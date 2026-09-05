@@ -402,3 +402,17 @@ export function defineStateLedgerContractSuite(ctx: StateLedgerContractContext) 
         expect(beta.snapshot).toMatchObject({ ref: { projectId: "proj-beta" } });
       }
     });
+    it("crash mid-commit leaves no partial state (fault injection)", async () => {
+      if (!ctx.createWithFault) return;
+      const { ledger, triggerFault } = await ctx.createWithFault();
+      const boot = bootstrapBatch("cmd-boot-13");
+      triggerFault();
+      await expect(ledger.commit(boot.batch)).rejects.toThrow();
+      expect(await eventIdsAfter(ledger, null)).toEqual([]);
+      expect(await ledger.load({ aggregateType: "Project", projectId: "proj-alpha" })).toMatchObject({
+        status: "not_found",
+      });
+    });
+  });
+}
+

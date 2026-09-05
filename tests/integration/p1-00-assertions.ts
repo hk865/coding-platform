@@ -51,9 +51,21 @@ export async function verifyGoalViewIsolation(
   expect(alphaView.goal.activePlanRevision).toBeNull();
   expect(alphaView.goal.aggregateRevision).toBe(1);
 
-  // same local workspaceId/goalId keyed under the other project must not be hit
-  const crossB = await harness.collaboration.goalView({
+  // identical local (workspaceId, goalId) queried under alpha must return ONLY
+  // the alpha row (never beta's), and a genuinely absent scope is not_found.
+  const sameKeyAlpha = await harness.collaboration.goalView({
     projectId: alpha.projectId,
+    workspaceId: beta.workspaceId,
+    goalId: beta.goalId,
+    ...(atLeast === null ? {} : { atLeastCursor: atLeast }),
+  });
+  expect(sameKeyAlpha.status).toBe("ready");
+  if (sameKeyAlpha.status === "ready") {
+    expect(sameKeyAlpha.goal.objective).toBe(alpha.objective.trim());
+    expect(sameKeyAlpha.goal.projectId).toBe(alpha.projectId);
+  }
+  const crossB = await harness.collaboration.goalView({
+    projectId: "proj-not-initialized",
     workspaceId: beta.workspaceId,
     goalId: beta.goalId,
     ...(atLeast === null ? {} : { atLeastCursor: atLeast }),
