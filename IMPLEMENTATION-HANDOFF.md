@@ -2,11 +2,11 @@
 
 ```yaml
 ticket_id: P1-01
-status: implementation in progress (limited authorization, 2026-09-05 — P1-01 only)
+status: implementation verified (limited authorization, 2026-09-05 — P1-01 only)
 updated: 2026-09-05
 authorized_by: user (limited authorization note recorded in ticket 01 + this file)
-next: STOP after P1-01 — P1-02 requires separate authorization; P1-01 acceptance does NOT mark P1 done
-evidence: (pending — /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-01-implementation-evidence.md)
+next: STOP — P1-01 done; P1-02 requires separate authorization; P1-01 acceptance does NOT mark P1 done
+evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-01-implementation-evidence.md
 ```
 
 ---
@@ -45,30 +45,38 @@ evidence: (pending — /mnt/d/1.project/software/agent_learn/agent_dev/agent_pla
 
 | Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
 | --- | --- | --- | --- | --- |
-| A SqliteStateLedger | `p1-01-lane-a` @ `/home/han001/projects/agents/agent_platform-p1-01-a` | StateLedger 全语义 + 契约套件（含故障注入回滚）通过 | `src/sqlite-ledger/**`、`tests/sqlite-ledger/**` | dispatched 2026-09-05 |
-| B SqliteReadModelIndex | `p1-01-lane-b` @ `/home/han001/projects/agents/agent_platform-p1-01-b` | ReadModelIndex 全语义 + GoalView 契约套件通过、重建等价 | `src/sqlite-read-model/**`、`tests/sqlite-read-model/**` | dispatched 2026-09-05 |
-| C 持久化 harness + 重启证据 | `p1-01-lane-c` @ `/home/han001/projects/agents/agent_platform-p1-01-c` | file harness、双路径 fixture/断言、证据收集、集成骨架完善 | `src/harness/persistent-harness.ts`、`tests/restart/**` | dispatched 2026-09-05 |
+| A SqliteStateLedger | `p1-01-lane-a` @ `/home/han001/projects/agents/agent_platform-p1-01-a`（7997345、2861ff3；merge 4dc0e10） | StateLedger 全语义 + 契约套件（含故障注入回滚）通过 | `src/sqlite-ledger/**`、`tests/sqlite-ledger/**` | ✅ 17/17 |
+| B SqliteReadModelIndex | `p1-01-lane-b` @ `/home/han001/projects/agents/agent_platform-p1-01-b`（311942f；merge a187da0） | ReadModelIndex 全语义 + GoalView 契约套件通过、重建等价 | `src/sqlite-read-model/**`、`tests/sqlite-read-model/**` | ✅ 16/16 |
+| C 持久化 harness + 重启证据 | `p1-01-lane-c` @ `/home/han001/projects/agents/agent_platform-p1-01-c`（a99d8d4；merge 3f861bc） | file harness、双路径 fixture/断言、证据收集、集成骨架完善 | `src/harness/persistent-harness.ts`、`tests/restart/**` | ✅ 2/2（适配器落地后自动启用） |
 
 integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`、`src/harness/index.ts`、`tests/integration/**`、文档与状态记录、集成协调。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结入口签名（如有缺口：提交建议给 integrator，由 integrator 统一改基线并通知消费者）。
 
-## 已执行命令及结果（阶段 1：共享基线）
+## 已执行命令及结果（最终）
 
 | 命令（product root） | 结果 |
 | --- | --- |
-| `pnpm typecheck` | PASS，0 errors（入口 + harness + tests/restart 全编译） |
-| `pnpm vitest run` | 11 files / 117 tests PASS；2 skipped（restart skeleton，探针：适配器未实现） |
+| `pnpm typecheck` | PASS，0 errors |
+| `pnpm vitest run` | **18 files / 158 tests PASS**（P1-00 基线 117 + P1-01 新增 41：SQLite 双套件 27、重启双路径 2、p1-01 集成 6、p1-01 断言/证据相关 6） |
+| `pnpm vitest run tests/sqlite-ledger` | 17 PASS（共享套件 16 + 文件库重启 1） |
+| `pnpm vitest run tests/sqlite-read-model` | 16 PASS（共享套件 11 + 文件库重建等价 5） |
+| `pnpm vitest run tests/restart` | 2 PASS（探针自动启用：双路径 + 证据采集） |
+| `pnpm vitest run tests/integration/p1-01.integration.test.ts` | 6 PASS（真实适配器，无 fake） |
+| `pnpm vitest run tests/restart/evidence/p1-01-evidence.test.ts` | 1 PASS（`P1-01-EVIDENCE` JSON 证据块，可重复） |
+| `node dev_docs/verification/validate-docs.mjs` | 12/12 PASS |
+| 静态 grep：src 中 `sqlite-ledger`/`sqlite-read-model` 之外的原始 SQL 与 `node:sqlite` 消费者 | 0 / 0 |
 
 ## 未解问题 / 设计理由
 
 - 无阻断项。设计理由见上方“P1-01 契约与存储语义”（驱动选型、单文件策略、重启语义、事务边界、故障注入映射）。
 - 已知预留：`beforeWrite` 与 InMemoryLedger 同名（统一故障注入 seam）；unavailable 保留给选择该语义的 Adapter；read model 与 ledger 分离文件（投影可删可重建，canonical 不受影响）。
 
-## 下一步
+## 验收证据与下一步
 
-1. 等三路完成 → integrator 校验命令结果 → 逐 lane 合并 main；
-2. 真实适配器替换集成路径（tests/integration p1-01 由 integrator 编写，使用真实 SQLite Adapter，无 fake）；
-3. P1-01 Acceptance 逐项对照，证据写入 `dev_docs/verification/p1-01-implementation-evidence.md`；
-4. 全绿后记录本票完成（status 保持 proposed，追加 Implementation record），**停止**，不自动推进 P1-02。
+- P1-01 Acceptance 逐项对照（16 项）与命令输出、重启证据块摘要：[p1-01-implementation-evidence.md]（文档根 dev_docs/verification/）
+- 本票 Implementation record：01-goal-persisted-and-visible.md（status 保持 proposed，符合阶段守卫）
+- 集成阶段 integrator 修复：p1-01 集成测试 2 处（重放 cursor 断言用 alpha 原值 c5；ledger 读取移到 close 之前）；无产品代码缺陷回退。
+
+**停止**。P1-01 完成（有限授权内）。不自动推进 P1-02；P1 DAG 仍为 proposed；推送/部署未发生（remote 未推送，需用户授权）。
 
 ---
 
