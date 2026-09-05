@@ -12,6 +12,10 @@ import type {
   TaskDetailViewQuery,
   TaskDetailViewResult,
 } from "../plan-view.js";
+import type {
+  ActiveAgentQuery,
+  ActiveAgentViewResult,
+} from "../active-agent.js";
 
 export type AdvanceBehavior = (
   page: EventPage,
@@ -25,12 +29,16 @@ export type PlanGraphBehavior = (
 export type TaskDetailBehavior = (
   query: TaskDetailViewQuery,
 ) => Promise<TaskDetailViewResult> | TaskDetailViewResult;
+export type ActiveAgentBehavior = (
+  query: ActiveAgentQuery,
+) => Promise<ActiveAgentViewResult> | ActiveAgentViewResult;
 
 export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly advanceCalls: EventPage[] = [];
   readonly goalCalls: GoalViewQuery[] = [];
   readonly planGraphCalls: PlanGraphViewQuery[] = [];
   readonly taskDetailCalls: TaskDetailViewQuery[] = [];
+  readonly activeAgentCalls: ActiveAgentQuery[] = [];
 
   constructor(
     private readonly options: {
@@ -38,6 +46,7 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
       goal?: GoalBehavior;
       planGraph?: PlanGraphBehavior;
       taskDetail?: TaskDetailBehavior;
+      activeAgent?: ActiveAgentBehavior;
     } = {},
   ) {}
 
@@ -65,6 +74,12 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   async taskDetail(query: TaskDetailViewQuery): Promise<TaskDetailViewResult> {
     this.taskDetailCalls.push(query);
     if (this.options.taskDetail) return this.options.taskDetail(query);
+    return { status: "not_found", observedCursor: null };
+  }
+
+  async activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult> {
+    this.activeAgentCalls.push(query);
+    if (this.options.activeAgent) return this.options.activeAgent(query);
     return { status: "not_found", observedCursor: null };
   }
 }

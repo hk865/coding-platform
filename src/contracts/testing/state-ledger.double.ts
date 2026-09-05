@@ -10,6 +10,7 @@ import type {
   StateLedger,
 } from "../ledger.js";
 import { makeCommitCursor } from "../ledger.js";
+import type { DispatchOutboxEntrySnapshot } from "../dispatch.js";
 
 export type LoadBehavior = (ref: AggregateRef) => Promise<SnapshotResult> | SnapshotResult;
 export type CommitBehavior = (
@@ -31,14 +32,20 @@ export function defaultCommittedReceiptFor(batch: LedgerCommit): LedgerCommitRec
   };
 }
 
+export type PendingIntentsBehavior = (
+    limit: number,
+  ) => Promise<DispatchOutboxEntrySnapshot[]> | DispatchOutboxEntrySnapshot[];
+
 export class ScriptedStateLedger implements StateLedger {
   readonly loads: AggregateRef[] = [];
   readonly commits: LedgerCommit[] = [];
+  readonly pendingIntentsCalls: number[] = [];
 
   constructor(
     private readonly options: {
       load?: LoadBehavior;
       commit?: CommitBehavior;
+      pendingIntents?: PendingIntentsBehavior;
     } = {},
   ) {}
 
@@ -56,5 +63,11 @@ export class ScriptedStateLedger implements StateLedger {
 
   async events(): Promise<never> {
     throw new Error("ScriptedStateLedger.events is not used by ControlEngine tests");
+  }
+
+  async pendingDispatchIntents(limit: number): Promise<DispatchOutboxEntrySnapshot[]> {
+    this.pendingIntentsCalls.push(limit);
+    if (this.options.pendingIntents) return this.options.pendingIntents(limit);
+    return [];
   }
 }

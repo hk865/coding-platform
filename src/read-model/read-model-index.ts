@@ -39,6 +39,7 @@ import type {
   TaskDetailViewQuery,
   TaskDetailViewResult,
 } from "../contracts/plan-view.js";
+import type { ActiveAgentQuery, ActiveAgentViewResult } from "../contracts/active-agent.js";
 import { ProjectionStallError } from "../contracts/goal-view.js";
 import type { CommitCursor } from "../contracts/command-event.js";
 import type { GoalCreatedEvent } from "../contracts/command-event.js";
@@ -330,10 +331,18 @@ export class ReadModelIndexImpl implements ReadModelIndex {
         phase: task.phase,
         scope: task.scope,
         obligations,
+        // P1-03: run-state projection is D (null until a TaskClaimed event).
+        run: null,
         sourceCursor: cursor,
       };
       this.taskDetailRows.set(taskDetailKey(projectId, goalId, task.taskId), detail);
     }
+  }
+
+  /** P1-03: active agent view (frozen entry; lane D implements the projection). */
+  async activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult> {
+    void query;
+    throw new Error("P1-03: activeAgent not implemented yet");
   }
 
   /** Event types this projection currently has handlers for (P1-02, v1). */

@@ -12,6 +12,7 @@
 import type { CommitCursor } from "./command-event.js";
 import type { EventPage } from "./ledger.js";
 import type { PlanRevisionRef } from "./plan.js";
+import type { ActiveAgentQuery, ActiveAgentViewResult } from "./active-agent.js";
 import type {
   PlanGraphViewQuery,
   PlanGraphViewResult,
@@ -85,4 +86,6 @@ export interface ReadModelIndex {
   planGraph(query: PlanGraphViewQuery): Promise<PlanGraphViewResult>;
   /** P1-02: Task Detail view (per (projectId, goalId, taskId)). */
   taskDetail(query: TaskDetailViewQuery): Promise<TaskDetailViewResult>;
+  /** P1-03: active agent (lease/attempt/run/budget/status) per (projectId, goalId, taskId). */
+  activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult>;
 }

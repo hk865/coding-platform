@@ -10,6 +10,9 @@ import { normalizeObjective } from "./command-event.js";
 import type { WorkspaceBootstrapEntry } from "./bootstrap.js";
 import { bootstrapSourceDigest } from "./bootstrap.js";
 import { isKnownEventType } from "./events.js";
+import { canonicalJson } from "./fingerprint.js";
+import { RUNTIME_EVENT_TYPES, TERMINAL_RUNTIME_EVENT_TYPES } from "./dispatch.js";
+import { TASK_ENVELOPE_MAX_SIZE_BYTES } from "./task-envelope.js";
 
 export type ValidationIssueCode =
   | "missing_field"
@@ -29,7 +32,12 @@ export type ValidationIssueCode =
   | "unknown_task_ref"
   | "unknown_stage_ref"
   | "unknown_obligation_ref"
-  | "bad_scope";
+  | "bad_scope"
+  | "bad_enum"
+  | "bad_sequence"
+  | "size_exceeded"
+  | "bad_binding_ref"
+  | "bad_ref";
 
 export type ValidationIssue = {
   path: string;
@@ -802,5 +810,374 @@ export function validateApplyPlanRevisionCommand(value: unknown): ValidationIssu
   } else {
     issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
   }
+  return issues;
+}
+// ------------------------------------------------------------------------ //
+// P1-03: dispatch / run command + envelope + runtime event validators        //
+// ------------------------------------------------------------------------ //
+
+function numberField(
+  record: UnknownRecord,
+  key: string,
+  issues: ValidationIssue[],
+  displayPath: string = key,
+  min: number = 0,
+): number | null {
+  const value = record[key];
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= min) return value;
+  issues.push({
+    path: displayPath,
+    code: "bad_sequence",
+    message: displayPath + " must be a non-negative integer",
+  });
+  return null;
+}
+
+function stringArrayField(
+  record: UnknownRecord,
+  key: string,
+  issues: ValidationIssue[],
+  displayPath: string = key,
+  allowEmpty: boolean = true,
+): string[] | null {
+  const value = record[key];
+  if (Array.isArray(value) && value.every((v) => typeof v === "string" && v.length > 0)) {
+    if (!allowEmpty && value.length === 0) {
+      issues.push({
+        path: displayPath,
+        code: "bad_scope",
+        message: displayPath + " must not be empty",
+      });
+      return null;
+    }
+    return [...value];
+  }
+  issues.push({
+    path: displayPath,
+    code: "bad_type",
+    message: displayPath + " must be an array of non-empty strings",
+  });
+  return null;
+}
+
+export function validateRoleBindingRef(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: path + ".schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "bindingId", issues, path + ".bindingId");
+  stringField(value, "templateId", issues, path + ".templateId");
+  stringField(value, "templateRevision", issues, path + ".templateRevision");
+  numberField(value, "bindingVersion", issues, path + ".bindingVersion", 1);
+  stringField(value, "policyRevision", issues, path + ".policyRevision");
+}
+
+export function validateTaskBudget(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  numberField(value, "tokenBudget", issues, path + ".tokenBudget", 1);
+  const deadline = value["deadline"];
+  if (deadline !== null && typeof deadline !== "string") {
+    issues.push({ path: path + ".deadline", code: "bad_type", message: "deadline must be a string or null" });
+  }
+}
+
+function validateDeclaredPermissions(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  stringArrayField(value, "tools", issues, path + ".tools");
+  stringArrayField(value, "writeScope", issues, path + ".writeScope");
+}
+
+function validateRunRef(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  stringField(value, "aggregateType", issues, path + ".aggregateType");
+  stringField(value, "projectId", issues, path + ".projectId");
+  stringField(value, "goalId", issues, path + ".goalId");
+  stringField(value, "runId", issues, path + ".runId");
+}
+
+export function validateDispatchClaimCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "DispatchClaimCommand must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "DispatchClaimTask") {
+    issues.push({ path: "commandType", code: "invalid_command_type", message: 'commandType must be "DispatchClaimTask"' });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "commandId", issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (value["expectedRevision"] !== 0) {
+    issues.push({ path: "expectedRevision", code: "bad_expected_revision", message: "P1-03 claim expectedRevision must be 0 (single lease)" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  stringField(payload, "goalId", issues, "payload.goalId");
+  stringField(payload, "attemptId", issues, "payload.attemptId");
+  stringField(payload, "runId", issues, "payload.runId");
+  validateRoleBindingRef(payload["roleBinding"], "payload.roleBinding", issues);
+  validateDeclaredPermissions(payload["declaredPermissions"], "payload.declaredPermissions", issues);
+  validateTaskBudget(payload["budget"], "payload.budget", issues);
+  return issues;
+}
+
+export function validateDispatchStartCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "DispatchStartCommand must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "DispatchStartRun") {
+    issues.push({ path: "commandType", code: "invalid_command_type", message: 'commandType must be "DispatchStartRun"' });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "commandId", issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  numberField(value, "expectedRevision", issues, "expectedRevision", 1);
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  issues.push(
+    ...validateTaskEnvelope(payload["envelope"]).map((issue) => ({ ...issue, path: "payload.envelope." + issue.path })),
+  );
+  issues.push(
+    ...validateContextManifest(payload["manifest"]).map((issue) => ({ ...issue, path: "payload.manifest." + issue.path })),
+  );
+  return issues;
+}
+
+export function validateRunFactCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "RunFactCommand must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "RunFact") {
+    issues.push({ path: "commandType", code: "invalid_command_type", message: 'commandType must be "RunFact"' });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "commandId", issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  numberField(value, "expectedRevision", issues, "expectedRevision", 1);
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  const fact = payload["fact"];
+  if (!isRecord(fact)) {
+    issues.push({ path: "payload.fact", code: "bad_type", message: "fact must be an object" });
+    return issues;
+  }
+  if (fact["kind"] === "runtime_event") {
+    issues.push(
+      ...validateRuntimeEvent(fact["event"]).map((issue) => ({ ...issue, path: "payload.fact.event." + issue.path })),
+    );
+  } else if (fact["kind"] === "outcome_unknown") {
+    stringField(fact, "reason", issues, "payload.fact.reason");
+  } else {
+    issues.push({ path: "payload.fact.kind", code: "bad_enum", message: 'kind must be "runtime_event" | "outcome_unknown"' });
+  }
+  return issues;
+}
+
+export function validateTaskEnvelope(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "TaskEnvelope must be an object" });
+    return issues;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "envelopeId", issues);
+  stringField(value, "projectId", issues);
+  stringField(value, "workspaceId", issues);
+  stringField(value, "goalId", issues);
+  stringField(value, "taskId", issues);
+  validateRunRef(value["runRef"], "runRef", issues);
+  const attemptRef = value["attemptRef"];
+  if (isRecord(attemptRef)) {
+    stringField(attemptRef, "aggregateType", issues, "attemptRef.aggregateType");
+    stringField(attemptRef, "attemptId", issues, "attemptRef.attemptId");
+  } else {
+    issues.push({ path: "attemptRef", code: "bad_type", message: "attemptRef must be an object" });
+  }
+  const planRef = value["planRef"];
+  if (isRecord(planRef)) {
+    stringField(planRef, "aggregateType", issues, "planRef.aggregateType");
+    stringField(planRef, "planId", issues, "planRef.planId");
+  } else {
+    issues.push({ path: "planRef", code: "bad_type", message: "planRef must be an object" });
+  }
+  validateRoleBindingRef(value["roleBinding"], "roleBinding", issues);
+  const ws = value["workspaceSnapshot"];
+  if (isRecord(ws)) {
+    stringField(ws, "workspaceId", issues, "workspaceSnapshot.workspaceId");
+    numberField(ws, "revision", issues, "workspaceSnapshot.revision", 1);
+  } else {
+    issues.push({ path: "workspaceSnapshot", code: "bad_type", message: "workspaceSnapshot must be an object" });
+  }
+  const permissions = value["permissions"];
+  if (isRecord(permissions)) {
+    stringField(permissions, "policyRevision", issues, "permissions.policyRevision");
+    stringArrayField(permissions, "tools", issues, "permissions.tools");
+    stringArrayField(permissions, "writeScope", issues, "permissions.writeScope");
+  } else {
+    issues.push({ path: "permissions", code: "bad_type", message: "permissions must be an object" });
+  }
+  validateTaskBudget(value["budget"], "budget", issues);
+  const sourceRefs = value["sourceRefs"];
+  if (Array.isArray(sourceRefs)) {
+    sourceRefs.forEach((source, index) => {
+      if (!isRecord(source)) {
+        issues.push({ path: "sourceRefs[" + index + "]", code: "bad_type", message: "source ref must be an object" });
+        return;
+      }
+      stringField(source, "kind", issues, "sourceRefs[" + index + "].kind");
+      stringField(source, "refId", issues, "sourceRefs[" + index + "].refId");
+      stringField(source, "revision", issues, "sourceRefs[" + index + "].revision");
+    });
+  } else {
+    issues.push({ path: "sourceRefs", code: "bad_type", message: "sourceRefs must be an array" });
+  }
+  const bundleRef = value["bundleRef"];
+  if (isRecord(bundleRef)) {
+    stringField(bundleRef, "kind", issues, "bundleRef.kind");
+    stringField(bundleRef, "contentType", issues, "bundleRef.contentType");
+    stringField(bundleRef, "digest", issues, "bundleRef.digest");
+    numberField(bundleRef, "sizeBytes", issues, "bundleRef.sizeBytes", 1);
+  } else {
+    issues.push({ path: "bundleRef", code: "bad_type", message: "bundleRef must be an object" });
+  }
+  if (issues.length === 0) {
+    const size = Buffer.byteLength(canonicalJson(value as never), "utf8");
+    if (size > TASK_ENVELOPE_MAX_SIZE_BYTES) {
+      issues.push({
+        path: "$",
+        code: "size_exceeded",
+        message: "TaskEnvelope serialized size " + size + " exceeds " + TASK_ENVELOPE_MAX_SIZE_BYTES,
+      });
+    }
+  }
+  return issues;
+}
+
+export function validateContextManifest(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "ContextManifest must be an object" });
+    return issues;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  if (!Array.isArray(value["selectedRefs"])) {
+    issues.push({ path: "selectedRefs", code: "bad_type", message: "selectedRefs must be an array" });
+  }
+  if (!Array.isArray(value["gaps"])) {
+    issues.push({ path: "gaps", code: "bad_type", message: "gaps must be an array" });
+  }
+  return issues;
+}
+
+export function validateRuntimeEvent(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "RuntimeEvent must be an object" });
+    return issues;
+  }
+  const eventType = value["eventType"];
+  if (typeof eventType !== "string" || !(RUNTIME_EVENT_TYPES as readonly string[]).includes(eventType)) {
+    issues.push({ path: "eventType", code: "bad_enum", message: "unknown runtime event type" });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "eventId", issues);
+  validateRunRef(value["runRef"], "runRef", issues);
+  numberField(value, "sequence", issues, "sequence", 1);
+  stringField(value, "occurredAt", issues);
+  const payload = value["payload"];
+  if (isRecord(payload)) {
+    const kind = payload["kind"];
+    if (typeof kind !== "string" || !["started", "completed", "crashed", "cancelled", "budget_exhausted"].includes(kind)) {
+      issues.push({ path: "payload.kind", code: "bad_enum", message: "unknown runtime event payload kind" });
+    }
+    if (kind === "completed" && typeof payload["exitCode"] !== "number") {
+      issues.push({ path: "payload.exitCode", code: "bad_type", message: "exitCode must be a number" });
+    }
+  } else {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+  }
+  return issues;
+}
+
+export function validateTaskContextRequest(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "TaskContextRequest must be an object" });
+    return issues;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "requestId", issues);
+  stringField(value, "projectId", issues);
+  stringField(value, "workspaceId", issues);
+  stringField(value, "goalId", issues);
+  stringField(value, "taskId", issues);
+  stringField(value, "submittedAt", issues);
+  const ws = value["workspaceSnapshot"];
+  if (isRecord(ws)) {
+    numberField(ws, "revision", issues, "workspaceSnapshot.revision", 1);
+  } else {
+    issues.push({ path: "workspaceSnapshot", code: "bad_type", message: "workspaceSnapshot must be an object" });
+  }
+  validateRoleBindingRef(value["roleBinding"], "roleBinding", issues);
+  const scope = value["scope"];
+  if (isRecord(scope)) {
+    stringArrayField(scope, "tools", issues, "scope.tools");
+    stringArrayField(scope, "writeScope", issues, "scope.writeScope");
+  } else {
+    issues.push({ path: "scope", code: "bad_type", message: "scope must be an object" });
+  }
+  validateTaskBudget(value["budget"], "budget", issues);
   return issues;
 }

@@ -4,24 +4,21 @@
  * HumanCollaborationImpl) to the REAL SQLite adapters (SqliteStateLedger,
  * SqliteReadModelIndex) so the full path is executable against a file:
  *
- *   bootstrap -> CreateGoal -> Sqlite ledger.commit -> close() ->
- *   reopen() -> (a) ledger.load(GoalSnapshot) canonical load,
- *              (b) drain persisted EventPage(s) into a fresh read model
- *                  rebuild -> same GoalView
+ * P1-03 (frozen by the shared baseline): the harness additionally wires the
+ * REAL dispatch/run modules — ArtifactVault / ContextCompilerImpl /
+ * FakeRuntimeAdapter / DispatchEngineImpl — around the SAME SqliteStateLedger,
+ * so claim -> assemble -> start -> run facts -> restart evidence is
+ * executable against a file.
  *
  * Restart semantics (fixed in IMPLEMENTATION-HANDOFF.md — "P1-01 契约与存储语义"):
  *   - durable state lives ONLY in the SQLite file(s); "restart" = close() +
  *     a NEW instance on the SAME file path. No in-process state carries over.
  *   - single-file strategy: one database file for the ledger
  *     (ledger.sqlite), one separate database file for the read model
- *     (readmodel.sqlite), both under one temporary directory (default
- *     mkdtemp in os.tmpdir()) that the caller owns and may clean up.
- *   - closed instances reject further use; close() is idempotent.
+ *     (readmodel.sqlite), both under one temporary directory.
  *   - the read model is ALWAYS an event projection: rebuild from a fresh file
- *     (reopen({ readModelFile: ... })) must reproduce the same GoalView.
- *     The canonical Goal state never comes from the read model.
- *
- * The InMemory path (src/harness/in-memory-harness.ts) is untouched.
+ *     must reproduce the same views. The canonical state never comes from the
+ *     read model.
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -43,6 +40,22 @@ import type {
   TaskDetailViewQuery,
   TaskDetailViewResult,
 } from "../contracts/plan-view.js";
+import type {
+  DispatchClaimCommand,
+  DispatchClaimReceipt,
+  DispatchReadinessQuery,
+  DispatchReadinessResult,
+  DispatchStartCommand,
+  DispatchStartReceipt,
+  RunFactCommand,
+  RunFactReceipt,
+} from "../contracts/dispatch.js";
+import type { ActiveAgentQuery, ActiveAgentViewResult } from "../contracts/active-agent.js";
+import type { ArtifactPort } from "../contracts/artifact.js";
+import type { TaskContextPort } from "../contracts/task-envelope.js";
+import type { DispatchDriveResult, DispatchDriveTrigger, DispatchPort, RunPort } from "../contracts/ports.js";
+import type { FakeRuntimeScriptV1 } from "../contracts/fixtures/dispatch-fixtures.js";
+import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../contracts/fixtures/dispatch-fixtures.js";
 import { SqliteStateLedger, createSqliteStateLedger } from "../sqlite-ledger/sqlite-ledger.js";
 import {
   SqliteReadModelIndex,
@@ -50,6 +63,10 @@ import {
 } from "../sqlite-read-model/sqlite-read-model-index.js";
 import { ControlEngineImpl } from "../control/control-engine.js";
 import { HumanCollaborationImpl } from "../interaction/human-collaboration.js";
+import { ArtifactVault } from "../vault/artifact-vault.js";
+import { ContextCompilerImpl } from "../context/context-compiler.js";
+import { FakeRuntimeAdapter } from "../runtime/fake-runtime-adapter.js";
+import { DispatchEngineImpl } from "../control/dispatch-engine.js";
 import { createDeterministicDeps, type InjectableDeps } from "../contracts/testing/sequences.js";
 
 export interface PersistentSqliteHarnessOptions {
@@ -61,6 +78,8 @@ export interface PersistentSqliteHarnessOptions {
   readModelFile?: string;
   /** Deterministic-sequence overrides (default createDeterministicDeps()). */
   deps?: Partial<InjectableDeps>;
+  /** P1-03: default FakeRuntimeAdapter script (FAKE_RUNTIME_SCRIPT_COMPLETED_V1). */
+  runtimeScript?: FakeRuntimeScriptV1;
 }
 
 export interface PersistentSqliteHarness {
@@ -72,6 +91,11 @@ export interface PersistentSqliteHarness {
   readModel: SqliteReadModelIndex;
   control: ControlEngine;
   collaboration: HumanCollaboration;
+  /** P1-03: real modules (default wiring; overridable per options). */
+  vault: ArtifactPort;
+  contextCompiler: TaskContextPort;
+  runtime: RunPort;
+  dispatchEngine: DispatchPort;
 
   bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
   /** P1-02: governance install (immutable revision; never auto-activates). */
@@ -83,22 +107,24 @@ export interface PersistentSqliteHarness {
   /** P1-02: Plan Graph / Task Detail views (freshness by opaque cursor). */
   planGraph(query: PlanGraphViewQuery): Promise<PlanGraphViewResult>;
   taskDetail(query: TaskDetailViewQuery): Promise<TaskDetailViewResult>;
+  /** P1-03: readiness / claim / start / run-fact control entries. */
+  dispatchReadiness(query: DispatchReadinessQuery): Promise<DispatchReadinessResult>;
+  claimTask(command: DispatchClaimCommand): Promise<DispatchClaimReceipt>;
+  startRun(command: DispatchStartCommand): Promise<DispatchStartReceipt>;
+  runFact(command: RunFactCommand): Promise<RunFactReceipt>;
+  /** P1-03: ActiveAgent view (freshness by opaque cursor). */
+  activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult>;
+  /** P1-03: outbox drive (claim -> assemble -> start -> events). */
+  drive(trigger: DispatchDriveTrigger): Promise<DispatchDriveResult>;
   /** Pull new events from the ledger and push them into the read model. */
   advanceProjection(): Promise<ProjectionReceipt>;
   /** Last cursor pushed into the read model (null until first advance). */
   observedCursor(): CommitCursor | null;
 
-  /**
-   * Emulates a process restart: closes both connections. The harness is dead
-   * afterwards; use reopen() for the restarted process. Idempotent.
-   */
+  /** Emulates a process restart: closes both connections. Idempotent. */
   close(): Promise<void>;
 
-  /**
-   * Restart: NEW instances on the SAME ledger file. readModelFile may differ
-   * (default: same file) — pass a fresh file name for the rebuild-from-events
-   * evidence path. Deterministic deps restart from their sequence beginning.
-   */
+  /** Restart: NEW instances on the SAME ledger file. readModelFile may differ. */
   reopen(options?: { readModelFile?: string }): Promise<PersistentSqliteHarness>;
 
   /** Close both connections and remove the harness directory (best effort). */
@@ -110,6 +136,10 @@ interface BuiltHarness {
   readModel: SqliteReadModelIndex;
   control: ControlEngine;
   collaboration: HumanCollaboration;
+  vault: ArtifactPort;
+  contextCompiler: TaskContextPort;
+  runtime: RunPort;
+  dispatchEngine: DispatchPort;
   advanceProjection: () => Promise<ProjectionReceipt>;
   observedCursor: () => CommitCursor | null;
   planGraph: (query: PlanGraphViewQuery) => Promise<PlanGraphViewResult>;
@@ -121,6 +151,7 @@ function buildHarness(
   ledgerFile: string,
   readModelFile: string,
   deps: Partial<InjectableDeps>,
+  runtimeScript: FakeRuntimeScriptV1,
 ): BuiltHarness {
   const d: InjectableDeps = { ...createDeterministicDeps(), ...deps };
   const ledger = createSqliteStateLedger({ path: join(dir, ledgerFile) });
@@ -132,6 +163,15 @@ function buildHarness(
     commandId: d.commandId,
     correlationId: d.correlationId,
     now: d.clock,
+  });
+  const vault: ArtifactPort = new ArtifactVault();
+  const contextCompiler: TaskContextPort = new ContextCompilerImpl({ ledger, vault, now: d.clock });
+  const runtime: RunPort = new FakeRuntimeAdapter(runtimeScript);
+  const dispatchEngine: DispatchPort = new DispatchEngineImpl({
+    ledger,
+    control,
+    contextCompiler,
+    runtime,
   });
   let lastCursor: CommitCursor | null = null;
   async function advanceProjection(): Promise<ProjectionReceipt> {
@@ -149,6 +189,10 @@ function buildHarness(
     readModel,
     control,
     collaboration,
+    vault,
+    contextCompiler,
+    runtime,
+    dispatchEngine,
     advanceProjection,
     observedCursor: () => lastCursor,
     planGraph: (query) => readModel.planGraph(query),
@@ -163,12 +207,13 @@ export async function createPersistentSqliteHarness(
   const ledgerFile = options.ledgerFile ?? "ledger.sqlite";
   const readModelFile = options.readModelFile ?? "readmodel.sqlite";
   const deps = options.deps ?? {};
+  const runtimeScript = options.runtimeScript ?? FAKE_RUNTIME_SCRIPT_COMPLETED_V1;
 
   const make = (
     ledgerFilename: string,
     readModelFilename: string,
   ): PersistentSqliteHarness => {
-    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps);
+    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript);
     let closed = false;
     return {
       dir,
@@ -178,12 +223,22 @@ export async function createPersistentSqliteHarness(
       readModel: built.readModel,
       control: built.control,
       collaboration: built.collaboration,
+      vault: built.vault,
+      contextCompiler: built.contextCompiler,
+      runtime: built.runtime,
+      dispatchEngine: built.dispatchEngine,
       bootstrap: (command) => built.control.bootstrap(command),
       install: (command) => built.control.install(command),
       activate: (command) => built.control.activate(command),
       applyPlan: (command) => built.control.applyPlan(command),
       planGraph: (query) => built.planGraph(query),
       taskDetail: (query) => built.taskDetail(query),
+      dispatchReadiness: (query) => built.control.dispatchReadiness(query),
+      claimTask: (command) => built.control.claimTask(command),
+      startRun: (command) => built.control.startRun(command),
+      runFact: (command) => built.control.runFact(command),
+      activeAgent: (query) => built.readModel.activeAgent(query),
+      drive: (trigger) => built.dispatchEngine.drive(trigger),
       advanceProjection: built.advanceProjection,
       observedCursor: built.observedCursor,
       close: async () => {

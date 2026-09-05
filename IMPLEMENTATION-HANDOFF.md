@@ -1,13 +1,71 @@
 # IMPLEMENTATION-HANDOFF — Agent Platform 产品代码根
 
 ```yaml
-ticket_id: P1-02
-status: implementation verified (limited authorization, 2026-09-05 — P1-02 only)
+ticket_id: P1-03
+status: shared baseline + parallel lanes running (limited authorization, 2026-09-05 — P1-03 only)
 updated: 2026-09-05
-authorized_by: user (limited authorization note recorded in ticket 02 + this file)
-next: STOP after P1-02 acceptance — do NOT auto-start P1-03
-evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-02-implementation-evidence.md
+authorized_by: user (limited authorization note recorded in ticket 03 + this file)
+next: STOP after P1-03 acceptance — do NOT auto-start P1-04 (DAG: 04 验收后才出现 05/06 并行窗口)
+evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-03-implementation-evidence.md
 ```
+
+---
+
+## P1-03 当前票据与共享契约基线
+
+- Ticket：`/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/03-fake-run-visible.md`（P1-03，status 按阶段守卫保持 `proposed`；有限授权与 Implementation record 已追加票尾；**不把本票记成 P1 已验收，不自动推进 P1-04**）
+- 上游 P1-00/P1-01/P1-02 验收证据：`dev_docs/verification/p1-00|p1-01|p1-02-implementation-evidence.md`（仅证明各自票据）；P1-02 结束基线 = 产品根 commit `bafb0f1`（typecheck 0 errors、29 files/283 tests PASS、validate-docs 12/12）
+- **冻结复用、不重写**：`src/contracts/**`（P1-00/01/02 部分）、`src/contracts/fixtures/**`、`src/contracts/testing/**`、`tests/contract-suite/state-ledger.*`+`goal-view.*`（既有套件零修改）、`src/ledger|control|read-model|interaction|sqlite-ledger|sqlite-read-model`（P1-02 部分）、`src/harness/**`、`tests/restart/**`、`tests/integration/**`
+- P0-06 复核影响（AGENTS.md 要求）：`human-framework-role-review.md` 结论与本票无冲突——复核收敛了角色/记忆方向（协调 vs 执行、短生命周期自由模板、报告需 Control 登记、完成权不绑定名称、outbox-before-side-effect、crash≠outcome_unknown 均在 03 验收内）；本票不创建 CompletionClaim/VerificationPlan、不做 Goal 归约、不把 Run 结束写 `Task.phase=satisfied`。doc 与票据 Acceptance 无冲突；如后续发现差异：以票据 Acceptance 为准并上报 integrator 统一协调接口文档修订（本屏已按此原则冻结 runtime-collaboration 尚未冻结的 wire 字段）。
+- 四个最小 Interface 首次冻结（DAG interfaces_to_freeze）：`ArtifactPort`（src/contracts/artifact.ts）、`DispatchPort`（src/contracts/ports.ts）、`TaskContextPort`（src/contracts/task-envelope.ts）、`RunPort`（src/contracts/ports.ts）——已建、版本化（v1）、以契约套件定义 + 集成接线作为最小 contract test；后续票据只消费/显式升级。
+
+## P1-03 契约与存储语义（冻结）
+
+1. **LedgerCommit 扩展方式**：新增三个 commitKind（`dispatch-claim` / `dispatch-start` / `run-fact`），全部 schemaVersion 1、project-scoped CommandIdentity，沿用 P1-00/02 先例做版本化记录，**不改变既有 v1 语义**（既有 283 测试零回归）。`LedgerCommit.outboxIntents` 首次非空：dispatch-claim 的 outboxIntents=[DispatchIntentV1]（与 DispatchOutboxEntrySnapshot.intent 逐字段等价，由 validator 校验）；其余 kind 仍为 []。**outbox 存储语义：outbox 记录以 canonical DispatchOutboxEntry 聚合（ref=projectId+goalId+taskId+attemptId）持久在 Snapshots 表**——与 dispatch 事件/attempt/snapshot 同一原子提交、同一 CAS 窗口、可 load、可重启读取；status 生命周期 pending→started→done（claim / start / 终态 run-fact 各自 CAS 推进）。排序：outboxIntent 先于副作用由 DispatchEngine.drive 保证（加载 pending → assemble → startRun 提交 → 才调用 RunPort.start）。
+2. **六个契约**：DispatchIntentV1 / TaskLeaseSnapshot / TaskAttemptSnapshot / RunSnapshot / RuntimeEventV1 / ActiveAgentView（+ TaskDetailView.run: TaskRunState|null）全部 schemaVersion 1；版本化策略 = 新增合类型 + 未知版本拒绝（validation.ts + events.ts KNOWN 列表），与 P1-00/02 相同。**TaskEnvelope 角色模板/绑定版本的最小形状 = RoleBindingRefV1 {bindingId, templateId, templateRevision, bindingVersion, policyRevision}**（runtime-collaboration 的完整 RoleBinding 语义尚无契约；本票只冻结“版本化引用 + 版本一致性 + 声明权限 ⊆ 绑定声明”的最小校验；授权策略注册表留给后续票据，已注明）。
+3. **唯一领取语义**：eligibility = 显式 DAG 硬依赖全部满足（dep task phase === "satisfied"）+ goal desiredState active + task disposition active + 无 Blocker（phase≠blocked）+ 资源可用（无 active lease、tokenBudget>0、deadline 未过）+ taskKind=work（gate 由 P1-04 Evidence 归约，不派发）；**CAS/lease = TaskLease@0 的 ledger CAS**（P1-03 每任务只允许一次领取，无重试/re-claim）；两个 Dispatcher 竞争 → 至多一个 lease+Attempt+Run 提交成功，败者 revision_conflict 零写入；幂等重放（同 identity+fingerprint → committed(replayed)）优先于 CAS。
+4. **RuntimeEvent 语义**：每 Run 单调 sequence 是唯一去重/排序权威；sequence < run.lastEventSeq → stale_event；== lastEventSeq 且 runtimeEventId 不同 → conflict_event；== 且相同 → duplicate_event（拒绝，零写入，**不再有 ledger 级幂等重放——run-fact commit 不写 idempotency 表**）；Run 已 ended 后任何 fact → after_terminal；全部拒绝不回退 Task/Run revision（P1-03 无 Task 聚合写入，Run revision 只前进）。**crash 与 outcome_unknown 分开投影**：run_crashed → outcome crashed；RunOutcomeUnknown 是显式 RunFact（{kind:"outcome_unknown"}），绝不从 crash/exit 推断成功；**run_completed(exit=0) → outcome completed（run 视角，exitCode 记录），永不写 Task.phase=satisfied**。
+5. **FakeRuntimeAdapter 边界**：真实可重放适配器（真实模块 src/runtime/fake-runtime-adapter.ts，可注入），按 FakeRuntimeScriptV1 重放（runRef=envelope.runRef，eventId="rt-<runId>-<seq>"），capabilities 声明 replayable/supportsSnapshot=false/maxEnvelopeBytes=64KiB；只发事件，不判真伪、不写 satisfied、不自动推断 outcome_unknown。TaskEnvelope 硬上限 64KiB（canonical JSON bytes），**不含完整 transcript**（仅有界 bundleRef + sourceRefs）。
+6. **ReadModel**：ActiveAgentView（per projectId+goalId+taskId）+ TaskDetailView.run 只从已提交事件重建（TaskClaimed/RunStarted/RunEventRecorded/RunOutcomeUnknown 四个 handler）；freshness 沿用 opaque CommitCursor（not_ready≠not_found）；已知 v1 事件无 handler → ProjectionStallError(unsupported_event_type) 整页停止（未实现前不静默）。**无投影在跳过事件**。
+7. **重启等价**：dispatch/claim/start/run-fact 全部经 SQLite 单事务；重启后 outbox、lease、Attempt、Run（close→reopen 同文件、全新实例）逐字段一致；ActiveAgents/TaskDetail 从持久 EventPage 重建逐字段一致；禁止任何 fake 或内存状态延续。
+8. **边界**：本票不创建 CompletionClaim/VerificationPlan、不做 Goal 归约、不把 Run 结束满足 Task、不创建重试/取消（P1-10）/换手（P1-06）。TaskEnvelope 正文先经 ArtifactVault 保存（content-addressed，body-first），Control startRun 登记成功后才成为可查询引用（保存后登记失败只留未采纳 Artifact，不显示为已接受事实）。
+9. **事务/命令路径**：dispatch 路径 command/流水 = readiness(只读) → claimTask(dispatch-claim commit) → [ContextCompiler.assemble → vault.put] → startRun(dispatch-start commit) → RunPort.start → runFact×N（run-fact commits）；0xC0 顺序仅由 drive 调用方控制（单线程驱动），CAS 保证唯一 Writer。
+
+## P1-03 已冻结的代码入口（integrator 建立，签名冻结）
+
+| 入口 | 文件 | 冻结表面 |
+| --- | --- | --- |
+| dispatch 契约/夹具 | src/contracts/dispatch.ts、fixtures/dispatch-fixtures.ts | DispatchIntentV1/TaskLease/TaskAttempt/Run 快照与 ref、RuntimeEventV1、eligibility 纯函数 evaluateTaskEligibility、claim/start/runFact 命令与 receipt、指纹、四 domain events（TaskClaimed/RunStarted/RunEventRecorded/RunOutcomeUnknown） |
+| artifact/task-envelope/active-agent/ports | src/contracts/artifact.ts、task-envelope.ts、active-agent.ts、ports.ts | ArtifactPort、ArtifactRef（content-address）、TaskContextPort/TaskContextRequest-V1/TaskContextResult、TaskEnvelopeV1（64KiB 上限）、RunPort/RunCapabilities/RunHandle、DispatchPort/dispatchDrive、ActiveAgentView/TaskRunState |
+| ledger 扩展 | src/contracts/ledger.ts、ledger-validation.ts、src/ledger/in-memory-ledger.ts、src/sqlite-ledger/sqlite-ledger.ts | 3 个 commitKind、StateLedger.pendingDispatchIntents、3 个纯 commit validator（InMemory+SQLite 共用） |
+| validation 扩展 | src/contracts/validation.ts | validateDispatchClaim/Start/RunFactCommand、validateTaskEnvelope(+cap)、validateRuntimeEvent、validateTaskContextRequest、validateContextManifest、validateRoleBindingRef、validateTaskBudget |
+| Control 入口 | src/control/readiness.ts、claim.ts、start-run.ts、run-facts.ts、dispatch-engine.ts | evaluateDispatchReadiness(deps,query)/claimTask(deps,cmd)/startRun(deps,cmd)/runFact(deps,cmd)/DispatchEngineImpl.drive（stub→lane 填充；control-engine.ts 仅委托） |
+| Runtime/Vault/Context | src/runtime/fake-runtime-adapter.ts、src/vault/artifact-vault.ts、src/context/context-compiler.ts | FakeRuntimeAdapter(script)、ArtifactVault.put/open、ContextCompilerImpl.assemble（stub→lane 填充） |
+| harness | src/harness/{in-memory,persistent}-harness.ts | vault/contextCompiler/runtime/dispatchEngine + dispatchReadiness/claimTask/startRun/runFact/activeAgent/drive 直通；options {runtimeScript?} |
+| 契约套件 | tests/contract-suite/{p1-03-harness,dispatch.contract.suite,run.contract.suite}.ts | defineDispatchContractSuite/defineRunContractSuite(factory) + prepareDispatchScenario/buildPreparedClaim/buildPreparedEnvelope |
+| 重启骨架 | tests/restart/p1-03-restart-fixtures.ts、p1-03-restart.test.ts、evidence/p1-03-evidence.test.ts | skipIf 探针 isP103Ready()；实现落地后自动启用（lane D 硬化） |
+
+## 四路并行（P1-03，隔离 worktree → main 合并；从本基线 commit 派生）
+
+| Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
+| --- | --- | --- | --- | --- |
+| A dispatch/claim | `p1-03-lane-a` | readiness 判定与唯一领取 + start + drive（outbox 先于副作用） | src/control/readiness.ts、claim.ts、start-run.ts、dispatch-engine.ts、tests/control/dispatch-*.test.ts | 进行中 |
+| B FakeRuntime + run-facts | `p1-03-lane-b` | FakeRuntimeAdapter + runFact（无回退/crash≠unknown/exit 不写 satisfied） | src/control/run-facts.ts、src/runtime/fake-runtime-adapter.ts、tests/control/run-facts.test.ts、tests/runtime/fake-runtime-adapter.test.ts | 进行中 |
+| C ContextCompiler+Vault | `p1-03-lane-c` | assemble（越权/旧绑定/预算/超界拒绝；正文先入 Vault）+ ArtifactVault | src/context/context-compiler.ts、src/vault/artifact-vault.ts、tests/context/**、tests/vault/** | 进行中 |
+| D ReadModel + 重启证据 | `p1-03-lane-d` | ActiveAgent/TaskDetail.run 投影 + 双 Adapter + 重启证据硬化 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、tests/read-model/**、tests/sqlite-read-model/**、tests/restart/p1-03-*.ts（含 evidence） | 进行中 |
+
+integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 schema/接口/共享 fixture）、`src/ledger/**`、`src/sqlite-ledger/**`、`src/control/control-engine.ts`、`src/harness/**`、`tests/contract-suite/**`、`tests/integration/**`、文档与状态记录。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结签名（如有缺口：提交具体建议给 integrator 统一修改基线并通知消费者）。
+
+## P1-03 已执行命令及结果（共享基线）
+
+| 命令（product root） | 结果 |
+| --- | --- |
+| `pnpm typecheck` | PASS 0 errors（含新契约/夹具/套件/骨架） |
+| `pnpm vitest run`（全量） | **29 files / 283 tests PASS + 2 SKIP**（既有 P1-00/01/02 零回归；P1-03 重启骨架 skipIf 探针未启用） |
+| P1-03 契约套件/集成/证据 | 待 lane 落地后接线运行（套件定义已就绪：defineDispatchContractSuite/defineRunContractSuite；集成测试 finals 步骤建立） |
+| `node dev_docs/verification/validate-docs.mjs` | 待本票文档记录更新后运行（12/12 基线） |
+
+设计理由摘要：outbox=canonical 聚合（可 load/可重启/与事件同事务，无第二套机制）；唯一领取=TaskLease CAS@0（ledger 原子性直接给出“至多一个”）；RuntimeEvent 去重=per-run 单调 sequence（零写入拒绝，不回退）；crash≠outcome_unknown（显式 fact）；TaskEnvelope 有界=64KiB+bodyRef（无 transcript）；FakeRuntimeAdapter=真实可重放适配器；事务边界=3 种 commitKind 单事务，run-fact 无 idempotency 记录（语义见上 4）。
 
 ---
 

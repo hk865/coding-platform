@@ -63,9 +63,23 @@ import type {
   GovernanceInstallReceipt,
 } from "../contracts/governance.js";
 import type { ApplyPlanRevisionCommand, PlanRevisionReceipt } from "../contracts/plan.js";
+import type {
+  DispatchClaimCommand,
+  DispatchClaimReceipt,
+  DispatchReadinessQuery,
+  DispatchReadinessResult,
+  DispatchStartCommand,
+  DispatchStartReceipt,
+  RunFactCommand,
+  RunFactReceipt,
+} from "../contracts/dispatch.js";
 import { installGovernanceRevision } from "./governance-install.js";
 import { activateGovernance } from "./governance-activate.js";
 import { applyPlanRevision } from "./plan-acceptance.js";
+import { evaluateDispatchReadiness } from "./readiness.js";
+import { claimTask } from "./claim.js";
+import { startRun } from "./start-run.js";
+import { runFact } from "./run-facts.js";
 
 export type ControlEngineDeps = {
   ledger: StateLedger;
@@ -205,6 +219,26 @@ export class ControlEngineImpl implements ControlEngine {
 
   applyPlan(command: ApplyPlanRevisionCommand): Promise<PlanRevisionReceipt> {
     return applyPlanRevision(this.deps, command);
+  }
+
+  // --------------------------------------------------------------------- //
+  // P1-03 dispatch / run entries (delegating handlers)                     //
+  // --------------------------------------------------------------------- //
+
+  dispatchReadiness(query: DispatchReadinessQuery): Promise<DispatchReadinessResult> {
+    return evaluateDispatchReadiness(this.deps, query);
+  }
+
+  claimTask(command: DispatchClaimCommand): Promise<DispatchClaimReceipt> {
+    return claimTask(this.deps, command);
+  }
+
+  startRun(command: DispatchStartCommand): Promise<DispatchStartReceipt> {
+    return startRun(this.deps, command);
+  }
+
+  runFact(command: RunFactCommand): Promise<RunFactReceipt> {
+    return runFact(this.deps, command);
   }
 
   // --------------------------------------------------------------------- //

@@ -12,6 +12,16 @@ import type {
   GovernanceInstallReceipt,
 } from "../governance.js";
 import type { ApplyPlanRevisionCommand, PlanRevisionReceipt } from "../plan.js";
+import type {
+  DispatchClaimCommand,
+  DispatchClaimReceipt,
+  DispatchReadinessQuery,
+  DispatchReadinessResult,
+  DispatchStartCommand,
+  DispatchStartReceipt,
+  RunFactCommand,
+  RunFactReceipt,
+} from "../dispatch.js";
 import type { ControlEngine } from "../modules.js";
 
 export function committedReceiptFor(command: CreateGoalCommand): CommandReceipt {
@@ -48,6 +58,18 @@ export type ActivateBehavior = (
 export type ApplyPlanBehavior = (
   command: ApplyPlanRevisionCommand,
 ) => Promise<PlanRevisionReceipt> | PlanRevisionReceipt;
+export type DispatchReadinessBehavior = (
+  query: DispatchReadinessQuery,
+) => Promise<DispatchReadinessResult> | DispatchReadinessResult;
+export type ClaimTaskBehavior = (
+  command: DispatchClaimCommand,
+) => Promise<DispatchClaimReceipt> | DispatchClaimReceipt;
+export type StartRunBehavior = (
+  command: DispatchStartCommand,
+) => Promise<DispatchStartReceipt> | DispatchStartReceipt;
+export type RunFactBehavior = (
+  command: RunFactCommand,
+) => Promise<RunFactReceipt> | RunFactReceipt;
 
 export class ScriptedControlEngine implements ControlEngine {
   readonly submitCalls: CreateGoalCommand[] = [];
@@ -55,6 +77,10 @@ export class ScriptedControlEngine implements ControlEngine {
   readonly installCalls: GovernanceInstallCommand[] = [];
   readonly activateCalls: GovernanceActivateCommand[] = [];
   readonly applyPlanCalls: ApplyPlanRevisionCommand[] = [];
+  readonly dispatchReadinessCalls: DispatchReadinessQuery[] = [];
+  readonly claimTaskCalls: DispatchClaimCommand[] = [];
+  readonly startRunCalls: DispatchStartCommand[] = [];
+  readonly runFactCalls: RunFactCommand[] = [];
 
   constructor(
     private readonly options: {
@@ -63,6 +89,10 @@ export class ScriptedControlEngine implements ControlEngine {
       install?: InstallBehavior;
       activate?: ActivateBehavior;
       applyPlan?: ApplyPlanBehavior;
+      dispatchReadiness?: DispatchReadinessBehavior;
+      claimTask?: ClaimTaskBehavior;
+      startRun?: StartRunBehavior;
+      runFact?: RunFactBehavior;
       defaultSubmit?: CommandReceipt;
       defaultBootstrap?: WorkspaceBootstrapReceipt;
       defaultInstall?: GovernanceInstallReceipt;
@@ -103,5 +133,29 @@ export class ScriptedControlEngine implements ControlEngine {
     if (this.options.applyPlan) return this.options.applyPlan(command);
     if (this.options.defaultApplyPlan) return this.options.defaultApplyPlan;
     throw new Error("ScriptedControlEngine: no applyPlan behavior configured");
+  }
+
+  async dispatchReadiness(query: DispatchReadinessQuery): Promise<DispatchReadinessResult> {
+    this.dispatchReadinessCalls.push(query);
+    if (this.options.dispatchReadiness) return this.options.dispatchReadiness(query);
+    throw new Error("ScriptedControlEngine: no dispatchReadiness behavior configured");
+  }
+
+  async claimTask(command: DispatchClaimCommand): Promise<DispatchClaimReceipt> {
+    this.claimTaskCalls.push(command);
+    if (this.options.claimTask) return this.options.claimTask(command);
+    throw new Error("ScriptedControlEngine: no claimTask behavior configured");
+  }
+
+  async startRun(command: DispatchStartCommand): Promise<DispatchStartReceipt> {
+    this.startRunCalls.push(command);
+    if (this.options.startRun) return this.options.startRun(command);
+    throw new Error("ScriptedControlEngine: no startRun behavior configured");
+  }
+
+  async runFact(command: RunFactCommand): Promise<RunFactReceipt> {
+    this.runFactCalls.push(command);
+    if (this.options.runFact) return this.options.runFact(command);
+    throw new Error("ScriptedControlEngine: no runFact behavior configured");
   }
 }

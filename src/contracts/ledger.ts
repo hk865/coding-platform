@@ -1,23 +1,19 @@
 /**
  * StateLedger Interface — snapshot / atomic commit / ordered Event read.
  * Authority: dev_docs/interfaces/state-ledger.md (slice v1).
- * P1-00 versioned extensions (explicitly recorded in the interface doc):
- *  - LedgerCommit is a kind-tagged union: "goal-create" (slice v1) and
- *    "bootstrap" (P1-00); bootstrap commits only succeed on an empty ledger
- *    unless replayed (same identity + fingerprint);
- *  - LedgerCommitReceipt rejection code adds "not_empty" for that guard;
- *  - AggregateRef adds BootstrapManifestRef; EventPage carries the
- *    versioned DomainEvent union instead of GoalCreatedEvent only.
- * P1-02 versioned extensions (recorded in the interface doc):
- *  - LedgerCommit adds "governance-install" / "governance-activate" /
- *    "plan-revision" kinds (immutable governance revision persistence,
- *    per-kind active refs, accepted PlanRevision + Goal active plan);
- *  - AggregateRef/AggregateSnapshot add CompletionPolicyRevision /
- *    ArchitectureBaselineRevision / ProjectCompletionPolicyActive /
- *    ProjectArchitectureBaselineActive / PlanRevision;
- *  - GoalSnapshot.activePlanRevision becomes PlanRevisionRef | null and its
- *    revision becomes number (v1 GoalCreated still creates null/1; the
- *    P1-02 plan-revision commit advances the goal snapshot to revision 2).
+ * P1-00 versioned extensions: kind-tagged LedgerCommit union with
+ * "goal-create" (slice v1) and "bootstrap"; bootstrap commits only succeed on
+ * an empty ledger unless replayed; AggregateRef adds BootstrapManifestRef;
+ * LedgerCommitReceipt rejection code adds "not_empty".
+ * P1-02 versioned extensions: "governance-install" / "governance-activate" /
+ * "plan-revision" commit kinds; immutable governance revision aggregates,
+ * per-kind active refs, accepted PlanRevision + Goal active plan.
+ * P1-03 versioned extensions (recorded in the interface doc):
+ *  - "dispatch-claim" / "dispatch-start" / "run-fact" commit kinds
+ *    (TaskLease / TaskAttempt / Run / DispatchOutboxEntry aggregates);
+ *  - LedgerCommit.outboxIntents is FIRST non-empty on dispatch-claim
+ *    (the durable DispatchIntent rides the atomic commit);
+ *  - StateLedger adds pendingDispatchIntents (read-only outbox scan).
  */
 import type {
   CommandFingerprint,
@@ -48,6 +44,21 @@ import type {
   ProjectCompletionPolicyActiveSnapshot,
 } from "./governance.js";
 import type { PlanRevisionAcceptedEvent, PlanRevisionRef, PlanRevisionSnapshot } from "./plan.js";
+import type {
+  DispatchIntentV1,
+  DispatchOutboxEntrySnapshot,
+  DispatchOutboxRef,
+  RunEventRecordedEvent,
+  RunOutcomeUnknownEvent,
+  RunSnapshot,
+  RunStartedEvent,
+  RunRef,
+  TaskAttemptRef,
+  TaskAttemptSnapshot,
+  TaskClaimedEvent,
+  TaskLeaseRef,
+  TaskLeaseSnapshot,
+} from "./dispatch.js";
 
 export type ProjectRef = {
   aggregateType: "Project";
@@ -75,7 +86,11 @@ export type AggregateRef =
   | ArchitectureBaselineRevisionRef
   | ProjectCompletionPolicyActiveRef
   | ProjectArchitectureBaselineActiveRef
-  | PlanRevisionRef;
+  | PlanRevisionRef
+  | TaskLeaseRef
+  | TaskAttemptRef
+  | RunRef
+  | DispatchOutboxRef;
 
 export type ProjectSnapshot = {
   ref: ProjectRef;
@@ -107,7 +122,11 @@ export type AggregateSnapshot =
   | ArchitectureBaselineRevisionSnapshot
   | ProjectCompletionPolicyActiveSnapshot
   | ProjectArchitectureBaselineActiveSnapshot
-  | PlanRevisionSnapshot;
+  | PlanRevisionSnapshot
+  | TaskLeaseSnapshot
+  | TaskAttemptSnapshot
+  | RunSnapshot
+  | DispatchOutboxEntrySnapshot;
 
 export type SnapshotResult =
   | { status: "found"; snapshot: AggregateSnapshot }
@@ -175,12 +194,55 @@ export type PlanRevisionLedgerCommitV1 = {
   outboxIntents: [];
 };
 
+/** P1-03: atomic unique claim — durable outbox intent + lease + attempt + run. */
+export type DispatchClaimLedgerCommitV1 = {
+  commitKind: "dispatch-claim";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [TaskLease@0, TaskAttempt@0, Run@0, DispatchOutboxEntry@0]. */
+  expectedVersions: ExpectedVersion[];
+  events: [TaskClaimedEvent];
+  snapshots: [TaskLeaseSnapshot, TaskAttemptSnapshot, RunSnapshot, DispatchOutboxEntrySnapshot];
+  /** FIRST non-empty outbox: the durable dispatch intent rides the atomic commit. */
+  outboxIntents: [DispatchIntentV1];
+};
+
+/** P1-03: run start — a.s.a.p. before the RunPort is invoked (outbox -> started). */
+export type DispatchStartLedgerCommitV1 = {
+  commitKind: "dispatch-start";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [Run@1, TaskAttempt@1, DispatchOutboxEntry@1]. */
+  expectedVersions: ExpectedVersion[];
+  events: [RunStartedEvent];
+  snapshots: [RunSnapshot, TaskAttemptSnapshot, DispatchOutboxEntrySnapshot];
+  outboxIntents: [];
+};
+
+/** P1-03: one committed runtime fact (event or explicit outcome_unknown). */
+export type RunFactLedgerCommitV1 = {
+  commitKind: "run-fact";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** Non-terminal: [Run@k]. Terminal: [Run@k, TaskAttempt@k', DispatchOutboxEntry@k'']. */
+  expectedVersions: ExpectedVersion[];
+  events: [RunEventRecordedEvent | RunOutcomeUnknownEvent];
+  snapshots: (RunSnapshot | TaskAttemptSnapshot | DispatchOutboxEntrySnapshot)[];
+  outboxIntents: [];
+};
+
 export type LedgerCommit =
   | GoalCreateLedgerCommitV1
   | BootstrapLedgerCommitV1
   | GovernanceInstallLedgerCommitV1
   | GovernanceActivateLedgerCommitV1
-  | PlanRevisionLedgerCommitV1;
+  | PlanRevisionLedgerCommitV1
+  | DispatchClaimLedgerCommitV1
+  | DispatchStartLedgerCommitV1
+  | RunFactLedgerCommitV1;
 
 export type LedgerCommitReceipt =
   | {
@@ -223,14 +285,15 @@ export interface StateLedger {
   load(ref: AggregateRef): Promise<SnapshotResult>;
   commit(batch: LedgerCommit): Promise<LedgerCommitReceipt>;
   events(query: EventQuery): Promise<EventPage>;
+  /** P1-03: durable-outbox scan (pending intents, deterministic order). */
+  pendingDispatchIntents(limit: number): Promise<DispatchOutboxEntrySnapshot[]>;
 }
 
 /**
- * Cursor order semantics for P1-00 InMemory ledger: sequential, monotonically
- * increasing, zero-padded decimal sequence. Cursors stay OPAQUE to all
- * consumers: only ledger adapters and the ReadModelIndex may call
- * compareCommitCursor; everyone else must treat them as opaque tokens (no
- * string comparison, no decoding).
+ * Cursor order semantics: sequential, monotonically increasing, zero-padded
+ * decimal sequence. Cursors stay OPAQUE to all consumers: only ledger adapters
+ * and the ReadModelIndex may call compareCommitCursor; everyone else must
+ * treat them as opaque tokens.
  */
 export function makeCommitCursor(sequence: number): CommitCursor {
   if (!Number.isSafeInteger(sequence) || sequence < 1) {

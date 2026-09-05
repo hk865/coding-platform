@@ -21,6 +21,16 @@ import type {
   GovernanceInstallReceipt,
 } from "./governance.js";
 import type { ApplyPlanRevisionCommand, PlanRevisionReceipt } from "./plan.js";
+import type {
+  DispatchClaimCommand,
+  DispatchClaimReceipt,
+  DispatchReadinessQuery,
+  DispatchReadinessResult,
+  DispatchStartCommand,
+  DispatchStartReceipt,
+  RunFactCommand,
+  RunFactReceipt,
+} from "./dispatch.js";
 
 export type CreateGoalRequest = {
   projectId: string;
@@ -52,6 +62,14 @@ export interface ControlEngine {
   activate(command: GovernanceActivateCommand): Promise<GovernanceActivateReceipt>;
   /** P1-02: accept a hand-authored PlanRevision for an existing Goal. */
   applyPlan(command: ApplyPlanRevisionCommand): Promise<PlanRevisionReceipt>;
+  /** P1-03: read-only eligibility evaluation (zero writes). */
+  dispatchReadiness(query: DispatchReadinessQuery): Promise<DispatchReadinessResult>;
+  /** P1-03: unique claim — durable outbox intent + lease + attempt + run (atomic). */
+  claimTask(command: DispatchClaimCommand): Promise<DispatchClaimReceipt>;
+  /** P1-03: record the bounded envelope and mark the outbox intent started (CAS). */
+  startRun(command: DispatchStartCommand): Promise<DispatchStartReceipt>;
+  /** P1-03: ingest one runtime fact — no regress, crash != outcome_unknown. */
+  runFact(command: RunFactCommand): Promise<RunFactReceipt>;
 }
 
 export interface HumanCollaboration {

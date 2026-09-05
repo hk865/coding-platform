@@ -60,6 +60,7 @@ import type {
   TaskDetailViewQuery,
   TaskDetailViewResult,
 } from "../contracts/plan-view.js";
+import type { ActiveAgentQuery, ActiveAgentViewResult } from "../contracts/active-agent.js";
 import { ProjectionStallError } from "../contracts/goal-view.js";
 import type { CommitCursor, GoalCreatedEvent } from "../contracts/command-event.js";
 import type { DomainEvent } from "../contracts/events.js";
@@ -445,6 +446,12 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     };
   }
 
+  /** P1-03: active agent view (frozen entry; lane D implements the projection). */
+  async activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult> {
+    void query;
+    throw new Error("P1-03: activeAgent not implemented yet");
+  }
+
   /**
    * Adapter-specific disposal — NOT part of the ReadModelIndex interface.
    * Idempotent; a closed index rejects further use.
@@ -575,6 +582,8 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       phase: row.phase as TaskDetailView["phase"],
       scope: JSON.parse(row.scope),
       obligations: JSON.parse(row.obligations),
+      // P1-03: run-state projection lands with lane D (null before TaskClaimed).
+      run: null,
       sourceCursor: row.source_cursor as CommitCursor,
     };
   }

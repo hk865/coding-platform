@@ -14,9 +14,12 @@
  * Control handlers, NOT here.
  */
 import type {
+  DispatchClaimLedgerCommitV1,
+  DispatchStartLedgerCommitV1,
   GovernanceActivateLedgerCommitV1,
   GovernanceInstallLedgerCommitV1,
   PlanRevisionLedgerCommitV1,
+  RunFactLedgerCommitV1,
 } from "./ledger.js";
 import type {
   ArchitectureBaselineRevisionSnapshot,
@@ -24,6 +27,19 @@ import type {
   ProjectArchitectureBaselineActiveSnapshot,
   ProjectCompletionPolicyActiveSnapshot,
 } from "./governance.js";
+import type {
+  DispatchOutboxEntrySnapshot,
+  RunSnapshot,
+  TaskAttemptSnapshot,
+  TaskLeaseSnapshot,
+} from "./dispatch.js";
+import {
+  dispatchOutboxRefFor,
+  isTerminalRuntimeEvent,
+  runRefFor,
+  taskAttemptRefFor,
+  taskLeaseRefFor,
+} from "./dispatch.js";
 import { canonicalJson } from "./fingerprint.js";
 import { isKnownEventType } from "./events.js";
 
@@ -236,3 +252,316 @@ export function validatePlanRevisionCommit(batch: PlanRevisionLedgerCommitV1): b
     batch.identity,
   );
 }
+// ------------------------------------------------------------------------ //
+// dispatch-claim (P1-03)                                                     //
+// ------------------------------------------------------------------------ //
+
+export function validateDispatchClaimCommit(batch: DispatchClaimLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 1) return false;
+  if (batch.snapshots.length !== 4) return false;
+  if (batch.outboxIntents.length !== 1) return false;
+  const event = batch.events[0]!;
+  if (event.schemaVersion !== 1) return false;
+  if (event.eventType !== "TaskClaimed") return false;
+  if (!isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "TaskLease") return false;
+  if (event.aggregateRevision !== 1) return false;
+
+  const lease = batch.snapshots.find(
+    (s): s is TaskLeaseSnapshot => s.ref.aggregateType === "TaskLease",
+  );
+  const attempt = batch.snapshots.find(
+    (s): s is TaskAttemptSnapshot => s.ref.aggregateType === "TaskAttempt",
+  );
+  const run = batch.snapshots.find((s): s is RunSnapshot => s.ref.aggregateType === "Run");
+  const outbox = batch.snapshots.find(
+    (s): s is DispatchOutboxEntrySnapshot => s.ref.aggregateType === "DispatchOutboxEntry",
+  );
+  if (lease === undefined || attempt === undefined || run === undefined || outbox === undefined) {
+    return false;
+  }
+  if (lease.revision !== 1 || attempt.revision !== 1 || run.revision !== 1 || outbox.revision !== 1) {
+    return false;
+  }
+  if (
+    lease.schemaVersion !== 1 ||
+    attempt.schemaVersion !== 1 ||
+    run.schemaVersion !== 1 ||
+    outbox.schemaVersion !== 1
+  ) {
+    return false;
+  }
+
+  // Event <-> snapshot alignment (full refs, never bare local ids).
+  const expectedLeaseRef = taskLeaseRefFor(
+    event.projectId,
+    event.payload.goalId,
+    event.payload.taskId,
+  );
+  if (canonicalJson(lease.ref) !== canonicalJson(expectedLeaseRef)) return false;
+  if (
+    canonicalJson(attempt.ref) !==
+    canonicalJson(
+      taskAttemptRefFor(
+        event.projectId,
+        event.payload.goalId,
+        event.payload.taskId,
+        event.payload.attemptRef.attemptId,
+      ),
+    )
+  ) {
+    return false;
+  }
+  if (
+    canonicalJson(run.ref) !==
+    canonicalJson(runRefFor(event.projectId, event.payload.goalId, event.payload.runRef.runId))
+  ) {
+    return false;
+  }
+  if (
+    canonicalJson(outbox.ref) !==
+    canonicalJson(
+      dispatchOutboxRefFor(
+        event.projectId,
+        event.payload.goalId,
+        event.payload.taskId,
+        event.payload.attemptRef.attemptId,
+      ),
+    )
+  ) {
+    return false;
+  }
+  if (event.aggregateId !== event.payload.taskId) return false;
+  if (lease.holderRunId !== event.payload.runRef.runId) return false;
+  if (lease.attemptId !== event.payload.attemptRef.attemptId) return false;
+  if (attempt.runId !== event.payload.runRef.runId) return false;
+  if (attempt.status !== "claimed") return false;
+  if (attempt.startedAt !== null || attempt.endedAt !== null || attempt.endOutcome !== null) {
+    return false;
+  }
+  if (canonicalJson(attempt.planRef) !== canonicalJson(event.payload.planRef)) return false;
+
+  if (
+    run.task.projectId !== event.projectId ||
+    run.task.goalId !== event.payload.goalId ||
+    run.task.taskId !== event.payload.taskId
+  ) {
+    return false;
+  }
+  if (run.attemptId !== event.payload.attemptRef.attemptId) return false;
+  if (canonicalJson(run.planRef) !== canonicalJson(event.payload.planRef)) return false;
+  if (canonicalJson(run.roleBinding) !== canonicalJson(event.payload.roleBinding)) return false;
+  if (canonicalJson(run.budget) !== canonicalJson(event.payload.budget)) return false;
+  if (run.workspaceSnapshot.workspaceId !== event.workspaceId) return false;
+  if (
+    run.status !== "starting" ||
+    run.outcome !== null ||
+    run.exitCode !== null ||
+    run.lastEventSeq !== 0 ||
+    run.lastRuntimeEventId !== "" ||
+    run.lastFactEventId !== ""
+  ) {
+    return false;
+  }
+  if (run.envelope !== null || run.startedAt !== null || run.endedAt !== null) return false;
+
+  if (outbox.status !== "pending") return false;
+  if (canonicalJson(outbox.intent) !== canonicalJson(batch.outboxIntents[0]!)) return false;
+  const intent = outbox.intent;
+  if (intent.intentId !== event.payload.attemptRef.attemptId) return false;
+  if (
+    intent.projectId !== event.projectId ||
+    intent.workspaceId !== event.workspaceId ||
+    intent.goalId !== event.payload.goalId ||
+    intent.taskId !== event.payload.taskId
+  ) {
+    return false;
+  }
+  if (canonicalJson(intent.planRef) !== canonicalJson(event.payload.planRef)) return false;
+  if (canonicalJson(intent.attemptRef) !== canonicalJson(event.payload.attemptRef)) return false;
+  if (canonicalJson(intent.runRef) !== canonicalJson(event.payload.runRef)) return false;
+  if (canonicalJson(intent.roleBinding) !== canonicalJson(event.payload.roleBinding)) return false;
+  if (canonicalJson(intent.declaredPermissions) !== canonicalJson(event.payload.declaredPermissions)) {
+    return false;
+  }
+  if (canonicalJson(intent.budget) !== canonicalJson(event.payload.budget)) return false;
+  if (intent.requestedAt !== event.payload.claimedAt || intent.requestedAt !== event.occurredAt) {
+    return false;
+  }
+  if (intent.correlationId !== event.correlationId) return false;
+  if (canonicalJson(intent.workspaceSnapshot) !== canonicalJson(run.workspaceSnapshot)) return false;
+
+  // CAS: all four aggregates are created at revision 0 in one commit.
+  if (batch.expectedVersions.length !== 4) return false;
+  const expectedRefs = [
+    lease.ref,
+    attempt.ref,
+    run.ref,
+    outbox.ref,
+  ];
+  for (const [index, ref] of expectedRefs.entries()) {
+    const expected = batch.expectedVersions[index]!;
+    if (expected.revision !== 0) return false;
+    if (canonicalJson(expected.ref) !== canonicalJson(ref)) return false;
+  }
+
+  return identityMatchesActor(
+    event.projectId,
+    event.idempotencyKey,
+    event.actor.kind,
+    event.actor.id,
+    batch.identity,
+  );
+}
+
+// ------------------------------------------------------------------------ //
+// dispatch-start (P1-03)                                                     //
+// ------------------------------------------------------------------------ //
+
+export function validateDispatchStartCommit(batch: DispatchStartLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 1) return false;
+  if (batch.snapshots.length !== 3) return false;
+  if (batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.schemaVersion !== 1) return false;
+  if (event.eventType !== "RunStarted") return false;
+  if (!isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "Run") return false;
+  if (event.aggregateRevision !== 2) return false;
+  if (event.payload.startedAt !== event.occurredAt) return false;
+
+  const run = batch.snapshots.find((s): s is RunSnapshot => s.ref.aggregateType === "Run");
+  const attempt = batch.snapshots.find(
+    (s): s is TaskAttemptSnapshot => s.ref.aggregateType === "TaskAttempt",
+  );
+  const outbox = batch.snapshots.find(
+    (s): s is DispatchOutboxEntrySnapshot => s.ref.aggregateType === "DispatchOutboxEntry",
+  );
+  if (run === undefined || attempt === undefined || outbox === undefined) return false;
+  if (run.revision !== 2 || attempt.revision !== 2 || outbox.revision !== 2) return false;
+  if (run.schemaVersion !== 1 || attempt.schemaVersion !== 1 || outbox.schemaVersion !== 1) {
+    return false;
+  }
+  if (run.ref.runId !== event.aggregateId || event.aggregateId !== run.ref.runId) return false;
+  if (event.payload.taskId !== run.task.taskId) return false;
+  if (event.payload.attemptId !== run.attemptId) return false;
+  if (canonicalJson(run.envelope) !== canonicalJson(event.payload.envelope)) return false;
+  if (run.status !== "running" || run.outcome !== null || run.endedAt !== null) return false;
+  if (run.startedAt !== event.payload.startedAt) return false;
+  if (run.lastEventSeq !== 0 || run.lastRuntimeEventId !== "" || run.lastFactEventId !== "") {
+    return false;
+  }
+  if (attempt.status !== "started" || attempt.startedAt !== event.payload.startedAt) return false;
+  if (attempt.endedAt !== null || attempt.endOutcome !== null) return false;
+  if (outbox.status !== "started" || outbox.startedAt !== event.payload.startedAt) return false;
+
+  // CAS: [Run@1, TaskAttempt@1, DispatchOutboxEntry@1].
+  if (batch.expectedVersions.length !== 3) return false;
+  for (const [index, ref] of [run.ref, attempt.ref, outbox.ref].entries()) {
+    const expected = batch.expectedVersions[index]!;
+    if (expected.revision !== 1) return false;
+    if (canonicalJson(expected.ref) !== canonicalJson(ref)) return false;
+  }
+
+  return identityMatchesActor(
+    event.projectId,
+    event.idempotencyKey,
+    event.actor.kind,
+    event.actor.id,
+    batch.identity,
+  );
+}
+
+// ------------------------------------------------------------------------ //
+// run-fact (P1-03)                                                           //
+// ------------------------------------------------------------------------ //
+
+export function validateRunFactCommit(batch: RunFactLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 1) return false;
+  if (batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.schemaVersion !== 1) return false;
+  if (!isKnownEventType(event.eventType)) return false;
+
+  const run = batch.snapshots.find((s): s is RunSnapshot => s.ref.aggregateType === "Run");
+  if (run === undefined) return false;
+  if (event.aggregateType !== "Run" || event.aggregateId !== run.ref.runId) return false;
+  if (event.aggregateRevision !== run.revision) return false;
+  if (run.schemaVersion !== 1) return false;
+
+  const outbox = batch.snapshots.find(
+    (s): s is DispatchOutboxEntrySnapshot => s.ref.aggregateType === "DispatchOutboxEntry",
+  );
+  const attempt = batch.snapshots.find(
+    (s): s is TaskAttemptSnapshot => s.ref.aggregateType === "TaskAttempt",
+  );
+  const terminal = event.eventType === "RunOutcomeUnknown" || (event.eventType === "RunEventRecorded" && isTerminalRuntimeEvent(event.payload.runtimeEvent));
+
+  if (!terminal) {
+    if (batch.snapshots.length !== 1) return false;
+    if (attempt !== undefined || outbox !== undefined) return false;
+    if (batch.expectedVersions.length !== 1) return false;
+    if (batch.expectedVersions[0]!.revision !== run.revision - 1) return false;
+    if (canonicalJson(batch.expectedVersions[0]!.ref) !== canonicalJson(run.ref)) return false;
+    if (event.eventType !== "RunEventRecorded") return false;
+    if (run.outcome !== null || run.endedAt !== null) return false;
+    if (run.exitCode !== null) return false;
+  } else {
+    if (batch.snapshots.length !== 3) return false;
+    if (attempt === undefined || outbox === undefined) return false;
+    if (batch.expectedVersions.length !== 3) return false;
+    if (attempt.schemaVersion !== 1 || outbox.schemaVersion !== 1) return false;
+    if (attempt.revision !== 2 && attempt.revision !== 3) return false;
+    if (outbox.revision !== 2 && outbox.revision !== 3) return false;
+    if (batch.expectedVersions[0]!.revision !== run.revision - 1) return false;
+    if (canonicalJson(batch.expectedVersions[0]!.ref) !== canonicalJson(run.ref)) return false;
+    if (batch.expectedVersions[1]!.revision !== attempt.revision - 1) return false;
+    if (canonicalJson(batch.expectedVersions[1]!.ref) !== canonicalJson(attempt.ref)) return false;
+    if (batch.expectedVersions[2]!.revision !== outbox.revision - 1) return false;
+    if (canonicalJson(batch.expectedVersions[2]!.ref) !== canonicalJson(outbox.ref)) return false;
+    if (attempt.endedAt === null || attempt.endOutcome === null) return false;
+    if (outbox.status !== "done" || outbox.doneAt === null) return false;
+  }
+
+  if (event.eventType === "RunEventRecorded") {
+    const rt = event.payload.runtimeEvent;
+    if (rt.schemaVersion !== 1) return false;
+    if (canonicalJson(rt.runRef) !== canonicalJson(run.ref)) return false;
+    if (event.payload.taskId !== run.task.taskId) return false;
+    if (rt.sequence !== run.lastEventSeq) return false;
+    if (rt.eventId !== run.lastRuntimeEventId) return false;
+    if (event.eventId !== run.lastFactEventId) return false;
+    if (terminal) {
+      if (run.status !== "ended" || run.outcome === null) return false;
+      if (run.endedAt !== rt.occurredAt) return false;
+      if (rt.payload.kind === "completed") {
+        if (run.exitCode !== rt.payload.exitCode) return false;
+      } else {
+        if (run.exitCode !== null) return false;
+      }
+    } else {
+      if (run.status !== "running" || run.outcome !== null || run.endedAt !== null) return false;
+      if (run.exitCode !== null) return false;
+    }
+  } else if (event.eventType === "RunOutcomeUnknown") {
+    if (run.status !== "ended" || run.outcome !== "outcome_unknown") return false;
+    if (run.endedAt !== event.payload.observedAt) return false;
+    if (run.exitCode !== null) return false;
+    if (attempt?.endOutcome !== "outcome_unknown") return false;
+    if (attempt?.endedAt !== event.payload.observedAt) return false;
+  } else {
+    return false;
+  }
+
+  return identityMatchesActor(
+    event.projectId,
+    event.idempotencyKey,
+    event.actor.kind,
+    event.actor.id,
+    batch.identity,
+  );
+}
+

@@ -16,10 +16,19 @@ import type {
   VersionedRef,
 } from "../contracts/ledger.js";
 import {
+  validateDispatchClaimCommit,
+  validateDispatchStartCommit,
   validateGovernanceActivateCommit,
   validateGovernanceInstallCommit,
   validatePlanRevisionCommit,
+  validateRunFactCommit,
 } from "../contracts/ledger-validation.js";
+import type {
+  DispatchClaimLedgerCommitV1,
+  DispatchStartLedgerCommitV1,
+  RunFactLedgerCommitV1,
+} from "../contracts/ledger.js";
+import type { DispatchOutboxEntrySnapshot } from "../contracts/dispatch.js";
 import { makeCommitCursor, seqOfCommitCursor } from "../contracts/ledger.js";
 import { bootstrapIdentityKey } from "../contracts/bootstrap.js";
 import type { CommandFingerprint } from "../contracts/command-event.js";
@@ -95,6 +104,12 @@ export class InMemoryLedger implements StateLedger {
         return this.commitGovernanceActivate(batch);
       case "plan-revision":
         return this.commitPlanRevision(batch);
+      case "dispatch-claim":
+        return this.commitDispatchClaim(batch);
+      case "dispatch-start":
+        return this.commitDispatchStart(batch);
+      case "run-fact":
+        return this.commitRunFact(batch);
     }
   }
 
@@ -348,6 +363,76 @@ export class InMemoryLedger implements StateLedger {
    * P1-02 kinds; the kind validator already ran.
    */
   private async commitGeneric(
+    batch: LedgerCommit,
+  ): Promise<LedgerCommitReceipt> {
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  // ---------------------------------------------------------------------------
+  // P1-03 dispatch / run commits
+  // ---------------------------------------------------------------------------
+
+  private async commitDispatchClaim(
+    batch: DispatchClaimLedgerCommitV1,
+  ): Promise<LedgerCommitReceipt> {
+    if (!validateDispatchClaimCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitDispatchStart(
+    batch: DispatchStartLedgerCommitV1,
+  ): Promise<LedgerCommitReceipt> {
+    if (!validateDispatchStartCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  /**
+   * run-fact: NO ledger-level idempotency record — de-duplication is decided
+   * by the Control handler against the committed per-run sequence (frozen
+   * P1-03 semantics). Same command identity retried after the fact committed
+   * surfaces as a CAS revision_conflict (caller re-reads and sees
+   * duplicate/stale).
+   */
+  private async commitRunFact(batch: RunFactLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateRunFactCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    const currentVersions = this.casConflicts(batch.expectedVersions);
+    if (currentVersions.length > 0) {
+      return { status: "rejected", code: "revision_conflict", currentVersions };
+    }
+    this.beforeWrite?.();
+    const written = this.appendEvents(batch.events);
+    for (const snapshot of batch.snapshots) {
+      this.snapshots.set(this.refKey(snapshot.ref), snapshot);
+    }
+    return {
+      status: "committed",
+      replayed: false,
+      identity: batch.identity,
+      aggregateRevisions: batch.snapshots.map((s) => ({ ref: s.ref, revision: s.revision })),
+      eventIds: written.eventIds,
+      commitCursor: written.commitCursor,
+    };
+  }
+
+  async pendingDispatchIntents(limit: number): Promise<DispatchOutboxEntrySnapshot[]> {
+    const pending: DispatchOutboxEntrySnapshot[] = [];
+    for (const snapshot of this.snapshots.values()) {
+      if (snapshot.ref.aggregateType !== "DispatchOutboxEntry") continue;
+      const entry = snapshot as DispatchOutboxEntrySnapshot;
+      if (entry.status !== "pending") continue;
+      pending.push(entry);
+    }
+    pending.sort((a, b) => this.refKey(a.ref).localeCompare(this.refKey(b.ref)));
+    return pending.slice(0, Math.max(0, limit));
+  }
+
+  private async commitGenericWithIdempotency(
     batch: LedgerCommit,
   ): Promise<LedgerCommitReceipt> {
     const key = identityKeyFor(batch);

@@ -27,6 +27,7 @@ import type {
   ArchitectureBaselinePin,
   CompletionPolicyPin,
 } from "./governance.js";
+import type { TaskRunState } from "./active-agent.js";
 
 export type PlanGraphViewQuery = {
   projectId: string;
@@ -88,6 +89,8 @@ export type TaskDetailView = {
     requirementLevel: RequirementLevel;
     verificationRequirements: VerificationRequirement[];
   }[];
+  /** P1-03: run-state projection (null until a TaskClaimed event exists). */
+  run: TaskRunState | null;
   sourceCursor: CommitCursor;
 };
 
