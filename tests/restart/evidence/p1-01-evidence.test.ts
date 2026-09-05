@@ -1,14 +1,15 @@
 /**
  * P1-01 evidence collector — repeatable command:
  *   pnpm vitest run tests/restart/evidence/p1-01-evidence.test.ts
- * Prints (to stdout) one JSON block with the full restart-path evidence:
+ * Runs the FULL restart-path assertions (canonical snapshot load + EventPage
+ * rebuild) then prints ONE JSON block the integrator copies into
+ *   dev_docs/verification/p1-01-implementation-evidence.md.
+ * The block carries the restart-path evidence for BOTH scopes:
  *   bootstrap -> CreateGoal(alpha+beta) -> SQLite commit -> close -> reopen
  *   -> canonical snapshot load + EventPage rebuild -> same GoalView,
- * including pre/post snapshots, views, cursors and the manifest.
- * The integrator captures the output into
- * dev_docs/verification/p1-01-implementation-evidence.md.
- * AUTO-SKIPS while the adapters are not yet implemented (skeleton).
- * Owner: P1-01 lane C.
+ * including pre/post canonical snapshots, pre/post GoalView results, the
+ * bootstrap manifest, and the commit/cursor line. AUTO-SKIPS while the
+ * adapters are not yet implemented (integration skeleton). Owner: P1-01 lane C.
  */
 import { describe, expect, it } from "vitest";
 import { createPersistentSqliteHarness } from "../../../src/harness/persistent-harness.js";
@@ -16,11 +17,18 @@ import { RESTART_ALPHA, RESTART_BETA, runBootstrapAndCreateGoals } from "../rest
 import {
   capturePreRestart,
   loadGoal,
+  verifyRebuildViews,
+  verifySnapshotLoadPath,
 } from "../restart-assertions.js";
 import { buildBootstrapCommand } from "../../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from "../../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import {
+  WORKSPACE_BOOTSTRAP_FIXTURE_V1,
+  buildBootstrapLedgerCommit,
+} from "../../../src/contracts/fixtures/bootstrap-fixture-v1.js";
 import { makeCommitCursor } from "../../../src/contracts/ledger.js";
 import { FIXED_ISO_2026_09_05 } from "../../../src/contracts/testing/sequences.js";
+import type { WorkspaceBootstrapReceipt } from "../../../src/contracts/bootstrap.js";
+import type { CreateGoalResult } from "../../../src/contracts/modules.js";
 
 async function adaptersImplemented(): Promise<boolean> {
   try {
@@ -57,6 +65,14 @@ async function adaptersImplemented(): Promise<boolean> {
 
 const READY = await adaptersImplemented();
 
+function bootstrapCursor(receipt: WorkspaceBootstrapReceipt): string | null {
+  return receipt.status === "committed" ? String(receipt.commitCursor) : null;
+}
+
+function persistedCursor(result: CreateGoalResult): string | null {
+  return result.status === "persisted" ? String(result.commitCursor) : null;
+}
+
 describe.skipIf(!READY)("P1-01 restart-path evidence", () => {
   it("collects the restart evidence block", async () => {
     const harness = await createPersistentSqliteHarness();
@@ -65,59 +81,83 @@ describe.skipIf(!READY)("P1-01 restart-path evidence", () => {
       expect(runs.alpha.status).toBe("persisted");
       expect(runs.beta.status).toBe("persisted");
       if (runs.alpha.status !== "persisted" || runs.beta.status !== "persisted") return;
-      await harness.advanceProjection();
+
+      const receipt = await harness.advanceProjection();
+      expect(receipt.throughCursor).not.toBeNull();
       const capture = await capturePreRestart(harness, runs, RESTART_ALPHA, RESTART_BETA);
 
+      // Restart #1: canonical snapshot load path.
       await harness.close();
       const after = await harness.reopen();
+      await verifySnapshotLoadPath(after, capture, RESTART_ALPHA, RESTART_BETA);
       const alphaReload = await loadGoal(after, RESTART_ALPHA.projectId, RESTART_ALPHA.goalId);
       const betaReload = await loadGoal(after, RESTART_BETA.projectId, RESTART_BETA.goalId);
+      const ledgerPath = after.ledgerPath;
       await after.close();
+
+      // Restart #2 (fresh read model file): EventPage rebuild path.
       const rebuilt = await after.reopen({ readModelFile: "readmodel-rebuilt.sqlite" });
       await rebuilt.advanceProjection();
+      await verifyRebuildViews(rebuilt, capture, RESTART_ALPHA, RESTART_BETA);
       const alphaRebuilt = await rebuilt.collaboration.goalView({
         projectId: RESTART_ALPHA.projectId,
         workspaceId: RESTART_ALPHA.workspaceId,
         goalId: RESTART_ALPHA.goalId,
         atLeastCursor: capture.observedCursor,
       });
+      const betaRebuilt = await rebuilt.collaboration.goalView({
+        projectId: RESTART_BETA.projectId,
+        workspaceId: RESTART_BETA.workspaceId,
+        goalId: RESTART_BETA.goalId,
+        atLeastCursor: capture.observedCursor,
+      });
+      const rebuiltObservedCursor = rebuilt.observedCursor();
+      const rebuiltReadModelPath = rebuilt.readModelPath;
       await rebuilt.close();
 
       const evidence = {
         ticket: "P1-01",
-        path: "bootstrap -> CreateGoal -> SQLite commit -> close -> reopen -> snapshot load + event rebuild -> GoalView",
-        committedEventCursors: {
-          bootstrap: null,
+        path: "bootstrap -> CreateGoal(alpha+beta) -> SQLite commit -> close -> reopen -> canonical snapshot load + EventPage rebuild -> same GoalView",
+        commitCursors: {
+          bootstrap: bootstrapCursor(runs.bootstrap),
+          alpha: persistedCursor(runs.alpha),
+          beta: persistedCursor(runs.beta),
         },
-        restart: {
-          canonicalSnapshotLoadMatches: {
-            alpha: JSON.stringify(alphaReload) === JSON.stringify(capture.alphaSnapshot),
-            beta: JSON.stringify(betaReload) === JSON.stringify(capture.betaSnapshot),
-          },
-          eventRebuildMatches: JSON.stringify(alphaRebuilt) === JSON.stringify(capture.alphaView),
-          manifestSourceDigest: capture.manifest.sourceDigest,
-          manifestEntries: capture.manifest.entries.length,
-          observedCursorBefore: String(capture.observedCursor),
-          ledgerFile: after.ledgerPath,
+        manifest: {
+          schemaVersion: capture.manifest.schemaVersion,
+          sourceDigest: capture.manifest.sourceDigest,
+          bootstrapRevision: capture.manifest.bootstrapRevision,
+          entries: capture.manifest.entries.length,
         },
-        scopes: [
-          {
-            projectId: RESTART_ALPHA.projectId,
-            workspaceId: RESTART_ALPHA.workspaceId,
-            goalId: RESTART_ALPHA.goalId,
-            objective: capture.alphaSnapshot.objective,
-            snapshotRevision: capture.alphaSnapshot.revision,
-            viewObjective: (capture.alphaView.status === "ready" ? capture.alphaView.goal.objective : null),
+        cursor: {
+          observedBeforeRestart: String(capture.observedCursor),
+          rebuiltObservedAfter: rebuiltObservedCursor !== null ? String(rebuiltObservedCursor) : null,
+        },
+        canonicalSnapshotLoad: {
+          alpha: {
+            matches: JSON.stringify(alphaReload) === JSON.stringify(capture.alphaSnapshot),
+            pre: capture.alphaSnapshot,
+            post: alphaReload,
           },
-          {
-            projectId: RESTART_BETA.projectId,
-            workspaceId: RESTART_BETA.workspaceId,
-            goalId: RESTART_BETA.goalId,
-            objective: capture.betaSnapshot.objective,
-            snapshotRevision: capture.betaSnapshot.revision,
-            viewObjective: (capture.betaView.status === "ready" ? capture.betaView.goal.objective : null),
+          beta: {
+            matches: JSON.stringify(betaReload) === JSON.stringify(capture.betaSnapshot),
+            pre: capture.betaSnapshot,
+            post: betaReload,
           },
-        ],
+        },
+        eventRebuildView: {
+          alpha: {
+            matches: JSON.stringify(alphaRebuilt) === JSON.stringify(capture.alphaView),
+            pre: capture.alphaView,
+            post: alphaRebuilt,
+          },
+          beta: {
+            matches: JSON.stringify(betaRebuilt) === JSON.stringify(capture.betaView),
+            pre: capture.betaView,
+            post: betaRebuilt,
+          },
+        },
+        files: { ledger: ledgerPath, readModelRebuilt: rebuiltReadModelPath },
       };
       console.log("P1-01-EVIDENCE " + JSON.stringify(evidence, null, 2));
     } finally {
