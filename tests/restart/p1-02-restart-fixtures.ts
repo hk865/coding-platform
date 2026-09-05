@@ -146,6 +146,7 @@ export async function runP102Path(h: PersistentSqliteHarness): Promise<P102PreRe
     submittedAt: SCHEMA,
     projectId,
     expectedRevision: 1,
+    idempotencyKey: "activate-cp", // DISTINCT per kind: the default key would collide with the AB activation
   }));
   const actAb = await h.activate(buildActivateCommand(architectureBaselinePinFor(ab), {
     commandId: "cmd-act-ab",
@@ -153,6 +154,7 @@ export async function runP102Path(h: PersistentSqliteHarness): Promise<P102PreRe
     submittedAt: SCHEMA,
     projectId,
     expectedRevision: 1,
+    idempotencyKey: "activate-ab",
   }));
   if (actCp.status !== "committed" || actAb.status !== "committed") throw new Error("activate failed");
 
@@ -276,13 +278,21 @@ export function verifyP102AfterRestart(
     });
     if (active.status !== "found") throw new Error("active policy ref lost");
 
-    // canonical resolution via the frozen read-only helpers (exact triple match)
+    // canonical resolution via the frozen read-only helpers (exact triple match).
+    // The ACTIVE canonical ref after restart must equal the ref captured BEFORE
+    // the restart (identity + digest triple re-verified inside the resolver).
+    // NOTE: the active ref may legitimately differ from the PLAN PIN (default-ref
+    // movement) — the plan pin is asserted separately on the graph below.
     const policy = await resolveProjectCompletionPolicy(h.ledger, projectId);
     if (policy.status !== "found") throw new Error("completion policy did not resolve after restart");
-    if (policy.pin.digest !== before.planPinPolicyDigest) throw new Error("policy canonical digest drifted");
+    if (JSON.stringify(policy.pin.ref) !== JSON.stringify(before.activePolicyRef)) {
+      throw new Error("active policy ref drifted after restart");
+    }
     const baseline = await resolveProjectArchitectureBaseline(h.ledger, projectId);
     if (baseline.status !== "found") throw new Error("architecture baseline did not resolve after restart");
-    if (baseline.pin.digest !== before.planPinBaselineDigest) throw new Error("baseline canonical digest drifted");
+    if (JSON.stringify(baseline.pin.ref) !== JSON.stringify(before.activeBaselineRef)) {
+      throw new Error("active baseline ref drifted after restart");
+    }
 
     // (b) views rebuilt from persisted events: advance the NEW read model and
     // compare field-for-field with the pre-restart graph/task-detail/goal view.

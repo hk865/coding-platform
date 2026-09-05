@@ -2,7 +2,7 @@
 
 ```yaml
 ticket_id: P1-02
-status: implementation in progress (limited authorization, 2026-09-05 — P1-02 only)
+status: implementation verified (limited authorization, 2026-09-05 — P1-02 only)
 updated: 2026-09-05
 authorized_by: user (limited authorization note recorded in ticket 02 + this file)
 next: STOP after P1-02 acceptance — do NOT auto-start P1-03
@@ -48,26 +48,32 @@ evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_doc
 
 | Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
 | --- | --- | --- | --- | --- |
-| A install/activate | `p1-02-lane-a` @ `/home/han001/projects/agents/agent_platform-p1-02-a` | 完全实现 install（schema→digest→immutable 持久化→幂等→zero-write 映射）与 activate（精确 target→CAS→active ref 独立；悬空/digest/CAS 失败零写入） | src/control/governance-install.ts、src/control/governance-activate.ts、tests/control/governance-*.test.ts | ⏳ |
-| B ApplyPlanRevision | `p1-02-lane-b` @ `/home/han001/projects/agents/agent_platform-p1-02-b` | 完全实现 applyPlan（guard 顺序 1→5，非空+映射+VR 编译+无环，pin 固定，幂等/CAS 映射） | src/control/plan-acceptance.ts、tests/control/plan-acceptance.test.ts | ⏳ |
-| C ReadModel 投影 | `p1-02-lane-c` @ `/home/han001/projects/agents/agent_platform-p1-02-c` | PlanGraph/TaskDetail/GoalView(activePlanRevision) 双 Adapter 投影+查询+重建等价+隔离+stall | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、tests/read-model/**、tests/sqlite-read-model/** | ⏳ |
-| D 持久化 harness + 重启证据 | `p1-02-lane-d` @ `/home/han001/projects/agents/agent_platform-p1-02-d` | 完成重启路径（bootstrap→install×2→activate×2→CreateGoal→applyPlan→close→reopen→canonical refs/pins/views 一致）+证据收集 | tests/restart/p1-02-restart-fixtures.ts、p1-02-restart.test.ts、evidence/p1-02-evidence.test.ts | ⏳ |
+| A install/activate | `p1-02-lane-a` @ 9700b75（merge 36fcd05） | 完全实现 install（schema→digest→immutable 持久化→幂等→zero-write 映射）与 activate（精确 target→CAS→active ref 独立；悬空/digest/CAS 失败零写入） | src/control/governance-install.ts、src/control/governance-activate.ts、tests/control/governance-*.test.ts | ✅ 23/23 |
+| B ApplyPlanRevision | `p1-02-lane-b` @ 3512ae4（merge 1bff90c） | 完全实现 applyPlan（guard 顺序 1→5，非空+映射+VR 编译+无环，pin 固定，幂等/CAS 映射） | src/control/plan-acceptance.ts、tests/control/plan-acceptance.test.ts | ✅ 22/22 |
+| C ReadModel 投影 | `p1-02-lane-c` @ 6d50a47（merge a2f2d08） | PlanGraph/TaskDetail/GoalView(activePlanRevision) 双 Adapter 投影+查询+重建等价+隔离+stall | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、tests/read-model/**、tests/sqlite-read-model/** | ✅ 16/16 |
+| D 持久化 harness + 重启证据 | `p1-02-lane-d` @ e009f8b（merge 205ec44） | 完成重启路径（bootstrap→install×2→activate×2→CreateGoal→applyPlan→close→reopen→canonical refs/pins/views 一致）+证据收集 | tests/restart/p1-02-restart-fixtures.ts、p1-02-restart.test.ts、evidence/p1-02-evidence.test.ts | ✅ 探针自动启用 2/2 |
 
 integrator 维护：package/lock/tsconfig/vitest、src/contracts/**（公共 schema/接口/共享 fixture）、src/ledger/**、src/sqlite-ledger/**、src/control/control-engine.ts、src/harness/**、tests/contract-suite/**、tests/integration/**、文档与状态记录。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结签名（如有缺口：提交具体建议给 integrator 统一修改基线并通知消费者）。
 
-## P1-02 已执行命令及结果（阶段 1 共享基线）
+## P1-02 已执行命令及结果（最终）
 
 | 命令（product root） | 结果 |
 | --- | --- |
-| `pnpm typecheck` | PASS 0 errors（含新契约/夹具/套件/骨架） |
-| `pnpm vitest run`（全量） | 18 files / 158 tests PASS（既有零回归；P1-02 套件未接线，待 lane 落地） |
-| 静态 grep：既有套件改动 | 无（git diff 仅新增文件 + 版本化扩展） |
+| `pnpm typecheck` | PASS 0 errors |
+| `pnpm vitest run`（全量） | **29 files / 283 tests PASS**（既有 158 零回归 + P1-02 新增 125） |
+| `pnpm vitest run tests/integration/p1-02.contract-suite.inmemory.test.ts` | 29 PASS |
+| `pnpm vitest run tests/integration/p1-02.contract-suite.sqlite.test.ts` | 29 PASS（同一套件定义，无调参） |
+| `pnpm vitest run tests/integration/p1-02.integration.test.ts` | 4 PASS（真实 SQLite 全路径，无 fake） |
+| `pnpm vitest run tests/restart/evidence/p1-02-evidence.test.ts` | 1 PASS（`P1-02-EVIDENCE` JSON 证据块，可重复） |
+| `node dev_docs/verification/validate-docs.mjs` | 12/12 PASS |
+| 静态 grep：Adapter 之外原始 SQL / node:sqlite 消费者 | 0 / 0；既有双套件零修改；package/lock/tsconfig/vitest 零差异（零新增依赖） |
 
 ## 下一步 / 未解问题
 
-- 四路 lane 并行编码（A/B/C/D），然后 integrator 合并、接线契约套件（InMemory+SQLite）、写 tests/integration/p1-02.integration.test.ts（真实 Adapter 全路径，无 fake）并逐项核对 19 项 Acceptance；
-- 已知设计决定：install/activate 以 project 作用域建模（每个 Project 安装自己的 revision 副本并建立自己的 active ref；fixture 内容全局一致，policyId/baselineId 为 identity）；activation CAS 同时含 Project 与按 kind active aggregate 两条 expected（比单纯 Project CAS 更强，防止同类并发覆盖）；HumanCollaboration 用户级 applyPlan 入口留给 P1-08/15；
-- 未解：无阻断项。P1-02 完成前不推进 P1-03；推送/部署未发生（需用户授权）。
+- 无阻断项。设计理由见“P1-02 契约与存储语义”（LedgerCommit 扩展、immutable/activation/pin 语义、guard 顺序、事务边界）。
+- 已知取舍：① plan-revision validator 将 goalSnapshot.revision 固定为期望+1——P1-02 单次接受语义成立，multi-plan/rebase 属 P1-11 消费者；② PlanRevisionReceipt.revision_conflict 未携带 currentRevision（契约未定义）；③ 幂等键纪律：公共 fixture 默认 idempotencyKey 不区分 command 种类，同一 Project 上不同命令必须显式传独立 key（已三处修正集成；P1-00 幂等语义未变）。
+- 验收证据：[p1-02-implementation-evidence.md]（文档根 dev_docs/verification/）；票据 Implementation record：ticket 02（status 保持 proposed，符合阶段守卫）。
+- **停止**。P1-02 完成（有限授权内）。不自动推进 P1-03；P1 DAG 仍为 proposed；推送/部署未发生（remote 未推送，需用户授权）。
 
 ---
 

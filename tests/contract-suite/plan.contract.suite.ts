@@ -69,6 +69,7 @@ export function definePlanContractSuite(createHarness: P1_02HarnessFactory): voi
           submittedAt: SCHEMA,
           projectId,
           expectedRevision: 1,
+          idempotencyKey: "suite-act-cp-" + projectId, // DISTINCT per kind: default key would collide with the AB activation
         }),
       );
       const act2 = await h.activate(
@@ -78,6 +79,7 @@ export function definePlanContractSuite(createHarness: P1_02HarnessFactory): voi
           submittedAt: SCHEMA,
           projectId,
           expectedRevision: 1,
+          idempotencyKey: "suite-act-ab-" + projectId,
         }),
       );
       expect(act1.status).toBe("committed");
@@ -492,6 +494,7 @@ export function definePlanContractSuite(createHarness: P1_02HarnessFactory): voi
           submittedAt: SCHEMA,
           projectId: "proj-alpha",
           expectedRevision: 1,
+          idempotencyKey: "act-cp-rev2", // DISTINCT from the setupHarness activation key
         }),
       );
       expect(act2.status).toBe("committed");
@@ -512,12 +515,31 @@ export function definePlanContractSuite(createHarness: P1_02HarnessFactory): voi
       expect(early.status).toBe("not_ready");
       await h.applyPlan(planCommand(HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, "proj-alpha"));
       await h.advanceProjection();
-      const missing = await h.planGraph({ projectId: "proj-alpha", goalId: "goal-2" });
+      const cursor = h.observedCursor();
+      expect(cursor).not.toBeNull();
+      // no atLeastCursor + no row -> not_ready (goal() freshness semantics; never not_found)
+      const missingNoCursor = await h.planGraph({ projectId: "proj-alpha", goalId: "goal-2" });
+      expect(missingNoCursor.status).toBe("not_ready");
+      // covered by observedCursor + truly missing -> not_found
+      const missing = await h.planGraph({
+        projectId: "proj-alpha",
+        goalId: "goal-2",
+        atLeastCursor: cursor!,
+      });
       expect(missing.status).toBe("not_found");
-      const taskMissing = await h.taskDetail({ projectId: "proj-alpha", goalId: "goal-1", taskId: "task-nope" });
+      const taskMissing = await h.taskDetail({
+        projectId: "proj-alpha",
+        goalId: "goal-1",
+        taskId: "task-nope",
+        atLeastCursor: cursor!,
+      });
       expect(taskMissing.status).toBe("not_found");
-      // beta reuses goal-1 + same plan ids -> strictly isolated
-      const betaGraph = await h.planGraph({ projectId: "proj-beta", goalId: "goal-1" });
+      // beta reuses goal-1 + same plan ids -> strictly isolated (covered -> not_found)
+      const betaGraph = await h.planGraph({
+        projectId: "proj-beta",
+        goalId: "goal-1",
+        atLeastCursor: cursor!,
+      });
       expect(betaGraph.status).toBe("not_found");
     });
 
@@ -531,8 +553,12 @@ export function definePlanContractSuite(createHarness: P1_02HarnessFactory): voi
       expect(json).not.toMatch(/AgentRun/);
       expect(json).not.toMatch(/outbox/);
       const types = page.events.map((p) => p.event.eventType);
+      // bootstrap fixture emits one ProjectBootstrapped + one WorkspaceBootstrapped
+      // PER project/entry (proj-alpha + proj-beta).
       expect(types).toEqual([
         "ProjectBootstrapped",
+        "ProjectBootstrapped",
+        "WorkspaceBootstrapped",
         "WorkspaceBootstrapped",
         "CompletionPolicyInstalled",
         "ArchitectureBaselineInstalled",

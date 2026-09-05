@@ -404,7 +404,14 @@ export function validateCompletionPolicyContent(value: unknown, path: string, is
   if (value["schemaVersion"] !== 1) {
     issues.push({ path: path + ".schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
   }
-  validateStringArray(value["requirementKinds"], path + ".requirementKinds", issues);
+  const kinds = validateStringArray(value["requirementKinds"], path + ".requirementKinds", issues);
+  if (kinds !== null && kinds.length === 0) {
+    issues.push({
+      path: path + ".requirementKinds",
+      code: "empty_collection",
+      message: "requirementKinds must be non-empty (a CompletionPolicy with no kinds cannot compile obligations)",
+    });
+  }
   safePositiveIntField(value["minimumRequiredRequirementsPerObligation"], path + ".minimumRequiredRequirementsPerObligation", issues);
 }
 

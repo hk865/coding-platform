@@ -302,6 +302,7 @@ export function defineGovernanceContractSuite(createHarness: P1_02HarnessFactory
           submittedAt: "2026-09-05T12:00:00.000Z",
           projectId: "proj-alpha",
           expectedRevision: 99,
+          idempotencyKey: "act-cp-stale-cas", // DISTINCT command: same identity would hit idempotency_conflict first
         }),
       );
       expect(stale.status).toBe("rejected");
