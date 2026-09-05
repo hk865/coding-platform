@@ -153,9 +153,14 @@ export function defineGoalViewContractSuite(ctx: GoalViewContractContext) {
       const index = await ctx.create();
       const ev = goalEventAt(3, 0, 4);
       await index.advance(pageOf([ev.positioned]));
-      const result = await index.goal(queryFor(0));
+      // advance created the proj-alpha/ws-shared/goal-1 row; query a row that
+      // does not exist, without atLeastCursor: contract forbids not_found here.
+      const result = await index.goal({ ...queryFor(0), goalId: "goal-does-not-exist" });
       expect(result.status).toBe("not_ready");
       if (result.status === "not_ready") expect(result.observedCursor).toBe(ev.positioned.cursor);
+      // with the row present and no atLeastCursor, the view is ready
+      const present = await index.goal(queryFor(0));
+      expect(present.status).toBe("ready");
     });
 
     it("duplicate EventPage advance is idempotent, appliedEventIds not repeated", async () => {
@@ -231,16 +236,23 @@ export function defineGoalViewContractSuite(ctx: GoalViewContractContext) {
         expect(ra.goal.projectId).toBe("proj-alpha");
         expect(rb.goal.projectId).toBe("proj-beta");
       }
-      const crossA = await index.goal({ ...queryFor(0, makeCommitCursor(2)), goalId: "goal-1" });
-      // alpha query for alpha goal id but at beta cursor coverage: still its own row or not_found
-      expect(crossA.status).toBe("ready");
-      const crossB = await index.goal({
+      // same local (ws-shared, goal-1) keyed under proj-alpha must hit ONLY the
+      // proj-alpha row: identical local IDs never cross projects.
+      const crossA = await index.goal({
         projectId: "proj-alpha",
-        workspaceId: (b.scope as { workspaceId: string }).workspaceId,
-        goalId: (b.scope as { goalId: string }).goalId,
+        workspaceId: b.scope.workspaceId,
+        goalId: b.scope.goalId,
         atLeastCursor: makeCommitCursor(2),
       });
-      // beta's row keyed under (proj-beta, ...) — alpha query must NOT hit it
+      expect(crossA.status).toBe("ready");
+      if (crossA.status === "ready") expect(crossA.goal.projectId).toBe("proj-alpha");
+      // a genuinely absent scope key is not_found once covered
+      const crossB = await index.goal({
+        projectId: "proj-gamma",
+        workspaceId: b.scope.workspaceId,
+        goalId: b.scope.goalId,
+        atLeastCursor: makeCommitCursor(2),
+      });
       expect(crossB.status).toBe("not_found");
     });
 
