@@ -199,4 +199,45 @@ describe("InMemoryLedger boundary semantics", () => {
     }
     expect((await ledger.events({ afterCursor: null, limit: 1000 })).events.length).toBe(4);
   });
+
+  it("goal-create retry with a different eventId replays the original outcome (doc semantics)", async () => {
+    const ledger = new InMemoryLedger();
+    await committed(ledger, bootBatch("cmd-boot-rs").batch);
+    const first = goalBatch("cmd-rs", 0, 1);
+    const t1 = await committed(ledger, first.batch);
+    // simulate the control fold re-minting a NEW eventId on a retry of the SAME
+    // command: identity+fingerprint identical, volatile eventId differs. Per doc
+    // semantics the ledger MUST replay the original outcome, not append a 2nd event.
+    const retry = buildGoalCreateLedgerCommit(first.command, {
+      eventId: "evt-rs-1b",
+      occurredAt: OCCURRED,
+      projectRevision: 1,
+      workspaceRevision: 1,
+    });
+    const t2 = await ledger.commit(retry);
+    expect(t2.status).toBe("committed");
+    if (t2.status === "committed") {
+      expect(t2.replayed).toBe(true);
+      expect(t2.eventIds).toEqual(["evt-g-1"]); // original eventId, not the retry's
+      expect(t2.commitCursor).toBe(t1.commitCursor);
+      expect(t2.aggregateRevisions).toEqual(t1.aggregateRevisions);
+    }
+    // no second event was appended
+    expect((await ledger.events({ afterCursor: null, limit: 1000 })).events.length).toBe(5);
+  });
+
+  it("goal-create with a content/fingerprint mismatch is rejected, zero write", async () => {
+    const ledger = new InMemoryLedger();
+    await committed(ledger, bootBatch("cmd-boot-sc").batch);
+    const { batch } = goalBatch("cmd-sc", 0, 1);
+    const mismatched = {
+      ...batch,
+      events: [{ ...batch.events[0]!, payload: { ...batch.events[0]!.payload, objective: "changed" } }],
+      snapshots: [{ ...batch.snapshots[0]!, objective: "changed" }],
+    };
+    const receipt = await ledger.commit(mismatched);
+    expect(receipt.status).toBe("rejected");
+    if (receipt.status === "rejected") expect(receipt.code).toBe("idempotency_conflict");
+    expect((await ledger.events({ afterCursor: null, limit: 1000 })).events.length).toBe(4);
+  });
 });

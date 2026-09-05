@@ -18,7 +18,7 @@ import type { CommandFingerprint, GoalCreatedEvent } from "../contracts/command-
 import { commandFingerprint, commandIdentityKey } from "../contracts/command-event.js";
 import type { DomainEvent } from "../contracts/events.js";
 import { isKnownEventType } from "../contracts/events.js";
-import { canonicalJson, sha256Hex, type JsonValue } from "../contracts/fingerprint.js";
+import { canonicalJson } from "../contracts/fingerprint.js";
 import type { CommitCursor } from "../contracts/command-event.js";
 
 /**
@@ -38,7 +38,6 @@ interface IdempotencyRecord {
   eventIds: string[];
   aggregateRevisions: VersionedRef[];
   commitCursor: CommitCursor;
-  contentDigest: string;
 }
 
 function identityKeyFor(batch: LedgerCommit): string {
@@ -46,14 +45,6 @@ function identityKeyFor(batch: LedgerCommit): string {
     return "goal-create:" + commandIdentityKey(batch.identity);
   }
   return "bootstrap:" + bootstrapIdentityKey(batch.identity);
-}
-
-function makeContentDigest(batch: GoalCreateLedgerCommitV1 | BootstrapLedgerCommitV1): string {
-  const payload = {
-    events: batch.events as unknown as JsonValue[],
-    snapshots: batch.snapshots as unknown as JsonValue[],
-  };
-  return sha256Hex(canonicalJson(payload));
 }
 
 /** Signify a versioned ref entry used by the CAS conflict currentVersions. */
@@ -140,18 +131,18 @@ export class InMemoryLedger implements StateLedger {
       if (existing.fingerprint !== batch.fingerprint) {
         return { status: "rejected", code: "idempotency_conflict" };
       }
-      if (existing.contentDigest === makeContentDigest(batch)) {
-        return {
-          status: "committed",
-          replayed: true,
-          identity: batch.identity,
-          aggregateRevisions: existing.aggregateRevisions,
-          eventIds: existing.eventIds,
-          commitCursor: existing.commitCursor,
-        };
-      }
-      // Same identity+fingerprint but changed content is NOT an exact replay; it
-      // behaves like a fresh attempt so the CAS revision guard can reject it.
+      // Same identity+fingerprint => ALWAYS replay (doc semantics), even when a
+      // retry mints new eventId/causationId/occurredAt. The original outcome
+      // (eventIds/aggregateRevisions/commitCursor) is returned and nothing is
+      // appended — volatile per-attempt ids never enter the log on a replay.
+      return {
+        status: "committed",
+        replayed: true,
+        identity: batch.identity,
+        aggregateRevisions: existing.aggregateRevisions,
+        eventIds: existing.eventIds,
+        commitCursor: existing.commitCursor,
+      };
     }
 
     const currentVersions = this.casConflicts(batch.expectedVersions);
@@ -174,7 +165,6 @@ export class InMemoryLedger implements StateLedger {
       eventIds: written.eventIds,
       aggregateRevisions,
       commitCursor: written.commitCursor,
-      contentDigest: makeContentDigest(batch),
     });
 
     return {
@@ -277,7 +267,6 @@ export class InMemoryLedger implements StateLedger {
       eventIds: written.eventIds,
       aggregateRevisions,
       commitCursor: written.commitCursor,
-      contentDigest: makeContentDigest(batch),
     });
 
     return {
