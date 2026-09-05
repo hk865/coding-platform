@@ -1,34 +1,103 @@
 /**
- * FakeRuntimeAdapter — P1-03 WorkerRuntime RunPort implementation.
+ * FakeRuntimeAdapter — P1-03 WorkerRuntime RunPort implementation (Lane B).
  *
- * ENTRY FILE (shared baseline - exported signature FROZEN). Lane B fills the
- * implementation. It is a REAL, replayable adapter (not a scripted test stub):
- *   - replays a deterministic FakeRuntimeScriptV1 rebased onto the run
- *     (runRef = envelope.runRef; eventId = "rt-<runId>-<seq>");
- *   - start() is idempotent per (runRef, envelope) pair and returns a handle
- *     whose pollFreshEvents() drains the script in sequence order;
+ * A REAL, replayable adapter (not a scripted test stub):
+ *   - it rebases a deterministic FakeRuntimeScriptV1 onto a run
+ *     (runRef = envelope.runRef; eventId = "rt-<runId>-<seq4>"; occurredAt and
+ *     payload copied verbatim) — field-identical to contracts/fixtures'
+ *     rebaseScriptForRun, but implemented here WITHOUT importing the fixture
+ *     module;
+ *   - start() is idempotent per runRef: the FIRST start rebases and caches the
+ *     events; a later start of the SAME runRef returns the SAME handle and the
+ *     SAME event batch (replayable by construction);
+ *   - RunHandle.pollFreshEvents() drains the script in sequence order (atomically
+ *     clears the not-yet-polled queue) and returns [] once the terminal event
+ *     has been observed;
  *   - capabilities() declares replayable: true, supportsSnapshot: false,
  *     maxEnvelopeBytes = TASK_ENVELOPE_MAX_SIZE_BYTES;
- *   - the adapter ONLY emits events; it NEVER assesses truth, never marks
- *     tasks satisfied, and never fabricates an outcome_unknown (that is an
- *     explicit Control fact).
+ *   - the adapter ONLY emits events: it NEVER assesses truth, never marks tasks
+ *     satisfied, and never fabricates an outcome_unknown (that is an explicit
+ *     Control fact). No snapshot capability and no control/cancel in P1-03.
  */
 import type { RunCapabilities, RunHandle, RunPort } from "../contracts/ports.js";
+import { isTerminalRuntimeEvent } from "../contracts/dispatch.js";
+import type { RuntimeEventV1 } from "../contracts/dispatch.js";
 import type { TaskEnvelopeV1 } from "../contracts/task-envelope.js";
+import { TASK_ENVELOPE_MAX_SIZE_BYTES } from "../contracts/task-envelope.js";
 import type { FakeRuntimeScriptV1 } from "../contracts/fixtures/dispatch-fixtures.js";
+import { canonicalJson } from "../contracts/fingerprint.js";
+
+/** Per-run runtime state (single-writer, per runRef). */
+class FakeRunHandle implements RunHandle {
+  readonly runRef: TaskEnvelopeV1["runRef"];
+  private readonly events: RuntimeEventV1[];
+  private nextIndex: number;
+  private terminated: boolean;
+
+  constructor(runRef: TaskEnvelopeV1["runRef"], events: RuntimeEventV1[]) {
+    this.runRef = runRef;
+    this.events = events;
+    this.nextIndex = 0;
+    this.terminated = false;
+  }
+
+  async pollFreshEvents(): Promise<RuntimeEventV1[]> {
+    if (this.terminated) return [];
+    const remaining = this.events.slice(this.nextIndex);
+    this.nextIndex = this.events.length;
+    if (remaining.length > 0 && isTerminalRuntimeEvent(remaining[remaining.length - 1]!)) {
+      this.terminated = true;
+    }
+    return remaining;
+  }
+}
+
+/**
+ * Deterministic script rebase (no fixture import): stamps runRef + ids.
+ * eventId = "rt-" + runId + "-" + seq.padStart(4, "0"); occurredAt/payload copied.
+ */
+function rebaseScript(script: FakeRuntimeScriptV1, runRef: TaskEnvelopeV1["runRef"]): RuntimeEventV1[] {
+  return script.items.map((item) => {
+    const eventId = "rt-" + runRef.runId + "-" + String(item.sequence).padStart(4, "0");
+    return {
+      eventType: item.eventType,
+      schemaVersion: 1,
+      eventId,
+      runRef: { ...runRef },
+      sequence: item.sequence,
+      occurredAt: item.occurredAt,
+      payload: item.payload,
+    };
+  });
+}
 
 export class FakeRuntimeAdapter implements RunPort {
+  private readonly script: FakeRuntimeScriptV1;
+  private readonly runs = new Map<string, FakeRunHandle>();
+
   constructor(script: FakeRuntimeScriptV1) {
-    void script;
+    this.script = script;
   }
 
   capabilities(): Promise<RunCapabilities> {
-    return Promise.resolve({ replayable: true, supportsSnapshot: false, maxEnvelopeBytes: 0 });
+    return Promise.resolve({
+      replayable: true,
+      supportsSnapshot: false,
+      maxEnvelopeBytes: TASK_ENVELOPE_MAX_SIZE_BYTES,
+    });
   }
 
   start(envelope: TaskEnvelopeV1): Promise<RunHandle> {
-    void envelope;
-    return Promise.reject(new Error("P1-03: FakeRuntimeAdapter.start not implemented yet"));
+    const runKey = canonicalJson(envelope.runRef);
+    const existing = this.runs.get(runKey);
+    if (existing !== undefined) {
+      // Idempotent replay: same runRef -> same handle / same event batch.
+      return Promise.resolve(existing);
+    }
+    const events = rebaseScript(this.script, envelope.runRef);
+    const handle = new FakeRunHandle(envelope.runRef, events);
+    this.runs.set(runKey, handle);
+    return Promise.resolve(handle);
   }
 }
 
