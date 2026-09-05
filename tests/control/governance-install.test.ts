@@ -1,0 +1,298 @@
+/**
+ * P1-02 Lane A — governance install (CompletionPolicy / ArchitectureBaseline
+ * immutable revisions).
+ *
+ * Driven purely through the REAL InMemoryLedger + ControlEngineImpl (no fake
+ * ledger). A RecordingLedger subclass only observes the committed batch so the
+ * deterministic fold can be asserted (fold-equality) against the shared
+ * fixture-fold builders.
+ *
+ * Coverage (IMPLEMENTATION-HANDOFF "P1-02 契约与存储语义" + ticket verification):
+ *   - happy path + fold-equality (deep-equal buildInstallLedgerCommit);
+ *   - digest mismatch -> digest_mismatch, zero-write;
+ *   - invalid fixture (revision 0 / missing policyId / empty requirementKinds)
+ *     -> invalid, zero-write;
+ *   - same identity / different fingerprint -> idempotency_conflict, zero-write;
+ *   - same identity/revision, different command -> revision_conflict, zero-write;
+ *   - idempotent replay -> committed(replayed), original eventIds/cursor;
+ *   - install NEVER auto-activates (no active aggregates, no Activated events);
+ *   - two projects install their own revisions without cross-talk;
+ *   - no ArchitectureEvolutionPolicy artifact anywhere.
+ */
+import { describe, expect, it } from "vitest";
+import {
+  COMPLETION_POLICY_FIXTURE_V1,
+  ARCHITECTURE_BASELINE_FIXTURE_V1,
+  buildInstallCommand,
+  buildInstallLedgerCommit,
+  completionPolicyInstalledEventFor,
+  completionPolicyRevisionSnapshotFor,
+  architectureBaselineInstalledEventFor,
+  architectureBaselineRevisionSnapshotFor,
+  completionPolicyRevisionRefFor,
+  architectureBaselineRevisionRefFor,
+} from "../../src/contracts/fixtures/governance-fixtures.js";
+import type {
+  GovernanceInstallCommand,
+  InstallArchitectureBaselineRevisionCommand,
+  InstallCompletionPolicyRevisionCommand,
+} from "../../src/contracts/governance.js";
+import { governanceContentDigest } from "../../src/contracts/governance.js";
+import { makeCommitCursor } from "../../src/contracts/ledger.js";
+import type { LedgerCommit, LedgerCommitReceipt } from "../../src/contracts/ledger.js";
+import { createControlEngine } from "../../src/control/control-engine.js";
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
+import { KNOWN_EVENT_TYPES } from "../../src/contracts/events.js";
+
+/** Real InMemoryLedger that additionally records the committed batch (observation only). */
+class RecordingLedger extends InMemoryLedger {
+  commits: LedgerCommit[] = [];
+  override async commit(batch: LedgerCommit): Promise<LedgerCommitReceipt> {
+    this.commits.push(batch);
+    return super.commit(batch);
+  }
+}
+
+function makeEngine(ledger: InMemoryLedger = new RecordingLedger()) {
+  const deps = createDeterministicDeps();
+  const engine = createControlEngine({ ledger, now: deps.clock, eventId: deps.eventId });
+  return { ledger, engine, deps };
+}
+
+function installDeps(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    commandId: "cmd-install",
+    correlationId: "corr-install",
+    submittedAt: FIXED_ISO_2026_09_05,
+    projectId: "proj-alpha",
+    idempotencyKey: "inst-cp-alpha",
+    ...overrides,
+  };
+}
+
+async function eventsCount(ledger: InMemoryLedger): Promise<number> {
+  const page = await ledger.events({ afterCursor: null, limit: 100 });
+  return page.events.length;
+}
+
+describe("P1-02 governance install", () => {
+  it("persists the exact immutable revision (fold-equality with buildInstallLedgerCommit)", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const cmd = buildInstallCommand(
+      COMPLETION_POLICY_FIXTURE_V1,
+      installDeps(),
+    ) as InstallCompletionPolicyRevisionCommand;
+    const receipt = await engine.install(cmd);
+
+    const expected = buildInstallLedgerCommit(cmd, {
+      eventId: "evt-0001",
+      occurredAt: FIXED_ISO_2026_09_05,
+    });
+
+    expect(ledger.commits).toHaveLength(1);
+    expect(ledger.commits[0]).toEqual(expected);
+    // event + snapshot deep-equal the shared fixture builders
+    expect(expected.events[0]).toEqual(
+      completionPolicyInstalledEventFor(cmd, { eventId: "evt-0001", occurredAt: FIXED_ISO_2026_09_05 }),
+    );
+    expect(expected.snapshots[0]).toEqual(completionPolicyRevisionSnapshotFor(cmd));
+    expect(expected.expectedVersions[0]).toEqual({ ref: completionPolicyRevisionRefFor(cmd), revision: 0 });
+
+    expect(receipt).toEqual({
+      status: "committed",
+      commandId: "cmd-install",
+      replayed: false,
+      revisionRef: completionPolicyRevisionRefFor(cmd),
+      contentDigest: governanceContentDigest(COMPLETION_POLICY_FIXTURE_V1),
+      eventIds: ["evt-0001"],
+      commitCursor: makeCommitCursor(1),
+    });
+  });
+
+  it("also folds the exact ArchitectureBaseline revision (baseline path)", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const cmd = buildInstallCommand(
+      ARCHITECTURE_BASELINE_FIXTURE_V1,
+      installDeps(),
+    ) as InstallArchitectureBaselineRevisionCommand;
+    const receipt = await engine.install(cmd);
+
+    const expected = buildInstallLedgerCommit(cmd, {
+      eventId: "evt-0001",
+      occurredAt: FIXED_ISO_2026_09_05,
+    });
+    expect(ledger.commits).toHaveLength(1);
+    expect(ledger.commits[0]).toEqual(expected);
+    expect(expected.events[0]).toEqual(
+      architectureBaselineInstalledEventFor(cmd, { eventId: "evt-0001", occurredAt: FIXED_ISO_2026_09_05 }),
+    );
+    expect(expected.snapshots[0]).toEqual(architectureBaselineRevisionSnapshotFor(cmd));
+    expect(receipt).toEqual({
+      status: "committed",
+      commandId: "cmd-install",
+      replayed: false,
+      revisionRef: architectureBaselineRevisionRefFor(cmd),
+      contentDigest: governanceContentDigest(ARCHITECTURE_BASELINE_FIXTURE_V1),
+      eventIds: ["evt-0001"],
+      commitCursor: makeCommitCursor(1),
+    });
+  });
+
+  it("digest mismatch -> digest_mismatch, zero-write", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const before = await eventsCount(ledger);
+    const cmd = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, installDeps());
+    if (cmd.commandType !== "InstallCompletionPolicyRevision") throw new Error("build error");
+    const tampered = { ...cmd, payload: { ...cmd.payload, contentDigest: "0".repeat(64) } };
+    const receipt = await engine.install(tampered);
+    expect(receipt).toEqual({ status: "rejected", commandId: "cmd-install", code: "digest_mismatch" });
+    expect(await eventsCount(ledger)).toBe(before);
+    expect(ledger.commits).toHaveLength(0);
+  });
+
+  it("invalid fixture (revision 0) -> invalid, zero-write", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const before = await eventsCount(ledger);
+    const cmd = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, installDeps());
+    if (cmd.commandType !== "InstallCompletionPolicyRevision") throw new Error("build error");
+    const bad = { ...cmd, payload: { ...cmd.payload, fixture: { ...cmd.payload.fixture, revision: 0 } } };
+    const receipt = await engine.install(bad);
+    expect(receipt).toEqual({ status: "rejected", commandId: "cmd-install", code: "invalid" });
+    expect(await eventsCount(ledger)).toBe(before);
+    expect(ledger.commits).toHaveLength(0);
+  });
+
+  it("invalid fixture (missing policyId) -> invalid, zero-write", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const before = await eventsCount(ledger);
+    const cmd = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, installDeps());
+    if (cmd.commandType !== "InstallCompletionPolicyRevision") throw new Error("build error");
+    const bad = { ...cmd, payload: { ...cmd.payload, fixture: { ...cmd.payload.fixture, identity: {} } } } as unknown as GovernanceInstallCommand;
+    const receipt = await engine.install(bad);
+    expect(receipt).toEqual({ status: "rejected", commandId: "cmd-install", code: "invalid" });
+    expect(await eventsCount(ledger)).toBe(before);
+    expect(ledger.commits).toHaveLength(0);
+  });
+
+  it("invalid fixture (empty requirementKinds) -> invalid, zero-write", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const before = await eventsCount(ledger);
+    const cmd = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, installDeps());
+    if (cmd.commandType !== "InstallCompletionPolicyRevision") throw new Error("build error");
+    const bad = {
+      ...cmd,
+      payload: { ...cmd.payload, fixture: { ...cmd.payload.fixture, content: { ...cmd.payload.fixture.content, requirementKinds: [] } } },
+    };
+    const receipt = await engine.install(bad);
+    expect(receipt).toEqual({ status: "rejected", commandId: "cmd-install", code: "invalid" });
+    expect(await eventsCount(ledger)).toBe(before);
+    expect(ledger.commits).toHaveLength(0);
+  });
+
+  it("same identity + different fingerprint -> idempotency_conflict, zero-write", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const deps = installDeps({ idempotencyKey: "inst-shared" });
+    await engine.install(buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, deps));
+    const before = await eventsCount(ledger);
+    const receipt = await engine.install(buildInstallCommand(ARCHITECTURE_BASELINE_FIXTURE_V1, deps));
+    expect(receipt).toEqual({ status: "rejected", commandId: "cmd-install", code: "idempotency_conflict" });
+    expect(await eventsCount(ledger)).toBe(before);
+  });
+
+  it("same identity/revision, different command -> revision_conflict, zero-write", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    await engine.install(buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, installDeps()));
+    const before = await eventsCount(ledger);
+    const receipt = await engine.install(
+      buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, installDeps({ commandId: "cmd-install-2", idempotencyKey: "inst-cp-alpha-2" })),
+    );
+    expect(receipt).toEqual({ status: "rejected", commandId: "cmd-install-2", code: "revision_conflict" });
+    expect(await eventsCount(ledger)).toBe(before);
+  });
+
+  it("idempotent replay -> committed(replayed) with the ORIGINAL eventIds/cursor", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const cmd = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, installDeps());
+    const first = await engine.install(cmd);
+    expect(first.status).toBe("committed");
+    if (first.status !== "committed") return;
+    const after = await eventsCount(ledger);
+
+    const replay = await engine.install(cmd);
+    expect(replay.status).toBe("committed");
+    if (replay.status !== "committed") return;
+    expect(replay.replayed).toBe(true);
+    expect(replay.eventIds).toEqual(first.eventIds);
+    expect(replay.commitCursor).toEqual(first.commitCursor);
+    expect(await eventsCount(ledger)).toBe(after);
+  });
+
+  it("install NEVER auto-activates (active aggregate not_found, no Activated events)", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    await engine.install(buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, installDeps()));
+    const active = await ledger.load({ aggregateType: "ProjectCompletionPolicyActive", projectId: "proj-alpha" });
+    expect(active.status).toBe("not_found");
+    const page = await ledger.events({ afterCursor: null, limit: 100 });
+    const types = page.events.map((p) => p.event.eventType);
+    expect(types).not.toContain("CompletionPolicyActivated");
+    expect(types).not.toContain("ArchitectureBaselineActivated");
+  });
+
+  it("two projects install their own revisions without cross-talk", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const ra = await engine.install(buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, installDeps({ projectId: "proj-alpha" })));
+    const rb = await engine.install(buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, installDeps({ projectId: "proj-beta" })));
+    expect(ra.status).toBe("committed");
+    expect(rb.status).toBe("committed");
+    if (ra.status !== "committed" || rb.status !== "committed") return;
+    const alpha = await ledger.load({ aggregateType: "CompletionPolicyRevision", projectId: "proj-alpha", policyId: "policy-completion-mvp", revision: 1 });
+    const beta = await ledger.load({ aggregateType: "CompletionPolicyRevision", projectId: "proj-beta", policyId: "policy-completion-mvp", revision: 1 });
+    expect(alpha.status).toBe("found");
+    expect(beta.status).toBe("found");
+    if (alpha.status !== "found" || beta.status !== "found") return;
+    const alphaSnap = alpha.snapshot as { ref: { projectId: string } };
+    const betaSnap = beta.snapshot as { ref: { projectId: string } };
+    expect(alphaSnap.ref.projectId).toBe("proj-alpha");
+    expect(betaSnap.ref.projectId).toBe("proj-beta");
+    // no cross-project active aggregates created
+    const alphaActive = await ledger.load({ aggregateType: "ProjectCompletionPolicyActive", projectId: "proj-alpha" });
+    expect(alphaActive.status).toBe("not_found");
+  });
+
+  it("no ArchitectureEvolutionPolicy artifact anywhere in the ledger", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    await engine.install(buildInstallCommand(ARCHITECTURE_BASELINE_FIXTURE_V1, installDeps()));
+    const page = await ledger.events({ afterCursor: null, limit: 100 });
+    expect(JSON.stringify(page)).not.toMatch(/ArchitectureEvolutionPolicy/);
+    expect(KNOWN_EVENT_TYPES).not.toContain("ArchitectureEvolutionPolicyActivated");
+    const active = await ledger.load({ aggregateType: "ProjectArchitectureBaselineActive", projectId: "proj-alpha" });
+    expect(active.status).toBe("not_found");
+  });
+
+  it("structural issue wins over a digest mismatch -> invalid", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const cmd = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, installDeps());
+    if (cmd.commandType !== "InstallCompletionPolicyRevision") throw new Error("build error");
+    const bad = {
+      ...cmd,
+      payload: { ...cmd.payload, fixture: { ...cmd.payload.fixture, revision: 0 }, contentDigest: "0".repeat(64) },
+    };
+    const receipt = await engine.install(bad);
+    expect(receipt).toEqual({ status: "rejected", commandId: "cmd-install", code: "invalid" });
+    expect(ledger.commits).toHaveLength(0);
+  });
+});
