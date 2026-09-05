@@ -174,7 +174,7 @@ export function defineStateLedgerContractSuite(ctx: StateLedgerContractContext) 
             idempotencyKey: batch.identity.idempotencyKey,
           },
         ),
-        { eventIds: ["evt-x"], occurredAt: OCCURRED },
+        { eventIds: ["evt-x1", "evt-x2"], occurredAt: OCCURRED },
       );
       const receipt = await ledger.commit(other);
       expect(receipt.status).toBe("rejected");
@@ -302,8 +302,14 @@ export function defineStateLedgerContractSuite(ctx: StateLedgerContractContext) 
       await ledger.commit(boot.batch);
       const { batch } = goalBatch("cmd-goal-7", 0, 7);
       expect((await ledger.commit(batch)).status).toBe("committed");
-      const command = goalCommand("cmd-goal-7", 0);
+      const scope = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.scopes[0]!;
       // same scope/command content, NEW idempotency key -> new identity, stale expected 0
+      const command = buildCreateGoalCommand(scope, {
+        commandId: "cmd-goal-7-retry",
+        correlationId: "corr-retry",
+        submittedAt: OCCURRED,
+        idempotencyKey: "different-key-for-recreate",
+      });
       const again = buildGoalCreateLedgerCommit(command, {
         eventId: "evt-g-7b",
         occurredAt: OCCURRED,
@@ -313,6 +319,33 @@ export function defineStateLedgerContractSuite(ctx: StateLedgerContractContext) 
       const receipt = await ledger.commit(again);
       expect(receipt.status).toBe("rejected");
       if (receipt.status === "rejected") expect(receipt.code).toBe("revision_conflict");
+    });
+
+    it("same identity+fingerprint with different eventId -> REPLAYED with original outcome (doc semantics)", async () => {
+      const ledger = await ctx.create();
+      const boot = bootstrapBatch("cmd-boot-10b");
+      await ledger.commit(boot.batch);
+      const firstBatch = goalBatch("cmd-goal-7b", 0, 70);
+      const first = await ledger.commit(firstBatch.batch);
+      expect(first.status).toBe("committed");
+      if (first.status !== "committed") return;
+      // simulate retry: same command identity + fingerprint, but the control fold
+      // would mint a NEW eventId / commandId on a retry; the ledger must replay.
+      const retryBatch = buildGoalCreateLedgerCommit(firstBatch.command, {
+        eventId: "evt-g-70b",
+        occurredAt: OCCURRED,
+        projectRevision: 1,
+        workspaceRevision: 1,
+      });
+      const retry = await ledger.commit(retryBatch);
+      expect(retry.status).toBe("committed");
+      if (retry.status !== "committed") return;
+      expect(retry.replayed).toBe(true);
+      expect(retry.eventIds).toEqual(firstBatch.batch.events.map((e) => e.eventId));
+      expect(retry.commitCursor).toBe(first.commitCursor);
+      expect(retry.aggregateRevisions).toEqual(first.aggregateRevisions);
+      const ids = await eventIdsAfter(ledger, null);
+      expect(ids.filter((_, i) => i >= boot.batch.events.length)).toEqual(["evt-g-70"]);
     });
 
     it("EventPage: stable ordered paging, no skip, no duplicates", async () => {
