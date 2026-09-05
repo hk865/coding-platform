@@ -1,0 +1,383 @@
+/**
+ * P1-02 governance contract suite — shared by InMemory AND SQLite adapters
+ * (identical fixtures/assertions; wired in tests/integration/).
+ *
+ * Covers: install roundtrip + digest/revision fidelity, install never
+ * auto-activates, immutable revision (no overwrite), idempotent replay,
+ * zero-write rejections (invalid fixture / digest mismatch / dangling target /
+ * CAS window), per-kind active refs, two-project isolation, and the absence of
+ * any ArchitectureEvolutionPolicy artifact.
+ */
+import { describe, expect, it } from "vitest";
+import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import {
+  ARCHITECTURE_BASELINE_FIXTURE_V1,
+  COMPLETION_POLICY_FIXTURE_V1,
+  buildActivateCommand,
+  buildInstallCommand,
+  completionPolicyPinFor,
+  architectureBaselinePinFor,
+} from "../../src/contracts/fixtures/governance-fixtures.js";
+import { governanceContentDigest } from "../../src/contracts/governance.js";
+import type { CompletionPolicyRevisionSnapshot } from "../../src/contracts/governance.js";
+import type { P1_02HarnessFactory } from "./p1-02-harness.js";
+import { freshCommandId, freshCorrelationId } from "./p1-02-harness.js";
+
+const BOOT_DEPS = {
+  commandId: "cmd-bootstrap-suite",
+  correlationId: "corr-bootstrap-suite",
+  submittedAt: "2026-09-05T12:00:00.000Z",
+};
+
+export function defineGovernanceContractSuite(createHarness: P1_02HarnessFactory): void {
+  describe("P1-02 governance contract suite", () => {
+    async function setupHarness() {
+      const h = await createHarness();
+      const receipt = await h.bootstrap(
+        buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, BOOT_DEPS),
+      );
+      expect(receipt.status).toBe("committed");
+      return h;
+    }
+
+    it("install persists the exact immutable revision; load resolves digest/revision", async () => {
+      const h = await setupHarness();
+      const cmd = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+        commandId: freshCommandId("cmd-install-cp"),
+        correlationId: freshCorrelationId(),
+        submittedAt: "2026-09-05T12:00:00.000Z",
+        projectId: "proj-alpha",
+        idempotencyKey: "inst-cp-alpha-1",
+      });
+      const receipt = await h.install(cmd);
+      expect(receipt.status).toBe("committed");
+      if (receipt.status !== "committed") return;
+      expect(receipt.revisionRef).toEqual({
+        aggregateType: "CompletionPolicyRevision",
+        projectId: "proj-alpha",
+        policyId: "policy-completion-mvp",
+        revision: 1,
+      });
+      expect(receipt.contentDigest).toBe(governanceContentDigest(COMPLETION_POLICY_FIXTURE_V1));
+
+      // canonical resolution by exact triple (identity + digest)
+      const pin = completionPolicyPinFor(cmd as never);
+      const load = await h.ledger.load(pin.ref);
+      expect(load.status).toBe("found");
+      if (load.status !== "found") return;
+      expect(load.snapshot.ref).toEqual(pin.ref);
+      if (load.snapshot.ref.aggregateType !== "CompletionPolicyRevision") return;
+      const snap = load.snapshot as CompletionPolicyRevisionSnapshot;
+      expect(snap.contentDigest).toBe(pin.digest);
+      expect(snap.content).toEqual(COMPLETION_POLICY_FIXTURE_V1.content);
+    });
+
+    it("install NEVER auto-activates (no active aggregates, no activated events)", async () => {
+      const h = await setupHarness();
+      const cmd = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+        commandId: freshCommandId("cmd-install-cp2"),
+        correlationId: freshCorrelationId(),
+        submittedAt: "2026-09-05T12:00:00.000Z",
+        projectId: "proj-alpha",
+        idempotencyKey: "inst-cp-alpha-2",
+      });
+      await h.install(cmd);
+      const active = await h.ledger.load({
+        aggregateType: "ProjectCompletionPolicyActive",
+        projectId: "proj-alpha",
+      });
+      expect(active.status).toBe("not_found");
+      const page = await h.ledger.events({ afterCursor: null, limit: 100 });
+      expect(page.events.map((p) => p.event.eventType)).not.toContain("CompletionPolicyActivated");
+      expect(page.events.map((p) => p.event.eventType)).not.toContain("ArchitectureBaselineActivated");
+    });
+
+    it("same identity/fingerprint replay is committed(replayed) with the ORIGINAL outcome", async () => {
+      const h = await setupHarness();
+      const deps = {
+        commandId: freshCommandId("cmd-install-cp3"),
+        correlationId: freshCorrelationId(),
+        submittedAt: "2026-09-05T12:00:00.000Z",
+        projectId: "proj-alpha",
+        idempotencyKey: "inst-cp-alpha-3",
+      };
+      const first = await h.install(buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, deps));
+      expect(first.status).toBe("committed");
+      const pageBefore = await h.ledger.events({ afterCursor: null, limit: 100 });
+      const replay = await h.install(buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, deps));
+      expect(replay.status).toBe("committed");
+      if (replay.status !== "committed" || first.status !== "committed") return;
+      expect(replay.replayed).toBe(true);
+      expect(replay.eventIds).toEqual(first.eventIds);
+      expect(replay.commitCursor).toEqual(first.commitCursor);
+      const pageAfter = await h.ledger.events({ afterCursor: null, limit: 100 });
+      expect(pageAfter.events.length).toBe(pageBefore.events.length);
+    });
+
+    it("same identity with a DIFFERENT fingerprint is idempotency_conflict, zero-write", async () => {
+      const h = await setupHarness();
+      const base = {
+        commandId: freshCommandId("cmd-install-cp4"),
+        correlationId: freshCorrelationId(),
+        submittedAt: "2026-09-05T12:00:00.000Z",
+        projectId: "proj-alpha",
+        idempotencyKey: "inst-cp-alpha-4",
+      };
+      await h.install(buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, base));
+      const before = await h.ledger.events({ afterCursor: null, limit: 100 });
+      const other = buildInstallCommand(ARCHITECTURE_BASELINE_FIXTURE_V1, base);
+      const receipt = await h.install(other);
+      expect(receipt.status).toBe("rejected");
+      if (receipt.status !== "rejected") return;
+      expect(receipt.code).toBe("idempotency_conflict");
+      const after = await h.ledger.events({ afterCursor: null, limit: 100 });
+      expect(after.events.length).toBe(before.events.length);
+    });
+
+    it("same identity/revision (different command) is NOT overwritable — revision_conflict, zero-write", async () => {
+      const h = await setupHarness();
+      await h.install(
+        buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+          commandId: freshCommandId("cmd-install-cp5"),
+          correlationId: freshCorrelationId(),
+          submittedAt: "2026-09-05T12:00:00.000Z",
+          projectId: "proj-alpha",
+          idempotencyKey: "inst-cp-alpha-5",
+        }),
+      );
+      const before = await h.ledger.events({ afterCursor: null, limit: 100 });
+      // different idempotency key => different command identity
+      const receipt = await h.install(
+        buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+          commandId: freshCommandId("cmd-install-cp5b"),
+          correlationId: freshCorrelationId(),
+          submittedAt: "2026-09-05T12:00:01.000Z",
+          projectId: "proj-alpha",
+          idempotencyKey: "inst-cp-alpha-5b",
+        }),
+      );
+      expect(receipt.status).toBe("rejected");
+      if (receipt.status !== "rejected") return;
+      expect(receipt.code).toBe("revision_conflict");
+      const after = await h.ledger.events({ afterCursor: null, limit: 100 });
+      expect(after.events.length).toBe(before.events.length);
+    });
+
+    it("digest mismatch -> digest_mismatch, zero-write", async () => {
+      const h = await setupHarness();
+      const before = await h.ledger.events({ afterCursor: null, limit: 100 });
+      const cmd = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+        commandId: freshCommandId("cmd-install-cp6"),
+        correlationId: freshCorrelationId(),
+        submittedAt: "2026-09-05T12:00:00.000Z",
+        projectId: "proj-alpha",
+        idempotencyKey: "inst-cp-alpha-6",
+      });
+      if (cmd.commandType !== "InstallCompletionPolicyRevision") throw new Error("fixture build error");
+      const tampered = { ...cmd, payload: { ...cmd.payload, contentDigest: "0".repeat(64) } };
+      const receipt = await h.install(tampered);
+      expect(receipt.status).toBe("rejected");
+      if (receipt.status !== "rejected") return;
+      expect(receipt.code).toBe("digest_mismatch");
+      const after = await h.ledger.events({ afterCursor: null, limit: 100 });
+      expect(after.events.length).toBe(before.events.length);
+    });
+
+    it("activation: only installed exact target accepted; dangling -> not_found zero-write; per-kind independence", async () => {
+      const h = await setupHarness();
+      const installed = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+        commandId: freshCommandId("cmd-install-cp7"),
+        correlationId: freshCorrelationId(),
+        submittedAt: "2026-09-05T12:00:00.000Z",
+        projectId: "proj-alpha",
+        idempotencyKey: "inst-cp-alpha-7",
+      });
+      await h.install(installed);
+
+      // dangling policy pin (different policyId)
+      const dangling = buildActivateCommand(
+        {
+          ref: {
+            aggregateType: "CompletionPolicyRevision",
+            projectId: "proj-alpha",
+            policyId: "policy-completion-absent",
+            revision: 1,
+          },
+          digest: "1".repeat(64),
+        },
+        {
+          commandId: freshCommandId("cmd-act-cp-dangling"),
+          correlationId: freshCorrelationId(),
+          submittedAt: "2026-09-05T12:00:00.000Z",
+          projectId: "proj-alpha",
+          expectedRevision: 1,
+        },
+      );
+      const before = await h.ledger.events({ afterCursor: null, limit: 100 });
+      const dn = await h.activate(dangling);
+      expect(dn.status).toBe("rejected");
+      if (dn.status !== "rejected") return;
+      expect(dn.code).toBe("not_found");
+
+      // digest mismatch on installed identity
+      if (installed.commandType !== "InstallCompletionPolicyRevision") throw new Error("build");
+      const pin = completionPolicyPinFor(installed);
+      const wrongDigest = buildActivateCommand(
+        { ...pin, digest: "2".repeat(64) },
+        {
+          commandId: freshCommandId("cmd-act-cp-digest"),
+          correlationId: freshCorrelationId(),
+          submittedAt: "2026-09-05T12:00:00.000Z",
+          projectId: "proj-alpha",
+          expectedRevision: 1,
+        },
+      );
+      const dm = await h.activate(wrongDigest);
+      expect(dm.status).toBe("rejected");
+      if (dm.status !== "rejected") return;
+      expect(dm.code).toBe("digest_mismatch");
+
+      // valid activation
+      const ok = await h.activate(
+        buildActivateCommand(pin, {
+          commandId: freshCommandId("cmd-act-cp-ok"),
+          correlationId: freshCorrelationId(),
+          submittedAt: "2026-09-05T12:00:00.000Z",
+          projectId: "proj-alpha",
+          expectedRevision: 1,
+        }),
+      );
+      expect(ok.status).toBe("committed");
+
+      // policy active set; baseline active still absent (independent kinds)
+      const policyActive = await h.ledger.load({
+        aggregateType: "ProjectCompletionPolicyActive",
+        projectId: "proj-alpha",
+      });
+      expect(policyActive.status).toBe("found");
+      if (policyActive.status !== "found") return;
+      expect((policyActive.snapshot as { activeRevision: unknown }).activeRevision).toEqual(pin.ref);
+      const baselineActive = await h.ledger.load({
+        aggregateType: "ProjectArchitectureBaselineActive",
+        projectId: "proj-alpha",
+      });
+      expect(baselineActive.status).toBe("not_found");
+      const after = await h.ledger.events({ afterCursor: null, limit: 100 });
+      const types = after.events.map((p) => p.event.eventType);
+      expect(types.filter((t) => t === "CompletionPolicyActivated").length).toBe(1);
+      expect(types).not.toContain("ArchitectureBaselineActivated");
+    });
+
+    it("activation CAS: stale expected Project revision -> revision_conflict, active ref unmoved", async () => {
+      const h = await setupHarness();
+      await h.bootstrap(buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, {
+        ...BOOT_DEPS,
+        commandId: freshCommandId("cmd-bootstrap2"),
+      })).catch(() => undefined);
+      const installed = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+        commandId: freshCommandId("cmd-install-cp8"),
+        correlationId: freshCorrelationId(),
+        submittedAt: "2026-09-05T12:00:00.000Z",
+        projectId: "proj-alpha",
+        idempotencyKey: "inst-cp-alpha-8",
+      });
+      await h.install(installed);
+      if (installed.commandType !== "InstallCompletionPolicyRevision") throw new Error("build");
+      const pin = completionPolicyPinFor(installed);
+      await h.activate(
+        buildActivateCommand(pin, {
+          commandId: freshCommandId("cmd-act-cp-first"),
+          correlationId: freshCorrelationId(),
+          submittedAt: "2026-09-05T12:00:00.000Z",
+          projectId: "proj-alpha",
+          expectedRevision: 1,
+        }),
+      );
+      // stale CAS: expected Project revision 99 (never true)
+      const stale = await h.activate(
+        buildActivateCommand(pin, {
+          commandId: freshCommandId("cmd-act-cp-stale"),
+          correlationId: freshCorrelationId(),
+          submittedAt: "2026-09-05T12:00:00.000Z",
+          projectId: "proj-alpha",
+          expectedRevision: 99,
+        }),
+      );
+      expect(stale.status).toBe("rejected");
+      if (stale.status !== "rejected") return;
+      expect(stale.code).toBe("revision_conflict");
+      const active = await h.ledger.load({
+        aggregateType: "ProjectCompletionPolicyActive",
+        projectId: "proj-alpha",
+      });
+      expect(active.status).toBe("found");
+      if (active.status !== "found") return;
+      // active ref did NOT move (still first activation revision 1)
+      expect((active.snapshot as { activeRevision: unknown }).activeRevision).toEqual(pin.ref);
+      expect(active.snapshot.revision).toBe(1);
+    });
+
+    it("two projects install their own revisions and activate independently (no id collision)", async () => {
+      const h = await setupHarness();
+      for (const projectId of ["proj-alpha", "proj-beta"]) {
+        const installed = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+          commandId: freshCommandId("cmd-install-" + projectId),
+          correlationId: freshCorrelationId(),
+          submittedAt: "2026-09-05T12:00:00.000Z",
+          projectId,
+          idempotencyKey: "inst-cp-" + projectId,
+        });
+        await h.install(installed);
+        if (installed.commandType !== "InstallCompletionPolicyRevision") throw new Error("build");
+        const ok = await h.activate(
+          buildActivateCommand(completionPolicyPinFor(installed), {
+            commandId: freshCommandId("cmd-act-" + projectId),
+            correlationId: freshCorrelationId(),
+            submittedAt: "2026-09-05T12:00:00.000Z",
+            projectId,
+            expectedRevision: 1,
+          }),
+        );
+        expect(ok.status).toBe("committed");
+      }
+      const alpha = await h.ledger.load({
+        aggregateType: "ProjectCompletionPolicyActive",
+        projectId: "proj-alpha",
+      });
+      const beta = await h.ledger.load({
+        aggregateType: "ProjectCompletionPolicyActive",
+        projectId: "proj-beta",
+      });
+      expect(alpha.status).toBe("found");
+      expect(beta.status).toBe("found");
+      if (alpha.status !== "found" || beta.status !== "found") return;
+      expect((alpha.snapshot as { activeRevision: { projectId: string } }).activeRevision.projectId).toBe("proj-alpha");
+      expect((beta.snapshot as { activeRevision: { projectId: string } }).activeRevision.projectId).toBe("proj-beta");
+      // architecture baseline kind stays independent for both
+      const alphaBaseline = await h.ledger.load({
+        aggregateType: "ProjectArchitectureBaselineActive",
+        projectId: "proj-alpha",
+      });
+      expect(alphaBaseline.status).toBe("not_found");
+    });
+
+    it("no ArchitectureEvolutionPolicy artifact exists anywhere in the ledger", async () => {
+      const h = await setupHarness();
+      await h.install(
+        buildInstallCommand(ARCHITECTURE_BASELINE_FIXTURE_V1, {
+          commandId: freshCommandId("cmd-install-ab"),
+          correlationId: freshCorrelationId(),
+          submittedAt: "2026-09-05T12:00:00.000Z",
+          projectId: "proj-alpha",
+          idempotencyKey: "inst-ab-alpha",
+        }),
+      );
+      const page = await h.ledger.events({ afterCursor: null, limit: 100 });
+      const json = JSON.stringify(page);
+      expect(json).not.toMatch(/ArchitectureEvolutionPolicy/);
+      const known = await import("../../src/contracts/events.js");
+      expect(known.KNOWN_EVENT_TYPES).not.toContain("ArchitectureEvolutionPolicyActivated");
+    });
+  });
+}

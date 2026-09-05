@@ -40,6 +40,12 @@ import type {
   ProjectionReceipt,
   ReadModelIndex,
 } from "../contracts/goal-view.js";
+import type {
+  PlanGraphViewQuery,
+  PlanGraphViewResult,
+  TaskDetailViewQuery,
+  TaskDetailViewResult,
+} from "../contracts/plan-view.js";
 import { ProjectionStallError } from "../contracts/goal-view.js";
 import type { CommitCursor, GoalCreatedEvent } from "../contracts/command-event.js";
 import type { DomainEvent } from "../contracts/events.js";
@@ -163,6 +169,13 @@ export class SqliteReadModelIndex implements ReadModelIndex {
 
       this.ensureKnownEvent(event, observedCursor);
 
+      // A known v1 event with NO projection handler must stall the WHOLE page
+      // up front — nothing may be partially applied (baseline: P1-02 events
+      // until the projection lands).
+      if (!this.isHandledEventType(event.eventType)) {
+        throw new ProjectionStallError("unsupported_event_type", { observedCursor });
+      }
+
       // Dedupe: an already-applied eventId is skipped (idempotent replay) and
       // is not re-reported nor counted against cursor continuity.
       if (this.isApplied(event.eventId)) continue;
@@ -241,6 +254,23 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       requiredCursor: observedCursor ?? makeCommitCursor(1),
       observedCursor,
     };
+  }
+
+  /** Event types this projection currently has handlers for. */
+  private isHandledEventType(eventType: string): boolean {
+    return eventType === "GoalCreated" || eventType === "ProjectBootstrapped" || eventType === "WorkspaceBootstrapped";
+  }
+
+  async planGraph(query: PlanGraphViewQuery): Promise<PlanGraphViewResult> {
+    this.assertOpen();
+    void query;
+    throw new Error("P1-02: planGraph not implemented yet");
+  }
+
+  async taskDetail(query: TaskDetailViewQuery): Promise<TaskDetailViewResult> {
+    this.assertOpen();
+    void query;
+    throw new Error("P1-02: taskDetail not implemented yet");
   }
 
   /**

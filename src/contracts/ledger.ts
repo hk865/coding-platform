@@ -8,6 +8,16 @@
  *  - LedgerCommitReceipt rejection code adds "not_empty" for that guard;
  *  - AggregateRef adds BootstrapManifestRef; EventPage carries the
  *    versioned DomainEvent union instead of GoalCreatedEvent only.
+ * P1-02 versioned extensions (recorded in the interface doc):
+ *  - LedgerCommit adds "governance-install" / "governance-activate" /
+ *    "plan-revision" kinds (immutable governance revision persistence,
+ *    per-kind active refs, accepted PlanRevision + Goal active plan);
+ *  - AggregateRef/AggregateSnapshot add CompletionPolicyRevision /
+ *    ArchitectureBaselineRevision / ProjectCompletionPolicyActive /
+ *    ProjectArchitectureBaselineActive / PlanRevision;
+ *  - GoalSnapshot.activePlanRevision becomes PlanRevisionRef | null and its
+ *    revision becomes number (v1 GoalCreated still creates null/1; the
+ *    P1-02 plan-revision commit advances the goal snapshot to revision 2).
  */
 import type {
   CommandFingerprint,
@@ -23,6 +33,21 @@ import type {
   WorkspaceBootstrappedEventV1,
 } from "./bootstrap.js";
 import type { DomainEvent } from "./events.js";
+import type {
+  ArchitectureBaselineActivatedEvent,
+  ArchitectureBaselineInstalledEvent,
+  ArchitectureBaselineRevisionRef,
+  ArchitectureBaselineRevisionSnapshot,
+  CompletionPolicyActivatedEvent,
+  CompletionPolicyInstalledEvent,
+  CompletionPolicyRevisionRef,
+  CompletionPolicyRevisionSnapshot,
+  ProjectArchitectureBaselineActiveRef,
+  ProjectArchitectureBaselineActiveSnapshot,
+  ProjectCompletionPolicyActiveRef,
+  ProjectCompletionPolicyActiveSnapshot,
+} from "./governance.js";
+import type { PlanRevisionAcceptedEvent, PlanRevisionRef, PlanRevisionSnapshot } from "./plan.js";
 
 export type ProjectRef = {
   aggregateType: "Project";
@@ -41,7 +66,16 @@ export type GoalRef = {
   goalId: string;
 };
 
-export type AggregateRef = ProjectRef | WorkspaceRef | GoalRef | BootstrapManifestRef;
+export type AggregateRef =
+  | ProjectRef
+  | WorkspaceRef
+  | GoalRef
+  | BootstrapManifestRef
+  | CompletionPolicyRevisionRef
+  | ArchitectureBaselineRevisionRef
+  | ProjectCompletionPolicyActiveRef
+  | ProjectArchitectureBaselineActiveRef
+  | PlanRevisionRef;
 
 export type ProjectSnapshot = {
   ref: ProjectRef;
@@ -58,15 +92,22 @@ export type GoalSnapshot = {
   workspaceRef: WorkspaceRef;
   objective: string;
   desiredState: "active";
-  activePlanRevision: null;
-  revision: 1;
+  /** null after GoalCreated@1; a PlanRevisionRef after ApplyPlanRevision. */
+  activePlanRevision: PlanRevisionRef | null;
+  /** 1 at creation; 2+ after an accepted plan revision. */
+  revision: number;
 };
 
 export type AggregateSnapshot =
   | ProjectSnapshot
   | WorkspaceSnapshot
   | GoalSnapshot
-  | BootstrapManifestSnapshot;
+  | BootstrapManifestSnapshot
+  | CompletionPolicyRevisionSnapshot
+  | ArchitectureBaselineRevisionSnapshot
+  | ProjectCompletionPolicyActiveSnapshot
+  | ProjectArchitectureBaselineActiveSnapshot
+  | PlanRevisionSnapshot;
 
 export type SnapshotResult =
   | { status: "found"; snapshot: AggregateSnapshot }
@@ -98,7 +139,48 @@ export type BootstrapLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-export type LedgerCommit = GoalCreateLedgerCommitV1 | BootstrapLedgerCommitV1;
+export type GovernanceInstallLedgerCommitV1 = {
+  commitKind: "governance-install";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [{ revision aggregate, 0 }] — immutability CAS; install never overwrites. */
+  expectedVersions: ExpectedVersion[];
+  events: (CompletionPolicyInstalledEvent | ArchitectureBaselineInstalledEvent)[];
+  snapshots: (CompletionPolicyRevisionSnapshot | ArchitectureBaselineRevisionSnapshot)[];
+  outboxIntents: [];
+};
+
+export type GovernanceActivateLedgerCommitV1 = {
+  commitKind: "governance-activate";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [Project@expected, ActiveAggregate@expected] — project CAS + kind CAS. */
+  expectedVersions: ExpectedVersion[];
+  events: (CompletionPolicyActivatedEvent | ArchitectureBaselineActivatedEvent)[];
+  snapshots: (ProjectCompletionPolicyActiveSnapshot | ProjectArchitectureBaselineActiveSnapshot)[];
+  outboxIntents: [];
+};
+
+export type PlanRevisionLedgerCommitV1 = {
+  commitKind: "plan-revision";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [Goal@expected, PlanRevision@0]. */
+  expectedVersions: ExpectedVersion[];
+  events: [PlanRevisionAcceptedEvent];
+  snapshots: (PlanRevisionSnapshot | GoalSnapshot)[];
+  outboxIntents: [];
+};
+
+export type LedgerCommit =
+  | GoalCreateLedgerCommitV1
+  | BootstrapLedgerCommitV1
+  | GovernanceInstallLedgerCommitV1
+  | GovernanceActivateLedgerCommitV1
+  | PlanRevisionLedgerCommitV1;
 
 export type LedgerCommitReceipt =
   | {
@@ -152,17 +234,17 @@ export interface StateLedger {
  */
 export function makeCommitCursor(sequence: number): CommitCursor {
   if (!Number.isSafeInteger(sequence) || sequence < 1) {
-    throw new Error(`invalid cursor sequence: ${String(sequence)}`);
+    throw new Error("invalid cursor sequence: " + String(sequence));
   }
-  return `c${String(sequence).padStart(10, "0")}` as CommitCursor;
+  return ("c" + String(sequence).padStart(10, "0")) as CommitCursor;
 }
 
 export function seqOfCommitCursor(cursor: CommitCursor): number {
   const match = /^c(\d{10})$/.exec(String(cursor));
-  if (!match?.[1]) throw new Error(`not a ledger cursor: ${String(cursor)}`);
+  if (!match?.[1]) throw new Error("not a ledger cursor: " + String(cursor));
   const seq = Number.parseInt(match[1], 10);
   if (!Number.isSafeInteger(seq) || seq < 1) {
-    throw new Error(`invalid cursor sequence: ${String(cursor)}`);
+    throw new Error("invalid cursor sequence: " + String(seq));
   }
   return seq;
 }

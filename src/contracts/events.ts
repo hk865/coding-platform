@@ -1,16 +1,29 @@
 /**
- * Versioned DomainEvent union for P1-00.
+ * Versioned DomainEvent union.
  * v1 events: GoalCreated (Goal create slice) + ProjectBootstrapped /
- * WorkspaceBootstrapped (P1-00 bootstrap extension).
- * Unknown eventType or schemaVersion !== 1 must stop consumers, never skip.
+ * WorkspaceBootstrapped (P1-00 bootstrap extension) + governance /
+ * plan events (P1-02 versioned extension).
+ * Unknown eventType or schemaVersion must stop consumers, never skip.
  */
 import type { GoalCreatedEvent } from "./command-event.js";
 import type { ProjectBootstrappedEventV1, WorkspaceBootstrappedEventV1 } from "./bootstrap.js";
+import type {
+  ArchitectureBaselineActivatedEvent,
+  ArchitectureBaselineInstalledEvent,
+  CompletionPolicyActivatedEvent,
+  CompletionPolicyInstalledEvent,
+} from "./governance.js";
+import type { PlanRevisionAcceptedEvent } from "./plan.js";
 
 export type DomainEventV1 =
   | GoalCreatedEvent
   | ProjectBootstrappedEventV1
-  | WorkspaceBootstrappedEventV1;
+  | WorkspaceBootstrappedEventV1
+  | CompletionPolicyInstalledEvent
+  | ArchitectureBaselineInstalledEvent
+  | CompletionPolicyActivatedEvent
+  | ArchitectureBaselineActivatedEvent
+  | PlanRevisionAcceptedEvent;
 
 export type DomainEvent = DomainEventV1;
 
@@ -19,6 +32,11 @@ export const KNOWN_EVENT_TYPES = [
   "GoalCreated",
   "ProjectBootstrapped",
   "WorkspaceBootstrapped",
+  "CompletionPolicyInstalled",
+  "ArchitectureBaselineInstalled",
+  "CompletionPolicyActivated",
+  "ArchitectureBaselineActivated",
+  "PlanRevisionAccepted",
 ] as const;
 
 export function isKnownEventType(eventType: string): eventType is (typeof KNOWN_EVENT_TYPES)[number] {

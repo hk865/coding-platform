@@ -15,6 +15,19 @@ import type { ProjectionReceipt } from "../contracts/goal-view.js";
 import type { StateLedger } from "../contracts/ledger.js";
 import type { ControlEngine, HumanCollaboration } from "../contracts/modules.js";
 import type { ReadModelIndex } from "../contracts/goal-view.js";
+import type {
+  GovernanceActivateCommand,
+  GovernanceActivateReceipt,
+  GovernanceInstallCommand,
+  GovernanceInstallReceipt,
+} from "../contracts/governance.js";
+import type { ApplyPlanRevisionCommand, PlanRevisionReceipt } from "../contracts/plan.js";
+import type {
+  PlanGraphViewQuery,
+  PlanGraphViewResult,
+  TaskDetailViewQuery,
+  TaskDetailViewResult,
+} from "../contracts/plan-view.js";
 import { InMemoryLedger } from "../ledger/in-memory-ledger.js";
 import { ControlEngineImpl } from "../control/control-engine.js";
 import { ReadModelIndexImpl } from "../read-model/read-model-index.js";
@@ -27,6 +40,15 @@ export interface InMemoryHarness {
   readModel: ReadModelIndex;
   collaboration: HumanCollaboration;
   bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
+  /** P1-02: governance install (immutable revision; never auto-activates). */
+  install(command: GovernanceInstallCommand): Promise<GovernanceInstallReceipt>;
+  /** P1-02: governance activation (CAS; per-kind active refs). */
+  activate(command: GovernanceActivateCommand): Promise<GovernanceActivateReceipt>;
+  /** P1-02: accept a hand-authored PlanRevision (fixed pins). */
+  applyPlan(command: ApplyPlanRevisionCommand): Promise<PlanRevisionReceipt>;
+  /** P1-02: Plan Graph / Task Detail views (freshness by opaque cursor). */
+  planGraph(query: PlanGraphViewQuery): Promise<PlanGraphViewResult>;
+  taskDetail(query: TaskDetailViewQuery): Promise<TaskDetailViewResult>;
   /** pull new events from the ledger and push them into the ReadModelIndex */
   advanceProjection(): Promise<ProjectionReceipt>;
   /** last cursor pushed into the ReadModelIndex (null until first advance) */
@@ -66,6 +88,11 @@ export function createInMemoryHarness(deps?: Partial<InjectableDeps>): InMemoryH
     readModel,
     collaboration,
     bootstrap: (command) => control.bootstrap(command),
+    install: (command) => control.install(command),
+    activate: (command) => control.activate(command),
+    applyPlan: (command) => control.applyPlan(command),
+    planGraph: (query) => readModel.planGraph(query),
+    taskDetail: (query) => readModel.taskDetail(query),
     advanceProjection,
     observedCursor: () => lastCursor,
   };

@@ -30,6 +30,19 @@ import type { WorkspaceBootstrapCommand, WorkspaceBootstrapReceipt } from "../co
 import type { CommitCursor } from "../contracts/command-event.js";
 import type { ProjectionReceipt } from "../contracts/goal-view.js";
 import type { ControlEngine, HumanCollaboration } from "../contracts/modules.js";
+import type {
+  GovernanceActivateCommand,
+  GovernanceActivateReceipt,
+  GovernanceInstallCommand,
+  GovernanceInstallReceipt,
+} from "../contracts/governance.js";
+import type { ApplyPlanRevisionCommand, PlanRevisionReceipt } from "../contracts/plan.js";
+import type {
+  PlanGraphViewQuery,
+  PlanGraphViewResult,
+  TaskDetailViewQuery,
+  TaskDetailViewResult,
+} from "../contracts/plan-view.js";
 import { SqliteStateLedger, createSqliteStateLedger } from "../sqlite-ledger/sqlite-ledger.js";
 import {
   SqliteReadModelIndex,
@@ -61,6 +74,15 @@ export interface PersistentSqliteHarness {
   collaboration: HumanCollaboration;
 
   bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
+  /** P1-02: governance install (immutable revision; never auto-activates). */
+  install(command: GovernanceInstallCommand): Promise<GovernanceInstallReceipt>;
+  /** P1-02: governance activation (CAS; per-kind active refs). */
+  activate(command: GovernanceActivateCommand): Promise<GovernanceActivateReceipt>;
+  /** P1-02: accept a hand-authored PlanRevision (fixed pins). */
+  applyPlan(command: ApplyPlanRevisionCommand): Promise<PlanRevisionReceipt>;
+  /** P1-02: Plan Graph / Task Detail views (freshness by opaque cursor). */
+  planGraph(query: PlanGraphViewQuery): Promise<PlanGraphViewResult>;
+  taskDetail(query: TaskDetailViewQuery): Promise<TaskDetailViewResult>;
   /** Pull new events from the ledger and push them into the read model. */
   advanceProjection(): Promise<ProjectionReceipt>;
   /** Last cursor pushed into the read model (null until first advance). */
@@ -90,6 +112,8 @@ interface BuiltHarness {
   collaboration: HumanCollaboration;
   advanceProjection: () => Promise<ProjectionReceipt>;
   observedCursor: () => CommitCursor | null;
+  planGraph: (query: PlanGraphViewQuery) => Promise<PlanGraphViewResult>;
+  taskDetail: (query: TaskDetailViewQuery) => Promise<TaskDetailViewResult>;
 }
 
 function buildHarness(
@@ -120,7 +144,16 @@ function buildHarness(
     }
     return receipt!;
   }
-  return { ledger, readModel, control, collaboration, advanceProjection, observedCursor: () => lastCursor };
+  return {
+    ledger,
+    readModel,
+    control,
+    collaboration,
+    advanceProjection,
+    observedCursor: () => lastCursor,
+    planGraph: (query) => readModel.planGraph(query),
+    taskDetail: (query) => readModel.taskDetail(query),
+  };
 }
 
 export async function createPersistentSqliteHarness(
@@ -146,6 +179,11 @@ export async function createPersistentSqliteHarness(
       control: built.control,
       collaboration: built.collaboration,
       bootstrap: (command) => built.control.bootstrap(command),
+      install: (command) => built.control.install(command),
+      activate: (command) => built.control.activate(command),
+      applyPlan: (command) => built.control.applyPlan(command),
+      planGraph: (query) => built.planGraph(query),
+      taskDetail: (query) => built.taskDetail(query),
       advanceProjection: built.advanceProjection,
       observedCursor: built.observedCursor,
       close: async () => {

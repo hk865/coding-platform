@@ -5,13 +5,21 @@ import type {
   EventPage,
   EventQuery,
   GoalCreateLedgerCommitV1,
+  GovernanceActivateLedgerCommitV1,
+  GovernanceInstallLedgerCommitV1,
   LedgerCommit,
   LedgerCommitReceipt,
+  PlanRevisionLedgerCommitV1,
   PositionedEvent,
   SnapshotResult,
   StateLedger,
   VersionedRef,
 } from "../contracts/ledger.js";
+import {
+  validateGovernanceActivateCommit,
+  validateGovernanceInstallCommit,
+  validatePlanRevisionCommit,
+} from "../contracts/ledger-validation.js";
 import { makeCommitCursor, seqOfCommitCursor } from "../contracts/ledger.js";
 import { bootstrapIdentityKey } from "../contracts/bootstrap.js";
 import type { CommandFingerprint } from "../contracts/command-event.js";
@@ -41,10 +49,13 @@ interface IdempotencyRecord {
 }
 
 function identityKeyFor(batch: LedgerCommit): string {
-  if (batch.commitKind === "goal-create") {
-    return "goal-create:" + commandIdentityKey(batch.identity);
+  if (batch.commitKind === "bootstrap") {
+    return "bootstrap:" + bootstrapIdentityKey(batch.identity);
   }
-  return "bootstrap:" + bootstrapIdentityKey(batch.identity);
+  // goal-create / governance-install / governance-activate / plan-revision all
+  // carry a project-scoped CommandIdentity; the kind prefix keeps identity
+  // namespaces disjoint per command family.
+  return batch.commitKind + ":" + commandIdentityKey(batch.identity);
 }
 
 /** Signify a versioned ref entry used by the CAS conflict currentVersions. */
@@ -73,10 +84,18 @@ export class InMemoryLedger implements StateLedger {
   }
 
   async commit(batch: LedgerCommit): Promise<LedgerCommitReceipt> {
-    if (batch.commitKind === "goal-create") {
-      return this.commitGoalCreate(batch);
+    switch (batch.commitKind) {
+      case "goal-create":
+        return this.commitGoalCreate(batch);
+      case "bootstrap":
+        return this.commitBootstrap(batch);
+      case "governance-install":
+        return this.commitGovernanceInstall(batch);
+      case "governance-activate":
+        return this.commitGovernanceActivate(batch);
+      case "plan-revision":
+        return this.commitPlanRevision(batch);
     }
-    return this.commitBootstrap(batch);
   }
 
   async events(query: EventQuery): Promise<EventPage> {
@@ -276,6 +295,107 @@ export class InMemoryLedger implements StateLedger {
       if (snapshot.revision !== 1) return false;
     }
     return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // governance-install / governance-activate / plan-revision (P1-02)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * P1-02 install: immutable revision persistence. Control folds the exact
+   * commit; the ledger enforces immutability via idempotency + CAS at
+   * expected revision 0 (validated by the shared kind validator).
+   */
+  private async commitGovernanceInstall(
+    batch: GovernanceInstallLedgerCommitV1,
+  ): Promise<LedgerCommitReceipt> {
+    if (!validateGovernanceInstallCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  /**
+   * P1-02 activate: typed Project active ref movement under CAS (Project
+   * revision + per-kind active-aggregate revision). Rejections never move the
+   * active ref (zero-write).
+   */
+  private async commitGovernanceActivate(
+    batch: GovernanceActivateLedgerCommitV1,
+  ): Promise<LedgerCommitReceipt> {
+    if (!validateGovernanceActivateCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  /**
+   * P1-02 plan acceptance: goal snapshot advance + immutable PlanRevision in
+   * ONE atomic commit (validated for exact event/snapshot/expected alignment).
+   */
+  private async commitPlanRevision(
+    batch: PlanRevisionLedgerCommitV1,
+  ): Promise<LedgerCommitReceipt> {
+    if (!validatePlanRevisionCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  /**
+   * Generic P1-02 commit path: idempotency (replay-or-conflict by identity +
+   * stored fingerprint, decided FIRST) -> CAS -> write. Shared by the three
+   * P1-02 kinds; the kind validator already ran.
+   */
+  private async commitGeneric(
+    batch: LedgerCommit,
+  ): Promise<LedgerCommitReceipt> {
+    const key = identityKeyFor(batch);
+    const existing = this.idempotency.get(key);
+    if (existing !== undefined) {
+      if (existing.fingerprint !== batch.fingerprint) {
+        return { status: "rejected", code: "idempotency_conflict" };
+      }
+      return {
+        status: "committed",
+        replayed: true,
+        identity: batch.identity,
+        aggregateRevisions: existing.aggregateRevisions,
+        eventIds: existing.eventIds,
+        commitCursor: existing.commitCursor,
+      };
+    }
+
+    const currentVersions = this.casConflicts(batch.expectedVersions);
+    if (currentVersions.length > 0) {
+      return { status: "rejected", code: "revision_conflict", currentVersions };
+    }
+
+    this.beforeWrite?.();
+
+    const written = this.appendEvents(batch.events);
+    for (const snapshot of batch.snapshots) {
+      this.snapshots.set(this.refKey(snapshot.ref), snapshot);
+    }
+    const aggregateRevisions: VersionedRef[] = batch.snapshots.map((s) => ({
+      ref: s.ref,
+      revision: s.revision,
+    }));
+    this.idempotency.set(key, {
+      fingerprint: batch.fingerprint,
+      eventIds: written.eventIds,
+      aggregateRevisions,
+      commitCursor: written.commitCursor,
+    });
+
+    return {
+      status: "committed",
+      replayed: false,
+      identity: batch.identity,
+      aggregateRevisions,
+      eventIds: written.eventIds,
+      commitCursor: written.commitCursor,
+    };
   }
 
   // ---------------------------------------------------------------------------

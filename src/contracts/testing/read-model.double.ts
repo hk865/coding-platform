@@ -6,6 +6,12 @@ import type {
   ProjectionReceipt,
   ReadModelIndex,
 } from "../goal-view.js";
+import type {
+  PlanGraphViewQuery,
+  PlanGraphViewResult,
+  TaskDetailViewQuery,
+  TaskDetailViewResult,
+} from "../plan-view.js";
 
 export type AdvanceBehavior = (
   page: EventPage,
@@ -13,15 +19,25 @@ export type AdvanceBehavior = (
 export type GoalBehavior = (
   query: GoalViewQuery,
 ) => Promise<GoalViewResult> | GoalViewResult;
+export type PlanGraphBehavior = (
+  query: PlanGraphViewQuery,
+) => Promise<PlanGraphViewResult> | PlanGraphViewResult;
+export type TaskDetailBehavior = (
+  query: TaskDetailViewQuery,
+) => Promise<TaskDetailViewResult> | TaskDetailViewResult;
 
 export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly advanceCalls: EventPage[] = [];
   readonly goalCalls: GoalViewQuery[] = [];
+  readonly planGraphCalls: PlanGraphViewQuery[] = [];
+  readonly taskDetailCalls: TaskDetailViewQuery[] = [];
 
   constructor(
     private readonly options: {
       advance?: AdvanceBehavior;
       goal?: GoalBehavior;
+      planGraph?: PlanGraphBehavior;
+      taskDetail?: TaskDetailBehavior;
     } = {},
   ) {}
 
@@ -37,6 +53,18 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   async goal(query: GoalViewQuery): Promise<GoalViewResult> {
     this.goalCalls.push(query);
     if (this.options.goal) return this.options.goal(query);
+    return { status: "not_found", observedCursor: null };
+  }
+
+  async planGraph(query: PlanGraphViewQuery): Promise<PlanGraphViewResult> {
+    this.planGraphCalls.push(query);
+    if (this.options.planGraph) return this.options.planGraph(query);
+    return { status: "not_found", observedCursor: null };
+  }
+
+  async taskDetail(query: TaskDetailViewQuery): Promise<TaskDetailViewResult> {
+    this.taskDetailCalls.push(query);
+    if (this.options.taskDetail) return this.options.taskDetail(query);
     return { status: "not_found", observedCursor: null };
   }
 }

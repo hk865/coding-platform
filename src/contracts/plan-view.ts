@@ -1,0 +1,101 @@
+/**
+ * Plan/Task View contracts — P1-02 ReadModel projection surface.
+ * Authority: dev_docs/interfaces/goal-view.md freshness semantics extended to
+ * Plan Graph / Task Detail (opaque CommitCursor; not_ready != not_found),
+ * modules/data/read-model-index.md (views are rebuildable event projections).
+ *
+ * View keys are FULL scope keys: (projectId, goalId) for the plan graph and
+ * (projectId, goalId, taskId) for task detail — local ids shared across
+ * Projects never collide (mirrors the Goal view triple).
+ */
+import type { CommitCursor } from "./command-event.js";
+import type {
+  AcceptanceObligation,
+  PlanRevisionRef,
+  PlanStage,
+  RequirementLevel,
+  RuntimeTask,
+  RuntimeExecutionDAG,
+  TaskHierarchy,
+  TaskKind,
+  TaskScope,
+  Disposition,
+  Phase,
+  VerificationRequirement,
+} from "./plan.js";
+import type {
+  ArchitectureBaselinePin,
+  CompletionPolicyPin,
+} from "./governance.js";
+
+export type PlanGraphViewQuery = {
+  projectId: string;
+  goalId: string;
+  atLeastCursor?: CommitCursor;
+};
+
+export type PlanGraphView = {
+  projectId: string;
+  goalId: string;
+  planRef: PlanRevisionRef;
+  planRevision: number;
+  acceptedAt: string;
+  pinnedCompletionPolicy: CompletionPolicyPin;
+  pinnedArchitectureBaseline: ArchitectureBaselinePin;
+  stages: PlanStage[];
+  tasks: RuntimeTask[];
+  taskHierarchy: TaskHierarchy;
+  executionDag: RuntimeExecutionDAG;
+  /** Last Event cursor that changed this row (not global freshness). */
+  sourceCursor: CommitCursor;
+};
+
+export type PlanGraphViewResult =
+  | { status: "ready"; graph: PlanGraphView; observedCursor: CommitCursor }
+  | {
+      status: "not_ready";
+      requiredCursor: CommitCursor;
+      observedCursor: CommitCursor | null;
+    }
+  | { status: "not_found"; observedCursor: CommitCursor | null };
+
+export type TaskDetailViewQuery = {
+  projectId: string;
+  goalId: string;
+  taskId: string;
+  atLeastCursor?: CommitCursor;
+};
+
+export type TaskDetailView = {
+  projectId: string;
+  goalId: string;
+  taskId: string;
+  title: string;
+  stageId: string | null;
+  requirementLevel: RequirementLevel;
+  taskKind: TaskKind;
+  disposition: Disposition;
+  phase: Phase;
+  scope: TaskScope;
+  /**
+   * Obligations that map this task, with their compiled verification
+   * requirements (projection of the accepted snapshot, never a dispatch or
+   * completion claim).
+   */
+  obligations: {
+    obligationId: string;
+    title: string;
+    requirementLevel: RequirementLevel;
+    verificationRequirements: VerificationRequirement[];
+  }[];
+  sourceCursor: CommitCursor;
+};
+
+export type TaskDetailViewResult =
+  | { status: "ready"; task: TaskDetailView; observedCursor: CommitCursor }
+  | {
+      status: "not_ready";
+      requiredCursor: CommitCursor;
+      observedCursor: CommitCursor | null;
+    }
+  | { status: "not_found"; observedCursor: CommitCursor | null };

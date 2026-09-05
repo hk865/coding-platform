@@ -56,6 +56,16 @@ import {
   validateWorkspaceBootstrapCommand,
 } from "../contracts/validation.js";
 import type { ControlEngine } from "../contracts/modules.js";
+import type {
+  GovernanceActivateCommand,
+  GovernanceActivateReceipt,
+  GovernanceInstallCommand,
+  GovernanceInstallReceipt,
+} from "../contracts/governance.js";
+import type { ApplyPlanRevisionCommand, PlanRevisionReceipt } from "../contracts/plan.js";
+import { installGovernanceRevision } from "./governance-install.js";
+import { activateGovernance } from "./governance-activate.js";
+import { applyPlanRevision } from "./plan-acceptance.js";
 
 export type ControlEngineDeps = {
   ledger: StateLedger;
@@ -179,6 +189,22 @@ export class ControlEngineImpl implements ControlEngine {
 
     const receipt = await this.deps.ledger.commit(batch);
     return this.mapBootstrapReceipt(receipt, command, manifestSnapshot);
+  }
+
+  // --------------------------------------------------------------------- //
+  // P1-02 governance + plan (delegating handlers; semantics see handoff)     //
+  // --------------------------------------------------------------------- //
+
+  install(command: GovernanceInstallCommand): Promise<GovernanceInstallReceipt> {
+    return installGovernanceRevision(this.deps, command);
+  }
+
+  activate(command: GovernanceActivateCommand): Promise<GovernanceActivateReceipt> {
+    return activateGovernance(this.deps, command);
+  }
+
+  applyPlan(command: ApplyPlanRevisionCommand): Promise<PlanRevisionReceipt> {
+    return applyPlanRevision(this.deps, command);
   }
 
   // --------------------------------------------------------------------- //

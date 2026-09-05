@@ -40,13 +40,21 @@ import type {
   EventPage,
   EventQuery,
   GoalCreateLedgerCommitV1,
+  GovernanceActivateLedgerCommitV1,
+  GovernanceInstallLedgerCommitV1,
   LedgerCommit,
   LedgerCommitReceipt,
+  PlanRevisionLedgerCommitV1,
   PositionedEvent,
   SnapshotResult,
   StateLedger,
   VersionedRef,
 } from "../contracts/ledger.js";
+import {
+  validateGovernanceActivateCommit,
+  validateGovernanceInstallCommit,
+  validatePlanRevisionCommit,
+} from "../contracts/ledger-validation.js";
 import { makeCommitCursor, seqOfCommitCursor } from "../contracts/ledger.js";
 import { bootstrapIdentityKey } from "../contracts/bootstrap.js";
 import type { CommandFingerprint } from "../contracts/command-event.js";
@@ -116,10 +124,7 @@ export class SqliteStateLedger implements StateLedger {
     this.assertOpen();
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const receipt =
-        batch.commitKind === "goal-create"
-          ? this.commitGoalCreate(batch)
-          : this.commitBootstrap(batch);
+      const receipt = this.commitDispatch(batch);
       this.db.exec("COMMIT");
       return receipt;
     } catch (err) {
@@ -189,10 +194,13 @@ export class SqliteStateLedger implements StateLedger {
   }
 
   private identityKeyFor(batch: LedgerCommit): string {
-    if (batch.commitKind === "goal-create") {
-      return "goal-create:" + commandIdentityKey(batch.identity);
+    if (batch.commitKind === "bootstrap") {
+      return "bootstrap:" + bootstrapIdentityKey(batch.identity);
     }
-    return "bootstrap:" + bootstrapIdentityKey(batch.identity);
+    // goal-create / governance-install / governance-activate / plan-revision all
+    // carry a project-scoped CommandIdentity; the kind prefix keeps identity
+    // namespaces disjoint per command family.
+    return batch.commitKind + ":" + commandIdentityKey(batch.identity);
   }
 
   private idempotencyRecord(key: string): IdempotencyRecord | undefined {
@@ -389,6 +397,93 @@ export class SqliteStateLedger implements StateLedger {
   // ---------------------------------------------------------------------------
   // bootstrap
   // ---------------------------------------------------------------------------
+
+  private commitDispatch(batch: LedgerCommit): LedgerCommitReceipt {
+    switch (batch.commitKind) {
+      case "goal-create":
+        return this.commitGoalCreate(batch);
+      case "bootstrap":
+        return this.commitBootstrap(batch);
+      case "governance-install":
+        return this.commitGovernanceInstall(batch);
+      case "governance-activate":
+        return this.commitGovernanceActivate(batch);
+      case "plan-revision":
+        return this.commitPlanRevision(batch);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // P1-02 commit kinds (validators shared with InMemoryLedger)
+  // ---------------------------------------------------------------------------
+
+  private commitGovernanceInstall(batch: GovernanceInstallLedgerCommitV1): LedgerCommitReceipt {
+    if (!validateGovernanceInstallCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitGovernanceActivate(batch: GovernanceActivateLedgerCommitV1): LedgerCommitReceipt {
+    if (!validateGovernanceActivateCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitPlanRevision(batch: PlanRevisionLedgerCommitV1): LedgerCommitReceipt {
+    if (!validatePlanRevisionCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  /**
+   * Generic P1-02 commit path: idempotency (replay-or-conflict) FIRST, then
+   * CAS, then one atomic write; the kind validator already ran.
+   */
+  private commitGeneric(batch: LedgerCommit): LedgerCommitReceipt {
+    const key = this.identityKeyFor(batch);
+    const existing = this.idempotencyRecord(key);
+    if (existing !== undefined) {
+      if (existing.fingerprint !== String(batch.fingerprint)) {
+        return { status: "rejected", code: "idempotency_conflict" };
+      }
+      return this.replayReceipt(batch, existing);
+    }
+
+    const currentVersions = this.casConflicts(batch.expectedVersions);
+    if (currentVersions.length > 0) {
+      return { status: "rejected", code: "revision_conflict", currentVersions };
+    }
+
+    this.beforeWrite?.();
+
+    const written = this.appendEvents(batch.events);
+    for (const snapshot of batch.snapshots) {
+      this.upsertSnapshot(snapshot);
+    }
+    const aggregateRevisions: VersionedRef[] = batch.snapshots.map((snapshot) => ({
+      ref: snapshot.ref,
+      revision: snapshot.revision,
+    }));
+    this.persistIdempotency(
+      key,
+      batch.fingerprint,
+      written.eventIds,
+      aggregateRevisions,
+      written.commitCursor,
+    );
+
+    return {
+      status: "committed",
+      replayed: false,
+      identity: batch.identity,
+      aggregateRevisions,
+      eventIds: written.eventIds,
+      commitCursor: written.commitCursor,
+    };
+  }
 
   private commitBootstrap(batch: BootstrapLedgerCommitV1): LedgerCommitReceipt {
     if (!this.validateBootstrap(batch)) {
