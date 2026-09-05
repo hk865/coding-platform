@@ -257,6 +257,8 @@ export type PlanRevisionAcceptedEvent = {
   occurredAt: string;
   payload: {
     goalId: string;
+    /** Goal aggregate revision after acceptance (canonical = expectedGoal + 1). */
+    goalAggregateRevision: number;
     /** Full accepted snapshot (the ONLY source the ReadModel replays from). */
     planRevision: PlanRevisionSnapshot;
   };

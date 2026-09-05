@@ -219,6 +219,7 @@ export function validatePlanRevisionCommit(batch: PlanRevisionLedgerCommitV1): b
   }
   if (goalSnapshot.workspaceRef.projectId !== event.projectId) return false;
   if (goalSnapshot.workspaceRef.workspaceId !== event.workspaceId) return false;
+  if (event.payload.goalAggregateRevision !== goalSnapshot.revision) return false;
 
   // CAS: [Goal@(goalSnapshot.revision - 1), PlanRevision@0].
   if (batch.expectedVersions.length !== 2) return false;

@@ -320,6 +320,20 @@ export function validateDomainEvent(value: unknown): ValidationIssue[] {
     const payload = value["payload"];
     if (!isRecord(payload)) {
       issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+      return issues;
+    }
+    if (eventType === "PlanRevisionAccepted") {
+      stringField(payload, "goalId", issues, "payload.goalId");
+      if (!Number.isSafeInteger(payload["goalAggregateRevision"]) || (payload["goalAggregateRevision"] as number) < 1) {
+        issues.push({
+          path: "payload.goalAggregateRevision",
+          code: "bad_type",
+          message: "goalAggregateRevision must be a positive integer",
+        });
+      }
+      if (!isRecord(payload["planRevision"])) {
+        issues.push({ path: "payload.planRevision", code: "bad_type", message: "planRevision must be an object" });
+      }
     }
   } else if (typeof eventType === "string" && isKnownEventType(eventType)) {
     // covered above by per-type field checks

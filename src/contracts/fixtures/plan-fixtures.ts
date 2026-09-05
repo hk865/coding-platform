@@ -238,7 +238,13 @@ export function planRevisionSnapshotFor(
 
 export function planRevisionAcceptedEventFor(
   command: ApplyPlanRevisionCommand,
-  deps: { eventId: string; occurredAt: string; workspaceId: string; planSnapshot: PlanRevisionSnapshot },
+  deps: {
+    eventId: string;
+    occurredAt: string;
+    workspaceId: string;
+    goalAggregateRevision: number;
+    planSnapshot: PlanRevisionSnapshot;
+  },
 ): PlanRevisionAcceptedEvent {
   return {
     eventId: deps.eventId,
@@ -254,7 +260,11 @@ export function planRevisionAcceptedEventFor(
     idempotencyKey: command.identity.idempotencyKey,
     actor: { ...command.identity.actor },
     occurredAt: deps.occurredAt,
-    payload: { goalId: command.aggregateId, planRevision: deps.planSnapshot },
+    payload: {
+      goalId: command.aggregateId,
+      goalAggregateRevision: deps.goalAggregateRevision,
+      planRevision: deps.planSnapshot,
+    },
   };
 }
 
@@ -282,13 +292,14 @@ export function buildPlanLedgerCommit(
   },
 ): PlanRevisionLedgerCommitV1 {
   const planSnapshot = planRevisionSnapshotFor(command, deps.pins, deps.acceptedAt);
+  const goalSnapshot = updatedGoalSnapshotFor(deps.baseGoal, planSnapshot.ref);
   const event = planRevisionAcceptedEventFor(command, {
     eventId: deps.eventId,
     occurredAt: deps.occurredAt,
     workspaceId: deps.baseGoal.workspaceRef.workspaceId,
+    goalAggregateRevision: goalSnapshot.revision,
     planSnapshot,
   });
-  const goalSnapshot = updatedGoalSnapshotFor(deps.baseGoal, planSnapshot.ref);
   return {
     commitKind: "plan-revision",
     schemaVersion: 1,
