@@ -5,12 +5,12 @@
  *   close -> reopen -> (a) canonical refs re-resolve, (b) Plan Graph /
  *   Task Detail / active revision rebuilt identically from persisted events.
  *
- * SKELETON (shared baseline): the original P1-01 pattern (restart-fixtures /
- * restart-assertions) is reused; lane D completes/owns this file. Readiness
- * probe: the path is only executable once the P1-02 handlers + projections
- * are implemented (stubs throw "P1-02: ... not implemented yet").
+ * Owned by P1-02 lane D. The path only executes once the P1-02 handlers
+ * (lanes A/B) AND projections (lane C) are implemented — the readiness probe
+ * \`isP102Ready()\` runs the FULL pre-restart path in a throwaway harness and
+ * returns false while any step still throws "P1-02: ... not implemented yet",
+ * so the restart / evidence tests SKIP until then (never fake).
  */
-import type { WorkspaceBootstrapCommand, WorkspaceBootstrapReceipt } from "../../src/contracts/bootstrap.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
 import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
 import {
@@ -23,6 +23,15 @@ import {
 } from "../../src/contracts/fixtures/governance-fixtures.js";
 import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
 import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../../src/contracts/fixtures/goal-fixtures.js";
+import type {
+  CompletionPolicyPin,
+  ArchitectureBaselinePin,
+  CompletionPolicyRevisionRef,
+  ArchitectureBaselineRevisionRef,
+} from "../../src/contracts/governance.js";
+import { resolveProjectCompletionPolicy, resolveProjectArchitectureBaseline } from "../../src/contracts/governance.js";
+import type { PlanRevisionRef } from "../../src/contracts/plan.js";
+import type { GoalSnapshot } from "../../src/contracts/ledger.js";
 import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import type { PlanGraphView } from "../../src/contracts/plan-view.js";
@@ -31,48 +40,60 @@ import type { GoalView } from "../../src/contracts/goal-view.js";
 
 const SCHEMA = "2026-09-05T12:00:00.000Z";
 
+/** Pre-restart evidence captured after the full path (deterministic ids). */
 export interface P102PreRestartEvidence {
   projectId: string;
   workspaceId: string;
   goalId: string;
   planId: string;
-  policyRef: unknown;
-  baselineRef: unknown;
+  // canonical governance refs (revision ref + canonical content digest)
+  policyRef: CompletionPolicyRevisionRef;
+  baselineRef: ArchitectureBaselineRevisionRef;
   policyDigest: string;
   baselineDigest: string;
-  policyContentDigest: string;
-  baselineContentDigest: string;
+  // plan pins (immutable; effective governance for the accepted plan)
+  planPinPolicy: CompletionPolicyPin;
+  planPinBaseline: ArchitectureBaselinePin;
   planPinPolicyDigest: string;
   planPinBaselineDigest: string;
-  activePolicyRef: unknown;
-  activeBaselineRef: unknown;
-  goalSnapshotActivePlan: unknown;
+  // project active refs (per-kind aggregates)
+  activePolicyRef: CompletionPolicyRevisionRef;
+  activeBaselineRef: ArchitectureBaselineRevisionRef;
+  activePolicyAggregateRevision: number;
+  activeBaselineAggregateRevision: number;
+  // goal snapshot after acceptance
+  goalSnapshotActivePlan: PlanRevisionRef | null;
   goalSnapshotRevision: number;
-  notFoundBaseline: { projectId: string; aggregateType: string };
+  // per-step commit cursors (deterministic, for the evidence line)
+  commitCursors: {
+    bootstrap: string | null;
+    installCompletionPolicy: string | null;
+    installArchitectureBaseline: string | null;
+    activateCompletionPolicy: string | null;
+    activateArchitectureBaseline: string | null;
+    createGoal: string | null;
+    applyPlan: string | null;
+  };
+  // views
   graph: PlanGraphView | null;
   taskDetails: TaskDetailView[];
   goalView: GoalView | null;
+  // distinct event-type set (first-occurrence order)
   eventTypes: string[];
 }
 
-/** True when the P1-02 handlers + projections are implemented (no stub throw). */
+/**
+ * True when the P1-02 handlers (install/activate/applyPlan) AND projections
+ * (planGraph/taskDetail/goalView) are implemented. Runs the FULL pre-restart
+ * path in a throwaway harness: any "P1-02: ... not implemented yet" stub throw
+ * (or a projection stall / zero-write rejection) lands in the catch and we
+ * report false — the restart tests then SKIP instead of failing. No fake.
+ */
 export async function isP102Ready(): Promise<boolean> {
   const h = await createPersistentSqliteHarness({ deps: {} });
   try {
-    const c = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
-      commandId: "probe-cmd",
-      correlationId: "probe-corr",
-      submittedAt: SCHEMA,
-      projectId: "proj-alpha",
-      idempotencyKey: "probe-install",
-    });
-    await h.bootstrap(buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, {
-      commandId: "probe-boot",
-      correlationId: "probe-corr",
-      submittedAt: SCHEMA,
-    }));
-    const receipt = await h.install(c);
-    return receipt.status === "committed";
+    await runP102Path(h);
+    return true;
   } catch {
     return false;
   } finally {
@@ -80,18 +101,23 @@ export async function isP102Ready(): Promise<boolean> {
   }
 }
 
-/** Execute the pre-restart path and capture evidence (deterministic ids). */
+/**
+ * Execute the pre-restart path and capture evidence. Every step uses the REAL
+ * modules (ControlEngineImpl + SqliteStateLedger + SqliteReadModelIndex +
+ * HumanCollaboration). Deterministic ids make the whole block reproducible.
+ */
 export async function runP102Path(h: PersistentSqliteHarness): Promise<P102PreRestartEvidence> {
   const projectId = "proj-alpha";
   const workspaceId = "ws-shared";
   const goalId = "goal-1";
   const planId = HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1.planId;
 
-  await h.bootstrap(buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, {
+  const bootReceipt = await h.bootstrap(buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, {
     commandId: "cmd-boot",
     correlationId: "corr-boot",
     submittedAt: SCHEMA,
   }));
+  if (bootReceipt.status !== "committed") throw new Error("bootstrap failed");
 
   const cp = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
     commandId: "cmd-install-cp",
@@ -110,7 +136,9 @@ export async function runP102Path(h: PersistentSqliteHarness): Promise<P102PreRe
   const cpReceipt = await h.install(cp);
   const abReceipt = await h.install(ab);
   if (cpReceipt.status !== "committed" || abReceipt.status !== "committed") throw new Error("install failed");
-  if (cp.commandType !== "InstallCompletionPolicyRevision" || ab.commandType !== "InstallArchitectureBaselineRevision") throw new Error("fixture kind");
+  if (cp.commandType !== "InstallCompletionPolicyRevision" || ab.commandType !== "InstallArchitectureBaselineRevision") {
+    throw new Error("fixture kind");
+  }
 
   const actCp = await h.activate(buildActivateCommand(completionPolicyPinFor(cp), {
     commandId: "cmd-act-cp",
@@ -169,34 +197,56 @@ export async function runP102Path(h: PersistentSqliteHarness): Promise<P102PreRe
   if (goalView.status !== "ready") throw new Error("goal view not ready");
 
   const page = await h.ledger.events({ afterCursor: null, limit: 500 });
+  const eventTypes: string[] = [];
+  for (const p of page.events) {
+    if (!eventTypes.includes(p.event.eventType)) eventTypes.push(p.event.eventType);
+  }
+
+  const goalSnap = goalSnapshot.snapshot as GoalSnapshot;
+  const policySnap = activePolicy.snapshot as { activeRevision: CompletionPolicyRevisionRef; revision: number };
+  const baselineSnap = activeBaseline.snapshot as { activeRevision: ArchitectureBaselineRevisionRef; revision: number };
 
   const evd: P102PreRestartEvidence = {
     projectId,
     workspaceId,
     goalId,
     planId,
-    policyRef: cpReceipt.revisionRef,
-    baselineRef: abReceipt.revisionRef,
+    policyRef: cpReceipt.revisionRef as CompletionPolicyRevisionRef,
+    baselineRef: abReceipt.revisionRef as ArchitectureBaselineRevisionRef,
     policyDigest: cpReceipt.contentDigest,
     baselineDigest: abReceipt.contentDigest,
-    policyContentDigest: cp.payload.contentDigest,
-    baselineContentDigest: ab.payload.contentDigest,
+    planPinPolicy: graph.graph.pinnedCompletionPolicy,
+    planPinBaseline: graph.graph.pinnedArchitectureBaseline,
     planPinPolicyDigest: graph.graph.pinnedCompletionPolicy.digest,
     planPinBaselineDigest: graph.graph.pinnedArchitectureBaseline.digest,
-    activePolicyRef: (activePolicy.snapshot as { activeRevision: unknown }).activeRevision,
-    activeBaselineRef: (activeBaseline.snapshot as { activeRevision: unknown }).activeRevision,
-    goalSnapshotActivePlan: (goalSnapshot.snapshot as { activePlanRevision: unknown }).activePlanRevision,
-    goalSnapshotRevision: goalSnapshot.snapshot.revision,
-    notFoundBaseline: { projectId: "proj-beta", aggregateType: "PlanRevision" },
+    activePolicyRef: policySnap.activeRevision,
+    activeBaselineRef: baselineSnap.activeRevision,
+    activePolicyAggregateRevision: policySnap.revision,
+    activeBaselineAggregateRevision: baselineSnap.revision,
+    goalSnapshotActivePlan: goalSnap.activePlanRevision,
+    goalSnapshotRevision: goalSnap.revision,
+    commitCursors: {
+      bootstrap: bootReceipt.status === "committed" ? String(bootReceipt.commitCursor) : null,
+      installCompletionPolicy: cpReceipt.status === "committed" ? String(cpReceipt.commitCursor) : null,
+      installArchitectureBaseline: abReceipt.status === "committed" ? String(abReceipt.commitCursor) : null,
+      activateCompletionPolicy: actCp.status === "committed" ? String(actCp.commitCursor) : null,
+      activateArchitectureBaseline: actAb.status === "committed" ? String(actAb.commitCursor) : null,
+      createGoal: goal.status === "committed" ? String(goal.commitCursor) : null,
+      applyPlan: plan.status === "committed" ? String(plan.commitCursor) : null,
+    },
     graph: graph.graph,
     taskDetails,
     goalView: goalView.goal,
-    eventTypes: page.events.map((p) => p.event.eventType),
+    eventTypes,
   };
   return evd;
 }
 
-/** Post-restart assertions: canonical refs resolve; pin unchanged; views rebuilt identical. */
+/**
+ * Post-restart assertions: canonical refs resolve (identity/revision/digest
+ * triple), pin unchanged, views rebuilt identical from persisted EventPages.
+ * Throws on ANY mismatch (the restart test fails if the path is broken).
+ */
 export function verifyP102AfterRestart(
   h: PersistentSqliteHarness,
   before: P102PreRestartEvidence,
@@ -207,9 +257,10 @@ export function verifyP102AfterRestart(
     // (a) canonical: refs still resolve from the persistence store
     const goalSnapshot = await h.ledger.load({ aggregateType: "Goal", projectId, goalId });
     if (goalSnapshot.status !== "found") throw new Error("goal snapshot lost after restart");
-    const goalActive = (goalSnapshot.snapshot as { activePlanRevision: unknown }).activePlanRevision;
+    const goalSnap = goalSnapshot.snapshot as GoalSnapshot;
+    const goalActive = goalSnap.activePlanRevision;
     if (goalActive === null) throw new Error("active plan lost");
-    if (goalSnapshot.snapshot.revision !== before.goalSnapshotRevision) throw new Error("goal revision drifted");
+    if (goalSnap.revision !== before.goalSnapshotRevision) throw new Error("goal revision drifted");
     if (JSON.stringify(goalActive) !== JSON.stringify(before.goalSnapshotActivePlan)) {
       throw new Error("active plan ref drifted");
     }
@@ -224,6 +275,14 @@ export function verifyP102AfterRestart(
       projectId,
     });
     if (active.status !== "found") throw new Error("active policy ref lost");
+
+    // canonical resolution via the frozen read-only helpers (exact triple match)
+    const policy = await resolveProjectCompletionPolicy(h.ledger, projectId);
+    if (policy.status !== "found") throw new Error("completion policy did not resolve after restart");
+    if (policy.pin.digest !== before.planPinPolicyDigest) throw new Error("policy canonical digest drifted");
+    const baseline = await resolveProjectArchitectureBaseline(h.ledger, projectId);
+    if (baseline.status !== "found") throw new Error("architecture baseline did not resolve after restart");
+    if (baseline.pin.digest !== before.planPinBaselineDigest) throw new Error("baseline canonical digest drifted");
 
     // (b) views rebuilt from persisted events: advance the NEW read model and
     // compare field-for-field with the pre-restart graph/task-detail/goal view.
