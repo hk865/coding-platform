@@ -148,6 +148,12 @@ export async function verifyRebuildViews(
   alpha: GoalFixtureScope,
   beta: GoalFixtureScope,
 ): Promise<void> {
+  // The caller must have drained the persisted EventPage(s) into `rebuilt`
+  // (rebuilt.advanceProjection()) before this assertion runs. The rebuilt index
+  // is fresh (no checkpoint), so after draining it must have covered exactly the
+  // pre-restart observed cursor — the freshness rule in read-model-index.md.
+  expect(rebuilt.observedCursor()).toEqual(capture.observedCursor);
+
   const alphaView = await rebuilt.collaboration.goalView({
     projectId: alpha.projectId,
     workspaceId: alpha.workspaceId,
