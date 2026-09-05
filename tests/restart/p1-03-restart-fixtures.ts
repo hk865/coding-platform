@@ -22,6 +22,7 @@ import {
 import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../../src/contracts/fixtures/goal-fixtures.js";
 import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
 import {
+  DISPATCH_BLOCKED_TASK_ID,
   DISPATCH_ELIGIBLE_TASK_ID,
   DISPATCH_PLAN_REVISION_FIXTURE_V1,
   buildDispatchStartCommand,
@@ -76,10 +77,10 @@ export async function runP103Path(h: PersistentSqliteHarness) {
   if (installedCp.status !== "committed" || installedAb.status !== "committed") throw new Error("install");
   const { completionPolicyPinFor, architectureBaselinePinFor } = await import("../../src/contracts/fixtures/governance-fixtures.js");
   const actCp = await h.activate(buildActivateCommand(completionPolicyPinFor(cpCmd as never), {
-    commandId: "cmd-p103-actcp", correlationId: "corr-p103-actcp", submittedAt: SCHEMA, projectId: "proj-alpha", expectedRevision: 1,
+    commandId: "cmd-p103-actcp", correlationId: "corr-p103-actcp", submittedAt: SCHEMA, projectId: "proj-alpha", expectedRevision: 1, idempotencyKey: "activate-p103-cp",
   }));
   const actAb = await h.activate(buildActivateCommand(architectureBaselinePinFor(abCmd as never), {
-    commandId: "cmd-p103-actab", correlationId: "corr-p103-actab", submittedAt: SCHEMA, projectId: "proj-alpha", expectedRevision: 1,
+    commandId: "cmd-p103-actab", correlationId: "corr-p103-actab", submittedAt: SCHEMA, projectId: "proj-alpha", expectedRevision: 1, idempotencyKey: "activate-p103-ab",
   }));
   if (actCp.status !== "committed" || actAb.status !== "committed") throw new Error("activate");
 
@@ -89,8 +90,32 @@ export async function runP103Path(h: PersistentSqliteHarness) {
     }),
   );
   if (goal.status !== "committed") throw new Error("goal failed");
+  // The frozen DISPATCH_PLAN_REVISION_FIXTURE_V1 leaves the required+work+active
+  // task-blocked unmapped by any required obligation, so the P1-02 applyPlan guard
+  // rejects it (task_obligation_mapping). We add that mapping here (no src/contracts/**
+  // change) so the restart path can exercise the dispatch/run flow.
+  const planDraft: import("../../src/contracts/plan.js").PlanRevisionDraft = {
+    ...DISPATCH_PLAN_REVISION_FIXTURE_V1,
+    obligations: [
+      ...DISPATCH_PLAN_REVISION_FIXTURE_V1.obligations,
+      {
+        obligationId: "obl-blocked",
+        title: "映射 blocked 任务以满足 P1-02 applyPlan 守卫",
+        requirementLevel: "required",
+        taskIds: [DISPATCH_BLOCKED_TASK_ID],
+        verificationRequirements: [
+          {
+            requirementId: "vr-blocked",
+            requirementLevel: "required",
+            kind: "static",
+            description: "blocked 任务不可领取",
+          },
+        ],
+      },
+    ],
+  };
   const plan = await h.applyPlan(
-    buildApplyPlanCommand(DISPATCH_PLAN_REVISION_FIXTURE_V1, {
+    buildApplyPlanCommand(planDraft, {
       commandId: "cmd-p103-plan", correlationId: "corr-p103-plan", submittedAt: SCHEMA,
       projectId: "proj-alpha", expectedRevision: 1,
     }),

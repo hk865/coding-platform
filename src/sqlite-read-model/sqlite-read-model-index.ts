@@ -60,7 +60,12 @@ import type {
   TaskDetailViewQuery,
   TaskDetailViewResult,
 } from "../contracts/plan-view.js";
-import type { ActiveAgentQuery, ActiveAgentViewResult } from "../contracts/active-agent.js";
+import type {
+  ActiveAgentQuery,
+  ActiveAgentView,
+  ActiveAgentViewResult,
+  TaskRunState,
+} from "../contracts/active-agent.js";
 import { ProjectionStallError } from "../contracts/goal-view.js";
 import type { CommitCursor, GoalCreatedEvent } from "../contracts/command-event.js";
 import type { DomainEvent } from "../contracts/events.js";
@@ -71,6 +76,16 @@ import {
   seqOfCommitCursor,
 } from "../contracts/ledger.js";
 import type { PlanRevisionAcceptedEvent } from "../contracts/plan.js";
+import type {
+  RunEventRecordedEvent,
+  RunOutcomeUnknownEvent,
+  RunStartedEvent,
+  TaskClaimedEvent,
+} from "../contracts/dispatch.js";
+import {
+  isTerminalRuntimeEvent,
+  runtimeEventTerminalOutcome,
+} from "../contracts/dispatch.js";
 import { validateDomainEvent } from "../contracts/validation.js";
 
 export interface SqliteReadModelIndexOptions {
@@ -133,7 +148,22 @@ CREATE TABLE IF NOT EXISTS task_detail (
   phase             TEXT NOT NULL,
   scope             TEXT NOT NULL,
   obligations       TEXT NOT NULL,
+  run_json          TEXT,
   source_cursor     TEXT NOT NULL,
+  PRIMARY KEY (project_id, goal_id, task_id)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS active_agent (
+  project_id    TEXT NOT NULL,
+  goal_id       TEXT NOT NULL,
+  task_id       TEXT NOT NULL,
+  run_id        TEXT NOT NULL,
+  run_ref       TEXT NOT NULL,
+  attempt_ref   TEXT NOT NULL,
+  binding       TEXT NOT NULL,
+  lease         TEXT NOT NULL,
+  attempt       TEXT NOT NULL,
+  run           TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
   PRIMARY KEY (project_id, goal_id, task_id)
 ) WITHOUT ROWID;
 `;
@@ -178,8 +208,41 @@ type TaskDetailRow = {
   phase: string;
   scope: string;
   obligations: string;
+  run_json: string | null;
   source_cursor: string;
 };
+
+/** Row shape we read back for an ActiveAgentView (complex fields are JSON TEXT). */
+type ActiveAgentRow = {
+  project_id: string;
+  goal_id: string;
+  task_id: string;
+  run_id: string;
+  run_ref: string;
+  attempt_ref: string;
+  binding: string;
+  lease: string;
+  attempt: string;
+  run: string;
+  source_cursor: string;
+};
+
+/** Derive the TaskDetail.run (TaskRunState) part from an ActiveAgentView row. */
+function taskRunStateFrom(agent: ActiveAgentView): TaskRunState {
+  return {
+    runRef: agent.runRef,
+    attemptRef: agent.attemptRef,
+    status: agent.run.status,
+    outcome: agent.run.outcome,
+    exitCode: agent.run.exitCode,
+    lastEventSeq: agent.run.lastEventSeq,
+    startedAt: agent.run.startedAt,
+    endedAt: agent.run.endedAt,
+    budget: agent.run.budget,
+    binding: agent.binding,
+    sourceCursor: agent.run.sourceCursor,
+  };
+}
 
 export class SqliteReadModelIndex implements ReadModelIndex {
   private readonly db: DatabaseSync;
@@ -197,6 +260,10 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   private readonly stmtUpsertPlanGraph: StatementSync;
   private readonly stmtSelectTaskDetail: StatementSync;
   private readonly stmtUpsertTaskDetail: StatementSync;
+  private readonly stmtUpsertTaskDetailRun: StatementSync;
+  private readonly stmtSelectActiveAgent: StatementSync;
+  private readonly stmtSelectActiveAgentByRun: StatementSync;
+  private readonly stmtUpsertActiveAgent: StatementSync;
   private readonly stmtInsertApplied: StatementSync;
   private readonly stmtUpsertCheckpoint: StatementSync;
 
@@ -265,15 +332,15 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     this.stmtSelectTaskDetail = this.db.prepare(
       `SELECT project_id, goal_id, task_id, title, stage_id,
               requirement_level, task_kind, disposition, phase, scope,
-              obligations, source_cursor
+              obligations, run_json, source_cursor
          FROM task_detail
         WHERE project_id = ? AND goal_id = ? AND task_id = ?`,
     );
     this.stmtUpsertTaskDetail = this.db.prepare(
       `INSERT INTO task_detail
          (project_id, goal_id, task_id, title, stage_id, requirement_level,
-          task_kind, disposition, phase, scope, obligations, source_cursor)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          task_kind, disposition, phase, scope, obligations, run_json, source_cursor)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_id, goal_id, task_id) DO UPDATE SET
          title             = excluded.title,
          stage_id          = excluded.stage_id,
@@ -283,7 +350,38 @@ export class SqliteReadModelIndex implements ReadModelIndex {
          phase             = excluded.phase,
          scope             = excluded.scope,
          obligations       = excluded.obligations,
+         run_json          = excluded.run_json,
          source_cursor     = excluded.source_cursor`,
+    );
+    this.stmtUpsertTaskDetailRun = this.db.prepare(
+      "UPDATE task_detail SET run_json = ?, source_cursor = ? WHERE project_id = ? AND goal_id = ? AND task_id = ?",
+    );
+    this.stmtSelectActiveAgent = this.db.prepare(
+      `SELECT project_id, goal_id, task_id, run_id, run_ref, attempt_ref,
+              binding, lease, attempt, run, source_cursor
+         FROM active_agent
+        WHERE project_id = ? AND goal_id = ? AND task_id = ?`,
+    );
+    this.stmtSelectActiveAgentByRun = this.db.prepare(
+      `SELECT project_id, goal_id, task_id, run_id, run_ref, attempt_ref,
+              binding, lease, attempt, run, source_cursor
+         FROM active_agent
+        WHERE project_id = ? AND run_id = ?`,
+    );
+    this.stmtUpsertActiveAgent = this.db.prepare(
+      `INSERT INTO active_agent
+         (project_id, goal_id, task_id, run_id, run_ref, attempt_ref,
+          binding, lease, attempt, run, source_cursor)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(project_id, goal_id, task_id) DO UPDATE SET
+         run_id        = excluded.run_id,
+         run_ref       = excluded.run_ref,
+         attempt_ref   = excluded.attempt_ref,
+         binding       = excluded.binding,
+         lease         = excluded.lease,
+         attempt       = excluded.attempt,
+         run           = excluded.run,
+         source_cursor = excluded.source_cursor`,
     );
     this.stmtInsertApplied = this.db.prepare(
       "INSERT OR IGNORE INTO applied_event (event_id) VALUES (?)",
@@ -446,10 +544,258 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     };
   }
 
-  /** P1-03: active agent view (frozen entry; lane D implements the projection). */
+  /** P1-03: active agent view — same opaque-cursor freshness as goal()/planGraph()/taskDetail(). */
   async activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult> {
-    void query;
-    throw new Error("P1-03: activeAgent not implemented yet");
+    this.assertOpen();
+    const observedCursor = this.readCheckpoint();
+    const row = this.readActiveAgent(query.projectId, query.goalId, query.taskId);
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(observedCursor, query.atLeastCursor)) {
+        if (row) return { status: "ready", agent: row, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor };
+      }
+      return {
+        status: "not_ready",
+        requiredCursor: query.atLeastCursor,
+        observedCursor,
+      };
+    }
+
+    // No atLeastCursor: show the row if present, else the freshness-safe
+    // "not_ready" (never not_found here), mirroring goal()/planGraph()/taskDetail().
+    if (row) return { status: "ready", agent: row, observedCursor: observedCursor! };
+    return {
+      status: "not_ready",
+      requiredCursor: observedCursor ?? makeCommitCursor(1),
+      observedCursor,
+    };
+  }
+
+  // ------------------------------------------------------------------ //
+  // P1-03 run projection handlers (mirror of the InMemory fold)          //
+  // ------------------------------------------------------------------ //
+
+  /** TaskClaimed@1 -> create/refresh the (projectId, goalId, taskId) ActiveAgent row
+   * and sync the TaskDetail row's run state. lease.grantedAt = claimedAt; status
+   * "starting", lastEventSeq 0. */
+  private applyTaskClaimed(event: TaskClaimedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const goalId = event.payload.goalId;
+    const taskId = event.payload.taskId;
+    const row: ActiveAgentView = {
+      projectId,
+      goalId,
+      taskId,
+      runRef: event.payload.runRef,
+      attemptRef: event.payload.attemptRef,
+      binding: event.payload.roleBinding,
+      lease: {
+        holderRunId: event.payload.runRef.runId,
+        grantedAt: event.payload.claimedAt,
+        expiresAt: null,
+        sourceCursor: cursor,
+      },
+      attempt: {
+        attemptId: event.payload.attemptRef.attemptId,
+        status: "claimed",
+        startedAt: null,
+        endedAt: null,
+        endOutcome: null,
+        sourceCursor: cursor,
+      },
+      run: {
+        status: "starting",
+        outcome: null,
+        exitCode: null,
+        lastEventSeq: 0,
+        startedAt: null,
+        endedAt: null,
+        budget: event.payload.budget,
+        sourceCursor: cursor,
+      },
+      sourceCursor: cursor,
+    };
+    this.writeActiveAgent(row);
+    this.syncTaskDetailRun(projectId, goalId, taskId, taskRunStateFrom(row), cursor);
+  }
+
+  /** RunStarted@1 -> refresh agent.run{status running, startedAt} + attempt{started,
+   * startedAt} and the row's sourceCursor. Located through the run id (aggregateId). */
+  private applyRunStarted(event: RunStartedEvent, cursor: CommitCursor): void {
+    const row = this.readActiveAgentByRun(event.projectId, event.aggregateId);
+    if (!row) return;
+    const updated: ActiveAgentView = {
+      ...row,
+      run: {
+        ...row.run,
+        status: "running",
+        startedAt: event.payload.startedAt,
+        sourceCursor: cursor,
+      },
+      attempt: {
+        ...row.attempt,
+        status: "started",
+        startedAt: event.payload.startedAt,
+        sourceCursor: cursor,
+      },
+      sourceCursor: cursor,
+    };
+    this.writeActiveAgent(updated);
+    this.syncTaskDetailRun(updated.projectId, updated.goalId, updated.taskId, taskRunStateFrom(updated), cursor);
+  }
+
+  /** RunEventRecorded@1 -> fold on payload.runtimeEvent, idempotent against the row's
+   * lastEventSeq (sequence <= lastEventSeq changes nothing). Terminal runtime events end
+   * the Run AND the Attempt. NEVER touches TaskDetail.phase (satisfaction is P1-04). */
+  private applyRunEventRecorded(event: RunEventRecordedEvent, cursor: CommitCursor): void {
+    const row = this.readActiveAgentByRun(event.projectId, event.aggregateId);
+    if (!row) return;
+    const rt = event.payload.runtimeEvent;
+    if (rt.sequence <= row.run.lastEventSeq) return;
+
+    const terminal = isTerminalRuntimeEvent(rt);
+    const outcome = terminal ? runtimeEventTerminalOutcome(rt) : row.run.outcome;
+    const exitCode = rt.payload.kind === "completed" ? rt.payload.exitCode : row.run.exitCode;
+    const endedAt = terminal ? rt.occurredAt : row.run.endedAt;
+
+    const updated: ActiveAgentView = {
+      ...row,
+      run: {
+        ...row.run,
+        status: terminal ? "ended" : "running",
+        outcome,
+        exitCode,
+        lastEventSeq: rt.sequence,
+        endedAt,
+        sourceCursor: cursor,
+      },
+      attempt: terminal
+        ? {
+            ...row.attempt,
+            status: "ended",
+            endOutcome: outcome,
+            endedAt: rt.occurredAt,
+            sourceCursor: cursor,
+          }
+        : row.attempt,
+      sourceCursor: cursor,
+    };
+    this.writeActiveAgent(updated);
+    this.syncTaskDetailRun(updated.projectId, updated.goalId, updated.taskId, taskRunStateFrom(updated), cursor);
+  }
+
+  /** RunOutcomeUnknown@1 -> explicit fact: run ended with outcome_unknown (NEVER inferred
+   * from crash) + attempt ended. */
+  private applyRunOutcomeUnknown(event: RunOutcomeUnknownEvent, cursor: CommitCursor): void {
+    const row = this.readActiveAgentByRun(event.projectId, event.aggregateId);
+    if (!row) return;
+    const updated: ActiveAgentView = {
+      ...row,
+      run: {
+        ...row.run,
+        status: "ended",
+        outcome: "outcome_unknown",
+        endedAt: event.payload.observedAt,
+        sourceCursor: cursor,
+      },
+      attempt: {
+        ...row.attempt,
+        status: "ended",
+        endOutcome: "outcome_unknown",
+        endedAt: event.payload.observedAt,
+        sourceCursor: cursor,
+      },
+      sourceCursor: cursor,
+    };
+    this.writeActiveAgent(updated);
+    this.syncTaskDetailRun(updated.projectId, updated.goalId, updated.taskId, taskRunStateFrom(updated), cursor);
+  }
+
+  /** Push the run-state part of an ActiveAgentView onto the matching TaskDetail row.
+   * Only touches a TaskDetail row already created by PlanRevisionAccepted; phase and
+   * plan fields are NEVER modified here (satisfaction is P1-04). */
+  private syncTaskDetailRun(
+    projectId: string,
+    goalId: string,
+    taskId: string,
+    runState: TaskRunState,
+    cursor: CommitCursor,
+  ): void {
+    this.stmtUpsertTaskDetailRun.run(
+      JSON.stringify(runState),
+      cursor,
+      projectId,
+      goalId,
+      taskId,
+    );
+  }
+
+  /** Read the ActiveAgentView for a full key (projectId, goalId, taskId). */
+  private readActiveAgent(projectId: string, goalId: string, taskId: string): ActiveAgentView | null {
+    const row = this.stmtSelectActiveAgent.get(projectId, goalId, taskId) as unknown as
+      | ActiveAgentRow
+      | undefined;
+    if (!row) return null;
+    return this.activeAgentFromRow(row);
+  }
+
+  /** Read the ActiveAgentView located by projectId + runId (run events carry no goalId). */
+  private readActiveAgentByRun(projectId: string, runId: string): ActiveAgentView | null {
+    const row = this.stmtSelectActiveAgentByRun.get(projectId, runId) as unknown as
+      | ActiveAgentRow
+      | undefined;
+    if (!row) return null;
+    return this.activeAgentFromRow(row);
+  }
+
+  private activeAgentFromRow(row: ActiveAgentRow): ActiveAgentView {
+    return {
+      projectId: row.project_id,
+      goalId: row.goal_id,
+      taskId: row.task_id,
+      runRef: JSON.parse(row.run_ref),
+      attemptRef: JSON.parse(row.attempt_ref),
+      binding: JSON.parse(row.binding),
+      lease: JSON.parse(row.lease),
+      attempt: JSON.parse(row.attempt),
+      run: JSON.parse(row.run),
+      sourceCursor: row.source_cursor as CommitCursor,
+    };
+  }
+
+  private writeActiveAgent(row: ActiveAgentView): void {
+    this.stmtUpsertActiveAgent.run(
+      row.projectId,
+      row.goalId,
+      row.taskId,
+      row.runRef.runId,
+      JSON.stringify(row.runRef),
+      JSON.stringify(row.attemptRef),
+      JSON.stringify(row.binding),
+      JSON.stringify(row.lease),
+      JSON.stringify(row.attempt),
+      JSON.stringify(row.run),
+      row.sourceCursor,
+    );
+  }
+
+  /** Event types this projection currently has handlers for (P1-02 + P1-03, v1). */
+  private isHandledEventType(eventType: string): boolean {
+    return (
+      eventType === "GoalCreated" ||
+      eventType === "ProjectBootstrapped" ||
+      eventType === "WorkspaceBootstrapped" ||
+      eventType === "CompletionPolicyInstalled" ||
+      eventType === "ArchitectureBaselineInstalled" ||
+      eventType === "CompletionPolicyActivated" ||
+      eventType === "ArchitectureBaselineActivated" ||
+      eventType === "PlanRevisionAccepted" ||
+      eventType === "TaskClaimed" ||
+      eventType === "RunStarted" ||
+      eventType === "RunEventRecorded" ||
+      eventType === "RunOutcomeUnknown"
+    );
   }
 
   /**
@@ -503,14 +849,22 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     }
   }
 
-  /** Dispatch a validated event to its projection handler (P1-02 v1). */
+  /** Dispatch a validated event to its projection handler (P1-02 + P1-03 v1). */
   private applyEvent(event: DomainEvent, cursor: CommitCursor): void {
     if (event.eventType === "GoalCreated") {
       this.upsertGoalView(event, cursor);
     } else if (event.eventType === "PlanRevisionAccepted") {
       this.applyPlanRevisionAccepted(event, cursor);
+    } else if (event.eventType === "TaskClaimed") {
+      this.applyTaskClaimed(event, cursor);
+    } else if (event.eventType === "RunStarted") {
+      this.applyRunStarted(event, cursor);
+    } else if (event.eventType === "RunEventRecorded") {
+      this.applyRunEventRecorded(event, cursor);
+    } else if (event.eventType === "RunOutcomeUnknown") {
+      this.applyRunOutcomeUnknown(event, cursor);
     }
-    // Known non-goal / non-plan events (ProjectBootstrapped,
+    // Known non-goal / non-plan / non-dispatch events (ProjectBootstrapped,
     // WorkspaceBootstrapped, CompletionPolicyInstalled,
     // ArchitectureBaselineInstalled, CompletionPolicyActivated,
     // ArchitectureBaselineActivated) only advance the cursor; they project no row.
@@ -582,8 +936,8 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       phase: row.phase as TaskDetailView["phase"],
       scope: JSON.parse(row.scope),
       obligations: JSON.parse(row.obligations),
-      // P1-03: run-state projection lands with lane D (null before TaskClaimed).
-      run: null,
+      // P1-03: run-state projection (null until a TaskClaimed event for this task).
+      run: row.run_json === null ? null : (JSON.parse(row.run_json) as TaskRunState),
       sourceCursor: row.source_cursor as CommitCursor,
     };
   }
@@ -664,24 +1018,12 @@ export class SqliteReadModelIndex implements ReadModelIndex {
         task.phase,
         JSON.stringify(task.scope),
         JSON.stringify(obligations),
+        null,
         cursor,
       );
     }
   }
 
-  /** Event types this projection currently has handlers for (P1-02, v1). */
-  private isHandledEventType(eventType: string): boolean {
-    return (
-      eventType === "GoalCreated" ||
-      eventType === "ProjectBootstrapped" ||
-      eventType === "WorkspaceBootstrapped" ||
-      eventType === "CompletionPolicyInstalled" ||
-      eventType === "ArchitectureBaselineInstalled" ||
-      eventType === "CompletionPolicyActivated" ||
-      eventType === "ArchitectureBaselineActivated" ||
-      eventType === "PlanRevisionAccepted"
-    );
-  }
 }
 
 export function createSqliteReadModelIndex(
