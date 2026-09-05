@@ -1171,6 +1171,7 @@ export function validateTaskContextRequest(value: unknown): ValidationIssue[] {
     issues.push({ path: "workspaceSnapshot", code: "bad_type", message: "workspaceSnapshot must be an object" });
   }
   validateRoleBindingRef(value["roleBinding"], "roleBinding", issues);
+  validateDeclaredPermissions(value["declaredPermissions"], "declaredPermissions", issues);
   const scope = value["scope"];
   if (isRecord(scope)) {
     stringArrayField(scope, "tools", issues, "scope.tools");

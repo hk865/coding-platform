@@ -70,6 +70,9 @@ export type TaskContextRequestV1 = {
   roleBinding: RoleBindingRefV1;
   /** Must equal the canonical Workspace revision, else stale_workspace_snapshot. */
   workspaceSnapshot: { workspaceId: string; revision: number };
+  /** The binding's declared allowlist (from the durable dispatch intent). */
+  declaredPermissions: { tools: string[]; writeScope: string[] };
+  /** Requested tools/writeScope; MUST be a subset of declaredPermissions. */
   scope: { tools: string[]; writeScope: string[] };
   budget: TaskBudgetV1;
   submittedAt: string;
