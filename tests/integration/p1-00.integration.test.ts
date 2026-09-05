@@ -10,6 +10,11 @@ import {
   WORKSPACE_BOOTSTRAP_FIXTURE_V1,
   fixtureDigest,
 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import {
+  buildCreateGoalCommand,
+  goalCreatedEventFor,
+  goalSnapshotFor,
+} from "../../src/contracts/fixtures/goal-fixtures.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
 import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1 } from "../../src/contracts/fixtures/goal-fixtures.js";
 import {
@@ -89,6 +94,37 @@ describe("P1-00 integration: bootstrap -> CreateGoal -> Ledger -> Event -> GoalV
     expect(goalAlpha.status).toBe("found");
     const page = await harness.ledger.events({ afterCursor: null, limit: 100 });
     expect(page.events.filter((p) => p.event.eventType === "GoalCreated")).toHaveLength(2);
+
+    // Contract cross-module equality: with the harness's deterministic deps the
+    // committed event/snapshot MUST equal the shared contract builders.
+    // bootstrap consumes evt-0001..0004; alpha goal = evt-0005, beta = evt-0006.
+    const alphaExpected = buildCreateGoalCommand(ALPHA, {
+      commandId: "cmd-0001",
+      correlationId: "corr-0001",
+      submittedAt: FIXED_ISO_2026_09_05,
+      idempotencyKey: FIXTURE.sharedIdempotencyKey,
+    });
+    const alphaEvent = page.events.find(
+      (p) => p.event.eventType === "GoalCreated" && p.event.projectId === "proj-alpha",
+    )?.event;
+    expect(alphaEvent).toEqual(
+      goalCreatedEventFor(alphaExpected, { eventId: "evt-0005", occurredAt: FIXED_ISO_2026_09_05 }),
+    );
+    if (goalAlpha.status === "found") {
+      expect(goalAlpha.snapshot).toEqual(goalSnapshotFor(alphaExpected));
+    }
+    const betaExpected = buildCreateGoalCommand(BETA, {
+      commandId: "cmd-0002",
+      correlationId: "corr-0002",
+      submittedAt: FIXED_ISO_2026_09_05,
+      idempotencyKey: FIXTURE.sharedIdempotencyKey,
+    });
+    const betaEvent = page.events.find(
+      (p) => p.event.eventType === "GoalCreated" && p.event.projectId === "proj-beta",
+    )?.event;
+    expect(betaEvent).toEqual(
+      goalCreatedEventFor(betaExpected, { eventId: "evt-0006", occurredAt: FIXED_ISO_2026_09_05 }),
+    );
   });
 
   it("same CreateGoal request retry is idempotent (no second event)", async () => {

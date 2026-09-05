@@ -2,63 +2,76 @@
 
 ```yaml
 ticket_id: P1-00
-status: in_progress (共享基线就绪，三路并行编码已开始)
+status: implementation verified (limited authorization, 2026-09-05) — P1-00 only
 updated: 2026-09-05
-integration_owner: integrator (本会话)
+next: STOP — P1-01 requires separate authorization
+evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-00-implementation-evidence.md
 ```
 
 ## 当前票据与共享契约基线
 
-- Ticket：`/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/00-contract-pack.md`（P1-00）
-- 规范与接口权威：文档根 `dev_docs/interfaces/**` 与 `dev_docs/modules/**`（见各文件头）
-- 共享契约基线（integrator 已冻结，版本 v1 + P1-00 扩展）：
-  - `src/contracts/command-event.ts` — Command/Event 切片类型、fingerprint（JCS+SHA-256）、objective 规范化（NFC + unicode trim）、identity 相等（(projectId, actor.kind, actor.id, idempotencyKey)）
-  - `src/contracts/ledger.ts` — Ref/Snapshot/LedgerCommit(kind union: goal-create | bootstrap)/Receipt(含 not_empty)/EventQuery/EventPage/StateLedger；CommitCursor 为递增序列的 opaque token，仅 ReadModelIndex 可用 compareCommitCursor
-  - `src/contracts/bootstrap.ts` — WorkspaceBootstrapCommand/Fixture/Manifest/Receipt、BootstrapCommandIdentity（bootstrap 不绑定单一 project）、bootstrap 事件 v1、BootstrapManifest aggregate
-  - `src/contracts/goal-view.ts` — GoalView/GoalViewResult/ProjectionReceipt + ReadModelIndex 接口 + ProjectionStallError
+- Ticket：`/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/00-contract-pack.md`（P1-00，status 仍按阶段守卫为 proposed；Authorization/Implementation record 已写入）
+- 规范与接口权威：文档根 `dev_docs/interfaces/**`、`dev_docs/modules/**`（P1-00 扩展记录已同步至 state-ledger.md / command-event.md / control-engine.md 附录）
+- 共享契约基线（已冻结）：
+  - `src/contracts/command-event.ts` — Command/Event、fingerprint（JCS+SHA-256，NFC+unicode trim）、identity 相等 `(projectId, actor.kind, actor.id, idempotencyKey)`
+  - `src/contracts/ledger.ts` — Ref/Snapshot/LedgerCommit(goal-create | bootstrap)/Receipt(含 not_empty)/EventPage/StateLedger；CommitCursor opaque（仅 ledger adapter 与 ReadModelIndex 可经 compareCommitCursor 比较）
+  - `src/contracts/bootstrap.ts` — bootstrap 命令/fixture/manifest/事件/Receipt/BootstrapManifest aggregate（manifestId=sourceDigest）
+  - `src/contracts/goal-view.ts` — GoalView/GoalViewResult/ProjectionStallError/ReadModelIndex
   - `src/contracts/modules.ts` — ControlEngine（submit + bootstrap 扩展）、HumanCollaboration
-  - `src/contracts/validation.ts` — 确定性运行时校验（unknown schema version 拒绝）
-  - `src/contracts/fixtures/**` — 共享 fixture：WORKSPACE_BOOTSTRAP_FIXTURE_V1（两个 Project 复用同一本地 workspaceId）+ MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1（同 goalId/幂等键，跨 Scope 隔离）+ 确定性 builder（fold 契约数学：ControlEngine 必须产出与 builder 一致的内容）
-  - `src/contracts/testing/**` — 一致测试替身（ScriptedStateLedger/ControlEngine/ReadModelIndex、deterministic deps）
-  - `tests/contract-suite/**` — StateLedger 与 GoalView 共享契约套件（每个 Adapter 都必须通过）
+  - `src/contracts/validation.ts` — 确定性运行时校验；`src/contracts/fixtures/**` 共享 fixture 与 fold 契约数学（builder）；`src/contracts/testing/**` 一致测试替身
+  - `tests/contract-suite/**` — StateLedger / GoalView 共享契约套件（每个 Adapter 必须通过）
 
-### bootstrap 语义（已冻结，避免各模块自行解释）
+### 冻结语义（接口文档附录 + 套件强制）
 
-1. bootstrap 只允许“空库首次初始化”：ledger 无任何 Event/snapshot/idempotency 记录；
-2. 同 identity+fingerprint 重放（含跨调用的同用例重试）→ committed, replayed=true，不追加任何写入；
-3. 同 identity 异 fingerprint（如不同 entries/digest）→ idempotency_conflict；
-4. 非空库上的不同 identity 的 bootstrap → not_empty（确定性拒绝，零写入）；
-5. 全新空库 + 相同 fixture 的 bootstrap 结果（manifest/digest/revisions）确定一致；
-6. Manifest 经 BootstrapManifest aggregate snapshot 持久化（ref.manifestId = sourceDigest），可 load 重建。
+1. 幂等：**同 identity+fingerprint ⇒ 必定重放**（返回首次 eventIds/aggregateRevisions/commitCursor，易变 id 一律不入库）；同 identity 异 fingerprint ⇒ idempotency_conflict；异 identity ⇒ CAS（revision_conflict）。ledger 不做内容↔fingerprint 校验。
+2. bootstrap：仅空库首次初始化；幂等判定先于空库检查；非空库不同 identity ⇒ not_empty；manifest 经 BootstrapManifest snapshot 持久化并可重建。
+3. Goal 创建：expectedRevision 0、完整 Ref、唯一 GoalCreated+GoalSnapshot@1、activePlanRevision=null、零 outbox。
+4. freshness：not_found 仅当投影已覆盖 atLeastCursor 且无行；否则 not_ready（含无 atLeastCursor 且无行）；ready.observedCursor 必须覆盖 atLeastCursor。
+5. 投影停滞（缺口/乱序/未知版本）⇒ 抛 ProjectionStallError，不部分应用、不静默跳过。
 
-## 派发接口（固定入口）
+## 三路并行（隔离 worktree → main 合并）
 
-| Lane | 职责 | 固定入口（baseline 锁定） | 写范围 |
+| Lane | 分支/提交 | 产物 | 状态 |
 | --- | --- | --- | --- |
-| A | StateLedger InMemory 实现 | `src/ledger/in-memory-ledger.ts` 导出 `InMemoryLedger`+`createInMemoryLedger` | `src/ledger/**`, `tests/ledger/**` |
-| B | ControlEngine（bootstrap+CreateGoal fold） | `src/control/control-engine.ts` 导出 `ControlEngineImpl`+`createControlEngine` | `src/control/**`, `tests/control/**` |
-| C | ReadModelIndex + HumanCollaboration | `src/read-model/read-model-index.ts` (`ReadModelIndexImpl`)；`src/interaction/human-collaboration.ts` (`HumanCollaborationImpl`) | `src/read-model/**`, `src/interaction/**`, `tests/read-model/**`, `tests/interaction/**` |
+| A StateLedger | lane-a `31f61ef` | `src/ledger/in-memory-ledger.ts`（InMemoryLedger + createInMemoryLedger，beforeWrite 故障注入）；`tests/ledger`（契约套件 16 + 边界 11） | ✅ 27/27 |
+| B ControlEngine | lane-b `6c88e3d` | `src/control/control-engine.ts`（submit + bootstrap）；`tests/control` 22 用例表驱动 | ✅ 22/22 |
+| C ReadModel+HumanCollab | lane-c `b05ac82` | `src/read-model/read-model-index.ts`、`src/interaction/human-collaboration.ts`；`tests/read-model|interaction`（套件 11 + 22） | ✅ 33/33 |
 
-Integrator 专用：package/lockfile/tsconfig/vitest、contracts、fixtures、suites、testing、harness、tests/integration、IMPLEMENTATION-HANDOFF、文档根同步。Lane C 依赖 A/B 之 Interface 与测试替身，不允许等待 A/B 完成。
+integrator 维护：package/lock/tsconfig/vitest、contracts、fixtures、suites、testing、`src/harness`、`tests/integration`、文档同步、集成协调（套件修正 6 处、语义裁决 2 处、产物证据）。
 
-## 已执行命令及结果
+## 集成与验收（真实模块，无 fake）
 
-（基线阶段）
+- 完整路径：bootstrap → CreateGoal → InMemoryLedger → EventPage → ReadModelIndex → GoalView（`src/harness/in-memory-harness.ts` 接线真实 A/B/C 模块）。
+- 跨模块契约强断言：确定性 deps 下，Control 提交的 Event/Snapshot 与共享 builder 深相等（evt-0005/0006、cmd-0001/0002 已锁定）。
+- 集成断言：双 Scope 复用本地 id/goalId/key 的隔离、重放幂等、同键异载荷 conflict、rejections 零写入、bootstrap 重放/not_empty、freshness not_ready→ready。
 
-- 环境核实：node v24.18.0 (tooling)、pnpm 11.21.0、git 2.43.0、registry 可达（vitest 4.1.10 / typescript 6.0.3 与执行内核一致）
-- 待补：pnpm install、基线 typecheck/test（contracts 单元应绿；integration 因 lanes 未实现为红——按计划）
+## 已执行命令及结果（最终）
+
+| 命令（product root） | 结果 |
+| --- | --- |
+| `pnpm typecheck` | PASS，0 errors |
+| `pnpm vitest run` | 11 files / 117 tests PASS |
+| `pnpm vitest run tests/integration` | 7 PASS（tracer bullet） |
+| `node dev_docs/verification/validate-docs.mjs` | 12/12 PASS |
 
 ## 验收证据
 
-- 尚无。只有共享基线后三路汇合、集成路径全绿后才记录证据。红测试不代表验收，不承诺通过。
+- P1-00 Acceptance 逐项对照与命令输出：[p1-00-implementation-evidence.md]（文档根 dev_docs/verification/）
+- 本票 Implementation record：00-contract-pack.md
 
 ## 未解问题 / 设计理由
 
-- CommitCursor 具象为 `c<10位序列>`：仅 ledger 适配器与 ReadModelIndex 可经 compareCommitCursor 比较；其他调用者按 opaque 处理（文档接口要求）。
-- LedgerCommit / DomainEvent 为版本化 union（goal-create | bootstrap）：对文档中 CreateGoal-only 类型的显式扩展，已在接口文档中记录并同步。
-- ControlEngine 接口新增 `bootstrap` 方法（版本化扩展）；submit 形状不变。
-- “空库”检查在 ledger.commit 内部原子完成（bootstrap kind 的固有语义），不在 Control 做 check-then-commit。
+- 无阻断项。已知取舍（已记录）：
+  - Goal 已存在不短路：由 ledger 幂等+CAS 原子判定（重放 vs revision_conflict），文档语义要求；
+  - currentVersions 优先取 goal ref 的 revision（引用 aggregate 变化时提供有用信息）；
+  - bootstrap identity 无 projectId（BootstrapCommandIdentity），因 bootstrap 跨多 Project；
+  - 集成/契约证据为内存路径；生产 Adapter（SQLite）/transport 不在本票范围。
+- 已知修复记录：套件 test5(eventIds)、test9(先落记录+真异 fingerprint)、test12(异 identity)、新增“异 eventId 重放”用例；GoalView 套件两处断言；集成断言 crossB 键错误；integrator 读写截断事故（suite 尾部）已恢复并审计其它文件。
+
+## 远端
+
+- `origin = git@github.com:hk865/coding-platform.git`（仅本地配置，未推送；推送需用户授权）。
 
 ## 下一步
 
-- 三路并行编码（A/B/C）→ 汇合合并 → 替换测试替身 → 完整 tracer bullet → 按 P1-00 Acceptance 逐项验收存证 → 全量检查 → 更新本文件与票据 → 停止（不开始 P1-01）。
+- **停止**。P1-00 完成（有限授权内）；P1-01 需另行授权；业务/文档明确不自动推进。
