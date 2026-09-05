@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
-import type { CommitCursor } from "../../src/contracts/command-event.js";
+import type { CommandFingerprint, CommitCursor } from "../../src/contracts/command-event.js";
 import { seqOfCommitCursor } from "../../src/contracts/ledger.js";
 import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
@@ -226,18 +226,48 @@ describe("InMemoryLedger boundary semantics", () => {
     expect((await ledger.events({ afterCursor: null, limit: 1000 })).events.length).toBe(5);
   });
 
-  it("goal-create with a content/fingerprint mismatch is rejected, zero write", async () => {
+  it("same identity + different fingerprint -> idempotency_conflict, zero write", async () => {
     const ledger = new InMemoryLedger();
     await committed(ledger, bootBatch("cmd-boot-sc").batch);
-    const { batch } = goalBatch("cmd-sc", 0, 1);
-    const mismatched = {
-      ...batch,
-      events: [{ ...batch.events[0]!, payload: { ...batch.events[0]!.payload, objective: "changed" } }],
-      snapshots: [{ ...batch.snapshots[0]!, objective: "changed" }],
+    const first = goalBatch("cmd-sc", 0, 1);
+    await committed(ledger, first.batch);
+    // same identity (project/actor/idempotencyKey) with a GENUINELY different
+    // fingerprint field. Doc semantics: ledger compares stored vs batch
+    // fingerprint only; it must NOT validate content↔fingerprint.
+    const different = {
+      ...first.batch,
+      fingerprint: "f".repeat(64) as CommandFingerprint,
+      events: [{ ...first.batch.events[0]!, payload: { ...first.batch.events[0]!.payload, objective: "changed" } }],
+      snapshots: [{ ...first.batch.snapshots[0]!, objective: "changed" }],
     };
-    const receipt = await ledger.commit(mismatched);
+    const receipt = await ledger.commit(different);
     expect(receipt.status).toBe("rejected");
     if (receipt.status === "rejected") expect(receipt.code).toBe("idempotency_conflict");
-    expect((await ledger.events({ afterCursor: null, limit: 1000 })).events.length).toBe(4);
+    // no second event was appended
+    expect((await ledger.events({ afterCursor: null, limit: 1000 })).events.length).toBe(5);
+  });
+
+  it("same identity + same fingerprint, changed content -> REPLAYED with original outcome", async () => {
+    const ledger = new InMemoryLedger();
+    await committed(ledger, bootBatch("cmd-boot-sc2").batch);
+    const first = goalBatch("cmd-sc2", 0, 1);
+    const t1 = await committed(ledger, first.batch);
+    // same identity AND same fingerprint field, but the objective content differs.
+    // Doc semantics: the ledger replays the original outcome; the changed content
+    // is neither verified against the fingerprint nor appended.
+    const retry = {
+      ...first.batch,
+      events: [{ ...first.batch.events[0]!, payload: { ...first.batch.events[0]!.payload, objective: "changed" } }],
+      snapshots: [{ ...first.batch.snapshots[0]!, objective: "changed" }],
+    };
+    const receipt = await ledger.commit(retry);
+    expect(receipt.status).toBe("committed");
+    if (receipt.status === "committed") {
+      expect(receipt.replayed).toBe(true);
+      expect(receipt.eventIds).toEqual(first.batch.events.map((e) => e.eventId));
+      expect(receipt.commitCursor).toBe(t1.commitCursor);
+      expect(receipt.aggregateRevisions).toEqual(t1.aggregateRevisions);
+    }
+    expect((await ledger.events({ afterCursor: null, limit: 1000 })).events.length).toBe(5);
   });
 });

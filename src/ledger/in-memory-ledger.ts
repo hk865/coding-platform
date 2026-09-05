@@ -14,8 +14,8 @@ import type {
 } from "../contracts/ledger.js";
 import { makeCommitCursor, seqOfCommitCursor } from "../contracts/ledger.js";
 import { bootstrapIdentityKey } from "../contracts/bootstrap.js";
-import type { CommandFingerprint, GoalCreatedEvent } from "../contracts/command-event.js";
-import { commandFingerprint, commandIdentityKey } from "../contracts/command-event.js";
+import type { CommandFingerprint } from "../contracts/command-event.js";
+import { commandIdentityKey } from "../contracts/command-event.js";
 import type { DomainEvent } from "../contracts/events.js";
 import { isKnownEventType } from "../contracts/events.js";
 import { canonicalJson } from "../contracts/fingerprint.js";
@@ -119,14 +119,11 @@ export class InMemoryLedger implements StateLedger {
     const key = identityKeyFor(batch);
     const existing = this.idempotency.get(key);
 
-    // Self-consistency: the supplied fingerprint must correspond to the actual
-    // event/snapshot content. A mismatch means the caller claims an identity
-    // with a payload it did not actually commit — reject as idempotency_conflict
-    // (zero write), never as a fresh accept.
-    if (this.goalCreateFingerprintFromEvent(batch.events[0]!) !== batch.fingerprint) {
-      return { status: "rejected", code: "idempotency_conflict" };
-    }
-
+    // Doc semantics: replay/conflict is decided ONLY by identity + the stored
+    // fingerprint. The ledger must NOT recompute a fingerprint from event/snapshot
+    // content — that is the ControlEngine's job (it builds the fingerprint and
+    // folds the matching content). We only compare the incoming batch.fingerprint
+    // against the stored one.
     if (existing !== undefined) {
       if (existing.fingerprint !== batch.fingerprint) {
         return { status: "rejected", code: "idempotency_conflict" };
@@ -201,21 +198,6 @@ export class InMemoryLedger implements StateLedger {
       return false;
     }
     return true;
-  }
-
-  private goalCreateFingerprintFromEvent(ev: GoalCreatedEvent): CommandFingerprint {
-    return commandFingerprint({
-      commandType: "CreateGoal",
-      schemaVersion: ev.schemaVersion,
-      identity: {
-        projectId: ev.projectId,
-        actor: ev.actor,
-        idempotencyKey: ev.idempotencyKey,
-      },
-      aggregateId: ev.aggregateId,
-      expectedRevision: 0,
-      payload: { workspaceId: ev.workspaceId, objective: ev.payload.objective },
-    });
   }
 
   // ---------------------------------------------------------------------------
