@@ -9,7 +9,16 @@ import type { RunRef, SourceRefV1, TaskAttemptRef } from "./dispatch.js";
 
 export const ARTIFACT_MAX_SIZE_BYTES = 256 * 1024;
 
-/** Digest-keyed immutable artifact reference (content addressed). */
+/**
+ * FROZEN P1-03 content-addressing semantics (integrator ruling on lane-C gap 3/4):
+ *   - FIRST put wins: a re-put of identical body/contentType returns the ORIGINAL
+ *     ref (original source + original ownerRunId). Open authorization stays with
+ *     the first recorded owner run.
+ *   - open authorization: only a recorded OWNER RunRef requester may open
+ *     (requesterRunRef.runId === ownerRunId). A TaskAttempt owner records
+ *     ownerRunId = null -> deny-by-default (the attempt ref has no runId and is
+ *     not an open-authorized principal in P1-03).
+ */
 export type ArtifactRef = {
   kind: "artifact";
   contentType: string;

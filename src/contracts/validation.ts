@@ -1180,5 +1180,41 @@ export function validateTaskContextRequest(value: unknown): ValidationIssue[] {
     issues.push({ path: "scope", code: "bad_type", message: "scope must be an object" });
   }
   validateTaskBudget(value["budget"], "budget", issues);
+  // P1-03 decision (integrator ruling on lane-C gap 1): the context request is
+  // built from the durable dispatch intent, so its three refs and the scope
+  // triple MUST be validated at the contract boundary (assembler guards too).
+  const planRef = value["planRef"];
+  if (isRecord(planRef)) {
+    if (planRef["aggregateType"] !== "PlanRevision") {
+      issues.push({ path: "planRef.aggregateType", code: "bad_ref", message: "planRef.aggregateType must be PlanRevision" });
+    }
+    stringField(planRef, "projectId", issues, "planRef.projectId");
+    stringField(planRef, "planId", issues, "planRef.planId");
+  } else {
+    issues.push({ path: "planRef", code: "bad_type", message: "planRef must be an object" });
+  }
+  validateRunRef(value["runRef"], "runRef", issues);
+  const attemptRef = value["attemptRef"];
+  if (isRecord(attemptRef)) {
+    if (attemptRef["aggregateType"] !== "TaskAttempt") {
+      issues.push({ path: "attemptRef.aggregateType", code: "bad_ref", message: "attemptRef.aggregateType must be TaskAttempt" });
+    }
+    stringField(attemptRef, "projectId", issues, "attemptRef.projectId");
+    stringField(attemptRef, "goalId", issues, "attemptRef.goalId");
+    stringField(attemptRef, "taskId", issues, "attemptRef.taskId");
+    stringField(attemptRef, "attemptId", issues, "attemptRef.attemptId");
+  } else {
+    issues.push({ path: "attemptRef", code: "bad_type", message: "attemptRef must be an object" });
+  }
+  // cross-field alignment (full-scope keys, never bare local ids)
+  if (isRecord(value["runRef"]) && value["runRef"]["goalId"] !== value["goalId"]) {
+    issues.push({ path: "runRef.goalId", code: "bad_ref", message: "runRef.goalId must equal request goalId" });
+  }
+  if (isRecord(attemptRef) && attemptRef["taskId"] !== value["taskId"]) {
+    issues.push({ path: "attemptRef.taskId", code: "bad_ref", message: "attemptRef.taskId must equal request taskId" });
+  }
+  if (isRecord(planRef) && planRef["projectId"] !== value["projectId"]) {
+    issues.push({ path: "planRef.projectId", code: "bad_ref", message: "planRef.projectId must equal request projectId" });
+  }
   return issues;
 }
