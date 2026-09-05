@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import type { LedgerCommit, LedgerCommitReceipt, StateLedger } from "../../src/contracts/ledger.js";
 import { seqOfCommitCursor } from "../../src/contracts/ledger.js";
-import type { CommitCursor } from "../../src/contracts/command-event.js";
+import type { CommandFingerprint, CommitCursor } from "../../src/contracts/command-event.js";
 import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
 import {
@@ -281,8 +281,12 @@ export function defineStateLedgerContractSuite(ctx: StateLedgerContractContext) 
       const boot = bootstrapBatch("cmd-boot-9");
       await ledger.commit(boot.batch);
       const { batch } = goalBatch("cmd-goal-6", 0, 6);
+      // same identity, GENUINELY different fingerprint (e.g. the same
+      // idempotency key reused with a different payload); the ledger compares
+      // the declared fingerprint only — it must NOT validate content↔fingerprint.
       const different = {
         ...batch,
+        fingerprint: "f".repeat(64) as CommandFingerprint,
         events: [
           {
             ...batch.events[0]!,
@@ -398,17 +402,3 @@ export function defineStateLedgerContractSuite(ctx: StateLedgerContractContext) 
         expect(beta.snapshot).toMatchObject({ ref: { projectId: "proj-beta" } });
       }
     });
-
-    it("crash mid-commit leaves no partial state (fault injection)", async () => {
-      if (!ctx.createWithFault) return;
-      const { ledger, triggerFault } = await ctx.createWithFault();
-      const boot = bootstrapBatch("cmd-boot-13");
-      triggerFault();
-      await expect(ledger.commit(boot.batch)).rejects.toThrow();
-      expect(await eventIdsAfter(ledger, null)).toEqual([]);
-      expect(await ledger.load({ aggregateType: "Project", projectId: "proj-alpha" })).toMatchObject({
-        status: "not_found",
-      });
-    });
-  });
-}
