@@ -281,6 +281,8 @@ export function defineStateLedgerContractSuite(ctx: StateLedgerContractContext) 
       const boot = bootstrapBatch("cmd-boot-9");
       await ledger.commit(boot.batch);
       const { batch } = goalBatch("cmd-goal-6", 0, 6);
+      // commit first so the idempotency record exists under this identity
+      expect((await ledger.commit(batch)).status).toBe("committed");
       // same identity, GENUINELY different fingerprint (e.g. the same
       // idempotency key reused with a different payload); the ledger compares
       // the declared fingerprint only — it must NOT validate content↔fingerprint.
