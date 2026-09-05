@@ -113,45 +113,46 @@ export async function prepareDispatchScenario(h: P1_03TestHarness): Promise<void
     }),
   );
   expect(boot.status).toBe("committed");
+  // Two prepared projects: alpha (primary run paths) and beta (second run
+  // path — crash vs outcome_unknown need two distinct eligible runs).
+  await prepareP103Project(h, "proj-alpha", "a");
+  await prepareP103Project(h, "proj-beta", "b");
+}
+
+export async function prepareP103Project(
+  h: P1_03TestHarness,
+  projectId: string,
+  suffix: string,
+): Promise<void> {
   for (const kind of ["cp", "ab"] as const) {
     const fixture = kind === "cp" ? COMPLETION_POLICY_FIXTURE_V1 : ARCHITECTURE_BASELINE_FIXTURE_V1;
     const installCmd = buildInstallCommand(fixture, {
-      commandId: "cmd-p103-install-" + kind,
-      correlationId: "corr-p103-install-" + kind,
+      commandId: "cmd-p103-install-" + suffix + kind,
+      correlationId: "corr-p103-install-" + suffix + kind,
       submittedAt: SCHEMA,
-      projectId: "proj-alpha",
-      idempotencyKey: "p103-install-" + kind,
+      projectId,
+      idempotencyKey: "p103-install-" + suffix + kind,
     });
     const installed = await h.install(installCmd);
     expect(installed.status).toBe("committed");
-    if (kind === "cp") {
-      const activated = await h.activate(
-        buildActivateCommand(completionPolicyPinFor(installCmd as never), {
-          commandId: "cmd-p103-activate-" + kind,
-          correlationId: "corr-p103-activate-" + kind,
+    const activated = await h.activate(
+      buildActivateCommand(
+        kind === "cp" ? completionPolicyPinFor(installCmd as never) : architectureBaselinePinFor(installCmd as never),
+        {
+          commandId: "cmd-p103-activate-" + suffix + kind,
+          correlationId: "corr-p103-activate-" + suffix + kind,
           submittedAt: SCHEMA,
-          projectId: "proj-alpha",
+          projectId,
           expectedRevision: 1,
-        }),
-      );
-      expect(activated.status).toBe("committed");
-    } else {
-      const activated = await h.activate(
-        buildActivateCommand(architectureBaselinePinFor(installCmd as never), {
-          commandId: "cmd-p103-activate-" + kind,
-          correlationId: "corr-p103-activate-" + kind,
-          submittedAt: SCHEMA,
-          projectId: "proj-alpha",
-          expectedRevision: 1,
-        }),
-      );
-      expect(activated.status).toBe("committed");
-    }
+        },
+      ),
+    );
+    expect(activated.status).toBe("committed");
   }
   const goal = await h.submit(
     buildCreateGoalCommand(MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.scopes[0]!, {
-      commandId: "cmd-p103-goal",
-      correlationId: "corr-p103-goal",
+      commandId: "cmd-p103-goal-" + suffix,
+      correlationId: "corr-p103-goal-" + suffix,
       submittedAt: SCHEMA,
     }),
   );
@@ -159,10 +160,10 @@ export async function prepareDispatchScenario(h: P1_03TestHarness): Promise<void
   if (goal.status !== "committed") return;
   const plan = await h.applyPlan(
     buildApplyPlanCommand(DISPATCH_PLAN_REVISION_FIXTURE_V1, {
-      commandId: "cmd-p103-plan",
-      correlationId: "corr-p103-plan",
+      commandId: "cmd-p103-plan-" + suffix,
+      correlationId: "corr-p103-plan-" + suffix,
       submittedAt: SCHEMA,
-      projectId: "proj-alpha",
+      projectId,
       expectedRevision: 1,
     }),
   );
@@ -178,12 +179,13 @@ export function buildPreparedClaim(deps: {
   runId?: string;
   idempotencyKey?: string;
   goalId?: string;
+  projectId?: string;
 }): import("../../src/contracts/dispatch.js").DispatchClaimCommand {
   return buildDispatchClaimCommand({
     commandId: deps.commandId,
     correlationId: deps.correlationId ?? freshCorrelationId(),
     submittedAt: SCHEMA,
-    projectId: "proj-alpha",
+    projectId: deps.projectId ?? "proj-alpha",
     ...(deps.goalId !== undefined ? { goalId: deps.goalId } : {}),
     ...(deps.taskId !== undefined ? { taskId: deps.taskId } : {}),
     ...(deps.attemptId !== undefined ? { attemptId: deps.attemptId } : {}),
@@ -198,16 +200,18 @@ export function buildPreparedEnvelope(deps: {
   attemptId: string;
   bundleRef: import("../../src/contracts/artifact.js").ArtifactRef;
   envelopeId?: string;
+  projectId?: string;
 }): import("../../src/contracts/task-envelope.js").TaskEnvelopeV1 {
+  const projectId = deps.projectId ?? "proj-alpha";
   return buildEnvelopeFixture({
     envelopeId: deps.envelopeId ?? "envelope-" + deps.runId,
-    projectId: "proj-alpha",
+    projectId,
     workspaceId: "ws-shared",
     goalId: "goal-1",
     taskId: DISPATCH_ELIGIBLE_TASK_ID,
     runId: deps.runId,
     attemptId: deps.attemptId,
-    planRef: { aggregateType: "PlanRevision", projectId: "proj-alpha", planId: "plan-dispatch-mvp" },
+    planRef: { aggregateType: "PlanRevision", projectId, planId: "plan-dispatch-mvp" },
     workspaceRevision: 1,
     bundleRef: deps.bundleRef,
   });

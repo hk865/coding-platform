@@ -7,16 +7,11 @@
  *   - run_completed(exit 0) -> outcome completed + exitCode 0, but
  *     TaskDetail.phase stays pending (never satisfied);
  *   - run_crashed -> outcome crashed (separate from outcome_unknown);
- *   - outcome_unknown is an EXPLICIT RunFact fact;
+ *   - outcome_unknown is an EXPLICIT RunFact fact (second project run);
  *   - ActiveAgent + TaskDetail.run rebuild field-identically from events.
  */
 import { describe, expect, it } from "vitest";
-import type {
-  DispatchOutboxEntrySnapshot,
-  RunSnapshot,
-  RuntimeEventV1,
-  TaskAttemptSnapshot,
-} from "../../src/contracts/dispatch.js";
+import type { RunSnapshot, RuntimeEventV1 } from "../../src/contracts/dispatch.js";
 import {
   buildRunFactCommand,
   buildManifestFixture,
@@ -36,11 +31,18 @@ import {
 } from "./p1-03-harness.js";
 import { runRefFor } from "../../src/contracts/dispatch.js";
 
-const PLAN_REF = { aggregateType: "PlanRevision" as const, projectId: "proj-alpha", planId: "plan-dispatch-mvp" };
+function planRefFor(projectId: string) {
+  return { aggregateType: "PlanRevision" as const, projectId, planId: "plan-dispatch-mvp" };
+}
 
-async function claimedAndStarted(h: Awaited<ReturnType<P1_03HarnessFactory>>, runId: string, attemptId: string) {
+async function claimedAndStarted(
+  h: Awaited<ReturnType<P1_03HarnessFactory>>,
+  runId: string,
+  attemptId: string,
+  projectId: string = "proj-alpha",
+) {
   const claim = await h.claimTask(
-    buildPreparedClaim({ commandId: freshCommandId("claim-" + runId), attemptId, runId, idempotencyKey: "claim-" + runId }),
+    buildPreparedClaim({ commandId: freshCommandId("claim-" + runId), attemptId, runId, idempotencyKey: "claim-" + runId, projectId }),
   );
   expect(claim.status).toBe("committed");
   if (claim.status !== "committed") throw new Error("claim failed");
@@ -51,16 +53,16 @@ async function claimedAndStarted(h: Awaited<ReturnType<P1_03HarnessFactory>>, ru
     sizeBytes: 8,
     source: { kind: "plan-revision" as const, refId: "plan-dispatch-mvp", revision: "1" },
   };
-  const envelope = buildPreparedEnvelope({ runId, attemptId, bundleRef });
+  const envelope = buildPreparedEnvelope({ runId, attemptId, bundleRef, projectId });
   const start = await h.startRun(
     buildDispatchStartCommand({
       commandId: freshCommandId("start-" + runId),
       correlationId: freshCorrelationId(),
       submittedAt: SCHEMA,
-      projectId: "proj-alpha",
+      projectId,
       runId,
       envelope,
-      manifest: buildManifestFixture({ workspaceId: "ws-shared", workspaceRevision: 1, planRef: PLAN_REF }),
+      manifest: buildManifestFixture({ workspaceId: "ws-shared", workspaceRevision: 1, planRef: planRefFor(projectId) }),
     }),
   );
   expect(start.status).toBe("committed");
@@ -68,12 +70,12 @@ async function claimedAndStarted(h: Awaited<ReturnType<P1_03HarnessFactory>>, ru
   return { claim, envelope };
 }
 
-function rtEvent(runId: string, sequence: number, partial: Partial<RuntimeEventV1> = {}): RuntimeEventV1 {
+function rtEvent(runId: string, sequence: number, projectId: string = "proj-alpha", partial: Partial<RuntimeEventV1> = {}): RuntimeEventV1 {
   return {
     eventType: "run_started",
     schemaVersion: 1,
     eventId: "rt-" + runId + "-" + String(sequence).padStart(4, "0"),
-    runRef: runRefFor("proj-alpha", "goal-1", runId),
+    runRef: runRefFor(projectId, "goal-1", runId),
     sequence,
     occurredAt: "2026-09-05T12:00:0" + sequence + ".000Z",
     payload: { kind: "started", startedAt: "2026-09-05T12:00:01.000Z" },
@@ -92,16 +94,15 @@ export function defineRunContractSuite(createHarness: P1_03HarnessFactory): void
     it("run_completed(exit=0) -> ended/completed + exitCode 0; Task.phase stays pending", async () => {
       const h = await setup();
       await claimedAndStarted(h, "run-c1", "att-c1");
-      const startedEvent = rtEvent("run-c1", 1);
       const first = await h.runFact(buildRunFactCommand({
         commandId: freshCommandId("fact-start"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-c1", expectedRevision: 2,
-        fact: { kind: "runtime_event", event: startedEvent },
+        fact: { kind: "runtime_event", event: rtEvent("run-c1", 1) },
       }));
       expect(first.status).toBe("committed");
       if (first.status !== "committed") return;
       expect(first.terminal).toBe(false);
 
-      const completedEvent = rtEvent("run-c1", 2, { eventType: "run_completed", payload: { kind: "completed", exitCode: 0 } });
+      const completedEvent = rtEvent("run-c1", 2, "proj-alpha", { eventType: "run_completed", payload: { kind: "completed", exitCode: 0 } });
       const second = await h.runFact(buildRunFactCommand({
         commandId: freshCommandId("fact-complete"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-c1", expectedRevision: 3,
         fact: { kind: "runtime_event", event: completedEvent },
@@ -129,7 +130,7 @@ export function defineRunContractSuite(createHarness: P1_03HarnessFactory): void
       expect(detail.task.run?.exitCode).toBe(0);
     });
 
-    it("duplicate / stale / conflicting / after-terminal facts are rejected zero-write", async () => {
+    it("duplicate / stale / conflicting facts are rejected zero-write", async () => {
       const h = await setup();
       await claimedAndStarted(h, "run-c2", "att-c2");
       const e1 = rtEvent("run-c2", 1);
@@ -139,7 +140,6 @@ export function defineRunContractSuite(createHarness: P1_03HarnessFactory): void
       }));
       const before = await h.ledger.events({ afterCursor: null, limit: 500 });
 
-      // same sequence same id -> duplicate_event
       const dup = await h.runFact(buildRunFactCommand({
         commandId: freshCommandId("f-dup"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-c2", expectedRevision: 3,
         fact: { kind: "runtime_event", event: e1 },
@@ -147,29 +147,27 @@ export function defineRunContractSuite(createHarness: P1_03HarnessFactory): void
       expect(dup.status).toBe("rejected");
       if (dup.status === "rejected") expect(dup.code).toBe("duplicate_event");
 
-      // lower sequence -> stale_event
-      const staleEvent = rtEvent("run-c2", 0);
       const stale = await h.runFact(buildRunFactCommand({
         commandId: freshCommandId("f-stale"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-c2", expectedRevision: 3,
-        fact: { kind: "runtime_event", event: staleEvent },
+        fact: { kind: "runtime_event", event: rtEvent("run-c2", 0) },
       }));
       expect(stale.status).toBe("rejected");
       if (stale.status === "rejected") expect(stale.code).toBe("stale_event");
 
-      // same sequence different id -> conflict_event
       const conflict = await h.runFact(buildRunFactCommand({
         commandId: freshCommandId("f-conf"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-c2", expectedRevision: 3,
-        fact: { kind: "runtime_event", event: rtEvent("run-c2", 1, { eventId: "rt-other-0001" }) },
+        fact: { kind: "runtime_event", event: rtEvent("run-c2", 1, "proj-alpha", { eventId: "rt-other-0001" }) },
       }));
       expect(conflict.status).toBe("rejected");
       if (conflict.status === "rejected") expect(conflict.code).toBe("conflict_event");
 
       const after = await h.ledger.events({ afterCursor: null, limit: 500 });
-      expect(after.events.length).toBe(before.events.length); // zero write
+      expect(after.events.length).toBe(before.events.length);
     });
 
     it("crash and outcome_unknown project to DIFFERENT outcomes; unknown never guessed from crash", async () => {
       const h = await setup();
+      // alpha: crashed
       await claimedAndStarted(h, "run-crash", "att-crash");
       const crashed = rebaseScriptForRun(FAKE_RUNTIME_SCRIPT_CRASHED_V1, runRefFor("proj-alpha", "goal-1", "run-crash"));
       for (const [i, event] of crashed.entries()) {
@@ -184,16 +182,16 @@ export function defineRunContractSuite(createHarness: P1_03HarnessFactory): void
       if (run.status !== "found") return;
       expect((run.snapshot as RunSnapshot).outcome).toBe("crashed");
 
-      // explicit outcome_unknown on a SECOND run (separate task claim)
-      await claimedAndStarted(h, "run-unknown", "att-unknown");
+      // beta: explicit outcome_unknown (independent project/run)
+      await claimedAndStarted(h, "run-unknown", "att-unknown", "proj-beta");
       const unknown = await h.runFact(buildRunFactCommand({
-        commandId: freshCommandId("f-unknown"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-unknown", expectedRevision: 2,
+        commandId: freshCommandId("f-unknown"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-beta", runId: "run-unknown", expectedRevision: 2,
         fact: { kind: "outcome_unknown", reason: "disconnected after start" },
       }));
       expect(unknown.status).toBe("committed");
       if (unknown.status !== "committed") return;
       expect(unknown.terminal).toBe(true);
-      const run2 = await h.ledger.load({ aggregateType: "Run", projectId: "proj-alpha", goalId: "goal-1", runId: "run-unknown" });
+      const run2 = await h.ledger.load({ aggregateType: "Run", projectId: "proj-beta", goalId: "goal-1", runId: "run-unknown" });
       expect(run2.status).toBe("found");
       if (run2.status !== "found") return;
       expect((run2.snapshot as RunSnapshot).outcome).toBe("outcome_unknown");
@@ -203,12 +201,16 @@ export function defineRunContractSuite(createHarness: P1_03HarnessFactory): void
       expect(agentCrash.status).toBe("ready");
       if (agentCrash.status !== "ready") return;
       expect(agentCrash.agent.run.outcome).toBe("crashed");
+      const agentUnknown = await h.activeAgent({ projectId: "proj-beta", goalId: "goal-1", taskId: "task-run-adaptor" });
+      expect(agentUnknown.status).toBe("ready");
+      if (agentUnknown.status !== "ready") return;
+      expect(agentUnknown.agent.run.outcome).toBe("outcome_unknown");
     });
 
     it("ActiveAgent + TaskDetail views rebuild field-identically after a fresh projection", async () => {
       const h = await setup();
       await claimedAndStarted(h, "run-rebuild", "att-rebuild");
-      const done = rtEvent("run-rebuild", 1, { eventType: "run_completed", payload: { kind: "completed", exitCode: 1 } });
+      const done = rtEvent("run-rebuild", 1, "proj-alpha", { eventType: "run_completed", payload: { kind: "completed", exitCode: 1 } });
       await h.runFact(buildRunFactCommand({
         commandId: freshCommandId("f-rebuild"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-rebuild", expectedRevision: 2,
         fact: { kind: "runtime_event", event: done },
@@ -222,10 +224,25 @@ export function defineRunContractSuite(createHarness: P1_03HarnessFactory): void
         expect(detail.task.run?.outcome).toBe("completed");
         expect(agent.agent.run.outcome).toBe("completed");
         expect(agent.agent.attempt.status).toBe("ended");
-        // freshness semantic: not_ready != not_found
         const absent = await h.activeAgent({ projectId: "proj-alpha", goalId: "goal-1", taskId: "task-absent" });
         expect(["not_found", "not_ready"]).toContain(absent.status);
       }
+    });
+
+    it("outcome_unknown after crash: crash run never becomes satisfied either", async () => {
+      const h = await setup();
+      await claimedAndStarted(h, "run-c3", "att-c3");
+      const out = await h.runFact(buildRunFactCommand({
+        commandId: freshCommandId("f-c3"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-c3", expectedRevision: 2,
+        fact: { kind: "outcome_unknown", reason: "connection lost" },
+      }));
+      expect(out.status).toBe("committed");
+      await h.advanceProjection();
+      const detail = await h.taskDetail({ projectId: "proj-alpha", goalId: "goal-1", taskId: "task-run-adaptor" });
+      expect(detail.status).toBe("ready");
+      if (detail.status !== "ready") return;
+      expect(detail.task.phase).toBe("pending");
+      expect(detail.task.run?.outcome).toBe("outcome_unknown");
     });
   });
 }

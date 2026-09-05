@@ -176,7 +176,7 @@ export function defineDispatchContractSuite(createHarness: P1_03HarnessFactory):
       expect(pageAfter.events.length).toBe(pageBefore.events.length);
 
       const other = await h.claimTask(
-        buildPreparedClaim({ commandId: "cmd-p103-replay-b", attemptId: "att-r2", runId: "run-r2", idempotencyKey: "key-replay" }),
+        buildPreparedClaim({ commandId: "cmd-p103-replay-b", attemptId: "att-r2", runId: "run-r2", idempotencyKey: "key-replay-other" }),
       );
       expect(other.status).toBe("rejected");
       if (other.status !== "rejected") return;
