@@ -25,6 +25,7 @@ import type {
   RunOutcomeUnknownEvent,
   RunRef,
   RunSnapshot,
+  RunFactV1,
   TaskAttemptRef,
   TaskAttemptSnapshot,
   TaskBudgetV1,
@@ -162,6 +163,22 @@ export const DISPATCH_PLAN_REVISION_FIXTURE_V1: PlanRevisionDraft = {
           requirementLevel: "required",
           kind: "reviewer",
           description: "集成验收逐项对照",
+        },
+      ],
+    },
+    {
+      // task-blocked is required+work+active, so P1-02's "every required
+      // executable task maps a required obligation" guard demands a mapping.
+      obligationId: "obl-blocked",
+      title: "阻塞任务不可领取（readiness 表用例）",
+      requirementLevel: "required",
+      taskIds: [DISPATCH_BLOCKED_TASK_ID],
+      verificationRequirements: [
+        {
+          requirementId: "vr-blocked",
+          requirementLevel: "required",
+          kind: "static",
+          description: "blocked 任务在 readiness 表显式拒绝",
         },
       ],
     },
@@ -634,7 +651,7 @@ export type BuildRunFactDeps = {
   idempotencyKey?: string;
   runId: string;
   expectedRevision: number;
-  fact: { kind: "runtime_event"; event: RuntimeEventV1 } | { kind: "outcome_unknown"; reason: string };
+  fact: RunFactV1;
 };
 
 export function buildRunFactCommand(deps: BuildRunFactDeps): RunFactCommand {
@@ -717,10 +734,17 @@ export function buildRunEventRecordedCommit(
   if (event.kind !== "runtime_event") throw new Error("expected runtime_event fact");
   const runtimeEvent = event.event;
   const terminal = isTerminalRuntimeEvent(runtimeEvent);
-  const run = nextRunSnapshotForRuntimeEvent(deps.currentRun, runtimeEvent);
+  // Commit-consistent fold target: the Run advances from the CAS window
+  // (expectedRevision + 1) — same rule the run-fact handler applies.
+  const run = nextRunSnapshotForRuntimeEvent(
+    { ...deps.currentRun, revision: command.expectedRevision + 1 },
+    runtimeEvent,
+  );
   run.lastFactEventId = deps.eventId;
   const snapshots: (RunSnapshot | TaskAttemptSnapshot | DispatchOutboxEntrySnapshot)[] = [run];
-  const expectedVersions: ExpectedVersion[] = [{ ref: run.ref, revision: run.revision - 1 }];
+  const expectedVersions: ExpectedVersion[] = [
+    { ref: run.ref, revision: command.expectedRevision },
+  ];
   if (terminal) {
     const outcome = runtimeEventTerminalOutcome(runtimeEvent)!;
     const attempt = nextAttemptSnapshotForTerminal(deps.currentAttempt, outcome, runtimeEvent.occurredAt);
@@ -772,7 +796,10 @@ export function buildRunOutcomeUnknownCommit(
 ): RunFactLedgerCommitV1 {
   const fact = command.payload.fact;
   if (fact.kind !== "outcome_unknown") throw new Error("expected outcome_unknown fact");
-  const run = nextRunSnapshotForOutcomeUnknown(deps.currentRun, { observedAt: deps.occurredAt });
+  const run = nextRunSnapshotForOutcomeUnknown(
+    { ...deps.currentRun, revision: command.expectedRevision + 1 },
+    { observedAt: deps.occurredAt },
+  );
   const attempt = nextAttemptSnapshotForTerminal(deps.currentAttempt, "outcome_unknown", deps.occurredAt);
   const outbox = nextOutboxSnapshotForTerminal(deps.currentOutbox, deps.occurredAt);
   const domainEvent: RunOutcomeUnknownEvent = {

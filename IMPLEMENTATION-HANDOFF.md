@@ -2,7 +2,7 @@
 
 ```yaml
 ticket_id: P1-03
-status: shared baseline + parallel lanes running (limited authorization, 2026-09-05 — P1-03 only)
+status: implementation verified (limited authorization, 2026-09-05 — P1-03 only)
 updated: 2026-09-05
 authorized_by: user (limited authorization note recorded in ticket 03 + this file)
 next: STOP after P1-03 acceptance — do NOT auto-start P1-04 (DAG: 04 验收后才出现 05/06 并行窗口)
@@ -14,7 +14,7 @@ evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_doc
 ## P1-03 当前票据与共享契约基线
 
 - Ticket：`/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/03-fake-run-visible.md`（P1-03，status 按阶段守卫保持 `proposed`；有限授权与 Implementation record 已追加票尾；**不把本票记成 P1 已验收，不自动推进 P1-04**）
-- 上游 P1-00/P1-01/P1-02 验收证据：`dev_docs/verification/p1-00|p1-01|p1-02-implementation-evidence.md`（仅证明各自票据）；P1-02 结束基线 = 产品根 commit `bafb0f1`（typecheck 0 errors、29 files/283 tests PASS、validate-docs 12/12）
+- 上游 P1-00/P1-01/P1-02 验收证据：`dev_docs/verification/p1-00|p1-01|p1-02-implementation-evidence.md`（仅证明各自票据）；P1-02 结束基线 = 产品根 commit `bafb0f1`（typecheck 0 errors、29 files/283 tests PASS、validate-docs 12/12）。P1-03 共享基线 = 产品根 commit `27359e1`（= cec6b57 + TaskContextRequest.declaredPermissions；套件细化 c986d2d）；四路 lane（a/b/c/d）从 27359e1 派生并全部合并入 main；lane 上报缺口的 integrator 统一裁决见 evidence 文档 "integrator 裁决记录"
 - **冻结复用、不重写**：`src/contracts/**`（P1-00/01/02 部分）、`src/contracts/fixtures/**`、`src/contracts/testing/**`、`tests/contract-suite/state-ledger.*`+`goal-view.*`（既有套件零修改）、`src/ledger|control|read-model|interaction|sqlite-ledger|sqlite-read-model`（P1-02 部分）、`src/harness/**`、`tests/restart/**`、`tests/integration/**`
 - P0-06 复核影响（AGENTS.md 要求）：`human-framework-role-review.md` 结论与本票无冲突——复核收敛了角色/记忆方向（协调 vs 执行、短生命周期自由模板、报告需 Control 登记、完成权不绑定名称、outbox-before-side-effect、crash≠outcome_unknown 均在 03 验收内）；本票不创建 CompletionClaim/VerificationPlan、不做 Goal 归约、不把 Run 结束写 `Task.phase=satisfied`。doc 与票据 Acceptance 无冲突；如后续发现差异：以票据 Acceptance 为准并上报 integrator 统一协调接口文档修订（本屏已按此原则冻结 runtime-collaboration 尚未冻结的 wire 字段）。
 - 四个最小 Interface 首次冻结（DAG interfaces_to_freeze）：`ArtifactPort`（src/contracts/artifact.ts）、`DispatchPort`（src/contracts/ports.ts）、`TaskContextPort`（src/contracts/task-envelope.ts）、`RunPort`（src/contracts/ports.ts）——已建、版本化（v1）、以契约套件定义 + 集成接线作为最小 contract test；后续票据只消费/显式升级。
@@ -49,10 +49,10 @@ evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_doc
 
 | Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
 | --- | --- | --- | --- | --- |
-| A dispatch/claim | `p1-03-lane-a` | readiness 判定与唯一领取 + start + drive（outbox 先于副作用） | src/control/readiness.ts、claim.ts、start-run.ts、dispatch-engine.ts、tests/control/dispatch-*.test.ts | 进行中 |
-| B FakeRuntime + run-facts | `p1-03-lane-b` | FakeRuntimeAdapter + runFact（无回退/crash≠unknown/exit 不写 satisfied） | src/control/run-facts.ts、src/runtime/fake-runtime-adapter.ts、tests/control/run-facts.test.ts、tests/runtime/fake-runtime-adapter.test.ts | 进行中 |
-| C ContextCompiler+Vault | `p1-03-lane-c` | assemble（越权/旧绑定/预算/超界拒绝；正文先入 Vault）+ ArtifactVault | src/context/context-compiler.ts、src/vault/artifact-vault.ts、tests/context/**、tests/vault/** | 进行中 |
-| D ReadModel + 重启证据 | `p1-03-lane-d` | ActiveAgent/TaskDetail.run 投影 + 双 Adapter + 重启证据硬化 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、tests/read-model/**、tests/sqlite-read-model/**、tests/restart/p1-03-*.ts（含 evidence） | 进行中 |
+| A dispatch/claim | `p1-03-lane-a` @ d92a4fc | readiness 判定与唯一领取 + start + drive（outbox 先于副作用） | src/control/readiness.ts、claim.ts、start-run.ts、dispatch-engine.ts、tests/control/dispatch-*.test.ts | ✅ 23/23 |
+| B FakeRuntime + run-facts | `p1-03-lane-b` @ 5387ee6 | FakeRuntimeAdapter + runFact（无回退/crash≠unknown/exit 不写 satisfied） | src/control/run-facts.ts、src/runtime/fake-runtime-adapter.ts、tests/control/run-facts.test.ts、tests/runtime/fake-runtime-adapter.test.ts | ✅ 16/16 |
+| C ContextCompiler+Vault | `p1-03-lane-c` @ 913f4a2 | assemble（越权/旧绑定/预算/超界拒绝；正文先入 Vault）+ ArtifactVault | src/context/context-compiler.ts、src/vault/artifact-vault.ts、tests/context/**、tests/vault/** | ✅ 25/25 |
+| D ReadModel + 重启证据 | `p1-03-lane-d` @ 6fd0eb8 | ActiveAgent/TaskDetail.run 投影 + 双 Adapter + 重启证据硬化 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、tests/read-model/**、tests/sqlite-read-model/**、tests/restart/p1-03-*.ts（含 evidence） | ✅ 14/14（重启探针自动启用） |
 
 integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 schema/接口/共享 fixture）、`src/ledger/**`、`src/sqlite-ledger/**`、`src/control/control-engine.ts`、`src/harness/**`、`tests/contract-suite/**`、`tests/integration/**`、文档与状态记录。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结签名（如有缺口：提交具体建议给 integrator 统一修改基线并通知消费者）。
 
@@ -61,9 +61,12 @@ integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 s
 | 命令（product root） | 结果 |
 | --- | --- |
 | `pnpm typecheck` | PASS 0 errors（含新契约/夹具/套件/骨架） |
-| `pnpm vitest run`（全量） | **29 files / 283 tests PASS + 2 SKIP**（既有 P1-00/01/02 零回归；P1-03 重启骨架 skipIf 探针未启用） |
-| P1-03 契约套件/集成/证据 | 待 lane 落地后接线运行（套件定义已就绪：defineDispatchContractSuite/defineRunContractSuite；集成测试 finals 步骤建立） |
-| `node dev_docs/verification/validate-docs.mjs` | 待本票文档记录更新后运行（12/12 基线） |
+| `pnpm vitest run`（全量） | **44 files / 395 tests PASS**（P1-00/01/02 基线 283 零回归 + P1-03 新增 112） |
+| `pnpm vitest run tests/integration/p1-03.contract-suite.inmemory.test.ts` | 15/15 PASS |
+| `pnpm vitest run tests/integration/p1-03.contract-suite.sqlite.test.ts` | 15/15 PASS（同一套件定义，无调参） |
+| `pnpm vitest run tests/integration/p1-03.integration.test.ts` | 2/2 PASS（真实 SQLite：drive 全路径 + 并发竞争领取） |
+| `pnpm vitest run tests/restart/evidence/p1-03-evidence.test.ts` | 1/1 PASS（`P1-03-EVIDENCE` JSON 证据块，可重复） |
+| `node dev_docs/verification/validate-docs.mjs` | 12/12 PASS |
 
 设计理由摘要：outbox=canonical 聚合（可 load/可重启/与事件同事务，无第二套机制）；唯一领取=TaskLease CAS@0（ledger 原子性直接给出“至多一个”）；RuntimeEvent 去重=per-run 单调 sequence（零写入拒绝，不回退）；crash≠outcome_unknown（显式 fact）；TaskEnvelope 有界=64KiB+bodyRef（无 transcript）；FakeRuntimeAdapter=真实可重放适配器；事务边界=3 种 commitKind 单事务，run-fact 无 idempotency 记录（语义见上 4）。
 
@@ -126,7 +129,7 @@ integrator 维护：package/lock/tsconfig/vitest、src/contracts/**（公共 sch
 | `node dev_docs/verification/validate-docs.mjs` | 12/12 PASS |
 | 静态 grep：Adapter 之外原始 SQL / node:sqlite 消费者 | 0 / 0；既有双套件零修改；package/lock/tsconfig/vitest 零差异（零新增依赖） |
 
-## 下一步 / 未解问题
+## P1-03 下一步 / 未解问题（最终）
 
 - 无阻断项。设计理由见“P1-02 契约与存储语义”（LedgerCommit 扩展、immutable/activation/pin 语义、guard 顺序、事务边界）。
 - 已知取舍：① plan-revision validator 将 goalSnapshot.revision 固定为期望+1——P1-02 单次接受语义成立，multi-plan/rebase 属 P1-11 消费者；② PlanRevisionReceipt.revision_conflict 未携带 currentRevision（契约未定义）；③ 幂等键纪律：公共 fixture 默认 idempotencyKey 不区分 command 种类，同一 Project 上不同命令必须显式传独立 key（已三处修正集成；P1-00 幂等语义未变）。

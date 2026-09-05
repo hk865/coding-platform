@@ -174,7 +174,7 @@ function runtimeEvent(runId: string, sequence: number, partial: Partial<RuntimeE
   };
 }
 
-function factCmd(runId: string, expectedRevision: number, fact: { kind: "runtime_event"; event: RuntimeEventV1 } | { kind: "outcome_unknown"; reason: string }): ReturnType<typeof buildRunFactCommand> {
+function factCmd(runId: string, expectedRevision: number, fact: import("../../src/contracts/dispatch.js").RunFactV1): ReturnType<typeof buildRunFactCommand> {
   return buildRunFactCommand({
     commandId: "cmd-fact-" + runId + "-" + Math.random().toString(36).slice(2, 8),
     correlationId: "corr-fact-" + runId,
@@ -288,7 +288,7 @@ describe("P1-03 Control.runFact", () => {
     expect(after.status).toBe("rejected");
     if (after.status === "rejected") expect(after.code).toBe("after_terminal");
 
-    const unknownAfter = await h.engine.runFact(factCmd("run-ter", 3, { kind: "outcome_unknown", reason: "late" }));
+    const unknownAfter = await h.engine.runFact(factCmd("run-ter", 3, { kind: "outcome_unknown", runRef: runRefFor(PROJECT, GOAL, "run-ter"), reason: "late" }));
     expect(unknownAfter.status).toBe("rejected");
     if (unknownAfter.status === "rejected") expect(unknownAfter.code).toBe("after_terminal");
 
@@ -376,7 +376,7 @@ describe("P1-03 Control.runFact", () => {
     await seedStartedRun(h, "run-unknown", "att-unknown");
     const runRef = runRefFor(PROJECT, GOAL, "run-unknown");
 
-    const r = await h.engine.runFact(factCmd("run-unknown", 2, { kind: "outcome_unknown", reason: "disconnected" }));
+    const r = await h.engine.runFact(factCmd("run-unknown", 2, { kind: "outcome_unknown", runRef: runRefFor(PROJECT, GOAL, "run-unknown"), reason: "disconnected" }));
     expect(r.status).toBe("committed");
     if (r.status !== "committed") return;
     expect(r.terminal).toBe(true);
@@ -443,7 +443,7 @@ describe("P1-03 Control.runFact", () => {
     const loadedAttempt = await snap<TaskAttemptSnapshot>(h.ledger, taskAttemptRefFor(PROJECT, GOAL, TASK, "att-fold-u"));
     const loadedOutbox = await snap<DispatchOutboxEntrySnapshot>(h.ledger, dispatchOutboxRefFor(PROJECT, GOAL, TASK, "att-fold-u"));
 
-    const command = factCmd("run-fold-u", 2, { kind: "outcome_unknown", reason: "lost" });
+    const command = factCmd("run-fold-u", 2, { kind: "outcome_unknown", runRef: runRefFor(PROJECT, GOAL, "run-fold-u"), reason: "lost" });
     const receipt = await h.engine.runFact(command);
     expect(receipt.status).toBe("committed");
     if (receipt.status !== "committed") return;

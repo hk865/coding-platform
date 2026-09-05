@@ -56,7 +56,7 @@ export function defineDispatchContractSuite(createHarness: P1_03HarnessFactory):
         { taskId: DISPATCH_DEPENDENT_TASK_ID, codes: ["deps_unsatisfied"] },
         { taskId: DISPATCH_BLOCKED_TASK_ID, codes: ["task_phase_not_dispatchable"] },
         { taskId: DISPATCH_DEFERRED_TASK_ID, codes: ["task_not_active"] },
-        { taskId: DISPATCH_GATE_TASK_ID, codes: ["task_kind_not_work"] },
+        { taskId: DISPATCH_GATE_TASK_ID, codes: ["task_kind_not_work", "deps_unsatisfied"] },
         { taskId: "task-absent", codes: ["task_not_found"] },
       ];
       for (const c of cases) {
@@ -242,6 +242,7 @@ export function defineDispatchContractSuite(createHarness: P1_03HarnessFactory):
         projectId: "proj-alpha",
         runId: "run-s",
         expectedRevision: 999,
+        idempotencyKey: "p103-start-stale",
         envelope,
         manifest: buildManifestFixture({ workspaceId: "ws-shared", workspaceRevision: 1, planRef: { aggregateType: "PlanRevision", projectId: "proj-alpha", planId: "plan-dispatch-mvp" } }),
       }));

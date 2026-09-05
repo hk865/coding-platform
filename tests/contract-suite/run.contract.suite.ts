@@ -130,7 +130,7 @@ export function defineRunContractSuite(createHarness: P1_03HarnessFactory): void
       expect(detail.task.run?.exitCode).toBe(0);
     });
 
-    it("duplicate / stale / conflicting facts are rejected zero-write", async () => {
+    it("duplicate / invalid-sequence / conflicting / late-after-terminal facts are rejected zero-write (no regress)", async () => {
       const h = await setup();
       await claimedAndStarted(h, "run-c2", "att-c2");
       const e1 = rtEvent("run-c2", 1);
@@ -140,6 +140,7 @@ export function defineRunContractSuite(createHarness: P1_03HarnessFactory): void
       }));
       const before = await h.ledger.events({ afterCursor: null, limit: 500 });
 
+      // same sequence same id -> duplicate_event
       const dup = await h.runFact(buildRunFactCommand({
         commandId: freshCommandId("f-dup"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-c2", expectedRevision: 3,
         fact: { kind: "runtime_event", event: e1 },
@@ -147,13 +148,16 @@ export function defineRunContractSuite(createHarness: P1_03HarnessFactory): void
       expect(dup.status).toBe("rejected");
       if (dup.status === "rejected") expect(dup.code).toBe("duplicate_event");
 
-      const stale = await h.runFact(buildRunFactCommand({
-        commandId: freshCommandId("f-stale"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-c2", expectedRevision: 3,
+      // sequence 0 is MALFORMED input (per-run sequences are >= 1): invalid,
+      // never a version change — frozen semantics (see HANDOFF).
+      const zero = await h.runFact(buildRunFactCommand({
+        commandId: freshCommandId("f-zero"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-c2", expectedRevision: 3,
         fact: { kind: "runtime_event", event: rtEvent("run-c2", 0) },
       }));
-      expect(stale.status).toBe("rejected");
-      if (stale.status === "rejected") expect(stale.code).toBe("stale_event");
+      expect(zero.status).toBe("rejected");
+      if (zero.status === "rejected") expect(zero.code).toBe("invalid");
 
+      // same sequence different id -> conflict_event
       const conflict = await h.runFact(buildRunFactCommand({
         commandId: freshCommandId("f-conf"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-c2", expectedRevision: 3,
         fact: { kind: "runtime_event", event: rtEvent("run-c2", 1, "proj-alpha", { eventId: "rt-other-0001" }) },
@@ -163,6 +167,47 @@ export function defineRunContractSuite(createHarness: P1_03HarnessFactory): void
 
       const after = await h.ledger.events({ afterCursor: null, limit: 500 });
       expect(after.events.length).toBe(before.events.length);
+      const run = await h.ledger.load({ aggregateType: "Run", projectId: "proj-alpha", goalId: "goal-1", runId: "run-c2" });
+      expect(run.status).toBe("found");
+      if (run.status !== "found") return;
+      expect((run.snapshot as RunSnapshot).revision).toBe(3); // never regressed
+      expect((run.snapshot as RunSnapshot).lastEventSeq).toBe(1);
+    });
+
+    it("out-of-order NEWER-then-OLDER events: late old event after a terminal NEVER regresses", async () => {
+      const h = await setup();
+      await claimedAndStarted(h, "run-late", "att-late");
+      const e1 = rtEvent("run-late", 1);
+      await h.runFact(buildRunFactCommand({
+        commandId: freshCommandId("f-late-1"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-late", expectedRevision: 2,
+        fact: { kind: "runtime_event", event: e1 },
+      }));
+      // newer terminal event arrives BEFORE an older one (out-of-order delivery)
+      const e3 = rtEvent("run-late", 3, "proj-alpha", { eventType: "run_completed", payload: { kind: "completed", exitCode: 0 } });
+      const newer = await h.runFact(buildRunFactCommand({
+        commandId: freshCommandId("f-late-3"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-late", expectedRevision: 3,
+        fact: { kind: "runtime_event", event: e3 },
+      }));
+      expect(newer.status).toBe("committed");
+      if (newer.status !== "committed") return;
+      const before = await h.ledger.events({ afterCursor: null, limit: 500 });
+      // the OLD event (seq 2) arrives late — after terminal -> after_terminal
+      const e2 = rtEvent("run-late", 2, "proj-alpha", { eventType: "run_completed", payload: { kind: "completed", exitCode: 7 } });
+      const late = await h.runFact(buildRunFactCommand({
+        commandId: freshCommandId("f-late-2"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-late", expectedRevision: 4,
+        fact: { kind: "runtime_event", event: e2 },
+      }));
+      expect(late.status).toBe("rejected");
+      if (late.status === "rejected") expect(late.code).toBe("after_terminal");
+      const after = await h.ledger.events({ afterCursor: null, limit: 500 });
+      expect(after.events.length).toBe(before.events.length);
+      const run = await h.ledger.load({ aggregateType: "Run", projectId: "proj-alpha", goalId: "goal-1", runId: "run-late" });
+      expect(run.status).toBe("found");
+      if (run.status !== "found") return;
+      const snap = run.snapshot as RunSnapshot;
+      expect(snap.lastEventSeq).toBe(3);
+      expect(snap.outcome).toBe("completed");
+      expect(snap.exitCode).toBe(0); // the late exit=7 did NOT overwrite
     });
 
     it("crash and outcome_unknown project to DIFFERENT outcomes; unknown never guessed from crash", async () => {
@@ -186,7 +231,7 @@ export function defineRunContractSuite(createHarness: P1_03HarnessFactory): void
       await claimedAndStarted(h, "run-unknown", "att-unknown", "proj-beta");
       const unknown = await h.runFact(buildRunFactCommand({
         commandId: freshCommandId("f-unknown"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-beta", runId: "run-unknown", expectedRevision: 2,
-        fact: { kind: "outcome_unknown", reason: "disconnected after start" },
+        fact: { kind: "outcome_unknown", runRef: runRefFor("proj-beta", "goal-1", "run-unknown"), reason: "disconnected after start" },
       }));
       expect(unknown.status).toBe("committed");
       if (unknown.status !== "committed") return;
@@ -234,7 +279,7 @@ export function defineRunContractSuite(createHarness: P1_03HarnessFactory): void
       await claimedAndStarted(h, "run-c3", "att-c3");
       const out = await h.runFact(buildRunFactCommand({
         commandId: freshCommandId("f-c3"), correlationId: freshCorrelationId(), submittedAt: SCHEMA, projectId: "proj-alpha", runId: "run-c3", expectedRevision: 2,
-        fact: { kind: "outcome_unknown", reason: "connection lost" },
+        fact: { kind: "outcome_unknown", runRef: runRefFor("proj-alpha", "goal-1", "run-c3"), reason: "connection lost" },
       }));
       expect(out.status).toBe("committed");
       await h.advanceProjection();

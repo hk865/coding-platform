@@ -679,7 +679,8 @@ export type DispatchStartReceipt =
 
 export type RunFactV1 =
   | { kind: "runtime_event"; event: RuntimeEventV1 }
-  | { kind: "outcome_unknown"; reason: string };
+  /** Explicit "no terminal signal" fact — carries its Run identity (mirrors runtime_event). */
+  | { kind: "outcome_unknown"; runRef: RunRef; reason: string };
 
 export type RunFactCommand = {
   commandId: string;

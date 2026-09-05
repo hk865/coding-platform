@@ -43,7 +43,7 @@ import {
   runtimeEventTerminalOutcome,
   taskAttemptRefFor,
 } from "../contracts/dispatch.js";
-import type { CommitCursor } from "../contracts/command-event.js";
+
 import type {
   ExpectedVersion,
   LedgerCommitReceipt,
@@ -74,57 +74,19 @@ function rejected(
 }
 
 /**
- * Resolve the target Run aggregate ref for a fact command.
- *
- * `RunFactV1.runtime_event` carries the authoritative runRef inside the event.
- * `RunFactV1.outcome_unknown` (frozen contract) carries NO runRef and no
- * goalId, so the handler recovers the run ref from the Run event log by runId
- * (the RunStartedEvent / RunEventRecordedEvent always embed the full RunRef).
- * That is a consequence of the frozen outcome_unknown shape (see design notes);
- * adding a runRef to the fact would remove the scan.
+ * Resolve the target Run aggregate ref for a fact command (integrator ruling on
+ * lane-B gap 1): BOTH fact kinds carry their full Run identity — runtime_event
+ * inside the event, outcome_unknown on the fact — so NO event-log scan is ever
+ * needed. Alignment with the command (projectId/aggregateId) is enforced by
+ * validateRunFactCommand; this guard is the runtime safety net.
  */
-async function resolveRunRef(
-  deps: ControlEngineDeps,
-  command: RunFactCommand,
-): Promise<RunRef | null> {
+function resolveRunRef(command: RunFactCommand): RunRef | null {
   const fact = command.payload.fact;
-  if (fact.kind === "runtime_event") {
-    const ref = fact.event.runRef;
-    if (ref.aggregateType !== "Run") return null;
-    if (ref.projectId !== command.identity.projectId) return null;
-    if (ref.runId !== command.aggregateId) return null;
-    return ref;
-  }
-  return findRunRefByRunId(deps, command.identity.projectId, command.aggregateId);
-}
-
-/** Recover the RunRef addressed by (projectId, runId) from the Run event log. */
-async function findRunRefByRunId(
-  deps: ControlEngineDeps,
-  projectId: string,
-  runId: string,
-): Promise<RunRef | null> {
-  let afterCursor: CommitCursor | null = null;
-  let found: RunRef | null = null;
-  for (;;) {
-    const page = await deps.ledger.events({ afterCursor, limit: 256 });
-    for (const positioned of page.events) {
-      const event = positioned.event;
-      if (event.aggregateType !== "Run" || event.aggregateId !== runId) continue;
-      if (event.eventType === "RunStarted") {
-        const started = event as Extract<typeof event, { eventType: "RunStarted" }>;
-        found = started.payload.envelope.runRef;
-      } else if (event.eventType === "RunEventRecorded") {
-        const recorded = event as Extract<typeof event, { eventType: "RunEventRecorded" }>;
-        found = recorded.payload.runtimeEvent.runRef;
-      }
-      // RunOutcomeUnknown carries no runRef (aggregateId only).
-    }
-    if (!page.hasMore) break;
-    afterCursor = page.throughCursor;
-  }
-  if (found !== null && found.projectId !== projectId) return null;
-  return found;
+  const ref = fact.kind === "runtime_event" ? fact.event.runRef : fact.runRef;
+  if (ref.aggregateType !== "Run") return null;
+  if (ref.projectId !== command.identity.projectId) return null;
+  if (ref.runId !== command.aggregateId) return null;
+  return ref;
 }
 
 async function loadAttempt(
@@ -168,7 +130,7 @@ async function runFactImpl(
   }
 
   // Guard 2: resolve + load the Run aggregate.
-  const runRef = await resolveRunRef(deps, command);
+  const runRef = resolveRunRef(command);
   if (runRef === null) {
     return rejected(command.commandId, "invalid");
   }

@@ -144,13 +144,18 @@ export async function prepareP103Project(
           submittedAt: SCHEMA,
           projectId,
           expectedRevision: 1,
+          // DISTINCT per kind+project — the builder default key would make
+          // alpha-cp and alpha-ab the SAME CommandIdentity (idempotency_conflict).
+          idempotencyKey: "p103-activate-" + suffix + kind,
         },
       ),
     );
     expect(activated.status).toBe("committed");
   }
+  const scopeIndex = projectId === "proj-beta" ? 1 : 0;
+  const goalScope = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.scopes[scopeIndex]!;
   const goal = await h.submit(
-    buildCreateGoalCommand(MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.scopes[0]!, {
+    buildCreateGoalCommand(goalScope, {
       commandId: "cmd-p103-goal-" + suffix,
       correlationId: "corr-p103-goal-" + suffix,
       submittedAt: SCHEMA,

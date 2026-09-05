@@ -1010,9 +1010,23 @@ export function validateRunFactCommand(value: unknown): ValidationIssue[] {
       ...validateRuntimeEvent(fact["event"]).map((issue) => ({ ...issue, path: "payload.fact.event." + issue.path })),
     );
   } else if (fact["kind"] === "outcome_unknown") {
+    validateRunRef(fact["runRef"], "payload.fact.runRef", issues);
     stringField(fact, "reason", issues, "payload.fact.reason");
   } else {
     issues.push({ path: "payload.fact.kind", code: "bad_enum", message: 'kind must be "runtime_event" | "outcome_unknown"' });
+  }
+  // P1-03 decision (integrator ruling on lane-B gap 1): the fact carries its
+  // full run identity; alignment with the command's projectId/aggregateId is
+  // checked here so NO event-log scan is ever needed to resolve the Run.
+  const runRef = fact["runRef"];
+  const identity = isRecord(value["identity"]) ? value["identity"] : null;
+  if (isRecord(runRef) && identity !== null) {
+    if (runRef["projectId"] !== identity["projectId"]) {
+      issues.push({ path: "payload.fact.runRef.projectId", code: "bad_ref", message: "runRef.projectId must equal identity.projectId" });
+    }
+    if (runRef["runId"] !== value["aggregateId"]) {
+      issues.push({ path: "payload.fact.runRef.runId", code: "bad_ref", message: "runRef.runId must equal aggregateId" });
+    }
   }
   return issues;
 }
