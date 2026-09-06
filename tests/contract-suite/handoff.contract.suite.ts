@@ -51,6 +51,7 @@ import { artifactBodyDigest, type ArtifactRef } from "../../src/contracts/artifa
 import { buildRunFactCommand, rebaseScriptForRun, FAKE_RUNTIME_SCRIPT_CRASHED_V1 } from "../../src/contracts/fixtures/dispatch-fixtures.js";
 import { p106PlanRefFor } from "./p1-06-harness.js";
 import { handoffPacketRefFor as hpr } from "../../src/contracts/handoff.js";
+import { FakeHandoffControlPort } from "../../src/contracts/testing/handoff-control.double.js";
 import { buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand } from "../../src/contracts/fixtures/evidence-fixtures.js";
 import { P106_OBL_HANDOFF, P106_TASK_ID as P106_TASK, P106_VR_DYNAMIC, P106_VR_STATIC } from "../../src/contracts/fixtures/handoff-fixtures.js";
 
@@ -892,7 +893,9 @@ export function defineHandoffContractSuite(factory: P1_06HarnessFactory): void {
         const sc = await prepareP106Scenario(hh);
         await endP106RunA(hh, { projectId: sc.projectId, taskId: P106_TASK_ID, runId: "run-a-14", attemptId: "att-a-14", script: "crashed" });
         const bRun = runRefFor(sc.projectId, P106_GOAL, "run-b-14");
-        const control = hh.handoffControl;
+        // Contract-shape test uses the shared double (frozen semantics); the REAL
+        // adapter's per-run behavior is covered by lane B's unit tests.
+        const control = new FakeHandoffControlPort([{ runRef: bRun, lastEventSeq: 3 }]);
         const paused = await control.control({ schemaVersion: 1, kind: "pause", reason: "safe point", correlationId: "corr-ctrl-14", submittedAt: P106_SCHEMA });
         expect(paused.status).toBe("accepted");
         if (paused.status === "accepted") expect(paused.state.status).toBe("paused");

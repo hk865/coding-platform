@@ -23,6 +23,8 @@ type FakeControlState = {
 
 export class FakeHandoffControlPort implements HandoffControlPort {
   private readonly states = new Map<string, FakeControlState>();
+  /** The run the no-runRef control() targets (first seeded; updated on control). */
+  private current: string | null = null;
 
   constructor(initial: { runRef: RunRef; lastEventSeq?: number; terminalOutcome?: PublicRuntimeReportV1["terminalOutcome"] }[] = []) {
     for (const entry of initial) {
@@ -46,6 +48,7 @@ export class FakeHandoffControlPort implements HandoffControlPort {
       lastEventSeq,
       terminalOutcome,
     });
+    if (this.current === null) this.current = key;
   }
 
   async control(command: HandoffControlCommandV1): Promise<HandoffControlCommandResultV1> {
@@ -54,7 +57,7 @@ export class FakeHandoffControlPort implements HandoffControlPort {
     if (command.kind !== "pause" && command.kind !== "stop") issues.push("kind must be pause|stop");
     if (typeof command.reason !== "string" || command.reason.length === 0) issues.push("reason required");
     if (issues.length > 0) return { status: "rejected", code: "invalid", issues };
-    const context = this.states.get("single");
+    const context = this.current === null ? undefined : this.states.get(this.current);
     if (context === undefined) {
       return { status: "rejected", code: "run_not_found", issues: ["no run context seeded"] };
     }
@@ -70,7 +73,7 @@ export class FakeHandoffControlPort implements HandoffControlPort {
       lastReason: command.reason,
       noHiddenContextRead: true,
     };
-    this.states.set("single", { ...context, state: next });
+    if (this.current !== null) this.states.set(this.current, { ...context, state: next });
     return { status: "accepted", state: next };
   }
 
@@ -78,7 +81,7 @@ export class FakeHandoffControlPort implements HandoffControlPort {
     if (query.schemaVersion !== 1) {
       return { status: "rejected", code: "invalid", issues: ["schemaVersion must be 1"] };
     }
-    const context = this.states.get(runKey(query.runRef)) ?? this.states.get("single");
+    const context = this.states.get(runKey(query.runRef));
     if (context === undefined) {
       return { status: "unsupported", reason: "no snapshot state for run " + query.runRef.runId };
     }
