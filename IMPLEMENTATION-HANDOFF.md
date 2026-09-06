@@ -1,22 +1,68 @@
 # IMPLEMENTATION-HANDOFF — Agent Platform 产品代码根
 
 ```yaml
-ticket_id: P1-16
-status: implementation in progress (limited authorization, 2026-09-06 continuous window — P1-09..P1-17 + G1..G5 authorized); shared baseline a597eaf committed; lanes A/B dispatched
+ticket_id: P1-12 (parallel window 1b) / P1-16 (parallel window 1a, lanes in flight)
+status: P1-16 lanes A/B in flight (baseline a597eaf); P1-12 shared baseline e150447 committed, lanes A/B dispatched (limited authorization, 2026-09-06 continuous window — P1-09..P1-17 + G1..G5 authorized)
 updated: 2026-09-06
 authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a) all done / (b) architecture tradeoff / (c) architecture-granularity confirmation; GitHub push still needs user authorization)
 next: merge P1-16 lanes A/B -> full acceptance (typecheck + 768-base zero-regression + dual-adapter suite + real SQLite + restart + validate-docs) -> evidence; then P1-12 (independent parallel window); then 09/10/17 (after 16) and 13 (after 12); then 11 (after 10) and 14 (after 11+12); then 15 (after 09+14+17); gates: G2 waits 05+06+16, G4 waits 09+11, G5 waits 13+14, G3 waits 07+15
 evidence: (pending — lanes in flight) full acceptance evidence will live in dev_docs/verification/p1-16-implementation-evidence.md
-shared_baseline: "P1-16 共享基线" commit a597eaf (7664d91 + context-continuity contracts + 3 ports + fixtures + harness wiring + suite/restart/integration skeletons; 既有 768 测试零回归实测：97 files/768 passed, 5 files/37 tests auto-skip via isP116Ready probe)
-parallel_scope: P1-16 (窗口 1a) 与 P1-12 (窗口 1b) 并行——二者 blocked_by 均为已验收票（16←06；12←07）；本票 lane 用隔离 worktree（先例 P1-06/07/08；lane A/B 并行，重启+集成由 integrator 在合并后执行）
+shared_baseline: P1-16 = a597eaf（768 zero-regression 实测）；P1-12 = e150447（768 zero-regression 实测；97 files/768 passed, 8 files/42 tests auto-skip via isP112Ready probe）
+parallel_scope: 窗口 1 = P1-16（←06）与 P1-12（←07）并行，二者 blocked_by 均为已验收票；lane 均用隔离 worktree；重启+集成由 integrator 在各票 lane 合并后执行
 merge_surface_note: P1-16 只扩展同工作连续性 + 理由留痕 + 显式接续能力声明；不新增 Module（ARCHITECTURE §Plane）；不改 P1-03/04/05/06/07/08 冻结形状（零改动，只版本化追加）；4 个新事件（WorkContextBound/WorkRunLinked/ExecutionNoteRecorded/ContinuationRecorded）——KNOWN 与 handler 各 lane 同 commit；不改 Goal/CompletionPolicy；真实内核（coding-agent）连续性验证为本票 Acceptance 第 7 项，Fake 契约测试不能替代
 ```
 
 ---
 
-## P1-16 当前票据与共享契约基线
+## P1-12 当前票据与共享契约基线（并行窗口 1b）
 
-- Ticket：`/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/16-context-continuity.md`（P1-16，status 按阶段守卫保持 `proposed`；Implementation record 将在验收后追加票尾）
+- Ticket："/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/12-codegraph-finding-decision-brief.md"（P1-12，status 按阶段守卫保持 proposed；Implementation record 将在验收后追加票尾）
+- 上游基线：产品根 commit 7664d91（P1-08 验收；本地 main 未推送 GitHub——推送需用户授权）。**P1-12 共享基线 = commit e150447**（= 7664d91 + P1-16 基线 a597eaf + 本票 contract/port/fixture/harness/套件/restart/集成骨架；既有 768 测试零回归实测，8 files/42 tests 因 isP112Ready()=false 自动 skip 属预期）。
+- **冻结复用、不重写**：P1-00…P1-11 全部契约/夹具/套件/适配器/harness 零修改通过；P1-02 的 governance/plan pin 形状只被消费（p112BaselinePin 由 ARCHITECTURE_BASELINE_FIXTURE_V1 + architectureBaselinePinFor 派生）；P1-05/04 reducer 不修改。
+- **P0-06 复核影响（已核对）**：2026-09-06 同步记录明确——P1-12 接受无 raw Delta 的问题来源（报告型 finding 合法、禁止伪造 delta）；P1-14 验证决定/迁移/主动上报最小路径。
+- **三个最小 Interface 首次冻结**：WorkspaceReader.ReadPort（src/contracts/workspace-read.ts）、ArchitectureReconciler.InspectionPort（src/contracts/architecture-reconciler.ts）、VerificationEngine.CodeGraphPort（同文件）——P1-13/14 只消费这些版本；6 个契约：ArchitectureInspectionIntent/CodeGraphSnapshot/ArchitectureDelta/ArchitectureFinding/ArchitectureDecisionBrief/CandidateBaselineProposal。
+- **Lane 跟踪**：lane A（inspect pipeline：workspace reader + code-graph port + reconciler，subagent e44ac9f9）与 lane B（4 record commands + brief/proposal 投影，subagent e075e034）在隔离 worktree agent_platform-p1-12-a/b（分支 p1-12-lane-a/b，自 e150447）。合并后 integrator 执行重启硬化 + 集成 + 证据块。
+
+## P1-12 契约与存储语义（冻结）
+
+1. **pin-only baseline**：inspection 意图携带 planRef + ArchitectureBaselinePin（ref+digest）；reconciler 只沿 pin 加载 digest/revision 匹配的 immutable baseline（ledger.load）——**不读 Project active ref、无内置 baseline**；pin 缺失/dangling → fail_closed(baseline_unresolved)，digest 不匹配 → fail_closed(baseline_digest_mismatch)，均为零写入并带可解释诊断，**绝不生成伪 Delta/Finding**。
+2. **CodeGraphSnapshot（revision-bound）**：绑定 workspaceRevision/planRef/baselinePin/gitRef(commitHash+treeDigest)/nodes(≤512)/edges(≤1024)/indexCapabilities{hasCodeGraph, degradesToText, graphRevision}/bodyRef；无图能力必须显式（hasCodeGraph=false + 降级标注），不得编造关系。阅读约定：WorkspaceReader 注册表 sourceRevision 0 = pin 基准态（fixture-graph registry），>=1 = 当前态；调用方版本与当前不符 → stale（重新取材）。
+3. **ArchitectureDelta（纯机械）**：computeArchitectureDelta(before, after) 纯函数——node/edge 按 structuralKey 求差集，changes 只含 added/removed/modified/moved + before/afterDigest；noVerdict: true 显式保证；相同输入 → 相同 Delta（canonicalJson 相等）。
+4. **ArchitectureFinding**：source ∈ workspace_delta|interface_report|performance|permission|runtime_evidence；**deltaRef: null 合法（report 型）**——禁止伪造 raw Delta；category/risk/confidence + sources(≤16)/affectedRefs/recommendation；material/ambiguous 布尔；summary ≤4096B；JSON ≤16KiB。
+5. **ArchitectureDecisionBrief**：material/ambiguous finding 必须产生；绑定 source baseline pin + findingRefs + 原始理由(≤8) + 影响(modules/interfaces/plans) + 选项(≤8，含 optionId/风险/延后影响/递延后果) + bodyRef。
+6. **CandidateBaselineProposal**：从精确 sourceBaselinePin + 选中 delta/option + normalizedContent 确定性派生；proposalDigest = sha256(canonicalJson(payload))（record 时重算验证，不一致 → digest_mismatch 零写入）；expectedCandidateDigest 供 P1-14 物化比对。
+7. **Record 命令/守卫**：inspection/finding/brief/proposal 四个不可变聚合（CAS@0）+ 全量幂等；pin 解析缺失 → not_found，digest 不匹配 → baseline_mismatch；每命令一个原子 commit（fold-equality 用共享 fixture builder）。
+8. **事件/投影**：4 个新 v1 事件（ArchitectureInspectionRecorded/FindingRecorded/BriefRecorded/ProposalRecorded；DomainEvent/KNOWN 同一基线；handler+isHandledEventType 各 lane 同 commit）；ReadModel 视图 architectureInspectionView（key=canonicalJson(完整 ref)；inspections+findings（LANE-A）+briefs+proposals（LANE-B）；只展示不判定；freshness opaque cursor）。
+9. **边界**：**本票不产生 RemediationTask、migration Gate 或 BaselineActivation 副作用**；Worker/Reviewer 无权修改 baseline、不能把自己的 CompletionClaim 作为新 baseline；不物化 candidate、不移动 active ref；改动接口/契约的人工协商由 P1-14/15 消费（不形成反向依赖）。
+
+## P1-12 已冻结的代码入口（integrator 建立，签名冻结）
+
+| 入口 | 文件 | 冻结表面 |
+| --- | --- | --- |
+| 契约/纯函数 | src/contracts/architecture-inspection.ts | 6 契约值类型 + 4 refs + 4 命令/回执 + 4 事件 + 4 snapshot + fingerprints + computeArchitectureDelta（纯）+ candidateProposalDigest（纯）+ 视图 Query/Result + 上限常量 |
+| 端口 | src/contracts/workspace-read.ts、architecture-reconciler.ts | WorkspaceReadPort/CodeGraphReadQueryV1/ResultV1；InspectionPort/InspectResultV1；CodeGraphPort/CodeGraphQueryV1/ResultV1 |
+| ledger/validation 扩展 | src/contracts/{ledger,ledger-validation,validation,events,modules,goal-view,index}.ts | 4 commitKind + 4 validateXxxCommit（双适配器共用）+ intent/finding/brief/proposal/4 命令校验器 + DomainEvent/KNOWN + ControlEngine 4 个版本化新增 + ReadModelIndex.architectureInspectionView |
+| fixtures | src/contracts/fixtures/architecture-fixtures.ts | P112_* 常量、p112BaselinePin、P112 基准/当前图、delta/report finding、brief、proposal（确定性 digest）、buildP112InspectionIntent/Snapshot、4 命令 builder + 4 ledger-fold builder |
+| Control 入口 | src/control/architecture-inspection.ts | ArchitectureInspectionEngineImpl（stub→lane B）；control-engine.ts 仅委托 |
+| Reconciler/reader/seam | src/control/architecture-reconciler.ts、src/data/workspace-reader-adapter.ts、src/verification/code-graph-port.ts | ArchitectureReconcilerImpl（stub→lane A）；FakeWorkspaceReaderAdapter（stub→lane A）；CodeGraphPortImpl（stub→lane A） |
+| harness | src/harness/{in-memory,persistent}-harness.ts | workspaceReader/codeGraph/inspection 默认接线 + recordArchitectureInspection/finding/decisionBrief/candidateProposal + architectureInspectionView + workspaceRead/codeGraphQuery/inspect 直通 + options {workspaceReader?, codeGraph?, inspection?} |
+| 契约套件 | tests/contract-suite/{p1-12-harness,architecture.contract.suite}.ts | P1_12TestHarness/FACTORY、runP112InspectionScenario、defineArchitectureInspectionContractSuite（InMemory+SQLite 同套件；Acceptance + 7 组 verification；restart 组为集成级） |
+| 重启骨架 | tests/restart/p1-12-restart-fixtures.ts、p1-12-restart.test.ts、evidence/p1-12-evidence.test.ts | isP112Ready() 探针；实现落地后自动启用 |
+| 集成接线 | tests/integration/p1-12.contract-suite.inmemory|sqlite.test.ts、p1-12.integration.test.ts | 双适配器套件接线（skipIf 探针）+ 真实 SQLite 全路径 + 重启等价 |
+
+## 三路并行（P1-12，隔离 worktree → main 合并；从 e150447 派生）
+
+| Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
+| --- | --- | --- | --- | --- |
+| A inspect pipeline | agent_platform-p1-12-a @ p1-12-lane-a | FakeWorkspaceReaderAdapter（图注册表/stale/unsupported）+ CodeGraphPortImpl + ArchitectureReconcilerImpl.inspect（pin-only fail-closed、确定性 delta、report-source 无伪 delta、经 Control 记录、零 baseline 副作用）+ 对应单测 | src/data/workspace-reader-adapter.ts、src/verification/code-graph-port.ts、src/control/architecture-reconciler.ts、tests/control/architecture-reconciler.test.ts、tests/data/workspace-reader-adapter.test.ts、tests/verification/code-graph-port.test.ts | ⏳ 实施中（subagent e44ac9f9） |
+| B record + projection | agent_platform-p1-12-b @ p1-12-lane-b | 4 record commands（守卫序+fold-equality+幂等；proposal digest 重算）+ architectureInspectionView 的 brief/proposal 部分（in-memory+sqlite，isHandledEventType 同 commit）+ 对应单测 | src/control/architecture-inspection.ts、src/read-model/read-model-index.ts（LANE-B 区域）、src/sqlite-read-model/sqlite-read-model-index.ts（LANE-B 区域）、tests/control/architecture-inspection.test.ts、tests/read-model/p1-12-brief-proposal-projection.test.ts、tests/sqlite-read-model/p1-12-brief-proposal-projection.test.ts | ⏳ 实施中（subagent e075e034） |
+| C 重启证据 + 集成 | (integrator 合并后执行) | isP112Ready 探针硬化 + restart 逐字段一致 + 真实 SQLite 全路径集成 + 双适配器视图一致性 + P1-12-EVIDENCE 块 | tests/restart/p1-12-*、tests/integration/p1-12.* | ⏳ 待 lane A/B 合并 |
+
+---
+
+## P1-16 当前票据与共享契约基线（并行窗口 1a — lane A/B 实施中；本段自 8aa395a 起保持，P1-16 原文未改动）
+
+- Ticket："/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/16-context-continuity.md"（P1-16，status 按阶段守卫保持 `proposed`；Implementation record 将在验收后追加票尾）
 - 上游基线：产品根 commit `7664d91`（P1-08 验收：97 files/768 tests PASS、12/12 Acceptance、7/7 verification、validate-docs 13/13；本地 main 未推送 GitHub——推送需用户授权）。**P1-16 共享基线 = commit `a597eaf`**（= 7664d91 + 本票新增 contract/port/fixture/harness/套件/restart/集成骨架；既有 768 测试零回归实测——97 files/768 tests PASS，5 files/37 tests 因 isP116Ready()=false 自动 skip 属预期）。
 - **冻结复用、不重写**：P1-00…P1-08 全部契约/夹具/套件/适配器/harness 零修改通过；P1-03 冻结的 Run/TaskAttempt/TaskLease/lease 形状不修改；P1-06 的 HandoffPacket/ReplacementAttempt 只被消费不重写；P1-05 goal reducer / P1-04 完成策略不修改。
 - **P0-06 复核影响（已核对）**：`dev_docs/verification/2026-09-06-context-orchestration-sync.md` 明确——同工作连续性与真实内核能力由 16 验证（P1-03/06 仅有原最小派发/换手证据）；P1-09/10 消费其产物；G2 = 05+06+16。
