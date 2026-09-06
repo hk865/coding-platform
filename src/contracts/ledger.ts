@@ -76,6 +76,14 @@ import type {
   GoalPhaseSnapshot,
   GoalPhaseUpdatedEvent,
 } from "./goal-phase.js";
+import type {
+  HandoffPacketRef,
+  HandoffPacketSnapshot,
+  HandoffRecordedEvent,
+  ReplacementAttemptRef,
+  ReplacementAttemptSnapshot,
+  ReplacementClaimedEvent,
+} from "./handoff.js";
 
 export type ProjectRef = {
   aggregateType: "Project";
@@ -111,7 +119,9 @@ export type AggregateRef =
   | EvidenceRef
   | TaskEvidenceIndexRef
   | TaskReductionRef
-  | GoalPhaseRef;
+  | GoalPhaseRef
+  | HandoffPacketRef
+  | ReplacementAttemptRef;
 
 export type ProjectSnapshot = {
   ref: ProjectRef;
@@ -151,7 +161,9 @@ export type AggregateSnapshot =
   | EvidenceSnapshot
   | TaskEvidenceIndexSnapshot
   | TaskReductionSnapshot
-  | GoalPhaseSnapshot;
+  | GoalPhaseSnapshot
+  | HandoffPacketSnapshot
+  | ReplacementAttemptSnapshot;
 
 export type SnapshotResult =
   | { status: "found"; snapshot: AggregateSnapshot }
@@ -276,6 +288,33 @@ export type EvidenceIntakeLedgerCommitV1 = {
   outboxIntents: [];
 };
 
+/** P1-06: handoff-record — one immutable HandoffPacket aggregate (body-first). */
+export type HandoffRecordLedgerCommitV1 = {
+  commitKind: "handoff-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [HandoffPacket@0]. */
+  expectedVersions: ExpectedVersion[];
+  events: [HandoffRecordedEvent];
+  snapshots: [HandoffPacketSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-06: replacement-claim — B's new Attempt lifecycle for the SAME Task
+ * (lease CAS@N + new TaskAttempt/Run/DispatchOutboxEntry + ReplacementAttempt). */
+export type ReplacementClaimLedgerCommitV1 = {
+  commitKind: "replacement-claim";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [TaskLease@N, TaskAttempt@0, Run@0, DispatchOutboxEntry@0, ReplacementAttempt@0]. */
+  expectedVersions: ExpectedVersion[];
+  events: [ReplacementClaimedEvent];
+  snapshots: [TaskLeaseSnapshot, TaskAttemptSnapshot, RunSnapshot, DispatchOutboxEntrySnapshot, ReplacementAttemptSnapshot];
+  outboxIntents: [DispatchIntentV1];
+};
+
 /** P1-04: verification-result — the deterministic Task/Gate reduction state. */
 export type TaskReductionLedgerCommitV1 = {
   commitKind: "verification-result";
@@ -313,7 +352,9 @@ export type LedgerCommit =
   | RunFactLedgerCommitV1
   | EvidenceIntakeLedgerCommitV1
   | TaskReductionLedgerCommitV1
-  | GoalReductionLedgerCommitV1;
+  | GoalReductionLedgerCommitV1
+  | HandoffRecordLedgerCommitV1
+  | ReplacementClaimLedgerCommitV1;
 
 export type LedgerCommitReceipt =
   | {

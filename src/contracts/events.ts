@@ -3,8 +3,10 @@
  * v1 events: GoalCreated (Goal create slice) + ProjectBootstrapped /
  * WorkspaceBootstrapped (P1-00 bootstrap extension) + governance / plan events
  * (P1-02 versioned extension) + dispatch/run events (P1-03 versioned
- * extension). Unknown eventType or schemaVersion must stop consumers, never
- * skip.
+ * extension) + evidence/reduction events (P1-04 versioned extension) +
+ * goal-phase events (P1-05 versioned extension) + handoff/replacement events
+ * (P1-06 versioned extension). Unknown eventType or schemaVersion must stop
+ * consumers, never skip.
  */
 import type { GoalCreatedEvent } from "./command-event.js";
 import type { ProjectBootstrappedEventV1, WorkspaceBootstrappedEventV1 } from "./bootstrap.js";
@@ -24,6 +26,7 @@ import type {
 import type { EvidenceAdmittedEvent } from "./evidence.js";
 import type { TaskReductionUpdatedEvent } from "./reduction.js";
 import type { GoalPhaseUpdatedEvent } from "./goal-phase.js";
+import type { HandoffRecordedEvent, ReplacementClaimedEvent } from "./handoff.js";
 
 export type DomainEventV1 =
   | GoalCreatedEvent
@@ -40,7 +43,9 @@ export type DomainEventV1 =
   | RunOutcomeUnknownEvent
   | EvidenceAdmittedEvent
   | TaskReductionUpdatedEvent
-  | GoalPhaseUpdatedEvent;
+  | GoalPhaseUpdatedEvent
+  | HandoffRecordedEvent
+  | ReplacementClaimedEvent;
 
 export type DomainEvent = DomainEventV1;
 
@@ -61,6 +66,8 @@ export const KNOWN_EVENT_TYPES = [
   "EvidenceAdmitted",
   "TaskReductionUpdated",
   "GoalPhaseUpdated",
+  "HandoffRecorded",
+  "ReplacementClaimed",
 ] as const;
 
 export function isKnownEventType(eventType: string): eventType is (typeof KNOWN_EVENT_TYPES)[number] {

@@ -60,6 +60,8 @@ import {
   validateEvidenceIntakeCommit,
   validateTaskReductionCommit,
   validateGoalReductionCommit,
+  validateHandoffRecordCommit,
+  validateReplacementClaimCommit,
 } from "../contracts/ledger-validation.js";
 import type {
   DispatchClaimLedgerCommitV1,
@@ -434,6 +436,10 @@ export class SqliteStateLedger implements StateLedger {
         return this.commitTaskReduction(batch);
       case "goal-reduction":
         return this.commitGoalReduction(batch);
+      case "handoff-record":
+        return this.commitHandoffRecord(batch);
+      case "replacement-claim":
+        return this.commitReplacementClaim(batch);
     }
   }
 
@@ -497,6 +503,22 @@ export class SqliteStateLedger implements StateLedger {
   /** P1-05: goal-reduction — full idempotency + CAS via the shared machinery. */
   private commitGoalReduction(batch: import("../contracts/ledger.js").GoalReductionLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
     if (!validateGoalReductionCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  /** P1-06: handoff-record — one immutable HandoffPacket (full idempotency + CAS). */
+  private commitHandoffRecord(batch: import("../contracts/ledger.js").HandoffRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateHandoffRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  /** P1-06: replacement-claim — lease CAS@N + new attempt/run/outbox/replacement (full idempotency). */
+  private commitReplacementClaim(batch: import("../contracts/ledger.js").ReplacementClaimLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateReplacementClaimCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
     }
     return this.commitGeneric(batch);

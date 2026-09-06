@@ -1,0 +1,605 @@
+/**
+ * P1-06 Handoff contracts — HandoffPacket / ReplacementAttempt / events
+ * (first consumer freeze of DispatchEngine.HandoffPort).
+ *
+ * Authority:
+ *   - dev_docs/planning/proposed/P1-foundation/tickets/06-handoff-a-to-b.md
+ *     (4 verification groups, 6 Acceptance items)
+ *   - dev_docs/interfaces/runtime-collaboration.md (bounded handoff; body-first
+ *     in ArtifactVault; old binding / overreach rejected; duplicate / late
+ *     results never re-dispatch or mutate an un-accepted state; outcome_unknown
+ *     preserved)
+ *   - IMPLEMENTATION-HANDOFF.md "P1-06 契约与存储语义（冻结）"
+ *
+ * FROZEN semantics:
+ *   - HandoffPacket is BOUNDED (HANDOFF_PACKET_MAX_BYTES, same order as the
+ *     TaskEnvelope 64KiB cap) and carries objective / constraints / completed /
+ *     unresolved / Evidence+Artifact refs / Workspace revision / source
+ *     (Run+Binding+Context versions). It has the EXPLICIT noFullTranscript
+ *     field and its schema has NO transcript/chain-of-thought slot — the
+ *     validator rejects unknown fields, so a hidden transcript cannot be
+ *     smuggled in.
+ *   - Body-first: the caller puts the packet body (canonical JSON of the
+ *     packet) into the ArtifactVault BEFORE recordHandoff; Control registration
+ *     is the only thing that makes the packet queryable. A failed registration
+ *     leaves only an un-adopted Artifact.
+ *   - ReplacementAttempt: the SAME Task gets a new Attempt with a NEW lease /
+ *     outbox / run lifecycle. A replacement is admissible ONLY when A's prior
+ *     attempt ENDED or A's lease is EXPIRED; A's late runtime facts target A's
+ *     own ended Run and are rejected by the P1-03 per-run sequence semantics
+ *     (after_terminal / stale_event / duplicate_event), never rolling B's new
+ *     attempt back. Retry/cancel stays P1-10.
+ *   - outcome_unknown is preserved end-to-end (packet unresolved item +
+ *     provenance view); the platform never auto-retries an irreversible action.
+ *   - TaskReduction / Goal phase is NOT touched (P1-05 owns the Goal reducer).
+ *
+ * The RuntimeEvent / TaskLease / TaskAttempt / Run / DispatchOutboxEntry
+ * shapes are reused UNCHANGED from P1-03; the only new aggregates are
+ * HandoffPacket and ReplacementAttempt.
+ */
+import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
+import { canonicalJson, sha256Hex } from "./fingerprint.js";
+import type {
+  DispatchOutboxRef,
+  RoleBindingRefV1,
+  RunOutcome,
+  RunRef,
+  TaskAttemptRef,
+  TaskBudgetV1,
+} from "./dispatch.js";
+import type { PlanRevisionRef, PlanRevisionSnapshot, Phase, Disposition, DependencyRequirement } from "./plan.js";
+import type { ArtifactRef } from "./artifact.js";
+import type { EvidenceRef } from "./evidence.js";
+
+// ------------------------------------------------------------------------ //
+// Limits (bounded packet — same order as the TaskEnvelope 64KiB cap)         //
+// ------------------------------------------------------------------------ //
+
+/** Hard HandoffPacket size cap: canonical JSON of the packet (UTF-8 bytes). */
+export const HANDOFF_PACKET_MAX_BYTES = 64 * 1024;
+/** Per-item summary cap (full material stays in the vault). */
+export const HANDOFF_SUMMARY_MAX_BYTES = 4096;
+export const HANDOFF_MAX_COMPLETED = 64;
+export const HANDOFF_MAX_UNRESOLVED = 64;
+export const HANDOFF_MAX_CONSTRAINTS = 32;
+export const HANDOFF_MAX_EVIDENCE_REFS = 128;
+export const HANDOFF_MAX_ARTIFACT_REFS = 64;
+/** Max bytes of the "bundle" build by HandoffContextPort (reuses ArtifactVault cap). */
+export const HANDOFF_CONTEXT_BUNDLE_MAX_BYTES = 256 * 1024;
+
+// ------------------------------------------------------------------------ //
+// Refs                                                                       //
+// ------------------------------------------------------------------------ //
+
+export type HandoffPacketRef = {
+  aggregateType: "HandoffPacket";
+  projectId: string;
+  goalId: string;
+  taskId: string;
+  packetId: string;
+};
+
+export type ReplacementAttemptRef = {
+  aggregateType: "ReplacementAttempt";
+  projectId: string;
+  goalId: string;
+  taskId: string;
+  /** The NEW (successor) attempt id — the attempt the ReplacementAttempt covers. */
+  attemptId: string;
+};
+
+export function handoffPacketRefFor(
+  projectId: string,
+  goalId: string,
+  taskId: string,
+  packetId: string,
+): HandoffPacketRef {
+  return { aggregateType: "HandoffPacket", projectId, goalId, taskId, packetId };
+}
+
+export function replacementAttemptRefFor(
+  projectId: string,
+  goalId: string,
+  taskId: string,
+  attemptId: string,
+): ReplacementAttemptRef {
+  return { aggregateType: "ReplacementAttempt", projectId, goalId, taskId, attemptId };
+}
+
+// ------------------------------------------------------------------------ //
+// Packet value types                                                         //
+// ------------------------------------------------------------------------ //
+
+/** Origin of the packet: A's Run + binding + bounded Context reference. */
+export type HandoffSourceV1 = {
+  schemaVersion: 1;
+  /** A's run (the previous worker). */
+  runRef: RunRef;
+  attemptRef: TaskAttemptRef;
+  binding: RoleBindingRefV1;
+  context: {
+    /** Vault refs of A's bounded context bundle / manifest (ARCHIVAL — B never
+     * reads A's bundle; B gets a fresh bundle via HandoffContextPort). */
+    contextBundleRef: ArtifactRef | null;
+    contextManifestRef: ArtifactRef | null;
+  };
+  runtime: {
+    /** Highest runtime event sequence A's Run applied (0 before any fact). */
+    lastEventSeq: number;
+    terminalEventId: string | null;
+    terminalOutcome: RunOutcome | null;
+  };
+};
+
+export type HandoffCompletedItemV1 = {
+  summary: string;
+  artifactRef: ArtifactRef | null;
+  /** Evidence ids the completed item is backed by (bounded; audit only). */
+  evidenceRefs: EvidenceRef[];
+};
+
+export type HandoffUnresolvedKind =
+  | "missing_material"
+  | "outcome_unknown"
+  | "risk"
+  | "blocked"
+  | "cancelled"
+  | "other";
+
+export type HandoffUnresolvedItemV1 = {
+  kind: HandoffUnresolvedKind;
+  summary: string;
+  artifactRef: ArtifactRef | null;
+};
+
+/**
+ * The bounded handoff payload. NOTE the explicit noFullTranscript guarantee —
+ * the schema has no transcript field and validateHandoffPacket rejects unknown
+ * top-level fields, so a hidden chain-of-thought / full transcript cannot be
+ * smuggled into a packet.
+ */
+export type HandoffPacketV1 = {
+  schemaVersion: 1;
+  packetId: string;
+  projectId: string;
+  workspaceId: string;
+  goalId: string;
+  taskId: string;
+  planRef: PlanRevisionRef;
+  /** The Task revision (accepted plan snapshot planRevision) the packet was generated under. */
+  taskRevision: number;
+  objective: string;
+  constraints: string[];
+  completed: HandoffCompletedItemV1[];
+  unresolved: HandoffUnresolvedItemV1[];
+  /** Evidence ids referenced by the packet (audit; the Evidence records stay authoritative). */
+  evidenceRefs: EvidenceRef[];
+  artifactRefs: ArtifactRef[];
+  workspaceSnapshot: { workspaceId: string; revision: number };
+  source: HandoffSourceV1;
+  /** Vault ref of the packet body (canonical JSON of THIS packet; body-first). */
+  bodyRef: ArtifactRef;
+  /** Explicit guarantee: NO hidden chain-of-thought / full transcript. */
+  noFullTranscript: true;
+  /** Provenance chain: the previous packet of the same task (null on the first). */
+  predecessorPacketRef: HandoffPacketRef | null;
+  generatedAt: string;
+};
+
+export type HandoffPacketSnapshot = {
+  ref: HandoffPacketRef;
+  revision: 1;
+  schemaVersion: 1;
+  packet: HandoffPacketV1;
+  recordedAt: string;
+};
+
+export function handoffPacketBody(packet: HandoffPacketV1): string {
+  return canonicalJson(packet);
+}
+
+// ------------------------------------------------------------------------ //
+// Replacement attempt / eligibility (PURE decision)                          //
+// ------------------------------------------------------------------------ //
+
+export type ReplacementAttemptSnapshot = {
+  ref: ReplacementAttemptRef;
+  revision: number;
+  schemaVersion: 1;
+  /** The packet the replacement was claimed under (B's context source). */
+  packetRef: HandoffPacketRef;
+  /** A's attempt/run (the replaced predecessor). */
+  priorAttemptRef: TaskAttemptRef;
+  priorRunRef: RunRef;
+  /** B's new attempt/run/outbox. */
+  attemptRef: TaskAttemptRef;
+  runRef: RunRef;
+  outboxRef: DispatchOutboxRef;
+  reason: ReplacementReason;
+  workspaceRevision: number;
+  claimedAt: string;
+};
+
+export type ReplacementReason =
+  | "run_crashed"
+  | "run_ended"
+  | "outcome_unknown"
+  | "context_rollover"
+  | "manual";
+
+export const REPLACEMENT_REASONS: readonly ReplacementReason[] = [
+  "run_crashed",
+  "run_ended",
+  "outcome_unknown",
+  "context_rollover",
+  "manual",
+];
+
+export type ReplacementEligibilityFacts = {
+  projectId: string;
+  goalId: string;
+  goalDesiredState: string;
+  goalActivePlanRevision: PlanRevisionRef | null;
+  plan: PlanRevisionSnapshot | null;
+  taskId: string;
+  priorLease:
+    | { status: "none" }
+    | { status: "leased"; holderRunId: string; attemptId: string; grantedAt: string; expiresAt: string | null };
+  priorAttempt:
+    | { status: "claimed" | "started"; endedAt: null; endOutcome: null }
+    | { status: "ended"; endedAt: string | null; endOutcome: RunOutcome | null }
+    | null;
+  packet:
+    | {
+        present: true;
+        projectId: string;
+        goalId: string;
+        taskId: string;
+        planRef: PlanRevisionRef;
+        taskRevision: number;
+        workspaceSnapshot: { workspaceId: string; revision: number };
+      }
+    | { present: false };
+  canonicalWorkspaceRevision: number;
+  resource: { tokenBudget: number; deadline: string | null; now: string };
+};
+
+export type ReplacementIneligibilityReason =
+  | { code: "goal_not_active"; message: string }
+  | { code: "plan_not_accepted"; message: string }
+  | { code: "task_not_found"; taskId: string; message: string }
+  | { code: "task_kind_not_work"; taskId: string; taskKind: string; message: string }
+  | { code: "task_not_active"; taskId: string; disposition: Disposition; message: string }
+  | { code: "task_phase_not_dispatchable"; taskId: string; phase: Phase; message: string }
+  | { code: "deps_unsatisfied"; taskId: string; deps: { dependsOnId: string; requires: DependencyRequirement; phase: Phase | "missing" }[]; message: string }
+  | { code: "no_prior_attempt"; message: string }
+  | { code: "lease_active"; message: string }
+  | { code: "packet_not_found"; message: string }
+  | { code: "packet_mismatch"; message: string }
+  | { code: "stale_packet"; message: string }
+  | { code: "resource_unavailable"; taskId: string; detail: "budget_exhausted" | "deadline_passed"; message: string };
+
+export type ReplacementEligibility =
+  | { eligible: true; reasons: [] }
+  | { eligible: false; reasons: ReplacementIneligibilityReason[] };
+
+/**
+ * FROZEN replacement eligibility (Acceptance "A 过期 lease 与迟到结果不能覆盖
+ * B 的新 Attempt"):
+ *   - same structural rules as P1-03 eligibility (active goal, accepted plan,
+ *     work task, active disposition, dispatchable phase, DAG deps satisfied);
+ *   - a PRIOR attempt must exist (a replacement of nothing is ineligible);
+ *   - the prior attempt must be ENDED or the prior lease EXPIRED (deadline
+ *     passed) — otherwise lease_active;
+ *   - the packet must exist, reference the SAME task + same planRef, and carry
+ *     the CURRENT canonical workspace revision — a stale/mismatched packet is
+ *     explicit (stale_packet / packet_mismatch, zero write) — never silently
+ *     reused;
+ *   - budget/deadline resource checks are preserved.
+ * Deterministic: same facts -> same eligibility; it NEVER writes history.
+ */
+export function evaluateReplacementEligibility(
+  facts: ReplacementEligibilityFacts,
+): ReplacementEligibility {
+  const reasons: ReplacementIneligibilityReason[] = [];
+
+  if (facts.goalDesiredState !== "active") {
+    reasons.push({ code: "goal_not_active", message: "goal desiredState is not active" });
+  }
+  if (facts.goalActivePlanRevision === null || facts.plan === null) {
+    reasons.push({ code: "plan_not_accepted", message: "goal has no accepted PlanRevision" });
+  }
+
+  const plan = facts.plan;
+  if (plan !== null) {
+    const task = plan.tasks.find((t) => t.taskId === facts.taskId);
+    if (task === undefined) {
+      reasons.push({ code: "task_not_found", taskId: facts.taskId, message: "task is not part of the accepted plan" });
+    } else {
+      if (task.taskKind !== "work") {
+        reasons.push({ code: "task_kind_not_work", taskId: facts.taskId, taskKind: task.taskKind, message: "only work tasks are dispatched" });
+      }
+      if (task.disposition !== "active") {
+        reasons.push({ code: "task_not_active", taskId: facts.taskId, disposition: task.disposition, message: "task disposition is not active" });
+      }
+      if (task.phase === "blocked" || (task.phase !== "pending" && task.phase !== "ready")) {
+        reasons.push({ code: "task_phase_not_dispatchable", taskId: facts.taskId, phase: task.phase, message: "task phase is not dispatchable (pending|ready)" });
+      }
+      const unsatisfied = plan.executionDag.dependsOn
+        .filter((edge) => edge.taskId === facts.taskId)
+        .map((edge) => {
+          const dep = plan.tasks.find((t) => t.taskId === edge.dependsOnId);
+          return {
+            dependsOnId: edge.dependsOnId,
+            requires: edge.requires,
+            phase: (dep?.phase ?? "missing") as Phase | "missing",
+          };
+        })
+        .filter((dep) => dep.phase !== "satisfied");
+      if (unsatisfied.length > 0) {
+        reasons.push({ code: "deps_unsatisfied", taskId: facts.taskId, deps: unsatisfied, message: "unsatisfied dependencies" });
+      }
+    }
+  }
+
+  if (facts.priorLease.status === "none") {
+    reasons.push({ code: "no_prior_attempt", message: "no prior lease — nothing to replace (use claimTask)" });
+  } else {
+    const ended = facts.priorAttempt?.status === "ended";
+    const expired =
+      facts.priorLease.expiresAt !== null &&
+      facts.priorLease.expiresAt < facts.resource.now;
+    if (!ended && !expired) {
+      reasons.push({ code: "lease_active", message: "prior attempt is not ended and the prior lease is not expired" });
+    }
+  }
+
+  if (!facts.packet.present) {
+    reasons.push({ code: "packet_not_found", message: "handoff packet is not registered" });
+  } else {
+    const p = facts.packet;
+    if (
+      p.projectId !== facts.projectId ||
+      p.goalId !== facts.goalId ||
+      p.taskId !== facts.taskId ||
+      (facts.goalActivePlanRevision !== null &&
+        canonicalJson(p.planRef) !== canonicalJson(facts.goalActivePlanRevision)) ||
+      (plan !== null && p.taskRevision !== plan.planRevision)
+    ) {
+      reasons.push({ code: "packet_mismatch", message: "packet references a different task/plan/revision tuple" });
+    }
+    if (p.workspaceSnapshot.revision !== facts.canonicalWorkspaceRevision) {
+      reasons.push({ code: "stale_packet", message: "packet workspace revision is stale — re-project before replacement" });
+    }
+  }
+
+  if (!Number.isSafeInteger(facts.resource.tokenBudget) || !(facts.resource.tokenBudget > 0)) {
+    reasons.push({ code: "resource_unavailable", taskId: facts.taskId, detail: "budget_exhausted", message: "tokenBudget is not a positive integer" });
+  }
+  if (facts.resource.deadline !== null && facts.resource.deadline < facts.resource.now) {
+    reasons.push({ code: "resource_unavailable", taskId: facts.taskId, detail: "deadline_passed", message: "deadline has passed" });
+  }
+
+  return reasons.length === 0 ? { eligible: true, reasons: [] } : { eligible: false, reasons };
+}
+
+// ------------------------------------------------------------------------ //
+// Commands / receipts                                                        //
+// ------------------------------------------------------------------------ //
+
+export type RecordHandoffCommand = {
+  commandId: string;
+  commandType: "RecordHandoff";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  /** packetId — the HandoffPacket aggregate (created once, immutable). */
+  aggregateId: string;
+  /** Always 0: HandoffPacket aggregates are created exactly once. */
+  expectedRevision: 0;
+  correlationId: string;
+  submittedAt: string;
+  payload: { packet: HandoffPacketV1 };
+};
+
+export type RecordHandoffRejectionCode =
+  | "invalid"
+  | "not_found"
+  | "run_not_ended"
+  | "stale_source"
+  | "revision_conflict"
+  | "idempotency_conflict"
+  | "unavailable";
+
+export type RecordHandoffReceipt =
+  | {
+      status: "committed";
+      commandId: string;
+      replayed: boolean;
+      packetRef: HandoffPacketRef;
+      eventIds: string[];
+      commitCursor: CommitCursor;
+    }
+  | { status: "rejected"; commandId: string; code: RecordHandoffRejectionCode; issues?: string[] };
+
+export type ClaimReplacementCommand = {
+  commandId: string;
+  commandType: "ClaimReplacement";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  /** taskId — the EXISTING TaskLease aggregate (replacement moves the lease). */
+  aggregateId: string;
+  /** Expected TaskLease revision (>= 1 after the first claim; CAS window). */
+  expectedRevision: number;
+  correlationId: string;
+  submittedAt: string;
+  payload: {
+    goalId: string;
+    /** B's new attempt id (new lifecycle). */
+    attemptId: string;
+    /** B's new run id (new lifecycle). */
+    runId: string;
+    roleBinding: RoleBindingRefV1;
+    declaredPermissions: { tools: string[]; writeScope: string[] };
+    budget: TaskBudgetV1;
+    handoffPacketRef: HandoffPacketRef;
+    reason: ReplacementReason;
+  };
+};
+
+export type ClaimReplacementRejectionCode =
+  | "invalid"
+  | "ineligible"
+  | "not_found"
+  | "stale_packet"
+  | "lease_active"
+  | "revision_conflict"
+  | "idempotency_conflict"
+  | "unavailable";
+
+export type ClaimReplacementReceipt =
+  | {
+      status: "committed";
+      commandId: string;
+      replayed: boolean;
+      replacementRef: ReplacementAttemptRef;
+      leaseRef: { aggregateType: "TaskLease"; projectId: string; goalId: string; taskId: string };
+      attemptRef: TaskAttemptRef;
+      runRef: RunRef;
+      outboxRef: DispatchOutboxRef;
+      eventIds: string[];
+      commitCursor: CommitCursor;
+    }
+  | {
+      status: "rejected";
+      commandId: string;
+      code: ClaimReplacementRejectionCode;
+      issues?: ReplacementIneligibilityReason[];
+      currentRevision?: number;
+    };
+
+// ------------------------------------------------------------------------ //
+// Domain events (P1-06 v1)                                                   //
+// ------------------------------------------------------------------------ //
+
+export type HandoffRecordedEvent = {
+  eventId: string;
+  eventType: "HandoffRecorded";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "HandoffPacket";
+  aggregateId: string;
+  aggregateRevision: 1;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: {
+    goalId: string;
+    taskId: string;
+    packet: HandoffPacketV1;
+    recordedAt: string;
+  };
+};
+
+export type ReplacementClaimedEvent = {
+  eventId: string;
+  eventType: "ReplacementClaimed";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "ReplacementAttempt";
+  aggregateId: string;
+  aggregateRevision: 1;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: {
+    goalId: string;
+    taskId: string;
+    packetRef: HandoffPacketRef;
+    replacementRef: ReplacementAttemptRef;
+    priorAttemptRef: TaskAttemptRef;
+    priorRunRef: RunRef;
+    attemptRef: TaskAttemptRef;
+    runRef: RunRef;
+    outboxRef: DispatchOutboxRef;
+    reason: ReplacementReason;
+    claimedAt: string;
+  };
+};
+
+// ------------------------------------------------------------------------ //
+// Fingerprints (JCS + SHA-256; volatile ids excluded — P1-00 convention)      //
+// ------------------------------------------------------------------------ //
+
+export function recordHandoffFingerprint(command: RecordHandoffCommand): CommandFingerprint {
+  const shape = {
+    schemaVersion: command.schemaVersion,
+    commandType: command.commandType,
+    projectId: command.identity.projectId,
+    aggregateId: command.aggregateId,
+    expectedRevision: command.expectedRevision,
+    payload: { packet: command.payload.packet },
+  };
+  return sha256Hex(canonicalJson(shape)) as CommandFingerprint;
+}
+
+export function claimReplacementFingerprint(command: ClaimReplacementCommand): CommandFingerprint {
+  const shape = {
+    schemaVersion: command.schemaVersion,
+    commandType: command.commandType,
+    projectId: command.identity.projectId,
+    aggregateId: command.aggregateId,
+    expectedRevision: command.expectedRevision,
+    payload: {
+      goalId: command.payload.goalId,
+      attemptId: command.payload.attemptId,
+      runId: command.payload.runId,
+      roleBinding: command.payload.roleBinding,
+      declaredPermissions: command.payload.declaredPermissions,
+      budget: command.payload.budget,
+      handoffPacketRef: command.payload.handoffPacketRef,
+      reason: command.payload.reason,
+    },
+  };
+  return sha256Hex(canonicalJson(shape)) as CommandFingerprint;
+}
+
+// ------------------------------------------------------------------------ //
+// DispatchEngine.HandoffPort (interfaces_to_freeze — first consumer)          //
+// ------------------------------------------------------------------------ //
+
+export type HandoffDriveTrigger = {
+  reason: string;
+  /** Bound the number of intents processed per drive (default 8). */
+  maxIntents?: number;
+};
+
+export type HandoffDriveFailure = {
+  intentId: string;
+  outboxRef: { aggregateType: "DispatchOutboxEntry"; projectId: string; goalId: string; taskId: string; attemptId: string };
+  code: "not_found" | "context_rejected" | "runtime_error" | "rejected" | "not_a_replacement";
+  message: string;
+};
+
+export type HandoffDriveResult = {
+  scanned: number;
+  started: number;
+  completed: number;
+  pendingRemaining: number;
+  failures: HandoffDriveFailure[];
+};
+
+/**
+ * DispatchEngine.HandoffPort — processes pending outbox intents that carry a
+ * ReplacementAttempt: HandoffContextPort (bounded context from the packet) ->
+ * Control.startRun (B's envelope) -> RunPort.start -> run facts. Normal
+ * DispatchPort.drive SKIPS replacement intents (they belong here).
+ */
+export interface HandoffPort {
+  driveHandoff(trigger: HandoffDriveTrigger): Promise<HandoffDriveResult>;
+}
