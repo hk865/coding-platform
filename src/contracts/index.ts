@@ -37,3 +37,4 @@ export * from "./architecture-inspection.js";
 export * from "./workspace-read.js";
 export * from "./architecture-reconciler.js";
 export * from "./control-intent.js";
+export * from "./query-job.js";
