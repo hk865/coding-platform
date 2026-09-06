@@ -298,6 +298,9 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   private readonly p108GoalPhase = new Map<string, import("../contracts/goal-phase.js").GoalPhase>();
   /** P1-16 LANE-A: full-scope key -> WorkContextBinding snapshot (binding rows). */
   private readonly p116Bindings = new Map<string, import("../contracts/context-continuity.js").WorkContextBindingSnapshot>();
+  private readonly p109Jobs = new Map<string, import("../contracts/query-job.js").QueryJobV1>();
+  private readonly p109Runs = new Map<string, import("../contracts/query-job.js").QueryRunV1>();
+  private readonly p109Answers = new Map<string, import("../contracts/query-job.js").QueryJobAnswerV1[]>();
   private readonly p110IntentRows = new Map<string, { ref: import("../contracts/control-intent.js").ControlIntentRef; scope: { goalId: string | null; taskId: string | null }; kind: import("../contracts/control-intent.js").ControlKind; desiredState: string; status: import("../contracts/control-intent.js").ControlIntentStatus; ackCount: number; cursor: CommitCursor }[]>();
   /** P1-16 LANE-A: full-scope key -> ordered ExecutionNote rows (notes part). */
   private readonly p116Notes = new Map<string, import("../contracts/context-continuity.js").WorkContextNoteRow[]>();
@@ -451,6 +454,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
 
       // P1-10 control projections (desired state + safe-point acks).
       this.applyP110(event, positioned.cursor);
+      this.applyP109(event, positioned.cursor);
 
       // Known non-goal / non-plan / non-dispatch events
       // (ProjectBootstrapped, WorkspaceBootstrapped, CompletionPolicyInstalled,
@@ -2659,6 +2663,33 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
   }
 
+  // P1-09 LANE-A/LANE-B hook: fold QueryJob events.
+  private applyP109(event: DomainEvent, cursor: CommitCursor): void {
+    if (event.eventType === "QueryJobSubmitted") {
+      const ev = event as import("../contracts/query-job.js").QueryJobSubmittedEvent;
+      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
+      this.p109Jobs.set(key + "\u0000" + ev.payload.job.queryJobId, ev.payload.job);
+    } else if (event.eventType === "QueryRunStarted") {
+      const ev = event as import("../contracts/query-job.js").QueryRunStartedEvent;
+      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
+      this.p109Runs.set(key + "\u0000" + ev.payload.run.runId, ev.payload.run);
+    } else if (event.eventType === "QueryJobAnswerRecorded") {
+      const ev = event as import("../contracts/query-job.js").QueryJobAnswerRecordedEvent;
+      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
+      this.p109Jobs.set(key + "\u0000" + ev.payload.job.queryJobId, ev.payload.job);
+      this.p109Runs.set(key + "\u0000" + ev.payload.run.runId, ev.payload.run);
+      const answers = this.p109Answers.get(key + "\u0000" + ev.payload.job.queryJobId) ?? [];
+      answers.push(ev.payload.answer);
+      this.p109Answers.set(key + "\u0000" + ev.payload.job.queryJobId, answers);
+    } else if (event.eventType === "QueryJobClosed") {
+      const ev = event as import("../contracts/query-job.js").QueryJobClosedEvent;
+      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
+      this.p109Jobs.set(key + "\u0000" + ev.payload.job.queryJobId, ev.payload.job);
+      this.p109Runs.set(key + "\u0000" + ev.payload.run.runId, ev.payload.run);
+    }
+    void cursor;
+  }
+
   // P1-10 LANE-A/LANE-B hook: fold ControlIntentRecorded/SafePointAcknowledged.
   private applyP110(event: DomainEvent, cursor: CommitCursor): void {
     if (event.eventType === "ControlIntentRecorded") {
@@ -2677,9 +2708,23 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     }
   }
 
-  /** P1-09 LANE-A/LANE-B stub: query job view (display only). */
+  /** P1-09 LANE-A/LANE-B: query job view (display only). */
   async queryJobView(query: import("../contracts/query-job.js").QueryJobViewQuery): Promise<import("../contracts/query-job.js").QueryJobViewResult> {
-    throw new Error("P1-09 lane A/B: queryJobView not implemented yet");
+    const observedCursor = this.observedCursor;
+    if (observedCursor === null) return { status: "not_ready", observedCursor: null };
+    const key = consoleWorkspaceKey(query.projectId, query.workspaceId);
+    const job = this.p109Jobs.get(key + "\u0000" + query.queryJobId);
+    if (job === undefined) return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId, queryJobId: query.queryJobId };
+    const runRef = job.runRef !== null ? job.runRef : null;
+    const run = runRef === null ? null : (this.p109Runs.get(key + "\u0000" + runRef.runId) ?? null);
+    const answers = this.p109Answers.get(key + "\u0000" + query.queryJobId) ?? [];
+    const currentAnswer = answers.length > 0 ? answers[answers.length - 1]! : null;
+    return {
+      status: "ready", job, run, answers,
+      currentAnswer,
+      stale: currentAnswer?.stale ?? false,
+      sourceCursor: observedCursor,
+    };
   }
 
   /** P1-17: completed-work selection source view (display only; composed from the P1-16 work-context stores). */
@@ -2862,7 +2907,11 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       eventType === "ArchitectureDecisionBriefRecorded" ||
       eventType === "ArchitectureCandidateProposalRecorded" ||
       eventType === "ControlIntentRecorded" ||
-      eventType === "SafePointAcknowledged"
+      eventType === "SafePointAcknowledged" ||
+      eventType === "QueryJobSubmitted" ||
+      eventType === "QueryRunStarted" ||
+      eventType === "QueryJobAnswerRecorded" ||
+      eventType === "QueryJobClosed"
     );
   }
 }

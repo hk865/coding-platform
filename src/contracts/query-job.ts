@@ -175,7 +175,7 @@ export type CloseQueryJobCommand = {
   expectedRevision: number;
   correlationId: string;
   submittedAt: string;
-  payload: { reason: { code: "timeout" | "gap" | "failed" | "stale_source" | "cancelled"; message: string } };
+  payload: { reason: { code: "timeout" | "gap" | "failed" | "stale_source" | "cancelled"; message: string }; jobRef: QueryJobRef; runRef: QueryRunRef };
 };
 
 export type CloseQueryJobRejectionCode = "invalid" | "not_found" | "already_closed" | "revision_conflict" | "idempotency_conflict" | "unavailable";

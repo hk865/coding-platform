@@ -1279,7 +1279,8 @@ export function validateQueryAnswerRecordCommit(batch: import("./ledger.js").Que
   if (canonicalJson(answerSnap.answer) !== canonicalJson(event.payload.answer)) return false;
   if (canonicalJson(jobSnap.job) !== canonicalJson(event.payload.job)) return false;
   if (canonicalJson(runSnap.run) !== canonicalJson(event.payload.run)) return false;
-  if (jobSnap.job.status !== "answered" || runSnap.run.status !== "answered") return false;
+  if (jobSnap.job.status !== "answered") return false;
+  if (runSnap.run.status !== "answered" && runSnap.run.status !== "running") return false;
   if (jobSnap.job.answerRefs[jobSnap.job.answerRefs.length - 1]?.answerId !== answerSnap.answer.answerId) return false;
   if (batch.expectedVersions.length !== 3) return false;
   const aE = batch.expectedVersions.find((v) => v.ref.aggregateType === "QueryJobAnswer");

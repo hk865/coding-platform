@@ -70,12 +70,12 @@ export function buildP109AnswerCommand(job: QueryJobV1, run: QueryRunV1, answer:
 }
 
 export function buildP109CloseCommand(job: QueryJobV1, reasonCode: "timeout" | "gap" | "failed" | "stale_source" | "cancelled", expectedRevision: number, deps: { commandId: string }): CloseQueryJobCommand {
-  return { commandId: deps.commandId, commandType: "CloseQueryJob", schemaVersion: 1, identity: { projectId: P109_PROJECT, actor: { kind: "system", id: "query-runtime" }, idempotencyKey: deps.commandId + "-idem" }, aggregateId: job.queryJobId, expectedRevision, correlationId: deps.commandId + "-corr", submittedAt: P109_SCHEMA, payload: { reason: { code: reasonCode, message: "fixture close " + reasonCode } } };
+  return { commandId: deps.commandId, commandType: "CloseQueryJob", schemaVersion: 1, identity: { projectId: P109_PROJECT, actor: { kind: "system", id: "query-runtime" }, idempotencyKey: deps.commandId + "-idem" }, aggregateId: job.queryJobId, expectedRevision, correlationId: deps.commandId + "-corr", submittedAt: P109_SCHEMA, payload: { reason: { code: reasonCode, message: "fixture close " + reasonCode }, jobRef: queryJobRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId), runRef: queryRunRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId, job.runRef?.runId ?? P109_RUN) } };
 }
 
 export function buildQueryJobRecordCommit(command: SubmitQueryJobCommand, deps: { eventId: string; occurredAt: string }): QueryJobRecordLedgerCommitV1 {
   const job = buildP109Job(command.payload.intent);
-  const run = buildP109Run(job, "pending");
+  const run = buildP109Run(job, command.payload.runId, "pending");
   const jobSnap: QueryJobSnapshot = { ref: queryJobRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId), revision: 1, schemaVersion: 1, job };
   const runRef = queryRunRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId, command.payload.runId);
   const runSnap: QueryRunSnapshot = { ref: runRef, revision: 1, schemaVersion: 1, run };

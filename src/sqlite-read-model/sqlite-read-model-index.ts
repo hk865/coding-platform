@@ -404,6 +404,27 @@ CREATE TABLE IF NOT EXISTS architecture_brief_rows (
   PRIMARY KEY (scope_key)
 ) WITHOUT ROWID;
 
+CREATE TABLE IF NOT EXISTS query_job_rows (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS query_run_rows (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS query_answer_rows (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS control_intent_rows (
   scope_key     TEXT NOT NULL,
   entry_json    TEXT NOT NULL,
@@ -1862,7 +1883,11 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       eventType === "ArchitectureDecisionBriefRecorded" ||
       eventType === "ArchitectureCandidateProposalRecorded" ||
       eventType === "ControlIntentRecorded" ||
-      eventType === "SafePointAcknowledged"
+      eventType === "SafePointAcknowledged" ||
+      eventType === "QueryJobSubmitted" ||
+      eventType === "QueryRunStarted" ||
+      eventType === "QueryJobAnswerRecorded" ||
+      eventType === "QueryJobClosed"
     );
   }
 
@@ -1963,6 +1988,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     // P1-12 architecture-inspection projections.
     this.applyP112Inspection(event, cursor);
     this.applyP110(event, cursor);
+    this.applyP109(event, cursor);
     // Known non-goal / non-plan / non-dispatch events (ProjectBootstrapped,
     // WorkspaceBootstrapped, CompletionPolicyInstalled,
     // ArchitectureBaselineInstalled, CompletionPolicyActivated,
@@ -2653,9 +2679,61 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     }
   }
 
-  /** P1-09 LANE-A/LANE-B stub: query job view (display only). */
+  /** P1-09 LANE-A/LANE-B: query job view (display only). */
   async queryJobView(query: import("../contracts/query-job.js").QueryJobViewQuery): Promise<import("../contracts/query-job.js").QueryJobViewResult> {
-    throw new Error("P1-09 lane A/B: queryJobView (sqlite) not implemented yet");
+    const observedCursor = this.readCheckpoint();
+    if (observedCursor === null) return { status: "not_ready", observedCursor: null };
+    const jobKey = consoleWorkspaceKey(query.projectId, query.workspaceId) + "\u0000" + query.queryJobId;
+    const job = this.p109ReadOne("query_job_rows", jobKey) as import("../contracts/query-job.js").QueryJobV1 | null;
+    if (job === null) return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId, queryJobId: query.queryJobId };
+    const run = job.runRef === null ? null : (this.p109ReadOne("query_run_rows", consoleWorkspaceKey(query.projectId, query.workspaceId) + "\u0000" + job.runRef.runId) as import("../contracts/query-job.js").QueryRunV1 | null);
+    const answers = this.p109ReadList("query_answer_rows", jobKey) as import("../contracts/query-job.js").QueryJobAnswerV1[];
+    const currentAnswer = answers.length > 0 ? answers[answers.length - 1]! : null;
+    return { status: "ready", job, run, answers, currentAnswer, stale: currentAnswer?.stale ?? false, sourceCursor: observedCursor };
+  }
+
+  private p109ReadOne(table: string, key: string): unknown | null {
+    const stmt = this.db.prepare("SELECT entry_json FROM " + table + " WHERE scope_key = ?");
+    const row = stmt.get(key) as { entry_json: string } | undefined;
+    return row ? JSON.parse(row.entry_json) : null;
+  }
+
+  private p109ReadList(table: string, key: string): unknown[] {
+    const stmt = this.db.prepare("SELECT entry_json FROM " + table + " WHERE scope_key = ?");
+    const row = stmt.get(key) as { entry_json: string } | undefined;
+    return row ? (JSON.parse(row.entry_json) as unknown[]) : [];
+  }
+
+  private p109UpsertOne(table: string, key: string, value: unknown, cursor: import("../contracts/command-event.js").CommitCursor): void {
+    const stmt = this.db.prepare("INSERT OR REPLACE INTO " + table + " (scope_key, entry_json, source_cursor) VALUES (?, ?, ?)");
+    stmt.run(key, JSON.stringify(value), String(cursor));
+  }
+
+  private p109UpsertList(table: string, key: string, values: unknown[], cursor: import("../contracts/command-event.js").CommitCursor): void {
+    const stmt = this.db.prepare("INSERT OR REPLACE INTO " + table + " (scope_key, entry_json, source_cursor) VALUES (?, ?, ?)");
+    stmt.run(key, JSON.stringify(values), String(cursor));
+  }
+
+  private applyP109(event: DomainEvent, cursor: import("../contracts/command-event.js").CommitCursor): void {
+    if (event.eventType === "QueryJobSubmitted") {
+      const ev = event as import("../contracts/query-job.js").QueryJobSubmittedEvent;
+      this.p109UpsertOne("query_job_rows", consoleWorkspaceKey(ev.projectId, ev.workspaceId) + "\u0000" + ev.payload.job.queryJobId, ev.payload.job, cursor);
+    } else if (event.eventType === "QueryRunStarted") {
+      const ev = event as import("../contracts/query-job.js").QueryRunStartedEvent;
+      this.p109UpsertOne("query_run_rows", consoleWorkspaceKey(ev.projectId, ev.workspaceId) + "\u0000" + ev.payload.run.runId, ev.payload.run, cursor);
+    } else if (event.eventType === "QueryJobAnswerRecorded") {
+      const ev = event as import("../contracts/query-job.js").QueryJobAnswerRecordedEvent;
+      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId) + "\u0000" + ev.payload.job.queryJobId;
+      this.p109UpsertOne("query_job_rows", key, ev.payload.job, cursor);
+      this.p109UpsertOne("query_run_rows", consoleWorkspaceKey(ev.projectId, ev.workspaceId) + "\u0000" + ev.payload.run.runId, ev.payload.run, cursor);
+      const answers = this.p109ReadList("query_answer_rows", key) as import("../contracts/query-job.js").QueryJobAnswerV1[];
+      answers.push(ev.payload.answer);
+      this.p109UpsertList("query_answer_rows", key, answers, cursor);
+    } else if (event.eventType === "QueryJobClosed") {
+      const ev = event as import("../contracts/query-job.js").QueryJobClosedEvent;
+      this.p109UpsertOne("query_job_rows", consoleWorkspaceKey(ev.projectId, ev.workspaceId) + "\u0000" + ev.payload.job.queryJobId, ev.payload.job, cursor);
+      this.p109UpsertOne("query_run_rows", consoleWorkspaceKey(ev.projectId, ev.workspaceId) + "\u0000" + ev.payload.run.runId, ev.payload.run, cursor);
+    }
   }
 
   /** P1-17: completed-work selection source view (display only; composed from the P1-16 work-context stores). */
