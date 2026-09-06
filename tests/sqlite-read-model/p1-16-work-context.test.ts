@@ -1,0 +1,182 @@
+/**
+ * P1-16 LANE-A SQLite projection tests — workContext (binding + notes rows;
+ * continuations are LANE-B). Dual-adapter mirror of
+ * tests/read-model/p1-16-work-context.test.ts.
+ *
+ * The SAME two-project scenario is run against the real SQLite read model
+ * (persistent harness). The LANE-A adapter projects into the frozen
+ * work_context_binding (entry_json) / work_context_notes (entry_json) tables and
+ * the work_context_view reads them back. Assertions must match the InMemory
+ * reference field-for-field; the views are event projections — advance first.
+ * Restart equivalence is verified by closing/reopening the same DB file.
+ */
+import { describe, expect, it } from "vitest";
+import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import {
+  createP108ScenarioRuntime,
+  runP108TwoProjectScenario,
+  toP1_08Harness,
+  P108_PROJECT_A,
+  P108_PROJECT_B,
+  P108_TASK_WORK,
+} from "../contract-suite/p1-08-harness.js";
+import { toP1_16Harness, type P1_16TestHarness } from "../contract-suite/p1-16-harness.js";
+import {
+  P116_WORK,
+  P116_WORKSPACE,
+  P116_NOTE_1,
+  P116_NOTE_2,
+  buildBindWorkContextCommand,
+  buildLinkWorkRunCommand,
+  buildExecutionNoteV1,
+  buildRecordExecutionNoteCommand,
+} from "../../src/contracts/fixtures/context-fixtures.js";
+import type { BindWorkContextCommand } from "../../src/contracts/context-continuity.js";
+
+const A = P108_PROJECT_A;
+const B = P108_PROJECT_B;
+const WSPACE = P116_WORKSPACE;
+
+// BASELINE GAP (reported): validateBindWorkContextCommand checks the field
+// "payload.roleBinding" while the frozen schema + fixture emit
+// "payload.roleBindingRef". Workaround for THIS test only; mirrors roleBindingRef
+// into roleBinding so the buggy validator passes. The commit fold reads
+// roleBindingRef and is unaffected.
+function bindCmd(deps: Parameters<typeof buildBindWorkContextCommand>[0]): BindWorkContextCommand {
+  const cmd = buildBindWorkContextCommand(deps);
+  (cmd.payload as Record<string, unknown>)["roleBinding"] = cmd.payload.roleBindingRef;
+  return cmd;
+}
+
+function workView(h: P1_16TestHarness, projectId: string, workId: string) {
+  return h.workContextView({ projectId, workspaceId: WSPACE, workId });
+}
+
+async function seedWorld(h: P1_16TestHarness) {
+  const p108 = toP1_08Harness(h as never);
+  const world = await runP108TwoProjectScenario(p108);
+  const goalA = world.previews.find((p) => p.projectId === A)!.goalId;
+  const goalB = world.previews.find((p) => p.projectId === B)!.goalId;
+  return { world, goalA, goalB };
+}
+
+describe("P1-16 LANE-A SQLite work-context projection", () => {
+  it("projects the binding + notes rows and survives close/reopen (restart equivalence)", async () => {
+    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h16 = toP1_16Harness(h as never);
+    try {
+      const { world, goalA } = await seedWorld(h16);
+      const runRef = world.projectA.workRun;
+      await h16.bindWorkContext(bindCmd({
+        commandId: "sq-bind-w1", projectId: A, workId: P116_WORK, workspaceId: WSPACE,
+        workKind: "task", goalId: goalA, taskId: P108_TASK_WORK, initialRunRef: runRef,
+      }));
+      const note = buildExecutionNoteV1({ noteId: P116_NOTE_1, workId: P116_WORK, projectId: A, runRef, kind: "checkpoint" });
+      await h16.recordExecutionNote(buildRecordExecutionNoteCommand({ commandId: "sq-note-1", projectId: A, note }));
+      await h16.advanceProjection();
+
+      const v = await workView(h16, A, P116_WORK);
+      expect(v.status).toBe("ready");
+      if (v.status !== "ready") return;
+      expect(v.binding.binding.initialRunRef.runId).toBe(runRef.runId);
+      expect(v.notes.map((n) => n.noteRef.noteId)).toEqual([P116_NOTE_1]);
+      expect(v.sourceCursor).toBeTruthy();
+
+      // Restart: close() then NEW instances on the SAME DB files -> the
+      // persisted projection reproduces the same rows (rebuild equivalence).
+      await h.close();
+      const h2 = await h.reopen();
+      const h16b = toP1_16Harness(h2 as never);
+      try {
+        const v2 = await workView(h16b, A, P116_WORK);
+        expect(v2.status).toBe("ready");
+        if (v2.status !== "ready") return;
+        expect(JSON.stringify(v2)).toBe(JSON.stringify(v));
+      } finally {
+        await h2.cleanup().catch(() => undefined);
+      }
+    } finally {
+      await h.cleanup().catch(() => undefined);
+    }
+  });
+
+  it("scope isolation: the SAME local workId in project B has its OWN rows (no cross-project read)", async () => {
+    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h16 = toP1_16Harness(h as never);
+    try {
+      const { world, goalA, goalB } = await seedWorld(h16);
+      await h16.bindWorkContext(bindCmd({
+        commandId: "sq-bind-a", projectId: A, workId: P116_WORK, workspaceId: WSPACE,
+        workKind: "task", goalId: goalA, taskId: P108_TASK_WORK, initialRunRef: world.projectA.workRun,
+      }));
+      await h16.bindWorkContext(bindCmd({
+        commandId: "sq-bind-b", projectId: B, workId: P116_WORK, workspaceId: WSPACE,
+        workKind: "task", goalId: goalB, taskId: P108_TASK_WORK, initialRunRef: world.projectB.workRun,
+      }));
+      await h16.advanceProjection();
+
+      const va = await workView(h16, A, P116_WORK);
+      const vb = await workView(h16, B, P116_WORK);
+      expect(va.status).toBe("ready");
+      expect(vb.status).toBe("ready");
+      if (va.status !== "ready" || vb.status !== "ready") return;
+      expect(va.binding.binding.initialRunRef.runId).toBe(world.projectA.workRun.runId);
+      expect(vb.binding.binding.initialRunRef.runId).toBe(world.projectB.workRun.runId);
+      expect(JSON.stringify(va.binding)).not.toBe(JSON.stringify(vb.binding));
+      expect(va.binding.binding.initialRunRef.projectId).toBe(A);
+      expect(vb.binding.binding.initialRunRef.projectId).toBe(B);
+    } finally {
+      await h.cleanup().catch(() => undefined);
+    }
+  });
+
+  it("notes append in order and the multi-run link path is projected", async () => {
+    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h16 = toP1_16Harness(h as never);
+    try {
+      const { world } = await seedWorld(h16);
+      await h16.bindWorkContext(bindCmd({
+        commandId: "sq-bind-w2", projectId: A, workId: "work-p116-coord", workspaceId: WSPACE,
+        workKind: "coordination", goalId: null, taskId: null, initialRunRef: world.projectA.workRun,
+      }));
+      await h16.linkWorkRun(buildLinkWorkRunCommand({
+        commandId: "sq-link-w2", projectId: A, workId: "work-p116-coord", workspaceId: WSPACE,
+        runRef: world.projectA.extraReplacementRun, expectedRevision: 1,
+      }));
+      const note1 = buildExecutionNoteV1({ noteId: P116_NOTE_1, workId: "work-p116-coord", projectId: A, runRef: world.projectA.workRun, kind: "checkpoint" });
+      const note2 = buildExecutionNoteV1({ noteId: P116_NOTE_2, workId: "work-p116-coord", projectId: A, runRef: world.projectA.extraReplacementRun, kind: "frontier" });
+      await h16.recordExecutionNote(buildRecordExecutionNoteCommand({ commandId: "sq-note-1", projectId: A, note: note1 }));
+      await h16.recordExecutionNote(buildRecordExecutionNoteCommand({ commandId: "sq-note-2", projectId: A, note: note2 }));
+      await h16.advanceProjection();
+
+      const v = await workView(h16, A, "work-p116-coord");
+      expect(v.status).toBe("ready");
+      if (v.status !== "ready") return;
+      expect(v.binding.binding.linkedRunRefs.map((r) => r.runId)).toEqual([
+        world.projectA.workRun.runId,
+        world.projectA.extraReplacementRun.runId,
+      ]);
+      expect(v.notes.map((n) => n.noteRef.noteId)).toEqual([P116_NOTE_1, P116_NOTE_2]);
+      expect(v.notes[1]!.kind).toBe("frontier");
+    } finally {
+      await h.cleanup().catch(() => undefined);
+    }
+  });
+
+  it("freshness: a never-bound work is not_found (distinct from not_ready)", async () => {
+    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h16 = toP1_16Harness(h as never);
+    try {
+      await seedWorld(h16);
+      await h16.advanceProjection();
+      const missing = await workView(h16, A, "work-never-bound");
+      expect(missing.status).toBe("not_found");
+      if (missing.status === "not_found") {
+        expect(missing.workId).toBe("work-never-bound");
+      }
+      expect(missing.status).not.toBe("not_ready");
+    } finally {
+      await h.cleanup().catch(() => undefined);
+    }
+  });
+});

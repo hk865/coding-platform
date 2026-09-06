@@ -1,0 +1,183 @@
+/**
+ * P1-16 LANE-A InMemory projection tests — workContext (binding + notes rows;
+ * continuations are LANE-B). Reference: tests/read-model/p1-08-portfolio-summary.test.ts.
+ *
+ * The world is the P1-08 two-project scenario; we then bind / link / record
+ * notes on a durable work identity and assert the event-projected view:
+ *   - binding + notes rows present for the work scope;
+ *   - rebuild equivalence (a fresh index replayed over the same EventPages
+ *     yields the same view);
+ *   - full-scope key isolation: the SAME local workId in project B has its OWN
+ *     rows (no cross-project read);
+ *   - freshness: before any advance -> not_ready; a never-bound work -> not_found.
+ */
+import { describe, expect, it } from "vitest";
+import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
+import {
+  createP108ScenarioRuntime,
+  runP108TwoProjectScenario,
+  toP1_08Harness,
+  P108_PROJECT_A,
+  P108_PROJECT_B,
+  P108_TASK_WORK,
+} from "../contract-suite/p1-08-harness.js";
+import { toP1_16Harness } from "../contract-suite/p1-16-harness.js";
+import { createReadModelIndex } from "../../src/read-model/read-model-index.js";
+import type { ReadModelIndex } from "../../src/contracts/goal-view.js";
+import {
+  P116_WORK,
+  P116_WORKSPACE,
+  P116_NOTE_1,
+  P116_NOTE_2,
+  buildBindWorkContextCommand,
+  buildLinkWorkRunCommand,
+  buildExecutionNoteV1,
+  buildRecordExecutionNoteCommand,
+} from "../../src/contracts/fixtures/context-fixtures.js";
+import type { BindWorkContextCommand } from "../../src/contracts/context-continuity.js";
+
+const A = P108_PROJECT_A;
+const B = P108_PROJECT_B;
+const WSPACE = P116_WORKSPACE;
+
+// BASELINE GAP (reported): validateBindWorkContextCommand checks the field
+// "payload.roleBinding" while the frozen schema + fixture emit
+// "payload.roleBindingRef". Workaround for THIS test only; mirrors roleBindingRef
+// into roleBinding so the buggy validator passes. The commit fold reads
+// roleBindingRef and is unaffected.
+function bindCmd(deps: Parameters<typeof buildBindWorkContextCommand>[0]): BindWorkContextCommand {
+  const cmd = buildBindWorkContextCommand(deps);
+  (cmd.payload as Record<string, unknown>)["roleBinding"] = cmd.payload.roleBindingRef;
+  return cmd;
+}
+
+async function makeWorld() {
+  const h = createInMemoryHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+  const p108 = toP1_08Harness(h as never);
+  const world = await runP108TwoProjectScenario(p108);
+  const h16 = toP1_16Harness(h as never);
+  const goalA = world.previews.find((p) => p.projectId === A)!.goalId;
+  return { h: h16, harness: h, world, goalA };
+}
+
+function workView(h: ReturnType<typeof toP1_16Harness>, projectId: string, workId: string) {
+  return h.workContextView({ projectId, workspaceId: WSPACE, workId });
+}
+
+describe("P1-16 LANE-A InMemory work-context projection", () => {
+  it("projects the binding + notes rows for one work and rebuilds identically from a fresh index", async () => {
+    const ctx = await makeWorld();
+    const runRef = ctx.world.projectA.workRun;
+    await ctx.h.bindWorkContext(bindCmd({
+      commandId: "rm-bind-w1", projectId: A, workId: P116_WORK, workspaceId: WSPACE,
+      workKind: "task", goalId: ctx.goalA, taskId: P108_TASK_WORK, initialRunRef: runRef,
+    }));
+    const note = buildExecutionNoteV1({
+      noteId: P116_NOTE_1, workId: P116_WORK, projectId: A, runRef, kind: "checkpoint",
+    });
+    await ctx.h.recordExecutionNote(buildRecordExecutionNoteCommand({ commandId: "rm-note-1", projectId: A, note }));
+    await ctx.h.advanceProjection();
+
+    const v = await workView(ctx.h, A, P116_WORK);
+    expect(v.status).toBe("ready");
+    if (v.status !== "ready") return;
+    expect(v.binding.binding.initialRunRef.runId).toBe(runRef.runId);
+    expect(v.binding.binding.linkedRunRefs.map((r) => r.runId)).toEqual([runRef.runId]);
+    expect(v.notes.map((n) => n.noteRef.noteId)).toEqual([P116_NOTE_1]);
+    expect(v.notes[0]!.kind).toBe("checkpoint");
+    expect(v.sourceCursor).toBeTruthy();
+
+    // Rebuild equivalence: a FRESH index replayed over the same EventPages
+    // reproduces the same binding + notes rows.
+    const fresh = createReadModelIndex();
+    await replayAllEvents(ctx.harness.ledger, fresh);
+    const fv = await fresh.workContext({ projectId: A, workspaceId: WSPACE, workId: P116_WORK });
+    expect(fv.status).toBe("ready");
+    if (fv.status !== "ready") return;
+    expect(JSON.stringify(fv)).toBe(JSON.stringify(v));
+  });
+
+  it("scope isolation: the SAME local workId in project B has its OWN rows (no cross-project read)", async () => {
+    const ctx = await makeWorld();
+    // Project A work.
+    await ctx.h.bindWorkContext(bindCmd({
+      commandId: "rm-bind-a", projectId: A, workId: P116_WORK, workspaceId: WSPACE,
+      workKind: "task", goalId: ctx.goalA, taskId: P108_TASK_WORK, initialRunRef: ctx.world.projectA.workRun,
+    }));
+    // Project B work — SAME local workId, SAME workspaceId, isolated by projectId.
+    await ctx.h.bindWorkContext(bindCmd({
+      commandId: "rm-bind-b", projectId: B, workId: P116_WORK, workspaceId: WSPACE,
+      workKind: "task", goalId: ctx.world.previews.find((p) => p.projectId === B)!.goalId,
+      taskId: P108_TASK_WORK, initialRunRef: ctx.world.projectB.workRun,
+    }));
+    await ctx.h.advanceProjection();
+
+    const va = await workView(ctx.h, A, P116_WORK);
+    const vb = await workView(ctx.h, B, P116_WORK);
+    expect(va.status).toBe("ready");
+    expect(vb.status).toBe("ready");
+    if (va.status !== "ready" || vb.status !== "ready") return;
+    expect(va.binding.binding.initialRunRef.runId).toBe(ctx.world.projectA.workRun.runId);
+    expect(vb.binding.binding.initialRunRef.runId).toBe(ctx.world.projectB.workRun.runId);
+    expect(JSON.stringify(va.binding)).not.toBe(JSON.stringify(vb.binding));
+    // Cross-project query must NEVER return project B's row for project A.
+    expect(va.binding.binding.initialRunRef.projectId).toBe(A);
+    expect(vb.binding.binding.initialRunRef.projectId).toBe(B);
+  });
+
+  it("notes are appended in order and survive a multi-run link (link path)", async () => {
+    const ctx = await makeWorld();
+    await ctx.h.bindWorkContext(bindCmd({
+      commandId: "rm-bind-w2", projectId: A, workId: "work-p116-coord", workspaceId: WSPACE,
+      workKind: "coordination", goalId: null, taskId: null, initialRunRef: ctx.world.projectA.workRun,
+    }));
+    await ctx.h.linkWorkRun(buildLinkWorkRunCommand({
+      commandId: "rm-link-w2", projectId: A, workId: "work-p116-coord", workspaceId: WSPACE,
+      runRef: ctx.world.projectA.extraReplacementRun, expectedRevision: 1,
+    }));
+    const note1 = buildExecutionNoteV1({ noteId: P116_NOTE_1, workId: "work-p116-coord", projectId: A, runRef: ctx.world.projectA.workRun, kind: "checkpoint" });
+    const note2 = buildExecutionNoteV1({ noteId: P116_NOTE_2, workId: "work-p116-coord", projectId: A, runRef: ctx.world.projectA.extraReplacementRun, kind: "frontier" });
+    await ctx.h.recordExecutionNote(buildRecordExecutionNoteCommand({ commandId: "rm-note-1", projectId: A, note: note1 }));
+    await ctx.h.recordExecutionNote(buildRecordExecutionNoteCommand({ commandId: "rm-note-2", projectId: A, note: note2 }));
+    await ctx.h.advanceProjection();
+
+    const v = await workView(ctx.h, A, "work-p116-coord");
+    expect(v.status).toBe("ready");
+    if (v.status !== "ready") return;
+    expect(v.binding.binding.linkedRunRefs.map((r) => r.runId)).toEqual([
+      ctx.world.projectA.workRun.runId,
+      ctx.world.projectA.extraReplacementRun.runId,
+    ]);
+    expect(v.notes.map((n) => n.noteRef.noteId)).toEqual([P116_NOTE_1, P116_NOTE_2]);
+    expect(v.notes[1]!.kind).toBe("frontier");
+  });
+
+  it("freshness: not_ready before any advance, not_found for a never-bound work", async () => {
+    const ctx = await makeWorld();
+    // Fresh index with NO events applied -> not_ready (cannot judge existence).
+    const fresh = createReadModelIndex();
+    const z = await fresh.workContext({ projectId: A, workspaceId: WSPACE, workId: "work-never-bound" });
+    expect(z.status).toBe("not_ready");
+
+    await ctx.h.advanceProjection();
+    const missing = await workView(ctx.h, A, "work-never-bound");
+    expect(missing.status).toBe("not_found");
+    if (missing.status === "not_found") {
+      expect(missing.projectId).toBe(A);
+      expect(missing.workId).toBe("work-never-bound");
+    }
+    // Not_ready is DISTINCT from not_found.
+    expect(missing.status).not.toBe("not_ready");
+  });
+});
+
+// Replay every event page over a fresh index (rebuild-equivalence helper).
+async function replayAllEvents(ledger: import("../../src/contracts/ledger.js").StateLedger, index: ReadModelIndex) {
+  let after: import("../../src/contracts/command-event.js").CommitCursor | null = null;
+  for (;;) {
+    const page = await ledger.events({ afterCursor: after, limit: 64 });
+    await index.advance(page);
+    after = page.throughCursor;
+    if (!page.hasMore) break;
+  }
+}
