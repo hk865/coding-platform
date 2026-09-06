@@ -22,6 +22,7 @@ import type {
   GoalTimelineQuery,
   GoalTimelineViewResult,
 } from "../goal-phase-view.js";
+import type { HandoffProvenanceViewQuery, HandoffProvenanceViewResult } from "../handoff-view.js";
 
 export type AdvanceBehavior = (
   page: EventPage,
@@ -44,6 +45,9 @@ export type GoalStatusBehavior = (
 export type GoalTimelineBehavior = (
   query: GoalTimelineQuery,
 ) => Promise<GoalTimelineViewResult> | GoalTimelineViewResult;
+export type HandoffProvenanceBehavior = (
+  query: HandoffProvenanceViewQuery,
+) => Promise<HandoffProvenanceViewResult> | HandoffProvenanceViewResult;
 
 export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly advanceCalls: EventPage[] = [];
@@ -53,6 +57,7 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly activeAgentCalls: ActiveAgentQuery[] = [];
   readonly goalStatusCalls: GoalStatusQuery[] = [];
   readonly goalTimelineCalls: GoalTimelineQuery[] = [];
+  readonly handoffProvenanceCalls: HandoffProvenanceViewQuery[] = [];
 
   constructor(
     private readonly options: {
@@ -63,6 +68,7 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
       activeAgent?: ActiveAgentBehavior;
       goalStatus?: GoalStatusBehavior;
       goalTimeline?: GoalTimelineBehavior;
+      handoffProvenance?: HandoffProvenanceBehavior;
     } = {},
   ) {}
 
@@ -109,5 +115,11 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
     this.goalTimelineCalls.push(query);
     if (this.options.goalTimeline) return this.options.goalTimeline(query);
     return { status: "not_found", observedCursor: null };
+  }
+
+  async handoffProvenance(query: HandoffProvenanceViewQuery): Promise<HandoffProvenanceViewResult> {
+    this.handoffProvenanceCalls.push(query);
+    if (this.options.handoffProvenance) return this.options.handoffProvenance(query);
+    return { status: "not_found", observedCursor: (null as unknown) as import("../command-event.js").CommitCursor };
   }
 }

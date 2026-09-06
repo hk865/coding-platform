@@ -19,3 +19,7 @@ export * from "./modules.js";
 export * from "./validation.js";
 export * from "./fixtures/index.js";
 export * from "./testing/index.js";
+export * from "./handoff.js";
+export * from "./handoff-context.js";
+export * from "./handoff-control.js";
+export * from "./handoff-view.js";

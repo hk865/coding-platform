@@ -100,6 +100,13 @@ import {
   runtimeEventTerminalOutcome,
 } from "../contracts/dispatch.js";
 import { validateDomainEvent } from "../contracts/validation.js";
+import type { HandoffRecordedEvent, ReplacementClaimedEvent } from "../contracts/handoff.js";
+import { handoffPacketRefFor } from "../contracts/handoff.js";
+import type {
+  HandoffProvenanceView,
+  HandoffProvenanceViewQuery,
+  HandoffProvenanceViewResult,
+} from "../contracts/handoff-view.js";
 
 export interface SqliteReadModelIndexOptions {
   /** ":memory:" (per-connection ephemeral) or a single SQLite file path. */
@@ -223,6 +230,13 @@ CREATE TABLE IF NOT EXISTS goal_timeline (
   event_id           TEXT NOT NULL,
   source_cursor      TEXT NOT NULL,
   PRIMARY KEY (project_id, goal_id, seq)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS handoff_provenance (
+  project_id      TEXT NOT NULL,
+  goal_id         TEXT NOT NULL,
+  task_id         TEXT NOT NULL,
+  provenance_json TEXT NOT NULL,
+  PRIMARY KEY (project_id, goal_id, task_id)
 ) WITHOUT ROWID;
 `;
 
@@ -393,6 +407,8 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   private readonly stmtSelectGoalTimeline: StatementSync;
   private readonly stmtInsertGoalTimeline: StatementSync;
   private readonly stmtSelectMaxGoalTimelineSeq: StatementSync;
+  private readonly stmtSelectHandoffProvenance: StatementSync;
+  private readonly stmtUpsertHandoffProvenance: StatementSync;
 
   constructor(options: SqliteReadModelIndexOptions) {
     if (typeof options.path !== "string" || options.path.length === 0) {
@@ -584,6 +600,12 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     this.stmtSelectMaxGoalTimelineSeq = this.db.prepare(
 `SELECT MAX(seq) AS max_seq FROM goal_timeline WHERE project_id = ? AND goal_id = ?`
     );
+    this.stmtSelectHandoffProvenance = this.db.prepare(
+      "SELECT provenance_json FROM handoff_provenance WHERE project_id = ? AND goal_id = ? AND task_id = ?",
+    );
+    this.stmtUpsertHandoffProvenance = this.db.prepare(
+      "INSERT INTO handoff_provenance (project_id, goal_id, task_id, provenance_json) VALUES (?, ?, ?, ?) ON CONFLICT(project_id, goal_id, task_id) DO UPDATE SET provenance_json = excluded.provenance_json",
+    );
   }
 
   async advance(page: EventPage): Promise<ProjectionReceipt> {
@@ -764,6 +786,58 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       requiredCursor: observedCursor ?? makeCommitCursor(1),
       observedCursor,
     };
+  }
+
+  /** P1-06: display-only handoff provenance timeline (keyed by full-scope
+   * (projectId, goalId, taskId); NEVER judges completion). Freshness mirrors
+   * goalStatus(): not_found only when atLeastCursor is provided AND already
+   * covered AND there is no row; otherwise the freshness-safe not_ready. */
+  async handoffProvenance(query: HandoffProvenanceViewQuery): Promise<HandoffProvenanceViewResult> {
+    this.assertOpen();
+    const observedCursor = this.readCheckpoint();
+    const row = this.readHandoffProvenanceRow(query.projectId, query.goalId, query.taskId);
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(observedCursor, query.atLeastCursor)) {
+        if (row) return { status: "ready", provenance: row, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor: observedCursor ?? makeCommitCursor(1) };
+      }
+      return {
+        status: "not_ready",
+        requiredCursor: query.atLeastCursor,
+        observedCursor: observedCursor ?? makeCommitCursor(1),
+      };
+    }
+
+    // No atLeastCursor: show the row if present, else the freshness-safe
+    // "not_ready" (identical to goalStatus() — never not_found here).
+    if (row) return { status: "ready", provenance: row, observedCursor: observedCursor! };
+    return {
+      status: "not_ready",
+      requiredCursor: observedCursor ?? makeCommitCursor(1),
+      observedCursor: observedCursor ?? makeCommitCursor(1),
+    };
+  }
+
+  private readHandoffProvenanceRow(
+    projectId: string,
+    goalId: string,
+    taskId: string,
+  ): HandoffProvenanceView | null {
+    const row = this.stmtSelectHandoffProvenance.get(projectId, goalId, taskId) as unknown as
+      | { provenance_json: string }
+      | undefined;
+    if (!row) return null;
+    return JSON.parse(row.provenance_json) as HandoffProvenanceView;
+  }
+
+  private writeHandoffProvenanceRow(row: HandoffProvenanceView): void {
+    this.stmtUpsertHandoffProvenance.run(
+      row.projectId,
+      row.goalId,
+      row.taskId,
+      JSON.stringify(row),
+    );
   }
 
   /** P1-05: goal phase status projection (per (projectId, goalId)). */
@@ -1094,6 +1168,82 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     );
   }
 
+  /** Get or create the per-task handoff provenance row (full-scope key). */
+  private ensureHandoffProvenanceRow(
+    projectId: string,
+    goalId: string,
+    taskId: string,
+    cursor: CommitCursor,
+  ): HandoffProvenanceView {
+    const existing = this.readHandoffProvenanceRow(projectId, goalId, taskId);
+    if (existing) return existing;
+    return {
+      projectId,
+      goalId,
+      taskId,
+      packetRefs: [],
+      replacementRefs: [],
+      taskRevision: null,
+      planRef: null,
+      timeline: [],
+      outcomeUnknownPreserved: true,
+      sourceCursor: cursor,
+    };
+  }
+
+  /** HandoffRecorded@1 -> append a packet_recorded entry + packetRef and snapshot
+   * the row's taskRevision / planRef (the row is created here if absent — it
+   * carries ONLY event fields, never depends on a Plan event). */
+  private applyHandoffRecorded(event: HandoffRecordedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const goalId = event.payload.goalId;
+    const taskId = event.payload.taskId;
+    const packet = event.payload.packet;
+    const row = this.ensureHandoffProvenanceRow(projectId, goalId, taskId, cursor);
+
+    row.timeline.push({
+      kind: "packet_recorded",
+      packetRef: handoffPacketRefFor(projectId, goalId, taskId, packet.packetId),
+      packetId: packet.packetId,
+      sourceRunRef: { ...packet.source.runRef },
+      sourceAttemptRef: { ...packet.source.attemptRef },
+      predecessorPacketRef: packet.predecessorPacketRef === null ? null : { ...packet.predecessorPacketRef },
+      taskRevision: packet.taskRevision,
+      workspaceSnapshot: { ...packet.workspaceSnapshot },
+      recordedAt: event.payload.recordedAt,
+      sourceCursor: cursor,
+    });
+    row.packetRefs.push(handoffPacketRefFor(projectId, goalId, taskId, packet.packetId));
+    row.taskRevision = packet.taskRevision;
+    row.planRef = { ...packet.planRef };
+    row.sourceCursor = cursor;
+    this.writeHandoffProvenanceRow(row);
+  }
+
+  /** ReplacementClaimed@1 -> append a replacement_claimed entry + replacementRef. */
+  private applyReplacementClaimed(event: ReplacementClaimedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const goalId = event.payload.goalId;
+    const taskId = event.payload.taskId;
+    const row = this.ensureHandoffProvenanceRow(projectId, goalId, taskId, cursor);
+
+    row.timeline.push({
+      kind: "replacement_claimed",
+      packetRef: { ...event.payload.packetRef },
+      replacementRef: { ...event.payload.replacementRef },
+      priorRunRef: { ...event.payload.priorRunRef },
+      priorAttemptRef: { ...event.payload.priorAttemptRef },
+      runRef: { ...event.payload.runRef },
+      attemptRef: { ...event.payload.attemptRef },
+      reason: event.payload.reason,
+      claimedAt: event.payload.claimedAt,
+      sourceCursor: cursor,
+    });
+    row.replacementRefs.push({ ...event.payload.replacementRef });
+    row.sourceCursor = cursor;
+    this.writeHandoffProvenanceRow(row);
+  }
+
   /** Event types this projection currently has handlers for (P1-02 + P1-03, v1). */
   private isHandledEventType(eventType: string): boolean {
     return (
@@ -1111,7 +1261,9 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       eventType === "RunOutcomeUnknown" ||
       eventType === "EvidenceAdmitted" ||
       eventType === "TaskReductionUpdated" ||
-      eventType === "GoalPhaseUpdated"
+      eventType === "GoalPhaseUpdated" ||
+      eventType === "HandoffRecorded" ||
+      eventType === "ReplacementClaimed"
     );
   }
 
@@ -1186,6 +1338,10 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       this.applyTaskReductionUpdated(event, cursor);
     } else if (event.eventType === "GoalPhaseUpdated") {
       this.applyGoalPhaseUpdated(event, cursor);
+    } else if (event.eventType === "HandoffRecorded") {
+      this.applyHandoffRecorded(event, cursor);
+    } else if (event.eventType === "ReplacementClaimed") {
+      this.applyReplacementClaimed(event, cursor);
     }
     // Known non-goal / non-plan / non-dispatch events (ProjectBootstrapped,
     // WorkspaceBootstrapped, CompletionPolicyInstalled,
@@ -1377,6 +1533,29 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     });
     row.sourceCursor = cursor;
     this.writeVerificationRow(row);
+
+    // P1-06: the SAME EvidenceAdmitted event also feeds the display-only
+    // provenance timeline (evidence_admitted entry). The verification projection
+    // above is unchanged; this only appends to the handoff provenance row.
+    const provRow = this.ensureHandoffProvenanceRow(projectId, goalId, taskId, cursor);
+    provRow.timeline.push({
+      kind: "evidence_admitted",
+      evidenceRef: {
+        aggregateType: "Evidence",
+        projectId,
+        evidenceId: event.payload.evidence.evidenceId,
+      },
+      evidenceId: event.payload.evidence.evidenceId,
+      outcome: event.payload.evidence.outcome,
+      evidenceKind: event.payload.evidence.kind,
+      sourceRunRef: event.payload.evidence.source.runRef,
+      planRef: event.payload.evidence.anchor.planRef,
+      planRevision: event.payload.evidence.anchor.planRevision,
+      admittedAt: event.payload.admittedAt,
+      sourceCursor: cursor,
+    });
+    provRow.sourceCursor = cursor;
+    this.writeHandoffProvenanceRow(provRow);
   }
 
   /** TaskReductionUpdated@1 -> refresh the task's canonical reduction snapshot

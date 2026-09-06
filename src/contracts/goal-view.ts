@@ -98,4 +98,6 @@ export interface ReadModelIndex {
   goalStatus(query: GoalStatusQuery): Promise<GoalStatusViewResult>;
   /** P1-05: goal phase timeline projection per (projectId, goalId). */
   goalTimeline(query: GoalTimelineQuery): Promise<GoalTimelineViewResult>;
+  /** P1-06: handoff provenance timeline per (projectId, goalId, taskId) — display only. */
+  handoffProvenance(query: import("./handoff-view.js").HandoffProvenanceViewQuery): Promise<import("./handoff-view.js").HandoffProvenanceViewResult>;
 }

@@ -82,6 +82,8 @@ import { startRun } from "./start-run.js";
 import { runFact } from "./run-facts.js";
 import { submitEvidence } from "./evidence-intake.js";
 import { reduceTask } from "./task-reducer.js";
+import { recordHandoff } from "./handoff.js";
+import { claimReplacement } from "./replacement-claim.js";
 import { reduceGoal } from "./goal-reducer.js";
 
 export type ControlEngineDeps = {
@@ -250,6 +252,14 @@ export class ControlEngineImpl implements ControlEngine {
 
   reduceTask(command: import("../contracts/reduction.js").ReduceTaskCommand): Promise<import("../contracts/reduction.js").ReduceTaskReceipt> {
     return reduceTask(this.deps, command);
+  }
+
+  recordHandoff(command: import("../contracts/handoff.js").RecordHandoffCommand): Promise<import("../contracts/handoff.js").RecordHandoffReceipt> {
+    return recordHandoff(this.deps, command);
+  }
+
+  claimReplacement(command: import("../contracts/handoff.js").ClaimReplacementCommand): Promise<import("../contracts/handoff.js").ClaimReplacementReceipt> {
+    return claimReplacement(this.deps, command);
   }
 
   /** P1-05: deterministic Goal phase reduction (never Task phase). */

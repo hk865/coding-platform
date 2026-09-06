@@ -1,22 +1,85 @@
 # IMPLEMENTATION-HANDOFF — Agent Platform 产品代码根
 
 ```yaml
+ticket_id: P1-06
+status: implementation in progress (limited authorization, 2026-09-06 — P1-06 only); shared baseline built on P1-05 commit d1c6595; 3 lanes dispatched for control/context/read-model implementations; acceptance evidence at dev_docs/verification/p1-06-implementation-evidence.md (pending)
+updated: 2026-09-06
+authorized_by: user (limited authorization for P1-06 only; P1-06 is NOT P1 acceptance, P1-07/15 NOT auto-started; G2 (Continuity) waits P1-05 + P1-06)
+next: after P1-06 acceptance STOP — do NOT auto-start P1-15/other tickets (G2 needs 05+06; next window triggered by user/process)
+evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-06-implementation-evidence.md (at acceptance); upstream baseline: P1-05 commit d1c6595 (64 files/539 tests)
+merge_surface_note: P1-06 was built in ISOLATED worktree agent_platform-p1-06 (branch p1-06-int, derived from d1c6595) AFTER the P1-05 parallel session finished. The earlier P1-05 x P1-06 text-level conflict (both sessions appending to events.ts / ledger.ts / validation.ts from the 5a278cb baseline) was resolved mechanically ("双方皆保留、版本化追加"), verified byte-fidelity of P1-05 parts, and documented as a control-plane lesson in dev_docs/logs/conflict-reports/README.md (see the integration report for the tagged conflict record).
+```
+
+```yaml
 ticket_id: P1-05
 status: implementation verified (limited authorization, 2026-09-05 — P1-05 only); lanes A/B implemented (subagent infra failed mid-run -> integrator takeover, recorded below) and merged; lane C validated (no changes needed); full acceptance evidence in dev_docs/verification/p1-05-implementation-evidence.md
 updated: 2026-09-05
 authorized_by: user (limited authorization for P1-05 only, per P1-04 precedent; P1-05 is NOT P1 acceptance, P1-07/08 NOT auto-started)
 next: STOP after P1-05 acceptance — do NOT auto-start P1-07/08 (DAG: 05 验收后才出现 07/08 并行窗口); P1-06 parallel session paused by user (its worktree agent_platform-p1-06 branch p1-06-int is at its own baseline; merge surface: events/ledger/validation.ts — coordinate at merge)
 evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-05-implementation-evidence.md (at acceptance); P1-04 upstream baseline: commit 5a278cb
-yaml
-ticket_id: P1-04
-status: implementation verified (limited authorization, 2026-09-05 — P1-04 only); four lanes merged; full acceptance evidence in dev_docs/verification/p1-04-implementation-evidence.md
-updated: 2026-09-05
-authorized_by: user (limited authorization for P1-04 only; recorded in this file; ticket 04 record appended at acceptance)
-next: (superseded by P1-05 record above)
-evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-04-implementation-evidence.md (at acceptance); P1-03 evidence: p1-03-implementation-evidence.md
 ```
 
 ---
+
+## P1-06 当前票据与共享契约基线
+
+- Ticket：`/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/06-handoff-a-to-b.md`（P1-06，status 按阶段守卫保持 `proposed`；Implementation record 将在验收后追加票尾；**本票验收 ≠ 整个 P1 验收，P1-15 不自动开始**）
+- P1-05 结束基线（upstream 已验收）：产品根 commit `d1c6595`（typecheck 0 errors、64 files/539 tests PASS；已推 GitHub origin main）。**P1-06 共享基线 = 本文件本次更新的 commit**（= d1c6595 + 4 个新契约 + 1 个视图契约 + 2 个 commitKind + 纯函数校验器 + 入口/夹具/套件/重启骨架 + 适配器登记；既有 539 测试零回归——实施前已复跑）。
+- **冻结复用、不重写**：P1-00…P1-05 全部契约/夹具/套件/适配器/harness 零修改通过；P1-03 冻结的 TaskLease/TaskAttempt/Run/DispatchOutboxEntry/TaskEnvelope/DispatchIntentV1 形状**不修改**（replacement-claim 只新增 ReplacementAttempt 一个聚合）；P1-05 的 goal-phase/goal-reducer 全部文件不修改（可读对比 `git diff d1c6595..p1-06-int -- src/contracts/goal-phase.ts src/contracts/goal-phase-view.ts src/control/goal-reducer.ts` 为空）。
+- **P0-06 复核影响（AGENTS.md 要求，已核对）**：`dev_docs/design/human-framework-role-review.md` 结论与本票无冲突——"某个协调 Run 结束或失败后…新 Run 从状态与有界交接恢复"（= 本票 A→B 换手）；"默认是有界任务、问题、报告、提案和 Handoff；参与者只读取相关上下文"（= HandoffPacket 有界、无 transcript、body-first）；"状态链：工具/Agent 产出 → 框架校验与归约 → 持久状态 → 事实投影"（= run-fact → recordHandoff/claimReplacement → Event → provenance 投影）；"完成权不绑定名称"（B 不因接续而获得完成权——TaskReduction 仍由 P1-04 reducer 归约，本票不写 phase）。本票不做 Goal 归约（P1-05），不做重试/取消（P1-10），不做并行 Reader/唯一 Writer 归约（P1-07），无 Findings/Decision 路径。
+- **三个最小 Interface 首次冻结**（DAG interfaces_to_freeze）：`DispatchEngine.HandoffPort`（src/contracts/handoff.ts）、`ContextCompiler.HandoffContextPort`（src/contracts/handoff-context.ts）、`WorkerRuntime.HandoffControlPort`（src/contracts/handoff-control.ts）——已建、版本化（v1）、以契约套件 + 集成接线作为最小 contract test；**三个契约**：HandoffPacket、HandoffContextRequest、ReplacementAttempt（见下方冻结语义与入口表）。
+
+## P1-06 契约与存储语义（冻结）
+
+1. **HandoffPacket 有界形状**：硬上限 `HANDOFF_PACKET_MAX_BYTES = 64KiB`（与 TaskEnvelope 同序；校验器在已知字段检查通过后按 canonical JSON 字节数判 size_exceeded）；必备字段 objective / constraints（≤32）/ completed（≤64，每项 summary ≤4096B + ArtifactRef + EvidenceRefs）/ unresolved（≤64，kind ∈ {missing_material, outcome_unknown, risk, blocked, cancelled, other}）/ evidenceRefs（≤128）/ artifactRefs（≤64）/ workspaceSnapshot / source（runRef(来源 Run) + attemptRef + binding(RoleBindingRefV1) + context(contextBundleRef/contextManifestRef) + runtime(lastEventSeq/terminalEventId/terminalOutcome)）/ bodyRef / taskRevision / planRef / generatedAt。**无 transcript 为显式保证**：schema 无 transcript/思维链字段，且 `validateHandoffPacket` 对**未知顶层字段一律拒绝**（unknown_field——"transcript" 字段直接 invalid），`noFullTranscript: true` 为必填常量字段。**正文先入 ArtifactVault（body-first）**：调用方先 put 正文（ownerRef = 来源 RunRef，沿用 P1-03 open 授权规则），再由 Control.recordHandoff 登记；登记失败只留未采纳 Artifact。**B 的 HandoffContext 从 ledger 的 HandoffPacketSnapshot（有界）取材，不 open A 的 vault 正文**（vault 正文是同有界负载的归档副本）。
+2. **ReplacementAttempt**：同一 Task 的**新 Attempt**（新 TaskAttempt@0 + Run@0 + DispatchOutboxEntry@0（intent=DispatchIntentV1，形状不变）+ ReplacementAttempt@0；TaskLease **CAS @N→N+1** 转移 holder 到 B）。**可替换前提（纯函数 evaluateReplacementEligibility，冻结）**：A 的 attempt 已 ended（终端事实/outcome_unknown）**或** A 的 lease 已过期（expiresAt < now）；二者皆否 → `lease_active`（零写入）；无 prior lease → `no_prior_attempt`；packet 未登记 → `packet_not_found`；packet 的 task/planRef/taskRevision 不匹配 → `packet_mismatch`；packet.workspaceRevision ≠ canonical → `stale_packet`（显式，不静默用旧）。结构性规则（goal active/plan accepted/work/disposition/phase/deps/resource）沿用 P1-03 eligibility 语义。**A 的迟到事实**：target A 自己的 ended Run → P1-03 per-run sequence 语义（after_terminal / stale_event / duplicate_event，零写入，**绝不回退**）；B 的 Run/Attempt 是独立聚合，A 的输入在数据结构上不可能接触。**完整幂等**（同 identity+fingerprint → committed/replayed；同 identity 异 fingerprint → idempotency_conflict；异 identity 复用新 attemptId/runId → revision_conflict 零写入）。重试/取消 = P1-10，本票只做"A 结束/故障后 B 接续"。
+3. **HandoffContextRequest / Port**：ContextCompiler **版本化扩展**（新文件 src/context/handoff-context-compiler.ts；P1-03 冻结的 assemble(TaskContextRequestV1) **不改写**）。`HandoffContextPort.assemble`（新接口，v1）：request 带 B 的 runRef/attemptRef/roleBinding/declaredPermissions/scope/workspaceSnapshot/budget + **handoffPacketRef**。守卫顺序（全部零写入，除 body-first put）：shape 校验 → packet 存在（packet_not_found）→ packet 与请求同 task/plan（packet_mismatch）→ canonical workspace/plan 解析（缺材料 needs_material）→ **source revision 不匹配 → 显式 stale_workspace_snapshot / stale_packet（绝不静默用旧；调用方重新投影后重试）** → scope ⊆ declared / policyRevision 非空（forbidden_tool_or_scope，旧绑定/越权拒绝）→ 预算/期限（budget_exhausted）→ 组装有界 Bundle（仅取 packet 白名单字段 + 新鲜 plan/workspace 材料摘要；无 transcript）→ body-first vault put（owner=B runRef）→ B 的 TaskEnvelope（**形状冻结复用**，drive/startRun/runtime 路径不变）+ manifest（noFullTranscript: true）。assemble 永不启动 Agent；评审/验证语义 Run 仍走正式 dispatch。
+4. **HandoffControlPort**：WorkerRuntime 控制面**最小形状**（v1）：`control({kind:"pause"|"stop", reason, ...})` → accepted(state{status running|paused|stopped, noHiddenContextRead:true}) / rejected(invalid|forbidden|run_not_found|already_stopped)；**无 cancel（P1-10）**；`snapshot(query)` → ready(state + PublicRuntimeReport{lastEventSeq, terminalOutcome, summary, reportRef, noHiddenContextRead:true}) / unsupported / rejected。**只暴露公开报告，拒绝隐藏上下文读取**（noHiddenContextRead 显式字段——RuntimeEvent/manifest 的隐藏部分不进入报告；报告正文 ≤32KiB）。评审/验证语义 Run 仍走正式 dispatch（P1-03 RunPort）；本 port 是控制/快照面。Harness 默认 = src/runtime/handoff-control-adapter.ts（FakeHandoffControlRuntimeAdapter，与 FakeRuntimeAdapter 组合）；契约套件用共享替身 FakeHandoffControlPort。
+5. **验证路径可追溯**：reference 链 = HandoffPacket（source.runRef=A、attemptRef=A、evidenceRefs）→ ReplacementAttempt（packetRef + priorRunRef=A + runRef=B）→ B 的 EvidenceAdmitted（source.runRef=B，anchor.planRef/planRevision = 同一 Task revision tuple）。**B 提交后续结果时**，taskVerification 视图同时显示 A/B 两个 Run 来源且同一 anchor tuple（套件断言）；handoffProvenance 时间线显示 packet_recorded → replacement_claimed → evidence_admitted（按事件序，只展示不判定）。**outcome_unknown 在交接与视图保留**（packet unresolved kind=outcome_unknown + provenance.outcomeUnknownPreserved: true），**不自动重试不可逆动作**（套件断言一次替换恰好一条，无额外自动重领）。
+6. **事件/视图**：两个新 v1 事件 `HandoffRecorded`（HandoffPacket 聚合创建，aggregateRevision=1——**不进 isActivationEvent**，与本票事件为创建型一致，revision 语义由套件覆盖）+ `ReplacementClaimed`（ReplacementAttempt 聚合，rev=1）；已加入 DomainEvent/KNOWN_EVENT_TYPES（与 P1-05 的 GoalPhaseUpdated 并存，版本化追加）。ReadModel 投影 `handoffProvenance`（key=(projectId, goalId, taskId)；条目 packet_recorded/replacement_claimed/evidence_admitted；freshness 沿用 opaque CommitCursor：not_ready≠not_found；已知 v1 事件无 handler → 仍 unsupported_event_type 整页停止——**KNOWN 列表新增与 isHandledEventType 新增作为同一原子动作**：handler + isHandledEventType 在 lane C 同一 commit 落地）。
+7. **重启等价**：handoff-record / replacement-claim 全经 SQLite 单事务（commitKind 各自独立；InMemory/SQLite 共用 ledger-validation 纯校验器）；重启后（close→reopen 同文件、全新实例）HandoffPacket/ReplacementAttempt/TaskLease/B-Run 快照 load 逐字段一致、handoffProvenance 从持久 EventPage 重建逐字段一致、observedCursor 一致（tests/restart/p1-06-*，探针 isP106Ready() 自动启用）。ArtifactVault 正文持久化不在本票——与 P1-03/04 相同只存引用。
+8. **边界**：不归约 Goal phase（P1-05）、不写 Task phase（P1-04 reducer 专有）、无 retry/cancel（P1-10）、无 Findings/Decision（P1-11/14）、无并行 Reader 归约（P1-07）；recordHandoff 不 open/不验证 vault 正文内容（只有引用），不做"已保存正文但提交失败"的清理（与 P1-03/04 相同）。
+
+## P1-06 已冻结的代码入口（integrator 建立，签名冻结）
+
+| 入口 | 文件 | 冻结表面 |
+| --- | --- | --- |
+| handoff 契约/纯函数 | src/contracts/handoff.ts | HandoffPacketV1（有界/noFullTranscript）、HandoffPacketRef/Snapshot、ReplacementAttemptRef/Snapshot、RecordHandoffCommand/Receipt、ClaimReplacementCommand/Receipt、HandoffRecorded/ReplacementClaimed 事件、evaluateReplacementEligibility（纯）、recordHandoffFingerprint/claimReplacementFingerprint、DispatchEngine.HandoffPort（driveHandoff 接口 + 驱动类型） |
+| handoff-context 契约 | src/contracts/handoff-context.ts | HandoffContextPort/RequestV1/ResultV1/Manifest（noFullTranscript: true）、拒绝码 |
+| handoff-control 契约 | src/contracts/handoff-control.ts | HandoffControlPort/CommandV1/StateV1/SnapshotQuery/PublicRuntimeReportV1（noHiddenContextRead: true）、HANDOFF_CONTROL_MAX_REPORT_BYTES |
+| handoff-view 契约 | src/contracts/handoff-view.ts | HandoffProvenanceViewQuery/View/Result、ProvenanceEntry（packet_recorded/replacement_claimed/evidence_admitted）、outcomeUnknownPreserved |
+| fixtures | src/contracts/fixtures/handoff-fixtures.ts | P106_PLAN_REVISION_FIXTURE_V1（work task + goal gate；无 dependsOn 于 work）、P106_GOAL/PROJECT/TASK/WORKSPACE、buildHandoffPacketV1/buildRecordHandoffCommand/buildClaimReplacementCommand/buildReplacementClaimLedgerCommit（fold 目标）/p106PlanRef |
+| ledger/validation 扩展 | src/contracts/{ledger,ledger-validation,validation,events}.ts、src/contracts/{modules,goal-view}.ts | handoff-record/replacement-claim commitKind + validateHandoffRecordCommit/validateReplacementClaimCommit（双适配器共用）、validateHandoffPacket（严格未知字段+cap）/validateRecordHandoffCommand/validateClaimReplacementCommand/validateHandoffContextRequest/validateHandoffControlCommand/validateHandoffSnapshotQuery + validateDomainEvent 两个分支、DomainEvent/KNOWN + 2 事件、ControlEngine.recordHandoff/claimReplacement、ReadModelIndex.handoffProvenance |
+| Control 入口 | src/control/{handoff,replacement-claim,handoff-drive}.ts | recordHandoff/claimReplacement（stub→lane A 填充）；HandoffDriveEngineImpl.driveHandoff（stub→lane A）；control-engine.ts 仅委托；dispatch-engine.ts 增加"替换意图跳过"守卫（P1-06 行为追加，签名不变） |
+| Context/控制面 | src/context/handoff-context-compiler.ts、src/runtime/handoff-control-adapter.ts | HandoffContextCompilerImpl.assemble（stub→lane B）；FakeHandoffControlRuntimeAdapter.control/snapshot（stub→lane B） |
+| ReadModel | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts | handoffProvenance（stub→lane C；handler + isHandledEventType 同 commit） |
+| harness | src/harness/{in-memory,persistent}-harness.ts | handoffContext/handoffControl/handoffDrive 默认接线 + recordHandoff/claimReplacement/handoffProvenance/assembleHandoff 直通；options {handoffContext?, handoffControl?} |
+| 契约套件 | tests/contract-suite/{p1-06-harness,handoff.contract.suite}.ts | P1_06TestHarness/FACTORY、prepareP106Scenario、toP1_06Harness、defineHandoffContractSuite（InMemory+SQLite 同套件；10 组：packet 有界/record/纯 eligibility/claim 生命周期/迟到拒绝/context 组装/完整恢复/outcome_unknown/可追溯/控制面） |
+| 重启骨架 | tests/restart/p1-06-restart-fixtures.ts、p1-06-restart.test.ts、evidence/p1-06-evidence.test.ts | isP106Ready() 探针；实现落地后自动启用 |
+| 集成接线 | tests/integration/p1-06.contract-suite.inmemory|sqlite.test.ts、p1-06.integration.test.ts | 双适配器套件接线（skipIf 探针）+ 真实 SQLite 全路径 + 重启等价 |
+
+## 三路并行（P1-06，隔离 worktree → main 合并；从本基线 commit 派生）
+
+| Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
+| --- | --- | --- | --- | --- |
+| A HandoffPacket + ReplacementAttempt（Control/Process 面） | p1-06-lane-a | recordHandoff/claimReplacement 完整实现（守卫→fold→commit→map；run_not_ended/stale_source/lease_active/packet_* /CAS/幂等零写入）+ HandoffDriveEngineImpl.driveHandoff（替换意图：assemble→startRun→runtime→runFact；outbox 先于副作用） | src/control/handoff.ts、src/control/replacement-claim.ts、src/control/handoff-drive.ts、tests/control/handoff.test.ts、tests/control/replacement-claim.test.ts、tests/control/handoff-drive.test.ts | 🔄 进行中 |
+| B HandoffContext + HandoffControl | p1-06-lane-b | HandoffContextCompilerImpl.assemble 完整实现（守卫序/stale 显式/越权/Budget/有界 Bundle body-first/无 transcript）+ FakeHandoffControlRuntimeAdapter（pause/stop + 公开快照） | src/context/handoff-context-compiler.ts、src/runtime/handoff-control-adapter.ts、tests/context/handoff-context-compiler.test.ts、tests/runtime/handoff-control-adapter.test.ts | 🔄 进行中 |
+| C ReadModel provenance + 重启证据 | p1-06-lane-c | HandoffRecorded/ReplacementClaimed/EvidenceAdmitted 双适配器投影 + handoffProvenance（重建等价/全键隔离/freshness）+ isHandledEventType 与 handler 同 commit + 重启证据硬化 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、tests/read-model/p1-06-handoff-projection.test.ts、tests/sqlite-read-model/p1-06-handoff-projection.test.ts、tests/restart/p1-06-*.ts | 🔄 进行中 |
+
+integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 schema/接口/共享 fixture）、`src/ledger/**`、`src/sqlite-ledger/**`、`src/control/control-engine.ts`、`src/harness/**`、`tests/contract-suite/**`、`tests/integration/**`、文档与状态记录。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结签名、**不得修改 P1-05 文件**（如有缺口：提交具体建议给 integrator 统一修改基线并通知消费者）。子 Agent 从实际读文件开始，不等待派发者；允许测试命令：`pnpm vitest run <自身路径>`、`pnpm typecheck`。
+
+## P1-06 已执行命令及结果（共享基线）
+
+| 命令（product root worktree） | 结果 |
+| --- | --- |
+| `pnpm typecheck` | PASS 0 errors（含全部新契约/夹具/套件/入口/接线骨架） |
+| `pnpm vitest run`（全量，基线） | **64 files / 539 tests PASS（P1-05 零漂移）+ 53 新测试 skipIf 探针自动跳过**（实现未落地，预期；明细见 p1-06-implementation-evidence.md 验收节） |
+| 只读零漂移比对 | `git diff d1c6595..p1-06-int -- src/contracts/goal-phase.ts src/contracts/goal-phase-view.ts src/control/goal-reducer.ts` 为空；`git diff d1c6595..p1-06-int` 仅含 P1-06 追加（10 文件：4 新契约 + events/ledger/validation/ledger-validation + 两适配器 22 行登记 + 后续套件/接线） |
+
+---
+
+## P1-05 历史记录（已完成，保留备查；P1-06 在其上实施，P1-05 原文自下一标题起未改动）
+
 
 ## P1-05 当前票据与共享契约基线
 

@@ -58,6 +58,19 @@ import type { ReduceTaskCommand, ReduceTaskReceipt } from "../contracts/reductio
 import type { ReduceGoalCommand, ReduceGoalReceipt } from "../contracts/goal-phase.js";
 import type { GoalStatusQuery, GoalStatusViewResult, GoalTimelineQuery, GoalTimelineViewResult } from "../contracts/goal-phase-view.js";
 import type { ReviewContextPort, ReviewContextRequestV1, ReviewContextResultV1 } from "../contracts/review-context.js";
+import type {
+  ClaimReplacementCommand,
+  ClaimReplacementReceipt,
+  HandoffPort,
+  RecordHandoffCommand,
+  RecordHandoffReceipt,
+} from "../contracts/handoff.js";
+import type { HandoffContextPort, HandoffContextRequestV1, HandoffContextResultV1 } from "../contracts/handoff-context.js";
+import type { HandoffControlPort } from "../contracts/handoff-control.js";
+import type { HandoffProvenanceViewQuery, HandoffProvenanceViewResult } from "../contracts/handoff-view.js";
+import { HandoffContextCompilerImpl } from "../context/handoff-context-compiler.js";
+import { FakeHandoffControlRuntimeAdapter } from "../runtime/handoff-control-adapter.js";
+import { HandoffDriveEngineImpl } from "../control/handoff-drive.js";
 import type { FakeRuntimeScriptV1 } from "../contracts/fixtures/dispatch-fixtures.js";
 import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../contracts/fixtures/dispatch-fixtures.js";
 import { InMemoryLedger } from "../ledger/in-memory-ledger.js";
@@ -90,6 +103,10 @@ export interface InMemoryHarnessOptions {
   verification?: VerificationPort;
   /** P1-04: explicit ReviewContextPort (default ReviewContextCompilerImpl). */
   reviewContext?: ReviewContextPort;
+  /** P1-06: explicit HandoffContextPort (default HandoffContextCompilerImpl). */
+  handoffContext?: HandoffContextPort;
+  /** P1-06: explicit HandoffControlPort (default FakeHandoffControlRuntimeAdapter). */
+  handoffControl?: HandoffControlPort;
   deps?: Partial<InjectableDeps>;
 }
 
@@ -107,6 +124,12 @@ export interface InMemoryHarness {
   verification: VerificationPort;
   /** P1-04: default ReviewContextPort (bounded ReviewPacket assembly). */
   reviewContext: ReviewContextPort;
+  /** P1-06: bounded handoff-context assembly (never a transcript). */
+  handoffContext: HandoffContextPort;
+  /** P1-06: WorkerRuntime control face (pause/stop + public snapshot). */
+  handoffControl: HandoffControlPort;
+  /** P1-06: DispatchEngine.HandoffPort (replacement outbox drive). */
+  handoffDrive: HandoffPort;
   bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
   /** P1-02: governance install (immutable revision; never auto-activates). */
   install(command: GovernanceInstallCommand): Promise<GovernanceInstallReceipt>;
@@ -136,6 +159,14 @@ export interface InMemoryHarness {
   goalStatus(query: GoalStatusQuery): Promise<GoalStatusViewResult>;
   /** P1-05: goal phase timeline view (freshness by opaque cursor). */
   goalTimeline(query: GoalTimelineQuery): Promise<GoalTimelineViewResult>;
+  /** P1-06: register a bounded HandoffPacket (body-first pass-through). */
+  recordHandoff(command: RecordHandoffCommand): Promise<RecordHandoffReceipt>;
+  /** P1-06: replacement claim (B's new lifecycle; lease CAS). */
+  claimReplacement(command: ClaimReplacementCommand): Promise<ClaimReplacementReceipt>;
+  /** P1-06: handoff provenance timeline (display only). */
+  handoffProvenance(query: HandoffProvenanceViewQuery): Promise<HandoffProvenanceViewResult>;
+  /** P1-06: bounded handoff-context assembly. */
+  assembleHandoff(request: HandoffContextRequestV1): Promise<HandoffContextResultV1>;
   /** P1-04: review-context assembly (bounded ReviewPacket). */
   assembleReview(request: ReviewContextRequestV1): Promise<ReviewContextResultV1>;
   /** P1-03: outbox drive (claim -> assemble -> start -> events). */
@@ -182,6 +213,16 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     );
   const reviewContext: ReviewContextPort =
     options.reviewContext ?? new ReviewContextCompilerImpl({ ledger, vault, now: d.clock });
+  const handoffContext: HandoffContextPort =
+    options.handoffContext ?? new HandoffContextCompilerImpl({ ledger, vault, now: d.clock });
+  const handoffControl: HandoffControlPort =
+    options.handoffControl ?? new FakeHandoffControlRuntimeAdapter(runtime);
+  const handoffDrive: HandoffPort = new HandoffDriveEngineImpl({
+    ledger,
+    control,
+    handoffContext,
+    runtime,
+  });
   let lastCursor: CommitCursor | null = null;
   async function advanceProjection(): Promise<ProjectionReceipt> {
     let receipt: ProjectionReceipt | null = null;
@@ -204,6 +245,9 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     dispatchEngine,
     verification,
     reviewContext,
+    handoffContext,
+    handoffControl,
+    handoffDrive,
     bootstrap: (command) => control.bootstrap(command),
     install: (command) => control.install(command),
     activate: (command) => control.activate(command),
@@ -221,6 +265,10 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     goalStatus: (query) => readModel.goalStatus(query),
     goalTimeline: (query) => readModel.goalTimeline(query),
     taskVerification: (query) => readModel.taskVerification(query),
+    recordHandoff: (command) => control.recordHandoff(command),
+    claimReplacement: (command) => control.claimReplacement(command),
+    handoffProvenance: (query) => readModel.handoffProvenance(query),
+    assembleHandoff: (request) => handoffContext.assemble(request),
     assembleReview: (request) => reviewContext.assemble(request),
     drive: (trigger) => dispatchEngine.drive(trigger),
     advanceProjection,

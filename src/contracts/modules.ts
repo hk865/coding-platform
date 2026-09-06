@@ -34,6 +34,12 @@ import type {
 import type { SubmitEvidenceCommand, SubmitEvidenceReceipt } from "./evidence.js";
 import type { ReduceTaskCommand, ReduceTaskReceipt } from "./reduction.js";
 import type { ReduceGoalCommand, ReduceGoalReceipt } from "./goal-phase.js";
+import type {
+  ClaimReplacementCommand,
+  ClaimReplacementReceipt,
+  RecordHandoffCommand,
+  RecordHandoffReceipt,
+} from "./handoff.js";
 
 export type CreateGoalRequest = {
   projectId: string;
@@ -81,6 +87,11 @@ export interface ControlEngine {
   /** P1-05: deterministic Goal phase reduction — the ONLY writer of the canonical
    * GoalPhase (never a Task phase; P1-06+ mechanisms are NOT implemented here). */
   reduceGoal(command: ReduceGoalCommand): Promise<ReduceGoalReceipt>;
+  /** P1-06: register a bounded HandoffPacket (body-first; immutable aggregate). */
+  recordHandoff(command: RecordHandoffCommand): Promise<RecordHandoffReceipt>;
+  /** P1-06: replacement claim — B's NEW attempt/run lifecycle for the SAME Task
+   * (lease CAS; only after A ended or A's lease expired; no Goal/phase writes). */
+  claimReplacement(command: ClaimReplacementCommand): Promise<ClaimReplacementReceipt>;
 }
 
 export interface HumanCollaboration {
