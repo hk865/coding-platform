@@ -454,8 +454,7 @@ function buildHarness(
   const workspaceCapability: WorkspaceCapabilityPort =
     workspaceCapabilityOverride ?? new FakeWorkspaceCapabilityAdapter();
   const control = new ControlEngineImpl({ ledger, now: d.clock, eventId: d.eventId, workspaceCapability });
-  const planProposal: PlanProposalPort = planProposalOverride ?? new PlanCompilerImpl();
-  const planningContext: PlanningContextPort = planningContextOverride ?? new PlanningContextCompilerImpl();
+  const planProposal: PlanProposalPort = planProposalOverride ?? new PlanCompilerImpl({ ledger, readModel, now: d.clock });
   const collaboration = new HumanCollaborationImpl({
     control,
     readModel,
@@ -504,6 +503,7 @@ function buildHarness(
     acquireWriteLease: (command) => control.acquireWorkspaceWriteLease(command),
     releaseLease: (command) => control.releaseWorkspaceLease(command),
   };
+  const planningContext: PlanningContextPort = planningContextOverride ?? new PlanningContextCompilerImpl({ ledger, vault, contextCompiler, readModel, now: d.clock });
   const workContext: WorkContextPort =
     workContextOverride ?? new WorkContextCompilerImpl({ ledger, vault, now: d.clock, readModel });
   const contextContinuation: ContextContinuationPort =

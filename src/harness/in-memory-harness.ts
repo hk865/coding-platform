@@ -371,8 +371,7 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     workspaceCapability,
   });
   const readModel = new ReadModelIndexImpl();
-  const planProposal: PlanProposalPort = options.planProposal ?? new PlanCompilerImpl();
-  const planningContext: PlanningContextPort = options.planningContext ?? new PlanningContextCompilerImpl();
+  const planProposal: PlanProposalPort = options.planProposal ?? new PlanCompilerImpl({ ledger, readModel, now: d.clock });
   const collaboration = new HumanCollaborationImpl({
     control,
     readModel,
@@ -420,6 +419,7 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
       runtime,
       now: d.clock,
     });
+  const planningContext: PlanningContextPort = options.planningContext ?? new PlanningContextCompilerImpl({ ledger, vault, contextCompiler, readModel, now: d.clock });
   const workContext: WorkContextPort =
     options.workContext ?? new WorkContextCompilerImpl({ ledger, vault, now: d.clock, readModel });
   const contextContinuation: ContextContinuationPort =
