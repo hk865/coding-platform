@@ -14,6 +14,7 @@ import {
   type P1_05TestHarness,
 } from "../contract-suite/p1-05-harness.js";
 import type { GoalStatusView, GoalTimelineEntry } from "../../src/contracts/goal-phase-view.js";
+import { makeCommitCursor } from "../../src/contracts/ledger.js";
 
 function json(v: unknown): string {
   return JSON.stringify(v);
@@ -96,10 +97,17 @@ describe("P1-05 InMemory goal-phase projection", () => {
     const notReady = await h.goalStatus({ projectId: sc.projectId, goalId: sc.goalId, atLeastCursor: receipt.commitCursor });
     expect(notReady.status).toBe("not_ready");
     await h.advanceProjection();
+    // not_found ONLY with atLeastCursor provided and covered (frozen contract):
+    const observed = h.observedCursor()!;
+    const missingCovered = await h.goalStatus({ projectId: sc.projectId, goalId: "goal-missing-105", atLeastCursor: observed });
+    expect(missingCovered.status).toBe("not_found");
+    const missingTlCovered = await h.goalTimeline({ projectId: sc.projectId, goalId: "goal-missing-105", atLeastCursor: observed });
+    expect(missingTlCovered.status).toBe("not_found");
+    // without atLeastCursor the contract forbids not_found — freshness-safe not_ready:
     const missing = await h.goalStatus({ projectId: sc.projectId, goalId: "goal-missing-105" });
-    expect(missing.status).toBe("not_found");
+    expect(missing.status).toBe("not_ready");
     const missingTl = await h.goalTimeline({ projectId: sc.projectId, goalId: "goal-missing-105" });
-    expect(missingTl.status).toBe("not_found");
+    expect(missingTl.status).toBe("not_ready");
 
     // replay the SAME event page into a fresh index: dedupe -> timeline unchanged
     const fresh = new ReadModelIndexImpl();
@@ -124,4 +132,64 @@ describe("P1-05 InMemory goal-phase projection", () => {
     const after = (await h.ledger.events({ afterCursor: null, limit: 500 })).events.length;
     expect(after).toBe(before);
   });
+
+  it("full-scope isolation: two Projects share the same goalId without colliding", async () => {
+    const fresh = new ReadModelIndexImpl();
+    await fresh.advance({
+      afterCursor: null, throughCursor: makeCommitCursor(2),
+      events: [
+        { cursor: makeCommitCursor(1), event: phaseEvent("proj-alpha", "goal-105", "ev-isol-a", "RUNNING") },
+        { cursor: makeCommitCursor(2), event: phaseEvent("proj-beta", "goal-105", "ev-isol-b", "COMPLETED") },
+      ],
+      hasMore: false,
+    });
+    const a = await fresh.goalStatus({ projectId: "proj-alpha", goalId: "goal-105" });
+    const b = await fresh.goalStatus({ projectId: "proj-beta", goalId: "goal-105" });
+    expect(a.status).toBe("ready");
+    expect(b.status).toBe("ready");
+    if (a.status === "ready") { expect(a.goal.phase).toBe("RUNNING"); expect(a.goal.projectId).toBe("proj-alpha"); }
+    if (b.status === "ready") { expect(b.goal.phase).toBe("COMPLETED"); expect(b.goal.projectId).toBe("proj-beta"); }
+    const ta = await fresh.goalTimeline({ projectId: "proj-alpha", goalId: "goal-105" });
+    const tb = await fresh.goalTimeline({ projectId: "proj-beta", goalId: "goal-105" });
+    if (ta.status === "ready") expect(ta.timeline).toHaveLength(1);
+    if (tb.status === "ready") expect(tb.timeline).toHaveLength(1);
+    // cross query: beta's key never leaks into alpha's row
+    const cross = await fresh.goalStatus({ projectId: "proj-alpha", goalId: "goal-105", atLeastCursor: makeCommitCursor(2) });
+    expect(cross.status).toBe("ready");
+    if (cross.status === "ready") expect(cross.goal.phase).toBe("RUNNING");
+  });
 });
+
+/** Deterministic GoalPhaseUpdated event for direct-stream projection tests. */
+function phaseEvent(projectId: string, goalId: string, eventId: string, phase: "RUNNING" | "COMPLETED"): import("../../src/contracts/goal-phase.js").GoalPhaseUpdatedEvent {
+  return {
+    eventId,
+    eventType: "GoalPhaseUpdated" as const,
+    schemaVersion: 1,
+    projectId,
+    workspaceId: "ws-shared",
+    aggregateType: "GoalPhase",
+    aggregateId: goalId,
+    aggregateRevision: 1,
+    causationId: "cmd-" + eventId,
+    correlationId: "corr-" + eventId,
+    idempotencyKey: "idem-" + eventId,
+    actor: { kind: "system", id: "control-engine" },
+    occurredAt: "2026-09-05T12:00:00.000Z",
+    payload: {
+      goalId,
+      previousPhase: null,
+      phase,
+      reasonCodes: (phase === "COMPLETED" ? ["completion_guard_ok"] : ["required_frontier_available"]) as import("../../src/contracts/goal-phase.js").GoalPhaseReasonCode[],
+      explanation: {
+        schemaVersion: 1,
+        phase,
+        headline: "goal " + goalId + " phase = " + phase,
+        items: [{ code: (phase === "COMPLETED" ? "completion_guard_ok" : "required_frontier_available") as import("../../src/contracts/goal-phase.js").GoalPhaseReasonCode, message: phase === "COMPLETED" ? "guard holds" : "frontier", refs: {} }],
+      },
+      sideEffectReconciliation: { identified: [], unreconciled: [] },
+      planRef: null,
+      reducedAt: "2026-09-05T12:00:00.000Z",
+    },
+  };
+}

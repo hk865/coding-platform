@@ -4,7 +4,12 @@
  * rebuild-from-fresh-file equivalence.
  */
 import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createSqliteReadModelIndex } from "../../src/sqlite-read-model/sqlite-read-model-index.js";
+import { makeCommitCursor } from "../../src/contracts/ledger.js";
 import {
   prepareP105Scenario,
   satisfyEverythingP105,
@@ -108,8 +113,13 @@ describe("P1-05 SQLite goal-phase projection", () => {
       const notReady = await h.goalStatus({ projectId: sc.projectId, goalId: sc.goalId, atLeastCursor: receipt.commitCursor });
       expect(notReady.status).toBe("not_ready");
       await h.advanceProjection();
+      // not_found ONLY with atLeastCursor provided and covered (frozen contract):
+      const observed = h.observedCursor()!;
+      const missingCovered = await h.goalStatus({ projectId: sc.projectId, goalId: "goal-missing-105", atLeastCursor: observed });
+      expect(missingCovered.status).toBe("not_found");
+      // without atLeastCursor the contract forbids not_found — freshness-safe not_ready:
       const missing = await h.goalStatus({ projectId: sc.projectId, goalId: "goal-missing-105" });
-      expect(missing.status).toBe("not_found");
+      expect(missing.status).toBe("not_ready");
       const before = (await h.ledger.events({ afterCursor: null, limit: 500 })).events.length;
       await h.goalStatus({ projectId: sc.projectId, goalId: sc.goalId });
       await h.goalTimeline({ projectId: sc.projectId, goalId: sc.goalId });
@@ -119,4 +129,70 @@ describe("P1-05 SQLite goal-phase projection", () => {
       await hp.cleanup().catch(() => undefined);
     }
   }, 90_000);
+
+  it("full-scope isolation: two Projects share the same goalId without colliding", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "p105-iso-"));
+    const path = join(dir, "iso.sqlite");
+    const idx = createSqliteReadModelIndex({ path });
+    try {
+      await idx.advance({
+        afterCursor: null, throughCursor: makeCommitCursor(2),
+        events: [
+          { cursor: makeCommitCursor(1), event: phaseEvent("proj-alpha", "goal-105", "ev-isol-a", "RUNNING") },
+          { cursor: makeCommitCursor(2), event: phaseEvent("proj-beta", "goal-105", "ev-isol-b", "COMPLETED") },
+        ],
+        hasMore: false,
+      });
+      const a = await idx.goalStatus({ projectId: "proj-alpha", goalId: "goal-105" });
+      const b = await idx.goalStatus({ projectId: "proj-beta", goalId: "goal-105" });
+      expect(a.status).toBe("ready");
+      expect(b.status).toBe("ready");
+      if (a.status === "ready") { expect(a.goal.phase).toBe("RUNNING"); expect(a.goal.projectId).toBe("proj-alpha"); }
+      if (b.status === "ready") { expect(b.goal.phase).toBe("COMPLETED"); expect(b.goal.projectId).toBe("proj-beta"); }
+      const ta = await idx.goalTimeline({ projectId: "proj-alpha", goalId: "goal-105" });
+      const tb = await idx.goalTimeline({ projectId: "proj-beta", goalId: "goal-105" });
+      if (ta.status === "ready") expect(ta.timeline).toHaveLength(1);
+      if (tb.status === "ready") expect(tb.timeline).toHaveLength(1);
+      const cross = await idx.goalStatus({ projectId: "proj-alpha", goalId: "goal-105", atLeastCursor: makeCommitCursor(2) });
+      expect(cross.status).toBe("ready");
+      if (cross.status === "ready") expect(cross.goal.phase).toBe("RUNNING");
+    } finally {
+      await idx.close();
+      await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }, 90_000);
 });
+
+/** Deterministic GoalPhaseUpdated event for direct-stream projection tests. */
+function phaseEvent(projectId: string, goalId: string, eventId: string, phase: "RUNNING" | "COMPLETED"): import("../../src/contracts/goal-phase.js").GoalPhaseUpdatedEvent {
+  return {
+    eventId,
+    eventType: "GoalPhaseUpdated" as const,
+    schemaVersion: 1,
+    projectId,
+    workspaceId: "ws-shared",
+    aggregateType: "GoalPhase",
+    aggregateId: goalId,
+    aggregateRevision: 1,
+    causationId: "cmd-" + eventId,
+    correlationId: "corr-" + eventId,
+    idempotencyKey: "idem-" + eventId,
+    actor: { kind: "system", id: "control-engine" },
+    occurredAt: "2026-09-05T12:00:00.000Z",
+    payload: {
+      goalId,
+      previousPhase: null,
+      phase,
+      reasonCodes: (phase === "COMPLETED" ? ["completion_guard_ok"] : ["required_frontier_available"]) as import("../../src/contracts/goal-phase.js").GoalPhaseReasonCode[],
+      explanation: {
+        schemaVersion: 1,
+        phase,
+        headline: "goal " + goalId + " phase = " + phase,
+        items: [{ code: (phase === "COMPLETED" ? "completion_guard_ok" : "required_frontier_available") as import("../../src/contracts/goal-phase.js").GoalPhaseReasonCode, message: phase === "COMPLETED" ? "guard holds" : "frontier", refs: {} }],
+      },
+      sideEffectReconciliation: { identified: [], unreconciled: [] },
+      planRef: null,
+      reducedAt: "2026-09-05T12:00:00.000Z",
+    },
+  };
+}

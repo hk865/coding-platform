@@ -497,11 +497,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       };
     }
 
-    // No atLeastCursor: show the row if present. Once the projection has
-    // advanced (observedCursor non-null) a missing key is a definitive
-    // not_found; before any advance it is the freshness-safe not_ready.
+    // No atLeastCursor: show the row if present, else the freshness-safe
+    // "not_ready" (identical to goal()/planGraph()/taskDetail()/activeAgent —
+    // the contract forbids returning not_found here).
     if (row) return { status: "ready", goal: row, observedCursor: observedCursor! };
-    if (observedCursor !== null) return { status: "not_found", observedCursor };
     return {
       status: "not_ready",
       requiredCursor: observedCursor ?? makeCommitCursor(1),
@@ -526,10 +525,9 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       };
     }
 
-    // No atLeastCursor: show the row if present; a missing key after any
-    // advance is not_found, else the freshness-safe not_ready.
+    // No atLeastCursor: show the rows if present, else the freshness-safe
+    // "not_ready" (never not_found here, mirroring goalStatus()).
     if (row) return { status: "ready", timeline: [...row], observedCursor: observedCursor! };
-    if (observedCursor !== null) return { status: "not_found", observedCursor };
     return {
       status: "not_ready",
       requiredCursor: observedCursor ?? makeCommitCursor(1),

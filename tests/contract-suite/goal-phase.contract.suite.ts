@@ -201,8 +201,13 @@ export function defineGoalReductionContractSuite(createHarness: P1_05HarnessFact
       await h.advanceProjection();
       const after = await h.goalStatus({ projectId: sc.projectId, goalId: sc.goalId, atLeastCursor: receipt.commitCursor });
       expect(after.status).toBe("ready");
+      // not_found ONLY with atLeastCursor provided and covered (frozen contract):
+      const observed = h.observedCursor()!;
+      const missingCovered = await h.goalStatus({ projectId: sc.projectId, goalId: "goal-missing-105", atLeastCursor: observed });
+      expect(missingCovered.status).toBe("not_found");
+      // without atLeastCursor the contract forbids not_found — freshness-safe not_ready:
       const missing = await h.goalStatus({ projectId: sc.projectId, goalId: "goal-missing-105" });
-      expect(missing.status).toBe("not_found");
+      expect(missing.status).toBe("not_ready");
       // never claims a Task phase: TaskDetail.phase stays the plan value
       const detail = await h.taskDetail({ projectId: sc.projectId, goalId: sc.goalId, taskId: P105_TASK_WORK });
       expect(detail.status).toBe("ready");
