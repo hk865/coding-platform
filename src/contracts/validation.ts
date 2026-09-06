@@ -2157,7 +2157,9 @@ export function validateRecordIntegrationResultCommand(value: unknown): Validati
   stringField(result, "workspaceId", issues, "payload.result.workspaceId");
   stringField(result, "goalId", issues, "payload.result.goalId");
   stringField(result, "taskId", issues, "payload.result.taskId");
-  stringField(result, "taskRevision", issues, "payload.result.taskRevision");
+  if (!Number.isSafeInteger(result["taskRevision"])) {
+    issues.push({ path: "payload.result.taskRevision", code: "bad_type", message: "taskRevision must be an integer" });
+  }
   validateRunRef(result["runRef"], "payload.result.runRef", issues);
   if (!Number.isSafeInteger(result["workspaceRevision"])) {
     issues.push({ path: "payload.result.workspaceRevision", code: "bad_type", message: "workspaceRevision must be an integer" });
@@ -2235,7 +2237,9 @@ export function validateRecordPatchCommand(value: unknown): ValidationIssue[] {
   stringField(patch, "workspaceId", issues, "payload.patch.workspaceId");
   stringField(patch, "goalId", issues, "payload.patch.goalId");
   stringField(patch, "taskId", issues, "payload.patch.taskId");
-  stringField(patch, "taskRevision", issues, "payload.patch.taskRevision");
+  if (!Number.isSafeInteger(patch["taskRevision"])) {
+    issues.push({ path: "payload.patch.taskRevision", code: "bad_type", message: "taskRevision must be an integer" });
+  }
   validateRunRef(patch["runRef"], "payload.patch.runRef", issues);
   validateEnum(patch["kind"], ["patch", "commit"], "payload.patch.kind", issues);
   stringField(patch, "title", issues, "payload.patch.title");

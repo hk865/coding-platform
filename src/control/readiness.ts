@@ -30,6 +30,7 @@ import { evaluateTaskEligibility, taskLeaseRefFor } from "../contracts/dispatch.
 import type { GoalSnapshot } from "../contracts/ledger.js";
 import type { PlanRevisionSnapshot, PlanRevisionRef } from "../contracts/plan.js";
 import type { ControlEngineDeps } from "./control-engine.js";
+import { loadLivePlan } from "./dispatch-facts.js";
 
 const BUDGET_ABSENT_TOKEN_BUDGET = Number.MAX_SAFE_INTEGER;
 
@@ -67,7 +68,7 @@ export async function evaluateDispatchReadiness(
   if (planResult.status === "not_found") {
     return { status: "not_found", code: "plan" };
   }
-  plan = planResult.snapshot as PlanRevisionSnapshot;
+  plan = await loadLivePlan(deps.ledger, planResult.snapshot as PlanRevisionSnapshot);
 
   // Lease (always checked).
   const leaseRef = taskLeaseRefFor(projectId, goalId, taskId);

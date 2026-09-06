@@ -209,8 +209,8 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
       expect(winA.startedAt < winB.startedAt && winB.startedAt < winA.terminalAt && winA.terminalAt < winB.terminalAt).toBe(true);
       void sc;
       // independent attempt/context/budget/source: each run has its own outbox entry
-      const outA = await h.ledger.load(dispatchOutboxRefFor(P107_PROJECT, P107_GOAL, P107_TASK_READER_A, "run-p107-read-a"));
-      const outB = await h.ledger.load(dispatchOutboxRefFor(P107_PROJECT, P107_GOAL, P107_TASK_READER_B, "run-p107-read-b"));
+      const outA = await h.ledger.load(dispatchOutboxRefFor(P107_PROJECT, P107_GOAL, P107_TASK_READER_A, "att-p107-read-a"));
+      const outB = await h.ledger.load(dispatchOutboxRefFor(P107_PROJECT, P107_GOAL, P107_TASK_READER_B, "att-p107-read-b"));
       expect(outA.status).toBe("found");
       expect(outB.status).toBe("found");
       if (outA.status === "found" && outB.status === "found") {

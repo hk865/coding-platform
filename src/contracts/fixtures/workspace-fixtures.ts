@@ -54,8 +54,11 @@ import type { TaskEnvelopeV1 } from "../task-envelope.js";
 // Constants                                                                 //
 // ------------------------------------------------------------------------ //
 
-export const P107_PROJECT = "proj-p107";
-export const P107_WORKSPACE = "ws-p107";
+/** Uses the bootstrap fixture's existing project/workspace (proj-alpha/ws-shared
+ * — the P1-06 precedent); P107 local ids (goal/plan/tasks/obligations) stay
+ * P107-specific. */
+export const P107_PROJECT = "proj-alpha";
+export const P107_WORKSPACE = "ws-shared";
 export const P107_GOAL = "goal-p107-1";
 export const P107_PLAN_ID = "plan-p107-parallel";
 export const P107_TASK_READER_A = "task-p107-read-a";
