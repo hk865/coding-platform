@@ -55,6 +55,12 @@ merge_surface_note: P1-11 只版本化追加——ControlEngine +3（recordPlanC
 | A control | agent_platform-p1-11-a @ p1-11-lane-a | GoalChangeEngineImpl 完整实现（记录两命令守卫+apply 守卫链 proposal→decision→target→draft→source_stale→P1-02 guards→原子 fold+映射）+ 负例/幂等/隔离单测 | src/control/goal-change.ts、tests/control/goal-change.test.ts | ⏳ 实施中（subagent a7134fc3） |
 | B compilers | agent_platform-p1-11-b @ p1-11-lane-b | PlanCompilerImpl.request（有界 proposal+impact，零写）+ PlanningContextCompilerImpl.assemblePlanningContext（委托 ContextCompiler 预算/缺口/越权）+ 单测 | src/control/plan-compiler.ts、src/context/planning-context-compiler.ts、tests/control/plan-compiler.test.ts、tests/context/planning-context-compiler.test.ts | ⏳ 实施中（subagent 3bd68486） |
 | C projection | agent_platform-p1-11-c @ p1-11-lane-c | planChangeView 双适配器（proposals/decisions/revisions/plan snapshots 行 + 组装 dispositions + isHandledEventType 4 事件同 commit）+ 重建/重启等价 + 隔离单测 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts（P1-11 区域）、tests/read-model/p1-11-plan-change.test.ts、tests/sqlite-read-model/p1-11-plan-change.test.ts | ⏳ 实施中（subagent 5f57f476） |
+**P1-11 integrator 裁决（2026-09-07，lane B 完成后记录）**：
+1. ContextManifestV1 无 opaque cursor → PlanningContext ready 的 freshnessCursor 恒 null —— 接受为已知边界（端口允许 null；不改 P1-03 契约，若 P1-15 需要真实 cursor 再升级接口）。
+2. add delta 的 affectedWorks 用「克隆首个源义务 taskIds」启发式 —— 接受（与共享 fixture buildP111NewPlanDraft 默认一致；真实 add 的 task 映射属后续切片）。
+3. 未知 workspace → rejected{invalid_request}（revision=0 触发契约边界）—— 接受（code 在允许三值内）。
+4. 编译器未实际使用 readModel —— 接受（impact 方案 (b) 已冻结为 delta/sourcePlan 派生；冻结 ctor deps 保持不变）。
+
 
 ---
 
