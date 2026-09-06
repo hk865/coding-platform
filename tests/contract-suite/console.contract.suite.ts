@@ -34,6 +34,7 @@ import {
   p108GoalKey,
 } from "./p1-08-harness.js";
 import { consoleWorkspaceKey } from "../../src/contracts/console-views.js";
+import { makeCommitCursor } from "../../src/contracts/ledger.js";
 import { HumanCollaborationImpl } from "../../src/interaction/human-collaboration.js";
 import { createP108ScenarioRuntime } from "./p1-08-harness.js";
 import { ScriptedReadModelIndex } from "../../src/contracts/testing/read-model.double.js";
@@ -210,7 +211,9 @@ export function defineConsoleContractSuite(
         const bIds = evidenceB.evidence.evidence.map((e) => e.evidenceId);
         expect(aIds).toContain(P108_EVIDENCE_WORK);
         expect(bIds).toContain(P108_EVIDENCE_WORK);
-        expect(aIds).not.toContain(P108_EVIDENCE_CLAIM);
+        // The claim evidence exists ONLY in project A's scope (same local id
+        // in B would be a DIFFERENT Evidence aggregate): cross-read is impossible.
+        expect(aIds).toContain(P108_EVIDENCE_CLAIM);
         expect(bIds).not.toContain(P108_EVIDENCE_CLAIM);
         // A's claim evidence never leaks into B's view, and the effective sets
         // are per-scope (A's view has the claim marker, B's does not).
@@ -249,7 +252,7 @@ export function defineConsoleContractSuite(
         expect(observed).toBeTruthy();
         const ahead = await h.consoleSummary({
           projectId: P108_PROJECT_A, workspaceId: P108_WORKSPACE,
-          atLeastCursor: "cursor-9999999999999999" as never,
+          atLeastCursor: makeCommitCursor(9999999999),
         });
         // ANY query with an un-covered atLeastCursor is not_ready — the index
         // NEVER echoes current data as if it observed the write.

@@ -15,7 +15,7 @@ const READY = await isP108Ready();
 const factory = async (options?: P1_08FactoryOptions) => {
   const h = await createPersistentSqliteHarness({
     deps: {},
-    ...(options?.runtime === undefined ? {} : { runtime: options.runtime ?? createP108ScenarioRuntime() }),
+    runtime: options?.runtime ?? createP108ScenarioRuntime(),
   });
   return { h, th: toP1_08Harness(h as unknown as P1_08HarnessLike) };
 };

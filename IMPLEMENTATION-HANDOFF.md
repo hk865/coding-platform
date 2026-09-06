@@ -2,13 +2,13 @@
 
 ```yaml
 ticket_id: P1-08
-status: implementation in progress (shared baseline committed; lanes A/B/C derived from it; final acceptance evidence in dev_docs/verification/p1-08-implementation-evidence.md)
+status: implementation verified (limited authorization, 2026-09-06 — P1-08 only); 2 lanes merged; full acceptance evidence in dev_docs/verification/p1-08-implementation-evidence.md
 updated: 2026-09-06
-authorized_by: user (limited authorization for P1-08 only; NOT P1 acceptance; 09/10/15 NOT auto-started; local main NOT pushed — push needs user authorization per P1-04/05/06/07 precedent)
-next: after P1-08 acceptance STOP — do NOT auto-start P1-09/10/15 (G4 waits P1-09 + P1-11; 09/10 need 08 + 16 products; active notification/change reporting = P1-14/15; next window triggered by user/process)
-evidence: dev_docs/verification/p1-08-implementation-evidence.md (12/12 acceptance; 7 verification groups; typecheck 0 errors; validate-docs 13/13); upstream baseline: P1-07 commit 404ab28 (88 files/722 tests)
-shared_baseline: "P1-08 共享基线" commit 6b54e28 (404ab28 + console-views contracts + modules/goal-view versioned additions + console fixtures + harness wiring + console suite + restart/integration skeletons; 既有 722 测试零回归 — 实施前复跑)
-parallel_scope: P1-08 与 P1-07 并行窗口已过期（07 已完成）；本 session 无其他并行活动，按常规单线实施共享面；lane 仍用隔离 worktree（先例 P1-06/07）
+authorized_by: user (limited authorization for P1-08 only; P1-08 is NOT P1 acceptance, P1-09/10/15 NOT auto-started; G4 (Human Control) waits P1-09 + P1-11)
+next: STOP after P1-08 acceptance — do NOT auto-start P1-09/10/15/other tickets (G4 needs 09+11 evidence; 09/10 need 08 + 16 products; user notification/change reporting = P1-14/15; next window triggered by user/process; local main NOT pushed — push needs user authorization per P1-04/05/06/07 precedent)
+evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-08-implementation-evidence.md (97 files / 768 tests PASS; 12/12 acceptance + 7/7 verification groups; typecheck 0 errors; validate-docs 13/13); upstream baseline: P1-07 commit 404ab28 (88 files/722 tests)
+shared_baseline: "P1-08 共享基线" commit 3f68b83 (404ab28 + console-views contracts + modules/goal-view versioned additions + P108 fixtures + harness console wiring + console suite + restart/integration skeletons; 既有 722 测试零回归)
+parallel_scope: P1-08 与 P1-07 并行窗口已过期（07 已完成）；本 session 无其他并行活动，按常规单线实施共享面；lane 用隔离 worktree（先例 P1-06/07；段 A/B 并行、段 C 由 integrator 在合并后执行）
 merge_surface_note: 本票只做只读展示（HumanCollaboration 版本化扩展；不新增 Module；ARCHITECTURE §Plane）；主动通知/待决/变更上报归 P1-14/15；控制入口（pause/steer）与 QueryJob 归 P1-10/09；不改 P1-03/04/05/06/07 冻结形状（零改动，只版本化追加）；不新增任何 DomainEvent；无 Findings；无隐藏 control/QueryJob/Planner side effect
 ```
 
@@ -56,11 +56,13 @@ merge_surface_note: 本票只做只读展示（HumanCollaboration 版本化扩�
 
 | Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
 | --- | --- | --- | --- | --- |
-| A Portfolio/Summary + 只读面 | agent_platform-p1-08-a @ p1-08-lane-a | consolePortfolio + consoleSummary 双适配器投影（重建等价、全键隔离、same-local-id、freshness）+ 对应 projection 单元测试 + read-only-adapter/console 只读面核对 | src/read-model/read-model-index.ts（LANE-A 区域）、src/sqlite-read-model/sqlite-read-model-index.ts（LANE-A 区域）、tests/read-model/p1-08-portfolio-summary.test.ts、tests/sqlite-read-model/p1-08-portfolio-summary.test.ts | 进行中 |
-| B Matrix/Agents/Evidence/Timeline 投影 | agent_platform-p1-08-b @ p1-08-lane-b | consolePlanMatrix + consoleActiveAgents + consoleTaskEvidence + consoleTimeline 双适配器投影（重建等价、全键隔离、same-local-id、freshness、正式/报告分列、持续/转交/未知按来源展示）+ 对应 projection 单元测试 | src/read-model/read-model-index.ts（LANE-B 区域）、src/sqlite-read-model/sqlite-read-model-index.ts（LANE-B 区域）、tests/read-model/p1-08-matrix-agents-evidence-timeline.test.ts、tests/sqlite-read-model/p1-08-matrix-agents-evidence-timeline.test.ts | 进行中 |
-| C 重启证据 + 集成 + 端到端 | agent_platform-p1-08-c @ p1-08-lane-c | isP108Ready 探针硬化 + restart 逐字段一致 + 真实 SQLite 全路径集成 + portfolio-list-and-switch/multi-project 隔离/cursor-freshness 端到端核对 + P1-08-EVIDENCE 块（仿 p1-07-evidence） | tests/restart/p1-08-*、tests/integration/p1-08.*（除契约套件文件本身由 integrator 维护） | 进行中 |
+| A Portfolio/Summary + 只读面 | agent_platform-p1-08-a @ p1-08-lane-a（694a14f） | consolePortfolio + consoleSummary 双适配器投影（重建等价、全键隔离、same-local-id、freshness）+ 对应 projection 单元测试 + read-only-adapter/console 只读面核对 | src/read-model/read-model-index.ts（LANE-A 区域）、src/sqlite-read-model/sqlite-read-model-index.ts（LANE-A 区域）、tests/read-model/p1-08-portfolio-summary.test.ts、tests/sqlite-read-model/p1-08-portfolio-summary.test.ts | ✅ 10/10（主分支已合并） |
+| B Matrix/Agents/Evidence/Timeline 投影 | agent_platform-p1-08-b @ p1-08-lane-b（3e83a96） | consolePlanMatrix + consoleActiveAgents + consoleTaskEvidence + consoleTimeline 双适配器投影（重建等价、全键隔离、same-local-id、freshness、正式/报告分列、持续/转交/未知按来源展示）+ 对应 projection 单元测试 | src/read-model/read-model-index.ts（LANE-B 区域）、src/sqlite-read-model/sqlite-read-model-index.ts（LANE-B 区域）、tests/read-model/p1-08-matrix-agents-evidence-timeline.test.ts、tests/sqlite-read-model/p1-08-matrix-agents-evidence-timeline.test.ts | ✅ 10/10（主分支已合并） |
+| C 重启证据 + 集成 + 端到端 | (integrator 合并后执行) | isP108Ready 探针硬化 + restart 逐字段一致 + 真实 SQLite 全路径集成 + portfolio-list-and-switch/multi-project 隔离/cursor-freshness 端到端核对 + P1-08-EVIDENCE 块（仿 p1-07-evidence） | tests/restart/p1-08-*、tests/integration/p1-08.* | ✅ restart 1/1、集成 1/1、evidence 块已采集 |
 
-integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 schema/接口/共享 fixture）、`src/harness/**`、`tests/contract-suite/**`（suite 定义文件）、`tests/integration/**`（接线文件）、文档与状态记录、以及两条 lane 的**合并**（区域互不重叠：LANE-A/LANE-B 区域 + 各自 projection 测试文件；若合并冲突，以区域标记机械取双边）。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结签名、**不得修改 P1-03/04/05/06/07 文件**、不得修改 isHandledEventType（无新事件类型）；如有缺口：提交具体建议给 integrator 统一修改基线并通知消费者。允许测试命令：`pnpm vitest run <自身路径>`、`pnpm typecheck`。
+integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 schema/接口/共享 fixture）、`src/harness/**`、`tests/contract-suite/**`（suite 定义文件）、`tests/integration/**`（接线文件）、文档与状态记录、以及两条 lane 的**合并**（LANE-A/LANE-B 区域互不重叠；唯一冲突 = console-views 常量 import 并集，当场解决了）。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结签名、**不得修改 P1-03/04/05/06/07 文件**、不得修改 isHandledEventType（无新事件类型）；如有缺口：提交具体建议给 integrator 统一修改基线并通知消费者。允许测试命令：`pnpm vitest run <自身路径>`、`pnpm typecheck`。
+
+**P1-08 integrator 补充裁决（验收后记录，见 p1-08-implementation-evidence.md §4）**：①**agentRunCount 语义** = TaskClaimed + ReplacementClaimed（replacement 同样创建新 Agent Run；与 ActiveAgents 行数一致：A=3/B=2；lane A 报告原按纯 TaskClaimed 计数 A=B=2，采纳本裁决并同步其单元测试）；②**replacement run 真实启动**：场景 claimReplacement 后改走 `handoffDrive.driveHandoff`（P1-06 路径；普通 DispatchPort.drive 按守卫跳过 replacement intent），因此 ActiveAgents 的 ongoing 行由真实 RunStarted/RunEventRecorded 事实驱动（lane B 在 ReplacementClaimed 处先行创建行仅作防御）；③**maxEntries 冻结语义** = 正整数上限生效（1→1）；undefined/0/负 → CONSOLE_TIMELINE_MAX_ENTRIES 默认；④**共享 run-id 助手修正**：p108RunOfWork/p108RunOfExtra 由 project 派生场景字面量（proj-alpha→a、proj-beta→b）；⑤**SQLite 扫描**：canonicalJson 键不保证 workspace 前缀顺序，agent 行扫描用整表 + JS 过滤（注释已说明）；⑥**replacement run binding 占位**：ReplacementClaimed/RunStarted 事件不携 roleBinding，展示行用稳定占位（与 P1-07 租约视图同先例，仅展示）。
 ## P1-07 历史记录（已完成，保留备查；P1-08 在其上实施，P1-07 原文自本标题起未改动）
 
 ## P1-07 当前票据与共享契约基线
