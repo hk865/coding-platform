@@ -1,16 +1,36 @@
-# IMPLEMENTATION-HANDOFF — Agent Platform 产品代码根
-
 ```yaml
-ticket_id: 窗口 2 — P1-17 ✅ / P1-10 ✅（947 tests 全绿，ee53869）；P1-09 契约+wiring ✅（fixtures/suite/restart/集成骨架 + lanes 待建）；P1-13 待建
-status: P1-16 VERIFIED (fa9389d, 852 tests, real-kernel 1/1, evidence p1-16-implementation-evidence.md); P1-12 VERIFIED (4ecc517, 914 tests, evidence p1-12-implementation-evidence.md); 窗口 1 全部关闭，G1 PASS 在档；下一窗口四票 shared baseline 待建（limited authorization, 2026-09-06 continuous window — P1-09..P1-17 + G1..G5 authorized)
-updated: 2026-09-06
-authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a) all done / (b) architecture tradeoff / (c) architecture-granularity confirmation; GitHub push still needs user authorization)
-next: 窗口 2 = P1-09 / P1-10 / P1-17（←16）+ P1-13（←12）——P1-17 基线（cd754a4）+ P1-10 基线（含 fixtures/suite/restart/integration）已提交；P1-09 设计已由 C 收敛（consultant-p109-query-run-path.md）并出 integrator 裁决：采用 C 推荐 (c) 变体——复用 RunPort/drive 路径 + 新增 QueryRun 聚合与 QueryJobDrivePort（版本化追加，零 P1-03/06/07 冻结形状改动；该变体替代 C 的 A 选项，因一手核实 RunSnapshot.attemptId 为 P1-03 冻结必填字段）；C 的"docs-only"判断系误扫描文档根，产品源码在 product_root。P1-13 基线待建；在途 lanes：P1-17 v2（a0735cba）、P1-10 A（108b7148）、P1-10 B（2a3ac9a3）；运行面细化：P1-03 RunPort 不动——只读执行经新 WorkerRuntime.ReadOnlyQueryPort; then 09/10/17 (after 16) and 13 (after 12); then 11 (after 10) and 14 (after 11+12); then 15 (after 09+14+17); gates: G2 waits 05+06+16, G4 waits 09+11, G5 waits 13+14, G3 waits 07+15
-evidence: (pending — lanes in flight) full acceptance evidence will live in dev_docs/verification/p1-16-implementation-evidence.md
-shared_baseline: P1-16 = a597eaf（验收 fa9389d）；P1-12 = e150447（验收 4ecc517）——两票均 914/852 tests 全绿、typecheck 0、validate-docs 13/13（P1-12 验收时全量基线 914）
-parallel_scope: 窗口 1 关闭（P1-16 + P1-12 均验收）；窗口 2 = P1-09/10/17（←08+16/08+16/05+16）与 P1-13（←12）——按 DAG 建共享基线后派发 lanes；lane 均隔离 worktree；重启+集成由 integrator 执行
-merge_surface_note: P1-16 只扩展同工作连续性 + 理由留痕 + 显式接续能力声明；不新增 Module（ARCHITECTURE §Plane）；不改 P1-03/04/05/06/07/08 冻结形状（零改动，只版本化追加）；4 个新事件（WorkContextBound/WorkRunLinked/ExecutionNoteRecorded/ContinuationRecorded）——KNOWN 与 handler 各 lane 同 commit；不改 Goal/CompletionPolicy；真实内核（coding-agent）连续性验证为本票 Acceptance 第 7 项，Fake 契约测试不能替代
+ticket_id: 窗口 3 — P1-11（共享基线 8c42367 已提交：965 passed / 24 skipped 探针组；lanes A/B/C 待派发）
+status: P1-09 ✅ (验收后最新 main；965/989 基线)、P1-10 ✅、P1-16 ✅ (fa9389d)、P1-12 ✅ (4ecc517)、P1-17 ✅；G1/G2 PASS 在档；P1-11 共享基线完成，B lanes 实施中
+updated: 2026-09-07
+authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a) all done / (b) architecture tradeoff / (c) architecture-granularity confirmation; GitHub push still needs user authorization) + user 2026-09-07 阶段时限 = 09:00 CST 硬性到点（先落干净检查点再报告）；分工纠正：实现/修复由 B lanes 承担，integrator 只做共享基线/合并/集成验收/共享面修正
+next: P1-11 lanes A（control）+ B（compilers）+ C（dual-adapter projection）并行；合并后 integrator 验收（typecheck/双套件/真实 SQLite/restart 等价/validate-docs/证据块）；P1-11 验收后 → P1-13 基线（13 只依赖 12 = 已验收，可并行建）+ P1-14（等 11+12）；gates: G4 waits 09+11, G5 waits 13+14, G3 waits 07+15
+evidence: P1-11 acceptance evidence will live in dev_docs/verification/p1-11-implementation-evidence.md
+shared_baseline: P1-11 = 8c42367（前置 main 含 P1-09 实现 2c01536 等；typecheck 0；全量 140 files / 989 tests：965 PASS + 24 skip（P1-11 探针组 5 files）——零回归）
+parallel_scope: P1-11 三 lane（A/B/C 独立 worktree，自 8c42367）；lane 均隔离；重启+集成由 integrator 执行
+merge_surface_note: P1-11 只版本化追加——ControlEngine +3（recordPlanChangeProposal/recordUserDecision/applyPlanChange）、HumanCollaboration.GoalChangePort +3（amend/decide/applyChange）、ReadModelIndex.planChangeView、3 个新 commitKind（plan-change-proposal-record/user-decision-record/goal-change-apply）、4 个新事件（PlanProposalRecorded/UserDecisionRecorded/GoalRevisionRecorded/PlanRevisionSuperseded；apply fold 三事件：PlanRevisionAccepted → PlanRevisionSuperseded → GoalRevisionRecorded）——零改动 P1-00..P1-10 冻结形状；新 planId 聚合 @0（P1-02 PlanRevision 不可变语义 → 新 revision = 新 planId 聚合），task 集合在 P1-11 不可变
 ```
+
+---
+
+## P1-11 当前票据与共享契约基线（并行窗口 3 — lanes A/B/C 实施中）
+
+- Ticket："/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/11-goal-plan-change-revision.md"（P1-11，status 按阶段守卫保持 proposed；Implementation record 验收后追加票尾）
+- 上游基线：产品根 main（P1-09 实现 2c01536；P1-08 7664d91 上游验收）。**P1-11 共享基线 = 8c42367**（契约/纯函数/fixtures/接口/双适配器 stub/compiler stub/harness 接线/契约套件/restart/集成骨架；全量 965 PASS + 24 skip 探针组，零回归）。
+- **P0-06 复核影响（已核对 2026-09-06 同步记录）**：本票把 UserDecision 路径保留为未委托变更候选；委托策略路径需单独明确契约后同步（不在本票）。
+- **三个最小 Interface 首次冻结**：HumanCollaboration.GoalChangePort、PlanCompiler.PlanProposalPort、ContextCompiler.PlanningContextPort（全部版本化 v1；后续规划/变更票只能消费或显式升级）。
+- **Lane 跟踪**：A（control）B（compilers）C（projection）——见三路并行表。
+
+## P1-11 契约与存储语义（冻结）
+
+1. **AmendGoalRequest（有界、永不变更）**：goalRef + 可选 planRef + objectiveDelta（change|clarify|restore；newObjective 可 null=仅阐明）+ obligationDeltas（≤64；add|change|remove，各带 justification）+ requestedByRunRef? + actor；编译器永不写 canonical state。
+2. **PlanProposal/PlanPatch/ChangeImpactAnalysis（编译器产物）**：proposal 绑定 sourceGoalRef/sourcePlanRef/sourcePlanRevision；patch 带 objective 全文 + obligationDeltas + taskHierarchy(可 null) + 显式 inScope/outOfScope；impact 含 affectedWorks（≤64，workRef+refreshRequired+reason）/staleAssumptions/materialsToRefresh/independentWork；alternatives（≤8）。**任务集合在本票不可变**：新 revision 的任务集 = source 任务集（patch 只有 hierarchy 可调）。
+3. **planProposalDigest（纯、冻结）** = sha256(canonicalJson({projectId, workspaceId, sourceGoalRef, sourcePlanRef, sourcePlanRevision, patch, impact}))；decisionTargetFor(proposal) = {goalId, newObjective: patch.objective, sourcePlanDigest}——authorizedTarget 必须与之精确匹配。
+4. **UserDecision（不可变聚合，CAS@0）**：subject{goalRef,sourcePlanRef,sourcePlanRevision} + outcome(accept|reject|defer) + actor + authority{strategy:user|delegated; delegator; policyVersion} + authorizedTarget + summary(≤4096B)；record 只登记（零 active-revision 副作用）。
+5. **applyPlanChange 守卫链（全部零写入至通过；顺序冻结）**：schema/形状 → proposal_not_found → decision_not_found → decision_not_accepted(outcome≠accept) → decision_target_mismatch（subject/authority 形状或 authorizedTarget != decisionTargetFor(proposal)）→ draft_mismatch（objective ≠ authorizedTarget.newObjective ≠ patch.objective；planRevision != source+1；义务 delta 一致性（change 只改 title、remove 必须缺失、add 必须新 id + title==newText、未动义务必须逐字节一致）；task 一致性引用）→ source_stale（proposal.sourcePlanRef ≠ goal 当前 activePlanRevision）→ 与 P1-02 相同的 guard 重跑（applyPlanGuardIssues 复用：非空+映射+VR+结构合法）→ guards_failed → 原子 commit。
+6. **goal-change-apply fold（冻结）**：events=[PlanRevisionAccepted(new plan), PlanRevisionSuperseded(supersededRef=source, activeRef=new, decisionRef), GoalRevisionRecorded(change)]；snapshots=[PlanRevisionSnapshot(new), GoalRevisionSnapshot, GoalSnapshot(revision+1, activePlanRevision=new)]；expectedVersions=[Goal@expected, PlanRevision@0(new planId)]；P1-02 PlanRevision 聚合不可变 → **新 revision 必须是新 planId 聚合**（fixture：plan-mvp-1-v2）。
+7. **Read/展示**：ReadModelIndex.planChangeView（key=canonicalJson({projectId,workspaceId,goalId})）组装 proposals/decisions/revisions + **computeTaskDispositions（纯函数，view 时计算）**：keep（任务+义务签名不变）/reverify（义务/VR 签名变化）/replace（移除且有唯一同 key 新任务）/cancel（移除无独一替代）/resume（不变且被 P1-10 safe-point 暂停）；pausedTaskIds 来自 P1-10 control intent 视图。freshness opaque cursor；只展示不判定。
+8. **证据适用性重算**：旧证据（anchor=source plan ref）保留在 ledger；新 binding 下 evidenceApplicability（P1-04 纯函数）对 新 currentAnchor（new planRef + same pins）→ OUT_OF_SCOPE（planRef 变化）；绝不改写旧证据。
+9. **边界**：不做委托策略（P0-06 注明）、不做 P1-14/15 的验证决定闭环；Planner/HumanCollaboration 不能直接激活 revision（只有 ControlEngine.applyPlanChange）；拒绝/延后不改变 active revision；全量幂等沿用 ledger。
 
 ---
 
