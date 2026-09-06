@@ -122,4 +122,6 @@ export interface ReadModelIndex {
   workContext(query: import("./context-continuity.js").WorkContextViewQuery): Promise<import("./context-continuity.js").WorkContextViewResult>;
   /** P1-12: architecture inspection view per (projectId, workspaceId) — inspections + findings + briefs + proposals (display only; no baseline writes). */
   architectureInspectionView(query: import("./architecture-inspection.js").ArchitectureInspectionViewQuery): Promise<import("./architecture-inspection.js").ArchitectureInspectionViewResult>;
+  /** P1-17: completed-work selection source view per (projectId, workspaceId) — display only, composed from the P1-16 work-context stores. */
+  completedWorkView(query: import("./completed-work-context.js").CompletedWorkViewQuery): Promise<import("./completed-work-context.js").CompletedWorkViewResult>;
 }

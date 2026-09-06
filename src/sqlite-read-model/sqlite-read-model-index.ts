@@ -2602,6 +2602,11 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return { status: "ready", binding, notes, continuations, sourceCursor: observedCursor! };
   }
 
+  /** P1-17 LANE-A/LANE-B stub: completed-work selection source view (display only; composed from the P1-16 work-context stores). */
+  async completedWorkView(query: import("../contracts/completed-work-context.js").CompletedWorkViewQuery): Promise<import("../contracts/completed-work-context.js").CompletedWorkViewResult> {
+    throw new Error("P1-17 lane A/B: completedWorkView (sqlite) not implemented yet");
+  }
+
   /** P1-12 LANE-A/LANE-B: architecture inspection view (display only) —
    * field-for-field parity with the InMemory reference. The lane-B parts are
    * always surfaced; the lane-A parts are empty until lane A lands (the view

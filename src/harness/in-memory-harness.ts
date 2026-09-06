@@ -96,6 +96,8 @@ import { DETERMINISTIC_CHECK_PROVIDERS, FAKE_REVIEWER_PORT } from "../contracts/
 import { VerificationEngineImpl } from "../verification/verification-engine.js";
 import { ReviewContextCompilerImpl } from "../context/review-context-compiler.js";
 import { WorkContextCompilerImpl } from "../context/work-context-compiler.js";
+import { CompletedWorkContextCompilerImpl } from "../context/completed-work-context-compiler.js";
+import type { CompletedWorkContextPort, CompletedWorkContextRequestV1, CompletedWorkContextResultV1 } from "../contracts/completed-work-context.js";
 import { FakeContextContinuationRuntimeAdapter } from "../runtime/context-continuation-adapter.js";
 import { ArchitectureReconcilerImpl } from "../control/architecture-reconciler.js";
 import { FakeWorkspaceReaderAdapter } from "../data/workspace-reader-adapter.js";
@@ -136,6 +138,8 @@ export interface InMemoryHarnessOptions {
   workContext?: WorkContextPort;
   /** P1-16: explicit ContextContinuationPort (default FakeContextContinuationRuntimeAdapter). */
   contextContinuation?: ContextContinuationPort;
+  /** P1-17: explicit CompletedWorkContextPort (default CompletedWorkContextCompilerImpl). */
+  completedWork?: CompletedWorkContextPort;
   /** P1-12: explicit WorkspaceReader (default FakeWorkspaceReaderAdapter). */
   workspaceReader?: WorkspaceReadPort;
   /** P1-12: explicit CodeGraphPort (default CodeGraphPortImpl). */
@@ -175,6 +179,8 @@ export interface InMemoryHarness {
   workContext: WorkContextPort;
   /** P1-16: WorkerRuntime continuation capability face. */
   contextContinuation: ContextContinuationPort;
+  /** P1-17: completed-work selection (read-only composition; no writes). */
+  completedWork: CompletedWorkContextPort;
   /** P1-12: deterministic workspace reader (versioned source graphs). */
   workspaceReader: WorkspaceReadPort;
   /** P1-12: VerificationEngine.CodeGraphPort seam. */
@@ -266,6 +272,8 @@ export interface InMemoryHarness {
   recordCandidateBaselineProposal(command: RecordCandidateBaselineProposalCommand): Promise<RecordCandidateBaselineProposalReceipt>;
   /** P1-12: architecture inspection view (read-only; readModel only). */
   architectureInspectionView(query: ArchitectureInspectionViewQuery): Promise<ArchitectureInspectionViewResult>;
+  /** P1-17: completed-work selection source view (read-only; readModel only). */
+  completedWorkView(query: import("../contracts/completed-work-context.js").CompletedWorkViewQuery): Promise<import("../contracts/completed-work-context.js").CompletedWorkViewResult>;
   /** P1-12: deterministic workspace graph read. */
   workspaceRead(query: CodeGraphReadQueryV1): Promise<CodeGraphReadResultV1>;
   /** P1-12: code-graph capability seam. */
@@ -274,6 +282,8 @@ export interface InMemoryHarness {
   inspect(intent: ArchitectureInspectionIntentV1): Promise<InspectResultV1>;
   /** P1-16: bounded work-context assembly. */
   assembleWorkContext(request: WorkContextRequestV1): Promise<WorkContextAssemblyResultV1>;
+  /** P1-17: bounded completed-work selection for a related new task. */
+  assembleCompletedWorkContext(request: CompletedWorkContextRequestV1): Promise<CompletedWorkContextResultV1>;
   /** P1-16: runtime continuation capabilities (honest declaration). */
   continuationCapabilities(request: { workContextRef: import("../contracts/context-continuity.js").WorkContextRef; runRef: import("../contracts/dispatch.js").RunRef | null }): Promise<import("../contracts/context-continuation-port.js").ContextContinuationCapabilityResult>;
   /** P1-04: review-context assembly (bounded ReviewPacket). */
@@ -348,6 +358,8 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     options.workContext ?? new WorkContextCompilerImpl({ ledger, vault, now: d.clock, readModel });
   const contextContinuation: ContextContinuationPort =
     options.contextContinuation ?? new FakeContextContinuationRuntimeAdapter(runtime);
+  const completedWork: CompletedWorkContextPort =
+    options.completedWork ?? new CompletedWorkContextCompilerImpl({ ledger, vault, readModel, now: d.clock });
   const workspaceReader: WorkspaceReadPort =
     options.workspaceReader ?? new FakeWorkspaceReaderAdapter({ now: d.clock });
   const codeGraph: CodeGraphPort = options.codeGraph ?? new CodeGraphPortImpl();
@@ -388,6 +400,7 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     workspaceDrive,
     workContext,
     contextContinuation,
+    completedWork,
     workspaceReader,
     codeGraph,
     inspection,
@@ -427,6 +440,7 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     consoleTimeline: (query) => collaboration.consoleTimeline(query),
     workContextView: (query) => readModel.workContext(query),
     architectureInspectionView: (query) => readModel.architectureInspectionView(query),
+    completedWorkView: (query) => readModel.completedWorkView(query),
     recordArchitectureInspection: (command) => control.recordArchitectureInspection(command),
     recordArchitectureFinding: (command) => control.recordArchitectureFinding(command),
     recordArchitectureDecisionBrief: (command) => control.recordArchitectureDecisionBrief(command),
@@ -439,6 +453,7 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     recordExecutionNote: (command) => control.recordExecutionNote(command),
     recordContinuation: (command) => control.recordContinuation(command),
     assembleWorkContext: (request) => workContext.assembleWorkContext(request),
+    assembleCompletedWorkContext: (request) => completedWork.assembleCompletedWorkContext(request),
     continuationCapabilities: (request) => contextContinuation.capabilities(request),
     assembleHandoff: (request) => handoffContext.assemble(request),
     assembleReview: (request) => reviewContext.assemble(request),

@@ -2640,10 +2640,12 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
   }
 
-  /** P1-12 LANE-A/LANE-B: architecture inspection view (inspections + findings
-   * (LANE-A) + briefs + proposals (LANE-B) per (projectId, workspaceId); display
-   * only). The lane-B parts are always surfaced; the lane-A parts are empty until
-   * lane A lands — the view still works (ready with a possibly-empty list). */
+  /** P1-17 LANE-A/LANE-B stub: completed-work selection source view (display only; composed from the P1-16 work-context stores). */
+  async completedWorkView(query: import("../contracts/completed-work-context.js").CompletedWorkViewQuery): Promise<import("../contracts/completed-work-context.js").CompletedWorkViewResult> {
+    throw new Error("P1-17 lane A/B: completedWorkView not implemented yet");
+  }
+
+  /** P1-12 LANE-A/LANE-B: architecture inspection view (inspections + findings (LANE-A) + briefs + proposals (LANE-B) per (projectId, workspaceId); display only). */
   async architectureInspectionView(query: import("../contracts/architecture-inspection.js").ArchitectureInspectionViewQuery): Promise<import("../contracts/architecture-inspection.js").ArchitectureInspectionViewResult> {
     const observed = this.observedCursor;
     if (observed === null) {
