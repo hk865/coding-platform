@@ -33,7 +33,7 @@
 import type { StateLedger, AggregateSnapshot, GoalSnapshot, LedgerCommitReceipt } from "../contracts/ledger.js";
 import type { PlanRevisionSnapshot } from "../contracts/plan.js";
 import type { TaskReductionSnapshot } from "../contracts/reduction.js";
-import type { RunSnapshot } from "../contracts/dispatch.js";
+import type { RunSnapshot, TaskLeaseSnapshot } from "../contracts/dispatch.js";
 import type { ControlEngineDeps } from "./control-engine.js";
 import type {
   ReduceGoalCommand,
@@ -42,6 +42,7 @@ import type {
   GoalObligationFact,
   GoalSideEffectFact,
   GoalTaskReductionFact,
+  GoalTaskRunFact,
   GoalPhaseSnapshot,
 } from "../contracts/goal-phase.js";
 import {
@@ -61,7 +62,15 @@ import {
   taskEvidenceIndexRefFor,
   evidenceRefFor,
   selectEffectiveEvidenceSet,
+  requirementKeyOf,
 } from "../contracts/evidence.js";
+import type {
+  EffectiveEvidenceSet,
+  EvidenceSnapshot,
+  EvidenceV1,
+  TaskEvidenceIndexSnapshot,
+} from "../contracts/evidence.js";
+import { buildCurrentEffectivityAnchor } from "./task-reducer.js";
 
 async function reduceGoalImpl(
   deps: ControlEngineDeps,
@@ -143,7 +152,152 @@ export async function buildGoalReductionInput(
   deps: ControlEngineDeps,
   refs: { projectId: string; goalId: string; goal: GoalSnapshot; plan: PlanRevisionSnapshot | null },
 ): Promise<GoalReductionInput> {
-  throw new Error("P1-05: not implemented yet (lane A)");
+  const { projectId, goalId, goal, plan } = refs;
+  const taskReductions: GoalTaskReductionFact[] = [];
+  const obligations: GoalObligationFact[] = [];
+  const sideEffects: GoalSideEffectFact[] = [];
+
+  if (plan === null) {
+    return {
+      schemaVersion: 1,
+      projectId,
+      goalId,
+      plan: null,
+      goalActivePlanRevision: null,
+      desiredState: goal.desiredState,
+      taskReductions: [],
+      obligations: [],
+      sideEffects: [],
+      decisions: [],
+      changePending: null,
+      decisionNeeds: [],
+      planning: { possible: true, failed: false, blockedReason: null },
+    };
+  }
+
+  // Canonical current effectivity tuple (plan pins + Workspace revision).
+  const workspaceResult = await deps.ledger.load(goal.workspaceRef);
+  const workspaceRevision = workspaceResult.status === "found" ? workspaceResult.snapshot.revision : 1;
+  const currentAnchor = buildCurrentEffectivityAnchor({ plan, workspaceRevision });
+
+  // Per-task facts: canonical reduction + evidence set + run fact (P1-04 floor).
+  const taskEffective = new Map<string, EffectiveEvidenceSet>();
+  for (const task of plan.tasks) {
+    const reductionResult = await deps.ledger.load(taskReductionRefFor(projectId, goalId, task.taskId));
+    const reduction: TaskReductionSnapshot | null =
+      reductionResult.status === "found" && reductionResult.snapshot.ref.aggregateType === "TaskReduction"
+        ? (reductionResult.snapshot as TaskReductionSnapshot)
+        : null;
+
+    const indexResult = await deps.ledger.load(taskEvidenceIndexRefFor(projectId, goalId, task.taskId));
+    const evidence: EvidenceV1[] = [];
+    if (indexResult.status === "found" && indexResult.snapshot.ref.aggregateType === "TaskEvidenceIndex") {
+      const index = indexResult.snapshot as TaskEvidenceIndexSnapshot;
+      for (const evidenceId of index.evidenceIds) {
+        const evResult = await deps.ledger.load(evidenceRefFor(projectId, evidenceId));
+        if (evResult.status === "found" && evResult.snapshot.ref.aggregateType === "Evidence") {
+          evidence.push((evResult.snapshot as EvidenceSnapshot).evidence);
+        }
+      }
+    }
+    const effectiveSet = selectEffectiveEvidenceSet(evidence, plan, currentAnchor);
+    taskEffective.set(task.taskId, effectiveSet);
+
+    let runFact: GoalTaskRunFact | null = null;
+    const leaseResult = await deps.ledger.load(taskLeaseRefFor(projectId, goalId, task.taskId));
+    if (leaseResult.status === "found" && leaseResult.snapshot.ref.aggregateType === "TaskLease") {
+      const lease = leaseResult.snapshot as TaskLeaseSnapshot;
+      const runResult = await deps.ledger.load(runRefFor(projectId, goalId, lease.holderRunId));
+      if (runResult.status === "found" && runResult.snapshot.ref.aggregateType === "Run") {
+        const run = runResult.snapshot as RunSnapshot;
+        runFact = { status: run.status, outcome: run.outcome ?? null, exitCode: run.exitCode ?? null };
+        // P1-05: unreconciled unknown side effect — identified & recorded only.
+        if (run.status === "ended" && run.outcome === "outcome_unknown") {
+          sideEffects.push({ kind: "outcome_unknown", runRef: run.ref, note: null, reconciled: false });
+        }
+      }
+    }
+
+    taskReductions.push({
+      taskId: task.taskId,
+      taskKind: task.taskKind,
+      requirementLevel: task.requirementLevel,
+      disposition: task.disposition,
+      planPhase: task.phase,
+      reductionPhase: reduction?.phase ?? null,
+      effectiveEvidenceIds: reduction?.effectiveEvidenceIds ?? effectiveSet.effectiveEvidenceIds,
+      reducedAt: reduction?.reducedAt ?? null,
+      runFact,
+    });
+  }
+
+  // Per-obligation evidence summary (P1-04 effective-set folding; values are
+  // pure derivations — never written back to history).
+  for (const obligation of plan.obligations) {
+    const requiredVRs = obligation.verificationRequirements.filter(
+      (v) => v.requirementLevel === "required",
+    );
+    const covered = new Set<string>();
+    const blocking = new Set<string>();
+    const stale = new Set<string>();
+    const outOfScope = new Set<string>();
+    let hasHistoricalFail = false;
+    for (const taskId of obligation.taskIds) {
+      const eff = taskEffective.get(taskId);
+      if (eff === undefined) continue;
+      for (const vr of requiredVRs) {
+        const key = requirementKeyOf({ obligationId: obligation.obligationId, requirementId: vr.requirementId });
+        if (eff.coverageByRequirement[key] !== undefined) covered.add(vr.requirementId);
+        for (const id of eff.blockingByRequirement[key] ?? []) blocking.add(id);
+      }
+      for (const id of eff.staleEvidenceIds) stale.add(id);
+      for (const id of eff.outOfScopeEvidenceIds) outOfScope.add(id);
+    }
+    // Audit flag: any FAIL evidence EVER admitted for the mapped task.
+    for (const taskId of obligation.taskIds) {
+      const indexResult = await deps.ledger.load(taskEvidenceIndexRefFor(projectId, goalId, taskId));
+      if (indexResult.status !== "found" || indexResult.snapshot.ref.aggregateType !== "TaskEvidenceIndex") continue;
+      const index = indexResult.snapshot as TaskEvidenceIndexSnapshot;
+      for (const evidenceId of index.evidenceIds) {
+        const evResult = await deps.ledger.load(evidenceRefFor(projectId, evidenceId));
+        if (evResult.status === "found" && evResult.snapshot.ref.aggregateType === "Evidence") {
+          const evidence = (evResult.snapshot as EvidenceSnapshot).evidence;
+          if (evidence.outcome === "FAIL") {
+            hasHistoricalFail = true;
+            break;
+          }
+        }
+      }
+      if (hasHistoricalFail) break;
+    }
+    obligations.push({
+      obligationId: obligation.obligationId,
+      requirementLevel: obligation.requirementLevel,
+      taskIds: [...obligation.taskIds],
+      requiredRequirementIds: requiredVRs.map((v) => v.requirementId),
+      coveredRequirementIds: [...covered],
+      blockingEvidenceIds: [...blocking],
+      hasHistoricalFail,
+      staleEvidenceIds: [...stale],
+      outOfScopeEvidenceIds: [...outOfScope],
+    });
+  }
+
+  return {
+    schemaVersion: 1,
+    projectId,
+    goalId,
+    plan,
+    goalActivePlanRevision: goal.activePlanRevision,
+    desiredState: goal.desiredState,
+    taskReductions,
+    obligations,
+    sideEffects,
+    decisions: [],
+    changePending: null,
+    decisionNeeds: [],
+    planning: { possible: false, failed: false, blockedReason: null },
+  };
 }
 
 /** Deterministic goal-reduction fold target (fold-equality for Control). */
