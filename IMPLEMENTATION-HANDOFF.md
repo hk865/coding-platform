@@ -1,14 +1,20 @@
 ```yaml
-ticket_id: P1-13 共享基线 ✅（5ade74b：1025 passed / 21 skip 探针组，零回归）——三 lane 实施中
-status: P1-11 ✅ 验收（6d70494, 1025/1025, G4 PASS）；P1-09/10/16/12/17 ✅（G1/G2/G4 PASS）；剩余票 = P1-13（实施中）、P1-14（←11+12）、P1-15（←09+14+17）；G3 等 07+15、G5 等 13+14
+ticket_id: P1-13 ✅ VERIFIED（fbc365e；全量 154 files / 1083 tests PASS，0 skip）——下一窗口：P1-14（←11+12 均 ✅）
+status: P1-09/P1-10/P1-11/P1-13 ✅（P1-13 1083/1083；G4 PASS）；P1-16/P1-12/P1-17 ✅；G1/G2/G4 PASS；剩余票 = P1-14（←11+12）、P1-15（←09+14+17）；G5 等 13+14、G3 等 07+15
 updated: 2026-09-07
-authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a)/(b)/(c); GitHub push still needs user authorization) + 2026-09-07 阶段时限 = 09:00 CST 硬性到点（先落干净检查点再报告）；实现/修复由 B lanes 承担
-next: P1-13 lanes A（policy install/activate/resolution）B（remediation patch/task/dedup/advance）C（唯一 Writer+Verification 链集成测试）后合并验收；验收后 P1-14（←11+12）；09:00 到点未完成 → 干净检查点停止
-shared_baseline: P1-13 = 5ade74b（P1-11 验收后 main + Policy/Remediation 契约+fixtures+双适配器 dispatch+ControlEngine+5+stubs+harness+套件+restart/integration 骨架；全量 1025 passed + 21 skip，零回归）
-merge_surface_note: 第三 governance 类走 P1-02 同一 commitKind union 扩展（install/activate events+snapshots union+AggregateRef/Snapshot union+KNOWN versioned-append）；P1-02 断言维护（KNOWN 全局断言 → 场景级事件流隔离断言，integrator 裁决 2026-09-07：版本化追加约定 + 隔离证据保留，不改变 P1-02 功能/契约）；P1-13 无 read-model 展示视图（事件仅注册 isHandledEventType 防 stall；P1-14 若需再版本化追加）
+authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a)/(b)/(c); GitHub push needs user authorization) + 2026-09-07 阶段时限 09:00 CST 硬性到点（先落干净检查点再报告）；实现/修复由 B lanes 承担
+next: P1-14 基线（候选物化 + migration Gate + 决策闭环；评估文档 dev_docs/verification/2026-09-07-p1-14-baseline-plan.md）；09:00 到点未完成 → 干净检查点停止
+shared_baseline: P1-11 = d5a51ba（验收 6d70494）；P1-13 = 5ade74b（验收 fbc365e：A policy 0ab2cd2 + B remediation e8092b2/56e95f6 + C writer 链 3000e8b + 套件对齐 a3641f0）
+merge_surface_note: P1-13 零改动 P1-00..P1-12 冻结形状（第三 governance 类走现有 governance-install/activate commitKind union 扩展；KNOWN 版本化追加含 P1-02 断言维护裁决）；P1-13 无 read-model 展示视图（事件仅注册防 stall）；G5（13+14）待 P1-14
 ```
 
 ---
+
+## P1-13 验收记录（2026-09-07，正式）
+
+- **命令与数字**：typecheck 0；全量 154 files / **1083 tests PASS（0 skip）**；双适配器同套件 9+9；集成/restart/evidence 各 1/1；writer 链（InMemory+SQLite reopen）3/3；validate-docs 13/13。
+- **验收映射 + 裁决**：dev_docs/verification/p1-13-implementation-evidence.md（票尾 Implementation record 同款）。
+- **G5（13+14）未成立**（待 P1-14）；G1/G2/G4 PASS 在档。
 
 ## P1-13 当前票据与共享契约基线（并行窗口 4 — lanes A/B/C 实施中）
 
