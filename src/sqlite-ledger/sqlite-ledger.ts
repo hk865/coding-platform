@@ -62,6 +62,12 @@ import {
   validateGoalReductionCommit,
   validateHandoffRecordCommit,
   validateReplacementClaimCommit,
+  validateWorkspaceReadLeaseAcquireCommit,
+  validateWorkspaceReadLeaseReleaseCommit,
+  validateWorkspaceWriteLeaseAcquireCommit,
+  validateWorkspaceWriteLeaseReleaseCommit,
+  validateIntegrationRecordCommit,
+  validatePatchRecordCommit,
 } from "../contracts/ledger-validation.js";
 import type {
   DispatchClaimLedgerCommitV1,
@@ -440,6 +446,18 @@ export class SqliteStateLedger implements StateLedger {
         return this.commitHandoffRecord(batch);
       case "replacement-claim":
         return this.commitReplacementClaim(batch);
+      case "workspace-read-lease-acquire":
+        return this.commitWorkspaceReadLeaseAcquire(batch);
+      case "workspace-read-lease-release":
+        return this.commitWorkspaceReadLeaseRelease(batch);
+      case "workspace-write-lease-acquire":
+        return this.commitWorkspaceWriteLeaseAcquire(batch);
+      case "workspace-write-lease-release":
+        return this.commitWorkspaceWriteLeaseRelease(batch);
+      case "integration-record":
+        return this.commitIntegrationRecord(batch);
+      case "patch-record":
+        return this.commitPatchRecord(batch);
     }
   }
 
@@ -519,6 +537,52 @@ export class SqliteStateLedger implements StateLedger {
   /** P1-06: replacement-claim — lease CAS@N + new attempt/run/outbox/replacement (full idempotency). */
   private commitReplacementClaim(batch: import("../contracts/ledger.js").ReplacementClaimLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
     if (!validateReplacementClaimCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  // ---------------------------------------------------------------------------
+  // P1-07 commit kinds (validators shared with InMemoryLedger)
+  // ---------------------------------------------------------------------------
+
+  private commitWorkspaceReadLeaseAcquire(batch: import("../contracts/ledger.js").WorkspaceReadLeaseAcquireLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateWorkspaceReadLeaseAcquireCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitWorkspaceReadLeaseRelease(batch: import("../contracts/ledger.js").WorkspaceReadLeaseReleaseLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateWorkspaceReadLeaseReleaseCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitWorkspaceWriteLeaseAcquire(batch: import("../contracts/ledger.js").WorkspaceWriteLeaseAcquireLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateWorkspaceWriteLeaseAcquireCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitWorkspaceWriteLeaseRelease(batch: import("../contracts/ledger.js").WorkspaceWriteLeaseReleaseLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateWorkspaceWriteLeaseReleaseCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitIntegrationRecord(batch: import("../contracts/ledger.js").IntegrationRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateIntegrationRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitPatchRecord(batch: import("../contracts/ledger.js").PatchRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validatePatchRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
     }
     return this.commitGeneric(batch);

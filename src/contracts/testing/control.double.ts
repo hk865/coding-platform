@@ -26,6 +26,16 @@ import type { SubmitEvidenceCommand, SubmitEvidenceReceipt } from "../evidence.j
 import type { ReduceTaskCommand, ReduceTaskReceipt } from "../reduction.js";
 import type { ReduceGoalCommand, ReduceGoalReceipt } from "../goal-phase.js";
 import type { ClaimReplacementCommand, ClaimReplacementReceipt, RecordHandoffCommand, RecordHandoffReceipt } from "../handoff.js";
+import type {
+  AcquireReadLeaseReceipt,
+  AcquireWorkspaceReadLeaseCommand,
+  AcquireWorkspaceWriteLeaseCommand,
+  AcquireWriteLeaseReceipt,
+  ReleaseLeaseReceipt,
+  ReleaseWorkspaceLeaseCommand,
+} from "../workspace-lease.js";
+import type { RecordIntegrationResultCommand, RecordIntegrationResultReceipt } from "../integration.js";
+import type { RecordPatchCommand, RecordPatchReceipt } from "../patch.js";
 import type { ControlEngine } from "../modules.js";
 
 export function committedReceiptFor(command: CreateGoalCommand): CommandReceipt {
@@ -82,6 +92,11 @@ export type ReduceTaskBehavior = (
 ) => Promise<ReduceTaskReceipt> | ReduceTaskReceipt;
 export type RecordHandoffBehavior = (command: RecordHandoffCommand) => RecordHandoffReceipt | Promise<RecordHandoffReceipt>;
 export type ClaimReplacementBehavior = (command: ClaimReplacementCommand) => ClaimReplacementReceipt | Promise<ClaimReplacementReceipt>;
+export type AcquireReadLeaseBehavior = (command: AcquireWorkspaceReadLeaseCommand) => AcquireReadLeaseReceipt | Promise<AcquireReadLeaseReceipt>;
+export type AcquireWriteLeaseBehavior = (command: AcquireWorkspaceWriteLeaseCommand) => AcquireWriteLeaseReceipt | Promise<AcquireWriteLeaseReceipt>;
+export type ReleaseLeaseBehavior = (command: ReleaseWorkspaceLeaseCommand) => ReleaseLeaseReceipt | Promise<ReleaseLeaseReceipt>;
+export type RecordIntegrationResultBehavior = (command: RecordIntegrationResultCommand) => RecordIntegrationResultReceipt | Promise<RecordIntegrationResultReceipt>;
+export type RecordPatchBehavior = (command: RecordPatchCommand) => RecordPatchReceipt | Promise<RecordPatchReceipt>;
 
 export type ReduceGoalBehavior = (
   command: ReduceGoalCommand,
@@ -119,6 +134,11 @@ export class ScriptedControlEngine implements ControlEngine {
       reduceGoal?: ReduceGoalBehavior;
       recordHandoff?: RecordHandoffBehavior;
       claimReplacement?: ClaimReplacementBehavior;
+      acquireWorkspaceReadLease?: AcquireReadLeaseBehavior;
+      acquireWorkspaceWriteLease?: AcquireWriteLeaseBehavior;
+      releaseWorkspaceLease?: ReleaseLeaseBehavior;
+      recordIntegrationResult?: RecordIntegrationResultBehavior;
+      recordPatch?: RecordPatchBehavior;
       defaultSubmit?: CommandReceipt;
       defaultBootstrap?: WorkspaceBootstrapReceipt;
       defaultInstall?: GovernanceInstallReceipt;
@@ -213,5 +233,43 @@ export class ScriptedControlEngine implements ControlEngine {
     this.claimReplacementCalls.push(command);
     if (this.options.claimReplacement) return this.options.claimReplacement(command);
     throw new Error("ScriptedControlEngine: no claimReplacement behavior configured");
+  }
+
+  // P1-07 (scripted double: records calls; behaviors configured per test)      //
+
+  readonly acquireWorkspaceReadLeaseCalls: AcquireWorkspaceReadLeaseCommand[] = [];
+  readonly acquireWorkspaceWriteLeaseCalls: AcquireWorkspaceWriteLeaseCommand[] = [];
+  readonly releaseWorkspaceLeaseCalls: ReleaseWorkspaceLeaseCommand[] = [];
+  readonly recordIntegrationResultCalls: RecordIntegrationResultCommand[] = [];
+  readonly recordPatchCalls: RecordPatchCommand[] = [];
+
+  async acquireWorkspaceReadLease(command: AcquireWorkspaceReadLeaseCommand): Promise<AcquireReadLeaseReceipt> {
+    this.acquireWorkspaceReadLeaseCalls.push(command);
+    if (this.options.acquireWorkspaceReadLease) return this.options.acquireWorkspaceReadLease(command);
+    throw new Error("ScriptedControlEngine: no acquireWorkspaceReadLease behavior configured");
+  }
+
+  async acquireWorkspaceWriteLease(command: AcquireWorkspaceWriteLeaseCommand): Promise<AcquireWriteLeaseReceipt> {
+    this.acquireWorkspaceWriteLeaseCalls.push(command);
+    if (this.options.acquireWorkspaceWriteLease) return this.options.acquireWorkspaceWriteLease(command);
+    throw new Error("ScriptedControlEngine: no acquireWorkspaceWriteLease behavior configured");
+  }
+
+  async releaseWorkspaceLease(command: ReleaseWorkspaceLeaseCommand): Promise<ReleaseLeaseReceipt> {
+    this.releaseWorkspaceLeaseCalls.push(command);
+    if (this.options.releaseWorkspaceLease) return this.options.releaseWorkspaceLease(command);
+    throw new Error("ScriptedControlEngine: no releaseWorkspaceLease behavior configured");
+  }
+
+  async recordIntegrationResult(command: RecordIntegrationResultCommand): Promise<RecordIntegrationResultReceipt> {
+    this.recordIntegrationResultCalls.push(command);
+    if (this.options.recordIntegrationResult) return this.options.recordIntegrationResult(command);
+    throw new Error("ScriptedControlEngine: no recordIntegrationResult behavior configured");
+  }
+
+  async recordPatch(command: RecordPatchCommand): Promise<RecordPatchReceipt> {
+    this.recordPatchCalls.push(command);
+    if (this.options.recordPatch) return this.options.recordPatch(command);
+    throw new Error("ScriptedControlEngine: no recordPatch behavior configured");
   }
 }

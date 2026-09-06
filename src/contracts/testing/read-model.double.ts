@@ -23,6 +23,7 @@ import type {
   GoalTimelineViewResult,
 } from "../goal-phase-view.js";
 import type { HandoffProvenanceViewQuery, HandoffProvenanceViewResult } from "../handoff-view.js";
+import type { WorkspaceLeaseViewQuery, WorkspaceLeaseViewResult, IntegrationConflictViewQuery, IntegrationConflictViewResult, WorkspacePatchViewQuery, WorkspacePatchViewResult } from "../workspace-views.js";
 
 export type AdvanceBehavior = (
   page: EventPage,
@@ -48,6 +49,15 @@ export type GoalTimelineBehavior = (
 export type HandoffProvenanceBehavior = (
   query: HandoffProvenanceViewQuery,
 ) => Promise<HandoffProvenanceViewResult> | HandoffProvenanceViewResult;
+export type WorkspaceLeaseViewBehavior = (
+  query: WorkspaceLeaseViewQuery,
+) => Promise<WorkspaceLeaseViewResult> | WorkspaceLeaseViewResult;
+export type IntegrationConflictViewBehavior = (
+  query: IntegrationConflictViewQuery,
+) => Promise<IntegrationConflictViewResult> | IntegrationConflictViewResult;
+export type WorkspacePatchViewBehavior = (
+  query: WorkspacePatchViewQuery,
+) => Promise<WorkspacePatchViewResult> | WorkspacePatchViewResult;
 
 export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly advanceCalls: EventPage[] = [];
@@ -58,6 +68,9 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly goalStatusCalls: GoalStatusQuery[] = [];
   readonly goalTimelineCalls: GoalTimelineQuery[] = [];
   readonly handoffProvenanceCalls: HandoffProvenanceViewQuery[] = [];
+  readonly workspaceLeaseViewCalls: WorkspaceLeaseViewQuery[] = [];
+  readonly integrationConflictsCalls: IntegrationConflictViewQuery[] = [];
+  readonly workspacePatchesCalls: WorkspacePatchViewQuery[] = [];
 
   constructor(
     private readonly options: {
@@ -69,6 +82,9 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
       goalStatus?: GoalStatusBehavior;
       goalTimeline?: GoalTimelineBehavior;
       handoffProvenance?: HandoffProvenanceBehavior;
+      workspaceLeaseView?: WorkspaceLeaseViewBehavior;
+      integrationConflicts?: IntegrationConflictViewBehavior;
+      workspacePatches?: WorkspacePatchViewBehavior;
     } = {},
   ) {}
 
@@ -120,6 +136,26 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   async handoffProvenance(query: HandoffProvenanceViewQuery): Promise<HandoffProvenanceViewResult> {
     this.handoffProvenanceCalls.push(query);
     if (this.options.handoffProvenance) return this.options.handoffProvenance(query);
+    return { status: "not_found", observedCursor: (null as unknown) as import("../command-event.js").CommitCursor };
+  }
+
+  // P1-07 views (scripted)                                                     //
+
+  async workspaceLeaseView(query: WorkspaceLeaseViewQuery): Promise<WorkspaceLeaseViewResult> {
+    this.workspaceLeaseViewCalls.push(query);
+    if (this.options.workspaceLeaseView) return this.options.workspaceLeaseView(query);
+    return { status: "not_found", observedCursor: (null as unknown) as import("../command-event.js").CommitCursor };
+  }
+
+  async integrationConflicts(query: IntegrationConflictViewQuery): Promise<IntegrationConflictViewResult> {
+    this.integrationConflictsCalls.push(query);
+    if (this.options.integrationConflicts) return this.options.integrationConflicts(query);
+    return { status: "not_found", observedCursor: (null as unknown) as import("../command-event.js").CommitCursor };
+  }
+
+  async workspacePatches(query: WorkspacePatchViewQuery): Promise<WorkspacePatchViewResult> {
+    this.workspacePatchesCalls.push(query);
+    if (this.options.workspacePatches) return this.options.workspacePatches(query);
     return { status: "not_found", observedCursor: (null as unknown) as import("../command-event.js").CommitCursor };
   }
 }

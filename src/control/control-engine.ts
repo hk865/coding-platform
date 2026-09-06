@@ -85,11 +85,27 @@ import { reduceTask } from "./task-reducer.js";
 import { recordHandoff } from "./handoff.js";
 import { claimReplacement } from "./replacement-claim.js";
 import { reduceGoal } from "./goal-reducer.js";
+import { WorkspaceLeaseEngineImpl } from "./workspace-lease.js";
+import { recordIntegrationResult } from "./integration-join.js";
+import { recordPatch } from "./patch-record.js";
+import type { WorkspaceCapabilityPort } from "../contracts/workspace-capability.js";
+import type {
+  AcquireReadLeaseReceipt,
+  AcquireWorkspaceReadLeaseCommand,
+  AcquireWorkspaceWriteLeaseCommand,
+  AcquireWriteLeaseReceipt,
+  ReleaseLeaseReceipt,
+  ReleaseWorkspaceLeaseCommand,
+} from "../contracts/workspace-lease.js";
+import type { RecordIntegrationResultCommand, RecordIntegrationResultReceipt } from "../contracts/integration.js";
+import type { RecordPatchCommand, RecordPatchReceipt } from "../contracts/patch.js";
 
 export type ControlEngineDeps = {
   ledger: StateLedger;
   now: () => string;
   eventId: () => string;
+  /** P1-07: WorkerRuntime.WorkspaceCapabilityPort (default = unsupported until wired). */
+  workspaceCapability?: WorkspaceCapabilityPort;
 };
 
 type BootstrapSnapshotUnion = ProjectSnapshot | WorkspaceSnapshot | BootstrapManifestSnapshot;
@@ -97,9 +113,11 @@ type BootstrapEventUnion = ProjectBootstrappedEventV1 | WorkspaceBootstrappedEve
 
 export class ControlEngineImpl implements ControlEngine {
   private readonly deps: ControlEngineDeps;
+  private readonly workspaceLease: WorkspaceLeaseEngineImpl;
 
   constructor(deps: ControlEngineDeps) {
     this.deps = deps;
+    this.workspaceLease = new WorkspaceLeaseEngineImpl(deps);
   }
 
   // --------------------------------------------------------------------- //
@@ -265,6 +283,30 @@ export class ControlEngineImpl implements ControlEngine {
   /** P1-05: deterministic Goal phase reduction (never Task phase). */
   reduceGoal(command: import("../contracts/goal-phase.js").ReduceGoalCommand): Promise<import("../contracts/goal-phase.js").ReduceGoalReceipt> {
     return reduceGoal(this.deps, command);
+  }
+
+  // --------------------------------------------------------------------- //
+  // P1-07 workspace lease / integration / patch (delegating handlers)      //
+  // --------------------------------------------------------------------- //
+
+  acquireWorkspaceReadLease(command: AcquireWorkspaceReadLeaseCommand): Promise<AcquireReadLeaseReceipt> {
+    return this.workspaceLease.acquireReadLease(command);
+  }
+
+  acquireWorkspaceWriteLease(command: AcquireWorkspaceWriteLeaseCommand): Promise<AcquireWriteLeaseReceipt> {
+    return this.workspaceLease.acquireWriteLease(command);
+  }
+
+  releaseWorkspaceLease(command: ReleaseWorkspaceLeaseCommand): Promise<ReleaseLeaseReceipt> {
+    return this.workspaceLease.releaseLease(command);
+  }
+
+  recordIntegrationResult(command: RecordIntegrationResultCommand): Promise<RecordIntegrationResultReceipt> {
+    return recordIntegrationResult(this.deps, command);
+  }
+
+  recordPatch(command: RecordPatchCommand): Promise<RecordPatchReceipt> {
+    return recordPatch(this.deps, command);
   }
 
   // --------------------------------------------------------------------- //

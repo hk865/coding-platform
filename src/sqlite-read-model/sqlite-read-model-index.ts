@@ -819,6 +819,22 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     };
   }
 
+  // --------------------------------------------------------------------- //
+  // P1-07 views (stub — lane C fills the projection)                       //
+  // --------------------------------------------------------------------- //
+
+  async workspaceLeaseView(query: import("../contracts/workspace-views.js").WorkspaceLeaseViewQuery): Promise<import("../contracts/workspace-views.js").WorkspaceLeaseViewResult> {
+    throw new Error("P1-07 lane C: workspaceLeaseView not implemented yet");
+  }
+
+  async integrationConflicts(query: import("../contracts/workspace-views.js").IntegrationConflictViewQuery): Promise<import("../contracts/workspace-views.js").IntegrationConflictViewResult> {
+    throw new Error("P1-07 lane C: integrationConflicts not implemented yet");
+  }
+
+  async workspacePatches(query: import("../contracts/workspace-views.js").WorkspacePatchViewQuery): Promise<import("../contracts/workspace-views.js").WorkspacePatchViewResult> {
+    throw new Error("P1-07 lane C: workspacePatches not implemented yet");
+  }
+
   private readHandoffProvenanceRow(
     projectId: string,
     goalId: string,

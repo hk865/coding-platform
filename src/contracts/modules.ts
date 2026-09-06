@@ -40,6 +40,16 @@ import type {
   RecordHandoffCommand,
   RecordHandoffReceipt,
 } from "./handoff.js";
+import type {
+  AcquireReadLeaseReceipt,
+  AcquireWorkspaceReadLeaseCommand,
+  AcquireWorkspaceWriteLeaseCommand,
+  AcquireWriteLeaseReceipt,
+  ReleaseLeaseReceipt,
+  ReleaseWorkspaceLeaseCommand,
+} from "./workspace-lease.js";
+import type { RecordIntegrationResultCommand, RecordIntegrationResultReceipt } from "./integration.js";
+import type { RecordPatchCommand, RecordPatchReceipt } from "./patch.js";
 
 export type CreateGoalRequest = {
   projectId: string;
@@ -92,6 +102,16 @@ export interface ControlEngine {
   /** P1-06: replacement claim — B's NEW attempt/run lifecycle for the SAME Task
    * (lease CAS; only after A ended or A's lease expired; no Goal/phase writes). */
   claimReplacement(command: ClaimReplacementCommand): Promise<ClaimReplacementReceipt>;
+  /** P1-07: shared/overlapping read lease acquisition (read-read never conflicts). */
+  acquireWorkspaceReadLease(command: AcquireWorkspaceReadLeaseCommand): Promise<AcquireReadLeaseReceipt>;
+  /** P1-07: exclusive write lease (index CAS — invariant #7, one writer per workspace). */
+  acquireWorkspaceWriteLease(command: AcquireWorkspaceWriteLeaseCommand): Promise<AcquireWriteLeaseReceipt>;
+  /** P1-07: holder-only lease release (no cancel/preempt — P1-10). */
+  releaseWorkspaceLease(command: ReleaseWorkspaceLeaseCommand): Promise<ReleaseLeaseReceipt>;
+  /** P1-07: evidence join record (explicit conflict preservation; never overwrite). */
+  recordIntegrationResult(command: RecordIntegrationResultCommand): Promise<RecordIntegrationResultReceipt>;
+  /** P1-07: record ONE patch artifact (body-first) + workspace revision advance + lease release (atomic). */
+  recordPatch(command: RecordPatchCommand): Promise<RecordPatchReceipt>;
 }
 
 export interface HumanCollaboration {

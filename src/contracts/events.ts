@@ -27,6 +27,14 @@ import type { EvidenceAdmittedEvent } from "./evidence.js";
 import type { TaskReductionUpdatedEvent } from "./reduction.js";
 import type { GoalPhaseUpdatedEvent } from "./goal-phase.js";
 import type { HandoffRecordedEvent, ReplacementClaimedEvent } from "./handoff.js";
+import type {
+  WorkspaceReadLeaseGrantedEvent,
+  WorkspaceReadLeaseReleasedEvent,
+  WorkspaceWriteLeaseGrantedEvent,
+  WorkspaceWriteLeaseReleasedEvent,
+} from "./workspace-lease.js";
+import type { IntegrationJoinedEvent } from "./integration.js";
+import type { PatchRecordedEvent } from "./patch.js";
 
 export type DomainEventV1 =
   | GoalCreatedEvent
@@ -45,7 +53,13 @@ export type DomainEventV1 =
   | TaskReductionUpdatedEvent
   | GoalPhaseUpdatedEvent
   | HandoffRecordedEvent
-  | ReplacementClaimedEvent;
+  | ReplacementClaimedEvent
+  | WorkspaceReadLeaseGrantedEvent
+  | WorkspaceReadLeaseReleasedEvent
+  | WorkspaceWriteLeaseGrantedEvent
+  | WorkspaceWriteLeaseReleasedEvent
+  | IntegrationJoinedEvent
+  | PatchRecordedEvent;
 
 export type DomainEvent = DomainEventV1;
 
@@ -68,6 +82,12 @@ export const KNOWN_EVENT_TYPES = [
   "GoalPhaseUpdated",
   "HandoffRecorded",
   "ReplacementClaimed",
+  "WorkspaceReadLeaseGranted",
+  "WorkspaceReadLeaseReleased",
+  "WorkspaceWriteLeaseGranted",
+  "WorkspaceWriteLeaseReleased",
+  "IntegrationJoined",
+  "PatchRecorded",
 ] as const;
 
 export function isKnownEventType(eventType: string): eventType is (typeof KNOWN_EVENT_TYPES)[number] {

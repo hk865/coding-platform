@@ -84,6 +84,22 @@ import type {
   ReplacementAttemptSnapshot,
   ReplacementClaimedEvent,
 } from "./handoff.js";
+import type {
+  WorkspaceReadLeaseGrantedEvent,
+  WorkspaceReadLeaseIndexRef,
+  WorkspaceReadLeaseIndexSnapshot,
+  WorkspaceReadLeaseRef,
+  WorkspaceReadLeaseReleasedEvent,
+  WorkspaceReadLeaseSnapshot,
+  WorkspaceWriteLeaseGrantedEvent,
+  WorkspaceWriteLeaseIndexRef,
+  WorkspaceWriteLeaseIndexSnapshot,
+  WorkspaceWriteLeaseRef,
+  WorkspaceWriteLeaseReleasedEvent,
+  WorkspaceWriteLeaseSnapshot,
+} from "./workspace-lease.js";
+import type { IntegrationJoinedEvent, IntegrationResultRef, IntegrationResultSnapshot } from "./integration.js";
+import type { PatchRecordedEvent, PatchRecordRef, PatchRecordSnapshot } from "./patch.js";
 
 export type ProjectRef = {
   aggregateType: "Project";
@@ -121,7 +137,13 @@ export type AggregateRef =
   | TaskReductionRef
   | GoalPhaseRef
   | HandoffPacketRef
-  | ReplacementAttemptRef;
+  | ReplacementAttemptRef
+  | WorkspaceReadLeaseRef
+  | WorkspaceReadLeaseIndexRef
+  | WorkspaceWriteLeaseRef
+  | WorkspaceWriteLeaseIndexRef
+  | IntegrationResultRef
+  | PatchRecordRef;
 
 export type ProjectSnapshot = {
   ref: ProjectRef;
@@ -163,7 +185,13 @@ export type AggregateSnapshot =
   | TaskReductionSnapshot
   | GoalPhaseSnapshot
   | HandoffPacketSnapshot
-  | ReplacementAttemptSnapshot;
+  | ReplacementAttemptSnapshot
+  | WorkspaceReadLeaseSnapshot
+  | WorkspaceReadLeaseIndexSnapshot
+  | WorkspaceWriteLeaseSnapshot
+  | WorkspaceWriteLeaseIndexSnapshot
+  | IntegrationResultSnapshot
+  | PatchRecordSnapshot;
 
 export type SnapshotResult =
   | { status: "found"; snapshot: AggregateSnapshot }
@@ -328,6 +356,89 @@ export type TaskReductionLedgerCommitV1 = {
   outboxIntents: [];
 };
 
+/** P1-07: workspace-read-lease-acquire — shared read lease + read lease index (atomic). */
+export type WorkspaceReadLeaseAcquireLedgerCommitV1 = {
+  commitKind: "workspace-read-lease-acquire";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [ReadLease@0, ReadLeaseIndex@(index.revision - 1)]. */
+  expectedVersions: ExpectedVersion[];
+  events: [WorkspaceReadLeaseGrantedEvent];
+  snapshots: [WorkspaceReadLeaseSnapshot, WorkspaceReadLeaseIndexSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-07: workspace-read-lease-release — read lease @2 + index clear entry (atomic). */
+export type WorkspaceReadLeaseReleaseLedgerCommitV1 = {
+  commitKind: "workspace-read-lease-release";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [ReadLease@1, ReadLeaseIndex@(index.revision - 1)]. */
+  expectedVersions: ExpectedVersion[];
+  events: [WorkspaceReadLeaseReleasedEvent];
+  snapshots: [WorkspaceReadLeaseSnapshot, WorkspaceReadLeaseIndexSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-07: workspace-write-lease-acquire — exclusive write lease + index CAS (atomic). */
+export type WorkspaceWriteLeaseAcquireLedgerCommitV1 = {
+  commitKind: "workspace-write-lease-acquire";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [WriteLease@0, WriteLeaseIndex@(index.revision - 1)] (+ [VacatedLease@1] when an expired active lease is vacated in the same commit). */
+  expectedVersions: ExpectedVersion[];
+  events: [WorkspaceWriteLeaseGrantedEvent];
+  /** New lease @1 + index @N+1 (+ vacated old lease @2 when expiry-vacate). */
+  snapshots:
+    | [WorkspaceWriteLeaseSnapshot, WorkspaceWriteLeaseIndexSnapshot]
+    | [WorkspaceWriteLeaseSnapshot, WorkspaceWriteLeaseIndexSnapshot, WorkspaceWriteLeaseSnapshot];
+  /** Non-null when an expired active lease was vacated (releasedVia = "expiry-vacate"). */
+  vacatedLeaseRef: WorkspaceWriteLeaseRef | null;
+  outboxIntents: [];
+};
+
+/** P1-07: workspace-write-lease-release — explicit holder release (atomic; index CAS). */
+export type WorkspaceWriteLeaseReleaseLedgerCommitV1 = {
+  commitKind: "workspace-write-lease-release";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [WriteLease@1, WriteLeaseIndex@(index.revision - 1)]. */
+  expectedVersions: ExpectedVersion[];
+  events: [WorkspaceWriteLeaseReleasedEvent];
+  snapshots: [WorkspaceWriteLeaseSnapshot, WorkspaceWriteLeaseIndexSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-07: integration-record — accumulating join records (revision == count, CAS). */
+export type IntegrationRecordLedgerCommitV1 = {
+  commitKind: "integration-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [IntegrationResult@(snapshot.revision - 1)]. */
+  expectedVersions: ExpectedVersion[];
+  events: [IntegrationJoinedEvent];
+  snapshots: [IntegrationResultSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-07: patch-record — patch @1 + canonical Workspace revision advance + write lease release + index clear (ONE atomic commit). */
+export type PatchRecordLedgerCommitV1 = {
+  commitKind: "patch-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [PatchRecord@0, Workspace@N, WriteLease@1, WriteLeaseIndex@M]. */
+  expectedVersions: ExpectedVersion[];
+  events: [PatchRecordedEvent, WorkspaceWriteLeaseReleasedEvent];
+  snapshots: [PatchRecordSnapshot, WorkspaceSnapshot, WorkspaceWriteLeaseSnapshot, WorkspaceWriteLeaseIndexSnapshot];
+  outboxIntents: [];
+};
+
 /** P1-05: goal-reduction — the deterministic Goal phase state (per (projectId, goalId)). */
 export type GoalReductionLedgerCommitV1 = {
   commitKind: "goal-reduction";
@@ -354,7 +465,13 @@ export type LedgerCommit =
   | TaskReductionLedgerCommitV1
   | GoalReductionLedgerCommitV1
   | HandoffRecordLedgerCommitV1
-  | ReplacementClaimLedgerCommitV1;
+  | ReplacementClaimLedgerCommitV1
+  | WorkspaceReadLeaseAcquireLedgerCommitV1
+  | WorkspaceReadLeaseReleaseLedgerCommitV1
+  | WorkspaceWriteLeaseAcquireLedgerCommitV1
+  | WorkspaceWriteLeaseReleaseLedgerCommitV1
+  | IntegrationRecordLedgerCommitV1
+  | PatchRecordLedgerCommitV1;
 
 export type LedgerCommitReceipt =
   | {

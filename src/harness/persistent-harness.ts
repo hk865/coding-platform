@@ -77,6 +77,15 @@ import type { HandoffProvenanceViewQuery, HandoffProvenanceViewResult } from "..
 import { HandoffContextCompilerImpl } from "../context/handoff-context-compiler.js";
 import { FakeHandoffControlRuntimeAdapter } from "../runtime/handoff-control-adapter.js";
 import { HandoffDriveEngineImpl } from "../control/handoff-drive.js";
+import { WorkspaceDriveEngineImpl } from "../control/workspace-drive.js";
+import { FakeWorkspaceCapabilityAdapter } from "../runtime/workspace-capability-adapter.js";
+import type { WorkspaceCapabilityPort } from "../contracts/workspace-capability.js";
+import type { WorkspaceLeasePort } from "../contracts/workspace-lease.js";
+import type { WorkspaceDrivePort } from "../contracts/workspace-drive.js";
+import type { WorkspaceLeaseViewQuery, WorkspaceLeaseViewResult, IntegrationConflictViewQuery, IntegrationConflictViewResult, WorkspacePatchViewQuery, WorkspacePatchViewResult } from "../contracts/workspace-views.js";
+import type { AcquireWorkspaceReadLeaseCommand, AcquireReadLeaseReceipt, AcquireWorkspaceWriteLeaseCommand, AcquireWriteLeaseReceipt, ReleaseWorkspaceLeaseCommand, ReleaseLeaseReceipt } from "../contracts/workspace-lease.js";
+import type { RecordIntegrationResultCommand, RecordIntegrationResultReceipt } from "../contracts/integration.js";
+import type { RecordPatchCommand, RecordPatchReceipt } from "../contracts/patch.js";
 import type { FakeRuntimeScriptV1 } from "../contracts/fixtures/dispatch-fixtures.js";
 import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../contracts/fixtures/dispatch-fixtures.js";
 import { SqliteStateLedger, createSqliteStateLedger } from "../sqlite-ledger/sqlite-ledger.js";
@@ -118,6 +127,10 @@ export interface PersistentSqliteHarnessOptions {
   handoffContext?: HandoffContextPort;
   /** P1-06: explicit HandoffControlPort (default FakeHandoffControlRuntimeAdapter). */
   handoffControl?: HandoffControlPort;
+  /** P1-07: explicit WorkspaceCapabilityPort (default FakeWorkspaceCapabilityAdapter). */
+  workspaceCapability?: WorkspaceCapabilityPort;
+  /** P1-07: explicit WorkspaceDrivePort (default WorkspaceDriveEngineImpl). */
+  workspaceDrive?: WorkspaceDrivePort;
 }
 
 export interface PersistentSqliteHarness {
@@ -144,6 +157,12 @@ export interface PersistentSqliteHarness {
   handoffControl: HandoffControlPort;
   /** P1-06: DispatchEngine.HandoffPort (replacement outbox drive). */
   handoffDrive: HandoffPort;
+  /** P1-07: workspace capability port (default FakeWorkspaceCapabilityAdapter). */
+  workspaceCapability: WorkspaceCapabilityPort;
+  /** P1-07: DispatchEngine.WorkspaceLeasePort (read/write leases + release). */
+  workspaceLease: WorkspaceLeasePort;
+  /** P1-07: parallel drive port (real overlap, replacement intents skipped). */
+  workspaceDrive: WorkspaceDrivePort;
 
   bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
   /** P1-02: governance install (immutable revision; never auto-activates). */
@@ -182,6 +201,22 @@ export interface PersistentSqliteHarness {
   handoffProvenance(query: HandoffProvenanceViewQuery): Promise<HandoffProvenanceViewResult>;
   /** P1-06: bounded handoff-context assembly. */
   assembleHandoff(request: HandoffContextRequestV1): Promise<HandoffContextResultV1>;
+  /** P1-07: acquire a shared read lease (read-read never conflicts). */
+  acquireWorkspaceReadLease(command: AcquireWorkspaceReadLeaseCommand): Promise<AcquireReadLeaseReceipt>;
+  /** P1-07: acquire the exclusive write lease (index CAS, invariant #7). */
+  acquireWorkspaceWriteLease(command: AcquireWorkspaceWriteLeaseCommand): Promise<AcquireWriteLeaseReceipt>;
+  /** P1-07: holder-only lease release. */
+  releaseWorkspaceLease(command: ReleaseWorkspaceLeaseCommand): Promise<ReleaseLeaseReceipt>;
+  /** P1-07: evidence join record (conflict preservation; never overwrite). */
+  recordIntegrationResult(command: RecordIntegrationResultCommand): Promise<RecordIntegrationResultReceipt>;
+  /** P1-07: record ONE patch artifact (atomic workspace revision advance + lease release). */
+  recordPatch(command: RecordPatchCommand): Promise<RecordPatchReceipt>;
+  /** P1-07: workspace lease status view (display only). */
+  workspaceLeaseView(query: WorkspaceLeaseViewQuery): Promise<WorkspaceLeaseViewResult>;
+  /** P1-07: integration join/conflict view (display only, no judgement). */
+  integrationConflicts(query: IntegrationConflictViewQuery): Promise<IntegrationConflictViewResult>;
+  /** P1-07: workspace patch view (display only). */
+  workspacePatches(query: WorkspacePatchViewQuery): Promise<WorkspacePatchViewResult>;
   /** P1-04: review-context assembly (bounded ReviewPacket). */
   assembleReview(request: ReviewContextRequestV1): Promise<ReviewContextResultV1>;
   /** P1-03: outbox drive (claim -> assemble -> start -> events). */
@@ -215,6 +250,9 @@ interface BuiltHarness {
   handoffContext: HandoffContextPort;
   handoffControl: HandoffControlPort;
   handoffDrive: HandoffPort;
+  workspaceCapability: WorkspaceCapabilityPort;
+  workspaceLease: WorkspaceLeasePort;
+  workspaceDrive: WorkspaceDrivePort;
   advanceProjection: () => Promise<ProjectionReceipt>;
   observedCursor: () => CommitCursor | null;
   planGraph: (query: PlanGraphViewQuery) => Promise<PlanGraphViewResult>;
@@ -233,11 +271,15 @@ function buildHarness(
   reviewContextOverride: ReviewContextPort | undefined,
   handoffContextOverride: HandoffContextPort | undefined,
   handoffControlOverride: HandoffControlPort | undefined,
+  workspaceCapabilityOverride: WorkspaceCapabilityPort | undefined,
+  workspaceDriveOverride: WorkspaceDrivePort | undefined,
 ): BuiltHarness {
   const d: InjectableDeps = { ...createDeterministicDeps(), ...deps };
   const ledger = createSqliteStateLedger({ path: join(dir, ledgerFile) });
   const readModel = createSqliteReadModelIndex({ path: join(dir, readModelFile) });
-  const control = new ControlEngineImpl({ ledger, now: d.clock, eventId: d.eventId });
+  const workspaceCapability: WorkspaceCapabilityPort =
+    workspaceCapabilityOverride ?? new FakeWorkspaceCapabilityAdapter();
+  const control = new ControlEngineImpl({ ledger, now: d.clock, eventId: d.eventId, workspaceCapability });
   const collaboration = new HumanCollaborationImpl({
     control,
     readModel,
@@ -272,6 +314,19 @@ function buildHarness(
     handoffContext,
     runtime,
   });
+  const workspaceDrive: WorkspaceDrivePort =
+    workspaceDriveOverride ?? new WorkspaceDriveEngineImpl({
+      ledger,
+      control,
+      contextCompiler,
+      runtime,
+      now: d.clock,
+    });
+  const workspaceLease: WorkspaceLeasePort = {
+    acquireReadLease: (command) => control.acquireWorkspaceReadLease(command),
+    acquireWriteLease: (command) => control.acquireWorkspaceWriteLease(command),
+    releaseLease: (command) => control.releaseWorkspaceLease(command),
+  };
   let lastCursor: CommitCursor | null = null;
   async function advanceProjection(): Promise<ProjectionReceipt> {
     let receipt: ProjectionReceipt | null = null;
@@ -297,6 +352,9 @@ function buildHarness(
     handoffContext,
     handoffControl,
     handoffDrive,
+    workspaceCapability,
+    workspaceLease,
+    workspaceDrive,
     advanceProjection,
     observedCursor: () => lastCursor,
     planGraph: (query) => readModel.planGraph(query),
@@ -321,7 +379,7 @@ export async function createPersistentSqliteHarness(
     ledgerFilename: string,
     readModelFilename: string,
   ): PersistentSqliteHarness => {
-    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript, checkPorts, reviewer, verificationOverride, reviewContextOverride, options.handoffContext, options.handoffControl);
+    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript, checkPorts, reviewer, verificationOverride, reviewContextOverride, options.handoffContext, options.handoffControl, options.workspaceCapability, options.workspaceDrive);
     let closed = false;
     return {
       dir,
@@ -340,6 +398,9 @@ export async function createPersistentSqliteHarness(
       handoffContext: built.handoffContext,
       handoffControl: built.handoffControl,
       handoffDrive: built.handoffDrive,
+      workspaceCapability: built.workspaceCapability,
+      workspaceLease: built.workspaceLease,
+      workspaceDrive: built.workspaceDrive,
       bootstrap: (command) => built.control.bootstrap(command),
       install: (command) => built.control.install(command),
       activate: (command) => built.control.activate(command),
@@ -360,6 +421,14 @@ export async function createPersistentSqliteHarness(
       recordHandoff: (command) => built.control.recordHandoff(command),
       claimReplacement: (command) => built.control.claimReplacement(command),
       handoffProvenance: (query) => built.readModel.handoffProvenance(query),
+      acquireWorkspaceReadLease: (command) => built.control.acquireWorkspaceReadLease(command),
+      acquireWorkspaceWriteLease: (command) => built.control.acquireWorkspaceWriteLease(command),
+      releaseWorkspaceLease: (command) => built.control.releaseWorkspaceLease(command),
+      recordIntegrationResult: (command) => built.control.recordIntegrationResult(command),
+      recordPatch: (command) => built.control.recordPatch(command),
+      workspaceLeaseView: (query) => built.readModel.workspaceLeaseView(query),
+      integrationConflicts: (query) => built.readModel.integrationConflicts(query),
+      workspacePatches: (query) => built.readModel.workspacePatches(query),
       assembleHandoff: (request) => built.handoffContext.assemble(request),
       assembleReview: (request) => built.reviewContext.assemble(request),
       drive: (trigger) => built.dispatchEngine.drive(trigger),

@@ -71,12 +71,23 @@ function rebaseScript(script: FakeRuntimeScriptV1, runRef: TaskEnvelopeV1["runRe
   });
 }
 
+/**
+ * P1-07 versioned extension (optional): a per-envelope script selector lets
+ * ONE adapter serve different runs with different deterministic scripts (a
+ * reader run vs. a writer run, or two readers with distinct evidence scripts).
+ * The DEFAULT selector returns the single constructor script — the P1-03
+ * behavior is byte-identical (zero regression; scripts are per-run rebased).
+ */
+export type FakeRuntimeScriptSelector = (envelope: TaskEnvelopeV1) => FakeRuntimeScriptV1;
+
 export class FakeRuntimeAdapter implements RunPort {
   private readonly script: FakeRuntimeScriptV1;
+  private readonly scriptFor: FakeRuntimeScriptSelector | null;
   private readonly runs = new Map<string, FakeRunHandle>();
 
-  constructor(script: FakeRuntimeScriptV1) {
+  constructor(script: FakeRuntimeScriptV1, options?: { scriptFor?: FakeRuntimeScriptSelector }) {
     this.script = script;
+    this.scriptFor = options?.scriptFor ?? null;
   }
 
   capabilities(): Promise<RunCapabilities> {
@@ -94,7 +105,8 @@ export class FakeRuntimeAdapter implements RunPort {
       // Idempotent replay: same runRef -> same handle / same event batch.
       return Promise.resolve(existing);
     }
-    const events = rebaseScript(this.script, envelope.runRef);
+    const script = this.scriptFor === null ? this.script : this.scriptFor(envelope);
+    const events = rebaseScript(script, envelope.runRef);
     const handle = new FakeRunHandle(envelope.runRef, events);
     this.runs.set(runKey, handle);
     return Promise.resolve(handle);

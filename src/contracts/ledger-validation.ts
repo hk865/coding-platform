@@ -45,6 +45,18 @@ import {
 } from "./dispatch.js";
 import { canonicalJson } from "./fingerprint.js";
 import { isKnownEventType } from "./events.js";
+import type {
+  IntegrationRecordLedgerCommitV1,
+  PatchRecordLedgerCommitV1,
+  WorkspaceReadLeaseAcquireLedgerCommitV1,
+  WorkspaceReadLeaseReleaseLedgerCommitV1,
+  WorkspaceWriteLeaseAcquireLedgerCommitV1,
+  WorkspaceWriteLeaseReleaseLedgerCommitV1,
+} from "./ledger.js";
+import type { WorkspaceWriteLeaseIndexSnapshot, WorkspaceWriteLeaseSnapshot } from "./workspace-lease.js";
+import { workspaceReadLeaseIndexRefFor, workspaceReadLeaseRefFor, workspaceWriteLeaseIndexRefFor, workspaceWriteLeaseRefFor } from "./workspace-lease.js";
+import { integrationResultRefFor } from "./integration.js";
+import { patchRecordRefFor } from "./patch.js";
 
 function identityMatchesActor(
   projectId: string,
@@ -879,3 +891,268 @@ export function validateReplacementClaimCommit(batch: ReplacementClaimLedgerComm
     batch.identity,
   );
 }
+
+// ------------------------------------------------------------------------ //
+// P1-07 pure commit validators (shared by both ledger adapters)             //
+// ------------------------------------------------------------------------ //
+
+function expectedVersionOf(batch: { expectedVersions: { ref: { aggregateType: string }; revision: number }[] }, ref: { aggregateType: string }): number | null {
+  const hit = batch.expectedVersions.find((v) => canonicalJson(v.ref) === canonicalJson(ref));
+  return hit === undefined ? null : hit.revision;
+}
+
+export function validateWorkspaceReadLeaseAcquireCommit(batch: WorkspaceReadLeaseAcquireLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 1) return false;
+  if (batch.snapshots.length !== 2) return false;
+  if (batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.schemaVersion !== 1) return false;
+  if (event.eventType !== "WorkspaceReadLeaseGranted") return false;
+  if (!isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "WorkspaceReadLease") return false;
+  if (event.aggregateRevision !== 1) return false;
+  const lease = batch.snapshots[0]!;
+  const index = batch.snapshots[1]!;
+  if (lease.ref.aggregateType !== "WorkspaceReadLease") return false;
+  if (index.ref.aggregateType !== "WorkspaceReadLeaseIndex") return false;
+  if (lease.revision !== 1) return false;
+  if (lease.schemaVersion !== 1) return false;
+  if (index.schemaVersion !== 1) return false;
+  const expectedLeaseRef = workspaceReadLeaseRefFor(event.projectId, event.payload.leaseId);
+  if (canonicalJson(lease.ref) !== canonicalJson(expectedLeaseRef)) return false;
+  const expectedIndexRef = workspaceReadLeaseIndexRefFor(event.projectId, event.workspaceId);
+  if (canonicalJson(index.ref) !== canonicalJson(expectedIndexRef)) return false;
+  if (event.aggregateId !== event.payload.leaseId) return false;
+  if (event.projectId !== lease.ref.projectId) return false;
+  if (event.workspaceId !== index.ref.workspaceId) return false;
+  if (event.payload.leaseId !== lease.lease.leaseId) return false;
+  if (canonicalJson(event.payload.scope) !== canonicalJson(lease.lease.scope)) return false;
+  if (canonicalJson(event.payload.holder) !== canonicalJson({ runRef: lease.lease.holder.runRef, attemptRef: lease.lease.holder.attemptRef })) return false;
+  if (event.payload.expiresAt !== lease.lease.expiresAt) return false;
+  if (lease.lease.status !== "active") return false;
+  if (lease.lease.grantedAt !== event.occurredAt) return false;
+  if (lease.lease.releasedAt !== null || lease.lease.releasedBy !== null) return false;
+  const indexWait = expectedVersionOf(batch, index.ref);
+  if (indexWait === null || index.revision !== indexWait + 1) return false;
+  if (expectedVersionOf(batch, lease.ref) !== 0) return false;
+  if (!index.activeReadLeases.some((e) => e.leaseId === lease.lease.leaseId && canonicalJson(e.scope) === canonicalJson(lease.lease.scope))) return false;
+
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+
+export function validateWorkspaceReadLeaseReleaseCommit(batch: WorkspaceReadLeaseReleaseLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 1) return false;
+  if (batch.snapshots.length !== 2) return false;
+  if (batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.schemaVersion !== 1) return false;
+  if (event.eventType !== "WorkspaceReadLeaseReleased") return false;
+  if (!isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "WorkspaceReadLease") return false;
+  if (event.aggregateRevision !== 2) return false;
+  const lease = batch.snapshots[0]!;
+  const index = batch.snapshots[1]!;
+  if (lease.ref.aggregateType !== "WorkspaceReadLease") return false;
+  if (index.ref.aggregateType !== "WorkspaceReadLeaseIndex") return false;
+  if (lease.revision !== 2) return false;
+  if (lease.lease.status !== "released") return false;
+  if (lease.lease.releasedAt !== event.payload.releasedAt) return false;
+  if (lease.lease.releasedBy !== event.payload.releasedBy) return false;
+  if (event.aggregateId !== lease.ref.leaseId) return false;
+  if (event.payload.leaseId !== lease.ref.leaseId) return false;
+  if (expectedVersionOf(batch, lease.ref) !== 1) return false;
+  const indexWait = expectedVersionOf(batch, index.ref);
+  if (indexWait === null || index.revision !== indexWait + 1) return false;
+  if (index.activeReadLeases.some((e) => e.leaseId === lease.ref.leaseId)) return false;
+
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+
+function validateWriteLeaseIndexSnapshot(index: WorkspaceWriteLeaseIndexSnapshot, lease: WorkspaceWriteLeaseSnapshot, batch: { expectedVersions: { ref: { aggregateType: string }; revision: number }[] }): boolean {
+  if (index.schemaVersion !== 1) return false;
+  if (index.activeLeaseId !== lease.ref.leaseId) return false;
+  if (canonicalJson(index.activeScope) !== canonicalJson(lease.lease.scope)) return false;
+  if (canonicalJson(index.holderRunRef) !== canonicalJson(lease.lease.holder.runRef)) return false;
+  const indexWait = expectedVersionOf(batch, index.ref);
+  return indexWait !== null && index.revision === indexWait + 1;
+}
+
+export function validateWorkspaceWriteLeaseAcquireCommit(batch: WorkspaceWriteLeaseAcquireLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 1) return false;
+  if (batch.snapshots.length !== 2 && batch.snapshots.length !== 3) return false;
+  if (batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.schemaVersion !== 1) return false;
+  if (event.eventType !== "WorkspaceWriteLeaseGranted") return false;
+  if (!isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "WorkspaceWriteLease") return false;
+  if (event.aggregateRevision !== 1) return false;
+  const lease = batch.snapshots[0]!;
+  const index = batch.snapshots[1]!;
+  if (lease.ref.aggregateType !== "WorkspaceWriteLease") return false;
+  if (index.ref.aggregateType !== "WorkspaceWriteLeaseIndex") return false;
+  if (lease.revision !== 1) return false;
+  const expectedLeaseRef = workspaceWriteLeaseRefFor(event.projectId, event.payload.leaseId);
+  if (canonicalJson(lease.ref) !== canonicalJson(expectedLeaseRef)) return false;
+  const expectedIndexRef = workspaceWriteLeaseIndexRefFor(event.projectId, event.workspaceId);
+  if (canonicalJson(index.ref) !== canonicalJson(expectedIndexRef)) return false;
+  if (event.aggregateId !== event.payload.leaseId) return false;
+  if (event.projectId !== lease.ref.projectId) return false;
+  if (event.payload.leaseId !== lease.lease.leaseId) return false;
+  if (canonicalJson(event.payload.scope) !== canonicalJson(lease.lease.scope)) return false;
+  if (canonicalJson(event.payload.holder) !== canonicalJson({ runRef: lease.lease.holder.runRef, attemptRef: lease.lease.holder.attemptRef })) return false;
+  if (event.payload.expiresAt !== lease.lease.expiresAt) return false;
+  if (lease.lease.status !== "active") return false;
+  if (lease.lease.grantedAt !== event.occurredAt) return false;
+  if (lease.lease.releasedAt !== null || lease.lease.releasedBy !== null) return false;
+  if (expectedVersionOf(batch, lease.ref) !== 0) return false;
+  if (!validateWriteLeaseIndexSnapshot(index, lease, batch)) return false;
+  if (batch.vacatedLeaseRef !== null) {
+    if (batch.snapshots.length !== 3) return false;
+    const vacated = batch.snapshots[2]!;
+    if (vacated.ref.aggregateType !== "WorkspaceWriteLease") return false;
+    if (canonicalJson(vacated.ref) !== canonicalJson(batch.vacatedLeaseRef)) return false;
+    if (vacated.revision !== 2) return false;
+    if (vacated.lease.status !== "released") return false;
+    if (vacated.lease.releasedBy !== null) return false;
+    if (vacated.lease.releasedAt !== event.occurredAt) return false;
+    if (expectedVersionOf(batch, vacated.ref) !== 1) return false;
+  }
+
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+
+export function validateWorkspaceWriteLeaseReleaseCommit(batch: WorkspaceWriteLeaseReleaseLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 1) return false;
+  if (batch.snapshots.length !== 2) return false;
+  if (batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.schemaVersion !== 1) return false;
+  if (event.eventType !== "WorkspaceWriteLeaseReleased") return false;
+  if (!isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "WorkspaceWriteLease") return false;
+  if (event.aggregateRevision !== 2) return false;
+  const lease = batch.snapshots[0]!;
+  const index = batch.snapshots[1]!;
+  if (lease.ref.aggregateType !== "WorkspaceWriteLease") return false;
+  if (index.ref.aggregateType !== "WorkspaceWriteLeaseIndex") return false;
+  if (lease.revision !== 2) return false;
+  if (lease.lease.status !== "released") return false;
+  if (lease.lease.releasedAt !== event.payload.releasedAt) return false;
+  if (lease.lease.releasedBy !== event.payload.releasedBy) return false;
+  if (event.payload.releasedVia !== "explicit") return false;
+  if (event.payload.postWriteWorkspaceRevision !== null) return false;
+  if (lease.lease.postWriteWorkspaceRevision !== null) return false;
+  if (event.aggregateId !== lease.ref.leaseId) return false;
+  if (event.payload.leaseId !== lease.ref.leaseId) return false;
+  if (expectedVersionOf(batch, lease.ref) !== 1) return false;
+  if (index.activeLeaseId !== null || index.activeScope !== null || index.holderRunRef !== null) return false;
+  const indexWait = expectedVersionOf(batch, index.ref);
+  if (indexWait === null || index.revision !== indexWait + 1) return false;
+
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+
+export function validateIntegrationRecordCommit(batch: IntegrationRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 1) return false;
+  if (batch.snapshots.length !== 1) return false;
+  if (batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.schemaVersion !== 1) return false;
+  if (event.eventType !== "IntegrationJoined") return false;
+  if (!isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "IntegrationResult") return false;
+  const snapshot = batch.snapshots[0]!;
+  if (snapshot.ref.aggregateType !== "IntegrationResult") return false;
+  if (snapshot.schemaVersion !== 1) return false;
+  const expectedRef = integrationResultRefFor(event.projectId, event.payload.goalId, event.payload.taskId);
+  if (canonicalJson(snapshot.ref) !== canonicalJson(expectedRef)) return false;
+  if (event.aggregateId !== event.payload.taskId) return false;
+  if (snapshot.records.length !== snapshot.revision) return false;
+  if (snapshot.revision !== event.aggregateRevision) return false;
+  if (snapshot.records.length < 1) return false;
+  if (expectedVersionOf(batch, snapshot.ref) !== snapshot.revision - 1) return false;
+  if (event.occurredAt !== snapshot.records[snapshot.records.length - 1]!.generatedAt) return false;
+  const last = snapshot.records[snapshot.records.length - 1]!;
+  if (last.resultId !== event.payload.resultId) return false;
+  if (last.taskId !== event.payload.taskId) return false;
+  if (canonicalJson(last.runRef) !== canonicalJson(event.payload.runRef)) return false;
+  if (last.workspaceRevision !== event.payload.workspaceRevision) return false;
+  if (canonicalJson(last.inputs) !== canonicalJson(event.payload.inputs)) return false;
+  if (canonicalJson(last.conflicts) !== canonicalJson(event.payload.conflicts)) return false;
+  if (canonicalJson(last.gaps) !== canonicalJson(event.payload.gaps)) return false;
+  if (last.explanation !== event.payload.explanation) return false;
+  if (last.escalate !== event.payload.escalate) return false;
+  if (last.generatedAt !== event.payload.generatedAt) return false;
+
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+
+export function validatePatchRecordCommit(batch: PatchRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 2) return false;
+  if (batch.snapshots.length !== 4) return false;
+  if (batch.outboxIntents.length !== 0) return false;
+  const patchEvent = batch.events[0]!;
+  const releaseEvent = batch.events[1]!;
+  if (patchEvent.schemaVersion !== 1 || releaseEvent.schemaVersion !== 1) return false;
+  if (patchEvent.eventType !== "PatchRecorded") return false;
+  if (releaseEvent.eventType !== "WorkspaceWriteLeaseReleased") return false;
+  if (!isKnownEventType(patchEvent.eventType) || !isKnownEventType(releaseEvent.eventType)) return false;
+  if (patchEvent.aggregateType !== "PatchRecord") return false;
+  if (patchEvent.aggregateRevision !== 1) return false;
+  if (releaseEvent.aggregateType !== "WorkspaceWriteLease") return false;
+  if (releaseEvent.aggregateRevision !== 2) return false;
+  const patch = batch.snapshots[0]!;
+  const workspace = batch.snapshots[1]!;
+  const lease = batch.snapshots[2]!;
+  const index = batch.snapshots[3]!;
+  if (patch.ref.aggregateType !== "PatchRecord") return false;
+  if (workspace.ref.aggregateType !== "Workspace") return false;
+  if (lease.ref.aggregateType !== "WorkspaceWriteLease") return false;
+  if (index.ref.aggregateType !== "WorkspaceWriteLeaseIndex") return false;
+  if (patch.revision !== 1) return false;
+  const expectedPatchRef = patchRecordRefFor(patchEvent.projectId, patchEvent.payload.patchId);
+  if (canonicalJson(patch.ref) !== canonicalJson(expectedPatchRef)) return false;
+  if (patchEvent.aggregateId !== patchEvent.payload.patchId) return false;
+  if (patchEvent.payload.patchId !== patch.patch.patchId) return false;
+  if (patchEvent.payload.taskId !== patch.patch.taskId) return false;
+  if (canonicalJson(patchEvent.payload.runRef) !== canonicalJson(patch.patch.runRef)) return false;
+  if (patchEvent.payload.kind !== patch.patch.kind) return false;
+  if (patchEvent.payload.title !== patch.patch.title) return false;
+  if (canonicalJson(patchEvent.payload.changedPaths) !== canonicalJson(patch.patch.changedPaths)) return false;
+  if (patchEvent.payload.beforeWorkspaceRevision !== patch.patch.beforeWorkspaceRevision) return false;
+  if (patchEvent.payload.afterWorkspaceRevision !== patch.patch.afterWorkspaceRevision) return false;
+  if (canonicalJson(patchEvent.payload.checkResults) !== canonicalJson(patch.patch.checkResults)) return false;
+  if (canonicalJson(patchEvent.payload.usedInputEvidenceRefs) !== canonicalJson(patch.patch.usedInputEvidenceRefs)) return false;
+  if (patch.recordedAt !== patchEvent.occurredAt) return false;
+  // Workspace canonical advance N -> N+1 (only via patch-record).
+  if (workspace.revision !== patch.patch.afterWorkspaceRevision) return false;
+  if (expectedVersionOf(batch, workspace.ref) !== workspace.revision - 1) return false;
+  // The write lease is released BY the patch record (@2, releasedVia patch-record).
+  if (lease.revision !== 2) return false;
+  if (lease.lease.status !== "released") return false;
+  if (lease.lease.releasedAt !== releaseEvent.payload.releasedAt) return false;
+  if (lease.lease.releasedBy !== releaseEvent.payload.releasedBy) return false;
+  if (releaseEvent.payload.releasedVia !== "patch-record") return false;
+  if (releaseEvent.payload.postWriteWorkspaceRevision !== workspace.revision) return false;
+  if (lease.lease.postWriteWorkspaceRevision !== workspace.revision) return false;
+  if (releaseEvent.payload.leaseId !== lease.ref.leaseId) return false;
+  if (releaseEvent.aggregateId !== lease.ref.leaseId) return false;
+  if (releaseEvent.projectId !== patchEvent.projectId) return false;
+  if (canonicalJson(patchEvent.payload.usedInputEvidenceRefs) !== canonicalJson(patch.patch.usedInputEvidenceRefs)) return false;
+  if (expectedVersionOf(batch, patch.ref) !== 0) return false;
+  if (expectedVersionOf(batch, lease.ref) !== 1) return false;
+  if (index.activeLeaseId !== null || index.activeScope !== null || index.holderRunRef !== null) return false;
+  const indexWait = expectedVersionOf(batch, index.ref);
+  if (indexWait === null || index.revision !== indexWait + 1) return false;
+  if (!lease.lease.patches.some((r) => canonicalJson(r) === canonicalJson(patch.ref))) return false;
+
+  return identityMatchesActor(patchEvent.projectId, patchEvent.idempotencyKey, patchEvent.actor.kind, patchEvent.actor.id, batch.identity);
+}
+

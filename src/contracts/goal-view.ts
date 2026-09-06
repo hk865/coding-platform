@@ -100,4 +100,10 @@ export interface ReadModelIndex {
   goalTimeline(query: GoalTimelineQuery): Promise<GoalTimelineViewResult>;
   /** P1-06: handoff provenance timeline per (projectId, goalId, taskId) — display only. */
   handoffProvenance(query: import("./handoff-view.js").HandoffProvenanceViewQuery): Promise<import("./handoff-view.js").HandoffProvenanceViewResult>;
+  /** P1-07: workspace lease status view per (projectId, workspaceId) — display only. */
+  workspaceLeaseView(query: import("./workspace-views.js").WorkspaceLeaseViewQuery): Promise<import("./workspace-views.js").WorkspaceLeaseViewResult>;
+  /** P1-07: integration join/conflict view per (projectId, goalId, taskId) — display only, no judgement. */
+  integrationConflicts(query: import("./workspace-views.js").IntegrationConflictViewQuery): Promise<import("./workspace-views.js").IntegrationConflictViewResult>;
+  /** P1-07: workspace patch view per (projectId, workspaceId) — display only. */
+  workspacePatches(query: import("./workspace-views.js").WorkspacePatchViewQuery): Promise<import("./workspace-views.js").WorkspacePatchViewResult>;
 }

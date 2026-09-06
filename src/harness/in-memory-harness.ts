@@ -71,6 +71,15 @@ import type { HandoffProvenanceViewQuery, HandoffProvenanceViewResult } from "..
 import { HandoffContextCompilerImpl } from "../context/handoff-context-compiler.js";
 import { FakeHandoffControlRuntimeAdapter } from "../runtime/handoff-control-adapter.js";
 import { HandoffDriveEngineImpl } from "../control/handoff-drive.js";
+import { WorkspaceDriveEngineImpl } from "../control/workspace-drive.js";
+import { FakeWorkspaceCapabilityAdapter } from "../runtime/workspace-capability-adapter.js";
+import type { WorkspaceCapabilityPort } from "../contracts/workspace-capability.js";
+import type { WorkspaceLeasePort } from "../contracts/workspace-lease.js";
+import type { WorkspaceDrivePort } from "../contracts/workspace-drive.js";
+import type { WorkspaceLeaseViewQuery, WorkspaceLeaseViewResult, IntegrationConflictViewQuery, IntegrationConflictViewResult, WorkspacePatchViewQuery, WorkspacePatchViewResult } from "../contracts/workspace-views.js";
+import type { AcquireWorkspaceReadLeaseCommand, AcquireReadLeaseReceipt, AcquireWorkspaceWriteLeaseCommand, AcquireWriteLeaseReceipt, ReleaseWorkspaceLeaseCommand, ReleaseLeaseReceipt } from "../contracts/workspace-lease.js";
+import type { RecordIntegrationResultCommand, RecordIntegrationResultReceipt } from "../contracts/integration.js";
+import type { RecordPatchCommand, RecordPatchReceipt } from "../contracts/patch.js";
 import type { FakeRuntimeScriptV1 } from "../contracts/fixtures/dispatch-fixtures.js";
 import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../contracts/fixtures/dispatch-fixtures.js";
 import { InMemoryLedger } from "../ledger/in-memory-ledger.js";
@@ -107,6 +116,10 @@ export interface InMemoryHarnessOptions {
   handoffContext?: HandoffContextPort;
   /** P1-06: explicit HandoffControlPort (default FakeHandoffControlRuntimeAdapter). */
   handoffControl?: HandoffControlPort;
+  /** P1-07: explicit WorkspaceCapabilityPort (default FakeWorkspaceCapabilityAdapter). */
+  workspaceCapability?: WorkspaceCapabilityPort;
+  /** P1-07: explicit WorkspaceDrivePort (default WorkspaceDriveEngineImpl). */
+  workspaceDrive?: WorkspaceDrivePort;
   deps?: Partial<InjectableDeps>;
 }
 
@@ -130,6 +143,12 @@ export interface InMemoryHarness {
   handoffControl: HandoffControlPort;
   /** P1-06: DispatchEngine.HandoffPort (replacement outbox drive). */
   handoffDrive: HandoffPort;
+  /** P1-07: workspace capability port (default FakeWorkspaceCapabilityAdapter). */
+  workspaceCapability: WorkspaceCapabilityPort;
+  /** P1-07: DispatchEngine.WorkspaceLeasePort (read/write leases + release). */
+  workspaceLease: WorkspaceLeasePort;
+  /** P1-07: parallel drive port (real overlap, replacement intents skipped). */
+  workspaceDrive: WorkspaceDrivePort;
   bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
   /** P1-02: governance install (immutable revision; never auto-activates). */
   install(command: GovernanceInstallCommand): Promise<GovernanceInstallReceipt>;
@@ -167,6 +186,22 @@ export interface InMemoryHarness {
   handoffProvenance(query: HandoffProvenanceViewQuery): Promise<HandoffProvenanceViewResult>;
   /** P1-06: bounded handoff-context assembly. */
   assembleHandoff(request: HandoffContextRequestV1): Promise<HandoffContextResultV1>;
+  /** P1-07: acquire a shared read lease (read-read never conflicts). */
+  acquireWorkspaceReadLease(command: AcquireWorkspaceReadLeaseCommand): Promise<AcquireReadLeaseReceipt>;
+  /** P1-07: acquire the exclusive write lease (index CAS, invariant #7). */
+  acquireWorkspaceWriteLease(command: AcquireWorkspaceWriteLeaseCommand): Promise<AcquireWriteLeaseReceipt>;
+  /** P1-07: holder-only lease release. */
+  releaseWorkspaceLease(command: ReleaseWorkspaceLeaseCommand): Promise<ReleaseLeaseReceipt>;
+  /** P1-07: evidence join record (conflict preservation; never overwrite). */
+  recordIntegrationResult(command: RecordIntegrationResultCommand): Promise<RecordIntegrationResultReceipt>;
+  /** P1-07: record ONE patch artifact (atomic workspace revision advance + lease release). */
+  recordPatch(command: RecordPatchCommand): Promise<RecordPatchReceipt>;
+  /** P1-07: workspace lease status view (display only). */
+  workspaceLeaseView(query: WorkspaceLeaseViewQuery): Promise<WorkspaceLeaseViewResult>;
+  /** P1-07: integration join/conflict view (display only, no judgement). */
+  integrationConflicts(query: IntegrationConflictViewQuery): Promise<IntegrationConflictViewResult>;
+  /** P1-07: workspace patch view (display only). */
+  workspacePatches(query: WorkspacePatchViewQuery): Promise<WorkspacePatchViewResult>;
   /** P1-04: review-context assembly (bounded ReviewPacket). */
   assembleReview(request: ReviewContextRequestV1): Promise<ReviewContextResultV1>;
   /** P1-03: outbox drive (claim -> assemble -> start -> events). */
@@ -180,10 +215,13 @@ export interface InMemoryHarness {
 export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InMemoryHarness {
   const d: InjectableDeps = { ...createDeterministicDeps(), ...(options.deps ?? {}) };
   const ledger: StateLedger = new InMemoryLedger();
+  const workspaceCapability: WorkspaceCapabilityPort =
+    options.workspaceCapability ?? new FakeWorkspaceCapabilityAdapter();
   const control = new ControlEngineImpl({
     ledger,
     now: d.clock,
     eventId: d.eventId,
+    workspaceCapability,
   });
   const readModel = new ReadModelIndexImpl();
   const collaboration = new HumanCollaborationImpl({
@@ -223,6 +261,20 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     handoffContext,
     runtime,
   });
+  const workspaceDrive: WorkspaceDrivePort =
+    options.workspaceDrive ??
+    new WorkspaceDriveEngineImpl({
+      ledger,
+      control,
+      contextCompiler,
+      runtime,
+      now: d.clock,
+    });
+  const workspaceLease: WorkspaceLeasePort = {
+    acquireReadLease: (command) => control.acquireWorkspaceReadLease(command),
+    acquireWriteLease: (command) => control.acquireWorkspaceWriteLease(command),
+    releaseLease: (command) => control.releaseWorkspaceLease(command),
+  };
   let lastCursor: CommitCursor | null = null;
   async function advanceProjection(): Promise<ProjectionReceipt> {
     let receipt: ProjectionReceipt | null = null;
@@ -248,6 +300,9 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     handoffContext,
     handoffControl,
     handoffDrive,
+    workspaceCapability,
+    workspaceLease,
+    workspaceDrive,
     bootstrap: (command) => control.bootstrap(command),
     install: (command) => control.install(command),
     activate: (command) => control.activate(command),
@@ -268,6 +323,14 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     recordHandoff: (command) => control.recordHandoff(command),
     claimReplacement: (command) => control.claimReplacement(command),
     handoffProvenance: (query) => readModel.handoffProvenance(query),
+    acquireWorkspaceReadLease: (command) => control.acquireWorkspaceReadLease(command),
+    acquireWorkspaceWriteLease: (command) => control.acquireWorkspaceWriteLease(command),
+    releaseWorkspaceLease: (command) => control.releaseWorkspaceLease(command),
+    recordIntegrationResult: (command) => control.recordIntegrationResult(command),
+    recordPatch: (command) => control.recordPatch(command),
+    workspaceLeaseView: (query) => readModel.workspaceLeaseView(query),
+    integrationConflicts: (query) => readModel.integrationConflicts(query),
+    workspacePatches: (query) => readModel.workspacePatches(query),
     assembleHandoff: (request) => handoffContext.assemble(request),
     assembleReview: (request) => reviewContext.assemble(request),
     drive: (trigger) => dispatchEngine.drive(trigger),

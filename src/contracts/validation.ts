@@ -24,6 +24,19 @@ import {
   HANDOFF_SUMMARY_MAX_BYTES,
   REPLACEMENT_REASONS,
 } from "./handoff.js";
+import { CONFLICT_SCOPE_KINDS } from "./workspace-lease.js";
+import {
+  INTEGRATION_MAX_CONFLICTS,
+  INTEGRATION_MAX_EXPLANATION_BYTES,
+  INTEGRATION_MAX_GAPS,
+  INTEGRATION_MAX_INPUTS,
+} from "./integration.js";
+import {
+  PATCH_MAX_CHANGED_PATHS,
+  PATCH_MAX_CHECK_RESULTS,
+  PATCH_MAX_CHECK_SUMMARY_BYTES,
+  PATCH_MAX_USED_INPUT_EVIDENCE,
+} from "./patch.js";
 
 export type ValidationIssueCode =
   | "missing_field"
@@ -40,6 +53,8 @@ export type ValidationIssueCode =
   | "bad_revision"
   | "invalid_fixture"
   | "empty_collection"
+  | "conflict_unresolved"
+  | "invalid_escalate"
   | "unknown_task_ref"
   | "unknown_stage_ref"
   | "unknown_obligation_ref"
@@ -294,7 +309,10 @@ export function validateDomainEvent(value: unknown): ValidationIssue[] {
     eventType === "RunEventRecorded" ||
     eventType === "RunOutcomeUnknown" ||
     eventType === "TaskReductionUpdated" ||
-    eventType === "GoalPhaseUpdated";
+    eventType === "GoalPhaseUpdated" ||
+    eventType === "WorkspaceReadLeaseReleased" ||
+    eventType === "WorkspaceWriteLeaseReleased" ||
+    eventType === "IntegrationJoined";
   // Creation events are always revision 1; activation aggregates advance (>= 1).
   if (!isActivationEvent && value["aggregateRevision"] !== 1) {
     issues.push({
@@ -431,6 +449,71 @@ export function validateDomainEvent(value: unknown): ValidationIssue[] {
     }
     validateEnum(payload["reason"], REPLACEMENT_REASONS, "payload.reason", issues);
     stringField(payload, "claimedAt", issues, "payload.claimedAt");
+  } else if (
+    eventType === "WorkspaceReadLeaseGranted" ||
+    eventType === "WorkspaceReadLeaseReleased" ||
+    eventType === "WorkspaceWriteLeaseGranted" ||
+    eventType === "WorkspaceWriteLeaseReleased" ||
+    eventType === "IntegrationJoined" ||
+    eventType === "PatchRecorded"
+  ) {
+    stringField(value, "workspaceId", issues);
+    const payload = value["payload"];
+    if (!isRecord(payload)) {
+      issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+      return issues;
+    }
+    if (eventType === "WorkspaceReadLeaseGranted" || eventType === "WorkspaceWriteLeaseGranted") {
+      stringField(payload, "leaseId", issues, "payload.leaseId");
+      if (!isRecord(payload["scope"])) {
+        issues.push({ path: "payload.scope", code: "bad_type", message: "scope must be an object" });
+      }
+      if (!isRecord(payload["holder"])) {
+        issues.push({ path: "payload.holder", code: "bad_type", message: "holder must be an object" });
+      }
+      if (payload["expiresAt"] !== null && typeof payload["expiresAt"] !== "string") {
+        issues.push({ path: "payload.expiresAt", code: "bad_type", message: "expiresAt must be a string or null" });
+      }
+    } else if (eventType === "WorkspaceReadLeaseReleased" || eventType === "WorkspaceWriteLeaseReleased") {
+      stringField(payload, "leaseId", issues, "payload.leaseId");
+      stringField(payload, "releasedAt", issues, "payload.releasedAt");
+      if (payload["releasedBy"] !== null && payload["releasedBy"] !== "holder") {
+        issues.push({ path: "payload.releasedBy", code: "bad_type", message: "releasedBy must be holder or null" });
+      }
+      if (eventType === "WorkspaceWriteLeaseReleased") {
+        validateEnum(payload["releasedVia"], ["explicit", "patch-record", "expiry-vacate"], "payload.releasedVia", issues);
+        if (payload["postWriteWorkspaceRevision"] !== null && !Number.isSafeInteger(payload["postWriteWorkspaceRevision"])) {
+          issues.push({ path: "payload.postWriteWorkspaceRevision", code: "bad_type", message: "postWriteWorkspaceRevision must be an integer or null" });
+        }
+      }
+    } else if (eventType === "IntegrationJoined") {
+      stringField(payload, "goalId", issues, "payload.goalId");
+      stringField(payload, "taskId", issues, "payload.taskId");
+      stringField(payload, "resultId", issues, "payload.resultId");
+      if (!isRecord(payload["runRef"])) {
+        issues.push({ path: "payload.runRef", code: "bad_type", message: "runRef must be an object" });
+      }
+      if (!Array.isArray(payload["conflicts"])) {
+        issues.push({ path: "payload.conflicts", code: "bad_type", message: "conflicts must be an array" });
+      }
+      if (payload["explanation"] !== null && typeof payload["explanation"] !== "string") {
+        issues.push({ path: "payload.explanation", code: "bad_type", message: "explanation must be a string or null" });
+      }
+      if (typeof payload["escalate"] !== "boolean") {
+        issues.push({ path: "payload.escalate", code: "bad_type", message: "escalate must be a boolean" });
+      }
+    } else if (eventType === "PatchRecorded") {
+      stringField(payload, "patchId", issues, "payload.patchId");
+      stringField(payload, "goalId", issues, "payload.goalId");
+      stringField(payload, "taskId", issues, "payload.taskId");
+      stringField(payload, "title", issues, "payload.title");
+      if (!Number.isSafeInteger(payload["beforeWorkspaceRevision"]) || !Number.isSafeInteger(payload["afterWorkspaceRevision"])) {
+        issues.push({ path: "payload.workspaceRevisions", code: "bad_type", message: "workspace revisions must be integers" });
+      }
+      if (!Array.isArray(payload["changedPaths"])) {
+        issues.push({ path: "payload.changedPaths", code: "bad_type", message: "changedPaths must be an array" });
+      }
+    }
   } else if (typeof eventType === "string" && isKnownEventType(eventType)) {
     // covered above by per-type field checks
     void 0;
@@ -1902,3 +1985,291 @@ export function validateHandoffSnapshotQuery(value: unknown): ValidationIssue[] 
   validateRunRef(value["runRef"], "runRef", issues);
   return issues;
 }
+
+// ------------------------------------------------------------------------ //
+// P1-07 validators: workspace lease / integration / patch commands          //
+// ------------------------------------------------------------------------ //
+
+function validateConflictScope(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: "ConflictScope must be an object" });
+    return;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: path + ".schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  if (typeof value["projectId"] !== "string" || value["projectId"].length === 0) {
+    issues.push({ path: path + ".projectId", code: "bad_type", message: "projectId must be a non-empty string" });
+  }
+  if (typeof value["workspaceId"] !== "string" || value["workspaceId"].length === 0) {
+    issues.push({ path: path + ".workspaceId", code: "bad_type", message: "workspaceId must be a non-empty string" });
+  }
+  validateEnum(value["kind"], CONFLICT_SCOPE_KINDS, path + ".kind", issues);
+  if (typeof value["id"] !== "string" || value["id"].length === 0) {
+    issues.push({ path: path + ".id", code: "bad_type", message: "id must be a non-empty string" });
+  }
+  if (value["revision"] !== null && !Number.isSafeInteger(value["revision"])) {
+    issues.push({ path: path + ".revision", code: "bad_type", message: "revision must be an integer or null" });
+  }
+}
+
+function validateWorkspaceLeaseHolder(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: "holder must be an object" });
+    return;
+  }
+  validateRunRef(value["runRef"], path + ".runRef", issues);
+  const attemptRef = value["attemptRef"];
+  if (!isRecord(attemptRef)) {
+    issues.push({ path: path + ".attemptRef", code: "bad_type", message: "attemptRef must be an object" });
+  } else {
+    if (attemptRef["aggregateType"] !== "TaskAttempt") {
+      issues.push({ path: path + ".attemptRef.aggregateType", code: "bad_type", message: "aggregateType must be TaskAttempt" });
+    }
+    stringField(attemptRef, "projectId", issues, path + ".attemptRef.projectId");
+    stringField(attemptRef, "goalId", issues, path + ".attemptRef.goalId");
+    stringField(attemptRef, "taskId", issues, path + ".attemptRef.taskId");
+    stringField(attemptRef, "attemptId", issues, path + ".attemptRef.attemptId");
+  }
+  const roleBinding = value["roleBinding"];
+  if (!isRecord(roleBinding)) {
+    issues.push({ path: path + ".roleBinding", code: "bad_type", message: "roleBinding must be an object" });
+  } else {
+    if (roleBinding["schemaVersion"] !== 1) {
+      issues.push({ path: path + ".roleBinding.schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+    }
+    stringField(roleBinding, "bindingId", issues, path + ".roleBinding.bindingId");
+    stringField(roleBinding, "templateId", issues, path + ".roleBinding.templateId");
+  }
+}
+
+function validateLeaseBase(command: unknown, commandType: string, issues: ValidationIssue[]): boolean {
+  if (!isRecord(command)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return false;
+  }
+  if (command["commandType"] !== commandType) {
+    issues.push({ path: "commandType", code: "bad_type", message: "commandType must be " + commandType });
+  }
+  if (command["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  validateCommandIdentity(command["identity"], "identity", issues);
+  stringField(command, "aggregateId", issues);
+  if (command["expectedRevision"] !== 0) {
+    issues.push({ path: "expectedRevision", code: "bad_type", message: "expectedRevision must be 0 for a new lease" });
+  }
+  stringField(command, "correlationId", issues);
+  stringField(command, "submittedAt", issues);
+  return !isRecord(command["payload"]) || true;
+}
+
+export function validateAcquireWorkspaceReadLeaseCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (validateLeaseBase(value, "AcquireWorkspaceReadLease", issues) && isRecord(value) && isRecord(value["payload"])) {
+    const payload = value["payload"];
+    stringField(payload, "projectId", issues, "payload.projectId");
+    stringField(payload, "workspaceId", issues, "payload.workspaceId");
+    validateConflictScope(payload["scope"], "payload.scope", issues);
+    validateWorkspaceLeaseHolder(payload["holder"], "payload.holder", issues);
+    if (payload["expiresAt"] !== null && typeof payload["expiresAt"] !== "string") {
+      issues.push({ path: "payload.expiresAt", code: "bad_type", message: "expiresAt must be a string or null" });
+    }
+  }
+  return issues;
+}
+
+export function validateAcquireWorkspaceWriteLeaseCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (validateLeaseBase(value, "AcquireWorkspaceWriteLease", issues) && isRecord(value) && isRecord(value["payload"])) {
+    const payload = value["payload"];
+    stringField(payload, "projectId", issues, "payload.projectId");
+    stringField(payload, "workspaceId", issues, "payload.workspaceId");
+    validateConflictScope(payload["scope"], "payload.scope", issues);
+    validateWorkspaceLeaseHolder(payload["holder"], "payload.holder", issues);
+    if (payload["expiresAt"] !== null && typeof payload["expiresAt"] !== "string") {
+      issues.push({ path: "payload.expiresAt", code: "bad_type", message: "expiresAt must be a string or null" });
+    }
+    if (!Array.isArray(payload["declaredWriteScope"]) || payload["declaredWriteScope"].some((e: unknown) => typeof e !== "string")) {
+      issues.push({ path: "payload.declaredWriteScope", code: "bad_type", message: "declaredWriteScope must be an array of strings" });
+    }
+  }
+  return issues;
+}
+
+export function validateReleaseWorkspaceLeaseCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (validateLeaseBase(value, "ReleaseWorkspaceLease", issues) && isRecord(value) && isRecord(value["payload"])) {
+    const payload = value["payload"];
+    stringField(payload, "projectId", issues, "payload.projectId");
+    stringField(payload, "workspaceId", issues, "payload.workspaceId");
+    validateEnum(payload["kind"], ["read", "write"], "payload.kind", issues);
+    stringField(payload, "leaseId", issues, "payload.leaseId");
+    validateRunRef(payload["holderRunRef"], "payload.holderRunRef", issues);
+  }
+  return issues;
+}
+
+function validateEvidenceInputRef(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: "input must be an object" });
+    return;
+  }
+  stringField(value, "sourceTaskId", issues, path + ".sourceTaskId");
+  validateRunRef(value["sourceRunRef"], path + ".sourceRunRef", issues);
+  validateEnum(value["kind"], ["evidence", "artifact", "handoff"], path + ".kind", issues);
+}
+
+export function validateRecordIntegrationResultCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "RecordIntegrationResult") {
+    issues.push({ path: "commandType", code: "bad_type", message: "commandType must be RecordIntegrationResult" });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (!Number.isSafeInteger(value["expectedRevision"]) || (value["expectedRevision"] as number) < 0) {
+    issues.push({ path: "expectedRevision", code: "bad_type", message: "expectedRevision must be a non-negative integer" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  const result = payload["result"];
+  if (!isRecord(result)) {
+    issues.push({ path: "payload.result", code: "bad_type", message: "result must be an object" });
+    return issues;
+  }
+  if (result["schemaVersion"] !== 1) {
+    issues.push({ path: "payload.result.schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(result, "resultId", issues, "payload.result.resultId");
+  stringField(result, "projectId", issues, "payload.result.projectId");
+  stringField(result, "workspaceId", issues, "payload.result.workspaceId");
+  stringField(result, "goalId", issues, "payload.result.goalId");
+  stringField(result, "taskId", issues, "payload.result.taskId");
+  stringField(result, "taskRevision", issues, "payload.result.taskRevision");
+  validateRunRef(result["runRef"], "payload.result.runRef", issues);
+  if (!Number.isSafeInteger(result["workspaceRevision"])) {
+    issues.push({ path: "payload.result.workspaceRevision", code: "bad_type", message: "workspaceRevision must be an integer" });
+  }
+  const inputs = result["inputs"];
+  if (!Array.isArray(inputs) || inputs.length > INTEGRATION_MAX_INPUTS) {
+    issues.push({ path: "payload.result.inputs", code: "size_exceeded", message: "inputs must be an array <= " + INTEGRATION_MAX_INPUTS });
+  } else {
+    inputs.forEach((e: unknown, i: number) => validateEvidenceInputRef(e, "payload.result.inputs[" + i + "]", issues));
+  }
+  const conflicts = result["conflicts"];
+  if (!Array.isArray(conflicts) || conflicts.length > INTEGRATION_MAX_CONFLICTS) {
+    issues.push({ path: "payload.result.conflicts", code: "size_exceeded", message: "conflicts must be an array <= " + INTEGRATION_MAX_CONFLICTS });
+  }
+  const gaps = result["gaps"];
+  if (!Array.isArray(gaps) || gaps.length > INTEGRATION_MAX_GAPS) {
+    issues.push({ path: "payload.result.gaps", code: "size_exceeded", message: "gaps must be an array <= " + INTEGRATION_MAX_GAPS });
+  }
+  const explanation = result["explanation"];
+  if (explanation === null || typeof explanation === "string") {
+    if (typeof explanation === "string" && Buffer.byteLength(explanation, "utf8") > INTEGRATION_MAX_EXPLANATION_BYTES) {
+      issues.push({ path: "payload.result.explanation", code: "size_exceeded", message: "explanation exceeds " + INTEGRATION_MAX_EXPLANATION_BYTES + " bytes" });
+    }
+  } else {
+    issues.push({ path: "payload.result.explanation", code: "bad_type", message: "explanation must be a string or null" });
+  }
+  if (typeof result["escalate"] !== "boolean") {
+    issues.push({ path: "payload.result.escalate", code: "bad_type", message: "escalate must be a boolean" });
+  }
+  const conflictCount = Array.isArray(conflicts) ? conflicts.length : 0;
+  if (conflictCount > 0 && explanation === null && result["escalate"] !== true) {
+    issues.push({ path: "payload.result.explanation", code: "conflict_unresolved", message: "conflicts require explanation or escalate" });
+  }
+  if (result["escalate"] === true && conflictCount === 0) {
+    issues.push({ path: "payload.result.escalate", code: "invalid_escalate", message: "escalate requires at least one conflict" });
+  }
+  stringField(result, "generatedAt", issues, "payload.result.generatedAt");
+  return issues;
+}
+
+export function validateRecordPatchCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "RecordPatch") {
+    issues.push({ path: "commandType", code: "bad_type", message: "commandType must be RecordPatch" });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (value["expectedRevision"] !== 0) {
+    issues.push({ path: "expectedRevision", code: "bad_type", message: "expectedRevision must be 0 for a new patch" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  const patch = payload["patch"];
+  if (!isRecord(patch)) {
+    issues.push({ path: "payload.patch", code: "bad_type", message: "patch must be an object" });
+    return issues;
+  }
+  if (patch["schemaVersion"] !== 1) {
+    issues.push({ path: "payload.patch.schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(patch, "patchId", issues, "payload.patch.patchId");
+  stringField(patch, "projectId", issues, "payload.patch.projectId");
+  stringField(patch, "workspaceId", issues, "payload.patch.workspaceId");
+  stringField(patch, "goalId", issues, "payload.patch.goalId");
+  stringField(patch, "taskId", issues, "payload.patch.taskId");
+  stringField(patch, "taskRevision", issues, "payload.patch.taskRevision");
+  validateRunRef(patch["runRef"], "payload.patch.runRef", issues);
+  validateEnum(patch["kind"], ["patch", "commit"], "payload.patch.kind", issues);
+  stringField(patch, "title", issues, "payload.patch.title");
+  const changedPaths = patch["changedPaths"];
+  if (!Array.isArray(changedPaths) || changedPaths.length > PATCH_MAX_CHANGED_PATHS || changedPaths.some((e: unknown) => typeof e !== "string" || e.length === 0)) {
+    issues.push({ path: "payload.patch.changedPaths", code: "size_exceeded", message: "changedPaths must be a non-empty-string array <= " + PATCH_MAX_CHANGED_PATHS });
+  }
+  if (!isRecord(patch["bodyRef"])) {
+    issues.push({ path: "payload.patch.bodyRef", code: "bad_type", message: "bodyRef must be an object" });
+  }
+  if (!Number.isSafeInteger(patch["beforeWorkspaceRevision"]) || !Number.isSafeInteger(patch["afterWorkspaceRevision"])) {
+    issues.push({ path: "payload.patch.workspaceRevisions", code: "bad_type", message: "workspace revisions must be integers" });
+  }
+  const checkResults = patch["checkResults"];
+  if (!Array.isArray(checkResults) || checkResults.length > PATCH_MAX_CHECK_RESULTS) {
+    issues.push({ path: "payload.patch.checkResults", code: "size_exceeded", message: "checkResults must be an array <= " + PATCH_MAX_CHECK_RESULTS });
+  } else {
+    checkResults.forEach((c: unknown, i: number) => {
+      if (!isRecord(c)) {
+        issues.push({ path: "payload.patch.checkResults[" + i + "]", code: "bad_type", message: "checkResult must be an object" });
+        return;
+      }
+      stringField(c, "checkId", issues, "payload.patch.checkResults[" + i + "].checkId");
+      validateEnum(c["outcome"], ["PASS", "FAIL", "INCONCLUSIVE"], "payload.patch.checkResults[" + i + "].outcome", issues);
+      if (typeof c["summary"] !== "string" || Buffer.byteLength(c["summary"] as string, "utf8") > PATCH_MAX_CHECK_SUMMARY_BYTES) {
+        issues.push({ path: "payload.patch.checkResults[" + i + "].summary", code: "size_exceeded", message: "summary exceeds " + PATCH_MAX_CHECK_SUMMARY_BYTES + " bytes" });
+      }
+    });
+  }
+  const usedInput = patch["usedInputEvidenceRefs"];
+  if (!Array.isArray(usedInput) || usedInput.length > PATCH_MAX_USED_INPUT_EVIDENCE) {
+    issues.push({ path: "payload.patch.usedInputEvidenceRefs", code: "size_exceeded", message: "usedInputEvidenceRefs must be an array <= " + PATCH_MAX_USED_INPUT_EVIDENCE });
+  }
+  stringField(patch, "generatedAt", issues, "payload.patch.generatedAt");
+  return issues;
+}
+
