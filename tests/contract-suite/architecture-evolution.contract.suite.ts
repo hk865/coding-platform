@@ -107,7 +107,7 @@ export function defineArchitectureEvolutionContractSuite(
         expect(x.patchReceipt.status).toBe("committed");
         if (x.patchReceipt.status !== "committed") return;
         expect(x.patch.findingRef.findingId).toBe(P113_FINDING);
-        expect(x.patch.policyPin.contentDigest.length).toBeGreaterThan(0);
+        expect(x.patch.policyPin.digest.length).toBeGreaterThan(0);
         expect(x.patch.planBaselinePin.ref.aggregateType).toBe("ArchitectureBaselineRevision");
         expect(x.patch.completionPolicyPin.ref.aggregateType).toBe("CompletionPolicyRevision");
       });
