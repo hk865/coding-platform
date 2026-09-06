@@ -263,15 +263,14 @@ export function defineEvidenceContractSuite(createHarness: P1_04HarnessFactory):
         taskId: IMPLEMENT, coverage: covStatic(), checkId: "static-check-lint", workspaceRevision: 2,
       });
       expect((await h.submitEvidence(evidenceCommandFor(sc.alpha, { commandId: "cmd-app-stale", evidence: staleEv, idempotencyKey: "p104-ev-app-stale" }))).status).toBe("committed");
-      // Coverage of the REVIEW requirement but subject = implement: the intake guard
-      // deterministically REJECTS cross-task coverage (dangling_ref, zero write).
+      // Coverage of the REVIEW requirement but subject = implement: the entry is
+      // ADMITTED (an existing obligation/VR fact — no hard dangling) and the frozen
+      // applicability rule marks it OUT_OF_SCOPE (never written back).
       const oosEv = evidenceFor(sc.alpha, {
         evidenceId: "ev-app-oos", kind: "observation", outcome: "PASS",
         taskId: IMPLEMENT, coverage: covReview(), checkId: "static-check-lint",
       });
-      const oosRejected = await h.submitEvidence(evidenceCommandFor(sc.alpha, { commandId: "cmd-app-oos", evidence: oosEv, idempotencyKey: "p104-ev-app-oos" }));
-      expect(oosRejected.status).toBe("rejected");
-      if (oosRejected.status === "rejected") expect(oosRejected.code).toBe("dangling_ref");
+      expect((await h.submitEvidence(evidenceCommandFor(sc.alpha, { commandId: "cmd-app-oos", evidence: oosEv, idempotencyKey: "p104-ev-app-oos" }))).status).toBe("committed");
       const dynamic = evidenceFor(sc.alpha, {
         evidenceId: "ev-app-dyn", kind: "observation", outcome: "PASS",
         taskId: IMPLEMENT, coverage: covDynamic(), checkId: "dynamic-check-tests",
@@ -292,9 +291,7 @@ export function defineEvidenceContractSuite(createHarness: P1_04HarnessFactory):
       );
       expect(bindingApplicability.get("ev-app-pass")).toBe("APPLICABLE");
       expect(bindingApplicability.get("ev-app-stale")).toBe("STALE");
-      // OUT_OF_SCOPE display is covered by the pure applicability table (different
-      // plan refs / different requirement sets); at runtime P1-04 has no plan-change
-      // machinery (P1-11 onwards), and cross-task coverage is rejected at intake.
+      expect(bindingApplicability.get("ev-app-oos")).toBe("OUT_OF_SCOPE");
       // History untouched: the stale evidence still anchors workspaceRevision 2.
       const staleLoad = await h.ledger.load(evidenceRefFor(sc.alpha.projectId, "ev-app-stale"));
       expect(staleLoad.status).toBe("found");
