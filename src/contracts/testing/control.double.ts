@@ -111,6 +111,8 @@ export type BindWorkContextBehavior = (command: BindWorkContextCommand) => BindW
 export type LinkWorkRunBehavior = (command: LinkWorkRunCommand) => LinkWorkRunReceipt | Promise<LinkWorkRunReceipt>;
 export type RecordExecutionNoteBehavior = (command: RecordExecutionNoteCommand) => RecordExecutionNoteReceipt | Promise<RecordExecutionNoteReceipt>;
 export type RecordContinuationBehavior = (command: RecordContinuationCommand) => RecordContinuationReceipt | Promise<RecordContinuationReceipt>;
+export type SubmitControlBehavior = (command: import("../control-intent.js").SubmitControlCommand) => import("../control-intent.js").SubmitControlReceipt | Promise<import("../control-intent.js").SubmitControlReceipt>;
+export type RecordSafePointAckBehavior = (command: import("../control-intent.js").RecordSafePointAckCommand) => import("../control-intent.js").RecordSafePointAckReceipt | Promise<import("../control-intent.js").RecordSafePointAckReceipt>;
 export type RecordArchitectureInspectionBehavior = (command: import("../architecture-inspection.js").RecordArchitectureInspectionCommand) => import("../architecture-inspection.js").RecordArchitectureInspectionReceipt | Promise<import("../architecture-inspection.js").RecordArchitectureInspectionReceipt>;
 export type RecordArchitectureFindingBehavior = (command: import("../architecture-inspection.js").RecordArchitectureFindingCommand) => import("../architecture-inspection.js").RecordArchitectureFindingReceipt | Promise<import("../architecture-inspection.js").RecordArchitectureFindingReceipt>;
 export type RecordArchitectureDecisionBriefBehavior = (command: import("../architecture-inspection.js").RecordArchitectureDecisionBriefCommand) => import("../architecture-inspection.js").RecordArchitectureDecisionBriefReceipt | Promise<import("../architecture-inspection.js").RecordArchitectureDecisionBriefReceipt>;
@@ -161,6 +163,8 @@ export class ScriptedControlEngine implements ControlEngine {
       linkWorkRun?: LinkWorkRunBehavior;
       recordExecutionNote?: RecordExecutionNoteBehavior;
       recordContinuation?: RecordContinuationBehavior;
+      submitControl?: SubmitControlBehavior;
+      recordSafePointAck?: RecordSafePointAckBehavior;
       recordArchitectureInspection?: RecordArchitectureInspectionBehavior;
       recordArchitectureFinding?: RecordArchitectureFindingBehavior;
       recordArchitectureDecisionBrief?: RecordArchitectureDecisionBriefBehavior;
@@ -305,6 +309,20 @@ export class ScriptedControlEngine implements ControlEngine {
   readonly linkWorkRunCalls: LinkWorkRunCommand[] = [];
   readonly recordExecutionNoteCalls: RecordExecutionNoteCommand[] = [];
   readonly recordContinuationCalls: RecordContinuationCommand[] = [];
+  readonly submitControlCalls: import("../control-intent.js").SubmitControlCommand[] = [];
+  readonly recordSafePointAckCalls: import("../control-intent.js").RecordSafePointAckCommand[] = [];
+
+  async submitControl(command: import("../control-intent.js").SubmitControlCommand): Promise<import("../control-intent.js").SubmitControlReceipt> {
+    this.submitControlCalls.push(command);
+    if (this.options.submitControl) return this.options.submitControl(command);
+    throw new Error("ScriptedControlEngine: no submitControl behavior configured");
+  }
+
+  async recordSafePointAck(command: import("../control-intent.js").RecordSafePointAckCommand): Promise<import("../control-intent.js").RecordSafePointAckReceipt> {
+    this.recordSafePointAckCalls.push(command);
+    if (this.options.recordSafePointAck) return this.options.recordSafePointAck(command);
+    throw new Error("ScriptedControlEngine: no recordSafePointAck behavior configured");
+  }
 
   async bindWorkContext(command: BindWorkContextCommand): Promise<BindWorkContextReceipt> {
     this.bindWorkContextCalls.push(command);

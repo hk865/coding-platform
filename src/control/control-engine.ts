@@ -88,6 +88,8 @@ import { reduceGoal } from "./goal-reducer.js";
 import { WorkspaceLeaseEngineImpl } from "./workspace-lease.js";
 import { WorkRecordEngineImpl } from "./work-record.js";
 import { ArchitectureInspectionEngineImpl } from "./architecture-inspection.js";
+import { ControlIntentEngineImpl } from "./control-intent.js";
+import type { RecordSafePointAckCommand, RecordSafePointAckReceipt, SubmitControlCommand, SubmitControlReceipt } from "../contracts/control-intent.js";
 import type { RecordArchitectureInspectionCommand, RecordArchitectureInspectionReceipt, RecordArchitectureFindingCommand, RecordArchitectureFindingReceipt, RecordArchitectureDecisionBriefCommand, RecordArchitectureDecisionBriefReceipt, RecordCandidateBaselineProposalCommand, RecordCandidateBaselineProposalReceipt } from "../contracts/architecture-inspection.js";
 import { recordIntegrationResult } from "./integration-join.js";
 import { recordPatch } from "./patch-record.js";
@@ -129,12 +131,14 @@ export class ControlEngineImpl implements ControlEngine {
   private readonly workspaceLease: WorkspaceLeaseEngineImpl;
   private readonly workRecord: WorkRecordEngineImpl;
   private readonly architectureInspection: ArchitectureInspectionEngineImpl;
+  private readonly controlIntent: ControlIntentEngineImpl;
 
   constructor(deps: ControlEngineDeps) {
     this.deps = deps;
     this.workspaceLease = new WorkspaceLeaseEngineImpl(deps);
     this.workRecord = new WorkRecordEngineImpl(deps);
     this.architectureInspection = new ArchitectureInspectionEngineImpl(deps);
+    this.controlIntent = new ControlIntentEngineImpl(deps);
   }
 
   // --------------------------------------------------------------------- //
@@ -356,6 +360,14 @@ export class ControlEngineImpl implements ControlEngine {
 
   recordCandidateBaselineProposal(command: RecordCandidateBaselineProposalCommand): Promise<RecordCandidateBaselineProposalReceipt> {
     return this.architectureInspection.recordCandidateBaselineProposal(command);
+  }
+
+  submitControl(command: SubmitControlCommand): Promise<SubmitControlReceipt> {
+    return this.controlIntent.submit(command);
+  }
+
+  recordSafePointAck(command: RecordSafePointAckCommand): Promise<RecordSafePointAckReceipt> {
+    return this.controlIntent.recordSafePointAck(command);
   }
 
   // --------------------------------------------------------------------- //

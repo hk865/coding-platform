@@ -126,6 +126,7 @@ import type {
   ArchitectureInspectionRef,
   ArchitectureInspectionSnapshot,
 } from "./architecture-inspection.js";
+import type { ControlIntentRecordedEvent, ControlIntentRef, ControlIntentSnapshot, SafePointAcknowledgedEvent } from "./control-intent.js";
 
 export type ProjectRef = {
   aggregateType: "Project";
@@ -176,7 +177,8 @@ export type AggregateRef =
   | ArchitectureInspectionRef
   | ArchitectureFindingRef
   | ArchitectureDecisionBriefRef
-  | ArchitectureCandidateProposalRef;
+  | ArchitectureCandidateProposalRef
+  | ControlIntentRef;
 
 export type ProjectSnapshot = {
   ref: ProjectRef;
@@ -231,7 +233,8 @@ export type AggregateSnapshot =
   | ArchitectureInspectionSnapshot
   | ArchitectureFindingSnapshot
   | ArchitectureDecisionBriefSnapshot
-  | ArchitectureCandidateProposalSnapshot;
+  | ArchitectureCandidateProposalSnapshot
+  | ControlIntentSnapshot;
 
 export type SnapshotResult =
   | { status: "found"; snapshot: AggregateSnapshot }
@@ -594,6 +597,31 @@ export type ArchitectureProposalRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
+
+/** P1-10: control-intent-record — one durable desired-state intent (CAS@0). */
+export type ControlIntentRecordLedgerCommitV1 = {
+  commitKind: "control-intent-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  events: [ControlIntentRecordedEvent];
+  snapshots: [ControlIntentSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-10: control-ack — append one safe-point acknowledgement (intent CAS@N). */
+export type ControlAckRecordLedgerCommitV1 = {
+  commitKind: "control-ack";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  events: [SafePointAcknowledgedEvent];
+  snapshots: [ControlIntentSnapshot];
+  outboxIntents: [];
+};
+
 export type LedgerCommit =
   | GoalCreateLedgerCommitV1
   | BootstrapLedgerCommitV1
@@ -621,7 +649,9 @@ export type LedgerCommit =
   | ArchitectureInspectionRecordLedgerCommitV1
   | ArchitectureFindingRecordLedgerCommitV1
   | ArchitectureBriefRecordLedgerCommitV1
-  | ArchitectureProposalRecordLedgerCommitV1;
+  | ArchitectureProposalRecordLedgerCommitV1
+  | ControlIntentRecordLedgerCommitV1
+  | ControlAckRecordLedgerCommitV1;
 
 export type LedgerCommitReceipt =
   | {

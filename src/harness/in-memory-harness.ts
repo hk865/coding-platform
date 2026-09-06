@@ -97,6 +97,8 @@ import { VerificationEngineImpl } from "../verification/verification-engine.js";
 import { ReviewContextCompilerImpl } from "../context/review-context-compiler.js";
 import { WorkContextCompilerImpl } from "../context/work-context-compiler.js";
 import { CompletedWorkContextCompilerImpl } from "../context/completed-work-context-compiler.js";
+import { FakeLifecycleControlAdapter } from "../runtime/lifecycle-control-adapter.js";
+import type { LifecycleControlPort, ControlIntentRef, ControlTimelineViewQuery, ControlTimelineViewResult, SubmitControlCommand, SubmitControlReceipt, RecordSafePointAckCommand, RecordSafePointAckReceipt, ControlIntentPort } from "../contracts/control-intent.js";
 import type { CompletedWorkContextPort, CompletedWorkContextRequestV1, CompletedWorkContextResultV1 } from "../contracts/completed-work-context.js";
 import { FakeContextContinuationRuntimeAdapter } from "../runtime/context-continuation-adapter.js";
 import { ArchitectureReconcilerImpl } from "../control/architecture-reconciler.js";
@@ -140,6 +142,8 @@ export interface InMemoryHarnessOptions {
   contextContinuation?: ContextContinuationPort;
   /** P1-17: explicit CompletedWorkContextPort (default CompletedWorkContextCompilerImpl). */
   completedWork?: CompletedWorkContextPort;
+  /** P1-10: explicit LifecycleControlPort (default FakeLifecycleControlAdapter). */
+  lifecycleControl?: LifecycleControlPort;
   /** P1-12: explicit WorkspaceReader (default FakeWorkspaceReaderAdapter). */
   workspaceReader?: WorkspaceReadPort;
   /** P1-12: explicit CodeGraphPort (default CodeGraphPortImpl). */
@@ -181,6 +185,8 @@ export interface InMemoryHarness {
   contextContinuation: ContextContinuationPort;
   /** P1-17: completed-work selection (read-only composition; no writes). */
   completedWork: CompletedWorkContextPort;
+  /** P1-10: WorkerRuntime lifecycle control face (safe points). */
+  lifecycleControl: LifecycleControlPort;
   /** P1-12: deterministic workspace reader (versioned source graphs). */
   workspaceReader: WorkspaceReadPort;
   /** P1-12: VerificationEngine.CodeGraphPort seam. */
@@ -284,6 +290,14 @@ export interface InMemoryHarness {
   assembleWorkContext(request: WorkContextRequestV1): Promise<WorkContextAssemblyResultV1>;
   /** P1-17: bounded completed-work selection for a related new task. */
   assembleCompletedWorkContext(request: CompletedWorkContextRequestV1): Promise<CompletedWorkContextResultV1>;
+  /** P1-10: submit one durable control intent (desired state first). */
+  submitControl(command: SubmitControlCommand): Promise<SubmitControlReceipt>;
+  /** P1-10: record one safe-point acknowledgement. */
+  recordSafePointAck(command: RecordSafePointAckCommand): Promise<RecordSafePointAckReceipt>;
+  /** P1-10: control timeline view (read-only; readModel only). */
+  controlTimelineView(query: ControlTimelineViewQuery): Promise<ControlTimelineViewResult>;
+  /** P1-10: runtime lifecycle capabilities (honest declaration). */
+  lifecycleCapabilities(request: { runRef: import("../contracts/dispatch.js").RunRef | null }): { safePointDelivery: boolean; pause: boolean; cancel: boolean; steer: boolean; maxSteerPayloadBytes: number };
   /** P1-16: runtime continuation capabilities (honest declaration). */
   continuationCapabilities(request: { workContextRef: import("../contracts/context-continuity.js").WorkContextRef; runRef: import("../contracts/dispatch.js").RunRef | null }): Promise<import("../contracts/context-continuation-port.js").ContextContinuationCapabilityResult>;
   /** P1-04: review-context assembly (bounded ReviewPacket). */
@@ -360,6 +374,8 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     options.contextContinuation ?? new FakeContextContinuationRuntimeAdapter(runtime);
   const completedWork: CompletedWorkContextPort =
     options.completedWork ?? new CompletedWorkContextCompilerImpl({ ledger, vault, readModel, now: d.clock });
+  const lifecycleControl: LifecycleControlPort =
+    options.lifecycleControl ?? new FakeLifecycleControlAdapter();
   const workspaceReader: WorkspaceReadPort =
     options.workspaceReader ?? new FakeWorkspaceReaderAdapter({ now: d.clock });
   const codeGraph: CodeGraphPort = options.codeGraph ?? new CodeGraphPortImpl();
@@ -401,6 +417,7 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     workContext,
     contextContinuation,
     completedWork,
+    lifecycleControl,
     workspaceReader,
     codeGraph,
     inspection,
@@ -454,6 +471,10 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     recordContinuation: (command) => control.recordContinuation(command),
     assembleWorkContext: (request) => workContext.assembleWorkContext(request),
     assembleCompletedWorkContext: (request) => completedWork.assembleCompletedWorkContext(request),
+    submitControl: (command) => control.submitControl(command),
+    recordSafePointAck: (command) => control.recordSafePointAck(command),
+    controlTimelineView: (query) => readModel.controlTimelineView(query),
+    lifecycleCapabilities: (request) => lifecycleControl.capabilities(request),
     continuationCapabilities: (request) => contextContinuation.capabilities(request),
     assembleHandoff: (request) => handoffContext.assemble(request),
     assembleReview: (request) => reviewContext.assemble(request),

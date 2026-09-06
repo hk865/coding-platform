@@ -124,4 +124,6 @@ export interface ReadModelIndex {
   architectureInspectionView(query: import("./architecture-inspection.js").ArchitectureInspectionViewQuery): Promise<import("./architecture-inspection.js").ArchitectureInspectionViewResult>;
   /** P1-17: completed-work selection source view per (projectId, workspaceId) — display only, composed from the P1-16 work-context stores. */
   completedWorkView(query: import("./completed-work-context.js").CompletedWorkViewQuery): Promise<import("./completed-work-context.js").CompletedWorkViewResult>;
+  /** P1-10: control timeline view per (projectId, workspaceId) — desired vs current separated (display only). */
+  controlTimelineView(query: import("./control-intent.js").ControlTimelineViewQuery): Promise<import("./control-intent.js").ControlTimelineViewResult>;
 }

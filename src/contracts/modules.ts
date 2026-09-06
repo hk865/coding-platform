@@ -70,6 +70,7 @@ import type {
   RecordCandidateBaselineProposalCommand,
   RecordCandidateBaselineProposalReceipt,
 } from "./architecture-inspection.js";
+import type { RecordSafePointAckCommand, RecordSafePointAckReceipt, SubmitControlCommand, SubmitControlReceipt } from "./control-intent.js";
 
 export type CreateGoalRequest = {
   projectId: string;
@@ -148,6 +149,10 @@ export interface ControlEngine {
   recordArchitectureDecisionBrief(command: RecordArchitectureDecisionBriefCommand): Promise<RecordArchitectureDecisionBriefReceipt>;
   /** P1-12: record one immutable candidate baseline proposal (deterministic digest; P1-14 consumes). */
   recordCandidateBaselineProposal(command: RecordCandidateBaselineProposalCommand): Promise<RecordCandidateBaselineProposalReceipt>;
+  /** P1-10: submit one durable control intent (desired state FIRST — no side effect until runtime ack). */
+  submitControl(command: SubmitControlCommand): Promise<SubmitControlReceipt>;
+  /** P1-10: record one safe-point acknowledgement (append to the intent; CAS@N). */
+  recordSafePointAck(command: RecordSafePointAckCommand): Promise<RecordSafePointAckReceipt>;
 }
 
 export interface HumanCollaboration {

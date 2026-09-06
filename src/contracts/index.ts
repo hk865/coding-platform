@@ -36,3 +36,4 @@ export * from "./context-continuation-port.js";
 export * from "./architecture-inspection.js";
 export * from "./workspace-read.js";
 export * from "./architecture-reconciler.js";
+export * from "./control-intent.js";

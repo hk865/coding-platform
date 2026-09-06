@@ -78,6 +78,8 @@ import { HandoffContextCompilerImpl } from "../context/handoff-context-compiler.
 import { FakeHandoffControlRuntimeAdapter } from "../runtime/handoff-control-adapter.js";
 import { WorkContextCompilerImpl } from "../context/work-context-compiler.js";
 import { CompletedWorkContextCompilerImpl } from "../context/completed-work-context-compiler.js";
+import { FakeLifecycleControlAdapter } from "../runtime/lifecycle-control-adapter.js";
+import type { LifecycleControlPort, ControlTimelineViewQuery, ControlTimelineViewResult, SubmitControlCommand, SubmitControlReceipt, RecordSafePointAckCommand, RecordSafePointAckReceipt } from "../contracts/control-intent.js";
 import type { CompletedWorkContextPort, CompletedWorkContextRequestV1, CompletedWorkContextResultV1 } from "../contracts/completed-work-context.js";
 import { FakeContextContinuationRuntimeAdapter } from "../runtime/context-continuation-adapter.js";
 import { ArchitectureReconcilerImpl } from "../control/architecture-reconciler.js";
@@ -153,6 +155,8 @@ export interface PersistentSqliteHarnessOptions {
   contextContinuation?: ContextContinuationPort;
   /** P1-17: explicit CompletedWorkContextPort (default CompletedWorkContextCompilerImpl). */
   completedWork?: CompletedWorkContextPort;
+  /** P1-10: explicit LifecycleControlPort (default FakeLifecycleControlAdapter). */
+  lifecycleControl?: LifecycleControlPort;
   /** P1-12: explicit WorkspaceReader (default FakeWorkspaceReaderAdapter). */
   workspaceReader?: WorkspaceReadPort;
   /** P1-12: explicit CodeGraphPort (default CodeGraphPortImpl). */
@@ -197,6 +201,8 @@ export interface PersistentSqliteHarness {
   contextContinuation: ContextContinuationPort;
   /** P1-17: completed-work selection (read-only composition; no writes). */
   completedWork: CompletedWorkContextPort;
+  /** P1-10: WorkerRuntime lifecycle control face (safe points). */
+  lifecycleControl: LifecycleControlPort;
   /** P1-12: deterministic workspace reader (versioned source graphs). */
   workspaceReader: WorkspaceReadPort;
   /** P1-12: VerificationEngine.CodeGraphPort seam. */
@@ -301,6 +307,14 @@ export interface PersistentSqliteHarness {
   assembleWorkContext(request: WorkContextRequestV1): Promise<WorkContextAssemblyResultV1>;
   /** P1-17: bounded completed-work selection for a related new task. */
   assembleCompletedWorkContext(request: CompletedWorkContextRequestV1): Promise<CompletedWorkContextResultV1>;
+  /** P1-10: submit one durable control intent (desired state first). */
+  submitControl(command: SubmitControlCommand): Promise<SubmitControlReceipt>;
+  /** P1-10: record one safe-point acknowledgement. */
+  recordSafePointAck(command: RecordSafePointAckCommand): Promise<RecordSafePointAckReceipt>;
+  /** P1-10: control timeline view (read-only; readModel only). */
+  controlTimelineView(query: ControlTimelineViewQuery): Promise<ControlTimelineViewResult>;
+  /** P1-10: runtime lifecycle capabilities (honest declaration). */
+  lifecycleCapabilities(request: { runRef: import("../contracts/dispatch.js").RunRef | null }): { safePointDelivery: boolean; pause: boolean; cancel: boolean; steer: boolean; maxSteerPayloadBytes: number };
   /** P1-16: runtime continuation capabilities (honest declaration). */
   continuationCapabilities(request: { workContextRef: import("../contracts/context-continuity.js").WorkContextRef; runRef: import("../contracts/dispatch.js").RunRef | null }): Promise<import("../contracts/context-continuation-port.js").ContextContinuationCapabilityResult>;
   /** P1-04: review-context assembly (bounded ReviewPacket). */
@@ -342,6 +356,7 @@ interface BuiltHarness {
   workContext: WorkContextPort;
   contextContinuation: ContextContinuationPort;
   completedWork: CompletedWorkContextPort;
+  lifecycleControl: LifecycleControlPort;
   workspaceReader: WorkspaceReadPort;
   codeGraph: CodeGraphPort;
   inspection: InspectionPort;
@@ -369,6 +384,7 @@ function buildHarness(
   workContextOverride: WorkContextPort | undefined,
   contextContinuationOverride: ContextContinuationPort | undefined,
   completedWorkOverride: CompletedWorkContextPort | undefined,
+  lifecycleControlOverride: LifecycleControlPort | undefined,
   workspaceReaderOverride: WorkspaceReadPort | undefined,
   codeGraphOverride: CodeGraphPort | undefined,
   inspectionOverride: InspectionPort | undefined,
@@ -432,6 +448,8 @@ function buildHarness(
     contextContinuationOverride ?? new FakeContextContinuationRuntimeAdapter(runtime);
   const completedWork: CompletedWorkContextPort =
     completedWorkOverride ?? new CompletedWorkContextCompilerImpl({ ledger, vault, readModel, now: d.clock });
+  const lifecycleControl: LifecycleControlPort =
+    lifecycleControlOverride ?? new FakeLifecycleControlAdapter();
   const workspaceReader: WorkspaceReadPort =
     workspaceReaderOverride ?? new FakeWorkspaceReaderAdapter({ now: d.clock });
   const codeGraph: CodeGraphPort = codeGraphOverride ?? new CodeGraphPortImpl();
@@ -468,6 +486,7 @@ function buildHarness(
     workContext,
     contextContinuation,
     completedWork,
+    lifecycleControl,
     workspaceReader,
     codeGraph,
     inspection,
@@ -495,7 +514,7 @@ export async function createPersistentSqliteHarness(
     ledgerFilename: string,
     readModelFilename: string,
   ): PersistentSqliteHarness => {
-    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript, checkPorts, reviewer, verificationOverride, reviewContextOverride, options.handoffContext, options.handoffControl, options.workspaceCapability, options.workspaceDrive, options.runtime, options.workContext, options.contextContinuation, options.completedWork, options.workspaceReader, options.codeGraph, options.inspection);
+    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript, checkPorts, reviewer, verificationOverride, reviewContextOverride, options.handoffContext, options.handoffControl, options.workspaceCapability, options.workspaceDrive, options.runtime, options.workContext, options.contextContinuation, options.completedWork, options.lifecycleControl, options.workspaceReader, options.codeGraph, options.inspection);
     let closed = false;
     return {
       dir,
@@ -520,6 +539,7 @@ export async function createPersistentSqliteHarness(
       workContext: built.workContext,
       contextContinuation: built.contextContinuation,
       completedWork: built.completedWork,
+      lifecycleControl: built.lifecycleControl,
       workspaceReader: built.workspaceReader,
       codeGraph: built.codeGraph,
       inspection: built.inspection,
@@ -573,6 +593,10 @@ export async function createPersistentSqliteHarness(
       recordContinuation: (command) => built.control.recordContinuation(command),
       assembleWorkContext: (request) => built.workContext.assembleWorkContext(request),
       assembleCompletedWorkContext: (request) => built.completedWork.assembleCompletedWorkContext(request),
+      submitControl: (command) => built.control.submitControl(command),
+      recordSafePointAck: (command) => built.control.recordSafePointAck(command),
+      controlTimelineView: (query) => built.readModel.controlTimelineView(query),
+      lifecycleCapabilities: (request) => built.lifecycleControl.capabilities(request),
       continuationCapabilities: (request) => built.contextContinuation.capabilities(request),
       assembleHandoff: (request) => built.handoffContext.assemble(request),
       assembleReview: (request) => built.reviewContext.assemble(request),

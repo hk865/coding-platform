@@ -61,6 +61,9 @@ export type WorkspacePatchViewBehavior = (
 export type WorkContextBehavior = (
   query: import("../context-continuity.js").WorkContextViewQuery,
 ) => Promise<import("../context-continuity.js").WorkContextViewResult> | import("../context-continuity.js").WorkContextViewResult;
+export type ControlTimelineViewBehavior = (
+  query: import("../control-intent.js").ControlTimelineViewQuery,
+) => Promise<import("../control-intent.js").ControlTimelineViewResult> | import("../control-intent.js").ControlTimelineViewResult;
 export type CompletedWorkViewBehavior = (
   query: import("../completed-work-context.js").CompletedWorkViewQuery,
 ) => Promise<import("../completed-work-context.js").CompletedWorkViewResult> | import("../completed-work-context.js").CompletedWorkViewResult;
@@ -89,6 +92,7 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly workContextCalls: import("../context-continuity.js").WorkContextViewQuery[] = [];
   readonly architectureInspectionViewCalls: import("../architecture-inspection.js").ArchitectureInspectionViewQuery[] = [];
   readonly completedWorkViewCalls: import("../completed-work-context.js").CompletedWorkViewQuery[] = [];
+  readonly controlTimelineViewCalls: import("../control-intent.js").ControlTimelineViewQuery[] = [];
 
   constructor(
     private readonly options: {
@@ -106,6 +110,7 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
       workContext?: WorkContextBehavior;
       architectureInspectionView?: ArchitectureInspectionViewBehavior;
       completedWorkView?: CompletedWorkViewBehavior;
+      controlTimelineView?: ControlTimelineViewBehavior;
       consolePortfolio?: import("../console-views.js").PortfolioViewResult extends never ? never : (query: import("../console-views.js").PortfolioViewQuery) => Promise<import("../console-views.js").PortfolioViewResult> | import("../console-views.js").PortfolioViewResult;
       consoleSummary?: (query: import("../console-views.js").WorkspaceSummaryViewQuery) => Promise<import("../console-views.js").WorkspaceSummaryViewResult> | import("../console-views.js").WorkspaceSummaryViewResult;
       consolePlanMatrix?: (query: import("../console-views.js").PlanMatrixViewQuery) => Promise<import("../console-views.js").PlanMatrixViewResult> | import("../console-views.js").PlanMatrixViewResult;
@@ -203,6 +208,12 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   async completedWorkView(query: import("../completed-work-context.js").CompletedWorkViewQuery): Promise<import("../completed-work-context.js").CompletedWorkViewResult> {
     this.completedWorkViewCalls.push(query);
     if (this.options.completedWorkView) return this.options.completedWorkView(query);
+    return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId };
+  }
+
+  async controlTimelineView(query: import("../control-intent.js").ControlTimelineViewQuery): Promise<import("../control-intent.js").ControlTimelineViewResult> {
+    this.controlTimelineViewCalls.push(query);
+    if (this.options.controlTimelineView) return this.options.controlTimelineView(query);
     return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId };
   }
 

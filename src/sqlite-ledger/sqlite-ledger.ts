@@ -76,6 +76,8 @@ import {
   validateArchitectureFindingRecordCommit,
   validateArchitectureBriefRecordCommit,
   validateArchitectureProposalRecordCommit,
+  validateControlIntentRecordCommit,
+  validateControlAckRecordCommit,
 } from "../contracts/ledger-validation.js";
 import type {
   DispatchClaimLedgerCommitV1,
@@ -482,6 +484,10 @@ export class SqliteStateLedger implements StateLedger {
         return this.commitArchitectureBriefRecord(batch);
       case "architecture-proposal-record":
         return this.commitArchitectureProposalRecord(batch);
+      case "control-intent-record":
+        return this.commitControlIntentRecord(batch);
+      case "control-ack":
+        return this.commitControlAckRecord(batch);
     }
   }
 
@@ -656,6 +662,20 @@ export class SqliteStateLedger implements StateLedger {
 
   private commitArchitectureBriefRecord(batch: import("../contracts/ledger.js").ArchitectureBriefRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
     if (!validateArchitectureBriefRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitControlIntentRecord(batch: import("../contracts/ledger.js").ControlIntentRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateControlIntentRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitControlAckRecord(batch: import("../contracts/ledger.js").ControlAckRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateControlAckRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
     }
     return this.commitGeneric(batch);

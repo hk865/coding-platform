@@ -55,6 +55,8 @@ import {
   validateArchitectureFindingRecordCommit,
   validateArchitectureBriefRecordCommit,
   validateArchitectureProposalRecordCommit,
+  validateControlIntentRecordCommit,
+  validateControlAckRecordCommit,
 } from "../contracts/ledger-validation.js";
 import { canonicalJson } from "../contracts/fingerprint.js";
 import type { CommitCursor } from "../contracts/command-event.js";
@@ -169,6 +171,10 @@ export class InMemoryLedger implements StateLedger {
         return this.commitArchitectureBriefRecord(batch);
       case "architecture-proposal-record":
         return this.commitArchitectureProposalRecord(batch);
+      case "control-intent-record":
+        return this.commitControlIntentRecord(batch);
+      case "control-ack":
+        return this.commitControlAckRecord(batch);
     }
   }
 
@@ -591,6 +597,22 @@ export class InMemoryLedger implements StateLedger {
   /** P1-12: architecture-brief-record — one immutable decision brief (CAS@0). */
   private async commitArchitectureBriefRecord(batch: import("../contracts/ledger.js").ArchitectureBriefRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateArchitectureBriefRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  /** P1-10: control-intent-record — one durable desired-state intent (CAS@0). */
+  private async commitControlIntentRecord(batch: import("../contracts/ledger.js").ControlIntentRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateControlIntentRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  /** P1-10: control-ack — append one safe-point acknowledgement (CAS@N). */
+  private async commitControlAckRecord(batch: import("../contracts/ledger.js").ControlAckRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateControlAckRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
     }
     return this.commitGenericWithIdempotency(batch);
