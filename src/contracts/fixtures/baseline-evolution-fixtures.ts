@@ -27,8 +27,8 @@ export const P114_ACTIVATION = "activation-p114-1";
 export function p114ProposalRef(projectId: string = P114_PROJECT) {
   return { aggregateType: "ArchitectureCandidateProposal" as const, projectId, workspaceId: P114_WORKSPACE, proposalId: P114_PROPOSAL };
 }
-export function p114CandidateRef(projectId: string = P114_PROJECT): CandidateArchitectureBaselineRef {
-  return candidateRefFor(projectId, P114_WORKSPACE, P114_CANDIDATE);
+export function p114CandidateRef(projectId: string = P114_PROJECT, candidateId: string = P114_CANDIDATE): CandidateArchitectureBaselineRef {
+  return candidateRefFor(projectId, P114_WORKSPACE, candidateId);
 }
 export function p114DecisionRef(projectId: string = P114_PROJECT): ArchitectureChangeDecisionRef {
   return architectureChangeDecisionRefFor(projectId, P114_WORKSPACE, P114_DECISION);
@@ -64,7 +64,7 @@ export function buildP114Decision(candidate: CandidateArchitectureBaselineV1, ov
     decisionId: P114_DECISION,
     projectId: candidate.projectId,
     workspaceId: candidate.workspaceId,
-    subject: { fromPin, candidateRef: { ...p114CandidateRef(candidate.projectId) } },
+    subject: { fromPin, candidateRef: { ...candidateRefFor(candidate.projectId, candidate.workspaceId, candidate.candidateId) } },
     outcome: overrides.outcome ?? "accept",
     actor: overrides.actor ?? { kind: "human", id: "user-owner-1" },
     authority: overrides.authority ?? { strategy: "user", delegator: null, policyVersion: "architecture-decision-policy@1" },
@@ -81,7 +81,7 @@ export function buildP114Gate(candidate: CandidateArchitectureBaselineV1, overri
     projectId: candidate.projectId,
     workspaceId: candidate.workspaceId,
     planRef: "plan-mvp-1",
-    candidateRef: { ...p114CandidateRef(candidate.projectId) },
+    candidateRef: { ...candidateRefFor(candidate.projectId, candidate.workspaceId, candidate.candidateId) },
     workspaceRevision: 2,
     status: "pass",
     gateEvidenceRefs: [{ aggregateType: "Evidence" as const, projectId: candidate.projectId, evidenceId: "p114-gate-evidence-1" }],
@@ -98,7 +98,7 @@ export function buildP114PlanV1(candidate: CandidateArchitectureBaselineV1, deci
     projectId: candidate.projectId,
     workspaceId: candidate.workspaceId,
     decisionRef: { ...p114DecisionRef(candidate.projectId) },
-    candidateRef: { ...p114CandidateRef(candidate.projectId) },
+    candidateRef: { ...candidateRefFor(candidate.projectId, candidate.workspaceId, candidate.candidateId) },
     fromPin: { ...decision.authorizedTarget.fromPin },
     candidatePin: { ref: { aggregateType: "ArchitectureBaselineRevision" as const, projectId: candidate.projectId, baselineId: "architecture-baseline-1", revision: 2 }, digest: candidate.contentDigest },
     affectedPlanRefs: [{ planRef: { aggregateType: "PlanRevision" as const, projectId: candidate.projectId, planId: "plan-mvp-1" }, pinnedBaselinePin: { ...decision.authorizedTarget.fromPin } }],
