@@ -129,6 +129,22 @@ export function scopeCoveredByWriteScope(scope: ConflictScopeV1, declaredWriteSc
   return declaredWriteScope.includes(scope.kind + ":" + scope.id);
 }
 
+/**
+ * FROZEN pure path-coverage check (used by recordPatch scope_mismatch):
+ * workspace scope covers every path; a path-like (module|path) scope covers
+ * itself and every descendants path (path-segment boundary); label scopes
+ * NEVER cover paths (no semantic inference).
+ */
+export function scopeCoversPath(scope: ConflictScopeV1, path: string): boolean {
+  const p = path.replace(/\/+$/, "");
+  if (scope.kind === "workspace") return true;
+  if (isPathLikeScopeKind(scope.kind)) {
+    const id = scope.id.replace(/\/+$/, "");
+    return p === id || p.startsWith(id + "/");
+  }
+  return false;
+}
+
 // ------------------------------------------------------------------------ //
 // Lease holder                                                              //
 // ------------------------------------------------------------------------ //
