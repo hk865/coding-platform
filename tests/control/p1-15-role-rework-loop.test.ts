@@ -1,18 +1,20 @@
 /**
  * P1-15 lane C — 角色协作回流集成链（一次有界返工 + rollover 续接 + 语义继承）
  *
- * Real harness path first; the P1-15 design/decision/coordination-policy CONTROL is
- * still a shared-baseline STUB (it throws "not implemented yet"), so those four
- * records are committed via the shared FIXTURE FOLDS (buildP115*Fold) — the sanctioned
- * stub fallback. Dispatch (P1-03), replacement-claim (P1-06), work-context (P1-16) and
- * completed-work (P1-17) are REAL and are driven through the real InMemoryHarness.
+ * Real harness path (lane A design/policy handlers + lane B unifiedStatusView have now
+ * landed in main): the four P1-15 records go through the REAL engine entries
+ * h.recordInitialDesignProposal / recordInitialDesignDecision / installCoordinationPolicy /
+ * activateCoordinationPolicy (the previously-stubbed control is now implemented and the
+ * activate validator was fixed to P1-02 semantics). Dispatch (P1-03), replacement-claim
+ * (P1-06), work-context (P1-16) and completed-work (P1-17) are also REAL.
  *
- * Chain: p111BootstrapGoalGovernance -> accept plan -> recordProposal(fold) ->
- *   recordDecision(accept, opt-a)(fold) -> installCoordinationPolicy(fold) ->
+ * Chain: p111BootstrapGoalGovernance -> accept plan -> recordProposal -> recordDecision
+ *   (accept, opt-a) -> installCoordinationPolicy -> activateCoordinationPolicy ->
  *   claim/dispatch a Coder task (P1-03) -> runtime FAIL (run_crashed fact) -> Coder fails
  *   -> coordinator arranges ONE bounded rework (ReplacementClaim P1-06 + new run -> completed)
- *   -> Evidence -> budget budget_exhausted (policy budget = 1) -> rollover (P1-16 bind/
- *   link/continuation) -> P1-17 completed-work selection.
+ *   -> budget budget_exhausted (policy budget = 1) -> rollover (P1-16 bind/link/continuation)
+ *   -> P1-17 completed-work selection; unified status view (facts-first + decisions + visible
+ *   budget-bearing coordination-policy fact) is asserted.
  *
  * Assertions:
  *  - the Coder run ends outcome=crashed (failure fact);
@@ -21,6 +23,8 @@
  *  - the installed coordination budget is exhausted (maxAutonomousReworks=1); a second
  *    autonomous rework is NOT authorized — the coordinator records a visible unresolved
  *    item (budget_exhausted) instead of widening the policy;
+ *  - the unified status view is facts-first ready, exposes the accept decision, and makes the
+ *    budget-bearing coordination-policy(+activation) facts visible;
  *  - rollover preserves work-context facts (bind -> link the replacement run ->
  *    continuation took_over) and the work-context view exposes the reworked run;
  *  - P1-17 completed-work selection is visible for the same workspace.
@@ -48,9 +52,8 @@ import { sha256Hex } from "../../src/contracts/fingerprint.js";
 import {
   P115_PROJECT, P115_WORKSPACE, P115_COORDINATION_POLICY_CONTENT,
   buildP115Proposal, buildP115Decision, buildP115ProposalCommand, buildP115DecisionCommand,
-  buildP115InstallCommand, buildP115ProposalFold, buildP115DecisionFold,
-  buildP115PolicyInstallFold,
-  p115DesignRef, p115DecisionRef, p115PolicyRef,
+  buildP115InstallCommand, buildP115ActivateCommand,
+  p115PolicyRef,
 } from "../../src/contracts/fixtures/human-role-collaboration-fixtures.js";
 import {
   buildBindWorkContextCommand, buildLinkWorkRunCommand,
@@ -67,10 +70,6 @@ const coderRunId = "run-p115-coder";
 const reworkRunId = "run-p115-rework";
 const workId = "work-p115-coder";
 
-/** Deterministic event ids that do not collide with engine-generated evt-XXXX. */
-let eventSeq = 70_000;
-const evId = (tag: string) => "evt-lc-" + tag + "-" + (eventSeq++);
-
 async function setupWorld(h: InMemoryHarness): Promise<{ planRef: { aggregateType: "PlanRevision"; projectId: string; planId: string } }> {
   await p111BootstrapGoalGovernance(h.ledger, projectId);
   const plan = await h.applyPlan(buildApplyPlanCommand(DISPATCH_PLAN_REVISION_FIXTURE_V1, {
@@ -82,28 +81,36 @@ async function setupWorld(h: InMemoryHarness): Promise<{ planRef: { aggregateTyp
 }
 
 async function commitStartDesignAndPolicy(h: InMemoryHarness, planRef: { aggregateType: "PlanRevision"; projectId: string; planId: string }): Promise<void> {
-  // P1-15 records via shared fixture folds (the P1-15 control is a stub).
+  // P1-15 records via the REAL engine entries (lane A has landed).
   const proposal = buildP115Proposal({ projectId, workspaceId: wsId, goalRef: { aggregateType: "Goal", projectId, goalId }, planRef });
-  expect((await h.ledger.commit(buildP115ProposalFold(buildP115ProposalCommand(proposal, { commandId: "cmd-lc-prop" }), { eventId: evId("prop"), occurredAt: FIXED }))).status).toBe("committed");
-  expect((await h.ledger.load(p115DesignRef(projectId))).status).toBe("found");
+  const propReceipt = await h.recordInitialDesignProposal(buildP115ProposalCommand(proposal, { commandId: "cmd-lc-prop" }));
+  expect(propReceipt.status).toBe("committed");
+  expect(propReceipt.status === "committed" && propReceipt.replayed).toBe(false);
 
   const decision = buildP115Decision(proposal);
-  expect((await h.ledger.commit(buildP115DecisionFold(buildP115DecisionCommand(decision, { commandId: "cmd-lc-dec" }), { eventId: evId("dec"), occurredAt: FIXED }))).status).toBe("committed");
-  expect((await h.ledger.load(p115DecisionRef(projectId))).status).toBe("found");
+  const decReceipt = await h.recordInitialDesignDecision(buildP115DecisionCommand(decision, { commandId: "cmd-lc-dec" }));
+  expect(decReceipt.status).toBe("committed");
   expect(decision.outcome).toBe("accept");
   expect(decision.authorizedTarget.optionId).toBe(proposal.options[0]?.optionId);
 
-  const install = buildP115InstallCommand(projectId, { commandId: "cmd-lc-poli" });
-  expect((await h.ledger.commit(buildP115PolicyInstallFold(install, { eventId: evId("poli"), occurredAt: FIXED }))).status).toBe("committed");
+  const installReceipt = await h.installCoordinationPolicy(buildP115InstallCommand(projectId, { commandId: "cmd-lc-poli" }));
+  expect(installReceipt.status).toBe("committed");
 
-  // The installed policy revision carries the versioned, budgeted content.
+  // Activate now commits (activate validator fixed to P1-02 semantics): Project CAS target
+  // is the CURRENT Project revision (command.expectedRevision).
+  const projLoad = await h.ledger.load({ aggregateType: "Project", projectId });
+  const projRev = projLoad.status === "found" ? (projLoad.snapshot as { revision: number }).revision : 0;
+  const activateReceipt = await h.activateCoordinationPolicy(buildP115ActivateCommand(projectId, { commandId: "cmd-lc-pola", expectedRevision: projRev }));
+  expect(activateReceipt.status).toBe("committed");
+
+  // The installed policy revision carries the versioned, budgeted content the coordinator honors.
   const polLoad = await h.ledger.load(p115PolicyRef(projectId));
   expect(polLoad.status).toBe("found");
   const polSnap = polLoad.status === "found" ? (polLoad.snapshot as { content: { budget: { maxAutonomousReworks: number; maxClarifications: number } } }) : null;
   expect(polSnap?.content.budget.maxAutonomousReworks).toBe(1);
 }
 
-async function runCoderTask(h: InMemoryHarness, planRef: { aggregateType: "PlanRevision"; projectId: string; planId: string }, runtime: ReturnType<typeof createP108ScenarioRuntime>): Promise<RunRef> {
+async function runCoderTask(h: InMemoryHarness, planRef: { aggregateType: "PlanRevision"; projectId: string; planId: string }): Promise<RunRef> {
   const claim = await h.claimTask(buildDispatchClaimCommand({
     commandId: "cmd-lc-claim1", correlationId: "corr-lc-claim1", submittedAt: FIXED,
     projectId, goalId, taskId: coderTaskId, runId: coderRunId, attemptId: "att-" + coderRunId,
@@ -134,9 +141,8 @@ async function runCoderTask(h: InMemoryHarness, planRef: { aggregateType: "PlanR
   return coderRunRef;
 }
 
-async function arrangeBoundedRework(h: InMemoryHarness, planRef: { aggregateType: "PlanRevision"; projectId: string; planId: string }, coderRunRef: RunRef, runtime: ReturnType<typeof createP108ScenarioRuntime>): Promise<{ reworkRunRef: RunRef; packetRef: ReturnType<typeof handoffPacketRefFor>; budget: { maxAutonomousReworks: number; autonomousReworksUsed: number } }> {
+async function arrangeBoundedRework(h: InMemoryHarness, planRef: { aggregateType: "PlanRevision"; projectId: string; planId: string }, coderRunRef: RunRef, runtime: ReturnType<typeof createP108ScenarioRuntime>): Promise<{ reworkRunRef: RunRef; budget: { maxAutonomousReworks: number; autonomousReworksUsed: number } }> {
   const budget = { maxAutonomousReworks: P115_COORDINATION_POLICY_CONTENT.budget.maxAutonomousReworks, autonomousReworksUsed: 0 };
-  // The installed policy budget is honored by the coordinator.
   expect(budget.maxAutonomousReworks).toBe(1);
 
   // recordHandoff: bounded Handoff packet describing the crashed Coder run.
@@ -174,7 +180,7 @@ async function arrangeBoundedRework(h: InMemoryHarness, planRef: { aggregateType
   expect(rsnap?.outcome).toBe("completed");
 
   expect(budget.autonomousReworksUsed).toBe(1);
-  return { reworkRunRef, packetRef, budget };
+  return { reworkRunRef, budget };
 }
 
 describe("P1-15 lane C — bounded rework loop (InMemory harness)", () => {
@@ -189,8 +195,11 @@ describe("P1-15 lane C — bounded rework loop (InMemory harness)", () => {
   it("Coder FAIL -> exactly ONE bounded rework -> budget exhausted -> rollover -> completed-work selection", async () => {
     const { planRef } = await setupWorld(h);
     await commitStartDesignAndPolicy(h, planRef);
-    const coderRunRef = await runCoderTask(h, planRef, runtime);
+    const coderRunRef = await runCoderTask(h, planRef);
     const { reworkRunRef, budget } = await arrangeBoundedRework(h, planRef, coderRunRef, runtime);
+
+    await h.advanceProjection();
+    await assertUnifiedStatusReady(h);
 
     // --- budget: exactly one rework authorized; a second autonomous rework is NOT honored (budget exhausted) ---
     expect(budget.autonomousReworksUsed).toBe(budget.maxAutonomousReworks);
@@ -232,7 +241,6 @@ describe("P1-15 lane C — bounded rework loop (InMemory harness)", () => {
     const wcView = await h.workContextView({ projectId, workspaceId: wsId, workId });
     expect(wcView.status).toBe("ready");
     if (wcView.status === "ready") {
-      // bound to the crashed Coder run itself, and the rework run was linked in.
       expect(wcView.binding.binding.initialRunRef.runId).toBe(coderRunId);
       expect(wcView.binding.binding.linkedRunRefs.some((r) => r.runId === reworkRunId)).toBe(true);
       expect(wcView.continuations.length).toBeGreaterThanOrEqual(1);
@@ -259,3 +267,17 @@ describe("P1-15 lane C — bounded rework loop (InMemory harness)", () => {
     expect(assembled.status === "ready" || assembled.status === "needs_material").toBe(true);
   }, 60_000);
 });
+
+/** Unified status: facts-first ready + accept decision row + visible budget-bearing policy fact. */
+async function assertUnifiedStatusReady(h: InMemoryHarness): Promise<void> {
+  const usView = await h.unifiedStatusView({ projectId, workspaceId: wsId });
+  expect(usView.status).toBe("ready");
+  if (usView.status !== "ready") return;
+  const kinds = usView.facts.map((f) => f.kind);
+  expect(kinds).toContain("proposal");
+  expect(kinds).toContain("decision");
+  expect(kinds).toContain("baseline"); // coordinated budget-bearing policy (+ activation) facts
+  expect(usView.decisions.some((d) => d.outcome === "accept")).toBe(true);
+  // The coordination-policy fact (which carries the budget) is visible in the presentation.
+  expect(usView.facts.some((f) => f.display.includes("CoordinationPolicy"))).toBe(true);
+}
