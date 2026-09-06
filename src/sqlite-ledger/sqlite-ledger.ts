@@ -68,6 +68,10 @@ import {
   validateWorkspaceWriteLeaseReleaseCommit,
   validateIntegrationRecordCommit,
   validatePatchRecordCommit,
+  validateWorkContextBindCommit,
+  validateWorkContextLinkCommit,
+  validateExecutionNoteRecordCommit,
+  validateContinuationRecordCommit,
 } from "../contracts/ledger-validation.js";
 import type {
   DispatchClaimLedgerCommitV1,
@@ -458,6 +462,14 @@ export class SqliteStateLedger implements StateLedger {
         return this.commitIntegrationRecord(batch);
       case "patch-record":
         return this.commitPatchRecord(batch);
+      case "work-context-bind":
+        return this.commitWorkContextBind(batch);
+      case "work-context-link":
+        return this.commitWorkContextLink(batch);
+      case "execution-note-record":
+        return this.commitExecutionNoteRecord(batch);
+      case "continuation-record":
+        return this.commitContinuationRecord(batch);
     }
   }
 
@@ -583,6 +595,34 @@ export class SqliteStateLedger implements StateLedger {
 
   private commitPatchRecord(batch: import("../contracts/ledger.js").PatchRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
     if (!validatePatchRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitWorkContextBind(batch: import("../contracts/ledger.js").WorkContextBindLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateWorkContextBindCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitWorkContextLink(batch: import("../contracts/ledger.js").WorkContextLinkLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateWorkContextLinkCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitExecutionNoteRecord(batch: import("../contracts/ledger.js").ExecutionNoteRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateExecutionNoteRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitContinuationRecord(batch: import("../contracts/ledger.js").ContinuationRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateContinuationRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
     }
     return this.commitGeneric(batch);

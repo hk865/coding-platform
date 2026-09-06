@@ -76,6 +76,11 @@ import type { HandoffControlPort } from "../contracts/handoff-control.js";
 import type { HandoffProvenanceViewQuery, HandoffProvenanceViewResult } from "../contracts/handoff-view.js";
 import { HandoffContextCompilerImpl } from "../context/handoff-context-compiler.js";
 import { FakeHandoffControlRuntimeAdapter } from "../runtime/handoff-control-adapter.js";
+import { WorkContextCompilerImpl } from "../context/work-context-compiler.js";
+import { FakeContextContinuationRuntimeAdapter } from "../runtime/context-continuation-adapter.js";
+import type { WorkContextPort, WorkContextRequestV1, WorkContextAssemblyResultV1 } from "../contracts/work-context-port.js";
+import type { ContextContinuationPort } from "../contracts/context-continuation-port.js";
+import type { WorkContextViewQuery, WorkContextViewResult, BindWorkContextCommand, BindWorkContextReceipt, LinkWorkRunCommand, LinkWorkRunReceipt, RecordExecutionNoteCommand, RecordExecutionNoteReceipt, RecordContinuationCommand, RecordContinuationReceipt } from "../contracts/context-continuity.js";
 import { HandoffDriveEngineImpl } from "../control/handoff-drive.js";
 import { WorkspaceDriveEngineImpl } from "../control/workspace-drive.js";
 import { FakeWorkspaceCapabilityAdapter } from "../runtime/workspace-capability-adapter.js";
@@ -134,6 +139,10 @@ export interface PersistentSqliteHarnessOptions {
   workspaceDrive?: WorkspaceDrivePort;
   /** P1-07: explicit RunPort override (default FakeRuntimeAdapter(script)). */
   runtime?: RunPort;
+  /** P1-16: explicit WorkContextPort (default WorkContextCompilerImpl). */
+  workContext?: WorkContextPort;
+  /** P1-16: explicit ContextContinuationPort (default FakeContextContinuationRuntimeAdapter). */
+  contextContinuation?: ContextContinuationPort;
 }
 
 export interface PersistentSqliteHarness {
@@ -166,6 +175,10 @@ export interface PersistentSqliteHarness {
   workspaceLease: WorkspaceLeasePort;
   /** P1-07: parallel drive port (real overlap, replacement intents skipped). */
   workspaceDrive: WorkspaceDrivePort;
+  /** P1-16: bounded work-context assembly (ContextCompiler.WorkContextPort). */
+  workContext: WorkContextPort;
+  /** P1-16: WorkerRuntime continuation capability face. */
+  contextContinuation: ContextContinuationPort;
 
   bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
   /** P1-02: governance install (immutable revision; never auto-activates). */
@@ -232,6 +245,20 @@ export interface PersistentSqliteHarness {
   consoleTaskEvidence(query: TaskEvidenceViewQuery): Promise<TaskEvidenceViewResult>;
   /** P1-08: workspace timeline (read-only; readModel only). */
   consoleTimeline(query: TimelineViewQuery): Promise<TimelineViewResult>;
+  /** P1-16: work context view (read-only; readModel only). */
+  workContextView(query: WorkContextViewQuery): Promise<WorkContextViewResult>;
+  /** P1-16: bind the durable work identity. */
+  bindWorkContext(command: BindWorkContextCommand): Promise<BindWorkContextReceipt>;
+  /** P1-16: link a run to the work. */
+  linkWorkRun(command: LinkWorkRunCommand): Promise<LinkWorkRunReceipt>;
+  /** P1-16: register one immutable execution note (body-first). */
+  recordExecutionNote(command: RecordExecutionNoteCommand): Promise<RecordExecutionNoteReceipt>;
+  /** P1-16: record the observed continuation path. */
+  recordContinuation(command: RecordContinuationCommand): Promise<RecordContinuationReceipt>;
+  /** P1-16: bounded work-context assembly. */
+  assembleWorkContext(request: WorkContextRequestV1): Promise<WorkContextAssemblyResultV1>;
+  /** P1-16: runtime continuation capabilities (honest declaration). */
+  continuationCapabilities(request: { workContextRef: import("../contracts/context-continuity.js").WorkContextRef; runRef: import("../contracts/dispatch.js").RunRef | null }): Promise<import("../contracts/context-continuation-port.js").ContextContinuationCapabilityResult>;
   /** P1-04: review-context assembly (bounded ReviewPacket). */
   assembleReview(request: ReviewContextRequestV1): Promise<ReviewContextResultV1>;
   /** P1-03: outbox drive (claim -> assemble -> start -> events). */
@@ -268,6 +295,8 @@ interface BuiltHarness {
   workspaceCapability: WorkspaceCapabilityPort;
   workspaceLease: WorkspaceLeasePort;
   workspaceDrive: WorkspaceDrivePort;
+  workContext: WorkContextPort;
+  contextContinuation: ContextContinuationPort;
   advanceProjection: () => Promise<ProjectionReceipt>;
   observedCursor: () => CommitCursor | null;
   planGraph: (query: PlanGraphViewQuery) => Promise<PlanGraphViewResult>;
@@ -289,6 +318,8 @@ function buildHarness(
   workspaceCapabilityOverride: WorkspaceCapabilityPort | undefined,
   workspaceDriveOverride: WorkspaceDrivePort | undefined,
   runtimeOverride: RunPort | undefined,
+  workContextOverride: WorkContextPort | undefined,
+  contextContinuationOverride: ContextContinuationPort | undefined,
 ): BuiltHarness {
   const d: InjectableDeps = { ...createDeterministicDeps(), ...deps };
   const ledger = createSqliteStateLedger({ path: join(dir, ledgerFile) });
@@ -343,6 +374,10 @@ function buildHarness(
     acquireWriteLease: (command) => control.acquireWorkspaceWriteLease(command),
     releaseLease: (command) => control.releaseWorkspaceLease(command),
   };
+  const workContext: WorkContextPort =
+    workContextOverride ?? new WorkContextCompilerImpl({ ledger, vault, now: d.clock });
+  const contextContinuation: ContextContinuationPort =
+    contextContinuationOverride ?? new FakeContextContinuationRuntimeAdapter(runtime);
   let lastCursor: CommitCursor | null = null;
   async function advanceProjection(): Promise<ProjectionReceipt> {
     let receipt: ProjectionReceipt | null = null;
@@ -371,6 +406,8 @@ function buildHarness(
     workspaceCapability,
     workspaceLease,
     workspaceDrive,
+    workContext,
+    contextContinuation,
     advanceProjection,
     observedCursor: () => lastCursor,
     planGraph: (query) => readModel.planGraph(query),
@@ -395,7 +432,7 @@ export async function createPersistentSqliteHarness(
     ledgerFilename: string,
     readModelFilename: string,
   ): PersistentSqliteHarness => {
-    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript, checkPorts, reviewer, verificationOverride, reviewContextOverride, options.handoffContext, options.handoffControl, options.workspaceCapability, options.workspaceDrive, options.runtime);
+    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript, checkPorts, reviewer, verificationOverride, reviewContextOverride, options.handoffContext, options.handoffControl, options.workspaceCapability, options.workspaceDrive, options.runtime, options.workContext, options.contextContinuation);
     let closed = false;
     return {
       dir,
@@ -417,6 +454,8 @@ export async function createPersistentSqliteHarness(
       workspaceCapability: built.workspaceCapability,
       workspaceLease: built.workspaceLease,
       workspaceDrive: built.workspaceDrive,
+      workContext: built.workContext,
+      contextContinuation: built.contextContinuation,
       bootstrap: (command) => built.control.bootstrap(command),
       install: (command) => built.control.install(command),
       activate: (command) => built.control.activate(command),
@@ -451,6 +490,13 @@ export async function createPersistentSqliteHarness(
       consoleActiveAgents: (query) => built.collaboration.consoleActiveAgents(query),
       consoleTaskEvidence: (query) => built.collaboration.consoleTaskEvidence(query),
       consoleTimeline: (query) => built.collaboration.consoleTimeline(query),
+      workContextView: (query) => built.readModel.workContext(query),
+      bindWorkContext: (command) => built.control.bindWorkContext(command),
+      linkWorkRun: (command) => built.control.linkWorkRun(command),
+      recordExecutionNote: (command) => built.control.recordExecutionNote(command),
+      recordContinuation: (command) => built.control.recordContinuation(command),
+      assembleWorkContext: (request) => built.workContext.assembleWorkContext(request),
+      continuationCapabilities: (request) => built.contextContinuation.capabilities(request),
       assembleHandoff: (request) => built.handoffContext.assemble(request),
       assembleReview: (request) => built.reviewContext.assemble(request),
       drive: (trigger) => built.dispatchEngine.drive(trigger),

@@ -35,6 +35,12 @@ import type {
 } from "./workspace-lease.js";
 import type { IntegrationJoinedEvent } from "./integration.js";
 import type { PatchRecordedEvent } from "./patch.js";
+import type {
+  WorkContextBoundEvent,
+  WorkRunLinkedEvent,
+  ExecutionNoteRecordedEvent,
+  ContinuationRecordedEvent,
+} from "./context-continuity.js";
 
 export type DomainEventV1 =
   | GoalCreatedEvent
@@ -59,7 +65,11 @@ export type DomainEventV1 =
   | WorkspaceWriteLeaseGrantedEvent
   | WorkspaceWriteLeaseReleasedEvent
   | IntegrationJoinedEvent
-  | PatchRecordedEvent;
+  | PatchRecordedEvent
+  | WorkContextBoundEvent
+  | WorkRunLinkedEvent
+  | ExecutionNoteRecordedEvent
+  | ContinuationRecordedEvent;
 
 export type DomainEvent = DomainEventV1;
 
@@ -88,6 +98,10 @@ export const KNOWN_EVENT_TYPES = [
   "WorkspaceWriteLeaseReleased",
   "IntegrationJoined",
   "PatchRecorded",
+  "WorkContextBound",
+  "WorkRunLinked",
+  "ExecutionNoteRecorded",
+  "ContinuationRecorded",
 ] as const;
 
 export function isKnownEventType(eventType: string): eventType is (typeof KNOWN_EVENT_TYPES)[number] {

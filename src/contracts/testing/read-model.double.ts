@@ -58,6 +58,9 @@ export type IntegrationConflictViewBehavior = (
 export type WorkspacePatchViewBehavior = (
   query: WorkspacePatchViewQuery,
 ) => Promise<WorkspacePatchViewResult> | WorkspacePatchViewResult;
+export type WorkContextBehavior = (
+  query: import("../context-continuity.js").WorkContextViewQuery,
+) => Promise<import("../context-continuity.js").WorkContextViewResult> | import("../context-continuity.js").WorkContextViewResult;
 
 export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly advanceCalls: EventPage[] = [];
@@ -77,6 +80,7 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly workspaceLeaseViewCalls: WorkspaceLeaseViewQuery[] = [];
   readonly integrationConflictsCalls: IntegrationConflictViewQuery[] = [];
   readonly workspacePatchesCalls: WorkspacePatchViewQuery[] = [];
+  readonly workContextCalls: import("../context-continuity.js").WorkContextViewQuery[] = [];
 
   constructor(
     private readonly options: {
@@ -91,6 +95,7 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
       workspaceLeaseView?: WorkspaceLeaseViewBehavior;
       integrationConflicts?: IntegrationConflictViewBehavior;
       workspacePatches?: WorkspacePatchViewBehavior;
+      workContext?: WorkContextBehavior;
       consolePortfolio?: import("../console-views.js").PortfolioViewResult extends never ? never : (query: import("../console-views.js").PortfolioViewQuery) => Promise<import("../console-views.js").PortfolioViewResult> | import("../console-views.js").PortfolioViewResult;
       consoleSummary?: (query: import("../console-views.js").WorkspaceSummaryViewQuery) => Promise<import("../console-views.js").WorkspaceSummaryViewResult> | import("../console-views.js").WorkspaceSummaryViewResult;
       consolePlanMatrix?: (query: import("../console-views.js").PlanMatrixViewQuery) => Promise<import("../console-views.js").PlanMatrixViewResult> | import("../console-views.js").PlanMatrixViewResult;
@@ -169,6 +174,14 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
     this.workspacePatchesCalls.push(query);
     if (this.options.workspacePatches) return this.options.workspacePatches(query);
     return { status: "not_found", observedCursor: (null as unknown) as import("../command-event.js").CommitCursor };
+  }
+
+  // P1-16 work context view (scripted)                                       //
+
+  async workContext(query: import("../context-continuity.js").WorkContextViewQuery): Promise<import("../context-continuity.js").WorkContextViewResult> {
+    this.workContextCalls.push(query);
+    if (this.options.workContext) return this.options.workContext(query);
+    return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId, workId: query.workId };
   }
 
   // P1-08 console views (scripted)                                           //

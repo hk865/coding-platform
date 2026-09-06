@@ -86,6 +86,7 @@ import { recordHandoff } from "./handoff.js";
 import { claimReplacement } from "./replacement-claim.js";
 import { reduceGoal } from "./goal-reducer.js";
 import { WorkspaceLeaseEngineImpl } from "./workspace-lease.js";
+import { WorkRecordEngineImpl } from "./work-record.js";
 import { recordIntegrationResult } from "./integration-join.js";
 import { recordPatch } from "./patch-record.js";
 import type { WorkspaceCapabilityPort } from "../contracts/workspace-capability.js";
@@ -99,6 +100,16 @@ import type {
 } from "../contracts/workspace-lease.js";
 import type { RecordIntegrationResultCommand, RecordIntegrationResultReceipt } from "../contracts/integration.js";
 import type { RecordPatchCommand, RecordPatchReceipt } from "../contracts/patch.js";
+import type {
+  BindWorkContextCommand,
+  BindWorkContextReceipt,
+  LinkWorkRunCommand,
+  LinkWorkRunReceipt,
+  RecordContinuationCommand,
+  RecordContinuationReceipt,
+  RecordExecutionNoteCommand,
+  RecordExecutionNoteReceipt,
+} from "../contracts/context-continuity.js";
 
 export type ControlEngineDeps = {
   ledger: StateLedger;
@@ -114,10 +125,12 @@ type BootstrapEventUnion = ProjectBootstrappedEventV1 | WorkspaceBootstrappedEve
 export class ControlEngineImpl implements ControlEngine {
   private readonly deps: ControlEngineDeps;
   private readonly workspaceLease: WorkspaceLeaseEngineImpl;
+  private readonly workRecord: WorkRecordEngineImpl;
 
   constructor(deps: ControlEngineDeps) {
     this.deps = deps;
     this.workspaceLease = new WorkspaceLeaseEngineImpl(deps);
+    this.workRecord = new WorkRecordEngineImpl(deps);
   }
 
   // --------------------------------------------------------------------- //
@@ -307,6 +320,22 @@ export class ControlEngineImpl implements ControlEngine {
 
   recordPatch(command: RecordPatchCommand): Promise<RecordPatchReceipt> {
     return recordPatch(this.deps, command);
+  }
+
+  bindWorkContext(command: BindWorkContextCommand): Promise<BindWorkContextReceipt> {
+    return this.workRecord.bindWorkContext(command);
+  }
+
+  linkWorkRun(command: LinkWorkRunCommand): Promise<LinkWorkRunReceipt> {
+    return this.workRecord.linkWorkRun(command);
+  }
+
+  recordExecutionNote(command: RecordExecutionNoteCommand): Promise<RecordExecutionNoteReceipt> {
+    return this.workRecord.recordExecutionNote(command);
+  }
+
+  recordContinuation(command: RecordContinuationCommand): Promise<RecordContinuationReceipt> {
+    return this.workRecord.recordContinuation(command);
   }
 
   // --------------------------------------------------------------------- //

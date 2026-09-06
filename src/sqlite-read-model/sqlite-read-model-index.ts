@@ -358,6 +358,27 @@ CREATE TABLE IF NOT EXISTS console_timeline (
   source_cursor TEXT NOT NULL,
   PRIMARY KEY (scope_key)
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS work_context_binding (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS work_context_notes (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS work_context_continuations (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
 `;
 
 /** Row shape we read back for a GoalView. */
@@ -1858,6 +1879,9 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     // P1-08 console projections consume the SAME committed events (no new
     // DomainEvent). The two lane hooks are no-ops until their lanes land.
     this.applyP108Console(event, cursor);
+    // P1-16 work-context projections. Handler + isHandledEventType land in the
+    // SAME lane commit; until then advance() rejects the event.
+    this.applyP116Context(event, cursor);
     // Known non-goal / non-plan / non-dispatch events (ProjectBootstrapped,
     // WorkspaceBootstrapped, CompletionPolicyInstalled,
     // ArchitectureBaselineInstalled, CompletionPolicyActivated,
@@ -2344,6 +2368,28 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   private applyP108Console(event: DomainEvent, cursor: CommitCursor): void {
     this.applyP108ConsoleLaneA(event, cursor);
     this.applyP108ConsoleLaneB(event, cursor);
+  }
+
+  /** P1-16 LANE-A/LANE-B stub regions (filled by the lanes; no-op until then). */
+  private applyP116Context(event: DomainEvent, cursor: CommitCursor): void {
+    this.applyP116ContextLaneA(event, cursor);
+    this.applyP116ContextLaneB(event, cursor);
+  }
+
+  // LANE-A: WorkContextBinding + ExecutionNote rows (binding/notes view part).
+  private applyP116ContextLaneA(_event: DomainEvent, _cursor: CommitCursor): void {
+    // P1-16 lane A implementation region
+  }
+
+  // LANE-B: ContinuationRecord rows + frontier aggregation.
+  private applyP116ContextLaneB(_event: DomainEvent, _cursor: CommitCursor): void {
+    // P1-16 lane B implementation region
+  }
+
+  /** P1-16 LANE-A/LANE-B stub: work context view (binding + notes + continuations).
+   * Region markers are fixed by the shared baseline. */
+  async workContext(query: import("../contracts/context-continuity.js").WorkContextViewQuery): Promise<import("../contracts/context-continuity.js").WorkContextViewResult> {
+    throw new Error("P1-16 lane A/B: workContext (sqlite) not implemented yet");
   }
 
   /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — rebuilt ONLY from the

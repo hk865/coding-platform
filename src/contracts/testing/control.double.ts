@@ -36,6 +36,16 @@ import type {
 } from "../workspace-lease.js";
 import type { RecordIntegrationResultCommand, RecordIntegrationResultReceipt } from "../integration.js";
 import type { RecordPatchCommand, RecordPatchReceipt } from "../patch.js";
+import type {
+  BindWorkContextCommand,
+  BindWorkContextReceipt,
+  LinkWorkRunCommand,
+  LinkWorkRunReceipt,
+  RecordContinuationCommand,
+  RecordContinuationReceipt,
+  RecordExecutionNoteCommand,
+  RecordExecutionNoteReceipt,
+} from "../context-continuity.js";
 import type { ControlEngine } from "../modules.js";
 
 export function committedReceiptFor(command: CreateGoalCommand): CommandReceipt {
@@ -97,6 +107,10 @@ export type AcquireWriteLeaseBehavior = (command: AcquireWorkspaceWriteLeaseComm
 export type ReleaseLeaseBehavior = (command: ReleaseWorkspaceLeaseCommand) => ReleaseLeaseReceipt | Promise<ReleaseLeaseReceipt>;
 export type RecordIntegrationResultBehavior = (command: RecordIntegrationResultCommand) => RecordIntegrationResultReceipt | Promise<RecordIntegrationResultReceipt>;
 export type RecordPatchBehavior = (command: RecordPatchCommand) => RecordPatchReceipt | Promise<RecordPatchReceipt>;
+export type BindWorkContextBehavior = (command: BindWorkContextCommand) => BindWorkContextReceipt | Promise<BindWorkContextReceipt>;
+export type LinkWorkRunBehavior = (command: LinkWorkRunCommand) => LinkWorkRunReceipt | Promise<LinkWorkRunReceipt>;
+export type RecordExecutionNoteBehavior = (command: RecordExecutionNoteCommand) => RecordExecutionNoteReceipt | Promise<RecordExecutionNoteReceipt>;
+export type RecordContinuationBehavior = (command: RecordContinuationCommand) => RecordContinuationReceipt | Promise<RecordContinuationReceipt>;
 
 export type ReduceGoalBehavior = (
   command: ReduceGoalCommand,
@@ -139,6 +153,10 @@ export class ScriptedControlEngine implements ControlEngine {
       releaseWorkspaceLease?: ReleaseLeaseBehavior;
       recordIntegrationResult?: RecordIntegrationResultBehavior;
       recordPatch?: RecordPatchBehavior;
+      bindWorkContext?: BindWorkContextBehavior;
+      linkWorkRun?: LinkWorkRunBehavior;
+      recordExecutionNote?: RecordExecutionNoteBehavior;
+      recordContinuation?: RecordContinuationBehavior;
       defaultSubmit?: CommandReceipt;
       defaultBootstrap?: WorkspaceBootstrapReceipt;
       defaultInstall?: GovernanceInstallReceipt;
@@ -271,5 +289,36 @@ export class ScriptedControlEngine implements ControlEngine {
     this.recordPatchCalls.push(command);
     if (this.options.recordPatch) return this.options.recordPatch(command);
     throw new Error("ScriptedControlEngine: no recordPatch behavior configured");
+  }
+
+  // P1-16 (scripted double: records calls; behaviors configured per test)      //
+
+  readonly bindWorkContextCalls: BindWorkContextCommand[] = [];
+  readonly linkWorkRunCalls: LinkWorkRunCommand[] = [];
+  readonly recordExecutionNoteCalls: RecordExecutionNoteCommand[] = [];
+  readonly recordContinuationCalls: RecordContinuationCommand[] = [];
+
+  async bindWorkContext(command: BindWorkContextCommand): Promise<BindWorkContextReceipt> {
+    this.bindWorkContextCalls.push(command);
+    if (this.options.bindWorkContext) return this.options.bindWorkContext(command);
+    throw new Error("ScriptedControlEngine: no bindWorkContext behavior configured");
+  }
+
+  async linkWorkRun(command: LinkWorkRunCommand): Promise<LinkWorkRunReceipt> {
+    this.linkWorkRunCalls.push(command);
+    if (this.options.linkWorkRun) return this.options.linkWorkRun(command);
+    throw new Error("ScriptedControlEngine: no linkWorkRun behavior configured");
+  }
+
+  async recordExecutionNote(command: RecordExecutionNoteCommand): Promise<RecordExecutionNoteReceipt> {
+    this.recordExecutionNoteCalls.push(command);
+    if (this.options.recordExecutionNote) return this.options.recordExecutionNote(command);
+    throw new Error("ScriptedControlEngine: no recordExecutionNote behavior configured");
+  }
+
+  async recordContinuation(command: RecordContinuationCommand): Promise<RecordContinuationReceipt> {
+    this.recordContinuationCalls.push(command);
+    if (this.options.recordContinuation) return this.options.recordContinuation(command);
+    throw new Error("ScriptedControlEngine: no recordContinuation behavior configured");
   }
 }

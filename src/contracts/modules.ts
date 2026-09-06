@@ -50,6 +50,16 @@ import type {
 } from "./workspace-lease.js";
 import type { RecordIntegrationResultCommand, RecordIntegrationResultReceipt } from "./integration.js";
 import type { RecordPatchCommand, RecordPatchReceipt } from "./patch.js";
+import type {
+  BindWorkContextCommand,
+  BindWorkContextReceipt,
+  LinkWorkRunCommand,
+  LinkWorkRunReceipt,
+  RecordContinuationCommand,
+  RecordContinuationReceipt,
+  RecordExecutionNoteCommand,
+  RecordExecutionNoteReceipt,
+} from "./context-continuity.js";
 
 export type CreateGoalRequest = {
   projectId: string;
@@ -112,6 +122,14 @@ export interface ControlEngine {
   recordIntegrationResult(command: RecordIntegrationResultCommand): Promise<RecordIntegrationResultReceipt>;
   /** P1-07: record ONE patch artifact (body-first) + workspace revision advance + lease release (atomic). */
   recordPatch(command: RecordPatchCommand): Promise<RecordPatchReceipt>;
+  /** P1-16: bind the durable work identity (one per (projectId, workspaceId, workId)). */
+  bindWorkContext(command: BindWorkContextCommand): Promise<BindWorkContextReceipt>;
+  /** P1-16: link a run to the work binding (bounded; work responsibility crosses runs). */
+  linkWorkRun(command: LinkWorkRunCommand): Promise<LinkWorkRunReceipt>;
+  /** P1-16: register ONE immutable ExecutionNote (body-first; idempotent; no transcript). */
+  recordExecutionNote(command: RecordExecutionNoteCommand): Promise<RecordExecutionNoteReceipt>;
+  /** P1-16: record the OBSERVED continuation path (capability declaration is never fabricated). */
+  recordContinuation(command: RecordContinuationCommand): Promise<RecordContinuationReceipt>;
 }
 
 export interface HumanCollaboration {

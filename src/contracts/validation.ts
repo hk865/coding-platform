@@ -37,6 +37,17 @@ import {
   PATCH_MAX_CHECK_SUMMARY_BYTES,
   PATCH_MAX_USED_INPUT_EVIDENCE,
 } from "./patch.js";
+import {
+  CONTINUATION_SUMMARY_MAX_BYTES,
+  EXECUTION_NOTE_KINDS,
+  EXECUTION_NOTE_MAX_ALTERNATIVES,
+  EXECUTION_NOTE_MAX_BYTES,
+  EXECUTION_NOTE_MAX_SOURCE_REFS,
+  EXECUTION_NOTE_REASON_MAX_BYTES,
+  EXECUTION_NOTE_SUMMARY_MAX_BYTES,
+  WORK_CONTEXT_MAX_RUN_LINKS,
+  WORK_KINDS,
+} from "./context-continuity.js";
 
 export type ValidationIssueCode =
   | "missing_field"
@@ -2276,4 +2287,383 @@ export function validateRecordPatchCommand(value: unknown): ValidationIssue[] {
   stringField(patch, "generatedAt", issues, "payload.patch.generatedAt");
   return issues;
 }
+
+// ------------------------------------------------------------------------ //
+// P1-16 context-continuity command/request validators                       //
+// ------------------------------------------------------------------------ //
+
+const WORK_CONTEXT_BIND_KEYS = [
+  "schemaVersion", "workId", "projectId", "workspaceId", "workKind", "goalId", "taskId",
+  "planRef", "planRevision", "roleBindingRef", "initialRunRef", "linkedRunRefs", "status", "createdAt",
+] as const;
+
+function validateWorkContextBindingValue(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  rejectUnknownFields(value, WORK_CONTEXT_BIND_KEYS, path, issues);
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: path + ".schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "workId", issues, path + ".workId");
+  stringField(value, "projectId", issues, path + ".projectId");
+  stringField(value, "workspaceId", issues, path + ".workspaceId");
+  validateEnum(value["workKind"], WORK_KINDS as unknown as string[], path + ".workKind", issues);
+  if (value["goalId"] !== null) stringField(value, "goalId", issues, path + ".goalId");
+  if (value["taskId"] !== null) stringField(value, "taskId", issues, path + ".taskId");
+  const planRef = value["planRef"];
+  if (planRef !== null) {
+    if (!isRecord(planRef)) {
+      issues.push({ path: path + ".planRef", code: "bad_type", message: "planRef must be an object or null" });
+    } else {
+      stringField(planRef, "aggregateType", issues, path + ".planRef.aggregateType");
+      stringField(planRef, "planId", issues, path + ".planRef.planId");
+      if (planRef["aggregateType"] !== "PlanRevision") {
+        issues.push({ path: path + ".planRef.aggregateType", code: "bad_ref", message: "aggregateType must be PlanRevision" });
+      }
+    }
+  }
+  if (value["planRevision"] !== null) numberField(value, "planRevision", issues, path + ".planRevision", 1);
+  validateRoleBindingRef(value["roleBindingRef"], path + ".roleBindingRef", issues);
+  validateRunRef(value["initialRunRef"], path + ".initialRunRef", issues);
+  const linked = value["linkedRunRefs"];
+  if (!Array.isArray(linked) || linked.length < 1 || linked.length > WORK_CONTEXT_MAX_RUN_LINKS) {
+    issues.push({ path: path + ".linkedRunRefs", code: "size_exceeded", message: "linkedRunRefs must be an array with 1.." + WORK_CONTEXT_MAX_RUN_LINKS + " items" });
+  } else {
+    linked.forEach((r, i) => validateRunRef(r, path + ".linkedRunRefs[" + i + "]", issues));
+  }
+  if (value["status"] !== "active") {
+    issues.push({ path: path + ".status", code: "bad_type", message: "status must be active" });
+  }
+  stringField(value, "createdAt", issues, path + ".createdAt");
+}
+
+const EXECUTION_NOTE_KEYS = [
+  "schemaVersion", "noteId", "workId", "projectId", "workspaceId", "runRef", "attemptRef",
+  "roleBindingRef", "kind", "summary", "reason", "alternatives", "sourceRefs",
+  "applicableVersions", "verification", "bodyRef", "noFullTranscript", "createdAt",
+] as const;
+
+/**
+ * STRICT note validator: known fields only (a hidden transcript is rejected),
+ * bounded shape, explicit noFullTranscript === true, HARD canonical-JSON cap.
+ */
+export function validateExecutionNote(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "ExecutionNote must be an object" });
+    return issues;
+  }
+  rejectUnknownFields(value, EXECUTION_NOTE_KEYS, "$", issues);
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "noteId", issues);
+  stringField(value, "workId", issues);
+  stringField(value, "projectId", issues);
+  stringField(value, "workspaceId", issues);
+  validateRunRef(value["runRef"], "runRef", issues);
+  const attemptRef = value["attemptRef"];
+  if (attemptRef !== null && !isRecord(attemptRef)) {
+    issues.push({ path: "attemptRef", code: "bad_type", message: "attemptRef must be an object or null" });
+  }
+  validateRoleBindingRef(value["roleBindingRef"], "roleBindingRef", issues);
+  validateEnum(value["kind"], EXECUTION_NOTE_KINDS as unknown as string[], "kind", issues);
+  const summary = stringField(value, "summary", issues);
+  if (summary !== null && Buffer.byteLength(summary, "utf8") > EXECUTION_NOTE_SUMMARY_MAX_BYTES) {
+    issues.push({ path: "summary", code: "size_exceeded", message: "summary exceeds " + EXECUTION_NOTE_SUMMARY_MAX_BYTES + " bytes" });
+  }
+  const reason = stringField(value, "reason", issues);
+  if (reason !== null && Buffer.byteLength(reason, "utf8") > EXECUTION_NOTE_REASON_MAX_BYTES) {
+    issues.push({ path: "reason", code: "size_exceeded", message: "reason exceeds " + EXECUTION_NOTE_REASON_MAX_BYTES + " bytes" });
+  }
+  const alternatives = value["alternatives"];
+  if (!Array.isArray(alternatives) || alternatives.length > EXECUTION_NOTE_MAX_ALTERNATIVES) {
+    issues.push({ path: "alternatives", code: "size_exceeded", message: "alternatives must be an array <= " + EXECUTION_NOTE_MAX_ALTERNATIVES });
+  } else {
+    alternatives.forEach((a, i) => {
+      if (typeof a !== "string" || Buffer.byteLength(a, "utf8") > EXECUTION_NOTE_SUMMARY_MAX_BYTES) {
+        issues.push({ path: "alternatives[" + i + "]", code: "size_exceeded", message: "alternative must be a string <= " + EXECUTION_NOTE_SUMMARY_MAX_BYTES + " bytes" });
+      }
+    });
+  }
+  const sourceRefs = value["sourceRefs"];
+  if (!Array.isArray(sourceRefs) || sourceRefs.length > EXECUTION_NOTE_MAX_SOURCE_REFS) {
+    issues.push({ path: "sourceRefs", code: "size_exceeded", message: "sourceRefs must be an array <= " + EXECUTION_NOTE_MAX_SOURCE_REFS });
+  } else {
+    sourceRefs.forEach((s, i) => {
+      if (!isRecord(s)) {
+        issues.push({ path: "sourceRefs[" + i + "]", code: "bad_type", message: "source must be an object" });
+        return;
+      }
+      validateEnum(s["kind"], ["evidence", "artifact", "run", "handoff", "decision", "event"], "sourceRefs[" + i + "].kind", issues);
+      stringField(s, "refKey", issues, "sourceRefs[" + i + "].refKey");
+      if (s["version"] !== null) numberField(s, "version", issues, "sourceRefs[" + i + "].version", 1);
+      if (s["label"] !== null) stringField(s, "label", issues, "sourceRefs[" + i + "].label");
+    });
+  }
+  const versions = value["applicableVersions"];
+  if (!isRecord(versions)) {
+    issues.push({ path: "applicableVersions", code: "bad_type", message: "applicableVersions must be an object" });
+  } else {
+    const planRef = versions["planRef"];
+    if (planRef !== null && !isRecord(planRef)) {
+      issues.push({ path: "applicableVersions.planRef", code: "bad_type", message: "planRef must be an object or null" });
+    }
+    if (versions["planRevision"] !== null) numberField(versions, "planRevision", issues, "applicableVersions.planRevision", 1);
+    numberField(versions, "workspaceRevision", issues, "applicableVersions.workspaceRevision", 1);
+    if (versions["governanceRevision"] !== null) stringField(versions, "governanceRevision", issues, "applicableVersions.governanceRevision");
+  }
+  const verification = value["verification"];
+  if (!isRecord(verification)) {
+    issues.push({ path: "verification", code: "bad_type", message: "verification must be an object" });
+  } else {
+    validateEnum(verification["status"], ["unverified", "verified", "contradicted"], "verification.status", issues);
+    const evidenceRefs = verification["evidenceRefs"];
+    if (!Array.isArray(evidenceRefs)) {
+      issues.push({ path: "verification.evidenceRefs", code: "bad_type", message: "evidenceRefs must be an array" });
+    }
+  }
+  validateArtifactRefRef(value["bodyRef"], "bodyRef", issues);
+  if (value["noFullTranscript"] !== true) {
+    issues.push({ path: "noFullTranscript", code: "bad_type", message: "noFullTranscript must be true (no transcript in a note, ever)" });
+  }
+  stringField(value, "createdAt", issues);
+  if (issues.length === 0) {
+    const size = Buffer.byteLength(canonicalJson(value as never), "utf8");
+    if (size > EXECUTION_NOTE_MAX_BYTES) {
+      issues.push({ path: "$", code: "size_exceeded", message: "ExecutionNote serialized size " + size + " exceeds " + EXECUTION_NOTE_MAX_BYTES });
+    }
+  }
+  return issues;
+}
+
+const CONTINUATION_RESULT_KEYS = [
+  "schemaVersion", "reportId", "workId", "projectId", "workspaceId", "requestedByRunRef",
+  "capabilitySource", "status", "originalRunRef", "takeoverRunRef", "resumedFromRunRef",
+  "unsupportedCapabilities", "rejectionCode", "summary", "recordedAt",
+] as const;
+
+export function validateContextContinuationResult(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "ContextContinuationResult must be an object" });
+    return issues;
+  }
+  rejectUnknownFields(value, CONTINUATION_RESULT_KEYS, "$", issues);
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "reportId", issues);
+  stringField(value, "workId", issues);
+  stringField(value, "projectId", issues);
+  stringField(value, "workspaceId", issues);
+  if (value["requestedByRunRef"] !== null) validateRunRef(value["requestedByRunRef"], "requestedByRunRef", issues);
+  validateEnum(value["capabilitySource"], ["runtime", "adapter"], "capabilitySource", issues);
+  validateEnum(value["status"], ["restored_original", "took_over", "unsupported", "rejected"], "status", issues);
+  if (value["originalRunRef"] !== null) validateRunRef(value["originalRunRef"], "originalRunRef", issues);
+  if (value["takeoverRunRef"] !== null) validateRunRef(value["takeoverRunRef"], "takeoverRunRef", issues);
+  if (value["resumedFromRunRef"] !== null) validateRunRef(value["resumedFromRunRef"], "resumedFromRunRef", issues);
+  const unsupported = value["unsupportedCapabilities"];
+  if (!Array.isArray(unsupported) || unsupported.length > 8) {
+    issues.push({ path: "unsupportedCapabilities", code: "size_exceeded", message: "unsupportedCapabilities must be an array <= 8" });
+  }
+  if (value["rejectionCode"] !== null) stringField(value, "rejectionCode", issues, "rejectionCode");
+  const summary = stringField(value, "summary", issues);
+  if (summary !== null && Buffer.byteLength(summary, "utf8") > CONTINUATION_SUMMARY_MAX_BYTES) {
+    issues.push({ path: "summary", code: "size_exceeded", message: "summary exceeds " + CONTINUATION_SUMMARY_MAX_BYTES + " bytes" });
+  }
+  stringField(value, "recordedAt", issues);
+  return issues;
+}
+
+export function validateBindWorkContextCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "BindWorkContext") {
+    issues.push({ path: "commandType", code: "invalid_command_type", message: 'commandType must be "BindWorkContext"' });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "commandId", issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (value["expectedRevision"] !== 0) {
+    issues.push({ path: "expectedRevision", code: "bad_expected_revision", message: "expectedRevision must be 0" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  stringField(payload, "workspaceId", issues, "payload.workspaceId");
+  validateEnum(payload["workKind"], WORK_KINDS as unknown as string[], "payload.workKind", issues);
+  if (payload["goalId"] !== null) stringField(payload, "goalId", issues, "payload.goalId");
+  if (payload["taskId"] !== null) stringField(payload, "taskId", issues, "payload.taskId");
+  const planRef = payload["planRef"];
+  if (planRef !== null && !isRecord(planRef)) {
+    issues.push({ path: "payload.planRef", code: "bad_type", message: "planRef must be an object or null" });
+  }
+  if (payload["planRevision"] !== null) numberField(payload, "planRevision", issues, "payload.planRevision", 1);
+  validateRoleBindingRef(payload["roleBinding"], "payload.roleBinding", issues);
+  validateRunRef(payload["initialRunRef"], "payload.initialRunRef", issues);
+  return issues;
+}
+
+export function validateLinkWorkRunCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "LinkWorkRun") {
+    issues.push({ path: "commandType", code: "invalid_command_type", message: 'commandType must be "LinkWorkRun"' });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "commandId", issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (!Number.isSafeInteger(value["expectedRevision"]) || (value["expectedRevision"] as number) < 1) {
+    issues.push({ path: "expectedRevision", code: "bad_expected_revision", message: "expectedRevision must be a positive integer (existing binding)" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  stringField(payload, "workspaceId", issues, "payload.workspaceId");
+  validateRunRef(payload["runRef"], "payload.runRef", issues);
+  return issues;
+}
+
+export function validateRecordExecutionNoteCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "RecordExecutionNote") {
+    issues.push({ path: "commandType", code: "invalid_command_type", message: 'commandType must be "RecordExecutionNote"' });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "commandId", issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (value["expectedRevision"] !== 0) {
+    issues.push({ path: "expectedRevision", code: "bad_expected_revision", message: "expectedRevision must be 0" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  for (const issue of validateExecutionNote(payload["note"])) {
+    issues.push({ path: "payload.note." + issue.path, code: issue.code, message: issue.message });
+  }
+  return issues;
+}
+
+export function validateRecordContinuationCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "RecordContinuation") {
+    issues.push({ path: "commandType", code: "invalid_command_type", message: 'commandType must be "RecordContinuation"' });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "commandId", issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (value["expectedRevision"] !== 0) {
+    issues.push({ path: "expectedRevision", code: "bad_expected_revision", message: "expectedRevision must be 0" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  for (const issue of validateContextContinuationResult(payload["result"])) {
+    issues.push({ path: "payload.result." + issue.path, code: issue.code, message: issue.message });
+  }
+  return issues;
+}
+
+export function validateWorkContextRequest(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "request must be an object" });
+    return issues;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  const ref = value["workContextRef"];
+  if (!isRecord(ref)) {
+    issues.push({ path: "workContextRef", code: "bad_type", message: "workContextRef must be an object" });
+  } else {
+    if (ref["aggregateType"] !== "WorkContextBinding") {
+      issues.push({ path: "workContextRef.aggregateType", code: "bad_ref", message: "aggregateType must be WorkContextBinding" });
+    }
+    stringField(ref, "projectId", issues, "workContextRef.projectId");
+    stringField(ref, "workspaceId", issues, "workContextRef.workspaceId");
+    stringField(ref, "workId", issues, "workContextRef.workId");
+  }
+  validateRunRef(value["requestedByRunRef"], "requestedByRunRef", issues);
+  validateRoleBindingRef(value["roleBindingRef"], "roleBindingRef", issues);
+  validateDeclaredPermissions(value["declaredPermissions"], "declaredPermissions", issues);
+  const required = value["requiredMaterial"];
+  if (!Array.isArray(required) || required.length === 0) {
+    issues.push({ path: "requiredMaterial", code: "bad_type", message: "requiredMaterial must be a non-empty array" });
+  }
+  numberField(value, "maxBundleBytes", issues, "maxBundleBytes", 1);
+  if (!Array.isArray(value["noteKinds"])) {
+    issues.push({ path: "noteKinds", code: "bad_type", message: "noteKinds must be an array" });
+  }
+  if (!Number.isSafeInteger(value["maxNotes"]) || (value["maxNotes"] as number) < 1) {
+    issues.push({ path: "maxNotes", code: "bad_type", message: "maxNotes must be a positive integer" });
+  }
+  return issues;
+}
+
+export function validateContinuationCheckRequest(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "request must be an object" });
+    return issues;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  const ref = value["workContextRef"];
+  if (!isRecord(ref)) {
+    issues.push({ path: "workContextRef", code: "bad_type", message: "workContextRef must be an object" });
+  }
+  if (value["requestedByRunRef"] !== null) validateRunRef(value["requestedByRunRef"], "requestedByRunRef", issues);
+  if (value["originalRunRef"] !== null) validateRunRef(value["originalRunRef"], "originalRunRef", issues);
+  numberField(value, "workspaceRevision", issues, "workspaceRevision", 1);
+  if (value["planRevision"] !== null) numberField(value, "planRevision", issues, "planRevision", 1);
+  return issues;
+}
+
 

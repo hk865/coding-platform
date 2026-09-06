@@ -118,4 +118,6 @@ export interface ReadModelIndex {
   consoleTaskEvidence(query: import("./console-views.js").TaskEvidenceViewQuery): Promise<import("./console-views.js").TaskEvidenceViewResult>;
   /** P1-08: workspace-level bounded timeline (optional goalId filter; display only). */
   consoleTimeline(query: import("./console-views.js").TimelineViewQuery): Promise<import("./console-views.js").TimelineViewResult>;
+  /** P1-16: work context view per (projectId, workspaceId, workId) — binding + notes + continuations (display only). */
+  workContext(query: import("./context-continuity.js").WorkContextViewQuery): Promise<import("./context-continuity.js").WorkContextViewResult>;
 }

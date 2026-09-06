@@ -46,6 +46,12 @@ import type { CommandFingerprint } from "../contracts/command-event.js";
 import { commandIdentityKey } from "../contracts/command-event.js";
 import type { DomainEvent } from "../contracts/events.js";
 import { isKnownEventType } from "../contracts/events.js";
+import {
+  validateContinuationRecordCommit,
+  validateExecutionNoteRecordCommit,
+  validateWorkContextBindCommit,
+  validateWorkContextLinkCommit,
+} from "../contracts/ledger-validation.js";
 import { canonicalJson } from "../contracts/fingerprint.js";
 import type { CommitCursor } from "../contracts/command-event.js";
 
@@ -143,6 +149,14 @@ export class InMemoryLedger implements StateLedger {
         return this.commitIntegrationRecord(batch);
       case "patch-record":
         return this.commitPatchRecord(batch);
+      case "work-context-bind":
+        return this.commitWorkContextBind(batch);
+      case "work-context-link":
+        return this.commitWorkContextLink(batch);
+      case "execution-note-record":
+        return this.commitExecutionNoteRecord(batch);
+      case "continuation-record":
+        return this.commitContinuationRecord(batch);
     }
   }
 
@@ -509,6 +523,38 @@ export class InMemoryLedger implements StateLedger {
 
   private async commitPatchRecord(batch: import("../contracts/ledger.js").PatchRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validatePatchRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  /** P1-16: work-context-bind — one durable WorkContextBinding (CAS@0). */
+  private async commitWorkContextBind(batch: import("../contracts/ledger.js").WorkContextBindLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateWorkContextBindCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  /** P1-16: work-context-link — append a run link (CAS@N). */
+  private async commitWorkContextLink(batch: import("../contracts/ledger.js").WorkContextLinkLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateWorkContextLinkCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  /** P1-16: execution-note-record — one immutable note (body-first; CAS@0). */
+  private async commitExecutionNoteRecord(batch: import("../contracts/ledger.js").ExecutionNoteRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateExecutionNoteRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  /** P1-16: continuation-record — one immutable continuation report (CAS@0). */
+  private async commitContinuationRecord(batch: import("../contracts/ledger.js").ContinuationRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateContinuationRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
     }
     return this.commitGenericWithIdempotency(batch);

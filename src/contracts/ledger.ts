@@ -100,6 +100,18 @@ import type {
 } from "./workspace-lease.js";
 import type { IntegrationJoinedEvent, IntegrationResultRef, IntegrationResultSnapshot } from "./integration.js";
 import type { PatchRecordedEvent, PatchRecordRef, PatchRecordSnapshot } from "./patch.js";
+import type {
+  ContinuationRecordRef,
+  ContinuationRecordSnapshot,
+  ContinuationRecordedEvent,
+  ExecutionNoteRef,
+  ExecutionNoteSnapshot,
+  ExecutionNoteRecordedEvent,
+  WorkContextBindingSnapshot,
+  WorkContextBoundEvent,
+  WorkContextRef,
+  WorkRunLinkedEvent,
+} from "./context-continuity.js";
 
 export type ProjectRef = {
   aggregateType: "Project";
@@ -143,7 +155,10 @@ export type AggregateRef =
   | WorkspaceWriteLeaseRef
   | WorkspaceWriteLeaseIndexRef
   | IntegrationResultRef
-  | PatchRecordRef;
+  | PatchRecordRef
+  | WorkContextRef
+  | ExecutionNoteRef
+  | ContinuationRecordRef;
 
 export type ProjectSnapshot = {
   ref: ProjectRef;
@@ -191,7 +206,10 @@ export type AggregateSnapshot =
   | WorkspaceWriteLeaseSnapshot
   | WorkspaceWriteLeaseIndexSnapshot
   | IntegrationResultSnapshot
-  | PatchRecordSnapshot;
+  | PatchRecordSnapshot
+  | WorkContextBindingSnapshot
+  | ExecutionNoteSnapshot
+  | ContinuationRecordSnapshot;
 
 export type SnapshotResult =
   | { status: "found"; snapshot: AggregateSnapshot }
@@ -452,6 +470,59 @@ export type GoalReductionLedgerCommitV1 = {
   outboxIntents: [];
 };
 
+
+/** P1-16: work-context-bind — one durable WorkContextBinding (created exactly once; CAS@0). */
+export type WorkContextBindLedgerCommitV1 = {
+  commitKind: "work-context-bind";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [WorkContextBinding@0]. */
+  expectedVersions: ExpectedVersion[];
+  events: [WorkContextBoundEvent];
+  snapshots: [WorkContextBindingSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-16: work-context-link — append a run to the binding (run linkage CAS@N). */
+export type WorkContextLinkLedgerCommitV1 = {
+  commitKind: "work-context-link";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [WorkContextBinding@(snapshot.revision - 1)]. */
+  expectedVersions: ExpectedVersion[];
+  events: [WorkRunLinkedEvent];
+  snapshots: [WorkContextBindingSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-16: execution-note-record — one immutable ExecutionNote (body-first; CAS@0). */
+export type ExecutionNoteRecordLedgerCommitV1 = {
+  commitKind: "execution-note-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [ExecutionNote@0]. */
+  expectedVersions: ExpectedVersion[];
+  events: [ExecutionNoteRecordedEvent];
+  snapshots: [ExecutionNoteSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-16: continuation-record — one immutable continuation report (CAS@0). */
+export type ContinuationRecordLedgerCommitV1 = {
+  commitKind: "continuation-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [ContinuationRecord@0]. */
+  expectedVersions: ExpectedVersion[];
+  events: [ContinuationRecordedEvent];
+  snapshots: [ContinuationRecordSnapshot];
+  outboxIntents: [];
+};
+
 export type LedgerCommit =
   | GoalCreateLedgerCommitV1
   | BootstrapLedgerCommitV1
@@ -471,7 +542,11 @@ export type LedgerCommit =
   | WorkspaceWriteLeaseAcquireLedgerCommitV1
   | WorkspaceWriteLeaseReleaseLedgerCommitV1
   | IntegrationRecordLedgerCommitV1
-  | PatchRecordLedgerCommitV1;
+  | PatchRecordLedgerCommitV1
+  | WorkContextBindLedgerCommitV1
+  | WorkContextLinkLedgerCommitV1
+  | ExecutionNoteRecordLedgerCommitV1
+  | ContinuationRecordLedgerCommitV1;
 
 export type LedgerCommitReceipt =
   | {

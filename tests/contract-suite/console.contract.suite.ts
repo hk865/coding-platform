@@ -120,6 +120,10 @@ export class TrapControlEngine implements ControlEngine {
   releaseWorkspaceLease(): never { return this.trap("releaseWorkspaceLease"); }
   recordIntegrationResult(): never { return this.trap("recordIntegrationResult"); }
   recordPatch(): never { return this.trap("recordPatch"); }
+  bindWorkContext(): never { return this.trap("bindWorkContext"); }
+  linkWorkRun(): never { return this.trap("linkWorkRun"); }
+  recordExecutionNote(): never { return this.trap("recordExecutionNote"); }
+  recordContinuation(): never { return this.trap("recordContinuation"); }
 }
 
 export function defineConsoleContractSuite(

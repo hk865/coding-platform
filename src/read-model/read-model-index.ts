@@ -402,6 +402,11 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       // views. Both are no-ops until their lane implementations land.
       this.applyP108Console(event, positioned.cursor);
 
+      // P1-16 work-context projections (WorkContextBound / WorkRunLinked /
+      // ExecutionNoteRecorded / ContinuationRecorded). Handler + isHandledEventType
+      // land in the SAME lane commit; until then advance() rejects the event.
+      this.applyP116Context(event, positioned.cursor);
+
       // Known non-goal / non-plan / non-dispatch events
       // (ProjectBootstrapped, WorkspaceBootstrapped, CompletionPolicyInstalled,
       // ArchitectureBaselineInstalled, CompletionPolicyActivated,
@@ -1585,6 +1590,22 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     this.applyP108ConsoleLaneB(event, cursor);
   }
 
+  // P1-16 LANE-A/LANE-B stub regions (filled by the lanes; no-op until then).
+  private applyP116Context(event: DomainEvent, cursor: CommitCursor): void {
+    this.applyP116ContextLaneA(event, cursor);
+    this.applyP116ContextLaneB(event, cursor);
+  }
+
+  // LANE-A: WorkContextBinding rows + ExecutionNote rows (binding/notes view part).
+  private applyP116ContextLaneA(_event: DomainEvent, _cursor: CommitCursor): void {
+    // P1-16 lane A implementation region
+  }
+
+  // LANE-B: ContinuationRecord rows + frontier aggregation.
+  private applyP116ContextLaneB(_event: DomainEvent, _cursor: CommitCursor): void {
+    // P1-16 lane B implementation region
+  }
+
   /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — rebuilt ONLY from the
    * committed v1 events. Portfolio rows come from WorkspaceBootstrapped; summary
    * rows are touched by every workspace-scoped counter event. Phase COUNT maps
@@ -2433,6 +2454,13 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     }
     if (hasRow) return { status: "ready", timeline: view, observedCursor: observedCursor! };
     return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
+  }
+
+  /** P1-16 LANE-A/LANE-B stub: work context view (binding + notes + continuations).
+   * Region markers are fixed by the shared baseline; lane A owns the binding +
+   * notes rows, lane B owns the continuation rows + frontier aggregation. */
+  async workContext(query: import("../contracts/context-continuity.js").WorkContextViewQuery): Promise<import("../contracts/context-continuity.js").WorkContextViewResult> {
+    throw new Error("P1-16 lane A/B: workContext not implemented yet");
   }
 
   /** Event types this projection currently has handlers for (P1-02 + P1-03, v1). */
