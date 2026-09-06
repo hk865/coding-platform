@@ -143,7 +143,7 @@ export function defineVerificationContractSuite(createHarness: P1_04HarnessFacto
         planRef: sc.alpha.planRef,
         changeScope: { diffClass: "code-change", changedFiles: ["src/a.ts"], writeSummary: "change" },
         semanticChange: "semantic",
-        risks: [{ level: "low", description: "local" }],
+        risks: [{ level: "low" as const, description: "local" }],
       };
       const before = await h.ledger.events({ afterCursor: null, limit: 500 });
       const result = await h.verification.verify(request);
@@ -354,6 +354,92 @@ export function defineVerificationContractSuite(createHarness: P1_04HarnessFacto
       const superseded = selectEffectiveEvidenceSet([inconclusive, pass], plan, current);
       expect(superseded.coverageByRequirement[P104_OBL_IMPLEMENT + "\u0000vr-impl-static"]).toBe("ev-table-pass2");
       expect(superseded.blockingByRequirement[P104_OBL_IMPLEMENT + "\u0000vr-impl-static"]).toBeUndefined();
+    });
+  });
+}
+
+// ------------------------------------------------------------------------ //
+// ReviewContext assemble — bounded ReviewPacket (dual-adapter parity)        //
+// ------------------------------------------------------------------------ //
+
+export function defineReviewContextSuite(createHarness: P1_04HarnessFactory): void {
+  describe("P1-04 ReviewContext assemble suite", () => {
+    async function setup() {
+      const h = await createHarness();
+      const sc = await prepareP104Scenario(h);
+      const run = await runP104ClaimedRun(h, {
+        projectId: sc.alpha.projectId, taskId: REVIEW, runId: "run-pkt", attemptId: "att-pkt",
+      });
+      return { h, sc, run };
+    }
+
+    function reviewRequest(sc: Awaited<ReturnType<typeof prepareP104Scenario>>["alpha"], run: Awaited<ReturnType<typeof runP104ClaimedRun>>, partial: Partial<import("../../src/contracts/review-context.js").ReviewContextRequestV1> = {}) {
+      return {
+        schemaVersion: 1 as const,
+        requestId: "req-pkt-1",
+        projectId: sc.projectId,
+        workspaceId: "ws-shared",
+        goalId: sc.goalId,
+        taskId: REVIEW,
+        planRef: sc.planRef,
+        runRef: run.runRef,
+        attemptRef: { aggregateType: "TaskAttempt" as const, projectId: sc.projectId, goalId: sc.goalId, taskId: REVIEW, attemptId: "att-pkt" },
+        roleBinding: {
+          schemaVersion: 1 as const, bindingId: "binding-review-v1", templateId: "template-reviewer",
+          templateRevision: "2026-09-05", bindingVersion: 1, policyRevision: "auth-policy-runtime-v1",
+        },
+        declaredPermissions: { tools: ["read", "write"], writeScope: ["src/contracts"] },
+        scope: { tools: ["read"], writeScope: ["src/contracts"] },
+        workspaceSnapshot: { workspaceId: "ws-shared", revision: 1 },
+        changeScope: { diffClass: "code-change", changedFiles: ["src/a.ts"], writeSummary: "change" },
+        semanticChange: "semantic" as const,
+        risks: [{ level: "low" as const, description: "local" }],
+        contractPoints: [{ refId: "contract-1", point: "语义变化与义务覆盖一致性" }],
+        budget: { tokenBudget: 10_000, deadline: "2026-09-06T00:00:00.000Z" },
+        submittedAt: SCHEMA,
+        ...partial,
+      };
+    }
+
+    it("assemble: bounded ReviewPacket, body-first in the vault, no transcript", async () => {
+      const { h, sc, run } = await setup();
+      const before = await h.ledger.events({ afterCursor: null, limit: 500 });
+      const result = await h.assembleReview(reviewRequest(sc.alpha, run));
+      expect(result.status).toBe("ready");
+      if (result.status !== "ready") return;
+      expect(result.packet.total.noFullTranscript).toBe(true);
+      expect(result.packet.total.materialCount).toBeGreaterThanOrEqual(1);
+      expect(result.packet.total.materialCount).toBeLessThanOrEqual(8);
+      expect(result.packet.rubric.obligations.length).toBeGreaterThanOrEqual(1);
+      expect(result.bundleRef.digest.length).toBe(64);
+      expect(result.manifest.selectedRefs.length).toBeGreaterThanOrEqual(1);
+      // Body-first: the bundle is readable by the owning review run.
+      const opened = await (h as unknown as { vault: { open: (ref: import("../../src/contracts/artifact.js").ArtifactRef, q: import("../../src/contracts/artifact.js").ArtifactOpenQuery) => Promise<import("../../src/contracts/artifact.js").ArtifactOpenResult> } }).vault.open(result.bundleRef, { requesterRunRef: run.runRef });
+      expect(opened.status).toBe("ready");
+      if (opened.status === "ready") {
+        const body = JSON.parse(opened.record.body) as { packetId: string };
+        expect(body.packetId).toBe(result.packet.packetId);
+      }
+    });
+
+    it("rejections are zero-write: forbidden scope / stale workspace / not-semantic / exhausted budget", async () => {
+      const { h, sc, run } = await setup();
+      const before = await h.ledger.events({ afterCursor: null, limit: 500 });
+      const cases = [
+        [{ scope: { tools: ["pwn"], writeScope: [] } }, "forbidden_tool_or_scope" as const],
+        [{ workspaceSnapshot: { workspaceId: "ws-shared", revision: 2 } }, "stale_workspace_snapshot" as const],
+        [{ semanticChange: "none" as const }, "not_semantic_change" as const],
+        [{ budget: { tokenBudget: 10_000, deadline: "2020-01-01T00:00:00.000Z" } }, "budget_exhausted" as const],
+      ];
+      for (const [partial, code] of cases) {
+        const result = await h.assembleReview(reviewRequest(sc.alpha, run, partial as never));
+        expect(result.status, "expected rejection " + code).toBe("rejected");
+        if (result.status === "rejected") {
+          expect(result.code).toBe(code);
+        }
+      }
+      const after = await h.ledger.events({ afterCursor: null, limit: 500 });
+      expect(after.events.length).toBe(before.events.length);
     });
   });
 }
