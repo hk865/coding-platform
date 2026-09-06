@@ -702,7 +702,7 @@ export async function runP107FullScenario(h: P1_07TestHarness): Promise<P107Full
     }),
   });
   expect((await h.reduceTask(buildP107ReduceTaskCommand(P107_TASK_GATE))).status).toBe("committed");
-  const goalReduce = await reduceP107Goal(h, 1);
+  const goalReduce = await reduceP107Goal(h, 0);
   expect(goalReduce.status).toBe("committed");
 
   return {

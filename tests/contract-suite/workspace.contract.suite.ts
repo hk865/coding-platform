@@ -197,9 +197,8 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
 
       // REAL overlap: both fired before any consumption (no implicit order).
       expect(probe.started).toHaveLength(2);
-      expect(probe.started).toEqual([P107_TASK_READER_A, P107_TASK_READER_B].sort((a, b) => a.localeCompare(b)));
-      expect(probe.started).toHaveLength(2);
-      const firstPollIndex = probe.started.length; // all starts precede polls
+      expect([...probe.started].sort()).toEqual([P107_TASK_READER_A, P107_TASK_READER_B].sort((a, b) => a.localeCompare(b)));
+      expect(probe.polled).toHaveLength(2);
       // windows: A [10,40], B [20,50] -> overlap = [20,40]
       const winA = probe.windows["run-p107-read-a"]!;
       const winB = probe.windows["run-p107-read-b"]!;
@@ -208,7 +207,6 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
       expect(winB.startedAt).toBe("2026-09-06T12:00:20.000Z");
       expect(winB.terminalAt).toBe("2026-09-06T12:00:50.000Z");
       expect(winA.startedAt < winB.startedAt && winB.startedAt < winA.terminalAt && winA.terminalAt < winB.terminalAt).toBe(true);
-      void firstPollIndex;
       void sc;
       // independent attempt/context/budget/source: each run has its own outbox entry
       const outA = await h.ledger.load(dispatchOutboxRefFor(P107_PROJECT, P107_GOAL, P107_TASK_READER_A, "run-p107-read-a"));
@@ -605,7 +603,7 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
       // gate evidence FAILs
       await submitP107Evidence(h, { evidenceId: "ev-g-gate-fail", taskId: P107_TASK_GATE, outcome: "FAIL", runRef: gateRun, coverage: [{ obligationId: P107_OBL_GATE, requirementId: P107_VR_GATE }], anchor: readerAnchor(sc, sc.workspaceRevision + 1) });
       expect((await h.reduceTask(buildP107ReduceTaskCommand(P107_TASK_GATE))).status).toBe("committed");
-      const reduce = await reduceP107Goal(h, 1);
+      const reduce = await reduceP107Goal(h, 0);
       expect(reduce.status).toBe("committed");
       const status = await h.goalStatus({ projectId: P107_PROJECT, goalId: P107_GOAL });
       expect(status.status).toBe("ready");
