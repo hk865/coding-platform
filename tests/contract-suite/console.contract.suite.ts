@@ -258,12 +258,11 @@ export function defineConsoleContractSuite(
           expect(ahead.requiredCursor).toBeTruthy();
           expect(ahead.observedCursor).toBeTruthy();
         }
-        const missing = await h.consolePortfolio({
+        const portfolio = await h.consolePortfolio({
           atLeastCursor: observed as never,
         });
-        // Covered + no such scope -> not_found; NOT_READY would be wrong here
-        // (the index is at least at the observed cursor).
-        expect(missing.status).toBe("ready");
+        // Covered + portfolio rows exist -> ready (never echoes the request).
+        expect(portfolio.status).toBe("ready");
 
         // A scope that never existed, fully covered -> not_found.
         const never = await h.consoleSummary({
@@ -377,6 +376,7 @@ export function defineConsoleContractSuite(
         await runP108TwoProjectScenario(probeH);
         expect(counting.starts).toBeGreaterThan(0);
         const before = counting.starts;
+        const pollsBefore = counting.pollCalls;
         // Mechanical status queries — pure ReadModel reads.
         expect((await probeH.consolePortfolio({})).status).toBe("ready");
         expect((await probeH.consoleSummary({ projectId: P108_PROJECT_A, workspaceId: P108_WORKSPACE })).status).toBe("ready");
@@ -385,7 +385,7 @@ export function defineConsoleContractSuite(
         expect((await probeH.consoleTaskEvidence({ projectId: P108_PROJECT_A, workspaceId: P108_WORKSPACE, goalId: P108_GOAL, taskId: P108_TASK_WORK })).status).toBe("ready");
         expect((await probeH.consoleTimeline({ projectId: P108_PROJECT_A, workspaceId: P108_WORKSPACE })).status).toBe("ready");
         expect(counting.starts).toBe(before);
-        expect(counting.pollCalls).toBe(before * 2); // poll only during the scenario drives
+        expect(counting.pollCalls).toBe(pollsBefore); // no runtime interaction during queries
       });
     });
 

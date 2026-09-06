@@ -128,7 +128,15 @@ import type {
   TimelineViewQuery,
   TimelineViewResult,
 } from "../contracts/console-views.js";
-import { consoleWorkspaceKey, consoleGoalKey, consoleTaskKey, CONSOLE_PORTFOLIO_MAX_PROJECTS } from "../contracts/console-views.js";
+import {
+  consoleWorkspaceKey,
+  consoleGoalKey,
+  consoleTaskKey,
+  CONSOLE_PORTFOLIO_MAX_PROJECTS,
+  CONSOLE_ACTIVE_AGENTS_MAX_ROWS,
+  CONSOLE_TIMELINE_MAX_ENTRIES,
+  CONSOLE_MATRIX_MAX_TASKS,
+} from "../contracts/console-views.js";
 import { patchRecordRefFor } from "../contracts/patch.js";
 import type { RoleBindingRefV1 } from "../contracts/dispatch.js";
 
@@ -1734,9 +1742,519 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     row.phaseCounts.goalPhase[phase] = (row.phaseCounts.goalPhase[phase] ?? 0) - 1;
   }
 
-  /** P1-08 LANE-B hook (PlanMatrix + ActiveAgents + TaskEvidence + Timeline) — no-op until lane B lands. */
-  private applyP108ConsoleLaneB(_event: DomainEvent, _cursor: CommitCursor): void {
-    // replaced by lane B (shared baseline placeholder)
+  // ------------------------------------------------------------------ //
+  // P1-08 LANE-B projection fields (per-workspace order/seq + index).   //
+  // ------------------------------------------------------------------ //
+
+  /** LANE-B: agent storageKey (consoleTaskKey + "\u0000" + runId) -> workspace arrival seq. */
+  private readonly p108AgentRowSeq = new Map<string, number>();
+  /** LANE-B: consoleWorkspaceKey -> per-workspace agent arrival seq counter. */
+  private readonly p108AgentArrivalSeq = new Map<string, number>();
+  /** LANE-B: (projectId \0 runId) -> agent storageKey (RunStarted / RunEventRecorded /
+   * RunOutcomeUnknown carry only the runId). */
+  private readonly p108AgentRunIndex = new Map<string, string>();
+  /** LANE-B: consoleWorkspaceKey -> total timeline arrivals (before the bounded window). */
+  private readonly p108TimelineTotal = new Map<string, number>();
+
+  /** P1-08 LANE-B hook (PlanMatrix + ActiveAgents + TaskEvidence + Timeline). */
+  private applyP108ConsoleLaneB(event: DomainEvent, cursor: CommitCursor): void {
+    switch (event.eventType) {
+      case "GoalCreated":
+        this.p108Timeline(event, cursor, "goal_created", { goalId: event.aggregateId }, "goal " + event.aggregateId + " created");
+        break;
+      case "PlanRevisionAccepted":
+        this.p108ApplyPlanRevisionAccepted(event, cursor);
+        break;
+      case "TaskClaimed":
+        this.p108ApplyTaskClaimed(event, cursor);
+        break;
+      case "RunStarted":
+        this.p108ApplyRunStarted(event, cursor);
+        break;
+      case "RunEventRecorded":
+        this.p108ApplyRunEventRecorded(event, cursor);
+        break;
+      case "RunOutcomeUnknown":
+        this.p108ApplyRunOutcomeUnknown(event, cursor);
+        break;
+      case "EvidenceAdmitted":
+        this.p108ApplyEvidenceAdmitted(event, cursor);
+        break;
+      case "TaskReductionUpdated":
+        this.p108ApplyTaskReductionUpdated(event, cursor);
+        break;
+      case "GoalPhaseUpdated":
+        this.p108Timeline(event, cursor, "goal_phase", { goalId: event.payload.goalId },
+          "goal " + event.payload.goalId + " phase " + event.payload.phase);
+        break;
+      case "HandoffRecorded":
+        this.p108Timeline(event, cursor, "handoff_recorded",
+          { goalId: event.payload.goalId, taskId: event.payload.taskId, packetId: event.payload.packet.packetId },
+          "handoff packet " + event.payload.packet.packetId + " recorded");
+        break;
+      case "ReplacementClaimed":
+        this.p108ApplyReplacementClaimed(event, cursor);
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Helper: active-agent storage key (full-scope task key + runId). */
+  private p108AgentStorageKey(projectId: string, workspaceId: string, goalId: string, taskId: string, runId: string): string {
+    return consoleTaskKey(projectId, workspaceId, goalId, taskId) + "\u0000" + runId;
+  }
+
+  /** Helper: workspace-level agent arrival seq (1-based, deterministic). */
+  private p108NextAgentSeq(workspaceKey: string): number {
+    const next = (this.p108AgentArrivalSeq.get(workspaceKey) ?? 0) + 1;
+    this.p108AgentArrivalSeq.set(workspaceKey, next);
+    return next;
+  }
+
+  /** Helper: append one bounded workspace timeline entry (drop oldest beyond the bound). */
+  private p108Timeline(
+    event: { eventId: string; occurredAt: string; projectId: string; workspaceId: string },
+    cursor: CommitCursor,
+    kind: import("../contracts/console-views.js").TimelineEntryKind,
+    refs: { goalId?: string; taskId?: string; runId?: string; evidenceId?: string; packetId?: string },
+    summary: string,
+  ): void {
+    const workspaceKey = consoleWorkspaceKey(event.projectId, event.workspaceId);
+    const seq = (this.p108TimelineSeq.get(workspaceKey) ?? 0) + 1;
+    this.p108TimelineSeq.set(workspaceKey, seq);
+    const total = (this.p108TimelineTotal.get(workspaceKey) ?? 0) + 1;
+    this.p108TimelineTotal.set(workspaceKey, total);
+    const entry: import("../contracts/console-views.js").TimelineEntry = {
+      seq,
+      kind,
+      eventId: event.eventId,
+      occurredAt: event.occurredAt,
+      sourceCursor: cursor,
+      refs: { projectId: event.projectId, workspaceId: event.workspaceId, ...refs },
+      summary,
+    };
+    const list = this.p108TimelineRows.get(workspaceKey) ?? [];
+    list.push(entry);
+    if (list.length > CONSOLE_TIMELINE_MAX_ENTRIES) {
+      list.splice(0, list.length - CONSOLE_TIMELINE_MAX_ENTRIES);
+    }
+    this.p108TimelineRows.set(workspaceKey, list);
+  }
+
+  /** Helper: display state of a terminal runtime event type (never inferred). */
+  private p108TerminalDisplayState(eventType: string): import("../contracts/console-views.js").RunDisplayState {
+    switch (eventType) {
+      case "run_completed": return "completed_run";
+      case "run_crashed": return "crashed";
+      case "run_cancelled": return "cancelled";
+      case "run_budget_exhausted": return "budget_exhausted";
+      default: return "ongoing";
+    }
+  }
+
+  /** Helper: build a PlanMatrixView from an accepted plan snapshot (shared by the
+   * accepted-plan handler and the defensive TaskReductionUpdated rebuild path). */
+  private p108BuildMatrix(
+    projectId: string,
+    workspaceId: string,
+    goalId: string,
+    snapshot: PlanRevisionSnapshot,
+    cursor: CommitCursor,
+    updatedAt: string,
+  ): import("../contracts/console-views.js").PlanMatrixView {
+    const stages = snapshot.stages;
+    const stageTitleOf = (stageId: string | undefined): string | null =>
+      stageId === undefined ? null : (stages.find((s) => s.stageId === stageId)?.title ?? null);
+    const rows: import("../contracts/console-views.js").PlanMatrixRow[] =
+      snapshot.tasks.slice(0, CONSOLE_MATRIX_MAX_TASKS).map((task) => ({
+        taskId: task.taskId,
+        title: task.title,
+        stageId: task.stageId ?? null,
+        stageTitle: stageTitleOf(task.stageId),
+        requirementLevel: task.requirementLevel,
+        taskKind: task.taskKind,
+        disposition: task.disposition,
+        taskScope: task.scope,
+        plannedPhase: task.phase,
+        livePhase: null,
+        phaseSources: {
+          planned: { planRef: snapshot.ref, planRevision: snapshot.planRevision, sourceCursor: cursor },
+          live: { reductionRevision: null, sourceCursor: null },
+        },
+        phaseMismatch: false,
+        sourceCursor: cursor,
+      }));
+    return {
+      projectId,
+      workspaceId,
+      goalId,
+      planRef: snapshot.ref,
+      planRevision: snapshot.planRevision,
+      stages,
+      rows,
+      taskCount: snapshot.tasks.length,
+      sourceCursor: cursor,
+      updatedAt,
+    };
+  }
+
+  /** LANE-B: PlanRevisionAccepted -> matrix row + timeline plan_accepted. */
+  private p108ApplyPlanRevisionAccepted(event: PlanRevisionAcceptedEvent, cursor: CommitCursor): void {
+    const snapshot = event.payload.planRevision;
+    const projectId = event.projectId;
+    const workspaceId = event.workspaceId;
+    const goalId = event.payload.goalId;
+    const view = this.p108BuildMatrix(projectId, workspaceId, goalId, snapshot, cursor, event.occurredAt);
+    this.p108MatrixRows.set(consoleGoalKey(projectId, workspaceId, goalId), view);
+    this.p108Timeline(event, cursor, "plan_accepted", { goalId },
+      "plan " + snapshot.ref.planId + " revision " + snapshot.planRevision + " accepted");
+  }
+
+  /** LANE-B: TaskClaimed -> create/refresh the active-agent run row (starting). */
+  private p108ApplyTaskClaimed(event: TaskClaimedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const workspaceId = event.workspaceId;
+    const { goalId, taskId, runRef, attemptRef, roleBinding, claimedAt } = event.payload;
+    const workspaceKey = consoleWorkspaceKey(projectId, workspaceId);
+    const taskKey = consoleTaskKey(projectId, workspaceId, goalId, taskId);
+    const storageKey = this.p108AgentStorageKey(projectId, workspaceId, goalId, taskId, runRef.runId);
+    if (!this.p108AgentRows.has(storageKey)) {
+      this.p108AgentRowSeq.set(storageKey, this.p108NextAgentSeq(workspaceKey));
+    }
+    const marker = this.p108HandoffMarkers.get(taskKey) ?? null;
+    const row: import("../contracts/console-views.js").ActiveAgentRunRow = {
+      projectId,
+      workspaceId,
+      goalId,
+      taskId,
+      runRef,
+      attemptRef,
+      binding: roleBinding,
+      runStatus: "starting",
+      runOutcome: null,
+      exitCode: null,
+      lastEventSeq: 0,
+      attemptStatus: "claimed",
+      attemptEndOutcome: null,
+      lease: { holderRunId: runRef.runId, grantedAt: claimedAt, expiresAt: null },
+      startedAt: null,
+      endedAt: null,
+      displayState: "starting",
+      handoff: marker,
+      sourceCursor: cursor,
+    };
+    this.p108AgentRows.set(storageKey, row);
+    this.p108AgentRunIndex.set(projectId + "\u0000" + runRef.runId, storageKey);
+    this.p108Timeline(event, cursor, "task_claimed", { goalId, taskId, runId: runRef.runId },
+      "work " + taskId + " claimed (run " + runRef.runId + ")");
+  }
+
+  /** LANE-B: RunStarted -> the run row becomes running/ongoing. */
+  private p108ApplyRunStarted(event: RunStartedEvent, cursor: CommitCursor): void {
+    const storageKey = this.p108AgentRunIndex.get(event.projectId + "\u0000" + event.aggregateId);
+    if (!storageKey) return;
+    const row = this.p108AgentRows.get(storageKey);
+    if (!row) return;
+    this.p108AgentRows.set(storageKey, {
+      ...row,
+      runStatus: "running",
+      startedAt: event.payload.startedAt,
+      attemptStatus: "started",
+      displayState: "ongoing",
+      sourceCursor: cursor,
+    });
+    this.p108Timeline(event, cursor, "run_started", { goalId: row.goalId, taskId: row.taskId, runId: row.runRef.runId },
+      "run " + row.runRef.runId + " started");
+  }
+
+  /** LANE-B: RunEventRecorded -> fold the runtime event into the run row (idempotent on seq). */
+  private p108ApplyRunEventRecorded(event: RunEventRecordedEvent, cursor: CommitCursor): void {
+    const storageKey = this.p108AgentRunIndex.get(event.projectId + "\u0000" + event.aggregateId);
+    if (!storageKey) return;
+    const row = this.p108AgentRows.get(storageKey);
+    if (!row) return;
+    const rt = event.payload.runtimeEvent;
+    if (rt.sequence > row.lastEventSeq) {
+      const terminal = isTerminalRuntimeEvent(rt);
+      const outcome = terminal ? runtimeEventTerminalOutcome(rt) : row.runOutcome;
+      const exitCode = rt.payload.kind === "completed" ? rt.payload.exitCode : row.exitCode;
+      const endedAt = terminal ? rt.occurredAt : row.endedAt;
+      this.p108AgentRows.set(storageKey, {
+        ...row,
+        runStatus: terminal ? "ended" : "running",
+        runOutcome: outcome,
+        exitCode,
+        lastEventSeq: rt.sequence,
+        endedAt,
+        attemptStatus: terminal ? "ended" : row.attemptStatus,
+        attemptEndOutcome: terminal ? outcome : row.attemptEndOutcome,
+        displayState: terminal ? this.p108TerminalDisplayState(rt.eventType) : "ongoing",
+        sourceCursor: cursor,
+      });
+    }
+    this.p108Timeline(event, cursor, "run_event", { goalId: row.goalId, taskId: row.taskId, runId: row.runRef.runId },
+      "run " + row.runRef.runId + " " + rt.eventType);
+  }
+
+  /** LANE-B: RunOutcomeUnknown -> explicit ended/outcome_unknown fact (never inferred). */
+  private p108ApplyRunOutcomeUnknown(event: RunOutcomeUnknownEvent, cursor: CommitCursor): void {
+    const storageKey = this.p108AgentRunIndex.get(event.projectId + "\u0000" + event.aggregateId);
+    if (!storageKey) return;
+    const row = this.p108AgentRows.get(storageKey);
+    if (!row) return;
+    this.p108AgentRows.set(storageKey, {
+      ...row,
+      runStatus: "ended",
+      runOutcome: "outcome_unknown",
+      endedAt: event.payload.observedAt,
+      attemptStatus: "ended",
+      attemptEndOutcome: "outcome_unknown",
+      displayState: "outcome_unknown",
+      sourceCursor: cursor,
+    });
+    this.p108Timeline(event, cursor, "run_outcome_unknown", { goalId: row.goalId, taskId: row.taskId, runId: row.runRef.runId },
+      "run " + row.runRef.runId + " outcome unknown");
+  }
+
+  /** LANE-B: ReplacementClaimed -> task handoff marker + (absent) replacement run row. */
+  private p108ApplyReplacementClaimed(event: ReplacementClaimedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const workspaceId = event.workspaceId;
+    const { goalId, taskId, packetRef, priorRunRef, replacementRef, attemptRef, runRef, reason, claimedAt } = event.payload;
+    const taskKey = consoleTaskKey(projectId, workspaceId, goalId, taskId);
+    const handoff: import("../contracts/console-views.js").ActiveAgentRunRow["handoff"] = {
+      packetRef,
+      priorRunRef,
+      replacementRef,
+      reason,
+      claimedAt,
+      sourceCursor: cursor,
+    };
+    this.p108HandoffMarkers.set(taskKey, handoff);
+    const runKey = projectId + "\u0000" + runRef.runId;
+    const storageKey = this.p108AgentStorageKey(projectId, workspaceId, goalId, taskId, runRef.runId);
+    if (!this.p108AgentRows.has(storageKey)) {
+      this.p108AgentRowSeq.set(storageKey, this.p108NextAgentSeq(consoleWorkspaceKey(projectId, workspaceId)));
+      const row: import("../contracts/console-views.js").ActiveAgentRunRow = {
+        projectId,
+        workspaceId,
+        goalId,
+        taskId,
+        runRef,
+        attemptRef,
+        binding: LEASE_VIEW_PLACEHOLDER_BINDING,
+        runStatus: "running",
+        runOutcome: null,
+        exitCode: null,
+        lastEventSeq: 0,
+        attemptStatus: "claimed",
+        attemptEndOutcome: null,
+        lease: { holderRunId: runRef.runId, grantedAt: claimedAt, expiresAt: null },
+        startedAt: null,
+        endedAt: null,
+        displayState: "ongoing",
+        handoff,
+        sourceCursor: cursor,
+      };
+      this.p108AgentRows.set(storageKey, row);
+    } else {
+      const existing = this.p108AgentRows.get(storageKey)!;
+      this.p108AgentRows.set(storageKey, { ...existing, handoff, sourceCursor: cursor });
+    }
+    this.p108AgentRunIndex.set(runKey, storageKey);
+    this.p108Timeline(event, cursor, "replacement_claimed", { goalId, taskId, runId: runRef.runId, packetId: packetRef.packetId },
+      "replacement claimed (run " + runRef.runId + ")");
+  }
+
+  /** LANE-B: EvidenceAdmitted -> append the entry + timeline evidence_admitted. */
+  private p108ApplyEvidenceAdmitted(event: EvidenceAdmittedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const workspaceId = event.workspaceId;
+    const { goalId, taskId, evidence, admittedAt, evidenceIndex } = event.payload;
+    const taskKey = consoleTaskKey(projectId, workspaceId, goalId, taskId);
+    let proj = this.p108EvidenceProjections.get(taskKey);
+    if (!proj) {
+      const snapshot = this.planSnapshots.get(planGraphKey(projectId, goalId)) ?? null;
+      proj = {
+        projectId,
+        workspaceId,
+        goalId,
+        taskId,
+        evidence: [],
+        reduction: null,
+        reductionCursor: null,
+        planRef: snapshot?.ref ?? { aggregateType: "PlanRevision", projectId, planId: "" },
+        planRevision: snapshot?.planRevision ?? 0,
+        sourceCursor: cursor,
+        updatedAt: null,
+      };
+    }
+    proj.evidence.push({ evidence, admittedAt, evidenceIndex, sourceCursor: cursor });
+    proj.sourceCursor = cursor;
+    proj.updatedAt = event.occurredAt;
+    this.p108EvidenceProjections.set(taskKey, proj);
+    this.p108Timeline(event, cursor, "evidence_admitted", { goalId, taskId, evidenceId: evidence.evidenceId },
+      "evidence " + evidence.evidenceId + " admitted " + evidence.outcome);
+  }
+
+  /** LANE-B: TaskReductionUpdated -> matrix live-phase + evidence reduction + timeline. */
+  private p108ApplyTaskReductionUpdated(event: TaskReductionUpdatedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const workspaceId = event.workspaceId;
+    const { goalId, taskId, reduction } = event.payload;
+
+    // Plan matrix: update the task's live phase (defensive rebuild if the matrix
+    // row is missing — only a TaskReductionUpdated was seen).
+    const matrixKey = consoleGoalKey(projectId, workspaceId, goalId);
+    let view = this.p108MatrixRows.get(matrixKey);
+    if (!view) {
+      const snapshot = this.planSnapshots.get(planGraphKey(projectId, goalId));
+      if (snapshot) view = this.p108BuildMatrix(projectId, workspaceId, goalId, snapshot, cursor, event.occurredAt);
+    }
+    if (view) {
+      const rows = view.rows.map((row) => {
+        if (row.taskId !== taskId) return row;
+        const livePhase = reduction.phase;
+        return {
+          ...row,
+          livePhase,
+          phaseSources: { ...row.phaseSources, live: { reductionRevision: reduction.revision, sourceCursor: cursor } },
+          phaseMismatch: livePhase !== row.plannedPhase,
+          sourceCursor: cursor,
+        };
+      });
+      this.p108MatrixRows.set(matrixKey, { ...view, rows, sourceCursor: cursor, updatedAt: event.occurredAt });
+    }
+
+    // Task evidence projection: refresh the reduction + plan ref.
+    const taskKey = consoleTaskKey(projectId, workspaceId, goalId, taskId);
+    let proj = this.p108EvidenceProjections.get(taskKey);
+    if (!proj) {
+      const snapshot = this.planSnapshots.get(planGraphKey(projectId, goalId)) ?? null;
+      proj = {
+        projectId,
+        workspaceId,
+        goalId,
+        taskId,
+        evidence: [],
+        reduction: null,
+        reductionCursor: null,
+        planRef: snapshot?.ref ?? { aggregateType: "PlanRevision", projectId, planId: "" },
+        planRevision: snapshot?.planRevision ?? 0,
+        sourceCursor: cursor,
+        updatedAt: null,
+      };
+    }
+    proj.reduction = reduction;
+    proj.reductionCursor = cursor;
+    proj.planRef = reduction.planRef;
+    proj.planRevision = reduction.planRevision;
+    proj.sourceCursor = cursor;
+    proj.updatedAt = event.occurredAt;
+    this.p108EvidenceProjections.set(taskKey, proj);
+
+    this.p108Timeline(event, cursor, "task_reduction", { goalId, taskId },
+      "task " + taskId + " reduced to " + reduction.phase);
+  }
+
+  /** Map a projected evidence entry to its task-evidence display entry. */
+  private p108ToTaskEvidenceEntry(
+    pe: { evidence: EvidenceV1; admittedAt: string; evidenceIndex: number; sourceCursor: CommitCursor },
+    planSnapshot: PlanRevisionSnapshot | null,
+    currentAnchor: EffectivityAnchorV1 | null,
+  ): import("../contracts/console-views.js").TaskEvidenceEntry {
+    const e = pe.evidence;
+    const marker: import("../contracts/console-views.js").EvidenceFormalMarker =
+      e.kind === "claim" || e.kind === "verdict" ? "unverified_report" : "observed_fact";
+    const applicability =
+      planSnapshot !== null && currentAnchor !== null ? evidenceApplicability(e, planSnapshot, currentAnchor) : null;
+    return {
+      evidenceId: e.evidenceId,
+      kind: e.kind,
+      marker,
+      outcome: e.outcome,
+      coverage: e.coverage.map((c) => ({ ...c })),
+      applicability,
+      anchor: { ...e.anchor },
+      sourceRunRef: e.source.runRef,
+      checkId: e.source.checkId,
+      artifactRef: e.summary.artifactRef,
+      summary: e.summary.text,
+      admittedAt: pe.admittedAt,
+      evidenceIndex: pe.evidenceIndex,
+      sourceCursor: pe.sourceCursor,
+    };
+  }
+
+  /** Build the TaskEvidenceView from the projected row (query-time pure derivation). */
+  private p108BuildEvidenceView(proj: {
+    projectId: string;
+    workspaceId: string;
+    goalId: string;
+    taskId: string;
+    evidence: { evidence: EvidenceV1; admittedAt: string; evidenceIndex: number; sourceCursor: CommitCursor }[];
+    reduction: TaskReductionSnapshot | null;
+    reductionCursor: CommitCursor | null;
+    planRef: PlanRevisionRef;
+    planRevision: number;
+    sourceCursor: CommitCursor;
+    updatedAt: string | null;
+  }): import("../contracts/console-views.js").TaskEvidenceView {
+    const projectId = proj.projectId;
+    const goalId = proj.goalId;
+    const taskId = proj.taskId;
+    const planSnapshot = this.planSnapshots.get(planGraphKey(projectId, goalId)) ?? null;
+    const currentAnchor = proj.reduction ? proj.reduction.currentAnchor : null;
+    const sorted = [...proj.evidence].sort((a, b) => a.evidenceIndex - b.evidenceIndex);
+    const evidence = sorted.map((pe) => this.p108ToTaskEvidenceEntry(pe, planSnapshot, currentAnchor));
+    let effectiveEvidenceIds: string[] = [];
+    let blockingEvidenceIds: string[] = [];
+    if (planSnapshot !== null && currentAnchor !== null) {
+      const effectiveSet = selectEffectiveEvidenceSet(
+        sorted.map((pe) => pe.evidence),
+        planSnapshot,
+        currentAnchor,
+      );
+      effectiveEvidenceIds = effectiveSet.effectiveEvidenceIds;
+      blockingEvidenceIds = Object.values(effectiveSet.blockingByRequirement).flat();
+    }
+    const reduction = proj.reduction === null
+      ? null
+      : {
+          phase: proj.reduction.phase,
+          causes: proj.reduction.causes,
+          effectiveEvidenceIds: proj.reduction.effectiveEvidenceIds,
+          blockingEvidenceIds: proj.reduction.blockingEvidenceIds,
+          satisfiedObligationIds: proj.reduction.satisfiedObligationIds,
+          planRef: proj.reduction.planRef,
+          reducedAt: proj.reduction.reducedAt,
+          sourceCursor: proj.reductionCursor!,
+        };
+    const staleEvidenceIds = proj.reduction ? proj.reduction.staleEvidenceIds : [];
+    const outOfScopeEvidenceIds = proj.reduction ? proj.reduction.outOfScopeEvidenceIds : [];
+    const planRef = planSnapshot?.ref ?? proj.reduction?.planRef ?? sorted[0]?.evidence.anchor.planRef ??
+      { aggregateType: "PlanRevision", projectId, planId: "" };
+    const planRevision = planSnapshot?.planRevision ?? proj.reduction?.planRevision ?? sorted[0]?.evidence.anchor.planRevision ?? 0;
+    return {
+      projectId,
+      workspaceId: proj.workspaceId,
+      goalId,
+      taskId,
+      currentAnchor,
+      planRef,
+      planRevision,
+      evidence,
+      effectiveEvidenceIds,
+      blockingEvidenceIds,
+      staleEvidenceIds,
+      outOfScopeEvidenceIds,
+      reduction,
+      bodyPolicy: "ref_only",
+      modelExplanation: { status: "unavailable", sourceCursor: null },
+      sourceCursor: proj.sourceCursor,
+      updatedAt: proj.updatedAt,
+    };
   }
 
   /** P1-08 LANE-A: portfolio of bootstrapped Project/Workspace scopes. */
@@ -1809,24 +2327,105 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
   }
 
-  /** P1-08 LANE-B stub: consolePlanMatrix (frozen signature; lane B implements). */
-  async consolePlanMatrix(_query: PlanMatrixViewQuery): Promise<PlanMatrixViewResult> {
-    throw new Error("P1-08 lane stub: consolePlanMatrix not implemented yet");
+  /** P1-08 LANE-B: plan matrix (key = consoleGoalKey; freshness mirrors goal()). */
+  async consolePlanMatrix(query: PlanMatrixViewQuery): Promise<PlanMatrixViewResult> {
+    const observedCursor = this.observedCursor;
+    const row = this.p108MatrixRows.get(consoleGoalKey(query.projectId, query.workspaceId, query.goalId));
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(query.atLeastCursor)) {
+        if (row) return { status: "ready", matrix: row, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor };
+      }
+      return { status: "not_ready", requiredCursor: query.atLeastCursor, observedCursor };
+    }
+    if (row) return { status: "ready", matrix: row, observedCursor: observedCursor! };
+    return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** P1-08 LANE-B stub: consoleActiveAgents (frozen signature; lane B implements). */
-  async consoleActiveAgents(_query: ActiveAgentsViewQuery): Promise<ActiveAgentsViewResult> {
-    throw new Error("P1-08 lane stub: consoleActiveAgents not implemented yet");
+  /** P1-08 LANE-B: active agents (per workspace; optional goalId filter; bounded). */
+  async consoleActiveAgents(query: ActiveAgentsViewQuery): Promise<ActiveAgentsViewResult> {
+    const observedCursor = this.observedCursor;
+    const workspaceKey = consoleWorkspaceKey(query.projectId, query.workspaceId);
+    const entries: [import("../contracts/console-views.js").ActiveAgentRunRow, number][] = [];
+    for (const [storageKey, row] of this.p108AgentRows) {
+      if (row.projectId !== query.projectId || row.workspaceId !== query.workspaceId) continue;
+      entries.push([row, this.p108AgentRowSeq.get(storageKey) ?? 0]);
+    }
+    entries.sort((a, b) => a[1] - b[1]);
+    const hasRows = entries.length > 0;
+    const base = entries.map(([row]) => row);
+    const filtered = query.goalId === undefined ? base : base.filter((row) => row.goalId === query.goalId);
+    const taskCount = filtered.length;
+    const bounded = filtered.slice(-CONSOLE_ACTIVE_AGENTS_MAX_ROWS);
+    const rows = bounded.map((row) => {
+      const marker = this.p108HandoffMarkers.get(consoleTaskKey(row.projectId, row.workspaceId, row.goalId, row.taskId)) ?? null;
+      return marker ? { ...row, handoff: marker } : row;
+    });
+    const last = bounded.length > 0 ? bounded[bounded.length - 1] : null;
+    const view: import("../contracts/console-views.js").ActiveAgentsView = {
+      projectId: query.projectId,
+      workspaceId: query.workspaceId,
+      rows,
+      taskCount,
+      sourceCursor: last ? last.sourceCursor : (observedCursor ?? makeCommitCursor(1)),
+      updatedAt: last ? (last.endedAt ?? last.startedAt ?? last.lease.grantedAt) : null,
+    };
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(query.atLeastCursor)) {
+        if (hasRows) return { status: "ready", agents: view, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor };
+      }
+      return { status: "not_ready", requiredCursor: query.atLeastCursor, observedCursor };
+    }
+    if (hasRows) return { status: "ready", agents: view, observedCursor: observedCursor! };
+    return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** P1-08 LANE-B stub: consoleTaskEvidence (frozen signature; lane B implements). */
-  async consoleTaskEvidence(_query: TaskEvidenceViewQuery): Promise<TaskEvidenceViewResult> {
-    throw new Error("P1-08 lane stub: consoleTaskEvidence not implemented yet");
+  /** P1-08 LANE-B: task evidence (key = consoleTaskKey; freshness mirrors goal()). */
+  async consoleTaskEvidence(query: TaskEvidenceViewQuery): Promise<TaskEvidenceViewResult> {
+    const observedCursor = this.observedCursor;
+    const proj = this.p108EvidenceProjections.get(
+      consoleTaskKey(query.projectId, query.workspaceId, query.goalId, query.taskId),
+    );
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(query.atLeastCursor)) {
+        if (proj) return { status: "ready", evidence: this.p108BuildEvidenceView(proj), observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor };
+      }
+      return { status: "not_ready", requiredCursor: query.atLeastCursor, observedCursor };
+    }
+    if (proj) return { status: "ready", evidence: this.p108BuildEvidenceView(proj), observedCursor: observedCursor! };
+    return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** P1-08 LANE-B stub: consoleTimeline (frozen signature; lane B implements). */
-  async consoleTimeline(_query: TimelineViewQuery): Promise<TimelineViewResult> {
-    throw new Error("P1-08 lane stub: consoleTimeline not implemented yet");
+  /** P1-08 LANE-B: workspace timeline (per workspace; optional goalId filter; bounded). */
+  async consoleTimeline(query: TimelineViewQuery): Promise<TimelineViewResult> {
+    const observedCursor = this.observedCursor;
+    const workspaceKey = consoleWorkspaceKey(query.projectId, query.workspaceId);
+    const entries = this.p108TimelineRows.get(workspaceKey) ?? [];
+    const hasRow = entries.length > 0 || (this.p108TimelineTotal.get(workspaceKey) ?? 0) > 0;
+    const filtered = query.goalId === undefined ? entries : entries.filter((e) => e.refs.goalId === query.goalId);
+    const maxEntries = query.maxEntries === undefined || query.maxEntries < 1
+      ? CONSOLE_TIMELINE_MAX_ENTRIES
+      : query.maxEntries;
+    const bounded = filtered.slice(-maxEntries);
+    const view: import("../contracts/console-views.js").TimelineView = {
+      projectId: query.projectId,
+      workspaceId: query.workspaceId,
+      entries: bounded,
+      totalCount: filtered.length,
+      sourceCursor: entries.length > 0 ? entries[entries.length - 1]!.sourceCursor : (observedCursor ?? makeCommitCursor(1)),
+      updatedAt: entries.length > 0 ? entries[entries.length - 1]!.occurredAt : null,
+    };
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(query.atLeastCursor)) {
+        if (hasRow) return { status: "ready", timeline: view, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor };
+      }
+      return { status: "not_ready", requiredCursor: query.atLeastCursor, observedCursor };
+    }
+    if (hasRow) return { status: "ready", timeline: view, observedCursor: observedCursor! };
+    return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
   /** Event types this projection currently has handlers for (P1-02 + P1-03, v1). */
