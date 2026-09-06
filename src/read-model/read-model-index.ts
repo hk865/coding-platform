@@ -128,7 +128,7 @@ import type {
   TimelineViewQuery,
   TimelineViewResult,
 } from "../contracts/console-views.js";
-import { consoleWorkspaceKey, consoleGoalKey, consoleTaskKey } from "../contracts/console-views.js";
+import { consoleWorkspaceKey, consoleGoalKey, consoleTaskKey, CONSOLE_PORTFOLIO_MAX_PROJECTS } from "../contracts/console-views.js";
 import { patchRecordRefFor } from "../contracts/patch.js";
 import type { RoleBindingRefV1 } from "../contracts/dispatch.js";
 
@@ -274,6 +274,12 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   private readonly p108PortfolioEntries = new Map<string, PortfolioEntry>();
   /** LANE-A: (projectId, workspaceId) -> WorkspaceSummaryView. */
   private readonly p108SummaryRows = new Map<string, import("../contracts/console-views.js").WorkspaceSummaryView>();
+  /** LANE-A: (projectId, workspaceId, goalId, taskId) -> latest TaskReduction phase
+   * (feeds phaseCounts.taskReduction "每任务最新相位计数" — decrement old, increment new). */
+  private readonly p108TaskReductionPhase = new Map<string, import("../contracts/reduction.js").TaskReductionPhase>();
+  /** LANE-A: (projectId, workspaceId, goalId) -> latest GoalPhase
+   * (feeds phaseCounts.goalPhase "每 Goal 最新相位计数"). */
+  private readonly p108GoalPhase = new Map<string, import("../contracts/goal-phase.js").GoalPhase>();
   /** LANE-B: (projectId, workspaceId, goalId) -> PlanMatrixView. */
   private readonly p108MatrixRows = new Map<string, import("../contracts/console-views.js").PlanMatrixView>();
   /** LANE-B: (projectId, workspaceId, goalId, taskId) -> ActiveAgentRunRow. */
@@ -1571,9 +1577,161 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     this.applyP108ConsoleLaneB(event, cursor);
   }
 
-  /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — no-op until lane A lands. */
-  private applyP108ConsoleLaneA(_event: DomainEvent, _cursor: CommitCursor): void {
-    // replaced by lane A (shared baseline placeholder)
+  /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — rebuilt ONLY from the
+   * committed v1 events. Portfolio rows come from WorkspaceBootstrapped; summary
+   * rows are touched by every workspace-scoped counter event. Phase COUNT maps
+   * track the LATEST phase per task/goal (display-only projection facts). */
+  private applyP108ConsoleLaneA(event: DomainEvent, cursor: CommitCursor): void {
+    if (event.eventType === "WorkspaceBootstrapped") {
+      const ev = event as import("../contracts/bootstrap.js").WorkspaceBootstrappedEventV1;
+      this.p108ApplyBootstrap(ev, cursor);
+    } else if (event.eventType === "GoalCreated") {
+      const ev = event as import("../contracts/command-event.js").GoalCreatedEvent;
+      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+        row.goalCount += 1;
+      });
+    } else if (event.eventType === "PlanRevisionAccepted") {
+      const ev = event as import("../contracts/plan.js").PlanRevisionAcceptedEvent;
+      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+        row.taskCount += ev.payload.planRevision.tasks.length;
+        row.planRevisionCount += 1;
+      });
+    } else if (event.eventType === "TaskClaimed") {
+      const ev = event as import("../contracts/dispatch.js").TaskClaimedEvent;
+      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+        row.agentRunCount += 1;
+      });
+    } else if (event.eventType === "EvidenceAdmitted") {
+      const ev = event as import("../contracts/evidence.js").EvidenceAdmittedEvent;
+      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+        row.evidenceCount += 1;
+      });
+    } else if (event.eventType === "TaskReductionUpdated") {
+      const ev = event as import("../contracts/reduction.js").TaskReductionUpdatedEvent;
+      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+        row.taskReductionCount += 1;
+        const phase = ev.payload.reduction.phase;
+        const key = consoleTaskKey(ev.projectId, ev.workspaceId, ev.payload.goalId, ev.payload.taskId);
+        const prev = this.p108TaskReductionPhase.get(key);
+        if (prev !== undefined) this.p108DecrementTaskReduction(row, prev);
+        this.p108TaskReductionPhase.set(key, phase);
+        this.p108IncrementTaskReduction(row, phase);
+      });
+    } else if (event.eventType === "GoalPhaseUpdated") {
+      const ev = event as import("../contracts/goal-phase.js").GoalPhaseUpdatedEvent;
+      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+        row.goalPhaseCount += 1;
+        const phase = ev.payload.phase;
+        const key = consoleGoalKey(ev.projectId, ev.workspaceId, ev.payload.goalId);
+        const prev = this.p108GoalPhase.get(key);
+        if (prev !== undefined) this.p108DecrementGoalPhase(row, prev);
+        this.p108GoalPhase.set(key, phase);
+        this.p108IncrementGoalPhase(row, phase);
+      });
+    }
+    // Every other event type leaves the workspace summary/portfolio rows
+    // unchanged (they are not counter rows per the frozen contract).
+  }
+
+  /** WorkspaceBootstrapped -> create/refresh the (projectId, workspaceId)
+   * PortfolioEntry AND initialize the WorkspaceSummary row. */
+  private p108ApplyBootstrap(
+    ev: import("../contracts/bootstrap.js").WorkspaceBootstrappedEventV1,
+    cursor: CommitCursor,
+  ): void {
+    const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
+    const existing = this.p108PortfolioEntries.get(key);
+    const sourceDigest = ev.payload.sourceDigest;
+    const bootstrappedAt = ev.occurredAt;
+    if (existing === undefined) {
+      const entry: import("../contracts/console-views.js").PortfolioEntry = {
+        projectId: ev.projectId,
+        workspaceId: ev.workspaceId,
+        projectRevision: 1,
+        workspaceRevision: 1,
+        sourceDigest,
+        bootstrappedAt,
+        sourceCursor: cursor,
+        scopeKey: key,
+      };
+      this.p108PortfolioEntries.set(key, entry);
+    } else {
+      // Idempotent replay: re-running the same event set reproduces the same row;
+      // a genuinely new bootstrap refresh carries updated provenance.
+      existing.sourceDigest = sourceDigest;
+      existing.bootstrappedAt = bootstrappedAt;
+      existing.sourceCursor = cursor;
+    }
+    this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, bootstrappedAt, (row) => {
+      row.sourceDigest = sourceDigest;
+      row.bootstrappedAt = bootstrappedAt;
+    });
+  }
+
+  /** Get (or lazily create) the WorkspaceSummary row for the full scope key and
+   * apply one counter mutation; every counter event refreshes sourceCursor +
+   * updatedAt. */
+  private p108TouchSummary(
+    projectId: string,
+    workspaceId: string,
+    cursor: CommitCursor,
+    occurredAt: string,
+    update: (row: import("../contracts/console-views.js").WorkspaceSummaryView) => void,
+  ): import("../contracts/console-views.js").WorkspaceSummaryView {
+    const key = consoleWorkspaceKey(projectId, workspaceId);
+    let row = this.p108SummaryRows.get(key);
+    if (row === undefined) {
+      row = {
+        projectId,
+        workspaceId,
+        sourceDigest: null,
+        bootstrappedAt: null,
+        goalCount: 0,
+        taskCount: 0,
+        planRevisionCount: 0,
+        agentRunCount: 0,
+        evidenceCount: 0,
+        taskReductionCount: 0,
+        goalPhaseCount: 0,
+        phaseCounts: { taskReduction: {}, goalPhase: {} },
+        sourceCursor: cursor,
+        updatedAt: occurredAt,
+      };
+      this.p108SummaryRows.set(key, row);
+    } else {
+      row.sourceCursor = cursor;
+      row.updatedAt = occurredAt;
+    }
+    update(row);
+    return row;
+  }
+
+  private p108IncrementTaskReduction(
+    row: import("../contracts/console-views.js").WorkspaceSummaryView,
+    phase: import("../contracts/reduction.js").TaskReductionPhase,
+  ): void {
+    row.phaseCounts.taskReduction[phase] = (row.phaseCounts.taskReduction[phase] ?? 0) + 1;
+  }
+
+  private p108DecrementTaskReduction(
+    row: import("../contracts/console-views.js").WorkspaceSummaryView,
+    phase: import("../contracts/reduction.js").TaskReductionPhase,
+  ): void {
+    row.phaseCounts.taskReduction[phase] = (row.phaseCounts.taskReduction[phase] ?? 0) - 1;
+  }
+
+  private p108IncrementGoalPhase(
+    row: import("../contracts/console-views.js").WorkspaceSummaryView,
+    phase: import("../contracts/goal-phase.js").GoalPhase,
+  ): void {
+    row.phaseCounts.goalPhase[phase] = (row.phaseCounts.goalPhase[phase] ?? 0) + 1;
+  }
+
+  private p108DecrementGoalPhase(
+    row: import("../contracts/console-views.js").WorkspaceSummaryView,
+    phase: import("../contracts/goal-phase.js").GoalPhase,
+  ): void {
+    row.phaseCounts.goalPhase[phase] = (row.phaseCounts.goalPhase[phase] ?? 0) - 1;
   }
 
   /** P1-08 LANE-B hook (PlanMatrix + ActiveAgents + TaskEvidence + Timeline) — no-op until lane B lands. */
@@ -1581,14 +1739,74 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     // replaced by lane B (shared baseline placeholder)
   }
 
-  /** P1-08 LANE-A stub: consolePortfolio (frozen signature; lane A implements). */
-  async consolePortfolio(_query: PortfolioViewQuery): Promise<PortfolioViewResult> {
-    throw new Error("P1-08 lane stub: consolePortfolio not implemented yet");
+  /** P1-08 LANE-A: portfolio of bootstrapped Project/Workspace scopes. */
+  async consolePortfolio(query: PortfolioViewQuery): Promise<PortfolioViewResult> {
+    const observedCursor = this.observedCursor;
+    const maxProjects = CONSOLE_PORTFOLIO_MAX_PROJECTS;
+    const entries = [...this.p108PortfolioEntries.values()]
+      .sort((a, b) => (a.scopeKey < b.scopeKey ? -1 : a.scopeKey > b.scopeKey ? 1 : 0))
+      .slice(0, maxProjects);
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(query.atLeastCursor)) {
+        if (entries.length > 0) {
+          return {
+            status: "ready",
+            portfolio: this.p108BuildPortfolio(entries, observedCursor!),
+            observedCursor: observedCursor!,
+          };
+        }
+        return { status: "not_found", observedCursor };
+      }
+      return { status: "not_ready", requiredCursor: query.atLeastCursor, observedCursor };
+    }
+
+    // No atLeastCursor: show the list if any scope bootstrapped, else the
+    // freshness-safe not_ready (never not_found — front-run protection).
+    if (entries.length > 0) {
+      return {
+        status: "ready",
+        portfolio: this.p108BuildPortfolio(entries, observedCursor!),
+        observedCursor: observedCursor!,
+      };
+    }
+    return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** P1-08 LANE-A stub: consoleSummary (frozen signature; lane A implements). */
-  async consoleSummary(_query: WorkspaceSummaryViewQuery): Promise<WorkspaceSummaryViewResult> {
-    throw new Error("P1-08 lane stub: consoleSummary not implemented yet");
+  /** P1-08 LANE-A: workspace-level summary per full-scope key. */
+  async consoleSummary(query: WorkspaceSummaryViewQuery): Promise<WorkspaceSummaryViewResult> {
+    const observedCursor = this.observedCursor;
+    const row = this.p108SummaryRows.get(consoleWorkspaceKey(query.projectId, query.workspaceId));
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(query.atLeastCursor)) {
+        if (row) return { status: "ready", summary: row, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor };
+      }
+      return { status: "not_ready", requiredCursor: query.atLeastCursor, observedCursor };
+    }
+
+    // No atLeastCursor: show the row if present, else the freshness-safe
+    // "not_ready" (identical to goal()/planGraph()/taskDetail()).
+    if (row) return { status: "ready", summary: row, observedCursor: observedCursor! };
+    return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
+  }
+
+  /** Build the bounded PortfolioView (entries in scope-key deterministic order;
+   * sourceCursor = the global observed anchor; updatedAt = latest bootstrap). */
+  private p108BuildPortfolio(
+    entries: import("../contracts/console-views.js").PortfolioEntry[],
+    sourceCursor: CommitCursor,
+  ): import("../contracts/console-views.js").PortfolioView {
+    let updatedAt: string | null = null;
+    for (const e of entries) {
+      if (updatedAt === null || e.bootstrappedAt > updatedAt) updatedAt = e.bootstrappedAt;
+    }
+    return {
+      entries: entries.map((e) => ({ ...e })),
+      sourceCursor,
+      updatedAt,
+    };
   }
 
   /** P1-08 LANE-B stub: consolePlanMatrix (frozen signature; lane B implements). */

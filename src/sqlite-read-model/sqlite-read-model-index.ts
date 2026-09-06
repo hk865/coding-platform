@@ -148,7 +148,7 @@ import type {
   TimelineViewQuery,
   TimelineViewResult,
 } from "../contracts/console-views.js";
-import { consoleWorkspaceKey, consoleGoalKey, consoleTaskKey } from "../contracts/console-views.js";
+import { consoleWorkspaceKey, consoleGoalKey, consoleTaskKey, CONSOLE_PORTFOLIO_MAX_PROJECTS } from "../contracts/console-views.js";
 
 /**
  * Reconstruct a lease view holder: the grant events carry runRef + attemptRef
@@ -2289,6 +2289,18 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   private readonly p108SelectCache = new Map<string, StatementSync>();
   private readonly p108UpsertCache = new Map<string, StatementSync>();
 
+  // ---- LANE-A private state (Portfolio + WorkspaceSummary; display only) ----
+  /** Lazily-prepared summary (view_json) select/upsert statements. */
+  private p108SummarySelectStmt: StatementSync | null = null;
+  private p108SummaryUpsertStmt: StatementSync | null = null;
+  /** Lazily-prepared per-task / per-goal phase tracking statements. */
+  private readonly p108PhaseSelectCache = new Map<string, StatementSync>();
+  private readonly p108PhaseUpsertCache = new Map<string, StatementSync>();
+  /** Lazily-prepared portfolio full-scan statement. */
+  private readonly p108SelectAllCache = new Map<string, StatementSync>();
+  /** Idempotent guard: internal phase tables created once per open connection. */
+  private p108InternalTablesReady = false;
+
   private p108Select(table: string): StatementSync {
     let stmt = this.p108SelectCache.get(table);
     if (stmt === undefined) {
@@ -2326,9 +2338,235 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     this.applyP108ConsoleLaneB(event, cursor);
   }
 
-  /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — no-op until lane A lands. */
-  private applyP108ConsoleLaneA(_event: DomainEvent, _cursor: CommitCursor): void {
-    // replaced by lane A (shared baseline placeholder)
+  /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — rebuilt ONLY from the
+   * committed v1 events, in field-for-field parity with the InMemory reference.
+   * Portfolio rows come from WorkspaceBootstrapped; summary rows are touched by
+   * every workspace-scoped counter event. Per-task / per-goal phase counts are
+   * persisted in internal tables so restart replay is exact (upsert rebuild). */
+  private applyP108ConsoleLaneA(event: DomainEvent, cursor: CommitCursor): void {
+    this.p108EnsureInternalTables();
+    if (event.eventType === "WorkspaceBootstrapped") {
+      const ev = event as import("../contracts/bootstrap.js").WorkspaceBootstrappedEventV1;
+      this.p108ApplyBootstrap(ev, cursor);
+    } else if (event.eventType === "GoalCreated") {
+      const ev = event as import("../contracts/command-event.js").GoalCreatedEvent;
+      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+        row.goalCount += 1;
+      });
+    } else if (event.eventType === "PlanRevisionAccepted") {
+      const ev = event as import("../contracts/plan.js").PlanRevisionAcceptedEvent;
+      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+        row.taskCount += ev.payload.planRevision.tasks.length;
+        row.planRevisionCount += 1;
+      });
+    } else if (event.eventType === "TaskClaimed") {
+      const ev = event as import("../contracts/dispatch.js").TaskClaimedEvent;
+      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+        row.agentRunCount += 1;
+      });
+    } else if (event.eventType === "EvidenceAdmitted") {
+      const ev = event as import("../contracts/evidence.js").EvidenceAdmittedEvent;
+      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+        row.evidenceCount += 1;
+      });
+    } else if (event.eventType === "TaskReductionUpdated") {
+      const ev = event as import("../contracts/reduction.js").TaskReductionUpdatedEvent;
+      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+        row.taskReductionCount += 1;
+        const phase = ev.payload.reduction.phase;
+        const key = consoleTaskKey(ev.projectId, ev.workspaceId, ev.payload.goalId, ev.payload.taskId);
+        const prev = this.p108ReadPhase("console_task_phase", key);
+        if (prev !== null) this.p108DecrementTaskReduction(row, prev);
+        this.p108WritePhase("console_task_phase", key, phase);
+        this.p108IncrementTaskReduction(row, phase);
+      });
+    } else if (event.eventType === "GoalPhaseUpdated") {
+      const ev = event as import("../contracts/goal-phase.js").GoalPhaseUpdatedEvent;
+      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+        row.goalPhaseCount += 1;
+        const phase = ev.payload.phase;
+        const key = consoleGoalKey(ev.projectId, ev.workspaceId, ev.payload.goalId);
+        const prev = this.p108ReadPhase("console_goal_phase", key);
+        if (prev !== null) this.p108DecrementGoalPhase(row, prev);
+        this.p108WritePhase("console_goal_phase", key, phase);
+        this.p108IncrementGoalPhase(row, phase);
+      });
+    }
+    // Every other event type leaves the workspace summary/portfolio rows
+    // unchanged (they are not counter rows per the frozen contract).
+  }
+
+  /** Create the internal per-task / per-goal phase tracking tables on first use
+   * (IF NOT EXISTS — idempotent; persisted in the same read-model file so
+   * restart replay reproduces the same phase counts). */
+  private p108EnsureInternalTables(): void {
+    if (this.p108InternalTablesReady) return;
+    this.db.exec(
+      "CREATE TABLE IF NOT EXISTS console_task_phase (" +
+        "scope_key TEXT PRIMARY KEY, phase TEXT NOT NULL) WITHOUT ROWID;" +
+        "CREATE TABLE IF NOT EXISTS console_goal_phase (" +
+        "scope_key TEXT PRIMARY KEY, phase TEXT NOT NULL) WITHOUT ROWID;",
+    );
+    this.p108InternalTablesReady = true;
+  }
+
+  private p108PhaseSelect(table: string): StatementSync {
+    let stmt = this.p108PhaseSelectCache.get(table);
+    if (stmt === undefined) {
+      stmt = this.db.prepare("SELECT phase FROM " + table + " WHERE scope_key = ?");
+      this.p108PhaseSelectCache.set(table, stmt);
+    }
+    return stmt;
+  }
+
+  private p108PhaseUpsert(table: string): StatementSync {
+    let stmt = this.p108PhaseUpsertCache.get(table);
+    if (stmt === undefined) {
+      stmt = this.db.prepare(
+        "INSERT INTO " + table + " (scope_key, phase) VALUES (?, ?) " +
+          "ON CONFLICT(scope_key) DO UPDATE SET phase = excluded.phase",
+      );
+      this.p108PhaseUpsertCache.set(table, stmt);
+    }
+    return stmt;
+  }
+
+  private p108ReadPhase(table: string, scopeKey: string): string | null {
+    const row = this.p108PhaseSelect(table).get(scopeKey) as unknown as { phase: string } | undefined;
+    return row ? row.phase : null;
+  }
+
+  private p108WritePhase(table: string, scopeKey: string, phase: string): void {
+    this.p108PhaseUpsert(table).run(scopeKey, phase);
+  }
+
+  /** Read the persisted WorkspaceSummaryView (view_json) for a full scope key. */
+  private p108ReadSummaryRow(scopeKey: string): import("../contracts/console-views.js").WorkspaceSummaryView | null {
+    if (this.p108SummarySelectStmt === null) {
+      this.p108SummarySelectStmt = this.db.prepare("SELECT view_json FROM console_summary WHERE scope_key = ?");
+    }
+    const row = this.p108SummarySelectStmt.get(scopeKey) as unknown as { view_json: string } | undefined;
+    return row ? (JSON.parse(row.view_json) as import("../contracts/console-views.js").WorkspaceSummaryView) : null;
+  }
+
+  /** Upsert the persisted WorkspaceSummaryView (view_json column of console_summary). */
+  private p108WriteSummaryRow(scopeKey: string, json: string, cursor: CommitCursor): void {
+    if (this.p108SummaryUpsertStmt === null) {
+      this.p108SummaryUpsertStmt = this.db.prepare(
+        "INSERT INTO console_summary (scope_key, view_json, source_cursor) VALUES (?, ?, ?) " +
+          "ON CONFLICT(scope_key) DO UPDATE SET view_json = excluded.view_json, source_cursor = excluded.source_cursor",
+      );
+    }
+    this.p108SummaryUpsertStmt.run(scopeKey, json, cursor);
+  }
+
+  /** WorkspaceBootstrapped -> create/refresh the (projectId, workspaceId)
+   * PortfolioEntry (entry_json of console_portfolio) AND initialize the
+   * WorkspaceSummary row (view_json of console_summary). */
+  private p108ApplyBootstrap(
+    ev: import("../contracts/bootstrap.js").WorkspaceBootstrappedEventV1,
+    cursor: CommitCursor,
+  ): void {
+    const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
+    const sourceDigest = ev.payload.sourceDigest;
+    const bootstrappedAt = ev.occurredAt;
+    const entry: import("../contracts/console-views.js").PortfolioEntry = {
+      projectId: ev.projectId,
+      workspaceId: ev.workspaceId,
+      projectRevision: 1,
+      workspaceRevision: 1,
+      sourceDigest,
+      bootstrappedAt,
+      sourceCursor: cursor,
+      scopeKey: key,
+    };
+    // Upsert: replaying the same event set reproduces the same row; a genuinely
+    // new bootstrap refresh carries updated provenance. The baseline helper
+    // writes the portfolio table's entry_json column.
+    this.writeP108JsonRow(SqliteReadModelIndex.P108_TABLES.portfolio, key, JSON.stringify(entry), cursor);
+    this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, bootstrappedAt, (row) => {
+      row.sourceDigest = sourceDigest;
+      row.bootstrappedAt = bootstrappedAt;
+    });
+  }
+
+  /** Get (or lazily create) the WorkspaceSummary row for the full scope key and
+   * apply one counter mutation, then persist the (view_json) row; every counter
+   * event refreshes sourceCursor + updatedAt. */
+  private p108TouchSummary(
+    projectId: string,
+    workspaceId: string,
+    cursor: CommitCursor,
+    occurredAt: string,
+    update: (row: import("../contracts/console-views.js").WorkspaceSummaryView) => void,
+  ): void {
+    const key = consoleWorkspaceKey(projectId, workspaceId);
+    let row = this.p108ReadSummaryRow(key);
+    if (row === null) {
+      row = {
+        projectId,
+        workspaceId,
+        sourceDigest: null,
+        bootstrappedAt: null,
+        goalCount: 0,
+        taskCount: 0,
+        planRevisionCount: 0,
+        agentRunCount: 0,
+        evidenceCount: 0,
+        taskReductionCount: 0,
+        goalPhaseCount: 0,
+        phaseCounts: { taskReduction: {}, goalPhase: {} },
+        sourceCursor: cursor,
+        updatedAt: occurredAt,
+      };
+    } else {
+      row.sourceCursor = cursor;
+      row.updatedAt = occurredAt;
+    }
+    update(row);
+    this.p108WriteSummaryRow(key, JSON.stringify(row), cursor);
+  }
+
+  private p108IncrementTaskReduction(
+    row: import("../contracts/console-views.js").WorkspaceSummaryView,
+    phase: string,
+  ): void {
+    const map = row.phaseCounts.taskReduction as Record<string, number>;
+    map[phase] = (map[phase] ?? 0) + 1;
+  }
+
+  private p108DecrementTaskReduction(
+    row: import("../contracts/console-views.js").WorkspaceSummaryView,
+    phase: string,
+  ): void {
+    const map = row.phaseCounts.taskReduction as Record<string, number>;
+    map[phase] = (map[phase] ?? 0) - 1;
+  }
+
+  private p108IncrementGoalPhase(
+    row: import("../contracts/console-views.js").WorkspaceSummaryView,
+    phase: string,
+  ): void {
+    const map = row.phaseCounts.goalPhase as Record<string, number>;
+    map[phase] = (map[phase] ?? 0) + 1;
+  }
+
+  private p108DecrementGoalPhase(
+    row: import("../contracts/console-views.js").WorkspaceSummaryView,
+    phase: string,
+  ): void {
+    const map = row.phaseCounts.goalPhase as Record<string, number>;
+    map[phase] = (map[phase] ?? 0) - 1;
+  }
+
+  /** Full-scope scan of the portfolio table, ordered by scope_key (deterministic). */
+  private p108SelectAll(table: string): { scope_key: string; entry_json: string; source_cursor: string }[] {
+    let stmt = this.p108SelectAllCache.get(table);
+    if (stmt === undefined) {
+      stmt = this.db.prepare("SELECT scope_key, entry_json, source_cursor FROM " + table + " ORDER BY scope_key ASC");
+      this.p108SelectAllCache.set(table, stmt);
+    }
+    return stmt.all() as unknown as { scope_key: string; entry_json: string; source_cursor: string }[];
   }
 
   /** P1-08 LANE-B hook (PlanMatrix + ActiveAgents + TaskEvidence + Timeline) — no-op until lane B lands. */
@@ -2336,16 +2574,78 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     // replaced by lane B (shared baseline placeholder)
   }
 
-  /** P1-08 LANE-A stub: consolePortfolio (frozen signature; lane A implements). */
-  async consolePortfolio(_query: PortfolioViewQuery): Promise<PortfolioViewResult> {
+  /** P1-08 LANE-A: portfolio of bootstrapped Project/Workspace scopes
+   * (all rows read from console_portfolio, ordered by scope_key). */
+  async consolePortfolio(query: PortfolioViewQuery): Promise<PortfolioViewResult> {
     this.assertOpen();
-    throw new Error("P1-08 lane stub: consolePortfolio not implemented yet");
+    const observedCursor = this.readCheckpoint();
+    const maxProjects = CONSOLE_PORTFOLIO_MAX_PROJECTS;
+    const rows = this.p108SelectAll(SqliteReadModelIndex.P108_TABLES.portfolio);
+    const entries = rows
+      .map((row) => JSON.parse(row.entry_json) as import("../contracts/console-views.js").PortfolioEntry)
+      .slice(0, maxProjects);
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(observedCursor, query.atLeastCursor)) {
+        if (entries.length > 0) {
+          return {
+            status: "ready",
+            portfolio: this.p108BuildPortfolio(entries, observedCursor!),
+            observedCursor: observedCursor!,
+          };
+        }
+        return { status: "not_found", observedCursor };
+      }
+      return { status: "not_ready", requiredCursor: query.atLeastCursor, observedCursor };
+    }
+
+    // No atLeastCursor: show the list if any scope bootstrapped, else the
+    // freshness-safe not_ready (never not_found — front-run protection).
+    if (entries.length > 0) {
+      return {
+        status: "ready",
+        portfolio: this.p108BuildPortfolio(entries, observedCursor!),
+        observedCursor: observedCursor!,
+      };
+    }
+    return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** P1-08 LANE-A stub: consoleSummary (frozen signature; lane A implements). */
-  async consoleSummary(_query: WorkspaceSummaryViewQuery): Promise<WorkspaceSummaryViewResult> {
+  /** P1-08 LANE-A: workspace-level summary per full-scope key. */
+  async consoleSummary(query: WorkspaceSummaryViewQuery): Promise<WorkspaceSummaryViewResult> {
     this.assertOpen();
-    throw new Error("P1-08 lane stub: consoleSummary not implemented yet");
+    const observedCursor = this.readCheckpoint();
+    const row = this.p108ReadSummaryRow(consoleWorkspaceKey(query.projectId, query.workspaceId));
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(observedCursor, query.atLeastCursor)) {
+        if (row) return { status: "ready", summary: row, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor };
+      }
+      return { status: "not_ready", requiredCursor: query.atLeastCursor, observedCursor };
+    }
+
+    // No atLeastCursor: show the row if present, else the freshness-safe
+    // "not_ready" (identical to goal()/planGraph()/taskDetail()).
+    if (row) return { status: "ready", summary: row, observedCursor: observedCursor! };
+    return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
+  }
+
+  /** Build the bounded PortfolioView (entries in scope-key deterministic order;
+   * sourceCursor = the global observed anchor; updatedAt = latest bootstrap). */
+  private p108BuildPortfolio(
+    entries: import("../contracts/console-views.js").PortfolioEntry[],
+    sourceCursor: CommitCursor,
+  ): import("../contracts/console-views.js").PortfolioView {
+    let updatedAt: string | null = null;
+    for (const e of entries) {
+      if (updatedAt === null || e.bootstrappedAt > updatedAt) updatedAt = e.bootstrappedAt;
+    }
+    return {
+      entries: entries.map((e) => ({ ...e })),
+      sourceCursor,
+      updatedAt,
+    };
   }
 
   /** P1-08 LANE-B stub: consolePlanMatrix (frozen signature; lane B implements). */
