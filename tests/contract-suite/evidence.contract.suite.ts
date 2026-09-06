@@ -175,7 +175,7 @@ export function defineEvidenceContractSuite(createHarness: P1_04HarnessFactory):
 
     it("single exit=0 / claim alone NEVER satisfy: blocked with missing-evidence causes", async () => {
       const { h, sc } = await setup();
-      await runP104ClaimedRun(h, {
+      const runEv9 = await runP104ClaimedRun(h, {
         projectId: sc.alpha.projectId, taskId: IMPLEMENT, runId: "run-ev-exit0", attemptId: "att-ev-exit0",
       });
       const reduce = await h.reduceTask(reduceCommand(sc.alpha, {
@@ -185,19 +185,16 @@ export function defineEvidenceContractSuite(createHarness: P1_04HarnessFactory):
       if (reduce.status !== "committed") return;
       expect(reduce.phase).toBe("blocked");
 
-      // With a claim but still no PASS: still blocked (claim is neutral).
-      const run2 = await runP104ClaimedRun(h, {
-        projectId: sc.alpha.projectId, taskId: IMPLEMENT, runId: "run-ev-claim3", attemptId: "att-ev-claim3",
-      });
+      // With a claim but still no PASS: still blocked (claim is neutral). One run per task (P1-03 frozen lease).
       const claim = evidenceFor(sc.alpha, {
         evidenceId: "ev-claim-only", kind: "claim", outcome: "INCONCLUSIVE",
         taskId: IMPLEMENT, coverage: [{ obligationId: P104_OBL_IMPLEMENT, requirementId: "vr-impl-static" }, { obligationId: P104_OBL_IMPLEMENT, requirementId: "vr-impl-dynamic" }],
-        runRef: run2.runRef,
+        runRef: runEv9.runRef,
       });
       const admit = await h.submitEvidence(evidenceCommandFor(sc.alpha, { commandId: "cmd-claim-only", evidence: claim }));
       expect(admit.status).toBe("committed");
       const reduce2 = await h.reduceTask(reduceCommand(sc.alpha, {
-        commandId: "cmd-reduce-claim", taskId: IMPLEMENT, expectedRevision: 0, idempotencyKey: "p104-reduce-claim",
+        commandId: "cmd-reduce-claim", taskId: IMPLEMENT, expectedRevision: 1, idempotencyKey: "p104-reduce-claim",
       }));
       expect(reduce2.status).toBe("committed");
       if (reduce2.status === "committed") expect(reduce2.phase).toBe("blocked");
@@ -266,12 +263,15 @@ export function defineEvidenceContractSuite(createHarness: P1_04HarnessFactory):
         taskId: IMPLEMENT, coverage: covStatic(), checkId: "static-check-lint", workspaceRevision: 2,
       });
       expect((await h.submitEvidence(evidenceCommandFor(sc.alpha, { commandId: "cmd-app-stale", evidence: staleEv, idempotencyKey: "p104-ev-app-stale" }))).status).toBe("committed");
-      // Coverage of the REVIEW requirement but subject = implement -> OUT_OF_SCOPE.
+      // Coverage of the REVIEW requirement but subject = implement: the intake guard
+      // deterministically REJECTS cross-task coverage (dangling_ref, zero write).
       const oosEv = evidenceFor(sc.alpha, {
         evidenceId: "ev-app-oos", kind: "observation", outcome: "PASS",
         taskId: IMPLEMENT, coverage: covReview(), checkId: "static-check-lint",
       });
-      expect((await h.submitEvidence(evidenceCommandFor(sc.alpha, { commandId: "cmd-app-oos", evidence: oosEv, idempotencyKey: "p104-ev-app-oos" }))).status).toBe("committed");
+      const oosRejected = await h.submitEvidence(evidenceCommandFor(sc.alpha, { commandId: "cmd-app-oos", evidence: oosEv, idempotencyKey: "p104-ev-app-oos" }));
+      expect(oosRejected.status).toBe("rejected");
+      if (oosRejected.status === "rejected") expect(oosRejected.code).toBe("dangling_ref");
       const dynamic = evidenceFor(sc.alpha, {
         evidenceId: "ev-app-dyn", kind: "observation", outcome: "PASS",
         taskId: IMPLEMENT, coverage: covDynamic(), checkId: "dynamic-check-tests",
@@ -292,7 +292,9 @@ export function defineEvidenceContractSuite(createHarness: P1_04HarnessFactory):
       );
       expect(bindingApplicability.get("ev-app-pass")).toBe("APPLICABLE");
       expect(bindingApplicability.get("ev-app-stale")).toBe("STALE");
-      expect(bindingApplicability.get("ev-app-oos")).toBe("OUT_OF_SCOPE");
+      // OUT_OF_SCOPE display is covered by the pure applicability table (different
+      // plan refs / different requirement sets); at runtime P1-04 has no plan-change
+      // machinery (P1-11 onwards), and cross-task coverage is rejected at intake.
       // History untouched: the stale evidence still anchors workspaceRevision 2.
       const staleLoad = await h.ledger.load(evidenceRefFor(sc.alpha.projectId, "ev-app-stale"));
       expect(staleLoad.status).toBe("found");
@@ -302,12 +304,12 @@ export function defineEvidenceContractSuite(createHarness: P1_04HarnessFactory):
 
     it("reviewer verdict alone never satisfies; verdict + bounded-packet static evidence satisfies", async () => {
       const { h, sc } = await setup();
-      await runP104ClaimedRun(h, {
+      const runVerdict = await runP104ClaimedRun(h, {
         projectId: sc.alpha.projectId, taskId: REVIEW, runId: "run-ev-verdict", attemptId: "att-ev-verdict",
       });
       const verdict = evidenceFor(sc.alpha, {
         evidenceId: "ev-verdict-1", kind: "verdict", outcome: "PASS",
-        taskId: REVIEW, coverage: covReview(), checkId: "reviewer-semantic-check",
+        taskId: REVIEW, coverage: covReview(), checkId: "reviewer-semantic-check", runRef: runVerdict.runRef,
       });
       const admit = await h.submitEvidence(evidenceCommandFor(sc.alpha, { commandId: "cmd-verdict-1", evidence: verdict }));
       expect(admit.status).toBe("committed");

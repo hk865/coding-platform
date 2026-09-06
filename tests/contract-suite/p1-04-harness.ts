@@ -338,6 +338,7 @@ export async function runP104ClaimedRun(
       projectId,
       runId: deps.runId,
       expectedRevision: 1,
+      idempotencyKey: "p104-start-" + deps.runId,
       envelope,
       manifest: buildManifestFixture({ workspaceId: "ws-shared", workspaceRevision: 1, planRef }),
     }),

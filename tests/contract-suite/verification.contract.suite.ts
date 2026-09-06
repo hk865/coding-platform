@@ -310,16 +310,57 @@ export function defineVerificationContractSuite(createHarness: P1_04HarnessFacto
       expect(crashed.phase).toBe("failed");
 
       // outcome_unknown side effect never satisfies even with complete evidence.
-      await runP104ClaimedRun(h, { projectId: sc.alpha.projectId, taskId: REVIEW, runId: "run-unknown-1", attemptId: "att-unknown-1" });
+      // The review run is claimed + started WITHOUT the completed script (no terminal fact).
+      const rvClaim = await h.claimTask({
+        commandId: "cmd-unknown-claim", commandType: "DispatchClaimTask", schemaVersion: 1,
+        identity: { projectId: sc.alpha.projectId, actor: { kind: "human", id: "user-1" }, idempotencyKey: "p104-unknown-claim" },
+        aggregateId: REVIEW, expectedRevision: 0, correlationId: "corr-unknown-claim", submittedAt: SCHEMA,
+        payload: {
+          goalId: sc.alpha.goalId, attemptId: "att-unknown-1", runId: "run-unknown-1",
+          roleBinding: { schemaVersion: 1, bindingId: "b", templateId: "t", templateRevision: "r", bindingVersion: 1, policyRevision: "p" },
+          declaredPermissions: { tools: ["read", "write"], writeScope: ["src"] },
+          budget: { tokenBudget: 100_000, deadline: "2026-09-06T00:00:00.000Z" },
+        },
+      });
+      expect(rvClaim.status).toBe("committed");
+      if (rvClaim.status !== "committed") return;
+      const rvBundle = {
+        kind: "artifact" as const, contentType: "text/plain",
+        digest: artifactBodyDigest("unknown-bundle"), sizeBytes: artifactBodyDigest("unknown-bundle").length,
+        source: { kind: "plan-revision" as const, refId: sc.alpha.planRef.planId, revision: "1" },
+      };
+      const rvEnvelope = {
+        schemaVersion: 1 as const, envelopeId: "env-unknown", projectId: sc.alpha.projectId, workspaceId: "ws-shared",
+        goalId: sc.alpha.goalId, taskId: REVIEW,
+        runRef: runRefFor(sc.alpha.projectId, sc.alpha.goalId, "run-unknown-1"),
+        attemptRef: taskAttemptRefFor(sc.alpha.projectId, sc.alpha.goalId, REVIEW, "att-unknown-1"),
+        planRef: sc.alpha.planRef,
+        roleBinding: { schemaVersion: 1 as const, bindingId: "b", templateId: "t", templateRevision: "r", bindingVersion: 1, policyRevision: "p" },
+        workspaceSnapshot: { workspaceId: "ws-shared", revision: 1 },
+        permissions: { policyRevision: "p", tools: ["read", "write"], writeScope: ["src"] },
+        budget: { tokenBudget: 100_000, deadline: "2026-09-06T00:00:00.000Z" },
+        sourceRefs: [{ kind: "plan-revision" as const, refId: sc.alpha.planRef.planId, revision: "1" }],
+        bundleRef: rvBundle,
+      };
+      const rvStart = await h.startRun(buildDispatchStartCommand({
+        commandId: "cmd-unknown-start", correlationId: "corr-unknown-start", submittedAt: SCHEMA,
+        projectId: sc.alpha.projectId, runId: "run-unknown-1", expectedRevision: 1,
+        idempotencyKey: "p104-unknown-start",
+        envelope: rvEnvelope,
+        manifest: buildManifestFixture({ workspaceId: "ws-shared", workspaceRevision: 1, planRef: sc.alpha.planRef }),
+      }));
+      expect(rvStart.status).toBe("committed");
+      if (rvStart.status !== "committed") return;
       const unknownFact = await h.runFact(buildRunFactCommand({
         commandId: "cmd-unknown", correlationId: "corr-unknown", submittedAt: SCHEMA,
-        projectId: sc.alpha.projectId, runId: "run-unknown-1", expectedRevision: 4,
+        projectId: sc.alpha.projectId, runId: "run-unknown-1", expectedRevision: 2,
         fact: { kind: "outcome_unknown", runRef: runRefFor(sc.alpha.projectId, sc.alpha.goalId, "run-unknown-1"), reason: "disconnected" },
       }));
       expect(unknownFact.status).toBe("committed");
       const verdict = evidenceFor(sc.alpha, {
         evidenceId: "ev-unknown-verdict", kind: "verdict", outcome: "PASS",
         taskId: REVIEW, coverage: [{ obligationId: P104_OBL_REVIEW, requirementId: "vr-review" }], checkId: "reviewer-semantic-check",
+        runRef: runRefFor(sc.alpha.projectId, sc.alpha.goalId, "run-unknown-1"),
       });
       expect((await h.submitEvidence(evidenceCommandFor(sc.alpha, { commandId: "cmd-unknown-verdict", evidence: verdict }))).status).toBe("committed");
       const pkt = evidenceFor(sc.alpha, {
