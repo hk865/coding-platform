@@ -1,16 +1,21 @@
 ```yaml
-ticket_id: P1-11 ✅ VERIFIED（6d70494；全量 145 files / 1025 tests PASS，0 skip）——下一窗口：P1-13（←12 已验收）
-status: P1-09 ✅ / P1-10 ✅ / P1-11 ✅（6d70494, 1025/1025, G4 PASS 在档）；P1-16 ✅ (fa9389d)、P1-12 ✅ (4ecc517)、P1-17 ✅；G1/G2 PASS、G4 PASS；剩余票 = P1-13（←12）、P1-14（←11+12）、P1-15（←09+14+17）；G3 等 07+15、G5 等 13+14
+ticket_id: P1-13 共享基线 ✅（5ade74b：1025 passed / 21 skip 探针组，零回归）——三 lane 实施中
+status: P1-11 ✅ 验收（6d70494, 1025/1025, G4 PASS）；P1-09/10/16/12/17 ✅（G1/G2/G4 PASS）；剩余票 = P1-13（实施中）、P1-14（←11+12）、P1-15（←09+14+17）；G3 等 07+15、G5 等 13+14
 updated: 2026-09-07
-authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a) all done / (b) architecture tradeoff / (c) architecture-granularity confirmation; GitHub push still needs user authorization) + user 2026-09-07 阶段时限 = 09:00 CST 硬性到点（先落干净检查点再报告）；实现/修复由 B lanes 承担，integrator 只做共享基线/合并/集成验收/共享面修正
-next: P1-13 共享基线（计划：dev_docs/verification/2026-09-07-p1-13-baseline-plan.md；governance 第三类走同一 commitKind union 扩展，待 C 复核后冻结）→ lanes A/B/C → 验收（P1-13 后再 P1-14）；09:00 到点前未完成则按到点协议停止
-evidence: P1-11 = dev_docs/verification/p1-11-implementation-evidence.md（6d70494）；G4 = dev_docs/verification/g4-gate-evidence.md（PASS）
-shared_baseline: P1-11 共享基线 = d5a51ba（965 passed + 24 skip 零回归）；验收 main = 6d70494（1025/1025）
-parallel_scope: P1-11 三 lane 已全部合入（B 2512b93 = compilers；C merge = projection；A merge = control）；合并后 integrator 修复：① P111_WORKSPACE→ws-shared（canonical 对齐）② 契约套件 skipIf 死锁修复（wiring READY 门控 + beforeAll 无条件）③ 探针诊断回退
-merge_surface_note: P1-11 零改动 P1-00..P1-10 冻结形状（只版本化追加）；3 个新 commitKind + 4 个新事件（apply fold 三事件序冻结）；任务集合在 P1-11 不可变；新 revision = 新 planId 聚合 @0
+authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a)/(b)/(c); GitHub push still needs user authorization) + 2026-09-07 阶段时限 = 09:00 CST 硬性到点（先落干净检查点再报告）；实现/修复由 B lanes 承担
+next: P1-13 lanes A（policy install/activate/resolution）B（remediation patch/task/dedup/advance）C（唯一 Writer+Verification 链集成测试）后合并验收；验收后 P1-14（←11+12）；09:00 到点未完成 → 干净检查点停止
+shared_baseline: P1-13 = 5ade74b（P1-11 验收后 main + Policy/Remediation 契约+fixtures+双适配器 dispatch+ControlEngine+5+stubs+harness+套件+restart/integration 骨架；全量 1025 passed + 21 skip，零回归）
+merge_surface_note: 第三 governance 类走 P1-02 同一 commitKind union 扩展（install/activate events+snapshots union+AggregateRef/Snapshot union+KNOWN versioned-append）；P1-02 断言维护（KNOWN 全局断言 → 场景级事件流隔离断言，integrator 裁决 2026-09-07：版本化追加约定 + 隔离证据保留，不改变 P1-02 功能/契约）；P1-13 无 read-model 展示视图（事件仅注册 isHandledEventType 防 stall；P1-14 若需再版本化追加）
 ```
 
 ---
+
+## P1-13 当前票据与共享契约基线（并行窗口 4 — lanes A/B/C 实施中）
+
+- Ticket：/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/13-allowlisted-remediation.md（status 保持 proposed）
+- 基线：5ade74b。契约：src/contracts/architecture-evolution-policy.ts（第三 governance 类：Content/Fixture/Ref/Pin/Snapshot/ActiveRef/命令/回执/事件/digest/fingerprints/resolve 只读 helper + evolutionPolicyDecision 纯判据）；src/contracts/remediation.ts（RemediationPlanPatch/Task/DedupKey/命令/回执/事件/fingerprints + remediationTaskOccupiesDedupKey 纯函数）；ledger 3 个 commitKind（remediation-plan-patch-record / remediation-task-record / remediation-task-advance）；ControlEngine +5（install/activate/submitPatch/createTask/advanceTask）；读模型：P1-13 无视图（applyP113 no-op + isHandledEventType 已扩）。
+- **LANE 表**：A policy（worktree agent_platform-p1-13-a @ p1-13-lane-a；subagent d8579b25；写入 src/control/architecture-evolution-policy.ts + ledger-validation.ts P1-13 区 + 单测）；B remediation（p1-13-b；45e7497c；src/control/remediation.ts + 单测）；C writer/verify 链（p1-13-c；3cb893a9；仅有测试文件）。均自 5ade74b。
+- **integrator 预裁决（已写入派发消息）**：① verdict 引擎权威重算（命令携带的 verdict 仅为建议，不一致按重算值 fold）；② dedup 实现 = 事件流扫描构造 dedupKey→任务映射（task 状态 ∈ occupied 集合 → deduplicated）；③ resolved 守卫 = evidenceRefs 非空 + result.verified + outcome=PASS + workspaceRevisionAfter ≥ patch.workspaceRevision（过期 PASS → evidence_mismatch 零写）；④ terminal 状态不占用 dedup key。
 
 ## P1-11 验收记录（2026-09-07，正式）
 
