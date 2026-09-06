@@ -1845,11 +1845,15 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       eventType === "WorkspaceWriteLeaseReleased" ||
       eventType === "IntegrationJoined" ||
       eventType === "PatchRecorded" ||
-      // P1-16 events (handler + isHandledEventType in the SAME commit per lane; union at merge).
+      // P1-16 + P1-12 events (union at merge; handler + isHandledEventType per lane commit).
       eventType === "WorkContextBound" ||
       eventType === "WorkRunLinked" ||
       eventType === "ExecutionNoteRecorded" ||
-      eventType === "ContinuationRecorded"
+      eventType === "ContinuationRecorded" ||
+      eventType === "ArchitectureInspectionRecorded" ||
+      eventType === "ArchitectureFindingRecorded" ||
+      eventType === "ArchitectureDecisionBriefRecorded" ||
+      eventType === "ArchitectureCandidateProposalRecorded"
     );
   }
 
@@ -2511,14 +2515,67 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     this.applyP112InspectionLaneB(event, cursor);
   }
 
-  // LANE-A: inspection + finding rows.
-  private applyP112InspectionLaneA(_event: DomainEvent, _cursor: CommitCursor): void {
-    // P1-12 lane A implementation region
+  // LANE-A: inspection + finding rows (integrator fill after merge — same
+  // tables the view reads: architecture_inspection_rows / architecture_finding_rows).
+  private applyP112InspectionLaneA(event: DomainEvent, cursor: CommitCursor): void {
+    if (event.eventType === "ArchitectureInspectionRecorded") {
+      const ev = event as import("../contracts/architecture-inspection.js").ArchitectureInspectionRecordedEvent;
+      const scopeKey = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
+      this.p112AppendRow("architecture_inspection_rows", scopeKey, ev.payload.inspection, cursor);
+    } else if (event.eventType === "ArchitectureFindingRecorded") {
+      const ev = event as import("../contracts/architecture-inspection.js").ArchitectureFindingRecordedEvent;
+      const scopeKey = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
+      const snapshot = { ref: { aggregateType: "ArchitectureFinding", projectId: ev.projectId, workspaceId: ev.workspaceId, findingId: ev.payload.finding.findingId }, revision: 1, schemaVersion: 1, finding: ev.payload.finding, recordedAt: ev.payload.recordedAt };
+      this.p112AppendRow("architecture_finding_rows", scopeKey, snapshot, cursor);
+    }
   }
 
   // LANE-B: decision brief + candidate proposal rows.
-  private applyP112InspectionLaneB(_event: DomainEvent, _cursor: CommitCursor): void {
-    // P1-12 lane B implementation region
+  private applyP112InspectionLaneB(event: DomainEvent, cursor: CommitCursor): void {
+    if (event.eventType === "ArchitectureDecisionBriefRecorded") {
+      const ev = event as import("../contracts/architecture-inspection.js").ArchitectureDecisionBriefRecordedEvent;
+      const brief = ev.payload.brief;
+      const snapshot = {
+        ref: { aggregateType: "ArchitectureDecisionBrief", projectId: brief.projectId, workspaceId: brief.workspaceId, briefId: brief.briefId },
+        revision: 1,
+        schemaVersion: 1,
+        brief,
+        recordedAt: ev.payload.recordedAt,
+      };
+      const key = consoleWorkspaceKey(brief.projectId, brief.workspaceId);
+      this.p112AppendRow("architecture_brief_rows", key, snapshot, cursor);
+    } else if (event.eventType === "ArchitectureCandidateProposalRecorded") {
+      const ev = event as import("../contracts/architecture-inspection.js").ArchitectureCandidateProposalRecordedEvent;
+      const proposal = ev.payload.proposal;
+      const snapshot = {
+        ref: { aggregateType: "ArchitectureCandidateProposal", projectId: proposal.projectId, workspaceId: proposal.workspaceId, proposalId: proposal.proposalId },
+        revision: 1,
+        schemaVersion: 1,
+        proposal,
+        recordedAt: ev.payload.recordedAt,
+      };
+      const key = consoleWorkspaceKey(proposal.projectId, proposal.workspaceId);
+      this.p112AppendRow("architecture_proposal_rows", key, snapshot, cursor);
+    }
+  }
+
+  /** LANE-B: append a snapshot to the scope_key JSON-array row (upsert). */
+  private p112AppendRow(table: "architecture_inspection_rows" | "architecture_finding_rows" | "architecture_brief_rows" | "architecture_proposal_rows", key: string, entry: unknown, cursor: CommitCursor): void {
+    const read = this.p108LaneBPrepare("SELECT entry_json FROM " + table + " WHERE scope_key = ?").get(key) as { entry_json: string } | undefined;
+    const rows: unknown[] = read ? (JSON.parse(read.entry_json) as unknown[]) : [];
+    rows.push(entry);
+    this.p108LaneBPrepare(
+      "INSERT INTO " + table + " (scope_key, entry_json, source_cursor) VALUES (?, ?, ?) " +
+        "ON CONFLICT(scope_key) DO UPDATE SET entry_json = excluded.entry_json, source_cursor = excluded.source_cursor",
+    ).run(key, JSON.stringify(rows), cursor);
+  }
+
+  /** LANE-B: read the scope_key JSON-array row for a P1-12 table
+   * (brief/proposal are LANE-B-written; inspection/finding are LANE-A-written
+   * and feed the SAME view). */
+  private p112ReadRows(table: "architecture_inspection_rows" | "architecture_finding_rows" | "architecture_brief_rows" | "architecture_proposal_rows", key: string): unknown[] {
+    const read = this.p108LaneBPrepare("SELECT entry_json FROM " + table + " WHERE scope_key = ?").get(key) as { entry_json: string } | undefined;
+    return read ? (JSON.parse(read.entry_json) as unknown[]) : [];
   }
 
   /** P1-16 work context view — field-for-field mirror of the InMemory index.
@@ -2545,9 +2602,119 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return { status: "ready", binding, notes, continuations, sourceCursor: observedCursor! };
   }
 
-  /** P1-12 LANE-A/LANE-B stub: architecture inspection view (display only). */
+  /** P1-12 LANE-A/LANE-B: architecture inspection view (display only) —
+   * field-for-field parity with the InMemory reference. The lane-B parts are
+   * always surfaced; the lane-A parts are empty until lane A lands (the view
+   * still works — ready with a possibly-empty list). */
   async architectureInspectionView(query: import("../contracts/architecture-inspection.js").ArchitectureInspectionViewQuery): Promise<import("../contracts/architecture-inspection.js").ArchitectureInspectionViewResult> {
-    throw new Error("P1-12 lane A/B: architectureInspectionView (sqlite) not implemented yet");
+    const observed = this.readCheckpoint();
+    if (observed === null) {
+      return { status: "not_ready", observedCursor: null };
+    }
+    const key = consoleWorkspaceKey(query.projectId, query.workspaceId);
+    const entries = this.p112BuildInspectionEntries(key, query.planId);
+    if (entries.length === 0) {
+      return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId };
+    }
+    return { status: "ready", inspections: entries, sourceCursor: observed };
+  }
+
+  private p112BuildInspectionEntries(
+    scopeKey: string,
+    planId: string | undefined,
+  ): {
+    inspection: import("../contracts/architecture-inspection.js").ArchitectureInspectionSnapshot;
+    findings: import("../contracts/architecture-inspection.js").ArchitectureFindingSnapshot[];
+    briefs: import("../contracts/architecture-inspection.js").ArchitectureDecisionBriefSnapshot[];
+    proposals: import("../contracts/architecture-inspection.js").ArchitectureCandidateProposalSnapshot[];
+  }[] {
+    const entries: {
+      inspection: import("../contracts/architecture-inspection.js").ArchitectureInspectionSnapshot;
+      findings: import("../contracts/architecture-inspection.js").ArchitectureFindingSnapshot[];
+      briefs: import("../contracts/architecture-inspection.js").ArchitectureDecisionBriefSnapshot[];
+      proposals: import("../contracts/architecture-inspection.js").ArchitectureCandidateProposalSnapshot[];
+    }[] = [];
+
+    const inspectionRows = this.p112ReadRows("architecture_inspection_rows", scopeKey) as import("../contracts/architecture-inspection.js").ArchitectureInspectionSnapshot[];
+    const findingRows = this.p112ReadRows("architecture_finding_rows", scopeKey) as import("../contracts/architecture-inspection.js").ArchitectureFindingSnapshot[];
+    const briefRows = this.p112ReadRows("architecture_brief_rows", scopeKey) as import("../contracts/architecture-inspection.js").ArchitectureDecisionBriefSnapshot[];
+    const proposalRows = this.p112ReadRows("architecture_proposal_rows", scopeKey) as import("../contracts/architecture-inspection.js").ArchitectureCandidateProposalSnapshot[];
+
+    const claimedBriefs = new Set<string>();
+    const claimedProposals = new Set<string>();
+
+    for (const inspection of inspectionRows) {
+      const findingRefs = new Set(inspection.findingRefs.map((r) => r.findingId));
+      const findings = findingRows.filter((f) => findingRefs.has(f.ref.findingId));
+      const briefRefId = inspection.briefRef?.briefId;
+      const briefs = briefRefId ? briefRows.filter((b) => b.ref.briefId === briefRefId) : [];
+      briefs.forEach((b) => claimedBriefs.add(b.ref.briefId));
+      const proposalRefId = inspection.proposalRef?.proposalId;
+      const proposals = proposalRefId ? proposalRows.filter((pr) => pr.ref.proposalId === proposalRefId) : [];
+      proposals.forEach((pr) => claimedProposals.add(pr.ref.proposalId));
+      if (planId === undefined || inspection.intent.planRef.planId === planId) {
+        entries.push({ inspection, findings, briefs, proposals });
+      }
+    }
+    for (const brief of briefRows) {
+      if (claimedBriefs.has(brief.ref.briefId)) continue;
+      if (planId !== undefined && brief.brief.planRef.planId !== planId) continue;
+      entries.push({
+        inspection: this.p112SyntheticInspection(brief.ref.projectId, brief.ref.workspaceId, brief.ref.briefId, brief.brief.baselinePin, brief.brief.planRef, brief.recordedAt, "brief"),
+        findings: [],
+        briefs: [brief],
+        proposals: [],
+      });
+    }
+    for (const proposal of proposalRows) {
+      if (claimedProposals.has(proposal.ref.proposalId)) continue;
+      if (planId !== undefined && proposal.proposal.planRef.planId !== planId) continue;
+      entries.push({
+        inspection: this.p112SyntheticInspection(proposal.ref.projectId, proposal.ref.workspaceId, proposal.ref.proposalId, proposal.proposal.sourceBaselinePin, proposal.proposal.planRef, proposal.recordedAt, "proposal"),
+        findings: [],
+        briefs: [],
+        proposals: [proposal],
+      });
+    }
+    return entries;
+  }
+
+  /** Synthetic display inspection used to surface a brief/proposal that is not
+   * referenced by any real (LANE-A) inspection row (LANE-B-only projection). */
+  private p112SyntheticInspection(
+    projectId: string,
+    workspaceId: string,
+    labelId: string,
+    baselinePin: import("../contracts/governance.js").ArchitectureBaselinePin,
+    planRef: import("../contracts/plan.js").PlanRevisionRef,
+    recordedAt: string,
+    label: string,
+  ): import("../contracts/architecture-inspection.js").ArchitectureInspectionSnapshot {
+    const inspectionId = "synthetic-" + label + "-" + labelId;
+    return {
+      ref: { aggregateType: "ArchitectureInspection", projectId, workspaceId, inspectionId },
+      revision: 1,
+      schemaVersion: 1,
+      intent: {
+        schemaVersion: 1,
+        inspectionId,
+        projectId,
+        workspaceId,
+        workspaceRevision: 0,
+        planRef,
+        baselinePin,
+        source: "report",
+        requestedByRunRef: null,
+        reportInput: null,
+        budget: { maxTokens: 0, deadline: null },
+      },
+      snapshotRef: null,
+      deltaRef: null,
+      findingRefs: [],
+      briefRef: null,
+      proposalRef: null,
+      recordedAt,
+    };
   }
 
   /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — rebuilt ONLY from the

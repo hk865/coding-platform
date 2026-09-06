@@ -8,11 +8,12 @@ import { expect } from "vitest";
 import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import { toP1_12Harness, runP112InspectionScenario, type P1_12HarnessLike, type P1_12TestHarness, type P112InspectionScenarioResult } from "../contract-suite/p1-12-harness.js";
+import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 import { P112_PROJECT, P112_WORKSPACE } from "../../src/contracts/fixtures/architecture-fixtures.js";
 
 export async function isP112Ready(): Promise<boolean> {
   try {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
     try {
       await runP112RestartScenario(h);
       return true;

@@ -4,6 +4,7 @@
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import { createPersistentSqliteHarness } from "../../../src/harness/persistent-harness.js";
+import { createP108ScenarioRuntime } from "../../contract-suite/p1-08-harness.js";
 import { isP112Ready, runP112RestartScenario, type P112RestartEvidence } from "../p1-12-restart-fixtures.js";
 
 const READY = await isP112Ready();
@@ -12,7 +13,7 @@ describe.skipIf(!READY)("P1-12-EVIDENCE", () => {
   let evidence: P112RestartEvidence;
 
   beforeAll(async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
     try {
       evidence = await runP112RestartScenario(h);
       console.log("P1-12-EVIDENCE-BLOCK");

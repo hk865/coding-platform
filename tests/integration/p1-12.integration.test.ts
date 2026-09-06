@@ -2,8 +2,8 @@
  * P1-12 integration: real SQLite full path + restart equivalence + view
  * parity between adapters. AUTO-SKIPS until the P1-12 paths exist (probe).
  */
-import { describe, it, expect, beforeAll } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createPersistentSqliteHarness, type PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 import { toP1_12Harness, runP112InspectionScenario, type P1_12HarnessLike } from "../contract-suite/p1-12-harness.js";
@@ -14,24 +14,21 @@ const READY = await isP112Ready();
 
 describe.skipIf(!READY)("P1-12 real SQLite integration", () => {
   let evidence: P112RestartEvidence;
+  let closed: PersistentSqliteHarness;
 
   beforeAll(async () => {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
-    try {
-      evidence = await runP112RestartScenario(h);
-    } finally {
-      await h.cleanup().catch(() => undefined);
-    }
+    closed = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    evidence = await runP112RestartScenario(closed);
+    await closed.close();
+  });
+
+  afterAll(async () => {
+    await closed.cleanup().catch(() => undefined);
   });
 
   it("inspection view rebuilds identically after close+reopen (real SQLite)", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
-    try {
-      const restarted = await h.reopen();
-      await verifyP112AfterRestart(restarted, evidence);
-    } finally {
-      await h.cleanup().catch(() => undefined);
-    }
+    const restarted = await closed.reopen();
+    await verifyP112AfterRestart(restarted, evidence);
   });
 
   it("InMemory and SQLite inspection views agree (same deterministic scenario)", async () => {
