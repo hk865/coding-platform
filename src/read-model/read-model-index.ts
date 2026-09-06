@@ -537,6 +537,8 @@ export class ReadModelIndexImpl implements ReadModelIndex {
 
       // P1-14 baseline-evolution events (candidate/decision/gate/activation; view stub until lane C).
       this.applyP114(event, positioned.cursor);
+    // P1-15 initial-design/coordination-policy events.
+    this.applyP115(event, positioned.cursor);
 
       // Known non-goal / non-plan / non-dispatch events
       // (ProjectBootstrapped, WorkspaceBootstrapped, CompletionPolicyInstalled,
@@ -2862,6 +2864,18 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     void cursor;
   }
 
+  /** P1-15: no-op hook (facts-first view stub until lane B lands). */
+  private applyP115(event: DomainEvent, cursor: CommitCursor): void {
+    void event;
+    void cursor;
+  }
+
+  /** P1-15 LANE-B: unified status view stub. */
+  async unifiedStatusView(query: import("../contracts/human-role-collaboration.js").UnifiedStatusViewQuery): Promise<import("../contracts/human-role-collaboration.js").UnifiedStatusViewResult> {
+    void query;
+    throw new Error("P1-15 lane: unifiedStatusView not implemented yet");
+  }
+
   /** P1-14 LANE-C: baseline-evolution hook — fold the 4 events into
    * candidate / decision / gate / activation rows (workspace-scope keys). */
   private applyP114(event: DomainEvent, cursor: CommitCursor): void {
@@ -3326,6 +3340,11 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       eventType === "ArchitectureChangeDecisionRecorded" ||
       eventType === "MigrationGateRecorded" ||
       eventType === "BaselineActivationRecorded" ||
+      // P1-15 initial-design/coordination-policy events.
+      eventType === "InitialDesignProposalRecorded" ||
+      eventType === "InitialDesignDecisionRecorded" ||
+      eventType === "CoordinationPolicyInstalled" ||
+      eventType === "CoordinationPolicyActivated" ||
       // P1-11 plan-change events (handler + isHandledEventType in the SAME lane commit).
       eventType === "PlanProposalRecorded" ||
       eventType === "UserDecisionRecorded" ||

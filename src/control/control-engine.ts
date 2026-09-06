@@ -94,6 +94,7 @@ import { GoalChangeEngineImpl } from "./goal-change.js";
 import { ArchitectureEvolutionPolicyEngineImpl } from "./architecture-evolution-policy.js";
 import { RemediationEngineImpl } from "./remediation.js";
 import { BaselineEvolutionEngineImpl } from "./baseline-evolution.js";
+import { HumanRoleCollaborationEngineImpl } from "./human-role-collaboration.js";
 import type { ApplyPlanChangeCommand, ApplyPlanChangeReceipt, RecordPlanChangeProposalCommand, RecordPlanChangeProposalReceipt, RecordUserDecisionCommand, RecordUserDecisionReceipt } from "../contracts/goal-change.js";
 import type { CloseQueryJobCommand, CloseQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, SubmitQueryJobCommand, SubmitQueryJobReceipt } from "../contracts/query-job.js";
 import type { RecordSafePointAckCommand, RecordSafePointAckReceipt, SubmitControlCommand, SubmitControlReceipt } from "../contracts/control-intent.js";
@@ -144,6 +145,7 @@ export class ControlEngineImpl implements ControlEngine {
   private readonly evolutionPolicy: ArchitectureEvolutionPolicyEngineImpl;
   private readonly remediation: RemediationEngineImpl;
   private readonly baselineEvolution: BaselineEvolutionEngineImpl;
+  private readonly humanRole: HumanRoleCollaborationEngineImpl;
 
   constructor(deps: ControlEngineDeps) {
     this.deps = deps;
@@ -156,6 +158,7 @@ export class ControlEngineImpl implements ControlEngine {
     this.evolutionPolicy = new ArchitectureEvolutionPolicyEngineImpl(deps);
     this.remediation = new RemediationEngineImpl(deps);
     this.baselineEvolution = new BaselineEvolutionEngineImpl(deps);
+    this.humanRole = new HumanRoleCollaborationEngineImpl(deps);
   }
 
   // --------------------------------------------------------------------- //
@@ -445,6 +448,22 @@ export class ControlEngineImpl implements ControlEngine {
 
   recordBaselineActivation(command: import("../contracts/baseline-evolution.js").RecordBaselineActivationCommand): Promise<import("../contracts/baseline-evolution.js").RecordBaselineActivationReceipt> {
     return this.baselineEvolution.recordActivation(command);
+  }
+
+  recordInitialDesignProposal(command: import("../contracts/human-role-collaboration.js").RecordInitialDesignProposalCommand): Promise<import("../contracts/human-role-collaboration.js").RecordInitialDesignProposalReceipt> {
+    return this.humanRole.recordProposal(command);
+  }
+
+  recordInitialDesignDecision(command: import("../contracts/human-role-collaboration.js").RecordInitialDesignDecisionCommand): Promise<import("../contracts/human-role-collaboration.js").RecordInitialDesignDecisionReceipt> {
+    return this.humanRole.recordDecision(command);
+  }
+
+  installCoordinationPolicy(command: import("../contracts/human-role-collaboration.js").InstallCoordinationPolicyCommand): Promise<import("../contracts/human-role-collaboration.js").InstallCoordinationPolicyReceipt> {
+    return this.humanRole.installPolicy(command);
+  }
+
+  activateCoordinationPolicy(command: import("../contracts/human-role-collaboration.js").ActivateCoordinationPolicyCommand): Promise<import("../contracts/human-role-collaboration.js").ActivateCoordinationPolicyReceipt> {
+    return this.humanRole.activatePolicy(command);
   }
 
   // --------------------------------------------------------------------- //

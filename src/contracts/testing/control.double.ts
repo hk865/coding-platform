@@ -187,6 +187,10 @@ export class ScriptedControlEngine implements ControlEngine {
       recordArchitectureChangeDecision?: (command: import("../baseline-evolution.js").RecordArchitectureChangeDecisionCommand) => import("../baseline-evolution.js").RecordArchitectureChangeDecisionReceipt | Promise<import("../baseline-evolution.js").RecordArchitectureChangeDecisionReceipt>;
       recordMigrationGate?: (command: import("../baseline-evolution.js").RecordMigrationGateCommand) => import("../baseline-evolution.js").RecordMigrationGateReceipt | Promise<import("../baseline-evolution.js").RecordMigrationGateReceipt>;
       recordBaselineActivation?: (command: import("../baseline-evolution.js").RecordBaselineActivationCommand) => import("../baseline-evolution.js").RecordBaselineActivationReceipt | Promise<import("../baseline-evolution.js").RecordBaselineActivationReceipt>;
+      recordInitialDesignProposal?: (command: import("../human-role-collaboration.js").RecordInitialDesignProposalCommand) => import("../human-role-collaboration.js").RecordInitialDesignProposalReceipt | Promise<import("../human-role-collaboration.js").RecordInitialDesignProposalReceipt>;
+      recordInitialDesignDecision?: (command: import("../human-role-collaboration.js").RecordInitialDesignDecisionCommand) => import("../human-role-collaboration.js").RecordInitialDesignDecisionReceipt | Promise<import("../human-role-collaboration.js").RecordInitialDesignDecisionReceipt>;
+      installCoordinationPolicy?: (command: import("../human-role-collaboration.js").InstallCoordinationPolicyCommand) => import("../human-role-collaboration.js").InstallCoordinationPolicyReceipt | Promise<import("../human-role-collaboration.js").InstallCoordinationPolicyReceipt>;
+      activateCoordinationPolicy?: (command: import("../human-role-collaboration.js").ActivateCoordinationPolicyCommand) => import("../human-role-collaboration.js").ActivateCoordinationPolicyReceipt | Promise<import("../human-role-collaboration.js").ActivateCoordinationPolicyReceipt>;
       defaultSubmit?: CommandReceipt;
       defaultBootstrap?: WorkspaceBootstrapReceipt;
       defaultInstall?: GovernanceInstallReceipt;
@@ -505,5 +509,33 @@ export class ScriptedControlEngine implements ControlEngine {
     this.recordBaselineActivationCalls.push(command);
     if (this.options.recordBaselineActivation) return this.options.recordBaselineActivation(command);
     throw new Error("ScriptedControlEngine: no recordBaselineActivation behavior configured");
+  }
+
+  // P1-15 (scripted double: records calls; behaviors configured per test)      //
+
+  readonly recordInitialDesignProposalCalls: import("../human-role-collaboration.js").RecordInitialDesignProposalCommand[] = [];
+  readonly recordInitialDesignDecisionCalls: import("../human-role-collaboration.js").RecordInitialDesignDecisionCommand[] = [];
+  readonly installCoordinationPolicyCalls: import("../human-role-collaboration.js").InstallCoordinationPolicyCommand[] = [];
+  readonly activateCoordinationPolicyCalls: import("../human-role-collaboration.js").ActivateCoordinationPolicyCommand[] = [];
+
+  async recordInitialDesignProposal(command: import("../human-role-collaboration.js").RecordInitialDesignProposalCommand): Promise<import("../human-role-collaboration.js").RecordInitialDesignProposalReceipt> {
+    this.recordInitialDesignProposalCalls.push(command);
+    if (this.options.recordInitialDesignProposal) return this.options.recordInitialDesignProposal(command);
+    throw new Error("ScriptedControlEngine: no recordInitialDesignProposal behavior configured");
+  }
+  async recordInitialDesignDecision(command: import("../human-role-collaboration.js").RecordInitialDesignDecisionCommand): Promise<import("../human-role-collaboration.js").RecordInitialDesignDecisionReceipt> {
+    this.recordInitialDesignDecisionCalls.push(command);
+    if (this.options.recordInitialDesignDecision) return this.options.recordInitialDesignDecision(command);
+    throw new Error("ScriptedControlEngine: no recordInitialDesignDecision behavior configured");
+  }
+  async installCoordinationPolicy(command: import("../human-role-collaboration.js").InstallCoordinationPolicyCommand): Promise<import("../human-role-collaboration.js").InstallCoordinationPolicyReceipt> {
+    this.installCoordinationPolicyCalls.push(command);
+    if (this.options.installCoordinationPolicy) return this.options.installCoordinationPolicy(command);
+    throw new Error("ScriptedControlEngine: no installCoordinationPolicy behavior configured");
+  }
+  async activateCoordinationPolicy(command: import("../human-role-collaboration.js").ActivateCoordinationPolicyCommand): Promise<import("../human-role-collaboration.js").ActivateCoordinationPolicyReceipt> {
+    this.activateCoordinationPolicyCalls.push(command);
+    if (this.options.activateCoordinationPolicy) return this.options.activateCoordinationPolicy(command);
+    throw new Error("ScriptedControlEngine: no activateCoordinationPolicy behavior configured");
   }
 }

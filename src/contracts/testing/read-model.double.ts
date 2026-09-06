@@ -99,6 +99,7 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly queryJobViewCalls: import("../query-job.js").QueryJobViewQuery[] = [];
   readonly planChangeViewCalls: import("../goal-change.js").PlanChangeViewQuery[] = [];
   readonly baselineChangeViewCalls: import("../baseline-evolution.js").BaselineChangeViewQuery[] = [];
+  readonly unifiedStatusViewCalls: import("../human-role-collaboration.js").UnifiedStatusViewQuery[] = [];
 
   constructor(
     private readonly options: {
@@ -120,6 +121,7 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
       queryJobView?: QueryJobViewBehavior;
       planChangeView?: (query: import("../goal-change.js").PlanChangeViewQuery) => Promise<import("../goal-change.js").PlanChangeViewResult> | import("../goal-change.js").PlanChangeViewResult;
       baselineChangeView?: (query: import("../baseline-evolution.js").BaselineChangeViewQuery) => Promise<import("../baseline-evolution.js").BaselineChangeViewResult> | import("../baseline-evolution.js").BaselineChangeViewResult;
+      unifiedStatusView?: (query: import("../human-role-collaboration.js").UnifiedStatusViewQuery) => Promise<import("../human-role-collaboration.js").UnifiedStatusViewResult> | import("../human-role-collaboration.js").UnifiedStatusViewResult;
       consolePortfolio?: import("../console-views.js").PortfolioViewResult extends never ? never : (query: import("../console-views.js").PortfolioViewQuery) => Promise<import("../console-views.js").PortfolioViewResult> | import("../console-views.js").PortfolioViewResult;
       consoleSummary?: (query: import("../console-views.js").WorkspaceSummaryViewQuery) => Promise<import("../console-views.js").WorkspaceSummaryViewResult> | import("../console-views.js").WorkspaceSummaryViewResult;
       consolePlanMatrix?: (query: import("../console-views.js").PlanMatrixViewQuery) => Promise<import("../console-views.js").PlanMatrixViewResult> | import("../console-views.js").PlanMatrixViewResult;
@@ -241,6 +243,12 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   async baselineChangeView(query: import("../baseline-evolution.js").BaselineChangeViewQuery): Promise<import("../baseline-evolution.js").BaselineChangeViewResult> {
     this.baselineChangeViewCalls.push(query);
     if (this.options.baselineChangeView) return this.options.baselineChangeView(query);
+    return { status: "not_found" };
+  }
+
+  async unifiedStatusView(query: import("../human-role-collaboration.js").UnifiedStatusViewQuery): Promise<import("../human-role-collaboration.js").UnifiedStatusViewResult> {
+    this.unifiedStatusViewCalls.push(query);
+    if (this.options.unifiedStatusView) return this.options.unifiedStatusView(query);
     return { status: "not_found" };
   }
 

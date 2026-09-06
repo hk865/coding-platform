@@ -2104,6 +2104,8 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     // P1-13 + P1-14 events (no/limited display projection; registered handled).
     this.applyP113(event, cursor);
     this.applyP114(event, cursor);
+    // P1-15 initial-design/coordination-policy events.
+    this.applyP115(event, cursor);
     // Known non-goal / non-plan / non-dispatch events (ProjectBootstrapped,
     // WorkspaceBootstrapped, CompletionPolicyInstalled,
     // ArchitectureBaselineInstalled, CompletionPolicyActivated,
@@ -2664,6 +2666,18 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   private applyP113(event: DomainEvent, cursor: CommitCursor): void {
     void event;
     void cursor;
+  }
+
+  /** P1-15: no-op hook (facts-first view stub until lane B lands). */
+  private applyP115(event: DomainEvent, cursor: CommitCursor): void {
+    void event;
+    void cursor;
+  }
+
+  /** P1-15 LANE-B: unified status view stub. */
+  async unifiedStatusView(query: import("../contracts/human-role-collaboration.js").UnifiedStatusViewQuery): Promise<import("../contracts/human-role-collaboration.js").UnifiedStatusViewResult> {
+    void query;
+    throw new Error("P1-15 lane: unifiedStatusView not implemented yet");
   }
 
   /** P1-14 LANE-C: baseline-evolution hook — fold the 4 events into

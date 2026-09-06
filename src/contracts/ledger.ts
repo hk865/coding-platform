@@ -46,6 +46,7 @@ import type {
 import type { ArchitectureEvolutionPolicyActivatedEvent, ArchitectureEvolutionPolicyInstalledEvent } from "./architecture-evolution-policy.js";
 import type { RemediationPlanPatchRecordedEvent, RemediationPlanPatchSnapshot, RemediationPlanPatchRef, RemediationTaskAdvancedEvent, RemediationTaskCreatedEvent, RemediationTaskSnapshot, RemediationTaskRef } from "./remediation.js";
 import type { ArchitectureChangeDecisionRecordedEvent, ArchitectureChangeDecisionRef, ArchitectureChangeDecisionV1, BaselineActivationRecordedEvent, BaselineActivationRef, BaselineActivationV1, CandidateArchitectureBaselineRef, CandidateArchitectureBaselineSnapshot, CandidateBaselineMaterializedEvent, MigrationGateRecordedEvent, MigrationGateTaskRef, MigrationGateTaskV1 } from "./baseline-evolution.js";
+import type { CoordinationPolicyActivatedEvent, CoordinationPolicyInstalledEvent, CoordinationPolicyRevisionRef, CoordinationPolicyRevisionSnapshot, InitialDesignDecisionRecordedEvent, InitialDesignDecisionRef, InitialDesignDecisionSnapshot, InitialDesignDecisionV1, InitialDesignProposalRecordedEvent, InitialDesignProposalRef, InitialDesignProposalSnapshot, InitialDesignProposalV1, ProjectCoordinationPolicyActiveRef, ProjectCoordinationPolicyActiveSnapshot } from "./human-role-collaboration.js";
 import type { PlanRevisionAcceptedEvent, PlanRevisionRef, PlanRevisionSnapshot } from "./plan.js";
 import type {
   DispatchIntentV1,
@@ -198,7 +199,11 @@ export type AggregateRef =
   | CandidateArchitectureBaselineRef
   | ArchitectureChangeDecisionRef
   | MigrationGateTaskRef
-  | BaselineActivationRef;
+  | BaselineActivationRef
+  | InitialDesignProposalRef
+  | InitialDesignDecisionRef
+  | CoordinationPolicyRevisionRef
+  | ProjectCoordinationPolicyActiveRef;
 
 export type ProjectSnapshot = {
   ref: ProjectRef;
@@ -268,7 +273,11 @@ export type AggregateSnapshot =
   | CandidateArchitectureBaselineSnapshot
   | { ref: ArchitectureChangeDecisionRef; revision: 1; schemaVersion: 1; decision: ArchitectureChangeDecisionV1; recordedAt: string }
   | { ref: MigrationGateTaskRef; revision: 1; schemaVersion: 1; gate: MigrationGateTaskV1; recordedAt: string }
-  | { ref: BaselineActivationRef; revision: 1; schemaVersion: 1; activation: BaselineActivationV1; recordedAt: string };
+  | { ref: BaselineActivationRef; revision: 1; schemaVersion: 1; activation: BaselineActivationV1; recordedAt: string }
+  | InitialDesignProposalSnapshot
+  | InitialDesignDecisionSnapshot
+  | CoordinationPolicyRevisionSnapshot
+  | ProjectCoordinationPolicyActiveSnapshot;
 
 export type SnapshotResult =
   | { status: "found"; snapshot: AggregateSnapshot }
@@ -772,6 +781,12 @@ export type ArchitectureChangeDecisionRecordLedgerCommitV1 = { commitKind: "arch
 export type MigrationGateRecordLedgerCommitV1 = { commitKind: "migration-gate-record"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [MigrationGateRecordedEvent]; snapshots: [{ ref: MigrationGateTaskRef; revision: 1; schemaVersion: 1; gate: MigrationGateTaskV1; recordedAt: string }]; outboxIntents: [] };
 export type BaselineActivationRecordLedgerCommitV1 = { commitKind: "baseline-activation-record"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [BaselineActivationRecordedEvent]; snapshots: [{ ref: BaselineActivationRef; revision: 1; schemaVersion: 1; activation: BaselineActivationV1; recordedAt: string }]; outboxIntents: [] };
 
+/** P1-15: initial-design + coordination-policy commit kinds. */
+export type InitialDesignProposalRecordLedgerCommitV1 = { commitKind: "initial-design-proposal-record"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [InitialDesignProposalRecordedEvent]; snapshots: [InitialDesignProposalSnapshot]; outboxIntents: [] };
+export type InitialDesignDecisionRecordLedgerCommitV1 = { commitKind: "initial-design-decision-record"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [InitialDesignDecisionRecordedEvent]; snapshots: [InitialDesignDecisionSnapshot]; outboxIntents: [] };
+export type CoordinationPolicyInstallRecordLedgerCommitV1 = { commitKind: "coordination-policy-install"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [CoordinationPolicyInstalledEvent]; snapshots: [CoordinationPolicyRevisionSnapshot]; outboxIntents: [] };
+export type CoordinationPolicyActivateRecordLedgerCommitV1 = { commitKind: "coordination-policy-activate"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [CoordinationPolicyActivatedEvent]; snapshots: [ProjectCoordinationPolicyActiveSnapshot]; outboxIntents: [] };
+
 export type LedgerCommit =
   | GoalCreateLedgerCommitV1
   | BootstrapLedgerCommitV1
@@ -814,7 +829,11 @@ export type LedgerCommit =
   | CandidateBaselineMaterializeLedgerCommitV1
   | ArchitectureChangeDecisionRecordLedgerCommitV1
   | MigrationGateRecordLedgerCommitV1
-  | BaselineActivationRecordLedgerCommitV1;
+  | BaselineActivationRecordLedgerCommitV1
+  | InitialDesignProposalRecordLedgerCommitV1
+  | InitialDesignDecisionRecordLedgerCommitV1
+  | CoordinationPolicyInstallRecordLedgerCommitV1
+  | CoordinationPolicyActivateRecordLedgerCommitV1;
 
 export type LedgerCommitReceipt =
   | {

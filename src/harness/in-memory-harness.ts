@@ -353,6 +353,20 @@ export interface InMemoryHarness {
   recordMigrationGate(command: import("../contracts/baseline-evolution.js").RecordMigrationGateCommand): Promise<import("../contracts/baseline-evolution.js").RecordMigrationGateReceipt>;
   recordBaselineActivation(command: import("../contracts/baseline-evolution.js").RecordBaselineActivationCommand): Promise<import("../contracts/baseline-evolution.js").RecordBaselineActivationReceipt>;
   baselineChangeView(query: import("../contracts/baseline-evolution.js").BaselineChangeViewQuery): Promise<import("../contracts/baseline-evolution.js").BaselineChangeViewResult>;
+  /** P1-15: initial-design/coordination entries + unified status view. */
+  recordInitialDesignProposal(command: import("../contracts/human-role-collaboration.js").RecordInitialDesignProposalCommand): Promise<import("../contracts/human-role-collaboration.js").RecordInitialDesignProposalReceipt>;
+  recordInitialDesignDecision(command: import("../contracts/human-role-collaboration.js").RecordInitialDesignDecisionCommand): Promise<import("../contracts/human-role-collaboration.js").RecordInitialDesignDecisionReceipt>;
+  installCoordinationPolicy(command: import("../contracts/human-role-collaboration.js").InstallCoordinationPolicyCommand): Promise<import("../contracts/human-role-collaboration.js").InstallCoordinationPolicyReceipt>;
+  activateCoordinationPolicy(command: import("../contracts/human-role-collaboration.js").ActivateCoordinationPolicyCommand): Promise<import("../contracts/human-role-collaboration.js").ActivateCoordinationPolicyReceipt>;
+  unifiedStatusView(query: import("../contracts/human-role-collaboration.js").UnifiedStatusViewQuery): Promise<import("../contracts/human-role-collaboration.js").UnifiedStatusViewResult>;
+
+  /** P1-15: initial-design/coordination entries + unified status view. */
+  recordInitialDesignProposal(command: import("../contracts/human-role-collaboration.js").RecordInitialDesignProposalCommand): Promise<import("../contracts/human-role-collaboration.js").RecordInitialDesignProposalReceipt>;
+  recordInitialDesignDecision(command: import("../contracts/human-role-collaboration.js").RecordInitialDesignDecisionCommand): Promise<import("../contracts/human-role-collaboration.js").RecordInitialDesignDecisionReceipt>;
+  installCoordinationPolicy(command: import("../contracts/human-role-collaboration.js").InstallCoordinationPolicyCommand): Promise<import("../contracts/human-role-collaboration.js").InstallCoordinationPolicyReceipt>;
+  activateCoordinationPolicy(command: import("../contracts/human-role-collaboration.js").ActivateCoordinationPolicyCommand): Promise<import("../contracts/human-role-collaboration.js").ActivateCoordinationPolicyReceipt>;
+  unifiedStatusView(query: import("../contracts/human-role-collaboration.js").UnifiedStatusViewQuery): Promise<import("../contracts/human-role-collaboration.js").UnifiedStatusViewResult>;
+
   /** P1-13: install/activate ArchitectureEvolutionPolicy (third governance kind) + remediation entries. */
   installArchitectureEvolutionPolicy(command: import("../contracts/architecture-evolution-policy.js").InstallArchitectureEvolutionPolicyRevisionCommand): Promise<import("../contracts/architecture-evolution-policy.js").ArchitectureEvolutionPolicyInstallReceipt>;
   activateArchitectureEvolutionPolicy(command: import("../contracts/architecture-evolution-policy.js").ActivateProjectArchitectureEvolutionPolicyCommand): Promise<import("../contracts/architecture-evolution-policy.js").ArchitectureEvolutionPolicyActivateReceipt>;
@@ -574,6 +588,11 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     recordArchitectureChangeDecision: (command) => control.recordArchitectureChangeDecision(command),
     recordMigrationGate: (command) => control.recordMigrationGate(command),
     recordBaselineActivation: (command) => control.recordBaselineActivation(command),
+    recordInitialDesignProposal: (command) => control.recordInitialDesignProposal(command),
+    recordInitialDesignDecision: (command) => control.recordInitialDesignDecision(command),
+    installCoordinationPolicy: (command) => control.installCoordinationPolicy(command),
+    activateCoordinationPolicy: (command) => control.activateCoordinationPolicy(command),
+    unifiedStatusView: (query) => readModel.unifiedStatusView(query),
     baselineChangeView: (query) => readModel.baselineChangeView(query),
     continuationCapabilities: (request) => contextContinuation.capabilities(request),
     assembleHandoff: (request) => handoffContext.assemble(request),

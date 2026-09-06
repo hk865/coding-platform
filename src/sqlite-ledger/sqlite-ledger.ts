@@ -91,6 +91,10 @@ import {
   validateArchitectureChangeDecisionRecordCommit,
   validateMigrationGateRecordCommit,
   validateBaselineActivationRecordCommit,
+  validateInitialDesignProposalRecordCommit,
+  validateInitialDesignDecisionRecordCommit,
+  validateCoordinationPolicyInstallCommit,
+  validateCoordinationPolicyActivateCommit,
 } from "../contracts/ledger-validation.js";
 import type {
   DispatchClaimLedgerCommitV1,
@@ -527,6 +531,14 @@ export class SqliteStateLedger implements StateLedger {
         return this.commitMigrationGateRecord(batch);
       case "baseline-activation-record":
         return this.commitBaselineActivationRecord(batch);
+      case "initial-design-proposal-record":
+        return this.commitInitialDesignProposalRecord(batch);
+      case "initial-design-decision-record":
+        return this.commitInitialDesignDecisionRecord(batch);
+      case "coordination-policy-install":
+        return this.commitCoordinationPolicyInstall(batch);
+      case "coordination-policy-activate":
+        return this.commitCoordinationPolicyActivate(batch);
     }
   }
 
@@ -788,6 +800,26 @@ export class SqliteStateLedger implements StateLedger {
 
   private commitBaselineActivationRecord(batch: import("../contracts/ledger.js").BaselineActivationRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
     if (!validateBaselineActivationRecordCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGeneric(batch);
+  }
+
+  private commitInitialDesignProposalRecord(batch: import("../contracts/ledger.js").InitialDesignProposalRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateInitialDesignProposalRecordCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGeneric(batch);
+  }
+
+  private commitInitialDesignDecisionRecord(batch: import("../contracts/ledger.js").InitialDesignDecisionRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateInitialDesignDecisionRecordCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGeneric(batch);
+  }
+
+  private commitCoordinationPolicyInstall(batch: import("../contracts/ledger.js").CoordinationPolicyInstallRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateCoordinationPolicyInstallCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGeneric(batch);
+  }
+
+  private commitCoordinationPolicyActivate(batch: import("../contracts/ledger.js").CoordinationPolicyActivateRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateCoordinationPolicyActivateCommit(batch)) return { status: "rejected", code: "invalid_commit" };
     return this.commitGeneric(batch);
   }
 

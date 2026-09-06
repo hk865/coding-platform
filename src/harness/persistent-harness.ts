@@ -370,6 +370,13 @@ export interface PersistentSqliteHarness {
   recordMigrationGate(command: import("../contracts/baseline-evolution.js").RecordMigrationGateCommand): Promise<import("../contracts/baseline-evolution.js").RecordMigrationGateReceipt>;
   recordBaselineActivation(command: import("../contracts/baseline-evolution.js").RecordBaselineActivationCommand): Promise<import("../contracts/baseline-evolution.js").RecordBaselineActivationReceipt>;
   baselineChangeView(query: import("../contracts/baseline-evolution.js").BaselineChangeViewQuery): Promise<import("../contracts/baseline-evolution.js").BaselineChangeViewResult>;
+  /** P1-15: initial-design/coordination entries + unified status view. */
+  recordInitialDesignProposal(command: import("../contracts/human-role-collaboration.js").RecordInitialDesignProposalCommand): Promise<import("../contracts/human-role-collaboration.js").RecordInitialDesignProposalReceipt>;
+  recordInitialDesignDecision(command: import("../contracts/human-role-collaboration.js").RecordInitialDesignDecisionCommand): Promise<import("../contracts/human-role-collaboration.js").RecordInitialDesignDecisionReceipt>;
+  installCoordinationPolicy(command: import("../contracts/human-role-collaboration.js").InstallCoordinationPolicyCommand): Promise<import("../contracts/human-role-collaboration.js").InstallCoordinationPolicyReceipt>;
+  activateCoordinationPolicy(command: import("../contracts/human-role-collaboration.js").ActivateCoordinationPolicyCommand): Promise<import("../contracts/human-role-collaboration.js").ActivateCoordinationPolicyReceipt>;
+  unifiedStatusView(query: import("../contracts/human-role-collaboration.js").UnifiedStatusViewQuery): Promise<import("../contracts/human-role-collaboration.js").UnifiedStatusViewResult>;
+
   /** P1-13: install/activate ArchitectureEvolutionPolicy (third governance kind) + remediation entries. */
   installArchitectureEvolutionPolicy(command: import("../contracts/architecture-evolution-policy.js").InstallArchitectureEvolutionPolicyRevisionCommand): Promise<import("../contracts/architecture-evolution-policy.js").ArchitectureEvolutionPolicyInstallReceipt>;
   activateArchitectureEvolutionPolicy(command: import("../contracts/architecture-evolution-policy.js").ActivateProjectArchitectureEvolutionPolicyCommand): Promise<import("../contracts/architecture-evolution-policy.js").ArchitectureEvolutionPolicyActivateReceipt>;
@@ -707,6 +714,11 @@ export async function createPersistentSqliteHarness(
     recordArchitectureChangeDecision: (command) => built.control.recordArchitectureChangeDecision(command),
     recordMigrationGate: (command) => built.control.recordMigrationGate(command),
     recordBaselineActivation: (command) => built.control.recordBaselineActivation(command),
+    recordInitialDesignProposal: (command) => built.control.recordInitialDesignProposal(command),
+    recordInitialDesignDecision: (command) => built.control.recordInitialDesignDecision(command),
+    installCoordinationPolicy: (command) => built.control.installCoordinationPolicy(command),
+    activateCoordinationPolicy: (command) => built.control.activateCoordinationPolicy(command),
+    unifiedStatusView: (query) => built.readModel.unifiedStatusView(query),
     baselineChangeView: (query) => built.readModel.baselineChangeView(query),
       assembleQueryContext: (request) => built.queryContext.assembleQueryContext(request),
       publicSnapshot: (query) => built.snapshot.snapshot(query),

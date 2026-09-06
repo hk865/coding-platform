@@ -185,6 +185,14 @@ export interface ControlEngine {
   recordMigrationGate(command: import("./baseline-evolution.js").RecordMigrationGateCommand): Promise<import("./baseline-evolution.js").RecordMigrationGateReceipt>;
   /** P1-14: record the CAS-guarded baseline activation (ref chain + gate PASS + decision accept). */
   recordBaselineActivation(command: import("./baseline-evolution.js").RecordBaselineActivationCommand): Promise<import("./baseline-evolution.js").RecordBaselineActivationReceipt>;
+  /** P1-15: record one initial-design proposal (ambiguity + >=2 options). */
+  recordInitialDesignProposal(command: import("./human-role-collaboration.js").RecordInitialDesignProposalCommand): Promise<import("./human-role-collaboration.js").RecordInitialDesignProposalReceipt>;
+  /** P1-15: record one exact initial-design decision (bound to proposal digest). */
+  recordInitialDesignDecision(command: import("./human-role-collaboration.js").RecordInitialDesignDecisionCommand): Promise<import("./human-role-collaboration.js").RecordInitialDesignDecisionReceipt>;
+  /** P1-15: install a budgeted immutable coordination policy (never auto-activates). */
+  installCoordinationPolicy(command: import("./human-role-collaboration.js").InstallCoordinationPolicyCommand): Promise<import("./human-role-collaboration.js").InstallCoordinationPolicyReceipt>;
+  /** P1-15: CAS-activate the project coordination policy active ref. */
+  activateCoordinationPolicy(command: import("./human-role-collaboration.js").ActivateCoordinationPolicyCommand): Promise<import("./human-role-collaboration.js").ActivateCoordinationPolicyReceipt>;
 }
 
 export interface HumanCollaboration {

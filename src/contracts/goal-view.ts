@@ -132,4 +132,6 @@ export interface ReadModelIndex {
   planChangeView(query: import("./goal-change.js").PlanChangeViewQuery): Promise<import("./goal-change.js").PlanChangeViewResult>;
   /** P1-14: baseline change view per (projectId, workspaceId) — default pin/candidate/decision/gate/activation + not-yet-rebased plans (display only). */
   baselineChangeView(query: import("./baseline-evolution.js").BaselineChangeViewQuery): Promise<import("./baseline-evolution.js").BaselineChangeViewResult>;
+  /** P1-15: unified facts-first status presentation (read-only; stale marks; display only). */
+  unifiedStatusView(query: import("./human-role-collaboration.js").UnifiedStatusViewQuery): Promise<import("./human-role-collaboration.js").UnifiedStatusViewResult>;
 }

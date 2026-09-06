@@ -1521,6 +1521,57 @@ export function validateBaselineActivationRecordCommit(batch: import("./ledger.j
   return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
 }
 
+
+// ------------------------------------------------------------------------ //
+// P1-15 initial-design + coordination-policy commit validators              //
+// ------------------------------------------------------------------------ //
+
+function validateInitialDesignCommon(event: { eventType: string; projectId: string; workspaceId: string; aggregateRevision: number; aggregateId: string; actor: import("./command-event.js").ActorRef; idempotencyKey: string }, batch: { identity: import("./command-event.js").CommandIdentity }): boolean {
+  return event.aggregateRevision === 1 && identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+
+export function validateInitialDesignProposalRecordCommit(batch: import("./ledger.js").InitialDesignProposalRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1 || batch.events.length !== 1 || batch.snapshots.length !== 1 || batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.eventType !== "InitialDesignProposalRecorded" || !isKnownEventType(event.eventType)) return false;
+  const snap = batch.snapshots[0]!;
+  if (snap.proposal.designId !== event.aggregateId || canonicalJson(snap.proposal) !== canonicalJson(event.payload.proposal) || snap.recordedAt !== event.payload.recordedAt) return false;
+  if (!validateInitialDesignCommon(event, batch)) return false;
+  if (batch.expectedVersions.length !== 1 || batch.expectedVersions[0]!.revision !== 0 || canonicalJson(batch.expectedVersions[0]!.ref) !== canonicalJson(snap.ref)) return false;
+  return true;
+}
+export function validateInitialDesignDecisionRecordCommit(batch: import("./ledger.js").InitialDesignDecisionRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1 || batch.events.length !== 1 || batch.snapshots.length !== 1 || batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.eventType !== "InitialDesignDecisionRecorded" || !isKnownEventType(event.eventType)) return false;
+  const snap = batch.snapshots[0]!;
+  if (snap.decision.decisionId !== event.aggregateId || canonicalJson(snap.decision) !== canonicalJson(event.payload.decision) || snap.recordedAt !== event.payload.recordedAt) return false;
+  if (!validateInitialDesignCommon(event, batch)) return false;
+  if (batch.expectedVersions.length !== 1 || batch.expectedVersions[0]!.revision !== 0 || canonicalJson(batch.expectedVersions[0]!.ref) !== canonicalJson(snap.ref)) return false;
+  return true;
+}
+export function validateCoordinationPolicyInstallCommit(batch: import("./ledger.js").CoordinationPolicyInstallRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1 || batch.events.length !== 1 || batch.snapshots.length !== 1 || batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.eventType !== "CoordinationPolicyInstalled" || !isKnownEventType(event.eventType)) return false;
+  const snap = batch.snapshots[0]!;
+  if (snap.policyId !== event.aggregateId || canonicalJson(snap.content) !== canonicalJson(event.payload.revision.content) || snap.contentDigest !== event.payload.revision.contentDigest || snap.installedAt !== event.payload.revision.installedAt) return false;
+  if (batch.expectedVersions.length !== 1 || batch.expectedVersions[0]!.revision !== 0 || canonicalJson(batch.expectedVersions[0]!.ref) !== canonicalJson(snap.ref)) return false;
+  return validateInitialDesignCommon(event, batch);
+}
+export function validateCoordinationPolicyActivateCommit(batch: import("./ledger.js").CoordinationPolicyActivateRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1 || batch.events.length !== 1 || batch.snapshots.length !== 1 || batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.eventType !== "CoordinationPolicyActivated" || !isKnownEventType(event.eventType)) return false;
+  const snap = batch.snapshots[0]!;
+  if (snap.projectId !== event.projectId || canonicalJson(snap.activeRevision) !== canonicalJson(event.payload.activeRevision)) return false;
+  if (batch.expectedVersions.length !== 2) return false;
+  const pE = batch.expectedVersions[0]!; const aE = batch.expectedVersions[1]!;
+  if (!canonicalJson(pE.ref).includes("Project")) return false;
+  if (pE.revision !== snap.revision - 1 || aE.revision !== snap.revision - 1) return false;
+  return true;
+}
+
 export function validateWorkContextBindCommit(batch: import("./ledger.js").WorkContextBindLedgerCommitV1): boolean {
   if (batch.schemaVersion !== 1) return false;
   if (batch.events.length !== 1) return false;

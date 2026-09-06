@@ -70,6 +70,10 @@ import {
   validateArchitectureChangeDecisionRecordCommit,
   validateMigrationGateRecordCommit,
   validateBaselineActivationRecordCommit,
+  validateInitialDesignProposalRecordCommit,
+  validateInitialDesignDecisionRecordCommit,
+  validateCoordinationPolicyInstallCommit,
+  validateCoordinationPolicyActivateCommit,
 } from "../contracts/ledger-validation.js";
 import { canonicalJson } from "../contracts/fingerprint.js";
 import type { CommitCursor } from "../contracts/command-event.js";
@@ -214,6 +218,14 @@ export class InMemoryLedger implements StateLedger {
         return this.commitMigrationGateRecord(batch);
       case "baseline-activation-record":
         return this.commitBaselineActivationRecord(batch);
+      case "initial-design-proposal-record":
+        return this.commitInitialDesignProposalRecord(batch);
+      case "initial-design-decision-record":
+        return this.commitInitialDesignDecisionRecord(batch);
+      case "coordination-policy-install":
+        return this.commitCoordinationPolicyInstall(batch);
+      case "coordination-policy-activate":
+        return this.commitCoordinationPolicyActivate(batch);
     }
   }
 
@@ -720,6 +732,26 @@ export class InMemoryLedger implements StateLedger {
 
   private async commitBaselineActivationRecord(batch: import("../contracts/ledger.js").BaselineActivationRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateBaselineActivationRecordCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitInitialDesignProposalRecord(batch: import("../contracts/ledger.js").InitialDesignProposalRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateInitialDesignProposalRecordCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitInitialDesignDecisionRecord(batch: import("../contracts/ledger.js").InitialDesignDecisionRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateInitialDesignDecisionRecordCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitCoordinationPolicyInstall(batch: import("../contracts/ledger.js").CoordinationPolicyInstallRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateCoordinationPolicyInstallCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitCoordinationPolicyActivate(batch: import("../contracts/ledger.js").CoordinationPolicyActivateRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateCoordinationPolicyActivateCommit(batch)) return { status: "rejected", code: "invalid_commit" };
     return this.commitGenericWithIdempotency(batch);
   }
 

@@ -53,6 +53,7 @@ import type { GoalRevisionRecordedEvent, PlanProposalRecordedEvent, PlanRevision
 import type { ArchitectureEvolutionPolicyActivatedEvent, ArchitectureEvolutionPolicyInstalledEvent } from "./architecture-evolution-policy.js";
 import type { RemediationPlanPatchRecordedEvent, RemediationTaskAdvancedEvent, RemediationTaskCreatedEvent } from "./remediation.js";
 import type { ArchitectureChangeDecisionRecordedEvent, BaselineActivationRecordedEvent, CandidateBaselineMaterializedEvent, MigrationGateRecordedEvent } from "./baseline-evolution.js";
+import type { CoordinationPolicyActivatedEvent, CoordinationPolicyInstalledEvent, InitialDesignDecisionRecordedEvent, InitialDesignProposalRecordedEvent } from "./human-role-collaboration.js";
 
 export type DomainEventV1 =
   | GoalCreatedEvent
@@ -104,7 +105,11 @@ export type DomainEventV1 =
   | CandidateBaselineMaterializedEvent
   | ArchitectureChangeDecisionRecordedEvent
   | MigrationGateRecordedEvent
-  | BaselineActivationRecordedEvent;
+  | BaselineActivationRecordedEvent
+  | InitialDesignProposalRecordedEvent
+  | InitialDesignDecisionRecordedEvent
+  | CoordinationPolicyInstalledEvent
+  | CoordinationPolicyActivatedEvent;
 
 export type DomainEvent = DomainEventV1;
 
@@ -160,6 +165,10 @@ export const KNOWN_EVENT_TYPES = [
   "ArchitectureChangeDecisionRecorded",
   "MigrationGateRecorded",
   "BaselineActivationRecorded",
+  "InitialDesignProposalRecorded",
+  "InitialDesignDecisionRecorded",
+  "CoordinationPolicyInstalled",
+  "CoordinationPolicyActivated",
 ] as const;
 
 export function isKnownEventType(eventType: string): eventType is (typeof KNOWN_EVENT_TYPES)[number] {
