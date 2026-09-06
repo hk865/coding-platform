@@ -41,6 +41,7 @@ import {
   P107_TASK_READER_B,
   P107_TASK_INTEGRATION,
   P107_TASK_WRITER,
+  P107_TASK_WRITER_B,
   P107_TASK_GATE,
   P107_VR_READERS,
   P107_OBL_READERS,
@@ -274,25 +275,52 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
     // Acceptance 5: competing-writer-lease-test                            //
     // ------------------------------------------------------------------- //
 
+    /** Brings the DAG to a write-ready state: readers satisfied -> integration
+     * joined -> the WRITER task run AND the independent WRITER_B task run. */
+    async function setupWriterContenders(h: P1_07TestHarness) {
+      const sc = await freshScenario(h);
+      const anchor = readerAnchor(sc);
+      const runA = await runP107Reader(h, "a", "2026-09-06T12:00:10.000Z", "2026-09-06T12:00:30.000Z");
+      const runB = await runP107Reader(h, "b", "2026-09-06T12:00:10.000Z", "2026-09-06T12:00:30.000Z");
+      const evA = await submitP107Evidence(h, { evidenceId: "ev-cw-a", taskId: P107_TASK_READER_A, outcome: "PASS", runRef: runA, coverage: [{ obligationId: P107_OBL_READERS, requirementId: P107_VR_READERS }], anchor });
+      const evB = await submitP107Evidence(h, { evidenceId: "ev-cw-b", taskId: P107_TASK_READER_B, outcome: "PASS", runRef: runB, coverage: [{ obligationId: P107_OBL_READERS, requirementId: P107_VR_READERS }], anchor });
+      expect((await h.reduceTask(buildP107ReduceTaskCommand(P107_TASK_READER_A))).status).toBe("committed");
+      expect((await h.reduceTask(buildP107ReduceTaskCommand(P107_TASK_READER_B))).status).toBe("committed");
+      const integrationRun = await runP107Task(h, { taskId: P107_TASK_INTEGRATION, runId: "run-cw-int", attemptId: "att-cw-int", roleBinding: P107_ROLE_BINDING_READER_V1, declaredPermissions: P107_DECLARED_READ_PERMISSIONS_V1, budget: P107_BUDGET_READER_V1 });
+      expect((await recordP107Integration(h, {
+        resultId: "res-cw-1", runRef: integrationRun, attemptRef: taskAttemptRefFor(P107_PROJECT, P107_GOAL, P107_TASK_INTEGRATION, "att-cw-int"),
+        inputs: [
+          { sourceTaskId: P107_TASK_READER_A, sourceRunRef: runA, kind: "evidence", evidenceRef: evA, artifactRef: null, handoffPacketRef: null },
+          { sourceTaskId: P107_TASK_READER_B, sourceRunRef: runB, kind: "evidence", evidenceRef: evB, artifactRef: null, handoffPacketRef: null },
+        ],
+        workspaceRevision: sc.workspaceRevision, planRef: sc.planRef,
+      })).status).toBe("committed");
+      await submitP107Evidence(h, { evidenceId: "ev-cw-int", taskId: P107_TASK_INTEGRATION, outcome: "PASS", runRef: integrationRun, coverage: [{ obligationId: P107_OBL_JOIN, requirementId: P107_VR_JOIN }], anchor });
+      expect((await h.reduceTask(buildP107ReduceTaskCommand(P107_TASK_INTEGRATION))).status).toBe("committed");
+      const runW = await runP107Task(h, { taskId: P107_TASK_WRITER, runId: "run-cw-w", attemptId: "att-cw-w", roleBinding: P107_ROLE_BINDING_WRITER_V1, declaredPermissions: P107_DECLARED_WRITE_PERMISSIONS_V1, budget: P107_BUDGET_WRITER_V1 });
+      const runWB = await runP107Task(h, { taskId: P107_TASK_WRITER_B, runId: "run-cw-wb", attemptId: "att-cw-wb", roleBinding: P107_ROLE_BINDING_WRITER_V1, declaredPermissions: P107_DECLARED_WRITE_PERMISSIONS_V1, budget: P107_BUDGET_WRITER_V1 });
+      return {
+        sc,
+        runW,
+        runWB,
+        attW: taskAttemptRefFor(P107_PROJECT, P107_GOAL, P107_TASK_WRITER, "att-cw-w"),
+        attWB: taskAttemptRefFor(P107_PROJECT, P107_GOAL, P107_TASK_WRITER_B, "att-cw-wb"),
+      };
+    }
+
+    const writeLeaseCommand = (leaseId: string, runRef: import("../../src/contracts/dispatch.js").RunRef, attemptRef: import("../../src/contracts/dispatch.js").TaskAttemptRef, commandId: string, expiresAt?: string | null) =>
+      buildP107AcquireWriteLeaseCommand({
+        commandId, projectId: P107_PROJECT, leaseId, scope: P107_SCOPE_WRITER,
+        declaredWriteScope: P107_DECLARED_WRITE_PERMISSIONS_V1.writeScope,
+        ...(expiresAt === undefined ? {} : { expiresAt }),
+        holder: { runRef, attemptRef, roleBinding: P107_ROLE_BINDING_WRITER_V1 },
+      });
+
     it("A5 competing writers: at most one effective write lease; loser zero write; readback", async () => {
       const h = await factory();
-      const sc = await freshScenario(h);
-      const runA = await runP107Task(h, {
-        taskId: P107_TASK_WRITER, runId: "run-w1", attemptId: "att-w1",
-        roleBinding: P107_ROLE_BINDING_WRITER_V1, declaredPermissions: P107_DECLARED_WRITE_PERMISSIONS_V1, budget: P107_BUDGET_WRITER_V1,
-      });
-      const runB = await runP107Task(h, {
-        taskId: P107_TASK_WRITER, runId: "run-w2", attemptId: "att-w2",
-        roleBinding: P107_ROLE_BINDING_WRITER_V1, declaredPermissions: P107_DECLARED_WRITE_PERMISSIONS_V1, budget: P107_BUDGET_WRITER_V1,
-      });
-      const mk = (leaseId: string, runRef: typeof runA, attemptId: string, commandId: string) =>
-        buildP107AcquireWriteLeaseCommand({
-          commandId, projectId: P107_PROJECT, leaseId, scope: P107_SCOPE_WRITER,
-          declaredWriteScope: P107_DECLARED_WRITE_PERMISSIONS_V1.writeScope,
-          holder: { runRef, attemptRef: taskAttemptRefFor(P107_PROJECT, P107_GOAL, P107_TASK_WRITER, attemptId), roleBinding: P107_ROLE_BINDING_WRITER_V1 },
-        });
-      const w1 = await h.acquireWorkspaceWriteLease(mk("lease-w1", runA, "att-w1", "cmd-w1"));
-      const w2 = await h.acquireWorkspaceWriteLease(mk("lease-w2", runB, "att-w2", "cmd-w2"));
+      const contender = await setupWriterContenders(h);
+      const w1 = await h.acquireWorkspaceWriteLease(writeLeaseCommand("lease-w1", contender.runW, contender.attW, "cmd-w1"));
+      const w2 = await h.acquireWorkspaceWriteLease(writeLeaseCommand("lease-w2", contender.runWB, contender.attWB, "cmd-w2"));
       const committed = [w1, w2].filter((r) => r.status === "committed");
       const rejected = [w1, w2].filter((r) => r.status === "rejected");
       expect(committed).toHaveLength(1);
@@ -311,34 +339,29 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
       }
       // scope overreach: not declared -> scope_not_declared, zero write
       const overreach = await h.acquireWorkspaceWriteLease(
-        buildP107AcquireWriteLeaseCommand({ commandId: "cmd-w-over", projectId: P107_PROJECT, leaseId: "lease-w-over", scope: P107_SCOPE_READER_A, declaredWriteScope: [P107_WRITE_SCOPE], holder: { runRef: runA, attemptRef: taskAttemptRefFor(P107_PROJECT, P107_GOAL, P107_TASK_WRITER, "att-w1"), roleBinding: P107_ROLE_BINDING_WRITER_V1 } }),
+        buildP107AcquireWriteLeaseCommand({ commandId: "cmd-w-over", projectId: P107_PROJECT, leaseId: "lease-w-over", scope: P107_SCOPE_READER_A, declaredWriteScope: [P107_WRITE_SCOPE], holder: { runRef: contender.runW, attemptRef: contender.attW, roleBinding: P107_ROLE_BINDING_WRITER_V1 } }),
       );
       expect(overreach.status).toBe("rejected");
       if (overreach.status === "rejected") expect(overreach.code).toBe("scope_not_declared");
       // not-holder release -> not_holder, zero write
+      const winnerRun = committed[0]!.status === "committed" && committed[0]!.leaseRef.leaseId === "lease-w1" ? contender.runW : contender.runWB;
+      const otherRun = winnerRun.runId === contender.runW.runId ? contender.runWB : contender.runW;
       const foreign = await h.releaseWorkspaceLease(
-        buildP107ReleaseLeaseCommand({ commandId: "cmd-rel-foreign", projectId: P107_PROJECT, leaseId: committed[0]!.status === "committed" ? committed[0]!.leaseRef.leaseId : "lease-w1", kind: "write", holderRunRef: runB }),
+        buildP107ReleaseLeaseCommand({ commandId: "cmd-rel-foreign", projectId: P107_PROJECT, leaseId: committed[0]!.status === "committed" ? committed[0]!.leaseRef.leaseId : "lease-w1", kind: "write", holderRunRef: otherRun }),
       );
       expect(foreign.status).toBe("rejected");
       if (foreign.status === "rejected") expect(foreign.code).toBe("not_holder");
-      void sc;
     });
 
     it("A5b lease release + expiry-vacate; expired lease does not block a new writer", async () => {
       const h = await factory();
-      await freshScenario(h);
-      const runW1 = await runP107Task(h, {
-        taskId: P107_TASK_WRITER, runId: "run-w1", attemptId: "att-w1",
-        roleBinding: P107_ROLE_BINDING_WRITER_V1, declaredPermissions: P107_DECLARED_WRITE_PERMISSIONS_V1, budget: P107_BUDGET_WRITER_V1,
-      });
-      const runW2 = await runP107Task(h, {
-        taskId: P107_TASK_WRITER, runId: "run-w2", attemptId: "att-w2",
-        roleBinding: P107_ROLE_BINDING_WRITER_V1, declaredPermissions: P107_DECLARED_WRITE_PERMISSIONS_V1, budget: P107_BUDGET_WRITER_V1,
-      });
-      const attW1 = taskAttemptRefFor(P107_PROJECT, P107_GOAL, P107_TASK_WRITER, "att-w1");
-      const attW2 = taskAttemptRefFor(P107_PROJECT, P107_GOAL, P107_TASK_WRITER, "att-w2");
+      const contender = await setupWriterContenders(h);
+      const runW1 = contender.runW;
+      const runW2 = contender.runWB;
+      const attW1 = contender.attW;
+      const attW2 = contender.attWB;
       // explicit release path
-      const w1 = await h.acquireWorkspaceWriteLease(buildP107AcquireWriteLeaseCommand({ commandId: "cmd-w1", projectId: P107_PROJECT, leaseId: "lease-w1", scope: P107_SCOPE_WRITER, declaredWriteScope: [P107_WRITE_SCOPE], holder: { runRef: runW1, attemptRef: attW1, roleBinding: P107_ROLE_BINDING_WRITER_V1 } }));
+      const w1 = await h.acquireWorkspaceWriteLease(writeLeaseCommand("lease-w1", runW1, attW1, "cmd-w1"));
       expect(w1.status).toBe("committed");
       const rel = await h.releaseWorkspaceLease(buildP107ReleaseLeaseCommand({ commandId: "cmd-rel-w1", projectId: P107_PROJECT, leaseId: "lease-w1", kind: "write", holderRunRef: runW1 }));
       expect(rel.status).toBe("committed");
@@ -346,9 +369,9 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
       expect(relAgain.status).toBe("rejected");
       if (relAgain.status === "rejected") expect(relAgain.code).toBe("already_released");
       // expired lease: a new acquire succeeds and vacates it (releasedBy null)
-      const wExp = await h.acquireWorkspaceWriteLease(buildP107AcquireWriteLeaseCommand({ commandId: "cmd-wexp", projectId: P107_PROJECT, leaseId: "lease-exp", scope: P107_SCOPE_WRITER, declaredWriteScope: [P107_WRITE_SCOPE], expiresAt: "2026-09-06T09:00:00.000Z", holder: { runRef: runW1, attemptRef: attW1, roleBinding: P107_ROLE_BINDING_WRITER_V1 } }));
+      const wExp = await h.acquireWorkspaceWriteLease(writeLeaseCommand("lease-exp", runW1, attW1, "cmd-wexp", "2026-09-06T09:00:00.000Z"));
       expect(wExp.status).toBe("committed");
-      const w2 = await h.acquireWorkspaceWriteLease(buildP107AcquireWriteLeaseCommand({ commandId: "cmd-w2", projectId: P107_PROJECT, leaseId: "lease-w2", scope: P107_SCOPE_WRITER, declaredWriteScope: [P107_WRITE_SCOPE], holder: { runRef: runW2, attemptRef: attW2, roleBinding: P107_ROLE_BINDING_WRITER_V1 } }));
+      const w2 = await h.acquireWorkspaceWriteLease(writeLeaseCommand("lease-w2", runW2, attW2, "cmd-w2"));
       expect(w2.status).toBe("committed");
       const vacated = await h.ledger.load(workspaceWriteLeaseRefFor(P107_PROJECT, "lease-exp"));
       expect(vacated.status).toBe("found");

@@ -62,6 +62,8 @@ export const P107_TASK_READER_A = "task-p107-read-a";
 export const P107_TASK_READER_B = "task-p107-read-b";
 export const P107_TASK_INTEGRATION = "task-p107-integrate";
 export const P107_TASK_WRITER = "task-p107-writer";
+/** Second (independent, optional) writer used ONLY by the competing-writer-lease-test. */
+export const P107_TASK_WRITER_B = "task-p107-writer-b";
 export const P107_TASK_GATE = "gate-p107-goal";
 export const P107_OBL_READERS = "obl-p107-readers";
 export const P107_VR_READERS = "vr-p107-readers-common";
@@ -135,6 +137,15 @@ export const P107_SCOPE_WRITER: ConflictScopeV1 = {
   revision: null,
 };
 
+export const P107_SCOPE_WRITER_B: ConflictScopeV1 = {
+  schemaVersion: 1,
+  projectId: P107_PROJECT,
+  workspaceId: P107_WORKSPACE,
+  kind: "path",
+  id: "src/p107-alt",
+  revision: null,
+};
+
 // ------------------------------------------------------------------------ //
 // Plan fixture                                                              //
 // ------------------------------------------------------------------------ //
@@ -185,6 +196,16 @@ export const P107_PLAN_REVISION_FIXTURE_V1: PlanRevisionDraft = {
       disposition: "active",
       phase: "pending",
       scope: { kind: "module", stageId: "stage-p107-parallel", moduleRef: P107_WRITE_SCOPE },
+    },
+    {
+      taskId: P107_TASK_WRITER_B,
+      stageId: "stage-p107-parallel",
+      title: "Writer B（可选）：竞争写入用独立工作包",
+      requirementLevel: "optional",
+      taskKind: "work",
+      disposition: "active",
+      phase: "pending",
+      scope: { kind: "module", stageId: "stage-p107-parallel", moduleRef: "src/p107-alt" },
     },
     {
       taskId: P107_TASK_GATE,
