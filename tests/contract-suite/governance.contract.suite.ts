@@ -377,8 +377,10 @@ export function defineGovernanceContractSuite(createHarness: P1_02HarnessFactory
       const page = await h.ledger.events({ afterCursor: null, limit: 100 });
       const json = JSON.stringify(page);
       expect(json).not.toMatch(/ArchitectureEvolutionPolicy/);
-      const known = await import("../../src/contracts/events.js");
-      expect(known.KNOWN_EVENT_TYPES).not.toContain("ArchitectureEvolutionPolicyActivated");
+      // P1-13 legally introduces the third governance kind into KNOWN (2026-09-07
+      // integrator ruling: versioned-append convention; the P1-02 scene itself
+      // produces NO such event — asserted above via the event stream).
+      expect(page.events.some((e) => (e as unknown as { event: { eventType: string } }).event.eventType === "ArchitectureEvolutionPolicyInstalled" || (e as unknown as { event: { eventType: string } }).event.eventType === "ArchitectureEvolutionPolicyActivated")).toBe(false);
     });
   });
 }

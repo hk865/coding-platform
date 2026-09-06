@@ -277,7 +277,10 @@ describe("P1-02 governance install", () => {
     await engine.install(buildInstallCommand(ARCHITECTURE_BASELINE_FIXTURE_V1, installDeps()));
     const page = await ledger.events({ afterCursor: null, limit: 100 });
     expect(JSON.stringify(page)).not.toMatch(/ArchitectureEvolutionPolicy/);
-    expect(KNOWN_EVENT_TYPES).not.toContain("ArchitectureEvolutionPolicyActivated");
+    // P1-13 legally introduces the third governance kind into KNOWN (2026-09-07
+    // integrator ruling: versioned-append convention; the P1-02 scene itself
+    // produces NO such event — asserted above via the event stream).
+    expect(page.events.some((e) => (e as unknown as { event: { eventType: string } }).event.eventType === "ArchitectureEvolutionPolicyInstalled" || (e as unknown as { event: { eventType: string } }).event.eventType === "ArchitectureEvolutionPolicyActivated")).toBe(false);
     const active = await ledger.load({ aggregateType: "ProjectArchitectureBaselineActive", projectId: "proj-alpha" });
     expect(active.status).toBe("not_found");
   });
