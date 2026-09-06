@@ -68,6 +68,29 @@ import type {
 } from "../contracts/goal-change.js";
 import { computeTaskDispositions, planChangeScopeKey } from "../contracts/goal-change.js";
 import type {
+  ArchitectureChangeDecisionV1,
+  ArchitectureChangeDecisionRef,
+  BaselineActivationV1,
+  BaselineActivationRef,
+  BaselineChangeViewQuery,
+  BaselineChangeViewResult,
+  CandidateArchitectureBaselineSnapshot,
+  CandidateBaselineMaterializedEvent,
+  ArchitectureChangeDecisionRecordedEvent,
+  MigrationGateRecordedEvent,
+  MigrationGateTaskV1,
+  MigrationGateTaskRef,
+  BaselineActivationRecordedEvent,
+} from "../contracts/baseline-evolution.js";
+import {
+  isSourceStale,
+  candidateRefFor,
+  architectureChangeDecisionRefFor,
+  migrationGateRefFor,
+  baselineActivationRefFor,
+} from "../contracts/baseline-evolution.js";
+import type { ArchitectureBaselinePin } from "../contracts/governance.js";
+import type {
   RunEventRecordedEvent,
   RunOutcomeUnknownEvent,
   RunStartedEvent,
@@ -383,6 +406,23 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   // ------------------------------------------------------------------ //
   /** LANE-B: full-scope key -> ContinuationRecordSnapshot[] (arrival order). */
   private readonly p116ContinuationRows = new Map<string, import("../contracts/context-continuity.js").ContinuationRecordSnapshot[]>();
+
+  // ------------------------------------------------------------------ //
+  // P1-14 baseline-evolution projection rows (LANE-C: candidate /      //
+  // decision / gate / activation). Row keys are FULL workspace scope   //
+  // keys: consoleWorkspaceKey(projectId, workspaceId) + "\u0000" + id  //
+  // — so identical local ids reused across Projects / workspaces NEVER //
+  // collide (hard isolation). The view derives defaultPin + stale      //
+  // markers + notRebasedPlans from these rows at query time.          //
+  // ------------------------------------------------------------------ //
+  /** scopeKey + "\u0000" + candidateId -> CandidateArchitectureBaselineSnapshot. */
+  private readonly p114Candidates = new Map<string, CandidateArchitectureBaselineSnapshot>();
+  /** scopeKey + "\u0000" + decisionId -> { ref, decision: ArchitectureChangeDecisionV1 }. */
+  private readonly p114Decisions = new Map<string, { ref: ArchitectureChangeDecisionRef; decision: ArchitectureChangeDecisionV1 }>();
+  /** scopeKey + "\u0000" + gateId -> { ref, gate: MigrationGateTaskV1 }. */
+  private readonly p114Gates = new Map<string, { ref: MigrationGateTaskRef; gate: MigrationGateTaskV1 }>();
+  /** scopeKey + "\u0000" + activationId -> { ref, activation: BaselineActivationV1 }. */
+  private readonly p114Activations = new Map<string, { ref: BaselineActivationRef; activation: BaselineActivationV1 }>();
 
   async advance(page: EventPage): Promise<ProjectionReceipt> {
     const toApply: PositionedEvent[] = [];
@@ -2822,16 +2862,207 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     void cursor;
   }
 
-  /** P1-14 LANE-C: baseline-evolution hook (empty until the lane lands). */
+  /** P1-14 LANE-C: baseline-evolution hook — fold the 4 events into
+   * candidate / decision / gate / activation rows (workspace-scope keys). */
   private applyP114(event: DomainEvent, cursor: CommitCursor): void {
-    void event;
+    if (event.eventType === "CandidateBaselineMaterialized") {
+      const ev = event as CandidateBaselineMaterializedEvent;
+      const candidate = ev.payload.candidate;
+      const ref = candidateRefFor(candidate.projectId, candidate.workspaceId, candidate.candidateId);
+      const key = consoleWorkspaceKey(candidate.projectId, candidate.workspaceId) + "\u0000" + candidate.candidateId;
+      const snapshot: CandidateArchitectureBaselineSnapshot = { ref, revision: 1, schemaVersion: 1, candidate, materializedAt: ev.payload.materializedAt };
+      this.p114Candidates.set(key, snapshot);
+    } else if (event.eventType === "ArchitectureChangeDecisionRecorded") {
+      const ev = event as ArchitectureChangeDecisionRecordedEvent;
+      const decision = ev.payload.decision;
+      const ref = architectureChangeDecisionRefFor(decision.projectId, decision.workspaceId, decision.decisionId);
+      const key = consoleWorkspaceKey(decision.projectId, decision.workspaceId) + "\u0000" + decision.decisionId;
+      this.p114Decisions.set(key, { ref, decision });
+    } else if (event.eventType === "MigrationGateRecorded") {
+      const ev = event as MigrationGateRecordedEvent;
+      const gate = ev.payload.gate;
+      const ref = migrationGateRefFor(gate.projectId, gate.workspaceId, gate.gateId);
+      const key = consoleWorkspaceKey(gate.projectId, gate.workspaceId) + "\u0000" + gate.gateId;
+      this.p114Gates.set(key, { ref, gate });
+    } else if (event.eventType === "BaselineActivationRecorded") {
+      const ev = event as BaselineActivationRecordedEvent;
+      const activation = ev.payload.activation;
+      const ref = baselineActivationRefFor(activation.projectId, activation.workspaceId, activation.activationId);
+      const key = consoleWorkspaceKey(activation.projectId, activation.workspaceId) + "\u0000" + activation.activationId;
+      this.p114Activations.set(key, { ref, activation });
+    }
     void cursor;
   }
 
-  /** P1-14 LANE-C: baseline change view stub. */
-  async baselineChangeView(query: import("../contracts/baseline-evolution.js").BaselineChangeViewQuery): Promise<import("../contracts/baseline-evolution.js").BaselineChangeViewResult> {
-    void query;
-    throw new Error("P1-14 lane: baselineChangeView not implemented yet");
+  /** P1-14 LANE-C: baseline change view (display only; rebuildable from events).
+   * Assembles the candidate / decision / gate / activation rows for the
+   * (projectId, workspaceId) workspace scope plus the purely-computed defaultPin,
+   * stale markers and notRebasedPlans. Deterministic: rows are picked by the
+   * authoritative activation chain (latest wins), falling back to the latest of
+   * each type when no activation has been recorded yet. */
+  async baselineChangeView(query: BaselineChangeViewQuery): Promise<BaselineChangeViewResult> {
+    const observedCursor = this.observedCursor;
+    // No projection ever advanced -> we cannot claim freshness for any scope.
+    if (observedCursor === null) return { status: "not_found" };
+
+    const scopeKey = consoleWorkspaceKey(query.projectId, query.workspaceId);
+    const candidateRows = this.p114ScopeCandidates(scopeKey);
+    const decisionRows = this.p114ScopeDecisions(scopeKey);
+    const gateRows = this.p114ScopeGates(scopeKey);
+    const activationRows = this.p114ScopeActivations(scopeKey);
+    if (
+      candidateRows.length === 0 &&
+      decisionRows.length === 0 &&
+      gateRows.length === 0 &&
+      activationRows.length === 0
+    ) {
+      return { status: "not_found" };
+    }
+
+    const latestCandidate =
+      candidateRows.length === 0 ? null : candidateRows[candidateRows.length - 1]!;
+    const latestDecision =
+      decisionRows.length === 0 ? null : decisionRows[decisionRows.length - 1]!;
+    const latestGate = gateRows.length === 0 ? null : gateRows[gateRows.length - 1]!;
+    const latestActivation =
+      activationRows.length === 0 ? null : activationRows[activationRows.length - 1]!;
+
+    // defaultPin = latest activation's toPin; before any activation the default is
+    // still the candidate's source pin (this view serves the post-activation
+    // explanation: who authorized / gate evidence / which plans are not yet
+    // rebased). With neither activation nor candidate we cannot claim the view.
+    let defaultPin: ArchitectureBaselinePin;
+    if (latestActivation !== null) {
+      defaultPin = latestActivation.activation.toPin;
+    } else if (latestCandidate !== null) {
+      defaultPin = latestCandidate.candidate.parentSourcePin;
+    } else {
+      return { status: "not_found" };
+    }
+
+    // Authoritative chain: when an activation exists, follow it to the exact
+    // gate / decision / candidate it records; otherwise fall back to the latest
+    // of each type (pre-activation state).
+    let candidate = latestCandidate;
+    let decision = latestDecision;
+    let gate = latestGate;
+    if (latestActivation !== null) {
+      gate =
+        gateRows.find((g) => g.ref.gateId === latestActivation.activation.gateRef.gateId) ??
+        latestGate;
+      decision =
+        decisionRows.find((d) => d.ref.decisionId === latestActivation.activation.decisionRef.decisionId) ??
+        latestDecision;
+      if (gate !== null) {
+        const g = gate;
+        candidate =
+          candidateRows.find((c) => c.ref.candidateId === g.gate.candidateRef.candidateId) ??
+          candidate;
+      }
+      if (candidate === null && decision !== null) {
+        const d = decision;
+        candidate =
+          candidateRows.find((c) => c.ref.candidateId === d.decision.subject.candidateRef.candidateId) ??
+          null;
+      }
+    }
+
+    // gate stale = the candidate it derives from is stale OR the gate is stale.
+    let gateStale: boolean | null = null;
+    if (gate !== null) {
+      const g = gate;
+      const relatedCandidate =
+        candidateRows.find((c) => c.ref.candidateId === g.gate.candidateRef.candidateId) ??
+        null;
+      const relatedCandidateStale =
+        relatedCandidate === null
+          ? false
+          : isSourceStale(relatedCandidate.candidate.parentSourcePin, defaultPin);
+      gateStale = relatedCandidateStale || g.gate.status === "stale";
+    }
+
+    // notRebasedPlans: the migration gate's planRef names ONE still-pinned plan;
+    // report it once an activation exists (post-activation evidence).
+    const notRebasedPlans: { planRef: PlanRevisionRef; pinnedBaselinePin: ArchitectureBaselinePin }[] = [];
+    if (latestActivation !== null && gate !== null && gate.gate.planRef !== "") {
+      notRebasedPlans.push({
+        planRef: { aggregateType: "PlanRevision", projectId: gate.gate.projectId, planId: gate.gate.planRef },
+        pinnedBaselinePin: latestActivation.activation.fromPin,
+      });
+    }
+
+    return {
+      status: "ready",
+      defaultPin,
+      candidate:
+        candidate === null
+          ? null
+          : { ...candidate, stale: isSourceStale(candidate.candidate.parentSourcePin, defaultPin) },
+      decision:
+        decision === null
+          ? null
+          : { ...decision.decision, ref: decision.ref, stale: isSourceStale(decision.decision.authorizedTarget.fromPin, defaultPin) },
+      gate: gate === null ? null : { ...gate.gate, ref: gate.ref, stale: gateStale ?? false },
+      activation:
+        latestActivation === null
+          ? null
+          : { ...latestActivation.activation, ref: latestActivation.ref },
+      notRebasedPlans,
+      freshness: observedCursor,
+    };
+  }
+
+  /** P1-14: rows under a workspace-scope key prefix, sorted ascending by the row's
+   * timestamp (then id) so the LAST element is the latest. */
+  private p114ScopeCandidates(scopeKey: string): CandidateArchitectureBaselineSnapshot[] {
+    const out: CandidateArchitectureBaselineSnapshot[] = [];
+    for (const [rowKey, value] of this.p114Candidates) {
+      if (rowKey.startsWith(scopeKey + "\u0000")) out.push(value);
+    }
+    out.sort((a, b) => {
+      const t = a.materializedAt.localeCompare(b.materializedAt);
+      return t !== 0 ? t : a.ref.candidateId.localeCompare(b.ref.candidateId);
+    });
+    return out;
+  }
+
+  /** P1-14: workspace-scope decision rows, ascending by decidedAt then id. */
+  private p114ScopeDecisions(scopeKey: string): { ref: ArchitectureChangeDecisionRef; decision: ArchitectureChangeDecisionV1 }[] {
+    const out: { ref: ArchitectureChangeDecisionRef; decision: ArchitectureChangeDecisionV1 }[] = [];
+    for (const [rowKey, value] of this.p114Decisions) {
+      if (rowKey.startsWith(scopeKey + "\u0000")) out.push(value);
+    }
+    out.sort((a, b) => {
+      const t = a.decision.decidedAt.localeCompare(b.decision.decidedAt);
+      return t !== 0 ? t : a.ref.decisionId.localeCompare(b.ref.decisionId);
+    });
+    return out;
+  }
+
+  /** P1-14: workspace-scope gate rows, ascending by updatedAt then id. */
+  private p114ScopeGates(scopeKey: string): { ref: MigrationGateTaskRef; gate: MigrationGateTaskV1 }[] {
+    const out: { ref: MigrationGateTaskRef; gate: MigrationGateTaskV1 }[] = [];
+    for (const [rowKey, value] of this.p114Gates) {
+      if (rowKey.startsWith(scopeKey + "\u0000")) out.push(value);
+    }
+    out.sort((a, b) => {
+      const t = a.gate.updatedAt.localeCompare(b.gate.updatedAt);
+      return t !== 0 ? t : a.ref.gateId.localeCompare(b.ref.gateId);
+    });
+    return out;
+  }
+
+  /** P1-14: workspace-scope activation rows, ascending by activatedAt then id. */
+  private p114ScopeActivations(scopeKey: string): { ref: BaselineActivationRef; activation: BaselineActivationV1 }[] {
+    const out: { ref: BaselineActivationRef; activation: BaselineActivationV1 }[] = [];
+    for (const [rowKey, value] of this.p114Activations) {
+      if (rowKey.startsWith(scopeKey + "\u0000")) out.push(value);
+    }
+    out.sort((a, b) => {
+      const t = a.activation.activatedAt.localeCompare(b.activation.activatedAt);
+      return t !== 0 ? t : a.ref.activationId.localeCompare(b.ref.activationId);
+    });
+    return out;
   }
 
   /** P1-11 LANE-A/LANE-B hook: fold plan-change events (proposal/decision +
