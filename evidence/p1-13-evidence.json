@@ -1,0 +1,7 @@
+{
+  "ticket": "P1-13",
+  "cursorBefore": "?",
+  "policyDigestBefore": "\"11efaab32e26550cd39ba75087dc449abc101566cecf4031177f5efd0abec561\"",
+  "taskStatusBefore": "resolved",
+  "activationBefore": "{\"aggregateType\":\"ArchitectureEvolutionPolicyRevision\",\"projectId\":\"proj-alpha\",\"policyId\":\"evolution-policy-1\",\"revision\":1}"
+}

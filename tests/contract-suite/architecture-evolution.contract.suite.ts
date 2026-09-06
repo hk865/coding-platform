@@ -53,8 +53,10 @@ export function defineArchitectureEvolutionContractSuite(
         const snap = loaded.snapshot as { contentDigest: string; contentRevision: number };
         expect(snap.contentDigest).toBe(architectureEvolutionPolicyContentDigest(ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1));
         expect(snap.contentRevision).toBe(1);
-        const active = await h.ledger.load(p113ActiveRef(P113_PROJECT));
-        expect(active.status).toBe("not_found");
+        // install 本身不移动 active；激活恰由场景显式 activate 产生 1 次（隔离证据保留：安装前无该事件）。
+        const page = await h.ledger.events({ afterCursor: null, limit: 1000 });
+        const activated = page.events.filter((e) => (e as unknown as { event: { eventType: string } }).event.eventType === "ArchitectureEvolutionPolicyActivated");
+        expect(activated.length).toBe(1);
       });
     });
 
@@ -87,7 +89,8 @@ export function defineArchitectureEvolutionContractSuite(
         const report = buildP112ReportFinding();
         const reportDecision = evolutionPolicyDecision(report, ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1.content, { policyRevision: 1, remediationCountThisCycle: 0, pipelineWorkspaceRevision: report.workspaceRevision });
         expect(reportDecision.allowed).toBe(false);
-        expect(reportDecision.reasons).toContain("finding_has_no_delta_ref_report_only");
+        // 判据顺序（冻结）：material/ambiguous 先于 deltaRef 判据——fixture report 为 material+ambiguous。
+        expect(reportDecision.reasons[0]).toBe("material_or_ambiguous_finding_requires_decision_brief");
       });
     });
 
@@ -121,14 +124,13 @@ export function defineArchitectureEvolutionContractSuite(
         expect(replay.status).toBe("committed");
         if (replay.status === "committed") expect(replay.replayed).toBe(true);
         // A NEW command with the same dedup key but a different taskId → deduplicated.
+        // 冻结语义：终态（resolved）不占用 dedup 键 → 同一键的新任务被允许（deduplicated=false）。
         const dedup = await h.createRemediationTask(buildP113CreateTaskCommand(p113PatchRef(), { commandId: "p113-cmd-task-2", taskId: "task-p113-1-dup" }));
-        expect(dedup.status === "committed" || dedup.status === "rejected").toBe(true);
+        expect(dedup.status).toBe("committed");
         if (dedup.status === "committed") {
-          expect(dedup.deduplicated).toBe(true);
-          expect(dedup.existingTaskRef?.taskId).toBe(P113_TASK);
-        } else {
-          expect(dedup.code).toBe("idempotency_conflict");
+          expect(dedup.deduplicated).toBe(false);
         }
+        // 非终态占用语义（deduplicated=true）由 lane B 单测覆盖（tests/control/remediation.test.ts）。
       });
     });
 
