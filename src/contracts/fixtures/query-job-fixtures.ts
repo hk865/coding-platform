@@ -86,18 +86,20 @@ export function buildQueryJobRecordCommit(command: SubmitQueryJobCommand, deps: 
 }
 
 export function buildQueryAnswerRecordCommit(command: RecordQueryAnswerCommand, deps: { eventId: string; occurredAt: string; nextRevision: number; job: QueryJobV1; run: QueryRunV1 }): QueryAnswerRecordLedgerCommitV1 {
+  const runRef: QueryRunRef = queryRunRefFor(P109_PROJECT, P109_WORKSPACE, deps.job.queryJobId, deps.run.runId);
   const answer = command.payload.answer;
   const job = deps.job;
   const run = deps.run;
-  return { commitKind: "query-answer-record", schemaVersion: 1, identity: command.identity, fingerprint: recordQueryAnswerFingerprint(command), expectedVersions: [{ ref: queryJobAnswerRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId, answer.answerId), revision: 0 }, { ref: queryJobRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId), revision: deps.nextRevision - 1 }, { ref: run.ref, revision: deps.nextRevision - 1 }], events: [{
+  return { commitKind: "query-answer-record", schemaVersion: 1, identity: command.identity, fingerprint: recordQueryAnswerFingerprint(command), expectedVersions: [{ ref: queryJobAnswerRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId, answer.answerId), revision: 0 }, { ref: queryJobRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId), revision: deps.nextRevision - 1 }, { ref: runRef, revision: deps.nextRevision - 1 }], events: [{
     eventId: deps.eventId, eventType: "QueryJobAnswerRecorded", schemaVersion: 1, projectId: P109_PROJECT, workspaceId: P109_WORKSPACE, aggregateType: "QueryJob", aggregateId: job.queryJobId, aggregateRevision: deps.nextRevision, causationId: command.commandId, correlationId: command.correlationId, idempotencyKey: command.identity.idempotencyKey, actor: { ...command.identity.actor }, occurredAt: deps.occurredAt, payload: { answer, job, run },
-  }], snapshots: [{ ref: queryJobAnswerRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId, answer.answerId), revision: 1, schemaVersion: 1, answer }, { ref: queryJobRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId), revision: deps.nextRevision, schemaVersion: 1, job }, { ref: run.ref, revision: deps.nextRevision, schemaVersion: 1, run }], outboxIntents: [] };
+  }], snapshots: [{ ref: queryJobAnswerRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId, answer.answerId), revision: 1, schemaVersion: 1, answer }, { ref: queryJobRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId), revision: deps.nextRevision, schemaVersion: 1, job }, { ref: runRef, revision: deps.nextRevision, schemaVersion: 1, run }], outboxIntents: [] };
 }
 
 export function buildQueryCloseRecordCommit(command: CloseQueryJobCommand, deps: { eventId: string; occurredAt: string; nextRevision: number; job: QueryJobV1; run: QueryRunV1 }): QueryCloseRecordLedgerCommitV1 {
+  const runRef: QueryRunRef = queryRunRefFor(P109_PROJECT, P109_WORKSPACE, deps.job.queryJobId, deps.run.runId);
   const job = deps.job;
   const run = deps.run;
-  return { commitKind: "query-close-record", schemaVersion: 1, identity: command.identity, fingerprint: closeQueryJobFingerprint(command), expectedVersions: [{ ref: queryJobRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId), revision: deps.nextRevision - 1 }, { ref: run.ref, revision: deps.nextRevision - 1 }], events: [{
+  return { commitKind: "query-close-record", schemaVersion: 1, identity: command.identity, fingerprint: closeQueryJobFingerprint(command), expectedVersions: [{ ref: queryJobRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId), revision: deps.nextRevision - 1 }, { ref: runRef, revision: deps.nextRevision - 1 }], events: [{
     eventId: deps.eventId, eventType: "QueryJobClosed", schemaVersion: 1, projectId: P109_PROJECT, workspaceId: P109_WORKSPACE, aggregateType: "QueryJob", aggregateId: job.queryJobId, aggregateRevision: deps.nextRevision, causationId: command.commandId, correlationId: command.correlationId, idempotencyKey: command.identity.idempotencyKey, actor: { ...command.identity.actor }, occurredAt: deps.occurredAt, payload: { reason: command.payload.reason, job, run },
-  }], snapshots: [{ ref: queryJobRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId), revision: deps.nextRevision, schemaVersion: 1, job }, { ref: run.ref, revision: deps.nextRevision, schemaVersion: 1, run }], outboxIntents: [] };
+  }], snapshots: [{ ref: queryJobRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId), revision: deps.nextRevision, schemaVersion: 1, job }, { ref: runRef, revision: deps.nextRevision, schemaVersion: 1, run }], outboxIntents: [] };
 }

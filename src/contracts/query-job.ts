@@ -100,6 +100,8 @@ export type QueryJobSnapshot = { ref: QueryJobRef; revision: number; schemaVersi
 export type QueryRunV1 = {
   schemaVersion: 1;
   queryJobRef: QueryJobRef;
+  /** The QueryRun identity runId (same as QueryRunRef.runId). */
+  runId: string;
   status: QueryRunStatus;
   startedAt: string | null;
   endedAt: string | null;
