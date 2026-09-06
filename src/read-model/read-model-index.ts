@@ -312,6 +312,19 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   private readonly p108TimelineRows = new Map<string, import("../contracts/console-views.js").TimelineEntry[]>();
   /** LANE-B: per-workspace timeline seq counter. */
   private readonly p108TimelineSeq = new Map<string, number>();
+  // ------------------------------------------------------------------ //
+  // P1-12 architecture-inspection projection rows (brief/proposal are  //
+  // LANE-B; inspection/finding are LANE-A and feed the SAME view).     //
+  // ------------------------------------------------------------------ //
+
+  /** LANE-A: scopeKey -> inspection snapshots (fed by applyP112InspectionLaneA). */
+  private readonly p112InspectionRows = new Map<string, import("../contracts/architecture-inspection.js").ArchitectureInspectionSnapshot[]>();
+  /** LANE-A: scopeKey -> finding snapshots (fed by applyP112InspectionLaneA). */
+  private readonly p112FindingRows = new Map<string, import("../contracts/architecture-inspection.js").ArchitectureFindingSnapshot[]>();
+  /** LANE-B: scopeKey -> decision brief snapshots (fed by applyP112InspectionLaneB). */
+  private readonly p112BriefRows = new Map<string, import("../contracts/architecture-inspection.js").ArchitectureDecisionBriefSnapshot[]>();
+  /** LANE-B: scopeKey -> candidate proposal snapshots (fed by applyP112InspectionLaneB). */
+  private readonly p112ProposalRows = new Map<string, import("../contracts/architecture-inspection.js").ArchitectureCandidateProposalSnapshot[]>();
 
   async advance(page: EventPage): Promise<ProjectionReceipt> {
     const toApply: PositionedEvent[] = [];
@@ -1622,8 +1635,36 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   }
 
   // LANE-B: decision brief + candidate proposal rows.
-  private applyP112InspectionLaneB(_event: DomainEvent, _cursor: CommitCursor): void {
-    // P1-12 lane B implementation region
+  private applyP112InspectionLaneB(event: DomainEvent, cursor: CommitCursor): void {
+    if (event.eventType === "ArchitectureDecisionBriefRecorded") {
+      const ev = event as import("../contracts/architecture-inspection.js").ArchitectureDecisionBriefRecordedEvent;
+      const brief = ev.payload.brief;
+      const snapshot: import("../contracts/architecture-inspection.js").ArchitectureDecisionBriefSnapshot = {
+        ref: { aggregateType: "ArchitectureDecisionBrief", projectId: brief.projectId, workspaceId: brief.workspaceId, briefId: brief.briefId },
+        revision: 1,
+        schemaVersion: 1,
+        brief,
+        recordedAt: ev.payload.recordedAt,
+      };
+      const key = consoleWorkspaceKey(brief.projectId, brief.workspaceId);
+      const rows = this.p112BriefRows.get(key) ?? [];
+      rows.push(snapshot);
+      this.p112BriefRows.set(key, rows);
+    } else if (event.eventType === "ArchitectureCandidateProposalRecorded") {
+      const ev = event as import("../contracts/architecture-inspection.js").ArchitectureCandidateProposalRecordedEvent;
+      const proposal = ev.payload.proposal;
+      const snapshot: import("../contracts/architecture-inspection.js").ArchitectureCandidateProposalSnapshot = {
+        ref: { aggregateType: "ArchitectureCandidateProposal", projectId: proposal.projectId, workspaceId: proposal.workspaceId, proposalId: proposal.proposalId },
+        revision: 1,
+        schemaVersion: 1,
+        proposal,
+        recordedAt: ev.payload.recordedAt,
+      };
+      const key = consoleWorkspaceKey(proposal.projectId, proposal.workspaceId);
+      const rows = this.p112ProposalRows.get(key) ?? [];
+      rows.push(snapshot);
+      this.p112ProposalRows.set(key, rows);
+    }
   }
 
   /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — rebuilt ONLY from the
@@ -2483,10 +2524,120 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     throw new Error("P1-16 lane A/B: workContext not implemented yet");
   }
 
-  /** P1-12 LANE-A/LANE-B stub: architecture inspection view (inspections +
-   * findings + briefs + proposals per (projectId, workspaceId); display only). */
+  /** P1-12 LANE-A/LANE-B: architecture inspection view (inspections + findings
+   * (LANE-A) + briefs + proposals (LANE-B) per (projectId, workspaceId); display
+   * only). The lane-B parts are always surfaced; the lane-A parts are empty until
+   * lane A lands — the view still works (ready with a possibly-empty list). */
   async architectureInspectionView(query: import("../contracts/architecture-inspection.js").ArchitectureInspectionViewQuery): Promise<import("../contracts/architecture-inspection.js").ArchitectureInspectionViewResult> {
-    throw new Error("P1-12 lane A/B: architectureInspectionView not implemented yet");
+    const observed = this.observedCursor;
+    if (observed === null) {
+      return { status: "not_ready", observedCursor: null };
+    }
+    const scopeKey = consoleWorkspaceKey(query.projectId, query.workspaceId);
+    const entries = this.p112BuildInspectionEntries(scopeKey, query.planId);
+    if (entries.length === 0) {
+      return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId };
+    }
+    return { status: "ready", inspections: entries, sourceCursor: observed };
+  }
+
+  private p112BuildInspectionEntries(
+    scopeKey: string,
+    planId: string | undefined,
+  ): {
+    inspection: import("../contracts/architecture-inspection.js").ArchitectureInspectionSnapshot;
+    findings: import("../contracts/architecture-inspection.js").ArchitectureFindingSnapshot[];
+    briefs: import("../contracts/architecture-inspection.js").ArchitectureDecisionBriefSnapshot[];
+    proposals: import("../contracts/architecture-inspection.js").ArchitectureCandidateProposalSnapshot[];
+  }[] {
+    const entries: {
+      inspection: import("../contracts/architecture-inspection.js").ArchitectureInspectionSnapshot;
+      findings: import("../contracts/architecture-inspection.js").ArchitectureFindingSnapshot[];
+      briefs: import("../contracts/architecture-inspection.js").ArchitectureDecisionBriefSnapshot[];
+      proposals: import("../contracts/architecture-inspection.js").ArchitectureCandidateProposalSnapshot[];
+    }[] = [];
+
+    const inspectionRows = this.p112InspectionRows.get(scopeKey) ?? [];
+    const findingRows = this.p112FindingRows.get(scopeKey) ?? [];
+    const briefRows = this.p112BriefRows.get(scopeKey) ?? [];
+    const proposalRows = this.p112ProposalRows.get(scopeKey) ?? [];
+
+    const claimedBriefs = new Set<string>();
+    const claimedProposals = new Set<string>();
+
+    for (const inspection of inspectionRows) {
+      const findingRefs = new Set(inspection.findingRefs.map((r) => r.findingId));
+      const findings = findingRows.filter((f) => findingRefs.has(f.ref.findingId));
+      const briefRefId = inspection.briefRef?.briefId;
+      const briefs = briefRefId ? briefRows.filter((b) => b.ref.briefId === briefRefId) : [];
+      briefs.forEach((b) => claimedBriefs.add(b.ref.briefId));
+      const proposalRefId = inspection.proposalRef?.proposalId;
+      const proposals = proposalRefId ? proposalRows.filter((pr) => pr.ref.proposalId === proposalRefId) : [];
+      proposals.forEach((pr) => claimedProposals.add(pr.ref.proposalId));
+      if (planId === undefined || inspection.intent.planRef.planId === planId) {
+        entries.push({ inspection, findings, briefs, proposals });
+      }
+    }
+    // Surface lane-B facts not referenced by any real (LANE-A) inspection row.
+    for (const brief of briefRows) {
+      if (claimedBriefs.has(brief.ref.briefId)) continue;
+      if (planId !== undefined && brief.brief.planRef.planId !== planId) continue;
+      entries.push({
+        inspection: this.p112SyntheticInspection(brief.ref.projectId, brief.ref.workspaceId, brief.ref.briefId, brief.brief.baselinePin, brief.brief.planRef, brief.recordedAt, "brief"),
+        findings: [],
+        briefs: [brief],
+        proposals: [],
+      });
+    }
+    for (const proposal of proposalRows) {
+      if (claimedProposals.has(proposal.ref.proposalId)) continue;
+      if (planId !== undefined && proposal.proposal.planRef.planId !== planId) continue;
+      entries.push({
+        inspection: this.p112SyntheticInspection(proposal.ref.projectId, proposal.ref.workspaceId, proposal.ref.proposalId, proposal.proposal.sourceBaselinePin, proposal.proposal.planRef, proposal.recordedAt, "proposal"),
+        findings: [],
+        briefs: [],
+        proposals: [proposal],
+      });
+    }
+    return entries;
+  }
+
+  /** Synthetic display inspection used to surface a brief/proposal that is not
+   * referenced by any real (LANE-A) inspection row (LANE-B-only projection). */
+  private p112SyntheticInspection(
+    projectId: string,
+    workspaceId: string,
+    labelId: string,
+    baselinePin: import("../contracts/governance.js").ArchitectureBaselinePin,
+    planRef: import("../contracts/plan.js").PlanRevisionRef,
+    recordedAt: string,
+    label: string,
+  ): import("../contracts/architecture-inspection.js").ArchitectureInspectionSnapshot {
+    const inspectionId = "synthetic-" + label + "-" + labelId;
+    return {
+      ref: { aggregateType: "ArchitectureInspection", projectId, workspaceId, inspectionId },
+      revision: 1,
+      schemaVersion: 1,
+      intent: {
+        schemaVersion: 1,
+        inspectionId,
+        projectId,
+        workspaceId,
+        workspaceRevision: 0,
+        planRef,
+        baselinePin,
+        source: "report",
+        requestedByRunRef: null,
+        reportInput: null,
+        budget: { maxTokens: 0, deadline: null },
+      },
+      snapshotRef: null,
+      deltaRef: null,
+      findingRefs: [],
+      briefRef: null,
+      proposalRef: null,
+      recordedAt,
+    };
   }
 
   /** Event types this projection currently has handlers for (P1-02 + P1-03, v1). */
@@ -2514,7 +2665,11 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       eventType === "WorkspaceWriteLeaseGranted" ||
       eventType === "WorkspaceWriteLeaseReleased" ||
       eventType === "IntegrationJoined" ||
-      eventType === "PatchRecorded"
+      eventType === "PatchRecorded" ||
+      // P1-12 LANE-B handled events (brief + proposal; inspection/finding are
+      // registered by LANE-A in the SAME commit).
+      eventType === "ArchitectureDecisionBriefRecorded" ||
+      eventType === "ArchitectureCandidateProposalRecorded"
     );
   }
 }
