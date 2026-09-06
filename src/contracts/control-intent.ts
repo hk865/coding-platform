@@ -1,0 +1,315 @@
+/**
+ * P1-10 Lifecycle controls contracts — PauseCommand / ResumeCommand /
+ * CancelCommand / SteerCommand / RuntimeControlIntent /
+ * SafePointAcknowledgement (first consumer freeze of
+ * HumanCollaboration.ControlCommandPort, DispatchEngine.ControlIntentPort,
+ * WorkerRuntime.LifecycleControlPort).
+ *
+ * Authority:
+ *   - dev_docs/planning/proposed/P1-foundation/tickets/10-lifecycle-controls-safe-steer.md
+ *     (8 Acceptance items; verification: resume-original-or-replacement /
+ *      lifecycle-transition-table / idempotent-control-command /
+ *      safe-point-delivery / late-ack-and-outcome-unknown)
+ *   - dev_docs/interfaces/context-lifecycle.md (等待/暂停/恢复；框架保留转交、
+ *     暂停与当前运行状态的区别；能力不足显式)
+ *   - dev_docs/interfaces/runtime-collaboration.md (执行指令在声明的安全点加载)
+ *
+ * FROZEN semantics:
+ *   - DESIRED STATE FIRST: every control command persists the desired state /
+ *     control intent (durable) BEFORE any runtime side effect; the console
+ *     shows desired vs current SEPARATELY until a runtime fact (safe-point
+ *     acknowledgement) proves the change. A delivered command never proves
+ *     the context was restored.
+ *   - Safe-point delivery: life/steer intents are applied by the runtime ONLY
+ *     at declared safe points; a steer carries payload digest + delivery
+ *     cursor + acknowledgement. Steer NEVER changes Goal objective /
+ *     AcceptanceObligation (that path is P1-11).
+ *   - Repeat commands: idempotency key + expected revision on EVERY command;
+ *     repeated commands never repeat side effects; a LATE acknowledgement
+ *     never overwrites a newer run/intent (stale ack -> rejected/ignored).
+ *   - outcome_unknown when the runtime cannot confirm (never guessed as
+ *     paused/cancelled/succeeded). UI can never kill a process directly nor
+ *     write Task/Goal phase.
+ *   - Resume: continue the ORIGINAL run when the kernel supports it, or an
+ *     explicit continuation with a NEW run (capability-declared); the ack
+ *     records resumeOutcome (original | takeover | unsupported).
+ *   - No TaskReduction/GoalPhase write; no CompletionPolicy change.
+ */
+import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
+import { canonicalJson, sha256Hex } from "./fingerprint.js";
+import type { RunRef } from "./dispatch.js";
+import type { ContinuationStatus } from "./context-continuity.js";
+
+// ------------------------------------------------------------------------ //
+// Limits                                                                    //
+// ------------------------------------------------------------------------ //
+
+export const CONTROL_INTENT_MAX_REASONS = 8;
+export const CONTROL_STEER_PAYLOAD_MAX_BYTES = 16 * 1024;
+export const CONTROL_INTENT_MAX_ACKS = 16;
+export const CONTROL_INTENT_SUMMARY_MAX_BYTES = 1024;
+export const CONTROL_TIMELINE_MAX_ENTRIES = 64;
+
+// ------------------------------------------------------------------------ //
+// Refs                                                                      //
+// ------------------------------------------------------------------------ //
+
+export type ControlIntentRef = {
+  aggregateType: "ControlIntent";
+  projectId: string;
+  workspaceId: string;
+  intentId: string;
+};
+
+export function controlIntentRefFor(projectId: string, workspaceId: string, intentId: string): ControlIntentRef {
+  return { aggregateType: "ControlIntent", projectId, workspaceId, intentId };
+}
+
+// ------------------------------------------------------------------------ //
+// Commands / value types                                                    //
+// ------------------------------------------------------------------------ //
+
+export type ControlKind = "pause" | "resume" | "cancel" | "steer";
+
+export type ControlTargetScope = {
+  projectId: string;
+  workspaceId: string;
+  goalId: string | null;
+  taskId: string | null;
+  runRef: RunRef | null;
+};
+
+export type ControlCommandV1 = {
+  commandId: string;
+  commandType: "ControlIntent";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  /** intentId — one durable control intent per command. */
+  aggregateId: string;
+  expectedRevision: 0;
+  correlationId: string;
+  submittedAt: string;
+  payload: {
+    kind: ControlKind;
+    scope: ControlTargetScope;
+    reason: string | null;
+    /** steer-only: bounded directive (never a Goal objective rewrite). */
+    steer: {
+      directive: string;
+      payloadDigest: string;
+      safePointOnly: true;
+      expectedRunRef: RunRef | null;
+    } | null;
+    /** resume-only: prior pause intent ref (resume applies to the paused state). */
+    resumeFromIntentRef: ControlIntentRef | null;
+    budget: { maxAcks: number; deadline: string | null };
+  };
+};
+
+// ------------------------------------------------------------------------ //
+// RuntimeControlIntent / SafePointAcknowledgement                           //
+// ------------------------------------------------------------------------ //
+
+export type ControlIntentStatus = "queued" | "applied" | "rejected" | "timed_out" | "outcome_unknown";
+
+export type SafePointAcknowledgementV1 = {
+  schemaVersion: 1;
+  ackId: string;
+  intentRef: ControlIntentRef;
+  runRef: RunRef | null;
+  /** The safe point at which the intent was applied (runtime-declared). */
+  safePoint: { seq: number; eventSeq: number | null; at: string };
+  applied: boolean;
+  reason: string | null;
+  /** resume-only: how the runtime actually continued. */
+  resumeOutcome: { status: "original" | "takeover" | "unsupported"; detail: string | null } | null;
+  /** steer-only: delivery cursor of the applied payload (opaque; runtime-owned). */
+  deliveryCursor: string | null;
+  recordedAt: string;
+};
+
+export type ControlIntentV1 = {
+  schemaVersion: 1;
+  intentId: string;
+  projectId: string;
+  workspaceId: string;
+  kind: ControlKind;
+  scope: ControlTargetScope;
+  reason: string | null;
+  steer: ControlCommandV1["payload"]["steer"];
+  /** Desired state (display + guard source). */
+  desiredState: "running" | "paused" | "cancelled" | "steered";
+  status: ControlIntentStatus;
+  acks: SafePointAcknowledgementV1[];
+  resumeFromIntentRef: ControlIntentRef | null;
+  submittedAt: string;
+  updatedAt: string;
+};
+
+export type ControlIntentSnapshot = {
+  ref: ControlIntentRef;
+  revision: number;
+  schemaVersion: 1;
+  intent: ControlIntentV1;
+};
+
+// ------------------------------------------------------------------------ //
+// Commands / receipts                                                       //
+// ------------------------------------------------------------------------ //
+
+export type SubmitControlCommand = {
+  commandId: string;
+  commandType: "SubmitControl";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  aggregateId: string;
+  expectedRevision: 0;
+  correlationId: string;
+  submittedAt: string;
+  payload: { intent: ControlIntentV1 };
+};
+
+export type SubmitControlRejectionCode =
+  | "invalid"
+  | "not_found"
+  | "stale_scope"
+  | "duplicate_active"
+  | "revision_conflict"
+  | "idempotency_conflict"
+  | "unavailable";
+
+export type SubmitControlReceipt =
+  | { status: "committed"; commandId: string; replayed: boolean; intentRef: ControlIntentRef; eventIds: string[]; commitCursor: CommitCursor }
+  | { status: "rejected"; commandId: string; code: SubmitControlRejectionCode; issues?: string[] };
+
+export type RecordSafePointAckCommand = {
+  commandId: string;
+  commandType: "RecordSafePointAck";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  /** intentId — the EXISTING ControlIntent aggregate (append ack; CAS). */
+  aggregateId: string;
+  expectedRevision: number;
+  correlationId: string;
+  submittedAt: string;
+  payload: { ack: SafePointAcknowledgementV1 };
+};
+
+export type RecordSafePointAckRejectionCode =
+  | "invalid"
+  | "not_found"
+  | "stale_ack"
+  | "acks_exceeded"
+  | "revision_conflict"
+  | "idempotency_conflict"
+  | "unavailable";
+
+export type RecordSafePointAckReceipt =
+  | { status: "committed"; commandId: string; replayed: boolean; intentRef: ControlIntentRef; revision: number; eventIds: string[]; commitCursor: CommitCursor }
+  | { status: "rejected"; commandId: string; code: RecordSafePointAckRejectionCode; issues?: string[] };
+
+// ------------------------------------------------------------------------ //
+// Domain events (P1-10 v1)                                                  //
+// ------------------------------------------------------------------------ //
+
+export type ControlIntentRecordedEvent = {
+  eventId: string;
+  eventType: "ControlIntentRecorded";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "ControlIntent";
+  aggregateId: string;
+  aggregateRevision: 1;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: { intent: ControlIntentV1 };
+};
+
+export type SafePointAcknowledgedEvent = {
+  eventId: string;
+  eventType: "SafePointAcknowledged";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "ControlIntent";
+  aggregateId: string;
+  aggregateRevision: number;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: { ack: SafePointAcknowledgementV1; status: ControlIntentStatus; desiredState: "running" | "paused" | "cancelled" | "steered"; updatedAt: string };
+};
+
+// ------------------------------------------------------------------------ //
+// Fingerprints                                                              //
+// ------------------------------------------------------------------------ //
+
+export function submitControlFingerprint(command: SubmitControlCommand): CommandFingerprint {
+  return sha256Hex(canonicalJson({
+    schemaVersion: 1, commandType: command.commandType, projectId: command.identity.projectId,
+    aggregateId: command.aggregateId, expectedRevision: command.expectedRevision, payload: { intent: command.payload.intent },
+  })) as CommandFingerprint;
+}
+
+export function recordSafePointAckFingerprint(command: RecordSafePointAckCommand): CommandFingerprint {
+  return sha256Hex(canonicalJson({
+    schemaVersion: 1, commandType: command.commandType, projectId: command.identity.projectId,
+    aggregateId: command.aggregateId, expectedRevision: command.expectedRevision, payload: { ack: command.payload.ack },
+  })) as CommandFingerprint;
+}
+
+// ------------------------------------------------------------------------ //
+// Ports (interfaces_to_freeze)                                              //
+// ------------------------------------------------------------------------ //
+
+export interface LifecycleControlPort {
+  /** Runtime-declared safe-point/cancellation capability (honest). */
+  capabilities(request: { runRef: RunRef | null }): {
+    safePointDelivery: boolean;
+    pause: boolean;
+    cancel: boolean;
+    steer: boolean;
+    maxSteerPayloadBytes: number;
+  };
+  /** Apply the intent at the runtime's NEXT declared safe point. The runtime
+   * answers with an acknowledgement THE MOMENT the safe point is reached
+   * (applied) or a rejection; never assumes. */
+  apply(intent: ControlIntentV1, atRunRef: RunRef | null): Promise<SafePointAcknowledgementV1>;
+}
+
+export interface ControlIntentPort {
+  /** Submit one durable control intent (desired state FIRST; zero side effect
+   * until the runtime acknowledges). */
+  submit(command: SubmitControlCommand): Promise<SubmitControlReceipt>;
+  /** Record one safe-point acknowledgement (append to the intent; CAS@N). */
+  recordSafePointAck(command: RecordSafePointAckCommand): Promise<RecordSafePointAckReceipt>;
+}
+
+export interface ControlCommandPort {
+  pause(payload: { scope: ControlTargetScope; reason: string | null } & { commandId: string; identity: CommandIdentity; correlationId: string; submittedAt: string }): Promise<SubmitControlReceipt>;
+  resume(payload: { scope: ControlTargetScope; reason: string | null; resumeFromIntentRef: ControlIntentRef } & { commandId: string; identity: CommandIdentity; correlationId: string; submittedAt: string }): Promise<SubmitControlReceipt>;
+  cancel(payload: { scope: ControlTargetScope; reason: string | null } & { commandId: string; identity: CommandIdentity; correlationId: string; submittedAt: string }): Promise<SubmitControlReceipt>;
+  steer(payload: { scope: ControlTargetScope; reason: string | null; steer: { directive: string; expectedRunRef: RunRef | null } } & { commandId: string; identity: CommandIdentity; correlationId: string; submittedAt: string }): Promise<SubmitControlReceipt>;
+}
+
+// ------------------------------------------------------------------------ //
+// View (display only)                                                       //
+// ------------------------------------------------------------------------ //
+
+export type ControlTimelineViewQuery = {
+  projectId: string;
+  workspaceId: string;
+  goalId?: string;
+  taskId?: string;
+};
+
+export type ControlTimelineViewResult =
+  | { status: "ready"; entries: { intentRef: ControlIntentRef; kind: ControlKind; desiredState: string; status: ControlIntentStatus; ackCount: number; sourceCursor: CommitCursor }[]; sourceCursor: CommitCursor }
+  | { status: "not_ready"; observedCursor: CommitCursor | null }
+  | { status: "not_found"; projectId: string; workspaceId: string };
