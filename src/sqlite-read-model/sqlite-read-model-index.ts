@@ -379,6 +379,34 @@ CREATE TABLE IF NOT EXISTS work_context_continuations (
   source_cursor TEXT NOT NULL,
   PRIMARY KEY (scope_key)
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS architecture_inspection_rows (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS architecture_finding_rows (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS architecture_brief_rows (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS architecture_proposal_rows (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
 `;
 
 /** Row shape we read back for a GoalView. */
@@ -1882,6 +1910,8 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     // P1-16 work-context projections. Handler + isHandledEventType land in the
     // SAME lane commit; until then advance() rejects the event.
     this.applyP116Context(event, cursor);
+    // P1-12 architecture-inspection projections.
+    this.applyP112Inspection(event, cursor);
     // Known non-goal / non-plan / non-dispatch events (ProjectBootstrapped,
     // WorkspaceBootstrapped, CompletionPolicyInstalled,
     // ArchitectureBaselineInstalled, CompletionPolicyActivated,
@@ -2386,10 +2416,31 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     // P1-16 lane B implementation region
   }
 
+  /** P1-12 LANE-A/LANE-B stub regions (filled by the lanes; no-op until then). */
+  private applyP112Inspection(event: DomainEvent, cursor: CommitCursor): void {
+    this.applyP112InspectionLaneA(event, cursor);
+    this.applyP112InspectionLaneB(event, cursor);
+  }
+
+  // LANE-A: inspection + finding rows.
+  private applyP112InspectionLaneA(_event: DomainEvent, _cursor: CommitCursor): void {
+    // P1-12 lane A implementation region
+  }
+
+  // LANE-B: decision brief + candidate proposal rows.
+  private applyP112InspectionLaneB(_event: DomainEvent, _cursor: CommitCursor): void {
+    // P1-12 lane B implementation region
+  }
+
   /** P1-16 LANE-A/LANE-B stub: work context view (binding + notes + continuations).
    * Region markers are fixed by the shared baseline. */
   async workContext(query: import("../contracts/context-continuity.js").WorkContextViewQuery): Promise<import("../contracts/context-continuity.js").WorkContextViewResult> {
     throw new Error("P1-16 lane A/B: workContext (sqlite) not implemented yet");
+  }
+
+  /** P1-12 LANE-A/LANE-B stub: architecture inspection view (display only). */
+  async architectureInspectionView(query: import("../contracts/architecture-inspection.js").ArchitectureInspectionViewQuery): Promise<import("../contracts/architecture-inspection.js").ArchitectureInspectionViewResult> {
+    throw new Error("P1-12 lane A/B: architectureInspectionView (sqlite) not implemented yet");
   }
 
   /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — rebuilt ONLY from the

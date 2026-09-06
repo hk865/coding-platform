@@ -407,6 +407,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       // land in the SAME lane commit; until then advance() rejects the event.
       this.applyP116Context(event, positioned.cursor);
 
+      // P1-12 architecture-inspection projections (4 new events; handler +
+      // isHandledEventType land in the SAME lane commit).
+      this.applyP112Inspection(event, positioned.cursor);
+
       // Known non-goal / non-plan / non-dispatch events
       // (ProjectBootstrapped, WorkspaceBootstrapped, CompletionPolicyInstalled,
       // ArchitectureBaselineInstalled, CompletionPolicyActivated,
@@ -1606,6 +1610,22 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     // P1-16 lane B implementation region
   }
 
+  // P1-12 LANE-A/LANE-B stub regions (filled by the lanes; no-op until then).
+  private applyP112Inspection(event: DomainEvent, cursor: CommitCursor): void {
+    this.applyP112InspectionLaneA(event, cursor);
+    this.applyP112InspectionLaneB(event, cursor);
+  }
+
+  // LANE-A: inspection + finding rows.
+  private applyP112InspectionLaneA(_event: DomainEvent, _cursor: CommitCursor): void {
+    // P1-12 lane A implementation region
+  }
+
+  // LANE-B: decision brief + candidate proposal rows.
+  private applyP112InspectionLaneB(_event: DomainEvent, _cursor: CommitCursor): void {
+    // P1-12 lane B implementation region
+  }
+
   /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — rebuilt ONLY from the
    * committed v1 events. Portfolio rows come from WorkspaceBootstrapped; summary
    * rows are touched by every workspace-scoped counter event. Phase COUNT maps
@@ -2461,6 +2481,12 @@ export class ReadModelIndexImpl implements ReadModelIndex {
    * notes rows, lane B owns the continuation rows + frontier aggregation. */
   async workContext(query: import("../contracts/context-continuity.js").WorkContextViewQuery): Promise<import("../contracts/context-continuity.js").WorkContextViewResult> {
     throw new Error("P1-16 lane A/B: workContext not implemented yet");
+  }
+
+  /** P1-12 LANE-A/LANE-B stub: architecture inspection view (inspections +
+   * findings + briefs + proposals per (projectId, workspaceId); display only). */
+  async architectureInspectionView(query: import("../contracts/architecture-inspection.js").ArchitectureInspectionViewQuery): Promise<import("../contracts/architecture-inspection.js").ArchitectureInspectionViewResult> {
+    throw new Error("P1-12 lane A/B: architectureInspectionView not implemented yet");
   }
 
   /** Event types this projection currently has handlers for (P1-02 + P1-03, v1). */

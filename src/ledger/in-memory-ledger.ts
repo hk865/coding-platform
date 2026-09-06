@@ -51,6 +51,10 @@ import {
   validateExecutionNoteRecordCommit,
   validateWorkContextBindCommit,
   validateWorkContextLinkCommit,
+  validateArchitectureInspectionRecordCommit,
+  validateArchitectureFindingRecordCommit,
+  validateArchitectureBriefRecordCommit,
+  validateArchitectureProposalRecordCommit,
 } from "../contracts/ledger-validation.js";
 import { canonicalJson } from "../contracts/fingerprint.js";
 import type { CommitCursor } from "../contracts/command-event.js";
@@ -157,6 +161,14 @@ export class InMemoryLedger implements StateLedger {
         return this.commitExecutionNoteRecord(batch);
       case "continuation-record":
         return this.commitContinuationRecord(batch);
+      case "architecture-inspection-record":
+        return this.commitArchitectureInspectionRecord(batch);
+      case "architecture-finding-record":
+        return this.commitArchitectureFindingRecord(batch);
+      case "architecture-brief-record":
+        return this.commitArchitectureBriefRecord(batch);
+      case "architecture-proposal-record":
+        return this.commitArchitectureProposalRecord(batch);
     }
   }
 
@@ -555,6 +567,38 @@ export class InMemoryLedger implements StateLedger {
   /** P1-16: continuation-record — one immutable continuation report (CAS@0). */
   private async commitContinuationRecord(batch: import("../contracts/ledger.js").ContinuationRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateContinuationRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  /** P1-12: architecture-inspection-record — one immutable inspection (CAS@0). */
+  private async commitArchitectureInspectionRecord(batch: import("../contracts/ledger.js").ArchitectureInspectionRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateArchitectureInspectionRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  /** P1-12: architecture-finding-record — one immutable finding (CAS@0). */
+  private async commitArchitectureFindingRecord(batch: import("../contracts/ledger.js").ArchitectureFindingRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateArchitectureFindingRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  /** P1-12: architecture-brief-record — one immutable decision brief (CAS@0). */
+  private async commitArchitectureBriefRecord(batch: import("../contracts/ledger.js").ArchitectureBriefRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateArchitectureBriefRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  /** P1-12: architecture-proposal-record — one immutable candidate proposal (CAS@0). */
+  private async commitArchitectureProposalRecord(batch: import("../contracts/ledger.js").ArchitectureProposalRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateArchitectureProposalRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
     }
     return this.commitGenericWithIdempotency(batch);

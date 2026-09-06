@@ -72,6 +72,10 @@ import {
   validateWorkContextLinkCommit,
   validateExecutionNoteRecordCommit,
   validateContinuationRecordCommit,
+  validateArchitectureInspectionRecordCommit,
+  validateArchitectureFindingRecordCommit,
+  validateArchitectureBriefRecordCommit,
+  validateArchitectureProposalRecordCommit,
 } from "../contracts/ledger-validation.js";
 import type {
   DispatchClaimLedgerCommitV1,
@@ -470,6 +474,14 @@ export class SqliteStateLedger implements StateLedger {
         return this.commitExecutionNoteRecord(batch);
       case "continuation-record":
         return this.commitContinuationRecord(batch);
+      case "architecture-inspection-record":
+        return this.commitArchitectureInspectionRecord(batch);
+      case "architecture-finding-record":
+        return this.commitArchitectureFindingRecord(batch);
+      case "architecture-brief-record":
+        return this.commitArchitectureBriefRecord(batch);
+      case "architecture-proposal-record":
+        return this.commitArchitectureProposalRecord(batch);
     }
   }
 
@@ -623,6 +635,34 @@ export class SqliteStateLedger implements StateLedger {
 
   private commitContinuationRecord(batch: import("../contracts/ledger.js").ContinuationRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
     if (!validateContinuationRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitArchitectureInspectionRecord(batch: import("../contracts/ledger.js").ArchitectureInspectionRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateArchitectureInspectionRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitArchitectureFindingRecord(batch: import("../contracts/ledger.js").ArchitectureFindingRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateArchitectureFindingRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitArchitectureBriefRecord(batch: import("../contracts/ledger.js").ArchitectureBriefRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateArchitectureBriefRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitArchitectureProposalRecord(batch: import("../contracts/ledger.js").ArchitectureProposalRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateArchitectureProposalRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
     }
     return this.commitGeneric(batch);

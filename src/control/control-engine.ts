@@ -87,6 +87,8 @@ import { claimReplacement } from "./replacement-claim.js";
 import { reduceGoal } from "./goal-reducer.js";
 import { WorkspaceLeaseEngineImpl } from "./workspace-lease.js";
 import { WorkRecordEngineImpl } from "./work-record.js";
+import { ArchitectureInspectionEngineImpl } from "./architecture-inspection.js";
+import type { RecordArchitectureInspectionCommand, RecordArchitectureInspectionReceipt, RecordArchitectureFindingCommand, RecordArchitectureFindingReceipt, RecordArchitectureDecisionBriefCommand, RecordArchitectureDecisionBriefReceipt, RecordCandidateBaselineProposalCommand, RecordCandidateBaselineProposalReceipt } from "../contracts/architecture-inspection.js";
 import { recordIntegrationResult } from "./integration-join.js";
 import { recordPatch } from "./patch-record.js";
 import type { WorkspaceCapabilityPort } from "../contracts/workspace-capability.js";
@@ -126,11 +128,13 @@ export class ControlEngineImpl implements ControlEngine {
   private readonly deps: ControlEngineDeps;
   private readonly workspaceLease: WorkspaceLeaseEngineImpl;
   private readonly workRecord: WorkRecordEngineImpl;
+  private readonly architectureInspection: ArchitectureInspectionEngineImpl;
 
   constructor(deps: ControlEngineDeps) {
     this.deps = deps;
     this.workspaceLease = new WorkspaceLeaseEngineImpl(deps);
     this.workRecord = new WorkRecordEngineImpl(deps);
+    this.architectureInspection = new ArchitectureInspectionEngineImpl(deps);
   }
 
   // --------------------------------------------------------------------- //
@@ -336,6 +340,22 @@ export class ControlEngineImpl implements ControlEngine {
 
   recordContinuation(command: RecordContinuationCommand): Promise<RecordContinuationReceipt> {
     return this.workRecord.recordContinuation(command);
+  }
+
+  recordArchitectureInspection(command: RecordArchitectureInspectionCommand): Promise<RecordArchitectureInspectionReceipt> {
+    return this.architectureInspection.recordArchitectureInspection(command);
+  }
+
+  recordArchitectureFinding(command: RecordArchitectureFindingCommand): Promise<RecordArchitectureFindingReceipt> {
+    return this.architectureInspection.recordArchitectureFinding(command);
+  }
+
+  recordArchitectureDecisionBrief(command: RecordArchitectureDecisionBriefCommand): Promise<RecordArchitectureDecisionBriefReceipt> {
+    return this.architectureInspection.recordArchitectureDecisionBrief(command);
+  }
+
+  recordCandidateBaselineProposal(command: RecordCandidateBaselineProposalCommand): Promise<RecordCandidateBaselineProposalReceipt> {
+    return this.architectureInspection.recordCandidateBaselineProposal(command);
   }
 
   // --------------------------------------------------------------------- //

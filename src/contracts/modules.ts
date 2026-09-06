@@ -60,6 +60,16 @@ import type {
   RecordExecutionNoteCommand,
   RecordExecutionNoteReceipt,
 } from "./context-continuity.js";
+import type {
+  RecordArchitectureDecisionBriefCommand,
+  RecordArchitectureDecisionBriefReceipt,
+  RecordArchitectureFindingCommand,
+  RecordArchitectureFindingReceipt,
+  RecordArchitectureInspectionCommand,
+  RecordArchitectureInspectionReceipt,
+  RecordCandidateBaselineProposalCommand,
+  RecordCandidateBaselineProposalReceipt,
+} from "./architecture-inspection.js";
 
 export type CreateGoalRequest = {
   projectId: string;
@@ -130,6 +140,14 @@ export interface ControlEngine {
   recordExecutionNote(command: RecordExecutionNoteCommand): Promise<RecordExecutionNoteReceipt>;
   /** P1-16: record the OBSERVED continuation path (capability declaration is never fabricated). */
   recordContinuation(command: RecordContinuationCommand): Promise<RecordContinuationReceipt>;
+  /** P1-12: record one immutable architecture inspection (pin-only baseline; CAS@0). */
+  recordArchitectureInspection(command: RecordArchitectureInspectionCommand): Promise<RecordArchitectureInspectionReceipt>;
+  /** P1-12: record one immutable architecture finding (may have deltaRef: null — never fake a raw delta). */
+  recordArchitectureFinding(command: RecordArchitectureFindingCommand): Promise<RecordArchitectureFindingReceipt>;
+  /** P1-12: record one immutable architecture decision brief (material/ambiguous findings). */
+  recordArchitectureDecisionBrief(command: RecordArchitectureDecisionBriefCommand): Promise<RecordArchitectureDecisionBriefReceipt>;
+  /** P1-12: record one immutable candidate baseline proposal (deterministic digest; P1-14 consumes). */
+  recordCandidateBaselineProposal(command: RecordCandidateBaselineProposalCommand): Promise<RecordCandidateBaselineProposalReceipt>;
 }
 
 export interface HumanCollaboration {

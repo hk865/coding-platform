@@ -111,6 +111,31 @@ export function architectureDeltaRef(delta: ArchitectureDeltaV1): ArtifactRef {
 }
 
 // ------------------------------------------------------------------------ //
+// ReadModel view (display only)                                             //
+// ------------------------------------------------------------------------ //
+
+export type ArchitectureInspectionViewQuery = {
+  projectId: string;
+  workspaceId: string;
+  /** Optional plan filter (default: all plans of the workspace). */
+  planId?: string;
+};
+
+export type ArchitectureInspectionViewResult =
+  | {
+      status: "ready";
+      inspections: {
+        inspection: ArchitectureInspectionSnapshot;
+        findings: ArchitectureFindingSnapshot[];
+        briefs: ArchitectureDecisionBriefSnapshot[];
+        proposals: ArchitectureCandidateProposalSnapshot[];
+      }[];
+      sourceCursor: CommitCursor;
+    }
+  | { status: "not_ready"; observedCursor: CommitCursor | null }
+  | { status: "not_found"; projectId: string; workspaceId: string };
+
+// ------------------------------------------------------------------------ //
 // CodeGraph value types                                                     //
 // ------------------------------------------------------------------------ //
 

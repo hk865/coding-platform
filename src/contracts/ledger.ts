@@ -112,6 +112,20 @@ import type {
   WorkContextRef,
   WorkRunLinkedEvent,
 } from "./context-continuity.js";
+import type {
+  ArchitectureCandidateProposalRecordedEvent,
+  ArchitectureCandidateProposalRef,
+  ArchitectureCandidateProposalSnapshot,
+  ArchitectureDecisionBriefRecordedEvent,
+  ArchitectureDecisionBriefRef,
+  ArchitectureDecisionBriefSnapshot,
+  ArchitectureFindingRecordedEvent,
+  ArchitectureFindingRef,
+  ArchitectureFindingSnapshot,
+  ArchitectureInspectionRecordedEvent,
+  ArchitectureInspectionRef,
+  ArchitectureInspectionSnapshot,
+} from "./architecture-inspection.js";
 
 export type ProjectRef = {
   aggregateType: "Project";
@@ -158,7 +172,11 @@ export type AggregateRef =
   | PatchRecordRef
   | WorkContextRef
   | ExecutionNoteRef
-  | ContinuationRecordRef;
+  | ContinuationRecordRef
+  | ArchitectureInspectionRef
+  | ArchitectureFindingRef
+  | ArchitectureDecisionBriefRef
+  | ArchitectureCandidateProposalRef;
 
 export type ProjectSnapshot = {
   ref: ProjectRef;
@@ -209,7 +227,11 @@ export type AggregateSnapshot =
   | PatchRecordSnapshot
   | WorkContextBindingSnapshot
   | ExecutionNoteSnapshot
-  | ContinuationRecordSnapshot;
+  | ContinuationRecordSnapshot
+  | ArchitectureInspectionSnapshot
+  | ArchitectureFindingSnapshot
+  | ArchitectureDecisionBriefSnapshot
+  | ArchitectureCandidateProposalSnapshot;
 
 export type SnapshotResult =
   | { status: "found"; snapshot: AggregateSnapshot }
@@ -523,6 +545,55 @@ export type ContinuationRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
+
+/** P1-12: architecture-inspection-record — one immutable inspection (CAS@0). */
+export type ArchitectureInspectionRecordLedgerCommitV1 = {
+  commitKind: "architecture-inspection-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  events: [ArchitectureInspectionRecordedEvent];
+  snapshots: [ArchitectureInspectionSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-12: architecture-finding-record — one immutable finding (CAS@0). */
+export type ArchitectureFindingRecordLedgerCommitV1 = {
+  commitKind: "architecture-finding-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  events: [ArchitectureFindingRecordedEvent];
+  snapshots: [ArchitectureFindingSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-12: architecture-brief-record — one immutable decision brief (CAS@0). */
+export type ArchitectureBriefRecordLedgerCommitV1 = {
+  commitKind: "architecture-brief-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  events: [ArchitectureDecisionBriefRecordedEvent];
+  snapshots: [ArchitectureDecisionBriefSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-12: architecture-proposal-record — one immutable candidate proposal (CAS@0). */
+export type ArchitectureProposalRecordLedgerCommitV1 = {
+  commitKind: "architecture-proposal-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  events: [ArchitectureCandidateProposalRecordedEvent];
+  snapshots: [ArchitectureCandidateProposalSnapshot];
+  outboxIntents: [];
+};
+
 export type LedgerCommit =
   | GoalCreateLedgerCommitV1
   | BootstrapLedgerCommitV1
@@ -546,7 +617,11 @@ export type LedgerCommit =
   | WorkContextBindLedgerCommitV1
   | WorkContextLinkLedgerCommitV1
   | ExecutionNoteRecordLedgerCommitV1
-  | ContinuationRecordLedgerCommitV1;
+  | ContinuationRecordLedgerCommitV1
+  | ArchitectureInspectionRecordLedgerCommitV1
+  | ArchitectureFindingRecordLedgerCommitV1
+  | ArchitectureBriefRecordLedgerCommitV1
+  | ArchitectureProposalRecordLedgerCommitV1;
 
 export type LedgerCommitReceipt =
   | {

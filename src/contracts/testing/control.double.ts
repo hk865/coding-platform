@@ -111,6 +111,10 @@ export type BindWorkContextBehavior = (command: BindWorkContextCommand) => BindW
 export type LinkWorkRunBehavior = (command: LinkWorkRunCommand) => LinkWorkRunReceipt | Promise<LinkWorkRunReceipt>;
 export type RecordExecutionNoteBehavior = (command: RecordExecutionNoteCommand) => RecordExecutionNoteReceipt | Promise<RecordExecutionNoteReceipt>;
 export type RecordContinuationBehavior = (command: RecordContinuationCommand) => RecordContinuationReceipt | Promise<RecordContinuationReceipt>;
+export type RecordArchitectureInspectionBehavior = (command: import("../architecture-inspection.js").RecordArchitectureInspectionCommand) => import("../architecture-inspection.js").RecordArchitectureInspectionReceipt | Promise<import("../architecture-inspection.js").RecordArchitectureInspectionReceipt>;
+export type RecordArchitectureFindingBehavior = (command: import("../architecture-inspection.js").RecordArchitectureFindingCommand) => import("../architecture-inspection.js").RecordArchitectureFindingReceipt | Promise<import("../architecture-inspection.js").RecordArchitectureFindingReceipt>;
+export type RecordArchitectureDecisionBriefBehavior = (command: import("../architecture-inspection.js").RecordArchitectureDecisionBriefCommand) => import("../architecture-inspection.js").RecordArchitectureDecisionBriefReceipt | Promise<import("../architecture-inspection.js").RecordArchitectureDecisionBriefReceipt>;
+export type RecordCandidateBaselineProposalBehavior = (command: import("../architecture-inspection.js").RecordCandidateBaselineProposalCommand) => import("../architecture-inspection.js").RecordCandidateBaselineProposalReceipt | Promise<import("../architecture-inspection.js").RecordCandidateBaselineProposalReceipt>;
 
 export type ReduceGoalBehavior = (
   command: ReduceGoalCommand,
@@ -157,6 +161,10 @@ export class ScriptedControlEngine implements ControlEngine {
       linkWorkRun?: LinkWorkRunBehavior;
       recordExecutionNote?: RecordExecutionNoteBehavior;
       recordContinuation?: RecordContinuationBehavior;
+      recordArchitectureInspection?: RecordArchitectureInspectionBehavior;
+      recordArchitectureFinding?: RecordArchitectureFindingBehavior;
+      recordArchitectureDecisionBrief?: RecordArchitectureDecisionBriefBehavior;
+      recordCandidateBaselineProposal?: RecordCandidateBaselineProposalBehavior;
       defaultSubmit?: CommandReceipt;
       defaultBootstrap?: WorkspaceBootstrapReceipt;
       defaultInstall?: GovernanceInstallReceipt;
@@ -320,5 +328,34 @@ export class ScriptedControlEngine implements ControlEngine {
     this.recordContinuationCalls.push(command);
     if (this.options.recordContinuation) return this.options.recordContinuation(command);
     throw new Error("ScriptedControlEngine: no recordContinuation behavior configured");
+  }
+
+  readonly recordArchitectureInspectionCalls: import("../architecture-inspection.js").RecordArchitectureInspectionCommand[] = [];
+  readonly recordArchitectureFindingCalls: import("../architecture-inspection.js").RecordArchitectureFindingCommand[] = [];
+  readonly recordArchitectureDecisionBriefCalls: import("../architecture-inspection.js").RecordArchitectureDecisionBriefCommand[] = [];
+  readonly recordCandidateBaselineProposalCalls: import("../architecture-inspection.js").RecordCandidateBaselineProposalCommand[] = [];
+
+  async recordArchitectureInspection(command: import("../architecture-inspection.js").RecordArchitectureInspectionCommand): Promise<import("../architecture-inspection.js").RecordArchitectureInspectionReceipt> {
+    this.recordArchitectureInspectionCalls.push(command);
+    if (this.options.recordArchitectureInspection) return this.options.recordArchitectureInspection(command);
+    throw new Error("ScriptedControlEngine: no recordArchitectureInspection behavior configured");
+  }
+
+  async recordArchitectureFinding(command: import("../architecture-inspection.js").RecordArchitectureFindingCommand): Promise<import("../architecture-inspection.js").RecordArchitectureFindingReceipt> {
+    this.recordArchitectureFindingCalls.push(command);
+    if (this.options.recordArchitectureFinding) return this.options.recordArchitectureFinding(command);
+    throw new Error("ScriptedControlEngine: no recordArchitectureFinding behavior configured");
+  }
+
+  async recordArchitectureDecisionBrief(command: import("../architecture-inspection.js").RecordArchitectureDecisionBriefCommand): Promise<import("../architecture-inspection.js").RecordArchitectureDecisionBriefReceipt> {
+    this.recordArchitectureDecisionBriefCalls.push(command);
+    if (this.options.recordArchitectureDecisionBrief) return this.options.recordArchitectureDecisionBrief(command);
+    throw new Error("ScriptedControlEngine: no recordArchitectureDecisionBrief behavior configured");
+  }
+
+  async recordCandidateBaselineProposal(command: import("../architecture-inspection.js").RecordCandidateBaselineProposalCommand): Promise<import("../architecture-inspection.js").RecordCandidateBaselineProposalReceipt> {
+    this.recordCandidateBaselineProposalCalls.push(command);
+    if (this.options.recordCandidateBaselineProposal) return this.options.recordCandidateBaselineProposal(command);
+    throw new Error("ScriptedControlEngine: no recordCandidateBaselineProposal behavior configured");
   }
 }

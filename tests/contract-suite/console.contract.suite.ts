@@ -124,6 +124,10 @@ export class TrapControlEngine implements ControlEngine {
   linkWorkRun(): never { return this.trap("linkWorkRun"); }
   recordExecutionNote(): never { return this.trap("recordExecutionNote"); }
   recordContinuation(): never { return this.trap("recordContinuation"); }
+  recordArchitectureInspection(): never { return this.trap("recordArchitectureInspection"); }
+  recordArchitectureFinding(): never { return this.trap("recordArchitectureFinding"); }
+  recordArchitectureDecisionBrief(): never { return this.trap("recordArchitectureDecisionBrief"); }
+  recordCandidateBaselineProposal(): never { return this.trap("recordCandidateBaselineProposal"); }
 }
 
 export function defineConsoleContractSuite(

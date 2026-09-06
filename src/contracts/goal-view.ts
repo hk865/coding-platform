@@ -120,4 +120,6 @@ export interface ReadModelIndex {
   consoleTimeline(query: import("./console-views.js").TimelineViewQuery): Promise<import("./console-views.js").TimelineViewResult>;
   /** P1-16: work context view per (projectId, workspaceId, workId) — binding + notes + continuations (display only). */
   workContext(query: import("./context-continuity.js").WorkContextViewQuery): Promise<import("./context-continuity.js").WorkContextViewResult>;
+  /** P1-12: architecture inspection view per (projectId, workspaceId) — inspections + findings + briefs + proposals (display only; no baseline writes). */
+  architectureInspectionView(query: import("./architecture-inspection.js").ArchitectureInspectionViewQuery): Promise<import("./architecture-inspection.js").ArchitectureInspectionViewResult>;
 }

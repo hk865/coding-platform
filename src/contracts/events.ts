@@ -41,6 +41,12 @@ import type {
   ExecutionNoteRecordedEvent,
   ContinuationRecordedEvent,
 } from "./context-continuity.js";
+import type {
+  ArchitectureInspectionRecordedEvent,
+  ArchitectureFindingRecordedEvent,
+  ArchitectureDecisionBriefRecordedEvent,
+  ArchitectureCandidateProposalRecordedEvent,
+} from "./architecture-inspection.js";
 
 export type DomainEventV1 =
   | GoalCreatedEvent
@@ -69,7 +75,11 @@ export type DomainEventV1 =
   | WorkContextBoundEvent
   | WorkRunLinkedEvent
   | ExecutionNoteRecordedEvent
-  | ContinuationRecordedEvent;
+  | ContinuationRecordedEvent
+  | ArchitectureInspectionRecordedEvent
+  | ArchitectureFindingRecordedEvent
+  | ArchitectureDecisionBriefRecordedEvent
+  | ArchitectureCandidateProposalRecordedEvent;
 
 export type DomainEvent = DomainEventV1;
 
@@ -102,6 +112,10 @@ export const KNOWN_EVENT_TYPES = [
   "WorkRunLinked",
   "ExecutionNoteRecorded",
   "ContinuationRecorded",
+  "ArchitectureInspectionRecorded",
+  "ArchitectureFindingRecorded",
+  "ArchitectureDecisionBriefRecorded",
+  "ArchitectureCandidateProposalRecorded",
 ] as const;
 
 export function isKnownEventType(eventType: string): eventType is (typeof KNOWN_EVENT_TYPES)[number] {
