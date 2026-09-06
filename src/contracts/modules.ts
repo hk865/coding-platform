@@ -167,6 +167,16 @@ export interface ControlEngine {
   recordUserDecision(command: RecordUserDecisionCommand): Promise<RecordUserDecisionReceipt>;
   /** P1-11: apply an ACCEPTED decision -> new PlanRevision + GoalRevision + Goal CAS (atomic). */
   applyPlanChange(command: ApplyPlanChangeCommand): Promise<ApplyPlanChangeReceipt>;
+  /** P1-13: install an immutable ArchitectureEvolutionPolicy revision (never auto-activates). */
+  installArchitectureEvolutionPolicy(command: import("./architecture-evolution-policy.js").InstallArchitectureEvolutionPolicyRevisionCommand): Promise<import("./architecture-evolution-policy.js").ArchitectureEvolutionPolicyInstallReceipt>;
+  /** P1-13: CAS-activate the project ArchitectureEvolutionPolicy active ref (per-kind independent). */
+  activateArchitectureEvolutionPolicy(command: import("./architecture-evolution-policy.js").ActivateProjectArchitectureEvolutionPolicyCommand): Promise<import("./architecture-evolution-policy.js").ArchitectureEvolutionPolicyActivateReceipt>;
+  /** P1-13: record one allowlisted remediation plan patch (verdict recomputed; CAS@0). */
+  submitRemediationPlanPatch(command: import("./remediation.js").SubmitRemediationPlanPatchCommand): Promise<import("./remediation.js").SubmitRemediationPlanPatchReceipt>;
+  /** P1-13: create ONE effective RemediationTask per dedup key (double-submit dedups). */
+  createRemediationTask(command: import("./remediation.js").CreateRemediationTaskCommand): Promise<import("./remediation.js").CreateRemediationTaskReceipt>;
+  /** P1-13: advance a RemediationTask (writing/verifying/resolved/failed/blocked; CAS@N). */
+  advanceRemediationTask(command: import("./remediation.js").AdvanceRemediationTaskCommand): Promise<import("./remediation.js").AdvanceRemediationTaskReceipt>;
 }
 
 export interface HumanCollaboration {

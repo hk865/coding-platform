@@ -1376,6 +1376,61 @@ export function validateGoalChangeApplyCommit(batch: import("./ledger.js").GoalC
   return identityMatchesActor(planEvent.projectId, planEvent.idempotencyKey, planEvent.actor.kind, planEvent.actor.id, batch.identity);
 }
 
+
+// ------------------------------------------------------------------------ //
+// P1-13 remediation commit validators (shared by BOTH adapters)             //
+// ------------------------------------------------------------------------ //
+
+export function validateRemediationPlanPatchRecordCommit(batch: import("./ledger.js").RemediationPlanPatchRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 1 || batch.snapshots.length !== 1 || batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.eventType !== "RemediationPlanPatchRecorded" || !isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "RemediationPlanPatch" || event.aggregateRevision !== 1) return false;
+  const snap = batch.snapshots[0]!;
+  if (snap.ref.aggregateType !== "RemediationPlanPatch" || snap.revision !== 1 || snap.schemaVersion !== 1) return false;
+  if (snap.patch.patchId !== event.aggregateId) return false;
+  if (canonicalJson(snap.patch) !== canonicalJson(event.payload.patch)) return false;
+  if (snap.recordedAt !== event.payload.recordedAt) return false;
+  if (batch.expectedVersions.length !== 1) return false;
+  const expected = batch.expectedVersions[0]!;
+  if (expected.revision !== 0 || canonicalJson(expected.ref) !== canonicalJson(snap.ref)) return false;
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+
+export function validateRemediationTaskRecordCommit(batch: import("./ledger.js").RemediationTaskRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 1 || batch.snapshots.length !== 1 || batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.eventType !== "RemediationTaskCreated" || !isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "RemediationTask" || event.aggregateRevision !== 1) return false;
+  const snap = batch.snapshots[0]!;
+  if (snap.ref.aggregateType !== "RemediationTask" || snap.revision !== 1 || snap.schemaVersion !== 1) return false;
+  if (snap.task.taskId !== event.aggregateId) return false;
+  if (canonicalJson(snap.task) !== canonicalJson(event.payload.task)) return false;
+  if (batch.expectedVersions.length !== 1) return false;
+  const expected = batch.expectedVersions[0]!;
+  if (expected.revision !== 0 || canonicalJson(expected.ref) !== canonicalJson(snap.ref)) return false;
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+
+export function validateRemediationTaskAdvanceCommit(batch: import("./ledger.js").RemediationTaskAdvanceLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 1 || batch.snapshots.length !== 1 || batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.eventType !== "RemediationTaskAdvanced" || !isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "RemediationTask") return false;
+  const snap = batch.snapshots[0]!;
+  if (snap.ref.aggregateType !== "RemediationTask" || snap.schemaVersion !== 1) return false;
+  if (event.aggregateRevision !== snap.revision) return false;
+  if (snap.task.taskId !== event.aggregateId) return false;
+  if (canonicalJson(snap.task) !== canonicalJson(event.payload.task)) return false;
+  if (batch.expectedVersions.length !== 1) return false;
+  const expected = batch.expectedVersions[0]!;
+  if (expected.revision !== snap.revision - 1 || canonicalJson(expected.ref) !== canonicalJson(snap.ref)) return false;
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+
 export function validateWorkContextBindCommit(batch: import("./ledger.js").WorkContextBindLedgerCommitV1): boolean {
   if (batch.schemaVersion !== 1) return false;
   if (batch.events.length !== 1) return false;

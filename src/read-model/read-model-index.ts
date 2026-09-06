@@ -491,6 +491,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       // land in the SAME lane commits — LANE-A proposal/decision, LANE-B revision/plan).
       this.applyP111(event, positioned.cursor);
 
+      // P1-13 governance-third-kind + remediation events: no display projection in
+      // this ticket (no view acceptance); registered handled to never stall advance.
+      this.applyP113(event, positioned.cursor);
+
       // Known non-goal / non-plan / non-dispatch events
       // (ProjectBootstrapped, WorkspaceBootstrapped, CompletionPolicyInstalled,
       // ArchitectureBaselineInstalled, CompletionPolicyActivated,
@@ -2809,6 +2813,12 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return computeTaskDispositions(source, target, []);
   }
 
+  /** P1-13: no-op handled registration (no display view in this ticket). */
+  private applyP113(event: DomainEvent, cursor: CommitCursor): void {
+    void event;
+    void cursor;
+  }
+
   /** P1-11 LANE-A/LANE-B hook: fold plan-change events (proposal/decision +
    * LANE-B revision/plan; empty until the lane lands — handler + isHandledEventType
    * land in the SAME lane commit). */
@@ -3059,6 +3069,12 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       eventType === "QueryRunStarted" ||
       eventType === "QueryJobAnswerRecorded" ||
       eventType === "QueryJobClosed" ||
+      // P1-13 (no view; registered to keep advance stall-free).
+      eventType === "ArchitectureEvolutionPolicyInstalled" ||
+      eventType === "ArchitectureEvolutionPolicyActivated" ||
+      eventType === "RemediationPlanPatchRecorded" ||
+      eventType === "RemediationTaskCreated" ||
+      eventType === "RemediationTaskAdvanced" ||
       // P1-11 plan-change events (handler + isHandledEventType in the SAME lane commit).
       eventType === "PlanProposalRecorded" ||
       eventType === "UserDecisionRecorded" ||

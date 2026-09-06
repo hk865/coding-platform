@@ -43,6 +43,8 @@ import type {
   ProjectCompletionPolicyActiveRef,
   ProjectCompletionPolicyActiveSnapshot,
 } from "./governance.js";
+import type { ArchitectureEvolutionPolicyActivatedEvent, ArchitectureEvolutionPolicyInstalledEvent } from "./architecture-evolution-policy.js";
+import type { RemediationPlanPatchRecordedEvent, RemediationPlanPatchSnapshot, RemediationPlanPatchRef, RemediationTaskAdvancedEvent, RemediationTaskCreatedEvent, RemediationTaskSnapshot, RemediationTaskRef } from "./remediation.js";
 import type { PlanRevisionAcceptedEvent, PlanRevisionRef, PlanRevisionSnapshot } from "./plan.js";
 import type {
   DispatchIntentV1,
@@ -129,6 +131,7 @@ import type {
 import type { ControlIntentRecordedEvent, ControlIntentRef, ControlIntentSnapshot, SafePointAcknowledgedEvent } from "./control-intent.js";
 import type { QueryJobAnswerRecordedEvent, QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobClosedEvent, QueryJobRef, QueryJobSnapshot, QueryJobSubmittedEvent, QueryRunRef, QueryRunSnapshot, QueryRunStartedEvent } from "./query-job.js";
 import type { GoalRevisionRecordedEvent, GoalRevisionSnapshot, PlanProposalRecordedEvent, PlanProposalSnapshot, PlanRevisionSupersededEvent, UserDecisionRecordedEvent, UserDecisionSnapshot } from "./goal-change.js";
+import type { ArchitectureEvolutionPolicyRevisionRef, ArchitectureEvolutionPolicyRevisionSnapshot, ProjectArchitectureEvolutionPolicyActiveRef, ProjectArchitectureEvolutionPolicyActiveSnapshot } from "./architecture-evolution-policy.js";
 
 export type ProjectRef = {
   aggregateType: "Project";
@@ -186,7 +189,11 @@ export type AggregateRef =
   | QueryJobAnswerRef
   | PlanProposalSnapshot["ref"]
   | UserDecisionSnapshot["ref"]
-  | GoalRevisionSnapshot["ref"];
+  | GoalRevisionSnapshot["ref"]
+  | ArchitectureEvolutionPolicyRevisionRef
+  | ProjectArchitectureEvolutionPolicyActiveRef
+  | RemediationPlanPatchRef
+  | RemediationTaskRef;
 
 export type ProjectSnapshot = {
   ref: ProjectRef;
@@ -248,7 +255,11 @@ export type AggregateSnapshot =
   | QueryJobAnswerSnapshot
   | PlanProposalSnapshot
   | UserDecisionSnapshot
-  | GoalRevisionSnapshot;
+  | GoalRevisionSnapshot
+  | ArchitectureEvolutionPolicyRevisionSnapshot
+  | ProjectArchitectureEvolutionPolicyActiveSnapshot
+  | RemediationPlanPatchSnapshot
+  | RemediationTaskSnapshot;
 
 export type SnapshotResult =
   | { status: "found"; snapshot: AggregateSnapshot }
@@ -287,8 +298,8 @@ export type GovernanceInstallLedgerCommitV1 = {
   fingerprint: CommandFingerprint;
   /** [{ revision aggregate, 0 }] — immutability CAS; install never overwrites. */
   expectedVersions: ExpectedVersion[];
-  events: (CompletionPolicyInstalledEvent | ArchitectureBaselineInstalledEvent)[];
-  snapshots: (CompletionPolicyRevisionSnapshot | ArchitectureBaselineRevisionSnapshot)[];
+  events: (CompletionPolicyInstalledEvent | ArchitectureBaselineInstalledEvent | ArchitectureEvolutionPolicyInstalledEvent)[];
+  snapshots: (CompletionPolicyRevisionSnapshot | ArchitectureBaselineRevisionSnapshot | ArchitectureEvolutionPolicyRevisionSnapshot)[];
   outboxIntents: [];
 };
 
@@ -299,8 +310,8 @@ export type GovernanceActivateLedgerCommitV1 = {
   fingerprint: CommandFingerprint;
   /** [Project@expected, ActiveAggregate@expected] — project CAS + kind CAS. */
   expectedVersions: ExpectedVersion[];
-  events: (CompletionPolicyActivatedEvent | ArchitectureBaselineActivatedEvent)[];
-  snapshots: (ProjectCompletionPolicyActiveSnapshot | ProjectArchitectureBaselineActiveSnapshot)[];
+  events: (CompletionPolicyActivatedEvent | ArchitectureBaselineActivatedEvent | ArchitectureEvolutionPolicyActivatedEvent)[];
+  snapshots: (ProjectCompletionPolicyActiveSnapshot | ProjectArchitectureBaselineActiveSnapshot | ProjectArchitectureEvolutionPolicyActiveSnapshot)[];
   outboxIntents: [];
 };
 
@@ -710,6 +721,42 @@ export type GoalChangeApplyLedgerCommitV1 = {
   outboxIntents: [];
 };
 
+/** P1-13: remediation-plan-patch-record — one immutable patch (CAS@0). */
+export type RemediationPlanPatchRecordLedgerCommitV1 = {
+  commitKind: "remediation-plan-patch-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  events: [RemediationPlanPatchRecordedEvent];
+  snapshots: [RemediationPlanPatchSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-13: remediation-task-record — one task (CAS@0; dedup key occupied). */
+export type RemediationTaskRecordLedgerCommitV1 = {
+  commitKind: "remediation-task-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  events: [RemediationTaskCreatedEvent];
+  snapshots: [RemediationTaskSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-13: remediation-task-advance — status/evidence/result CAS@N. */
+export type RemediationTaskAdvanceLedgerCommitV1 = {
+  commitKind: "remediation-task-advance";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  events: [RemediationTaskAdvancedEvent];
+  snapshots: [RemediationTaskSnapshot];
+  outboxIntents: [];
+};
+
 export type LedgerCommit =
   | GoalCreateLedgerCommitV1
   | BootstrapLedgerCommitV1
@@ -745,7 +792,10 @@ export type LedgerCommit =
   | QueryCloseRecordLedgerCommitV1
   | PlanChangeProposalRecordLedgerCommitV1
   | UserDecisionRecordLedgerCommitV1
-  | GoalChangeApplyLedgerCommitV1;
+  | GoalChangeApplyLedgerCommitV1
+  | RemediationPlanPatchRecordLedgerCommitV1
+  | RemediationTaskRecordLedgerCommitV1
+  | RemediationTaskAdvanceLedgerCommitV1;
 
 export type LedgerCommitReceipt =
   | {

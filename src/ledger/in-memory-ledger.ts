@@ -63,6 +63,9 @@ import {
   validatePlanChangeProposalRecordCommit,
   validateUserDecisionRecordCommit,
   validateGoalChangeApplyCommit,
+  validateRemediationPlanPatchRecordCommit,
+  validateRemediationTaskRecordCommit,
+  validateRemediationTaskAdvanceCommit,
 } from "../contracts/ledger-validation.js";
 import { canonicalJson } from "../contracts/fingerprint.js";
 import type { CommitCursor } from "../contracts/command-event.js";
@@ -193,6 +196,12 @@ export class InMemoryLedger implements StateLedger {
         return this.commitQueryAnswerRecord(batch);
       case "query-close-record":
         return this.commitQueryCloseRecord(batch);
+      case "remediation-plan-patch-record":
+        return this.commitRemediationPlanPatchRecord(batch);
+      case "remediation-task-record":
+        return this.commitRemediationTaskRecord(batch);
+      case "remediation-task-advance":
+        return this.commitRemediationTaskAdvance(batch);
     }
   }
 
@@ -664,6 +673,21 @@ export class InMemoryLedger implements StateLedger {
 
   private async commitGoalChangeApply(batch: import("../contracts/ledger.js").GoalChangeApplyLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateGoalChangeApplyCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitRemediationPlanPatchRecord(batch: import("../contracts/ledger.js").RemediationPlanPatchRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateRemediationPlanPatchRecordCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitRemediationTaskRecord(batch: import("../contracts/ledger.js").RemediationTaskRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateRemediationTaskRecordCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitRemediationTaskAdvance(batch: import("../contracts/ledger.js").RemediationTaskAdvanceLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateRemediationTaskAdvanceCommit(batch)) return { status: "rejected", code: "invalid_commit" };
     return this.commitGenericWithIdempotency(batch);
   }
 

@@ -347,6 +347,13 @@ export interface InMemoryHarness {
   assemblePlanningContext(request: { schemaVersion: 1; requestId: string; projectId: string; workspaceId: string; goalRef: import("../contracts/ledger.js").GoalRef; planRef: import("../contracts/plan.js").PlanRevisionRef | null; budget: { maxBundleBytes: number } }): Promise<{ status: "ready"; bundleRef: import("../contracts/artifact.js").ArtifactRef; manifest: { selectedSources: string[]; freshnessCursor: import("../contracts/command-event.js").CommitCursor | null; totalBytes: number } } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: "invalid_request" | "forbidden_tool_or_scope" | "unavailable"; message: string }>;
   /** P1-11: HumanCollaboration goal-change face (amend compiles then records). */
   amend(request: import("../contracts/goal-change.js").AmendGoalRequestV1): Promise<{ status: "accepted"; proposalRef: import("../contracts/goal-change.js").PlanProposalSnapshot["ref"] } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
+  /** P1-13: install/activate ArchitectureEvolutionPolicy (third governance kind) + remediation entries. */
+  installArchitectureEvolutionPolicy(command: import("../contracts/architecture-evolution-policy.js").InstallArchitectureEvolutionPolicyRevisionCommand): Promise<import("../contracts/architecture-evolution-policy.js").ArchitectureEvolutionPolicyInstallReceipt>;
+  activateArchitectureEvolutionPolicy(command: import("../contracts/architecture-evolution-policy.js").ActivateProjectArchitectureEvolutionPolicyCommand): Promise<import("../contracts/architecture-evolution-policy.js").ArchitectureEvolutionPolicyActivateReceipt>;
+  submitRemediationPlanPatch(command: import("../contracts/remediation.js").SubmitRemediationPlanPatchCommand): Promise<import("../contracts/remediation.js").SubmitRemediationPlanPatchReceipt>;
+  createRemediationTask(command: import("../contracts/remediation.js").CreateRemediationTaskCommand): Promise<import("../contracts/remediation.js").CreateRemediationTaskReceipt>;
+  advanceRemediationTask(command: import("../contracts/remediation.js").AdvanceRemediationTaskCommand): Promise<import("../contracts/remediation.js").AdvanceRemediationTaskReceipt>;
+
   /** P1-16: runtime continuation capabilities (honest declaration). */
   continuationCapabilities(request: { workContextRef: import("../contracts/context-continuity.js").WorkContextRef; runRef: import("../contracts/dispatch.js").RunRef | null }): Promise<import("../contracts/context-continuation-port.js").ContextContinuationCapabilityResult>;
   /** P1-04: review-context assembly (bounded ReviewPacket). */
@@ -552,6 +559,11 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     planProposalRequest: (request) => planProposal.request(request),
     assemblePlanningContext: (request) => planningContext.assemblePlanningContext(request),
     amend: (request) => collaboration.amend(request),
+    installArchitectureEvolutionPolicy: (command) => control.installArchitectureEvolutionPolicy(command),
+    activateArchitectureEvolutionPolicy: (command) => control.activateArchitectureEvolutionPolicy(command),
+    submitRemediationPlanPatch: (command) => control.submitRemediationPlanPatch(command),
+    createRemediationTask: (command) => control.createRemediationTask(command),
+    advanceRemediationTask: (command) => control.advanceRemediationTask(command),
     continuationCapabilities: (request) => contextContinuation.capabilities(request),
     assembleHandoff: (request) => handoffContext.assemble(request),
     assembleReview: (request) => reviewContext.assemble(request),

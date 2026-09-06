@@ -178,6 +178,11 @@ export class ScriptedControlEngine implements ControlEngine {
       recordPlanChangeProposal?: (command: import("../goal-change.js").RecordPlanChangeProposalCommand) => import("../goal-change.js").RecordPlanChangeProposalReceipt | Promise<import("../goal-change.js").RecordPlanChangeProposalReceipt>;
       recordUserDecision?: (command: import("../goal-change.js").RecordUserDecisionCommand) => import("../goal-change.js").RecordUserDecisionReceipt | Promise<import("../goal-change.js").RecordUserDecisionReceipt>;
       applyPlanChange?: (command: import("../goal-change.js").ApplyPlanChangeCommand) => import("../goal-change.js").ApplyPlanChangeReceipt | Promise<import("../goal-change.js").ApplyPlanChangeReceipt>;
+      installArchitectureEvolutionPolicy?: (command: import("../architecture-evolution-policy.js").InstallArchitectureEvolutionPolicyRevisionCommand) => import("../architecture-evolution-policy.js").ArchitectureEvolutionPolicyInstallReceipt | Promise<import("../architecture-evolution-policy.js").ArchitectureEvolutionPolicyInstallReceipt>;
+      activateArchitectureEvolutionPolicy?: (command: import("../architecture-evolution-policy.js").ActivateProjectArchitectureEvolutionPolicyCommand) => import("../architecture-evolution-policy.js").ArchitectureEvolutionPolicyActivateReceipt | Promise<import("../architecture-evolution-policy.js").ArchitectureEvolutionPolicyActivateReceipt>;
+      submitRemediationPlanPatch?: (command: import("../remediation.js").SubmitRemediationPlanPatchCommand) => import("../remediation.js").SubmitRemediationPlanPatchReceipt | Promise<import("../remediation.js").SubmitRemediationPlanPatchReceipt>;
+      createRemediationTask?: (command: import("../remediation.js").CreateRemediationTaskCommand) => import("../remediation.js").CreateRemediationTaskReceipt | Promise<import("../remediation.js").CreateRemediationTaskReceipt>;
+      advanceRemediationTask?: (command: import("../remediation.js").AdvanceRemediationTaskCommand) => import("../remediation.js").AdvanceRemediationTaskReceipt | Promise<import("../remediation.js").AdvanceRemediationTaskReceipt>;
       defaultSubmit?: CommandReceipt;
       defaultBootstrap?: WorkspaceBootstrapReceipt;
       defaultInstall?: GovernanceInstallReceipt;
@@ -430,5 +435,43 @@ export class ScriptedControlEngine implements ControlEngine {
     this.applyPlanChangeCalls.push(command);
     if (this.options.applyPlanChange) return this.options.applyPlanChange(command);
     throw new Error("ScriptedControlEngine: no applyPlanChange behavior configured");
+  }
+
+  // P1-13 (scripted double: records calls; behaviors configured per test)      //
+
+  readonly installArchitectureEvolutionPolicyCalls: import("../architecture-evolution-policy.js").InstallArchitectureEvolutionPolicyRevisionCommand[] = [];
+  readonly activateArchitectureEvolutionPolicyCalls: import("../architecture-evolution-policy.js").ActivateProjectArchitectureEvolutionPolicyCommand[] = [];
+  readonly submitRemediationPlanPatchCalls: import("../remediation.js").SubmitRemediationPlanPatchCommand[] = [];
+  readonly createRemediationTaskCalls: import("../remediation.js").CreateRemediationTaskCommand[] = [];
+  readonly advanceRemediationTaskCalls: import("../remediation.js").AdvanceRemediationTaskCommand[] = [];
+
+  async installArchitectureEvolutionPolicy(command: import("../architecture-evolution-policy.js").InstallArchitectureEvolutionPolicyRevisionCommand): Promise<import("../architecture-evolution-policy.js").ArchitectureEvolutionPolicyInstallReceipt> {
+    this.installArchitectureEvolutionPolicyCalls.push(command);
+    if (this.options.installArchitectureEvolutionPolicy) return this.options.installArchitectureEvolutionPolicy(command);
+    throw new Error("ScriptedControlEngine: no installArchitectureEvolutionPolicy behavior configured");
+  }
+
+  async activateArchitectureEvolutionPolicy(command: import("../architecture-evolution-policy.js").ActivateProjectArchitectureEvolutionPolicyCommand): Promise<import("../architecture-evolution-policy.js").ArchitectureEvolutionPolicyActivateReceipt> {
+    this.activateArchitectureEvolutionPolicyCalls.push(command);
+    if (this.options.activateArchitectureEvolutionPolicy) return this.options.activateArchitectureEvolutionPolicy(command);
+    throw new Error("ScriptedControlEngine: no activateArchitectureEvolutionPolicy behavior configured");
+  }
+
+  async submitRemediationPlanPatch(command: import("../remediation.js").SubmitRemediationPlanPatchCommand): Promise<import("../remediation.js").SubmitRemediationPlanPatchReceipt> {
+    this.submitRemediationPlanPatchCalls.push(command);
+    if (this.options.submitRemediationPlanPatch) return this.options.submitRemediationPlanPatch(command);
+    throw new Error("ScriptedControlEngine: no submitRemediationPlanPatch behavior configured");
+  }
+
+  async createRemediationTask(command: import("../remediation.js").CreateRemediationTaskCommand): Promise<import("../remediation.js").CreateRemediationTaskReceipt> {
+    this.createRemediationTaskCalls.push(command);
+    if (this.options.createRemediationTask) return this.options.createRemediationTask(command);
+    throw new Error("ScriptedControlEngine: no createRemediationTask behavior configured");
+  }
+
+  async advanceRemediationTask(command: import("../remediation.js").AdvanceRemediationTaskCommand): Promise<import("../remediation.js").AdvanceRemediationTaskReceipt> {
+    this.advanceRemediationTaskCalls.push(command);
+    if (this.options.advanceRemediationTask) return this.options.advanceRemediationTask(command);
+    throw new Error("ScriptedControlEngine: no advanceRemediationTask behavior configured");
   }
 }

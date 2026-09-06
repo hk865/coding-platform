@@ -136,6 +136,11 @@ export class TrapControlEngine implements ControlEngine {
   recordPlanChangeProposal(): never { return this.trap("recordPlanChangeProposal"); }
   recordUserDecision(): never { return this.trap("recordUserDecision"); }
   applyPlanChange(): never { return this.trap("applyPlanChange"); }
+  installArchitectureEvolutionPolicy(): never { return this.trap("installArchitectureEvolutionPolicy"); }
+  activateArchitectureEvolutionPolicy(): never { return this.trap("activateArchitectureEvolutionPolicy"); }
+  submitRemediationPlanPatch(): never { return this.trap("submitRemediationPlanPatch"); }
+  createRemediationTask(): never { return this.trap("createRemediationTask"); }
+  advanceRemediationTask(): never { return this.trap("advanceRemediationTask"); }
 }
 
 export function defineConsoleContractSuite(
