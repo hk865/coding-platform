@@ -43,9 +43,9 @@ export function buildP109Job(intent: QueryJobIntentV1, runRef: QueryRunRef | nul
   };
 }
 
-export function buildP109Run(job: QueryJobV1, status: QueryRunV1["status"] = "pending", outcome: QueryRunV1["outcome"] = null): QueryRunV1 {
+export function buildP109Run(job: QueryJobV1, runId: string = P109_RUN, status: QueryRunV1["status"] = "pending", outcome: QueryRunV1["outcome"] = null): QueryRunV1 {
   return {
-    schemaVersion: 1, queryJobRef: queryJobRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId),
+    schemaVersion: 1, queryJobRef: queryJobRefFor(P109_PROJECT, P109_WORKSPACE, job.queryJobId), runId,
     status, startedAt: status === "pending" ? null : P109_SCHEMA, endedAt: outcome === null ? null : P109_SCHEMA, outcome,
   };
 }
