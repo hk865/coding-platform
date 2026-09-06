@@ -1,14 +1,14 @@
 # IMPLEMENTATION-HANDOFF — Agent Platform 产品代码根
 
 ```yaml
-ticket_id: P1-12 (parallel window 1b) / P1-16 (parallel window 1a, lanes in flight)
-status: P1-16 lanes A/B in flight (baseline a597eaf); P1-12 shared baseline e150447 committed, lanes A/B dispatched (limited authorization, 2026-09-06 continuous window — P1-09..P1-17 + G1..G5 authorized)
+ticket_id: 窗口 2 — P1-09 / P1-10 / P1-17（←16）+ P1-13（←12）next
+status: P1-16 VERIFIED (fa9389d, 852 tests, real-kernel 1/1, evidence p1-16-implementation-evidence.md); P1-12 VERIFIED (4ecc517, 914 tests, evidence p1-12-implementation-evidence.md); 窗口 1 全部关闭，G1 PASS 在档；下一窗口四票 shared baseline 待建（limited authorization, 2026-09-06 continuous window — P1-09..P1-17 + G1..G5 authorized)
 updated: 2026-09-06
 authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a) all done / (b) architecture tradeoff / (c) architecture-granularity confirmation; GitHub push still needs user authorization)
 next: merge P1-16 lanes A/B -> full acceptance (typecheck + 768-base zero-regression + dual-adapter suite + real SQLite + restart + validate-docs) -> evidence; then P1-12 (independent parallel window); then 09/10/17 (after 16) and 13 (after 12); then 11 (after 10) and 14 (after 11+12); then 15 (after 09+14+17); gates: G2 waits 05+06+16, G4 waits 09+11, G5 waits 13+14, G3 waits 07+15
 evidence: (pending — lanes in flight) full acceptance evidence will live in dev_docs/verification/p1-16-implementation-evidence.md
-shared_baseline: P1-16 = a597eaf（768 zero-regression 实测）；P1-12 = e150447（768 zero-regression 实测；97 files/768 passed, 8 files/42 tests auto-skip via isP112Ready probe）
-parallel_scope: 窗口 1 = P1-16（←06）与 P1-12（←07）并行，二者 blocked_by 均为已验收票；lane 均用隔离 worktree；重启+集成由 integrator 在各票 lane 合并后执行
+shared_baseline: P1-16 = a597eaf（验收 fa9389d）；P1-12 = e150447（验收 4ecc517）——两票均 914/852 tests 全绿、typecheck 0、validate-docs 13/13（P1-12 验收时全量基线 914）
+parallel_scope: 窗口 1 关闭（P1-16 + P1-12 均验收）；窗口 2 = P1-09/10/17（←08+16/08+16/05+16）与 P1-13（←12）——按 DAG 建共享基线后派发 lanes；lane 均隔离 worktree；重启+集成由 integrator 执行
 merge_surface_note: P1-16 只扩展同工作连续性 + 理由留痕 + 显式接续能力声明；不新增 Module（ARCHITECTURE §Plane）；不改 P1-03/04/05/06/07/08 冻结形状（零改动，只版本化追加）；4 个新事件（WorkContextBound/WorkRunLinked/ExecutionNoteRecorded/ContinuationRecorded）——KNOWN 与 handler 各 lane 同 commit；不改 Goal/CompletionPolicy；真实内核（coding-agent）连续性验证为本票 Acceptance 第 7 项，Fake 契约测试不能替代
 ```
 
