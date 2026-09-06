@@ -59,10 +59,10 @@ evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_doc
 
 | Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
 | --- | --- | --- | --- | --- |
-| A evidence intake + reducer | `p1-04-lane-a`（从本基线派生） | submitEvidence/reduceTask 完整实现（guard 顺序见入口文件头注；Evidence 不可变/CAS/完整幂等/零写入拒绝/Worker 不写 phase） | src/control/evidence-intake.ts、src/control/task-reducer.ts、tests/control/evidence-intake.test.ts、tests/control/task-reducer.test.ts | 未开始 |
+| A evidence intake + reducer | [p1-04-lane-a] @ f10b4de | submitEvidence/reduceTask 完整实现（guard 1-6；Evidence 不可变/CAS/完整幂等/零写入；Worker 不写 phase；outcome_unknown 副作用映射裁决） | src/control/evidence-intake.ts、src/control/task-reducer.ts、tests/control/evidence-intake.test.ts、tests/control/task-reducer.test.ts | ✅ 20/20（主分支 2db3df5 已合并；契约套件自证） |
 | B VerificationEngine | `p1-04-lane-b`（从本基线派生） | verify() 完整实现：goal/workspace/plan/pins/policy 解析→纯 compileVerificationPlan→仅 predicate 检查（reviewer 绝不执行）→observations；拒绝表 not_found/dangling_ref/unknown_check/no_check_coverage/budget_exhausted；绝不写 ledger | src/verification/verification-engine.ts、tests/verification/verification-engine.test.ts | ✅ 10/10（commit 9a1adc9；主分支 a6e1e31 已合并；契约套件 verify 断言自证） |
 | C ReviewContext + ReviewerPort | `p1-04-lane-c`（从本基线派生） | assemble 完整实现：有界 ReviewPacket（材料/摘要/字节上限、noFullTranscript）、body-first vault put、确定性拒绝（旧 pin out_of_scope/forbidden/stale workspace/budget/not_semantic/超界）零写入；ReviewerPort 用共享替身 | src/context/review-context-compiler.ts、tests/context/review-context-compiler.test.ts | ✅ 4/4（commit e804da3 由 integrator 接管；主分支 f345f4c 已合并；双适配器 ReviewContext 套件 2/2 PASS） |
-| D ReadModel 投影 + 重启证据 | `p1-04-lane-d`（从本基线派生） | EvidenceAdmitted/TaskReductionUpdated 投影 + taskVerification 查询（双适配器，重建等价/隔离/freshness/unsupported stall）+ 重启证据收集 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、tests/read-model/p1-04*.test.ts、tests/sqlite-read-model/p1-04*.test.ts、tests/restart/p1-04-*.ts（含 evidence） | 未开始 |
+| D ReadModel 投影 + 重启证据 | [p1-04-lane-d] @ a18e1ad | EvidenceAdmitted/TaskReductionUpdated 双适配器投影 + taskVerification（事件重建等价/全键隔离/not_ready≠not_found/applicability 纯函数重算） | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、tests/read-model/p1-04-verification-projection.test.ts、tests/sqlite-read-model/p1-04-verification-projection.test.ts | ✅ 16/16（主分支已合并） |
 
 integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 schema/接口/共享 fixture）、`src/ledger/**`、`src/sqlite-ledger/**`、`src/control/control-engine.ts`、`src/harness/**`、`tests/contract-suite/**`、`tests/integration/**`、文档与状态记录。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结签名（如有缺口：提交具体建议给 integrator 统一修改基线并通知消费者）。子 Agent 从实际读文件开始，不等待派发者；允许测试命令：`pnpm vitest run <自身路径>`、`pnpm typecheck`。
 
@@ -71,9 +71,9 @@ integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 s
 | 命令（product root） | 结果 |
 | --- | --- |
 | `pnpm typecheck` | PASS 0 errors（含全部新契约/夹具/套件/入口骨架） |
-| `pnpm vitest run`（全量） | 44 files / 395 tests PASS（P1-00…03 基线零回归；P1-04 套件/集成接线暂红：入口为冻结 stub，属预期，验收前由 lane 实现转绿） |
-| `pnpm vitest run tests/restart/evidence/p1-04-evidence.test.ts` | 1 skipped（isP104Ready() 探针自动跳过——实现落地后自动启用，不假 PASS） |
-| `node dev_docs/verification/validate-docs.mjs` | （验收阶段执行） |
+| `pnpm vitest run`（全量） | 55 files / 485 tests PASS（P1-00…03 基线 395 零回归 + P1-04 新增 90；命令明细见 p1-04-implementation-evidence.md） |
+| `pnpm vitest run tests/restart/evidence/p1-04-evidence.test.ts` | 1 PASS（P1-04-EVIDENCE JSON 证据块，可重复；探针自动启用） |
+| `node dev_docs/verification/validate-docs.mjs` | 12/12 PASS |
 
 设计理由摘要（详见上方冻结语义）：Evidence=不可变单次聚合 + 派生 applicability（历史零改写）；evidence-intake 单事务携带 index 保证"证据+绑定锚"原子可见；claim 中性（INCONCLUSIVE+不参与集）——"报告"与"完成"分离；verification-plan=内容寻址纯函数（无模型/无默认）；supersede=需求键+同修订 tuple+后置 PASS；reducer=纯公式（Control 唯一写 phase=TaskReduction；Goal 归约留给 P1-05）；ReviewPacket=显式有界（材料数/summary/packet 字节，无 transcript；body-first）；重启等价=单事务+事件重建；不重写 P1-03 冻结的 TaskContextPort（ReviewContextPort 独立版本化扩展）。
 
