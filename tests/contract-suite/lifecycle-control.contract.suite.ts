@@ -40,7 +40,7 @@ export function defineLifecycleControlContractSuite(
       });
 
       it("same intentId under another identity is CAS-rejected", async () => {
-        const other = await h.submitControl(buildP110SubmitControlCommand(buildP110Intent({ intentId: scen.steer.intentId, kind: "pause" }), { commandId: "p110-cmd-cancel-other", idempotencyKey: "other-ident" }));
+        const other = await h.submitControl(buildP110SubmitControlCommand(buildP110Intent({ intentId: scen.steer.intentId, kind: "pause", scope: scen.steer.scope }), { commandId: "p110-cmd-cancel-other", idempotencyKey: "other-ident", projectId: scen.steer.projectId }));
         expect(other.status).toBe("rejected");
         if (other.status === "rejected") expect(other.code).toBe("revision_conflict");
       });
@@ -60,10 +60,11 @@ export function defineLifecycleControlContractSuite(
         // Late-ack guard: ack for an intent whose scope run is NOT the current
         // run is rejected by control (stale_ack) — exercised in lane tests.
         const lateAck = await h.recordSafePointAck(buildP110RecordAckCommand(
-          buildP110Ack({ ackId: "ack-late", intentRef: { aggregateType: "ControlIntent", projectId: P108_PROJECT_A, workspaceId: P110_WORKSPACE, intentId: p110IntentId("pause", 1) }, runRef: p110RunRef("run-unknown"), applied: true }),
+          buildP110Ack({ ackId: "ack-late", intentRef: { aggregateType: "ControlIntent", projectId: P108_PROJECT_A, workspaceId: P110_WORKSPACE, intentId: p110IntentId("pause", 1) }, runRef: p110RunRef("run-unknown", scen.world.projectA.workRun.goalId), applied: true }),
           2, { commandId: "p110-cmd-ack-late" },
         ));
-        expect(lateAck.status).toBe("committed"); // intent exists; run mismatch guard belongs to control lane — see lane tests
+        expect(lateAck.status).toBe("rejected"); // stale_ack: the ack run is NOT the intent scope run (late-ack guard)
+        if (lateAck.status === "rejected") expect(lateAck.code).toBe("stale_ack");
       });
     });
 

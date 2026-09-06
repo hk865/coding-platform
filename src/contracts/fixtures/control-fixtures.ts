@@ -16,8 +16,8 @@ export const P110_GOAL = "goal-p110-1";
 export const P110_TASK = "task-p110-work";
 export const P110_SCHEMA = "2026-09-06T00:00:00.000Z";
 
-export function p110RunRef(runId: string): RunRef {
-  return { aggregateType: "Run", projectId: P110_PROJECT, goalId: P110_GOAL, runId };
+export function p110RunRef(runId: string, goalId: string = P110_GOAL): RunRef {
+  return { aggregateType: "Run", projectId: P110_PROJECT, goalId, runId };
 }
 
 export function p110IntentId(kind: ControlKind, seq: number): string {

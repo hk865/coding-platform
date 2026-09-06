@@ -298,6 +298,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   private readonly p108GoalPhase = new Map<string, import("../contracts/goal-phase.js").GoalPhase>();
   /** P1-16 LANE-A: full-scope key -> WorkContextBinding snapshot (binding rows). */
   private readonly p116Bindings = new Map<string, import("../contracts/context-continuity.js").WorkContextBindingSnapshot>();
+  private readonly p110IntentRows = new Map<string, { ref: import("../contracts/control-intent.js").ControlIntentRef; scope: { goalId: string | null; taskId: string | null }; kind: import("../contracts/control-intent.js").ControlKind; desiredState: string; status: import("../contracts/control-intent.js").ControlIntentStatus; ackCount: number; cursor: CommitCursor }[]>();
   /** P1-16 LANE-A: full-scope key -> ordered ExecutionNote rows (notes part). */
   private readonly p116Notes = new Map<string, import("../contracts/context-continuity.js").WorkContextNoteRow[]>();
   /** LANE-B: (projectId, workspaceId, goalId) -> PlanMatrixView. */
@@ -447,6 +448,9 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       // P1-12 architecture-inspection projections (4 new events; handler +
       // isHandledEventType land in the SAME lane commit).
       this.applyP112Inspection(event, positioned.cursor);
+
+      // P1-10 control projections (desired state + safe-point acks).
+      this.applyP110(event, positioned.cursor);
 
       // Known non-goal / non-plan / non-dispatch events
       // (ProjectBootstrapped, WorkspaceBootstrapped, CompletionPolicyInstalled,
@@ -2640,9 +2644,37 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
   }
 
-  /** P1-10 LANE-A/LANE-B stub: control timeline view (display only; desired vs current separated). */
+  /** P1-10: control timeline view (display only; desired vs current separated). */
   async controlTimelineView(query: import("../contracts/control-intent.js").ControlTimelineViewQuery): Promise<import("../contracts/control-intent.js").ControlTimelineViewResult> {
-    throw new Error("P1-10 lane A/B: controlTimelineView not implemented yet");
+    const observedCursor = this.observedCursor;
+    if (observedCursor === null) return { status: "not_ready", observedCursor: null };
+    const key = consoleWorkspaceKey(query.projectId, query.workspaceId);
+    const rows = this.p110IntentRows.get(key) ?? [];
+    const filtered = rows.filter((r2) => (query.goalId === undefined || r2.scope.goalId === query.goalId) && (query.taskId === undefined || r2.scope.taskId === query.taskId));
+    if (filtered.length === 0) return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId };
+    return {
+      status: "ready",
+      entries: filtered.map((r2) => ({ intentRef: r2.ref, kind: r2.kind, desiredState: r2.desiredState, status: r2.status, ackCount: r2.ackCount, sourceCursor: r2.cursor })),
+      sourceCursor: filtered[filtered.length - 1]!.cursor,
+    };
+  }
+
+  // P1-10 LANE-A/LANE-B hook: fold ControlIntentRecorded/SafePointAcknowledged.
+  private applyP110(event: DomainEvent, cursor: CommitCursor): void {
+    if (event.eventType === "ControlIntentRecorded") {
+      const ev = event as import("../contracts/control-intent.js").ControlIntentRecordedEvent;
+      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
+      const rows = this.p110IntentRows.get(key) ?? [];
+      rows.push({ ref: { aggregateType: "ControlIntent", projectId: ev.projectId, workspaceId: ev.workspaceId, intentId: ev.payload.intent.intentId } as import("../contracts/control-intent.js").ControlIntentRef, scope: { goalId: ev.payload.intent.scope.goalId, taskId: ev.payload.intent.scope.taskId }, kind: ev.payload.intent.kind, desiredState: ev.payload.intent.desiredState, status: ev.payload.intent.status, ackCount: 0, cursor });
+      this.p110IntentRows.set(key, rows);
+    } else if (event.eventType === "SafePointAcknowledged") {
+      const ev = event as import("../contracts/control-intent.js").SafePointAcknowledgedEvent;
+      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
+      const rows = this.p110IntentRows.get(key) ?? [];
+      const hit = rows.find((r2) => r2.ref.intentId === ev.payload.ack.intentRef.intentId);
+      if (hit) { hit.status = ev.payload.status; hit.ackCount += 1; hit.cursor = cursor; }
+      this.p110IntentRows.set(key, rows);
+    }
   }
 
   /** P1-09 LANE-A/LANE-B stub: query job view (display only). */
@@ -2650,9 +2682,34 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     throw new Error("P1-09 lane A/B: queryJobView not implemented yet");
   }
 
-  /** P1-17 LANE-A/LANE-B stub: completed-work selection source view (display only; composed from the P1-16 work-context stores). */
+  /** P1-17: completed-work selection source view (display only; composed from the P1-16 work-context stores). */
   async completedWorkView(query: import("../contracts/completed-work-context.js").CompletedWorkViewQuery): Promise<import("../contracts/completed-work-context.js").CompletedWorkViewResult> {
-    throw new Error("P1-17 lane A/B: completedWorkView not implemented yet");
+    const observedCursor = this.observedCursor;
+    if (observedCursor === null) {
+      return { status: "not_ready", observedCursor: null };
+    }
+    const rows: import("../contracts/completed-work-context.js").CompletedWorkViewRow[] = [];
+    for (const binding of this.p116Bindings.values()) {
+      if (binding.ref.projectId !== query.projectId || binding.ref.workspaceId !== query.workspaceId) continue;
+      if (query.goalId !== undefined && binding.binding.goalId !== query.goalId) continue;
+      const refKey = canonicalJson(binding.ref);
+      const notes = this.p116Notes.get(refKey) ?? [];
+      const continuations = this.p116ContinuationRows.get(refKey) ?? [];
+      const latestCursor = notes.length > 0 ? notes[notes.length - 1]!.sourceCursor : continuations.length > 0 ? observedCursor : observedCursor;
+      rows.push({
+        workRef: binding.ref,
+        workKind: binding.binding.workKind,
+        goalId: binding.binding.goalId,
+        taskId: binding.binding.taskId,
+        noteCount: notes.length,
+        continuationCount: continuations.length,
+        sourceCursor: latestCursor,
+      });
+    }
+    if (rows.length === 0) {
+      return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId };
+    }
+    return { status: "ready", rows, sourceCursor: observedCursor };
   }
 
   /** P1-12 LANE-A/LANE-B: architecture inspection view (inspections + findings (LANE-A) + briefs + proposals (LANE-B) per (projectId, workspaceId); display only). */
@@ -2803,7 +2860,9 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       eventType === "ArchitectureInspectionRecorded" ||
       eventType === "ArchitectureFindingRecorded" ||
       eventType === "ArchitectureDecisionBriefRecorded" ||
-      eventType === "ArchitectureCandidateProposalRecorded"
+      eventType === "ArchitectureCandidateProposalRecorded" ||
+      eventType === "ControlIntentRecorded" ||
+      eventType === "SafePointAcknowledged"
     );
   }
 }

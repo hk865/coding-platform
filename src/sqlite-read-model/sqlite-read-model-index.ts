@@ -404,6 +404,13 @@ CREATE TABLE IF NOT EXISTS architecture_brief_rows (
   PRIMARY KEY (scope_key)
 ) WITHOUT ROWID;
 
+CREATE TABLE IF NOT EXISTS control_intent_rows (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS architecture_proposal_rows (
   scope_key     TEXT NOT NULL,
   entry_json    TEXT NOT NULL,
@@ -1853,7 +1860,9 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       eventType === "ArchitectureInspectionRecorded" ||
       eventType === "ArchitectureFindingRecorded" ||
       eventType === "ArchitectureDecisionBriefRecorded" ||
-      eventType === "ArchitectureCandidateProposalRecorded"
+      eventType === "ArchitectureCandidateProposalRecorded" ||
+      eventType === "ControlIntentRecorded" ||
+      eventType === "SafePointAcknowledged"
     );
   }
 
@@ -1953,6 +1962,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     this.applyP116Context(event, cursor);
     // P1-12 architecture-inspection projections.
     this.applyP112Inspection(event, cursor);
+    this.applyP110(event, cursor);
     // Known non-goal / non-plan / non-dispatch events (ProjectBootstrapped,
     // WorkspaceBootstrapped, CompletionPolicyInstalled,
     // ArchitectureBaselineInstalled, CompletionPolicyActivated,
@@ -2602,9 +2612,45 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return { status: "ready", binding, notes, continuations, sourceCursor: observedCursor! };
   }
 
-  /** P1-10 LANE-A/LANE-B stub: control timeline view (display only; desired vs current separated). */
+  /** P1-10 LANE-A/LANE-B stub: control timeline view — TODO sqlite impl. */
   async controlTimelineView(query: import("../contracts/control-intent.js").ControlTimelineViewQuery): Promise<import("../contracts/control-intent.js").ControlTimelineViewResult> {
-    throw new Error("P1-10 lane A/B: controlTimelineView (sqlite) not implemented yet");
+    const observedCursor = this.readCheckpoint();
+    if (observedCursor === null) return { status: "not_ready", observedCursor: null };
+    // sqlite impl below (replaces this stub in the same adapter)
+    const key = consoleWorkspaceKey(query.projectId, query.workspaceId);
+    const rows = this.p110ReadRows(key);
+    if (rows.length === 0) return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId };
+    const filtered = rows.filter((r2) => (query.goalId === undefined || r2.scope.goalId === query.goalId) && (query.taskId === undefined || r2.scope.taskId === query.taskId));
+    if (filtered.length === 0) return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId };
+    return { status: "ready", entries: filtered.map((r2) => ({ intentRef: r2.ref, kind: r2.kind, desiredState: r2.desiredState, status: r2.status, ackCount: r2.ackCount, sourceCursor: r2.cursor })), sourceCursor: filtered[filtered.length - 1]!.cursor };
+  }
+
+  private p110ReadRows(key: string): { ref: import("../contracts/control-intent.js").ControlIntentRef; scope: { goalId: string | null; taskId: string | null }; kind: import("../contracts/control-intent.js").ControlKind; desiredState: string; status: import("../contracts/control-intent.js").ControlIntentStatus; ackCount: number; cursor: import("../contracts/command-event.js").CommitCursor }[] {
+    const stmt = this.db.prepare("SELECT entry_json FROM control_intent_rows WHERE scope_key = ?");
+    const row = stmt.get(key) as { entry_json: string } | undefined;
+    return row ? (JSON.parse(row.entry_json) as { ref: import("../contracts/control-intent.js").ControlIntentRef; scope: { goalId: string | null; taskId: string | null }; kind: import("../contracts/control-intent.js").ControlKind; desiredState: string; status: import("../contracts/control-intent.js").ControlIntentStatus; ackCount: number; cursor: import("../contracts/command-event.js").CommitCursor }[]) : [];
+  }
+
+  private p110WriteRows(key: string, rows: unknown[], cursor: import("../contracts/command-event.js").CommitCursor): void {
+    const stmt = this.db.prepare("INSERT OR REPLACE INTO control_intent_rows (scope_key, entry_json, source_cursor) VALUES (?, ?, ?)");
+    stmt.run(key, JSON.stringify(rows), String(cursor));
+  }
+
+  private applyP110(event: DomainEvent, cursor: import("../contracts/command-event.js").CommitCursor): void {
+    if (event.eventType === "ControlIntentRecorded") {
+      const ev = event as import("../contracts/control-intent.js").ControlIntentRecordedEvent;
+      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
+      const rows = this.p110ReadRows(key);
+      rows.push({ ref: { aggregateType: "ControlIntent", projectId: ev.projectId, workspaceId: ev.workspaceId, intentId: ev.payload.intent.intentId } as import("../contracts/control-intent.js").ControlIntentRef, scope: { goalId: ev.payload.intent.scope.goalId, taskId: ev.payload.intent.scope.taskId }, kind: ev.payload.intent.kind, desiredState: ev.payload.intent.desiredState, status: ev.payload.intent.status, ackCount: 0, cursor });
+      this.p110WriteRows(key, rows, cursor);
+    } else if (event.eventType === "SafePointAcknowledged") {
+      const ev = event as import("../contracts/control-intent.js").SafePointAcknowledgedEvent;
+      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
+      const rows = this.p110ReadRows(key);
+      const hit = rows.find((r2) => r2.ref.intentId === ev.payload.ack.intentRef.intentId);
+      if (hit) { hit.status = ev.payload.status; hit.ackCount += 1; hit.cursor = cursor; }
+      this.p110WriteRows(key, rows, cursor);
+    }
   }
 
   /** P1-09 LANE-A/LANE-B stub: query job view (display only). */
@@ -2612,9 +2658,61 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     throw new Error("P1-09 lane A/B: queryJobView (sqlite) not implemented yet");
   }
 
-  /** P1-17 LANE-A/LANE-B stub: completed-work selection source view (display only; composed from the P1-16 work-context stores). */
+  /** P1-17: completed-work selection source view (display only; composed from the P1-16 work-context stores). */
   async completedWorkView(query: import("../contracts/completed-work-context.js").CompletedWorkViewQuery): Promise<import("../contracts/completed-work-context.js").CompletedWorkViewResult> {
-    throw new Error("P1-17 lane A/B: completedWorkView (sqlite) not implemented yet");
+    const observedCursor = this.readCheckpoint();
+    if (observedCursor === null) {
+      return { status: "not_ready", observedCursor: null };
+    }
+    const scopeKey = consoleWorkspaceKey(query.projectId, query.workspaceId);
+    const rows: import("../contracts/completed-work-context.js").CompletedWorkViewRow[] = [];
+    for (const [key, entry] of this.scanP116Bindings(scopeKey)) {
+      const binding = entry as import("../contracts/context-continuity.js").WorkContextBindingSnapshot;
+      if (query.goalId !== undefined && binding.binding.goalId !== query.goalId) continue;
+      const notes = this.readP116Notes(key);
+      const continuations = this.readP116Continuations(key);
+      const latestCursor = notes.length > 0 ? notes[notes.length - 1]!.sourceCursor : observedCursor;
+      rows.push({
+        workRef: binding.ref,
+        workKind: binding.binding.workKind,
+        goalId: binding.binding.goalId,
+        taskId: binding.binding.taskId,
+        noteCount: notes.length,
+        continuationCount: continuations.length,
+        sourceCursor: latestCursor,
+      });
+    }
+    if (rows.length === 0) {
+      return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId };
+    }
+    return { status: "ready", rows, sourceCursor: observedCursor };
+  }
+
+  /** P1-17 helpers: scan the work_context tables for a workspace scope. */
+  private scanP116Bindings(scopeKey: string): [string, unknown][] {
+    // Full-scope keys are canonicalJson refs (not workspace-prefix-sortable), so
+    // scan the whole table + JS filter (same tactic as the P1-08 agent scanner).
+    const out: [string, unknown][] = [];
+    const stmt = this.db.prepare("SELECT scope_key, entry_json FROM work_context_binding");
+    for (const row of stmt.all() as { scope_key: string; entry_json: string }[]) {
+      const binding = JSON.parse(row.entry_json) as import("../contracts/context-continuity.js").WorkContextBindingSnapshot;
+      if (consoleWorkspaceKey(binding.ref.projectId, binding.ref.workspaceId) === scopeKey) {
+        out.push([row.scope_key, binding]);
+      }
+    }
+    return out;
+  }
+
+  private readP116Notes(key: string): import("../contracts/context-continuity.js").WorkContextNoteRow[] {
+    const stmt = this.db.prepare("SELECT entry_json FROM work_context_notes WHERE scope_key = ?");
+    const row = stmt.get(key) as { entry_json: string } | undefined;
+    return row ? (JSON.parse(row.entry_json) as import("../contracts/context-continuity.js").WorkContextNoteRow[]) : [];
+  }
+
+  private readP116Continuations(key: string): import("../contracts/context-continuity.js").ContinuationRecordSnapshot[] {
+    const stmt = this.db.prepare("SELECT entry_json FROM work_context_continuations WHERE scope_key = ?");
+    const row = stmt.get(key) as { entry_json: string } | undefined;
+    return row ? (JSON.parse(row.entry_json) as import("../contracts/context-continuity.js").ContinuationRecordSnapshot[]) : [];
   }
 
   /** P1-12 LANE-A/LANE-B: architecture inspection view (display only) —

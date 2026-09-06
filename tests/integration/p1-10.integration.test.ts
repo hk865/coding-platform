@@ -36,6 +36,7 @@ describe.skipIf(!READY)("P1-10 real SQLite integration", () => {
     try {
       const thSql = toP1_10Harness(sql as unknown as P1_10HarnessLike);
       await runP110ControlScenario(th);
+      await runP110ControlScenario(thSql);
       const a = await th.controlTimelineView({ projectId: P110_PROJECT, workspaceId: P110_WORKSPACE });
       const b = await thSql.controlTimelineView({ projectId: P110_PROJECT, workspaceId: P110_WORKSPACE });
       expect(JSON.stringify(a)).toBe(JSON.stringify(b));
