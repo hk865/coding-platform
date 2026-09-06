@@ -30,6 +30,7 @@ import {
   P106_BUDGET_V1,
   P106_DECLARED_PERMISSIONS_V1,
   P106_GOAL,
+  P106_PLAN_ID,
   P106_PROJECT,
   P106_SCHEMA,
   P106_TASK_ID,
@@ -52,6 +53,7 @@ import { buildRunFactCommand, rebaseScriptForRun, FAKE_RUNTIME_SCRIPT_CRASHED_V1
 import { p106PlanRefFor } from "./p1-06-harness.js";
 import { handoffPacketRefFor as hpr } from "../../src/contracts/handoff.js";
 import { FakeHandoffControlPort } from "../../src/contracts/testing/handoff-control.double.js";
+import { sha256Hex } from "../../src/contracts/fingerprint.js";
 import { buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand } from "../../src/contracts/fixtures/evidence-fixtures.js";
 import { P106_OBL_HANDOFF, P106_TASK_ID as P106_TASK, P106_VR_DYNAMIC, P106_VR_STATIC } from "../../src/contracts/fixtures/handoff-fixtures.js";
 
@@ -293,12 +295,30 @@ export function defineHandoffContractSuite(factory: P1_06HarnessFactory): void {
     // ------------------------------------------------------------------ //
 
     describe("evaluateReplacementEligibility (pure)", () => {
+      // Minimal accepted-plan snapshot: the handoff task is dispatchable
+      // (work/active/pending) with no DAG edges — enough for the pure function.
+      const p106MinimalPlan = (): import("../../src/contracts/plan.js").PlanRevisionSnapshot => ({
+        ref: p106PlanRefFor(P106_PROJECT),
+        revision: 1,
+        schemaVersion: 1,
+        goalRef: { aggregateType: "Goal", projectId: P106_PROJECT, goalId: P106_GOAL },
+        planId: P106_PLAN_ID,
+        planRevision: 1,
+        acceptedAt: P106_SCHEMA,
+        effectiveCompletionPolicy: { ref: { aggregateType: "CompletionPolicyRevision", projectId: P106_PROJECT, policyId: "policy-completion-mvp", revision: 1 }, digest: "5".repeat(64) },
+        effectiveArchitectureBaseline: { ref: { aggregateType: "ArchitectureBaselineRevision", projectId: P106_PROJECT, baselineId: "baseline-architecture-mvp", revision: 1 }, digest: "6".repeat(64) },
+        stages: [{ stageId: "stage-handoff", title: "handoff" }],
+        tasks: [{ taskId: P106_TASK_ID, stageId: "stage-handoff", title: "handoff target", requirementLevel: "required", taskKind: "work", disposition: "active", phase: "pending", scope: { kind: "stage", stageId: "stage-handoff" } }],
+        obligations: [],
+        taskHierarchy: { parentOf: [] },
+        executionDag: { dependsOn: [] },
+      });
       const base = () => ({
         projectId: P106_PROJECT,
         goalId: P106_GOAL,
         goalDesiredState: "active",
         goalActivePlanRevision: p106PlanRefFor(P106_PROJECT),
-        plan: null as never,
+        plan: p106MinimalPlan(),
         taskId: P106_TASK_ID,
         priorLease: { status: "leased" as const, holderRunId: "run-a", attemptId: "att-a", grantedAt: P106_SCHEMA, expiresAt: null },
         priorAttempt: { status: "ended" as const, endedAt: P106_SCHEMA, endOutcome: "crashed" as const },
@@ -524,7 +544,11 @@ export function defineHandoffContractSuite(factory: P1_06HarnessFactory): void {
             }),
           )).status,
         ).toBe("committed");
-        // A's late "completed" event targeting A's ENDED run.
+        // A's late "completed" event targeting A's ENDED run (with A's CURRENT
+        // run revision so the after_terminal guard — NOT the CAS window — decides).
+        const aRunNow = await hh.ledger.load(runRefFor(sc.projectId, P106_GOAL, "run-a-7"));
+        expect(aRunNow.status).toBe("found");
+        const aRunRevision = aRunNow.status === "found" ? (aRunNow.snapshot as { revision: number }).revision : 99;
         const late = await hh.runFact(
           buildRunFactCommand({
             commandId: "cmd-late-7",
@@ -532,18 +556,19 @@ export function defineHandoffContractSuite(factory: P1_06HarnessFactory): void {
             submittedAt: P106_SCHEMA,
             projectId: sc.projectId,
             runId: "run-a-7",
-            expectedRevision: 99,
+            expectedRevision: aRunRevision,
             fact: { kind: "runtime_event", event: { eventType: "run_completed", schemaVersion: 1 as const, eventId: "rt-late-7", runRef: runRefFor(sc.projectId, P106_GOAL, "run-a-7"), sequence: 3, occurredAt: P106_SCHEMA, payload: { kind: "completed", exitCode: 0 } } },
           }),
         );
         expect(late.status).toBe("rejected");
         if (late.status === "rejected") expect(late.code).toBe("after_terminal");
-        // B's run is untouched: still running (no facts yet), lease held by B.
+        // B's run is untouched: still at starting (claim only; no facts, NOT
+        // advanced/regressed by A's late fact), lease held by B.
         const bRun = await hh.ledger.load(runRefFor(sc.projectId, P106_GOAL, "run-b-7"));
         expect(bRun.status).toBe("found");
         if (bRun.status === "found") {
           const snap = bRun.snapshot as { status: string; lastEventSeq: number };
-          expect(snap.status).toBe("running");
+          expect(snap.status).toBe("starting");
           expect(snap.lastEventSeq).toBe(0);
         }
         const lease = await hh.ledger.load(taskLeaseRefFor(sc.projectId, P106_GOAL, P106_TASK_ID));
@@ -836,6 +861,7 @@ export function defineHandoffContractSuite(factory: P1_06HarnessFactory): void {
           pinnedCompletionPolicy: sc.pinnedCompletionPolicy!,
           pinnedArchitectureBaseline: sc.pinnedArchitectureBaseline!,
         });
+        const VPLAN = { planId: "vp-handoff", planDigest: sha256Hex("vp-handoff-13") };
         const evidenceA = buildEvidenceV1({
           evidenceId: "ev-trace-a-13",
           kind: "observation",
@@ -847,7 +873,7 @@ export function defineHandoffContractSuite(factory: P1_06HarnessFactory): void {
           runRef: aRun,
           checkId: "static-check-lint",
           anchor,
-          verificationPlanRef: { planId: "vp-handoff", planDigest: "digest-handoff" },
+          verificationPlanRef: VPLAN,
         });
         const evidenceB = buildEvidenceV1({
           evidenceId: "ev-trace-b-13",
@@ -860,7 +886,7 @@ export function defineHandoffContractSuite(factory: P1_06HarnessFactory): void {
           runRef: bRun,
           checkId: "dynamic-check-tests",
           anchor,
-          verificationPlanRef: { planId: "vp-handoff", planDigest: "digest-handoff" },
+          verificationPlanRef: VPLAN,
         });
         // A and B evidence share the SAME anchor tuple (same task revision).
         expect((await hh.submitEvidence(buildSubmitEvidenceCommand({ commandId: "cmd-ev-a-13", evidence: evidenceA, correlationId: "corr-ev-a-13", submittedAt: P106_SCHEMA }))).status).toBe("committed");
