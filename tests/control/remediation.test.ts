@@ -4,47 +4,32 @@
  * the submitted commit for fold-equality).
  *
  * Setup: bootstrap + goal + CP/AB governance via p111BootstrapGoalGovernance
- * (real ledger), plus the delta finding recorded through
- * buildRecordArchitectureFindingCommand (real engine + real ledger).
- *
- * PROVISIONING NOTE (baseline gap): the shared governance-install/activate
- * validators (validateGovernanceInstallCommit / validateGovernanceActivateCommit
- * in src/contracts/ledger-validation.ts) only accept CompletionPolicy /
- * ArchitectureBaseline events — the third ArchitectureEvolutionPolicy kind is
- * NOT handled there, so buildP113InstallLedgerCommit / buildP113ActivateLedgerCommit
- * are rejected as invalid_commit. Because the evolution policy cannot be
- * installed/activated through a real commit in the current baseline, this test
- * provisions the active evolution-policy precondition via a small test-double
- * ledger that SEEDS the policy-revision + project-active-ref snapshots through
- * its load() seam (all other loads/commits/events stay on the real
- * InMemoryLedger). The remediation engine still reads the policy through
- * resolveProjectArchitectureEvolutionPolicy and recomputes the verdict against
- * the real fixture content; the remediation patch/task/advance commits still go
- * through the real shared remediation ledger validators. (The validator gap is
- * separately reported to the integrator; it also blocks lane A's install/activate
- * engine and requires extending those two validators for the third kind.)
+ * (real ledger), the active ArchitectureEvolutionPolicy installed + activated
+ * through the REAL third-branch ledger validators (buildP113InstallLedgerCommit /
+ * buildP113ActivateLedgerCommit — lane A merged into main closed the validator
+ * gap), and the delta finding recorded through buildRecordArchitectureFindingCommand.
  *
  * NOTE on the finding id: the P1-13 PATCH fixture (buildP113PlanPatchV1) pins
  * findingRef at P113_FINDING ("finding-p113-1"), whereas buildP112DeltaFinding
- * uses P112_FINDING_DELTA ("finding-p112-delta"). The integrator pre-ruling loads
- * patch.findingRef as the ONLY finding fact surface, so the recorded finding MUST
- * be at P113_FINDING for a patch referencing that fixture.
+ * uses P112_FINDING_DELTA ("finding-p112-delta"). The integrator ruled the
+ * scenario finding be recorded at P113_FINDING (p1-13-harness), so this suite
+ * records the delta finding at P113_FINDING as well.
  */
 import { describe, expect, it } from "vitest";
-import type { StateLedger, LedgerCommit, LedgerCommitReceipt, AggregateRef, AggregateSnapshot, SnapshotResult } from "../../src/contracts/ledger.js";
+import type { StateLedger, LedgerCommit, LedgerCommitReceipt } from "../../src/contracts/ledger.js";
 import { createControlEngine } from "../../src/control/control-engine.js";
 import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
 import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
-import { canonicalJson } from "../../src/contracts/fingerprint.js";
 import { p111BootstrapGoalGovernance } from "../contract-suite/p1-11-harness.js";
 import {
   ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1,
-  p113PolicyRef,
-  p113ActiveRef,
-  P113_POLICY,
+  buildP113InstallCommand,
+  buildP113ActivateCommand,
+  buildP113InstallLedgerCommit,
+  buildP113ActivateLedgerCommit,
+  p113PolicyPin,
   P113_PROJECT,
 } from "../../src/contracts/fixtures/architecture-evolution-policy-fixtures.js";
-import { architectureEvolutionPolicyContentDigest } from "../../src/contracts/architecture-evolution-policy.js";
 import {
   P113_WORKSPACE,
   P113_FINDING,
@@ -70,7 +55,7 @@ const FIXED = FIXED_ISO_2026_09_05;
 const PROJECT = P113_PROJECT;
 const WS = P113_WORKSPACE;
 
-/** Leader-only recorder over the real InMemoryLedger (captures submitted batches). */
+/** Recorder over the real InMemoryLedger (captures the submitted batch). */
 class RecordingLedger extends InMemoryLedger {
   commits: LedgerCommit[] = [];
   override async commit(batch: LedgerCommit): Promise<LedgerCommitReceipt> {
@@ -79,42 +64,10 @@ class RecordingLedger extends InMemoryLedger {
   }
 }
 
-/** Recorder + active evolution-policy precondition (seeded through load()). */
-class SeededLedger extends RecordingLedger {
-  private readonly seeded = new Map<string, AggregateSnapshot>();
-  constructor() {
-    super();
-    const policyRef = p113PolicyRef();
-    const activeRef = p113ActiveRef();
-    const contentDigest = architectureEvolutionPolicyContentDigest(ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1);
-    this.seeded.set(canonicalJson(activeRef), {
-      ref: activeRef,
-      projectId: PROJECT,
-      activeRevision: policyRef,
-      revision: 1,
-    });
-    this.seeded.set(canonicalJson(policyRef), {
-      ref: policyRef,
-      revision: 1,
-      schemaVersion: 1,
-      policyId: P113_POLICY,
-      contentRevision: 1,
-      content: ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1.content,
-      contentDigest,
-      installedAt: FIXED,
-    });
-  }
-  override async load(ref: AggregateRef): Promise<SnapshotResult> {
-    const s = this.seeded.get(canonicalJson(ref));
-    if (s !== undefined) return { status: "found", snapshot: s };
-    return super.load(ref);
-  }
-}
-
 type Harness = { ledger: RecordingLedger; engine: ReturnType<typeof createControlEngine> };
 
-function makeHarness(seedPolicy: boolean): Harness {
-  const ledger = seedPolicy ? new SeededLedger() : new RecordingLedger();
+function makeHarness(): Harness {
+  const ledger = new RecordingLedger();
   const deps = createDeterministicDeps();
   const engine = createControlEngine({ ledger, now: deps.clock, eventId: deps.eventId });
   return { ledger, engine };
@@ -129,6 +82,32 @@ function highRiskFindingForP113(): ArchitectureFindingV1 {
   return { ...buildP112DeltaFinding(), findingId: P113_FINDING, risk: "high" as const };
 }
 
+/** Install + activate the evolution policy through the REAL third-branch validators. */
+async function installActivatePolicy(ledger: StateLedger): Promise<void> {
+  const installCmd = buildP113InstallCommand(ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1, {
+    commandId: "p113-cmd-policy-install",
+    projectId: PROJECT,
+  });
+  const ir = await ledger.commit(
+    buildP113InstallLedgerCommit(installCmd, { eventId: "evt-policy-install", occurredAt: FIXED }),
+  );
+  expect(ir.status).toBe("committed");
+  const actCmd = buildP113ActivateCommand(p113PolicyPin(), {
+    commandId: "p113-cmd-policy-activate",
+    projectId: PROJECT,
+    expectedRevision: 1,
+  });
+  const ar = await ledger.commit(
+    buildP113ActivateLedgerCommit(actCmd, {
+      eventId: "evt-policy-activate",
+      occurredAt: FIXED,
+      activeAggregateRevision: 1,
+      projectRevision: 1,
+    }),
+  );
+  expect(ar.status).toBe("committed");
+}
+
 async function recordFinding(
   engine: ReturnType<typeof createControlEngine>,
   finding: ArchitectureFindingV1,
@@ -140,8 +119,9 @@ async function recordFinding(
 
 /** Full happy-path state: bootstrap+goal+governance, active policy, delta finding, committed patch. */
 async function setupCommittedPatch(): Promise<Harness> {
-  const { ledger, engine } = makeHarness(true);
+  const { ledger, engine } = makeHarness();
   await p111BootstrapGoalGovernance(ledger, PROJECT);
+  await installActivatePolicy(ledger);
   await recordFinding(engine, deltaFindingForP113());
   const sub = await engine.submitRemediationPlanPatch(
     buildP113SubmitPatchCommand(buildP113PlanPatchV1(), { commandId: "p113-cmd-patch" }),
@@ -190,8 +170,9 @@ async function resolveTask(
 
 describe("remediation: happy path", () => {
   it("patch committed (verdict recompute consistent) -> task committed -> advance to resolved; event order + fold-equality", async () => {
-    const { ledger, engine } = makeHarness(true);
+    const { ledger, engine } = makeHarness();
     await p111BootstrapGoalGovernance(ledger, PROJECT);
+    await installActivatePolicy(ledger);
     await recordFinding(engine, deltaFindingForP113());
     // engine eventId sequence so far: recordArchitectureFinding consumed evt-0001.
     const evtPatch = "evt-0002";
@@ -293,8 +274,9 @@ describe("remediation: happy path", () => {
 
 describe("remediation: submit guards (zero write)", () => {
   it("finding missing -> not_found, zero write", async () => {
-    const { ledger, engine } = makeHarness(true);
+    const { ledger, engine } = makeHarness();
     await p111BootstrapGoalGovernance(ledger, PROJECT);
+    await installActivatePolicy(ledger);
     const before = await eventCount(ledger);
     const patch = buildP113PlanPatchV1({ findingRef: architectureFindingRefFor(PROJECT, WS, "finding-p113-ghost"), findingId: "finding-p113-ghost" });
     const sub = await engine.submitRemediationPlanPatch(buildP113SubmitPatchCommand(patch, { commandId: "p113-cmd-patch" }));
@@ -304,7 +286,8 @@ describe("remediation: submit guards (zero write)", () => {
   });
 
   it("policy not installed/activated -> policy_unresolved, zero write", async () => {
-    const { ledger, engine } = makeHarness(false);
+    const { ledger, engine } = makeHarness();
+    // bootstrap+goal+governance (CP/AB active) but NO evolution policy.
     await p111BootstrapGoalGovernance(ledger, PROJECT);
     await recordFinding(engine, deltaFindingForP113());
     const before = await eventCount(ledger);
@@ -315,8 +298,9 @@ describe("remediation: submit guards (zero write)", () => {
   });
 
   it("report finding (no deltaRef) -> allowlist_rejected with reasons, zero write", async () => {
-    const { ledger, engine } = makeHarness(true);
+    const { ledger, engine } = makeHarness();
     await p111BootstrapGoalGovernance(ledger, PROJECT);
+    await installActivatePolicy(ledger);
     const reportFinding: ArchitectureFindingV1 = { ...buildP112ReportFinding(), findingId: P113_FINDING };
     await recordFinding(engine, reportFinding);
     const before = await eventCount(ledger);
@@ -331,8 +315,9 @@ describe("remediation: submit guards (zero write)", () => {
   });
 
   it("high-risk finding exceeds allowlist max -> allowlist_rejected (risk_exceeds_allowlist_max), zero write", async () => {
-    const { ledger, engine } = makeHarness(true);
+    const { ledger, engine } = makeHarness();
     await p111BootstrapGoalGovernance(ledger, PROJECT);
+    await installActivatePolicy(ledger);
     await recordFinding(engine, highRiskFindingForP113());
     const before = await eventCount(ledger);
     const patch = buildP113PlanPatchV1({ findingRef: p113FindingRef(), findingId: P113_FINDING });
@@ -346,8 +331,9 @@ describe("remediation: submit guards (zero write)", () => {
   });
 
   it("stale finding (patch.workspaceRevision != finding) -> stale_finding, zero write", async () => {
-    const { ledger, engine } = makeHarness(true);
+    const { ledger, engine } = makeHarness();
     await p111BootstrapGoalGovernance(ledger, PROJECT);
+    await installActivatePolicy(ledger);
     await recordFinding(engine, deltaFindingForP113()); // finding.workspaceRevision = 2
     const before = await eventCount(ledger);
     const patch = buildP113PlanPatchV1({ workspaceRevision: 3 });
@@ -358,8 +344,9 @@ describe("remediation: submit guards (zero write)", () => {
   });
 
   it("recompute is authoritative: patch.verdict.allowed=true with fail reasons is recorded with the recomputed verdict", async () => {
-    const { ledger, engine } = makeHarness(true);
+    const { ledger, engine } = makeHarness();
     await p111BootstrapGoalGovernance(ledger, PROJECT);
+    await installActivatePolicy(ledger);
     await recordFinding(engine, deltaFindingForP113());
     const patch = buildP113PlanPatchV1({ verdict: { allowed: true, reasons: ["someone_set_a_reason"] } });
     const sub = await engine.submitRemediationPlanPatch(buildP113SubmitPatchCommand(patch, { commandId: "p113-cmd-patch" }));
@@ -374,8 +361,9 @@ describe("remediation: submit guards (zero write)", () => {
 
 describe("remediation: createTask guards + dedup", () => {
   it("patch missing -> patch_not_found, zero write", async () => {
-    const { ledger, engine } = makeHarness(true);
+    const { ledger, engine } = makeHarness();
     await p111BootstrapGoalGovernance(ledger, PROJECT);
+    await installActivatePolicy(ledger);
     await recordFinding(engine, deltaFindingForP113());
     const before = await eventCount(ledger);
     const ghostPatchRef = remediationPlanPatchRefFor(PROJECT, WS, "patch-p113-ghost");
@@ -541,8 +529,9 @@ describe("remediation: advance guards (zero write)", () => {
 
 describe("remediation: submit idempotency", () => {
   it("replay of an identical acceptance command -> committed/replayed, same eventIds & cursor", async () => {
-    const { ledger, engine } = makeHarness(true);
+    const { ledger, engine } = makeHarness();
     await p111BootstrapGoalGovernance(ledger, PROJECT);
+    await installActivatePolicy(ledger);
     await recordFinding(engine, deltaFindingForP113());
     const cmd = buildP113SubmitPatchCommand(buildP113PlanPatchV1(), { commandId: "p113-cmd-patch-idem" });
     const first = await engine.submitRemediationPlanPatch(cmd);
@@ -560,8 +549,9 @@ describe("remediation: submit idempotency", () => {
   });
 
   it("same identity, different payload -> idempotency_conflict (via ledger)", async () => {
-    const { ledger, engine } = makeHarness(true);
+    const { ledger, engine } = makeHarness();
     await p111BootstrapGoalGovernance(ledger, PROJECT);
+    await installActivatePolicy(ledger);
     await recordFinding(engine, deltaFindingForP113());
     const first = await engine.submitRemediationPlanPatch(buildP113SubmitPatchCommand(buildP113PlanPatchV1(), { commandId: "p113-cmd-patch-x" }));
     expect(first.status).toBe("committed");
