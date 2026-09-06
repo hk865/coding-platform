@@ -1933,7 +1933,18 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       eventType === "PlanProposalRecorded" ||
       eventType === "UserDecisionRecorded" ||
       eventType === "GoalRevisionRecorded" ||
-      eventType === "PlanRevisionSuperseded"
+      eventType === "PlanRevisionSuperseded" ||
+      // P1-13 governance-third-kind + remediation (no display view; registered to keep advance stall-free).
+      eventType === "ArchitectureEvolutionPolicyInstalled" ||
+      eventType === "ArchitectureEvolutionPolicyActivated" ||
+      eventType === "RemediationPlanPatchRecorded" ||
+      eventType === "RemediationTaskCreated" ||
+      eventType === "RemediationTaskAdvanced" ||
+      // P1-14 baseline-evolution events.
+      eventType === "CandidateBaselineMaterialized" ||
+      eventType === "ArchitectureChangeDecisionRecorded" ||
+      eventType === "MigrationGateRecorded" ||
+      eventType === "BaselineActivationRecorded"
     );
   }
 
@@ -2038,6 +2049,10 @@ export class SqliteReadModelIndex implements ReadModelIndex {
 
     // P1-11 plan-change projections (LANE-A proposal/decision; LANE-B revision/plan).
     this.applyP111(event, cursor);
+
+    // P1-13 + P1-14 events (no/limited display projection; registered handled).
+    this.applyP113(event, cursor);
+    this.applyP114(event, cursor);
     // Known non-goal / non-plan / non-dispatch events (ProjectBootstrapped,
     // WorkspaceBootstrapped, CompletionPolicyInstalled,
     // ArchitectureBaselineInstalled, CompletionPolicyActivated,
@@ -2592,6 +2607,24 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       : [];
     rows.push(snapshot);
     this.stmtUpsertWorkContextContinuations.run(scopeKey, JSON.stringify(rows), String(cursor));
+  }
+
+  /** P1-13: no-op handled registration (no display view in P1-13). */
+  private applyP113(event: DomainEvent, cursor: CommitCursor): void {
+    void event;
+    void cursor;
+  }
+
+  /** P1-14 LANE-C: baseline-evolution hook (empty until the lane lands). */
+  private applyP114(event: DomainEvent, cursor: CommitCursor): void {
+    void event;
+    void cursor;
+  }
+
+  /** P1-14 LANE-C: baseline change view stub. */
+  async baselineChangeView(query: import("../contracts/baseline-evolution.js").BaselineChangeViewQuery): Promise<import("../contracts/baseline-evolution.js").BaselineChangeViewResult> {
+    void query;
+    throw new Error("P1-14 lane: baselineChangeView not implemented yet");
   }
 
   /** P1-12 LANE-A/LANE-B stub regions (filled by the lanes; no-op until then). */

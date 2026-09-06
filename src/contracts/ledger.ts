@@ -45,6 +45,7 @@ import type {
 } from "./governance.js";
 import type { ArchitectureEvolutionPolicyActivatedEvent, ArchitectureEvolutionPolicyInstalledEvent } from "./architecture-evolution-policy.js";
 import type { RemediationPlanPatchRecordedEvent, RemediationPlanPatchSnapshot, RemediationPlanPatchRef, RemediationTaskAdvancedEvent, RemediationTaskCreatedEvent, RemediationTaskSnapshot, RemediationTaskRef } from "./remediation.js";
+import type { ArchitectureChangeDecisionRecordedEvent, ArchitectureChangeDecisionRef, ArchitectureChangeDecisionV1, BaselineActivationRecordedEvent, BaselineActivationRef, BaselineActivationV1, CandidateArchitectureBaselineRef, CandidateArchitectureBaselineSnapshot, CandidateBaselineMaterializedEvent, MigrationGateRecordedEvent, MigrationGateTaskRef, MigrationGateTaskV1 } from "./baseline-evolution.js";
 import type { PlanRevisionAcceptedEvent, PlanRevisionRef, PlanRevisionSnapshot } from "./plan.js";
 import type {
   DispatchIntentV1,
@@ -193,7 +194,11 @@ export type AggregateRef =
   | ArchitectureEvolutionPolicyRevisionRef
   | ProjectArchitectureEvolutionPolicyActiveRef
   | RemediationPlanPatchRef
-  | RemediationTaskRef;
+  | RemediationTaskRef
+  | CandidateArchitectureBaselineRef
+  | ArchitectureChangeDecisionRef
+  | MigrationGateTaskRef
+  | BaselineActivationRef;
 
 export type ProjectSnapshot = {
   ref: ProjectRef;
@@ -259,7 +264,11 @@ export type AggregateSnapshot =
   | ArchitectureEvolutionPolicyRevisionSnapshot
   | ProjectArchitectureEvolutionPolicyActiveSnapshot
   | RemediationPlanPatchSnapshot
-  | RemediationTaskSnapshot;
+  | RemediationTaskSnapshot
+  | CandidateArchitectureBaselineSnapshot
+  | { ref: ArchitectureChangeDecisionRef; revision: 1; schemaVersion: 1; decision: ArchitectureChangeDecisionV1; recordedAt: string }
+  | { ref: MigrationGateTaskRef; revision: 1; schemaVersion: 1; gate: MigrationGateTaskV1; recordedAt: string }
+  | { ref: BaselineActivationRef; revision: 1; schemaVersion: 1; activation: BaselineActivationV1; recordedAt: string };
 
 export type SnapshotResult =
   | { status: "found"; snapshot: AggregateSnapshot }
@@ -757,6 +766,12 @@ export type RemediationTaskAdvanceLedgerCommitV1 = {
   outboxIntents: [];
 };
 
+/** P1-14: baseline-evolution commit kinds (candidate/decision/gate/activation records). */
+export type CandidateBaselineMaterializeLedgerCommitV1 = { commitKind: "candidate-baseline-materialize"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [CandidateBaselineMaterializedEvent]; snapshots: [CandidateArchitectureBaselineSnapshot]; outboxIntents: [] };
+export type ArchitectureChangeDecisionRecordLedgerCommitV1 = { commitKind: "architecture-change-decision-record"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [ArchitectureChangeDecisionRecordedEvent]; snapshots: [{ ref: ArchitectureChangeDecisionRef; revision: 1; schemaVersion: 1; decision: ArchitectureChangeDecisionV1; recordedAt: string }]; outboxIntents: [] };
+export type MigrationGateRecordLedgerCommitV1 = { commitKind: "migration-gate-record"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [MigrationGateRecordedEvent]; snapshots: [{ ref: MigrationGateTaskRef; revision: 1; schemaVersion: 1; gate: MigrationGateTaskV1; recordedAt: string }]; outboxIntents: [] };
+export type BaselineActivationRecordLedgerCommitV1 = { commitKind: "baseline-activation-record"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [BaselineActivationRecordedEvent]; snapshots: [{ ref: BaselineActivationRef; revision: 1; schemaVersion: 1; activation: BaselineActivationV1; recordedAt: string }]; outboxIntents: [] };
+
 export type LedgerCommit =
   | GoalCreateLedgerCommitV1
   | BootstrapLedgerCommitV1
@@ -795,7 +810,11 @@ export type LedgerCommit =
   | GoalChangeApplyLedgerCommitV1
   | RemediationPlanPatchRecordLedgerCommitV1
   | RemediationTaskRecordLedgerCommitV1
-  | RemediationTaskAdvanceLedgerCommitV1;
+  | RemediationTaskAdvanceLedgerCommitV1
+  | CandidateBaselineMaterializeLedgerCommitV1
+  | ArchitectureChangeDecisionRecordLedgerCommitV1
+  | MigrationGateRecordLedgerCommitV1
+  | BaselineActivationRecordLedgerCommitV1;
 
 export type LedgerCommitReceipt =
   | {

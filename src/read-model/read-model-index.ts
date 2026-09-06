@@ -495,6 +495,9 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       // this ticket (no view acceptance); registered handled to never stall advance.
       this.applyP113(event, positioned.cursor);
 
+      // P1-14 baseline-evolution events (candidate/decision/gate/activation; view stub until lane C).
+      this.applyP114(event, positioned.cursor);
+
       // Known non-goal / non-plan / non-dispatch events
       // (ProjectBootstrapped, WorkspaceBootstrapped, CompletionPolicyInstalled,
       // ArchitectureBaselineInstalled, CompletionPolicyActivated,
@@ -2819,6 +2822,18 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     void cursor;
   }
 
+  /** P1-14 LANE-C: baseline-evolution hook (empty until the lane lands). */
+  private applyP114(event: DomainEvent, cursor: CommitCursor): void {
+    void event;
+    void cursor;
+  }
+
+  /** P1-14 LANE-C: baseline change view stub. */
+  async baselineChangeView(query: import("../contracts/baseline-evolution.js").BaselineChangeViewQuery): Promise<import("../contracts/baseline-evolution.js").BaselineChangeViewResult> {
+    void query;
+    throw new Error("P1-14 lane: baselineChangeView not implemented yet");
+  }
+
   /** P1-11 LANE-A/LANE-B hook: fold plan-change events (proposal/decision +
    * LANE-B revision/plan; empty until the lane lands — handler + isHandledEventType
    * land in the SAME lane commit). */
@@ -3075,6 +3090,11 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       eventType === "RemediationPlanPatchRecorded" ||
       eventType === "RemediationTaskCreated" ||
       eventType === "RemediationTaskAdvanced" ||
+      // P1-14 baseline-evolution events (view stub until lane C lands).
+      eventType === "CandidateBaselineMaterialized" ||
+      eventType === "ArchitectureChangeDecisionRecorded" ||
+      eventType === "MigrationGateRecorded" ||
+      eventType === "BaselineActivationRecorded" ||
       // P1-11 plan-change events (handler + isHandledEventType in the SAME lane commit).
       eventType === "PlanProposalRecorded" ||
       eventType === "UserDecisionRecorded" ||

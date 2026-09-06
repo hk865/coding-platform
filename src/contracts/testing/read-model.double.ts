@@ -98,6 +98,7 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly controlTimelineViewCalls: import("../control-intent.js").ControlTimelineViewQuery[] = [];
   readonly queryJobViewCalls: import("../query-job.js").QueryJobViewQuery[] = [];
   readonly planChangeViewCalls: import("../goal-change.js").PlanChangeViewQuery[] = [];
+  readonly baselineChangeViewCalls: import("../baseline-evolution.js").BaselineChangeViewQuery[] = [];
 
   constructor(
     private readonly options: {
@@ -118,6 +119,7 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
       controlTimelineView?: ControlTimelineViewBehavior;
       queryJobView?: QueryJobViewBehavior;
       planChangeView?: (query: import("../goal-change.js").PlanChangeViewQuery) => Promise<import("../goal-change.js").PlanChangeViewResult> | import("../goal-change.js").PlanChangeViewResult;
+      baselineChangeView?: (query: import("../baseline-evolution.js").BaselineChangeViewQuery) => Promise<import("../baseline-evolution.js").BaselineChangeViewResult> | import("../baseline-evolution.js").BaselineChangeViewResult;
       consolePortfolio?: import("../console-views.js").PortfolioViewResult extends never ? never : (query: import("../console-views.js").PortfolioViewQuery) => Promise<import("../console-views.js").PortfolioViewResult> | import("../console-views.js").PortfolioViewResult;
       consoleSummary?: (query: import("../console-views.js").WorkspaceSummaryViewQuery) => Promise<import("../console-views.js").WorkspaceSummaryViewResult> | import("../console-views.js").WorkspaceSummaryViewResult;
       consolePlanMatrix?: (query: import("../console-views.js").PlanMatrixViewQuery) => Promise<import("../console-views.js").PlanMatrixViewResult> | import("../console-views.js").PlanMatrixViewResult;
@@ -233,6 +235,12 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   async planChangeView(query: import("../goal-change.js").PlanChangeViewQuery): Promise<import("../goal-change.js").PlanChangeViewResult> {
     this.planChangeViewCalls.push(query);
     if (this.options.planChangeView) return this.options.planChangeView(query);
+    return { status: "not_found" };
+  }
+
+  async baselineChangeView(query: import("../baseline-evolution.js").BaselineChangeViewQuery): Promise<import("../baseline-evolution.js").BaselineChangeViewResult> {
+    this.baselineChangeViewCalls.push(query);
+    if (this.options.baselineChangeView) return this.options.baselineChangeView(query);
     return { status: "not_found" };
   }
 

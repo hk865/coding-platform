@@ -66,6 +66,10 @@ import {
   validateRemediationPlanPatchRecordCommit,
   validateRemediationTaskRecordCommit,
   validateRemediationTaskAdvanceCommit,
+  validateCandidateBaselineMaterializeCommit,
+  validateArchitectureChangeDecisionRecordCommit,
+  validateMigrationGateRecordCommit,
+  validateBaselineActivationRecordCommit,
 } from "../contracts/ledger-validation.js";
 import { canonicalJson } from "../contracts/fingerprint.js";
 import type { CommitCursor } from "../contracts/command-event.js";
@@ -202,6 +206,14 @@ export class InMemoryLedger implements StateLedger {
         return this.commitRemediationTaskRecord(batch);
       case "remediation-task-advance":
         return this.commitRemediationTaskAdvance(batch);
+      case "candidate-baseline-materialize":
+        return this.commitCandidateBaselineMaterialize(batch);
+      case "architecture-change-decision-record":
+        return this.commitArchitectureChangeDecisionRecord(batch);
+      case "migration-gate-record":
+        return this.commitMigrationGateRecord(batch);
+      case "baseline-activation-record":
+        return this.commitBaselineActivationRecord(batch);
     }
   }
 
@@ -688,6 +700,26 @@ export class InMemoryLedger implements StateLedger {
 
   private async commitRemediationTaskAdvance(batch: import("../contracts/ledger.js").RemediationTaskAdvanceLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateRemediationTaskAdvanceCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitCandidateBaselineMaterialize(batch: import("../contracts/ledger.js").CandidateBaselineMaterializeLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateCandidateBaselineMaterializeCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitArchitectureChangeDecisionRecord(batch: import("../contracts/ledger.js").ArchitectureChangeDecisionRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateArchitectureChangeDecisionRecordCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitMigrationGateRecord(batch: import("../contracts/ledger.js").MigrationGateRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateMigrationGateRecordCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitBaselineActivationRecord(batch: import("../contracts/ledger.js").BaselineActivationRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateBaselineActivationRecordCommit(batch)) return { status: "rejected", code: "invalid_commit" };
     return this.commitGenericWithIdempotency(batch);
   }
 

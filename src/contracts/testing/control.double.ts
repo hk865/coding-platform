@@ -183,6 +183,10 @@ export class ScriptedControlEngine implements ControlEngine {
       submitRemediationPlanPatch?: (command: import("../remediation.js").SubmitRemediationPlanPatchCommand) => import("../remediation.js").SubmitRemediationPlanPatchReceipt | Promise<import("../remediation.js").SubmitRemediationPlanPatchReceipt>;
       createRemediationTask?: (command: import("../remediation.js").CreateRemediationTaskCommand) => import("../remediation.js").CreateRemediationTaskReceipt | Promise<import("../remediation.js").CreateRemediationTaskReceipt>;
       advanceRemediationTask?: (command: import("../remediation.js").AdvanceRemediationTaskCommand) => import("../remediation.js").AdvanceRemediationTaskReceipt | Promise<import("../remediation.js").AdvanceRemediationTaskReceipt>;
+      materializeCandidateBaseline?: (command: import("../baseline-evolution.js").MaterializeCandidateBaselineCommand) => import("../baseline-evolution.js").MaterializeCandidateBaselineReceipt | Promise<import("../baseline-evolution.js").MaterializeCandidateBaselineReceipt>;
+      recordArchitectureChangeDecision?: (command: import("../baseline-evolution.js").RecordArchitectureChangeDecisionCommand) => import("../baseline-evolution.js").RecordArchitectureChangeDecisionReceipt | Promise<import("../baseline-evolution.js").RecordArchitectureChangeDecisionReceipt>;
+      recordMigrationGate?: (command: import("../baseline-evolution.js").RecordMigrationGateCommand) => import("../baseline-evolution.js").RecordMigrationGateReceipt | Promise<import("../baseline-evolution.js").RecordMigrationGateReceipt>;
+      recordBaselineActivation?: (command: import("../baseline-evolution.js").RecordBaselineActivationCommand) => import("../baseline-evolution.js").RecordBaselineActivationReceipt | Promise<import("../baseline-evolution.js").RecordBaselineActivationReceipt>;
       defaultSubmit?: CommandReceipt;
       defaultBootstrap?: WorkspaceBootstrapReceipt;
       defaultInstall?: GovernanceInstallReceipt;
@@ -473,5 +477,33 @@ export class ScriptedControlEngine implements ControlEngine {
     this.advanceRemediationTaskCalls.push(command);
     if (this.options.advanceRemediationTask) return this.options.advanceRemediationTask(command);
     throw new Error("ScriptedControlEngine: no advanceRemediationTask behavior configured");
+  }
+
+  // P1-14 (scripted double: records calls; behaviors configured per test)      //
+
+  readonly materializeCandidateBaselineCalls: import("../baseline-evolution.js").MaterializeCandidateBaselineCommand[] = [];
+  readonly recordArchitectureChangeDecisionCalls: import("../baseline-evolution.js").RecordArchitectureChangeDecisionCommand[] = [];
+  readonly recordMigrationGateCalls: import("../baseline-evolution.js").RecordMigrationGateCommand[] = [];
+  readonly recordBaselineActivationCalls: import("../baseline-evolution.js").RecordBaselineActivationCommand[] = [];
+
+  async materializeCandidateBaseline(command: import("../baseline-evolution.js").MaterializeCandidateBaselineCommand): Promise<import("../baseline-evolution.js").MaterializeCandidateBaselineReceipt> {
+    this.materializeCandidateBaselineCalls.push(command);
+    if (this.options.materializeCandidateBaseline) return this.options.materializeCandidateBaseline(command);
+    throw new Error("ScriptedControlEngine: no materializeCandidateBaseline behavior configured");
+  }
+  async recordArchitectureChangeDecision(command: import("../baseline-evolution.js").RecordArchitectureChangeDecisionCommand): Promise<import("../baseline-evolution.js").RecordArchitectureChangeDecisionReceipt> {
+    this.recordArchitectureChangeDecisionCalls.push(command);
+    if (this.options.recordArchitectureChangeDecision) return this.options.recordArchitectureChangeDecision(command);
+    throw new Error("ScriptedControlEngine: no recordArchitectureChangeDecision behavior configured");
+  }
+  async recordMigrationGate(command: import("../baseline-evolution.js").RecordMigrationGateCommand): Promise<import("../baseline-evolution.js").RecordMigrationGateReceipt> {
+    this.recordMigrationGateCalls.push(command);
+    if (this.options.recordMigrationGate) return this.options.recordMigrationGate(command);
+    throw new Error("ScriptedControlEngine: no recordMigrationGate behavior configured");
+  }
+  async recordBaselineActivation(command: import("../baseline-evolution.js").RecordBaselineActivationCommand): Promise<import("../baseline-evolution.js").RecordBaselineActivationReceipt> {
+    this.recordBaselineActivationCalls.push(command);
+    if (this.options.recordBaselineActivation) return this.options.recordBaselineActivation(command);
+    throw new Error("ScriptedControlEngine: no recordBaselineActivation behavior configured");
   }
 }

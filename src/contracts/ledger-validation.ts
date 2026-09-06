@@ -1467,6 +1467,60 @@ export function validateRemediationTaskAdvanceCommit(batch: import("./ledger.js"
   return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
 }
 
+
+// ------------------------------------------------------------------------ //
+// P1-14 baseline-evolution commit validators (shared by BOTH adapters)       //
+// ------------------------------------------------------------------------ //
+
+export function validateCandidateBaselineMaterializeCommit(batch: import("./ledger.js").CandidateBaselineMaterializeLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1 || batch.events.length !== 1 || batch.snapshots.length !== 1 || batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.eventType !== "CandidateBaselineMaterialized" || !isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "CandidateArchitectureBaseline" || event.aggregateRevision !== 1) return false;
+  const snap = batch.snapshots[0]!;
+  if (snap.candidate.candidateId !== event.aggregateId) return false;
+  if (canonicalJson(snap.candidate) !== canonicalJson(event.payload.candidate)) return false;
+  if (snap.materializedAt !== event.payload.materializedAt) return false;
+  if (batch.expectedVersions.length !== 1 || batch.expectedVersions[0]!.revision !== 0 || canonicalJson(batch.expectedVersions[0]!.ref) !== canonicalJson(snap.ref)) return false;
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+export function validateArchitectureChangeDecisionRecordCommit(batch: import("./ledger.js").ArchitectureChangeDecisionRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1 || batch.events.length !== 1 || batch.snapshots.length !== 1 || batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.eventType !== "ArchitectureChangeDecisionRecorded" || !isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "ArchitectureChangeDecision" || event.aggregateRevision !== 1) return false;
+  const snap = batch.snapshots[0]!;
+  if (snap.decision.decisionId !== event.aggregateId) return false;
+  if (canonicalJson(snap.decision) !== canonicalJson(event.payload.decision)) return false;
+  if (snap.recordedAt !== event.payload.recordedAt) return false;
+  if (batch.expectedVersions.length !== 1 || batch.expectedVersions[0]!.revision !== 0 || canonicalJson(batch.expectedVersions[0]!.ref) !== canonicalJson(snap.ref)) return false;
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+export function validateMigrationGateRecordCommit(batch: import("./ledger.js").MigrationGateRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1 || batch.events.length !== 1 || batch.snapshots.length !== 1 || batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.eventType !== "MigrationGateRecorded" || !isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "MigrationGateTask" || event.aggregateRevision !== 1) return false;
+  const snap = batch.snapshots[0]!;
+  if (snap.gate.gateId !== event.aggregateId) return false;
+  if (canonicalJson(snap.gate) !== canonicalJson(event.payload.gate)) return false;
+  if (snap.recordedAt !== event.payload.recordedAt) return false;
+  if (batch.expectedVersions.length !== 1 || batch.expectedVersions[0]!.revision !== 0 || canonicalJson(batch.expectedVersions[0]!.ref) !== canonicalJson(snap.ref)) return false;
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+export function validateBaselineActivationRecordCommit(batch: import("./ledger.js").BaselineActivationRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1 || batch.events.length !== 1 || batch.snapshots.length !== 1 || batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.eventType !== "BaselineActivationRecorded" || !isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "BaselineActivation" || event.aggregateRevision !== 1) return false;
+  const snap = batch.snapshots[0]!;
+  if (snap.activation.activationId !== event.aggregateId) return false;
+  if (canonicalJson(snap.activation) !== canonicalJson(event.payload.activation)) return false;
+  if (snap.recordedAt !== event.payload.recordedAt) return false;
+  if (batch.expectedVersions.length !== 1 || batch.expectedVersions[0]!.revision !== 0 || canonicalJson(batch.expectedVersions[0]!.ref) !== canonicalJson(snap.ref)) return false;
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+
 export function validateWorkContextBindCommit(batch: import("./ledger.js").WorkContextBindLedgerCommitV1): boolean {
   if (batch.schemaVersion !== 1) return false;
   if (batch.events.length !== 1) return false;

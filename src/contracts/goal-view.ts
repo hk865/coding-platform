@@ -130,4 +130,6 @@ export interface ReadModelIndex {
   queryJobView(query: import("./query-job.js").QueryJobViewQuery): Promise<import("./query-job.js").QueryJobViewResult>;
   /** P1-11: plan-change view per (projectId, workspaceId, goalId) — proposals/decisions/revisions + task dispositions (display only). */
   planChangeView(query: import("./goal-change.js").PlanChangeViewQuery): Promise<import("./goal-change.js").PlanChangeViewResult>;
+  /** P1-14: baseline change view per (projectId, workspaceId) — default pin/candidate/decision/gate/activation + not-yet-rebased plans (display only). */
+  baselineChangeView(query: import("./baseline-evolution.js").BaselineChangeViewQuery): Promise<import("./baseline-evolution.js").BaselineChangeViewResult>;
 }

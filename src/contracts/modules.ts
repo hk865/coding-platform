@@ -177,6 +177,14 @@ export interface ControlEngine {
   createRemediationTask(command: import("./remediation.js").CreateRemediationTaskCommand): Promise<import("./remediation.js").CreateRemediationTaskReceipt>;
   /** P1-13: advance a RemediationTask (writing/verifying/resolved/failed/blocked; CAS@N). */
   advanceRemediationTask(command: import("./remediation.js").AdvanceRemediationTaskCommand): Promise<import("./remediation.js").AdvanceRemediationTaskReceipt>;
+  /** P1-14: deterministically materialize the candidate baseline from a P1-12 proposal + exact source. */
+  materializeCandidateBaseline(command: import("./baseline-evolution.js").MaterializeCandidateBaselineCommand): Promise<import("./baseline-evolution.js").MaterializeCandidateBaselineReceipt>;
+  /** P1-14: record one immutable architecture-change decision (exact candidate target). */
+  recordArchitectureChangeDecision(command: import("./baseline-evolution.js").RecordArchitectureChangeDecisionCommand): Promise<import("./baseline-evolution.js").RecordArchitectureChangeDecisionReceipt>;
+  /** P1-14: record one migration gate result (candidate + current workspace revision). */
+  recordMigrationGate(command: import("./baseline-evolution.js").RecordMigrationGateCommand): Promise<import("./baseline-evolution.js").RecordMigrationGateReceipt>;
+  /** P1-14: record the CAS-guarded baseline activation (ref chain + gate PASS + decision accept). */
+  recordBaselineActivation(command: import("./baseline-evolution.js").RecordBaselineActivationCommand): Promise<import("./baseline-evolution.js").RecordBaselineActivationReceipt>;
 }
 
 export interface HumanCollaboration {

@@ -364,6 +364,12 @@ export interface PersistentSqliteHarness {
   assemblePlanningContext(request: { schemaVersion: 1; requestId: string; projectId: string; workspaceId: string; goalRef: import("../contracts/ledger.js").GoalRef; planRef: import("../contracts/plan.js").PlanRevisionRef | null; budget: { maxBundleBytes: number } }): Promise<{ status: "ready"; bundleRef: import("../contracts/artifact.js").ArtifactRef; manifest: { selectedSources: string[]; freshnessCursor: import("../contracts/command-event.js").CommitCursor | null; totalBytes: number } } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: "invalid_request" | "forbidden_tool_or_scope" | "unavailable"; message: string }>;
   /** P1-11: HumanCollaboration goal-change face (amend compiles then records). */
   amend(request: import("../contracts/goal-change.js").AmendGoalRequestV1): Promise<{ status: "accepted"; proposalRef: import("../contracts/goal-change.js").PlanProposalSnapshot["ref"] } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
+  /** P1-14: baseline evolution entries (candidate/decision/gate/activation) + view. */
+  materializeCandidateBaseline(command: import("../contracts/baseline-evolution.js").MaterializeCandidateBaselineCommand): Promise<import("../contracts/baseline-evolution.js").MaterializeCandidateBaselineReceipt>;
+  recordArchitectureChangeDecision(command: import("../contracts/baseline-evolution.js").RecordArchitectureChangeDecisionCommand): Promise<import("../contracts/baseline-evolution.js").RecordArchitectureChangeDecisionReceipt>;
+  recordMigrationGate(command: import("../contracts/baseline-evolution.js").RecordMigrationGateCommand): Promise<import("../contracts/baseline-evolution.js").RecordMigrationGateReceipt>;
+  recordBaselineActivation(command: import("../contracts/baseline-evolution.js").RecordBaselineActivationCommand): Promise<import("../contracts/baseline-evolution.js").RecordBaselineActivationReceipt>;
+  baselineChangeView(query: import("../contracts/baseline-evolution.js").BaselineChangeViewQuery): Promise<import("../contracts/baseline-evolution.js").BaselineChangeViewResult>;
   /** P1-13: install/activate ArchitectureEvolutionPolicy (third governance kind) + remediation entries. */
   installArchitectureEvolutionPolicy(command: import("../contracts/architecture-evolution-policy.js").InstallArchitectureEvolutionPolicyRevisionCommand): Promise<import("../contracts/architecture-evolution-policy.js").ArchitectureEvolutionPolicyInstallReceipt>;
   activateArchitectureEvolutionPolicy(command: import("../contracts/architecture-evolution-policy.js").ActivateProjectArchitectureEvolutionPolicyCommand): Promise<import("../contracts/architecture-evolution-policy.js").ArchitectureEvolutionPolicyActivateReceipt>;
@@ -697,6 +703,11 @@ export async function createPersistentSqliteHarness(
     submitRemediationPlanPatch: (command) => built.control.submitRemediationPlanPatch(command),
     createRemediationTask: (command) => built.control.createRemediationTask(command),
     advanceRemediationTask: (command) => built.control.advanceRemediationTask(command),
+    materializeCandidateBaseline: (command) => built.control.materializeCandidateBaseline(command),
+    recordArchitectureChangeDecision: (command) => built.control.recordArchitectureChangeDecision(command),
+    recordMigrationGate: (command) => built.control.recordMigrationGate(command),
+    recordBaselineActivation: (command) => built.control.recordBaselineActivation(command),
+    baselineChangeView: (query) => built.readModel.baselineChangeView(query),
       assembleQueryContext: (request) => built.queryContext.assembleQueryContext(request),
       publicSnapshot: (query) => built.snapshot.snapshot(query),
       continuationCapabilities: (request) => built.contextContinuation.capabilities(request),

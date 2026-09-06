@@ -93,6 +93,7 @@ import { QueryJobEngineImpl } from "./query-job.js";
 import { GoalChangeEngineImpl } from "./goal-change.js";
 import { ArchitectureEvolutionPolicyEngineImpl } from "./architecture-evolution-policy.js";
 import { RemediationEngineImpl } from "./remediation.js";
+import { BaselineEvolutionEngineImpl } from "./baseline-evolution.js";
 import type { ApplyPlanChangeCommand, ApplyPlanChangeReceipt, RecordPlanChangeProposalCommand, RecordPlanChangeProposalReceipt, RecordUserDecisionCommand, RecordUserDecisionReceipt } from "../contracts/goal-change.js";
 import type { CloseQueryJobCommand, CloseQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, SubmitQueryJobCommand, SubmitQueryJobReceipt } from "../contracts/query-job.js";
 import type { RecordSafePointAckCommand, RecordSafePointAckReceipt, SubmitControlCommand, SubmitControlReceipt } from "../contracts/control-intent.js";
@@ -142,6 +143,7 @@ export class ControlEngineImpl implements ControlEngine {
   private readonly goalChange: GoalChangeEngineImpl;
   private readonly evolutionPolicy: ArchitectureEvolutionPolicyEngineImpl;
   private readonly remediation: RemediationEngineImpl;
+  private readonly baselineEvolution: BaselineEvolutionEngineImpl;
 
   constructor(deps: ControlEngineDeps) {
     this.deps = deps;
@@ -153,6 +155,7 @@ export class ControlEngineImpl implements ControlEngine {
     this.goalChange = new GoalChangeEngineImpl(deps);
     this.evolutionPolicy = new ArchitectureEvolutionPolicyEngineImpl(deps);
     this.remediation = new RemediationEngineImpl(deps);
+    this.baselineEvolution = new BaselineEvolutionEngineImpl(deps);
   }
 
   // --------------------------------------------------------------------- //
@@ -426,6 +429,22 @@ export class ControlEngineImpl implements ControlEngine {
 
   advanceRemediationTask(command: import("../contracts/remediation.js").AdvanceRemediationTaskCommand): Promise<import("../contracts/remediation.js").AdvanceRemediationTaskReceipt> {
     return this.remediation.advanceTask(command);
+  }
+
+  materializeCandidateBaseline(command: import("../contracts/baseline-evolution.js").MaterializeCandidateBaselineCommand): Promise<import("../contracts/baseline-evolution.js").MaterializeCandidateBaselineReceipt> {
+    return this.baselineEvolution.materializeCandidate(command);
+  }
+
+  recordArchitectureChangeDecision(command: import("../contracts/baseline-evolution.js").RecordArchitectureChangeDecisionCommand): Promise<import("../contracts/baseline-evolution.js").RecordArchitectureChangeDecisionReceipt> {
+    return this.baselineEvolution.recordDecision(command);
+  }
+
+  recordMigrationGate(command: import("../contracts/baseline-evolution.js").RecordMigrationGateCommand): Promise<import("../contracts/baseline-evolution.js").RecordMigrationGateReceipt> {
+    return this.baselineEvolution.recordGate(command);
+  }
+
+  recordBaselineActivation(command: import("../contracts/baseline-evolution.js").RecordBaselineActivationCommand): Promise<import("../contracts/baseline-evolution.js").RecordBaselineActivationReceipt> {
+    return this.baselineEvolution.recordActivation(command);
   }
 
   // --------------------------------------------------------------------- //
