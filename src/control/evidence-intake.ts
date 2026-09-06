@@ -37,7 +37,82 @@ async function submitEvidenceImpl(
   deps: ControlEngineDeps,
   command: SubmitEvidenceCommand,
 ): Promise<SubmitEvidenceReceipt> {
-  throw new Error("P1-04 evidence-intake: not implemented yet");
+  // Guard 1: schema validation (zero write).
+  const issues = validateSubmitEvidenceCommand(command);
+  if (issues.length > 0) {
+    return { status: "rejected", commandId: command.commandId, code: "invalid" };
+  }
+
+  const evidence = command.payload.evidence;
+  const projectId = command.identity.projectId;
+  const goalId = evidence.subject.goalId;
+  const taskId = evidence.subject.taskId;
+
+  // Guard 2: Goal exists (else not_found) and its Workspace exists (else not_found).
+  const goalRef = { aggregateType: "Goal" as const, projectId, goalId };
+  const goalResult = await deps.ledger.load(goalRef);
+  if (goalResult.status === "not_found") {
+    return { status: "rejected", commandId: command.commandId, code: "not_found" };
+  }
+  const goal = goalResult.snapshot as GoalSnapshot;
+  const workspaceResult = await deps.ledger.load(goal.workspaceRef);
+  if (workspaceResult.status === "not_found") {
+    return { status: "rejected", commandId: command.commandId, code: "not_found" };
+  }
+  const workspaceId = goal.workspaceRef.workspaceId;
+
+  // Guard 3: the anchor plan must exist (load) and the subject task must be
+  // part of that plan (dangling_ref — deterministic failure, never a default).
+  const anchorPlanRef = evidence.anchor.planRef;
+  const planResult = await deps.ledger.load(anchorPlanRef);
+  if (planResult.status === "not_found" || !isPlanRevisionSnapshot(planResult.snapshot)) {
+    return { status: "rejected", commandId: command.commandId, code: "dangling_ref" };
+  }
+  const plan = planResult.snapshot as PlanRevisionSnapshot;
+  const subjectTask = plan.tasks.find((t) => t.taskId === taskId);
+  if (subjectTask === undefined) {
+    return { status: "rejected", commandId: command.commandId, code: "dangling_ref" };
+  }
+
+  // Guard 4: every coverage entry must reference a VerificationRequirement of
+  // an obligation that EXISTS IN THE ANCHOR PLAN (dangling_ref — a reference to
+  // a non-existent obligation/VR is a hard failure). Coverage whose obligation
+  // exists but is NOT mapped to the subject task is NOT a rejection: the frozen
+  // applicability rule (evidenceApplicability rule ① / frozen sem #6) marks it
+  // OUT_OF_SCOPE, so historical/other-task evidence is admitted and derived.
+  for (const coverage of evidence.coverage) {
+    const obligation = plan.obligations.find((o) => o.obligationId === coverage.obligationId);
+    if (obligation === undefined) {
+      return { status: "rejected", commandId: command.commandId, code: "dangling_ref" };
+    }
+    if (!obligation.verificationRequirements.some((vr) => vr.requirementId === coverage.requirementId)) {
+      return { status: "rejected", commandId: command.commandId, code: "dangling_ref" };
+    }
+  }
+
+  // Guard 5: per-task admission cap (zero write).
+  const indexResult = await deps.ledger.load(taskEvidenceIndexRefFor(projectId, goalId, taskId));
+  const priorIndex: TaskEvidenceIndexSnapshot | null =
+    indexResult.status === "found" && isTaskEvidenceIndexSnapshot(indexResult.snapshot)
+      ? (indexResult.snapshot as TaskEvidenceIndexSnapshot)
+      : null;
+  if ((priorIndex?.evidenceIds.length ?? 0) >= MAX_EVIDENCE_PER_TASK) {
+    return { status: "rejected", commandId: command.commandId, code: "evidence_limit_exceeded" };
+  }
+
+  // Guard 6: deterministic fold (fold-equality with the shared fixture builder,
+  // given the same ids) -> ledger.commit -> mapEvidenceIntakeReceipt.
+  const eventId = deps.eventId();
+  const occurredAt = deps.now();
+  const batch = buildEvidenceIntakeLedgerCommit(command, {
+    eventId,
+    occurredAt,
+    workspaceId,
+    priorIndex,
+  });
+
+  const receipt = await deps.ledger.commit(batch);
+  return mapEvidenceIntakeReceipt(receipt, command);
 }
 
 export function submitEvidence(

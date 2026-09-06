@@ -20,24 +20,158 @@
  * identity/expectedRevision is required after new evidence (idempotency keys
  * are per command — P1-00 discipline).
  */
-import type { StateLedger, AggregateSnapshot } from "../contracts/ledger.js";
+import type { StateLedger, AggregateSnapshot, GoalSnapshot } from "../contracts/ledger.js";
 import type { LedgerCommitReceipt } from "../contracts/ledger.js";
-import type { EvidenceSnapshot, TaskEvidenceIndexSnapshot } from "../contracts/evidence.js";
+import type { EvidenceSnapshot, EvidenceV1, TaskEvidenceIndexSnapshot } from "../contracts/evidence.js";
+import { evidenceRefFor } from "../contracts/evidence.js";
 import type { EffectivityAnchorV1 } from "../contracts/evidence.js";
 import type { PlanRevisionSnapshot } from "../contracts/plan.js";
 import type { RunSnapshot, TaskLeaseSnapshot } from "../contracts/dispatch.js";
+import { runRefFor, taskLeaseRefFor } from "../contracts/dispatch.js";
 import type { ReduceTaskCommand, ReduceTaskReceipt, RunSignal, TaskReductionSnapshot } from "../contracts/reduction.js";
 import { taskReductionRefFor } from "../contracts/reduction.js";
 import { reduceTaskVerification, type TaskReductionInput } from "../contracts/reduction.js";
 import { validateReduceTaskCommand } from "../contracts/validation.js";
-import { buildTaskReductionLedgerCommit } from "../contracts/fixtures/evidence-fixtures.js";
+import { buildTaskReductionLedgerCommit, buildTaskReductionSnapshot } from "../contracts/fixtures/evidence-fixtures.js";
 import type { ControlEngineDeps } from "./control-engine.js";
+import { taskEvidenceIndexRefFor } from "../contracts/evidence.js";
 
 async function reduceTaskImpl(
   deps: ControlEngineDeps,
   command: ReduceTaskCommand,
 ): Promise<ReduceTaskReceipt> {
-  throw new Error("P1-04 task-reducer: not implemented yet");
+  // Guard 1: schema validation (zero write).
+  const issues = validateReduceTaskCommand(command);
+  if (issues.length > 0) {
+    return { status: "rejected", commandId: command.commandId, code: "invalid" };
+  }
+
+  const projectId = command.identity.projectId;
+  const goalId = command.payload.goalId;
+  const taskId = command.aggregateId;
+
+  // Guard 2: Goal exists (else not_found); goal.activePlanRevision === null ->
+  // not_found; plan loads (else not_found).
+  const goalRef = { aggregateType: "Goal" as const, projectId, goalId };
+  const goalResult = await deps.ledger.load(goalRef);
+  if (goalResult.status === "not_found") {
+    return { status: "rejected", commandId: command.commandId, code: "not_found" };
+  }
+  const goal = goalResult.snapshot as GoalSnapshot;
+  const planRef = goal.activePlanRevision;
+  if (planRef === null) {
+    return { status: "rejected", commandId: command.commandId, code: "not_found" };
+  }
+  const planResult = await deps.ledger.load(planRef);
+  if (planResult.status === "not_found" || !isPlanRevisionSnapshot(planResult.snapshot)) {
+    return { status: "rejected", commandId: command.commandId, code: "not_found" };
+  }
+  const plan = planResult.snapshot as PlanRevisionSnapshot;
+
+  // Guard 3: task must be part of the plan (task_not_in_plan).
+  const task = plan.tasks.find((t) => t.taskId === taskId);
+  if (task === undefined) {
+    return { status: "rejected", commandId: command.commandId, code: "task_not_in_plan" };
+  }
+
+  // Guard 4: load the task evidence index + every Evidence snapshot; load the
+  // TaskLease/Run (run signals: outcome/exitCode of the latest attempt).
+  const indexResult = await deps.ledger.load(taskEvidenceIndexRefFor(projectId, goalId, taskId));
+  const index: TaskEvidenceIndexSnapshot | null =
+    indexResult.status === "found" && isTaskEvidenceIndexSnapshot(indexResult.snapshot)
+      ? (indexResult.snapshot as TaskEvidenceIndexSnapshot)
+      : null;
+  const evidence: EvidenceV1[] = [];
+  if (index !== null) {
+    for (const evidenceId of index.evidenceIds) {
+      const evResult = await deps.ledger.load(evidenceRefFor(projectId, evidenceId));
+      if (evResult.status === "found" && isEvidenceSnapshot(evResult.snapshot)) {
+        evidence.push((evResult.snapshot as EvidenceSnapshot).evidence);
+      }
+    }
+  }
+
+  const leaseResult = await deps.ledger.load(taskLeaseRefFor(projectId, goalId, taskId));
+  const lease: TaskLeaseSnapshot | null =
+    leaseResult.status === "found" && isTaskLeaseSnapshot(leaseResult.snapshot)
+      ? (leaseResult.snapshot as TaskLeaseSnapshot)
+      : null;
+  let runSignals: RunSignal[] = emptyRunSignals();
+  const unreconciledSideEffects: TaskReductionInput["unreconciledSideEffects"] = [];
+  if (lease !== null) {
+    const runResult = await deps.ledger.load(runRefFor(projectId, goalId, lease.holderRunId));
+    if (runResult.status === "found" && isRunSnapshot(runResult.snapshot)) {
+      const run = runResult.snapshot as RunSnapshot;
+      runSignals = collectRunSignals(run);
+      // integrator ruling (frozen sem #9 mapping): an outcome_unknown ENDED
+      // run is an EXPLICIT terminal fact (never inferred); as a side effect it
+      // blocks satisfaction. It is NEVER a run-failed signal; crashed / a
+      // completed+exit!==0 run are run-failed; completed+exit===0 and
+      // budget_exhausted / cancelled are neutral (never a satisfaction signal).
+      if (run.status === "ended" && run.outcome === "outcome_unknown") {
+        unreconciledSideEffects.push({ kind: "outcome_unknown", runRef: run.ref });
+      }
+    }
+  }
+
+  // Guard 5: canonical current effectivity tuple (plan pins + canonical
+  // Workspace revision) — the ONLY admissible "current" anchor.
+  const workspaceResult = await deps.ledger.load(goal.workspaceRef);
+  const workspaceRevision =
+    workspaceResult.status === "found" ? workspaceResult.snapshot.revision : 1;
+  const currentAnchor = buildCurrentEffectivityAnchor({ plan, workspaceRevision });
+
+  // Guard 6: run the PURE reduceTaskVerification (TaskSatisfied formula) —
+  // deterministic, no model calls.
+  const input: TaskReductionInput = {
+    projectId,
+    goalId,
+    taskId,
+    plan,
+    goalActivePlanRevision: planRef,
+    currentAnchor,
+    evidence,
+    runSignals,
+    unresolvedFindings: [],
+    unreconciledSideEffects,
+  };
+  const computation = reduceTaskVerification(input);
+
+  // Deterministic fold (buildTaskReductionLedgerCommit with the computed
+  // snapshot, revision = expectedRevision + 1) -> ledger.commit -> receipt.
+  const reduction: TaskReductionSnapshot = buildTaskReductionSnapshot({
+    projectId,
+    goalId,
+    taskId,
+    revision: command.expectedRevision + 1,
+    planRef: plan.ref,
+    planRevision: plan.planRevision,
+    taskKind: task.taskKind,
+    requirementLevel: task.requirementLevel,
+    disposition: task.disposition,
+    phase: computation.phase,
+    currentAnchor,
+    effectiveEvidenceIds: computation.effectiveEvidenceIds,
+    blockingEvidenceIds: computation.blockingEvidenceIds,
+    staleEvidenceIds: computation.staleEvidenceIds,
+    outOfScopeEvidenceIds: computation.outOfScopeEvidenceIds,
+    satisfiedObligationIds: computation.satisfiedObligationIds,
+    causes: computation.causes,
+    reducedAt: deps.now(),
+  });
+
+  const eventId = deps.eventId();
+  const occurredAt = deps.now();
+  const workspaceId = goal.workspaceRef.workspaceId;
+  const batch = buildTaskReductionLedgerCommit(command, {
+    eventId,
+    occurredAt,
+    workspaceId,
+    reduction,
+  });
+
+  const receipt = await deps.ledger.commit(batch);
+  return mapReduceTaskReceipt(receipt, command, computation.phase);
 }
 
 export function reduceTask(
