@@ -92,6 +92,19 @@ import { canonicalJson } from "../contracts/fingerprint.js";
 import { continuationRecordRefFor, WORK_CONTEXT_VIEW_MAX_CONTINUATIONS } from "../contracts/context-continuity.js";
 import type { PlanRevisionAcceptedEvent, PlanRevisionRef, PlanRevisionSnapshot } from "../contracts/plan.js";
 import type {
+  GoalRevisionSnapshot,
+  PlanChangeViewQuery,
+  PlanChangeViewResult,
+  PlanProposalSnapshot,
+  PlanProposalRecordedEvent,
+  GoalRevisionRecordedEvent,
+  UserDecisionSnapshot,
+  UserDecisionRecordedEvent,
+  PlanRevisionSupersededEvent,
+  TaskDispositionRow,
+} from "../contracts/goal-change.js";
+import { computeTaskDispositions, planChangeScopeKey } from "../contracts/goal-change.js";
+import type {
   RunEventRecordedEvent,
   RunOutcomeUnknownEvent,
   RunStartedEvent,
@@ -433,6 +446,34 @@ CREATE TABLE IF NOT EXISTS control_intent_rows (
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS architecture_proposal_rows (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS p111_proposal_rows (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS p111_decision_rows (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS p111_revision_rows (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS p111_plan_rows (
   scope_key     TEXT NOT NULL,
   entry_json    TEXT NOT NULL,
   source_cursor TEXT NOT NULL,
@@ -1887,7 +1928,12 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       eventType === "QueryJobSubmitted" ||
       eventType === "QueryRunStarted" ||
       eventType === "QueryJobAnswerRecorded" ||
-      eventType === "QueryJobClosed"
+      eventType === "QueryJobClosed" ||
+      // P1-11 plan-change events (handler + isHandledEventType in the SAME lane commit).
+      eventType === "PlanProposalRecorded" ||
+      eventType === "UserDecisionRecorded" ||
+      eventType === "GoalRevisionRecorded" ||
+      eventType === "PlanRevisionSuperseded"
     );
   }
 
@@ -2695,16 +2741,119 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return { status: "ready", job, run, answers, currentAnswer, stale: currentAnswer?.stale ?? false, sourceCursor: observedCursor };
   }
 
-  /** P1-11 LANE-B: plan change view (display only) — stub until the lane lands. */
-  async planChangeView(query: import("../contracts/goal-change.js").PlanChangeViewQuery): Promise<import("../contracts/goal-change.js").PlanChangeViewResult> {
-    void query;
-    throw new Error("P1-11 lane: planChangeView not implemented yet");
+  /** P1-11 LANE-B: plan change view (display only; rebuildable from events).
+   * Assembles proposals / decisions / revisions for the (projectId, workspaceId,
+   * goalId) scope plus the purely-computed task dispositions (never judged). */
+  async planChangeView(query: PlanChangeViewQuery): Promise<PlanChangeViewResult> {
+    const observedCursor = this.readCheckpoint();
+    // No projection ever advanced -> we cannot claim freshness for any scope.
+    if (observedCursor === null) return { status: "not_found" };
+
+    const key = planChangeScopeKey(query);
+    const proposals = this.p111ReadScope("p111_proposal_rows", key + "\u0000") as PlanProposalSnapshot[];
+    const decisions = this.p111ReadScope("p111_decision_rows", key + "\u0000") as UserDecisionSnapshot[];
+    const revisions = this.p109ReadList("p111_revision_rows", key) as GoalRevisionSnapshot[];
+    if (proposals.length === 0 && decisions.length === 0 && revisions.length === 0) {
+      return { status: "not_found" };
+    }
+
+    const dispositions = this.computePlanChangeDispositions(revisions);
+    return {
+      status: "ready",
+      proposals,
+      decisions,
+      revisions,
+      dispositions,
+      freshness: observedCursor,
+    };
   }
 
-  /** P1-11 LANE-A/LANE-B hook: fold plan-change events (empty shell until lanes land). */
+  /** P1-11: compute the displayed task dispositions from the latest goal revision
+   * (pure; empty when either plan snapshot is not (yet) projected). */
+  private computePlanChangeDispositions(revisions: GoalRevisionSnapshot[]): TaskDispositionRow[] {
+    if (revisions.length === 0) return [];
+    const latest = revisions[revisions.length - 1]!;
+    const change = latest.change;
+    if (change.supersededPlanRefs.length === 0) return [];
+    const sourceRef = change.supersededPlanRefs[change.supersededPlanRefs.length - 1]!;
+    const source = this.p109ReadOne("p111_plan_rows", canonicalJson(sourceRef)) as PlanRevisionSnapshot | null;
+    const target = this.p109ReadOne("p111_plan_rows", canonicalJson(change.activePlanRef)) as PlanRevisionSnapshot | null;
+    if (source === null || target === null) return [];
+    return computeTaskDispositions(source, target, []);
+  }
+
+  /** P1-11: read every row in a table whose full-scope key is under a prefix. */
+  private p111ReadScope(table: string, prefix: string): unknown[] {
+    const out: unknown[] = [];
+    const stmt = this.db.prepare("SELECT scope_key, entry_json FROM " + table);
+    for (const row of stmt.all() as { scope_key: string; entry_json: string }[]) {
+      if (row.scope_key.startsWith(prefix)) out.push(JSON.parse(row.entry_json));
+    }
+    return out;
+  }
+
+  /** P1-11 LANE-A/LANE-B hook: fold plan-change events (proposal/decision +
+   * LANE-B revision/plan; empty until the lane lands — handler + isHandledEventType
+   * land in the SAME lane commit). */
   private applyP111(event: DomainEvent, cursor: import("../contracts/command-event.js").CommitCursor): void {
-    void event;
-    void cursor;
+    if (event.eventType === "PlanProposalRecorded") {
+      const ev = event as PlanProposalRecordedEvent;
+      const proposal = ev.payload.proposal;
+      const ref = {
+        aggregateType: "PlanProposal" as const,
+        projectId: proposal.projectId,
+        workspaceId: proposal.workspaceId,
+        proposalId: proposal.proposalId,
+      };
+      const key = planChangeScopeKey({
+        projectId: proposal.projectId,
+        workspaceId: proposal.workspaceId,
+        goalId: proposal.sourceGoalRef.goalId,
+      }) + "\u0000" + proposal.proposalId;
+      const snapshot: PlanProposalSnapshot = { ref, revision: 1, schemaVersion: 1, proposal, recordedAt: ev.payload.recordedAt };
+      this.p109UpsertOne("p111_proposal_rows", key, snapshot, cursor);
+    } else if (event.eventType === "UserDecisionRecorded") {
+      const ev = event as UserDecisionRecordedEvent;
+      const decision = ev.payload.decision;
+      const ref = {
+        aggregateType: "UserDecision" as const,
+        projectId: decision.projectId,
+        workspaceId: decision.workspaceId,
+        decisionId: decision.decisionId,
+      };
+      const key = planChangeScopeKey({
+        projectId: decision.projectId,
+        workspaceId: decision.workspaceId,
+        goalId: decision.subject.goalRef.goalId,
+      }) + "\u0000" + decision.decisionId;
+      const snapshot: UserDecisionSnapshot = { ref, revision: 1, schemaVersion: 1, decision, recordedAt: ev.payload.recordedAt };
+      this.p109UpsertOne("p111_decision_rows", key, snapshot, cursor);
+    } else if (event.eventType === "GoalRevisionRecorded") {
+      const ev = event as GoalRevisionRecordedEvent;
+      const change = ev.payload.change;
+      const ref = {
+        aggregateType: "GoalRevision" as const,
+        projectId: ev.projectId,
+        workspaceId: ev.workspaceId,
+        goalId: change.goalRef.goalId,
+        revision: change.revision,
+      };
+      const key = planChangeScopeKey({ projectId: ev.projectId, workspaceId: ev.workspaceId, goalId: change.goalRef.goalId });
+      const snapshot: GoalRevisionSnapshot = { ref, revision: 1, schemaVersion: 1, change, recordedAt: ev.payload.recordedAt };
+      const rows = this.p109ReadList("p111_revision_rows", key) as GoalRevisionSnapshot[];
+      rows.push(snapshot);
+      rows.sort((a, b) => a.ref.revision - b.ref.revision);
+      this.p109UpsertList("p111_revision_rows", key, rows, cursor);
+    } else if (event.eventType === "PlanRevisionAccepted") {
+      const ev = event as PlanRevisionAcceptedEvent;
+      const planRevision = ev.payload.planRevision;
+      // Idempotent: the same ref always projects the same immutable snapshot.
+      this.p109UpsertOne("p111_plan_rows", canonicalJson(planRevision.ref), planRevision, cursor);
+    } else if (event.eventType === "PlanRevisionSuperseded") {
+      // The same fact is already carried by the GoalRevisionRecorded change;
+      // the supersession event itself needs no dedicated row.
+      void (event as PlanRevisionSupersededEvent);
+    }
   }
 
   private p109ReadOne(table: string, key: string): unknown | null {
