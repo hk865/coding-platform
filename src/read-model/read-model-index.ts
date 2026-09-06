@@ -72,6 +72,15 @@ import type {
 import type { EffectivityAnchorV1, EvidenceAdmittedEvent, EvidenceV1 } from "../contracts/evidence.js";
 import { evidenceApplicability, selectEffectiveEvidenceSet } from "../contracts/evidence.js";
 import type { TaskReductionSnapshot, TaskReductionUpdatedEvent } from "../contracts/reduction.js";
+import type {
+  GoalStatusQuery,
+  GoalStatusView,
+  GoalStatusViewResult,
+  GoalTimelineQuery,
+  GoalTimelineEntry,
+  GoalTimelineViewResult,
+} from "../contracts/goal-phase-view.js";
+import type { GoalPhaseUpdatedEvent } from "../contracts/goal-phase.js";
 
 /** Full-scope view key: (projectId, workspaceId, goalId) — never a local id only. */
 function goalKey(projectId: string, workspaceId: string, goalId: string): string {
@@ -86,6 +95,11 @@ function planGraphKey(projectId: string, goalId: string): string {
 /** Full-scope Task Detail key: (projectId, goalId, taskId). */
 function taskDetailKey(projectId: string, goalId: string, taskId: string): string {
   return projectId + "\u0000" + goalId + "\u0000" + taskId;
+}
+
+/** Full-scope Goal phase key: (projectId, goalId) — the P1-05 projection scope. */
+function goalPhaseKey(projectId: string, goalId: string): string {
+  return projectId + "\u0000" + goalId;
 }
 
 /** Derive the TaskDetail.run (TaskRunState) part from an ActiveAgentView row. */
@@ -154,6 +168,12 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   /** (projectId, goalId, taskId) -> latest projected verification view row. */
   private readonly verificationRows = new Map<string, VerificationProjection>();
 
+  /** (projectId, goalId) -> latest projected GoalStatusView (P1-05). */
+  private readonly goalStatusRows = new Map<string, GoalStatusView>();
+
+  /** (projectId, goalId) -> goal timeline entries in arrival order (P1-05). */
+  private readonly goalTimelineRows = new Map<string, GoalTimelineEntry[]>();
+
   async advance(page: EventPage): Promise<ProjectionReceipt> {
     const toApply: PositionedEvent[] = [];
     const appliedEventIds: string[] = [];
@@ -219,6 +239,8 @@ export class ReadModelIndexImpl implements ReadModelIndex {
         this.applyEvidenceAdmitted(event, positioned.cursor);
       } else if (event.eventType === "TaskReductionUpdated") {
         this.applyTaskReductionUpdated(event, positioned.cursor);
+      } else if (event.eventType === "GoalPhaseUpdated") {
+        this.applyGoalPhaseUpdated(event, positioned.cursor);
       }
       // Known non-goal / non-plan / non-dispatch events
       // (ProjectBootstrapped, WorkspaceBootstrapped, CompletionPolicyInstalled,
@@ -458,14 +480,61 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
   }
 
-  /** P1-05: goal phase status projection (handled by lane B). */
-  async goalStatus(query: import("../contracts/goal-phase-view.js").GoalStatusQuery): Promise<import("../contracts/goal-phase-view.js").GoalStatusViewResult> {
-    throw new Error("P1-05: not implemented yet (lane B)");
+  /** P1-05: goal phase status projection (per (projectId, goalId)). */
+  async goalStatus(query: GoalStatusQuery): Promise<GoalStatusViewResult> {
+    const observedCursor = this.observedCursor;
+    const row = this.goalStatusRows.get(goalPhaseKey(query.projectId, query.goalId));
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(query.atLeastCursor)) {
+        if (row) return { status: "ready", goal: row, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor };
+      }
+      return {
+        status: "not_ready",
+        requiredCursor: query.atLeastCursor,
+        observedCursor,
+      };
+    }
+
+    // No atLeastCursor: show the row if present. Once the projection has
+    // advanced (observedCursor non-null) a missing key is a definitive
+    // not_found; before any advance it is the freshness-safe not_ready.
+    if (row) return { status: "ready", goal: row, observedCursor: observedCursor! };
+    if (observedCursor !== null) return { status: "not_found", observedCursor };
+    return {
+      status: "not_ready",
+      requiredCursor: observedCursor ?? makeCommitCursor(1),
+      observedCursor,
+    };
   }
 
-  /** P1-05: goal phase timeline projection (handled by lane B). */
-  async goalTimeline(query: import("../contracts/goal-phase-view.js").GoalTimelineQuery): Promise<import("../contracts/goal-phase-view.js").GoalTimelineViewResult> {
-    throw new Error("P1-05: not implemented yet (lane B)");
+  /** P1-05: goal phase timeline projection (per (projectId, goalId)). */
+  async goalTimeline(query: GoalTimelineQuery): Promise<GoalTimelineViewResult> {
+    const observedCursor = this.observedCursor;
+    const row = this.goalTimelineRows.get(goalPhaseKey(query.projectId, query.goalId));
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(query.atLeastCursor)) {
+        if (row) return { status: "ready", timeline: [...row], observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor };
+      }
+      return {
+        status: "not_ready",
+        requiredCursor: query.atLeastCursor,
+        observedCursor,
+      };
+    }
+
+    // No atLeastCursor: show the row if present; a missing key after any
+    // advance is not_found, else the freshness-safe not_ready.
+    if (row) return { status: "ready", timeline: [...row], observedCursor: observedCursor! };
+    if (observedCursor !== null) return { status: "not_found", observedCursor };
+    return {
+      status: "not_ready",
+      requiredCursor: observedCursor ?? makeCommitCursor(1),
+      observedCursor,
+    };
   }
 
   // ------------------------------------------------------------------ //
@@ -844,6 +913,49 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     );
   }
 
+  // ------------------------------------------------------------------ //
+  // P1-05 goal phase projection handler                                //
+  // ------------------------------------------------------------------ //
+
+  /** GoalPhaseUpdated@1 -> upsert the (projectId, goalId) GoalStatusView row AND
+   * append one GoalTimelineEntry in arrival order. The view is rebuilt ONLY from
+   * the event payload (never from a ledger snapshot); sourceCursor is the
+   * positioned cursor; observedCursor/checkpoint stay under the existing
+   * advance() mechanism. */
+  private applyGoalPhaseUpdated(event: GoalPhaseUpdatedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const goalId = event.payload.goalId;
+
+    const row: GoalStatusView = {
+      projectId,
+      goalId,
+      phase: event.payload.phase,
+      previousPhase: event.payload.previousPhase,
+      planRef: event.payload.planRef === null ? null : { ...event.payload.planRef },
+      reasonCodes: [...event.payload.reasonCodes],
+      explanation: event.payload.explanation,
+      sideEffectReconciliation: event.payload.sideEffectReconciliation,
+      aggregateRevision: event.aggregateRevision,
+      sourceCursor: cursor,
+      updatedAt: event.payload.reducedAt,
+    };
+    this.goalStatusRows.set(goalPhaseKey(projectId, goalId), row);
+
+    const entry: GoalTimelineEntry = {
+      phase: event.payload.phase,
+      previousPhase: event.payload.previousPhase,
+      reasonCodes: [...event.payload.reasonCodes],
+      explanation: event.payload.explanation,
+      aggregateRevision: event.aggregateRevision,
+      reducedAt: event.payload.reducedAt,
+      eventId: event.eventId,
+      sourceCursor: cursor,
+    };
+    const list = this.goalTimelineRows.get(goalPhaseKey(projectId, goalId)) ?? [];
+    list.push(entry);
+    this.goalTimelineRows.set(goalPhaseKey(projectId, goalId), list);
+  }
+
   /** Event types this projection currently has handlers for (P1-02 + P1-03, v1). */
   private isHandledEventType(eventType: string): boolean {
     return (
@@ -860,7 +972,8 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       eventType === "RunEventRecorded" ||
       eventType === "RunOutcomeUnknown" ||
       eventType === "EvidenceAdmitted" ||
-      eventType === "TaskReductionUpdated"
+      eventType === "TaskReductionUpdated" ||
+      eventType === "GoalPhaseUpdated"
     );
   }
 }

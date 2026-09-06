@@ -196,6 +196,34 @@ CREATE TABLE IF NOT EXISTS task_verification (
   source_cursor    TEXT NOT NULL,
   PRIMARY KEY (project_id, goal_id, task_id)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS goal_status (
+  project_id                 TEXT NOT NULL,
+  goal_id                    TEXT NOT NULL,
+  phase                      TEXT NOT NULL,
+  previous_phase             TEXT,
+  plan_ref                   TEXT,
+  reason_codes               TEXT NOT NULL,
+  explanation                TEXT NOT NULL,
+  side_effect_reconciliation TEXT NOT NULL,
+  aggregate_revision         INTEGER NOT NULL,
+  updated_at                 TEXT,
+  source_cursor              TEXT NOT NULL,
+  PRIMARY KEY (project_id, goal_id)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS goal_timeline (
+  project_id         TEXT NOT NULL,
+  goal_id            TEXT NOT NULL,
+  seq                INTEGER NOT NULL,
+  phase              TEXT NOT NULL,
+  previous_phase     TEXT,
+  reason_codes       TEXT NOT NULL,
+  explanation        TEXT NOT NULL,
+  aggregate_revision INTEGER NOT NULL,
+  reduced_at         TEXT NOT NULL,
+  event_id           TEXT NOT NULL,
+  source_cursor      TEXT NOT NULL,
+  PRIMARY KEY (project_id, goal_id, seq)
+) WITHOUT ROWID;
 `;
 
 /** Row shape we read back for a GoalView. */
@@ -293,6 +321,36 @@ type VerificationProjection = {
   sourceCursor: CommitCursor;
 };
 
+/** Row shape we read back for a goal status projection (complex fields are JSON TEXT). */
+type GoalStatusRow = {
+  project_id: string;
+  goal_id: string;
+  phase: string;
+  previous_phase: string | null;
+  plan_ref: string | null;
+  reason_codes: string;
+  explanation: string;
+  side_effect_reconciliation: string;
+  aggregate_revision: number;
+  updated_at: string | null;
+  source_cursor: string;
+};
+
+/** Row shape we read back for a goal timeline projection (complex fields are JSON TEXT). */
+type GoalTimelineRow = {
+  project_id: string;
+  goal_id: string;
+  seq: number;
+  phase: string;
+  previous_phase: string | null;
+  reason_codes: string;
+  explanation: string;
+  aggregate_revision: number;
+  reduced_at: string;
+  event_id: string;
+  source_cursor: string;
+};
+
 /** Row shape we read back for a verification projection (complex fields are JSON TEXT). */
 type TaskVerificationRow = {
   project_id: string;
@@ -330,6 +388,11 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   private readonly stmtUpsertPlanSnapshot: StatementSync;
   private readonly stmtSelectTaskVerification: StatementSync;
   private readonly stmtUpsertTaskVerification: StatementSync;
+  private readonly stmtSelectGoalStatus: StatementSync;
+  private readonly stmtUpsertGoalStatus: StatementSync;
+  private readonly stmtSelectGoalTimeline: StatementSync;
+  private readonly stmtInsertGoalTimeline: StatementSync;
+  private readonly stmtSelectMaxGoalTimelineSeq: StatementSync;
 
   constructor(options: SqliteReadModelIndexOptions) {
     if (typeof options.path !== "string" || options.path.length === 0) {
@@ -480,6 +543,46 @@ export class SqliteReadModelIndex implements ReadModelIndex {
          reduction_json   = excluded.reduction_json,
          reduction_cursor = excluded.reduction_cursor,
          source_cursor    = excluded.source_cursor`,
+    );
+    this.stmtSelectGoalStatus = this.db.prepare(
+`SELECT project_id, goal_id, phase, previous_phase, plan_ref, reason_codes,
+             explanation, side_effect_reconciliation, aggregate_revision,
+             updated_at, source_cursor
+        FROM goal_status
+       WHERE project_id = ? AND goal_id = ?`
+    );
+    this.stmtUpsertGoalStatus = this.db.prepare(
+`INSERT INTO goal_status
+        (project_id, goal_id, phase, previous_phase, plan_ref, reason_codes,
+         explanation, side_effect_reconciliation, aggregate_revision,
+         updated_at, source_cursor)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id, goal_id) DO UPDATE SET
+        phase                      = excluded.phase,
+        previous_phase             = excluded.previous_phase,
+        plan_ref                   = excluded.plan_ref,
+        reason_codes               = excluded.reason_codes,
+        explanation                = excluded.explanation,
+        side_effect_reconciliation = excluded.side_effect_reconciliation,
+        aggregate_revision         = excluded.aggregate_revision,
+        updated_at                 = excluded.updated_at,
+        source_cursor              = excluded.source_cursor`
+    );
+    this.stmtSelectGoalTimeline = this.db.prepare(
+`SELECT seq, phase, previous_phase, reason_codes, explanation,
+             aggregate_revision, reduced_at, event_id, source_cursor
+        FROM goal_timeline
+       WHERE project_id = ? AND goal_id = ?
+       ORDER BY seq ASC`
+    );
+    this.stmtInsertGoalTimeline = this.db.prepare(
+`INSERT INTO goal_timeline
+        (project_id, goal_id, seq, phase, previous_phase, reason_codes,
+         explanation, aggregate_revision, reduced_at, event_id, source_cursor)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    this.stmtSelectMaxGoalTimelineSeq = this.db.prepare(
+`SELECT MAX(seq) AS max_seq FROM goal_timeline WHERE project_id = ? AND goal_id = ?`
     );
   }
 
@@ -663,14 +766,127 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     };
   }
 
-  /** P1-05: goal phase status projection (handled by lane B). */
+  /** P1-05: goal phase status projection (per (projectId, goalId)). */
   async goalStatus(query: import("../contracts/goal-phase-view.js").GoalStatusQuery): Promise<import("../contracts/goal-phase-view.js").GoalStatusViewResult> {
-    throw new Error("P1-05: not implemented yet (lane B)");
+    this.assertOpen();
+    const observedCursor = this.readCheckpoint();
+    const row = this.readGoalStatusRow(query.projectId, query.goalId);
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(observedCursor, query.atLeastCursor)) {
+        if (row) return { status: "ready", goal: row, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor };
+      }
+      return { status: "not_ready", requiredCursor: query.atLeastCursor, observedCursor };
+    }
+
+    // No atLeastCursor: show the row if present. Once the projection has
+    // advanced (observedCursor non-null) a missing key is a definitive
+    // not_found; before any advance it is the freshness-safe not_ready.
+    if (row) return { status: "ready", goal: row, observedCursor: observedCursor! };
+    if (observedCursor !== null) return { status: "not_found", observedCursor };
+    return {
+      status: "not_ready",
+      requiredCursor: makeCommitCursor(1),
+      observedCursor,
+    };
   }
 
-  /** P1-05: goal phase timeline projection (handled by lane B). */
+  /** P1-05: goal phase timeline projection (per (projectId, goalId)). */
   async goalTimeline(query: import("../contracts/goal-phase-view.js").GoalTimelineQuery): Promise<import("../contracts/goal-phase-view.js").GoalTimelineViewResult> {
-    throw new Error("P1-05: not implemented yet (lane B)");
+    this.assertOpen();
+    const observedCursor = this.readCheckpoint();
+    const row = this.readGoalTimelineRows(query.projectId, query.goalId);
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(observedCursor, query.atLeastCursor)) {
+        if (row !== null) return { status: "ready", timeline: row, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor };
+      }
+      return { status: "not_ready", requiredCursor: query.atLeastCursor, observedCursor };
+    }
+
+    // No atLeastCursor: show the rows if present; a missing key after any
+    // advance is not_found, else the freshness-safe not_ready.
+    if (row !== null) return { status: "ready", timeline: row, observedCursor: observedCursor! };
+    if (observedCursor !== null) return { status: "not_found", observedCursor };
+    return {
+      status: "not_ready",
+      requiredCursor: makeCommitCursor(1),
+      observedCursor,
+    };
+  }
+
+  private readGoalStatusRow(projectId: string, goalId: string): import("../contracts/goal-phase-view.js").GoalStatusView | null {
+    const row = this.stmtSelectGoalStatus.get(projectId, goalId) as unknown as GoalStatusRow | undefined;
+    if (!row) return null;
+    return {
+      projectId: row.project_id,
+      goalId: row.goal_id,
+      phase: row.phase as import("../contracts/goal-phase.js").GoalPhase,
+      previousPhase: row.previous_phase === null ? null : (row.previous_phase as import("../contracts/goal-phase.js").GoalPhase),
+      planRef: row.plan_ref === null ? null : (JSON.parse(row.plan_ref) as import("../contracts/plan.js").PlanRevisionRef),
+      reasonCodes: JSON.parse(row.reason_codes) as import("../contracts/goal-phase.js").GoalPhaseReasonCode[],
+      explanation: JSON.parse(row.explanation) as import("../contracts/goal-phase.js").GoalCompletionExplanation,
+      sideEffectReconciliation: JSON.parse(row.side_effect_reconciliation) as import("../contracts/goal-phase.js").GoalSideEffectReconciliation,
+      aggregateRevision: row.aggregate_revision,
+      sourceCursor: row.source_cursor as import("../contracts/command-event.js").CommitCursor,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private readGoalTimelineRows(projectId: string, goalId: string): import("../contracts/goal-phase-view.js").GoalTimelineEntry[] | null {
+    const rows = this.stmtSelectGoalTimeline.all(projectId, goalId) as unknown as GoalTimelineRow[];
+    if (rows.length === 0) return null;
+    return rows.map((row) => ({
+      phase: row.phase as import("../contracts/goal-phase.js").GoalPhase,
+      previousPhase: row.previous_phase === null ? null : (row.previous_phase as import("../contracts/goal-phase.js").GoalPhase),
+      reasonCodes: JSON.parse(row.reason_codes) as import("../contracts/goal-phase.js").GoalPhaseReasonCode[],
+      explanation: JSON.parse(row.explanation) as import("../contracts/goal-phase.js").GoalCompletionExplanation,
+      aggregateRevision: row.aggregate_revision,
+      reducedAt: row.reduced_at,
+      eventId: row.event_id,
+      sourceCursor: row.source_cursor as import("../contracts/command-event.js").CommitCursor,
+    }));
+  }
+
+  /** GoalPhaseUpdated@1 -> upsert the (projectId, goalId) status row AND append
+   * one timeline entry in arrival order (rebuilt ONLY from the event payload). */
+  private applyGoalPhaseUpdated(event: import("../contracts/goal-phase.js").GoalPhaseUpdatedEvent, cursor: import("../contracts/command-event.js").CommitCursor): void {
+    const projectId = event.projectId;
+    const goalId = event.payload.goalId;
+    this.stmtUpsertGoalStatus.run(
+      projectId,
+      goalId,
+      event.payload.phase,
+      event.payload.previousPhase,
+      event.payload.planRef === null ? null : JSON.stringify(event.payload.planRef),
+      JSON.stringify(event.payload.reasonCodes),
+      JSON.stringify(event.payload.explanation),
+      JSON.stringify(event.payload.sideEffectReconciliation),
+      event.aggregateRevision,
+      event.payload.reducedAt,
+      cursor,
+    );
+    const nextSeq = this.nextGoalTimelineSeq(projectId, goalId);
+    this.stmtInsertGoalTimeline.run(
+      projectId,
+      goalId,
+      nextSeq,
+      event.payload.phase,
+      event.payload.previousPhase,
+      JSON.stringify(event.payload.reasonCodes),
+      JSON.stringify(event.payload.explanation),
+      event.aggregateRevision,
+      event.payload.reducedAt,
+      event.eventId,
+      cursor,
+    );
+  }
+
+  private nextGoalTimelineSeq(projectId: string, goalId: string): number {
+    const row = this.stmtSelectMaxGoalTimelineSeq.get(projectId, goalId) as unknown as { max_seq: number | null } | undefined;
+    return (row?.max_seq ?? 0) + 1;
   }
 
   // ------------------------------------------------------------------ //
@@ -897,7 +1113,8 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       eventType === "RunEventRecorded" ||
       eventType === "RunOutcomeUnknown" ||
       eventType === "EvidenceAdmitted" ||
-      eventType === "TaskReductionUpdated"
+      eventType === "TaskReductionUpdated" ||
+      eventType === "GoalPhaseUpdated"
     );
   }
 
@@ -970,6 +1187,8 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       this.applyEvidenceAdmitted(event, cursor);
     } else if (event.eventType === "TaskReductionUpdated") {
       this.applyTaskReductionUpdated(event, cursor);
+    } else if (event.eventType === "GoalPhaseUpdated") {
+      this.applyGoalPhaseUpdated(event, cursor);
     }
     // Known non-goal / non-plan / non-dispatch events (ProjectBootstrapped,
     // WorkspaceBootstrapped, CompletionPolicyInstalled,
