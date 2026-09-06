@@ -29,10 +29,13 @@ import type {
   HumanCollaboration,
   UserFacingRejectionCode,
 } from "../contracts/modules.js";
+import type { PlanProposalPort } from "../contracts/goal-change.js";
 
 export interface HumanCollaborationDeps {
   control: ControlEngine;
   readModel: ReadModelIndex;
+  /** P1-11: bounded PlanCompiler proposal port (never mutates; CompilerImpl is a lane stub until it lands). */
+  planProposal?: PlanProposalPort;
   commandId: () => string;
   correlationId: () => string;
   now: () => string;
@@ -103,6 +106,44 @@ export class HumanCollaborationImpl implements HumanCollaboration {
 
   async consoleTimeline(query: import("../contracts/console-views.js").TimelineViewQuery): Promise<import("../contracts/console-views.js").TimelineViewResult> {
     return this.deps.readModel.consoleTimeline(query);
+  }
+
+  // ------------------------------------------------------------------ //
+  // P1-11 goal-change group (GoalChangePort): amend -> compiler -> control //
+  // record; decide/applyChange delegate to Control (only Control creates //
+  // or activates a revision). No direct revision writes here.             //
+  // ------------------------------------------------------------------ //
+
+  async amend(request: import("../contracts/goal-change.js").AmendGoalRequestV1): Promise<{ status: "accepted"; proposalRef: import("../contracts/goal-change.js").PlanProposalSnapshot["ref"] } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }> {
+    if (this.deps.planProposal === undefined) {
+      return { status: "rejected", code: "unavailable", message: "plan proposal port not wired" };
+    }
+    const result = await this.deps.planProposal.request(request);
+    if (result.status === "needs_material") return result;
+    if (result.status === "rejected") return result;
+    const receipt = await this.deps.control.recordPlanChangeProposal({
+      commandId: this.deps.commandId(),
+      commandType: "RecordPlanChangeProposal",
+      schemaVersion: 1,
+      identity: { projectId: request.projectId, actor: request.requestedBy, idempotencyKey: this.deps.commandId() + "-idem" },
+      aggregateId: result.proposal.proposalId,
+      expectedRevision: 0,
+      correlationId: this.deps.correlationId(),
+      submittedAt: this.deps.now(),
+      payload: { proposal: result.proposal },
+    });
+    if (receipt.status === "committed") {
+      return { status: "accepted", proposalRef: receipt.proposalRef };
+    }
+    return { status: "rejected", code: receipt.code, message: "proposal record rejected: " + receipt.code };
+  }
+
+  async decide(command: import("../contracts/goal-change.js").RecordUserDecisionCommand): Promise<import("../contracts/goal-change.js").RecordUserDecisionReceipt> {
+    return this.deps.control.recordUserDecision(command);
+  }
+
+  async applyChange(command: import("../contracts/goal-change.js").ApplyPlanChangeCommand): Promise<import("../contracts/goal-change.js").ApplyPlanChangeReceipt> {
+    return this.deps.control.applyPlanChange(command);
   }
 
   private mapToResult(receipt: CommandReceipt, goalId: string): CreateGoalResult {

@@ -183,4 +183,15 @@ export interface HumanCollaboration {
   consoleActiveAgents(query: import("./console-views.js").ActiveAgentsViewQuery): Promise<import("./console-views.js").ActiveAgentsViewResult>;
   consoleTaskEvidence(query: import("./console-views.js").TaskEvidenceViewQuery): Promise<import("./console-views.js").TaskEvidenceViewResult>;
   consoleTimeline(query: import("./console-views.js").TimelineViewQuery): Promise<import("./console-views.js").TimelineViewResult>;
+  /**
+   * P1-11 versioned goal-change group (HumanCollaboration.GoalChangePort —
+   * first QUIET freeze for PlanCompiler.PlanProposalPort /
+   * ContextCompiler.PlanningContextPort; later planning/change tickets may
+   * only consume these versions or submit an explicit version upgrade).
+   * amend: submit a bounded AmendGoalRequest; the compiler produces a bounded
+   * proposal+impact (never mutates) which Control RECORDS immutably.
+   */
+  amend(request: import("./goal-change.js").AmendGoalRequestV1): Promise<{ status: "accepted"; proposalRef: import("./goal-change.js").PlanProposalSnapshot["ref"] } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
+  decide(command: import("./goal-change.js").RecordUserDecisionCommand): Promise<import("./goal-change.js").RecordUserDecisionReceipt>;
+  applyChange(command: import("./goal-change.js").ApplyPlanChangeCommand): Promise<import("./goal-change.js").ApplyPlanChangeReceipt>;
 }

@@ -113,6 +113,9 @@ import type { ArchitectureInspectionViewQuery, ArchitectureInspectionViewResult,
 import type { WorkContextPort, WorkContextRequestV1, WorkContextAssemblyResultV1 } from "../contracts/work-context-port.js";
 import type { ContextContinuationPort } from "../contracts/context-continuation-port.js";
 import type { WorkContextViewQuery, WorkContextViewResult, BindWorkContextCommand, BindWorkContextReceipt, LinkWorkRunCommand, LinkWorkRunReceipt, RecordExecutionNoteCommand, RecordExecutionNoteReceipt, RecordContinuationCommand, RecordContinuationReceipt } from "../contracts/context-continuity.js";
+import { PlanCompilerImpl } from "../control/plan-compiler.js";
+import { PlanningContextCompilerImpl } from "../context/planning-context-compiler.js";
+import type { PlanProposalPort, PlanningContextPort } from "../contracts/goal-change.js";
 
 export interface InMemoryHarnessOptions {
   /** P1-03: default FakeRuntimeAdapter script (FAKE_RUNTIME_SCRIPT_COMPLETED_V1). */
@@ -159,6 +162,10 @@ export interface InMemoryHarnessOptions {
   codeGraph?: CodeGraphPort;
   /** P1-12: explicit InspectionPort (default ArchitectureReconcilerImpl). */
   inspection?: InspectionPort;
+  /** P1-11: explicit PlanProposalPort (default PlanCompilerImpl stub). */
+  planProposal?: PlanProposalPort;
+  /** P1-11: explicit PlanningContextPort (default PlanningContextCompilerImpl stub). */
+  planningContext?: PlanningContextPort;
   deps?: Partial<InjectableDeps>;
 }
 
@@ -208,6 +215,10 @@ export interface InMemoryHarness {
   codeGraph: CodeGraphPort;
   /** P1-12: ArchitectureReconciler.InspectionPort seam. */
   inspection: InspectionPort;
+  /** P1-11: bounded PlanCompiler proposal port (default stub until the lane lands). */
+  planProposal: PlanProposalPort;
+  /** P1-11: bounded planning-context port (default stub until the lane lands). */
+  planningContext: PlanningContextPort;
   bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
   /** P1-02: governance install (immutable revision; never auto-activates). */
   install(command: GovernanceInstallCommand): Promise<GovernanceInstallReceipt>;
@@ -322,6 +333,20 @@ export interface InMemoryHarness {
   assembleQueryContext(request: QueryContextRequestV1): Promise<QueryContextResultV1>;
   /** P1-09: read the runtime public snapshot (explicit unsupported/stale). */
   publicSnapshot(query: PublicSnapshotQueryV1): Promise<PublicSnapshotResultV1>;
+  /** P1-11: record one immutable plan-change proposal (Planner proposes only). */
+  recordPlanChangeProposal(command: import("../contracts/goal-change.js").RecordPlanChangeProposalCommand): Promise<import("../contracts/goal-change.js").RecordPlanChangeProposalReceipt>;
+  /** P1-11: record one immutable user decision. */
+  recordUserDecision(command: import("../contracts/goal-change.js").RecordUserDecisionCommand): Promise<import("../contracts/goal-change.js").RecordUserDecisionReceipt>;
+  /** P1-11: apply an ACCEPTED decision (CAS new revision + goal). */
+  applyPlanChange(command: import("../contracts/goal-change.js").ApplyPlanChangeCommand): Promise<import("../contracts/goal-change.js").ApplyPlanChangeReceipt>;
+  /** P1-11: plan-change view (display only). */
+  planChangeView(query: import("../contracts/goal-change.js").PlanChangeViewQuery): Promise<import("../contracts/goal-change.js").PlanChangeViewResult>;
+  /** P1-11: bounded proposal request (compiler port). */
+  planProposalRequest(request: import("../contracts/goal-change.js").AmendGoalRequestV1): Promise<{ status: "proposal"; proposal: import("../contracts/goal-change.js").PlanProposalV1 } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
+  /** P1-11: bounded planning-context assembly. */
+  assemblePlanningContext(request: { schemaVersion: 1; requestId: string; projectId: string; workspaceId: string; goalRef: import("../contracts/ledger.js").GoalRef; planRef: import("../contracts/plan.js").PlanRevisionRef | null; budget: { maxBundleBytes: number } }): Promise<{ status: "ready"; bundleRef: import("../contracts/artifact.js").ArtifactRef; manifest: { selectedSources: string[]; freshnessCursor: import("../contracts/command-event.js").CommitCursor | null; totalBytes: number } } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: "invalid_request" | "forbidden_tool_or_scope" | "unavailable"; message: string }>;
+  /** P1-11: HumanCollaboration goal-change face (amend compiles then records). */
+  amend(request: import("../contracts/goal-change.js").AmendGoalRequestV1): Promise<{ status: "accepted"; proposalRef: import("../contracts/goal-change.js").PlanProposalSnapshot["ref"] } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
   /** P1-16: runtime continuation capabilities (honest declaration). */
   continuationCapabilities(request: { workContextRef: import("../contracts/context-continuity.js").WorkContextRef; runRef: import("../contracts/dispatch.js").RunRef | null }): Promise<import("../contracts/context-continuation-port.js").ContextContinuationCapabilityResult>;
   /** P1-04: review-context assembly (bounded ReviewPacket). */
@@ -346,9 +371,12 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     workspaceCapability,
   });
   const readModel = new ReadModelIndexImpl();
+  const planProposal: PlanProposalPort = options.planProposal ?? new PlanCompilerImpl();
+  const planningContext: PlanningContextPort = options.planningContext ?? new PlanningContextCompilerImpl();
   const collaboration = new HumanCollaborationImpl({
     control,
     readModel,
+    planProposal,
     commandId: d.commandId,
     correlationId: d.correlationId,
     now: d.clock,
@@ -455,6 +483,8 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     workspaceReader,
     codeGraph,
     inspection,
+    planProposal,
+    planningContext,
     bootstrap: (command) => control.bootstrap(command),
     install: (command) => control.install(command),
     activate: (command) => control.activate(command),
@@ -515,6 +545,13 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     queryJobView: (query) => readModel.queryJobView(query),
     assembleQueryContext: (request) => queryContext.assembleQueryContext(request),
     publicSnapshot: (query) => snapshot.snapshot(query),
+    recordPlanChangeProposal: (command) => control.recordPlanChangeProposal(command),
+    recordUserDecision: (command) => control.recordUserDecision(command),
+    applyPlanChange: (command) => control.applyPlanChange(command),
+    planChangeView: (query) => readModel.planChangeView(query),
+    planProposalRequest: (request) => planProposal.request(request),
+    assemblePlanningContext: (request) => planningContext.assemblePlanningContext(request),
+    amend: (request) => collaboration.amend(request),
     continuationCapabilities: (request) => contextContinuation.capabilities(request),
     assembleHandoff: (request) => handoffContext.assemble(request),
     assembleReview: (request) => reviewContext.assemble(request),

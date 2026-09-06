@@ -128,4 +128,6 @@ export interface ReadModelIndex {
   controlTimelineView(query: import("./control-intent.js").ControlTimelineViewQuery): Promise<import("./control-intent.js").ControlTimelineViewResult>;
   /** P1-09: query job view per (projectId, workspaceId, queryJobId) — job/run/answers/stale (display only). */
   queryJobView(query: import("./query-job.js").QueryJobViewQuery): Promise<import("./query-job.js").QueryJobViewResult>;
+  /** P1-11: plan-change view per (projectId, workspaceId, goalId) — proposals/decisions/revisions + task dispositions (display only). */
+  planChangeView(query: import("./goal-change.js").PlanChangeViewQuery): Promise<import("./goal-change.js").PlanChangeViewResult>;
 }

@@ -1989,6 +1989,9 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     this.applyP112Inspection(event, cursor);
     this.applyP110(event, cursor);
     this.applyP109(event, cursor);
+
+    // P1-11 plan-change projections (LANE-A proposal/decision; LANE-B revision/plan).
+    this.applyP111(event, cursor);
     // Known non-goal / non-plan / non-dispatch events (ProjectBootstrapped,
     // WorkspaceBootstrapped, CompletionPolicyInstalled,
     // ArchitectureBaselineInstalled, CompletionPolicyActivated,
@@ -2690,6 +2693,18 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     const answers = this.p109ReadList("query_answer_rows", jobKey) as import("../contracts/query-job.js").QueryJobAnswerV1[];
     const currentAnswer = answers.length > 0 ? answers[answers.length - 1]! : null;
     return { status: "ready", job, run, answers, currentAnswer, stale: currentAnswer?.stale ?? false, sourceCursor: observedCursor };
+  }
+
+  /** P1-11 LANE-B: plan change view (display only) — stub until the lane lands. */
+  async planChangeView(query: import("../contracts/goal-change.js").PlanChangeViewQuery): Promise<import("../contracts/goal-change.js").PlanChangeViewResult> {
+    void query;
+    throw new Error("P1-11 lane: planChangeView not implemented yet");
+  }
+
+  /** P1-11 LANE-A/LANE-B hook: fold plan-change events (empty shell until lanes land). */
+  private applyP111(event: DomainEvent, cursor: import("../contracts/command-event.js").CommitCursor): void {
+    void event;
+    void cursor;
   }
 
   private p109ReadOne(table: string, key: string): unknown | null {

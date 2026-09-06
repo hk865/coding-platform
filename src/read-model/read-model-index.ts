@@ -456,6 +456,11 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       this.applyP110(event, positioned.cursor);
       this.applyP109(event, positioned.cursor);
 
+      // P1-11 plan-change projections (PlanProposalRecorded / UserDecisionRecorded /
+      // GoalRevisionRecorded / PlanRevisionSuperseded; handler + isHandledEventType
+      // land in the SAME lane commits — LANE-A proposal/decision, LANE-B revision/plan).
+      this.applyP111(event, positioned.cursor);
+
       // Known non-goal / non-plan / non-dispatch events
       // (ProjectBootstrapped, WorkspaceBootstrapped, CompletionPolicyInstalled,
       // ArchitectureBaselineInstalled, CompletionPolicyActivated,
@@ -2725,6 +2730,18 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       stale: currentAnswer?.stale ?? false,
       sourceCursor: observedCursor,
     };
+  }
+
+  /** P1-11 LANE-B: plan change view (display only) — stub until the lane lands. */
+  async planChangeView(query: import("../contracts/goal-change.js").PlanChangeViewQuery): Promise<import("../contracts/goal-change.js").PlanChangeViewResult> {
+    void query;
+    throw new Error("P1-11 lane: planChangeView not implemented yet");
+  }
+
+  /** P1-11 LANE-A/LANE-B hook: fold plan-change events (empty shell until lanes land). */
+  private applyP111(event: DomainEvent, cursor: CommitCursor): void {
+    void event;
+    void cursor;
   }
 
   /** P1-17: completed-work selection source view (display only; composed from the P1-16 work-context stores). */

@@ -86,6 +86,9 @@ import type { LifecycleControlPort, ControlTimelineViewQuery, ControlTimelineVie
 import type { CompletedWorkContextPort, CompletedWorkContextRequestV1, CompletedWorkContextResultV1 } from "../contracts/completed-work-context.js";
 import { FakeContextContinuationRuntimeAdapter } from "../runtime/context-continuation-adapter.js";
 import { ArchitectureReconcilerImpl } from "../control/architecture-reconciler.js";
+import { PlanCompilerImpl } from "../control/plan-compiler.js";
+import { PlanningContextCompilerImpl } from "../context/planning-context-compiler.js";
+import type { PlanProposalPort, PlanningContextPort } from "../contracts/goal-change.js";
 import { FakeWorkspaceReaderAdapter } from "../data/workspace-reader-adapter.js";
 import { CodeGraphPortImpl } from "../verification/code-graph-port.js";
 import type { InspectionPort, InspectResultV1, CodeGraphPort } from "../contracts/architecture-reconciler.js";
@@ -172,6 +175,10 @@ export interface PersistentSqliteHarnessOptions {
   codeGraph?: CodeGraphPort;
   /** P1-12: explicit InspectionPort (default ArchitectureReconcilerImpl). */
   inspection?: InspectionPort;
+  /** P1-11: explicit PlanProposalPort (default PlanCompilerImpl stub). */
+  planProposal?: PlanProposalPort;
+  /** P1-11: explicit PlanningContextPort (default PlanningContextCompilerImpl stub). */
+  planningContext?: PlanningContextPort;
 }
 
 export interface PersistentSqliteHarness {
@@ -224,6 +231,10 @@ export interface PersistentSqliteHarness {
   codeGraph: CodeGraphPort;
   /** P1-12: ArchitectureReconciler.InspectionPort seam. */
   inspection: InspectionPort;
+  /** P1-11: bounded PlanCompiler proposal port (default stub until the lane lands). */
+  planProposal: PlanProposalPort;
+  /** P1-11: bounded planning-context port (default stub until the lane lands). */
+  planningContext: PlanningContextPort;
 
   bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
   /** P1-02: governance install (immutable revision; never auto-activates). */
@@ -339,6 +350,20 @@ export interface PersistentSqliteHarness {
   assembleQueryContext(request: QueryContextRequestV1): Promise<QueryContextResultV1>;
   /** P1-09: read the runtime public snapshot (explicit unsupported/stale). */
   publicSnapshot(query: PublicSnapshotQueryV1): Promise<PublicSnapshotResultV1>;
+  /** P1-11: record one immutable plan-change proposal (Planner proposes only). */
+  recordPlanChangeProposal(command: import("../contracts/goal-change.js").RecordPlanChangeProposalCommand): Promise<import("../contracts/goal-change.js").RecordPlanChangeProposalReceipt>;
+  /** P1-11: record one immutable user decision. */
+  recordUserDecision(command: import("../contracts/goal-change.js").RecordUserDecisionCommand): Promise<import("../contracts/goal-change.js").RecordUserDecisionReceipt>;
+  /** P1-11: apply an ACCEPTED decision (CAS new revision + goal). */
+  applyPlanChange(command: import("../contracts/goal-change.js").ApplyPlanChangeCommand): Promise<import("../contracts/goal-change.js").ApplyPlanChangeReceipt>;
+  /** P1-11: plan-change view (display only). */
+  planChangeView(query: import("../contracts/goal-change.js").PlanChangeViewQuery): Promise<import("../contracts/goal-change.js").PlanChangeViewResult>;
+  /** P1-11: bounded proposal request (compiler port). */
+  planProposalRequest(request: import("../contracts/goal-change.js").AmendGoalRequestV1): Promise<{ status: "proposal"; proposal: import("../contracts/goal-change.js").PlanProposalV1 } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
+  /** P1-11: bounded planning-context assembly. */
+  assemblePlanningContext(request: { schemaVersion: 1; requestId: string; projectId: string; workspaceId: string; goalRef: import("../contracts/ledger.js").GoalRef; planRef: import("../contracts/plan.js").PlanRevisionRef | null; budget: { maxBundleBytes: number } }): Promise<{ status: "ready"; bundleRef: import("../contracts/artifact.js").ArtifactRef; manifest: { selectedSources: string[]; freshnessCursor: import("../contracts/command-event.js").CommitCursor | null; totalBytes: number } } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: "invalid_request" | "forbidden_tool_or_scope" | "unavailable"; message: string }>;
+  /** P1-11: HumanCollaboration goal-change face (amend compiles then records). */
+  amend(request: import("../contracts/goal-change.js").AmendGoalRequestV1): Promise<{ status: "accepted"; proposalRef: import("../contracts/goal-change.js").PlanProposalSnapshot["ref"] } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
   /** P1-16: runtime continuation capabilities (honest declaration). */
   continuationCapabilities(request: { workContextRef: import("../contracts/context-continuity.js").WorkContextRef; runRef: import("../contracts/dispatch.js").RunRef | null }): Promise<import("../contracts/context-continuation-port.js").ContextContinuationCapabilityResult>;
   /** P1-04: review-context assembly (bounded ReviewPacket). */
@@ -384,6 +409,8 @@ interface BuiltHarness {
   workspaceReader: WorkspaceReadPort;
   codeGraph: CodeGraphPort;
   inspection: InspectionPort;
+  planProposal: PlanProposalPort;
+  planningContext: PlanningContextPort;
   readOnlyQuery: ReadOnlyQueryPort;
   queryContext: QueryContextPort;
   snapshot: SnapshotPort;
@@ -418,6 +445,8 @@ function buildHarness(
   workspaceReaderOverride: WorkspaceReadPort | undefined,
   codeGraphOverride: CodeGraphPort | undefined,
   inspectionOverride: InspectionPort | undefined,
+  planProposalOverride: PlanProposalPort | undefined,
+  planningContextOverride: PlanningContextPort | undefined,
 ): BuiltHarness {
   const d: InjectableDeps = { ...createDeterministicDeps(), ...deps };
   const ledger = createSqliteStateLedger({ path: join(dir, ledgerFile) });
@@ -425,9 +454,12 @@ function buildHarness(
   const workspaceCapability: WorkspaceCapabilityPort =
     workspaceCapabilityOverride ?? new FakeWorkspaceCapabilityAdapter();
   const control = new ControlEngineImpl({ ledger, now: d.clock, eventId: d.eventId, workspaceCapability });
+  const planProposal: PlanProposalPort = planProposalOverride ?? new PlanCompilerImpl();
+  const planningContext: PlanningContextPort = planningContextOverride ?? new PlanningContextCompilerImpl();
   const collaboration = new HumanCollaborationImpl({
     control,
     readModel,
+    planProposal,
     commandId: d.commandId,
     correlationId: d.correlationId,
     now: d.clock,
@@ -528,6 +560,8 @@ function buildHarness(
     workspaceReader,
     codeGraph,
     inspection,
+    planProposal,
+    planningContext,
     advanceProjection,
     observedCursor: () => lastCursor,
     planGraph: (query) => readModel.planGraph(query),
@@ -552,7 +586,7 @@ export async function createPersistentSqliteHarness(
     ledgerFilename: string,
     readModelFilename: string,
   ): PersistentSqliteHarness => {
-    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript, checkPorts, reviewer, verificationOverride, reviewContextOverride, options.handoffContext, options.handoffControl, options.workspaceCapability, options.workspaceDrive, options.runtime, options.workContext, options.contextContinuation, options.completedWork, options.lifecycleControl, options.readOnlyQuery, options.queryContext, options.snapshot, options.workspaceReader, options.codeGraph, options.inspection);
+    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript, checkPorts, reviewer, verificationOverride, reviewContextOverride, options.handoffContext, options.handoffControl, options.workspaceCapability, options.workspaceDrive, options.runtime, options.workContext, options.contextContinuation, options.completedWork, options.lifecycleControl, options.readOnlyQuery, options.queryContext, options.snapshot, options.workspaceReader, options.codeGraph, options.inspection, options.planProposal, options.planningContext);
     let closed = false;
     return {
       dir,
@@ -584,6 +618,8 @@ export async function createPersistentSqliteHarness(
       workspaceReader: built.workspaceReader,
       codeGraph: built.codeGraph,
       inspection: built.inspection,
+      planProposal: built.planProposal,
+      planningContext: built.planningContext,
       bootstrap: (command) => built.control.bootstrap(command),
       install: (command) => built.control.install(command),
       activate: (command) => built.control.activate(command),
@@ -642,6 +678,13 @@ export async function createPersistentSqliteHarness(
       recordQueryAnswer: (command) => built.control.recordQueryAnswer(command),
       closeQueryJob: (command) => built.control.closeQueryJob(command),
       queryJobView: (query) => built.readModel.queryJobView(query),
+    recordPlanChangeProposal: (command) => built.control.recordPlanChangeProposal(command),
+    recordUserDecision: (command) => built.control.recordUserDecision(command),
+    applyPlanChange: (command) => built.control.applyPlanChange(command),
+    planChangeView: (query) => built.readModel.planChangeView(query),
+    planProposalRequest: (request) => built.planProposal.request(request),
+    assemblePlanningContext: (request) => built.planningContext.assemblePlanningContext(request),
+    amend: (request) => built.collaboration.amend(request),
       assembleQueryContext: (request) => built.queryContext.assembleQueryContext(request),
       publicSnapshot: (query) => built.snapshot.snapshot(query),
       continuationCapabilities: (request) => built.contextContinuation.capabilities(request),

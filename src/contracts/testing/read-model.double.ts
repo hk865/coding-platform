@@ -97,6 +97,7 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly completedWorkViewCalls: import("../completed-work-context.js").CompletedWorkViewQuery[] = [];
   readonly controlTimelineViewCalls: import("../control-intent.js").ControlTimelineViewQuery[] = [];
   readonly queryJobViewCalls: import("../query-job.js").QueryJobViewQuery[] = [];
+  readonly planChangeViewCalls: import("../goal-change.js").PlanChangeViewQuery[] = [];
 
   constructor(
     private readonly options: {
@@ -116,6 +117,7 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
       completedWorkView?: CompletedWorkViewBehavior;
       controlTimelineView?: ControlTimelineViewBehavior;
       queryJobView?: QueryJobViewBehavior;
+      planChangeView?: (query: import("../goal-change.js").PlanChangeViewQuery) => Promise<import("../goal-change.js").PlanChangeViewResult> | import("../goal-change.js").PlanChangeViewResult;
       consolePortfolio?: import("../console-views.js").PortfolioViewResult extends never ? never : (query: import("../console-views.js").PortfolioViewQuery) => Promise<import("../console-views.js").PortfolioViewResult> | import("../console-views.js").PortfolioViewResult;
       consoleSummary?: (query: import("../console-views.js").WorkspaceSummaryViewQuery) => Promise<import("../console-views.js").WorkspaceSummaryViewResult> | import("../console-views.js").WorkspaceSummaryViewResult;
       consolePlanMatrix?: (query: import("../console-views.js").PlanMatrixViewQuery) => Promise<import("../console-views.js").PlanMatrixViewResult> | import("../console-views.js").PlanMatrixViewResult;
@@ -226,6 +228,12 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
     this.queryJobViewCalls.push(query);
     if (this.options.queryJobView) return this.options.queryJobView(query);
     return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId, queryJobId: query.queryJobId };
+  }
+
+  async planChangeView(query: import("../goal-change.js").PlanChangeViewQuery): Promise<import("../goal-change.js").PlanChangeViewResult> {
+    this.planChangeViewCalls.push(query);
+    if (this.options.planChangeView) return this.options.planChangeView(query);
+    return { status: "not_found" };
   }
 
   // P1-08 console views (scripted)                                           //
