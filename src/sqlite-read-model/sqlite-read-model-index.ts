@@ -94,6 +94,8 @@ import type {
   RunOutcomeUnknownEvent,
   RunStartedEvent,
   TaskClaimedEvent,
+  RunRef,
+  TaskAttemptRef,
 } from "../contracts/dispatch.js";
 import {
   isTerminalRuntimeEvent,
@@ -107,6 +109,45 @@ import type {
   HandoffProvenanceViewQuery,
   HandoffProvenanceViewResult,
 } from "../contracts/handoff-view.js";
+import type {
+  WorkspaceLeaseView,
+  WorkspaceLeaseViewQuery,
+  WorkspaceLeaseViewResult,
+  IntegrationConflictView,
+  IntegrationConflictViewQuery,
+  IntegrationConflictViewResult,
+  WorkspacePatchView,
+  WorkspacePatchViewEntry,
+  WorkspacePatchViewQuery,
+  WorkspacePatchViewResult,
+  IntegrationConflictViewRecord,
+} from "../contracts/workspace-views.js";
+import type {
+  WorkspaceReadLeaseGrantedEvent,
+  WorkspaceReadLeaseReleasedEvent,
+  WorkspaceWriteLeaseGrantedEvent,
+  WorkspaceWriteLeaseReleasedEvent,
+  WorkspaceLeaseHolderV1,
+} from "../contracts/workspace-lease.js";
+import type { IntegrationJoinedEvent } from "../contracts/integration.js";
+import { patchRecordRefFor } from "../contracts/patch.js";
+import type { PatchRecordedEvent } from "../contracts/patch.js";
+import type { RoleBindingRefV1 } from "../contracts/dispatch.js";
+
+/**
+ * Reconstruct a lease view holder: the grant events carry runRef + attemptRef
+ * only (the roleBinding lives on the lease snapshot, off the event stream), so
+ * the display view carries a stable placeholder binding — display-only, never
+ * judged, never replayed as authority.
+ */
+const LEASE_P1_07_PLACEHOLDER_BINDING: RoleBindingRefV1 = {
+  schemaVersion: 1,
+  bindingId: "",
+  templateId: "",
+  templateRevision: "",
+  bindingVersion: 1,
+  policyRevision: "",
+};
 
 export interface SqliteReadModelIndexOptions {
   /** ":memory:" (per-connection ephemeral) or a single SQLite file path. */
@@ -237,6 +278,25 @@ CREATE TABLE IF NOT EXISTS handoff_provenance (
   task_id         TEXT NOT NULL,
   provenance_json TEXT NOT NULL,
   PRIMARY KEY (project_id, goal_id, task_id)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS workspace_lease_view (
+  project_id   TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  lease_json   TEXT NOT NULL,
+  PRIMARY KEY (project_id, workspace_id)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS integration_conflict_view (
+  project_id    TEXT NOT NULL,
+  goal_id       TEXT NOT NULL,
+  task_id       TEXT NOT NULL,
+  conflict_json TEXT NOT NULL,
+  PRIMARY KEY (project_id, goal_id, task_id)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS workspace_patch_view (
+  project_id   TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  patch_json   TEXT NOT NULL,
+  PRIMARY KEY (project_id, workspace_id)
 ) WITHOUT ROWID;
 `;
 
@@ -409,6 +469,12 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   private readonly stmtSelectMaxGoalTimelineSeq: StatementSync;
   private readonly stmtSelectHandoffProvenance: StatementSync;
   private readonly stmtUpsertHandoffProvenance: StatementSync;
+  private readonly stmtSelectWorkspaceLease: StatementSync;
+  private readonly stmtUpsertWorkspaceLease: StatementSync;
+  private readonly stmtSelectIntegrationConflict: StatementSync;
+  private readonly stmtUpsertIntegrationConflict: StatementSync;
+  private readonly stmtSelectWorkspacePatch: StatementSync;
+  private readonly stmtUpsertWorkspacePatch: StatementSync;
 
   constructor(options: SqliteReadModelIndexOptions) {
     if (typeof options.path !== "string" || options.path.length === 0) {
@@ -605,6 +671,24 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     );
     this.stmtUpsertHandoffProvenance = this.db.prepare(
       "INSERT INTO handoff_provenance (project_id, goal_id, task_id, provenance_json) VALUES (?, ?, ?, ?) ON CONFLICT(project_id, goal_id, task_id) DO UPDATE SET provenance_json = excluded.provenance_json",
+    );
+    this.stmtSelectWorkspaceLease = this.db.prepare(
+      "SELECT lease_json FROM workspace_lease_view WHERE project_id = ? AND workspace_id = ?",
+    );
+    this.stmtUpsertWorkspaceLease = this.db.prepare(
+      "INSERT INTO workspace_lease_view (project_id, workspace_id, lease_json) VALUES (?, ?, ?) ON CONFLICT(project_id, workspace_id) DO UPDATE SET lease_json = excluded.lease_json",
+    );
+    this.stmtSelectIntegrationConflict = this.db.prepare(
+      "SELECT conflict_json FROM integration_conflict_view WHERE project_id = ? AND goal_id = ? AND task_id = ?",
+    );
+    this.stmtUpsertIntegrationConflict = this.db.prepare(
+      "INSERT INTO integration_conflict_view (project_id, goal_id, task_id, conflict_json) VALUES (?, ?, ?, ?) ON CONFLICT(project_id, goal_id, task_id) DO UPDATE SET conflict_json = excluded.conflict_json",
+    );
+    this.stmtSelectWorkspacePatch = this.db.prepare(
+      "SELECT patch_json FROM workspace_patch_view WHERE project_id = ? AND workspace_id = ?",
+    );
+    this.stmtUpsertWorkspacePatch = this.db.prepare(
+      "INSERT INTO workspace_patch_view (project_id, workspace_id, patch_json) VALUES (?, ?, ?) ON CONFLICT(project_id, workspace_id) DO UPDATE SET patch_json = excluded.patch_json",
     );
   }
 
@@ -820,19 +904,118 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   }
 
   // --------------------------------------------------------------------- //
-  // P1-07 views (stub — lane C fills the projection)                       //
+  // P1-07 views (display-only; persisted across close()/reopen)            //
   // --------------------------------------------------------------------- //
 
-  async workspaceLeaseView(query: import("../contracts/workspace-views.js").WorkspaceLeaseViewQuery): Promise<import("../contracts/workspace-views.js").WorkspaceLeaseViewResult> {
-    throw new Error("P1-07 lane C: workspaceLeaseView not implemented yet");
+  async workspaceLeaseView(query: WorkspaceLeaseViewQuery): Promise<WorkspaceLeaseViewResult> {
+    this.assertOpen();
+    const observedCursor = this.readCheckpoint();
+    const row = this.readWorkspaceLeaseRow(query.projectId, query.workspaceId);
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(observedCursor, query.atLeastCursor)) {
+        if (row) return { status: "ready", lease: row, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor: observedCursor ?? makeCommitCursor(1) };
+      }
+      return {
+        status: "not_ready",
+        requiredCursor: query.atLeastCursor,
+        observedCursor: observedCursor ?? makeCommitCursor(1),
+      };
+    }
+
+    if (row) return { status: "ready", lease: row, observedCursor: observedCursor! };
+    return {
+      status: "not_ready",
+      requiredCursor: observedCursor ?? makeCommitCursor(1),
+      observedCursor: observedCursor ?? makeCommitCursor(1),
+    };
   }
 
-  async integrationConflicts(query: import("../contracts/workspace-views.js").IntegrationConflictViewQuery): Promise<import("../contracts/workspace-views.js").IntegrationConflictViewResult> {
-    throw new Error("P1-07 lane C: integrationConflicts not implemented yet");
+  async integrationConflicts(query: IntegrationConflictViewQuery): Promise<IntegrationConflictViewResult> {
+    this.assertOpen();
+    const observedCursor = this.readCheckpoint();
+    const row = this.readIntegrationConflictRow(query.projectId, query.goalId, query.taskId);
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(observedCursor, query.atLeastCursor)) {
+        if (row) return { status: "ready", integration: row, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor: observedCursor ?? makeCommitCursor(1) };
+      }
+      return {
+        status: "not_ready",
+        requiredCursor: query.atLeastCursor,
+        observedCursor: observedCursor ?? makeCommitCursor(1),
+      };
+    }
+
+    if (row) return { status: "ready", integration: row, observedCursor: observedCursor! };
+    return {
+      status: "not_ready",
+      requiredCursor: observedCursor ?? makeCommitCursor(1),
+      observedCursor: observedCursor ?? makeCommitCursor(1),
+    };
   }
 
-  async workspacePatches(query: import("../contracts/workspace-views.js").WorkspacePatchViewQuery): Promise<import("../contracts/workspace-views.js").WorkspacePatchViewResult> {
-    throw new Error("P1-07 lane C: workspacePatches not implemented yet");
+  async workspacePatches(query: WorkspacePatchViewQuery): Promise<WorkspacePatchViewResult> {
+    this.assertOpen();
+    const observedCursor = this.readCheckpoint();
+    const row = this.readWorkspacePatchRow(query.projectId, query.workspaceId);
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(observedCursor, query.atLeastCursor)) {
+        if (row) return { status: "ready", patch: row, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor: observedCursor ?? makeCommitCursor(1) };
+      }
+      return {
+        status: "not_ready",
+        requiredCursor: query.atLeastCursor,
+        observedCursor: observedCursor ?? makeCommitCursor(1),
+      };
+    }
+
+    if (row) return { status: "ready", patch: row, observedCursor: observedCursor! };
+    return {
+      status: "not_ready",
+      requiredCursor: observedCursor ?? makeCommitCursor(1),
+      observedCursor: observedCursor ?? makeCommitCursor(1),
+    };
+  }
+
+  private readWorkspaceLeaseRow(projectId: string, workspaceId: string): WorkspaceLeaseView | null {
+    const row = this.stmtSelectWorkspaceLease.get(projectId, workspaceId) as unknown as
+      | { lease_json: string }
+      | undefined;
+    if (!row) return null;
+    return JSON.parse(row.lease_json) as WorkspaceLeaseView;
+  }
+
+  private writeWorkspaceLeaseRow(row: WorkspaceLeaseView): void {
+    this.stmtUpsertWorkspaceLease.run(row.projectId, row.workspaceId, JSON.stringify(row));
+  }
+
+  private readIntegrationConflictRow(projectId: string, goalId: string, taskId: string): IntegrationConflictView | null {
+    const row = this.stmtSelectIntegrationConflict.get(projectId, goalId, taskId) as unknown as
+      | { conflict_json: string }
+      | undefined;
+    if (!row) return null;
+    return JSON.parse(row.conflict_json) as IntegrationConflictView;
+  }
+
+  private writeIntegrationConflictRow(row: IntegrationConflictView): void {
+    this.stmtUpsertIntegrationConflict.run(row.projectId, row.goalId, row.taskId, JSON.stringify(row));
+  }
+
+  private readWorkspacePatchRow(projectId: string, workspaceId: string): WorkspacePatchView | null {
+    const row = this.stmtSelectWorkspacePatch.get(projectId, workspaceId) as unknown as
+      | { patch_json: string }
+      | undefined;
+    if (!row) return null;
+    return JSON.parse(row.patch_json) as WorkspacePatchView;
+  }
+
+  private writeWorkspacePatchRow(row: WorkspacePatchView): void {
+    this.stmtUpsertWorkspacePatch.run(row.projectId, row.workspaceId, JSON.stringify(row));
   }
 
   private readHandoffProvenanceRow(
@@ -1260,6 +1443,241 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     this.writeHandoffProvenanceRow(row);
   }
 
+  // ------------------------------------------------------------------ //
+  // P1-07 lease / integration / patch projection handlers (SQLite)       //
+  // ------------------------------------------------------------------ //
+
+  private ensureWorkspaceLeaseRow(
+    projectId: string,
+    workspaceId: string,
+    cursor: CommitCursor,
+    occurredAt: string,
+  ): WorkspaceLeaseView {
+    const existing = this.readWorkspaceLeaseRow(projectId, workspaceId);
+    if (existing) return existing;
+    const row: WorkspaceLeaseView = {
+      projectId,
+      workspaceId,
+      writeLease: null,
+      readLeases: [],
+      sourceCursor: cursor,
+      updatedAt: occurredAt,
+    };
+    this.writeWorkspaceLeaseRow(row);
+    return row;
+  }
+
+  /** The grant events carry runRef + attemptRef only; the roleBinding lives on
+   * the lease snapshot (off the event stream), so the display view carries the
+   * stable placeholder binding. Display-only — never judged. */
+  private leaseHolderView(holder: { runRef: RunRef; attemptRef: TaskAttemptRef }): WorkspaceLeaseHolderV1 {
+    return {
+      runRef: { ...holder.runRef },
+      attemptRef: { ...holder.attemptRef },
+      roleBinding: { ...LEASE_P1_07_PLACEHOLDER_BINDING },
+    };
+  }
+
+  /** WorkspaceReadLeaseGranted@1 -> append an ACTIVE read lease entry (read-read
+   * never conflicts, so a grant is always an append). */
+  private applyWorkspaceReadLeaseGranted(event: WorkspaceReadLeaseGrantedEvent, cursor: CommitCursor): void {
+    const row = this.ensureWorkspaceLeaseRow(event.projectId, event.workspaceId, cursor, event.occurredAt);
+    row.readLeases.push({
+      status: "active",
+      leaseId: event.payload.leaseId,
+      scope: { ...event.payload.scope },
+      holder: this.leaseHolderView(event.payload.holder),
+      grantedAt: event.occurredAt,
+      expiresAt: event.payload.expiresAt,
+      releasedAt: null,
+    });
+    row.sourceCursor = cursor;
+    row.updatedAt = event.occurredAt;
+    this.writeWorkspaceLeaseRow(row);
+  }
+
+  /** WorkspaceReadLeaseReleased@1 -> mark the matching read lease released. */
+  private applyWorkspaceReadLeaseReleased(event: WorkspaceReadLeaseReleasedEvent, cursor: CommitCursor): void {
+    const row = this.ensureWorkspaceLeaseRow(event.projectId, event.workspaceId, cursor, event.occurredAt);
+    const entry = row.readLeases.find((l) => l.leaseId === event.payload.leaseId);
+    if (entry) {
+      entry.status = "released";
+      entry.releasedAt = event.payload.releasedAt;
+    }
+    row.sourceCursor = cursor;
+    row.updatedAt = event.occurredAt;
+    this.writeWorkspaceLeaseRow(row);
+  }
+
+  /** WorkspaceWriteLeaseGranted@1 -> the workspace's SINGLE write-lease entry. */
+  private applyWorkspaceWriteLeaseGranted(event: WorkspaceWriteLeaseGrantedEvent, cursor: CommitCursor): void {
+    const row = this.ensureWorkspaceLeaseRow(event.projectId, event.workspaceId, cursor, event.occurredAt);
+    row.writeLease = {
+      status: "active",
+      leaseId: event.payload.leaseId,
+      scope: { ...event.payload.scope },
+      holder: this.leaseHolderView(event.payload.holder),
+      grantedAt: event.occurredAt,
+      expiresAt: event.payload.expiresAt,
+      releasedAt: null,
+      releasedBy: null,
+      releasedVia: null,
+      patches: [],
+      postWriteWorkspaceRevision: null,
+    };
+    row.sourceCursor = cursor;
+    row.updatedAt = event.occurredAt;
+    this.writeWorkspaceLeaseRow(row);
+  }
+
+  /** WorkspaceWriteLeaseReleased@1 -> release the workspace write lease and seed
+   * the patch-view fallback revision (patch-record path only). */
+  private applyWorkspaceWriteLeaseReleased(event: WorkspaceWriteLeaseReleasedEvent, cursor: CommitCursor): void {
+    const row = this.ensureWorkspaceLeaseRow(event.projectId, event.workspaceId, cursor, event.occurredAt);
+    if (row.writeLease && row.writeLease.leaseId === event.payload.leaseId) {
+      row.writeLease.status = "released";
+      row.writeLease.releasedAt = event.payload.releasedAt;
+      row.writeLease.releasedBy = event.payload.releasedBy;
+      row.writeLease.releasedVia = event.payload.releasedVia;
+      if (event.payload.postWriteWorkspaceRevision !== null) {
+        row.writeLease.postWriteWorkspaceRevision = event.payload.postWriteWorkspaceRevision;
+      }
+    }
+    row.sourceCursor = cursor;
+    row.updatedAt = event.occurredAt;
+    this.writeWorkspaceLeaseRow(row);
+
+    if (event.payload.postWriteWorkspaceRevision !== null) {
+      const patchRow = this.ensureWorkspacePatchRow(event.projectId, event.workspaceId, cursor, event.occurredAt);
+      patchRow.workspaceRevision = event.payload.postWriteWorkspaceRevision;
+      patchRow.sourceCursor = cursor;
+      patchRow.updatedAt = event.occurredAt;
+      this.writeWorkspacePatchRow(patchRow);
+    }
+  }
+
+  /** IntegrationJoined@1 -> append one join record (arrival order) and record the
+   * FIRST resultId per conflictKey (authority — display only, no merge). */
+  private applyIntegrationJoined(event: IntegrationJoinedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const goalId = event.payload.goalId;
+    const taskId = event.payload.taskId;
+    const row = this.ensureIntegrationConflictRow(projectId, goalId, taskId, cursor, event.occurredAt);
+    const record: IntegrationConflictViewRecord = {
+      resultId: event.payload.resultId,
+      runRef: { ...event.payload.runRef },
+      workspaceRevision: event.payload.workspaceRevision,
+      inputs: event.payload.inputs.map((i) => ({ ...i })),
+      conflicts: event.payload.conflicts.map((c) => ({ ...c })),
+      gaps: event.payload.gaps.map((g) => ({ ...g })),
+      explanation: event.payload.explanation,
+      escalate: event.payload.escalate,
+      generatedAt: event.payload.generatedAt,
+      sourceCursor: cursor,
+    };
+    row.records.push(record);
+    for (const conflict of record.conflicts) {
+      if (!Object.prototype.hasOwnProperty.call(row.authoritativeKeys, conflict.conflictKey)) {
+        row.authoritativeKeys[conflict.conflictKey] = record.resultId;
+      }
+    }
+    row.sourceCursor = cursor;
+    row.updatedAt = event.occurredAt;
+    this.writeIntegrationConflictRow(row);
+  }
+
+  /** PatchRecorded@1 -> append a patch entry + advance the canonical workspace
+   * revision (last event wins) AND record the patch ref on the write lease. */
+  private applyPatchRecorded(event: PatchRecordedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const workspaceId = event.workspaceId;
+    const patchRow = this.ensureWorkspacePatchRow(projectId, workspaceId, cursor, event.occurredAt);
+    patchRow.patches.push({
+      patchId: event.payload.patchId,
+      goalId: event.payload.goalId,
+      taskId: event.payload.taskId,
+      runRef: { ...event.payload.runRef },
+      kind: event.payload.kind,
+      title: event.payload.title,
+      changedPaths: [...event.payload.changedPaths],
+      beforeWorkspaceRevision: event.payload.beforeWorkspaceRevision,
+      afterWorkspaceRevision: event.payload.afterWorkspaceRevision,
+      checkResults: event.payload.checkResults.map((c) => ({ ...c })),
+      usedInputEvidenceRefs: event.payload.usedInputEvidenceRefs.map((r) => ({ ...r })),
+      recordedAt: event.occurredAt,
+      sourceCursor: cursor,
+    } satisfies WorkspacePatchViewEntry);
+    patchRow.workspaceRevision = event.payload.afterWorkspaceRevision;
+    patchRow.sourceCursor = cursor;
+    patchRow.updatedAt = event.occurredAt;
+    this.writeWorkspacePatchRow(patchRow);
+
+    const leaseRow = this.workspaceLeaseRowForLease(projectId, workspaceId, event.payload.patchId, cursor, event.occurredAt);
+    if (leaseRow !== null) {
+      this.writeWorkspaceLeaseRow(leaseRow);
+    }
+  }
+
+  /** Read the workspace's single write-lease row and append the patch ref (the
+   * patch-record path releases it via the following event). Returns null when no
+   * lease row is present. */
+  private workspaceLeaseRowForLease(
+    projectId: string,
+    workspaceId: string,
+    patchId: string,
+    cursor: CommitCursor,
+    occurredAt: string,
+  ): WorkspaceLeaseView | null {
+    const leaseRow = this.readWorkspaceLeaseRow(projectId, workspaceId);
+    if (!leaseRow || !leaseRow.writeLease) return null;
+    leaseRow.writeLease.patches.push(patchRecordRefFor(projectId, patchId));
+    leaseRow.sourceCursor = cursor;
+    leaseRow.updatedAt = occurredAt;
+    return leaseRow;
+  }
+
+  private ensureWorkspacePatchRow(
+    projectId: string,
+    workspaceId: string,
+    cursor: CommitCursor,
+    occurredAt: string,
+  ): WorkspacePatchView {
+    const existing = this.readWorkspacePatchRow(projectId, workspaceId);
+    if (existing) return existing;
+    const row: WorkspacePatchView = {
+      projectId,
+      workspaceId,
+      workspaceRevision: 1,
+      patches: [],
+      sourceCursor: cursor,
+      updatedAt: occurredAt,
+    };
+    this.writeWorkspacePatchRow(row);
+    return row;
+  }
+
+  private ensureIntegrationConflictRow(
+    projectId: string,
+    goalId: string,
+    taskId: string,
+    cursor: CommitCursor,
+    occurredAt: string,
+  ): IntegrationConflictView {
+    const existing = this.readIntegrationConflictRow(projectId, goalId, taskId);
+    if (existing) return existing;
+    const row: IntegrationConflictView = {
+      projectId,
+      goalId,
+      taskId,
+      records: [],
+      authoritativeKeys: {},
+      sourceCursor: cursor,
+      updatedAt: occurredAt,
+    };
+    this.writeIntegrationConflictRow(row);
+    return row;
+  }
+
   /** Event types this projection currently has handlers for (P1-02 + P1-03, v1). */
   private isHandledEventType(eventType: string): boolean {
     return (
@@ -1279,7 +1697,13 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       eventType === "TaskReductionUpdated" ||
       eventType === "GoalPhaseUpdated" ||
       eventType === "HandoffRecorded" ||
-      eventType === "ReplacementClaimed"
+      eventType === "ReplacementClaimed" ||
+      eventType === "WorkspaceReadLeaseGranted" ||
+      eventType === "WorkspaceReadLeaseReleased" ||
+      eventType === "WorkspaceWriteLeaseGranted" ||
+      eventType === "WorkspaceWriteLeaseReleased" ||
+      eventType === "IntegrationJoined" ||
+      eventType === "PatchRecorded"
     );
   }
 
@@ -1358,6 +1782,18 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       this.applyHandoffRecorded(event, cursor);
     } else if (event.eventType === "ReplacementClaimed") {
       this.applyReplacementClaimed(event, cursor);
+    } else if (event.eventType === "WorkspaceReadLeaseGranted") {
+      this.applyWorkspaceReadLeaseGranted(event, cursor);
+    } else if (event.eventType === "WorkspaceReadLeaseReleased") {
+      this.applyWorkspaceReadLeaseReleased(event, cursor);
+    } else if (event.eventType === "WorkspaceWriteLeaseGranted") {
+      this.applyWorkspaceWriteLeaseGranted(event, cursor);
+    } else if (event.eventType === "WorkspaceWriteLeaseReleased") {
+      this.applyWorkspaceWriteLeaseReleased(event, cursor);
+    } else if (event.eventType === "IntegrationJoined") {
+      this.applyIntegrationJoined(event, cursor);
+    } else if (event.eventType === "PatchRecorded") {
+      this.applyPatchRecorded(event, cursor);
     }
     // Known non-goal / non-plan / non-dispatch events (ProjectBootstrapped,
     // WorkspaceBootstrapped, CompletionPolicyInstalled,

@@ -57,6 +57,8 @@ import type {
   RunOutcomeUnknownEvent,
   RunStartedEvent,
   TaskClaimedEvent,
+  RunRef,
+  TaskAttemptRef,
 } from "../contracts/dispatch.js";
 import {
   isTerminalRuntimeEvent,
@@ -89,6 +91,30 @@ import type {
   HandoffProvenanceViewQuery,
   HandoffProvenanceViewResult,
 } from "../contracts/handoff-view.js";
+import type {
+  WorkspaceLeaseView,
+  WorkspaceLeaseViewQuery,
+  WorkspaceLeaseViewResult,
+  IntegrationConflictView,
+  IntegrationConflictViewQuery,
+  IntegrationConflictViewResult,
+  WorkspacePatchView,
+  WorkspacePatchViewEntry,
+  WorkspacePatchViewQuery,
+  WorkspacePatchViewResult,
+  IntegrationConflictViewRecord,
+} from "../contracts/workspace-views.js";
+import type {
+  WorkspaceReadLeaseGrantedEvent,
+  WorkspaceReadLeaseReleasedEvent,
+  WorkspaceWriteLeaseGrantedEvent,
+  WorkspaceWriteLeaseReleasedEvent,
+  WorkspaceLeaseHolderV1,
+} from "../contracts/workspace-lease.js";
+import type { IntegrationJoinedEvent } from "../contracts/integration.js";
+import type { PatchRecordedEvent } from "../contracts/patch.js";
+import { patchRecordRefFor } from "../contracts/patch.js";
+import type { RoleBindingRefV1 } from "../contracts/dispatch.js";
 
 /** Full-scope view key: (projectId, workspaceId, goalId) — never a local id only. */
 function goalKey(projectId: string, workspaceId: string, goalId: string): string {
@@ -109,6 +135,34 @@ function taskDetailKey(projectId: string, goalId: string, taskId: string): strin
 function goalPhaseKey(projectId: string, goalId: string): string {
   return projectId + "\u0000" + goalId;
 }
+
+/** Full-scope P1-07 workspace lease view key: (projectId, workspaceId). */
+function workspaceLeaseKey(projectId: string, workspaceId: string): string {
+  return projectId + "\u0000" + workspaceId;
+}
+
+/** Full-scope P1-07 integration conflict view key: (projectId, goalId, taskId). */
+function integrationConflictKey(projectId: string, goalId: string, taskId: string): string {
+  return projectId + "\u0000" + goalId + "\u0000" + taskId;
+}
+
+/** Full-scope P1-07 workspace patch view key: (projectId, workspaceId). */
+function workspacePatchKey(projectId: string, workspaceId: string): string {
+  return projectId + "\u0000" + workspaceId;
+}
+
+/** Reconstruct a lease view holder. The grant event carries runRef + attemptRef
+ * but NOT the holder roleBinding (which lives on the lease snapshot, off the
+ * event stream), so the display view carries a stable placeholder binding —
+ * display-only, never judged, never replayed as authority. */
+const LEASE_VIEW_PLACEHOLDER_BINDING: RoleBindingRefV1 = {
+  schemaVersion: 1,
+  bindingId: "",
+  templateId: "",
+  templateRevision: "",
+  bindingVersion: 1,
+  policyRevision: "",
+};
 
 /** Derive the TaskDetail.run (TaskRunState) part from an ActiveAgentView row. */
 function taskRunStateFrom(agent: ActiveAgentView): TaskRunState {
@@ -185,6 +239,15 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   /** (projectId, goalId, taskId) -> latest projected HandoffProvenanceView (P1-06). */
   private readonly handoffProvenanceRows = new Map<string, HandoffProvenanceView>();
 
+  /** (projectId, workspaceId) -> latest projected WorkspaceLeaseView (P1-07). */
+  private readonly workspaceLeaseRows = new Map<string, WorkspaceLeaseView>();
+
+  /** (projectId, goalId, taskId) -> latest projected IntegrationConflictView (P1-07). */
+  private readonly integrationConflictRows = new Map<string, IntegrationConflictView>();
+
+  /** (projectId, workspaceId) -> latest projected WorkspacePatchView (P1-07). */
+  private readonly workspacePatchRows = new Map<string, WorkspacePatchView>();
+
   async advance(page: EventPage): Promise<ProjectionReceipt> {
     const toApply: PositionedEvent[] = [];
     const appliedEventIds: string[] = [];
@@ -256,6 +319,18 @@ export class ReadModelIndexImpl implements ReadModelIndex {
         this.applyHandoffRecorded(event, positioned.cursor);
       } else if (event.eventType === "ReplacementClaimed") {
         this.applyReplacementClaimed(event, positioned.cursor);
+      } else if (event.eventType === "WorkspaceReadLeaseGranted") {
+        this.applyWorkspaceReadLeaseGranted(event, positioned.cursor);
+      } else if (event.eventType === "WorkspaceReadLeaseReleased") {
+        this.applyWorkspaceReadLeaseReleased(event, positioned.cursor);
+      } else if (event.eventType === "WorkspaceWriteLeaseGranted") {
+        this.applyWorkspaceWriteLeaseGranted(event, positioned.cursor);
+      } else if (event.eventType === "WorkspaceWriteLeaseReleased") {
+        this.applyWorkspaceWriteLeaseReleased(event, positioned.cursor);
+      } else if (event.eventType === "IntegrationJoined") {
+        this.applyIntegrationJoined(event, positioned.cursor);
+      } else if (event.eventType === "PatchRecorded") {
+        this.applyPatchRecorded(event, positioned.cursor);
       }
       // Known non-goal / non-plan / non-dispatch events
       // (ProjectBootstrapped, WorkspaceBootstrapped, CompletionPolicyInstalled,
@@ -500,19 +575,81 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   }
 
   // --------------------------------------------------------------------- //
-  // P1-07 views (stub — lane C fills the projection)                       //
+  // P1-07 views (display-only; rebuildable from the EventPage)             //
   // --------------------------------------------------------------------- //
 
-  async workspaceLeaseView(query: import("../contracts/workspace-views.js").WorkspaceLeaseViewQuery): Promise<import("../contracts/workspace-views.js").WorkspaceLeaseViewResult> {
-    throw new Error("P1-07 lane C: workspaceLeaseView not implemented yet");
+  async workspaceLeaseView(query: WorkspaceLeaseViewQuery): Promise<WorkspaceLeaseViewResult> {
+    const observedCursor = this.observedCursor;
+    const row = this.workspaceLeaseRows.get(workspaceLeaseKey(query.projectId, query.workspaceId));
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(query.atLeastCursor)) {
+        if (row) return { status: "ready", lease: row, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor: observedCursor ?? makeCommitCursor(1) };
+      }
+      return {
+        status: "not_ready",
+        requiredCursor: query.atLeastCursor,
+        observedCursor: observedCursor ?? makeCommitCursor(1),
+      };
+    }
+
+    if (row) return { status: "ready", lease: row, observedCursor: observedCursor! };
+    return {
+      status: "not_ready",
+      requiredCursor: observedCursor ?? makeCommitCursor(1),
+      observedCursor: observedCursor ?? makeCommitCursor(1),
+    };
   }
 
-  async integrationConflicts(query: import("../contracts/workspace-views.js").IntegrationConflictViewQuery): Promise<import("../contracts/workspace-views.js").IntegrationConflictViewResult> {
-    throw new Error("P1-07 lane C: integrationConflicts not implemented yet");
+  async integrationConflicts(query: IntegrationConflictViewQuery): Promise<IntegrationConflictViewResult> {
+    const observedCursor = this.observedCursor;
+    const row = this.integrationConflictRows.get(
+      integrationConflictKey(query.projectId, query.goalId, query.taskId),
+    );
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(query.atLeastCursor)) {
+        if (row) return { status: "ready", integration: row, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor: observedCursor ?? makeCommitCursor(1) };
+      }
+      return {
+        status: "not_ready",
+        requiredCursor: query.atLeastCursor,
+        observedCursor: observedCursor ?? makeCommitCursor(1),
+      };
+    }
+
+    if (row) return { status: "ready", integration: row, observedCursor: observedCursor! };
+    return {
+      status: "not_ready",
+      requiredCursor: observedCursor ?? makeCommitCursor(1),
+      observedCursor: observedCursor ?? makeCommitCursor(1),
+    };
   }
 
-  async workspacePatches(query: import("../contracts/workspace-views.js").WorkspacePatchViewQuery): Promise<import("../contracts/workspace-views.js").WorkspacePatchViewResult> {
-    throw new Error("P1-07 lane C: workspacePatches not implemented yet");
+  async workspacePatches(query: WorkspacePatchViewQuery): Promise<WorkspacePatchViewResult> {
+    const observedCursor = this.observedCursor;
+    const row = this.workspacePatchRows.get(workspacePatchKey(query.projectId, query.workspaceId));
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(query.atLeastCursor)) {
+        if (row) return { status: "ready", patch: row, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor: observedCursor ?? makeCommitCursor(1) };
+      }
+      return {
+        status: "not_ready",
+        requiredCursor: query.atLeastCursor,
+        observedCursor: observedCursor ?? makeCommitCursor(1),
+      };
+    }
+
+    if (row) return { status: "ready", patch: row, observedCursor: observedCursor! };
+    return {
+      status: "not_ready",
+      requiredCursor: observedCursor ?? makeCommitCursor(1),
+      observedCursor: observedCursor ?? makeCommitCursor(1),
+    };
   }
 
   async activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult> {
@@ -1125,6 +1262,240 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     this.handoffProvenanceRows.set(key, row);
   }
 
+  // ------------------------------------------------------------------ //
+  // P1-07 lease / integration / patch projection handlers              //
+  // ------------------------------------------------------------------ //
+
+  private ensureWorkspaceLeaseRow(
+    projectId: string,
+    workspaceId: string,
+    cursor: CommitCursor,
+    occurredAt: string,
+  ): WorkspaceLeaseView {
+    const key = workspaceLeaseKey(projectId, workspaceId);
+    const existing = this.workspaceLeaseRows.get(key);
+    if (existing) return existing;
+    const row: WorkspaceLeaseView = {
+      projectId,
+      workspaceId,
+      writeLease: null,
+      readLeases: [],
+      sourceCursor: cursor,
+      updatedAt: occurredAt,
+    };
+    this.workspaceLeaseRows.set(key, row);
+    return row;
+  }
+
+  /** The grant events carry runRef + attemptRef only; the roleBinding lives on
+   * the lease snapshot (off the event stream), so the display view carries the
+   * stable placeholder binding. Display-only — never judged. */
+  private leaseHolderView(holder: { runRef: RunRef; attemptRef: TaskAttemptRef }): WorkspaceLeaseHolderV1 {
+    return {
+      runRef: { ...holder.runRef },
+      attemptRef: { ...holder.attemptRef },
+      roleBinding: { ...LEASE_VIEW_PLACEHOLDER_BINDING },
+    };
+  }
+
+  /** WorkspaceReadLeaseGranted@1 -> append an ACTIVE read lease entry (read-read
+   * never conflicts, so a grant is always an append). */
+  private applyWorkspaceReadLeaseGranted(event: WorkspaceReadLeaseGrantedEvent, cursor: CommitCursor): void {
+    const row = this.ensureWorkspaceLeaseRow(event.projectId, event.workspaceId, cursor, event.occurredAt);
+    row.readLeases.push({
+      status: "active",
+      leaseId: event.payload.leaseId,
+      scope: { ...event.payload.scope },
+      holder: this.leaseHolderView(event.payload.holder),
+      grantedAt: event.occurredAt,
+      expiresAt: event.payload.expiresAt,
+      releasedAt: null,
+    });
+    row.sourceCursor = cursor;
+    row.updatedAt = event.occurredAt;
+    this.workspaceLeaseRows.set(workspaceLeaseKey(event.projectId, event.workspaceId), row);
+  }
+
+  /** WorkspaceReadLeaseReleased@1 -> mark the matching read lease released. */
+  private applyWorkspaceReadLeaseReleased(event: WorkspaceReadLeaseReleasedEvent, cursor: CommitCursor): void {
+    const key = workspaceLeaseKey(event.projectId, event.workspaceId);
+    const row = this.ensureWorkspaceLeaseRow(event.projectId, event.workspaceId, cursor, event.occurredAt);
+    const entry = row.readLeases.find((l) => l.leaseId === event.payload.leaseId);
+    if (entry) {
+      entry.status = "released";
+      entry.releasedAt = event.payload.releasedAt;
+    }
+    row.sourceCursor = cursor;
+    row.updatedAt = event.occurredAt;
+    this.workspaceLeaseRows.set(key, row);
+  }
+
+  /** WorkspaceWriteLeaseGranted@1 -> the workspace's SINGLE write-lease entry
+   * (index CAS guarantees exclusivity; a new grant over a vacated expired
+   * lease replaces the entry). */
+  private applyWorkspaceWriteLeaseGranted(event: WorkspaceWriteLeaseGrantedEvent, cursor: CommitCursor): void {
+    const row = this.ensureWorkspaceLeaseRow(event.projectId, event.workspaceId, cursor, event.occurredAt);
+    row.writeLease = {
+      status: "active",
+      leaseId: event.payload.leaseId,
+      scope: { ...event.payload.scope },
+      holder: this.leaseHolderView(event.payload.holder),
+      grantedAt: event.occurredAt,
+      expiresAt: event.payload.expiresAt,
+      releasedAt: null,
+      releasedBy: null,
+      releasedVia: null,
+      patches: [],
+      postWriteWorkspaceRevision: null,
+    };
+    row.sourceCursor = cursor;
+    row.updatedAt = event.occurredAt;
+    this.workspaceLeaseRows.set(workspaceLeaseKey(event.projectId, event.workspaceId), row);
+  }
+
+  /** WorkspaceWriteLeaseReleased@1 -> release the workspace write lease (explicit,
+   * patch-record, or expiry-vacate). The patch-record path carries the
+   * postWriteWorkspaceRevision and also seeds the patch-view fallback revision. */
+  private applyWorkspaceWriteLeaseReleased(event: WorkspaceWriteLeaseReleasedEvent, cursor: CommitCursor): void {
+    const key = workspaceLeaseKey(event.projectId, event.workspaceId);
+    const row = this.ensureWorkspaceLeaseRow(event.projectId, event.workspaceId, cursor, event.occurredAt);
+    if (row.writeLease && row.writeLease.leaseId === event.payload.leaseId) {
+      row.writeLease.status = "released";
+      row.writeLease.releasedAt = event.payload.releasedAt;
+      row.writeLease.releasedBy = event.payload.releasedBy;
+      row.writeLease.releasedVia = event.payload.releasedVia;
+      if (event.payload.postWriteWorkspaceRevision !== null) {
+        row.writeLease.postWriteWorkspaceRevision = event.payload.postWriteWorkspaceRevision;
+      }
+    }
+    row.sourceCursor = cursor;
+    row.updatedAt = event.occurredAt;
+    this.workspaceLeaseRows.set(key, row);
+
+    // P1-07 patch-view fallback: a write release that carries a post-write
+    // revision (patch-record) is the canonical revision source when no
+    // PatchRecorded is present. The explicit-release path (postWrite null)
+    // never creates a phantom patch row.
+    if (event.payload.postWriteWorkspaceRevision !== null) {
+      const patchRow = this.ensureWorkspacePatchRow(event.projectId, event.workspaceId, cursor, event.occurredAt);
+      patchRow.workspaceRevision = event.payload.postWriteWorkspaceRevision;
+      patchRow.sourceCursor = cursor;
+      patchRow.updatedAt = event.occurredAt;
+      this.workspacePatchRows.set(workspacePatchKey(event.projectId, event.workspaceId), patchRow);
+    }
+  }
+
+  /** IntegrationJoined@1 -> append one join record (arrival order) and record the
+   * FIRST resultId per conflictKey (authority — display only, no merge). */
+  private applyIntegrationJoined(event: IntegrationJoinedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const goalId = event.payload.goalId;
+    const taskId = event.payload.taskId;
+    const row = this.ensureIntegrationConflictRow(projectId, goalId, taskId, cursor, event.occurredAt);
+    const record: IntegrationConflictViewRecord = {
+      resultId: event.payload.resultId,
+      runRef: { ...event.payload.runRef },
+      workspaceRevision: event.payload.workspaceRevision,
+      inputs: event.payload.inputs.map((i) => ({ ...i })),
+      conflicts: event.payload.conflicts.map((c) => ({ ...c })),
+      gaps: event.payload.gaps.map((g) => ({ ...g })),
+      explanation: event.payload.explanation,
+      escalate: event.payload.escalate,
+      generatedAt: event.payload.generatedAt,
+      sourceCursor: cursor,
+    };
+    row.records.push(record);
+    for (const conflict of record.conflicts) {
+      if (!Object.prototype.hasOwnProperty.call(row.authoritativeKeys, conflict.conflictKey)) {
+        row.authoritativeKeys[conflict.conflictKey] = record.resultId;
+      }
+    }
+    row.sourceCursor = cursor;
+    row.updatedAt = event.occurredAt;
+    this.integrationConflictRows.set(integrationConflictKey(projectId, goalId, taskId), row);
+  }
+
+  /** PatchRecorded@1 -> append a patch entry + advance the canonical workspace
+   * revision (last event wins) AND record the patch ref on the write lease. */
+  private applyPatchRecorded(event: PatchRecordedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const workspaceId = event.workspaceId;
+    const patchRow = this.ensureWorkspacePatchRow(projectId, workspaceId, cursor, event.occurredAt);
+    patchRow.patches.push({
+      patchId: event.payload.patchId,
+      goalId: event.payload.goalId,
+      taskId: event.payload.taskId,
+      runRef: { ...event.payload.runRef },
+      kind: event.payload.kind,
+      title: event.payload.title,
+      changedPaths: [...event.payload.changedPaths],
+      beforeWorkspaceRevision: event.payload.beforeWorkspaceRevision,
+      afterWorkspaceRevision: event.payload.afterWorkspaceRevision,
+      checkResults: event.payload.checkResults.map((c) => ({ ...c })),
+      usedInputEvidenceRefs: event.payload.usedInputEvidenceRefs.map((r) => ({ ...r })),
+      recordedAt: event.occurredAt,
+      sourceCursor: cursor,
+    } satisfies WorkspacePatchViewEntry);
+    patchRow.workspaceRevision = event.payload.afterWorkspaceRevision;
+    patchRow.sourceCursor = cursor;
+    patchRow.updatedAt = event.occurredAt;
+    this.workspacePatchRows.set(workspacePatchKey(projectId, workspaceId), patchRow);
+
+    // The same patch records its ref on the (single) write lease of the
+    // workspace — the patch-record path releases it via the following event.
+    const leaseRow = this.workspaceLeaseRows.get(workspaceLeaseKey(projectId, workspaceId));
+    if (leaseRow && leaseRow.writeLease) {
+      leaseRow.writeLease.patches.push(patchRecordRefFor(projectId, event.payload.patchId));
+      leaseRow.sourceCursor = cursor;
+      leaseRow.updatedAt = event.occurredAt;
+      this.workspaceLeaseRows.set(workspaceLeaseKey(projectId, workspaceId), leaseRow);
+    }
+  }
+
+  private ensureWorkspacePatchRow(
+    projectId: string,
+    workspaceId: string,
+    cursor: CommitCursor,
+    occurredAt: string,
+  ): WorkspacePatchView {
+    const key = workspacePatchKey(projectId, workspaceId);
+    const existing = this.workspacePatchRows.get(key);
+    if (existing) return existing;
+    const row: WorkspacePatchView = {
+      projectId,
+      workspaceId,
+      workspaceRevision: 1,
+      patches: [],
+      sourceCursor: cursor,
+      updatedAt: occurredAt,
+    };
+    this.workspacePatchRows.set(key, row);
+    return row;
+  }
+
+  private ensureIntegrationConflictRow(
+    projectId: string,
+    goalId: string,
+    taskId: string,
+    cursor: CommitCursor,
+    occurredAt: string,
+  ): IntegrationConflictView {
+    const key = integrationConflictKey(projectId, goalId, taskId);
+    const existing = this.integrationConflictRows.get(key);
+    if (existing) return existing;
+    const row: IntegrationConflictView = {
+      projectId,
+      goalId,
+      taskId,
+      records: [],
+      authoritativeKeys: {},
+      sourceCursor: cursor,
+      updatedAt: occurredAt,
+    };
+    this.integrationConflictRows.set(key, row);
+    return row;
+  }
+
   /** Event types this projection currently has handlers for (P1-02 + P1-03, v1). */
   private isHandledEventType(eventType: string): boolean {
     return (
@@ -1144,7 +1515,13 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       eventType === "TaskReductionUpdated" ||
       eventType === "GoalPhaseUpdated" ||
       eventType === "HandoffRecorded" ||
-      eventType === "ReplacementClaimed"
+      eventType === "ReplacementClaimed" ||
+      eventType === "WorkspaceReadLeaseGranted" ||
+      eventType === "WorkspaceReadLeaseReleased" ||
+      eventType === "WorkspaceWriteLeaseGranted" ||
+      eventType === "WorkspaceWriteLeaseReleased" ||
+      eventType === "IntegrationJoined" ||
+      eventType === "PatchRecorded"
     );
   }
 }
