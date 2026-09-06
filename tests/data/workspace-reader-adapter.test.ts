@@ -1,0 +1,139 @@
+/**
+ * P1-12 lane A unit tests — FakeWorkspaceReaderAdapter.read.
+ *
+ * Registry convention: revision 0 = pinned baseline graph, revision 2 =
+ * current graph (currentRevision = 2). Verifies sourced (with coverage
+ * provenance), stale (revision not in registry), unsupported (no graph
+ * capability), and rejected (invalid_request / scope_forbidden /
+ * path_forbidden) branches, plus the degraded-sourced (hasCodeGraph=false,
+ * degradesToText=true) case. Injection drives the branches the default
+ * registry never reaches.
+ */
+import { describe, expect, it } from "vitest";
+import { FakeWorkspaceReaderAdapter } from "../../src/data/workspace-reader-adapter.js";
+import type { CodeGraphReadQueryV1 } from "../../src/contracts/workspace-read.js";
+import type { CodeGraphSnapshotV1 } from "../../src/contracts/architecture-inspection.js";
+import {
+  buildP112BaselineGraph,
+  buildP112CurrentGraph,
+  P112_PROJECT,
+  P112_WORKSPACE,
+  p112PlanRef,
+  p112BaselinePin,
+} from "../../src/contracts/fixtures/architecture-fixtures.js";
+
+const NOW = "2026-09-06T00:00:00.000Z";
+
+function makeQuery(overrides: Partial<CodeGraphReadQueryV1> = {}): CodeGraphReadQueryV1 {
+  return {
+    schemaVersion: 1,
+    projectId: P112_PROJECT,
+    workspaceId: P112_WORKSPACE,
+    workspaceRevision: 2,
+    planRef: p112PlanRef(),
+    baselinePin: p112BaselinePin(),
+    requestedKinds: ["module", "interface"],
+    maxNodes: 512,
+    maxEdges: 1024,
+    ...overrides,
+  };
+}
+
+function defaultAdapter(overrides: Partial<{ graphs: Map<number, CodeGraphSnapshotV1>; currentRevision: number }> = {}) {
+  return new FakeWorkspaceReaderAdapter({ now: () => NOW, ...overrides });
+}
+
+describe("FakeWorkspaceReaderAdapter.read", () => {
+  it("sources the baseline graph at workspace revision 0 with coverage provenance", async () => {
+    const adapter = defaultAdapter();
+    const res = await adapter.read(makeQuery({ workspaceRevision: 0 }));
+    expect(res.status).toBe("sourced");
+    if (res.status !== "sourced") return;
+    expect(res.snapshot).toEqual(buildP112BaselineGraph());
+    expect(res.provenance.revision).toBe(0);
+    expect(res.provenance.source).toBe("fixture");
+    expect(res.provenance.coverage.hasCodeGraph).toBe(true);
+    expect(res.provenance.coverage.degradesToText).toBe(false);
+    expect(res.provenance.coverage.coveredPaths).toEqual(["src/control", "src/data", "src/data/maps"]);
+    expect(res.provenance.sourceCursor).toBeNull();
+  });
+
+  it("sources the current graph at workspace revision 2", async () => {
+    const adapter = defaultAdapter();
+    const res = await adapter.read(makeQuery({ workspaceRevision: 2 }));
+    expect(res.status).toBe("sourced");
+    if (res.status !== "sourced") return;
+    expect(res.snapshot).toEqual(buildP112CurrentGraph());
+    expect(res.provenance.coverage.coveredPaths).toEqual(["src/control", "src/data", "src/data/maps", "src/query"]);
+  });
+
+  it("returns stale when the requested revision is not in the registry, keeping observedRevision", async () => {
+    const adapter = defaultAdapter();
+    const res = await adapter.read(makeQuery({ workspaceRevision: 1 }));
+    expect(res.status).toBe("stale");
+    if (res.status !== "stale") return;
+    expect(res.expectedRevision).toBe(2);
+    expect(res.observedRevision).toBe(1);
+    expect(res.message).toContain("1");
+  });
+
+  it("returns stale for a revision above the current one too (never fabricates)", async () => {
+    const adapter = defaultAdapter();
+    const res = await adapter.read(makeQuery({ workspaceRevision: 9 }));
+    expect(res.status).toBe("stale");
+    if (res.status !== "stale") return;
+    expect(res.expectedRevision).toBe(2);
+    expect(res.observedRevision).toBe(9);
+  });
+
+  it("returns unsupported when the revision has no code-graph capability and no text fallback", async () => {
+    const baseline = {
+      ...buildP112BaselineGraph(),
+      indexCapabilities: { hasCodeGraph: false, degradesToText: false, graphRevision: null },
+    };
+    const adapter = defaultAdapter({ graphs: new Map([[0, baseline]]), currentRevision: 0 });
+    const res = await adapter.read(makeQuery({ workspaceRevision: 0 }));
+    expect(res.status).toBe("unsupported");
+    if (res.status !== "unsupported") return;
+    expect(res.message).toContain("no code graph");
+  });
+
+  it("sources a degraded graph with the text fallback flag marked", async () => {
+    const baseline = {
+      ...buildP112BaselineGraph(),
+      indexCapabilities: { hasCodeGraph: false, degradesToText: true, graphRevision: null },
+    };
+    const adapter = defaultAdapter({ graphs: new Map([[0, baseline]]), currentRevision: 0 });
+    const res = await adapter.read(makeQuery({ workspaceRevision: 0 }));
+    expect(res.status).toBe("sourced");
+    if (res.status !== "sourced") return;
+    expect(res.provenance.coverage.hasCodeGraph).toBe(false);
+    expect(res.provenance.coverage.degradesToText).toBe(true);
+  });
+
+  it("rejects an invalid request (bad schemaVersion / non-positive bounds / empty kinds)", async () => {
+    const adapter = defaultAdapter();
+    const badSchema = await adapter.read({ ...makeQuery(), schemaVersion: 2 } as unknown as CodeGraphReadQueryV1);
+    expect(badSchema.status).toBe("rejected");
+    const zeroMax = await adapter.read(makeQuery({ maxNodes: 0 }));
+    expect(zeroMax.status).toBe("rejected");
+    const emptyKinds = await adapter.read(makeQuery({ requestedKinds: [] }));
+    expect(emptyKinds.status).toBe("rejected");
+  });
+
+  it("rejects an out-of-scope project/workspace", async () => {
+    const adapter = defaultAdapter();
+    const res = await adapter.read(makeQuery({ projectId: "proj-other" }));
+    expect(res.status).toBe("rejected");
+    if (res.status !== "rejected") return;
+    expect(res.code).toBe("scope_forbidden");
+  });
+
+  it("rejects a requested graph kind outside supported coverage", async () => {
+    const adapter = defaultAdapter();
+    const res = await adapter.read(makeQuery({ requestedKinds: ["module", "bogus"] }));
+    expect(res.status).toBe("rejected");
+    if (res.status !== "rejected") return;
+    expect(res.code).toBe("path_forbidden");
+  });
+});
