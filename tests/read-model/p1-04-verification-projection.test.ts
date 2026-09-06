@@ -1,0 +1,470 @@
+/**
+ * P1-04 lane D — InMemory read-model taskVerification projection tests.
+ *
+ * These tests drive the ReadModelIndexImpl DIRECTLY with hand-built EventPages
+ * (PlanRevisionAccepted / EvidenceAdmitted / TaskReductionUpdated) — they do
+ * NOT depend on lanes A/B/C (submitEvidence/reduceTask/verify are stubs).
+ * They prove the frozen semantics of the verification view:
+ *   - the view rebuilds ONLY from events (works on a fresh index; identical on
+ *     a rebuild);
+ *   - the reduction is a PROJECTED FACT from TaskReductionUpdated (report text
+ *     never becomes a completion state);
+ *   - applicability is recomputed at query time by the PURE
+ *     evidenceApplicability function (APPLICABLE / STALE / OUT_OF_SCOPE);
+ *   - currentAnchor is null (and per-binding applicability is null) before the
+ *     first TaskReductionUpdated;
+ *   - not_ready !== not_found; unknown/skip stalls never silently apply a page.
+ */
+import { describe, expect, it } from "vitest";
+import {
+  ReadModelIndexImpl,
+  createReadModelIndex,
+} from "../../src/read-model/read-model-index.js";
+import type { ReadModelIndex } from "../../src/contracts/goal-view.js";
+import { ProjectionStallError } from "../../src/contracts/goal-view.js";
+import type { EventPage } from "../../src/contracts/ledger.js";
+import { makeCommitCursor } from "../../src/contracts/ledger.js";
+import type { DomainEvent } from "../../src/contracts/events.js";
+import type {
+  EvidenceAdmittedEvent,
+  EvidenceCoverageV1,
+  EvidenceV1,
+} from "../../src/contracts/evidence.js";
+import {
+  buildEffectivityAnchorV1,
+  buildEvidenceV1,
+  buildTaskReductionSnapshot,
+  P104_GOAL,
+  P104_OBL_IMPLEMENT,
+  P104_OBL_REVIEW,
+  P104_PLAN_ID,
+  P104_PLAN_REVISION_FIXTURE_V1,
+  P104_TASK_IMPLEMENT,
+  P104_TASK_REVIEW,
+} from "../../src/contracts/fixtures/evidence-fixtures.js";
+import {
+  buildApplyPlanCommand,
+  planRevisionAcceptedEventFor,
+  planRevisionSnapshotFor,
+} from "../../src/contracts/fixtures/plan-fixtures.js";
+import type { PlanRevisionAcceptedEvent, PlanRevisionRef, PlanRevisionSnapshot } from "../../src/contracts/plan.js";
+import type { TaskReductionSnapshot, TaskReductionUpdatedEvent } from "../../src/contracts/reduction.js";
+import type {
+  ArchitectureBaselinePin,
+  CompletionPolicyPin,
+} from "../../src/contracts/governance.js";
+import type { TaskVerificationView } from "../../src/contracts/verification-view.js";
+
+const T0 = "2026-09-05T12:00:00.000Z";
+const WS = "ws-shared";
+const PROJECT_A = "proj-alpha";
+const PROJECT_B = "proj-beta";
+const GOAL = P104_GOAL;
+
+function pins(projectId: string): { cp: CompletionPolicyPin; ab: ArchitectureBaselinePin } {
+  return {
+    cp: {
+      ref: { aggregateType: "CompletionPolicyRevision", projectId, policyId: "policy-completion", revision: 1 },
+      digest: "a".repeat(64),
+    },
+    ab: {
+      ref: { aggregateType: "ArchitectureBaselineRevision", projectId, baselineId: "arch-baseline", revision: 1 },
+      digest: "b".repeat(64),
+    },
+  };
+}
+
+function planRef(projectId: string): PlanRevisionRef {
+  return { aggregateType: "PlanRevision", projectId, planId: P104_PLAN_ID };
+}
+
+function anchor(projectId: string, workspaceRevision = 1) {
+  const p = pins(projectId);
+  return buildEffectivityAnchorV1({
+    planRef: planRef(projectId),
+    planRevision: 1,
+    workspaceRevision,
+    pinnedCompletionPolicy: p.cp,
+    pinnedArchitectureBaseline: p.ab,
+  });
+}
+
+function planEvent(projectId: string): { event: PlanRevisionAcceptedEvent; snapshot: PlanRevisionSnapshot } {
+  const command = buildApplyPlanCommand(P104_PLAN_REVISION_FIXTURE_V1, {
+    commandId: "cmd-plan-" + projectId,
+    correlationId: "corr-plan-" + projectId,
+    submittedAt: T0,
+    projectId,
+    expectedRevision: 1,
+  });
+  const p = pins(projectId);
+  const snapshot = planRevisionSnapshotFor(command, { completionPolicy: p.cp, architectureBaseline: p.ab }, T0);
+  const event = planRevisionAcceptedEventFor(command, {
+    eventId: "ev-plan-" + projectId,
+    occurredAt: T0,
+    workspaceId: WS,
+    goalAggregateRevision: 2,
+    planSnapshot: snapshot,
+  });
+  return { event, snapshot };
+}
+
+function evidenceEvent(deps: {
+  projectId: string;
+  taskId: string;
+  evidenceId: string;
+  kind: "claim" | "observation" | "verdict";
+  outcome: "PASS" | "FAIL" | "INCONCLUSIVE";
+  coverage: EvidenceCoverageV1[];
+  workspaceRevision?: number;
+  checkId?: string | null;
+  evidenceIndex?: number;
+}): EvidenceAdmittedEvent {
+  const evidence: EvidenceV1 = buildEvidenceV1({
+    evidenceId: deps.evidenceId,
+    kind: deps.kind,
+    outcome: deps.outcome,
+    projectId: deps.projectId,
+    goalId: GOAL,
+    taskId: deps.taskId,
+    coverage: deps.coverage,
+    anchor: anchor(deps.projectId, deps.workspaceRevision ?? 1),
+    verificationPlanRef: { planId: "vp-evidence-mvp", planDigest: "e".repeat(64) },
+    ...(deps.checkId !== undefined ? { checkId: deps.checkId } : {}),
+  });
+  return {
+    eventId: "evad-" + deps.projectId + "-" + deps.evidenceId,
+    eventType: "EvidenceAdmitted",
+    schemaVersion: 1,
+    projectId: deps.projectId,
+    workspaceId: WS,
+    aggregateType: "Evidence",
+    aggregateId: deps.evidenceId,
+    aggregateRevision: 1,
+    causationId: "cmd-sector-" + deps.evidenceId,
+    correlationId: "corr-sector-" + deps.evidenceId,
+    idempotencyKey: "idem-" + deps.evidenceId,
+    actor: { kind: "human", id: "user-1" },
+    occurredAt: T0,
+    payload: {
+      goalId: GOAL,
+      taskId: deps.taskId,
+      evidence,
+      admittedAt: T0,
+      evidenceIndex: deps.evidenceIndex ?? 0,
+      evidenceCount: (deps.evidenceIndex ?? 0),
+    },
+  };
+}
+
+function reductionEvent(deps: {
+  projectId: string;
+  taskId: string;
+  phase: TaskReductionSnapshot["phase"];
+  effectiveEvidenceIds: string[];
+  blockingEvidenceIds: string[];
+  staleEvidenceIds?: string[];
+  outOfScopeEvidenceIds?: string[];
+  workspaceRevision?: number;
+}): { event: TaskReductionUpdatedEvent; snapshot: TaskReductionSnapshot } {
+  const snapshot = buildTaskReductionSnapshot({
+    projectId: deps.projectId,
+    goalId: GOAL,
+    taskId: deps.taskId,
+    revision: 1,
+    planRef: planRef(deps.projectId),
+    planRevision: 1,
+    taskKind: "work",
+    requirementLevel: "required",
+    disposition: "active",
+    phase: deps.phase,
+    currentAnchor: anchor(deps.projectId, deps.workspaceRevision ?? 1),
+    effectiveEvidenceIds: deps.effectiveEvidenceIds,
+    blockingEvidenceIds: deps.blockingEvidenceIds,
+    staleEvidenceIds: deps.staleEvidenceIds ?? [],
+    outOfScopeEvidenceIds: deps.outOfScopeEvidenceIds ?? [],
+    satisfiedObligationIds: [P104_OBL_IMPLEMENT],
+    causes: [{ code: "missing_evidence", message: "test" }],
+    reducedAt: T0,
+  });
+  const event: TaskReductionUpdatedEvent = {
+    eventId: "tru-" + deps.projectId + "-" + deps.taskId,
+    eventType: "TaskReductionUpdated",
+    schemaVersion: 1,
+    projectId: deps.projectId,
+    workspaceId: WS,
+    aggregateType: "TaskReduction",
+    aggregateId: deps.taskId,
+    aggregateRevision: 1,
+    causationId: "cmd-red-" + deps.taskId,
+    correlationId: "corr-red-" + deps.taskId,
+    idempotencyKey: "idem-red-" + deps.taskId,
+    actor: { kind: "system", id: "control-engine" },
+    occurredAt: T0,
+    payload: { goalId: GOAL, taskId: deps.taskId, reduction: snapshot },
+  };
+  return { event, snapshot };
+}
+
+function page(startSeq: number, events: DomainEvent[]): EventPage {
+  const positioned = events.map((event, i) => ({ cursor: makeCommitCursor(startSeq + i), event }));
+  const throughCursor = positioned.length ? makeCommitCursor(startSeq + positioned.length - 1) : null;
+  return { afterCursor: null, throughCursor, events: positioned, hasMore: false };
+}
+
+/** A fresh InMemory read model typed as the concrete implementation (which
+ * exposes taskVerification, not on the ReadModelIndex interface). */
+function mk(): ReadModelIndexImpl {
+  return createReadModelIndex() as ReadModelIndexImpl;
+}
+
+/** Feed a page and fail loudly if the projection stalls. */
+async function feed(rm: ReadModelIndex, startSeq: number, events: DomainEvent[]): Promise<void> {
+  await rm.advance(page(startSeq, events));
+}
+
+function covImplementStatic(): EvidenceCoverageV1[] {
+  return [{ obligationId: P104_OBL_IMPLEMENT, requirementId: "vr-impl-static" }];
+}
+function covImplementDynamic(): EvidenceCoverageV1[] {
+  return [{ obligationId: P104_OBL_IMPLEMENT, requirementId: "vr-impl-dynamic" }];
+}
+function covImplementBoth(): EvidenceCoverageV1[] {
+  return [...covImplementStatic(), ...covImplementDynamic()];
+}
+
+/** Build the happy-path Implement scenario events (plan + 2 PASS + reduction). */
+function buildImplementScenario(projectId: string): {
+  plan: PlanRevisionAcceptedEvent;
+  planSnapshot: PlanRevisionSnapshot;
+  evidence: [
+    { evad: EvidenceAdmittedEvent; ev: EvidenceV1 },
+    { evad: EvidenceAdmittedEvent; ev: EvidenceV1 },
+  ];
+  reduction: { event: TaskReductionUpdatedEvent; snapshot: TaskReductionSnapshot };
+} {
+  const { event: plan, snapshot: planSnapshot } = planEvent(projectId);
+  const s = evidenceEvent({ projectId, taskId: P104_TASK_IMPLEMENT, evidenceId: "ev-impl-static", kind: "observation", outcome: "PASS", coverage: covImplementStatic(), checkId: "static-check-lint", evidenceIndex: 1 });
+  const d = evidenceEvent({ projectId, taskId: P104_TASK_IMPLEMENT, evidenceId: "ev-impl-dynamic", kind: "observation", outcome: "PASS", coverage: covImplementDynamic(), checkId: "dynamic-check-tests", evidenceIndex: 2 });
+  const reduction = reductionEvent({
+    projectId,
+    taskId: P104_TASK_IMPLEMENT,
+    phase: "satisfied",
+    effectiveEvidenceIds: ["ev-impl-static", "ev-impl-dynamic"],
+    blockingEvidenceIds: [],
+  });
+  return { plan, planSnapshot, evidence: [
+    { evad: s, ev: s.payload.evidence },
+    { evad: d, ev: d.payload.evidence },
+  ], reduction };
+}
+
+describe("P1-04 verification projection (InMemory)", () => {
+  it("incremental projection rebuilds a verification view from events (applicability recomputed, reduction is a projected fact)", async () => {
+    const rm = mk();
+    const sc = buildImplementScenario(PROJECT_A);
+
+    // Page 1: plan accepted. Page 2: evidence + reduction.
+    await feed(rm, 1, [sc.plan]);
+    await feed(rm, 2, [sc.evidence[0].evad, sc.evidence[1].evad, sc.reduction.event]);
+
+    const view = await rm.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: P104_TASK_IMPLEMENT });
+    expect(view.status).toBe("ready");
+    if (view.status !== "ready") return;
+    expect(view.observedCursor).toBe(makeCommitCursor(4));
+
+    const v: TaskVerificationView = view.verification;
+    // Evidence, in admission index order, with applicability recomputed.
+    expect(v.evidence.map((e) => e.evidenceId)).toEqual(["ev-impl-static", "ev-impl-dynamic"]);
+    expect(v.evidence.map((e) => e.applicability)).toEqual(["APPLICABLE", "APPLICABLE"]);
+    expect(v.evidence[0]!.checkId).toBe("static-check-lint");
+    expect(v.evidence[0]!.evidenceIndex).toBe(1);
+    expect(v.evidence[1]!.evidenceIndex).toBe(2);
+
+    // currentAnchor comes from the latest reduction snapshot.
+    expect(v.currentAnchor).not.toBeNull();
+    expect(v.currentAnchor!.planRevision).toBe(1);
+
+    // reduction is the PROJECTED fact (never derived from report text).
+    expect(v.reduction).not.toBeNull();
+    expect(v.reduction!.phase).toBe("satisfied");
+    expect(v.reduction!.effectiveEvidenceIds).toEqual(["ev-impl-static", "ev-impl-dynamic"]);
+    expect(v.reduction!.blockingEvidenceIds).toEqual([]);
+    expect(v.reduction!.sourceCursor).toBe(makeCommitCursor(4));
+
+    // planRef / planRevision from the accepted plan snapshot.
+    expect(v.planRef.planId).toBe(P104_PLAN_ID);
+    expect(v.planRevision).toBe(1);
+
+    // View-level effective/blocking are recomputed from the pure effective set.
+    expect([...v.effectiveEvidenceIds].sort()).toEqual(["ev-impl-dynamic", "ev-impl-static"]);
+    expect(v.blockingEvidenceIds).toEqual([]);
+    expect(v.sourceCursor).toBe(makeCommitCursor(4));
+  });
+
+  it("repeated evidence event is idempotent (dedupe by eventId)", async () => {
+    const rm = mk();
+    const sc = buildImplementScenario(PROJECT_A);
+    await feed(rm, 1, [sc.plan]);
+    await feed(rm, 2, [sc.evidence[0].evad, sc.evidence[1].evad, sc.reduction.event]);
+
+    // Replay the first evidence event (same eventId) at a later cursor.
+    await feed(rm, 5, [sc.evidence[0].evad]);
+
+    const view = await rm.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: P104_TASK_IMPLEMENT });
+    expect(view.status).toBe("ready");
+    if (view.status !== "ready") return;
+    expect(view.verification.evidence.map((e) => e.evidenceId)).toEqual(["ev-impl-static", "ev-impl-dynamic"]);
+    // sourceCursor did NOT regress (dedupe never re-applies an old cursor).
+    expect(view.verification.sourceCursor).toBe(makeCommitCursor(4));
+  });
+
+  it("rebuild equivalence: a fresh index fed the same events produces the identical view", async () => {
+    const sc = buildImplementScenario(PROJECT_A);
+    const rm1 = mk();
+    await feed(rm1, 1, [sc.plan]);
+    await feed(rm1, 2, [sc.evidence[0].evad, sc.evidence[1].evad, sc.reduction.event]);
+    const v1 = await rm1.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: P104_TASK_IMPLEMENT });
+    expect(v1.status).toBe("ready");
+    if (v1.status !== "ready") return;
+
+    const rm2 = mk();
+    await feed(rm2, 1, [sc.plan]);
+    await feed(rm2, 2, [sc.evidence[0].evad, sc.evidence[1].evad, sc.reduction.event]);
+    const v2 = await rm2.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: P104_TASK_IMPLEMENT });
+    expect(v2.status).toBe("ready");
+    if (v2.status !== "ready") return;
+
+    expect(JSON.stringify(v2.verification)).toBe(JSON.stringify(v1.verification));
+  });
+
+  it("full-key isolation: identical goalId/taskId under different projects never collide", async () => {
+    const rm = mk();
+    const a = buildImplementScenario(PROJECT_A);
+    const b = buildImplementScenario(PROJECT_B);
+    await feed(rm, 1, [a.plan]);
+    await feed(rm, 2, [b.plan]);
+    await feed(rm, 3, [a.evidence[0].evad, a.evidence[1].evad, a.reduction.event]);
+    await feed(rm, 6, [b.evidence[0].evad, b.evidence[1].evad, b.reduction.event]);
+
+    const va = await rm.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: P104_TASK_IMPLEMENT });
+    const vb = await rm.taskVerification({ projectId: PROJECT_B, goalId: GOAL, taskId: P104_TASK_IMPLEMENT });
+    expect(va.status).toBe("ready");
+    expect(vb.status).toBe("ready");
+    if (va.status !== "ready" || vb.status !== "ready") return;
+    expect(va.verification.projectId).toBe(PROJECT_A);
+    expect(vb.verification.projectId).toBe(PROJECT_B);
+    expect(va.verification.evidence.map((e) => e.evidenceId)).toEqual(["ev-impl-static", "ev-impl-dynamic"]);
+    expect(vb.verification.evidence.map((e) => e.evidenceId)).toEqual(["ev-impl-static", "ev-impl-dynamic"]);
+    expect(va.verification.planRef.projectId).toBe(PROJECT_A);
+    expect(vb.verification.planRef.projectId).toBe(PROJECT_B);
+
+    // A different taskId in the SAME project is also isolated (no row) — a
+    // covered atLeastCursor is required to yield not_found (never without it).
+    const covered8 = makeCommitCursor(8);
+    const other = await rm.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: P104_TASK_REVIEW, atLeastCursor: covered8 });
+    expect(other.status).toBe("not_found");
+
+    // Cross-project cursor is shared (freshness is global), but rows are isolated.
+    expect(va.observedCursor).toBe(makeCommitCursor(8));
+  });
+
+  it("not_found only after covered; not_ready before coverage", async () => {
+    const rm = mk();
+    const sc = buildImplementScenario(PROJECT_A);
+    await feed(rm, 1, [sc.plan]);
+    await feed(rm, 2, [sc.evidence[0].evad, sc.evidence[1].evad, sc.reduction.event]);
+    const covered = makeCommitCursor(4);
+
+    // atLeastCursor covered but no row -> not_found.
+    const nf = await rm.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: "task-no-such", atLeastCursor: covered });
+    expect(nf.status).toBe("not_found");
+
+    // atLeastCursor NOT covered -> not_ready.
+    const nr = await rm.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: "task-no-such", atLeastCursor: makeCommitCursor(5) });
+    expect(nr.status).toBe("not_ready");
+    if (nr.status === "not_ready") expect(nr.requiredCursor).toBe(makeCommitCursor(5));
+
+    // A freshly created index (no events) -> not_ready, never not_found.
+    const fresh = mk();
+    const f1 = await fresh.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: P104_TASK_IMPLEMENT });
+    expect(f1.status).toBe("not_ready");
+    const f2 = await fresh.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: P104_TASK_IMPLEMENT, atLeastCursor: makeCommitCursor(1) });
+    expect(f2.status).toBe("not_ready");
+  });
+
+  it("stall behaviours: cursor_gap / out_of_order / unknown event type never apply a page", async () => {
+    const sc = buildImplementScenario(PROJECT_A);
+
+    const rmGap = mk();
+    await expect(feed(rmGap, 1, [sc.plan])).resolves.toBeUndefined();
+    // A page that jumps to seq 3 after seq 1 (missing seq 2) stalls.
+    await expect(rmGap.advance(page(3, [sc.evidence[0].evad]))).rejects.toBeInstanceOf(ProjectionStallError);
+    await rmGap.advance(page(3, [sc.evidence[0].evad])).catch((e: unknown) => {
+      expect((e as ProjectionStallError).reason).toBe("cursor_gap");
+    });
+
+    const rmOoo = mk();
+    await rmOoo.advance(page(2, [sc.plan])).catch(() => undefined);
+    // out_of_order: seq 2 then seq 1.
+    await rmOoo.advance(page(1, [sc.evidence[0].evad])).catch((e: unknown) => {
+      expect((e as ProjectionStallError).reason).toBe("out_of_order");
+    });
+
+    const rmUnknown = mk();
+    const unknown = { ...sc.plan, eventType: "NoSuchEvent" as const } as unknown as DomainEvent;
+    await rmUnknown.advance(page(1, [unknown])).catch((e: unknown) => {
+      expect(e).toBeInstanceOf(ProjectionStallError);
+      expect((e as ProjectionStallError).reason).toBe("unknown_schema_version");
+    });
+  });
+
+  it("applicability recompute: STALE / OUT_OF_SCOPE rows displayed, history untouched", async () => {
+    const rm = mk();
+    const { event: plan } = planEvent(PROJECT_A);
+    const pass = evidenceEvent({ projectId: PROJECT_A, taskId: P104_TASK_IMPLEMENT, evidenceId: "ev-app-pass", kind: "observation", outcome: "PASS", coverage: covImplementStatic(), checkId: "static-check-lint", evidenceIndex: 1 });
+    const stale = evidenceEvent({ projectId: PROJECT_A, taskId: P104_TASK_IMPLEMENT, evidenceId: "ev-app-stale", kind: "observation", outcome: "PASS", coverage: covImplementStatic(), checkId: "static-check-lint", workspaceRevision: 2, evidenceIndex: 2 });
+    const oos = evidenceEvent({ projectId: PROJECT_A, taskId: P104_TASK_IMPLEMENT, evidenceId: "ev-app-oos", kind: "observation", outcome: "PASS", coverage: [{ obligationId: P104_OBL_REVIEW, requirementId: "vr-review" }], checkId: "static-check-lint", evidenceIndex: 3 });
+    const reduction = reductionEvent({
+      projectId: PROJECT_A,
+      taskId: P104_TASK_IMPLEMENT,
+      phase: "verifying",
+      effectiveEvidenceIds: ["ev-app-pass"],
+      blockingEvidenceIds: [],
+      staleEvidenceIds: ["ev-app-stale"],
+      outOfScopeEvidenceIds: ["ev-app-oos"],
+    });
+
+    await feed(rm, 1, [plan]);
+    await feed(rm, 2, [pass, stale, oos, reduction.event]);
+
+    const view = await rm.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: P104_TASK_IMPLEMENT });
+    expect(view.status).toBe("ready");
+    if (view.status !== "ready") return;
+    const byId = new Map(view.verification.evidence.map((e) => [e.evidenceId, e] as const));
+    expect(byId.get("ev-app-pass")!.applicability).toBe("APPLICABLE");
+    expect(byId.get("ev-app-stale")!.applicability).toBe("STALE");
+    expect(byId.get("ev-app-oos")!.applicability).toBe("OUT_OF_SCOPE");
+    // History is never rewritten: the stale anchor keeps workspaceRevision 2.
+    expect((byId.get("ev-app-pass") as { anchor: { workspaceRevision: number } }).anchor.workspaceRevision).toBe(1);
+    expect((byId.get("ev-app-stale") as { anchor: { workspaceRevision: number } }).anchor.workspaceRevision).toBe(2);
+  });
+
+  it("reduction null -> currentAnchor null and every binding applicability null (no report-derived phase)", async () => {
+    const rm = mk();
+    const { event: plan } = planEvent(PROJECT_A);
+    const pass = evidenceEvent({ projectId: PROJECT_A, taskId: P104_TASK_IMPLEMENT, evidenceId: "ev-only-pass", kind: "observation", outcome: "PASS", coverage: covImplementBoth(), checkId: "static-check-lint" });
+    await feed(rm, 1, [plan]);
+    await feed(rm, 2, [pass]);
+
+    const view = await rm.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: P104_TASK_IMPLEMENT });
+    expect(view.status).toBe("ready");
+    if (view.status !== "ready") return;
+    expect(view.verification.currentAnchor).toBeNull();
+    expect(view.verification.reduction).toBeNull();
+    expect(view.verification.evidence[0]!.applicability).toBeNull();
+    // No reduction/projected phase exists even though a PASS report was admitted.
+    expect(view.verification.effectiveEvidenceIds).toEqual([]);
+    expect(view.verification.blockingEvidenceIds).toEqual([]);
+  });
+});

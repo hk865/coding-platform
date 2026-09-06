@@ -67,9 +67,19 @@ import type {
   TaskRunState,
 } from "../contracts/active-agent.js";
 import { ProjectionStallError } from "../contracts/goal-view.js";
-import type { TaskVerificationViewQuery, TaskVerificationViewResult } from "../contracts/verification-view.js";
-import type { EvidenceAdmittedEvent } from "../contracts/evidence.js";
-import type { TaskReductionUpdatedEvent } from "../contracts/reduction.js";
+import type {
+  TaskVerificationViewQuery,
+  TaskVerificationViewResult,
+  TaskVerificationView,
+  EvidenceBindingView,
+} from "../contracts/verification-view.js";
+import type {
+  EffectivityAnchorV1,
+  EvidenceAdmittedEvent,
+  EvidenceV1,
+} from "../contracts/evidence.js";
+import { evidenceApplicability, selectEffectiveEvidenceSet } from "../contracts/evidence.js";
+import type { TaskReductionSnapshot, TaskReductionUpdatedEvent } from "../contracts/reduction.js";
 import type { CommitCursor, GoalCreatedEvent } from "../contracts/command-event.js";
 import type { DomainEvent } from "../contracts/events.js";
 import type { PositionedEvent } from "../contracts/ledger.js";
@@ -78,7 +88,7 @@ import {
   makeCommitCursor,
   seqOfCommitCursor,
 } from "../contracts/ledger.js";
-import type { PlanRevisionAcceptedEvent } from "../contracts/plan.js";
+import type { PlanRevisionAcceptedEvent, PlanRevisionRef, PlanRevisionSnapshot } from "../contracts/plan.js";
 import type {
   RunEventRecordedEvent,
   RunOutcomeUnknownEvent,
@@ -169,6 +179,23 @@ CREATE TABLE IF NOT EXISTS active_agent (
   source_cursor TEXT NOT NULL,
   PRIMARY KEY (project_id, goal_id, task_id)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS plan_snapshot (
+  project_id    TEXT NOT NULL,
+  goal_id       TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (project_id, goal_id)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS task_verification (
+  project_id       TEXT NOT NULL,
+  goal_id          TEXT NOT NULL,
+  task_id          TEXT NOT NULL,
+  evidence_json    TEXT NOT NULL,
+  reduction_json   TEXT,
+  reduction_cursor TEXT,
+  source_cursor    TEXT NOT NULL,
+  PRIMARY KEY (project_id, goal_id, task_id)
+) WITHOUT ROWID;
 `;
 
 /** Row shape we read back for a GoalView. */
@@ -247,6 +274,36 @@ function taskRunStateFrom(agent: ActiveAgentView): TaskRunState {
   };
 }
 
+/** Projected evidence entry (from an EvidenceAdmitted event) carrying admission metadata. */
+type ProjectedEvidence = {
+  evidence: EvidenceV1;
+  admittedAt: string;
+  evidenceIndex: number;
+};
+
+/** Per-task verification projection — rebuilt ONLY from EvidenceAdmitted /
+ * TaskReductionUpdated events (P1-04). */
+type VerificationProjection = {
+  projectId: string;
+  goalId: string;
+  taskId: string;
+  evidence: ProjectedEvidence[];
+  reduction: TaskReductionSnapshot | null;
+  reductionCursor: CommitCursor | null;
+  sourceCursor: CommitCursor;
+};
+
+/** Row shape we read back for a verification projection (complex fields are JSON TEXT). */
+type TaskVerificationRow = {
+  project_id: string;
+  goal_id: string;
+  task_id: string;
+  evidence_json: string;
+  reduction_json: string | null;
+  reduction_cursor: string | null;
+  source_cursor: string;
+};
+
 export class SqliteReadModelIndex implements ReadModelIndex {
   private readonly db: DatabaseSync;
   private closed = false;
@@ -269,6 +326,10 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   private readonly stmtUpsertActiveAgent: StatementSync;
   private readonly stmtInsertApplied: StatementSync;
   private readonly stmtUpsertCheckpoint: StatementSync;
+  private readonly stmtSelectPlanSnapshot: StatementSync;
+  private readonly stmtUpsertPlanSnapshot: StatementSync;
+  private readonly stmtSelectTaskVerification: StatementSync;
+  private readonly stmtUpsertTaskVerification: StatementSync;
 
   constructor(options: SqliteReadModelIndexOptions) {
     if (typeof options.path !== "string" || options.path.length === 0) {
@@ -392,6 +453,33 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     this.stmtUpsertCheckpoint = this.db.prepare(
       `INSERT INTO read_model_checkpoint (id, cursor) VALUES (1, ?)
        ON CONFLICT(id) DO UPDATE SET cursor = excluded.cursor`,
+    );
+    this.stmtSelectPlanSnapshot = this.db.prepare(
+      "SELECT snapshot_json FROM plan_snapshot WHERE project_id = ? AND goal_id = ?",
+    );
+    this.stmtUpsertPlanSnapshot = this.db.prepare(
+      `INSERT INTO plan_snapshot (project_id, goal_id, snapshot_json, source_cursor)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(project_id, goal_id) DO UPDATE SET
+         snapshot_json = excluded.snapshot_json,
+         source_cursor = excluded.source_cursor`,
+    );
+    this.stmtSelectTaskVerification = this.db.prepare(
+      `SELECT project_id, goal_id, task_id, evidence_json, reduction_json,
+              reduction_cursor, source_cursor
+         FROM task_verification
+        WHERE project_id = ? AND goal_id = ? AND task_id = ?`,
+    );
+    this.stmtUpsertTaskVerification = this.db.prepare(
+      `INSERT INTO task_verification
+         (project_id, goal_id, task_id, evidence_json, reduction_json,
+          reduction_cursor, source_cursor)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(project_id, goal_id, task_id) DO UPDATE SET
+         evidence_json    = excluded.evidence_json,
+         reduction_json   = excluded.reduction_json,
+         reduction_cursor = excluded.reduction_cursor,
+         source_cursor    = excluded.source_cursor`,
     );
   }
 
@@ -797,7 +885,9 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       eventType === "TaskClaimed" ||
       eventType === "RunStarted" ||
       eventType === "RunEventRecorded" ||
-      eventType === "RunOutcomeUnknown"
+      eventType === "RunOutcomeUnknown" ||
+      eventType === "EvidenceAdmitted" ||
+      eventType === "TaskReductionUpdated"
     );
   }
 
@@ -866,6 +956,10 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       this.applyRunEventRecorded(event, cursor);
     } else if (event.eventType === "RunOutcomeUnknown") {
       this.applyRunOutcomeUnknown(event, cursor);
+    } else if (event.eventType === "EvidenceAdmitted") {
+      this.applyEvidenceAdmitted(event, cursor);
+    } else if (event.eventType === "TaskReductionUpdated") {
+      this.applyTaskReductionUpdated(event, cursor);
     }
     // Known non-goal / non-plan / non-dispatch events (ProjectBootstrapped,
     // WorkspaceBootstrapped, CompletionPolicyInstalled,
@@ -973,6 +1067,10 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     const goalId = event.payload.goalId;
     const workspaceId = event.workspaceId;
 
+    // P1-04: retain the accepted plan snapshot (tasks + obligations) so the
+    // verification view can recompute evidence applicability at query time.
+    this.stmtUpsertPlanSnapshot.run(projectId, goalId, JSON.stringify(snapshot), cursor);
+
     // ① Goal row refresh (only when the GoalCreated row is present).
     this.stmtUpdateGoalActive.run(
       JSON.stringify(snapshot.ref),
@@ -1027,11 +1125,235 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     }
   }
 
-  /** P1-04: task-detail verification view (frozen entry; lane D implements). */
-  async taskVerification(query: TaskVerificationViewQuery): Promise<TaskVerificationViewResult> {
-    throw new Error("P1-04 read-model taskVerification: not implemented yet");
+  // ------------------------------------------------------------------ //
+  // P1-04 verification projection handlers                               //
+  // ------------------------------------------------------------------ //
+
+  /** EvidenceAdmitted@1 -> append the immutable Evidence + admission metadata to
+   * the (projectId, goalId, taskId) verification row (admission order). */
+  private applyEvidenceAdmitted(event: EvidenceAdmittedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const goalId = event.payload.goalId;
+    const taskId = event.payload.taskId;
+    const row = this.readVerificationRow(projectId, goalId, taskId) ?? {
+      projectId,
+      goalId,
+      taskId,
+      evidence: [],
+      reduction: null,
+      reductionCursor: null,
+      sourceCursor: cursor,
+    };
+    row.evidence.push({
+      evidence: event.payload.evidence,
+      admittedAt: event.payload.admittedAt,
+      evidenceIndex: event.payload.evidenceIndex,
+    });
+    row.sourceCursor = cursor;
+    this.writeVerificationRow(row);
   }
 
+  /** TaskReductionUpdated@1 -> refresh the task's canonical reduction snapshot
+   * (it is a projected FACT — never derived from report text at query time). */
+  private applyTaskReductionUpdated(event: TaskReductionUpdatedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const goalId = event.payload.goalId;
+    const taskId = event.payload.taskId;
+    const row = this.readVerificationRow(projectId, goalId, taskId) ?? {
+      projectId,
+      goalId,
+      taskId,
+      evidence: [],
+      reduction: null,
+      reductionCursor: null,
+      sourceCursor: cursor,
+    };
+    row.reduction = event.payload.reduction;
+    row.reductionCursor = cursor;
+    row.sourceCursor = cursor;
+    this.writeVerificationRow(row);
+  }
+
+  private readVerificationRow(
+    projectId: string,
+    goalId: string,
+    taskId: string,
+  ): VerificationProjection | null {
+    const row = this.stmtSelectTaskVerification.get(projectId, goalId, taskId) as unknown as
+      | TaskVerificationRow
+      | undefined;
+    if (!row) return null;
+    return {
+      projectId: row.project_id,
+      goalId: row.goal_id,
+      taskId: row.task_id,
+      evidence: JSON.parse(row.evidence_json) as ProjectedEvidence[],
+      reduction: row.reduction_json === null ? null : (JSON.parse(row.reduction_json) as TaskReductionSnapshot),
+      reductionCursor: row.reduction_cursor as CommitCursor | null,
+      sourceCursor: row.source_cursor as CommitCursor,
+    };
+  }
+
+  private writeVerificationRow(row: VerificationProjection): void {
+    this.stmtUpsertTaskVerification.run(
+      row.projectId,
+      row.goalId,
+      row.taskId,
+      JSON.stringify(row.evidence),
+      row.reduction === null ? null : JSON.stringify(row.reduction),
+      row.reductionCursor,
+      row.sourceCursor,
+    );
+  }
+
+  private readPlanSnapshot(projectId: string, goalId: string): PlanRevisionSnapshot | null {
+    const row = this.stmtSelectPlanSnapshot.get(projectId, goalId) as unknown as
+      | { snapshot_json: string }
+      | undefined;
+    return row ? (JSON.parse(row.snapshot_json) as PlanRevisionSnapshot) : null;
+  }
+
+  /** P1-04: task-detail verification view (frozen entry; lane D implements).
+   * The view is rebuilt ONLY from events: applicability is recomputed at query
+   * time by the PURE evidenceApplicability function against the projected
+   * current anchor; the reduction is the projected reduction fact. */
+  async taskVerification(query: TaskVerificationViewQuery): Promise<TaskVerificationViewResult> {
+    this.assertOpen();
+    const observedCursor = this.readCheckpoint();
+    const row = this.readVerificationRow(query.projectId, query.goalId, query.taskId);
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(observedCursor, query.atLeastCursor)) {
+        if (row) return {
+          status: "ready",
+          verification: this.buildVerificationView(row),
+          observedCursor: observedCursor!,
+        };
+        return { status: "not_found", observedCursor };
+      }
+      return { status: "not_ready", requiredCursor: query.atLeastCursor, observedCursor };
+    }
+
+    // No atLeastCursor: show the row if present, else the freshness-safe
+    // "not_ready" (never not_found here), mirroring goal()/planGraph()/taskDetail().
+    if (row) return {
+      status: "ready",
+      verification: this.buildVerificationView(row),
+      observedCursor: observedCursor!,
+    };
+    return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
+  }
+
+  /** Build the TaskVerificationView from the projected row (query-time derived
+   * parts use the pure functions; they never write back to history). */
+  private buildVerificationView(row: VerificationProjection): TaskVerificationView {
+    const planSnapshot = this.readPlanSnapshot(row.projectId, row.goalId);
+    const currentAnchor = row.reduction ? row.reduction.currentAnchor : null;
+
+    // Admission order = the per-task evidence index order (deterministic).
+    const sorted = [...row.evidence].sort((a, b) => a.evidenceIndex - b.evidenceIndex);
+    const evidence: EvidenceBindingView[] = sorted.map((pe) =>
+      this.toEvidenceBindingView(pe, planSnapshot, currentAnchor),
+    );
+
+    let effectiveEvidenceIds: string[] = [];
+    let blockingEvidenceIds: string[] = [];
+    if (planSnapshot !== null && currentAnchor !== null) {
+      const effectiveSet = selectEffectiveEvidenceSet(
+        sorted.map((pe) => pe.evidence),
+        planSnapshot,
+        currentAnchor,
+      );
+      effectiveEvidenceIds = effectiveSet.effectiveEvidenceIds;
+      blockingEvidenceIds = Object.values(effectiveSet.blockingByRequirement).flat();
+    }
+
+    const reduction = row.reduction === null
+      ? null
+      : {
+          phase: row.reduction.phase,
+          causes: row.reduction.causes,
+          effectiveEvidenceIds: row.reduction.effectiveEvidenceIds,
+          blockingEvidenceIds: row.reduction.blockingEvidenceIds,
+          staleEvidenceIds: row.reduction.staleEvidenceIds,
+          outOfScopeEvidenceIds: row.reduction.outOfScopeEvidenceIds,
+          satisfiedObligationIds: row.reduction.satisfiedObligationIds,
+          planRef: row.reduction.planRef,
+          reducedAt: row.reduction.reducedAt,
+          sourceCursor: row.reductionCursor!,
+        };
+
+    return {
+      projectId: row.projectId,
+      goalId: row.goalId,
+      taskId: row.taskId,
+      currentAnchor,
+      planRef: this.viewPlanRef(row, planSnapshot, currentAnchor),
+      planRevision: this.viewPlanRevision(row, planSnapshot, currentAnchor),
+      evidence,
+      effectiveEvidenceIds,
+      blockingEvidenceIds,
+      reduction,
+      sourceCursor: row.sourceCursor,
+    };
+  }
+
+  /** Map a projected evidence entry to its display binding (applicability is
+   * derived by the pure function; null when no authoritative current anchor). */
+  private toEvidenceBindingView(
+    pe: ProjectedEvidence,
+    planSnapshot: PlanRevisionSnapshot | null,
+    currentAnchor: EffectivityAnchorV1 | null,
+  ): EvidenceBindingView {
+    const e = pe.evidence;
+    const applicability = planSnapshot !== null && currentAnchor !== null
+      ? evidenceApplicability(e, planSnapshot, currentAnchor)
+      : null;
+    return {
+      evidenceId: e.evidenceId,
+      kind: e.kind,
+      outcome: e.outcome,
+      coverage: e.coverage.map((c) => ({ ...c })),
+      applicability,
+      anchor: { ...e.anchor },
+      verificationPlanId: e.verificationPlanRef.planId,
+      verificationPlanDigest: e.verificationPlanRef.planDigest,
+      sourceRunRef: e.source.runRef,
+      checkId: e.source.checkId,
+      summary: e.summary.text,
+      artifactRef: e.summary.artifactRef,
+      admittedAt: pe.admittedAt,
+      evidenceIndex: pe.evidenceIndex,
+    };
+  }
+
+  /** planRef for the view: the accepted plan's ref, else the reduction anchor,
+   * else the first evidence's anchor (the row only exists after such an event). */
+  private viewPlanRef(
+    row: VerificationProjection,
+    planSnapshot: PlanRevisionSnapshot | null,
+    currentAnchor: EffectivityAnchorV1 | null,
+  ): PlanRevisionRef {
+    return (
+      planSnapshot?.ref ??
+      currentAnchor?.planRef ??
+      row.evidence[0]?.evidence.anchor.planRef ??
+      { aggregateType: "PlanRevision", projectId: row.projectId, planId: "" }
+    );
+  }
+
+  private viewPlanRevision(
+    row: VerificationProjection,
+    planSnapshot: PlanRevisionSnapshot | null,
+    currentAnchor: EffectivityAnchorV1 | null,
+  ): number {
+    return (
+      planSnapshot?.planRevision ??
+      currentAnchor?.planRevision ??
+      row.evidence[0]?.evidence.anchor.planRevision ??
+      0
+    );
+  }
 }
 
 export function createSqliteReadModelIndex(
