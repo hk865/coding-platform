@@ -1,9 +1,19 @@
 ```yaml
-ticket_id: P1-15 共享基线 ✅（5a5b085：1142 passed / 21 skipped 探针组）——三 lane A/B/C 实施中
-status: P1-14 ✅ VERIFIED（685bf34, 1142/1142, G5 PASS）；P1-09/10/11/12/13/16/17 ✅；G1/G2/G4/G5 PASS；剩余 = P1-15（实施中，最后一张）→ G3（07+15）→ MVP 评议
+ticket_id: ✅ 全部完成 — P1-00..P1-17 全部验收（最终 main；1193/1193 PASS，0 skip）；G1..G5 全部 PASS；MVP 评议：dev_docs/verification/mvp-review.md
+status: P1-09(2c01536)/P1-11(6d70494)/P1-12(4ecc517)/P1-13(fbc365e)/P1-14(685bf34)/P1-15(最终 main)/P1-16(fa9389d)/P1-17(ee53869)/P1-10 ✓；G1 ✅ G2 ✅ G3 ✅（07+15）G4 ✅（09+11）G5 ✅（13+14）
 updated: 2026-09-07
-authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a)/(b)/(c); GitHub push needs user authorization) + 2026-09-07 阶段时限 09:00 CST 硬性到点
-next: P1-15 lanes A（design/policy handlers）B（unified status 视图——✅ fe795dd）C（角色协作回流 e2e：有界返工+rollover+completed-work 继承+本地 SSE 模型端点）→ 合并验收 → 证据/票尾 → G3 PASS → MVP 评议 → stop_condition (a)
+authorized_by: user (continuous authorization: P1-09..P1-17 + G1..G5 + MVP review；GitHub push still needs user authorization)
+next: 等待用户决策：① 推送本地 main（领先 origin 96 commits）② 委托策略契约（P0-06 欠账）③ full-demo 答辩；本地 main 未推送
+summary: 全量 174 files / 1193 tests PASS（30s testTimeout；默认 5s 下个别 sqlite 偶发抖动）；typecheck 0；validate-docs 13/13；每票证据/票尾/Gate 证据在 dev_docs/verification/*
+```
+
+---
+
+## 最终状态（2026-09-07，停止点 (a) 达成：全部剩余 ticket 完成）
+
+- P1-15 验收：见 dev_docs/verification/p1-15-implementation-evidence.md（角色回流链 + 模型 e2e；真实引擎路径）；G3 PASS；MVP 评议（mvp-review.md）已产出。
+- 全部 5 个 Gate PASS；本地 main 未推送（需授权）；委托策略路径登记欠账（P0-06）。
+
 shared_baseline: P1-15 = 5a5b085（human-role-collaboration 契约/4 commitKinds/validators/双适配器/fixtures/stub/harness/套件/restart/integration 骨架；全量 1142 + 21 skip 零回归）
 merge_surface_note: P1-15 零改动 P1-00..P1-14 冻结形状（版本化追加 4 commitKind + 4 事件 + ControlEngine +4 + ReadModelIndex.unifiedStatusView + 3 冻结端口）；CoordinationPolicy 为独立不可变聚合（install 不自动激活 + activation CAS，P1-02 口径）；initial design 决定绑定精确 proposal digest；unified status 视图 facts-first（facts 先显示、解释可 stale、policy/activation 归 kind=baseline）
 ```
