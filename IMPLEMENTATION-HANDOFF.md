@@ -1,20 +1,69 @@
 # IMPLEMENTATION-HANDOFF — Agent Platform 产品代码根
 
 ```yaml
-ticket_id: P1-08
-status: implementation verified (limited authorization, 2026-09-06 — P1-08 only); 2 lanes merged; full acceptance evidence in dev_docs/verification/p1-08-implementation-evidence.md
+ticket_id: P1-16
+status: implementation in progress (limited authorization, 2026-09-06 continuous window — P1-09..P1-17 + G1..G5 authorized); shared baseline a597eaf committed; lanes A/B dispatched
 updated: 2026-09-06
-authorized_by: user (limited authorization for P1-08 only; P1-08 is NOT P1 acceptance, P1-09/10/15 NOT auto-started; G4 (Human Control) waits P1-09 + P1-11)
-next: STOP after P1-08 acceptance — do NOT auto-start P1-09/10/15/other tickets (G4 needs 09+11 evidence; 09/10 need 08 + 16 products; user notification/change reporting = P1-14/15; next window triggered by user/process; local main NOT pushed — push needs user authorization per P1-04/05/06/07 precedent)
-evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-08-implementation-evidence.md (97 files / 768 tests PASS; 12/12 acceptance + 7/7 verification groups; typecheck 0 errors; validate-docs 13/13); upstream baseline: P1-07 commit 404ab28 (88 files/722 tests)
-shared_baseline: "P1-08 共享基线" commit 3f68b83 (404ab28 + console-views contracts + modules/goal-view versioned additions + P108 fixtures + harness console wiring + console suite + restart/integration skeletons; 既有 722 测试零回归)
-parallel_scope: P1-08 与 P1-07 并行窗口已过期（07 已完成）；本 session 无其他并行活动，按常规单线实施共享面；lane 用隔离 worktree（先例 P1-06/07；段 A/B 并行、段 C 由 integrator 在合并后执行）
-merge_surface_note: 本票只做只读展示（HumanCollaboration 版本化扩展；不新增 Module；ARCHITECTURE §Plane）；主动通知/待决/变更上报归 P1-14/15；控制入口（pause/steer）与 QueryJob 归 P1-10/09；不改 P1-03/04/05/06/07 冻结形状（零改动，只版本化追加）；不新增任何 DomainEvent；无 Findings；无隐藏 control/QueryJob/Planner side effect
+authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a) all done / (b) architecture tradeoff / (c) architecture-granularity confirmation; GitHub push still needs user authorization)
+next: merge P1-16 lanes A/B -> full acceptance (typecheck + 768-base zero-regression + dual-adapter suite + real SQLite + restart + validate-docs) -> evidence; then P1-12 (independent parallel window); then 09/10/17 (after 16) and 13 (after 12); then 11 (after 10) and 14 (after 11+12); then 15 (after 09+14+17); gates: G2 waits 05+06+16, G4 waits 09+11, G5 waits 13+14, G3 waits 07+15
+evidence: (pending — lanes in flight) full acceptance evidence will live in dev_docs/verification/p1-16-implementation-evidence.md
+shared_baseline: "P1-16 共享基线" commit a597eaf (7664d91 + context-continuity contracts + 3 ports + fixtures + harness wiring + suite/restart/integration skeletons; 既有 768 测试零回归实测：97 files/768 passed, 5 files/37 tests auto-skip via isP116Ready probe)
+parallel_scope: P1-16 (窗口 1a) 与 P1-12 (窗口 1b) 并行——二者 blocked_by 均为已验收票（16←06；12←07）；本票 lane 用隔离 worktree（先例 P1-06/07/08；lane A/B 并行，重启+集成由 integrator 在合并后执行）
+merge_surface_note: P1-16 只扩展同工作连续性 + 理由留痕 + 显式接续能力声明；不新增 Module（ARCHITECTURE §Plane）；不改 P1-03/04/05/06/07/08 冻结形状（零改动，只版本化追加）；4 个新事件（WorkContextBound/WorkRunLinked/ExecutionNoteRecorded/ContinuationRecorded）——KNOWN 与 handler 各 lane 同 commit；不改 Goal/CompletionPolicy；真实内核（coding-agent）连续性验证为本票 Acceptance 第 7 项，Fake 契约测试不能替代
 ```
 
 ---
 
-## P1-08 当前票据与共享契约基线
+## P1-16 当前票据与共享契约基线
+
+- Ticket：`/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/16-context-continuity.md`（P1-16，status 按阶段守卫保持 `proposed`；Implementation record 将在验收后追加票尾）
+- 上游基线：产品根 commit `7664d91`（P1-08 验收：97 files/768 tests PASS、12/12 Acceptance、7/7 verification、validate-docs 13/13；本地 main 未推送 GitHub——推送需用户授权）。**P1-16 共享基线 = commit `a597eaf`**（= 7664d91 + 本票新增 contract/port/fixture/harness/套件/restart/集成骨架；既有 768 测试零回归实测——97 files/768 tests PASS，5 files/37 tests 因 isP116Ready()=false 自动 skip 属预期）。
+- **冻结复用、不重写**：P1-00…P1-08 全部契约/夹具/套件/适配器/harness 零修改通过；P1-03 冻结的 Run/TaskAttempt/TaskLease/lease 形状不修改；P1-06 的 HandoffPacket/ReplacementAttempt 只被消费不重写；P1-05 goal reducer / P1-04 完成策略不修改。
+- **P0-06 复核影响（已核对）**：`dev_docs/verification/2026-09-06-context-orchestration-sync.md` 明确——同工作连续性与真实内核能力由 16 验证（P1-03/06 仅有原最小派发/换手证据）；P1-09/10 消费其产物；G2 = 05+06+16。
+- **三个最小 Interface 首次冻结**：`ControlEngine.WorkRecordPort`（src/contracts/context-continuity.ts）、`ContextCompiler.WorkContextPort`（src/contracts/work-context-port.ts）、`WorkerRuntime.ContextContinuationPort`（src/contracts/context-continuation-port.ts）——已建、版本化（v1）；3 个契约：WorkContextBinding、ExecutionNote、ContextContinuationResult。上游 Artifact refs：P1-06（404ab28 现状；HandoffPacket/ReplacementAttempt）、P1-08（7664d91）、P1-03 冻结 Run/lease/attempt 形状；本票自产 artifact：versioned-context-continuity-contract、durable-execution-notes、context-continuity-evidence。
+- **Lane 跟踪**：lane A（WorkRecord control + binding/notes 投影，subagent b46eeaeb-fe69-440e-b711-fb70210577ef）与 lane B（WorkContext assemble + continuation runtime 面 + continuation 投影，subagent 9ff178e2-f433-4253-a112-44e0400f699a）；隔离 worktree `agent_platform-p1-16-a` / `agent_platform-p1-16-b`（分支 p1-16-lane-a / p1-16-lane-b，自 a597eaf）。合并后 integrator 执行：isP116Ready 探针硬化 + restart 逐字段一致 + 真实 SQLite 全路径集成 + 证据块 + 真实内核连续性证据。
+
+## P1-16 契约与存储语义（冻结）
+
+1. **WorkContextBinding = 持久工作身份**：每 (projectId, workspaceId, workId) 恰好一个绑定聚合（BindWorkContextCommand @0→1，不可覆盖；同 identity+fingerprint 重放 → committed/replayed；同 workId 异身份 → revision_conflict 零写入）。绑定字段 = workId/workspaceId/projectId/workKind（task|coordination|query|review|integration）/goalId/taskId（可 null）/planRef+planRevision（可 null）/roleBindingRef/initialRunRef/linkedRunRefs（≤ WORK_CONTEXT_MAX_RUN_LINKS=32，初始=initialRun）/status:"active"/createdAt。**Run≠工作**：多次模型/工具反馈（一个 Run 内多事实）与跨 Run 换手都保持同一绑定；ContextBundle 是组装结果，独立概念。
+2. **WorkRunLinked（追加链路）**：LinkWorkRunCommand（binding @N→N+1，CAS）；run 已 link → already_linked 零写入；绑定不存在 → not_found；run 不存在 → not_found；超 32 → links_exceeded；幂等与 CAS 均走 ledger 全量 idempotency。
+3. **ExecutionNote（不可变、有界、正文先落库）**：EXECUTION_NOTE_MAX_BYTES=16KiB；noteId 唯一；字段=runRef（作者 run）+attemptRef(null|)+roleBindingRef+kind（key_choice|checkpoint|frontier|risk|unresolved|result）+summary(≤1024B)+reason(≤4096B)+alternatives(≤8)+sourceRefs(≤64, kinds evidence|artifact|run|handoff|decision|event)+applicableVersions（planRef/planRevision/workspaceRevision/governanceRevision）+verification（unverified|verified|contradicted + evidenceRefs）+bodyRef+noFullTranscript:true+createdAt。**正文先入 ArtifactVault（body-first）**：调用方先 put（canonicalJson(note)），Control 只登记引用；登记失败只留未采纳 Artifact。严格未知字段拒绝（transcript 直接 invalid）。缺少最终总结时已登记记录仍可恢复（崩溃语义）。
+4. **ContextContinuationResult（登记观察到的接续路径）**：status ∈ restored_original | took_over | unsupported | rejected；字段=requestedByRunRef（可 null）/capabilitySource（runtime|adapter）/originalRunRef/takeoverRunRef/resumedFromRunRef/unsupportedCapabilities/rejectionCode/summary(≤4096B)/recordedAt。**显式声明，不伪装原进程存在**：unsupported 列出缺失能力（如 session_restore）；capability 声明来自运行时适配器（capabilitySource），Control 不虚构。
+5. **WorkRecordPort 守卫序（零写入）**：shape 校验 → invalid；Project/Workspace/Binding/Run 存在性 → not_found；note 作者 run ∈ 绑定 linkedRunRefs → run_not_in_work；重复 link → already_linked；上限 → links_exceeded；每命令一个原子 commit（fold-equality 用共享 fixture builder）+ 全量 ledger 幂等。**不改 Goal/Task phase；不改 CompletionPolicy**；旧 lease/迟到运行事实沿用 P1-03 guard 语义；P1-04 评审隔离不被接续上下文覆盖。
+6. **WorkContextPort.assembleWorkContext（有界选材，永不启动模型）**：request 校验 → invalid_request；绑定/run 归属/scope ⊆ declaredPermissions → work_not_found / forbidden_tool_or_scope；材料/预算/版本缺口 → needs_material{gaps, selectedRefs}（binding 缺失、vault 不可用、budget_exhausted、scope_forbidden）；组装有界 Bundle（binding 事实 + 按 noteKinds/maxNotes 选 notes（历史/陈旧以 historical 标志保留，不是当前事实）+ 最新 continuation + 选材来源），body-first vault.put（owner=requestedByRunRef）→ ready(bundleRef, manifest{selected/truncated/gaps/freshness/totalBytes})；manifest 明示截断/缺失；同输入 → 同 bundleRef（内容寻址）。
+7. **ContextContinuationPort（显式能力/结果）**：capabilities(request) → supported({sessionRestore, contextResume, takeoverRun, maxContextBytes, maxResumeBytes}) | unsupported | rejected；FakeRuntimeAdapter 诚实声明（Fake: sessionRestore=false/contextResume=true/takeoverRun=true）；**不得假定 Fake 能力等同真实内核**——真实 coding-agent 适配路径做一次多轮+接续验证并保留能力降级证据（Acceptance 第 7 项；Fake 契约测试不能替代）。
+8. **事件/投影**：4 个新 v1 事件（全在 DomainEvent/KNOWN 同一基线落地；handler + isHandledEventType 各 lane 同一 commit）；ReadModel 投影 workContext 视图：key=canonicalJson(完整 ref)，binding+notes（LANE-A）+ continuations（LANE-B）；freshness opaque cursor（not_ready≠not_found）；只展示不判定；重启等价（close→reopen 同文件逐字段一致 + observedCursor 一致；isP116Ready() 探针——lane 未落地时自动 skip，绝不假实现）。
+9. **边界**：不做 P1-17（完成后历史继承）、P1-09（QueryJob——只记录接续观察）、P1-10（暂停/恢复控制）；不实现新 Work Agent/MemoryStore/Context Plane；不改 P1-03/05/06/08 冻结形状；无 Findings/Decision。
+
+## P1-16 已冻结的代码入口（integrator 建立，签名冻结）
+
+| 入口 | 文件 | 冻结表面 |
+| --- | --- | --- |
+| 契约/纯函数 | src/contracts/context-continuity.ts | WorkContextBindingV1/Snapshot、ExecutionNoteV1/Snapshot、ContextContinuationResultV1/Snapshot、4 refs、4 命令+回执、4 事件、fingerprints、WorkRecordPort、WorkContextViewQuery/Result、上限常量、executionNoteBody |
+| Context 端口 | src/contracts/work-context-port.ts | WorkContextPort/RequestV1/BundleV1/ManifestV1/Gap/RejectionCode、WORK_CONTEXT_BUNDLE_MAX_BYTES |
+| Runtime 端口 | src/contracts/context-continuation-port.ts | ContextContinuationPort、ContinuationCapabilitiesV1、CapabilityResult、CheckV1、ObservationV1 |
+| ledger/validation 扩展 | src/contracts/{ledger,ledger-validation,validation,events,modules,goal-view,index}.ts | 4 commitKind + validateXxxCommit（双适配器共用）+ 4 命令/请求/note/result 校验器 + DomainEvent/KNOWN + ControlEngine 4 个版本化新增 + ReadModelIndex.workContext |
+| fixtures | src/contracts/fixtures/context-fixtures.ts | P116_* 常量（两 Project 复用同 local ids）、buildWorkContextBindingV1、buildBindWorkContextCommand/buildLinkWorkRunCommand/buildExecutionNoteV1/buildRecordExecutionNoteCommand/buildContextContinuationResultV1/buildRecordContinuationCommand、4 个 ledger-fold builder |
+| Control 入口 | src/control/work-record.ts | WorkRecordEngineImpl（stub→lane A）；control-engine.ts 仅委托 |
+| Context/运行时面 | src/context/work-context-compiler.ts、src/runtime/context-continuation-adapter.ts | WorkContextCompilerImpl（stub→lane B）；FakeContextContinuationRuntimeAdapter（capabilities 已实现；checkContinuation→lane B） |
+| harness | src/harness/{in-memory,persistent}-harness.ts | workContext/contextContinuation 默认接线 + bindWorkContext/linkWorkRun/recordExecutionNote/recordContinuation/workContextView/assembleWorkContext/continuationCapabilities 直通 + options {workContext?, contextContinuation?} |
+| 契约套件 | tests/contract-suite/{p1-16-harness,context.continuity.contract.suite}.ts | P1_16TestHarness/FACTORY、runP116ContinuityScenario、defineContextContinuityContractSuite（InMemory+SQLite 同套件；5 组 Acceptance + 5 组 verification） |
+| 重启骨架 | tests/restart/p1-16-restart-fixtures.ts、p1-16-restart.test.ts、evidence/p1-16-evidence.test.ts | isP116Ready() 探针；实现落地后自动启用 |
+| 集成接线 | tests/integration/p1-16.contract-suite.inmemory|sqlite.test.ts、p1-16.integration.test.ts | 双适配器套件接线（skipIf 探针）+ 真实 SQLite 全路径 + 重启等价 + 真实内核证据块 |
+
+## 三路并行（P1-16，隔离 worktree → main 合并；从 a597eaf 派生）
+
+| Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
+| --- | --- | --- | --- | --- |
+| A WorkRecord control + binding/notes 投影 | agent_platform-p1-16-a @ p1-16-lane-a | bindWorkContext/linkWorkRun/recordExecutionNote/recordContinuation 完整实现（守卫序+fold-equality+幂等映射）+ workContext 视图 binding/notes 部分（in-memory + sqlite，isHandledEventType 同 commit）+ 对应单元测试 | src/control/work-record.ts、src/read-model/read-model-index.ts（LANE-A 区域）、src/sqlite-read-model/sqlite-read-model-index.ts（LANE-A 区域）、tests/control/work-record.test.ts、tests/read-model/p1-16-work-context.test.ts、tests/sqlite-read-model/p1-16-work-context.test.ts | ⏳ 实施中（subagent b46eeaeb） |
+| B Context assemble + continuation 面 + continuation 投影 | agent_platform-p1-16-b @ p1-16-lane-b | assembleWorkContext 完整实现（选材/预算/正文先落库/manifest）+ FakeContextContinuationRuntimeAdapter.checkContinuation + workContext 视图 continuation 部分（in-memory + sqlite）+ 对应单元测试 | src/context/work-context-compiler.ts、src/runtime/context-continuation-adapter.ts、src/read-model/read-model-index.ts（LANE-B 区域）、src/sqlite-read-model/sqlite-read-model-index.ts（LANE-B 区域）、tests/context/work-context-compiler.test.ts、tests/runtime/context-continuation-adapter.test.ts、tests/read-model/p1-16-continuation-projection.test.ts、tests/sqlite-read-model/p1-16-continuation-projection.test.ts | ⏳ 实施中（subagent 9ff178e2） |
+| C 重启证据 + 集成 + 真实内核 | (integrator 合并后执行) | isP116Ready 探针硬化 + restart 逐字段一致 + 真实 SQLite 全路径集成 + 真实 coding-agent 接续验证（能力降级证据）+ P1-16-EVIDENCE 块 | tests/restart/p1-16-*、tests/integration/p1-16.* | ⏳ 待 lane A/B 合并 |
+
+integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`、`src/harness/**`、`tests/contract-suite/**`（套件定义文件）、`tests/integration/**`（接线文件）、文档与状态记录、以及两条 lane 的**合并**。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结签名、**不得修改 P1-00…P1-08 文件或 P1-16 共享基线文件**；如有缺口：提交具体建议给 integrator 统一修改基线并通知消费者。允许测试命令：pnpm vitest run <自身路径>、pnpm typecheck。
+
+---
+
+## P1-08 历史记录（已完成，保留备查；P1-16 在其上实施，P1-08 原文自本标题起未改动）
 
 - Ticket：`/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/08-status-evidence-console.md`（P1-08，status 按阶段守卫保持 `proposed`；Implementation record 将在验收后追加票尾；**本票验收 ≠ 整个 P1 验收，P1-09/10/15 不自动开始**）
 - P1-07 结束基线（upstream 已验收）：产品根 commit `404ab28`（typecheck 0 errors、88 files/722 tests PASS；P1-07 双套件 12/12×2、集成 1/1、重启证据 1/1、validate-docs 13/13；本地 main 未推送 GitHub origin main——推送需用户授权）。**P1-08 共享基线 = 本文件本次更新的 commit**（= 404ab28 + 本票新增 contract/validator/fixture/entry/suite/restart 骨架；既有 722 测试零回归——实施前复跑）。
