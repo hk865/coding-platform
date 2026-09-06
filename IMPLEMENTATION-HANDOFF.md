@@ -32,6 +32,30 @@ merge_surface_note: P1-11 只版本化追加——ControlEngine +3（recordPlanC
 8. **证据适用性重算**：旧证据（anchor=source plan ref）保留在 ledger；新 binding 下 evidenceApplicability（P1-04 纯函数）对 新 currentAnchor（new planRef + same pins）→ OUT_OF_SCOPE（planRef 变化）；绝不改写旧证据。
 9. **边界**：不做委托策略（P0-06 注明）、不做 P1-14/15 的验证决定闭环；Planner/HumanCollaboration 不能直接激活 revision（只有 ControlEngine.applyPlanChange）；拒绝/延后不改变 active revision；全量幂等沿用 ledger。
 
+## P1-11 已冻结的代码入口（integrator 建立，签名冻结）
+
+| 入口 | 文件 | 冻结表面 |
+| --- | --- | --- |
+| 契约/纯函数 | src/contracts/goal-change.ts | 7 契约（AmendGoalRequest/PlanPatch/ChangeImpactAnalysis/PlanProposal/UserDecision/GoalRevision/PlanRevisionSupersededEvent）+ 3 snapshots/refs + 3 命令/回执 + 3 事件 + fingerprints + planChangeScopeKey/planProposalDigest/decisionTargetFor/computeTaskDispositions/draftConsistencyIssues（纯）+ PlanChangeViewQuery/Result + 上限常量 + 3 个端口（GoalChangePort/PlanProposalPort/PlanningContextPort） |
+| 端口/接口扩展 | src/contracts/{modules,goal-view}.ts | ControlEngine +3、HumanCollaboration.GoalChangePort +3（amend/decide/applyChange）、ReadModelIndex.planChangeView |
+| ledger/validation | src/contracts/{ledger,ledger-validation,events}.ts | 3 commitKind + validateProposal/Decision/ApplyCommit（双适配器共用；apply fold 事件=[PlanRevisionAccepted,PlanRevisionSuperseded,GoalRevisionRecorded]）+ 4 事件入 KNOWN/union |
+| fixtures | src/contracts/fixtures/goal-change-fixtures.ts | P111_* 常量、buildAmendGoalRequestV1/PlanPatchV1/ChangeImpactAnalysisV1/PlanProposalV1/UserDecisionV1/GoalRevisionV1/NewPlanDraft + 3 命令 builder + 3 fold builder（含 buildGoalChangeApplyCommit） |
+| Control 入口 | src/control/goal-change.ts | GoalChangeEngineImpl（stub→lane A）；control-engine.ts 仅委托 |
+| 编译器 | src/control/plan-compiler.ts、src/context/planning-context-compiler.ts | PlanCompilerImpl（deps 冻结：ledger/readModel/now）、PlanningContextCompilerImpl（deps 冻结：ledger/vault/contextCompiler/readModel/now）——stub→lane B |
+| 读模型 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts | planChangeView stub + applyP111 钩子（lane C 填分支 + isHandledEventType 4 事件） |
+| harness | src/harness/{in-memory,persistent}-harness.ts | planProposal/planningContext 默认接线（deps 注入）+ recordPlanChangeProposal/recordUserDecision/applyPlanChange/planChangeView/planProposalRequest/assemblePlanningContext/amend 直通 + options {planProposal?, planningContext?} |
+| 契约套件 | tests/contract-suite/{p1-11-harness,goal-change.contract.suite}.ts | P1_11TestHarness/FACTORY、runP111ChangeScenario（bootstrap+goal+governance+applyPlan→proposal→decision→apply→view）、defineGoalChangeContractSuite（验收 + 7 组 verification；lanes 未落地自动 skip） |
+| 重启骨架 | tests/restart/p1-11-restart-fixtures/test/evidence | isP111Ready() 探针；实现落地后自动启用 |
+| 集成接线 | tests/integration/p1-11.* | 双适配器套件接线（skipIf 探针）+ 真实 SQLite 全路径 + 重启等价 |
+
+## 三路并行（P1-11，隔离 worktree → main 合并；从 d5a51ba 派生）
+
+| Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
+| --- | --- | --- | --- | --- |
+| A control | agent_platform-p1-11-a @ p1-11-lane-a | GoalChangeEngineImpl 完整实现（记录两命令守卫+apply 守卫链 proposal→decision→target→draft→source_stale→P1-02 guards→原子 fold+映射）+ 负例/幂等/隔离单测 | src/control/goal-change.ts、tests/control/goal-change.test.ts | ⏳ 实施中（subagent a7134fc3） |
+| B compilers | agent_platform-p1-11-b @ p1-11-lane-b | PlanCompilerImpl.request（有界 proposal+impact，零写）+ PlanningContextCompilerImpl.assemblePlanningContext（委托 ContextCompiler 预算/缺口/越权）+ 单测 | src/control/plan-compiler.ts、src/context/planning-context-compiler.ts、tests/control/plan-compiler.test.ts、tests/context/planning-context-compiler.test.ts | ⏳ 实施中（subagent 3bd68486） |
+| C projection | agent_platform-p1-11-c @ p1-11-lane-c | planChangeView 双适配器（proposals/decisions/revisions/plan snapshots 行 + 组装 dispositions + isHandledEventType 4 事件同 commit）+ 重建/重启等价 + 隔离单测 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts（P1-11 区域）、tests/read-model/p1-11-plan-change.test.ts、tests/sqlite-read-model/p1-11-plan-change.test.ts | ⏳ 实施中（subagent 5f57f476） |
+
 ---
 
 ## P1-12 当前票据与共享契约基线（并行窗口 1b）
