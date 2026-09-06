@@ -1348,11 +1348,11 @@ export function validateUserDecisionRecordCommit(batch: import("./ledger.js").Us
 
 export function validateGoalChangeApplyCommit(batch: import("./ledger.js").GoalChangeApplyLedgerCommitV1): boolean {
   if (batch.schemaVersion !== 1) return false;
-  if (batch.events.length !== 2) return false;
+  if (batch.events.length !== 3) return false;
   if (batch.snapshots.length !== 3 || batch.outboxIntents.length !== 0) return false;
-  const [planEvent, revisionEvent] = batch.events as [import("./plan.js").PlanRevisionAcceptedEvent, import("./goal-change.js").GoalRevisionRecordedEvent];
-  if (planEvent.eventType !== "PlanRevisionAccepted" || revisionEvent.eventType !== "GoalRevisionRecorded") return false;
-  if (!isKnownEventType(planEvent.eventType) || !isKnownEventType(revisionEvent.eventType)) return false;
+  const [planEvent, supersedeEvent, revisionEvent] = batch.events as [import("./plan.js").PlanRevisionAcceptedEvent, import("./goal-change.js").PlanRevisionSupersededEvent, import("./goal-change.js").GoalRevisionRecordedEvent];
+  if (planEvent.eventType !== "PlanRevisionAccepted" || supersedeEvent.eventType !== "PlanRevisionSuperseded" || revisionEvent.eventType !== "GoalRevisionRecorded") return false;
+  if (!isKnownEventType(planEvent.eventType) || !isKnownEventType(supersedeEvent.eventType) || !isKnownEventType(revisionEvent.eventType)) return false;
   const planSnap = batch.snapshots.find((s) => s.ref.aggregateType === "PlanRevision") as import("./plan.js").PlanRevisionSnapshot | undefined;
   const revSnap = batch.snapshots.find((s) => s.ref.aggregateType === "GoalRevision") as import("./goal-change.js").GoalRevisionSnapshot | undefined;
   const goalSnap = batch.snapshots.find((s) => s.ref.aggregateType === "Goal") as import("./ledger.js").GoalSnapshot | undefined;
@@ -1361,6 +1361,13 @@ export function validateGoalChangeApplyCommit(batch: import("./ledger.js").GoalC
   if (goalSnap.revision !== planEvent.payload.goalAggregateRevision) return false;
   if (goalSnap.activePlanRevision?.planId !== planSnap.ref.planId) return false;
   if (canonicalJson(revSnap.change) !== canonicalJson(revisionEvent.payload.change)) return false;
+  const supersededRefs = revSnap.change.supersededPlanRefs;
+  if (supersededRefs.length === 0) return false;
+  const lastSuperseded = supersededRefs[supersededRefs.length - 1]!;
+  if (canonicalJson(supersedeEvent.payload.supersededRef) !== canonicalJson(lastSuperseded)) return false;
+  if (canonicalJson(supersedeEvent.payload.activeRef) !== canonicalJson(revSnap.change.activePlanRef)) return false;
+  if (supersedeEvent.payload.decisionRef.aggregateType !== "UserDecision" || !supersedeEvent.payload.decisionRef.decisionId) return false;
+  if (supersedeEvent.payload.changedAt !== revSnap.change.changedAt) return false;
   if (batch.expectedVersions.length !== 2) return false;
   const gE = batch.expectedVersions.find((v) => v.ref.aggregateType === "Goal");
   const pE = batch.expectedVersions.find((v) => v.ref.aggregateType === "PlanRevision");

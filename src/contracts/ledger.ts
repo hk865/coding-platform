@@ -128,7 +128,7 @@ import type {
 } from "./architecture-inspection.js";
 import type { ControlIntentRecordedEvent, ControlIntentRef, ControlIntentSnapshot, SafePointAcknowledgedEvent } from "./control-intent.js";
 import type { QueryJobAnswerRecordedEvent, QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobClosedEvent, QueryJobRef, QueryJobSnapshot, QueryJobSubmittedEvent, QueryRunRef, QueryRunSnapshot, QueryRunStartedEvent } from "./query-job.js";
-import type { GoalRevisionRecordedEvent, GoalRevisionSnapshot, PlanProposalRecordedEvent, PlanProposalSnapshot, UserDecisionRecordedEvent, UserDecisionSnapshot } from "./goal-change.js";
+import type { GoalRevisionRecordedEvent, GoalRevisionSnapshot, PlanProposalRecordedEvent, PlanProposalSnapshot, PlanRevisionSupersededEvent, UserDecisionRecordedEvent, UserDecisionSnapshot } from "./goal-change.js";
 
 export type ProjectRef = {
   aggregateType: "Project";
@@ -705,7 +705,7 @@ export type GoalChangeApplyLedgerCommitV1 = {
   identity: CommandIdentity;
   fingerprint: CommandFingerprint;
   expectedVersions: ExpectedVersion[];
-  events: [PlanRevisionAcceptedEvent, GoalRevisionRecordedEvent];
+  events: [PlanRevisionAcceptedEvent, PlanRevisionSupersededEvent, GoalRevisionRecordedEvent];
   snapshots: [import("./plan.js").PlanRevisionSnapshot, GoalRevisionSnapshot, import("./ledger.js").GoalSnapshot];
   outboxIntents: [];
 };

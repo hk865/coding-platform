@@ -313,7 +313,7 @@ export type RecordUserDecisionReceipt =
 
 export type ApplyPlanChangeRejectionCode =
   | "invalid" | "not_found" | "proposal_not_found" | "decision_not_found" | "decision_not_accepted"
-  | "decision_target_mismatch" | "source_stale" | "guards_failed" | "revision_conflict" | "idempotency_conflict" | "unavailable";
+  | "decision_target_mismatch" | "draft_mismatch" | "source_stale" | "guards_failed" | "revision_conflict" | "idempotency_conflict" | "unavailable";
 export type ApplyPlanChangeReceipt =
   | { status: "committed"; commandId: string; replayed: boolean; goalRevision: GoalRevisionSnapshot["ref"]; activePlanRef: PlanRevisionRef; eventIds: string[]; commitCursor: CommitCursor }
   | { status: "rejected"; commandId: string; code: ApplyPlanChangeRejectionCode; issues?: string[] };
