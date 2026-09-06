@@ -97,7 +97,7 @@ export function defineArchitectureEvolutionContractSuite(
         expect(resolved.status).toBe("found");
         if (resolved.status !== "found") return;
         expect(resolved.pin.ref.policyId).toBe(P113_POLICY);
-        expect(resolved.pin.contentDigest).toBe(architectureEvolutionPolicyContentDigest(ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1));
+        expect(resolved.pin.digest).toBe(architectureEvolutionPolicyContentDigest(ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1));
       });
     });
 
