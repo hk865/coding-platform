@@ -131,6 +131,8 @@ export interface PersistentSqliteHarnessOptions {
   workspaceCapability?: WorkspaceCapabilityPort;
   /** P1-07: explicit WorkspaceDrivePort (default WorkspaceDriveEngineImpl). */
   workspaceDrive?: WorkspaceDrivePort;
+  /** P1-07: explicit RunPort override (default FakeRuntimeAdapter(script)). */
+  runtime?: RunPort;
 }
 
 export interface PersistentSqliteHarness {
@@ -273,6 +275,7 @@ function buildHarness(
   handoffControlOverride: HandoffControlPort | undefined,
   workspaceCapabilityOverride: WorkspaceCapabilityPort | undefined,
   workspaceDriveOverride: WorkspaceDrivePort | undefined,
+  runtimeOverride: RunPort | undefined,
 ): BuiltHarness {
   const d: InjectableDeps = { ...createDeterministicDeps(), ...deps };
   const ledger = createSqliteStateLedger({ path: join(dir, ledgerFile) });
@@ -289,7 +292,7 @@ function buildHarness(
   });
   const vault: ArtifactPort = new ArtifactVault();
   const contextCompiler: TaskContextPort = new ContextCompilerImpl({ ledger, vault, now: d.clock });
-  const runtime: RunPort = new FakeRuntimeAdapter(runtimeScript);
+  const runtime: RunPort = runtimeOverride ?? new FakeRuntimeAdapter(runtimeScript);
   const dispatchEngine: DispatchPort = new DispatchEngineImpl({
     ledger,
     control,
@@ -379,7 +382,7 @@ export async function createPersistentSqliteHarness(
     ledgerFilename: string,
     readModelFilename: string,
   ): PersistentSqliteHarness => {
-    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript, checkPorts, reviewer, verificationOverride, reviewContextOverride, options.handoffContext, options.handoffControl, options.workspaceCapability, options.workspaceDrive);
+    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript, checkPorts, reviewer, verificationOverride, reviewContextOverride, options.handoffContext, options.handoffControl, options.workspaceCapability, options.workspaceDrive, options.runtime);
     let closed = false;
     return {
       dir,
