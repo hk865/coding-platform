@@ -81,6 +81,14 @@ import type {
   GoalTimelineViewResult,
 } from "../contracts/goal-phase-view.js";
 import type { GoalPhaseUpdatedEvent } from "../contracts/goal-phase.js";
+import type { HandoffRecordedEvent, ReplacementClaimedEvent } from "../contracts/handoff.js";
+import { handoffPacketRefFor } from "../contracts/handoff.js";
+import type {
+  HandoffProvenanceEntry,
+  HandoffProvenanceView,
+  HandoffProvenanceViewQuery,
+  HandoffProvenanceViewResult,
+} from "../contracts/handoff-view.js";
 
 /** Full-scope view key: (projectId, workspaceId, goalId) — never a local id only. */
 function goalKey(projectId: string, workspaceId: string, goalId: string): string {
@@ -174,6 +182,9 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   /** (projectId, goalId) -> goal timeline entries in arrival order (P1-05). */
   private readonly goalTimelineRows = new Map<string, GoalTimelineEntry[]>();
 
+  /** (projectId, goalId, taskId) -> latest projected HandoffProvenanceView (P1-06). */
+  private readonly handoffProvenanceRows = new Map<string, HandoffProvenanceView>();
+
   async advance(page: EventPage): Promise<ProjectionReceipt> {
     const toApply: PositionedEvent[] = [];
     const appliedEventIds: string[] = [];
@@ -241,6 +252,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
         this.applyTaskReductionUpdated(event, positioned.cursor);
       } else if (event.eventType === "GoalPhaseUpdated") {
         this.applyGoalPhaseUpdated(event, positioned.cursor);
+      } else if (event.eventType === "HandoffRecorded") {
+        this.applyHandoffRecorded(event, positioned.cursor);
+      } else if (event.eventType === "ReplacementClaimed") {
+        this.applyReplacementClaimed(event, positioned.cursor);
       }
       // Known non-goal / non-plan / non-dispatch events
       // (ProjectBootstrapped, WorkspaceBootstrapped, CompletionPolicyInstalled,
@@ -452,12 +467,36 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   }
 
   /** P1-03: active agent view — same opaque-cursor freshness as planGraph / taskDetail. */
-  /** P1-06: display-only handoff provenance timeline (stub -> lane C fills). */
-  async handoffProvenance(
-    query: import("../contracts/handoff-view.js").HandoffProvenanceViewQuery,
-  ): Promise<import("../contracts/handoff-view.js").HandoffProvenanceViewResult> {
-    void query;
-    throw new Error("P1-06: handoffProvenance not implemented yet");
+  /** P1-06: display-only handoff provenance timeline (keyed by full-scope
+   * (projectId, goalId, taskId); NEVER judges completion). Freshness mirrors
+   * goalStatus(): not_found only when atLeastCursor is provided AND already
+   * covered AND there is no row; otherwise the freshness-safe not_ready. */
+  async handoffProvenance(query: HandoffProvenanceViewQuery): Promise<HandoffProvenanceViewResult> {
+    const observedCursor = this.observedCursor;
+    const row = this.handoffProvenanceRows.get(
+      taskDetailKey(query.projectId, query.goalId, query.taskId),
+    );
+
+    if (query.atLeastCursor !== undefined) {
+      if (this.isCovered(query.atLeastCursor)) {
+        if (row) return { status: "ready", provenance: row, observedCursor: observedCursor! };
+        return { status: "not_found", observedCursor: observedCursor ?? makeCommitCursor(1) };
+      }
+      return {
+        status: "not_ready",
+        requiredCursor: query.atLeastCursor,
+        observedCursor: observedCursor ?? makeCommitCursor(1),
+      };
+    }
+
+    // No atLeastCursor: show the row if present, else the freshness-safe
+    // "not_ready" (identical to goalStatus() — never not_found here).
+    if (row) return { status: "ready", provenance: row, observedCursor: observedCursor! };
+    return {
+      status: "not_ready",
+      requiredCursor: observedCursor ?? makeCommitCursor(1),
+      observedCursor: observedCursor ?? makeCommitCursor(1),
+    };
   }
 
   async activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult> {
@@ -734,6 +773,29 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     });
     row.sourceCursor = cursor;
     this.verificationRows.set(key, row);
+
+    // P1-06: the SAME EvidenceAdmitted event also feeds the display-only
+    // provenance timeline (evidence_admitted entry). The verification projection
+    // above is unchanged; this only appends to the handoff provenance row.
+    const provRow = this.ensureHandoffProvenanceRow(projectId, goalId, taskId, cursor);
+    provRow.timeline.push({
+      kind: "evidence_admitted",
+      evidenceRef: {
+        aggregateType: "Evidence",
+        projectId,
+        evidenceId: event.payload.evidence.evidenceId,
+      },
+      evidenceId: event.payload.evidence.evidenceId,
+      outcome: event.payload.evidence.outcome,
+      evidenceKind: event.payload.evidence.kind,
+      sourceRunRef: event.payload.evidence.source.runRef,
+      planRef: event.payload.evidence.anchor.planRef,
+      planRevision: event.payload.evidence.anchor.planRevision,
+      admittedAt: event.payload.admittedAt,
+      sourceCursor: cursor,
+    });
+    provRow.sourceCursor = cursor;
+    this.handoffProvenanceRows.set(taskDetailKey(projectId, goalId, taskId), provRow);
   }
 
   /** TaskReductionUpdated@1 -> refresh the task's canonical reduction snapshot.
@@ -962,6 +1024,91 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     this.goalTimelineRows.set(goalPhaseKey(projectId, goalId), list);
   }
 
+  // ------------------------------------------------------------------ //
+  // P1-06 handoff provenance projection handlers                        //
+  // ------------------------------------------------------------------ //
+
+  /** Get or create the per-task handoff provenance row (full-scope key). */
+  private ensureHandoffProvenanceRow(
+    projectId: string,
+    goalId: string,
+    taskId: string,
+    cursor: CommitCursor,
+  ): HandoffProvenanceView {
+    const key = taskDetailKey(projectId, goalId, taskId);
+    const existing = this.handoffProvenanceRows.get(key);
+    if (existing) return existing;
+    const row: HandoffProvenanceView = {
+      projectId,
+      goalId,
+      taskId,
+      packetRefs: [],
+      replacementRefs: [],
+      taskRevision: null,
+      planRef: null,
+      timeline: [],
+      outcomeUnknownPreserved: true,
+      sourceCursor: cursor,
+    };
+    this.handoffProvenanceRows.set(key, row);
+    return row;
+  }
+
+  /** HandoffRecorded@1 -> append a packet_recorded entry + packetRef and snapshot
+   * the row's taskRevision / planRef from the packet (the row is created here if
+   * absent — it carries ONLY event fields, never depends on a Plan event). */
+  private applyHandoffRecorded(event: HandoffRecordedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const goalId = event.payload.goalId;
+    const taskId = event.payload.taskId;
+    const key = taskDetailKey(projectId, goalId, taskId);
+    const packet = event.payload.packet;
+    const row = this.ensureHandoffProvenanceRow(projectId, goalId, taskId, cursor);
+
+    row.timeline.push({
+      kind: "packet_recorded",
+      packetRef: handoffPacketRefFor(projectId, goalId, taskId, packet.packetId),
+      packetId: packet.packetId,
+      sourceRunRef: { ...packet.source.runRef },
+      sourceAttemptRef: { ...packet.source.attemptRef },
+      predecessorPacketRef: packet.predecessorPacketRef === null ? null : { ...packet.predecessorPacketRef },
+      taskRevision: packet.taskRevision,
+      workspaceSnapshot: { ...packet.workspaceSnapshot },
+      recordedAt: event.payload.recordedAt,
+      sourceCursor: cursor,
+    } satisfies HandoffProvenanceEntry);
+    row.packetRefs.push(handoffPacketRefFor(projectId, goalId, taskId, packet.packetId));
+    row.taskRevision = packet.taskRevision;
+    row.planRef = { ...packet.planRef };
+    row.sourceCursor = cursor;
+    this.handoffProvenanceRows.set(key, row);
+  }
+
+  /** ReplacementClaimed@1 -> append a replacement_claimed entry + replacementRef. */
+  private applyReplacementClaimed(event: ReplacementClaimedEvent, cursor: CommitCursor): void {
+    const projectId = event.projectId;
+    const goalId = event.payload.goalId;
+    const taskId = event.payload.taskId;
+    const key = taskDetailKey(projectId, goalId, taskId);
+    const row = this.ensureHandoffProvenanceRow(projectId, goalId, taskId, cursor);
+
+    row.timeline.push({
+      kind: "replacement_claimed",
+      packetRef: { ...event.payload.packetRef },
+      replacementRef: { ...event.payload.replacementRef },
+      priorRunRef: { ...event.payload.priorRunRef },
+      priorAttemptRef: { ...event.payload.priorAttemptRef },
+      runRef: { ...event.payload.runRef },
+      attemptRef: { ...event.payload.attemptRef },
+      reason: event.payload.reason,
+      claimedAt: event.payload.claimedAt,
+      sourceCursor: cursor,
+    } satisfies HandoffProvenanceEntry);
+    row.replacementRefs.push({ ...event.payload.replacementRef });
+    row.sourceCursor = cursor;
+    this.handoffProvenanceRows.set(key, row);
+  }
+
   /** Event types this projection currently has handlers for (P1-02 + P1-03, v1). */
   private isHandledEventType(eventType: string): boolean {
     return (
@@ -979,7 +1126,9 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       eventType === "RunOutcomeUnknown" ||
       eventType === "EvidenceAdmitted" ||
       eventType === "TaskReductionUpdated" ||
-      eventType === "GoalPhaseUpdated"
+      eventType === "GoalPhaseUpdated" ||
+      eventType === "HandoffRecorded" ||
+      eventType === "ReplacementClaimed"
     );
   }
 }
