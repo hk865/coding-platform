@@ -23,12 +23,10 @@
  *       Project revision / active-aggregate movement => revision_conflict,
  *       never moves the active ref.
  *
- * NOTE (P1-13 LANE-A): the shared activate validator (validatePin kind=policy)
- * flags the THIRD-kind aggregateType as an unexpected target aggregateType. That
- * is a known false positive for the ArchitectureEvolutionPolicy kind, so the
- * control strips that single issue and independently asserts the exact third-kind
- * aggregateType; the integrator should fix validatePin / the activate validator on
- * the shared surface.
+ * NOTE (P1-13 LANE-A): the shared activate validator (validatePin) now accepts
+ * kind="evolution" (aggregateType=ArchitectureEvolutionPolicyRevision), so the
+ * control consumes it directly and additionally asserts the exact third-kind
+ * aggregateType before proceeding.
  *
  * Dependencies: only the frozen contracts (architecture-evolution-policy.js,
  * ledger.js), the shared validators (validation.js), StateLedger.load/commit via
@@ -65,11 +63,6 @@ import type {
   SnapshotResult,
 } from "../contracts/ledger.js";
 import type { ControlEngineDeps } from "./control-engine.js";
-
-/** P1-13 LANE-A: shared validatePin (kind=policy) expects CompletionPolicyRevision;
- * strip its single third-kind false-positive so a valid ArchitectureEvolutionPolicy
- * activate is not rejected. */
-const ACTIVATE_AGGREGATE_TYPE_ISSUE_PATH = "payload.target.ref.aggregateType";
 
 function isEvolutionPolicySnapshot(
   result: SnapshotResult,
@@ -283,10 +276,8 @@ export class ArchitectureEvolutionPolicyEngineImpl {
 
   async activate(command: ActivateProjectArchitectureEvolutionPolicyCommand): Promise<ArchitectureEvolutionPolicyActivateReceipt> {
     // 1) schema: shared validator -> structural issues are invalid (ZERO write).
-    //    P1-13 LANE-A: strip the shared validatePin(kind=policy) false positive on
-    //    the third-kind aggregateType, then assert the exact third-kind type.
-    const raw = validateActivateProjectArchitectureEvolutionPolicyCommand(command);
-    const issues = raw.filter((i) => !(i.path === ACTIVATE_AGGREGATE_TYPE_ISSUE_PATH && i.code === "bad_type"));
+    //    P1-13 LANE-A: additionally assert the exact third-kind aggregateType.
+    const issues = validateActivateProjectArchitectureEvolutionPolicyCommand(command);
     if (issues.length > 0 || (command.payload.target.ref as { aggregateType?: string }).aggregateType !== "ArchitectureEvolutionPolicyRevision") {
       return { status: "rejected", commandId: command.commandId, code: "invalid" };
     }
