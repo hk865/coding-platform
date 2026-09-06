@@ -128,6 +128,7 @@ import type {
 } from "./architecture-inspection.js";
 import type { ControlIntentRecordedEvent, ControlIntentRef, ControlIntentSnapshot, SafePointAcknowledgedEvent } from "./control-intent.js";
 import type { QueryJobAnswerRecordedEvent, QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobClosedEvent, QueryJobRef, QueryJobSnapshot, QueryJobSubmittedEvent, QueryRunRef, QueryRunSnapshot, QueryRunStartedEvent } from "./query-job.js";
+import type { GoalRevisionRecordedEvent, GoalRevisionSnapshot, PlanProposalRecordedEvent, PlanProposalSnapshot, UserDecisionRecordedEvent, UserDecisionSnapshot } from "./goal-change.js";
 
 export type ProjectRef = {
   aggregateType: "Project";
@@ -182,7 +183,10 @@ export type AggregateRef =
   | ControlIntentRef
   | QueryJobRef
   | QueryRunRef
-  | QueryJobAnswerRef;
+  | QueryJobAnswerRef
+  | PlanProposalSnapshot["ref"]
+  | UserDecisionSnapshot["ref"]
+  | GoalRevisionSnapshot["ref"];
 
 export type ProjectSnapshot = {
   ref: ProjectRef;
@@ -241,7 +245,10 @@ export type AggregateSnapshot =
   | ControlIntentSnapshot
   | QueryJobSnapshot
   | QueryRunSnapshot
-  | QueryJobAnswerSnapshot;
+  | QueryJobAnswerSnapshot
+  | PlanProposalSnapshot
+  | UserDecisionSnapshot
+  | GoalRevisionSnapshot;
 
 export type SnapshotResult =
   | { status: "found"; snapshot: AggregateSnapshot }
@@ -666,6 +673,43 @@ export type QueryCloseRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
+
+/** P1-11: plan-change-proposal-record — one immutable proposal (CAS@0). */
+export type PlanChangeProposalRecordLedgerCommitV1 = {
+  commitKind: "plan-change-proposal-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  events: [PlanProposalRecordedEvent];
+  snapshots: [PlanProposalSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-11: user-decision-record — one immutable decision (CAS@0). */
+export type UserDecisionRecordLedgerCommitV1 = {
+  commitKind: "user-decision-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  events: [UserDecisionRecordedEvent];
+  snapshots: [UserDecisionSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-11: goal-change-apply — accepted decision -> new PlanRevision + GoalRevision + Goal CAS (atomic). */
+export type GoalChangeApplyLedgerCommitV1 = {
+  commitKind: "goal-change-apply";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  events: [PlanRevisionAcceptedEvent, GoalRevisionRecordedEvent];
+  snapshots: [import("./plan.js").PlanRevisionSnapshot, GoalRevisionSnapshot, import("./ledger.js").GoalSnapshot];
+  outboxIntents: [];
+};
+
 export type LedgerCommit =
   | GoalCreateLedgerCommitV1
   | BootstrapLedgerCommitV1
@@ -698,7 +742,10 @@ export type LedgerCommit =
   | ControlAckRecordLedgerCommitV1
   | QueryJobRecordLedgerCommitV1
   | QueryAnswerRecordLedgerCommitV1
-  | QueryCloseRecordLedgerCommitV1;
+  | QueryCloseRecordLedgerCommitV1
+  | PlanChangeProposalRecordLedgerCommitV1
+  | UserDecisionRecordLedgerCommitV1
+  | GoalChangeApplyLedgerCommitV1;
 
 export type LedgerCommitReceipt =
   | {

@@ -90,6 +90,8 @@ import { WorkRecordEngineImpl } from "./work-record.js";
 import { ArchitectureInspectionEngineImpl } from "./architecture-inspection.js";
 import { ControlIntentEngineImpl } from "./control-intent.js";
 import { QueryJobEngineImpl } from "./query-job.js";
+import { GoalChangeEngineImpl } from "./goal-change.js";
+import type { ApplyPlanChangeCommand, ApplyPlanChangeReceipt, RecordPlanChangeProposalCommand, RecordPlanChangeProposalReceipt, RecordUserDecisionCommand, RecordUserDecisionReceipt } from "../contracts/goal-change.js";
 import type { CloseQueryJobCommand, CloseQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, SubmitQueryJobCommand, SubmitQueryJobReceipt } from "../contracts/query-job.js";
 import type { RecordSafePointAckCommand, RecordSafePointAckReceipt, SubmitControlCommand, SubmitControlReceipt } from "../contracts/control-intent.js";
 import type { RecordArchitectureInspectionCommand, RecordArchitectureInspectionReceipt, RecordArchitectureFindingCommand, RecordArchitectureFindingReceipt, RecordArchitectureDecisionBriefCommand, RecordArchitectureDecisionBriefReceipt, RecordCandidateBaselineProposalCommand, RecordCandidateBaselineProposalReceipt } from "../contracts/architecture-inspection.js";
@@ -135,6 +137,7 @@ export class ControlEngineImpl implements ControlEngine {
   private readonly architectureInspection: ArchitectureInspectionEngineImpl;
   private readonly controlIntent: ControlIntentEngineImpl;
   private readonly queryJob: QueryJobEngineImpl;
+  private readonly goalChange: GoalChangeEngineImpl;
 
   constructor(deps: ControlEngineDeps) {
     this.deps = deps;
@@ -143,6 +146,7 @@ export class ControlEngineImpl implements ControlEngine {
     this.architectureInspection = new ArchitectureInspectionEngineImpl(deps);
     this.controlIntent = new ControlIntentEngineImpl(deps);
     this.queryJob = new QueryJobEngineImpl(deps);
+    this.goalChange = new GoalChangeEngineImpl(deps);
   }
 
   // --------------------------------------------------------------------- //
@@ -384,6 +388,18 @@ export class ControlEngineImpl implements ControlEngine {
 
   closeQueryJob(command: CloseQueryJobCommand): Promise<CloseQueryJobReceipt> {
     return this.queryJob.close(command);
+  }
+
+  recordPlanChangeProposal(command: RecordPlanChangeProposalCommand): Promise<RecordPlanChangeProposalReceipt> {
+    return this.goalChange.recordPlanChangeProposal(command);
+  }
+
+  recordUserDecision(command: RecordUserDecisionCommand): Promise<RecordUserDecisionReceipt> {
+    return this.goalChange.recordUserDecision(command);
+  }
+
+  applyPlanChange(command: ApplyPlanChangeCommand): Promise<ApplyPlanChangeReceipt> {
+    return this.goalChange.applyPlanChange(command);
   }
 
   // --------------------------------------------------------------------- //

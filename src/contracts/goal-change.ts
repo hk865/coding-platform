@@ -166,6 +166,57 @@ export type GoalRevisionSnapshot = {
   recordedAt: string;
 };
 
+export type PlanProposalRecordedEvent = {
+  eventId: string;
+  eventType: "PlanProposalRecorded";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "PlanProposal";
+  aggregateId: string;
+  aggregateRevision: 1;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: { proposal: PlanProposalV1; recordedAt: string };
+};
+
+export type UserDecisionRecordedEvent = {
+  eventId: string;
+  eventType: "UserDecisionRecorded";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "UserDecision";
+  aggregateId: string;
+  aggregateRevision: 1;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: { decision: UserDecisionV1; recordedAt: string };
+};
+
+export type GoalRevisionRecordedEvent = {
+  eventId: string;
+  eventType: "GoalRevisionRecorded";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "GoalRevision";
+  aggregateId: string;
+  aggregateRevision: 1;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: { change: GoalRevisionV1; recordedAt: string };
+};
+
 export type PlanRevisionSupersededEvent = {
   eventId: string;
   eventType: "PlanRevisionSuperseded";
@@ -187,6 +238,18 @@ export type PlanRevisionSupersededEvent = {
     changedAt: string;
   };
 };
+
+export function recordPlanChangeProposalFingerprint(command: RecordPlanChangeProposalCommand): CommandFingerprint {
+  return sha256Hex(canonicalJson({ schemaVersion: 1, commandType: command.commandType, projectId: command.identity.projectId, aggregateId: command.aggregateId, expectedRevision: command.expectedRevision, payload: { proposal: command.payload.proposal } })) as CommandFingerprint;
+}
+
+export function recordUserDecisionFingerprint(command: RecordUserDecisionCommand): CommandFingerprint {
+  return sha256Hex(canonicalJson({ schemaVersion: 1, commandType: command.commandType, projectId: command.identity.projectId, aggregateId: command.aggregateId, expectedRevision: command.expectedRevision, payload: { decision: command.payload.decision } })) as CommandFingerprint;
+}
+
+export function applyPlanChangeFingerprint(command: ApplyPlanChangeCommand): CommandFingerprint {
+  return sha256Hex(canonicalJson({ schemaVersion: 1, commandType: command.commandType, projectId: command.identity.projectId, aggregateId: command.aggregateId, expectedRevision: command.expectedRevision, payload: { decisionRef: command.payload.decisionRef, proposalRef: command.payload.proposalRef, changeReason: command.payload.changeReason } })) as CommandFingerprint;
+}
 
 export type RecordPlanChangeProposalCommand = {
   commandId: string;

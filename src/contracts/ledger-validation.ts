@@ -1314,6 +1314,61 @@ export function validateQueryCloseRecordCommit(batch: import("./ledger.js").Quer
   return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
 }
 
+
+// ------------------------------------------------------------------------ //
+// P1-11 goal-change validators (shared by BOTH adapters)                    //
+// ------------------------------------------------------------------------ //
+
+export function validatePlanChangeProposalRecordCommit(batch: import("./ledger.js").PlanChangeProposalRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1 || batch.events.length !== 1 || batch.snapshots.length !== 1 || batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.eventType !== "PlanProposalRecorded" || !isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "PlanProposal" || event.aggregateRevision !== 1) return false;
+  const snap = batch.snapshots[0] as import("./goal-change.js").PlanProposalSnapshot;
+  if (snap.ref.aggregateType !== "PlanProposal" || snap.revision !== 1) return false;
+  if (canonicalJson(snap.proposal) !== canonicalJson(event.payload.proposal)) return false;
+  if (snap.proposal.proposalId !== event.aggregateId) return false;
+  if (snap.recordedAt !== event.payload.recordedAt) return false;
+  if (batch.expectedVersions.length !== 1 || batch.expectedVersions[0]!.revision !== 0) return false;
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+
+export function validateUserDecisionRecordCommit(batch: import("./ledger.js").UserDecisionRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1 || batch.events.length !== 1 || batch.snapshots.length !== 1 || batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.eventType !== "UserDecisionRecorded" || !isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "UserDecision" || event.aggregateRevision !== 1) return false;
+  const snap = batch.snapshots[0] as import("./goal-change.js").UserDecisionSnapshot;
+  if (snap.ref.aggregateType !== "UserDecision" || snap.revision !== 1) return false;
+  if (canonicalJson(snap.decision) !== canonicalJson(event.payload.decision)) return false;
+  if (snap.decision.decisionId !== event.aggregateId) return false;
+  if (batch.expectedVersions.length !== 1 || batch.expectedVersions[0]!.revision !== 0) return false;
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+
+export function validateGoalChangeApplyCommit(batch: import("./ledger.js").GoalChangeApplyLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 2) return false;
+  if (batch.snapshots.length !== 3 || batch.outboxIntents.length !== 0) return false;
+  const [planEvent, revisionEvent] = batch.events as [import("./plan.js").PlanRevisionAcceptedEvent, import("./goal-change.js").GoalRevisionRecordedEvent];
+  if (planEvent.eventType !== "PlanRevisionAccepted" || revisionEvent.eventType !== "GoalRevisionRecorded") return false;
+  if (!isKnownEventType(planEvent.eventType) || !isKnownEventType(revisionEvent.eventType)) return false;
+  const planSnap = batch.snapshots.find((s) => s.ref.aggregateType === "PlanRevision") as import("./plan.js").PlanRevisionSnapshot | undefined;
+  const revSnap = batch.snapshots.find((s) => s.ref.aggregateType === "GoalRevision") as import("./goal-change.js").GoalRevisionSnapshot | undefined;
+  const goalSnap = batch.snapshots.find((s) => s.ref.aggregateType === "Goal") as import("./ledger.js").GoalSnapshot | undefined;
+  if (planSnap === undefined || revSnap === undefined || goalSnap === undefined) return false;
+  if (canonicalJson(planSnap) !== canonicalJson(planEvent.payload.planRevision)) return false;
+  if (goalSnap.revision !== planEvent.payload.goalAggregateRevision) return false;
+  if (goalSnap.activePlanRevision?.planId !== planSnap.ref.planId) return false;
+  if (canonicalJson(revSnap.change) !== canonicalJson(revisionEvent.payload.change)) return false;
+  if (batch.expectedVersions.length !== 2) return false;
+  const gE = batch.expectedVersions.find((v) => v.ref.aggregateType === "Goal");
+  const pE = batch.expectedVersions.find((v) => v.ref.aggregateType === "PlanRevision");
+  if (gE === undefined || gE.revision !== goalSnap.revision - 1) return false;
+  if (pE === undefined || pE.revision !== 0) return false;
+  return identityMatchesActor(planEvent.projectId, planEvent.idempotencyKey, planEvent.actor.kind, planEvent.actor.id, batch.identity);
+}
+
 export function validateWorkContextBindCommit(batch: import("./ledger.js").WorkContextBindLedgerCommitV1): boolean {
   if (batch.schemaVersion !== 1) return false;
   if (batch.events.length !== 1) return false;

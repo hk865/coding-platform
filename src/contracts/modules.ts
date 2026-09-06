@@ -72,6 +72,7 @@ import type {
 } from "./architecture-inspection.js";
 import type { RecordSafePointAckCommand, RecordSafePointAckReceipt, SubmitControlCommand, SubmitControlReceipt } from "./control-intent.js";
 import type { CloseQueryJobCommand, CloseQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, SubmitQueryJobCommand, SubmitQueryJobReceipt } from "./query-job.js";
+import type { ApplyPlanChangeCommand, ApplyPlanChangeReceipt, RecordPlanChangeProposalCommand, RecordPlanChangeProposalReceipt, RecordUserDecisionCommand, RecordUserDecisionReceipt } from "./goal-change.js";
 
 export type CreateGoalRequest = {
   projectId: string;
@@ -160,6 +161,12 @@ export interface ControlEngine {
   recordQueryAnswer(command: RecordQueryAnswerCommand): Promise<RecordQueryAnswerReceipt>;
   /** P1-09: close a query job (timeout/gap/failed/stale_source; observable; no source-phase write). */
   closeQueryJob(command: CloseQueryJobCommand): Promise<CloseQueryJobReceipt>;
+  /** P1-11: record one immutable plan-change proposal (Planner proposes only). */
+  recordPlanChangeProposal(command: RecordPlanChangeProposalCommand): Promise<RecordPlanChangeProposalReceipt>;
+  /** P1-11: record one immutable user decision (authority-target exact; zero write unless accepted). */
+  recordUserDecision(command: RecordUserDecisionCommand): Promise<RecordUserDecisionReceipt>;
+  /** P1-11: apply an ACCEPTED decision -> new PlanRevision + GoalRevision + Goal CAS (atomic). */
+  applyPlanChange(command: ApplyPlanChangeCommand): Promise<ApplyPlanChangeReceipt>;
 }
 
 export interface HumanCollaboration {

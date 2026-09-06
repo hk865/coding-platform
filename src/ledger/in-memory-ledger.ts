@@ -60,6 +60,9 @@ import {
   validateQueryJobRecordCommit,
   validateQueryAnswerRecordCommit,
   validateQueryCloseRecordCommit,
+  validatePlanChangeProposalRecordCommit,
+  validateUserDecisionRecordCommit,
+  validateGoalChangeApplyCommit,
 } from "../contracts/ledger-validation.js";
 import { canonicalJson } from "../contracts/fingerprint.js";
 import type { CommitCursor } from "../contracts/command-event.js";
@@ -180,6 +183,12 @@ export class InMemoryLedger implements StateLedger {
         return this.commitControlAckRecord(batch);
       case "query-job-record":
         return this.commitQueryJobRecord(batch);
+      case "plan-change-proposal-record":
+        return this.commitPlanChangeProposalRecord(batch);
+      case "user-decision-record":
+        return this.commitUserDecisionRecord(batch);
+      case "goal-change-apply":
+        return this.commitGoalChangeApply(batch);
       case "query-answer-record":
         return this.commitQueryAnswerRecord(batch);
       case "query-close-record":
@@ -640,6 +649,21 @@ export class InMemoryLedger implements StateLedger {
     if (!validateQueryAnswerRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
     }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitPlanChangeProposalRecord(batch: import("../contracts/ledger.js").PlanChangeProposalRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validatePlanChangeProposalRecordCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitUserDecisionRecord(batch: import("../contracts/ledger.js").UserDecisionRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateUserDecisionRecordCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitGoalChangeApply(batch: import("../contracts/ledger.js").GoalChangeApplyLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateGoalChangeApplyCommit(batch)) return { status: "rejected", code: "invalid_commit" };
     return this.commitGenericWithIdempotency(batch);
   }
 

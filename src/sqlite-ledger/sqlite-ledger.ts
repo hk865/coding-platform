@@ -81,6 +81,9 @@ import {
   validateQueryJobRecordCommit,
   validateQueryAnswerRecordCommit,
   validateQueryCloseRecordCommit,
+  validatePlanChangeProposalRecordCommit,
+  validateUserDecisionRecordCommit,
+  validateGoalChangeApplyCommit,
 } from "../contracts/ledger-validation.js";
 import type {
   DispatchClaimLedgerCommitV1,
@@ -493,6 +496,12 @@ export class SqliteStateLedger implements StateLedger {
         return this.commitControlAckRecord(batch);
       case "query-job-record":
         return this.commitQueryJobRecord(batch);
+      case "plan-change-proposal-record":
+        return this.commitPlanChangeProposalRecord(batch);
+      case "user-decision-record":
+        return this.commitUserDecisionRecord(batch);
+      case "goal-change-apply":
+        return this.commitGoalChangeApply(batch);
       case "query-answer-record":
         return this.commitQueryAnswerRecord(batch);
       case "query-close-record":
@@ -701,6 +710,21 @@ export class SqliteStateLedger implements StateLedger {
     if (!validateQueryAnswerRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
     }
+    return this.commitGeneric(batch);
+  }
+
+  private commitPlanChangeProposalRecord(batch: import("../contracts/ledger.js").PlanChangeProposalRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validatePlanChangeProposalRecordCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGeneric(batch);
+  }
+
+  private commitUserDecisionRecord(batch: import("../contracts/ledger.js").UserDecisionRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateUserDecisionRecordCommit(batch)) return { status: "rejected", code: "invalid_commit" };
+    return this.commitGeneric(batch);
+  }
+
+  private commitGoalChangeApply(batch: import("../contracts/ledger.js").GoalChangeApplyLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateGoalChangeApplyCommit(batch)) return { status: "rejected", code: "invalid_commit" };
     return this.commitGeneric(batch);
   }
 

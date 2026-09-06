@@ -133,6 +133,9 @@ export class TrapControlEngine implements ControlEngine {
   submitQueryJob(): never { return this.trap("submitQueryJob"); }
   recordQueryAnswer(): never { return this.trap("recordQueryAnswer"); }
   closeQueryJob(): never { return this.trap("closeQueryJob"); }
+  recordPlanChangeProposal(): never { return this.trap("recordPlanChangeProposal"); }
+  recordUserDecision(): never { return this.trap("recordUserDecision"); }
+  applyPlanChange(): never { return this.trap("applyPlanChange"); }
 }
 
 export function defineConsoleContractSuite(

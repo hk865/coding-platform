@@ -175,6 +175,9 @@ export class ScriptedControlEngine implements ControlEngine {
       recordArchitectureFinding?: RecordArchitectureFindingBehavior;
       recordArchitectureDecisionBrief?: RecordArchitectureDecisionBriefBehavior;
       recordCandidateBaselineProposal?: RecordCandidateBaselineProposalBehavior;
+      recordPlanChangeProposal?: (command: import("../goal-change.js").RecordPlanChangeProposalCommand) => import("../goal-change.js").RecordPlanChangeProposalReceipt | Promise<import("../goal-change.js").RecordPlanChangeProposalReceipt>;
+      recordUserDecision?: (command: import("../goal-change.js").RecordUserDecisionCommand) => import("../goal-change.js").RecordUserDecisionReceipt | Promise<import("../goal-change.js").RecordUserDecisionReceipt>;
+      applyPlanChange?: (command: import("../goal-change.js").ApplyPlanChangeCommand) => import("../goal-change.js").ApplyPlanChangeReceipt | Promise<import("../goal-change.js").ApplyPlanChangeReceipt>;
       defaultSubmit?: CommandReceipt;
       defaultBootstrap?: WorkspaceBootstrapReceipt;
       defaultInstall?: GovernanceInstallReceipt;
@@ -403,5 +406,29 @@ export class ScriptedControlEngine implements ControlEngine {
     this.recordCandidateBaselineProposalCalls.push(command);
     if (this.options.recordCandidateBaselineProposal) return this.options.recordCandidateBaselineProposal(command);
     throw new Error("ScriptedControlEngine: no recordCandidateBaselineProposal behavior configured");
+  }
+
+  // P1-11 (scripted double: records calls; behaviors configured per test)      //
+
+  readonly recordPlanChangeProposalCalls: import("../goal-change.js").RecordPlanChangeProposalCommand[] = [];
+  readonly recordUserDecisionCalls: import("../goal-change.js").RecordUserDecisionCommand[] = [];
+  readonly applyPlanChangeCalls: import("../goal-change.js").ApplyPlanChangeCommand[] = [];
+
+  async recordPlanChangeProposal(command: import("../goal-change.js").RecordPlanChangeProposalCommand): Promise<import("../goal-change.js").RecordPlanChangeProposalReceipt> {
+    this.recordPlanChangeProposalCalls.push(command);
+    if (this.options.recordPlanChangeProposal) return this.options.recordPlanChangeProposal(command);
+    throw new Error("ScriptedControlEngine: no recordPlanChangeProposal behavior configured");
+  }
+
+  async recordUserDecision(command: import("../goal-change.js").RecordUserDecisionCommand): Promise<import("../goal-change.js").RecordUserDecisionReceipt> {
+    this.recordUserDecisionCalls.push(command);
+    if (this.options.recordUserDecision) return this.options.recordUserDecision(command);
+    throw new Error("ScriptedControlEngine: no recordUserDecision behavior configured");
+  }
+
+  async applyPlanChange(command: import("../goal-change.js").ApplyPlanChangeCommand): Promise<import("../goal-change.js").ApplyPlanChangeReceipt> {
+    this.applyPlanChangeCalls.push(command);
+    if (this.options.applyPlanChange) return this.options.applyPlanChange(command);
+    throw new Error("ScriptedControlEngine: no applyPlanChange behavior configured");
   }
 }
