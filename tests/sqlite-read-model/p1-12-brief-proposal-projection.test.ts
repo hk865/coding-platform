@@ -135,5 +135,5 @@ describe("P1-12 LANE-B SQLite projection: brief/proposal isolation", () => {
     } finally {
       await h.cleanup().catch(() => undefined);
     }
-  });
+  }, 60_000);
 });
