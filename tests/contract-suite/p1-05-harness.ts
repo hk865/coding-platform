@@ -446,7 +446,14 @@ export async function satisfyEverythingP105(
     }));
     expect(receipt.status).toBe("committed");
     if (receipt.status !== "committed") throw new Error("reduceTask failed: " + taskId);
-    expect((receipt as { phase: string }).phase).toBe("satisfied");
+    const phase = (receipt as { phase: string }).phase;
+    if (taskId === "task-work-105" && opts.withUnknownSideEffect === true) {
+      // unreconciled outcome_unknown side effect -> exactly "verifying"
+      // (never satisfied; the GOAL reducer turns this into NEEDS_DECISION).
+      expect(phase).toBe("verifying");
+    } else {
+      expect(phase).toBe("satisfied");
+    }
   }
   return { workRun };
 }
