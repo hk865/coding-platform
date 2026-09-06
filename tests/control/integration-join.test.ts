@@ -201,7 +201,7 @@ describe("recordIntegrationResult", () => {
         commandId: "cmd-p107-integration-res-unresolved", projectId: P107_PROJECT, expectedRevision: 0,
         result: {
           schemaVersion: 1, resultId: "res-unresolved", projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
-          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: "1" as unknown as number,
+          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: 1,
           runRef, attemptRef: attInt, workspaceRevision: sc.workspaceRevision,
           inputs: [
             { sourceTaskId: P107_TASK_READER_A, sourceRunRef: runA, kind: "evidence", evidenceRef: evA, artifactRef: null, handoffPacketRef: null },
@@ -220,7 +220,7 @@ describe("recordIntegrationResult", () => {
         commandId: "cmd-p107-integration-res-explained", projectId: P107_PROJECT, expectedRevision: 0,
         result: {
           schemaVersion: 1, resultId: "res-explained", projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
-          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: "1" as unknown as number,
+          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: 1,
           runRef, attemptRef: attInt, workspaceRevision: sc.workspaceRevision,
           inputs: [
             { sourceTaskId: P107_TASK_READER_A, sourceRunRef: runA, kind: "evidence", evidenceRef: evA, artifactRef: null, handoffPacketRef: null },
@@ -247,7 +247,7 @@ describe("recordIntegrationResult", () => {
         commandId: "cmd-p107-integration-res-late", projectId: P107_PROJECT, expectedRevision: 0,
         result: {
           schemaVersion: 1, resultId: "res-late", projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
-          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: "1" as unknown as number,
+          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: 1,
           runRef, attemptRef: attInt, workspaceRevision: sc.workspaceRevision,
           inputs: [
             { sourceTaskId: P107_TASK_READER_A, sourceRunRef: runA, kind: "evidence", evidenceRef: evA, artifactRef: null, handoffPacketRef: null },
@@ -266,7 +266,7 @@ describe("recordIntegrationResult", () => {
         commandId: "cmd-p107-integration-res-bad-esc", projectId: P107_PROJECT, expectedRevision: 0,
         result: {
           schemaVersion: 1, resultId: "res-bad-esc", projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
-          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: "1" as unknown as number,
+          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: 1,
           runRef, attemptRef: attInt, workspaceRevision: sc.workspaceRevision,
           inputs: [{ sourceTaskId: P107_TASK_READER_A, sourceRunRef: runA, kind: "evidence", evidenceRef: evA, artifactRef: null, handoffPacketRef: null }],
           conflicts: [], gaps: [], explanation: null, escalate: true, generatedAt: P107_SCHEMA,
@@ -287,7 +287,7 @@ describe("recordIntegrationResult", () => {
         commandId: "cmd-p107-integration-res-first", projectId: P107_PROJECT, expectedRevision: 0,
         result: {
           schemaVersion: 1, resultId: "res-first", projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
-          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: "1" as unknown as number,
+          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: 1,
           runRef, attemptRef: attInt, workspaceRevision: sc.workspaceRevision,
           inputs: [{ sourceTaskId: P107_TASK_READER_A, sourceRunRef: runA, kind: "evidence", evidenceRef: { aggregateType: "Evidence" as const, projectId: P107_PROJECT, evidenceId: "ev-acc-a" }, artifactRef: null, handoffPacketRef: null }],
           conflicts: [], gaps: [], explanation: null, escalate: false, generatedAt: P107_SCHEMA,
@@ -301,7 +301,7 @@ describe("recordIntegrationResult", () => {
         commandId: "cmd-p107-integration-res-second", projectId: P107_PROJECT, expectedRevision: 0,
         result: {
           schemaVersion: 1, resultId: "res-second", projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
-          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: "1" as unknown as number,
+          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: 1,
           runRef, attemptRef: attInt, workspaceRevision: sc.workspaceRevision,
           inputs: [{ sourceTaskId: P107_TASK_READER_A, sourceRunRef: runA, kind: "evidence", evidenceRef: { aggregateType: "Evidence" as const, projectId: P107_PROJECT, evidenceId: "ev-acc-a" }, artifactRef: null, handoffPacketRef: null }],
           conflicts: [], gaps: [], explanation: null, escalate: false, generatedAt: P107_SCHEMA,
@@ -330,7 +330,7 @@ describe("recordIntegrationResult", () => {
         commandId: "cmd-p107-integration-res-nf", projectId: P107_PROJECT, expectedRevision: 0,
         result: {
           schemaVersion: 1, resultId: "res-nf", projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
-          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: "1" as unknown as number,
+          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: 1,
           runRef: { aggregateType: "Run" as const, projectId: P107_PROJECT, goalId: P107_GOAL, runId: "run-nope" },
           attemptRef: attInt, workspaceRevision: sc.workspaceRevision,
           inputs: [], conflicts: [], gaps: [], explanation: null, escalate: false, generatedAt: P107_SCHEMA,
@@ -346,7 +346,7 @@ describe("recordIntegrationResult", () => {
         commandId: "cmd-p107-integration-res-sw", projectId: P107_PROJECT, expectedRevision: 0,
         result: {
           schemaVersion: 1, resultId: "res-sw", projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
-          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: "1" as unknown as number,
+          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: 1,
           runRef, attemptRef: attInt, workspaceRevision: sc.workspaceRevision + 1,
           inputs: [], conflicts: [], gaps: [], explanation: null, escalate: false, generatedAt: P107_SCHEMA,
         },
@@ -361,7 +361,7 @@ describe("recordIntegrationResult", () => {
         commandId: "cmd-p107-integration-res-sp", projectId: P107_PROJECT, expectedRevision: 0,
         result: {
           schemaVersion: 1, resultId: "res-sp", projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
-          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: "2" as unknown as number,
+          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: 2,
           runRef, attemptRef: attInt, workspaceRevision: sc.workspaceRevision,
           inputs: [], conflicts: [], gaps: [], explanation: null, escalate: false, generatedAt: P107_SCHEMA,
         },
@@ -383,7 +383,7 @@ describe("recordIntegrationResult", () => {
         commandId: "cmd-p107-integration-res-ne", projectId: P107_PROJECT, expectedRevision: 0,
         result: {
           schemaVersion: 1, resultId: "res-ne", projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
-          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: "1" as unknown as number,
+          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: 1,
           runRef: { aggregateType: "Run" as const, projectId: P107_PROJECT, goalId: P107_GOAL, runId: "run-ne" },
           attemptRef: attInt, workspaceRevision: sc.workspaceRevision,
           inputs: [], conflicts: [], gaps: [], explanation: null, escalate: false, generatedAt: P107_SCHEMA,
@@ -407,7 +407,7 @@ describe("recordIntegrationResult", () => {
         commandId: "cmd-p107-integration-res-inf", projectId: P107_PROJECT, expectedRevision: 0,
         result: {
           schemaVersion: 1, resultId: "res-inf", projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
-          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: "1" as unknown as number,
+          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: 1,
           runRef, attemptRef: attInt, workspaceRevision: sc.workspaceRevision,
           inputs: [{ sourceTaskId: P107_TASK_READER_A, sourceRunRef: runA, kind: "evidence", evidenceRef: { aggregateType: "Evidence" as const, projectId: P107_PROJECT, evidenceId: "ev-missing" }, artifactRef: null, handoffPacketRef: null }],
           conflicts: [], gaps: [], explanation: null, escalate: false, generatedAt: P107_SCHEMA,
@@ -423,7 +423,7 @@ describe("recordIntegrationResult", () => {
         commandId: "cmd-p107-integration-res-irm", projectId: P107_PROJECT, expectedRevision: 0,
         result: {
           schemaVersion: 1, resultId: "res-irm", projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
-          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: "1" as unknown as number,
+          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: 1,
           runRef, attemptRef: attInt, workspaceRevision: sc.workspaceRevision,
           inputs: [{ sourceTaskId: P107_TASK_READER_A, sourceRunRef: runB, kind: "evidence", evidenceRef: { aggregateType: "Evidence" as const, projectId: P107_PROJECT, evidenceId: "ev-in-a" }, artifactRef: null, handoffPacketRef: null }],
           conflicts: [], gaps: [], explanation: null, escalate: false, generatedAt: P107_SCHEMA,
@@ -444,7 +444,7 @@ describe("recordIntegrationResult", () => {
         commandId: "cmd-p107-integration-res-na", projectId: P107_PROJECT, expectedRevision: 0,
         result: {
           schemaVersion: 1, resultId: "res-na", projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
-          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: "1" as unknown as number,
+          goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: 1,
           runRef, attemptRef: attInt, workspaceRevision: sc.workspaceRevision,
           inputs: [{ sourceTaskId: P107_TASK_READER_B, sourceRunRef: runB, kind: "evidence", evidenceRef: { aggregateType: "Evidence" as const, projectId: P107_PROJECT, evidenceId: "ev-stale" }, artifactRef: null, handoffPacketRef: null }],
           conflicts: [], gaps: [], explanation: null, escalate: false, generatedAt: P107_SCHEMA,
@@ -463,7 +463,7 @@ describe("recordIntegrationResult", () => {
       commandId: "cmd-p107-integration-res-inv", projectId: P107_PROJECT, expectedRevision: 0,
       result: {
         schemaVersion: 1, resultId: "res-inv", projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
-        goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: "1" as unknown as number,
+        goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION, planRef: sc.planRef, taskRevision: 1,
         runRef, attemptRef: attInt, workspaceRevision: sc.workspaceRevision,
         inputs: [], conflicts: [], gaps: [], explanation: null, escalate: false, generatedAt: P107_SCHEMA,
       },

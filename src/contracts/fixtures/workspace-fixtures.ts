@@ -277,6 +277,25 @@ export const P107_PLAN_REVISION_FIXTURE_V1: PlanRevisionDraft = {
   },
 };
 
+/**
+ * CONFLICT-TEST plan variant: same slice, but the Integration task's DAG edge
+ * onto reader B is dropped — a reader whose task FAILS (the disagreeing
+ * evidence) must not block the integration run that joins it. The Conflict is
+ * preserved by the join (acceptance 4) while the DAG stays explicit
+ * (acceptance 2: only the declared depends_on edges gate).
+ */
+export const P107_PLAN_REVISION_CONFLICT_FIXTURE_V1: PlanRevisionDraft = {
+  ...P107_PLAN_REVISION_FIXTURE_V1,
+  planId: P107_PLAN_ID,
+  executionDag: {
+    dependsOn: [
+      { taskId: P107_TASK_INTEGRATION, dependsOnId: P107_TASK_READER_A, requires: { kind: "artifact", label: "Reader A 的调查结果" } },
+      { taskId: P107_TASK_WRITER, dependsOnId: P107_TASK_INTEGRATION, requires: { kind: "artifact", label: "join 确认（无未解释冲突）" } },
+      { taskId: P107_TASK_GATE, dependsOnId: P107_TASK_WRITER, requires: { kind: "gate-result", label: "Writer patch 已登记且 workspace revision 推进" } },
+    ],
+  },
+};
+
 // ------------------------------------------------------------------------ //
 // Scope helpers                                                             //
 // ------------------------------------------------------------------------ //

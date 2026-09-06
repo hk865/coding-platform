@@ -2043,7 +2043,7 @@ function validateWorkspaceLeaseHolder(value: unknown, path: string, issues: Vali
   }
 }
 
-function validateLeaseBase(command: unknown, commandType: string, issues: ValidationIssue[]): boolean {
+function validateLeaseBase(command: unknown, commandType: string, issues: ValidationIssue[], expectedRevision: 0 | 1): boolean {
   if (!isRecord(command)) {
     issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
     return false;
@@ -2056,8 +2056,8 @@ function validateLeaseBase(command: unknown, commandType: string, issues: Valida
   }
   validateCommandIdentity(command["identity"], "identity", issues);
   stringField(command, "aggregateId", issues);
-  if (command["expectedRevision"] !== 0) {
-    issues.push({ path: "expectedRevision", code: "bad_type", message: "expectedRevision must be 0 for a new lease" });
+  if (command["expectedRevision"] !== expectedRevision) {
+    issues.push({ path: "expectedRevision", code: "bad_type", message: "expectedRevision must be " + expectedRevision });
   }
   stringField(command, "correlationId", issues);
   stringField(command, "submittedAt", issues);
@@ -2066,7 +2066,7 @@ function validateLeaseBase(command: unknown, commandType: string, issues: Valida
 
 export function validateAcquireWorkspaceReadLeaseCommand(value: unknown): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  if (validateLeaseBase(value, "AcquireWorkspaceReadLease", issues) && isRecord(value) && isRecord(value["payload"])) {
+  if (validateLeaseBase(value, "AcquireWorkspaceReadLease", issues, 0) && isRecord(value) && isRecord(value["payload"])) {
     const payload = value["payload"];
     stringField(payload, "projectId", issues, "payload.projectId");
     stringField(payload, "workspaceId", issues, "payload.workspaceId");
@@ -2081,7 +2081,7 @@ export function validateAcquireWorkspaceReadLeaseCommand(value: unknown): Valida
 
 export function validateAcquireWorkspaceWriteLeaseCommand(value: unknown): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  if (validateLeaseBase(value, "AcquireWorkspaceWriteLease", issues) && isRecord(value) && isRecord(value["payload"])) {
+  if (validateLeaseBase(value, "AcquireWorkspaceWriteLease", issues, 0) && isRecord(value) && isRecord(value["payload"])) {
     const payload = value["payload"];
     stringField(payload, "projectId", issues, "payload.projectId");
     stringField(payload, "workspaceId", issues, "payload.workspaceId");
@@ -2099,7 +2099,7 @@ export function validateAcquireWorkspaceWriteLeaseCommand(value: unknown): Valid
 
 export function validateReleaseWorkspaceLeaseCommand(value: unknown): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  if (validateLeaseBase(value, "ReleaseWorkspaceLease", issues) && isRecord(value) && isRecord(value["payload"])) {
+  if (validateLeaseBase(value, "ReleaseWorkspaceLease", issues, 1) && isRecord(value) && isRecord(value["payload"])) {
     const payload = value["payload"];
     stringField(payload, "projectId", issues, "payload.projectId");
     stringField(payload, "workspaceId", issues, "payload.workspaceId");

@@ -73,6 +73,8 @@ import {
   buildP107RecordPatchCommand,
   buildP107ArtifactRef,
   taskAttemptRefFor,
+  P107_PLAN_REVISION_CONFLICT_FIXTURE_V1,
+  rerunP107Verification,
 } from "./p1-07-harness.js";
 import { buildEffectivityAnchorV1 } from "../../src/contracts/fixtures/evidence-fixtures.js";
 import { evidenceRefFor } from "../../src/contracts/evidence.js";
@@ -265,7 +267,11 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
       );
       expect(un.status).toBe("rejected");
       if (un.status === "rejected") expect(un.code).toBe("capability_unsupported");
+      await hUn.advanceProjection();
       const viewUn = await hUn.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
+      // No lease event ever happened for this workspace: the freshness-safe
+      // "not_ready" is returned without atLeastCursor (never a false found).
+      expect(["not_ready", "ready"]).toContain(viewUn.status);
       if (viewUn.status === "ready") expect(viewUn.lease.readLeases).toHaveLength(0);
     });
 
@@ -331,7 +337,9 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
         const index = ws.snapshot as { activeLeaseId: string | null };
         expect(index.activeLeaseId).not.toBeNull();
       }
+      await h.advanceProjection();
       const view = await h.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
+      expect(view.status).toBe("ready");
       if (view.status === "ready") {
         expect(view.lease.writeLease?.status).toBe("active");
       }
@@ -367,7 +375,8 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
       expect(relAgain.status).toBe("rejected");
       if (relAgain.status === "rejected") expect(relAgain.code).toBe("already_released");
       // expired lease: a new acquire succeeds and vacates it (releasedBy null)
-      const wExp = await h.acquireWorkspaceWriteLease(writeLeaseCommand("lease-exp", runW1, attW1, "cmd-wexp", "2026-09-06T09:00:00.000Z"));
+      // Old-enough expiry: the default fixture clock is 2026-09-05T12:00Z.
+      const wExp = await h.acquireWorkspaceWriteLease(writeLeaseCommand("lease-exp", runW1, attW1, "cmd-wexp", "2026-09-04T09:00:00.000Z"));
       expect(wExp.status).toBe("committed");
       const w2 = await h.acquireWorkspaceWriteLease(writeLeaseCommand("lease-w2", runW2, attW2, "cmd-w2"));
       expect(w2.status).toBe("committed");
@@ -387,7 +396,9 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
 
     it("A4 conflict preserved, never overwritten; explanation or escalate required", async () => {
       const h = await factory();
-      const sc = await freshScenario(h);
+      // The conflict plan drops the integration->readerB DAG edge: a reader
+      // whose task FAILS (the disagreeing evidence) must not gate the join run.
+      const sc = await prepareP107Scenario(h, P107_PLAN_REVISION_CONFLICT_FIXTURE_V1);
       const anchor = readerAnchor(sc);
       const runA = await runP107Reader(h, "a", "2026-09-06T12:00:10.000Z", "2026-09-06T12:00:30.000Z");
       const runB = await runP107Reader(h, "b", "2026-09-06T12:00:10.000Z", "2026-09-06T12:00:30.000Z");
@@ -423,6 +434,7 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
         explanation: "Reader A verified the fix; Reader B's failure is on an optional path (needs confirmation).",
       });
       expect(explained.status).toBe("committed");
+      await h.advanceProjection();
       const view = await h.integrationConflicts({ projectId: P107_PROJECT, goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION });
       expect(view.status).toBe("ready");
       if (view.status === "ready") {
@@ -442,6 +454,7 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
       });
       expect(late.status).toBe("rejected");
       if (late.status === "rejected") expect(late.code).toBe("conflict_duplicate");
+      await h.advanceProjection();
       const viewAfter = await h.integrationConflicts({ projectId: P107_PROJECT, goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION });
       expect(viewAfter.status).toBe("ready");
       if (viewAfter.status === "ready") {
@@ -485,6 +498,7 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
         workspaceRevision: sc.workspaceRevision, planRef: sc.planRef,
       });
       expect(join.status).toBe("committed");
+      await submitP107Evidence(h, { evidenceId: "ev-w-int", taskId: P107_TASK_INTEGRATION, outcome: "PASS", runRef: integrationRun, coverage: [{ obligationId: P107_OBL_JOIN, requirementId: P107_VR_JOIN }], anchor });
       expect((await h.reduceTask(buildP107ReduceTaskCommand(P107_TASK_INTEGRATION))).status).toBe("committed");
       const writerRun = await runP107Task(h, {
         taskId: P107_TASK_WRITER, runId: "run-w-writer", attemptId: "att-w-writer",
@@ -541,6 +555,7 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
         expect(snap.lease.patches.length).toBe(1);
       }
       // patch view shows the record + workspace revision
+      await h.advanceProjection();
       const patchView = await h.workspacePatches({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
       expect(patchView.status).toBe("ready");
       if (patchView.status === "ready") {
@@ -592,19 +607,21 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
         workspaceRevision: sc.workspaceRevision, planRef: sc.planRef,
       });
       expect(join.status).toBe("committed");
+      await submitP107Evidence(h, { evidenceId: "ev-g-int", taskId: P107_TASK_INTEGRATION, outcome: "PASS", runRef: integrationRun, coverage: [{ obligationId: P107_OBL_JOIN, requirementId: P107_VR_JOIN }], anchor: anchorN });
       expect((await h.reduceTask(buildP107ReduceTaskCommand(P107_TASK_INTEGRATION))).status).toBe("committed");
       const writerRun = await runP107Task(h, { taskId: P107_TASK_WRITER, runId: "run-g-w", attemptId: "att-g-w", roleBinding: P107_ROLE_BINDING_WRITER_V1, declaredPermissions: P107_DECLARED_WRITE_PERMISSIONS_V1, budget: P107_BUDGET_WRITER_V1 });
       const attW = taskAttemptRefFor(P107_PROJECT, P107_GOAL, P107_TASK_WRITER, "att-g-w");
       expect((await h.acquireWorkspaceWriteLease(buildP107AcquireWriteLeaseCommand({ commandId: "cmd-g-w", projectId: P107_PROJECT, leaseId: "lease-g-w", scope: P107_SCOPE_WRITER, declaredWriteScope: [P107_WRITE_SCOPE], holder: { runRef: writerRun, attemptRef: attW, roleBinding: P107_ROLE_BINDING_WRITER_V1 } }))).status).toBe("committed");
       expect((await recordP107Patch(h, { patchId: "patch-g-1", runRef: writerRun, attemptRef: attW, beforeWorkspaceRevision: sc.workspaceRevision, afterWorkspaceRevision: sc.workspaceRevision + 1, usedInputEvidenceRefs: [evidenceRefFor(P107_PROJECT, "ev-g-a"), evidenceRefFor(P107_PROJECT, "ev-g-b")], leaseId: "lease-g-w" })).status).toBe("committed");
+      await rerunP107Verification(h, { anchor: readerAnchor(sc, sc.workspaceRevision + 1), runA, runB, integrationRun });
       await submitP107Evidence(h, { evidenceId: "ev-g-writer", taskId: P107_TASK_WRITER, outcome: "PASS", runRef: writerRun, coverage: [{ obligationId: P107_OBL_PATCH, requirementId: P107_VR_PATCH }, { obligationId: P107_OBL_PATCH, requirementId: "vr-p107-writer-accepts" }], anchor: readerAnchor(sc, sc.workspaceRevision + 1) });
       expect((await h.reduceTask(buildP107ReduceTaskCommand(P107_TASK_WRITER))).status).toBe("committed");
-      const gateRun = await runP107Task(h, { taskId: P107_TASK_GATE, runId: "run-g-gate", attemptId: "att-g-gate", roleBinding: P107_ROLE_BINDING_WRITER_V1, declaredPermissions: P107_DECLARED_WRITE_PERMISSIONS_V1, budget: P107_BUDGET_WRITER_V1 });
-      // gate evidence FAILs
-      await submitP107Evidence(h, { evidenceId: "ev-g-gate-fail", taskId: P107_TASK_GATE, outcome: "FAIL", runRef: gateRun, coverage: [{ obligationId: P107_OBL_GATE, requirementId: P107_VR_GATE }], anchor: readerAnchor(sc, sc.workspaceRevision + 1) });
+      // gate tasks are not dispatchable; the gate verdict evidence has runRef null.
+      await submitP107Evidence(h, { evidenceId: "ev-g-gate-fail", taskId: P107_TASK_GATE, outcome: "FAIL", runRef: null, coverage: [{ obligationId: P107_OBL_GATE, requirementId: P107_VR_GATE }], anchor: readerAnchor(sc, sc.workspaceRevision + 1) });
       expect((await h.reduceTask(buildP107ReduceTaskCommand(P107_TASK_GATE))).status).toBe("committed");
       const reduce = await reduceP107Goal(h, 0);
       expect(reduce.status).toBe("committed");
+      await h.advanceProjection();
       const status = await h.goalStatus({ projectId: P107_PROJECT, goalId: P107_GOAL });
       expect(status.status).toBe("ready");
       if (status.status === "ready") {
@@ -649,6 +666,7 @@ export function defineWorkspaceContractSuite(factory: P1_07Factory): void {
         const snap = workerSnap.snapshot as { lease: { status: string; expiresAt: string | null } };
         expect(evaluateLeaseAdmissibility({ status: snap.lease.status as "active" | "released", expiresAt: snap.lease.expiresAt }, P107_SCHEMA)).toEqual({ admissible: true });
       }
+      await h.advanceProjection();
       const view = await h.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
       expect(view.status).toBe("ready");
       if (view.status === "ready") {

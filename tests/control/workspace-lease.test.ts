@@ -283,7 +283,7 @@ describe("WorkspaceLeaseEngineImpl — acquireWriteLease / release (A5/A5b unit-
   });
 });
 
-/** The shared release fixture uses expectedRevision 1 (frozen) but the shared validator requires 0 for release (baseline gap). */
+/** The shared release fixture uses expectedRevision 1 (frozen: the active lease revision). */
 function rel(deps: Parameters<typeof buildP107ReleaseLeaseCommand>[0]) {
-  return { ...buildP107ReleaseLeaseCommand(deps), expectedRevision: 0 };
+  return buildP107ReleaseLeaseCommand(deps);
 }

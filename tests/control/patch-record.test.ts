@@ -121,7 +121,7 @@ type PatchOverrides = Partial<{
 function mkPatch(commandId: string, patchId: string, runId: string, beforeRev: number, o: PatchOverrides = {}): RecordPatchCommand {
   const patch: PatchArtifactV1 = {
     schemaVersion: 1, patchId, projectId: P107_PROJECT, workspaceId: o.workspaceId ?? P107_WORKSPACE, goalId: P107_GOAL, taskId: P107_TASK_WRITER,
-    planRef: o.planRef ?? p107PlanRef(P107_PROJECT), taskRevision: (o.taskRevision ?? "1") as number,
+    planRef: o.planRef ?? p107PlanRef(P107_PROJECT), taskRevision: (o.taskRevision ?? 1) as number,
     runRef: o.runRef ?? runRefFor(P107_PROJECT, P107_GOAL, runId), attemptRef: taskAttemptRefFor(P107_PROJECT, P107_GOAL, P107_TASK_WRITER, "att-" + runId),
     roleBinding: P107_ROLE_BINDING_WRITER_V1, kind: "patch", title: "fix", changedPaths: o.changedPaths ?? ["src/p107/fix-a.ts"],
     bodyRef: buildP107ArtifactRef(patchId), beforeWorkspaceRevision: beforeRev, afterWorkspaceRevision: o.afterWorkspaceRevision ?? beforeRev + 1,
@@ -137,11 +137,11 @@ async function eventCount(ledger: StateLedger): Promise<number> {
 }
 
 describe("recordPatch: guard sequence (shape -> run -> workspace -> plan)", () => {
-  it("invalid command (numeric taskRevision per contract type) -> invalid, zero write", async () => {
+  it("invalid command (string taskRevision violates the numeric contract type) -> invalid, zero write", async () => {
     const { ledger, engine } = makeHarness();
     await setupPlan(engine, ledger);
     const before = await eventCount(ledger);
-    const cmd = mkPatch("cmd-invalid", "patch-inv", "run-a", 1, { taskRevision: 1 });
+    const cmd = mkPatch("cmd-invalid", "patch-inv", "run-a", 1, { taskRevision: "1" });
     const receipt = await engine.recordPatch(cmd);
     expect(receipt.status).toBe("rejected");
     if (receipt.status === "rejected") expect(receipt.code).toBe("invalid");
@@ -198,22 +198,25 @@ describe("recordPatch: guard sequence (shape -> run -> workspace -> plan)", () =
     // Driver: pass a string taskRevision "2" (valid per the CURRENT validator,
     // which requires a string) but it is strictly != plan.planRevision (1).
     const before = await eventCount(ledger);
-    const receipt = await engine.recordPatch(mkPatch("cmd-stale", "patch-stale", "run-stale", 1, { runRef: run, taskRevision: "2" }));
+    const receipt = await engine.recordPatch(mkPatch("cmd-stale", "patch-stale", "run-stale", 1, { runRef: run, taskRevision: 2 }));
     expect(receipt.status).toBe("rejected");
     if (receipt.status === "rejected") expect(receipt.code).toBe("stale_plan");
     expect(await eventCount(ledger)).toBe(before);
   });
 
-  it("BOUNDED: guards 5..10 + happy path are blocked by the validateRecordPatchCommand taskRevision bug (see header).", async () => {
-    // The suite documents the blocker; these guards are unreachable until the
-    // integrator changes the validator to accept a NUMERIC taskRevision.
+  it("lease_not_found (no active write lease for the ended run) -> zero write", async () => {
+    // Guards 5: after shape/run/workspace/plan pass, the write-lease index has
+    // no active lease -> lease_not_found (zero write). The deep guards 6..10
+    // and the happy path (workspace revision advance + lease release + index
+    // clear + idempotency) are covered end-to-end by the shared contract suite
+    // (tests/contract-suite/workspace.contract.suite.ts A6) on both adapters.
     const { ledger, engine } = makeHarness();
     await setupPlan(engine, ledger);
-    // A command with the contract-correct numeric taskRevision is rejected at
-    // guard 1 by the current (buggy) validator, so the deeper guards cannot be
-    // reached. We assert the outermost guard to demonstrate the blocker.
-    const receipt = await engine.recordPatch(mkPatch("cmd-blocked", "patch-blocked", "run-a", 1, { taskRevision: 1, usedInputEvidenceRefs: [evidenceRefFor(P107_PROJECT, "ev-read-a")] }));
+    const run = await endReader(engine, "run-lease");
+    const before = await eventCount(ledger);
+    const receipt = await engine.recordPatch(mkPatch("cmd-lease", "patch-lease", "run-lease", 1, { runRef: run, usedInputEvidenceRefs: [evidenceRefFor(P107_PROJECT, "ev-read-a")] }));
     expect(receipt.status).toBe("rejected");
-    if (receipt.status === "rejected") expect(receipt.code).toBe("invalid");
+    if (receipt.status === "rejected") expect(receipt.code).toBe("lease_not_found");
+    expect(await eventCount(ledger)).toBe(before);
   });
 });

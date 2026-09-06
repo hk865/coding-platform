@@ -24,7 +24,7 @@ import type { WorkspaceDrivePort } from "../../src/contracts/workspace-drive.js"
 import type { WorkspaceLeaseViewQuery, WorkspaceLeaseViewResult, IntegrationConflictViewQuery, IntegrationConflictViewResult, WorkspacePatchViewQuery, WorkspacePatchViewResult } from "../../src/contracts/workspace-views.js";
 import type { RecordIntegrationResultCommand, RecordIntegrationResultReceipt, IntegrationInputRefV1, IntegrationTaskResultV1 } from "../../src/contracts/integration.js";
 import type { RecordPatchCommand, RecordPatchReceipt, PatchArtifactV1 } from "../../src/contracts/patch.js";
-import type { PlanRevisionRef, PlanRevisionSnapshot } from "../../src/contracts/plan.js";
+import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from "../../src/contracts/plan.js";
 import { sha256Hex } from "../../src/contracts/fingerprint.js";
 import type { GoalSnapshot, WorkspaceSnapshot } from "../../src/contracts/ledger.js";
 import type { RunRef, TaskAttemptRef, TaskBudgetV1, RoleBindingRefV1, RuntimeEventV1 } from "../../src/contracts/dispatch.js";
@@ -36,6 +36,7 @@ import {
   P107_GOAL,
   P107_PLAN_ID,
   P107_PLAN_REVISION_FIXTURE_V1,
+  P107_PLAN_REVISION_CONFLICT_FIXTURE_V1,
   P107_PROJECT,
   P107_SCHEMA,
   P107_TASK_GATE,
@@ -171,6 +172,7 @@ export {
   P107_SCOPE_WRITER,
   P107_WRITE_SCOPE,
   P107_ROLE_BINDING_COORDINATOR_V1,
+  P107_PLAN_REVISION_CONFLICT_FIXTURE_V1,
   p107PlanRef,
   p107ScopeForTask,
   p107ReaderScript,
@@ -202,8 +204,13 @@ export type P107ScenarioPreview = {
   pinnedArchitectureBaseline: ReturnType<typeof architectureBaselinePinFor>;
 };
 
-/** Shared governance+goal+plan preparation for the P1-07 scenario. */
-export async function prepareP107Scenario(h: P1_07HarnessLike): Promise<P107ScenarioPreview> {
+/** Shared governance+goal+plan preparation for the P1-07 scenario
+ * (planDraft defaults to the two-independent-reader-tasks slice; the conflict
+ * variant is used by the evidence-conflict test). */
+export async function prepareP107Scenario(
+  h: P1_07HarnessLike,
+  planDraft: PlanRevisionDraft = P107_PLAN_REVISION_FIXTURE_V1,
+): Promise<P107ScenarioPreview> {
   const boot = await h.bootstrap(
     buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, {
       commandId: "cmd-p107-boot",
@@ -260,7 +267,7 @@ export async function prepareP107Scenario(h: P1_07HarnessLike): Promise<P107Scen
   expect(goal.status).toBe("committed");
 
   const plan = await h.applyPlan(
-    buildApplyPlanCommand(P107_PLAN_REVISION_FIXTURE_V1, {
+    buildApplyPlanCommand(planDraft, {
       commandId: "cmd-p107-apply-plan",
       correlationId: "corr-p107-apply-plan",
       submittedAt: P107_SCHEMA,
@@ -675,6 +682,17 @@ export async function runP107FullScenario(h: P1_07TestHarness): Promise<P107Full
   });
   expect(patch.status).toBe("committed");
   const workspaceRevisionAfter = patch.status === "committed" ? patch.workspaceRevision : sc.workspaceRevision;
+  // Full re-verification at the canonical POST-WRITE revision (GoalGate全量检查):
+  // the P1-05 goal reduction evaluates obligations at the CURRENT tuple, so the
+  // reader + integration evidence (anchor N) is re-admitted at N+1 and the
+  // three downstream tasks re-reduced (TaskReduction k+1 — never rewritten).
+  await rerunP107Verification(h, {
+    anchor: buildEffectivityAnchorV1({
+      planRef: sc.planRef, planRevision: 1, workspaceRevision: workspaceRevisionAfter,
+      pinnedCompletionPolicy: sc.pinnedCompletionPolicy, pinnedArchitectureBaseline: sc.pinnedArchitectureBaseline,
+    }),
+    runA, runB, integrationRun,
+  });
   await submitP107Evidence(h, {
     evidenceId: "ev-p107-writer", taskId: P107_TASK_WRITER, outcome: "PASS", runRef: writerRun,
     coverage: [
@@ -688,13 +706,11 @@ export async function runP107FullScenario(h: P1_07TestHarness): Promise<P107Full
   });
   expect((await h.reduceTask(buildP107ReduceTaskCommand(P107_TASK_WRITER))).status).toBe("committed");
 
-  // 5) gate run + gate evidence + reduction + goal phase COMPLETED.
-  const gateRun = await runP107Task(h, {
-    taskId: P107_TASK_GATE, runId: "run-p107-gate", attemptId: "att-p107-gate",
-    roleBinding: P107_ROLE_BINDING_WRITER_V1, declaredPermissions: P107_DECLARED_WRITE_PERMISSIONS_V1, budget: P107_BUDGET_WRITER_V1,
-  });
+  // 5) gate evidence (gate tasks are NOT dispatchable — evidence reduction
+  //    applies without a run; verdicts are system checks, runRef null) +
+  //    reduction + goal phase COMPLETED.
   const gateEvidence = await submitP107Evidence(h, {
-    evidenceId: "ev-p107-gate", taskId: P107_TASK_GATE, outcome: "PASS", runRef: gateRun,
+    evidenceId: "ev-p107-gate", taskId: P107_TASK_GATE, outcome: "PASS", runRef: null,
     coverage: [{ obligationId: P107_OBL_GATE, requirementId: P107_VR_GATE }],
     anchor: buildEffectivityAnchorV1({
       planRef: sc.planRef, planRevision: 1, workspaceRevision: workspaceRevisionAfter,
@@ -704,6 +720,7 @@ export async function runP107FullScenario(h: P1_07TestHarness): Promise<P107Full
   expect((await h.reduceTask(buildP107ReduceTaskCommand(P107_TASK_GATE))).status).toBe("committed");
   const goalReduce = await reduceP107Goal(h, 0);
   expect(goalReduce.status).toBe("committed");
+  await h.advanceProjection();
 
   return {
     workspaceRevisionAfter,
@@ -724,16 +741,43 @@ import { taskAttemptRefFor, taskLeaseRefFor } from "../../src/contracts/dispatch
 import type { ReduceTaskCommand } from "../../src/contracts/reduction.js";
 import { buildReduceTaskCommand } from "../../src/contracts/fixtures/evidence-fixtures.js";
 
-export function buildP107ReduceTaskCommand(taskId: string): ReduceTaskCommand {
+export function buildP107ReduceTaskCommand(taskId: string, expectedRevision = 0): ReduceTaskCommand {
   return buildReduceTaskCommand({
-    commandId: "cmd-p107-reduce-" + taskId,
-    correlationId: "corr-p107-reduce-" + taskId,
+    commandId: "cmd-p107-reduce-" + taskId + "-" + expectedRevision,
+    correlationId: "corr-p107-reduce-" + taskId + "-" + expectedRevision,
     submittedAt: P107_SCHEMA,
     projectId: P107_PROJECT,
     goalId: P107_GOAL,
     taskId,
-    expectedRevision: 0,
+    expectedRevision,
+    idempotencyKey: "p1-07-reduce-" + taskId + "-" + expectedRevision,
   }) as ReduceTaskCommand;
+}
+
+/**
+ * Post-write full re-verification (the GoalGate full check at the canonical
+ * revision AFTER the patch): re-admit the reader + integration evidence at the
+ * final workspace revision and re-reduce the three downstream tasks so the
+ * goal reduction sees ALL required obligations satisfied at the CURRENT
+ * anchor (P1-05 reducer is frozen — the full check re-verifies at the new
+ * tuple instead of re-writing it).
+ */
+export async function rerunP107Verification(
+  h: P1_07TestHarness,
+  deps: {
+    anchor: EffectivityAnchorV1;
+    runA: RunRef;
+    runB: RunRef;
+    integrationRun: RunRef;
+  },
+): Promise<{ evA2: EvidenceRef; evB2: EvidenceRef; evInt2: EvidenceRef }> {
+  const evA2 = await submitP107Evidence(h, { evidenceId: "ev-p107-read-a-v2", taskId: P107_TASK_READER_A, outcome: "PASS", runRef: deps.runA, coverage: [{ obligationId: P107_OBL_READERS, requirementId: P107_VR_READERS }], anchor: deps.anchor });
+  const evB2 = await submitP107Evidence(h, { evidenceId: "ev-p107-read-b-v2", taskId: P107_TASK_READER_B, outcome: "PASS", runRef: deps.runB, coverage: [{ obligationId: P107_OBL_READERS, requirementId: P107_VR_READERS }], anchor: deps.anchor });
+  const evInt2 = await submitP107Evidence(h, { evidenceId: "ev-p107-integration-v2", taskId: P107_TASK_INTEGRATION, outcome: "PASS", runRef: deps.integrationRun, coverage: [{ obligationId: P107_OBL_JOIN, requirementId: P107_VR_JOIN }], anchor: deps.anchor });
+  expect((await h.reduceTask(buildP107ReduceTaskCommand(P107_TASK_READER_A, 1))).status).toBe("committed");
+  expect((await h.reduceTask(buildP107ReduceTaskCommand(P107_TASK_READER_B, 1))).status).toBe("committed");
+  expect((await h.reduceTask(buildP107ReduceTaskCommand(P107_TASK_INTEGRATION, 1))).status).toBe("committed");
+  return { evA2, evB2, evInt2 };
 }
 
 export { taskAttemptRefFor, taskLeaseRefFor, buildReduceTaskCommand, workspaceReadLeaseRefFor, workspaceWriteLeaseRefFor, buildP107AcquireReadLeaseCommand, buildP107AcquireWriteLeaseCommand, buildP107ReleaseLeaseCommand, buildP107RecordIntegrationCommand, buildP107RecordPatchCommand, runRefFor };

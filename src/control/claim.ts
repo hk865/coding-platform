@@ -34,6 +34,7 @@ import {
   taskAttemptRefFor,
   taskLeaseRefFor,
 } from "../contracts/dispatch.js";
+import { loadLivePlan } from "./dispatch-facts.js";
 import type { LedgerCommitReceipt } from "../contracts/ledger.js";
 import type { GoalSnapshot } from "../contracts/ledger.js";
 import type { PlanRevisionSnapshot, PlanRevisionRef } from "../contracts/plan.js";
@@ -83,7 +84,7 @@ async function claimTaskImpl(
   if (planRef !== null) {
     const planResult = await deps.ledger.load(planRef);
     if (planResult.status === "found") {
-      plan = planResult.snapshot as PlanRevisionSnapshot;
+      plan = await loadLivePlan(deps.ledger, planResult.snapshot as PlanRevisionSnapshot);
     }
   }
 

@@ -111,6 +111,9 @@ export class DispatchEngineImpl implements DispatchPort {
         submittedAt: intent.requestedAt,
         projectId: intent.projectId,
         runId: intent.runRef.runId,
+        /** P1-07 fix (P1-03 latent): a run-scoped idempotencyKey — a shared
+         * default would make every start of the same project collide. */
+        idempotencyKey: "p1-03-start-" + intent.runRef.runId,
         expectedRevision: 1,
         envelope,
         manifest,
