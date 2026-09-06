@@ -1,0 +1,7 @@
+{
+  "ticket": "P1-14",
+  "candidateDigest": "6cc3f6358441644c69d02dcd99bcd33d043bcac2dc85c41db62f0dafafb12cbd",
+  "decisionOutcome": "accept",
+  "gateStatus": "pass",
+  "activationFrom": "{\"ref\":{\"aggregateType\":\"ArchitectureBaselineRevision\",\"projectId\":\"proj-alpha\",\"baselineId\":\"baseline-architecture-mvp\",\"revision\":1},\"digest\":\"19a578923f4fc100e37ef3f907d23a4d945e8825c653b7c467cf8712d1db7a8b\"}"
+}

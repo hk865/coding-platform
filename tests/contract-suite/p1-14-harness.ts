@@ -64,7 +64,7 @@ export async function runP114Scenario(h: P114HarnessLike): Promise<P114ScenarioR
 
   const materialize = await h.materializeCandidateBaseline(buildP114MaterializeCommand(p114ProposalRef(P114_PROJECT), { commandId: "p114-cmd-materialize" }));
   expect(materialize.status).toBe("committed");
-  const candidate = buildP114Candidate(proposal);
+  const candidate = buildP114Candidate(proposal, { candidateId: P114_CANDIDATE });
   const candidateLoad = await h.ledger.load({ aggregateType: "CandidateArchitectureBaseline" as const, projectId: P114_PROJECT, workspaceId: P114_WORKSPACE, candidateId: candidate.candidateId });
   expect(candidateLoad.status).toBe("found");
   if (candidateLoad.status !== "found") throw new Error("candidate not found");

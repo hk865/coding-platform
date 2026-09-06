@@ -43,9 +43,10 @@ export function p114ActivationRef(projectId: string = P114_PROJECT): BaselineAct
 export function buildP114Candidate(proposal: ArchitectureCandidateProposalV1, overrides: Partial<CandidateArchitectureBaselineV1> = {}): CandidateArchitectureBaselineV1 {
   const digest = candidateContentDigest(proposal.normalizedContent);
   const normalizedContent = { description: proposal.normalizedContent.description, constraints: proposal.normalizedContent.constraints.map((c) => ({ ...c })) };
+  // 聚合身份 = 调用方提供的稳定 aggregateId（内容寻址仅作为 contentDigest 字段写入；integrator ruling 2026-09-07）。
   return {
     schemaVersion: 1,
-    candidateId: candidateIdFromDigest(digest),
+    candidateId: P114_CANDIDATE,
     projectId: proposal.projectId,
     workspaceId: proposal.workspaceId,
     proposalRef: p114ProposalRef(proposal.projectId),
@@ -82,7 +83,7 @@ export function buildP114Gate(candidate: CandidateArchitectureBaselineV1, overri
     workspaceId: candidate.workspaceId,
     planRef: "plan-mvp-1",
     candidateRef: { ...candidateRefFor(candidate.projectId, candidate.workspaceId, candidate.candidateId) },
-    workspaceRevision: 2,
+    workspaceRevision: 1, // P1-11 bootstrap world leaves Workspace at revision 1 (integrator ruling 2026-09-07)
     status: "pass",
     gateEvidenceRefs: [{ aggregateType: "Evidence" as const, projectId: candidate.projectId, evidenceId: "p114-gate-evidence-1" }],
     createdAt: P114_SCHEMA,
