@@ -73,6 +73,38 @@ export class HumanCollaborationImpl implements HumanCollaboration {
     return this.deps.readModel.goal(query);
   }
 
+  // ------------------------------------------------------------------ //
+  // P1-08 console query group (READ-ONLY face).                         //
+  // Each method delegates exclusively to the ReadModelIndex — the       //
+  // HumanCollaboration console path has NO access to the runtime/       //
+  // control write face, never starts a model, never refreshes a lease   //
+  // and never writes canonical state (ticket acceptance 6/8/9/12).      //
+  // ------------------------------------------------------------------ //
+
+  async consolePortfolio(query: import("../contracts/console-views.js").PortfolioViewQuery): Promise<import("../contracts/console-views.js").PortfolioViewResult> {
+    return this.deps.readModel.consolePortfolio(query);
+  }
+
+  async consoleSummary(query: import("../contracts/console-views.js").WorkspaceSummaryViewQuery): Promise<import("../contracts/console-views.js").WorkspaceSummaryViewResult> {
+    return this.deps.readModel.consoleSummary(query);
+  }
+
+  async consolePlanMatrix(query: import("../contracts/console-views.js").PlanMatrixViewQuery): Promise<import("../contracts/console-views.js").PlanMatrixViewResult> {
+    return this.deps.readModel.consolePlanMatrix(query);
+  }
+
+  async consoleActiveAgents(query: import("../contracts/console-views.js").ActiveAgentsViewQuery): Promise<import("../contracts/console-views.js").ActiveAgentsViewResult> {
+    return this.deps.readModel.consoleActiveAgents(query);
+  }
+
+  async consoleTaskEvidence(query: import("../contracts/console-views.js").TaskEvidenceViewQuery): Promise<import("../contracts/console-views.js").TaskEvidenceViewResult> {
+    return this.deps.readModel.consoleTaskEvidence(query);
+  }
+
+  async consoleTimeline(query: import("../contracts/console-views.js").TimelineViewQuery): Promise<import("../contracts/console-views.js").TimelineViewResult> {
+    return this.deps.readModel.consoleTimeline(query);
+  }
+
   private mapToResult(receipt: CommandReceipt, goalId: string): CreateGoalResult {
     if (receipt.status === "committed") {
       return { status: "persisted", goalId, commitCursor: receipt.commitCursor };

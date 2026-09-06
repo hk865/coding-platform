@@ -133,6 +133,22 @@ import type { IntegrationJoinedEvent } from "../contracts/integration.js";
 import { patchRecordRefFor } from "../contracts/patch.js";
 import type { PatchRecordedEvent } from "../contracts/patch.js";
 import type { RoleBindingRefV1 } from "../contracts/dispatch.js";
+import type {
+  PortfolioEntry,
+  PortfolioViewQuery,
+  PortfolioViewResult,
+  WorkspaceSummaryViewQuery,
+  WorkspaceSummaryViewResult,
+  PlanMatrixViewQuery,
+  PlanMatrixViewResult,
+  ActiveAgentsViewQuery,
+  ActiveAgentsViewResult,
+  TaskEvidenceViewQuery,
+  TaskEvidenceViewResult,
+  TimelineViewQuery,
+  TimelineViewResult,
+} from "../contracts/console-views.js";
+import { consoleWorkspaceKey, consoleGoalKey, consoleTaskKey } from "../contracts/console-views.js";
 
 /**
  * Reconstruct a lease view holder: the grant events carry runRef + attemptRef
@@ -297,6 +313,42 @@ CREATE TABLE IF NOT EXISTS workspace_patch_view (
   workspace_id TEXT NOT NULL,
   patch_json   TEXT NOT NULL,
   PRIMARY KEY (project_id, workspace_id)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS console_portfolio (
+  scope_key     TEXT NOT NULL,
+  entry_json    TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS console_summary (
+  scope_key     TEXT NOT NULL,
+  view_json     TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS console_matrix (
+  goal_key      TEXT NOT NULL,
+  view_json     TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (goal_key)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS console_agent (
+  task_key      TEXT NOT NULL,
+  view_json     TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (task_key)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS console_evidence (
+  task_key      TEXT NOT NULL,
+  view_json     TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (task_key)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS console_timeline (
+  scope_key     TEXT NOT NULL,
+  view_json     TEXT NOT NULL,
+  source_cursor TEXT NOT NULL,
+  PRIMARY KEY (scope_key)
 ) WITHOUT ROWID;
 `;
 
@@ -1795,6 +1847,9 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     } else if (event.eventType === "PatchRecorded") {
       this.applyPatchRecorded(event, cursor);
     }
+    // P1-08 console projections consume the SAME committed events (no new
+    // DomainEvent). The two lane hooks are no-ops until their lanes land.
+    this.applyP108Console(event, cursor);
     // Known non-goal / non-plan / non-dispatch events (ProjectBootstrapped,
     // WorkspaceBootstrapped, CompletionPolicyInstalled,
     // ArchitectureBaselineInstalled, CompletionPolicyActivated,
@@ -2211,6 +2266,112 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       0
     );
   }
+
+  // ------------------------------------------------------------------ //
+  // P1-08 console query surface + projection hooks (SHARED BASELINE).   //
+  // The six console queries are FROZEN in src/contracts/console-views   //
+  // (first consumer); this baseline carries the JSON row helpers + the  //
+  // two lane hooks as no-ops. Lane A fills consolePortfolio/            //
+  // consoleSummary; Lane B fills consolePlanMatrix/consoleActiveAgents/ //
+  // consoleTaskEvidence/consoleTimeline. isHandledEventType stays       //
+  // unchanged — no new DomainEvent, all types already handled.          //
+  // ------------------------------------------------------------------ //
+
+  private static readonly P108_TABLES = {
+    portfolio: "console_portfolio",
+    summary: "console_summary",
+    matrix: "console_matrix",
+    agent: "console_agent",
+    evidence: "console_evidence",
+    timeline: "console_timeline",
+  } as const;
+
+  private readonly p108SelectCache = new Map<string, StatementSync>();
+  private readonly p108UpsertCache = new Map<string, StatementSync>();
+
+  private p108Select(table: string): StatementSync {
+    let stmt = this.p108SelectCache.get(table);
+    if (stmt === undefined) {
+      stmt = this.db.prepare(`SELECT entry_json FROM ${table} WHERE scope_key = ?`);
+      this.p108SelectCache.set(table, stmt);
+    }
+    return stmt;
+  }
+
+  private p108Upsert(table: string): StatementSync {
+    let stmt = this.p108UpsertCache.get(table);
+    if (stmt === undefined) {
+      stmt = this.db.prepare(`INSERT INTO ${table} (scope_key, entry_json, source_cursor) VALUES (?, ?, ?)
+        ON CONFLICT(scope_key) DO UPDATE SET entry_json = excluded.entry_json, source_cursor = excluded.source_cursor`);
+      this.p108UpsertCache.set(table, stmt);
+    }
+    return stmt;
+  }
+
+  private readP108JsonRow(table: string, scopeKey: string): { json: string; cursor: CommitCursor } | null {
+    const row = this.p108Select(table).get(scopeKey) as unknown as
+      | { entry_json: string; source_cursor: string }
+      | undefined;
+    return row ? { json: row.entry_json, cursor: row.source_cursor as CommitCursor } : null;
+  }
+
+  private writeP108JsonRow(table: string, scopeKey: string, json: string, cursor: CommitCursor): void {
+    this.p108Upsert(table).run(scopeKey, json, cursor);
+  }
+
+  /** P1-08 console projection dispatcher: forwards every committed event to
+   * the per-lane console projections. NO new event is created here. */
+  private applyP108Console(event: DomainEvent, cursor: CommitCursor): void {
+    this.applyP108ConsoleLaneA(event, cursor);
+    this.applyP108ConsoleLaneB(event, cursor);
+  }
+
+  /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — no-op until lane A lands. */
+  private applyP108ConsoleLaneA(_event: DomainEvent, _cursor: CommitCursor): void {
+    // replaced by lane A (shared baseline placeholder)
+  }
+
+  /** P1-08 LANE-B hook (PlanMatrix + ActiveAgents + TaskEvidence + Timeline) — no-op until lane B lands. */
+  private applyP108ConsoleLaneB(_event: DomainEvent, _cursor: CommitCursor): void {
+    // replaced by lane B (shared baseline placeholder)
+  }
+
+  /** P1-08 LANE-A stub: consolePortfolio (frozen signature; lane A implements). */
+  async consolePortfolio(_query: PortfolioViewQuery): Promise<PortfolioViewResult> {
+    this.assertOpen();
+    throw new Error("P1-08 lane stub: consolePortfolio not implemented yet");
+  }
+
+  /** P1-08 LANE-A stub: consoleSummary (frozen signature; lane A implements). */
+  async consoleSummary(_query: WorkspaceSummaryViewQuery): Promise<WorkspaceSummaryViewResult> {
+    this.assertOpen();
+    throw new Error("P1-08 lane stub: consoleSummary not implemented yet");
+  }
+
+  /** P1-08 LANE-B stub: consolePlanMatrix (frozen signature; lane B implements). */
+  async consolePlanMatrix(_query: PlanMatrixViewQuery): Promise<PlanMatrixViewResult> {
+    this.assertOpen();
+    throw new Error("P1-08 lane stub: consolePlanMatrix not implemented yet");
+  }
+
+  /** P1-08 LANE-B stub: consoleActiveAgents (frozen signature; lane B implements). */
+  async consoleActiveAgents(_query: ActiveAgentsViewQuery): Promise<ActiveAgentsViewResult> {
+    this.assertOpen();
+    throw new Error("P1-08 lane stub: consoleActiveAgents not implemented yet");
+  }
+
+  /** P1-08 LANE-B stub: consoleTaskEvidence (frozen signature; lane B implements). */
+  async consoleTaskEvidence(_query: TaskEvidenceViewQuery): Promise<TaskEvidenceViewResult> {
+    this.assertOpen();
+    throw new Error("P1-08 lane stub: consoleTaskEvidence not implemented yet");
+  }
+
+  /** P1-08 LANE-B stub: consoleTimeline (frozen signature; lane B implements). */
+  async consoleTimeline(_query: TimelineViewQuery): Promise<TimelineViewResult> {
+    this.assertOpen();
+    throw new Error("P1-08 lane stub: consoleTimeline not implemented yet");
+  }
+
 }
 
 export function createSqliteReadModelIndex(

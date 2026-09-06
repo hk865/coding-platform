@@ -1,18 +1,67 @@
 # IMPLEMENTATION-HANDOFF — Agent Platform 产品代码根
 
 ```yaml
-ticket_id: P1-07
-status: implementation verified (limited authorization, 2026-09-06 — P1-07 only); 3 lanes merged; full acceptance evidence in dev_docs/verification/p1-07-implementation-evidence.md
+ticket_id: P1-08
+status: implementation in progress (shared baseline committed; lanes A/B/C derived from it; final acceptance evidence in dev_docs/verification/p1-08-implementation-evidence.md)
 updated: 2026-09-06
-authorized_by: user (limited authorization for P1-07 only; P1-07 is NOT P1 acceptance, P1-12/15 NOT auto-started; G3 (Role Collaboration) waits P1-07 + P1-15 evidence)
-next: STOP after P1-07 acceptance — do NOT auto-start P1-12/15/other tickets (G3 needs 07+15 evidence — 07 side now met; next window triggered by user/process; local main = 14886d8 NOT pushed — push needs user authorization per P1-04/05/06 precedent)
-evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-07-implementation-evidence.md (88 files / 722 tests PASS); upstream baseline: P1-06 commit f3a6a71 (76 files/641 tests)
-shared_baseline: "P1-07 共享基线" commit a155f15 (f3a6a71 + workspace-lease/capability/integration/patch/views/drive contracts + 6 commitKinds + pure validators + P107 fixtures + control/runtime stubs + harness wiring + contract suite + restart skeleton + integration wiring; 既有 641 测试零回归); final product root = 14886d8
-parallel_scope: P1-07 与 P1-08 并行窗口已开（DAG 05 验收后 07/08 可并行）——本 session 无 P1-08 并行活动（无 worktree/无近期写入），按常规单线实施共享面；lane 仍用隔离 worktree（先例 P1-06）
-merge_surface_note: 本票只做 双 Reader 并行 + Evidence join + 唯一 Writer；不动 P1-03/04/05/06 冻结形状（零改动，只版本化追加）；不触碰 Goal reducer（P1-05 已验收）；语义路由/人决定闭环 = P1-15，retry/抢占 = P1-10，CodeGraph = P1-12；P1-08 若并行到来，共享面（events/ledger/validation 追加）以"先到者优先、后到者在新基线上 rebase"机械合并（先例 dev_docs/logs/conflict-reports/2026-09-06-p105-p106-merge.md，state=closed）
+authorized_by: user (limited authorization for P1-08 only; NOT P1 acceptance; 09/10/15 NOT auto-started; local main NOT pushed — push needs user authorization per P1-04/05/06/07 precedent)
+next: after P1-08 acceptance STOP — do NOT auto-start P1-09/10/15 (G4 waits P1-09 + P1-11; 09/10 need 08 + 16 products; active notification/change reporting = P1-14/15; next window triggered by user/process)
+evidence: dev_docs/verification/p1-08-implementation-evidence.md (12/12 acceptance; 7 verification groups; typecheck 0 errors; validate-docs 13/13); upstream baseline: P1-07 commit 404ab28 (88 files/722 tests)
+shared_baseline: "P1-08 共享基线" commit 6b54e28 (404ab28 + console-views contracts + modules/goal-view versioned additions + console fixtures + harness wiring + console suite + restart/integration skeletons; 既有 722 测试零回归 — 实施前复跑)
+parallel_scope: P1-08 与 P1-07 并行窗口已过期（07 已完成）；本 session 无其他并行活动，按常规单线实施共享面；lane 仍用隔离 worktree（先例 P1-06/07）
+merge_surface_note: 本票只做只读展示（HumanCollaboration 版本化扩展；不新增 Module；ARCHITECTURE §Plane）；主动通知/待决/变更上报归 P1-14/15；控制入口（pause/steer）与 QueryJob 归 P1-10/09；不改 P1-03/04/05/06/07 冻结形状（零改动，只版本化追加）；不新增任何 DomainEvent；无 Findings；无隐藏 control/QueryJob/Planner side effect
 ```
 
 ---
+
+## P1-08 当前票据与共享契约基线
+
+- Ticket：`/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/08-status-evidence-console.md`（P1-08，status 按阶段守卫保持 `proposed`；Implementation record 将在验收后追加票尾；**本票验收 ≠ 整个 P1 验收，P1-09/10/15 不自动开始**）
+- P1-07 结束基线（upstream 已验收）：产品根 commit `404ab28`（typecheck 0 errors、88 files/722 tests PASS；P1-07 双套件 12/12×2、集成 1/1、重启证据 1/1、validate-docs 13/13；本地 main 未推送 GitHub origin main——推送需用户授权）。**P1-08 共享基线 = 本文件本次更新的 commit**（= 404ab28 + 本票新增 contract/validator/fixture/entry/suite/restart 骨架；既有 722 测试零回归——实施前复跑）。
+- **冻结复用、不重写**：P1-00…P1-07 全部契约/夹具/套件/适配器/harness 零修改通过；P1-03/04/05/06/07 冻结形状**零改动，只版本化追加**（console 视图消费既有事件）；**不新增任何 DomainEvent**（KNOWN 列表不变；isHandledEventType 不变——既有类型已全部处理，新增处理分支与既有同 commit）；不改 Goal reducer。
+- **P0-06 复核影响（已核对）**：`dev_docs/verification/2026-09-06-context-orchestration-sync.md` 明确——本票只做**只读展示**；主动通知、待决与变更上报归 P1-14/15；控制入口（pause/steer）与 QueryJob 归 P1-10/09；"查询工具是 HumanCollaboration 的候选访问能力，不据此新增独立 Module"（ARCHITECTURE §Plane）；G4 等待 P1-09 + P1-11；08 验收后（与 P1-16 产物一起）09/10 才可并行。
+- **7 个 contracts_to_create（wire schema 以本票为准；非 interfaces_to_freeze——DAG 规则下首个真实消费者冻结仍适用，本票即首个消费者）**：PortfolioViewQuery / WorkspaceSummaryView / WorkspaceSelectionRoute / PlanMatrixViewQuery / ActiveAgentsViewQuery / TaskEvidenceViewQuery / TimelineViewQuery。
+
+## P1-08 只读控制台契约与查询语义（冻结）
+
+1. **范围与路由**：控制台 = HumanCollaboration **版本化扩展**（不新增 Module；ARCHITECTURE §Plane——查询工具是 HumanCollaboration 的候选访问能力）。`WorkspaceSelectionRoute = { projectId, workspaceId, goalId? }`——范围切换只改变查询参数，不写 canonical state、不创建隐式"当前 Workspace"事实（无持久化选择；重启后重新选择）。路由/列表/查询结果/缓存键一律 `canonicalJson(完整 ref)`（consoleWorkspaceKey / consoleGoalKey / consoleTaskKey）。
+2. **全作用域键与隔离**：所有查询键 = (projectId, workspaceId)（+ 必要 goalId/taskId）；两 Project 可复用相同本地 `workspaceId/goalId` 且**不串读**（multi-project-workspace-isolation-test + same-local-id-scope-test 双适配器；P1-08 fixture 中 run/attempt/evidence 本地 id 也跨 Project 复用）。
+3. **七个契约（全部 v1、有界、freshness 沿用 opaque cursor）**：见 src/contracts/console-views.ts——PortfolioViewQuery（至少两个隔离 Project/Workspace，来自版本化 bootstrap manifest 投影，P1-00）；WorkspaceSummaryView（workspace 级摘要：Goal/Task/AgentRun/Evidence/reduction/goalPhase 计数 + TaskReduction/GoalPhase 相位计数，只从既有事件聚合）；PlanMatrixViewQuery（任务×阶段网格：PlanRevisionAccepted 的 planGraph 事实 + TaskReduction 正式 phase 叠加，**正式 phase 与计划声明分列（plannedPhase/livePhase + phaseMismatch）**）；ActiveAgentsViewQuery（范围化活跃 Agent 行：TaskClaimed/RunStarted/run 事实聚合，displayState 含 outcome_unknown/crashed/cancelled 明确标注——"持续/转交/未知结果按来源展示，不伪装完成"）；TaskEvidenceViewQuery（任务 Evidence 详细：证据 id/outcome/source.runRef/coverage/applicability 纯函数重算/summary 摘要——**不 open vault 正文（bodyPolicy:"ref_only"）**；完成结论链接 effectiveEvidenceIds）；TimelineViewQuery（workspace 级有界时间线：goal/task/reduction/evidence/handoff/run 事实混排，每条带 kind + eventId + sourceCursor + refs 链，只展示，last maxEntries 窗口）。
+4. **来源配对（displayed phase → revision/cursor）**：每条展示带 sourceCursor/updatedAt/ref；完成结论可追到当前 EffectiveEvidenceSet（P1-04 effectiveEvidenceIds）；解释（reasonCodes/explanation）独立标注 manifest 与 revision——映射 human-design-status 的 pending/ready/stale/unavailable 四态（P1-08 无模型语义解释 → modelExplanation.status 恒为 "unavailable"，确定性 reason codes 在 reduction.causes 并带 sourceCursor）。
+5. **正式 vs 报告分离**：TaskReduction/GoalPhase 正式 phase 与 CompletionClaim/verdict/ReviewPacket 报告分种类标明来源（EvidenceFormalMarker：claim/verdict → unverified_report；observation → observed_fact）；"报告明确是 report，不替代正式 phase"。
+6. **纯事实查询零模型**：console 查询路径只依赖 ReadModelIndex（HumanCollaborationImpl console 方法为纯委托，不经 control/runtime）；no-model-status-query-test 用探针断言查询期间无 RunPort 调用；不刷新 Worker lease、不启动模型。
+7. **只读适配器面**：HumanCollaboration 的 console 扩展只经 ReadModelIndex 接口消费（双适配器）；adapter 不能直接读 SQLite 表（console_* 表只存在于 read-model 库文件；ledger 库文件无 console_* 表——read-only-adapter-test 断言）；ledger.commit/close 等不可达（TrapControlEngine/TrapStateLedger 断言）。
+8. **事件与投影**：**不新增任何 DomainEvent**（全部消费既有事件：WorkspaceBootstrapped/GoalCreated/PlanRevisionAccepted/TaskClaimed/RunStarted/RunEventRecorded/RunOutcomeUnknown/EvidenceAdmitted/TaskReductionUpdated/GoalPhaseUpdated/HandoffRecorded/ReplacementClaimed）；KNOWN 与 isHandledEventType **不变**（既有类型已全部处理），新增处理分支经 advance() 的 applyP108Console 钩子与既有 handler 同一 commit 落地。
+9. **重启等价**：全部新投影持久化（sqlite read-model 表：console_portfolio/summary/matrix/agent/evidence/timeline，JSON 行 + full-scope key）+ 从持久 EventPage 重建逐字段一致 + observedCursor 一致（isP108Ready() 探针；tests/restart/p1-08-*）；控制台自身无状态可持久化。
+
+**边界**：不做 P1-09（QueryJob/非阻塞模型查询）、P1-10（pause/stop/安全点控制——只展示状态）、P1-11/14/15（目标修改、主动通知、议题/决定闭环——被动展示已存在事实，本票不主动通知）；不改 P1-03/04/05/06/07 冻结形状（零改动，只版本化追加）；不改 Goal reducer；无 Findings；无隐藏 control/QueryJob/Planner side effect（验收 12）。
+
+**显示上限（冻结常量）**：CONSOLE_TIMELINE_MAX_ENTRIES=200、CONSOLE_ACTIVE_AGENTS_MAX_ROWS=100、CONSOLE_MATRIX_MAX_TASKS=512、CONSOLE_EVIDENCE_SUMMARY_MAX_BYTES=4096、CONSOLE_PORTFOLIO_MAX_PROJECTS=64。
+
+## P1-08 已冻结的代码入口（integrator 建立，签名冻结）
+
+| 入口 | 文件 | 冻结表面 |
+| --- | --- | --- |
+| 查询契约 | src/contracts/console-views.ts | 7 个契约（PortfolioViewQuery/WorkspaceSelectionRoute/PlanMatrixViewQuery/ActiveAgentsViewQuery/TaskEvidenceViewQuery/TimelineViewQuery + WorkspaceSummaryView）+ 视图类型 + 上限常量 + full-scope key 纯函数 + ConsoleExplanationStatus/EvidenceFormalMarker |
+| 接口扩展 | src/contracts/{goal-view,modules}.ts | ReadModelIndex +6（consolePortfolio/consoleSummary/consolePlanMatrix/consoleActiveAgents/consoleTaskEvidence/consoleTimeline）；HumanCollaboration +同 6（版本化追加，createGoal/goalView 形状不变） |
+| fixtures | src/contracts/fixtures/console-fixtures.ts | P108_* 常量（两 Project 复用同 workspaceId/goalId）、P108_PLAN_REVISION_FIXTURE_V1、p108GoalScope（不同 objective）、buildP108*Command 全组、consoleBoundExpectation/p108TimelineMax、P108 runtime scripts |
+| console 实现 | src/interaction/human-collaboration.ts | HumanCollaborationImpl 6 个 console 方法（纯委托 readModel；只读面） |
+| 双适配器 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts | 6 个 query 签名（baseline stub→lane 实现）、applyP108Console 钩子（lane A/B 区域）、sqlite console_* 表 + JSON 行 I/O 助手 |
+| harness | src/harness/{in-memory,persistent}-harness.ts | 6 个 console 直通 + options {runtime?} |
+| 契约套件 | tests/contract-suite/{p1-08-harness,console.contract.suite}.ts | P1_08TestHarness、runP108TwoProjectScenario（两 Project 全场景）、defineConsoleContractSuite（12 项验收 + 7 组 verification，InMemory+SQLite 同套件） |
+| 重启骨架 | tests/restart/p1-08-*（fixtures/test/evidence） | isP108Ready() 探针；实现落地后自动启用 |
+| 集成接线 | tests/integration/p1-08.* | 双适配器套件接线（skipIf 探针）+ 真实 SQLite 全路径 + read-only-adapter sqlite 断言 + 重启等价 |
+
+## 三路并行（P1-08，隔离 worktree → main 合并；从本基线 commit 派生）
+
+| Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
+| --- | --- | --- | --- | --- |
+| A Portfolio/Summary + 只读面 | agent_platform-p1-08-a @ p1-08-lane-a | consolePortfolio + consoleSummary 双适配器投影（重建等价、全键隔离、same-local-id、freshness）+ 对应 projection 单元测试 + read-only-adapter/console 只读面核对 | src/read-model/read-model-index.ts（LANE-A 区域）、src/sqlite-read-model/sqlite-read-model-index.ts（LANE-A 区域）、tests/read-model/p1-08-portfolio-summary.test.ts、tests/sqlite-read-model/p1-08-portfolio-summary.test.ts | 进行中 |
+| B Matrix/Agents/Evidence/Timeline 投影 | agent_platform-p1-08-b @ p1-08-lane-b | consolePlanMatrix + consoleActiveAgents + consoleTaskEvidence + consoleTimeline 双适配器投影（重建等价、全键隔离、same-local-id、freshness、正式/报告分列、持续/转交/未知按来源展示）+ 对应 projection 单元测试 | src/read-model/read-model-index.ts（LANE-B 区域）、src/sqlite-read-model/sqlite-read-model-index.ts（LANE-B 区域）、tests/read-model/p1-08-matrix-agents-evidence-timeline.test.ts、tests/sqlite-read-model/p1-08-matrix-agents-evidence-timeline.test.ts | 进行中 |
+| C 重启证据 + 集成 + 端到端 | agent_platform-p1-08-c @ p1-08-lane-c | isP108Ready 探针硬化 + restart 逐字段一致 + 真实 SQLite 全路径集成 + portfolio-list-and-switch/multi-project 隔离/cursor-freshness 端到端核对 + P1-08-EVIDENCE 块（仿 p1-07-evidence） | tests/restart/p1-08-*、tests/integration/p1-08.*（除契约套件文件本身由 integrator 维护） | 进行中 |
+
+integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 schema/接口/共享 fixture）、`src/harness/**`、`tests/contract-suite/**`（suite 定义文件）、`tests/integration/**`（接线文件）、文档与状态记录、以及两条 lane 的**合并**（区域互不重叠：LANE-A/LANE-B 区域 + 各自 projection 测试文件；若合并冲突，以区域标记机械取双边）。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结签名、**不得修改 P1-03/04/05/06/07 文件**、不得修改 isHandledEventType（无新事件类型）；如有缺口：提交具体建议给 integrator 统一修改基线并通知消费者。允许测试命令：`pnpm vitest run <自身路径>`、`pnpm typecheck`。
+## P1-07 历史记录（已完成，保留备查；P1-08 在其上实施，P1-07 原文自本标题起未改动）
 
 ## P1-07 当前票据与共享契约基线
 
@@ -131,6 +180,8 @@ integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 s
 | 只读零漂移比对 | `git diff d1c6595 a9070e5 -- src/contracts/goal-phase.ts src/contracts/goal-phase-view.ts src/control/goal-reducer.ts` = 0 行；`P1-06 冲突记录` = dev_docs/logs/conflict-reports/2026-09-06-p105-p106-merge.md（state=closed） |
 
 **integrator 裁决/修正记录**（详见 p1-06-implementation-evidence.md §5）：本票首次冻结三个最小 Interface + 三个契约；packet stale 的三层覆盖（record 拒登记/assemble 显式/纯函数守卫）+ 登记后 stale 的完整路径留 P1-10/后续 workspace 演进；控制面 lastEventSeq 以注入事件数实现（公开报告仍 noHiddenContextRead）；normal drive 替换意图在扫描前跳过（scanned 语义）；两处套件/夹具缺口（fixture digest 归一为 sha256 hex；claim 与 envelope 绑定一致）由 integrator 统一修复。**G2（Continuity）等待 P1-05 + P1-06 双验收——双方证据已齐**。本地 main = a9070e5，**未推送** GitHub origin main（需用户授权）。
+
+**09-06 DAG 注记（追加，不改原记录）**：按 [P1 DAG](dev_docs/planning/proposed/P1-foundation/DAG.md) 09-06 增量，G2（Continuity）= P1-05 + P1-06 + **P1-16**；P1-06 已完成本侧（06）证据，P1-16 交付后 G2 齐。
 
 ---
 
@@ -276,7 +327,7 @@ integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 s
 
 1. **LedgerCommit 扩展方式**：新增三个 commitKind（`dispatch-claim` / `dispatch-start` / `run-fact`），全部 schemaVersion 1、project-scoped CommandIdentity，沿用 P1-00/02 先例做版本化记录，**不改变既有 v1 语义**（既有 283 测试零回归）。`LedgerCommit.outboxIntents` 首次非空：dispatch-claim 的 outboxIntents=[DispatchIntentV1]（与 DispatchOutboxEntrySnapshot.intent 逐字段等价，由 validator 校验）；其余 kind 仍为 []。**outbox 存储语义：outbox 记录以 canonical DispatchOutboxEntry 聚合（ref=projectId+goalId+taskId+attemptId）持久在 Snapshots 表**——与 dispatch 事件/attempt/snapshot 同一原子提交、同一 CAS 窗口、可 load、可重启读取；status 生命周期 pending→started→done（claim / start / 终态 run-fact 各自 CAS 推进）。排序：outboxIntent 先于副作用由 DispatchEngine.drive 保证（加载 pending → assemble → startRun 提交 → 才调用 RunPort.start）。
 2. **六个契约**：DispatchIntentV1 / TaskLeaseSnapshot / TaskAttemptSnapshot / RunSnapshot / RuntimeEventV1 / ActiveAgentView（+ TaskDetailView.run: TaskRunState|null）全部 schemaVersion 1；版本化策略 = 新增合类型 + 未知版本拒绝（validation.ts + events.ts KNOWN 列表），与 P1-00/02 相同。**TaskEnvelope 角色模板/绑定版本的最小形状 = RoleBindingRefV1 {bindingId, templateId, templateRevision, bindingVersion, policyRevision}**（runtime-collaboration 的完整 RoleBinding 语义尚无契约；本票只冻结“版本化引用 + 版本一致性 + 声明权限 ⊆ 绑定声明”的最小校验；授权策略注册表留给后续票据，已注明）。
-3. **唯一领取语义**：eligibility = 显式 DAG 硬依赖全部满足（dep task phase === "satisfied"）+ goal desiredState active + task disposition active + 无 Blocker（phase≠blocked）+ 资源可用（无 active lease、tokenBudget>0、deadline 未过）+ taskKind=work（gate 由 P1-04 Evidence 归约，不派发）；**CAS/lease = TaskLease@0 的 ledger CAS**（P1-03 每任务只允许一次领取，无重试/re-claim）；两个 Dispatcher 竞争 → 至多一个 lease+Attempt+Run 提交成功，败者 revision_conflict 零写入；幂等重放（同 identity+fingerprint → committed(replayed)）优先于 CAS。
+3. **唯一领取语义**：eligibility = 显式 DAG 硬依赖全部满足（dep task phase === "satisfied"）+ goal desiredState active + task disposition active + 无 Blocker（phase≠blocked）+ 资源可用（无 active lease、tokenBudget>0、deadline 未过）+ taskKind=work（gate 由 P1-04 Evidence 归约，不派发）；**CAS/lease = TaskLease@0 的 ledger CAS**（P1-03 每任务只允许一次领取，无重试/re-claim）；两个 Dispatcher 竞争 → 至多一个 lease+Attempt+Run 提交成功，败者 revision_conflict 零写入；幂等重放（同 identity+fingerprint → committed(replayed)）优先于 CAS。**（P1-07 追加注记：plan 快照 task.phase 为声明值；dep 满足以 TaskReduction live phase 为准，由 src/control/dispatch-facts.ts::loadLivePlan 派生并接入 readiness/claim，签名不变——见下节「P1-07 契约与存储语义」①。）**
 4. **RuntimeEvent 语义**：每 Run 单调 sequence 是唯一去重/排序权威；sequence < run.lastEventSeq → stale_event；== lastEventSeq 且 runtimeEventId 不同 → conflict_event；== 且相同 → duplicate_event（拒绝，零写入，**不再有 ledger 级幂等重放——run-fact commit 不写 idempotency 表**）；Run 已 ended 后任何 fact → after_terminal；全部拒绝不回退 Task/Run revision（P1-03 无 Task 聚合写入，Run revision 只前进）。**crash 与 outcome_unknown 分开投影**：run_crashed → outcome crashed；RunOutcomeUnknown 是显式 RunFact（{kind:"outcome_unknown"}），绝不从 crash/exit 推断成功；**run_completed(exit=0) → outcome completed（run 视角，exitCode 记录），永不写 Task.phase=satisfied**。
 5. **FakeRuntimeAdapter 边界**：真实可重放适配器（真实模块 src/runtime/fake-runtime-adapter.ts，可注入），按 FakeRuntimeScriptV1 重放（runRef=envelope.runRef，eventId="rt-<runId>-<seq>"），capabilities 声明 replayable/supportsSnapshot=false/maxEnvelopeBytes=64KiB；只发事件，不判真伪、不写 satisfied、不自动推断 outcome_unknown。TaskEnvelope 硬上限 64KiB（canonical JSON bytes），**不含完整 transcript**（仅有界 bundleRef + sourceRefs）。
 6. **ReadModel**：ActiveAgentView（per projectId+goalId+taskId）+ TaskDetailView.run 只从已提交事件重建（TaskClaimed/RunStarted/RunEventRecorded/RunOutcomeUnknown 四个 handler）；freshness 沿用 opaque CommitCursor（not_ready≠not_found）；已知 v1 事件无 handler → ProjectionStallError(unsupported_event_type) 整页停止（未实现前不静默）。**无投影在跳过事件**。

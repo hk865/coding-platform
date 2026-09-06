@@ -61,6 +61,12 @@ export type WorkspacePatchViewBehavior = (
 
 export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly advanceCalls: EventPage[] = [];
+  readonly consolePortfolioCalls: import("../console-views.js").PortfolioViewQuery[] = [];
+  readonly consoleSummaryCalls: import("../console-views.js").WorkspaceSummaryViewQuery[] = [];
+  readonly consolePlanMatrixCalls: import("../console-views.js").PlanMatrixViewQuery[] = [];
+  readonly consoleActiveAgentsCalls: import("../console-views.js").ActiveAgentsViewQuery[] = [];
+  readonly consoleTaskEvidenceCalls: import("../console-views.js").TaskEvidenceViewQuery[] = [];
+  readonly consoleTimelineCalls: import("../console-views.js").TimelineViewQuery[] = [];
   readonly goalCalls: GoalViewQuery[] = [];
   readonly planGraphCalls: PlanGraphViewQuery[] = [];
   readonly taskDetailCalls: TaskDetailViewQuery[] = [];
@@ -85,6 +91,12 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
       workspaceLeaseView?: WorkspaceLeaseViewBehavior;
       integrationConflicts?: IntegrationConflictViewBehavior;
       workspacePatches?: WorkspacePatchViewBehavior;
+      consolePortfolio?: import("../console-views.js").PortfolioViewResult extends never ? never : (query: import("../console-views.js").PortfolioViewQuery) => Promise<import("../console-views.js").PortfolioViewResult> | import("../console-views.js").PortfolioViewResult;
+      consoleSummary?: (query: import("../console-views.js").WorkspaceSummaryViewQuery) => Promise<import("../console-views.js").WorkspaceSummaryViewResult> | import("../console-views.js").WorkspaceSummaryViewResult;
+      consolePlanMatrix?: (query: import("../console-views.js").PlanMatrixViewQuery) => Promise<import("../console-views.js").PlanMatrixViewResult> | import("../console-views.js").PlanMatrixViewResult;
+      consoleActiveAgents?: (query: import("../console-views.js").ActiveAgentsViewQuery) => Promise<import("../console-views.js").ActiveAgentsViewResult> | import("../console-views.js").ActiveAgentsViewResult;
+      consoleTaskEvidence?: (query: import("../console-views.js").TaskEvidenceViewQuery) => Promise<import("../console-views.js").TaskEvidenceViewResult> | import("../console-views.js").TaskEvidenceViewResult;
+      consoleTimeline?: (query: import("../console-views.js").TimelineViewQuery) => Promise<import("../console-views.js").TimelineViewResult> | import("../console-views.js").TimelineViewResult;
     } = {},
   ) {}
 
@@ -156,6 +168,44 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   async workspacePatches(query: WorkspacePatchViewQuery): Promise<WorkspacePatchViewResult> {
     this.workspacePatchesCalls.push(query);
     if (this.options.workspacePatches) return this.options.workspacePatches(query);
+    return { status: "not_found", observedCursor: (null as unknown) as import("../command-event.js").CommitCursor };
+  }
+
+  // P1-08 console views (scripted)                                           //
+
+  async consolePortfolio(query: import("../console-views.js").PortfolioViewQuery): Promise<import("../console-views.js").PortfolioViewResult> {
+    this.consolePortfolioCalls.push(query);
+    if (this.options.consolePortfolio) return this.options.consolePortfolio(query);
+    return { status: "not_found", observedCursor: (null as unknown) as import("../command-event.js").CommitCursor };
+  }
+
+  async consoleSummary(query: import("../console-views.js").WorkspaceSummaryViewQuery): Promise<import("../console-views.js").WorkspaceSummaryViewResult> {
+    this.consoleSummaryCalls.push(query);
+    if (this.options.consoleSummary) return this.options.consoleSummary(query);
+    return { status: "not_found", observedCursor: (null as unknown) as import("../command-event.js").CommitCursor };
+  }
+
+  async consolePlanMatrix(query: import("../console-views.js").PlanMatrixViewQuery): Promise<import("../console-views.js").PlanMatrixViewResult> {
+    this.consolePlanMatrixCalls.push(query);
+    if (this.options.consolePlanMatrix) return this.options.consolePlanMatrix(query);
+    return { status: "not_found", observedCursor: (null as unknown) as import("../command-event.js").CommitCursor };
+  }
+
+  async consoleActiveAgents(query: import("../console-views.js").ActiveAgentsViewQuery): Promise<import("../console-views.js").ActiveAgentsViewResult> {
+    this.consoleActiveAgentsCalls.push(query);
+    if (this.options.consoleActiveAgents) return this.options.consoleActiveAgents(query);
+    return { status: "not_found", observedCursor: (null as unknown) as import("../command-event.js").CommitCursor };
+  }
+
+  async consoleTaskEvidence(query: import("../console-views.js").TaskEvidenceViewQuery): Promise<import("../console-views.js").TaskEvidenceViewResult> {
+    this.consoleTaskEvidenceCalls.push(query);
+    if (this.options.consoleTaskEvidence) return this.options.consoleTaskEvidence(query);
+    return { status: "not_found", observedCursor: (null as unknown) as import("../command-event.js").CommitCursor };
+  }
+
+  async consoleTimeline(query: import("../console-views.js").TimelineViewQuery): Promise<import("../console-views.js").TimelineViewResult> {
+    this.consoleTimelineCalls.push(query);
+    if (this.options.consoleTimeline) return this.options.consoleTimeline(query);
     return { status: "not_found", observedCursor: (null as unknown) as import("../command-event.js").CommitCursor };
   }
 }

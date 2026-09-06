@@ -113,6 +113,22 @@ import type {
 } from "../contracts/workspace-lease.js";
 import type { IntegrationJoinedEvent } from "../contracts/integration.js";
 import type { PatchRecordedEvent } from "../contracts/patch.js";
+import type {
+  PortfolioEntry,
+  PortfolioViewQuery,
+  PortfolioViewResult,
+  WorkspaceSummaryViewQuery,
+  WorkspaceSummaryViewResult,
+  PlanMatrixViewQuery,
+  PlanMatrixViewResult,
+  ActiveAgentsViewQuery,
+  ActiveAgentsViewResult,
+  TaskEvidenceViewQuery,
+  TaskEvidenceViewResult,
+  TimelineViewQuery,
+  TimelineViewResult,
+} from "../contracts/console-views.js";
+import { consoleWorkspaceKey, consoleGoalKey, consoleTaskKey } from "../contracts/console-views.js";
 import { patchRecordRefFor } from "../contracts/patch.js";
 import type { RoleBindingRefV1 } from "../contracts/dispatch.js";
 
@@ -248,6 +264,41 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   /** (projectId, workspaceId) -> latest projected WorkspacePatchView (P1-07). */
   private readonly workspacePatchRows = new Map<string, WorkspacePatchView>();
 
+  // ------------------------------------------------------------------ //
+  // P1-08 console projection rows (consumes ONLY existing v1 events).  //
+  // Row stores are shared structure; the lane implementations fill the //
+  // per-view apply/query logic in their delimited regions below.       //
+  // ------------------------------------------------------------------ //
+
+  /** LANE-A: (projectId, workspaceId) -> PortfolioEntry (WorkspaceBootstrapped projection). */
+  private readonly p108PortfolioEntries = new Map<string, PortfolioEntry>();
+  /** LANE-A: (projectId, workspaceId) -> WorkspaceSummaryView. */
+  private readonly p108SummaryRows = new Map<string, import("../contracts/console-views.js").WorkspaceSummaryView>();
+  /** LANE-B: (projectId, workspaceId, goalId) -> PlanMatrixView. */
+  private readonly p108MatrixRows = new Map<string, import("../contracts/console-views.js").PlanMatrixView>();
+  /** LANE-B: (projectId, workspaceId, goalId, taskId) -> ActiveAgentRunRow. */
+  private readonly p108AgentRows = new Map<string, import("../contracts/console-views.js").ActiveAgentRunRow>();
+  /** LANE-B: (projectId, workspaceId, goalId, taskId) -> latest handoff marker. */
+  private readonly p108HandoffMarkers = new Map<string, import("../contracts/console-views.js").ActiveAgentRunRow["handoff"]>();
+  /** LANE-B: (projectId, workspaceId, goalId, taskId) -> task evidence projection. */
+  private readonly p108EvidenceProjections = new Map<string, {
+    projectId: string;
+    workspaceId: string;
+    goalId: string;
+    taskId: string;
+    evidence: { evidence: import("../contracts/evidence.js").EvidenceV1; admittedAt: string; evidenceIndex: number; sourceCursor: import("../contracts/command-event.js").CommitCursor }[];
+    reduction: import("../contracts/reduction.js").TaskReductionSnapshot | null;
+    reductionCursor: import("../contracts/command-event.js").CommitCursor | null;
+    planRef: import("../contracts/plan.js").PlanRevisionRef;
+    planRevision: number;
+    sourceCursor: import("../contracts/command-event.js").CommitCursor;
+    updatedAt: string | null;
+  }>();
+  /** LANE-B: (projectId, workspaceId) -> timeline entries in arrival order. */
+  private readonly p108TimelineRows = new Map<string, import("../contracts/console-views.js").TimelineEntry[]>();
+  /** LANE-B: per-workspace timeline seq counter. */
+  private readonly p108TimelineSeq = new Map<string, number>();
+
   async advance(page: EventPage): Promise<ProjectionReceipt> {
     const toApply: PositionedEvent[] = [];
     const appliedEventIds: string[] = [];
@@ -332,6 +383,11 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       } else if (event.eventType === "PatchRecorded") {
         this.applyPatchRecorded(event, positioned.cursor);
       }
+      // P1-08 console projections consume the SAME committed events (no new
+      // DomainEvent is introduced); the two lane hooks feed the console read
+      // views. Both are no-ops until their lane implementations land.
+      this.applyP108Console(event, positioned.cursor);
+
       // Known non-goal / non-plan / non-dispatch events
       // (ProjectBootstrapped, WorkspaceBootstrapped, CompletionPolicyInstalled,
       // ArchitectureBaselineInstalled, CompletionPolicyActivated,
@@ -1494,6 +1550,65 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
     this.integrationConflictRows.set(key, row);
     return row;
+  }
+
+
+  // ------------------------------------------------------------------ //
+  // P1-08 console query surface + projection hooks (SHARED BASELINE).   //
+  // The six console queries are FROZEN in src/contracts/console-views   //
+  // (first consumer); this baseline carries the fresh helper + the two  //
+  // lane hooks as no-ops. Lane A fills consolePortfolio/consoleSummary //
+  // + applyP108ConsoleLaneA; Lane B fills consolePlanMatrix/           //
+  // consoleActiveAgents/consoleTaskEvidence/consoleTimeline +           //
+  // applyP108ConsoleLaneB. iSHANDLED: all event types are already       //
+  // handled (no new DomainEvent) — the list is unchanged.               //
+  // ------------------------------------------------------------------ //
+
+  /** P1-08 console projection dispatcher: forwards every committed event to
+   * the per-lane console projections. NO new event is created here. */
+  private applyP108Console(event: DomainEvent, cursor: CommitCursor): void {
+    this.applyP108ConsoleLaneA(event, cursor);
+    this.applyP108ConsoleLaneB(event, cursor);
+  }
+
+  /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — no-op until lane A lands. */
+  private applyP108ConsoleLaneA(_event: DomainEvent, _cursor: CommitCursor): void {
+    // replaced by lane A (shared baseline placeholder)
+  }
+
+  /** P1-08 LANE-B hook (PlanMatrix + ActiveAgents + TaskEvidence + Timeline) — no-op until lane B lands. */
+  private applyP108ConsoleLaneB(_event: DomainEvent, _cursor: CommitCursor): void {
+    // replaced by lane B (shared baseline placeholder)
+  }
+
+  /** P1-08 LANE-A stub: consolePortfolio (frozen signature; lane A implements). */
+  async consolePortfolio(_query: PortfolioViewQuery): Promise<PortfolioViewResult> {
+    throw new Error("P1-08 lane stub: consolePortfolio not implemented yet");
+  }
+
+  /** P1-08 LANE-A stub: consoleSummary (frozen signature; lane A implements). */
+  async consoleSummary(_query: WorkspaceSummaryViewQuery): Promise<WorkspaceSummaryViewResult> {
+    throw new Error("P1-08 lane stub: consoleSummary not implemented yet");
+  }
+
+  /** P1-08 LANE-B stub: consolePlanMatrix (frozen signature; lane B implements). */
+  async consolePlanMatrix(_query: PlanMatrixViewQuery): Promise<PlanMatrixViewResult> {
+    throw new Error("P1-08 lane stub: consolePlanMatrix not implemented yet");
+  }
+
+  /** P1-08 LANE-B stub: consoleActiveAgents (frozen signature; lane B implements). */
+  async consoleActiveAgents(_query: ActiveAgentsViewQuery): Promise<ActiveAgentsViewResult> {
+    throw new Error("P1-08 lane stub: consoleActiveAgents not implemented yet");
+  }
+
+  /** P1-08 LANE-B stub: consoleTaskEvidence (frozen signature; lane B implements). */
+  async consoleTaskEvidence(_query: TaskEvidenceViewQuery): Promise<TaskEvidenceViewResult> {
+    throw new Error("P1-08 lane stub: consoleTaskEvidence not implemented yet");
+  }
+
+  /** P1-08 LANE-B stub: consoleTimeline (frozen signature; lane B implements). */
+  async consoleTimeline(_query: TimelineViewQuery): Promise<TimelineViewResult> {
+    throw new Error("P1-08 lane stub: consoleTimeline not implemented yet");
   }
 
   /** Event types this projection currently has handlers for (P1-02 + P1-03, v1). */

@@ -106,4 +106,16 @@ export interface ReadModelIndex {
   integrationConflicts(query: import("./workspace-views.js").IntegrationConflictViewQuery): Promise<import("./workspace-views.js").IntegrationConflictViewResult>;
   /** P1-07: workspace patch view per (projectId, workspaceId) — display only. */
   workspacePatches(query: import("./workspace-views.js").WorkspacePatchViewQuery): Promise<import("./workspace-views.js").WorkspacePatchViewResult>;
+  /** P1-08: portfolio of bootstrapped Project/Workspace scopes (P1-00 manifest projection). */
+  consolePortfolio(query: import("./console-views.js").PortfolioViewQuery): Promise<import("./console-views.js").PortfolioViewResult>;
+  /** P1-08: workspace-level summary per full-scope key (projectId, workspaceId). */
+  consoleSummary(query: import("./console-views.js").WorkspaceSummaryViewQuery): Promise<import("./console-views.js").WorkspaceSummaryViewResult>;
+  /** P1-08: plan matrix per (projectId, workspaceId, goalId) — planned vs formal phase separated. */
+  consolePlanMatrix(query: import("./console-views.js").PlanMatrixViewQuery): Promise<import("./console-views.js").PlanMatrixViewResult>;
+  /** P1-08: workspace-scoped active agent/run rows (optional goalId filter). */
+  consoleActiveAgents(query: import("./console-views.js").ActiveAgentsViewQuery): Promise<import("./console-views.js").ActiveAgentsViewResult>;
+  /** P1-08: task evidence detail per (projectId, workspaceId, goalId, taskId) — refs only, no vault body. */
+  consoleTaskEvidence(query: import("./console-views.js").TaskEvidenceViewQuery): Promise<import("./console-views.js").TaskEvidenceViewResult>;
+  /** P1-08: workspace-level bounded timeline (optional goalId filter; display only). */
+  consoleTimeline(query: import("./console-views.js").TimelineViewQuery): Promise<import("./console-views.js").TimelineViewResult>;
 }

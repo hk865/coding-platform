@@ -117,4 +117,15 @@ export interface ControlEngine {
 export interface HumanCollaboration {
   createGoal(request: CreateGoalRequest): Promise<CreateGoalResult>;
   goalView(query: GoalViewQuery): Promise<GoalViewResult>;
+  /**
+   * P1-08 versioned console query group (READ-ONLY face — only the
+   * ReadModelIndex is consumed; control/runtime write faces are never
+   * reachable from these methods; no model call, no lease refresh).
+   */
+  consolePortfolio(query: import("./console-views.js").PortfolioViewQuery): Promise<import("./console-views.js").PortfolioViewResult>;
+  consoleSummary(query: import("./console-views.js").WorkspaceSummaryViewQuery): Promise<import("./console-views.js").WorkspaceSummaryViewResult>;
+  consolePlanMatrix(query: import("./console-views.js").PlanMatrixViewQuery): Promise<import("./console-views.js").PlanMatrixViewResult>;
+  consoleActiveAgents(query: import("./console-views.js").ActiveAgentsViewQuery): Promise<import("./console-views.js").ActiveAgentsViewResult>;
+  consoleTaskEvidence(query: import("./console-views.js").TaskEvidenceViewQuery): Promise<import("./console-views.js").TaskEvidenceViewResult>;
+  consoleTimeline(query: import("./console-views.js").TimelineViewQuery): Promise<import("./console-views.js").TimelineViewResult>;
 }

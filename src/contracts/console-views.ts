@@ -1,0 +1,482 @@
+/**
+ * P1-08 Read-only status & Evidence console — read-model query contracts.
+ * Authority: dev_docs/planning/proposed/P1-foundation/tickets/08-status-evidence-console.md
+ * (7 contracts) + dev_docs/interfaces/{goal-view,runtime-collaboration,human-design-status}.md
+ * + IMPLEMENTATION-HANDOFF.md "P1-08 只读控制台契约与查询语义" (integrator rulings).
+ *
+ * FROZEN semantics:
+ *   - The console is a VERSIONED extension of HumanCollaboration (no new
+ *     Module; ARCHITECTURE §Plane — query tools are a candidate access
+ *     capability of HumanCollaboration). It is a READ-ONLY face: every
+ *     query goes through the ReadModelIndex interface only; the console path
+ *     never touches the Control/runtime write face, never starts a model,
+ *     never refreshes a Worker lease, never opens vault bodies and never
+ *     creates an implicit "current Workspace" domain fact.
+ *   - Full-scope keys: (projectId, workspaceId) for workspace-level views,
+ *     + goalId for goal-level views, + taskId for task-level views. Local ids
+ *     shared across Projects NEVER collide. All list/route/result/cache keys
+ *     use canonicalJson of the COMPLETE ref (consoleWorkspaceKey /
+ *     consoleGoalKey / consoleTaskKey).
+ *   - Displayed phases pair source revision/cursor: every row carries
+ *     sourceCursor; the plan matrix SEPARATES the plan-declared phase
+ *     (accepted PlanRevision snapshot) from the formal TaskReduction phase;
+ *     completion conclusions link effectiveEvidenceIds (P1-04 recomputation).
+ *   - Reports are reports: CompletionClaim/verdict/ReviewPacket kinds are
+ *     displayed AS REPORT kinds; they never substitute the formal phase.
+ *   - Freshness reuses the opaque CommitCursor contract: not_ready !=
+ *     not_found; not_found only after observedCursor covered atLeastCursor;
+ *     no atLeastCursor + no row -> not_ready (never not_found).
+ *   - NO new DomainEvent is introduced: every console projection consumes the
+ *     existing v1 events (WorkspaceBootstrapped / GoalCreated /
+ *     PlanRevisionAccepted / TaskClaimed / RunStarted / RunEventRecorded /
+ *     RunOutcomeUnknown / EvidenceAdmitted / TaskReductionUpdated /
+ *     GoalPhaseUpdated / HandoffRecorded / ReplacementClaimed).
+ *   - Display bounds are explicit constants; the views are bounded by design.
+ */
+import type { CommitCursor } from "./command-event.js";
+import type { ArtifactRef } from "./artifact.js";
+import type {
+  RunRef,
+  TaskAttemptRef,
+  RunOutcome,
+  RunStatus,
+  TaskAttemptStatus,
+  RoleBindingRefV1,
+} from "./dispatch.js";
+import type {
+  Disposition,
+  Phase,
+  PlanRevisionRef,
+  PlanStage,
+  RequirementLevel,
+  TaskKind,
+  TaskScope,
+} from "./plan.js";
+import type { TaskReductionCause, TaskReductionPhase } from "./reduction.js";
+import type {
+  EvidenceApplicability,
+  EvidenceCoverageV1,
+  EvidenceKind,
+  EvidenceOutcome,
+  EffectivityAnchorV1,
+} from "./evidence.js";
+import type { GoalPhase } from "./goal-phase.js";
+import type { HandoffPacketRef, ReplacementReason, ReplacementAttemptRef } from "./handoff.js";
+import { canonicalJson } from "./fingerprint.js";
+
+// ------------------------------------------------------------------------ //
+// human-design-status markers (semantic explanation + report kind)        //
+// ------------------------------------------------------------------------ //
+
+/**
+ * Four-state marker for SEMANTIC EXPLANATIONS (human-design-status.md):
+ * pending = explanation not produced yet; ready = produced against the
+ * current facts; stale = produced against an older cursor than the facts
+ * shown; unavailable = no such explanation exists. P1-08 console is a
+ * PASSIVE deterministic face: model semantic explanations are NOT produced
+ * (they belong to P1-09/15), so the marker is always "unavailable" while
+ * deterministic reason codes are shown separately with their sourceCursor.
+ */
+export type ConsoleExplanationStatus = "pending" | "ready" | "stale" | "unavailable";
+
+/**
+ * Report-kind marker per evidence entry (completion-policy: reports do not
+ * substitute the formal phase; a CompletionClaim is explicitly unverified).
+ */
+export type EvidenceFormalMarker = "unverified_report" | "observed_fact";
+
+// ------------------------------------------------------------------------ //
+// Display bounds (bounded views by design)                                 //
+// ------------------------------------------------------------------------ //
+
+/** Workspace timeline keeps at most this many entries (the most recent window). */
+export const CONSOLE_TIMELINE_MAX_ENTRIES = 200;
+/** Workspace active-agent rows keep at most this many rows. */
+export const CONSOLE_ACTIVE_AGENTS_MAX_ROWS = 100;
+/** Plan matrix rows keep at most this many tasks. */
+export const CONSOLE_MATRIX_MAX_TASKS = 512;
+/** Evidence summary text shows at most this many utf-8 bytes (vault body NEVER opened). */
+export const CONSOLE_EVIDENCE_SUMMARY_MAX_BYTES = 4096;
+/** Portfolio lists at most this many scopes. */
+export const CONSOLE_PORTFOLIO_MAX_PROJECTS = 64;
+
+// ------------------------------------------------------------------------ //
+// Full-scope keys (canonicalJson of the COMPLETE ref; never a local id)     //
+// ------------------------------------------------------------------------ //
+
+/** (projectId, workspaceId) — the workspace-level console scope key. */
+export function consoleWorkspaceKey(projectId: string, workspaceId: string): string {
+  return canonicalJson({ projectId, workspaceId });
+}
+
+/** (projectId, workspaceId, goalId) — the goal-level console scope key. */
+export function consoleGoalKey(projectId: string, workspaceId: string, goalId: string): string {
+  return canonicalJson({ projectId, workspaceId, goalId });
+}
+
+/** (projectId, workspaceId, goalId, taskId) — the task-level console scope key. */
+export function consoleTaskKey(
+  projectId: string,
+  workspaceId: string,
+  goalId: string,
+  taskId: string,
+): string {
+  return canonicalJson({ projectId, workspaceId, goalId, taskId });
+}
+
+// ------------------------------------------------------------------------ //
+// Workspace selection route                                                 //
+// ------------------------------------------------------------------------ //
+
+/**
+ * A PURE route: selecting/switching a scope only changes query parameters.
+ * It is NEVER persisted, NEVER written to canonical state and NEVER creates
+ * an implicit "current Workspace" domain fact (a restart re-selects).
+ */
+export type WorkspaceSelectionRoute = {
+  projectId: string;
+  workspaceId: string;
+  /** Optional goal-level drill-down (task-level views take the task id via
+   * the same route + a taskId parameter). */
+  goalId?: string;
+};
+
+// ------------------------------------------------------------------------ //
+// Portfolio                                                                 //
+// ------------------------------------------------------------------------ //
+
+export type PortfolioViewQuery = {
+  atLeastCursor?: CommitCursor;
+};
+
+export type PortfolioEntry = {
+  projectId: string;
+  workspaceId: string;
+  /** Bootstrap manifest entry projection (P1-00): the bootstrapped revision. */
+  projectRevision: 1;
+  workspaceRevision: 1;
+  /** Source digest of the versioned bootstrap manifest (source provenance). */
+  sourceDigest: string;
+  bootstrappedAt: string;
+  /** Last Event that changed this entry. */
+  sourceCursor: CommitCursor;
+  /** Display note: local ids are project-scoped — never merge across projects. */
+  scopeKey: string;
+};
+
+export type PortfolioView = {
+  /** All bootstrapped scopes, bounded, in deterministic scope-key order. */
+  entries: PortfolioEntry[];
+  sourceCursor: CommitCursor;
+  updatedAt: string | null;
+};
+
+export type PortfolioViewResult =
+  | { status: "ready"; portfolio: PortfolioView; observedCursor: CommitCursor }
+  | { status: "not_ready"; requiredCursor: CommitCursor; observedCursor: CommitCursor | null }
+  | { status: "not_found"; observedCursor: CommitCursor | null };
+
+// ------------------------------------------------------------------------ //
+// Workspace summary (per (projectId, workspaceId))                         //
+// ------------------------------------------------------------------------ //
+
+export type WorkspaceSummaryViewQuery = {
+  projectId: string;
+  workspaceId: string;
+  atLeastCursor?: CommitCursor;
+};
+
+export type WorkspaceSummaryView = {
+  projectId: string;
+  workspaceId: string;
+  /** null until a WorkspaceBootstrapped event for the scope is projected. */
+  sourceDigest: string | null;
+  bootstrappedAt: string | null;
+  goalCount: number;
+  /** Tasks in accepted plan revisions (PlanRevisionAccepted tasks). */
+  taskCount: number;
+  /** Accepted plan revisions (PlanRevisionAccepted count). */
+  planRevisionCount: number;
+  agentRunCount: number;
+  evidenceCount: number;
+  taskReductionCount: number;
+  goalPhaseCount: number;
+  /** Phase COUNTS (display-only projection facts — NEVER reducer inputs). */
+  phaseCounts: {
+    taskReduction: Partial<Record<TaskReductionPhase, number>>;
+    goalPhase: Partial<Record<GoalPhase, number>>;
+  };
+  sourceCursor: CommitCursor;
+  updatedAt: string | null;
+};
+
+export type WorkspaceSummaryViewResult =
+  | { status: "ready"; summary: WorkspaceSummaryView; observedCursor: CommitCursor }
+  | { status: "not_ready"; requiredCursor: CommitCursor; observedCursor: CommitCursor | null }
+  | { status: "not_found"; observedCursor: CommitCursor | null };
+
+// ------------------------------------------------------------------------ //
+// Plan matrix (per (projectId, workspaceId, goalId))                       //
+// ------------------------------------------------------------------------ //
+
+export type PlanMatrixViewQuery = {
+  projectId: string;
+  workspaceId: string;
+  goalId: string;
+  atLeastCursor?: CommitCursor;
+};
+
+export type PlanMatrixRow = {
+  taskId: string;
+  title: string;
+  stageId: string | null;
+  stageTitle: string | null;
+  requirementLevel: RequirementLevel;
+  taskKind: TaskKind;
+  disposition: Disposition;
+  taskScope: TaskScope;
+  /** The plan-DECLARED phase (accepted PlanRevision snapshot). */
+  plannedPhase: Phase;
+  /** The FORMAL phase (latest TaskReduction), null before the first reduction. */
+  livePhase: TaskReductionPhase | null;
+  /** Source pairing for each displayed phase — a report NEVER substitutes the formal phase. */
+  phaseSources: {
+    planned: { planRef: PlanRevisionRef; planRevision: number; sourceCursor: CommitCursor };
+    live: { reductionRevision: number | null; sourceCursor: CommitCursor | null };
+  };
+  /** formal vs declared mismatch marker — display only, NEVER a reducer input. */
+  phaseMismatch: boolean;
+  sourceCursor: CommitCursor;
+};
+
+export type PlanMatrixView = {
+  projectId: string;
+  workspaceId: string;
+  goalId: string;
+  planRef: PlanRevisionRef;
+  planRevision: number;
+  stages: PlanStage[];
+  rows: PlanMatrixRow[];
+  /** Display note: rows beyond CONSOLE_MATRIX_MAX_TASKS are dropped, never merged. */
+  taskCount: number;
+  sourceCursor: CommitCursor;
+  updatedAt: string | null;
+};
+
+export type PlanMatrixViewResult =
+  | { status: "ready"; matrix: PlanMatrixView; observedCursor: CommitCursor }
+  | { status: "not_ready"; requiredCursor: CommitCursor; observedCursor: CommitCursor | null }
+  | { status: "not_found"; observedCursor: CommitCursor | null };
+
+// ------------------------------------------------------------------------ //
+// Active agents (per (projectId, workspaceId); optional goalId filter)     //
+// ------------------------------------------------------------------------ //
+
+export type ActiveAgentsViewQuery = {
+  projectId: string;
+  workspaceId: string;
+  /** Optional drill-down to one goal (full workspace key is still required). */
+  goalId?: string;
+  atLeastCursor?: CommitCursor;
+};
+
+/**
+ * Explicit source-based display marker for a run row. It NEVER infers task
+ * completion: starting / ongoing / handed_over / outcome_unknown / crashed /
+ * cancelled / budget_exhausted / completed_run are exactly what the committed
+ * facts say — a temporary wait is never shown as done.
+ */
+export type RunDisplayState =
+  | "starting"
+  | "ongoing"
+  | "completed_run"
+  | "crashed"
+  | "cancelled"
+  | "budget_exhausted"
+  | "outcome_unknown"
+  | "ended_no_outcome";
+
+export type ActiveAgentRunRow = {
+  projectId: string;
+  workspaceId: string;
+  goalId: string;
+  taskId: string;
+  runRef: RunRef;
+  attemptRef: TaskAttemptRef;
+  binding: RoleBindingRefV1;
+  runStatus: RunStatus;
+  runOutcome: RunOutcome | null;
+  exitCode: number | null;
+  lastEventSeq: number;
+  attemptStatus: TaskAttemptStatus;
+  attemptEndOutcome: RunOutcome | null;
+  lease: { holderRunId: string; grantedAt: string; expiresAt: string | null };
+  startedAt: string | null;
+  endedAt: string | null;
+  /** Source-based display state (see RunDisplayState). */
+  displayState: RunDisplayState;
+  /** Latest handoff markers for this task (null when none) — handoffs shown by source. */
+  handoff: {
+    packetRef: HandoffPacketRef;
+    priorRunRef: RunRef;
+    replacementRef: ReplacementAttemptRef;
+    reason: ReplacementReason;
+    claimedAt: string;
+    sourceCursor: CommitCursor;
+  } | null;
+  sourceCursor: CommitCursor;
+};
+
+export type ActiveAgentsView = {
+  projectId: string;
+  workspaceId: string;
+  /** Display-only rows, bounded (CONSOLE_ACTIVE_AGENTS_MAX_ROWS), in claim order. */
+  rows: ActiveAgentRunRow[];
+  taskCount: number;
+  sourceCursor: CommitCursor;
+  updatedAt: string | null;
+};
+
+export type ActiveAgentsViewResult =
+  | { status: "ready"; agents: ActiveAgentsView; observedCursor: CommitCursor }
+  | { status: "not_ready"; requiredCursor: CommitCursor; observedCursor: CommitCursor | null }
+  | { status: "not_found"; observedCursor: CommitCursor | null };
+
+// ------------------------------------------------------------------------ //
+// Task evidence (per (projectId, workspaceId, goalId, taskId))             //
+// ------------------------------------------------------------------------ //
+
+export type TaskEvidenceViewQuery = {
+  projectId: string;
+  workspaceId: string;
+  goalId: string;
+  taskId: string;
+  atLeastCursor?: CommitCursor;
+};
+
+export type TaskEvidenceEntry = {
+  evidenceId: string;
+  kind: EvidenceKind;
+  /** claim/verdict -> unverified_report; observation -> observed_fact. Display only. */
+  marker: EvidenceFormalMarker;
+  outcome: EvidenceOutcome;
+  coverage: EvidenceCoverageV1[];
+  /** Derived at query time against the view's current anchor (pure function; never written back). */
+  applicability: EvidenceApplicability | null;
+  anchor: EffectivityAnchorV1;
+  sourceRunRef: RunRef | null;
+  checkId: string | null;
+  /** REF ONLY — the console NEVER opens the vault body (body-first rule). */
+  artifactRef: ArtifactRef | null;
+  /** Bounded summary (utf-8 bytes <= CONSOLE_EVIDENCE_SUMMARY_MAX_BYTES), no body. */
+  summary: string;
+  admittedAt: string;
+  evidenceIndex: number;
+  sourceCursor: CommitCursor;
+};
+
+export type TaskEvidenceView = {
+  projectId: string;
+  workspaceId: string;
+  goalId: string;
+  taskId: string;
+  /** The current effectivity tuple the view derives applicability under
+   * (null before the first TaskReductionUpdated — no authoritative anchor). */
+  currentAnchor: EffectivityAnchorV1 | null;
+  planRef: PlanRevisionRef;
+  planRevision: number;
+  /** Evidence in admission order (reports with their own kind/source). */
+  evidence: TaskEvidenceEntry[];
+  /** Completion conclusion: the effective evidence ids (P1-04 pure recomputation). */
+  effectiveEvidenceIds: string[];
+  blockingEvidenceIds: string[];
+  staleEvidenceIds: string[];
+  outOfScopeEvidenceIds: string[];
+  /** The FORMAL reduction (display-only projection fact; report ≠ formal phase). */
+  reduction: {
+    phase: TaskReductionPhase;
+    causes: TaskReductionCause[];
+    effectiveEvidenceIds: string[];
+    blockingEvidenceIds: string[];
+    satisfiedObligationIds: string[];
+    planRef: PlanRevisionRef;
+    reducedAt: string;
+    sourceCursor: CommitCursor;
+  } | null;
+  /** Display note: vault bodies are NEVER opened by this view. */
+  bodyPolicy: "ref_only";
+  /** Semantic (model) explanation marker — P1-08 produces none (unavailable);
+   * deterministic reason codes live in reduction.causes with the sourceCursor. */
+  modelExplanation: { status: ConsoleExplanationStatus; sourceCursor: CommitCursor | null };
+  sourceCursor: CommitCursor;
+  updatedAt: string | null;
+};
+
+export type TaskEvidenceViewResult =
+  | { status: "ready"; evidence: TaskEvidenceView; observedCursor: CommitCursor }
+  | { status: "not_ready"; requiredCursor: CommitCursor; observedCursor: CommitCursor | null }
+  | { status: "not_found"; observedCursor: CommitCursor | null };
+
+// ------------------------------------------------------------------------ //
+// Timeline (per (projectId, workspaceId); optional goalId filter)          //
+// ------------------------------------------------------------------------ //
+
+export type TimelineViewQuery = {
+  projectId: string;
+  workspaceId: string;
+  /** Optional drill-down to one goal. */
+  goalId?: string;
+  /** Bounded entries requested (the LAST maxEntries are kept; default CONSOLE_TIMELINE_MAX_ENTRIES). */
+  maxEntries?: number;
+  atLeastCursor?: CommitCursor;
+};
+
+export type TimelineEntryKind =
+  | "goal_created"
+  | "plan_accepted"
+  | "task_claimed"
+  | "run_started"
+  | "run_event"
+  | "run_outcome_unknown"
+  | "evidence_admitted"
+  | "task_reduction"
+  | "goal_phase"
+  | "handoff_recorded"
+  | "replacement_claimed";
+
+export type TimelineEntry = {
+  /** 1-based arrival order within the workspace timeline (display order). */
+  seq: number;
+  kind: TimelineEntryKind;
+  eventId: string;
+  occurredAt: string;
+  sourceCursor: CommitCursor;
+  /** The full-scope ref chain the entry is about (display only). */
+  refs: {
+    projectId: string;
+    workspaceId: string;
+    goalId?: string;
+    taskId?: string;
+    runId?: string;
+    evidenceId?: string;
+    packetId?: string;
+  };
+  /** Deterministic one-line summary (no model, no interpretation — display only). */
+  summary: string;
+};
+
+export type TimelineView = {
+  projectId: string;
+  workspaceId: string;
+  /** Matched entries (after goalId filter), bounded to the LAST maxEntries. */
+  entries: TimelineEntry[];
+  /** Total matched entries BEFORE the bound (so the bound is visible). */
+  totalCount: number;
+  sourceCursor: CommitCursor;
+  updatedAt: string | null;
+};
+
+export type TimelineViewResult =
+  | { status: "ready"; timeline: TimelineView; observedCursor: CommitCursor }
+  | { status: "not_ready"; requiredCursor: CommitCursor; observedCursor: CommitCursor | null }
+  | { status: "not_found"; observedCursor: CommitCursor | null };

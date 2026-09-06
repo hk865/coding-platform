@@ -1,0 +1,411 @@
+/**
+ * P1-08 shared fixtures: two-project isolation + console scenario building
+ * blocks + display-bound assertions.
+ *
+ * Isolation statement (ticket acceptance): BOTH projects reuse the SAME local
+ * workspaceId ("ws-shared") AND the SAME local goalId ("goal-p108-1") with
+ * DIFFERENT objectives. Every console list/route/result/cache key is the
+ * canonicalJson of the COMPLETE ref (consoleWorkspaceKey / consoleGoalKey /
+ * consoleTaskKey) — local ids never merge across projects.
+ *
+ * The scenario itself is run by the shared p1-08 test harness
+ * (tests/contract-suite/p1-08-harness.ts); this file carries ONLY the frozen
+ * data + command construction helpers (no harness access, no writes).
+ */
+import { consoleWorkspaceKey, consoleGoalKey, consoleTaskKey, CONSOLE_TIMELINE_MAX_ENTRIES } from "../console-views.js";
+import type { PlanRevisionDraft, PlanRevisionRef } from "../plan.js";
+import type { GoalFixtureScope } from "./goal-fixtures.js";
+import { buildCreateGoalCommand } from "./goal-fixtures.js";
+import type { CreateGoalCommand } from "../command-event.js";
+import { buildApplyPlanCommand } from "./plan-fixtures.js";
+import type { ApplyPlanRevisionCommand } from "../plan.js";
+import { buildDispatchClaimCommand } from "./dispatch-fixtures.js";
+import type { DispatchClaimCommand, RunFactCommand, RoleBindingRefV1, RunRef, TaskBudgetV1 } from "../dispatch.js";
+import { buildRunFactCommand } from "./dispatch-fixtures.js";
+import { buildEvidenceV1, buildEffectivityAnchorV1, buildSubmitEvidenceCommand, buildReduceTaskCommand, coverage } from "./evidence-fixtures.js";
+import type { SubmitEvidenceCommand } from "../evidence.js";
+import { buildReduceGoalCommand } from "./goal-phase-fixtures.js";
+import type { ReduceGoalCommand } from "../goal-phase.js";
+import { buildHandoffPacketV1, buildRecordHandoffCommand, buildClaimReplacementCommand } from "./handoff-fixtures.js";
+import type { HandoffPacketV1, RecordHandoffCommand, ClaimReplacementCommand, HandoffPacketRef } from "../handoff.js";
+import type { FakeRuntimeScriptV1 } from "./dispatch-fixtures.js";
+import type { ArchitectureBaselinePin, CompletionPolicyPin } from "../governance.js";
+import type { EvidenceV1 } from "../evidence.js";
+import { sha256Hex } from "../fingerprint.js";
+
+// ------------------------------------------------------------------------ //
+// Scope constants                                                           //
+// ------------------------------------------------------------------------ //
+
+export const P108_PROJECT_A = "proj-alpha";
+export const P108_PROJECT_B = "proj-beta";
+/** BOTH projects reuse the SAME local workspaceId (project-scoped ids). */
+export const P108_WORKSPACE = "ws-shared";
+/** BOTH projects reuse the SAME local goalId with DIFFERENT objectives. */
+export const P108_GOAL = "goal-p108-1";
+export const P108_PLAN_ID = "plan-p108-1";
+export const P108_TASK_WORK = "task-p108-work";
+export const P108_TASK_GATE = "task-p108-gate";
+export const P108_TASK_EXTRA = "task-p108-extra";
+export const P108_STAGE_WORK = "stage-p108-1";
+export const P108_STAGE_GATE = "stage-p108-2";
+export const P108_OBL_WORK = "obl-p108-work";
+export const P108_OBL_GATE = "obl-p108-gate";
+export const P108_VR_WORK = "vr-p108-work";
+export const P108_VR_GATE = "vr-p108-gate";
+export const P108_SCHEMA = "2026-09-06T12:00:00.000Z";
+
+// ------------------------------------------------------------------------ //
+// Goal scope (different objective per project; same local goalId)          //
+// ------------------------------------------------------------------------ //
+
+export function p108GoalScope(project: string): GoalFixtureScope {
+  return {
+    projectId: project,
+    workspaceId: P108_WORKSPACE,
+    goalId: P108_GOAL,
+    objective: "为 " + project + " 验证只读状态与依据控制台：可查状态图并按来源展示",
+    actor: { kind: "human", id: "user-p108" },
+  };
+}
+
+export function p108PlanRef(projectId: string): PlanRevisionRef {
+  return { aggregateType: "PlanRevision", projectId, planId: P108_PLAN_ID };
+}
+
+// ------------------------------------------------------------------------ //
+// P1-08 plan (work + gate + optional risk task; per frozen guard structure) //
+// ------------------------------------------------------------------------ //
+
+export const P108_PLAN_REVISION_FIXTURE_V1: PlanRevisionDraft = {
+  schemaVersion: 1,
+  planId: P108_PLAN_ID,
+  planRevision: 1,
+  goalId: P108_GOAL,
+  stages: [
+    { stageId: P108_STAGE_WORK, title: "P1-08 主工作阶段" },
+    { stageId: P108_STAGE_GATE, title: "P1-08 门禁与风险阶段" },
+  ],
+  tasks: [
+    {
+      taskId: P108_TASK_WORK,
+      stageId: P108_STAGE_WORK,
+      title: "P1-08 控制台验证主任务",
+      requirementLevel: "required",
+      taskKind: "work",
+      disposition: "active",
+      phase: "pending",
+      scope: { kind: "goal" },
+    },
+    {
+      taskId: P108_TASK_GATE,
+      stageId: P108_STAGE_GATE,
+      title: "P1-08 控制台目标门禁",
+      requirementLevel: "required",
+      taskKind: "gate",
+      disposition: "active",
+      phase: "pending",
+      scope: { kind: "goal" },
+    },
+    {
+      taskId: P108_TASK_EXTRA,
+      stageId: P108_STAGE_GATE,
+      title: "P1-08 风险勘察任务（可选）",
+      requirementLevel: "optional",
+      taskKind: "work",
+      disposition: "active",
+      phase: "pending",
+      scope: { kind: "goal" },
+    },
+  ],
+  obligations: [
+    {
+      obligationId: P108_OBL_WORK,
+      title: "P1-08 主任务义务",
+      requirementLevel: "required",
+      taskIds: [P108_TASK_WORK],
+      verificationRequirements: [
+        { requirementId: P108_VR_WORK, requirementLevel: "required", kind: "static", description: "主任务静态检查" },
+      ],
+    },
+    {
+      obligationId: P108_OBL_GATE,
+      title: "P1-08 门禁义务",
+      requirementLevel: "required",
+      taskIds: [P108_TASK_GATE],
+      verificationRequirements: [
+        { requirementId: P108_VR_GATE, requirementLevel: "required", kind: "dynamic", description: "目标门禁动态检查" },
+      ],
+    },
+  ],
+  taskHierarchy: { parentOf: [] },
+  executionDag: {
+    dependsOn: [
+      {
+        taskId: P108_TASK_GATE,
+        dependsOnId: P108_TASK_WORK,
+        requires: { kind: "gate-result", label: "主任务完成门禁" },
+      },
+    ],
+  },
+};
+
+/** Deterministic per-project evidence id (same local id space per project). */
+export function p108EvidenceId(project: string, label: string): string {
+  return "ev-p108-" + project + "-" + label;
+}
+
+// ------------------------------------------------------------------------ //
+// Command builders (deterministic; shared by both adapters + restart)      //
+// ------------------------------------------------------------------------ //
+
+export interface P108AnchorPins {
+  completionPolicy: CompletionPolicyPin;
+  architectureBaseline: ArchitectureBaselinePin;
+}
+
+export function buildP108CreateGoalCommand(project: string, suffix = "1"): CreateGoalCommand {
+  return buildCreateGoalCommand(p108GoalScope(project), {
+    commandId: "cmd-p108-create-" + project + "-" + suffix,
+    correlationId: "corr-p108-create-" + project + "-" + suffix,
+    submittedAt: P108_SCHEMA,
+    idempotencyKey: "p1-08-create-goal-" + project + "-" + suffix,
+  });
+}
+
+export function buildP108ApplyPlanCommand(project: string, expectedRevision = 1): ApplyPlanRevisionCommand {
+  return buildApplyPlanCommand(P108_PLAN_REVISION_FIXTURE_V1, {
+    commandId: "cmd-p108-apply-plan-" + project + "-" + expectedRevision,
+    correlationId: "corr-p108-apply-plan-" + project + "-" + expectedRevision,
+    submittedAt: P108_SCHEMA,
+    projectId: project,
+    expectedRevision,
+    idempotencyKey: "p1-08-apply-plan-" + project + "-" + expectedRevision,
+  });
+}
+
+export function buildP108ClaimCommand(
+  project: string,
+  runId: string,
+  taskId: string,
+  binding: RoleBindingRefV1,
+  permissions: { tools: string[]; writeScope: string[] },
+  budget: TaskBudgetV1,
+): DispatchClaimCommand {
+  return buildDispatchClaimCommand({
+    commandId: "cmd-p108-claim-" + project + "-" + runId,
+    correlationId: "corr-p108-claim-" + project + "-" + runId,
+    submittedAt: P108_SCHEMA,
+    taskId,
+    goalId: P108_GOAL,
+    roleBinding: binding,
+    projectId: project,
+    runId,
+    attemptId: "att-" + runId,
+    idempotencyKey: "p1-08-claim-" + project + "-" + runId,
+    declaredPermissions: permissions,
+    budget,
+  });
+}
+
+export function buildP108OutcomeUnknownCommand(
+  project: string,
+  runId: string,
+  runRef: RunRef,
+  expectedRevision: number,
+  reason = "worker vanished without terminal signal",
+): RunFactCommand {
+  return buildRunFactCommand({
+    commandId: "cmd-p108-outcome-unknown-" + project + "-" + runId,
+    correlationId: "corr-p108-outcome-unknown-" + project + "-" + runId,
+    submittedAt: P108_SCHEMA,
+    projectId: project,
+    runId,
+    expectedRevision,
+    fact: { kind: "outcome_unknown", runRef, reason },
+  });
+}
+
+export type P108EvidenceDeps = {
+  project: string;
+  evidenceId: string;
+  taskId: string;
+  obligationId: string;
+  requirementId: string;
+  runRef: RunRef | null;
+  outcome?: "PASS" | "FAIL" | "INCONCLUSIVE";
+  kind?: "claim" | "observation" | "verdict";
+  pins: P108AnchorPins;
+};
+
+export function buildP108EvidenceCommand(deps: P108EvidenceDeps): SubmitEvidenceCommand {
+  const evidence: EvidenceV1 = buildEvidenceV1({
+    evidenceId: deps.evidenceId,
+    kind: deps.kind ?? "observation",
+    outcome: deps.outcome ?? "PASS",
+    projectId: deps.project,
+    goalId: P108_GOAL,
+    taskId: deps.taskId,
+    coverage: [coverage(deps.obligationId, deps.requirementId)],
+    anchor: buildEffectivityAnchorV1({
+      planRef: p108PlanRef(deps.project),
+      planRevision: 1,
+      workspaceRevision: 1,
+      pinnedCompletionPolicy: deps.pins.completionPolicy,
+      pinnedArchitectureBaseline: deps.pins.architectureBaseline,
+    }),
+    verificationPlanRef: { planId: "vp-p108-" + deps.project, planDigest: sha256Hex("p108-vp-" + deps.project) },
+    runRef: deps.runRef,
+  });
+  return buildSubmitEvidenceCommand({
+    commandId: "cmd-p108-evidence-" + deps.project + "-" + deps.evidenceId,
+    correlationId: "corr-p108-evidence-" + deps.project + "-" + deps.evidenceId,
+    submittedAt: P108_SCHEMA,
+    evidence,
+  });
+}
+
+export function buildP108ReduceTaskCommand(project: string, taskId: string, expectedRevision = 0): import("../reduction.js").ReduceTaskCommand {
+  return buildReduceTaskCommand({
+    commandId: "cmd-p108-reduce-" + project + "-" + taskId + "-" + expectedRevision,
+    correlationId: "corr-p108-reduce-" + project + "-" + taskId + "-" + expectedRevision,
+    submittedAt: P108_SCHEMA,
+    projectId: project,
+    goalId: P108_GOAL,
+    taskId,
+    expectedRevision,
+    idempotencyKey: "p1-08-reduce-" + project + "-" + taskId + "-" + expectedRevision,
+  });
+}
+
+export function buildP108ReduceGoalCommand(project: string, expectedRevision = 0): ReduceGoalCommand {
+  return buildReduceGoalCommand({
+    commandId: "cmd-p108-reduce-goal-" + project + "-" + expectedRevision,
+    correlationId: "corr-p108-reduce-goal-" + project + "-" + expectedRevision,
+    submittedAt: P108_SCHEMA,
+    expectedRevision,
+    projectId: project,
+    goalId: P108_GOAL,
+  });
+}
+
+export type P108HandoffDeps = {
+  project: string;
+  packetId: string;
+  runRef: RunRef;
+  attemptRef: import("../dispatch.js").TaskAttemptRef;
+  planRef: PlanRevisionRef;
+  taskRevision: number;
+  /** The task the handoff packet is about (default P108_TASK_WORK). */
+  taskId?: string;
+  terminalOutcome?: HandoffPacketV1["source"]["runtime"]["terminalOutcome"];
+  workspaceId?: string;
+  workspaceRevision?: number;
+  roleBinding?: RoleBindingRefV1;
+};
+
+export function buildP108RecordHandoffCommand(deps: P108HandoffDeps): RecordHandoffCommand {
+  const packet = buildHandoffPacketV1({
+    packetId: deps.packetId,
+    projectId: deps.project,
+    goalId: P108_GOAL,
+    taskId: deps.taskId ?? P108_TASK_WORK,
+    planRef: deps.planRef,
+    taskRevision: deps.taskRevision,
+    workspaceId: deps.workspaceId ?? P108_WORKSPACE,
+    workspaceRevision: deps.workspaceRevision ?? 1,
+    runRef: deps.runRef,
+    attemptRef: deps.attemptRef,
+    terminalOutcome: deps.terminalOutcome ?? "completed",
+    ...(deps.roleBinding === undefined ? {} : { roleBinding: deps.roleBinding }),
+    unresolved: [],
+  });
+  return buildRecordHandoffCommand({
+    commandId: "cmd-p108-handoff-" + deps.project + "-" + deps.packetId,
+    correlationId: "corr-p108-handoff-" + deps.project + "-" + deps.packetId,
+    submittedAt: P108_SCHEMA,
+    projectId: deps.project,
+    packet,
+  });
+}
+
+export type P108ReplacementDeps = {
+  project: string;
+  runId: string;
+  taskId: string;
+  priorRunRef: RunRef;
+  packetRef: HandoffPacketRef;
+  reason?: import("../handoff.js").ReplacementReason;
+  expectedRevision?: number;
+  roleBinding?: RoleBindingRefV1;
+  declaredPermissions?: { tools: string[]; writeScope: string[] };
+  budget?: TaskBudgetV1;
+};
+
+export function buildP108ClaimReplacementCommand(deps: P108ReplacementDeps): ClaimReplacementCommand {
+  return buildClaimReplacementCommand({
+    commandId: "cmd-p108-replacement-" + deps.project + "-" + deps.runId,
+    correlationId: "corr-p108-replacement-" + deps.project + "-" + deps.runId,
+    submittedAt: P108_SCHEMA,
+    projectId: deps.project,
+    goalId: P108_GOAL,
+    taskId: deps.taskId,
+    expectedRevision: deps.expectedRevision ?? 1,
+    attemptId: "att-" + deps.runId,
+    runId: deps.runId,
+    ...(deps.roleBinding === undefined ? {} : { roleBinding: deps.roleBinding }),
+    ...(deps.declaredPermissions === undefined ? {} : { declaredPermissions: deps.declaredPermissions }),
+    ...(deps.budget === undefined ? {} : { budget: deps.budget }),
+    handoffPacketRef: deps.packetRef,
+    reason: deps.reason ?? "run_ended",
+  });
+}
+
+// ------------------------------------------------------------------------ //
+// Display-bound assertions (pure; used by the contract suite + fixtures)   //
+// ------------------------------------------------------------------------ //
+
+export function consoleBoundExpectation(size: number, max: number): { bounded: boolean; dropped: number } {
+  return { bounded: size <= max, dropped: Math.max(0, size - max) };
+}
+
+export function p108TimelineMax(): number {
+  return CONSOLE_TIMELINE_MAX_ENTRIES;
+}
+
+// ------------------------------------------------------------------------ //
+// Scope key helpers (canonicalJson of the COMPLETE ref — frozen contract)  //
+// ------------------------------------------------------------------------ //
+
+export function p108WorkspaceKey(projectId: string): string {
+  return consoleWorkspaceKey(projectId, P108_WORKSPACE);
+}
+
+export function p108GoalKey(projectId: string): string {
+  return consoleGoalKey(projectId, P108_WORKSPACE, P108_GOAL);
+}
+
+export function p108TaskKey(projectId: string, taskId: string): string {
+  return consoleTaskKey(projectId, P108_WORKSPACE, P108_GOAL, taskId);
+}
+
+// ------------------------------------------------------------------------ //
+// Runtime scripts (start-only / completed — deterministic for the console) //
+// ------------------------------------------------------------------------ //
+
+/** Run started but still in progress — the console MUST show it as ongoing, never done. */
+export const P108_RUNTIME_SCRIPT_START_ONLY_V1: FakeRuntimeScriptV1 = {
+  schemaVersion: 1,
+  items: [
+    { sequence: 1, eventType: "run_started", payload: { kind: "started", startedAt: P108_SCHEMA }, occurredAt: P108_SCHEMA },
+  ],
+};
+
+/** Completed run (exit 0) — a run-level fact, NEVER a Task satisfaction signal. */
+export const P108_RUNTIME_SCRIPT_COMPLETED_V1: FakeRuntimeScriptV1 = {
+  schemaVersion: 1,
+  items: [
+    { sequence: 1, eventType: "run_started", payload: { kind: "started", startedAt: P108_SCHEMA }, occurredAt: P108_SCHEMA },
+    { sequence: 2, eventType: "run_completed", payload: { kind: "completed", exitCode: 0 }, occurredAt: P108_SCHEMA },
+  ],
+};

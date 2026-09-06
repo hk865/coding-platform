@@ -29,3 +29,4 @@ export * from "./integration.js";
 export * from "./patch.js";
 export * from "./workspace-views.js";
 export * from "./workspace-drive.js";
+export * from "./console-views.js";

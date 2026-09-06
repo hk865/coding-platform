@@ -83,6 +83,7 @@ import type { WorkspaceCapabilityPort } from "../contracts/workspace-capability.
 import type { WorkspaceLeasePort } from "../contracts/workspace-lease.js";
 import type { WorkspaceDrivePort } from "../contracts/workspace-drive.js";
 import type { WorkspaceLeaseViewQuery, WorkspaceLeaseViewResult, IntegrationConflictViewQuery, IntegrationConflictViewResult, WorkspacePatchViewQuery, WorkspacePatchViewResult } from "../contracts/workspace-views.js";
+import type { PortfolioViewQuery, PortfolioViewResult, WorkspaceSummaryViewQuery, WorkspaceSummaryViewResult, PlanMatrixViewQuery, PlanMatrixViewResult, ActiveAgentsViewQuery, ActiveAgentsViewResult, TaskEvidenceViewQuery, TaskEvidenceViewResult, TimelineViewQuery, TimelineViewResult } from "../contracts/console-views.js";
 import type { AcquireWorkspaceReadLeaseCommand, AcquireReadLeaseReceipt, AcquireWorkspaceWriteLeaseCommand, AcquireWriteLeaseReceipt, ReleaseWorkspaceLeaseCommand, ReleaseLeaseReceipt } from "../contracts/workspace-lease.js";
 import type { RecordIntegrationResultCommand, RecordIntegrationResultReceipt } from "../contracts/integration.js";
 import type { RecordPatchCommand, RecordPatchReceipt } from "../contracts/patch.js";
@@ -219,6 +220,18 @@ export interface PersistentSqliteHarness {
   integrationConflicts(query: IntegrationConflictViewQuery): Promise<IntegrationConflictViewResult>;
   /** P1-07: workspace patch view (display only). */
   workspacePatches(query: WorkspacePatchViewQuery): Promise<WorkspacePatchViewResult>;
+  /** P1-08: console portfolio (read-only; readModel only). */
+  consolePortfolio(query: PortfolioViewQuery): Promise<PortfolioViewResult>;
+  /** P1-08: workspace summary (read-only; readModel only). */
+  consoleSummary(query: WorkspaceSummaryViewQuery): Promise<WorkspaceSummaryViewResult>;
+  /** P1-08: plan matrix (read-only; readModel only). */
+  consolePlanMatrix(query: PlanMatrixViewQuery): Promise<PlanMatrixViewResult>;
+  /** P1-08: workspace active agents (read-only; readModel only). */
+  consoleActiveAgents(query: ActiveAgentsViewQuery): Promise<ActiveAgentsViewResult>;
+  /** P1-08: task evidence detail (read-only; readModel only). */
+  consoleTaskEvidence(query: TaskEvidenceViewQuery): Promise<TaskEvidenceViewResult>;
+  /** P1-08: workspace timeline (read-only; readModel only). */
+  consoleTimeline(query: TimelineViewQuery): Promise<TimelineViewResult>;
   /** P1-04: review-context assembly (bounded ReviewPacket). */
   assembleReview(request: ReviewContextRequestV1): Promise<ReviewContextResultV1>;
   /** P1-03: outbox drive (claim -> assemble -> start -> events). */
@@ -432,6 +445,12 @@ export async function createPersistentSqliteHarness(
       workspaceLeaseView: (query) => built.readModel.workspaceLeaseView(query),
       integrationConflicts: (query) => built.readModel.integrationConflicts(query),
       workspacePatches: (query) => built.readModel.workspacePatches(query),
+      consolePortfolio: (query) => built.collaboration.consolePortfolio(query),
+      consoleSummary: (query) => built.collaboration.consoleSummary(query),
+      consolePlanMatrix: (query) => built.collaboration.consolePlanMatrix(query),
+      consoleActiveAgents: (query) => built.collaboration.consoleActiveAgents(query),
+      consoleTaskEvidence: (query) => built.collaboration.consoleTaskEvidence(query),
+      consoleTimeline: (query) => built.collaboration.consoleTimeline(query),
       assembleHandoff: (request) => built.handoffContext.assemble(request),
       assembleReview: (request) => built.reviewContext.assemble(request),
       drive: (trigger) => built.dispatchEngine.drive(trigger),
