@@ -1,7 +1,7 @@
 # IMPLEMENTATION-HANDOFF — Agent Platform 产品代码根
 
 ```yaml
-ticket_id: 窗口 2 — P1-09 / P1-10 / P1-17（←16）+ P1-13（←12）next
+ticket_id: 窗口 2 — P1-17 ✅ / P1-10 ✅（947 tests 全绿，ee53869）；P1-09 契约+wiring ✅（fixtures/suite/restart/集成骨架 + lanes 待建）；P1-13 待建
 status: P1-16 VERIFIED (fa9389d, 852 tests, real-kernel 1/1, evidence p1-16-implementation-evidence.md); P1-12 VERIFIED (4ecc517, 914 tests, evidence p1-12-implementation-evidence.md); 窗口 1 全部关闭，G1 PASS 在档；下一窗口四票 shared baseline 待建（limited authorization, 2026-09-06 continuous window — P1-09..P1-17 + G1..G5 authorized)
 updated: 2026-09-06
 authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a) all done / (b) architecture tradeoff / (c) architecture-granularity confirmation; GitHub push still needs user authorization)
