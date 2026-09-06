@@ -88,6 +88,8 @@ import {
   makeCommitCursor,
   seqOfCommitCursor,
 } from "../contracts/ledger.js";
+import { canonicalJson } from "../contracts/fingerprint.js";
+import { continuationRecordRefFor, WORK_CONTEXT_VIEW_MAX_CONTINUATIONS } from "../contracts/context-continuity.js";
 import type { PlanRevisionAcceptedEvent, PlanRevisionRef, PlanRevisionSnapshot } from "../contracts/plan.js";
 import type {
   RunEventRecordedEvent,
@@ -556,6 +558,11 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   private readonly stmtUpsertIntegrationConflict: StatementSync;
   private readonly stmtSelectWorkspacePatch: StatementSync;
   private readonly stmtUpsertWorkspacePatch: StatementSync;
+  /** P1-16 LANE-B: continuation table (write) + combined view selects (read). */
+  private readonly stmtSelectWorkContextBinding: StatementSync;
+  private readonly stmtSelectWorkContextNotes: StatementSync;
+  private readonly stmtSelectWorkContextContinuations: StatementSync;
+  private readonly stmtUpsertWorkContextContinuations: StatementSync;
 
   constructor(options: SqliteReadModelIndexOptions) {
     if (typeof options.path !== "string" || options.path.length === 0) {
@@ -770,6 +777,25 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     );
     this.stmtUpsertWorkspacePatch = this.db.prepare(
       "INSERT INTO workspace_patch_view (project_id, workspace_id, patch_json) VALUES (?, ?, ?) ON CONFLICT(project_id, workspace_id) DO UPDATE SET patch_json = excluded.patch_json",
+    );
+    // P1-16 LANE-B work-context continuation projection (writes the continuations
+    // table) + read-only select statements for the combined-view binding/notes
+    // tables (populated by LANE-A).
+    this.stmtSelectWorkContextBinding = this.db.prepare(
+      "SELECT entry_json FROM work_context_binding WHERE scope_key = ?",
+    );
+    this.stmtSelectWorkContextNotes = this.db.prepare(
+      "SELECT entry_json FROM work_context_notes WHERE scope_key = ?",
+    );
+    this.stmtSelectWorkContextContinuations = this.db.prepare(
+      "SELECT entry_json FROM work_context_continuations WHERE scope_key = ?",
+    );
+    this.stmtUpsertWorkContextContinuations = this.db.prepare(
+      `INSERT INTO work_context_continuations (scope_key, entry_json, source_cursor)
+       VALUES (?, ?, ?)
+       ON CONFLICT(scope_key) DO UPDATE SET
+         entry_json = excluded.entry_json,
+         source_cursor = excluded.source_cursor`,
     );
   }
 
@@ -1784,7 +1810,8 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       eventType === "WorkspaceWriteLeaseGranted" ||
       eventType === "WorkspaceWriteLeaseReleased" ||
       eventType === "IntegrationJoined" ||
-      eventType === "PatchRecorded"
+      eventType === "PatchRecorded" ||
+      eventType === "ContinuationRecorded"
     );
   }
 
@@ -2382,14 +2409,52 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   }
 
   // LANE-B: ContinuationRecord rows + frontier aggregation.
-  private applyP116ContextLaneB(_event: DomainEvent, _cursor: CommitCursor): void {
-    // P1-16 lane B implementation region
+  private applyP116ContextLaneB(event: DomainEvent, cursor: CommitCursor): void {
+    void cursor;
+    if (event.eventType !== "ContinuationRecorded") return;
+    const ev = event as import("../contracts/context-continuity.js").ContinuationRecordedEvent;
+    const workId = ev.payload.result.workId;
+    const scopeKey = canonicalJson({ projectId: ev.projectId, workspaceId: ev.workspaceId, workId });
+    const snapshot: import("../contracts/context-continuity.js").ContinuationRecordSnapshot = {
+      ref: continuationRecordRefFor(ev.projectId, ev.workspaceId, workId, ev.payload.result.reportId),
+      revision: 1,
+      schemaVersion: 1,
+      result: ev.payload.result,
+    };
+    const existing = this.stmtSelectWorkContextContinuations.get(scopeKey) as { entry_json: string } | undefined;
+    const rows: import("../contracts/context-continuity.js").ContinuationRecordSnapshot[] = existing
+      ? (JSON.parse(existing.entry_json) as import("../contracts/context-continuity.js").ContinuationRecordSnapshot[])
+      : [];
+    rows.push(snapshot);
+    this.stmtUpsertWorkContextContinuations.run(scopeKey, JSON.stringify(rows), String(cursor));
   }
 
-  /** P1-16 LANE-A/LANE-B stub: work context view (binding + notes + continuations).
-   * Region markers are fixed by the shared baseline. */
+  /** P1-16 work context view — field-for-field mirror of the InMemory index.
+   * LANE-A populates the binding/notes tables; LANE-B populates the
+   * continuations table. The composed view is recent-first and bounded by
+   * WORK_CONTEXT_VIEW_MAX_CONTINUATIONS; a missing binding -> not_found. */
   async workContext(query: import("../contracts/context-continuity.js").WorkContextViewQuery): Promise<import("../contracts/context-continuity.js").WorkContextViewResult> {
-    throw new Error("P1-16 lane A/B: workContext (sqlite) not implemented yet");
+    const scopeKey = canonicalJson({
+      projectId: query.projectId,
+      workspaceId: query.workspaceId,
+      workId: query.workId,
+    });
+    const bindingRow = this.stmtSelectWorkContextBinding.get(scopeKey) as { entry_json: string } | undefined;
+    if (bindingRow === undefined) {
+      return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId, workId: query.workId };
+    }
+    const binding = JSON.parse(bindingRow.entry_json) as import("../contracts/context-continuity.js").WorkContextBindingSnapshot;
+    const notesRow = this.stmtSelectWorkContextNotes.get(scopeKey) as { entry_json: string } | undefined;
+    const notes: import("../contracts/context-continuity.js").WorkContextNoteRow[] = notesRow
+      ? (JSON.parse(notesRow.entry_json) as import("../contracts/context-continuity.js").WorkContextNoteRow[])
+      : [];
+    const contRow = this.stmtSelectWorkContextContinuations.get(scopeKey) as { entry_json: string } | undefined;
+    const raw: import("../contracts/context-continuity.js").ContinuationRecordSnapshot[] = contRow
+      ? (JSON.parse(contRow.entry_json) as import("../contracts/context-continuity.js").ContinuationRecordSnapshot[])
+      : [];
+    const continuations = raw.slice(-WORK_CONTEXT_VIEW_MAX_CONTINUATIONS).reverse();
+    const observedCursor = this.readCheckpoint();
+    return { status: "ready", binding, notes, continuations, sourceCursor: observedCursor! };
   }
 
   /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — rebuilt ONLY from the

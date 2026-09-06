@@ -51,6 +51,8 @@ import type { GoalCreatedEvent } from "../contracts/command-event.js";
 import type { DomainEvent } from "../contracts/events.js";
 import type { EventPage, PositionedEvent } from "../contracts/ledger.js";
 import { compareCommitCursor, makeCommitCursor, seqOfCommitCursor } from "../contracts/ledger.js";
+import { canonicalJson } from "../contracts/fingerprint.js";
+import { continuationRecordRefFor, WORK_CONTEXT_VIEW_MAX_CONTINUATIONS } from "../contracts/context-continuity.js";
 import type { PlanRevisionAcceptedEvent, PlanRevisionRef, PlanRevisionSnapshot } from "../contracts/plan.js";
 import type {
   RunEventRecordedEvent,
@@ -312,6 +314,22 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   private readonly p108TimelineRows = new Map<string, import("../contracts/console-views.js").TimelineEntry[]>();
   /** LANE-B: per-workspace timeline seq counter. */
   private readonly p108TimelineSeq = new Map<string, number>();
+
+  // ------------------------------------------------------------------ //
+  // P1-16 work-context view storage (co-owned by LANE-A + LANE-B).      //
+  // LANE-A is authoritative for the binding + notes rows; LANE-B owns   //
+  // the continuation rows + frontier aggregation. The combined          //
+  // workContext() view composes all three. Rows are keyed by the        //
+  // FULL-scope key (canonicalJson of the complete work-context ref),    //
+  // so two projects / workspaces reusing the same local workId NEVER    //
+  // collide (hard isolation).                                           //
+  // ------------------------------------------------------------------ //
+  /** LANE-A: full-scope key -> WorkContextBindingSnapshot. */
+  private readonly p116BindingRows = new Map<string, import("../contracts/context-continuity.js").WorkContextBindingSnapshot>();
+  /** LANE-A: full-scope key -> WorkContextNoteRow[] (arrival order). */
+  private readonly p116NoteRows = new Map<string, import("../contracts/context-continuity.js").WorkContextNoteRow[]>();
+  /** LANE-B: full-scope key -> ContinuationRecordSnapshot[] (arrival order). */
+  private readonly p116ContinuationRows = new Map<string, import("../contracts/context-continuity.js").ContinuationRecordSnapshot[]>();
 
   async advance(page: EventPage): Promise<ProjectionReceipt> {
     const toApply: PositionedEvent[] = [];
@@ -1602,8 +1620,21 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   }
 
   // LANE-B: ContinuationRecord rows + frontier aggregation.
-  private applyP116ContextLaneB(_event: DomainEvent, _cursor: CommitCursor): void {
-    // P1-16 lane B implementation region
+  private applyP116ContextLaneB(event: DomainEvent, cursor: CommitCursor): void {
+    void cursor;
+    if (event.eventType !== "ContinuationRecorded") return;
+    const ev = event as import("../contracts/context-continuity.js").ContinuationRecordedEvent;
+    const workId = ev.payload.result.workId;
+    const scopeKey = canonicalJson({ projectId: ev.projectId, workspaceId: ev.workspaceId, workId });
+    const snapshot: import("../contracts/context-continuity.js").ContinuationRecordSnapshot = {
+      ref: continuationRecordRefFor(ev.projectId, ev.workspaceId, workId, ev.payload.result.reportId),
+      revision: 1,
+      schemaVersion: 1,
+      result: ev.payload.result,
+    };
+    const rows = this.p116ContinuationRows.get(scopeKey) ?? [];
+    rows.push(snapshot);
+    this.p116ContinuationRows.set(scopeKey, rows);
   }
 
   /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — rebuilt ONLY from the
@@ -2456,11 +2487,26 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** P1-16 LANE-A/LANE-B stub: work context view (binding + notes + continuations).
-   * Region markers are fixed by the shared baseline; lane A owns the binding +
-   * notes rows, lane B owns the continuation rows + frontier aggregation. */
+  /** P1-16 work context view — binding + notes + continuations (display only).
+   * LANE-A owns the binding + notes rows; LANE-B owns the continuation rows.
+   * The method composes the COMPLETE result: binding absent -> not_found;
+   * otherwise ready with the bounded (recent-first) continuation window.
+   * Freshness is judged by the opaque observedCursor. */
   async workContext(query: import("../contracts/context-continuity.js").WorkContextViewQuery): Promise<import("../contracts/context-continuity.js").WorkContextViewResult> {
-    throw new Error("P1-16 lane A/B: workContext not implemented yet");
+    const scopeKey = canonicalJson({
+      projectId: query.projectId,
+      workspaceId: query.workspaceId,
+      workId: query.workId,
+    });
+    const binding = this.p116BindingRows.get(scopeKey) ?? null;
+    const notes = this.p116NoteRows.get(scopeKey) ?? [];
+    const raw = this.p116ContinuationRows.get(scopeKey) ?? [];
+    const continuations = raw.slice(-WORK_CONTEXT_VIEW_MAX_CONTINUATIONS).reverse();
+    const observedCursor = this.observedCursor;
+    if (binding === null) {
+      return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId, workId: query.workId };
+    }
+    return { status: "ready", binding, notes, continuations, sourceCursor: observedCursor! };
   }
 
   /** Event types this projection currently has handlers for (P1-02 + P1-03, v1). */
@@ -2488,7 +2534,8 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       eventType === "WorkspaceWriteLeaseGranted" ||
       eventType === "WorkspaceWriteLeaseReleased" ||
       eventType === "IntegrationJoined" ||
-      eventType === "PatchRecorded"
+      eventType === "PatchRecorded" ||
+      eventType === "ContinuationRecorded"
     );
   }
 }
