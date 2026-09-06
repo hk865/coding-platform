@@ -1,16 +1,23 @@
 ```yaml
-ticket_id: 窗口 3 — P1-11（共享基线 8c42367 已提交：965 passed / 24 skipped 探针组；lanes A/B/C 待派发）
-status: P1-09 ✅ (验收后最新 main；965/989 基线)、P1-10 ✅、P1-16 ✅ (fa9389d)、P1-12 ✅ (4ecc517)、P1-17 ✅；G1/G2 PASS 在档；P1-11 共享基线完成，B lanes 实施中
+ticket_id: P1-11 ✅ VERIFIED（6d70494；全量 145 files / 1025 tests PASS，0 skip）——下一窗口：P1-13（←12 已验收）
+status: P1-09 ✅ / P1-10 ✅ / P1-11 ✅（6d70494, 1025/1025, G4 PASS 在档）；P1-16 ✅ (fa9389d)、P1-12 ✅ (4ecc517)、P1-17 ✅；G1/G2 PASS、G4 PASS；剩余票 = P1-13（←12）、P1-14（←11+12）、P1-15（←09+14+17）；G3 等 07+15、G5 等 13+14
 updated: 2026-09-07
-authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a) all done / (b) architecture tradeoff / (c) architecture-granularity confirmation; GitHub push still needs user authorization) + user 2026-09-07 阶段时限 = 09:00 CST 硬性到点（先落干净检查点再报告）；分工纠正：实现/修复由 B lanes 承担，integrator 只做共享基线/合并/集成验收/共享面修正
-next: P1-11 lanes A（control）+ B（compilers）+ C（dual-adapter projection）并行；合并后 integrator 验收（typecheck/双套件/真实 SQLite/restart 等价/validate-docs/证据块）；P1-11 验收后 → P1-13 基线（13 只依赖 12 = 已验收，可并行建）+ P1-14（等 11+12）；gates: G4 waits 09+11, G5 waits 13+14, G3 waits 07+15
-evidence: P1-11 acceptance evidence will live in dev_docs/verification/p1-11-implementation-evidence.md
-shared_baseline: P1-11 = 8c42367（前置 main 含 P1-09 实现 2c01536 等；typecheck 0；全量 140 files / 989 tests：965 PASS + 24 skip（P1-11 探针组 5 files）——零回归）
-parallel_scope: P1-11 三 lane（A/B/C 独立 worktree，自 8c42367）；lane 均隔离；重启+集成由 integrator 执行
-merge_surface_note: P1-11 只版本化追加——ControlEngine +3（recordPlanChangeProposal/recordUserDecision/applyPlanChange）、HumanCollaboration.GoalChangePort +3（amend/decide/applyChange）、ReadModelIndex.planChangeView、3 个新 commitKind（plan-change-proposal-record/user-decision-record/goal-change-apply）、4 个新事件（PlanProposalRecorded/UserDecisionRecorded/GoalRevisionRecorded/PlanRevisionSuperseded；apply fold 三事件：PlanRevisionAccepted → PlanRevisionSuperseded → GoalRevisionRecorded）——零改动 P1-00..P1-10 冻结形状；新 planId 聚合 @0（P1-02 PlanRevision 不可变语义 → 新 revision = 新 planId 聚合），task 集合在 P1-11 不可变
+authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a) all done / (b) architecture tradeoff / (c) architecture-granularity confirmation; GitHub push still needs user authorization) + user 2026-09-07 阶段时限 = 09:00 CST 硬性到点（先落干净检查点再报告）；实现/修复由 B lanes 承担，integrator 只做共享基线/合并/集成验收/共享面修正
+next: P1-13 共享基线（计划：dev_docs/verification/2026-09-07-p1-13-baseline-plan.md；governance 第三类走同一 commitKind union 扩展，待 C 复核后冻结）→ lanes A/B/C → 验收（P1-13 后再 P1-14）；09:00 到点前未完成则按到点协议停止
+evidence: P1-11 = dev_docs/verification/p1-11-implementation-evidence.md（6d70494）；G4 = dev_docs/verification/g4-gate-evidence.md（PASS）
+shared_baseline: P1-11 共享基线 = d5a51ba（965 passed + 24 skip 零回归）；验收 main = 6d70494（1025/1025）
+parallel_scope: P1-11 三 lane 已全部合入（B 2512b93 = compilers；C merge = projection；A merge = control）；合并后 integrator 修复：① P111_WORKSPACE→ws-shared（canonical 对齐）② 契约套件 skipIf 死锁修复（wiring READY 门控 + beforeAll 无条件）③ 探针诊断回退
+merge_surface_note: P1-11 零改动 P1-00..P1-10 冻结形状（只版本化追加）；3 个新 commitKind + 4 个新事件（apply fold 三事件序冻结）；任务集合在 P1-11 不可变；新 revision = 新 planId 聚合 @0
 ```
 
 ---
+
+## P1-11 验收记录（2026-09-07，正式）
+
+- **命令与数字**：typecheck 0；全量 145 files / **1025 tests PASS（0 skip）**；双适配器同套件 10/10 + 10/10；p1-11.integration.test 2/2（真实 SQLite + InMemory/SQLite 视图一致）；p1-11-restart.test 1/1（close→reopen 同 DB 逐字段一致）；p1-11-evidence.test 1/1；doc validate-docs 13/13。
+- **验收映射 + 裁决**：见 dev_docs/verification/p1-11-implementation-evidence.md（票尾 Implementation record 同款）。
+- **G4（09+11）PASS**：dev_docs/verification/g4-gate-evidence.md。
+- **三点 integrator 裁决已落地**：① 重放 vs source_stale：source_stale 分支内 causationId+同命令关联重建 receipt（读零写，replayed 同 eventIds/cursor）；② guards_failed issues 为 string[]（code+message 映射）；③ ws-shared 统一 + 存在性锚点=goal 链。
 
 ## P1-11 当前票据与共享契约基线（并行窗口 3 — lanes A/B/C 实施中）
 
