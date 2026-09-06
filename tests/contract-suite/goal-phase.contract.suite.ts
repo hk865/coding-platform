@@ -105,10 +105,9 @@ export function defineGoalReductionContractSuite(createHarness: P1_05HarnessFact
       expect(receipt.reasonCodes).toContain("unknown_side_effect_needs_decision");
       expect(receipt.reasonCodes).toContain("guard_unreconciled_side_effect");
       expect(receipt.reasonCodes).not.toContain("completion_guard_ok");
-      expect(receipt.reasonCodes).toContain("guard_required_obligation_unsatisfied");
-      // the run with the unknown outcome is recorded in the reconciliation
-      const rec = receipt as { phase: string } & { sideEffects?: unknown };
-      void rec;
+      // the work task's reduction is verifying (not satisfied) — the guard
+      // records the task-level blocker:
+      expect(receipt.reasonCodes).toContain("guard_required_work_task_unsatisfied");
     });
 
     it("PLANNING for a goal with no active plan; empty plan never completes (full path)", async () => {
@@ -160,7 +159,7 @@ export function defineGoalReductionContractSuite(createHarness: P1_05HarnessFact
       const invalid = await h.reduceGoal({ ...reduceGoalCommand(sc, { commandId: "cmd-p105-invalid", expectedRevision: 0, idempotencyKey: "p105-invalid" }), commandType: "ReduceGoalX" as never });
       expect(invalid.status).toBe("rejected");
       if (invalid.status === "rejected") expect(invalid.code).toBe("invalid");
-      const notFound = await h.reduceGoal({ ...reduceGoalCommand(sc, { commandId: "cmd-p105-nf", expectedRevision: 0, idempotencyKey: "p105-nf" }), payload: { goalId: "goal-missing-105" } });
+      const notFound = await h.reduceGoal({ ...reduceGoalCommand(sc, { commandId: "cmd-p105-nf", expectedRevision: 0, idempotencyKey: "p105-nf" }), aggregateId: "goal-missing-105", payload: { goalId: "goal-missing-105" } });
       expect(notFound.status).toBe("rejected");
       if (notFound.status === "rejected") expect(notFound.code).toBe("not_found");
 

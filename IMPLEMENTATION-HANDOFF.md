@@ -2,11 +2,11 @@
 
 ```yaml
 ticket_id: P1-05
-status: in progress (limited authorization, 2026-09-05 — P1-05 only; shared baseline committed; 3 lanes dispatched in isolated worktrees; NOT accepted yet)
+status: implementation verified (limited authorization, 2026-09-05 — P1-05 only); lanes A/B implemented (subagent infra failed mid-run -> integrator takeover, recorded below) and merged; lane C validated (no changes needed); full acceptance evidence in dev_docs/verification/p1-05-implementation-evidence.md
 updated: 2026-09-05
 authorized_by: user (limited authorization for P1-05 only, per P1-04 precedent; P1-05 is NOT P1 acceptance, P1-07/08 NOT auto-started)
-next: merge lanes -> integration -> acceptance evidence -> STOP after P1-05 (P1-06 parallel session runs separately; P1-07/08 only after P1-05 acceptance)
-evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-05-implementation-evidence.md (at acceptance); P1-04 baseline: commit 5a278cb
+next: STOP after P1-05 acceptance — do NOT auto-start P1-07/08 (DAG: 05 验收后才出现 07/08 并行窗口); P1-06 parallel session paused by user (its worktree agent_platform-p1-06 branch p1-06-int is at its own baseline; merge surface: events/ledger/validation.ts — coordinate at merge)
+evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-05-implementation-evidence.md (at acceptance); P1-04 upstream baseline: commit 5a278cb
 yaml
 ticket_id: P1-04
 status: implementation verified (limited authorization, 2026-09-05 — P1-04 only); four lanes merged; full acceptance evidence in dev_docs/verification/p1-04-implementation-evidence.md
@@ -55,19 +55,27 @@ evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_doc
 
 | Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
 | --- | --- | --- | --- | --- |
-| A goal reducer | `p1-05-lane-a` @ /home/han001/projects/agents/agent_platform-p1-05-a | reduceGoalImpl 完整实现（schema→goal/plan 解析→事实收集（TaskReduction/证据集/runFact/副作用/planning）→纯 reduceGoalPhase→单事务提交→map）；只对 required 集合归约，绝不写 Task phase/投影；不创造模型调用 | src/control/goal-reducer.ts、tests/control/goal-reducer.test.ts | ▶ 派发中 |
-| B 视图+事件 | `p1-05-lane-b` @ /home/han001/projects/agents/agent_platform-p1-05-b | GoalPhaseUpdated 投影（goalStatus+goalTimeline）InMemory+SQLite 双适配器、重建等价、全键隔离、freshness；绝不把投影当 reducer 输入 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、tests/read-model/p1-05-goal-phase-projection.test.ts、tests/sqlite-read-model/p1-05-goal-phase-projection.test.ts | ▶ 派发中 |
-| C 重启证据+集成骨架 | `p1-05-lane-c` @ /home/han001/projects/agents/agent_platform-p1-05-c | 重启路径硬化（同事实重放→同 phase/解释；GoalPhase 快照/视图逐字段一致）、证据收集（对照 P1-04 模式）、集成骨架（可暂红） | tests/restart/p1-05-*.ts、tests/restart/evidence/p1-05-evidence.test.ts、tests/integration/p1-05.integration.test.ts | ▶ 派发中 |
+| A goal reducer | `p1-05-lane-a` @ /home/han001/projects/agents/agent_platform-p1-05-a | reduceGoalImpl 完整实现（schema→goal/plan 解析→事实收集（TaskReduction/证据集/runFact/副作用/obligation 摘要）→纯 reduceGoalPhase→单事务提交→map）；只对 required 集合归约，绝不写 Task phase/投影 | src/control/goal-reducer.ts、tests/control/goal-reducer.test.ts | ✅ 6/6（commit 36c144c；subagent 失败后 integrator 接管完成；主分支 8a7da9c 已合并） |
+| B 视图+事件 | `p1-05-lane-b` @ /home/han001/projects/agents/agent_platform-p1-05-b | GoalPhaseUpdated 投影（goalStatus+goalTimeline）InMemory+SQLite 双适配器、重建等价、全键隔离、freshness；绝不把投影当 reducer 输入 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、tests/read-model/p1-05-goal-phase-projection.test.ts、tests/sqlite-read-model/p1-05-goal-phase-projection.test.ts | ✅ 7/7（commit faa97e2；subagent 失败后 integrator 接管完成；主分支 746dfc6 已合并） |
+| C 重启证据+集成骨架 | `p1-05-lane-c` @ /home/han001/projects/agents/agent_platform-p1-05-c | 重启路径硬化（同事实重放→同 phase/解释；GoalPhase 快照/视图逐字段一致）、证据收集、集成骨架 | tests/restart/p1-05-*.ts、tests/restart/evidence/p1-05-evidence.test.ts、tests/integration/p1-05.integration.test.ts | ✅ 无改动（integrator 已写骨架；重启 1/1 + 证据 1/1 + 集成 1/1 全部通过——探针自动启用即验证） |
 
 integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 schema/接口/共享 fixture）、`src/ledger/**`、`src/sqlite-ledger/**`、`src/control/control-engine.ts`、`src/harness/**`、`tests/contract-suite/**`、`tests/integration/**`、文档与状态记录。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结签名（如有缺口：提交具体建议给 integrator 统一修改基线并通知消费者）。子 Agent 从实际读文件开始，不等待派发者；允许测试命令：`pnpm vitest run <自身路径>`、`pnpm typecheck`。
 
-## P1-05 已执行命令及结果（共享基线）
+## P1-05 已执行命令及结果（最终）
 
 | 命令（product root） | 结果 |
 | --- | --- |
-| `pnpm typecheck` | PASS 0 errors（含全部新契约/夹具/套件/骨架） |
-| `pnpm vitest run`（全量，基线时刻） | 56 files / 505 tests PASS（P1-00…04 基线 486 零回归 + 19 个新 pure reducer 测试；P1-05 路径套件因 stub 暂红属预期，2 files） |
-| `pnpm vitest run tests/restart/evidence/p1-05-evidence.test.ts` | skip（isP105Ready 探针）——lane A/B 落地后自动启用 |
+| `pnpm typecheck` | PASS 0 errors（全部契约/夹具/套件/双适配器实现） |
+| `pnpm vitest run`（全量，最终） | **64 files / 537 tests PASS**（P1-00…04 基线 486 零回归 + P1-05 新增 51：19 纯 reducer + 双套件 8×2 + 6 lane A + 7 lane B + 重启 1 + 证据 1 + 集成 1；明细见 p1-05-implementation-evidence.md） |
+| `pnpm vitest run tests/integration/p1-05.contract-suite.inmemory.test.ts` | 8/8 PASS |
+| `pnpm vitest run tests/integration/p1-05.contract-suite.sqlite.test.ts` | 8/8 PASS（**同一套件定义，无调参**） |
+| `pnpm vitest run tests/integration/p1-04.contract-suite.inmemory.test.ts tests/integration/p1-04.contract-suite.sqlite.test.ts` | 18/18 × 2 = 36 PASS（P1-04 套件零回归） |
+| `pnpm vitest run tests/integration/p1-05.integration.test.ts` | 1/1 PASS（真实 SQLite：完整路径 + 重启等价） |
+| `pnpm vitest run tests/restart/p1-05-restart.test.ts` | 1/1 PASS（探针自动启用；GoalPhase 快照/视图逐字段一致） |
+| `pnpm vitest run tests/restart/evidence/p1-05-evidence.test.ts` | 1/1 PASS（P1-05-EVIDENCE JSON 证据块，可重复） |
+| `node dev_docs/verification/validate-docs.mjs` | 12/12 PASS |
+
+**integrator 裁决记录**：三路子 Agent 均在执行中因基础设施故障中断（未产出、未 commit；B 在内存适配器完成后中断）。按 P1-04 先例由 integrator 接管实现（A/B 在各自 worktree 内完成并以 lane commit 合并；C 的骨架由 integrator 编写、无改动）。共享 helper 修正在 main（satisfyEverythingP105 在 outcome_unknown 时断言 work=verifying）。**P1-06 合并面**：并行 session（已暂停）的 worktree `agent_platform-p1-06`（branch `p1-06-int`，未 commit）在 events.ts/ledger.ts/validation.ts 上与 P1-05 同区修改——P1-06 恢复后合入 main 时按'双方皆保留、版本化追加'机械解决该三处冲突；其 typecheck 红（in-memory/sqlite ledger 未加 handoff-record/replacement-claim case）属 Phase 1 未完成态。
 
 ---
 ## P1-04 当前票据与共享契约基线
