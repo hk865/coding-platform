@@ -272,6 +272,7 @@ export function evidenceCommandFor(sc: P104Preview, deps: {
     correlationId: deps.correlationId ?? "corr-p104-evidence",
     submittedAt: SCHEMA,
     evidence: deps.evidence,
+    actor: deps.evidence.source.actor,
     ...(deps.idempotencyKey !== undefined ? { idempotencyKey: deps.idempotencyKey } : {}),
   });
 }
