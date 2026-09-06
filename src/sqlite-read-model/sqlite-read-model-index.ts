@@ -132,6 +132,8 @@ import type {
 import type { IntegrationJoinedEvent } from "../contracts/integration.js";
 import { patchRecordRefFor } from "../contracts/patch.js";
 import type { PatchRecordedEvent } from "../contracts/patch.js";
+import { canonicalJson } from "../contracts/fingerprint.js";
+import { workContextRefFor } from "../contracts/context-continuity.js";
 import type { RoleBindingRefV1 } from "../contracts/dispatch.js";
 import type {
   PortfolioEntry,
@@ -467,6 +469,11 @@ type ActiveAgentRow = {
   run: string;
   source_cursor: string;
 };
+
+/** P1-16 full-scope work-context key: canonicalJson of the COMPLETE ref. */
+function workContextScopeKey(projectId: string, workspaceId: string, workId: string): string {
+  return canonicalJson(workContextRefFor(projectId, workspaceId, workId));
+}
 
 /** Derive the TaskDetail.run (TaskRunState) part from an ActiveAgentView row. */
 function taskRunStateFrom(agent: ActiveAgentView): TaskRunState {
@@ -1812,7 +1819,11 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       eventType === "WorkspaceWriteLeaseGranted" ||
       eventType === "WorkspaceWriteLeaseReleased" ||
       eventType === "IntegrationJoined" ||
-      eventType === "PatchRecorded"
+      eventType === "PatchRecorded" ||
+      // P1-16 LANE-A events (handler + isHandledEventType in the SAME commit).
+      eventType === "WorkContextBound" ||
+      eventType === "WorkRunLinked" ||
+      eventType === "ExecutionNoteRecorded"
     );
   }
 
@@ -2407,8 +2418,44 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   }
 
   // LANE-A: WorkContextBinding + ExecutionNote rows (binding/notes view part).
-  private applyP116ContextLaneA(_event: DomainEvent, _cursor: CommitCursor): void {
-    // P1-16 lane A implementation region
+  private applyP116ContextLaneA(event: DomainEvent, cursor: CommitCursor): void {
+    if (event.eventType === "WorkContextBound") {
+      const ev = event as import("../contracts/context-continuity.js").WorkContextBoundEvent;
+      const ref = workContextRefFor(ev.projectId, ev.workspaceId, ev.aggregateId);
+      const snapshot = { ref, revision: ev.aggregateRevision, schemaVersion: 1, binding: ev.payload.binding };
+      this.writeP108JsonRow("work_context_binding", canonicalJson(ref), JSON.stringify(snapshot), cursor);
+    } else if (event.eventType === "WorkRunLinked") {
+      const ev = event as import("../contracts/context-continuity.js").WorkRunLinkedEvent;
+      const ref = workContextRefFor(ev.projectId, ev.workspaceId, ev.aggregateId);
+      const key = canonicalJson(ref);
+      const current = this.readP108JsonRow("work_context_binding", key);
+      if (current !== null) {
+        const prev = JSON.parse(current.json) as import("../contracts/context-continuity.js").WorkContextBindingSnapshot;
+        const next: import("../contracts/context-continuity.js").WorkContextBindingSnapshot = {
+          ref,
+          revision: ev.aggregateRevision,
+          schemaVersion: 1,
+          binding: { ...prev.binding, linkedRunRefs: ev.payload.linkedRunRefs.map((r) => ({ ...r })) },
+        };
+        this.writeP108JsonRow("work_context_binding", key, JSON.stringify(next), cursor);
+      }
+    } else if (event.eventType === "ExecutionNoteRecorded") {
+      const ev = event as import("../contracts/context-continuity.js").ExecutionNoteRecordedEvent;
+      const note = ev.payload.note;
+      const ref = workContextRefFor(ev.projectId, ev.workspaceId, note.workId);
+      const key = canonicalJson(ref);
+      const current = this.readP108JsonRow("work_context_notes", key);
+      const rows = current === null ? [] : (JSON.parse(current.json) as import("../contracts/context-continuity.js").WorkContextNoteRow[]);
+      rows.push({
+        noteRef: { aggregateType: "ExecutionNote", projectId: ev.projectId, workspaceId: ev.workspaceId, workId: note.workId, noteId: note.noteId },
+        kind: note.kind,
+        summary: note.summary,
+        runRef: { ...note.runRef },
+        createdAt: note.createdAt,
+        sourceCursor: cursor,
+      });
+      this.writeP108JsonRow("work_context_notes", key, JSON.stringify(rows), cursor);
+    }
   }
 
   // LANE-B: ContinuationRecord rows + frontier aggregation.
@@ -2433,9 +2480,34 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   }
 
   /** P1-16 LANE-A/LANE-B stub: work context view (binding + notes + continuations).
-   * Region markers are fixed by the shared baseline. */
+   * Region markers are fixed by the shared baseline. Lane A owns binding + notes.
+   * Lane B fills the continuation aggregation. */
   async workContext(query: import("../contracts/context-continuity.js").WorkContextViewQuery): Promise<import("../contracts/context-continuity.js").WorkContextViewResult> {
-    throw new Error("P1-16 lane A/B: workContext (sqlite) not implemented yet");
+    const observedCursor = this.readCheckpoint();
+    const key = workContextScopeKey(query.projectId, query.workspaceId, query.workId);
+    const bindingRow = this.readP108JsonRow("work_context_binding", key);
+
+    // Freshness: before ANY event is applied we cannot judge the work exists —
+    // this is "not_ready" (distinct from a definitive "not_found").
+    if (observedCursor === null) {
+      return { status: "not_ready", observedCursor: null };
+    }
+    if (bindingRow === null) {
+      return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId, workId: query.workId };
+    }
+
+    const binding = JSON.parse(bindingRow.json) as import("../contracts/context-continuity.js").WorkContextBindingSnapshot;
+    const notesRow = this.readP108JsonRow("work_context_notes", key);
+    const notes = notesRow === null ? [] : (JSON.parse(notesRow.json) as import("../contracts/context-continuity.js").WorkContextNoteRow[]);
+    // LANE-B composition point: lane B fills `continuations`. Absent until lane B.
+    const continuations: import("../contracts/context-continuity.js").ContinuationRecordSnapshot[] = [];
+    return {
+      status: "ready",
+      binding,
+      notes,
+      continuations,
+      sourceCursor: observedCursor,
+    };
   }
 
   /** P1-12 LANE-A/LANE-B stub: architecture inspection view (display only). */
