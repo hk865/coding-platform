@@ -1,16 +1,75 @@
 # IMPLEMENTATION-HANDOFF — Agent Platform 产品代码根
 
 ```yaml
+ticket_id: P1-05
+status: in progress (limited authorization, 2026-09-05 — P1-05 only; shared baseline committed; 3 lanes dispatched in isolated worktrees; NOT accepted yet)
+updated: 2026-09-05
+authorized_by: user (limited authorization for P1-05 only, per P1-04 precedent; P1-05 is NOT P1 acceptance, P1-07/08 NOT auto-started)
+next: merge lanes -> integration -> acceptance evidence -> STOP after P1-05 (P1-06 parallel session runs separately; P1-07/08 only after P1-05 acceptance)
+evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-05-implementation-evidence.md (at acceptance); P1-04 baseline: commit 5a278cb
+yaml
 ticket_id: P1-04
 status: implementation verified (limited authorization, 2026-09-05 — P1-04 only); four lanes merged; full acceptance evidence in dev_docs/verification/p1-04-implementation-evidence.md
 updated: 2026-09-05
 authorized_by: user (limited authorization for P1-04 only; recorded in this file; ticket 04 record appended at acceptance)
-next: STOP after P1-04 acceptance — do NOT auto-start P1-05/06 (DAG: 04 验收后才出现 05/06 并行窗口)
+next: (superseded by P1-05 record above)
 evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-04-implementation-evidence.md (at acceptance); P1-03 evidence: p1-03-implementation-evidence.md
 ```
 
 ---
 
+## P1-05 当前票据与共享契约基线
+
+- Ticket：`/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/05-goal-phase-reduction.md`（P1-05，status 按阶段守卫保持 `proposed`；有限授权与 Implementation record 将在验收后追加票尾；**本票验收 ≠ 整个 P1 验收，P1-07/08 不自动开始**）
+- P1-04 结束基线（upstream 已验收）：产品根 commit `5a278cb`（typecheck 0 errors、55 files/486 tests PASS、P1-04 双契约套件 InMemory 18/18 + SQLite 18/18（同一套件定义、无调参）、真实 SQLite 集成 2/2、重启证据 1/1、validate-docs 12/12；已推 GitHub origin main）。**P1-05 共享基线 = 产品根 commit `3256167`**（= 5a278cb + 5 个新契约 + 1 个视图契约 + goal-reduction commitKind + 纯函数 + 入口/夹具/套件/重启骨架；既有 486 测试零回归——实施前已复跑 505 PASS 含 19 个新的 pure reducer 测试）。
+- **冻结复用、不重写**：P1-00…P1-04 全部契约/夹具/套件/适配器/harness 零修改通过；P1-04 共享契约套件 + InMemory/SQLite 双 Adapter、in-memory/persistent 双 harness、重启证据、隔离 worktree→main 合并模式全部复用。
+- **P0-06 复核影响（AGENTS.md 要求，已核对）**：`dev_docs/design/human-framework-role-review.md` 结论与本票无冲突——"状态链：工具/Agent 产出 → 框架校验与归约 → 持久状态 → 事实投影 → 图形与解释 → 人"（= evidence → TaskReduction → GoalPhase → EventPage → goalStatus/解释）；"控制：schema、权限、幂等、版本与转换规则校验；不重复写入，不以 claim 直接完成"（= 本票全部规则）；"ModuleProgress/StageProgress 是投影，不是 reducer 输入"（§7 已按此执行，防投影回环）；"完成权不绑定名称"（Worker/Reviewer/ReadModel 均不写 Goal phase，只有 Control reduceGoal 归约）。本票不做换手（P1-06）、并行 Reader/唯一 Writer（P1-07）、只读控制台（P1-08）、计划变更/Decision（P1-11/14）；副作用只识别+阻断。
+- **三个最小 Interface/契约首次冻结**（DAG interfaces_to_freeze 规则——本票未列出，按"首个真实消费者应显式冻结并记录"执行）：GoalPhase 聚合面（goal-phase.ts，含纯函数 reduceGoalPhase + GoalCompletionGuard + 确定性 explanation 模板）、GoalStatus/Timeline 视图面（goal-phase-view.ts）、ControlEngine.reduceGoal（modules.ts 版本化新增）。dependencies 记录：结算完成策略 §3/§8/§9 为唯一语义来源；若接口文档与票据 Acceptance 冲突——以票据 Acceptance 为准（本屏未发现冲突；已按此原则冻结 wire 字段为可执行契约）。
+
+## P1-05 契约与存储语义（冻结）
+
+1. **Goal phase 存储**：新增 `goal-reduction` commitKind（schemaVersion 1、project-scoped CommandIdentity、`outboxIntents: []`）与 **GoalPhase 聚合**（ref=(projectId, goalId)，与 TaskReduction 对称：保留完整阶段历史）——CAS（`[GoalPhase@(revision-1)]`）、**完整幂等**（同 identity+fingerprint → committed(replayed)，绝不追加；同 identity 异 fingerprint → idempotency_conflict；异 identity 复用 goalId → revision_conflict）、所有拒绝零写入；沿用 P1-00/02/03/04 版本化先例，既有 v1 语义不变（506 基线测试零回归已验证）。**新聚合**理由：与 TaskReduction 对称、保留阶段历史、不动 P1-00/02 冻结的 Goal 快照形状。
+2. **四契约**（src/contracts/goal-phase.ts）：`GoalReductionInput`（事实快照：plan 快照或 null、goalActivePlanRevision、desiredState、全部 required/optional TaskReduction 事实（含 planPhase/reductionPhase/effectiveEvidenceIds/runFact）、义务级证据集摘要（required VR/covered/blocking/historicalFail/stale/outOfScope）、副作用、需要人裁决信号（decisions/decisionNeeds/changePending/planning——P1-05 恒空，形状为 P1-11/14 冻结））、`GoalPhase`（封闭 10 值枚举，与 §9 一一对应）、`GoalCompletionExplanation`（schemaVersion 1：phase + headline + items[{code, message, refs}]）、`SideEffectReconciliation`（identify=输入列表、unreconciled 阻断完成；**不做处置**——P1-05 无 disposal 路径，所有 fact reconciled 恒 false）。schemaVersion 1；未知版本拒绝（validation.ts），不静默跳过。
+3. **纯函数 `reduceGoalPhase(input)`**（冻结的 10 级表驱动优先级：CANCELLED > CHANGE_PENDING > PAUSED > COMPLETED > ACCEPTED_PARTIAL > PLANNING > RUNNING > NEEDS_DECISION > BLOCKED > FAILED；每种返回恰一个 primary phase；较低优先级命中事实仍作为 attention flags 进入 reasonCodes）：§3 规则（空 Plan/空 required GoalGateTask/空 obligation/空 VR 不能证明完成，fail-closed 进 FAILED；optional 不阻止完成；required 的 deferred/cancelled/blocked/failed 不伪装成完成）；GoalCompletionGuard（§8 公式 = active PlanRevision 非空约束全过 + 全部 required work Task SATISFIED + 全部 required AcceptanceObligation satisfied + 全部 required Module/StageGate SATISFIED + required GoalGate 非空且全 SATISFIED + 无未对账副作用；COMPLETED 只能来自该公式）；parent_of/Module/Stage/完成比例不改 required 集合；no-change 只能由带当前 PASS Evidence 的 AlreadySatisfied required GoalGateTask 表达（空 required goal-gate 集合 → guard 失败，applyPlan 也拒绝缺 active required GoalGate 的 Plan）；输入来源可替换（本轮=plan 枚举+点查，将来=摘要提供者——GoalReductionInput 即 T07 增量优化预留接口）。
+4. **判定与解释分离**：`reduceGoalPhase` 产出 (phase, reasonCodes[], refsByCode, guard, sideEffectReconciliation)；`renderGoalCompletionExplanation` 由 reasonCode **确定性模板**渲染（可重放/可比较/可穷举；模板表在 goal-phase.ts REASON_TEMPLATES + refSuffix 确定性 refs 拼接）；语义叙述留 T15。
+5. **事件与视图**：`GoalPhaseUpdatedEvent`（每归约一个；payload=goalId + previousPhase + phase + reasonCodes + explanation + sideEffectReconciliation + planRef + reducedAt；aggregateRevision=GoalPhase revision，单调 k）；ReadModel 投影 `goalStatus`（key=(projectId, goalId)，ready.goal… 注意字段名是 `goal` 不是 `status`）+ `goalTimeline`（ordered entries；每 event 一条）；freshness 沿用 opaque CommitCursor（not_ready≠not_found；无 atLeastCursor 且无行 → not_ready）；**ModuleProgress/StageProgress 只投影，绝不作为 reducer 输入**（防投影回环）；已知 v1 事件无 handler → 仍 unsupported_event_type 整页停止。
+6. **重启等价**：goal-reduction 单事务；重启后 GoalPhase 快照 load 一致 + goalStatus/goalTimeline 从持久 EventPage 重建逐字段一致 + observedCursor 一致；重放相同事实 → 相同 phase 与解释（tests/restart/p1-05-*，探针 isP105Ready() 自动启用）。
+7. **边界**：不做并行 Reader/唯一 Writer（P1-07）、只读控制台（P1-08）、换手（P1-06）、计划变更/Decision（P1-11/14）；副作用只识别+阻断；P1-05 不加裁决机制；**不写 Task phase/Goal 快照**——GoalPhase 是唯一 phase 面（Worker/Reviewer/ReadModel 均不写；taskDetail.phase 保持计划值）。
+
+## P1-05 已冻结的代码入口（integrator 建立，签名冻结）
+
+| 入口 | 文件 | 冻结表面 |
+| --- | --- | --- |
+| goal-phase 契约/纯函数 | src/contracts/goal-phase.ts | GoalReductionInput/GoalPhase/GoalCompletionExplanation/SideEffectReconciliation、reduceGoalPhase（纯）、evaluateGoalCompletionGuard、reconcileGoalSideEffects、renderGoalCompletionExplanation、GoalPhaseSnapshot/GoalPhaseUpdatedEvent、ReduceGoalCommand/Receipt、reduceGoalFingerprint |
+| 视图契约 | src/contracts/goal-phase-view.ts | GoalStatusQuery/GoalStatusView/Result（ready.goal）、GoalTimelineQuery/Entry/Result |
+| fixtures | src/contracts/fixtures/goal-phase-fixtures.ts | P105_PLAN_REVISION_FIXTURE_V1（plan-goal-mvp：work+Module/Stage/Goal gate+optional；parentOf；无 dependsOn）、buildReduceGoalCommand/buildGoalPhaseSnapshot/buildGoalReductionLedgerCommit |
+| ledger/validation 扩展 | src/contracts/{ledger,ledger-validation,validation,events,modules}.ts | goal-reduction commitKind + validateGoalReductionCommit（双适配器共用）、validateReduceGoalCommand、validateDomainEvent GoalPhaseUpdated 分支 + isActivationEvent、DomainEvent/KNOWN_EVENT_TYPES + GoalPhaseUpdated、ControlEngine.reduceGoal |
+| Control 入口 | src/control/goal-reducer.ts | reduceGoal(deps,cmd)（stub→lane A 填充）；buildGoalReductionInput（stub→lane A）；commitGoalReduction/mapReduceGoalReceipt/previousGoalPhase/isGoalPhaseSnapshot（已实现）；control-engine.ts 仅委托 |
+| ReadModel | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts | goalStatus/goalTimeline（stub→lane B 填充；isHandledEventType + GoalPhaseUpdated handler 同 lane B） |
+| harness | src/harness/{in-memory,persistent}-harness.ts | reduceGoal/goalStatus/goalTimeline 直通（已接线）；options 无新增 |
+| 契约套件 | tests/contract-suite/{p1-05-harness,goal-phase.contract.suite}.ts | P1_05TestHarness/FACTORY、prepareP105Scenario、satisfyEverythingP105、defineGoalReductionContractSuite（InMemory+SQLite 同套件） |
+| 重启骨架 | tests/restart/p1-05-restart-fixtures.ts、p1-05-restart.test.ts、evidence/p1-05-evidence.test.ts | isP105Ready() 探针；实现落地后自动启用（lane C 硬化） |
+| 集成接线 | tests/integration/p1-05.contract-suite.inmemory|sqlite.test.ts、p1-05.integration.test.ts | 双适配器套件接线 + 真实 SQLite 全路径（skipIf 探针） |
+
+## 三路并行（P1-05，隔离 worktree → main 合并；从基线 3256167 派生）
+
+| Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
+| --- | --- | --- | --- | --- |
+| A goal reducer | `p1-05-lane-a` @ /home/han001/projects/agents/agent_platform-p1-05-a | reduceGoalImpl 完整实现（schema→goal/plan 解析→事实收集（TaskReduction/证据集/runFact/副作用/planning）→纯 reduceGoalPhase→单事务提交→map）；只对 required 集合归约，绝不写 Task phase/投影；不创造模型调用 | src/control/goal-reducer.ts、tests/control/goal-reducer.test.ts | ▶ 派发中 |
+| B 视图+事件 | `p1-05-lane-b` @ /home/han001/projects/agents/agent_platform-p1-05-b | GoalPhaseUpdated 投影（goalStatus+goalTimeline）InMemory+SQLite 双适配器、重建等价、全键隔离、freshness；绝不把投影当 reducer 输入 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、tests/read-model/p1-05-goal-phase-projection.test.ts、tests/sqlite-read-model/p1-05-goal-phase-projection.test.ts | ▶ 派发中 |
+| C 重启证据+集成骨架 | `p1-05-lane-c` @ /home/han001/projects/agents/agent_platform-p1-05-c | 重启路径硬化（同事实重放→同 phase/解释；GoalPhase 快照/视图逐字段一致）、证据收集（对照 P1-04 模式）、集成骨架（可暂红） | tests/restart/p1-05-*.ts、tests/restart/evidence/p1-05-evidence.test.ts、tests/integration/p1-05.integration.test.ts | ▶ 派发中 |
+
+integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 schema/接口/共享 fixture）、`src/ledger/**`、`src/sqlite-ledger/**`、`src/control/control-engine.ts`、`src/harness/**`、`tests/contract-suite/**`、`tests/integration/**`、文档与状态记录。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结签名（如有缺口：提交具体建议给 integrator 统一修改基线并通知消费者）。子 Agent 从实际读文件开始，不等待派发者；允许测试命令：`pnpm vitest run <自身路径>`、`pnpm typecheck`。
+
+## P1-05 已执行命令及结果（共享基线）
+
+| 命令（product root） | 结果 |
+| --- | --- |
+| `pnpm typecheck` | PASS 0 errors（含全部新契约/夹具/套件/骨架） |
+| `pnpm vitest run`（全量，基线时刻） | 56 files / 505 tests PASS（P1-00…04 基线 486 零回归 + 19 个新 pure reducer 测试；P1-05 路径套件因 stub 暂红属预期，2 files） |
+| `pnpm vitest run tests/restart/evidence/p1-05-evidence.test.ts` | skip（isP105Ready 探针）——lane A/B 落地后自动启用 |
+
+---
 ## P1-04 当前票据与共享契约基线
 
 - Ticket：`/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/04-evidence-satisfies-task.md`（P1-04，status 按阶段守卫保持 `proposed`；有限授权与 Implementation record 将在验收后追加票尾；**不把本票记成 P1 已验收，不自动推进 P1-05/06**）
