@@ -1,0 +1,69 @@
+/**
+ * P1-12 ArchitectureReconciler.InspectionPort + VerificationEngine.CodeGraphPort
+ * (first consumer freeze — P1-13/14 only consume these versions).
+ *
+ * Authority: dev_docs/modules/control/architecture-reconciler.md (唯一 baseline
+ * 输入 = PlanRevision pin；不读 Project active ref、不内置 baseline) +
+ * dev_docs/modules/control/verification-engine.md (CodeGraph 与目标化 Reviewer
+ * seams)。
+ *
+ * FROZEN semantics:
+ *   - inspect(intent) resolves the EXACT pinned baseline (invariant #11/#12):
+ *     plan pin missing / dangling / digest mismatch -> fail_closed with
+ *     diagnostics, NO pseudo Delta/Finding. It never mutates the baseline,
+ *     never moves active refs, never creates remediation/gate/activation
+ *     side effects (P1-13/14).
+ *   - The raw Delta is produced by the deterministic
+ *     computeArchitectureDelta pure function (same inputs -> same Delta).
+ *   - A REPORT-source inspection (no code change / no test failure) records
+ *     finding candidates without fabricating a raw Delta; the reconciler
+ *     records findings through ControlEngine (this ticket's commands).
+ *   - codeGraph(query) exposes the graph capability view of a workspace
+ *     revision: sourced / unsupported / stale / rejected — the reconciler
+ *     fails closed on unsupported/stale.
+ */
+import type {
+  ArchitectureInspectionIntentV1,
+  ArchitectureInspectionOutcome,
+  ArchitectureFindingV1,
+  ArchitectureDecisionBriefV1,
+  ArchitectureCandidateProposalV1,
+} from "./architecture-inspection.js";
+
+export type InspectResultV1 =
+  | { status: "recorded"; outcome: ArchitectureInspectionOutcome }
+  | { status: "fail_closed"; code: "baseline_unresolved" | "baseline_digest_mismatch" | "plan_pin_missing" | "workspace_unavailable" | "reported_only"; diagnostics: string[] };
+
+export interface InspectionPort {
+  /**
+   * Deterministic reconcile of ONE workspace revision against the plan-pinned
+   * baseline. NEVER writes baseline/active refs; records findings + briefs +
+   * candidate proposals through ControlEngine commands.
+   */
+  inspect(intent: ArchitectureInspectionIntentV1): Promise<InspectResultV1>;
+}
+
+export type CodeGraphQueryV1 = {
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  workspaceRevision: number;
+  planRef: import("./plan.js").PlanRevisionRef;
+  baselinePin: import("./governance.js").ArchitectureBaselinePin;
+};
+
+export type CodeGraphResultV1 =
+  | { status: "supported"; snapshotRef: import("./artifact.js").ArtifactRef; capabilityNote: string }
+  | { status: "unsupported"; message: string }
+  | { status: "stale"; expectedRevision: number; observedRevision: number; message: string }
+  | { status: "rejected"; code: "invalid_request" | "scope_forbidden" | "unavailable"; issues: string[] };
+
+export interface CodeGraphPort {
+  /** Graph capability seam of VerificationEngine: the platform asks the
+   * engine about a workspace revision's graph; the engine answers from its
+   * fixture/registry adapter (real graph index integration stays behind this
+   * seam — P1-12 uses deterministic fixtures). */
+  codeGraph(query: CodeGraphQueryV1): Promise<CodeGraphResultV1>;
+}
+
+export type { ArchitectureFindingV1, ArchitectureDecisionBriefV1, ArchitectureCandidateProposalV1 };

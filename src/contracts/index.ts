@@ -33,3 +33,6 @@ export * from "./console-views.js";
 export * from "./context-continuity.js";
 export * from "./work-context-port.js";
 export * from "./context-continuation-port.js";
+export * from "./architecture-inspection.js";
+export * from "./workspace-read.js";
+export * from "./architecture-reconciler.js";
