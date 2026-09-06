@@ -53,19 +53,21 @@ export class DispatchEngineImpl implements DispatchPort {
     const failures: DispatchDriveFailure[] = [];
 
     for (const entry of pending) {
-      scanned += 1;
       const intent = entry.intent;
       const outboxRef = entry.ref;
 
       // P1-06 guard: an intent with a co-committed ReplacementAttempt belongs
       // to the HandoffPort (driveHandoff) — the normal drive NEVER assembles a
-      // non-handoff context for a replacement run (skip, not a failure).
+      // non-handoff context for a replacement run (skipped BEFORE scanning;
+      // not a failure, not counted).
       const replacementResult = await this.deps.ledger.load(
         replacementAttemptRefFor(intent.projectId, intent.goalId, intent.taskId, intent.attemptRef.attemptId),
       );
       if (replacementResult.status === "found") {
         continue;
       }
+
+      scanned += 1;
 
       // 2. assemble (bounded envelope + vault bundle).
       let assembled;
