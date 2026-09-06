@@ -107,6 +107,8 @@ merge_surface_note: P1-16 只扩展同工作连续性 + 理由留痕 + 显式接
 
 integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`、`src/harness/**`、`tests/contract-suite/**`（套件定义文件）、`tests/integration/**`（接线文件）、文档与状态记录、以及两条 lane 的**合并**。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结签名、**不得修改 P1-00…P1-08 文件或 P1-16 共享基线文件**；如有缺口：提交具体建议给 integrator 统一修改基线并通知消费者。允许测试命令：pnpm vitest run <自身路径>、pnpm typecheck。
 
+**P1-16 真实内核证据设计（integrator 2026-09-06 复核，kernel_root=/home/han001/projects/agents/coding-agent）**：真实 coding-agent 适配路径证据 = 测试内启动真实 CLI（dist/app/cli/main.js，已构建）headless：`run --cwd <fixture-ws> --config coding-agent.json --non-interactive`（首批可脚本化；kernel e2e 同款做法：本地 OpenAI 兼容 fixture server + env DEEPSEEK_API_KEY=fixture-secret，不开真实网络），随后 `resume --session <id>` 验证原会话**真实恢复/继续**（kernel 支持 run+resume 双路径，session 存于 sessions.sqlite）；适配器的 ContextContinuationPort.checkContinuation 将真实结果映射为 restored_original/took_over/unsupported；证据块记录（session id、output 摘要、session 文件字节、状态码、映射结果）。属"真实内核应用路径 + 模型端点替身"——模型端点替身是缺乏 provider 凭证时的明确降级证据，与"Fake 契约测试不能替代真实内核验证"边界一致；真实 provider 密钥若不可用，此替代方案即能力降级证据。
+
 ---
 
 ## P1-08 历史记录（已完成，保留备查；P1-16 在其上实施，P1-08 原文自本标题起未改动）
