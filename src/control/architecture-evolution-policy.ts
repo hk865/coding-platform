@@ -6,8 +6,8 @@
  * implementation. The semantics mirror P1-02 governance-install.ts / governance-activate.ts:
  *
  *   install (schema -> digest -> fold the exact install commit -> ledger.commit -> map):
- *     - schema / structural issues -> "invalid" (ZERO write); digest mismatch ->
- *       "digest_mismatch";
+ *     - schema / structural issues (shared validateInstallArchitectureEvolutionPolicyRevisionCommand)
+ *       -> "invalid" (ZERO write); digest mismatch -> "digest_mismatch";
  *     - install NEVER auto-activates; no built-in allowlist; a missing / invalid
  *       fixture is rejected as "invalid", never defaulted;
  *     - immutability (idempotent replay, CAS at revision 0) is decided by
@@ -15,16 +15,24 @@
  *
  *   activate (schema -> exact installed-target resolution -> per-kind active CAS):
  *     - only an INSTALLED exact target ref (identity/revision/digest triple) is
- *       admissible; an absent ref or digest mismatch resolves to "not_found"
- *       (ZERO write);
+ *       admissible: ledger.load(target.ref) not_found -> "not_found"; the ref is
+ *       found but the stored contentDigest != target.digest -> "digest_mismatch"
+ *       (both ZERO write);
  *     - CAS: Project@command.expectedRevision + per-kind active aggregate@k
  *       (first activation k=0 -> 1) -> fold -> ledger.commit -> map; a stale
  *       Project revision / active-aggregate movement => revision_conflict,
  *       never moves the active ref.
  *
+ * NOTE (P1-13 LANE-A): the shared activate validator (validatePin kind=policy)
+ * flags the THIRD-kind aggregateType as an unexpected target aggregateType. That
+ * is a known false positive for the ArchitectureEvolutionPolicy kind, so the
+ * control strips that single issue and independently asserts the exact third-kind
+ * aggregateType; the integrator should fix validatePin / the activate validator on
+ * the shared surface.
+ *
  * Dependencies: only the frozen contracts (architecture-evolution-policy.js,
- * ledger.js), StateLedger.load/commit via ControlEngineDeps, and the shared
- * resolution helper. The deterministic folds are built inline replicating the
+ * ledger.js), the shared validators (validation.js), StateLedger.load/commit via
+ * ControlEngineDeps. The deterministic folds are built inline replicating the
  * shared fixture-fold builders EXACTLY; the lane tests assert fold-equality.
  */
 import type {
@@ -32,6 +40,7 @@ import type {
   ArchitectureEvolutionPolicyActivatedEvent,
   ArchitectureEvolutionPolicyInstallReceipt,
   ArchitectureEvolutionPolicyInstalledEvent,
+  ArchitectureEvolutionPolicyPin,
   ArchitectureEvolutionPolicyRevisionRef,
   ArchitectureEvolutionPolicyRevisionSnapshot,
   ActivateProjectArchitectureEvolutionPolicyCommand,
@@ -40,132 +49,44 @@ import type {
   ProjectArchitectureEvolutionPolicyActiveSnapshot,
 } from "../contracts/architecture-evolution-policy.js";
 import {
-  ARCHITECTURE_EVOLUTION_POLICY_MAX_ALLOWLIST_ENTRIES,
-  ARCHITECTURE_EVOLUTION_POLICY_MAX_DRIFT_BUDGET,
   architectureEvolutionPolicyActivateFingerprint,
   architectureEvolutionPolicyContentDigest,
   architectureEvolutionPolicyInstallFingerprint,
-  resolveArchitectureEvolutionPolicyRevision,
 } from "../contracts/architecture-evolution-policy.js";
+import {
+  validateActivateProjectArchitectureEvolutionPolicyCommand,
+  validateInstallArchitectureEvolutionPolicyRevisionCommand,
+} from "../contracts/validation.js";
 import type {
   GovernanceActivateLedgerCommitV1,
   GovernanceInstallLedgerCommitV1,
   LedgerCommitReceipt,
   ProjectRef,
+  SnapshotResult,
 } from "../contracts/ledger.js";
 import type { ControlEngineDeps } from "./control-engine.js";
 
-const FINDING_CATEGORIES = new Set([
-  "structure",
-  "interface",
-  "dependency",
-  "performance",
-  "permission",
-  "runtime",
-  "governance",
-]);
-const SCOPE_KINDS = new Set(["module", "interface", "runtime", "governance"]);
-const RISKS = new Set(["high", "medium", "low"]);
-const REVERSIBILITIES = new Set(["reversible", "manual_only"]);
-const DIGEST_RE = /^[0-9a-f]{64}$/;
+/** P1-13 LANE-A: shared validatePin (kind=policy) expects CompletionPolicyRevision;
+ * strip its single third-kind false-positive so a valid ArchitectureEvolutionPolicy
+ * activate is not rejected. */
+const ACTIVATE_AGGREGATE_TYPE_ISSUE_PATH = "payload.target.ref.aggregateType";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
-function isPositiveInt(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-}
-function isSafeNonNegInt(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
-function onlyKeys(record: Record<string, unknown>, allowed: string[]): boolean {
-  const set = new Set(allowed);
-  return Object.keys(record).every((k) => set.has(k));
-}
-function validActor(actor: unknown): boolean {
-  if (!isRecord(actor)) return false;
-  if (actor["kind"] !== "human" && actor["kind"] !== "system") return false;
-  return isNonEmptyString(actor["id"]);
-}
-function validIdentity(identity: unknown): boolean {
-  if (!isRecord(identity)) return false;
-  return isNonEmptyString(identity["projectId"]) && validActor(identity["actor"]) && isNonEmptyString(identity["idempotencyKey"]);
+function isEvolutionPolicySnapshot(
+  result: SnapshotResult,
+): result is { status: "found"; snapshot: ArchitectureEvolutionPolicyRevisionSnapshot } {
+  return result.status === "found" && result.snapshot.ref.aggregateType === "ArchitectureEvolutionPolicyRevision";
 }
 
-/** Structural validity of an install command (schema 校验). true = invalid. */
-function invalidInstall(command: unknown): boolean {
-  if (!isRecord(command)) return true;
-  if (command["schemaVersion"] !== 1) return true;
-  if (command["commandType"] !== "InstallArchitectureEvolutionPolicyRevision") return true;
-  if (!isNonEmptyString(command["commandId"])) return true;
-  if (!validIdentity(command["identity"])) return true;
-  if (!isNonEmptyString(command["correlationId"])) return true;
-  if (!isNonEmptyString(command["submittedAt"])) return true;
-  if (!isRecord(command["payload"])) return true;
-  const fixture = command["payload"]["fixture"];
-  if (!isRecord(fixture)) return true;
-  if (!onlyKeys(fixture, ["schemaVersion", "fixtureId", "contentType", "revision", "identity", "content"])) return true;
-  if (fixture["schemaVersion"] !== 1) return true;
-  if (fixture["contentType"] !== "ArchitectureEvolutionPolicy") return true;
-  if (fixture["revision"] !== 1) return true;
-  if (!isRecord(fixture["identity"])) return true;
-  const fident = fixture["identity"];
-  if (fident["kind"] !== "local") return true;
-  if (!isNonEmptyString(fident["fixtureId"])) return true;
-  if (!onlyKeys(fident, ["kind", "fixtureId", "source"])) return true;
-  if (!isRecord(fixture["content"])) return true;
-  const content = fixture["content"];
-  if (!onlyKeys(content, ["schemaVersion", "allowlist", "driftBudget", "upgrade"])) return true;
-  if (content["schemaVersion"] !== 1) return true;
-  if (!Array.isArray(content["allowlist"])) return true;
-  if (content["allowlist"].length > ARCHITECTURE_EVOLUTION_POLICY_MAX_ALLOWLIST_ENTRIES) return true;
-  for (const entry of content["allowlist"]) {
-    if (!isRecord(entry)) return true;
-    if (!onlyKeys(entry, ["findingCategory", "scope", "maxRisk", "reversibility", "note"])) return true;
-    if (!FINDING_CATEGORIES.has(entry["findingCategory"] as string)) return true;
-    if (!SCOPE_KINDS.has(entry["scope"] as string)) return true;
-    if (!RISKS.has(entry["maxRisk"] as string)) return true;
-    if (!REVERSIBILITIES.has(entry["reversibility"] as string)) return true;
-    if (!isNonEmptyString(entry["note"])) return true;
-  }
-  if (!isRecord(content["driftBudget"])) return true;
-  const db = content["driftBudget"];
-  if (!onlyKeys(db, ["maxRemediationsPerCycle"])) return true;
-  if (typeof db["maxRemediationsPerCycle"] !== "number" || !Number.isSafeInteger(db["maxRemediationsPerCycle"]) || db["maxRemediationsPerCycle"] < 0) return true;
-  if (db["maxRemediationsPerCycle"] > ARCHITECTURE_EVOLUTION_POLICY_MAX_DRIFT_BUDGET) return true;
-  if (!isRecord(content["upgrade"])) return true;
-  if (content["upgrade"]["path"] !== "manual-decision" && content["upgrade"]["path"] !== "proposal") return true;
-  if (!isNonEmptyString(content["upgrade"]["note"])) return true;
-  return false;
-}
-
-/** Structural validity of an activate command. true = invalid. */
-function invalidActivate(command: unknown): boolean {
-  if (!isRecord(command)) return true;
-  if (command["schemaVersion"] !== 1) return true;
-  if (command["commandType"] !== "ActivateProjectArchitectureEvolutionPolicy") return true;
-  if (!isNonEmptyString(command["commandId"])) return true;
-  if (!validIdentity(command["identity"])) return true;
-  if (!isNonEmptyString(command["aggregateId"])) return true;
-  if (!isSafeNonNegInt(command["expectedRevision"])) return true;
-  if (!isNonEmptyString(command["correlationId"])) return true;
-  if (!isNonEmptyString(command["submittedAt"])) return true;
-  if (!isRecord(command["payload"])) return true;
-  const target = command["payload"]["target"];
-  if (!isRecord(target)) return true;
-  if (!onlyKeys(target, ["ref", "contentDigest"])) return true;
-  if (!isRecord(target["ref"])) return true;
-  const ref = target["ref"];
-  if (!onlyKeys(ref, ["aggregateType", "projectId", "policyId", "revision"])) return true;
-  if (ref["aggregateType"] !== "ArchitectureEvolutionPolicyRevision") return true;
-  if (!isNonEmptyString(ref["projectId"])) return true;
-  if (!isNonEmptyString(ref["policyId"])) return true;
-  if (!isPositiveInt(ref["revision"])) return true;
-  if (typeof target["contentDigest"] !== "string" || !DIGEST_RE.test(target["contentDigest"])) return true;
-  return false;
+function targetMatchesEvolutionPolicySnapshot(
+  snapshot: ArchitectureEvolutionPolicyRevisionSnapshot,
+  target: ArchitectureEvolutionPolicyPin,
+): boolean {
+  return (
+    snapshot.ref.projectId === target.ref.projectId &&
+    snapshot.policyId === target.ref.policyId &&
+    snapshot.contentRevision === target.ref.revision &&
+    snapshot.contentDigest === target.digest
+  );
 }
 
 // ------------------------------------------------------------------------ //
@@ -340,8 +261,9 @@ export class ArchitectureEvolutionPolicyEngineImpl {
   constructor(private readonly deps: ControlEngineDeps) {}
 
   async install(command: InstallArchitectureEvolutionPolicyRevisionCommand): Promise<ArchitectureEvolutionPolicyInstallReceipt> {
-    // 1) schema: structural issues are an invalid command (ZERO write).
-    if (invalidInstall(command)) {
+    // 1) schema: shared validator -> structural issues are invalid (ZERO write).
+    const issues = validateInstallArchitectureEvolutionPolicyRevisionCommand(command);
+    if (issues.length > 0) {
       return { status: "rejected", commandId: command.commandId, code: "invalid" };
     }
 
@@ -360,18 +282,24 @@ export class ArchitectureEvolutionPolicyEngineImpl {
   }
 
   async activate(command: ActivateProjectArchitectureEvolutionPolicyCommand): Promise<ArchitectureEvolutionPolicyActivateReceipt> {
-    // 1) schema: structural issues are an invalid command (ZERO write).
-    if (invalidActivate(command)) {
+    // 1) schema: shared validator -> structural issues are invalid (ZERO write).
+    //    P1-13 LANE-A: strip the shared validatePin(kind=policy) false positive on
+    //    the third-kind aggregateType, then assert the exact third-kind type.
+    const raw = validateActivateProjectArchitectureEvolutionPolicyCommand(command);
+    const issues = raw.filter((i) => !(i.path === ACTIVATE_AGGREGATE_TYPE_ISSUE_PATH && i.code === "bad_type"));
+    if (issues.length > 0 || (command.payload.target.ref as { aggregateType?: string }).aggregateType !== "ArchitectureEvolutionPolicyRevision") {
       return { status: "rejected", commandId: command.commandId, code: "invalid" };
     }
 
-    // 2) exact installed-target resolution (pre-CAS, ZERO write). Only an
-    //    INSTALLED revision whose identity/revision/digest triple matches is
-    //    admissible; an absent ref or digest mismatch collapses to not_found.
+    // 2) exact installed-target resolution (pre-CAS, ZERO write). A dangling ref ->
+    //    not_found; the ref is found but the digest does not match -> digest_mismatch.
     const target = command.payload.target;
-    const resolved = await resolveArchitectureEvolutionPolicyRevision(this.deps.ledger, target.ref, target.contentDigest);
-    if (resolved.status !== "found") {
+    const loaded = await this.deps.ledger.load(target.ref);
+    if (loaded.status === "not_found") {
       return { status: "rejected", commandId: command.commandId, code: "not_found" };
+    }
+    if (!isEvolutionPolicySnapshot(loaded) || !targetMatchesEvolutionPolicySnapshot(loaded.snapshot, target)) {
+      return { status: "rejected", commandId: command.commandId, code: "digest_mismatch" };
     }
 
     // 3) per-kind active aggregate revision (absent -> 0; present -> snapshot.revision).

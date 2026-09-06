@@ -169,14 +169,23 @@ describe("P1-13 ArchitectureEvolutionPolicy install", () => {
     expect(ledger.commits).toHaveLength(0);
   });
 
-  it("fixture with an unknown field -> invalid, zero-write", async () => {
+  it("fixture content with an invalid allowlist entry -> invalid, zero-write", async () => {
     const ledger = new RecordingLedger();
     const { engine } = makeEngine(ledger);
     const before = await eventsCount(ledger);
     const cmd = buildP113InstallCommand(ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1, installDeps());
     const bad = {
       ...cmd,
-      payload: { ...cmd.payload, fixture: { ...cmd.payload.fixture, bogus: true } },
+      payload: {
+        ...cmd.payload,
+        fixture: {
+          ...cmd.payload.fixture,
+          content: {
+            ...cmd.payload.fixture.content,
+            allowlist: [{ ...cmd.payload.fixture.content.allowlist[0]!, findingCategory: "bogus" }],
+          },
+        },
+      },
     } as unknown as InstallArchitectureEvolutionPolicyRevisionCommand;
     const receipt = await engine.installArchitectureEvolutionPolicy(bad);
     expect(receipt).toEqual({ status: "rejected", commandId: "p113-install", code: "invalid" });
@@ -311,7 +320,7 @@ describe("P1-13 ArchitectureEvolutionPolicy activate", () => {
     const { projectId } = await bootstrappedPolicy(engine);
     const before = await eventsCount(ledger);
     const dangling = buildP113ActivateCommand(
-      { ref: { aggregateType: "ArchitectureEvolutionPolicyRevision", projectId, policyId: "policy-absent", revision: 1 }, contentDigest: "1".repeat(64) },
+      { ref: { aggregateType: "ArchitectureEvolutionPolicyRevision", projectId, policyId: "policy-absent", revision: 1 }, digest: "1".repeat(64) },
       activateDeps({ projectId }),
     );
     const receipt = await engine.activateArchitectureEvolutionPolicy(dangling);
@@ -320,19 +329,22 @@ describe("P1-13 ArchitectureEvolutionPolicy activate", () => {
     expect(ledger.commits).toHaveLength(2); // bootstrap + install only
   });
 
-  it("digest mismatch on installed identity -> not_found, zero-write", async () => {
+  it("digest mismatch on installed identity -> digest_mismatch, zero-write, active ref unmoved", async () => {
     const ledger = new RecordingLedger();
     const { engine } = makeEngine(ledger);
     const { projectId, pin } = await bootstrappedPolicy(engine);
     const before = await eventsCount(ledger);
     const wrongDigest = buildP113ActivateCommand(
-      { ...pin, contentDigest: "2".repeat(64) },
+      { ...pin, digest: "2".repeat(64) },
       activateDeps({ projectId, commandId: "p113-act-digest" }),
     );
     const receipt = await engine.activateArchitectureEvolutionPolicy(wrongDigest);
-    expect(receipt).toEqual({ status: "rejected", commandId: "p113-act-digest", code: "not_found" });
+    expect(receipt).toEqual({ status: "rejected", commandId: "p113-act-digest", code: "digest_mismatch" });
     expect(await eventsCount(ledger)).toBe(before);
     expect(ledger.commits).toHaveLength(2);
+    // zero-write: the active ref is NOT created/moved.
+    const active = await ledger.load(p113ActiveRef(projectId));
+    expect(active.status).toBe("not_found");
   });
 
   it("install does NOT auto-activate: the active ref stays not_found until an activate", async () => {
