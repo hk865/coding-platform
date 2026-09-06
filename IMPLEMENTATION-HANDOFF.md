@@ -1,14 +1,21 @@
 ```yaml
-ticket_id: P1-13 ✅ VERIFIED（fbc365e；全量 154 files / 1083 tests PASS，0 skip）——下一窗口：P1-14（←11+12 均 ✅）
-status: P1-09/P1-10/P1-11/P1-13 ✅（P1-13 1083/1083；G4 PASS）；P1-16/P1-12/P1-17 ✅；G1/G2/G4 PASS；剩余票 = P1-14（←11+12）、P1-15（←09+14+17）；G5 等 13+14、G3 等 07+15
+ticket_id: P1-14 共享基线 ✅（7f35a2e：1083 passed / 21 skipped 探针组，零回归）——三 lane A/B/C 实施中
+status: P1-13 ✅ VERIFIED（fbc365e, 1083/1083, G4 PASS）；P1-09/10/11/12/16/17 ✅；G1/G2/G4 PASS；剩余票 = P1-14（实施中）、P1-15（←09+14+17）；G5 等 13+14（13 ✅，14 实施中）、G3 等 07+15
 updated: 2026-09-07
 authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a)/(b)/(c); GitHub push needs user authorization) + 2026-09-07 阶段时限 09:00 CST 硬性到点（先落干净检查点再报告）；实现/修复由 B lanes 承担
-next: P1-14 基线（候选物化 + migration Gate + 决策闭环；评估文档 dev_docs/verification/2026-09-07-p1-14-baseline-plan.md）；09:00 到点未完成 → 干净检查点停止
-shared_baseline: P1-11 = d5a51ba（验收 6d70494）；P1-13 = 5ade74b（验收 fbc365e：A policy 0ab2cd2 + B remediation e8092b2/56e95f6 + C writer 链 3000e8b + 套件对齐 a3641f0）
-merge_surface_note: P1-13 零改动 P1-00..P1-12 冻结形状（第三 governance 类走现有 governance-install/activate commitKind union 扩展；KNOWN 版本化追加含 P1-02 断言维护裁决）；P1-13 无 read-model 展示视图（事件仅注册防 stall）；G5（13+14）待 P1-14
+next: P1-14 lanes A（编排 guard 链）B（MigrationGatePort/BaselineEvolutionPort）C（baselineChangeView 双适配器）→ 合并验收 → 证据/票尾 → G5 成立 → P1-15（最后）→ G3 → MVP 评议；09:00 到点未完成 → 干净检查点停止
+shared_baseline: P1-14 = 7f35a2e（baseline-evolution 契约/4 commitKinds/validators/双适配器/fixtures/stubs/harness/套件/restart/integration 骨架 + sqlite P1-13 handled-registration 补全；全量 1083 passed + 21 skip）
+merge_surface_note: P1-14 零改动 P1-00..P1-13 冻结形状（版本化追加 4 commitKind + 4 事件 + ControlEngine +4 + ReadModelIndex.baselineChangeView + 3 个冻结端口）；P1-02 baseline install/activate 机制被复用（BaselineActivation 只记录编排事实；实际 ref 移动由集成链经 P1-02 activate）；迁移 Gate 不允许隐式 rebase；STALE 语义 = 源 pin 不再等于当前 active
 ```
 
 ---
+
+## P1-14 当前票据与共享契约基线（并行窗口 5 — lanes A/B/C 实施中）
+
+- Ticket：14-baseline-activation.md（status 保持 proposed）；依赖 P1-12 ✅ + P1-11 ✅。
+- 基线 7f35a2e：contracts/baseline-evolution.ts（CandidateArchitectureBaseline/ArchitectureChangeDecision/MigrationPlan/MigrationGateTask/BaselineActivation + 4 事件/命令/回执/fingerprints + 纯函数 candidateContentDigest/candidateIdFromDigest/baselineEvolutionChainConsistent/isSourceStale/migrationPlanConsistent + BaselineChangeViewQuery/Result + 3 冻结端口（ArchitectureDecisionPort/BaselineEvolutionPort/MigrationGatePort——后者由 lane B 按裁决加 planRef 字段））；ledger 4 commitKind + 双适配器；validators 4；ControlEngine +4；fixtures（4 聚合 + 4 fold）；stub（BaselineEvolutionEngineImpl）；harness P1-14 直通/场景；套件（9 组 verification）；restart/integration/evidence 骨架；sqlite P1-13 handled-registration 补全（antirregression）。
+- **LANE 表**：A 编排（a5fed645；src/control/baseline-evolution.ts + tests）；B gate 端口（39a61a3a；src/verification/migration-gate-port.ts + src/control/baseline-evolution-port.ts + MigrationGatePort 签名更新（LANE-B 区）+ 单测）；C 视图（cb6f7f33；双适配器 p114 行 + baselineChangeView + 单测）。
+- **integrator 冻结裁决**：① 守卫链/零写语义（proposal→source 精确→digest 重算→decision target 精确→gate pass→链一致→fold）；② gate.planRef 必填（端口更新字段）；③ gate 证据确定性派生 EvidenceRef（不提交真实证据——真实链归集成）；④ 视图 defaultPin=最新 activation.toPin（无激活→candidate.parentSourcePin）；⑤ notRebasedPlans 简并（gate.planRef 1 条 + 固定 fromPin）；⑥ 回执映射与幂等语义同前。
 
 ## P1-13 验收记录（2026-09-07，正式）
 
