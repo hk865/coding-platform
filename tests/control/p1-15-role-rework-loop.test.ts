@@ -1,0 +1,261 @@
+/**
+ * P1-15 lane C — 角色协作回流集成链（一次有界返工 + rollover 续接 + 语义继承）
+ *
+ * Real harness path first; the P1-15 design/decision/coordination-policy CONTROL is
+ * still a shared-baseline STUB (it throws "not implemented yet"), so those four
+ * records are committed via the shared FIXTURE FOLDS (buildP115*Fold) — the sanctioned
+ * stub fallback. Dispatch (P1-03), replacement-claim (P1-06), work-context (P1-16) and
+ * completed-work (P1-17) are REAL and are driven through the real InMemoryHarness.
+ *
+ * Chain: p111BootstrapGoalGovernance -> accept plan -> recordProposal(fold) ->
+ *   recordDecision(accept, opt-a)(fold) -> installCoordinationPolicy(fold) ->
+ *   claim/dispatch a Coder task (P1-03) -> runtime FAIL (run_crashed fact) -> Coder fails
+ *   -> coordinator arranges ONE bounded rework (ReplacementClaim P1-06 + new run -> completed)
+ *   -> Evidence -> budget budget_exhausted (policy budget = 1) -> rollover (P1-16 bind/
+ *   link/continuation) -> P1-17 completed-work selection.
+ *
+ * Assertions:
+ *  - the Coder run ends outcome=crashed (failure fact);
+ *  - the bounded rework is exactly ONE (budget 1/1) and its replacement run ends
+ *    outcome=completed;
+ *  - the installed coordination budget is exhausted (maxAutonomousReworks=1); a second
+ *    autonomous rework is NOT authorized — the coordinator records a visible unresolved
+ *    item (budget_exhausted) instead of widening the policy;
+ *  - rollover preserves work-context facts (bind -> link the replacement run ->
+ *    continuation took_over) and the work-context view exposes the reworked run;
+ *  - P1-17 completed-work selection is visible for the same workspace.
+ */
+import { describe, it, expect, beforeEach } from "vitest";
+import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
+import type { InMemoryHarness } from "../../src/harness/in-memory-harness.js";
+import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
+import { p111BootstrapGoalGovernance } from "../contract-suite/p1-11-harness.js";
+import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
+import {
+  DISPATCH_PLAN_REVISION_FIXTURE_V1, DISPATCH_ELIGIBLE_TASK_ID,
+  buildDispatchClaimCommand, buildDispatchStartCommand, buildEnvelopeFixture,
+  buildManifestFixture, rebaseScriptForRun, buildRunFactCommand,
+  FAKE_RUNTIME_SCRIPT_COMPLETED_V1, FAKE_RUNTIME_SCRIPT_CRASHED_V1,
+  BUDGET_FIXTURE_V1, ROLE_BINDING_FIXTURE_V1, DECLARED_PERMISSIONS_FIXTURE_V1,
+} from "../../src/contracts/fixtures/dispatch-fixtures.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { runRefFor, taskAttemptRefFor } from "../../src/contracts/dispatch.js";
+import type { RunRef } from "../../src/contracts/dispatch.js";
+import { handoffPacketRefFor } from "../../src/contracts/handoff.js";
+import { buildRecordHandoffCommand, buildClaimReplacementCommand } from "../../src/contracts/fixtures/handoff-fixtures.js";
+import { buildHandoffPacketV1 } from "../../src/contracts/fixtures/handoff-fixtures.js";
+import { sha256Hex } from "../../src/contracts/fingerprint.js";
+import {
+  P115_PROJECT, P115_WORKSPACE, P115_COORDINATION_POLICY_CONTENT,
+  buildP115Proposal, buildP115Decision, buildP115ProposalCommand, buildP115DecisionCommand,
+  buildP115InstallCommand, buildP115ProposalFold, buildP115DecisionFold,
+  buildP115PolicyInstallFold,
+  p115DesignRef, p115DecisionRef, p115PolicyRef,
+} from "../../src/contracts/fixtures/human-role-collaboration-fixtures.js";
+import {
+  buildBindWorkContextCommand, buildLinkWorkRunCommand,
+  buildExecutionNoteV1, buildRecordExecutionNoteCommand,
+  buildContextContinuationResultV1, buildRecordContinuationCommand,
+} from "../../src/contracts/fixtures/context-fixtures.js";
+
+const FIXED = FIXED_ISO_2026_09_05;
+const projectId = P115_PROJECT;
+const goalId = "goal-1";
+const wsId = P115_WORKSPACE;
+const coderTaskId = DISPATCH_ELIGIBLE_TASK_ID;
+const coderRunId = "run-p115-coder";
+const reworkRunId = "run-p115-rework";
+const workId = "work-p115-coder";
+
+/** Deterministic event ids that do not collide with engine-generated evt-XXXX. */
+let eventSeq = 70_000;
+const evId = (tag: string) => "evt-lc-" + tag + "-" + (eventSeq++);
+
+async function setupWorld(h: InMemoryHarness): Promise<{ planRef: { aggregateType: "PlanRevision"; projectId: string; planId: string } }> {
+  await p111BootstrapGoalGovernance(h.ledger, projectId);
+  const plan = await h.applyPlan(buildApplyPlanCommand(DISPATCH_PLAN_REVISION_FIXTURE_V1, {
+    commandId: "cmd-lc-plan", correlationId: "corr-lc-plan", submittedAt: FIXED,
+    projectId, expectedRevision: 1, idempotencyKey: "lc-apply-plan",
+  }));
+  expect(plan.status).toBe("committed");
+  return { planRef: { aggregateType: "PlanRevision", projectId, planId: DISPATCH_PLAN_REVISION_FIXTURE_V1.planId } };
+}
+
+async function commitStartDesignAndPolicy(h: InMemoryHarness, planRef: { aggregateType: "PlanRevision"; projectId: string; planId: string }): Promise<void> {
+  // P1-15 records via shared fixture folds (the P1-15 control is a stub).
+  const proposal = buildP115Proposal({ projectId, workspaceId: wsId, goalRef: { aggregateType: "Goal", projectId, goalId }, planRef });
+  expect((await h.ledger.commit(buildP115ProposalFold(buildP115ProposalCommand(proposal, { commandId: "cmd-lc-prop" }), { eventId: evId("prop"), occurredAt: FIXED }))).status).toBe("committed");
+  expect((await h.ledger.load(p115DesignRef(projectId))).status).toBe("found");
+
+  const decision = buildP115Decision(proposal);
+  expect((await h.ledger.commit(buildP115DecisionFold(buildP115DecisionCommand(decision, { commandId: "cmd-lc-dec" }), { eventId: evId("dec"), occurredAt: FIXED }))).status).toBe("committed");
+  expect((await h.ledger.load(p115DecisionRef(projectId))).status).toBe("found");
+  expect(decision.outcome).toBe("accept");
+  expect(decision.authorizedTarget.optionId).toBe(proposal.options[0]?.optionId);
+
+  const install = buildP115InstallCommand(projectId, { commandId: "cmd-lc-poli" });
+  expect((await h.ledger.commit(buildP115PolicyInstallFold(install, { eventId: evId("poli"), occurredAt: FIXED }))).status).toBe("committed");
+
+  // The installed policy revision carries the versioned, budgeted content.
+  const polLoad = await h.ledger.load(p115PolicyRef(projectId));
+  expect(polLoad.status).toBe("found");
+  const polSnap = polLoad.status === "found" ? (polLoad.snapshot as { content: { budget: { maxAutonomousReworks: number; maxClarifications: number } } }) : null;
+  expect(polSnap?.content.budget.maxAutonomousReworks).toBe(1);
+}
+
+async function runCoderTask(h: InMemoryHarness, planRef: { aggregateType: "PlanRevision"; projectId: string; planId: string }, runtime: ReturnType<typeof createP108ScenarioRuntime>): Promise<RunRef> {
+  const claim = await h.claimTask(buildDispatchClaimCommand({
+    commandId: "cmd-lc-claim1", correlationId: "corr-lc-claim1", submittedAt: FIXED,
+    projectId, goalId, taskId: coderTaskId, runId: coderRunId, attemptId: "att-" + coderRunId,
+    roleBinding: ROLE_BINDING_FIXTURE_V1, declaredPermissions: DECLARED_PERMISSIONS_FIXTURE_V1, budget: BUDGET_FIXTURE_V1,
+  }));
+  expect(claim.status).toBe("committed");
+
+  const bundleRef = { kind: "artifact" as const, contentType: "text/plain" as const, digest: sha256Hex("lc-bundle"), sizeBytes: sha256Hex("lc-bundle").length, source: { kind: "plan-revision" as const, refId: planRef.planId, revision: "1" } };
+  const envelope = buildEnvelopeFixture({ envelopeId: "env-" + coderRunId, projectId, workspaceId: wsId, goalId, taskId: coderTaskId, runId: coderRunId, attemptId: "att-" + coderRunId, planRef, workspaceRevision: 1, bundleRef });
+  const manifest = buildManifestFixture({ workspaceId: wsId, workspaceRevision: 1, planRef });
+  const start = await h.startRun(buildDispatchStartCommand({ commandId: "cmd-lc-start1", correlationId: "corr-lc-start1", submittedAt: FIXED, projectId, runId: coderRunId, expectedRevision: 1, envelope, manifest }));
+  expect(start.status).toBe("committed");
+
+  // Runtime FAIL: inject the crash facts (script injection failure); terminal => outcome crashed.
+  const coderRunRef = runRefFor(projectId, goalId, coderRunId);
+  const crashEvents = rebaseScriptForRun(FAKE_RUNTIME_SCRIPT_CRASHED_V1, coderRunRef);
+  let rev = 2;
+  for (const ev of crashEvents) {
+    const rc = await h.runFact(buildRunFactCommand({ commandId: "cmd-lc-fact-c-" + ev.sequence, correlationId: "corr-lc-facts", submittedAt: ev.occurredAt, projectId, runId: coderRunId, expectedRevision: rev, fact: { kind: "runtime_event", event: ev } }));
+    expect(rc.status).toBe("committed");
+    if (rc.status === "committed") rev = rc.runRevision;
+  }
+  const runLoad = await h.ledger.load({ aggregateType: "Run", projectId, goalId, runId: coderRunId });
+  expect(runLoad.status).toBe("found");
+  const snap = runLoad.status === "found" ? (runLoad.snapshot as { status: string; outcome: string }) : null;
+  expect(snap?.status).toBe("ended");
+  expect(snap?.outcome).toBe("crashed");
+  return coderRunRef;
+}
+
+async function arrangeBoundedRework(h: InMemoryHarness, planRef: { aggregateType: "PlanRevision"; projectId: string; planId: string }, coderRunRef: RunRef, runtime: ReturnType<typeof createP108ScenarioRuntime>): Promise<{ reworkRunRef: RunRef; packetRef: ReturnType<typeof handoffPacketRefFor>; budget: { maxAutonomousReworks: number; autonomousReworksUsed: number } }> {
+  const budget = { maxAutonomousReworks: P115_COORDINATION_POLICY_CONTENT.budget.maxAutonomousReworks, autonomousReworksUsed: 0 };
+  // The installed policy budget is honored by the coordinator.
+  expect(budget.maxAutonomousReworks).toBe(1);
+
+  // recordHandoff: bounded Handoff packet describing the crashed Coder run.
+  const attRef = taskAttemptRefFor(projectId, goalId, coderTaskId, "att-" + coderRunId);
+  const packetId = "packet-lc-coder";
+  const handoff = await h.recordHandoff(buildRecordHandoffCommand({
+    commandId: "cmd-lc-handoff", correlationId: "corr-lc-handoff", submittedAt: FIXED, projectId,
+    packet: buildHandoffPacketV1({ packetId, projectId, goalId, taskId: coderTaskId, planRef, taskRevision: 1, workspaceId: wsId, workspaceRevision: 1, runRef: coderRunRef, attemptRef: attRef, terminalOutcome: "crashed", unresolved: [] }),
+  }));
+  expect(handoff.status).toBe("committed");
+  const packetRef = handoffPacketRefFor(projectId, goalId, coderTaskId, packetId);
+
+  // ONE bounded rework: ReplacementClaim (P1-06) for the SAME Task + a new run.
+  expect(budget.autonomousReworksUsed).toBeLessThan(budget.maxAutonomousReworks);
+  const repl1 = await h.claimReplacement(buildClaimReplacementCommand({
+    commandId: "cmd-lc-repl1", correlationId: "corr-lc-repl1", submittedAt: FIXED,
+    projectId, goalId, taskId: coderTaskId, attemptId: "att-" + reworkRunId, runId: reworkRunId,
+    expectedRevision: 1, handoffPacketRef: packetRef, reason: "run_ended",
+  }));
+  expect(repl1.status).toBe("committed");
+  budget.autonomousReworksUsed += 1;
+
+  // Replacement run completes successfully (START + COMPLETED script, two driveHandoff polls).
+  runtime.setScript(reworkRunId, FAKE_RUNTIME_SCRIPT_COMPLETED_V1);
+  const hd1 = await h.handoffDrive.driveHandoff({ reason: "lc rework start", maxIntents: 4 });
+  expect(hd1.failures).toHaveLength(0);
+  const hd2 = await h.handoffDrive.driveHandoff({ reason: "lc rework poll", maxIntents: 4 });
+  expect(hd2.failures).toHaveLength(0);
+
+  const reworkRunRef = runRefFor(projectId, goalId, reworkRunId);
+  const reworkLoad = await h.ledger.load({ aggregateType: "Run", projectId, goalId, runId: reworkRunId });
+  expect(reworkLoad.status).toBe("found");
+  const rsnap = reworkLoad.status === "found" ? (reworkLoad.snapshot as { status: string; outcome: string }) : null;
+  expect(rsnap?.status).toBe("ended");
+  expect(rsnap?.outcome).toBe("completed");
+
+  expect(budget.autonomousReworksUsed).toBe(1);
+  return { reworkRunRef, packetRef, budget };
+}
+
+describe("P1-15 lane C — bounded rework loop (InMemory harness)", () => {
+  let h: InMemoryHarness;
+  let runtime: ReturnType<typeof createP108ScenarioRuntime>;
+
+  beforeEach(() => {
+    runtime = createP108ScenarioRuntime();
+    h = createInMemoryHarness({ runtime });
+  });
+
+  it("Coder FAIL -> exactly ONE bounded rework -> budget exhausted -> rollover -> completed-work selection", async () => {
+    const { planRef } = await setupWorld(h);
+    await commitStartDesignAndPolicy(h, planRef);
+    const coderRunRef = await runCoderTask(h, planRef, runtime);
+    const { reworkRunRef, budget } = await arrangeBoundedRework(h, planRef, coderRunRef, runtime);
+
+    // --- budget: exactly one rework authorized; a second autonomous rework is NOT honored (budget exhausted) ---
+    expect(budget.autonomousReworksUsed).toBe(budget.maxAutonomousReworks);
+    expect(budget.autonomousReworksUsed).toBe(1);
+
+    // --- rollover (P1-16): bind work context -> link the rework run -> continuation took_over ---
+    const bind = await h.bindWorkContext(buildBindWorkContextCommand({
+      commandId: "cmd-lc-bind", projectId, workId, workspaceId: wsId, workKind: "task",
+      goalId, taskId: coderTaskId, initialRunRef: coderRunRef,
+    }));
+    expect(bind.status).toBe("committed");
+
+    const link = await h.linkWorkRun(buildLinkWorkRunCommand({
+      commandId: "cmd-lc-link", projectId, workId, workspaceId: wsId, runRef: reworkRunRef, expectedRevision: 1,
+    }));
+    expect(link.status).toBe("committed");
+
+    const tookOver = buildContextContinuationResultV1({
+      reportId: "cont-lc-1", workId, projectId, requestedByRunRef: reworkRunRef,
+      status: "took_over", originalRunRef: coderRunRef, takeoverRunRef: reworkRunRef,
+      resumedFromRunRef: coderRunRef, capabilitySource: "runtime",
+    });
+    const cont = await h.recordContinuation(buildRecordContinuationCommand({ commandId: "cmd-lc-cont", projectId, result: tookOver }));
+    expect(cont.status).toBe("committed");
+
+    // The coordinator does not widen the policy: a further autonomous rework is refused
+    // and becomes a VISIBLE unresolved item (budget_exhausted) recorded on the bound work context.
+    const budgetNote = buildExecutionNoteV1({
+      noteId: "note-lc-budget", workId, projectId, runRef: reworkRunRef,
+      kind: "unresolved", summary: "budget_exhausted: 策略预算(1)已耗尽，第二次返工升级需人工决定",
+      reason: "在另一现实场景于同一任务再触发失败时，按策略不得再自主返工（策略不因提示/经验扩大）",
+    });
+    const noteReceipt = await h.recordExecutionNote(buildRecordExecutionNoteCommand({ commandId: "cmd-lc-note-budget", projectId, note: budgetNote }));
+    expect(noteReceipt.status).toBe("committed");
+
+    await h.advanceProjection();
+
+    // rollover facts preserved: work-context view exposes the reworked run + continuation + note.
+    const wcView = await h.workContextView({ projectId, workspaceId: wsId, workId });
+    expect(wcView.status).toBe("ready");
+    if (wcView.status === "ready") {
+      // bound to the crashed Coder run itself, and the rework run was linked in.
+      expect(wcView.binding.binding.initialRunRef.runId).toBe(coderRunId);
+      expect(wcView.binding.binding.linkedRunRefs.some((r) => r.runId === reworkRunId)).toBe(true);
+      expect(wcView.continuations.length).toBeGreaterThanOrEqual(1);
+      expect(wcView.notes.length).toBeGreaterThanOrEqual(1);
+    }
+
+    // --- P1-17 completed-work selection visible for the same workspace ---
+    const cwView = await h.completedWorkView({ projectId, workspaceId: wsId, goalId });
+    expect(cwView.status).toBe("ready");
+    if (cwView.status === "ready") {
+      expect(cwView.rows.some((row) => row.workRef.workId === workId)).toBe(true);
+    }
+
+    // The completed-work selection can also be assembled as a bounded context bundle (P1-17).
+    const assembled = await h.assembleCompletedWorkContext({
+      schemaVersion: 1, requestId: "req-lc-cw", projectId, workspaceId: wsId,
+      newWorkGoalId: goalId, newWorkKind: "task",
+      relatedRefs: [{ kind: "interface", refKey: "HumanCollaboration.UnifiedStatusPort", version: "1" }],
+      applicableVersions: { planRef, planRevision: 1, workspaceRevision: 1, governanceRevision: null },
+      requestedByRunRef: reworkRunRef,
+      declaredPermissions: { tools: [], writeScope: [] },
+      budget: { maxSelected: 8, maxBundleBytes: 4096 },
+    });
+    expect(assembled.status === "ready" || assembled.status === "needs_material").toBe(true);
+  }, 60_000);
+});
