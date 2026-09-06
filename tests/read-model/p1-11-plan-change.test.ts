@@ -1,0 +1,235 @@
+/**
+ * P1-11 LANE-C InMemory projection tests — planChangeView over
+ * PlanProposalRecorded / UserDecisionRecorded / GoalRevisionRecorded /
+ * PlanRevisionSuperseded (+ the P1-02 PlanRevisionAccepted plan snapshots).
+ * Asserts:
+ *   - ready view with proposals/decisions/revisions/dispositions;
+ *   - task dispositions (task-verify -> reverify; untouched -> keep);
+ *   - cross-project isolation (same local goalId under another project -> not_found);
+ *   - a never-advanced index -> not_found (no cursor claim);
+ *   - rebuild equivalence (a fresh index replayed from the same events reproduces
+ *     the view field-for-field).
+ * The events are built DIRECTLY from the P1-11/plan fixture ledger-commit
+ * builders (the control lane is a stub in this worktree, so the scenario is
+ * fed to the read model as a plain EventPage).
+ */
+import { describe, expect, it } from "vitest";
+import { ReadModelIndexImpl } from "../../src/read-model/read-model-index.js";
+import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import {
+  P111_GOAL,
+  P111_PROJECT,
+  P111_PROJECT_B,
+  P111_SOURCE_PLAN,
+  P111_WORKSPACE,
+  buildApplyPlanChangeCommand,
+  buildP111NewPlanDraft,
+  buildPlanChangeProposalRecordCommit,
+  buildGoalChangeApplyCommit,
+  buildPlanProposalV1,
+  buildRecordPlanChangeProposalCommand,
+  buildRecordUserDecisionCommand,
+  buildUserDecisionRecordCommit,
+  buildUserDecisionV1,
+  p111GoalRef,
+  p111PlanRef,
+} from "../../src/contracts/fixtures/goal-change-fixtures.js";
+import {
+  HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1,
+  buildApplyPlanCommand,
+  planRevisionAcceptedEventFor,
+  planRevisionSnapshotFor,
+} from "../../src/contracts/fixtures/plan-fixtures.js";
+import {
+  ARCHITECTURE_BASELINE_FIXTURE_V1,
+  COMPLETION_POLICY_FIXTURE_V1,
+  architectureBaselinePinFor,
+  buildInstallCommand,
+  completionPolicyPinFor,
+} from "../../src/contracts/fixtures/governance-fixtures.js";
+import type { InstallArchitectureBaselineRevisionCommand, InstallCompletionPolicyRevisionCommand } from "../../src/contracts/governance.js";
+import type { GoalSnapshot } from "../../src/contracts/ledger.js";
+import type { PlanChangeViewResult } from "../../src/contracts/goal-change.js";
+
+const FIXED = FIXED_ISO_2026_09_05;
+
+function json(v: unknown): string {
+  return JSON.stringify(v);
+}
+
+/** Build the P1-11 event stream (source accept -> proposal -> decision -> new
+ * accept -> supersede -> revision) as a directly-advanceable EventPage. */
+function buildP111Page(projectId: string = P111_PROJECT): { page: EventPage } {
+  const planCmd = buildApplyPlanCommand(HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, {
+    commandId: "p111-src-accept",
+    correlationId: "p111-src-corr",
+    submittedAt: FIXED,
+    projectId,
+    expectedRevision: 1,
+    idempotencyKey: "p111-src-accept-idem",
+  });
+  const cp = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+    commandId: "p111-cp-install",
+    correlationId: "p111-cp-corr",
+    submittedAt: FIXED,
+    projectId,
+    idempotencyKey: "p111-cp-idem",
+  }) as InstallCompletionPolicyRevisionCommand;
+  const ab = buildInstallCommand(ARCHITECTURE_BASELINE_FIXTURE_V1, {
+    commandId: "p111-ab-install",
+    correlationId: "p111-ab-corr",
+    submittedAt: FIXED,
+    projectId,
+    idempotencyKey: "p111-ab-idem",
+  }) as InstallArchitectureBaselineRevisionCommand;
+  const pins = {
+    completionPolicy: completionPolicyPinFor(cp),
+    architectureBaseline: architectureBaselinePinFor(ab),
+  };
+  const sourceSnap = planRevisionSnapshotFor(planCmd, pins, FIXED);
+  const sourceAccepted = planRevisionAcceptedEventFor(planCmd, {
+    eventId: "evt-p111-src-accept",
+    occurredAt: FIXED,
+    workspaceId: P111_WORKSPACE,
+    goalAggregateRevision: 2,
+    planSnapshot: sourceSnap,
+  });
+
+  const proposal = buildPlanProposalV1({
+    projectId,
+    workspaceId: P111_WORKSPACE,
+    sourceGoalRef: p111GoalRef(projectId),
+    sourcePlanRef: p111PlanRef(P111_SOURCE_PLAN, projectId),
+  });
+  const propCommit = buildPlanChangeProposalRecordCommit(
+    buildRecordPlanChangeProposalCommand(proposal, { commandId: "p111-cmd-proposal" }),
+    { eventId: "evt-p111-proposal", occurredAt: FIXED },
+  );
+
+  const decision = buildUserDecisionV1({ proposal, outcome: "accept" });
+  const decCommit = buildUserDecisionRecordCommit(
+    buildRecordUserDecisionCommand(decision, { commandId: "p111-cmd-decision" }),
+    { eventId: "evt-p111-decision", occurredAt: FIXED },
+  );
+
+  const deltas = proposal.patch.patchDraft.obligationDeltas;
+  const newPlanDraft = buildP111NewPlanDraft(sourceSnap, deltas, proposal.patch.patchDraft.objective);
+  const applyCmd = buildApplyPlanChangeCommand(proposal, decision, newPlanDraft, {
+    commandId: "p111-cmd-apply",
+    expectedRevision: 1,
+  });
+  const baseGoal: GoalSnapshot = {
+    ref: p111GoalRef(projectId),
+    workspaceRef: { aggregateType: "Workspace", projectId, workspaceId: P111_WORKSPACE },
+    objective: proposal.patch.patchDraft.objective,
+    desiredState: "active",
+    activePlanRevision: null,
+    revision: 1,
+  };
+  const applyCommit = buildGoalChangeApplyCommit(applyCmd, {
+    eventId: "evt-p111-apply",
+    occurredAt: FIXED,
+    changedAt: FIXED,
+    pins,
+    sourcePlan: sourceSnap,
+    newPlanDraft,
+    baseGoal,
+  });
+
+  const events: PositionedEvent[] = [
+    { cursor: makeCommitCursor(1), event: sourceAccepted },
+    { cursor: makeCommitCursor(2), event: propCommit.events[0]! },
+    { cursor: makeCommitCursor(3), event: decCommit.events[0]! },
+    { cursor: makeCommitCursor(4), event: applyCommit.events[0]! },
+    { cursor: makeCommitCursor(5), event: applyCommit.events[1]! },
+    { cursor: makeCommitCursor(6), event: applyCommit.events[2]! },
+  ];
+  return {
+    page: { afterCursor: null, throughCursor: makeCommitCursor(6), events, hasMore: false },
+  };
+}
+
+describe("P1-11 LANE-C InMemory projection: planChangeView", () => {
+  it("projects proposals/decisions/revisions and computes task dispositions", async () => {
+    const { page } = buildP111Page();
+    const rm = new ReadModelIndexImpl();
+    const receipt = await rm.advance(page);
+    expect(receipt.appliedEventIds.length).toBe(6);
+
+    const view = await rm.planChangeView({ projectId: P111_PROJECT, workspaceId: P111_WORKSPACE, goalId: P111_GOAL });
+    expect(view.status).toBe("ready");
+    if (view.status !== "ready") throw new Error("view not ready");
+
+    expect(view.proposals.length).toBe(1);
+    expect(view.proposals[0]!.ref.proposalId).toBe("proposal-p111-1");
+    expect(view.proposals[0]!.revision).toBe(1);
+    expect(view.decisions.length).toBe(1);
+    expect(view.decisions[0]!.ref.decisionId).toBe("decision-p111-1");
+    expect(view.revisions.length).toBe(1);
+    // Goal revision number: the goal advanced from revision 1 to 2.
+    expect(view.revisions[0]!.ref.revision).toBe(2);
+    expect(view.revisions[0]!.revision).toBe(1);
+    expect(view.freshness).toBeTruthy();
+
+    // task-verify obligation changed (obl-2 title) -> reverify; others keep.
+    const byTask = new Map(view.dispositions.map((d) => [d.taskId, d]));
+    expect(view.dispositions.length).toBeGreaterThan(0);
+    expect(byTask.get("task-verify")?.disposition).toBe("reverify");
+    expect(byTask.get("task-install-contract")?.disposition).toBe("keep");
+    expect(byTask.get("task-accept-plan")?.disposition).toBe("keep");
+    expect(byTask.get("gate-goal")?.disposition).toBe("keep");
+  });
+
+  it("isolates the same local goal id across projects (hard scope key)", async () => {
+    const { page } = buildP111Page();
+    const rm = new ReadModelIndexImpl();
+    await rm.advance(page);
+
+    // Same goalId but another project -> no rows under that scope.
+    const other = await rm.planChangeView({ projectId: P111_PROJECT_B, workspaceId: P111_WORKSPACE, goalId: P111_GOAL });
+    expect(other.status).toBe("not_found");
+  });
+
+  it("a never-advanced index returns not_found (no cursor claim)", async () => {
+    const rm = new ReadModelIndexImpl();
+    const view = await rm.planChangeView({ projectId: P111_PROJECT, workspaceId: P111_WORKSPACE, goalId: P111_GOAL });
+    expect(view.status).toBe("not_found");
+  });
+
+  it("rebuild equivalence: a fresh InMemory index from the same events reproduces the view", async () => {
+    const { page } = buildP111Page();
+    const rm = new ReadModelIndexImpl();
+    await rm.advance(page);
+    const before = await rm.planChangeView({ projectId: P111_PROJECT, workspaceId: P111_WORKSPACE, goalId: P111_GOAL });
+
+    const fresh = new ReadModelIndexImpl();
+    await fresh.advance(page);
+    const after = await fresh.planChangeView({ projectId: P111_PROJECT, workspaceId: P111_WORKSPACE, goalId: P111_GOAL });
+    expect(json(after)).toBe(json(before));
+    if (after.status === "ready") {
+      expect(after.proposals[0]!.ref.proposalId).toBe("proposal-p111-1");
+    }
+  });
+
+  it("dispositions are empty when a plan snapshot is missing (not projected)", async () => {
+    // Build the stream without the source-plan accept: the revision references a
+    // superseded ref for which no PlanRevisionSnapshot exists -> dispositions [].
+    const { page } = buildP111Page();
+    const rm = new ReadModelIndexImpl();
+    // First event (source accept) is intentionally dropped; skip to proposal.
+    const reduced: EventPage = {
+      ...page,
+      events: page.events.slice(1),
+      throughCursor: makeCommitCursor(5),
+    };
+    await rm.advance(reduced);
+    const view = await rm.planChangeView({ projectId: P111_PROJECT, workspaceId: P111_WORKSPACE, goalId: P111_GOAL });
+    expect(view.status).toBe("ready");
+    if (view.status === "ready") {
+      expect(view.proposals.length).toBe(1);
+      expect(view.revisions.length).toBe(1);
+      expect(view.dispositions).toEqual([]);
+    }
+  });
+});

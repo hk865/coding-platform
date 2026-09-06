@@ -55,6 +55,19 @@ import { canonicalJson } from "../contracts/fingerprint.js";
 import { continuationRecordRefFor, WORK_CONTEXT_VIEW_MAX_CONTINUATIONS } from "../contracts/context-continuity.js";
 import type { PlanRevisionAcceptedEvent, PlanRevisionRef, PlanRevisionSnapshot } from "../contracts/plan.js";
 import type {
+  GoalRevisionSnapshot,
+  PlanChangeViewQuery,
+  PlanChangeViewResult,
+  PlanProposalSnapshot,
+  PlanProposalRecordedEvent,
+  GoalRevisionRecordedEvent,
+  UserDecisionSnapshot,
+  UserDecisionRecordedEvent,
+  PlanRevisionSupersededEvent,
+  TaskDispositionRow,
+} from "../contracts/goal-change.js";
+import { computeTaskDispositions, planChangeScopeKey } from "../contracts/goal-change.js";
+import type {
   RunEventRecordedEvent,
   RunOutcomeUnknownEvent,
   RunStartedEvent,
@@ -302,6 +315,23 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   private readonly p109Runs = new Map<string, import("../contracts/query-job.js").QueryRunV1>();
   private readonly p109Answers = new Map<string, import("../contracts/query-job.js").QueryJobAnswerV1[]>();
   private readonly p110IntentRows = new Map<string, { ref: import("../contracts/control-intent.js").ControlIntentRef; scope: { goalId: string | null; taskId: string | null }; kind: import("../contracts/control-intent.js").ControlKind; desiredState: string; status: import("../contracts/control-intent.js").ControlIntentStatus; ackCount: number; cursor: CommitCursor }[]>();
+
+  // ------------------------------------------------------------------ //
+  // P1-11 plan-change projection rows (LANE-C: proposal/decision +     //
+  // revision + accepted-plan snapshots). Row keys are FULL scope keys: //
+  // the planChangeScopeKey prefix (projectId, workspaceId, goalId) for //
+  // the proposal/decision/revision rows, canonicalJson(plan ref) for   //
+  // the accepted-plan snapshot rows — so identical local ids reused    //
+  // across Projects / goals NEVER collide (hard isolation).            //
+  // ------------------------------------------------------------------ //
+  /** scopeKey + "\u0000" + proposalId -> PlanProposalSnapshot. */
+  private readonly p111Proposals = new Map<string, PlanProposalSnapshot>();
+  /** scopeKey + "\u0000" + decisionId -> UserDecisionSnapshot. */
+  private readonly p111Decisions = new Map<string, UserDecisionSnapshot>();
+  /** scopeKey -> GoalRevisionSnapshot[] appended in revision-ascending order. */
+  private readonly p111GoalRevisions = new Map<string, GoalRevisionSnapshot[]>();
+  /** canonicalJson(PlanRevision ref) -> accepted PlanRevisionSnapshot (every accept stored; idempotent overwrite). */
+  private readonly p111PlanSnapshots = new Map<string, PlanRevisionSnapshot>();
   /** P1-16 LANE-A: full-scope key -> ordered ExecutionNote rows (notes part). */
   private readonly p116Notes = new Map<string, import("../contracts/context-continuity.js").WorkContextNoteRow[]>();
   /** LANE-B: (projectId, workspaceId, goalId) -> PlanMatrixView. */
@@ -2732,15 +2762,115 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
   }
 
-  /** P1-11 LANE-B: plan change view (display only) — stub until the lane lands. */
-  async planChangeView(query: import("../contracts/goal-change.js").PlanChangeViewQuery): Promise<import("../contracts/goal-change.js").PlanChangeViewResult> {
-    void query;
-    throw new Error("P1-11 lane: planChangeView not implemented yet");
+  /** P1-11 LANE-B: plan change view (display only; rebuildable from events).
+   * Assembles proposals / decisions / revisions for the (projectId, workspaceId,
+   * goalId) scope plus the purely-computed task dispositions (never judged). */
+  async planChangeView(query: PlanChangeViewQuery): Promise<PlanChangeViewResult> {
+    const observedCursor = this.observedCursor;
+    // No projection ever advanced -> we cannot claim freshness for any scope.
+    if (observedCursor === null) return { status: "not_found" };
+
+    const key = planChangeScopeKey(query);
+    const proposals: PlanProposalSnapshot[] = [];
+    for (const [rowKey, value] of this.p111Proposals) {
+      if (rowKey.startsWith(key + "\u0000")) proposals.push(value);
+    }
+    const decisions: UserDecisionSnapshot[] = [];
+    for (const [rowKey, value] of this.p111Decisions) {
+      if (rowKey.startsWith(key + "\u0000")) decisions.push(value);
+    }
+    const revisions = this.p111GoalRevisions.get(key) ?? [];
+    if (proposals.length === 0 && decisions.length === 0 && revisions.length === 0) {
+      return { status: "not_found" };
+    }
+
+    const dispositions = this.computePlanChangeDispositions(revisions);
+    return {
+      status: "ready",
+      proposals,
+      decisions,
+      revisions,
+      dispositions,
+      freshness: observedCursor,
+    };
   }
 
-  /** P1-11 LANE-A/LANE-B hook: fold plan-change events (empty shell until lanes land). */
+  /** P1-11: compute the displayed task dispositions from the latest goal revision
+   * (pure; empty when either plan snapshot is not (yet) projected). */
+  private computePlanChangeDispositions(revisions: GoalRevisionSnapshot[]): TaskDispositionRow[] {
+    if (revisions.length === 0) return [];
+    const latest = revisions[revisions.length - 1]!;
+    const change = latest.change;
+    if (change.supersededPlanRefs.length === 0) return [];
+    const sourceRef = change.supersededPlanRefs[change.supersededPlanRefs.length - 1]!;
+    const source = this.p111PlanSnapshots.get(canonicalJson(sourceRef));
+    const target = this.p111PlanSnapshots.get(canonicalJson(change.activePlanRef));
+    if (source === undefined || target === undefined) return [];
+    return computeTaskDispositions(source, target, []);
+  }
+
+  /** P1-11 LANE-A/LANE-B hook: fold plan-change events (proposal/decision +
+   * LANE-B revision/plan; empty until the lane lands — handler + isHandledEventType
+   * land in the SAME lane commit). */
   private applyP111(event: DomainEvent, cursor: CommitCursor): void {
-    void event;
+    if (event.eventType === "PlanProposalRecorded") {
+      const ev = event as PlanProposalRecordedEvent;
+      const proposal = ev.payload.proposal;
+      const ref = {
+        aggregateType: "PlanProposal" as const,
+        projectId: proposal.projectId,
+        workspaceId: proposal.workspaceId,
+        proposalId: proposal.proposalId,
+      };
+      const key = planChangeScopeKey({
+        projectId: proposal.projectId,
+        workspaceId: proposal.workspaceId,
+        goalId: proposal.sourceGoalRef.goalId,
+      }) + "\u0000" + proposal.proposalId;
+      const snapshot: PlanProposalSnapshot = { ref, revision: 1, schemaVersion: 1, proposal, recordedAt: ev.payload.recordedAt };
+      this.p111Proposals.set(key, snapshot);
+    } else if (event.eventType === "UserDecisionRecorded") {
+      const ev = event as UserDecisionRecordedEvent;
+      const decision = ev.payload.decision;
+      const ref = {
+        aggregateType: "UserDecision" as const,
+        projectId: decision.projectId,
+        workspaceId: decision.workspaceId,
+        decisionId: decision.decisionId,
+      };
+      const key = planChangeScopeKey({
+        projectId: decision.projectId,
+        workspaceId: decision.workspaceId,
+        goalId: decision.subject.goalRef.goalId,
+      }) + "\u0000" + decision.decisionId;
+      const snapshot: UserDecisionSnapshot = { ref, revision: 1, schemaVersion: 1, decision, recordedAt: ev.payload.recordedAt };
+      this.p111Decisions.set(key, snapshot);
+    } else if (event.eventType === "GoalRevisionRecorded") {
+      const ev = event as GoalRevisionRecordedEvent;
+      const change = ev.payload.change;
+      const ref = {
+        aggregateType: "GoalRevision" as const,
+        projectId: ev.projectId,
+        workspaceId: ev.workspaceId,
+        goalId: change.goalRef.goalId,
+        revision: change.revision,
+      };
+      const key = planChangeScopeKey({ projectId: ev.projectId, workspaceId: ev.workspaceId, goalId: change.goalRef.goalId });
+      const snapshot: GoalRevisionSnapshot = { ref, revision: 1, schemaVersion: 1, change, recordedAt: ev.payload.recordedAt };
+      const rows = this.p111GoalRevisions.get(key) ?? [];
+      rows.push(snapshot);
+      rows.sort((a, b) => a.ref.revision - b.ref.revision);
+      this.p111GoalRevisions.set(key, rows);
+    } else if (event.eventType === "PlanRevisionAccepted") {
+      const ev = event as PlanRevisionAcceptedEvent;
+      const planRevision = ev.payload.planRevision;
+      // Idempotent: the same ref always projects the same immutable snapshot.
+      this.p111PlanSnapshots.set(canonicalJson(planRevision.ref), planRevision);
+    } else if (event.eventType === "PlanRevisionSuperseded") {
+      // The same fact is already carried by the GoalRevisionRecorded change;
+      // the supersession event itself needs no dedicated row.
+      void (event as PlanRevisionSupersededEvent);
+    }
     void cursor;
   }
 
@@ -2928,7 +3058,12 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       eventType === "QueryJobSubmitted" ||
       eventType === "QueryRunStarted" ||
       eventType === "QueryJobAnswerRecorded" ||
-      eventType === "QueryJobClosed"
+      eventType === "QueryJobClosed" ||
+      // P1-11 plan-change events (handler + isHandledEventType in the SAME lane commit).
+      eventType === "PlanProposalRecorded" ||
+      eventType === "UserDecisionRecorded" ||
+      eventType === "GoalRevisionRecorded" ||
+      eventType === "PlanRevisionSuperseded"
     );
   }
 }
