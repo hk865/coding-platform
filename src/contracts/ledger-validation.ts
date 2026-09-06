@@ -60,6 +60,7 @@ import { patchRecordRefFor } from "./patch.js";
 import { WORK_CONTEXT_MAX_RUN_LINKS } from "./context-continuity.js";
 import { candidateProposalDigest } from "./architecture-inspection.js";
 import { CONTROL_INTENT_MAX_ACKS } from "./control-intent.js";
+import { QUERY_JOB_MAX_ROUNDS } from "./query-job.js";
 
 function identityMatchesActor(
   projectId: string,
@@ -1227,6 +1228,88 @@ export function validateControlAckRecordCommit(batch: import("./ledger.js").Cont
   const expected = batch.expectedVersions[0]!;
   if (expected.revision !== snapshot.revision - 1) return false;
   if (canonicalJson(expected.ref) !== canonicalJson(snapshot.ref)) return false;
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+
+
+// ------------------------------------------------------------------------ //
+// P1-09 query-job validators (shared by BOTH adapters)                      //
+// ------------------------------------------------------------------------ //
+
+export function validateQueryJobRecordCommit(batch: import("./ledger.js").QueryJobRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 2) return false;
+  if (batch.snapshots.length !== 2) return false;
+  if (batch.outboxIntents.length !== 0) return false;
+  const [jobEvent, runEvent] = batch.events as [import("./query-job.js").QueryJobSubmittedEvent, import("./query-job.js").QueryRunStartedEvent];
+  if (jobEvent.eventType !== "QueryJobSubmitted") return false;
+  if (runEvent.eventType !== "QueryRunStarted") return false;
+  if (!isKnownEventType(jobEvent.eventType) || !isKnownEventType(runEvent.eventType)) return false;
+  const jobSnap = batch.snapshots[0] as import("./query-job.js").QueryJobSnapshot;
+  const runSnap = batch.snapshots[1] as import("./query-job.js").QueryRunSnapshot;
+  if (jobSnap.ref.aggregateType !== "QueryJob" || runSnap.ref.aggregateType !== "QueryRun") return false;
+  if (jobSnap.revision !== 1 || runSnap.revision !== 1) return false;
+  if (canonicalJson(jobSnap.job) !== canonicalJson(jobEvent.payload.job)) return false;
+  if (canonicalJson(runSnap.run) !== canonicalJson(runEvent.payload.run)) return false;
+  if (jobSnap.job.queryJobId !== jobEvent.aggregateId) return false;
+  if (jobSnap.job.projectId !== jobEvent.projectId || jobSnap.job.workspaceId !== jobEvent.workspaceId) return false;
+  if (runSnap.run.queryJobRef.queryJobId !== jobSnap.job.queryJobId) return false;
+  if (jobSnap.job.status !== "pending" || runSnap.run.status !== "pending") return false;
+  if (batch.expectedVersions.length !== 2) return false;
+  const jE = batch.expectedVersions.find((v) => v.ref.aggregateType === "QueryJob");
+  const rE = batch.expectedVersions.find((v) => v.ref.aggregateType === "QueryRun");
+  if (jE === undefined || jE.revision !== 0 || canonicalJson(jE.ref) !== canonicalJson(jobSnap.ref)) return false;
+  if (rE === undefined || rE.revision !== 0 || canonicalJson(rE.ref) !== canonicalJson(runSnap.ref)) return false;
+  return identityMatchesActor(jobEvent.projectId, jobEvent.idempotencyKey, jobEvent.actor.kind, jobEvent.actor.id, batch.identity);
+}
+
+export function validateQueryAnswerRecordCommit(batch: import("./ledger.js").QueryAnswerRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 1) return false;
+  if (batch.snapshots.length !== 3) return false;
+  if (batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.eventType !== "QueryJobAnswerRecorded") return false;
+  if (!isKnownEventType(event.eventType)) return false;
+  const answerSnap = batch.snapshots.find((s) => s.ref.aggregateType === "QueryJobAnswer") as import("./query-job.js").QueryJobAnswerSnapshot | undefined;
+  const jobSnap = batch.snapshots.find((s) => s.ref.aggregateType === "QueryJob") as import("./query-job.js").QueryJobSnapshot | undefined;
+  const runSnap = batch.snapshots.find((s) => s.ref.aggregateType === "QueryRun") as import("./query-job.js").QueryRunSnapshot | undefined;
+  if (answerSnap === undefined || jobSnap === undefined || runSnap === undefined) return false;
+  if (answerSnap.revision !== 1 || answerSnap.schemaVersion !== 1) return false;
+  if (canonicalJson(answerSnap.answer) !== canonicalJson(event.payload.answer)) return false;
+  if (canonicalJson(jobSnap.job) !== canonicalJson(event.payload.job)) return false;
+  if (canonicalJson(runSnap.run) !== canonicalJson(event.payload.run)) return false;
+  if (jobSnap.job.status !== "answered" || runSnap.run.status !== "answered") return false;
+  if (jobSnap.job.answerRefs[jobSnap.job.answerRefs.length - 1]?.answerId !== answerSnap.answer.answerId) return false;
+  if (batch.expectedVersions.length !== 3) return false;
+  const aE = batch.expectedVersions.find((v) => v.ref.aggregateType === "QueryJobAnswer");
+  if (aE === undefined || aE.revision !== 0) return false;
+  const jE = batch.expectedVersions.find((v) => v.ref.aggregateType === "QueryJob");
+  if (jE === undefined || jE.revision !== jobSnap.revision - 1) return false;
+  const rE = batch.expectedVersions.find((v) => v.ref.aggregateType === "QueryRun");
+  if (rE === undefined || rE.revision !== runSnap.revision - 1) return false;
+  return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
+}
+
+export function validateQueryCloseRecordCommit(batch: import("./ledger.js").QueryCloseRecordLedgerCommitV1): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 1) return false;
+  if (batch.snapshots.length !== 2) return false;
+  if (batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.eventType !== "QueryJobClosed") return false;
+  if (!isKnownEventType(event.eventType)) return false;
+  const jobSnap = batch.snapshots.find((s) => s.ref.aggregateType === "QueryJob") as import("./query-job.js").QueryJobSnapshot | undefined;
+  const runSnap = batch.snapshots.find((s) => s.ref.aggregateType === "QueryRun") as import("./query-job.js").QueryRunSnapshot | undefined;
+  if (jobSnap === undefined || runSnap === undefined) return false;
+  if (canonicalJson(jobSnap.job) !== canonicalJson(event.payload.job)) return false;
+  if (canonicalJson(runSnap.run) !== canonicalJson(event.payload.run)) return false;
+  if (jobSnap.job.status !== "closed" || runSnap.run.status !== "closed") return false;
+  if (jobSnap.job.closeReason?.code !== event.payload.reason.code) return false;
+  const jE = batch.expectedVersions.find((v) => v.ref.aggregateType === "QueryJob");
+  if (jE === undefined || jE.revision !== jobSnap.revision - 1) return false;
+  const rE = batch.expectedVersions.find((v) => v.ref.aggregateType === "QueryRun");
+  if (rE === undefined || rE.revision !== runSnap.revision - 1) return false;
   return identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity);
 }
 

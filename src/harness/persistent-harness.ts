@@ -79,6 +79,9 @@ import { FakeHandoffControlRuntimeAdapter } from "../runtime/handoff-control-ada
 import { WorkContextCompilerImpl } from "../context/work-context-compiler.js";
 import { CompletedWorkContextCompilerImpl } from "../context/completed-work-context-compiler.js";
 import { FakeLifecycleControlAdapter } from "../runtime/lifecycle-control-adapter.js";
+import { FakeReadOnlyQueryAdapter } from "../runtime/read-only-query-adapter.js";
+import { QueryJobContextStub } from "../contracts/testing/query-context.stub.js";
+import type { ReadOnlyQueryPort, QueryJobViewQuery, QueryJobViewResult, SubmitQueryJobCommand, SubmitQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, CloseQueryJobCommand, CloseQueryJobReceipt, QueryContextPort, QueryContextRequestV1, QueryContextResultV1, SnapshotPort, PublicSnapshotQueryV1, PublicSnapshotResultV1 } from "../contracts/query-job.js";
 import type { LifecycleControlPort, ControlTimelineViewQuery, ControlTimelineViewResult, SubmitControlCommand, SubmitControlReceipt, RecordSafePointAckCommand, RecordSafePointAckReceipt } from "../contracts/control-intent.js";
 import type { CompletedWorkContextPort, CompletedWorkContextRequestV1, CompletedWorkContextResultV1 } from "../contracts/completed-work-context.js";
 import { FakeContextContinuationRuntimeAdapter } from "../runtime/context-continuation-adapter.js";
@@ -157,6 +160,12 @@ export interface PersistentSqliteHarnessOptions {
   completedWork?: CompletedWorkContextPort;
   /** P1-10: explicit LifecycleControlPort (default FakeLifecycleControlAdapter). */
   lifecycleControl?: LifecycleControlPort;
+  /** P1-09: explicit ReadOnlyQueryPort (default FakeReadOnlyQueryAdapter). */
+  readOnlyQuery?: ReadOnlyQueryPort;
+  /** P1-09: explicit QueryContextPort (default stub). */
+  queryContext?: QueryContextPort;
+  /** P1-09: explicit SnapshotPort (default stub). */
+  snapshot?: SnapshotPort;
   /** P1-12: explicit WorkspaceReader (default FakeWorkspaceReaderAdapter). */
   workspaceReader?: WorkspaceReadPort;
   /** P1-12: explicit CodeGraphPort (default CodeGraphPortImpl). */
@@ -203,6 +212,12 @@ export interface PersistentSqliteHarness {
   completedWork: CompletedWorkContextPort;
   /** P1-10: WorkerRuntime lifecycle control face (safe points). */
   lifecycleControl: LifecycleControlPort;
+  /** P1-09: read-only query run face (never touches source run/lease). */
+  readOnlyQuery: ReadOnlyQueryPort;
+  /** P1-09: bounded query-context assembly. */
+  queryContext: QueryContextPort;
+  /** P1-09: public snapshot face (noHiddenContextRead). */
+  snapshot: SnapshotPort;
   /** P1-12: deterministic workspace reader (versioned source graphs). */
   workspaceReader: WorkspaceReadPort;
   /** P1-12: VerificationEngine.CodeGraphPort seam. */
@@ -315,6 +330,15 @@ export interface PersistentSqliteHarness {
   controlTimelineView(query: ControlTimelineViewQuery): Promise<ControlTimelineViewResult>;
   /** P1-10: runtime lifecycle capabilities (honest declaration). */
   lifecycleCapabilities(request: { runRef: import("../contracts/dispatch.js").RunRef | null }): { safePointDelivery: boolean; pause: boolean; cancel: boolean; steer: boolean; maxSteerPayloadBytes: number };
+  /** P1-09: submit/answer/close a QueryJob + its view. */
+  submitQueryJob(command: SubmitQueryJobCommand): Promise<SubmitQueryJobReceipt>;
+  recordQueryAnswer(command: RecordQueryAnswerCommand): Promise<RecordQueryAnswerReceipt>;
+  closeQueryJob(command: CloseQueryJobCommand): Promise<CloseQueryJobReceipt>;
+  queryJobView(query: QueryJobViewQuery): Promise<QueryJobViewResult>;
+  /** P1-09: assemble the bounded query context (never a transcript). */
+  assembleQueryContext(request: QueryContextRequestV1): Promise<QueryContextResultV1>;
+  /** P1-09: read the runtime public snapshot (explicit unsupported/stale). */
+  publicSnapshot(query: PublicSnapshotQueryV1): Promise<PublicSnapshotResultV1>;
   /** P1-16: runtime continuation capabilities (honest declaration). */
   continuationCapabilities(request: { workContextRef: import("../contracts/context-continuity.js").WorkContextRef; runRef: import("../contracts/dispatch.js").RunRef | null }): Promise<import("../contracts/context-continuation-port.js").ContextContinuationCapabilityResult>;
   /** P1-04: review-context assembly (bounded ReviewPacket). */
@@ -360,6 +384,9 @@ interface BuiltHarness {
   workspaceReader: WorkspaceReadPort;
   codeGraph: CodeGraphPort;
   inspection: InspectionPort;
+  readOnlyQuery: ReadOnlyQueryPort;
+  queryContext: QueryContextPort;
+  snapshot: SnapshotPort;
   advanceProjection: () => Promise<ProjectionReceipt>;
   observedCursor: () => CommitCursor | null;
   planGraph: (query: PlanGraphViewQuery) => Promise<PlanGraphViewResult>;
@@ -385,6 +412,9 @@ function buildHarness(
   contextContinuationOverride: ContextContinuationPort | undefined,
   completedWorkOverride: CompletedWorkContextPort | undefined,
   lifecycleControlOverride: LifecycleControlPort | undefined,
+  readOnlyQueryOverride: ReadOnlyQueryPort | undefined,
+  queryContextOverride: QueryContextPort | undefined,
+  snapshotOverride: SnapshotPort | undefined,
   workspaceReaderOverride: WorkspaceReadPort | undefined,
   codeGraphOverride: CodeGraphPort | undefined,
   inspectionOverride: InspectionPort | undefined,
@@ -450,6 +480,11 @@ function buildHarness(
     completedWorkOverride ?? new CompletedWorkContextCompilerImpl({ ledger, vault, readModel, now: d.clock });
   const lifecycleControl: LifecycleControlPort =
     lifecycleControlOverride ?? new FakeLifecycleControlAdapter();
+  const readOnlyQuery: ReadOnlyQueryPort =
+    readOnlyQueryOverride ?? new FakeReadOnlyQueryAdapter();
+  const queryContext: QueryContextPort =
+    queryContextOverride ?? new QueryJobContextStub();
+  const snapshot: SnapshotPort = snapshotOverride ?? { snapshot: (q) => Promise.resolve({ status: "unsupported", message: "P1-09 lane: public snapshot not wired yet" }) };
   const workspaceReader: WorkspaceReadPort =
     workspaceReaderOverride ?? new FakeWorkspaceReaderAdapter({ now: d.clock });
   const codeGraph: CodeGraphPort = codeGraphOverride ?? new CodeGraphPortImpl();
@@ -487,6 +522,9 @@ function buildHarness(
     contextContinuation,
     completedWork,
     lifecycleControl,
+    readOnlyQuery,
+    queryContext,
+    snapshot,
     workspaceReader,
     codeGraph,
     inspection,
@@ -514,7 +552,7 @@ export async function createPersistentSqliteHarness(
     ledgerFilename: string,
     readModelFilename: string,
   ): PersistentSqliteHarness => {
-    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript, checkPorts, reviewer, verificationOverride, reviewContextOverride, options.handoffContext, options.handoffControl, options.workspaceCapability, options.workspaceDrive, options.runtime, options.workContext, options.contextContinuation, options.completedWork, options.lifecycleControl, options.workspaceReader, options.codeGraph, options.inspection);
+    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript, checkPorts, reviewer, verificationOverride, reviewContextOverride, options.handoffContext, options.handoffControl, options.workspaceCapability, options.workspaceDrive, options.runtime, options.workContext, options.contextContinuation, options.completedWork, options.lifecycleControl, options.readOnlyQuery, options.queryContext, options.snapshot, options.workspaceReader, options.codeGraph, options.inspection);
     let closed = false;
     return {
       dir,
@@ -540,6 +578,9 @@ export async function createPersistentSqliteHarness(
       contextContinuation: built.contextContinuation,
       completedWork: built.completedWork,
       lifecycleControl: built.lifecycleControl,
+      readOnlyQuery: built.readOnlyQuery,
+      queryContext: built.queryContext,
+      snapshot: built.snapshot,
       workspaceReader: built.workspaceReader,
       codeGraph: built.codeGraph,
       inspection: built.inspection,
@@ -597,6 +638,12 @@ export async function createPersistentSqliteHarness(
       recordSafePointAck: (command) => built.control.recordSafePointAck(command),
       controlTimelineView: (query) => built.readModel.controlTimelineView(query),
       lifecycleCapabilities: (request) => built.lifecycleControl.capabilities(request),
+      submitQueryJob: (command) => built.control.submitQueryJob(command),
+      recordQueryAnswer: (command) => built.control.recordQueryAnswer(command),
+      closeQueryJob: (command) => built.control.closeQueryJob(command),
+      queryJobView: (query) => built.readModel.queryJobView(query),
+      assembleQueryContext: (request) => built.queryContext.assembleQueryContext(request),
+      publicSnapshot: (query) => built.snapshot.snapshot(query),
       continuationCapabilities: (request) => built.contextContinuation.capabilities(request),
       assembleHandoff: (request) => built.handoffContext.assemble(request),
       assembleReview: (request) => built.reviewContext.assemble(request),

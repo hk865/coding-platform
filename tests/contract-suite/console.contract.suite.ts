@@ -130,6 +130,9 @@ export class TrapControlEngine implements ControlEngine {
   recordCandidateBaselineProposal(): never { return this.trap("recordCandidateBaselineProposal"); }
   submitControl(): never { return this.trap("submitControl"); }
   recordSafePointAck(): never { return this.trap("recordSafePointAck"); }
+  submitQueryJob(): never { return this.trap("submitQueryJob"); }
+  recordQueryAnswer(): never { return this.trap("recordQueryAnswer"); }
+  closeQueryJob(): never { return this.trap("closeQueryJob"); }
 }
 
 export function defineConsoleContractSuite(

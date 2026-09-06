@@ -126,4 +126,6 @@ export interface ReadModelIndex {
   completedWorkView(query: import("./completed-work-context.js").CompletedWorkViewQuery): Promise<import("./completed-work-context.js").CompletedWorkViewResult>;
   /** P1-10: control timeline view per (projectId, workspaceId) — desired vs current separated (display only). */
   controlTimelineView(query: import("./control-intent.js").ControlTimelineViewQuery): Promise<import("./control-intent.js").ControlTimelineViewResult>;
+  /** P1-09: query job view per (projectId, workspaceId, queryJobId) — job/run/answers/stale (display only). */
+  queryJobView(query: import("./query-job.js").QueryJobViewQuery): Promise<import("./query-job.js").QueryJobViewResult>;
 }

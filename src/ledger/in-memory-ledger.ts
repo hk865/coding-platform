@@ -57,6 +57,9 @@ import {
   validateArchitectureProposalRecordCommit,
   validateControlIntentRecordCommit,
   validateControlAckRecordCommit,
+  validateQueryJobRecordCommit,
+  validateQueryAnswerRecordCommit,
+  validateQueryCloseRecordCommit,
 } from "../contracts/ledger-validation.js";
 import { canonicalJson } from "../contracts/fingerprint.js";
 import type { CommitCursor } from "../contracts/command-event.js";
@@ -175,6 +178,12 @@ export class InMemoryLedger implements StateLedger {
         return this.commitControlIntentRecord(batch);
       case "control-ack":
         return this.commitControlAckRecord(batch);
+      case "query-job-record":
+        return this.commitQueryJobRecord(batch);
+      case "query-answer-record":
+        return this.commitQueryAnswerRecord(batch);
+      case "query-close-record":
+        return this.commitQueryCloseRecord(batch);
     }
   }
 
@@ -613,6 +622,30 @@ export class InMemoryLedger implements StateLedger {
   /** P1-10: control-ack — append one safe-point acknowledgement (CAS@N). */
   private async commitControlAckRecord(batch: import("../contracts/ledger.js").ControlAckRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateControlAckRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  /** P1-09: query-job-record — QueryJob + QueryRun @1 (atomic). */
+  private async commitQueryJobRecord(batch: import("../contracts/ledger.js").QueryJobRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateQueryJobRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  /** P1-09: query-answer-record — answer + advanced job/run (atomic). */
+  private async commitQueryAnswerRecord(batch: import("../contracts/ledger.js").QueryAnswerRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateQueryAnswerRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  /** P1-09: query-close-record — closed job/run (atomic). */
+  private async commitQueryCloseRecord(batch: import("../contracts/ledger.js").QueryCloseRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateQueryCloseRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
     }
     return this.commitGenericWithIdempotency(batch);

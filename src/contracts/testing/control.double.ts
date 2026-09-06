@@ -113,6 +113,9 @@ export type RecordExecutionNoteBehavior = (command: RecordExecutionNoteCommand) 
 export type RecordContinuationBehavior = (command: RecordContinuationCommand) => RecordContinuationReceipt | Promise<RecordContinuationReceipt>;
 export type SubmitControlBehavior = (command: import("../control-intent.js").SubmitControlCommand) => import("../control-intent.js").SubmitControlReceipt | Promise<import("../control-intent.js").SubmitControlReceipt>;
 export type RecordSafePointAckBehavior = (command: import("../control-intent.js").RecordSafePointAckCommand) => import("../control-intent.js").RecordSafePointAckReceipt | Promise<import("../control-intent.js").RecordSafePointAckReceipt>;
+export type SubmitQueryJobBehavior = (command: import("../query-job.js").SubmitQueryJobCommand) => import("../query-job.js").SubmitQueryJobReceipt | Promise<import("../query-job.js").SubmitQueryJobReceipt>;
+export type RecordQueryAnswerBehavior = (command: import("../query-job.js").RecordQueryAnswerCommand) => import("../query-job.js").RecordQueryAnswerReceipt | Promise<import("../query-job.js").RecordQueryAnswerReceipt>;
+export type CloseQueryJobBehavior = (command: import("../query-job.js").CloseQueryJobCommand) => import("../query-job.js").CloseQueryJobReceipt | Promise<import("../query-job.js").CloseQueryJobReceipt>;
 export type RecordArchitectureInspectionBehavior = (command: import("../architecture-inspection.js").RecordArchitectureInspectionCommand) => import("../architecture-inspection.js").RecordArchitectureInspectionReceipt | Promise<import("../architecture-inspection.js").RecordArchitectureInspectionReceipt>;
 export type RecordArchitectureFindingBehavior = (command: import("../architecture-inspection.js").RecordArchitectureFindingCommand) => import("../architecture-inspection.js").RecordArchitectureFindingReceipt | Promise<import("../architecture-inspection.js").RecordArchitectureFindingReceipt>;
 export type RecordArchitectureDecisionBriefBehavior = (command: import("../architecture-inspection.js").RecordArchitectureDecisionBriefCommand) => import("../architecture-inspection.js").RecordArchitectureDecisionBriefReceipt | Promise<import("../architecture-inspection.js").RecordArchitectureDecisionBriefReceipt>;
@@ -165,6 +168,9 @@ export class ScriptedControlEngine implements ControlEngine {
       recordContinuation?: RecordContinuationBehavior;
       submitControl?: SubmitControlBehavior;
       recordSafePointAck?: RecordSafePointAckBehavior;
+      submitQueryJob?: SubmitQueryJobBehavior;
+      recordQueryAnswer?: RecordQueryAnswerBehavior;
+      closeQueryJob?: CloseQueryJobBehavior;
       recordArchitectureInspection?: RecordArchitectureInspectionBehavior;
       recordArchitectureFinding?: RecordArchitectureFindingBehavior;
       recordArchitectureDecisionBrief?: RecordArchitectureDecisionBriefBehavior;
@@ -322,6 +328,28 @@ export class ScriptedControlEngine implements ControlEngine {
     this.recordSafePointAckCalls.push(command);
     if (this.options.recordSafePointAck) return this.options.recordSafePointAck(command);
     throw new Error("ScriptedControlEngine: no recordSafePointAck behavior configured");
+  }
+
+  readonly submitQueryJobCalls: import("../query-job.js").SubmitQueryJobCommand[] = [];
+  readonly recordQueryAnswerCalls: import("../query-job.js").RecordQueryAnswerCommand[] = [];
+  readonly closeQueryJobCalls: import("../query-job.js").CloseQueryJobCommand[] = [];
+
+  async submitQueryJob(command: import("../query-job.js").SubmitQueryJobCommand): Promise<import("../query-job.js").SubmitQueryJobReceipt> {
+    this.submitQueryJobCalls.push(command);
+    if (this.options.submitQueryJob) return this.options.submitQueryJob(command);
+    throw new Error("ScriptedControlEngine: no submitQueryJob behavior configured");
+  }
+
+  async recordQueryAnswer(command: import("../query-job.js").RecordQueryAnswerCommand): Promise<import("../query-job.js").RecordQueryAnswerReceipt> {
+    this.recordQueryAnswerCalls.push(command);
+    if (this.options.recordQueryAnswer) return this.options.recordQueryAnswer(command);
+    throw new Error("ScriptedControlEngine: no recordQueryAnswer behavior configured");
+  }
+
+  async closeQueryJob(command: import("../query-job.js").CloseQueryJobCommand): Promise<import("../query-job.js").CloseQueryJobReceipt> {
+    this.closeQueryJobCalls.push(command);
+    if (this.options.closeQueryJob) return this.options.closeQueryJob(command);
+    throw new Error("ScriptedControlEngine: no closeQueryJob behavior configured");
   }
 
   async bindWorkContext(command: BindWorkContextCommand): Promise<BindWorkContextReceipt> {

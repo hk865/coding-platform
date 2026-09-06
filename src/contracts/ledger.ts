@@ -127,6 +127,7 @@ import type {
   ArchitectureInspectionSnapshot,
 } from "./architecture-inspection.js";
 import type { ControlIntentRecordedEvent, ControlIntentRef, ControlIntentSnapshot, SafePointAcknowledgedEvent } from "./control-intent.js";
+import type { QueryJobAnswerRecordedEvent, QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobClosedEvent, QueryJobRef, QueryJobSnapshot, QueryJobSubmittedEvent, QueryRunRef, QueryRunSnapshot, QueryRunStartedEvent } from "./query-job.js";
 
 export type ProjectRef = {
   aggregateType: "Project";
@@ -178,7 +179,10 @@ export type AggregateRef =
   | ArchitectureFindingRef
   | ArchitectureDecisionBriefRef
   | ArchitectureCandidateProposalRef
-  | ControlIntentRef;
+  | ControlIntentRef
+  | QueryJobRef
+  | QueryRunRef
+  | QueryJobAnswerRef;
 
 export type ProjectSnapshot = {
   ref: ProjectRef;
@@ -234,7 +238,10 @@ export type AggregateSnapshot =
   | ArchitectureFindingSnapshot
   | ArchitectureDecisionBriefSnapshot
   | ArchitectureCandidateProposalSnapshot
-  | ControlIntentSnapshot;
+  | ControlIntentSnapshot
+  | QueryJobSnapshot
+  | QueryRunSnapshot
+  | QueryJobAnswerSnapshot;
 
 export type SnapshotResult =
   | { status: "found"; snapshot: AggregateSnapshot }
@@ -622,6 +629,43 @@ export type ControlAckRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
+
+/** P1-09: query-job-record — QueryJob @0 + QueryRun @0 (atomic; durable intent first). */
+export type QueryJobRecordLedgerCommitV1 = {
+  commitKind: "query-job-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  events: [QueryJobSubmittedEvent, QueryRunStartedEvent];
+  snapshots: [QueryJobSnapshot, QueryRunSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-09: query-answer-record — answer @0 + job/run advanced (atomic). */
+export type QueryAnswerRecordLedgerCommitV1 = {
+  commitKind: "query-answer-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  events: [QueryJobAnswerRecordedEvent];
+  snapshots: [QueryJobAnswerSnapshot, QueryJobSnapshot, QueryRunSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-09: query-close-record — job/run closed (atomic). */
+export type QueryCloseRecordLedgerCommitV1 = {
+  commitKind: "query-close-record";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  events: [QueryJobClosedEvent];
+  snapshots: [QueryJobSnapshot, QueryRunSnapshot];
+  outboxIntents: [];
+};
+
 export type LedgerCommit =
   | GoalCreateLedgerCommitV1
   | BootstrapLedgerCommitV1
@@ -651,7 +695,10 @@ export type LedgerCommit =
   | ArchitectureBriefRecordLedgerCommitV1
   | ArchitectureProposalRecordLedgerCommitV1
   | ControlIntentRecordLedgerCommitV1
-  | ControlAckRecordLedgerCommitV1;
+  | ControlAckRecordLedgerCommitV1
+  | QueryJobRecordLedgerCommitV1
+  | QueryAnswerRecordLedgerCommitV1
+  | QueryCloseRecordLedgerCommitV1;
 
 export type LedgerCommitReceipt =
   | {

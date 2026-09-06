@@ -97,7 +97,10 @@ import { VerificationEngineImpl } from "../verification/verification-engine.js";
 import { ReviewContextCompilerImpl } from "../context/review-context-compiler.js";
 import { WorkContextCompilerImpl } from "../context/work-context-compiler.js";
 import { CompletedWorkContextCompilerImpl } from "../context/completed-work-context-compiler.js";
+import { QueryJobContextStub } from "../contracts/testing/query-context.stub.js";
 import { FakeLifecycleControlAdapter } from "../runtime/lifecycle-control-adapter.js";
+import { FakeReadOnlyQueryAdapter } from "../runtime/read-only-query-adapter.js";
+import type { ReadOnlyQueryPort, QueryJobViewQuery, QueryJobViewResult, SubmitQueryJobCommand, SubmitQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, CloseQueryJobCommand, CloseQueryJobReceipt, QueryContextPort, QueryContextRequestV1, QueryContextResultV1, SnapshotPort, PublicSnapshotQueryV1, PublicSnapshotResultV1 } from "../contracts/query-job.js";
 import type { LifecycleControlPort, ControlIntentRef, ControlTimelineViewQuery, ControlTimelineViewResult, SubmitControlCommand, SubmitControlReceipt, RecordSafePointAckCommand, RecordSafePointAckReceipt, ControlIntentPort } from "../contracts/control-intent.js";
 import type { CompletedWorkContextPort, CompletedWorkContextRequestV1, CompletedWorkContextResultV1 } from "../contracts/completed-work-context.js";
 import { FakeContextContinuationRuntimeAdapter } from "../runtime/context-continuation-adapter.js";
@@ -144,6 +147,12 @@ export interface InMemoryHarnessOptions {
   completedWork?: CompletedWorkContextPort;
   /** P1-10: explicit LifecycleControlPort (default FakeLifecycleControlAdapter). */
   lifecycleControl?: LifecycleControlPort;
+  /** P1-09: explicit ReadOnlyQueryPort (default FakeReadOnlyQueryAdapter). */
+  readOnlyQuery?: ReadOnlyQueryPort;
+  /** P1-09: explicit QueryContextPort (default stub compiler). */
+  queryContext?: QueryContextPort;
+  /** P1-09: explicit SnapshotPort (default stub). */
+  snapshot?: SnapshotPort;
   /** P1-12: explicit WorkspaceReader (default FakeWorkspaceReaderAdapter). */
   workspaceReader?: WorkspaceReadPort;
   /** P1-12: explicit CodeGraphPort (default CodeGraphPortImpl). */
@@ -187,6 +196,12 @@ export interface InMemoryHarness {
   completedWork: CompletedWorkContextPort;
   /** P1-10: WorkerRuntime lifecycle control face (safe points). */
   lifecycleControl: LifecycleControlPort;
+  /** P1-09: read-only query run face (never touches source run/lease). */
+  readOnlyQuery: ReadOnlyQueryPort;
+  /** P1-09: bounded query-context assembly. */
+  queryContext: QueryContextPort;
+  /** P1-09: public snapshot face (noHiddenContextRead). */
+  snapshot: SnapshotPort;
   /** P1-12: deterministic workspace reader (versioned source graphs). */
   workspaceReader: WorkspaceReadPort;
   /** P1-12: VerificationEngine.CodeGraphPort seam. */
@@ -298,6 +313,15 @@ export interface InMemoryHarness {
   controlTimelineView(query: ControlTimelineViewQuery): Promise<ControlTimelineViewResult>;
   /** P1-10: runtime lifecycle capabilities (honest declaration). */
   lifecycleCapabilities(request: { runRef: import("../contracts/dispatch.js").RunRef | null }): { safePointDelivery: boolean; pause: boolean; cancel: boolean; steer: boolean; maxSteerPayloadBytes: number };
+  /** P1-09: submit/answer/close a QueryJob + its view. */
+  submitQueryJob(command: SubmitQueryJobCommand): Promise<SubmitQueryJobReceipt>;
+  recordQueryAnswer(command: RecordQueryAnswerCommand): Promise<RecordQueryAnswerReceipt>;
+  closeQueryJob(command: CloseQueryJobCommand): Promise<CloseQueryJobReceipt>;
+  queryJobView(query: QueryJobViewQuery): Promise<QueryJobViewResult>;
+  /** P1-09: assemble the bounded query context (never a transcript). */
+  assembleQueryContext(request: QueryContextRequestV1): Promise<QueryContextResultV1>;
+  /** P1-09: read the runtime public snapshot (explicit unsupported/stale). */
+  publicSnapshot(query: PublicSnapshotQueryV1): Promise<PublicSnapshotResultV1>;
   /** P1-16: runtime continuation capabilities (honest declaration). */
   continuationCapabilities(request: { workContextRef: import("../contracts/context-continuity.js").WorkContextRef; runRef: import("../contracts/dispatch.js").RunRef | null }): Promise<import("../contracts/context-continuation-port.js").ContextContinuationCapabilityResult>;
   /** P1-04: review-context assembly (bounded ReviewPacket). */
@@ -376,6 +400,13 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     options.completedWork ?? new CompletedWorkContextCompilerImpl({ ledger, vault, readModel, now: d.clock });
   const lifecycleControl: LifecycleControlPort =
     options.lifecycleControl ?? new FakeLifecycleControlAdapter();
+  const readOnlyQuery: ReadOnlyQueryPort =
+    options.readOnlyQuery ?? new FakeReadOnlyQueryAdapter();
+  const queryContext: QueryContextPort =
+    options.queryContext ?? new QueryJobContextStub();
+  const snapshot: SnapshotPort = {
+    snapshot: (q) => Promise.resolve({ status: "unsupported", message: "P1-09 lane: public snapshot not wired yet" }),
+  };
   const workspaceReader: WorkspaceReadPort =
     options.workspaceReader ?? new FakeWorkspaceReaderAdapter({ now: d.clock });
   const codeGraph: CodeGraphPort = options.codeGraph ?? new CodeGraphPortImpl();
@@ -418,6 +449,9 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     contextContinuation,
     completedWork,
     lifecycleControl,
+    readOnlyQuery,
+    queryContext,
+    snapshot,
     workspaceReader,
     codeGraph,
     inspection,
@@ -475,6 +509,12 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     recordSafePointAck: (command) => control.recordSafePointAck(command),
     controlTimelineView: (query) => readModel.controlTimelineView(query),
     lifecycleCapabilities: (request) => lifecycleControl.capabilities(request),
+    submitQueryJob: (command) => control.submitQueryJob(command),
+    recordQueryAnswer: (command) => control.recordQueryAnswer(command),
+    closeQueryJob: (command) => control.closeQueryJob(command),
+    queryJobView: (query) => readModel.queryJobView(query),
+    assembleQueryContext: (request) => queryContext.assembleQueryContext(request),
+    publicSnapshot: (query) => snapshot.snapshot(query),
     continuationCapabilities: (request) => contextContinuation.capabilities(request),
     assembleHandoff: (request) => handoffContext.assemble(request),
     assembleReview: (request) => reviewContext.assemble(request),

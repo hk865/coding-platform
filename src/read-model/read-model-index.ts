@@ -2645,6 +2645,11 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     throw new Error("P1-10 lane A/B: controlTimelineView not implemented yet");
   }
 
+  /** P1-09 LANE-A/LANE-B stub: query job view (display only). */
+  async queryJobView(query: import("../contracts/query-job.js").QueryJobViewQuery): Promise<import("../contracts/query-job.js").QueryJobViewResult> {
+    throw new Error("P1-09 lane A/B: queryJobView not implemented yet");
+  }
+
   /** P1-17 LANE-A/LANE-B stub: completed-work selection source view (display only; composed from the P1-16 work-context stores). */
   async completedWorkView(query: import("../contracts/completed-work-context.js").CompletedWorkViewQuery): Promise<import("../contracts/completed-work-context.js").CompletedWorkViewResult> {
     throw new Error("P1-17 lane A/B: completedWorkView not implemented yet");

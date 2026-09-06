@@ -48,6 +48,7 @@ import type {
   ArchitectureCandidateProposalRecordedEvent,
 } from "./architecture-inspection.js";
 import type { ControlIntentRecordedEvent, SafePointAcknowledgedEvent } from "./control-intent.js";
+import type { QueryJobSubmittedEvent, QueryRunStartedEvent, QueryJobAnswerRecordedEvent, QueryJobClosedEvent } from "./query-job.js";
 
 export type DomainEventV1 =
   | GoalCreatedEvent
@@ -82,7 +83,11 @@ export type DomainEventV1 =
   | ArchitectureDecisionBriefRecordedEvent
   | ArchitectureCandidateProposalRecordedEvent
   | ControlIntentRecordedEvent
-  | SafePointAcknowledgedEvent;
+  | SafePointAcknowledgedEvent
+  | QueryJobSubmittedEvent
+  | QueryRunStartedEvent
+  | QueryJobAnswerRecordedEvent
+  | QueryJobClosedEvent;
 
 export type DomainEvent = DomainEventV1;
 
@@ -121,6 +126,10 @@ export const KNOWN_EVENT_TYPES = [
   "ArchitectureCandidateProposalRecorded",
   "ControlIntentRecorded",
   "SafePointAcknowledged",
+  "QueryJobSubmitted",
+  "QueryRunStarted",
+  "QueryJobAnswerRecorded",
+  "QueryJobClosed",
 ] as const;
 
 export function isKnownEventType(eventType: string): eventType is (typeof KNOWN_EVENT_TYPES)[number] {

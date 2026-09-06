@@ -71,6 +71,7 @@ import type {
   RecordCandidateBaselineProposalReceipt,
 } from "./architecture-inspection.js";
 import type { RecordSafePointAckCommand, RecordSafePointAckReceipt, SubmitControlCommand, SubmitControlReceipt } from "./control-intent.js";
+import type { CloseQueryJobCommand, CloseQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, SubmitQueryJobCommand, SubmitQueryJobReceipt } from "./query-job.js";
 
 export type CreateGoalRequest = {
   projectId: string;
@@ -153,6 +154,12 @@ export interface ControlEngine {
   submitControl(command: SubmitControlCommand): Promise<SubmitControlReceipt>;
   /** P1-10: record one safe-point acknowledgement (append to the intent; CAS@N). */
   recordSafePointAck(command: RecordSafePointAckCommand): Promise<RecordSafePointAckReceipt>;
+  /** P1-09: submit one non-blocking QueryJob (durable job+run first; source run untouched). */
+  submitQueryJob(command: SubmitQueryJobCommand): Promise<SubmitQueryJobReceipt>;
+  /** P1-09: record one bounded query answer (rounds <= 4; sources + stale marker). */
+  recordQueryAnswer(command: RecordQueryAnswerCommand): Promise<RecordQueryAnswerReceipt>;
+  /** P1-09: close a query job (timeout/gap/failed/stale_source; observable; no source-phase write). */
+  closeQueryJob(command: CloseQueryJobCommand): Promise<CloseQueryJobReceipt>;
 }
 
 export interface HumanCollaboration {

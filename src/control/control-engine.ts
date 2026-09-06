@@ -89,6 +89,8 @@ import { WorkspaceLeaseEngineImpl } from "./workspace-lease.js";
 import { WorkRecordEngineImpl } from "./work-record.js";
 import { ArchitectureInspectionEngineImpl } from "./architecture-inspection.js";
 import { ControlIntentEngineImpl } from "./control-intent.js";
+import { QueryJobEngineImpl } from "./query-job.js";
+import type { CloseQueryJobCommand, CloseQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, SubmitQueryJobCommand, SubmitQueryJobReceipt } from "../contracts/query-job.js";
 import type { RecordSafePointAckCommand, RecordSafePointAckReceipt, SubmitControlCommand, SubmitControlReceipt } from "../contracts/control-intent.js";
 import type { RecordArchitectureInspectionCommand, RecordArchitectureInspectionReceipt, RecordArchitectureFindingCommand, RecordArchitectureFindingReceipt, RecordArchitectureDecisionBriefCommand, RecordArchitectureDecisionBriefReceipt, RecordCandidateBaselineProposalCommand, RecordCandidateBaselineProposalReceipt } from "../contracts/architecture-inspection.js";
 import { recordIntegrationResult } from "./integration-join.js";
@@ -132,6 +134,7 @@ export class ControlEngineImpl implements ControlEngine {
   private readonly workRecord: WorkRecordEngineImpl;
   private readonly architectureInspection: ArchitectureInspectionEngineImpl;
   private readonly controlIntent: ControlIntentEngineImpl;
+  private readonly queryJob: QueryJobEngineImpl;
 
   constructor(deps: ControlEngineDeps) {
     this.deps = deps;
@@ -139,6 +142,7 @@ export class ControlEngineImpl implements ControlEngine {
     this.workRecord = new WorkRecordEngineImpl(deps);
     this.architectureInspection = new ArchitectureInspectionEngineImpl(deps);
     this.controlIntent = new ControlIntentEngineImpl(deps);
+    this.queryJob = new QueryJobEngineImpl(deps);
   }
 
   // --------------------------------------------------------------------- //
@@ -368,6 +372,18 @@ export class ControlEngineImpl implements ControlEngine {
 
   recordSafePointAck(command: RecordSafePointAckCommand): Promise<RecordSafePointAckReceipt> {
     return this.controlIntent.recordSafePointAck(command);
+  }
+
+  submitQueryJob(command: SubmitQueryJobCommand): Promise<SubmitQueryJobReceipt> {
+    return this.queryJob.submit(command);
+  }
+
+  recordQueryAnswer(command: RecordQueryAnswerCommand): Promise<RecordQueryAnswerReceipt> {
+    return this.queryJob.answer(command);
+  }
+
+  closeQueryJob(command: CloseQueryJobCommand): Promise<CloseQueryJobReceipt> {
+    return this.queryJob.close(command);
   }
 
   // --------------------------------------------------------------------- //

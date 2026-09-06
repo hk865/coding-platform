@@ -61,6 +61,9 @@ export type WorkspacePatchViewBehavior = (
 export type WorkContextBehavior = (
   query: import("../context-continuity.js").WorkContextViewQuery,
 ) => Promise<import("../context-continuity.js").WorkContextViewResult> | import("../context-continuity.js").WorkContextViewResult;
+export type QueryJobViewBehavior = (
+  query: import("../query-job.js").QueryJobViewQuery,
+) => Promise<import("../query-job.js").QueryJobViewResult> | import("../query-job.js").QueryJobViewResult;
 export type ControlTimelineViewBehavior = (
   query: import("../control-intent.js").ControlTimelineViewQuery,
 ) => Promise<import("../control-intent.js").ControlTimelineViewResult> | import("../control-intent.js").ControlTimelineViewResult;
@@ -93,6 +96,7 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly architectureInspectionViewCalls: import("../architecture-inspection.js").ArchitectureInspectionViewQuery[] = [];
   readonly completedWorkViewCalls: import("../completed-work-context.js").CompletedWorkViewQuery[] = [];
   readonly controlTimelineViewCalls: import("../control-intent.js").ControlTimelineViewQuery[] = [];
+  readonly queryJobViewCalls: import("../query-job.js").QueryJobViewQuery[] = [];
 
   constructor(
     private readonly options: {
@@ -111,6 +115,7 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
       architectureInspectionView?: ArchitectureInspectionViewBehavior;
       completedWorkView?: CompletedWorkViewBehavior;
       controlTimelineView?: ControlTimelineViewBehavior;
+      queryJobView?: QueryJobViewBehavior;
       consolePortfolio?: import("../console-views.js").PortfolioViewResult extends never ? never : (query: import("../console-views.js").PortfolioViewQuery) => Promise<import("../console-views.js").PortfolioViewResult> | import("../console-views.js").PortfolioViewResult;
       consoleSummary?: (query: import("../console-views.js").WorkspaceSummaryViewQuery) => Promise<import("../console-views.js").WorkspaceSummaryViewResult> | import("../console-views.js").WorkspaceSummaryViewResult;
       consolePlanMatrix?: (query: import("../console-views.js").PlanMatrixViewQuery) => Promise<import("../console-views.js").PlanMatrixViewResult> | import("../console-views.js").PlanMatrixViewResult;
@@ -215,6 +220,12 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
     this.controlTimelineViewCalls.push(query);
     if (this.options.controlTimelineView) return this.options.controlTimelineView(query);
     return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId };
+  }
+
+  async queryJobView(query: import("../query-job.js").QueryJobViewQuery): Promise<import("../query-job.js").QueryJobViewResult> {
+    this.queryJobViewCalls.push(query);
+    if (this.options.queryJobView) return this.options.queryJobView(query);
+    return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId, queryJobId: query.queryJobId };
   }
 
   // P1-08 console views (scripted)                                           //

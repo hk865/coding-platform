@@ -78,6 +78,9 @@ import {
   validateArchitectureProposalRecordCommit,
   validateControlIntentRecordCommit,
   validateControlAckRecordCommit,
+  validateQueryJobRecordCommit,
+  validateQueryAnswerRecordCommit,
+  validateQueryCloseRecordCommit,
 } from "../contracts/ledger-validation.js";
 import type {
   DispatchClaimLedgerCommitV1,
@@ -488,6 +491,12 @@ export class SqliteStateLedger implements StateLedger {
         return this.commitControlIntentRecord(batch);
       case "control-ack":
         return this.commitControlAckRecord(batch);
+      case "query-job-record":
+        return this.commitQueryJobRecord(batch);
+      case "query-answer-record":
+        return this.commitQueryAnswerRecord(batch);
+      case "query-close-record":
+        return this.commitQueryCloseRecord(batch);
     }
   }
 
@@ -676,6 +685,27 @@ export class SqliteStateLedger implements StateLedger {
 
   private commitControlAckRecord(batch: import("../contracts/ledger.js").ControlAckRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
     if (!validateControlAckRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitQueryJobRecord(batch: import("../contracts/ledger.js").QueryJobRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateQueryJobRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitQueryAnswerRecord(batch: import("../contracts/ledger.js").QueryAnswerRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateQueryAnswerRecordCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitQueryCloseRecord(batch: import("../contracts/ledger.js").QueryCloseRecordLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateQueryCloseRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
     }
     return this.commitGeneric(batch);
