@@ -29,6 +29,11 @@ import type {
   ProjectArchitectureBaselineActiveSnapshot,
   ProjectCompletionPolicyActiveSnapshot,
 } from "./governance.js";
+// P1-13 LANE-A: third governance kind (ArchitectureEvolutionPolicy) snapshots.
+import type {
+  ArchitectureEvolutionPolicyRevisionSnapshot,
+  ProjectArchitectureEvolutionPolicyActiveSnapshot,
+} from "./architecture-evolution-policy.js";
 import type {
   DispatchOutboxEntrySnapshot,
   RunSnapshot,
@@ -119,6 +124,21 @@ export function validateGovernanceInstallCommit(
       return false;
     }
     if (canonicalJson(s.content) !== canonicalJson(event.payload.content)) return false;
+  } else if (event.eventType === "ArchitectureEvolutionPolicyInstalled") {
+    // P1-13 LANE-A: third governance kind — exactly one revision snapshot + event.
+    if (event.aggregateType !== "ArchitectureEvolutionPolicyRevision") return false;
+    if (snapshot.ref.aggregateType !== "ArchitectureEvolutionPolicyRevision") return false;
+    const s = snapshot as ArchitectureEvolutionPolicyRevisionSnapshot;
+    if (
+      s.ref.projectId !== event.projectId ||
+      s.policyId !== event.aggregateId ||
+      s.contentRevision !== event.payload.revision.contentRevision ||
+      s.contentDigest !== event.payload.revision.contentDigest
+    ) {
+      return false;
+    }
+    if (canonicalJson(s.content) !== canonicalJson(event.payload.revision.content)) return false;
+    if (canonicalJson(event.payload.revision.ref) !== canonicalJson(snapshot.ref)) return false;
   } else {
     return false;
   }
@@ -186,6 +206,22 @@ export function validateGovernanceActivateCommit(
     if (canonicalJson(s.activeRevision) !== canonicalJson(event.payload.target.ref)) {
       return false;
     }
+  } else if (event.eventType === "ArchitectureEvolutionPolicyActivated") {
+    // P1-13 LANE-A: third governance kind — per-kind Project active aggregate.
+    if (event.aggregateType !== "ProjectArchitectureEvolutionPolicyActive") return false;
+    if (snapshot.ref.aggregateType !== "ProjectArchitectureEvolutionPolicyActive") return false;
+    const s = snapshot as ProjectArchitectureEvolutionPolicyActiveSnapshot;
+    if (
+      s.ref.projectId !== event.projectId ||
+      s.projectId !== event.projectId ||
+      s.activeRevision.policyId !== event.payload.activeRevision.policyId ||
+      s.activeRevision.projectId !== event.payload.activeRevision.projectId ||
+      s.activeRevision.revision !== event.payload.activeRevision.revision
+    ) {
+      return false;
+    }
+    if (canonicalJson(s.activeRevision) !== canonicalJson(event.payload.activeRevision)) return false;
+    if (canonicalJson(s.ref) !== canonicalJson(event.payload.activeRef)) return false;
   } else {
     return false;
   }
