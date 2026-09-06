@@ -200,8 +200,8 @@ async function prepareP104Project(
   );
   expect(plan.status).toBe("committed");
   // Resolve the accepted pins from the plan view.
-  const cursor = h.observedCursor();
-  const graph = await h.planGraph(cursor === null ? { projectId, goalId: P104_GOAL } : { projectId, goalId: P104_GOAL, atLeastCursor: cursor });
+  await h.advanceProjection();
+  const graph = await h.planGraph({ projectId, goalId: P104_GOAL });
   expect(graph.status).toBe("ready");
   if (graph.status !== "ready") throw new Error("plan graph not ready");
   return {
@@ -380,7 +380,7 @@ export function reduceCommand(sc: P104Preview, deps: {
     identity: {
       projectId: sc.projectId,
       actor: { kind: "system" as const, id: "control-engine" },
-      idempotencyKey: deps.idempotencyKey ?? "p104-reduce-" + deps.taskId,
+      idempotencyKey: deps.idempotencyKey ?? freshP104Id("rekey"),
     },
     aggregateId: deps.taskId,
     expectedRevision: deps.expectedRevision,

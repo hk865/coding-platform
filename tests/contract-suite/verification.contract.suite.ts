@@ -231,11 +231,7 @@ export function defineVerificationContractSuite(createHarness: P1_04HarnessFacto
 
     it("gate reduces to SATISFIED only with its static gate evidence; deferred never satisfies", async () => {
       const { h, sc } = await setup();
-      // Deferred task: never satisfied regardless of evidence.
-      const runDef = await runP104ClaimedRun(h, {
-        projectId: sc.alpha.projectId, taskId: P104_TASK_DEFERRED, runId: "run-def", attemptId: "att-def",
-      });
-      void runDef;
+      // Deferred task: never satisfied (disposition never active); never claimable (frozen eligibility).
       const r0 = await h.reduceTask(reduceCommand(sc.alpha, { commandId: "cmd-red-def", taskId: P104_TASK_DEFERRED, expectedRevision: 0 }));
       expect(r0.status).toBe("committed");
       if (r0.status !== "committed") return;

@@ -288,7 +288,7 @@ export function buildSubmitEvidenceCommand(deps: BuildSubmitEvidenceDeps): Submi
     identity: {
       projectId: deps.evidence.subject.projectId,
       actor: deps.actor ?? { kind: "human", id: "user-1" },
-      idempotencyKey: deps.idempotencyKey ?? "p1-04-evidence",
+      idempotencyKey: deps.idempotencyKey ?? "p1-04-evidence-" + deps.evidence.evidenceId,
     },
     aggregateId: deps.evidence.evidenceId,
     expectedRevision: 0,
