@@ -28,7 +28,7 @@ import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand, buildGoalCr
 import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit, completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/fixtures/governance-fixtures.js";
 import { buildApplyPlanCommand, buildPlanLedgerCommit } from "../../src/contracts/fixtures/plan-fixtures.js";
 import { P104_GOAL, P104_OBL_GATE, P104_OBL_IMPLEMENT, P104_OBL_REVIEW, P104_PLAN_REVISION_FIXTURE_V1, P104_TASK_DEFERRED, P104_TASK_GATE, P104_TASK_IMPLEMENT, P104_TASK_REVIEW, buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand, buildReduceTaskCommand, buildTaskReductionSnapshot, buildTaskReductionLedgerCommit, coverage } from "../../src/contracts/fixtures/evidence-fixtures.js";
-import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1, FAKE_RUNTIME_SCRIPT_CRASHED_V1, buildDispatchClaimCommand, buildDispatchStartCommand, buildManifestFixture, buildRunFactCommand, rebaseScriptForRun } from "../../src/contracts/fixtures/dispatch-fixtures.js";
+import { FAKE_RUNTIME_SCRIPT_BUDGET_EXHAUSTED_V1, FAKE_RUNTIME_SCRIPT_COMPLETED_V1, FAKE_RUNTIME_SCRIPT_CRASHED_V1, buildDispatchClaimCommand, buildDispatchStartCommand, buildManifestFixture, buildRunFactCommand, rebaseScriptForRun } from "../../src/contracts/fixtures/dispatch-fixtures.js";
 import { artifactBodyDigest } from "../../src/contracts/artifact.js";
 import { runRefFor, taskAttemptRefFor } from "../../src/contracts/dispatch.js";
 import type { PlanRevisionSnapshot } from "../../src/contracts/plan.js";
@@ -482,6 +482,24 @@ describe("reduceTask: run signals that block satisfaction", () => {
     if (redLoad.status === "found") {
       const red = redLoad.snapshot as TaskReductionSnapshot;
       expect(red.causes.some((c) => c.code === "unreconciled_side_effect")).toBe(true);
+    }
+  });
+});
+
+describe("reduceTask: neutral run outcomes are NOT run-failed / side-effect (integrator ruling)", () => {
+  it("budget_exhausted run + no evidence -> blocked with NO run_failed_signal and NO unreconciled_side_effect", async () => {
+    const { ledger, engine } = await setupAccepted();
+    await runScript(engine, { taskId: IMPLEMENT, runId: "run-budget", attemptId: "att-budget", script: FAKE_RUNTIME_SCRIPT_BUDGET_EXHAUSTED_V1 });
+    const r = await engine.reduceTask(reduceCmd({ commandId: "cmd-reduce-budget", taskId: IMPLEMENT, expectedRevision: 0 }));
+    expect(r.status).toBe("committed");
+    if (r.status !== "committed") return;
+    expect(r.phase).toBe("blocked"); // missing input; the budget run alone is neutral
+    const redLoad = await ledger.load(taskReductionRefFor(PROJECT, GOAL, IMPLEMENT));
+    expect(redLoad.status).toBe("found");
+    if (redLoad.status === "found") {
+      const red = redLoad.snapshot as TaskReductionSnapshot;
+      expect(red.causes.some((c) => c.code === "run_failed_signal")).toBe(false);
+      expect(red.causes.some((c) => c.code === "unreconciled_side_effect")).toBe(false);
     }
   });
 });

@@ -103,9 +103,12 @@ async function reduceTaskImpl(
     if (runResult.status === "found" && isRunSnapshot(runResult.snapshot)) {
       const run = runResult.snapshot as RunSnapshot;
       runSignals = collectRunSignals(run);
-      // outcome_unknown is an EXPLICIT terminal fact (never inferred); as a
-      // side effect it blocks satisfaction (hard rule in the pure formula).
-      if (run.outcome === "outcome_unknown") {
+      // integrator ruling (frozen sem #9 mapping): an outcome_unknown ENDED
+      // run is an EXPLICIT terminal fact (never inferred); as a side effect it
+      // blocks satisfaction. It is NEVER a run-failed signal; crashed / a
+      // completed+exit!==0 run are run-failed; completed+exit===0 and
+      // budget_exhausted / cancelled are neutral (never a satisfaction signal).
+      if (run.status === "ended" && run.outcome === "outcome_unknown") {
         unreconciledSideEffects.push({ kind: "outcome_unknown", runRef: run.ref });
       }
     }
