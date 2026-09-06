@@ -28,7 +28,7 @@ import type { ActorRef } from "../command-event.js";
 
 export const P111_PROJECT = "proj-alpha";
 export const P111_PROJECT_B = "proj-beta";
-export const P111_WORKSPACE = "ws-p111";
+export const P111_WORKSPACE = "ws-shared"; // 与共享 bootstrap fixture 一致（canonical goal workspace；integrator 裁决 2026-09-07：声明字段与 canonical 一致，避免 P1-15 消费者坑）
 export const P111_SCHEMA = "2026-09-06T00:00:00.000Z";
 export const P111_GOAL = "goal-1";
 export const P111_SOURCE_PLAN = "plan-mvp-1";

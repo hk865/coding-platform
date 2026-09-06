@@ -17,27 +17,19 @@ export function defineGoalChangeContractSuite(
   describe(suiteOptions.name ?? "P1-11 goal-change contract suite", () => {
     let h: P1_11TestHarness;
     let scen: P111ChangeScenarioResult | null = null;
-    const ready = (): boolean => scen !== null;
     const s = (): P111ChangeScenarioResult => {
       if (scen === null) throw new Error("P1-11 scenario not ready");
       return scen;
     };
 
     beforeAll(async () => {
+      // Wiring 层 READY 门控；到这一步实现必须可用——失败即暴露（不静默跳过）。
       h = await factory();
-      try {
-        scen = await runP111ChangeScenario(h);
-      } catch (e) {
-        if (String(e).includes("P1-11 lane") || String(e).includes("not implemented")) {
-          scen = null;
-        } else {
-          throw e;
-        }
-      }
+      scen = await runP111ChangeScenario(h);
     });
 
     describe("goal-plan-change-acceptance-test", () => {
-      it.skipIf(!ready())("proposal + decision recorded; apply commits; view ready", () => {
+      it("proposal + decision recorded; apply commits; view ready", () => {
         const x = s();
         expect(x.proposalReceipt.status).toBe("committed");
         expect(x.decisionReceipt.status).toBe("committed");
@@ -47,7 +39,7 @@ export function defineGoalChangeContractSuite(
     });
 
     describe("proposal-bound-test", () => {
-      it.skipIf(!ready())("proposal binds source goal/plan/workspace + in/out-of-scope + deltas justify", () => {
+      it("proposal binds source goal/plan/workspace + in/out-of-scope + deltas justify", () => {
         const x = s();
         expect(x.proposal.sourceGoalRef.goalId).toBe(x.goalRef.goalId);
         expect(x.proposal.sourcePlanRef.planId).toBe(P111_SOURCE_PLAN);
@@ -59,7 +51,7 @@ export function defineGoalChangeContractSuite(
     });
 
     describe("affected-context-refresh-test", () => {
-      it.skipIf(!ready())("impact lists affected works (refresh) + independent works (continue) + stale assumptions", () => {
+      it("impact lists affected works (refresh) + independent works (continue) + stale assumptions", () => {
         const x = s();
         expect(x.proposal.impact.affectedWorks.length).toBeGreaterThan(0);
         expect(x.proposal.impact.affectedWorks.some((w) => w.refreshRequired)).toBe(true);
@@ -70,7 +62,7 @@ export function defineGoalChangeContractSuite(
     });
 
     describe("affected-subgraph-selection-tests", () => {
-      it.skipIf(!ready())("dispositions cover every source task; only affected tasks need re-verification", () => {
+      it("dispositions cover every source task; only affected tasks need re-verification", () => {
         const x = s();
         const sourceIds = x.sourcePlan.tasks.map((t) => t.taskId).sort();
         const dispIds = x.dispositions.map((d) => d.taskId).sort();
@@ -83,7 +75,7 @@ export function defineGoalChangeContractSuite(
     });
 
     describe("decision-authority-tests", () => {
-      it.skipIf(!ready())("accepted decision carries frozen authority shape + exact authorized target", () => {
+      it("accepted decision carries frozen authority shape + exact authorized target", () => {
         const x = s();
         expect(x.decision.outcome).toBe("accept");
         expect(x.decision.authority.strategy).toBe("user");
@@ -94,7 +86,7 @@ export function defineGoalChangeContractSuite(
     });
 
     describe("revision-cas-tests", () => {
-      it.skipIf(!ready())("apply advances goal revision, activates new plan, preserves superseded + FAILs", () => {
+      it("apply advances goal revision, activates new plan, preserves superseded + FAILs", () => {
         const x = s();
         expect(x.applyReceipt.status).toBe("committed");
         if (x.applyReceipt.status !== "committed") return;
@@ -110,7 +102,7 @@ export function defineGoalChangeContractSuite(
     });
 
     describe("evidence-applicability-recompute-test", () => {
-      it.skipIf(!ready())("old evidence stays recorded; applicability recomputes OUT_OF_SCOPE via the NEW binding", async () => {
+      it("old evidence stays recorded; applicability recomputes OUT_OF_SCOPE via the NEW binding", async () => {
         const x = s();
         // Evidence admitted under the SOURCE plan binding (P1-04 anchor tuple).
         const oldAnchor = buildEffectivityAnchorV1({
@@ -151,7 +143,7 @@ export function defineGoalChangeContractSuite(
     });
 
     describe("versioned-planning-interface-contract-tests", () => {
-      it.skipIf(!ready())("planProposalRequest is bounded, versioned and ZERO-write", async () => {
+      it("planProposalRequest is bounded, versioned and ZERO-write", async () => {
         const x = s();
         const before = (await h.ledger.events({ afterCursor: null, limit: 1000 })).events.length;
         const result = await h.planProposalRequest(x.intent);
@@ -167,7 +159,7 @@ export function defineGoalChangeContractSuite(
     });
 
     describe("bounded-planning-context-tests", () => {
-      it.skipIf(!ready())("planning-context is bounded (budget gaps / forbidden scope / ready manifest)", async () => {
+      it("planning-context is bounded (budget gaps / forbidden scope / ready manifest)", async () => {
         const x = s();
         const base = {
           schemaVersion: 1 as const,
@@ -190,7 +182,7 @@ export function defineGoalChangeContractSuite(
     });
 
     describe("plan-change-view-test", () => {
-      it.skipIf(!ready())("view composes proposals + decisions + revisions with freshness; scope-isolated", async () => {
+      it("view composes proposals + decisions + revisions with freshness; scope-isolated", async () => {
         const x = s();
         const view = await h.planChangeView(planChangeViewQueryFor(P111_PROJECT));
         expect(view.status).toBe("ready");
