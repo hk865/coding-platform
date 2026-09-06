@@ -2,10 +2,10 @@
 
 ```yaml
 ticket_id: P1-04
-status: shared baseline ready (limited authorization, 2026-09-05 — P1-04 only); lanes in parallel worktrees; NOT yet verified
+status: implementation verified (limited authorization, 2026-09-05 — P1-04 only); four lanes merged; full acceptance evidence in dev_docs/verification/p1-04-implementation-evidence.md
 updated: 2026-09-05
 authorized_by: user (limited authorization for P1-04 only; recorded in this file; ticket 04 record appended at acceptance)
-next: P1-04 integration in progress; STOP after P1-04 acceptance — do NOT auto-start P1-05/06 (DAG: 04 验收后才出现 05/06 并行窗口)
+next: STOP after P1-04 acceptance — do NOT auto-start P1-05/06 (DAG: 04 验收后才出现 05/06 并行窗口)
 evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-04-implementation-evidence.md (at acceptance); P1-03 evidence: p1-03-implementation-evidence.md
 ```
 
