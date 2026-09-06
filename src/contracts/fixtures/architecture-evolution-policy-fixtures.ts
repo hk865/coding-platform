@@ -34,7 +34,7 @@ export function p113ActiveRef(projectId: string = P113_PROJECT) {
   return { aggregateType: "ProjectArchitectureEvolutionPolicyActive" as const, projectId };
 }
 export function p113PolicyPin(projectId: string = P113_PROJECT) {
-  return { ref: p113PolicyRef(projectId), contentDigest: architectureEvolutionPolicyContentDigest(ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1) };
+  return { ref: p113PolicyRef(projectId), digest: architectureEvolutionPolicyContentDigest(ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1) };
 }
 
 export function buildP113InstallCommand(fixture: VersionedArchitectureEvolutionPolicyFixture, deps: { commandId: string; projectId: string; idempotencyKey?: string; actor?: CommandIdentity["actor"] }): InstallArchitectureEvolutionPolicyRevisionCommand {

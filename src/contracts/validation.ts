@@ -2964,3 +2964,115 @@ export function validateRecordCandidateBaselineProposalCommand(value: unknown): 
 
 
 
+
+// ------------------------------------------------------------------------ //
+// P1-13 ArchitectureEvolutionPolicy validators (third governance kind)       //
+// ------------------------------------------------------------------------ //
+
+export function validateArchitectureEvolutionPolicyFixture(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "VersionedArchitectureEvolutionPolicyFixture must be an object" });
+    return issues;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  if (value["contentType"] !== "ArchitectureEvolutionPolicy") {
+    issues.push({ path: "contentType", code: "bad_type", message: "contentType must be ArchitectureEvolutionPolicy" });
+  }
+  const identity = value["identity"];
+  if (isRecord(identity)) {
+    if (identity["kind"] !== "local") issues.push({ path: "identity.kind", code: "bad_type", message: "identity.kind must be local" });
+    stringField(identity, "fixtureId", issues, "identity.fixtureId");
+    stringField(identity, "source", issues, "identity.source");
+  } else {
+    issues.push({ path: "identity", code: "bad_type", message: "identity must be an object" });
+  }
+  safePositiveIntField(value["revision"], "revision", issues);
+  const content = value["content"];
+  if (isRecord(content)) {
+    validateArchitectureEvolutionPolicyContent(content, issues);
+  } else {
+    issues.push({ path: "content", code: "bad_type", message: "content must be an object" });
+  }
+  return issues;
+}
+
+function validateArchitectureEvolutionPolicyContent(value: UnknownRecord, issues: ValidationIssue[]): void {
+  if (value["schemaVersion"] !== 1) issues.push({ path: "content.schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  const allowlist = value["allowlist"];
+  if (!Array.isArray(allowlist) || allowlist.length === 0 || allowlist.length > 64) {
+    issues.push({ path: "content.allowlist", code: "empty_collection", message: "allowlist must be 1..64 entries" });
+  } else {
+    const categories = new Set(["structure", "interface", "dependency", "performance", "permission", "runtime", "governance"]);
+    const scopes = new Set(["module", "interface", "runtime", "governance"]);
+    const risks = new Set(["high", "medium", "low"]);
+    const revers = new Set(["reversible", "manual_only"]);
+    allowlist.forEach((entry, i) => {
+      if (!isRecord(entry)) {
+        issues.push({ path: "content.allowlist[" + i + "]", code: "bad_type", message: "entry must be an object" });
+        return;
+      }
+      if (!categories.has(String(entry["findingCategory"]))) issues.push({ path: "content.allowlist[" + i + "].findingCategory", code: "bad_type", message: "unexpected findingCategory" });
+      if (!scopes.has(String(entry["scope"]))) issues.push({ path: "content.allowlist[" + i + "].scope", code: "bad_type", message: "unexpected scope" });
+      if (!risks.has(String(entry["maxRisk"]))) issues.push({ path: "content.allowlist[" + i + "].maxRisk", code: "bad_type", message: "unexpected maxRisk" });
+      if (!revers.has(String(entry["reversibility"]))) issues.push({ path: "content.allowlist[" + i + "].reversibility", code: "bad_type", message: "unexpected reversibility" });
+      stringField(entry, "note", issues, "content.allowlist[" + i + "].note");
+    });
+  }
+  const drift = value["driftBudget"];
+  if (!isRecord(drift)) {
+    issues.push({ path: "content.driftBudget", code: "bad_type", message: "driftBudget must be an object" });
+  } else {
+    const n = Number(drift["maxRemediationsPerCycle"]);
+    if (!Number.isSafeInteger(n) || n < 1 || n > 12) issues.push({ path: "content.driftBudget.maxRemediationsPerCycle", code: "bad_type", message: "must be 1..12" });
+  }
+  const upgrade = value["upgrade"];
+  if (isRecord(upgrade)) {
+    if (upgrade["path"] !== "manual-decision" && upgrade["path"] !== "proposal") issues.push({ path: "content.upgrade.path", code: "bad_type", message: "unexpected upgrade path" });
+    stringField(upgrade, "note", issues, "content.upgrade.note");
+  } else {
+    issues.push({ path: "content.upgrade", code: "bad_type", message: "upgrade must be an object" });
+  }
+}
+
+export function validateInstallArchitectureEvolutionPolicyRevisionCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  validateGovernanceInstallCommon(value, "InstallArchitectureEvolutionPolicyRevision", issues);
+  const payload = value["payload"];
+  if (isRecord(payload)) {
+    issues.push(...validateArchitectureEvolutionPolicyFixture(payload["fixture"]));
+    validateContentDigest(payload, "payload", issues);
+  } else {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+  }
+  return issues;
+}
+
+export function validateActivateProjectArchitectureEvolutionPolicyCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  validateActivateCommon(value, "ActivateProjectArchitectureEvolutionPolicy", issues);
+  const payload = value["payload"];
+  if (isRecord(payload)) {
+    validatePin(payload["target"], "payload.target", issues, "policy");
+    const pin = payload["target"] as UnknownRecord;
+    if (isRecord(pin)) {
+      const ref = pin["ref"] as UnknownRecord | undefined;
+      if (ref !== undefined && isRecord(ref)) {
+        stringField(ref, "policyId", issues, "payload.target.ref.policyId");
+      }
+    }
+  } else {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+  }
+  return issues;
+}

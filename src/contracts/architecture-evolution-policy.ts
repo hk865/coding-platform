@@ -60,7 +60,8 @@ export type ArchitectureEvolutionPolicyRevisionRef = {
 
 export type ArchitectureEvolutionPolicyPin = {
   ref: ArchitectureEvolutionPolicyRevisionRef;
-  contentDigest: string;
+  /** identity/revision/digest triple — matches the P1-02 pin shape. */
+  digest: string;
 };
 
 export type ArchitectureEvolutionPolicyRevisionSnapshot = {
@@ -231,7 +232,7 @@ export async function resolveArchitectureEvolutionPolicyRevision(ledger: StateLe
   if (snapshot.ref.projectId !== ref.projectId || snapshot.policyId !== ref.policyId || snapshot.contentRevision !== ref.revision || snapshot.contentDigest !== digest) {
     return { status: "not_found" };
   }
-  return { status: "found", pin: { ref, contentDigest: digest }, snapshot };
+  return { status: "found", pin: { ref, digest }, snapshot };
 }
 
 /** Project active-ref resolution — exact triple match, never a fallback. */
@@ -240,13 +241,13 @@ export async function resolveProjectArchitectureEvolutionPolicy(ledger: StateLed
   const activeResult = await ledger.load(activeRef);
   if (!isActiveEvolutionPolicySnapshot(activeResult)) return { status: "not_found" };
   const active = activeResult.snapshot;
-  const pin: ArchitectureEvolutionPolicyPin = { ref: active.activeRevision, contentDigest: "" };
+  const pin: ArchitectureEvolutionPolicyPin = { ref: active.activeRevision, digest: "" };
   // Load the revision snapshot to obtain the stored digest (triple match).
   const revResult = await ledger.load(active.activeRevision);
   if (!isEvolutionPolicySnapshot(revResult)) return { status: "not_found" };
   const rev = revResult.snapshot;
   if (rev.ref.projectId !== projectId || rev.policyId !== active.activeRevision.policyId || rev.contentRevision !== active.activeRevision.revision) return { status: "not_found" };
-  pin.contentDigest = rev.contentDigest;
+  pin.digest = rev.contentDigest;
   return { status: "found", pin, snapshot: rev };
 }
 
