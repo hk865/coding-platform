@@ -135,7 +135,8 @@ export const GOAL_PHASE_REASON_CODES: readonly GoalPhaseReasonCode[] = [
  * redispatch, so an ENDED run means the task's own frontier cannot advance
  * without new work/authorization (side-effect decision). */
 export type GoalTaskRunFact = {
-  status: "starting" | "started" | "ended";
+  /** mirrors RunSnapshot.status (P1-03): starting | running | ended. */
+  status: "starting" | "running" | "ended";
   outcome: import("./dispatch.js").RunOutcome | null;
   exitCode: number | null;
 };
