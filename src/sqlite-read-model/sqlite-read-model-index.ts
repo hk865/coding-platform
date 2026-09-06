@@ -766,6 +766,14 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     };
   }
 
+  /** P1-06: display-only handoff provenance timeline (stub -> lane C fills). */
+  async handoffProvenance(
+    query: import("../contracts/handoff-view.js").HandoffProvenanceViewQuery,
+  ): Promise<import("../contracts/handoff-view.js").HandoffProvenanceViewResult> {
+    void query;
+    throw new Error("P1-06: handoffProvenance not implemented yet");
+  }
+
   /** P1-05: goal phase status projection (per (projectId, goalId)). */
   async goalStatus(query: import("../contracts/goal-phase-view.js").GoalStatusQuery): Promise<import("../contracts/goal-phase-view.js").GoalStatusViewResult> {
     this.assertOpen();

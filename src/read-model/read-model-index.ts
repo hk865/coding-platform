@@ -452,6 +452,14 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   }
 
   /** P1-03: active agent view — same opaque-cursor freshness as planGraph / taskDetail. */
+  /** P1-06: display-only handoff provenance timeline (stub -> lane C fills). */
+  async handoffProvenance(
+    query: import("../contracts/handoff-view.js").HandoffProvenanceViewQuery,
+  ): Promise<import("../contracts/handoff-view.js").HandoffProvenanceViewResult> {
+    void query;
+    throw new Error("P1-06: handoffProvenance not implemented yet");
+  }
+
   async activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult> {
     const observedCursor = this.observedCursor;
     const row = this.activeAgentRows.get(

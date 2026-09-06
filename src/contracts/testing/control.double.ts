@@ -25,6 +25,7 @@ import type {
 import type { SubmitEvidenceCommand, SubmitEvidenceReceipt } from "../evidence.js";
 import type { ReduceTaskCommand, ReduceTaskReceipt } from "../reduction.js";
 import type { ReduceGoalCommand, ReduceGoalReceipt } from "../goal-phase.js";
+import type { ClaimReplacementCommand, ClaimReplacementReceipt, RecordHandoffCommand, RecordHandoffReceipt } from "../handoff.js";
 import type { ControlEngine } from "../modules.js";
 
 export function committedReceiptFor(command: CreateGoalCommand): CommandReceipt {
@@ -79,6 +80,9 @@ export type SubmitEvidenceBehavior = (
 export type ReduceTaskBehavior = (
   command: ReduceTaskCommand,
 ) => Promise<ReduceTaskReceipt> | ReduceTaskReceipt;
+export type RecordHandoffBehavior = (command: RecordHandoffCommand) => RecordHandoffReceipt | Promise<RecordHandoffReceipt>;
+export type ClaimReplacementBehavior = (command: ClaimReplacementCommand) => ClaimReplacementReceipt | Promise<ClaimReplacementReceipt>;
+
 export type ReduceGoalBehavior = (
   command: ReduceGoalCommand,
 ) => Promise<ReduceGoalReceipt> | ReduceGoalReceipt;
@@ -96,6 +100,8 @@ export class ScriptedControlEngine implements ControlEngine {
   readonly submitEvidenceCalls: SubmitEvidenceCommand[] = [];
   readonly reduceTaskCalls: ReduceTaskCommand[] = [];
   readonly reduceGoalCalls: ReduceGoalCommand[] = [];
+  readonly recordHandoffCalls: RecordHandoffCommand[] = [];
+  readonly claimReplacementCalls: ClaimReplacementCommand[] = [];
 
   constructor(
     private readonly options: {
@@ -111,6 +117,8 @@ export class ScriptedControlEngine implements ControlEngine {
       submitEvidence?: SubmitEvidenceBehavior;
       reduceTask?: ReduceTaskBehavior;
       reduceGoal?: ReduceGoalBehavior;
+      recordHandoff?: RecordHandoffBehavior;
+      claimReplacement?: ClaimReplacementBehavior;
       defaultSubmit?: CommandReceipt;
       defaultBootstrap?: WorkspaceBootstrapReceipt;
       defaultInstall?: GovernanceInstallReceipt;
@@ -193,5 +201,17 @@ export class ScriptedControlEngine implements ControlEngine {
     this.reduceGoalCalls.push(command);
     if (this.options.reduceGoal) return this.options.reduceGoal(command);
     throw new Error("ScriptedControlEngine: no reduceGoal behavior configured");
+  }
+
+  async recordHandoff(command: RecordHandoffCommand): Promise<RecordHandoffReceipt> {
+    this.recordHandoffCalls.push(command);
+    if (this.options.recordHandoff) return this.options.recordHandoff(command);
+    throw new Error("ScriptedControlEngine: no recordHandoff behavior configured");
+  }
+
+  async claimReplacement(command: ClaimReplacementCommand): Promise<ClaimReplacementReceipt> {
+    this.claimReplacementCalls.push(command);
+    if (this.options.claimReplacement) return this.options.claimReplacement(command);
+    throw new Error("ScriptedControlEngine: no claimReplacement behavior configured");
   }
 }

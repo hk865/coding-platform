@@ -64,6 +64,19 @@ import type { ReduceTaskCommand, ReduceTaskReceipt } from "../contracts/reductio
 import type { ReduceGoalCommand, ReduceGoalReceipt } from "../contracts/goal-phase.js";
 import type { GoalStatusQuery, GoalStatusViewResult, GoalTimelineQuery, GoalTimelineViewResult } from "../contracts/goal-phase-view.js";
 import type { ReviewContextPort, ReviewContextRequestV1, ReviewContextResultV1 } from "../contracts/review-context.js";
+import type {
+  ClaimReplacementCommand,
+  ClaimReplacementReceipt,
+  HandoffPort,
+  RecordHandoffCommand,
+  RecordHandoffReceipt,
+} from "../contracts/handoff.js";
+import type { HandoffContextPort, HandoffContextRequestV1, HandoffContextResultV1 } from "../contracts/handoff-context.js";
+import type { HandoffControlPort } from "../contracts/handoff-control.js";
+import type { HandoffProvenanceViewQuery, HandoffProvenanceViewResult } from "../contracts/handoff-view.js";
+import { HandoffContextCompilerImpl } from "../context/handoff-context-compiler.js";
+import { FakeHandoffControlRuntimeAdapter } from "../runtime/handoff-control-adapter.js";
+import { HandoffDriveEngineImpl } from "../control/handoff-drive.js";
 import type { FakeRuntimeScriptV1 } from "../contracts/fixtures/dispatch-fixtures.js";
 import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../contracts/fixtures/dispatch-fixtures.js";
 import { SqliteStateLedger, createSqliteStateLedger } from "../sqlite-ledger/sqlite-ledger.js";
@@ -101,6 +114,10 @@ export interface PersistentSqliteHarnessOptions {
   verification?: VerificationPort;
   /** P1-04: explicit ReviewContextPort (default ReviewContextCompilerImpl). */
   reviewContext?: ReviewContextPort;
+  /** P1-06: explicit HandoffContextPort (default HandoffContextCompilerImpl). */
+  handoffContext?: HandoffContextPort;
+  /** P1-06: explicit HandoffControlPort (default FakeHandoffControlRuntimeAdapter). */
+  handoffControl?: HandoffControlPort;
 }
 
 export interface PersistentSqliteHarness {
@@ -121,6 +138,12 @@ export interface PersistentSqliteHarness {
   verification: VerificationPort;
   /** P1-04: default ReviewContextPort (bounded ReviewPacket assembly). */
   reviewContext: ReviewContextPort;
+  /** P1-06: bounded handoff-context assembly (never a transcript). */
+  handoffContext: HandoffContextPort;
+  /** P1-06: WorkerRuntime control face (pause/stop + public snapshot). */
+  handoffControl: HandoffControlPort;
+  /** P1-06: DispatchEngine.HandoffPort (replacement outbox drive). */
+  handoffDrive: HandoffPort;
 
   bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
   /** P1-02: governance install (immutable revision; never auto-activates). */
@@ -151,6 +174,14 @@ export interface PersistentSqliteHarness {
   goalStatus(query: GoalStatusQuery): Promise<GoalStatusViewResult>;
   /** P1-05: goal phase timeline view (freshness by opaque cursor). */
   goalTimeline(query: GoalTimelineQuery): Promise<GoalTimelineViewResult>;
+  /** P1-06: register a bounded HandoffPacket (body-first pass-through). */
+  recordHandoff(command: RecordHandoffCommand): Promise<RecordHandoffReceipt>;
+  /** P1-06: replacement claim (B's new lifecycle; lease CAS). */
+  claimReplacement(command: ClaimReplacementCommand): Promise<ClaimReplacementReceipt>;
+  /** P1-06: handoff provenance timeline (display only). */
+  handoffProvenance(query: HandoffProvenanceViewQuery): Promise<HandoffProvenanceViewResult>;
+  /** P1-06: bounded handoff-context assembly. */
+  assembleHandoff(request: HandoffContextRequestV1): Promise<HandoffContextResultV1>;
   /** P1-04: review-context assembly (bounded ReviewPacket). */
   assembleReview(request: ReviewContextRequestV1): Promise<ReviewContextResultV1>;
   /** P1-03: outbox drive (claim -> assemble -> start -> events). */
@@ -181,6 +212,9 @@ interface BuiltHarness {
   dispatchEngine: DispatchPort;
   verification: VerificationPort;
   reviewContext: ReviewContextPort;
+  handoffContext: HandoffContextPort;
+  handoffControl: HandoffControlPort;
+  handoffDrive: HandoffPort;
   advanceProjection: () => Promise<ProjectionReceipt>;
   observedCursor: () => CommitCursor | null;
   planGraph: (query: PlanGraphViewQuery) => Promise<PlanGraphViewResult>;
@@ -197,6 +231,8 @@ function buildHarness(
   reviewer: ReviewerPort | undefined,
   verificationOverride: VerificationPort | undefined,
   reviewContextOverride: ReviewContextPort | undefined,
+  handoffContextOverride: HandoffContextPort | undefined,
+  handoffControlOverride: HandoffControlPort | undefined,
 ): BuiltHarness {
   const d: InjectableDeps = { ...createDeterministicDeps(), ...deps };
   const ledger = createSqliteStateLedger({ path: join(dir, ledgerFile) });
@@ -226,6 +262,16 @@ function buildHarness(
     );
   const reviewContext: ReviewContextPort =
     reviewContextOverride ?? new ReviewContextCompilerImpl({ ledger, vault, now: d.clock });
+  const handoffContext: HandoffContextPort =
+    handoffContextOverride ?? new HandoffContextCompilerImpl({ ledger, vault, now: d.clock });
+  const handoffControl: HandoffControlPort =
+    handoffControlOverride ?? new FakeHandoffControlRuntimeAdapter(runtime);
+  const handoffDrive: HandoffPort = new HandoffDriveEngineImpl({
+    ledger,
+    control,
+    handoffContext,
+    runtime,
+  });
   let lastCursor: CommitCursor | null = null;
   async function advanceProjection(): Promise<ProjectionReceipt> {
     let receipt: ProjectionReceipt | null = null;
@@ -248,6 +294,9 @@ function buildHarness(
     dispatchEngine,
     verification,
     reviewContext,
+    handoffContext,
+    handoffControl,
+    handoffDrive,
     advanceProjection,
     observedCursor: () => lastCursor,
     planGraph: (query) => readModel.planGraph(query),
@@ -272,7 +321,7 @@ export async function createPersistentSqliteHarness(
     ledgerFilename: string,
     readModelFilename: string,
   ): PersistentSqliteHarness => {
-    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript, checkPorts, reviewer, verificationOverride, reviewContextOverride);
+    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript, checkPorts, reviewer, verificationOverride, reviewContextOverride, options.handoffContext, options.handoffControl);
     let closed = false;
     return {
       dir,
@@ -288,6 +337,9 @@ export async function createPersistentSqliteHarness(
       dispatchEngine: built.dispatchEngine,
       verification: built.verification,
       reviewContext: built.reviewContext,
+      handoffContext: built.handoffContext,
+      handoffControl: built.handoffControl,
+      handoffDrive: built.handoffDrive,
       bootstrap: (command) => built.control.bootstrap(command),
       install: (command) => built.control.install(command),
       activate: (command) => built.control.activate(command),
@@ -305,6 +357,10 @@ export async function createPersistentSqliteHarness(
       goalStatus: (query) => built.readModel.goalStatus(query),
       goalTimeline: (query) => built.readModel.goalTimeline(query),
       taskVerification: (query) => built.readModel.taskVerification(query),
+      recordHandoff: (command) => built.control.recordHandoff(command),
+      claimReplacement: (command) => built.control.claimReplacement(command),
+      handoffProvenance: (query) => built.readModel.handoffProvenance(query),
+      assembleHandoff: (request) => built.handoffContext.assemble(request),
       assembleReview: (request) => built.reviewContext.assemble(request),
       drive: (trigger) => built.dispatchEngine.drive(trigger),
       advanceProjection: built.advanceProjection,
