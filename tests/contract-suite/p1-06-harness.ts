@@ -206,6 +206,11 @@ export async function runP106ClaimedRun(
       attemptId: deps.attemptId,
       runId: deps.runId,
       idempotencyKey: "p106-claim-" + deps.runId,
+      // MUST match the startRun envelope binding (P1-03 start-run guard 4):
+      // a claim with the default P1-03 binding + a P106 envelope is stale_binding.
+      roleBinding: P106_ROLE_BINDING_V1,
+      declaredPermissions: P106_DECLARED_PERMISSIONS_V1,
+      budget: P106_BUDGET_V1,
     }),
   );
   expect(claim.status).toBe("committed");

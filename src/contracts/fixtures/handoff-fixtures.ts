@@ -7,6 +7,7 @@
  * P1-06 plan fixture that passes the P1-02 non-empty guards.
  */
 import type { CommandIdentity } from "../command-event.js";
+import { sha256Hex } from "../fingerprint.js";
 import type { PlanRevisionDraft, PlanRevisionSnapshot, PlanRevisionRef } from "../plan.js";
 import type {
   ArtifactRef,
@@ -193,12 +194,16 @@ export type BuildArtifactRefDeps = {
 };
 
 export function buildP106ArtifactRef(deps: BuildArtifactRefDeps = {}): ArtifactRef {
+  // STRICT validator rule: artifact digests MUST be lowercase sha256 hex — any
+  // caller label is normalized via sha256Hex so fixture-built packets always
+  // pass validateHandoffPacket (a label like "digest-a-artifact" is NOT hex).
+  const digest = sha256Hex("p106-artifact:" + (deps.digest ?? "default-body"));
   return {
     kind: "artifact",
     contentType: "application/json",
-    digest: deps.digest ?? "digest-p106-body",
+    digest,
     sizeBytes: deps.sizeBytes ?? 128,
-    source: { kind: "artifact", refId: "body-p106", revision: "1", digest: deps.digest ?? "digest-p106-body" },
+    source: { kind: "artifact", refId: "body-p106", revision: "1", digest },
   };
 }
 
