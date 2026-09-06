@@ -1,0 +1,5 @@
+{
+  "ticket": "P1-15",
+  "proposalDigest": "aade5cb897086a0a30226caf631551915764cb6cccf39bf62ff5325d6fffc5ea",
+  "policyActive": "{\"aggregateType\":\"CoordinationPolicyRevision\",\"projectId\":\"proj-alpha\",\"policyId\":\"coordination-policy-1\",\"revision\":1}"
+}

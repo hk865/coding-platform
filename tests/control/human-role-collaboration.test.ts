@@ -352,7 +352,7 @@ describe("P1-15 HumanRoleCollaborationEngineImpl", () => {
       expect(harness.ledger.eventCount).toBe(before);
     });
 
-    it("frozen-validator blocker: fold built exactly per ruling, ledger rejects first activation (invalid_commit -> invalid)", async () => {
+    it("first activation commits (validator aligned with P1-02 semantics: Project CAS shape-only, active@snap-1) — integrator 2026-09-07 fix", async () => {
       const harness = makeHarness();
       await setupWorld(harness.ledger, P115_PROJECT);
       await harness.engine.recordInitialDesignProposal(buildP115ProposalCommand(buildP115Proposal({ projectId: P115_PROJECT, workspaceId: P115_WORKSPACE }), { commandId: "p115-cmd-proposal" }));
@@ -373,11 +373,11 @@ describe("P1-15 HumanRoleCollaborationEngineImpl", () => {
       // The frozen validator couples Project@(snap.revision-1) AND active@(snap.revision-1),
       // so a first activation (Project@1, active@0) cannot commit. Handler maps
       // invalid_commit -> invalid. (Pinned so the gap is traceable.)
-      expect(receipt.status).toBe("rejected");
-      if (receipt.status === "rejected") expect(receipt.code).toBe("invalid");
-      // no snapshot landed (validation rejected before any write)
+      expect(receipt.status).toBe("committed");
+      if (receipt.status === "committed") expect(receipt.replayed).toBe(false);
+      // snapshot landed with the first activation
       const activeAfter = await harness.ledger.load(p115PolicyActiveRef(P115_PROJECT));
-      expect(activeAfter.status).toBe("not_found");
+      expect(activeAfter.status).toBe("found");
     });
   });
 

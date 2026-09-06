@@ -1565,10 +1565,12 @@ export function validateCoordinationPolicyActivateCommit(batch: import("./ledger
   if (event.eventType !== "CoordinationPolicyActivated" || !isKnownEventType(event.eventType)) return false;
   const snap = batch.snapshots[0]!;
   if (snap.projectId !== event.projectId || canonicalJson(snap.activeRevision) !== canonicalJson(event.payload.activeRevision)) return false;
+  // CAS: [Project@expected (shape-only; runtime CAS), ActiveAggregate@(snapshot.revision - 1)] — P1-02 semantics.
   if (batch.expectedVersions.length !== 2) return false;
   const pE = batch.expectedVersions[0]!; const aE = batch.expectedVersions[1]!;
-  if (!canonicalJson(pE.ref).includes("Project")) return false;
-  if (pE.revision !== snap.revision - 1 || aE.revision !== snap.revision - 1) return false;
+  if (pE.ref.aggregateType !== "Project" || pE.ref.projectId !== event.projectId) return false;
+  if (!Number.isSafeInteger(pE.revision) || pE.revision < 0) return false;
+  if (canonicalJson(aE.ref) !== canonicalJson(snap.ref) || aE.revision !== snap.revision - 1) return false;
   return true;
 }
 
