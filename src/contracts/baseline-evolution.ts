@@ -303,7 +303,12 @@ export type RecordMaterializeResult =
   | { status: "needs_material"; gaps: string[] }
   | { status: "rejected"; code: "proposal_not_found" | "source_stale" | "digest_mismatch" | "invalid_request"; message: string };
 
+// --- P1-14 LANE-B zone -------------------------------------------------- //
+// Minimal field extension to the FROZEN MigrationGatePort: planRef is now a
+// REQUIRED input. The gate record associates the change view with the existing
+// plan; a missing/empty planRef yields { status: "fail", reasons:["plan_ref_missing"] }.
+// Only this interface changes in lane B; every other contract stays frozen.
 export interface MigrationGatePort {
   /** Run (or re-run) the migration gate against candidate + current workspace revision. */
-  run(input: { candidateRef: CandidateArchitectureBaselineRef; workspaceRevision: number }): Promise<{ status: "pass"; gate: MigrationGateTaskV1 } | { status: "fail"; gate: MigrationGateTaskV1; reasons: string[] } | { status: "stale"; message: string } | { status: "unsupported"; message: string }>;
+  run(input: { candidateRef: CandidateArchitectureBaselineRef; workspaceRevision: number; planRef: string }): Promise<{ status: "pass"; gate: MigrationGateTaskV1 } | { status: "fail"; gate: MigrationGateTaskV1; reasons: string[] } | { status: "stale"; message: string } | { status: "unsupported"; message: string }>;
 }

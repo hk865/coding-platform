@@ -1,0 +1,136 @@
+/**
+ * P1-14 lane B unit tests — BaselineEvolutionPortImpl.materialize
+ * (ArchitectureReconciler seam). Covers: deterministic materialization, and the
+ * rejected branches proposal_not_found / source_stale / digest_mismatch.
+ * The port is READ-ONLY (never commits to the ledger).
+ */
+import { describe, expect, it } from "vitest";
+import { BaselineEvolutionPortImpl } from "../../src/control/baseline-evolution-port.js";
+import { ScriptedStateLedger } from "../../src/contracts/testing/state-ledger.double.js";
+import type { AggregateRef, AggregateSnapshot, SnapshotResult } from "../../src/contracts/ledger.js";
+import type { ArchitectureCandidateProposalV1, ArchitectureCandidateProposalSnapshot } from "../../src/contracts/architecture-inspection.js";
+import type { ArchitectureBaselinePin, ArchitectureBaselineRevisionSnapshot, ProjectArchitectureBaselineActiveSnapshot } from "../../src/contracts/governance.js";
+import { buildP112Proposal } from "../../src/contracts/fixtures/architecture-fixtures.js";
+import { p114ProposalRef, P114_PROJECT, P114_WORKSPACE, P114_PROPOSAL, P114_SCHEMA } from "../../src/contracts/fixtures/baseline-evolution-fixtures.js";
+import { candidateContentDigest, candidateIdFromDigest } from "../../src/contracts/baseline-evolution.js";
+import { canonicalJson } from "../../src/contracts/fingerprint.js";
+
+const NOW = "2026-09-06T00:00:00.000Z";
+
+function seededLedger(snapshots: AggregateSnapshot[]): ScriptedStateLedger {
+  return new ScriptedStateLedger({
+    load: async (ref: AggregateRef): Promise<SnapshotResult> => {
+      for (const s of snapshots) {
+        if (canonicalJson(s.ref) === canonicalJson(ref)) return { status: "found", snapshot: s };
+      }
+      return { status: "not_found", ref };
+    },
+  });
+}
+
+function activeBaselineSnapshots(activePin: ArchitectureBaselinePin): AggregateSnapshot[] {
+  const baselineRevSnap: ArchitectureBaselineRevisionSnapshot = {
+    ref: activePin.ref,
+    revision: 1,
+    schemaVersion: 1,
+    baselineId: activePin.ref.baselineId,
+    contentRevision: activePin.ref.revision,
+    contentDigest: activePin.digest,
+    content: { schemaVersion: 1, description: "baseline", constraints: [] },
+  };
+  const activeSnap: ProjectArchitectureBaselineActiveSnapshot = {
+    ref: { aggregateType: "ProjectArchitectureBaselineActive", projectId: P114_PROJECT },
+    projectId: P114_PROJECT,
+    activeRevision: activePin.ref,
+    revision: 1,
+  };
+  return [baselineRevSnap, activeSnap];
+}
+
+const baseProposal = buildP112Proposal();
+const normalizedContent = baseProposal.normalizedContent;
+const expectedDigest = candidateContentDigest(normalizedContent);
+const sourcePin = baseProposal.sourceBaselinePin;
+
+function buildProposal(overrides: Partial<ArchitectureCandidateProposalV1> = {}): ArchitectureCandidateProposalV1 {
+  return {
+    schemaVersion: 1,
+    proposalId: P114_PROPOSAL,
+    projectId: P114_PROJECT,
+    workspaceId: P114_WORKSPACE,
+    planRef: baseProposal.planRef,
+    sourceBaselinePin: sourcePin,
+    selectedDeltaRef: baseProposal.selectedDeltaRef,
+    selectedOptionId: baseProposal.selectedOptionId,
+    normalizedContent,
+    proposalDigest: baseProposal.proposalDigest,
+    expectedCandidateDigest: expectedDigest,
+    bodyRef: baseProposal.bodyRef,
+    generatedAt: baseProposal.generatedAt,
+    ...overrides,
+  };
+}
+
+function proposalSnap(proposal: ArchitectureCandidateProposalV1): ArchitectureCandidateProposalSnapshot {
+  return { ref: p114ProposalRef(P114_PROJECT), revision: 1, schemaVersion: 1, proposal, recordedAt: P114_SCHEMA };
+}
+
+function makePort(snapshots: AggregateSnapshot[]): BaselineEvolutionPortImpl {
+  return new BaselineEvolutionPortImpl({ ledger: seededLedger(snapshots), now: () => NOW });
+}
+
+describe("BaselineEvolutionPortImpl.materialize", () => {
+  it("materializes a deterministic candidate from proposal + exact source", async () => {
+    const port = makePort([proposalSnap(buildProposal()), ...activeBaselineSnapshots(sourcePin)]);
+    const res = await port.materialize(p114ProposalRef(P114_PROJECT));
+    expect(res.status).toBe("materialized");
+    if (res.status !== "materialized") return;
+    expect(res.candidate.schemaVersion).toBe(1);
+    expect(res.candidate.projectId).toBe(P114_PROJECT);
+    expect(res.candidate.workspaceId).toBe(P114_WORKSPACE);
+    expect(res.candidate.candidateId).toBe(candidateIdFromDigest(expectedDigest));
+    expect(res.candidate.parentSourcePin).toEqual(sourcePin);
+    expect(res.candidate.contentDigest).toBe(expectedDigest);
+    expect(res.candidate.proposalRef).toEqual(p114ProposalRef(P114_PROJECT));
+    expect(res.candidate.materializedAt).toBe(NOW);
+    // shallow copy independence
+    expect(res.candidate.normalizedContent).toEqual(normalizedContent);
+  });
+
+  it("rejects proposal_not_found when the proposal is missing", async () => {
+    const port = makePort(activeBaselineSnapshots(sourcePin));
+    const res = await port.materialize(p114ProposalRef(P114_PROJECT));
+    expect(res.status).toBe("rejected");
+    if (res.status !== "rejected") return;
+    expect(res.code).toBe("proposal_not_found");
+  });
+
+  it("rejects source_stale when the active baseline != proposal source", async () => {
+    const movedPin: ArchitectureBaselinePin = {
+      ref: { aggregateType: "ArchitectureBaselineRevision", projectId: P114_PROJECT, baselineId: "baseline-architecture-mvp", revision: 2 },
+      digest: "moved-baseline-digest",
+    };
+    const port = makePort([proposalSnap(buildProposal()), ...activeBaselineSnapshots(movedPin)]);
+    const res = await port.materialize(p114ProposalRef(P114_PROJECT));
+    expect(res.status).toBe("rejected");
+    if (res.status !== "rejected") return;
+    expect(res.code).toBe("source_stale");
+  });
+
+  it("rejects source_stale when no active baseline exists", async () => {
+    const port = makePort([proposalSnap(buildProposal())]);
+    const res = await port.materialize(p114ProposalRef(P114_PROJECT));
+    expect(res.status).toBe("rejected");
+    if (res.status !== "rejected") return;
+    expect(res.code).toBe("source_stale");
+  });
+
+  it("rejects digest_mismatch when the recomputed digest differs", async () => {
+    const proposal = buildProposal({ expectedCandidateDigest: "000000000000000000000000000000000000000000000000000000000000dead" });
+    const port = makePort([proposalSnap(proposal), ...activeBaselineSnapshots(sourcePin)]);
+    const res = await port.materialize(p114ProposalRef(P114_PROJECT));
+    expect(res.status).toBe("rejected");
+    if (res.status !== "rejected") return;
+    expect(res.code).toBe("digest_mismatch");
+  });
+});
