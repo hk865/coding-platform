@@ -54,6 +54,14 @@ import type { ActiveAgentQuery, ActiveAgentViewResult } from "../contracts/activ
 import type { ArtifactPort } from "../contracts/artifact.js";
 import type { TaskContextPort } from "../contracts/task-envelope.js";
 import type { DispatchDriveResult, DispatchDriveTrigger, DispatchPort, RunPort } from "../contracts/ports.js";
+import type {
+  TaskVerificationViewQuery,
+  TaskVerificationViewResult,
+} from "../contracts/verification-view.js";
+import type { ReviewerPort, CheckPort, VerificationPort } from "../contracts/verification.js";
+import type { SubmitEvidenceCommand, SubmitEvidenceReceipt } from "../contracts/evidence.js";
+import type { ReduceTaskCommand, ReduceTaskReceipt } from "../contracts/reduction.js";
+import type { ReviewContextPort, ReviewContextRequestV1, ReviewContextResultV1 } from "../contracts/review-context.js";
 import type { FakeRuntimeScriptV1 } from "../contracts/fixtures/dispatch-fixtures.js";
 import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../contracts/fixtures/dispatch-fixtures.js";
 import { SqliteStateLedger, createSqliteStateLedger } from "../sqlite-ledger/sqlite-ledger.js";
@@ -68,6 +76,9 @@ import { ContextCompilerImpl } from "../context/context-compiler.js";
 import { FakeRuntimeAdapter } from "../runtime/fake-runtime-adapter.js";
 import { DispatchEngineImpl } from "../control/dispatch-engine.js";
 import { createDeterministicDeps, type InjectableDeps } from "../contracts/testing/sequences.js";
+import { DETERMINISTIC_CHECK_PROVIDERS, FAKE_REVIEWER_PORT } from "../contracts/testing/check-providers.double.js";
+import { VerificationEngineImpl } from "../verification/verification-engine.js";
+import { ReviewContextCompilerImpl } from "../context/review-context-compiler.js";
 
 export interface PersistentSqliteHarnessOptions {
   /** Directory for the SQLite files. Default: fresh mkdtemp in os.tmpdir(). */
@@ -80,6 +91,14 @@ export interface PersistentSqliteHarnessOptions {
   deps?: Partial<InjectableDeps>;
   /** P1-03: default FakeRuntimeAdapter script (FAKE_RUNTIME_SCRIPT_COMPLETED_V1). */
   runtimeScript?: FakeRuntimeScriptV1;
+  /** P1-04: explicit CheckPort registry for the default VerificationEngine. */
+  checkPorts?: CheckPort[];
+  /** P1-04: explicit reviewer capability port (default FakeReviewerPort). */
+  reviewer?: ReviewerPort;
+  /** P1-04: explicit VerificationEngine (default: deterministic providers). */
+  verification?: VerificationPort;
+  /** P1-04: explicit ReviewContextPort (default ReviewContextCompilerImpl). */
+  reviewContext?: ReviewContextPort;
 }
 
 export interface PersistentSqliteHarness {
@@ -96,6 +115,10 @@ export interface PersistentSqliteHarness {
   contextCompiler: TaskContextPort;
   runtime: RunPort;
   dispatchEngine: DispatchPort;
+  /** P1-04: default VerificationEngine (deterministic check providers). */
+  verification: VerificationPort;
+  /** P1-04: default ReviewContextPort (bounded ReviewPacket assembly). */
+  reviewContext: ReviewContextPort;
 
   bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
   /** P1-02: governance install (immutable revision; never auto-activates). */
@@ -112,8 +135,16 @@ export interface PersistentSqliteHarness {
   claimTask(command: DispatchClaimCommand): Promise<DispatchClaimReceipt>;
   startRun(command: DispatchStartCommand): Promise<DispatchStartReceipt>;
   runFact(command: RunFactCommand): Promise<RunFactReceipt>;
+  /** P1-04: admit evidence + binding anchor (atomic; full idempotency). */
+  submitEvidence(command: SubmitEvidenceCommand): Promise<SubmitEvidenceReceipt>;
+  /** P1-04: deterministic Task/Gate reduction (never Goal phase). */
+  reduceTask(command: ReduceTaskCommand): Promise<ReduceTaskReceipt>;
   /** P1-03: ActiveAgent view (freshness by opaque cursor). */
   activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult>;
+  /** P1-04: task-detail verification view (freshness by opaque cursor). */
+  taskVerification(query: TaskVerificationViewQuery): Promise<TaskVerificationViewResult>;
+  /** P1-04: review-context assembly (bounded ReviewPacket). */
+  assembleReview(request: ReviewContextRequestV1): Promise<ReviewContextResultV1>;
   /** P1-03: outbox drive (claim -> assemble -> start -> events). */
   drive(trigger: DispatchDriveTrigger): Promise<DispatchDriveResult>;
   /** Pull new events from the ledger and push them into the read model. */
@@ -140,6 +171,8 @@ interface BuiltHarness {
   contextCompiler: TaskContextPort;
   runtime: RunPort;
   dispatchEngine: DispatchPort;
+  verification: VerificationPort;
+  reviewContext: ReviewContextPort;
   advanceProjection: () => Promise<ProjectionReceipt>;
   observedCursor: () => CommitCursor | null;
   planGraph: (query: PlanGraphViewQuery) => Promise<PlanGraphViewResult>;
@@ -152,6 +185,10 @@ function buildHarness(
   readModelFile: string,
   deps: Partial<InjectableDeps>,
   runtimeScript: FakeRuntimeScriptV1,
+  checkPorts: CheckPort[] | undefined,
+  reviewer: ReviewerPort | undefined,
+  verificationOverride: VerificationPort | undefined,
+  reviewContextOverride: ReviewContextPort | undefined,
 ): BuiltHarness {
   const d: InjectableDeps = { ...createDeterministicDeps(), ...deps };
   const ledger = createSqliteStateLedger({ path: join(dir, ledgerFile) });
@@ -173,6 +210,14 @@ function buildHarness(
     contextCompiler,
     runtime,
   });
+  const verification: VerificationPort =
+    verificationOverride ?? new VerificationEngineImpl(
+      { ledger, now: d.clock },
+      checkPorts ?? DETERMINISTIC_CHECK_PROVIDERS,
+      reviewer ?? FAKE_REVIEWER_PORT,
+    );
+  const reviewContext: ReviewContextPort =
+    reviewContextOverride ?? new ReviewContextCompilerImpl({ ledger, vault, now: d.clock });
   let lastCursor: CommitCursor | null = null;
   async function advanceProjection(): Promise<ProjectionReceipt> {
     let receipt: ProjectionReceipt | null = null;
@@ -193,6 +238,8 @@ function buildHarness(
     contextCompiler,
     runtime,
     dispatchEngine,
+    verification,
+    reviewContext,
     advanceProjection,
     observedCursor: () => lastCursor,
     planGraph: (query) => readModel.planGraph(query),
@@ -208,12 +255,16 @@ export async function createPersistentSqliteHarness(
   const readModelFile = options.readModelFile ?? "readmodel.sqlite";
   const deps = options.deps ?? {};
   const runtimeScript = options.runtimeScript ?? FAKE_RUNTIME_SCRIPT_COMPLETED_V1;
+  const checkPorts = options.checkPorts;
+  const reviewer = options.reviewer;
+  const verificationOverride = options.verification;
+  const reviewContextOverride = options.reviewContext;
 
   const make = (
     ledgerFilename: string,
     readModelFilename: string,
   ): PersistentSqliteHarness => {
-    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript);
+    const built = buildHarness(dir, ledgerFilename, readModelFilename, deps, runtimeScript, checkPorts, reviewer, verificationOverride, reviewContextOverride);
     let closed = false;
     return {
       dir,
@@ -227,6 +278,8 @@ export async function createPersistentSqliteHarness(
       contextCompiler: built.contextCompiler,
       runtime: built.runtime,
       dispatchEngine: built.dispatchEngine,
+      verification: built.verification,
+      reviewContext: built.reviewContext,
       bootstrap: (command) => built.control.bootstrap(command),
       install: (command) => built.control.install(command),
       activate: (command) => built.control.activate(command),
@@ -237,7 +290,11 @@ export async function createPersistentSqliteHarness(
       claimTask: (command) => built.control.claimTask(command),
       startRun: (command) => built.control.startRun(command),
       runFact: (command) => built.control.runFact(command),
+      submitEvidence: (command) => built.control.submitEvidence(command),
+      reduceTask: (command) => built.control.reduceTask(command),
       activeAgent: (query) => built.readModel.activeAgent(query),
+      taskVerification: (query) => built.readModel.taskVerification(query),
+      assembleReview: (request) => built.reviewContext.assemble(request),
       drive: (trigger) => built.dispatchEngine.drive(trigger),
       advanceProjection: built.advanceProjection,
       observedCursor: built.observedCursor,

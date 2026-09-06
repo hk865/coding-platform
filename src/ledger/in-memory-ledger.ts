@@ -22,6 +22,8 @@ import {
   validateGovernanceInstallCommit,
   validatePlanRevisionCommit,
   validateRunFactCommit,
+  validateEvidenceIntakeCommit,
+  validateTaskReductionCommit,
 } from "../contracts/ledger-validation.js";
 import type {
   DispatchClaimLedgerCommitV1,
@@ -110,6 +112,10 @@ export class InMemoryLedger implements StateLedger {
         return this.commitDispatchStart(batch);
       case "run-fact":
         return this.commitRunFact(batch);
+      case "evidence-intake":
+        return this.commitEvidenceIntake(batch);
+      case "verification-result":
+        return this.commitTaskReduction(batch);
     }
   }
 
@@ -397,6 +403,20 @@ export class InMemoryLedger implements StateLedger {
    * surfaces as a CAS revision_conflict (caller re-reads and sees
    * duplicate/stale).
    */
+  private async commitEvidenceIntake(batch: import("../contracts/ledger.js").EvidenceIntakeLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateEvidenceIntakeCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  private async commitTaskReduction(batch: import("../contracts/ledger.js").TaskReductionLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateTaskReductionCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
   private async commitRunFact(batch: RunFactLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateRunFactCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };

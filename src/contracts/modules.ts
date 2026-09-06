@@ -31,6 +31,8 @@ import type {
   RunFactCommand,
   RunFactReceipt,
 } from "./dispatch.js";
+import type { SubmitEvidenceCommand, SubmitEvidenceReceipt } from "./evidence.js";
+import type { ReduceTaskCommand, ReduceTaskReceipt } from "./reduction.js";
 
 export type CreateGoalRequest = {
   projectId: string;
@@ -70,6 +72,11 @@ export interface ControlEngine {
   startRun(command: DispatchStartCommand): Promise<DispatchStartReceipt>;
   /** P1-03: ingest one runtime fact — no regress, crash != outcome_unknown. */
   runFact(command: RunFactCommand): Promise<RunFactReceipt>;
+  /** P1-04: admit ONE immutable evidence record + binding anchor (atomic; full idempotency). */
+  submitEvidence(command: SubmitEvidenceCommand): Promise<SubmitEvidenceReceipt>;
+  /** P1-04: deterministic Task/Gate reduction — the ONLY writer of the canonical
+   * TaskReduction phase (never Goal phase — P1-05). */
+  reduceTask(command: ReduceTaskCommand): Promise<ReduceTaskReceipt>;
 }
 
 export interface HumanCollaboration {

@@ -67,6 +67,9 @@ import type {
   TaskRunState,
 } from "../contracts/active-agent.js";
 import { ProjectionStallError } from "../contracts/goal-view.js";
+import type { TaskVerificationViewQuery, TaskVerificationViewResult } from "../contracts/verification-view.js";
+import type { EvidenceAdmittedEvent } from "../contracts/evidence.js";
+import type { TaskReductionUpdatedEvent } from "../contracts/reduction.js";
 import type { CommitCursor, GoalCreatedEvent } from "../contracts/command-event.js";
 import type { DomainEvent } from "../contracts/events.js";
 import type { PositionedEvent } from "../contracts/ledger.js";
@@ -1022,6 +1025,11 @@ export class SqliteReadModelIndex implements ReadModelIndex {
         cursor,
       );
     }
+  }
+
+  /** P1-04: task-detail verification view (frozen entry; lane D implements). */
+  async taskVerification(query: TaskVerificationViewQuery): Promise<TaskVerificationViewResult> {
+    throw new Error("P1-04 read-model taskVerification: not implemented yet");
   }
 
 }

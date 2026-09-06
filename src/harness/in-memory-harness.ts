@@ -48,6 +48,14 @@ import type { ActiveAgentQuery, ActiveAgentViewResult } from "../contracts/activ
 import type { ArtifactPort } from "../contracts/artifact.js";
 import type { TaskContextPort } from "../contracts/task-envelope.js";
 import type { DispatchDriveResult, DispatchDriveTrigger, DispatchPort, RunPort } from "../contracts/ports.js";
+import type {
+  TaskVerificationViewQuery,
+  TaskVerificationViewResult,
+} from "../contracts/verification-view.js";
+import type { ReviewerPort, CheckPort, VerificationPort } from "../contracts/verification.js";
+import type { SubmitEvidenceCommand, SubmitEvidenceReceipt } from "../contracts/evidence.js";
+import type { ReduceTaskCommand, ReduceTaskReceipt } from "../contracts/reduction.js";
+import type { ReviewContextPort, ReviewContextRequestV1, ReviewContextResultV1 } from "../contracts/review-context.js";
 import type { FakeRuntimeScriptV1 } from "../contracts/fixtures/dispatch-fixtures.js";
 import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../contracts/fixtures/dispatch-fixtures.js";
 import { InMemoryLedger } from "../ledger/in-memory-ledger.js";
@@ -59,6 +67,9 @@ import { ContextCompilerImpl } from "../context/context-compiler.js";
 import { FakeRuntimeAdapter } from "../runtime/fake-runtime-adapter.js";
 import { DispatchEngineImpl } from "../control/dispatch-engine.js";
 import { createDeterministicDeps, type InjectableDeps } from "../contracts/testing/sequences.js";
+import { DETERMINISTIC_CHECK_PROVIDERS, FAKE_REVIEWER_PORT } from "../contracts/testing/check-providers.double.js";
+import { VerificationEngineImpl } from "../verification/verification-engine.js";
+import { ReviewContextCompilerImpl } from "../context/review-context-compiler.js";
 
 export interface InMemoryHarnessOptions {
   /** P1-03: default FakeRuntimeAdapter script (FAKE_RUNTIME_SCRIPT_COMPLETED_V1). */
@@ -69,6 +80,14 @@ export interface InMemoryHarnessOptions {
   contextCompiler?: TaskContextPort;
   /** P1-03: explicit ArtifactPort override (default ArtifactVault). */
   vault?: ArtifactPort;
+  /** P1-04: explicit CheckPort registry for the default VerificationEngine. */
+  checkPorts?: CheckPort[];
+  /** P1-04: explicit reviewer capability port (default FakeReviewerPort). */
+  reviewer?: ReviewerPort;
+  /** P1-04: explicit VerificationEngine (default: deterministic providers). */
+  verification?: VerificationPort;
+  /** P1-04: explicit ReviewContextPort (default ReviewContextCompilerImpl). */
+  reviewContext?: ReviewContextPort;
   deps?: Partial<InjectableDeps>;
 }
 
@@ -82,6 +101,10 @@ export interface InMemoryHarness {
   contextCompiler: TaskContextPort;
   runtime: RunPort;
   dispatchEngine: DispatchPort;
+  /** P1-04: default VerificationEngine (deterministic check providers). */
+  verification: VerificationPort;
+  /** P1-04: default ReviewContextPort (bounded ReviewPacket assembly). */
+  reviewContext: ReviewContextPort;
   bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
   /** P1-02: governance install (immutable revision; never auto-activates). */
   install(command: GovernanceInstallCommand): Promise<GovernanceInstallReceipt>;
@@ -97,8 +120,16 @@ export interface InMemoryHarness {
   claimTask(command: DispatchClaimCommand): Promise<DispatchClaimReceipt>;
   startRun(command: DispatchStartCommand): Promise<DispatchStartReceipt>;
   runFact(command: RunFactCommand): Promise<RunFactReceipt>;
+  /** P1-04: admit evidence + binding anchor (atomic; full idempotency). */
+  submitEvidence(command: SubmitEvidenceCommand): Promise<SubmitEvidenceReceipt>;
+  /** P1-04: deterministic Task/Gate reduction (never Goal phase). */
+  reduceTask(command: ReduceTaskCommand): Promise<ReduceTaskReceipt>;
   /** P1-03: ActiveAgent view (freshness by opaque cursor). */
   activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult>;
+  /** P1-04: task-detail verification view (freshness by opaque cursor). */
+  taskVerification(query: TaskVerificationViewQuery): Promise<TaskVerificationViewResult>;
+  /** P1-04: review-context assembly (bounded ReviewPacket). */
+  assembleReview(request: ReviewContextRequestV1): Promise<ReviewContextResultV1>;
   /** P1-03: outbox drive (claim -> assemble -> start -> events). */
   drive(trigger: DispatchDriveTrigger): Promise<DispatchDriveResult>;
   /** pull new events from the ledger and push them into the ReadModelIndex */
@@ -134,6 +165,15 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     contextCompiler,
     runtime,
   });
+  const verification: VerificationPort =
+    options.verification ??
+    new VerificationEngineImpl(
+      { ledger, now: d.clock },
+      options.checkPorts ?? DETERMINISTIC_CHECK_PROVIDERS,
+      options.reviewer ?? FAKE_REVIEWER_PORT,
+    );
+  const reviewContext: ReviewContextPort =
+    options.reviewContext ?? new ReviewContextCompilerImpl({ ledger, vault, now: d.clock });
   let lastCursor: CommitCursor | null = null;
   async function advanceProjection(): Promise<ProjectionReceipt> {
     let receipt: ProjectionReceipt | null = null;
@@ -154,6 +194,8 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     contextCompiler,
     runtime,
     dispatchEngine,
+    verification,
+    reviewContext,
     bootstrap: (command) => control.bootstrap(command),
     install: (command) => control.install(command),
     activate: (command) => control.activate(command),
@@ -164,7 +206,11 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     claimTask: (command) => control.claimTask(command),
     startRun: (command) => control.startRun(command),
     runFact: (command) => control.runFact(command),
+    submitEvidence: (command) => control.submitEvidence(command),
+    reduceTask: (command) => control.reduceTask(command),
     activeAgent: (query) => readModel.activeAgent(query),
+    taskVerification: (query) => readModel.taskVerification(query),
+    assembleReview: (request) => reviewContext.assemble(request),
     drive: (trigger) => dispatchEngine.drive(trigger),
     advanceProjection,
     observedCursor: () => lastCursor,

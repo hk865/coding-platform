@@ -57,6 +57,8 @@ import {
   validateGovernanceInstallCommit,
   validatePlanRevisionCommit,
   validateRunFactCommit,
+  validateEvidenceIntakeCommit,
+  validateTaskReductionCommit,
 } from "../contracts/ledger-validation.js";
 import type {
   DispatchClaimLedgerCommitV1,
@@ -425,6 +427,10 @@ export class SqliteStateLedger implements StateLedger {
         return this.commitDispatchStart(batch);
       case "run-fact":
         return this.commitRunFact(batch);
+      case "evidence-intake":
+        return this.commitEvidenceIntake(batch);
+      case "verification-result":
+        return this.commitTaskReduction(batch);
     }
   }
 
@@ -466,6 +472,20 @@ export class SqliteStateLedger implements StateLedger {
 
   private commitDispatchStart(batch: DispatchStartLedgerCommitV1): LedgerCommitReceipt {
     if (!validateDispatchStartCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitEvidenceIntake(batch: import("../contracts/ledger.js").EvidenceIntakeLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateEvidenceIntakeCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGeneric(batch);
+  }
+
+  private commitTaskReduction(batch: import("../contracts/ledger.js").TaskReductionLedgerCommitV1): import("../contracts/ledger.js").LedgerCommitReceipt {
+    if (!validateTaskReductionCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
     }
     return this.commitGeneric(batch);

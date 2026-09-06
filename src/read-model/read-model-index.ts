@@ -63,6 +63,13 @@ import {
   runtimeEventTerminalOutcome,
 } from "../contracts/dispatch.js";
 import { validateDomainEvent } from "../contracts/validation.js";
+import type {
+  TaskVerificationViewQuery,
+  TaskVerificationViewResult,
+  TaskVerificationView,
+} from "../contracts/verification-view.js";
+import type { EvidenceAdmittedEvent } from "../contracts/evidence.js";
+import type { TaskReductionUpdatedEvent } from "../contracts/reduction.js";
 
 /** Full-scope view key: (projectId, workspaceId, goalId) — never a local id only. */
 function goalKey(projectId: string, workspaceId: string, goalId: string): string {
@@ -584,6 +591,11 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     const row = this.taskDetailRows.get(key);
     if (!row) return;
     this.taskDetailRows.set(key, { ...row, run: runState, sourceCursor: cursor });
+  }
+
+  /** P1-04: task-detail verification view (frozen entry; lane D implements). */
+  async taskVerification(query: TaskVerificationViewQuery): Promise<TaskVerificationViewResult> {
+    throw new Error("P1-04 read-model taskVerification: not implemented yet");
   }
 
   /** Event types this projection currently has handlers for (P1-02 + P1-03, v1). */

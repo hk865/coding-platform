@@ -59,6 +59,18 @@ import type {
   TaskLeaseRef,
   TaskLeaseSnapshot,
 } from "./dispatch.js";
+import type {
+  EvidenceAdmittedEvent,
+  EvidenceRef,
+  EvidenceSnapshot,
+  TaskEvidenceIndexRef,
+  TaskEvidenceIndexSnapshot,
+} from "./evidence.js";
+import type {
+  TaskReductionRef,
+  TaskReductionSnapshot,
+  TaskReductionUpdatedEvent,
+} from "./reduction.js";
 
 export type ProjectRef = {
   aggregateType: "Project";
@@ -90,7 +102,10 @@ export type AggregateRef =
   | TaskLeaseRef
   | TaskAttemptRef
   | RunRef
-  | DispatchOutboxRef;
+  | DispatchOutboxRef
+  | EvidenceRef
+  | TaskEvidenceIndexRef
+  | TaskReductionRef;
 
 export type ProjectSnapshot = {
   ref: ProjectRef;
@@ -126,7 +141,10 @@ export type AggregateSnapshot =
   | TaskLeaseSnapshot
   | TaskAttemptSnapshot
   | RunSnapshot
-  | DispatchOutboxEntrySnapshot;
+  | DispatchOutboxEntrySnapshot
+  | EvidenceSnapshot
+  | TaskEvidenceIndexSnapshot
+  | TaskReductionSnapshot;
 
 export type SnapshotResult =
   | { status: "found"; snapshot: AggregateSnapshot }
@@ -234,6 +252,36 @@ export type RunFactLedgerCommitV1 = {
   outboxIntents: [];
 };
 
+/**
+ * P1-04: evidence-intake — one immutable Evidence + the task evidence index
+ * update (atomic). FULL ledger idempotency (replay returns the original
+ * outcome; same evidenceId under another identity becomes a CAS conflict).
+ */
+export type EvidenceIntakeLedgerCommitV1 = {
+  commitKind: "evidence-intake";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [Evidence@0, TaskEvidenceIndex@(index.revision - 1)]. */
+  expectedVersions: ExpectedVersion[];
+  events: [EvidenceAdmittedEvent];
+  snapshots: [EvidenceSnapshot, TaskEvidenceIndexSnapshot];
+  outboxIntents: [];
+};
+
+/** P1-04: verification-result — the deterministic Task/Gate reduction state. */
+export type TaskReductionLedgerCommitV1 = {
+  commitKind: "verification-result";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [TaskReduction@(snapshot.revision - 1)]. */
+  expectedVersions: ExpectedVersion[];
+  events: [TaskReductionUpdatedEvent];
+  snapshots: [TaskReductionSnapshot];
+  outboxIntents: [];
+};
+
 export type LedgerCommit =
   | GoalCreateLedgerCommitV1
   | BootstrapLedgerCommitV1
@@ -242,7 +290,9 @@ export type LedgerCommit =
   | PlanRevisionLedgerCommitV1
   | DispatchClaimLedgerCommitV1
   | DispatchStartLedgerCommitV1
-  | RunFactLedgerCommitV1;
+  | RunFactLedgerCommitV1
+  | EvidenceIntakeLedgerCommitV1
+  | TaskReductionLedgerCommitV1;
 
 export type LedgerCommitReceipt =
   | {

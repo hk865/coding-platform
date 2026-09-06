@@ -80,6 +80,8 @@ import { evaluateDispatchReadiness } from "./readiness.js";
 import { claimTask } from "./claim.js";
 import { startRun } from "./start-run.js";
 import { runFact } from "./run-facts.js";
+import { submitEvidence } from "./evidence-intake.js";
+import { reduceTask } from "./task-reducer.js";
 
 export type ControlEngineDeps = {
   ledger: StateLedger;
@@ -239,6 +241,14 @@ export class ControlEngineImpl implements ControlEngine {
 
   runFact(command: RunFactCommand): Promise<RunFactReceipt> {
     return runFact(this.deps, command);
+  }
+
+  submitEvidence(command: import("../contracts/evidence.js").SubmitEvidenceCommand): Promise<import("../contracts/evidence.js").SubmitEvidenceReceipt> {
+    return submitEvidence(this.deps, command);
+  }
+
+  reduceTask(command: import("../contracts/reduction.js").ReduceTaskCommand): Promise<import("../contracts/reduction.js").ReduceTaskReceipt> {
+    return reduceTask(this.deps, command);
   }
 
   // --------------------------------------------------------------------- //
@@ -529,4 +539,3 @@ function buildGoalSnapshot(command: CreateGoalCommand): GoalSnapshot {
 export function createControlEngine(deps: ControlEngineDeps): ControlEngineImpl {
   return new ControlEngineImpl(deps);
 }
-

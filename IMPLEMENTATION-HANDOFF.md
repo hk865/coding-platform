@@ -1,17 +1,84 @@
 # IMPLEMENTATION-HANDOFF — Agent Platform 产品代码根
 
 ```yaml
-ticket_id: P1-03
-status: implementation verified (limited authorization, 2026-09-05 — P1-03 only)
+ticket_id: P1-04
+status: shared baseline ready (limited authorization, 2026-09-05 — P1-04 only); lanes in parallel worktrees; NOT yet verified
 updated: 2026-09-05
-authorized_by: user (limited authorization note recorded in ticket 03 + this file)
-next: STOP after P1-03 acceptance — do NOT auto-start P1-04 (DAG: 04 验收后才出现 05/06 并行窗口)
-evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-03-implementation-evidence.md
+authorized_by: user (limited authorization for P1-04 only; recorded in this file; ticket 04 record appended at acceptance)
+next: P1-04 integration in progress; STOP after P1-04 acceptance — do NOT auto-start P1-05/06 (DAG: 04 验收后才出现 05/06 并行窗口)
+evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-04-implementation-evidence.md (at acceptance); P1-03 evidence: p1-03-implementation-evidence.md
 ```
 
 ---
 
-## P1-03 当前票据与共享契约基线
+## P1-04 当前票据与共享契约基线
+
+- Ticket：`/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/04-evidence-satisfies-task.md`（P1-04，status 按阶段守卫保持 `proposed`；有限授权与 Implementation record 将在验收后追加票尾；**不把本票记成 P1 已验收，不自动推进 P1-05/06**）
+- 上游验收证据（仅证明各自票据）：`dev_docs/verification/p1-00|p1-01|p1-02|p1-03-implementation-evidence.md`；P1-03 结束基线 = 产品根 commit `9722e14`（typecheck 0 errors、44 files/395 tests PASS、P1-03 双套件 15/15 + 集成 2/2 + 重启证据 1/1、validate-docs 12/12）。**P1-04 共享基线 = 本文件首次更新的 commit**（在 `9722e14` 之上：7 个新契约 + 2 个接口冻结 + 入口/夹具/套件骨架；既有 395 测试零回归——实施前已复跑）。
+- **冻结复用、不重写**：P1-00…P1-03 全部契约/夹具/套件/适配器/harness（既有测试零修改通过）；`ContextCompilerImpl.assemble(TaskContextRequestV1)` P1-03 冻结签名**不改写**（P1-04 的 ReviewContextPort 是**版本化扩展**，独立文件）。
+- **P0-06 复核影响（AGENTS.md 要求，已核对）**：`dev_docs/design/human-framework-role-review.md` 结论与本票无冲突——"框架依证据规则接受结果，集成者同意不单独构成完成条件"（Acceptance 7）、"控制：schema、权限、幂等、版本与转换规则校验；接入静态/运行/语义证据；不重复写入，不以 claim 直接完成"（= 本票全部规则）、"状态链：工具/Agent 产出 → 框架校验与归约 → 持久状态 → 事实投影"（= evidence-intake → reducer → Event → ReadModel）。本票不归约 Goal（P1-05）、不做换手（P1-06）、无用户 Decision 路径；doc 与票据 Acceptance 无冲突，差异以票据 Acceptance 为准（本屏已按此原则冻结 runtime-collaboration/completion-policy 尚未冻结的 wire 字段为可执行契约）。
+- **两个最小 Interface 首次冻结**（DAG interfaces_to_freeze）：`VerificationEngine.VerificationPort`（src/contracts/verification.ts）、`ContextCompiler.ReviewContextPort`（src/contracts/review-context.ts）——已建、版本化（v1）、以契约套件 + 集成接线作为最小 contract test；**七个契约**：CompletionClaim（EvidenceV1 kind=claim）、VerificationPlan、Evidence、EvidenceBinding、EffectiveEvidenceSet、ReviewPacket、VerificationResult（见下方冻结语义与入口表）。
+
+## P1-04 契约与存储语义（冻结）
+
+1. **LedgerCommit 扩展方式**：新增两个 commitKind（`evidence-intake` / `verification-result`），schemaVersion 1、project-scoped CommandIdentity、`outboxIntents: []`；沿用 P1-00/02/03 版本化先例，既有 v1 语义不变（395 测试零回归）。**Evidence/TaskEvidenceIndex/TaskReduction 三个新聚合**（完整 ref：EvidenceRef=(projectId,evidenceId)、TaskEvidenceIndexRef/TaskReductionRef=(projectId,goalId,taskId)）。
+2. **Evidence 不可变追加**：EvidenceSnapshot 创建即 revision 1，永不改写（改写路径不存在；同 evidenceId 异 identity 的再次提交 = CAS revision_conflict 零写入）。**Evidence 与 binding 锚原子提交**：evidence-intake 单事务携带 [Evidence@0 + TaskEvidenceIndex@(count-1)]；事件 EvidenceAdmitted 是唯一展示/重建来源。TaskEvidenceIndex 按 admission 顺序记录 evidenceIds（revision == count；上限 MAX_EVIDENCE_PER_TASK=512，超出 evidence_limit_exceeded 零写入）。
+3. **claim/observation/verdict** 为三种证据 kind：**claim 强制 outcome=INCONCLUSIVE**（自报 ≠ PASS；validator + commit validator 双重强制）；observation/verdict 可为 PASS/FAIL/INCONCLUSIVE；claim/verdict **必须有来源 Run**（正式 dispatch Run 的报告），system/机械 observation 允许 runRef=null（如 Gate 的系统静态检查）。**正文先入 ArtifactVault（body-first）**，Evidence 只保留 ArtifactRef + 有界 summary（≤ EVIDENCE_SUMMARY_MAX_BYTES=4096）；登记失败只留未被采纳的 Artifact。
+4. **幂等与 CAS**：claim/verdict/observation 命令**完整幂等**（同 identity+fingerprint → committed(replayed)，绝不重复追加；同 identity 异 fingerprint → idempotency_conflict；异 identity 使用已存在 evidenceId → revision_conflict）。**不要把 P1-03 run-fact 的"无幂等记录"语义复制到 evidence**。reduction 命令同样完整幂等（同 identity+fingerprint 重放；每次归约使用独立 idempotencyKey——P1-00 幂等键纪律）。
+5. **EffectivityAnchor = revision tuple**：{planRef, planRevision, workspaceRevision, pinnedCompletionPolicy, pinnedArchitectureBaseline}；**verificationPlanRef 是审计关联，不参与 applicability 判定**（同修订下每次 claim 的 changeScope/检查集不同而 plan digest 不同——属正常可适用证据）。锚随证据不可变；**applicability（APPLICABLE/STALE/OUT_OF_SCOPE）永远是纯函数重算值**（evidenceApplicability/binding 派生），**绝不写回历史**。
+6. **applicability 规则（纯函数，冻结）**：① 证据主题任务或覆盖的义务/VR 不在当前计划的该任务集合 → OUT_OF_SCOPE；② anchor.planRef ≠ 当前 planRef → OUT_OF_SCOPE；③ planRef 相同但任一 revision 分量不同（planRevision/workspaceRevision/pins）→ STALE（曾适用，现状已改）；④ 否则 APPLICABLE。旧/迟到来源的证据**可被登记**（报告是事实），但永不错误满足——它的 applicability 决定一切。
+7. **EffectiveEvidenceSet（纯函数，冻结）**：需求键（obligationId, requirementId）上取 APPLICABLE 且未被合法 supersede 的 PASS；**合法 supersede = 同一 (task, obligation, requirement) + 同一 revision tuple + 更新 admission 的 APPLICABLE PASS**——新 PASS 进入当前有效集，旧 FAIL 永远保留可审计；无更新 PASS 覆盖的 APPLICABLE FAIL/INCONCLUSIVE 阻断该需求（blockingByRequirement）。**claim 是中性声明**：不覆盖、不阻断（claim 只证明"报告了某事"）。
+8. **VerificationPlan 编译 = 确定性纯函数**（compileVerificationPlan，内容寻址 planId==planDigest==JCS+SHA-256(输入元组)，无时间戳/无模型调用）：输入 = 任务契约（plan snapshot）+ workspaceRevision + pins + changeScope + semanticChange + risks + 可用检查 ∩ policy.requirementKinds；**缺 pin（快照无有效 pin）→ missing_pin；悬空/未知检查 → unknown_check；policy kinds 无检查覆盖 → no_check_coverage；任务无 required VR → invalid**——确定性失败，**绝不内置默认**。**reviewer 层**：satisfactionPath=「review-packet」除非（semanticChange==none **且** versioned policy 的 fastPathDiffClasses 显式包含 diffClass）→「no-change-fast-path」（checkId=no-change-fast-path，noChangeFastPath 记录 diffClass+reason——**快放证据显式，不得以"看起来没变"当证明**；无语义变化但策略不允许 → 仍 review-packet，不偷偷快放）。
+9. **TaskSatisfied 归约（纯函数 reduceTaskVerification，冻结公式）**：任务 ∈ 当前 active PlanRevision 且 disposition=active 且全部 required obligation 的 required VR 被当前 EffectiveEvidenceSet 的 APPLICABLE PASS 覆盖且无可阻断 Applicable FAIL/INCONCLUSIVE 且无未处置 Finding（P1-04 恒空，公式保留）且无未对账 outcome_unknown/高风险副作用 → SATISFIED；否则：阻断 FAIL/INCONCLUSIVE 或 run crashed/exit≠0 → failed（返工）；缺输入（required VR 无任何 Applicable 证据且无历史覆盖）→ blocked；存在 stale/out-of-score 证据或其它未齐 → verifying（binding 显示 STALE；exit=0/claim/verdict 各自单独永不满足——claim 中性、exit=0 中性信号、verdict 只是集合一员）。**Control 归约入口是唯一写 phase 者**（TaskReduction 聚合；写不了 Task 快照/Goal phase——Goal 归约属于 P1-05）。
+10. **ReviewPacket 有界**：ReviewContextRequestV1 → assemble → ready(packet+bundleRef+manifest)/needs_material/rejected；ReviewPacket 硬度上限：材料数 ≤ REVIEW_PACKET_MAX_MATERIALS=8、每材料 summary ≤ REVIEW_SUMMARY_MAX_BYTES=4096、packet canonical ≤ REVIEW_PACKET_MAX_BYTES=32KiB、**无完整 transcript**（total.noFullTranscript=true）；正文 bundle 先入 ArtifactVault（body-first）；越权（scope ⊄ declared）、旧 workspace/pin、超预算、超界、semanticChange==none（not_semantic_change——无变化走快放，不给 review packet）→ 结构化拒绝，零写入（除 body-first put）。assemble 永不启动 Reviewer/模型；**评审工作 = 正式 dispatch Run**（P1-03 FakeRuntime 路径），ReviewerPort 只冻结能力替身（mode=dispatch-run、maxPacketBytes=REVIEWER_MAX_PACKET_BYTES、noFullTranscript=true）。
+11. **ReadModel**：taskVerification 视图（key=(projectId, goalId, taskId)）只从 EvidenceAdmitted/TaskReductionUpdated 事件重建：evidence（admission 序）+ 每条 EvidenceBindingView（applicability 由纯函数按视图 currentAnchor 重算；currentAnchor 来自最新 TaskReduction 快照——事件重建权威；无归约前为 null）+ effectiveEvidenceIds/blockingEvidenceIds + reduction（phase/causes/planRef/…）。**展示层绝不把报告文字投影为正式完成状态**；TaskDetailView（P1-02 冻结形状）不变（其 phase 仍为计划值；正式归约结果只在 verification 面显示，后续 UI 整合票消费）。freshness 沿用 opaque CommitCursor（not_ready≠not_found）；已知 v1 事件无 handler → unsupported_event_type 整页停止。
+12. **重启等价**：evidence-intake/verification-result 全部经 SQLite 单事务；restart（close→reopen 同文件、全新实例）后 Evidence/TaskEvidenceIndex/TaskReduction 快照 load 逐字段一致、taskVerification 从持久 EventPage 重建逐字段一致、observedCursor 一致（tests/restart/p1-04-*，探针自动启用）。（ArtifactVault 正文持久化不在本票——与 P1-03 相同只存引用。）
+13. **边界**：不归约 Goal phase（P1-05 的 Goal reducer 与 10 级优先级）、不做换手（P1-06）、无用户 Decision 路径、无 Findings 机制（公式以空输入显式表示）、无重试/取消（P1-10）。P1-04 计划夹具（plan-evidence-mvp）**不给可派发任务加 dependsOn 边**：P1-03 冻结的 eligibility 从计划快照 phase（静态）读依赖满足，DAG 排序派发需后续调度票；Gate 保留 DAG 边（gate 不被派发）。
+14. **事务/命令路径**：claim → start → runFacts（P1-03 原路径）；verify(只读编译+检查运行，绝不写 ledger) → body-first 证据材料入 vault → submitEvidence(evidence-intake 单事务) → reduceTask(verification-result 单事务) → advanceProjection；单线程驱动 + CAS 保证唯一 Writer。
+
+## P1-04 已冻结的代码入口（integrator 建立，签名冻结）
+
+| 入口 | 文件 | 冻结表面 |
+| --- | --- | --- |
+| evidence 契约/夹具 | src/contracts/evidence.ts、fixtures/evidence-fixtures.ts | EvidenceV1/EffectivityAnchorV1/Binding/EffectiveEvidenceSet、SubmitEvidenceCommand/Receipt、fingerprint、EvidenceAdmittedEvent、evidenceApplicability/selectEffectiveEvidenceSet 纯函数、P104_PLAN_REVISION_FIXTURE_V1、COMPLETION_POLICY_FASTPATH_FIXTURE_V1、buildEvidenceIntakeLedgerCommit 等 fold 目标 |
+| verification 契约 | src/contracts/verification.ts | VerificationPort/VerificationRequest/Result、VerificationPlanV1、compileVerificationPlan（纯函数）、CheckPort/CheckContext/CheckOutcome、ReviewerPort/ReviewerCapabilities、ChangeScope/Risk/SemanticChangeClassification |
+| reduction 契约 | src/contracts/reduction.ts | TaskReductionRef/Snapshot、reduceTaskVerification（纯函数 TaskSatisfied）、ReduceTaskCommand/Receipt、fingerprint、TaskReductionUpdatedEvent |
+| review-context 契约 | src/contracts/review-context.ts | ReviewContextPort/Request/Result、ReviewPacketV1（有界）、ReviewManifestV1 |
+| verification-view 契约 | src/contracts/verification-view.ts | TaskVerificationViewQuery/View/Result、EvidenceBindingView |
+| ledger/validation 扩展 | src/contracts/ledger.ts、ledger-validation.ts、validation.ts、events.ts、governance.ts、modules.ts | 2 个 commitKind 与纯 validator（双适配器共用）、validateSubmitEvidence/ReduceTaskCommand、validateDomainEvent 新事件分支、CompletionPolicyContentV1.fastPathDiffClasses（可选新增，既有 fixture digest 不变）、ControlEngine.submitEvidence/reduceTask |
+| Control 入口 | src/control/evidence-intake.ts、task-reducer.ts | submitEvidence(deps,cmd)/reduceTask(deps,cmd)（stub→lane A 填充）；mapEvidenceIntakeReceipt/mapReduceTaskReceipt/buildCurrentEffectivityAnchor（已实现）；control-engine.ts 仅委托 |
+| VerificationEngine | src/verification/verification-engine.ts | VerificationEngineImpl(deps, checkPorts, reviewer).verify（stub→lane B 填充）；createVerificationEngine |
+| ReviewContext | src/context/review-context-compiler.ts | ReviewContextCompilerImpl(deps)。assemble（stub→lane C 填充）；ContextCompilerImpl 不改 |
+| harness | src/harness/{in-memory,persistent}-harness.ts | 默认接线 VerificationEngineImpl(确定性 check providers)+ReviewContextCompilerImpl；submitEvidence/reduceTask/taskVerification/assembleReview 直通；options {checkPorts?, reviewer?, verification?, reviewContext?} |
+| 测试替身 | src/contracts/testing/check-providers.double.ts | DeterministicStatic/DynamicCheckProvider（结果按 diffClass 表驱动）、DETERMINISTIC_CHECK_PROVIDERS、FakeReviewerPort/FAKE_REVIEWER_PORT |
+| 契约套件 | tests/contract-suite/{p1-04-harness,evidence.contract.suite,verification.contract.suite}.ts | P1_04TestHarness/FACTORY、prepareP104Scenario、defineEvidenceContractSuite/defineVerificationContractSuite（InMemory+SQLite 同套件） |
+| 重启骨架 | tests/restart/p1-04-restart-fixtures.ts、p1-04-restart.test.ts、evidence/p1-04-evidence.test.ts | isP104Ready() 探针；实现落地后自动启用 |
+| 集成接线 | tests/integration/p1-04.contract-suite.inmemory|sqlite.test.ts、p1-04.integration.test.ts | 双适配器套件接线 + 真实 SQLite 全路径（T1 验收 8 项 + T2 不可独立满足） |
+
+## 四路并行（P1-04，隔离 worktree → main 合并；从本基线 commit 派生）
+
+| Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
+| --- | --- | --- | --- | --- |
+| A evidence intake + reducer | `p1-04-lane-a`（从本基线派生） | submitEvidence/reduceTask 完整实现（guard 顺序见入口文件头注；Evidence 不可变/CAS/完整幂等/零写入拒绝/Worker 不写 phase） | src/control/evidence-intake.ts、src/control/task-reducer.ts、tests/control/evidence-intake.test.ts、tests/control/task-reducer.test.ts | 未开始 |
+| B VerificationEngine | `p1-04-lane-b`（从本基线派生） | verify 完整实现（canonical 解析→compileVerificationPlan→检查运行→observations；悬空/缺 pin/未知检查确定性拒绝；绝不写 ledger）+ 有效集消费 | src/verification/verification-engine.ts、tests/verification/** | 未开始 |
+| C ReviewContext + ReviewerPort | `p1-04-lane-c`（从本基线派生） | ReviewContextCompilerImpl.assemble 完整实现（有界 ReviewPacket/body-first/全部拒绝-codes/不启动模型）+ ReviewerPort 替身 | src/context/review-context-compiler.ts、tests/context/review-context-compiler.test.ts | 未开始 |
+| D ReadModel 投影 + 重启证据 | `p1-04-lane-d`（从本基线派生） | EvidenceAdmitted/TaskReductionUpdated 投影 + taskVerification 查询（双适配器，重建等价/隔离/freshness/unsupported stall）+ 重启证据收集 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、tests/read-model/p1-04*.test.ts、tests/sqlite-read-model/p1-04*.test.ts、tests/restart/p1-04-*.ts（含 evidence） | 未开始 |
+
+integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 schema/接口/共享 fixture）、`src/ledger/**`、`src/sqlite-ledger/**`、`src/control/control-engine.ts`、`src/harness/**`、`tests/contract-suite/**`、`tests/integration/**`、文档与状态记录。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结签名（如有缺口：提交具体建议给 integrator 统一修改基线并通知消费者）。子 Agent 从实际读文件开始，不等待派发者；允许测试命令：`pnpm vitest run <自身路径>`、`pnpm typecheck`。
+
+## P1-04 已执行命令及结果（共享基线）
+
+| 命令（product root） | 结果 |
+| --- | --- |
+| `pnpm typecheck` | PASS 0 errors（含全部新契约/夹具/套件/入口骨架） |
+| `pnpm vitest run`（全量） | 44 files / 395 tests PASS（P1-00…03 基线零回归；P1-04 套件/集成接线暂红：入口为冻结 stub，属预期，验收前由 lane 实现转绿） |
+| `pnpm vitest run tests/restart/evidence/p1-04-evidence.test.ts` | 1 skipped（isP104Ready() 探针自动跳过——实现落地后自动启用，不假 PASS） |
+| `node dev_docs/verification/validate-docs.mjs` | （验收阶段执行） |
+
+设计理由摘要（详见上方冻结语义）：Evidence=不可变单次聚合 + 派生 applicability（历史零改写）；evidence-intake 单事务携带 index 保证"证据+绑定锚"原子可见；claim 中性（INCONCLUSIVE+不参与集）——"报告"与"完成"分离；verification-plan=内容寻址纯函数（无模型/无默认）；supersede=需求键+同修订 tuple+后置 PASS；reducer=纯公式（Control 唯一写 phase=TaskReduction；Goal 归约留给 P1-05）；ReviewPacket=显式有界（材料数/summary/packet 字节，无 transcript；body-first）；重启等价=单事务+事件重建；不重写 P1-03 冻结的 TaskContextPort（ReviewContextPort 独立版本化扩展）。
+
+---
+## P1-03 历史记录（已完成，保留备查；基线 commit 9722e14）
 
 - Ticket：`/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/P1-foundation/tickets/03-fake-run-visible.md`（P1-03，status 按阶段守卫保持 `proposed`；有限授权与 Implementation record 已追加票尾；**不把本票记成 P1 已验收，不自动推进 P1-04**）
 - 上游 P1-00/P1-01/P1-02 验收证据：`dev_docs/verification/p1-00|p1-01|p1-02-implementation-evidence.md`（仅证明各自票据）；P1-02 结束基线 = 产品根 commit `bafb0f1`（typecheck 0 errors、29 files/283 tests PASS、validate-docs 12/12）。P1-03 共享基线 = 产品根 commit `27359e1`（= cec6b57 + TaskContextRequest.declaredPermissions；套件细化 c986d2d）；四路 lane（a/b/c/d）从 27359e1 派生并全部合并入 main；lane 上报缺口的 integrator 统一裁决见 evidence 文档 "integrator 裁决记录"

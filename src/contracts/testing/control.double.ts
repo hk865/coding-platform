@@ -22,6 +22,8 @@ import type {
   RunFactCommand,
   RunFactReceipt,
 } from "../dispatch.js";
+import type { SubmitEvidenceCommand, SubmitEvidenceReceipt } from "../evidence.js";
+import type { ReduceTaskCommand, ReduceTaskReceipt } from "../reduction.js";
 import type { ControlEngine } from "../modules.js";
 
 export function committedReceiptFor(command: CreateGoalCommand): CommandReceipt {
@@ -70,6 +72,12 @@ export type StartRunBehavior = (
 export type RunFactBehavior = (
   command: RunFactCommand,
 ) => Promise<RunFactReceipt> | RunFactReceipt;
+export type SubmitEvidenceBehavior = (
+  command: SubmitEvidenceCommand,
+) => Promise<SubmitEvidenceReceipt> | SubmitEvidenceReceipt;
+export type ReduceTaskBehavior = (
+  command: ReduceTaskCommand,
+) => Promise<ReduceTaskReceipt> | ReduceTaskReceipt;
 
 export class ScriptedControlEngine implements ControlEngine {
   readonly submitCalls: CreateGoalCommand[] = [];
@@ -81,6 +89,8 @@ export class ScriptedControlEngine implements ControlEngine {
   readonly claimTaskCalls: DispatchClaimCommand[] = [];
   readonly startRunCalls: DispatchStartCommand[] = [];
   readonly runFactCalls: RunFactCommand[] = [];
+  readonly submitEvidenceCalls: SubmitEvidenceCommand[] = [];
+  readonly reduceTaskCalls: ReduceTaskCommand[] = [];
 
   constructor(
     private readonly options: {
@@ -93,6 +103,8 @@ export class ScriptedControlEngine implements ControlEngine {
       claimTask?: ClaimTaskBehavior;
       startRun?: StartRunBehavior;
       runFact?: RunFactBehavior;
+      submitEvidence?: SubmitEvidenceBehavior;
+      reduceTask?: ReduceTaskBehavior;
       defaultSubmit?: CommandReceipt;
       defaultBootstrap?: WorkspaceBootstrapReceipt;
       defaultInstall?: GovernanceInstallReceipt;
@@ -157,5 +169,17 @@ export class ScriptedControlEngine implements ControlEngine {
     this.runFactCalls.push(command);
     if (this.options.runFact) return this.options.runFact(command);
     throw new Error("ScriptedControlEngine: no runFact behavior configured");
+  }
+
+  async submitEvidence(command: SubmitEvidenceCommand): Promise<SubmitEvidenceReceipt> {
+    this.submitEvidenceCalls.push(command);
+    if (this.options.submitEvidence) return this.options.submitEvidence(command);
+    throw new Error("ScriptedControlEngine: no submitEvidence behavior configured");
+  }
+
+  async reduceTask(command: ReduceTaskCommand): Promise<ReduceTaskReceipt> {
+    this.reduceTaskCalls.push(command);
+    if (this.options.reduceTask) return this.options.reduceTask(command);
+    throw new Error("ScriptedControlEngine: no reduceTask behavior configured");
   }
 }

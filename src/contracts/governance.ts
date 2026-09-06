@@ -78,6 +78,10 @@ export type CompletionPolicyContentV1 = {
   requirementKinds: string[];
   /** Minimum number of REQUIRED VerificationRequirements per required obligation. */
   minimumRequiredRequirementsPerObligation: number;
+  /** P1-04 (optional, additive): diff classes a mechanical no-change proof may
+   * fast-path for reviewer-layer requirements. Absent => NO fast path (the
+   * frozen P1-02 fixture keeps this field absent, digest unchanged). */
+  fastPathDiffClasses?: string[];
 };
 
 /**
