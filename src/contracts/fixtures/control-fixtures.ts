@@ -47,12 +47,12 @@ export function buildP110IntentSnapshot(intent: ControlIntentV1): ControlIntentS
   return { ref: controlIntentRefFor(P110_PROJECT, P110_WORKSPACE, intent.intentId), revision: 1, schemaVersion: 1, intent };
 }
 
-export function buildP110SubmitControlCommand(intent: ControlIntentV1, deps: { commandId: string; actor?: CommandIdentity["actor"]; idempotencyKey?: string }): SubmitControlCommand {
+export function buildP110SubmitControlCommand(intent: ControlIntentV1, deps: { commandId: string; actor?: CommandIdentity["actor"]; idempotencyKey?: string; projectId?: string }): SubmitControlCommand {
   return {
     commandId: deps.commandId,
     commandType: "SubmitControl",
     schemaVersion: 1,
-    identity: { projectId: P110_PROJECT, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem" },
+    identity: { projectId: deps.projectId ?? intent.projectId, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem" },
     aggregateId: intent.intentId,
     expectedRevision: 0,
     correlationId: deps.commandId + "-corr",
