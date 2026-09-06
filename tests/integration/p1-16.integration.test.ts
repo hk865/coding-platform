@@ -4,8 +4,8 @@
  * real-kernel continuation evidence block.
  * AUTO-SKIPS the contract-suite parts until the lanes land (probe, no fake).
  */
-import { describe, it, expect, beforeAll } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createPersistentSqliteHarness, type PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 import { toP1_16Harness, type P1_16HarnessLike } from "../contract-suite/p1-16-harness.js";
@@ -17,24 +17,21 @@ const READY = await isP116Ready();
 
 describe.skipIf(!READY)("P1-16 real SQLite integration", () => {
   let evidence: P116RestartEvidence;
+  let closed: PersistentSqliteHarness;
 
   beforeAll(async () => {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
-    try {
-      evidence = await runP116RestartScenario(h);
-    } finally {
-      await h.cleanup().catch(() => undefined);
-    }
+    closed = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    evidence = await runP116RestartScenario(closed);
+    await closed.close();
+  });
+
+  afterAll(async () => {
+    await closed.cleanup().catch(() => undefined);
   });
 
   it("work-context rows rebuild identically after close+reopen (real SQLite)", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
-    try {
-      const restarted = await h.reopen();
-      await verifyP116AfterRestart(restarted, evidence);
-    } finally {
-      await h.cleanup().catch(() => undefined);
-    }
+    const restarted = await closed.reopen();
+    await verifyP116AfterRestart(restarted, evidence);
   });
 
   it("InMemory and SQLite work-context views agree (same scenario, same expectations)", async () => {

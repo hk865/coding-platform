@@ -2520,7 +2520,7 @@ export function validateBindWorkContextCommand(value: unknown): ValidationIssue[
     issues.push({ path: "payload.planRef", code: "bad_type", message: "planRef must be an object or null" });
   }
   if (payload["planRevision"] !== null) numberField(payload, "planRevision", issues, "payload.planRevision", 1);
-  validateRoleBindingRef(payload["roleBinding"], "payload.roleBinding", issues);
+  validateRoleBindingRef(payload["roleBindingRef"], "payload.roleBindingRef", issues);
   validateRunRef(payload["initialRunRef"], "payload.initialRunRef", issues);
   return issues;
 }

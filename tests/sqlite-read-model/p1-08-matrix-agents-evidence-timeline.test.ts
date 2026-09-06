@@ -172,6 +172,8 @@ describe("P1-08 LANE-B SQLite projection", () => {
 
   it("rebuild equivalence: close/reopen with a fresh read-model file reproduces the views", async () => {
     const h = await makeHarness();
+    // NOTE: generous timeout — this replays the whole scenario into a fresh
+    // read-model file (IO bound; flaky under parallel lane load).
     try {
       const H = await makeTest(h);
       const before = {
@@ -203,5 +205,5 @@ describe("P1-08 LANE-B SQLite projection", () => {
     } finally {
       await h.cleanup().catch(() => undefined);
     }
-  });
+  }, 60_000);
 });

@@ -345,7 +345,7 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
       now: d.clock,
     });
   const workContext: WorkContextPort =
-    options.workContext ?? new WorkContextCompilerImpl({ ledger, vault, now: d.clock });
+    options.workContext ?? new WorkContextCompilerImpl({ ledger, vault, now: d.clock, readModel });
   const contextContinuation: ContextContinuationPort =
     options.contextContinuation ?? new FakeContextContinuationRuntimeAdapter(runtime);
   const workspaceReader: WorkspaceReadPort =

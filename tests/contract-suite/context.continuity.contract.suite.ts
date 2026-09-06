@@ -79,6 +79,9 @@ export function defineContextContinuityContractSuite(
           commandId: "p116-cmd-bind-w1-dup",
           projectId: P108_PROJECT_A,
           workId: P116_WORK,
+          workKind: "coordination",
+          goalId: null,
+          taskId: null,
           initialRunRef: scen.works.aWork.initialRun,
         }));
         expect(dup.status).toBe("rejected");

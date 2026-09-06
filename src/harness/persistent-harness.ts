@@ -415,7 +415,7 @@ function buildHarness(
     releaseLease: (command) => control.releaseWorkspaceLease(command),
   };
   const workContext: WorkContextPort =
-    workContextOverride ?? new WorkContextCompilerImpl({ ledger, vault, now: d.clock });
+    workContextOverride ?? new WorkContextCompilerImpl({ ledger, vault, now: d.clock, readModel });
   const contextContinuation: ContextContinuationPort =
     contextContinuationOverride ?? new FakeContextContinuationRuntimeAdapter(runtime);
   const workspaceReader: WorkspaceReadPort =
