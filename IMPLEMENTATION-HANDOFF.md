@@ -2,12 +2,12 @@
 
 ```yaml
 ticket_id: P1-06
-status: implementation in progress (limited authorization, 2026-09-06 — P1-06 only); shared baseline built on P1-05 commit d1c6595; 3 lanes dispatched for control/context/read-model implementations; acceptance evidence at dev_docs/verification/p1-06-implementation-evidence.md (pending)
+status: implementation verified (limited authorization, 2026-09-06 — P1-06 only); 3 lanes merged; full acceptance evidence in dev_docs/verification/p1-06-implementation-evidence.md
 updated: 2026-09-06
-authorized_by: user (limited authorization for P1-06 only; P1-06 is NOT P1 acceptance, P1-07/15 NOT auto-started; G2 (Continuity) waits P1-05 + P1-06)
-next: after P1-06 acceptance STOP — do NOT auto-start P1-15/other tickets (G2 needs 05+06; next window triggered by user/process)
+authorized_by: user (limited authorization for P1-06 only; P1-06 is NOT P1 acceptance, P1-07/15 NOT auto-started; G2 (Continuity) waits P1-05 + P1-06 evidence — now met)
+next: STOP after P1-06 acceptance — do NOT auto-start P1-15/other tickets (G2 needs 05+06; next window triggered by user/process; local main = a9070e5 NOT pushed — push needs user authorization per P1-04/05 precedent)
 evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-06-implementation-evidence.md (at acceptance); upstream baseline: P1-05 commit d1c6595 (64 files/539 tests)
-merge_surface_note: P1-06 was built in ISOLATED worktree agent_platform-p1-06 (branch p1-06-int, derived from d1c6595) AFTER the P1-05 parallel session finished. The earlier P1-05 x P1-06 text-level conflict (both sessions appending to events.ts / ledger.ts / validation.ts from the 5a278cb baseline) was resolved mechanically ("双方皆保留、版本化追加"), verified byte-fidelity of P1-05 parts, and documented as a control-plane lesson in dev_docs/logs/conflict-reports/README.md (see the integration report for the tagged conflict record).
+merge_surface_note: P1-06 was built in ISOLATED worktree agent_platform-p1-06 (branch p1-06-int, derived from d1c6595) AFTER the P1-05 parallel session finished. The earlier P1-05 x P1-06 text-level conflict (both sessions appending to events.ts / ledger.ts / validation.ts from the 5a278cb baseline) was resolved mechanically ("双方皆保留、版本化追加"), verified byte-fidelity of P1-05 parts, and documented as a control-plane lesson in dev_docs/logs/conflict-reports/2026-09-06-p105-p106-merge.md (tagged conflict record: kind=conflict, tickets=[P1-05,P1-06], state=closed).
 ```
 
 ```yaml
@@ -62,19 +62,29 @@ evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_doc
 
 | Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
 | --- | --- | --- | --- | --- |
-| A HandoffPacket + ReplacementAttempt（Control/Process 面） | p1-06-lane-a | recordHandoff/claimReplacement 完整实现（守卫→fold→commit→map；run_not_ended/stale_source/lease_active/packet_* /CAS/幂等零写入）+ HandoffDriveEngineImpl.driveHandoff（替换意图：assemble→startRun→runtime→runFact；outbox 先于副作用） | src/control/handoff.ts、src/control/replacement-claim.ts、src/control/handoff-drive.ts、tests/control/handoff.test.ts、tests/control/replacement-claim.test.ts、tests/control/handoff-drive.test.ts | 🔄 进行中 |
-| B HandoffContext + HandoffControl | p1-06-lane-b | HandoffContextCompilerImpl.assemble 完整实现（守卫序/stale 显式/越权/Budget/有界 Bundle body-first/无 transcript）+ FakeHandoffControlRuntimeAdapter（pause/stop + 公开快照） | src/context/handoff-context-compiler.ts、src/runtime/handoff-control-adapter.ts、tests/context/handoff-context-compiler.test.ts、tests/runtime/handoff-control-adapter.test.ts | 🔄 进行中 |
-| C ReadModel provenance + 重启证据 | p1-06-lane-c | HandoffRecorded/ReplacementClaimed/EvidenceAdmitted 双适配器投影 + handoffProvenance（重建等价/全键隔离/freshness）+ isHandledEventType 与 handler 同 commit + 重启证据硬化 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、tests/read-model/p1-06-handoff-projection.test.ts、tests/sqlite-read-model/p1-06-handoff-projection.test.ts、tests/restart/p1-06-*.ts | 🔄 进行中 |
+| A HandoffPacket + ReplacementAttempt（Control/Process 面） | p1-06-lane-a @ 090c3b5 | recordHandoff/claimReplacement 完整实现（守卫→fold→commit→map；run_not_ended/stale_source/lease_active/packet_* /CAS/幂等零写入）+ HandoffDriveEngineImpl.driveHandoff（替换意图：assemble→startRun→runtime→runFact；outbox 先于副作用） | src/control/handoff.ts、src/control/replacement-claim.ts、src/control/handoff-drive.ts、tests/control/handoff.test.ts、tests/control/replacement-claim.test.ts、tests/control/handoff-drive.test.ts | ✅ 20/20（主分支已合并） |
+| B HandoffContext + HandoffControl | p1-06-lane-b @ ee4405c | HandoffContextCompilerImpl.assemble 完整实现（守卫序/stale 显式/越权/Budget/有界 Bundle body-first/无 transcript）+ FakeHandoffControlRuntimeAdapter（pause/stop + 公开快照） | src/context/handoff-context-compiler.ts、src/runtime/handoff-control-adapter.ts、tests/context/handoff-context-compiler.test.ts、tests/runtime/handoff-control-adapter.test.ts | ✅ 15/15（主分支已合并） |
+| C ReadModel provenance + 重启证据 | p1-06-lane-c @ ebe844c | HandoffRecorded/ReplacementClaimed/EvidenceAdmitted 双适配器投影 + handoffProvenance（重建等价/全键隔离/freshness）+ isHandledEventType 与 handler 同 commit + 重启证据硬化 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、tests/read-model/p1-06-handoff-projection.test.ts、tests/sqlite-read-model/p1-06-handoff-projection.test.ts、tests/restart/p1-06-*.ts | ✅ 14/14（主分支已合并） |
 
 integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 schema/接口/共享 fixture）、`src/ledger/**`、`src/sqlite-ledger/**`、`src/control/control-engine.ts`、`src/harness/**`、`tests/contract-suite/**`、`tests/integration/**`、文档与状态记录。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结签名、**不得修改 P1-05 文件**（如有缺口：提交具体建议给 integrator 统一修改基线并通知消费者）。子 Agent 从实际读文件开始，不等待派发者；允许测试命令：`pnpm vitest run <自身路径>`、`pnpm typecheck`。
 
-## P1-06 已执行命令及结果（共享基线）
+## P1-06 已执行命令及结果（最终，product root = main @ a9070e5）
 
-| 命令（product root worktree） | 结果 |
+| 命令（product root） | 结果 |
 | --- | --- |
-| `pnpm typecheck` | PASS 0 errors（含全部新契约/夹具/套件/入口/接线骨架） |
-| `pnpm vitest run`（全量，基线） | **64 files / 539 tests PASS（P1-05 零漂移）+ 53 新测试 skipIf 探针自动跳过**（实现未落地，预期；明细见 p1-06-implementation-evidence.md 验收节） |
-| 只读零漂移比对 | `git diff d1c6595..p1-06-int -- src/contracts/goal-phase.ts src/contracts/goal-phase-view.ts src/control/goal-reducer.ts` 为空；`git diff d1c6595..p1-06-int` 仅含 P1-06 追加（10 文件：4 新契约 + events/ledger/validation/ledger-validation + 两适配器 22 行登记 + 后续套件/接线） |
+| `pnpm typecheck` | PASS 0 errors（全部契约/夹具/套件/双适配器实现） |
+| `pnpm vitest run`（全量，最终） | **76 files / 641 tests PASS**（P1-00…05 基线 539 零回归 + P1-06 新增 102；明细见 p1-06-implementation-evidence.md） |
+| `pnpm vitest run tests/integration/p1-06.contract-suite.inmemory.test.ts` | 25/25 PASS |
+| `pnpm vitest run tests/integration/p1-06.contract-suite.sqlite.test.ts` | 25/25 PASS（**同一套件定义，无调参**） |
+| `pnpm vitest run tests/integration/p1-04.contract-suite.inmemory.test.ts tests/integration/p1-04.contract-suite.sqlite.test.ts` | 36/36 PASS（P1-04 套件零回归） |
+| `pnpm vitest run tests/integration/p1-05.contract-suite.inmemory.test.ts tests/integration/p1-05.contract-suite.sqlite.test.ts` | 16/16 PASS（P1-05 套件零回归） |
+| `pnpm vitest run tests/integration/p1-06.integration.test.ts` | 1/1 PASS（真实 SQLite 全路径 + 重启等价） |
+| `pnpm vitest run tests/restart/p1-06-restart.test.ts` | 1/1 PASS（探针自动启用；packet/replacement/lease/B-run 逐字段一致） |
+| `pnpm vitest run tests/restart/evidence/p1-06-evidence.test.ts` | 1/1 PASS（P1-06-EVIDENCE JSON 证据块，可重复） |
+| `node dev_docs/verification/validate-docs.mjs` | 12/12 PASS |
+| 只读零漂移比对 | `git diff d1c6595 a9070e5 -- src/contracts/goal-phase.ts src/contracts/goal-phase-view.ts src/control/goal-reducer.ts` = 0 行；`P1-06 冲突记录` = dev_docs/logs/conflict-reports/2026-09-06-p105-p106-merge.md（state=closed） |
+
+**integrator 裁决/修正记录**（详见 p1-06-implementation-evidence.md §5）：本票首次冻结三个最小 Interface + 三个契约；packet stale 的三层覆盖（record 拒登记/assemble 显式/纯函数守卫）+ 登记后 stale 的完整路径留 P1-10/后续 workspace 演进；控制面 lastEventSeq 以注入事件数实现（公开报告仍 noHiddenContextRead）；normal drive 替换意图在扫描前跳过（scanned 语义）；两处套件/夹具缺口（fixture digest 归一为 sha256 hex；claim 与 envelope 绑定一致）由 integrator 统一修复。**G2（Continuity）等待 P1-05 + P1-06 双验收——双方证据已齐**。本地 main = a9070e5，**未推送** GitHub origin main（需用户授权）。
 
 ---
 
