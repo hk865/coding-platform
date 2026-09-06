@@ -30,6 +30,7 @@ import {
   p113DedupKey,
 } from "../../src/contracts/fixtures/remediation-fixtures.js";
 import { buildP112DeltaFinding, buildP112ReportFinding, buildRecordArchitectureFindingCommand } from "../../src/contracts/fixtures/architecture-fixtures.js";
+import { P112_FINDING_DELTA } from "../../src/contracts/fixtures/architecture-fixtures.js";
 
 export interface P1_13TestHarness extends P1_11TestHarness {
   recordArchitectureFinding(command: import("../../src/contracts/architecture-inspection.js").RecordArchitectureFindingCommand): Promise<RecordArchitectureFindingReceipt>;
@@ -74,8 +75,9 @@ export async function runP113Scenario(h: P1_13HarnessLike): Promise<P113Scenario
   const activate = await h.activateArchitectureEvolutionPolicy(buildP113ActivateCommand(p113PolicyPin(), { commandId: "p113-cmd-activate", projectId: P113_PROJECT, expectedRevision: 1 }));
   expect(activate.status).toBe("committed");
 
-  const finding = buildP112DeltaFinding();
-  const findingReceipt = await h.recordArchitectureFinding(buildRecordArchitectureFindingCommand(finding, { commandId: "p113-cmd-finding" }));
+  // 与 remediation fixtures 的 P113_FINDING 对齐（integrator 裁决 2026-09-07：findingId 统一，保留 delta 分类/风险/免 material）。
+  const finding = { ...buildP112DeltaFinding(), findingId: P113_FINDING };
+  const findingReceipt = await h.recordArchitectureFinding(buildRecordArchitectureFindingCommand({ ...finding } as import("../../src/contracts/architecture-inspection.js").ArchitectureFindingV1, { commandId: "p113-cmd-finding" }));
   expect(findingReceipt.status).toBe("committed");
 
   const patch = buildP113PlanPatchV1();

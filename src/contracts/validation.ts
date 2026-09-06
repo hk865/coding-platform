@@ -736,7 +736,7 @@ export function validateInstallArchitectureBaselineRevisionCommand(value: unknow
   return issues;
 }
 
-function validatePin(value: unknown, path: string, issues: ValidationIssue[], kind: "policy" | "baseline"): void {
+function validatePin(value: unknown, path: string, issues: ValidationIssue[], kind: "policy" | "baseline" | "evolution"): void {
   if (!isRecord(value)) {
     issues.push({ path, code: "bad_type", message: path + " must be an object" });
     return;
@@ -746,11 +746,12 @@ function validatePin(value: unknown, path: string, issues: ValidationIssue[], ki
     issues.push({ path: path + ".ref", code: "bad_type", message: path + ".ref must be an object" });
     return;
   }
-  if (ref["aggregateType"] !== (kind === "policy" ? "CompletionPolicyRevision" : "ArchitectureBaselineRevision")) {
+  const expectedAgg = kind === "policy" ? "CompletionPolicyRevision" : kind === "baseline" ? "ArchitectureBaselineRevision" : "ArchitectureEvolutionPolicyRevision";
+  if (ref["aggregateType"] !== expectedAgg) {
     issues.push({ path: path + ".ref.aggregateType", code: "bad_type", message: "unexpected target aggregateType" });
   }
   stringField(ref, "projectId", issues, path + ".ref.projectId");
-  stringField(ref, kind === "policy" ? "policyId" : "baselineId", issues, path + ".ref." + (kind === "policy" ? "policyId" : "baselineId"));
+  stringField(ref, kind === "baseline" ? "baselineId" : "policyId", issues, path + ".ref." + (kind === "baseline" ? "baselineId" : "policyId"));
   safePositiveIntField(ref["revision"], path + ".ref.revision", issues);
   const digest = stringField(value, "digest", issues, path + ".digest");
   if (digest !== null && !/^[0-9a-f]{64}$/.test(digest)) {
@@ -3063,14 +3064,7 @@ export function validateActivateProjectArchitectureEvolutionPolicyCommand(value:
   validateActivateCommon(value, "ActivateProjectArchitectureEvolutionPolicy", issues);
   const payload = value["payload"];
   if (isRecord(payload)) {
-    validatePin(payload["target"], "payload.target", issues, "policy");
-    const pin = payload["target"] as UnknownRecord;
-    if (isRecord(pin)) {
-      const ref = pin["ref"] as UnknownRecord | undefined;
-      if (ref !== undefined && isRecord(ref)) {
-        stringField(ref, "policyId", issues, "payload.target.ref.policyId");
-      }
-    }
+    validatePin(payload["target"], "payload.target", issues, "evolution");
   } else {
     issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
   }
