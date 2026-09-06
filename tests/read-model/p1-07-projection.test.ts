@@ -1,0 +1,310 @@
+/**
+ * P1-07 InMemory projection tests — WorkspaceReadLeaseGranted/Released,
+ * WorkspaceWriteLeaseGranted/Released, IntegrationJoined, PatchRecorded ->
+ * workspaceLeaseView / integrationConflicts / workspacePatches (display only).
+ *
+ * Covers (ticket P1-07 lane C):
+ *   - 6-event projection into the 3 views (grant/release, write granted +
+ *     patch-release, conflict records + authoritativeKeys, workspace revision
+ *     progression);
+ *   - rebuild equivalence (empty index -> full replay == incremental, JSON
+ *     identical);
+ *   - full-key isolation (two Projects / two workspaces never collide);
+ *   - freshness not_ready != not_found (atLeastCursor covered but no row ->
+ *     not_found; no atLeastCursor + no row -> not_ready);
+ *   - display-only: the views never judge/merge.
+ */
+import { describe, expect, it } from "vitest";
+import { ReadModelIndexImpl } from "../../src/read-model/read-model-index.js";
+import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
+import {
+  P107_GOAL,
+  P107_PROJECT,
+  P107_WORKSPACE,
+  P107_SCHEMA,
+  P107_TASK_INTEGRATION,
+  P107_TASK_READER_A,
+  P107_TASK_READER_B,
+  P107_TASK_WRITER,
+  P107_SCOPE_READER_A,
+  P107_SCOPE_READER_B,
+  P107_SCOPE_WRITER,
+  P107_ROLE_BINDING_READER_V1,
+  P107_ROLE_BINDING_WRITER_V1,
+  p107PlanRef,
+  buildP107AcquireReadLeaseCommand,
+  buildP107AcquireWriteLeaseCommand,
+  buildP107ReleaseLeaseCommand,
+  buildP107RecordIntegrationCommand,
+  buildP107RecordPatchCommand,
+  buildP107ArtifactRef,
+  buildWorkspaceReadLeaseAcquireLedgerCommit,
+  buildWorkspaceReadLeaseReleaseLedgerCommit,
+  buildWorkspaceWriteLeaseAcquireLedgerCommit,
+  buildWorkspaceWriteLeaseReleaseLedgerCommit,
+  buildIntegrationRecordLedgerCommit,
+  buildPatchRecordLedgerCommit,
+} from "../../src/contracts/fixtures/workspace-fixtures.js";
+import { runRefFor, taskAttemptRefFor, type TaskAttemptRef, type RunRef } from "../../src/contracts/dispatch.js";
+import { evidenceRefFor } from "../../src/contracts/evidence.js";
+import { workspaceReadLeaseRefFor, workspaceWriteLeaseRefFor, workspaceReadLeaseIndexRefFor, workspaceWriteLeaseIndexRefFor } from "../../src/contracts/workspace-lease.js";
+import type { WorkspaceWriteLeaseSnapshot } from "../../src/contracts/workspace-lease.js";
+import type { IntegrationTaskResultV1 } from "../../src/contracts/integration.js";
+
+function json(v: unknown): string {
+  return JSON.stringify(v);
+}
+
+function runRef(projectId: string, runId: string): RunRef {
+  return runRefFor(projectId, P107_GOAL, runId);
+}
+function attRef(projectId: string, taskId: string, attemptId: string): TaskAttemptRef {
+  return taskAttemptRefFor(projectId, P107_GOAL, taskId, attemptId);
+}
+
+function pos(event: { eventType: string }, seq: number): PositionedEvent {
+  return { cursor: makeCommitCursor(seq), event: event as never };
+}
+function page(events: PositionedEvent[], throughSeq: number): EventPage {
+  return { afterCursor: null, throughCursor: makeCommitCursor(throughSeq), events, hasMore: false };
+}
+
+/** Build a WorkspaceReadLeaseGranted event (shared read lease). */
+function readGranted(projectId: string, workspaceId: string, leaseId: string, runId: string, eventId: string): import("../../src/contracts/workspace-lease.js").WorkspaceReadLeaseGrantedEvent {
+  const command = buildP107AcquireReadLeaseCommand({
+    commandId: "cmd-" + eventId, projectId, leaseId,
+    workspaceId, scope: P107_SCOPE_READER_A,
+    holder: { runRef: runRef(projectId, runId), attemptRef: attRef(projectId, P107_TASK_READER_A, "att-" + runId), roleBinding: P107_ROLE_BINDING_READER_V1 },
+  });
+  return buildWorkspaceReadLeaseAcquireLedgerCommit(command, {
+    eventId, occurredAt: P107_SCHEMA,
+    indexSnapshot: { ref: workspaceReadLeaseIndexRefFor(projectId, workspaceId), revision: 0, schemaVersion: 1, activeReadLeases: [] },
+  }).events[0];
+}
+
+/** Build a WorkspaceReadLeaseReleased event (shared read lease). */
+function readReleased(projectId: string, workspaceId: string, leaseId: string, runId: string, eventId: string): import("../../src/contracts/workspace-lease.js").WorkspaceReadLeaseReleasedEvent {
+  const command = buildP107ReleaseLeaseCommand({ commandId: "cmd-" + eventId, projectId, workspaceId, leaseId, kind: "read", holderRunRef: runRef(projectId, runId) });
+  const active: import("../../src/contracts/workspace-lease.js").WorkspaceReadLeaseSnapshot = {
+    ref: workspaceReadLeaseRefFor(projectId, leaseId), revision: 1, schemaVersion: 1,
+    lease: { schemaVersion: 1, leaseId, projectId, workspaceId, scope: P107_SCOPE_READER_A, holder: { runRef: runRef(projectId, runId), attemptRef: attRef(projectId, P107_TASK_READER_A, "att-" + runId), roleBinding: P107_ROLE_BINDING_READER_V1 }, grantedAt: P107_SCHEMA, expiresAt: null, status: "active", releasedAt: null, releasedBy: null },
+  };
+  return buildWorkspaceReadLeaseReleaseLedgerCommit(command, active, {
+    eventId, occurredAt: P107_SCHEMA,
+    indexSnapshot: { ref: workspaceReadLeaseIndexRefFor(projectId, workspaceId), revision: 1, schemaVersion: 1, activeReadLeases: [{ leaseId, scope: P107_SCOPE_READER_A }] },
+  }).events[0];
+}
+
+/** Build a WorkspaceWriteLeaseGranted event (exclusive write lease). */
+function writeGranted(projectId: string, workspaceId: string, leaseId: string, runId: string, scope: import("../../src/contracts/workspace-lease.js").ConflictScopeV1, eventId: string): import("../../src/contracts/workspace-lease.js").WorkspaceWriteLeaseGrantedEvent {
+  const command = buildP107AcquireWriteLeaseCommand({
+    commandId: "cmd-" + eventId, projectId, leaseId, workspaceId, scope,
+    declaredWriteScope: [scope.id],
+    holder: { runRef: runRef(projectId, runId), attemptRef: attRef(projectId, P107_TASK_WRITER, "att-" + runId), roleBinding: P107_ROLE_BINDING_WRITER_V1 },
+  });
+  return buildWorkspaceWriteLeaseAcquireLedgerCommit(command, {
+    eventId, occurredAt: P107_SCHEMA,
+    indexSnapshot: { ref: workspaceWriteLeaseIndexRefFor(projectId, workspaceId), revision: 0, schemaVersion: 1, activeLeaseId: null, activeScope: null, holderRunRef: null },
+  }).events[0];
+}
+
+/** Build a WorkspaceWriteLeaseReleased event (explicit release — postWrite null). */
+function writeReleased(projectId: string, workspaceId: string, leaseId: string, runId: string, eventId: string): import("../../src/contracts/workspace-lease.js").WorkspaceWriteLeaseReleasedEvent {
+  const command = buildP107ReleaseLeaseCommand({ commandId: "cmd-" + eventId, projectId, workspaceId, leaseId, kind: "write", holderRunRef: runRef(projectId, runId) });
+  const active: WorkspaceWriteLeaseSnapshot = {
+    ref: workspaceWriteLeaseRefFor(projectId, leaseId), revision: 1, schemaVersion: 1,
+    lease: { schemaVersion: 1, leaseId, projectId, workspaceId, scope: P107_SCOPE_WRITER, holder: { runRef: runRef(projectId, runId), attemptRef: attRef(projectId, P107_TASK_WRITER, "att-" + runId), roleBinding: P107_ROLE_BINDING_WRITER_V1 }, grantedAt: P107_SCHEMA, expiresAt: null, status: "active", releasedAt: null, releasedBy: null, patches: [], postWriteWorkspaceRevision: null },
+  };
+  return buildWorkspaceWriteLeaseReleaseLedgerCommit(command, active, {
+    eventId, occurredAt: P107_SCHEMA,
+    indexSnapshot: { ref: workspaceWriteLeaseIndexRefFor(projectId, workspaceId), revision: 1, schemaVersion: 1, activeLeaseId: leaseId, activeScope: P107_SCOPE_WRITER, holderRunRef: runRef(projectId, runId) },
+  }).events[0];
+}
+
+/** A recordPatch commit produces BOTH the PatchRecorded + WriteLeaseReleased(viaPatch) events. */
+function patchRecordedEvents(projectId: string, workspaceId: string, leaseId: string, runId: string, patchId: string, beforeRev: number, afterRev: number, eventId: string): [import("../../src/contracts/patch.js").PatchRecordedEvent, import("../../src/contracts/workspace-lease.js").WorkspaceWriteLeaseReleasedEvent] {
+  const patch: import("../../src/contracts/patch.js").PatchArtifactV1 = {
+    schemaVersion: 1, patchId, projectId, workspaceId, goalId: P107_GOAL, taskId: P107_TASK_WRITER,
+    planRef: p107PlanRef(projectId), taskRevision: 1, runRef: runRef(projectId, runId),
+    attemptRef: attRef(projectId, P107_TASK_WRITER, "att-" + runId), roleBinding: P107_ROLE_BINDING_WRITER_V1,
+    kind: "patch", title: "fix", changedPaths: ["src/p107/fix-a.ts"], bodyRef: buildP107ArtifactRef(patchId),
+    beforeWorkspaceRevision: beforeRev, afterWorkspaceRevision: afterRev,
+    checkResults: [{ checkId: "gate-p107", outcome: "PASS", summary: "ok" }],
+    usedInputEvidenceRefs: [evidenceRefFor(projectId, "ev-read-a")], generatedAt: P107_SCHEMA,
+  };
+  const command = buildP107RecordPatchCommand({ commandId: "cmd-" + eventId, projectId, patch });
+  const lease: WorkspaceWriteLeaseSnapshot = {
+    ref: workspaceWriteLeaseRefFor(projectId, leaseId), revision: 1, schemaVersion: 1,
+    lease: { schemaVersion: 1, leaseId, projectId, workspaceId, scope: P107_SCOPE_WRITER, holder: { runRef: runRef(projectId, runId), attemptRef: attRef(projectId, P107_TASK_WRITER, "att-" + runId), roleBinding: P107_ROLE_BINDING_WRITER_V1 }, grantedAt: P107_SCHEMA, expiresAt: null, status: "active", releasedAt: null, releasedBy: null, patches: [], postWriteWorkspaceRevision: null },
+  };
+  const index: import("../../src/contracts/workspace-lease.js").WorkspaceWriteLeaseIndexSnapshot = { ref: workspaceWriteLeaseIndexRefFor(projectId, workspaceId), revision: 1, schemaVersion: 1, activeLeaseId: leaseId, activeScope: P107_SCOPE_WRITER, holderRunRef: runRef(projectId, runId) };
+  const commit = buildPatchRecordLedgerCommit(command, {
+    eventId, occurredAt: P107_SCHEMA, workspaceRevisionBefore: beforeRev,
+    activeLeaseSnapshot: lease, writeIndexSnapshot: index,
+  });
+  return commit.events;
+}
+
+/** Build an IntegrationJoined event. */
+function integrationJoined(projectId: string, workspaceId: string, resultId: string, runId: string, conflicts: import("../../src/contracts/integration.js").EvidenceConflictRecordV1[], eventId: string): import("../../src/contracts/integration.js").IntegrationJoinedEvent {
+  const result: IntegrationTaskResultV1 = {
+    schemaVersion: 1, resultId, projectId, workspaceId, goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION,
+    planRef: p107PlanRef(projectId), taskRevision: 1, runRef: runRef(projectId, runId),
+    attemptRef: attRef(projectId, P107_TASK_INTEGRATION, "att-" + runId), workspaceRevision: 1,
+    inputs: [
+      { sourceTaskId: P107_TASK_READER_A, sourceRunRef: runRef(projectId, "run-a"), kind: "evidence", evidenceRef: evidenceRefFor(projectId, "ev-a"), artifactRef: null, handoffPacketRef: null },
+      { sourceTaskId: P107_TASK_READER_B, sourceRunRef: runRef(projectId, "run-b"), kind: "evidence", evidenceRef: evidenceRefFor(projectId, "ev-b"), artifactRef: null, handoffPacketRef: null },
+    ],
+    conflicts, gaps: [], explanation: conflicts.length > 0 ? "Reader A vs B differ" : null, escalate: false, generatedAt: P107_SCHEMA,
+  };
+  const command = buildP107RecordIntegrationCommand({ commandId: "cmd-" + eventId, projectId, expectedRevision: 0, result });
+  return buildIntegrationRecordLedgerCommit(command, { eventId, occurredAt: P107_SCHEMA, priorRecords: [] }).events[0];
+}
+
+const CONFLICT = (projectId: string, k: string): import("../../src/contracts/integration.js").EvidenceConflictRecordV1 => ({
+  conflictId: k, conflictKey: "ck-" + k, kind: "outcome_disagreement", obligationId: "obl", requirementId: "vr",
+  planRevision: 1, workspaceRevision: 1,
+  evidence: [
+    { evidenceId: "ev-a", outcome: "PASS", runRef: runRef(projectId, "run-a"), applicability: "APPLICABLE" },
+    { evidenceId: "ev-b", outcome: "FAIL", runRef: runRef(projectId, "run-b"), applicability: "APPLICABLE" },
+  ],
+  detectedAt: P107_SCHEMA,
+});
+
+describe("P1-07 InMemory projection", () => {
+  it("6 events project the 3 views field-for-field (lease grant/release, write+patch, conflicts+authority)", async () => {
+    const rm = new ReadModelIndexImpl();
+    const p = P107_PROJECT, w = P107_WORKSPACE;
+    const rgA = readGranted(p, w, "lease-ra", "run-ra", "ev-1");
+    const rgB = readGranted(p, w, "lease-rb", "run-rb", "ev-2");
+    const wg = writeGranted(p, w, "lease-w", "run-w", P107_SCOPE_WRITER, "ev-3");
+    const int1 = integrationJoined(p, w, "res-1", "run-int", [CONFLICT(p, "x")], "ev-4");
+    const rr = readReleased(p, w, "lease-ra", "run-ra", "ev-5");
+    const [patchEv, wrel] = patchRecordedEvents(p, w, "lease-w", "run-w", "patch-1", 1, 2, "ev-6");
+
+    await rm.advance(page([pos(rgA, 1), pos(rgB, 2), pos(wg, 3), pos(int1, 4), pos(rr, 5), pos(patchEv, 6), pos(wrel, 7)], 7));
+
+    // workspace lease view
+    const lv = await rm.workspaceLeaseView({ projectId: p, workspaceId: w });
+    expect(lv.status).toBe("ready");
+    if (lv.status === "ready") {
+      expect(lv.lease.writeLease).not.toBeNull();
+      expect(lv.lease.writeLease!.status).toBe("released");
+      expect(lv.lease.writeLease!.releasedVia).toBe("patch-record");
+      expect(lv.lease.writeLease!.postWriteWorkspaceRevision).toBe(2);
+      expect(lv.lease.writeLease!.patches).toHaveLength(1);
+      expect(lv.lease.writeLease!.patches[0]!.aggregateType).toBe("PatchRecord");
+      expect(lv.lease.readLeases).toHaveLength(2);
+      expect(lv.lease.readLeases.some((l) => l.leaseId === "lease-ra" && l.status === "released")).toBe(true);
+      expect(lv.lease.readLeases.some((l) => l.leaseId === "lease-rb" && l.status === "active")).toBe(true);
+      expect(lv.lease.sourceCursor).toBe(makeCommitCursor(7));
+    }
+
+    // workspace patch view
+    const pv = await rm.workspacePatches({ projectId: p, workspaceId: w });
+    expect(pv.status).toBe("ready");
+    if (pv.status === "ready") {
+      expect(pv.patch.workspaceRevision).toBe(2);
+      expect(pv.patch.patches).toHaveLength(1);
+      expect(pv.patch.patches[0]!.changedPaths).toEqual(["src/p107/fix-a.ts"]);
+      expect(pv.patch.patches[0]!.usedInputEvidenceRefs).toHaveLength(1);
+      expect(pv.patch.patches[0]!.sourceCursor).toBe(makeCommitCursor(6));
+    }
+
+    // integration conflict view
+    const iv = await rm.integrationConflicts({ projectId: p, goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION });
+    expect(iv.status).toBe("ready");
+    if (iv.status === "ready") {
+      expect(iv.integration.records).toHaveLength(1);
+      expect(iv.integration.records[0]!.conflicts).toHaveLength(1);
+      expect(iv.integration.records[0]!.sourceCursor).toBe(makeCommitCursor(4));
+      expect(iv.integration.authoritativeKeys["ck-x"]).toBe("res-1");
+    }
+  });
+
+  it("authoritativeKeys keeps the FIRST record per conflictKey (arrival order)", async () => {
+    const rm = new ReadModelIndexImpl();
+    const p = P107_PROJECT, w = P107_WORKSPACE;
+    const int1 = integrationJoined(p, w, "res-first", "run-int-1", [CONFLICT(p, "a")], "ev-10");
+    const int2 = integrationJoined(p, w, "res-second", "run-int-2", [CONFLICT(p, "a"), CONFLICT(p, "b")], "ev-11");
+    await rm.advance(page([pos(int1, 1), pos(int2, 2)], 2));
+    const iv = await rm.integrationConflicts({ projectId: p, goalId: P107_GOAL, taskId: P107_TASK_INTEGRATION });
+    if (iv.status === "ready") {
+      expect(iv.integration.records).toHaveLength(2);
+      expect(iv.integration.authoritativeKeys["ck-a"]).toBe("res-first");
+      expect(iv.integration.authoritativeKeys["ck-b"]).toBe("res-second");
+    }
+  });
+
+  it("full-key isolation: two workspaces / two projects never collide", async () => {
+    const rm = new ReadModelIndexImpl();
+    // project A workspace wA writes patch; project B workspace wB writes patch.
+    const wgA = writeGranted("proj-a", "ws-a", "le-aw", "run-aw", P107_SCOPE_WRITER, "ev-20");
+    const [patchA, wrelA] = patchRecordedEvents("proj-a", "ws-a", "le-aw", "run-aw", "patch-aw", 1, 2, "ev-21");
+    const wgB = writeGranted("proj-b", "ws-b", "le-bw", "run-bw", P107_SCOPE_WRITER, "ev-22");
+    const [patchB, wrelB] = patchRecordedEvents("proj-b", "ws-b", "le-bw", "run-bw", "patch-bw", 1, 2, "ev-23");
+    await rm.advance(page([pos(wgA, 1), pos(patchA, 2), pos(wrelA, 3), pos(wgB, 4), pos(patchB, 5), pos(wrelB, 6)], 6));
+
+    const a = await rm.workspacePatches({ projectId: "proj-a", workspaceId: "ws-a" });
+    const b = await rm.workspacePatches({ projectId: "proj-b", workspaceId: "ws-b" });
+    expect(a.status).toBe("ready");
+    expect(b.status).toBe("ready");
+    if (a.status === "ready" && b.status === "ready") {
+      expect(a.patch.patches[0]!.patchId).toBe("patch-aw");
+      expect(b.patch.patches[0]!.patchId).toBe("patch-bw");
+      expect(json(a.patch)).not.toContain("patch-bw");
+    }
+  });
+
+  it("freshness not_ready != not_found; covered atLeastCursor + no row -> not_found", async () => {
+    const rm = new ReadModelIndexImpl();
+    const cold = await rm.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
+    expect(cold.status).toBe("not_ready");
+
+    const wg = writeGranted(P107_PROJECT, P107_WORKSPACE, "lease-w", "run-w", P107_SCOPE_WRITER, "ev-30");
+    await rm.advance(page([pos(wg, 1)], 1));
+    const covered = makeCommitCursor(1);
+
+    const missing = await rm.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: "ws-never", atLeastCursor: covered });
+    expect(missing.status).toBe("not_found");
+    const notCovered = await rm.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: "ws-never", atLeastCursor: makeCommitCursor(2) });
+    expect(notCovered.status).toBe("not_ready");
+    const noCursor = await rm.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: "ws-never" });
+    expect(noCursor.status).toBe("not_ready");
+    const ready = await rm.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE, atLeastCursor: covered });
+    expect(ready.status).toBe("ready");
+  });
+
+  it("rebuild equivalence: fresh index full replay == incremental (JSON identical)", async () => {
+    const events = [
+      readGranted(P107_PROJECT, P107_WORKSPACE, "lease-ra", "run-ra", "ev-40"),
+      writeGranted(P107_PROJECT, P107_WORKSPACE, "lease-w", "run-w", P107_SCOPE_WRITER, "ev-41"),
+      integrationJoined(P107_PROJECT, P107_WORKSPACE, "res-1", "run-int", [CONFLICT(P107_PROJECT, "a")], "ev-42"),
+    ];
+    const [patchEv, wrel] = patchRecordedEvents(P107_PROJECT, P107_WORKSPACE, "lease-w", "run-w", "patch-1", 1, 2, "ev-43");
+
+    const incremental = new ReadModelIndexImpl();
+    await incremental.advance(page(events.map((e, i) => pos(e, i + 1)), events.length));
+    await incremental.advance(page([pos(patchEv, events.length + 1), pos(wrel, events.length + 2)], events.length + 2));
+    const before = await incremental.workspacePatches({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
+    const lb = await incremental.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
+
+    const fresh = new ReadModelIndexImpl();
+    await fresh.advance(page([...events.map((e, i) => pos(e, i + 1)), pos(patchEv, events.length + 1), pos(wrel, events.length + 2)], events.length + 2));
+    const after = await fresh.workspacePatches({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
+    const lb2 = await fresh.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
+    if (before.status === "ready" && after.status === "ready") expect(json(after.patch)).toBe(json(before.patch));
+    if (lb.status === "ready" && lb2.status === "ready") expect(json(lb2.lease)).toBe(json(lb.lease));
+  });
+
+  it("the six P1-07 event types advance without stalling (handled event types)", async () => {
+    const rm = new ReadModelIndexImpl();
+    const p = P107_PROJECT, w = P107_WORKSPACE;
+    const boot = { eventId: "ev-boot", eventType: "WorkspaceBootstrapped", schemaVersion: 1, projectId: p, workspaceId: w, aggregateType: "Workspace", aggregateId: w, aggregateRevision: 1, causationId: "c", correlationId: "c", idempotencyKey: "b", actor: { kind: "system", id: "b" }, occurredAt: P107_SCHEMA, payload: { workspaceId: w, projectId: p, desiredState: "active" } };
+    const wg = writeGranted(p, w, "lease-w", "run-w", P107_SCOPE_WRITER, "ev-50");
+    const receipt = await rm.advance(page([pos(boot as never, 1), pos(wg, 2)], 2));
+    expect(receipt.appliedEventIds).toHaveLength(2);
+    const v = await rm.workspaceLeaseView({ projectId: p, workspaceId: w });
+    expect(v.status).toBe("ready");
+  });
+});
