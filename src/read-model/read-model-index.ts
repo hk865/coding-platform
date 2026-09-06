@@ -458,6 +458,16 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
   }
 
+  /** P1-05: goal phase status projection (handled by lane B). */
+  async goalStatus(query: import("../contracts/goal-phase-view.js").GoalStatusQuery): Promise<import("../contracts/goal-phase-view.js").GoalStatusViewResult> {
+    throw new Error("P1-05: not implemented yet (lane B)");
+  }
+
+  /** P1-05: goal phase timeline projection (handled by lane B). */
+  async goalTimeline(query: import("../contracts/goal-phase-view.js").GoalTimelineQuery): Promise<import("../contracts/goal-phase-view.js").GoalTimelineViewResult> {
+    throw new Error("P1-05: not implemented yet (lane B)");
+  }
+
   // ------------------------------------------------------------------ //
   // P1-03 run projection handlers                                        //
   // ------------------------------------------------------------------ //

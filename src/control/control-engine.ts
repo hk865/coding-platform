@@ -82,6 +82,7 @@ import { startRun } from "./start-run.js";
 import { runFact } from "./run-facts.js";
 import { submitEvidence } from "./evidence-intake.js";
 import { reduceTask } from "./task-reducer.js";
+import { reduceGoal } from "./goal-reducer.js";
 
 export type ControlEngineDeps = {
   ledger: StateLedger;
@@ -249,6 +250,11 @@ export class ControlEngineImpl implements ControlEngine {
 
   reduceTask(command: import("../contracts/reduction.js").ReduceTaskCommand): Promise<import("../contracts/reduction.js").ReduceTaskReceipt> {
     return reduceTask(this.deps, command);
+  }
+
+  /** P1-05: deterministic Goal phase reduction (never Task phase). */
+  reduceGoal(command: import("../contracts/goal-phase.js").ReduceGoalCommand): Promise<import("../contracts/goal-phase.js").ReduceGoalReceipt> {
+    return reduceGoal(this.deps, command);
   }
 
   // --------------------------------------------------------------------- //

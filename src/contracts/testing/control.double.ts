@@ -24,6 +24,7 @@ import type {
 } from "../dispatch.js";
 import type { SubmitEvidenceCommand, SubmitEvidenceReceipt } from "../evidence.js";
 import type { ReduceTaskCommand, ReduceTaskReceipt } from "../reduction.js";
+import type { ReduceGoalCommand, ReduceGoalReceipt } from "../goal-phase.js";
 import type { ControlEngine } from "../modules.js";
 
 export function committedReceiptFor(command: CreateGoalCommand): CommandReceipt {
@@ -78,6 +79,9 @@ export type SubmitEvidenceBehavior = (
 export type ReduceTaskBehavior = (
   command: ReduceTaskCommand,
 ) => Promise<ReduceTaskReceipt> | ReduceTaskReceipt;
+export type ReduceGoalBehavior = (
+  command: ReduceGoalCommand,
+) => Promise<ReduceGoalReceipt> | ReduceGoalReceipt;
 
 export class ScriptedControlEngine implements ControlEngine {
   readonly submitCalls: CreateGoalCommand[] = [];
@@ -91,6 +95,7 @@ export class ScriptedControlEngine implements ControlEngine {
   readonly runFactCalls: RunFactCommand[] = [];
   readonly submitEvidenceCalls: SubmitEvidenceCommand[] = [];
   readonly reduceTaskCalls: ReduceTaskCommand[] = [];
+  readonly reduceGoalCalls: ReduceGoalCommand[] = [];
 
   constructor(
     private readonly options: {
@@ -105,6 +110,7 @@ export class ScriptedControlEngine implements ControlEngine {
       runFact?: RunFactBehavior;
       submitEvidence?: SubmitEvidenceBehavior;
       reduceTask?: ReduceTaskBehavior;
+      reduceGoal?: ReduceGoalBehavior;
       defaultSubmit?: CommandReceipt;
       defaultBootstrap?: WorkspaceBootstrapReceipt;
       defaultInstall?: GovernanceInstallReceipt;
@@ -181,5 +187,11 @@ export class ScriptedControlEngine implements ControlEngine {
     this.reduceTaskCalls.push(command);
     if (this.options.reduceTask) return this.options.reduceTask(command);
     throw new Error("ScriptedControlEngine: no reduceTask behavior configured");
+  }
+
+  async reduceGoal(command: ReduceGoalCommand): Promise<ReduceGoalReceipt> {
+    this.reduceGoalCalls.push(command);
+    if (this.options.reduceGoal) return this.options.reduceGoal(command);
+    throw new Error("ScriptedControlEngine: no reduceGoal behavior configured");
   }
 }

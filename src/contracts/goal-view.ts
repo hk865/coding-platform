@@ -14,6 +14,12 @@ import type { EventPage } from "./ledger.js";
 import type { PlanRevisionRef } from "./plan.js";
 import type { ActiveAgentQuery, ActiveAgentViewResult } from "./active-agent.js";
 import type {
+  GoalStatusQuery,
+  GoalStatusViewResult,
+  GoalTimelineQuery,
+  GoalTimelineViewResult,
+} from "./goal-phase-view.js";
+import type {
   PlanGraphViewQuery,
   PlanGraphViewResult,
   TaskDetailViewQuery,
@@ -88,4 +94,8 @@ export interface ReadModelIndex {
   taskDetail(query: TaskDetailViewQuery): Promise<TaskDetailViewResult>;
   /** P1-03: active agent (lease/attempt/run/budget/status) per (projectId, goalId, taskId). */
   activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult>;
+  /** P1-05: goal phase status projection per (projectId, goalId). */
+  goalStatus(query: GoalStatusQuery): Promise<GoalStatusViewResult>;
+  /** P1-05: goal phase timeline projection per (projectId, goalId). */
+  goalTimeline(query: GoalTimelineQuery): Promise<GoalTimelineViewResult>;
 }

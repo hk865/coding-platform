@@ -55,6 +55,8 @@ import type {
 import type { ReviewerPort, CheckPort, VerificationPort } from "../contracts/verification.js";
 import type { SubmitEvidenceCommand, SubmitEvidenceReceipt } from "../contracts/evidence.js";
 import type { ReduceTaskCommand, ReduceTaskReceipt } from "../contracts/reduction.js";
+import type { ReduceGoalCommand, ReduceGoalReceipt } from "../contracts/goal-phase.js";
+import type { GoalStatusQuery, GoalStatusViewResult, GoalTimelineQuery, GoalTimelineViewResult } from "../contracts/goal-phase-view.js";
 import type { ReviewContextPort, ReviewContextRequestV1, ReviewContextResultV1 } from "../contracts/review-context.js";
 import type { FakeRuntimeScriptV1 } from "../contracts/fixtures/dispatch-fixtures.js";
 import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../contracts/fixtures/dispatch-fixtures.js";
@@ -124,10 +126,16 @@ export interface InMemoryHarness {
   submitEvidence(command: SubmitEvidenceCommand): Promise<SubmitEvidenceReceipt>;
   /** P1-04: deterministic Task/Gate reduction (never Goal phase). */
   reduceTask(command: ReduceTaskCommand): Promise<ReduceTaskReceipt>;
+  /** P1-05: deterministic Goal phase reduction (never Task phase). */
+  reduceGoal(command: ReduceGoalCommand): Promise<ReduceGoalReceipt>;
   /** P1-03: ActiveAgent view (freshness by opaque cursor). */
   activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult>;
   /** P1-04: task-detail verification view (freshness by opaque cursor). */
   taskVerification(query: TaskVerificationViewQuery): Promise<TaskVerificationViewResult>;
+  /** P1-05: goal phase status view (freshness by opaque cursor). */
+  goalStatus(query: GoalStatusQuery): Promise<GoalStatusViewResult>;
+  /** P1-05: goal phase timeline view (freshness by opaque cursor). */
+  goalTimeline(query: GoalTimelineQuery): Promise<GoalTimelineViewResult>;
   /** P1-04: review-context assembly (bounded ReviewPacket). */
   assembleReview(request: ReviewContextRequestV1): Promise<ReviewContextResultV1>;
   /** P1-03: outbox drive (claim -> assemble -> start -> events). */
@@ -208,7 +216,10 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     runFact: (command) => control.runFact(command),
     submitEvidence: (command) => control.submitEvidence(command),
     reduceTask: (command) => control.reduceTask(command),
+    reduceGoal: (command) => control.reduceGoal(command),
     activeAgent: (query) => readModel.activeAgent(query),
+    goalStatus: (query) => readModel.goalStatus(query),
+    goalTimeline: (query) => readModel.goalTimeline(query),
     taskVerification: (query) => readModel.taskVerification(query),
     assembleReview: (request) => reviewContext.assemble(request),
     drive: (trigger) => dispatchEngine.drive(trigger),

@@ -13,6 +13,8 @@ export * from "./active-agent.js";
 export * from "./ports.js";
 export * from "./ledger.js";
 export * from "./goal-view.js";
+export * from "./goal-phase.js";
+export * from "./goal-phase-view.js";
 export * from "./modules.js";
 export * from "./validation.js";
 export * from "./fixtures/index.js";

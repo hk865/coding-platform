@@ -699,3 +699,48 @@ export function validateTaskReductionCommit(
     batch.identity,
   );
 }
+
+// ------------------------------------------------------------------------ //
+// goal-reduction (P1-05)                                                    //
+// ------------------------------------------------------------------------ //
+
+export function validateGoalReductionCommit(
+  batch: import("./ledger.js").GoalReductionLedgerCommitV1,
+): boolean {
+  if (batch.schemaVersion !== 1) return false;
+  if (batch.events.length !== 1) return false;
+  if (batch.snapshots.length !== 1) return false;
+  if (batch.outboxIntents.length !== 0) return false;
+  const event = batch.events[0]!;
+  if (event.schemaVersion !== 1) return false;
+  if (event.eventType !== "GoalPhaseUpdated") return false;
+  if (!isKnownEventType(event.eventType)) return false;
+  if (event.aggregateType !== "GoalPhase") return false;
+  const phase = batch.snapshots[0]!;
+  if (phase.ref.aggregateType !== "GoalPhase") return false;
+  if (phase.schemaVersion !== 1) return false;
+  if (!Number.isSafeInteger(phase.revision) || phase.revision < 1) return false;
+  if (event.aggregateRevision !== phase.revision) return false;
+  if (event.aggregateId !== phase.ref.goalId) return false;
+  if (event.projectId !== phase.ref.projectId) return false;
+  if (event.payload.goalId !== phase.ref.goalId) return false;
+  if (event.payload.phase !== phase.phase) return false;
+  if (event.payload.previousPhase !== phase.previousPhase) return false;
+  if (canonicalJson(event.payload.reasonCodes) !== canonicalJson(phase.reasonCodes)) return false;
+  if (canonicalJson(event.payload.explanation) !== canonicalJson(phase.explanation)) return false;
+  if (canonicalJson(event.payload.sideEffectReconciliation) !== canonicalJson(phase.sideEffectReconciliation)) return false;
+  if (canonicalJson(event.payload.planRef) !== canonicalJson(phase.planRef)) return false;
+  if (phase.reducedAt !== event.occurredAt) return false;
+  if (event.payload.reducedAt !== event.occurredAt) return false;
+  if (batch.expectedVersions.length !== 1) return false;
+  if (batch.expectedVersions[0]!.revision !== phase.revision - 1) return false;
+  if (canonicalJson(batch.expectedVersions[0]!.ref) !== canonicalJson(phase.ref)) return false;
+
+  return identityMatchesActor(
+    event.projectId,
+    event.idempotencyKey,
+    event.actor.kind,
+    event.actor.id,
+    batch.identity,
+  );
+}

@@ -33,6 +33,7 @@ import type {
 } from "./dispatch.js";
 import type { SubmitEvidenceCommand, SubmitEvidenceReceipt } from "./evidence.js";
 import type { ReduceTaskCommand, ReduceTaskReceipt } from "./reduction.js";
+import type { ReduceGoalCommand, ReduceGoalReceipt } from "./goal-phase.js";
 
 export type CreateGoalRequest = {
   projectId: string;
@@ -77,6 +78,9 @@ export interface ControlEngine {
   /** P1-04: deterministic Task/Gate reduction — the ONLY writer of the canonical
    * TaskReduction phase (never Goal phase — P1-05). */
   reduceTask(command: ReduceTaskCommand): Promise<ReduceTaskReceipt>;
+  /** P1-05: deterministic Goal phase reduction — the ONLY writer of the canonical
+   * GoalPhase (never a Task phase; P1-06+ mechanisms are NOT implemented here). */
+  reduceGoal(command: ReduceGoalCommand): Promise<ReduceGoalReceipt>;
 }
 
 export interface HumanCollaboration {

@@ -24,6 +24,7 @@ import {
   validateRunFactCommit,
   validateEvidenceIntakeCommit,
   validateTaskReductionCommit,
+  validateGoalReductionCommit,
 } from "../contracts/ledger-validation.js";
 import type {
   DispatchClaimLedgerCommitV1,
@@ -116,6 +117,8 @@ export class InMemoryLedger implements StateLedger {
         return this.commitEvidenceIntake(batch);
       case "verification-result":
         return this.commitTaskReduction(batch);
+      case "goal-reduction":
+        return this.commitGoalReduction(batch);
     }
   }
 
@@ -412,6 +415,14 @@ export class InMemoryLedger implements StateLedger {
 
   private async commitTaskReduction(batch: import("../contracts/ledger.js").TaskReductionLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateTaskReductionCommit(batch)) {
+      return { status: "rejected", code: "invalid_commit" };
+    }
+    return this.commitGenericWithIdempotency(batch);
+  }
+
+  /** P1-05: goal-reduction — full idempotency + CAS via the shared machinery. */
+  private async commitGoalReduction(batch: import("../contracts/ledger.js").GoalReductionLedgerCommitV1): Promise<LedgerCommitReceipt> {
+    if (!validateGoalReductionCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
     }
     return this.commitGenericWithIdempotency(batch);

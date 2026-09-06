@@ -71,6 +71,11 @@ import type {
   TaskReductionSnapshot,
   TaskReductionUpdatedEvent,
 } from "./reduction.js";
+import type {
+  GoalPhaseRef,
+  GoalPhaseSnapshot,
+  GoalPhaseUpdatedEvent,
+} from "./goal-phase.js";
 
 export type ProjectRef = {
   aggregateType: "Project";
@@ -105,7 +110,8 @@ export type AggregateRef =
   | DispatchOutboxRef
   | EvidenceRef
   | TaskEvidenceIndexRef
-  | TaskReductionRef;
+  | TaskReductionRef
+  | GoalPhaseRef;
 
 export type ProjectSnapshot = {
   ref: ProjectRef;
@@ -144,7 +150,8 @@ export type AggregateSnapshot =
   | DispatchOutboxEntrySnapshot
   | EvidenceSnapshot
   | TaskEvidenceIndexSnapshot
-  | TaskReductionSnapshot;
+  | TaskReductionSnapshot
+  | GoalPhaseSnapshot;
 
 export type SnapshotResult =
   | { status: "found"; snapshot: AggregateSnapshot }
@@ -282,6 +289,19 @@ export type TaskReductionLedgerCommitV1 = {
   outboxIntents: [];
 };
 
+/** P1-05: goal-reduction — the deterministic Goal phase state (per (projectId, goalId)). */
+export type GoalReductionLedgerCommitV1 = {
+  commitKind: "goal-reduction";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [GoalPhase@(snapshot.revision - 1)]. */
+  expectedVersions: ExpectedVersion[];
+  events: [GoalPhaseUpdatedEvent];
+  snapshots: [GoalPhaseSnapshot];
+  outboxIntents: [];
+};
+
 export type LedgerCommit =
   | GoalCreateLedgerCommitV1
   | BootstrapLedgerCommitV1
@@ -292,7 +312,8 @@ export type LedgerCommit =
   | DispatchStartLedgerCommitV1
   | RunFactLedgerCommitV1
   | EvidenceIntakeLedgerCommitV1
-  | TaskReductionLedgerCommitV1;
+  | TaskReductionLedgerCommitV1
+  | GoalReductionLedgerCommitV1;
 
 export type LedgerCommitReceipt =
   | {

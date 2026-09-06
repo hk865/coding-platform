@@ -16,6 +16,12 @@ import type {
   ActiveAgentQuery,
   ActiveAgentViewResult,
 } from "../active-agent.js";
+import type {
+  GoalStatusQuery,
+  GoalStatusViewResult,
+  GoalTimelineQuery,
+  GoalTimelineViewResult,
+} from "../goal-phase-view.js";
 
 export type AdvanceBehavior = (
   page: EventPage,
@@ -32,6 +38,12 @@ export type TaskDetailBehavior = (
 export type ActiveAgentBehavior = (
   query: ActiveAgentQuery,
 ) => Promise<ActiveAgentViewResult> | ActiveAgentViewResult;
+export type GoalStatusBehavior = (
+  query: GoalStatusQuery,
+) => Promise<GoalStatusViewResult> | GoalStatusViewResult;
+export type GoalTimelineBehavior = (
+  query: GoalTimelineQuery,
+) => Promise<GoalTimelineViewResult> | GoalTimelineViewResult;
 
 export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly advanceCalls: EventPage[] = [];
@@ -39,6 +51,8 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   readonly planGraphCalls: PlanGraphViewQuery[] = [];
   readonly taskDetailCalls: TaskDetailViewQuery[] = [];
   readonly activeAgentCalls: ActiveAgentQuery[] = [];
+  readonly goalStatusCalls: GoalStatusQuery[] = [];
+  readonly goalTimelineCalls: GoalTimelineQuery[] = [];
 
   constructor(
     private readonly options: {
@@ -47,6 +61,8 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
       planGraph?: PlanGraphBehavior;
       taskDetail?: TaskDetailBehavior;
       activeAgent?: ActiveAgentBehavior;
+      goalStatus?: GoalStatusBehavior;
+      goalTimeline?: GoalTimelineBehavior;
     } = {},
   ) {}
 
@@ -80,6 +96,18 @@ export class ScriptedReadModelIndex implements ReadModelIndex {
   async activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult> {
     this.activeAgentCalls.push(query);
     if (this.options.activeAgent) return this.options.activeAgent(query);
+    return { status: "not_found", observedCursor: null };
+  }
+
+  async goalStatus(query: GoalStatusQuery): Promise<GoalStatusViewResult> {
+    this.goalStatusCalls.push(query);
+    if (this.options.goalStatus) return this.options.goalStatus(query);
+    return { status: "not_found", observedCursor: null };
+  }
+
+  async goalTimeline(query: GoalTimelineQuery): Promise<GoalTimelineViewResult> {
+    this.goalTimelineCalls.push(query);
+    if (this.options.goalTimeline) return this.options.goalTimeline(query);
     return { status: "not_found", observedCursor: null };
   }
 }

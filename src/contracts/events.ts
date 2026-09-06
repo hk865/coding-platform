@@ -23,6 +23,7 @@ import type {
 } from "./dispatch.js";
 import type { EvidenceAdmittedEvent } from "./evidence.js";
 import type { TaskReductionUpdatedEvent } from "./reduction.js";
+import type { GoalPhaseUpdatedEvent } from "./goal-phase.js";
 
 export type DomainEventV1 =
   | GoalCreatedEvent
@@ -38,7 +39,8 @@ export type DomainEventV1 =
   | RunEventRecordedEvent
   | RunOutcomeUnknownEvent
   | EvidenceAdmittedEvent
-  | TaskReductionUpdatedEvent;
+  | TaskReductionUpdatedEvent
+  | GoalPhaseUpdatedEvent;
 
 export type DomainEvent = DomainEventV1;
 
@@ -58,6 +60,7 @@ export const KNOWN_EVENT_TYPES = [
   "RunOutcomeUnknown",
   "EvidenceAdmitted",
   "TaskReductionUpdated",
+  "GoalPhaseUpdated",
 ] as const;
 
 export function isKnownEventType(eventType: string): eventType is (typeof KNOWN_EVENT_TYPES)[number] {

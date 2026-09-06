@@ -282,7 +282,8 @@ export function validateDomainEvent(value: unknown): ValidationIssue[] {
     eventType === "ArchitectureBaselineActivated" ||
     eventType === "RunEventRecorded" ||
     eventType === "RunOutcomeUnknown" ||
-    eventType === "TaskReductionUpdated";
+    eventType === "TaskReductionUpdated" ||
+    eventType === "GoalPhaseUpdated";
   // Creation events are always revision 1; activation aggregates advance (>= 1).
   if (!isActivationEvent && value["aggregateRevision"] !== 1) {
     issues.push({
@@ -348,7 +349,7 @@ export function validateDomainEvent(value: unknown): ValidationIssue[] {
         issues.push({ path: "payload.planRevision", code: "bad_type", message: "planRevision must be an object" });
       }
     }
-  } else if (eventType === "EvidenceAdmitted" || eventType === "TaskReductionUpdated") {
+  } else if (eventType === "EvidenceAdmitted" || eventType === "TaskReductionUpdated" || eventType === "GoalPhaseUpdated") {
     stringField(value, "workspaceId", issues);
     const payload = value["payload"];
     if (!isRecord(payload)) {
@@ -356,14 +357,22 @@ export function validateDomainEvent(value: unknown): ValidationIssue[] {
       return issues;
     }
     stringField(payload, "goalId", issues, "payload.goalId");
-    stringField(payload, "taskId", issues, "payload.taskId");
     if (eventType === "EvidenceAdmitted") {
+      stringField(payload, "taskId", issues, "payload.taskId");
       if (!isRecord(payload["evidence"])) {
         issues.push({ path: "payload.evidence", code: "bad_type", message: "evidence must be an object" });
       }
-    } else {
+    } else if (eventType === "TaskReductionUpdated") {
+      stringField(payload, "taskId", issues, "payload.taskId");
       if (!isRecord(payload["reduction"])) {
         issues.push({ path: "payload.reduction", code: "bad_type", message: "reduction must be an object" });
+      }
+    } else {
+      if (!isRecord(payload["explanation"])) {
+        issues.push({ path: "payload.explanation", code: "bad_type", message: "explanation must be an object" });
+      }
+      if (!isRecord(payload["sideEffectReconciliation"])) {
+        issues.push({ path: "payload.sideEffectReconciliation", code: "bad_type", message: "sideEffectReconciliation must be an object" });
       }
     }
   } else if (typeof eventType === "string" && isKnownEventType(eventType)) {
@@ -1457,5 +1466,37 @@ export function validateReduceTaskCommand(value: unknown): ValidationIssue[] {
     return issues;
   }
   stringField(payload, "goalId", issues, "payload.goalId");
+  return issues;
+}
+
+export function validateReduceGoalCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "ReduceGoal") {
+    issues.push({ path: "commandType", code: "invalid_command_type", message: 'commandType must be "ReduceGoal"' });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "commandId", issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (!Number.isSafeInteger(value["expectedRevision"]) || (value["expectedRevision"] as number) < 0) {
+    issues.push({ path: "expectedRevision", code: "bad_expected_revision", message: "expectedRevision must be a non-negative integer" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  const goalId = stringField(payload, "goalId", issues, "payload.goalId");
+  if (goalId !== null && goalId !== value["aggregateId"]) {
+    issues.push({ path: "payload.goalId", code: "bad_type", message: "goalId must equal the command aggregateId" });
+  }
   return issues;
 }
