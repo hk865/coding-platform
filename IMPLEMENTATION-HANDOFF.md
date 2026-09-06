@@ -2,12 +2,12 @@
 
 ```yaml
 ticket_id: P1-07
-status: implementation in progress (limited authorization, 2026-09-06 — P1-07 only); baseline frozen below; 3 lanes dispatch pending; acceptance evidence = dev_docs/verification/p1-07-implementation-evidence.md (at acceptance)
+status: implementation verified (limited authorization, 2026-09-06 — P1-07 only); 3 lanes merged; full acceptance evidence in dev_docs/verification/p1-07-implementation-evidence.md
 updated: 2026-09-06
 authorized_by: user (limited authorization for P1-07 only; P1-07 is NOT P1 acceptance, P1-12/15 NOT auto-started; G3 (Role Collaboration) waits P1-07 + P1-15 evidence)
-next: STOP after P1-07 acceptance — do NOT auto-start P1-12/15/other tickets (G3 needs 07+15; next window triggered by user/process; local main NOT pushed — push needs user authorization per P1-04/05/06 precedent)
-evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-07-implementation-evidence.md (at acceptance); upstream baseline: P1-06 commit f3a6a71 (76 files/641 tests)
-shared_baseline: NEW "P1-07 共享基线" commit (f3a6a71 + 4 contracts + 3 view contracts + drive contract + 6 commitKinds + pure validators + fixtures + entry stubs + suite/restart skeleton + harness wiring; 既有 641 测试零回归)
+next: STOP after P1-07 acceptance — do NOT auto-start P1-12/15/other tickets (G3 needs 07+15 evidence — 07 side now met; next window triggered by user/process; local main = 14886d8 NOT pushed — push needs user authorization per P1-04/05/06 precedent)
+evidence: /mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/verification/p1-07-implementation-evidence.md (88 files / 722 tests PASS); upstream baseline: P1-06 commit f3a6a71 (76 files/641 tests)
+shared_baseline: "P1-07 共享基线" commit a155f15 (f3a6a71 + workspace-lease/capability/integration/patch/views/drive contracts + 6 commitKinds + pure validators + P107 fixtures + control/runtime stubs + harness wiring + contract suite + restart skeleton + integration wiring; 既有 641 测试零回归); final product root = 14886d8
 parallel_scope: P1-07 与 P1-08 并行窗口已开（DAG 05 验收后 07/08 可并行）——本 session 无 P1-08 并行活动（无 worktree/无近期写入），按常规单线实施共享面；lane 仍用隔离 worktree（先例 P1-06）
 merge_surface_note: 本票只做 双 Reader 并行 + Evidence join + 唯一 Writer；不动 P1-03/04/05/06 冻结形状（零改动，只版本化追加）；不触碰 Goal reducer（P1-05 已验收）；语义路由/人决定闭环 = P1-15，retry/抢占 = P1-10，CodeGraph = P1-12；P1-08 若并行到来，共享面（events/ledger/validation 追加）以"先到者优先、后到者在新基线上 rebase"机械合并（先例 dev_docs/logs/conflict-reports/2026-09-06-p105-p106-merge.md，state=closed）
 ```
@@ -55,13 +55,15 @@ merge_surface_note: 本票只做 双 Reader 并行 + Evidence join + 唯一 Writ
 
 ## 三路并行（P1-07，隔离 worktree → main 合并；从本基线 commit 派生）
 
-| Lane | 分支/worktree | 职责 | 写入范围（互不重叠） |
-| --- | --- | --- | --- |
-| A Workspace lease + capability（Control/Process 面） | p1-07-lane-a @ agent_platform-p1-07-a | WorkspaceLeaseEngineImpl acquire/release 完整实现（run/workspace/plan 守卫序 → evaluateLeaseAdmissibility → 独占 CAS → fold → commit → 回执映射；幂等零写入；already_released/not_holder/expired）+ FakeWorkspaceCapabilityAdapter（能力声明矩阵；reader run 无写能力；unsupported 显式）+ read-only-capability-enforcement + competing-writer-lease-test + 运行隔离用例（协调者退出不撤销 Worker 合法 lease） | src/control/workspace-lease.ts、src/runtime/workspace-capability-adapter.ts、tests/control/workspace-lease.test.ts、tests/runtime/workspace-capability-adapter.test.ts |
-| B 双 Reader 并行 + IntegrationTask（Dispatch/Process 面） | p1-07-lane-b @ agent_platform-p1-07-b | WorkspaceDriveEngineImpl.driveParallel（真实重叠：全部独立 intent 先 assemble→startRun→runtime.start 并发开始，再 Promise.all consume；替换意图跳过；outbox-before-side-effect）+ recordIntegrationResult 完整实现（守卫 → detectEvidenceConflicts → conflict_unresolved → conflict_duplicate 不可覆盖 → CAS 累积）+ real-run-overlap-measurement + evidence-conflict-test + 正式 dispatch 集成 run | src/control/workspace-drive.ts、src/control/integration-join.ts、tests/control/workspace-drive.test.ts、tests/control/integration-join.test.ts |
-| C ReadModel 投影 + 重启证据 + Writer/patch 端到端 | p1-07-lane-c @ agent_platform-p1-07-c | 6 事件双适配器投影（writerLease/integrationConflicts/workspacePatches；重建等价、全键隔离、freshness、只展示）+ isHandledEventType 与 handler 同 commit + recordPatch 完整实现（守卫 → 原子推进 workspace revision CAS + 释放 lease）+ tests/restart/p1-07-*.ts（isP107Ready 探针硬化 + 逐字段一致）+ goal-gate-full-check 端到端 + 契约证据块 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、src/control/patch-record.ts、tests/read-model/p1-07-*.test.ts、tests/sqlite-read-model/p1-07-*.test.ts、tests/restart/p1-07-*.ts |
+| Lane | 分支/worktree | 职责 | 写入范围（互不重叠） | 状态 |
+| --- | --- | --- | --- | --- |
+| A Workspace lease + capability（Control/Process 面） | p1-07-lane-a @ 339d3ac | WorkspaceLeaseEngineImpl acquire/release 完整实现（run/workspace/plan 守卫序 → evaluateLeaseAdmissibility → 独占 CAS → fold → commit → 回执映射；幂等零写入；already_released/not_holder/expired）+ FakeWorkspaceCapabilityAdapter（能力声明矩阵；reader run 无写能力；unsupported 显式）+ read-only-capability-enforcement + competing-writer-lease-test + 运行隔离用例（协调者退出不撤销 Worker 合法 lease） | src/control/workspace-lease.ts、src/runtime/workspace-capability-adapter.ts、tests/control/workspace-lease.test.ts、tests/runtime/workspace-capability-adapter.test.ts | ✅ 26/26（主分支已合并） |
+| B 双 Reader 并行 + IntegrationTask（Dispatch/Process 面） | p1-07-lane-b @ d379181 | WorkspaceDriveEngineImpl.driveParallel（真实重叠：全部独立 intent 先 assemble→startRun→runtime.start 并发开始，再 Promise.all consume；替换意图跳过；outbox-before-side-effect）+ recordIntegrationResult 完整实现（守卫 → detectEvidenceConflicts → conflict_unresolved → conflict_duplicate 不可覆盖 → CAS 累积）+ real-run-overlap-measurement + evidence-conflict-test + 正式 dispatch 集成 run | src/control/workspace-drive.ts、src/control/integration-join.ts、tests/control/workspace-drive.test.ts、tests/control/integration-join.test.ts | ✅ 9/9（主分支已合并） |
+| C ReadModel 投影 + 重启证据 + Writer/patch 端到端 | p1-07-lane-c @ c15b694 | 6 事件双适配器投影（writerLease/integrationConflicts/workspacePatches；重建等价、全键隔离、freshness、只展示）+ isHandledEventType 与 handler 同 commit + recordPatch 完整实现（守卫 → 原子推进 workspace revision CAS + 释放 lease）+ tests/restart/p1-07-*.ts（isP107Ready 探针硬化 + 逐字段一致）+ goal-gate-full-check 端到端 + 契约证据块 | src/read-model/read-model-index.ts、src/sqlite-read-model/sqlite-read-model-index.ts、src/control/patch-record.ts、tests/read-model/p1-07-*.test.ts、tests/sqlite-read-model/p1-07-*.test.ts、tests/restart/p1-07-*.ts | ✅ 19/19（主分支已合并） |
 
 integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 schema/接口/共享 fixture）、`src/ledger/**`、`src/sqlite-ledger/**`、`src/control/control-engine.ts`、`src/harness/**`、`tests/contract-suite/**`、`tests/integration/**`、文档与状态记录。子 Agent 不得派发其他 Agent、不得修改 Ticket 状态、不得新增依赖、不得改动冻结签名、**不得修改 P1-03/04/05/06 文件**（如有缺口：提交具体建议给 integrator 统一修改基线并通知消费者）。子 Agent 从实际读文件开始，不等待派发者；允许测试命令：`pnpm vitest run <自身路径>`、`pnpm typecheck`。
+
+**P1-07 integrator 补充裁决（验收后记录，见 p1-07-implementation-evidence.md §2/§5）**：①DAG readiness 的 plan 不可变是 P1-03 冻结事实——新增 `src/control/dispatch-facts.ts::loadLivePlan`（只读派生：TaskReduction phase 覆盖计划 phase），readiness + claim 签名不变；②taskRevision 契约类型为 number（validator 修正）；③P1-03 drive startRun idempotencyKey 改为 run-scoped（潜在缺口，P1-07 修复）；④release 校验 expectedRevision=1；⑤冲突场景用 plan 变体（FAIL 依赖阻塞属 DAG 正确语义，不应绕过）；⑥GoalGate 全量检查 = patch 后 canonical revision 全量再验证（P1-05 reducer 冻结未改写）；⑦视图为事件投影，断言前 advanceProjection。
 
 ---
 
