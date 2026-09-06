@@ -73,7 +73,7 @@ describe("P1-08 LANE-A SQLite portfolio + workspace summary projection", () => {
       expect(a.summary.goalCount).toBe(1);
       expect(a.summary.taskCount).toBe(3);
       expect(a.summary.planRevisionCount).toBe(1);
-      expect(a.summary.agentRunCount).toBe(2);
+      expect(a.summary.agentRunCount).toBe(3); // claims + replacement run (integrator ruling)
       expect(a.summary.evidenceCount).toBe(3);
       expect(a.summary.taskReductionCount).toBe(3);
       expect(a.summary.goalPhaseCount).toBe(1);

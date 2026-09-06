@@ -75,7 +75,7 @@ describe("P1-08 LANE-A InMemory portfolio + workspace summary projection", () =>
     expect(a.summary.goalCount).toBe(1);
     expect(a.summary.taskCount).toBe(3);
     expect(a.summary.planRevisionCount).toBe(1);
-    expect(a.summary.agentRunCount).toBe(2); // work + extra claims; replacement is ReplacementClaimed (not a TaskClaimed)
+    expect(a.summary.agentRunCount).toBe(3); // work + extra claims + replacement run (integrator ruling: claims + replacements)
     expect(a.summary.evidenceCount).toBe(3); // claim + work + gate
     expect(a.summary.taskReductionCount).toBe(3); // work + extra + gate
     expect(a.summary.goalPhaseCount).toBe(1);

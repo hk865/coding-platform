@@ -1609,6 +1609,13 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
         row.agentRunCount += 1;
       });
+    } else if (event.eventType === "ReplacementClaimed") {
+      // integrator ruling: a replacement claim creates another Agent Run —
+      // agentRunCount = claims + replacements (matches the ActiveAgents rows).
+      const ev = event as import("../contracts/handoff.js").ReplacementClaimedEvent;
+      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+        row.agentRunCount += 1;
+      });
     } else if (event.eventType === "EvidenceAdmitted") {
       const ev = event as import("../contracts/evidence.js").EvidenceAdmittedEvent;
       this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {

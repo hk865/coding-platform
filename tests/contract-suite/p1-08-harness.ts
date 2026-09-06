@@ -151,12 +151,17 @@ export const P108_EVIDENCE_WORK = "ev-p108-work";
 export const P108_EVIDENCE_GATE = "ev-p108-gate";
 export const P108_EVIDENCE_CLAIM = "ev-p108-claim";
 
+/** Short per-project run-id prefix matching the frozen scenario literals. */
+function p108RunPrefix(project: string): string {
+  return project === P108_PROJECT_A ? "a" : "b";
+}
+
 export function p108RunOfWork(project: string): string {
-  return "run-p108-" + project + "-work";
+  return "run-p108-" + p108RunPrefix(project) + "-work";
 }
 
 export function p108RunOfExtra(project: string, generation: 1 | 2 = 1): string {
-  return "run-p108-" + project + "-extra" + (generation === 1 ? "" : "-b");
+  return "run-p108-" + p108RunPrefix(project) + "-extra" + (generation === 2 ? "-b" : "");
 }
 
 export async function p108Advance(h: P1_08HarnessLike): Promise<void> {
@@ -405,9 +410,15 @@ export async function runP108TwoProjectScenario(h: P1_08HarnessLike): Promise<P1
     }),
   );
   expect(replacement.status).toBe("committed");
-  // replacement claim created the outbox; drive starts the ongoing run.
-  const drive = await h.drive({ reason: "p1-08 replacement ongoing " + P108_PROJECT_A, maxIntents: 4 });
-  expect(drive.failures).toHaveLength(0);
+  // Replacement intents belong to the HandoffPort (P1-06): the normal drive
+  // skips them, so the replacement run is really started via driveHandoff
+  // (RunStarted + run facts — the console shows a genuinely RUNNING run).
+  const handoffDrive = await h.handoffDrive.driveHandoff({
+    reason: "p1-08 replacement ongoing " + P108_PROJECT_A,
+    maxIntents: 4,
+  });
+  expect(handoffDrive.failures).toHaveLength(0);
+  expect(handoffDrive.started).toBeGreaterThan(0);
   await reduceP108Task(h, P108_PROJECT_A, P108_TASK_EXTRA);
 
   // gate: system evidence (no run) + reduction + goal phase.
