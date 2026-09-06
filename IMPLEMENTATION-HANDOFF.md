@@ -66,7 +66,7 @@ integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 s
 | 命令（product root） | 结果 |
 | --- | --- |
 | `pnpm typecheck` | PASS 0 errors（全部契约/夹具/套件/双适配器实现） |
-| `pnpm vitest run`（全量，最终） | **64 files / 537 tests PASS**（P1-00…04 基线 486 零回归 + P1-05 新增 51：19 纯 reducer + 双套件 8×2 + 6 lane A + 7 lane B + 重启 1 + 证据 1 + 集成 1；明细见 p1-05-implementation-evidence.md） |
+| `pnpm vitest run`（全量，最终） | **64 files / 539 tests PASS**（P1-00…04 基线 486 零回归 + P1-05 新增 53：19 纯 reducer + 双套件 8×2 + 6 lane A + 7 lane B + 2 隔离用例 + 重启 1 + 证据 1 + 集成 1；明细见 p1-05-implementation-evidence.md） |
 | `pnpm vitest run tests/integration/p1-05.contract-suite.inmemory.test.ts` | 8/8 PASS |
 | `pnpm vitest run tests/integration/p1-05.contract-suite.sqlite.test.ts` | 8/8 PASS（**同一套件定义，无调参**） |
 | `pnpm vitest run tests/integration/p1-04.contract-suite.inmemory.test.ts tests/integration/p1-04.contract-suite.sqlite.test.ts` | 18/18 × 2 = 36 PASS（P1-04 套件零回归） |
@@ -75,7 +75,7 @@ integrator 维护：package/lock/tsconfig/vitest、`src/contracts/**`（公共 s
 | `pnpm vitest run tests/restart/evidence/p1-05-evidence.test.ts` | 1/1 PASS（P1-05-EVIDENCE JSON 证据块，可重复） |
 | `node dev_docs/verification/validate-docs.mjs` | 12/12 PASS |
 
-**integrator 裁决记录**：三路子 Agent 均在执行中因基础设施故障中断（未产出、未 commit；B 在内存适配器完成后中断）。按 P1-04 先例由 integrator 接管实现（A/B 在各自 worktree 内完成并以 lane commit 合并；C 的骨架由 integrator 编写、无改动）。共享 helper 修正在 main（satisfyEverythingP105 在 outcome_unknown 时断言 work=verifying）。**P1-06 合并面**：并行 session（已暂停）的 worktree `agent_platform-p1-06`（branch `p1-06-int`，未 commit）在 events.ts/ledger.ts/validation.ts 上与 P1-05 同区修改——P1-06 恢复后合入 main 时按'双方皆保留、版本化追加'机械解决该三处冲突；其 typecheck 红（in-memory/sqlite ledger 未加 handoff-record/replacement-claim case）属 Phase 1 未完成态。
+**integrator 裁决记录**：三路子 Agent 均在执行中因基础设施故障中断（未产出、未 commit；B 在内存适配器完成后中断）；用户随后要求三方以独立验收者身份复跑——A/B/C 验收结论均 PASS，其中 **B 发现的真实偏差已修复**（goalStatus/goalTimeline 无 atLeastCursor 缺失键改回 freshness-safe not_ready，not_found 仅在提供且已覆盖 atLeastCursor 时；双适配器 + 套件 + 新增两 Project 同 goalId 真隔离用例；最终全量 539/539）。按 P1-04 先例由 integrator 接管实现（A/B 在各自 worktree 内完成并以 lane commit 合并；C 的骨架由 integrator 编写、无改动）。共享 helper 修正在 main（satisfyEverythingP105 在 outcome_unknown 时断言 work=verifying）。**P1-06 合并面**：并行 session（已暂停）的 worktree `agent_platform-p1-06`（branch `p1-06-int`，未 commit）在 events.ts/ledger.ts/validation.ts 上与 P1-05 同区修改——P1-06 恢复后合入 main 时按'双方皆保留、版本化追加'机械解决该三处冲突；其 typecheck 红（in-memory/sqlite ledger 未加 handoff-record/replacement-claim case）属 Phase 1 未完成态。
 
 ---
 ## P1-04 当前票据与共享契约基线
