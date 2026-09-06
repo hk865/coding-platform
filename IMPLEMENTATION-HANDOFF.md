@@ -1,12 +1,21 @@
 ```yaml
-ticket_id: P1-14 共享基线 ✅（7f35a2e：1083 passed / 21 skipped 探针组，零回归）——三 lane A/B/C 实施中
-status: P1-13 ✅ VERIFIED（fbc365e, 1083/1083, G4 PASS）；P1-09/10/11/12/16/17 ✅；G1/G2/G4 PASS；剩余票 = P1-14（实施中）、P1-15（←09+14+17）；G5 等 13+14（13 ✅，14 实施中）、G3 等 07+15
+ticket_id: P1-15 共享基线 ✅（5a5b085：1142 passed / 21 skipped 探针组）——三 lane A/B/C 实施中
+status: P1-14 ✅ VERIFIED（685bf34, 1142/1142, G5 PASS）；P1-09/10/11/12/13/16/17 ✅；G1/G2/G4/G5 PASS；剩余 = P1-15（实施中，最后一张）→ G3（07+15）→ MVP 评议
 updated: 2026-09-07
-authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a)/(b)/(c); GitHub push needs user authorization) + 2026-09-07 阶段时限 09:00 CST 硬性到点（先落干净检查点再报告）；实现/修复由 B lanes 承担
-next: P1-14 lanes A（编排 guard 链）B（MigrationGatePort/BaselineEvolutionPort）C（baselineChangeView 双适配器）→ 合并验收 → 证据/票尾 → G5 成立 → P1-15（最后）→ G3 → MVP 评议；09:00 到点未完成 → 干净检查点停止
-shared_baseline: P1-14 = 7f35a2e（baseline-evolution 契约/4 commitKinds/validators/双适配器/fixtures/stubs/harness/套件/restart/integration 骨架 + sqlite P1-13 handled-registration 补全；全量 1083 passed + 21 skip）
-merge_surface_note: P1-14 零改动 P1-00..P1-13 冻结形状（版本化追加 4 commitKind + 4 事件 + ControlEngine +4 + ReadModelIndex.baselineChangeView + 3 个冻结端口）；P1-02 baseline install/activate 机制被复用（BaselineActivation 只记录编排事实；实际 ref 移动由集成链经 P1-02 activate）；迁移 Gate 不允许隐式 rebase；STALE 语义 = 源 pin 不再等于当前 active
+authorized_by: user (continuous authorization: complete P1-09..P1-17 and drive G1..G5 + MVP review; stop only on stop_condition (a)/(b)/(c); GitHub push needs user authorization) + 2026-09-07 阶段时限 09:00 CST 硬性到点
+next: P1-15 lanes A（design/policy handlers）B（unified status 视图——✅ fe795dd）C（角色协作回流 e2e：有界返工+rollover+completed-work 继承+本地 SSE 模型端点）→ 合并验收 → 证据/票尾 → G3 PASS → MVP 评议 → stop_condition (a)
+shared_baseline: P1-15 = 5a5b085（human-role-collaboration 契约/4 commitKinds/validators/双适配器/fixtures/stub/harness/套件/restart/integration 骨架；全量 1142 + 21 skip 零回归）
+merge_surface_note: P1-15 零改动 P1-00..P1-14 冻结形状（版本化追加 4 commitKind + 4 事件 + ControlEngine +4 + ReadModelIndex.unifiedStatusView + 3 冻结端口）；CoordinationPolicy 为独立不可变聚合（install 不自动激活 + activation CAS，P1-02 口径）；initial design 决定绑定精确 proposal digest；unified status 视图 facts-first（facts 先显示、解释可 stale、policy/activation 归 kind=baseline）
 ```
+
+---
+
+## P1-15 当前票据与共享契约基线（并行窗口 6 — lanes A/B/C 实施中）
+
+- Ticket：15-human-role-collaboration.md（status 保持 proposed）；依赖 P1-06/07/09/14/17 ✅。
+- 基线 5a5b085：contracts/human-role-collaboration.ts（InitialDesignProposal/Decision/CoordinationPolicy/UnifiedStatusPresentation + 4 事件/命令/回执/fingerprints + 3 冻结端口（InitialDesignPort/UnifiedStatusPort/CoordinationPolicyPort））；ledger 4 commitKind；validators 4；双适配器；fixtures；stub（HumanRoleCollaborationEngineImpl）；harness 直通/场景；契约套件（9 组 verification 名照票）；restart/integration/evidence 骨架。
+- **LANE 表**：A（33180e14；src/control/human-role-collaboration.ts + 单测）；B（✅ fe795dd；双适配器 unifiedStatusView + 8 测试）；C（f1abe5c3；角色协作回流 e2e：有界返工/rollover/completed-work 继承/本地 SSE 模型端点）。
+- **integrator 冻结裁决**：① design 决定绑定 proposalDigest 精确；② policy install 不自动激活 + 口径 P1-02（digest_mismatch 区分）；③ unified status facts-first（policy/activation→kind baseline；行级 stale=false——无多版本比较面）；④ C lane e2e 用本地 SSE fixture 实现“真实任务一次模型协作集成”（模型端点替身=能力降级证据，同 P1-16 模式）。
 
 ---
 
