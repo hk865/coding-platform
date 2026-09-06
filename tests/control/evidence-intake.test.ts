@@ -27,7 +27,7 @@ import { buildApplyPlanCommand, buildPlanLedgerCommit } from "../../src/contract
 import { P104_GOAL, P104_OBL_IMPLEMENT, P104_PLAN_REVISION_FIXTURE_V1, P104_TASK_IMPLEMENT, buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand, buildEvidenceIntakeLedgerCommit, coverage } from "../../src/contracts/fixtures/evidence-fixtures.js";
 import type { PlanRevisionSnapshot } from "../../src/contracts/plan.js";
 import type { EvidenceSnapshot, SubmitEvidenceCommand, TaskEvidenceIndexSnapshot, EvidenceV1 } from "../../src/contracts/evidence.js";
-import { evidenceRefFor, taskEvidenceIndexRefFor, MAX_EVIDENCE_PER_TASK } from "../../src/contracts/evidence.js";
+import { evidenceRefFor, taskEvidenceIndexRefFor, evidenceApplicability, MAX_EVIDENCE_PER_TASK } from "../../src/contracts/evidence.js";
 import { runRefFor } from "../../src/contracts/dispatch.js";
 import { canonicalJson } from "../../src/contracts/fingerprint.js";
 
@@ -316,7 +316,7 @@ describe("submitEvidence: dangling subject/coverage -> dangling_ref (zero write)
     expect(await eventCount(ledger)).toBe(before);
   });
 
-  it("coverage referencing an obligation/VR not mapped to the subject task -> dangling_ref", async () => {
+  it("coverage referencing a NON-EXISTENT obligation/VR -> dangling_ref", async () => {
     const { ledger, engine, plan } = await setupAccepted();
     const before = await eventCount(ledger);
     const evidence = makeEvidence(plan, {
@@ -327,6 +327,25 @@ describe("submitEvidence: dangling subject/coverage -> dangling_ref (zero write)
     expect(r.status).toBe("rejected");
     if (r.status === "rejected") expect(r.code).toBe("dangling_ref");
     expect(await eventCount(ledger)).toBe(before);
+  });
+
+  it("coverage referencing an EXISTING obligation/VR mapped to a DIFFERENT task is ADMITTED (applicability -> OUT_OF_SCOPE, never a rejection)", async () => {
+    const { ledger, engine, plan } = await setupAccepted();
+    const before = await eventCount(ledger);
+    // Subject = IMPLEMENT, but the coverage references the REVIEW obligation's
+    // (existing) vr-review. Per frozen applicability rule ① (sem #6) this is a
+    // valid report -> admitted; its DERIVED applicability is OUT_OF_SCOPE.
+    const evidence = makeEvidence(plan, {
+      evidenceId: "ev-oos", kind: "observation", outcome: "PASS", checkId: "static-check-lint-tool",
+      coverage: [{ obligationId: "obl-review", requirementId: "vr-review" }],
+    });
+    const r = await engine.submitEvidence(makeCommand({ commandId: "cmd-oos", evidence }));
+    expect(r.status).toBe("committed");
+    if (r.status !== "committed") return;
+    expect(r.evidenceIndex).toBe(1);
+    expect(await eventCount(ledger)).toBe(before + 1);
+    // Derived applicability (never written back): OUT_OF_SCOPE.
+    expect(evidenceApplicability(evidence, plan, anchorForPlan(plan, 1))).toBe("OUT_OF_SCOPE");
   });
 
   it("anchor plan missing -> dangling_ref", async () => {

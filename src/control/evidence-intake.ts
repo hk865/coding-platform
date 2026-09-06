@@ -75,16 +75,17 @@ async function submitEvidenceImpl(
   }
 
   // Guard 4: every coverage entry must reference a VerificationRequirement of
-  // an obligation mapped to the subject task IN THE ANCHOR PLAN (dangling_ref).
-  const knownKeys = new Set<string>();
-  for (const obligation of plan.obligations) {
-    if (!obligation.taskIds.includes(taskId)) continue;
-    for (const vr of obligation.verificationRequirements) {
-      knownKeys.add(obligation.obligationId + "\u0000" + vr.requirementId);
-    }
-  }
+  // an obligation that EXISTS IN THE ANCHOR PLAN (dangling_ref — a reference to
+  // a non-existent obligation/VR is a hard failure). Coverage whose obligation
+  // exists but is NOT mapped to the subject task is NOT a rejection: the frozen
+  // applicability rule (evidenceApplicability rule ① / frozen sem #6) marks it
+  // OUT_OF_SCOPE, so historical/other-task evidence is admitted and derived.
   for (const coverage of evidence.coverage) {
-    if (!knownKeys.has(coverage.obligationId + "\u0000" + coverage.requirementId)) {
+    const obligation = plan.obligations.find((o) => o.obligationId === coverage.obligationId);
+    if (obligation === undefined) {
+      return { status: "rejected", commandId: command.commandId, code: "dangling_ref" };
+    }
+    if (!obligation.verificationRequirements.some((vr) => vr.requirementId === coverage.requirementId)) {
       return { status: "rejected", commandId: command.commandId, code: "dangling_ref" };
     }
   }
