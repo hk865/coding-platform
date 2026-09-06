@@ -91,6 +91,22 @@ import {
 } from "../contracts/baseline-evolution.js";
 import type { ArchitectureBaselinePin } from "../contracts/governance.js";
 import type {
+  CoordinationPolicyActivatedEvent,
+  CoordinationPolicyInstalledEvent,
+  CoordinationPolicyRevisionSnapshot,
+  InitialDesignDecisionRecordedEvent,
+  InitialDesignDecisionSnapshot,
+  InitialDesignProposalRecordedEvent,
+  InitialDesignProposalSnapshot,
+  ProjectCoordinationPolicyActiveSnapshot,
+  UnifiedStatusViewQuery,
+  UnifiedStatusViewResult,
+} from "../contracts/human-role-collaboration.js";
+import {
+  initialDesignDecisionRefFor,
+  initialDesignProposalRefFor,
+} from "../contracts/human-role-collaboration.js";
+import type {
   RunEventRecordedEvent,
   RunOutcomeUnknownEvent,
   RunStartedEvent,
@@ -423,6 +439,23 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   private readonly p114Gates = new Map<string, { ref: MigrationGateTaskRef; gate: MigrationGateTaskV1 }>();
   /** scopeKey + "\u0000" + activationId -> { ref, activation: BaselineActivationV1 }. */
   private readonly p114Activations = new Map<string, { ref: BaselineActivationRef; activation: BaselineActivationV1 }>();
+
+  // ------------------------------------------------------------------ //
+  // P1-15 unified-status projection rows (LANE-B: proposal / decision / //
+  // policy / activation). Proposal + decision rows are workspace-scoped;//
+  // policy + activation rows are PROJECT-scoped (their events carry     //
+  // workspaceId ""), so the view gathers them by projectId. Each row    //
+  // wraps the snapshot with the sourceCursor that produced it, so the  //
+  // facts-first facts[] can carry per-fact lineage.                     //
+  // ------------------------------------------------------------------ //
+  /** scopeKey + "\u0000" + designId -> { snapshot, sourceCursor }. */
+  private readonly p115ProposalRows = new Map<string, { snapshot: InitialDesignProposalSnapshot; sourceCursor: CommitCursor }>();
+  /** scopeKey + "\u0000" + decisionId -> { snapshot, sourceCursor }. */
+  private readonly p115DecisionRows = new Map<string, { snapshot: InitialDesignDecisionSnapshot; sourceCursor: CommitCursor }>();
+  /** consoleWorkspaceKey(projectId, "") + "\u0000" + policyId -> { snapshot, sourceCursor }. */
+  private readonly p115PolicyRows = new Map<string, { snapshot: CoordinationPolicyRevisionSnapshot; sourceCursor: CommitCursor }>();
+  /** consoleWorkspaceKey(projectId, "") + "\u0000" + projectId -> { snapshot, sourceCursor }. */
+  private readonly p115ActivationRows = new Map<string, { snapshot: ProjectCoordinationPolicyActiveSnapshot; sourceCursor: CommitCursor }>();
 
   async advance(page: EventPage): Promise<ProjectionReceipt> {
     const toApply: PositionedEvent[] = [];
@@ -2864,16 +2897,164 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     void cursor;
   }
 
-  /** P1-15: no-op hook (facts-first view stub until lane B lands). */
+  /** P1-15 LANE-B: fold the 4 initial-design / coordination-policy events into
+   * proposal / decision / policy / activation rows. Proposal + decision are
+   * workspace-scoped; policy + activation are project-scoped (their events
+   * carry workspaceId ""). Row keys follow the frozen integrator ruling:
+   * consoleWorkspaceKey(projectId, workspaceId) + "\u0000" + id. */
   private applyP115(event: DomainEvent, cursor: CommitCursor): void {
-    void event;
-    void cursor;
+    if (event.eventType === "InitialDesignProposalRecorded") {
+      const ev = event as InitialDesignProposalRecordedEvent;
+      const proposal = ev.payload.proposal;
+      const ref = initialDesignProposalRefFor(proposal.projectId, proposal.workspaceId, proposal.designId);
+      const snapshot: InitialDesignProposalSnapshot = { ref, revision: 1, schemaVersion: 1, proposal, recordedAt: ev.payload.recordedAt };
+      const key = consoleWorkspaceKey(proposal.projectId, proposal.workspaceId) + "\u0000" + proposal.designId;
+      this.p115ProposalRows.set(key, { snapshot, sourceCursor: cursor });
+    } else if (event.eventType === "InitialDesignDecisionRecorded") {
+      const ev = event as InitialDesignDecisionRecordedEvent;
+      const decision = ev.payload.decision;
+      const ref = initialDesignDecisionRefFor(decision.projectId, decision.workspaceId, decision.decisionId);
+      const snapshot: InitialDesignDecisionSnapshot = { ref, revision: 1, schemaVersion: 1, decision, recordedAt: ev.payload.recordedAt };
+      const key = consoleWorkspaceKey(decision.projectId, decision.workspaceId) + "\u0000" + decision.decisionId;
+      this.p115DecisionRows.set(key, { snapshot, sourceCursor: cursor });
+    } else if (event.eventType === "CoordinationPolicyInstalled") {
+      const ev = event as CoordinationPolicyInstalledEvent;
+      const snapshot = ev.payload.revision;
+      const key = consoleWorkspaceKey(snapshot.ref.projectId, "") + "\u0000" + snapshot.ref.policyId;
+      this.p115PolicyRows.set(key, { snapshot, sourceCursor: cursor });
+    } else if (event.eventType === "CoordinationPolicyActivated") {
+      const ev = event as CoordinationPolicyActivatedEvent;
+      const snapshot: ProjectCoordinationPolicyActiveSnapshot = {
+        ref: ev.payload.activeRef,
+        projectId: ev.payload.activeRef.projectId,
+        activeRevision: ev.payload.activeRevision,
+        revision: ev.aggregateRevision,
+      };
+      const key = consoleWorkspaceKey(snapshot.projectId, "") + "\u0000" + snapshot.ref.projectId;
+      this.p115ActivationRows.set(key, { snapshot, sourceCursor: cursor });
+    }
   }
 
-  /** P1-15 LANE-B: unified status view stub. */
-  async unifiedStatusView(query: import("../contracts/human-role-collaboration.js").UnifiedStatusViewQuery): Promise<import("../contracts/human-role-collaboration.js").UnifiedStatusViewResult> {
-    void query;
-    throw new Error("P1-15 lane: unifiedStatusView not implemented yet");
+  /** P1-15 LANE-B: unified status view (facts-first display; rebuildable from
+   * events). Rows are the latest proposal / decision / policy / activation rows
+   * for the (projectId, workspaceId) scope (policy + activation are gathered by
+   * projectId because their events carry workspaceId ""). Every fact carries
+   * sourceCursor lineage; the P1-15 view has no multi-version comparison
+   * surface, so every fact is marked stale=false per the integrator ruling. */
+  async unifiedStatusView(query: UnifiedStatusViewQuery): Promise<UnifiedStatusViewResult> {
+    const observedCursor = this.observedCursor;
+    // No projection ever advanced -> we cannot claim freshness for any scope.
+    if (observedCursor === null) return { status: "not_found" };
+
+    const scopeKey = consoleWorkspaceKey(query.projectId, query.workspaceId);
+    const prefix = scopeKey + "\u0000";
+    const proposalRows = this.p115ScopeProposalRows(prefix);
+    const decisionRows = this.p115ScopeDecisionRows(prefix);
+    const policyRows = this.p115ProjectPolicyRows(query.projectId);
+    const activationRows = this.p115ProjectActivationRows(query.projectId);
+    if (
+      proposalRows.length === 0 &&
+      decisionRows.length === 0 &&
+      policyRows.length === 0 &&
+      activationRows.length === 0
+    ) {
+      return { status: "not_found" };
+    }
+
+    // Deterministic fact order: rank by row type (proposal -> decision -> policy
+    // -> activation), then by refKey. Policy + activation share kind "baseline"
+    // (the frozen contract has no dedicated policy/activation fact kind), so the
+    // rank keeps them apart and stable for rebuild equivalence.
+    type P115RankedFact = {
+      rank: number;
+      kind: "proposal" | "decision" | "baseline";
+      refKey: string;
+      display: string;
+      revision: unknown;
+      stale: boolean;
+      sourceCursor: CommitCursor;
+    };
+    const ranked: P115RankedFact[] = [];
+    for (const row of proposalRows) {
+      ranked.push({ rank: 0, kind: "proposal", refKey: canonicalJson(row.snapshot.ref), display: "InitialDesignProposal(" + row.snapshot.proposal.designId + ")", revision: row.snapshot.revision, stale: false, sourceCursor: row.sourceCursor });
+    }
+    for (const row of decisionRows) {
+      ranked.push({ rank: 1, kind: "decision", refKey: canonicalJson(row.snapshot.ref), display: "InitialDesignDecision(" + row.snapshot.decision.decisionId + ", " + row.snapshot.decision.outcome + ")", revision: row.snapshot.revision, stale: false, sourceCursor: row.sourceCursor });
+    }
+    for (const row of policyRows) {
+      ranked.push({ rank: 2, kind: "baseline", refKey: canonicalJson(row.snapshot.ref), display: "CoordinationPolicy(" + row.snapshot.policyId + "@r" + row.snapshot.revision + ")", revision: row.snapshot.revision, stale: false, sourceCursor: row.sourceCursor });
+    }
+    for (const row of activationRows) {
+      ranked.push({ rank: 3, kind: "baseline", refKey: canonicalJson(row.snapshot.ref), display: "CoordinationPolicyActive(" + row.snapshot.projectId + " -> " + canonicalJson(row.snapshot.activeRevision) + ")", revision: row.snapshot.revision, stale: false, sourceCursor: row.sourceCursor });
+    }
+    ranked.sort((a, b) => a.rank - b.rank || a.refKey.localeCompare(b.refKey));
+    const facts = ranked.map((r) => ({ kind: r.kind, refKey: r.refKey, display: r.display, revision: r.revision, stale: r.stale, sourceCursor: r.sourceCursor }));
+
+    const decisions = decisionRows.map((row) => ({ decisionId: row.snapshot.decision.decisionId, outcome: row.snapshot.decision.outcome, summary: row.snapshot.decision.summary, stale: false }));
+
+    return {
+      status: "ready",
+      facts,
+      decisions,
+      explanations: [{ fact: "design option", explanation: "由 HumanCollaboration 解释", stale: false }],
+      freshness: observedCursor,
+    };
+  }
+
+  /** P1-15: workspace-scope proposal rows, ascending by recordedAt then designId. */
+  private p115ScopeProposalRows(prefix: string): { snapshot: InitialDesignProposalSnapshot; sourceCursor: CommitCursor }[] {
+    const out: { snapshot: InitialDesignProposalSnapshot; sourceCursor: CommitCursor }[] = [];
+    for (const [rowKey, value] of this.p115ProposalRows) {
+      if (rowKey.startsWith(prefix)) out.push(value);
+    }
+    out.sort((a, b) => {
+      const t = a.snapshot.recordedAt.localeCompare(b.snapshot.recordedAt);
+      return t !== 0 ? t : a.snapshot.ref.designId.localeCompare(b.snapshot.ref.designId);
+    });
+    return out;
+  }
+
+  /** P1-15: workspace-scope decision rows, ascending by decidedAt then decisionId. */
+  private p115ScopeDecisionRows(prefix: string): { snapshot: InitialDesignDecisionSnapshot; sourceCursor: CommitCursor }[] {
+    const out: { snapshot: InitialDesignDecisionSnapshot; sourceCursor: CommitCursor }[] = [];
+    for (const [rowKey, value] of this.p115DecisionRows) {
+      if (rowKey.startsWith(prefix)) out.push(value);
+    }
+    out.sort((a, b) => {
+      const t = a.snapshot.decision.decidedAt.localeCompare(b.snapshot.decision.decidedAt);
+      return t !== 0 ? t : a.snapshot.ref.decisionId.localeCompare(b.snapshot.ref.decisionId);
+    });
+    return out;
+  }
+
+  /** P1-15: project-scope policy rows (event workspaceId is ""), ascending by
+   * installedAt then policyId. */
+  private p115ProjectPolicyRows(projectId: string): { snapshot: CoordinationPolicyRevisionSnapshot; sourceCursor: CommitCursor }[] {
+    const out: { snapshot: CoordinationPolicyRevisionSnapshot; sourceCursor: CommitCursor }[] = [];
+    for (const value of this.p115PolicyRows.values()) {
+      if (value.snapshot.ref.projectId !== projectId) continue;
+      out.push(value);
+    }
+    out.sort((a, b) => {
+      const t = a.snapshot.installedAt.localeCompare(b.snapshot.installedAt);
+      return t !== 0 ? t : a.snapshot.ref.policyId.localeCompare(b.snapshot.ref.policyId);
+    });
+    return out;
+  }
+
+  /** P1-15: project-scope activation rows (event workspaceId is ""), ascending
+   * by aggregate revision then refKey. */
+  private p115ProjectActivationRows(projectId: string): { snapshot: ProjectCoordinationPolicyActiveSnapshot; sourceCursor: CommitCursor }[] {
+    const out: { snapshot: ProjectCoordinationPolicyActiveSnapshot; sourceCursor: CommitCursor }[] = [];
+    for (const value of this.p115ActivationRows.values()) {
+      if (value.snapshot.projectId !== projectId) continue;
+      out.push(value);
+    }
+    out.sort((a, b) => {
+      const t = a.snapshot.revision - b.snapshot.revision;
+      return t !== 0 ? t : canonicalJson(a.snapshot.ref).localeCompare(canonicalJson(b.snapshot.ref));
+    });
+    return out;
   }
 
   /** P1-14 LANE-C: baseline-evolution hook — fold the 4 events into
