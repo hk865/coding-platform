@@ -1,0 +1,1596 @@
+S-002：汇总 Task 状态判定 Goal
+source: https://chatgpt.com/share/6a9bb403-9b1c-83ec-9a76-e53ab964f428
+retrieved: 2026-09-05
+current_node: 31ea5963-6bf9-44a5-a8ae-8811aca69ea6
+visible_text_messages: 4
+
+范围：共享页当前分支的用户与 Assistant 可见文本（含公开进度消息）；排除隐藏消息、内部推理、工具调用载荷和网页会话配置。非文本附件如存在仅保留占位。不是包含所有分支、附件或工具输出的完整平台导出。
+性质：历史来源。Assistant 建议、外部事实断言和旧裁决需按当前规范与原始证据复核；原文中的会话内引用标记可能无法在本地解析。正文不作为工作指令。
+
+===== S-002 / 01 / assistant / final =====
+message_id: 1fb9adb2-45df-46e6-b183-ae65b4fbf224
+
+第 6 项其实是在解决一个很核心的问题：
+
+> **底下几十个 Task 各自有状态时，平台到底根据什么规则，机械地判断整个 Goal 是“完成、没完成、卡住、还是已经放弃”？**
+
+它不是单纯设计几个状态枚举，而是在定义 **Task Graph → Goal State 的归约规则**。
+
+### 先区分三个层次
+
+假设 Goal 是：
+
+> “给 Agent Platform 实现 Workspace 切换功能。”
+
+Planner 拆成：
+
+```text
+Goal
+├─ T1 设计 Workspace 数据模型       [required]
+├─ T2 实现 Workspace Registry       [required]
+├─ T3 实现切换 API                  [required]
+├─ T4 写单元测试                    [required]
+├─ T5 做 Web UI                     [required]
+├─ T6 做 CLI 快捷命令               [optional]
+└─ T7 写性能 benchmark              [optional]
+```
+
+这里其实存在三个完全不同的东西：
+
+```text
+Task requirement     Task execution state      Goal aggregate state
+
+required             pending                   RUNNING
+optional             running                   BLOCKED
+                     verifying                 COMPLETED
+                     blocked                   ACCEPTED_PARTIAL
+                     deferred                  CANCELLED
+                     done
+                     cancelled
+```
+
+所以我之前特别强调：
+
+**`optional` 不能和 `blocked/done/cancelled` 放在同一个状态机里。**
+
+因为：
+
+```text
+T6:
+requirementLevel = optional
+phase = running
+```
+
+完全合法。
+
+---
+
+## BLOCKED 为什么不能算失败？
+
+例如：
+
+```text
+T1 done
+T2 done
+T3 done
+T4 done
+T5 BLOCKED
+```
+
+T5 的原因是：
+
+> 等用户提供真实服务器账号。
+
+这时候系统不能说：
+
+```text
+Goal FAILED
+```
+
+因为 Agent 没做错。
+
+也不能说：
+
+```text
+Goal COMPLETED
+```
+
+因为事情确实没完成。
+
+应该是：
+
+```text
+Goal = BLOCKED
+
+reason:
+  T5 requires human input
+```
+
+这对你的 Secretary 特别重要。
+
+Secretary 应该主动告诉你：
+
+> 当前 Goal 已完成 4/5 个 required 条件。  
+> 剩余 T5 因缺少服务器权限而阻塞，需要你处理。
+
+这正好对应你之前说的：**人只应该被拉进来处理 Agent 自己解决不了的信息和决策。**
+
+---
+
+## DEFERRED 和 BLOCKED 又不同
+
+假设 T5 能做，但你说：
+
+> UI 今天先不做，下周再说。
+
+那么：
+
+```text
+T5 = DEFERRED
+```
+
+这不是系统“做不了”，而是**主动延后**。
+
+问题来了：
+
+如果 T5 原本是 required：
+
+```text
+T5:
+requirementLevel = required
+phase = deferred
+```
+
+Goal 能不能 completed？
+
+我的建议是：**不能。**
+
+否则系统会出现一个很危险的漏洞：
+
+```text
+做不完
+↓
+把 Task 标成 deferred
+↓
+Goal completed
+```
+
+那 Task Graph 就失去约束意义了。
+
+正确做法有两个：
+
+```text
+方案 A
+
+Goal revision 12
+T5 required + deferred
+
+=> Goal 不能 completed
+```
+
+或者你正式改变目标：
+
+```text
+Goal revision 13
+
+删除：
+T5 Web UI [required]
+
+增加：
+T8 Web UI follow-up
+
+=> revision 13 的 required criteria 全部满足
+=> COMPLETED
+```
+
+所以 **Plan Revision 非常重要**。
+
+它意味着系统不能偷偷降低标准。
+
+---
+
+## CANCELLED 最容易设计错
+
+这里尤其要区分：
+
+```text
+Run cancelled
+Attempt cancelled
+Task cancelled
+Goal cancelled
+```
+
+它们完全不是一回事。
+
+例如 Worker A 正在 T3：
+
+```text
+T3
+ ├─ Attempt #1
+ │    └─ Run A   cancelled
+ │
+ └─ Attempt #2
+      └─ Run B   running
+```
+
+这时候：
+
+```text
+Run A = cancelled
+Attempt #1 = cancelled
+Task T3 = running
+Goal = running
+```
+
+也就是说：
+
+> **执行实例死了，不代表任务死了。**
+
+这与你想做的“Agent 可替换”直接相关。
+
+甚至：
+
+```text
+Agent A 崩了
+Context 爆了
+Run cancelled
+```
+
+都不应该影响 Goal 的语义。
+
+Platform 应该重新调度：
+
+```text
+Task T3
+     ↓
+new Attempt
+     ↓
+Agent B
+```
+
+因此你真正应该持久化的是 **Task State，而不是 Agent Todo**。
+
+---
+
+## SUPERSEDED 是版本系统带来的状态
+
+假设原来：
+
+```text
+Revision 8
+
+T3：使用 Redis 实现状态缓存
+```
+
+做到一半你告诉 Secretary：
+
+> 不要 Redis 了，SQLite 已经够了。
+
+Planner 创建：
+
+```text
+Revision 9
+
+T3'：使用 SQLite 实现状态缓存
+```
+
+那么旧的：
+
+```text
+T3 = SUPERSEDED
+```
+
+不是：
+
+```text
+T3 = FAILED
+```
+
+也不是：
+
+```text
+T3 = CANCELLED
+```
+
+因为它没有失败，也不是单纯“不要做了”。
+
+而是：
+
+> **旧计划中的这个任务已经被新计划取代。**
+
+这样 Timeline 才能解释：
+
+```text
+为什么 Agent 昨天花了 40 分钟研究 Redis，
+今天却完全没有 Redis？
+
+→ 因为 Goal Revision 9 替代了 Revision 8。
+```
+
+---
+
+# 真正重要的是：Goal 不应该简单看 Task 数量
+
+比如：
+
+```text
+10 个 Task
+
+8 done
+1 blocked
+1 optional
+```
+
+不能简单：
+
+```text
+8 / 10 = 80%
+```
+
+因为那个 blocked Task 可能恰好是：
+
+> “确认整个系统不会删除用户数据”
+
+它的重要性可能比另外八个 Task 加起来还大。
+
+所以我更建议你的架构进一步收敛成：
+
+```text
+Goal
+ │
+ ├── Acceptance Criterion A [required]
+ │       ├── T1
+ │       └── T2
+ │
+ ├── Acceptance Criterion B [required]
+ │       ├── T3
+ │       ├── T4
+ │       └── T5
+ │
+ └── Acceptance Criterion C [optional]
+         └── T6
+```
+
+然后：
+
+```text
+Task
+  = 工作如何进行
+
+Acceptance Criterion
+  = 什么叫完成
+
+Goal
+  = 用户到底要什么
+```
+
+**Goal 的完成最好由 Acceptance Criteria 决定，而不是直接由 Task 决定。**
+
+这是我现在觉得比之前那版表述更准确的一点。
+
+---
+
+## 因此整个系统应该是
+
+```text
+                 Goal
+                  │
+          “我要实现什么？”
+                  │
+          Acceptance Criteria
+                  │
+          “怎样才算实现？”
+                  │
+              Task Graph
+                  │
+           “具体怎么做？”
+                  │
+        Attempt → Run → Agent
+                  │
+             “谁来执行？”
+```
+
+于是：
+
+```text
+Agent：“我做完了”
+        ↓
+Task Attempt finished
+        ↓
+产生 Evidence
+        ↓
+Verifier 检查 Criterion
+        ↓
+Criterion satisfied
+        ↓
+所有 required Criteria satisfied
+        ↓
+Goal COMPLETED
+```
+
+而不是：
+
+```text
+Agent：“Todo 都勾完了”
+        ↓
+Goal completed
+```
+
+这其实正好解决了你之前问的那个 **Agent Todo 为什么总是在最后一起勾掉** 的问题：
+
+**Todo 根本不应该承担系统真相源的职责。**
+
+---
+
+### 所以我建议第 6 项最终裁决可以压缩成一句
+
+> **Goal 完成由当前 Goal Revision 的 required Acceptance Criteria 决定，而不是由 Worker 的 Todo 或 Task 数量决定；Task Graph 描述实现过程，Acceptance Criteria 描述完成条件。Blocked、Deferred、Cancelled、Superseded 都必须保留真实语义，不能被偷偷折算成 Done。**
+
+这样设计以后，Secretary 的仪表盘也会自然分成两种进度：
+
+```text
+执行进度
+████████░░  8/10 Tasks
+
+目标完成度
+██████░░░░  3/5 required criteria verified
+
+当前阻塞
+AC-4 → T9 → 等待用户确认 API 兼容策略
+```
+
+我认为这比单纯显示“80% 完成”更符合你这个产品的目标：**让人掌握真实状态，而不是给人看一个好看的 Todo List。**
+
+===== S-002 / 02 / user / unspecified =====
+message_id: f68c21ca-37a5-4939-a4bd-137523d754d0
+
+我觉得你的理解有个问题，你从始至终没有谈怎么实现。
+你觉得技术上来说，这个 task graph 该如何来判定呢？一种是通过跑测试，就是你预先定义好测试之后再来进行一个实现；一种是由 agent 来审计，来报告是否完成。哪一个才是真正合理的呢？或者说是我们这个方案里面需要的？&#x20;
+肯定是先是静态的代码分析之后，再加上 agent 来判断语义。我觉得是这样子的。就比如说一个 AST 语法树之类的东西，来针对某个模块，因为你是拆分成模块来实现了，就是 task 吗。 然后我觉得你像你这种 task 有多阶段的，然后每一个阶段依赖前一个阶段的，我觉得其实是相对不太好的。为什么呢？因为你这个好像不能实现多 agent 并行啊，不能实现多 agent 并行，其实你的效率没有多大的提高。
+是的，它事实上它的并行有多种，就是每一个阶段都应该有多个模块一起在实现，这样才能实现多 agent 的一个东西。因此这里有两个，一个是时间线上面的一个阶段有没有完成，一个是空间上面的一些一个模块有没有写完成。
+&#x20;当然最终到实际执行，就是看某一个模块有没有执行完成。这里我觉得应该是用一个静态语法分析的东西来进行初步判断，初步判断之后，然后让 agent 来进行判断。因为这比重新再写一个测试接口的代码要快很多，要快很多。&#x20;
+
+当然你也可以一直坚持每一个模块都坚持写一个测试的模块，但是我觉得这太麻烦了，而且 OpenAI 推荐实践应该也没有说这个东西。&#x20;
+
+
+然后就到了 agent，那么这个审查的 agent 它需要有什么信息context来构成呢？我的最初的想法是架构图加上需要检查的要点，但检查的要点是怎么来的呢？ 这个可以由工作的 agent 自行来汇报它自己做的哪些问题，然后再根据架构图加上这个 agent 自己的报告，然后针对性地派一个 agent。这个 agent 在读取之前静态语法分析树的结果，因为你根据这个类似 code graph，也类似于 AST，你就大概地对这个模块里面的代码有个比较清晰的了解。然后再确定好各个动态运行时可能存在的业务情况之后，再对于每一个模块进行分析，就大概差不多了。这是模块内部的。
+
+然后除了模块内部的，还有模块间的，模块间的一般是由提前写好的架构来确定。然后是在动态的测试当中暴露出来一些问题。当然也可以派一个 agent 去审查。不过这样的话审查又会成为一个开发速度的一瓶颈。最好就是一开始架构设计的时候就已经确定好边界。
+
+然后大概就这些，我的理解就这些。你把这些我的理解再结合一下 OpenAI 的实践，就是我先前好像提到过的一个实践。你再看一看怎么搞。
+
+===== S-002 / 03 / assistant / commentary =====
+message_id: 4c7570bb-6896-46d8-b13a-714966cafc53
+
+你这个修正是对的：前面我更多在定义“完成语义”，但没有把**完成判定器本身怎么实现**讲清楚。这里更合理的不是“每个 Task 都先写测试”，而是做成分层判定：**静态结构检查负责便宜、机械、快速的确定性事实；Agent 审查负责语义与业务；动态测试只放在真正需要运行时证据的地方。**这和 OpenAI 的做法其实很接近：他们强调的是机械约束架构边界、结构测试和 custom lints，同时把 review 大量交给 agent，而不是要求每个开发 Task 都额外写一套独立测试。
+
+===== S-002 / 04 / assistant / final =====
+message_id: 31ea5963-6bf9-44a5-a8ae-8811aca69ea6
+
+你这次把问题从“Task 状态机怎么定义”拉回到了真正关键的地方：**Task Graph 的边到底是什么、节点什么时候算完成、这个判定如何低成本自动化。**
+
+我现在会把之前那套“Acceptance Criteria → Task → Verifier”改得更工程化一点。对于 coding-first 的 Agent Platform，最合适的不是“每个 Task 配一组测试”，而是：
+
+```text
+                  Architecture / Plan
+                         │
+                 生成 Task Graph
+                         │
+        ┌────────────────┴────────────────┐
+        │                                 │
+  Structural Graph                  Execution Graph
+  空间/模块结构图                     时间/依赖执行图
+        │                                 │
+ Module A  Module B  Module C       Stage 0 → Stage 1 → Stage 2
+    │        │        │                │         │
+   T1       T2       T3             多个 Task   多个 Task
+    │        │        │
+    └────────┬────────┘
+             ▼
+       Task Completion
+             │
+     ┌───────┼────────┐
+     ▼       ▼        ▼
+ Static    Agent    Runtime
+ Check     Review    Evidence
+     │       │        │
+     └───────┴────────┘
+             ▼
+      Task verified/done
+```
+
+而且你提出的“**空间上的模块完成度 + 时间上的阶段完成度**”我认为应该正式进入架构。之前如果只有一个线性的 Task DAG，确实很容易把系统设计成：
+
+```text
+设计
+ ↓
+实现 A
+ ↓
+实现 B
+ ↓
+测试
+ ↓
+完成
+```
+
+这样名义上是 DAG，实际上就是一条流水线，多 Agent 没多少发挥空间。
+
+更合理的是一个二维结构。
+
+---
+
+# 1. Task Graph 实际上应该是二维的
+
+例如一个功能：
+
+```text
+                Stage 1            Stage 2             Stage 3
+             接口/骨架建立          功能实现              集成验证
+
+Module A        A1 ───────────────→ A2 ───────────────→ A3
+                 │                   │
+Module B        B1 ───────────────→ B2 ───────────────→ B3
+                 │                   │
+Module C        C1 ───────────────→ C2 ───────────────→ C3
+```
+
+但是依赖关系不会是：
+
+```text
+A1 → A2 → A3 → B1 → B2 ...
+```
+
+而应该尽量是：
+
+```text
+A1 ─→ A2
+B1 ─→ B2
+C1 ─→ C2
+
+A1/B1/C1
+   ↓
+某个 integration boundary ready
+
+A2/B2/C2
+   ↓
+Integration verification
+```
+
+于是一个阶段里面：
+
+```text
+Worker A → Module A
+Worker B → Module B
+Worker C → Module C
+```
+
+可以真正并行。
+
+所以我会把两个概念分开：
+
+**Structural Graph**
+
+回答：
+
+> 系统由哪些模块组成，它们允许怎样依赖？
+
+**Task/Execution Graph**
+
+回答：
+
+> 当前 Goal 为了改变这些模块，需要做哪些工作，以及这些工作之间真正存在什么依赖？
+
+Task Graph 应该从 Structural Graph 上“投影”出来，而不是 Planner 凭空脑补一个 Todo List。
+
+这其实非常重要。
+
+---
+
+# 2. 所以 AST 不是最终目标，应该是 Code Model / Structural Graph
+
+你说 AST，我赞同它作为最低层输入，但我不会把整个系统绑定成：
+
+> AST → Task Judge。
+
+因为 AST 太低层了。
+
+例如 TypeScript：
+
+```ts
+class WorkspaceService {
+    constructor(
+        private registry: WorkspaceRegistry,
+        private runtime: RuntimePort,
+    ) {}
+}
+```
+
+AST 能告诉我们：
+
+```text
+ClassDeclaration
+ ├── constructor
+ ├── property registry
+ └── property runtime
+```
+
+但我们真正需要的是：
+
+```text
+WorkspaceService
+    ├── depends_on → WorkspaceRegistry
+    ├── depends_on → RuntimePort
+    ├── implements → Workspace lifecycle
+    ├── exported_by → workspace module
+    └── called_by → CommandHandler
+```
+
+因此底层最好是：
+
+```text
+Parser / LSP / AST
+        │
+        ▼
+Symbol Graph
+        │
+        ├── file
+        ├── module
+        ├── class
+        ├── function
+        ├── type
+        ├── import
+        ├── call
+        ├── implements
+        └── references
+        │
+        ▼
+Architecture Graph
+        │
+        ├── domain
+        ├── layer
+        ├── public interface
+        ├── allowed dependency
+        ├── forbidden dependency
+        └── ownership
+```
+
+我会把它统称为：
+
+# Code Model
+
+而不是 AST。
+
+AST 只是 Code Model 的一个 provider。
+
+---
+
+# 3. OpenAI Harness Engineering 实际上很支持你这个方向
+
+OpenAI 那篇实践里，并没有说：
+
+> 每拆一个 Task，都必须为 Task 单独新写测试。
+
+他们真正强调的是另一件事：
+
+> **机械地 enforce invariants，而不是机械地规定 implementation。**
+
+他们把业务 domain 划成固定 layer，严格限制依赖方向，然后通过 custom linters 和 structural tests 机械检查；包括 schema/type 命名、结构化日志、文件大小、可靠性规则等。与此同时，他们明确说大量 review 已经转向 agent-to-agent。citeturn210230view0
+
+所以他们实际上是：
+
+```text
+                   Verification
+                        │
+       ┌────────────────┴────────────────┐
+       │                                 │
+Mechanical invariants                Agent review
+       │                                 │
+architecture                         semantics
+dependency                           implementation
+schema                               product behavior
+lint                                 design judgment
+tests                                code review
+```
+
+而不是：
+
+```text
+Task
+ ↓
+专门写 Task Test
+ ↓
+Pass
+```
+
+而且他们非常强调让代码、文档、schema、计划、日志、metrics、UI 都变得 **agent-legible**，这样 Agent 可以自己获取上下文、复现问题、验证结果，而不依赖人把信息复制进 prompt。citeturn210230view0
+
+这与你提出的：
+
+> 架构图 + Code Graph/AST + Worker 报告 → Reviewer Agent
+
+几乎是同一方向。
+
+---
+
+# 4. 我建议 Task 完成判定器正式做成三级
+
+这是核心实现。
+
+```text
+Task
+ │
+ ▼
+┌─────────────────────────────┐
+│ L1 Structural Verification  │
+│ 静态机械检查                 │
+└──────────────┬──────────────┘
+               │ pass
+               ▼
+┌─────────────────────────────┐
+│ L2 Semantic Agent Review    │
+│ Agent 语义审查               │
+└──────────────┬──────────────┘
+               │ pass
+               ▼
+┌─────────────────────────────┐
+│ L3 Runtime Verification     │
+│ 仅在任务需要时               │
+└──────────────┬──────────────┘
+               ▼
+          VERIFIED
+```
+
+不是所有 Task 都跑 L3。
+
+甚至不是所有 Task 都必须完整跑 L2。
+
+---
+
+## L1：Structural Verification
+
+这是最便宜的。
+
+例如 Task：
+
+> “增加 WorkspaceRegistry，并由 WorkspaceService 通过接口访问，禁止 UI 直接依赖 repository。”
+
+Task 创建的时候就可以产生：
+
+```text
+StructuralExpectations
+
+must_exist:
+  - symbol: WorkspaceRegistry
+
+must_export:
+  - WorkspaceRegistry
+
+must_depend:
+  - WorkspaceService -> WorkspaceRegistry
+
+must_not_depend:
+  - UI -> WorkspaceRepository
+
+changed_scope:
+  - src/workspace/**
+```
+
+代码写完：
+
+```text
+git diff
+   ↓
+incremental parser
+   ↓
+AST / Symbol Graph update
+   ↓
+Structural Rule Engine
+```
+
+直接得到：
+
+```text
+✓ WorkspaceRegistry exists
+✓ WorkspaceService depends on Registry
+✓ UI has no Repo dependency
+✓ no unexpected cross-domain edge
+
+Structural verdict = PASS
+```
+
+完全不需要 LLM。
+
+---
+
+# 5. 这里甚至可以直接成为 Task Graph 自动更新机制
+
+这是一个很关键的推论。
+
+现在 Agent Todo 的问题是：
+
+```text
+Agent 做了
+但是忘了 update todo
+```
+
+如果我们拥有 Code Model：
+
+```text
+Task T37
+targetModule = workspace.registry
+
+expectedChanges =
+    WorkspaceRegistry exists
+    registration API exists
+    provider wiring exists
+```
+
+代码变化之后：
+
+```text
+Code Graph updated
+        ↓
+T37 structural predicates
+        ↓
+3 / 3 satisfied
+        ↓
+T37 automatically:
+RUNNING → REVIEW_READY
+```
+
+Agent 根本不用“勾 Todo”。
+
+这才是真正意义上的：
+
+> **Todo 是状态投影。**
+
+而不是要求 Agent 更听话。
+
+---
+
+# 6. Worker 自己的报告应该存在，但不能作为 Evidence 真相
+
+你提出：
+
+> Worker 自己报告它到底做了什么，然后 Reviewer 根据这个报告检查。
+
+我很赞同。
+
+不过角色应该严格定义为：
+
+```text
+WorkerReport = Review Index
+```
+
+而不是：
+
+```text
+WorkerReport = Completion Evidence
+```
+
+比如 Worker 完成后输出：
+
+```yaml
+task: T37
+
+implemented:
+  - added WorkspaceRegistry
+  - added register/unregister
+  - connected WorkspaceService
+
+changed_symbols:
+  - WorkspaceRegistry
+  - WorkspaceService.createWorkspace
+
+design_decisions:
+  - registry owns lifecycle
+  - service does not persist runtime state
+
+uncertain:
+  - crash recovery behavior not verified
+  - concurrent registration may race
+
+recommended_review:
+  - verify lifecycle ownership
+  - inspect concurrency edge case
+```
+
+这个东西非常有价值。
+
+因为 Reviewer 不再面对整个 repo：
+
+```text
+“你给我检查一下这个 Agent 写得好不好。”
+```
+
+而是：
+
+```text
+Architecture
++
+Task contract
++
+Structural diff
++
+Worker report
++
+Changed code
++
+Relevant runtime evidence
+```
+
+这样 Reviewer Context 很小。
+
+---
+
+# 7. Reviewer Context 我建议固定成六部分
+
+你刚才问的其实是一个非常好的接口设计问题。
+
+我会定义：
+
+```text
+ReviewPacket
+│
+├── 1. Task Contract
+├── 2. Architecture Slice
+├── 3. Code Graph Delta
+├── 4. Worker Report
+├── 5. Relevant Diff
+└── 6. Runtime Evidence
+```
+
+其中不是把完整“架构图”扔进去。
+
+而是：
+
+```text
+Global Architecture Graph
+          ↓
+根据 targetModule + changedSymbols
+          ↓
+Architecture Slice
+```
+
+例如只给 Reviewer：
+
+```text
+CommandHandler
+      │
+      ▼
+WorkspaceService
+      │
+      ▼
+WorkspaceRegistry
+      │
+      ▼
+WorkspaceRepository
+```
+
+以及：
+
+```text
+Allowed:
+Command → Service → Registry → Repo
+
+Forbidden:
+Command → Repo
+UI → Repo
+Registry → UI
+```
+
+这就是 OpenAI 所谓的 **map，而不是 1000 页 manual** 的思想：短入口指向结构化、可发现的具体上下文，而不是把所有知识一股脑塞给 Agent。citeturn210230view0
+
+---
+
+# 8. Code Graph Delta 比完整 Code Graph 更重要
+
+Reviewer 不应该每次重新理解整个模块。
+
+在 Task 开始前：
+
+```text
+Snapshot S17
+CodeGraph G17
+```
+
+Worker 完成：
+
+```text
+Snapshot S18
+CodeGraph G18
+```
+
+得到：
+
+```text
+ΔG = G18 - G17
+```
+
+比如：
+
+```text
+Added:
++ WorkspaceRegistry
++ WorkspaceRegistry.register
+
+New edges:
++ WorkspaceService -> WorkspaceRegistry
+
+Removed:
+- WorkspaceService -> WorkspaceRepository
+
+Changed:
+~ WorkspaceService.create
+```
+
+Reviewer 第一眼就能看到：
+
+> **这次工作实际上改变了系统什么。**
+
+这会比单纯 `git diff` 更适合 Agent。
+
+git diff 是文本变化。
+
+Code Graph Delta 是**语义结构变化**。
+
+---
+
+# 9. 然后才是 Agent Semantic Review
+
+Reviewer 的任务不是重新实现，而是回答有限的问题：
+
+```text
+Task Contract
++
+Architecture Slice
++
+Graph Delta
++
+Worker Report
+      ↓
+Reviewer
+```
+
+例如输出：
+
+```yaml
+verdict: needs_fix
+
+checks:
+  architecture:
+    status: pass
+
+  task_scope:
+    status: pass
+
+  semantic_correctness:
+    status: fail
+    issue:
+      WorkspaceRegistry.unregister()
+      does not invalidate active lease
+
+  worker_claims:
+    status: partial
+    unsupported:
+      - "crash safe"
+
+suggested_followup:
+  - handle stale runtime lease
+```
+
+然后 Controller：
+
+```text
+PASS
+ ↓
+done
+
+NEEDS_FIX
+ ↓
+创建 Follow-up / reopen Task
+
+UNCERTAIN
+ ↓
+runtime verification / another reviewer
+```
+
+---
+
+# 10. 动态测试不是没有，而是按风险触发
+
+这里我和你有一点细微区别。
+
+我同意：
+
+> 不应该为了每个 Task 强制重新写一套测试。
+
+但是已有测试还是非常廉价、非常高价值。
+
+所以应该：
+
+```text
+Static
+永远跑
+
+Existing affected tests
+能找到就跑
+
+Agent semantic review
+通常跑
+
+New test
+只有满足条件才要求写
+```
+
+例如：
+
+### 不需要额外测试
+
+```text
+rename module
+move interface
+split file
+add type
+dependency cleanup
+documentation
+```
+
+静态 + Reviewer 足够。
+
+### 应运行已有测试
+
+```text
+modify Parser
+modify Scheduler
+modify WorkspaceStore
+```
+
+通过 dependency graph 找：
+
+```text
+affected symbols
+      ↓
+related tests
+```
+
+只跑受影响部分。
+
+### 应增加新测试
+
+只有：
+
+```text
+新业务 invariant
+曾经发生 regression
+纯静态无法验证
+风险较高
+稳定可机械复现
+```
+
+例如：
+
+> “Worker 崩溃后同一个 Tool side effect 不得重复执行。”
+
+这种东西非常值得写测试。
+
+因为这是一个长期 invariant。
+
+这也符合 OpenAI 的思路：**当一个规则真正重要并且可以机械化，就把它编码进 tooling/linters/tests，而不是永远依赖 prompt 或 review。**citeturn210230view0
+
+---
+
+# 11. 所以其实形成一个“规则升级机制”
+
+这可能是这套系统最重要的一部分。
+
+第一次遇到一个问题：
+
+```text
+Reviewer Agent 发现
+“UI 不应该直接访问 Repository”
+```
+
+第一次它只是：
+
+```text
+semantic review rule
+```
+
+但如果这个问题是：
+
+```text
+重要
++
+反复出现
++
+可以机械识别
+```
+
+那就升级：
+
+```text
+Agent Judgment
+      ↓
+Architecture Rule
+      ↓
+Static Graph Constraint
+      ↓
+Linter
+```
+
+从此：
+
+```text
+UI → Repo
+```
+
+直接：
+
+```text
+StructuralCheck = FAIL
+```
+
+再也不用消耗 Reviewer Token。
+
+这恰好对应 OpenAI Harness Engineering 一个非常重要的思想：
+
+> 人类/Reviewer 的 judgment 一旦稳定，就尽可能沉淀成 repository 内可机械执行的约束。citeturn210230view0
+
+---
+
+# 12. 这样审查 Agent 就不会成为严重瓶颈
+
+你担心：
+
+> 每个模块都派 Reviewer，会不会吞吐掉下来？
+
+会。
+
+所以不能：
+
+```text
+每个 Task
+  ↓
+完整 Reviewer Agent
+```
+
+应该有一个 routing。
+
+```text
+Task Finished
+     │
+     ▼
+Static Verification
+     │
+     ├── fail ──→ Worker 修
+     │
+     ▼
+Risk Scorer
+     │
+     ├── low
+     │    └── cheap reviewer / sampled review
+     │
+     ├── medium
+     │    └── normal reviewer
+     │
+     └── high
+          └── reviewer + runtime/test
+```
+
+风险来自：
+
+```text
+changed public API
+cross-module edge
+high fan-in symbol
+high fan-out symbol
+state persistence
+concurrency
+security
+external side effect
+architecture boundary
+large graph delta
+Worker uncertainty
+```
+
+反过来：
+
+```text
+内部 private helper
+小范围实现
+结构规则全部通过
+已有测试覆盖
+Worker 没报告 uncertainty
+```
+
+可以很轻地 review。
+
+---
+
+# 13. 模块间检查应该和模块内检查完全分开
+
+你这一点我非常赞同。
+
+## 模块内
+
+Agent 有较大自由：
+
+```text
+Architecture defines:
+input
+output
+responsibility
+invariants
+
+Agent decides:
+internal classes
+algorithms
+helpers
+layout
+```
+
+检查：
+
+```text
+static structure
++
+semantic reviewer
++
+必要 runtime
+```
+
+---
+
+## 模块间
+
+尽可能提前固化：
+
+```text
+Module Contract
+Allowed Dependency
+Public API
+Data Shape
+Ownership
+Side Effects
+```
+
+然后：
+
+```text
+Code Graph
+    ↓
+Mechanical boundary checker
+```
+
+而不是每次派 Agent 去重新理解：
+
+> A 能不能调用 B？
+
+这类问题如果架构已经规定了，就没有理由浪费智能。
+
+OpenAI 的实践对此非常明确：他们把每个业务 domain 划成固定 layer，只允许规定方向的依赖，并用 custom lint 和 structural tests 机械 enforce；同时强调“centrally enforce boundaries, allow autonomy locally”。citeturn210230view0
+
+这几乎可以直接作为我们这里的原则：
+
+> **模块间机械化，模块内语义化。**
+
+当然不是 100%，但这是非常好的默认方向。
+
+---
+
+# 14. 现在 Task Graph 本身也应该改变定义
+
+因此我会把我们此前的：
+
+```text
+Planner
+  ↓
+生成 Task DAG
+```
+
+改成：
+
+```text
+                    Goal
+                     │
+                     ▼
+             Architecture Model
+                     │
+       ┌─────────────┴──────────────┐
+       ▼                            ▼
+Structural decomposition      Temporal constraints
+空间模块分解                   时间/真正依赖
+       │                            │
+       └─────────────┬──────────────┘
+                     ▼
+                 Task Graph
+```
+
+每个 Task 至少有：
+
+```yaml
+task:
+  id: T31
+
+  target:
+    module: workspace.registry
+
+  objective:
+    "实现 workspace registry"
+
+  dependencies:
+    hard:
+      - interface.WorkspaceRef
+    soft: []
+
+  structural_expectations:
+    - WorkspaceRegistry exists
+    - Service -> Registry allowed
+    - UI -> Repository forbidden
+
+  semantic_review:
+    - registry owns lifecycle
+    - registration is idempotent
+
+  runtime_verification:
+    required: false
+
+  evidence:
+    code_graph_delta: null
+    worker_report: null
+    reviewer_result: null
+```
+
+注意：
+
+`dependencies` 只应该记录 **真正不能并行的依赖**。
+
+不要因为：
+
+> “我们习惯先设计再写代码。”
+
+就人工制造：
+
+```text
+T1 → T2 → T3 → T4
+```
+
+这正是你指出的问题。
+
+---
+
+# 15. Scheduler 可以因此主动最大化并行度
+
+有了 Structural Graph：
+
+```text
+Task A → module X
+Task B → module Y
+Task C → module Z
+```
+
+如果：
+
+```text
+no hard dependency
++
+write set 不冲突
++
+contract 已冻结
+```
+
+Scheduler 就可以：
+
+```text
+A || B || C
+```
+
+甚至 Planner 不需要显式说：
+
+> 请并行。
+
+Scheduler 自己根据：
+
+```text
+readSet
+writeSet
+dependency
+architecture boundary
+```
+
+求 ready set：
+
+```text
+Ready = {
+  task |
+  hardDependencies satisfied
+  && resources available
+  && no write conflict
+}
+```
+
+这才是真正的多 Agent Control Plane。
+
+---
+
+# 16. 最终我认为这套 verification architecture 应该长这样
+
+```text
+                            ┌──────────────────┐
+                            │ Architecture Docs │
+                            └────────┬─────────┘
+                                     │ compile
+                                     ▼
+┌─────────────┐             ┌───────────────────┐
+│ Source Code │──parse─────→│     Code Model    │
+└─────────────┘             │ AST/Symbol/Graph  │
+                            └────────┬──────────┘
+                                     │
+                         architecture constraints
+                                     │
+                                     ▼
+                              Task Planner
+                                     │
+                              Task Graph
+                                     │
+                         parallel dispatch
+                 ┌───────────┼───────────┐
+                 ▼           ▼           ▼
+              Worker A    Worker B    Worker C
+                 │           │           │
+                 └─────── results ───────┘
+                             │
+                             ▼
+                      Code Graph Delta
+                             │
+              ┌──────────────┴─────────────┐
+              ▼                            ▼
+      Structural Verifier            Worker Report
+              │                            │
+              └──────────────┬─────────────┘
+                             ▼
+                       Review Router
+                             │
+                  ┌──────────┼─────────┐
+                  ▼          ▼         ▼
+                cheap      Agent     runtime
+                accept     review    validation
+                  │          │         │
+                  └──────────┴─────────┘
+                             ▼
+                      Task State Update
+                             │
+                             ▼
+                       Scheduler unlocks
+                        dependent Tasks
+```
+
+---
+
+## 我会把现在的核心原则重新总结成五句话
+
+1. **Task Graph 不是 Todo List，而是 Architecture Graph 在当前 Goal 上的执行投影。**
+
+2. **Task 的完成默认不是“测试通过”，而是 `静态结构事实 + Agent 语义审查 + 按需运行时证据`。**
+
+3. **模块边界尽可能机械化；模块内部主要让 Agent 判断语义。**
+
+4. **Worker Report 是 Reviewer 的索引，不是完成事实；Code Graph Delta 才是非常重要的客观输入。**
+
+5. **Agent Review 中反复出现、稳定、可机械化的判断，逐步升级成 lint / structural rule / test，从智能判断迁移到廉价机械判断。**
+
+这最后一点尤其重要。它意味着这个平台不是一开始就试图把所有测试、规则写全，而是会随着真实开发不断把“昂贵的 Agent 判断”**编译成廉价的机械规则**。这既符合你想要的开发速度，也和 OpenAI Harness Engineering 所展示的演化路径高度一致。citeturn210230view0
+
+而且这样以后，我们第 6 项其实不该再叫单纯的 **“Task 状态如何汇总成 Goal”**，更准确应该拆成两个设计问题：
+
+```text
+A. Task Verification
+   一个模块任务如何被判定为完成？
+
+B. Graph Reconciliation
+   Task 完成以后，哪些依赖被解锁，
+   当前阶段/模块/Goal 状态如何重新计算？
+```
+
+这两个才是真正需要在 P0 里先设计清楚的实现核心。

@@ -1,0 +1,98 @@
+# StateLedger Module：Goal 创建切片
+
+```yaml
+status: draft
+updated: 2026-09-05
+slice: 创建 Goal → 持久化 → 投影显示
+plane: Data
+```
+
+## Purpose
+
+2026-09-05 [设计复核](../../design/human-framework-role-review.md)：原子持久化机制保留为候选，最终事件与事实来源需随协作流程复核。
+
+`StateLedger` 原子保存 Control 已经生成的 Domain Event、canonical aggregate snapshot、幂等结果与
+outbox intent，并提供有序 Event 读取。调用者不必了解事务、表、序列化、checkpoint 或崩溃恢复细节。
+
+## Interface
+
+角色绑定、消息与工作请求的持久化扩展遵循 [运行时协作 Interface](../../interfaces/runtime-collaboration.md)。load/commit/events 的原子性保持不变，扩展对象与 outbox 类型须显式版本化；以下空 outbox 约束只适用于 CreateGoal。
+
+```ts
+interface StateLedger {
+  load(ref: AggregateRef): Promise<SnapshotResult>;
+  commit(batch: LedgerCommit): Promise<LedgerCommitReceipt>;
+  events(query: EventQuery): Promise<EventPage>;
+}
+```
+
+所有参数与结果由[StateLedger Interface](../../interfaces/state-ledger.md)定义。本切片的
+`LedgerCommit.outboxIntents` 固定为空；成功 receipt 返回 aggregate revisions 与 opaque `CommitCursor`。
+Project、Workspace 与 Goal 的 key 均使用该 Interface 定义的完整 `AggregateRef`，存储 Adapter 不得降级为
+只按本地 `workspaceId` 或 `goalId` 建唯一索引。
+
+## Hidden Implementation
+
+Implementation 隐藏：SQLite 或内存布局、事务范围、append-only log、snapshot 编码、idempotency 索引、
+全局 cursor、分页、checkpoint 和崩溃恢复。存储引擎变化不改变 Interface 语义。
+
+## Dependencies
+
+- Event/identity/cursor 使用[Command/Event Interface](../../interfaces/command-event.md)；
+- snapshot、commit、receipt 与 EventPage 使用[StateLedger Interface](../../interfaces/state-ledger.md)；
+- 底层存储与 clock 是内部 Seam；至少出现生产和测试两个 Adapter 后才固定该 Seam；
+- 不依赖 ControlEngine、ReadModelIndex 或 UI。
+
+## Invariants
+
+### Global
+
+- Domain Event 追加后不可修改或删除；
+- Events、canonical snapshots、idempotency receipt 与 outbox intents 全部提交或全部不提交；
+- aggregate revision 和全局 CommitCursor 单调递增；
+- restart 只加载最后一次原子提交的 canonical snapshot；StateLedger 不自行 fold Event。
+
+### Local
+
+- 创建 Goal 时 expected Goal revision 为 `0`，Event 与 snapshot revision 均为 `1`；
+- Workspace key 为 `(projectId, workspaceId)`，Goal key 为 `(projectId, goalId)`；Project 之间允许复用本地 ID；
+- 每个提交中 Event、snapshot 与 expected revision 必须对齐，否则无副作用地拒绝；
+- 相同 CommandIdentity/fingerprint 返回相同 durable outcome，不追加第二份 Event；同 identity 异
+  fingerprint 返回冲突；
+- `events(afterCursor)` 使用稳定顺序，重复分页不遗漏、不重排；
+- Adapter 崩溃不能暴露只写 Event、只写 snapshot 或只写幂等记录的中间状态。
+
+## Test seam
+
+所有 Adapter 运行同一 [StateLedger Interface](../../interfaces/state-ledger.md) contract suite：首次提交、
+CAS 冲突、同 identity 重放、同 identity 异 fingerprint、原子故障注入、restart 后 snapshot load、
+EventPage 分页、cursor 连续性和跨 Project 同名本地 ID 隔离。Control 测试只替换整个 StateLedger Adapter，
+不 mock 内部表或 SQL。
+
+## Explicitly not responsible
+
+- 不判断 CreateGoal 的业务合法性，不发明 Domain Event，也不执行 Command→snapshot/Event fold；
+- 不构建 Portfolio、Goal 或 Todo View；
+- 不执行 Scheduler、Runtime、Verification 或 Artifact 大对象存储；
+- 不向用户解释错误。
+
+## Context load
+
+默认只装载：本文件、[Command/Event Interface](../../interfaces/command-event.md)、
+[StateLedger Interface](../../interfaces/state-ledger.md)和当前 Ticket。实现某个 Adapter 时再装载该
+Adapter 的存储约束；只在对接时读取
+[`ControlEngine.Interface`](../control/control-engine.md#interface) 或
+[`ReadModelIndex.Interface`](./read-model-index.md#interface)，不装载其 Implementation 或全局设计文档。
+## P1-02 extension record：governance / plan 持久化
+
+2026-09-05 [P1-02](../../planning/proposed/P1-foundation/tickets/02-plan-revision-visible.md) 版本化扩展：新增 commitKind（governance-install / governance-activate / plan-revision），原子性（单事务）、CAS、幂等 replay、EventPage 单调与 cursor 语义不变；事件/snapshot/expected 对齐规则在 src/contracts/ledger-validation.ts，InMemory 与 SQLite 共用。
+
+## P1-03 extension record：dispatch / run 持久化
+
+2026-09-05 [P1-03](../../planning/proposed/P1-foundation/tickets/03-fake-run-visible.md) 版本化扩展：新增 dispatch-claim / dispatch-start / run-fact commitKind（事件/snapshot/expected 对齐规则不变）；TaskLease / TaskAttempt / Run / DispatchOutboxEntry 聚合；outboxIntents 首次非空（claim 的 outboxIntents=[DispatchIntentV1]，与 outbox 聚合逐字段等价）。
+## P1-06 extension record：handoff 持久化
+
+2026-09-06 [P1-06](../../planning/proposed/P1-foundation/tickets/06-handoff-a-to-b.md) 版本化扩展：新增 handoff-record / replacement-claim commitKind；HandoffPacket / ReplacementAttempt / HandoffProvenance 聚合；replacement 的 outbox intent 复用 P1-03 DispatchIntentV1 形状（packet 引用由 ReplacementAttempt 承载）。
+## P1-07 extension record：lease / integration / patch 持久化
+
+2026-09-06 [P1-07](../../planning/proposed/P1-foundation/tickets/07-parallel-readers-single-writer.md) 版本化扩展：新增 workspace-read/write-lease-acquire/release、integration-record、patch-record 六个 commitKind；WorkspaceReadLease / WorkspaceWriteLease / WorkspaceWriteLeaseIndex / IntegrationResult / PatchRecord 聚合；Workspace 聚合 revision 由 ledger CAS 单调推进（patch 登记原子携带 N→N+1；显式 release 不推进）。

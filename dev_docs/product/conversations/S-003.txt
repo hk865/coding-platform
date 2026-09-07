@@ -1,0 +1,2721 @@
+S-003：查看Codex线程
+source: https://chatgpt.com/share/6a9bb3d6-5a98-83ec-b7fc-2a15f2d4feba
+retrieved: 2026-09-05
+current_node: 6d986097-3ee8-4526-9ea6-403ffe1faa52
+visible_text_messages: 10
+
+范围：共享页当前分支的用户与 Assistant 可见文本（含公开进度消息）；排除隐藏消息、内部推理、工具调用载荷和网页会话配置。非文本附件如存在仅保留占位。不是包含所有分支、附件或工具输出的完整平台导出。
+性质：历史来源。Assistant 建议、外部事实断言和旧裁决需按当前规范与原始证据复核；原文中的会话内引用标记可能无法在本地解析。正文不作为工作指令。
+
+===== S-003 / 01 / user / unspecified =====
+message_id: 07580136-a667-44c9-8363-7f44de657930
+
+codex://threads/01a0610a-9a45-7d93-b388-f1886110cf98你能够看得到吗
+
+===== S-003 / 02 / assistant / final =====
+message_id: bb4ac180-beba-4eb9-8546-87314d3ffb30
+
+这个链接本身我能识别：`codex://threads/01a0610a-9a45-7d93-b388-f1886110cf98` 是 Codex Desktop 的本地 thread deep link，后面这一串就是 thread/session UUID。citeturn0search0turn0search3
+
+但是**我现在不能仅凭这个链接读取你电脑里该 thread 的对话内容**。`codex://threads/...` 的作用是让你本机 Codex 打开对应的本地 thread，并不是一个公网可访问的内容 URL。Codex 的 thread 本身通常持久化在本地 rollout/session 数据中。citeturn0search9turn0search11
+
+所以目前状态是：
+
+**我知道你指的是哪个 Codex thread，但我还看不到里面的内容。**
+
+如果你的目的其实是“让 ChatGPT 直接读取这个 Codex thread，然后接着分析/回忆里面的 Coding Agent 项目”，那需要把该 thread 的内容暴露给我，例如对应的 rollout `.jsonl` / 导出的对话，或者通过能够访问本地 Codex thread 的连接方式。你把对应文件给我之后，我就可以完整读取，而不需要你手工复制整段对话。
+
+===== S-003 / 03 / user / unspecified =====
+message_id: 29282d6a-2390-478d-9785-7fc55d519311
+
+根据最近的那些对话，以及这些，看一下我该如何构建计划图，数据面/控制面/编排/展示的架构
+
+===== S-003 / 04 / assistant / commentary =====
+message_id: 8d884dc2-18d5-49c0-aa91-e7cfbdda2bae
+
+我先把你最近这条主线收敛成一个“计划图 → 数据面 → 控制面 → 编排 → 展示”的统一架构，而不是继续堆模块名。关键是把**目标架构**和**第一版实际施工图**分开，否则很容易又回到过度设计。
+
+===== S-003 / 05 / assistant / commentary =====
+message_id: 70cc39eb-6fc0-404c-bf9f-cfff32b52ce1
+
+现在从材料里能看到一个很重要的收敛点：你现有 `coding-agent` 的 **Runtime / Tool / Session / Checkpoint** 已经足够像“执行内核”，下一层不该再重造 Agent Loop，而应该在它上面加**状态模型 + 控制器 + 编排器 + 投影/展示**。现有 M0–M6 已经把单 Agent 执行闭环和恢复能力做出来了，M7 才是向长期任务/多 Agent 上移。
+
+===== S-003 / 06 / assistant / commentary =====
+message_id: a0b401c6-6cdd-4fab-b97f-8ac6a643efa3
+
+还有一个边界现在应该固定下来：**计划图不是“一个新的大脑模块”，而是数据面的核心投影；编排器也不是另一个 Agent，而是控制面的决策/调度部分。** 这样 Secretary、Worker、Context Manager 都不会继续互相吞职责。你们前面的讨论已经把长期 Session、AgentInstance、Run、Context Window 分成了不同生命周期，这个分层应直接成为平台对象模型。
+
+===== S-003 / 07 / assistant / final =====
+message_id: c5cf6aa1-61ca-40a6-89a8-0bdf128d846a
+
+你现在这套系统，最好不要再把“计划图 / 数据面 / 控制面 / 编排 / 展示”理解成五个平级模块。它们其实处在不同层级。
+
+最核心的关系是：
+
+> **计划图是一种核心状态模型；数据面保存事实；控制面根据事实推动状态变化；编排是控制面的核心决策循环；展示层只是这些状态的读模型和控制入口。**
+
+而你已经完成的 `coding-agent`，应该基本退到下面，成为一个**执行内核 / Worker Runtime**。目前 M0–M6 已经有 Runtime、Tool、安全边界、Session、Checkpoint、CLI 和测试闭环，所以现在真正缺的是它上面的平台层。fileciteturn1file6L441-L467
+
+---
+
+# 1. 我认为最终总架构应该长这样
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│                    Interaction / Display                     │
+│                                                              │
+│   Secretary Chat      Plan Graph       Agent/Run Timeline    │
+│   用户唯一入口          任务/依赖/状态       当前执行情况          │
+│                                                              │
+│   create / steer / query / pause / resume / cancel / approve │
+└───────────────────────┬──────────────────────▲───────────────┘
+                        │ Command / Query       │ Read Model
+                        │                       │
+┌───────────────────────▼──────────────────────┴───────────────┐
+│                         Control Plane                         │
+│                                                              │
+│  Intent Compiler / Planner                                   │
+│           ↓ PlanPatch / TaskProposal                         │
+│  Plan Controller / Reconciler                               │
+│           ↓                                                  │
+│  Scheduler ── Agent Lifecycle ── Budget ── Concurrency       │
+│           ↓                                                  │
+│  Dispatch / Cancel / Resume / Recover / Handoff / Verify     │
+└───────────────────────┬──────────────────────▲───────────────┘
+                        │ dispatch             │ events
+                        │                      │
+┌───────────────────────▼──────────────────────┴───────────────┐
+│                       Execution Plane                         │
+│                                                              │
+│  AgentInstance                                               │
+│       │                                                      │
+│       ├── Run 1 ── Context Window 1 → 2 → ...                │
+│       └── Run 2                                              │
+│                                                              │
+│  coding-agent                                                │
+│  Runtime → Model → ToolExecutor → Permission → Sandbox       │
+└───────────────────────┬──────────────────────────────────────┘
+                        │ facts / results / trace
+                        ▼
+┌──────────────────────────────────────────────────────────────┐
+│                         Data Plane                            │
+│                                                              │
+│  Goal / Task / TaskEdge                                      │
+│  AgentInstance / Run / Session / ContextWindow               │
+│  Decision / Artifact / Evidence / Handoff                    │
+│  Workspace Revision / Event / Trace / Usage                  │
+│                                                              │
+│  Canonical State + Event Log + Index + Read Models           │
+│                                                              │
+│               ┌─────────────────────────┐                    │
+│               │   Plan Graph Projection │                    │
+│               └─────────────────────────┘                    │
+└──────────────────────────────────────────────────────────────┘
+
+              Security / Audit / Observability
+                     横跨所有层
+```
+
+这也符合你之前已经形成的生命周期划分：
+
+```text
+Long-lived User Session
+        ≠
+AgentInstance
+        ≠
+Run
+        ≠
+Context Window
+```
+
+不能再用一个 `Agent` 对象把这四个东西糊起来。fileciteturn1file9L647-L678
+
+---
+
+# 2. 「计划图」到底是什么
+
+这是现在最应该先定义清楚的。
+
+我认为计划图**不是 Agent 的思维链，也不是 execution trace，更不是知识图谱**。
+
+它表示的是：
+
+> **系统当前认为应该完成什么、任务之间是什么关系、每件事目前处于什么状态。**
+
+因此它其实同时包含两个维度：
+
+```text
+             Goal
+              │
+       ┌──────┴──────┐
+       │             │
+     Task A        Task B
+       │             │
+     Task C ← depends_on B
+       │
+    Verify D
+```
+
+第一种边是：
+
+```text
+parent / child
+```
+
+表达任务分解。
+
+第二种边是：
+
+```text
+depends_on
+```
+
+表达执行依赖。
+
+首版只需要这两种。
+
+**不要一开始造通用 Graph DSL。**
+
+---
+
+## Plan Node
+
+我建议最小结构直接类似：
+
+```text
+Task
+├── id
+├── parent_id
+├── objective
+├── acceptance_criteria
+├── desired_state
+├── current_phase
+├── revision
+├── priority
+├── assigned_agent?
+├── blocked_reason?
+├── artifact_refs[]
+├── evidence_refs[]
+└── created_from
+```
+
+其中最重要的是把：
+
+```text
+desired_state
+```
+
+和：
+
+```text
+current_phase
+```
+
+分开。
+
+例如：
+
+```text
+Task T13
+
+desired_state = ACTIVE
+current_phase = BLOCKED
+
+reason = waiting for T8
+```
+
+这一下就把 **计划图** 和 **控制面** 接起来了。
+
+控制器干的事情本质上就是：
+
+```text
+Desired State
+      │
+      │ compare
+      ▼
+Current State
+      │
+      ▼
+What action should happen next?
+```
+
+这就是 Kubernetes / controller 那套思想真正值得借鉴的地方。
+
+---
+
+# 3. 计划图不是数据库里的「图数据库」
+
+这点我反而建议你明确写进设计。
+
+逻辑上它是 Graph：
+
+```text
+Task ─depends_on→ Task
+Task ─parent_of─→ Task
+```
+
+物理实现第一版完全可以是：
+
+```text
+task
+task_edge
+```
+
+两张 SQLite/Postgres 表。
+
+然后：
+
+```text
+PlanGraph = projection(task + task_edge + runtime state)
+```
+
+所以：
+
+> **Graph 是数据模型和展示方式，不意味着 Neo4j。**
+
+这和你之前研究代码图、知识图谱时容易混淆。
+
+这里的 Task Graph 非常稳定、结构非常简单，根本不需要图数据库。
+
+---
+
+# 4. 数据面：不要再设计一个「Memory 模块」
+
+你前面的判断其实是对的：
+
+> Memory 不是一个东西。
+
+平台真正应该保存的是**事实和可检索对象**。
+
+我建议数据面分成两类。
+
+| 类型 | 内容 | 可信度 |
+|---|---|---|
+| Mechanical State | Task 状态、Run、Agent 状态、工具结果、commit、测试结果、workspace revision | 强事实 |
+| Semantic State | Decision、Summary、Hypothesis、Handoff、Notes | Agent/用户产生，有 provenance |
+
+例如：
+
+```text
+Mechanical
+──────────
+Task T3 = RUNNING
+Agent A = RUNNING
+Run R7 = ACTIVE
+workspace_commit = abc123
+test_result = 38/38 passed
+
+
+Semantic
+────────
+Decision:
+  不采用方案 X
+
+Reason:
+  会破坏 backwards compatibility
+
+Source:
+  Run R4 / message 38
+```
+
+这两类数据不能混。
+
+尤其不能让 Agent 写一句：
+
+```text
+"任务差不多完成了"
+```
+
+然后平台就把：
+
+```text
+Task.status = DONE
+```
+
+这应该经过验收条件/控制器。
+
+---
+
+# 5. Memory 应该变成数据面的多种「投影 + 检索」
+
+这样你之前关于 Memory 的很多困惑会自然消失。
+
+```text
+                        Canonical Data
+                             │
+        ┌────────────────────┼─────────────────────┐
+        ▼                    ▼                     ▼
+ Task State Projection   Decision Index       History Index
+        │                    │                     │
+        ▼                    ▼                     ▼
+ 当前做什么              为什么这样做          原始发生过什么
+
+        ┌────────────────────┼─────────────────────┐
+        ▼                    ▼                     ▼
+ Agent State           Artifact Index        Retrieval Index
+```
+
+所谓 Memory Retrieval 就变成：
+
+```text
+1. ID / relation 精确查询
+2. 当前 Task / Agent State 查询
+3. Artifact / Decision 查询
+4. keyword / BM25
+5. semantic retrieval
+6. 必要时 Agent 帮你继续查
+```
+
+而不是：
+
+```text
+所有东西
+    ↓
+Embedding
+    ↓
+向量数据库
+    ↓
+祈祷召回正确
+```
+
+这个对于你的系统特别重要。
+
+---
+
+# 6. Control Plane：机械框架必须是主人
+
+这里我建议非常明确地划边界。
+
+**LLM 可以提出计划。**
+
+但是：
+
+> LLM 不应该直接拥有生命周期。
+
+也就是说：
+
+```text
+Secretary / Planner Agent
+           │
+           │ propose
+           ▼
+       PlanPatch
+           │
+           ▼
+    deterministic validator
+           │
+           ▼
+       State Store
+           │
+           ▼
+      Reconciler
+```
+
+而不是：
+
+```text
+Manager Agent
+     │
+     ├─ spawn agent
+     ├─ kill agent
+     ├─ overwrite state
+     ├─ modify DAG
+     ├─ merge code
+     └─ decide everything
+```
+
+后者早晚会失控。
+
+---
+
+# 7. Control Plane 真正负责什么
+
+可以把它理解成六个机械控制器：
+
+```text
+Plan Controller
+     │
+     ├── Task Lifecycle
+     ├── Agent Lifecycle
+     ├── Scheduler
+     ├── Budget / Limits
+     ├── Recovery
+     └── Verification
+```
+
+例如每次 reconciliation：
+
+```text
+for task in task_graph:
+
+    if task.desired_state == CANCELLED:
+        cancel_active_runs(task)
+
+    if task.phase == PENDING
+       and dependencies_satisfied(task):
+
+        task.phase = READY
+
+    if task.phase == READY
+       and resources_available():
+
+        agent = select_agent(task)
+        dispatch(agent, task)
+
+    if run.finished:
+        evaluate_result()
+
+    if acceptance_criteria_passed:
+        task.phase = DONE
+
+    else:
+        task.phase = REVIEW / FAILED / READY
+```
+
+这就是你的**控制面核心**。
+
+其实并不需要特别智能。
+
+真正智能的是：
+
+```text
+“该拆成哪些任务？”
+“这个结果意味着什么？”
+“现在应该改变计划吗？”
+```
+
+这些可以交给 Agent。
+
+---
+
+# 8. 编排不是独立于控制面的第四个大系统
+
+我会把「编排」定义成：
+
+> **控制面里决定“下一步执行什么、谁来执行、能不能并行”的部分。**
+
+但它内部需要分两层。
+
+### Semantic Orchestration
+
+LLM 擅长：
+
+```text
+用户目标
+   ↓
+理解意图
+   ↓
+任务分解
+   ↓
+依赖分析
+   ↓
+PlanProposal / PlanPatch
+```
+
+例如：
+
+```text
+目标：修复这个大型项目中的 race condition
+
+Planner:
+    T1 调查调用链
+    T2 调查线程模型
+    T3 复现 bug
+
+    T4 设计修复
+        depends_on T1,T2,T3
+
+    T5 实施
+        depends_on T4
+
+    T6 测试
+        depends_on T5
+```
+
+### Mechanical Orchestration
+
+系统负责：
+
+```text
+ready = tasks whose dependencies are satisfied
+
+schedule(ready)
+
+T1 → Worker A
+T2 → Worker B
+T3 → Worker C
+
+wait
+
+T4 → Planner/Executor
+...
+```
+
+所以：
+
+```text
+Planner 决定：
+"What should be done?"
+
+Controller 决定：
+"What is allowed to happen?"
+
+Scheduler 决定：
+"What runs now?"
+
+Worker 决定：
+"How do I execute this task?"
+```
+
+这是我认为你整个系统最重要的一组边界。
+
+---
+
+# 9. Agent 可以修改计划，但只能「提案」
+
+否则动态 Agent 系统会非常容易把图搞乱。
+
+Worker 发现：
+
+```text
+T3 无法继续
+因为还需要调查 module X
+```
+
+它不要直接：
+
+```text
+INSERT Task T3.1
+```
+
+而应该：
+
+```text
+PlanProposal {
+    parent: T3
+    action: ADD_TASK
+    objective: "inspect module X"
+    reason: ...
+    evidence: ...
+}
+```
+
+然后：
+
+```text
+Planner / Plan Controller
+        ↓
+接受 / 修改 / 拒绝
+        ↓
+Plan revision++
+```
+
+这个机制以后对多人、多 Agent、用户修改目标都会非常重要。
+
+---
+
+# 10. `revision` 应该成为核心字段
+
+这个小东西能解决很多问题。
+
+假设用户说：
+
+```text
+不要再重构整个模块了，
+只做最小 bug fix。
+```
+
+于是：
+
+```text
+Task T7 revision:
+17 → 18
+```
+
+而旧 Worker 还在执行：
+
+```text
+task_revision = 17
+```
+
+它回来提交结果时，控制面发现：
+
+```text
+worker revision = 17
+current revision = 18
+```
+
+于是不能机械接受。
+
+进入：
+
+```text
+STALE_RESULT
+```
+
+再由 Planner / 用户判断是否还能利用。
+
+这比让 Agent 自己“记得用户后来改过主意”可靠得多。
+
+---
+
+# 11. Agent / Run / Context 应该怎么进入这套结构
+
+你之前这里确实纠结了很久。
+
+现在我认为可以正式固定：
+
+```text
+AgentInstance
+=
+Profile
++ Task reference
++ State reference
++ Session reference
+```
+
+AgentInstance 是一个**逻辑执行者**。
+
+下面：
+
+```text
+AgentInstance A
+       │
+       ├── Run A1
+       │     ├── Context 1
+       │     ├── Context 2
+       │     └── Context 3
+       │
+       └── Run A2
+```
+
+这和之前材料里的结论一致。跨 Run / 跨 Context 本质上都是“任务状态不能依附于当前执行窗口”。fileciteturn1file7L477-L517
+
+---
+
+# 12. Context Manager 的定位现在也可以固定了
+
+它不应该管理：
+
+```text
+Task
+Agent lifecycle
+Plan
+Session lifecycle
+```
+
+它只负责：
+
+> **从 Data Plane 中，为下一次模型调用选择一个有限工作集。**
+
+即：
+
+```text
+ContextRequest
+├── task_id
+├── agent_id
+├── run_id
+└── token_budget
+          │
+          ▼
+Context Manager
+          │
+          ├── personality / profile
+          ├── tools
+          ├── current task
+          ├── constraints
+          ├── decisions
+          ├── current workspace state
+          ├── relevant artifacts
+          ├── handoff
+          └── relevant history
+          │
+          ▼
+     Model Context
+```
+
+所以你之前说：
+
+> Context Manager 似乎把 Agent 是什么都管了？
+
+问题就解决了。
+
+它不是管理这些对象。
+
+它是：
+
+```text
+State → Context
+```
+
+的 **selection/admission layer**。
+
+---
+
+# 13. Handoff 应该成为统一原语
+
+这一点我觉得可以直接继承你们前面的 `ContinuationPacket` 思路。
+
+目前文件里已经提出了：
+
+```text
+ContinuationPacketV1
+├── previous objective
+├── prior run outcome
+├── final assistant result
+├── unresolved tools
+├── workspace revision
+└── source positions
+```
+
+而且强调机械生成、有界、可追溯、不复制完整 transcript。fileciteturn1file5L374-L398
+
+我现在会把它进一步泛化：
+
+```text
+HandoffPacket
+```
+
+同时用于：
+
+```text
+Context 1 → Context 2
+
+Run 1 → Run 2
+
+Agent A → Agent B
+
+Worker → Secretary
+
+Worker → Writer
+```
+
+这样你不会分别实现四套“记忆/交接机制”。
+
+---
+
+# 14. 展示层：计划图应该成为主要视觉对象
+
+你想做的并不是一个“多 Agent 聊天室”。
+
+我认为用户真正应该看到：
+
+```text
+Project Goal
+│
+├── ✓ T1 调研现有 Runtime
+│
+├── ● T2 设计 State Model
+│      Agent A
+│      Run #17
+│
+├── ● T3 调研 Context
+│      Agent B
+│
+├── ○ T4 设计 Controller
+│      blocked by T2
+│
+└── ○ T5 实施 MVP
+       blocked by T2,T3,T4
+```
+
+用户点 T2 才展开：
+
+```text
+Objective
+Acceptance criteria
+Current state
+Agent
+Run
+Decisions
+Evidence
+Artifacts
+Blockers
+History
+```
+
+而不是默认铺几千条 event log。
+
+---
+
+# 15. Secretary 的作用也因此非常清楚
+
+Secretary 是：
+
+```text
+自然语言 ↔ 平台状态
+```
+
+的接口。
+
+用户说：
+
+> 现在做到哪里了？
+
+不应该触发一个 Agent 到处搜索。
+
+应该：
+
+```text
+query Plan ReadModel
+        ↓
+Secretary summarize
+```
+
+用户说：
+
+> 暂停那个 UI 的任务。
+
+变成：
+
+```text
+TaskCommand {
+    task = UI
+    desired_state = PAUSED
+}
+```
+
+用户说：
+
+> 不要做 web UI 了，先把 CLI 完成。
+
+这才需要：
+
+```text
+Intent Compiler
+     ↓
+PlanPatch
+```
+
+所以查询路径和命令路径要分开。这一点你之前的总体设计清单已经明确要求同时设计“命令路径与查询路径”。fileciteturn1file0L10-L33
+
+---
+
+# 16. 展示层建议只做四种视图
+
+第一版其实非常简单：
+
+| View | 回答的问题 |
+|---|---|
+| Plan Graph | 要做什么、依赖是什么 |
+| Active Agents | 谁正在干什么 |
+| Task Detail | 这个任务为什么处于现在的状态 |
+| Timeline / Trace | 到底发生了什么 |
+
+Secretary Chat 是第五个“入口”，但不应该是唯一的状态表达。
+
+这非常关键。
+
+否则又会变成：
+
+```text
+所有系统状态
+       ↓
+塞进聊天
+       ↓
+LLM 给你解释
+```
+
+然后真实状态和 Agent 叙述开始漂移。
+
+---
+
+# 17. 最终你的数据流应该是这个
+
+```text
+USER
+ │
+ │ "帮我完成 X"
+ ▼
+Secretary
+ │
+ ▼
+Intent Compiler
+ │
+ │ PlanPatch
+ ▼
+Plan Store
+ │
+ │ revision++
+ ▼
+Plan Graph
+ │
+ ▼
+Reconciler
+ │
+ ▼
+Ready Tasks
+ │
+ ▼
+Scheduler
+ │
+ ├──────────────┐
+ ▼              ▼
+Worker A       Worker B
+ │              │
+ ▼              ▼
+coding-agent runtime
+ │              │
+ └───────┬──────┘
+         ▼
+ Event / Artifact / Evidence
+         │
+         ▼
+      Data Plane
+         │
+    ┌────┴─────┐
+    ▼          ▼
+Controller   Read Model
+    │          │
+    └────┐  ┌──┘
+         ▼  ▼
+       Plan Graph
+           │
+           ▼
+     UI / Secretary
+```
+
+这是一个真正闭环。
+
+---
+
+# 18. 我认为你现在最需要避免的四件事
+
+1. **不要建立一个万能 Manager Agent。**  
+   Manager Agent 可以做语义规划，但机械控制权必须在框架手上。
+
+2. **不要建立万能 Memory Service。**  
+   先建立事实、对象、索引和 projection。
+
+3. **不要把 Plan Graph、Agent Graph、Code Graph、Knowledge Graph 合成一张图。**  
+   Task Graph 是控制结构；Code Graph 是检索结构；Agent topology 是运行时状态。逻辑完全不同。
+
+4. **不要让 UI 直接读取内部 Runtime。**  
+   UI 应读取稳定的 Read Model。这样以后 CLI/TUI/Web/Secretary 都共享一个数据源。
+
+---
+
+# 19. 映射到你现在的 `coding-agent`
+
+你目前的单 Agent 应该整体放在：
+
+```text
+Execution Plane
+```
+
+而不是继续往里面塞平台逻辑。
+
+现有闭环本来就是：
+
+```text
+ContextBuilder
+→ Model
+→ Runtime
+→ Tool
+→ Permission/Sandbox
+→ Session/Checkpoint
+```
+
+fileciteturn0file0L27-L36
+
+所以下一步的代码结构，我倾向于形成：
+
+```text
+agents/
+│
+├── coding-agent/                 # 已有：Execution Kernel
+│
+└── platform/
+    │
+    ├── domain/
+    │   ├── task
+    │   ├── agent
+    │   ├── run
+    │   ├── artifact
+    │   └── handoff
+    │
+    ├── state/
+    │   ├── store
+    │   ├── event-log
+    │   ├── projections
+    │   └── retrieval
+    │
+    ├── control/
+    │   ├── reconciler
+    │   ├── scheduler
+    │   ├── lifecycle
+    │   ├── budget
+    │   └── recovery
+    │
+    ├── orchestration/
+    │   ├── intent-compiler
+    │   ├── planner
+    │   └── plan-validator
+    │
+    ├── context/
+    │   ├── admission
+    │   ├── handoff
+    │   └── retrieval
+    │
+    ├── read-model/
+    │   ├── plan
+    │   ├── agents
+    │   └── timeline
+    │
+    └── interaction/
+        ├── secretary
+        ├── cli
+        └── web
+```
+
+这是**目标结构表达**，不是说现在就应该创建这么多目录。
+
+你之前已经明确形成了“规划可以完整，但执行必须轻”的原则；总体设计和第一版施工范围应该在同一份设计里分别画出来。fileciteturn1file8L571-L610
+
+---
+
+# 20. 第一版 MVP 应该从这张大图切哪里
+
+这里我现在基本赞成你上传材料最后形成的范围：
+
+```text
+一个 Project
+        │
+一个长期用户入口
+        │
+Secretary
+        │
+Task / Plan Graph
+        │
+Mechanical Controller
+        │
+   ┌────┴─────┐
+Read Worker  Read Worker
+   └────┬─────┘
+        ▼
+     Handoff
+        │
+        ▼
+   One Writer
+        │
+        ▼
+ coding-agent
+```
+
+并支持：
+
+```text
+query
+pause
+resume
+cancel
+steer
+```
+
+这正是材料中那个真正能够验证“一个入口控制多个可替换后台 Agent”的 MVP，而不是仅仅验证跨 Run。fileciteturn1file1L92-L127
+
+---
+
+# 21. 所以你的「计划图」应该成为整个系统的中心，而不是 Orchestrator
+
+我会把最终核心关系压缩成一句：
+
+```text
+                        Plan Graph
+                       /          \
+                desired state    current state
+                     │               ▲
+                     ▼               │
+                  Control Plane ─────┘
+                     │
+                  Orchestrator
+                     │
+                     ▼
+                    Agent
+                     │
+                     ▼
+                  Data Plane
+                     │
+                     ├── facts
+                     ├── evidence
+                     ├── artifacts
+                     └── events
+                     │
+                     └──────→ Plan Projection
+
+User
+ │
+ └──── Secretary / UI ─────→ Plan Graph
+```
+
+**Plan Graph 是系统“现在准备如何完成目标”的公共表示。**
+
+数据面保证：
+
+> 图上的东西有事实依据。
+
+控制面保证：
+
+> 图不会只是一张死图。
+
+编排保证：
+
+> Ready 的事情真的有人去做，而且用合理的 Token / 并发 / Agent。
+
+展示层保证：
+
+> 人不用阅读后台几十个 Agent 的轨迹，也知道现在发生了什么并能控制它。
+
+这比以「多 Agent」本身为中心更接近你最近这几天逐渐形成的目标：**你真正要做的是一个管理长期目标、任务状态和可替换执行 Agent 的系统，而不是一个让多个 LLM 相互聊天的框架。**
+
+而且我认为接下来设计文档首先应该画的也不是更细的类图，而是三张图：**①上面这张总架构图；②Plan Graph + 对象生命周期图；③“用户修改任务 → revision → controller reconcile → Agent 被 steer/cancel → 新 Run”的完整时序图。** 这三张画清楚以后，再讨论 Context、Memory、Scheduler 的细节会容易很多。
+
+===== S-003 / 08 / user / unspecified =====
+message_id: e40ecf99-01ed-4e00-a29b-33737ec2f5a2
+
+[https://openai.com/zh-Hans-CN/index/harness-engineering/](https://openai.com/zh-Hans-CN/index/harness-engineering/)看一下它再给一下文件夹结构以及架构图，以及具体实现开发的流程
+
+===== S-003 / 09 / assistant / commentary =====
+message_id: 790468fb-c4fa-4fab-9a2e-32968f1de5b2
+
+我会把这篇 Harness Engineering 当成一个“工程组织方式”的参考，而不是直接照搬目录。然后把它和你现在已有的 `coding-agent` 执行内核、前面确定的 Plan Graph / Data Plane / Control Plane 分层合并，给出一版**可以直接进入开发的目录结构 + 架构图 + 开发顺序**。
+
+===== S-003 / 10 / assistant / final =====
+message_id: 6d986097-3ee8-4526-9ea6-403ffe1faa52
+
+这篇 OpenAI 的 Harness Engineering 对你现在这个项目很有参考价值，因为它恰好证明了一个你最近已经逐渐形成的判断：
+
+> **未来 Agent 工程的核心，不是继续增强单个 Agent 的“聪明程度”，而是把环境、状态、计划、约束、验证和反馈回路工程化。**
+
+OpenAI 在这篇文章里明确说，他们后来最难的问题集中在“环境、反馈回路和控制系统”，而不是让 Codex“再努力一点”；并且他们把仓库本身做成了记录系统，把计划作为一等工件，同时用机械规则约束架构边界。citeturn297458view0
+
+这与你现在的方向基本一致。但需要区分：
+
+- OpenAI 这篇文章讲的是 **如何构造一个让 coding agent 高效工作的工程环境 / harness**；
+- 你要做的是再上一层：**管理长期 Goal / Plan / 多个 Agent / Context / State 的 Agent Platform**。
+
+所以不能照搬它的目录，但可以直接借它的几个核心原则。
+
+---
+
+# 一、先固定最终系统的总体架构
+
+我会把你现在的系统正式收敛成 **6 层**：
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│  1. Interaction / Presentation                              │
+│                                                             │
+│   Secretary Chat     Plan Graph     Task Detail             │
+│   Active Agents      Timeline       Approval / Control      │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                     Command / Query
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  2. Planning / Semantic Orchestration                       │
+│                                                             │
+│   Intent Compiler                                           │
+│   Planner                                                   │
+│   Plan Critic / Validator                                   │
+│                                                             │
+│   User Intent → Goal → Task Graph / PlanPatch               │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ proposal
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  3. Control Plane                                           │
+│                                                             │
+│   Plan Reconciler        Scheduler                          │
+│   Task Lifecycle         Agent Lifecycle                    │
+│   Budget Controller      Recovery Controller                │
+│   Verification           Concurrency / Lease                │
+│                                                             │
+│          Desired State ↔ Current State                      │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ dispatch
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  4. Agent Runtime / Execution Plane                         │
+│                                                             │
+│  AgentInstance                                              │
+│      └─ Run                                                 │
+│          └─ Context Window                                  │
+│                                                             │
+│  existing coding-agent                                     │
+│                                                             │
+│  Runtime                                                    │
+│   → Context Builder                                         │
+│   → Model                                                   │
+│   → Tool Executor                                           │
+│   → Permission / Sandbox                                    │
+│   → Session / Checkpoint                                    │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ events/results
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  5. Data Plane                                              │
+│                                                             │
+│  Canonical State                                            │
+│                                                             │
+│  Goal / Task / Edge                                         │
+│  AgentInstance / Run / Context                             │
+│  Decision / Constraint / Handoff                           │
+│  Artifact / Evidence / Workspace Revision                  │
+│  Event / Trace / Usage                                     │
+│                                                             │
+│  Event Log → Projections → Indexes                         │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  6. Context / Knowledge Access                              │
+│                                                             │
+│   State Retrieval                                           │
+│   History Retrieval                                         │
+│   Artifact Retrieval                                        │
+│   Context Admission                                         │
+│   Compaction / Rollover                                     │
+│   Handoff                                                   │
+└─────────────────────────────────────────────────────────────┘
+
+        Security / Audit / Observability / Evaluation
+                   cross-cutting
+```
+
+你的现有 `coding-agent` 基本已经覆盖了第四层的主体：Runtime、Tools、安全边界、Session/Checkpoint 和 CLI 闭环已经存在。fileciteturn0file0L27-L36
+
+所以现在应该：
+
+> **向上构建 Platform，而不是继续横向扩张 coding-agent。**
+
+---
+
+# 二、Harness Engineering 对这个架构最大的影响
+
+## 1. 仓库必须成为 Source of Truth
+
+OpenAI 明确放弃了巨大 `AGENTS.md`，改成：
+
+```text
+AGENTS.md        # 地图
+ARCHITECTURE.md  # 顶层架构
+docs/            # 真正的知识库
+```
+
+`AGENTS.md` 大约只作为入口地图使用，详细信息放入结构化、版本控制的 docs。citeturn297458view0
+
+这个非常适合你。
+
+你的系统本身就在解决：
+
+```text
+Context 太大
+历史太多
+Agent 不知道去哪里找
+```
+
+所以项目本身不能反过来搞：
+
+```text
+AGENTS.md
+  3000 行
+```
+
+正确做法应该是：
+
+```text
+AGENTS.md
+   ↓
+告诉 Agent：
+   架构在哪里
+   当前计划在哪里
+   产品定义在哪里
+   运行命令在哪里
+   具体模块文档在哪里
+```
+
+---
+
+# 三、我建议最终仓库目录不要按“功能小模块”无限拆
+
+结合你“不喜欢模块拆太碎”的习惯，我会采用：
+
+```text
+agents/
+│
+├── AGENTS.md
+├── ARCHITECTURE.md
+├── README.md
+├── package.json
+│
+├── apps/
+│   ├── secretary-cli/
+│   └── control-ui/
+│
+├── platform/
+│   ├── domain/
+│   ├── data/
+│   ├── control/
+│   ├── orchestration/
+│   ├── context/
+│   └── runtime/
+│
+├── coding-agent/
+│
+├── tools/
+│
+├── tests/
+│
+└── docs/
+```
+
+注意：
+
+> **顶层只保留真正有认知意义的模块。**
+
+不要变成：
+
+```text
+src/
+  plan/
+  planner/
+  planning/
+  task/
+  tasks/
+  lifecycle/
+  agent/
+  agents/
+  agent_manager/
+  ...
+```
+
+这种结构对 Agent 和人都很难导航。
+
+---
+
+# 四、完整建议目录结构
+
+```text
+agents/
+│
+├── AGENTS.md
+├── ARCHITECTURE.md
+├── README.md
+│
+├── package.json
+├── tsconfig.json
+│
+│
+├── apps/
+│   │
+│   ├── secretary/
+│   │   ├── src/
+│   │   │   ├── chat.ts
+│   │   │   ├── commands.ts
+│   │   │   └── query.ts
+│   │   └── README.md
+│   │
+│   └── control-ui/
+│       ├── src/
+│       │   ├── plan/
+│       │   ├── agents/
+│       │   ├── task/
+│       │   └── timeline/
+│       └── README.md
+│
+│
+├── platform/
+│   │
+│   ├── domain/
+│   │   ├── task.ts
+│   │   ├── plan.ts
+│   │   ├── agent.ts
+│   │   ├── run.ts
+│   │   ├── handoff.ts
+│   │   ├── artifact.ts
+│   │   └── events.ts
+│   │
+│   ├── data/
+│   │   ├── state-store/
+│   │   ├── event-store/
+│   │   ├── projections/
+│   │   └── indexes/
+│   │
+│   ├── control/
+│   │   ├── reconciler/
+│   │   ├── scheduler/
+│   │   ├── lifecycle/
+│   │   ├── budget/
+│   │   ├── recovery/
+│   │   └── verification/
+│   │
+│   ├── orchestration/
+│   │   ├── intent-compiler/
+│   │   ├── planner/
+│   │   └── plan-validator/
+│   │
+│   ├── context/
+│   │   ├── assembler/
+│   │   ├── retrieval/
+│   │   ├── handoff/
+│   │   └── rollover/
+│   │
+│   └── runtime/
+│       ├── agent-runtime.ts
+│       ├── coding-agent-adapter.ts
+│       └── dispatch.ts
+│
+│
+├── coding-agent/
+│   ├── src/
+│   │   ├── core/
+│   │   ├── tools/
+│   │   ├── storage/
+│   │   └── app/
+│   └── ...
+│
+│
+├── tools/
+│   ├── architecture-lint/
+│   ├── docs-lint/
+│   ├── plan-lint/
+│   └── dev/
+│
+│
+├── tests/
+│   ├── domain/
+│   ├── control/
+│   ├── platform/
+│   ├── scenarios/
+│   └── e2e/
+│
+│
+└── docs/
+    │
+    ├── design/
+    │   ├── index.md
+    │   ├── principles.md
+    │   ├── object-model.md
+    │   ├── data-plane.md
+    │   ├── control-plane.md
+    │   ├── orchestration.md
+    │   ├── context.md
+    │   └── security.md
+    │
+    ├── product/
+    │   ├── index.md
+    │   ├── product-goal.md
+    │   ├── secretary.md
+    │   └── control-ui.md
+    │
+    ├── plans/
+    │   ├── active/
+    │   ├── completed/
+    │   └── tech-debt.md
+    │
+    ├── generated/
+    │   ├── schema.md
+    │   ├── architecture-check.md
+    │   └── api-reference.md
+    │
+    ├── decisions/
+    │   └── ADR-xxxx.md
+    │
+    ├── development/
+    │   ├── setup.md
+    │   ├── commands.md
+    │   ├── testing.md
+    │   └── debugging.md
+    │
+    └── evaluation/
+        ├── scenarios.md
+        ├── metrics.md
+        └── baselines.md
+```
+
+这其实是在吸收 OpenAI 的：
+
+```text
+design-docs/
+exec-plans/
+generated/
+product-specs/
+references/
+```
+
+结构，但做了你的平台语义调整。OpenAI 把 active plan、completed plan 和 tech debt 都放进版本控制，并明确把计划当作“一等工件”。citeturn297458view0
+
+---
+
+# 五、其中 `AGENTS.md` 应该非常短
+
+例如只做：
+
+```text
+# Project Map
+
+## Product
+docs/product/
+
+## Architecture
+ARCHITECTURE.md
+docs/design/
+
+## Current Work
+docs/plans/active/
+
+## Development
+docs/development/
+
+## Testing
+docs/evaluation/
+
+## Main Runtime
+coding-agent/
+
+## Platform
+platform/
+```
+
+外加：
+
+```text
+开始任务：
+1. 阅读 ARCHITECTURE.md
+2. 阅读当前相关 active plan
+3. 阅读目标模块 README / design
+4. 再探索代码
+```
+
+然后就结束。
+
+这正是 Harness Engineering 的：
+
+> “给 Agent 一张地图，而不是一本 1000 页说明书。” citeturn297458view0
+
+---
+
+# 六、`ARCHITECTURE.md` 也不要写实现细节
+
+只画这张：
+
+```text
+                       User
+                         │
+                 Secretary / UI
+                         │
+                    Command
+                         ▼
+              ┌───────────────────┐
+              │   Orchestration   │
+              │ Intent / Planner  │
+              └─────────┬─────────┘
+                        │ PlanPatch
+                        ▼
+              ┌───────────────────┐
+              │   Control Plane   │
+              │ Reconcile/Schedule│
+              └─────────┬─────────┘
+                        │
+                     Dispatch
+                        ▼
+              ┌───────────────────┐
+              │  Agent Runtime    │
+              │  coding-agent     │
+              └─────────┬─────────┘
+                        │ Event
+                        ▼
+              ┌───────────────────┐
+              │    Data Plane     │
+              │ State/Event/Index │
+              └─────────┬─────────┘
+                        │
+              ┌─────────┴──────────┐
+              ▼                    ▼
+         Context Access        Read Models
+              │                    │
+              └──────────────► UI / Agent
+```
+
+然后告诉 Agent：
+
+```text
+如果要理解 Data Plane：
+docs/design/data-plane.md
+
+如果要理解 Context：
+docs/design/context.md
+```
+
+就够了。
+
+---
+
+# 七、Plan Graph 的物理实现
+
+我现在反而建议第一版非常保守。
+
+### Task
+
+```ts
+interface Task {
+  id: TaskId;
+
+  projectId: ProjectId;
+  parentId?: TaskId;
+
+  objective: string;
+  acceptanceCriteria: string[];
+
+  desiredState:
+    | "active"
+    | "paused"
+    | "cancelled";
+
+  phase:
+    | "pending"
+    | "ready"
+    | "running"
+    | "blocked"
+    | "review"
+    | "done"
+    | "failed";
+
+  revision: number;
+
+  assignedAgentId?: AgentId;
+
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+```
+
+### Edge
+
+```ts
+interface TaskEdge {
+  from: TaskId;
+  to: TaskId;
+
+  type:
+    | "depends_on";
+}
+```
+
+注意：
+
+`parentId` 已经负责：
+
+```text
+Task decomposition
+```
+
+所以 Edge 暂时只需要：
+
+```text
+depends_on
+```
+
+不要造：
+
+```text
+related_to
+influences
+derived_from
+blocks
+soft_depends
+knowledge_depends
+...
+```
+
+---
+
+# 八、Data Plane 的核心数据关系
+
+```text
+Project
+  │
+  ├── Goal
+  │
+  ├── Plan
+  │    │
+  │    ├── Task
+  │    │     │
+  │    │     ├── TaskEdge
+  │    │     ├── Decision
+  │    │     ├── Evidence
+  │    │     └── Artifact
+  │
+  ├── AgentInstance
+  │       │
+  │       └── Run
+  │             │
+  │             └── ContextWindow
+  │
+  └── EventLog
+```
+
+长期关系：
+
+```text
+Session
+  > AgentInstance
+      > Run
+          > ContextWindow
+```
+
+你们前面的材料已经明确发现：
+
+```text
+User Session
+≠ Agent
+≠ Run
+≠ Context Window
+```
+
+fileciteturn1file9L647-L674
+
+这应该现在正式写进 `object-model.md`。
+
+---
+
+# 九、Control Plane 的实现不要从 Scheduler 开始
+
+最应该先实现：
+
+```text
+Reconciler
+```
+
+因为它才是整个控制面的中枢。
+
+逻辑：
+
+```ts
+async function reconcileTask(taskId: TaskId) {
+  const task = await state.getTask(taskId);
+
+  if (task.desiredState === "cancelled") {
+    await cancelRuns(task);
+    return;
+  }
+
+  if (task.desiredState === "paused") {
+    await pauseRuns(task);
+    return;
+  }
+
+  if (
+    task.phase === "pending" &&
+    await dependenciesSatisfied(task)
+  ) {
+    await state.setPhase(task.id, "ready");
+  }
+
+  if (
+    task.phase === "ready" &&
+    await scheduler.canDispatch(task)
+  ) {
+    await dispatch(task);
+  }
+
+  if (task.phase === "review") {
+    await verify(task);
+  }
+}
+```
+
+这就是：
+
+```text
+State
+ ↓
+Reconcile
+ ↓
+Action
+ ↓
+New State
+```
+
+---
+
+# 十、Scheduler 第一版也不要聪明
+
+第一版：
+
+```text
+READY tasks
+    ↓
+priority
+    ↓
+available worker
+```
+
+最多判断：
+
+```text
+read-only worker
+writer
+reviewer
+```
+
+不要上：
+
+```text
+RL scheduler
+模型动态选择
+复杂 token optimization
+全局 DAG critical path
+```
+
+这些都是实验优化。
+
+---
+
+# 十一、Orchestration 怎么开发
+
+这一层才允许 LLM。
+
+输入：
+
+```text
+User:
+"先调查整个系统为什么跨 context 会丢状态，
+然后给方案，确认后再实现。"
+```
+
+输出必须是结构化：
+
+```json
+{
+  "goal": "...",
+  "tasks": [
+    {
+      "temp_id": "T1",
+      "objective": "调查现有跨 Context 状态行为",
+      "acceptance_criteria": [
+        "明确当前状态来源",
+        "明确丢失点"
+      ]
+    },
+    {
+      "temp_id": "T2",
+      "objective": "设计 continuation 方案",
+      "depends_on": ["T1"]
+    }
+  ]
+}
+```
+
+之后：
+
+```text
+LLM output
+   ↓
+schema validation
+   ↓
+semantic validation
+   ↓
+PlanPatch
+   ↓
+Control Plane
+```
+
+LLM 不直接写 DB。
+
+---
+
+# 十二、Handoff 的统一实现
+
+你现在应该直接把之前的 Continuation Packet 提升成：
+
+```text
+HandoffPacket
+```
+
+例如：
+
+```ts
+interface HandoffPacket {
+  taskId: TaskId;
+  taskRevision: number;
+
+  objective: string;
+
+  completed: string[];
+  unresolved: string[];
+
+  constraints: ConstraintRef[];
+  decisions: DecisionRef[];
+
+  artifacts: ArtifactRef[];
+  evidence: EvidenceRef[];
+
+  workspaceRevision?: string;
+
+  recommendedNextStep?: string;
+
+  sourceRefs: SourceRef[];
+}
+```
+
+然后统一服务于：
+
+```text
+Context 1 → Context 2
+Run 1 → Run 2
+Worker A → Worker B
+Worker → Reviewer
+Worker → Secretary
+```
+
+你们之前的 `ContinuationPacketV1` 已经强调了机械生成、有大小上限、来源可追溯和不复制全文历史。fileciteturn1file5L374-L398
+
+所以没必要再为 multi-agent 设计另一套 memory handoff。
+
+---
+
+# 十三、Context Manager 放在哪里
+
+最终目录：
+
+```text
+platform/context/
+```
+
+它不是 Runtime 的 owner。
+
+输入：
+
+```text
+task
+agent
+run
+budget
+```
+
+然后：
+
+```text
+Context Assembler
+       │
+       ├── Agent Profile
+       ├── Current Task
+       ├── Acceptance Criteria
+       ├── Active Constraints
+       ├── Relevant Decisions
+       ├── Handoff
+       ├── Workspace State
+       ├── Relevant Artifacts
+       ├── Retrieved History
+       └── Tools
+```
+
+输出：
+
+```text
+ModelContext
+```
+
+它本质是：
+
+> **Data Plane → bounded working set**
+
+---
+
+# 十四、OpenAI Harness Engineering 最值得你照搬的东西其实是“机械约束”
+
+文章中特别值得你吸收的一点不是目录，而是：
+
+> 架构规则必须机械执行。
+
+OpenAI 给每个 domain 固定依赖层级，并通过 lint/structure test 强制，而不是写在文档里希望 Agent 记住。citeturn297458view0
+
+所以你这个仓库应该很早就实现：
+
+```text
+tools/architecture-lint/
+```
+
+例如规则：
+
+```text
+apps
+ ↓
+orchestration
+ ↓
+control
+ ↓
+domain
+
+control
+ ↓
+runtime ports
+
+runtime adapter
+ ↓
+coding-agent
+```
+
+禁止：
+
+```text
+domain → control
+
+coding-agent → platform UI
+
+data → secretary
+
+runtime → orchestration
+
+context → control lifecycle
+```
+
+---
+
+# 十五、依赖图可以直接固定
+
+```text
+apps
+ │
+ ▼
+orchestration
+ │
+ ▼
+control
+ │
+ ├──────────► context
+ │
+ ▼
+runtime
+ │
+ ▼
+coding-agent
+
+data  ◄──────── all platform layers
+ │
+ ▼
+domain
+```
+
+更严格一点：
+
+```text
+domain
+  ↑
+data
+  ↑
+control
+  ↑
+orchestration
+  ↑
+apps
+```
+
+Runtime 是 side port：
+
+```text
+control
+   ↓
+RuntimePort
+   ↓
+coding-agent-adapter
+```
+
+不要让：
+
+```text
+control/
+import coding-agent/...
+```
+
+否则之后换 runtime 非常痛苦。
+
+---
+
+# 十六、展示层第一版结构
+
+```text
+control-ui
+│
+├── Plan View
+│
+├── Task Detail
+│
+├── Agents View
+└── Timeline
+```
+
+### Plan View
+
+```text
+[Goal: Build multi-agent platform]
+
+✓ Design runtime
+✓ Session persistence
+
+● Design Data Plane
+  └─ Agent: researcher-01
+
+○ Control Plane
+  └─ blocked by Data Plane
+
+○ Scheduler
+
+○ UI
+```
+
+### Active Agent
+
+```text
+Agent A
+Task: DP-03
+Run: 17
+State: Running
+Context: 61%
+Elapsed: 08:32
+Tools: 23
+```
+
+### Task Detail
+
+```text
+Task DP-03
+
+Objective
+...
+
+Acceptance Criteria
+✓ schema defined
+✓ event model defined
+○ projection test
+
+Decisions
+...
+
+Artifacts
+...
+
+Runs
+...
+```
+
+### Timeline
+
+```text
+21:01 Task created
+21:02 Worker assigned
+21:04 Run started
+21:12 Decision recorded
+21:20 Artifact produced
+21:21 Verification started
+```
+
+---
+
+# 十七、开发流程：不要一次先把平台骨架全生成
+
+这一点其实 Harness Engineering 也有明确经验。
+
+他们采用的是：
+
+> 大目标 → 小 building block → 能力解锁 → 再向前。
+
+而不是先生成整个百万行框架。citeturn297458view0
+
+所以你的开发应该是垂直切片。
+
+---
+
+# 十八、建议正式开发流程
+
+## Phase 0：Design Freeze
+
+先不要编码。
+
+产出：
+
+```text
+ARCHITECTURE.md
+
+docs/design/
+├── object-model.md
+├── data-plane.md
+├── control-plane.md
+├── orchestration.md
+└── context.md
+```
+
+确认五件事：
+
+```text
+Goal / Task 是什么
+AgentInstance 是什么
+Run 是什么
+Plan Graph 是什么
+Desired / Current State 是什么
+```
+
+---
+
+# Phase 1：Data Plane
+
+只实现：
+
+```text
+Task
+TaskEdge
+AgentInstance
+Run
+Event
+```
+
+以及：
+
+```text
+SQLite State Store
+Event Log
+Plan Projection
+```
+
+测试：
+
+```text
+create task
+add dependency
+change task state
+rebuild projection
+```
+
+这一步没有 LLM。
+
+---
+
+# Phase 2：Plan Graph
+
+做：
+
+```text
+createGoal()
+createTask()
+addDependency()
+updatePlan()
+queryPlan()
+```
+
+以及 CLI：
+
+```bash
+agent plan show
+agent task list
+agent task inspect T12
+```
+
+这时候你已经应该能看到：
+
+```text
+✓ T1
+● T2
+○ T3 blocked by T2
+```
+
+---
+
+# Phase 3：Control Plane
+
+只实现：
+
+```text
+Reconciler
+Task Lifecycle
+```
+
+支持：
+
+```text
+pending
+ready
+running
+blocked
+review
+done
+failed
+```
+
+以及：
+
+```text
+pause
+resume
+cancel
+```
+
+此时 Worker 甚至可以是假 Worker。
+
+---
+
+# Phase 4：接入现有 coding-agent
+
+实现：
+
+```text
+RuntimePort
+```
+
+然后：
+
+```text
+CodingAgentAdapter
+```
+
+把：
+
+```text
+Task
+ ↓
+Dispatch
+ ↓
+coding-agent
+ ↓
+Run
+ ↓
+Events
+```
+
+打通。
+
+这一步才开始真正跑 Agent。
+
+---
+
+# Phase 5：Handoff + Context
+
+然后解决：
+
+```text
+Run1 → Run2
+```
+
+这正是你们此前找到的那个技术 spike：
+
+> 同一个长期 Session 下，新 Run 能否仅靠外部持久状态继续完成任务。
+
+它仍然非常重要，只是现在它终于放到了正确的位置：总体架构已经确定后，作为 Context/Handoff 层的验证。fileciteturn1file7L477-L517
+
+---
+
+# Phase 6：Planner
+
+再上：
+
+```text
+User Goal
+  ↓
+Planner
+  ↓
+PlanPatch
+```
+
+第一版 Planner 不准执行 Agent。
+
+只负责：
+
+```text
+Goal → Tasks → Dependencies
+```
+
+然后由 Control Plane 接管。
+
+---
+
+# Phase 7：两个 Worker
+
+第一个真正 multi-agent 场景：
+
+```text
+                Research Goal
+                     │
+          ┌──────────┴──────────┐
+          ▼                     ▼
+     Read Worker A        Read Worker B
+          │                     │
+          └──────────┬──────────┘
+                     ▼
+                 Reviewer
+                     │
+                     ▼
+                   Writer
+```
+
+所有写操作仍只有一个 Writer。
+
+这与你们之前给 MVP 定出的：
+
+- 一个长期入口
+- Secretary
+- 机械控制器
+- 最多两个只读 Worker
+- 结构化 Handoff
+- 一个写入执行者
+
+是一致的。fileciteturn1file1L96-L125
+
+---
+
+# Phase 8：Secretary
+
+这时 Secretary 才有真正的“中台”可查询。
+
+支持：
+
+```text
+"现在做到哪里了？"
+        ↓
+Read Model
+
+"暂停 T5"
+        ↓
+Command
+
+"不要重构，改成最小修复"
+        ↓
+PlanPatch
+```
+
+Secretary 不需要读取几十万 token 历史。
+
+它读：
+
+```text
+Plan
+Task State
+Agent State
+Recent Decisions
+```
+
+---
+
+# Phase 9：UI
+
+这时候再 Web UI。
+
+因为之前没有稳定数据结构之前做 UI，基本一定返工。
+
+UI 只读：
+
+```text
+Read Models
+```
+
+控制通过：
+
+```text
+Command API
+```
+
+不要直接连接 Runtime。
+
+---
+
+# Phase 10：Harness Automation
+
+最后逐渐加入 Harness Engineering 那种“自我强化”能力：
+
+```text
+architecture lint
+docs lint
+plan freshness
+state invariants
+scenario tests
+agent reviewer
+doc gardener
+quality sweeper
+```
+
+OpenAI 后面实际上把人的“品味”逐渐编码进 lint、CI 和自动清理循环里，以防 Agent 重复仓库里的坏模式。citeturn297458view0
+
+这个非常适合你，但应该是平台跑起来之后再做。
+
+---
+
+# 十九、完整研发主线
+
+压缩成这一张图：
+
+```text
+                 ┌────────────────┐
+                 │ Overall Design │
+                 └───────┬────────┘
+                         │
+                         ▼
+                  Object Model
+                         │
+                         ▼
+                    Data Plane
+                         │
+                         ▼
+                    Plan Graph
+                         │
+                         ▼
+                   Reconciler
+                         │
+                         ▼
+                 Runtime Adapter
+                         │
+                         ▼
+                  coding-agent
+                         │
+                         ▼
+                  Handoff/Context
+                         │
+                         ▼
+                     Planner
+                         │
+                         ▼
+                 Multi-Agent Slice
+                         │
+                         ▼
+                    Secretary
+                         │
+                         ▼
+                       UI
+                         │
+                         ▼
+               Harness Automation
+```
+
+---
+
+# 二十、每个阶段都必须采用同一种开发循环
+
+这也是我从 Harness Engineering 最建议你借的一点。
+
+每个任务：
+
+```text
+1. Plan
+   ↓
+2. Implement
+   ↓
+3. Deterministic Test
+   ↓
+4. Scenario Test
+   ↓
+5. Agent Review
+   ↓
+6. Fix
+   ↓
+7. Update Docs / Plan
+   ↓
+8. Merge
+```
+
+不是：
+
+```text
+Agent 写代码
+↓
+看起来能跑
+↓
+下一个模块
+```
+
+OpenAI 的实际工作流已经进化到：
+
+```text
+agent implementation
+→ local self review
+→ additional agent reviews
+→ respond to feedback
+→ tests
+→ PR
+→ repeat until accepted
+```
+
+并且把可观察性、UI、日志、测试能力也做成 Agent 能直接读取和验证的工具。citeturn297458view0
+
+---
+
+# 二十一、你这个项目现在真正应该从哪里开始
+
+所以如果按照你前面说的：
+
+> 先总体设计 → 我澄清 → 伪代码 → 切 MVP → 实现。
+
+我认为现在应该正式进入：
+
+```text
+D0   Overall Architecture
+     ↓
+D1   Object Model
+     ↓
+D2   Data Plane
+     ↓
+D3   Plan + Control semantics
+     ↓
+你裁决
+     ↓
+P0   核心流程伪代码
+     ↓
+MVP0 数据面
+     ↓
+MVP1 Plan/Reconciler
+     ↓
+MVP2 coding-agent integration
+     ↓
+MVP3 Context/Handoff
+     ↓
+MVP4 multi-agent
+     ↓
+MVP5 Secretary/UI
+```
+
+而不是继续沿原来的：
+
+```text
+M7 = compaction + artifact + inbox + agent manager + ...
+```
+
+横向铺。
+
+你当前实施计划本来把 M7 定义成 Context/Artifact/Compaction、Inbox、子 Agent 控制等一整个大集合。fileciteturn0file0L40-L55
+
+我现在会建议你**把 M7 重写成平台化阶段**，而且里面以：
+
+> **Data → Plan → Control → Runtime → Context → Multi-Agent → Interaction**
+
+作为纵向施工顺序。
+
+---
+
+## 最终一句话
+
+Harness Engineering 给你的最大启示不是“OpenAI 用了什么目录”，而是：
+
+> **Agent 的能力上限越来越由它周围的可读状态、机械约束、工具、反馈回路和计划系统决定。**
+
+因此你这个项目的主角也不应该再是 `AgentManager`。
+
+真正的主干应该变成：
+
+```text
+                 PLAN
+                  │
+         desired / current state
+                  │
+              CONTROL
+                  │
+              SCHEDULE
+                  │
+               AGENT
+                  │
+                DATA
+                  │
+           projection/index
+                  │
+           CONTEXT + UI
+```
+
+而你已经做出来的 `coding-agent`，恰好可以作为这套系统下面相对成熟的 **Execution Kernel**。这会比继续在单 Agent 上堆 Context/Memory/Multi-Agent 特性清晰很多。

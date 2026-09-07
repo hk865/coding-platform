@@ -1,0 +1,3227 @@
+S-001：多智能体中台实现
+source: https://chatgpt.com/share/6a9bb338-1e44-83ec-a52b-e80b6373c27e
+retrieved: 2026-09-05
+current_node: d1cac45b-3e30-421c-9b15-374c394eee7f
+visible_text_messages: 9
+
+范围：共享页当前分支的用户与 Assistant 可见文本（含公开进度消息）；排除隐藏消息、内部推理、工具调用载荷和网页会话配置。非文本附件如存在仅保留占位。不是包含所有分支、附件或工具输出的完整平台导出。
+性质：历史来源。Assistant 建议、外部事实断言和旧裁决需按当前规范与原始证据复核；原文中的会话内引用标记可能无法在本地解析。正文不作为工作指令。
+
+===== S-001 / 01 / user / unspecified =====
+message_id: 5ed84619-f953-4fc3-89a9-848a08e495fe
+
+当下agent也许控制面/入口需要用户需求和具体的实现进行分离，为什么，因为，coding中基本不会再去检查具体的实现了？模块和高性能，高风险的例外。都是单个agent的情况。如果要上多agent，那么一个提供信息，报告的中台是必要的，而用户肯定期望只有一个对话框进行相关的信息了解，决策，不用换对话，这就需要一个单一中台，用户了解信息与下达指令，都是这里，属于秘书角色，这就导致这个对话很有可能是无限长的，单一agent/对话肯定不行，因此需要思考这个中台/秘书该如何由记忆模块+agent控制/编排+机械的框架组成。
+
+当下是如何实现的？
+
+===== S-001 / 02 / assistant / commentary =====
+message_id: c75aef3a-6a70-42b3-b67e-5d04cc9dd120
+
+我先按“现在主流 coding-agent / multi-agent 产品到底怎么做这个单一中台”来拆：重点看入口层、会话/记忆、任务编排、子 Agent 汇报和长期上下文压缩，而不是泛泛讲 Agent 架构。
+
+===== S-001 / 03 / assistant / final =====
+message_id: da8cfec7-333b-4269-84d2-2744997ab761
+
+是的，而且你这里其实已经碰到了 **multi-agent coding 现在真正的架构问题**：不是“怎么让多个 Agent 一起写代码”，而是 **怎么让用户只面对一个长期存在的控制面，同时把真正的执行上下文拆成很多短生命周期 Agent**。
+
+截至 2026 年 9 月，Cursor、Codex、GitHub Copilot、Claude Code 都已经部分朝这个方向走，但还没有谁把你描述的“秘书型中台”完整做出来。现在主流实现更像是：
+
+```text
+                     ┌──────────────────────────────┐
+                     │      User / Command Center   │
+                     │   对话、任务、状态、决策入口    │
+                     └──────────────┬───────────────┘
+                                    │
+                         Intent / Task / Decision
+                                    │
+                     ┌──────────────▼───────────────┐
+                     │      Parent / Orchestrator   │
+                     │                              │
+                     │  任务分解 / 路由 / 汇总 / 调度 │
+                     └───────┬─────────┬────────────┘
+                             │         │
+                    spawn    │         │ spawn
+                             ▼         ▼
+                       ┌─────────┐ ┌─────────┐
+                       │Agent A  │ │Agent B  │ ...
+                       │独立ctx  │ │独立ctx  │
+                       └────┬────┘ └────┬────┘
+                            │           │
+                       code/test     research
+                            │           │
+                            └─────┬─────┘
+                                  │
+                           structured result
+                                  │
+                    ┌─────────────▼──────────────┐
+                    │     State / Artifact DB     │
+                    │ task / diff / test / fact   │
+                    │ decision / progress / event │
+                    └─────────────┬──────────────┘
+                                  │
+                     retrieve / summarize
+                                  │
+                    ┌─────────────▼──────────────┐
+                    │       Secretary Agent       │
+                    │ 回答用户“现在怎么样？”       │
+                    │ 请求决策 / 展示异常 / 下指令   │
+                    └─────────────────────────────┘
+```
+
+但现在大多数产品，只实现到了上图的 **60%左右**。
+
+### 1. 当前最普遍的办法：Parent Agent + 独立 Subagent context
+
+这一点已经基本形成共识。
+
+Cursor 明确规定：subagent **从干净上下文开始**，看不到父对话历史，Parent 只把当前任务需要的信息塞进去；执行完以后，把结果返回父 Agent。这样 Explore、Bash 等大量中间输出不会污染主上下文。citeturn106013search9turn106013search1
+
+GitHub Copilot SDK 也是几乎相同的模型：
+
+> Parent Session  
+> → 自动选择 Custom Agent  
+> → Subagent 在 isolated context 执行  
+> → 生命周期事件持续回传 Parent Session。citeturn106013search2turn106013search3
+
+这其实就是你说的：
+
+**用户需求 ≠ 具体实现上下文。**
+
+一个主 Agent 不需要知道：
+
+- grep 出来的 600 行东西；
+- 每一步 shell output；
+- 某个模块具体怎么改；
+- 测试失败三次的完整日志；
+- 一个 worker 为什么选择这个函数。
+
+它真正需要的是：
+
+```text
+task: implement OAuth refresh
+status: completed
+changed:
+  - auth/session.ts
+  - auth/token.ts
+tests:
+  - auth.test.ts: pass
+risk:
+  - refresh concurrency still uncertain
+decision_required: false
+```
+
+所以今天已经出现一个非常明显的原则：
+
+> **Execution context should die.  
+> Project state should survive.**
+
+执行上下文是消耗品。
+
+状态才是长期资产。
+
+---
+
+## 2. 但是现在的“主对话”仍然太像 Agent，而不是你说的秘书
+
+这是当前产品真正没有解决好的地方。
+
+例如 Codex App 现在把自己明确描述成 **command center for agents**：不同 Agent 在独立 thread/worktree 中运行，用户可以同时监督多个长期任务。citeturn106013search4turn106013search5
+
+Cursor 也是 Agents Window：
+
+```text
+Agents Window
+ ├── Agent/session A
+ ├── Agent/session B
+ ├── Agent/session C
+ └── ...
+```
+
+而不是：
+
+```text
+                    一个长期秘书
+                         │
+          ┌──────────────┼──────────────┐
+          ▼              ▼              ▼
+       Project A      Project B      Project C
+          │              │              │
+      Agent swarm     Agent swarm    Agent swarm
+```
+
+Cursor 甚至明确说，目前管理多个 Agent 的方式还是 sidebar + pinned conversations；长会话依赖自动 summarization 保持工作。citeturn106013search1
+
+这和你的设想差异非常大。
+
+你想要的是：
+
+> **用户不管理 Agent。用户管理事情。**
+
+现在的产品多数还是：
+
+> 用户管理若干 Agent session。
+
+这是两个时代的 UI。
+
+---
+
+# 3. 为什么你说的“秘书 Agent”不能真的靠一个无限长 conversation
+
+这点我基本赞同你的判断。
+
+假设用户长期只说：
+
+> “昨天那个权限问题怎么样？”
+
+Secretary 如果靠完整 conversation：
+
+```text
+300k tokens history
+        ↓
+compression
+        ↓
+200k
+        ↓
+compression
+        ↓
+120k
+        ↓
+...
+```
+
+最终必然出现 information drift。
+
+而且真正的问题不是 token 贵，而是：
+
+### Conversation 本身不是合理的状态表示。
+
+例如：
+
+```text
+用户：
+先别改数据库。
+
+Agent：
+好的。
+
+[三小时以后]
+
+用户：
+刚才 API 那个问题继续解决。
+
+```
+
+真正应存储的不是：
+
+```text
+message #217:
+"先别改数据库"
+```
+
+而应该变成：
+
+```yaml
+constraints:
+  database_schema_changes:
+    allowed: false
+    source: user
+    timestamp: ...
+```
+
+也就是说：
+
+> **conversation 是 event log，不应该是 state。**
+
+这其实类似 event sourcing：
+
+```text
+Conversation / Agent events
+          │
+          ▼
+       Reducer
+          │
+          ▼
+     Canonical State
+```
+
+你之前 coding-agent 里面一直在讨论 Event → Reducer → State，这里实际上正好派上用场。
+
+---
+
+# 4. 因此真正的 Secretary 应该由三部分组成
+
+不是一个超级 Agent。
+
+而应该是：
+
+```text
+Secretary
+=
+Mechanical Control Plane
++
+Persistent State / Memory
++
+Thin Reasoning Agent
+```
+
+其中我反而认为 **Agent 是最薄的一层**。
+
+---
+
+## A. Mechanical Control Plane
+
+大量事情根本不要让 LLM 决定。
+
+例如：
+
+```text
+Task ID
+Owner Agent
+Parent Task
+Status
+Workspace
+Branch
+Commit
+Files Changed
+Tests
+Start Time
+End Time
+Dependencies
+Artifacts
+Risk Level
+Approval Needed
+```
+
+全部数据库维护。
+
+例如：
+
+```text
+task_182
+├─ goal: OAuth refresh support
+├─ status: blocked
+├─ worker: agent_74
+├─ workspace: wt/auth-refresh
+├─ parent: feature_auth
+│
+├─ artifacts
+│   ├─ patch
+│   ├─ test-result
+│   └─ implementation-report
+│
+└─ blocker
+    └─ requires DB schema change
+```
+
+用户问：
+
+> “认证功能做得怎么样了？”
+
+秘书完全没必要翻 80 万 token。
+
+机械查询：
+
+```sql
+SELECT ...
+FROM task_tree
+WHERE project='auth'
+```
+
+然后只给 LLM：
+
+```text
+7 tasks
+5 completed
+1 running
+1 blocked
+
+blocked:
+database schema approval required
+```
+
+让它负责说人话。
+
+---
+
+# 5. Memory 也不应该是一个东西
+
+当前很多 Agent 系统所谓 memory 太混乱了。
+
+Claude Code 已经开始把 memory 分层，比如：
+
+- 用户级；
+- 项目级；
+- 项目局部规则；
+
+并通过 CLAUDE.md 等持久化跨 session 信息。citeturn120924search0
+
+GitHub Copilot Memory 更有意思：它已经开始保存 **repository facts**，甚至给事实附代码 citation，并在使用前重新验证 citation 对当前 branch 是否仍成立。citeturn106013search8
+
+这其实已经很接近正确方向。
+
+但你的系统里我会再进一步分成：
+
+```text
+Memory
+│
+├── User Memory
+│   └── 偏好 / 长期目标
+│
+├── Project Memory
+│   ├── architecture
+│   ├── conventions
+│   └── constraints
+│
+├── Decision Memory
+│   ├── 为什么选 PostgreSQL
+│   ├── 为什么不用方案 B
+│   └── 用户批准了什么
+│
+├── Task State
+│   ├── todo
+│   ├── doing
+│   ├── blocked
+│   └── done
+│
+├── Evidence
+│   ├── commits
+│   ├── diffs
+│   ├── tests
+│   └── screenshots
+│
+└── Ephemeral Agent Context
+    └── 干完直接丢掉
+```
+
+最后一个尤其重要：
+
+**90% Agent context 本来就应该删除。**
+
+---
+
+# 6. Worker 给 Secretary 的不是聊天，而应该是 Report
+
+这可能是你这个想法里最关键的一步。
+
+现在很多 multi-agent 实现实际上还是：
+
+```text
+Agent A
+   ↓
+一段自然语言
+   ↓
+Parent Agent
+```
+
+这仍然太脆弱。
+
+更合理的是定义固定的 **Agent Report Protocol**。
+
+比如：
+
+```json
+{
+  "task_id": "T184",
+  "status": "completed",
+
+  "summary": "Implemented refresh-token rotation",
+
+  "changes": [
+    "src/auth/session.ts",
+    "src/auth/token.ts"
+  ],
+
+  "verification": {
+    "tests": 42,
+    "passed": 42
+  },
+
+  "decisions": [
+    {
+      "decision": "Use atomic token replacement",
+      "reason": "Avoid refresh replay"
+    }
+  ],
+
+  "risks": [],
+
+  "needs_user_decision": false
+}
+```
+
+然后：
+
+```text
+Worker
+  ↓
+Report Validator
+  ↓
+State Reducer
+  ↓
+Project DB
+  ↓
+Secretary
+```
+
+因此 worker 有没有胡言乱语，并不太重要。
+
+Control Plane 只认 schema。
+
+GitHub Copilot SDK 已经允许 Parent 捕获 subagent lifecycle events；这已经开始具备这种基础设施，只是目前更偏运行事件，而不是完整的“组织知识报告层”。citeturn106013search2turn106013search3
+
+---
+
+# 7. 那 Secretary 本身怎么避免变成无限 context？
+
+答案其实很反直觉：
+
+### Secretary 也应该是 stateless-ish 的。
+
+例如你今天打开唯一对话框：
+
+> 那个支付系统现在怎么样？
+
+系统实际上做的是：
+
+```text
+                    User message
+                         │
+                         ▼
+                Intent Resolver
+                         │
+          "payment project status"
+                         │
+                         ▼
+              Context Assembler
+               /      |       \
+              /       |        \
+       Project DB   Memory   recent msgs
+            │          │          │
+            └──────────┼──────────┘
+                       ▼
+                Secretary LLM
+                       │
+                       ▼
+                    Answer
+```
+
+Secretary 不需要“记住半年”。
+
+每一轮临时 assemble：
+
+```text
+system:
+你是项目秘书
+
+user preferences:
+...
+
+relevant project state:
+...
+
+relevant decisions:
+...
+
+recent conversation:
+last 8 turns
+
+current request:
+...
+```
+
+回答结束以后，这个 context 也可以丢。
+
+所以：
+
+> **界面上是一个无限长对话。**
+>
+> **模型层面却根本不存在一个无限长对话。**
+
+这个差别非常关键。
+
+---
+
+# 8. Claude 现在其实已经透露出类似方向
+
+Anthropic 对长任务的最新指导里甚至明确建议：
+
+复杂任务跨多个 context window 时，不一定应该一直 compression。
+
+有时候直接：
+
+```text
+new context
+→ read progress.txt
+→ read tests.json
+→ inspect git log
+→ continue
+```
+
+效果反而更好。citeturn120924search1
+
+这句话背后的本质就是：
+
+> **filesystem / structured state > conversation history**
+
+也就是你现在想到的方向。
+
+---
+
+# 9. Coding 场景为什么尤其适合这种架构
+
+你前面那句话其实很重要：
+
+> coding 中基本不会再去检查具体实现了，高风险、高性能模块例外。
+
+我稍微修正一下：
+
+不是“不检查实现”，而是 **人的 review 粒度正在向上移动**。
+
+以前：
+
+```text
+Human
+ ↓
+写每一行代码
+```
+
+后来：
+
+```text
+Human
+ ↓
+review diff
+```
+
+再往后：
+
+```text
+Human
+ ↓
+review architecture
+ ↓
+review behavior
+ ↓
+review evidence
+```
+
+比如用户其实只想知道：
+
+```text
+支付完成了吗？
+性能有没有退化？
+测试过了吗？
+改了哪些边界？
+有没有安全风险？
+```
+
+并不想知道：
+
+```text
+第 383 行用了 map 还是 for loop
+```
+
+Cursor 自己现在宣传 Cloud Agents 时也已经明显强调：
+
+> PR 带截图和视频，让 review 更关注 outcome，而不是逐行检查代码。citeturn106013search15
+
+所以人机接口自然会变成：
+
+```text
+Implementation
+      ↓
+Verification
+      ↓
+Evidence
+      ↓
+Report
+      ↓
+Human decision
+```
+
+而不是：
+
+```text
+Implementation
+      ↓
+Human reads implementation
+```
+
+---
+
+# 10. 所以我认为你现在这个 Coding Agent 的 Control Plane 可以重新定义
+
+你之前把 Session 视作 data plane，Workspace/调度看作 control plane 的基础。
+
+现在可以再加一层。
+
+我会把整个东西改成：
+
+```text
+                         USER
+                          │
+                          ▼
+                ┌──────────────────┐
+                │ Secretary Plane  │
+                │ 单一交互入口       │
+                └────────┬─────────┘
+                         │
+        ┌────────────────┼────────────────┐
+        │                │                │
+        ▼                ▼                ▼
+    Query State      Give Orders      Decisions
+        │                │                │
+        └────────────────┼────────────────┘
+                         ▼
+                ┌──────────────────┐
+                │   Control Plane  │
+                │                  │
+                │ Task DAG         │
+                │ Scheduler        │
+                │ Agent lifecycle  │
+                │ Permissions      │
+                │ Approvals        │
+                └────────┬─────────┘
+                         │
+                  dispatch / event
+                         │
+      ┌──────────────────┼──────────────────┐
+      ▼                  ▼                  ▼
+   Agent A            Agent B            Agent C
+ Workspace A         Workspace B         Workspace C
+      │                  │                  │
+      └──────────────Report/Event───────────┘
+                         │
+                         ▼
+                ┌──────────────────┐
+                │    Data Plane    │
+                │                  │
+                │ Sessions         │
+                │ Git / Artifacts  │
+                │ Test results     │
+                │ Logs             │
+                └────────┬─────────┘
+                         │
+                         ▼
+                ┌──────────────────┐
+                │ Knowledge Plane  │
+                │                  │
+                │ Project State    │
+                │ Decisions        │
+                │ Facts            │
+                │ User Memory      │
+                └──────────────────┘
+```
+
+这里我甚至不建议把 Secretary 塞进 Control Plane。
+
+因为二者职责不同：
+
+**Control Plane 决定机器怎么干活。**
+
+**Secretary Plane 决定用户如何理解和控制整个系统。**
+
+这是一个非常有价值的分层。
+
+---
+
+## 当前行业大概在哪里
+
+可以粗略这么看：
+
+| 系统 | Multi-Agent | 独立上下文 | 独立 Workspace | 持久化知识 | 单一秘书中台 |
+|---|---|---|---|---|---|
+| Cursor | 强 | 有 | Worktree/VM | 部分 | **没有完全形成** |
+| Codex App | 强 | 有 | Worktree/Cloud | Session/Project | **偏 Command Center** |
+| GitHub Copilot | 强 | 有 | isolated session | Copilot Memory | **正在接近** |
+| Claude Code | Subagent 很强 | 有 | 可隔离 | CLAUDE.md / files | **主要仍是 Parent Agent** |
+
+Cursor 已经明确把 subagent 用来隔离 code exploration 和 shell output；Codex 已经把 UI 定义成多 Agent command center；Copilot 已经有 Parent Session→subagent lifecycle events 和 repository-level fact memory；Claude 则已经明确接受“丢弃 context、从文件状态恢复”的长任务模式。citeturn106013search9turn106013search5turn106013search8turn120924search1
+
+所以各个零件其实基本都已经出现了。
+
+**现在缺的主要不是某个 Agent 技术，而是把它们真正组织成一个“AI 组织操作系统”。**
+
+而你说的“秘书”其实就是这个操作系统最上面的 **human control interface**。
+
+它不应该是“最聪明、什么都干的 Agent”，而更像：
+
+> **一个可以查询组织状态、理解用户意图、发出任务、收集报告、维护决策历史、只在需要的时候把问题升级给人的 thin agent。**
+
+如果顺着你现在 Coding-Agent 的设计继续推，我认为最值得做的已经不是继续加强单 Agent loop，而是把现有 **Session / Workspace / Event / State** 重新映射成这一套 **Secretary Plane → Control Plane → Data Plane → Knowledge Plane**。这可能比单纯再加一个 multi-agent scheduler 更接近真正的产品形态。memcite
+
+===== S-001 / 04 / user / unspecified =====
+message_id: 85c0e29a-3a68-44e0-bcff-a45af7b5b7ff
+
+# Selected text:
+
+## Selection 1
+它真正需要的是：
+
+## Selection 2
+5. Memory 也不应该是一个东西
+
+## My request:
+你的这个其实本质上就是类似日志的固定实现了。cursor好像说固定中台，框架编排好于主agent编排。
+
+memory记录不难，难的是查找，如何确保刚好。这个可以让活跃agent/状态，找agent和状态机械检索，二者一起是可以的，但是这样token又会上升。所以agent的生命周期（活跃与不活跃），状态的更新，图工程三者都需要注意
+
+另外管理状态的生命周期也很重要。这个需要查找研究。
+
+===== S-001 / 05 / assistant / commentary =====
+message_id: 192c5c3e-b8a3-4b46-a329-63ffc6696aaa
+
+你抓到的是更核心的一层：**不是“怎么记”，而是“什么东西在什么时候还应该存在、还能被找到、找到后值不值得塞进上下文”**。我会重点查三条线：Cursor/Claude/Codex 对固定编排 vs 主 Agent 编排的判断；Agent/任务状态生命周期；以及 memory retrieval、图检索和 token 预算之间现在怎么权衡。
+
+===== S-001 / 06 / assistant / final =====
+message_id: e5a18c34-d032-4fa6-bb86-59e55da75811
+
+对，你这个修正很关键。前面我把重点放在“状态/报告结构化”，但你现在指出的是更难的系统问题：
+
+> **长期 Agent 系统的核心不是 storage，而是 lifecycle + retrieval + context admission。**
+
+也就是三个问题：
+
+1. **哪些 Agent / 状态现在还是“活的”？**
+2. **用户或 Agent 当前这一步到底应该找到哪些状态？**
+3. **找到以后，哪些东西值得真正进入 LLM context？**
+
+我查了一下最近 2026 年这一波工作，已经明显开始往这个方向集中。
+
+---
+
+# 1. 先确认你的 Cursor 印象：基本是对的，但需要稍微修正
+
+Cursor 今年 1 月公开了他们数百 Agent、持续数周 coding 的实验。
+
+他们一开始确实尝试了非常“Agent-native”的方案：
+
+```text
+Agent A ─┐
+Agent B ─┼→ shared state
+Agent C ─┘
+
+每个 Agent：
+- 看其他 Agent 在干什么
+- 自己挑任务
+- 自己协调
+- 自己抢锁
+```
+
+结果失败得很明显：
+
+- Agent 忘记释放锁；
+- 锁成为吞吐瓶颈；
+- 状态更新发生竞争；
+- 更严重的是，没有明确层级以后，Agent 倾向于做容易的小任务；
+- 没 Agent 对端到端目标负责。citeturn549947view0
+
+后来 Cursor 改成了非常明确的结构：
+
+```text
+Planner
+   ↓
+Task Queue
+   ↓
+Workers
+   ↓
+Judge
+   ↓
+next cycle
+```
+
+Worker **根本不负责协调**，只完成自己的任务。每轮结束后，由 Judge 判断是否继续，然后下一轮重新开始。citeturn549947view0
+
+所以你说的：
+
+> 固定中台 / framework orchestration 好于完全由主 Agent 编排
+
+在这个意义上是成立的。
+
+但 Cursor 自己的结论更精确：
+
+> **不是越固定越好，而是 harness 和 Agent 之间需要划边界。**
+
+他们明确说“结构太少会冲突、重复和漂移；结构太多又会脆弱”。citeturn549947view0
+
+而且他们 2026 年 4 月又进一步说：
+
+> 多 Agent 的 dispatch、task framing、结果 stitching，本质上属于 **harness challenge**，而不是某个单独 Agent 应该承担的职责。citeturn654922search0
+
+这与你现在想的中台非常吻合。
+
+---
+
+# 2. 但是更有意思的是 Cursor 后来又往回退了一点
+
+今年 6 月 Cursor 关于 Cloud Agent 的总结很值得注意。
+
+他们发现随着模型能力提升，一些过去 hard-code 在 harness 里的东西，开始重新交回 Agent。
+
+比如以前：
+
+```text
+Harness:
+检测 CI failure
+→ 抓日志
+→ 把日志放进 VM
+→ 告诉 Agent 怎么处理
+```
+
+现在变成：
+
+```text
+Harness:
+给 Agent GitHub CLI
+给 Agent searchable files
+
+Agent:
+自己决定何时找 CI
+自己决定找什么
+```
+
+Cursor 把这个问题明确描述成：
+
+> 不断重新判断多少行为应该 deterministic，多少应该交给 Agent。citeturn549947view1
+
+所以现在比较合理的结构不是：
+
+```text
+固定 workflow
+取代
+Agent orchestration
+```
+
+而是：
+
+```text
+机械框架负责：
+生命周期
+权限
+并发
+持久化
+任务依赖
+恢复
+状态索引
+
+Agent负责：
+语义判断
+规划
+探索
+异常情况
+动态检索
+```
+
+也就是：
+
+> **structure 固定，policy 可智能。**
+
+这个区分非常重要。
+
+---
+
+# 3. 你现在提的“生命周期”其实有三个不同生命周期
+
+我觉得最好不要把它们混成一个。
+
+应该分别存在：
+
+```text
+Agent lifecycle
+Task lifecycle
+State / Memory lifecycle
+```
+
+三者相互关联，但不相同。
+
+---
+
+# 一、Agent lifecycle
+
+Cursor 最近其实已经碰到这个问题了。
+
+他们明确说：
+
+- Agent 可能运行在一台机器；
+- subagent 可以运行在其他机器；
+- subagent 甚至可以比 parent 活得更久；
+- VM 生命周期应该和 Agent 生命周期解耦；
+- conversation state 也应该和 Agent loop 解耦。citeturn549947view1
+
+因此：
+
+```text
+Conversation
+≠ Agent
+≠ Machine
+≠ Task
+```
+
+这是非常重要的。
+
+一个 Worker Agent 可以：
+
+```text
+CREATED
+   ↓
+READY
+   ↓
+RUNNING
+   ↓
+WAITING
+   ↓
+BLOCKED
+   ↓
+SUSPENDED
+   ↓
+COMPLETED
+   ↓
+ARCHIVED
+```
+
+但任务本身可能还没结束。
+
+例如：
+
+```text
+Task T1: OAuth
+   │
+   ├─ Agent A → dead
+   │
+   ├─ Agent B → completed
+   │
+   └─ Agent C → active
+```
+
+所以 Secretary 如果问：
+
+> OAuth 现在怎么样？
+
+绝对不能：
+
+```text
+find Agent A
+→ read Agent A history
+```
+
+而应该：
+
+```text
+find Task T1
+    ↓
+find active execution lineage
+    ↓
+Agent C
+    +
+completed evidence B
+```
+
+这个 **active execution lineage** 很重要。
+
+---
+
+# 二、Task lifecycle
+
+它通常应该比 Agent 长。
+
+比如：
+
+```text
+CREATED
+ ↓
+PLANNED
+ ↓
+READY
+ ↓
+RUNNING
+ ↓
+BLOCKED
+ ↓
+VERIFYING
+ ↓
+DONE
+ ↓
+SUPERSEDED / INVALIDATED / REOPENED
+```
+
+Cursor 的实验里面其实已经隐含了这种设计：
+
+Planner 创建任务；
+
+Worker 完成任务；
+
+Judge 判断：
+
+```text
+继续？
+结束？
+重新规划？
+```
+
+然后新 cycle fresh start。citeturn549947view0
+
+也就是说：
+
+> Agent 可以死，但 Task continuity 必须存在。
+
+这也是为什么它们仍需要 harness。
+
+---
+
+# 三、State lifecycle
+
+这个反而是现在学术界最近开始真正研究的地方。
+
+过去大家把 memory 想成：
+
+```text
+write
+↓
+vector DB
+↓
+retrieve
+```
+
+现在越来越发现这是错的。
+
+因为一个事实：
+
+```text
+"OAuth 使用 JWT"
+```
+
+可能经历：
+
+```text
+valid
+ ↓
+modified
+ ↓
+deprecated
+ ↓
+superseded
+ ↓
+historical-only
+```
+
+但 semantic similarity 根本不知道这些。
+
+于是如果你只做 embedding retrieval：
+
+```text
+query:
+"OAuth 怎么实现的？"
+
+vector DB:
+旧设计    0.94
+新设计    0.90
+```
+
+它很可能把旧设计排第一。
+
+这就是严重问题。
+
+---
+
+# 4. 最近有一个研究跟你现在的问题几乎完全撞上：MAGE
+
+微软 2026 年 6 月发表了一篇：
+
+**Beyond Semantic Organization: Memory as Execution State Management for Long-Horizon Agents**
+
+它直接攻击了传统：
+
+```text
+semantic memory
++
+RAG
+```
+
+的思路。
+
+它认为长期 Agent 的 memory 不是“知识库”，而首先是：
+
+> **execution state manager**
+
+因为长任务不是一堆独立事实，而是一条：
+
+```text
+goal
+ ↓
+decision
+ ↓
+action
+ ↓
+result
+ ↓
+new constraint
+ ↓
+next decision
+```
+
+的执行路径。
+
+于是他们不是用 flat memory，而是：
+
+```text
+                    ROOT
+                     │
+              Task Objective
+                     │
+               ┌─────┴─────┐
+               │           │
+             path A      path B
+               │           │
+          failed state   active
+                           │
+                       current
+```
+
+真正进入 Agent context 的主要是：
+
+> **active root → current path**
+
+而不是整个历史。citeturn216483search2
+
+这个正好回答了你刚才说的：
+
+> 找 Agent 和找状态机械检索以后 token 又会上升。
+
+答案不是：
+
+> retrieve more accurately
+
+而可能是：
+
+> **首先利用 lifecycle，把搜索空间砍掉。**
+
+---
+
+# 5. 这其实比 embedding search 强很多
+
+假设项目里已经有 10 万条状态。
+
+用户问：
+
+> 数据库迁移为什么还没做？
+
+最差的方法：
+
+```text
+Embedding search
+10万 state
+     ↓
+Top 50
+     ↓
+LLM rerank
+     ↓
+20 items
+```
+
+token 很快爆掉。
+
+更好的应该是：
+
+```text
+Current Project
+       ↓
+Active Goal
+       ↓
+Task DAG
+       ↓
+database migration node
+       ↓
+active lineage
+       ↓
+blocked state
+       ↓
+associated decision
+```
+
+第一次检索甚至可以完全不需要 LLM。
+
+例如：
+
+```text
+project_id
+  ↓
+task_id
+  ↓
+active_state_id
+  ↓
+parent decision
+  ↓
+blocker
+```
+
+只有到这里还不知道的时候：
+
+```text
+semantic search
+```
+
+所以检索顺序实际上应该是：
+
+```text
+Structural retrieval
+       ↓
+Lifecycle filter
+       ↓
+Graph traversal
+       ↓
+Semantic retrieval
+       ↓
+LLM reasoning
+```
+
+而不是现在常见的：
+
+```text
+Embedding
+↓
+LLM
+```
+
+---
+
+# 6. 你说“图工程需要注意”是对的，但不是把所有东西做 Knowledge Graph
+
+这也是最近 graph-memory 研究开始出现的一个变化。
+
+2026 ACL 的 MAGMA 就明确批评：
+
+> 一个单一 semantic graph 不够。
+
+它把 memory 分成多个正交图：
+
+```text
+Memory Item
+ ├── Semantic Graph
+ ├── Temporal Graph
+ ├── Causal Graph
+ └── Entity Graph
+```
+
+然后查询时，根据 query 决定走哪张图。citeturn412336search0
+
+这和 coding 场景其实非常对应：
+
+```text
+State
+│
+├── Task Graph
+│      depends_on
+│      parent
+│      child
+│
+├── Agent Graph
+│      spawned_by
+│      owned_by
+│      replaced_by
+│
+├── Code Graph
+│      modifies
+│      calls
+│      depends_on
+│
+├── Temporal Graph
+│      before
+│      after
+│      supersedes
+│
+└── Decision Graph
+       caused_by
+       approved_by
+       invalidates
+```
+
+这比搞一张：
+
+```text
+everything → everything
+```
+
+的大知识图谱合理得多。
+
+---
+
+# 7. 但 graph 最大的问题正是生命周期
+
+这里你的问题又出现了。
+
+假设：
+
+```text
+Task A
+ ├── Agent 1
+ ├── Agent 2
+ ├── files
+ ├── decisions
+ └── test results
+```
+
+Agent 1 已经死了。
+
+那么是不是删节点？
+
+不应该。
+
+因为：
+
+```text
+Agent 1
+```
+
+仍然可能是：
+
+```text
+为什么做出 Decision X？
+```
+
+的重要 evidence。
+
+所以这里需要区分：
+
+```text
+存在性
+≠
+活跃性
+≠
+可检索性
+≠
+context eligibility
+```
+
+我认为这是非常重要的四分法。
+
+比如：
+
+| State | Exists | Active | Searchable | Default context |
+|---|---:|---:|---:|---:|
+| 当前任务 | ✓ | ✓ | ✓ | ✓ |
+| 完成任务 | ✓ | × | ✓ | × |
+| 旧设计 | ✓ | × | ✓ | × |
+| 已否决方案 | ✓ | × | ✓ | × |
+| 当前 blocker | ✓ | ✓ | ✓ | ✓ |
+| raw shell log | ✓ | × | 条件 | × |
+
+也就是说：
+
+> “inactive” 不代表删除。
+
+只是退出 **working set**。
+
+---
+
+# 8. 我觉得可以借 OS 的 working set 思路
+
+这其实很好理解。
+
+Agent system 不应该每次去问：
+
+> memory 里面有什么？
+
+而应该维护一个：
+
+```text
+Working Set
+```
+
+例如：
+
+```text
+Secretary Working Set
+│
+├── active projects
+├── active tasks
+├── currently running agents
+├── unresolved decisions
+├── blockers
+├── recent user directives
+└── high-risk modules
+```
+
+这个集合可能只有：
+
+```text
+5 KB
+20 KB
+50 KB
+```
+
+而整个系统 memory：
+
+```text
+GB / TB
+```
+
+用户每次发消息：
+
+```text
+Working Set
+     +
+Query-linked expansion
+     ↓
+Context
+```
+
+这就很好解决 token 问题。
+
+---
+
+# 9. 状态从 active 到 inactive 不能只靠时间
+
+这个尤其重要。
+
+你不能简单：
+
+```text
+7 天没访问 → archive
+```
+
+coding task 里不成立。
+
+一个半年前的设计约束：
+
+> payment service 不允许直接写 ledger
+
+可能永远 relevant。
+
+所以 lifecycle 应该至少考虑几个轴：
+
+```text
+State relevance =
+    task_activity
+  + dependency_reachability
+  + recency
+  + authority
+  + unresolvedness
+  + risk
+```
+
+例如：
+
+### 一条状态什么时候应该保持 hot？
+
+满足：
+
+```text
+属于 active task
+OR
+被 active task dependency 引用
+OR
+unresolved
+OR
+user-pinned
+OR
+high-risk invariant
+```
+
+### warm：
+
+```text
+recently completed
+OR
+possible dependency
+OR
+recent design decision
+```
+
+### cold：
+
+```text
+completed
+AND
+no current dependency
+AND
+not unresolved
+```
+
+### historical：
+
+```text
+superseded
+rejected
+failed trajectory
+```
+
+但 historical 仍然可搜。
+
+---
+
+# 10. 一个很有意思的新研究：不是“retrieve memory”，而是主动决定是否打扰 Agent
+
+2026 年 7 月一个工作叫：
+
+**Remember When It Matters**
+
+它专门研究一个现象：
+
+> 长任务里真正重要的 state 随着 trajectory 增长，被埋掉了。
+
+他们叫：
+
+**behavioral state decay**。
+
+解决方式不是每次把 memory 都塞给主 Agent，而是单独运行一个 **memory agent**：
+
+```text
+Action Agent ───────────────→ acting
+      │
+      │ trajectory
+      ▼
+Memory Agent
+      │
+      ├── update memory
+      │
+      └── decide:
+             silent
+               OR
+             remind
+```
+
+也就是说 Memory Agent 很多时候：
+
+> **什么都不说。**
+
+结果反而比：
+
+- 永远暴露 memory bank；
+- 每轮 RAG；
+- advisor 一直给建议；
+
+效果更好。citeturn412336academia58
+
+这个与你说：
+
+> 检索之后 token 又会上升
+
+完全是一个问题。
+
+所以未来可能不是：
+
+```text
+retrieve → context
+```
+
+而是：
+
+```text
+retrieve
+   ↓
+admission policy
+   ↓
+值得打扰吗？
+  /     \
+no      yes
+         ↓
+      inject
+```
+
+---
+
+# 11. 所以我现在会把你的 Secretary 设计进一步改成这样
+
+```text
+                         User
+                          │
+                          ▼
+                ┌─────────────────┐
+                │ Secretary Agent │
+                └────────┬────────┘
+                         │
+               current request
+                         ▼
+             ┌─────────────────────┐
+             │ Context Controller  │
+             └─────────┬───────────┘
+                       │
+        ┌──────────────┼───────────────┐
+        ▼              ▼               ▼
+ Active State      Task Graph       Memory Search
+   Index              │                  │
+        │              │                  │
+        └──────────────┼──────────────────┘
+                       ▼
+                Candidate States
+                       │
+                       ▼
+              Context Admission
+                       │
+            relevance / risk /
+            authority / budget
+                       │
+                       ▼
+               Secretary Context
+```
+
+下面再接：
+
+```text
+                Control Plane
+                     │
+        ┌────────────┼────────────┐
+        ▼            ▼            ▼
+      Task       Agent Life     Workflow
+      DAG          Cycle        Runtime
+```
+
+关键变化是：
+
+> **Memory retrieval 不直接连 LLM。**
+
+中间一定应该有：
+
+```text
+Context Admission Controller
+```
+
+---
+
+# 12. Agent lifecycle 和 State lifecycle 应该联动
+
+比如 Agent 完成：
+
+```text
+Agent A:
+RUNNING
+   ↓
+COMPLETED
+```
+
+系统机械执行：
+
+```text
+1. Freeze execution context
+2. Extract final state
+3. Update task state
+4. Update affected graph nodes
+5. Mark ephemeral state cold
+6. Promote important decisions
+7. Update active working set
+8. terminate agent
+```
+
+注意这里：
+
+**不是先杀 Agent，再让某个 Agent 总结。**
+
+而应该是生命周期 hook。
+
+这也是为什么 harness 很重要。
+
+类似：
+
+```text
+on_agent_complete()
+on_task_blocked()
+on_task_reopened()
+on_decision_invalidated()
+on_branch_superseded()
+```
+
+这种机械 hook。
+
+---
+
+# 13. LangGraph 已经有底层雏形，但没有解决 semantic lifecycle
+
+LangGraph 目前已经把 runtime state 做得比较明确：
+
+```text
+Thread
+ ↓
+Super-step
+ ↓
+Checkpoint
+ ↓
+StateSnapshot
+```
+
+每一步都可以 checkpoint，从而：
+
+- resume；
+- replay；
+- fork；
+- human interrupt。citeturn216483search0
+
+他们甚至最近发现全量 snapshot 长期运行会出现近似 \(O(N^2)\) 的存储增长，于是 2026 年加了 DeltaChannel，只保存增量，并周期性做完整 snapshot。citeturn216483search6
+
+这是 **storage lifecycle**。
+
+但它仍然不能回答：
+
+> 哪个状态现在语义上已经失效？
+
+这是另一层。
+
+也就是：
+
+```text
+Runtime persistence
+         ≠
+Semantic state lifecycle
+```
+
+---
+
+# 14. 一个我认为特别适合 coding agent 的状态模型
+
+我现在倾向于不要搞：
+
+```text
+Memory[]
+```
+
+而是统一定义：
+
+```text
+StateObject
+```
+
+每一个对象至少有：
+
+```text
+id
+type
+
+scope
+project_id
+task_id
+agent_id
+
+status
+active | warm | cold | historical
+
+validity
+valid | superseded | disputed | invalid
+
+authority
+user
+system
+agent
+inferred
+
+created_at
+updated_at
+last_used_at
+
+relations[]
+
+source
+evidence
+
+summary
+payload_pointer
+```
+
+注意：
+
+```text
+summary
+```
+
+只是快速检索用。
+
+完整东西：
+
+```text
+payload_pointer
+```
+
+指向：
+
+- commit；
+- file；
+- trace；
+- log；
+- conversation；
+- artifact。
+
+因此中台存的不是所有内容。
+
+而是：
+
+```text
+metadata graph
++
+pointers
+```
+
+---
+
+# 15. 最终真正解决“刚好找到”的方法可能是三级检索
+
+我觉得这是当前最值得做的。
+
+### Level 0：Working Set
+
+零成本直接提供：
+
+```text
+active goal
+active tasks
+active agents
+blockers
+pending decisions
+```
+
+一般秘书 70% 的问题到这里就够了。
+
+---
+
+### Level 1：Graph Expansion
+
+例如：
+
+> 为什么 T38 被 blocker？
+
+机械：
+
+```text
+T38
+ ↓ blocked_by
+D12
+ ↓ caused_by
+test_74
+ ↓ related_to
+module X
+```
+
+不需要 embedding。
+
+---
+
+### Level 2：Semantic / Agentic Search
+
+只有用户问：
+
+> 我记得我们以前是不是讨论过另一个缓存方案？
+
+这种模糊信息才进入：
+
+```text
+semantic search
++
+graph reconstruction
++
+LLM
+```
+
+最近 MRAgent 就是在尝试这种“不是一次 retrieve，而是根据中间证据不断扩展和剪枝图”的方式。他们称为 active reconstruction；相比静态 retrieve-then-reason，在 LongMemEval/LoCoMo 上同时降低了 token/runtime，并提升表现。citeturn412336academia56
+
+---
+
+# 16. 所以你刚刚列的三件事，我认为其实应该变成四件事
+
+你说：
+
+> Agent 生命周期  
+> 状态更新  
+> 图工程
+
+我会再加一个：
+
+> **Context 生命周期**
+
+完整是：
+
+```text
+┌────────────────────┐
+│ Agent lifecycle    │
+└─────────┬──────────┘
+          │ creates / updates
+          ▼
+┌────────────────────┐
+│ State lifecycle    │
+└─────────┬──────────┘
+          │ represented by
+          ▼
+┌────────────────────┐
+│ Relation / Graph   │
+└─────────┬──────────┘
+          │ retrieval candidates
+          ▼
+┌────────────────────┐
+│ Context lifecycle  │
+│ admission/eviction │
+└────────────────────┘
+```
+
+最后这个尤其容易被漏掉。
+
+因为：
+
+```text
+Memory ≠ Context
+```
+
+我认为这是这套架构里最应该写死的一条原则。
+
+**Memory 是长期保存。**
+
+**Working state 是当前有效状态。**
+
+**Context 是这一轮模型暂时允许看到的工作集。**
+
+这三者必须彻底分离。
+
+---
+
+而且你刚才强调的“状态的生命周期”，现在看来确实不只是一个工程实现细节，它很可能是整个长期 multi-agent 系统的核心抽象。微软的 MAGE、今年 ACL 的 GAM/MAGMA，以及 Cursor 自己从 eternal workflow 转向**短 workflow + durable state + fresh agent**，其实都正在从不同方向收敛到这一点。Cursor 甚至明确表示已经从“eternal agent workflows”改成多个完成单一任务后退出的短 workflow，因为这样更容易升级和管理；同时 Agent loop、machine state、conversation state 三者解耦。citeturn549947view1
+
+所以如果放回你的 Coding-Agent，我现在反而会建议：**暂时不要先做复杂 memory RAG，也不要急着搞大知识图谱。先把 `Task lifecycle → Agent lifecycle → State validity/lifecycle → Working Set` 这四个东西定义出来。** 它们定义好了之后，图结构实际上会自然产生，memory retrieval 才知道该搜什么；否则先做 graph/RAG，很容易重新掉回“存了一切，但不知道什么时候该拿什么”的坑里。memcite
+
+===== S-001 / 07 / user / unspecified =====
+message_id: fe8d9684-9f1c-46f4-89ae-3ff846621ded
+
+我感觉数据面和控制面，有哪些重要的技术？
+
+意图识别--记忆
+记忆检索--高效，可能除了静态检索，还需要agent标签+询问+rag+agent网络检索+状态检索
+数据面-除了项目静态状态还有整个的多agent状态，这个agent状态与其它的业务有关
+
+控制面--生命周期管理，不然难以实现以上所有的高效。
+\--编排，任务方面的，决定token利用率与任务完成情况，并发和异步也是
+
+还有哪些其它的？
+
+结合以上思考和实际实践/探索，哪些是实现我初始目标/设想需要的一个结构？
+
+===== S-001 / 08 / assistant / commentary =====
+message_id: 0cb64ab8-6ca8-4c4e-ade0-1e3bc0bf270e
+
+我会先把你的要素压成“单一秘书入口 + 多 Agent 执行”的完整架构，再结合多 Agent、耐久工作流与协议实践，补齐可观测性等缺失层。
+
+===== S-001 / 09 / assistant / final =====
+message_id: d1cac45b-3e30-421c-9b15-374c394eee7f
+
+# 核心结论
+
+你现在已经抓住了两个主干：
+
+- **状态与记忆如何被找到**
+- **Agent 与任务如何被编排和管理**
+
+但要实现最初设想的“**用户只面对一个长期秘书入口，背后存在多个可替换、可并发、可异步的 Agent**”，还必须补上四个一等公民：
+
+1. **统一状态模型与一致性机制**
+2. **上下文准入与 Token 预算**
+3. **证据、验证与结果集成**
+4. **权限、身份、隔离与审计**
+
+而且，“数据面”最好进一步拆成：
+
+- **状态面**：系统知道什么、当前发生了什么；
+- **执行面**：Agent、模型、工具和工作区实际做什么。
+
+否则项目知识、任务状态、Agent 运行状态、代码文件、记忆和对话记录会全部混在一起，生命周期无法定义清楚。
+
+---
+
+# 一、实现目标所需的总体架构
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│                    单一用户交互入口                            │
+│                                                              │
+│  对话 / 状态查询 / 下达任务 / 修改目标 / 审批 / 中断 / 纠正   │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                         Query / Command
+                         Decision / Note
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│                   Secretary / Interaction Plane              │
+│                                                              │
+│  意图编译        指代消解        查询规划        回复生成      │
+│  “用户要什么”    “那个任务是谁”  “去哪里查”      “怎么说给人听” │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                     结构化 Query / Command
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│                     Agent API Server                         │
+│                                                              │
+│  鉴权 · 校验 · 幂等 · 版本控制 · 路由 · 事件发布 · 流式订阅   │
+└───────────────┬────────────────────────────┬─────────────────┘
+                │                            │
+                ▼                            ▼
+┌────────────────────────────┐  ┌──────────────────────────────┐
+│       Control Plane        │  │     State / Knowledge Plane  │
+│                            │  │                              │
+│  Goal / Task Controller    │  │  Event Store                 │
+│  Planner / Task Compiler   │  │  当前状态表                   │
+│  Scheduler                 │  │  Active Working Set          │
+│  AgentRun Lifecycle        │  │  决策与约束                   │
+│  Dependency Controller     │  │  Artifact / Evidence Index   │
+│  Budget / Model Router     │  │  Memory Store                │
+│  Approval / Policy         │  │  Graph / Text / Vector Index │
+│  Retry / Recovery          │  │  Materialized Views          │
+└───────────────┬────────────┘  └──────────────▲───────────────┘
+                │                              │
+                │ Dispatch / Cancel / Resume   │ Event / Status
+                ▼                              │
+┌──────────────────────────────────────────────┴───────────────┐
+│                    Execution / Data Plane                    │
+│                                                              │
+│  Agent Harness       Model Gateway       Tool Gateway        │
+│  Sandbox / VM        Git Workspace       MCP Connectors      │
+│  Planner Agent       Worker Agent        Evaluator Agent     │
+│  Tester Agent        Integrator Agent    Research Agent      │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                   Artifacts / Evidence / Events
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│              Assurance / Observability Plane                 │
+│                                                              │
+│  Trace · Replay · Evals · CI · Security · Cost · Provenance  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+这个结构的关键不是多了多少服务，而是建立了几个稳定边界：
+
+> **秘书负责理解和表达，不负责维持系统运行。**  
+> **控制面负责让事情持续推进，不负责保存全部知识。**  
+> **状态面是事实来源，不负责执行任务。**  
+> **执行面的 Agent 可以随时死亡和替换。**
+
+---
+
+# 二、首先要纠正：意图识别不等于记忆检索
+
+你现在写的是：
+
+```text
+意图识别 → 记忆
+```
+
+更准确的结构应当是：
+
+```text
+用户输入
+   │
+   ▼
+操作类型识别
+   │
+   ├── 查询 Query
+   ├── 命令 Command
+   ├── 决策 Decision
+   ├── 纠正 Correction
+   ├── 约束 Constraint
+   ├── 记忆请求 Remember
+   └── 普通对话 Chat
+   │
+   ▼
+作用域与指代消解
+   │
+   ├── 哪个项目
+   ├── 哪个目标
+   ├── 哪个任务
+   ├── 哪个 AgentRun
+   └── 哪个 Artifact / Decision
+   │
+   ▼
+决定是否需要检索
+```
+
+例如用户说：
+
+> 先暂停支付模块的重构，测试继续跑，然后告诉我现在最大的风险。
+
+这不是一个简单的“意图标签”，而是三个结构化操作：
+
+```text
+1. PatchTaskSpec:
+   payment-refactor.paused = true
+
+2. EnsureRun:
+   payment-tests.desired_state = running
+
+3. Query:
+   RiskView(scope = payment)
+```
+
+因此秘书层更像一个 **Intent Compiler**，不是一个单纯的分类器。
+
+记忆只参与：
+
+- “支付模块”具体指哪个任务；
+- “继续跑”对应哪个测试 Run；
+- 用户过去是否声明过“不允许修改数据库”；
+- 当前项目有什么长期约束。
+
+意图本身应该被编译成结构化 API，而不是直接交给某个长期主 Agent 自由发挥。
+
+---
+
+# 三、控制面的核心不是“主 Agent”，而是 Desired State + Reconciliation
+
+这是整个架构最值得从 Kubernetes 借鉴的地方。
+
+每个长期对象都分成：
+
+```text
+spec    = 希望它变成什么
+status  = 它实际上是什么
+```
+
+例如：
+
+```yaml
+task:
+  id: payment-refactor
+
+  spec:
+    desired_state: paused
+    priority: high
+    verification_required: true
+
+  status:
+    phase: draining
+    active_runs: 1
+    last_checkpoint: commit_a38f
+    blockers: []
+```
+
+控制器不断执行：
+
+```text
+读取 spec
+   ↓
+读取 status
+   ↓
+比较差异
+   ↓
+采取动作
+   ↓
+更新 status
+```
+
+Kubernetes 的 Controller 正是通过持续比较 desired state 与 current state，把系统推向目标状态，而不是依靠一个永久存活的“超级进程”记住所有事情。citeturn821064view7
+
+这对 Agent 系统特别重要，因为用户说“暂停”时，实际可能存在：
+
+- 一个 Agent 正在生成代码；
+- 一个工具调用正在运行；
+- 工作区有未提交修改；
+- 一个子 Agent 尚未结束；
+- 测试正在异步运行。
+
+“暂停”不能等价于立即杀死进程，而应由生命周期控制器执行：
+
+```text
+Task.spec = PAUSED
+      ↓
+Run Controller 发现目标变化
+      ↓
+停止派发新步骤
+      ↓
+请求当前 Agent checkpoint
+      ↓
+提交或保存当前 patch
+      ↓
+取消未必要的子任务
+      ↓
+Run.status = SUSPENDED
+Task.status = PAUSED
+```
+
+因此固定中台真正应该固定的是：
+
+- 状态机；
+- 资源对象；
+- 事件协议；
+- 权限规则；
+- 重试与恢复；
+- 调度与预算；
+- 状态更新路径。
+
+动态部分才交给 Agent：
+
+- 如何分解任务；
+- 如何解决具体技术问题；
+- 是否需要扩展检索；
+- 遇到异常如何重新规划；
+- 如何评价难以机械验证的结果。
+
+---
+
+# 四、控制面还缺少哪些重要技术
+
+## 4.1 统一资源模型
+
+系统不能只有“Agent”和“Memory”。
+
+至少需要区分：
+
+| 资源 | 作用 | 生命周期 |
+|---|---|---|
+| `Project` | 项目边界 | 长期 |
+| `Goal` | 用户希望达到的结果 | 长期，可修改 |
+| `Task` | 可调度的工作单元 | 通常长于 Agent |
+| `AgentProfile` | Agent 能力、工具、权限、成本 | 长期定义 |
+| `AgentRun` | 某次具体运行 | 短期、可替换 |
+| `Workspace` | Git、文件、容器、环境 | 与 Run 或 Task 绑定 |
+| `Artifact` | 代码、补丁、报告、测试结果 | 持久化、尽量不可变 |
+| `Decision` | 用户或系统做出的决定 | 长期、可追溯 |
+| `MemoryItem` | 提炼后的知识或偏好 | 长期，但可失效 |
+| `Approval` | 待用户批准的动作 | 中期 |
+| `ContextPacket` | 某一轮真正送入模型的上下文 | 极短期 |
+
+最重要的几个区分是：
+
+```text
+Task ≠ AgentRun
+AgentProfile ≠ AgentRun
+Session ≠ Task
+Memory ≠ State
+State ≠ Context
+Artifact ≠ Message
+```
+
+Anthropic 2026 年的 Managed Agents 也把 `session`、`harness` 和 `sandbox` 抽象成彼此独立、可替换的对象，避免某台机器或某个运行实例成为无法丢失的“宠物”。citeturn821064view3
+
+---
+
+## 4.2 Agent 生命周期管理
+
+“活跃 / 不活跃”还不够，至少需要：
+
+```text
+QUEUED
+   ↓
+LEASED
+   ↓
+STARTING
+   ↓
+RUNNING
+   ├── WAITING_TOOL
+   ├── WAITING_DEPENDENCY
+   ├── WAITING_HUMAN
+   └── RATE_LIMITED
+   ↓
+CHECKPOINTING
+   ↓
+COMPLETED
+
+异常分支：
+FAILED / CANCELED / TIMED_OUT / ORPHANED / SUSPENDED
+```
+
+控制面需要处理：
+
+- heartbeat；
+- lease 到期；
+- 僵尸 Agent；
+- 重试；
+- checkpoint；
+- Run 替换；
+- 父子 Run；
+- 取消传播；
+- 超时；
+- 限流；
+- 恢复；
+- Run 完成后的清理。
+
+需要坚持：
+
+> **Task 连续性由控制面维持，不由某个 Agent 的对话维持。**
+
+一个 AgentRun 死亡后，可以从 Task 状态、Artifact、Checkpoint 和 Workspace 中启动新 AgentRun。
+
+Temporal 已经提供了长工作流所需的事件历史、任务队列、恢复、Query、Signal 和 Update 等基础抽象；其中 Query 用于读取运行状态，Signal 用于异步修改，Update 用于等待结果的受跟踪修改，这非常接近秘书对长期 Agent 系统所需的控制接口。citeturn802034view5turn310400search7
+
+---
+
+## 4.3 调度与资源治理
+
+Scheduler 不能只负责“找一个 Agent”。
+
+它至少要判断：
+
+```text
+任务依赖是否满足
+是否真正可以并行
+是否会修改相同文件或资源
+需要什么模型
+需要哪些工具
+权限是否允许
+Token / 时间 / 金钱预算
+Agent 当前负载
+是否需要高性能模型
+失败后是否值得重试
+```
+
+多 Agent 的性能收益，本质上来自增加独立上下文和并行 Token 使用，但成本也会迅速增加。Anthropic 的多 Agent 研究系统中，多 Agent 总 Token 消耗约为普通聊天的 15 倍，并且其报告明确指出，高依赖、强共享上下文的 coding 任务不一定适合大量并行。citeturn821064view2
+
+所以 Scheduler 应维护“可并行前沿”：
+
+```text
+Task DAG
+   │
+   ├── 已满足依赖且写集合不冲突 → 并行
+   ├── 有共享核心上下文           → 单 Agent 或顺序
+   └── 高风险集成点               → 串行 + 强验证
+```
+
+Token 利用率真正取决于：
+
+- 任务是否被正确切开；
+- 子任务是否彼此独立；
+- Agent 是否重复探索；
+- 返回结果是否被有效压缩；
+- 集成是否产生大量冲突。
+
+---
+
+## 4.4 并发一致性
+
+Cursor 最早尝试让平级 Agent 通过共享文件、锁和自协调来领取任务，结果出现锁长期占用、忘记释放、竞争和吞吐下降；改成 Planner、Executor/Worker、Judge 等明确角色后才显著改善。citeturn821064view0turn821064view1
+
+因此不应让 Agent 直接维护共享协调文件。
+
+更可靠的方式是：
+
+```text
+Agent
+  ↓ typed command
+API Server
+  ↓ version check
+State Store
+  ↓ event
+Materialized View
+```
+
+技术上需要：
+
+- 乐观并发控制；
+- `expected_version`；
+- 命令幂等 ID；
+- Workspace base revision；
+- 租约而非永久锁；
+- Merge Queue；
+- 冲突检测；
+- 可重放事件；
+- 外部副作用的幂等处理。
+
+例如：
+
+```json
+{
+  "command_id": "cmd-783",
+  "task_id": "T-32",
+  "expected_version": 17,
+  "operation": "mark_blocked",
+  "reason": "CI integration test failed"
+}
+```
+
+如果当前版本已经是 19，系统拒绝或要求重新读取，而不是让 Agent 用过期状态覆盖新状态。
+
+---
+
+# 五、状态面不是一个日志数据库
+
+你此前说“这本质上还是日志的固定实现”，这里需要再细分四层：
+
+```text
+1. Event History
+   原始事件、工具调用、状态变化、对话、日志
+
+               ↓ reducer
+
+2. Operational State
+   当前任务、当前 Run、当前 blocker、当前 desired/status
+
+               ↓ consolidation
+
+3. Semantic Memory
+   长期约束、决策、事实、经验、用户偏好
+
+               ↓ retrieval + admission
+
+4. Context Packet
+   当前这一轮允许模型看到的少量信息
+```
+
+Event History 的作用是：
+
+- 审计；
+- 恢复；
+- 重放；
+- 调试；
+- 生成新投影。
+
+它不应该直接进入模型。
+
+Temporal 的可靠执行同样依靠有序 Event History 重建当前 Workflow 状态，而用户查询时读取的是当前状态，不是把所有事件重新显示给用户。citeturn802034view5
+
+因此推荐采用类似 **Event Sourcing + CQRS** 的思路：
+
+```text
+Write Side:
+Command → Validation → Event Store
+
+Read Side:
+Event → Reducer → ActiveTaskView
+                → AgentRunView
+                → RiskView
+                → PendingDecisionView
+                → ProjectSummaryView
+```
+
+秘书读取的是这些小型 Materialized Views。
+
+---
+
+# 六、记忆检索应当是分级检索，而不是把所有办法同时调用
+
+你提出的：
+
+- Agent 标签；
+- 询问 Agent；
+- RAG；
+- Agent 网络检索；
+- 状态检索；
+
+都可能有用，但不应平行执行。合理顺序应是：
+
+```text
+L0：当前 Working Set
+     ↓ 不够
+L1：精确状态与元数据查询
+     ↓ 不够
+L2：关系图扩展
+     ↓ 不够
+L3：全文 + 向量混合检索
+     ↓ 不够
+L4：询问仍存活的 Agent
+     ↓ 不够
+L5：外部系统 / 网络深度检索
+```
+
+## L0：Working Set
+
+每个项目持续维护一个很小的当前工作集：
+
+```text
+当前目标
+活跃任务
+活跃 AgentRun
+当前 blocker
+待用户决策
+最近的重要变更
+高风险约束
+用户固定要求
+```
+
+这不是每轮通过 RAG 找出来的，而是控制面根据生命周期增量维护。
+
+大部分“现在怎么样了”都应在这一层解决。
+
+---
+
+## L1：精确状态查询
+
+例如：
+
+```sql
+SELECT *
+FROM task_view
+WHERE project_id = ?
+  AND status IN ('RUNNING', 'BLOCKED');
+```
+
+或者：
+
+```text
+GetTask(T-38)
+ListActiveRuns(project=payment)
+ListPendingDecisions(scope=backend)
+GetLatestArtifact(task=T-38, type=test_report)
+```
+
+这一层不需要 LLM。
+
+---
+
+## L2：图关系扩展
+
+需要回答“为什么”“由谁造成”“依赖什么”时：
+
+```text
+Task T38
+   ↓ blocked_by
+CI Run C71
+   ↓ failed_on
+Integration Test I9
+   ↓ affected_by
+Artifact Patch P12
+   ↓ produced_by
+AgentRun R44
+```
+
+这里需要的不是一个巨大的通用知识图谱，而是几张用途明确的关系图：
+
+```text
+Task Dependency Graph
+AgentRun Lineage Graph
+Artifact Provenance Graph
+Decision / Supersession Graph
+Code Dependency Graph
+```
+
+图应该首先是一种**逻辑数据模型和查询投影**，不意味着一开始就必须上 Neo4j。
+
+初期完全可以用 PostgreSQL：
+
+```text
+nodes
+edges
+task_dependencies
+artifact_relations
+decision_relations
+```
+
+图索引应当由权威状态派生，而不是成为唯一事实来源。
+
+---
+
+## L3：混合 RAG
+
+只有模糊问题才进入语义检索：
+
+> 我们以前是不是讨论过一个不用 Redis 的缓存方案？
+
+此时使用：
+
+- 作用域过滤；
+- 时间过滤；
+- 有效性过滤；
+- 全文 BM25；
+- embedding；
+- rerank；
+- 图扩展；
+- 去重。
+
+A-MEM 等研究已经在探索 embedding 初筛后再由模型建立动态关系，而 Mem0 则采用抽取、合并、更新和检索的长期记忆流程；共同趋势是记忆不再只是静态 top-k 向量搜索。citeturn167641search2turn167641search3
+
+---
+
+## L4：询问活跃 Agent
+
+这一层应当是后备方案，不应成为默认。
+
+原因是：
+
+- Agent 可能正在执行关键步骤；
+- Agent 可能已经死亡；
+- Agent 的回答可能只是其局部认知；
+- 询问会消耗新的 Token；
+- 多个 Agent 可能相互询问形成消息风暴。
+
+更合理的是让 Agent 持续发布结构化状态：
+
+```json
+{
+  "run_id": "R44",
+  "phase": "waiting_dependency",
+  "current_step": "integration test",
+  "progress": 0.72,
+  "blocker": "requires schema decision D8",
+  "checkpoint": "commit_a82",
+  "next_action": "resume after decision",
+  "updated_at": "..."
+}
+```
+
+控制面发现状态过期时，先发送：
+
+```text
+RequestStatus
+RequestCheckpoint
+RequestExplanation
+```
+
+只有 `RequestExplanation` 真正需要重新调用 LLM。
+
+---
+
+# 七、检索之后还必须有 Context Admission Controller
+
+这是你当前列表里非常重要但尚未明确的一层。
+
+```text
+检索结果
+   ↓
+Candidate States
+   ↓
+Context Admission
+   ↓
+Token Budgeted Context
+   ↓
+Secretary / Worker Agent
+```
+
+不是“检索到”就必须“塞进 context”。
+
+准入需要考虑：
+
+```text
+与当前任务的结构关联
+状态是否仍然有效
+信息来源权威性
+是否已经被取代
+是否未解决
+风险等级
+时间新鲜度
+是否重复
+Token 成本
+是否需要原始证据
+```
+
+一个简单的优先级可以是：
+
+```text
+用户明确约束
+>
+当前目标与 blocker
+>
+直接任务依赖
+>
+高风险决策
+>
+当前 Artifact 证据
+>
+历史相似经验
+>
+普通对话记录
+>
+原始日志
+```
+
+Anthropic 对 context engineering 的总结也是：目标不是把能找到的信息尽量放进去，而是寻找“能最大化任务成功率的最小高信号 Token 集合”。citeturn802034view3
+
+因此：
+
+> **Memory 是可用信息全集。**  
+> **Working Set 是当前活跃信息。**  
+> **Retrieved Candidates 是可能相关的信息。**  
+> **Context 是最终获准进入模型的信息。**
+
+---
+
+# 八、Memory 本身需要生命周期和治理
+
+建议每条记忆至少包含：
+
+```yaml
+id:
+scope:
+  user_id:
+  project_id:
+  task_id:
+
+kind:
+  preference | constraint | fact | decision | experience | summary
+
+authority:
+  user | system | verified_agent | inferred_agent
+
+validity:
+  candidate | active | disputed | superseded | invalid | expired
+
+importance:
+risk_level:
+created_at:
+last_verified_at:
+last_used_at:
+
+supersedes:
+evidence_refs:
+artifact_refs:
+source_event_refs:
+
+summary:
+payload_pointer:
+```
+
+记忆生命周期可以是：
+
+```text
+OBSERVED
+   ↓
+CANDIDATE
+   ↓
+CONFIRMED
+   ↓
+ACTIVE
+   ├── SUPERSEDED
+   ├── DISPUTED
+   ├── EXPIRED
+   └── INVALID
+   ↓
+ARCHIVED
+```
+
+特别要注意：
+
+```text
+不活跃 ≠ 删除
+失效 ≠ 不可搜索
+可搜索 ≠ 应进入 Context
+```
+
+例如一个被否决的旧架构仍然有价值，因为它可以回答：
+
+> 为什么之前没有采用事件总线方案？
+
+但它不能被当作当前架构继续执行。
+
+另外，持久化记忆也是安全边界。Anthropic 2026 年关于 Agent 隔离的工程总结明确提出了 persistent memory poisoning、多 Agent trust escalation、工具输出注入和 Agent identity 等问题。因此每条记忆都应带来源、信任级别和证据，而不能因为“它来自另一个内部 Agent”就默认可信。citeturn616596search9
+
+---
+
+# 九、执行面需要哪些关键技术
+
+## 9.1 Agent Harness
+
+每个 AgentRun 至少包含：
+
+```text
+Model Client
+Context Assembler
+Agent Loop
+Tool Dispatcher
+Checkpoint Hook
+Cancellation Hook
+Budget Counter
+Trace Emitter
+Structured Output Validator
+```
+
+控制面不应依赖具体模型和 Agent 框架。
+
+Anthropic 将 session、harness、sandbox 分开，本质上也是为了让模型、循环和运行环境能够独立演进。citeturn821064view3
+
+---
+
+## 9.2 Workspace 与隔离
+
+Coding Agent 还需要：
+
+```text
+每个 Run 独立 worktree / container / VM
+明确 base commit
+文件修改范围
+网络与密钥权限
+CPU / 内存 / 磁盘限制
+可取消的进程树
+最终 patch / commit
+```
+
+Agent 不应直接共享一个可任意修改的工作区。
+
+高并发时可以：
+
+```text
+AgentRun
+   ↓
+isolated workspace
+   ↓
+patch / commit
+   ↓
+integration queue
+   ↓
+tests
+   ↓
+merge
+```
+
+---
+
+## 9.3 Artifact 与 Message 分离
+
+Agent 输出不应只是聊天文本。
+
+A2A 1.0 已经明确区分：
+
+- `Message`：沟通、澄清、状态；
+- `Task`：有生命周期的工作；
+- `Artifact`：真正的结果。
+
+规范还明确建议，任务结果应放入 Artifact，而不是通过普通 Message 交付。citeturn720583view3turn720583view0
+
+Coding 场景中的 Artifact 包括：
+
+```text
+Patch
+Commit
+Test Report
+Benchmark
+Screenshot
+Architecture Note
+Migration Plan
+Security Report
+Build Output
+```
+
+每个 Artifact 应带：
+
+```text
+producer_run_id
+task_id
+base_revision
+content_hash
+verification_status
+provenance
+risk
+```
+
+这样秘书可以展示证据，而不是复述 Agent 的自我评价。
+
+---
+
+# 十、还必须增加 Assurance Plane
+
+## 10.1 验证不能只依赖 Agent 自己说“完成了”
+
+需要区分：
+
+```text
+Agent Report:
+“测试通过了”
+
+Observed Outcome:
+CI 中确实有 128 个测试通过
+```
+
+Anthropic 对 Agent eval 的定义也明确区分 transcript 与 outcome：Agent 声称订票成功，不等于数据库里真的存在订单。citeturn616596search4
+
+因此至少需要：
+
+```text
+Worker → Artifact
+             ↓
+        Mechanical Checks
+             ↓
+        Evaluator / Judge
+             ↓
+        Integration Gate
+             ↓
+        Task.status = DONE
+```
+
+验证来源优先级：
+
+```text
+真实环境状态
+>
+机械测试和静态分析
+>
+外部系统确认
+>
+独立 Evaluator Agent
+>
+执行 Agent 自我报告
+```
+
+---
+
+## 10.2 可观测性
+
+至少记录：
+
+```text
+Task transition
+AgentRun transition
+LLM call
+Token usage
+Tool call
+Tool result
+Workspace change
+Artifact produced
+Decision requested
+Decision made
+Retry / cancellation
+Retrieval candidates
+Final admitted context
+```
+
+Cursor 在其大规模多 Agent 实验中专门记录 Agent 消息、系统动作和命令输出，并利用这些数据回放和分析失败模式。citeturn821064view1
+
+关键指标不只是成功率，还包括：
+
+```text
+tokens / successful task
+重复工作比例
+Agent 冲突率
+过期状态注入率
+检索精确率
+用户纠正次数
+任务重新打开率
+从失败恢复成功率
+平均 blocker 持续时间
+高风险操作审批率
+```
+
+---
+
+## 10.3 权限和身份
+
+需要区分：
+
+```text
+User Identity
+Secretary Identity
+AgentProfile Identity
+AgentRun Identity
+Tool / Connector Identity
+```
+
+每个 AgentRun 应获得：
+
+- 临时身份；
+- 最小权限；
+- 作用域限定的 token；
+- 可撤销凭据；
+- Workspace 限制；
+- 网络出口限制。
+
+而不是继承用户所有权限。
+
+---
+
+# 十一、协议如何放入这个结构
+
+现在已经逐渐形成三层协议边界：
+
+```text
+用户 ↔ Agent Backend      AG-UI 类协议
+Agent ↔ 工具和数据         MCP
+Agent ↔ 远程 Agent         A2A
+```
+
+AG-UI 侧重流式事件、共享状态、暂停、审批、恢复和用户 steering；MCP 负责工具、资源和数据连接；A2A 负责 Agent 能力发现、任务、状态、消息和 Artifact。citeturn821064view6turn802034view7turn802034view6
+
+但 MVP 不需要把所有协议都实现一遍。
+
+建议：
+
+```text
+前端：
+SSE / WebSocket + 自定义 typed events
+未来可适配 AG-UI
+
+内部 Agent：
+直接使用内部 Task / Event API
+
+工具层：
+适合优先兼容 MCP
+
+跨机器或第三方 Agent：
+真正需要时再引入 A2A
+```
+
+内部同一系统里的 Agent 没必要为了“看起来标准”而全部走 A2A。
+
+---
+
+# 十二、最适合你当前项目的可实现主干
+
+为了避免过度设计，第一版只需要五个顶层模块。
+
+```text
+agent-platform/
+│
+├── secretary-gateway/
+│   ├── chat API
+│   ├── intent compiler
+│   ├── reference resolver
+│   ├── context admission
+│   └── streaming UI events
+│
+├── control-plane/
+│   ├── goal-task controller
+│   ├── scheduler
+│   ├── agent-run controller
+│   ├── approval controller
+│   ├── integration controller
+│   └── recovery controller
+│
+├── state-plane/
+│   ├── event store
+│   ├── resource repository
+│   ├── materialized views
+│   ├── retrieval indexes
+│   └── memory lifecycle
+│
+├── agent-runtime/
+│   ├── harness
+│   ├── model gateway
+│   ├── tool gateway
+│   ├── sandbox/workspace
+│   └── worker adapters
+│
+└── assurance/
+    ├── tracing
+    ├── evaluation
+    ├── CI/test adapters
+    ├── provenance
+    └── security policy
+```
+
+## 第一阶段只做
+
+```text
+Project
+Goal
+Task
+AgentProfile
+AgentRun
+Workspace
+Artifact
+Decision
+```
+
+再加六类事件：
+
+```text
+TaskCreated
+TaskStateChanged
+RunStarted
+RunStatusUpdated
+ArtifactProduced
+DecisionRequested / DecisionResolved
+```
+
+查询侧维护五个视图：
+
+```text
+ActiveTaskView
+ActiveRunView
+PendingDecisionView
+RiskView
+RecentArtifactView
+```
+
+检索第一版只做：
+
+```text
+Working Set
++
+精确状态查询
++
+PostgreSQL 全文搜索
+```
+
+暂时不要先做：
+
+- 巨型知识图谱；
+- 全 Agent 社交网络；
+- 所有 Agent 互相询问；
+- 复杂自主 memory agent；
+- 每轮都跑向量检索；
+- 让主 Agent 自己维护生命周期。
+
+---
+
+# 十三、推荐的实现技术组合
+
+对于你当前已有 Coding Agent Runtime 的情况，比较合适的是：
+
+```text
+单一秘书 UI
+    │
+TypeScript API / WebSocket
+    │
+Control Plane
+    ├── 第一版：PostgreSQL + Queue + Controllers
+    └── 长期：Temporal
+    │
+State Plane
+    ├── PostgreSQL
+    ├── JSONB
+    ├── relational edges
+    └── pgvector 后加
+    │
+Execution Plane
+    ├── 现有 Coding Agent loop
+    ├── Git worktree
+    ├── container / VM
+    └── MCP tool adapters
+    │
+Artifact
+    ├── Git
+    └── S3 / MinIO 类对象存储
+    │
+Observability
+    └── OpenTelemetry
+```
+
+Temporal 更适合放在最外层，管理：
+
+- 长期 Task；
+- 异步事件；
+- 超时与重试；
+- 用户暂停和恢复；
+- 子工作流；
+- 生命周期。
+
+LangGraph、OpenAI Agents SDK、Claude Agent SDK 或你自己的 Runtime，则适合放在某个 Worker 内部，解决单次 AgentRun 的模型循环。LangGraph 已经提供 checkpoint、interrupt 和 fault-tolerant execution 等能力，但全局多项目状态仍应有独立权威数据模型。citeturn665478search0turn665478search4turn665478search18
+
+---
+
+# 十四、最终结构判断
+
+你最初的设想不应该实现成：
+
+```text
+一个无限长秘书 Agent
+   ↓
+直接管理所有子 Agent
+   ↓
+所有信息都存在它的 Memory
+```
+
+而应该是：
+
+```text
+一个看起来连续的秘书界面
+   ↓
+一个近似无状态的 Secretary Agent
+   ↓
+统一 Query / Command API
+   ↓
+机械可靠的 Control Plane
+   ↓
+可替换的短生命周期 AgentRun
+   ↓
+持续更新的权威 State Plane
+   ↓
+按需生成的 Context Packet
+```
+
+最核心的五条原则是：
+
+```text
+Conversation is a view, not the source of truth.
+
+Task is durable; AgentRun is replaceable.
+
+Events are history; state is the current projection.
+
+Memory is persistent knowledge; context is a temporary budgeted projection.
+
+Agents propose and execute; controllers validate, schedule, recover and reconcile.
+```
+
+所以你这个项目下一步最值得先确定的不是更复杂的 RAG，而是：
+
+> **资源对象模型、`spec/status` 状态机、事件更新路径、AgentRun 生命周期，以及 Active Working Set。**
+
+这五部分一旦成立，编排、记忆检索、图关系、单一秘书入口和异步并发才会共用同一套坚实基础。
