@@ -1,0 +1,214 @@
+/** Dispatch receives captured issue materials from the composition root; it never holds a Verification callback. */
+import type { PlanRevisionRef } from '../plan.js';
+import type { PlanProposalSnapshot } from '../goal-change.js';
+import type { OpenIssuesViewV1 } from './issues.js';
+import type { ReworkBoundaryOutcomeV1, ReworkBudgetFactsV1 } from './acceptance.js';
+
+export type ReworkDriveScopeV1 = {
+  projectId: string;
+  workspaceId: string;
+  goalId: string;
+};
+
+/** 一次触发绑定目标作用域和组合根读取的问题材料；当前计划由驱动读取并核对。 */
+export type ReworkDriveRequestV1 = {
+  /** Captured by the composition root; omission is explicitly unavailable. */
+  issueMaterials?: OpenIssuesViewV1;
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  goalId: string;
+};
+
+/**
+ * 一个任务分组的处置结果。四态互斥，四种都带得出原因：
+ *   - accepted：四条边界都满足，Control 已受理（可能是一次幂等重放）；
+ *   - needs_human_decision：编译期或受理期判定不成立，必须由人决定，且零写入；
+ *   - rejected：输入与 canonical 事实不一致，或既有守卫链拒绝；
+ *   - superseded：该分组的问题**已经被处置**——承担者换人（返工任务接手）或该要求已在当前
+ *     revision 上重验通过。这个结论必须由 canonical 的处置事实（disposition）支撑，并带上接手者
+ *     （carrierTaskIds），不允许把「历史证据失效」当成「已被处置」报出来。
+ *
+ * 一次触发会把**所有**尚未处置的分组推进完。分组 A 的受理推进 revision 之后，
+ * 分组 B 的问题 anchor 虽然失效，但只要它的失败义务仍由原任务承担且没有重验通过
+ * （disposition=carried_by_task），它仍会被接手，而不是被丢弃成 superseded。
+ */
+export type ReworkDriveOutcomeV1 =
+  | {
+      groupTaskId: string;
+      issueIds: string[];
+      status: 'accepted';
+      proposalId: string;
+      /** 受理后生效的新 revision。 */
+      planRef: PlanRevisionRef;
+      /** true 表示同一提案此前已受理，本次没有产生第二份提案或第二个 revision。 */
+      replayed: boolean;
+      /** 四条边界的逐条结论；幂等重放时为空数组（受理入口不重判当时的结论）。 */
+      boundaries: ReworkBoundaryOutcomeV1[];
+      budget: ReworkBudgetFactsV1 | null;
+      reasons: string[];
+    }
+  | {
+      groupTaskId: string;
+      issueIds: string[];
+      status: 'needs_human_decision';
+      /** 判定来自 PlanCompiler（机械无法推导）还是 Control 的四条边界。 */
+      origin: 'compiler' | 'acceptance';
+      code: string;
+      reasons: string[];
+      boundaries: ReworkBoundaryOutcomeV1[];
+      budget: ReworkBudgetFactsV1 | null;
+    }
+  | {
+      groupTaskId: string;
+      issueIds: string[];
+      status: 'rejected';
+      origin: 'compiler' | 'acceptance' | 'canonical';
+      code: string;
+      reasons: string[];
+      /** 该分组的问题是否已被本次触发中更早的受理取代；没有则为 null。 */
+      supersededByPlanId: string | null;
+    }
+  | {
+      groupTaskId: string;
+      issueIds: string[];
+      status: 'superseded';
+      /** 本次触发中更早的一次受理推进到的新 revision；null 表示更早的受理不在本次触发里。 */
+      replacedByPlanId: string | null;
+      /**
+       * 当前 revision 里接手这些义务的 active 任务（承担者）。**必填**：报告 superseded 必须
+       * 说得出"谁接手了"，否则就会让失败义务凭空消失。
+       */
+      carrierTaskIds: string[];
+      reasons: string[];
+    };
+
+/**
+ * 本次触发对**每一条**问题（触发开始时读到的全部问题，不只是被受理的那些）的逐项交代。
+ *
+ * 为什么需要它：受理结果只描述"哪些分组被受理了"，回答不了"剩下的失败义务去哪了、谁在等什么"。
+ * 逐项交代让「未处置的还有什么」可以被测试与界面直接断言，而不必从若干 outcomes 里反推。
+ * 每一项都必须落在"有明确承担者"（accepted_rework／carried_by_task／disposed_*）或
+ * "有明确且可继续处理的阻塞"（awaiting_budget／awaiting_human_decision／rejected_input）上；
+ * unresolved 表示既没有归属也没有阻塞（必须为空，出现即为缺陷），unknown 表示 canonical 事实
+ * 读不到（如实标注，不当成已处置）。
+ */
+export type ReworkIssueDispositionTraceV1 = {
+  issueId: string;
+  taskId: string;
+  /** 该问题列出的失败义务（未处置的就是这些），升序去重。 */
+  obligationIds: string[];
+  status:
+    /** 已被本次受理的返工任务接手（明确承担者）。 */
+    | 'accepted_rework'
+    /** 明确阻塞：自动化预算耗尽，等预算或人的决定。 */
+    | 'awaiting_budget'
+    /** 明确阻塞：其余边界不成立（人的拒绝／治理未授权／触发源或范围不成立），必须由人决定。 */
+    | 'awaiting_human_decision'
+    /** 输入与 canonical 事实不一致，机械推导无法成立：要先修输入。 */
+    | 'rejected_input'
+    /** 未处置但落点明确：当前 revision 里这些义务仍由原任务承担（证据 anchor 已失效）。 */
+    | 'carried_by_task'
+    /** 已处置：承担者换人，由 carrierTaskIds 接手。 */
+    | 'disposed_by_rework'
+    /** 已处置：失败要求已在当前 revision 上重新验证通过。 */
+    | 'disposed_by_reverification'
+    /** 既没有归属也没有阻塞（缺陷信号：驱动没有走到它）。 */
+    | 'unresolved'
+    /** canonical 事实读不到，无法判断（不得当成已处置）。 */
+    | 'unknown';
+  /** 本次触发结束时，当前 revision 里承担这些义务的 active 任务（升序）；读不到计划时为空。 */
+  carrierTaskIds: string[];
+  /** 本次受理产生的返工任务（仅 accepted_rework 非空）。 */
+  reworkTaskIds: string[];
+  reasons: string[];
+};
+
+/**
+ * 一次触发的结构化结果。
+ *
+ * issues 是触发开始时读到的只读问题视图（原样带回，不重写）；outcomes 按任务分组给出
+ * 逐组结论；acceptedPlanRefs 是本次触发真正生效的新 revision（顺序即受理顺序）。
+ */
+export type ReworkDriveResultV1 = {
+  schemaVersion: 1;
+  status: 'unavailable' | 'nothing_to_do' | 'driven';
+  scope: ReworkDriveScopeV1;
+  issues: OpenIssuesViewV1;
+  outcomes: ReworkDriveOutcomeV1[];
+  acceptedPlanRefs: PlanRevisionRef[];
+  /**
+   * 逐条交代本次触发开始时读到的每一条失败的落点（见 ReworkIssueDispositionTraceV1）。
+   * 顺序按 issueId 升序，与遍历顺序无关，重启后可重建。
+   */
+  dispositions: ReworkIssueDispositionTraceV1[];
+  gaps: string[];
+};
+
+/**
+ * 提案的只读预览：由 PlanCompiler 对当前 canonical 事实机械推导，不落账、不触发受理。
+ * proposalId／planId 只在真正产出提案时给出；其余情况下给出编译器的结论码与诊断。
+ */
+export type ReworkProposalPreviewV1 = {
+  status: 'not_compiled' | 'proposal' | 'needs_decision' | 'rejected';
+  proposalId: string | null;
+  planId: string | null;
+  message: string | null;
+  diagnostics: string[];
+};
+
+/**
+ * 受理事实。全部由 canonical 来源重建（Goal 的当前 active revision + 账本里的提案聚合），
+ * 因此重启后仍然一致；被拒绝／转人工的判定零写入，不在这里冒充历史记录。
+ */
+export type ReworkAcceptanceViewV1 = {
+  /** 与当前未处置问题对应的提案身份；没有可推导的问题时为 null。 */
+  proposalId: string | null;
+  /** 账本里是否已有该身份的不可变提案记录。 */
+  proposalRecorded: boolean;
+  proposalRef: PlanProposalSnapshot['ref'] | null;
+  recordedAt: string | null;
+  /**
+   * 已记录的提案与当前机械推导是否一致；null 表示没有可比较的推导结果
+   * （没有问题、编译没有产出提案，或账本里还没有记录）。
+   */
+  digestMatches: boolean | null;
+  /**
+   * 这些问题的返工是否**已经生效**：要么"提案导出的新 revision 就是当前 active revision"，
+   * 要么当前 active revision 里这条问题自己的返工任务正在承担它的义务（见 appliedBasis）。
+   */
+  applied: boolean;
+  /**
+   * 判定依据。为什么必须分开写：一次触发会受理**多个**分组（每个分组一份提案、各自一个新
+   * revision），此时只有最后一次受理满足"active revision ＝ 本提案导出的 revision"，身份也
+   * 无法只从问题本身重建（后来的提案建立在推进后的 revision 上，而问题带的是它自己的 anchor）。
+   * 把两种依据混成一句"已受理"会让人以为身份可核对，因此这里逐项说明用的是哪一种。
+   */
+  appliedBasis: 'proposal_identity' | 'rework_carrier' | 'none';
+  /** 已生效的返工提案身份（由已落账提案身份确定性推导，重启后仍可重建）；重建不出时为 null。 */
+  appliedProposalId: string | null;
+  /** Goal 当前生效的 revision：受理结果的对照基线。 */
+  activePlanRef: PlanRevisionRef | null;
+  /** 如实说明本视图能回答什么、不能回答什么。 */
+  note: string;
+};
+
+export type ReworkDriveViewV1 = {
+  schemaVersion: 1;
+  scope: ReworkDriveScopeV1;
+  /** 未处置问题的只读投影（原样，不重写）。 */
+  issues: OpenIssuesViewV1;
+  proposal: ReworkProposalPreviewV1;
+  acceptance: ReworkAcceptanceViewV1;
+  /** 视图自身的缺口说明（例如问题的来源 revision 已读不到）。 */
+  gaps: string[];
+};
+
+/**
+ * DispatchEngine 暴露给组合根与 harness 的返工面。
+ * driveRework 是唯一会调用 ControlEngine 写入面的入口；reworkView 是纯只读。
+ */
+export interface ReworkDrivePort {
+  driveRework(request: ReworkDriveRequestV1): Promise<ReworkDriveResultV1>;
+  reworkView(request: ReworkDriveRequestV1): Promise<ReworkDriveViewV1>;
+}

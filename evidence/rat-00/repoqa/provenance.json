@@ -1,0 +1,218 @@
+{
+  "source_downloads": [
+    {
+      "file": "release.json",
+      "url": "https://api.github.com/repos/evalplus/repoqa_release/releases/tags/2024-06-23",
+      "bytes": 3411,
+      "sha256": "29c8441da6fe526cc397753fae87ca7e4b8018b69d0d6c38024be905d57b3add",
+      "status": "READY"
+    },
+    {
+      "file": "tool-commit.json",
+      "url": "https://api.github.com/repos/evalplus/repoqa/commits/ae876deb1365dbf5a15b0533723c8ed123eee586",
+      "bytes": 7063,
+      "sha256": "7f0d5648837f74d98e555f3c862ff7c34cf80bca5b74d7976db4ec82d9971134",
+      "status": "READY"
+    },
+    {
+      "file": "release-tree.json",
+      "url": "https://api.github.com/repos/evalplus/repoqa_release/git/trees/2024-06-23?recursive=1",
+      "bytes": 900,
+      "sha256": "84ecb64edfee29db82c64d8e20b9127d5663e4eef098e2f4b8ef9cdc77f5b343",
+      "status": "READY"
+    },
+    {
+      "file": "repoqa-2024-06-23.json.gz",
+      "url": "https://github.com/evalplus/repoqa_release/releases/download/2024-06-23/repoqa-2024-06-23.json.gz",
+      "bytes": 12525636,
+      "sha256": "c050a2ad90a7df89d9dc1f1c3b3b20683edd20a56293b35fcaae43dec115d681",
+      "status": "READY"
+    },
+    {
+      "file": "release-LICENSE",
+      "url": "https://raw.githubusercontent.com/evalplus/repoqa_release/e3a571033de99d0b9dcaccd25577a75d4b1c70b1/LICENSE",
+      "bytes": 11558,
+      "sha256": "fcc1f77fe5443b21bfc4dfcc3d66f7654f599b91582df771850e5e876986a103",
+      "status": "READY"
+    },
+    {
+      "file": "express-LICENSE",
+      "url": "https://raw.githubusercontent.com/expressjs/express/815f799310a5627c000d4a5156c1c958e4947b4c/LICENSE",
+      "bytes": 1249,
+      "sha256": "95a5762890e5c1c9808921cef095661fc482c5e1f0bba31446ac85595df6237c",
+      "status": "READY"
+    },
+    {
+      "file": "tool/LICENSE",
+      "url": "https://raw.githubusercontent.com/evalplus/repoqa/ae876deb1365dbf5a15b0533723c8ed123eee586/LICENSE",
+      "bytes": 11558,
+      "sha256": "fcc1f77fe5443b21bfc4dfcc3d66f7654f599b91582df771850e5e876986a103",
+      "status": "READY"
+    },
+    {
+      "file": "tool/README.md",
+      "url": "https://raw.githubusercontent.com/evalplus/repoqa/ae876deb1365dbf5a15b0533723c8ed123eee586/README.md",
+      "bytes": 7601,
+      "sha256": "e977d6e61cc5de1e264802c0717a924337c5594632497200c30f91018880904f",
+      "status": "READY"
+    },
+    {
+      "file": "tool/requirements.txt",
+      "url": "https://raw.githubusercontent.com/evalplus/repoqa/ae876deb1365dbf5a15b0533723c8ed123eee586/requirements.txt",
+      "bytes": 139,
+      "sha256": "00781d3f89fa2b3c112e89a33a93e5080b5e8943968044a76afa86026e10e271",
+      "status": "READY"
+    },
+    {
+      "file": "tool/setup.cfg",
+      "url": "https://raw.githubusercontent.com/evalplus/repoqa/ae876deb1365dbf5a15b0533723c8ed123eee586/setup.cfg",
+      "bytes": 1000,
+      "sha256": "d5fdaa1ce6daa4bb71cef79ce9acff7365be4f0e4dee383063f1632f749bdf01",
+      "status": "READY"
+    },
+    {
+      "file": "tool/repoqa/__init__.py",
+      "url": "https://raw.githubusercontent.com/evalplus/repoqa/ae876deb1365dbf5a15b0533723c8ed123eee586/repoqa/__init__.py",
+      "bytes": 208,
+      "sha256": "ec1c2dc48aa5b3c626750d0421a41bdc187c03ce04d947003223130ae169001c",
+      "status": "READY"
+    },
+    {
+      "file": "tool/repoqa/data.py",
+      "url": "https://raw.githubusercontent.com/evalplus/repoqa/ae876deb1365dbf5a15b0533723c8ed123eee586/repoqa/data.py",
+      "bytes": 1639,
+      "sha256": "1ede94992479cfa39759387c6a964be699d633dfac57aea84042bb3679d8178e",
+      "status": "READY"
+    },
+    {
+      "file": "tool/repoqa/compute_score.py",
+      "url": "https://raw.githubusercontent.com/evalplus/repoqa/ae876deb1365dbf5a15b0533723c8ed123eee586/repoqa/compute_score.py",
+      "bytes": 13467,
+      "sha256": "f4e9edaec292105272fb8d2f85f1f5b1b02f5caa4bd61a0c1f463a5f612664d8",
+      "status": "READY"
+    },
+    {
+      "file": "tool/repoqa/metric.py",
+      "url": "https://raw.githubusercontent.com/evalplus/repoqa/ae876deb1365dbf5a15b0533723c8ed123eee586/repoqa/metric.py",
+      "bytes": 600,
+      "sha256": "e477e85ed621aa540b9fdfe4f3e022f4077447f942d54fbec53b49e990cbbc38",
+      "status": "READY"
+    },
+    {
+      "file": "tool/repoqa/utility.py",
+      "url": "https://raw.githubusercontent.com/evalplus/repoqa/ae876deb1365dbf5a15b0533723c8ed123eee586/repoqa/utility.py",
+      "bytes": 2527,
+      "sha256": "a8494598171769033bbff34fde155bae75f3cfb34cad62ef43cd0f73c0284e46",
+      "status": "READY"
+    },
+    {
+      "file": "tool/repoqa/search_needle_function.py",
+      "url": "https://raw.githubusercontent.com/evalplus/repoqa/ae876deb1365dbf5a15b0533723c8ed123eee586/repoqa/search_needle_function.py",
+      "bytes": 21681,
+      "sha256": "23ae5a20c0824cef23c54ee3940837e5e69d17cc93fe54ad03456f05670aef8e",
+      "status": "READY"
+    },
+    {
+      "file": "tool/scripts/cherrypick/lists.json",
+      "url": "https://raw.githubusercontent.com/evalplus/repoqa/ae876deb1365dbf5a15b0533723c8ed123eee586/scripts/cherrypick/lists.json",
+      "bytes": 12868,
+      "sha256": "06cfd6ac1b372937ea0398df9dd494ffdb0466485b95399b7d928ac84cf3dd01",
+      "status": "READY"
+    }
+  ],
+  "express_source_verification": [
+    {
+      "path": "lib/application.js",
+      "url": "https://raw.githubusercontent.com/expressjs/express/815f799310a5627c000d4a5156c1c958e4947b4c/lib/application.js",
+      "upstream_sha256": "5901b32f609ba349351bf7406dbdc0c4c57b77ce6f7215ea67ccca5ac2a28e88",
+      "dataset_sha256": "5901b32f609ba349351bf7406dbdc0c4c57b77ce6f7215ea67ccca5ac2a28e88",
+      "bytes": 14593,
+      "matches_release": true
+    },
+    {
+      "path": "lib/express.js",
+      "url": "https://raw.githubusercontent.com/expressjs/express/815f799310a5627c000d4a5156c1c958e4947b4c/lib/express.js",
+      "upstream_sha256": "2f25585c03c3050779c8f5f00597f8653f4fb8a97448ef8ef8cb21e65ba4d15d",
+      "dataset_sha256": "2f25585c03c3050779c8f5f00597f8653f4fb8a97448ef8ef8cb21e65ba4d15d",
+      "bytes": 2409,
+      "matches_release": true
+    },
+    {
+      "path": "lib/request.js",
+      "url": "https://raw.githubusercontent.com/expressjs/express/815f799310a5627c000d4a5156c1c958e4947b4c/lib/request.js",
+      "upstream_sha256": "64ac10752c0516d789cb0698bb433586d4ce3b46f7f06ee3cb2880762b8bda40",
+      "dataset_sha256": "64ac10752c0516d789cb0698bb433586d4ce3b46f7f06ee3cb2880762b8bda40",
+      "bytes": 12505,
+      "matches_release": true
+    },
+    {
+      "path": "lib/response.js",
+      "url": "https://raw.githubusercontent.com/expressjs/express/815f799310a5627c000d4a5156c1c958e4947b4c/lib/response.js",
+      "upstream_sha256": "8761b1592827b8d4708dc17810a7359b35ca469bde3bb10aabdce6a1884629a8",
+      "dataset_sha256": "8761b1592827b8d4708dc17810a7359b35ca469bde3bb10aabdce6a1884629a8",
+      "bytes": 28339,
+      "matches_release": true
+    },
+    {
+      "path": "lib/utils.js",
+      "url": "https://raw.githubusercontent.com/expressjs/express/815f799310a5627c000d4a5156c1c958e4947b4c/lib/utils.js",
+      "upstream_sha256": "9035c6d946ece511e749043cc823e32d3efe6727b8a9d52aac89649e99584f09",
+      "dataset_sha256": "9035c6d946ece511e749043cc823e32d3efe6727b8a9d52aac89649e99584f09",
+      "bytes": 5871,
+      "matches_release": true
+    },
+    {
+      "path": "lib/view.js",
+      "url": "https://raw.githubusercontent.com/expressjs/express/815f799310a5627c000d4a5156c1c958e4947b4c/lib/view.js",
+      "upstream_sha256": "ec627880c1b43aee5887164ac2e9c58f01e4ee8086e23a829eddf1af3858c021",
+      "dataset_sha256": "ec627880c1b43aee5887164ac2e9c58f01e4ee8086e23a829eddf1af3858c021",
+      "bytes": 3325,
+      "matches_release": true
+    },
+    {
+      "path": "lib/middleware/init.js",
+      "url": "https://raw.githubusercontent.com/expressjs/express/815f799310a5627c000d4a5156c1c958e4947b4c/lib/middleware/init.js",
+      "upstream_sha256": "48c1d12f1494b20377fcdeec9056272eff84ed8c081e1e56dc2aea395f77d19c",
+      "dataset_sha256": "48c1d12f1494b20377fcdeec9056272eff84ed8c081e1e56dc2aea395f77d19c",
+      "bytes": 853,
+      "matches_release": true
+    },
+    {
+      "path": "lib/middleware/query.js",
+      "url": "https://raw.githubusercontent.com/expressjs/express/815f799310a5627c000d4a5156c1c958e4947b4c/lib/middleware/query.js",
+      "upstream_sha256": "6edce3963588b42e41942900b24218e665b97df0c0b1c74090b2b934fa68ca08",
+      "dataset_sha256": "6edce3963588b42e41942900b24218e665b97df0c0b1c74090b2b934fa68ca08",
+      "bytes": 885,
+      "matches_release": true
+    },
+    {
+      "path": "lib/router/index.js",
+      "url": "https://raw.githubusercontent.com/expressjs/express/815f799310a5627c000d4a5156c1c958e4947b4c/lib/router/index.js",
+      "upstream_sha256": "19c5ca9b025396612dbe464d07fbe7104ff9170c4d6a1c7e5507df4dbbf4d5cb",
+      "dataset_sha256": "19c5ca9b025396612dbe464d07fbe7104ff9170c4d6a1c7e5507df4dbbf4d5cb",
+      "bytes": 15123,
+      "matches_release": true
+    },
+    {
+      "path": "lib/router/layer.js",
+      "url": "https://raw.githubusercontent.com/expressjs/express/815f799310a5627c000d4a5156c1c958e4947b4c/lib/router/layer.js",
+      "upstream_sha256": "c90709dcba8d9a6cfd1f2b4ef6d7a22d833e317f0c876d884342cee5a96f8a02",
+      "dataset_sha256": "c90709dcba8d9a6cfd1f2b4ef6d7a22d833e317f0c876d884342cee5a96f8a02",
+      "bytes": 3296,
+      "matches_release": true
+    },
+    {
+      "path": "lib/router/route.js",
+      "url": "https://raw.githubusercontent.com/expressjs/express/815f799310a5627c000d4a5156c1c958e4947b4c/lib/router/route.js",
+      "upstream_sha256": "86db123570815a63dc23aa88d73e1b3dce908692ac2e3cf20fa350d69de63337",
+      "dataset_sha256": "86db123570815a63dc23aa88d73e1b3dce908692ac2e3cf20fa350d69de63337",
+      "bytes": 4399,
+      "matches_release": true
+    }
+  ],
+  "subset_dataset_sha256": "07c247de933e23ddd138796233b5b38f5803697e4304e2619d3efc8980520400",
+  "manifest_sha256": "39d77928b98ae8f75b843439fc2ef1e01037cddd6b5df6fe898a9720d2a5738e",
+  "upstream_full_dataset_location": ".local/evaluation/rat-00/repoqa/evaluator-only/upstream/repoqa-2024-06-23.json.gz",
+  "network_limit_bytes": 13000000,
+  "no_full_repository_clone": true
+}

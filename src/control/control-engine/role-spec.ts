@@ -1,0 +1,177 @@
+/**
+ * RW-11（ADR 0003 D4 前半）Control 入口：RoleSpecRevision 的 install / activate。
+ *
+ * 这是**既有治理三段式**（P1-02 CompletionPolicy／ArchitectureBaseline、P1-15 CoordinationPolicy、
+ * P1-13 ArchitectureEvolutionPolicy）的第 5 个治理种类，不是第二套治理机制：
+ *   - 唯一写入路径仍是 StateLedger.commit；身份、幂等、CAS 全部由账本裁决；
+ *   - install 固定 CAS@0 且**绝不自动生效**；activate 用 CAS 移动 Project 上「该角色」的生效引用；
+ *   - receipt 取值沿用 CoordinationPolicy 的同一组码，没有新造 reject 码。
+ *
+ * 守卫顺序（全部零写入，提交前）：
+ *   1. 命令形状（validateInstallRoleSpecRevisionCommand /
+ *      validateActivateRoleSpecRevisionCommand）-> invalid；
+ *   2. 内容摘要与角色身份（roleSpecContentDigest(content, roleId, ROLE_SPEC_REVISION)）
+ *      -> digest_mismatch；
+ *   3. activate 额外要求目标 revision 已安装且三元组（projectId／roleId／revision）与摘要
+ *      与落账快照逐字一致 -> not_found / digest_mismatch。
+ *
+ * 为什么摘要口径固定用 ROLE_SPEC_REVISION：与 P1-15 同理，一个 roleId 只有一份安装 revision；
+ * 「安装一份内容不同的规格」在身份上就是换一个 roleId，而不是偷偷覆盖旧内容。
+ */
+import type {
+  ActivateRoleSpecRevisionCommand,
+  ActivateRoleSpecRevisionReceipt,
+  InstallRoleSpecRevisionCommand,
+  InstallRoleSpecRevisionReceipt,
+  RoleSpecRevisionSnapshot,
+} from "../../contracts/role-spec.js";
+import { ROLE_SPEC_REVISION, roleSpecContentDigest } from "../../contracts/role-spec.js";
+import { validateActivateRoleSpecRevisionCommand, validateInstallRoleSpecRevisionCommand } from '../../contracts/validation/role.js';
+import { buildRoleSpecActivateFold, buildRoleSpecInstallFold } from "./records/role-spec.js";
+import type { LedgerCommitReceipt } from "../../contracts/ledger.js";
+import type { ControlEngineDeps } from "./control-engine.js";
+
+/** RW-11 Control 角色规格入口（与 HumanRoleCollaborationEngineImpl 的 policy 部分同形）。 */
+export class RoleSpecEngineImpl {
+  constructor(private readonly deps: ControlEngineDeps) {}
+
+  install(command: InstallRoleSpecRevisionCommand): Promise<InstallRoleSpecRevisionReceipt> {
+    return installRoleSpecImpl(this.deps, command);
+  }
+
+  activate(command: ActivateRoleSpecRevisionCommand): Promise<ActivateRoleSpecRevisionReceipt> {
+    return activateRoleSpecImpl(this.deps, command);
+  }
+}
+
+async function installRoleSpecImpl(
+  deps: ControlEngineDeps,
+  command: InstallRoleSpecRevisionCommand,
+): Promise<InstallRoleSpecRevisionReceipt> {
+  // Guard 1: 命令与正文形状（零写入）。正文缺权限上界、必产出或退出条件即 invalid。
+  const issues = validateInstallRoleSpecRevisionCommand(command);
+  if (issues.length > 0) {
+    return { status: "rejected", commandId: command.commandId, code: "invalid" };
+  }
+
+  // Guard 2: 内容摘要必须与命令声明的摘要一致（零写入）。
+  let expectedDigest: string;
+  try {
+    expectedDigest = roleSpecContentDigest(command.payload.content, command.payload.roleId, ROLE_SPEC_REVISION);
+  } catch {
+    // 正文里出现非 JSON 值（undefined／非有限数）时 canonicalJson 会抛错；
+    // 这是输入不合法，不是摘要不符，按 invalid 处理并保持零写入。
+    return { status: "rejected", commandId: command.commandId, code: "invalid" };
+  }
+  if (command.payload.contentDigest !== expectedDigest) {
+    return { status: "rejected", commandId: command.commandId, code: "digest_mismatch" };
+  }
+
+  const eventId = deps.eventId();
+  const occurredAt = deps.now();
+  const batch = buildRoleSpecInstallFold(command, { eventId, occurredAt });
+  const receipt = await deps.ledger.commit(batch);
+  if (receipt.status === "committed") {
+    return {
+      status: "committed",
+      commandId: command.commandId,
+      replayed: receipt.replayed,
+      revisionRef: (batch.snapshots[0]! as RoleSpecRevisionSnapshot).ref,
+      contentDigest: command.payload.contentDigest,
+      eventIds: receipt.eventIds,
+      commitCursor: receipt.commitCursor,
+    };
+  }
+  return mapInstallRejected(receipt, command.commandId);
+}
+
+async function activateRoleSpecImpl(
+  deps: ControlEngineDeps,
+  command: ActivateRoleSpecRevisionCommand,
+): Promise<ActivateRoleSpecRevisionReceipt> {
+  // Guard 1: 命令形状（零写入）。
+  const issues = validateActivateRoleSpecRevisionCommand(command);
+  if (issues.length > 0) {
+    return { status: "rejected", commandId: command.commandId, code: "invalid" };
+  }
+
+  const target = command.payload.target;
+
+  // Guard 2: 目标 revision 必须已安装（零写入）。
+  const targetResult = await deps.ledger.load(target.ref);
+  if (targetResult.status !== "found" || targetResult.snapshot.ref.aggregateType !== "RoleSpecRevision") {
+    return { status: "rejected", commandId: command.commandId, code: "not_found" };
+  }
+  const revision = targetResult.snapshot as RoleSpecRevisionSnapshot;
+
+  // Guard 3: 三元组 + 摘要必须与落账快照逐字一致（零写入）。
+  if (
+    revision.ref.projectId !== target.ref.projectId ||
+    revision.roleId !== target.ref.roleId ||
+    revision.contentRevision !== target.ref.revision ||
+    revision.contentDigest !== target.digest
+  ) {
+    return { status: "rejected", commandId: command.commandId, code: "digest_mismatch" };
+  }
+
+  // 每个 (project, role) 一份生效聚合；缺失即 0。
+  const activeRef = { aggregateType: "ProjectRoleSpecActive" as const, projectId: command.identity.projectId, roleId: target.ref.roleId };
+  const active = await deps.ledger.load(activeRef);
+  const activeExpected = active.status === "found" ? active.snapshot.revision : 0;
+  const newActiveRevision = activeExpected + 1;
+
+  const eventId = deps.eventId();
+  const occurredAt = deps.now();
+  const batch = buildRoleSpecActivateFold(command, {
+    eventId,
+    occurredAt,
+    activeAggregateRevision: newActiveRevision,
+    projectRevision: command.expectedRevision,
+  });
+  const receipt = await deps.ledger.commit(batch);
+  if (receipt.status === "committed") {
+    const snap = batch.snapshots[0]!;
+    return {
+      status: "committed",
+      commandId: command.commandId,
+      replayed: receipt.replayed,
+      activeRef: snap.ref,
+      activeRevision: snap.activeRevision,
+      eventIds: receipt.eventIds,
+      commitCursor: receipt.commitCursor,
+    };
+  }
+  return mapActivateRejected(receipt, command.commandId);
+}
+
+// ------------------------------------------------------------------------ //
+// Receipt mapping（与 P1-15 coordination-policy 同一组码）                    //
+// ------------------------------------------------------------------------ //
+
+type LedgerRejected = Extract<LedgerCommitReceipt, { status: "rejected" }>;
+
+function mapCommittedRejection(
+  receipt: LedgerRejected,
+  commandId: string,
+): { status: "rejected"; commandId: string; code: "invalid" | "revision_conflict" | "idempotency_conflict" | "unavailable" } {
+  switch (receipt.code) {
+    case "invalid_commit":
+      return { status: "rejected", commandId, code: "invalid" };
+    case "revision_conflict":
+      return { status: "rejected", commandId, code: "revision_conflict" };
+    case "idempotency_conflict":
+      return { status: "rejected", commandId, code: "idempotency_conflict" };
+    case "unavailable":
+      return { status: "rejected", commandId, code: "unavailable" };
+    case "not_empty":
+      // 这两类提交都带非空 expectedVersions，不会走到这里；按畸形提交处理，不新造码。
+      return { status: "rejected", commandId, code: "invalid" };
+  }
+}
+
+function mapInstallRejected(receipt: LedgerRejected, commandId: string): InstallRoleSpecRevisionReceipt {
+  return mapCommittedRejection(receipt, commandId);
+}
+function mapActivateRejected(receipt: LedgerRejected, commandId: string): ActivateRoleSpecRevisionReceipt {
+  return mapCommittedRejection(receipt, commandId);
+}

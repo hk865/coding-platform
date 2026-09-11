@@ -1,0 +1,93 @@
+import type { StateLedger, GoalSnapshot } from '../../contracts/ledger.js';
+import type { AmendGoalRequestV1 } from '../../contracts/goal-change.js';
+import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../contracts/plan.js';
+import type { QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobSnapshot } from '../../contracts/query-job.js';
+import type { CoordinationSourcePort, InitialPlanningResultMaterial, PlanningMaterialPort, PlanningScope } from '../../contracts/planning.js';
+import type { AcceptedInitialPlan } from '../../contracts/initial-planning.js';
+import { initialPlanIdFor } from '../../contracts/initial-planning.js';
+import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
+import type { ScopeCatalogPort } from '../../contracts/scope-catalog.js';
+
+export type CoordinationContextDeps = {
+  ledger: Pick<StateLedger, 'load'>;
+  catalog?: Pick<ScopeCatalogPort, 'jobs'>;
+  sources?: CoordinationSourcePort;
+};
+
+/** Selects exact planning facts and registered answers, without running models,
+ * granting authority, or treating material currentness as a commit guard. */
+export class CoordinationContextCompiler implements PlanningMaterialPort {
+  constructor(private readonly deps: CoordinationContextDeps) {}
+
+  async amendment(intent: AmendGoalRequestV1): ReturnType<PlanningMaterialPort['amendment']> {
+    if (intent.goalRef.projectId !== intent.projectId || (intent.planRef && intent.planRef.projectId !== intent.projectId))
+      return { status: 'rejected', code: 'forbidden_tool_or_scope', message: 'planning references must match project scope' };
+    const found = await this.goal({ projectId: intent.projectId, workspaceId: intent.workspaceId, goalId: intent.goalRef.goalId });
+    if (!found) return { status: 'rejected', code: 'not_found', message: 'goal scope not found' };
+    if (!found.activePlanRevision) return { status: 'needs_material', gaps: ['active_plan_missing'] };
+    if (intent.planRef && canonicalJson(intent.planRef) !== canonicalJson(found.activePlanRevision))
+      return { status: 'rejected', code: 'source_stale', message: 'requested plan is no longer active' };
+    const plan = await this.initialPlan(found.activePlanRevision);
+    if (!plan) return { status: 'needs_material', gaps: ['active_plan_missing'] };
+    return { status: 'ready', goal: found, plan };
+  }
+
+  async initialRequest(scope: PlanningScope, queryJobId: string): ReturnType<PlanningMaterialPort['initialRequest']> {
+    const goal = await this.goal(scope);
+    if (!goal) return { status: 'rejected', code: 'not_found', message: '目标作用域不存在' };
+    const loaded = await this.deps.ledger.load({ aggregateType: 'QueryJob', projectId: scope.projectId, workspaceId: scope.workspaceId, queryJobId });
+    const prior = loaded.status === 'found' && loaded.snapshot.ref.aggregateType === 'QueryJob' ? loaded.snapshot as QueryJobSnapshot : null;
+    if (prior && (prior.job.goalId !== scope.goalId || prior.job.intent.execution?.kind !== 'initial_coordination'))
+      return { status: 'rejected', code: 'idempotency_conflict', message: '请求标识已用于另一目标或协调类型' };
+    if (!prior && goal.activePlanRevision !== null)
+      return { status: 'rejected', code: 'plan_exists', message: '目标已有计划；新需求需要正式计划修订' };
+    return { status: 'ready', goal, prior };
+  }
+
+  async initialResults(resultRef?: QueryJobAnswerRef): Promise<InitialPlanningResultMaterial[]> {
+    let jobs: QueryJobSnapshot[];
+    if (resultRef) {
+      const loaded = await this.deps.ledger.load({ aggregateType: 'QueryJob', projectId: resultRef.projectId, workspaceId: resultRef.workspaceId, queryJobId: resultRef.queryJobId });
+      jobs = loaded.status === 'found' && loaded.snapshot.ref.aggregateType === 'QueryJob' ? [loaded.snapshot as QueryJobSnapshot] : [];
+    } else jobs = await this.deps.catalog?.jobs() ?? [];
+    const rows: InitialPlanningResultMaterial[] = [];
+    for (const snapshot of jobs) {
+      const job = snapshot.job, ref = job.answerRefs.at(-1);
+      if (job.status !== 'answered' || !job.goalId || !ref || job.intent.execution?.kind !== 'initial_coordination' || !job.intent.execution.implementationAuthorization) continue;
+      if (resultRef && canonicalJson(ref) !== canonicalJson(resultRef)) continue;
+      const loaded = await this.deps.ledger.load(ref);
+      if (loaded.status !== 'found' || loaded.snapshot.ref.aggregateType !== 'QueryJobAnswer') continue;
+      const answer = (loaded.snapshot as QueryJobAnswerSnapshot).answer;
+      if (canonicalJson(answer.queryJobRef) !== canonicalJson(snapshot.ref) || canonicalJson(answer.runRef) !== canonicalJson(job.runRef)) continue;
+      rows.push({ snapshot, answer, resultRef: ref });
+    }
+    return rows;
+  }
+
+  async initialPlan(ref: PlanRevisionRef): Promise<PlanRevisionSnapshot | null> {
+    const loaded = await this.deps.ledger.load(ref);
+    return loaded.status === 'found' && loaded.snapshot.ref.aggregateType === 'PlanRevision' ? loaded.snapshot as PlanRevisionSnapshot : null;
+  }
+
+  async initialCurrentness(snapshot: QueryJobSnapshot): Promise<boolean> {
+    try { return (await this.deps.sources?.currentness(snapshot.job.projectId, snapshot.job.workspaceId))?.get(snapshot.job.queryJobId) === true; }
+    catch { return false; }
+  }
+
+  async acceptedInitialPlans(): Promise<AcceptedInitialPlan[]> {
+    const accepted: AcceptedInitialPlan[] = [];
+    for (const { snapshot, answer } of await this.initialResults()) {
+      const plan = await this.initialPlan({ aggregateType: 'PlanRevision', projectId: snapshot.job.projectId, planId: initialPlanIdFor(snapshot.job.intent) });
+      const answerRef = { ...answer.queryJobRef, aggregateType: 'QueryJobAnswer', answerId: answer.answerId };
+      if (plan?.origin && canonicalJson(plan.origin.answerRef) === canonicalJson(answerRef) && plan.origin.answerDigest === sha256Hex(answer.answer)) accepted.push({ snapshot, plan });
+    }
+    return accepted;
+  }
+
+  private async goal(scope: PlanningScope): Promise<GoalSnapshot | null> {
+    const found = await this.deps.ledger.load({ aggregateType: 'Goal', projectId: scope.projectId, goalId: scope.goalId });
+    if (found.status !== 'found' || found.snapshot.ref.aggregateType !== 'Goal') return null;
+    const goal = found.snapshot as GoalSnapshot;
+    return goal.workspaceRef.workspaceId === scope.workspaceId ? goal : null;
+  }
+}

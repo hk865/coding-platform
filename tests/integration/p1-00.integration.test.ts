@@ -9,20 +9,20 @@ import { describe, expect, it } from "vitest";
 import {
   WORKSPACE_BOOTSTRAP_FIXTURE_V1,
   fixtureDigest,
-} from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+} from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import {
   buildCreateGoalCommand,
   goalCreatedEventFor,
   goalSnapshotFor,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1 } from "../../src/contracts/fixtures/goal-fixtures.js";
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1 } from "../contract-support/fixtures/goal-fixtures.js";
 import {
   verifyBootstrapManifest,
   verifyGoalViewIsolation,
 } from "./p1-00-assertions.js";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import type { WorkspaceBootstrapCommand } from "../../src/contracts/bootstrap.js";
 
 const FIXTURE = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1;

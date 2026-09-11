@@ -1,0 +1,4 @@
+{"type":"task.prepared","trialId":"python-slug-normalization-trial-1"}
+{"type":"workspace.changed","paths":["slug.py"]}
+{"type":"evaluator.completed","status":"resolved"}
+{"type":"agent.process","exitCode":0,"summary":{"status":"completed","sessionId":"07243c79-7574-49f1-9a1d-0948a6d781a3","configuration":{"revision":"d6c00a9e-b67b-4ebc-a5a4-6a806b39e60a","provider":"deepseek","model":"deepseek-v4-flash-vision-exp","baseUrl":"https://api.deepseek.com","protocol":"chat-completions","updatedAt":"2026-09-07T10:22:38.817Z"},"usage":{"modelRequestCount":5,"toolCallCount":5,"inputTokens":15344,"outputTokens":1135,"cachedInputTokens":13696,"costUsdMicros":null},"traceArtifact":"native-trace.jsonl","runtimeArtifact":"runtime.json","budget":{"contextWindowTokens":1000000,"inputTokens":200000,"outputTokens":16384,"maxRequests":10,"maxToolCalls":30,"timeoutMs":30000,"perResponseTokens":2048}}}

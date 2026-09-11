@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-16 LANE-B SQLite continuation projection tests — field-for-field mirror of
  * the InMemory adapter. ContinuationRecorded folds into the
@@ -6,21 +7,12 @@
  * equivalence, full-scope isolation and freshness.
  */
 import { describe, expect, it } from "vitest";
-import { createSqliteReadModelIndex } from "../../src/sqlite-read-model/sqlite-read-model-index.js";
+import { createSqliteReadModelIndex } from "../../src/data/read-model-index/sqlite-read-model-index.js";
 import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
 import { canonicalJson } from "../../src/contracts/fingerprint.js";
 import { workContextRefFor } from "../../src/contracts/context-continuity.js";
-import {
-  P116_PROJECT_A,
-  P116_PROJECT_B,
-  P116_WORKSPACE,
-  P116_SCHEMA,
-  P116_REPORT_1,
-  P116_REPORT_2,
-  buildContextContinuationResultV1,
-  buildRecordContinuationCommand,
-  buildContinuationRecordLedgerCommit,
-} from "../../src/contracts/fixtures/context-fixtures.js";
+import { P116_PROJECT_A, P116_PROJECT_B, P116_WORKSPACE, P116_SCHEMA, P116_REPORT_1, P116_REPORT_2, buildContextContinuationResultV1, buildRecordContinuationCommand } from "../contract-support/fixtures/context-fixtures.js";
+import { buildContinuationRecordLedgerCommit } from "../../src/control/control-engine/records/context.js";
 import { runRefFor } from "../../src/contracts/dispatch.js";
 import type { ContinuationRecordedEvent } from "../../src/contracts/context-continuity.js";
 
@@ -74,7 +66,7 @@ function jsonRows(rm: ReturnType<typeof createSqliteReadModelIndex>, key: string
 
 describe("P1-16 LANE-B SQLite continuation projection", () => {
   it("projects ContinuationRecorded rows (status / takeoverRunRef / unsupportedCapabilities)", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const proj = P116_PROJECT_A;
     const workId = "work-p116-coord";
     await rm.advance(page([pos(continuationEvent(proj, workId, P116_REPORT_1, "ev-cont-1", "took_over", "run-b"), 1)], 1));
@@ -101,11 +93,11 @@ describe("P1-16 LANE-B SQLite continuation projection", () => {
     const ev1 = continuationEvent(proj, workId, P116_REPORT_1, "ev-cont-1", "took_over", "run-b");
     const ev2 = continuationEvent(proj, workId, P116_REPORT_2, "ev-cont-2", "unsupported", "run-b");
 
-    const incremental = createSqliteReadModelIndex({ path: ":memory:" });
+    const incremental = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     await incremental.advance(page([pos(ev1, 1)], 1));
     await incremental.advance(page([pos(ev2, 2)], 2));
 
-    const fresh = createSqliteReadModelIndex({ path: ":memory:" });
+    const fresh = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     await fresh.advance(page([pos(ev1, 1), pos(ev2, 2)], 2));
 
     const key = scopeKey(proj, P116_WORKSPACE, workId);
@@ -115,7 +107,7 @@ describe("P1-16 LANE-B SQLite continuation projection", () => {
   });
 
   it("full-scope key isolation: the SAME local workId across two projects never collides", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const workId = "work-p116-1";
     await rm.advance(
       page(
@@ -137,7 +129,7 @@ describe("P1-16 LANE-B SQLite continuation projection", () => {
   });
 
   it("freshness: ContinuationRecorded advances the projection checkpoint; workContext stays not_found", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const proj = P116_PROJECT_A;
     const workId = "work-p116-coord";
     const cold = await rm.workContext({ projectId: proj, workspaceId: P116_WORKSPACE, workId });

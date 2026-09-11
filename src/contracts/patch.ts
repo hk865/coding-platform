@@ -3,7 +3,7 @@
  * single-writer output. Authority: IMPLEMENTATION-HANDOFF.md "P1-07 契约与
  * 存储语义" item 5 + invariant #7.
  *
- * FROZEN semantics:
+ * Semantics:
  *   - body-first: the patch/commit body lives in the ArtifactVault; the
  *     PatchRecord carries ONLY the ArtifactRef (+ bounded metadata) — same
  *     rule as P1-03/04/06.

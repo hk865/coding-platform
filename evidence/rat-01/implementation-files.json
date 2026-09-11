@@ -1,0 +1,44 @@
+{
+  "files": [
+    {
+      "path": "src/app/model-settings.ts",
+      "sha256": "3cfb12ca4a36211e66b36aa9b58e3ff57bf26e33086cffd610bf9211a2c9c8d6"
+    },
+    {
+      "path": "src/app/server.ts",
+      "sha256": "4b634810d092cb126facab22f4ec9399f353071acd525352be7bf45955b54c8e"
+    },
+    {
+      "path": "src/app/workspace-tools.ts",
+      "sha256": "522b7b4440093dee395c2be143e141f2553e7ea3abd3621790dfe099a22210b2"
+    },
+    {
+      "path": "src/app/public/model-settings.js",
+      "sha256": "c663c9718038e124ab80d6a934775df5cd9bc69a786f907e53b4c1363cd3c937"
+    },
+    {
+      "path": "src/app/public/index.html",
+      "sha256": "d722cbd12ff79f3156c9b541e1e53512a909fd2ae1232685cc5c26a501f467bf"
+    },
+    {
+      "path": "src/app/public/app.js",
+      "sha256": "1845c0cd5d4243e3c6cd3b8a5dd76f2bd5a915313397a3c83b2112cf67436a24"
+    },
+    {
+      "path": "src/app/public/styles.css",
+      "sha256": "a88d2cf49b90b176fc3776b020c199a219e508df64564d8c0b9e0e32e4f40393"
+    },
+    {
+      "path": "tests/app/model-settings.test.ts",
+      "sha256": "6e9dfcfe4443241adc5b1e7d091301995158c385c8dc412d49bca2d2410f0b39"
+    },
+    {
+      "path": "package.json",
+      "sha256": "c60e6d07c3a826a2098b84553808f4d67c786957cf0f7607091d9636f27ec72f"
+    },
+    {
+      "path": "README.md",
+      "sha256": "c61dc177ca48ff7d5498c363997a5e5786282e12d2bfada7abcceee6a5defb0c"
+    }
+  ]
+}

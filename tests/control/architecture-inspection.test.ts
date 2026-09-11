@@ -15,38 +15,15 @@
  *   - NO remediation/gate/activation side effects anywhere.
  */
 import { describe, expect, it } from "vitest";
-import { createControlEngine } from "../../src/control/control-engine.js";
-import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
+import { createControlEngine } from "../../src/control/control-engine/control-engine.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
 import type { StateLedger, LedgerCommit, LedgerCommitReceipt, ArchitectureInspectionRecordLedgerCommitV1, ArchitectureFindingRecordLedgerCommitV1, ArchitectureBriefRecordLedgerCommitV1, ArchitectureProposalRecordLedgerCommitV1 } from "../../src/contracts/ledger.js";
-import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
-import { ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand } from "../../src/contracts/fixtures/governance-fixtures.js";
-import {
-  P112_PROJECT,
-  P112_WORKSPACE,
-  P112_INSPECTION,
-  P112_INSPECTION_REPORT,
-  P112_FINDING_DELTA,
-  P112_FINDING_REPORT,
-  P112_BRIEF,
-  P112_PROPOSAL,
-  p112BaselinePin,
-  buildP112InspectionIntent,
-  buildP112InspectionSnapshot,
-  buildP112DeltaFinding,
-  buildP112ReportFinding,
-  buildP112Brief,
-  buildP112Proposal,
-  buildRecordArchitectureInspectionCommand,
-  buildRecordArchitectureFindingCommand,
-  buildRecordArchitectureDecisionBriefCommand,
-  buildRecordCandidateBaselineProposalCommand,
-  buildArchitectureInspectionRecordLedgerCommit,
-  buildArchitectureFindingRecordLedgerCommit,
-  buildArchitectureBriefRecordLedgerCommit,
-  buildArchitectureProposalRecordLedgerCommit,
-} from "../../src/contracts/fixtures/architecture-fixtures.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
+import { P112_PROJECT, P112_WORKSPACE, P112_INSPECTION, P112_INSPECTION_REPORT, P112_FINDING_DELTA, P112_FINDING_REPORT, P112_BRIEF, P112_PROPOSAL, p112BaselinePin, buildP112InspectionIntent, buildP112InspectionSnapshot, buildP112DeltaFinding, buildP112ReportFinding, buildP112Brief, buildP112Proposal, buildRecordArchitectureInspectionCommand, buildRecordArchitectureFindingCommand, buildRecordArchitectureDecisionBriefCommand, buildRecordCandidateBaselineProposalCommand } from "../../src/fixtures/architecture-fixtures.js";
+import { buildArchitectureInspectionRecordLedgerCommit, buildArchitectureFindingRecordLedgerCommit, buildArchitectureBriefRecordLedgerCommit, buildArchitectureProposalRecordLedgerCommit } from "../../src/control/control-engine/records/architecture.js";
 import { architectureInspectionRefFor, architectureFindingRefFor, architectureDecisionBriefRefFor, architectureCandidateProposalRefFor } from "../../src/contracts/architecture-inspection.js";
 import type { ArchitectureBaselinePin } from "../../src/contracts/governance.js";
 

@@ -1,10 +1,11 @@
+import { classifyRestartProbeError } from "./readiness-probe.js";
 /** P1-09 restart-path fixtures + readiness probe. */
 import { expect } from "vitest";
 import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import { toP1_09Harness, runP109QueryScenario, type P1_09HarnessLike, type P1_09TestHarness, type P109QueryScenarioResult } from "../contract-suite/p1-09-harness.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
-import { P109_PROJECT, P109_WORKSPACE, P109_QUERY } from "../../src/contracts/fixtures/query-job-fixtures.js";
+import { P109_PROJECT, P109_WORKSPACE, P109_QUERY } from "../contract-support/fixtures/query-job-fixtures.js";
 
 export async function isP109Ready(): Promise<boolean> {
   try {
@@ -15,8 +16,8 @@ export async function isP109Ready(): Promise<boolean> {
     } finally {
       await h.cleanup().catch(() => undefined);
     }
-  } catch {
-    return false;
+  } catch (error) {
+    return classifyRestartProbeError(error);
   }
 }
 

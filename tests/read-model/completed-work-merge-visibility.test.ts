@@ -1,0 +1,91 @@
+/**
+ * RW-15（阻断项 M1）：完成工作视图发生「同一任务多条身份」归并时，必须**可见**。
+ *
+ * 此前：视图按 RW-13 的权威规则把同一 (goal, task) 的多条身份静默归并成一行 —— 落选身份既不出现在
+ * 视图里，也没有计数、没有 gap，读的人无从知道发生过归并，落选身份的留痕也就永远没有机会被选进
+ * 历史材料。本用例证明归并事实现在是可见的（duplicateIdentityCount + droppedWorkRefs），
+ * 且落选身份仍是可读的不可变历史事实（不被改名、不被删除）。
+ *
+ * 两套后端（内存投影 / SQLite 投影）必须逐字段一致：同一段事件、同一个结果。
+ */
+import { expect, it } from 'vitest';
+import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
+import { createP108ScenarioRuntime, P108_PROJECT_A, P108_SCHEMA, P108_TASK_WORK } from '../contract-suite/p1-08-harness.js';
+import { runP116ContinuityScenario, type P1_16HarnessLike } from '../contract-suite/p1-16-harness.js';
+import { buildBindWorkContextCommand, P116_WORK, P116_WORKSPACE } from '../contract-support/fixtures/context-fixtures.js';
+import { isDerivedWorkIdFor } from '../../src/contracts/task-work-identity.js';
+import type { WorkContextBoundEvent } from '../../src/contracts/context-continuity.js';
+import { seedLegacyWorkContextBinding } from '../support/legacy-work-context-seed.js';
+
+/** 一个明显不来自推导规则的 workId：只能来自别的主体对同一任务的显式声明。 */
+const DECLARED_WORK_ID = 'work-rw15-declared';
+
+it.each(['memory', 'sqlite'])('completed-work view exposes a merged duplicate identity instead of dropping it silently (%s)', async mode => {
+  const options = { runtime: createP108ScenarioRuntime() };
+  const persistent = mode === 'sqlite' ? await createPersistentSqliteHarness(options) : null;
+  const h = persistent ?? createInMemoryHarness(options);
+  try {
+    const world = await runP116ContinuityScenario(h as unknown as P1_16HarnessLike);
+    const projectId = P108_PROJECT_A;
+    const goalId = world.world.previews.find(preview => preview.projectId === projectId)!.goalId;
+    const scope = { projectId, workspaceId: P116_WORKSPACE, goalId };
+    // 同一任务再加一条身份（RW-13 之前留下的历史不一致正是这个形状）：账本里于是有两条
+    // 描述同一 (goal, task) 的 WorkContextBinding。这里不改写、不删除任何一条。
+    //
+    // RC-03 起这种形状**不可能再由命令面产生**（bindWorkContext 会以 already_bound 拒绝），
+    // 因此夹具按「RC-03 之前的数据库」的形状把它写进存储（见 tests/support/legacy-work-context-seed.ts）。
+    // 归并行为仍然必须被证明：旧数据库里已经存在的重复身份要继续被正确消费。
+    const declaredCommand = buildBindWorkContextCommand({
+      commandId: 'rw15-bind-declared', projectId, workId: DECLARED_WORK_ID, workspaceId: P116_WORKSPACE,
+      workKind: 'task', goalId, taskId: P108_TASK_WORK, initialRunRef: { ...world.world.projectA.workRun },
+    });
+    // 先证明同一命令走真实入口会被权威拒绝（零写），再按遗留账本的形状注入这条历史事实。
+    const refused = await h.bindWorkContext(declaredCommand);
+    expect(refused.status).toBe('rejected');
+    if (refused.status === 'rejected') expect(refused.code).toBe('already_bound');
+    await seedLegacyWorkContextBinding(h.ledger, declaredCommand, { eventId: 'rw15-legacy-evt', occurredAt: P108_SCHEMA });
+    await h.advanceProjection();
+
+    // 账本里这个任务到底有几条身份：由已提交的 WorkContextBound 事件数出来（不猜、不写死）。
+    const events = await h.ledger.events({ afterCursor: null, limit: 1000 });
+    const candidates = new Set<string>();
+    for (const positioned of events.events) {
+      if (positioned.event.eventType !== 'WorkContextBound') continue;
+      const event = positioned.event as WorkContextBoundEvent;
+      if (event.projectId !== projectId || event.workspaceId !== P116_WORKSPACE) continue;
+      const binding = event.payload.binding;
+      if (binding.workKind !== 'task' || binding.goalId !== goalId || binding.taskId !== P108_TASK_WORK) continue;
+      candidates.add(binding.workId);
+    }
+    // 同一任务本来就有多条历史身份（RW-13 之前留下的不一致），本用例再显式加一条；至少两条。
+    expect(candidates.size).toBeGreaterThan(1);
+    expect(candidates.has(DECLARED_WORK_ID)).toBe(true);
+
+    const view = await h.completedWorkView({ projectId, workspaceId: P116_WORKSPACE });
+    expect(view.status).toBe('ready');
+    if (view.status !== 'ready') throw Error('completed-work view unavailable');
+    const rows = view.rows.filter(row => row.taskId === P108_TASK_WORK);
+    // 一个任务仍然只有一行（既有归并规则不变）。
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    // 选择规则不变：显式声明的身份优先于推导兜底身份。P116_WORK 是不是推导 id 由唯一权威规则判定，
+    // 本用例据此算出期望，而不是把某个具体 workId 写死。
+    const originalIsDerived = isDerivedWorkIdFor(scope, P108_TASK_WORK, P116_WORK);
+    const expectedRetained = originalIsDerived ? DECLARED_WORK_ID : P116_WORK;
+    expect(row.workRef.workId).toBe(expectedRetained);
+    // 归并事实可见：计数 + 落选者是谁（此前只留下"选中了哪一条"，落选者被静默丢弃）。
+    const expectedDropped = [...candidates].filter(workId => workId !== expectedRetained).sort();
+    expect(row.duplicateIdentityCount).toBe(candidates.size - 1);
+    expect(row.droppedWorkRefs.map(ref => ref.workId).sort()).toEqual(expectedDropped);
+    expect(row.droppedWorkRefs.every(ref => ref.projectId === projectId && ref.workspaceId === P116_WORKSPACE)).toBe(true);
+    expect(row.droppedWorkRefs.some(ref => ref.workId === expectedRetained)).toBe(false);
+    // 落选身份仍是不可变历史事实：仍可按 workId 直接读取。
+    for (const workId of expectedDropped) {
+      expect((await h.workContextView({ projectId, workspaceId: P116_WORKSPACE, workId })).status).toBe('ready');
+    }
+    // 没有发生归并的行必须如实写 0，而不是省略字段（省略会让"没归并"和"没这条事实"无法区分）。
+    const coordination = view.rows.filter(candidate => candidate.workKind !== 'task');
+    expect(coordination.every(candidate => candidate.duplicateIdentityCount === 0 && candidate.droppedWorkRefs.length === 0)).toBe(true);
+  } finally { await persistent?.cleanup(); }
+});

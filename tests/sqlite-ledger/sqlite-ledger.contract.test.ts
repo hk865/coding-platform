@@ -1,7 +1,7 @@
 
 import { describe, expect, it } from "vitest";
 import { defineStateLedgerContractSuite } from "../contract-suite/state-ledger.contract.suite.js";
-import { SqliteStateLedger } from "../../src/sqlite-ledger/sqlite-ledger.js";
+import { SqliteStateLedger } from "../../src/data/state-ledger/sqlite-ledger.js";
 import type { StateLedger } from "../../src/contracts/ledger.js";
 
 /**

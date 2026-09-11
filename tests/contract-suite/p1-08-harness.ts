@@ -58,7 +58,7 @@ import {
   p108GoalKey,
   p108TaskKey,
   type P108AnchorPins,
-} from "../../src/contracts/fixtures/console-fixtures.js";
+} from "../contract-support/fixtures/console-fixtures.js";
 import {
   P107_ROLE_BINDING_WRITER_V1,
   P107_BUDGET_WRITER_V1,
@@ -67,25 +67,19 @@ import {
   P107_BUDGET_READER_V1,
   P107_DECLARED_READ_PERMISSIONS_V1,
   P107_PROJECT,
-} from "../../src/contracts/fixtures/workspace-fixtures.js";
-import {
-  completionPolicyPinFor,
-  architectureBaselinePinFor,
-  buildInstallCommand,
-  buildActivateCommand,
-  COMPLETION_POLICY_FIXTURE_V1,
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
+} from "../contract-support/fixtures/workspace-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
+import { buildInstallCommand, buildActivateCommand, COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1 } from "../../src/fixtures/governance-fixtures.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import { taskAttemptRefFor, runRefFor } from "../../src/contracts/dispatch.js";
 import type { RunRef } from "../../src/contracts/dispatch.js";
 import { handoffPacketRefFor } from "../../src/contracts/handoff.js";
-import type { FakeRuntimeScriptV1 } from "../../src/contracts/fixtures/dispatch-fixtures.js";
-import { buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand } from "../../src/contracts/fixtures/evidence-fixtures.js";
+import type { FakeRuntimeScriptV1 } from "../../src/fixtures/dispatch-fixtures.js";
+import { buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand } from "../contract-support/fixtures/evidence-fixtures.js";
 import type { EvidenceOutcome } from "../../src/contracts/evidence.js";
-import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../../src/contracts/fixtures/dispatch-fixtures.js";
-import { FakeRuntimeAdapter } from "../../src/runtime/fake-runtime-adapter.js";
+import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../../src/fixtures/dispatch-fixtures.js";
+import { FakeRuntimeAdapter } from "../../src/execution/worker-runtime/fake-runtime-adapter.js";
 import type { RunCapabilities, RunHandle, RunPort } from "../../src/contracts/ports.js";
 import type { TaskEnvelopeV1 } from "../../src/contracts/task-envelope.js";
 
@@ -275,6 +269,22 @@ export async function claimP108Task(
   return runRefFor(project, P108_GOAL, runId);
 }
 
+/**
+ * RC-03：claim 与它的 drive 之间的可选挂钩。
+ *
+ * 为什么需要这个时机：「显式声明的工作身份」只有在**派发建立兜底身份之前**落地，一个任务才可能
+ * 始终只有一个身份。RC-03 之后命令面不再允许事后补一条（那时推导身份已经存在，第二条必被拒），
+ * 因此需要显式身份的场景（P1-16／P1-17 及其消费者）改在这里绑定——这也正是那些夹具注释里
+ * 一直声称的语义（"一个任务只应有一个持久工作身份"）。
+ * 不传这个挂钩时行为与以前完全一致：没有人会因为新增参数而得到不同的世界。
+ */
+export type P108ClaimHookContext = {
+  project: string;
+  taskId: string;
+  runId: string;
+  runRef: RunRef;
+};
+
 /** Claim + drive (runtime script); the run facts are ingested by the drive. */
 export async function runP108Task(
   h: P1_08HarnessLike,
@@ -282,9 +292,11 @@ export async function runP108Task(
   taskId: string,
   runId: string,
   script: FakeRuntimeScriptV1 = P108_RUNTIME_SCRIPT_COMPLETED_V1,
+  afterClaim?: (context: P108ClaimHookContext) => Promise<void>,
 ): Promise<RunRef> {
   p108SetScript(h, runId, script);
   const runRef = await claimP108Task(h, project, taskId, runId);
+  if (afterClaim !== undefined) await afterClaim({ project, taskId, runId, runRef });
   const drive = await h.drive({ reason: "p1-08 run " + project + "/" + taskId, maxIntents: 8 });
   expect(drive.failures).toHaveLength(0);
   return runRef;
@@ -357,13 +369,32 @@ export type P108TwoProjectScenarioResult = {
  *      disguised) + gate satisfied + goal NOT COMPLETED (unreconciled side effect).
  * Local workspaceId/goalId/run/evidence ids are REUSED across projects.
  */
-export async function runP108TwoProjectScenario(h: P1_08HarnessLike): Promise<P108TwoProjectScenarioResult> {
+export type P108ScenarioOptions = {
+  /**
+   * RC-03：每次 claim 之后、drive 之前调用一次（见 P108ClaimHookContext）。
+   * 需要"显式工作身份先于派发落地"的场景用它在正确的时机绑定；不给即保持原行为。
+   */
+  afterClaim?: (context: P108ClaimHookContext & { planRef: P108ProjectPreview["planRef"] }) => Promise<void>;
+};
+
+export async function runP108TwoProjectScenario(
+  h: P1_08HarnessLike,
+  options: P108ScenarioOptions = {},
+): Promise<P108TwoProjectScenarioResult> {
   const previews = await prepareP108Scenario(h);
   const a = previews.find((p) => p.projectId === P108_PROJECT_A)!;
   const b = previews.find((p) => p.projectId === P108_PROJECT_B)!;
+  const hook =
+    options.afterClaim === undefined
+      ? undefined
+      : async (context: P108ClaimHookContext) =>
+          options.afterClaim!({
+            ...context,
+            planRef: previews.find((preview) => preview.projectId === context.project)!.planRef,
+          });
 
   // ---- Project A: work completed + satisfied + handoff + replacement (ongoing) ----
-  const aWorkRun = await runP108Task(h, P108_PROJECT_A, P108_TASK_WORK, "run-p108-a-work");
+  const aWorkRun = await runP108Task(h, P108_PROJECT_A, P108_TASK_WORK, "run-p108-a-work", undefined, hook);
   await submitP108Evidence(h, {
     project: P108_PROJECT_A, taskId: P108_TASK_WORK, evidenceId: P108_EVIDENCE_CLAIM,
     obligationId: P108_OBL_WORK, requirementId: P108_VR_WORK, runRef: aWorkRun,
@@ -377,7 +408,7 @@ export async function runP108TwoProjectScenario(h: P1_08HarnessLike): Promise<P1
   await reduceP108Task(h, P108_PROJECT_A, P108_TASK_WORK);
 
   // extra task: completed run -> handoff -> replacement (ongoing run).
-  const aExtraRun = await runP108Task(h, P108_PROJECT_A, P108_TASK_EXTRA, "run-p108-a-extra");
+  const aExtraRun = await runP108Task(h, P108_PROJECT_A, P108_TASK_EXTRA, "run-p108-a-extra", undefined, hook);
   const aPacketId = "packet-p108-a-extra";
   const aPacketRef = handoffPacketRefFor(P108_PROJECT_A, P108_GOAL, P108_TASK_EXTRA, aPacketId);
   const packet = await h.recordHandoff(
@@ -433,7 +464,7 @@ export async function runP108TwoProjectScenario(h: P1_08HarnessLike): Promise<P1
   const aPhase = aGoalReduce.status === "committed" ? aGoalReduce.phase : "UNKNOWN";
 
   // ---- Project B: work satisfied + extra outcome_unknown ----
-  const bWorkRun = await runP108Task(h, P108_PROJECT_B, P108_TASK_WORK, "run-p108-b-work");
+  const bWorkRun = await runP108Task(h, P108_PROJECT_B, P108_TASK_WORK, "run-p108-b-work", undefined, hook);
   await submitP108Evidence(h, {
     project: P108_PROJECT_B, taskId: P108_TASK_WORK, evidenceId: P108_EVIDENCE_WORK,
     obligationId: P108_OBL_WORK, requirementId: P108_VR_WORK, runRef: bWorkRun,

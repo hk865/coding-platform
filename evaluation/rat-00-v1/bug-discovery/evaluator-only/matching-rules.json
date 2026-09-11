@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "fieldsRequiredForAnyFinding": [
+    "path",
+    "trigger",
+    "expected",
+    "actual",
+    "impact",
+    "reproductionSteps"
+  ],
+  "confirmedRequires": "An independently executed reproduction artifact tied to this exact workspace digest and the reported trigger; model assertions or majority agreement are insufficient.",
+  "locationMatching": "Normalize workspace-relative paths and match a hidden target path; source location alone is insufficient without the concrete trigger and independent evidence.",
+  "duplicateIdentity": [
+    "sampleId",
+    "normalizedPath",
+    "normalizedTrigger"
+  ],
+  "pendingDoesNotCountAsConfirmed": true,
+  "negativeSampleScope": "Only the frozen target defect is labelled absent; other reproducible findings require separate review rather than automatic false-positive classification.",
+  "metrics": [
+    "TP",
+    "FP",
+    "FN",
+    "precision",
+    "recall",
+    "reproductionRate",
+    "duplicateCount"
+  ],
+  "zeroDenominator": "N/A",
+  "semanticAndIndependentRunBinding": "Implemented/verified in RAT-05; current stage prepares labels and exact executable baseline oracles only."
+}

@@ -1,0 +1,17 @@
+{
+  "root": "/tmp/coding-agent-bench-ts-nullish-timeout-XkP25Y/workspace",
+  "before": {
+    ".platform-runtime/bin/node": "41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c",
+    "src/timeout.mjs": "b03cfa94f6325fa6fd3342c096d0221ce854d78f6e57bc42b11a3b1b911a8756",
+    "test.mjs": "75859e4751cd9779dcc4127860ea7469a8332454e062bea8ce6db076c72c990c"
+  },
+  "budget": {
+    "contextWindowTokens": 1000000,
+    "inputTokens": 200000,
+    "outputTokens": 16384,
+    "maxRequests": 8,
+    "maxToolCalls": 24,
+    "timeoutMs": 30000,
+    "perResponseTokens": 2048
+  }
+}

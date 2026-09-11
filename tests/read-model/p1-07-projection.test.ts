@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-07 InMemory projection tests — WorkspaceReadLeaseGranted/Released,
  * WorkspaceWriteLeaseGranted/Released, IntegrationJoined, PatchRecorded ->
@@ -15,36 +16,10 @@
  *   - display-only: the views never judge/merge.
  */
 import { describe, expect, it } from "vitest";
-import { ReadModelIndexImpl } from "../../src/read-model/read-model-index.js";
+import { ReadModelIndexImpl } from "../../src/data/read-model-index/read-model-index.js";
 import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
-import {
-  P107_GOAL,
-  P107_PROJECT,
-  P107_WORKSPACE,
-  P107_SCHEMA,
-  P107_TASK_INTEGRATION,
-  P107_TASK_READER_A,
-  P107_TASK_READER_B,
-  P107_TASK_WRITER,
-  P107_SCOPE_READER_A,
-  P107_SCOPE_READER_B,
-  P107_SCOPE_WRITER,
-  P107_ROLE_BINDING_READER_V1,
-  P107_ROLE_BINDING_WRITER_V1,
-  p107PlanRef,
-  buildP107AcquireReadLeaseCommand,
-  buildP107AcquireWriteLeaseCommand,
-  buildP107ReleaseLeaseCommand,
-  buildP107RecordIntegrationCommand,
-  buildP107RecordPatchCommand,
-  buildP107ArtifactRef,
-  buildWorkspaceReadLeaseAcquireLedgerCommit,
-  buildWorkspaceReadLeaseReleaseLedgerCommit,
-  buildWorkspaceWriteLeaseAcquireLedgerCommit,
-  buildWorkspaceWriteLeaseReleaseLedgerCommit,
-  buildIntegrationRecordLedgerCommit,
-  buildPatchRecordLedgerCommit,
-} from "../../src/contracts/fixtures/workspace-fixtures.js";
+import { P107_GOAL, P107_PROJECT, P107_WORKSPACE, P107_SCHEMA, P107_TASK_INTEGRATION, P107_TASK_READER_A, P107_TASK_READER_B, P107_TASK_WRITER, P107_SCOPE_READER_A, P107_SCOPE_READER_B, P107_SCOPE_WRITER, P107_ROLE_BINDING_READER_V1, P107_ROLE_BINDING_WRITER_V1, p107PlanRef, buildP107AcquireReadLeaseCommand, buildP107AcquireWriteLeaseCommand, buildP107ReleaseLeaseCommand, buildP107RecordIntegrationCommand, buildP107RecordPatchCommand, buildP107ArtifactRef } from "../contract-support/fixtures/workspace-fixtures.js";
+import { buildWorkspaceReadLeaseAcquireLedgerCommit, buildWorkspaceReadLeaseReleaseLedgerCommit, buildWorkspaceWriteLeaseAcquireLedgerCommit, buildWorkspaceWriteLeaseReleaseLedgerCommit, buildIntegrationRecordLedgerCommit, buildPatchRecordLedgerCommit } from "../../src/control/control-engine/records/workspace.js";
 import { runRefFor, taskAttemptRefFor, type TaskAttemptRef, type RunRef } from "../../src/contracts/dispatch.js";
 import { evidenceRefFor } from "../../src/contracts/evidence.js";
 import { workspaceReadLeaseRefFor, workspaceWriteLeaseRefFor, workspaceReadLeaseIndexRefFor, workspaceWriteLeaseIndexRefFor } from "../../src/contracts/workspace-lease.js";
@@ -173,7 +148,7 @@ const CONFLICT = (projectId: string, k: string): import("../../src/contracts/int
 
 describe("P1-07 InMemory projection", () => {
   it("6 events project the 3 views field-for-field (lease grant/release, write+patch, conflicts+authority)", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const p = P107_PROJECT, w = P107_WORKSPACE;
     const rgA = readGranted(p, w, "lease-ra", "run-ra", "ev-1");
     const rgB = readGranted(p, w, "lease-rb", "run-rb", "ev-2");
@@ -223,7 +198,7 @@ describe("P1-07 InMemory projection", () => {
   });
 
   it("authoritativeKeys keeps the FIRST record per conflictKey (arrival order)", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const p = P107_PROJECT, w = P107_WORKSPACE;
     const int1 = integrationJoined(p, w, "res-first", "run-int-1", [CONFLICT(p, "a")], "ev-10");
     const int2 = integrationJoined(p, w, "res-second", "run-int-2", [CONFLICT(p, "a"), CONFLICT(p, "b")], "ev-11");
@@ -237,7 +212,7 @@ describe("P1-07 InMemory projection", () => {
   });
 
   it("full-key isolation: two workspaces / two projects never collide", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     // project A workspace wA writes patch; project B workspace wB writes patch.
     const wgA = writeGranted("proj-a", "ws-a", "le-aw", "run-aw", P107_SCOPE_WRITER, "ev-20");
     const [patchA, wrelA] = patchRecordedEvents("proj-a", "ws-a", "le-aw", "run-aw", "patch-aw", 1, 2, "ev-21");
@@ -257,7 +232,7 @@ describe("P1-07 InMemory projection", () => {
   });
 
   it("freshness not_ready != not_found; covered atLeastCursor + no row -> not_found", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const cold = await rm.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
     expect(cold.status).toBe("not_ready");
 
@@ -283,13 +258,13 @@ describe("P1-07 InMemory projection", () => {
     ];
     const [patchEv, wrel] = patchRecordedEvents(P107_PROJECT, P107_WORKSPACE, "lease-w", "run-w", "patch-1", 1, 2, "ev-43");
 
-    const incremental = new ReadModelIndexImpl();
+    const incremental = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await incremental.advance(page(events.map((e, i) => pos(e, i + 1)), events.length));
     await incremental.advance(page([pos(patchEv, events.length + 1), pos(wrel, events.length + 2)], events.length + 2));
     const before = await incremental.workspacePatches({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
     const lb = await incremental.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
 
-    const fresh = new ReadModelIndexImpl();
+    const fresh = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await fresh.advance(page([...events.map((e, i) => pos(e, i + 1)), pos(patchEv, events.length + 1), pos(wrel, events.length + 2)], events.length + 2));
     const after = await fresh.workspacePatches({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
     const lb2 = await fresh.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
@@ -298,7 +273,7 @@ describe("P1-07 InMemory projection", () => {
   });
 
   it("the six P1-07 event types advance without stalling (handled event types)", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const p = P107_PROJECT, w = P107_WORKSPACE;
     const boot = { eventId: "ev-boot", eventType: "WorkspaceBootstrapped", schemaVersion: 1, projectId: p, workspaceId: w, aggregateType: "Workspace", aggregateId: w, aggregateRevision: 1, causationId: "c", correlationId: "c", idempotencyKey: "b", actor: { kind: "system", id: "b" }, occurredAt: P107_SCHEMA, payload: { workspaceId: w, projectId: p, desiredState: "active" } };
     const wg = writeGranted(p, w, "lease-w", "run-w", P107_SCOPE_WRITER, "ev-50");

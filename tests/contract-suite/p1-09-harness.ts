@@ -1,14 +1,14 @@
 /**
  * Shared P1-09 contract-suite harness: query-job scenario over the P1-08
- * world + helpers (FROZEN surface; lanes fill submit/answer/close/drive/view).
+ * world + helpers. Both adapters consume the same Control and Context interfaces.
  */
 import { expect } from "vitest";
 import type { P1_08HarnessLike, P1_08TestHarness } from "./p1-08-harness.js";
 import { runP108TwoProjectScenario, type P108TwoProjectScenarioResult } from "./p1-08-harness.js";
-import type { QueryJobViewQuery, QueryJobViewResult, SubmitQueryJobCommand, SubmitQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, CloseQueryJobCommand, CloseQueryJobReceipt, QueryContextRequestV1, QueryContextResultV1, PublicSnapshotQueryV1, PublicSnapshotResultV1, ReadOnlyQueryPort, SnapshotPort, QueryContextPort, QueryJobIntentV1 } from "../../src/contracts/query-job.js";
-import { buildP109Intent, buildP109Job, buildP109Run, buildP109Answer, buildP109SubmitCommand, buildP109AnswerCommand, buildP109CloseCommand, p109RunRef, p109QuestRef, P109_PROJECT, P109_WORKSPACE, P109_QUERY, P109_RUN, P109_ANSWER } from "../../src/contracts/fixtures/query-job-fixtures.js";
+import type { QueryJobViewQuery, QueryJobViewResult, SubmitQueryJobCommand, SubmitQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, CloseQueryJobCommand, CloseQueryJobReceipt, PublicSnapshotQueryV1, PublicSnapshotResultV1, ReadOnlyQueryPort, SnapshotPort, QueryContextPort, QueryJobIntentV1 } from "../../src/contracts/query-job.js";
+import { buildP109Intent, buildP109Job, buildP109Run, buildP109Answer, buildP109SubmitCommand, buildP109AnswerCommand, p109QuestRef, P109_PROJECT, P109_WORKSPACE, P109_QUERY, P109_RUN } from "../contract-support/fixtures/query-job-fixtures.js";
 import { queryJobAnswerRefFor } from "../../src/contracts/query-job.js";
-import { P108_PROJECT_A, P108_PROJECT_B, P108_TASK_WORK } from "./p1-08-harness.js";
+import { P108_PROJECT_A } from "./p1-08-harness.js";
 
 export interface P1_09TestHarness extends P1_08TestHarness {
   readOnlyQuery: ReadOnlyQueryPort;
@@ -18,7 +18,6 @@ export interface P1_09TestHarness extends P1_08TestHarness {
   recordQueryAnswer(command: RecordQueryAnswerCommand): Promise<RecordQueryAnswerReceipt>;
   closeQueryJob(command: CloseQueryJobCommand): Promise<CloseQueryJobReceipt>;
   queryJobView(query: QueryJobViewQuery): Promise<QueryJobViewResult>;
-  assembleQueryContext(request: QueryContextRequestV1): Promise<QueryContextResultV1>;
   publicSnapshot(query: PublicSnapshotQueryV1): Promise<PublicSnapshotResultV1>;
 }
 
@@ -30,7 +29,6 @@ export type P1_09HarnessLike = P1_08HarnessLike & {
   recordQueryAnswer: (command: RecordQueryAnswerCommand) => Promise<RecordQueryAnswerReceipt>;
   closeQueryJob: (command: CloseQueryJobCommand) => Promise<CloseQueryJobReceipt>;
   queryJobView: (query: QueryJobViewQuery) => Promise<QueryJobViewResult>;
-  assembleQueryContext: (request: QueryContextRequestV1) => Promise<QueryContextResultV1>;
   publicSnapshot: (query: PublicSnapshotQueryV1) => Promise<PublicSnapshotResultV1>;
 };
 

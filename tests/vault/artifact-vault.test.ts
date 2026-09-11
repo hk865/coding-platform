@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ArtifactVault } from "../../src/vault/artifact-vault.js";
+import { ArtifactVault } from "../../src/data/artifact-vault/artifact-vault.js";
 import {
   ARTIFACT_MAX_SIZE_BYTES,
   artifactBodyDigest,
@@ -7,6 +7,7 @@ import {
 } from "../../src/contracts/artifact.js";
 import type { ArtifactOpenQuery, ArtifactPutRecord, ArtifactRef } from "../../src/contracts/artifact.js";
 import { runRefFor } from "../../src/contracts/dispatch.js";
+import { queryRunRefFor } from "../../src/contracts/query-job.js";
 import type { SourceRefV1 } from "../../src/contracts/dispatch.js";
 
 const RUN = runRefFor("proj-alpha", "goal-1", "run-0001");
@@ -137,6 +138,40 @@ describe("ArtifactVault.open", () => {
     expect(opened.status).toBe("rejected");
     if (opened.status !== "rejected") return;
     expect(opened.code).toBe("forbidden");
+  });
+
+  it.each([
+    runRefFor("proj-beta", "goal-1", "run-0001"),
+    runRefFor("proj-alpha", "goal-2", "run-0001"),
+  ])("rejects a same-named run outside the recorded owner scope: %j", async (requester) => {
+    const vault = new ArtifactVault();
+    const put = await vault.put(putRecord());
+    expect(put.status).toBe("stored");
+    if (put.status !== "stored") return;
+
+    const opened = await open(vault, put.ref, requester);
+    expect(opened).toMatchObject({ status: "rejected", code: "forbidden" });
+    expect((await open(vault, put.ref)).status).toBe("ready");
+  });
+
+  it("authorizes a QueryRun by its complete identity without impersonating a worker Run", async () => {
+    const vault = new ArtifactVault();
+    const owner = queryRunRefFor("proj-alpha", "workspace-a", "query-a", "run-0001");
+    const put = await vault.put(putRecord({ ownerRef: owner }));
+    expect(put.status).toBe("stored");
+    if (put.status !== "stored") return;
+    expect((await vault.open(put.ref, { requesterRunRef: owner })).status).toBe("ready");
+    for (const requester of [
+      { ...owner, projectId: "proj-beta" },
+      { ...owner, workspaceId: "workspace-b" },
+      { ...owner, queryJobId: "query-b" },
+      { ...owner, runId: "run-0002" },
+      runRefFor("proj-alpha", "query", "run-0001"),
+    ]) {
+      expect(await vault.open(put.ref, { requesterRunRef: requester })).toMatchObject({
+        status: "rejected", code: "forbidden",
+      });
+    }
   });
 
   it("returns unavailable for an unknown ref", async () => {

@@ -1,0 +1,442 @@
+{
+  "ticket_id": "RAT-00",
+  "fixture_version": "rat-00-v1",
+  "python": "3.12.3",
+  "model_calls": 0,
+  "python_executable": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/repoqa/scorer-env/bin/python",
+  "hf_hub_offline": true,
+  "transformers_offline": true,
+  "dependency_lock_sha256": "95b5a6698d3a8b103cb0a5321140d354ee922e554c825550e24d1dbb35b6c331",
+  "fixture_preflight": {
+    "status": "PASS",
+    "checks": [
+      {
+        "name": "dependency_lock_digest",
+        "status": "PASS"
+      },
+      {
+        "name": "repository_commit_matches_manifest",
+        "status": "PASS"
+      },
+      {
+        "name": "all_ten_needles_in_release_order",
+        "status": "PASS"
+      },
+      {
+        "name": "all_ten_public_ids_match_private_order",
+        "status": "PASS"
+      },
+      {
+        "name": "private_manifest_digest",
+        "status": "PASS"
+      },
+      {
+        "name": "all_private_controls_present",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:LICENSE",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/application.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/express.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/middleware/init.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/middleware/query.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/request.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/response.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/router/index.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/router/layer.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/router/route.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/utils.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/view.js",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-01",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-01",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-02",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-02",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-03",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-03",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-04",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-04",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-05",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-05",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-06",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-06",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-07",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-07",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-08",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-08",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-09",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-09",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-10",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-10",
+        "status": "PASS"
+      },
+      {
+        "name": "agent_input_exact_allowlist",
+        "status": "PASS"
+      },
+      {
+        "name": "agent_input_no_symlinks",
+        "status": "PASS"
+      },
+      {
+        "name": "evaluator_root_outside_agent_input",
+        "status": "PASS"
+      },
+      {
+        "name": "official_source_digest:repoqa/compute_score.py",
+        "status": "PASS"
+      },
+      {
+        "name": "official_source_digest:repoqa/metric.py",
+        "status": "PASS"
+      },
+      {
+        "name": "official_source_digest:repoqa/utility.py",
+        "status": "PASS"
+      },
+      {
+        "name": "official_source_digest:repoqa/data.py",
+        "status": "PASS"
+      },
+      {
+        "name": "official_source_digest:repoqa/__init__.py",
+        "status": "PASS"
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "module": "numpy",
+      "available": true,
+      "version": "2.5.3"
+    },
+    {
+      "module": "tempdir",
+      "available": true,
+      "version": "0.7.1"
+    },
+    {
+      "module": "rich",
+      "available": true,
+      "version": "15.0.0"
+    },
+    {
+      "module": "transformers",
+      "available": true,
+      "version": "4.41.2"
+    },
+    {
+      "module": "tree_sitter_languages",
+      "available": true,
+      "version": "1.10.2"
+    },
+    {
+      "module": "tree_sitter",
+      "available": true,
+      "version": "0.21.3"
+    },
+    {
+      "module": "nltk",
+      "available": true,
+      "version": "3.10.3"
+    },
+    {
+      "module": "appdirs",
+      "available": true,
+      "version": "1.4.4"
+    },
+    {
+      "module": "wget",
+      "available": true,
+      "version": "3.2"
+    }
+  ],
+  "official_scorer": {
+    "status": "PASS",
+    "official_calls": 30,
+    "controls_planned": 30,
+    "results": [
+      {
+        "task_id": "repoqa-express-01",
+        "positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "repeat_positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "negative": {
+          "status": "PASS",
+          "official_threshold_pass": false,
+          "similarity": 1.0
+        }
+      },
+      {
+        "task_id": "repoqa-express-02",
+        "positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "repeat_positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "negative": {
+          "status": "PASS",
+          "official_threshold_pass": false,
+          "similarity": 1.0
+        }
+      },
+      {
+        "task_id": "repoqa-express-03",
+        "positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "repeat_positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "negative": {
+          "status": "PASS",
+          "official_threshold_pass": false,
+          "similarity": 1.0
+        }
+      },
+      {
+        "task_id": "repoqa-express-04",
+        "positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "repeat_positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "negative": {
+          "status": "PASS",
+          "official_threshold_pass": false,
+          "similarity": 1.0
+        }
+      },
+      {
+        "task_id": "repoqa-express-05",
+        "positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "repeat_positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "negative": {
+          "status": "PASS",
+          "official_threshold_pass": false,
+          "similarity": 1.0
+        }
+      },
+      {
+        "task_id": "repoqa-express-06",
+        "positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "repeat_positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "negative": {
+          "status": "PASS",
+          "official_threshold_pass": false,
+          "similarity": 1.0
+        }
+      },
+      {
+        "task_id": "repoqa-express-07",
+        "positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "repeat_positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "negative": {
+          "status": "PASS",
+          "official_threshold_pass": false,
+          "similarity": 1.0
+        }
+      },
+      {
+        "task_id": "repoqa-express-08",
+        "positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "repeat_positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "negative": {
+          "status": "PASS",
+          "official_threshold_pass": false,
+          "similarity": 1.0
+        }
+      },
+      {
+        "task_id": "repoqa-express-09",
+        "positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "repeat_positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "negative": {
+          "status": "PASS",
+          "official_threshold_pass": false,
+          "similarity": 1.0
+        }
+      },
+      {
+        "task_id": "repoqa-express-10",
+        "positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "repeat_positive": {
+          "status": "PASS",
+          "official_threshold_pass": true,
+          "similarity": 1.0
+        },
+        "negative": {
+          "status": "PASS",
+          "official_threshold_pass": false,
+          "similarity": 1.0
+        }
+      }
+    ]
+  },
+  "official_snf_prompt": {
+    "status": "BLOCKED",
+    "reason": "Frozen-source tokenizer codellama/CodeLlama-7b-Instruct-hf has no frozen revision or local assets; 16384-token contexts were not generated."
+  },
+  "runtime_boundary": {
+    "status": "NOT_RUN",
+    "reason": "Static input allowlist passed separately. Sandbox must prove evaluator, parent paths, credentials and other trials unreadable before any model call."
+  },
+  "agent_score": null
+}

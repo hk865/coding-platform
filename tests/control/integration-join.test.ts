@@ -29,23 +29,17 @@
 import { describe, expect, it } from "vitest";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import {
-  buildInstallCommand,
-  buildActivateCommand,
-  completionPolicyPinFor,
-  architectureBaselinePinFor,
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  COMPLETION_POLICY_FIXTURE_V1,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
-import { buildCreateGoalCommand } from "../../src/contracts/fixtures/goal-fixtures.js";
-import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
+import { buildInstallCommand, buildActivateCommand, ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1 } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
+import { buildCreateGoalCommand } from "../contract-support/fixtures/goal-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
 import {
   P107_PROJECT,
   P107_WORKSPACE,
   P107_SCHEMA,
   P107_PLAN_REVISION_FIXTURE_V1,
-} from "../../src/contracts/fixtures/workspace-fixtures.js";
-import { buildEffectivityAnchorV1 } from "../../src/contracts/fixtures/evidence-fixtures.js";
+} from "../contract-support/fixtures/workspace-fixtures.js";
+import { buildEffectivityAnchorV1 } from "../contract-support/fixtures/evidence-fixtures.js";
 import { integrationResultRefFor } from "../../src/contracts/integration.js";
 import { taskAttemptRefFor } from "../../src/contracts/dispatch.js";
 import type { EffectivityAnchorV1 } from "../../src/contracts/evidence.js";

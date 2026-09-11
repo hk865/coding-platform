@@ -1,0 +1,782 @@
+{
+  "decisions": [
+    {
+      "file": "src/contracts/commands/reviewer-work.ts",
+      "name": "buildCreateReviewWorkCommand",
+      "kind": "FunctionDeclaration",
+      "line": 3,
+      "local": 1,
+      "consumers": [],
+      "action": "delete",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/commands/reviewer-work.ts",
+      "name": "buildBindReviewOutputCommand",
+      "kind": "FunctionDeclaration",
+      "line": 4,
+      "local": 1,
+      "consumers": [],
+      "action": "delete",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/commands/reviewer-work.ts",
+      "name": "buildValidatedReviewResultCommand",
+      "kind": "FunctionDeclaration",
+      "line": 5,
+      "local": 1,
+      "consumers": [],
+      "action": "delete",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/context-continuation-port.ts",
+      "name": "ContinuationCapabilitiesV1",
+      "kind": "TypeAliasDeclaration",
+      "line": 27,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "WorkKind",
+      "kind": "TypeAliasDeclaration",
+      "line": 100,
+      "local": 5,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "ExecutionNoteKind",
+      "kind": "TypeAliasDeclaration",
+      "line": 138,
+      "local": 4,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "ExecutionNoteSourceV1",
+      "kind": "TypeAliasDeclaration",
+      "line": 149,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "ExecutionNoteVerificationV1",
+      "kind": "TypeAliasDeclaration",
+      "line": 160,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "executionNoteBody",
+      "kind": "FunctionDeclaration",
+      "line": 197,
+      "local": 1,
+      "consumers": [],
+      "action": "delete",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "ContinuationStatus",
+      "kind": "TypeAliasDeclaration",
+      "line": 213,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "BindWorkContextRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "line": 290,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "LinkWorkRunRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "line": 333,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "RecordExecutionNoteRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "line": 367,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "RecordContinuationRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "line": 399,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/dispatch.ts",
+      "name": "RuntimeEventType",
+      "kind": "TypeAliasDeclaration",
+      "line": 115,
+      "local": 4,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/dispatch.ts",
+      "name": "TERMINAL_RUNTIME_EVENT_TYPES",
+      "kind": "FirstStatement",
+      "line": 130,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/dispatch.ts",
+      "name": "RuntimeEvent",
+      "kind": "TypeAliasDeclaration",
+      "line": 177,
+      "local": 1,
+      "consumers": [],
+      "action": "delete",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/dispatch.ts",
+      "name": "DispatchOutboxStatus",
+      "kind": "TypeAliasDeclaration",
+      "line": 192,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/execution-feedback.ts",
+      "name": "ExecutionFeedback",
+      "kind": "TypeAliasDeclaration",
+      "line": 6,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/execution-feedback.ts",
+      "name": "FeedbackResolution",
+      "kind": "TypeAliasDeclaration",
+      "line": 17,
+      "local": 3,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/goal-change.ts",
+      "name": "UserDecisionOutcome",
+      "kind": "TypeAliasDeclaration",
+      "line": 158,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/goal-change.ts",
+      "name": "RecordPlanChangeProposalRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "line": 348,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/goal-change.ts",
+      "name": "RecordUserDecisionRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "line": 353,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/goal-change.ts",
+      "name": "ApplyPlanChangeRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "line": 358,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/goal-change.ts",
+      "name": "GoalChangePort",
+      "kind": "InterfaceDeclaration",
+      "line": 387,
+      "local": 1,
+      "consumers": [],
+      "action": "delete",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/goal-change.ts",
+      "name": "TaskChangeDisposition",
+      "kind": "TypeAliasDeclaration",
+      "line": 429,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/initial-planning.ts",
+      "name": "InitialPlanningResponse",
+      "kind": "TypeAliasDeclaration",
+      "line": 23,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/material-access.ts",
+      "name": "materialBasisKey",
+      "kind": "FunctionDeclaration",
+      "line": 126,
+      "local": 1,
+      "consumers": [],
+      "action": "delete",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/material-access.ts",
+      "name": "MaterialAccessRevocationV1",
+      "kind": "TypeAliasDeclaration",
+      "line": 185,
+      "local": 4,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/material-access.ts",
+      "name": "GrantMaterialAccessRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "line": 263,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/plan.ts",
+      "name": "GateTask",
+      "kind": "TypeAliasDeclaration",
+      "line": 83,
+      "local": 1,
+      "consumers": [],
+      "action": "delete",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/plan.ts",
+      "name": "ParentOfEdge",
+      "kind": "TypeAliasDeclaration",
+      "line": 107,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/plan.ts",
+      "name": "DependsOnEdge",
+      "kind": "TypeAliasDeclaration",
+      "line": 122,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/plan.ts",
+      "name": "PlanValidationCode",
+      "kind": "TypeAliasDeclaration",
+      "line": 204,
+      "local": 3,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/planning.ts",
+      "name": "PlanningRejection",
+      "kind": "TypeAliasDeclaration",
+      "line": 8,
+      "local": 5,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/planning.ts",
+      "name": "InitialPlanningSubmission",
+      "kind": "TypeAliasDeclaration",
+      "line": 13,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/planning.ts",
+      "name": "CoordinationSourcePort",
+      "kind": "InterfaceDeclaration",
+      "line": 50,
+      "local": 1,
+      "consumers": [
+        {
+          "file": "src/data/context-compiler/coordination-context-compiler.ts",
+          "count": 2,
+          "owner": "ContextCompiler"
+        },
+        {
+          "file": "src/data/context-compiler/query-execution-context.ts",
+          "count": 2,
+          "owner": "ContextCompiler"
+        }
+      ],
+      "action": "move",
+      "destination": "src/data/context-compiler/query-execution-context.ts"
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "TaskRef",
+      "kind": "TypeAliasDeclaration",
+      "line": 51,
+      "local": 3,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "QueryJobStatus",
+      "kind": "TypeAliasDeclaration",
+      "line": 91,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "QueryRunStatus",
+      "kind": "TypeAliasDeclaration",
+      "line": 107,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "SubmitQueryJobRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "line": 173,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "RecordQueryAnswerRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "line": 190,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "CloseQueryJobRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "line": 207,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "PublicSnapshotPort",
+      "kind": "InterfaceDeclaration",
+      "line": 317,
+      "local": 1,
+      "consumers": [],
+      "action": "delete",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/reviewer-context.ts",
+      "name": "ReviewerMaterialPage",
+      "kind": "TypeAliasDeclaration",
+      "line": 82,
+      "local": 3,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/reviewer-work.ts",
+      "name": "INDEPENDENT_REVIEW_PROTOCOL",
+      "kind": "FirstStatement",
+      "line": 13,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/reviewer-work.ts",
+      "name": "TaskReviewProtocolAdoptedEvent",
+      "kind": "TypeAliasDeclaration",
+      "line": 71,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/reviewer-work.ts",
+      "name": "ReviewInputBoundEvent",
+      "kind": "TypeAliasDeclaration",
+      "line": 74,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/reviewer-work.ts",
+      "name": "ReviewOutputBoundEvent",
+      "kind": "TypeAliasDeclaration",
+      "line": 75,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/reviewer-work.ts",
+      "name": "ReviewResultRecordedEvent",
+      "kind": "TypeAliasDeclaration",
+      "line": 76,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/rework/acceptance.ts",
+      "name": "REWORK_BOUNDARY_CODES",
+      "kind": "FirstStatement",
+      "line": 11,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/rework/acceptance.ts",
+      "name": "ReworkBoundaryCode",
+      "kind": "TypeAliasDeclaration",
+      "line": 22,
+      "local": 3,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/rework/proposal.ts",
+      "name": "ReworkProposalOriginV1",
+      "kind": "TypeAliasDeclaration",
+      "line": 38,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/runtime-context-materials.ts",
+      "name": "RuntimeWorkIdentityMaterial",
+      "kind": "TypeAliasDeclaration",
+      "line": 47,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/runtime-context-materials.ts",
+      "name": "RoleMaterialQualification",
+      "kind": "TypeAliasDeclaration",
+      "line": 84,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/validation/dispatch.ts",
+      "name": "validateContextManifest",
+      "kind": "FunctionDeclaration",
+      "line": 263,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/validation/dispatch.ts",
+      "name": "validateRuntimeEvent",
+      "kind": "FunctionDeclaration",
+      "line": 281,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/validation/material-access.ts",
+      "name": "validateMaterialBasis",
+      "kind": "FunctionDeclaration",
+      "line": 31,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/validation/plan.ts",
+      "name": "validatePlanRevisionDraft",
+      "kind": "FunctionDeclaration",
+      "line": 88,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/verification-context.ts",
+      "name": "VerificationRunMaterial",
+      "kind": "TypeAliasDeclaration",
+      "line": 20,
+      "local": 3,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/verification-round.ts",
+      "name": "VerificationRoundGap",
+      "kind": "TypeAliasDeclaration",
+      "line": 27,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/verification-round.ts",
+      "name": "VerificationRoundCheck",
+      "kind": "TypeAliasDeclaration",
+      "line": 80,
+      "local": 3,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/verification-service.ts",
+      "name": "CommandCheckReports",
+      "kind": "TypeAliasDeclaration",
+      "line": 66,
+      "local": 2,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/verification-source.ts",
+      "name": "CandidatePatchCheckPort",
+      "kind": "InterfaceDeclaration",
+      "line": 7,
+      "local": 1,
+      "consumers": [
+        {
+          "file": "src/control/verification-engine/candidate-patch-check.ts",
+          "count": 2,
+          "owner": "VerificationEngine"
+        },
+        {
+          "file": "src/control/verification-engine/verification-deps.ts",
+          "count": 2,
+          "owner": "VerificationEngine"
+        }
+      ],
+      "action": "move",
+      "destination": "src/control/verification-engine/candidate-patch-check.ts"
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "CheckKind",
+      "kind": "TypeAliasDeclaration",
+      "line": 46,
+      "local": 4,
+      "consumers": [],
+      "action": "local",
+      "destination": null
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "VerificationPlanRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "line": 122,
+      "local": 2,
+      "consumers": [
+        {
+          "file": "src/control/verification-engine/verification-engine.ts",
+          "count": 2,
+          "owner": "VerificationEngine"
+        }
+      ],
+      "action": "move",
+      "destination": "src/control/verification-engine/verification-plan-compiler.ts"
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "VerificationPlanCompileInput",
+      "kind": "TypeAliasDeclaration",
+      "line": 129,
+      "local": 1,
+      "consumers": [
+        {
+          "file": "src/control/verification-engine/verification-plan-compiler.ts",
+          "count": 2,
+          "owner": "VerificationEngine"
+        },
+        {
+          "file": "tests/contract-suite/verification.contract.suite.ts",
+          "count": 4,
+          "owner": "Unmapped"
+        },
+        {
+          "file": "tests/verification/verification-engine.test.ts",
+          "count": 2,
+          "owner": "Unmapped"
+        }
+      ],
+      "action": "move",
+      "destination": "src/control/verification-engine/verification-plan-compiler.ts"
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "VerificationPlanCompileResult",
+      "kind": "TypeAliasDeclaration",
+      "line": 145,
+      "local": 1,
+      "consumers": [
+        {
+          "file": "src/control/verification-engine/verification-engine.ts",
+          "count": 2,
+          "owner": "VerificationEngine"
+        },
+        {
+          "file": "src/control/verification-engine/verification-plan-compiler.ts",
+          "count": 2,
+          "owner": "VerificationEngine"
+        }
+      ],
+      "action": "move",
+      "destination": "src/control/verification-engine/verification-plan-compiler.ts"
+    }
+  ],
+  "forwardersRemoved": [
+    "ArtifactPort",
+    "TaskContextPort",
+    "DispatchIntentV1"
+  ],
+  "deletedFiles": [
+    "src/contracts/commands/reviewer-work.ts"
+  ],
+  "changed": [
+    "src/contracts/commands/reviewer-work.ts",
+    "src/contracts/context-continuation-port.ts",
+    "src/contracts/context-continuity.ts",
+    "src/contracts/dispatch.ts",
+    "src/contracts/execution-feedback.ts",
+    "src/contracts/goal-change.ts",
+    "src/contracts/initial-planning.ts",
+    "src/contracts/material-access.ts",
+    "src/contracts/plan.ts",
+    "src/contracts/planning.ts",
+    "src/contracts/query-job.ts",
+    "src/contracts/reviewer-context.ts",
+    "src/contracts/reviewer-work.ts",
+    "src/contracts/rework/acceptance.ts",
+    "src/contracts/rework/proposal.ts",
+    "src/contracts/runtime-context-materials.ts",
+    "src/contracts/validation/dispatch.ts",
+    "src/contracts/validation/material-access.ts",
+    "src/contracts/validation/plan.ts",
+    "src/contracts/verification-context.ts",
+    "src/contracts/verification-round.ts",
+    "src/contracts/verification-service.ts",
+    "src/contracts/verification-source.ts",
+    "src/contracts/verification.ts",
+    "src/data/context-compiler/query-execution-context.ts",
+    "src/control/verification-engine/candidate-patch-check.ts",
+    "src/control/verification-engine/verification-plan-compiler.ts",
+    "src/control/verification-engine/verification-deps.ts",
+    "src/control/verification-engine/verification-engine.ts",
+    "src/data/context-compiler/coordination-context-compiler.ts",
+    "tests/contract-suite/verification.contract.suite.ts",
+    "tests/verification/verification-engine.test.ts",
+    "src/contracts/ports.ts"
+  ]
+}

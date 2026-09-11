@@ -1,0 +1,21 @@
+{
+  "createdAt": "2026-09-11T06:07:34.5028868Z",
+  "docRoot": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform",
+  "verification": "Copy-Item before rewrite; source and destination SHA256 compared equal; snapshots retain original bytes and original relative-link base",
+  "documents": [
+    {
+      "source": "human/module-status.md",
+      "snapshot": "dev_docs/verification/2026-09-11-architecture-convergence/history/module-status.md.txt",
+      "originalSha256": "41e304ebde3b873661101c2b8e9c21471c447e29f09f76c9a79dfaceae0d7472",
+      "currentSha256": "f42a19bf0c924f9caf65d2b7e1bec8433c7638881118a103629288cf5fcc5a7d",
+      "snapshotLinkBase": "human/module-status.md"
+    },
+    {
+      "source": "dev_docs/verification/2026-09-10-core-obligations-map.md",
+      "snapshot": "dev_docs/verification/2026-09-11-architecture-convergence/history/2026-09-10-core-obligations-map.md.txt",
+      "originalSha256": "abf76614189e9b12707798283c120b372f27fc7072c6a04790a4805e8df48800",
+      "currentSha256": "f048809db30ec03dde00f8279ff5d5c4c7e8b7ed4831ac617c9429c34ef4771b",
+      "snapshotLinkBase": "dev_docs/verification/2026-09-10-core-obligations-map.md"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+import { expect } from 'vitest';
+import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
+import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
+import { buildInstallCommand, buildActivateCommand, COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1 } from '../../src/contracts/fixtures/governance-fixtures.js';
+import { completionPolicyPinFor, architectureBaselinePinFor } from '../../src/contracts/governance.js';
+import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1 } from '../../src/contracts/fixtures/plan-fixtures.js';
+import type { ReadOnlyQueryPort } from '../../src/contracts/query-job.js';
+import type { PlanCompilerPort } from '../../src/contracts/planning.js';
+import { PlanCompilerImpl } from '../../src/control/plan-compiler/plan-compiler.js';
+import { CoordinationContextCompiler } from '../../src/data/context-compiler/coordination-context-compiler.js';
+import { LedgerScopeCatalog } from '../../src/data/state-ledger/ledger-scope-catalog.js';
+
+export const planningScope = { projectId: 'planning-project', workspaceId: 'workspace', goalId: 'goal' };
+export const planningAt = '2026-09-09T00:00:00.000Z';
+export function planningResponse() {
+  const plan = structuredClone(HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1);
+  plan.goalId = planningScope.goalId;
+  plan.tasks = plan.tasks.map(task => ({ ...task, phase: 'pending', disposition: 'active', requirementLevel: 'required' }));
+  return JSON.stringify({ kind: 'plan', summary: 'Implement the explicit obligations and verify the results.', plan,
+    assignments: plan.tasks.filter(task => task.taskKind === 'work').map(task => ({ taskId: task.taskId, role: 'executor', instruction: 'Implement ' + task.title + ' and provide independently checkable outputs.' })) });
+}
+
+export async function planningScenario(body = planningResponse()) {
+  let calls = 0, current = true;
+  let inspectRequest: ((request: Parameters<ReadOnlyQueryPort['startQuery']>[0]) => Promise<void>) | undefined;
+  const runtime: ReadOnlyQueryPort = { capabilities: () => ({ supported: true, readOnly: true, maxQuestionBytes: 4096, maxAnswerBytes: 16384 }),
+    startQuery: async request => { calls++; await inspectRequest?.(request); return { schemaVersion: 1, runRef: request.runRef, outcome: 'answered', answer: body, sources: [], message: null, endedAt: planningAt }; } };
+  const h = createInMemoryHarness({ readOnlyQuery: runtime });
+  expect(await h.bootstrap(buildBootstrapCommand({ schemaVersion: 1, entries: [planningScope] }, { commandId: 'boot', correlationId: 'boot', submittedAt: planningAt }))).toMatchObject({ status: 'committed' });
+  expect(await h.collaboration.createGoal({ ...planningScope, objective: 'Build the requested change', actor: { kind: 'human', id: 'operator' }, idempotencyKey: 'goal' })).toMatchObject({ status: 'persisted' });
+  for (const [i, fixture] of [COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1].entries()) {
+    const deps = { projectId: planningScope.projectId, commandId: 'install-' + i, correlationId: 'governance', idempotencyKey: 'install-' + i, submittedAt: planningAt };
+    const install = buildInstallCommand(fixture, deps); expect(await h.install(install)).toMatchObject({ status: 'committed' });
+    const pin = install.commandType === 'InstallCompletionPolicyRevision' ? completionPolicyPinFor(install) : architectureBaselinePinFor(install);
+    expect(await h.activate(buildActivateCommand(pin, { ...deps, commandId: 'activate-' + i, idempotencyKey: 'activate-' + i, expectedRevision: 1 }))).toMatchObject({ status: 'committed' });
+  }
+  const catalog = new LedgerScopeCatalog(h.ledger);
+  const materials = new CoordinationContextCompiler({ ledger: h.ledger, catalog,
+    sources: { currentness: async () => new Map((await catalog.jobs()).map(row => [row.job.queryJobId, current])) } });
+  const compiler: PlanCompilerPort = new PlanCompilerImpl({ materials, control: h, now: () => planningAt });
+  const request = { schemaVersion: 1 as const, kind: 'initial' as const, scope: planningScope, input: { requestId: 'work', instruction: 'Implement the stated contract.', allowWrite: true } };
+  return { h, compiler, materials, catalog, request, calls: () => calls, stale: () => { current = false; }, onRequest: (inspect: NonNullable<typeof inspectRequest>) => { inspectRequest = inspect; } };
+}

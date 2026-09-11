@@ -1,0 +1,21 @@
+import { expect, it } from 'vitest';
+import { computeArchitectureDelta } from '../../src/control/architecture-reconciler/architecture-delta.js';
+import { buildP112BaselineGraph } from '../../src/contracts/fixtures/architecture-fixtures.js';
+
+it('detects changes to an existing edge rather than only added and removed keys', () => {
+  const before = buildP112BaselineGraph();
+  const after = structuredClone(before);
+  after.edges[0]!.kind = 'calls';
+  expect(computeArchitectureDelta(before, after).changes).toEqual([
+    expect.objectContaining({ level: 'edge', kind: 'modified', structuralKey: before.edges[0]!.structuralKey }),
+  ]);
+});
+
+it('detects a moved node even when its content digest has not changed', () => {
+  const before = buildP112BaselineGraph();
+  const after = structuredClone(before);
+  after.nodes[0]!.path = 'src/moved';
+  expect(computeArchitectureDelta(before, after).changes).toEqual([
+    expect.objectContaining({ level: 'node', kind: 'moved', structuralKey: before.nodes[0]!.structuralKey }),
+  ]);
+});

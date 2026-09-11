@@ -1,0 +1,13 @@
+diff --git a/evidence/2026-09-10-module-folder-reorg/independent-review/before/src/runtime/observed-model-run.ts b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/src/runtime/observed-model-run.ts
+index 9e65fb7..53b045a 100644
+--- a/evidence/2026-09-10-module-folder-reorg/independent-review/before/src/runtime/observed-model-run.ts
++++ b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/src/runtime/observed-model-run.ts
+@@ -36,7 +36,7 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
+     config: { ...base, model: { ...base.model, provider: definition.id, model: o.bound.configuration.model, baseUrl: o.bound.configuration.baseUrl, maxOutputTokens: o.budget.perResponseTokens },
+       runtime: { tokenBudget: o.budget.contextWindowTokens, maxModelRequests: o.budget.maxRequests ?? base.runtime.maxModelRequests, maxToolCalls: o.budget.maxToolCalls ?? base.runtime.maxToolCalls },
+       tools: { enabledNames: [...(reviewSource ? ['read_source', ...(o.materialTools ? ['read_material'] : [])] : o.readOnly ? ['read'] : ['read', 'edit', 'shell']), 'list_files', 'search', 'symbols', 'code_index', 'project_index', 'python_index', 'cpp_index', 'source_excerpt'] },
+-      storage: { databasePath: o.databasePath }, skills: { resourceRoot: resolve(import.meta.dirname, '../../vendor/coding-agent/resources/skills'), enabledIds: ['coding-safety'] } },
++      storage: { databasePath: o.databasePath }, skills: { resourceRoot: resolve(import.meta.dirname, '../../../vendor/coding-agent/resources/skills'), enabledIds: ['coding-safety'] } },
+     additionalTools: workspace => [
+       ...createExplorationTools(workspace, { sourceIdentity: () => readSourceIdentity(o.root, workspace.identity), ...o.sourceTools }),
+       ...(o.materialTools?.(workspace) ?? []),

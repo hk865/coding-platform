@@ -1,0 +1,697 @@
+/**
+ * RW-04 ControlEngine 入口：返工提案的**自动受理**（ADR 0003 D1 第 4、5 条）。
+ *
+ * 职责边界（为什么在本 Module、为什么不再造一套东西）：
+ *   - 本文件只做四件事：读问题与提案 → 判定四条边界 → 复用既有入口落账 → 复用既有
+ *     applyPlanChange 做 CAS 应用。不动 ledger.commit，不新建聚合，不新造状态机，
+ *     也不复制 plan-change 的业务分派（提案/决定/应用三段全部调用 GoalChangeEngineImpl）。
+ *   - 提案内容与派生草稿都来自 PlanCompiler 的机械推导（contracts/rework.ts 的
+ *     ReworkProposalV1：rework.issues + patch.taskSetDelta + planDraft），本入口只**复核**，
+ *     不重新推导第二份草稿；草稿与增量的逐项一致由 RW-02 的 draftConsistencyIssues 在
+ *     落账前预跑一次、applyPlanChange 的守卫 f2 在应用时再原样复跑一次。
+ *
+ * 四条边界（ADR 0003 D1-4）逐条判定；任一条不满足即返回 needs_human_decision 且零写入：
+ *   (a) 触发源是已提交的验证结论（工具轮次聚合 Evidence 或独立审阅 ReviewResult）；
+ *   (b) 改动落在 inScopeRework（同义务、同验收语义，只换承担者），且**当前生效策略**的
+ *       allowed.inScopeRework 为 true —— 这是 RW-10 的人可暂停开关：每次受理都重新读取生效
+ *       revision 的该字段，人把它装成 false 就让全部自动返工转人工（不需要新命令、新聚合或新状态）；
+ *   (c) 自动化预算未耗尽（按 Goal 累计已应用的自动返工次数）；
+ *   (d) 人没有对这些问题显式拒绝或延后过。
+ *
+ * 幂等与重放：身份全部确定性（提案与 planId 复用 RW-03 的推导函数，决定/命令 id 由提案 id
+ * 推导），已受理过的再次触发直接返回 replayed；计数与拒绝事实都从账本事件重建，重启后一致。
+ * 重放**不是**免检路径（RW-10 P7）：重放前把本次输入与已落账提案的 rework／planDraft 逐字比对
+ * （这两部分不在 planProposalDigest 里），不一致即返回提案冲突码且零写入。
+ *
+ * 边界 (a) 为什么能在 ControlEngine 内部判定：已提交的验证结论在账本里有两类 canonical 形态——
+ *   工具轮次聚合 Evidence（TaskEvidenceIndex → Evidence，带 coverage 与 effectivity anchor）
+ *   与独立审阅结论（ReviewResult 聚合，逐条 outcome）。本入口只读它们，不回调 VerificationEngine，
+ *   因此 ModuleDependencyDAG（VerificationEngine → ControlEngine）不被反向依赖破坏。
+ */
+import type { CommitCursor } from '../../contracts/command-event.js';
+import type { EventPage, GoalSnapshot, StateLedger } from '../../contracts/ledger.js';
+import type { EvidenceSnapshot, TaskEvidenceIndexSnapshot } from '../../contracts/evidence.js';
+import { taskEvidenceIndexRefFor } from '../../contracts/evidence.js';
+import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../contracts/plan.js';
+import type { ReviewResultRef, ReviewResultSnapshot, ReviewWorkSnapshot } from '../../contracts/reviewer-work.js';
+import type { CoordinationPolicyContentV1 } from '../../contracts/human-role-collaboration.js';
+import type {
+  ApplyPlanChangeCommand,
+  GoalRevisionRecordedEvent,
+  PlanProposalSnapshot,
+  RecordPlanChangeProposalCommand,
+  RecordUserDecisionCommand,
+  UserDecisionRecordedEvent,
+  UserDecisionSnapshot,
+  UserDecisionV1,
+} from '../../contracts/goal-change.js';
+import { decisionTargetFor, planProposalDigest } from '../../contracts/goal-change.js';
+import type { ReworkIssueV1, ReworkProposalV1 } from '../../contracts/rework.js';
+import type {
+  ReworkAcceptanceReceiptV1,
+  ReworkAcceptanceRejectionCode,
+  ReworkAcceptanceRequestV1,
+  ReworkBoundaryOutcomeV1,
+  ReworkBudgetFactsV1,
+} from '../../contracts/rework-acceptance.js';
+import { canonicalJson } from '../../contracts/fingerprint.js';
+// RW-11：生效策略的解析只有一份实现，自动受理与 claim 角色守卫共用（避免两处默认行为分叉）。
+import { resolveActiveCoordinationPolicy } from './policies/coordination-policy.js';
+import { draftAdmissionRejectionCode, draftConsistencyIssues } from './policies/goal-change-consistency.js';
+import {
+  AUTONOMOUS_REWORK_ACTOR,
+  AUTONOMOUS_REWORK_ACTOR_ID,
+  autonomousReworkCommandIdFor,
+  autonomousReworkDecisionIdFor,
+  autonomousReworkPauseIssues,
+  autonomousReworkPolicyVersion,
+  budgetBoundaryOutcome,
+  inScopeReworkIssues,
+  proposalAddressesIssue,
+  proposalIdentityIssues,
+  reworkBudgetFacts,
+  reworkProposalExtensionDigest,
+  triggerSourceIssues,
+  type CommittedConclusionFactV1,
+} from './policies/autonomous-rework.js';
+import type { ControlEngineDeps } from './control-engine.js';
+import type { GoalChangeEngineImpl } from './goal-change.js';
+
+/**
+ * 事件扫描上限（页数 × 每页 1000）。预算计数与“人拒绝过这条问题吗”都必须从账本重建，
+ * 因此需要扫事件；超过上限时**不猜**，直接 fail closed 返回 unavailable（转人工）。
+ */
+const MAX_SCAN_PAGES = 200;
+const SCAN_PAGE_SIZE = 1000;
+
+export class AutonomousReworkEngineImpl {
+  constructor(
+    private readonly deps: ControlEngineDeps,
+    /** 复用同一个 goal-change 引擎实例：提案/决定/应用三段都走既有入口，没有第二条写入路径。 */
+    private readonly goalChange: GoalChangeEngineImpl,
+  ) {}
+
+  /** 只读面：账本读取。写入仍然只经 goalChange 的三个既有入口。 */
+  private get ledger(): Pick<StateLedger, 'load' | 'events'> {
+    return this.deps.ledger;
+  }
+
+  /**
+   * 确定性入口：一份返工提案 → 四条边界都满足时自动受理（落账 + CAS 应用）。
+   * 返回值区分三种结果：accepted（已受理，含幂等重放）、needs_human_decision（边界不满足）、
+   * rejected（输入/引用/既有守卫拒绝）。
+   */
+  async acceptReworkProposal(request: ReworkAcceptanceRequestV1): Promise<ReworkAcceptanceReceiptV1> {
+    const candidate = request?.proposal as ReworkProposalV1 | undefined;
+    const proposalId = typeof candidate?.proposalId === 'string' ? candidate.proposalId : '';
+    const rejected = (
+      code: ReworkAcceptanceRejectionCode,
+      reasons: string[],
+      extra?: { guardCode?: string; guardIssues?: string[] },
+    ): ReworkAcceptanceReceiptV1 => ({ status: 'rejected', code, proposalId, reasons, ...extra });
+
+    if (request === null || request === undefined || request.schemaVersion !== 1 || candidate === null || candidate === undefined) {
+      return rejected('invalid', ['受理请求形状不合法：需要 schemaVersion=1 与一份返工提案']);
+    }
+    const proposal = candidate;
+    if (proposal.schemaVersion !== 1 || proposal.patch === null || proposal.patch === undefined || proposal.patch.patchDraft === null || proposal.patch.patchDraft === undefined) {
+      return rejected('invalid', ['提案缺少 patch.patchDraft：受理需要明确的变更内容']);
+    }
+    if (proposal.planDraft === null || proposal.planDraft === undefined) {
+      return rejected('invalid', ['提案没有导出新计划草稿（planDraft）：本入口不代替提案方推导草稿']);
+    }
+    if (!proposal.projectId || !proposal.workspaceId || !proposal.sourceGoalRef || proposal.sourceGoalRef.aggregateType !== 'Goal' || !proposal.sourceGoalRef.goalId) {
+      return rejected('invalid', ['提案缺少 projectId／workspaceId／sourceGoalRef，无法建立受理范围']);
+    }
+
+    // ------------------------------------------------------------------ //
+    // 读 canonical 范围事实：Goal / workspace / active plan / policy      //
+    // ------------------------------------------------------------------ //
+
+    const goalRef = { aggregateType: 'Goal' as const, projectId: proposal.projectId, goalId: proposal.sourceGoalRef.goalId };
+    const goalLoad = await this.ledger.load(goalRef);
+    if (goalLoad.status !== 'found' || goalLoad.snapshot.ref.aggregateType !== 'Goal') {
+      return rejected('not_found', ['Goal ' + goalRef.goalId + ' 在项目 ' + proposal.projectId + ' 不存在']);
+    }
+    const goal = goalLoad.snapshot as GoalSnapshot;
+    const workspaceId = goal.workspaceRef.workspaceId;
+    if (proposal.workspaceId !== workspaceId) {
+      return rejected('invalid', ['提案声明的 workspace ' + proposal.workspaceId + ' 与 Goal 的 canonical workspace ' + workspaceId + ' 不一致']);
+    }
+    // 幂等重放的判定必须先于「源 revision 是否仍然生效」：已经受理过的提案，其源 revision
+    // 本来就已经被自己产生的新 revision 取代，继续按“过期”处理会让重放变成拒绝。
+    const proposalIdEarly = proposal.proposalId;
+    const decisionRefEarly: UserDecisionSnapshot['ref'] = {
+      aggregateType: 'UserDecision',
+      projectId: proposal.projectId,
+      workspaceId,
+      decisionId: autonomousReworkDecisionIdFor(proposalIdEarly),
+    };
+    const reworkPlanRefEarly: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId: proposal.projectId, planId: proposal.planDraft.planId };
+    const priorDecisionLoad = await this.ledger.load(decisionRefEarly);
+    if (priorDecisionLoad.status === 'found' && priorDecisionLoad.snapshot.ref.aggregateType === 'UserDecision') {
+      const priorDecision = (priorDecisionLoad.snapshot as UserDecisionSnapshot).decision;
+      if (priorDecision.outcome !== 'accept' || canonicalJson(priorDecision.authorizedTarget) !== canonicalJson(decisionTargetFor(proposal))) {
+        return rejected('proposal_conflict', [
+          '同一提案身份 ' + proposalIdEarly + ' 已经记录过一条内容不同的决定（' + decisionRefEarly.decisionId + '）：决定记录不可变，不覆盖也不合并，转人工',
+        ]);
+      }
+      // RW-10（P7）：重放之前先比对**已落账提案**的 rework 与 planDraft。
+      // 这两部分不在 planProposalDigest 里（那份摘要覆盖 patch + impact），而 planDraft 正是要落进
+      // 新 revision 的内容；只比对决定与 authorizedTarget 会把「同一提案身份、但草稿已被篡改」的
+      // 输入当成重放成功返回。不一致即提案冲突码、零写入；读不到已落账提案时同样保守转人工
+      // （不能核对就不能声称这是重放）。
+      const priorProposalLoad = await this.ledger.load({
+        aggregateType: 'PlanProposal',
+        projectId: proposal.projectId,
+        workspaceId,
+        proposalId: proposalIdEarly,
+      });
+      if (priorProposalLoad.status !== 'found' || priorProposalLoad.snapshot.ref.aggregateType !== 'PlanProposal') {
+        return rejected('proposal_conflict', [
+          '同一提案身份 ' + proposalIdEarly + ' 已有决定记录，但账本里读不到对应的提案聚合：无法核对本次输入的 rework／planDraft 是否与已落账提案一致，保守转人工（零写）',
+        ]);
+      }
+      const priorProposal = (priorProposalLoad.snapshot as PlanProposalSnapshot).proposal as ReworkProposalV1;
+      if (reworkProposalExtensionDigest(priorProposal) !== reworkProposalExtensionDigest(proposal)) {
+        return rejected('proposal_conflict', [
+          '本次输入的 rework／planDraft 与已落账提案 ' + proposalIdEarly + ' 不一致：提案与决定聚合都不可改写，既不覆盖也不合并，本次转人工（零写）',
+        ]);
+      }
+      const priorPlan = await this.ledger.load(reworkPlanRefEarly);
+      if (priorPlan.status === 'found' && priorPlan.snapshot.ref.aggregateType === 'PlanRevision') {
+        // boundaries 为空数组：四条边界的结论属于**当次**受理；重放不再重新判定，
+        // 只回报既有受理的身份与生效 revision，避免用当前状态伪造当时结论。
+        return {
+          status: 'accepted',
+          replayed: true,
+          proposalId: proposalIdEarly,
+          issueIds: proposal.rework.issues.map((issue) => issue.issueId),
+          proposalRef: { aggregateType: 'PlanProposal', projectId: proposal.projectId, workspaceId, proposalId: proposalIdEarly },
+          decisionRef: decisionRefEarly,
+          activePlanRef: reworkPlanRefEarly,
+          boundaries: [],
+          budget: await this.currentBudgetFacts(proposal.projectId, goal.ref.goalId),
+          eventIds: [],
+          commitCursor: null,
+        };
+      }
+      // 决定已落账但 revision 尚未生效（上次在应用前中断）：继续走应用，不重复落账。
+    }
+
+    const activePlanRef = goal.activePlanRevision;
+    if (activePlanRef === null) {
+      return rejected('source_not_current', ['Goal 当前没有 active plan revision：没有可返工的验收基线']);
+    }
+    if (canonicalJson(activePlanRef) !== canonicalJson(proposal.sourcePlanRef)) {
+      return rejected('source_not_current', [
+        '提案基于 revision ' + String(proposal.sourcePlanRef?.planId) + '，而当前 active revision 是 ' + activePlanRef.planId + '：提案的源已被取代，不基于过期版本自动受理',
+      ]);
+    }
+    const sourcePlanLoad = await this.ledger.load(activePlanRef);
+    if (sourcePlanLoad.status !== 'found' || sourcePlanLoad.snapshot.ref.aggregateType !== 'PlanRevision') {
+      return rejected('not_found', ['active plan revision ' + activePlanRef.planId + ' 读不到，无法核对提案']);
+    }
+    const sourcePlan = sourcePlanLoad.snapshot as PlanRevisionSnapshot;
+    if (sourcePlan.planRevision !== proposal.sourcePlanRevision) {
+      return rejected('source_not_current', [
+        '提案声明的源 planRevision（' + proposal.sourcePlanRevision + '）与帐本里的 ' + sourcePlan.planRevision + ' 不一致',
+      ]);
+    }
+    const identityIssues = proposalIdentityIssues(proposal);
+    if (identityIssues.length > 0) return rejected('invalid', identityIssues);
+
+    const policy = await this.activeCoordinationPolicy(proposal.projectId);
+    if (policy === null) {
+      return rejected('governance_unavailable', [
+        'Project ' + proposal.projectId + ' 没有生效的 CoordinationPolicy revision：自动受理没有授权来源，不套用默认预算、也不回退',
+      ]);
+    }
+
+    // ------------------------------------------------------------------ //
+    // 四条边界                                                            //
+    // ------------------------------------------------------------------ //
+
+    const issues = proposal.rework.issues;
+    const attestationGaps: string[] = [];
+    const factsByTask = await this.committedFactsByTask(proposal, workspaceId, attestationGaps);
+    const sourceIssues: string[] = [];
+    for (const issue of issues) {
+      sourceIssues.push(...triggerSourceIssues(issue, factsByTask.get(issue.taskId) ?? []));
+    }
+    const scan = await this.scanGoalChangeFacts(proposal.projectId, goalRef.goalId);
+    if (scan === null) {
+      return rejected('unavailable', [
+        '账本事件超过扫描上限（' + MAX_SCAN_PAGES * SCAN_PAGE_SIZE + ' 条）：无法重建预算计数与人工拒绝事实，不凭不完整事实自动受理',
+      ]);
+    }
+    const budget = reworkBudgetFacts({
+      limit: policy.content.budget.maxAutonomousReworks,
+      used: scan.autonomousApplied,
+      policyId: policy.policyId,
+      policyRevision: policy.contentRevision,
+      policyVersion: autonomousReworkPolicyVersion(policy),
+    });
+
+    const boundaryA: ReworkBoundaryOutcomeV1 = {
+      code: 'trigger_source_committed',
+      satisfied: sourceIssues.length === 0,
+      reasons:
+        sourceIssues.length > 0
+          ? sourceIssues
+          : [
+              // RC-01：触发源的判据是"在**问题自己的** anchor revision 上有已提交结论"（见
+              // triggerSourceIssues）。计划推进之后，同一批里尚未处置的问题可以带着更早的
+              // anchor 被接手（carried_by_task），此时提案的源 revision 已经不是它们成立时的
+              // revision，因此这里必须按问题各自的 anchor 逐项说明，不能笼统写成提案的源 revision。
+              '触发源已在账本中逐条复核：提案处置的 ' + issues.length + ' 条问题的每一条失败要求，都在它自己的来源 revision（' +
+                [...new Set(issues.map((issue) => issue.planRef.planId))].join('、') +
+                '）上有同一 (义务, 要求) 的已提交非 PASS 结论',
+              ...issues.filter((issue) => issue.planRef.planId !== sourcePlan.planId).map(
+                (issue) =>
+                  '问题 ' + issue.issueId + ' 的证据 anchor 属于 ' + issue.planRef.planId + '（当前的 active revision 是 ' +
+                  sourcePlan.planId + '）：旧 FAIL 不再直接适用于当前 revision，本次返工只换承担者，' +
+                  '它列出的失败要求要在本提案导出的新 revision 上重新取证',
+              ),
+              ...attestationGaps,
+            ],
+    };
+
+    const scopeIssues = inScopeReworkIssues({ proposal, sourcePlan });
+    // RW-10（P2）人的暂停开关：每次受理都读**当前生效策略**的 allowed.inScopeRework。
+    // 人安装并激活一份 inScopeRework=false 的协调策略即停用自动返工：这里转 needs_human_decision
+    // （边界 in_scope_rework）且零写入，之后每条失败都必须由人决定。没有新命令、新聚合、新状态。
+    scopeIssues.push(...autonomousReworkPauseIssues(policy));
+    const boundaryB: ReworkBoundaryOutcomeV1 = {
+      code: 'in_scope_rework',
+      satisfied: scopeIssues.length === 0,
+      reasons:
+        scopeIssues.length > 0
+          ? scopeIssues
+          : ['改动落在 inScopeRework：任务集增量只做“取代失败任务 + 新增承接同一义务的返工任务”，义务正文、等级与验收语义逐项不变，且不取消任何承担者'],
+    };
+
+    const boundaryC = budgetBoundaryOutcome(budget);
+
+    const rejectionReasons: { blocking: boolean; reason: string }[] = [];
+    for (const issue of issues) rejectionReasons.push(...(await this.humanDecisionReasons(issue, scan.decisions)));
+    const blocking = rejectionReasons.filter((entry) => entry.blocking);
+    const boundaryD: ReworkBoundaryOutcomeV1 = {
+      code: 'no_human_rejection',
+      satisfied: blocking.length === 0,
+      reasons:
+        blocking.length > 0
+          ? blocking.map((entry) => entry.reason)
+          : [
+              '账本里没有针对这些问题的 reject／defer 决定（已核对 ' + scan.decisions.length + ' 条本 Goal 的计划变更决定）',
+              ...rejectionReasons.map((entry) => entry.reason),
+            ],
+    };
+
+    const boundaries = [boundaryA, boundaryB, boundaryC, boundaryD];
+    const unsatisfied = boundaries.find((boundary) => !boundary.satisfied);
+    if (unsatisfied !== undefined) {
+      return {
+        status: 'needs_human_decision',
+        code: unsatisfied.code,
+        proposalId,
+        boundaries,
+        budget,
+        reasons: boundaries.filter((boundary) => !boundary.satisfied).flatMap((boundary) => boundary.reasons.map((reason) => boundary.code + '：' + reason)),
+      };
+    }
+
+    // ------------------------------------------------------------------ //
+    // 落账前预跑既有守卫 f2（同一函数；把它提前只是为了避免先写后拒）      //
+    // ------------------------------------------------------------------ //
+
+    const decisionRef: UserDecisionSnapshot['ref'] = {
+      aggregateType: 'UserDecision',
+      projectId: proposal.projectId,
+      workspaceId,
+      decisionId: autonomousReworkDecisionIdFor(proposalId),
+    };
+    // 走到这里说明：决定尚未落账（已受理的情况在幂等重放分支就返回了），
+    // 或者决定已落账但 revision 还没生效（上次在应用前中断，本次继续应用而不重复落账）。
+    const existingDecisionLoad = await this.ledger.load(decisionRef);
+
+    const decision = this.buildDecision({ proposal, goal, activePlanRef, sourcePlan, decisionRef, workspaceId, budget, policy });
+    const preflight = draftConsistencyIssues(proposal, decision, proposal.planDraft, sourcePlan);
+    // RW-10（P8）：预检拒绝沿用既有守卫的归因码，不再把所有草稿不一致压成 invalid。
+    // 归因函数与 applyPlanChange 守卫 f2 是同一个（policies/goal-change-consistency.ts），
+    // 因此这里报出的码与「先落账再被守卫打回」时会看到的码完全一致，调用方不必再猜第二次。
+    const preflightCode = draftAdmissionRejectionCode(preflight);
+    if (preflightCode !== null) {
+      return rejected(preflightCode, [
+        '提案导出的新计划草稿与「源 revision + 任务集增量」的确定性推导不一致，受理方不代其推导也不修正：',
+        ...preflight,
+      ]);
+    }
+
+    // ------------------------------------------------------------------ //
+    // 复用既有入口：记录提案 → 记录决定（actor=system）→ applyPlanChange    //
+    // ------------------------------------------------------------------ //
+
+    const proposalRef: PlanProposalSnapshot['ref'] = { aggregateType: 'PlanProposal', projectId: proposal.projectId, workspaceId, proposalId };
+    let proposalToRecord: ReworkProposalV1 = proposal;
+    const existingProposalLoad = await this.ledger.load(proposalRef);
+    if (existingProposalLoad.status === 'found' && existingProposalLoad.snapshot.ref.aggregateType === 'PlanProposal') {
+      const existing = (existingProposalLoad.snapshot as PlanProposalSnapshot).proposal;
+      // 两次比对缺一不可：planProposalDigest 覆盖 patch + impact（含 authorizedTarget 绑定的语义），
+      // 扩展摘要覆盖 ReworkProposalV1 多出的 rework 与 planDraft（见 reworkProposalExtensionDigest）。
+      if (
+        planProposalDigest(existing) !== planProposalDigest(proposal) ||
+        reworkProposalExtensionDigest(existing as ReworkProposalV1) !== reworkProposalExtensionDigest(proposal)
+      ) {
+        return rejected('proposal_conflict', [
+          '同一提案身份 ' + proposalId + ' 已经记录过一份内容不同的提案（含 rework／planDraft）：提案聚合不可变，不覆盖也不合并，本次转人工',
+        ]);
+      }
+      // 内容一致：沿用已记录的提案原文（时间与身份以账本为准），保证重试幂等。
+      proposalToRecord = existing as ReworkProposalV1;
+    } else {
+      const recordProposal = await this.goalChange.recordPlanChangeProposal(
+        this.proposalCommand(proposalToRecord, autonomousReworkCommandIdFor(proposalId, 'proposal')),
+      );
+      if (recordProposal.status === 'rejected') {
+        return rejected('guard_rejected', ['返工提案落账被既有记录入口拒绝'], {
+          guardCode: recordProposal.code,
+          guardIssues: recordProposal.issues ?? [],
+        });
+      }
+    }
+
+    if (existingDecisionLoad.status !== 'found') {
+      const recordDecision = await this.goalChange.recordUserDecision(
+        this.decisionCommand(decision, autonomousReworkCommandIdFor(proposalId, 'decision')),
+      );
+      if (recordDecision.status === 'rejected') {
+        return rejected('guard_rejected', ['自动受理决定落账被既有记录入口拒绝'], {
+          guardCode: recordDecision.code,
+          guardIssues: recordDecision.issues ?? [],
+        });
+      }
+    }
+
+    const applyCommandId = autonomousReworkCommandIdFor(proposalId, 'apply');
+    const applyCommand: ApplyPlanChangeCommand = {
+      commandId: applyCommandId,
+      commandType: 'ApplyPlanChange',
+      schemaVersion: 1,
+      identity: { projectId: proposal.projectId, actor: { ...AUTONOMOUS_REWORK_ACTOR }, idempotencyKey: applyCommandId + '-idem' },
+      aggregateId: proposalId,
+      expectedRevision: goal.revision,
+      correlationId: applyCommandId + '-corr',
+      submittedAt: this.deps.now(),
+      payload: {
+        decisionRef,
+        proposalRef,
+        // 草稿原样提交：它的逐项一致性刚刚由同一守卫函数预跑并通过，应用时守卫 f2 会再复跑一遍。
+        newPlanDraft: proposalToRecord.planDraft,
+        changeReason: 'autonomous-rework:' + proposalId,
+      },
+    };
+    // 守卫链在这里原样复跑：applyPlanChange 的 a–i（形状、提案/决定存在、仅 accept 可应用、
+    // 目标精确匹配、守卫 f1/f2 的增量与草稿一致性、source_stale、治理解析与 P1-02 非空守卫、
+    // CAS 折叠）一条都没有被跳过。本入口只负责把“四条边界都满足”这件事证明给它们。
+    const applied = await this.goalChange.applyPlanChange(applyCommand);
+    if (applied.status === 'rejected') {
+      return rejected('guard_rejected', ['既有 applyPlanChange 守卫链拒绝了这次自动受理'], {
+        guardCode: applied.code,
+        guardIssues: applied.issues ?? [],
+      });
+    }
+
+    return {
+      status: 'accepted',
+      replayed: applied.replayed,
+      proposalId,
+      issueIds: issues.map((issue) => issue.issueId),
+      proposalRef,
+      decisionRef,
+      activePlanRef: applied.activePlanRef,
+      boundaries,
+      budget,
+      eventIds: applied.eventIds,
+      commitCursor: applied.commitCursor,
+    };
+  }
+
+  // --------------------------------------------------------------------- //
+  // canonical 读取                                                          //
+  // --------------------------------------------------------------------- //
+
+  /** 生效的 CoordinationPolicy revision；缺失即 null（没有默认值，也没有回退）。 */
+  private async activeCoordinationPolicy(
+    projectId: string,
+  ): Promise<{ policyId: string; contentRevision: number; content: CoordinationPolicyContentV1 } | null> {
+    return resolveActiveCoordinationPolicy(this.ledger, projectId);
+  }
+
+  /** 当前的预算事实（解析生效策略 + 扫账本计数）；任一读取失败即 null，不编造数值。 */
+  private async currentBudgetFacts(projectId: string, goalId: string): Promise<ReworkBudgetFactsV1 | null> {
+    const policy = await this.activeCoordinationPolicy(projectId);
+    if (policy === null) return null;
+    const scan = await this.scanGoalChangeFacts(projectId, goalId);
+    if (scan === null) return null;
+    return reworkBudgetFacts({
+      limit: policy.content.budget.maxAutonomousReworks,
+      used: scan.autonomousApplied,
+      policyId: policy.policyId,
+      policyRevision: policy.contentRevision,
+      policyVersion: autonomousReworkPolicyVersion(policy),
+    });
+  }
+
+  /**
+   * 边界 (a) 的事实来源：把账本里两类**已提交**验证结论归一成「任务 → 事实」。
+   * 只读、不重算验证、不看摘要文字：工具轮次读 TaskEvidenceIndex → Evidence（coverage +
+   * effectivity anchor + outcome），独立审阅读 ReviewResult 聚合的逐条 outcome 与 ReviewWork 的 planRef。
+   */
+  private async committedFactsByTask(
+    proposal: ReworkProposalV1,
+    workspaceId: string,
+    gaps: string[],
+  ): Promise<Map<string, CommittedConclusionFactV1[]>> {
+    const byTask = new Map<string, CommittedConclusionFactV1[]>();
+    const push = (taskId: string, fact: CommittedConclusionFactV1): void => {
+      const list = byTask.get(taskId) ?? [];
+      list.push(fact);
+      byTask.set(taskId, list);
+    };
+    const taskIds = [...new Set(proposal.rework.issues.map((issue) => issue.taskId))];
+
+    // 独立审阅：先按问题的来源身份读取正式结果（ReviewResult 聚合）。
+    for (const issue of proposal.rework.issues) {
+      if (issue.source?.kind !== 'review_verdict') continue;
+      const reviewId = issue.source.resultRef;
+      const resultRef: ReviewResultRef = { aggregateType: 'ReviewResult', projectId: issue.projectId, workspaceId, goalId: issue.goalId, reviewId };
+      const loaded = await this.ledger.load(resultRef);
+      if (loaded.status === 'found' && loaded.snapshot.ref.aggregateType === 'ReviewResult') {
+        const result = loaded.snapshot as ReviewResultSnapshot;
+        if (result.decision.status !== 'accepted') {
+          gaps.push('审阅结果 ' + reviewId + ' 的结论未被接受：它不构成返工问题的事实依据');
+          continue;
+        }
+        let planRef = issue.planRef;
+        const workLoad = await this.ledger.load(result.workRef);
+        if (workLoad.status === 'found' && workLoad.snapshot.ref.aggregateType === 'ReviewWork') {
+          planRef = (workLoad.snapshot as ReviewWorkSnapshot).planRef;
+        } else {
+          gaps.push('审阅 ' + reviewId + ' 的 ReviewWork 快照读不到：无法独立核对其生效 revision，按问题声明的 revision 判定');
+        }
+        for (const requirement of result.decision.requirements) {
+          if (requirement.outcome === 'PASS') continue;
+          push(issue.taskId, {
+            kind: 'review',
+            refKey: reviewId,
+            outcome: requirement.outcome,
+            planRef,
+            coverage: [{ obligationId: requirement.obligationId, requirementId: requirement.requirementId }],
+          });
+        }
+      } else {
+        gaps.push('独立审阅结果 ' + reviewId + ' 不在账本里：问题 ' + issue.issueId + ' 的来源无法复核');
+      }
+    }
+
+    // 工具轮次：任务证据索引 → 已接纳 Evidence。
+    for (const taskId of taskIds) {
+      const issue = proposal.rework.issues.find((entry) => entry.taskId === taskId)!;
+      const indexLoad = await this.ledger.load(taskEvidenceIndexRefFor(issue.projectId, issue.goalId, taskId));
+      if (indexLoad.status !== 'found' || indexLoad.snapshot.ref.aggregateType !== 'TaskEvidenceIndex') {
+        gaps.push('任务 ' + taskId + ' 还没有已接纳证据索引：工具轮次结论无法从账本复核');
+        continue;
+      }
+      const evidenceIds = (indexLoad.snapshot as TaskEvidenceIndexSnapshot).evidenceIds;
+      for (const evidenceId of evidenceIds) {
+        const evidenceLoad = await this.ledger.load({ aggregateType: 'Evidence', projectId: issue.projectId, evidenceId });
+        if (evidenceLoad.status !== 'found' || evidenceLoad.snapshot.ref.aggregateType !== 'Evidence') {
+          gaps.push('任务证据索引里的 ' + evidenceId + ' 读不到（索引与证据不一致）：按不可复核处理');
+          continue;
+        }
+        const evidence = (evidenceLoad.snapshot as EvidenceSnapshot).evidence;
+        if (evidence.outcome === 'PASS') continue;
+        if (evidence.subject.goalId !== issue.goalId || evidence.subject.taskId !== taskId) continue;
+        push(taskId, {
+          kind: 'evidence',
+          refKey: evidenceId,
+          outcome: evidence.outcome,
+          planRef: evidence.anchor.planRef,
+          coverage: evidence.coverage.map((c) => ({ obligationId: c.obligationId, requirementId: c.requirementId })),
+        });
+      }
+    }
+    return byTask;
+  }
+
+  /**
+   * 扫账本事件，重建两类事实：
+   *   - autonomousApplied：该 Goal 上**已经应用成功**的自动返工次数（预算计数口径）；
+   *   - decisions：该 Goal 的计划变更决定（用于“人是否拒绝过这条问题”）。
+   * 为什么扫事件而不是读投影：ControlEngine 不能依赖 ReadModel（依赖方向是 ReadModelIndex → ControlEngine），
+   * 而账本事件本身就是 canonical 事实，重启后重新扫描即得到同一结果。
+   */
+  private async scanGoalChangeFacts(
+    projectId: string,
+    goalId: string,
+  ): Promise<{ decisions: UserDecisionV1[]; autonomousApplied: number } | null> {
+    const decisions: UserDecisionV1[] = [];
+    let autonomousApplied = 0;
+    let cursor: CommitCursor | null = null;
+    for (let pageIndex = 0; pageIndex < MAX_SCAN_PAGES; pageIndex++) {
+      const page: EventPage = await this.ledger.events({ afterCursor: cursor, limit: SCAN_PAGE_SIZE });
+      for (const positioned of page.events) {
+        const eventProjectId = (positioned.event as { projectId?: string }).projectId;
+        if (eventProjectId !== undefined && eventProjectId !== projectId) continue;
+        if (positioned.event.eventType === 'UserDecisionRecorded') {
+          const decision = (positioned.event as UserDecisionRecordedEvent).payload.decision;
+          if (decision?.subject?.goalRef?.goalId === goalId) decisions.push(decision);
+        } else if (positioned.event.eventType === 'GoalRevisionRecorded') {
+          const change = (positioned.event as GoalRevisionRecordedEvent).payload.change;
+          if (change?.goalRef?.goalId !== goalId) continue;
+          // 只有本入口以这个 system 身份写 GoalRevision：它计数的是“已应用的自动返工”，
+          // 不是“提过的案”。被守卫拒绝的尝试不产生事件，也就不消耗预算。
+          if (positioned.event.actor?.kind === 'system' && positioned.event.actor?.id === AUTONOMOUS_REWORK_ACTOR_ID) autonomousApplied++;
+        }
+      }
+      if (!page.hasMore) return { decisions, autonomousApplied };
+      cursor = page.throughCursor;
+    }
+    return null;
+  }
+
+  /**
+   * 边界 (d)：人是否已经对这条问题表过态。
+   *
+   * 事实存在既有决定记录里（UserDecisionV1，P1-11 的决定路径），不新造聚合：
+   * 一条 reject／defer 决定，只要它决定的提案就是给这条问题做的返工（提案自己列了这条问题，
+   * 或取代了同一条失败任务，或新增了本问题的规范返工任务 id），就表示人对这条问题已经给过结论。
+   * 按 PRODUCT「拒绝、延后与过期决定不会偷偷推进变更」，reject 与 defer 都阻止自动受理。
+   * 读不到被决定的提案时保守处置（同样转人工）：无法排除它是针对本问题的拒绝。
+   */
+  private async humanDecisionReasons(
+    issue: ReworkIssueV1,
+    decisions: UserDecisionV1[],
+  ): Promise<{ blocking: boolean; reason: string }[]> {
+    const reasons: { blocking: boolean; reason: string }[] = [];
+    for (const decision of decisions) {
+      if (decision.outcome === 'accept') continue;
+      const proposalLoad = await this.ledger.load(decision.proposalRef);
+      if (proposalLoad.status !== 'found' || proposalLoad.snapshot.ref.aggregateType !== 'PlanProposal') {
+        reasons.push({
+          blocking: true,
+          reason:
+            '决定 ' + decision.decisionId + '（' + decision.outcome + '）的提案 ' + decision.proposalRef.proposalId + ' 在账本里读不到：无法排除它是针对问题 ' + issue.issueId + ' 的拒绝，保守转人工',
+        });
+        continue;
+      }
+      const decided = (proposalLoad.snapshot as PlanProposalSnapshot).proposal;
+      if (proposalAddressesIssue(decided, issue)) {
+        reasons.push({
+          blocking: true,
+          reason:
+            '人已经在决定 ' + decision.decisionId + ' 上对问题 ' + issue.issueId + ' 给出 ' + decision.outcome + '（' + decision.decidedAt + '：' + (decision.summary ?? '无摘要') + '）：不再自动受理',
+        });
+      } else {
+        reasons.push({ blocking: false, reason: '决定 ' + decision.decisionId + ' 的 ' + decision.outcome + ' 针对的是别的变更，与问题 ' + issue.issueId + ' 无关' });
+      }
+    }
+    return reasons;
+  }
+
+  // --------------------------------------------------------------------- //
+  // 落账内容构造（身份由提案确定性推导，与 RW-03 的推导函数同源）            //
+  // --------------------------------------------------------------------- //
+
+  private proposalCommand(proposal: ReworkProposalV1, commandId: string): RecordPlanChangeProposalCommand {
+    return {
+      commandId,
+      commandType: 'RecordPlanChangeProposal',
+      schemaVersion: 1,
+      identity: { projectId: proposal.projectId, actor: { ...AUTONOMOUS_REWORK_ACTOR }, idempotencyKey: commandId + '-idem' },
+      aggregateId: proposal.proposalId,
+      expectedRevision: 0,
+      correlationId: commandId + '-corr',
+      submittedAt: this.deps.now(),
+      payload: { proposal },
+    };
+  }
+
+  /**
+   * 自动受理的决定：actor 是 system，授权来源写进 authority——
+   * strategy=delegated 表示授权来自版本化 CoordinationPolicy（人经 install/activate 显式提交），
+   * delegator 记录该 policy revision 身份，policyVersion 记录内容摘要。
+   * 不伪造一个人类 id，也不把 system 决定说成人的决定。
+   */
+  private buildDecision(input: {
+    proposal: ReworkProposalV1;
+    goal: GoalSnapshot;
+    activePlanRef: PlanRevisionRef;
+    sourcePlan: PlanRevisionSnapshot;
+    decisionRef: UserDecisionSnapshot['ref'];
+    workspaceId: string;
+    budget: ReworkBudgetFactsV1;
+    policy: { policyId: string; contentRevision: number; content: CoordinationPolicyContentV1 };
+  }): UserDecisionV1 {
+    return {
+      schemaVersion: 1,
+      decisionId: input.decisionRef.decisionId,
+      projectId: input.proposal.projectId,
+      workspaceId: input.workspaceId,
+      proposalRef: { aggregateType: 'PlanProposal', projectId: input.proposal.projectId, workspaceId: input.workspaceId, proposalId: input.proposal.proposalId },
+      subject: {
+        goalRef: input.goal.ref,
+        sourcePlanRef: input.activePlanRef,
+        sourcePlanRevision: input.sourcePlan.planRevision,
+      },
+      outcome: 'accept',
+      actor: { ...AUTONOMOUS_REWORK_ACTOR },
+      authority: {
+        strategy: 'delegated',
+        delegator: 'coordination-policy:' + input.policy.policyId + '@' + input.policy.contentRevision,
+        policyVersion: autonomousReworkPolicyVersion(input.policy),
+      },
+      authorizedTarget: decisionTargetFor(input.proposal),
+      summary:
+        '自动受理返工提案（' + input.proposal.proposalId + '）：四条边界 (a)-(d) 同时满足；' +
+        '授权来自 ' + input.policy.policyId + '@' + input.policy.contentRevision +
+        '，预算 ' + input.budget.used + '/' + input.budget.limit,
+      decidedAt: this.deps.now(),
+    };
+  }
+
+  private decisionCommand(decision: UserDecisionV1, commandId: string): RecordUserDecisionCommand {
+    return {
+      commandId,
+      commandType: 'RecordUserDecision',
+      schemaVersion: 1,
+      identity: { projectId: decision.projectId, actor: { ...AUTONOMOUS_REWORK_ACTOR }, idempotencyKey: commandId + '-idem' },
+      aggregateId: decision.decisionId,
+      expectedRevision: 0,
+      correlationId: commandId + '-corr',
+      submittedAt: this.deps.now(),
+      payload: { decision },
+    };
+  }
+}

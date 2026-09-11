@@ -1,0 +1,1003 @@
+/**
+ * RW-03 返工提案编译器：把「验证留下的未处置问题」编译成一份具体的计划变更提案。
+ *
+ * Authority:
+ *   - dev_docs/decisions/0003-rework-role-spec-architecture-reconciliation.md D1：
+ *     返工以新的 PlanRevision 承载；任务集增量只能改「谁承担义务」，义务正文与验收
+ *     语义逐字不动；默认自动受理，但边界不成立时提交给人决定。
+ *   - ARCHITECTURE.md 全局不变量 #1（Planner 只提出 Proposal/Patch，ControlEngine 才能
+ *     推进长期状态）与「协调、自治与人类知情」（授权不覆盖的变化由人决定）。
+ *   - PRODUCT.md「证据驱动完成」：失败要能变成关联返工，并在新版本上重新证明。
+ *
+ * 本模块只提案、不落账。编译是**纯函数**：没有时钟、没有账本、没有 I/O，也不 import
+ * 任何写入路径，因此「同一份源计划 + 同一组问题 → 逐字相同的提案」是结构性事实，
+ * 而不是靠约定维持。落账（recordPlanChangeProposal → recordUserDecision →
+ * applyPlanChange，或 RW-04 的自动受理入口）由 ControlEngine 负责。
+ *
+ * 机械推导的三处权威实现（本文件不重写其中任何一条规则）：
+ *   1. 任务集与义务承担者：control-engine/policies/goal-change-consistency.ts 的
+ *      deriveTaskSet／deriveObligationSet。applyPlanChange 的守卫 f2 用**同一对函数**
+ *      比对草稿，因此提案侧与守卫侧不可能各写一套规则而悄悄分叉。
+ *   2. 执行 DAG 与层级的重指（RW-05 下沉）：同文件的 deriveExpectedTaskGraph
+ *      （= rewireExecutionDag + rewireTaskHierarchy）。规则曾经只住在本文件的私有函数里，
+ *      于是守卫只能做悬空引用检查，「下游仍在依赖被取代任务」这种致命草稿会被放行；
+ *      现在提案侧生成草稿与守卫侧比对草稿调用的是同一个函数。
+ *   3. 身份：contracts/rework.ts 的 reworkTaskIdFor（返工任务）、reworkProposalIdFor
+ *      （提案／补丁）与 reworkPlanIdFor（新 revision 的计划 id）。ControlEngine 的自动
+ *      受理入口用同一组函数**复核**提案身份，双方不会推出两个"官方"聚合身份。
+ */
+import type {
+  AcceptanceObligation,
+  PlanRevisionSnapshot,
+  PlanTaskAssignment,
+  RuntimeTask,
+  TaskScope,
+} from '../../contracts/plan.js';
+import { revisionAssignments } from '../../contracts/plan.js';
+import type { GoalRef } from '../../contracts/ledger.js';
+import type { ChangeImpactAnalysisV1, PlanPatchV1, PlanTaskSetDeltaV1 } from '../../contracts/goal-change.js';
+import {
+  PLAN_CHANGE_MAX_AFFECTED_WORKS,
+  PLAN_CHANGE_MAX_INSTRUCTION_BYTES,
+  PLAN_CHANGE_MAX_TASK_DELTAS,
+} from '../../contracts/goal-change.js';
+import {
+  REWORK_MAX_ISSUES_PER_PROPOSAL,
+  reworkIssueFactFor,
+  reworkIssueUnaddressed,
+  reworkPlanIdFor,
+  reworkProposalIdFor,
+  reworkTaskIdFor,
+  type ReworkCompileRejectionCode,
+  type ReworkCompileRequestV1,
+  type ReworkCompileResultV1,
+  type ReworkIssueViewV1,
+  type ReworkNeedsDecisionCode,
+  type ReworkPlanDraftV1,
+  type ReworkProposalTaskV1,
+  type ReworkProposalV1,
+} from '../../contracts/rework.js';
+import { canonicalJson } from '../../contracts/fingerprint.js';
+import { planningWorkRef, planningWorkGaps } from './planning-work-materials.js';
+import {
+  deriveExpectedTaskGraph,
+  deriveObligationSet,
+  deriveTaskAssignments,
+  deriveTaskSet,
+} from '../control-engine/policies/goal-change-consistency.js';
+
+/**
+ * 人类摘要里每条问题最多逐条列出的失败要求数。为什么要有界：摘要的用途是让人一眼看懂
+ * 「哪条要求失败、为什么失败」，完整清单仍在 rework.issues[].failedRequirements 里；
+ * 无界拼接会随失败数量线性膨胀，而摘要不承担证据职责。截断处写明还剩多少条。
+ */
+export const REWORK_SUMMARY_MAX_REQUIREMENTS_PER_ISSUE = 8;
+
+/** 一个被取代任务 + 处置它的问题 = 一个返工任务。 */
+type ReworkGroup = {
+  sourceTask: RuntimeTask;
+  /**
+   * 被取代任务在源 revision 里的指派（RW-07）。返工任务的 role 只能取自它：同一义务、
+   * 同一验收语义，只换承担者，因此承担者角色也沿用，不从别处推断，也不新造授权。
+   * gate 类任务没有实现指派（初始规划与守卫 f1 是同一约定），因此这里是 null；work 类任务
+   * 在源 revision 里没有指派时 compile 直接拒绝（replaceable_task_without_assignment）。
+   */
+  sourceAssignment: PlanTaskAssignment | null;
+  /** 该组处置的全部问题（按 issueId 排序）。 */
+  issues: ReworkIssueViewV1[];
+  /** 从源任务逐字接手的义务（源计划顺序）：不只是失败的那几条，见 compile 里的建组处。 */
+  obligations: AcceptanceObligation[];
+  primaryIssueId: string;
+  reworkTaskId: string;
+};
+
+type PendingGroup = { sourceTask: RuntimeTask; sourceAssignment: PlanTaskAssignment | null; issues: ReworkIssueViewV1[]; obligations: AcceptanceObligation[] };
+type Diagnostic = { code: string; issueId: string | null; message: string };
+
+/**
+ * 拒绝码的优先级。为什么要显式排序：结论必须只由「问题集合」决定，而不是由「哪条问题
+ * 先被遍历到」决定；把最根本的问题（作用域/当前性）排在前面，人拿到的主码也最可操作。
+ */
+const REJECTION_PRECEDENCE: readonly ReworkCompileRejectionCode[] = [
+  'invalid_request',
+  'issue_out_of_scope',
+  'issue_not_current',
+  'issue_identity_conflict',
+  'issue_identity_inconsistent',
+  'issue_without_failed_requirements',
+  'issue_task_not_in_plan',
+  'replaceable_task_without_assignment',
+  'obligation_not_in_plan',
+  'obligation_not_carried_by_task',
+  'rework_task_already_in_plan',
+  'delta_exceeds_bound',
+  'too_many_issues',
+  'empty_issue_set',
+];
+
+const rankOf = (code: string): number => {
+  const index = REJECTION_PRECEDENCE.indexOf(code as ReworkCompileRejectionCode);
+  return index === -1 ? REJECTION_PRECEDENCE.length : index;
+};
+
+/** 诊断的确定性排序：同一批问题得到逐字相同的诊断列表，与调用方的输入顺序无关。 */
+function orderedDiagnostics(diagnostics: Diagnostic[]): Diagnostic[] {
+  return [...diagnostics].sort((a, b) => {
+    const rank = rankOf(a.code) - rankOf(b.code);
+    if (rank !== 0) return rank;
+    const issue = (a.issueId ?? '').localeCompare(b.issueId ?? '');
+    return issue !== 0 ? issue : a.message.localeCompare(b.message);
+  });
+}
+
+const diagnosticLines = (diagnostics: Diagnostic[]): string[] =>
+  diagnostics.map((entry) =>
+    entry.issueId === null ? entry.code + ': ' + entry.message : entry.code + ' [' + entry.issueId + ']: ' + entry.message,
+  );
+
+function rejected(code: ReworkCompileRejectionCode, diagnostics: Diagnostic[]): ReworkCompileResultV1 {
+  const ordered = orderedDiagnostics(diagnostics);
+  return {
+    status: 'rejected',
+    code,
+    message: ordered[0]?.message ?? code,
+    issues: diagnosticLines(ordered),
+  };
+}
+
+function needsDecision(code: ReworkNeedsDecisionCode, diagnostics: Diagnostic[]): ReworkCompileResultV1 {
+  const ordered = orderedDiagnostics(diagnostics);
+  return {
+    status: 'needs_decision',
+    code,
+    message: ordered[0]?.message ?? code,
+    issues: diagnosticLines(ordered),
+  };
+}
+
+/**
+ * 返工提案编译器。没有构造依赖（无时钟、无账本、无端口），compile 是同步纯函数——
+ * 这样「本票不产生任何账本写入」不是承诺，而是没有可写入的入口。
+ */
+export class ReworkPlanCompiler {
+  compile(request: ReworkCompileRequestV1): ReworkCompileResultV1 {
+    const shapeIssue = validateRequest(request);
+    if (shapeIssue !== null) {
+      return rejected('invalid_request', [{ code: 'invalid_request', issueId: null, message: shapeIssue }]);
+    }
+    const activePlan = request.activePlan;
+
+    if (request.issues.length === 0) {
+      return rejected('empty_issue_set', [
+        {
+          code: 'empty_issue_set',
+          issueId: null,
+          message: '没有要处置的未处置问题：空集合既不构成一次计划变更，也不能用来证明完成',
+        },
+      ]);
+    }
+    if (request.issues.length > REWORK_MAX_ISSUES_PER_PROPOSAL) {
+      return rejected('too_many_issues', [
+        {
+          code: 'too_many_issues',
+          issueId: null,
+          message:
+            '未处置问题 ' + request.issues.length + ' 条超过上限 ' + REWORK_MAX_ISSUES_PER_PROPOSAL + ' 条；请先收敛范围或分批返工',
+        },
+      ]);
+    }
+
+    // 规范化：按 issueId 排序；同 id 且事实一致的去重，事实冲突的整批拒绝
+    // （问题身份必须唯一对应一组事实，不能任选一份）。
+    const deduped: ReworkIssueViewV1[] = [];
+    const conflicts: Diagnostic[] = [];
+    for (const issue of [...request.issues].sort((a, b) => a.issueId.localeCompare(b.issueId))) {
+      const previous = deduped.find((candidate) => candidate.issueId === issue.issueId);
+      if (previous === undefined) {
+        deduped.push(issue);
+        continue;
+      }
+      if (canonicalJson(reworkIssueFactFor(previous) as never) !== canonicalJson(reworkIssueFactFor(issue) as never)) {
+        conflicts.push({
+          code: 'issue_identity_conflict',
+          issueId: issue.issueId,
+          message: '同一 issueId 出现了内容不同的问题；问题身份必须唯一对应一组事实，不能任选一份',
+        });
+      }
+    }
+    if (conflicts.length > 0) return rejected('issue_identity_conflict', conflicts);
+
+    // 源 revision 的指派（RW-07）：一律经契约的唯一读取入口取，不自己挑字段。
+    const assignmentByTask = new Map(revisionAssignments(activePlan).map((entry) => [entry.taskId, entry]));
+
+    // 逐条核对。全部问题检查完再决定结论：结论只由问题集合决定，不由遍历顺序决定。
+    const rejections: Diagnostic[] = [];
+    const decisions: Diagnostic[] = [];
+    const pending = new Map<string, PendingGroup>();
+
+    for (const issue of deduped) {
+      const scopeIssue = checkScope(request, issue);
+      if (scopeIssue !== null) {
+        rejections.push(scopeIssue);
+        continue;
+      }
+      const currentIssue = checkCurrent(activePlan, issue);
+      if (currentIssue !== null) {
+        rejections.push(currentIssue);
+        continue;
+      }
+      // 返工任务 id 必须就是契约函数推导出的那一个：视图值与推导值不一致，说明这条问题
+      // 的身份被改写或来自别的实现，重复提案将无法去重。
+      const derivedTaskId = reworkTaskIdFor(issue.issueId);
+      if (issue.reworkTaskId !== derivedTaskId) {
+        rejections.push({
+          code: 'issue_identity_inconsistent',
+          issueId: issue.issueId,
+          message:
+            '问题携带的返工任务 id ' + issue.reworkTaskId + ' 与 reworkTaskIdFor 推导的 ' + derivedTaskId + ' 不一致',
+        });
+        continue;
+      }
+      if (issue.failedRequirements.length === 0) {
+        rejections.push({
+          code: 'issue_without_failed_requirements',
+          issueId: issue.issueId,
+          message: '问题没有列出任何未通过的验收要求；没有失败要求就没有返工对象',
+        });
+        continue;
+      }
+      const sourceTask = activePlan.tasks.find((task) => task.taskId === issue.taskId);
+      if (sourceTask === undefined) {
+        rejections.push({
+          code: 'issue_task_not_in_plan',
+          issueId: issue.issueId,
+          message:
+            '问题指向的任务 ' + issue.taskId + ' 不在当前 active plan revision（' + activePlan.ref.planId + '@' + activePlan.planRevision + '）里',
+        });
+        continue;
+      }
+      // 被取代者必须在源 revision 里是 active。已经 superseded／cancelled／deferred 的任务
+      // 不能再被取代（那是链式取代或推翻既有处置），属于必须由人决定的范围。
+      if (sourceTask.disposition !== 'active') {
+        const soleCarriers = activePlan.obligations
+          .filter((obligation) => obligation.taskIds.length === 1 && obligation.taskIds[0] === issue.taskId)
+          .map((obligation) => obligation.obligationId);
+        decisions.push({
+          code: 'task_not_replaceable',
+          issueId: issue.issueId,
+          message:
+            '任务 ' + issue.taskId + ' 在源 revision 里已经是 ' + sourceTask.disposition + '，不能被再次取代' +
+            (soleCarriers.length > 0 ? '（且它是义务 ' + soleCarriers.join('、') + ' 的唯一承担者，取消该承担者会让这些义务没有承担者）' : '') +
+            '；继续处置需要人的决定',
+        });
+        continue;
+      }
+      // RW-07：返工任务的指派由「被取代任务的指派 + 失败事实」推导。work 任务的源指派缺失时
+      // role 无从推导，本模块不猜（猜出来的承担者角色等于伪造授权），直接拒绝；gate 任务本来
+      // 就没有实现指派（初始规划与守卫 f1 同一约定），返工后仍是没有指派的 gate。
+      const sourceAssignment = sourceTask.taskKind === 'work' ? assignmentByTask.get(issue.taskId) ?? null : null;
+      if (sourceTask.taskKind === 'work' && sourceAssignment === null) {
+        rejections.push({
+          code: 'replaceable_task_without_assignment',
+          issueId: issue.issueId,
+          message:
+            '任务 ' + issue.taskId + ' 在源 revision ' + activePlan.ref.planId + '@' + activePlan.planRevision +
+            ' 里没有 assignment（role／instruction）：返工任务的承担者角色只能取自被取代任务的指派，不从别处推断、也不新造授权',
+        });
+        continue;
+      }
+      for (const requirement of issue.failedRequirements) {
+        const obligation = activePlan.obligations.find(
+          (candidate) => candidate.obligationId === requirement.obligationId,
+        );
+        if (obligation === undefined) {
+          rejections.push({
+            code: 'obligation_not_in_plan',
+            issueId: issue.issueId,
+            message:
+              '失败要求 ' + requirement.obligationId + '/' + requirement.requirementId + ' 指向的义务不在源 revision 里；返工不能发明义务',
+          });
+          continue;
+        }
+        if (!obligation.taskIds.includes(issue.taskId)) {
+          rejections.push({
+            code: 'obligation_not_carried_by_task',
+            issueId: issue.issueId,
+            message:
+              '义务 ' + requirement.obligationId + ' 在源 revision 里不由任务 ' + issue.taskId + ' 承担（承担者：' +
+              (obligation.taskIds.join('、') || '无') + '）；问题与计划事实不一致',
+          });
+        }
+      }
+      const existing = pending.get(issue.taskId);
+      if (existing === undefined) {
+        // 接手的是该任务在源 revision 里承担的**全部**义务，而不只是失败的那几条：
+        // 被取代任务退出执行后它的每一项义务都必须有人继续承担，否则新 revision 会失去
+        // 义务承担者（P1-02 非空守卫），那就不是"只换承担者"了。
+        pending.set(issue.taskId, {
+          sourceTask,
+          sourceAssignment,
+          issues: [issue],
+          obligations: activePlan.obligations.filter((obligation) => obligation.taskIds.includes(issue.taskId)),
+        });
+      } else {
+        existing.issues.push(issue);
+      }
+    }
+
+    // 结构不一致优先于需要决定：输入与 canonical 对不上时，先要修的是输入本身。
+    if (rejections.length > 0) {
+      const ordered = orderedDiagnostics(rejections);
+      const decisionsOrdered = orderedDiagnostics(decisions);
+      // 需要人的决定的判定也一并列出：主码是拒绝码，但人能看到同一批问题里还有哪些需要决定。
+      return rejected(ordered[0]!.code as ReworkCompileRejectionCode, [...ordered, ...decisionsOrdered]);
+    }
+    if (decisions.length > 0) {
+      const ordered = orderedDiagnostics(decisions);
+      return needsDecision(ordered[0]!.code as ReworkNeedsDecisionCode, ordered);
+    }
+
+    const groups = this.groupRework(pending, activePlan);
+    if (typeof groups === 'string') {
+      // groupRework 只在发现"返工任务 id 与源 revision 冲突"时返回诊断说明，
+      // 属于输入与 canonical 事实不一致，按 rejected 处理（不猜、不换 id）。
+      const diagnostics = orderedDiagnostics([
+        { code: 'rework_task_already_in_plan', issueId: null, message: groups },
+      ]);
+      return rejected('rework_task_already_in_plan', diagnostics);
+    }
+
+    const delta = buildTaskSetDelta(groups, activePlan);
+    if (delta.length > PLAN_CHANGE_MAX_TASK_DELTAS) {
+      return rejected('delta_exceeds_bound', [
+        {
+          code: 'delta_exceeds_bound',
+          issueId: null,
+          message:
+            '推导出的任务集增量 ' + delta.length + ' 条操作超过受理上限 ' + PLAN_CHANGE_MAX_TASK_DELTAS + ' 条；请分批返工',
+        },
+      ]);
+    }
+
+    return { status: 'proposal', proposal: buildProposal(request, deduped, groups, delta) };
+  }
+
+  /**
+   * 把「问题 → 任务」的分组转成返工任务分组：一个被取代任务恰好一个返工任务。
+   *
+   * 同一任务被多条问题指向时（例如同一任务先后两轮验证各留下一条问题）只生成一个返工
+   * 任务：一次取代只能有一个取代者，两条 replaceTask 指向同一个被取代任务是非法的
+   * （checkTaskSetDelta 会拒绝）。返工任务 id 取排序最前的问题身份推导值，确定性且稳定。
+   */
+  private groupRework(pending: Map<string, PendingGroup>, activePlan: PlanRevisionSnapshot): ReworkGroup[] | string {
+    const groups: ReworkGroup[] = [];
+    for (const [taskId, group] of pending) {
+      const ordered = [...group.issues].sort((a, b) => a.issueId.localeCompare(b.issueId));
+      const primaryIssueId = ordered[0]!.issueId;
+      const reworkTaskId = reworkTaskIdFor(primaryIssueId);
+      // 新增任务的 id 已经存在于源 revision：本模块不换 id、不改名，直接拒绝，
+      // 否则会覆盖一个已有任务或把两条不同的返工混成一个身份。
+      if (activePlan.tasks.some((task) => task.taskId === reworkTaskId)) {
+        return '推导出的返工任务 id ' + reworkTaskId + ' 已经存在于源 revision（问题 ' + primaryIssueId + '）；不覆盖既有任务，需人工处置';
+      }
+      if (group.obligations.length === 0) {
+        return '任务 ' + taskId + ' 在源 revision 里不承担任何义务，无法推导"只换承担者"的增量';
+      }
+      groups.push({
+        sourceTask: group.sourceTask,
+        sourceAssignment: group.sourceAssignment,
+        issues: ordered,
+        obligations: group.obligations,
+        primaryIssueId,
+        reworkTaskId,
+      });
+    }
+    // 组的顺序按被取代任务 id：增量的书写顺序由此确定，不随输入顺序变化。
+    return groups.sort((a, b) => a.sourceTask.taskId.localeCompare(b.sourceTask.taskId));
+  }
+}
+
+// --------------------------------------------------------------------------- //
+// 输入校验与逐条核对                                                          //
+// --------------------------------------------------------------------------- //
+
+function validateRequest(request: ReworkCompileRequestV1): string | null {
+  if (request === null || request === undefined || typeof request !== 'object') return '编译请求是必填项';
+  if (request.schemaVersion !== 1) return 'schemaVersion 必须为 1';
+  if (!request.projectId) return 'projectId 是必填项';
+  if (!request.workspaceId) return 'workspaceId 是必填项';
+  const goalRef: GoalRef | undefined = request.goalRef;
+  if (!goalRef || goalRef.aggregateType !== 'Goal' || goalRef.projectId !== request.projectId || !goalRef.goalId) {
+    return 'goalRef 必须指向本 project 下的 Goal';
+  }
+  if (typeof request.goalObjective !== 'string' || request.goalObjective.trim().length === 0) {
+    return 'goalObjective 必须是当前目标正文（返工逐字沿用它，不从别处推断目标）';
+  }
+  const plan: PlanRevisionSnapshot | undefined = request.activePlan;
+  if (!plan || plan.ref?.aggregateType !== 'PlanRevision') return 'activePlan 必须是 PlanRevision 快照';
+  if (plan.ref.projectId !== request.projectId) return 'activePlan 不属于本 project';
+  if (canonicalJson(plan.goalRef as never) !== canonicalJson(goalRef as never)) return 'activePlan 不是该 Goal 的计划';
+  if (!Number.isInteger(plan.planRevision) || plan.planRevision < 1) return 'activePlan.planRevision 必须是从 1 开始的整数';
+  if (!Array.isArray(request.issues)) return 'issues 必须是数组';
+  return null;
+}
+
+/** 问题必须属于被编译的这个作用域：跨作用域的问题不能混进同一份提案。 */
+function checkScope(request: ReworkCompileRequestV1, issue: ReworkIssueViewV1): Diagnostic | null {
+  if (issue.schemaVersion !== 1) {
+    return { code: 'invalid_request', issueId: issue.issueId, message: '问题的 schemaVersion 必须是 1' };
+  }
+  if (
+    issue.projectId !== request.projectId ||
+    issue.workspaceId !== request.workspaceId ||
+    issue.goalId !== request.goalRef.goalId
+  ) {
+    return {
+      code: 'issue_out_of_scope',
+      issueId: issue.issueId,
+      message:
+        '问题属于 ' + issue.projectId + '/' + issue.workspaceId + '/' + issue.goalId + '，与本次编译的 ' +
+        request.projectId + '/' + request.workspaceId + '/' + request.goalRef.goalId + ' 不一致',
+    };
+  }
+  return null;
+}
+
+/**
+ * 问题必须**尚未处置**，并且能够落到这份 active revision 上。三条判据都用问题自身的机械身份，
+ * 不依赖视图推断：
+ *   1. 处置事实（RC-01）必须是"尚未处置"——contracts/rework.ts 的 reworkIssueUnaddressed 是唯一
+ *      判据（unaddressed／carried_by_task）。superseded（承担者已换人或已重验通过）与 unknown
+ *      都不能用来授权一次自动受理。disposition 缺失的手写视图回落到 currentness=open。
+ *   2. anchor 与当前 active revision 同一身份时：问题带的 revision 号非 0 就必须一致
+ *      （独立审阅来源的问题不带 revision 号，记为 0——这是明确记录"该字段没有信息"）。
+ *   3. anchor 已失效但处置事实是 carried_by_task（计划推进让 anchor 失效，而失败义务仍由原任务
+ *      承担、也没有在当前 revision 上重验通过）时**允许**：这正是 RC-01 要修的形态——分组 A 的
+ *      受理推进 revision 之后，同一批里尚未处置的分组 B 必须仍能被接手。这里不放松任何来源判据：
+ *      边界 (a) 仍然要求每一条失败要求在它自己的 anchor revision 上有已提交的非 PASS 结论
+ *      （RW-04 的 triggerSourceIssues），下面逐条核对还会再确认任务仍在、仍是 active、仍承担这些义务。
+ */
+function checkCurrent(activePlan: PlanRevisionSnapshot, issue: ReworkIssueViewV1): Diagnostic | null {
+  if (!reworkIssueUnaddressed(issue)) {
+    return {
+      code: 'issue_not_current',
+      issueId: issue.issueId,
+      message:
+        '问题的处置事实为 ' + dispositionText(issue) + '（当前性 ' + String(issue.currentness?.status ?? 'unknown') +
+        '：' + (issue.currentness?.issues.join('；') || '无说明') + '）；只有尚未处置的问题才能推导返工',
+    };
+  }
+  const samePlan = canonicalJson(issue.planRef as never) === canonicalJson(activePlan.ref as never);
+  if (samePlan) {
+    if (issue.planRevision !== 0 && issue.planRevision !== activePlan.planRevision) {
+      return {
+        code: 'issue_not_current',
+        issueId: issue.issueId,
+        message:
+          '问题成立时的 revision 是 ' + issue.planRevision + '，与当前 active revision ' + activePlan.planRevision + ' 不一致',
+      };
+    }
+    return null;
+  }
+  if (issue.disposition?.status !== 'carried_by_task') {
+    return {
+      code: 'issue_not_current',
+      issueId: issue.issueId,
+      message:
+        '问题来自 ' + issue.planRef.planId + '，当前 active revision 是 ' + activePlan.ref.planId +
+        '；处置事实为 ' + dispositionText(issue) + '，只有 carried_by_task（失败义务仍由原任务承担且尚未处置）才允许在推进后的 revision 上推导返工',
+    };
+  }
+  return null;
+}
+
+/** 处置事实的人可读描述：缺失时如实写"未提供"，不猜。 */
+function dispositionText(issue: ReworkIssueViewV1): string {
+  const disposition = issue.disposition;
+  if (disposition === undefined) return '未提供（disposition 缺失）';
+  return disposition.status + '（承担者 ' + (disposition.carrierTaskIds.join('、') || '无 active 承担者') + '；' +
+    (disposition.issues.join('；') || '无说明') + '）';
+}
+
+// --------------------------------------------------------------------------- //
+// 由源计划与问题事实推导出的字段                                              //
+// --------------------------------------------------------------------------- //
+
+/**
+ * 任务集增量。每组恰好两条操作，顺序固定为「先新增、后取代」：
+ *   - addTask：返工任务，携带它的指派（RW-07：任务与指派同属一个 revision）并声明它接手的
+ *     义务（义务必须是源 revision 里已有的，不能发明）；
+ *   - replaceTask：被取代的是问题指向的原失败任务，取代者是该返工任务。
+ * 不含 cancelTask：取消承担者不会产生新的证明者，不属于返工。
+ */
+function buildTaskSetDelta(groups: ReworkGroup[], sourcePlan: PlanRevisionSnapshot): PlanTaskSetDeltaV1[] {
+  const delta: PlanTaskSetDeltaV1[] = [];
+  for (const group of groups) {
+    delta.push({
+      action: 'addTask',
+      task: reworkTaskFor(group),
+      assignment: reworkAssignmentFor(group, sourcePlan),
+      obligationIds: group.obligations.map((obligation) => obligation.obligationId),
+      reason:
+        '验证结论遗留问题的返工任务：承接 ' + group.sourceTask.taskId + ' 在源 revision 中承担的全部义务' +
+        '（义务正文与验收语义逐字不变，只换承担者）；来源问题 ' + group.issues.map((issue) => issue.issueId).join('、'),
+    });
+    delta.push({
+      action: 'replaceTask',
+      supersededTaskId: group.sourceTask.taskId,
+      byTaskId: group.reworkTaskId,
+      reason:
+        '原承担者在旧 revision 上留下了未通过的验证结论，改由返工任务在新 revision 上重新取证；' +
+        '旧 revision、旧 FAIL 与旧报告全部保留',
+    });
+  }
+  return delta;
+}
+
+/**
+ * 返工任务定义。除 taskId/title 外逐字继承源任务：
+ *   - requirementLevel／taskKind／stageId／scope 继承：返工不改变义务等级，也不改变
+ *     计划的结构角色（换掉 kind 会改变验收结构，那是人的决定）；
+ *   - disposition = active：它是新 revision 里真正要被执行的承担者；
+ *   - phase = pending：新任务没有历史，Control 的增量检查同样要求这一点。
+ */
+function reworkTaskFor(group: ReworkGroup): RuntimeTask {
+  const source = group.sourceTask;
+  const task: RuntimeTask = {
+    taskId: group.reworkTaskId,
+    title: reworkTitleFor(group),
+    requirementLevel: source.requirementLevel,
+    taskKind: source.taskKind,
+    disposition: 'active',
+    phase: 'pending',
+    scope: cloneScope(source.scope),
+  };
+  if (source.stageId !== undefined) task.stageId = source.stageId;
+  return task;
+}
+
+function cloneScope(scope: TaskScope): TaskScope {
+  switch (scope.kind) {
+    case 'goal':
+      return { kind: 'goal' };
+    case 'stage':
+      return { kind: 'stage', stageId: scope.stageId };
+    case 'module':
+      return { kind: 'module', stageId: scope.stageId, moduleRef: scope.moduleRef };
+  }
+}
+
+// --------------------------------------------------------------------------- //
+// RW-07：返工任务的指派（role 取自被取代任务，instruction 由失败事实与义务正文拼出） //
+// --------------------------------------------------------------------------- //
+
+/**
+ * 返工任务的指派。两条都由既有事实推导，没有一句自由判断：
+ *   - role：逐字取自被取代任务在源 revision 里的 role——同一义务、同一验收语义，只换承担者，
+ *     承担者角色属于「谁承担」的一部分，不能借返工改掉；
+ *   - instruction：由该任务承担的义务正文与问题的失败事实拼出（见 buildReworkInstruction）。
+ * 指令随任务集增量一起进入 planProposalDigest，因此人的决定（或自动受理的策略授权）绑定的
+ * 就是这段正文；派发只用当前生效 revision 的指派，不会再去旧版本里找。
+ */
+function reworkAssignmentFor(group: ReworkGroup, sourcePlan: PlanRevisionSnapshot): PlanTaskAssignment | null {
+  // gate 任务没有实现指派：它的结论由证据归约产生，返工后仍然如此（与初始规划同一约定）。
+  if (group.sourceAssignment === null) return null;
+  return {
+    taskId: group.reworkTaskId,
+    role: group.sourceAssignment.role,
+    instruction: buildReworkInstruction(group, sourcePlan),
+  };
+}
+
+/**
+ * 返工任务的指令正文。必须写清**验收义务、输入、期望产出与检查**——与初始规划对
+ * assignment.instruction 的既有约定同一条要求——并逐字引用问题的失败事实
+ * （ReworkFailureFactV1 的字段：类别、命令、退出码、超时、耗时、stderr 摘录、来源摘要、
+ * 原始报告引用与事实缺口），不重新判定失败原因。
+ *
+ * 确定性：无时钟、无 I/O，输入只有源计划与问题事实，因此同一批事实两次编译得到逐字相同的
+ * 指令；字节上界与初始规划的指令同一个界（超限时按序截断并显式标注，不静默丢内容）。
+ */
+function buildReworkInstruction(group: ReworkGroup, sourcePlan: PlanRevisionSnapshot): string {
+  const source = group.sourceTask;
+  const head: string[] = [
+    '返工任务 ' + group.reworkTaskId + '：接手任务「' + source.title + '」在 ' + sourcePlan.ref.planId + '@' +
+      sourcePlan.planRevision + ' 上承担的同一批义务（同一义务、同一验收语义，只换承担者）。',
+    '',
+    '验收义务（逐字来自源 revision，不得改写）：',
+  ];
+  for (const obligation of group.obligations) {
+    head.push('- ' + obligation.obligationId + '「' + obligation.title + '」');
+    for (const requirement of obligation.verificationRequirements) {
+      head.push('  · ' + requirement.requirementId + '（' + requirement.kind + '／' + requirement.requirementLevel + '）：' + requirement.description);
+    }
+  }
+  const tail: string[] = [
+    '输入：源 revision 的义务与验收要求（上文逐字引用）、失败要求引用的原始报告（正文保存在 ArtifactVault，按权限读取）、派发信封给出的工作区与计划版本。',
+    '期望产出：让上述验收要求在新 revision 上可被独立复核的候选实现与运行事实；不要改动义务正文与验收语义。',
+    '检查：平台既有验证路径在该 revision 上重跑这些要求（static／dynamic 由工具轮次、reviewer 由独立审阅），旧 revision 的失败结论与报告全部保留。',
+  ];
+  return assembleInstruction(head, failureBlocks(group), tail);
+}
+
+/** 每个未通过要求一个块：块的边界就是可截断的边界（截断处显式写明还剩多少项）。 */
+function failureBlocks(group: ReworkGroup): string[] {
+  const blocks: string[] = ['', '已提交的失败事实（逐条引用，不重新判定）：'];
+  for (const issue of group.issues) {
+    blocks.push('- 问题 ' + issue.issueId + '（' + issueSourceText(issue) + '）：未通过 ' + issue.failedRequirements.length + ' 项验收要求');
+    const ordered = [...issue.failedRequirements].sort((a, b) =>
+      a.obligationId === b.obligationId ? a.requirementId.localeCompare(b.requirementId) : a.obligationId.localeCompare(b.obligationId),
+    );
+    for (const requirement of ordered) {
+      const failure = requirement.failure;
+      blocks.push(
+        '  · ' + requirement.obligationId + '/' + requirement.requirementId + '（' + requirement.kind + '）：' + requirement.reason + '\n' +
+          '    检查 ' + (failure.checkId ?? '无（该类要求由审阅逐条结论承载）') +
+          '；同一要求下失败的检查 ' + (failure.failedCheckIds.join('、') || '无') +
+          '；分类 ' + (failure.category ?? '无（reviewer 类要求不另立分类）') +
+          '；命令 ' + (failure.command ?? '未记录') +
+          '；退出码 ' + stringifyFact(failure.exitCode) +
+          '；是否超时 ' + stringifyFact(failure.timedOut) +
+          '；耗时 ' + stringifyFact(failure.durationMs) + 'ms' +
+          '；结论 ' + stringifyFact(failure.result) +
+          '；源码摘要 ' + (failure.sourceDigest ?? '未记录') + '\n' +
+          '    stderr（有界摘录）：' + (failure.stderrExcerpt === null ? '未读取到（见事实缺口）' : failure.stderrExcerpt === '' ? '（命令没有 stderr 输出）' : failure.stderrExcerpt) + '\n' +
+          '    原始报告：' + (failure.reportRef === null ? '无引用（见事实缺口）' : failure.reportRef.source.refId + '@' + failure.reportRef.source.revision + '（digest ' + failure.reportRef.digest + '）') + '\n' +
+          '    事实缺口：' + (failure.gaps.length === 0 ? '无' : failure.gaps.join('；')),
+      );
+    }
+  }
+  return blocks;
+}
+
+/** 取不到的字段一律显式写成「未记录」，与 ReworkFailureFactV1 的缺口约定一致。 */
+function stringifyFact(value: string | number | boolean | null): string {
+  return value === null ? '未记录' : String(value);
+}
+
+/**
+ * 按字节上界装配指令：头（标题 + 义务）与尾（输入／产出／检查）总是保留，失败事实块按序
+ * 保留到放不下为止，被丢掉的部分以显式标注收尾——不静默截断，也不让一个问题很多的返工
+ * 因为指令超界而无法受理（完整事实始终在本提案的 rework.issues 里）。
+ */
+function assembleInstruction(head: string[], blocks: string[], tail: string[]): string {
+  const fixedHead = head.join('\n') + '\n';
+  const fixedTail = '\n' + tail.join('\n');
+  let keep = blocks.length;
+  for (;;) {
+    const omitted = blocks.length - keep;
+    const body = blocks.slice(0, keep).join('\n');
+    const note = omitted > 0
+      ? '\n…其余 ' + omitted + ' 条失败事实见本提案 rework.issues[].failedRequirements（本字段按 ' +
+        PLAN_CHANGE_MAX_INSTRUCTION_BYTES + ' 字节上限截断）'
+      : '';
+    const text = fixedHead + body + note + fixedTail;
+    if (Buffer.byteLength(text) <= PLAN_CHANGE_MAX_INSTRUCTION_BYTES || keep === 0) {
+      return clampUtf8(text, PLAN_CHANGE_MAX_INSTRUCTION_BYTES);
+    }
+    keep -= 1;
+  }
+}
+
+/** 按 UTF-8 字节上限截断（不切开码点），并留下显式截断标注。 */
+function clampUtf8(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text) <= maxBytes) return text;
+  const marker = '\n…（本指令按 ' + maxBytes + ' 字节上限截断，完整事实见本提案 rework.issues）';
+  const room = maxBytes - Buffer.byteLength(marker);
+  const codePoints = Array.from(text);
+  let cut = codePoints.length;
+  while (cut > 0 && Buffer.byteLength(codePoints.slice(0, cut).join('')) > room) cut -= 1;
+  return codePoints.slice(0, cut).join('') + marker;
+}
+
+/** 返工任务标题：由被取代任务的标题与失败要求数量拼出，不含自由文本判断。 */
+function reworkTitleFor(group: ReworkGroup): string {
+  return '返工：重新证明「' + group.sourceTask.title + '」承担的义务（' + failedRequirementCount(group) + ' 项要求未通过）';
+}
+
+/** 该组失败的验收要求条数（obligationId+requirementId 去重，与 Evidence.coverage 同一键）。 */
+function failedRequirementCount(group: ReworkGroup): number {
+  const keys = new Set<string>();
+  for (const issue of group.issues) {
+    for (const requirement of issue.failedRequirements) keys.add(requirement.obligationId + '/' + requirement.requirementId);
+  }
+  return keys.size;
+}
+
+/*
+ * 为什么必须重指（RW-05 把这条规则从本文件下沉到 ControlEngine 的策略面）：
+ * 被取代任务在新 revision 里 disposition=superseded，而调度与归约只放行 active 任务，
+ * 且依赖按 taskId 找前驱并要求它 satisfied（policies/task-eligibility.ts:78-96、
+ * policies/goal-phase.ts:372-375）。若下游任务仍依赖被取代任务，它永远等不到一个 satisfied
+ * 的前驱——返工会把计划卡死、Goal 无法归约为 RUNNING。
+ *
+ * 规则此前只存在于本文件的私有函数里，于是「草稿构造者记得调用它」成了正确性的前提，
+ * 而 applyPlanChange 对草稿只做悬空引用检查：任何不复用本编译器的草稿构造路径都会静默丢掉
+ * 这个保证。现在规则住在 control-engine/policies/goal-change-consistency.ts（与任务集／
+ * 义务推导同处），提案侧与守卫侧调用同一个函数：
+ *   提案侧：本文件用 deriveExpectedTaskGraph 生成 planDraft 的 DAG 与层级；
+ *   守卫侧：applyPlanChange 的守卫 f2（draftConsistencyIssues）用同一函数逐项比对草稿。
+ */
+function buildProposal(
+  request: ReworkCompileRequestV1,
+  issues: ReworkIssueViewV1[],
+  groups: ReworkGroup[],
+  taskSetDelta: PlanTaskSetDeltaV1[],
+): ReworkProposalV1 {
+  const sourcePlan = request.activePlan;
+  // 身份只由「哪份源计划 + 哪些问题」决定（contracts/rework.ts 的唯一实现）：
+  // ControlEngine 的受理入口用同一个函数复核，双方不可能推出两个"官方"聚合身份。
+  const proposalId = reworkProposalIdFor({
+    projectId: request.projectId,
+    workspaceId: request.workspaceId,
+    goalRef: request.goalRef,
+    sourcePlanRef: sourcePlan.ref,
+    sourcePlanRevision: sourcePlan.planRevision,
+    issues: issues.map((issue) => ({ issueId: issue.issueId, taskId: issue.taskId })),
+  });
+  const patchId = 'patch-' + proposalId;
+  const planId = reworkPlanIdFor(proposalId);
+
+  // 任务集与义务承担者的推导复用 Control 的权威函数：applyPlanChange 的守卫 f2 用同一对
+  // 函数逐项比对草稿，因此提案侧与守卫侧不可能各写一套规则而分叉。
+  const derived = deriveTaskSet(sourcePlan, taskSetDelta);
+  // 指派与任务用同一次推导：deriveTaskAssignments 与守卫 f2 调用的是同一个函数
+  // （deriveTaskSet 的同处实现），因此「谁承担」不会在提案侧与守卫侧各有一套规则。
+  const assignments = deriveTaskAssignments(sourcePlan, taskSetDelta);
+  const obligations = deriveObligationSet(sourcePlan, taskSetDelta, derived.replacedBy);
+  // 执行 DAG 与层级的重指：调用下沉后的**唯一权威函数**（与守卫 f2 同一个），本文件不再自己实现。
+  const graph = deriveExpectedTaskGraph(sourcePlan, derived.replacedBy);
+
+  const planDraft: ReworkPlanDraftV1 = {
+    planId,
+    planRevision: sourcePlan.planRevision + 1,
+    // 目标正文逐字沿用：返工不改变目标含义，也不能借返工改验收。
+    objective: request.goalObjective,
+    stages: sourcePlan.stages.map((stage) => ({ ...stage })),
+    tasks: derived.tasks,
+    assignments,
+    taskHierarchy: graph.taskHierarchy,
+    executionDag: graph.executionDag,
+    obligations,
+  };
+
+  // 提案的时间基点：本模块不读时钟，取本批问题中最新的已提交检测时间。它是"事实截至何时"，
+  // 不是进程当前时间——正因如此，同一批事实两次编译得到逐字相同的提案（含 generatedAt）。
+  const generatedAt = issues.map((issue) => issue.detectedAt).sort().slice(-1)[0]!;
+
+  const patch: PlanPatchV1 = {
+    schemaVersion: 1,
+    patchId,
+    projectId: request.projectId,
+    workspaceId: request.workspaceId,
+    goalRef: request.goalRef,
+    sourcePlanRef: sourcePlan.ref,
+    sourcePlanRevision: sourcePlan.planRevision,
+    patchDraft: {
+      objective: request.goalObjective,
+      // 返工不改义务：义务增量恒为空。改义务正文或验收语义属于人的决定，不是返工。
+      obligationDeltas: [],
+      // 层级改动来自任务集增量（承担者换人后层级重指），一并在这里声明：
+      // patch 与 planDraft 必须表达同一份变更，且 planProposalDigest 覆盖 patch，
+      // 因此人的决定也就绑定了这次层级重指。
+      taskHierarchy: planDraft.taskHierarchy,
+      taskSetDelta,
+    },
+    inScope: deriveInScope(groups, sourcePlan),
+    outOfScope: deriveOutOfScope(groups, sourcePlan, issues),
+    generatedAt,
+  };
+
+  const reworkTasks: ReworkProposalTaskV1[] = groups.map((group) => ({
+    taskId: group.reworkTaskId,
+    primaryIssueId: group.primaryIssueId,
+    issueIds: group.issues.map((issue) => issue.issueId),
+    supersedesTaskId: group.sourceTask.taskId,
+    supersededTitle: group.sourceTask.title,
+    obligationIds: group.obligations.map((obligation) => obligation.obligationId),
+    title: reworkTitleFor(group),
+    reason:
+      '问题 ' + group.issues.map((issue) => issue.issueId).join('、') + ' 指向的 ' + group.sourceTask.taskId +
+      ' 在 ' + sourcePlan.ref.planId + '@' + sourcePlan.planRevision + ' 上留下 ' + failedRequirementCount(group) +
+      ' 项未通过要求；返工任务接手同一批义务在新 revision 上重新取证',
+  }));
+
+  return {
+    schemaVersion: 1,
+    proposalId,
+    projectId: request.projectId,
+    workspaceId: request.workspaceId,
+    sourceGoalRef: request.goalRef,
+    sourcePlanRef: sourcePlan.ref,
+    sourcePlanRevision: sourcePlan.planRevision,
+    patch,
+    impact: deriveImpact(request, sourcePlan, groups, planId, proposalId, generatedAt),
+    // 返工不是"多选一"的讨论稿：范围明确时只有一种机械推导结果，因此不提供备选方案。
+    alternatives: [],
+    rework: {
+      schemaVersion: 1,
+      issues: issues.map((issue) => reworkIssueFactFor(issue)),
+      tasks: reworkTasks,
+    },
+    planDraft,
+    summary: deriveSummary(request, sourcePlan, groups, issues, proposalId, planId),
+    generatedAt,
+  };
+}
+
+function deriveInScope(groups: ReworkGroup[], sourcePlan: PlanRevisionSnapshot): string[] {
+  const inScope: string[] = [];
+  for (const group of groups) {
+    inScope.push(
+      'rework task ' + group.reworkTaskId + ' carrying obligation(s) ' +
+        group.obligations.map((obligation) => obligation.obligationId).join('、') + ' of ' + group.sourceTask.taskId,
+    );
+    inScope.push('task disposition ' + group.sourceTask.taskId + ' -> superseded (replaced by ' + group.reworkTaskId + ')');
+  }
+  const failed = groups.reduce((total, group) => total + failedRequirementCount(group), 0);
+  inScope.push(
+    're-verification on ' + sourcePlan.ref.planId + '@' + (sourcePlan.planRevision + 1) + ' for ' + failed + ' failed requirement(s)',
+  );
+  return inScope;
+}
+
+function deriveOutOfScope(
+  groups: ReworkGroup[],
+  sourcePlan: PlanRevisionSnapshot,
+  issues: ReworkIssueViewV1[],
+): string[] {
+  const obligationIds = [...new Set(groups.flatMap((group) => group.obligations.map((obligation) => obligation.obligationId)))].sort();
+  const touched = new Set(groups.map((group) => group.sourceTask.taskId));
+  const untouched = sourcePlan.tasks.filter((task) => !touched.has(task.taskId)).length;
+  return [
+    'goal objective changes (the objective is carried verbatim from the current goal)',
+    'acceptance obligation text and verification requirement semantics of ' + (obligationIds.join('、') || 'no obligation') +
+      ' (verbatim from ' + sourcePlan.ref.planId + '@' + sourcePlan.planRevision + ')',
+    'tasks not referenced by the ' + issues.length + ' source issue(s) (' + untouched + ' task(s) keep their carrier)',
+    'dispatch semantics and new domain modules',
+  ];
+}
+
+/**
+ * 影响分析。三项都由这份提案的真实内容推导，没有一句是写死的文案：
+ *   - affectedWorks：被取代任务的工作身份必须刷新（它的结论停在被取代的 revision 上）；
+ *   - staleAssumptions：被取代任务"会继续推进、旧结论仍适用"这两条假设被本次变更推翻，
+ *     理由里带具体的 revision 元组、失败要求数量与证据适用性后果；
+ *   - materialsToRefresh：需要用新身份重新组装的具体材料（计划上下文、证据绑定、工作上下文）。
+ */
+function deriveImpact(
+  request: ReworkCompileRequestV1,
+  sourcePlan: PlanRevisionSnapshot,
+  groups: ReworkGroup[],
+  planId: string,
+  proposalId: string,
+  generatedAt: string,
+): ChangeImpactAnalysisV1 {
+  const affectedWorkIds = new Set<string>();
+  const affectedWorks = groups.flatMap((group) => {
+    const workRef = planningWorkRef(request.workIdentities, group.sourceTask.taskId, request);
+    if (workRef === null || affectedWorkIds.has(workRef.workId)) return [];
+    affectedWorkIds.add(workRef.workId);
+    return [{
+      workRef,
+      refreshRequired: true,
+      reason:
+        '任务 ' + group.sourceTask.taskId + ' 在 ' + sourcePlan.ref.planId + '@' + sourcePlan.planRevision + ' 上留下的 ' +
+        failedRequirementCount(group) + ' 项未通过要求由 ' + group.reworkTaskId + ' 接手；该工作身份需要按新 revision 重新组装',
+    }];
+  });
+
+  const staleAssumptions = groups.map((group) => ({
+    assumption: '任务 ' + group.sourceTask.taskId + ' 会继续推进，它在旧 revision 上的结论仍然适用',
+    reason:
+      '本次变更把 ' + group.sourceTask.taskId + ' 标为 superseded 并由 ' + group.reworkTaskId + ' 接手：它退出默认可执行集合' +
+      '（task-eligibility 只放行 active），' + sourcePlan.ref.planId + '@' + sourcePlan.planRevision +
+      ' 上的结论在 ' + planId + '@' + (sourcePlan.planRevision + 1) +
+      ' 下不再覆盖当前要求（旧 FAIL 保留并按 OUT_OF_SCOPE 处理），因此必须重新取证',
+  }));
+  staleAssumptions.push({
+    assumption: '源 revision 的任务集与义务承担者保持不变',
+    reason:
+      '新增 ' + groups.length + ' 个返工任务并取代 ' + groups.length + ' 个原任务；义务正文、等级与 ' +
+      'verificationRequirements 逐字保留，只有承担者（taskIds）变化',
+  });
+  staleAssumptions.push(...planningWorkGaps(request.workIdentities, sourcePlan.tasks.map(task => task.taskId), request));
+
+  const materialsToRefresh = [
+    'planContext:' + planId + '@' + (sourcePlan.planRevision + 1),
+    'evidenceBindings:' + sourcePlan.ref.planId + '@' + sourcePlan.planRevision,
+    ...new Set(affectedWorks.map(work => 'workContext:' + work.workRef.workId)),
+  ];
+
+  // 不受影响的工作：仍保持原承担者的任务。有界（与既有提案同一常数），
+  // 超出部分在摘要里说明，不静默丢弃。
+  const touched = new Set(groups.map((group) => group.sourceTask.taskId));
+  const independentWorkIds = new Set<string>();
+  const independentWork = sourcePlan.tasks
+    .filter((task) => !touched.has(task.taskId))
+    .slice(0, PLAN_CHANGE_MAX_AFFECTED_WORKS)
+    .flatMap((task) => {
+      const workRef = planningWorkRef(request.workIdentities, task.taskId, request);
+      if (workRef === null || affectedWorkIds.has(workRef.workId) || independentWorkIds.has(workRef.workId)) return [];
+      independentWorkIds.add(workRef.workId);
+      return [{
+        workRef,
+        reason: '任务 ' + task.taskId + ' 的承担者与义务未变，本次返工不影响它的工作身份',
+      }];
+    });
+
+  return {
+    schemaVersion: 1,
+    // 与既有提案同一约定：影响分析挂在提案身份上，patchRef 指向被分析的源 revision。
+    analysisId: 'impact-' + proposalId,
+    patchRef: sourcePlan.ref,
+    affectedWorks,
+    staleAssumptions,
+    materialsToRefresh,
+    independentWork,
+    generatedAt,
+  };
+}
+
+/**
+ * 人类可读摘要。每条失败要求逐字引用问题里的 reason（它由 ReworkFailureFactV1 拼出），
+ * 本模块不重新判定失败原因；超过 REWORK_SUMMARY_MAX_REQUIREMENTS_PER_ISSUE 条时只截断展示，
+ * 并写明完整事实仍在提案的 rework.issues 里。
+ */
+function deriveSummary(
+  request: ReworkCompileRequestV1,
+  sourcePlan: PlanRevisionSnapshot,
+  groups: ReworkGroup[],
+  issues: ReworkIssueViewV1[],
+  proposalId: string,
+  planId: string,
+): string {
+  const lines: string[] = [];
+  lines.push(
+    '返工提案 ' + proposalId + '：处置 ' + issues.length + ' 条未处置问题，取代 ' + groups.length + ' 个任务，新增 ' +
+      groups.length + ' 个返工任务在同一批义务上重新取证（义务正文与验收语义逐字不变，只换承担者）。',
+  );
+  lines.push(
+    '源计划 ' + sourcePlan.ref.planId + '@' + sourcePlan.planRevision + ' → 新 revision ' + planId + '@' +
+      (sourcePlan.planRevision + 1) + '；目标正文逐字不变。',
+  );
+  for (const group of groups) {
+    lines.push(
+      '- 任务 ' + group.sourceTask.taskId + '「' + group.sourceTask.title + '」由返工任务 ' + group.reworkTaskId +
+        ' 取代（接手义务：' + group.obligations.map((obligation) => obligation.obligationId).join('、') + '）',
+    );
+    for (const issue of group.issues) {
+      lines.push('  问题 ' + issue.issueId + '（' + issueSourceText(issue) + '）：未通过 ' + issue.failedRequirements.length + ' 项验收要求');
+      const listed = [...issue.failedRequirements].sort((a, b) =>
+        a.obligationId === b.obligationId
+          ? a.requirementId.localeCompare(b.requirementId)
+          : a.obligationId.localeCompare(b.obligationId),
+      );
+      for (const requirement of listed.slice(0, REWORK_SUMMARY_MAX_REQUIREMENTS_PER_ISSUE)) {
+        lines.push('    · ' + requirement.obligationId + '/' + requirement.requirementId + '（' + requirement.kind + '）：' + requirement.reason);
+      }
+      if (listed.length > REWORK_SUMMARY_MAX_REQUIREMENTS_PER_ISSUE) {
+        lines.push(
+          '    · 其余 ' + (listed.length - REWORK_SUMMARY_MAX_REQUIREMENTS_PER_ISSUE) + ' 项未通过要求见本提案 ' +
+            'rework.issues 中该问题的 failedRequirements（本摘要按 ' + REWORK_SUMMARY_MAX_REQUIREMENTS_PER_ISSUE + ' 条展示上限截断）',
+        );
+      }
+    }
+  }
+  const untouched = sourcePlan.tasks.filter((task) => !groups.some((group) => group.sourceTask.taskId === task.taskId)).length;
+  const omitted = untouched - PLAN_CHANGE_MAX_AFFECTED_WORKS;
+  if (omitted > 0) {
+    lines.push(
+      '说明：不受影响的工作清单按 ' + PLAN_CHANGE_MAX_AFFECTED_WORKS + ' 条上限截断，另有 ' + omitted +
+        ' 个任务未列入 impact.independentWork（它们不参与本次变更）。',
+    );
+  }
+  return lines.join('\n');
+}
+
+/** 问题来源的人可读描述：只翻译机械身份，不改写结论。 */
+function issueSourceText(issue: ReworkIssueViewV1): string {
+  return issue.source.kind === 'verification_round'
+    ? '来源：工具验证轮次 ' + issue.source.roundId + '（请求 ' + issue.source.requestId + '，轮次结论 ' + issue.source.outcome + '，状态 ' + issue.source.status + '）'
+    : '来源：独立审阅 ' + issue.source.requestId + '（正式结果身份 ' + issue.source.resultRef + '）';
+}

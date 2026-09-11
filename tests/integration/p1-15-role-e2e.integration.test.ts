@@ -59,7 +59,7 @@ describe.skipIf(!ready.ready)("P1-15 lane C — 模型协作集成端到端 (真
       "--config", configPath,
       "--session", SESSION_ID,
       "--non-interactive",
-    ], undefined, 30_000, 3_500);
+    ], undefined, 30_000, () => server.requests.length >= 2);
     const resumedResult = await spawnCli([
       "resume",
       "--session", SESSION_ID,

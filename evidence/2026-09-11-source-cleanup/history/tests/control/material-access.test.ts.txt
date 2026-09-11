@@ -1,0 +1,168 @@
+/**
+ * P1-18 Control handler: grantMaterialAccess guards over a REAL InMemoryLedger
+ * and the real ControlEngineImpl. The world is bootstrapped workspace + goal +
+ * two real Run aggregates (dispatch-claim), so the referential guards resolve
+ * real aggregates.
+ *
+ * Asserted: one atomic material-access-grant (CAS@0) whose batch is
+ * fold-equivalent to the shared fixture builder; replay is idempotent; a
+ * same-identity/different-payload command is idempotency_conflict; a duplicate
+ * grantId under a fresh identity is revision_conflict; unknown workspace, goal
+ * or reader run are not_found (zero write); a reader outside the goal scope is
+ * scope_mismatch; a malformed command is invalid.
+ */
+import { describe, expect, it } from "vitest";
+import { createControlEngine } from "../../src/control/control-engine/control-engine.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
+import type { LedgerCommit, LedgerCommitReceipt, StateLedger } from "../../src/contracts/ledger.js";
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand, buildGoalCreateLedgerCommit } from "../../src/contracts/fixtures/goal-fixtures.js";
+import { buildDispatchClaimCommand } from "../../src/contracts/fixtures/dispatch-fixtures.js";
+import { buildDispatchClaimLedgerCommit } from "../../src/control/control-engine/records/dispatch.js";
+import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from "../../src/contracts/fixtures/material-access-fixtures.js";
+import { buildMaterialAccessGrantLedgerCommit } from "../../src/control/control-engine/records/material-access.js";
+import { materialAccessGrantIdFor } from "../../src/contracts/material-access.js";
+import type { GrantMaterialAccessCommand } from "../../src/contracts/material-access.js";
+import type { ArtifactRef } from "../../src/contracts/artifact.js";
+import type { RunRef } from "../../src/contracts/dispatch.js";
+
+const FIXED = FIXED_ISO_2026_09_05;
+const PROJECT = "proj-alpha";
+const WORKSPACE = "ws-shared";
+const GOAL = "goal-1";
+const PLAN_REF = { aggregateType: "PlanRevision" as const, projectId: PROJECT, planId: "plan-dispatch-mvp" };
+
+const artifact: ArtifactRef = {
+  kind: "artifact",
+  contentType: "application/json",
+  digest: "c".repeat(64),
+  sizeBytes: 128,
+  source: { kind: "artifact", refId: "c".repeat(64), revision: "1", digest: "c".repeat(64) },
+};
+const BASIS = { planRef: PLAN_REF, workspaceRevision: 1, sourceDigest: null };
+
+class RecordingLedger extends InMemoryLedger {
+  commits: LedgerCommit[] = [];
+  committed: LedgerCommit[] = [];
+  override async commit(batch: LedgerCommit): Promise<LedgerCommitReceipt> {
+    this.commits.push(batch);
+    const receipt = await super.commit(batch);
+    if (receipt.status === "committed") this.committed.push(batch);
+    return receipt;
+  }
+}
+
+async function seedRun(ledger: StateLedger, runId: string, taskId: string, workspaceId = WORKSPACE): Promise<RunRef> {
+  const command = buildDispatchClaimCommand({
+    commandId: "cmd-claim-" + runId, projectId: PROJECT, goalId: GOAL, taskId, runId,
+    attemptId: "attempt-" + runId, idempotencyKey: "claim-" + runId, correlationId: "corr-claim-" + runId, submittedAt: FIXED,
+  });
+  const receipt = await ledger.commit(buildDispatchClaimLedgerCommit(command, {
+    eventId: "evt-claim-" + runId, occurredAt: FIXED, workspaceId, planRef: PLAN_REF, workspaceRevision: 1,
+  }));
+  expect(receipt.status, "seed run " + runId).toBe("committed");
+  return { aggregateType: "Run", projectId: PROJECT, goalId: GOAL, runId };
+}
+
+async function makeWorld() {
+  const ledger = new RecordingLedger();
+  const d = createDeterministicDeps();
+  const engine = createControlEngine({ ledger, now: d.clock, eventId: d.eventId });
+  const bootCmd = buildBootstrapCommand({ ...WORKSPACE_BOOTSTRAP_FIXTURE_V1, entries: [...WORKSPACE_BOOTSTRAP_FIXTURE_V1.entries, { projectId: PROJECT, workspaceId: 'ws-unrelated' }] }, { commandId: "cmd-bootstrap", correlationId: "corr-bootstrap", submittedAt: FIXED });
+  await ledger.commit(buildBootstrapLedgerCommit(bootCmd, { eventIds: ["evt-b1", "evt-b2", "evt-b3", "evt-b4", "evt-b5"], occurredAt: FIXED }));
+  const goalCmd = buildCreateGoalCommand(MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.scopes[0]!, { commandId: "cmd-goal", correlationId: "corr-goal", submittedAt: FIXED });
+  await ledger.commit(buildGoalCreateLedgerCommit(goalCmd, { eventId: "evt-goal", occurredAt: FIXED, projectRevision: 1, workspaceRevision: 1 }));
+  const producer = await seedRun(ledger, "run-producer", "task-producer");
+  const consumer = await seedRun(ledger, "run-consumer", "task-consumer");
+  return { ledger, engine, producer, consumer };
+}
+
+type World = Awaited<ReturnType<typeof makeWorld>>;
+
+function commandFor(world: World, deps: { commandId: string; idempotencyKey?: string; reader?: RunRef; materials?: ArtifactRef[]; workspaceId?: string; goalId?: string; purpose?: string }): GrantMaterialAccessCommand {
+  const reader = deps.reader ?? world.consumer;
+  const materials = deps.materials ?? [artifact];
+  const grant = buildMaterialAccessGrantV1({
+    grantId: materialAccessGrantIdFor(reader, materials, BASIS),
+    scope: { projectId: PROJECT, workspaceId: deps.workspaceId ?? WORKSPACE, goalId: deps.goalId ?? GOAL },
+    materials, reader,
+    issuedBy: { aggregateType: "Control", projectId: PROJECT, goalId: deps.goalId ?? GOAL },
+    purpose: deps.purpose ?? "评审运行读取执行运行的任务包",
+    basis: BASIS,
+    grantedAt: FIXED,
+  });
+  return buildGrantMaterialAccessCommand(grant, {
+    commandId: deps.commandId, projectId: PROJECT, actorKind: "system", actorId: "test",
+    idempotencyKey: deps.idempotencyKey ?? deps.commandId, correlationId: "corr-" + deps.commandId, submittedAt: FIXED,
+  });
+}
+
+describe("ControlEngine.grantMaterialAccess", () => {
+  it('rejects existing but unrelated workspaces, runs and issuers without committing', async () => {
+    const world = await makeWorld();
+    const misplaced = await seedRun(world.ledger, 'misplaced', 'task-misplaced', 'ws-unrelated');
+    const before = world.ledger.committed.length;
+    expect(await world.engine.grantMaterialAccess(commandFor(world, { commandId: 'wrong-ws', workspaceId: 'ws-unrelated' }))).toMatchObject({ status: 'rejected', code: 'scope_mismatch' });
+    expect(await world.engine.grantMaterialAccess(commandFor(world, { commandId: 'wrong-run-ws', reader: misplaced }))).toMatchObject({ status: 'rejected', code: 'scope_mismatch' });
+    expect(await world.engine.grantMaterialAccess(commandFor(world, { commandId: 'wrong-project', reader: { ...world.consumer, projectId: 'proj-beta' } }))).toMatchObject({ status: 'rejected', code: 'scope_mismatch' });
+    const command = commandFor(world, { commandId: 'wrong-issuer' });
+    command.payload.grant.issuedBy = { aggregateType: 'Control', projectId: 'proj-beta', goalId: GOAL };
+    expect(await world.engine.grantMaterialAccess(command)).toMatchObject({ status: 'rejected', code: 'scope_mismatch' });
+    expect(world.ledger.committed).toHaveLength(before);
+  });
+  it("commits one immutable CAS@0 grant fold-equivalent to the shared builder", async () => {
+    const world = await makeWorld();
+    const command = commandFor(world, { commandId: "cmd-grant" });
+    const receipt = await world.engine.grantMaterialAccess(command);
+    expect(receipt).toMatchObject({ status: "committed", replayed: false, grantRef: { aggregateType: "MaterialAccessGrant", grantId: command.aggregateId } });
+
+    const committed = world.ledger.commits.at(-1)!;
+    expect(committed).toEqual(buildMaterialAccessGrantLedgerCommit(command, {
+      eventId: committed.events[0]!.eventId, occurredAt: FIXED,
+    }));
+    const loaded = await world.ledger.load(receipt.status === "committed" ? receipt.grantRef : { aggregateType: "MaterialAccessGrant", projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL, grantId: command.aggregateId });
+    expect(loaded).toMatchObject({ status: "found", snapshot: { revision: 1, grant: { reader: world.consumer, materials: [artifact], basis: BASIS } } });
+  });
+
+  it("replays idempotently and rejects a same-identity command with a different payload", async () => {
+    const world = await makeWorld();
+    const command = commandFor(world, { commandId: "cmd-grant" });
+    await world.engine.grantMaterialAccess(command);
+    const events = world.ledger.commits.at(-1)!.events.length;
+    expect(await world.engine.grantMaterialAccess(command)).toMatchObject({ status: "committed", replayed: true });
+
+    const conflicting = commandFor(world, { commandId: "cmd-grant", purpose: "另一个用途" });
+    expect(await world.engine.grantMaterialAccess(conflicting)).toMatchObject({ status: "rejected", code: "idempotency_conflict" });
+    expect(world.ledger.commits.at(-1)!.events.length).toBe(events);
+  });
+
+  it("rejects a duplicate grantId under a fresh identity with revision_conflict (zero write)", async () => {
+    const world = await makeWorld();
+    const command = commandFor(world, { commandId: "cmd-grant" });
+    await world.engine.grantMaterialAccess(command);
+    const before = world.ledger.commits.length;
+    const duplicate = { ...command, commandId: "cmd-grant-2", identity: { ...command.identity, idempotencyKey: "other-key" }, correlationId: "corr-2" };
+    expect(await world.engine.grantMaterialAccess(duplicate)).toMatchObject({ status: "rejected", code: "revision_conflict" });
+    expect(world.ledger.committed.length).toBe(before);
+  });
+
+  it("rejects unknown workspace / goal / reader run and a reader outside the goal scope (zero write)", async () => {
+    const world = await makeWorld();
+    const before = world.ledger.committed.length;
+    expect(await world.engine.grantMaterialAccess(commandFor(world, { commandId: "c1", workspaceId: "ws-missing" }))).toMatchObject({ status: "rejected", code: "not_found" });
+    expect(await world.engine.grantMaterialAccess(commandFor(world, { commandId: "c2", goalId: "goal-missing" }))).toMatchObject({ status: "rejected", code: "not_found" });
+    expect(await world.engine.grantMaterialAccess(commandFor(world, { commandId: "c3", reader: { aggregateType: "Run", projectId: PROJECT, goalId: GOAL, runId: "run-missing" } }))).toMatchObject({ status: "rejected", code: "not_found" });
+    expect(await world.engine.grantMaterialAccess(commandFor(world, { commandId: "c4", reader: { aggregateType: "Run", projectId: PROJECT, goalId: "goal-other", runId: "run-consumer" } }))).toMatchObject({ status: "rejected", code: "scope_mismatch" });
+    expect(world.ledger.committed.length).toBe(before);
+  });
+
+  it("rejects a malformed command as invalid (zero write)", async () => {
+    const world = await makeWorld();
+    const before = world.ledger.committed.length;
+    expect(await world.engine.grantMaterialAccess({ ...commandFor(world, { commandId: "c5" }), payload: { grant: { schemaVersion: 1 } } } as never))
+      .toMatchObject({ status: "rejected", code: "invalid" });
+    expect(world.ledger.committed.length).toBe(before);
+  });
+});

@@ -1,0 +1,372 @@
+/** Control-owned deterministic domain policy. */
+/**
+ * ADR 0003 D1-4 自动受理策略：四条边界的**纯**判定 + 确定性身份推导。
+ *
+ * 为什么是纯函数：ControlEngine 的入口只负责读账本、落账与应用；边界判定本身
+ * 不读状态、不写状态，才能被逐条单独测试，也才能保证“四条都满足才受理”。
+ *
+ * 复用而不是重写（同一份业务规则只留一个权威实现）：
+ *   - 任务集增量的形状与语义合法性复用 RW-02 的 checkTaskSetDelta；
+ *   - 草稿与「源 revision + 增量」的一致性复用 RW-02 的 draftConsistencyIssues（由引擎在
+ *     落账**之前**预跑一次，落账时 applyPlanChange 的守卫 f2 再原样复跑一次）；
+ *   - 提案／新计划的身份复用 contracts/rework.ts 的 reworkProposalIdFor／reworkPlanIdFor；
+ *   - 返工任务 id 复用 contracts/rework.ts 的 reworkTaskIdFor。
+ * 本文件不重新推导任务集，也不另立第二套身份。
+ */
+import { canonicalJson, sha256Hex } from '../../../contracts/fingerprint.js';
+import { coordinationPolicyContentDigest, type CoordinationPolicyContentV1 } from '../../../contracts/human-role-collaboration.js';
+import { reworkProposalIdFor, reworkPlanIdFor, reworkTaskIdFor, type ReworkIssueV1, type ReworkProposalV1 } from '../../../contracts/rework.js';
+import type { PlanRevisionSnapshot, PlanRevisionRef } from '../../../contracts/plan.js';
+import type { ReworkBoundaryOutcomeV1, ReworkBudgetFactsV1 } from '../../../contracts/rework-acceptance.js';
+import { checkTaskSetDelta } from './goal-change-consistency.js';
+
+/**
+ * 自动受理写入账本时使用的 system 身份。它同时是**预算计数口径**的事实来源：
+ * 一次自动返工是否真的发生，看的是它产生的 GoalRevisionRecorded 事件是否带这个 actor。
+ */
+export const AUTONOMOUS_REWORK_ACTOR_ID = 'autonomous-rework';
+export const AUTONOMOUS_REWORK_ACTOR = { kind: 'system' as const, id: AUTONOMOUS_REWORK_ACTOR_ID };
+
+/**
+ * 决定身份：由提案身份推导。提案身份本身已经是「同一批问题 + 同一份源 revision」的
+ * 确定性函数（contracts/rework.ts），所以同一提案重复触发只会命中同一条决定。
+ */
+export function autonomousReworkDecisionIdFor(proposalId: string): string {
+  return 'rework-decision-' + sha256Hex(proposalId).slice(0, 32);
+}
+export function autonomousReworkCommandIdFor(proposalId: string, step: 'proposal' | 'decision' | 'apply'): string {
+  return 'cmd-autonomous-rework-' + step + '-' + sha256Hex(proposalId).slice(0, 24);
+}
+/** 自动受理的授权来源身份（policy 内容摘要），写进决定的 authority.policyVersion。 */
+export function autonomousReworkPolicyVersion(policy: { policyId: string; contentRevision: number; content: CoordinationPolicyContentV1 }): string {
+  return coordinationPolicyContentDigest(policy.content, policy.policyId, policy.contentRevision);
+}
+
+/** 源 revision 里由该任务承担的义务 id（“同义务”的判据）。 */
+export function reworkCarrierObligationIds(source: PlanRevisionSnapshot, taskId: string): string[] {
+  return source.obligations.filter((o) => o.taskIds.includes(taskId)).map((o) => o.obligationId);
+}
+
+function sameSet(a: string[], b: string[]): boolean {
+  return canonicalJson([...a].sort()) === canonicalJson([...b].sort());
+}
+
+/**
+ * 边界 (b)：改动必须落在 inScopeRework —— 同义务、同验收语义，只换承担者。
+ *
+ * 为什么在受理前检查而不是只依赖 applyPlanChange 的守卫 f2：守卫 f2 判的是
+ * “草稿是不是增量的确定性推导结果”，它保证增量不能靠草稿偷偷改义务；但“增量本身是否越界”
+ * 是另一个问题——一条把义务增量、取消承担者、或对无关任务动手的提案，应当在**受理前**
+ * 就转人工，而不是先落一份提案和一条 system 决定再被守卫打回。
+ *
+ * 允许的形状（逐条，按问题分组核对）：
+ *   1. patchDraft.obligationDeltas 为空（义务正文与验收语义只能由人的决定改变）；
+ *   2. taskSetDelta 非空，且通过 checkTaskSetDelta（形状、引用、链式取代复用 RW-02 判定）；
+ *   3. 没有 cancelTask：取消承担者不产生新的证明者，不是返工；
+ *   4. 每条 replaceTask 的取代者必须是**本增量新增**的返工任务（不是把义务并给既有任务）；
+ *   5. 每个新增任务都必须由提案的 rework.tasks 声明，并且恰好取代一个源任务；
+ *   6. 被取代任务承担的义务集合（非空）必须与新增任务声明的义务集合完全相同；
+ *   7. 返工任务保留源任务的结构角色（requirementLevel / taskKind），否则新 revision 的
+ *      非空守卫（例如 required GoalGateTask）会失败，说明这不是“只换承担者”；
+ *   8. 提案处置的每条问题都必须落到一个分组：分组取代的正是问题指向的任务，
+ *      分组 id 等于 reworkTaskIdFor(分组的 primaryIssueId)，且增量里确实有对应的
+ *      addTask／replaceTask 两条操作。
+ */
+export function inScopeReworkIssues(input: { proposal: ReworkProposalV1; sourcePlan: PlanRevisionSnapshot }): string[] {
+  const { proposal, sourcePlan } = input;
+  const issues: string[] = [];
+  const draft = proposal.patch?.patchDraft;
+  if (draft === null || draft === undefined) {
+    issues.push('提案没有 patchDraft，无法判断改动是否落在 inScopeRework');
+    return issues;
+  }
+  if (draft.obligationDeltas.length > 0) {
+    const ids = draft.obligationDeltas.map((d) => d.obligationId + '(' + d.action + ')').join('、');
+    issues.push('提案带有义务增量 ' + ids + '：义务正文与验收语义属于 CoordinationPolicyContentV1.scope.changesRequireHumanDecision，必须由人的决定改变，不能自动受理');
+  }
+  const delta = draft.taskSetDelta ?? null;
+  if (delta === null || delta.length === 0) {
+    issues.push('提案没有任务集增量：返工必须在新 revision 里换承担者，没有增量就不是返工受理');
+    return issues;
+  }
+  const deltaCheck = checkTaskSetDelta(delta, sourcePlan);
+  if (!deltaCheck.ok) issues.push(...deltaCheck.issues.map((i) => '任务集增量不合法：' + i));
+
+  const groups = Array.isArray(proposal.rework?.tasks) ? proposal.rework.tasks : [];
+  const proposedIssues = Array.isArray(proposal.rework?.issues) ? proposal.rework.issues : [];
+  if (groups.length === 0) issues.push('提案没有声明任何返工任务分组：无法核对“谁接手了哪条失败任务”');
+  if (proposedIssues.length === 0) issues.push('提案没有携带任何来源问题：自动受理没有触发源');
+
+  const addTaskById = new Map<string, { taskId: string; obligationIds: string[]; requirementLevel?: string; taskKind?: string }>();
+  for (const op of delta) {
+    if (op.action === 'addTask' && op.task !== null && op.task !== undefined) {
+      addTaskById.set(op.task.taskId, {
+        taskId: op.task.taskId,
+        obligationIds: Array.isArray(op.obligationIds) ? op.obligationIds : [],
+        requirementLevel: op.task.requirementLevel,
+        taskKind: op.task.taskKind,
+      });
+    }
+    if (op.action === 'cancelTask') {
+      issues.push('任务集增量包含 cancelTask(' + op.taskId + ')：取消承担者不会产生新的证明者，不属于 inScopeRework（必须转人工）');
+    }
+    if (op.action === 'replaceTask' && !delta.some((other) => other.action === 'addTask' && other.task?.taskId === op.byTaskId)) {
+      issues.push('replaceTask(' + op.supersededTaskId + ' → ' + op.byTaskId + ') 的取代者不是本增量新增的返工任务：把义务并给既有任务不属于 inScopeRework');
+    }
+  }
+
+  // 每个分组：同义务 + 同结构角色 + 增量的两条操作齐备。
+  for (const group of groups) {
+    const label = '分组 ' + String(group?.taskId) + '（取代 ' + String(group?.supersedesTaskId) + '）';
+    if (group === null || group === undefined) {
+      issues.push('提案的返工任务清单里有空条目');
+      continue;
+    }
+    if (group.taskId !== reworkTaskIdFor(group.primaryIssueId)) {
+      issues.push(label + '：返工任务 id 必须由 primaryIssueId 推导（期望 ' + reworkTaskIdFor(group.primaryIssueId) + '）');
+    }
+    const sourceTask = sourcePlan.tasks.find((t) => t.taskId === group.supersedesTaskId);
+    if (sourceTask === undefined) {
+      issues.push(label + '：被取代任务不在源 revision 里');
+      continue;
+    }
+    const carriers = reworkCarrierObligationIds(sourcePlan, group.supersedesTaskId);
+    if (carriers.length === 0) {
+      issues.push(label + '：被取代任务在源 revision 里不承担任何义务，无法“同义务”地换承担者');
+    }
+    const add = addTaskById.get(group.taskId);
+    if (add === undefined) {
+      issues.push(label + '：增量里没有对应的 addTask');
+    } else {
+      if (!sameSet(add.obligationIds, carriers)) {
+        issues.push(label + '：返工任务承担的义务集合与源任务不一致（源 [' + [...carriers].sort().join(',') + ']，提案 [' + [...add.obligationIds].sort().join(',') + ']）：返工只换承担者，不换义务');
+      }
+      if (add.requirementLevel !== sourceTask.requirementLevel) {
+        issues.push(label + '：返工任务的 requirementLevel（' + String(add.requirementLevel) + '）与源任务（' + sourceTask.requirementLevel + '）不同，这不是“只换承担者”');
+      }
+      if (add.taskKind !== sourceTask.taskKind) {
+        issues.push(label + '：返工任务的 taskKind（' + String(add.taskKind) + '）与源任务（' + sourceTask.taskKind + '）不同，会改变计划的验收结构，必须由人决定');
+      }
+      if (!sameSet(Array.isArray(group.obligationIds) ? group.obligationIds : [], carriers)) {
+        issues.push(label + '：提案声明的义务与源任务承担的义务不一致');
+      }
+    }
+    const replace = delta.find((op) => op.action === 'replaceTask' && op.supersededTaskId === group.supersedesTaskId);
+    if (replace === undefined || replace.action !== 'replaceTask') {
+      issues.push(label + '：增量里没有取代该源任务的 replaceTask');
+    } else if (replace.byTaskId !== group.taskId) {
+      issues.push(label + '：replaceTask 的取代者是 ' + replace.byTaskId + '，与分组声明的 ' + group.taskId + ' 不一致');
+    }
+  }
+
+  // 增量新增的任务必须都由某个分组声明（否则就是没人认领的改动）。
+  for (const [taskId] of addTaskById) {
+    if (!groups.some((group) => group?.taskId === taskId)) {
+      issues.push('增量新增的任务 ' + taskId + ' 不在提案的返工任务清单里：没有来源问题的改动不属于 inScopeRework');
+    }
+  }
+
+  // 每条来源问题都必须落到一个分组上（这条提案确实是给这些问题做的返工）。
+  for (const issue of proposedIssues) {
+    const group = groups.find((candidate) => Array.isArray(candidate?.issueIds) && candidate.issueIds.includes(issue.issueId));
+    if (group === undefined) {
+      issues.push('问题 ' + issue.issueId + ' 没有被任何返工任务分组处置');
+      continue;
+    }
+    if (group.supersedesTaskId !== issue.taskId) {
+      issues.push('问题 ' + issue.issueId + ' 指向任务 ' + issue.taskId + '，而分组取代的是 ' + group.supersedesTaskId + '：返工必须换掉留下这条失败的任务本身');
+    }
+  }
+  return issues;
+}
+
+/**
+ * RW-10（P2）人的暂停开关：CoordinationPolicyContentV1.allowed.inScopeRework 的运行时判定。
+ *
+ * 为什么放在策略面而不是内联在引擎里：这个位是**授权**判据，与四条边界同层，必须能单独测试。
+ * 为什么由受理入口在每次受理时调用它：判据是「当前生效策略」的内容，不是进程内缓存的开关——
+ * 人安装并激活一份 allowed.inScopeRework=false 的协调策略即停用自动返工（不需要新命令、新聚合
+ * 或新状态），因此每次受理都必须重新读一遍当前生效 revision 的内容。
+ *
+ * 返回非空即表示人已停用：受理入口必须转 needs_human_decision（边界 in_scope_rework）并零写入。
+ */
+export function autonomousReworkPauseIssues(policy: {
+  policyId: string;
+  contentRevision: number;
+  content: CoordinationPolicyContentV1;
+}): string[] {
+  if (policy.content.allowed.inScopeRework === true) return [];
+  return [
+    '人已停用范围内的自动返工：生效的 CoordinationPolicy ' + policy.policyId + '@' + policy.contentRevision +
+      ' 的 allowed.inScopeRework 不是 true（当前为 ' + canonicalJson(policy.content.allowed.inScopeRework as never) +
+      '），本次返工必须由人决定，受理入口零写入；要重新启用，需安装并激活一份 allowed.inScopeRework=true 的策略 revision',
+  ];
+}
+
+/**
+ * RW-10（P7）：返工提案**扩展部分**的 canonical 摘要，用于重放／重复触发前的比对。
+ *
+ * 为什么需要单独一份口径：planProposalDigest 覆盖的是 patch + impact，而 ReworkProposalV1 多出的
+ * rework（来源问题与返工任务分组）与 planDraft（提交给 applyPlanChange 的新计划草稿）不在其中。
+ * 重放分支此前只比对决定与 authorizedTarget，于是「同一 proposalId、但 rework／planDraft 已被
+ * 篡改」的输入会被当作重放成功返回——而 planDraft 正是要落进新 revision 的内容。把这两部分一起
+ * 纳入比对口径后，重放与重复触发都必须先与已落账提案逐字一致。
+ */
+export function reworkProposalExtensionDigest(proposal: ReworkProposalV1): string {
+  return sha256Hex(
+    canonicalJson({
+      proposalId: proposal.proposalId,
+      rework: proposal.rework ?? null,
+      planDraft: proposal.planDraft ?? null,
+    } as never),
+  );
+}
+
+/** 一条**已提交**验证结论在账本中的事实形态（工具轮次聚合 Evidence 或独立审阅逐条结论）。 */
+export type CommittedConclusionFactV1 = {
+  kind: 'evidence' | 'review';
+  /** 可追溯身份（evidenceId 或 reviewId），只用于原因文本。 */
+  refKey: string;
+  outcome: 'FAIL' | 'INCONCLUSIVE';
+  /** 该结论成立时生效的 plan revision。 */
+  planRef: PlanRevisionRef;
+  coverage: { obligationId: string; requirementId: string }[];
+};
+
+/**
+ * 边界 (a)：触发源必须是**已提交**的验证结论。
+ *
+ * 判定口径（逐条，不看摘要文字）：问题的每一条失败要求，都必须在账本里找到一条
+ * 同一 plan revision 下、同一 (obligationId, requirementId)、结论与该要求声明的失败结论
+ * 一致、且非 PASS 的已提交结论。找不到就是“别人口头声称的失败”，转人工。
+ *
+ * 取舍：要求逐条都有结论，而不是“整体上有一条”。只有覆盖缺失、没有结论的失败要求
+ * （failure.result = null）不能作为自动返工的依据——无法证明它真的是失败。
+ */
+export function triggerSourceIssues(issue: ReworkIssueV1, facts: CommittedConclusionFactV1[]): string[] {
+  const issues: string[] = [];
+  if (!Array.isArray(issue.failedRequirements) || issue.failedRequirements.length === 0) {
+    issues.push('问题 ' + issue.issueId + ' 没有列出任何未通过的验收要求：它不是从一条具体验证结论归一出来的');
+    return issues;
+  }
+  const samePlan = facts.filter((f) => canonicalJson(f.planRef) === canonicalJson(issue.planRef));
+  if (samePlan.length === 0) {
+    issues.push('问题 ' + issue.issueId + '：在 revision ' + issue.planRef.planId + ' 上找不到该任务已提交的非 PASS 验证结论（工具轮次聚合 Evidence 或独立审阅结果）');
+  }
+  for (const requirement of issue.failedRequirements) {
+    const key = requirement.obligationId + '\u0000' + requirement.requirementId;
+    const declared = requirement.failure?.result ?? null;
+    if (declared === null) {
+      issues.push('问题 ' + issue.issueId + ' 的要求 ' + requirement.obligationId + '/' + requirement.requirementId + ' 没有产生结论（failure.result 为 null）：覆盖缺失或轮次中断不能作为自动返工的依据');
+      continue;
+    }
+    const matched = samePlan.find(
+      (f) => f.outcome === declared && f.coverage.some((c) => c.obligationId + '\u0000' + c.requirementId === key),
+    );
+    if (matched === undefined) {
+      issues.push('问题 ' + issue.issueId + ' 的要求 ' + requirement.obligationId + '/' + requirement.requirementId + ' 声明 ' + declared + '，但账本里没有同一 revision 下覆盖该要求且结论一致的已提交结论');
+    }
+  }
+  return issues;
+}
+
+/**
+ * 预算事实。
+ *
+ * 计数口径（写进测试，也写进注释）：
+ *   used = 该 Goal 上**已经应用成功**的自动返工次数（按 GoalRevisionRecorded 事件的 actor 计数，见引擎）；
+ *   limit = 当前生效 CoordinationPolicy revision 的 budget.maxAutonomousReworks。
+ * 为什么按 Goal，而不是按问题或按 policy revision：
+ *   - 按问题计数等于每个问题各给一份预算，等于没有上限；
+ *   - 按 policy revision 计数会让“重装一份同样的策略”变成静默重置预算；
+ *   - 按 Goal 累计、上限取当前策略内容，既让次数成为真实运行时上限，也保证只有人显式提高
+ *     maxAutonomousReworks（install + activate）才会获得更多额度。
+ * 已应用才计数：被守卫拒绝的尝试没有产生任何返工 revision，不消耗额度。
+ */
+export function reworkBudgetFacts(input: {
+  limit: number;
+  used: number;
+  policyId: string;
+  policyRevision: number;
+  policyVersion: string;
+}): ReworkBudgetFactsV1 {
+  const remaining = Math.max(0, input.limit - input.used);
+  return {
+    policyId: input.policyId,
+    policyRevision: input.policyRevision,
+    policyVersion: input.policyVersion,
+    limit: input.limit,
+    used: input.used,
+    remaining,
+  };
+}
+
+/**
+ * 预算边界：还有剩余额度才允许自动受理。
+ *
+ * RW-10（P11）：这里只判 used < limit。原先还写了 limit > 0，那是**不可达**的防御——安装期
+ * 已要求 budget.maxAutonomousReworks ∈ 1..4（P15_COORDINATION_BUDGET_MAX，见 ControlEngine
+ * 的 validateInstallShape），且它本来就是冗余的：limit 为 0 时 used >= 0 必然不满足 used < limit。
+ * 保留一个永远为真的条件只会让人以为「上限为 0」是一种可能的状态。
+ */
+export function budgetBoundaryOutcome(budget: ReworkBudgetFactsV1): ReworkBoundaryOutcomeV1 {
+  const satisfied = budget.used < budget.limit;
+  return {
+    code: 'autonomous_budget_available',
+    satisfied,
+    reasons: satisfied
+      ? ['自动化预算未耗尽：上限 ' + budget.limit + '，已应用 ' + budget.used + '，剩余 ' + budget.remaining + '（policy ' + budget.policyId + '@' + budget.policyRevision + '，按 Goal 累计）']
+      : ['自动化预算已耗尽：上限 ' + budget.limit + '，已应用 ' + budget.used + '（policy ' + budget.policyId + '@' + budget.policyRevision + '，按 Goal 累计）；本次返工必须由人决定'],
+  };
+}
+
+/**
+ * 边界 (d) 的机械部分：这份提案是不是针对这条问题的返工。
+ *
+ * 判据是提案自身的问题清单与任务集增量，而不是文字摘要：
+ *   - 提案的 rework.issues 里带这条问题；或
+ *   - 增量取代了问题指向的失败任务；或
+ *   - 增量新增的任务就是本问题的规范返工任务 id。
+ * 三种任一成立，都表示“这份提案就是给这条问题做的返工”。
+ */
+export function proposalAddressesIssue(proposal: ReworkProposalV1 | import('../../../contracts/goal-change.js').PlanProposalV1, issue: ReworkIssueV1): boolean {
+  const candidate = proposal as ReworkProposalV1;
+  const origin = candidate.rework;
+  if (origin !== undefined && Array.isArray(origin.issues) && origin.issues.some((entry) => entry?.issueId === issue.issueId)) return true;
+  if (origin !== undefined && Array.isArray(origin.tasks) && origin.tasks.some((entry) => Array.isArray(entry?.issueIds) && entry.issueIds.includes(issue.issueId))) return true;
+  const delta = candidate.patch?.patchDraft?.taskSetDelta ?? null;
+  if (delta === null) return false;
+  const reworkTaskId = reworkTaskIdFor(issue.issueId);
+  return delta.some(
+    (op) =>
+      (op.action === 'replaceTask' && op.supersededTaskId === issue.taskId) ||
+      (op.action === 'addTask' && op.task?.taskId === reworkTaskId),
+  );
+}
+
+/** 提案身份与计划身份的复核：身份必须由 contracts/rework.ts 的确定性函数推导，不由调用方自定。 */
+export function proposalIdentityIssues(proposal: ReworkProposalV1): string[] {
+  const issues: string[] = [];
+  if (proposal === null || proposal === undefined) return ['提案为空'];
+  const origin = proposal.rework;
+  if (origin === undefined || !Array.isArray(origin.issues)) return ['提案没有携带来源问题（rework.issues）'];
+  const expected = reworkProposalIdFor({
+    projectId: proposal.projectId,
+    workspaceId: proposal.workspaceId,
+    goalRef: proposal.sourceGoalRef,
+    sourcePlanRef: proposal.sourcePlanRef,
+    sourcePlanRevision: proposal.sourcePlanRevision,
+    issues: origin.issues.map((issue) => ({ issueId: issue.issueId, taskId: issue.taskId })),
+  });
+  if (proposal.proposalId !== expected) {
+    issues.push('提案身份不是由来源问题与源 revision 推导出来的（期望 ' + expected + '，实际 ' + proposal.proposalId + '）：身份必须确定性，否则同一批问题可能落出第二份提案');
+  }
+  const expectedPlanId = reworkPlanIdFor(proposal.proposalId);
+  if (proposal.planDraft?.planId !== expectedPlanId) {
+    issues.push('提案导出的新计划 id 不是由提案身份推导出来的（期望 ' + expectedPlanId + '，实际 ' + String(proposal.planDraft?.planId) + '）');
+  }
+  if (proposal.planDraft?.planRevision !== proposal.sourcePlanRevision + 1) {
+    issues.push('提案导出的新计划 revision 必须是源 revision + 1（期望 ' + (proposal.sourcePlanRevision + 1) + '，实际 ' + String(proposal.planDraft?.planRevision) + '）');
+  }
+  return issues;
+}

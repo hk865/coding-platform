@@ -1,15 +1,12 @@
 import { describe, expect, it } from "vitest";
-import {
-  validateCreateGoalCommand,
-  validateDomainEvent,
-  validateWorkspaceBootstrapCommand,
-  validateWorkspaceBootstrapFixture,
-} from "../../src/contracts/validation.js";
-import { buildCreateGoalCommand, goalCreatedEventFor } from "../../src/contracts/fixtures/goal-fixtures.js";
-import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1 } from "../../src/contracts/fixtures/goal-fixtures.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import { validateCreateGoalCommand } from '../../src/contracts/validation/goal.js';
+import { validateDomainEvent } from '../../src/contracts/validation/event.js';
+import { validateWorkspaceBootstrapCommand, validateWorkspaceBootstrapFixture } from '../../src/contracts/validation/bootstrap.js';
+import { buildCreateGoalCommand, goalCreatedEventFor } from "../contract-support/fixtures/goal-fixtures.js";
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1 } from "../contract-support/fixtures/goal-fixtures.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 
 const scope = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.scopes[0]!;
 

@@ -1,0 +1,108 @@
+{
+  "source": {
+    "candidate": "candidate-04",
+    "endSnapshots": [
+      "build-end-04",
+      "browser-end-04",
+      "full-end-04",
+      "release-04"
+    ]
+  },
+  "environment": {
+    "shell": "WSL Ubuntu-24.04",
+    "productRoot": "/mnt/d/1.project/Software/agent_platform",
+    "documentationRoot": "/mnt/d/1.project/Software/agent_learn/agent_dev/agent_platform",
+    "head": "65d270d75f3088d7baa4ef3a7c80fdaa62c3a38d",
+    "branch": "main",
+    "delivery": "Uncommitted working tree retained; no commit, reset, stash or push"
+  },
+  "backendTypes": {
+    "exitCode": 0,
+    "sessionId": 30452,
+    "command": "node .local/linux-test-tools/node_modules/typescript/bin/tsc --noEmit",
+    "log": "types-final-04.log"
+  },
+  "uiTypes": {
+    "exitCode": 0,
+    "sessionId": 99232,
+    "command": "node .local/linux-test-tools/node_modules/typescript/bin/tsc -p src/ui/tsconfig.json --noEmit",
+    "log": "ui-types-final-04.log"
+  },
+  "build": {
+    "exitCode": 0,
+    "sessionId": 46801,
+    "command": "pnpm build",
+    "configuredNodeAndPnpmPath": true,
+    "log": "build-final-04.log"
+  },
+  "moduleBoundaries": {
+    "exitCode": 0,
+    "sourceFiles": 345,
+    "issues": 0,
+    "command": "node scripts/check-module-boundaries.mjs --output=evidence/2026-09-09-independent-review/module-boundaries-final-04.json",
+    "log": "module-boundaries-final-04.log"
+  },
+  "moduleBoundaryReport": {
+    "exitCode": 0,
+    "log": "module-boundaries-final-04.json"
+  },
+  "architectureDag": {
+    "exitCode": 0,
+    "nodes": 12,
+    "edges": 35,
+    "matching": true,
+    "acyclic": true,
+    "log": "audit-dag.json"
+  },
+  "a04Regression": {
+    "exitCode": 0,
+    "sessionId": 22980,
+    "testFiles": 4,
+    "tests": 47,
+    "durationSeconds": 174.65,
+    "command": "bash scripts/test-wsl.sh tests/app/verification-rounds.test.ts tests/verification/verification-rounds.test.ts tests/verification/reviewer-verification.test.ts tests/verification/verification-service.test.ts --maxWorkers=1",
+    "log": "a04-regression-final.log"
+  },
+  "browser": {
+    "exitCode": 0,
+    "sessionId": 22516,
+    "tests": 23,
+    "failed": 0,
+    "durationMinutes": 3.6,
+    "command": "node src/ui/node_modules/@playwright/test/cli.js test --config=evidence/2026-09-09-independent-review/playwright-final-04.config.ts",
+    "log": "browser-final-04.log"
+  },
+  "fullTests": {
+    "exitCode": 0,
+    "sessionId": 37810,
+    "testFiles": 249,
+    "tests": 1633,
+    "failed": 0,
+    "skipped": 0,
+    "durationSeconds": 1531.3,
+    "startAtLocal": "2026-09-09 23:23:04 +08:00",
+    "command": "bash scripts/test-wsl.sh --maxWorkers=2",
+    "log": "full-tests-final-workers2.log"
+  },
+  "documents": {
+    "exitCode": 0,
+    "sessionId": 32914,
+    "checks": 13,
+    "stage": "Accepted status documents validated after independent full-run/source confirmation",
+    "cwd": "/mnt/d/1.project/Software/agent_learn/agent_dev/agent_platform",
+    "command": "node dev_docs/verification/validate-docs.mjs",
+    "log": "docs-final.log"
+  },
+  "previousFailedFull": {
+    "exitCode": 1,
+    "testFiles": 249,
+    "passedFiles": 248,
+    "tests": 1633,
+    "passedTests": 1632,
+    "durationSeconds": 1623.62,
+    "sourceCandidate": "candidate-03",
+    "log": "full-tests-workers2.log",
+    "reason": "A04 old corrupted-report HTTP error message compatibility; original tests and timeouts retained"
+  },
+  "evidenceBoundary": "Real kernel/tools/HTTP/SQLite/Vault/Control/UI with local deterministic SSE model fixtures. Not an external-model quality, arbitrary OS-kill, benchmark or whole autonomous product acceptance."
+}

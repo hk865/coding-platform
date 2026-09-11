@@ -1,0 +1,156 @@
+/**
+ * P1-18 material-access contracts — pure validator / fixture / fingerprint
+ * tests. No adapter, no model, no vault: this file proves the SHAPE rules and
+ * the deterministic fold the Control handler and both ledger adapters share.
+ */
+import { describe, expect, it } from "vitest";
+import {
+  MATERIAL_ACCESS_MAX_MATERIALS,
+  grantMaterialAccessFingerprint,
+  materialAccessGrantIdFor,
+  materialBasisEquals,
+  materialBasisIsUnconditional,
+  sameArtifactOwnerRunRef,
+  sameArtifactRef,
+} from "../../src/contracts/material-access.js";
+import type { MaterialAccessGrantV1 } from "../../src/contracts/material-access.js";
+import { validateGrantMaterialAccessCommand, validateMaterialAccessGrant } from "../../src/contracts/validation.js";
+import { validateMaterialAccessGrantCommit } from "../../src/contracts/ledger-validation.js";
+import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from "../../src/contracts/fixtures/material-access-fixtures.js";
+import { buildMaterialAccessGrantLedgerCommit } from "../../src/control/control-engine/records/material-access.js";
+import type { ArtifactRef } from "../../src/contracts/artifact.js";
+import type { RunRef } from "../../src/contracts/dispatch.js";
+
+const FIXED = "2026-09-08T00:00:00.000Z";
+const PROJECT = "proj-alpha";
+const WORKSPACE = "ws-shared";
+const GOAL = "goal-1";
+
+const artifact = (digest: string): ArtifactRef => ({
+  kind: "artifact",
+  contentType: "text/plain",
+  digest,
+  sizeBytes: 12,
+  source: { kind: "artifact", refId: digest, revision: "1", digest },
+});
+const run = (runId: string): RunRef => ({ aggregateType: "Run", projectId: PROJECT, goalId: GOAL, runId });
+
+function grantOf(overrides: Partial<MaterialAccessGrantV1> = {}): MaterialAccessGrantV1 {
+  return buildMaterialAccessGrantV1({
+    grantId: "grant-1",
+    scope: { projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL },
+    materials: [artifact("a".repeat(64))],
+    reader: run("reader-1"),
+    issuedBy: { aggregateType: "Control", projectId: PROJECT, goalId: GOAL },
+    purpose: "直接前驱报告：消费者读取生产者产物",
+    basis: { planRef: { aggregateType: "PlanRevision", projectId: PROJECT, planId: "plan-1" }, workspaceRevision: 3, sourceDigest: "b".repeat(64) },
+    grantedAt: FIXED,
+    ...overrides,
+  });
+}
+
+describe("MaterialBasisV1", () => {
+  it("treats an all-null basis as unconditional and compares by canonical value", () => {
+    const unconditional = { planRef: null, workspaceRevision: null, sourceDigest: null };
+    expect(materialBasisIsUnconditional(unconditional)).toBe(true);
+    expect(materialBasisIsUnconditional({ ...unconditional, workspaceRevision: 1 })).toBe(false);
+    expect(materialBasisEquals(unconditional, { planRef: null, workspaceRevision: null, sourceDigest: null })).toBe(true);
+    expect(materialBasisEquals(unconditional, { ...unconditional, sourceDigest: "c".repeat(64) })).toBe(false);
+  });
+
+  it("keeps a plan revision pin significant (a plan change is a different basis)", () => {
+    const base = { planRef: { aggregateType: "PlanRevision" as const, projectId: PROJECT, planId: "plan-1" }, workspaceRevision: 1, sourceDigest: null };
+    const next = { ...base, planRef: { ...base.planRef, planId: "plan-2" } };
+    expect(materialBasisEquals(base, next)).toBe(false);
+  });
+});
+
+describe("grant identity", () => {
+  it("is deterministic per (reader, material set, basis) and ignores the grantedAt timestamp", () => {
+    const g = grantOf();
+    expect(materialAccessGrantIdFor(g.reader, g.materials, g.basis)).toBe(materialAccessGrantIdFor(g.reader, g.materials, g.basis));
+    expect(materialAccessGrantIdFor(run("other"), g.materials, g.basis)).not.toBe(materialAccessGrantIdFor(g.reader, g.materials, g.basis));
+    expect(materialAccessGrantIdFor(g.reader, [artifact("d".repeat(64))], g.basis)).not.toBe(materialAccessGrantIdFor(g.reader, g.materials, g.basis));
+    expect(materialAccessGrantIdFor(g.reader, g.materials, { planRef: null, workspaceRevision: null, sourceDigest: null }))
+      .not.toBe(materialAccessGrantIdFor(g.reader, g.materials, g.basis));
+  });
+
+  it("matches artifact refs by content address and run principals by full identity", () => {
+    expect(sameArtifactRef(artifact("e".repeat(64)), { ...artifact("e".repeat(64)), source: { kind: "workspace", refId: "w", revision: "1" } })).toBe(true);
+    expect(sameArtifactRef(artifact("e".repeat(64)), artifact("f".repeat(64)))).toBe(false);
+    expect(sameArtifactOwnerRunRef(run("r1"), { ...run("r1") })).toBe(true);
+    expect(sameArtifactOwnerRunRef(run("r1"), { ...run("r1"), goalId: "goal-2" })).toBe(false);
+    expect(sameArtifactOwnerRunRef(run("r1"), null)).toBe(false);
+  });
+});
+
+describe("grant validation", () => {
+  it("accepts a well-formed grant and rejects each malformed dimension", () => {
+    const ok: import("../../src/contracts/validation.js").ValidationIssue[] = [];
+    validateMaterialAccessGrant(grantOf(), "grant", ok);
+    expect(ok).toEqual([]);
+    const bad: Array<[Partial<MaterialAccessGrantV1>, string]> = [
+      [{ materials: [] }, "empty material set"],
+      [{ materials: Array.from({ length: MATERIAL_ACCESS_MAX_MATERIALS + 1 }, (_, i) => artifact(String(i % 10).repeat(64))) }, "material cap"],
+      [{ reader: { aggregateType: "Task" } as never }, "bad reader"],
+      [{ issuedBy: { aggregateType: "Task" } as never }, "bad issuer"],
+      [{ purpose: "x".repeat(2048) }, "purpose cap"],
+      [{ basis: { planRef: null, workspaceRevision: 1.5, sourceDigest: null } }, "non-integer revision"],
+      [{ basis: { planRef: null, workspaceRevision: null, sourceDigest: "not-a-digest" } }, "bad digest"],
+    ];
+    for (const [patch, label] of bad) {
+      const issues: import("../../src/contracts/validation.js").ValidationIssue[] = [];
+      validateMaterialAccessGrant(grantOf(patch), "grant", issues);
+      expect(issues.length, label).toBeGreaterThan(0);
+    }
+  });
+
+  it("requires the command aggregateId to equal the grant id", () => {
+    const command = buildGrantMaterialAccessCommand(grantOf(), {
+      commandId: "cmd-1", projectId: PROJECT, actorKind: "system", actorId: "test", idempotencyKey: "k1", correlationId: "c1", submittedAt: FIXED,
+    });
+    expect(validateGrantMaterialAccessCommand(command)).toEqual([]);
+    expect(validateGrantMaterialAccessCommand({ ...command, aggregateId: "other" })).toContainEqual(
+      expect.objectContaining({ path: "aggregateId", code: "bad_ref" }),
+    );
+  });
+
+  it("fingerprints the grant payload and changes when the grant changes", () => {
+    const command = buildGrantMaterialAccessCommand(grantOf(), {
+      commandId: "cmd-1", projectId: PROJECT, actorKind: "system", actorId: "test", idempotencyKey: "k1", correlationId: "c1", submittedAt: FIXED,
+    });
+    const same = buildGrantMaterialAccessCommand(grantOf(), {
+      commandId: "cmd-2", projectId: PROJECT, actorKind: "system", actorId: "test", idempotencyKey: "k2", correlationId: "c2", submittedAt: "2026-09-09T00:00:00.000Z",
+    });
+    expect(grantMaterialAccessFingerprint(command)).toBe(grantMaterialAccessFingerprint(same));
+    const changed = buildGrantMaterialAccessCommand(grantOf({ purpose: "另一用途" }), {
+      commandId: "cmd-1", projectId: PROJECT, actorKind: "system", actorId: "test", idempotencyKey: "k1", correlationId: "c1", submittedAt: FIXED,
+    });
+    expect(grantMaterialAccessFingerprint(changed)).not.toBe(grantMaterialAccessFingerprint(command));
+  });
+});
+
+describe("grant ledger fold", () => {
+  const command = buildGrantMaterialAccessCommand(grantOf(), {
+    commandId: "cmd-1", projectId: PROJECT, actorKind: "system", actorId: "test", idempotencyKey: "k1", correlationId: "c1", submittedAt: FIXED,
+  });
+  const batch = buildMaterialAccessGrantLedgerCommit(command, { eventId: "ev-1", occurredAt: FIXED });
+
+  it("is a valid immutable CAS@0 commit", () => {
+    expect(validateMaterialAccessGrantCommit(batch)).toBe(true);
+    expect(batch.expectedVersions).toEqual([
+      { ref: { aggregateType: "MaterialAccessGrant", projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL, grantId: "grant-1" }, revision: 0 },
+    ]);
+    expect(batch.events[0]!.eventType).toBe("MaterialAccessGranted");
+    expect(batch.snapshots[0]!.grant).toEqual(grantOf());
+  });
+
+  it("rejects a tampered snapshot, a non-zero expected revision and a mismatched scope", () => {
+    expect(validateMaterialAccessGrantCommit({ ...batch, snapshots: [{ ...batch.snapshots[0]!, grant: grantOf({ purpose: "篡改" }) }] })).toBe(false);
+    expect(validateMaterialAccessGrantCommit({ ...batch, expectedVersions: [{ ...batch.expectedVersions[0]!, revision: 1 }] })).toBe(false);
+    expect(validateMaterialAccessGrantCommit({
+      ...batch,
+      events: [{ ...batch.events[0]!, workspaceId: "other" }] as never,
+    })).toBe(false);
+  });
+});

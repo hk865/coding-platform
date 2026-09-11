@@ -1,0 +1,230 @@
+/**
+ * Ordinary outbox dispatch: assemble bounded Context, bind/link durable work,
+ * commit Control.startRun, then call the runtime and submit observed facts.
+ * The dispatch intent must exist before side effects. Rejections do not create a
+ * new attempt; failures remain visible. Replacement dispatch has its own consumer.
+ * Unknown runtime effects must be reconciled and cannot be repaired by blind retry.
+ */
+import type {
+  DispatchDriveFailure,
+  DispatchDriveResult,
+  DispatchDriveTrigger,
+  DispatchPort,
+  RunHandle,
+  RunPort,
+} from "../../contracts/ports.js";
+import type { StateLedger } from "../../contracts/ledger.js";
+import type { ControlEngine } from "../../contracts/modules.js";
+import type { TaskContextPort, TaskContextRequestV1 } from "../../contracts/task-envelope.js";
+import type { DispatchIntentV1 } from "../../contracts/dispatch.js";
+import { buildDispatchStartCommand, buildRunFactCommand } from "../../contracts/commands/dispatch.js";
+import { replacementAttemptRefFor } from "../../contracts/handoff.js";
+import { ensureWorkIdentity } from "./work-identity.js";
+
+export type DispatchEngineDeps = {
+  ledger: StateLedger;
+  control: ControlEngine;
+  contextCompiler: TaskContextPort;
+  runtime: RunPort;
+};
+
+export class DispatchEngineImpl implements DispatchPort {
+  constructor(private readonly deps: DispatchEngineDeps) {}
+
+  async drive(trigger: DispatchDriveTrigger): Promise<DispatchDriveResult> {
+    const maxIntents = trigger.maxIntents ?? 8;
+    const pending = await this.deps.ledger.pendingDispatchIntents(maxIntents, { workKind: 'ordinary' });
+
+    let scanned = 0;
+    let started = 0;
+    let completed = 0;
+    const failures: DispatchDriveFailure[] = [];
+
+    for (const entry of pending) {
+      const intent = entry.intent;
+      if (intent.work?.kind === 'review') continue;
+      const outboxRef = entry.ref;
+
+      // P1-06 guard: an intent with a co-committed ReplacementAttempt belongs
+      // to the HandoffPort (driveHandoff) — the normal drive NEVER assembles a
+      // non-handoff context for a replacement run (skipped BEFORE scanning;
+      // not a failure, not counted).
+      const replacementResult = await this.deps.ledger.load(
+        replacementAttemptRefFor(intent.projectId, intent.goalId, intent.taskId, intent.attemptRef.attemptId),
+      );
+      if (replacementResult.status === "found") {
+        continue;
+      }
+
+      scanned += 1;
+
+      // 2. assemble (bounded envelope + vault bundle).
+      let assembled;
+      try {
+        assembled = await this.deps.contextCompiler.assemble(this.buildContextRequest(intent));
+      } catch (err) {
+        failures.push({
+          intentId: intent.intentId,
+          outboxRef,
+          code: "context_rejected",
+          message: String(err),
+        });
+        continue;
+      }
+
+      if (assembled.status === "rejected") {
+        failures.push({
+          intentId: intent.intentId,
+          outboxRef,
+          code: "context_rejected",
+          message: "context rejected: " + assembled.issues.join("; "),
+        });
+        continue;
+      }
+      if (assembled.status === "needs_material") {
+        failures.push({
+          intentId: intent.intentId,
+          outboxRef,
+          code: "rejected",
+          message: "needs_material: " + assembled.gaps.map((g) => g.message).join("; "),
+        });
+        continue;
+      }
+
+      const { envelope, manifest } = assembled;
+
+      // 2b. 真实 Run 的持久工作身份。位置是刻意的——
+      //   - 在**上下文组装成功之后**：材料缺口/越权路径保持零写入，不会留下一个没有 Run 的身份；
+      //   - 在**DispatchStartRun 之前**：运行一旦启动，工作身份必定已经在 canonical 账本里，
+      //     因此派发时编译的历史材料一定指向一个真实存在的 workId；
+      //   - 在**唯一收口处**：三个 claimTask 调用点都要经过这里才会启动运行，不存在第二条建立路径。
+      // workId 规则与"重复派发不产生第二个身份"的论证见 ./work-identity.ts。
+      const workIdentity = await ensureWorkIdentity({ ledger: this.deps.ledger, control: this.deps.control, now: () => intent.requestedAt }, intent);
+      if (workIdentity.status === "rejected") {
+        failures.push({
+          intentId: intent.intentId,
+          outboxRef,
+          code: "rejected",
+          message: "work identity " + workIdentity.code + ": " + workIdentity.message,
+        });
+        continue;
+      }
+
+      // 3. startRun (dispatch-start commit) BEFORE runtime.start.
+      const startCommand = buildDispatchStartCommand({
+        // Preserve the identity used for this persisted command protocol.
+        actor: { kind: "human", id: "user-1" },
+        commandId: "start-" + intent.intentId,
+        correlationId: intent.correlationId,
+        submittedAt: intent.requestedAt,
+        projectId: intent.projectId,
+        runId: intent.runRef.runId,
+        /** P1-07 fix (P1-03 latent): a run-scoped idempotencyKey — a shared
+         * default would make every start of the same project collide. */
+        idempotencyKey: "p1-03-start-" + intent.runRef.runId,
+        expectedRevision: 1,
+        envelope,
+        manifest,
+      });
+      const startReceipt = await this.deps.control.startRun(startCommand);
+      if (startReceipt.status !== "committed") {
+        const code = startReceipt.status === "rejected" && startReceipt.code === "not_found" ? "not_found" : "rejected";
+        failures.push({
+          intentId: intent.intentId,
+          outboxRef,
+          code,
+          message: "startRun rejected: " + startReceipt.code,
+        });
+        continue;
+      }
+      started += 1;
+
+      // 4. only NOW invoke the runtime (outbox-before-side-effect).
+      try {
+        const handle = await this.deps.runtime.start(envelope);
+        const completion = await this.consumeRun(handle, intent);
+        completed += completion;
+      } catch (err) {
+        failures.push({
+          intentId: intent.intentId,
+          outboxRef,
+          code: "runtime_error",
+          message: String(err),
+        });
+      }
+    }
+
+    const remaining = await this.deps.ledger.pendingDispatchIntents(maxIntents, { workKind: 'ordinary' });
+    return { scanned, started, completed, pendingRemaining: remaining.length, failures };
+  }
+
+  private buildContextRequest(intent: DispatchIntentV1): TaskContextRequestV1 {
+    return {
+      schemaVersion: 1,
+      requestId: "context-" + intent.intentId,
+      projectId: intent.projectId,
+      workspaceId: intent.workspaceId,
+      goalId: intent.goalId,
+      taskId: intent.taskId,
+      planRef: intent.planRef,
+      runRef: intent.runRef,
+      attemptRef: intent.attemptRef,
+      roleBinding: intent.roleBinding,
+      workspaceSnapshot: intent.workspaceSnapshot,
+      declaredPermissions: intent.declaredPermissions,
+      scope: {
+        tools: [...intent.declaredPermissions.tools],
+        writeScope: [...intent.declaredPermissions.writeScope],
+      },
+      budget: intent.budget,
+      submittedAt: intent.requestedAt,
+    };
+  }
+
+  consumeRun(handle: RunHandle, intent: DispatchIntentV1): Promise<number> { return consumeDispatchedRun(this.deps.control, handle, intent); }
+}
+
+export function createDispatchEngine(deps: DispatchEngineDeps): DispatchEngineImpl {
+  return new DispatchEngineImpl(deps);
+}
+
+export async function consumeDispatchedRun(control: Pick<ControlEngine, 'runFact'>, handle: RunHandle, intent: DispatchIntentV1): Promise<number> {
+    let completed = 0;
+    // The Run is at revision 2 right after startRun; each accepted fact returns
+    // its new run revision, which we track for the next single-writer CAS.
+    let expectedRevision = 2;
+    for (;;) {
+      const events = await handle.pollFreshEvents();
+      if (events.length === 0) break;
+      let terminal = false;
+      for (const event of events) {
+        const command = buildRunFactCommand({
+          actor: { kind: "human", id: "user-1" },
+          idempotencyKey: "p1-03-runfact",
+          commandId: "fact-" + intent.intentId + "-" + String(event.sequence),
+          correlationId: intent.correlationId,
+          submittedAt: event.occurredAt,
+          projectId: intent.projectId,
+          runId: intent.runRef.runId,
+          expectedRevision,
+          fact: { kind: "runtime_event", event },
+        });
+        const receipt = await control.runFact(command);
+        if (receipt.status === "committed") {
+          expectedRevision = receipt.runRevision;
+          if (receipt.terminal) {
+            completed += 1;
+            terminal = true;
+            break;
+          }
+        } else {
+          // Rejected fact (duplicate/stale/conflict/after_terminal/revision
+          // conflict): stop consuming; the outbox/run stay as committed. No
+          // retry in P1-03.
+          return completed;
+        }
+      }
+      if (terminal) break;
+    }
+    return completed;
+  }

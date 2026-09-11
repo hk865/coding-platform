@@ -1,0 +1,13 @@
+diff --git a/evidence/2026-09-10-module-folder-reorg/independent-review/before/src/app/workspace-tools.ts b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/src/app/workspace-tools.ts
+index f8cefcf..2431fd1 100644
+--- a/evidence/2026-09-10-module-folder-reorg/independent-review/before/src/app/workspace-tools.ts
++++ b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/src/app/workspace-tools.ts
+@@ -23,7 +23,7 @@ export async function createWorkspaceTools(dir: string, options: WorkspaceToolsO
+     await mkdir(root, { recursive: true });
+     mounts.push({ projectId: id, workspaceId: 'workspace-main', root: await realpath(root), name: id === 'acceptance-alpha' ? '主验收项目' : '隔离对照项目' });
+   }
+-  const sandboxSource = await readFile(new URL('./terminal-sandbox.py', import.meta.url), 'utf8');
++  const sandboxSource = await readFile(new URL('../execution/worker-runtime/terminal-sandbox.py', import.meta.url), 'utf8');
+   const nodeRuntime = dirname(dirname(await realpath(process.execPath)));
+   const sessions = new Map<string, Session>(), creates = new Map<string, string>();
+   let registryQueue: Promise<unknown> = Promise.resolve();

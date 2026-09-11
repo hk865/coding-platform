@@ -1,0 +1,8 @@
+{
+  "checked": 1572,
+  "moved": 170,
+  "removed": [
+    "src/contracts/rework-disposition.ts#ReworkIssueMaterials"
+  ],
+  "differences": []
+}

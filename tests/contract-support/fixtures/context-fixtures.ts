@@ -1,0 +1,317 @@
+
+
+
+/**
+ * P1-16 shared fixtures: work-context continuity scenario + binding / note /
+ * continuation / ledger-fold builders used by BOTH adapter suites (InMemory +
+ * SQLite, same fixtures) and by the restart path.
+ *
+ * Structure mirrors P1-03/04/06 fixtures: deterministic builders whose fold
+ * output equals what the Control handlers produce (fold-equality target).
+ * Isolation statement: BOTH projects reuse the SAME local workspaceId /
+ * goalId / taskId / runIds — every work-context key is the canonicalJson of
+ * the COMPLETE ref, so a cross-project read is a hard assertion failure.
+ */
+import type { CommandIdentity } from "../../../src/contracts/command-event.js";
+import { sha256Hex } from "../../../src/contracts/fingerprint.js";
+import type { ArtifactRef } from "../../../src/contracts/artifact.js";
+import type { RoleBindingRefV1, RunRef, TaskAttemptRef } from "../../../src/contracts/dispatch.js";
+import type { PlanRevisionRef } from "../../../src/contracts/plan.js";
+import type { BindWorkContextCommand, ContextContinuationResultV1, ExecutionNoteRef, ExecutionNoteV1, LinkWorkRunCommand, RecordContinuationCommand, RecordExecutionNoteCommand, WorkContextBindingV1, WorkContextRef } from "../../../src/contracts/context-continuity.js";
+import { executionNoteRefFor, workContextRefFor } from "../../../src/contracts/context-continuity.js";
+
+import { P107_ROLE_BINDING_READER_V1 } from "./workspace-fixtures.js";
+
+export const P116_PROJECT_A = "proj-alpha";
+export const P116_PROJECT_B = "proj-beta";
+export const P116_WORKSPACE = "ws-shared";
+export const P116_GOAL = "goal-p116-1";
+export const P116_TASK_WORK = "task-p116-work";
+/** The durable work identity under test (same local id in BOTH projects). */
+export const P116_WORK = "work-p116-1";
+export const P116_WORK_QUERY = "work-p116-query";
+export const P116_NOTE_1 = "note-p116-1";
+export const P116_NOTE_2 = "note-p116-2";
+export const P116_REPORT_1 = "cont-p116-1";
+export const P116_REPORT_2 = "cont-p116-2";
+export const P116_SCHEMA = "2026-09-06T00:00:00.000Z";
+
+export function buildP116ArtifactRef(deps: { digest?: string; sizeBytes?: number } = {}): ArtifactRef {
+  const digest = sha256Hex("p116-artifact:" + (deps.digest ?? "default-body"));
+  return {
+    kind: "artifact",
+    contentType: "application/json",
+    digest,
+    sizeBytes: deps.sizeBytes ?? 128,
+    source: { kind: "artifact", refId: "body-p116", revision: "1", digest },
+  };
+}
+
+export function p116WorkContextRef(projectId: string, workId: string = P116_WORK): WorkContextRef {
+  return workContextRefFor(projectId, P116_WORKSPACE, workId);
+}
+
+export function p116NoteRef(projectId: string, workId: string, noteId: string): ExecutionNoteRef {
+  return executionNoteRefFor(projectId, P116_WORKSPACE, workId, noteId);
+}
+
+export type BuildBindWorkContextCommandDeps = {
+  commandId: string;
+  projectId: string;
+  workId: string;
+  workspaceId?: string;
+  workKind?: WorkContextBindingV1["workKind"];
+  goalId?: string | null;
+  taskId?: string | null;
+  planRef?: PlanRevisionRef | null;
+  planRevision?: number | null;
+  roleBindingRef?: RoleBindingRefV1;
+  initialRunRef: RunRef;
+  actor?: CommandIdentity["actor"];
+  idempotencyKey?: string;
+  correlationId?: string;
+  submittedAt?: string;
+};
+
+export function buildBindWorkContextCommand(deps: BuildBindWorkContextCommandDeps): BindWorkContextCommand {
+  return {
+    commandId: deps.commandId,
+    commandType: "BindWorkContext",
+    schemaVersion: 1,
+    identity: {
+      projectId: deps.projectId,
+      actor: deps.actor ?? { kind: "system", id: "work-recorder" },
+      idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem",
+    },
+    aggregateId: deps.workId,
+    expectedRevision: 0,
+    correlationId: deps.correlationId ?? deps.commandId + "-corr",
+    submittedAt: deps.submittedAt ?? P116_SCHEMA,
+    payload: {
+      workspaceId: deps.workspaceId ?? P116_WORKSPACE,
+      workKind: deps.workKind ?? "task",
+      goalId: deps.goalId ?? null,
+      taskId: deps.taskId ?? null,
+      planRef: deps.planRef ?? null,
+      planRevision: deps.planRevision ?? null,
+      roleBindingRef: deps.roleBindingRef ?? P107_ROLE_BINDING_READER_V1,
+      initialRunRef: { ...deps.initialRunRef },
+    },
+  };
+}
+
+export type BuildLinkWorkRunCommandDeps = {
+  commandId: string;
+  projectId: string;
+  workId: string;
+  workspaceId?: string;
+  runRef: RunRef;
+  expectedRevision: number;
+  actor?: CommandIdentity["actor"];
+  idempotencyKey?: string;
+  correlationId?: string;
+  submittedAt?: string;
+};
+
+export function buildLinkWorkRunCommand(deps: BuildLinkWorkRunCommandDeps): LinkWorkRunCommand {
+  return {
+    commandId: deps.commandId,
+    commandType: "LinkWorkRun",
+    schemaVersion: 1,
+    identity: {
+      projectId: deps.projectId,
+      actor: deps.actor ?? { kind: "system", id: "work-recorder" },
+      idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem",
+    },
+    aggregateId: deps.workId,
+    expectedRevision: deps.expectedRevision,
+    correlationId: deps.correlationId ?? deps.commandId + "-corr",
+    submittedAt: deps.submittedAt ?? P116_SCHEMA,
+    payload: {
+      workspaceId: deps.workspaceId ?? P116_WORKSPACE,
+      runRef: { ...deps.runRef },
+    },
+  };
+}
+
+export type BuildExecutionNoteDeps = {
+  noteId: string;
+  workId: string;
+  projectId: string;
+  workspaceId?: string;
+  runRef: RunRef;
+  attemptRef?: TaskAttemptRef | null;
+  roleBindingRef?: RoleBindingRefV1;
+  kind?: ExecutionNoteV1["kind"];
+  summary?: string;
+  reason?: string;
+  alternatives?: string[];
+  sourceRefs?: ExecutionNoteV1["sourceRefs"];
+  applicableVersions?: ExecutionNoteV1["applicableVersions"];
+  verification?: ExecutionNoteV1["verification"];
+  bodyRef?: ArtifactRef;
+  createdAt?: string;
+};
+
+export function buildExecutionNoteV1(deps: BuildExecutionNoteDeps): ExecutionNoteV1 {
+  return {
+    schemaVersion: 1,
+    noteId: deps.noteId,
+    workId: deps.workId,
+    projectId: deps.projectId,
+    workspaceId: deps.workspaceId ?? P116_WORKSPACE,
+    runRef: { ...deps.runRef },
+    attemptRef: deps.attemptRef ?? null,
+    roleBindingRef: deps.roleBindingRef ?? P107_ROLE_BINDING_READER_V1,
+    kind: deps.kind ?? "key_choice",
+    summary: deps.summary ?? "关键选择：继续保持同一工作身份并记录理由",
+    reason: deps.reason ?? "同一工作跨多次模型/工具反馈，不逐次新建工作身份",
+    alternatives: deps.alternatives ?? ["另建新 Run 身份", "合并进前一个 ContextBundle"],
+    sourceRefs: deps.sourceRefs ?? [
+      { kind: "event", refKey: "goal:goal-p116-1@1", version: 1, label: "goal created" },
+    ],
+    applicableVersions: deps.applicableVersions ?? {
+      planRef: null,
+      planRevision: null,
+      workspaceRevision: 1,
+      governanceRevision: null,
+    },
+    verification: deps.verification ?? { status: "unverified", evidenceRefs: [] },
+    bodyRef: deps.bodyRef ?? buildP116ArtifactRef({ digest: "digest-note-" + deps.noteId }),
+    noFullTranscript: true,
+    createdAt: deps.createdAt ?? P116_SCHEMA,
+  };
+}
+
+export type BuildRecordExecutionNoteCommandDeps = {
+  commandId: string;
+  projectId: string;
+  note: ExecutionNoteV1;
+  actor?: CommandIdentity["actor"];
+  idempotencyKey?: string;
+  correlationId?: string;
+  submittedAt?: string;
+};
+
+export function buildRecordExecutionNoteCommand(deps: BuildRecordExecutionNoteCommandDeps): RecordExecutionNoteCommand {
+  return {
+    commandId: deps.commandId,
+    commandType: "RecordExecutionNote",
+    schemaVersion: 1,
+    identity: {
+      projectId: deps.projectId,
+      actor: deps.actor ?? { kind: "system", id: "note-author" },
+      idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem",
+    },
+    aggregateId: deps.note.noteId,
+    expectedRevision: 0,
+    correlationId: deps.correlationId ?? deps.commandId + "-corr",
+    submittedAt: deps.submittedAt ?? P116_SCHEMA,
+    payload: { note: deps.note },
+  };
+}
+
+export type BuildContinuationResultDeps = {
+  reportId: string;
+  workId: string;
+  projectId: string;
+  workspaceId?: string;
+  requestedByRunRef?: RunRef | null;
+  capabilitySource?: ContextContinuationResultV1["capabilitySource"];
+  status?: ContextContinuationResultV1["status"];
+  originalRunRef?: RunRef | null;
+  takeoverRunRef?: RunRef | null;
+  resumedFromRunRef?: RunRef | null;
+  unsupportedCapabilities?: string[];
+  rejectionCode?: string | null;
+  summary?: string;
+  recordedAt?: string;
+};
+
+export function buildContextContinuationResultV1(deps: BuildContinuationResultDeps): ContextContinuationResultV1 {
+  const status = deps.status ?? "took_over";
+  return {
+    schemaVersion: 1,
+    reportId: deps.reportId,
+    workId: deps.workId,
+    projectId: deps.projectId,
+    workspaceId: deps.workspaceId ?? P116_WORKSPACE,
+    requestedByRunRef: deps.requestedByRunRef ?? null,
+    capabilitySource: deps.capabilitySource ?? "runtime",
+    status,
+    originalRunRef: deps.originalRunRef ?? (status === "restored_original" ? { aggregateType: "Run", projectId: deps.projectId, goalId: "goal-restored", runId: "run-restored" } : null),
+    takeoverRunRef: deps.takeoverRunRef ?? (status === "took_over" ? { aggregateType: "Run", projectId: deps.projectId, goalId: "goal-takeover", runId: "run-takeover-1" } : null),
+    resumedFromRunRef: deps.resumedFromRunRef ?? null,
+    unsupportedCapabilities: deps.unsupportedCapabilities ?? [],
+    rejectionCode: deps.rejectionCode ?? null,
+    summary: deps.summary ?? "原会话不可恢复；新 Run 从持久事实接续（明确声明，不伪装原进程存在）",
+    recordedAt: deps.recordedAt ?? P116_SCHEMA,
+  };
+}
+
+export type BuildRecordContinuationCommandDeps = {
+  commandId: string;
+  projectId: string;
+  result: ContextContinuationResultV1;
+  actor?: CommandIdentity["actor"];
+  idempotencyKey?: string;
+  correlationId?: string;
+  submittedAt?: string;
+};
+
+export function buildRecordContinuationCommand(deps: BuildRecordContinuationCommandDeps): RecordContinuationCommand {
+  return {
+    commandId: deps.commandId,
+    commandType: "RecordContinuation",
+    schemaVersion: 1,
+    identity: {
+      projectId: deps.projectId,
+      actor: deps.actor ?? { kind: "system", id: "continuation-recorder" },
+      idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem",
+    },
+    aggregateId: deps.result.reportId,
+    expectedRevision: 0,
+    correlationId: deps.correlationId ?? deps.commandId + "-corr",
+    submittedAt: deps.submittedAt ?? P116_SCHEMA,
+    payload: { result: deps.result },
+  };
+}
+
+
+
+
+
+
+export type BuildWorkContextBindingDeps = {
+  workId: string;
+  projectId: string;
+  workspaceId?: string;
+  workKind?: WorkContextBindingV1["workKind"];
+  goalId?: string | null;
+  taskId?: string | null;
+  planRef?: PlanRevisionRef | null;
+  planRevision?: number | null;
+  roleBindingRef?: RoleBindingRefV1;
+  initialRunRef: RunRef;
+  linkedRunRefs?: RunRef[];
+  createdAt?: string;
+};
+export function buildWorkContextBindingV1(deps: BuildWorkContextBindingDeps): WorkContextBindingV1 {
+  const links = deps.linkedRunRefs ?? [deps.initialRunRef];
+  return {
+    schemaVersion: 1,
+    workId: deps.workId,
+    projectId: deps.projectId,
+    workspaceId: deps.workspaceId ?? P116_WORKSPACE,
+    workKind: deps.workKind ?? "task",
+    goalId: deps.goalId ?? null,
+    taskId: deps.taskId ?? null,
+    planRef: deps.planRef ?? null,
+    planRevision: deps.planRevision ?? null,
+    roleBindingRef: deps.roleBindingRef ?? P107_ROLE_BINDING_READER_V1,
+    initialRunRef: { ...deps.initialRunRef },
+    linkedRunRefs: links.map((r) => ({ ...r })),
+    status: "active",
+    createdAt: deps.createdAt ?? P116_SCHEMA,
+  };
+}

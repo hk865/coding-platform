@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+const read=p=>fs.readFileSync(p,'utf8').replaceAll('\r\n','\n'); const write=(p,s)=>fs.writeFileSync(p,s);
+let p='src/contracts/rework-drive.ts',s=read(p);s=s.replace('export type ReworkDriveRequestV1 = {','export type ReworkDriveRequestV1 = {\n  /** Captured by the composition root; omission is explicitly unavailable. */\n  issueMaterials?: OpenIssuesViewV1;');s=s.slice(s.indexOf('import type'));s=s.replace(/\/\*\*[\s\S]*?未处置问题的只读读取端口[\s\S]*?\*\//,'/** Verification material reader used by composition roots only. */');write(p,s);
+p='src/control/dispatch-engine/rework-drive.ts';s=read(p);s=s.slice(s.indexOf('import type'));s="/** Drive rework from supplied verification material. Re-read disposition through Control after each acceptance. */\nimport type { ReworkDispositionPort } from '../../contracts/rework-disposition.js';\n"+s;s=s.replace('  issues: ReworkIssueReadPort;', '  disposition: ReworkDispositionPort;');const a=s.indexOf('      return await this.deps.issues('),b=s.indexOf('\n    } catch',a);s=s.slice(0,a)+`      const material = request.issueMaterials;
+      if (!material) return { status: 'unavailable', code: 'unavailable', message: '未提供验证问题材料' };
+      if (material.status !== 'ready') return structuredClone(material);
+      if (material.issues.some(issue => issue.projectId !== request.projectId || issue.workspaceId !== request.workspaceId || issue.goalId !== request.goalId))
+        return { status: 'unavailable', code: 'unavailable', message: '验证问题材料作用域不符' };
+      return { ...structuredClone(material), issues: await this.deps.disposition.projectIssues({ ...request, taskIds: [] }, material.issues) };`+s.slice(b);s=s.replace('  ReworkIssueReadPort,\n','');write(p,s);
+for(p of ['src/harness/persistent-harness.ts','src/harness/in-memory-harness.ts','src/app/service.ts','tests/control/rework-drive.test.ts']){s=read(p);s=s.replace(/new ReworkDriveEngine\(/g,'composeReworkDrive(');const from=p.startsWith('tests/')?'../../src/harness/rework-composition.js':p.includes('/app/')?'../harness/rework-composition.js':'./rework-composition.js';s=`import { composeReworkDrive } from '${from}';\n`+s;write(p,s);}

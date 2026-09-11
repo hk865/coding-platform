@@ -10,13 +10,13 @@ import { candidateContentDigest, candidateIdFromDigest } from "../../src/contrac
 import type { ArchitectureCandidateProposalV1 } from "../../src/contracts/architecture-inspection.js";
 import {
   buildP112Proposal, buildRecordCandidateBaselineProposalCommand,
-} from "../../src/contracts/fixtures/architecture-fixtures.js";
+} from "../../src/fixtures/architecture-fixtures.js";
 import {
   P114_PROJECT, P114_WORKSPACE, P114_PROPOSAL, P114_CANDIDATE, P114_DECISION, P114_GATE, P114_ACTIVATION,
   buildP114Candidate, buildP114Decision, buildP114Gate, buildP114Activation,
   buildP114MaterializeCommand, buildP114DecisionCommand, buildP114GateCommand, buildP114ActivationCommand,
   p114CandidateRef, p114ProposalRef,
-} from "../../src/contracts/fixtures/baseline-evolution-fixtures.js";
+} from "../contract-support/fixtures/baseline-evolution-fixtures.js";
 
 export type P114HarnessLike = P1_13HarnessLike & {
   recordCandidateBaselineProposal: (command: import("../../src/contracts/architecture-inspection.js").RecordCandidateBaselineProposalCommand) => Promise<import("../../src/contracts/architecture-inspection.js").RecordCandidateBaselineProposalReceipt>;

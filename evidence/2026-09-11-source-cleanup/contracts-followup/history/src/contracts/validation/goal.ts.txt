@@ -1,0 +1,75 @@
+/** goal protocol schema validation. Structural checks do not grant authority. */
+import { normalizeObjective } from '../command-event.js';
+import type { ValidationIssue } from './common.js';
+import { isRecord } from './common.js';
+import { stringField } from './common.js';
+import { validateCommandIdentity } from './identity.js';
+
+export function validateCreateGoalCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "CreateGoalCommand must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "CreateGoal") {
+    issues.push({
+      path: "commandType",
+      code: "invalid_command_type",
+      message: 'commandType must be "CreateGoal"',
+    });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({
+      path: "schemaVersion",
+      code: "unknown_schema_version",
+      message: "only schemaVersion 1 is supported",
+    });
+  }
+  stringField(value, "commandId", issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (value["expectedRevision"] !== 0) {
+    issues.push({
+      path: "expectedRevision",
+      code: "bad_expected_revision",
+      message: "CreateGoal expectedRevision must be 0",
+    });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  stringField(payload, "workspaceId", issues);
+  const objective = stringField(payload, "objective", issues);
+  if (objective !== null && normalizeObjective(objective).length === 0) {
+    issues.push({
+      path: "payload.objective",
+      code: "empty_objective",
+      message: "objective must be non-empty after NFC normalization + whitespace trim",
+    });
+  }
+  return issues;
+}
+
+export function validateGoalViewQuery(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "GoalViewQuery must be an object" });
+    return issues;
+  }
+  stringField(value, "projectId", issues);
+  stringField(value, "workspaceId", issues);
+  stringField(value, "goalId", issues);
+  const atLeast = value["atLeastCursor"];
+  if (atLeast !== undefined && typeof atLeast !== "string") {
+    issues.push({
+      path: "atLeastCursor",
+      code: "bad_type",
+      message: "atLeastCursor must be a CommitCursor string",
+    });
+  }
+  return issues;
+}

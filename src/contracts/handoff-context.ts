@@ -10,7 +10,7 @@
  *   - dev_docs/planning/proposed/P1-foundation/tickets/06-handoff-a-to-b.md
  *   - IMPLEMENTATION-HANDOFF.md "P1-06 契约与存储语义（冻结）"
  *
- * FROZEN semantics:
+ * Semantics:
  *   - assemble(request) yields B's bounded TaskEnvelope (SAME frozen
  *     TaskEnvelopeV1 shape — the dispatch/startRun/runtime path is unchanged)
  *     whose bundle is derived from the registered HandoffPacketSnapshot

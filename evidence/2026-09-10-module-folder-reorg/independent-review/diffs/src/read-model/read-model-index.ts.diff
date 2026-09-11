@@ -1,0 +1,15 @@
+diff --git a/evidence/2026-09-10-module-folder-reorg/independent-review/before/src/read-model/read-model-index.ts b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/src/read-model/read-model-index.ts
+index 1f3ec6f..cff65ff 100644
+--- a/evidence/2026-09-10-module-folder-reorg/independent-review/before/src/read-model/read-model-index.ts
++++ b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/src/read-model/read-model-index.ts
+@@ -1,7 +1,7 @@
+-import { reviewProjectionChanges, reviewProjectionEventTypes, reviewProjectionFacts } from '../read-model/reviewer-projection.js';
+-import { projectBaselineChangeView } from '../read-model/baseline-change-projection.js';
++import { reviewProjectionChanges, reviewProjectionEventTypes, reviewProjectionFacts } from './reviewer-projection.js';
++import { projectBaselineChangeView } from './baseline-change-projection.js';
+ import type { ReviewProjectionSnapshot } from '../contracts/read-model.js';
+-import { completedWorkCursor } from '../read-model/completed-work-eligibility.js';
++import { completedWorkCursor } from './completed-work-eligibility.js';
+ import { matchesMaterialAccessLookup, type MaterialAccessGrantLookup, type MaterialAccessGrantViewResult } from '../contracts/material-access.js';
+ /**
+  * ReadModelIndexImpl — event projection (Goal create slice + P1-02 plan view).

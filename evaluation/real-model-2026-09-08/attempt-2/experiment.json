@@ -1,0 +1,24 @@
+{
+  "kind": "minimal-real-model-chain-not-benchmark",
+  "directory": "/tmp/platform-live-acceptance-NHBRKL",
+  "root": "/tmp/platform-live-acceptance-NHBRKL/project",
+  "configuration": {
+    "revision": "d6c00a9e-b67b-4ebc-a5a4-6a806b39e60a",
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash-vision-exp",
+    "baseUrl": "https://api.deepseek.com",
+    "protocol": "chat-completions",
+    "updatedAt": "2026-09-07T10:22:38.817Z"
+  },
+  "budget": {
+    "contextWindowTokens": 32768,
+    "inputTokens": null,
+    "outputTokens": null,
+    "maxRequests": null,
+    "maxToolCalls": null,
+    "timeoutMs": null,
+    "perResponseTokens": 16384
+  },
+  "baselineExitCode": 1,
+  "startedAt": "2026-09-08T11:37:14.123Z"
+}

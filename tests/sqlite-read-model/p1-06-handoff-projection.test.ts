@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-06 SQLite handoff-provenance projection tests — HandoffRecorded /
  * ReplacementClaimed / EvidenceAdmitted -> handoffProvenance timeline.
@@ -19,28 +20,12 @@ import { describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createSqliteReadModelIndex } from "../../src/sqlite-read-model/sqlite-read-model-index.js";
+import { createSqliteReadModelIndex } from "../../src/data/read-model-index/sqlite-read-model-index.js";
 import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
-import {
-  P106_GOAL,
-  P106_OBL_HANDOFF,
-  P106_SCHEMA,
-  P106_TASK_ID,
-  P106_VR_STATIC,
-  P106_WORKSPACE,
-  buildClaimReplacementCommand,
-  buildHandoffPacketV1,
-  buildRecordHandoffCommand,
-  buildReplacementClaimLedgerCommit,
-  handoffRecordedEventFor,
-  p106PlanRef,
-} from "../../src/contracts/fixtures/handoff-fixtures.js";
-import {
-  buildEffectivityAnchorV1,
-  buildEvidenceIntakeLedgerCommit,
-  buildEvidenceV1,
-  buildSubmitEvidenceCommand,
-} from "../../src/contracts/fixtures/evidence-fixtures.js";
+import { P106_GOAL, P106_OBL_HANDOFF, P106_SCHEMA, P106_TASK_ID, P106_VR_STATIC, P106_WORKSPACE, buildClaimReplacementCommand, buildHandoffPacketV1, buildRecordHandoffCommand, p106PlanRef } from "../contract-support/fixtures/handoff-fixtures.js";
+import { buildReplacementClaimLedgerCommit, handoffRecordedEventFor } from "../../src/control/control-engine/records/handoff.js";
+import { buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand } from "../contract-support/fixtures/evidence-fixtures.js";
+import { buildEvidenceIntakeLedgerCommit } from "../../src/control/control-engine/records/evidence.js";
 import { taskAttemptRefFor, taskLeaseRefFor, runRefFor, type TaskLeaseSnapshot } from "../../src/contracts/dispatch.js";
 import { handoffPacketRefFor } from "../../src/contracts/handoff.js";
 import type { ArchitectureBaselinePin, CompletionPolicyPin } from "../../src/contracts/governance.js";
@@ -189,7 +174,7 @@ function evSet(projectId: string) {
 
 describe("P1-06 SQLite handoff-provenance projection", () => {
   it("incremental projection: packet_recorded -> replacement_claimed -> evidence_admitted in event order", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const projectId = "proj-alpha";
     const { rec, claim, evA, evB } = evSet(projectId);
     await rm.advance(page([pos(rec, 1)], 1));
@@ -241,7 +226,7 @@ describe("P1-06 SQLite handoff-provenance projection", () => {
     const projectId = "proj-alpha";
     const { rec, claim, evA, evB } = evSet(projectId);
 
-    const incremental = createSqliteReadModelIndex({ path: ":memory:" });
+    const incremental = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     await incremental.advance(page([pos(rec, 1)], 1));
     await incremental.advance(page([pos(claim, 2)], 2));
     await incremental.advance(page([pos(evA, 3)], 3));
@@ -249,7 +234,7 @@ describe("P1-06 SQLite handoff-provenance projection", () => {
     const before = await incremental.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
     expect(before.status).toBe("ready");
 
-    const fresh = createSqliteReadModelIndex({ path: ":memory:" });
+    const fresh = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     await fresh.advance(page([pos(rec, 1), pos(claim, 2), pos(evA, 3), pos(evB, 4)], 4));
     const rebuilt = await fresh.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
     expect(rebuilt.status).toBe("ready");
@@ -261,7 +246,7 @@ describe("P1-06 SQLite handoff-provenance projection", () => {
   });
 
   it("full-key isolation: two Projects share goalId/taskId without colliding", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const alpha = recordedEvent("proj-alpha", "packet-isol-a", "ev-isol-a");
     const beta = recordedEvent("proj-beta", "packet-isol-b", "ev-isol-b");
     await rm.advance(page([pos(alpha, 1), pos(beta, 2)], 2));
@@ -283,7 +268,7 @@ describe("P1-06 SQLite handoff-provenance projection", () => {
   });
 
   it("freshness: not_ready != not_found; covered-atLeastCursor with no row -> not_found", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const cold = await rm.handoffProvenance({ projectId: "proj-alpha", goalId: P106_GOAL, taskId: P106_TASK_ID });
     expect(cold.status).toBe("not_ready");
 
@@ -318,7 +303,7 @@ describe("P1-06 SQLite handoff-provenance projection", () => {
   });
 
   it("outcomeUnknownPreserved always true; timeline order survives mixed writes", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const projectId = "proj-alpha";
     const rec = recordedEvent(projectId, "packet-ou", "ev-ou-1");
     const claim = claimedEvent(projectId, "packet-ou", "ev-ou-2", "att-b-ou", "run-b-ou");
@@ -342,7 +327,7 @@ describe("P1-06 SQLite handoff-provenance projection", () => {
     const projectId = "proj-alpha";
     const path = join(tmpdir(), "p1-06-handoff-projection-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8) + ".sqlite");
     try {
-      const rm = createSqliteReadModelIndex({ path });
+      const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
       const { rec, claim, evA, evB } = evSet(projectId);
       await rm.advance(page([pos(rec, 1)], 1));
       await rm.advance(page([pos(claim, 2)], 2));
@@ -355,7 +340,7 @@ describe("P1-06 SQLite handoff-provenance projection", () => {
 
       // Reopen the SAME file with a fresh instance: the persisted projection row
       // + checkpoint survive close()/reopen.
-      const reopened = createSqliteReadModelIndex({ path });
+      const reopened = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
       const persisted = await reopened.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
       expect(persisted.status).toBe("ready");
       if (persisted.status === "ready") expect(json(persisted.provenance)).toBe(beforeJson);
@@ -363,7 +348,7 @@ describe("P1-06 SQLite handoff-provenance projection", () => {
 
       // Rebuild: a brand-new FILE instance replaying the SAME EventPages equals
       // the persisted/incremental view (empty -> full replay == incremental).
-      const rebuilt = createSqliteReadModelIndex({ path: ":memory:" });
+      const rebuilt = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
       await rebuilt.advance(page([pos(rec, 1), pos(claim, 2), pos(evA, 3), pos(evB, 4)], 4));
       const rebuiltRes = await rebuilt.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
       expect(rebuiltRes.status).toBe("ready");
@@ -375,7 +360,7 @@ describe("P1-06 SQLite handoff-provenance projection", () => {
   });
 
   it("HandoffRecorded / ReplacementClaimed advance without stalling (handled event types)", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const projectId = "proj-alpha";
     const rec = recordedEvent(projectId, "packet-nostall", "ev-nostall-1");
     const claim = claimedEvent(projectId, "packet-nostall", "ev-nostall-2", "att-b-ns", "run-b-ns");

@@ -1,0 +1,68 @@
+{
+  "stage": "RAT-02",
+  "result": "bounded_delivery_for_acceptance",
+  "ticketStatus": "proposed",
+  "liveTrial": {
+    "task": "python-slug-normalization",
+    "status": "PASS",
+    "runId": "real-cc81e009-52b2-41fc-bd8a-78d40d6ef8e9",
+    "model": "deepseek-v4-flash-vision-exp",
+    "requests": 4,
+    "inputTokens": 12518,
+    "outputTokens": 1663,
+    "cachedInputTokens": 9472,
+    "contextWindowTokens": 1000000,
+    "changedPaths": [
+      "slug.py"
+    ],
+    "independentChecks": 5
+  },
+  "verification": {
+    "appTests": 32,
+    "kernelTests": 3,
+    "docsChecks": 13,
+    "build": "PASS",
+    "typecheck": "PASS",
+    "kernelArchitecture": "PASS",
+    "hostCrash": {
+      "status": "PASS",
+      "actualHostKilled": true,
+      "modelRequestsBeforeAndAfter": 1,
+      "runtimeStatus": "outcome_unknown",
+      "canonicalRunOutcome": "outcome_unknown",
+      "staleWorkspaceLockPreserved": true,
+      "automaticRetry": false,
+      "liveProviderCalls": 0
+    },
+    "credentialScan": {
+      "status": "PASS",
+      "scannedFiles": 1454,
+      "matchCount": 0,
+      "roots": [
+        "src",
+        "tests",
+        "scripts",
+        "evidence",
+        "evaluation",
+        "dist",
+        ".local/gui/real-runs",
+        "vendor/coding-agent/src",
+        "vendor/coding-agent/dist",
+        "authoritative docs/**/*.md",
+        "README.md",
+        "IMPLEMENTATION-HANDOFF.md",
+        "vendor/coding-agent/INTEGRATION.md"
+      ],
+      "method": "exact original credential bytes, never written to evidence",
+      "leakedPaths": []
+    }
+  },
+  "notImplemented": [
+    "automatic multi-task decomposition",
+    "real freeform Query",
+    "automatic session resume or unknown-lock reconciliation UI",
+    "cross-role shared budget binding",
+    "habit adaptation and measured intent learning"
+  ],
+  "next": "Wait for user confirmation of RAT-03, then UI/workflow stage; no additional paid run executed."
+}

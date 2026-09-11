@@ -1,0 +1,38 @@
+[
+  {
+    "requestId": "28592f8d-6181-47a5-9c8d-e9c66790ef04",
+    "reservedInput": 11408,
+    "reservedOutput": 2048,
+    "inputTokens": 1901,
+    "outputTokens": 127,
+    "cachedInputTokens": 1792,
+    "status": "reported"
+  },
+  {
+    "requestId": "278830c3-2138-4a60-aa7f-515a6324c23b",
+    "reservedInput": 13236,
+    "reservedOutput": 2048,
+    "inputTokens": 2442,
+    "outputTokens": 467,
+    "cachedInputTokens": 1920,
+    "status": "reported"
+  },
+  {
+    "requestId": "638b20a5-6f49-4a75-b679-409f33d6dabc",
+    "reservedInput": 15709,
+    "reservedOutput": 2048,
+    "inputTokens": 3204,
+    "outputTokens": 150,
+    "cachedInputTokens": 2816,
+    "status": "reported"
+  },
+  {
+    "requestId": "43bf7590-2e4c-41ee-8169-f726367de3e8",
+    "reservedInput": 17040,
+    "reservedOutput": 2048,
+    "inputTokens": 3598,
+    "outputTokens": 140,
+    "cachedInputTokens": 3328,
+    "status": "reported"
+  }
+]

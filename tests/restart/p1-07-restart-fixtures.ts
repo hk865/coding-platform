@@ -1,3 +1,4 @@
+import { classifyRestartProbeError } from "./readiness-probe.js";
 /**
  * P1-07 restart-path fixtures + readiness probe.
  *   runP107FullScenario (readers parallel -> join -> writer lease -> patch
@@ -20,8 +21,8 @@ export async function isP107Ready(): Promise<boolean> {
     } finally {
       await h.cleanup().catch(() => undefined);
     }
-  } catch {
-    return false;
+  } catch (error) {
+    return classifyRestartProbeError(error);
   }
 }
 

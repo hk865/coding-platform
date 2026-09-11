@@ -1,0 +1,12 @@
+{
+  "providedFileExists": true,
+  "providedFileNonempty": true,
+  "fileContentsRead": false,
+  "environmentVariablesPresent": {
+    "OPENAI_API_KEY": false,
+    "DEEPSEEK_API_KEY": false
+  },
+  "modelBinding": "UNBOUND_RAT_01",
+  "connectionTest": "NOT_RUN",
+  "externalModelCalls": 0
+}

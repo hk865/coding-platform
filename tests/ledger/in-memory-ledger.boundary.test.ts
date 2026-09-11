@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
 import type { CommandFingerprint, CommitCursor } from "../../src/contracts/command-event.js";
 import { seqOfCommitCursor } from "../../src/contracts/ledger.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
 import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
   buildCreateGoalCommand,
   buildGoalCreateLedgerCommit,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 
 const OCCURRED = FIXED_ISO_2026_09_05;
 const FIXTURE = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1;

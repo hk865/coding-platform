@@ -1,0 +1,36 @@
+tests\integration\p1-09-query-regression.test.ts:49:  const ready = await h.assembleQueryContext(request);
+tests\integration\p1-09-query-regression.test.ts:54:  expect(await h.assembleQueryContext({ ...request, budget: { maxBundleBytes: 1 } })).toMatchObject({ status: "needs_material", gaps: [{ code: "budget_exhausted" }] });
+tests\integration\p1-09-query-regression.test.ts:55:  expect(await h.assembleQueryContext({ ...request, focusTaskRefs: [{ ...request.focusTaskRefs[0]!, projectId: P108_PROJECT_B }] })).toMatchObject({ status: "rejected", code: "forbidden_tool_or_scope" });
+tests\integration\p1-09-query-regression.test.ts:56:  expect(await h.assembleQueryContext({ ...request, focusTaskRefs: [{ ...request.focusTaskRefs[0]!, taskId: "missing" }] })).toMatchObject({ status: "needs_material", gaps: [{ code: "focus_not_found" }] });
+tests\integration\p1-09-query-regression.test.ts:138:  const context = await h.assembleQueryContext(req);
+tests\contract-suite\completed-work.contract.suite.ts:53:        const none = await h.assembleCompletedWorkContext(buildP117Request({ requestId: "req-p117-none", workspaceId: "ws-unknown" }));
+tests\context\work-run-materials.test.ts:598:        const assembled = await port.assembleWorkContext(req);
+tests\context\completed-work-regression.test.ts:33:    const result = await compiler.assembleCompletedWorkContext(request);
+tests\context\completed-work-regression.test.ts:60:  expect(await f.compiler.assembleCompletedWorkContext(f.request)).toMatchObject({ status: 'rejected' });
+tests\context\work-context-compiler.test.ts:167:    const result = await compiler.assembleWorkContext(request({ maxNotes: 1, noteKinds: ['frontier'] }));
+tests\context\work-context-compiler.test.ts:180:    const res = await compiler.assembleWorkContext(request());
+tests\context\work-context-compiler.test.ts:209:    const res = await compiler.assembleWorkContext(request());
+tests\context\work-context-compiler.test.ts:221:    const res = await compiler.assembleWorkContext(request());
+tests\context\work-context-compiler.test.ts:234:    const res = await compiler.assembleWorkContext(request());
+tests\context\work-context-compiler.test.ts:241:    const bad = await compiler.assembleWorkContext(request({ schemaVersion: 2 } as never));
+tests\context\work-context-compiler.test.ts:244:    const missingRef = await compiler.assembleWorkContext({ ...request(), workContextRef: undefined } as never);
+tests\context\work-context-compiler.test.ts:251:    const res = await compiler.assembleWorkContext(request({ declaredPermissions: { tools: [], writeScope: [WORKSPACE] } }));
+tests\context\work-context-compiler.test.ts:258:    const res = await compiler.assembleWorkContext(request({ maxBundleBytes: WORK_CONTEXT_BUNDLE_MAX_BYTES + 1 }));
+tests\context\work-context-compiler.test.ts:267:    const res = await compiler.assembleWorkContext(request({ maxNotes: 1 }));
+tests\context\work-context-compiler.test.ts:297:    const res = await compiler.assembleWorkContext(request());
+tests\context\work-context-compiler.test.ts:306:    const ra = await A.compiler.assembleWorkContext(request());
+tests\context\work-context-compiler.test.ts:307:    const rb = await B.compiler.assembleWorkContext(request());
+src\harness\persistent-harness.ts:732:      assembleWorkContext: (request) => built.workContext.assembleWorkContext(request),
+src\harness\persistent-harness.ts:733:      assembleCompletedWorkContext: (request) => built.completedWork.assembleCompletedWorkContext(request),
+src\harness\persistent-harness.ts:744:    amend: (request) => built.collaboration.amend(request),
+src\harness\persistent-harness.ts:760:      assembleQueryContext: (request) => built.queryContext.assembleQueryContext(request),
+src\harness\in-memory-harness.ts:609:    assembleWorkContext: (request) => workContext.assembleWorkContext(request),
+src\harness\in-memory-harness.ts:610:    assembleCompletedWorkContext: (request) => completedWork.assembleCompletedWorkContext(request),
+src\harness\in-memory-harness.ts:620:    assembleQueryContext: (request) => queryContext.assembleQueryContext(request),
+src\harness\in-memory-harness.ts:623:    amend: (request) => collaboration.amend(request),
+tests\contract-suite\p1-17-harness.ts:39:  const selection = await h.assembleCompletedWorkContext(buildP117Request());
+tests\control\p1-15-role-rework-loop.test.ts:258:    const assembled = await h.assembleCompletedWorkContext({
+src\control\dispatch-engine\query-drive.ts:80:        const assembled = await this.deps.context.assembleQueryContext(request);
+src\control\dispatch-engine\query-drive.ts:94:        const refreshed = await this.deps.context.assembleQueryContext(request);
+src\data\context-compiler\work-run-materials.ts:412:    const assembled = await this.deps.workContext.assembleWorkContext({
+src\data\context-compiler\work-run-materials.ts:712:    const selection = await this.deps.completedWork.assembleCompletedWorkContext({

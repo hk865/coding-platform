@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-08 LANE-B InMemory projection tests — consolePlanMatrix / consoleActiveAgents /
  * consoleTaskEvidence / consoleTimeline (dual-adapter view semantics). Run the SHARED
@@ -5,7 +6,7 @@
  * equivalence from the SAME event pages.
  */
 import { describe, expect, it } from "vitest";
-import { ReadModelIndexImpl } from "../../src/read-model/read-model-index.js";
+import { ReadModelIndexImpl } from "../../src/data/read-model-index/read-model-index.js";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
 import {
   createP108ScenarioRuntime,
@@ -187,7 +188,7 @@ describe("P1-08 LANE-B InMemory projection", () => {
   it("rebuild equivalence: a fresh InMemory index from the same events reproduces the views", async () => {
     const { h, H } = await runScenario();
     const page = await h.ledger.events({ afterCursor: null, limit: 512 });
-    const fresh = new ReadModelIndexImpl();
+    const fresh = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await fresh.advance(page);
 
     const a = await H.consolePlanMatrix({ projectId: P108_PROJECT_A, workspaceId: P108_WORKSPACE, goalId: P108_GOAL });

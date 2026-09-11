@@ -1,0 +1,55 @@
+{
+  "date": "2026-09-09",
+  "scope": "First architecture-responsibility repair batch and the two exploration source-reading regressions",
+  "productHead": "65d270d75f3088d7baa4ef3a7c80fdaa62c3a38d",
+  "docsHead": "2f9a5df01175fb5686bb8bf02abc65216055a570",
+  "wholeProductComplete": false,
+  "allModuleDependenciesAligned": false,
+  "verification": [
+    {"name": "original exploration regression", "command": "bash scripts/test-wsl.sh tests/app/explorations.test.ts", "exitCode": 1, "testsPassed": 6, "testsFailed": 2, "durationSeconds": 101.12, "log": "explorations-before.log"},
+    {"name": "intermediate exploration migration", "exitCode": 1, "testsPassed": 7, "testsFailed": 1, "log": "explorations-after.log", "resolution": "Restored pre-dispatch prerequisite rejection through the shared Context rule; subsequent consumers and full suite passed."},
+    {"name": "structural consumers", "exitCode": 0, "filesPassed": 4, "testsPassed": 19, "durationSeconds": 58.20, "log": "structure-tests.log"},
+    {"name": "existing full suite", "command": "bash scripts/test-wsl.sh", "exitCode": 0, "filesPassed": 221, "testsPassed": 1464, "testsFailed": 0, "durationSeconds": 631.18, "log": "all-tests.log"},
+    {"name": "final host types", "command": "node .local/linux-test-tools/node_modules/typescript/bin/tsc --noEmit", "exitCode": 0, "log": "types-final-formatted.log"},
+    {"name": "final UI types", "command": "node .local/linux-test-tools/node_modules/typescript/bin/tsc -p src/ui/tsconfig.json --noEmit", "exitCode": 0, "log": "ui-types-final.log"},
+    {"name": "final application compilation", "command": "node .local/linux-test-tools/node_modules/typescript/bin/tsc -p tsconfig.app.json", "exitCode": 0, "log": "app-build-final.log"},
+    {"name": "final document validation", "command": "node dev_docs/verification/validate-docs.mjs", "exitCode": 0, "checksPassed": 13, "log": "docs-final.log"},
+    {"name": "tracked product diff format", "command": "git -c core.autocrlf=false -c core.safecrlf=false diff --check", "exitCode": 0, "log": "diff-check-final.log"},
+    {"name": "tracked documentation diff format", "exitCode": 0, "log": "docs-diff-check-final.log"}
+  ],
+  "additionalDiagnostics": [
+    {"name": "isolated UI rendering load", "exitCode": 1, "status": "inconclusive", "log": "rendering-isolated.log", "note": "Only the runner header was emitted. The original complete suite later passed this file. No UI changes followed."},
+    {"name": "isolated Mantine import", "exitCode": 1, "status": "inconclusive", "note": "Read-only diagnostic returned no output. It is not counted as a pass."}
+  ],
+  "identities": {
+    "baseline": "initial-source-sha256.json",
+    "duringFullSuite": "tested-source-sha256.json",
+    "finalSource": "final-source-sha256.json",
+    "finalDocs": "final-docs-sha256.json",
+    "delta": "source-changes.json",
+    "formatComparison": "format-validation.json",
+    "baselineSourcePaths": 557,
+    "missingBaselinePaths": 0,
+    "note": "Full-suite execution preceded final formatting, moving a shared type into contracts, and unused-import cleanup. Final types and app compilation were rerun; no identical-byte full-suite claim is made. The initial dirty worktree is the change baseline, not HEAD."
+  },
+  "limits": {
+    "externalRealModelCalls": 0,
+    "realKernelTestsUseModelStubs": true,
+    "newBrowserAcceptance": false,
+    "newKernelBuild": false,
+    "newUiBundleBuild": false,
+    "osKillContinuationAcceptance": false,
+    "benchmarkExecuted": false,
+    "performanceImprovementMeasured": false,
+    "committedOrPushed": false,
+    "resetOrStash": false,
+    "historicalBulkDeletion": false
+  },
+  "remaining": [
+    "Move coordination decision materials and architecture inputs behind Context interfaces while retaining canonical Control guards.",
+    "Move remaining command-check journal orchestration and restart reconciliation from the application host into Verification and Dispatch.",
+    "Connect independent Reviewer, authorized rework, re-verification, role material requests, and decision consumption.",
+    "Verify real process interruption and new-run continuation; implement history/memory consumers, architecture evolution UI, and actual Git differences.",
+    "Execute the existing end-to-end real-task and benchmark acceptance plan with separate correctness, collaboration, and efficiency evidence."
+  ]
+}

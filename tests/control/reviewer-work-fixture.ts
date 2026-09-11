@@ -1,0 +1,84 @@
+import { expect } from 'vitest';
+import { createControlEngine } from '../../src/control/control-engine/control-engine.js';
+import { createReviewControlPorts } from '../../src/control/control-engine/reviewer-work.js';
+import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
+import { buildCreateGoalCommand } from '../../src/contracts/commands/goal.js';
+import { buildApplyPlanCommand } from '../../src/contracts/commands/plan.js';
+import { buildDispatchClaimCommand, buildDispatchStartCommand, buildRunFactCommand } from '../../src/contracts/commands/dispatch.js';
+import { buildInstallCommand, buildActivateCommand, COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1 } from '../../src/fixtures/governance-fixtures.js';
+import { completionPolicyPinFor, architectureBaselinePinFor } from '../../src/contracts/governance.js';
+import { DISPATCH_PLAN_REVISION_FIXTURE_V1, buildEnvelopeFixture, buildManifestFixture, ROLE_BINDING_FIXTURE_V1 } from '../../src/fixtures/dispatch-fixtures.js';
+import { INDEPENDENT_REVIEWER_ROLE, type ReviewerProfileV1 } from '../../src/contracts/reviewer-context.js';
+import type { StateLedger, AggregateRef, GoalSnapshot } from '../../src/contracts/ledger.js';
+import type { ArtifactRef } from '../../src/contracts/artifact.js';
+import type { RunSnapshot } from '../../src/contracts/dispatch.js';
+import type { PlanRevisionSnapshot } from '../../src/contracts/plan.js';
+import type { ReviewMaterialDescriptorV1 } from '../../src/contracts/reviewer-verification.js';
+import type { EvidenceV1, SubmitEvidenceCommand } from '../../src/contracts/evidence.js';
+import type { ReviewWorkSnapshot, ReviewOutputBinding } from '../../src/contracts/reviewer-work.js';
+import { DEFAULT_RUNTIME_BUDGET } from '../../src/contracts/runtime-budget.js';
+import { canonicalJson, sha256Hex } from '../../src/contracts/fingerprint.js';
+import { buildCurrentEffectivityAnchor } from '../../src/control/control-engine/task-reducer.js';
+import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from '../../src/contracts/commands/material-access.js';
+
+export const at = '2026-09-09T08:00:00.000Z', scope = { projectId: 'review-project', workspaceId: 'workspace', goalId: 'goal-1', taskId: 'task-run-adaptor', runId: 'producer' };
+export const sha = (value: unknown) => sha256Hex(canonicalJson(value as never));
+export const ref = (body: string): ArtifactRef => ({ kind: 'artifact', contentType: 'application/json', digest: sha256Hex(body), sizeBytes: Buffer.byteLength(body), source: { kind: 'artifact', refId: 'review-fixture', revision: '1' } });
+export const identity = (id: string) => ({ projectId: scope.projectId, actor: { kind: 'system' as const, id: 'review-fixture' }, idempotencyKey: id });
+export const cmd = (id: string) => ({ ...identity(id), commandId: id, correlationId: id, submittedAt: at });
+export async function load<T>(ledger: StateLedger, key: AggregateRef): Promise<T> { const result = await ledger.load(key); if (result.status !== 'found') throw Error('missing '+JSON.stringify(key)); return result.snapshot as T; }
+
+export async function reviewFixture(ledger: StateLedger, options: { protocol?: boolean; toolOutcome?: 'PASS'|'FAIL'; reviewers?: number; minimalGoal?: boolean; independentTasks?: boolean } = {}) {
+  let nextId = 0;
+  const deps = { ledger, now: () => at, eventId: () => 'review-event-' + (++nextId) }, control = createControlEngine(deps), ports = createReviewControlPorts(deps);
+  expect(await control.bootstrap(buildBootstrapCommand({ schemaVersion: 1, entries: [scope] }, cmd('boot')))).toMatchObject({ status: 'committed' });
+  expect(await control.submit(buildCreateGoalCommand({ ...scope, objective: 'Implement and independently review', actor: identity('goal').actor }, cmd('goal')))).toMatchObject({ status: 'committed' });
+  for (const [i, fixture] of [COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1].entries()) {
+    const install = buildInstallCommand(fixture, cmd('install-' + i)); expect(await control.install(install)).toMatchObject({ status: 'committed' });
+    const pin = install.commandType === 'InstallCompletionPolicyRevision' ? completionPolicyPinFor(install) : architectureBaselinePinFor(install);
+    expect(await control.activate(buildActivateCommand(pin, { ...cmd('activate-' + i), expectedRevision: 1 }))).toMatchObject({ status: 'committed' });
+  }
+  const draft = structuredClone(DISPATCH_PLAN_REVISION_FIXTURE_V1);
+  if (options.independentTasks) draft.executionDag.dependsOn = [];
+  if (options.minimalGoal) {
+    draft.tasks = draft.tasks.filter(t => [scope.taskId, 'gate-dispatch'].includes(t.taskId));
+    draft.obligations = draft.obligations.filter(o => ['obl-run', 'obl-gate'].includes(o.obligationId));
+    draft.taskHierarchy.parentOf = [{ parentTaskId: 'gate-dispatch', childTaskId: scope.taskId }];
+    draft.executionDag.dependsOn = [];
+  }
+  if (options.protocol) draft.reviewAdmissionProtocol = 'independent-review-v1';
+  const coverage = Array.from({ length: options.reviewers ?? 3 }, (_, i) => ({ obligationId: 'obl-run', requirementId: 'review-' + i }));
+  draft.obligations[0]!.verificationRequirements.push(...coverage.map(c => ({ requirementId: c.requirementId, kind: 'reviewer', requirementLevel: 'required' as const, description: 'Review '+c.requirementId })));
+  expect(await control.applyPlan(buildApplyPlanCommand(draft, { ...cmd('plan'), goalId: scope.goalId, expectedRevision: 1 }))).toMatchObject({ status: 'committed' });
+  const planRef = { aggregateType: 'PlanRevision' as const, projectId: scope.projectId, planId: draft.planId };
+  expect(await control.claimTask(buildDispatchClaimCommand({ ...cmd('claim'), ...scope, attemptId: 'producer-attempt', runId: 'producer', roleBinding: ROLE_BINDING_FIXTURE_V1, declaredPermissions: { tools: ['read'], writeScope: [] }, budget: { tokenBudget: DEFAULT_RUNTIME_BUDGET.contextWindowTokens, deadline: null } }))).toMatchObject({ status: 'committed' });
+  const producerRef = { aggregateType: 'Run' as const, projectId: scope.projectId, goalId: scope.goalId, runId: scope.runId }, producerAttemptRef = { aggregateType: 'TaskAttempt' as const, projectId: scope.projectId, goalId: scope.goalId, taskId: scope.taskId, attemptId: 'producer-attempt' };
+  const envelope = buildEnvelopeFixture({ ...scope, envelopeId: 'producer-envelope', workspaceRevision: 1, attemptId: 'producer-attempt', planRef, bundleRef: ref('{}'), budget: { tokenBudget: DEFAULT_RUNTIME_BUDGET.contextWindowTokens, deadline: null } });
+  envelope.permissions = { policyRevision: ROLE_BINDING_FIXTURE_V1.policyRevision, tools: ['read'], writeScope: [] };
+  expect(await control.startRun(buildDispatchStartCommand({ ...cmd('start'), runId: scope.runId, expectedRevision: 1, envelope, manifest: buildManifestFixture({ planRef, workspaceId: scope.workspaceId, workspaceRevision: 1 }) }))).toMatchObject({ status: 'committed' });
+  expect(await control.runFact(buildRunFactCommand({ ...cmd('completed'), runId: scope.runId, expectedRevision: 2, fact: { kind: 'runtime_event', event: { schemaVersion: 1, eventType: 'run_completed', eventId: 'producer-completed', runRef: producerRef, sequence: 1, occurredAt: at, payload: { kind: 'completed', exitCode: 0 } } } }))).toMatchObject({ status: 'committed' });
+  const run = await load<RunSnapshot>(ledger, producerRef), plan = await load<PlanRevisionSnapshot>(ledger, planRef), goal = await load<GoalSnapshot>(ledger, { aggregateType: 'Goal', projectId: scope.projectId, goalId: scope.goalId }), workspace = await load<{ revision:number }>(ledger, goal.workspaceRef);
+  const aggregateRef = ref('{"tool":"pass"}'), verificationPlanRef = { planId: 'verification-round', planDigest: sha('verification-round') };
+  const toolEvidence: EvidenceV1 = { schemaVersion: 1, evidenceId: 'tool-pass', kind: 'observation', outcome: options.toolOutcome ?? 'PASS', source: { actor: identity('tool').actor, runRef: producerRef, checkId: 'tool' }, subject: { projectId: scope.projectId, goalId: scope.goalId, taskId: scope.taskId }, coverage: [{ obligationId: 'obl-run', requirementId: 'vr-run' }], anchor: buildCurrentEffectivityAnchor({ plan, workspaceRevision: 1 }), verificationPlanRef, summary: { text: 'Tool report', artifactRef: aggregateRef } };
+  const submit = (evidence: EvidenceV1): SubmitEvidenceCommand => ({ ...cmd(evidence.evidenceId), identity: identity(evidence.evidenceId), commandType: 'SubmitEvidence', schemaVersion: 1, aggregateId: evidence.evidenceId, expectedRevision: 0, payload: { evidence } });
+  expect(await control.submitEvidence(submit(toolEvidence))).toMatchObject({ status: 'committed' });
+  const sourceProof = { kind: 'current-workspace-only' as const, runBaselineKnown: false as const };
+  const body: Omit<ReviewMaterialDescriptorV1,'descriptorId'> = { schemaVersion: 1, kind: 'independent-review-material', subject: { scope, producerRunRef: producerRef, producerAttemptRef }, toolRound: { roundId: 'round', requestId: 'round-request', aggregateRef, configurationDigest: sha('tools'), verificationPlanRef }, materialIdentity: { schemaVersion: 1, scope, runRef: producerRef, runRevision: run.revision, runDigest: sha(run), planRef, planRevision: plan.planRevision, planDigest: sha(plan), taskDigest: sha(plan.tasks.find(t => t.taskId === scope.taskId)), goalRevision: goal.revision, goalDigest: sha(goal), workspaceRevision: workspace.revision, workspaceDigest: sha(workspace), workspaceRoot: '/workspace', policyPin: plan.effectiveCompletionPolicy, baselinePin: plan.effectiveArchitectureBaseline, sourceDigest: sha('source'), sourceProofDigest: sha(sourceProof) }, sourceProof, requiredReviewerCoverage: coverage, requirements: coverage.map(c => ({ ...c, description: 'Review' })), tools: [{ checkId: 'tool', kind: 'dynamic', definitionDigest: sha('tool'), childRequestId: 'child', observationId: 'tool-observation', reportRef: aggregateRef, coverage: toolEvidence.coverage, result: 'PASS' }], toolEvidence: [{ evidenceRef: { aggregateType: 'Evidence', projectId: scope.projectId, evidenceId: toolEvidence.evidenceId }, coverage: toolEvidence.coverage, aggregateRef }], sourceNotes: [] };
+  const descriptor = { ...body, descriptorId: sha(body) }, descriptorRef = ref(canonicalJson(descriptor));
+  const profileBody = { schemaVersion: 1 as const, subjectScope: scope, roleBinding: INDEPENDENT_REVIEWER_ROLE, mode: 'review' as const, permissions: { tools: ['read'], writeScope: [] as [] }, model: { configurationRevision: 'saved-config-1', provider: 'openai-compatible', model: 'review-model', baseUrl: 'http://local.test/v1' }, budget: DEFAULT_RUNTIME_BUDGET };
+  const profile: ReviewerProfileV1 = { ...profileBody, profileId: 'reviewer-profile-'+sha(profileBody), revision: 1, digest: sha(profileBody) };
+  const create = { identity: identity('create-review'), requestId: 'review-request', descriptor, descriptorRef, reviewerProfile: profile, reviewerConfigRef: { configId: profile.profileId, revision: profile.revision, digest: profile.digest } };
+  return { ledger, control, ports, create, coverage, submit, toolEvidence, plan, run, async start(work: ReviewWorkSnapshot, options: { bindOutput?: boolean } = {}) {
+    const grant = buildMaterialAccessGrantV1({ grantId: 'review-grant', scope, materials: [descriptorRef], reader: work.reviewerRunRef, issuedBy: { aggregateType: 'Control', projectId: scope.projectId, goalId: scope.goalId }, purpose: 'Review fixture originals', basis: { planRef, workspaceRevision: 1, sourceDigest: descriptor.materialIdentity.sourceDigest }, grantedAt: at });
+    const granted = await control.grantMaterialAccess(buildGrantMaterialAccessCommand(grant, { ...cmd('grant'), actorKind: 'system', actorId: 'review-fixture' })); expect(granted.status).toBe('committed'); if (granted.status !== 'committed') throw Error('grant');
+    const input = { packetRef: ref('{"review":"packet"}'), packetDigest: ref('{"review":"packet"}').digest, descriptorDigest: descriptorRef.digest, inputDigest: sha('review-input'), grantRefs: [granted.grantRef] };
+    const reviewerEnvelope = { ...envelope, runRef: work.reviewerRunRef, attemptRef: work.reviewerAttemptRef, envelopeId: work.ref.reviewId, roleBinding: profile.roleBinding, work: { kind: 'review' as const, reviewWorkRef: work.ref }, permissions: { policyRevision: profile.roleBinding.policyRevision, tools: ['read'], writeScope: [] }, reviewInput: input };
+    expect(await control.startRun(buildDispatchStartCommand({ ...cmd('review-start'), runId: work.reviewerRunRef.runId, expectedRevision: 1, envelope: reviewerEnvelope, manifest: buildManifestFixture({ planRef, workspaceId: scope.workspaceId, workspaceRevision: 1 }) }))).toMatchObject({ status: 'committed' });
+    expect(await control.runFact(buildRunFactCommand({ ...cmd('review-completed'), runId: work.reviewerRunRef.runId, expectedRevision: 2, fact: { kind: 'runtime_event', event: { schemaVersion: 1, eventType: 'run_completed', eventId: 'review-completed', runRef: work.reviewerRunRef, sequence: 1, occurredAt: at, payload: { kind: 'completed', exitCode: 0 } } } }))).toMatchObject({ status: 'committed' });
+    const fresh = await load<ReviewWorkSnapshot>(ledger, work.ref), ended = await load<RunSnapshot>(ledger, work.reviewerRunRef);
+    const reportRef = ref('{"report":"review result"}');
+    const output: ReviewOutputBinding = { reportRef, reportDigest: reportRef.digest, runRef: ended.ref, runRevision: ended.revision, terminalEventId: ended.lastRuntimeEventId, terminalEventSeq: ended.lastEventSeq, observationId: 'independent-observation', sessionId: 'independent-session', packetDigest: input.packetDigest, inputDigest: input.inputDigest, descriptorDigest: input.descriptorDigest };
+    if (options.bindOutput !== false) expect(await ports.dispatch.bindOutput({ identity: identity('bind-output'), workRef: work.ref, expectedWorkRevision: fresh.revision, output })).toMatchObject({ status: 'accepted' });
+    return { work: await load<ReviewWorkSnapshot>(ledger, work.ref), output };
+  } };
+}

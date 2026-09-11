@@ -1,0 +1,273 @@
+{
+  "directory": "/tmp/platform-live-acceptance-NHBRKL",
+  "kind": "minimal-real-model-chain-not-benchmark",
+  "baselineExitCode": 1,
+  "runtimeStatus": "completed",
+  "error": null,
+  "model": {
+    "revision": "d6c00a9e-b67b-4ebc-a5a4-6a806b39e60a",
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash-vision-exp",
+    "baseUrl": "https://api.deepseek.com",
+    "protocol": "chat-completions",
+    "updatedAt": "2026-09-07T10:22:38.817Z"
+  },
+  "requests": 7,
+  "usage": [
+    {
+      "requestId": "d92d41c9-310c-4c1a-8483-343982c16cb0",
+      "reservedInput": 17152,
+      "reservedOutput": 16384,
+      "inputTokens": 3414,
+      "outputTokens": 121,
+      "cachedInputTokens": 3328,
+      "status": "reported"
+    },
+    {
+      "requestId": "8d0d7fd1-47b6-4990-8b3d-007c784abffc",
+      "reservedInput": 18318,
+      "reservedOutput": 16384,
+      "inputTokens": 3726,
+      "outputTokens": 124,
+      "cachedInputTokens": 3456,
+      "status": "reported"
+    },
+    {
+      "requestId": "683e7610-deb2-4b6f-8f92-3e8a6a5b16ab",
+      "reservedInput": 21812,
+      "reservedOutput": 16384,
+      "inputTokens": 4794,
+      "outputTokens": 3605,
+      "cachedInputTokens": 3840,
+      "status": "reported"
+    },
+    {
+      "requestId": "94a4dcb4-15af-4200-a569-c5330ff69db0",
+      "reservedInput": 37536,
+      "reservedOutput": 16384,
+      "inputTokens": 8982,
+      "outputTokens": 77,
+      "cachedInputTokens": 8320,
+      "status": "reported"
+    },
+    {
+      "requestId": "9a5690ae-5864-454b-95f7-bdf9bec5068d",
+      "reservedInput": 39000,
+      "reservedOutput": 16384,
+      "inputTokens": 9406,
+      "outputTokens": 312,
+      "cachedInputTokens": 8960,
+      "status": "reported"
+    },
+    {
+      "requestId": "f237a13a-af71-4b97-bf4a-3b538996986d",
+      "reservedInput": 41107,
+      "reservedOutput": 16384,
+      "inputTokens": 10031,
+      "outputTokens": 1412,
+      "cachedInputTokens": 9600,
+      "status": "reported"
+    },
+    {
+      "requestId": "cba1c0fd-f4ca-43ef-9916-0e1a0f857432",
+      "reservedInput": 47192,
+      "reservedOutput": 16384,
+      "inputTokens": 11891,
+      "outputTokens": 520,
+      "cachedInputTokens": 11392,
+      "status": "reported"
+    }
+  ],
+  "unchangedTests": true,
+  "checked": {
+    "check": {
+      "projectId": "live-paths",
+      "workspaceId": "workspace-main",
+      "goalId": "goal-live",
+      "runId": "real-path-normalization",
+      "requestId": "independent-unittest",
+      "fingerprint": "875d76fbabd340ca2d0653358e3add44d73e5d4ad664ff017f17783eaeb84b6a",
+      "status": "finished",
+      "result": {
+        "status": "ready",
+        "plan": {
+          "schemaVersion": 1,
+          "planId": "ffc97e00addca82e89307a1b5ef0596f191554469bebe7a9b0c0fd2eb8b4d2bc",
+          "planDigest": "ffc97e00addca82e89307a1b5ef0596f191554469bebe7a9b0c0fd2eb8b4d2bc",
+          "taskRef": {
+            "projectId": "live-paths",
+            "goalId": "goal-live",
+            "taskId": "coding-task"
+          },
+          "planRef": {
+            "aggregateType": "PlanRevision",
+            "projectId": "live-paths",
+            "planId": "real-plan-goal-live"
+          },
+          "planRevision": 1,
+          "workspaceRevision": 1,
+          "pinnedCompletionPolicy": {
+            "ref": {
+              "aggregateType": "CompletionPolicyRevision",
+              "projectId": "live-paths",
+              "policyId": "policy-completion-mvp",
+              "revision": 1
+            },
+            "digest": "4680201b5cb8e4807db836eaaf8fbfc78ec565134e0a40cf20a5f813b309186e"
+          },
+          "pinnedArchitectureBaseline": {
+            "ref": {
+              "aggregateType": "ArchitectureBaselineRevision",
+              "projectId": "live-paths",
+              "baselineId": "baseline-architecture-mvp",
+              "revision": 1
+            },
+            "digest": "19a578923f4fc100e37ef3f907d23a4d945e8825c653b7c467cf8712d1db7a8b"
+          },
+          "changeScope": {
+            "diffClass": "code-change",
+            "changedFiles": [],
+            "writeSummary": "explicit independent command check"
+          },
+          "semanticChange": "semantic",
+          "risks": [],
+          "checks": [
+            {
+              "checkId": "command-dynamic",
+              "kind": "dynamic",
+              "satisfiesKind": "dynamic",
+              "coverage": [
+                {
+                  "obligationId": "coding-result",
+                  "requirementId": "independent-check"
+                }
+              ],
+              "satisfactionPath": "predicate"
+            }
+          ]
+        },
+        "observations": [
+          {
+            "checkId": "command-dynamic",
+            "kind": "dynamic",
+            "result": "PASS",
+            "coverage": [
+              {
+                "obligationId": "coding-result",
+                "requirementId": "independent-check"
+              }
+            ],
+            "summary": "dynamic command-dynamic: tool_check (PASS); command result only, not overall acceptance",
+            "artifactRef": {
+              "kind": "artifact",
+              "contentType": "application/json",
+              "digest": "49871a4ba13b9e486f2689d752433c67d1f5649fb58bb3bdb62bba55129747f5",
+              "sizeBytes": 1774,
+              "source": {
+                "kind": "workspace",
+                "refId": "workspace-main",
+                "revision": "1",
+                "digest": "738fc1734deaa7dc91b52251ffe11114036a6af57743c72bc7902f189622aa30"
+              }
+            }
+          }
+        ],
+        "verificationPlanRef": {
+          "planId": "ffc97e00addca82e89307a1b5ef0596f191554469bebe7a9b0c0fd2eb8b4d2bc",
+          "planDigest": "ffc97e00addca82e89307a1b5ef0596f191554469bebe7a9b0c0fd2eb8b4d2bc"
+        }
+      }
+    },
+    "replayed": false
+  },
+  "reports": {
+    "requestId": "independent-unittest",
+    "status": "finished",
+    "reports": [
+      {
+        "category": "tool_check",
+        "context": {
+          "changeScope": {
+            "changedFiles": [],
+            "diffClass": "code-change",
+            "writeSummary": "explicit independent command check"
+          },
+          "goalId": "goal-live",
+          "planRef": {
+            "aggregateType": "PlanRevision",
+            "planId": "real-plan-goal-live",
+            "projectId": "live-paths"
+          },
+          "projectId": "live-paths",
+          "taskId": "coding-task",
+          "workspaceRevision": 1
+        },
+        "definition": {
+          "checkId": "command-dynamic",
+          "command": "python3 -m unittest discover -s tests -v",
+          "cwd": ".",
+          "kind": "dynamic",
+          "timeoutMs": 60000
+        },
+        "endedAt": "2026-09-08T11:38:13.478Z",
+        "execution": {
+          "cancelled": false,
+          "effects": {
+            "artifactRefs": [],
+            "changedPaths": [],
+            "sideEffect": "possible",
+            "workspaceRevision": "764ef1802e54a2df57541f0da2d0d9d5e809b31c638e876dde297f9bc408e356"
+          },
+          "exitCode": 0,
+          "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+          "signal": null,
+          "stderr": {
+            "text": "test_absolute (test_paths.Paths.test_absolute) ... ok\ntest_literal_names (test_paths.Paths.test_literal_names) ... ok\ntest_reject_non_strings (test_paths.Paths.test_reject_non_strings) ... ok\ntest_reject_nul (test_paths.Paths.test_reject_nul) ... ok\ntest_relative (test_paths.Paths.test_relative) ... ok\n\n----------------------------------------------------------------------\nRan 5 tests in 0.000s\n\nOK\n",
+            "totalBytes": 402,
+            "truncated": false
+          },
+          "stdout": {
+            "text": "",
+            "totalBytes": 0,
+            "truncated": false
+          },
+          "timedOut": false,
+          "timings": {
+            "executionMs": 68.83560199999192,
+            "snapshotAfterMs": 6.921257000009064,
+            "snapshotBeforeMs": 9.727242000008118
+          }
+        },
+        "observationId": "check-c0c294ea-3801-4641-b455-a91efe9d0c0c",
+        "owner": {
+          "aggregateType": "Run",
+          "goalId": "goal-live",
+          "projectId": "live-paths",
+          "runId": "real-path-normalization"
+        },
+        "result": "PASS",
+        "schemaVersion": 1,
+        "sourceDigest": "738fc1734deaa7dc91b52251ffe11114036a6af57743c72bc7902f189622aa30",
+        "startedAt": "2026-09-08T11:38:13.372Z"
+      }
+    ]
+  },
+  "reopen": {
+    "runtimeStatus": "completed",
+    "reportEqual": true
+  },
+  "goalStatus": {
+    "status": "not_ready",
+    "requiredCursor": "c0000000016",
+    "observedCursor": "c0000000016"
+  },
+  "traceTypes": [
+    "run.started",
+    "model.request_started",
+    "model.usage_recorded",
+    "assistant.message_completed",
+    "tool.started",
+    "tool.completed",
+    "run.completed"
+  ]
+}

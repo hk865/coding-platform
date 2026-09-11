@@ -9,12 +9,12 @@ import type {
   WorkspaceBootstrapReceipt,
 } from "../../src/contracts/bootstrap.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
   type GoalFixtureScope,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import type { CreateGoalResult } from "../../src/contracts/modules.js";
 import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 

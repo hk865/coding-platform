@@ -1,0 +1,98 @@
+import { ControlReworkDisposition } from '../../src/control/control-engine/rework-disposition.js';
+import { afterEach, expect, it, vi } from 'vitest';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
+import { VerificationService } from '../../src/control/verification-engine/verification-service.js';
+import { ArtifactVault } from '../../src/data/artifact-vault/artifact-vault.js';
+import { canonicalJson } from '../../src/contracts/fingerprint.js';
+import type { CheckContextV1 } from '../../src/contracts/verification.js';
+import type { CommandCheckRecord, VerificationServiceDeps } from '../../src/contracts/verification-service.js';
+
+const roots: string[] = [];
+afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+const scope = { projectId: 'verification', workspaceId: 'workspace', goalId: 'goal', runId: 'run' };
+const owner = { aggregateType: 'Run' as const, projectId: scope.projectId, goalId: scope.goalId, runId: scope.runId };
+const context: CheckContextV1 = { ...scope, taskId: 'task', planRef: { aggregateType: 'PlanRevision', projectId: scope.projectId, planId: 'plan' }, workspaceRevision: 1,
+  changeScope: { diffClass: 'code-change', changedFiles: [], writeSummary: 'explicit check' } };
+const input = { requestId: 'check', command: 'printf check', kind: 'dynamic' as const, timeoutMs: 1000, allowExecute: true };
+const sha = (body: string) => createHash('sha256').update(body).digest('hex');
+const sourceDigest = 'a'.repeat(64);
+
+async function checkpoint(phase: 'executing' | 'report_stored', effects: 'known' | 'unknown' = 'known', legacy = false) {
+  const directory = await mkdtemp(join(tmpdir(), 'verification-service-')); roots.push(directory);
+  const vault = new ArtifactVault();
+  const startedAt = '2026-09-09T00:00:00.000Z';
+  const report = { observationId: 'observation', owner, context, effects, sourceDigest };
+  const stored = await vault.put({ body: JSON.stringify(report), contentType: 'application/json', ownerRef: owner,
+    sourceRefs: [{ kind: 'workspace', refId: scope.workspaceId, revision: '1', digest: sourceDigest }], requestedAt: startedAt });
+  if (stored.status !== 'stored') throw Error('report persistence failed: ' + JSON.stringify(stored));
+  const storedScope = legacy ? { ...scope, root: '/original/root', name: 'original mount', bindingDigest: 'b'.repeat(64) } : scope;
+  const key = sha(canonicalJson([storedScope, input.requestId]));
+  const record: CommandCheckRecord = { ...storedScope, requestId: input.requestId,
+    fingerprint: sha(canonicalJson({ scope: storedScope, command: input.command, kind: input.kind, timeoutMs: input.timeoutMs })),
+    command: input.command, kind: input.kind, timeoutMs: input.timeoutMs, startedAt, finishedAt: null, status: 'running', result: null,
+    lifecycle: phase, leaseId: 'command-check-' + key,
+    progress: phase === 'executing'
+      ? { phase, observationId: report.observationId, context, sourceDigest, startedAt }
+      : { phase, observationId: report.observationId, context, sourceDigest, artifactRef: stored.ref, effects, category: 'tool_check', result: 'PASS' } };
+  const filename = join(directory, 'check-' + key + '.json');
+  await writeFile(filename, JSON.stringify(record));
+  const unavailable = vi.fn(async (): Promise<never> => { throw Error('unexpected state or command operation'); });
+  // RW-16：必产出的见证通道要按 runRef 归因本 Run 的产出，因此宿主必须提供只读事件扫描；
+  // 本用例的轮次不带角色规格，扫描不会被调用（`unavailable` 断言未被调用）。
+  const deps: VerificationServiceDeps = { directory, disposition: new ControlReworkDisposition({ load: unavailable, events: unavailable } as never), vault,
+    context: { runOutputWitness: unavailable, resolveRound: unavailable, resolveVerification: unavailable, run: unavailable, policy: unavailable, baseline: unavailable,
+      taskReductionRevision: unavailable, goalPhaseRevision: unavailable, writeLease: unavailable, patchRecord: unavailable,
+      workspaceDigest: unavailable, openReport: (ref, requester) => vault.open(ref, { requesterRunRef: requester }) },
+    control: { submitEvidence: unavailable, reduceTask: unavailable, reduceGoal: unavailable, recordPatch: unavailable },
+    workspaceLease: { acquireWriteLease: unavailable, releaseLease: unavailable },
+    candidatePatchCheck: { check: unavailable } };
+  const service = new VerificationService(deps);
+  await service.init();
+  return { service, filename, directory, deps, unavailable, artifactRef: stored.ref };
+}
+
+it('replays only a verified legacy MountedProject fingerprint and keeps the original journal filename', async () => {
+  const { service, directory, filename, deps, unavailable } = await checkpoint('report_stored', 'known', true);
+  expect(await service.runChecks(scope, input)).toMatchObject({ replayed: true });
+  await expect(service.runChecks(scope, { ...input, command: 'changed command' })).rejects.toThrow('内容已改变');
+  expect(await readdir(directory)).toEqual([filename.slice(directory.length + 1)]);
+  const altered = JSON.parse(await readFile(filename, 'utf8'));
+  altered.root = '/different/root';
+  await writeFile(filename, JSON.stringify(altered));
+  const reopened = new VerificationService(deps); await reopened.init();
+  await expect(reopened.runChecks(scope, input)).rejects.toThrow('内容已改变');
+  expect(unavailable).not.toHaveBeenCalled();
+});
+
+it('reopens the existing command journal without Runtime or Harness and exposes only durable report materials', async () => {
+  const { service, filename, unavailable, artifactRef } = await checkpoint('report_stored');
+  expect(JSON.parse(await readFile(filename, 'utf8'))).toMatchObject({ status: 'interrupted', lifecycle: 'reconciliation_required', recovery: { commandReplayAllowed: false } });
+  const material = service.checkReportMaterials(scope);
+  expect(material).toEqual([{ id: canonicalJson([owner, input.requestId]), label: input.command, workspaceId: scope.workspaceId, owner, artifactRef }]);
+  material[0]!.artifactRef.digest = 'b'.repeat(64);
+  expect(service.checkReportMaterials()[0]!.artifactRef.digest).toBe(artifactRef.digest);
+  expect(service.checkReportMaterials({ ...scope, runId: 'another' })).toEqual([]);
+  expect(await service.checkReports(scope, input.requestId)).toMatchObject({ status: 'interrupted', observations: [], reports: [{ observationId: 'observation', effects: 'known' }] });
+  expect(await service.runChecks(scope, input)).toMatchObject({ replayed: true, check: { status: 'interrupted', result: null } });
+  await expect(service.runChecks(scope, { ...input, command: 'different' })).rejects.toThrow('内容已改变');
+  expect(unavailable).not.toHaveBeenCalled();
+});
+
+it('keeps an executing intent out of report history and cannot replay or release it on reopen', async () => {
+  const { service, unavailable } = await checkpoint('executing');
+  expect(service.checkReportMaterials()).toEqual([]);
+  await expect(service.reconcileCheck(scope, input.requestId)).rejects.toThrow('不能盲目重放或释放租约');
+  expect(await service.runChecks(scope, input)).toMatchObject({ replayed: true, check: { status: 'interrupted' } });
+  expect(unavailable).not.toHaveBeenCalled();
+});
+
+it('retains an unknown-effects report as history while refusing lease release and Evidence admission', async () => {
+  const { service, unavailable } = await checkpoint('report_stored', 'unknown');
+  expect(service.checkReportMaterials()).toHaveLength(1);
+  await expect(service.reconcileCheck(scope, input.requestId)).rejects.toThrow('不能证明工具副作用已确认');
+  await expect(service.admitCheckEvidence(scope, { requestId: input.requestId, reportDigest: 'a'.repeat(64) })).rejects.toThrow('不可登记证据');
+  expect(unavailable).not.toHaveBeenCalled();
+});

@@ -1,3 +1,4 @@
+import { compileVerificationPlan } from '../../src/control/verification-engine/verification-plan-compiler.js';
 /**
  * P1-04 verification contract suite — plan compilation, VerificationEngine
  * behavior, Reviewer/ReviewContext bounds and the Task/Gate reducer table.
@@ -5,28 +6,20 @@
  * tuning).
  */
 import { describe, expect, it } from "vitest";
-import { compileVerificationPlan, REVIEWER_MAX_PACKET_BYTES, REVIEWER_SEMANTIC_CHECK_ID, NO_CHANGE_FAST_PATH_CHECK_ID } from "../../src/contracts/verification.js";
-import type { VerificationPlanCompileInput, VerificationRequestV1 } from "../../src/contracts/verification.js";
+import { REVIEWER_MAX_PACKET_BYTES, REVIEWER_SEMANTIC_CHECK_ID, NO_CHANGE_FAST_PATH_CHECK_ID } from "../../src/contracts/verification.js";
+import type { VerificationPlanCompileInput } from '../../src/control/verification-engine/verification-plan-compiler.js';
+import type { VerificationRequestV1 } from '../../src/contracts/verification.js';
 import type { PlanRevisionSnapshot } from "../../src/contracts/plan.js";
-import type { EffectivityAnchorV1, EvidenceV1 } from "../../src/contracts/evidence.js";
-import { selectEffectiveEvidenceSet } from "../../src/contracts/evidence.js";
-import {
-  P104_OBL_GATE,
-  P104_OBL_IMPLEMENT,
-  P104_OBL_REVIEW,
-  P104_PLAN_REVISION_FIXTURE_V1,
-  P104_TASK_DEFERRED,
-  P104_TASK_GATE,
-  P104_TASK_IMPLEMENT,
-  P104_TASK_REVIEW,
-} from "../../src/contracts/fixtures/evidence-fixtures.js";
+import type { EvidenceV1 } from "../../src/contracts/evidence.js";
+import { selectEffectiveEvidenceSet } from "../../src/control/control-engine/policies/evidence.js";
+import { P104_OBL_GATE, P104_OBL_IMPLEMENT, P104_OBL_REVIEW, P104_TASK_DEFERRED, P104_TASK_GATE, P104_TASK_IMPLEMENT, P104_TASK_REVIEW } from "../contract-support/fixtures/evidence-fixtures.js";
 import {
   FAKE_RUNTIME_SCRIPT_CRASHED_V1,
   buildDispatchStartCommand,
   buildManifestFixture,
   buildRunFactCommand,
   rebaseScriptForRun,
-} from "../../src/contracts/fixtures/dispatch-fixtures.js";
+} from "../../src/fixtures/dispatch-fixtures.js";
 import {
   anchorFor,
   evidenceCommandFor,
@@ -40,7 +33,7 @@ import {
   SCHEMA,
   type P1_04HarnessFactory,
 } from "./p1-04-harness.js";
-import { DETERMINISTIC_CHECK_PROVIDERS, FAKE_REVIEWER_PORT } from "../../src/contracts/testing/check-providers.double.js";
+import { FAKE_REVIEWER_PORT } from "../../src/testing/check-providers.double.js";
 import { runRefFor, taskAttemptRefFor } from "../../src/contracts/dispatch.js";
 import { artifactBodyDigest } from "../../src/contracts/artifact.js";
 

@@ -46,7 +46,8 @@ import type {
 import type { ArchitectureEvolutionPolicyActivatedEvent, ArchitectureEvolutionPolicyInstalledEvent } from "./architecture-evolution-policy.js";
 import type { RemediationPlanPatchRecordedEvent, RemediationPlanPatchSnapshot, RemediationPlanPatchRef, RemediationTaskAdvancedEvent, RemediationTaskCreatedEvent, RemediationTaskSnapshot, RemediationTaskRef } from "./remediation.js";
 import type { ArchitectureChangeDecisionRecordedEvent, ArchitectureChangeDecisionRef, ArchitectureChangeDecisionV1, BaselineActivationRecordedEvent, BaselineActivationRef, BaselineActivationV1, CandidateArchitectureBaselineRef, CandidateArchitectureBaselineSnapshot, CandidateBaselineMaterializedEvent, MigrationGateRecordedEvent, MigrationGateTaskRef, MigrationGateTaskV1 } from "./baseline-evolution.js";
-import type { CoordinationPolicyActivatedEvent, CoordinationPolicyInstalledEvent, CoordinationPolicyRevisionRef, CoordinationPolicyRevisionSnapshot, InitialDesignDecisionRecordedEvent, InitialDesignDecisionRef, InitialDesignDecisionSnapshot, InitialDesignDecisionV1, InitialDesignProposalRecordedEvent, InitialDesignProposalRef, InitialDesignProposalSnapshot, InitialDesignProposalV1, ProjectCoordinationPolicyActiveRef, ProjectCoordinationPolicyActiveSnapshot } from "./human-role-collaboration.js";
+import type { CoordinationPolicyActivatedEvent, CoordinationPolicyInstalledEvent, CoordinationPolicyRevisionRef, CoordinationPolicyRevisionSnapshot, InitialDesignDecisionRecordedEvent, InitialDesignDecisionRef, InitialDesignDecisionSnapshot, InitialDesignProposalRecordedEvent, InitialDesignProposalRef, InitialDesignProposalSnapshot, ProjectCoordinationPolicyActiveRef, ProjectCoordinationPolicyActiveSnapshot } from "./human-role-collaboration.js";
+import type { ProjectRoleSpecActiveRef, ProjectRoleSpecActiveSnapshot, RoleSpecActivatedEvent, RoleSpecInstalledEvent, RoleSpecRevisionRef, RoleSpecRevisionSnapshot } from "./role-spec.js";
 import type { PlanRevisionAcceptedEvent, PlanRevisionRef, PlanRevisionSnapshot } from "./plan.js";
 import type {
   DispatchIntentV1,
@@ -134,6 +135,11 @@ import type { ControlIntentRecordedEvent, ControlIntentRef, ControlIntentSnapsho
 import type { QueryJobAnswerRecordedEvent, QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobClosedEvent, QueryJobRef, QueryJobSnapshot, QueryJobSubmittedEvent, QueryRunRef, QueryRunSnapshot, QueryRunStartedEvent } from "./query-job.js";
 import type { GoalRevisionRecordedEvent, GoalRevisionSnapshot, PlanProposalRecordedEvent, PlanProposalSnapshot, PlanRevisionSupersededEvent, UserDecisionRecordedEvent, UserDecisionSnapshot } from "./goal-change.js";
 import type { ArchitectureEvolutionPolicyRevisionRef, ArchitectureEvolutionPolicyRevisionSnapshot, ProjectArchitectureEvolutionPolicyActiveRef, ProjectArchitectureEvolutionPolicyActiveSnapshot } from "./architecture-evolution-policy.js";
+import type {
+  MaterialAccessGrantRef,
+  MaterialAccessGrantSnapshot,
+  MaterialAccessGrantedEvent,
+} from "./material-access.js";
 
 export type ProjectRef = {
   aggregateType: "Project";
@@ -153,6 +159,9 @@ export type GoalRef = {
 };
 
 export type AggregateRef =
+  | import('./reviewer-work.js').TaskReviewProtocolRef
+  | import('./reviewer-work.js').ReviewWorkRef
+  | import('./reviewer-work.js').ReviewResultRef
   | ProjectRef
   | WorkspaceRef
   | GoalRef
@@ -203,7 +212,10 @@ export type AggregateRef =
   | InitialDesignProposalRef
   | InitialDesignDecisionRef
   | CoordinationPolicyRevisionRef
-  | ProjectCoordinationPolicyActiveRef;
+  | ProjectCoordinationPolicyActiveRef
+  | RoleSpecRevisionRef
+  | ProjectRoleSpecActiveRef
+  | MaterialAccessGrantRef;
 
 export type ProjectSnapshot = {
   ref: ProjectRef;
@@ -227,6 +239,9 @@ export type GoalSnapshot = {
 };
 
 export type AggregateSnapshot =
+  | import('./reviewer-work.js').TaskReviewProtocolSnapshot
+  | import('./reviewer-work.js').ReviewWorkSnapshot
+  | import('./reviewer-work.js').ReviewResultSnapshot
   | ProjectSnapshot
   | WorkspaceSnapshot
   | GoalSnapshot
@@ -277,7 +292,10 @@ export type AggregateSnapshot =
   | InitialDesignProposalSnapshot
   | InitialDesignDecisionSnapshot
   | CoordinationPolicyRevisionSnapshot
-  | ProjectCoordinationPolicyActiveSnapshot;
+  | ProjectCoordinationPolicyActiveSnapshot
+  | RoleSpecRevisionSnapshot
+  | ProjectRoleSpecActiveSnapshot
+  | MaterialAccessGrantSnapshot;
 
 export type SnapshotResult =
   | { status: "found"; snapshot: AggregateSnapshot }
@@ -345,7 +363,7 @@ export type PlanRevisionLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-03: atomic unique claim — durable outbox intent + lease + attempt + run. */
+/** atomic unique claim — durable outbox intent + lease + attempt + run. */
 export type DispatchClaimLedgerCommitV1 = {
   commitKind: "dispatch-claim";
   schemaVersion: 1;
@@ -359,7 +377,7 @@ export type DispatchClaimLedgerCommitV1 = {
   outboxIntents: [DispatchIntentV1];
 };
 
-/** P1-03: run start — a.s.a.p. before the RunPort is invoked (outbox -> started). */
+/** run start — a.s.a.p. before the RunPort is invoked (outbox -> started). */
 export type DispatchStartLedgerCommitV1 = {
   commitKind: "dispatch-start";
   schemaVersion: 1;
@@ -372,7 +390,7 @@ export type DispatchStartLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-03: one committed runtime fact (event or explicit outcome_unknown). */
+/** one committed runtime fact (event or explicit outcome_unknown). */
 export type RunFactLedgerCommitV1 = {
   commitKind: "run-fact";
   schemaVersion: 1;
@@ -386,7 +404,7 @@ export type RunFactLedgerCommitV1 = {
 };
 
 /**
- * P1-04: evidence-intake — one immutable Evidence + the task evidence index
+ * evidence-intake — one immutable Evidence + the task evidence index
  * update (atomic). FULL ledger idempotency (replay returns the original
  * outcome; same evidenceId under another identity becomes a CAS conflict).
  */
@@ -402,7 +420,7 @@ export type EvidenceIntakeLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-06: handoff-record — one immutable HandoffPacket aggregate (body-first). */
+/** handoff-record — one immutable HandoffPacket aggregate (body-first). */
 export type HandoffRecordLedgerCommitV1 = {
   commitKind: "handoff-record";
   schemaVersion: 1;
@@ -415,7 +433,7 @@ export type HandoffRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-06: replacement-claim — B's new Attempt lifecycle for the SAME Task
+/** replacement-claim — B's new Attempt lifecycle for the SAME Task
  * (lease CAS@N + new TaskAttempt/Run/DispatchOutboxEntry + ReplacementAttempt). */
 export type ReplacementClaimLedgerCommitV1 = {
   commitKind: "replacement-claim";
@@ -429,8 +447,9 @@ export type ReplacementClaimLedgerCommitV1 = {
   outboxIntents: [DispatchIntentV1];
 };
 
-/** P1-04: verification-result — the deterministic Task/Gate reduction state. */
+/** verification-result — the deterministic Task/Gate reduction state. */
 export type TaskReductionLedgerCommitV1 = {
+  reviewProtocol?: 'independent-review-v1';
   commitKind: "verification-result";
   schemaVersion: 1;
   identity: CommandIdentity;
@@ -442,7 +461,7 @@ export type TaskReductionLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-07: workspace-read-lease-acquire — shared read lease + read lease index (atomic). */
+/** workspace-read-lease-acquire — shared read lease + read lease index (atomic). */
 export type WorkspaceReadLeaseAcquireLedgerCommitV1 = {
   commitKind: "workspace-read-lease-acquire";
   schemaVersion: 1;
@@ -455,7 +474,7 @@ export type WorkspaceReadLeaseAcquireLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-07: workspace-read-lease-release — read lease @2 + index clear entry (atomic). */
+/** workspace-read-lease-release — read lease @2 + index clear entry (atomic). */
 export type WorkspaceReadLeaseReleaseLedgerCommitV1 = {
   commitKind: "workspace-read-lease-release";
   schemaVersion: 1;
@@ -468,7 +487,7 @@ export type WorkspaceReadLeaseReleaseLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-07: workspace-write-lease-acquire — exclusive write lease + index CAS (atomic). */
+/** workspace-write-lease-acquire — exclusive write lease + index CAS (atomic). */
 export type WorkspaceWriteLeaseAcquireLedgerCommitV1 = {
   commitKind: "workspace-write-lease-acquire";
   schemaVersion: 1;
@@ -486,7 +505,7 @@ export type WorkspaceWriteLeaseAcquireLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-07: workspace-write-lease-release — explicit holder release (atomic; index CAS). */
+/** workspace-write-lease-release — explicit holder release (atomic; index CAS). */
 export type WorkspaceWriteLeaseReleaseLedgerCommitV1 = {
   commitKind: "workspace-write-lease-release";
   schemaVersion: 1;
@@ -499,7 +518,7 @@ export type WorkspaceWriteLeaseReleaseLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-07: integration-record — accumulating join records (revision == count, CAS). */
+/** integration-record — accumulating join records (revision == count, CAS). */
 export type IntegrationRecordLedgerCommitV1 = {
   commitKind: "integration-record";
   schemaVersion: 1;
@@ -512,7 +531,7 @@ export type IntegrationRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-07: patch-record — patch @1 + canonical Workspace revision advance + write lease release + index clear (ONE atomic commit). */
+/** patch-record — patch @1 + canonical Workspace revision advance + write lease release + index clear (ONE atomic commit). */
 export type PatchRecordLedgerCommitV1 = {
   commitKind: "patch-record";
   schemaVersion: 1;
@@ -525,8 +544,9 @@ export type PatchRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-05: goal-reduction — the deterministic Goal phase state (per (projectId, goalId)). */
+/** goal-reduction — the deterministic Goal phase state (per (projectId, goalId)). */
 export type GoalReductionLedgerCommitV1 = {
+  reviewProtocol?: 'independent-review-v1';
   commitKind: "goal-reduction";
   schemaVersion: 1;
   identity: CommandIdentity;
@@ -539,7 +559,7 @@ export type GoalReductionLedgerCommitV1 = {
 };
 
 
-/** P1-16: work-context-bind — one durable WorkContextBinding (created exactly once; CAS@0). */
+/** work-context-bind — one durable WorkContextBinding (created exactly once; CAS@0). */
 export type WorkContextBindLedgerCommitV1 = {
   commitKind: "work-context-bind";
   schemaVersion: 1;
@@ -552,7 +572,7 @@ export type WorkContextBindLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-16: work-context-link — append a run to the binding (run linkage CAS@N). */
+/** work-context-link — append a run to the binding (run linkage CAS@N). */
 export type WorkContextLinkLedgerCommitV1 = {
   commitKind: "work-context-link";
   schemaVersion: 1;
@@ -565,7 +585,7 @@ export type WorkContextLinkLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-16: execution-note-record — one immutable ExecutionNote (body-first; CAS@0). */
+/** execution-note-record — one immutable ExecutionNote (body-first; CAS@0). */
 export type ExecutionNoteRecordLedgerCommitV1 = {
   commitKind: "execution-note-record";
   schemaVersion: 1;
@@ -578,7 +598,7 @@ export type ExecutionNoteRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-16: continuation-record — one immutable continuation report (CAS@0). */
+/** continuation-record — one immutable continuation report (CAS@0). */
 export type ContinuationRecordLedgerCommitV1 = {
   commitKind: "continuation-record";
   schemaVersion: 1;
@@ -592,7 +612,7 @@ export type ContinuationRecordLedgerCommitV1 = {
 };
 
 
-/** P1-12: architecture-inspection-record — one immutable inspection (CAS@0). */
+/** architecture-inspection-record — one immutable inspection (CAS@0). */
 export type ArchitectureInspectionRecordLedgerCommitV1 = {
   commitKind: "architecture-inspection-record";
   schemaVersion: 1;
@@ -604,7 +624,7 @@ export type ArchitectureInspectionRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-12: architecture-finding-record — one immutable finding (CAS@0). */
+/** architecture-finding-record — one immutable finding (CAS@0). */
 export type ArchitectureFindingRecordLedgerCommitV1 = {
   commitKind: "architecture-finding-record";
   schemaVersion: 1;
@@ -616,7 +636,7 @@ export type ArchitectureFindingRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-12: architecture-brief-record — one immutable decision brief (CAS@0). */
+/** architecture-brief-record — one immutable decision brief (CAS@0). */
 export type ArchitectureBriefRecordLedgerCommitV1 = {
   commitKind: "architecture-brief-record";
   schemaVersion: 1;
@@ -628,7 +648,7 @@ export type ArchitectureBriefRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-12: architecture-proposal-record — one immutable candidate proposal (CAS@0). */
+/** architecture-proposal-record — one immutable candidate proposal (CAS@0). */
 export type ArchitectureProposalRecordLedgerCommitV1 = {
   commitKind: "architecture-proposal-record";
   schemaVersion: 1;
@@ -641,7 +661,7 @@ export type ArchitectureProposalRecordLedgerCommitV1 = {
 };
 
 
-/** P1-10: control-intent-record — one durable desired-state intent (CAS@0). */
+/** control-intent-record — one durable desired-state intent (CAS@0). */
 export type ControlIntentRecordLedgerCommitV1 = {
   commitKind: "control-intent-record";
   schemaVersion: 1;
@@ -653,7 +673,7 @@ export type ControlIntentRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-10: control-ack — append one safe-point acknowledgement (intent CAS@N). */
+/** control-ack — append one safe-point acknowledgement (intent CAS@N). */
 export type ControlAckRecordLedgerCommitV1 = {
   commitKind: "control-ack";
   schemaVersion: 1;
@@ -666,7 +686,7 @@ export type ControlAckRecordLedgerCommitV1 = {
 };
 
 
-/** P1-09: query-job-record — QueryJob @0 + QueryRun @0 (atomic; durable intent first). */
+/** query-job-record — QueryJob @0 + QueryRun @0 (atomic; durable intent first). */
 export type QueryJobRecordLedgerCommitV1 = {
   commitKind: "query-job-record";
   schemaVersion: 1;
@@ -678,7 +698,7 @@ export type QueryJobRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-09: query-answer-record — answer @0 + job/run advanced (atomic). */
+/** query-answer-record — answer @0 + job/run advanced (atomic). */
 export type QueryAnswerRecordLedgerCommitV1 = {
   commitKind: "query-answer-record";
   schemaVersion: 1;
@@ -690,7 +710,7 @@ export type QueryAnswerRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-09: query-close-record — job/run closed (atomic). */
+/** query-close-record — job/run closed (atomic). */
 export type QueryCloseRecordLedgerCommitV1 = {
   commitKind: "query-close-record";
   schemaVersion: 1;
@@ -703,7 +723,7 @@ export type QueryCloseRecordLedgerCommitV1 = {
 };
 
 
-/** P1-11: plan-change-proposal-record — one immutable proposal (CAS@0). */
+/** plan-change-proposal-record — one immutable proposal (CAS@0). */
 export type PlanChangeProposalRecordLedgerCommitV1 = {
   commitKind: "plan-change-proposal-record";
   schemaVersion: 1;
@@ -715,7 +735,7 @@ export type PlanChangeProposalRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-11: user-decision-record — one immutable decision (CAS@0). */
+/** user-decision-record — one immutable decision (CAS@0). */
 export type UserDecisionRecordLedgerCommitV1 = {
   commitKind: "user-decision-record";
   schemaVersion: 1;
@@ -727,7 +747,7 @@ export type UserDecisionRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-11: goal-change-apply — accepted decision -> new PlanRevision + GoalRevision + Goal CAS (atomic). */
+/** goal-change-apply — accepted decision -> new PlanRevision + GoalRevision + Goal CAS (atomic). */
 export type GoalChangeApplyLedgerCommitV1 = {
   commitKind: "goal-change-apply";
   schemaVersion: 1;
@@ -739,7 +759,29 @@ export type GoalChangeApplyLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-13: remediation-plan-patch-record — one immutable patch (CAS@0). */
+/**
+ * material-access-grant — one immutable cross-principal read grant
+ * (CAS@0). The grant is the durable authorization the ArtifactVault resolver
+ * reads; it carries the version basis the material was shared against.
+ */
+export type MaterialAccessGrantLedgerCommitV1 = {
+  commitKind: "material-access-grant";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  fingerprint: CommandFingerprint;
+  /** [MaterialAccessGrant@0] — immutability CAS. */
+  expectedVersions: ExpectedVersion[];
+  events: [MaterialAccessGrantedEvent];
+  snapshots: [MaterialAccessGrantSnapshot];
+  outboxIntents: [];
+};
+
+export type MaterialAccessRevokeLedgerCommitV1 = Omit<MaterialAccessGrantLedgerCommitV1, "commitKind" | "events"> & {
+  commitKind: "material-access-revoke";
+  events: [import("./material-access.js").MaterialAccessRevokedEvent];
+};
+
+/** remediation-plan-patch-record — one immutable patch (CAS@0). */
 export type RemediationPlanPatchRecordLedgerCommitV1 = {
   commitKind: "remediation-plan-patch-record";
   schemaVersion: 1;
@@ -751,7 +793,7 @@ export type RemediationPlanPatchRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-13: remediation-task-record — one task (CAS@0; dedup key occupied). */
+/** remediation-task-record — one task (CAS@0; dedup key occupied). */
 export type RemediationTaskRecordLedgerCommitV1 = {
   commitKind: "remediation-task-record";
   schemaVersion: 1;
@@ -763,7 +805,7 @@ export type RemediationTaskRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-13: remediation-task-advance — status/evidence/result CAS@N. */
+/** remediation-task-advance — status/evidence/result CAS@N. */
 export type RemediationTaskAdvanceLedgerCommitV1 = {
   commitKind: "remediation-task-advance";
   schemaVersion: 1;
@@ -775,19 +817,25 @@ export type RemediationTaskAdvanceLedgerCommitV1 = {
   outboxIntents: [];
 };
 
-/** P1-14: baseline-evolution commit kinds (candidate/decision/gate/activation records). */
+/** baseline-evolution commit kinds (candidate/decision/gate/activation records). */
 export type CandidateBaselineMaterializeLedgerCommitV1 = { commitKind: "candidate-baseline-materialize"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [CandidateBaselineMaterializedEvent]; snapshots: [CandidateArchitectureBaselineSnapshot]; outboxIntents: [] };
 export type ArchitectureChangeDecisionRecordLedgerCommitV1 = { commitKind: "architecture-change-decision-record"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [ArchitectureChangeDecisionRecordedEvent]; snapshots: [{ ref: ArchitectureChangeDecisionRef; revision: 1; schemaVersion: 1; decision: ArchitectureChangeDecisionV1; recordedAt: string }]; outboxIntents: [] };
 export type MigrationGateRecordLedgerCommitV1 = { commitKind: "migration-gate-record"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [MigrationGateRecordedEvent]; snapshots: [{ ref: MigrationGateTaskRef; revision: 1; schemaVersion: 1; gate: MigrationGateTaskV1; recordedAt: string }]; outboxIntents: [] };
 export type BaselineActivationRecordLedgerCommitV1 = { commitKind: "baseline-activation-record"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [BaselineActivationRecordedEvent]; snapshots: [{ ref: BaselineActivationRef; revision: 1; schemaVersion: 1; activation: BaselineActivationV1; recordedAt: string }]; outboxIntents: [] };
 
-/** P1-15: initial-design + coordination-policy commit kinds. */
+/** initial-design + coordination-policy commit kinds. */
 export type InitialDesignProposalRecordLedgerCommitV1 = { commitKind: "initial-design-proposal-record"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [InitialDesignProposalRecordedEvent]; snapshots: [InitialDesignProposalSnapshot]; outboxIntents: [] };
 export type InitialDesignDecisionRecordLedgerCommitV1 = { commitKind: "initial-design-decision-record"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [InitialDesignDecisionRecordedEvent]; snapshots: [InitialDesignDecisionSnapshot]; outboxIntents: [] };
 export type CoordinationPolicyInstallRecordLedgerCommitV1 = { commitKind: "coordination-policy-install"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [CoordinationPolicyInstalledEvent]; snapshots: [CoordinationPolicyRevisionSnapshot]; outboxIntents: [] };
 export type CoordinationPolicyActivateRecordLedgerCommitV1 = { commitKind: "coordination-policy-activate"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [CoordinationPolicyActivatedEvent]; snapshots: [ProjectCoordinationPolicyActiveSnapshot]; outboxIntents: [] };
 
+/** role-spec governance commit kinds（与 P1-15 coordination-policy 同构）。 */
+export type RoleSpecInstallRecordLedgerCommitV1 = { commitKind: "role-spec-install"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [RoleSpecInstalledEvent]; snapshots: [RoleSpecRevisionSnapshot]; outboxIntents: [] };
+export type RoleSpecActivateRecordLedgerCommitV1 = { commitKind: "role-spec-activate"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [RoleSpecActivatedEvent]; snapshots: [ProjectRoleSpecActiveSnapshot]; outboxIntents: [] };
+
 export type LedgerCommit =
+  | ReviewLedgerCommitV1
+  | import('./workspace-registration.js').WorkspaceRegisterLedgerCommitV1
   | GoalCreateLedgerCommitV1
   | BootstrapLedgerCommitV1
   | GovernanceInstallLedgerCommitV1
@@ -817,6 +865,7 @@ export type LedgerCommit =
   | ArchitectureProposalRecordLedgerCommitV1
   | ControlIntentRecordLedgerCommitV1
   | ControlAckRecordLedgerCommitV1
+  | QueryJobStartLedgerCommitV1
   | QueryJobRecordLedgerCommitV1
   | QueryAnswerRecordLedgerCommitV1
   | QueryCloseRecordLedgerCommitV1
@@ -833,7 +882,11 @@ export type LedgerCommit =
   | InitialDesignProposalRecordLedgerCommitV1
   | InitialDesignDecisionRecordLedgerCommitV1
   | CoordinationPolicyInstallRecordLedgerCommitV1
-  | CoordinationPolicyActivateRecordLedgerCommitV1;
+  | CoordinationPolicyActivateRecordLedgerCommitV1
+  | RoleSpecInstallRecordLedgerCommitV1
+  | RoleSpecActivateRecordLedgerCommitV1
+  | MaterialAccessGrantLedgerCommitV1
+  | MaterialAccessRevokeLedgerCommitV1;
 
 export type LedgerCommitReceipt =
   | {
@@ -872,12 +925,14 @@ export type EventPage = {
   hasMore: boolean;
 };
 
+export type PendingDispatchSelection = { workKind: 'ordinary' | 'review' };
+
 export interface StateLedger {
   load(ref: AggregateRef): Promise<SnapshotResult>;
   commit(batch: LedgerCommit): Promise<LedgerCommitReceipt>;
   events(query: EventQuery): Promise<EventPage>;
-  /** P1-03: durable-outbox scan (pending intents, deterministic order). */
-  pendingDispatchIntents(limit: number): Promise<DispatchOutboxEntrySnapshot[]>;
+  /** durable-outbox scan (pending intents, deterministic order). */
+  pendingDispatchIntents(limit: number, selection?: PendingDispatchSelection): Promise<DispatchOutboxEntrySnapshot[]>;
 }
 
 /**
@@ -909,3 +964,19 @@ export function compareCommitCursor(a: CommitCursor, b: CommitCursor): -1 | 0 | 
   const sb = seqOfCommitCursor(b);
   return sa < sb ? -1 : sa > sb ? 1 : 0;
 }
+/** QueryJob pending -> running CAS, durably authorizes one runtime start. */
+export type QueryJobStartLedgerCommitV1 = {
+  commitKind: "query-job-start"; schemaVersion: 1; identity: CommandIdentity;
+  fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[];
+  events: [QueryRunStartedEvent]; snapshots: [QueryJobSnapshot, QueryRunSnapshot]; outboxIntents: [];
+};
+
+/** Explicit atomic review transitions; replacement appends new identities and preserves historical records. */
+export type ReviewLedgerCommitV1 = {
+  commitKind: 'review-work-create' | 'review-work-replace' | 'review-start' | 'review-output-bind' | 'review-result-admission';
+  schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[];
+  snapshots: AggregateSnapshot[];
+  events: (import('./reviewer-work.js').ReviewDomainEvent | RunStartedEvent | EvidenceAdmittedEvent)[];
+  outboxIntents: DispatchIntentV1[];
+};

@@ -1,0 +1,418 @@
+/**
+ * P1-02 Control entry: ApplyPlanRevision (accept a hand-authored plan).
+ *
+ * ENTRY FILE (shared baseline). Implements the frozen guard order from
+ * IMPLEMENTATION-HANDOFF.md "P1-02 契约与存储语义" and the ticket Acceptance:
+ *   1. schema validation (validation.validateApplyPlanRevisionCommand) +
+ *      aggregateId === payload.plan.goalId scoping invariant;
+ *   2. ref resolution: Goal exists (else "not_found"); effective
+ *      CompletionPolicy + ArchitectureBaseline resolved from canonical
+ *      Project active refs — identity/revision/digest triple (else
+ *      "unresolved_governance_ref", no default / no fallback);
+ *   3. non-empty guards (PlanValidationError[] -> "plan_guard_failed"):
+ *      >=1 required executable task; >=1 active required GoalGateTask;
+ *      >=1 required obligation; every required executable task maps a
+ *      required obligation; every required obligation maps work/gate tasks;
+ *      every required obligation compiles >=1 required VerificationRequirement
+ *      with kind within the policy requirementKinds (policy minimum);
+ *   4. hierarchy/DAG legality (parent_of only in hierarchy; depends_on only in
+ *      DAG; no self/ref/dangling/cycles; Stage synthesizes NO dependencies);
+ *   5. atomic commit (goal snapshot +1 with activePlanRevision, immutable
+ *      PlanRevision@1 with FIXED pins, CAS) + receipt mapping.
+ *   - NOT in scope: dispatch outbox, Runs/TaskAttempts, Goal reduction.
+ *
+ * Design note on the goal-revision CAS: the state ledger validator for a
+ * plan-revision commit REQUIRES expectedVersions[0].revision ===
+ * goalSnapshot.revision - 1 (a batch-internal consistency invariant). We fold
+ * the goal snapshot's revision from the COMMAND's expectedRevision (the CAS
+ * window) rather than the possibly-advanced loaded revision, so a submitted
+ * batch is always internally consistent and the ledger can decide between an
+ * idempotent replay (same identity+fingerprint -> committed/replayed) and a
+ * genuine stale CAS (fresh command, revision mismatch -> revision_conflict).
+ * A pre-commit short-circuit on loaded-revision !== expectedRevision would
+ * break idempotent replay (the goal already advanced to revision 2 after a
+ * prior accept, yet a replay of the SAME command must return replayed=true).
+ */
+import type {
+  ApplyPlanRevisionCommand,
+  PlanRevisionReceipt,
+  PlanValidationError,
+  PlanRevisionDraft,
+  PlanRevisionRef,
+} from "../../contracts/plan.js";
+import { planValidationError } from "../../contracts/plan.js";
+import type {
+  ArchitectureBaselinePin,
+  CompletionPolicyContentV1,
+  CompletionPolicyPin,
+} from "../../contracts/governance.js";
+import { resolveProjectArchitectureBaseline, resolveProjectCompletionPolicy } from "../../data/state-ledger/governance-records.js";
+import type { GoalRef, GoalSnapshot, LedgerCommitReceipt } from "../../contracts/ledger.js";
+import { validateApplyPlanRevisionCommand } from '../../contracts/validation/plan.js';
+import { buildPlanLedgerCommit } from "./records/plan.js";
+import { goalRefFor, planRevisionRefFor } from "../../contracts/plan.js";
+import type { ControlEngineDeps } from "./control-engine.js";
+import { validateInitialPlanSource } from './initial-plan-source.js';
+
+type Edge = { from: string; to: string };
+
+/** Depth-first cycle detection over a directed task graph (self-loops count). */
+function hasCycle(edges: Edge[]): boolean {
+  const adj = new Map<string, string[]>();
+  for (const edge of edges) {
+    const list = adj.get(edge.from) ?? [];
+    list.push(edge.to);
+    adj.set(edge.from, list);
+  }
+  const WHITE = 0;
+  const GRAY = 1;
+  const BLACK = 2;
+  const color = new Map<string, number>();
+  for (const edge of edges) {
+    if (!color.has(edge.from)) color.set(edge.from, WHITE);
+    if (!color.has(edge.to)) color.set(edge.to, WHITE);
+  }
+  const dfs = (u: string): boolean => {
+    color.set(u, GRAY);
+    for (const v of adj.get(u) ?? []) {
+      const c = color.get(v) ?? WHITE;
+      if (c === GRAY) return true;
+      if (c === WHITE && dfs(v)) return true;
+    }
+    color.set(u, BLACK);
+    return false;
+  };
+  for (const node of color.keys()) {
+    if ((color.get(node) ?? WHITE) === WHITE && dfs(node)) return true;
+  }
+  return false;
+}
+
+/**
+ * Non-empty + structure guards for a hand-authored plan, evaluated against the
+ * resolved effective CompletionPolicy content. Returns every failing guard as
+ * a PlanValidationError (any non-empty array -> "plan_guard_failed").
+ */
+export function applyPlanGuardIssues(
+  plan: PlanRevisionDraft,
+  policyContent: CompletionPolicyContentV1,
+): PlanValidationError[] {
+  const issues: PlanValidationError[] = [];
+  const taskById = new Map(plan.tasks.map((t) => [t.taskId, t]));
+  const stageIds = new Set(plan.stages.map((s) => s.stageId));
+
+  const requiredExecutableTasks = plan.tasks.filter(
+    (t) => t.requirementLevel === "required" && t.taskKind === "work" && t.disposition === "active",
+  );
+  if (requiredExecutableTasks.length === 0) {
+    issues.push(
+      planValidationError(
+        "tasks",
+        "missing_required_executable_task",
+        "at least one required executable task (requirementLevel=required, taskKind=work, disposition=active) is required",
+      ),
+    );
+  }
+
+  const hasActiveRequiredGoalGate = plan.tasks.some(
+    (t) =>
+      t.requirementLevel === "required" &&
+      t.taskKind === "gate" &&
+      t.disposition === "active" &&
+      t.scope.kind === "goal",
+  );
+  if (!hasActiveRequiredGoalGate) {
+    issues.push(
+      planValidationError(
+        "tasks",
+        "missing_active_required_goal_gate",
+        "at least one active required GoalGate task (required+gate+active+scope=goal) is required",
+      ),
+    );
+  }
+
+  const requiredObligations = plan.obligations.filter((o) => o.requirementLevel === "required");
+  if (requiredObligations.length === 0) {
+    issues.push(
+      planValidationError(
+        "obligations",
+        "missing_required_obligation",
+        "at least one required AcceptanceObligation is required",
+      ),
+    );
+  }
+
+  // Every required executable task must be mapped by >=1 REQUIRED obligation.
+  for (const task of requiredExecutableTasks) {
+    const mapped = requiredObligations.some((o) => o.taskIds.includes(task.taskId));
+    if (!mapped) {
+      issues.push(
+        planValidationError(
+          `tasks[${task.taskId}]`,
+          "task_obligation_mapping",
+          `required executable task ${task.taskId} is not mapped by any required obligation`,
+        ),
+      );
+    }
+  }
+
+  // Every required obligation must have non-empty taskIds resolving to a
+  // plan-local work|gate Task.
+  for (const obligation of requiredObligations) {
+    if (obligation.taskIds.length === 0) {
+      issues.push(
+        planValidationError(
+          `obligations[${obligation.obligationId}]`,
+          "obligation_task_mapping",
+          `required obligation ${obligation.obligationId} maps no tasks`,
+        ),
+      );
+      continue;
+    }
+    for (const taskId of obligation.taskIds) {
+      const task = taskById.get(taskId);
+      if (task === undefined || (task.taskKind !== "work" && task.taskKind !== "gate")) {
+        issues.push(
+          planValidationError(
+            `obligations[${obligation.obligationId}].taskIds`,
+            "obligation_task_mapping",
+            `required obligation ${obligation.obligationId} references non-work/gate or unknown task ${taskId}`,
+          ),
+        );
+      }
+    }
+  }
+
+  // Per required obligation: compile >= minimum required VRs, all kinds allowed.
+  const minRequired = policyContent.minimumRequiredRequirementsPerObligation;
+  for (const obligation of requiredObligations) {
+    const requiredVRs = obligation.verificationRequirements.filter(
+      (v) => v.requirementLevel === "required",
+    );
+    if (requiredVRs.length < minRequired) {
+      issues.push(
+        planValidationError(
+          `obligations[${obligation.obligationId}].verificationRequirements`,
+          "empty_verification_requirements",
+          `required obligation ${obligation.obligationId} compiles fewer than ${minRequired} required VerificationRequirement(s)`,
+        ),
+      );
+    }
+    for (const vr of requiredVRs) {
+      if (!policyContent.requirementKinds.includes(vr.kind)) {
+        issues.push(
+          planValidationError(
+            `obligations[${obligation.obligationId}].verificationRequirements[${vr.requirementId}]`,
+            "unknown_requirement_kind",
+            `verification kind ${vr.kind} is not in the effective policy requirementKinds`,
+          ),
+        );
+      }
+    }
+  }
+
+  // Dangling stage refs.
+  for (const task of plan.tasks) {
+    if (task.stageId !== undefined && !stageIds.has(task.stageId)) {
+      issues.push(
+        planValidationError(
+          `tasks[${task.taskId}].stageId`,
+          "dangling_stage_ref",
+          `task ${task.taskId} references unknown stage ${task.stageId}`,
+        ),
+      );
+    }
+  }
+
+  // Dangling task refs (hierarchy + DAG endpoints).
+  plan.taskHierarchy.parentOf.forEach((edge, i) => {
+    if (!taskById.has(edge.parentTaskId) || !taskById.has(edge.childTaskId)) {
+      issues.push(
+        planValidationError(
+          `taskHierarchy.parentOf[${i}]`,
+          "dangling_task_ref",
+          "hierarchy edge references a task that does not exist in the plan",
+        ),
+      );
+    }
+  });
+  plan.executionDag.dependsOn.forEach((edge, i) => {
+    if (!taskById.has(edge.taskId) || !taskById.has(edge.dependsOnId)) {
+      issues.push(
+        planValidationError(
+          `executionDag.dependsOn[${i}]`,
+          "dangling_task_ref",
+          "DAG edge references a task that does not exist in the plan",
+        ),
+      );
+    }
+  });
+
+  // No self-dependency in the DAG.
+  plan.executionDag.dependsOn.forEach((edge, i) => {
+    if (edge.taskId === edge.dependsOnId) {
+      issues.push(
+        planValidationError(
+          `executionDag.dependsOn[${i}]`,
+          "self_dependency",
+          `task ${edge.taskId} depends on itself`,
+        ),
+      );
+    }
+  });
+
+  // Acyclicity (back-edge found by DFS = cycle). Self-loops are cycles too.
+  if (
+    hasCycle(plan.executionDag.dependsOn.map((e) => ({ from: e.taskId, to: e.dependsOnId })))
+  ) {
+    issues.push(
+      planValidationError("executionDag", "dag_cycle", "RuntimeExecutionDAG must be acyclic"),
+    );
+  }
+  if (
+    hasCycle(plan.taskHierarchy.parentOf.map((e) => ({ from: e.parentTaskId, to: e.childTaskId })))
+  ) {
+    issues.push(
+      planValidationError("taskHierarchy", "hierarchy_cycle", "TaskHierarchy must be acyclic"),
+    );
+  }
+
+  return issues;
+}
+
+function mapApplyPlanReceipt(
+  receipt: LedgerCommitReceipt,
+  command: ApplyPlanRevisionCommand,
+  goalRef: GoalRef,
+  planRef: PlanRevisionRef,
+): PlanRevisionReceipt {
+  if (receipt.status === "committed") {
+    return {
+      status: "committed",
+      commandId: command.commandId,
+      replayed: receipt.replayed,
+      planRef,
+      goalRef,
+      eventIds: receipt.eventIds,
+      commitCursor: receipt.commitCursor,
+    };
+  }
+  switch (receipt.code) {
+    case "invalid_commit":
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+    case "revision_conflict":
+      return { status: "rejected", commandId: command.commandId, code: "revision_conflict" };
+    case "idempotency_conflict":
+      return { status: "rejected", commandId: command.commandId, code: "idempotency_conflict" };
+    case "unavailable":
+      return { status: "rejected", commandId: command.commandId, code: "unavailable" };
+    case "not_empty":
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+  }
+}
+
+async function applyPlanRevisionImpl(
+  deps: ControlEngineDeps,
+  command: ApplyPlanRevisionCommand,
+): Promise<PlanRevisionReceipt> {
+  // Guard 1: schema validation — any issue -> "invalid" (zero write).
+  const validationIssues = validateApplyPlanRevisionCommand(command);
+  if (validationIssues.length > 0) {
+    return { status: "rejected", commandId: command.commandId, code: "invalid" };
+  }
+
+  const projectId = command.identity.projectId;
+
+  // Guard 2: ref resolution (all zero write, no default / no fallback).
+  const goalRef: GoalRef = {
+    aggregateType: "Goal",
+    projectId,
+    goalId: command.aggregateId,
+  };
+  const goalResult = await deps.ledger.load(goalRef);
+  if (goalResult.status === "not_found") {
+    return { status: "rejected", commandId: command.commandId, code: "not_found" };
+  }
+  const loadedGoal = goalResult.snapshot as GoalSnapshot;
+  if (!await validateInitialPlanSource(deps.ledger, command, loadedGoal)) return { status: 'rejected', commandId: command.commandId, code: 'invalid' };
+  // The plan must declare the SAME local goal the command targets. Checked
+  // AFTER existence so a non-existent goal resolves to not_found first (shared
+  // acceptance); a mismatch against an EXISTING goal is a malformed command.
+  if (command.aggregateId !== command.payload.plan.goalId) {
+    return { status: "rejected", commandId: command.commandId, code: "invalid" };
+  }
+
+  const policyResolution = await resolveProjectCompletionPolicy(deps.ledger, projectId);
+  if (policyResolution.status === "not_found") {
+    return { status: "rejected", commandId: command.commandId, code: "unresolved_governance_ref" };
+  }
+  const baselineResolution = await resolveProjectArchitectureBaseline(deps.ledger, projectId);
+  if (baselineResolution.status === "not_found") {
+    return { status: "rejected", commandId: command.commandId, code: "unresolved_governance_ref" };
+  }
+
+  const completionPin: CompletionPolicyPin = policyResolution.pin;
+  const architecturePin: ArchitectureBaselinePin = baselineResolution.pin;
+
+  // Guards 3 + 4: non-empty + structure legality (any issue -> plan_guard_failed).
+  const plan = command.payload.plan;
+  const guardIssues = applyPlanGuardIssues(plan, policyResolution.snapshot.content);
+  if (guardIssues.length > 0) {
+    return {
+      status: "rejected",
+      commandId: command.commandId,
+      code: "plan_guard_failed",
+      issues: guardIssues,
+    };
+  }
+
+  // Guard 5: deterministic fold + atomic commit.
+  //
+  // The plan-revision commit validator requires expectedVersions
+  // [Goal@expectedRevision] to equal goalSnapshot.revision - 1 AND the goal
+  // snapshot's revision to equal event.aggregateRevision + 1 (always 2).
+  // Folding the goal snapshot's revision from the command's expectedRevision
+  // keeps a batch for an EXPECTED revision of 1 internally valid, so the
+  // ledger can resolve it by idempotency (replay -> committed/replayed) vs
+  // CAS. A batch folded from a stale expectedRevision (!= 1) is rejected by
+  // that validator as invalid_commit, which we map to revision_conflict below
+  // (a genuine CAS-window conflict, zero-write) — without breaking replay,
+  // whose fold is always valid. See the module design note above.
+  const foldBaseGoal: GoalSnapshot = { ...loadedGoal, revision: command.expectedRevision };
+  const planRef = planRevisionRefFor(command);
+  const eventId = deps.eventId();
+  const occurredAt = deps.now();
+  const acceptedAt = deps.now();
+  const batch = buildPlanLedgerCommit(command, {
+    eventId,
+    occurredAt,
+    acceptedAt,
+    pins: { completionPolicy: completionPin, architectureBaseline: architecturePin },
+    baseGoal: foldBaseGoal,
+  });
+
+  const receipt = await deps.ledger.commit(batch);
+  // A stale CAS window (command.expectedRevision != the loaded goal revision)
+  // makes buildPlanLedgerCommit (which folds the goal snapshot's revision from
+  // the command's expectedRevision) produce a batch that the shared ledger
+  // validator rejects as invalid_commit; map that to revision_conflict. An
+  // idempotent replay of an already-accepted command produces a VALID batch
+  // (the goal snapshot folds to +1 from the expected revision) that the ledger
+  // resolves as committed/replayed — never invalid_commit — so the two cases
+  // are cleanly distinguished here.
+  if (
+    receipt.status === "rejected" &&
+    receipt.code === "invalid_commit" &&
+    loadedGoal.revision !== command.expectedRevision
+  ) {
+    return { status: "rejected", commandId: command.commandId, code: "revision_conflict" };
+  }
+  return mapApplyPlanReceipt(receipt, command, goalRef, planRef);
+}
+
+export function applyPlanRevision(
+  deps: ControlEngineDeps,
+  command: ApplyPlanRevisionCommand,
+): Promise<PlanRevisionReceipt> {
+  return applyPlanRevisionImpl(deps, command);
+}

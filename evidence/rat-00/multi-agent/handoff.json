@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "status": "PREPARED_WITH_EXPLICIT_GAPS",
+  "assetRoot": "/home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/multi-agent",
+  "manifest": "/home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/multi-agent/manifest.json",
+  "manifestSha256": "e6fcf8b4fda14ee44f47a7dd605d87b2b0a70b8c68fa4f109f7b7da8a2b90b71",
+  "assetTreeSha256": "e92e36e1a5c0367d1bb84c9b2643c00e3a619c9bc1db43e4edee7ac041f6126c",
+  "baselineSha256": "7ab3a51e314c30274e95001f4e54fb5d4d27135d542739b7629e91eba1ad1727",
+  "files": 48,
+  "realTrials": {
+    "total": 42,
+    "NOT_RUN": 42,
+    "PASS": 0,
+    "FAIL": 0,
+    "BLOCKED": 0
+  },
+  "selfchecks": {
+    "functionalControls": 12,
+    "controlKnownSuccess": 8,
+    "controlKnownFailure": 32,
+    "invalidConfigurationControls": 24,
+    "ablationApplicabilityControls": 1,
+    "deterministicInjectionSelectors": 23,
+    "visibleMaterializations": 8,
+    "meaning": "Evaluator and fixture tests only; never count constructed traces as product runs."
+  },
+  "notPrepared": [
+    {
+      "item": "platform trace export and cross-check against raw sessions/artifacts",
+      "status": "NOT_PREPARED"
+    },
+    {
+      "item": "product fault-injection adapter for all 23 symbolic directives",
+      "status": "NOT_PREPARED"
+    },
+    {
+      "item": "actual browser-engine E2E and GUI integration",
+      "status": "NOT_PREPARED"
+    },
+    {
+      "item": "real provider/model, cost ceiling and limit enforcement binding",
+      "status": "UNBOUND_RAT-01"
+    },
+    {
+      "item": "runtime isolation excluding hidden assets, other trials and credentials",
+      "status": "ROOT_ENVIRONMENT_GATE_REQUIRED"
+    }
+  ],
+  "commands": [
+    "node /home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/multi-agent/private/evaluator/functional-selftest.mjs /home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/functional",
+    "node /home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/multi-agent/private/evaluator/control-selftest.mjs /home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/control",
+    "node /home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/multi-agent/private/evaluator/injection-selftest.mjs /home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/injections"
+  ],
+  "warning": "Only local fixture code and synthetic evaluator controls were executed. No real model/API calls or product-control capability results."
+}

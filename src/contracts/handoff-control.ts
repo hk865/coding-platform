@@ -10,7 +10,7 @@
  *   - dev_docs/planning/proposed/P1-foundation/tickets/06-handoff-a-to-b.md
  *   - IMPLEMENTATION-HANDOFF.md "P1-06 契约与存储语义（冻结）"
  *
- * FROZEN semantics:
+ * Semantics:
  *   - MINIMAL control face: pause / stop via a safe point (NO cancel in
  *     P1-06 — retry/cancel is P1-10).
  *   - snapshot() returns ONLY a public report (status, facts, public report

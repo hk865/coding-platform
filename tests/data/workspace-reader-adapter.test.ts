@@ -10,7 +10,7 @@
  * registry never reaches.
  */
 import { describe, expect, it } from "vitest";
-import { FakeWorkspaceReaderAdapter } from "../../src/data/workspace-reader-adapter.js";
+import { FakeWorkspaceReaderAdapter } from "../../src/data/workspace-reader/workspace-reader-adapter.js";
 import type { CodeGraphReadQueryV1 } from "../../src/contracts/workspace-read.js";
 import type { CodeGraphSnapshotV1 } from "../../src/contracts/architecture-inspection.js";
 import {
@@ -20,7 +20,7 @@ import {
   P112_WORKSPACE,
   p112PlanRef,
   p112BaselinePin,
-} from "../../src/contracts/fixtures/architecture-fixtures.js";
+} from "../../src/fixtures/architecture-fixtures.js";
 
 const NOW = "2026-09-06T00:00:00.000Z";
 

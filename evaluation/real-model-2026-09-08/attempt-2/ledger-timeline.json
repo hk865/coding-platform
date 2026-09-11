@@ -1,0 +1,543 @@
+[
+  {
+    "id": 1,
+    "type": "ProjectBootstrapped",
+    "at": "2026-09-08T11:37:14.029Z",
+    "aggregate": "Project",
+    "payload": {
+      "sourceDigest": "08fd83ba12f3f17927c72107a4595594f9973958df91eb38644b7f5e15285f69"
+    }
+  },
+  {
+    "id": 2,
+    "type": "WorkspaceBootstrapped",
+    "at": "2026-09-08T11:37:14.029Z",
+    "aggregate": "Workspace",
+    "payload": {
+      "sourceDigest": "08fd83ba12f3f17927c72107a4595594f9973958df91eb38644b7f5e15285f69"
+    }
+  },
+  {
+    "id": 3,
+    "type": "CompletionPolicyInstalled",
+    "at": "2026-09-08T11:37:14.045Z",
+    "aggregate": "CompletionPolicyRevision",
+    "payload": {
+      "policyId": "policy-completion-mvp",
+      "revision": 1,
+      "contentDigest": "4680201b5cb8e4807db836eaaf8fbfc78ec565134e0a40cf20a5f813b309186e",
+      "content": {
+        "schemaVersion": 1,
+        "requirementKinds": [
+          "static",
+          "dynamic",
+          "reviewer"
+        ],
+        "minimumRequiredRequirementsPerObligation": 1
+      }
+    }
+  },
+  {
+    "id": 4,
+    "type": "CompletionPolicyActivated",
+    "at": "2026-09-08T11:37:14.060Z",
+    "aggregate": "ProjectCompletionPolicyActive",
+    "payload": {
+      "target": {
+        "ref": {
+          "aggregateType": "CompletionPolicyRevision",
+          "projectId": "live-paths",
+          "policyId": "policy-completion-mvp",
+          "revision": 1
+        },
+        "digest": "4680201b5cb8e4807db836eaaf8fbfc78ec565134e0a40cf20a5f813b309186e"
+      }
+    }
+  },
+  {
+    "id": 5,
+    "type": "ArchitectureBaselineInstalled",
+    "at": "2026-09-08T11:37:14.078Z",
+    "aggregate": "ArchitectureBaselineRevision",
+    "payload": {
+      "baselineId": "baseline-architecture-mvp",
+      "revision": 1,
+      "contentDigest": "19a578923f4fc100e37ef3f907d23a4d945e8825c653b7c467cf8712d1db7a8b",
+      "content": {
+        "schemaVersion": 1,
+        "description": "MVP 微控制面：Control 唯一权威、Data 双平面（canonical + 投影）、无运行时 Agent 依赖",
+        "constraints": [
+          {
+            "name": "unique-writer",
+            "scope": "ControlEngine"
+          },
+          {
+            "name": "event-projection-only",
+            "scope": "ReadModelIndex"
+          },
+          {
+            "name": "no-direct-fixture-write",
+            "scope": "governance install/activation contracts"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": 6,
+    "type": "ArchitectureBaselineActivated",
+    "at": "2026-09-08T11:37:14.092Z",
+    "aggregate": "ProjectArchitectureBaselineActive",
+    "payload": {
+      "target": {
+        "ref": {
+          "aggregateType": "ArchitectureBaselineRevision",
+          "projectId": "live-paths",
+          "baselineId": "baseline-architecture-mvp",
+          "revision": 1
+        },
+        "digest": "19a578923f4fc100e37ef3f907d23a4d945e8825c653b7c467cf8712d1db7a8b"
+      }
+    }
+  },
+  {
+    "id": 7,
+    "type": "GoalCreated",
+    "at": "2026-09-08T11:37:14.126Z",
+    "aggregate": "Goal",
+    "payload": {
+      "objective": "实现 Unix 风格路径规范化并通过独立测试",
+      "desiredState": "active",
+      "activePlanRevision": null
+    }
+  },
+  {
+    "id": 8,
+    "type": "PlanRevisionAccepted",
+    "at": "2026-09-08T11:37:14.167Z",
+    "aggregate": "PlanRevision",
+    "payload": {
+      "goalId": "goal-live",
+      "goalAggregateRevision": 2,
+      "planRevision": {
+        "ref": {
+          "aggregateType": "PlanRevision",
+          "projectId": "live-paths",
+          "planId": "real-plan-goal-live"
+        },
+        "revision": 1,
+        "schemaVersion": 1,
+        "goalRef": {
+          "aggregateType": "Goal",
+          "projectId": "live-paths",
+          "goalId": "goal-live"
+        },
+        "planId": "real-plan-goal-live",
+        "planRevision": 1,
+        "acceptedAt": "2026-09-08T11:37:14.167Z",
+        "effectiveCompletionPolicy": {
+          "ref": {
+            "aggregateType": "CompletionPolicyRevision",
+            "projectId": "live-paths",
+            "policyId": "policy-completion-mvp",
+            "revision": 1
+          },
+          "digest": "4680201b5cb8e4807db836eaaf8fbfc78ec565134e0a40cf20a5f813b309186e"
+        },
+        "effectiveArchitectureBaseline": {
+          "ref": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "live-paths",
+            "baselineId": "baseline-architecture-mvp",
+            "revision": 1
+          },
+          "digest": "19a578923f4fc100e37ef3f907d23a4d945e8825c653b7c467cf8712d1db7a8b"
+        },
+        "stages": [
+          {
+            "stageId": "coding",
+            "title": "真实开发任务"
+          }
+        ],
+        "tasks": [
+          {
+            "taskId": "coding-task",
+            "stageId": "coding",
+            "title": "Implement normalize_path(value) in paths.py. Read README and tests before editing. Pure string operation: collapse duplicate / and .; resolve .. without escapin",
+            "requirementLevel": "required",
+            "taskKind": "work",
+            "disposition": "active",
+            "phase": "pending",
+            "scope": {
+              "kind": "stage",
+              "stageId": "coding"
+            }
+          },
+          {
+            "taskId": "gate-goal",
+            "title": "独立验收",
+            "requirementLevel": "required",
+            "taskKind": "gate",
+            "disposition": "active",
+            "phase": "pending",
+            "scope": {
+              "kind": "goal"
+            }
+          }
+        ],
+        "obligations": [
+          {
+            "obligationId": "coding-result",
+            "title": "代码满足用户要求且独立检查通过",
+            "requirementLevel": "required",
+            "taskIds": [
+              "coding-task",
+              "gate-goal"
+            ],
+            "verificationRequirements": [
+              {
+                "requirementId": "independent-check",
+                "requirementLevel": "required",
+                "kind": "dynamic",
+                "description": "候选代码需独立验证；模型完成声明不直接验收"
+              }
+            ]
+          }
+        ],
+        "taskHierarchy": {
+          "parentOf": [
+            {
+              "parentTaskId": "gate-goal",
+              "childTaskId": "coding-task"
+            }
+          ]
+        },
+        "executionDag": {
+          "dependsOn": [
+            {
+              "taskId": "gate-goal",
+              "dependsOnId": "coding-task",
+              "requires": {
+                "kind": "gate-result",
+                "label": "当前代码独立检查证据"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "id": 9,
+    "type": "TaskClaimed",
+    "at": "2026-09-08T11:37:14.183Z",
+    "aggregate": "TaskLease",
+    "payload": {
+      "goalId": "goal-live",
+      "taskId": "coding-task",
+      "attemptRef": {
+        "aggregateType": "TaskAttempt",
+        "projectId": "live-paths",
+        "goalId": "goal-live",
+        "taskId": "coding-task",
+        "attemptId": "attempt-path-normalization"
+      },
+      "runRef": {
+        "aggregateType": "Run",
+        "projectId": "live-paths",
+        "goalId": "goal-live",
+        "runId": "real-path-normalization"
+      },
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "live-paths",
+        "planId": "real-plan-goal-live"
+      },
+      "roleBinding": {
+        "schemaVersion": 1,
+        "bindingId": "binding-run-short-lived-v1",
+        "templateId": "template-short-lived-runner",
+        "templateRevision": "2026-09-05",
+        "bindingVersion": 1,
+        "policyRevision": "auth-policy-runtime-v1"
+      },
+      "declaredPermissions": {
+        "tools": [
+          "read",
+          "write",
+          "shell"
+        ],
+        "writeScope": [
+          "*"
+        ]
+      },
+      "budget": {
+        "tokenBudget": 32768,
+        "deadline": null
+      },
+      "intentId": "attempt-path-normalization",
+      "claimedAt": "2026-09-08T11:37:14.183Z"
+    }
+  },
+  {
+    "id": 10,
+    "type": "RunStarted",
+    "at": "2026-09-08T11:37:14.222Z",
+    "aggregate": "Run",
+    "payload": {
+      "taskId": "coding-task",
+      "attemptId": "attempt-path-normalization",
+      "envelope": {
+        "schemaVersion": 1,
+        "envelopeId": "env-context-attempt-path-normalization",
+        "projectId": "live-paths",
+        "workspaceId": "workspace-main",
+        "goalId": "goal-live",
+        "taskId": "coding-task",
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "live-paths",
+          "goalId": "goal-live",
+          "runId": "real-path-normalization"
+        },
+        "attemptRef": {
+          "aggregateType": "TaskAttempt",
+          "projectId": "live-paths",
+          "goalId": "goal-live",
+          "taskId": "coding-task",
+          "attemptId": "attempt-path-normalization"
+        },
+        "planRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "live-paths",
+          "planId": "real-plan-goal-live"
+        },
+        "roleBinding": {
+          "schemaVersion": 1,
+          "bindingId": "binding-run-short-lived-v1",
+          "templateId": "template-short-lived-runner",
+          "templateRevision": "2026-09-05",
+          "bindingVersion": 1,
+          "policyRevision": "auth-policy-runtime-v1"
+        },
+        "workspaceSnapshot": {
+          "workspaceId": "workspace-main",
+          "revision": 1
+        },
+        "permissions": {
+          "policyRevision": "auth-policy-runtime-v1",
+          "tools": [
+            "read",
+            "write",
+            "shell"
+          ],
+          "writeScope": [
+            "*"
+          ]
+        },
+        "budget": {
+          "tokenBudget": 32768,
+          "deadline": null
+        },
+        "sourceRefs": [
+          {
+            "kind": "plan-revision",
+            "refId": "real-plan-goal-live",
+            "revision": "1",
+            "digest": "real-plan-goal-live"
+          },
+          {
+            "kind": "workspace",
+            "refId": "workspace-main",
+            "revision": "1"
+          }
+        ],
+        "bundleRef": {
+          "kind": "artifact",
+          "contentType": "application/json",
+          "digest": "77d3b613992915d92ecea8ff821de67ce3f0e4c88f0ce07ea734407c78f16a6a",
+          "sizeBytes": 1397,
+          "source": {
+            "kind": "plan-revision",
+            "refId": "real-plan-goal-live",
+            "revision": "1",
+            "digest": "real-plan-goal-live"
+          }
+        }
+      },
+      "manifest": {
+        "schemaVersion": 1,
+        "selectedRefs": [
+          {
+            "kind": "plan-revision",
+            "refId": "real-plan-goal-live",
+            "revision": "1",
+            "digest": "real-plan-goal-live"
+          },
+          {
+            "kind": "workspace",
+            "refId": "workspace-main",
+            "revision": "1"
+          }
+        ],
+        "gaps": [],
+        "freshness": {
+          "workspaceSnapshot": {
+            "workspaceId": "workspace-main",
+            "revision": 1
+          },
+          "planRef": {
+            "aggregateType": "PlanRevision",
+            "projectId": "live-paths",
+            "planId": "real-plan-goal-live"
+          }
+        }
+      },
+      "startedAt": "2026-09-08T11:37:14.222Z"
+    }
+  },
+  {
+    "id": 11,
+    "type": "WorkspaceWriteLeaseGranted",
+    "at": "2026-09-08T11:37:14.242Z",
+    "aggregate": "WorkspaceWriteLease",
+    "payload": {
+      "leaseId": "lease-real-path-normalization",
+      "scope": {
+        "schemaVersion": 1,
+        "projectId": "live-paths",
+        "workspaceId": "workspace-main",
+        "kind": "workspace",
+        "id": "workspace-main",
+        "revision": 1
+      },
+      "holder": {
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "live-paths",
+          "goalId": "goal-live",
+          "runId": "real-path-normalization"
+        },
+        "attemptRef": {
+          "aggregateType": "TaskAttempt",
+          "projectId": "live-paths",
+          "goalId": "goal-live",
+          "taskId": "coding-task",
+          "attemptId": "attempt-path-normalization"
+        }
+      },
+      "expiresAt": null
+    }
+  },
+  {
+    "id": 12,
+    "type": "RunEventRecorded",
+    "at": "2026-09-08T11:37:14.281Z",
+    "aggregate": "Run",
+    "payload": {
+      "taskId": "coding-task",
+      "runtimeEvent": {
+        "schemaVersion": 1,
+        "eventId": "b15bebbc-649b-47ff-bccf-8c90b0d2c391-1",
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "live-paths",
+          "goalId": "goal-live",
+          "runId": "real-path-normalization"
+        },
+        "sequence": 1,
+        "occurredAt": "2026-09-08T11:37:14.272Z",
+        "eventType": "run_started",
+        "payload": {
+          "kind": "started",
+          "startedAt": "2026-09-08T11:37:14.272Z"
+        }
+      }
+    }
+  },
+  {
+    "id": 13,
+    "type": "WorkspaceWriteLeaseReleased",
+    "at": "2026-09-08T11:38:12.915Z",
+    "aggregate": "WorkspaceWriteLease",
+    "payload": {
+      "leaseId": "lease-real-path-normalization",
+      "releasedAt": "2026-09-08T11:38:12.915Z",
+      "releasedBy": "holder",
+      "releasedVia": "explicit",
+      "postWriteWorkspaceRevision": null
+    }
+  },
+  {
+    "id": 14,
+    "type": "RunEventRecorded",
+    "at": "2026-09-08T11:38:12.931Z",
+    "aggregate": "Run",
+    "payload": {
+      "taskId": "coding-task",
+      "runtimeEvent": {
+        "schemaVersion": 1,
+        "eventId": "b15bebbc-649b-47ff-bccf-8c90b0d2c391-2",
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "live-paths",
+          "goalId": "goal-live",
+          "runId": "real-path-normalization"
+        },
+        "sequence": 2,
+        "occurredAt": "2026-09-08T11:38:12.907Z",
+        "eventType": "run_completed",
+        "payload": {
+          "kind": "completed",
+          "exitCode": 0
+        }
+      }
+    }
+  },
+  {
+    "id": 15,
+    "type": "WorkspaceWriteLeaseGranted",
+    "at": "2026-09-08T11:38:13.344Z",
+    "aggregate": "WorkspaceWriteLease",
+    "payload": {
+      "leaseId": "command-check-f79669ce6276a048ccd6e2fcd90236ec8597a039933402e8322af3c421881e8c",
+      "scope": {
+        "schemaVersion": 1,
+        "projectId": "live-paths",
+        "workspaceId": "workspace-main",
+        "kind": "workspace",
+        "id": "workspace-main",
+        "revision": 1
+      },
+      "holder": {
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "live-paths",
+          "goalId": "goal-live",
+          "runId": "real-path-normalization"
+        },
+        "attemptRef": {
+          "aggregateType": "TaskAttempt",
+          "projectId": "live-paths",
+          "goalId": "goal-live",
+          "taskId": "coding-task",
+          "attemptId": "attempt-path-normalization"
+        }
+      },
+      "expiresAt": null
+    }
+  },
+  {
+    "id": 16,
+    "type": "WorkspaceWriteLeaseReleased",
+    "at": "2026-09-08T11:38:13.490Z",
+    "aggregate": "WorkspaceWriteLease",
+    "payload": {
+      "leaseId": "command-check-f79669ce6276a048ccd6e2fcd90236ec8597a039933402e8322af3c421881e8c",
+      "releasedAt": "2026-09-08T11:38:13.490Z",
+      "releasedBy": "holder",
+      "releasedVia": "explicit",
+      "postWriteWorkspaceRevision": null
+    }
+  }
+]

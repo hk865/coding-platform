@@ -22,12 +22,13 @@
  *   - cross-project isolation (project B's world never touches project A's
  *     aggregates).
  */
-import { describe, expect, it } from "vitest";
-import { createControlEngine } from "../../src/control/control-engine.js";
-import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { SqliteStateLedger } from "../../src/data/state-ledger/sqlite-ledger.js";
+import { createControlEngine } from "../../src/control/control-engine/control-engine.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
 import type { StateLedger, LedgerCommit, LedgerCommitReceipt } from "../../src/contracts/ledger.js";
 import { canonicalJson } from "../../src/contracts/fingerprint.js";
-import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import type { ArchitectureBaselinePin } from "../../src/contracts/governance.js";
 import type { ArchitectureCandidateProposalV1 } from "../../src/contracts/architecture-inspection.js";
 import { candidateProposalDigest } from "../../src/contracts/architecture-inspection.js";
@@ -36,37 +37,11 @@ import type { CandidateArchitectureBaselineV1 } from "../../src/contracts/baseli
 import {
   buildP112Proposal,
   buildRecordCandidateBaselineProposalCommand,
-} from "../../src/contracts/fixtures/architecture-fixtures.js";
-import {
-  P114_PROJECT,
-  P114_WORKSPACE,
-  P114_PROPOSAL,
-  buildP114Candidate,
-  buildP114Decision,
-  buildP114Gate,
-  buildP114Activation,
-  buildP114MaterializeCommand,
-  buildP114DecisionCommand,
-  buildP114GateCommand,
-  buildP114ActivationCommand,
-  buildP114CandidateFold,
-  buildP114DecisionFold,
-  buildP114GateFold,
-  buildP114ActivationFold,
-  p114ProposalRef,
-  p114CandidateRef,
-  p114DecisionRef,
-  p114GateRef,
-  p114ActivationRef,
-} from "../../src/contracts/fixtures/baseline-evolution-fixtures.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  buildInstallCommand,
-  buildInstallLedgerCommit,
-  buildActivateCommand,
-  buildActivateLedgerCommit,
-  architectureBaselinePinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
+} from "../../src/fixtures/architecture-fixtures.js";
+import { P114_PROJECT, P114_WORKSPACE, P114_PROPOSAL, buildP114Candidate, buildP114Decision, buildP114Gate, buildP114Activation, buildP114MaterializeCommand, buildP114DecisionCommand, buildP114GateCommand, buildP114ActivationCommand, p114ProposalRef, p114CandidateRef, p114DecisionRef, p114GateRef, p114ActivationRef } from "../contract-support/fixtures/baseline-evolution-fixtures.js";
+import { buildP114CandidateFold, buildP114DecisionFold, buildP114GateFold, buildP114ActivationFold } from "../../src/control/control-engine/records/baseline-evolution.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildInstallLedgerCommit, buildActivateCommand, buildActivateLedgerCommit } from "../../src/fixtures/governance-fixtures.js";
+import { architectureBaselinePinFor } from "../../src/contracts/governance.js";
 import type { InstallArchitectureBaselineRevisionCommand } from "../../src/contracts/governance.js";
 import { p111BootstrapGoalGovernance } from "../contract-suite/p1-11-harness.js";
 
@@ -74,20 +49,28 @@ const FIXED = FIXED_ISO_2026_09_05;
 
 /** Thin recorder over the real InMemoryLedger (captures the submitted batch and
  *  the total number of events ever committed — used for zero-write assertions). */
+const sqliteLedgers: SqliteStateLedger[] = [];
+afterEach(async () => { for (const ledger of sqliteLedgers.splice(0)) await ledger.close(); });
+
 class RecordingLedger extends InMemoryLedger {
+  constructor(private readonly backing?: StateLedger) { super(); }
+  override load(ref: Parameters<StateLedger["load"]>[0]) { return this.backing ? this.backing.load(ref) : super.load(ref); }
+  override events(query: Parameters<StateLedger["events"]>[0]) { return this.backing ? this.backing.events(query) : super.events(query); }
   commits: LedgerCommit[] = [];
   eventCount = 0;
   override async commit(batch: LedgerCommit): Promise<LedgerCommitReceipt> {
     this.commits.push(batch);
     this.eventCount += batch.events.length;
-    return super.commit(batch);
+    return this.backing ? this.backing.commit(batch) : super.commit(batch);
   }
 }
 
 type Harness = { ledger: RecordingLedger; engine: ReturnType<typeof createControlEngine> };
 
-function makeHarness(): Harness {
-  const ledger = new RecordingLedger();
+function makeHarness(adapter: "memory" | "sqlite" = "memory"): Harness {
+  const backing = adapter === "sqlite" ? new SqliteStateLedger({ path: ":memory:" }) : undefined;
+  if (backing) sqliteLedgers.push(backing);
+  const ledger = new RecordingLedger(backing);
   const deps = createDeterministicDeps();
   const engine = createControlEngine({ ledger, now: deps.clock, eventId: deps.eventId });
   return { ledger, engine };
@@ -165,7 +148,7 @@ async function activateNewBaseline(ledger: StateLedger, projectId: string, revis
 /** Full happy-path chain over a fresh world: proposal recorded, then
  *  materialize -> decision(accept) -> gate(pass) -> activation, ALL committed.
  *  Returns the artifacts + command objects for replay/fold-equality. */
-async function runHappyPath(): Promise<{
+async function runHappyPath(adapter: "memory" | "sqlite" = "memory"): Promise<{
   harness: Harness;
   proposal: ArchitectureCandidateProposalV1;
   currentActivePin: ArchitectureBaselinePin;
@@ -175,7 +158,7 @@ async function runHappyPath(): Promise<{
   activationCmd: ReturnType<typeof buildP114ActivationCommand>;
   workspaceRevision: number;
 }> {
-  const harness = makeHarness();
+  const harness = makeHarness(adapter);
   await setupWorld(harness.ledger, P114_PROJECT);
   const { proposal, currentActivePin } = await recordProposal(harness.engine, harness.ledger, P114_PROJECT);
 
@@ -259,7 +242,7 @@ describe("P1-14 BaselineEvolutionEngineImpl", () => {
       const aReceipt = await engine.recordBaselineActivation(activationCmd);
       expect(aReceipt.status).toBe("committed");
       const aBatch = ledger.commits[aBefore]!;
-      expect(canonicalJson(aBatch)).toBe(canonicalJson(buildP114ActivationFold(activationCmd, { eventId: aBatch.events[0]!.eventId, occurredAt: aBatch.events[0]!.occurredAt })));
+      expect(canonicalJson(aBatch)).toBe(canonicalJson(buildP114ActivationFold(activationCmd, { eventId: aBatch.events[0]!.eventId, occurredAt: aBatch.events[0]!.occurredAt, guardVersions: [{ ref: { aggregateType: "Workspace", projectId: P114_PROJECT, workspaceId: P114_WORKSPACE }, revision: workspaceRevision }, { ref: { aggregateType: "ProjectArchitectureBaselineActive", projectId: P114_PROJECT }, revision: 1 }] })));
 
       // committed recipe fields
       if (mReceipt.status === "committed") {
@@ -609,4 +592,139 @@ describe("P1-14 BaselineEvolutionEngineImpl", () => {
       expect(candBRes.status).toBe("found");
     });
   });
+});
+
+
+describe("baseline evolution caller identities", () => {
+  it.each(["memory", "sqlite"] as const)("persists an arbitrary candidate ID at the exact receipt reference (%s)", async (adapter) => {
+    const { harness, materializeCmd } = await runHappyPath(adapter);
+    materializeCmd.aggregateId = "candidate-real-99";
+    const receipt = await harness.engine.materializeCandidateBaseline(materializeCmd);
+    expect(receipt.status).toBe("committed");
+    if (receipt.status !== "committed") throw new Error("materialization failed");
+    expect(receipt.candidateRef.candidateId).toBe("candidate-real-99");
+    const loaded = await harness.ledger.load(receipt.candidateRef);
+    expect(loaded.status).toBe("found");
+  });
+});
+
+
+describe("baseline evolution decision, gate and activation identities", () => {
+  it.each(["memory", "sqlite"] as const)("keeps caller-selected IDs through every public command and supports another evolution (%s)", async (adapter) => {
+    const { harness, materializeCmd, proposal, currentActivePin, workspaceRevision } = await runHappyPath(adapter);
+    for (const suffix of ["one", "two"]) {
+      const m = { ...materializeCmd, commandId: "materialize-" + suffix, aggregateId: "candidate-" + suffix,
+        identity: { ...materializeCmd.identity, idempotencyKey: "materialize-" + suffix } };
+      const mr = await harness.engine.materializeCandidateBaseline(m);
+      expect(mr.status).toBe("committed");
+      const candidate = buildP114Candidate(proposal, { candidateId: m.aggregateId });
+      const decision = { ...buildP114Decision(candidate), decisionId: "decision-" + suffix };
+      const dr = await harness.engine.recordArchitectureChangeDecision(buildP114DecisionCommand(decision, { commandId: "decision-" + suffix }));
+      expect(dr.status).toBe("committed");
+      if (dr.status !== "committed") throw new Error("decision rejected");
+      expect((await harness.ledger.load(dr.decisionRef)).status).toBe("found");
+      const gate = buildP114Gate(candidate, { gateId: "gate-" + suffix, workspaceRevision });
+      const gr = await harness.engine.recordMigrationGate(buildP114GateCommand(gate, { commandId: "gate-" + suffix }));
+      expect(gr.status).toBe("committed");
+      if (gr.status !== "committed") throw new Error("gate rejected");
+      expect((await harness.ledger.load(gr.gateRef)).status).toBe("found");
+      const toPin = { ref: { ...currentActivePin.ref, revision: 2 }, digest: candidate.contentDigest };
+      const activation = buildP114Activation(candidate, decision, gate, toPin, {
+        activationId: "activation-" + suffix, decisionRef: dr.decisionRef, gateRef: gr.gateRef,
+      });
+      const ar = await harness.engine.recordBaselineActivation(buildP114ActivationCommand(activation, { commandId: "activation-" + suffix }));
+      expect(ar.status).toBe("committed");
+      if (ar.status !== "committed") throw new Error("activation rejected");
+      expect((await harness.ledger.load(ar.activationRef)).status).toBe("found");
+    }
+  });
+});
+
+
+describe("baseline evolution gate binding", () => {
+  it.each(["memory", "sqlite"] as const)("rejects a different project's PASS gate without recording activation (%s)", async (adapter) => {
+    const { harness, materializeCmd, decisionCmd, gateCmd, activationCmd } = await runHappyPath(adapter);
+    await recordChain(harness, materializeCmd, decisionCmd, gateCmd);
+    await setupWorld(harness.ledger, "proj-beta");
+    const { proposal } = await recordProposal(harness.engine, harness.ledger, "proj-beta");
+    const candidate = buildP114Candidate(proposal);
+    expect((await harness.engine.materializeCandidateBaseline(buildP114MaterializeCommand(p114ProposalRef("proj-beta"), { commandId: "foreign-materialize" }))).status).toBe("committed");
+    const gate = buildP114Gate(candidate, { workspaceRevision: 1 });
+    expect((await harness.engine.recordMigrationGate(buildP114GateCommand(gate, { commandId: "foreign-gate" }))).status).toBe("committed");
+    activationCmd.payload.activation.gateRef = p114GateRef("proj-beta");
+    const result = await harness.engine.recordBaselineActivation(activationCmd);
+    expect(result).toMatchObject({ status: "rejected", code: "target_mismatch" });
+    expect((await harness.ledger.load(p114ActivationRef(P114_PROJECT))).status).toBe("not_found");
+  });
+});
+
+
+it.each(["memory", "sqlite"] as const)("does not record activation if the source baseline changes after validation (%s)", async (adapter) => {
+  const { harness, materializeCmd, decisionCmd, gateCmd, activationCmd } = await runHappyPath(adapter);
+  await recordChain(harness, materializeCmd, decisionCmd, gateCmd);
+  const commit = harness.ledger.commit.bind(harness.ledger);
+  let race = true;
+  harness.ledger.commit = async (batch) => {
+    if (race && batch.commitKind === "baseline-activation-record") {
+      race = false;
+      await activateNewBaseline(harness.ledger, P114_PROJECT, 2);
+    }
+    return commit(batch);
+  };
+  expect(await harness.engine.recordBaselineActivation(activationCmd)).toMatchObject({ status: "rejected", code: "revision_conflict" });
+  expect((await harness.ledger.load(p114ActivationRef(P114_PROJECT))).status).toBe("not_found");
+});
+
+
+it.each(["memory", "sqlite"] as const)("replays a committed activation after the project baseline advances (%s)", async (adapter) => {
+  const { harness, materializeCmd, decisionCmd, gateCmd, activationCmd } = await runHappyPath(adapter);
+  await recordChain(harness, materializeCmd, decisionCmd, gateCmd);
+  const original = await harness.engine.recordBaselineActivation(activationCmd);
+  expect(original.status).toBe("committed");
+  await activateNewBaseline(harness.ledger, P114_PROJECT, 2);
+  const replay = await harness.engine.recordBaselineActivation(activationCmd);
+  expect(replay).toEqual({ ...original, replayed: true });
+});
+
+
+it.each(["memory", "sqlite"] as const)("rejects command IDs that disagree with the recorded entity identity (%s)", async (adapter) => {
+  const { harness, materializeCmd, decisionCmd, gateCmd, activationCmd } = await runHappyPath(adapter);
+  await recordChain(harness, materializeCmd, decisionCmd, gateCmd);
+  const commands = [decisionCmd, gateCmd, activationCmd] as const;
+  for (const command of commands) {
+    const altered = { ...command, commandId: "different-" + command.commandId, aggregateId: "incorrect-entity-id", identity: { ...command.identity, idempotencyKey: "different-" + command.commandId } };
+    const result = altered.commandType === "RecordArchitectureChangeDecision"
+      ? await harness.engine.recordArchitectureChangeDecision(altered)
+      : altered.commandType === "RecordMigrationGate"
+        ? await harness.engine.recordMigrationGate(altered)
+        : await harness.engine.recordBaselineActivation(altered);
+    expect(result).toMatchObject({ status: "rejected", code: "invalid" });
+  }
+});
+
+
+it("rejects a previously passing migration gate after a real Writer patch advances the workspace", async () => {
+  const { createInMemoryHarness } = await import("../../src/harness/in-memory-harness.js");
+  const { runP107FullScenario, toP1_07Harness } = await import("../contract-suite/p1-07-harness.js");
+  const h = createInMemoryHarness();
+  let seq = 0;
+  const engine = createControlEngine({ ledger: h.ledger, now: () => FIXED, eventId: () => "baseline-stale-" + ++seq });
+  const pending: ReturnType<typeof buildP114ActivationCommand>[] = [];
+  const recordPatch = h.recordPatch.bind(h);
+  h.recordPatch = async (command) => {
+    const { proposal, currentActivePin } = await recordProposal(engine, h.ledger, P114_PROJECT);
+    const candidate = buildP114Candidate(proposal);
+    expect((await engine.materializeCandidateBaseline(buildP114MaterializeCommand(p114ProposalRef(), { commandId: "stale-materialize" }))).status).toBe("committed");
+    const decision = buildP114Decision(candidate);
+    expect((await engine.recordArchitectureChangeDecision(buildP114DecisionCommand(decision, { commandId: "stale-decision" }))).status).toBe("committed");
+    const gate = buildP114Gate(candidate, { workspaceRevision: command.payload.patch.beforeWorkspaceRevision });
+    expect((await engine.recordMigrationGate(buildP114GateCommand(gate, { commandId: "stale-gate" }))).status).toBe("committed");
+    pending.push(buildP114ActivationCommand(buildP114Activation(candidate, decision, gate, { ref: { ...currentActivePin.ref, revision: 2 }, digest: candidate.contentDigest }), { commandId: "stale-activation" }));
+    return recordPatch(command);
+  };
+  await runP107FullScenario(toP1_07Harness(h));
+  expect(pending).toHaveLength(1);
+  const result = await engine.recordBaselineActivation(pending[0]!);
+  expect(result).toMatchObject({ status: "rejected", code: "source_stale" });
+  expect((await h.ledger.load(p114ActivationRef())).status).toBe("not_found");
 });

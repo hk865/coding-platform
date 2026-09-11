@@ -13,9 +13,11 @@ import { describe, it, expect } from "vitest";
 import type { WorkspaceCapabilityPort } from "../../src/contracts/workspace-capability.js";
 import type { RunPort, RunHandle, RunCapabilities } from "../../src/contracts/ports.js";
 import type { TaskEnvelopeV1 } from "../../src/contracts/task-envelope.js";
-import { scopeOverlap, scopeCoveredByWriteScope, conflictScopeKeyFor, evaluateLeaseAdmissibility, workspaceReadLeaseRefFor, workspaceWriteLeaseRefFor } from "../../src/contracts/workspace-lease.js";
+import { scopeOverlap, scopeCoveredByWriteScope, conflictScopeKeyFor, workspaceReadLeaseRefFor, workspaceWriteLeaseRefFor } from "../../src/contracts/workspace-lease.js";
+import { evaluateLeaseAdmissibility } from "../../src/control/control-engine/policies/workspace-lease.js";
 import type { ConflictScopeV1 } from "../../src/contracts/workspace-lease.js";
-import { detectEvidenceConflicts, evidenceConflictKeyFor } from "../../src/contracts/integration.js";
+import { evidenceConflictKeyFor } from "../../src/contracts/integration.js";
+import { detectEvidenceConflicts } from "../../src/control/control-engine/policies/integration.js";
 import type { EvidenceConflictFactV1 } from "../../src/contracts/integration.js";
 import type {
   P1_07TestHarness,
@@ -76,16 +78,16 @@ import {
   P107_PLAN_REVISION_CONFLICT_FIXTURE_V1,
   rerunP107Verification,
 } from "./p1-07-harness.js";
-import { buildEffectivityAnchorV1 } from "../../src/contracts/fixtures/evidence-fixtures.js";
+import { buildEffectivityAnchorV1 } from "../contract-support/fixtures/evidence-fixtures.js";
 import { evidenceRefFor } from "../../src/contracts/evidence.js";
 import type { EvidenceV1 } from "../../src/contracts/evidence.js";
 import type { EvidenceRef } from "../../src/contracts/evidence.js";
 import type { EffectivityAnchorV1 } from "../../src/contracts/evidence.js";
-import type { FakeRuntimeScriptV1 } from "../../src/contracts/fixtures/dispatch-fixtures.js";
-import { rebaseScriptForRun } from "../../src/contracts/fixtures/dispatch-fixtures.js";
+import type { FakeRuntimeScriptV1 } from "../../src/fixtures/dispatch-fixtures.js";
+import { rebaseScriptForRun } from "../../src/fixtures/dispatch-fixtures.js";
 import type { PlanRevisionSnapshot } from "../../src/contracts/plan.js";
 import { dispatchOutboxRefFor } from "../../src/contracts/dispatch.js";
-import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
 
 export type P1_07FactoryOptions = {
   workspaceCapability?: WorkspaceCapabilityPort;

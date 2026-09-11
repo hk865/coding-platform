@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "kind": "python-cache-independence-check",
+  "environmentOverride": "PYTHONDONTWRITEBYTECODE explicitly absent in launcher; child script controls its own environment",
+  "runs": {
+    "bug": {
+      "exitCode": 0,
+      "stdout": "{\"passed\": 8, \"total\": 8, \"modelCalls\": 0}\n",
+      "stderr": "",
+      "command": [
+        "python3",
+        "/home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/bug-discovery/evaluator-only/preflight.py",
+        "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/environment/review-no-python-override/bug"
+      ]
+    },
+    "canary": {
+      "exitCode": 0,
+      "stdout": "{\"status\":\"PASS\",\"checks\":16,\"modelCalls\":0,\"outputRoot\":\"/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/environment/review-no-python-override/canary\"}\n",
+      "stderr": "",
+      "command": [
+        "node",
+        "/home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/scripts/canary-preflight.mjs",
+        "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/environment/review-no-python-override/canary"
+      ]
+    }
+  },
+  "sourceDrift": {
+    "bug": [],
+    "canarySource": []
+  },
+  "pycachePathsAfter": {
+    "bug": [],
+    "canarySource": []
+  },
+  "modelCalls": 0,
+  "privateArtifactsRoot": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/environment/review-no-python-override",
+  "status": "PASS"
+}

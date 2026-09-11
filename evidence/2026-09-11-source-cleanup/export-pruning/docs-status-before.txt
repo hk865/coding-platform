@@ -1,0 +1,152 @@
+ M AGENTS.md
+ M ARCHITECTURE.md
+ M PRODUCT.md
+ M README.md
+ M dev_docs/agent/P1-02-initialization-prompt.md
+ M dev_docs/agent/P1-07-integrator-prompt.md
+ M dev_docs/agent/README.md
+ M dev_docs/agent/project-location.md
+ M dev_docs/agent/reconciliation-agent-prompt.md
+ M dev_docs/archive/INDEX.md
+ M dev_docs/decisions/INDEX.md
+ M dev_docs/design/context-lifecycle-human-review.md
+ M dev_docs/design/human-framework-role-review.md
+ M dev_docs/document-ownership.md
+ M dev_docs/interfaces/context-lifecycle.md
+ M dev_docs/interfaces/human-design-status.md
+ M dev_docs/interfaces/runtime-collaboration.md
+ M dev_docs/modules/control/architecture-reconciler.md
+ M dev_docs/modules/control/control-engine.md
+ M dev_docs/modules/control/dispatch-engine.md
+ M dev_docs/modules/control/plan-compiler.md
+ M dev_docs/modules/control/verification-engine.md
+ M dev_docs/modules/data/artifact-vault.md
+ M dev_docs/modules/data/context-compiler.md
+ M dev_docs/modules/data/read-model-index.md
+ M dev_docs/modules/data/state-ledger.md
+ M dev_docs/modules/data/workspace-reader.md
+ M dev_docs/modules/execution/worker-runtime.md
+ M dev_docs/modules/interaction/human-collaboration.md
+ M dev_docs/planning/ROADMAP.md
+ M dev_docs/planning/active/P0/tickets/01-archive-source.md
+ M dev_docs/planning/active/P0/tickets/02-rewrite-maps.md
+ M dev_docs/planning/active/P0/tickets/03-module-dag.md
+ M dev_docs/planning/active/P0/tickets/04-first-slice-contracts.md
+ M dev_docs/planning/active/P0/tickets/05-proposed-build-dag.md
+ M dev_docs/planning/active/P0/tickets/06-user-review.md
+ M dev_docs/planning/proposed/P1-foundation/DAG.md
+ M dev_docs/planning/proposed/P1-foundation/tickets/00-contract-pack.md
+ M dev_docs/planning/proposed/P1-foundation/tickets/03-fake-run-visible.md
+ M dev_docs/planning/proposed/P1-foundation/tickets/16-context-continuity.md
+ M dev_docs/verification/2026-09-06-context-lifecycle-human-review.md
+ M dev_docs/verification/2026-09-06-context-orchestration-sync.md
+ M dev_docs/verification/2026-09-07-p1-13-baseline-plan.md
+ M dev_docs/verification/2026-09-07-p1-14-baseline-plan.md
+ M dev_docs/verification/consultant-p109-query-run-path.md
+ M dev_docs/verification/control-context-query-dialogue-review.md
+ M dev_docs/verification/data-context-coordination-review.md
+ M dev_docs/verification/document-convergence.md
+ M dev_docs/verification/document-ownership-split.md
+ M dev_docs/verification/g1-foundation-evidence.md
+ M dev_docs/verification/g2-continuity-evidence.md
+ M dev_docs/verification/g3-gate-evidence.md
+ M dev_docs/verification/g4-gate-evidence.md
+ M dev_docs/verification/g5-gate-evidence.md
+ M dev_docs/verification/memory-role-template-review.md
+ M dev_docs/verification/mvp-review.md
+ M dev_docs/verification/p0-documentation-evidence.md
+ M dev_docs/verification/p1-00-implementation-evidence.md
+ M dev_docs/verification/p1-01-implementation-evidence.md
+ M dev_docs/verification/p1-02-implementation-evidence.md
+ M dev_docs/verification/p1-03-implementation-evidence.md
+ M dev_docs/verification/p1-04-implementation-evidence.md
+ M dev_docs/verification/p1-05-implementation-evidence.md
+ M dev_docs/verification/p1-06-implementation-evidence.md
+ M dev_docs/verification/p1-07-implementation-evidence.md
+ M dev_docs/verification/p1-08-implementation-evidence.md
+ M dev_docs/verification/p1-09-implementation-evidence.md
+ M dev_docs/verification/p1-10-implementation-evidence.md
+ M dev_docs/verification/p1-11-implementation-evidence.md
+ M dev_docs/verification/p1-12-implementation-evidence.md
+ M dev_docs/verification/p1-13-implementation-evidence.md
+ M dev_docs/verification/p1-14-implementation-evidence.md
+ M dev_docs/verification/p1-15-implementation-evidence.md
+ M dev_docs/verification/p1-16-implementation-evidence.md
+ M dev_docs/verification/p1-17-implementation-evidence.md
+ M dev_docs/verification/product-architecture-review-2026-09-05.md
+ M dev_docs/verification/project-location-confirmation.md
+ M dev_docs/verification/reconciliation-2026-09-06-p1-00-06-vs-docs.md
+ M dev_docs/verification/runtime-collaboration-impact.md
+ M human/README.md
+?? dev_docs/agent/module-completion-prompt.md
+?? dev_docs/agent/ui-implementation-prompt.md
+?? dev_docs/archive/2026-09-08-before-module-audit/
+?? dev_docs/archive/2026-09-08-verification-history/
+?? dev_docs/archive/2026-09-09-before-architecture-rebuild/
+?? dev_docs/archive/2026-09-11-document-pruning/
+?? dev_docs/decisions/0003-rework-role-spec-architecture-reconciliation.md
+?? dev_docs/design/2026-09-07-ui-workflow-feedback.md
+?? dev_docs/evaluation/2026-09-07-coding-agent-benchmarks.md
+?? dev_docs/evaluation/2026-09-07-exploration-acceptance.md
+?? dev_docs/evaluation/2026-09-07-full-acceptance.md
+?? dev_docs/interfaces/independent-review.md
+?? dev_docs/interfaces/local-gui-verification.md
+?? dev_docs/interfaces/module-boundaries.md
+?? dev_docs/planning/active/architecture-rebuild/
+?? dev_docs/planning/active/core-verification/
+?? dev_docs/planning/active/external-review-repair/
+?? dev_docs/planning/proposed/module-completion/
+?? dev_docs/planning/proposed/real-agent-acceptance/
+?? dev_docs/product/frontend-workbench.md
+?? dev_docs/verification/2026-09-07-chat-workspace.md
+?? dev_docs/verification/2026-09-07-coding-agent-vendoring.md
+?? dev_docs/verification/2026-09-07-local-gui.md
+?? dev_docs/verification/2026-09-07-multi-agent-test-task-sync.md
+?? dev_docs/verification/2026-09-07-real-agent-test-task-sync.md
+?? dev_docs/verification/2026-09-07-review-fixes.md
+?? dev_docs/verification/2026-09-07-ui-feedback-swepro-preflight.md
+?? dev_docs/verification/2026-09-07-workspace-tools.md
+?? dev_docs/verification/2026-09-08-capability-completion-audit/
+?? dev_docs/verification/2026-09-08-framework-acceptance/
+?? dev_docs/verification/2026-09-08-module-audit/
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/
+?? dev_docs/verification/2026-09-08-p1-18-independent-review.md
+?? dev_docs/verification/2026-09-08-p1-18-material-access.md
+?? dev_docs/verification/2026-09-08-product-wiring-repair/
+?? dev_docs/verification/2026-09-08-project-exploration/
+?? dev_docs/verification/2026-09-08-real-model-minimal-acceptance.md
+?? dev_docs/verification/2026-09-08-repair/
+?? dev_docs/verification/2026-09-08-swepro-context-only-trial.md
+?? dev_docs/verification/2026-09-08-ui-workbench-acceptance.md
+?? dev_docs/verification/2026-09-08-ui-workflow-repair.md
+?? dev_docs/verification/2026-09-08-windows-migration/
+?? dev_docs/verification/2026-09-09-architecture-rebuild/
+?? dev_docs/verification/2026-09-09-architecture-repair.md
+?? dev_docs/verification/2026-09-09-code-document-structure-audit.md
+?? dev_docs/verification/2026-09-09-core-verification/
+?? dev_docs/verification/2026-09-09-independent-review/
+?? dev_docs/verification/2026-09-09-material-access-repair.md
+?? dev_docs/verification/2026-09-09-module-closeout.md
+?? dev_docs/verification/2026-09-09-module-completion.md
+?? dev_docs/verification/2026-09-09-ui-repair-acceptance.md
+?? dev_docs/verification/2026-09-10-core-obligations-map.md
+?? dev_docs/verification/2026-09-10-def17/
+?? dev_docs/verification/2026-09-10-doc-accuracy.md
+?? dev_docs/verification/2026-09-10-external-review-repair/
+?? dev_docs/verification/2026-09-10-external-review/
+?? dev_docs/verification/2026-09-10-progress-audit.md
+?? dev_docs/verification/2026-09-11-architecture-convergence/
+?? dev_docs/verification/2026-09-11-open-gaps-explained.md
+?? dev_docs/verification/2026-09-11-remaining-work.md
+?? dev_docs/verification/2026-09-11-verification-prompt.md
+?? dev_docs/verification/README.md
+?? dev_docs/verification/assets/
+?? dev_docs/verification/rat-00-evidence.md
+?? dev_docs/verification/rat-01-evidence.md
+?? dev_docs/verification/rat-02-evidence.md
+?? dev_docs/verification/rat-03-evidence.md
+?? human/capability-completion-path.md
+?? human/context-management.md
+?? human/current-capabilities.md
+?? human/module-status.md
+?? human/user-replies-2026-09-11.md

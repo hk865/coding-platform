@@ -1,18 +1,10 @@
 # Agent Platform 产品代码根
 
-```yaml
-status: in_progress (P1-00)
-updated: 2026-09-05
-scope: 产品代码；规范与计划的权威位置是文档根，不在本目录
-```
+产品根：`/mnt/d/1.project/Software/agent_platform`。权威规范、当前模块状态与开发记录位于文档根 `/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform`。
 
-本目录是 Agent Platform 的产品代码。规范、计划、Ticket 与验收记录的权威位置：
+- 以用户当前委托或分配的 Development Ticket 开始；实现子 Agent 的范围与验收来自明确 Ticket。详见 [工作入口](/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/AGENTS.md)。
+- 判断哪些已实现、哪些待修时，先核对 [当前模块状态](/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/human/module-status.md) 的相关条目；[交接](IMPLEMENTATION-HANDOFF.md) 只保留当前事实，旧记录已归档。
+- 设计职责与 Interface 见 [架构](/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/ARCHITECTURE.md) 及对应 Module/Interface；测试通过只证明所覆盖范围。
+- 修改内置执行内核时，先读 [vendor/coding-agent/AGENTS.md](vendor/coding-agent/AGENTS.md)；核对来源与本地适配读 [INTEGRATION.md](vendor/coding-agent/INTEGRATION.md)。
 
-- 文档根（规范与规划）：`/mnt/d/1.project/software/agent_learn/agent_dev/agent_platform`
-  - 工作 Agent 入口：[文档根 AGENTS.md](../../../mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/AGENTS.md)
-  - 建项与派发：[project-location.md](../../../mnt/d/1.project/software/agent_learn/agent_dev/agent_platform/dev_docs/agent/project-location.md)
-- 当前实施票据：`dev_docs/planning/proposed/P1-foundation/tickets/00-contract-pack.md`（位于文档根）
-- 交接与状态：[IMPLEMENTATION-HANDOFF.md](./IMPLEMENTATION-HANDOFF.md)
-
-技术栈：TypeScript（NodeNext、strict）+ vitest；与执行内核 coding-agent 的工具链一致。
-测试命令：`pnpm test`（全量）、`pnpm vitest run <路径>`（定向）、`pnpm typecheck`。
+保留与当前工作无关的未提交改动。构建/测试入口以 package.json 和已配置工具链为准。当前用户未配置累计 Token、调用数和时长预算，不自行增加。

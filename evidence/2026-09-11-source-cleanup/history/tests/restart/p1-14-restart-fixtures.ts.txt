@@ -1,0 +1,57 @@
+import { classifyRestartProbeError } from "./readiness-probe.js";
+/** P1-14 restart-path fixtures + readiness probe. */
+import { expect } from "vitest";
+import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
+import { runP114Scenario, p114ActiveBaselinePin, type P114HarnessLike, type P114ScenarioResult } from "../contract-suite/p1-14-harness.js";
+import { P114_PROJECT } from "../contract-suite/p1-14-harness.js";
+import { p114CandidateRef, p114DecisionRef, p114GateRef, p114ActivationRef } from "../../src/contracts/fixtures/baseline-evolution-fixtures.js";
+
+export async function isP114Ready(): Promise<boolean> {
+  try {
+    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    try {
+      await runP114RestartScenario(h);
+      return true;
+    } finally {
+      await h.cleanup().catch(() => undefined);
+    }
+  } catch (error) {
+    return classifyRestartProbeError(error);
+  }
+}
+
+export type P114RestartEvidence = {
+  candidateDigest: string;
+  decisionOutcome: string;
+  gateStatus: string;
+  activationFrom: string;
+};
+
+export async function runP114RestartScenario(h: PersistentSqliteHarness): Promise<P114RestartEvidence> {
+  const scen: P114ScenarioResult = await runP114Scenario(h as unknown as P114HarnessLike);
+  const cand = await h.ledger.load(p114CandidateRef(P114_PROJECT));
+  expect(cand.status).toBe("found");
+  const dec = await h.ledger.load(p114DecisionRef(P114_PROJECT));
+  expect(dec.status).toBe("found");
+  const gate = await h.ledger.load(p114GateRef(P114_PROJECT));
+  expect(gate.status).toBe("found");
+  const act = await h.ledger.load(p114ActivationRef(P114_PROJECT));
+  expect(act.status).toBe("found");
+  return {
+    candidateDigest: scen.candidate.contentDigest,
+    decisionOutcome: scen.decision.outcome,
+    gateStatus: scen.gate.status,
+    activationFrom: JSON.stringify(scen.activation.fromPin),
+  };
+}
+
+export async function verifyP114AfterRestart(restarted: PersistentSqliteHarness, evidence: P114RestartEvidence): Promise<void> {
+  const cand = await restarted.ledger.load(p114CandidateRef(P114_PROJECT));
+  expect(cand.status).toBe("found");
+  if (cand.status === "found") expect((cand.snapshot as { candidate: { contentDigest: string } }).candidate.contentDigest).toBe(evidence.candidateDigest);
+  const act = await restarted.ledger.load(p114ActivationRef(P114_PROJECT));
+  expect(act.status).toBe("found");
+  if (act.status === "found") expect(JSON.stringify((act.snapshot as { activation: { fromPin: unknown } }).activation.fromPin)).toBe(evidence.activationFrom);
+}

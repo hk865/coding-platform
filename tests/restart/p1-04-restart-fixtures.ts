@@ -1,3 +1,4 @@
+import { classifyRestartProbeError } from "./readiness-probe.js";
 /**
  * P1-04 restart-path fixtures + readiness probe.
  *   bootstrap -> install/activate -> CreateGoal -> applyPlan -> claim ->
@@ -42,8 +43,8 @@ export async function isP104Ready(): Promise<boolean> {
     } finally {
       await h.cleanup().catch(() => undefined);
     }
-  } catch {
-    return false;
+  } catch (error) {
+    return classifyRestartProbeError(error);
   }
 }
 

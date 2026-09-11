@@ -26,22 +26,16 @@ import type { RunPort, RunHandle, RunCapabilities } from "../../src/contracts/po
 import type { TaskEnvelopeV1 } from "../../src/contracts/task-envelope.js";
 import { dispatchOutboxRefFor } from "../../src/contracts/dispatch.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import {
-  buildInstallCommand,
-  buildActivateCommand,
-  completionPolicyPinFor,
-  architectureBaselinePinFor,
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  COMPLETION_POLICY_FIXTURE_V1,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
-import { buildCreateGoalCommand } from "../../src/contracts/fixtures/goal-fixtures.js";
-import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
+import { buildInstallCommand, buildActivateCommand, ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1 } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
+import { buildCreateGoalCommand } from "../contract-support/fixtures/goal-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
 import {
   P107_PROJECT,
   P107_WORKSPACE,
   P107_SCHEMA,
   P107_PLAN_REVISION_FIXTURE_V1,
-} from "../../src/contracts/fixtures/workspace-fixtures.js";
+} from "../contract-support/fixtures/workspace-fixtures.js";
 import {
   p107GoalScope,
   p107PlanRef,

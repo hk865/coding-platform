@@ -1,0 +1,67 @@
+import { describe, expect, it } from 'vitest';
+import { InMemoryLedger } from '../../src/data/state-ledger/in-memory-ledger.js';
+import { SqliteStateLedger } from '../../src/data/state-ledger/sqlite-ledger.js';
+import { HandoffDriveEngineImpl } from '../../src/control/dispatch-engine/handoff-drive.js';
+import { WorkspaceDriveEngineImpl } from '../../src/control/dispatch-engine/workspace-drive.js';
+import { buildDispatchClaimCommand } from '../../src/contracts/commands/dispatch.js';
+import { ROLE_BINDING_FIXTURE_V1 } from '../../src/contracts/fixtures/dispatch-fixtures.js';
+import type { RunPort } from '../../src/contracts/ports.js';
+import { reviewFixture, scope, cmd, at } from './reviewer-work-fixture.js';
+
+for (const storage of ['memory', 'sqlite'] as const) describe('review isolation from existing drivers ' + storage, () => {
+  it('keeps ReviewWork out of handoff and parallel windows while preserving ordinary intent behavior', async () => {
+    const ledger = storage === 'memory' ? new InMemoryLedger() : new SqliteStateLedger({ path: ':memory:' });
+    const h = await reviewFixture(ledger, { reviewers: 1, independentTasks: true });
+    expect(await h.ports.lifecycle.createWork(h.create)).toMatchObject({ status: 'accepted' });
+    const handoffSelections: string[] = [], parallelSelections: string[] = [];
+    const runtime: RunPort = {
+      capabilities: async () => ({ replayable: true, supportsSnapshot: false, maxEnvelopeBytes: 65536 }),
+      start: async () => { throw Error('No runtime should start without material'); },
+    };
+    const handoff = new HandoffDriveEngineImpl({
+      ledger, control: h.control, runtime, now: () => at,
+      handoffContext: {
+        assemble: async request => {
+          handoffSelections.push(request.runRef.runId);
+          return { status: 'needs_material', gaps: [], selectedRefs: [] };
+        },
+      },
+    });
+    const parallel = new WorkspaceDriveEngineImpl({
+      ledger, control: h.control, runtime, now: () => at,
+      contextCompiler: {
+        assemble: async request => {
+          parallelSelections.push(request.runRef.runId);
+          return { status: 'needs_material', gaps: [], selectedRefs: [] };
+        },
+      },
+    });
+    const trigger = { schemaVersion: 1 as const, projectId: scope.projectId, goalId: scope.goalId, reason: 'review-isolation', maxIntents: 1 };
+    const empty = { scanned: 0, started: 0, completed: 0, pendingRemaining: 0, failures: [] };
+    expect(await handoff.driveHandoff(trigger)).toEqual(empty);
+    expect(await parallel.driveParallel(trigger)).toEqual(empty);
+    expect(handoffSelections).toEqual([]);
+    expect(parallelSelections).toEqual([]);
+
+    expect(await h.control.claimTask(buildDispatchClaimCommand({
+      ...cmd('ordinary-task'), ...scope, taskId: 'task-verify-view',
+      attemptId: 'zz-ordinary', runId: 'ordinary-other-task', roleBinding: ROLE_BINDING_FIXTURE_V1,
+      declaredPermissions: { tools: ['read'], writeScope: [] }, budget: { tokenBudget: 128000, deadline: null },
+    }))).toMatchObject({ status: 'committed' });
+    const all = await ledger.pendingDispatchIntents(10);
+    expect(all).toHaveLength(2);
+    expect(all[0]!.intent.work?.kind).toBe('review');
+    const ordinary = all[1]!;
+    for (let i = 0; i < 3; i++) {
+      const handed = await handoff.driveHandoff(trigger);
+      expect(handed).toMatchObject({ scanned: 0, started: 0, pendingRemaining: 1 });
+      expect(handed.failures).toHaveLength(1);
+      expect(handed.failures[0]).toMatchObject({ code: 'not_a_replacement', outboxRef: ordinary.ref });
+      expect(await parallel.driveParallel(trigger)).toMatchObject({ scanned: 1, started: 0, pendingRemaining: 1 });
+    }
+    expect(handoffSelections).toEqual([]);
+    expect(parallelSelections).toEqual(Array(3).fill('ordinary-other-task'));
+    expect(await ledger.pendingDispatchIntents(10)).toEqual(all);
+    if ('close' in ledger) await ledger.close();
+  });
+});

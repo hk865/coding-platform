@@ -10,7 +10,7 @@ import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 import { toP1_16Harness, type P1_16HarnessLike } from "../contract-suite/p1-16-harness.js";
 import { isP116Ready, runP116RestartScenario, verifyP116AfterRestart, type P116RestartEvidence } from "../restart/p1-16-restart-fixtures.js";
-import { P116_WORKSPACE, P116_WORK } from "../../src/contracts/fixtures/context-fixtures.js";
+import { P116_WORKSPACE, P116_WORK } from "../contract-support/fixtures/context-fixtures.js";
 import { P108_PROJECT_A } from "../contract-suite/p1-08-harness.js";
 
 const READY = await isP116Ready();

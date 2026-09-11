@@ -1,0 +1,92 @@
+{
+  "date": "2026-09-11T06:28:34.270Z",
+  "productUnchangedFrom": "2026-09-11-architecture-convergence/final.json",
+  "archiveRoot": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\archive\\2026-09-11-document-pruning",
+  "files": [
+    {
+      "original": "dev_docs/verification/2026-09-09-code-document-structure-audit.md",
+      "archived": "dev_docs/archive/2026-09-11-document-pruning/dev_docs/verification/2026-09-09-code-document-structure-audit.md.txt",
+      "sha256": "df6e5d6b97db5ada038c3451fc9ce069d0a98c9774963f3024e5d059761825f5",
+      "originalBytes": 97006,
+      "routeBytes": 528,
+      "current": "human/module-status.md",
+      "retained": "尚待复核的维护项继续保留在延期登记DEF-15；旧建议不是当前架构决定。"
+    },
+    {
+      "original": "dev_docs/verification/2026-09-09-architecture-repair.md",
+      "archived": "dev_docs/archive/2026-09-11-document-pruning/dev_docs/verification/2026-09-09-architecture-repair.md.txt",
+      "sha256": "b48b49994321423bd27a7811926b1a4feb93e532179c2924bdbf1468bece412c",
+      "originalBytes": 12060,
+      "routeBytes": 509,
+      "current": "dev_docs/interfaces/module-boundaries.md",
+      "retained": "当前职责归属已由Module边界承接；产品缺口见模块状态。"
+    },
+    {
+      "original": "dev_docs/verification/2026-09-09-module-closeout.md",
+      "archived": "dev_docs/archive/2026-09-11-document-pruning/dev_docs/verification/2026-09-09-module-closeout.md.txt",
+      "sha256": "34799eefcdb3c9eded992365786634a77e9140963f2ba2913ae8a0d4a2473f11",
+      "originalBytes": 9924,
+      "routeBytes": 510,
+      "current": "human/module-status.md",
+      "retained": "来源授权、恢复、重验和历史能力义务留在当前14项清单及核心映射。"
+    },
+    {
+      "original": "dev_docs/verification/2026-09-10-progress-audit.md",
+      "archived": "dev_docs/archive/2026-09-11-document-pruning/dev_docs/verification/2026-09-10-progress-audit.md.txt",
+      "sha256": "0cca2d8ba3d774f53ef5d2f0a8e1f54743b023125c93c7d95279b54597ecdd38",
+      "originalBytes": 19449,
+      "routeBytes": 487,
+      "current": "human/module-status.md",
+      "retained": "当时实跑数字与失败保留；不与新状态并列为current。"
+    },
+    {
+      "original": "dev_docs/verification/2026-09-10-doc-accuracy.md",
+      "archived": "dev_docs/archive/2026-09-11-document-pruning/dev_docs/verification/2026-09-10-doc-accuracy.md.txt",
+      "sha256": "a5c37e748a433c10c4f2305988549ad5393a2d46030553abd631d319542c74fa",
+      "originalBytes": 2516,
+      "routeBytes": 495,
+      "current": "dev_docs/verification/2026-09-11-architecture-convergence/summary.md",
+      "retained": "修订前后证据仍保留在产品evidence原路径。"
+    },
+    {
+      "original": "dev_docs/verification/2026-09-11-open-gaps-explained.md",
+      "archived": "dev_docs/archive/2026-09-11-document-pruning/dev_docs/verification/2026-09-11-open-gaps-explained.md.txt",
+      "sha256": "37be90e368e692c71c2c09aedc8e41587220006f8e1f5bf0040e39c9d72700c4",
+      "originalBytes": 13510,
+      "routeBytes": 548,
+      "current": "dev_docs/verification/2026-09-10-core-obligations-map.md",
+      "retained": "requiredOutputs门禁、矩阵与回调依赖的旧解释已被后续决定替代；未批准方案只作候选历史。"
+    },
+    {
+      "original": "dev_docs/verification/2026-09-11-remaining-work.md",
+      "archived": "dev_docs/archive/2026-09-11-document-pruning/dev_docs/verification/2026-09-11-remaining-work.md.txt",
+      "sha256": "9e05deb8f3687a5e60e6e2baf2d1093e41697e96e363c728b10358f724bbbaf4",
+      "originalBytes": 8828,
+      "routeBytes": 523,
+      "current": "human/module-status.md",
+      "retained": "14项能力由当前状态及原11项义务映射承接；不沿用旧全完成或无需决定说法。"
+    },
+    {
+      "original": "dev_docs/verification/2026-09-11-verification-prompt.md",
+      "archived": "dev_docs/archive/2026-09-11-document-pruning/dev_docs/verification/2026-09-11-verification-prompt.md.txt",
+      "sha256": "6cac3dbad1149a535617cbf1bd22008c0552d3eae5ac8d7d72013cfcdfad1ec4",
+      "originalBytes": 11569,
+      "routeBytes": 497,
+      "current": "dev_docs/verification/README.md",
+      "retained": "旧固定变异数量/执行指令不构成新委托；正式验收协议继续保留。"
+    },
+    {
+      "original": "dev_docs/agent/module-completion-prompt.md",
+      "archived": "dev_docs/archive/2026-09-11-document-pruning/dev_docs/agent/module-completion-prompt.md.txt",
+      "sha256": "464b1a49700a5901b071de9fcf864cfeca18b68da812e760ecd429d68c7b3fe6",
+      "originalBytes": 24020,
+      "routeBytes": 526,
+      "current": "human/module-status.md",
+      "retained": "全范围持续实施和固定阶段不再是默认工作入口；下阶段须以用户新委托开始。"
+    }
+  ],
+  "defaultTextBytes": {
+    "before": 198882,
+    "after": 4623
+  }
+}

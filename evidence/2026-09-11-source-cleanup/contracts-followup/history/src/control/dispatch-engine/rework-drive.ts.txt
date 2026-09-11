@@ -1,0 +1,661 @@
+/** Drive rework from supplied verification material. Re-read disposition through Control after each acceptance. */
+import type { ReworkDispositionPort } from '../../contracts/rework-disposition.js';
+import type { GoalSnapshot, StateLedger } from '../../contracts/ledger.js';
+import type { PlanRevisionSnapshot, PlanRevisionRef } from '../../contracts/plan.js';
+import type { ControlEngine } from '../../contracts/modules.js';
+import type { PlanProposalSnapshot } from '../../contracts/goal-change.js';
+import { planProposalDigest } from '../../contracts/goal-change.js';
+import type {
+  OpenIssuesRequestV1,
+  OpenIssuesViewV1,
+  ReworkIssueDispositionV1,
+  ReworkIssueViewV1,
+  ReworkProposalV1,
+} from '../../contracts/rework.js';
+import { obligationCarrierTaskIds, reworkIssueUnaddressed, reworkPlanIdFor, reworkProposalIdFor, reworkTaskIdFor } from '../../contracts/rework.js';
+import type {
+  ReworkAcceptanceViewV1,
+  ReworkDriveOutcomeV1,
+  ReworkDrivePort,
+  ReworkDriveRequestV1,
+  ReworkDriveResultV1,
+  ReworkDriveScopeV1,
+  ReworkDriveViewV1,
+  ReworkIssueDispositionTraceV1,
+  ReworkProposalPreviewV1,
+} from '../../contracts/rework-drive.js';
+import { canonicalJson } from '../../contracts/fingerprint.js';
+import { ReworkPlanCompiler } from '../plan-compiler/rework-plan-compiler.js';
+import { resolvePlanningWorkIdentities } from '../plan-compiler/planning-work-materials.js';
+
+export type ReworkDriveDeps = {
+  /** 只读 canonical 事实：Goal 的当前 active revision 与已落账的提案聚合。 */
+  ledger: Pick<StateLedger, 'load'>;
+  /** 唯一写入面：ControlEngine 的既有自动受理入口（本文件不直接 commit）。 */
+  control: Pick<ControlEngine, 'acceptReworkProposal'> & Partial<Pick<ControlEngine, 'resolveTaskWorkIdentity'>>;
+  /** Control 复核当前计划与正式证据的义务处置接口。 */
+  disposition: ReworkDispositionPort;
+};
+
+/** 受理视图里对"本视图能回答什么"的固定说明；三种入口共用同一句话，避免各处措辞分叉。 */
+const ACCEPTANCE_NOTE =
+  '本视图只回报 canonical 的受理事实：提案是否落账、它导出的新 revision 是否已生效。' +
+  '一次触发可能受理多个分组（各自一份提案与一个新 revision），因此 appliedBasis 逐项说明' +
+  '「已生效」是按提案身份核对的（proposal_identity），还是按「这条问题的返工任务正在承担它的义务」' +
+  '核对的（rework_carrier）；两者都不是"没有生效"的反面证据。' +
+  '被拒绝或转人工的判定按 RW-04 的设计零写入（不消耗预算、不落提案），因此不会在这里留下记录；' +
+  '那份结论由 driveRework 的结果逐条回报。';
+
+export class ReworkDriveEngine implements ReworkDrivePort {
+  /** 同一进程内的触发串行队列；并发的两次触发不会各自读到同一批 open 问题。 */
+  private queue: Promise<unknown> = Promise.resolve();
+  /** RW-03 的编译器是纯函数、零依赖，因此这里直接持有实例，不需要注入。 */
+  private readonly compiler = new ReworkPlanCompiler();
+
+  constructor(private readonly deps: ReworkDriveDeps) {}
+
+  driveRework(request: ReworkDriveRequestV1): Promise<ReworkDriveResultV1> {
+    const work = this.queue.then(() => this.run(request));
+    this.queue = work.then(
+      () => undefined,
+      () => undefined,
+    );
+    return work;
+  }
+
+  reworkView(request: ReworkDriveRequestV1): Promise<ReworkDriveViewV1> {
+    return this.view(request);
+  }
+
+  // ----------------------------------------------------------------------- //
+  // 一次触发                                                               //
+  // ----------------------------------------------------------------------- //
+
+  private async run(request: ReworkDriveRequestV1): Promise<ReworkDriveResultV1> {
+    const scope = scopeOf(request);
+    const initial = await this.readIssues(request);
+    const gaps = viewGaps(initial);
+    if (initial.status === 'unavailable') {
+      // 问题都读不到时没有可交代的对象：不虚构空清单，unavailable 本身就是结论。
+      return { schemaVersion: 1, status: 'unavailable', scope, issues: initial, outcomes: [], acceptedPlanRefs: [], dispositions: [], gaps };
+    }
+
+    // 本次要处理的任务分组。筛选条件是问题的**处置事实**（Control 的权威标注）：
+    // 尚未处置（unaddressed：anchor 就是当前 revision；carried_by_task：anchor 已失效但失败义务
+    // 仍由原任务承担且没有在当前 revision 上重验通过）才需要返工。驱动只消费它，不自己判定时效，
+    // 也不从 planId 形状推断任何东西。
+    const planned = groupsOf(viewIssues(initial)).filter((group) => group.issues.some((issue) => reworkIssueUnaddressed(issue)));
+    if (planned.length === 0) {
+      const known = viewIssues(initial).length;
+      const unknown = viewIssues(initial).some(issue => (!issue.disposition || issue.disposition.status === 'unknown'));
+      gaps.push(
+        known === 0
+          ? '该目标当前没有未处置问题：没有来源结论就没有返工提案。'
+          : unknown ? '部分问题的义务处置无法确认，需补齐当前事实后重试；旧 FAIL 与义务继续保留。'
+          : '该目标的 ' + known + ' 条问题都已经处置：' + dispositionSummary(viewIssues(initial)) + '旧 FAIL 与旧报告全部保留在账本中。',
+      );
+      return {
+        schemaVersion: 1,
+        status: unknown ? 'unavailable' : 'nothing_to_do',
+        scope,
+        issues: initial,
+        outcomes: [],
+        acceptedPlanRefs: [],
+        dispositions: await this.dispositionsOf(request, initial, [], initial, gaps),
+        gaps,
+      };
+    }
+
+    const outcomes: ReworkDriveOutcomeV1[] = [];
+    const acceptedPlanRefs: PlanRevisionRef[] = [];
+    for (const plannedGroup of planned) {
+      // 每个分组都重新读一次 canonical 事实：上一组的受理会推进 revision，后面的分组必须按
+      // 推进后的事实判定，而不是拿旧快照继续推导。
+      const current = await this.readIssues(request);
+      if (current.status === 'unavailable') {
+        gaps.push('触发过程中未处置问题读取失败：' + current.message + '（已停止后续分组，不凭不完整事实提案）');
+        break;
+      }
+      const fresh = viewIssues(current).filter((issue) => issue.taskId === plannedGroup.taskId);
+      const open = fresh.filter((issue) => reworkIssueUnaddressed(issue));
+      if (open.length === 0) {
+        // 这一组已经不再"未处置"。但"不再属于当前 revision"不等于"已被处置"：
+        // 只有处置事实说明承担者已换人（disposed_by_rework）或已在当前 revision 上重验通过
+        // （disposed_by_reverification）时才能报 superseded，并且必须说得出谁接手了；
+        // 读不到归属（unknown）或干脆没有条目时如实报未确认，不允许静默 superseded。
+        const replacedBy = acceptedPlanRefs[acceptedPlanRefs.length - 1] ?? null;
+        const fact = groupDispositionFact(fresh);
+        const where = replacedBy === null
+          ? '它在本驱动之外就已经不再属于当前 revision。'
+          : '本次更早的一次受理已经把计划推进到 ' + replacedBy.planId + '。';
+        if (fact.disposed) {
+          outcomes.push({
+            groupTaskId: plannedGroup.taskId,
+            issueIds: fact.issueIds,
+            status: 'superseded',
+            replacedByPlanId: replacedBy?.planId ?? null,
+            carrierTaskIds: fact.carrierTaskIds,
+            reasons: [
+              '该任务分组的问题已经被处置：' + where + '接手这些义务的当前任务是 ' +
+                (fact.carrierTaskIds.join('、') || '（没有 active 承担者）') + '；旧 revision、旧 FAIL 与旧报告全部保留。',
+              ...fact.reasons,
+            ],
+          });
+          continue;
+        }
+        outcomes.push({
+          groupTaskId: plannedGroup.taskId,
+          issueIds: fact.issueIds.length > 0 ? fact.issueIds : plannedGroup.issueIds,
+          status: 'rejected',
+          origin: 'canonical',
+          code: 'issue_disposition_unconfirmed',
+          reasons: [
+            '该任务分组的问题已经不再是"未处置"，但 canonical 事实**不能**证明它已被处置：' + where +
+              '处置事实：' + (fact.reasons.join('；') || '未提供（disposition 缺失）') + '。' +
+              '因此本驱动不把它当作已处置（旧 FAIL 与旧报告保留），需要人核对这些义务当前由谁承担。',
+          ],
+          supersededByPlanId: replacedBy?.planId ?? null,
+        });
+        continue;
+      }
+
+      const canonical = await this.loadScope(request);
+      if (canonical === null) {
+        outcomes.push({
+          groupTaskId: plannedGroup.taskId,
+          issueIds: open.map((issue) => issue.issueId),
+          status: 'rejected',
+          origin: 'canonical',
+          code: 'scope_unavailable',
+          reasons: ['Goal ' + request.goalId + ' 或它的 active plan revision 读不到：没有可返工的验收基线，本组不提案。'],
+          supersededByPlanId: null,
+        });
+        gaps.push('分组 ' + plannedGroup.taskId + ' 缺少可用的 canonical 作用域；已停止后续分组。');
+        break;
+      }
+
+      // 机械推导提案。编译器自己会按「源任务 + 处置它的问题」建组，因此传进去的是
+      // 本任务分组的问题集合；调用方不重复它的分组规则。
+      const compiled = this.compiler.compile({
+        schemaVersion: 1,
+        projectId: request.projectId,
+        workspaceId: canonical.workspaceId,
+        goalRef: canonical.goal.ref,
+        goalObjective: canonical.goal.objective,
+        activePlan: canonical.plan,
+        issues: open,
+        workIdentities: await this.workIdentities(request, canonical.plan),
+      });
+
+      if (compiled.status === 'needs_decision') {
+        outcomes.push({
+          groupTaskId: plannedGroup.taskId,
+          issueIds: open.map((issue) => issue.issueId),
+          status: 'needs_human_decision',
+          origin: 'compiler',
+          code: compiled.code,
+          reasons: [compiled.message, ...compiled.issues],
+          boundaries: [],
+          budget: null,
+        });
+        continue;
+      }
+      if (compiled.status === 'rejected') {
+        outcomes.push({
+          groupTaskId: plannedGroup.taskId,
+          issueIds: open.map((issue) => issue.issueId),
+          status: 'rejected',
+          origin: 'compiler',
+          code: compiled.code,
+          reasons: [compiled.message, ...compiled.issues],
+          supersededByPlanId: acceptedPlanRefs[acceptedPlanRefs.length - 1]?.planId ?? null,
+        });
+        continue;
+      }
+
+      // 四条边界受理入口。本文件不预判边界，也不缓存它的结论。
+      const receipt = await this.deps.control.acceptReworkProposal({ schemaVersion: 1, proposal: compiled.proposal });
+      if (receipt.status === 'accepted') {
+        acceptedPlanRefs.push(receipt.activePlanRef);
+        outcomes.push({
+          groupTaskId: plannedGroup.taskId,
+          issueIds: receipt.issueIds,
+          status: 'accepted',
+          proposalId: receipt.proposalId,
+          planRef: receipt.activePlanRef,
+          replayed: receipt.replayed,
+          boundaries: receipt.boundaries,
+          budget: receipt.budget,
+          reasons: receipt.replayed
+            ? ['同一提案此前已受理：本次是幂等重放，没有产生第二份提案或第二个 revision。']
+            : receipt.boundaries.filter((boundary) => boundary.satisfied).flatMap((boundary) => boundary.reasons),
+        });
+        continue;
+      }
+      if (receipt.status === 'needs_human_decision') {
+        outcomes.push({
+          groupTaskId: plannedGroup.taskId,
+          issueIds: open.map((issue) => issue.issueId),
+          status: 'needs_human_decision',
+          origin: 'acceptance',
+          code: receipt.code,
+          reasons: receipt.reasons,
+          boundaries: receipt.boundaries,
+          budget: receipt.budget,
+        });
+        continue;
+      }
+      outcomes.push({
+        groupTaskId: plannedGroup.taskId,
+        issueIds: open.map((issue) => issue.issueId),
+        status: 'rejected',
+        origin: 'acceptance',
+        code: receipt.code,
+        reasons: [...receipt.reasons, ...(receipt.guardIssues ?? [])],
+        supersededByPlanId: acceptedPlanRefs[acceptedPlanRefs.length - 1]?.planId ?? null,
+      });
+    }
+
+    // 逐条交代本次触发开始时读到的每一条失败现在落在哪里。用触发**结束**时的 canonical
+    // 事实重建（处置事实 + 当前 revision 的义务承担者），因此重启后仍然一致，也让人不必从
+    // outcomes 里反推"剩下的是什么"。
+    const finalIssues = await this.readIssues(request);
+    return {
+      schemaVersion: 1,
+      status: 'driven',
+      scope,
+      issues: initial,
+      outcomes,
+      acceptedPlanRefs,
+      dispositions: await this.dispositionsOf(request, initial, outcomes, finalIssues, gaps),
+      gaps,
+    };
+  }
+
+  /**
+   * 把"本次触发开始时读到的每一条问题"逐项交代清楚。
+   *
+   * 每一项都必须落在「有明确承担者」（accepted_rework／carried_by_task／disposed_*）或
+   * 「有明确且可继续处理的阻塞」（awaiting_budget／awaiting_human_decision／rejected_input）上。
+   * unresolved 表示既没有归属也没有阻塞——那是缺陷信号，必须为空；unknown 表示 canonical 事实
+   * 读不到，如实标注，绝不当作已处置。
+   *
+   * 承担者一律读当前 revision 的义务承担者（contracts/rework.ts 的唯一判据），不解析文字，
+   * 也不从 outcome 的措辞反推。
+   */
+  private async dispositionsOf(
+    request: ReworkDriveRequestV1,
+    initial: OpenIssuesViewV1,
+    outcomes: ReworkDriveOutcomeV1[],
+    finalView: OpenIssuesViewV1,
+    gaps: string[],
+  ): Promise<ReworkIssueDispositionTraceV1[]> {
+    const issues = [...viewIssues(initial)].sort((a, b) => a.issueId.localeCompare(b.issueId));
+    if (issues.length === 0) return [];
+    const canonical = await this.loadScope(request);
+    if (canonical === null) {
+      gaps.push('本次触发结束后读不到该目标生效的 plan revision：所有问题的承担者事实都无法交代（dispositions 记为 unknown，不当作已处置）。');
+    }
+    const finalIssues = viewIssues(finalView);
+    const traces: ReworkIssueDispositionTraceV1[] = [];
+    for (const issue of issues) {
+      const obligationIds = [...new Set(issue.failedRequirements.map((requirement) => requirement.obligationId))].sort();
+      const carriers = canonical === null ? null : obligationCarrierTaskIds(canonical.plan, obligationIds);
+      const carrierTaskIds = carriers?.taskIds ?? [];
+      const outcome = outcomes.find((entry) => entry.issueIds.includes(issue.issueId));
+      const current = finalIssues.find((entry) => entry.issueId === issue.issueId) ?? null;
+      const reworkTaskId = reworkTaskIdFor(issue.issueId);
+      const reasons: string[] = [];
+      let status: ReworkIssueDispositionTraceV1['status'];
+      const reworkTaskIds: string[] = [];
+
+      if (outcome?.status === 'accepted') {
+        status = 'accepted_rework';
+        reworkTaskIds.push(reworkTaskId);
+        reasons.push('本次受理 ' + outcome.proposalId + ' 把这一组换给返工任务 ' + reworkTaskId + '（新 revision ' + outcome.planRef.planId + '）。');
+        if (carriers !== null && !carrierTaskIds.includes(reworkTaskId)) {
+          reasons.push('核对提示：受理回执给出的返工任务 ' + reworkTaskId + ' 不在当前 revision 的义务承担者 ' + (carrierTaskIds.join('、') || '（无）') + ' 里，请核对受理结果。');
+        }
+      } else if (outcome?.status === 'needs_human_decision') {
+        status = outcome.code === 'autonomous_budget_available' ? 'awaiting_budget' : 'awaiting_human_decision';
+        reasons.push('明确阻塞（' + outcome.code + '）：' + outcome.reasons.join('；'));
+      } else if (outcome?.status === 'rejected') {
+        status = 'rejected_input';
+        reasons.push('输入与 canonical 事实不一致（' + outcome.code + '）：' + outcome.reasons.join('；'));
+      } else if (outcome?.status === 'superseded') {
+        status = current?.disposition?.status === 'disposed_by_reverification' ? 'disposed_by_reverification' : 'disposed_by_rework';
+        reasons.push(...outcome.reasons);
+      } else {
+        const fromDisposition = current?.disposition === undefined ? null : traceStatusFromDisposition(current.disposition.status);
+        if (current === null) {
+          status = 'unknown';
+          reasons.push('本次触发没有覆盖这条问题，且触发结束时读不到它：不当作已处置，需要人核对。');
+        } else if (fromDisposition !== null) {
+          status = fromDisposition;
+          reasons.push('本次触发没有受理这条问题；它的处置事实是 ' + current.disposition!.status + '。');
+        } else {
+          status = 'unresolved';
+          reasons.push(
+            '本次触发结束时这条失败义务既没有承担者变更、也没有在当前 revision 上重验通过，也没有停在明确的阻塞上：' +
+              '这是缺陷信号（RC-01），必须由人接手核对。',
+          );
+        }
+      }
+      if (current?.disposition !== undefined) reasons.push(...current.disposition.issues);
+      traces.push({ issueId: issue.issueId, taskId: issue.taskId, obligationIds, status, carrierTaskIds, reworkTaskIds, reasons });
+    }
+    return traces;
+  }
+
+  // ----------------------------------------------------------------------- //
+  // 只读视图                                                               //
+  // ----------------------------------------------------------------------- //
+
+  private async view(request: ReworkDriveRequestV1): Promise<ReworkDriveViewV1> {
+    const scope = scopeOf(request);
+    const issues = await this.readIssues(request);
+    const gaps = viewGaps(issues);
+    const canonical = await this.loadScope(request);
+    if (canonical === null) {
+      return {
+        schemaVersion: 1,
+        scope,
+        issues,
+        proposal: {
+          status: 'not_compiled',
+          proposalId: null,
+          planId: null,
+          message: 'Goal 或它的 active plan revision 读不到：本视图不猜测提案与受理。',
+          diagnostics: [],
+        },
+        acceptance: emptyAcceptance(null),
+        gaps,
+      };
+    }
+
+    // 与 driveRework 同一判据（RC-01）：未处置 = unaddressed（anchor 当前）或 carried_by_task
+    // （anchor 已失效但失败义务仍由原任务承担且没有重验通过）。视图因此也能回答"还剩什么没处置"。
+    const open = viewIssues(issues).filter((issue) => reworkIssueUnaddressed(issue));
+    let compiledProposal: ReworkProposalV1 | null = null;
+    let proposal: ReworkProposalPreviewV1;
+    if (open.length === 0) {
+      proposal = {
+        status: 'not_compiled',
+        proposalId: null,
+        planId: null,
+        message: '当前没有属于生效 revision 的未处置问题：没有可推导的返工提案。',
+        diagnostics: [],
+      };
+    } else {
+      const compiled = this.compiler.compile({
+        schemaVersion: 1,
+        projectId: request.projectId,
+        workspaceId: canonical.workspaceId,
+        goalRef: canonical.goal.ref,
+        goalObjective: canonical.goal.objective,
+        activePlan: canonical.plan,
+        issues: open,
+        workIdentities: await this.workIdentities(request, canonical.plan),
+      });
+      if (compiled.status === 'proposal') {
+        compiledProposal = compiled.proposal;
+        proposal = {
+          status: 'proposal',
+          proposalId: compiled.proposal.proposalId,
+          planId: compiled.proposal.planDraft.planId,
+          message: compiled.proposal.summary,
+          diagnostics: [],
+        };
+      } else {
+        proposal = {
+          status: compiled.status === 'needs_decision' ? 'needs_decision' : 'rejected',
+          proposalId: null,
+          planId: null,
+          message: compiled.message,
+          diagnostics: compiled.issues,
+        };
+      }
+    }
+
+    // 受理事实只用 canonical 来源重建：Goal 的当前 active revision + 账本里的提案聚合。
+    // 提案身份不在这里发明，而是与 RW-03 编译器、RW-04 受理入口共用 contracts/rework.ts 的
+    // 同一个确定性函数；即使问题已经因为一次已生效的受理变成 superseded，也能凭问题自己的
+    // 来源 revision 找回当时那份提案的身份（历史 PlanRevision 不可改写，读回来仍是同一份）。
+    const candidates = await this.candidateProposalIds(request, canonical, issues, gaps);
+    const activePlanRef = canonical.goal.activePlanRevision;
+    let appliedProposalId: string | null = null;
+    for (const candidate of candidates) {
+      if (activePlanRef !== null && activePlanRef.planId === reworkPlanIdFor(candidate.proposalId)) appliedProposalId = candidate.proposalId;
+    }
+    const lookupId = proposal.proposalId ?? appliedProposalId;
+    let recorded: PlanProposalSnapshot | null = null;
+    if (lookupId !== null) {
+      const loaded = await this.deps.ledger.load({
+        aggregateType: 'PlanProposal',
+        projectId: request.projectId,
+        workspaceId: canonical.workspaceId,
+        proposalId: lookupId,
+      });
+      if (loaded.status === 'found' && loaded.snapshot.ref.aggregateType === 'PlanProposal') recorded = loaded.snapshot as PlanProposalSnapshot;
+    }
+    // 一次触发会受理多个分组（每个分组一份提案、各自一个新 revision）。此时"当前 active
+    // revision 就是本提案导出的 revision"只对最后一次受理成立，而问题带的是它自己的 anchor
+    // revision，光凭问题重建不出后几份提案的身份。身份重建不出来并不等于"没有生效"：改用这条
+    // 问题自己的 canonical 依据——当前 active revision 里，它的返工任务正在承担它的义务。
+    // 两种依据分开记录（appliedBasis），不把"身份可核对"与"承担者已接手"混成一句话。
+    const allIssues = viewIssues(issues);
+    const reworkCarrierInEffect =
+      allIssues.length > 0 &&
+      allIssues.every(
+        (entry) =>
+          entry.disposition?.status === 'disposed_by_rework' &&
+          entry.disposition.carrierTaskIds.includes(reworkTaskIdFor(entry.issueId)),
+      );
+    const acceptance: ReworkAcceptanceViewV1 = {
+      proposalId: proposal.proposalId,
+      proposalRecorded: recorded !== null,
+      proposalRef: recorded?.ref ?? null,
+      recordedAt: recorded?.recordedAt ?? null,
+      digestMatches:
+        recorded === null || compiledProposal === null ? null : planProposalDigest(recorded.proposal) === planProposalDigest(compiledProposal),
+      applied: appliedProposalId !== null || reworkCarrierInEffect,
+      appliedBasis: appliedProposalId !== null ? 'proposal_identity' : reworkCarrierInEffect ? 'rework_carrier' : 'none',
+      appliedProposalId,
+      activePlanRef,
+      note: ACCEPTANCE_NOTE,
+    };
+    return { schemaVersion: 1, scope, issues, proposal, acceptance, gaps };
+  }
+
+  /**
+   * 由「问题 + 它自己的来源 revision」推导候选提案身份。这是 contracts/rework.ts 的同一个
+   * 身份函数在只读视图上的应用，不是第二套推导：编译器与受理方用的也是它。
+   */
+  private async candidateProposalIds(
+    request: ReworkDriveRequestV1,
+    canonical: { goal: GoalSnapshot; workspaceId: string; plan: PlanRevisionSnapshot },
+    issues: OpenIssuesViewV1,
+    gaps: string[],
+  ): Promise<Array<{ proposalId: string }>> {
+    const buckets = new Map<string, ReworkIssueViewV1[]>();
+    for (const issue of viewIssues(issues)) {
+      const key = canonicalJson(issue.planRef as never);
+      const bucket = buckets.get(key);
+      if (bucket === undefined) buckets.set(key, [issue]);
+      else bucket.push(issue);
+    }
+    const candidates: Array<{ proposalId: string }> = [];
+    for (const bucket of buckets.values()) {
+      const first = bucket[0];
+      if (first === undefined) continue;
+      const loaded = await this.deps.ledger.load(first.planRef);
+      if (loaded.status !== 'found' || loaded.snapshot.ref.aggregateType !== 'PlanRevision') {
+        gaps.push('问题的来源 revision ' + first.planRef.planId + ' 读不到：无法为它重建提案身份。');
+        continue;
+      }
+      const source = loaded.snapshot as PlanRevisionSnapshot;
+      candidates.push({
+        proposalId: reworkProposalIdFor({
+          projectId: request.projectId,
+          workspaceId: canonical.workspaceId,
+          goalRef: canonical.goal.ref,
+          sourcePlanRef: source.ref,
+          sourcePlanRevision: source.planRevision,
+          issues: bucket.map((issue) => ({ issueId: issue.issueId, taskId: issue.taskId })),
+        }),
+      });
+    }
+    return candidates;
+  }
+
+  // ----------------------------------------------------------------------- //
+  // canonical 读取                                                          //
+  // ----------------------------------------------------------------------- //
+
+  private async readIssues(request: ReworkDriveRequestV1): Promise<OpenIssuesViewV1> {
+    try {
+      const material = request.issueMaterials;
+      if (!material) return { status: 'unavailable', code: 'unavailable', message: '未提供验证问题材料' };
+      if (material.status !== 'ready') return structuredClone(material);
+      if (material.issues.some(issue => issue.projectId !== request.projectId || issue.workspaceId !== request.workspaceId || issue.goalId !== request.goalId))
+        return { status: 'unavailable', code: 'unavailable', message: '验证问题材料作用域不符' };
+      return { ...structuredClone(material), issues: await this.deps.disposition.projectIssues({ ...request, taskIds: [] }, material.issues) };
+    } catch (error) {
+      // 只读出口失败不是"没有问题"：明确回报不可用，绝不把读取失败当成空集合。
+      return { status: 'unavailable', code: 'unavailable', message: '未处置问题读取失败：' + String(error) };
+    }
+  }
+
+  private workIdentities(request: ReworkDriveRequestV1, plan: PlanRevisionSnapshot) {
+    const resolve = this.deps.control.resolveTaskWorkIdentity;
+    return resolvePlanningWorkIdentities(request, plan, resolve ? {
+      resolveTaskWorkIdentity: query => resolve.call(this.deps.control, query),
+    } : undefined);
+  }
+
+  private async loadScope(
+    request: ReworkDriveRequestV1,
+  ): Promise<{ goal: GoalSnapshot; workspaceId: string; plan: PlanRevisionSnapshot } | null> {
+    const loaded = await this.deps.ledger.load({ aggregateType: 'Goal', projectId: request.projectId, goalId: request.goalId });
+    if (loaded.status !== 'found' || loaded.snapshot.ref.aggregateType !== 'Goal') return null;
+    const goal = loaded.snapshot as GoalSnapshot;
+    const workspaceId = goal.workspaceRef.workspaceId;
+    // 作用域必须一致：不拿别的 workspace 的 Goal 去给本作用域提案（跨作用域 = 越权）。
+    if (workspaceId !== request.workspaceId) return null;
+    if (goal.activePlanRevision === null) return null;
+    const planLoaded = await this.deps.ledger.load(goal.activePlanRevision);
+    if (planLoaded.status !== 'found' || planLoaded.snapshot.ref.aggregateType !== 'PlanRevision') return null;
+    return { goal, workspaceId, plan: planLoaded.snapshot as PlanRevisionSnapshot };
+  }
+}
+
+export function createReworkDriveEngine(deps: ReworkDriveDeps): ReworkDriveEngine {
+  return new ReworkDriveEngine(deps);
+}
+
+/** 只读视图的缺口：unavailable 没有 gaps 字段，用它的 message 代替，不虚构空缺口。 */
+function viewGaps(view: OpenIssuesViewV1): string[] {
+  return view.status === 'unavailable' ? [view.message] : [...view.gaps];
+}
+
+/** 视图里的问题清单：unavailable／none 都是空集合（原因由状态本身表达，不在这里猜）。 */
+function viewIssues(view: OpenIssuesViewV1): ReworkIssueViewV1[] {
+  return view.status === 'ready' ? view.issues : [];
+}
+
+function scopeOf(request: ReworkDriveRequestV1): ReworkDriveScopeV1 {
+  return { projectId: request.projectId, workspaceId: request.workspaceId, goalId: request.goalId };
+}
+
+/** 任务分组：只按投影给出的 taskId 分组，顺序确定（taskId 升序），与遍历顺序无关。 */
+function groupsOf(issues: readonly ReworkIssueViewV1[]): Array<{ taskId: string; issueIds: string[]; issues: ReworkIssueViewV1[] }> {
+  const buckets = new Map<string, ReworkIssueViewV1[]>();
+  for (const issue of issues) {
+    const bucket = buckets.get(issue.taskId);
+    if (bucket === undefined) buckets.set(issue.taskId, [issue]);
+    else bucket.push(issue);
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([taskId, bucket]) => ({
+      taskId,
+      issueIds: [...bucket].map((issue) => issue.issueId).sort(),
+      issues: [...bucket].sort((a, b) => a.issueId.localeCompare(b.issueId)),
+    }));
+}
+
+/**
+ * 一组的处置事实汇总。"已被处置"必须是**每一个**问题都有 canonical 支撑的处置事实
+ * （承担者换人或已重验通过）；只要有一条读不到归属，整组就不能报 superseded——那份结论会让人
+ * 以为失败义务已经有人接手。carrierTaskIds 是接手者的清单，report 必须带上它。
+ */
+function groupDispositionFact(issues: readonly ReworkIssueViewV1[]): {
+  disposed: boolean;
+  issueIds: string[];
+  carrierTaskIds: string[];
+  reasons: string[];
+} {
+  const carrierTaskIds = [...new Set(issues.flatMap((issue) => issue.disposition?.carrierTaskIds ?? []))].sort();
+  const reasons = issues.flatMap((issue) => {
+    const disposition = issue.disposition;
+    if (disposition === undefined)
+      return [issue.issueId + '：未提供处置事实（disposition 缺失），无法确认它是否已被处置'];
+    return disposition.issues.map((note) => issue.issueId + '（' + disposition.status + '）：' + note);
+  });
+  const disposed =
+    issues.length > 0 &&
+    issues.every(
+      (issue) =>
+        issue.disposition?.status === 'disposed_by_rework' || issue.disposition?.status === 'disposed_by_reverification',
+    );
+  return { disposed, issueIds: issues.map((issue) => issue.issueId).sort(), carrierTaskIds, reasons };
+}
+
+/** nothing_to_do 的逐条理由：按处置事实计数，不写"它们都被取代了"这种笼统结论。 */
+function dispositionSummary(issues: readonly ReworkIssueViewV1[]): string {
+  const counts = new Map<string, number>();
+  for (const issue of issues) {
+    const status = issue.disposition?.status ?? '未提供处置事实（disposition 缺失）';
+    counts.set(status, (counts.get(status) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([status, count]) => status + ' × ' + count)
+    .join('、') + '：';
+}
+
+/**
+ * 处置事实 → 逐项交代的状态。unaddressed 返回 null：它表示"仍未处置"，因此只有在没有任何
+ * outcome 覆盖时才是缺陷信号（unresolved），而不是一种已交代的落点。
+ */
+function traceStatusFromDisposition(
+  status: ReworkIssueDispositionV1['status'],
+): ReworkIssueDispositionTraceV1['status'] | null {
+  switch (status) {
+    case 'carried_by_task':
+      return 'carried_by_task';
+    case 'disposed_by_rework':
+      return 'disposed_by_rework';
+    case 'disposed_by_reverification':
+      return 'disposed_by_reverification';
+    case 'unknown':
+      return 'unknown';
+    case 'unaddressed':
+      return null;
+  }
+}
+
+function emptyAcceptance(activePlanRef: PlanRevisionRef | null): ReworkAcceptanceViewV1 {
+  return {
+    proposalId: null,
+    proposalRecorded: false,
+    proposalRef: null,
+    recordedAt: null,
+    digestMatches: null,
+    applied: false,
+    appliedBasis: 'none',
+    appliedProposalId: null,
+    activePlanRef,
+    note: ACCEPTANCE_NOTE,
+  };
+}

@@ -1,0 +1,10 @@
+diff --git a/evidence/2026-09-10-module-folder-reorg/independent-review/before/scripts/copy-ui.mjs b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/scripts/copy-ui.mjs
+index d4d5a05..a431224 100644
+--- a/evidence/2026-09-10-module-folder-reorg/independent-review/before/scripts/copy-ui.mjs
++++ b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/scripts/copy-ui.mjs
+@@ -15,4 +15,4 @@ await cp(legacy, target, {
+   recursive: true,
+   filter: source => !String(source).replaceAll('\\', '/').includes('/public/workbench'),
+ });
+-await cp(new URL('../src/app/terminal-sandbox.py', import.meta.url), new URL('../dist/app/terminal-sandbox.py', import.meta.url));
++await cp(new URL('../src/execution/worker-runtime/terminal-sandbox.py', import.meta.url), new URL('../dist/execution/worker-runtime/terminal-sandbox.py', import.meta.url));

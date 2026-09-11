@@ -1,3 +1,7 @@
+import type { HumanCollaboration } from '../../src/contracts/modules.js';
+import type { ControlEngine } from '../../src/contracts/modules.js';
+import type { PlanCompilerPort, PlanningContextPort } from '../../src/contracts/planning.js';
+
 /**
  * Shared P1-11 contract-suite harness: goal/plan-change scenario over a real
  * ledger + engine (FROZEN surface; lanes fill the control/compiler/projection
@@ -7,21 +11,7 @@ import { expect } from "vitest";
 import type { P1_08HarnessLike, P1_08TestHarness } from "./p1-08-harness.js";
 import type { GoalSnapshot, StateLedger } from "../../src/contracts/ledger.js";
 import type { PlanRevisionSnapshot } from "../../src/contracts/plan.js";
-import type {
-  AmendGoalRequestV1,
-  ApplyPlanChangeCommand,
-  ApplyPlanChangeReceipt,
-  PlanChangeViewQuery,
-  PlanChangeViewResult,
-  PlanProposalV1,
-  PlanProposalSnapshot,
-  RecordPlanChangeProposalCommand,
-  RecordPlanChangeProposalReceipt,
-  RecordUserDecisionCommand,
-  RecordUserDecisionReceipt,
-  TaskDispositionRow,
-  UserDecisionV1,
-} from "../../src/contracts/goal-change.js";
+import type { AmendGoalRequestV1, ApplyPlanChangeCommand, ApplyPlanChangeReceipt, PlanChangeViewQuery, PlanChangeViewResult, PlanProposalV1, RecordPlanChangeProposalReceipt, RecordUserDecisionReceipt, TaskDispositionRow, UserDecisionV1 } from "../../src/contracts/goal-change.js";
 import {
   P111_GOAL,
   P111_NEW_PLAN,
@@ -40,51 +30,38 @@ import {
   p111GoalRef,
   p111PlanRef,
   p111ProposalRef,
-} from "../../src/contracts/fixtures/goal-change-fixtures.js";
+} from "../contract-support/fixtures/goal-change-fixtures.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
 import {
   WORKSPACE_BOOTSTRAP_FIXTURE_V1,
   buildBootstrapLedgerCommit,
-} from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+} from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
   buildCreateGoalCommand,
   buildGoalCreateLedgerCommit,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  COMPLETION_POLICY_FIXTURE_V1,
-  architectureBaselinePinFor,
-  buildActivateCommand,
-  buildActivateLedgerCommit,
-  buildInstallCommand,
-  buildInstallLedgerCommit,
-  completionPolicyPinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
-import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit } from "../../src/fixtures/governance-fixtures.js";
+import { architectureBaselinePinFor, completionPolicyPinFor } from "../../src/contracts/governance.js";
+import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
 import type { InstallArchitectureBaselineRevisionCommand, InstallCompletionPolicyRevisionCommand } from "../../src/contracts/governance.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 
 const FIXED = FIXED_ISO_2026_09_05;
 
 export interface P1_11TestHarness extends P1_08TestHarness {
-  recordPlanChangeProposal(command: RecordPlanChangeProposalCommand): Promise<RecordPlanChangeProposalReceipt>;
-  recordUserDecision(command: RecordUserDecisionCommand): Promise<RecordUserDecisionReceipt>;
-  applyPlanChange(command: ApplyPlanChangeCommand): Promise<ApplyPlanChangeReceipt>;
   planChangeView(query: PlanChangeViewQuery): Promise<PlanChangeViewResult>;
-  planProposalRequest(request: AmendGoalRequestV1): Promise<{ status: "proposal"; proposal: PlanProposalV1 } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
-  assemblePlanningContext(request: { schemaVersion: 1; requestId: string; projectId: string; workspaceId: string; goalRef: { aggregateType: "Goal"; projectId: string; goalId: string }; planRef: { aggregateType: "PlanRevision"; projectId: string; planId: string } | null; budget: { maxBundleBytes: number } }): Promise<{ status: "ready"; bundleRef: import("../../src/contracts/artifact.js").ArtifactRef; manifest: { selectedSources: string[]; freshnessCursor: import("../../src/contracts/command-event.js").CommitCursor | null; totalBytes: number } } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: "invalid_request" | "forbidden_tool_or_scope" | "unavailable"; message: string }>;
-  amend(request: AmendGoalRequestV1): Promise<{ status: "accepted"; proposalRef: PlanProposalSnapshot["ref"] } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
+  planProposal: Pick<PlanCompilerPort, 'request'>;
+  planningContext: PlanningContextPort;
+  collaboration: Pick<HumanCollaboration, 'amend'>;
 }
 
 export type P1_11HarnessLike = P1_08HarnessLike & {
-  recordPlanChangeProposal: (command: RecordPlanChangeProposalCommand) => Promise<RecordPlanChangeProposalReceipt>;
-  recordUserDecision: (command: RecordUserDecisionCommand) => Promise<RecordUserDecisionReceipt>;
-  applyPlanChange: (command: ApplyPlanChangeCommand) => Promise<ApplyPlanChangeReceipt>;
+  control: Pick<ControlEngine, 'submit' | 'recordPlanChangeProposal' | 'recordUserDecision' | 'applyPlanChange'>;
   planChangeView: (query: PlanChangeViewQuery) => Promise<PlanChangeViewResult>;
-  planProposalRequest: (request: AmendGoalRequestV1) => Promise<{ status: "proposal"; proposal: PlanProposalV1 } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
-  assemblePlanningContext: (request: { schemaVersion: 1; requestId: string; projectId: string; workspaceId: string; goalRef: { aggregateType: "Goal"; projectId: string; goalId: string }; planRef: { aggregateType: "PlanRevision"; projectId: string; planId: string } | null; budget: { maxBundleBytes: number } }) => Promise<{ status: "ready"; bundleRef: import("../../src/contracts/artifact.js").ArtifactRef; manifest: { selectedSources: string[]; freshnessCursor: import("../../src/contracts/command-event.js").CommitCursor | null; totalBytes: number } } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: "invalid_request" | "forbidden_tool_or_scope" | "unavailable"; message: string }>;
-  amend: (request: AmendGoalRequestV1) => Promise<{ status: "accepted"; proposalRef: PlanProposalSnapshot["ref"] } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
+  planProposal: Pick<PlanCompilerPort, 'request'>;
+  planningContext: PlanningContextPort;
+  collaboration: Pick<HumanCollaboration, 'amend'>;
 };
 
 export function toP1_11Harness(h: P1_11HarnessLike): P1_11TestHarness {
@@ -180,11 +157,11 @@ export async function runP111ChangeScenario(h: P1_11HarnessLike, projectId: stri
 
   const intent = buildAmendGoalRequestV1({ projectId, workspaceId: P111_WORKSPACE, goalRef: p111GoalRef(projectId), planRef: p111PlanRef(P111_SOURCE_PLAN, projectId) });
   const proposal = buildPlanProposalV1({ projectId, workspaceId: P111_WORKSPACE, sourceGoalRef: p111GoalRef(projectId), sourcePlanRef: p111PlanRef(P111_SOURCE_PLAN, projectId) });
-  const proposalReceipt = await h.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "p111-cmd-proposal" }));
+  const proposalReceipt = await h.control.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "p111-cmd-proposal" }));
   expect(proposalReceipt.status).toBe("committed");
 
   const decision = buildUserDecisionV1({ proposal, outcome: "accept" });
-  const decisionReceipt = await h.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "p111-cmd-decision" }));
+  const decisionReceipt = await h.control.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "p111-cmd-decision" }));
   expect(decisionReceipt.status).toBe("committed");
 
   const deltas = proposal.patch.patchDraft.obligationDeltas;
@@ -193,7 +170,7 @@ export async function runP111ChangeScenario(h: P1_11HarnessLike, projectId: stri
     commandId: "p111-cmd-apply",
     expectedRevision: sourceGoal.revision,
   });
-  const applyReceipt = await h.applyPlanChange(applyCommand);
+  const applyReceipt = await h.control.applyPlanChange(applyCommand);
   expect(applyReceipt.status).toBe("committed");
 
   await h.advanceProjection();

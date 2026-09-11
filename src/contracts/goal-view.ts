@@ -88,50 +88,54 @@ export class ProjectionStallError extends Error {
 export interface ReadModelIndex {
   advance(page: EventPage): Promise<ProjectionReceipt>;
   goal(query: GoalViewQuery): Promise<GoalViewResult>;
-  /** P1-02: Plan Graph view for an accepted PlanRevision (per (projectId, goalId)). */
+  /** Plan Graph view for an accepted PlanRevision (per (projectId, goalId)). */
   planGraph(query: PlanGraphViewQuery): Promise<PlanGraphViewResult>;
-  /** P1-02: Task Detail view (per (projectId, goalId, taskId)). */
+  /** Task Detail view (per (projectId, goalId, taskId)). */
   taskDetail(query: TaskDetailViewQuery): Promise<TaskDetailViewResult>;
-  /** P1-03: active agent (lease/attempt/run/budget/status) per (projectId, goalId, taskId). */
+  /** active agent (lease/attempt/run/budget/status) per (projectId, goalId, taskId). */
   activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult>;
-  /** P1-05: goal phase status projection per (projectId, goalId). */
+  /** goal phase status projection per (projectId, goalId). */
   goalStatus(query: GoalStatusQuery): Promise<GoalStatusViewResult>;
-  /** P1-05: goal phase timeline projection per (projectId, goalId). */
+  /** goal phase timeline projection per (projectId, goalId). */
   goalTimeline(query: GoalTimelineQuery): Promise<GoalTimelineViewResult>;
-  /** P1-06: handoff provenance timeline per (projectId, goalId, taskId) — display only. */
+  /** handoff provenance timeline per (projectId, goalId, taskId) — display only. */
   handoffProvenance(query: import("./handoff-view.js").HandoffProvenanceViewQuery): Promise<import("./handoff-view.js").HandoffProvenanceViewResult>;
-  /** P1-07: workspace lease status view per (projectId, workspaceId) — display only. */
+  /** workspace lease status view per (projectId, workspaceId) — display only. */
   workspaceLeaseView(query: import("./workspace-views.js").WorkspaceLeaseViewQuery): Promise<import("./workspace-views.js").WorkspaceLeaseViewResult>;
-  /** P1-07: integration join/conflict view per (projectId, goalId, taskId) — display only, no judgement. */
+  /** integration join/conflict view per (projectId, goalId, taskId) — display only, no judgement. */
   integrationConflicts(query: import("./workspace-views.js").IntegrationConflictViewQuery): Promise<import("./workspace-views.js").IntegrationConflictViewResult>;
-  /** P1-07: workspace patch view per (projectId, workspaceId) — display only. */
+  /** workspace patch view per (projectId, workspaceId) — display only. */
   workspacePatches(query: import("./workspace-views.js").WorkspacePatchViewQuery): Promise<import("./workspace-views.js").WorkspacePatchViewResult>;
-  /** P1-08: portfolio of bootstrapped Project/Workspace scopes (P1-00 manifest projection). */
+  /** portfolio of bootstrapped Project/Workspace scopes (P1-00 manifest projection). */
   consolePortfolio(query: import("./console-views.js").PortfolioViewQuery): Promise<import("./console-views.js").PortfolioViewResult>;
-  /** P1-08: workspace-level summary per full-scope key (projectId, workspaceId). */
+  /** workspace-level summary per full-scope key (projectId, workspaceId). */
   consoleSummary(query: import("./console-views.js").WorkspaceSummaryViewQuery): Promise<import("./console-views.js").WorkspaceSummaryViewResult>;
-  /** P1-08: plan matrix per (projectId, workspaceId, goalId) — planned vs formal phase separated. */
+  /** plan matrix per (projectId, workspaceId, goalId) — planned vs formal phase separated. */
   consolePlanMatrix(query: import("./console-views.js").PlanMatrixViewQuery): Promise<import("./console-views.js").PlanMatrixViewResult>;
-  /** P1-08: workspace-scoped active agent/run rows (optional goalId filter). */
+  /** workspace-scoped active agent/run rows (optional goalId filter). */
   consoleActiveAgents(query: import("./console-views.js").ActiveAgentsViewQuery): Promise<import("./console-views.js").ActiveAgentsViewResult>;
-  /** P1-08: task evidence detail per (projectId, workspaceId, goalId, taskId) — refs only, no vault body. */
+  /** task evidence detail per (projectId, workspaceId, goalId, taskId) — refs only, no vault body. */
   consoleTaskEvidence(query: import("./console-views.js").TaskEvidenceViewQuery): Promise<import("./console-views.js").TaskEvidenceViewResult>;
-  /** P1-08: workspace-level bounded timeline (optional goalId filter; display only). */
+  /** workspace-level bounded timeline (optional goalId filter; display only). */
   consoleTimeline(query: import("./console-views.js").TimelineViewQuery): Promise<import("./console-views.js").TimelineViewResult>;
-  /** P1-16: work context view per (projectId, workspaceId, workId) — binding + notes + continuations (display only). */
+  /** work context view per (projectId, workspaceId, workId) — binding + notes + continuations (display only). */
   workContext(query: import("./context-continuity.js").WorkContextViewQuery): Promise<import("./context-continuity.js").WorkContextViewResult>;
-  /** P1-12: architecture inspection view per (projectId, workspaceId) — inspections + findings + briefs + proposals (display only; no baseline writes). */
+  /** architecture inspection view per (projectId, workspaceId) — inspections + findings + briefs + proposals (display only; no baseline writes). */
   architectureInspectionView(query: import("./architecture-inspection.js").ArchitectureInspectionViewQuery): Promise<import("./architecture-inspection.js").ArchitectureInspectionViewResult>;
-  /** P1-17: completed-work selection source view per (projectId, workspaceId) — display only, composed from the P1-16 work-context stores. */
+  /** completed-work selection source view per (projectId, workspaceId) — display only, composed from the P1-16 work-context stores. */
   completedWorkView(query: import("./completed-work-context.js").CompletedWorkViewQuery): Promise<import("./completed-work-context.js").CompletedWorkViewResult>;
-  /** P1-10: control timeline view per (projectId, workspaceId) — desired vs current separated (display only). */
+  /** control timeline view per (projectId, workspaceId) — desired vs current separated (display only). */
   controlTimelineView(query: import("./control-intent.js").ControlTimelineViewQuery): Promise<import("./control-intent.js").ControlTimelineViewResult>;
-  /** P1-09: query job view per (projectId, workspaceId, queryJobId) — job/run/answers/stale (display only). */
+  /** query job view per (projectId, workspaceId, queryJobId) — job/run/answers/stale (display only). */
   queryJobView(query: import("./query-job.js").QueryJobViewQuery): Promise<import("./query-job.js").QueryJobViewResult>;
-  /** P1-11: plan-change view per (projectId, workspaceId, goalId) — proposals/decisions/revisions + task dispositions (display only). */
+  /** bounded display of recorded grants; never use its page as authorization candidates. */
+  materialAccessGrants(query: import("./material-access.js").MaterialAccessGrantViewQuery): Promise<import("./material-access.js").MaterialAccessGrantViewResult>;
+  /** Complete candidates for one exact principal and material; no display truncation. */
+  materialAccessCandidates(query: import("./material-access.js").MaterialAccessGrantLookup): Promise<import("./material-access.js").MaterialAccessGrantViewResult>;
+  /** plan-change view per (projectId, workspaceId, goalId) — proposals/decisions/revisions + task dispositions (display only). */
   planChangeView(query: import("./goal-change.js").PlanChangeViewQuery): Promise<import("./goal-change.js").PlanChangeViewResult>;
-  /** P1-14: baseline change view per (projectId, workspaceId) — default pin/candidate/decision/gate/activation + not-yet-rebased plans (display only). */
+  /** baseline change view per (projectId, workspaceId) — default pin/candidate/decision/gate/activation + not-yet-rebased plans (display only). */
   baselineChangeView(query: import("./baseline-evolution.js").BaselineChangeViewQuery): Promise<import("./baseline-evolution.js").BaselineChangeViewResult>;
-  /** P1-15: unified facts-first status presentation (read-only; stale marks; display only). */
+  /** unified facts-first status presentation (read-only; stale marks; display only). */
   unifiedStatusView(query: import("./human-role-collaboration.js").UnifiedStatusViewQuery): Promise<import("./human-role-collaboration.js").UnifiedStatusViewResult>;
 }

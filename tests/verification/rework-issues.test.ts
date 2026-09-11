@@ -1,0 +1,434 @@
+import { ControlReworkDisposition } from '../../src/control/control-engine/rework-disposition.js';
+/**
+ * VerificationOpenIssues：把已提交的验证结论归一为「未处置问题」。
+ *
+ * 这里的断言只针对本模块的读投影行为：证据来源、问题身份、结构化失败事实（为什么 fail）、
+ * 时效标注与边界。返工任务如何被提案与受理不属于本文件（那需要 PlanRevision 的任务集变更，
+ * 见 docs 中的待决事项）。
+ *
+ * 失败事实的夹具直接照抄 CommandCheckProvider 真正持久化的两处形状：
+ *   - journal 的检查记录（progress 的 report_stored 阶段携带 category／result／artifactRef）；
+ *   - ArtifactVault 里的原始报告正文（execution 携带 exitCode／timedOut／stderr／timings）。
+ * 报告读取端口在真实接线中就是 Context.openReport，这里用同一份正文做的替身读取，
+ * 而不是另造一套事实。
+ */
+import { describe, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { VerificationJournal } from '../../src/control/verification-engine/verification-journal.js';
+import { VerificationOpenIssues, type OpenIssuesReportReader } from '../../src/control/verification-engine/verification-open-issues.js';
+import { reworkIssueIdFor } from '../../src/contracts/rework/issues.js';
+import { reworkTaskIdFor } from '../../src/contracts/rework/proposal.js';
+import { artifactBodyDigest, artifactBodySize, type ArtifactRef } from '../../src/contracts/artifact.js';
+import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { digest } from '../../src/control/verification-engine/verification-input.js';
+import type { CommandCheckRecord } from '../../src/contracts/verification-service.js';
+import type { VerificationRegisteredCheck, VerificationRoundRecord } from '../../src/contracts/verification-round.js';
+import type { GoalSnapshot } from '../../src/contracts/ledger.js';
+
+const PROJECT = 'project-rework';
+const WORKSPACE = 'workspace-main';
+const GOAL = 'goal-rework';
+const PLAN_ID = 'plan-rework-1';
+const TASK = 'task-a';
+const RUN = 'run-a';
+const SOURCE_DIGEST = 'source-digest';
+const STARTED_AT = '2026-09-10T00:04:00.000Z';
+const ENDED_AT = '2026-09-10T00:04:05.000Z';
+
+const scope = { projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL, runId: RUN, taskId: TASK };
+const runRef = { aggregateType: 'Run' as const, projectId: PROJECT, goalId: GOAL, runId: RUN };
+const planRef = { aggregateType: 'PlanRevision' as const, projectId: PROJECT, planId: PLAN_ID };
+const checkContext = {
+  projectId: PROJECT, goalId: GOAL, taskId: TASK, planRef, workspaceRevision: 7,
+  changeScope: { diffClass: 'code-change', changedFiles: [], writeSummary: 'fixture' },
+};
+
+function roundRecord(overrides: Partial<VerificationRoundRecord> = {}): VerificationRoundRecord {
+  return {
+    schemaVersion: 1,
+    roundId: 'round-1',
+    requestId: 'round-request-1',
+    scope,
+    fingerprint: 'fingerprint-1',
+    configuration: { schemaVersion: 1, version: 1, digest: 'cfg-1', checks: [] },
+    materialIdentity: {
+      schemaVersion: 1, scope, runRef,
+      runRevision: 1, runDigest: 'run-digest', planRef, planRevision: 3, planDigest: 'plan-digest', taskDigest: 'task-digest',
+      goalRevision: 1, goalDigest: 'goal-digest', workspaceRevision: 7, workspaceDigest: 'ws-digest', workspaceRoot: '/tmp/root',
+      policyPin: { ref: { aggregateType: 'CompletionPolicyRevision', projectId: PROJECT, policyId: 'p', revision: 1 }, digest: 'policy-digest' },
+      baselinePin: { ref: { aggregateType: 'ArchitectureBaselineRevision', projectId: PROJECT, baselineId: 'b', revision: 1 }, digest: 'baseline-digest' },
+      sourceDigest: SOURCE_DIGEST, sourceProofDigest: 'proof-digest',
+    },
+    sourceProof: null,
+    plan: null,
+    checks: [],
+    coverage: [
+      { obligationId: 'ob-1', requirementId: 'vr-static', kind: 'static', checkIds: ['check-1'], result: 'FAIL' },
+      { obligationId: 'ob-1', requirementId: 'vr-dynamic', kind: 'dynamic', checkIds: ['check-2'], result: 'PASS' },
+    ],
+    status: 'completed',
+    outcome: 'FAIL',
+    gaps: [],
+    // RW-15 之前落盘的轮次没有这个字段：null = 当时没有角色必产出这条检查，不补算也不阻断。
+    roleOutputs: null,
+    createdAt: '2026-09-10T00:00:00.000Z',
+    finishedAt: '2026-09-10T00:05:00.000Z',
+    aggregate: { artifactRef: { kind: 'artifact', contentType: 'application/json', digest: 'agg', sizeBytes: 1, source: { kind: 'artifact', refId: 'agg', revision: '1' } },
+      submittedAt: '2026-09-10T00:06:00.000Z',
+      admissions: [{ evidenceId: 'evidence-1', coverage: { obligationId: 'ob-1', requirementId: 'vr-static', kind: 'static', checkIds: ['check-1'], result: 'FAIL' }, status: 'admitted' }] },
+    control: { taskPhase: 'failed', goalPhase: 'FAILED' },
+    reduction: { task: null, goal: null },
+    ...overrides,
+  };
+}
+
+/** 本投影只需要 Goal 的 active plan revision；其余 canonical 事实不经这里读取。 */
+class FakeLedger {
+  constructor(private readonly goal: GoalSnapshot | null) {}
+  async load(ref: { aggregateType: string }) {
+    if (ref.aggregateType !== 'Goal' || this.goal === null) return { status: 'not_found' as const };
+    return { status: 'found' as const, snapshot: this.goal };
+  }
+}
+
+function goal(activePlanRevision: GoalSnapshot['activePlanRevision']): GoalSnapshot {
+  return { ref: { aggregateType: 'Goal', projectId: PROJECT, goalId: GOAL },
+    workspaceRef: { aggregateType: 'Workspace', projectId: PROJECT, workspaceId: WORKSPACE },
+    objective: '返工验证目标', desiredState: 'active', activePlanRevision, revision: 2 };
+}
+
+/** 与 VerificationEngine 实际持久化的审阅记录一致的已登记结果（只保留本测试需要的字段）。 */
+function reviewRecord(input: { outcome: 'PASS' | 'FAIL' | 'INCONCLUSIVE'; requestId: string }) {
+  const reviewRunRef = { aggregateType: 'Run' as const, projectId: PROJECT, goalId: GOAL, runId: input.requestId + '-run' };
+  return {
+    requestId: input.requestId,
+    reviewId: 'review-' + input.requestId,
+    scope,
+    roundRequestId: 'round-request-1',
+    workRef: { aggregateType: 'ReviewWork' as const, projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL, reviewId: 'review-' + input.requestId },
+    phase: 'settled' as const,
+    planRef,
+    createdAt: '2026-09-10T01:00:00.000Z',
+    resultReceipt: { status: 'accepted' as const, workRef: { aggregateType: 'ReviewWork' as const, projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL, reviewId: 'review-' + input.requestId },
+      workRevision: 1, resultRef: { aggregateType: 'ReviewResult' as const, projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL, reviewId: 'review-' + input.requestId } },
+    resultCommand: {
+      identity: { projectId: PROJECT, actor: { kind: 'system' as const, id: 'verification' }, idempotencyKey: input.requestId + '-result' },
+      workRef: { aggregateType: 'ReviewWork' as const, projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL, reviewId: 'review-' + input.requestId },
+      expectedWorkRevision: 1,
+      output: { reportRef: { kind: 'artifact' as const, contentType: 'application/json', digest: 'review-report', sizeBytes: 1, source: { kind: 'artifact' as const, refId: 'review-report', revision: '1' } },
+        reportDigest: 'report-digest', runRef: reviewRunRef, runRevision: 1, terminalEventId: 'evt', terminalEventSeq: 1, observationId: 'obs', sessionId: 'session',
+        packetDigest: 'packet', inputDigest: 'input', descriptorDigest: 'descriptor' },
+      validatedMaterialIdentityDigest: 'material', assessmentRef: { kind: 'artifact' as const, contentType: 'application/json', digest: 'assessment', sizeBytes: 1, source: { kind: 'artifact' as const, refId: 'assessment', revision: '1' } },
+      assessmentDigest: 'assessment-digest',
+      decision: { status: 'accepted' as const, requirements: [{ obligationId: 'ob-1', requirementId: 'vr-review', outcome: input.outcome, summary: '审阅要求结论文本' }] },
+    },
+  };
+}
+
+const CHECK_ID = 'unit-tests';
+const CHECK_REQUEST = 'round-check-unit-tests';
+
+/**
+ * 一轮只跑一条命令检查、且该检查未通过的轮次。
+ * 夹具与真实持久化一致：分类在检查记录里，执行细节在它引用的报告正文里。
+ */
+function toolRound(input: {
+  command?: string; timeoutMs?: number; category: string; result: 'PASS' | 'FAIL' | 'INCONCLUSIVE';
+  coverageResult?: 'PASS' | 'FAIL' | 'INCONCLUSIVE' | null;
+  execution?: JsonValue | null;
+  observationId?: string;
+}): { round: VerificationRoundRecord; check: CommandCheckRecord; body: string; ref: ArtifactRef } {
+  const command = input.command ?? 'python3 -m pytest -q';
+  const timeoutMs = input.timeoutMs ?? 60000;
+  const observationId = input.observationId ?? 'observation-1';
+  const effects = input.execution ? 'known' : 'not_started';
+  const body = canonicalJson({
+    schemaVersion: 1, observationId, owner: runRef, context: checkContext, sourceDigest: SOURCE_DIGEST,
+    definition: { checkId: CHECK_ID, kind: 'dynamic', command, cwd: '.', timeoutMs },
+    startedAt: STARTED_AT, endedAt: ENDED_AT, category: input.category, result: input.result, effects,
+    execution: input.execution ?? null,
+  });
+  const ref: ArtifactRef = { kind: 'artifact', contentType: 'application/json', digest: artifactBodyDigest(body), sizeBytes: artifactBodySize(body),
+    source: { kind: 'artifact', refId: 'report-' + CHECK_REQUEST, revision: '1' } };
+  const definition: VerificationRegisteredCheck = { checkId: CHECK_ID, kind: 'dynamic', command, cwd: '.', timeoutMs, appliesTo: { workspaceId: WORKSPACE, taskIds: [TASK] } };
+  const check: CommandCheckRecord = {
+    projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL, runId: RUN,
+    requestId: CHECK_REQUEST, fingerprint: 'fingerprint-check', status: 'finished',
+    command, kind: 'dynamic', timeoutMs, startedAt: STARTED_AT, finishedAt: ENDED_AT, result: null,
+    lifecycle: 'lease_released',
+    progress: { phase: 'report_stored', observationId, context: checkContext, sourceDigest: SOURCE_DIGEST,
+      artifactRef: ref, result: input.result, category: input.category, effects },
+  };
+  const round = roundRecord({
+    checks: [{ definition, requestId: CHECK_REQUEST, coverage: [{ obligationId: 'ob-1', requirementId: 'vr-dynamic' }] }],
+    coverage: [{ obligationId: 'ob-1', requirementId: 'vr-dynamic', kind: 'dynamic', checkIds: [CHECK_ID], result: input.coverageResult ?? input.result }],
+    outcome: input.coverageResult === 'PASS' || input.result === 'PASS' ? 'PASS' : input.result,
+  });
+  return { round, check, body, ref };
+}
+
+/** 报告读取端口的替身：只按引用返回真实持久化的正文，不做任何补充。 */
+const readerFor = (bodies: Record<string, string>): OpenIssuesReportReader => async (ref) => {
+  const body = bodies[ref.digest];
+  return body === undefined
+    ? { status: 'unavailable', ref }
+    : { status: 'ready', record: { ref, body, sourceRefs: [] } };
+};
+
+async function withJournal<T>(rounds: VerificationRoundRecord[], run: (journal: VerificationJournal) => Promise<T>, checks: CommandCheckRecord[] = []): Promise<T> {
+  const directory = await mkdtemp(join(tmpdir(), 'rework-issues-'));
+  try {
+    const journal = new VerificationJournal(directory);
+    await journal.init();
+    journal.rounds.push(...rounds);
+    journal.checks.push(...checks);
+    return await run(journal);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+}
+
+/**
+ * 工具轮次夹具：轮次与它引用的检查记录一起进 journal。
+ * 检查记录必须与轮次同时持久化，否则投影只能报「没有留下记录」。
+ */
+async function withToolRound<T>(fixture: { round: VerificationRoundRecord; check: CommandCheckRecord },
+  run: (journal: VerificationJournal) => Promise<T>): Promise<T> {
+  return withJournal([fixture.round], run, [fixture.check]);
+}
+
+const request = { schemaVersion: 1 as const, projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL, taskIds: [] as string[] };
+const failuresOf = async (port: VerificationOpenIssues) => {
+  const view = await port.openIssues(request);
+  if (view.status !== 'ready') throw Error('expected ready: ' + JSON.stringify(view));
+  return view.issues[0]!.failedRequirements[0]!;
+};
+
+describe('VerificationOpenIssues', () => {
+  it('从 FAIL 轮次的失败覆盖项生成问题，并保留来源、证据与当前版本标注', async () => {
+    await withJournal([roundRecord()], async journal => {
+      const port = new VerificationOpenIssues({ journal, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never) });
+      const view = await port.openIssues(request);
+      expect(view.status).toBe('ready');
+      if (view.status !== 'ready') throw Error('unreachable');
+      expect(view.issues).toHaveLength(1);
+      const issue = view.issues[0]!;
+      expect(issue.taskId).toBe(TASK);
+      expect(issue.source).toMatchObject({ kind: 'verification_round', roundId: 'round-1', requestId: 'round-request-1', outcome: 'FAIL', status: 'completed', sourceDigest: 'source-digest' });
+      expect(issue.failedRequirements).toHaveLength(1);
+      expect(issue.failedRequirements[0]).toMatchObject({ obligationId: 'ob-1', requirementId: 'vr-static', kind: 'static' });
+      expect(issue.evidenceRefs).toEqual([{ aggregateType: 'Evidence', projectId: PROJECT, evidenceId: 'evidence-1' }]);
+      expect(issue.planRef).toEqual(planRef);
+      expect(issue.planRevision).toBe(3);
+      expect(issue.currentness.status).toBe('open');
+      expect(issue.issueId).toBe(reworkIssueIdFor({ taskId: TASK, source: issue.source, failedRequirements: issue.failedRequirements }));
+      expect(issue.reworkTaskId).toBe(reworkTaskIdFor(issue.issueId));
+    });
+  });
+
+  it('超时被杀：分类与超时事实来自持久记录与原始报告，不靠结果反推', async () => {
+    const { round, check, body, ref } = toolRound({
+      command: 'python3 -c "import time; time.sleep(30)"', timeoutMs: 1500, category: 'timeout', result: 'INCONCLUSIVE',
+      execution: {
+        exitCode: null, signal: 'SIGKILL', timedOut: true, cancelled: false,
+        stdout: { text: '', totalBytes: 0, truncated: false },
+        stderr: { text: 'Timed out after 1500ms', totalBytes: 22, truncated: false },
+        effects: { workspaceRevision: 7 }, sandboxProfileVersion: 'v1',
+        timings: { snapshotBeforeMs: 3, executionMs: 1502, snapshotAfterMs: 2 },
+      },
+    });
+    await withToolRound({ round, check }, async journal => {
+      const port = new VerificationOpenIssues({ journal, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never), reports: readerFor({ [ref.digest]: body }) });
+      const requirement = await failuresOf(port);
+      expect(requirement.failure).toMatchObject({
+        checkId: CHECK_ID, failedCheckIds: [CHECK_ID], kind: 'dynamic', category: 'timeout', result: 'INCONCLUSIVE',
+        timedOut: true, exitCode: null, durationMs: 1502, timeoutMs: 1500, sourceDigest: SOURCE_DIGEST, reportRef: ref,
+      });
+      expect(requirement.failure.stderrExcerpt).toContain('Timed out after 1500ms');
+      expect(requirement.failure.command).toContain('time.sleep(30)');
+      // 事实完整时不留缺口：缺口只用来解释「读不到」，不是装饰。
+      expect(requirement.failure.gaps).toEqual([]);
+      // 「为什么 fail」在人类可读的原因里同样要看得见，而不只在结构化字段里。
+      expect(requirement.reason).toContain('timeout');
+      expect(requirement.reason).toContain('超时终止');
+      expect(requirement.reason).toContain('1500ms');
+    });
+  });
+
+  it('命令退出非零：分类为 tool_check，并带出退出码与命令原文', async () => {
+    const { round, check, body, ref } = toolRound({
+      command: 'python3 -c "import sys; sys.exit(3)"', timeoutMs: 60000, category: 'tool_check', result: 'FAIL',
+      execution: {
+        exitCode: 3, signal: null, timedOut: false, cancelled: false,
+        stdout: { text: '', totalBytes: 0, truncated: false },
+        stderr: { text: 'AssertionError: 期望 2，实际 3', totalBytes: 34, truncated: false },
+        effects: { workspaceRevision: 7 }, sandboxProfileVersion: 'v1',
+        timings: { snapshotBeforeMs: 4, executionMs: 87, snapshotAfterMs: 3 },
+      },
+    });
+    await withToolRound({ round, check }, async journal => {
+      const port = new VerificationOpenIssues({ journal, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never), reports: readerFor({ [ref.digest]: body }) });
+      const requirement = await failuresOf(port);
+      expect(requirement.failure).toMatchObject({ category: 'tool_check', result: 'FAIL', exitCode: 3, timedOut: false, durationMs: 87, timeoutMs: 60000 });
+      expect(requirement.failure.stderrExcerpt).toContain('AssertionError');
+      expect(requirement.failure.gaps).toEqual([]);
+      expect(requirement.reason).toContain('tool_check');
+      expect(requirement.reason).toContain('退出码 3');
+    });
+  });
+
+  it('来源变化：分类为 stale_source，没有执行记录时明确写出缺口而不是编造退出码', async () => {
+    // stale_source 表示命令在启动前就发现来源已变，因此原始报告没有 execution。
+    const { round, check, body, ref } = toolRound({ command: 'npm test', timeoutMs: 60000, category: 'stale_source', result: 'INCONCLUSIVE', coverageResult: 'INCONCLUSIVE', execution: null });
+    await withToolRound({ round, check }, async journal => {
+      const port = new VerificationOpenIssues({ journal, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never), reports: readerFor({ [ref.digest]: body }) });
+      const requirement = await failuresOf(port);
+      expect(requirement.failure).toMatchObject({ category: 'stale_source', result: 'INCONCLUSIVE', exitCode: null, timedOut: null, reportRef: ref });
+      expect(requirement.failure.gaps.some((gap) => gap.includes('没有命令执行记录'))).toBe(true);
+      expect(requirement.reason).toContain('stale_source');
+      // 缺口不能被当成通过：要求仍然是未通过，且结论来自持久记录。
+      expect(requirement.failure.result).not.toBe('PASS');
+    });
+  });
+
+  it('原始报告取不到：给出明确缺口，问题身份与结论不受影响', async () => {
+    const { round, check } = toolRound({ category: 'tool_check', result: 'FAIL' });
+    // 报告已被清理：读取端口按引用找不到正文，返回 unavailable；报告引用仍然保留。
+    const view = await withToolRound({ round, check }, async journal => {
+      const port = new VerificationOpenIssues({ journal, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never), reports: readerFor({}) });
+      const view = await port.openIssues(request);
+      if (view.status !== 'ready') throw Error('expected ready');
+      return view.issues[0]!;
+    });
+    const requirement = view.failedRequirements[0]!;
+    expect(requirement.failure.exitCode).toBeNull();
+    expect(requirement.failure.timedOut).toBeNull();
+    expect(requirement.failure.stderrExcerpt).toBeNull();
+    expect(requirement.failure.gaps.some((gap) => gap.includes('不可读取'))).toBe(true);
+    expect(requirement.failure.reportRef).not.toBeNull();
+    expect(requirement.failure.result).toBe('FAIL');
+    expect(requirement.reason).toContain('事实缺口');
+  });
+
+  it('未注入报告读取端口时，执行细节以明确缺口表示，而不是静默省略或伪装成通过', async () => {
+    const { round, check } = toolRound({ category: 'tool_check', result: 'FAIL' });
+    await withToolRound({ round, check }, async journal => {
+      const port = new VerificationOpenIssues({ journal, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never) });
+      const requirement = await failuresOf(port);
+      // 分类与结论在 journal 里，与读取端口无关，必须照常给出。
+      expect(requirement.failure).toMatchObject({ category: 'tool_check', result: 'FAIL', checkId: CHECK_ID });
+      expect(requirement.failure.gaps.some((gap) => gap.includes('没有注入原始报告读取端口'))).toBe(true);
+      expect(requirement.failure.gaps.some((gap) => gap.includes('reportRef'))).toBe(true);
+    });
+  });
+
+  it('stderr 摘要按字节有界，截断本身也写成缺口，不复制大段正文', async () => {
+    const stderr = 'x'.repeat(6000);
+    const { round, check, body, ref } = toolRound({
+      category: 'tool_check', result: 'FAIL',
+      execution: { exitCode: 1, signal: null, timedOut: false, cancelled: false, stdout: { text: '', totalBytes: 0, truncated: false },
+        stderr: { text: stderr, totalBytes: 6000, truncated: false }, effects: { workspaceRevision: 7 },
+        sandboxProfileVersion: 'v1', timings: { snapshotBeforeMs: 1, executionMs: 12, snapshotAfterMs: 1 } },
+    });
+    await withToolRound({ round, check }, async journal => {
+      const port = new VerificationOpenIssues({ journal, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never), reports: readerFor({ [ref.digest]: body }) });
+      const requirement = await failuresOf(port);
+      expect(Buffer.byteLength(requirement.failure.stderrExcerpt ?? '', 'utf8')).toBeLessThanOrEqual(2048);
+      expect(requirement.failure.stderrExcerpt!.length).toBeLessThan(stderr.length);
+      expect(requirement.failure.gaps.some((gap) => gap.includes('截断'))).toBe(true);
+    });
+  });
+
+  it('重复读取与重启后读取得到同一身份与同一内容（含失败事实）', async () => {
+    const { round, check, body, ref } = toolRound({ category: 'tool_check', result: 'FAIL' });
+    const directory = await mkdtemp(join(tmpdir(), 'rework-issues-restart-'));
+    try {
+      const journal = new VerificationJournal(directory);
+      await journal.init();
+      // 文件名身份必须与 VerificationEngine 自己写的一致：轮次用 keyOf(scope, requestId)，
+      // 检查用 journal.checkId(record)；否则重开时加载不到，等于没有持久事实。
+      await journal.save('round', digest(canonicalJson([scope, round.requestId])), round);
+      await journal.save('check', journal.checkId(check), check);
+      const first = new VerificationJournal(directory);
+      await first.init();
+      const firstView = await new VerificationOpenIssues({ journal: first, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never), reports: readerFor({ [ref.digest]: body }) }).openIssues(request);
+      const secondView = await new VerificationOpenIssues({ journal: first, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never), reports: readerFor({ [ref.digest]: body }) }).openIssues(request);
+      // 重新打开同一目录：事实来自磁盘，不是内存偶发状态。
+      const reopened = new VerificationJournal(directory);
+      await reopened.init();
+      const reopenedView = await new VerificationOpenIssues({ journal: reopened, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never), reports: readerFor({ [ref.digest]: body }) }).openIssues(request);
+      expect(reopenedView).toEqual(firstView);
+      expect(secondView).toEqual(firstView);
+      if (firstView.status !== 'ready') throw Error('expected ready');
+      expect(firstView.issues[0]!.issueId).toBe(reworkIssueIdFor({ taskId: TASK, source: firstView.issues[0]!.source, failedRequirements: firstView.issues[0]!.failedRequirements }));
+      expect(firstView.issues[0]!.failedRequirements[0]!.failure.category).toBe('tool_check');
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
+  it('报告可读与不可读不会改变问题身份：身份只由任务与要求决定', async () => {
+    const { round, check, body, ref } = toolRound({ category: 'tool_check', result: 'FAIL' });
+    const ids = await withToolRound({ round, check }, async journal => {
+      const withReport = await new VerificationOpenIssues({ journal, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never), reports: readerFor({ [ref.digest]: body }) }).openIssues(request);
+      const withoutReport = await new VerificationOpenIssues({ journal, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never), reports: readerFor({}) }).openIssues(request);
+      if (withReport.status !== 'ready' || withoutReport.status !== 'ready') throw Error('expected ready');
+      return { withReport, withoutReport };
+    });
+    expect(ids.withoutReport.issues[0]!.issueId).toBe(ids.withReport.issues[0]!.issueId);
+    expect(ids.withReport.issues[0]!.reworkTaskId).toBe(ids.withoutReport.issues[0]!.reworkTaskId);
+  });
+
+  it('结论为 PASS 的轮次不产生问题，重复读取得到同一身份', async () => {
+    await withJournal([roundRecord({ roundId: 'round-pass', outcome: 'PASS', coverage: [{ obligationId: 'ob-1', requirementId: 'vr-static', kind: 'static', checkIds: ['check-1'], result: 'PASS' }] })], async journal => {
+      const port = new VerificationOpenIssues({ journal, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never) });
+      expect(await port.openIssues(request)).toMatchObject({ status: 'none' });
+    });
+    await withJournal([roundRecord()], async journal => {
+      const port = new VerificationOpenIssues({ journal, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never) });
+      const first = await port.openIssues(request);
+      const second = await port.openIssues(request);
+      expect(first).toEqual(second);
+    });
+  });
+
+  it('Goal 已切到别的 revision 时问题标为 superseded，而不是被静默丢弃', async () => {
+    await withJournal([roundRecord()], async journal => {
+      const port = new VerificationOpenIssues({ journal, disposition: new ControlReworkDisposition(new FakeLedger(goal({ aggregateType: 'PlanRevision', projectId: PROJECT, planId: 'plan-rework-2' })) as never as never) });
+      const view = await port.openIssues(request);
+      if (view.status !== 'ready') throw Error('expected ready');
+      expect(view.issues[0]!.currentness.status).toBe('superseded');
+    });
+  });
+
+  it('已正式登记且结论为 FAIL 的独立审阅成为问题，逐条结论与结果身份沿用既有字段', async () => {
+    await withJournal([], async journal => {
+      journal.reviews.push(reviewRecord({ outcome: 'FAIL', requestId: 'review-a' }) as never);
+      const port = new VerificationOpenIssues({ journal, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never) });
+      const view = await port.openIssues(request);
+      if (view.status !== 'ready') throw Error('expected ready');
+      const issue = view.issues.find(entry => entry.source.kind === 'review_verdict')!;
+      expect(issue.source).toMatchObject({ kind: 'review_verdict', requestId: 'review-a', resultRef: 'review-review-a' });
+      expect(issue.failedRequirements[0]).toMatchObject({ requirementId: 'vr-review', kind: 'reviewer' });
+      expect(issue.failedRequirements[0]!.reason).toContain('审阅要求结论文本');
+      expect(issue.runRef.runId).toBe('review-a-run');
+      expect(issue.currentness.status).toBe('open');
+      // 审阅失败事实不套用命令检查分类：没有分类就是不适用，并写明为什么。
+      expect(issue.failedRequirements[0]!.failure).toMatchObject({ checkId: null, kind: 'reviewer', category: null, result: 'FAIL', exitCode: null, timedOut: null, reportRef: { digest: 'review-report' } });
+      expect(issue.failedRequirements[0]!.failure.gaps.some((gap) => gap.includes('不适用'))).toBe(true);
+    });
+  });
+
+  it('审阅结论为 PASS、或结果未被正式登记时不产生问题；任务范围过滤生效', async () => {
+    await withJournal([roundRecord()], async journal => {
+      journal.reviews.push(reviewRecord({ outcome: 'PASS', requestId: 'review-pass' }) as never);
+      const rejected = reviewRecord({ outcome: 'FAIL', requestId: 'review-rejected' });
+      rejected.resultReceipt = { status: 'rejected', code: 'invalid', issues: ['形状不符'] } as never;
+      journal.reviews.push(rejected as never);
+      const port = new VerificationOpenIssues({ journal, disposition: new ControlReworkDisposition(new FakeLedger(goal(planRef)) as never as never) });
+      const all = await port.openIssues(request);
+      if (all.status !== 'ready') throw Error('expected ready');
+      expect(all.issues.every(issue => issue.source.kind === 'verification_round')).toBe(true);
+      expect(all.gaps.some(gap => gap.includes('review-rejected'))).toBe(true);
+      expect(await port.openIssues({ ...request, taskIds: ['task-other'] })).toMatchObject({ status: 'none' });
+    });
+  });
+});

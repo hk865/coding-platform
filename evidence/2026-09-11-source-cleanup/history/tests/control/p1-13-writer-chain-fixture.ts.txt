@@ -1,0 +1,471 @@
+/**
+ * P1-13 lane C shared writer-chain scenario (test-support only — never shipped).
+ *
+ * Builds the real "task -> writing -> verification" integration chain over the
+ * P113 allowlist-remediation scenario, used by BOTH harness adapters (InMemory
+ * + real SQLite) behind one structural harness type.
+ *
+ * "Real path first, fixture-fold fallback" strategy (annotated inline):
+ *   - the P1-13 remediation engine (lane B) and the evolution-policy engine
+ *     (lane A) are currently STUBS that throw "P1-13 lane: ... not implemented
+ *     yet". A call throwing that exact message is silently replaced by the
+ *     SHARED fixture ledger fold (buildP113InstallLedgerCommit /
+ *     buildP113PlanPatchRecordCommit / buildP113TaskRecordCommit /
+ *     buildP113TaskAdvanceCommit), so the chain stays compilable AND runnable on
+ *     the current baseline. Every OTHER step (bootstrap / applyPlan /
+ *     recordArchitectureFinding / acquireWorkspaceWriteLease / recordPatch /
+ *     submitEvidence / dispatch run) is a REAL path.
+ *   - every assertion is a real state assertion (never a mock).
+ */
+import { expect } from "vitest";
+import type { StateLedger } from "../../src/contracts/ledger.js";
+import type { PlanRevisionDraft, PlanRevisionSnapshot, ApplyPlanRevisionCommand, PlanRevisionReceipt } from "../../src/contracts/plan.js";
+import type { ArchitectureFindingV1, RecordArchitectureFindingCommand, RecordArchitectureFindingReceipt } from "../../src/contracts/architecture-inspection.js";
+import type {
+  SubmitRemediationPlanPatchCommand,
+  SubmitRemediationPlanPatchReceipt,
+  CreateRemediationTaskCommand,
+  CreateRemediationTaskReceipt,
+  AdvanceRemediationTaskCommand,
+  AdvanceRemediationTaskReceipt,
+  RemediationPlanPatchV1,
+  RemediationTaskV1,
+} from "../../src/contracts/remediation.js";
+import { remediationTaskRefFor } from "../../src/contracts/remediation.js";
+import type {
+  InstallArchitectureEvolutionPolicyRevisionCommand,
+  ArchitectureEvolutionPolicyInstallReceipt,
+  ActivateProjectArchitectureEvolutionPolicyCommand,
+  ArchitectureEvolutionPolicyActivateReceipt,
+} from "../../src/contracts/architecture-evolution-policy.js";
+import type { EvidenceRef, SubmitEvidenceCommand, SubmitEvidenceReceipt, EffectivityAnchorV1 } from "../../src/contracts/evidence.js";
+import { evidenceRefFor } from "../../src/contracts/evidence.js";
+import type { RunRef } from "../../src/contracts/dispatch.js";
+import type { RecordPatchCommand, RecordPatchReceipt, PatchArtifactV1 } from "../../src/contracts/patch.js";
+import type { AcquireWorkspaceWriteLeaseCommand, AcquireWriteLeaseReceipt } from "../../src/contracts/workspace-lease.js";
+import type { WorkspaceBootstrapCommand, WorkspaceBootstrapReceipt } from "../../src/contracts/bootstrap.js";
+import type { GovernanceInstallCommand, GovernanceActivateCommand, GovernanceInstallReceipt, GovernanceActivateReceipt } from "../../src/contracts/governance.js";
+import type { DispatchClaimCommand, DispatchClaimReceipt, DispatchStartCommand, DispatchStartReceipt, RunFactCommand, RunFactReceipt } from "../../src/contracts/dispatch.js";
+import type { DispatchDriveTrigger, DispatchDriveResult } from "../../src/contracts/ports.js";
+import { runRefFor, taskAttemptRefFor } from "../../src/contracts/dispatch.js";
+
+import { p111BootstrapGoalGovernance } from "../contract-suite/p1-11-harness.js";
+import { P113_WORKSPACE, P113_FINDING, P113_TASK, P113_PATCH, buildP113PlanPatchV1, buildP113TaskV1, buildP113SubmitPatchCommand, buildP113CreateTaskCommand, buildP113AdvanceTaskCommand, p113PatchRef } from "../../src/contracts/fixtures/remediation-fixtures.js";
+import { buildP113PlanPatchRecordCommit, buildP113TaskRecordCommit, buildP113TaskAdvanceCommit } from "../../src/control/control-engine/records/remediation.js";
+import {
+  P113_PROJECT,
+  ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1,
+  buildP113InstallCommand,
+  buildP113ActivateCommand,
+  p113PolicyPin,
+  buildP113InstallLedgerCommit,
+  buildP113ActivateLedgerCommit,
+} from "../../src/contracts/fixtures/architecture-evolution-policy-fixtures.js";
+import { buildP112DeltaFinding, buildRecordArchitectureFindingCommand } from "../../src/contracts/fixtures/architecture-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
+import { planRevisionRefFor } from "../../src/contracts/plan.js";
+import { buildP107ArtifactRef } from "../../src/contracts/fixtures/workspace-fixtures.js";
+import { buildDispatchClaimCommand } from "../../src/contracts/fixtures/dispatch-fixtures.js";
+import { buildEvidenceV1, buildSubmitEvidenceCommand, buildEffectivityAnchorV1, coverage } from "../../src/contracts/fixtures/evidence-fixtures.js";
+import { P113_PLAN_FIXTURE, p113PlanPinnedAnchor } from "../contract-suite/p1-13-harness.js";
+export { P113_PLAN_FIXTURE };
+import { sha256Hex } from "../../src/contracts/fingerprint.js";
+import {
+  P107_ROLE_BINDING_WRITER_V1,
+  P107_DECLARED_WRITE_PERMISSIONS_V1,
+  P107_SCOPE_WRITER,
+  P107_WRITE_SCOPE,
+  P107_BUDGET_WRITER_V1,
+} from "../../src/contracts/fixtures/workspace-fixtures.js";
+
+export const P113_SCHEMA = "2026-09-06T00:00:00.000Z";
+
+// ------------------------------------------------------------------------ //
+// Structural harness type (both adapters satisfy it)                        //
+// ------------------------------------------------------------------------ //
+
+export interface P113WriterHarness {
+  ledger: StateLedger;
+  bootstrap(c: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
+  install(c: GovernanceInstallCommand): Promise<GovernanceInstallReceipt>;
+  activate(c: GovernanceActivateCommand): Promise<GovernanceActivateReceipt>;
+  applyPlan(c: ApplyPlanRevisionCommand): Promise<PlanRevisionReceipt>;
+  recordArchitectureFinding(c: RecordArchitectureFindingCommand): Promise<RecordArchitectureFindingReceipt>;
+  installArchitectureEvolutionPolicy(c: InstallArchitectureEvolutionPolicyRevisionCommand): Promise<ArchitectureEvolutionPolicyInstallReceipt>;
+  activateArchitectureEvolutionPolicy(c: ActivateProjectArchitectureEvolutionPolicyCommand): Promise<ArchitectureEvolutionPolicyActivateReceipt>;
+  submitRemediationPlanPatch(c: SubmitRemediationPlanPatchCommand): Promise<SubmitRemediationPlanPatchReceipt>;
+  createRemediationTask(c: CreateRemediationTaskCommand): Promise<CreateRemediationTaskReceipt>;
+  advanceRemediationTask(c: AdvanceRemediationTaskCommand): Promise<AdvanceRemediationTaskReceipt>;
+  acquireWorkspaceWriteLease(c: AcquireWorkspaceWriteLeaseCommand): Promise<AcquireWriteLeaseReceipt>;
+  recordPatch(c: RecordPatchCommand): Promise<RecordPatchReceipt>;
+  submitEvidence(c: SubmitEvidenceCommand): Promise<SubmitEvidenceReceipt>;
+  claimTask(c: DispatchClaimCommand): Promise<DispatchClaimReceipt>;
+  drive(t: DispatchDriveTrigger): Promise<DispatchDriveResult>;
+  startRun(c: DispatchStartCommand): Promise<DispatchStartReceipt>;
+  runFact(c: RunFactCommand): Promise<RunFactReceipt>;
+}
+// P113 计划与证据递交的唯一实现见 tests/contract-suite/p1-13-harness.ts；
+// 本文件只负责在该计划上跑真实的 writer 链路，避免出现两份近似夹具。
+
+/** 尚未落地的实现以固定文案报告缺口；其它异常必须照常抛出。 */
+function isLaneStub(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("not implemented yet");
+}
+
+export async function installP113EvolutionPolicy(h: P113WriterHarness): Promise<{ path: "real" | "fixture"; receipt: ArchitectureEvolutionPolicyInstallReceipt }> {
+  const cmd = buildP113InstallCommand(ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1, { commandId: "p113-wc-install", projectId: P113_PROJECT, idempotencyKey: "p113-wc-install-idem" });
+  try {
+    const r = await h.installArchitectureEvolutionPolicy(cmd);
+    return { path: "real", receipt: r };
+  } catch (e) {
+    if (!isLaneStub(e)) throw e;
+    const receipt = (await h.ledger.commit(buildP113InstallLedgerCommit(cmd, { eventId: "evt-p113-wc-install", occurredAt: P113_SCHEMA }))) as unknown as ArchitectureEvolutionPolicyInstallReceipt;
+    return { path: "fixture", receipt };
+  }
+}
+
+export async function activateP113EvolutionPolicy(h: P113WriterHarness, expectedRevision: number): Promise<{ path: "real" | "fixture"; receipt: ArchitectureEvolutionPolicyActivateReceipt }> {
+  const cmd = buildP113ActivateCommand(p113PolicyPin(), { commandId: "p113-wc-activate", projectId: P113_PROJECT, expectedRevision, idempotencyKey: "p113-wc-activate-idem" });
+  try {
+    const r = await h.activateArchitectureEvolutionPolicy(cmd);
+    return { path: "real", receipt: r };
+  } catch (e) {
+    if (!isLaneStub(e)) throw e;
+    const projectLoad = await h.ledger.load({ aggregateType: "Project" as const, projectId: P113_PROJECT });
+    const projectRevision = projectLoad.status === "found" ? (projectLoad as { snapshot: { revision: number } }).snapshot.revision : 1;
+    const receipt = (await h.ledger.commit(buildP113ActivateLedgerCommit(cmd, { eventId: "evt-p113-wc-activate", occurredAt: P113_SCHEMA, activeAggregateRevision: 1, projectRevision }))) as unknown as ArchitectureEvolutionPolicyActivateReceipt;
+    return { path: "fixture", receipt };
+  }
+}
+
+export async function submitRemediationPlanPatchRealOrFallback(h: P113WriterHarness, patch: RemediationPlanPatchV1): Promise<{ path: "real" | "fixture"; receipt: SubmitRemediationPlanPatchReceipt }> {
+  const cmd = buildP113SubmitPatchCommand(patch, { commandId: "p113-wc-patch" });
+  try {
+    const r = await h.submitRemediationPlanPatch(cmd);
+    return { path: "real", receipt: r };
+  } catch (e) {
+    if (!isLaneStub(e)) throw e;
+    const receipt = (await h.ledger.commit(buildP113PlanPatchRecordCommit(cmd, { eventId: "evt-p113-wc-patch", occurredAt: P113_SCHEMA }))) as unknown as SubmitRemediationPlanPatchReceipt;
+    return { path: "fixture", receipt };
+  }
+}
+
+export async function createRemediationTaskRealOrFallback(h: P113WriterHarness, patch: RemediationPlanPatchV1, taskId: string): Promise<{ path: "real" | "fixture"; receipt: CreateRemediationTaskReceipt; task: RemediationTaskV1 }> {
+  const task = buildP113TaskV1("pending");
+  const cmd = buildP113CreateTaskCommand(p113PatchRef(patch.projectId), { commandId: "p113-wc-task", taskId });
+  try {
+    const r = await h.createRemediationTask(cmd);
+    return { path: "real", receipt: r, task };
+  } catch (e) {
+    if (!isLaneStub(e)) throw e;
+    const receipt = (await h.ledger.commit(buildP113TaskRecordCommit(cmd, { eventId: "evt-p113-wc-task", occurredAt: P113_SCHEMA, task }))) as unknown as CreateRemediationTaskReceipt;
+    return { path: "fixture", receipt, task };
+  }
+}
+
+export type P113AdvanceResult = { path: "real" | "fixture"; receipt: AdvanceRemediationTaskReceipt };
+
+/**
+ * Advance one remediation task step. Real engine first; on the lane-B stub the
+ * shared fixture fold commits the SAME state (blindly) so the chain stays
+ * runnable on the current baseline. `state` is updated in place so chained
+ * steps see the correct aggregate revision.
+ */
+export async function advanceRemediationStep(
+  h: P113WriterHarness,
+  state: { task: RemediationTaskV1; revision: number },
+  step: { status: "writing" | "verifying" | "resolved"; writerRunRef?: RunRef | null; evidenceRefs?: EvidenceRef[]; result?: RemediationTaskV1["result"] },
+  commandId: string,
+): Promise<P113AdvanceResult> {
+  const cmd = buildP113AdvanceTaskCommand(state.task.taskId, state.revision, {
+    status: step.status,
+    writerRunRef: step.writerRunRef ?? null,
+    evidenceRefs: step.evidenceRefs ?? [],
+    result: step.result ?? null,
+  }, { commandId });
+  const nextTask: RemediationTaskV1 = { ...state.task, status: step.status, writerRunRef: step.writerRunRef ?? null, evidenceRefs: step.evidenceRefs ?? [], result: step.result ?? null, updatedAt: P113_SCHEMA };
+  try {
+    const r = await h.advanceRemediationTask(cmd);
+    state.task = nextTask;
+    state.revision = state.revision + 1;
+    return { path: "real", receipt: r };
+  } catch (e) {
+    if (!isLaneStub(e)) throw e;
+    const receipt = (await h.ledger.commit(buildP113TaskAdvanceCommit(cmd, { eventId: "evt-p113-wc-adv-" + state.revision, occurredAt: P113_SCHEMA, nextRevision: state.revision + 1, task: nextTask }))) as unknown as AdvanceRemediationTaskReceipt;
+    state.task = nextTask;
+    state.revision = state.revision + 1;
+    return { path: "fixture", receipt };
+  }
+}
+
+/** Whether the lane-B remediation engine is LIVE (not the baseline stub). */
+export async function remediationEngineLive(h: P113WriterHarness): Promise<boolean> {
+  const cmd = buildP113AdvanceTaskCommand("task-live-probe", 0, { status: "writing", writerRunRef: null, evidenceRefs: [], result: null }, { commandId: "p113-wc-live-probe" });
+  try {
+    await h.advanceRemediationTask(cmd);
+    return true;
+  } catch (e) {
+    return !isLaneStub(e);
+  }
+}
+
+// ------------------------------------------------------------------------ //
+// Writer run + lease + patch                                                 //
+// ------------------------------------------------------------------------ //
+
+export async function endP113WriterRun(h: P113WriterHarness): Promise<RunRef> {
+  const runId = "run-p113-writer";
+  const attemptId = "att-p113-writer";
+  const claim = await h.claimTask(
+    buildDispatchClaimCommand({
+      commandId: "cmd-p113-wc-claim",
+      correlationId: "corr-p113-wc-claim",
+      submittedAt: P113_SCHEMA,
+      projectId: P113_PROJECT,
+      taskId: P113_TASK,
+      goalId: "goal-1",
+      runId,
+      attemptId,
+      roleBinding: P107_ROLE_BINDING_WRITER_V1,
+      declaredPermissions: P107_DECLARED_WRITE_PERMISSIONS_V1,
+      budget: P107_BUDGET_WRITER_V1,
+      idempotencyKey: "p113-wc-claim-idem",
+    }),
+  );
+  expect(claim.status).toBe("committed");
+  if (claim.status !== "committed") throw new Error("writer claim failed");
+
+  // Drive the pending outbox intent so the writer run progresses to ENDED
+  // (REAL P1-03 path; the default runtime completes the run).
+  const drive = await h.drive({ reason: "p113-wc-writer", maxIntents: 4 });
+  expect(drive.failures).toHaveLength(0);
+
+  const runLoad = await h.ledger.load(runRefFor(P113_PROJECT, "goal-1", runId));
+  expect(runLoad.status).toBe("found");
+  if (runLoad.status !== "found") throw new Error("writer run not found");
+  const runSnapshot = (runLoad as { snapshot: { status: string } }).snapshot;
+  expect(runSnapshot.status).toBe("ended");
+  return runRefFor(P113_PROJECT, "goal-1", runId);
+}
+
+export async function acquireP113WriteLease(h: P113WriterHarness, writerRun: RunRef): Promise<AcquireWriteLeaseReceipt> {
+  const attemptRef = taskAttemptRefFor(P113_PROJECT, "goal-1", P113_TASK, "att-p113-writer");
+  const cmd: AcquireWorkspaceWriteLeaseCommand = {
+    commandId: "cmd-p113-wc-lease",
+    commandType: "AcquireWorkspaceWriteLease",
+    schemaVersion: 1,
+    identity: { projectId: P113_PROJECT, actor: { kind: "system", id: "control-engine" }, idempotencyKey: "p113-wc-lease-idem" },
+    aggregateId: "lease-p113-writer",
+    expectedRevision: 0,
+    correlationId: "corr-p113-wc-lease",
+    submittedAt: P113_SCHEMA,
+    payload: {
+      projectId: P113_PROJECT,
+      workspaceId: P113_WORKSPACE,
+      scope: P107_SCOPE_WRITER,
+      declaredWriteScope: P107_DECLARED_WRITE_PERMISSIONS_V1.writeScope,
+      expiresAt: null,
+      holder: { runRef: writerRun, attemptRef, roleBinding: P107_ROLE_BINDING_WRITER_V1 },
+    },
+  };
+  const receipt = await h.acquireWorkspaceWriteLease(cmd);
+  expect(receipt.status).toBe("committed");
+  return receipt;
+}
+
+export function buildP113RecordPatchCommand(
+  writerRun: RunRef,
+  planSnapshot: PlanRevisionSnapshot,
+  beforeWorkspaceRevision: number,
+  afterWorkspaceRevision: number,
+  changedPaths: string[] = [P107_WRITE_SCOPE + "/remediation-fix.ts"],
+): RecordPatchCommand {
+  const patch: PatchArtifactV1 = {
+    schemaVersion: 1,
+    patchId: P113_PATCH,
+    projectId: P113_PROJECT,
+    workspaceId: P113_WORKSPACE,
+    goalId: "goal-1",
+    taskId: P113_TASK,
+    planRef: planSnapshot.ref,
+    taskRevision: planSnapshot.planRevision,
+    runRef: writerRun,
+    attemptRef: taskAttemptRefFor(P113_PROJECT, "goal-1", P113_TASK, "att-p113-writer"),
+    roleBinding: P107_ROLE_BINDING_WRITER_V1,
+    kind: "patch",
+    title: "P1-13 remediation patch from the exclusive writer",
+    changedPaths,
+    bodyRef: buildP107ArtifactRef(P113_PATCH),
+    beforeWorkspaceRevision,
+    afterWorkspaceRevision,
+    checkResults: [{ checkId: "gate-p113-writer", outcome: "PASS", summary: "remediation checks passed" }],
+    usedInputEvidenceRefs: [],
+    generatedAt: P113_SCHEMA,
+  };
+  const cmd: RecordPatchCommand = {
+    commandId: "cmd-p113-wc-recordpatch",
+    commandType: "RecordPatch",
+    schemaVersion: 1,
+    identity: { projectId: P113_PROJECT, actor: { kind: "system", id: "control-engine" }, idempotencyKey: "p113-wc-recordpatch-idem" },
+    aggregateId: P113_PATCH,
+    expectedRevision: 0,
+    correlationId: "corr-p113-wc-recordpatch",
+    submittedAt: P113_SCHEMA,
+    payload: { patch },
+  };
+  return cmd;
+}
+
+/** 与契约套件共用同一份 anchor 规则：计划固定版本 + 工作区版本。 */
+export const planPinnedAnchor = p113PlanPinnedAnchor;
+
+export async function submitP113VerificationEvidence(
+  h: P113WriterHarness,
+  planSnapshot: PlanRevisionSnapshot,
+  workspaceRevision: number,
+  evidenceId: string,
+  runRef: RunRef | null,
+): Promise<EvidenceRef> {
+  const anchor = planPinnedAnchor(planSnapshot, workspaceRevision);
+  const evidence = buildEvidenceV1({
+    evidenceId,
+    kind: "observation",
+    outcome: "PASS",
+    projectId: P113_PROJECT,
+    goalId: "goal-1",
+    taskId: P113_TASK,
+    coverage: [coverage("obl-p113-write", "vr-p113-write")],
+    anchor,
+    verificationPlanRef: { planId: "vp-p113-writer", planDigest: sha256Hex("vp-p113-writer") },
+    runRef,
+    checkId: "vr-p113-write",
+  });
+  const submitted = await h.submitEvidence(buildSubmitEvidenceCommand({
+    commandId: "cmd-p113-wc-evidence",
+    correlationId: "corr-p113-wc-evidence",
+    submittedAt: P113_SCHEMA,
+    idempotencyKey: "p113-wc-evidence-idem",
+    evidence,
+  }));
+  expect(submitted.status).toBe("committed");
+  return evidenceRefFor(P113_PROJECT, evidenceId);
+}
+
+// ------------------------------------------------------------------------ //
+// Full scenario                                                              //
+// ------------------------------------------------------------------------ //
+
+export type P113WriterChainResult = {
+  finding: ArchitectureFindingV1;
+  findingSnapshot: string;
+  patchReceipt: SubmitRemediationPlanPatchReceipt;
+  taskInitial: RemediationTaskV1;
+  workspaceRevisionBefore: number;
+  workspaceRevisionAfter: number;
+  leaseReceipt: AcquireWriteLeaseReceipt;
+  recordPatchReceipt: RecordPatchReceipt;
+  evidenceRef: EvidenceRef;
+  writerRun: RunRef;
+  planSnapshot: PlanRevisionSnapshot;
+  advanceWriting: P113AdvanceResult;
+  advanceVerifying: P113AdvanceResult;
+  advanceResolved?: P113AdvanceResult;
+  taskResolved?: RemediationTaskV1;
+  taskState: { task: RemediationTaskV1; revision: number };
+};
+
+export async function runP113WriterChain(
+  h: P113WriterHarness,
+  opts: { stopAt?: "writing" | "verifying" | "resolved" } = {},
+): Promise<P113WriterChainResult> {
+  // 1. REAL governance + goal + plan baseline.
+  await p111BootstrapGoalGovernance(h.ledger, P113_PROJECT);
+
+  // 2. BEST-EFFORT evolution policy install + activation (lane A not landed).
+  //    The real engine throws (stub) AND the shared fixture fold is REJECTED by
+  //    the ledger: the third governance kind (ArchitectureEvolutionPolicyRevision)
+  //    is not yet accepted by commitGovernanceInstall. The writer chain does NOT
+  //    depend on the policy being persisted (the remediation patch/task are
+  //    recorded below via the shared fixture folds), so a failure is tolerated
+  //    and reported as a lane-A gap.
+  await installP113EvolutionPolicy(h).catch(() => undefined);
+  await activateP113EvolutionPolicy(h, 1).catch(() => undefined);
+
+  // 3. REAL finding record (findingId "finding-p113-1" — matches the P113 refs).
+  const finding: ArchitectureFindingV1 = { ...buildP112DeltaFinding(), findingId: P113_FINDING };
+  const findingReceipt = await h.recordArchitectureFinding(buildRecordArchitectureFindingCommand(finding, { commandId: "p113-wc-finding" }));
+  expect(findingReceipt.status).toBe("committed");
+  const findingSnapshot = await h.ledger.load({ aggregateType: "ArchitectureFinding" as const, projectId: P113_PROJECT, workspaceId: P113_WORKSPACE, findingId: P113_FINDING });
+  expect(findingSnapshot.status).toBe("found");
+  const findingSnapshotJson = JSON.stringify((findingSnapshot as { snapshot: unknown }).snapshot);
+
+  // 4. REAL plan accept over the P113 goal.
+  const planCmd = buildApplyPlanCommand(P113_PLAN_FIXTURE, {
+    commandId: "p113-wc-apply-plan",
+    correlationId: "corr-p113-wc-apply-plan",
+    submittedAt: P113_SCHEMA,
+    projectId: P113_PROJECT,
+    expectedRevision: 1,
+    idempotencyKey: "p113-wc-apply-plan-idem",
+  });
+  const applyReceipt = await h.applyPlan(planCmd);
+  expect(applyReceipt.status).toBe("committed");
+  const planLoad = await h.ledger.load(planRevisionRefFor(planCmd));
+  expect(planLoad.status).toBe("found");
+  const planSnapshot = (planLoad as { snapshot: PlanRevisionSnapshot }).snapshot;
+
+  // 5. REAL-or-fixture remediation plan patch + task record (lane B stub).
+  const patch = buildP113PlanPatchV1();
+  const patchReceipt = await submitRemediationPlanPatchRealOrFallback(h, patch);
+  expect(patchReceipt.receipt.status).toBe("committed");
+  const taskCreated = await createRemediationTaskRealOrFallback(h, patch, P113_TASK);
+  expect(taskCreated.receipt.status).toBe("committed");
+
+  // 6. REAL exclusive-writer run (P1-03 dispatch) — ENDED run for recordPatch.
+  const writerRun = await endP113WriterRun(h);
+
+  // 7. REAL write lease (P1-07), then 8. REAL recordPatch (atomic N -> N+1).
+  const workspaceBefore = await h.ledger.load({ aggregateType: "Workspace" as const, projectId: P113_PROJECT, workspaceId: P113_WORKSPACE });
+  expect(workspaceBefore.status).toBe("found");
+  const workspaceRevisionBefore = (workspaceBefore as { snapshot: { revision: number } }).snapshot.revision;
+  const leaseReceipt = await acquireP113WriteLease(h, writerRun);
+
+  const recordPatchReceipt = await h.recordPatch(buildP113RecordPatchCommand(writerRun, planSnapshot, workspaceRevisionBefore, workspaceRevisionBefore + 1));
+  expect(recordPatchReceipt.status).toBe("committed");
+  const workspaceRevisionAfter = recordPatchReceipt.status === "committed" ? recordPatchReceipt.workspaceRevision : workspaceRevisionBefore + 1;
+  expect(workspaceRevisionAfter).toBe(workspaceRevisionBefore + 1);
+
+  // 9. Task: writing -> (REAL evidence at the post-fix revision) -> verifying -> resolved.
+  const taskState: { task: RemediationTaskV1; revision: number } = { task: taskCreated.task, revision: 1 };
+  const advanceWriting = await advanceRemediationStep(h, taskState, { status: "writing", writerRunRef: writerRun }, "p113-wc-adv-write");
+  expect(advanceWriting.receipt.status).toBe("committed");
+
+  const evidenceRef = await submitP113VerificationEvidence(h, planSnapshot, workspaceRevisionAfter, "p113-evidence-writer", writerRun);
+
+  const advanceVerifying = await advanceRemediationStep(h, taskState, { status: "verifying", writerRunRef: writerRun, evidenceRefs: [evidenceRef] }, "p113-wc-adv-verify");
+  expect(advanceVerifying.receipt.status).toBe("committed");
+  if (opts.stopAt === "verifying") {
+    return {
+      finding, findingSnapshot: findingSnapshotJson, patchReceipt: patchReceipt.receipt, taskInitial: taskCreated.task,
+      workspaceRevisionBefore, workspaceRevisionAfter, leaseReceipt, recordPatchReceipt, evidenceRef, writerRun, planSnapshot,
+      advanceWriting, advanceVerifying, taskState,
+    };
+  }
+  const advanceResolved = await advanceRemediationStep(h, taskState, {
+    status: "resolved",
+    writerRunRef: writerRun,
+    evidenceRefs: [evidenceRef],
+    result: { workspaceRevisionAfter, verified: true, outcome: "PASS" },
+  }, "p113-wc-adv-resolve");
+  expect(advanceResolved.receipt.status).toBe("committed");
+
+  const taskLoad = await h.ledger.load(remediationTaskRefFor(P113_PROJECT, P113_WORKSPACE, P113_TASK));
+  expect(taskLoad.status).toBe("found");
+  const taskResolved = (taskLoad as { snapshot: { task: RemediationTaskV1 } }).snapshot.task;
+
+  return {
+    finding, findingSnapshot: findingSnapshotJson, patchReceipt: patchReceipt.receipt, taskInitial: taskCreated.task,
+    workspaceRevisionBefore, workspaceRevisionAfter, leaseReceipt, recordPatchReceipt, evidenceRef, writerRun, planSnapshot,
+    advanceWriting, advanceVerifying, advanceResolved, taskResolved, taskState,
+  };
+}

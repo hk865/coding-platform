@@ -1,0 +1,68 @@
+{
+  "ticket": "MC-A1",
+  "capturedAt": "2026-09-09T15:33:22.7000468+08:00",
+  "head": "65d270d75f3088d7baa4ef3a7c80fdaa62c3a38d",
+  "note": "Full-file hashes include pre-existing edits and other authorized module changes in shared files; these are final observed bytes, not a claim of A1-only ownership.",
+  "files": [
+    {
+      "path": "src/contracts/material-access.ts",
+      "sha256": "f13a46e88925a5b1fba66671877bf3ae2f66e4ec5957cc8d6494894f91978b96"
+    },
+    {
+      "path": "src/contracts/artifact.ts",
+      "sha256": "97eea31c871206b3aff8e8bd95474f0015a66b497092199c6c99a1d7b4b43d28"
+    },
+    {
+      "path": "src/contracts/validation.ts",
+      "sha256": "892b64c55f9e9f7bff617a453ef37baa54236c30634607f8345d63c0876810b4"
+    },
+    {
+      "path": "src/contracts/ledger-validation.ts",
+      "sha256": "70d30297a1895ce521336bc0cf042c1b3724caade33d87317e6ded9feb2dc5f4"
+    },
+    {
+      "path": "src/control/material-access.ts",
+      "sha256": "9b0216198936b2b36826fa96ac54cfc33705b5d301113ba37b7bc045285c7334"
+    },
+    {
+      "path": "src/data/source-applicability.ts",
+      "sha256": "f97248d7ca1cc887163f9c12b63e5e548f185b0c83e711d839b1afb02395c164"
+    },
+    {
+      "path": "src/harness/material-access-resolver.ts",
+      "sha256": "b119e7fd6c1d35eb117f15ab9df1d8e9c4030397aafa4f118c5b5a519afe9e8b"
+    },
+    {
+      "path": "src/harness/in-memory-harness.ts",
+      "sha256": "8ce89423fef1d6dfe616e6c7dbf13450d240a9d576e5010992af69e4a7e99138"
+    },
+    {
+      "path": "src/harness/persistent-harness.ts",
+      "sha256": "8358ba6d041282dc532d5fc0d4ad23c9d48958842cad935bf5595032a0e084ea"
+    },
+    {
+      "path": "src/vault/artifact-vault.ts",
+      "sha256": "e07ed7e572eca747e028d88123a3f3b213f0c987c34a6726aedec15d8e64ed2d"
+    },
+    {
+      "path": "tests/data/source-applicability-fixture.ts",
+      "sha256": "8539b5ebb9e5ab7bba4329f11e24a6c72a52f7d4a23a248b885a7b17f2f8694e"
+    },
+    {
+      "path": "tests/data/source-applicability.test.ts",
+      "sha256": "07b76cfd35cf78ab8ba6d0285e15135db4cc6ae91019043ed01e7063517b254b"
+    },
+    {
+      "path": "tests/restart/material-source-applicability.test.ts",
+      "sha256": "d99bce2ffc08dc17386b721b4f96dcc0132edb60d60ee9563eb819f68893b9c4"
+    },
+    {
+      "path": "tests/restart/material-source-process.mjs",
+      "sha256": "f05fb2c4836c4aff5bccec3f08773dade2d584c4e71ee8435cae1a76e793f715"
+    },
+    {
+      "path": "tests/restart/material-access-restart.test.ts",
+      "sha256": "6a78677d3a312834e725e66bc1138e38f9c42f5a684a6ded995a954725f554b6"
+    }
+  ]
+}

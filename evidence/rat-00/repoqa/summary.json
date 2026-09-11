@@ -1,0 +1,58 @@
+{
+  "ticket_id": "RAT-00",
+  "fixture_version": "rat-00-v1",
+  "task_ids": [
+    "repoqa-express-01",
+    "repoqa-express-02",
+    "repoqa-express-03",
+    "repoqa-express-04",
+    "repoqa-express-05",
+    "repoqa-express-06",
+    "repoqa-express-07",
+    "repoqa-express-08",
+    "repoqa-express-09",
+    "repoqa-express-10"
+  ],
+  "needle_selection": "all 10, released order unchanged",
+  "dataset_tag": "2024-06-23",
+  "dataset_sha256": "c050a2ad90a7df89d9dc1f1c3b3b20683edd20a56293b35fcaae43dec115d681",
+  "express_commit": "815f799310a5627c000d4a5156c1c958e4947b4c",
+  "official_scorer_commit": "ae876deb1365dbf5a15b0533723c8ed123eee586",
+  "task_materialization": "READY",
+  "source_commit_byte_comparison": "PASS 11/11",
+  "fixture_static_checks": "PASS 46/46",
+  "single_task_workspaces": "PASS 10/10; 13 files per workspace",
+  "official_scorer_controls": "PASS 30/30 (10 positive, 10 repeat positive, 10 wrong-target negative)",
+  "official_snf_16k_context": "BLOCKED: tokenizer revision and assets not frozen",
+  "actual_runtime_sandbox_boundary": "NOT_RUN by RepoQA subtask; parent environment report must cover before model execution",
+  "model_calls": 0,
+  "agent_score": null,
+  "scorer_python": ".local/evaluation/rat-00/repoqa/scorer-env/bin/python",
+  "commands": [
+    {
+      "command": "python3 evaluation/rat-00-v1/repoqa/prepare.py",
+      "exit_code": 0
+    },
+    {
+      "command": ".local/evaluation/rat-00/repoqa/scorer-env/bin/python evaluation/rat-00-v1/repoqa/preflight.py",
+      "exit_code": 0
+    }
+  ],
+  "installation": {
+    "package_count": 32,
+    "archive_bytes": 50701085,
+    "runtime_lock": "evaluation/rat-00-v1/repoqa/scorer-requirements.lock",
+    "no_torch_or_model_weights": true,
+    "system_python_modified": false
+  },
+  "remaining": [
+    "Freeze actual model/provider/budgets/trials in parent campaign before paid runs",
+    "Complete real Worker integration and actual runtime boundary check",
+    "Only official SNF execution requires frozen tokenizer preprocessing; derived tool navigation has separate reporting"
+  ],
+  "warnings_observed": [
+    "Upstream metric.py invalid escape sequence SyntaxWarning on Python 3.12; upstream retained unchanged",
+    "tree_sitter Language(path, name) deprecation warning; fixed compatible versions pass controls",
+    "Transformers reports no PyTorch/TensorFlow/Flax backend, which is expected for function scoring without models"
+  ]
+}

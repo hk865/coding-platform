@@ -1,0 +1,21 @@
+{
+  "kind": "browser-real-backend-model-stub",
+  "steps": [
+    "real kernel setup with labelled model stub",
+    "browser executed sandbox check and admitted exact report evidence",
+    "browser reconciled simulated durable orphan checkpoint with same report, no command replay",
+    "browser explicitly granted original check report to another Goal Run and verified original owner",
+    "browser revoked historical report grant and displayed persistent revision 2"
+  ],
+  "temp": "/tmp/platform-check-ui-cKJywt",
+  "source": "current working tree",
+  "realModel": false,
+  "goalStatus": {
+    "status": "not_ready",
+    "requiredCursor": "c0000000027",
+    "observedCursor": "c0000000027"
+  },
+  "passed": true,
+  "reportDigest": "fe02364e74835607789cd53f0e6352105a911f624b00c8d1a113f533f28e7527",
+  "observationId": "check-ab74fcca-8491-444b-a560-30e3c7ad28a7"
+}

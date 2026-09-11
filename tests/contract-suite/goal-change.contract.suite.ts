@@ -7,8 +7,8 @@ import type { P1_11TestHarness } from "./p1-11-harness.js";
 import { runP111ChangeScenario, type P111ChangeScenarioResult } from "./p1-11-harness.js";
 import { planChangeViewQueryFor, P111_PROJECT, P111_SOURCE_PLAN, P111_NEW_PLAN } from "./p1-11-harness.js";
 import { decisionTargetFor } from "../../src/contracts/goal-change.js";
-import { evidenceApplicability } from "../../src/contracts/evidence.js";
-import { buildEffectivityAnchorV1, buildEvidenceV1 } from "../../src/contracts/fixtures/evidence-fixtures.js";
+import { evidenceApplicability } from "../../src/control/control-engine/policies/evidence.js";
+import { buildEffectivityAnchorV1, buildEvidenceV1 } from "../contract-support/fixtures/evidence-fixtures.js";
 
 export function defineGoalChangeContractSuite(
   factory: () => Promise<P1_11TestHarness>,
@@ -143,10 +143,10 @@ export function defineGoalChangeContractSuite(
     });
 
     describe("versioned-planning-interface-contract-tests", () => {
-      it("planProposalRequest is bounded, versioned and ZERO-write", async () => {
+      it("planProposal.request is bounded, versioned and ZERO-write", async () => {
         const x = s();
         const before = (await h.ledger.events({ afterCursor: null, limit: 1000 })).events.length;
-        const result = await h.planProposalRequest(x.intent);
+        const result = await h.planProposal.request(x.intent);
         const after = (await h.ledger.events({ afterCursor: null, limit: 1000 })).events.length;
         expect(after).toBe(before);
         if (result.status === "proposal" || result.status === "rejected" || result.status === "needs_material") {
@@ -169,14 +169,14 @@ export function defineGoalChangeContractSuite(
           goalRef: x.goalRef,
           planRef: x.sourcePlan.ref,
         };
-        const tiny = await h.assemblePlanningContext({ ...base, budget: { maxBundleBytes: 1 } });
+        const tiny = await h.planningContext.assemblePlanningContext({ ...base, budget: { maxBundleBytes: 1 } });
         expect(tiny.status === "needs_material" || tiny.status === "ready").toBe(true);
-        const normal = await h.assemblePlanningContext({ ...base, budget: { maxBundleBytes: 64 * 1024 } });
+        const normal = await h.planningContext.assemblePlanningContext({ ...base, budget: { maxBundleBytes: 64 * 1024 } });
         if (normal.status === "ready") {
           expect(normal.manifest.totalBytes).toBeLessThanOrEqual(64 * 1024);
           expect(normal.manifest.selectedSources.length).toBeGreaterThan(0);
         }
-        const wrongScope = await h.assemblePlanningContext({ ...base, workspaceId: "ws-not-bound", budget: { maxBundleBytes: 64 * 1024 } });
+        const wrongScope = await h.planningContext.assemblePlanningContext({ ...base, workspaceId: "ws-not-bound", budget: { maxBundleBytes: 64 * 1024 } });
         expect(wrongScope.status === "rejected" || wrongScope.status === "needs_material").toBe(true);
       });
     });

@@ -1,0 +1,1451 @@
+{
+  "moves": {
+    "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts": "src/fixtures/architecture-evolution-policy-fixtures.ts",
+    "src/contracts/fixtures/architecture-fixtures.ts": "src/fixtures/architecture-fixtures.ts",
+    "src/contracts/fixtures/dispatch-fixtures.ts": "src/fixtures/dispatch-fixtures.ts",
+    "src/contracts/fixtures/governance-fixtures.ts": "src/fixtures/governance-fixtures.ts",
+    "src/contracts/fixtures/plan-fixtures.ts": "src/fixtures/plan-fixtures.ts",
+    "src/contracts/fixtures/role-spec-fixtures.ts": "src/fixtures/role-spec-fixtures.ts",
+    "src/contracts/testing/check-providers.double.ts": "src/testing/check-providers.double.ts",
+    "src/contracts/testing/sequences.ts": "src/testing/sequences.ts"
+  },
+  "consumers": [
+    {
+      "from": "src/app/service.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "src/app/service.ts",
+      "to": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts"
+    },
+    {
+      "from": "src/app/service.ts",
+      "to": "src/contracts/fixtures/role-spec-fixtures.ts"
+    },
+    {
+      "from": "src/app/service.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "src/app/service.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts",
+      "to": "src/contracts/command-event.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts",
+      "to": "src/contracts/architecture-evolution-policy.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts",
+      "to": "src/contracts/architecture-evolution-policy.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts",
+      "to": "src/contracts/commands/governance.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts",
+      "to": "src/contracts/ledger.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-fixtures.ts",
+      "to": "src/contracts/commands/architecture.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-fixtures.ts",
+      "to": "src/contracts/fingerprint.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-fixtures.ts",
+      "to": "src/contracts/command-event.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-fixtures.ts",
+      "to": "src/contracts/artifact.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-fixtures.ts",
+      "to": "src/contracts/plan.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-fixtures.ts",
+      "to": "src/contracts/governance.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-fixtures.ts",
+      "to": "src/contracts/architecture-inspection.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-fixtures.ts",
+      "to": "src/contracts/architecture-inspection.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-fixtures.ts",
+      "to": "src/contracts/architecture-inspection.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-fixtures.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/architecture-fixtures.ts",
+      "to": "src/contracts/governance.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/dispatch-fixtures.ts",
+      "to": "src/contracts/commands/dispatch.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/dispatch-fixtures.ts",
+      "to": "src/control/control-engine/records/dispatch.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/dispatch-fixtures.ts",
+      "to": "src/contracts/command-event.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/dispatch-fixtures.ts",
+      "to": "src/contracts/command-event.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/dispatch-fixtures.ts",
+      "to": "src/contracts/plan.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/dispatch-fixtures.ts",
+      "to": "src/contracts/dispatch.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/dispatch-fixtures.ts",
+      "to": "src/contracts/dispatch.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/dispatch-fixtures.ts",
+      "to": "src/contracts/task-envelope.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/dispatch-fixtures.ts",
+      "to": "src/contracts/artifact.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/dispatch-fixtures.ts",
+      "to": "src/contracts/ledger.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/governance-fixtures.ts",
+      "to": "src/contracts/governance.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/governance-fixtures.ts",
+      "to": "src/contracts/governance.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/governance-fixtures.ts",
+      "to": "src/contracts/commands/governance.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/governance-fixtures.ts",
+      "to": "src/contracts/command-event.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/governance-fixtures.ts",
+      "to": "src/contracts/command-event.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/governance-fixtures.ts",
+      "to": "src/contracts/governance.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/governance-fixtures.ts",
+      "to": "src/contracts/governance.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/governance-fixtures.ts",
+      "to": "src/contracts/ledger.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/plan-fixtures.ts",
+      "to": "src/contracts/commands/plan.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/plan-fixtures.ts",
+      "to": "src/contracts/command-event.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/plan-fixtures.ts",
+      "to": "src/contracts/command-event.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/plan-fixtures.ts",
+      "to": "src/contracts/plan.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/plan-fixtures.ts",
+      "to": "src/contracts/plan.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/role-spec-fixtures.ts",
+      "to": "src/contracts/human-role-collaboration.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/role-spec-fixtures.ts",
+      "to": "src/contracts/human-role-collaboration.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/role-spec-fixtures.ts",
+      "to": "src/contracts/human-role-collaboration.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/role-spec-fixtures.ts",
+      "to": "src/contracts/role-spec.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/role-spec-fixtures.ts",
+      "to": "src/contracts/role-spec.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/role-spec-fixtures.ts",
+      "to": "src/contracts/commands/governance.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/role-spec-fixtures.ts",
+      "to": "src/contracts/role-spec.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/role-spec-fixtures.ts",
+      "to": "src/contracts/role-spec.ts"
+    },
+    {
+      "from": "src/contracts/testing/check-providers.double.ts",
+      "to": "src/contracts/verification.ts"
+    },
+    {
+      "from": "src/contracts/testing/check-providers.double.ts",
+      "to": "src/contracts/verification.ts"
+    },
+    {
+      "from": "src/data/workspace-reader/workspace-reader-adapter.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "src/execution/worker-runtime/fake-runtime-adapter.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "src/harness/in-memory-harness.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "src/harness/in-memory-harness.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "src/harness/in-memory-harness.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "src/harness/in-memory-harness.ts",
+      "to": "src/contracts/testing/check-providers.double.ts"
+    },
+    {
+      "from": "src/harness/persistent-harness.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "src/harness/persistent-harness.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "src/harness/persistent-harness.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "src/harness/persistent-harness.ts",
+      "to": "src/contracts/testing/check-providers.double.ts"
+    },
+    {
+      "from": "tests/app/exploration-runtime.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/app/governance-commands.test.ts",
+      "to": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts"
+    },
+    {
+      "from": "tests/app/governance-commands.test.ts",
+      "to": "src/contracts/fixtures/role-spec-fixtures.ts"
+    },
+    {
+      "from": "tests/app/history-materials.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/app/real-runtime.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/app/role-material-run.test.ts",
+      "to": "src/contracts/fixtures/role-spec-fixtures.ts"
+    },
+    {
+      "from": "tests/app/role-spec-governance.test.ts",
+      "to": "src/contracts/fixtures/role-spec-fixtures.ts"
+    },
+    {
+      "from": "tests/app/runtime-context.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/app/runtime-context.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/app/runtime-context.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/app/verification-imports.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/app/work-material-delivery.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/app/work-material-delivery.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/app/work-material-delivery.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/context/context-compiler.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/context/context-compiler.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/context/planning-context-compiler.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/context/planning-context-compiler.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/context/planning-context-compiler.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/context/work-run-materials.test.ts",
+      "to": "src/contracts/fixtures/role-spec-fixtures.ts"
+    },
+    {
+      "from": "tests/context/work-run-materials.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/architecture-evolution.contract.suite.ts",
+      "to": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/architecture-evolution.contract.suite.ts",
+      "to": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/architecture-evolution.contract.suite.ts",
+      "to": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/architecture.contract.suite.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/console.contract.suite.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/console.contract.suite.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/dispatch.contract.suite.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/goal-view.contract.suite.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/contract-suite/governance.contract.suite.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/handoff.contract.suite.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-03-harness.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-03-harness.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-03-harness.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-04-harness.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-04-harness.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-04-harness.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-05-harness.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-05-harness.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-05-harness.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-05-harness.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-05-harness.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-06-harness.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-06-harness.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-06-harness.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-07-harness.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-07-harness.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-07-harness.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-08-harness.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-08-harness.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-08-harness.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-11-harness.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-11-harness.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-11-harness.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-12-harness.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-13-harness.ts",
+      "to": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-13-harness.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-13-harness.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-13-harness.ts",
+      "to": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-14-harness.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/plan.contract.suite.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/plan.contract.suite.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/run.contract.suite.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/state-ledger.contract.suite.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/contract-suite/verification.contract.suite.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/verification.contract.suite.ts",
+      "to": "src/contracts/testing/check-providers.double.ts"
+    },
+    {
+      "from": "tests/contract-suite/workspace.contract.suite.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/workspace.contract.suite.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-support/fixtures/console-fixtures.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-support/fixtures/console-fixtures.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-support/fixtures/console-fixtures.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-support/fixtures/console-fixtures.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-support/fixtures/remediation-fixtures.ts",
+      "to": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-support/fixtures/workspace-fixtures.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/contracts/fixtures.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/contracts/goal-phase.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/contracts/validation.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/architecture-delta-regression.test.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/control/architecture-evolution-policy.test.ts",
+      "to": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts"
+    },
+    {
+      "from": "tests/control/architecture-evolution-policy.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/architecture-inspection.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/architecture-inspection.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/architecture-inspection.test.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/control/architecture-reconciler.test.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/control/autonomous-rework-fixture.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/autonomous-rework-fixture.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/autonomous-rework-fixture.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/baseline-evolution-port.test.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/control/baseline-evolution.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/baseline-evolution.test.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/control/baseline-evolution.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/canonical-record-scope.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/canonical-record-scope.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/control-engine.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/dispatch-claim.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/dispatch-claim.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/dispatch-claim.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/dispatch-claim.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/dispatch-drive.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/dispatch-drive.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/dispatch-drive.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/dispatch-drive.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/dispatch-readiness.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/dispatch-readiness.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/dispatch-readiness.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/dispatch-readiness.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/dispatch-start.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/dispatch-start.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/dispatch-start.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/dispatch-start.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/evidence-intake.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/evidence-intake.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/evidence-intake.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/goal-change.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/goal-change.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/goal-change.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/governance-activate.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/governance-activate.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/governance-command-builders.test.ts",
+      "to": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts"
+    },
+    {
+      "from": "tests/control/governance-install.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/governance-install.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/handoff-drive.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/handoff.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/handoff.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/handoff.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/handoff.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/human-role-collaboration.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/initial-plan-source.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/initial-plan-source.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/integration-join.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/integration-join.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/live-frontier-regression.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/material-access.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/material-access.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/operator-entry-role.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/operator-entry-role.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/operator-entry-role.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/operator-entry-role.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/operator-entry-role.test.ts",
+      "to": "src/contracts/fixtures/role-spec-fixtures.ts"
+    },
+    {
+      "from": "tests/control/p1-13-writer-chain-fixture.ts",
+      "to": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts"
+    },
+    {
+      "from": "tests/control/p1-13-writer-chain-fixture.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/control/p1-13-writer-chain-fixture.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/p1-13-writer-chain-fixture.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/p1-15-role-rework-loop.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/p1-15-role-rework-loop.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/p1-15-role-rework-loop.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/patch-record.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/patch-record.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/patch-record.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/patch-record.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/plan-acceptance.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/plan-acceptance.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/plan-acceptance.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/plan-compiler.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/plan-compiler.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/plan-compiler.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/plan-impact-work-identity.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/planning-fixture.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/planning-fixture.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/remediation-writer-chain.test.ts",
+      "to": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts"
+    },
+    {
+      "from": "tests/control/remediation.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/remediation.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/remediation.test.ts",
+      "to": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts"
+    },
+    {
+      "from": "tests/control/remediation.test.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/control/replacement-claim.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/replacement-claim.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/replacement-claim.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/replacement-claim.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/reviewer-dispatch-isolation.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/reviewer-existing-drivers-isolation.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/reviewer-work-fixture.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/reviewer-work-fixture.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/rework-drive-harness.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/rework-drive-harness.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/rework-plan-compiler.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/rework-plan-compiler.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/rework-plan-compiler.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/rework-task-dispatch.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/role-binding-admission.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/role-binding-admission.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/role-binding-admission.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/role-binding-admission.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/role-binding-admission.test.ts",
+      "to": "src/contracts/fixtures/role-spec-fixtures.ts"
+    },
+    {
+      "from": "tests/control/role-material-completion.test.ts",
+      "to": "src/contracts/fixtures/role-spec-fixtures.ts"
+    },
+    {
+      "from": "tests/control/role-material-completion.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/role-material-completion.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/role-material-completion.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/role-spec-material-read.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/role-spec-material-read.test.ts",
+      "to": "src/contracts/fixtures/role-spec-fixtures.ts"
+    },
+    {
+      "from": "tests/control/role-spec.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/role-spec.test.ts",
+      "to": "src/contracts/fixtures/role-spec-fixtures.ts"
+    },
+    {
+      "from": "tests/control/run-facts.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/source-architecture.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/source-architecture.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/source-architecture.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/task-reducer.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/task-reducer.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/task-reducer.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/task-reducer.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-identity-harness.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-identity-harness.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-identity-harness.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-identity-uniqueness.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/work-identity-uniqueness.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-identity.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/control/work-identity.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-material-gate.test.ts",
+      "to": "src/contracts/fixtures/role-spec-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-material-gate.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-material-gate.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-material-gate.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/workspace-drive.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/workspace-drive.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/control/workspace-lease.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/control/workspace-lease.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/data/workspace-reader-adapter.test.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-00.integration.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/integration/p1-01.integration.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/integration/p1-02.integration.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-02.integration.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-03.integration.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/integration/p1-03.integration.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-09-query-regression.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-12.integration.test.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-13-writer-chain.integration.test.ts",
+      "to": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts"
+    },
+    {
+      "from": "tests/interaction/human-collaboration.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/ledger/in-memory-ledger.boundary.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/ledger/snapshot-isolation.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/ledger/snapshot-isolation.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/read-model/governance-view.test.ts",
+      "to": "src/contracts/fixtures/role-spec-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-03-run-projection.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-03-run-projection.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-03-run-projection.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-03-run-projection.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/read-model/p1-04-verification-projection.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-11-plan-change.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/read-model/p1-11-plan-change.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-11-plan-change.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-12-brief-proposal-projection.test.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-14-baseline-change-view.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/read-model/p1-14-baseline-change-view.test.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-14-baseline-change-view.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-15-unified-status.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/read-model/plan-change-timeline.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/read-model/plan-change-timeline.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/plan-change-timeline.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/plan-view.rebuild.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/plan-view.rebuild.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/plan-view.rebuild.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/read-model/plan-view.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/plan-view.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/plan-view.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/read-model/read-model-index.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/restart/evidence/p1-01-evidence.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/restart/material-access-restart.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/material-revocation.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/material-source-applicability.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/p1-02-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/p1-02-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/p1-03-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/p1-03-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/p1-03-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/p1-03-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/p1-12-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/persistent-restart.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/restart/restart-fixtures.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/runtime/context-continuation-adapter.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/runtime/fake-runtime-adapter.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/runtime/handoff-control-adapter.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-ledger/sqlite-ledger.restart.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-03-run-projection.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-03-run-projection.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-03-run-projection.test.ts",
+      "to": "src/contracts/fixtures/dispatch-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-03-run-projection.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-04-verification-projection.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-11-plan-change.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-11-plan-change.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-11-plan-change.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-12-brief-proposal-projection.test.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-14-baseline-change-view.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-14-baseline-change-view.test.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-14-baseline-change-view.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-15-unified-status.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/plan-view.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/plan-view.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/plan-view.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/sqlite-read-model-index.restart.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/verification/code-graph-port.test.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/verification/migration-gate-port.test.ts",
+      "to": "src/contracts/fixtures/architecture-fixtures.ts"
+    },
+    {
+      "from": "tests/verification/role-output-completeness.test.ts",
+      "to": "src/contracts/testing/sequences.ts"
+    },
+    {
+      "from": "tests/verification/role-output-completeness.test.ts",
+      "to": "src/contracts/fixtures/role-spec-fixtures.ts"
+    },
+    {
+      "from": "tests/verification/verification-engine.test.ts",
+      "to": "src/contracts/testing/check-providers.double.ts"
+    },
+    {
+      "from": "tests/verification/verification-engine.test.ts",
+      "to": "src/contracts/fixtures/governance-fixtures.ts"
+    },
+    {
+      "from": "tests/verification/verification-engine.test.ts",
+      "to": "src/contracts/fixtures/plan-fixtures.ts"
+    },
+    {
+      "from": "tests/verification/verification-rounds.test.ts",
+      "to": "src/contracts/fixtures/role-spec-fixtures.ts"
+    }
+  ],
+  "nonModuleOwners": [
+    "Fixtures",
+    "TestDoubles"
+  ],
+  "consumerAllowlistUnchanged": true
+}

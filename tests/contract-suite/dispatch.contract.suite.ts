@@ -19,7 +19,7 @@ import type {
   TaskAttemptSnapshot,
   TaskLeaseSnapshot,
 } from "../../src/contracts/dispatch.js";
-import { evaluateTaskEligibility } from "../../src/contracts/dispatch.js";
+import { evaluateTaskEligibility } from "../../src/control/control-engine/policies/task-eligibility.js";
 import {
   DISPATCH_BLOCKED_TASK_ID,
   DISPATCH_DEFERRED_TASK_ID,
@@ -28,7 +28,7 @@ import {
   DISPATCH_GATE_TASK_ID,
   buildDispatchStartCommand,
   buildManifestFixture,
-} from "../../src/contracts/fixtures/dispatch-fixtures.js";
+} from "../../src/fixtures/dispatch-fixtures.js";
 import { artifactBodyDigest } from "../../src/contracts/artifact.js";
 import { makeCommitCursor } from "../../src/contracts/ledger.js";
 import type { P1_03HarnessFactory } from "./p1-03-harness.js";

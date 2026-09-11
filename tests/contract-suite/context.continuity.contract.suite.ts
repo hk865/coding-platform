@@ -28,7 +28,7 @@ import {
   buildRecordExecutionNoteCommand,
   buildRecordContinuationCommand,
   p116WorkContextRef,
-} from "../../src/contracts/fixtures/context-fixtures.js";
+} from "../contract-support/fixtures/context-fixtures.js";
 import { workContextRefFor, EXECUTION_NOTE_MAX_BYTES, WORK_CONTEXT_MAX_RUN_LINKS } from "../../src/contracts/context-continuity.js";
 import { P108_PROJECT_A, P108_PROJECT_B, P108_TASK_WORK, P108_EVIDENCE_CLAIM } from "./p1-08-harness.js";
 
@@ -235,15 +235,6 @@ export function defineContextContinuityContractSuite(
       });
     });
 
-    describe("real-kernel-continuity-test", () => {
-      it("the REAL coding-agent adaptation path is verified ONCE by the integration evidence (this suite runs the Fake contract path only)", () => {
-        // The Fake contract suite never substitutes for the real-kernel run —
-        // tests/integration/p1-16.real-kernel.continuity.test.ts holds the
-        // evidence block; this group exists so the group name is present in
-        // BOTH suites (verification grouping completeness).
-        expect(true).toBe(true);
-      });
-    });
   });
 }
 

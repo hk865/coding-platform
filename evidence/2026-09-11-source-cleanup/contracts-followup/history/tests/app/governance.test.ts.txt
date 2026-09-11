@@ -1,0 +1,387 @@
+/**
+ * RW-08 真实 HTTP：治理安装与激活的产品入口。
+ *
+ * 本文件断言的是产品今天**真实**的行为：
+ *   1. 默认产品只会经 install/activate 生效 CompletionPolicy 与 ArchitectureBaseline
+ *      （组合根的内置本地来源，走同一正式路径）；CoordinationPolicy 与
+ *      ArchitectureEvolutionPolicy 没有被激活，因此视图里没有可用的自动化额度。
+ *   2. HTTP 入口可以安装并激活一份 CoordinationPolicy：install 用 CAS@0（同一份 source
+ *      重放、不同内容被拒且零写），activate 用 CAS（过期窗口被拒且零写），生效后视图能回答
+ *      "哪一份、谁在什么时候装的、内容是什么"。
+ *   3. 真实内核链路上，安装并激活协调策略之后，自动返工从 governance_unavailable 变成可受理
+ *      （受理成功且新 revision 生效），这正是 RW-06 报告里缺的那一环。
+ */
+import { afterEach, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { GovernanceActivateResultV1, GovernanceInstallResultV1, GovernanceViewV1 } from '../../src/contracts/governance-view.js';
+import { verificationRoundFixture } from './verification-round-fixture.js';
+import type { ReworkDriveResultV1, ReworkDriveViewV1 } from '../../src/contracts/rework-drive.js';
+import type { VerificationRegisteredCheck, VerificationRoundResult } from '../../src/contracts/verification-round.js';
+import { createGuiServer } from '../../src/app/server.js';
+
+
+const cleanup: Array<() => Promise<void>> = [];
+afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
+
+/** 夹具服务：真实 HTTP 宿主、真实 SQLite 账本，只有执行内核是显式 fixture。 */
+async function startFixture() {
+  const directory = await mkdtemp(join(tmpdir(), 'rw08-governance-'));
+  cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  let app = await createGuiServer(directory, { fixtureExecution: true });
+  let closed = false;
+  let base = '';
+  let token = '';
+  async function listen() {
+    await new Promise<void>(done => app.server.listen(0, '127.0.0.1', done));
+    const address = app.server.address();
+    if (!address || typeof address === 'string') throw Error('No application address');
+    base = 'http://127.0.0.1:' + address.port;
+    token = ((await (await fetch(base + '/api/meta')).json()) as { workspaceToken: string }).workspaceToken;
+  }
+  await listen();
+  const post = async <T = Record<string, unknown>>(path: string, body: unknown) => {
+    const response = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-platform-token': token }, body: JSON.stringify(body) });
+    return { status: response.status, body: await response.json() as T };
+  };
+  const session = {
+    directory,
+    scope: { projectId: 'acceptance-alpha', workspaceId: 'workspace-main' },
+    post,
+    close: async () => { if (!closed) { closed = true; await app.close(); } },
+    restart: async () => { await session.close(); closed = false; app = await createGuiServer(directory, { fixtureExecution: true }); await listen(); },
+  };
+  cleanup.push(() => session.close());
+  return session;
+}
+
+/**
+ * 协调策略 source：额度是人的授权决定，因此由调用方显式给出。
+ * RW-10 起 inScopeRework 同样是人的授权位（false = 停用范围内的自动返工），因此也是参数。
+ */
+const coordinationSource = (policyId: string, maxAutonomousReworks: number, inScopeRework = true) => ({
+  policyId,
+  content: {
+    schemaVersion: 1 as const,
+    budget: { maxAutonomousReworks, maxClarifications: 3 },
+    allowed: { inScopeRework, inScopeTesting: true as const },
+    scope: { changesRequireHumanDecision: ['requirement', 'acceptance', 'baseline'] },
+    upgrade: { path: 'manual-decision' as const, note: '策略升级需人工决定' },
+  },
+});
+
+const view = (fixture: { post: <T>(path: string, body: unknown) => Promise<{ status: number; body: T }>; scope: { projectId: string; workspaceId: string } }) =>
+  fixture.post<GovernanceViewV1>('/api/real/governance/view', fixture.scope);
+const kindOf = (view: GovernanceViewV1, kind: string) => view.kinds.find(entry => entry.kind === kind)!;
+
+it('产品入口完成治理种类的 install/activate：默认只有两条内置基线生效，协调策略必须由人显式提交，视图回答"哪一份、谁在什么时候装的、内容是什么"', async () => {
+  const fixture = await startFixture();
+
+  // 1) 默认状态：只有内置本地来源经正式 install/activate 生效的两条；两条策略都尚未激活。
+  const initial = await view(fixture);
+  expect(initial.status, JSON.stringify(initial.body)).toBe(200);
+  expect(initial.body.projectRevision).toBe(1);
+  const completion = kindOf(initial.body, 'CompletionPolicy');
+  expect(completion.active, JSON.stringify(completion)).not.toBeNull();
+  expect(completion.active!.revision!.contentDigest).toHaveLength(64);
+  expect(completion.active!.revision!.installedBy).toEqual({ kind: 'human', id: 'user-1' });
+  // 时间来自已提交的安装事件（ControlEngine 落账时的时间），不是请求里自报的字段。
+  expect(Number.isFinite(Date.parse(completion.active!.revision!.installedAt!))).toBe(true);
+  expect(completion.active!.revision!.content).toMatchObject({ requirementKinds: ['static', 'dynamic', 'reviewer'], minimumRequiredRequirementsPerObligation: 1 });
+  const baseline = kindOf(initial.body, 'ArchitectureBaseline');
+  expect(baseline.active).not.toBeNull();
+  expect(baseline.active!.revision!.content).toMatchObject({ schemaVersion: 1 });
+  expect(kindOf(initial.body, 'CoordinationPolicy').active).toBeNull();
+  expect(kindOf(initial.body, 'ArchitectureEvolutionPolicy').active).toBeNull();
+  // 没有生效的协调策略 = 没有自动化额度（不存在内置默认值），也**不是**“自动返工默认开启”。
+  expect(initial.body.automation).toBeNull();
+  expect(initial.body.automationSwitch).toMatchObject({ inScopeRework: null, policyId: null, policyRevision: null });
+  expect(initial.body.automationSwitch.note).toContain('没有生效的协调策略');
+
+  // 2) 协调策略没有内置来源：不给 source 就是明确拒绝，而不是套一个默认预算。
+  const missingSource = await fixture.post<GovernanceInstallResultV1>('/api/real/governance/install', { ...fixture.scope, kind: 'CoordinationPolicy' });
+  expect(missingSource.status).toBe(200);
+  expect(missingSource.body).toMatchObject({ status: 'rejected', code: 'invalid_source' });
+  expect(missingSource.body.message).toContain('必须由调用方显式提交版本化 source');
+
+  // 3) 安装：CAS@0，安装不会自动激活。
+  const source = coordinationSource('coordination-policy-main', 2);
+  const installed = await fixture.post<GovernanceInstallResultV1>('/api/real/governance/install', { ...fixture.scope, kind: 'CoordinationPolicy', source });
+  expect(installed.body, JSON.stringify(installed.body)).toMatchObject({ status: 'committed', replayed: false, sourceOrigin: 'caller-provided' });
+  expect(installed.body.revisionRef).toMatchObject({ aggregateType: 'CoordinationPolicyRevision', policyId: 'coordination-policy-main', revision: 1 });
+  const afterInstall = await view(fixture);
+  expect(kindOf(afterInstall.body, 'CoordinationPolicy').active).toBeNull();
+  expect(afterInstall.body.automation).toBeNull();
+  expect(kindOf(afterInstall.body, 'CoordinationPolicy').installed).toHaveLength(1);
+
+  // 4) 重复 install：同一份 source 是幂等重放，没有第二个 revision。
+  const replay = await fixture.post<GovernanceInstallResultV1>('/api/real/governance/install', { ...fixture.scope, kind: 'CoordinationPolicy', source });
+  expect(replay.body).toMatchObject({ status: 'committed', replayed: true });
+  expect(replay.body.revisionRef).toEqual(installed.body.revisionRef);
+  expect(kindOf((await view(fixture)).body, 'CoordinationPolicy').installed).toHaveLength(1);
+
+  // 5) 同一身份不同内容：revision 不可改写，明确拒绝并回报既有的那一份，零写入。
+  const conflict = await fixture.post<GovernanceInstallResultV1>('/api/real/governance/install', {
+    ...fixture.scope, kind: 'CoordinationPolicy', source: coordinationSource('coordination-policy-main', 4),
+  });
+  expect(conflict.body, JSON.stringify(conflict.body)).toMatchObject({ status: 'rejected', code: 'revision_conflict' });
+  expect(conflict.body.existing).toMatchObject({ contentRevision: 1, contentDigest: installed.body.contentDigest });
+  expect(conflict.body.message).toContain('不覆盖');
+  expect(kindOf((await view(fixture)).body, 'CoordinationPolicy').installed).toHaveLength(1);
+
+  // 6) 过期 CAS 窗口：Project@0 不是当前 revision，零写入。
+  const pin = { ref: installed.body.revisionRef!, digest: installed.body.contentDigest! };
+  const stale = await fixture.post<GovernanceActivateResultV1>('/api/real/governance/activate', { ...fixture.scope, kind: 'CoordinationPolicy', pin, expectedRevision: 0 });
+  expect(stale.body, JSON.stringify(stale.body)).toMatchObject({ status: 'rejected', code: 'revision_conflict', expectedRevisionSource: 'caller' });
+  expect(kindOf((await view(fixture)).body, 'CoordinationPolicy').active).toBeNull();
+
+  // 7) 激活：不给 expectedRevision 时用当前 Project revision 做 CAS。
+  const activated = await fixture.post<GovernanceActivateResultV1>('/api/real/governance/activate', { ...fixture.scope, kind: 'CoordinationPolicy', pin });
+  expect(activated.body, JSON.stringify(activated.body)).toMatchObject({ status: 'committed', replayed: false, expectedRevision: 1, expectedRevisionSource: 'current_project_revision' });
+  expect(activated.body.activatedRevision).toEqual(installed.body.revisionRef);
+
+  const effective = await view(fixture);
+  const coordination = kindOf(effective.body, 'CoordinationPolicy');
+  expect(coordination.active!.revision!.installedBy).toEqual({ kind: 'human', id: 'user-1' });
+  expect(coordination.active!.activatedBy).toEqual({ kind: 'human', id: 'user-1' });
+  expect(coordination.active!.activeAggregateRevision).toBe(1);
+  expect(typeof coordination.active!.activatedAt).toBe('string');
+  // 界面要回答"安装/激活这份策略等于授予多少自动返工额度"：这些数字逐项来自生效策略正文。
+  expect(effective.body.automation).toMatchObject({
+    policyId: 'coordination-policy-main', revision: 1, maxAutonomousReworks: 2, maxClarifications: 3,
+    inScopeRework: true, inScopeTesting: true,
+    changesRequireHumanDecision: ['requirement', 'acceptance', 'baseline'],
+    upgrade: { path: 'manual-decision' },
+  });
+  expect(effective.body.automation!.contentDigest).toBe(installed.body.contentDigest);
+  expect(effective.body.coordinationLimits.maxAutonomousReworksMax).toBe(4);
+  // RW-10：界面要能回答“自动返工现在是被授权还是被停用”，并且说明文字由后端给出（规则只有一处）。
+  expect(effective.body.automationSwitch).toMatchObject({ inScopeRework: true, policyId: 'coordination-policy-main', policyRevision: 1 });
+  expect(effective.body.automationSwitch.note).toContain('关闭 inScopeRework');
+  expect(effective.body.automationSwitch.note).toContain('之后每条失败都必须由人决定');
+
+  // 8) 同一激活请求重试：幂等重放，并被 canonical 复核过（active ref 仍然是它），没有第二次激活。
+  const retried = await fixture.post<GovernanceActivateResultV1>('/api/real/governance/activate', { ...fixture.scope, kind: 'CoordinationPolicy', pin });
+  expect(retried.body, JSON.stringify(retried.body)).toMatchObject({ status: 'committed', replayed: true });
+  expect(kindOf((await view(fixture)).body, 'CoordinationPolicy').active!.activeAggregateRevision).toBe(1);
+
+  // 9) 重启：生效 revision、安装者与授权额度都是持久事实，逐字一致。
+  await fixture.restart();
+  const reopened = await view(fixture);
+  expect(reopened.body.kinds).toEqual(effective.body.kinds);
+  expect(reopened.body.automation).toEqual(effective.body.automation);
+});
+
+it('激活另一份策略之后，旧激活请求的重放不会被当成"当前生效"：控制守卫复核 canonical，不谎报成功', async () => {
+  const fixture = await startFixture();
+  const first = coordinationSource('coordination-policy-main', 1);
+  const firstInstall = await fixture.post<GovernanceInstallResultV1>('/api/real/governance/install', { ...fixture.scope, kind: 'CoordinationPolicy', source: first });
+  const firstPin = { ref: firstInstall.body.revisionRef!, digest: firstInstall.body.contentDigest! };
+  expect((await fixture.post<GovernanceActivateResultV1>('/api/real/governance/activate', { ...fixture.scope, kind: 'CoordinationPolicy', pin: firstPin })).body.status).toBe('committed');
+
+  const second = coordinationSource('coordination-policy-next', 3);
+  const secondInstall = await fixture.post<GovernanceInstallResultV1>('/api/real/governance/install', { ...fixture.scope, kind: 'CoordinationPolicy', source: second });
+  const secondPin = { ref: secondInstall.body.revisionRef!, digest: secondInstall.body.contentDigest! };
+  expect((await fixture.post<GovernanceActivateResultV1>('/api/real/governance/activate', { ...fixture.scope, kind: 'CoordinationPolicy', pin: secondPin })).body.status).toBe('committed');
+  expect(kindOf((await view(fixture)).body, 'CoordinationPolicy').active!.activeAggregateRevision).toBe(2);
+
+  // 重放旧请求：账本会说"已落账"，但 canonical 的 active ref 已经不是它 → 不能报成功。
+  const staleReplay = await fixture.post<GovernanceActivateResultV1>('/api/real/governance/activate', { ...fixture.scope, kind: 'CoordinationPolicy', pin: firstPin });
+  expect(staleReplay.body, JSON.stringify(staleReplay.body)).toMatchObject({ status: 'rejected', code: 'revision_conflict', replayed: true });
+  expect(staleReplay.body.message).toContain('已经不是它');
+  expect(staleReplay.body.activeRevision).toMatchObject({ policyId: 'coordination-policy-next' });
+  // 零写入：生效的仍然是第二份。
+  const effective = await view(fixture);
+  expect(effective.body.automation).toMatchObject({ policyId: 'coordination-policy-next', maxAutonomousReworks: 3 });
+});
+
+type ReworkStatus = { view: ReworkDriveViewV1; lastDrive: ReworkDriveResultV1 | null };
+
+/**
+ * 初始规划提案（模型桩的回答）：**复核类要求挂在 gate 任务上**，工作任务的失败要求由工具轮次
+ * 独立承担。为什么必须是这个形状：轮次不会自己产生 reviewer 结论（verification-rounds.ts
+ * 明文「Reviewer and uncovered requirements remain null; PASS is never overall acceptance while
+ * one of those requirements still has no result」），因此把 reviewer 要求挂在工作任务上时，
+ * 轮次问题一定会带一条没有结论的要求，RW-04 的边界 (a) 会（正确地）拒绝自动返工。
+ */
+function governancePlan() {
+  return {
+    kind: 'plan', summary: '检查真实文件，再由 gate 任务做独立语义复核。',
+    assignments: [{ taskId: 'coding-task', role: 'executor', instruction: '检查 subject.txt 并报告公开结果；独立检查与语义复核由平台承担。' }],
+    plan: {
+      stages: [{ stageId: 'work', title: 'File task' }],
+      tasks: [
+        { taskId: 'coding-task', stageId: 'work', title: 'Inspect file', taskKind: 'work', requirementLevel: 'required', disposition: 'active', phase: 'pending', scope: { kind: 'stage', stageId: 'work' } },
+        { taskId: 'gate-goal', title: 'Independent verification', taskKind: 'gate', requirementLevel: 'required', disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
+      ],
+      obligations: [
+        { obligationId: 'file-behavior', title: '文件行为由工具检查证明', requirementLevel: 'required', taskIds: ['coding-task'], verificationRequirements: [
+          { requirementId: 'behavior', requirementLevel: 'required', kind: 'dynamic', description: 'Run all registered behavior checks.' },
+        ] },
+        { obligationId: 'file-semantics', title: '文件语义由独立复核证明', requirementLevel: 'required', taskIds: ['gate-goal'], verificationRequirements: [
+          { requirementId: 'semantics', requirementLevel: 'required', kind: 'reviewer', description: 'Independent semantic review of this source version.' },
+        ] },
+      ],
+      taskHierarchy: { parentOf: [{ parentTaskId: 'gate-goal', childTaskId: 'coding-task' }] },
+      executionDag: { dependsOn: [{ taskId: 'gate-goal', dependsOnId: 'coding-task', requires: { kind: 'gate-result', label: 'Current Task verification' } }] },
+    },
+  };
+}
+
+type RoundFixture = Awaited<ReturnType<typeof verificationRoundFixture>>;
+const check = (fixture: RoundFixture): VerificationRegisteredCheck => ({
+  checkId: 'rw08-failing-check', kind: 'dynamic', command: 'exit 1', cwd: '.', timeoutMs: 3000,
+  appliesTo: { workspaceId: fixture.scope.workspaceId, taskIds: [fixture.taskId] },
+});
+const scopeOf = (fixture: { scope: { projectId: string; workspaceId: string } }) =>
+  ({ projectId: fixture.scope.projectId, workspaceId: fixture.scope.workspaceId });
+
+/** 真实工具轮次 FAIL：失败要求由工具轮次独立承担，因此带着已提交的结论。 */
+async function failRound(fixture: RoundFixture): Promise<void> {
+  const started = await fixture.post<VerificationRoundResult>('/api/real/verifications/rounds/start', {
+    ...scopeOf(fixture), goalId: fixture.scope.goalId, runId: fixture.runId, taskId: fixture.taskId, requestId: 'rw08-failing-round', allowExecute: true,
+    configuration: { checks: [check(fixture)] },
+  });
+  expect(started.status, JSON.stringify(started.body)).toBe(200);
+  expect(started.body.round.outcome).toBe('FAIL');
+}
+
+/** 轮询只读入口，等到驱动的结论满足条件为止（判据由调用方给出，不在这里解释业务）。 */
+async function waitForDrive(fixture: RoundFixture, predicate: (status: ReworkStatus) => boolean, describe: string, timeoutMs = 60000): Promise<ReworkStatus> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const status = (await fixture.post<ReworkStatus>('/api/real/rework/status', { ...scopeOf(fixture), goalId: fixture.scope.goalId })).body;
+    if (predicate(status)) return status;
+    if (Date.now() >= deadline) throw Error(describe + '：' + JSON.stringify(status.lastDrive));
+    await new Promise(done => setTimeout(done, 50));
+  }
+}
+
+it('基线：没有经 install/activate 生效的协调策略时，真实失败链停在 governance_unavailable 且零写入', async () => {
+  const fixture = await verificationRoundFixture(cleanup, true, createGuiServer, { plan: governancePlan });
+  const scope = scopeOf(fixture);
+  const baseline = await fixture.post<GovernanceViewV1>('/api/real/governance/view', scope);
+  expect(baseline.body.automation).toBeNull();
+  const planBefore = (await fixture.post<ReworkStatus>('/api/real/rework/status', { ...scope, goalId: fixture.scope.goalId })).body.view.acceptance.activePlanRef!.planId;
+
+  await failRound(fixture);
+  const settled = await waitForDrive(fixture, status => (status.lastDrive?.outcomes.length ?? 0) > 0, '自动返工没有被触发');
+  const outcome = settled.lastDrive!.outcomes[0]!;
+  expect(outcome.status, JSON.stringify(outcome)).toBe('rejected');
+  if (outcome.status !== 'rejected') return;
+  expect(outcome.code).toBe('governance_unavailable');
+  expect(outcome.reasons.join(' ')).toContain('CoordinationPolicy');
+  // 零写入：没有落账提案，也没有把 revision 往前推。
+  expect(settled.view.acceptance.proposalRecorded).toBe(false);
+  expect(settled.view.acceptance.applied).toBe(false);
+  expect(settled.view.acceptance.activePlanRef!.planId).toBe(planBefore);
+  expect(settled.lastDrive!.acceptedPlanRefs).toEqual([]);
+}, 180000);
+
+it('真实 HTTP 安装并激活协调策略之后：同一条失败链自动受理成功，新 revision 生效，额度按生效策略计数', async () => {
+  const fixture = await verificationRoundFixture(cleanup, true, createGuiServer, { plan: governancePlan });
+  const scope = scopeOf(fixture);
+
+  // 1) 授权：经产品入口安装并激活一份协调策略（安装 CAS@0，激活用当前 Project revision 做 CAS）。
+  const source = coordinationSource('coordination-policy-main', 2);
+  const install = await fixture.post<GovernanceInstallResultV1>('/api/real/governance/install', { ...scope, kind: 'CoordinationPolicy', source });
+  expect(install.status, JSON.stringify(install.body)).toBe(200);
+  expect(install.body).toMatchObject({ status: 'committed' });
+  const activate = await fixture.post<GovernanceActivateResultV1>('/api/real/governance/activate', {
+    ...scope, kind: 'CoordinationPolicy', pin: { ref: install.body.revisionRef!, digest: install.body.contentDigest! },
+  });
+  expect(activate.body, JSON.stringify(activate.body)).toMatchObject({ status: 'committed' });
+  const granted = await fixture.post<GovernanceViewV1>('/api/real/governance/view', scope);
+  expect(granted.body.automation).toMatchObject({ policyId: 'coordination-policy-main', maxAutonomousReworks: 2, revision: 1 });
+
+  // 2) 同一条真实失败链：这次有生效的协调策略，四条边界成立 → 自动受理。
+  await failRound(fixture);
+  const settled = await waitForDrive(
+    fixture,
+    status => status.lastDrive?.outcomes.some(outcome => outcome.status === 'accepted') === true,
+    '安装协调策略之后自动返工仍然没有被受理',
+  );
+  const accepted = settled.lastDrive!.outcomes.find(outcome => outcome.status === 'accepted')!;
+  if (accepted.status !== 'accepted') throw Error('unreachable');
+  // 额度按生效策略计数（不是默认值）：上限 2、已用 0、来源写进决定。
+  expect(accepted.budget).toMatchObject({ policyId: 'coordination-policy-main', policyRevision: 1, limit: 2, used: 0, remaining: 2 });
+  expect(accepted.boundaries.every(boundary => boundary.satisfied)).toBe(true);
+  // 新 revision 确实生效：受理视图的 applied 与 Goal 的 active revision 同源。
+  expect(settled.view.acceptance.applied).toBe(true);
+  expect(settled.view.acceptance.activePlanRef!.planId).toBe(accepted.planRef.planId);
+  expect(settled.lastDrive!.acceptedPlanRefs.map(ref => ref.planId)).toEqual([accepted.planRef.planId]);
+
+  // 重启后：授权额度与生效 revision 都是持久事实。
+  await fixture.restart();
+  const reopened = await fixture.post<GovernanceViewV1>('/api/real/governance/view', scope);
+  expect(reopened.body.automation).toEqual(granted.body.automation);
+  expect(reopened.body.automationSwitch).toEqual(granted.body.automationSwitch);
+}, 180000);
+
+/**
+ * RW-10（P2）人的暂停开关，走真实产品链路：
+ *   1. 人经产品入口安装并激活一份 allowed.inScopeRework=false 的协调策略 → 视图说明“已停用”；
+ *   2. 同一条真实失败链：自动受理在边界 (b) 转 needs_human_decision，零写入（没有提案、没有新 revision）；
+ *   3. 人重新启用（安装并激活另一份 inScopeRework=true 的策略 revision）后，同一条链恢复自动受理。
+ * 整条路径没有暂停命令、没有暂停聚合、没有「暂停」状态：只有一次 install + activate。
+ */
+it('RW-10 人的暂停开关：inScopeRework=false 的协调策略生效后，真实失败链转人工且零写入；重新启用后恢复自动受理', async () => {
+  const fixture = await verificationRoundFixture(cleanup, true, createGuiServer, { plan: governancePlan });
+  const scope = scopeOf(fixture);
+
+  // 1) 停用：安装并激活一份 inScopeRework=false 的策略（它照样授予额度数字，只是不授权自动受理）。
+  const paused = coordinationSource('coordination-policy-paused', 2, false);
+  const pausedInstall = await fixture.post<GovernanceInstallResultV1>('/api/real/governance/install', { ...scope, kind: 'CoordinationPolicy', source: paused });
+  expect(pausedInstall.status, JSON.stringify(pausedInstall.body)).toBe(200);
+  expect(pausedInstall.body).toMatchObject({ status: 'committed' });
+  const pausedActivate = await fixture.post<GovernanceActivateResultV1>('/api/real/governance/activate', {
+    ...scope, kind: 'CoordinationPolicy', pin: { ref: pausedInstall.body.revisionRef!, digest: pausedInstall.body.contentDigest! },
+  });
+  expect(pausedActivate.body, JSON.stringify(pausedActivate.body)).toMatchObject({ status: 'committed' });
+  const pausedView = await fixture.post<GovernanceViewV1>('/api/real/governance/view', scope);
+  expect(pausedView.body.automation).toMatchObject({ policyId: 'coordination-policy-paused', inScopeRework: false, maxAutonomousReworks: 2 });
+  expect(pausedView.body.automationSwitch).toMatchObject({ inScopeRework: false, policyId: 'coordination-policy-paused' });
+  expect(pausedView.body.automationSwitch.note).toContain('人已停用范围内的自动返工');
+  expect(pausedView.body.automationSwitch.note).toContain('之后每条失败都必须由人决定');
+  const planBefore = (await fixture.post<ReworkStatus>('/api/real/rework/status', { ...scope, goalId: fixture.scope.goalId })).body.view.acceptance.activePlanRef!.planId;
+
+  // 2) 真实失败链：自动受理必须停在 needs_human_decision 且零写入。
+  await failRound(fixture);
+  const stopped = await waitForDrive(fixture, status => (status.lastDrive?.outcomes.length ?? 0) > 0, '暂停状态下自动返工没有被触发');
+  const stoppedOutcome = stopped.lastDrive!.outcomes[0]!;
+  expect(stoppedOutcome.status, JSON.stringify(stoppedOutcome)).toBe('needs_human_decision');
+  if (stoppedOutcome.status !== 'needs_human_decision') return;
+  expect(stoppedOutcome.code).toBe('in_scope_rework');
+  expect(stoppedOutcome.reasons.join(' ')).toContain('人已停用范围内的自动返工');
+  expect(stoppedOutcome.reasons.join(' ')).toContain('由人决定');
+  expect(stopped.view.acceptance.proposalRecorded).toBe(false);
+  expect(stopped.view.acceptance.applied).toBe(false);
+  expect(stopped.view.acceptance.activePlanRef!.planId).toBe(planBefore);
+  expect(stopped.lastDrive!.acceptedPlanRefs).toEqual([]);
+
+  // 3) 重新启用：策略 revision 不可改写，因此换一份 policyId 安装并激活（界面上的操作方式相同）。
+  const resumed = coordinationSource('coordination-policy-resumed', 2, true);
+  const resumedInstall = await fixture.post<GovernanceInstallResultV1>('/api/real/governance/install', { ...scope, kind: 'CoordinationPolicy', source: resumed });
+  expect(resumedInstall.body).toMatchObject({ status: 'committed' });
+  const resumedActivate = await fixture.post<GovernanceActivateResultV1>('/api/real/governance/activate', {
+    ...scope, kind: 'CoordinationPolicy', pin: { ref: resumedInstall.body.revisionRef!, digest: resumedInstall.body.contentDigest! },
+  });
+  expect(resumedActivate.body, JSON.stringify(resumedActivate.body)).toMatchObject({ status: 'committed' });
+  const resumedView = await fixture.post<GovernanceViewV1>('/api/real/governance/view', scope);
+  expect(resumedView.body.automationSwitch).toMatchObject({ inScopeRework: true, policyId: 'coordination-policy-resumed' });
+
+  // 同一条未处置问题仍然属于当前 revision（停用期间零写入），再次触发即可被受理：
+  // 重复提交同一轮次请求不会重新执行检查（同请求回放），但组合根会在收口后再次驱动返工。
+  await failRound(fixture);
+  const accepted = await waitForDrive(
+    fixture,
+    status => status.lastDrive?.outcomes.some(outcome => outcome.status === 'accepted') === true,
+    '重新启用之后自动返工仍然没有被受理',
+  );
+  const acceptedOutcome = accepted.lastDrive!.outcomes.find(outcome => outcome.status === 'accepted')!;
+  if (acceptedOutcome.status !== 'accepted') throw Error('unreachable');
+  expect(acceptedOutcome.budget).toMatchObject({ policyId: 'coordination-policy-resumed', limit: 2, used: 0, remaining: 2 });
+  expect(accepted.view.acceptance.applied).toBe(true);
+  expect(accepted.view.acceptance.activePlanRef!.planId).toBe(acceptedOutcome.planRef.planId);
+}, 180000);

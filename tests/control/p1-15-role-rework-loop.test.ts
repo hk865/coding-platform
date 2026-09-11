@@ -13,7 +13,7 @@
  *   claim/dispatch a Coder task (P1-03) -> runtime FAIL (run_crashed fact) -> Coder fails
  *   -> coordinator arranges ONE bounded rework (ReplacementClaim P1-06 + new run -> completed)
  *   -> budget budget_exhausted (policy budget = 1) -> rollover (P1-16 bind/link/continuation)
- *   -> P1-17 completed-work selection; unified status view (facts-first + decisions + visible
+ *   -> P1-17 excludes work lacking formal completion; unified status view (facts-first + decisions + visible
  *   budget-bearing coordination-policy fact) is asserted.
  *
  * Assertions:
@@ -27,39 +27,39 @@
  *    budget-bearing coordination-policy(+activation) facts visible;
  *  - rollover preserves work-context facts (bind -> link the replacement run ->
  *    continuation took_over) and the work-context view exposes the reworked run;
- *  - P1-17 completed-work selection is visible for the same workspace.
+ *  - P1-17 does not infer completed work from a replacement Run ending.
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
 import type { InMemoryHarness } from "../../src/harness/in-memory-harness.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 import { p111BootstrapGoalGovernance } from "../contract-suite/p1-11-harness.js";
-import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
 import {
   DISPATCH_PLAN_REVISION_FIXTURE_V1, DISPATCH_ELIGIBLE_TASK_ID,
   buildDispatchClaimCommand, buildDispatchStartCommand, buildEnvelopeFixture,
   buildManifestFixture, rebaseScriptForRun, buildRunFactCommand,
   FAKE_RUNTIME_SCRIPT_COMPLETED_V1, FAKE_RUNTIME_SCRIPT_CRASHED_V1,
   BUDGET_FIXTURE_V1, ROLE_BINDING_FIXTURE_V1, DECLARED_PERMISSIONS_FIXTURE_V1,
-} from "../../src/contracts/fixtures/dispatch-fixtures.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+} from "../../src/fixtures/dispatch-fixtures.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import { runRefFor, taskAttemptRefFor } from "../../src/contracts/dispatch.js";
 import type { RunRef } from "../../src/contracts/dispatch.js";
 import { handoffPacketRefFor } from "../../src/contracts/handoff.js";
-import { buildRecordHandoffCommand, buildClaimReplacementCommand } from "../../src/contracts/fixtures/handoff-fixtures.js";
-import { buildHandoffPacketV1 } from "../../src/contracts/fixtures/handoff-fixtures.js";
+import { buildRecordHandoffCommand, buildClaimReplacementCommand } from "../contract-support/fixtures/handoff-fixtures.js";
+import { buildHandoffPacketV1 } from "../contract-support/fixtures/handoff-fixtures.js";
 import { sha256Hex } from "../../src/contracts/fingerprint.js";
 import {
   P115_PROJECT, P115_WORKSPACE, P115_COORDINATION_POLICY_CONTENT,
   buildP115Proposal, buildP115Decision, buildP115ProposalCommand, buildP115DecisionCommand,
   buildP115InstallCommand, buildP115ActivateCommand,
   p115PolicyRef,
-} from "../../src/contracts/fixtures/human-role-collaboration-fixtures.js";
+} from "../contract-support/fixtures/human-role-collaboration-fixtures.js";
 import {
   buildBindWorkContextCommand, buildLinkWorkRunCommand,
   buildExecutionNoteV1, buildRecordExecutionNoteCommand,
   buildContextContinuationResultV1, buildRecordContinuationCommand,
-} from "../../src/contracts/fixtures/context-fixtures.js";
+} from "../contract-support/fixtures/context-fixtures.js";
 
 const FIXED = FIXED_ISO_2026_09_05;
 const projectId = P115_PROJECT;
@@ -192,7 +192,7 @@ describe("P1-15 lane C — bounded rework loop (InMemory harness)", () => {
     h = createInMemoryHarness({ runtime });
   });
 
-  it("Coder FAIL -> exactly ONE bounded rework -> budget exhausted -> rollover -> completed-work selection", async () => {
+  it("Coder FAIL -> exactly ONE bounded rework -> rollover remains visible without fabricating formal completion", async () => {
     const { planRef } = await setupWorld(h);
     await commitStartDesignAndPolicy(h, planRef);
     const coderRunRef = await runCoderTask(h, planRef);
@@ -247,15 +247,15 @@ describe("P1-15 lane C — bounded rework loop (InMemory harness)", () => {
       expect(wcView.notes.length).toBeGreaterThanOrEqual(1);
     }
 
-    // --- P1-17 completed-work selection visible for the same workspace ---
+    // A Run ended, but no Evidence/TaskReduction satisfied was committed.
+    // Continuity stays visible above; completed-history must not assert success.
+    const verification = await h.taskVerification({ projectId, goalId, taskId: coderTaskId });
+    expect(verification.status).toBe('not_ready');
     const cwView = await h.completedWorkView({ projectId, workspaceId: wsId, goalId });
-    expect(cwView.status).toBe("ready");
-    if (cwView.status === "ready") {
-      expect(cwView.rows.some((row) => row.workRef.workId === workId)).toBe(true);
-    }
+    expect(cwView.status).toBe("not_found");
 
     // The completed-work selection can also be assembled as a bounded context bundle (P1-17).
-    const assembled = await h.assembleCompletedWorkContext({
+    const assembled = await h.completedWork.assembleCompletedWorkContext({
       schemaVersion: 1, requestId: "req-lc-cw", projectId, workspaceId: wsId,
       newWorkGoalId: goalId, newWorkKind: "task",
       relatedRefs: [{ kind: "interface", refKey: "HumanCollaboration.UnifiedStatusPort", version: "1" }],
@@ -264,7 +264,7 @@ describe("P1-15 lane C — bounded rework loop (InMemory harness)", () => {
       declaredPermissions: { tools: [], writeScope: [] },
       budget: { maxSelected: 8, maxBundleBytes: 4096 },
     });
-    expect(assembled.status === "ready" || assembled.status === "needs_material").toBe(true);
+    expect(assembled).toMatchObject({ status: 'needs_material', gaps: [expect.objectContaining({ code: 'no_records' })] });
   }, 60_000);
 });
 

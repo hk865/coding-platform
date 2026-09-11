@@ -18,7 +18,7 @@ import type { WorkspaceBootstrapManifest } from "../../src/contracts/bootstrap.j
 import type { GoalSnapshot } from "../../src/contracts/ledger.js";
 import type { GoalViewResult } from "../../src/contracts/goal-view.js";
 import type { CommitCursor } from "../../src/contracts/command-event.js";
-import type { GoalFixtureScope } from "../../src/contracts/fixtures/goal-fixtures.js";
+import type { GoalFixtureScope } from "../contract-support/fixtures/goal-fixtures.js";
 import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import type { RestartRuns } from "./restart-fixtures.js";
 

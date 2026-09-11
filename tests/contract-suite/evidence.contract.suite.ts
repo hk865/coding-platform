@@ -5,7 +5,8 @@
  * auditable, revision changes only recompute applicability).
  */
 import { describe, expect, it } from "vitest";
-import { evidenceRefFor, taskEvidenceIndexRefFor, evidenceApplicability, selectEffectiveEvidenceSet } from "../../src/contracts/evidence.js";
+import { evidenceRefFor, taskEvidenceIndexRefFor } from "../../src/contracts/evidence.js";
+import { evidenceApplicability, selectEffectiveEvidenceSet } from "../../src/control/control-engine/policies/evidence.js";
 import type { EvidenceSnapshot, TaskEvidenceIndexSnapshot, EvidenceV1 } from "../../src/contracts/evidence.js";
 import {
   P104_OBL_GATE,
@@ -14,7 +15,7 @@ import {
   P104_TASK_GATE,
   P104_TASK_IMPLEMENT,
   P104_TASK_REVIEW,
-} from "../../src/contracts/fixtures/evidence-fixtures.js";
+} from "../contract-support/fixtures/evidence-fixtures.js";
 import {
   anchorFor,
   evidenceCommandFor,
@@ -32,7 +33,7 @@ import {
   type P104Preview,
 } from "./p1-04-harness.js";
 import type { PlanRevisionSnapshot } from "../../src/contracts/plan.js";
-import { buildSubmitEvidenceCommand } from "../../src/contracts/fixtures/evidence-fixtures.js";
+import { buildSubmitEvidenceCommand } from "../contract-support/fixtures/evidence-fixtures.js";
 
 const IMPLEMENT = P104_TASK_IMPLEMENT;
 const REVIEW = P104_TASK_REVIEW;

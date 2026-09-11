@@ -1,0 +1,18 @@
+--- evidence/2026-09-10-external-review-repair/before/tests/tests/restart/p1-03-restart-fixtures.ts	2026-09-06 02:48:10.000000000 +0800
++++ tests/restart/p1-03-restart-fixtures.ts	2026-09-10 01:37:38.451648300 +0800
+@@ -1,3 +1,4 @@
++import { classifyRestartProbeError } from "./readiness-probe.js";
+ /**
+  * P1-03 restart-path fixtures + readiness probe — owned by lane D.
+  *   bootstrap -> governance(install/activate) -> CreateGoal -> applyPlan ->
+@@ -53,8 +54,8 @@
+     } finally {
+       await h.cleanup().catch(() => undefined);
+     }
+-  } catch {
+-    return false;
++  } catch (error) {
++    return classifyRestartProbeError(error);
+   }
+ }
+ 

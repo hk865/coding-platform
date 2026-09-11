@@ -1,0 +1,214 @@
+import { ControlReworkDisposition } from '../../src/control/control-engine/rework-disposition.js';
+/**
+ * RW-17 硬回归：装了 executor 规格 + 含 roles 的矩阵之后，**普通任务仍能完成**。
+ *
+ * 完整路径（每一步都是既有生产实现，只有外部模型是本地内存桩）：
+ *   1. 运行能开始：真实 ControlEngine + DispatchEngine（LeasedWorkerRuntime／WorkMaterialDrive）
+ *      + 真实 WorkspaceSourceIndexReader + 真实 LedgerRoleSpecRead + 内核 CodingAgentRuntime
+ *      → 模型**真的被调用**（RW-17 之前这一步在 needs_material 上就结束了）；
+ *   2. 产出实现结果：本 Run 的 canonical PatchRecord（既有 writer 链的正式记录命令，
+ *      运行已结束 + 活动写租约 + 改动路径 ⊆ 租约范围 + 当前工作区版本）；
+ *   3. 轮次 PASS：真实 VerificationService 的工具轮次，必产出由**既有见证通道**核对
+ *      （implementation-result ← run-bound-patch-record，RW-16）；
+ *   4. Task satisfied：轮次结论归约到 Task（ControlEngine 的既有归约）。
+ *
+ * 正反两面都在同一个用例里（RW-18 之后语义如下）：
+ *   - 没有实现结果时跑一次轮次：这条产出期望**如实**记进 roleOutputs.missing，但它不再是完成判据
+ *     —— 轮次结论仍为 PASS、归约照常发起、Task 走到 satisfied；
+ *   - 登记实现结果之后再跑一次：同一类被本 Run 的 canonical PatchRecord 见证，roleOutputs 变为 complete。
+ * 见证知识与"产出期望不进完成判据"这两件事同时成立；判据没有放松（缺项没有被写成已满足）。
+ */
+import { afterEach, expect, it } from 'vitest';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { CodingAgentRuntime, type RunSpec } from '../../src/execution/worker-runtime/coding-agent-runtime.js';
+import type { ModelClientPort, ModelEvent, ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
+import { createInMemoryHarness, type InMemoryHarness } from '../../src/harness/in-memory-harness.js';
+import { LeasedWorkerRuntime } from '../../src/control/dispatch-engine/leased-worker-runtime.js';
+import { WorkMaterialDrive } from '../../src/control/dispatch-engine/work-material-drive.js';
+import { LedgerRoleSpecRead } from '../../src/control/dispatch-engine/role-spec-read.js';
+import { WorkRunMaterialCompiler } from '../../src/data/context-compiler/work-run-materials.js';
+import { WorkspaceSourceIndexReader } from '../../src/data/workspace-reader/role-source-reader.js';
+import { VerificationService } from '../../src/control/verification-engine/verification-service.js';
+import { VerificationContextCompiler } from '../../src/data/context-compiler/verification-context.js';
+import { CandidateWorkspaceReader } from '../../src/data/workspace-reader/candidate-workspace-reader.js';
+import { VerificationWorkspaceReader } from '../../src/data/workspace-reader/verification-workspace-reader.js';
+import type { VerificationRegisteredCheck } from '../../src/contracts/verification-round.js';
+import type { PatchArtifactV1 } from '../../src/contracts/patch.js';
+import { buildAcquireWriteLeaseCommand, buildRecordPatchCommand } from '../../src/contracts/commands/workspace.js';
+import { artifactBodyDigest } from '../../src/contracts/artifact.js';
+import { taskAttemptRefFor } from '../../src/contracts/dispatch.js';
+import {
+  ROLE_SOURCE_EXECUTOR,
+  buildCoordinationPolicyContentWithRolesV1,
+  buildRoleSpecActivateCommandFor,
+  buildRoleSpecInstallCommandFor,
+  roleMatrixPolicyDigest,
+} from '../../src/contracts/fixtures/role-spec-fixtures.js';
+import { buildCoordinationPolicyActivateCommand, buildCoordinationPolicyInstallCommand } from '../../src/contracts/commands/governance.js';
+import { P15_COORDINATION_POLICY_REVISION } from '../../src/contracts/human-role-collaboration.js';
+import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
+import { buildCreateGoalCommand } from '../../src/contracts/fixtures/goal-fixtures.js';
+import { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildActivateCommand } from '../../src/contracts/fixtures/governance-fixtures.js';
+import { completionPolicyPinFor, architectureBaselinePinFor } from '../../src/contracts/governance.js';
+import { DISPATCH_PLAN_REVISION_FIXTURE_V1, DISPATCH_ELIGIBLE_TASK_ID, buildDispatchClaimCommand } from '../../src/contracts/fixtures/dispatch-fixtures.js';
+import { buildApplyPlanCommand } from '../../src/contracts/fixtures/plan-fixtures.js';
+
+const cleanup: Array<() => Promise<void>> = [];
+afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
+const scope = { projectId: 'rw17c-project', workspaceId: 'rw17c-workspace', goalId: 'rw17c-goal' };
+const at = '2026-09-10T10:00:00.000Z';
+const deps = (id: string) => ({ projectId: scope.projectId, commandId: id, correlationId: id, idempotencyKey: id, submittedAt: at, actor: { kind: 'human' as const, id: 'user-1' } });
+
+it('装 executor 规格 + 矩阵：运行开始 → 登记实现结果 → 轮次 PASS → Task satisfied', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'rw17-completion-'));
+  cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  const root = join(dir, 'source');
+  await mkdir(join(root, 'src'), { recursive: true });
+  await writeFile(join(root, 'README.md'), 'local source\n');
+  await writeFile(join(root, 'src', 'hello.ts'), 'export const hello = (): string => "rw17";\n');
+
+  const requests: ModelRequest[] = [];
+  const client: ModelClientPort = {
+    async *stream(request): AsyncIterable<ModelEvent> {
+      requests.push(structuredClone(request));
+      const common = { schemaVersion: 1 as const, requestId: request.requestId };
+      yield { ...common, sequence: 1, type: 'text_delta', delta: '已按当前源码索引实现。' };
+      yield { ...common, sequence: 2, type: 'completed', reason: 'final_answer' };
+    },
+  };
+  const runtime = new CodingAgentRuntime(join(dir, 'runs'), async () => ({
+    configuration: { revision: 'local', provider: 'deepseek', model: 'local-memory-client', baseUrl: 'http://127.0.0.1' }, client,
+  }));
+  await runtime.init(); cleanup.push(() => runtime.close());
+
+  let h: InMemoryHarness;
+  h = createInMemoryHarness({
+    deps: { clock: () => at },
+    runtime: {
+      capabilities: () => runtime.capabilities(),
+      start: async envelope => new LeasedWorkerRuntime({
+        runtime, lease: () => h.workspaceLease, vault: () => h.vault, now: () => at,
+        materials: (spec, current) => new WorkMaterialDrive({
+          ledger: h.ledger,
+          control: h.control,
+          compiler: new WorkRunMaterialCompiler({
+            ledger: h.ledger, vault: h.vault, workContext: h.workContext, completedWork: h.completedWork,
+            roleSpec: new LedgerRoleSpecRead({ ledger: h.ledger }),
+            sourceIndex: new WorkspaceSourceIndexReader({ rootFor: () => root }),
+          }),
+        }).assembleRun(spec, current),
+      }).start(envelope),
+    },
+  });
+
+  // 1) 治理：完成策略、架构基线、executor 规格、含 roles 的矩阵（全部经既有治理命令）。
+  expect((await h.bootstrap(buildBootstrapCommand({ schemaVersion: 1, entries: [scope] }, deps('boot')))).status).toBe('committed');
+  for (const [i, definition] of [COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1].entries()) {
+    const installed = buildInstallCommand(definition, deps('install-' + i));
+    expect((await h.install(installed)).status).toBe('committed');
+    const pin = installed.commandType === 'InstallCompletionPolicyRevision' ? completionPolicyPinFor(installed) : architectureBaselinePinFor(installed);
+    expect((await h.activate(buildActivateCommand(pin, { ...deps('activate-' + i), expectedRevision: 1 }))).status).toBe('committed');
+  }
+  expect((await h.control.installRoleSpec(buildRoleSpecInstallCommandFor(ROLE_SOURCE_EXECUTOR, deps('role-install')))).status).toBe('committed');
+  expect((await h.control.activateRoleSpec(buildRoleSpecActivateCommandFor(ROLE_SOURCE_EXECUTOR, { ...deps('role-activate'), expectedRevision: 1 }))).status).toBe('committed');
+  const policyContent = buildCoordinationPolicyContentWithRolesV1(scope.projectId, [ROLE_SOURCE_EXECUTOR]);
+  const policyDeps = { policyId: 'rw17c-policy', content: policyContent };
+  const contentDigest = roleMatrixPolicyDigest(policyContent, policyDeps.policyId);
+  expect((await h.installCoordinationPolicy(buildCoordinationPolicyInstallCommand(policyDeps, deps('policy-install')))).status).toBe('committed');
+  expect((await h.activateCoordinationPolicy(buildCoordinationPolicyActivateCommand(
+    { ref: { aggregateType: 'CoordinationPolicyRevision', projectId: scope.projectId, policyId: policyDeps.policyId, revision: P15_COORDINATION_POLICY_REVISION }, digest: contentDigest },
+    { ...deps('policy-activate'), expectedRevision: 1 },
+  ))).status).toBe('committed');
+
+  // 2) 目标 + 计划（本任务承担一个 dynamic 验收要求）+ claim（角色矩阵的 claim 守卫受理）。
+  expect((await h.control.submit(buildCreateGoalCommand({ ...scope, objective: '验收 RW-17 的完整完成路径', actor: { kind: 'human', id: 'local-test' } }, deps('goal')))).status).toBe('committed');
+  const plan = structuredClone(DISPATCH_PLAN_REVISION_FIXTURE_V1);
+  plan.goalId = scope.goalId; plan.planId = 'rw17c-plan';
+  expect((await h.applyPlan(buildApplyPlanCommand(plan, { ...deps('plan'), expectedRevision: 1 }))).status).toBe('committed');
+
+  const runId = 'real-rw17c-run';
+  const taskId = DISPATCH_ELIGIBLE_TASK_ID;
+  const spec: RunSpec = { ...scope, runId, taskId, root, instruction: 'RW17C_INSTRUCTION：按当前源码索引实现', budget: { contextWindowTokens: 1000000, inputTokens: null, outputTokens: null, maxRequests: null, maxToolCalls: null, timeoutMs: null, perResponseTokens: 32768 } };
+  await runtime.prepare(spec);
+  expect((await h.claimTask(buildDispatchClaimCommand({
+    ...deps('claim'), goalId: scope.goalId, taskId, runId, attemptId: 'rw17c-attempt',
+    roleBinding: { schemaVersion: 1, bindingId: 'rw17c-binding', templateId: ROLE_SOURCE_EXECUTOR, templateRevision: '1', bindingVersion: 1, policyRevision: 'human-implementation-v1' },
+    declaredPermissions: { tools: ['read', 'write', 'shell'], writeScope: ['*'] },
+    budget: { tokenBudget: 1000000, deadline: null },
+  }))).status).toBe('committed');
+
+  // 3) 运行能开始（RW-17 的核心）：模型被调用，运行以 completed 收口。
+  await h.advanceProjection();
+  const drive = await h.drive({ reason: 'rw17c-run', maxIntents: 1 });
+  expect(drive.failures, JSON.stringify(drive.failures)).toEqual([]);
+  expect(drive.started).toBe(1);
+  expect(requests, runtime.all()[0]?.error ?? '模型请求缺失').toHaveLength(1);
+  expect(runtime.all()[0]!.status).toBe('completed');
+
+  // 4) 真实 VerificationService：轮次冻结材料时会按 RW-16 的见证通道核对 executor 的必产出。
+  const verificationDirectory = await mkdtemp(join(tmpdir(), 'rw17c-verifications-'));
+  cleanup.push(() => rm(verificationDirectory, { recursive: true, force: true }));
+  const verificationContext = new VerificationContextCompiler({
+    ledger: h.ledger, vault: h.vault, runtime: runtime.observations, rootFor: () => root,
+    workspaceSource: new CandidateWorkspaceReader(), roundSource: new VerificationWorkspaceReader(),
+  });
+  const verifications = new VerificationService({
+    directory: verificationDirectory, disposition: new ControlReworkDisposition(h.ledger as never), context: verificationContext, control: h.control,
+    vault: h.vault, workspaceLease: h.workspaceLease,
+    candidatePatchCheck: { check: async () => { throw Error('candidate patch checks are not part of this path'); } },
+    roleSpec: new LedgerRoleSpecRead({ ledger: h.ledger }),
+  });
+  await verifications.init();
+  const roundScope = { ...scope, taskId, runId };
+  const check: VerificationRegisteredCheck = { checkId: 'rw17c-check', kind: 'dynamic', command: 'printf passed', cwd: '.', timeoutMs: 3000, appliesTo: { workspaceId: scope.workspaceId, taskIds: [taskId] } };
+
+  // 4a) RW-18 验收核心：还没有实现结果时，这条产出期望**如实**记为没有见证事实（不是"已满足"），
+  //     但它不再降级轮次结论、也不再扣留归约 —— 结论 PASS，Task 走 satisfied。
+  const unwitnessed = await verifications.startRound(roundScope, { requestId: 'rw17c-unwitnessed', allowExecute: true, configuration: { checks: [check] } });
+  expect(unwitnessed.round.roleOutputs).toMatchObject({ status: 'incomplete', missing: ['implementation-result'] });
+  expect(unwitnessed.round.roleOutputs!.required[0]).toMatchObject({ kind: 'implementation-result', channel: 'run-bound-patch-record', witness: null });
+  expect(unwitnessed.round.outcome).toBe('PASS');
+  expect(unwitnessed.round.reduction.withheld).toBeUndefined();
+  expect(unwitnessed.round.control.taskPhase).toBe('satisfied');
+
+  // 5) 登记本 Run 的实现结果：既有 writer 链的正式 PatchRecord（先持活动写租约）。
+  const workspaceLoad = await h.ledger.load({ aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId });
+  if (workspaceLoad.status !== 'found') throw Error('workspace missing');
+  const workspaceRevision = workspaceLoad.snapshot.revision;
+  const roleBinding = { schemaVersion: 1 as const, bindingId: 'rw17c-binding', templateId: ROLE_SOURCE_EXECUTOR, templateRevision: '1', bindingVersion: 1, policyRevision: 'human-implementation-v1' };
+  const runRef = { aggregateType: 'Run' as const, projectId: scope.projectId, goalId: scope.goalId, runId };
+  const attemptRef = taskAttemptRefFor(scope.projectId, scope.goalId, taskId, 'rw17c-attempt');
+  // 运行自己的写租约（lease-<runId>）在运行结束时已释放，但聚合身份仍占用：登记实现结果用**另一条**租约。
+  const leaseId = 'lease-patch-' + runId;
+  const leaseReceipt = await h.acquireWorkspaceWriteLease(buildAcquireWriteLeaseCommand({
+    commandId: 'cmd-' + leaseId, projectId: scope.projectId, workspaceId: scope.workspaceId, leaseId,
+    scope: { schemaVersion: 1, projectId: scope.projectId, workspaceId: scope.workspaceId, kind: 'workspace', id: scope.workspaceId, revision: workspaceRevision },
+    declaredWriteScope: ['*'], holder: { runRef, attemptRef, roleBinding }, expiresAt: null,
+    actor: { kind: 'system', id: 'integrator' }, correlationId: 'cmd-' + leaseId, idempotencyKey: 'acquire-' + leaseId, submittedAt: at,
+  }));
+  expect(leaseReceipt, JSON.stringify(leaseReceipt)).toMatchObject({ status: 'committed' });
+  const patch: PatchArtifactV1 = {
+    schemaVersion: 1, patchId: 'rw17c-patch', projectId: scope.projectId, workspaceId: scope.workspaceId, goalId: scope.goalId,
+    taskId, planRef: { aggregateType: 'PlanRevision', projectId: scope.projectId, planId: plan.planId }, taskRevision: 1,
+    runRef, attemptRef, roleBinding, kind: 'patch', title: '本 Run 的实现结果', changedPaths: ['src/hello.ts'],
+    bodyRef: { kind: 'artifact', contentType: 'application/json', digest: artifactBodyDigest('rw17c-patch-body'), sizeBytes: 17, source: { kind: 'artifact', refId: 'rw17c-patch', revision: '1' } },
+    beforeWorkspaceRevision: workspaceRevision, afterWorkspaceRevision: workspaceRevision + 1,
+    checkResults: [{ checkId: 'rw17c-check', outcome: 'PASS', summary: '实现结果自检通过' }], usedInputEvidenceRefs: [], generatedAt: at,
+  };
+  expect((await h.recordPatch(buildRecordPatchCommand({
+    commandId: 'cmd-rw17c-patch', projectId: scope.projectId, patch, actor: { kind: 'system', id: 'integrator' },
+    correlationId: 'cmd-rw17c-patch', idempotencyKey: 'rw17c-patch', submittedAt: at,
+  }))).status).toBe('committed');
+
+  // 6) 同一个 Task 再跑一次轮次：这条产出期望被既有事实见证 → roleOutputs 变为 complete，结论仍是 PASS。
+  const reduced = await verifications.startRound(roundScope, { requestId: 'rw17c-pass', allowExecute: true, configuration: { checks: [check] } });
+  expect(reduced.round.status, JSON.stringify(reduced.round.gaps)).toBe('completed');
+  expect(reduced.round.roleOutputs).toMatchObject({ status: 'complete', roleId: ROLE_SOURCE_EXECUTOR, missing: [] });
+  expect(reduced.round.roleOutputs!.required[0]).toMatchObject({ kind: 'implementation-result', channel: 'run-bound-patch-record' });
+  expect(reduced.round.roleOutputs!.required[0]!.witness).toContain('rw17c-patch');
+  expect(reduced.round.reduction.withheld).toBeUndefined();
+  expect(reduced.round.outcome).toBe('PASS');
+  expect(reduced.round.control.taskPhase).toBe('satisfied');
+}, 180000);

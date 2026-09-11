@@ -39,7 +39,7 @@ import {
   P105_TASK_OPTIONAL,
   P105_TASK_STAGE_GATE,
   P105_TASK_WORK,
-} from "../../src/contracts/fixtures/goal-phase-fixtures.js";
+} from "../contract-support/fixtures/goal-phase-fixtures.js";
 
 
 const SCHEMA = "2026-09-05T12:00:00.000Z";
@@ -216,7 +216,7 @@ export function defineGoalReductionContractSuite(createHarness: P1_05HarnessFact
 
     it("applyPlan rejects a plan WITHOUT a required active GoalGate (no-change seam, zero-write)", async () => {
       const { h, sc } = await setup();
-      const plan = structuredClone((await import("../../src/contracts/fixtures/goal-phase-fixtures.js")).P105_PLAN_REVISION_FIXTURE_V1);
+      const plan = structuredClone((await import("../contract-support/fixtures/goal-phase-fixtures.js")).P105_PLAN_REVISION_FIXTURE_V1);
       plan.tasks = plan.tasks.filter((t) => t.taskId !== P105_TASK_GOAL_GATE);
       plan.obligations = plan.obligations.filter((o) => o.taskIds.includes(P105_TASK_WORK) || o.taskIds.includes(P105_TASK_MODULE_GATE));
       const apply = await h.applyPlan({

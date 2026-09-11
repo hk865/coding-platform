@@ -1,0 +1,12 @@
+import type { WorkContextRef } from './context-continuity.js';
+
+/** Read-only identity evidence for a task in the proposal's source plan.
+ * Absent means no binding exists; unavailable is never an empty answer. */
+export type PlanningTaskWorkMaterial = {
+  taskId: string;
+  originTaskId: string;
+} & (
+  | { status: 'resolved'; workRef: WorkContextRef }
+  | { status: 'absent' }
+  | { status: 'unavailable'; reason: string }
+);

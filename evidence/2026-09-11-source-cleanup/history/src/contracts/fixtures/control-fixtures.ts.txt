@@ -1,0 +1,88 @@
+
+/**
+ * P1-10 shared fixtures: control lifecycle scenario (pause → ack applied →
+ * resume(original|takeover) → cancel rejected at safe point + steer) +
+ * command/intent/ack/ledger-fold builders used by BOTH adapter suites.
+ */
+import type { CommandIdentity } from "../command-event.js";
+import { sha256Hex } from "../fingerprint.js";
+import type { RunRef } from "../dispatch.js";
+import type { ControlIntentV1, ControlIntentRef, SafePointAcknowledgementV1, ControlCommandV1, SubmitControlCommand, RecordSafePointAckCommand, ControlKind } from "../control-intent.js";
+import { controlIntentRefFor } from "../control-intent.js";
+
+
+export const P110_PROJECT = "proj-alpha";
+export const P110_WORKSPACE = "ws-shared";
+export const P110_GOAL = "goal-p110-1";
+export const P110_TASK = "task-p110-work";
+export const P110_SCHEMA = "2026-09-06T00:00:00.000Z";
+
+export function p110RunRef(runId: string, goalId: string = P110_GOAL): RunRef {
+  return { aggregateType: "Run", projectId: P110_PROJECT, goalId, runId };
+}
+
+export function p110IntentId(kind: ControlKind, seq: number): string {
+  return "intent-" + kind + "-" + String(seq);
+}
+
+export function buildP110Intent(deps: { intentId: string; kind: ControlKind; scope?: ControlCommandV1["payload"]["scope"]; desiredState?: ControlIntentV1["desiredState"]; steer?: ControlIntentV1["steer"]; status?: ControlIntentV1["status"]; acks?: SafePointAcknowledgementV1[]; submittedAt?: string }): ControlIntentV1 {
+  return {
+    schemaVersion: 1,
+    intentId: deps.intentId,
+    projectId: P110_PROJECT,
+    workspaceId: P110_WORKSPACE,
+    kind: deps.kind,
+    scope: deps.scope ?? { projectId: P110_PROJECT, workspaceId: P110_WORKSPACE, goalId: P110_GOAL, taskId: P110_TASK, runRef: p110RunRef("run-p110-a") },
+    reason: null,
+    steer: deps.steer ?? null,
+    desiredState: deps.desiredState ?? (deps.kind === "pause" ? "paused" : deps.kind === "cancel" ? "cancelled" : deps.kind === "steer" ? "steered" : "running"),
+    status: deps.status ?? "queued",
+    acks: deps.acks ?? [],
+    resumeFromIntentRef: deps.kind === "resume" ? controlIntentRefFor(P110_PROJECT, P110_WORKSPACE, "intent-pause-1") : null,
+    submittedAt: deps.submittedAt ?? P110_SCHEMA,
+    updatedAt: P110_SCHEMA,
+  };
+}
+
+export function buildP110SubmitControlCommand(intent: ControlIntentV1, deps: { commandId: string; actor?: CommandIdentity["actor"]; idempotencyKey?: string; projectId?: string }): SubmitControlCommand {
+  return {
+    commandId: deps.commandId,
+    commandType: "SubmitControl",
+    schemaVersion: 1,
+    identity: { projectId: deps.projectId ?? intent.projectId, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem" },
+    aggregateId: intent.intentId,
+    expectedRevision: 0,
+    correlationId: deps.commandId + "-corr",
+    submittedAt: P110_SCHEMA,
+    payload: { intent },
+  };
+}
+
+export function buildP110Ack(deps: { ackId: string; intentRef: ControlIntentRef; runRef: RunRef | null; applied: boolean; reason?: string | null; resumeOutcome?: SafePointAcknowledgementV1["resumeOutcome"]; seq?: number }): SafePointAcknowledgementV1 {
+  return {
+    schemaVersion: 1,
+    ackId: deps.ackId,
+    intentRef: { ...deps.intentRef },
+    runRef: deps.runRef ? { ...deps.runRef } : null,
+    safePoint: { seq: deps.seq ?? 1, eventSeq: null, at: P110_SCHEMA },
+    applied: deps.applied,
+    reason: deps.reason ?? null,
+    resumeOutcome: deps.resumeOutcome ?? null,
+    deliveryCursor: deps.applied && deps.intentRef.intentId.startsWith("intent-steer") ? sha256Hex("delivery-" + deps.ackId).slice(0, 24) : null,
+    recordedAt: P110_SCHEMA,
+  };
+}
+
+export function buildP110RecordAckCommand(ack: SafePointAcknowledgementV1, expectedRevision: number, deps: { commandId: string }): RecordSafePointAckCommand {
+  return {
+    commandId: deps.commandId,
+    commandType: "RecordSafePointAck",
+    schemaVersion: 1,
+    identity: { projectId: P110_PROJECT, actor: { kind: "system", id: "lifecycle-runtime" }, idempotencyKey: deps.commandId + "-idem" },
+    aggregateId: ack.intentRef.intentId,
+    expectedRevision,
+    correlationId: deps.commandId + "-corr",
+    submittedAt: P110_SCHEMA,
+    payload: { ack },
+  };
+}

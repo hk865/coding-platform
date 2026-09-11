@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-04 lane D — InMemory read-model taskVerification projection tests.
  *
@@ -19,7 +20,7 @@ import { describe, expect, it } from "vitest";
 import {
   ReadModelIndexImpl,
   createReadModelIndex,
-} from "../../src/read-model/read-model-index.js";
+} from "../../src/data/read-model-index/read-model-index.js";
 import type { ReadModelIndex } from "../../src/contracts/goal-view.js";
 import { ProjectionStallError } from "../../src/contracts/goal-view.js";
 import type { EventPage } from "../../src/contracts/ledger.js";
@@ -30,23 +31,10 @@ import type {
   EvidenceCoverageV1,
   EvidenceV1,
 } from "../../src/contracts/evidence.js";
-import {
-  buildEffectivityAnchorV1,
-  buildEvidenceV1,
-  buildTaskReductionSnapshot,
-  P104_GOAL,
-  P104_OBL_IMPLEMENT,
-  P104_OBL_REVIEW,
-  P104_PLAN_ID,
-  P104_PLAN_REVISION_FIXTURE_V1,
-  P104_TASK_IMPLEMENT,
-  P104_TASK_REVIEW,
-} from "../../src/contracts/fixtures/evidence-fixtures.js";
-import {
-  buildApplyPlanCommand,
-  planRevisionAcceptedEventFor,
-  planRevisionSnapshotFor,
-} from "../../src/contracts/fixtures/plan-fixtures.js";
+import { buildEffectivityAnchorV1, buildEvidenceV1, P104_GOAL, P104_OBL_IMPLEMENT, P104_OBL_REVIEW, P104_PLAN_ID, P104_PLAN_REVISION_FIXTURE_V1, P104_TASK_IMPLEMENT, P104_TASK_REVIEW } from "../contract-support/fixtures/evidence-fixtures.js";
+import { buildTaskReductionSnapshot } from "../../src/control/control-engine/records/evidence.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { planRevisionAcceptedEventFor, planRevisionSnapshotFor } from "../../src/control/control-engine/records/plan.js";
 import type { PlanRevisionAcceptedEvent, PlanRevisionRef, PlanRevisionSnapshot } from "../../src/contracts/plan.js";
 import type { TaskReductionSnapshot, TaskReductionUpdatedEvent } from "../../src/contracts/reduction.js";
 import type {
@@ -215,7 +203,7 @@ function page(startSeq: number, events: DomainEvent[]): EventPage {
 /** A fresh InMemory read model typed as the concrete implementation (which
  * exposes taskVerification, not on the ReadModelIndex interface). */
 function mk(): ReadModelIndexImpl {
-  return createReadModelIndex() as ReadModelIndexImpl;
+  return createReadModelIndex(new ControlPolicyExplanation()) as ReadModelIndexImpl;
 }
 
 /** Feed a page and fail loudly if the projection stalls. */
@@ -260,6 +248,30 @@ function buildImplementScenario(projectId: string): {
 }
 
 describe("P1-04 verification projection (InMemory)", () => {
+  it("uses the injected policy explanation for both evidence views without rewriting reduction facts", async () => {
+    let calls = 0;
+    const policy = new ControlPolicyExplanation();
+    policy.explainEvidence = request => {
+      calls++;
+      expect(request.evidence.map(item => item.evidenceId)).toEqual(['ev-impl-static', 'ev-impl-dynamic']);
+      return { bindings: request.evidence.map(item => ({ evidenceId: item.evidenceId, applicability: 'STALE' })), effectiveEvidenceIds: [], blockingEvidenceIds: ['display-explanation'] };
+    };
+    const rm = createReadModelIndex(policy) as ReadModelIndexImpl;
+    const sc = buildImplementScenario(PROJECT_A);
+    await feed(rm, 1, [sc.plan, sc.evidence[0].evad, sc.evidence[1].evad, sc.reduction.event]);
+    expect(calls).toBe(0);
+    const result = await rm.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: P104_TASK_IMPLEMENT });
+    expect(result).toMatchObject({ status: 'ready', observedCursor: makeCommitCursor(4), verification: {
+      effectiveEvidenceIds: [], blockingEvidenceIds: ['display-explanation'],
+      evidence: [{ applicability: 'STALE' }, { applicability: 'STALE' }],
+      reduction: { phase: 'satisfied', effectiveEvidenceIds: ['ev-impl-static', 'ev-impl-dynamic'] }
+    } });
+    expect(await rm.consoleTaskEvidence({ projectId: PROJECT_A, workspaceId: WS, goalId: GOAL, taskId: P104_TASK_IMPLEMENT })).toMatchObject({ status: 'ready', evidence: {
+      effectiveEvidenceIds: [], blockingEvidenceIds: ['display-explanation'], reduction: { phase: 'satisfied' }
+    } });
+    expect(calls).toBe(2);
+  });
+
   it("incremental projection rebuilds a verification view from events (applicability recomputed, reduction is a projected fact)", async () => {
     const rm = mk();
     const sc = buildImplementScenario(PROJECT_A);

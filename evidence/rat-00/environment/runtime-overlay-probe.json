@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "status": "READY",
+  "profile": {
+    "available": true,
+    "version": "bwrap-m3-v4:bubblewrap 0.9.0",
+    "bwrapPath": "/home/han001/projects/agents/agent_platform/.local/toolchains/bwrap/usr/bin/bwrap",
+    "reason": null
+  },
+  "stageManifest": {
+    "schemaVersion": 1,
+    "kind": "fixed-evaluation-runtime-layer",
+    "nodeVersion": "v24.18.0",
+    "nodeSha256": "41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c",
+    "nodeBytes": 123655872,
+    "sandboxCommandPrefix": "PATH=/workspace/.runtime/bin:$PATH",
+    "snapshotOrder": "Stage runtime BEFORE recording the workspace before-snapshot; keep runtime bytes in changedPaths validation.",
+    "network": "disabled",
+    "hiddenEvaluatorIncluded": false,
+    "npmIncluded": false
+  },
+  "checks": {
+    "node_version": {
+      "status": "PASS",
+      "command": "PATH=/workspace/.runtime/bin:$PATH node --version",
+      "exitCode": 0,
+      "signal": null,
+      "timedOut": false,
+      "cancelled": false,
+      "stdout": {
+        "text": "v24.18.0\n",
+        "totalBytes": 9,
+        "truncated": false
+      },
+      "stderr": {
+        "text": "",
+        "totalBytes": 0,
+        "truncated": false
+      },
+      "effects": {
+        "sideEffect": "possible",
+        "changedPaths": [],
+        "workspaceRevision": "6b21b0f1c5e931c891d48bf66e714648e9ea564796be12a44d0d6d6ee1daeb4f",
+        "artifactRefs": []
+      },
+      "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+      "timings": {
+        "snapshotBeforeMs": 4.359531000000004,
+        "executionMs": 8.574250000000006,
+        "snapshotAfterMs": 3.4423289999999724
+      }
+    },
+    "python_version": {
+      "status": "PASS",
+      "command": "python3 --version",
+      "exitCode": 0,
+      "signal": null,
+      "timedOut": false,
+      "cancelled": false,
+      "stdout": {
+        "text": "Python 3.12.3\n",
+        "totalBytes": 14,
+        "truncated": false
+      },
+      "stderr": {
+        "text": "",
+        "totalBytes": 0,
+        "truncated": false
+      },
+      "effects": {
+        "sideEffect": "possible",
+        "changedPaths": [],
+        "workspaceRevision": "6b21b0f1c5e931c891d48bf66e714648e9ea564796be12a44d0d6d6ee1daeb4f",
+        "artifactRefs": []
+      },
+      "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+      "timings": {
+        "snapshotBeforeMs": 3.2741100000000074,
+        "executionMs": 7.014800000000008,
+        "snapshotAfterMs": 3.5352139999999963
+      }
+    },
+    "hidden_materials_with_node": {
+      "status": "PASS",
+      "command": "PATH=/workspace/.runtime/bin:$PATH node --input-type=module -e 'import fs from \"node:fs\";import assert from \"node:assert/strict\";try{assert.equal(fs.readFileSync(\"/workspace/.env\",\"utf8\"),\"\");}catch(error){assert([\"EACCES\",\"EPERM\"].includes(error.code));}assert.throws(()=>fs.writeFileSync(\"/workspace/.env\",\"forbidden-write\"));assert.throws(()=>fs.writeFileSync(\"/workspace/.git/forbidden-write\",\"forbidden-write\"));for(const name of [\".oracle\",\".evaluator\",\"hidden-tests\"]){assert.deepEqual(fs.readdirSync(\"/workspace/\"+name),[]);}for(const name of [\"/home/han001/projects/agents/agent_platform/vendor/coding-agent/AGENTS.md\",\"/home/han001/projects/agents/coding-agent/AGENTS.md\",\"/etc/shadow\"]){assert.equal(fs.existsSync(name),false);}console.log(\"node_hidden_material_boundary=PASS\");'",
+      "exitCode": 0,
+      "signal": null,
+      "timedOut": false,
+      "cancelled": false,
+      "stdout": {
+        "text": "node_hidden_material_boundary=PASS\n",
+        "totalBytes": 35,
+        "truncated": false
+      },
+      "stderr": {
+        "text": "",
+        "totalBytes": 0,
+        "truncated": false
+      },
+      "effects": {
+        "sideEffect": "possible",
+        "changedPaths": [],
+        "workspaceRevision": "6b21b0f1c5e931c891d48bf66e714648e9ea564796be12a44d0d6d6ee1daeb4f",
+        "artifactRefs": []
+      },
+      "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+      "timings": {
+        "snapshotBeforeMs": 3.1903000000000077,
+        "executionMs": 26.408728999999994,
+        "snapshotAfterMs": 3.202309000000014
+      }
+    },
+    "node_network_interfaces": {
+      "status": "PASS",
+      "command": "PATH=/workspace/.runtime/bin:$PATH node --input-type=module -e 'import os from \"node:os\";import assert from \"node:assert/strict\";const names=Object.keys(os.networkInterfaces());assert(names.every(name=>name===\"lo\"));console.log(JSON.stringify({interfaces:names}));'",
+      "exitCode": 0,
+      "signal": null,
+      "timedOut": false,
+      "cancelled": false,
+      "stdout": {
+        "text": "{\"interfaces\":[\"lo\"]}\n",
+        "totalBytes": 22,
+        "truncated": false
+      },
+      "stderr": {
+        "text": "",
+        "totalBytes": 0,
+        "truncated": false
+      },
+      "effects": {
+        "sideEffect": "possible",
+        "changedPaths": [],
+        "workspaceRevision": "6b21b0f1c5e931c891d48bf66e714648e9ea564796be12a44d0d6d6ee1daeb4f",
+        "artifactRefs": []
+      },
+      "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+      "timings": {
+        "snapshotBeforeMs": 3.3667879999999855,
+        "executionMs": 25.382857,
+        "snapshotAfterMs": 3.772211000000027
+      }
+    }
+  },
+  "limitations": [
+    "This explicit evaluation environment prefix does not make unprefixed node commands work in the production GUI; RAT-02 must choose runtime launch integration.",
+    "No formal canary task or existing benchmark harness was changed."
+  ],
+  "changedPaths": [],
+  "runtimeHashBefore": "41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c",
+  "runtimeHashAfter": "41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c"
+}

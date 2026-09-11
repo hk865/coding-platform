@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-02 lane C — SQLite Plan Graph / Task Detail projection + rebuild/reopen
  * equivalence. Mirrors the InMemory semantics field-for-field and proves the
@@ -17,7 +18,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createSqliteReadModelIndex } from "../../src/sqlite-read-model/sqlite-read-model-index.js";
+import { createSqliteReadModelIndex } from "../../src/data/read-model-index/sqlite-read-model-index.js";
 import type { ReadModelIndex } from "../../src/contracts/goal-view.js";
 import type { CommitCursor } from "../../src/contracts/command-event.js";
 import type { EventPage, PositionedEvent } from "../../src/contracts/ledger.js";
@@ -26,21 +27,12 @@ import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
   buildCreateGoalCommand,
   goalCreatedEventFor,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
-import {
-  HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1,
-  buildApplyPlanCommand,
-  planRevisionSnapshotFor,
-  planRevisionAcceptedEventFor,
-} from "../../src/contracts/fixtures/plan-fixtures.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  COMPLETION_POLICY_FIXTURE_V1,
-  buildInstallCommand,
-  completionPolicyPinFor,
-  architectureBaselinePinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
+import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { planRevisionSnapshotFor, planRevisionAcceptedEventFor } from "../../src/control/control-engine/records/plan.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 
 const OCCURRED = FIXED_ISO_2026_09_05;
 const ACCEPTED_AT = "2026-09-05T12:00:00.000Z";
@@ -147,7 +139,7 @@ function alphaGoalQuery(atLeastCursor?: CommitCursor) {
 
 describe("SqliteReadModelIndex plan view (lane C)", () => {
   it("ready: Plan Graph / Task Detail mirror the accepted snapshot with exact pins", async () => {
-    const index = createSqliteReadModelIndex({ path: ":memory:" });
+    const index = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     await index.advance(pageOf([goalEventAt(1, 0, "x"), planEventAt(2, 0, "x")]));
     const graph = await index.planGraph(alphaGraphQuery(makeCommitCursor(2)));
     expect(graph.status).toBe("ready");
@@ -190,7 +182,7 @@ describe("SqliteReadModelIndex plan view (lane C)", () => {
   });
 
   it("not_ready != not_found for plan graph / task detail", async () => {
-    const index = createSqliteReadModelIndex({ path: ":memory:" });
+    const index = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const early = await index.planGraph({ projectId: "proj-alpha", goalId: "goal-1" });
     expect(early.status).toBe("not_ready");
     await index.advance(pageOf([goalEventAt(1, 0, "y"), planEventAt(2, 0, "y")]));
@@ -212,7 +204,7 @@ describe("SqliteReadModelIndex plan view (lane C)", () => {
   });
 
   it("cross-project isolation: same goalId/taskId reused under two projects", async () => {
-    const index = createSqliteReadModelIndex({ path: ":memory:" });
+    const index = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     await index.advance(pageOf([goalEventAt(1, 0, "p"), planEventAt(2, 0, "p")]));
     await index.advance(pageOf([goalEventAt(3, 1, "q"), planEventAt(4, 1, "q")]));
     const alpha = await index.planGraph({
@@ -246,10 +238,10 @@ describe("SqliteReadModelIndex plan view (lane C)", () => {
       const rebPath = join(dir, "reb.sqlite");
       const pages = buildPages("A");
 
-      let inc = createSqliteReadModelIndex({ path: incPath });
+      let inc = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: incPath });
       await inc.advance(pages[0]!);
       await inc.close();
-      inc = createSqliteReadModelIndex({ path: incPath }); // reopen same file
+      inc = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: incPath }); // reopen same file
       await inc.advance(pages[1]!);
       const incAlpha = await inc.planGraph(alphaGraphQuery(makeCommitCursor(4)));
       const incGate = await inc.taskDetail({
@@ -261,7 +253,7 @@ describe("SqliteReadModelIndex plan view (lane C)", () => {
       const incGoal = await inc.goal(alphaGoalQuery(makeCommitCursor(4)));
       await inc.close();
 
-      const reb = createSqliteReadModelIndex({ path: rebPath });
+      const reb = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: rebPath });
       await advanceAll(reb, pages);
       const rebAlpha = await reb.planGraph(alphaGraphQuery(makeCommitCursor(4)));
       const rebGate = await reb.taskDetail({
@@ -288,15 +280,15 @@ describe("SqliteReadModelIndex plan view (lane C)", () => {
       const onePath = join(dir, "one.sqlite");
       const pages = buildPages("B");
 
-      let inc = createSqliteReadModelIndex({ path: incPath });
+      let inc = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: incPath });
       await inc.advance(pages[0]!);
       await inc.close();
-      inc = createSqliteReadModelIndex({ path: incPath });
+      inc = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: incPath });
       await inc.advance(pages[1]!);
       const incAlpha = await inc.planGraph(alphaGraphQuery(makeCommitCursor(4)));
       await inc.close();
 
-      const one = createSqliteReadModelIndex({ path: onePath });
+      const one = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: onePath });
       await advanceAll(one, pages);
       const oneAlpha = await one.planGraph(alphaGraphQuery(makeCommitCursor(4)));
       await one.close();
@@ -312,11 +304,11 @@ describe("SqliteReadModelIndex plan view (lane C)", () => {
     try {
       const dupPath = join(dir, "dup.sqlite");
       const page = pageOf([goalEventAt(1, 0, "z"), planEventAt(2, 0, "z")]);
-      let idx = createSqliteReadModelIndex({ path: dupPath });
+      let idx = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: dupPath });
       const first = await idx.advance(page);
       expect(first.appliedEventIds).toEqual(["evt-goal-z", "evt-plan-z"]);
       await idx.close();
-      idx = createSqliteReadModelIndex({ path: dupPath });
+      idx = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: dupPath });
       const second = await idx.advance(page);
       expect(second.appliedEventIds).toEqual([]);
       const graph = await idx.planGraph(alphaGraphQuery(makeCommitCursor(2)));

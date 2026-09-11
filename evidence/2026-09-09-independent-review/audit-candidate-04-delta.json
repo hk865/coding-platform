@@ -1,0 +1,16 @@
+{
+  "prior": "f2b453c48ece299f4545680e6cba305328e5b85f88572b01bb908acb24e9bae7",
+  "current": "1234c2efa1bd3698a2836ed29f5dc8af6edf9e8202dee7755fe3b72a67bfcfd0",
+  "added": [],
+  "changed": [
+    "src/verification/verification-rounds.ts"
+  ],
+  "removed": [],
+  "fullEnd03DeclaredDigest": "f2b453c48ece299f4545680e6cba305328e5b85f88572b01bb908acb24e9bae7",
+  "fullEnd03ComputedDigest": "f2b453c48ece299f4545680e6cba305328e5b85f88572b01bb908acb24e9bae7",
+  "fullEnd03EqualsCandidate03": true,
+  "currentMessageOccurrences": 1,
+  "oldMessageAbsent": true,
+  "currentSourceMatchesCandidate04": true,
+  "restoringOnlyMessageMatchesCandidate03": true
+}

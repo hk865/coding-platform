@@ -1,30 +1,20 @@
 /**
- * P1-03 frozen module ports (the 4 interfaces_to_freeze of ticket 03; wire
- * fields are frozen HERE as the first consumer):
- *   ArtifactVault.ArtifactPort  — ./artifact.js
- *   DispatchEngine.DispatchPort — ./dispatch.js (DispatchPort below)
- *   ContextCompiler.TaskContextPort — ./task-envelope.js
- *   WorkerRuntime.RunPort       — below
- * Later tickets only consume these versions; semantic changes require an
- * explicit version upgrade (DAG interfaces_to_freeze rule).
+ * WorkerRuntime execution and Dispatch outbox driver ports.
+ * Artifact and Task Context ports are defined and imported directly from
+ * artifact.ts and task-envelope.ts. This file does not forward those exports.
  */
-import type { ArtifactPort } from "./artifact.js";
-import type {
-  DispatchIntentV1,
-  DispatchOutboxRef,
-  RunRef,
-  RuntimeEventV1,
-} from "./dispatch.js";
-import type { TaskEnvelopeV1, TaskContextPort } from "./task-envelope.js";
+
+import type { DispatchOutboxRef, RunRef, RuntimeEventV1 } from "./dispatch.js";
+import type { TaskEnvelopeV1 } from "./task-envelope.js";
 
 export type RunCapabilities = {
-  /** P1-03: the fake adapter is replayable by construction. */
+  /** Adapter-declared replay capability; fake capability does not imply real replay safety. */
   replayable: boolean;
   supportsSnapshot: boolean;
   maxEnvelopeBytes: number;
 };
 
-/** Pull-based run execution handle (no control/cancel in P1-03 — P1-10). */
+/** Pull-based execution handle. Control and cancellation use their separate ports. */
 export type RunHandle = {
   runRef: RunRef;
   /** Returns events not yet polled (empty after the script is drained). */
@@ -70,6 +60,3 @@ export type DispatchDriveResult = {
 export interface DispatchPort {
   drive(trigger: DispatchDriveTrigger): Promise<DispatchDriveResult>;
 }
-
-export type { ArtifactPort, TaskContextPort };
-export type { DispatchIntentV1 };

@@ -2,7 +2,7 @@
   "name": "agent-platform",
   "version": "0.1.0",
   "private": true,
-  "description": "Agent Platform product code — P1-00 executable contract pack",
+  "description": "Agent Platform product code",
   "type": "module",
   "engines": {
     "node": ">=24.15.0 <25"
@@ -11,11 +11,27 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm typecheck && pnpm test"
+    "check:architecture": "node scripts/check-module-boundaries.mjs",
+    "check": "pnpm typecheck && pnpm test",
+    "build": "npm run kernel:build && tsc -p tsconfig.app.json && node scripts/copy-ui.mjs && pnpm run ui:build",
+    "verify:ui-build": "node scripts/verify-ui-build.mjs",
+    "start": "node dist/app/server.js",
+    "gui": "pnpm build && pnpm start",
+    "kernel:install": "npm --prefix vendor/coding-agent ci",
+    "kernel:build": "npm --prefix vendor/coding-agent run build",
+    "ui:install": "pnpm --dir src/ui install",
+    "ui:build": "pnpm --dir src/ui run build",
+    "ui:typecheck": "pnpm --dir src/ui exec tsc -p tsconfig.json --noEmit",
+    "ui:test": "pnpm --dir src/ui exec playwright test --config tests/playwright.config.ts"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
-    "typescript": "6.0.3",
     "vitest": "4.1.10"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "node-pty": "1.1.0",
+    "typescript": "6.0.3"
   }
 }

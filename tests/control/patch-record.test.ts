@@ -18,15 +18,16 @@
  * the current validator, and document the blocker for the deeper guards.
  */
 import { describe, expect, it } from "vitest";
-import { createControlEngine } from "../../src/control/control-engine.js";
-import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
+import { createControlEngine } from "../../src/control/control-engine/control-engine.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
 import type { StateLedger, LedgerCommit, LedgerCommitReceipt } from "../../src/contracts/ledger.js";
-import { createDeterministicDeps } from "../../src/contracts/testing/sequences.js";
+import { createDeterministicDeps } from "../../src/testing/sequences.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../../src/contracts/fixtures/goal-fixtures.js";
-import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand, completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/fixtures/governance-fixtures.js";
-import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
-import { buildDispatchClaimCommand, buildDispatchStartCommand, buildRunFactCommand, buildEnvelopeFixture, buildManifestFixture, rebaseScriptForRun, FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../../src/contracts/fixtures/dispatch-fixtures.js";
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../contract-support/fixtures/goal-fixtures.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { buildDispatchClaimCommand, buildDispatchStartCommand, buildRunFactCommand, buildEnvelopeFixture, buildManifestFixture, rebaseScriptForRun, FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../../src/fixtures/dispatch-fixtures.js";
 import {
   P107_GOAL,
   P107_PROJECT,
@@ -42,11 +43,11 @@ import {
   p107PlanRef,
   buildP107RecordPatchCommand,
   buildP107ArtifactRef,
-} from "../../src/contracts/fixtures/workspace-fixtures.js";
+} from "../contract-support/fixtures/workspace-fixtures.js";
 import { runRefFor, taskAttemptRefFor } from "../../src/contracts/dispatch.js";
 import { evidenceRefFor } from "../../src/contracts/evidence.js";
 import { patchRecordRefFor, type PatchArtifactV1, type RecordPatchCommand } from "../../src/contracts/patch.js";
-import { buildPatchRecordLedgerCommit, type BuildP107PatchCommitDeps } from "../../src/contracts/fixtures/workspace-fixtures.js";
+import { buildPatchRecordLedgerCommit, type BuildP107PatchCommitDeps } from "../../src/control/control-engine/records/workspace.js";
 
 const FIXED = "2026-09-06T12:00:00.000Z";
 

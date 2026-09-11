@@ -1,3 +1,4 @@
+import { classifyRestartProbeError } from "./readiness-probe.js";
 /**
  * P1-06 restart-path fixtures + readiness probe.
  *   bootstrap -> install/activate -> CreateGoal -> applyPlan -> A claim/start/
@@ -22,7 +23,7 @@ import {
   buildHandoffPacketV1,
   buildRecordHandoffCommand,
   buildClaimReplacementCommand,
-} from "../../src/contracts/fixtures/handoff-fixtures.js";
+} from "../contract-support/fixtures/handoff-fixtures.js";
 import { handoffPacketRefFor, replacementAttemptRefFor } from "../../src/contracts/handoff.js";
 import { runRefFor, taskAttemptRefFor, taskLeaseRefFor } from "../../src/contracts/dispatch.js";
 import { artifactBodyDigest } from "../../src/contracts/artifact.js";
@@ -36,8 +37,8 @@ export async function isP106Ready(): Promise<boolean> {
     } finally {
       await h.cleanup().catch(() => undefined);
     }
-  } catch {
-    return false;
+  } catch (error) {
+    return classifyRestartProbeError(error);
   }
 }
 

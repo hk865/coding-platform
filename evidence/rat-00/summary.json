@@ -1,0 +1,59 @@
+{
+  "ticketId": "RAT-00",
+  "status": "PREPARATION_RECORDED_WITH_BLOCKERS",
+  "realModelCalls": 0,
+  "credentialContentsRead": false,
+  "businessSourceChanges": false,
+  "kernelSnapshotCommit": "411eff052b67ddab7706208ccc7b9ab07d919a83",
+  "canaryEvaluatorControls": {
+    "passed": 16,
+    "total": 16
+  },
+  "bugPositiveNegativeControls": {
+    "passed": 8,
+    "total": 8
+  },
+  "repoqaMaterialChecks": {
+    "passed": 46,
+    "total": 46
+  },
+  "repoqaOfficialScorerControls": {
+    "passed": 30,
+    "total": 30
+  },
+  "multiAgentSelfchecks": {
+    "functionalControls": 12,
+    "controlKnownSuccess": 8,
+    "controlKnownFailure": 32,
+    "invalidConfigurationControls": 24,
+    "ablationApplicabilityControls": 1,
+    "deterministicInjectionSelectors": 23,
+    "visibleMaterializations": 8,
+    "meaning": "Evaluator and fixture tests only; never count constructed traces as product runs."
+  },
+  "singleTaskWorkspaceMaterialization": {
+    "passed": 30,
+    "total": 30
+  },
+  "plannedCoreTrials": 68,
+  "plannedMultiAgentTrials": 42,
+  "realTrials": "NOT_RUN",
+  "requiredExecutionBlockers": [
+    "model-and-cost-binding",
+    "sandbox-node-environment",
+    "cumulative-role-budget-enforcement",
+    "real-worker-gui-integration",
+    "multi-agent-raw-evidence-and-fault-adapters"
+  ],
+  "optionalBlockers": [
+    "official-snf-tokenizer",
+    "container-diagnostics"
+  ],
+  "artifacts": {
+    "tasks": "evaluation/rat-00-v1/benchmark-task-manifest.json",
+    "budgets": "evaluation/rat-00-v1/budget-policy.json",
+    "environment": "evidence/rat-00/evaluation-environment-report.json",
+    "source": "evidence/rat-00/source-baseline.json"
+  },
+  "documentationValidation": "PASS"
+}

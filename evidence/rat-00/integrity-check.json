@@ -1,0 +1,40 @@
+{
+  "preparationIntegrity": "PASS",
+  "checkedAssets": 123,
+  "kernelSnapshotCommit": "411eff052b67ddab7706208ccc7b9ab07d919a83",
+  "realExecutionReady": false,
+  "modelBindingPresent": false,
+  "realExecutionBlockers": [
+    {
+      "id": "model-and-cost-binding",
+      "status": "UNBOUND",
+      "owner": "RAT-01",
+      "detail": "Provider/model, actual context/output capacity and monetary ceiling must be bound before model trials; supplied credential file is present/nonempty but not read or tested."
+    },
+    {
+      "id": "sandbox-node-environment",
+      "status": "BLOCKED",
+      "owner": "RAT-02/RAT-03",
+      "detail": "Default production sandbox cannot resolve node; dedicated environment-layer probe passes, but formal pre-snapshot staging, layer protection and PATH are not integrated."
+    },
+    {
+      "id": "cumulative-role-budget-enforcement",
+      "status": "NOT_IMPLEMENTED",
+      "owner": "RAT-02/RAT-03/RAT-04/RAT-08",
+      "detail": "runtime.tokenBudget denotes context capacity. Cumulative input/output across roles, continuations and retries must be metered and stopped separately."
+    },
+    {
+      "id": "real-worker-gui-integration",
+      "status": "NOT_IMPLEMENTED",
+      "owner": "RAT-02",
+      "detail": "GUI still uses test adapters; preparation does not establish real run/query integration."
+    },
+    {
+      "id": "multi-agent-raw-evidence-and-fault-adapters",
+      "status": "NOT_PREPARED",
+      "owner": "RAT-04/RAT-08",
+      "detail": "23 symbolic fault directives and normalized-trace assertions are prepared; platform raw-evidence authentication/export and real fault execution remain to be connected."
+    }
+  ],
+  "errors": []
+}

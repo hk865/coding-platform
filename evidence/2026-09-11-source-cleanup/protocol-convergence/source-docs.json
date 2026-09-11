@@ -1,0 +1,11 @@
+{
+  "files": [
+    "src/contracts/README.md",
+    "src/harness/README.md",
+    "src/control/plan-compiler/README.md",
+    "src/data/context-compiler/README.md",
+    "IMPLEMENTATION-HANDOFF.md"
+  ],
+  "checked": 80,
+  "failures": []
+}

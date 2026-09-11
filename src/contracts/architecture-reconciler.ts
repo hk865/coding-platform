@@ -7,7 +7,7 @@
  * dev_docs/modules/control/verification-engine.md (CodeGraph 与目标化 Reviewer
  * seams)。
  *
- * FROZEN semantics:
+ * Semantics:
  *   - inspect(intent) resolves the EXACT pinned baseline (invariant #11/#12):
  *     plan pin missing / dangling / digest mismatch -> fail_closed with
  *     diagnostics, NO pseudo Delta/Finding. It never mutates the baseline,
@@ -32,7 +32,7 @@ import type {
 
 export type InspectResultV1 =
   | { status: "recorded"; outcome: ArchitectureInspectionOutcome }
-  | { status: "fail_closed"; code: "baseline_unresolved" | "baseline_digest_mismatch" | "plan_pin_missing" | "workspace_unavailable" | "reported_only"; diagnostics: string[] };
+  | { status: "fail_closed"; code: "baseline_unresolved" | "baseline_digest_mismatch" | "plan_pin_missing" | "workspace_unavailable" | "reported_only" | "recording_rejected"; diagnostics: string[] };
 
 export interface InspectionPort {
   /**
@@ -50,6 +50,7 @@ export type CodeGraphQueryV1 = {
   workspaceRevision: number;
   planRef: import("./plan.js").PlanRevisionRef;
   baselinePin: import("./governance.js").ArchitectureBaselinePin;
+  requesterRunRef?: import('./dispatch.js').RunRef;
 };
 
 export type CodeGraphResultV1 =

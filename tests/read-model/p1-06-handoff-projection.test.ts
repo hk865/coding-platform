@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-06 InMemory handoff-provenance projection tests — HandoffRecorded /
  * ReplacementClaimed / EvidenceAdmitted -> handoffProvenance timeline.
@@ -16,28 +17,12 @@
  * a phase (only the read queries are asserted here).
  */
 import { describe, expect, it } from "vitest";
-import { ReadModelIndexImpl } from "../../src/read-model/read-model-index.js";
+import { ReadModelIndexImpl } from "../../src/data/read-model-index/read-model-index.js";
 import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
-import {
-  P106_GOAL,
-  P106_OBL_HANDOFF,
-  P106_SCHEMA,
-  P106_TASK_ID,
-  P106_VR_STATIC,
-  P106_WORKSPACE,
-  buildClaimReplacementCommand,
-  buildHandoffPacketV1,
-  buildRecordHandoffCommand,
-  buildReplacementClaimLedgerCommit,
-  handoffRecordedEventFor,
-  p106PlanRef,
-} from "../../src/contracts/fixtures/handoff-fixtures.js";
-import {
-  buildEffectivityAnchorV1,
-  buildEvidenceIntakeLedgerCommit,
-  buildEvidenceV1,
-  buildSubmitEvidenceCommand,
-} from "../../src/contracts/fixtures/evidence-fixtures.js";
+import { P106_GOAL, P106_OBL_HANDOFF, P106_SCHEMA, P106_TASK_ID, P106_VR_STATIC, P106_WORKSPACE, buildClaimReplacementCommand, buildHandoffPacketV1, buildRecordHandoffCommand, p106PlanRef } from "../contract-support/fixtures/handoff-fixtures.js";
+import { buildReplacementClaimLedgerCommit, handoffRecordedEventFor } from "../../src/control/control-engine/records/handoff.js";
+import { buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand } from "../contract-support/fixtures/evidence-fixtures.js";
+import { buildEvidenceIntakeLedgerCommit } from "../../src/control/control-engine/records/evidence.js";
 import { taskAttemptRefFor, taskLeaseRefFor, runRefFor, type TaskLeaseSnapshot } from "../../src/contracts/dispatch.js";
 import { handoffPacketRefFor } from "../../src/contracts/handoff.js";
 import type { ArchitectureBaselinePin, CompletionPolicyPin } from "../../src/contracts/governance.js";
@@ -180,7 +165,7 @@ function page(events: PositionedEvent[], throughSeq: number): EventPage {
 
 describe("P1-06 InMemory handoff-provenance projection", () => {
   it("incremental projection: packet_recorded -> replacement_claimed -> evidence_admitted in event order", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const projectId = "proj-alpha";
     const rec = recordedEvent(projectId, "packet-1", "ev-rec-1");
     const claim = claimedEvent(projectId, "packet-1", "ev-claim-2", "att-b-2", "run-b-2");
@@ -260,7 +245,7 @@ describe("P1-06 InMemory handoff-provenance projection", () => {
     const evA = evidenceEvent(projectId, "ev-rb-a", "ev-ev-rb-a", "run-a-1");
     const evB = evidenceEvent(projectId, "ev-rb-b", "ev-ev-rb-b", "run-b-rb");
 
-    const incremental = new ReadModelIndexImpl();
+    const incremental = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await incremental.advance(page([pos(rec, 1)], 1));
     await incremental.advance(page([pos(claim, 2)], 2));
     await incremental.advance(page([pos(evA, 3)], 3));
@@ -268,7 +253,7 @@ describe("P1-06 InMemory handoff-provenance projection", () => {
     const before = await incremental.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
     expect(before.status).toBe("ready");
 
-    const fresh = new ReadModelIndexImpl();
+    const fresh = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await fresh.advance(page([pos(rec, 1), pos(claim, 2), pos(evA, 3), pos(evB, 4)], 4));
     const rebuilt = await fresh.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
     expect(rebuilt.status).toBe("ready");
@@ -278,7 +263,7 @@ describe("P1-06 InMemory handoff-provenance projection", () => {
   });
 
   it("full-key isolation: two Projects share goalId/taskId without colliding", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const alpha = recordedEvent("proj-alpha", "packet-isol-a", "ev-isol-a");
     const beta = recordedEvent("proj-beta", "packet-isol-b", "ev-isol-b");
     await rm.advance(page([pos(alpha, 1), pos(beta, 2)], 2));
@@ -301,7 +286,7 @@ describe("P1-06 InMemory handoff-provenance projection", () => {
   });
 
   it("freshness: not_ready != not_found; covered-atLeastCursor with no row -> not_found", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const cold = await rm.handoffProvenance({ projectId: "proj-alpha", goalId: P106_GOAL, taskId: P106_TASK_ID });
     expect(cold.status).toBe("not_ready");
 
@@ -335,7 +320,7 @@ describe("P1-06 InMemory handoff-provenance projection", () => {
   });
 
   it("outcomeUnknownPreserved always true; timeline order survives mixed writes", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const projectId = "proj-alpha";
     const rec = recordedEvent(projectId, "packet-ou", "ev-ou-1");
     const claim = claimedEvent(projectId, "packet-ou", "ev-ou-2", "att-b-ou", "run-b-ou");
@@ -353,7 +338,7 @@ describe("P1-06 InMemory handoff-provenance projection", () => {
       expect(r.provenance.timeline.filter((e) => e.kind === "replacement_claimed")).toHaveLength(1);
     }
 
-    const rm2 = new ReadModelIndexImpl();
+    const rm2 = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await rm2.advance(page([pos(ev, 1)], 1));
     const r2 = await rm2.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
     expect(r2.status).toBe("ready");
@@ -364,7 +349,7 @@ describe("P1-06 InMemory handoff-provenance projection", () => {
   });
 
   it("HandoffRecorded / ReplacementClaimed advance without stalling (handled event types)", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const projectId = "proj-alpha";
     const rec = recordedEvent(projectId, "packet-nostall", "ev-nostall-1");
     const claim = claimedEvent(projectId, "packet-nostall", "ev-nostall-2", "att-b-ns", "run-b-ns");
@@ -394,7 +379,7 @@ describe("P1-06 InMemory handoff-provenance projection", () => {
   });
 
   it("projection never judges completion: repeated reads are stable", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const projectId = "proj-alpha";
     const rec = recordedEvent(projectId, "packet-ro", "ev-ro-1");
     const ev = evidenceEvent(projectId, "ev-ro-2", "ev-ro-2", "run-a-1");

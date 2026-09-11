@@ -1,0 +1,282 @@
+import { buildRecordArchitectureInspectionCommand as formalbuildRecordArchitectureInspectionCommand, buildRecordArchitectureFindingCommand as formalbuildRecordArchitectureFindingCommand, buildRecordArchitectureDecisionBriefCommand as formalbuildRecordArchitectureDecisionBriefCommand, buildRecordCandidateBaselineProposalCommand as formalbuildRecordCandidateBaselineProposalCommand } from "../contracts/commands/architecture.js";
+
+/**
+ * P1-12 shared fixtures: deterministic code-graph scenario + inspection /
+ * finding / brief / proposal / ledger-fold builders used by BOTH adapter
+ * suites (InMemory + SQLite, same fixtures) and by the restart path.
+ *
+ * Graph-registry convention (frozen): the WorkspaceReader registry exposes
+ * sourceRevision 0 = the PINNED BASELINE state, and sourceRevision >= 1 = the
+ * current workspace states; the reconciler ALWAYS compares baselineGraph
+ * (revision 0) with the graph of intent.workspaceRevision and fails closed on
+ * stale (reader current != intent revision). The baseline IDENTITY guard is
+ * the ledger pin: digest/revision mismatch -> fail_closed, never a pseudo
+ * delta.
+ */
+import { sha256Hex } from "../contracts/fingerprint.js";
+import type { CommandIdentity } from "../contracts/command-event.js";
+import type { ArtifactRef } from "../contracts/artifact.js";
+import type { PlanRevisionRef } from "../contracts/plan.js";
+import type { ArchitectureBaselinePin } from "../contracts/governance.js";
+import type { ArchitectureCandidateProposalV1, ArchitectureDecisionBriefV1, ArchitectureFindingV1, ArchitectureInspectionIntentV1, ArchitectureInspectionSnapshot, CodeGraphSnapshotV1 } from "../contracts/architecture-inspection.js";
+import { architectureDecisionBriefRefFor, architectureFindingRefFor, architectureInspectionRefFor, candidateProposalDigest } from "../contracts/architecture-inspection.js";
+
+
+import type { RecordArchitectureDecisionBriefCommand, RecordArchitectureFindingCommand, RecordArchitectureInspectionCommand, RecordCandidateBaselineProposalCommand } from "../contracts/architecture-inspection.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand } from "./governance-fixtures.js";
+import { architectureBaselinePinFor } from "../contracts/governance.js";
+
+export const P112_PROJECT = "proj-alpha";
+export const P112_WORKSPACE = "ws-shared";
+export const P112_PLAN = "plan-p112-1";
+export const P112_PLAN_REVISION = "planrev-p112-1";
+export const P112_INSPECTION = "insp-p112-1";
+export const P112_INSPECTION_REPORT = "insp-p112-report";
+export const P112_FINDING_DELTA = "finding-p112-delta";
+export const P112_FINDING_REPORT = "finding-p112-report";
+export const P112_BRIEF = "brief-p112-1";
+export const P112_PROPOSAL = "proposal-p112-1";
+export const P112_SCHEMA = "2026-09-06T00:00:00.000Z";
+
+export function p112PlanRef(): PlanRevisionRef {
+  return { aggregateType: "PlanRevision", projectId: P112_PROJECT, planId: P112_PLAN_REVISION };
+}
+
+let cachedPin: ArchitectureBaselinePin | null = null;
+export function p112BaselinePin(): ArchitectureBaselinePin {
+  if (cachedPin !== null) return cachedPin;
+  const base = ARCHITECTURE_BASELINE_FIXTURE_V1;
+  const installCommand = buildInstallCommand(base, {
+    commandId: "p112-cmd-install-baseline-fixture",
+    correlationId: "p112-corr-baseline",
+    submittedAt: P112_SCHEMA,
+    projectId: P112_PROJECT,
+  }) as Extract<ReturnType<typeof buildInstallCommand>, { payload: { fixture: typeof base } }>;
+  cachedPin = architectureBaselinePinFor(installCommand);
+  return cachedPin;
+}
+
+export function buildP112ArtifactRef(digest: string): ArtifactRef {
+  return {
+    kind: "artifact",
+    contentType: "application/json",
+    digest: sha256Hex("p112-artifact:" + digest),
+    sizeBytes: 512,
+    source: { kind: "artifact", refId: "body-p112", revision: "1", digest: sha256Hex("p112-artifact:" + digest) },
+  };
+}
+
+// ------------------------------------------------------------------------ //
+// Deterministic code graphs                                                //
+// ------------------------------------------------------------------------ //
+
+export function buildP112BaselineGraph(): CodeGraphSnapshotV1 {
+  return {
+    schemaVersion: 1,
+    snapshotId: "snap-p112-baseline",
+    projectId: P112_PROJECT,
+    workspaceId: P112_WORKSPACE,
+    workspaceRevision: 0,
+    planRef: p112PlanRef(),
+    baselinePin: p112BaselinePin(),
+    gitRef: { commitHash: "abc1234", treeDigest: "tree-0001" },
+    nodes: [
+      { nodeId: "node-m-a", kind: "module", name: "data", path: "src/data", structuralKey: "module:src/data", contentDigest: "digest-mod-a" },
+      { nodeId: "node-m-b", kind: "module", name: "control", path: "src/control", structuralKey: "module:src/control", contentDigest: "digest-mod-b" },
+      { nodeId: "node-i-ab", kind: "interface", name: "dataset", path: "src/data/maps", structuralKey: "interface:src/data/maps", contentDigest: "digest-intf-ab-v1" },
+    ],
+    edges: [
+      { edgeId: "edge-a-b", fromNode: "node-m-a", toNode: "node-m-b", kind: "module_dependency", structuralKey: "dep:src/data->src/control" },
+      { edgeId: "edge-a-ab", fromNode: "node-m-a", toNode: "node-i-ab", kind: "interface_uses", structuralKey: "uses:src/data->src/data/maps" },
+    ],
+    indexCapabilities: { hasCodeGraph: true, degradesToText: false, graphRevision: "snap-0001" },
+    bodyRef: buildP112ArtifactRef("graph-baseline"),
+    generatedAt: P112_SCHEMA,
+  };
+}
+
+export function buildP112CurrentGraph(): CodeGraphSnapshotV1 {
+  return {
+    schemaVersion: 1,
+    snapshotId: "snap-p112-current",
+    projectId: P112_PROJECT,
+    workspaceId: P112_WORKSPACE,
+    workspaceRevision: 2,
+    planRef: p112PlanRef(),
+    baselinePin: p112BaselinePin(),
+    gitRef: { commitHash: "def5678", treeDigest: "tree-0002" },
+    nodes: [
+      { nodeId: "node-m-a", kind: "module", name: "data", path: "src/data", structuralKey: "module:src/data", contentDigest: "digest-mod-a" },
+      { nodeId: "node-m-b", kind: "module", name: "control", path: "src/control", structuralKey: "module:src/control", contentDigest: "digest-mod-b" },
+      { nodeId: "node-i-ab", kind: "interface", name: "dataset", path: "src/data/maps", structuralKey: "interface:src/data/maps", contentDigest: "digest-intf-ab-v2" },
+      { nodeId: "node-m-c", kind: "module", name: "query", path: "src/query", structuralKey: "module:src/query", contentDigest: "digest-mod-c" },
+    ],
+    edges: [
+      { edgeId: "edge-a-ab", fromNode: "node-m-a", toNode: "node-i-ab", kind: "interface_uses", structuralKey: "uses:src/data->src/data/maps" },
+      { edgeId: "edge-c-a", fromNode: "node-m-c", toNode: "node-m-a", kind: "module_dependency", structuralKey: "dep:src/query->src/data" },
+    ],
+    indexCapabilities: { hasCodeGraph: true, degradesToText: false, graphRevision: "snap-0002" },
+    bodyRef: buildP112ArtifactRef("graph-current"),
+    generatedAt: P112_SCHEMA,
+  };
+}
+
+// ------------------------------------------------------------------------ //
+// Finding / brief / proposal builders                                       //
+// ------------------------------------------------------------------------ //
+
+export function buildP112DeltaFinding(): ArchitectureFindingV1 {
+  return {
+    schemaVersion: 1,
+    findingId: P112_FINDING_DELTA,
+    projectId: P112_PROJECT,
+    workspaceId: P112_WORKSPACE,
+    workspaceRevision: 2,
+    planRef: p112PlanRef(),
+    baselinePin: p112BaselinePin(),
+    source: "workspace_delta",
+    deltaRef: buildP112ArtifactRef("delta-current"),
+    category: "structure",
+    risk: "medium",
+    confidence: "high",
+    title: "新增模块 src/query 且数据集接口已修改",
+    summary: "机械 Delta 显示新增模块依赖 src/data 且 dataset 接口内容摘要发生变化",
+    sources: [{ kind: "event", refKey: "inspection:insp-p112-1", version: "1", label: "inspection recorded" }],
+    recommendation: null,
+    affectedRefs: { moduleRefs: ["src/query"], interfaceRefs: ["src/data/maps"], pathRefs: [] },
+    material: false,
+    ambiguous: false,
+    generatedAt: P112_SCHEMA,
+  };
+}
+
+export function buildP112ReportFinding(): ArchitectureFindingV1 {
+  return {
+    schemaVersion: 1,
+    findingId: P112_FINDING_REPORT,
+    projectId: P112_PROJECT,
+    workspaceId: P112_WORKSPACE,
+    workspaceRevision: 2,
+    planRef: p112PlanRef(),
+    baselinePin: p112BaselinePin(),
+    source: "interface_report",
+    deltaRef: null,
+    category: "interface",
+    risk: "high",
+    confidence: "medium",
+    title: "执行者/包工头带来源上报的接口/架构冲突（无代码变更）",
+    summary: "上报的接口职责冲突已经存在——无需伪造 raw Delta 也可形成 Finding；禁止伪造 Delta 是本票不变量",
+    sources: [{ kind: "event", refKey: "run:run-p112-report", version: "1", label: "work report" }],
+    recommendation: "组织有限协商并给出选项；人工协商归 P1-14/15 消费",
+    affectedRefs: { moduleRefs: ["src/data"], interfaceRefs: ["src/data/maps"], pathRefs: [] },
+    material: true,
+    ambiguous: true,
+    generatedAt: P112_SCHEMA,
+  };
+}
+
+export function buildP112Brief(): ArchitectureDecisionBriefV1 {
+  return {
+    schemaVersion: 1,
+    briefId: P112_BRIEF,
+    projectId: P112_PROJECT,
+    workspaceId: P112_WORKSPACE,
+    planRef: p112PlanRef(),
+    baselinePin: p112BaselinePin(),
+    findingRefs: [architectureFindingRefFor(P112_PROJECT, P112_WORKSPACE, P112_FINDING_REPORT)],
+    originalReasons: ["上报的接口职责冲突（无代码变更）", "material/ambiguous Finding 必须产生 DecisionBrief"],
+    impact: { affectedModules: ["src/data"], affectedInterfaces: ["src/data/maps"], affectedPlans: [P112_PLAN_REVISION] },
+    options: [
+      { optionId: "opt-keep", summary: "保持当前模块职责并登记欠账", affectedRefs: { moduleRefs: ["src/data"], interfaceRefs: [] }, risk: "medium", deferralImpact: "冲突保持到下一基线对账" },
+      { optionId: "opt-merge", summary: "合并 dataset 接口职责（需授权方案）", affectedRefs: { moduleRefs: ["src/data", "src/query"], interfaceRefs: ["src/data/maps"] }, risk: "high", deferralImpact: null },
+    ],
+    risk: "high",
+    deferralConsequence: "接口职责冲突延后解决将提高后续变更成本",
+    bodyRef: buildP112ArtifactRef("brief-body"),
+    generatedAt: P112_SCHEMA,
+  };
+}
+
+export function buildP112Proposal(): ArchitectureCandidateProposalV1 {
+  const proposal: ArchitectureCandidateProposalV1 = {
+    schemaVersion: 1,
+    proposalId: P112_PROPOSAL,
+    projectId: P112_PROJECT,
+    workspaceId: P112_WORKSPACE,
+    planRef: p112PlanRef(),
+    sourceBaselinePin: p112BaselinePin(),
+    selectedDeltaRef: buildP112ArtifactRef("delta-current"),
+    selectedOptionId: "opt-keep",
+    normalizedContent: { description: "候选基线：保持数据结构、登记接口职责欠账", constraints: [{ name: "no-interface-merge", scope: "src/data/maps" }] },
+    proposalDigest: "",
+    expectedCandidateDigest: sha256Hex("p112-candidate:" + "src/data/maps"),
+    bodyRef: buildP112ArtifactRef("proposal-body"),
+    generatedAt: P112_SCHEMA,
+  };
+  proposal.proposalDigest = candidateProposalDigest(proposal);
+  return proposal;
+}
+
+// ------------------------------------------------------------------------ //
+// Command builders                                                          //
+// ------------------------------------------------------------------------ //
+
+export function buildP112InspectionIntent(
+  overrides: Partial<ArchitectureInspectionIntentV1> & { inspectionId: string },
+): ArchitectureInspectionIntentV1 {
+  const base: Omit<ArchitectureInspectionIntentV1, "inspectionId"> = {
+    schemaVersion: 1,
+    projectId: P112_PROJECT,
+    workspaceId: P112_WORKSPACE,
+    workspaceRevision: 2,
+    planRef: p112PlanRef(),
+    baselinePin: p112BaselinePin(),
+    source: "mechanic",
+    requestedByRunRef: null,
+    reportInput: null,
+    budget: { maxTokens: 1000, deadline: null },
+  };
+  return { ...base, ...overrides };
+}
+
+export function buildP112InspectionSnapshot(intent: ArchitectureInspectionIntentV1): ArchitectureInspectionSnapshot {
+  return {
+    ref: architectureInspectionRefFor(intent.projectId, intent.workspaceId, intent.inspectionId),
+    revision: 1,
+    schemaVersion: 1,
+    intent,
+    snapshotRef: intent.source === "mechanic" ? buildP112ArtifactRef("graph-current") : null,
+    deltaRef: intent.source === "mechanic" ? buildP112ArtifactRef("delta-current") : null,
+    findingRefs: intent.source === "mechanic"
+      ? [architectureFindingRefFor(intent.projectId, intent.workspaceId, P112_FINDING_DELTA)]
+      : [architectureFindingRefFor(intent.projectId, intent.workspaceId, P112_FINDING_REPORT)],
+    briefRef: intent.source === "mechanic" ? null : architectureDecisionBriefRefFor(intent.projectId, intent.workspaceId, P112_BRIEF),
+    proposalRef: null,
+    recordedAt: P112_SCHEMA,
+  };
+}
+
+export type BuildP112CommandDeps = {
+  commandId: string;
+  projectId?: string;
+  actor?: CommandIdentity["actor"];
+  idempotencyKey?: string;
+  correlationId?: string;
+  submittedAt?: string;
+};
+
+export function buildRecordArchitectureInspectionCommand(inspection: ArchitectureInspectionSnapshot, deps: BuildP112CommandDeps): RecordArchitectureInspectionCommand {
+  return formalbuildRecordArchitectureInspectionCommand(inspection, { ...deps, actor: deps.actor ?? { kind: "system", id: "architecture-reconciler" }, idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem", correlationId: deps.correlationId ?? deps.commandId + "-corr", submittedAt: deps.submittedAt ?? P112_SCHEMA });
+}
+
+export function buildRecordArchitectureFindingCommand(finding: ArchitectureFindingV1, deps: BuildP112CommandDeps): RecordArchitectureFindingCommand {
+  return formalbuildRecordArchitectureFindingCommand(finding, { ...deps, actor: deps.actor ?? { kind: "system", id: "architecture-reconciler" }, idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem", correlationId: deps.correlationId ?? deps.commandId + "-corr", submittedAt: deps.submittedAt ?? P112_SCHEMA });
+}
+
+export function buildRecordArchitectureDecisionBriefCommand(brief: ArchitectureDecisionBriefV1, deps: BuildP112CommandDeps): RecordArchitectureDecisionBriefCommand {
+  return formalbuildRecordArchitectureDecisionBriefCommand(brief, { ...deps, actor: deps.actor ?? { kind: "system", id: "architecture-reconciler" }, idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem", correlationId: deps.correlationId ?? deps.commandId + "-corr", submittedAt: deps.submittedAt ?? P112_SCHEMA });
+}
+
+export function buildRecordCandidateBaselineProposalCommand(proposal: ArchitectureCandidateProposalV1, deps: BuildP112CommandDeps): RecordCandidateBaselineProposalCommand {
+  return formalbuildRecordCandidateBaselineProposalCommand(proposal, { ...deps, actor: deps.actor ?? { kind: "system", id: "architecture-reconciler" }, idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem", correlationId: deps.correlationId ?? deps.commandId + "-corr", submittedAt: deps.submittedAt ?? P112_SCHEMA });
+}

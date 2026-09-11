@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 1,
+  "status": "PASS",
+  "layer": "file-materialization-whitelist-selftest",
+  "results": [
+    {
+      "scenarioId": "MA-01",
+      "command": [
+        "node",
+        "/home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/multi-agent/materialize.mjs",
+        "MA-01",
+        "/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-01"
+      ],
+      "status": "PASS",
+      "visibleFileCount": 11,
+      "privateFilesCopied": 0,
+      "symlinks": 0,
+      "publicSmokeExitCode": 0,
+      "duplicateDestination": "REJECTED",
+      "stdout": "{\"scenarioId\":\"MA-01\",\"workspace\":\"/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-01\",\"visibleInputs\":[\"base/**\",\"public/MA-01/TASK.md\"],\"hiddenInputsCopied\":false,\"isolationStatus\":\"NOT_ESTABLISHED_BY_COPY\",\"realExecution\":\"NOT_RUN\"}\n",
+      "smokeStdout": "✔ unfiltered first page (3.463859ms)\n✔ board renders returned tasks (0.650255ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 44.045535\n"
+    },
+    {
+      "scenarioId": "MA-02",
+      "command": [
+        "node",
+        "/home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/multi-agent/materialize.mjs",
+        "MA-02",
+        "/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-02"
+      ],
+      "status": "PASS",
+      "visibleFileCount": 11,
+      "privateFilesCopied": 0,
+      "symlinks": 0,
+      "publicSmokeExitCode": 0,
+      "duplicateDestination": "REJECTED",
+      "stdout": "{\"scenarioId\":\"MA-02\",\"workspace\":\"/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-02\",\"visibleInputs\":[\"base/**\",\"public/MA-02/TASK.md\"],\"hiddenInputsCopied\":false,\"isolationStatus\":\"NOT_ESTABLISHED_BY_COPY\",\"realExecution\":\"NOT_RUN\"}\n",
+      "smokeStdout": "✔ unfiltered first page (3.134468ms)\n✔ board renders returned tasks (0.479007ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 38.637712\n"
+    },
+    {
+      "scenarioId": "MA-03",
+      "command": [
+        "node",
+        "/home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/multi-agent/materialize.mjs",
+        "MA-03",
+        "/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-03"
+      ],
+      "status": "PASS",
+      "visibleFileCount": 11,
+      "privateFilesCopied": 0,
+      "symlinks": 0,
+      "publicSmokeExitCode": 0,
+      "duplicateDestination": "REJECTED",
+      "stdout": "{\"scenarioId\":\"MA-03\",\"workspace\":\"/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-03\",\"visibleInputs\":[\"base/**\",\"public/MA-03/TASK.md\"],\"hiddenInputsCopied\":false,\"isolationStatus\":\"NOT_ESTABLISHED_BY_COPY\",\"realExecution\":\"NOT_RUN\"}\n",
+      "smokeStdout": "✔ unfiltered first page (3.385573ms)\n✔ board renders returned tasks (0.514843ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 39.990868\n"
+    },
+    {
+      "scenarioId": "MA-04",
+      "command": [
+        "node",
+        "/home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/multi-agent/materialize.mjs",
+        "MA-04",
+        "/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-04"
+      ],
+      "status": "PASS",
+      "visibleFileCount": 11,
+      "privateFilesCopied": 0,
+      "symlinks": 0,
+      "publicSmokeExitCode": 0,
+      "duplicateDestination": "REJECTED",
+      "stdout": "{\"scenarioId\":\"MA-04\",\"workspace\":\"/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-04\",\"visibleInputs\":[\"base/**\",\"public/MA-04/TASK.md\"],\"hiddenInputsCopied\":false,\"isolationStatus\":\"NOT_ESTABLISHED_BY_COPY\",\"realExecution\":\"NOT_RUN\"}\n",
+      "smokeStdout": "✔ unfiltered first page (3.22536ms)\n✔ board renders returned tasks (0.532242ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 41.2009\n"
+    },
+    {
+      "scenarioId": "MA-05",
+      "command": [
+        "node",
+        "/home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/multi-agent/materialize.mjs",
+        "MA-05",
+        "/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-05"
+      ],
+      "status": "PASS",
+      "visibleFileCount": 11,
+      "privateFilesCopied": 0,
+      "symlinks": 0,
+      "publicSmokeExitCode": 0,
+      "duplicateDestination": "REJECTED",
+      "stdout": "{\"scenarioId\":\"MA-05\",\"workspace\":\"/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-05\",\"visibleInputs\":[\"base/**\",\"public/MA-05/TASK.md\"],\"hiddenInputsCopied\":false,\"isolationStatus\":\"NOT_ESTABLISHED_BY_COPY\",\"realExecution\":\"NOT_RUN\"}\n",
+      "smokeStdout": "✔ unfiltered first page (2.883268ms)\n✔ board renders returned tasks (0.514799ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 38.338601\n"
+    },
+    {
+      "scenarioId": "MA-06",
+      "command": [
+        "node",
+        "/home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/multi-agent/materialize.mjs",
+        "MA-06",
+        "/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-06"
+      ],
+      "status": "PASS",
+      "visibleFileCount": 11,
+      "privateFilesCopied": 0,
+      "symlinks": 0,
+      "publicSmokeExitCode": 0,
+      "duplicateDestination": "REJECTED",
+      "stdout": "{\"scenarioId\":\"MA-06\",\"workspace\":\"/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-06\",\"visibleInputs\":[\"base/**\",\"public/MA-06/TASK.md\"],\"hiddenInputsCopied\":false,\"isolationStatus\":\"NOT_ESTABLISHED_BY_COPY\",\"realExecution\":\"NOT_RUN\"}\n",
+      "smokeStdout": "✔ unfiltered first page (3.465743ms)\n✔ board renders returned tasks (0.522414ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 43.708136\n"
+    },
+    {
+      "scenarioId": "MA-07",
+      "command": [
+        "node",
+        "/home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/multi-agent/materialize.mjs",
+        "MA-07",
+        "/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-07"
+      ],
+      "status": "PASS",
+      "visibleFileCount": 11,
+      "privateFilesCopied": 0,
+      "symlinks": 0,
+      "publicSmokeExitCode": 0,
+      "duplicateDestination": "REJECTED",
+      "stdout": "{\"scenarioId\":\"MA-07\",\"workspace\":\"/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-07\",\"visibleInputs\":[\"base/**\",\"public/MA-07/TASK.md\"],\"hiddenInputsCopied\":false,\"isolationStatus\":\"NOT_ESTABLISHED_BY_COPY\",\"realExecution\":\"NOT_RUN\"}\n",
+      "smokeStdout": "✔ unfiltered first page (3.178052ms)\n✔ board renders returned tasks (0.47954ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 41.584049\n"
+    },
+    {
+      "scenarioId": "MA-08",
+      "command": [
+        "node",
+        "/home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/multi-agent/materialize.mjs",
+        "MA-08",
+        "/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-08"
+      ],
+      "status": "PASS",
+      "visibleFileCount": 11,
+      "privateFilesCopied": 0,
+      "symlinks": 0,
+      "publicSmokeExitCode": 0,
+      "duplicateDestination": "REJECTED",
+      "stdout": "{\"scenarioId\":\"MA-08\",\"workspace\":\"/home/han001/projects/agents/agent_platform/evidence/rat-00/multi-agent/visible-preflight/MA-08\",\"visibleInputs\":[\"base/**\",\"public/MA-08/TASK.md\"],\"hiddenInputsCopied\":false,\"isolationStatus\":\"NOT_ESTABLISHED_BY_COPY\",\"realExecution\":\"NOT_RUN\"}\n",
+      "smokeStdout": "✔ unfiltered first page (3.567456ms)\n✔ board renders returned tasks (0.54089ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 44.435335\n"
+    }
+  ],
+  "runtimeIsolation": "NOT_ESTABLISHED",
+  "realExecution": "NOT_RUN"
+}

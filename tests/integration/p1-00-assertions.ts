@@ -5,8 +5,8 @@ import { expect } from "vitest";
 import type { WorkspaceBootstrapManifest } from "../../src/contracts/bootstrap.js";
 import type { GoalViewResult } from "../../src/contracts/goal-view.js";
 import type { InMemoryHarness } from "../../src/harness/in-memory-harness.js";
-import { fixtureDigest } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
-import type { GoalFixtureScope } from "../../src/contracts/fixtures/goal-fixtures.js";
+import { fixtureDigest } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
+import type { GoalFixtureScope } from "../contract-support/fixtures/goal-fixtures.js";
 
 export function verifyBootstrapManifest(manifest: WorkspaceBootstrapManifest): void {
   expect(manifest.schemaVersion).toBe(1);

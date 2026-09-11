@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-15 LANE-B SQLite projection tests — unifiedStatusView over the real
  * SqliteReadModelIndex (the same event stream as the InMemory twin, fed as a
@@ -9,31 +10,12 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSqliteReadModelIndex } from "../../src/sqlite-read-model/sqlite-read-model-index.js";
+import { createSqliteReadModelIndex } from "../../src/data/read-model-index/sqlite-read-model-index.js";
 import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import { canonicalJson } from "../../src/contracts/fingerprint.js";
-import {
-  P115_PROJECT,
-  P115_WORKSPACE,
-  P115_DESIGN,
-  P115_DECISION,
-  P115_POLICY,
-  p115DesignRef,
-  p115DecisionRef,
-  p115PolicyRef,
-  p115PolicyActiveRef,
-  buildP115Proposal,
-  buildP115Decision,
-  buildP115ProposalCommand,
-  buildP115DecisionCommand,
-  buildP115InstallCommand,
-  buildP115ActivateCommand,
-  buildP115ProposalFold,
-  buildP115DecisionFold,
-  buildP115PolicyInstallFold,
-  buildP115PolicyActivateFold,
-} from "../../src/contracts/fixtures/human-role-collaboration-fixtures.js";
+import { P115_PROJECT, P115_WORKSPACE, P115_DESIGN, P115_DECISION, P115_POLICY, p115DesignRef, p115DecisionRef, p115PolicyRef, p115PolicyActiveRef, buildP115Proposal, buildP115Decision, buildP115ProposalCommand, buildP115DecisionCommand, buildP115InstallCommand, buildP115ActivateCommand } from "../contract-support/fixtures/human-role-collaboration-fixtures.js";
+import { buildP115ProposalFold, buildP115DecisionFold, buildP115PolicyInstallFold, buildP115PolicyActivateFold } from "../../src/control/control-engine/records/human-role-collaboration.js";
 import type { UnifiedStatusViewResult } from "../../src/contracts/human-role-collaboration.js";
 
 const FIXED = FIXED_ISO_2026_09_05;
@@ -68,7 +50,7 @@ describe("P1-15 LANE-B SQLite projection: unifiedStatusView", () => {
   it("projects the 4 rows and returns a ready facts-first view", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p115-rm-"));
     const path = join(dir, "rm.sqlite");
-    const rm = createSqliteReadModelIndex({ path });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
     try {
       const { page } = buildP115Page();
       const receipt = await rm.advance(page);
@@ -123,7 +105,7 @@ describe("P1-15 LANE-B SQLite projection: unifiedStatusView", () => {
   it("a never-advanced index returns not_found (no cursor claim)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p115-rm-"));
     const path = join(dir, "rm.sqlite");
-    const rm = createSqliteReadModelIndex({ path });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
     try {
       const view = await rm.unifiedStatusView({ projectId: P115_PROJECT, workspaceId: P115_WORKSPACE });
       expect(view.status).toBe("not_found");
@@ -136,7 +118,7 @@ describe("P1-15 LANE-B SQLite projection: unifiedStatusView", () => {
   it("isolates the same local ids across projects (hard scope key)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p115-rm-"));
     const path = join(dir, "rm.sqlite");
-    const rm = createSqliteReadModelIndex({ path });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
     try {
       const { page } = buildP115Page();
       await rm.advance(page);
@@ -151,14 +133,14 @@ describe("P1-15 LANE-B SQLite projection: unifiedStatusView", () => {
   it("rebuild equivalence: close/reopen against the SAME db file reproduces the view", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p115-rm-"));
     const path = join(dir, "rm.sqlite");
-    const rm = createSqliteReadModelIndex({ path });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
     try {
       const { page } = buildP115Page();
       await rm.advance(page);
       const before = await rm.unifiedStatusView({ projectId: P115_PROJECT, workspaceId: P115_WORKSPACE });
       await rm.close();
 
-      const reopened = createSqliteReadModelIndex({ path });
+      const reopened = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
       try {
         await reopened.advance(page);
         const after = await reopened.unifiedStatusView({ projectId: P115_PROJECT, workspaceId: P115_WORKSPACE });

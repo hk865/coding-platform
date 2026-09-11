@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+const edit=(p,a,b)=>fs.writeFileSync(p,fs.readFileSync(p,'utf8').replaceAll(a,b));
+edit('src/app/service.ts','workIdentity: h,','workIdentity: h.control,');
+edit('src/control/dispatch-engine/rework-drive.ts',"issue.disposition.status === 'unknown'","(!issue.disposition || issue.disposition.status === 'unknown')");
+edit('src/control/dispatch-engine/rework-drive.ts','（RC-01，VerificationEngine 的权威标注）','（Control 的权威标注）');
+edit('tests/control/autonomous-rework-fixture.ts','    workIdentities,','    ...(workIdentities ? { workIdentities } : {}),');
+edit('tests/control/plan-impact-work-identity.test.ts','}), workIdentity, now:', '}), ...(workIdentity ? { workIdentity } : {}), now:');
+edit('tests/control/rework-drive-fixture.ts','load: (ref) =>','load: (ref: Parameters<StateLedger[\'load\']>[0]) =>');
+edit('src/contracts/verification-context.ts','RunOutputMaterialPort as importRunOutputMaterialPort','RunOutputMaterialPort');
+edit('src/contracts/verification-context.ts','importRunOutputMaterialPort','RunOutputMaterialPort');

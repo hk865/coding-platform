@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { canonicalJson, sha256Hex } from "../../src/contracts/fingerprint.js";
 import { commandFingerprint, normalizeObjective } from "../../src/contracts/command-event.js";
-import { buildCreateGoalCommand } from "../../src/contracts/fixtures/goal-fixtures.js";
-import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1 } from "../../src/contracts/fixtures/goal-fixtures.js";
+import { buildCreateGoalCommand } from "../contract-support/fixtures/goal-fixtures.js";
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1 } from "../contract-support/fixtures/goal-fixtures.js";
 
 describe("canonicalJson (JCS subset)", () => {
   it("sorts object keys by UTF-16 code unit", () => {

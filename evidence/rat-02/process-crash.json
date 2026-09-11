@@ -1,0 +1,10 @@
+{
+  "status": "PASS",
+  "actualHostKilled": true,
+  "modelRequestsBeforeAndAfter": 1,
+  "runtimeStatus": "outcome_unknown",
+  "canonicalRunOutcome": "outcome_unknown",
+  "staleWorkspaceLockPreserved": true,
+  "automaticRetry": false,
+  "liveProviderCalls": 0
+}

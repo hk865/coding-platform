@@ -1,20 +1,6 @@
 /**
- * P1-16 Context continuity contracts — WorkContextBinding / ExecutionNote /
- * ContextContinuationResult (first consumer freeze of
- * ControlEngine.WorkRecordPort, ContextCompiler.WorkContextPort,
- * WorkerRuntime.ContextContinuationPort).
- *
- * Authority:
- *   - dev_docs/planning/proposed/P1-foundation/tickets/16-context-continuity.md
- *     (5 verification groups, 7 Acceptance items)
- *   - dev_docs/interfaces/context-lifecycle.md (single behavior body: work
- *     identity persists across runs; reasons stored incrementally at key
- *     checkpoints, body-first; original-session continuation capability is
- *     EXPLICITLY declared; unsupported/takeover must be observable — never
- *     pretend the original process still exists)
- *   - IMPLEMENTATION-HANDOFF.md "P1-16 契约与存储语义（冻结）"
- *
- * FROZEN semantics:
+ * context-continuity protocol. Control retains canonical admission and completion authority.
+ * Semantics:
  *   - WorkContextBinding is the DURABLE work identity (one per (projectId,
  *     workspaceId, workId)). A Run is NOT a work identity: multiple model
  *     turns inside one run, and multiple runs of one work (handoff,
@@ -111,7 +97,7 @@ export function continuationRecordRefFor(projectId: string, workspaceId: string,
 // ------------------------------------------------------------------------ //
 
 /** The kind of work a binding covers (task / coordination / query / review / integration). */
-export type WorkKind = "task" | "coordination" | "query" | "review" | "integration";
+type WorkKind = "task" | "coordination" | "query" | "review" | "integration";
 export const WORK_KINDS: readonly WorkKind[] = ["task", "coordination", "query", "review", "integration"];
 
 export type WorkContextBindingV1 = {
@@ -149,7 +135,7 @@ export type WorkContextBindingSnapshot = {
 // ExecutionNote (value + snapshot)                                          //
 // ------------------------------------------------------------------------ //
 
-export type ExecutionNoteKind = "key_choice" | "checkpoint" | "frontier" | "risk" | "unresolved" | "result";
+type ExecutionNoteKind = "key_choice" | "checkpoint" | "frontier" | "risk" | "unresolved" | "result";
 export const EXECUTION_NOTE_KINDS: readonly ExecutionNoteKind[] = [
   "key_choice",
   "checkpoint",
@@ -160,7 +146,7 @@ export const EXECUTION_NOTE_KINDS: readonly ExecutionNoteKind[] = [
 ];
 
 /** A sourced reference the note is based on (audit; the original stays authoritative). */
-export type ExecutionNoteSourceV1 = {
+type ExecutionNoteSourceV1 = {
   kind: "evidence" | "artifact" | "run" | "handoff" | "decision" | "event";
   /** Canonical ref key of the source (e.g. canonicalJson of a RunRef). */
   refKey: string;
@@ -171,7 +157,7 @@ export type ExecutionNoteSourceV1 = {
 };
 
 /** Verification state of the note's claim (not a CompletionPolicy verdict). */
-export type ExecutionNoteVerificationV1 = {
+type ExecutionNoteVerificationV1 = {
   status: "unverified" | "verified" | "contradicted";
   evidenceRefs: EvidenceRef[];
 };
@@ -208,10 +194,6 @@ export type ExecutionNoteV1 = {
   createdAt: string;
 };
 
-export function executionNoteBody(note: ExecutionNoteV1): string {
-  return canonicalJson(note);
-}
-
 export type ExecutionNoteSnapshot = {
   ref: ExecutionNoteRef;
   revision: 1;
@@ -224,7 +206,7 @@ export type ExecutionNoteSnapshot = {
 // ContextContinuationResult (value + snapshot)                              //
 // ------------------------------------------------------------------------ //
 
-export type ContinuationStatus = "restored_original" | "took_over" | "unsupported" | "rejected";
+type ContinuationStatus = "restored_original" | "took_over" | "unsupported" | "rejected";
 
 export type ContextContinuationResultV1 = {
   schemaVersion: 1;
@@ -286,9 +268,25 @@ export type BindWorkContextCommand = {
   };
 };
 
-export type BindWorkContextRejectionCode =
+/**
+ * RC-03 扩展：新增 `already_bound`。
+ *
+ * ── 为什么需要这个拒绝码（而不是复用 revision_conflict）────────────────────────
+ * bindWorkContext 的 CAS@0 只能挡住「同一个 workId 被重复创建」，挡不住「同一段工作被
+ * 换一个 workId 又建一条身份」——两条绑定的聚合 ref 不同，CAS 各自成立，账本里于是留下两条
+ * 描述同一 (项目, 工作区, 目标, 任务) 的 WorkContextBound。这正是 RW-13 只堵住派发面之后
+ * 仍然存在的命令面漏洞。
+ *
+ * 语义（与既有零写拒绝路径一致）：命令被拒绝、**一个字都不写**，并且回执里带上已存在的那条
+ * 身份（existingWorkContextRef），让调用方可以显式改为复用它（linkWorkRun），而不是自己再猜。
+ * 注意：这是「同一任务已有身份」这一**事实**的拒绝码，不是「命令写错了」；因此它既不同于
+ * revision_conflict（同一个 workId 的 CAS 冲突），也不同于 idempotency_conflict（同一命令身份
+ * 提交了不同内容）。
+ */
+type BindWorkContextRejectionCode =
   | "invalid"
   | "not_found"
+  | "already_bound"
   | "revision_conflict"
   | "idempotency_conflict"
   | "unavailable";
@@ -302,7 +300,14 @@ export type BindWorkContextReceipt =
       eventIds: string[];
       commitCursor: CommitCursor;
     }
-  | { status: "rejected"; commandId: string; code: BindWorkContextRejectionCode; issues?: string[] };
+  | {
+      status: "rejected";
+      commandId: string;
+      code: BindWorkContextRejectionCode;
+      issues?: string[];
+      /** 仅 `already_bound`：已代表这段工作的那条身份（唯一权威答案，供调用方显式复用）。 */
+      existingWorkContextRef?: WorkContextRef;
+    };
 
 export type LinkWorkRunCommand = {
   commandId: string;
@@ -321,7 +326,7 @@ export type LinkWorkRunCommand = {
   };
 };
 
-export type LinkWorkRunRejectionCode =
+type LinkWorkRunRejectionCode =
   | "invalid"
   | "not_found"
   | "already_linked"
@@ -355,7 +360,7 @@ export type RecordExecutionNoteCommand = {
   payload: { note: ExecutionNoteV1 };
 };
 
-export type RecordExecutionNoteRejectionCode =
+type RecordExecutionNoteRejectionCode =
   | "invalid"
   | "not_found"
   | "run_not_in_work"
@@ -387,7 +392,7 @@ export type RecordContinuationCommand = {
   payload: { result: ContextContinuationResultV1 };
 };
 
-export type RecordContinuationRejectionCode =
+type RecordContinuationRejectionCode =
   | "invalid"
   | "not_found"
   | "revision_conflict"
@@ -569,6 +574,11 @@ export function recordContinuationFingerprint(command: RecordContinuationCommand
  *      run_not_in_work;
  *   4. links bounded (WORK_CONTEXT_MAX_RUN_LINKS) -> links_exceeded;
  *   5. ONE atomic commit per command with FULL ledger idempotency.
+ * RC-03 追加（bindWorkContext 专属）：
+ *   2b. 同一 (projectId, workspaceId, goalId, taskId) 的 task 工作只能有一条身份。已有身份的
+ *       workId 与本次 aggregateId 不同 -> already_bound（零写，回执带 existingWorkContextRef）；
+ *       唯一性由 ControlEngine 的这条守卫**和** StateLedger 提交语义的身份槽同时保证
+ *       （见 data/state-ledger/ledger-validation.ts 的 workContextIdentityClaim）。
  * The note body must ALREADY be body-first'd into the ArtifactVault by the
  * author; Control only registers the reference. NO Goal/Task phase write,
  * NO CompletionPolicy change.

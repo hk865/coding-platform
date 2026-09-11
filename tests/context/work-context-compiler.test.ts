@@ -6,8 +6,8 @@
  * report), and the no-model invariant (assembly NEVER starts a model/session).
  */
 import { describe, expect, it } from "vitest";
-import { WorkContextCompilerImpl } from "../../src/context/work-context-compiler.js";
-import { ArtifactVault } from "../../src/vault/artifact-vault.js";
+import { WorkContextCompilerImpl } from "../../src/data/context-compiler/work-context-compiler.js";
+import { ArtifactVault } from "../../src/data/artifact-vault/artifact-vault.js";
 import { makeCommitCursor } from "../../src/contracts/ledger.js";
 import { canonicalJson } from "../../src/contracts/fingerprint.js";
 import type { StateLedger, AggregateSnapshot, SnapshotResult } from "../../src/contracts/ledger.js";
@@ -30,8 +30,8 @@ import {
   buildWorkContextBindingV1,
   buildContextContinuationResultV1,
   p116WorkContextRef,
-} from "../../src/contracts/fixtures/context-fixtures.js";
-import { P107_ROLE_BINDING_READER_V1 } from "../../src/contracts/fixtures/workspace-fixtures.js";
+} from "../contract-support/fixtures/context-fixtures.js";
+import { P107_ROLE_BINDING_READER_V1 } from "../contract-support/fixtures/workspace-fixtures.js";
 import { runRefFor } from "../../src/contracts/dispatch.js";
 import { executionNoteRefFor, continuationRecordRefFor } from "../../src/contracts/context-continuity.js";
 import type { WorkContextRequestV1 } from "../../src/contracts/work-context-port.js";
@@ -160,6 +160,21 @@ function makeCompiler(overrides: { view?: WorkContextViewResult; ledger?: StateL
 }
 
 describe("WorkContextCompilerImpl (Lane B)", () => {
+  it("lists only the notes and continuation actually included after filtering and truncation", async () => {
+    const view = readyView();
+    view.continuations.push({ ...contSnapshot, ref: { ...contSnapshot.ref, reportId: 'older-report' } });
+    const { compiler, vault } = makeCompiler({ view });
+    const result = await compiler.assembleWorkContext(request({ maxNotes: 1, noteKinds: ['frontier'] }));
+    expect(result.status).toBe('ready');
+    if (result.status !== 'ready') throw Error('assembly failed');
+    const opened = await vault.open(result.bundleRef, { requesterRunRef: laterRun });
+    if (opened.status !== 'ready') throw Error('body unavailable');
+    const body = JSON.parse(opened.record.body);
+    expect(result.manifest.selected.filter(s => s.kind === 'execution-note').map(s => s.label)).toEqual([P116_NOTE_2]);
+    expect(result.manifest.selected.filter(s => s.kind === 'continuation').map(s => s.label)).toEqual([P116_REPORT_1]);
+    expect(body.selectedSources).toEqual(result.manifest.selected);
+    expect(result.manifest.totalBytes).toBe(Buffer.byteLength(opened.record.body, 'utf8'));
+  });
   it("ready: bounded bundle stored body-first; bundleRef opens; manifest complete", async () => {
     const { compiler, vault } = makeCompiler();
     const res = await compiler.assembleWorkContext(request());

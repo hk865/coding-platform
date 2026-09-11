@@ -1,0 +1,18 @@
+--- evidence/2026-09-10-external-review-repair/before/tests/tests/contract-suite/architecture.contract.suite.ts	2026-09-09 17:46:17.858199400 +0800
++++ tests/contract-suite/architecture.contract.suite.ts	2026-09-10 01:36:57.239556200 +0800
+@@ -116,10 +116,12 @@
+     });
+ 
+     describe("restart-view-rebuild-test", () => {
+-      it("view rebuild equivalence is verified in tests/restart + integration (isP112Ready probe)", () => {
+-        expect(true).toBe(true);
++      it("repeated projection reads are stable for the persisted inspection facts", async () => {
++        const first = await h.architectureInspectionView({ projectId: P112_PROJECT, workspaceId: P112_WORKSPACE });
++        const second = await h.architectureInspectionView({ projectId: P112_PROJECT, workspaceId: P112_WORKSPACE });
++        expect(first).toEqual(second);
++        expect(first.status).toBe("ready");
+       });
+     });
+   });
+ }
+-

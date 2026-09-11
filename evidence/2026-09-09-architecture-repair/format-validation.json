@@ -1,0 +1,68 @@
+{
+  "earlierFilesValidated": [
+    "src/context/exploration-context-compiler.ts",
+    "src/control/exploration-context-drive.ts",
+    "src/control/initial-plan-compiler.ts",
+    "src/control/planned-task-dispatch.ts"
+  ],
+  "results": [
+    {
+      "path": "src/control/leased-worker-runtime.ts",
+      "changed": false,
+      "tokenDifference": {
+        "before": [
+          [
+            80,
+            "runId"
+          ],
+          [
+            20,
+            "}"
+          ],
+          [
+            15,
+            "`;\n    const lease = { commandId: randomUUID(), projectId: envelope.projectId, workspaceId: envelope.workspaceId, leaseId,\n      scope: { schemaVersion: 1 as const, projectId: envelope.projectId, workspaceId: envelope.workspaceId, kind: 'workspace' as const, id: envelope.workspaceId, revision: envelope.workspaceSnapshot.revision },\n      holder: { runRef: envelope.runRef, attemptRef: envelope.attemptRef, roleBinding: envelope.roleBinding }, submittedAt: this.deps.now() };\n    const acquired = readOnly ? await this.deps.lease().acquireReadLease(buildP107AcquireReadLeaseCommand(lease)) : await this.deps.lease().acquireWriteLease(buildP107AcquireWriteLeaseCommand({ ...lease, declaredWriteScope: envelope.permissions.writeScope }));\n    if (acquired.status !== 'committed') throw Error(readOnly ? '工作区读租约被拒绝' : '工作区写租约被拒绝');\n    const release = async () => {\n      const result = await this.deps.lease().releaseLease(buildP107ReleaseLeaseCommand({ commandId: randomUUID(), projectId: envelope.projectId, workspaceId: envelope.workspaceId,\n        leaseId, kind: readOnly ? 'read' : 'write', holderRunRef: envelope.runRef, submittedAt: this.deps.now() }));\n      if (result.status !== 'committed') throw Error('工作区租约释放未确认');\n    };\n    let handle: RunHandle;\n    let materials: RuntimeContextMaterials | undefined;\n    try { materials = await this.deps.materials(spec, envelope); }\n    catch (error) {\n      await release();\n      return this.deps.runtime.rejectBeforeStart(envelope, error instanceof Error ? error.message : '运行材料无法组装');\n    }\n    try { handle = await this.deps.runtime.start(envelope, { vault: this.deps.vault(), ...(materials ? { materials } : {}) }); }\n    catch (error) { await release(); throw error; }\n    return { runRef: handle.runRef, pollFreshEvents: async () => {\n      const events = await handle.pollFreshEvents();\n      if (events.some(e => e.eventType !== 'run_started')) await release();\n      return events;\n    } };\n  }\n}\n"
+          ]
+        ],
+        "after": [
+          [
+            80,
+            "runId"
+          ],
+          [
+            20,
+            "}"
+          ],
+          [
+            15,
+            "`;\n        const lease = {\n            commandId: randomUUID(), projectId: envelope.projectId, workspaceId: envelope.workspaceId, leaseId,\n            scope: {\n                schemaVersion: 1 as const, projectId: envelope.projectId, workspaceId: envelope.workspaceId, kind: 'workspace' as const, id: envelope.workspaceId, revision: envelope.workspaceSnapshot.revision\n            },\n            holder: {\n                runRef: envelope.runRef, attemptRef: envelope.attemptRef, roleBinding: envelope.roleBinding\n            }, submittedAt: this.deps.now()\n        };\n        const acquired = readOnly ? await this.deps.lease().acquireReadLease(buildP107AcquireReadLeaseCommand(lease)) : await this.deps.lease().acquireWriteLease(buildP107AcquireWriteLeaseCommand({\n            ...lease, declaredWriteScope: envelope.permissions.writeScope\n        }));\n        if (acquired.status !== 'committed')\n            throw Error(readOnly ? '工作区读租约被拒绝' : '工作区写租约被拒绝');\n        const release = async () => {\n            const result = await this.deps.lease().releaseLease(buildP107ReleaseLeaseCommand({\n                commandId: randomUUID(), projectId: envelope.projectId, workspaceId: envelope.workspaceId,\n                leaseId, kind: readOnly ? 'read' : 'write', holderRunRef: envelope.runRef, submittedAt: this.deps.now()\n            }));\n            if (result.status !== 'committed')\n                throw Error('工作区租约释放未确认');\n        };\n        let handle: RunHandle;\n        let materials: RuntimeContextMaterials | undefined;\n        try {\n            materials = await this.deps.materials(spec, envelope);\n        }\n        catch (error) {\n            await release();\n            return this.deps.runtime.rejectBeforeStart(envelope, error instanceof Error ? error.message : '运行材料无法组装');\n        }\n        try {\n            handle = await this.deps.runtime.start(envelope, {\n                vault: this.deps.vault(), ...(materials ? { materials } : {})\n            });\n        }\n        catch (error) {\n            await release();\n            throw error;\n        }\n        return {\n            runRef: handle.runRef, pollFreshEvents: async () => {\n                const events = await handle.pollFreshEvents();\n                if (events.some(e => e.eventType !== 'run_started'))\n                    await release();\n                return events;\n            }\n        };\n    }\n}\n"
+          ]
+        ]
+      }
+    },
+    {
+      "path": "src/read-model/scope-catalog.ts",
+      "tokensUnchanged": true
+    },
+    {
+      "path": "src/read-model/initial-planning-view.ts",
+      "tokensUnchanged": true
+    },
+    {
+      "path": "src/verification/recorded-verification.ts",
+      "tokensUnchanged": true
+    },
+    {
+      "path": "src/verification/evidence-admission.ts",
+      "tokensUnchanged": true
+    },
+    {
+      "path": "src/contracts/exploration.ts",
+      "tokensUnchanged": true
+    },
+    {
+      "path": "src/contracts/verification-import.ts",
+      "tokensUnchanged": true
+    }
+  ]
+}

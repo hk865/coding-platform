@@ -1,0 +1,274 @@
+{
+  "schemaVersion": 1,
+  "layer": "evaluator-selftest",
+  "status": "PASS",
+  "results": [
+    {
+      "scenarioId": "MA-01",
+      "control": "known-success",
+      "status": "PASS"
+    },
+    {
+      "scenarioId": "MA-01",
+      "control": "known-failure",
+      "assertion": "exploration.source-call-chain",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-01",
+      "control": "known-failure",
+      "assertion": "exploration.reader-overlap",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-01",
+      "control": "known-failure",
+      "assertion": "exploration.merge-and-unknowns",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-01",
+      "control": "known-failure",
+      "assertion": "collaboration.real-consumption",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-02",
+      "control": "known-success",
+      "status": "PASS"
+    },
+    {
+      "scenarioId": "MA-02",
+      "control": "known-failure",
+      "assertion": "feature.accepted-proposal-consumed",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-02",
+      "control": "known-failure",
+      "assertion": "feature.independent-verification",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-02",
+      "control": "known-failure",
+      "assertion": "feature.review-after-checks",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-02",
+      "control": "known-failure",
+      "assertion": "collaboration.real-consumption",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-03",
+      "control": "known-success",
+      "status": "PASS"
+    },
+    {
+      "scenarioId": "MA-03",
+      "control": "known-failure",
+      "assertion": "bug.reproduce-then-fix",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-03",
+      "control": "known-failure",
+      "assertion": "bug.fixed-negative-not-confirmed",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-03",
+      "control": "known-failure",
+      "assertion": "bug.independent-chain",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-03",
+      "control": "known-failure",
+      "assertion": "collaboration.real-consumption",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-04",
+      "control": "known-success",
+      "status": "PASS"
+    },
+    {
+      "scenarioId": "MA-04",
+      "control": "known-failure",
+      "assertion": "conflict.evidence-adjudication",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-04",
+      "control": "known-failure",
+      "assertion": "lease.exclusive-current-and-scoped",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-04",
+      "control": "known-failure",
+      "assertion": "lease.accepted-change-preserved",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-04",
+      "control": "known-failure",
+      "assertion": "completion.current-fail-blocks",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-05",
+      "control": "known-success",
+      "status": "PASS"
+    },
+    {
+      "scenarioId": "MA-05",
+      "control": "known-failure",
+      "assertion": "message.replay-exactly-once",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-05",
+      "control": "known-failure",
+      "assertion": "message.stale-and-cross-project-rejected",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-05",
+      "control": "known-failure",
+      "assertion": "message.uncommitted-body-invisible",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-05",
+      "control": "known-failure",
+      "assertion": "isolation.independent-progress",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-06",
+      "control": "known-success",
+      "status": "PASS"
+    },
+    {
+      "scenarioId": "MA-06",
+      "control": "known-failure",
+      "assertion": "failure.no-cascade",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-06",
+      "control": "known-failure",
+      "assertion": "handoff.inherits-obligations-and-reasons",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-06",
+      "control": "known-failure",
+      "assertion": "recovery.reconcile-before-retry-once",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-06",
+      "control": "known-failure",
+      "assertion": "recovery.stale-lease-cannot-advance",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-07",
+      "control": "known-success",
+      "status": "PASS"
+    },
+    {
+      "scenarioId": "MA-07",
+      "control": "known-failure",
+      "assertion": "human.query-preserves-source-run",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-07",
+      "control": "known-failure",
+      "assertion": "human.change-version-and-affected-scope",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-07",
+      "control": "known-failure",
+      "assertion": "human.stale-result-and-independent-work",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-07",
+      "control": "known-failure",
+      "assertion": "human.cancel-run-versus-goal",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-08",
+      "control": "known-success",
+      "status": "PASS"
+    },
+    {
+      "scenarioId": "MA-08",
+      "control": "known-failure",
+      "assertion": "rework.failure-before-review",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-08",
+      "control": "known-failure",
+      "assertion": "rework.failure-preserved-and-new-evidence",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-08",
+      "control": "known-failure",
+      "assertion": "rework.independent-review-after-pass",
+      "status": "PASS",
+      "observed": "FAIL"
+    },
+    {
+      "scenarioId": "MA-08",
+      "control": "known-failure",
+      "assertion": "completion.control-current-evidence-only",
+      "status": "PASS",
+      "observed": "FAIL"
+    }
+  ],
+  "invalidConfigurationControls": 24,
+  "realModelExecution": "NOT_RUN",
+  "productControlIntegration": "NOT_PREPARED"
+}

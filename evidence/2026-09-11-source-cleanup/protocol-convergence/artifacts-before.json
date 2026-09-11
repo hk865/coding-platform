@@ -1,0 +1,78 @@
+{
+  "checkedAt": "2026-09-11T11:45:41.736Z",
+  "staleForwarders": [
+    {
+      "file": "dist/harness/in-memory-harness.js",
+      "name": "planProposalRequest"
+    },
+    {
+      "file": "dist/harness/in-memory-harness.js",
+      "name": "assemblePlanningContext"
+    },
+    {
+      "file": "dist/harness/in-memory-harness.js",
+      "name": "recordPlanChangeProposal"
+    },
+    {
+      "file": "dist/harness/in-memory-harness.js",
+      "name": "recordUserDecision"
+    },
+    {
+      "file": "dist/harness/in-memory-harness.js",
+      "name": "applyPlanChange"
+    },
+    {
+      "file": "dist/harness/in-memory-harness.js",
+      "name": "assembleQueryContext"
+    },
+    {
+      "file": "dist/harness/in-memory-harness.js",
+      "name": "assembleWorkContext"
+    },
+    {
+      "file": "dist/harness/in-memory-harness.js",
+      "name": "assembleCompletedWorkContext"
+    },
+    {
+      "file": "dist/harness/in-memory-harness.js",
+      "name": "amend"
+    },
+    {
+      "file": "dist/harness/persistent-harness.js",
+      "name": "planProposalRequest"
+    },
+    {
+      "file": "dist/harness/persistent-harness.js",
+      "name": "assemblePlanningContext"
+    },
+    {
+      "file": "dist/harness/persistent-harness.js",
+      "name": "recordPlanChangeProposal"
+    },
+    {
+      "file": "dist/harness/persistent-harness.js",
+      "name": "recordUserDecision"
+    },
+    {
+      "file": "dist/harness/persistent-harness.js",
+      "name": "applyPlanChange"
+    },
+    {
+      "file": "dist/harness/persistent-harness.js",
+      "name": "assembleQueryContext"
+    },
+    {
+      "file": "dist/harness/persistent-harness.js",
+      "name": "assembleWorkContext"
+    },
+    {
+      "file": "dist/harness/persistent-harness.js",
+      "name": "assembleCompletedWorkContext"
+    },
+    {
+      "file": "dist/harness/persistent-harness.js",
+      "name": "amend"
+    }
+  ],
+  "requestInitialBuilt": false
+}

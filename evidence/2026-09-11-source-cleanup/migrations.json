@@ -1,0 +1,1316 @@
+{
+  "moves": {
+    "src/contracts/fixtures/baseline-evolution-fixtures.ts": "tests/contract-support/fixtures/baseline-evolution-fixtures.ts",
+    "src/contracts/fixtures/bootstrap-fixture-v1.ts": "tests/contract-support/fixtures/bootstrap-fixture-v1.ts",
+    "src/contracts/fixtures/completed-work-fixtures.ts": "tests/contract-support/fixtures/completed-work-fixtures.ts",
+    "src/contracts/fixtures/console-fixtures.ts": "tests/contract-support/fixtures/console-fixtures.ts",
+    "src/contracts/fixtures/context-fixtures.ts": "tests/contract-support/fixtures/context-fixtures.ts",
+    "src/contracts/fixtures/control-fixtures.ts": "tests/contract-support/fixtures/control-fixtures.ts",
+    "src/contracts/fixtures/evidence-fixtures.ts": "tests/contract-support/fixtures/evidence-fixtures.ts",
+    "src/contracts/fixtures/goal-change-fixtures.ts": "tests/contract-support/fixtures/goal-change-fixtures.ts",
+    "src/contracts/fixtures/goal-fixtures.ts": "tests/contract-support/fixtures/goal-fixtures.ts",
+    "src/contracts/fixtures/goal-phase-fixtures.ts": "tests/contract-support/fixtures/goal-phase-fixtures.ts",
+    "src/contracts/fixtures/handoff-fixtures.ts": "tests/contract-support/fixtures/handoff-fixtures.ts",
+    "src/contracts/fixtures/human-role-collaboration-fixtures.ts": "tests/contract-support/fixtures/human-role-collaboration-fixtures.ts",
+    "src/contracts/fixtures/material-access-fixtures.ts": "tests/contract-support/fixtures/material-access-fixtures.ts",
+    "src/contracts/fixtures/query-job-fixtures.ts": "tests/contract-support/fixtures/query-job-fixtures.ts",
+    "src/contracts/fixtures/remediation-fixtures.ts": "tests/contract-support/fixtures/remediation-fixtures.ts",
+    "src/contracts/fixtures/workspace-fixtures.ts": "tests/contract-support/fixtures/workspace-fixtures.ts",
+    "src/contracts/testing/control.double.ts": "tests/contract-support/testing/control.double.ts",
+    "src/contracts/testing/handoff-control.double.ts": "tests/contract-support/testing/handoff-control.double.ts",
+    "src/contracts/testing/read-model.double.ts": "tests/contract-support/testing/read-model.double.ts",
+    "src/contracts/testing/state-ledger.double.ts": "tests/contract-support/testing/state-ledger.double.ts",
+    "src/contracts/ledger-validation.ts": "src/data/state-ledger/ledger-validation.ts",
+    "src/contracts/planning-work-materials.ts": "src/contracts/planning.ts"
+  },
+  "removed": [
+    "src/contracts/index.ts",
+    "src/contracts/fixtures/index.ts",
+    "src/contracts/testing/index.ts",
+    "src/contracts/testing/query-context.stub.ts"
+  ],
+  "retainedSupport": [
+    "src/contracts/fixtures/governance-fixtures.ts",
+    "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts",
+    "src/contracts/fixtures/role-spec-fixtures.ts",
+    "src/contracts/fixtures/plan-fixtures.ts",
+    "src/contracts/fixtures/dispatch-fixtures.ts",
+    "src/contracts/fixtures/architecture-fixtures.ts",
+    "src/contracts/testing/sequences.ts",
+    "src/contracts/testing/check-providers.double.ts"
+  ],
+  "consumers": [
+    {
+      "from": "src/contracts/fixtures/console-fixtures.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/console-fixtures.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/console-fixtures.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/console-fixtures.ts",
+      "to": "src/contracts/fixtures/goal-phase-fixtures.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/console-fixtures.ts",
+      "to": "src/contracts/fixtures/handoff-fixtures.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/context-fixtures.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/index.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/index.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/index.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/index.ts",
+      "to": "src/contracts/fixtures/goal-phase-fixtures.ts"
+    },
+    {
+      "from": "src/contracts/fixtures/index.ts",
+      "to": "src/contracts/fixtures/handoff-fixtures.ts"
+    },
+    {
+      "from": "src/contracts/rework.ts",
+      "to": "src/contracts/planning-work-materials.ts"
+    },
+    {
+      "from": "src/contracts/testing/index.ts",
+      "to": "src/contracts/testing/state-ledger.double.ts"
+    },
+    {
+      "from": "src/contracts/testing/index.ts",
+      "to": "src/contracts/testing/control.double.ts"
+    },
+    {
+      "from": "src/contracts/testing/index.ts",
+      "to": "src/contracts/testing/read-model.double.ts"
+    },
+    {
+      "from": "src/contracts/testing/index.ts",
+      "to": "src/contracts/testing/handoff-control.double.ts"
+    },
+    {
+      "from": "src/control/plan-compiler/plan-compiler.ts",
+      "to": "src/contracts/planning-work-materials.ts"
+    },
+    {
+      "from": "src/control/plan-compiler/planning-work-materials.ts",
+      "to": "src/contracts/planning-work-materials.ts"
+    },
+    {
+      "from": "src/data/state-ledger/in-memory-ledger.ts",
+      "to": "src/contracts/ledger-validation.ts"
+    },
+    {
+      "from": "src/data/state-ledger/in-memory-ledger.ts",
+      "to": "src/contracts/ledger-validation.ts"
+    },
+    {
+      "from": "src/data/state-ledger/in-memory-ledger.ts",
+      "to": "src/contracts/ledger-validation.ts"
+    },
+    {
+      "from": "src/data/state-ledger/in-memory-ledger.ts",
+      "to": "src/contracts/ledger-validation.ts"
+    },
+    {
+      "from": "src/data/state-ledger/sqlite-ledger.ts",
+      "to": "src/contracts/ledger-validation.ts"
+    },
+    {
+      "from": "src/data/state-ledger/sqlite-ledger.ts",
+      "to": "src/contracts/ledger-validation.ts"
+    },
+    {
+      "from": "src/data/state-ledger/sqlite-ledger.ts",
+      "to": "src/contracts/ledger-validation.ts"
+    },
+    {
+      "from": "tests/app/history-materials.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/app/history-materials.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/app/runtime-context.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/app/work-material-delivery.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/app/work-material-delivery.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/context/completed-work-regression.test.ts",
+      "to": "src/contracts/fixtures/completed-work-fixtures.ts"
+    },
+    {
+      "from": "tests/context/completed-work-regression.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/context/context-compiler.test.ts",
+      "to": "src/contracts/testing/state-ledger.double.ts"
+    },
+    {
+      "from": "tests/context/handoff-context-compiler.test.ts",
+      "to": "src/contracts/fixtures/handoff-fixtures.ts"
+    },
+    {
+      "from": "tests/context/planning-context-compiler.test.ts",
+      "to": "src/contracts/fixtures/goal-change-fixtures.ts"
+    },
+    {
+      "from": "tests/context/work-context-compiler.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/context/work-context-compiler.test.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "tests/context/work-run-materials.test.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/architecture-evolution.contract.suite.ts",
+      "to": "src/contracts/fixtures/remediation-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/baseline-evolution.contract.suite.ts",
+      "to": "src/contracts/fixtures/baseline-evolution-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/baseline-evolution.contract.suite.ts",
+      "to": "src/contracts/fixtures/baseline-evolution-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/baseline-evolution.contract.suite.ts",
+      "to": "src/contracts/fixtures/baseline-evolution-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/completed-work.contract.suite.ts",
+      "to": "src/contracts/fixtures/completed-work-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/completed-work.contract.suite.ts",
+      "to": "src/contracts/fixtures/completed-work-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/console.contract.suite.ts",
+      "to": "src/contracts/testing/read-model.double.ts"
+    },
+    {
+      "from": "tests/contract-suite/context.continuity.contract.suite.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/evidence.contract.suite.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/evidence.contract.suite.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/goal-change.contract.suite.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/goal-phase.contract.suite.ts",
+      "to": "src/contracts/fixtures/goal-phase-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/goal-phase.contract.suite.ts",
+      "to": "src/contracts/fixtures/goal-phase-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/goal-view.contract.suite.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/goal-view.contract.suite.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/contract-suite/goal-view.contract.suite.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/contract-suite/governance.contract.suite.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/contract-suite/handoff.contract.suite.ts",
+      "to": "src/contracts/fixtures/handoff-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/handoff.contract.suite.ts",
+      "to": "src/contracts/testing/handoff-control.double.ts"
+    },
+    {
+      "from": "tests/contract-suite/handoff.contract.suite.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/handoff.contract.suite.ts",
+      "to": "src/contracts/fixtures/handoff-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/human-role-collaboration.contract.suite.ts",
+      "to": "src/contracts/fixtures/human-role-collaboration-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/lifecycle-control.contract.suite.ts",
+      "to": "src/contracts/fixtures/control-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-03-harness.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-03-harness.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-04-harness.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-04-harness.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-04-harness.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-05-harness.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-05-harness.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-05-harness.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-05-harness.ts",
+      "to": "src/contracts/fixtures/goal-phase-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-06-harness.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-06-harness.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-06-harness.ts",
+      "to": "src/contracts/fixtures/handoff-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-07-harness.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-07-harness.ts",
+      "to": "src/contracts/fixtures/goal-phase-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-07-harness.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-07-harness.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-07-harness.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-07-harness.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-08-harness.ts",
+      "to": "src/contracts/fixtures/console-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-08-harness.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-08-harness.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-08-harness.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-09-harness.ts",
+      "to": "src/contracts/fixtures/query-job-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-10-harness.ts",
+      "to": "src/contracts/fixtures/control-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-11-harness.ts",
+      "to": "src/contracts/fixtures/goal-change-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-11-harness.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-11-harness.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-13-harness.ts",
+      "to": "src/contracts/fixtures/remediation-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-13-harness.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-14-harness.ts",
+      "to": "src/contracts/fixtures/baseline-evolution-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-15-harness.ts",
+      "to": "src/contracts/fixtures/human-role-collaboration-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-16-harness.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-17-harness.ts",
+      "to": "src/contracts/fixtures/completed-work-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/p1-17-harness.ts",
+      "to": "src/contracts/fixtures/completed-work-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/plan.contract.suite.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/contract-suite/plan.contract.suite.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/query-job.contract.suite.ts",
+      "to": "src/contracts/fixtures/query-job-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/state-ledger.contract.suite.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/contract-suite/state-ledger.contract.suite.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/verification.contract.suite.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/contract-suite/workspace.contract.suite.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/contracts/fingerprint.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/contracts/fingerprint.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/contracts/fixtures.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/contracts/fixtures.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/contracts/goal-phase.test.ts",
+      "to": "src/contracts/fixtures/goal-phase-fixtures.ts"
+    },
+    {
+      "from": "tests/contracts/material-access.test.ts",
+      "to": "src/contracts/ledger-validation.ts"
+    },
+    {
+      "from": "tests/contracts/material-access.test.ts",
+      "to": "src/contracts/fixtures/material-access-fixtures.ts"
+    },
+    {
+      "from": "tests/contracts/state-ledger.double.test.ts",
+      "to": "src/contracts/testing/state-ledger.double.ts"
+    },
+    {
+      "from": "tests/contracts/validation.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/contracts/validation.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/contracts/validation.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/architecture-evolution-policy.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/architecture-inspection.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/architecture-reconciler.test.ts",
+      "to": "src/contracts/testing/control.double.ts"
+    },
+    {
+      "from": "tests/control/architecture-reconciler.test.ts",
+      "to": "src/contracts/testing/state-ledger.double.ts"
+    },
+    {
+      "from": "tests/control/autonomous-rework-fixture.ts",
+      "to": "src/contracts/planning-work-materials.ts"
+    },
+    {
+      "from": "tests/control/autonomous-rework-fixture.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/autonomous-rework-fixture.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/autonomous-rework-fixture.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/autonomous-rework-fixture.ts",
+      "to": "src/contracts/fixtures/goal-change-fixtures.ts"
+    },
+    {
+      "from": "tests/control/autonomous-rework-fixture.ts",
+      "to": "src/contracts/fixtures/human-role-collaboration-fixtures.ts"
+    },
+    {
+      "from": "tests/control/autonomous-rework.test.ts",
+      "to": "src/contracts/fixtures/human-role-collaboration-fixtures.ts"
+    },
+    {
+      "from": "tests/control/autonomous-rework.test.ts",
+      "to": "src/contracts/fixtures/goal-change-fixtures.ts"
+    },
+    {
+      "from": "tests/control/baseline-evolution-port.test.ts",
+      "to": "src/contracts/testing/state-ledger.double.ts"
+    },
+    {
+      "from": "tests/control/baseline-evolution-port.test.ts",
+      "to": "src/contracts/fixtures/baseline-evolution-fixtures.ts"
+    },
+    {
+      "from": "tests/control/baseline-evolution.test.ts",
+      "to": "src/contracts/fixtures/baseline-evolution-fixtures.ts"
+    },
+    {
+      "from": "tests/control/canonical-record-scope.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/canonical-record-scope.test.ts",
+      "to": "src/contracts/fixtures/control-fixtures.ts"
+    },
+    {
+      "from": "tests/control/canonical-record-scope.test.ts",
+      "to": "src/contracts/fixtures/human-role-collaboration-fixtures.ts"
+    },
+    {
+      "from": "tests/control/canonical-record-scope.test.ts",
+      "to": "src/contracts/fixtures/goal-change-fixtures.ts"
+    },
+    {
+      "from": "tests/control/control-engine.test.ts",
+      "to": "src/contracts/testing/state-ledger.double.ts"
+    },
+    {
+      "from": "tests/control/control-engine.test.ts",
+      "to": "src/contracts/testing/state-ledger.double.ts"
+    },
+    {
+      "from": "tests/control/control-engine.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/control-engine.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/dispatch-claim.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/dispatch-claim.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/dispatch-drive.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/dispatch-drive.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/dispatch-readiness.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/dispatch-readiness.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/dispatch-start.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/dispatch-start.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/evidence-intake.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/evidence-intake.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/evidence-intake.test.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/control/goal-change.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/goal-change.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/goal-change.test.ts",
+      "to": "src/contracts/fixtures/goal-change-fixtures.ts"
+    },
+    {
+      "from": "tests/control/governance-activate.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/governance-command-builders.test.ts",
+      "to": "src/contracts/fixtures/human-role-collaboration-fixtures.ts"
+    },
+    {
+      "from": "tests/control/handoff-drive.test.ts",
+      "to": "src/contracts/fixtures/handoff-fixtures.ts"
+    },
+    {
+      "from": "tests/control/handoff.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/handoff.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/handoff.test.ts",
+      "to": "src/contracts/fixtures/handoff-fixtures.ts"
+    },
+    {
+      "from": "tests/control/human-role-collaboration.test.ts",
+      "to": "src/contracts/fixtures/human-role-collaboration-fixtures.ts"
+    },
+    {
+      "from": "tests/control/integration-join.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/integration-join.test.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "tests/control/integration-join.test.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/control/live-frontier-regression.test.ts",
+      "to": "src/contracts/fixtures/goal-phase-fixtures.ts"
+    },
+    {
+      "from": "tests/control/live-frontier-regression.test.ts",
+      "to": "src/contracts/fixtures/handoff-fixtures.ts"
+    },
+    {
+      "from": "tests/control/material-access.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/material-access.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/material-access.test.ts",
+      "to": "src/contracts/fixtures/material-access-fixtures.ts"
+    },
+    {
+      "from": "tests/control/operator-entry-role.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/operator-entry-role.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/p1-13-writer-chain-fixture.ts",
+      "to": "src/contracts/fixtures/remediation-fixtures.ts"
+    },
+    {
+      "from": "tests/control/p1-13-writer-chain-fixture.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "tests/control/p1-13-writer-chain-fixture.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/control/p1-13-writer-chain-fixture.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "tests/control/p1-15-role-rework-loop.test.ts",
+      "to": "src/contracts/fixtures/handoff-fixtures.ts"
+    },
+    {
+      "from": "tests/control/p1-15-role-rework-loop.test.ts",
+      "to": "src/contracts/fixtures/handoff-fixtures.ts"
+    },
+    {
+      "from": "tests/control/p1-15-role-rework-loop.test.ts",
+      "to": "src/contracts/fixtures/human-role-collaboration-fixtures.ts"
+    },
+    {
+      "from": "tests/control/p1-15-role-rework-loop.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/control/patch-record.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/patch-record.test.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "tests/control/plan-acceptance.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/plan-acceptance.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/plan-compiler.test.ts",
+      "to": "src/contracts/fixtures/goal-change-fixtures.ts"
+    },
+    {
+      "from": "tests/control/plan-impact-work-identity.test.ts",
+      "to": "src/contracts/fixtures/goal-change-fixtures.ts"
+    },
+    {
+      "from": "tests/control/plan-impact-work-identity.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/control/remediation-writer-chain.test.ts",
+      "to": "src/contracts/fixtures/remediation-fixtures.ts"
+    },
+    {
+      "from": "tests/control/remediation.test.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/control/remediation.test.ts",
+      "to": "src/contracts/fixtures/remediation-fixtures.ts"
+    },
+    {
+      "from": "tests/control/replacement-claim.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/replacement-claim.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/replacement-claim.test.ts",
+      "to": "src/contracts/fixtures/handoff-fixtures.ts"
+    },
+    {
+      "from": "tests/control/rework-drive-harness.test.ts",
+      "to": "src/contracts/fixtures/human-role-collaboration-fixtures.ts"
+    },
+    {
+      "from": "tests/control/rework-drive-harness.test.ts",
+      "to": "src/contracts/fixtures/goal-change-fixtures.ts"
+    },
+    {
+      "from": "tests/control/rework-drive.test.ts",
+      "to": "src/contracts/fixtures/goal-change-fixtures.ts"
+    },
+    {
+      "from": "tests/control/rework-drive.test.ts",
+      "to": "src/contracts/fixtures/human-role-collaboration-fixtures.ts"
+    },
+    {
+      "from": "tests/control/rework-plan-compiler.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/rework-plan-compiler.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/rework-plan-compiler.test.ts",
+      "to": "src/contracts/fixtures/goal-change-fixtures.ts"
+    },
+    {
+      "from": "tests/control/rework-task-dispatch.test.ts",
+      "to": "src/contracts/fixtures/human-role-collaboration-fixtures.ts"
+    },
+    {
+      "from": "tests/control/role-binding-admission.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/role-binding-admission.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/role-material-completion.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/role-spec-material-read.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/role-spec.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/role-spec.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/task-reducer.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/task-reducer.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/task-reducer.test.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-identity-harness.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-identity-harness.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-identity-uniqueness.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/work-identity-uniqueness.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-identity-uniqueness.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-identity.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/control/work-identity.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-identity.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-material-gate.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/work-record.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/control/workspace-capability-policy.test.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "tests/control/workspace-drive.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/workspace-drive.test.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "tests/control/workspace-lease.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/control/workspace-lease.test.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "tests/data/ledger-scope-catalog.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/data/ledger-scope-catalog.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-00-assertions.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/integration/p1-00-assertions.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-00.integration.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/integration/p1-00.integration.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-00.integration.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-01.integration.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/integration/p1-01.integration.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-02.integration.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/integration/p1-02.integration.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-09.integration.test.ts",
+      "to": "src/contracts/fixtures/query-job-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-10.integration.test.ts",
+      "to": "src/contracts/fixtures/control-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-13-writer-chain.integration.test.ts",
+      "to": "src/contracts/fixtures/remediation-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-16.integration.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/integration/p1-17.integration.test.ts",
+      "to": "src/contracts/fixtures/completed-work-fixtures.ts"
+    },
+    {
+      "from": "tests/interaction/human-collaboration.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/interaction/human-collaboration.test.ts",
+      "to": "src/contracts/testing/control.double.ts"
+    },
+    {
+      "from": "tests/interaction/human-collaboration.test.ts",
+      "to": "src/contracts/testing/read-model.double.ts"
+    },
+    {
+      "from": "tests/ledger/identity-upgrade.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/ledger/identity-upgrade.test.ts",
+      "to": "src/contracts/ledger-validation.ts"
+    },
+    {
+      "from": "tests/ledger/in-memory-ledger.boundary.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/ledger/in-memory-ledger.boundary.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/ledger/snapshot-isolation.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/ledger/snapshot-isolation.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/completed-work-merge-visibility.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/material-access-lookup.test.ts",
+      "to": "src/contracts/fixtures/material-access-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/material-access-projection.test.ts",
+      "to": "src/contracts/fixtures/material-access-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-03-run-projection.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-04-verification-projection.test.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-06-handoff-projection.test.ts",
+      "to": "src/contracts/fixtures/handoff-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-06-handoff-projection.test.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-07-projection.test.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-11-plan-change.test.ts",
+      "to": "src/contracts/fixtures/goal-change-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-14-baseline-change-view.test.ts",
+      "to": "src/contracts/fixtures/baseline-evolution-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-15-unified-status.test.ts",
+      "to": "src/contracts/fixtures/human-role-collaboration-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-16-continuation-projection.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/p1-16-work-context.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/plan-change-timeline.test.ts",
+      "to": "src/contracts/fixtures/goal-change-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/plan-view.rebuild.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/plan-view.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/read-model/read-model-index.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/evidence/p1-01-evidence.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/restart/material-access-restart.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/restart/material-access-restart.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/material-access-restart.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/material-access-restart.test.ts",
+      "to": "src/contracts/fixtures/material-access-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/material-revocation.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/restart/material-revocation.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/material-revocation.test.ts",
+      "to": "src/contracts/fixtures/material-access-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/material-source-applicability.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/restart/material-source-applicability.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/material-source-applicability.test.ts",
+      "to": "src/contracts/fixtures/material-access-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/p1-02-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/restart/p1-02-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/p1-03-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/restart/p1-03-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/p1-06-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/handoff-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/p1-09-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/query-job-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/p1-10-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/control-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/p1-14-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/baseline-evolution-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/p1-16-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/p1-17-restart-fixtures.ts",
+      "to": "src/contracts/fixtures/completed-work-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/persistent-restart.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/restart/restart-assertions.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/restart/restart-fixtures.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/restart/restart-fixtures.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/runtime/context-continuation-adapter.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/runtime/context-continuation-adapter.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/runtime/context-continuation-adapter.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-ledger/sqlite-ledger.restart.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/sqlite-ledger/sqlite-ledger.restart.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/material-access-projection.test.ts",
+      "to": "src/contracts/fixtures/material-access-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-03-run-projection.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-04-verification-projection.test.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-06-handoff-projection.test.ts",
+      "to": "src/contracts/fixtures/handoff-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-06-handoff-projection.test.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-07-projection.test.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-11-plan-change.test.ts",
+      "to": "src/contracts/fixtures/goal-change-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-14-baseline-change-view.test.ts",
+      "to": "src/contracts/fixtures/baseline-evolution-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-15-unified-status.test.ts",
+      "to": "src/contracts/fixtures/human-role-collaboration-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-16-continuation-projection.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/p1-16-work-context.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/plan-view.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/sqlite-read-model-index.restart.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/sqlite-read-model-index.restart.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/sqlite-read-model/sqlite-read-model-index.restart.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/vault/material-access-grant.test.ts",
+      "to": "src/contracts/fixtures/material-access-fixtures.ts"
+    },
+    {
+      "from": "tests/verification/migration-gate-port.test.ts",
+      "to": "src/contracts/testing/state-ledger.double.ts"
+    },
+    {
+      "from": "tests/verification/migration-gate-port.test.ts",
+      "to": "src/contracts/fixtures/baseline-evolution-fixtures.ts"
+    },
+    {
+      "from": "tests/verification/reviewer-fixture.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "tests/verification/role-output-completeness.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/verification/role-output-completeness.test.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    },
+    {
+      "from": "tests/verification/role-output-completeness.test.ts",
+      "to": "src/contracts/fixtures/context-fixtures.ts"
+    },
+    {
+      "from": "tests/verification/verification-engine.test.ts",
+      "to": "src/contracts/fixtures/bootstrap-fixture-v1.ts"
+    },
+    {
+      "from": "tests/verification/verification-engine.test.ts",
+      "to": "src/contracts/fixtures/goal-fixtures.ts"
+    },
+    {
+      "from": "tests/verification/verification-engine.test.ts",
+      "to": "src/contracts/fixtures/evidence-fixtures.ts"
+    },
+    {
+      "from": "tests/verification/verification-rounds.test.ts",
+      "to": "src/contracts/fixtures/workspace-fixtures.ts"
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "status": "PASS",
+  "layer": "fixture-functional-evaluator-selftest",
+  "results": [
+    {
+      "id": "changed-rule-base",
+      "expected": "FAIL",
+      "observed": "FAIL",
+      "status": "PASS",
+      "assertions": 11
+    },
+    {
+      "id": "changed-rule-oracle",
+      "expected": "PASS",
+      "observed": "PASS",
+      "status": "PASS",
+      "assertions": 11
+    },
+    {
+      "id": "changed-rule-oracle-repeat",
+      "expected": "PASS",
+      "observed": "PASS",
+      "status": "PASS",
+      "assertions": 11
+    },
+    {
+      "id": "changed-rule-stale-near-miss",
+      "expected": "FAIL",
+      "observed": "FAIL",
+      "status": "PASS",
+      "assertions": 11
+    },
+    {
+      "id": "filter-base",
+      "expected": "FAIL",
+      "observed": "FAIL",
+      "status": "PASS",
+      "assertions": 11
+    },
+    {
+      "id": "filter-oracle",
+      "expected": "PASS",
+      "observed": "PASS",
+      "status": "PASS",
+      "assertions": 11
+    },
+    {
+      "id": "filter-oracle-repeat",
+      "expected": "PASS",
+      "observed": "PASS",
+      "status": "PASS",
+      "assertions": 11
+    },
+    {
+      "id": "filter-near-miss",
+      "expected": "FAIL",
+      "observed": "FAIL",
+      "status": "PASS",
+      "assertions": 11
+    },
+    {
+      "id": "pagination-base",
+      "expected": "FAIL",
+      "observed": "FAIL",
+      "status": "PASS",
+      "assertions": 5
+    },
+    {
+      "id": "pagination-oracle",
+      "expected": "PASS",
+      "observed": "PASS",
+      "status": "PASS",
+      "assertions": 5
+    },
+    {
+      "id": "pagination-oracle-repeat",
+      "expected": "PASS",
+      "observed": "PASS",
+      "status": "PASS",
+      "assertions": 5
+    },
+    {
+      "id": "pagination-near-miss",
+      "expected": "FAIL",
+      "observed": "FAIL",
+      "status": "PASS",
+      "assertions": 5
+    }
+  ],
+  "browserEngine": "NOT_PREPARED",
+  "realModelExecution": "NOT_RUN"
+}

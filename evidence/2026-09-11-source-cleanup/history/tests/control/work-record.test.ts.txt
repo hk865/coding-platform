@@ -1,0 +1,481 @@
+/**
+ * P1-16 lane A control unit tests: WorkRecordEngineImpl (bind / link / note /
+ * continuation) over a REAL InMemoryLedger via the ControlEngineImpl handler.
+ *
+ * The world is the established P1-08 two-project scenario (real Runs, goal,
+ * bootstrapped "ws-shared" workspace) so the referential guards resolve real
+ * aggregates. We drive the ENGINE handler and assert:
+ *   - bind: one atomic work-context-bind (WorkContextBinding @1), the persisted
+ *     snapshot is field-identical to the shared fixture fold, an idempotent
+ *     replay returns committed(replayed) with no extra event, a same-identity
+ *     different-payload command is idempotency_conflict, and a duplicate bind
+ *     of the same workId under a fresh identity is revision_conflict;
+ *   - link: append (CAS@N) + already_linked + not_found (missing binding/run)
+ *     + links_exceeded (a binding seeded to the cap);
+ *   - note: body-first registration + author-not-linked -> run_not_in_work +
+ *     replay replayed + cross-identity same noteId -> revision_conflict;
+ *   - continuation: success + missing work -> not_found.
+ */
+import { describe, expect, it } from "vitest";
+import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
+import {
+  createP108ScenarioRuntime,
+  runP108TwoProjectScenario,
+  toP1_08Harness,
+  P108_PROJECT_A,
+  P108_PROJECT_B,
+  P108_TASK_WORK,
+} from "../contract-suite/p1-08-harness.js";
+import { toP1_16Harness } from "../contract-suite/p1-16-harness.js";
+import { P116_SCHEMA, P116_WORK, P116_WORKSPACE, P116_NOTE_1, P116_REPORT_1, P116_REPORT_2, buildBindWorkContextCommand, buildLinkWorkRunCommand, buildExecutionNoteV1, buildRecordExecutionNoteCommand, buildContextContinuationResultV1, buildRecordContinuationCommand, p116WorkContextRef } from "../../src/contracts/fixtures/context-fixtures.js";
+import { buildWorkContextBindLedgerCommit, buildWorkContextLinkLedgerCommit } from "../../src/control/control-engine/records/context.js";
+import { workContextRefFor, WORK_CONTEXT_MAX_RUN_LINKS } from "../../src/contracts/context-continuity.js";
+import type { RunRef } from "../../src/contracts/dispatch.js";
+import type { BindWorkContextCommand } from "../../src/contracts/context-continuity.js";
+
+const A = P108_PROJECT_A;
+const WSPACE = P116_WORKSPACE;
+
+function bindCmd(deps: Parameters<typeof buildBindWorkContextCommand>[0]): BindWorkContextCommand {
+  return buildBindWorkContextCommand(deps);
+}
+
+async function makeWorld() {
+  const h = createInMemoryHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+  const p108 = toP1_08Harness(h as never);
+  const world = await runP108TwoProjectScenario(p108);
+  const h16 = toP1_16Harness(h as never);
+  const goalA = world.previews.find((p) => p.projectId === A)!.goalId;
+  return { h: h16, harness: h, world, goalA };
+}
+
+type Ctx = Awaited<ReturnType<typeof makeWorld>>;
+
+/**
+ * RC-03：P108 世界在派发时已经为 P108_TASK_WORK 建立了唯一身份，因此「首次建立身份」的用例
+ * 必须换一个**还没有身份**的任务 —— 否则测的就不是 bind，而是那个任务的唯一性守卫了
+ * （同一任务第二条身份被拒的用例见 tests/control/work-identity-uniqueness.test.ts）。
+ */
+const P116_BIND_TASK = "task-p116-bind";
+
+async function bindTaskWork(ctx: Ctx, commandId: string, runRef: RunRef, workId: string, goalId: string) {
+  return ctx.h.bindWorkContext(bindCmd({
+    commandId,
+    projectId: A,
+    workId,
+    workspaceId: WSPACE,
+    workKind: "task",
+    goalId,
+    taskId: P116_BIND_TASK,
+    initialRunRef: runRef,
+  }));
+}
+
+async function bindCoordWork(ctx: Ctx, commandId: string, runRef: RunRef) {
+  return ctx.h.bindWorkContext(bindCmd({
+    commandId,
+    projectId: A,
+    workId: "work-p116-coord",
+    workspaceId: WSPACE,
+    workKind: "coordination",
+    goalId: null,
+    taskId: null,
+    initialRunRef: runRef,
+  }));
+}
+
+// Seed a binding to WORK_CONTEXT_MAX_RUN_LINKS by committing link batches
+// directly to the ledger (bypassing the control guard) so links_exceeded is
+// reachable with a real, existing, not-yet-linked run.
+async function seedBindingToCap(ctx: Ctx, workRef: import("../../src/contracts/context-continuity.js").WorkContextRef) {
+  const loaded = await ctx.harness.ledger.load(workRef);
+  if (loaded.status !== "found") throw new Error("seed: binding not found");
+  const snap = loaded.snapshot as import("../../src/contracts/context-continuity.js").WorkContextBindingSnapshot;
+  let revision = snap.revision;
+  let linked = [...snap.binding.linkedRunRefs];
+  const need = WORK_CONTEXT_MAX_RUN_LINKS - linked.length;
+  for (let i = 0; i < need; i += 1) {
+    const runRef: RunRef = { aggregateType: "Run", projectId: A, goalId: "goal-cap", runId: "run-seed-" + i };
+    const cmd = buildLinkWorkRunCommand({
+      commandId: "seed-link-" + i,
+      projectId: A,
+      workId: "work-p116-coord",
+      workspaceId: WSPACE,
+      runRef,
+      expectedRevision: revision,
+    });
+    const nextBinding = { ...snap.binding, linkedRunRefs: [...linked, runRef] };
+    const commit = buildWorkContextLinkLedgerCommit(cmd, {
+      eventId: "evt-seed-" + i,
+      occurredAt: P116_SCHEMA,
+      currentRevision: revision,
+      nextBinding,
+    });
+    const r = await ctx.harness.ledger.commit(commit);
+    if (r.status !== "committed") throw new Error("seed commit failed: " + r.status);
+    revision += 1;
+    linked.push(runRef);
+  }
+}
+
+describe("P1-16 lane A: WorkRecordEngineImpl bind", () => {
+  it("binds the durable work identity once, persists the exact fixture snapshot, and replays idempotently", async () => {
+    const ctx = await makeWorld();
+    const runRef = ctx.world.projectA.workRun;
+    const cmd = bindCmd({
+      commandId: "p116-bind-w1",
+      projectId: A,
+      workId: P116_WORK,
+      workspaceId: WSPACE,
+      workKind: "task",
+      goalId: ctx.goalA,
+      taskId: P116_BIND_TASK,
+      initialRunRef: runRef,
+    });
+    const receipt = await ctx.h.bindWorkContext(cmd);
+    expect(receipt.status).toBe("committed");
+    if (receipt.status !== "committed") return;
+    expect(receipt.replayed).toBe(false);
+    expect(receipt.workContextRef).toEqual(p116WorkContextRef(A, P116_WORK));
+
+    // Persisted snapshot is field-identical to the deterministic fixture fold.
+    const ref = p116WorkContextRef(A, P116_WORK);
+    const loaded = await ctx.harness.ledger.load(ref);
+    expect(loaded.status).toBe("found");
+    if (loaded.status !== "found") return;
+    const snap = loaded.snapshot as import("../../src/contracts/context-continuity.js").WorkContextBindingSnapshot;
+    const expected = buildWorkContextBindLedgerCommit(cmd, { eventId: "x", occurredAt: P116_SCHEMA });
+    expect(snap.revision).toBe(1);
+    expect(snap.ref).toEqual(expected.snapshots[0]!.ref);
+    expect(snap.binding).toEqual(expected.snapshots[0]!.binding);
+
+    // Idempotent replay -> committed(replayed), no extra event.
+    const replay = await ctx.h.bindWorkContext(cmd);
+    expect(replay.status).toBe("committed");
+    if (replay.status === "committed") expect(replay.replayed).toBe(true);
+  });
+
+  it("same identity + different payload -> idempotency_conflict (zero write)", async () => {
+    const ctx = await makeWorld();
+    const runRef = ctx.world.projectA.workRun;
+    const base = bindCmd({
+      commandId: "p116-bind-idem",
+      projectId: A,
+      workId: P116_WORK,
+      workspaceId: WSPACE,
+      workKind: "task",
+      goalId: ctx.goalA,
+      taskId: P116_BIND_TASK,
+      initialRunRef: runRef,
+    });
+    expect((await ctx.h.bindWorkContext(base)).status).toBe("committed");
+    // Same commandId/identity, different workKind -> different fingerprint.
+    const other = bindCmd({
+      commandId: "p116-bind-idem",
+      projectId: A,
+      workId: P116_WORK,
+      workspaceId: WSPACE,
+      workKind: "coordination",
+      goalId: null,
+      taskId: null,
+      initialRunRef: runRef,
+    });
+    const res = await ctx.h.bindWorkContext(other);
+    expect(res.status).toBe("rejected");
+    if (res.status === "rejected") expect(res.code).toBe("idempotency_conflict");
+  });
+
+  it("duplicate bind of the same workId under a fresh identity -> revision_conflict", async () => {
+    const ctx = await makeWorld();
+    await bindTaskWork(ctx, "p116-bind-w1", ctx.world.projectA.workRun, P116_WORK, ctx.goalA);
+    const dup = await bindTaskWork(ctx, "p116-bind-w1-dup", ctx.world.projectA.workRun, P116_WORK, ctx.goalA);
+    expect(dup.status).toBe("rejected");
+    if (dup.status === "rejected") expect(dup.code).toBe("revision_conflict");
+  });
+
+  it("task work without a goal/task anchor -> not_found (workKind consistency)", async () => {
+    const ctx = await makeWorld();
+    const cmd = bindCmd({
+      commandId: "p116-bind-invalid-task",
+      projectId: A,
+      workId: "work-no-anchor",
+      workspaceId: WSPACE,
+      workKind: "task",
+      goalId: null,
+      taskId: null,
+      initialRunRef: ctx.world.projectA.workRun,
+    });
+    const res = await ctx.h.bindWorkContext(cmd);
+    expect(res.status).toBe("rejected");
+    if (res.status === "rejected") expect(res.code).toBe("not_found");
+  });
+
+  it("bind into a missing workspace -> not_found", async () => {
+    const ctx = await makeWorld();
+    const cmd = bindCmd({
+      commandId: "p116-bind-missing-ws",
+      projectId: A,
+      workId: P116_WORK,
+      workspaceId: "ws-missing",
+      workKind: "task",
+      goalId: ctx.goalA,
+      taskId: P108_TASK_WORK,
+      initialRunRef: ctx.world.projectA.workRun,
+    });
+    const res = await ctx.h.bindWorkContext(cmd);
+    expect(res.status).toBe("rejected");
+    if (res.status === "rejected") expect(res.code).toBe("not_found");
+  });
+});
+
+describe("P1-16 lane A: WorkRecordEngineImpl link", () => {
+  it("links a run to the binding (CAS@N) with the exact fixture snapshot", async () => {
+    const ctx = await makeWorld();
+    await bindCoordWork(ctx, "p116-bind-w2", ctx.world.projectA.workRun);
+    const workRef = workContextRefFor(A, WSPACE, "work-p116-coord");
+    const before = await ctx.harness.ledger.load(workRef);
+    expect(before.status).toBe("found");
+    if (before.status !== "found") return;
+    const beforeSnap = before.snapshot as import("../../src/contracts/context-continuity.js").WorkContextBindingSnapshot;
+    const expectedNextBinding = {
+      ...beforeSnap.binding,
+      linkedRunRefs: [...beforeSnap.binding.linkedRunRefs.map((r) => ({ ...r })), { ...ctx.world.projectA.extraReplacementRun }],
+    };
+    const cmd = buildLinkWorkRunCommand({
+      commandId: "p116-link-w2",
+      projectId: A,
+      workId: "work-p116-coord",
+      workspaceId: WSPACE,
+      runRef: ctx.world.projectA.extraReplacementRun,
+      expectedRevision: 1,
+    });
+    const receipt = await ctx.h.linkWorkRun(cmd);
+    expect(receipt.status).toBe("committed");
+    if (receipt.status !== "committed") return;
+    expect(receipt.replayed).toBe(false);
+    expect(receipt.revision).toBe(2);
+
+    const loaded = await ctx.harness.ledger.load(workRef);
+    expect(loaded.status).toBe("found");
+    if (loaded.status !== "found") return;
+    const snap = loaded.snapshot as import("../../src/contracts/context-continuity.js").WorkContextBindingSnapshot;
+    expect(snap.revision).toBe(2);
+    expect(snap.binding).toEqual(expectedNextBinding);
+    // The persisted snapshot is exactly the fixture fold for the SAME nextBinding.
+    const expected = buildWorkContextLinkLedgerCommit(cmd, {
+      eventId: "x",
+      occurredAt: P116_SCHEMA,
+      currentRevision: 1,
+      nextBinding: expectedNextBinding,
+    });
+    expect(snap.binding).toEqual(expected.snapshots[0]!.binding);
+  });
+
+  it("linking an already-linked run -> already_linked", async () => {
+    const ctx = await makeWorld();
+    await bindCoordWork(ctx, "p116-bind-w2", ctx.world.projectA.workRun);
+    const run = ctx.world.projectA.extraReplacementRun;
+    await ctx.h.linkWorkRun(buildLinkWorkRunCommand({
+      commandId: "p116-link-w2",
+      projectId: A,
+      workId: "work-p116-coord",
+      workspaceId: WSPACE,
+      runRef: run,
+      expectedRevision: 1,
+    }));
+    const dup = await ctx.h.linkWorkRun(buildLinkWorkRunCommand({
+      commandId: "p116-link-w2-dup",
+      projectId: A,
+      workId: "work-p116-coord",
+      workspaceId: WSPACE,
+      runRef: run,
+      expectedRevision: 2,
+    }));
+    expect(dup.status).toBe("rejected");
+    if (dup.status === "rejected") expect(dup.code).toBe("already_linked");
+  });
+
+  it("linking a missing binding -> not_found", async () => {
+    const ctx = await makeWorld();
+    const res = await ctx.h.linkWorkRun(buildLinkWorkRunCommand({
+      commandId: "p116-link-missing",
+      projectId: A,
+      workId: "work-never-bound",
+      workspaceId: WSPACE,
+      runRef: ctx.world.projectA.workRun,
+      expectedRevision: 1,
+    }));
+    expect(res.status).toBe("rejected");
+    if (res.status === "rejected") expect(res.code).toBe("not_found");
+  });
+
+  it("linking a run beyond the cap -> links_exceeded (binding seeded to the cap)", async () => {
+    const ctx = await makeWorld();
+    await bindCoordWork(ctx, "p116-bind-w2", ctx.world.projectA.workRun);
+    const workRef = workContextRefFor(A, WSPACE, "work-p116-coord");
+    await seedBindingToCap(ctx, workRef);
+    // A real (project B) run that exists but is NOT yet linked -> the cap is hit.
+    const res = await ctx.h.linkWorkRun(buildLinkWorkRunCommand({
+      commandId: "p116-link-cap",
+      projectId: A,
+      workId: "work-p116-coord",
+      workspaceId: WSPACE,
+      runRef: ctx.world.projectB.workRun,
+      expectedRevision: WORK_CONTEXT_MAX_RUN_LINKS + 1,
+    }));
+    expect(res.status).toBe("rejected");
+    if (res.status === "rejected") expect(res.code).toBe("links_exceeded");
+  });
+});
+
+describe("P1-16 lane A: WorkRecordEngineImpl note + continuation", () => {
+  it("records a body-first note authored by a linked run", async () => {
+    const ctx = await makeWorld();
+    await bindCoordWork(ctx, "p116-bind-w2", ctx.world.projectA.workRun);
+    await ctx.h.linkWorkRun(buildLinkWorkRunCommand({
+      commandId: "p116-link-w2",
+      projectId: A,
+      workId: "work-p116-coord",
+      workspaceId: WSPACE,
+      runRef: ctx.world.projectA.extraReplacementRun,
+      expectedRevision: 1,
+    }));
+    const note = buildExecutionNoteV1({
+      noteId: P116_NOTE_1,
+      workId: "work-p116-coord",
+      projectId: A,
+      runRef: ctx.world.projectA.workRun,
+      kind: "checkpoint",
+    });
+    const receipt = await ctx.h.recordExecutionNote(buildRecordExecutionNoteCommand({
+      commandId: "p116-note-1",
+      projectId: A,
+      note,
+    }));
+    expect(receipt.status).toBe("committed");
+    if (receipt.status !== "committed") return;
+    expect(receipt.replayed).toBe(false);
+    // Persisted note field-identical to the submitted note.
+    const loaded = await ctx.harness.ledger.load(receipt.noteRef);
+    expect(loaded.status).toBe("found");
+    if (loaded.status !== "found") return;
+    const snap = loaded.snapshot as { note: import("../../src/contracts/context-continuity.js").ExecutionNoteV1 };
+    expect(snap.note).toEqual(note);
+    // Idempotent replay.
+    const replay = await ctx.h.recordExecutionNote(buildRecordExecutionNoteCommand({
+      commandId: "p116-note-1",
+      projectId: A,
+      note,
+    }));
+    expect(replay.status).toBe("committed");
+    if (replay.status === "committed") expect(replay.replayed).toBe(true);
+  });
+
+  it("a note authored by a run NOT linked to the work -> run_not_in_work", async () => {
+    const ctx = await makeWorld();
+    await bindCoordWork(ctx, "p116-bind-w2", ctx.world.projectA.extraReplacementRun);
+    const note = buildExecutionNoteV1({
+      noteId: P116_NOTE_1,
+      workId: "work-p116-coord",
+      projectId: A,
+      runRef: ctx.world.projectA.workRun, // not linked (only extraReplacementRun was bound)
+      kind: "checkpoint",
+    });
+    const res = await ctx.h.recordExecutionNote(buildRecordExecutionNoteCommand({
+      commandId: "p116-note-foreign",
+      projectId: A,
+      note,
+    }));
+    expect(res.status).toBe("rejected");
+    if (res.status === "rejected") expect(res.code).toBe("run_not_in_work");
+  });
+
+  it("same noteId under another identity -> revision_conflict (immutable note)", async () => {
+    const ctx = await makeWorld();
+    await bindCoordWork(ctx, "p116-bind-w2", ctx.world.projectA.workRun);
+    await ctx.h.linkWorkRun(buildLinkWorkRunCommand({
+      commandId: "p116-link-w2",
+      projectId: A,
+      workId: "work-p116-coord",
+      workspaceId: WSPACE,
+      runRef: ctx.world.projectA.extraReplacementRun,
+      expectedRevision: 1,
+    }));
+    const note = buildExecutionNoteV1({
+      noteId: P116_NOTE_1,
+      workId: "work-p116-coord",
+      projectId: A,
+      runRef: ctx.world.projectA.workRun,
+      kind: "checkpoint",
+    });
+    await ctx.h.recordExecutionNote(buildRecordExecutionNoteCommand({ commandId: "p116-note-1", projectId: A, note }));
+    const other = buildExecutionNoteV1({
+      noteId: P116_NOTE_1,
+      workId: "work-p116-coord",
+      projectId: A,
+      runRef: ctx.world.projectA.extraReplacementRun,
+      kind: "checkpoint",
+      summary: "另一个身份重写同一 noteId",
+    });
+    const res = await ctx.h.recordExecutionNote(buildRecordExecutionNoteCommand({
+      commandId: "p116-note-1-other",
+      projectId: A,
+      note: other,
+      idempotencyKey: "other-identity-key",
+    }));
+    expect(res.status).toBe("rejected");
+    if (res.status === "rejected") expect(res.code).toBe("revision_conflict");
+  });
+
+  it("records a continuation report (took_over / unsupported) for a bound work", async () => {
+    const ctx = await makeWorld();
+    await bindCoordWork(ctx, "p116-bind-w2", ctx.world.projectA.workRun);
+    const took = buildContextContinuationResultV1({
+      reportId: P116_REPORT_1,
+      workId: "work-p116-coord",
+      projectId: A,
+      requestedByRunRef: ctx.world.projectA.extraReplacementRun,
+      status: "took_over",
+      takeoverRunRef: ctx.world.projectA.extraReplacementRun,
+    });
+    const r1 = await ctx.h.recordContinuation(buildRecordContinuationCommand({
+      commandId: "p116-cont-1",
+      projectId: A,
+      result: took,
+    }));
+    expect(r1.status).toBe("committed");
+    if (r1.status !== "committed") return;
+    const unsupported = buildContextContinuationResultV1({
+      reportId: P116_REPORT_2,
+      workId: "work-p116-coord",
+      projectId: A,
+      status: "unsupported",
+      unsupportedCapabilities: ["session_restore"],
+    });
+    const r2 = await ctx.h.recordContinuation(buildRecordContinuationCommand({
+      commandId: "p116-cont-2",
+      projectId: A,
+      result: unsupported,
+    }));
+    expect(r2.status).toBe("committed");
+    if (r2.status !== "committed") return;
+    expect(r2.continuationRef).toBeTruthy();
+  });
+
+  it("records a continuation for a MISSING work -> not_found", async () => {
+    const ctx = await makeWorld();
+    const result = buildContextContinuationResultV1({
+      reportId: P116_REPORT_1,
+      workId: "work-never-bound",
+      projectId: A,
+      status: "took_over",
+    });
+    const res = await ctx.h.recordContinuation(buildRecordContinuationCommand({
+      commandId: "p116-cont-missing",
+      projectId: A,
+      result,
+    }));
+    expect(res.status).toBe("rejected");
+    if (res.status === "rejected") expect(res.code).toBe("not_found");
+  });
+});

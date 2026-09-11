@@ -1,0 +1,84 @@
+{
+  "trace": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-08",
+    "origin": "constructed-evaluator-selftest-only",
+    "observations": {
+      "attempts": [
+        {
+          "candidateDigest": "bad",
+          "checks": [
+            {
+              "result": "FAIL",
+              "ref": "f1",
+              "at": 1
+            }
+          ],
+          "reviewRuns": [],
+          "phase": "verifying",
+          "claims": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "candidateDigest": "fixed",
+          "checks": [
+            {
+              "result": "PASS",
+              "ref": "p1",
+              "at": 3
+            }
+          ],
+          "writerRun": "w",
+          "reviewRuns": [
+            {
+              "runId": "r",
+              "at": 4,
+              "candidateDigest": "fixed"
+            }
+          ]
+        }
+      ],
+      "preservedEvidenceRefs": [],
+      "reduction": {
+        "author": "Control",
+        "candidateDigest": "fixed",
+        "phase": "COMPLETED",
+        "evidenceRefs": [
+          "p1"
+        ],
+        "at": 5
+      },
+      "configuration": "parallel-with-injection"
+    }
+  },
+  "expectedFailure": "rework.failure-preserved-and-new-evidence",
+  "result": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-08",
+    "layer": "normalized-trace-assertion-evaluator",
+    "inputOrigin": "constructed-evaluator-selftest-only",
+    "status": "FAIL",
+    "assertions": [
+      {
+        "id": "rework.failure-before-review",
+        "status": "PASS"
+      },
+      {
+        "id": "rework.failure-preserved-and-new-evidence",
+        "status": "FAIL"
+      },
+      {
+        "id": "rework.independent-review-after-pass",
+        "status": "PASS"
+      },
+      {
+        "id": "completion.control-current-evidence-only",
+        "status": "PASS"
+      }
+    ],
+    "productCapabilityResult": "NOT_RUN",
+    "note": "A normalized trace can only test evaluator logic here. A platform export adapter and independent raw-evidence authentication are NOT_PREPARED; constructed traces are never product evidence."
+  }
+}

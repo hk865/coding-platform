@@ -16,21 +16,15 @@
  *   - invalid command -> invalid; missing goal -> not_found.
  */
 import { describe, expect, it } from "vitest";
-import { createControlEngine } from "../../src/control/control-engine.js";
-import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
+import { createControlEngine } from "../../src/control/control-engine/control-engine.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
 import type { StateLedger, LedgerCommit, LedgerCommitReceipt } from "../../src/contracts/ledger.js";
-import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
-import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../../src/contracts/fixtures/goal-fixtures.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  COMPLETION_POLICY_FIXTURE_V1,
-  buildActivateCommand,
-  buildInstallCommand,
-  completionPolicyPinFor,
-  architectureBaselinePinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../contract-support/fixtures/goal-fixtures.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
 import {
   P106_BUDGET_V1,
   P106_DECLARED_PERMISSIONS_V1,
@@ -44,8 +38,8 @@ import {
   buildRecordHandoffCommand,
   buildClaimReplacementCommand,
   p106PlanRef,
-} from "../../src/contracts/fixtures/handoff-fixtures.js";
-import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
+} from "../contract-support/fixtures/handoff-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
 import {
   buildDispatchClaimCommand,
   buildDispatchStartCommand,
@@ -54,12 +48,12 @@ import {
   buildManifestFixture,
   rebaseScriptForRun,
   FAKE_RUNTIME_SCRIPT_CRASHED_V1,
-} from "../../src/contracts/fixtures/dispatch-fixtures.js";
+} from "../../src/fixtures/dispatch-fixtures.js";
 import type { InstallArchitectureBaselineRevisionCommand, InstallCompletionPolicyRevisionCommand } from "../../src/contracts/governance.js";
 import { runRefFor, taskAttemptRefFor, taskLeaseRefFor, dispatchOutboxRefFor } from "../../src/contracts/dispatch.js";
 import { handoffPacketRefFor, replacementAttemptRefFor } from "../../src/contracts/handoff.js";
 import { artifactBodyDigest, type ArtifactRef } from "../../src/contracts/artifact.js";
-import { buildReplacementClaimLedgerCommit } from "../../src/contracts/fixtures/handoff-fixtures.js";
+import { buildReplacementClaimLedgerCommit } from "../../src/control/control-engine/records/handoff.js";
 import type { ClaimReplacementCommand } from "../../src/contracts/handoff.js";
 import type { TaskLeaseSnapshot } from "../../src/contracts/dispatch.js";
 

@@ -1,0 +1,1 @@
+{"spec":{"projectId":"audit","goalId":"audit","runId":"audit-review","workspaceId":"audit","taskId":"audit"},"status":"failed","events":[{"eventType":"run_crashed","sequence":1}],"trace":[],"usage":[],"sessionId":"audit-session","error":"prestart"}

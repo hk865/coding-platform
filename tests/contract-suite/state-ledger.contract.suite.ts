@@ -8,14 +8,14 @@ import { describe, expect, it } from "vitest";
 import type { LedgerCommit, LedgerCommitReceipt, StateLedger } from "../../src/contracts/ledger.js";
 import { seqOfCommitCursor } from "../../src/contracts/ledger.js";
 import type { CommandFingerprint, CommitCursor } from "../../src/contracts/command-event.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
 import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
   buildCreateGoalCommand,
   buildGoalCreateLedgerCommit,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 
 export interface StateLedgerContractContext {
   /** fresh empty ledger per call */

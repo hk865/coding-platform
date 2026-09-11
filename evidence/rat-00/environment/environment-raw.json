@@ -1,0 +1,253 @@
+{
+  "generatedAt": "2026-09-07T09:49:59.476205+00:00",
+  "versions": {
+    "node": {
+      "argv": [
+        "node",
+        "--version"
+      ],
+      "exitCode": 0,
+      "stdout": "v24.18.0",
+      "stderr": ""
+    },
+    "npm": {
+      "argv": [
+        "npm",
+        "--version"
+      ],
+      "exitCode": 0,
+      "stdout": "11.16.0",
+      "stderr": ""
+    },
+    "pnpm": {
+      "argv": [
+        "pnpm",
+        "--version"
+      ],
+      "exitCode": 0,
+      "stdout": "11.21.0",
+      "stderr": ""
+    },
+    "python": {
+      "argv": [
+        "python3",
+        "--version"
+      ],
+      "exitCode": 0,
+      "stdout": "Python 3.12.3",
+      "stderr": ""
+    },
+    "git": {
+      "argv": [
+        "git",
+        "--version"
+      ],
+      "exitCode": 0,
+      "stdout": "git version 2.43.0",
+      "stderr": ""
+    },
+    "bubblewrap": {
+      "argv": [
+        "/home/han001/projects/agents/agent_platform/.local/toolchains/bwrap/usr/bin/bwrap",
+        "--version"
+      ],
+      "exitCode": 0,
+      "stdout": "bubblewrap 0.9.0",
+      "stderr": ""
+    }
+  },
+  "toolPaths": {
+    "node": {
+      "path": "/home/han001/projects/agents/agent_platform/.local/toolchains/node-v24.18.0-linux-x64/bin/node",
+      "resolved": "/home/han001/projects/agents/agent_platform/.local/toolchains/node-v24.18.0-linux-x64/bin/node"
+    },
+    "npm": {
+      "path": "/home/han001/projects/agents/agent_platform/.local/toolchains/node-v24.18.0-linux-x64/bin/npm",
+      "resolved": "/home/han001/projects/agents/agent_platform/.local/toolchains/node-v24.18.0-linux-x64/lib/node_modules/npm/bin/npm-cli.js"
+    },
+    "pnpm": {
+      "path": "/home/han001/projects/agents/agent_platform/.local/toolchains/node-v24.18.0-linux-x64/bin/pnpm",
+      "resolved": "/home/han001/projects/agents/agent_platform/.local/toolchains/node-v24.18.0-linux-x64/lib/node_modules/corepack/dist/pnpm.js"
+    },
+    "python3": {
+      "path": "/usr/bin/python3",
+      "resolved": "/usr/bin/python3.12"
+    },
+    "git": {
+      "path": "/usr/bin/git",
+      "resolved": "/usr/bin/git"
+    },
+    "bwrap": {
+      "path": "/home/han001/projects/agents/agent_platform/.local/toolchains/bwrap/usr/bin/bwrap",
+      "resolved": "/home/han001/projects/agents/agent_platform/.local/toolchains/bwrap/usr/bin/bwrap"
+    },
+    "docker": {
+      "path": null,
+      "resolved": null
+    },
+    "docker.exe": {
+      "path": null,
+      "resolved": null
+    },
+    "podman": {
+      "path": null,
+      "resolved": null
+    },
+    "hf": {
+      "path": null,
+      "resolved": null
+    },
+    "huggingface-cli": {
+      "path": null,
+      "resolved": null
+    },
+    "uv": {
+      "path": null,
+      "resolved": null
+    },
+    "tb": {
+      "path": null,
+      "resolved": null
+    },
+    "harbor": {
+      "path": null,
+      "resolved": null
+    }
+  },
+  "pythonPackages": {
+    "repoqa": {
+      "installed": false,
+      "version": null
+    },
+    "swebench": {
+      "installed": false,
+      "version": null
+    },
+    "harbor": {
+      "installed": false,
+      "version": null
+    },
+    "terminal-bench": {
+      "installed": false,
+      "version": null
+    },
+    "huggingface-hub": {
+      "installed": false,
+      "version": null
+    },
+    "datasets": {
+      "installed": false,
+      "version": null
+    },
+    "tree-sitter": {
+      "installed": false,
+      "version": null
+    },
+    "tree-sitter-languages": {
+      "installed": false,
+      "version": null
+    },
+    "tiktoken": {
+      "installed": false,
+      "version": null
+    },
+    "transformers": {
+      "installed": false,
+      "version": null
+    },
+    "pytest": {
+      "installed": true,
+      "version": "7.4.4"
+    }
+  },
+  "system": {
+    "uname": {
+      "argv": [
+        "uname",
+        "-a"
+      ],
+      "exitCode": 0,
+      "stdout": "Linux han01 6.18.33.1-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Fri Jun  5 01:12:21 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux",
+      "stderr": ""
+    },
+    "architecture": "x86_64",
+    "cpuCount": 24,
+    "memoryKiB": {
+      "MemTotal": 16221872,
+      "MemAvailable": 11612820
+    },
+    "disk": {
+      "/home/han001/projects/agents/agent_platform": {
+        "totalBytes": 1081101176832,
+        "usedBytes": 47557832704,
+        "freeBytes": 978550988800
+      },
+      "/mnt/d/1.project/Software/agent_learn": {
+        "totalBytes": 700458201088,
+        "usedBytes": 177004040192,
+        "freeBytes": 523454160896
+      }
+    },
+    "namespaceSettings": {
+      "/proc/sys/user/max_user_namespaces": "63323"
+    },
+    "dockerSockets": {
+      "/var/run/docker.sock": false,
+      "/run/user/1000/docker.sock": false
+    },
+    "bwrapLibraries": {
+      "argv": [
+        "ldd",
+        "/home/han001/projects/agents/agent_platform/.local/toolchains/bwrap/usr/bin/bwrap"
+      ],
+      "exitCode": 0,
+      "stdout": "linux-vdso.so.1 (0x00007783746d7000)\n\tlibselinux.so.1 => /lib/x86_64-linux-gnu/libselinux.so.1 (0x0000778374674000)\n\tlibcap.so.2 => /lib/x86_64-linux-gnu/libcap.so.2 (0x0000778374667000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000778374400000)\n\tlibpcre2-8.so.0 => /lib/x86_64-linux-gnu/libpcre2-8.so.0 (0x0000778374366000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007783746d9000)",
+      "stderr": ""
+    }
+  },
+  "dockerImages": {
+    "status": "BLOCKED",
+    "reason": "Docker command is absent; image inventory is unknown, not an empty verified inventory."
+  },
+  "toolchainIntegrity": {
+    "node-v24.18.0-linux-x64": {
+      "sourcePath": "/home/han001/projects/agents/coding-agent/.tooling/node-v24.18.0-linux-x64",
+      "destinationPath": "/home/han001/projects/agents/agent_platform/.local/toolchains/node-v24.18.0-linux-x64",
+      "source": {
+        "sha256": "9becfd5eaf1d8fc6d81a2912d3f012c20b082bc8da5e8cea708f583addb06399",
+        "entries": 4710,
+        "algorithm": "sorted relative path NUL sha256(content) or link:target LF"
+      },
+      "destination": {
+        "sha256": "9becfd5eaf1d8fc6d81a2912d3f012c20b082bc8da5e8cea708f583addb06399",
+        "entries": 4710,
+        "algorithm": "sorted relative path NUL sha256(content) or link:target LF"
+      },
+      "equal": true
+    },
+    "bwrap": {
+      "sourcePath": "/home/han001/projects/agents/coding-agent/.tooling/bwrap",
+      "destinationPath": "/home/han001/projects/agents/agent_platform/.local/toolchains/bwrap",
+      "source": {
+        "sha256": "986c03819be6e273870fb0d8e0e0ecbd2069f2141bdc5164179657ecf3668436",
+        "entries": 14,
+        "algorithm": "sorted relative path NUL sha256(content) or link:target LF"
+      },
+      "destination": {
+        "sha256": "986c03819be6e273870fb0d8e0e0ecbd2069f2141bdc5164179657ecf3668436",
+        "entries": 14,
+        "algorithm": "sorted relative path NUL sha256(content) or link:target LF"
+      },
+      "equal": true
+    },
+    "corepack-cache": {
+      "destination": {
+        "sha256": "a17a4286d227eea016f66cde23d00ba9bbb883c155048cf5766c6023e7e4e6c9",
+        "entries": 1353,
+        "algorithm": "sorted relative path NUL sha256(content) or link:target LF"
+      },
+      "sourcePath": "/home/han001/.cache/node/corepack",
+      "selectedVersion": "11.21.0"
+    }
+  }
+}

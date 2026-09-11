@@ -1,0 +1,189 @@
+{
+  "capturedAtUtc": "2026-09-09T07:39:55.4564560Z",
+  "head": "65d270d75f3088d7baa4ef3a7c80fdaa62c3a38d",
+  "status": "finite_closeout_complete_implementation_frozen",
+  "overallProductComplete": false,
+  "childAgents": [
+    "a1_source_applicability: completed and stopped",
+    "a3_python: completed and stopped",
+    "a3_cpp: completed and stopped"
+  ],
+  "checks": [
+    {
+      "failed": 0,
+      "seconds": 18.55,
+      "passed": 39,
+      "files": 10,
+      "name": "A1 final",
+      "log": "a1-closeout-tests.log"
+    },
+    {
+      "failed": 0,
+      "seconds": 46.79,
+      "passed": 12,
+      "files": 1,
+      "name": "Python final",
+      "log": "a3-python-tests-final.log"
+    },
+    {
+      "failed": 0,
+      "seconds": 15.32,
+      "passed": 17,
+      "files": 2,
+      "name": "C++ and source tools final",
+      "log": "a3-cpp-tests-5.log"
+    },
+    {
+      "failed": 0,
+      "seconds": 23.03,
+      "passed": 6,
+      "files": 3,
+      "name": "Workspaces final",
+      "log": "closeout-workspaces-tests.log"
+    },
+    {
+      "failed": 3,
+      "seconds": 95.97,
+      "passed": 122,
+      "files": 21,
+      "name": "Consumer initial run",
+      "log": "closeout-consumers-tests.log"
+    },
+    {
+      "failed": 0,
+      "seconds": 33.68,
+      "passed": 4,
+      "files": 1,
+      "name": "GUI focused after assertion correction",
+      "log": "closeout-gui-tests-final.log"
+    }
+  ],
+  "staticAndBuildExitCodes": {
+    "uiBuild": 0,
+    "appCompilationAndLegacyCopy": 0,
+    "rootTypes": 0,
+    "finalRootTypes": 0,
+    "uiTypes": 0,
+    "docsCheck": 0
+  },
+  "knownConsumerRegressions": [
+    "Exploration dependency chain: digest-only grant and absent app sourceApplicability injection; downstream outcome_unknown.",
+    "Applied predecessor review note inheritance: same current-source consumer gap."
+  ],
+  "limits": [
+    "Original full product obligations remain incomplete.",
+    "No external real model or FeatureBench execution in this round.",
+    "No fresh browser acceptance after final edits.",
+    "Existing vendor kernel output reused; kernel not rebuilt.",
+    "No whole-repository test pass claimed; consumer run still has two unresolved failures after focused GUI repair.",
+    "All prior uncommitted work retained; no git commit, reset, push or document deletion."
+  ],
+  "nextStep": "Repair responsibility and interface alignment within the existing 12 Modules, fix current-source consumers, then resume remaining core features.",
+  "evidence": [
+    {
+      "file": "a1-closeout-tests.log",
+      "bytes": 2485,
+      "sha256": "c3d8bc48827053bb7faace7366c1c7a2339b51824612043554975ebc67764df7"
+    },
+    {
+      "file": "a1-closeout-types.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "a1-closeout.md",
+      "bytes": 7672,
+      "sha256": "7d718e905d50ff77c79b86412e82ab93285837de22a58594f812bd703206c7ca"
+    },
+    {
+      "file": "a1-closeout-sha256.json",
+      "bytes": 2631,
+      "sha256": "df7d06a47b73a6e4365afadd26cf482d2392c14c4861a3868007f4ef25b7c20d"
+    },
+    {
+      "file": "a3-python-tests-final.log",
+      "bytes": 2064,
+      "sha256": "8fc3f93dc952c670901aa1727c130e172e0883630e1ff4172c571655b16c2396"
+    },
+    {
+      "file": "a3-python-final.md",
+      "bytes": 3992,
+      "sha256": "42e5fe48db383fa15dc9d71b77e6b1e9b05d151e5bff34ac709a604777664226"
+    },
+    {
+      "file": "a3-python-final-sha256.json",
+      "bytes": 1135,
+      "sha256": "d5b447c03989c25f34d662cda4c3f174816150d5e43ad1ca8bdcb0cd2162781e"
+    },
+    {
+      "file": "a3-cpp-tests-5.log",
+      "bytes": 1216,
+      "sha256": "0c615bedf34a9386806d15e30916a39e1a8430e1b45d01f9bf20ede8328dd6a0"
+    },
+    {
+      "file": "a3-cpp-final.json",
+      "bytes": 4998,
+      "sha256": "2149376b5bf936c66510e1fa57fb4c368aaea974dc80480f359a1c6d81036c8a"
+    },
+    {
+      "file": "closeout-workspaces-tests.log",
+      "bytes": 1401,
+      "sha256": "d2462e14c38f810c75daa997ef6b4c005abc31d8b50f29333e4ff02cd78c971f"
+    },
+    {
+      "file": "closeout-consumers-tests.log",
+      "bytes": 87358,
+      "sha256": "159c198bd7c859d99adf004a73692b779ac2a2e36de1e09b5e7ccf63ceacd67b"
+    },
+    {
+      "file": "closeout-gui-tests-final.log",
+      "bytes": 1051,
+      "sha256": "b94b2d18a27c3a23d57e84664b6ebd916e2d9236d8f5f4ac832ac7632529c4b5"
+    },
+    {
+      "file": "closeout-types.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "closeout-types-final.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "closeout-ui-types.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "closeout-app-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "closeout-ui-build.log",
+      "bytes": 826,
+      "sha256": "9d9974fbcc16e439d2796455a25b9f6cc3fe2a2311091760244b0c3d2533da0a"
+    },
+    {
+      "file": "closeout-docs-check.log",
+      "bytes": 790,
+      "sha256": "17d741a7c14529eb566de8f33e1bcc4bf1afe0dedb1ae3c3c91a8189193d50f5"
+    },
+    {
+      "file": "closeout-source-sha256.json",
+      "bytes": 100172,
+      "sha256": "c3f0d29387eaf4aa08efede01592daac5cb6c48fd330e703de4c992c7c1a5e77"
+    },
+    {
+      "file": "closeout-product-status.txt",
+      "bytes": 5658,
+      "sha256": "b5756a7c919de9012bd68eefab82ada4d1b9d3198283a1fd28e53922d86f23a4"
+    },
+    {
+      "file": "closeout-docs-status.txt",
+      "bytes": 6464,
+      "sha256": "cb18bdc39ae226bbb56c4cf18662efba285c484e94c44ceee92a32d942d3f461"
+    }
+  ]
+}

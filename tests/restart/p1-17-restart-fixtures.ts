@@ -1,10 +1,11 @@
+import { classifyRestartProbeError } from "./readiness-probe.js";
 /** P1-17 restart-path fixtures + readiness probe (selection from persisted facts survives reopen). */
 import { expect } from "vitest";
 import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import { toP1_17Harness, runP117SelectionScenario, type P1_17HarnessLike, type P1_17TestHarness, type P117SelectionScenarioResult } from "../contract-suite/p1-17-harness.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
-import { P117_WORKSPACE } from "../../src/contracts/fixtures/completed-work-fixtures.js";
+import { P117_WORKSPACE } from "../contract-support/fixtures/completed-work-fixtures.js";
 import { P108_PROJECT_A } from "../contract-suite/p1-08-harness.js";
 
 export async function isP117Ready(): Promise<boolean> {
@@ -16,8 +17,8 @@ export async function isP117Ready(): Promise<boolean> {
     } finally {
       await h.cleanup().catch(() => undefined);
     }
-  } catch {
-    return false;
+  } catch (error) {
+    return classifyRestartProbeError(error);
   }
 }
 

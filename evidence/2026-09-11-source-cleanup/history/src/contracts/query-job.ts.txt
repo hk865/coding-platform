@@ -1,0 +1,361 @@
+/**
+ * P1-09 Non-blocking QueryJob contracts — QueryJobIntent / QueryJob /
+ * QueryRun / QueryJobAnswer + ports (first consumer freeze of
+ * HumanCollaboration.QueryJobPort, DispatchEngine.QueryJobDrivePort +
+ * SnapshotPort, ContextCompiler.QueryContextPort, WorkerRuntime.ReadOnlyQueryPort
+ * + PublicSnapshotPort).
+ *
+ * Authority:
+ *   - dev_docs/planning/proposed/P1-foundation/tickets/09-non-blocking-query-job.md
+ *     (Acceptance incl. 2026-09-06 extensions: multi-round bounded clarification;
+ *      snapshot unsupported/stale explicit; read-only)
+ *   - dev_docs/interfaces/runtime-collaboration.md (three query paths; QueryJob
+ *      never touches the source run lease/context/budget)
+ *   - dev_docs/verification/consultant-p109-query-run-path.md + integrator
+ *     ruling: QueryRun IS a P1-09 versioned aggregate (P1-03 Run aggregate
+ *     untouched — its snapshot requires a TaskAttempt anchor); execution
+ *     reuses the FakeRuntime compose pattern via a NEW ReadOnlyQueryPort.
+ *
+ * FROZEN semantics:
+ *   - SubmitQueryJob is desired-state-first: it atomically records QueryJob
+ *     (pending) + QueryRun (pending); the persisted pending pair is the
+ *     query dispatch intent, reconstructed from QueryJobSubmitted events;
+ *     driveQuery assembles a BOUNDED read-only context (never a transcript),
+ *     starts the read-only run and only then records the answer.
+ *   - QueryJob NEVER touches the source worker: separate run id, separate
+ *     budget, read-only permission; no write to the source lease/Context or
+ *     the target workspace (workspaceCapability read-only).
+ *   - Multi-round is bounded (maxRounds <= 4, roundIndex increments; a
+ *     follow-up may reference the prior applicable answer).
+ *   - Answers are sourced + revision-bound; stale marking is explicit
+ *     (stale_answer) — a stale answer never presents as current.
+ *   - Timeout / gap / failed / stale are OBSERVABLE closes; they never change
+ *     the source Task/Goal phase.
+ */
+import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
+import { canonicalJson, sha256Hex } from "./fingerprint.js";
+import type { RunRef } from "./dispatch.js";
+import type { ArtifactRef } from "./artifact.js";
+import type { RoleBindingRefV1 } from "./dispatch.js";
+import { validateRuntimeBudget } from './runtime-budget.js';
+import { validMaterialSourcePin } from './material-access.js';
+
+export const QUERY_JOB_MAX_FOCUS_REFS = 16;
+export const QUERY_JOB_QUESTION_MAX_BYTES = 4096;
+export const QUERY_JOB_MAX_ROUNDS = 4;
+export const QUERY_JOB_ANSWER_MAX_BYTES = 16 * 1024;
+export const QUERY_JOB_MAX_SOURCES = 64;
+export const QUERY_JOB_CONTEXT_BUNDLE_MAX_BYTES = 256 * 1024;
+
+export type QueryTaskRef = { aggregateType: "Task"; projectId: string; goalId: string; taskId: string };
+export type TaskRef = QueryTaskRef;
+export type QueryJobRef = { aggregateType: "QueryJob"; projectId: string; workspaceId: string; queryJobId: string };
+export type QueryRunRef = { aggregateType: "QueryRun"; projectId: string; workspaceId: string; queryJobId: string; runId: string };
+export type QueryJobAnswerRef = { aggregateType: "QueryJobAnswer"; projectId: string; workspaceId: string; queryJobId: string; answerId: string };
+
+export function queryJobRefFor(projectId: string, workspaceId: string, queryJobId: string): QueryJobRef {
+  return { aggregateType: "QueryJob", projectId, workspaceId, queryJobId };
+}
+export function queryRunRefFor(projectId: string, workspaceId: string, queryJobId: string, runId: string): QueryRunRef {
+  return { aggregateType: "QueryRun", projectId, workspaceId, queryJobId, runId };
+}
+export function queryJobAnswerRefFor(projectId: string, workspaceId: string, queryJobId: string, answerId: string): QueryJobAnswerRef {
+  return { aggregateType: "QueryJobAnswer", projectId, workspaceId, queryJobId, answerId };
+}
+
+// ------------------------------------------------------------------------ //
+// Value types                                                                 //
+// ------------------------------------------------------------------------ //
+
+export type QueryJobIntentV1 = {
+  schemaVersion: 1;
+  intentId: string;
+  projectId: string;
+  workspaceId: string;
+  goalId: string | null;
+  question: string;
+  focusTaskRefs: TaskRef[];
+  budget: { maxTokens: number; deadline: string | null };
+  multiTurn: { maxRounds: number };
+  correlationId: string;
+  /** Optional real read-only role work. Absence retains the legacy query contract. */
+  execution?: {
+    kind: 'semantic_query' | 'initial_coordination' | 'execution_coordination';
+    feedback?: import('./execution-feedback.js').FeedbackSource;
+    roleBinding: RoleBindingRefV1;
+    runtimeBudget: import('./runtime-budget.js').RuntimeBudget;
+    implementationAuthorization?: { requestId: string; writeScope: ['*']; instruction: string; referenceContext?: string };
+  };
+};
+
+export type QueryJobStatus = "pending" | "running" | "answered" | "closed";
+export function validQueryExecution(value: QueryJobIntentV1['execution']): boolean {
+  if (value === undefined) return true;
+  if (!value || !['semantic_query', 'initial_coordination', 'execution_coordination'].includes(value.kind)) return false;
+  if ((value.kind === 'execution_coordination') !== !!value.feedback) return false;
+  if (value.feedback && (!value.feedback.runRef || value.feedback.runRef.aggregateType !== 'Run' || !value.feedback.taskId ||
+    !value.feedback.planRef || value.feedback.planRef.aggregateType !== 'PlanRevision' || !Number.isSafeInteger(value.feedback.workspaceRevision) ||
+    value.feedback.workspaceRevision < 1 || !validMaterialSourcePin(value.feedback.sourcePin) || !value.feedback.reportRef || !/^[a-f0-9]{64}$/.test(value.feedback.reportRef.digest))) return false;
+  try { if (canonicalJson(validateRuntimeBudget(value.runtimeBudget)) !== canonicalJson(value.runtimeBudget)) return false; } catch { return false; }
+  const authorization = value.implementationAuthorization;
+  if (authorization?.referenceContext !== undefined && (typeof authorization.referenceContext !== 'string' || Buffer.byteLength(authorization.referenceContext) > 131072)) return false;
+  if (authorization && (value.kind !== 'initial_coordination' || typeof authorization.requestId !== 'string' || !/^[a-zA-Z0-9-]{1,100}$/.test(authorization.requestId) || canonicalJson(authorization.writeScope) !== '["*"]' || typeof authorization.instruction !== 'string' || !authorization.instruction.trim() || authorization.instruction.length > 4096)) return false;
+  const role = value.roleBinding;
+  return !!role && role.schemaVersion === 1 && Number.isSafeInteger(role.bindingVersion) && role.bindingVersion > 0 &&
+    [role.bindingId, role.templateId, role.templateRevision, role.policyRevision].every(field => typeof field === 'string' && field.length > 0 && field.length <= 256);
+}
+export type QueryRunStatus = "pending" | "running" | "answered" | "closed";
+
+export type QueryJobV1 = {
+  schemaVersion: 1;
+  queryJobId: string;
+  projectId: string;
+  workspaceId: string;
+  goalId: string | null;
+  intent: QueryJobIntentV1;
+  status: QueryJobStatus;
+  runRef: QueryRunRef | null;
+  answerRefs: QueryJobAnswerRef[];
+  closeReason: { code: "timeout" | "gap" | "failed" | "stale_source" | "cancelled"; message: string } | null;
+  submittedAt: string;
+  updatedAt: string;
+};
+
+export type QueryJobSnapshot = { ref: QueryJobRef; revision: number; schemaVersion: 1; job: QueryJobV1 };
+
+export type QueryRunV1 = {
+  schemaVersion: 1;
+  queryJobRef: QueryJobRef;
+  /** The QueryRun identity runId (same as QueryRunRef.runId). */
+  runId: string;
+  status: QueryRunStatus;
+  startedAt: string | null;
+  endedAt: string | null;
+  outcome: "answered" | "timeout" | "gap" | "failed" | null;
+};
+
+export type QueryRunSnapshot = { ref: QueryRunRef; revision: number; schemaVersion: 1; run: QueryRunV1 };
+
+export type QueryJobAnswerV1 = {
+  schemaVersion: 1;
+  answerId: string;
+  queryJobRef: QueryJobRef;
+  runRef: QueryRunRef;
+  roundIndex: number;
+  answer: string;
+  sources: { kind: string; refKey: string; version: string | null; label: string | null }[];
+  /** A follow-up answer that references a prior answer carries the prior ref. */
+  followsAnswerRef: QueryJobAnswerRef | null;
+  stale: boolean;
+  staleReason: string | null;
+  answeredAt: string;
+  bodyRef: ArtifactRef;
+};
+
+export type QueryJobAnswerSnapshot = { ref: QueryJobAnswerRef; revision: 1; schemaVersion: 1; answer: QueryJobAnswerV1 };
+
+// ------------------------------------------------------------------------ //
+// Commands / receipts                                                       //
+// ------------------------------------------------------------------------ //
+
+export type SubmitQueryJobCommand = {
+  commandId: string;
+  commandType: "SubmitQueryJob";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  aggregateId: string;
+  expectedRevision: 0;
+  correlationId: string;
+  submittedAt: string;
+  payload: { intent: QueryJobIntentV1; runId: string };
+};
+
+export type SubmitQueryJobRejectionCode = "invalid" | "not_found" | "duplicate" | "revision_conflict" | "idempotency_conflict" | "unavailable";
+export type SubmitQueryJobReceipt =
+  | { status: "committed"; commandId: string; replayed: boolean; queryJobRef: QueryJobRef; eventIds: string[]; commitCursor: CommitCursor }
+  | { status: "rejected"; commandId: string; code: SubmitQueryJobRejectionCode; issues?: string[] };
+
+export type RecordQueryAnswerCommand = {
+  commandId: string;
+  commandType: "RecordQueryAnswer";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  aggregateId: string;
+  expectedRevision: number;
+  correlationId: string;
+  submittedAt: string;
+  payload: { answer: QueryJobAnswerV1 };
+};
+
+export type RecordQueryAnswerRejectionCode = "invalid" | "not_found" | "run_not_answered" | "rounds_exceeded" | "revision_conflict" | "idempotency_conflict" | "unavailable";
+export type RecordQueryAnswerReceipt =
+  | { status: "committed"; commandId: string; replayed: boolean; answerRef: QueryJobAnswerRef; revision: number; eventIds: string[]; commitCursor: CommitCursor }
+  | { status: "rejected"; commandId: string; code: RecordQueryAnswerRejectionCode; issues?: string[] };
+
+export type CloseQueryJobCommand = {
+  commandId: string;
+  commandType: "CloseQueryJob";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  aggregateId: string;
+  expectedRevision: number;
+  correlationId: string;
+  submittedAt: string;
+  payload: { reason: { code: "timeout" | "gap" | "failed" | "stale_source" | "cancelled"; message: string }; jobRef: QueryJobRef; runRef: QueryRunRef };
+};
+
+export type CloseQueryJobRejectionCode = "invalid" | "not_found" | "already_closed" | "revision_conflict" | "idempotency_conflict" | "unavailable";
+export type CloseQueryJobReceipt =
+  | { status: "committed"; commandId: string; replayed: boolean; revision: number; eventIds: string[]; commitCursor: CommitCursor }
+  | { status: "rejected"; commandId: string; code: CloseQueryJobRejectionCode; issues?: string[] };
+
+// ------------------------------------------------------------------------ //
+// Events (P1-09 v1)                                                         //
+// ------------------------------------------------------------------------ //
+
+export type QueryJobSubmittedEvent = {
+  eventId: string; eventType: "QueryJobSubmitted"; schemaVersion: 1;
+  projectId: string; workspaceId: string; aggregateType: "QueryJob"; aggregateId: string; aggregateRevision: 1;
+  causationId: string; correlationId: string; idempotencyKey: string; actor: ActorRef; occurredAt: string;
+  payload: { job: QueryJobV1 };
+};
+
+export type QueryRunStartedEvent = {
+  eventId: string; eventType: "QueryRunStarted"; schemaVersion: 1;
+  projectId: string; workspaceId: string; aggregateType: "QueryRun"; aggregateId: string; aggregateRevision: number;
+  causationId: string; correlationId: string; idempotencyKey: string; actor: ActorRef; occurredAt: string;
+  payload: { run: QueryRunV1; job?: QueryJobV1 };
+};
+
+export type QueryJobAnswerRecordedEvent = {
+  eventId: string; eventType: "QueryJobAnswerRecorded"; schemaVersion: 1;
+  projectId: string; workspaceId: string; aggregateType: "QueryJob"; aggregateId: string; aggregateRevision: number;
+  causationId: string; correlationId: string; idempotencyKey: string; actor: ActorRef; occurredAt: string;
+  payload: { answer: QueryJobAnswerV1; job: QueryJobV1; run: QueryRunV1 };
+};
+
+export type QueryJobClosedEvent = {
+  eventId: string; eventType: "QueryJobClosed"; schemaVersion: 1;
+  projectId: string; workspaceId: string; aggregateType: "QueryJob"; aggregateId: string; aggregateRevision: number;
+  causationId: string; correlationId: string; idempotencyKey: string; actor: ActorRef; occurredAt: string;
+  payload: { reason: { code: "timeout" | "gap" | "failed" | "stale_source" | "cancelled"; message: string }; job: QueryJobV1; run: QueryRunV1 };
+};
+
+// ------------------------------------------------------------------------ //
+// Fingerprints                                                              //
+// ------------------------------------------------------------------------ //
+
+export function submitQueryJobFingerprint(command: SubmitQueryJobCommand): CommandFingerprint {
+  return sha256Hex(canonicalJson({ schemaVersion: 1, commandType: command.commandType, projectId: command.identity.projectId, aggregateId: command.aggregateId, expectedRevision: command.expectedRevision, payload: { intent: command.payload.intent, runId: command.payload.runId } })) as CommandFingerprint;
+}
+export function recordQueryAnswerFingerprint(command: RecordQueryAnswerCommand): CommandFingerprint {
+  return sha256Hex(canonicalJson({ schemaVersion: 1, commandType: command.commandType, projectId: command.identity.projectId, aggregateId: command.aggregateId, expectedRevision: command.expectedRevision, payload: { answer: command.payload.answer } })) as CommandFingerprint;
+}
+export function closeQueryJobFingerprint(command: CloseQueryJobCommand): CommandFingerprint {
+  return sha256Hex(canonicalJson({ schemaVersion: 1, commandType: command.commandType, projectId: command.identity.projectId, aggregateId: command.aggregateId, expectedRevision: command.expectedRevision, payload: command.payload })) as CommandFingerprint;
+}
+
+// ------------------------------------------------------------------------ //
+// Query context port (ContextCompiler)                                      //
+// ------------------------------------------------------------------------ //
+
+export type QueryContextRequestV1 = {
+  schemaVersion: 1;
+  requestId: string;
+  queryJobRef: QueryJobRef;
+  runRef: QueryRunRef;
+  goalId: string | null;
+  question: string;
+  focusTaskRefs: TaskRef[];
+  requestedByRunRef: RunRef | null;
+  roleBindingRef: RoleBindingRefV1;
+  declaredPermissions: { tools: string[]; writeScope: string[] };
+  budget: { maxBundleBytes: number };
+};
+
+export type QueryContextResultV1 =
+  | { status: "ready"; bundleRef: ArtifactRef; manifest: { queryJobRef: QueryJobRef; selectedSources: { kind: string; refKey: string; version: string | null }[]; truncated: string[]; totalBytes: number; freshnessCursor: CommitCursor | null; noTranscript: true } }
+  | { status: "needs_material"; gaps: { code: "focus_not_found" | "vault_unavailable" | "budget_exhausted" | "stale_versions"; message: string }[] }
+  | { status: "rejected"; code: "invalid_request" | "forbidden_tool_or_scope" | "work_not_found" | "unavailable"; message: string };
+
+export interface QueryContextPort {
+  assembleQueryContext(request: QueryContextRequestV1): Promise<QueryContextResultV1>;
+}
+
+// ------------------------------------------------------------------------ //
+// Read-only query port (WorkerRuntime)                                      //
+// ------------------------------------------------------------------------ //
+
+export type ReadOnlyQueryResultV1 = {
+  schemaVersion: 1;
+  runRef: QueryRunRef;
+  outcome: "answered" | "timeout" | "gap" | "failed";
+  answer: string | null;
+  sources: { kind: string; refKey: string; version: string | null }[];
+  message: string | null;
+  endedAt: string;
+};
+
+export interface ReadOnlyQueryPort {
+  /** Honest capability declaration (fake: read-only scripted run; no writes). */
+  capabilities(request: { runRef: QueryRunRef }): { supported: boolean; maxQuestionBytes: number; maxAnswerBytes: number; readOnly: true };
+  /** Start one bounded read-only query run (never touches source run/lease). */
+  startQuery(request: { runRef: QueryRunRef; bundleRef: ArtifactRef; question: string; budget: { maxTokens: number } }): Promise<ReadOnlyQueryResultV1>;
+}
+
+// ------------------------------------------------------------------------ //
+// Snapshot / PublicSnapshot ports (DispatchEngine / WorkerRuntime)          //
+// ------------------------------------------------------------------------ //
+
+export type PublicSnapshotQueryV1 = { schemaVersion: 1; projectId: string; workspaceId: string; runRef: RunRef | null };
+export type PublicSnapshotResultV1 =
+  | { status: "report"; report: { runRef: RunRef; summary: string; lastEventSeq: number | null; terminalOutcome: string | null; reportRef: ArtifactRef | null; at: string; noHiddenContextRead: true } }
+  | { status: "unsupported"; message: string }
+  | { status: "stale"; message: string }
+  | { status: "rejected"; code: "invalid_request" | "scope_forbidden" | "unavailable"; message: string };
+
+export interface PublicSnapshotPort {
+  capabilities(request: { runRef: RunRef | null }): { supported: boolean; snapshot: boolean; noHiddenContextRead: true };
+  snapshot(query: PublicSnapshotQueryV1): Promise<PublicSnapshotResultV1>;
+}
+
+export interface SnapshotPort {
+  /** DispatchEngine versioned face: reads only the runtime's PUBLIC report. */
+  snapshot(query: PublicSnapshotQueryV1): Promise<PublicSnapshotResultV1>;
+}
+
+// ------------------------------------------------------------------------ //
+// QueryJob drive port (DispatchEngine)                                      //
+// ------------------------------------------------------------------------ //
+
+export type QueryJobDriveTrigger = { reason: string; maxIntents?: number };
+export type QueryJobDriveResult = { scanned: number; started: number; answered: number; closed: number; failures: { intentId: string; code: string; message: string }[] };
+
+export interface QueryJobDrivePort {
+  driveQuery(trigger: QueryJobDriveTrigger): Promise<QueryJobDriveResult>;
+}
+
+// ------------------------------------------------------------------------ //
+// View                                                                            //
+// ------------------------------------------------------------------------ //
+
+export type QueryJobViewQuery = { projectId: string; workspaceId: string; queryJobId: string };
+export type QueryJobViewResult =
+  | { status: "ready"; job: QueryJobV1; run: QueryRunV1 | null; answers: QueryJobAnswerV1[]; currentAnswer: QueryJobAnswerV1 | null; stale: boolean; sourceCursor: CommitCursor }
+  | { status: "not_ready"; observedCursor: CommitCursor | null }
+  | { status: "not_found"; projectId: string; workspaceId: string; queryJobId: string };
+
+/** P1-09 recovery extension: durable claim before invoking the query runtime. */
+export type StartQueryJobCommand = {
+  schemaVersion: 1; commandType: "StartQueryJob"; commandId: string;
+  identity: CommandIdentity; aggregateId: string; expectedRevision: number;
+  correlationId: string; submittedAt: string;
+  payload: { jobRef: QueryJobRef; runRef: QueryRunRef };
+};
+export type StartQueryJobReceipt =
+  | { status: "committed"; commandId: string; replayed: boolean; revision: number; eventIds: string[]; commitCursor: CommitCursor }
+  | { status: "rejected"; commandId: string; code: "invalid" | "not_found" | "already_started" | "revision_conflict" | "idempotency_conflict" | "unavailable" };
+
+export function startQueryJobFingerprint(command: StartQueryJobCommand): CommandFingerprint {
+  return sha256Hex(canonicalJson({ schemaVersion: command.schemaVersion, commandType: command.commandType, projectId: command.identity.projectId, aggregateId: command.aggregateId, expectedRevision: command.expectedRevision, payload: command.payload })) as CommandFingerprint;
+}

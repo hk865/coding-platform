@@ -34,7 +34,7 @@ import {
   p113PolicyPin,
   P113_PROJECT,
   P113_PROJECT_B,
-} from "../../src/contracts/fixtures/architecture-evolution-policy-fixtures.js";
+} from "../../src/fixtures/architecture-evolution-policy-fixtures.js";
 import type {
   InstallArchitectureEvolutionPolicyRevisionCommand,
   ActivateProjectArchitectureEvolutionPolicyCommand,
@@ -42,12 +42,12 @@ import type {
 } from "../../src/contracts/architecture-evolution-policy.js";
 import { architectureEvolutionPolicyContentDigest } from "../../src/contracts/architecture-evolution-policy.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import { makeCommitCursor } from "../../src/contracts/ledger.js";
 import type { LedgerCommit, LedgerCommitReceipt } from "../../src/contracts/ledger.js";
-import { createControlEngine } from "../../src/control/control-engine.js";
-import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
-import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
+import { createControlEngine } from "../../src/control/control-engine/control-engine.js";
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
 
 const BOOT_DEPS = {
   commandId: "cmd-boot",

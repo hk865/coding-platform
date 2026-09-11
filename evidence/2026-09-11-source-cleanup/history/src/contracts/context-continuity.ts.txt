@@ -1,0 +1,640 @@
+/**
+ * P1-16 Context continuity contracts — WorkContextBinding / ExecutionNote /
+ * ContextContinuationResult (first consumer freeze of
+ * ControlEngine.WorkRecordPort, ContextCompiler.WorkContextPort,
+ * WorkerRuntime.ContextContinuationPort).
+ *
+ * Authority:
+ *   - dev_docs/planning/proposed/P1-foundation/tickets/16-context-continuity.md
+ *     (5 verification groups, 7 Acceptance items)
+ *   - dev_docs/interfaces/context-lifecycle.md (single behavior body: work
+ *     identity persists across runs; reasons stored incrementally at key
+ *     checkpoints, body-first; original-session continuation capability is
+ *     EXPLICITLY declared; unsupported/takeover must be observable — never
+ *     pretend the original process still exists)
+ *   - IMPLEMENTATION-HANDOFF.md "P1-16 契约与存储语义（冻结）"
+ *
+ * FROZEN semantics:
+ *   - WorkContextBinding is the DURABLE work identity (one per (projectId,
+ *     workspaceId, workId)). A Run is NOT a work identity: multiple model
+ *     turns inside one run, and multiple runs of one work (handoff,
+ *     replacement, continuation takeover), all stay under the SAME binding.
+ *     ContextBundle is the bounded assembly result — a separate concept.
+ *   - ExecutionNote is immutable (created exactly once per noteId), BOUNDED
+ *     (EXECUTION_NOTE_MAX_BYTES) and body-first: the caller puts the note body
+ *     (canonical JSON of the note) into the ArtifactVault BEFORE Control
+ *     registration; an unregistered note body is not an accepted record.
+ *     Repeated submission with the same identity+fingerprint is idempotent
+ *     (committed/replayed); a crash without a final summary leaves already
+ *     recorded notes recoverable.
+ *   - ContextContinuationResult records the OBSERVED continuation path:
+ *     restored_original (runtime really restored), took_over (a new run
+ *     continues from durable facts), unsupported (capability missing — names
+ *     the missing capability), rejected (explicit code). The capability
+ *     declaration comes from the runtime adapter (capabilitySource) and is
+ *     never fabricated by Control.
+ *   - No CompletionPolicy change; no Goal/Task phase write; old lease / late
+ *     runtime feedback keeps the P1-03 guard semantics; P1-04 review
+ *     isolation is not overridden by continuation context.
+ */
+import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
+import { canonicalJson, sha256Hex } from "./fingerprint.js";
+import type { RoleBindingRefV1, RunRef, TaskAttemptRef } from "./dispatch.js";
+import type { PlanRevisionRef } from "./plan.js";
+import type { ArtifactRef } from "./artifact.js";
+import type { EvidenceRef } from "./evidence.js";
+
+// ------------------------------------------------------------------------ //
+// Limits                                                                    //
+// ------------------------------------------------------------------------ //
+
+/** Hard ExecutionNote cap: canonical JSON of the note (UTF-8 bytes). */
+export const EXECUTION_NOTE_MAX_BYTES = 16 * 1024;
+/** Note body vault cap (same order as the TaskEnvelope 64KiB cap). */
+export const EXECUTION_NOTE_BODY_MAX_BYTES = 64 * 1024;
+export const EXECUTION_NOTE_MAX_ALTERNATIVES = 8;
+export const EXECUTION_NOTE_MAX_SOURCE_REFS = 64;
+export const EXECUTION_NOTE_SUMMARY_MAX_BYTES = 1024;
+export const EXECUTION_NOTE_REASON_MAX_BYTES = 4096;
+/** Max runs linked to a single WorkContextBinding. */
+export const WORK_CONTEXT_MAX_RUN_LINKS = 32;
+/** Max notes returned by the work context view. */
+export const WORK_CONTEXT_VIEW_MAX_NOTES = 64;
+/** Max continuation records returned by the view (recent first). */
+export const WORK_CONTEXT_VIEW_MAX_CONTINUATIONS = 16;
+/** Max bytes of the bundle built by WorkContextPort (reuses ArtifactVault cap). */
+export const WORK_CONTEXT_BUNDLE_MAX_BYTES = 256 * 1024;
+export const CONTINUATION_SUMMARY_MAX_BYTES = 4096;
+
+// ------------------------------------------------------------------------ //
+// Refs                                                                      //
+// ------------------------------------------------------------------------ //
+
+export type WorkContextRef = {
+  aggregateType: "WorkContextBinding";
+  projectId: string;
+  workspaceId: string;
+  /** The durable work identity (per (projectId, workspaceId); local id). */
+  workId: string;
+};
+
+export type ExecutionNoteRef = {
+  aggregateType: "ExecutionNote";
+  projectId: string;
+  workspaceId: string;
+  workId: string;
+  noteId: string;
+};
+
+export type ContinuationRecordRef = {
+  aggregateType: "ContinuationRecord";
+  projectId: string;
+  workspaceId: string;
+  workId: string;
+  reportId: string;
+};
+
+export function workContextRefFor(projectId: string, workspaceId: string, workId: string): WorkContextRef {
+  return { aggregateType: "WorkContextBinding", projectId, workspaceId, workId };
+}
+
+export function executionNoteRefFor(projectId: string, workspaceId: string, workId: string, noteId: string): ExecutionNoteRef {
+  return { aggregateType: "ExecutionNote", projectId, workspaceId, workId, noteId };
+}
+
+export function continuationRecordRefFor(projectId: string, workspaceId: string, workId: string, reportId: string): ContinuationRecordRef {
+  return { aggregateType: "ContinuationRecord", projectId, workspaceId, workId, reportId };
+}
+
+// ------------------------------------------------------------------------ //
+// WorkContextBinding (value + snapshot)                                     //
+// ------------------------------------------------------------------------ //
+
+/** The kind of work a binding covers (task / coordination / query / review / integration). */
+export type WorkKind = "task" | "coordination" | "query" | "review" | "integration";
+export const WORK_KINDS: readonly WorkKind[] = ["task", "coordination", "query", "review", "integration"];
+
+export type WorkContextBindingV1 = {
+  schemaVersion: 1;
+  workId: string;
+  projectId: string;
+  workspaceId: string;
+  workKind: WorkKind;
+  /** Goal scope (null for coordination/query work without a goal anchor). */
+  goalId: string | null;
+  /** Task scope (null unless this work is a task work). */
+  taskId: string | null;
+  /** The plan the work runs under (null before a plan is accepted). */
+  planRef: PlanRevisionRef | null;
+  planRevision: number | null;
+  /** The role this work is bound to (versioned binding; template ref + scope). */
+  roleBindingRef: RoleBindingRefV1;
+  /** The run that started the work. */
+  initialRunRef: RunRef;
+  /** Bounded list of runs that participated in this work (deterministic order). */
+  linkedRunRefs: RunRef[];
+  /** P1-16 bind-once: a binding is created active and has no end command. */
+  status: "active";
+  createdAt: string;
+};
+
+export type WorkContextBindingSnapshot = {
+  ref: WorkContextRef;
+  revision: number;
+  schemaVersion: 1;
+  binding: WorkContextBindingV1;
+};
+
+// ------------------------------------------------------------------------ //
+// ExecutionNote (value + snapshot)                                          //
+// ------------------------------------------------------------------------ //
+
+export type ExecutionNoteKind = "key_choice" | "checkpoint" | "frontier" | "risk" | "unresolved" | "result";
+export const EXECUTION_NOTE_KINDS: readonly ExecutionNoteKind[] = [
+  "key_choice",
+  "checkpoint",
+  "frontier",
+  "risk",
+  "unresolved",
+  "result",
+];
+
+/** A sourced reference the note is based on (audit; the original stays authoritative). */
+export type ExecutionNoteSourceV1 = {
+  kind: "evidence" | "artifact" | "run" | "handoff" | "decision" | "event";
+  /** Canonical ref key of the source (e.g. canonicalJson of a RunRef). */
+  refKey: string;
+  /** Version of the source object (null when not versioned). */
+  version: number | null;
+  /** Label shown in the manifest (bounded by the note caps). */
+  label: string | null;
+};
+
+/** Verification state of the note's claim (not a CompletionPolicy verdict). */
+export type ExecutionNoteVerificationV1 = {
+  status: "unverified" | "verified" | "contradicted";
+  evidenceRefs: EvidenceRef[];
+};
+
+export type ExecutionNoteV1 = {
+  schemaVersion: 1;
+  noteId: string;
+  workId: string;
+  projectId: string;
+  workspaceId: string;
+  /** The run that authored the note (must be linked to the work binding). */
+  runRef: RunRef;
+  attemptRef: TaskAttemptRef | null;
+  roleBindingRef: RoleBindingRefV1;
+  kind: ExecutionNoteKind;
+  summary: string;
+  reason: string;
+  /** Bounded list of considered/abandoned alternatives. */
+  alternatives: string[];
+  /** The note's key-choice checkpoints are NOT a substitute for a formal decision. */
+  sourceRefs: ExecutionNoteSourceV1[];
+  /** The versions the note was generated under (audit + applicability). */
+  applicableVersions: {
+    planRef: PlanRevisionRef | null;
+    planRevision: number | null;
+    workspaceRevision: number;
+    governanceRevision: string | null;
+  };
+  verification: ExecutionNoteVerificationV1;
+  /** Vault ref of the note body (canonical JSON of THIS note; body-first). */
+  bodyRef: ArtifactRef;
+  /** Explicit guarantee: the note carries no hidden chain-of-thought / transcript. */
+  noFullTranscript: true;
+  createdAt: string;
+};
+
+export function executionNoteBody(note: ExecutionNoteV1): string {
+  return canonicalJson(note);
+}
+
+export type ExecutionNoteSnapshot = {
+  ref: ExecutionNoteRef;
+  revision: 1;
+  schemaVersion: 1;
+  note: ExecutionNoteV1;
+  recordedAt: string;
+};
+
+// ------------------------------------------------------------------------ //
+// ContextContinuationResult (value + snapshot)                              //
+// ------------------------------------------------------------------------ //
+
+export type ContinuationStatus = "restored_original" | "took_over" | "unsupported" | "rejected";
+
+export type ContextContinuationResultV1 = {
+  schemaVersion: 1;
+  reportId: string;
+  workId: string;
+  projectId: string;
+  workspaceId: string;
+  /** Who asked to continue (null when the runtime was probed without a run). */
+  requestedByRunRef: RunRef | null;
+  /** Where the declared capability comes from (runtime adapter vs platform). */
+  capabilitySource: "runtime" | "adapter";
+  status: ContinuationStatus;
+  /** restored_original: the original run that was really restored. */
+  originalRunRef: RunRef | null;
+  /** took_over: the NEW run that continues from durable facts. */
+  takeoverRunRef: RunRef | null;
+  /** took_over: the run whose durable facts/frontier were followed. */
+  resumedFromRunRef: RunRef | null;
+  /** unsupported: capability names that are missing (e.g. session_restore). */
+  unsupportedCapabilities: string[];
+  /** rejected: explicit rejection code (e.g. scope_mismatch / stale_versions). */
+  rejectionCode: string | null;
+  /** Bounded summary of the observed path (display only). */
+  summary: string;
+  recordedAt: string;
+};
+
+export type ContinuationRecordSnapshot = {
+  ref: ContinuationRecordRef;
+  revision: 1;
+  schemaVersion: 1;
+  result: ContextContinuationResultV1;
+};
+
+// ------------------------------------------------------------------------ //
+// Commands / receipts                                                       //
+// ------------------------------------------------------------------------ //
+
+export type BindWorkContextCommand = {
+  commandId: string;
+  commandType: "BindWorkContext";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  /** workId — the durable work identity aggregate (created exactly once). */
+  aggregateId: string;
+  /** Always 0: WorkContextBinding aggregates are created exactly once. */
+  expectedRevision: 0;
+  correlationId: string;
+  submittedAt: string;
+  payload: {
+    workspaceId: string;
+    workKind: WorkKind;
+    goalId: string | null;
+    taskId: string | null;
+    planRef: PlanRevisionRef | null;
+    planRevision: number | null;
+    roleBindingRef: RoleBindingRefV1;
+    initialRunRef: RunRef;
+  };
+};
+
+/**
+ * RC-03 扩展：新增 `already_bound`。
+ *
+ * ── 为什么需要这个拒绝码（而不是复用 revision_conflict）────────────────────────
+ * bindWorkContext 的 CAS@0 只能挡住「同一个 workId 被重复创建」，挡不住「同一段工作被
+ * 换一个 workId 又建一条身份」——两条绑定的聚合 ref 不同，CAS 各自成立，账本里于是留下两条
+ * 描述同一 (项目, 工作区, 目标, 任务) 的 WorkContextBound。这正是 RW-13 只堵住派发面之后
+ * 仍然存在的命令面漏洞。
+ *
+ * 语义（与既有零写拒绝路径一致）：命令被拒绝、**一个字都不写**，并且回执里带上已存在的那条
+ * 身份（existingWorkContextRef），让调用方可以显式改为复用它（linkWorkRun），而不是自己再猜。
+ * 注意：这是「同一任务已有身份」这一**事实**的拒绝码，不是「命令写错了」；因此它既不同于
+ * revision_conflict（同一个 workId 的 CAS 冲突），也不同于 idempotency_conflict（同一命令身份
+ * 提交了不同内容）。
+ */
+export type BindWorkContextRejectionCode =
+  | "invalid"
+  | "not_found"
+  | "already_bound"
+  | "revision_conflict"
+  | "idempotency_conflict"
+  | "unavailable";
+
+export type BindWorkContextReceipt =
+  | {
+      status: "committed";
+      commandId: string;
+      replayed: boolean;
+      workContextRef: WorkContextRef;
+      eventIds: string[];
+      commitCursor: CommitCursor;
+    }
+  | {
+      status: "rejected";
+      commandId: string;
+      code: BindWorkContextRejectionCode;
+      issues?: string[];
+      /** 仅 `already_bound`：已代表这段工作的那条身份（唯一权威答案，供调用方显式复用）。 */
+      existingWorkContextRef?: WorkContextRef;
+    };
+
+export type LinkWorkRunCommand = {
+  commandId: string;
+  commandType: "LinkWorkRun";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  /** workId — the EXISTING WorkContextBinding aggregate (append link). */
+  aggregateId: string;
+  /** Expected WorkContextBinding revision (>= 1; CAS window). */
+  expectedRevision: number;
+  correlationId: string;
+  submittedAt: string;
+  payload: {
+    workspaceId: string;
+    runRef: RunRef;
+  };
+};
+
+export type LinkWorkRunRejectionCode =
+  | "invalid"
+  | "not_found"
+  | "already_linked"
+  | "links_exceeded"
+  | "revision_conflict"
+  | "idempotency_conflict"
+  | "unavailable";
+
+export type LinkWorkRunReceipt =
+  | {
+      status: "committed";
+      commandId: string;
+      replayed: boolean;
+      workContextRef: WorkContextRef;
+      revision: number;
+      eventIds: string[];
+      commitCursor: CommitCursor;
+    }
+  | { status: "rejected"; commandId: string; code: LinkWorkRunRejectionCode; issues?: string[] };
+
+export type RecordExecutionNoteCommand = {
+  commandId: string;
+  commandType: "RecordExecutionNote";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  /** noteId — the immutable ExecutionNote aggregate (created exactly once). */
+  aggregateId: string;
+  expectedRevision: 0;
+  correlationId: string;
+  submittedAt: string;
+  payload: { note: ExecutionNoteV1 };
+};
+
+export type RecordExecutionNoteRejectionCode =
+  | "invalid"
+  | "not_found"
+  | "run_not_in_work"
+  | "revision_conflict"
+  | "idempotency_conflict"
+  | "unavailable";
+
+export type RecordExecutionNoteReceipt =
+  | {
+      status: "committed";
+      commandId: string;
+      replayed: boolean;
+      noteRef: ExecutionNoteRef;
+      eventIds: string[];
+      commitCursor: CommitCursor;
+    }
+  | { status: "rejected"; commandId: string; code: RecordExecutionNoteRejectionCode; issues?: string[] };
+
+export type RecordContinuationCommand = {
+  commandId: string;
+  commandType: "RecordContinuation";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  /** reportId — one immutable continuation report aggregate (created exactly once). */
+  aggregateId: string;
+  expectedRevision: 0;
+  correlationId: string;
+  submittedAt: string;
+  payload: { result: ContextContinuationResultV1 };
+};
+
+export type RecordContinuationRejectionCode =
+  | "invalid"
+  | "not_found"
+  | "revision_conflict"
+  | "idempotency_conflict"
+  | "unavailable";
+
+export type RecordContinuationReceipt =
+  | {
+      status: "committed";
+      commandId: string;
+      replayed: boolean;
+      continuationRef: ContinuationRecordRef;
+      eventIds: string[];
+      commitCursor: CommitCursor;
+    }
+  | { status: "rejected"; commandId: string; code: RecordContinuationRejectionCode; issues?: string[] };
+
+// ------------------------------------------------------------------------ //
+// Domain events (P1-16 v1)                                                  //
+// ------------------------------------------------------------------------ //
+
+export type WorkContextBoundEvent = {
+  eventId: string;
+  eventType: "WorkContextBound";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "WorkContextBinding";
+  aggregateId: string;
+  aggregateRevision: 1;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: {
+    workKind: WorkKind;
+    goalId: string | null;
+    taskId: string | null;
+    planRef: PlanRevisionRef | null;
+    planRevision: number | null;
+    roleBindingRef: RoleBindingRefV1;
+    binding: WorkContextBindingV1;
+  };
+};
+
+export type WorkRunLinkedEvent = {
+  eventId: string;
+  eventType: "WorkRunLinked";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "WorkContextBinding";
+  aggregateId: string;
+  aggregateRevision: number;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: {
+    runRef: RunRef;
+    linkedRunRefs: RunRef[];
+  };
+};
+
+export type ExecutionNoteRecordedEvent = {
+  eventId: string;
+  eventType: "ExecutionNoteRecorded";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "ExecutionNote";
+  aggregateId: string;
+  aggregateRevision: 1;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: {
+    note: ExecutionNoteV1;
+    recordedAt: string;
+  };
+};
+
+export type ContinuationRecordedEvent = {
+  eventId: string;
+  eventType: "ContinuationRecorded";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "ContinuationRecord";
+  aggregateId: string;
+  aggregateRevision: 1;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: {
+    result: ContextContinuationResultV1;
+    recordedAt: string;
+  };
+};
+
+// ------------------------------------------------------------------------ //
+// Fingerprints (JCS + SHA-256; volatile ids excluded — P1-00 convention)    //
+// ------------------------------------------------------------------------ //
+
+export function bindWorkContextFingerprint(command: BindWorkContextCommand): CommandFingerprint {
+  const shape = {
+    schemaVersion: command.schemaVersion,
+    commandType: command.commandType,
+    projectId: command.identity.projectId,
+    aggregateId: command.aggregateId,
+    expectedRevision: command.expectedRevision,
+    payload: {
+      workspaceId: command.payload.workspaceId,
+      workKind: command.payload.workKind,
+      goalId: command.payload.goalId,
+      taskId: command.payload.taskId,
+      planRef: command.payload.planRef,
+      planRevision: command.payload.planRevision,
+      roleBindingRef: command.payload.roleBindingRef,
+      initialRunRef: command.payload.initialRunRef,
+    },
+  };
+  return sha256Hex(canonicalJson(shape)) as CommandFingerprint;
+}
+
+export function linkWorkRunFingerprint(command: LinkWorkRunCommand): CommandFingerprint {
+  const shape = {
+    schemaVersion: command.schemaVersion,
+    commandType: command.commandType,
+    projectId: command.identity.projectId,
+    aggregateId: command.aggregateId,
+    expectedRevision: command.expectedRevision,
+    payload: { workspaceId: command.payload.workspaceId, runRef: command.payload.runRef },
+  };
+  return sha256Hex(canonicalJson(shape)) as CommandFingerprint;
+}
+
+export function recordExecutionNoteFingerprint(command: RecordExecutionNoteCommand): CommandFingerprint {
+  const shape = {
+    schemaVersion: command.schemaVersion,
+    commandType: command.commandType,
+    projectId: command.identity.projectId,
+    aggregateId: command.aggregateId,
+    expectedRevision: command.expectedRevision,
+    payload: { note: command.payload.note },
+  };
+  return sha256Hex(canonicalJson(shape)) as CommandFingerprint;
+}
+
+export function recordContinuationFingerprint(command: RecordContinuationCommand): CommandFingerprint {
+  const shape = {
+    schemaVersion: command.schemaVersion,
+    commandType: command.commandType,
+    projectId: command.identity.projectId,
+    aggregateId: command.aggregateId,
+    expectedRevision: command.expectedRevision,
+    payload: { result: command.payload.result },
+  };
+  return sha256Hex(canonicalJson(shape)) as CommandFingerprint;
+}
+
+// ------------------------------------------------------------------------ //
+// ControlEngine.WorkRecordPort (interfaces_to_freeze — first consumer)      //
+// ------------------------------------------------------------------------ //
+
+/**
+ * ControlEngine.WorkRecordPort — the durable work identity + reason trail.
+ * Guards (all zero-write except the single atomic fold):
+ *   1. shape validation -> invalid;
+ *   2. referential guards (workspace/binding/run exist; workKind/goal/task
+ *      consistency) -> not_found;
+ *   3. note author must be a run LINKED to the work binding ->
+ *      run_not_in_work;
+ *   4. links bounded (WORK_CONTEXT_MAX_RUN_LINKS) -> links_exceeded;
+ *   5. ONE atomic commit per command with FULL ledger idempotency.
+ * RC-03 追加（bindWorkContext 专属）：
+ *   2b. 同一 (projectId, workspaceId, goalId, taskId) 的 task 工作只能有一条身份。已有身份的
+ *       workId 与本次 aggregateId 不同 -> already_bound（零写，回执带 existingWorkContextRef）；
+ *       唯一性由 ControlEngine 的这条守卫**和** StateLedger 提交语义的身份槽同时保证
+ *       （见 contracts/ledger-validation.ts 的 workContextIdentityClaim）。
+ * The note body must ALREADY be body-first'd into the ArtifactVault by the
+ * author; Control only registers the reference. NO Goal/Task phase write,
+ * NO CompletionPolicy change.
+ */
+export interface WorkRecordPort {
+  bindWorkContext(command: BindWorkContextCommand): Promise<BindWorkContextReceipt>;
+  linkWorkRun(command: LinkWorkRunCommand): Promise<LinkWorkRunReceipt>;
+  recordExecutionNote(command: RecordExecutionNoteCommand): Promise<RecordExecutionNoteReceipt>;
+  recordContinuation(command: RecordContinuationCommand): Promise<RecordContinuationReceipt>;
+}
+
+// ------------------------------------------------------------------------ //
+// Work context view (ReadModel; display only)                               //
+// ------------------------------------------------------------------------ //
+
+export type WorkContextViewQuery = {
+  projectId: string;
+  workspaceId: string;
+  workId: string;
+};
+
+export type WorkContextNoteRow = {
+  noteRef: ExecutionNoteRef;
+  kind: ExecutionNoteKind;
+  summary: string;
+  runRef: RunRef;
+  createdAt: string;
+  sourceCursor: CommitCursor;
+};
+
+export type WorkContextViewResult =
+  | {
+      status: "ready";
+      binding: WorkContextBindingSnapshot;
+      notes: WorkContextNoteRow[];
+      /** Recent continuation records (recent first; display only). */
+      continuations: ContinuationRecordSnapshot[];
+      sourceCursor: CommitCursor;
+    }
+  | { status: "not_ready"; observedCursor: CommitCursor | null }
+  | { status: "not_found"; projectId: string; workspaceId: string; workId: string };

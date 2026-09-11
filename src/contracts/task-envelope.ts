@@ -23,6 +23,8 @@ import type { PlanRevisionRef } from "./plan.js";
 export const TASK_ENVELOPE_MAX_SIZE_BYTES = 64 * 1024;
 
 export type TaskEnvelopeV1 = {
+  work?: import('./reviewer-work.js').ReviewWorkBinding;
+  reviewInput?: import('./reviewer-work.js').ReviewInputBinding;
   schemaVersion: 1;
   envelopeId: string;
   projectId: string;

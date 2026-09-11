@@ -1,0 +1,55 @@
+{
+  "sourceFiles": 409,
+  "inventoryFiles": 410,
+  "coverage": {
+    "parsedExtensions": [
+      ".ts",
+      ".tsx",
+      ".js"
+    ],
+    "ownerOnlyExtensions": [
+      ".py"
+    ],
+    "excluded": [
+      "dependencies",
+      "generated dist",
+      ".vite"
+    ],
+    "notASandboxVerification": true
+  },
+  "owners": {
+    "ArchitectureReconciler": 3,
+    "ArtifactVault": 5,
+    "ContextCompiler": 27,
+    "Contracts": 103,
+    "ControlEngine": 72,
+    "DispatchEngine": 14,
+    "Fixtures": 23,
+    "Host": 13,
+    "HumanCollaboration": 3,
+    "PlanCompiler": 5,
+    "ReadModelIndex": 8,
+    "StateLedger": 4,
+    "Storage": 1,
+    "TestDoubles": 8,
+    "UI": 69,
+    "VerificationEngine": 21,
+    "WorkerRuntime": 14,
+    "WorkspaceReader": 17
+  },
+  "moduleEdges": {
+    "ControlEngine -> StateLedger": 3,
+    "DispatchEngine -> ContextCompiler": 1,
+    "DispatchEngine -> PlanCompiler": 2,
+    "DispatchEngine -> ControlEngine": 2,
+    "PlanCompiler -> ControlEngine": 2,
+    "ArtifactVault -> WorkspaceReader": 1,
+    "ContextCompiler -> StateLedger": 3,
+    "ContextCompiler -> WorkspaceReader": 3,
+    "ReadModelIndex -> ControlEngine": 2,
+    "WorkerRuntime -> ArtifactVault": 2,
+    "WorkerRuntime -> ContextCompiler": 1,
+    "WorkerRuntime -> WorkspaceReader": 6
+  },
+  "issues": []
+}

@@ -1,0 +1,24 @@
+import { expect, it, vi } from 'vitest';
+import { ReworkDriveEngine } from '../../src/control/dispatch-engine/rework-drive.js';
+import type { ReworkIssueViewV1 } from '../../src/contracts/rework.js';
+
+it('does not announce unknown failure obligations as all disposed', async () => {
+  const scope = { projectId: 'project', workspaceId: 'workspace', goalId: 'goal' };
+  const issue = {
+    ...scope, issueId: 'issue', taskId: 'task',
+    failedRequirements: [{ obligationId: 'obligation', requirementId: 'check' }],
+    currentness: { status: 'unknown', issues: ['canonical unavailable'] },
+    disposition: { status: 'unknown', carrierTaskIds: [], issues: ['canonical unavailable'] },
+  } as unknown as ReworkIssueViewV1;
+  const acceptReworkProposal = vi.fn(async () => { throw Error('Unknown facts cannot authorize rework'); });
+  const drive = new ReworkDriveEngine({
+    ledger: { load: async ref => ({ status: 'not_found', ref }) },
+    control: { acceptReworkProposal },
+    disposition: { projectIssues: async () => [issue] },
+  });
+  const result = await drive.driveRework({ schemaVersion: 1, ...scope,
+    issueMaterials: { status: 'ready', issues: [issue], gaps: [] } });
+  expect(result.gaps.join('\n')).not.toContain('都已经处置');
+  expect(result.dispositions[0]!.status).toBe('unknown');
+  expect(acceptReworkProposal).not.toHaveBeenCalled();
+});

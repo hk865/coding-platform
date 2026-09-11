@@ -1,0 +1,138 @@
+/**
+ * RW-12 契约扩展：派发时编译进 ContextBundle 的**工作身份与历史材料**节。
+ *
+ * 权威：ADR 0003 D4（真实 Run 的工作身份由 DispatchEngine 在 claim 时建立；历史材料在派发时
+ * 编译进既有 ContextBundle，选材理由与缺口写入 manifest）、ARCHITECTURE「Context 生命周期与编排」、
+ * human/context-management.md「材料由谁管理」。
+ *
+ * 边界（结构性约束，不只是注释）：
+ *  1. 本节的每一条材料都必须是 `applicability: "historical_explanation"`。类型上不存在
+ *     "current" 取值，因此历史材料**不可能**被表达成当前事实，也就不可能冒充当前验收；
+ *  2. 每条材料必须带 `sourceRefs`（含版本与来源）与 `selectedBecause`（为什么选它）；
+ *     缺来源、缺版本、缺理由的材料由 ContextCompiler 在模型调用前拒绝，不是"尽量补全"；
+ *  3. 材料只是参考：它们不授予任何工具、写入范围或租约，也不构成 CompletionPolicy 判据。
+ *     Run 的权限永远只来自 TaskEnvelope.permissions（Control 在 claim 时确定）；
+ *  4. 缺失项一律进 `gaps`（谁缺、缺哪一类、为什么），绝不静默裁剪。
+ */
+import type { SourceRefV1, RunRef } from './dispatch.js';
+import type { TaskEnvelopeV1 } from './task-envelope.js';
+import type { RuntimeRoleSpecMaterials } from './role-spec-materials.js';
+import type { RoleMaterialKindV1 } from './role-spec.js';
+
+export type { RuntimeRoleSpecMaterials };
+
+export type RuntimeContextScope = { projectId: string; workspaceId: string; goalId: string; taskId: string; runId: string };
+export type RuntimeContextText = {
+  content: string;
+  digest: string;
+  sourceRefs: SourceRefV1[];
+  selectedBecause: string;
+  ruleKey?: string;
+  topics?: string[];
+};
+
+/**
+ * 一条历史/参考材料。`applicability` 是**字面量类型**：历史材料只能以历史解释的资格进入
+ * 本次运行，类型系统不允许把它写成当前事实。
+ */
+export type RuntimeHistoryMaterial = RuntimeContextText & {
+  /** 材料在 manifest 里的稳定标识（ExecutionNote id / 已完成工作 id），便于人逐条核对。 */
+  materialId: string;
+  applicability: 'historical_explanation';
+  /** 该材料所对应的版本（审计用；来源自身没有版本维度时为 null）。 */
+  versions: { workspaceRevision: number | null; planRevision: number | null };
+};
+
+/** 本 Run 的持久工作身份（canonical WorkContextBinding 的有界投影，不含授权）。 */
+export type RuntimeWorkIdentityMaterial = {
+  workId: string;
+  workKind: string;
+  goalId: string | null;
+  taskId: string | null;
+  planRef: TaskEnvelopeV1['planRef'] | null;
+  planRevision: number | null;
+  workspaceRevision: number;
+  /** 已参与该工作的 Run（有界；不含本次之外的隐藏会话）。 */
+  linkedRunIds: string[];
+  createdAt: string;
+  sourceRefs: SourceRefV1[];
+  selectedBecause: string;
+};
+
+export type RuntimeWorkContextMaterials = {
+  schemaVersion: 1;
+  identity: RuntimeWorkIdentityMaterial;
+  /** 该工作已有的留痕材料（ExecutionNote 的 canonical 记录）。 */
+  notes: RuntimeHistoryMaterial[];
+  /** 相关已完成工作的选材（跨工作继承；带适用性判断）。 */
+  history: RuntimeHistoryMaterial[];
+  /** 必读/相关材料缺失或未选入的原因：哪一类、为什么。绝不静默裁剪。 */
+  gaps: string[];
+};
+
+/**
+ * 按角色规格的**必读材料类别**选出的一条材料。
+ *
+ * 与 `RuntimeHistoryMaterial` 的区别（不要混用）：历史材料在类型上只能是
+ * `historical_explanation`；而 contract／code／evidence／decision 是**当前版本的事实引用**
+ * （当前计划固定的义务与契约 pin、当前工作区的源码索引、当前任务的已接纳证据索引、
+ * 本 Goal 已接受的变更决定）。它们的资格同样只有一种取值 `reference`：
+ *   - 不授予任何工具、写入范围或租约（Run 的权限永远只来自 TaskEnvelope.permissions）；
+ *   - 不构成完成判据，也不把任何东西标成"已满足"（归约仍只由 ControlEngine 依据正式 Evidence 做）；
+ *   - 每条都必须带 `selectedBecause` 与 `sourceRefs`（含版本）；缺来源或版本的材料不会被组装。
+ */
+export type RoleMaterialQualification = 'reference';
+
+export type RuntimeRoleMaterialEntryV1 = {
+  /** 角色规格里要求的类别（contract／code／evidence／history／decision）。 */
+  kind: RoleMaterialKindV1;
+  /** manifest 里可逐条核对的稳定标识（规则键／索引标识／决定 id）。 */
+  materialId: string;
+  content: string;
+  digest: string;
+  sourceRefs: SourceRefV1[];
+  selectedBecause: string;
+  /**
+   * `selected`：本次范围内选入了具体条目；
+   * `empty` ：通道**读到了确定的事实**——"本次范围内没有这类材料"（例如该任务首次运行、
+   *            尚无已接纳证据）。它是可核对的事实（依据写在 content 与 sourceRefs 里），
+   *            不是"未核对"，也不是"已满足"。
+   */
+  selection: 'selected' | 'empty';
+  qualification: RoleMaterialQualification;
+  /** 该材料对应的版本（来源自身没有版本维度时为 null）。 */
+  versions: { workspaceRevision: number | null; planRevision: number | null };
+};
+
+/** 本 Run 的角色必读材料取材结果（逐类都有理由与来源；缺项在 RuntimeContextMaterials.gaps）。 */
+export type RuntimeRoleMaterialsV1 = {
+  schemaVersion: 1;
+  entries: RuntimeRoleMaterialEntryV1[];
+};
+
+export type RuntimeContextMaterials = {
+  schemaVersion: 1;
+  scope: RuntimeContextScope;
+  planRef: TaskEnvelopeV1['planRef'];
+  workspaceSnapshot: TaskEnvelopeV1['workspaceSnapshot'];
+  rules: RuntimeContextText[];
+  predecessors: Array<{
+    taskId: string;
+    runRef: RunRef;
+    report: RuntimeContextText;
+    review: { reviewId: string; verdict: 'PASS'; status: 'applied'; text: RuntimeContextText };
+    evidenceRefs?: SourceRefV1[];
+  }>;
+  evidenceRefs: SourceRefV1[];
+  gaps: string[];
+  /** 工作身份与历史材料。缺省表示该 Run 没有可用的工作身份（例如审阅运行），
+   * 此时运行入口必须显式报告缺口，而不是假装"没有历史"。 */
+  workContext?: RuntimeWorkContextMaterials;
+  /** 按角色规格的必读材料类别选出的材料（contract／code／evidence／history／decision）。
+   *  history 走既有 workContext.history 通道；本节的条目同样只有"参考"资格。缺项一律进 gaps。 */
+  roleMaterials?: RuntimeRoleMaterialsV1;
+  /** RW-12/本 Run 绑定到的角色规格（必读材料与必产出的审计记录）。
+   *  必读材料里本入口不拥有的类别不会走到这里（那时派发入口已经 fail-closed），
+   *  必产出是否完备则由 VerificationEngine 的轮次核对，本记录不表示任何已完成状态。 */
+  roleSpec?: RuntimeRoleSpecMaterials;
+};

@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "MA-04",
+  "origin": "deterministic-test-input",
+  "adapterStatus": "NOT_PREPARED",
+  "guard": "Only run in a fresh scenario workspace; resolve all symbolic refs from captured current state; never use fixture claims as model output.",
+  "steps": [
+    {
+      "id": "MA-04-contradictory-reports",
+      "after": {
+        "type": "reader-report-published"
+      },
+      "occurrence": 1,
+      "action": "submit_test_reports",
+      "args": {
+        "reports": [
+          {
+            "label": "test-input-A",
+            "claim": "API slicing causes the mismatch"
+          },
+          {
+            "label": "test-input-B",
+            "claim": "Only UI rendering causes the mismatch"
+          }
+        ]
+      }
+    },
+    {
+      "id": "MA-04-competing-writers",
+      "after": {
+        "type": "writer-lease-granted"
+      },
+      "occurrence": 1,
+      "action": "request_conflicting_lease",
+      "args": {
+        "workspaceRef": "same-checkout",
+        "writerBinding": "second-writer",
+        "expected": "reject-conflict"
+      }
+    },
+    {
+      "id": "MA-04-stale-write",
+      "after": {
+        "type": "workspace-revision-advanced"
+      },
+      "occurrence": 1,
+      "action": "attempt_write",
+      "args": {
+        "leaseRef": "expired-first-lease",
+        "revisionRef": "previous",
+        "path": "src/store.mjs",
+        "expected": "reject"
+      }
+    },
+    {
+      "id": "MA-04-outside-write",
+      "after": {
+        "type": "writer-safe-point"
+      },
+      "occurrence": 1,
+      "action": "attempt_write",
+      "args": {
+        "leaseRef": "current",
+        "path": "../other-project/record.json",
+        "expected": "reject"
+      }
+    },
+    {
+      "id": "MA-04-current-fail",
+      "after": {
+        "type": "candidate-published"
+      },
+      "occurrence": 1,
+      "action": "submit_test_verification",
+      "args": {
+        "result": "FAIL",
+        "revisionRef": "current",
+        "claimAfter": [
+          "writer-done",
+          "reviewer-done"
+        ]
+      }
+    }
+  ]
+}

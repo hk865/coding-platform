@@ -1,0 +1,90 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
+/**
+ * P1-18 SQLite projection of MaterialAccessGranted — field-for-field mirror of
+ * the InMemory adapter, plus a file-backed reopen proving the grant rows survive
+ * a real close/open cycle (the same file, a new index instance).
+ */
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { createSqliteReadModelIndex } from "../../src/data/read-model-index/sqlite-read-model-index.js";
+import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
+import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from "../../src/contracts/fixtures/material-access-fixtures.js";
+import { buildMaterialAccessGrantLedgerCommit } from "../../src/control/control-engine/records/material-access.js";
+import { materialAccessGrantIdFor } from "../../src/contracts/material-access.js";
+import type { MaterialAccessGrantedEvent } from "../../src/contracts/material-access.js";
+import type { ArtifactRef } from "../../src/contracts/artifact.js";
+import type { RunRef } from "../../src/contracts/dispatch.js";
+
+const PROJECT_A = "proj-alpha";
+const PROJECT_B = "proj-beta";
+const WORKSPACE = "ws-shared";
+const GOAL = "goal-1";
+const AT = "2026-09-08T00:00:00.000Z";
+const DIGEST = "a".repeat(64);
+const artifact = (digest = DIGEST): ArtifactRef => ({
+  kind: "artifact", contentType: "text/plain", digest, sizeBytes: 10,
+  source: { kind: "artifact", refId: digest, revision: "1", digest },
+});
+const run = (projectId: string, runId: string): RunRef => ({ aggregateType: "Run", projectId, goalId: GOAL, runId });
+const BASIS = { planRef: null, workspaceRevision: 2, sourceDigest: null };
+
+function grantedEvent(projectId: string, readerRunId: string, digest: string, eventId: string): MaterialAccessGrantedEvent {
+  const reader = run(projectId, readerRunId);
+  const materials = [artifact(digest)];
+  const grant = buildMaterialAccessGrantV1({
+    grantId: materialAccessGrantIdFor(reader, materials, BASIS),
+    scope: { projectId, workspaceId: WORKSPACE, goalId: GOAL },
+    materials, reader,
+    issuedBy: { aggregateType: "Control", projectId, goalId: GOAL },
+    purpose: "评审运行读取执行运行材料", basis: BASIS, grantedAt: AT,
+  });
+  const command = buildGrantMaterialAccessCommand(grant, {
+    commandId: "cmd-" + eventId, projectId, actorKind: "system", actorId: "test",
+    idempotencyKey: eventId, correlationId: eventId, submittedAt: AT,
+  });
+  return buildMaterialAccessGrantLedgerCommit(command, { eventId, occurredAt: AT }).events[0]!;
+}
+const pos = (event: { eventType: string }, seq: number): PositionedEvent => ({ cursor: makeCommitCursor(seq), event: event as never });
+const page = (events: PositionedEvent[], throughSeq: number): EventPage => ({ afterCursor: null, throughCursor: makeCommitCursor(throughSeq), events, hasMore: false });
+
+describe("P1-18 material-access grant projection (SQLite)", () => {
+  it("projects grant rows and applies the resolver filters", async () => {
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
+    expect(await rm.materialAccessGrants({ projectId: PROJECT_A })).toEqual({ status: "not_ready", observedCursor: null });
+    await rm.advance(page([
+      pos(grantedEvent(PROJECT_A, "run-reader", DIGEST, "ev-a1"), 1),
+      pos(grantedEvent(PROJECT_A, "run-other", DIGEST, "ev-a2"), 2),
+      pos(grantedEvent(PROJECT_B, "run-reader", DIGEST, "ev-b1"), 3),
+    ], 3));
+
+    const view = await rm.materialAccessGrants({ projectId: PROJECT_A, materialDigest: DIGEST, readerRunId: "run-reader" });
+    expect(view.status).toBe("ready");
+    if (view.status !== "ready") throw new Error("unreachable");
+    expect(view.grants.map((g) => g.ref.grantId)).toEqual([grantedEvent(PROJECT_A, "run-reader", DIGEST, "ev-a1").aggregateId]);
+    expect(view.grants[0]!.grant).toMatchObject({ reader: run(PROJECT_A, "run-reader"), basis: BASIS });
+    expect(await rm.materialAccessGrants({ projectId: "proj-missing" })).toMatchObject({ status: "ready", grants: [] });
+    await rm.close();
+  });
+
+  it("keeps grant rows across a close/open cycle on the same file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "grant-readmodel-"));
+    const path = join(dir, "readmodel.sqlite");
+    try {
+      const first = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
+      await first.advance(page([pos(grantedEvent(PROJECT_A, "run-reader", DIGEST, "ev-1"), 1)], 1));
+      await first.close();
+
+      const reopened = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
+      const view = await reopened.materialAccessGrants({ projectId: PROJECT_A, materialDigest: DIGEST, readerRunId: "run-reader" });
+      expect(view.status).toBe("ready");
+      if (view.status !== "ready") throw new Error("unreachable");
+      expect(view.grants).toHaveLength(1);
+      expect(view.grants[0]!.grant.materials).toEqual([artifact()]);
+      await reopened.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

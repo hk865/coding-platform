@@ -1,0 +1,15 @@
+{
+  "changedPaths": [
+    "src/auth.mjs"
+  ],
+  "before": {
+    ".platform-runtime/bin/node": "41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c",
+    "src/auth.mjs": "bca6e1de32db4b5deae1d0262b1c032a3e4f5a6bcd6224cc4122e4aa312978a1",
+    "test.mjs": "24af6f4836d15a5bb620bd8344390726c44d2536042034075f9bfb3d051879d3"
+  },
+  "after": {
+    ".platform-runtime/bin/node": "41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c",
+    "src/auth.mjs": "45db5cade2a461cf7753cb13449b058bbb39b87821b18f412b864073a8e109c6",
+    "test.mjs": "24af6f4836d15a5bb620bd8344390726c44d2536042034075f9bfb3d051879d3"
+  }
+}

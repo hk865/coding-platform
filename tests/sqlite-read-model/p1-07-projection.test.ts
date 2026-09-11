@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-07 SQLite projection tests — WorkspaceReadLeaseGranted/Released,
  * WorkspaceWriteLeaseGranted/Released, IntegrationJoined, PatchRecorded ->
@@ -16,35 +17,10 @@ import { describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createSqliteReadModelIndex } from "../../src/sqlite-read-model/sqlite-read-model-index.js";
+import { createSqliteReadModelIndex } from "../../src/data/read-model-index/sqlite-read-model-index.js";
 import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
-import {
-  P107_GOAL,
-  P107_PROJECT,
-  P107_WORKSPACE,
-  P107_SCHEMA,
-  P107_TASK_INTEGRATION,
-  P107_TASK_READER_A,
-  P107_TASK_READER_B,
-  P107_TASK_WRITER,
-  P107_SCOPE_READER_A,
-  P107_SCOPE_WRITER,
-  P107_ROLE_BINDING_READER_V1,
-  P107_ROLE_BINDING_WRITER_V1,
-  p107PlanRef,
-  buildP107AcquireReadLeaseCommand,
-  buildP107AcquireWriteLeaseCommand,
-  buildP107ReleaseLeaseCommand,
-  buildP107RecordIntegrationCommand,
-  buildP107RecordPatchCommand,
-  buildP107ArtifactRef,
-  buildWorkspaceReadLeaseAcquireLedgerCommit,
-  buildWorkspaceReadLeaseReleaseLedgerCommit,
-  buildWorkspaceWriteLeaseAcquireLedgerCommit,
-  buildWorkspaceWriteLeaseReleaseLedgerCommit,
-  buildIntegrationRecordLedgerCommit,
-  buildPatchRecordLedgerCommit,
-} from "../../src/contracts/fixtures/workspace-fixtures.js";
+import { P107_GOAL, P107_PROJECT, P107_WORKSPACE, P107_SCHEMA, P107_TASK_INTEGRATION, P107_TASK_READER_A, P107_TASK_READER_B, P107_TASK_WRITER, P107_SCOPE_READER_A, P107_SCOPE_WRITER, P107_ROLE_BINDING_READER_V1, P107_ROLE_BINDING_WRITER_V1, p107PlanRef, buildP107AcquireReadLeaseCommand, buildP107AcquireWriteLeaseCommand, buildP107ReleaseLeaseCommand, buildP107RecordIntegrationCommand, buildP107RecordPatchCommand, buildP107ArtifactRef } from "../contract-support/fixtures/workspace-fixtures.js";
+import { buildWorkspaceReadLeaseAcquireLedgerCommit, buildWorkspaceReadLeaseReleaseLedgerCommit, buildWorkspaceWriteLeaseAcquireLedgerCommit, buildWorkspaceWriteLeaseReleaseLedgerCommit, buildIntegrationRecordLedgerCommit, buildPatchRecordLedgerCommit } from "../../src/control/control-engine/records/workspace.js";
 import { runRefFor, taskAttemptRefFor, type TaskAttemptRef, type RunRef } from "../../src/contracts/dispatch.js";
 import { evidenceRefFor } from "../../src/contracts/evidence.js";
 import { workspaceReadLeaseRefFor, workspaceWriteLeaseRefFor, workspaceReadLeaseIndexRefFor, workspaceWriteLeaseIndexRefFor } from "../../src/contracts/workspace-lease.js";
@@ -100,7 +76,7 @@ const CONFLICT = (projectId: string, k: string): import("../../src/contracts/int
 
 describe("P1-07 SQLite projection", () => {
   it("6 events project the 3 views field-for-field", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const p = P107_PROJECT, w = P107_WORKSPACE;
     const rgA = readGranted(p, w, "lease-ra", "run-ra", "ev-1");
     const rgB = readGranted(p, w, "lease-rb", "run-rb", "ev-2");
@@ -148,14 +124,14 @@ describe("P1-07 SQLite projection", () => {
       integrationJoined(P107_PROJECT, P107_WORKSPACE, "res-1", "run-int", [CONFLICT(P107_PROJECT, "a")], "ev-42"),
     ];
     const [patchEv, wrel] = patchRecordedEvents(P107_PROJECT, P107_WORKSPACE, "lease-w", "run-w", "patch-1", 1, 2, "ev-43");
-    const incremental = createSqliteReadModelIndex({ path: ":memory:" });
+    const incremental = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     await incremental.advance(page(events.map((e, i) => pos(e, i + 1)), events.length));
     await incremental.advance(page([pos(patchEv, events.length + 1), pos(wrel, events.length + 2)], events.length + 2));
     const before = await incremental.workspacePatches({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
     const lb = await incremental.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
     await incremental.close();
 
-    const fresh = createSqliteReadModelIndex({ path: ":memory:" });
+    const fresh = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     await fresh.advance(page([...events.map((e, i) => pos(e, i + 1)), pos(patchEv, events.length + 1), pos(wrel, events.length + 2)], events.length + 2));
     const after = await fresh.workspacePatches({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
     const lb2 = await fresh.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
@@ -165,7 +141,7 @@ describe("P1-07 SQLite projection", () => {
   });
 
   it("full-key isolation: two workspaces never collide", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const wgA = writeGranted("proj-a", "ws-a", "le-aw", "run-aw", P107_SCOPE_WRITER, "ev-20");
     const [patchA, wrelA] = patchRecordedEvents("proj-a", "ws-a", "le-aw", "run-aw", "patch-aw", 1, 2, "ev-21");
     const wgB = writeGranted("proj-b", "ws-b", "le-bw", "run-bw", P107_SCOPE_WRITER, "ev-22");
@@ -184,7 +160,7 @@ describe("P1-07 SQLite projection", () => {
   });
 
   it("freshness not_ready != not_found", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const cold = await rm.workspaceLeaseView({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
     expect(cold.status).toBe("not_ready");
     const wg = writeGranted(P107_PROJECT, P107_WORKSPACE, "lease-w", "run-w", P107_SCOPE_WRITER, "ev-30");
@@ -205,7 +181,7 @@ describe("P1-07 SQLite projection", () => {
     const dir = tmpdir();
     const path = join(dir, "p107-readmodel-" + Date.now() + ".sqlite");
     try {
-      const rm = createSqliteReadModelIndex({ path });
+      const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
       const wg = writeGranted(P107_PROJECT, P107_WORKSPACE, "lease-w", "run-w", P107_SCOPE_WRITER, "ev-60");
       const [patchEv, wrel] = patchRecordedEvents(P107_PROJECT, P107_WORKSPACE, "lease-w", "run-w", "patch-1", 1, 2, "ev-61");
       await rm.advance(page([pos(wg, 1), pos(patchEv, 2), pos(wrel, 3)], 3));
@@ -214,7 +190,7 @@ describe("P1-07 SQLite projection", () => {
       const beforeJson = before.status === "ready" ? json(before.patch) : "";
       await rm.close();
 
-      const reopened = createSqliteReadModelIndex({ path });
+      const reopened = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
       const persisted = await reopened.workspacePatches({ projectId: P107_PROJECT, workspaceId: P107_WORKSPACE });
       expect(persisted.status).toBe("ready");
       if (persisted.status === "ready") expect(json(persisted.patch)).toBe(beforeJson);
@@ -225,7 +201,7 @@ describe("P1-07 SQLite projection", () => {
   });
 
   it("the six P1-07 event types advance without stalling", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const p = P107_PROJECT, w = P107_WORKSPACE;
     const boot = { eventId: "ev-boot", eventType: "WorkspaceBootstrapped", schemaVersion: 1, projectId: p, workspaceId: w, aggregateType: "Workspace", aggregateId: w, aggregateRevision: 1, causationId: "c", correlationId: "c", idempotencyKey: "b", actor: { kind: "system", id: "b" }, occurredAt: P107_SCHEMA, payload: { workspaceId: w, projectId: p, desiredState: "active" } };
     const wg = writeGranted(p, w, "lease-w", "run-w", P107_SCOPE_WRITER, "ev-50");

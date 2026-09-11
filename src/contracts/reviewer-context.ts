@@ -1,0 +1,111 @@
+import type { ArtifactOpenResult, ArtifactRef } from './artifact.js';
+import type { RoleBindingRefV1, RunSnapshot } from './dispatch.js';
+import type { MaterialBasisV1, MaterialAccessGrantRef } from './material-access.js';
+import type { RuntimeBudget } from './runtime-budget.js';
+import type { TaskEnvelopeV1, ContextManifestV1 } from './task-envelope.js';
+import type { VerificationRoundMaterial, VerificationRoundScope, VerificationRoundMaterialResult } from './verification-context.js';
+import type { ReviewInputBinding, ReviewWorkRef, ReviewWorkSnapshot, ReviewResultSnapshot, ReviewPrestartFailureProofV1 } from './reviewer-work.js';
+import type { ReviewRecoveryView } from './reviewer-verification.js';
+
+/** New packet limits; the historical ReviewPacket limits are unchanged. */
+export const REVIEWER_PACKET_MAX_BYTES = 64 * 1024;
+export const REVIEWER_MATERIAL_PAGE_MAX_BYTES = 32 * 1024;
+export const REVIEWER_SOURCE_MAX_LINES = 200;
+export class ReviewerMaterialError extends Error {
+  constructor(readonly code: 'invalid_reference' | 'forbidden' | 'stale' | 'unavailable', message: string) { super(message); }
+}
+
+export type ReviewerConfigRef = { configId: string; revision: number; digest: string };
+export type ReviewerProfileV1 = {
+  schemaVersion: 1; profileId: string; revision: number; digest: string;
+  subjectScope: VerificationRoundScope;
+  roleBinding: RoleBindingRefV1;
+  mode: 'review'; permissions: { tools: string[]; writeScope: [] };
+  model: { configurationRevision: string; provider: string; model: string; baseUrl: string };
+  budget: RuntimeBudget;
+};
+export type ReviewerProfileResult =
+  | { status: 'ready'; ref: ReviewerConfigRef; profile: ReviewerProfileV1 }
+  | { status: 'incomplete'; missing: string[] }
+  | { status: 'rejected'; code: 'scope_mismatch' | 'stale_configuration'; issues: string[] };
+export interface ReviewerProfilePort {
+  current(scope: VerificationRoundScope): Promise<ReviewerProfileResult>;
+  resolve(scope: VerificationRoundScope, ref: ReviewerConfigRef): Promise<ReviewerProfileResult>;
+}
+/** The host exposes saved public metadata, never credentials or a live worker. */
+export interface ReviewerModelMetadataPort {
+  current(): Promise<ReviewerProfileV1['model'] | null>;
+}
+export interface ReviewerRoundContextPort {
+  resolveReviewRound(workRef: ReviewWorkRef): Promise<VerificationRoundMaterialResult>;
+}
+export const INDEPENDENT_REVIEWER_ROLE: RoleBindingRefV1 = Object.freeze({
+  schemaVersion: 1, bindingId: 'independent-reviewer-v1', templateId: 'independent-reviewer',
+  templateRevision: '1', bindingVersion: 1, policyRevision: 'independent-review-v1',
+});
+export interface ReviewerRuntimeObservations {
+  integrityIssues?(): string[];
+  all(): Array<{
+    spec: VerificationRoundScope & { budget: RuntimeBudget; mode?: string;
+      review?: { workRef: ReviewWorkRef; profile: ReviewerProfileV1 } };
+    status: string; sessionId?: string | null;
+    /** Only persisted observations qualify; absent historical fields are unknown. */
+    events?: import('./dispatch.js').RuntimeEventV1[]; trace?: unknown[]; usage?: unknown[]; error?: string | null;
+  }>;
+}
+export type ReviewerPacketV1 = {
+  schemaVersion: 1; kind: 'independent-review-packet';
+  workRef: ReviewWorkRef; reviewerRunRef: ReviewWorkSnapshot['reviewerRunRef'];
+  descriptorDigest: string; profile: ReviewerProfileV1;
+  materialIdentity: VerificationRoundMaterial['identity'];
+  sourceProof: VerificationRoundMaterial['sourceProof'];
+  changeScope: VerificationRoundMaterial['changeScope'];
+  task: VerificationRoundMaterial['task'];
+  policy: VerificationRoundMaterial['policyContent'];
+  baseline: VerificationRoundMaterial['baselineContent'];
+  coverage: Array<{ obligationId: string; requirementId: string; description: string }>;
+  materials: Array<{ materialId: string; kind: string; ref: ArtifactRef }>;
+  basis: MaterialBasisV1; gaps: string[];
+};
+export type ReviewerContextFailure =
+  | { status: 'incomplete'; code: string; missing: string[] }
+  | { status: 'rejected'; code: string; issues: string[] };
+export type ReviewerCurrentResult = ReviewerContextFailure | {
+  status: 'ready'; work: ReviewWorkSnapshot; material: VerificationRoundMaterial;
+  profile: ReviewerProfileV1; basis: MaterialBasisV1;
+  producerSessionId: string | null; reviewerSessionId: string | null;
+};
+export type ReviewerRecoveryResult = (ReviewRecoveryView & { allowed: false }) | (ReviewRecoveryView & {
+  allowed: true; proof: ReviewPrestartFailureProofV1; expectedWorkRevision: number; expectedProtocolRevision: number;
+});
+export type ReviewerMaterialPageRequest = { ref: ArtifactRef; offset: number; maxBytes: number };
+type ReviewerMaterialPage = {
+  ref: ArtifactRef; content: string; offset: number; nextOffset: number;
+  totalBytes: number; complete: boolean;
+};
+export type ReviewerSourceRequest = { path: string; startLine: number; endLine: number; digest?: string };
+export type ReviewerSourcePage = { materialId: string; path: string; digest: string; startLine: number; endLine: number; content: string };
+/** Functions are ephemeral capabilities and must never be persisted in RunSpec. */
+export type ReviewerRuntimeAccess = {
+  packet: ReviewerPacketV1; input: ReviewInputBinding; profile: ReviewerProfileV1;
+  assertCurrent(): Promise<void>;
+  readMaterial(request: ReviewerMaterialPageRequest): Promise<ReviewerMaterialPage>;
+};
+export interface ReviewerContextPort {
+  recovery(workRef: ReviewWorkRef): Promise<ReviewerRecoveryResult>;
+  inspect(workRef: ReviewWorkRef): Promise<{ work: ReviewWorkSnapshot; run: RunSnapshot; result: ReviewResultSnapshot | null; producerSessionId: string | null; reviewerSessionId: string | null } | null>;
+  current(workRef: ReviewWorkRef): Promise<ReviewerCurrentResult>;
+  select(workRef: ReviewWorkRef): Promise<ReviewerContextFailure | {
+    status: 'ready'; work: ReviewWorkSnapshot; basis: MaterialBasisV1; materials: ArtifactRef[];
+  }>;
+  assemble(workRef: ReviewWorkRef, grantRefs: MaterialAccessGrantRef[]): Promise<ReviewerContextFailure | {
+    status: 'ready'; envelope: TaskEnvelopeV1; input: ReviewInputBinding; packet: ReviewerPacketV1; manifest: ContextManifestV1;
+  }>;
+  packet(workRef: ReviewWorkRef): Promise<ReviewerPacketV1>;
+  runtime(workRef: ReviewWorkRef, envelope: TaskEnvelopeV1): Promise<ReviewerRuntimeAccess>;
+  readMaterial(workRef: ReviewWorkRef, request: ReviewerMaterialPageRequest): Promise<ReviewerMaterialPage>;
+  readSource(workRef: ReviewWorkRef, request: ReviewerSourceRequest): Promise<ReviewerSourcePage>;
+  openReport(workRef: ReviewWorkRef): Promise<ArtifactOpenResult>;
+  /** UI audit only: historical permission never qualifies a new verdict. */
+  openHistoricalReport(workRef: ReviewWorkRef): Promise<ArtifactOpenResult>;
+}

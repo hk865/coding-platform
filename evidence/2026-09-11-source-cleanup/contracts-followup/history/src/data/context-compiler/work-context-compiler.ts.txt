@@ -1,0 +1,326 @@
+/**
+ * Bounded work-context assembly; no model start or work allocation.
+ * Guard order:
+ *   1. request validation (validateWorkContextRequest) -> rejected(invalid);
+ *   2. binding exists + requested run linked to it -> rejected(work_not_found);
+ *   3. declared scope (tools / writeScope, independently) must be non-empty and
+ *      roleBindingRef.policyRevision non-empty -> rejected(forbidden_tool_or_scope)
+ *      — zero write;
+ *   4. fresh workspace/plan material + budget -> needs_material(gaps) — the
+ *      call NEVER starts a model, NEVER allocates work;
+ *   5. assemble the bounded bundle (binding facts + notes <= maxNotes + latest
+ *      continuation + frontier), save body-first into the ArtifactVault
+ *      (owner = requestedByRunRef), return ready(bundleRef, manifest) whose
+ *      manifest reports selection, truncation, gaps and freshness.
+ *
+ * Assembly material: the note / continuation / binding material is
+ * read from the ReadModelIndex.workContext VIEW . Note bodies are NEVER opened (noFullTranscript); a note
+ * whose authoring run is outside the binding's linkedRunRefs is retained as
+ * HISTORICAL explanatory material, not a current fact.
+ */
+import type {
+  WorkContextAssemblyResultV1,
+  WorkContextBucketRow,
+  WorkContextGap,
+  WorkContextManifestV1,
+  WorkContextPort,
+  WorkContextRequestV1,
+} from "../../contracts/work-context-port.js";
+import type { StateLedger, AggregateSnapshot, WorkspaceSnapshot } from "../../contracts/ledger.js";
+import type { ArtifactPort, ArtifactRef } from "../../contracts/artifact.js";
+import type { PlanRevisionSnapshot } from "../../contracts/plan.js";
+import type { ReadModelIndex } from "../../contracts/goal-view.js";
+import type { SourceRefV1, RunRef } from "../../contracts/dispatch.js";
+import { canonicalJson } from "../../contracts/fingerprint.js";
+import type { JsonValue } from "../../contracts/fingerprint.js";
+import type {
+  WorkContextBindingV1,
+  WorkContextViewResult,
+  WorkContextNoteRow,
+} from "../../contracts/context-continuity.js";
+import { WORK_CONTEXT_VIEW_MAX_NOTES, WORK_CONTEXT_BUNDLE_MAX_BYTES } from "../../contracts/context-continuity.js";
+import { issuesToErrorMessage, validateWorkContextRequest } from "../../contracts/validation.js";
+
+export type WorkContextCompilerDeps = {
+  ledger: StateLedger;
+  vault: ArtifactPort;
+  now: () => string;
+  readModel?: ReadModelIndex;
+};
+
+export class WorkContextCompilerImpl implements WorkContextPort {
+  private readonly deps: WorkContextCompilerDeps;
+
+  constructor(deps: WorkContextCompilerDeps) {
+    this.deps = deps;
+  }
+
+  async assembleWorkContext(request: WorkContextRequestV1): Promise<WorkContextAssemblyResultV1> {
+    const requestIssues = validateWorkContextRequest(request);
+    if (requestIssues.length > 0) {
+      return {
+        status: "rejected",
+        code: "invalid_request",
+        message: issuesToErrorMessage(requestIssues),
+      };
+    }
+    if (!request.workContextRef || !request.requestedByRunRef || !request.roleBindingRef) {
+      return {
+        status: "rejected",
+        code: "invalid_request",
+        message: "workContextRef, requestedByRunRef and roleBindingRef are required",
+      };
+    }
+
+    const bindingLoad = await this.deps.ledger.load(request.workContextRef);
+    if (bindingLoad.status === "not_found" || !isWorkContextBindingSnapshot(bindingLoad.snapshot)) {
+      return {
+        status: "rejected",
+        code: "work_not_found",
+        message: "work context binding is not registered in the ledger",
+      };
+    }
+    const binding: WorkContextBindingV1 = bindingLoad.snapshot.binding;
+    if (!binding.linkedRunRefs.some((r) => sameRun(r, request.requestedByRunRef))) {
+      return {
+        status: "rejected",
+        code: "work_not_found",
+        message: "requesting run is not linked to the work binding",
+      };
+    }
+
+    const forbidden: string[] = [];
+    if (request.declaredPermissions.tools.length === 0) {
+      forbidden.push("declaredPermissions.tools must be non-empty");
+    }
+    if (request.declaredPermissions.writeScope.length === 0) {
+      forbidden.push("declaredPermissions.writeScope must be non-empty");
+    }
+    if (request.roleBindingRef.policyRevision.length === 0) {
+      forbidden.push("roleBindingRef.policyRevision must be non-empty");
+    }
+    if (forbidden.length > 0) {
+      return {
+        status: "rejected",
+        code: "forbidden_tool_or_scope",
+        message: forbidden.join("; "),
+      };
+    }
+
+    if (this.deps.readModel === undefined) {
+      return {
+        status: "needs_material",
+        gaps: [{ code: "vault_unavailable", message: "work-context view is unavailable (no read model wired)" }],
+        selectedRefs: [],
+      };
+    }
+    const view = await this.deps.readModel.workContext({
+      projectId: request.workContextRef.projectId,
+      workspaceId: request.workContextRef.workspaceId,
+      workId: request.workContextRef.workId,
+    });
+    if (view.status !== "ready") {
+      const gapCode: WorkContextGap["code"] =
+        view.status === "not_found" ? "binding_missing" : "workspace_material_missing";
+      return {
+        status: "needs_material",
+        gaps: [{ code: gapCode, message: "work-context view is not ready for assembly" }],
+        selectedRefs: [],
+      };
+    }
+    const gaps: WorkContextGap[] = [];
+    if (request.requiredMaterial.includes("binding") && view.binding === null) {
+      gaps.push({ code: "binding_missing", message: "binding facts are missing from the work-context view" });
+    }
+    if (request.requiredMaterial.includes("notes") && view.notes.length === 0) {
+      gaps.push({ code: "workspace_material_missing", message: "execution notes are missing from the work-context view" });
+    }
+    if (request.requiredMaterial.includes("continuation") && view.continuations.length === 0) {
+      gaps.push({ code: "workspace_material_missing", message: "continuation records are missing from the work-context view" });
+    }
+    let workspaceRevision: number | null = null;
+    if (binding.planRevision !== null && binding.planRef !== null) {
+      const planLoad = await this.deps.ledger.load(binding.planRef);
+      if (
+        planLoad.status === "not_found" ||
+        !isPlanRevisionSnapshot(planLoad.snapshot) ||
+        planLoad.snapshot.planRevision !== binding.planRevision
+      ) {
+        gaps.push({ code: "workspace_material_missing", message: "binding plan revision is not fresh/available" });
+      }
+    }
+    const workspaceRef = {
+      aggregateType: "Workspace" as const,
+      projectId: binding.projectId,
+      workspaceId: binding.workspaceId,
+    };
+    const wsLoad = await this.deps.ledger.load(workspaceRef);
+    if (wsLoad.status === "not_found" || !isWorkspaceSnapshot(wsLoad.snapshot)) {
+      gaps.push({ code: "workspace_material_missing", message: "workspace material is missing from the ledger" });
+    } else {
+      workspaceRevision = wsLoad.snapshot.revision;
+    }
+    if (gaps.length > 0) {
+      return { status: "needs_material", gaps, selectedRefs: [] };
+    }
+
+    if (request.maxBundleBytes <= 0 || request.maxBundleBytes > WORK_CONTEXT_BUNDLE_MAX_BYTES) {
+      return {
+        status: "rejected",
+        code: "budget_exhausted",
+        message: "maxBundleBytes must be > 0 and <= " + WORK_CONTEXT_BUNDLE_MAX_BYTES,
+      };
+    }
+
+    const selected = selectNotes(view, request, binding);
+    const latestContinuation =
+      view.continuations.length > 0
+        ? {
+            status: view.continuations[0]!.result.status,
+            summary: view.continuations[0]!.result.summary,
+            recordedAt: view.continuations[0]!.result.recordedAt,
+          }
+        : null;
+    const bucketRows: WorkContextBucketRow[] = selected.selectedNotes.map((n) => ({
+      noteId: n.noteRef.noteId,
+      kind: n.kind,
+      summary: n.summary,
+      runRef: n.runRef,
+      createdAt: n.createdAt,
+      sourceCursor: n.sourceCursor,
+      truncated: false,
+      historical: !binding.linkedRunRefs.some((r) => sameRun(r, n.runRef)),
+    }));
+    const bundleSelected: WorkContextManifestV1["selected"] = buildSelected(
+      { ...view, notes: selected.selectedNotes, continuations: view.continuations.slice(0, 1) }, binding,
+    );
+    const generatedAt = this.deps.now();
+    const bundle = {
+      schemaVersion: 1,
+      workContextRef: { ...request.workContextRef },
+      binding: { ...binding },
+      bucketRows,
+      latestContinuation,
+      selectedSources: bundleSelected,
+      generatedAt,
+    };
+    const body = canonicalJson(bundle as JsonValue);
+    const totalBytes = Buffer.byteLength(body, "utf8");
+    if (totalBytes > request.maxBundleBytes || totalBytes > WORK_CONTEXT_BUNDLE_MAX_BYTES) {
+      return {
+        status: "needs_material",
+        gaps: [{ code: "budget_exhausted", message: "bundle size " + totalBytes + " exceeds the request budget" }],
+        selectedRefs: [],
+      };
+    }
+
+    const vaultSourceRefs = buildVaultSourceRefs(binding, workspaceRevision);
+    const putResult = await this.deps.vault.put({
+      contentType: "application/json",
+      body,
+      sourceRefs: vaultSourceRefs,
+      ownerRef: request.requestedByRunRef,
+      requestedAt: generatedAt,
+    });
+    if (putResult.status === "rejected") {
+      const gapCode: WorkContextGap["code"] =
+        putResult.code === "size_exceeded" ? "budget_exhausted" : "vault_unavailable";
+      return {
+        status: "needs_material",
+        gaps: [{ code: gapCode, message: putResult.issues.join("; ") }],
+        selectedRefs: [],
+      };
+    }
+    const bundleRef: ArtifactRef = putResult.ref;
+
+    const manifest: WorkContextManifestV1 = {
+      bundleRef,
+      selected: bundleSelected,
+      truncated: selected.truncated,
+      gaps: [],
+      freshness: {
+        bindingCursor: view.sourceCursor,
+        notesCursor: notesSourceCursor(view),
+        continuationCursor: view.continuations.length > 0 ? view.sourceCursor : null,
+        observedCursor: view.sourceCursor,
+      },
+      totalBytes,
+    };
+
+    return { status: "ready", bundleRef, manifest };
+  }
+}
+
+function selectNotes(
+  view: Extract<WorkContextViewResult, { status: "ready" }>,
+  request: WorkContextRequestV1,
+  binding: WorkContextBindingV1,
+): { selectedNotes: WorkContextNoteRow[]; truncated: WorkContextManifestV1["truncated"] } {
+  const wanted = request.noteKinds.length === 0 ? null : new Set(request.noteKinds);
+  const kindFiltered = wanted === null ? view.notes : view.notes.filter((n) => wanted.has(n.kind));
+  const limit = Math.min(request.maxNotes, WORK_CONTEXT_VIEW_MAX_NOTES);
+  const selectedNotes = kindFiltered.slice(0, limit);
+  const truncatedIds = kindFiltered.slice(limit).map((n) => n.noteRef.noteId);
+  return {
+    selectedNotes,
+    truncated:
+      truncatedIds.length > 0
+        ? [{ noteIds: truncatedIds, reason: "notes beyond maxNotes=" + limit + " are not included in the bounded bundle" }]
+        : [],
+  };
+}
+
+function buildSelected(
+  view: Extract<WorkContextViewResult, { status: "ready" }>,
+  binding: WorkContextBindingV1,
+): WorkContextManifestV1["selected"] {
+  const selected: WorkContextManifestV1["selected"] = [];
+  selected.push({ kind: "work-context-binding", refKey: canonicalJson(binding), version: 1, label: binding.workId });
+  for (const n of view.notes) {
+    selected.push({ kind: "execution-note", refKey: canonicalJson(n.noteRef), version: 1, label: n.noteRef.noteId });
+  }
+  for (const c of view.continuations) {
+    selected.push({ kind: "continuation", refKey: canonicalJson(c.ref), version: c.revision, label: c.ref.reportId });
+  }
+  return selected;
+}
+
+function buildVaultSourceRefs(binding: WorkContextBindingV1, workspaceRevision: number | null): SourceRefV1[] {
+  const refs: SourceRefV1[] = [];
+  if (workspaceRevision !== null) {
+    refs.push({ kind: "workspace", refId: binding.workspaceId, revision: String(workspaceRevision) });
+  }
+  if (binding.planRevision !== null && binding.planRef !== null) {
+    refs.push({
+      kind: "plan-revision",
+      refId: binding.planRef.planId,
+      revision: String(binding.planRevision),
+      digest: binding.planRef.planId,
+    });
+  }
+  return refs;
+}
+
+function notesSourceCursor(
+  view: Extract<WorkContextViewResult, { status: "ready" }>,
+): import("../../contracts/command-event.js").CommitCursor | null {
+  return view.notes.length > 0 ? view.notes[view.notes.length - 1]!.sourceCursor : null;
+}
+
+function sameRun(a: RunRef, b: RunRef): boolean {
+  return canonicalJson(a) === canonicalJson(b);
+}
+
+function isWorkContextBindingSnapshot(
+  snapshot: AggregateSnapshot,
+): snapshot is import("../../contracts/context-continuity.js").WorkContextBindingSnapshot {
+  return snapshot.ref.aggregateType === "WorkContextBinding";
+}
+
+function isWorkspaceSnapshot(snapshot: AggregateSnapshot): snapshot is WorkspaceSnapshot {
+  return snapshot.ref.aggregateType === "Workspace";
+}
+
+function isPlanRevisionSnapshot(snapshot: AggregateSnapshot): snapshot is PlanRevisionSnapshot {
+  return snapshot.ref.aggregateType === "PlanRevision";
+}

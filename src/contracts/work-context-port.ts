@@ -1,12 +1,11 @@
 /**
- * P1-16 ContextCompiler.WorkContextPort — bounded work-context assembly
- * (first consumer freeze of ContextCompiler.WorkContextPort).
+ * ContextCompiler.WorkContextPort — bounded work-context assembly
  *
  * Authority: dev_docs/interfaces/context-lifecycle.md (ContextCompiler 按当前
  * 工作、权限、版本和预算选取材料；manifest 列出来源、缺失、截断和适用性；
  * 必要约束缺失时返回 needs_material；过期历史作为解释材料带标识保留).
  *
- * FROZEN semantics:
+ * Semantics:
  *   - assembleWorkContext(request) NEVER starts a model, never allocates work,
  *     never changes roles. It selects the binding facts + bounded notes +
  *     latest continuation record + work frontier, checks scope/permissions,
@@ -104,7 +103,7 @@ export type WorkContextManifestV1 = {
   totalBytes: number;
 };
 
-/** ContextCompiler.WorkContextPort — bounded assembly (interfaces_to_freeze). */
+/** ContextCompiler.WorkContextPort — bounded assembly. */
 export interface WorkContextPort {
   assembleWorkContext(request: WorkContextRequestV1): Promise<WorkContextAssemblyResultV1>;
 }

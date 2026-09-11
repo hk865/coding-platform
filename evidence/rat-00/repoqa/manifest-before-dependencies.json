@@ -1,0 +1,216 @@
+{
+  "schema_version": 1,
+  "fixture_version": "rat-00-v1",
+  "ticket_id": "RAT-00",
+  "preparation_status": "MATERIALIZED",
+  "model_calls": 0,
+  "dataset": {
+    "name": "RepoQA",
+    "tag": "2024-06-23",
+    "release_commit": "e3a571033de99d0b9dcaccd25577a75d4b1c70b1",
+    "published_at": "2024-10-07T19:18:17Z",
+    "asset_bytes": 12525636,
+    "asset_sha256": "c050a2ad90a7df89d9dc1f1c3b3b20683edd20a56293b35fcaae43dec115d681",
+    "release_url": "https://github.com/evalplus/repoqa_release/releases/tag/2024-06-23",
+    "selection": "all 10 Express needles, original array order; no result-based selection"
+  },
+  "repository": {
+    "name": "expressjs/express",
+    "commit": "815f799310a5627c000d4a5156c1c958e4947b4c",
+    "group": "typescript",
+    "entrypoint": "lib",
+    "source_files": 11,
+    "source_tree": {
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "95a5762890e5c1c9808921cef095661fc482c5e1f0bba31446ac85595df6237c",
+          "bytes": 1249
+        },
+        {
+          "path": "lib/application.js",
+          "sha256": "5901b32f609ba349351bf7406dbdc0c4c57b77ce6f7215ea67ccca5ac2a28e88",
+          "bytes": 14593
+        },
+        {
+          "path": "lib/express.js",
+          "sha256": "2f25585c03c3050779c8f5f00597f8653f4fb8a97448ef8ef8cb21e65ba4d15d",
+          "bytes": 2409
+        },
+        {
+          "path": "lib/middleware/init.js",
+          "sha256": "48c1d12f1494b20377fcdeec9056272eff84ed8c081e1e56dc2aea395f77d19c",
+          "bytes": 853
+        },
+        {
+          "path": "lib/middleware/query.js",
+          "sha256": "6edce3963588b42e41942900b24218e665b97df0c0b1c74090b2b934fa68ca08",
+          "bytes": 885
+        },
+        {
+          "path": "lib/request.js",
+          "sha256": "64ac10752c0516d789cb0698bb433586d4ce3b46f7f06ee3cb2880762b8bda40",
+          "bytes": 12505
+        },
+        {
+          "path": "lib/response.js",
+          "sha256": "8761b1592827b8d4708dc17810a7359b35ca469bde3bb10aabdce6a1884629a8",
+          "bytes": 28339
+        },
+        {
+          "path": "lib/router/index.js",
+          "sha256": "19c5ca9b025396612dbe464d07fbe7104ff9170c4d6a1c7e5507df4dbbf4d5cb",
+          "bytes": 15123
+        },
+        {
+          "path": "lib/router/layer.js",
+          "sha256": "c90709dcba8d9a6cfd1f2b4ef6d7a22d833e317f0c876d884342cee5a96f8a02",
+          "bytes": 3296
+        },
+        {
+          "path": "lib/router/route.js",
+          "sha256": "86db123570815a63dc23aa88d73e1b3dce908692ac2e3cf20fa350d69de63337",
+          "bytes": 4399
+        },
+        {
+          "path": "lib/utils.js",
+          "sha256": "9035c6d946ece511e749043cc823e32d3efe6727b8a9d52aac89649e99584f09",
+          "bytes": 5871
+        },
+        {
+          "path": "lib/view.js",
+          "sha256": "ec627880c1b43aee5887164ac2e9c58f01e4ee8086e23a829eddf1af3858c021",
+          "bytes": 3325
+        }
+      ],
+      "sha256": "3eb56c820fb69c4d95a8720f422f6581e5991ffe71d30c2ecf0c320ac592e760"
+    }
+  },
+  "tool": {
+    "name": "evalplus/repoqa",
+    "commit": "ae876deb1365dbf5a15b0533723c8ed123eee586",
+    "scorer": "repoqa.compute_score.needle_evaluator",
+    "threshold": 0.8,
+    "ignore_comments": false
+  },
+  "protocols": {
+    "official_snf": {
+      "status": "BLOCKED",
+      "reason": "Missing official scorer/parser/transformers dependencies and frozen tokenizer revision. Official 16384-token prompt preprocessing is not materialized.",
+      "code_context_size": 16384,
+      "max_new_tokens": 1024,
+      "clean_ctx_comments": "none",
+      "tokenizer_name_in_frozen_source": "codellama/CodeLlama-7b-Instruct-hf",
+      "tokenizer_revision": null,
+      "metric": "official best-match and BLEU similarity >= 0.8"
+    },
+    "platform_derived_navigation": {
+      "input_status": "READY",
+      "execution_status": "NOT_RUN",
+      "label": "RepoQA-derived Express tool navigation acceptance",
+      "requires": "isolated read-only workspace; real worker adapter; separate official scorer or explicitly labeled derived metric",
+      "report_separately": [
+        "official function-match evaluation when available",
+        "path citation accuracy",
+        "tool bytes read",
+        "latency"
+      ]
+    }
+  },
+  "task_count": 10,
+  "tasks": [
+    {
+      "task_id": "repoqa-express-01",
+      "ordinal": 1,
+      "prompt": "agent-input/prompts/repoqa-express-01.md",
+      "prompt_sha256": "2fcbfc69293af58fa7e5d6f46336390add68e48c9cb41f623fc337dba06d60e4",
+      "description_sha256": "16a1000869f51477a0ae3e2ecfeae23fad75491b4ae4c5ba17d206a3abfe2832"
+    },
+    {
+      "task_id": "repoqa-express-02",
+      "ordinal": 2,
+      "prompt": "agent-input/prompts/repoqa-express-02.md",
+      "prompt_sha256": "293fc5ddbd2fc357627dd1f5000f690af055159db429fe9aa192556d6ee5fc5b",
+      "description_sha256": "e63a1db4415b26e205a3862f180a4cbf8ec05c2ace056268b914709957f1a224"
+    },
+    {
+      "task_id": "repoqa-express-03",
+      "ordinal": 3,
+      "prompt": "agent-input/prompts/repoqa-express-03.md",
+      "prompt_sha256": "b32559edcc191edd5d5c679c44f51ffc503a37f55c78b2f09de8504e5cbde785",
+      "description_sha256": "ef4bb920605c98013aa0bc4a71532d9044511974078646d317c1d657044c539a"
+    },
+    {
+      "task_id": "repoqa-express-04",
+      "ordinal": 4,
+      "prompt": "agent-input/prompts/repoqa-express-04.md",
+      "prompt_sha256": "f5e9bc026eded1f89cb48a6f34d0b24dcd4f861185e1a75289aae6b6fa87dd13",
+      "description_sha256": "85587fe56ad9201cb744d492b8cbecbb840b633e6437aa14be4c687433e685ad"
+    },
+    {
+      "task_id": "repoqa-express-05",
+      "ordinal": 5,
+      "prompt": "agent-input/prompts/repoqa-express-05.md",
+      "prompt_sha256": "11a2d9257be6626b759527a0c85944a822e96819765b0e2a6558c254e067fc5e",
+      "description_sha256": "ea7744d4683be1e1b9b6a20c0b2ff5c7bed7db025596afec366326fb245b4aca"
+    },
+    {
+      "task_id": "repoqa-express-06",
+      "ordinal": 6,
+      "prompt": "agent-input/prompts/repoqa-express-06.md",
+      "prompt_sha256": "3b9073e7cb4a9512d1a12a9d4c7691a7d27ed1457f5270e4b48b3c727bcfcb7c",
+      "description_sha256": "d326f5f24003ebff45b0fbca079b2381e082e69d51737512ba8bc2505378d2fe"
+    },
+    {
+      "task_id": "repoqa-express-07",
+      "ordinal": 7,
+      "prompt": "agent-input/prompts/repoqa-express-07.md",
+      "prompt_sha256": "5cd2341d75598a7f5f96db157ae4e1eef1ccf48f7efe5c3abaafc9e4bd2a2049",
+      "description_sha256": "31e6da5e1e858be01a556de74e6c87bcea8303e507deb78e3698d5bf6c94a9cd"
+    },
+    {
+      "task_id": "repoqa-express-08",
+      "ordinal": 8,
+      "prompt": "agent-input/prompts/repoqa-express-08.md",
+      "prompt_sha256": "571e5cbf358b742d06f3d52d49f913f6ac07025fc1cfad94e41d3be1e5f4c3ec",
+      "description_sha256": "d5a0b6458a86322955d5697529069b7a2e8fea3431964c15289b9cf0de62d092"
+    },
+    {
+      "task_id": "repoqa-express-09",
+      "ordinal": 9,
+      "prompt": "agent-input/prompts/repoqa-express-09.md",
+      "prompt_sha256": "2798966ba304e378b98b717b7f8b058363e2e80a21a9c60a2ff1d4b4224e86d4",
+      "description_sha256": "28bb0e48ce0a1620b89296616573b988342a1790bd559a61145fc3734b314bcf"
+    },
+    {
+      "task_id": "repoqa-express-10",
+      "ordinal": 10,
+      "prompt": "agent-input/prompts/repoqa-express-10.md",
+      "prompt_sha256": "e40341c7b7c4f441682e618b5cb4165fb89369401e6a75173562e241193429f8",
+      "description_sha256": "51c1dbf3e723f3bfdce1387f4541f11fa0df64c4272472b4d863c29b050443be"
+    }
+  ],
+  "private_material_root": ".local/evaluation/rat-00/repoqa/evaluator-only",
+  "private_manifest_sha256": "a5692e17055cc964878f58809a10c36779ef637ea06c1bdea0f16170fefc25cf",
+  "boundary": {
+    "allow_source_root": "evaluation/rat-00-v1/repoqa/agent-input/source",
+    "allow_task_prompt": "exactly one selected agent-input/prompts/<task_id>.md copied to TASK.md",
+    "never_mount": [
+      "platform root",
+      ".local",
+      "evidence",
+      "evaluator-only",
+      "other task prompts",
+      "upstream dataset",
+      "credentials"
+    ],
+    "enforcement": "Separate task input trees are prepared; actual OS sandbox deny-read check is required before model runs. Directory placement or chmod alone is not isolation."
+  },
+  "license": {
+    "dataset": "Apache-2.0",
+    "repoqa_tool": "Apache-2.0",
+    "express_source": "MIT",
+    "preserved_notices": "licenses/ and agent-input/source/LICENSE"
+  },
+  "scoring_preflight": "evidence/rat-00/repoqa/preflight.json"
+}

@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 1,
+  "positiveSamples": 4,
+  "negativeSamples": 4,
+  "blindAssignmentSeed": 20260907,
+  "samples": [
+    {
+      "id": "BD-01",
+      "family": "node-bearer-auth",
+      "variant": "base",
+      "containsTargetDefect": true,
+      "targetPaths": [
+        "src/auth.mjs"
+      ],
+      "expectedEvaluatorStatus": "unresolved",
+      "workspaceDigest": "914286d5c3a34c0f63fcdb25e529d6a8503cedc737f42f4e03da34a60ccf139e",
+      "targetDefectScope": "The seeded defect covered by the frozen canary evaluator; absence does not establish that the whole program is bug-free.",
+      "evaluator": {
+        "command": "{node}",
+        "args": [
+          "{evaluatorRoot}/evaluators/BD-01/evaluate.mjs",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "BD-02",
+      "family": "python-slug-normalization",
+      "variant": "base",
+      "containsTargetDefect": true,
+      "targetPaths": [
+        "slug.py"
+      ],
+      "expectedEvaluatorStatus": "unresolved",
+      "workspaceDigest": "c9f6dd5af63e28395facb89451d1fd44b6ef908d6d7f3185730551c2bbb4ce0f",
+      "targetDefectScope": "The seeded defect covered by the frozen canary evaluator; absence does not establish that the whole program is bug-free.",
+      "evaluator": {
+        "command": "python3",
+        "args": [
+          "{evaluatorRoot}/evaluators/BD-02/evaluate.py",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "BD-03",
+      "family": "recovery-exactly-once",
+      "variant": "oracle",
+      "containsTargetDefect": false,
+      "targetPaths": [
+        "src/recover.mjs"
+      ],
+      "expectedEvaluatorStatus": "resolved",
+      "workspaceDigest": "9f0b8d048f6d9dbcadc6a928f4ac9d179455c32a6c3e12f21ceb5cb98457caba",
+      "targetDefectScope": "The seeded defect covered by the frozen canary evaluator; absence does not establish that the whole program is bug-free.",
+      "evaluator": {
+        "command": "{node}",
+        "args": [
+          "{evaluatorRoot}/evaluators/BD-03/evaluate.mjs",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "BD-04",
+      "family": "recovery-exactly-once",
+      "variant": "base",
+      "containsTargetDefect": true,
+      "targetPaths": [
+        "src/recover.mjs"
+      ],
+      "expectedEvaluatorStatus": "unresolved",
+      "workspaceDigest": "80435762bb7545da2300348aaa29804dd3748cea6737bf610fb10f802f4b66e0",
+      "targetDefectScope": "The seeded defect covered by the frozen canary evaluator; absence does not establish that the whole program is bug-free.",
+      "evaluator": {
+        "command": "{node}",
+        "args": [
+          "{evaluatorRoot}/evaluators/BD-04/evaluate.mjs",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "BD-05",
+      "family": "ts-nullish-timeout",
+      "variant": "base",
+      "containsTargetDefect": true,
+      "targetPaths": [
+        "src/timeout.mjs"
+      ],
+      "expectedEvaluatorStatus": "unresolved",
+      "workspaceDigest": "e82926c32007aa43c1c369245ac74aec0959578ccecf3677a1732513655c1c98",
+      "targetDefectScope": "The seeded defect covered by the frozen canary evaluator; absence does not establish that the whole program is bug-free.",
+      "evaluator": {
+        "command": "{node}",
+        "args": [
+          "{evaluatorRoot}/evaluators/BD-05/evaluate.mjs",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "BD-06",
+      "family": "ts-nullish-timeout",
+      "variant": "oracle",
+      "containsTargetDefect": false,
+      "targetPaths": [
+        "src/timeout.mjs"
+      ],
+      "expectedEvaluatorStatus": "resolved",
+      "workspaceDigest": "073d761a3d3aa61d299d965c128cc2ad719fc7ff90f2e28ef73fa514eccd3b19",
+      "targetDefectScope": "The seeded defect covered by the frozen canary evaluator; absence does not establish that the whole program is bug-free.",
+      "evaluator": {
+        "command": "{node}",
+        "args": [
+          "{evaluatorRoot}/evaluators/BD-06/evaluate.mjs",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "BD-07",
+      "family": "node-bearer-auth",
+      "variant": "oracle",
+      "containsTargetDefect": false,
+      "targetPaths": [
+        "src/auth.mjs"
+      ],
+      "expectedEvaluatorStatus": "resolved",
+      "workspaceDigest": "790e2fad790dbd62d2f6bec7d4003cbe24cdfe9fba3e796a2de56f09024f9805",
+      "targetDefectScope": "The seeded defect covered by the frozen canary evaluator; absence does not establish that the whole program is bug-free.",
+      "evaluator": {
+        "command": "{node}",
+        "args": [
+          "{evaluatorRoot}/evaluators/BD-07/evaluate.mjs",
+          "{workspace}"
+        ]
+      }
+    },
+    {
+      "id": "BD-08",
+      "family": "python-slug-normalization",
+      "variant": "oracle",
+      "containsTargetDefect": false,
+      "targetPaths": [
+        "slug.py"
+      ],
+      "expectedEvaluatorStatus": "resolved",
+      "workspaceDigest": "a0ccfb8eacc5803dfff755f9d75594f6b6ca9f86bb4612e8e004b395d708d8ef",
+      "targetDefectScope": "The seeded defect covered by the frozen canary evaluator; absence does not establish that the whole program is bug-free.",
+      "evaluator": {
+        "command": "python3",
+        "args": [
+          "{evaluatorRoot}/evaluators/BD-08/evaluate.py",
+          "{workspace}"
+        ]
+      }
+    }
+  ]
+}

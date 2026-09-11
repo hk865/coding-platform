@@ -7,9 +7,9 @@
  * facts — never a transcript / bundle body.
  */
 import { describe, expect, it } from "vitest";
-import { FakeHandoffControlRuntimeAdapter } from "../../src/runtime/handoff-control-adapter.js";
-import { createFakeRuntimeAdapter } from "../../src/runtime/fake-runtime-adapter.js";
-import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../../src/contracts/fixtures/dispatch-fixtures.js";
+import { FakeHandoffControlRuntimeAdapter } from "../../src/execution/worker-runtime/handoff-control-adapter.js";
+import { createFakeRuntimeAdapter } from "../../src/execution/worker-runtime/fake-runtime-adapter.js";
+import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../../src/fixtures/dispatch-fixtures.js";
 import { runRefFor } from "../../src/contracts/dispatch.js";
 import type { RunRef } from "../../src/contracts/dispatch.js";
 import type { HandoffControlCommandV1 } from "../../src/contracts/handoff-control.js";

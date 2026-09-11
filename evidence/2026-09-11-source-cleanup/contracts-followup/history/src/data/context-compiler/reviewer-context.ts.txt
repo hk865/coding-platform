@@ -1,0 +1,259 @@
+import { artifactBodyDigest, artifactBodySize } from '../../contracts/artifact.js';
+import type { ArtifactPort, ArtifactRef, ArtifactRecord } from '../../contracts/artifact.js';
+import type { StateLedger } from '../../contracts/ledger.js';
+import type { DispatchOutboxEntrySnapshot, RunSnapshot, SourceRefV1 } from '../../contracts/dispatch.js';
+import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import type { MaterialAccessGrantRef, MaterialAccessGrantSnapshot, MaterialBasisV1, SourceApplicabilityPort } from '../../contracts/material-access.js';
+import { validateTaskEnvelope } from '../../contracts/validation.js';
+import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
+import type { ReviewInputBinding, ReviewResultSnapshot, ReviewWorkRef, ReviewWorkSnapshot } from '../../contracts/reviewer-work.js';
+import { REVIEWER_MATERIAL_PAGE_MAX_BYTES, REVIEWER_PACKET_MAX_BYTES, ReviewerMaterialError } from '../../contracts/reviewer-context.js';
+import type { ReviewerContextPort, ReviewerContextFailure, ReviewerCurrentResult, ReviewerMaterialPageRequest, ReviewerPacketV1, ReviewerProfilePort, ReviewerRoundContextPort, ReviewerRuntimeObservations, ReviewerSourceRequest } from '../../contracts/reviewer-context.js';
+import type { ReviewerRecoveryResult } from '../../contracts/reviewer-context.js';
+import type { TaskReviewProtocolSnapshot } from '../../contracts/reviewer-work.js';
+import { readReviewerSource } from '../workspace-reader/reviewer-source-reader.js';
+import { reviewerRuntimeInput } from './reviewer-runtime-context.js';
+
+const json = (value: unknown) => canonicalJson(value as JsonValue);
+const same = (a: unknown, b: unknown) => json(a) === json(b);
+function ensure(value: unknown, message: string): asserts value { if (!value) throw new ReviewerMaterialError('unavailable', message); }
+const failure = (error: unknown): ReviewerContextFailure => ({ status: 'incomplete', code: 'review_material_unavailable', missing: [error instanceof Error ? error.message : 'Reviewer materials are unavailable'] });
+const sourceFor = (ref: ArtifactRef): SourceRefV1 => ({ kind: 'artifact', refId: ref.digest, revision: '1', digest: ref.digest });
+type Current = Extract<ReviewerCurrentResult, { status: 'ready' }>;
+
+/** Context selects and reads current material; it never grants access or runs a model. */
+export class ReviewerContextCompiler implements ReviewerContextPort {
+  constructor(private readonly deps: {
+    ledger: StateLedger; vault: ArtifactPort; roundContext: ReviewerRoundContextPort;
+    profiles: ReviewerProfilePort; source: SourceApplicabilityPort; observations: ReviewerRuntimeObservations;
+  }) {}
+
+  async inspect(workRef: ReviewWorkRef) {
+    const loaded = await this.deps.ledger.load(workRef);
+    if (loaded.status !== 'found' || loaded.snapshot.ref.aggregateType !== 'ReviewWork' || !same(loaded.snapshot.ref, workRef)) return null;
+    const work = loaded.snapshot as ReviewWorkSnapshot;
+    const loadedRun = await this.deps.ledger.load(work.reviewerRunRef);
+    if (loadedRun.status !== 'found' || loadedRun.snapshot.ref.aggregateType !== 'Run' || !same(loadedRun.snapshot.ref, work.reviewerRunRef)) return null;
+    let result: ReviewResultSnapshot | null = null;
+    if (work.resultRef) {
+      const stored = await this.deps.ledger.load(work.resultRef);
+      if (stored.status === 'found' && stored.snapshot.ref.aggregateType === 'ReviewResult' && same(stored.snapshot.ref, work.resultRef)) result = stored.snapshot as ReviewResultSnapshot;
+    }
+    const session = (runId: string) => {
+      const rows = this.deps.observations.all().filter(r => r.spec.projectId === workRef.projectId && r.spec.workspaceId === workRef.workspaceId && r.spec.goalId === workRef.goalId && r.spec.runId === runId && r.spec.taskId === work.subject.taskId);
+      return rows.length === 1 && typeof rows[0]!.sessionId === 'string' && rows[0]!.sessionId ? rows[0]!.sessionId : null;
+    };
+    return { work, run: loadedRun.snapshot as RunSnapshot, result, producerSessionId: session(work.producerRunRef.runId), reviewerSessionId: session(work.reviewerRunRef.runId) };
+  }
+
+  async current(workRef: ReviewWorkRef): Promise<ReviewerCurrentResult> {
+    try {
+      const before = await this.inspect(workRef);
+      ensure(before, 'Canonical Reviewer work or Run is unavailable');
+      const { work } = before;
+      const material = await this.deps.roundContext.resolveReviewRound(workRef);
+      if (material.status !== 'ready') return material.status === 'incomplete' ? { status: 'incomplete', code: material.code, missing: material.missing } : { status: 'rejected', code: material.code, issues: material.issues.map(i => i.message) };
+      const profile = await this.deps.profiles.resolve(work.descriptor.subject.scope, work.reviewerConfigRef);
+      if (profile.status !== 'ready') return profile.status === 'incomplete' ? { status: 'incomplete', code: 'profile_unavailable', missing: profile.missing } : profile;
+      ensure(same(profile.profile, work.reviewerProfile) && same(work.roleBinding, profile.profile.roleBinding), 'Reviewer profile no longer matches canonical work');
+      const source = await this.deps.source.capture({ projectId: workRef.projectId, workspaceId: workRef.workspaceId, sourceSet: { kind: 'verification_workspace', paths: ['.'] } });
+      ensure(source.status === 'sourced' && source.pin.identity.workspace === 'verification-source-v1:' + material.material.root &&
+        source.pin.manifestDigest === sha256Hex(json({ sourceDigest: material.material.sourceDigest, sourceProof: material.material.sourceProof })), 'Reviewer source pin is unavailable or stale');
+      const basis: MaterialBasisV1 = { planRef: work.planRef, workspaceRevision: material.material.workspaceRevision, sourceDigest: material.material.sourceDigest, sourcePin: source.pin };
+      if (work.input) await this.validateGrants(work, basis, work.input.grantRefs);
+      const afterMaterial = await this.deps.roundContext.resolveReviewRound(workRef);
+      ensure(afterMaterial.status === 'ready' && same(afterMaterial.material.identity, material.material.identity), 'Canonical or source material changed during Reviewer currentness check');
+      const after = await this.inspect(workRef);
+      ensure(after && same(after.work, work), 'Review binding changed during material capture');
+      if (work.input) await this.validateGrants(work, basis, work.input.grantRefs);
+      return { status: 'ready', work, material: material.material, profile: profile.profile, basis, producerSessionId: after.producerSessionId, reviewerSessionId: after.reviewerSessionId };
+    } catch (error) { return failure(error); }
+  }
+  async recovery(workRef: ReviewWorkRef): Promise<ReviewerRecoveryResult> {
+    let failureReason: string | null = null;
+    const deny = (code: string, message: string): ReviewerRecoveryResult => ({ allowed: false, code, failureReason, issues: [message] });
+    try {
+      const integrity = this.deps.observations.integrityIssues?.() ?? [];
+      if (integrity.length) return deny('recovery_observation_integrity', '持久运行观察身份冲突，无法证明尚未启动：' + integrity.join('; '));
+      const before = await this.inspect(workRef);
+      if (!before) return deny('recovery_evidence_insufficient', 'Canonical Reviewer Work 或 Run 缺失');
+      const { work, run } = before;
+      // Match the Run identity first. A conflicting scope/profile row must not
+      // disappear from the uniqueness check through a narrower filter.
+      const candidates = () => this.deps.observations.all().filter(row => row.spec.projectId === work.ref.projectId && row.spec.goalId === work.ref.goalId && row.spec.runId === run.ref.runId);
+      const rows = candidates(), row = rows[0];
+      if (rows.length === 1 && typeof row?.error === 'string') failureReason = row.error;
+      if (work.output || work.resultRef || before.result) return deny('recovery_result_exists', '已有原报告或正式结果；真实 FAIL 和未知结论不可重抽');
+      if (run.outcome === 'outcome_unknown' || rows.some(r => r.status === 'outcome_unknown')) return deny('recovery_outcome_unknown', '副作用未知，禁止重新执行');
+      if (run.status !== 'ended' || run.outcome !== 'crashed' || run.exitCode !== null) return deny('recovery_not_prestart_failure', '仅已知启动前失败可授权恢复');
+      if (rows.length !== 1 || !row || row.status !== 'failed' || typeof row.sessionId !== 'string' || !row.sessionId.trim()
+          || !before.producerSessionId || row.sessionId === before.producerSessionId
+          || !same(row.spec, { ...row.spec, ...work.descriptor.subject.scope, runId: run.ref.runId, mode: 'review', review: { workRef, profile: work.reviewerProfile }, budget: work.reviewerProfile.budget })
+          || !Array.isArray(row.events) || !Array.isArray(row.trace) || !Array.isArray(row.usage)
+          || row.events.length !== 1 || row.trace.length !== 0 || row.usage.length !== 0) return deny('recovery_evidence_insufficient', '持久观察缺失、重复、身份不符或无法证明模型/工具未启动');
+      const event = row.events[0]!;
+      if (event.schemaVersion !== 1 || event.eventType !== 'run_crashed' || event.payload.kind !== 'crashed'
+          || typeof event.payload.error !== 'string' || !event.payload.error.trim() || !Number.isFinite(Date.parse(event.occurredAt))
+          || !event.eventId || event.sequence !== 1 || !same(event.runRef, run.ref)
+          || run.lastEventSeq !== 1 || run.lastRuntimeEventId !== event.eventId || run.endedAt !== event.occurredAt
+          || !same(run.work, { kind: 'review', reviewWorkRef: workRef }) || !same(run.task, work.subject)
+          || run.attemptId !== work.reviewerAttemptRef.attemptId || !same(run.roleBinding, work.roleBinding)
+          || !same(run.planRef, work.planRef) || !same(run.envelope?.work, run.work)
+          || !same(run.envelope?.reviewInput, work.input) || !same(run.envelope?.permissions.tools, ['read'])
+          || run.envelope?.permissions.writeScope.length !== 0) return deny('recovery_evidence_insufficient', '持久终止事件与 canonical Run/只读输入绑定不一致');
+      failureReason = event.payload.error;
+      const loaded = await this.deps.ledger.load(work.protocolRef);
+      if (loaded.status !== 'found' || loaded.snapshot.ref.aggregateType !== 'TaskReviewProtocol') return deny('recovery_evidence_insufficient', '审阅协议缺失');
+      const protocol = loaded.snapshot as TaskReviewProtocolSnapshot;
+      if (!same(protocol.ref, work.protocolRef) || !same(protocol.planRef, work.planRef)
+          || !same((protocol.workRefs ?? [protocol.firstWorkRef]).at(-1), workRef)) return deny('recovery_not_current', '该 Reviewer 已被替代，不再是协议当前工作');
+      const current = await this.current(workRef);
+      if (current.status !== 'ready') return { allowed: false, code: current.code, failureReason, issues: current.status === 'incomplete' ? current.missing : current.issues };
+      const after = await this.inspect(workRef), finalProtocol = await this.deps.ledger.load(work.protocolRef);
+      if (!after || !same(after.work, work) || !same(after.run, run) || !same(candidates(), rows)
+          || finalProtocol.status !== 'found' || !same(finalProtocol.snapshot, protocol)) return deny('recovery_evidence_changed', '恢复资格读取期间持久事实发生变化');
+      return { allowed: true, code: 'prestart_failure_proven', failureReason, issues: [], expectedWorkRevision: work.revision,
+        expectedProtocolRevision: protocol.revision, proof: { schemaVersion: 1, workRef, runRef: run.ref, runtimeStatus: 'failed',
+          terminalEventId: event.eventId, terminalEventSeq: 1, observationId: row.sessionId + ':' + event.eventId,
+          eventTypes: ['run_crashed'], traceCount: 0, usageCount: 0, modelStarted: false, toolStarted: false } };
+    } catch (error) { return deny('recovery_evidence_unavailable', String(error)); }
+  }
+  private async requireCurrent(workRef: ReviewWorkRef): Promise<Current> {
+    const result = await this.current(workRef);
+    if (result.status !== 'ready') throw new ReviewerMaterialError(result.status === 'rejected' && ['stale_material', 'source_changed', 'stale_configuration'].includes(result.code) ? 'stale' : 'unavailable', result.status === 'incomplete' ? result.missing.join('; ') : result.issues.join('; '));
+    return result;
+  }
+  private index(work: ReviewWorkSnapshot): ReviewerPacketV1['materials'] {
+    const items = [{ kind: 'descriptor', ref: work.descriptorRef }, { kind: 'tool-aggregate', ref: work.descriptor.toolRound.aggregateRef },
+      ...work.descriptor.tools.map(t => ({ kind: 'tool-report', ref: t.reportRef })), ...work.descriptor.toolEvidence.map(e => ({ kind: 'tool-aggregate', ref: e.aggregateRef }))];
+    const unique = new Map<string, ReviewerPacketV1['materials'][number]>();
+    for (const item of items) {
+      const materialId = 'artifact:' + item.ref.digest;
+      const previous = unique.get(materialId);
+      ensure(!previous || same(previous.ref, item.ref), 'One material digest has conflicting full references');
+      unique.set(materialId, { materialId, ...item });
+    }
+    return [...unique.values()];
+  }
+  async select(workRef: ReviewWorkRef) {
+    const current = await this.current(workRef);
+    return current.status === 'ready' ? { status: 'ready' as const, work: current.work, basis: current.basis, materials: this.index(current.work).map(i => i.ref) } : current;
+  }
+  private async validateGrants(work: ReviewWorkSnapshot, basis: MaterialBasisV1, refs: MaterialAccessGrantRef[]): Promise<void> {
+    ensure(refs.length > 0 && new Set(refs.map(json)).size === refs.length, 'Exact Reviewer grant references are missing or duplicate');
+    const covered = new Set<string>();
+    for (const ref of refs) {
+      const loaded = await this.deps.ledger.load(ref);
+      ensure(loaded.status === 'found' && loaded.snapshot.ref.aggregateType === 'MaterialAccessGrant' && same(loaded.snapshot.ref, ref), 'Reviewer grant is unavailable');
+      const snapshot = loaded.snapshot as MaterialAccessGrantSnapshot, grant = snapshot.grant;
+      ensure(snapshot.revision === 1 && !snapshot.revocation && !grant.history && same(grant.reader, work.reviewerRunRef) && same(grant.basis, basis) &&
+        same(grant.scope, { projectId: work.ref.projectId, workspaceId: work.ref.workspaceId, goalId: work.ref.goalId }), 'Reviewer current grant was revoked or has a different scope/basis');
+      for (const material of grant.materials) covered.add(json(material));
+    }
+    ensure(this.index(work).every(i => covered.has(json(i.ref))), 'Reviewer grants do not cover the complete material index');
+  }
+  private async openMaterial(work: ReviewWorkSnapshot, basis: MaterialBasisV1, ref: ArtifactRef): Promise<ArtifactRecord> {
+    const result = await this.deps.vault.open(ref, { requesterRunRef: work.reviewerRunRef, currentBasis: basis, usage: 'current', includeOwner: true });
+    if (result.status !== 'ready') throw new ReviewerMaterialError(result.status === 'rejected' && result.code === 'forbidden' ? 'forbidden' : result.status === 'rejected' && result.code === 'stale' ? 'stale' : 'unavailable', 'Original Reviewer material is unavailable, stale or forbidden');
+    ensure(same(result.record.ref, ref) && artifactBodyDigest(result.record.body) === ref.digest && artifactBodySize(result.record.body) === ref.sizeBytes, 'Original Reviewer material digest or size is invalid');
+    ensure(same(result.record.ownerRunRef, work.producerRunRef), 'Original tool material has a different producer owner');
+    return result.record;
+  }
+  async assemble(workRef: ReviewWorkRef, grantRefs: MaterialAccessGrantRef[]) {
+    try {
+      const current = await this.requireCurrent(workRef), { work, material, basis, profile } = current;
+      ensure(work.input === null, 'Review input is already bound; use the original packet');
+      await this.validateGrants(work, basis, grantRefs);
+      for (const item of this.index(work)) {
+        const opened = await this.openMaterial(work, basis, item.ref);
+        if (same(item.ref, work.descriptorRef)) ensure(same(JSON.parse(opened.body), work.descriptor), 'Descriptor body does not match canonical Work');
+      }
+      const outbox = await this.deps.ledger.load(work.outboxRef);
+      ensure(outbox.status === 'found' && outbox.snapshot.ref.aggregateType === 'DispatchOutboxEntry', 'Canonical Reviewer dispatch intent is unavailable');
+      const intent = (outbox.snapshot as DispatchOutboxEntrySnapshot).intent;
+      ensure(same(intent.work, { kind: 'review', reviewWorkRef: work.ref }) && same(intent.runRef, work.reviewerRunRef) && same(intent.attemptRef, work.reviewerAttemptRef) && same(intent.planRef, work.planRef) && same(intent.roleBinding, profile.roleBinding) && same(intent.declaredPermissions, profile.permissions), 'Reviewer intent binding or readonly permissions differ');
+      const packet: ReviewerPacketV1 = { schemaVersion: 1, kind: 'independent-review-packet', workRef, reviewerRunRef: work.reviewerRunRef,
+        descriptorDigest: work.descriptorRef.digest, profile, materialIdentity: material.identity, sourceProof: material.sourceProof, changeScope: material.changeScope,
+        task: material.task, policy: material.policyContent, baseline: material.baselineContent, coverage: work.descriptor.requirements,
+        materials: this.index(work), basis, gaps: material.gaps };
+      const packetBody = json(packet);
+      ensure(artifactBodySize(packetBody) <= REVIEWER_PACKET_MAX_BYTES, 'Complete Reviewer packet exceeds 64 KiB; no obligations or material indexes were truncated');
+      const sourceRefs: SourceRefV1[] = [{ kind: 'plan-revision', refId: work.planRef.planId, revision: String(material.plan.planRevision) }, { kind: 'workspace', refId: work.ref.workspaceId, revision: String(material.workspaceRevision), digest: material.sourceDigest }, sourceFor(work.descriptorRef)];
+      const packetStored = await this.deps.vault.put({ contentType: 'application/json', body: packetBody, sourceRefs, ownerRef: work.reviewerRunRef, requestedAt: intent.requestedAt });
+      ensure(packetStored.status === 'stored', 'Reviewer packet could not be stored');
+      const input: ReviewInputBinding = { packetRef: packetStored.ref, packetDigest: packetStored.ref.digest, inputDigest: artifactBodyDigest(reviewerRuntimeInput(packet)), descriptorDigest: work.descriptorRef.digest, grantRefs: structuredClone(grantRefs) };
+      const permissions = { policyRevision: profile.roleBinding.policyRevision, ...profile.permissions };
+      const bundle = { schemaVersion: 1, kind: 'independent-review-bundle', projectId: work.ref.projectId, workspaceId: work.ref.workspaceId, goalId: work.ref.goalId, taskId: work.subject.taskId,
+        runRef: work.reviewerRunRef, attemptRef: work.reviewerAttemptRef, planRef: work.planRef, roleBinding: work.roleBinding, workspaceSnapshot: intent.workspaceSnapshot,
+        permissions, budget: intent.budget, sources: sourceRefs, task: { title: material.task.title, obligations: material.plan.obligations.filter(o => o.taskIds.includes(work.subject.taskId)).map(o => ({ obligationId: o.obligationId, title: o.title })) },
+        dependencies: [], work: { kind: 'review', reviewWorkRef: work.ref }, reviewPacket: packet };
+      const stored = await this.deps.vault.put({ contentType: 'application/json', body: json(bundle), sourceRefs, ownerRef: work.reviewerRunRef, requestedAt: intent.requestedAt });
+      ensure(stored.status === 'stored', 'Reviewer input bundle could not be stored');
+      const envelope: TaskEnvelopeV1 = { schemaVersion: 1, envelopeId: 'review-env-' + work.ref.reviewId, projectId: work.ref.projectId, workspaceId: work.ref.workspaceId, goalId: work.ref.goalId, taskId: work.subject.taskId,
+        runRef: work.reviewerRunRef, attemptRef: work.reviewerAttemptRef, planRef: work.planRef, roleBinding: work.roleBinding, workspaceSnapshot: intent.workspaceSnapshot,
+        permissions, budget: intent.budget, sourceRefs, bundleRef: stored.ref, work: { kind: 'review', reviewWorkRef: work.ref }, reviewInput: input };
+      ensure(validateTaskEnvelope(envelope).length === 0, 'Reviewer envelope is invalid or exceeds its capacity');
+      await this.requireCurrent(workRef);
+      await this.validateGrants(work, basis, grantRefs);
+      return { status: 'ready' as const, envelope, input, packet, manifest: { schemaVersion: 1 as const, selectedRefs: sourceRefs, gaps: [], freshness: { workspaceSnapshot: intent.workspaceSnapshot, planRef: work.planRef } } };
+    } catch (error) { return failure(error); }
+  }
+  async packet(workRef: ReviewWorkRef): Promise<ReviewerPacketV1> {
+    const { work } = await this.requireCurrent(workRef);
+    ensure(work.input, 'Reviewer input is not yet bound');
+    const opened = await this.deps.vault.open(work.input.packetRef, { requesterRunRef: work.reviewerRunRef, includeOwner: true });
+    ensure(opened.status === 'ready' && same(opened.record.ownerRunRef, work.reviewerRunRef) && same(opened.record.ref, work.input.packetRef) && artifactBodyDigest(opened.record.body) === work.input.packetDigest && artifactBodySize(opened.record.body) <= REVIEWER_PACKET_MAX_BYTES, 'Bound Reviewer packet is unavailable or corrupt');
+    const packet = JSON.parse(opened.record.body) as ReviewerPacketV1;
+    ensure(packet.kind === 'independent-review-packet' && packet.schemaVersion === 1 && same(packet.workRef, workRef) && same(packet.profile, work.reviewerProfile) && same(packet.materialIdentity, work.descriptor.materialIdentity) && same(packet.materials, this.index(work)) && packet.descriptorDigest === work.descriptorRef.digest && artifactBodyDigest(reviewerRuntimeInput(packet)) === work.input.inputDigest, 'Bound Reviewer packet identity does not match Work');
+    await this.requireCurrent(workRef);
+    return packet;
+  }
+  async readMaterial(workRef: ReviewWorkRef, request: ReviewerMaterialPageRequest) {
+    if (!Number.isSafeInteger(request.offset) || request.offset < 0 || !Number.isSafeInteger(request.maxBytes) || request.maxBytes <= 0 || request.maxBytes > REVIEWER_MATERIAL_PAGE_MAX_BYTES) throw new ReviewerMaterialError('invalid_reference', 'Reviewer material page exceeds its bounded range');
+    const { work, basis } = await this.requireCurrent(workRef);
+    if (!work.input || !this.index(work).some(i => same(i.ref, request.ref))) throw new ReviewerMaterialError('invalid_reference', 'Material is not in the exact bound Reviewer index');
+    const opened = await this.openMaterial(work, basis, request.ref), bytes = Buffer.from(opened.body, 'utf8');
+    if (request.offset > bytes.length || (request.offset < bytes.length && (bytes[request.offset]! & 0xc0) === 0x80)) throw new ReviewerMaterialError('invalid_reference', 'Reviewer page offset is not a UTF-8 boundary');
+    let end = Math.min(bytes.length, request.offset + request.maxBytes);
+    while (end > request.offset && end < bytes.length && (bytes[end]! & 0xc0) === 0x80) end--;
+    if (end === request.offset && end !== bytes.length) throw new ReviewerMaterialError('invalid_reference', 'Reviewer page capacity cannot fit the next Unicode character');
+    await this.requireCurrent(workRef);
+    return { ref: request.ref, content: bytes.subarray(request.offset, end).toString('utf8'), offset: request.offset, nextOffset: end, totalBytes: bytes.length, complete: end === bytes.length };
+  }
+  async readSource(workRef: ReviewWorkRef, request: ReviewerSourceRequest) {
+    const current = await this.requireCurrent(workRef);
+    ensure(current.work.input, 'Reviewer input is not yet bound');
+    const result = await readReviewerSource(current.material.root, request);
+    await this.requireCurrent(workRef);
+    return result;
+  }
+  async openReport(workRef: ReviewWorkRef) {
+    const { work, basis } = await this.requireCurrent(workRef);
+    ensure(work.input && work.output, 'Original Reviewer output is not yet bound');
+    for (const item of this.index(work)) await this.openMaterial(work, basis, item.ref);
+    const result = await this.deps.vault.open(work.output.reportRef, { requesterRunRef: work.reviewerRunRef, includeOwner: true });
+    if (result.status === 'ready') ensure(same(result.record.ownerRunRef, work.reviewerRunRef) && same(result.record.ref, work.output.reportRef) && artifactBodyDigest(result.record.body) === work.output.reportDigest && artifactBodySize(result.record.body) === work.output.reportRef.sizeBytes, 'Reviewer original output owner, digest or size is invalid');
+    await this.requireCurrent(workRef);
+    return result;
+  }
+  async openHistoricalReport(workRef: ReviewWorkRef) {
+    const before = await this.inspect(workRef);
+    ensure(before?.work.output, 'Canonical original Reviewer report is unavailable');
+    const { work } = before, output = work.output!;
+    const result = await this.deps.vault.open(output.reportRef, { requesterRunRef: work.reviewerRunRef, includeOwner: true, usage: 'historical_explanation' });
+    if (result.status === 'ready') ensure(result.record.applicability === 'historical_explanation' && same(result.record.ownerRunRef, work.reviewerRunRef) &&
+      same(result.record.ref, output.reportRef) && artifactBodyDigest(result.record.body) === output.reportDigest && artifactBodySize(result.record.body) === output.reportRef.sizeBytes,
+    'Historical Reviewer original body owner or integrity is invalid');
+    const after = await this.inspect(workRef);
+    ensure(after && same(after.work.output, output) && same(after.work.reviewerRunRef, work.reviewerRunRef), 'Historical Reviewer output binding changed during read');
+    return result;
+  }
+  async runtime(workRef: ReviewWorkRef, envelope: TaskEnvelopeV1) {
+    const { work } = await this.requireCurrent(workRef);
+    ensure(work.input && same(envelope.work, { kind: 'review', reviewWorkRef: workRef }) && same(envelope.reviewInput, work.input) && same(envelope.runRef, work.reviewerRunRef), 'Runtime Reviewer input is not the canonical bound work');
+    const packet = await this.packet(workRef);
+    return { packet, input: work.input, profile: work.reviewerProfile,
+      assertCurrent: async () => { const value = await this.requireCurrent(workRef); ensure(same(value.work.input, work.input), 'Reviewer input changed'); },
+      readMaterial: (request: ReviewerMaterialPageRequest) => this.readMaterial(workRef, request) };
+  }
+}

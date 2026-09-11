@@ -24,45 +24,33 @@
  *   - no dispatch outbox / TaskAttempt / AgentRun anywhere.
  */
 import { describe, expect, it } from "vitest";
-import { createControlEngine } from "../../src/control/control-engine.js";
-import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
+import { createControlEngine } from "../../src/control/control-engine/control-engine.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
 import type { StateLedger, LedgerCommit, LedgerCommitReceipt } from "../../src/contracts/ledger.js";
 import {
   createDeterministicDeps,
   FIXED_ISO_2026_09_05,
-} from "../../src/contracts/testing/sequences.js";
+} from "../../src/testing/sequences.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
 import {
   WORKSPACE_BOOTSTRAP_FIXTURE_V1,
   buildBootstrapLedgerCommit,
-} from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+} from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
   buildCreateGoalCommand,
   buildGoalCreateLedgerCommit,
   goalSnapshotFor,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  COMPLETION_POLICY_FIXTURE_V1,
-  buildActivateCommand,
-  buildActivateLedgerCommit,
-  buildInstallCommand,
-  buildInstallLedgerCommit,
-  completionPolicyPinFor,
-  architectureBaselinePinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
 import type {
   InstallArchitectureBaselineRevisionCommand,
   InstallCompletionPolicyRevisionCommand,
 } from "../../src/contracts/governance.js";
-import {
-  HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1,
-  buildApplyPlanCommand,
-  buildPlanLedgerCommit,
-  goalRefFor,
-  planRevisionRefFor,
-} from "../../src/contracts/fixtures/plan-fixtures.js";
+import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { buildPlanLedgerCommit } from "../../src/control/control-engine/records/plan.js";
+import { goalRefFor, planRevisionRefFor } from "../../src/contracts/plan.js";
 import type { ApplyPlanRevisionCommand, PlanRevisionDraft, PlanRevisionSnapshot } from "../../src/contracts/plan.js";
 import type { GoalSnapshot } from "../../src/contracts/ledger.js";
 

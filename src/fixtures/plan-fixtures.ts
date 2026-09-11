@@ -1,0 +1,173 @@
+import { buildApplyPlanCommand as formalbuildApplyPlanCommand } from "../contracts/commands/plan.js";
+
+/**
+ * Shared fixture: hand-authored PlanRevision.
+ *
+ * Plan structure and admission constraints:
+ *  - stages / runtime tasks (requirementLevel/taskKind/disposition/phase are
+ *    four ORTHOGONAL dimensions) / AcceptanceObligation / gate tasks (a gate is
+ *    a Runtime Task with taskKind="gate") / TaskHierarchy (parent_of only) /
+ *    RuntimeExecutionDAG (depends_on only; every hard edge states what it
+ *    needs) / PlanRevisionSnapshot (fixed exact pins);
+ *  - the fixture satisfies every non-empty guard: >=1 required executable
+ *    task, >=1 active required GoalGateTask, >=1 required obligation, each
+ *    required executable task maps a required obligation, each required
+ *    obligation maps work/gate tasks and compiles >=1 required
+ *    VerificationRequirement (kind within the CompletionPolicy's
+ *    requirementKinds);
+ *  - stage does NOT synthesize dependencies; parent_of never enters the DAG
+ *    and depends_on never enters the hierarchy.
+ */
+import type { CommandIdentity } from "../contracts/command-event.js";
+import { commandIdentityKey } from "../contracts/command-event.js";
+import type { ApplyPlanRevisionCommand, PlanRevisionDraft } from "../contracts/plan.js";
+
+
+
+
+export const HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1: PlanRevisionDraft = {
+  schemaVersion: 1,
+  planId: "plan-mvp-1",
+  planRevision: 1,
+  goalId: "goal-1",
+  stages: [
+    { stageId: "stage-contract", title: "确定契约并安装治理基线" },
+    { stageId: "stage-execution", title: "实现并验证可观察切片" },
+  ],
+  tasks: [
+    {
+      taskId: "task-install-contract",
+      stageId: "stage-contract",
+      title: "安装 CompletionPolicy / ArchitectureBaseline 并激活 Project active refs",
+      requirementLevel: "required",
+      taskKind: "work",
+      disposition: "active",
+      phase: "pending",
+      scope: { kind: "stage", stageId: "stage-contract" },
+    },
+    {
+      taskId: "task-accept-plan",
+      stageId: "stage-contract",
+      title: "接受手写 PlanRevision 并固定 governance pins",
+      requirementLevel: "required",
+      taskKind: "work",
+      disposition: "active",
+      phase: "pending",
+      scope: { kind: "stage", stageId: "stage-contract" },
+    },
+    {
+      taskId: "task-verify",
+      stageId: "stage-execution",
+      title: "运行契约套件与重启证据验证",
+      requirementLevel: "required",
+      taskKind: "work",
+      disposition: "active",
+      phase: "pending",
+      scope: { kind: "stage", stageId: "stage-execution" },
+    },
+    {
+      taskId: "gate-goal",
+      title: "GoalGate：P1-02 验收路径全部通过",
+      requirementLevel: "required",
+      taskKind: "gate",
+      disposition: "active",
+      phase: "pending",
+      scope: { kind: "goal" },
+    },
+  ],
+  obligations: [
+    {
+      obligationId: "obl-1",
+      title: "治理基线以 install/activate 路径持久化且可解析",
+      requirementLevel: "required",
+      taskIds: ["task-install-contract", "task-accept-plan"],
+      verificationRequirements: [
+        {
+          requirementId: "vr-1",
+          requirementLevel: "required",
+          kind: "static",
+          description: "install/activate 契约套件与重启解析证据",
+        },
+      ],
+    },
+    {
+      obligationId: "obl-2",
+      title: "Plan 被原子接受并投影为 Plan Graph / Task Detail",
+      requirementLevel: "required",
+      taskIds: ["task-verify"],
+      verificationRequirements: [
+        {
+          requirementId: "vr-2",
+          requirementLevel: "required",
+          kind: "dynamic",
+          description: "运行契约套件与投影测试",
+        },
+      ],
+    },
+    {
+      obligationId: "obl-3",
+      title: "P1-02 验收在不产生 Run/dispatch 的前提下满足",
+      requirementLevel: "required",
+      taskIds: ["gate-goal"],
+      verificationRequirements: [
+        {
+          requirementId: "vr-3",
+          requirementLevel: "required",
+          kind: "reviewer",
+          description: "集成验收逐项对照与独立复核",
+        },
+      ],
+    },
+  ],
+  taskHierarchy: {
+    parentOf: [
+      { parentTaskId: "gate-goal", childTaskId: "task-install-contract" },
+      { parentTaskId: "gate-goal", childTaskId: "task-accept-plan" },
+      { parentTaskId: "gate-goal", childTaskId: "task-verify" },
+    ],
+  },
+  executionDag: {
+    dependsOn: [
+      {
+        taskId: "task-accept-plan",
+        dependsOnId: "task-install-contract",
+        requires: { kind: "output-contract", label: "已安装并激活的 governance 精确 refs" },
+      },
+      {
+        taskId: "task-verify",
+        dependsOnId: "task-accept-plan",
+        requires: { kind: "output-contract", label: "accepted plan revision + fixed pins" },
+      },
+      {
+        taskId: "gate-goal",
+        dependsOnId: "task-verify",
+        requires: { kind: "gate-result", label: "契约套件与重启证据" },
+      },
+    ],
+  },
+};
+
+export type BuildApplyPlanDeps = {
+  commandId: string;
+  correlationId: string;
+  submittedAt: string;
+  projectId: string;
+  actor?: CommandIdentity["actor"];
+  idempotencyKey?: string;
+  /** expected Goal revision (CAS; 1 after CreateGoal). */
+  expectedRevision: number;
+  goalId?: string;
+};
+
+export function buildApplyPlanCommand(
+  draft: PlanRevisionDraft,
+  deps: BuildApplyPlanDeps,
+): ApplyPlanRevisionCommand {
+  return formalbuildApplyPlanCommand(draft, { ...deps, goalId: deps.goalId ?? draft.goalId, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-02-apply-plan" });
+}
+
+export function planIdentityKey(command: ApplyPlanRevisionCommand): string {
+  return commandIdentityKey(command.identity);
+}
+
+export { goalRefFor, planRevisionRefFor } from "../contracts/plan.js";

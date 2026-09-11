@@ -98,101 +98,131 @@ export interface ControlEngine {
   submit(command: CreateGoalCommand): Promise<CommandReceipt>;
   /** P1-00 bootstrap extension: versioned addition to the interface. */
   bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
-  /** P1-02: install an immutable governance revision (policy or baseline). */
+  /** Register one explicitly mounted workspace through Control's canonical write face. */
+  registerWorkspace(command: import("./workspace-registration.js").RegisterWorkspaceCommand): Promise<import("./ledger.js").LedgerCommitReceipt>;
+  /** install an immutable governance revision (policy or baseline). */
   install(command: GovernanceInstallCommand): Promise<GovernanceInstallReceipt>;
-  /** P1-02: CAS-activate an installed revision as the Project's per-kind active ref. */
+  /** CAS-activate an installed revision as the Project's per-kind active ref. */
   activate(command: GovernanceActivateCommand): Promise<GovernanceActivateReceipt>;
-  /** P1-02: accept a hand-authored PlanRevision for an existing Goal. */
+  /** accept a hand-authored PlanRevision for an existing Goal. */
   applyPlan(command: ApplyPlanRevisionCommand): Promise<PlanRevisionReceipt>;
-  /** P1-03: read-only eligibility evaluation (zero writes). */
+  /** read-only eligibility evaluation (zero writes). */
   dispatchReadiness(query: DispatchReadinessQuery): Promise<DispatchReadinessResult>;
-  /** P1-03: unique claim — durable outbox intent + lease + attempt + run (atomic). */
+  /** unique claim — durable outbox intent + lease + attempt + run (atomic). */
   claimTask(command: DispatchClaimCommand): Promise<DispatchClaimReceipt>;
-  /** P1-03: record the bounded envelope and mark the outbox intent started (CAS). */
+  /** record the bounded envelope and mark the outbox intent started (CAS). */
   startRun(command: DispatchStartCommand): Promise<DispatchStartReceipt>;
-  /** P1-03: ingest one runtime fact — no regress, crash != outcome_unknown. */
+  /** ingest one runtime fact — no regress, crash != outcome_unknown. */
   runFact(command: RunFactCommand): Promise<RunFactReceipt>;
-  /** P1-04: admit ONE immutable evidence record + binding anchor (atomic; full idempotency). */
+  /** admit ONE immutable evidence record + binding anchor (atomic; full idempotency). */
   submitEvidence(command: SubmitEvidenceCommand): Promise<SubmitEvidenceReceipt>;
-  /** P1-04: deterministic Task/Gate reduction — the ONLY writer of the canonical
+  /** deterministic Task/Gate reduction — the ONLY writer of the canonical
    * TaskReduction phase (never Goal phase — P1-05). */
   reduceTask(command: ReduceTaskCommand): Promise<ReduceTaskReceipt>;
-  /** P1-05: deterministic Goal phase reduction — the ONLY writer of the canonical
+  /** deterministic Goal phase reduction — the ONLY writer of the canonical
    * GoalPhase (never a Task phase; P1-06+ mechanisms are NOT implemented here). */
   reduceGoal(command: ReduceGoalCommand): Promise<ReduceGoalReceipt>;
-  /** P1-06: register a bounded HandoffPacket (body-first; immutable aggregate). */
+  /** register a bounded HandoffPacket (body-first; immutable aggregate). */
   recordHandoff(command: RecordHandoffCommand): Promise<RecordHandoffReceipt>;
-  /** P1-06: replacement claim — B's NEW attempt/run lifecycle for the SAME Task
+  /** replacement claim — B's NEW attempt/run lifecycle for the SAME Task
    * (lease CAS; only after A ended or A's lease expired; no Goal/phase writes). */
   claimReplacement(command: ClaimReplacementCommand): Promise<ClaimReplacementReceipt>;
-  /** P1-07: shared/overlapping read lease acquisition (read-read never conflicts). */
+  /** shared/overlapping read lease acquisition (read-read never conflicts). */
   acquireWorkspaceReadLease(command: AcquireWorkspaceReadLeaseCommand): Promise<AcquireReadLeaseReceipt>;
-  /** P1-07: exclusive write lease (index CAS — invariant #7, one writer per workspace). */
+  /** exclusive write lease (index CAS — invariant #7, one writer per workspace). */
   acquireWorkspaceWriteLease(command: AcquireWorkspaceWriteLeaseCommand): Promise<AcquireWriteLeaseReceipt>;
-  /** P1-07: holder-only lease release (no cancel/preempt — P1-10). */
+  /** holder-only lease release (no cancel/preempt — P1-10). */
   releaseWorkspaceLease(command: ReleaseWorkspaceLeaseCommand): Promise<ReleaseLeaseReceipt>;
-  /** P1-07: evidence join record (explicit conflict preservation; never overwrite). */
+  /** evidence join record (explicit conflict preservation; never overwrite). */
   recordIntegrationResult(command: RecordIntegrationResultCommand): Promise<RecordIntegrationResultReceipt>;
-  /** P1-07: record ONE patch artifact (body-first) + workspace revision advance + lease release (atomic). */
+  /** record ONE patch artifact (body-first) + workspace revision advance + lease release (atomic). */
   recordPatch(command: RecordPatchCommand): Promise<RecordPatchReceipt>;
-  /** P1-16: bind the durable work identity (one per (projectId, workspaceId, workId)). */
+  /** bind the durable work identity (one per (projectId, workspaceId, workId)). */
   bindWorkContext(command: BindWorkContextCommand): Promise<BindWorkContextReceipt>;
-  /** P1-16: link a run to the work binding (bounded; work responsibility crosses runs). */
+  /** link a run to the work binding (bounded; work responsibility crosses runs). */
   linkWorkRun(command: LinkWorkRunCommand): Promise<LinkWorkRunReceipt>;
-  /** P1-16: register ONE immutable ExecutionNote (body-first; idempotent; no transcript). */
+  /** register ONE immutable ExecutionNote (body-first; idempotent; no transcript). */
   recordExecutionNote(command: RecordExecutionNoteCommand): Promise<RecordExecutionNoteReceipt>;
-  /** P1-16: record the OBSERVED continuation path (capability declaration is never fabricated). */
+  /** record the OBSERVED continuation path (capability declaration is never fabricated). */
   recordContinuation(command: RecordContinuationCommand): Promise<RecordContinuationReceipt>;
-  /** P1-12: record one immutable architecture inspection (pin-only baseline; CAS@0). */
+  /**
+   * 任务工作身份的**权威只读解析**（零写入、无新聚合、无第二份事实）。
+   * 按 (projectId, workspaceId, goalId, taskId) 找该任务已存在的 task 工作身份；
+   * 同一任务在账本里存在多条身份时（RW-13 之前留下的历史不一致）给出确定性唯一答案：
+   * 显式声明的身份优先于推导兜底身份，同为显式时取账本顺序最早的一条（不改名、不删除）。
+   * 读不完整（超过扫描上限）返回 unavailable——调用方必须失败，不得凭推导 id 硬写新身份。
+   */
+  resolveTaskWorkIdentity(query: import("./task-work-identity.js").TaskWorkIdentityQuery): Promise<import("./task-work-identity.js").TaskWorkIdentityResolution>;
+  /** record one immutable architecture inspection (pin-only baseline; CAS@0). */
   recordArchitectureInspection(command: RecordArchitectureInspectionCommand): Promise<RecordArchitectureInspectionReceipt>;
-  /** P1-12: record one immutable architecture finding (may have deltaRef: null — never fake a raw delta). */
+  /** record one immutable architecture finding (may have deltaRef: null — never fake a raw delta). */
   recordArchitectureFinding(command: RecordArchitectureFindingCommand): Promise<RecordArchitectureFindingReceipt>;
-  /** P1-12: record one immutable architecture decision brief (material/ambiguous findings). */
+  /** record one immutable architecture decision brief (material/ambiguous findings). */
   recordArchitectureDecisionBrief(command: RecordArchitectureDecisionBriefCommand): Promise<RecordArchitectureDecisionBriefReceipt>;
-  /** P1-12: record one immutable candidate baseline proposal (deterministic digest; P1-14 consumes). */
+  /** record one immutable candidate baseline proposal (deterministic digest; P1-14 consumes). */
   recordCandidateBaselineProposal(command: RecordCandidateBaselineProposalCommand): Promise<RecordCandidateBaselineProposalReceipt>;
-  /** P1-10: submit one durable control intent (desired state FIRST — no side effect until runtime ack). */
+  /** submit one durable control intent (desired state FIRST — no side effect until runtime ack). */
   submitControl(command: SubmitControlCommand): Promise<SubmitControlReceipt>;
-  /** P1-10: record one safe-point acknowledgement (append to the intent; CAS@N). */
+  /** record one safe-point acknowledgement (append to the intent; CAS@N). */
   recordSafePointAck(command: RecordSafePointAckCommand): Promise<RecordSafePointAckReceipt>;
-  /** P1-09: submit one non-blocking QueryJob (durable job+run first; source run untouched). */
+  /** claim a pending query with CAS before invoking its runtime. */
+  startQueryJob(command: import("./query-job.js").StartQueryJobCommand): Promise<import("./query-job.js").StartQueryJobReceipt>;
+  /** submit one non-blocking QueryJob (durable job+run first; source run untouched). */
   submitQueryJob(command: SubmitQueryJobCommand): Promise<SubmitQueryJobReceipt>;
-  /** P1-09: record one bounded query answer (rounds <= 4; sources + stale marker). */
+  /** record one bounded query answer (rounds <= 4; sources + stale marker). */
   recordQueryAnswer(command: RecordQueryAnswerCommand): Promise<RecordQueryAnswerReceipt>;
-  /** P1-09: close a query job (timeout/gap/failed/stale_source; observable; no source-phase write). */
+  /** close a query job (timeout/gap/failed/stale_source; observable; no source-phase write). */
   closeQueryJob(command: CloseQueryJobCommand): Promise<CloseQueryJobReceipt>;
-  /** P1-11: record one immutable plan-change proposal (Planner proposes only). */
+  /** record one immutable plan-change proposal (Planner proposes only). */
   recordPlanChangeProposal(command: RecordPlanChangeProposalCommand): Promise<RecordPlanChangeProposalReceipt>;
-  /** P1-11: record one immutable user decision (authority-target exact; zero write unless accepted). */
+  /** record one immutable user decision (authority-target exact; zero write unless accepted). */
   recordUserDecision(command: RecordUserDecisionCommand): Promise<RecordUserDecisionReceipt>;
-  /** P1-11: apply an ACCEPTED decision -> new PlanRevision + GoalRevision + Goal CAS (atomic). */
+  /** apply an ACCEPTED decision -> new PlanRevision + GoalRevision + Goal CAS (atomic). */
   applyPlanChange(command: ApplyPlanChangeCommand): Promise<ApplyPlanChangeReceipt>;
-  /** P1-13: install an immutable ArchitectureEvolutionPolicy revision (never auto-activates). */
+  /**
+   * RW-04（ADR 0003 D1-4/D1-5）：返工提案的自动受理——触发源是已提交的验证结论、
+   * 改动落在 inScopeRework、自动化预算未耗尽、人没有拒绝过这条问题，四条同时满足才
+   * 以 system 身份落账（提案 + 决定）并复用 applyPlanChange 做 CAS 应用；
+   * 任一不满足返回 needs_human_decision 且零写入。
+   */
+  acceptReworkProposal(request: import('./rework/acceptance.js').ReworkAcceptanceRequestV1): Promise<import('./rework/acceptance.js').ReworkAcceptanceReceiptV1>;
+  /** install an immutable ArchitectureEvolutionPolicy revision (never auto-activates). */
   installArchitectureEvolutionPolicy(command: import("./architecture-evolution-policy.js").InstallArchitectureEvolutionPolicyRevisionCommand): Promise<import("./architecture-evolution-policy.js").ArchitectureEvolutionPolicyInstallReceipt>;
-  /** P1-13: CAS-activate the project ArchitectureEvolutionPolicy active ref (per-kind independent). */
+  /** CAS-activate the project ArchitectureEvolutionPolicy active ref (per-kind independent). */
   activateArchitectureEvolutionPolicy(command: import("./architecture-evolution-policy.js").ActivateProjectArchitectureEvolutionPolicyCommand): Promise<import("./architecture-evolution-policy.js").ArchitectureEvolutionPolicyActivateReceipt>;
-  /** P1-13: record one allowlisted remediation plan patch (verdict recomputed; CAS@0). */
+  /** record one allowlisted remediation plan patch (verdict recomputed; CAS@0). */
   submitRemediationPlanPatch(command: import("./remediation.js").SubmitRemediationPlanPatchCommand): Promise<import("./remediation.js").SubmitRemediationPlanPatchReceipt>;
-  /** P1-13: create ONE effective RemediationTask per dedup key (double-submit dedups). */
+  /** create ONE effective RemediationTask per dedup key (double-submit dedups). */
   createRemediationTask(command: import("./remediation.js").CreateRemediationTaskCommand): Promise<import("./remediation.js").CreateRemediationTaskReceipt>;
-  /** P1-13: advance a RemediationTask (writing/verifying/resolved/failed/blocked; CAS@N). */
+  /** advance a RemediationTask (writing/verifying/resolved/failed/blocked; CAS@N). */
   advanceRemediationTask(command: import("./remediation.js").AdvanceRemediationTaskCommand): Promise<import("./remediation.js").AdvanceRemediationTaskReceipt>;
-  /** P1-14: deterministically materialize the candidate baseline from a P1-12 proposal + exact source. */
+  /** deterministically materialize the candidate baseline from a P1-12 proposal + exact source. */
   materializeCandidateBaseline(command: import("./baseline-evolution.js").MaterializeCandidateBaselineCommand): Promise<import("./baseline-evolution.js").MaterializeCandidateBaselineReceipt>;
-  /** P1-14: record one immutable architecture-change decision (exact candidate target). */
+  /** record one immutable architecture-change decision (exact candidate target). */
   recordArchitectureChangeDecision(command: import("./baseline-evolution.js").RecordArchitectureChangeDecisionCommand): Promise<import("./baseline-evolution.js").RecordArchitectureChangeDecisionReceipt>;
-  /** P1-14: record one migration gate result (candidate + current workspace revision). */
+  /** record one migration gate result (candidate + current workspace revision). */
   recordMigrationGate(command: import("./baseline-evolution.js").RecordMigrationGateCommand): Promise<import("./baseline-evolution.js").RecordMigrationGateReceipt>;
-  /** P1-14: record the CAS-guarded baseline activation (ref chain + gate PASS + decision accept). */
+  /** record the CAS-guarded baseline activation (ref chain + gate PASS + decision accept). */
   recordBaselineActivation(command: import("./baseline-evolution.js").RecordBaselineActivationCommand): Promise<import("./baseline-evolution.js").RecordBaselineActivationReceipt>;
-  /** P1-15: record one initial-design proposal (ambiguity + >=2 options). */
+  /** record one initial-design proposal (ambiguity + >=2 options). */
   recordInitialDesignProposal(command: import("./human-role-collaboration.js").RecordInitialDesignProposalCommand): Promise<import("./human-role-collaboration.js").RecordInitialDesignProposalReceipt>;
-  /** P1-15: record one exact initial-design decision (bound to proposal digest). */
+  /** record one exact initial-design decision (bound to proposal digest). */
   recordInitialDesignDecision(command: import("./human-role-collaboration.js").RecordInitialDesignDecisionCommand): Promise<import("./human-role-collaboration.js").RecordInitialDesignDecisionReceipt>;
-  /** P1-15: install a budgeted immutable coordination policy (never auto-activates). */
+  /** install a budgeted immutable coordination policy (never auto-activates). */
   installCoordinationPolicy(command: import("./human-role-collaboration.js").InstallCoordinationPolicyCommand): Promise<import("./human-role-collaboration.js").InstallCoordinationPolicyReceipt>;
-  /** P1-15: CAS-activate the project coordination policy active ref. */
+  /** CAS-activate the project coordination policy active ref. */
   activateCoordinationPolicy(command: import("./human-role-collaboration.js").ActivateCoordinationPolicyCommand): Promise<import("./human-role-collaboration.js").ActivateCoordinationPolicyReceipt>;
+  /**
+   * RW-11（ADR 0003 D4-1）：安装一份不可改写的角色规格 revision（CAS@0，绝不自动生效）。
+   * 角色规格决定这个角色能拿哪些工具、必须读哪些材料、必须产出什么、何时退出；
+   * 它是第五个治理种类，走与 P1-02／P1-15 相同的 install/activate/CAS 路径，不新增 Module。
+   */
+  installRoleSpec(command: import("./role-spec.js").InstallRoleSpecRevisionCommand): Promise<import("./role-spec.js").InstallRoleSpecRevisionReceipt>;
+  /** CAS 激活某个角色在本项目上的生效规格引用（每个角色一份，互相独立）。 */
+  activateRoleSpec(command: import("./role-spec.js").ActivateRoleSpecRevisionCommand): Promise<import("./role-spec.js").ActivateRoleSpecRevisionReceipt>;
+  /** register ONE immutable cross-principal material read grant (version-bound). */
+  grantMaterialAccess(command: import("./material-access.js").GrantMaterialAccessCommand): Promise<import("./material-access.js").GrantMaterialAccessReceipt>;
+  revokeMaterialAccess(command: import("./material-access.js").RevokeMaterialAccessCommand): Promise<import("./material-access.js").RevokeMaterialAccessReceipt>;
 }
 
 export interface HumanCollaboration {
@@ -210,10 +240,8 @@ export interface HumanCollaboration {
   consoleTaskEvidence(query: import("./console-views.js").TaskEvidenceViewQuery): Promise<import("./console-views.js").TaskEvidenceViewResult>;
   consoleTimeline(query: import("./console-views.js").TimelineViewQuery): Promise<import("./console-views.js").TimelineViewResult>;
   /**
-   * P1-11 versioned goal-change group (HumanCollaboration.GoalChangePort —
-   * first QUIET freeze for PlanCompiler.PlanProposalPort /
-   * ContextCompiler.PlanningContextPort; later planning/change tickets may
-   * only consume these versions or submit an explicit version upgrade).
+   * HumanCollaboration goal-change surface. Missing planning material is an
+   * explicit result; this interface is the authority for caller-facing shapes.
    * amend: submit a bounded AmendGoalRequest; the compiler produces a bounded
    * proposal+impact (never mutates) which Control RECORDS immutably.
    */

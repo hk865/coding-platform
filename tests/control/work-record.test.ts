@@ -27,23 +27,8 @@ import {
   P108_TASK_WORK,
 } from "../contract-suite/p1-08-harness.js";
 import { toP1_16Harness } from "../contract-suite/p1-16-harness.js";
-import {
-  P116_SCHEMA,
-  P116_WORK,
-  P116_WORKSPACE,
-  P116_NOTE_1,
-  P116_REPORT_1,
-  P116_REPORT_2,
-  buildBindWorkContextCommand,
-  buildLinkWorkRunCommand,
-  buildExecutionNoteV1,
-  buildRecordExecutionNoteCommand,
-  buildContextContinuationResultV1,
-  buildRecordContinuationCommand,
-  buildWorkContextBindLedgerCommit,
-  buildWorkContextLinkLedgerCommit,
-  p116WorkContextRef,
-} from "../../src/contracts/fixtures/context-fixtures.js";
+import { P116_SCHEMA, P116_WORK, P116_WORKSPACE, P116_NOTE_1, P116_REPORT_1, P116_REPORT_2, buildBindWorkContextCommand, buildLinkWorkRunCommand, buildExecutionNoteV1, buildRecordExecutionNoteCommand, buildContextContinuationResultV1, buildRecordContinuationCommand, p116WorkContextRef } from "../contract-support/fixtures/context-fixtures.js";
+import { buildWorkContextBindLedgerCommit, buildWorkContextLinkLedgerCommit } from "../../src/control/control-engine/records/context.js";
 import { workContextRefFor, WORK_CONTEXT_MAX_RUN_LINKS } from "../../src/contracts/context-continuity.js";
 import type { RunRef } from "../../src/contracts/dispatch.js";
 import type { BindWorkContextCommand } from "../../src/contracts/context-continuity.js";
@@ -51,16 +36,8 @@ import type { BindWorkContextCommand } from "../../src/contracts/context-continu
 const A = P108_PROJECT_A;
 const WSPACE = P116_WORKSPACE;
 
-// BASELINE GAP (reported): validateBindWorkContextCommand checks the field
-// "payload.roleBinding" while the frozen schema + fixture emit
-// "payload.roleBindingRef". Every fixture-built bind command is therefore
-// rejected "invalid". Workaround for THIS test only: mirror roleBindingRef into
-// roleBinding so the buggy validator passes; the handler's fold
-// (buildWorkContextBindLedgerCommit) reads roleBindingRef and is unaffected.
 function bindCmd(deps: Parameters<typeof buildBindWorkContextCommand>[0]): BindWorkContextCommand {
-  const cmd = buildBindWorkContextCommand(deps);
-  (cmd.payload as Record<string, unknown>)["roleBinding"] = cmd.payload.roleBindingRef;
-  return cmd;
+  return buildBindWorkContextCommand(deps);
 }
 
 async function makeWorld() {
@@ -74,6 +51,13 @@ async function makeWorld() {
 
 type Ctx = Awaited<ReturnType<typeof makeWorld>>;
 
+/**
+ * RC-03：P108 世界在派发时已经为 P108_TASK_WORK 建立了唯一身份，因此「首次建立身份」的用例
+ * 必须换一个**还没有身份**的任务 —— 否则测的就不是 bind，而是那个任务的唯一性守卫了
+ * （同一任务第二条身份被拒的用例见 tests/control/work-identity-uniqueness.test.ts）。
+ */
+const P116_BIND_TASK = "task-p116-bind";
+
 async function bindTaskWork(ctx: Ctx, commandId: string, runRef: RunRef, workId: string, goalId: string) {
   return ctx.h.bindWorkContext(bindCmd({
     commandId,
@@ -82,7 +66,7 @@ async function bindTaskWork(ctx: Ctx, commandId: string, runRef: RunRef, workId:
     workspaceId: WSPACE,
     workKind: "task",
     goalId,
-    taskId: P108_TASK_WORK,
+    taskId: P116_BIND_TASK,
     initialRunRef: runRef,
   }));
 }
@@ -145,7 +129,7 @@ describe("P1-16 lane A: WorkRecordEngineImpl bind", () => {
       workspaceId: WSPACE,
       workKind: "task",
       goalId: ctx.goalA,
-      taskId: P108_TASK_WORK,
+      taskId: P116_BIND_TASK,
       initialRunRef: runRef,
     });
     const receipt = await ctx.h.bindWorkContext(cmd);
@@ -181,7 +165,7 @@ describe("P1-16 lane A: WorkRecordEngineImpl bind", () => {
       workspaceId: WSPACE,
       workKind: "task",
       goalId: ctx.goalA,
-      taskId: P108_TASK_WORK,
+      taskId: P116_BIND_TASK,
       initialRunRef: runRef,
     });
     expect((await ctx.h.bindWorkContext(base)).status).toBe("committed");

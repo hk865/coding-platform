@@ -1,0 +1,254 @@
+{
+  "ticket_id": "RAT-00",
+  "fixture_version": "rat-00-v1",
+  "python": "3.12.3",
+  "model_calls": 0,
+  "fixture_preflight": {
+    "status": "PASS",
+    "checks": [
+      {
+        "name": "repository_commit_matches_manifest",
+        "status": "PASS"
+      },
+      {
+        "name": "all_ten_needles_in_release_order",
+        "status": "PASS"
+      },
+      {
+        "name": "all_ten_public_ids_match_private_order",
+        "status": "PASS"
+      },
+      {
+        "name": "private_manifest_digest",
+        "status": "PASS"
+      },
+      {
+        "name": "all_private_controls_present",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:LICENSE",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/application.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/express.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/middleware/init.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/middleware/query.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/request.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/response.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/router/index.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/router/layer.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/router/route.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/utils.js",
+        "status": "PASS"
+      },
+      {
+        "name": "source_digest:lib/view.js",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-01",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-01",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-02",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-02",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-03",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-03",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-04",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-04",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-05",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-05",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-06",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-06",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-07",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-07",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-08",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-08",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-09",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-09",
+        "status": "PASS"
+      },
+      {
+        "name": "prompt_digest:repoqa-express-10",
+        "status": "PASS"
+      },
+      {
+        "name": "description_matches_official:repoqa-express-10",
+        "status": "PASS"
+      },
+      {
+        "name": "agent_input_exact_allowlist",
+        "status": "PASS"
+      },
+      {
+        "name": "agent_input_no_symlinks",
+        "status": "PASS"
+      },
+      {
+        "name": "evaluator_root_outside_agent_input",
+        "status": "PASS"
+      },
+      {
+        "name": "official_source_digest:repoqa/compute_score.py",
+        "status": "PASS"
+      },
+      {
+        "name": "official_source_digest:repoqa/metric.py",
+        "status": "PASS"
+      },
+      {
+        "name": "official_source_digest:repoqa/utility.py",
+        "status": "PASS"
+      },
+      {
+        "name": "official_source_digest:repoqa/data.py",
+        "status": "PASS"
+      },
+      {
+        "name": "official_source_digest:repoqa/__init__.py",
+        "status": "PASS"
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "module": "numpy",
+      "available": true,
+      "version": "1.26.4"
+    },
+    {
+      "module": "tempdir",
+      "available": false,
+      "version": null
+    },
+    {
+      "module": "rich",
+      "available": true,
+      "version": "13.7.1"
+    },
+    {
+      "module": "transformers",
+      "available": false,
+      "version": null
+    },
+    {
+      "module": "tree_sitter_languages",
+      "available": false,
+      "version": null
+    },
+    {
+      "module": "tree_sitter",
+      "available": false,
+      "version": null
+    },
+    {
+      "module": "nltk",
+      "available": false,
+      "version": null
+    },
+    {
+      "module": "appdirs",
+      "available": true,
+      "version": "1.4.4"
+    },
+    {
+      "module": "wget",
+      "available": false,
+      "version": null
+    }
+  ],
+  "official_scorer": {
+    "status": "BLOCKED",
+    "official_calls": 0,
+    "controls_planned": 30,
+    "results": [],
+    "reason": "Missing required official scorer dependencies: tempdir, transformers, tree_sitter_languages, tree_sitter, nltk, wget"
+  },
+  "official_snf_prompt": {
+    "status": "BLOCKED",
+    "reason": "Frozen-source tokenizer codellama/CodeLlama-7b-Instruct-hf has no frozen revision or local assets; 16384-token contexts were not generated."
+  },
+  "runtime_boundary": {
+    "status": "NOT_RUN",
+    "reason": "Static input allowlist passed separately. Sandbox must prove evaluator, parent paths, credentials and other trials unreadable before any model call."
+  },
+  "agent_score": null
+}

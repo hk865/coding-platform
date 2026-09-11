@@ -1,3 +1,4 @@
+import { classifyRestartProbeError } from "./readiness-probe.js";
 /**
  * P1-12 restart-path fixtures + readiness probe (deterministic inspection
  * scenario -> close -> reopen -> architectureInspectionView field-identical +
@@ -9,7 +10,7 @@ import { createPersistentSqliteHarness } from "../../src/harness/persistent-harn
 import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import { toP1_12Harness, runP112InspectionScenario, type P1_12HarnessLike, type P1_12TestHarness, type P112InspectionScenarioResult } from "../contract-suite/p1-12-harness.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
-import { P112_PROJECT, P112_WORKSPACE } from "../../src/contracts/fixtures/architecture-fixtures.js";
+import { P112_PROJECT, P112_WORKSPACE } from "../../src/fixtures/architecture-fixtures.js";
 
 export async function isP112Ready(): Promise<boolean> {
   try {
@@ -20,8 +21,8 @@ export async function isP112Ready(): Promise<boolean> {
     } finally {
       await h.cleanup().catch(() => undefined);
     }
-  } catch {
-    return false;
+  } catch (error) {
+    return classifyRestartProbeError(error);
   }
 }
 

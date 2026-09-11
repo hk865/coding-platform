@@ -1,7 +1,7 @@
 /** P1-15 contract suite — acceptance + verification (compact; wiring READY gates). */
 import { describe, it, expect, beforeAll } from "vitest";
 import { runP115Scenario } from "./p1-15-harness.js";
-import { buildP115ProposalCommand } from "../../src/contracts/fixtures/human-role-collaboration-fixtures.js";
+import { buildP115ProposalCommand } from "../contract-support/fixtures/human-role-collaboration-fixtures.js";
 import type { P115HarnessLike, P115ScenarioResult } from "./p1-15-harness.js";
 
 export function defineHumanRoleCollaborationContractSuite(factory: () => Promise<P115HarnessLike>, suiteOptions: { name?: string } = {}): void {

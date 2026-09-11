@@ -1,0 +1,72 @@
+runtime-context-materials
+RuntimeContextScope src/data/context-compiler/runtime-context.ts
+RuntimeContextText src/data/context-compiler/exploration-context-compiler.ts src/data/context-compiler/role-material-sources.ts src/data/context-compiler/runtime-context.ts src/data/context-compiler/work-run-materials.ts
+RuntimeHistoryMaterial src/data/context-compiler/runtime-context.ts src/data/context-compiler/work-run-materials.ts
+RuntimeWorkIdentityMaterial 
+RuntimeWorkContextMaterials src/data/context-compiler/runtime-context.ts src/data/context-compiler/work-run-materials.ts
+RoleMaterialQualification 
+RuntimeRoleMaterialEntryV1 src/data/context-compiler/role-material-sources.ts src/data/context-compiler/role-source-index.ts src/data/context-compiler/work-run-materials.ts
+RuntimeRoleMaterialsV1 src/data/context-compiler/runtime-context.ts
+RuntimeContextMaterials src/contracts/exploration-session.ts src/control/dispatch-engine/leased-worker-runtime.ts src/control/dispatch-engine/work-material-drive.ts src/data/context-compiler/exploration-context-compiler.ts src/data/context-compiler/runtime-context.ts src/data/context-compiler/work-run-materials.ts
+ports
+RunCapabilities src/execution/worker-runtime/fake-runtime-adapter.ts tests/contract-suite/console.contract.suite.ts tests/contract-suite/p1-07-harness.ts tests/contract-suite/p1-08-harness.ts tests/contract-suite/workspace.contract.suite.ts tests/control/dispatch-drive.test.ts tests/control/handoff-drive.test.ts tests/control/workspace-drive.test.ts
+RunHandle src/control/dispatch-engine/dispatch-engine.ts src/control/dispatch-engine/handoff-drive.ts src/control/dispatch-engine/leased-worker-runtime.ts src/control/dispatch-engine/workspace-drive.ts src/execution/worker-runtime/coding-agent-runtime.ts src/execution/worker-runtime/fake-runtime-adapter.ts tests/contract-suite/console.contract.suite.ts tests/contract-suite/p1-07-harness.ts tests/contract-suite/p1-08-harness.ts tests/contract-suite/workspace.contract.suite.ts tests/control/dispatch-drive.test.ts tests/control/handoff-drive.test.ts tests/control/workspace-drive.test.ts
+RunPort src/app/service.ts src/control/dispatch-engine/dispatch-engine.ts src/control/dispatch-engine/handoff-drive.ts src/control/dispatch-engine/leased-worker-runtime.ts src/control/dispatch-engine/reviewer-dispatch.ts src/control/dispatch-engine/workspace-drive.ts src/execution/worker-runtime/coding-agent-runtime.ts src/execution/worker-runtime/context-continuation-adapter.ts src/execution/worker-runtime/fake-runtime-adapter.ts src/execution/worker-runtime/handoff-control-adapter.ts src/harness/in-memory-harness.ts src/harness/persistent-harness.ts tests/contract-suite/console.contract.suite.ts tests/contract-suite/context.continuity.contract.suite.ts tests/contract-suite/p1-03-harness.ts tests/contract-suite/p1-04-harness.ts tests/contract-suite/p1-07-harness.ts tests/contract-suite/p1-08-harness.ts tests/contract-suite/workspace.contract.suite.ts tests/control/dispatch-drive.test.ts tests/control/handoff-drive.test.ts tests/control/reviewer-existing-drivers-isolation.test.ts tests/control/reviewer-unknown-outcome-preservation.test.ts tests/control/workspace-drive.test.ts
+DispatchDriveTrigger src/control/dispatch-engine/dispatch-engine.ts src/harness/in-memory-harness.ts src/harness/persistent-harness.ts tests/contract-suite/p1-03-harness.ts tests/contract-suite/p1-04-harness.ts tests/control/p1-13-writer-chain-fixture.ts
+DispatchDriveFailure src/control/dispatch-engine/dispatch-engine.ts src/control/dispatch-engine/workspace-drive.ts
+DispatchDriveResult src/contracts/runtime-dispatch.ts src/contracts/workspace-drive.ts src/control/dispatch-engine/dispatch-engine.ts src/control/dispatch-engine/workspace-drive.ts src/harness/in-memory-harness.ts src/harness/persistent-harness.ts tests/contract-suite/p1-03-harness.ts tests/contract-suite/p1-04-harness.ts tests/control/p1-13-writer-chain-fixture.ts
+DispatchPort src/control/dispatch-engine/dispatch-engine.ts src/control/dispatch-engine/runtime-dispatch.ts src/harness/in-memory-harness.ts src/harness/persistent-harness.ts
+verification-source
+CandidateWorkspaceSourcePort src/data/context-compiler/verification-context.ts src/data/workspace-reader/candidate-workspace-reader.ts
+CandidatePatchCheckPort src/control/verification-engine/candidate-patch-check.ts src/control/verification-engine/verification-deps.ts
+planning
+PlanningScope src/app/initial-planning.ts src/data/context-compiler/coordination-context-compiler.ts tests/control/rework-task-dispatch.test.ts
+PlanningRejection 
+InitialPlanningRequest src/control/plan-compiler/initial-plan-compiler.ts src/control/plan-compiler/plan-compiler.ts
+InitialPlanningSubmission 
+InitialPlanningRequestResult src/control/plan-compiler/initial-plan-compiler.ts src/control/plan-compiler/plan-compiler.ts
+PlanningAcceptanceTrigger src/control/plan-compiler/initial-plan-compiler.ts src/control/plan-compiler/plan-compiler.ts
+PlanningAcceptanceReport src/control/plan-compiler/initial-plan-compiler.ts src/control/plan-compiler/plan-compiler.ts
+PlanCompilerPort src/app/initial-planning.ts src/control/plan-compiler/plan-compiler.ts tests/control/planning-fixture.ts tests/control/planning-interface.test.ts
+InitialPlanningResultMaterial src/data/context-compiler/coordination-context-compiler.ts
+PlanningMaterialPort src/control/dispatch-engine/planned-task-dispatch.ts src/control/plan-compiler/initial-plan-compiler.ts src/control/plan-compiler/plan-compiler.ts src/data/context-compiler/coordination-context-compiler.ts tests/control/rework-task-dispatch.test.ts
+CoordinationSourcePort src/data/context-compiler/coordination-context-compiler.ts src/data/context-compiler/query-execution-context.ts
+PlanningTaskWorkMaterial src/contracts/rework/proposal.ts src/control/plan-compiler/plan-compiler.ts src/control/plan-compiler/planning-work-materials.ts tests/control/autonomous-rework-fixture.ts
+verification
+ChangeScopeV1 src/contracts/review-context.ts src/contracts/verification-context.ts
+CHANGE_SCOPE_MAX_FILES src/data/workspace-reader/verification-workspace-reader.ts
+CHANGE_SCOPE_SUMMARY_MAX_BYTES 
+RiskV1 src/contracts/review-context.ts src/contracts/verification-context.ts
+SemanticChangeClassification src/contracts/review-context.ts
+CheckKind 
+CheckCapabilityV1 src/control/verification-engine/command-check-provider.ts src/control/verification-engine/verification-engine.ts src/testing/check-providers.double.ts tests/verification/verification-engine.test.ts
+CheckContextV1 src/contracts/verification-service.ts src/control/verification-engine/command-check-lifecycle.ts src/control/verification-engine/command-check-provider.ts src/control/verification-engine/verification-engine.ts src/testing/check-providers.double.ts tests/verification/command-check-provider.test.ts tests/verification/verification-service.test.ts
+CheckOutcomeV1 src/contracts/verification-service.ts src/control/verification-engine/command-check-provider.ts src/testing/check-providers.double.ts
+CheckPort src/control/verification-engine/command-check-provider.ts src/control/verification-engine/verification-engine.ts src/harness/in-memory-harness.ts src/harness/persistent-harness.ts src/testing/check-providers.double.ts tests/verification/verification-engine.test.ts
+VerificationCheckPlan src/contracts/verification-round.ts src/control/verification-engine/verification-plan-compiler.ts
+REVIEWER_SEMANTIC_CHECK_ID src/control/verification-engine/verification-plan-compiler.ts tests/contract-suite/verification.contract.suite.ts tests/verification/verification-engine.test.ts
+NO_CHANGE_FAST_PATH_CHECK_ID src/control/verification-engine/verification-plan-compiler.ts tests/contract-suite/verification.contract.suite.ts tests/verification/verification-engine.test.ts
+VerificationPlanV1 src/contracts/verification-round.ts src/control/verification-engine/verification-engine.ts src/control/verification-engine/verification-plan-compiler.ts
+VerificationIssue src/contracts/verification-context.ts src/control/verification-engine/verification-engine.ts src/control/verification-engine/verification-plan-compiler.ts src/data/context-compiler/verification-context.ts
+VerificationPlanRejectionCode src/control/verification-engine/verification-engine.ts
+VerificationPlanCompileInput src/control/verification-engine/verification-plan-compiler.ts tests/contract-suite/verification.contract.suite.ts tests/verification/verification-engine.test.ts
+VerificationPlanCompileResult src/control/verification-engine/verification-engine.ts src/control/verification-engine/verification-plan-compiler.ts
+VerificationRequestV1 src/app/service.ts src/contracts/verification-context.ts src/control/verification-engine/verification-engine.ts src/control/verification-engine/verification-rounds.ts src/control/verification-engine/verification-service.ts src/data/context-compiler/verification-context.ts tests/app/verification-rounds.test.ts tests/contract-suite/verification.contract.suite.ts tests/verification/verification-engine.test.ts
+ObservationDraftV1 src/control/verification-engine/verification-engine.ts
+VerificationRejectionCode src/control/verification-engine/verification-engine.ts
+VerificationResultV1 src/contracts/verification-context.ts src/contracts/verification-service.ts src/control/verification-engine/verification-engine.ts src/control/verification-engine/verification-rounds.ts tests/app/verification-rounds.test.ts
+VerificationPort src/contracts/verification-service.ts src/control/verification-engine/verification-engine.ts src/harness/in-memory-harness.ts src/harness/persistent-harness.ts tests/contract-suite/p1-04-harness.ts
+ReviewerCapabilities src/testing/check-providers.double.ts
+ReviewerPort src/control/verification-engine/verification-engine.ts src/harness/in-memory-harness.ts src/harness/persistent-harness.ts src/testing/check-providers.double.ts
+REVIEWER_MAX_PACKET_BYTES src/testing/check-providers.double.ts tests/contract-suite/verification.contract.suite.ts
+task-work-identity
+WORK_IDENTITY_MAX_CHAIN_HOPS src/control/dispatch-engine/work-identity.ts tests/control/work-identity.test.ts
+taskWorkOrigin src/control/dispatch-engine/work-identity.ts src/control/plan-compiler/planning-work-materials.ts
+WORK_ID_PREFIX src/control/dispatch-engine/work-identity.ts
+WorkIdentityScope src/control/control-engine/work-identity-resolution.ts src/control/dispatch-engine/work-identity.ts src/control/plan-compiler/planning-work-materials.ts
+workIdFor src/control/dispatch-engine/work-identity.ts tests/app/work-material-delivery.test.ts tests/control/plan-impact-work-identity.test.ts tests/control/work-identity-harness.test.ts tests/control/work-identity.test.ts
+isDerivedWorkIdFor src/control/control-engine/work-identity-resolution.ts tests/read-model/completed-work-merge-visibility.test.ts
+TaskWorkIdentityQuery src/contracts/modules.ts src/control/control-engine/control-engine.ts src/control/control-engine/work-identity-resolution.ts tests/contract-support/testing/control.double.ts
+TaskWorkIdentityCandidate src/control/control-engine/work-identity-resolution.ts
+TaskWorkIdentityAuthority src/control/control-engine/work-identity-resolution.ts
+TaskWorkIdentityResolution src/contracts/modules.ts src/control/control-engine/control-engine.ts src/control/control-engine/work-identity-resolution.ts src/control/plan-compiler/planning-work-materials.ts tests/contract-support/testing/control.double.ts

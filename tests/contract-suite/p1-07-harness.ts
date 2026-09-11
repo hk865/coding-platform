@@ -29,9 +29,9 @@ import { sha256Hex } from "../../src/contracts/fingerprint.js";
 import type { GoalSnapshot, WorkspaceSnapshot } from "../../src/contracts/ledger.js";
 import type { RunRef, TaskAttemptRef, TaskBudgetV1, RoleBindingRefV1, RuntimeEventV1 } from "../../src/contracts/dispatch.js";
 import type { EvidenceOutcome, EvidenceRef, EffectivityAnchorV1 } from "../../src/contracts/evidence.js";
-import { buildSubmitEvidenceCommand, buildEvidenceV1, buildEffectivityAnchorV1, coverage, taskTriple } from "../../src/contracts/fixtures/evidence-fixtures.js";
-import { buildDispatchClaimCommand, buildRunFactCommand, rebaseScriptForRun, FAKE_RUNTIME_SCRIPT_COMPLETED_V1, type FakeRuntimeScriptV1 } from "../../src/contracts/fixtures/dispatch-fixtures.js";
-import { buildReduceGoalCommand } from "../../src/contracts/fixtures/goal-phase-fixtures.js";
+import { buildSubmitEvidenceCommand, buildEvidenceV1, buildEffectivityAnchorV1, coverage, taskTriple } from "../contract-support/fixtures/evidence-fixtures.js";
+import { buildDispatchClaimCommand, buildRunFactCommand, rebaseScriptForRun, FAKE_RUNTIME_SCRIPT_COMPLETED_V1, type FakeRuntimeScriptV1 } from "../../src/fixtures/dispatch-fixtures.js";
+import { buildReduceGoalCommand } from "../contract-support/fixtures/goal-phase-fixtures.js";
 import {
   P107_GOAL,
   P107_PLAN_ID,
@@ -75,22 +75,17 @@ import {
   buildP107ArtifactRef,
   p107ReaderScript,
   p107WriterScript,
-} from "../../src/contracts/fixtures/workspace-fixtures.js";
+} from "../contract-support/fixtures/workspace-fixtures.js";
 import type { RunPort, RunCapabilities, RunHandle } from "../../src/contracts/ports.js";
 import type { TaskEnvelopeV1 } from "../../src/contracts/task-envelope.js";
-import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../../src/contracts/fixtures/goal-fixtures.js";
-import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  COMPLETION_POLICY_FIXTURE_V1,
-  architectureBaselinePinFor,
-  buildActivateCommand,
-  buildInstallCommand,
-  completionPolicyPinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../contract-support/fixtures/goal-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
+import { architectureBaselinePinFor, completionPolicyPinFor } from "../../src/contracts/governance.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
-import { evidenceRefFor, evidenceApplicability } from "../../src/contracts/evidence.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
+import { evidenceRefFor } from "../../src/contracts/evidence.js";
+import { evidenceApplicability } from "../../src/control/control-engine/policies/evidence.js";
 import { workspaceReadLeaseRefFor, workspaceWriteLeaseRefFor } from "../../src/contracts/workspace-lease.js";
 
 export type { P1_06HarnessFactory };
@@ -739,7 +734,7 @@ export async function runP107FullScenario(h: P1_07TestHarness): Promise<P107Full
 
 import { taskAttemptRefFor, taskLeaseRefFor } from "../../src/contracts/dispatch.js";
 import type { ReduceTaskCommand } from "../../src/contracts/reduction.js";
-import { buildReduceTaskCommand } from "../../src/contracts/fixtures/evidence-fixtures.js";
+import { buildReduceTaskCommand } from "../contract-support/fixtures/evidence-fixtures.js";
 
 export function buildP107ReduceTaskCommand(taskId: string, expectedRevision = 0): ReduceTaskCommand {
   return buildReduceTaskCommand({

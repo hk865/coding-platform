@@ -1,0 +1,11 @@
+{
+  "manifest": "candidate-02",
+  "declaredDigest": "ebd580d7fef6b492fbbbb0de12e394b6e9f93e8438641bb5081937a02961e7eb",
+  "computedDigest": "ebd580d7fef6b492fbbbb0de12e394b6e9f93e8438641bb5081937a02961e7eb",
+  "files": 729,
+  "duplicatePaths": 0,
+  "missing": [],
+  "changed": [],
+  "extraInventory": [],
+  "outsideInventory": []
+}

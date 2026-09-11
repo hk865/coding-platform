@@ -1,0 +1,62 @@
+[
+  {
+    "id": "1",
+    "title": "Plan release",
+    "status": "open"
+  },
+  {
+    "id": "2",
+    "title": "Update docs",
+    "status": "done"
+  },
+  {
+    "id": "3",
+    "title": "Review release",
+    "status": "open"
+  },
+  {
+    "id": "4",
+    "title": "Fix editor",
+    "status": "done"
+  },
+  {
+    "id": "5",
+    "title": "Write release notes",
+    "status": "open"
+  },
+  {
+    "id": "6",
+    "title": "Archive sprint",
+    "status": "done"
+  },
+  {
+    "id": "7",
+    "title": "Test API",
+    "status": "open"
+  },
+  {
+    "id": "8",
+    "title": "Deploy preview",
+    "status": "done"
+  },
+  {
+    "id": "9",
+    "title": "Review API",
+    "status": "open"
+  },
+  {
+    "id": "10",
+    "title": "Clean files",
+    "status": "done"
+  },
+  {
+    "id": "11",
+    "title": "Plan API release",
+    "status": "open"
+  },
+  {
+    "id": "12",
+    "title": "Tag release",
+    "status": "done"
+  }
+]

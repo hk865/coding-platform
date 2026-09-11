@@ -1,0 +1,412 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
+/**
+ * P1-02 lane C — InMemory Plan Graph / Task Detail projection supplemental tests.
+ *
+ * Focus (per IMPLEMENTATION-HANDOFF.md "P1-02 契约与存储语义" + plan-view.md):
+ *  - ready: PlanGraphView/TaskDetailView fields equal the ACCEPTED snapshot
+ *    (fixed pins exact); GoalView.activePlanRevision refreshed by
+ *    PlanRevisionAccepted;
+ *  - freshness: not_ready != not_found (no row before advancing; row absent
+ *    and atLeastCursor covered -> not_found; no atLeastCursor & no row ->
+ *    not_ready, mirroring goal());
+ *  - dedupe by eventId; unknown schema-version stall preserved;
+ *  - governance (install/activate) events advance the cursor without views;
+ *  - full-scope isolation: same local goalId/taskId reused across Projects.
+ *
+ * NOTE (conflict reported to integrator): the frozen plan-view freshness rule
+ * mirrors goal() — "no atLeastCursor & no row -> not_ready". The shared
+ * tests/contract-suite/plan.contract.suite.ts freshness case asserts
+ * "not_found" for (no atLeastCursor, no row, observedCursor set); that
+ * conflicts with goal().contract.suite.ts and HANDOFF item 8. Those tests keep
+ * the frozen, goal()-consistent rule here; see the lane C handoff report.
+ */
+import { describe, expect, it } from "vitest";
+import { createReadModelIndex } from "../../src/data/read-model-index/read-model-index.js";
+import type { CommitCursor } from "../../src/contracts/command-event.js";
+import type { DomainEvent } from "../../src/contracts/events.js";
+import type { EventPage, PositionedEvent } from "../../src/contracts/ledger.js";
+import { makeCommitCursor } from "../../src/contracts/ledger.js";
+import {
+  MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
+  buildCreateGoalCommand,
+  goalCreatedEventFor,
+} from "../../src/contracts/fixtures/goal-fixtures.js";
+import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
+import { planRevisionSnapshotFor, planRevisionAcceptedEventFor } from "../../src/control/control-engine/records/plan.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildInstallCommand } from "../../src/contracts/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { ProjectionStallError } from "../../src/contracts/goal-view.js";
+
+const OCCURRED = FIXED_ISO_2026_09_05;
+const ACCEPTED_AT = "2026-09-05T12:00:00.000Z";
+const FIX = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1;
+const ALPHA = FIX.scopes[0]!;
+const BETA = FIX.scopes[1]!;
+
+type Positioned = { cursor: CommitCursor; event: DomainEvent };
+
+function goalEventAt(seq: number, scope: 0 | 1, idx: string): Positioned {
+  const data = FIX.scopes[scope]!;
+  const cmd = buildCreateGoalCommand(data, {
+    commandId: "cmd-goal-" + idx,
+    correlationId: "corr-goal-" + idx,
+    submittedAt: OCCURRED,
+  });
+  return {
+    cursor: makeCommitCursor(seq),
+    event: goalCreatedEventFor(cmd, { eventId: "evt-goal-" + idx, occurredAt: OCCURRED }),
+  };
+}
+
+function projectOf(scope: 0 | 1): string {
+  return FIX.scopes[scope]!.projectId;
+}
+
+function cpPin(projectId: string) {
+  const cmd = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+    commandId: "cmd-cp",
+    correlationId: "corr-cp",
+    submittedAt: OCCURRED,
+    projectId,
+  });
+  if (cmd.commandType !== "InstallCompletionPolicyRevision") throw new Error("cp kind");
+  return completionPolicyPinFor(cmd);
+}
+
+function abPin(projectId: string) {
+  const cmd = buildInstallCommand(ARCHITECTURE_BASELINE_FIXTURE_V1, {
+    commandId: "cmd-ab",
+    correlationId: "corr-ab",
+    submittedAt: OCCURRED,
+    projectId,
+  });
+  if (cmd.commandType !== "InstallArchitectureBaselineRevision") throw new Error("ab kind");
+  return architectureBaselinePinFor(cmd);
+}
+
+function planEventAt(seq: number, scope: 0 | 1, idx: string): Positioned {
+  const projectId = projectOf(scope);
+  const cmd = buildApplyPlanCommand(HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, {
+    commandId: "cmd-plan-" + idx,
+    correlationId: "corr-plan-" + idx,
+    submittedAt: OCCURRED,
+    projectId,
+    expectedRevision: 1,
+    idempotencyKey: "apply-plan-" + idx,
+  });
+  const snapshot = planRevisionSnapshotFor(
+    cmd,
+    { completionPolicy: cpPin(projectId), architectureBaseline: abPin(projectId) },
+    ACCEPTED_AT,
+  );
+  const event = planRevisionAcceptedEventFor(cmd, {
+    eventId: "evt-plan-" + idx,
+    occurredAt: OCCURRED,
+    workspaceId: FIX.scopes[scope]!.workspaceId,
+    goalAggregateRevision: 2,
+    planSnapshot: snapshot,
+  });
+  return { cursor: makeCommitCursor(seq), event };
+}
+
+function pageOf(positioned: Positioned[]): EventPage {
+  return {
+    afterCursor: null,
+    throughCursor: positioned.at(-1)?.cursor ?? null,
+    events: [...positioned],
+    hasMore: false,
+  };
+}
+
+function alphaPlanQuery(atLeastCursor?: CommitCursor) {
+  const base = { projectId: ALPHA.projectId, goalId: ALPHA.goalId };
+  return atLeastCursor === undefined ? base : { ...base, atLeastCursor };
+}
+
+describe("ReadModelIndexImpl plan view (lane C, InMemory)", () => {
+  it("ready: Plan Graph fields equal the accepted snapshot with exact pins", async () => {
+    const index = createReadModelIndex(new ControlPolicyExplanation());
+    await index.advance(pageOf([goalEventAt(1, 0, "a"), planEventAt(2, 0, "a")]));
+    const result = await index.planGraph(alphaPlanQuery(makeCommitCursor(2)));
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") return;
+    expect(result.graph.projectId).toBe("proj-alpha");
+    expect(result.graph.goalId).toBe("goal-1");
+    expect(result.graph.planRef).toEqual({
+      aggregateType: "PlanRevision",
+      projectId: "proj-alpha",
+      planId: "plan-mvp-1",
+    });
+    expect(result.graph.planRevision).toBe(1);
+    expect(result.graph.acceptedAt).toBe(ACCEPTED_AT);
+    expect(result.graph.pinnedCompletionPolicy).toEqual(cpPin("proj-alpha"));
+    expect(result.graph.pinnedArchitectureBaseline).toEqual(abPin("proj-alpha"));
+    expect(result.graph.tasks.length).toBe(4);
+    expect(result.graph.taskHierarchy.parentOf.length).toBe(3);
+    expect(result.graph.executionDag.dependsOn.length).toBe(3);
+    expect(result.graph.sourceCursor).toBe(makeCommitCursor(2));
+    expect(result.observedCursor).toBe(makeCommitCursor(2));
+  });
+
+  it("ready: Task Detail projections obligations correctly per task", async () => {
+    const index = createReadModelIndex(new ControlPolicyExplanation());
+    await index.advance(pageOf([goalEventAt(1, 0, "b"), planEventAt(2, 0, "b")]));
+    const gate = await index.taskDetail({
+      projectId: "proj-alpha",
+      goalId: "goal-1",
+      taskId: "gate-goal",
+    });
+    expect(gate.status).toBe("ready");
+    if (gate.status !== "ready") return;
+    expect(gate.task.taskKind).toBe("gate");
+    expect(gate.task.stageId).toBeNull();
+    expect(gate.task.obligations.map((o) => o.obligationId)).toEqual(["obl-3"]);
+    expect(gate.task.obligations[0]!.requirementLevel).toBe("required");
+
+    const verify = await index.taskDetail({
+      projectId: "proj-alpha",
+      goalId: "goal-1",
+      taskId: "task-verify",
+    });
+    expect(verify.status).toBe("ready");
+    if (verify.status !== "ready") return;
+    expect(verify.task.stageId).toBe("stage-execution");
+    expect(verify.task.obligations.map((o) => o.obligationId)).toEqual(["obl-2"]);
+    expect(verify.task.sourceCursor).toBe(makeCommitCursor(2));
+
+    const install = await index.taskDetail({
+      projectId: "proj-alpha",
+      goalId: "goal-1",
+      taskId: "task-install-contract",
+    });
+    expect(install.status).toBe("ready");
+    if (install.status !== "ready") return;
+    expect(install.task.obligations.map((o) => o.obligationId)).toEqual(["obl-1"]);
+  });
+
+  it("goal view activePlanRevision refreshed by PlanRevisionAccepted", async () => {
+    const index = createReadModelIndex(new ControlPolicyExplanation());
+    await index.advance(pageOf([goalEventAt(1, 0, "c")]));
+    let g = await index.goal({
+      projectId: "proj-alpha",
+      workspaceId: ALPHA.workspaceId,
+      goalId: "goal-1",
+      atLeastCursor: makeCommitCursor(1),
+    });
+    expect(g.status).toBe("ready");
+    if (g.status !== "ready") return;
+    expect(g.goal.activePlanRevision).toBeNull();
+    expect(g.goal.aggregateRevision).toBe(1);
+
+    await index.advance(pageOf([planEventAt(2, 0, "c")]));
+    g = await index.goal({
+      projectId: "proj-alpha",
+      workspaceId: ALPHA.workspaceId,
+      goalId: "goal-1",
+      atLeastCursor: makeCommitCursor(2),
+    });
+    expect(g.status).toBe("ready");
+    if (g.status !== "ready") return;
+    expect(g.goal.activePlanRevision).toEqual({
+      aggregateType: "PlanRevision",
+      projectId: "proj-alpha",
+      planId: "plan-mvp-1",
+    });
+    expect(g.goal.aggregateRevision).toBe(2);
+    expect(g.goal.sourceCursor).toBe(makeCommitCursor(2));
+  });
+
+  it("not_ready != not_found for plan graph / task detail", async () => {
+    const index = createReadModelIndex(new ControlPolicyExplanation());
+    // projection never advanced -> not_ready (not not_found).
+    const early = await index.planGraph({ projectId: "proj-alpha", goalId: "goal-1" });
+    expect(early.status).toBe("not_ready");
+
+    await index.advance(pageOf([goalEventAt(1, 0, "d"), planEventAt(2, 0, "d")]));
+
+    // atLeastCursor covered + no row -> not_found.
+    const missing = await index.planGraph({
+      projectId: "proj-alpha",
+      goalId: "goal-2",
+      atLeastCursor: makeCommitCursor(2),
+    });
+    expect(missing.status).toBe("not_found");
+
+    // no atLeastCursor + no row -> not_ready (mirrors goal(); contract forbids
+    // not_found here). See report note on plan.contract.suite.ts conflict.
+    const noCursor = await index.planGraph({ projectId: "proj-alpha", goalId: "goal-2" });
+    expect(noCursor.status).toBe("not_ready");
+
+    const taskMissing = await index.taskDetail({
+      projectId: "proj-alpha",
+      goalId: "goal-1",
+      taskId: "task-nope",
+      atLeastCursor: makeCommitCursor(2),
+    });
+    expect(taskMissing.status).toBe("not_found");
+
+    // behind atLeastCursor on an existing row -> not_ready.
+    const behind = await index.planGraph(alphaPlanQuery(makeCommitCursor(9)));
+    expect(behind.status).toBe("not_ready");
+    if (behind.status === "not_ready") {
+      expect(behind.requiredCursor).toBe(makeCommitCursor(9));
+      expect(behind.observedCursor).toBe(makeCommitCursor(2));
+    }
+  });
+
+  it("dedupe: re-advancing the same page does not re-apply or re-advance", async () => {
+    const index = createReadModelIndex(new ControlPolicyExplanation());
+    const page = pageOf([goalEventAt(1, 0, "e"), planEventAt(2, 0, "e")]);
+    const first = await index.advance(page);
+    expect(first.appliedEventIds).toEqual(["evt-goal-e", "evt-plan-e"]);
+    const second = await index.advance(page);
+    expect(second.appliedEventIds).toEqual([]);
+    const graph = await index.planGraph(alphaPlanQuery(makeCommitCursor(2)));
+    expect(graph.status).toBe("ready");
+  });
+
+  it("unknown schema version stalls the whole page", async () => {
+    const index = createReadModelIndex(new ControlPolicyExplanation());
+    const bad: Positioned = {
+      cursor: makeCommitCursor(1),
+      event: { ...goalEventAt(1, 0, "f").event, schemaVersion: 2 } as unknown as DomainEvent,
+    };
+    await expect(index.advance(pageOf([bad]))).rejects.toMatchObject({
+      reason: "unknown_schema_version",
+    });
+    expect((await index.planGraph(alphaPlanQuery(makeCommitCursor(1)))).status).toBe("not_ready");
+  });
+
+  it("known governance install/activate events advance cursor without views (no stall)", async () => {
+    const index = createReadModelIndex(new ControlPolicyExplanation());
+    // A page with only install/activate events: no views, cursor advances.
+    const installs: Positioned[] = [
+      {
+        cursor: makeCommitCursor(1),
+        event: {
+          eventId: "evt-cp-install",
+          eventType: "CompletionPolicyInstalled",
+          schemaVersion: 1,
+          projectId: "proj-alpha",
+          aggregateType: "CompletionPolicyRevision",
+          aggregateId: "policy-completion-mvp",
+          aggregateRevision: 1,
+          causationId: "c",
+          correlationId: "c",
+          idempotencyKey: "k",
+          actor: { kind: "system", id: "s" },
+          occurredAt: OCCURRED,
+          payload: { policyId: "policy-completion-mvp", revision: 1, contentDigest: cpPin("proj-alpha").digest, content: COMPLETION_POLICY_FIXTURE_V1.content },
+        },
+      },
+      {
+        cursor: makeCommitCursor(2),
+        event: {
+          eventId: "evt-ab-install",
+          eventType: "ArchitectureBaselineInstalled",
+          schemaVersion: 1,
+          projectId: "proj-alpha",
+          aggregateType: "ArchitectureBaselineRevision",
+          aggregateId: "baseline-architecture-mvp",
+          aggregateRevision: 1,
+          causationId: "c",
+          correlationId: "c",
+          idempotencyKey: "k",
+          actor: { kind: "system", id: "s" },
+          occurredAt: OCCURRED,
+          payload: { baselineId: "baseline-architecture-mvp", revision: 1, contentDigest: abPin("proj-alpha").digest, content: ARCHITECTURE_BASELINE_FIXTURE_V1.content },
+        },
+      },
+      {
+        cursor: makeCommitCursor(3),
+        event: {
+          eventId: "evt-cp-act",
+          eventType: "CompletionPolicyActivated",
+          schemaVersion: 1,
+          projectId: "proj-alpha",
+          aggregateType: "ProjectCompletionPolicyActive",
+          aggregateId: "proj-alpha",
+          aggregateRevision: 1,
+          causationId: "c",
+          correlationId: "c",
+          idempotencyKey: "k",
+          actor: { kind: "system", id: "s" },
+          occurredAt: OCCURRED,
+          payload: { target: cpPin("proj-alpha") },
+        },
+      },
+      {
+        cursor: makeCommitCursor(4),
+        event: {
+          eventId: "evt-ab-act",
+          eventType: "ArchitectureBaselineActivated",
+          schemaVersion: 1,
+          projectId: "proj-alpha",
+          aggregateType: "ProjectArchitectureBaselineActive",
+          aggregateId: "proj-alpha",
+          aggregateRevision: 1,
+          causationId: "c",
+          correlationId: "c",
+          idempotencyKey: "k",
+          actor: { kind: "system", id: "s" },
+          occurredAt: OCCURRED,
+          payload: { target: abPin("proj-alpha") },
+        },
+      },
+      goalEventAt(5, 0, "g"),
+      planEventAt(6, 0, "g"),
+    ];
+    const receipt = await index.advance(pageOf(installs));
+    expect(receipt.appliedEventIds).toEqual([
+      "evt-cp-install",
+      "evt-ab-install",
+      "evt-cp-act",
+      "evt-ab-act",
+      "evt-goal-g",
+      "evt-plan-g",
+    ]);
+    const graph = await index.planGraph(alphaPlanQuery(makeCommitCursor(6)));
+    expect(graph.status).toBe("ready");
+    if (graph.status === "ready") expect(graph.graph.sourceCursor).toBe(makeCommitCursor(6));
+  });
+
+  it("full-scope isolation: same goalId/taskId reused across Projects never collide", async () => {
+    const index = createReadModelIndex(new ControlPolicyExplanation());
+    // distinct eventIds per project (same local goalId/taskId, different scope).
+    await index.advance(pageOf([goalEventAt(1, 0, "h"), planEventAt(2, 0, "h")]));
+    await index.advance(pageOf([goalEventAt(3, 1, "i"), planEventAt(4, 1, "i")]));
+
+    const alphaGraph = await index.planGraph({
+      projectId: "proj-alpha",
+      goalId: "goal-1",
+      atLeastCursor: makeCommitCursor(4),
+    });
+    const betaGraph = await index.planGraph({
+      projectId: "proj-beta",
+      goalId: "goal-1",
+      atLeastCursor: makeCommitCursor(4),
+    });
+    expect(alphaGraph.status).toBe("ready");
+    expect(betaGraph.status).toBe("ready");
+    if (alphaGraph.status === "ready") expect(alphaGraph.graph.projectId).toBe("proj-alpha");
+    if (betaGraph.status === "ready") expect(betaGraph.graph.projectId).toBe("proj-beta");
+
+    const alphaTask = await index.taskDetail({
+      projectId: "proj-alpha",
+      goalId: "goal-1",
+      taskId: "gate-goal",
+      atLeastCursor: makeCommitCursor(4),
+    });
+    const betaTask = await index.taskDetail({
+      projectId: "proj-beta",
+      goalId: "goal-1",
+      taskId: "gate-goal",
+      atLeastCursor: makeCommitCursor(4),
+    });
+    expect(alphaTask.status).toBe("ready");
+    expect(betaTask.status).toBe("ready");
+    if (alphaTask.status === "ready") expect(alphaTask.task.projectId).toBe("proj-alpha");
+    if (betaTask.status === "ready") expect(betaTask.task.projectId).toBe("proj-beta");
+  });
+});

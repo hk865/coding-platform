@@ -1,36 +1,12 @@
 /**
- * P1-03 dispatch / run contracts — "Eligible Task -> Fake Run view".
- *
- * Authority:
- *   - dev_docs/planning/proposed/P1-foundation/tickets/03-fake-run-visible.md
- *     (4 interfaces to freeze, 6 contracts, 8 Acceptance items)
- *   - dev_docs/interfaces/runtime-collaboration.md (minimal RoleBinding ref,
- *     outbox-before-side-effect, run facts; wire fields freeze at the FIRST
- *     consumer — this ticket)
- *   - IMPLEMENTATION-HANDOFF.md "P1-03 契约与存储语义（冻结）"
- *
- * Frozen P1-03 boundaries:
- *   - NO CompletionClaim / VerificationPlan / Goal reduction. Run end NEVER
- *     writes Task phase. crash != outcome_unknown. At most one claim per task
- *     (TaskLease CAS @0); no retry/re-claim after an attempt ended.
- *   - Runtime facts are de-duplicated by per-run monotonic sequence; run-fact
- *     commits have NO ledger-level idempotency replay (a fact with sequence <=
- *     the committed max is rejected zero-write: duplicate/stale/conflict).
- *   - RoleBinding has no full contract yet (P1-15); RoleBindingRefV1 is the
- *     MINIMAL versioned reference frozen here (template + binding version +
- *     authorization policy version). Authorization = enforced scope
- *     consistency against declared permissions; no policy registry yet.
+ * Run identities, role-binding references and observed runtime facts.
+ * Run completion never sets Task phase. Control admits claims, starts and facts;
+ * monotonic per-run sequences reject duplicate/stale/conflicting facts without writes.
+ * The role-spec and admission protocols resolve the referenced role and permissions.
  */
 import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
 import { canonicalJson, sha256Hex } from "./fingerprint.js";
-import type {
-  DependencyRequirement,
-  Disposition,
-  Phase,
-  PlanRevisionRef,
-  PlanRevisionSnapshot,
-  RuntimeTask,
-} from "./plan.js";
+import type { DependencyRequirement, Disposition, Phase, PlanRevisionRef, PlanRevisionSnapshot } from "./plan.js";
 import type { ContextManifestV1, TaskEnvelopeV1 } from "./task-envelope.js";
 
 // ------------------------------------------------------------------------ //
@@ -136,7 +112,7 @@ export type TaskBudgetV1 = {
 // RuntimeEvent (contract #5)                                                //
 // ------------------------------------------------------------------------ //
 
-export type RuntimeEventType =
+type RuntimeEventType =
   | "run_started"
   | "run_completed"
   | "run_crashed"
@@ -151,7 +127,7 @@ export const RUNTIME_EVENT_TYPES: readonly RuntimeEventType[] = [
   "run_budget_exhausted",
 ];
 
-export const TERMINAL_RUNTIME_EVENT_TYPES: readonly RuntimeEventType[] = [
+const TERMINAL_RUNTIME_EVENT_TYPES: readonly RuntimeEventType[] = [
   "run_completed",
   "run_crashed",
   "run_cancelled",
@@ -198,8 +174,6 @@ export type RuntimeEventV1 = {
     | { kind: "budget_exhausted"; exhaustedAt: string };
 };
 
-export type RuntimeEvent = RuntimeEventV1;
-
 // ------------------------------------------------------------------------ //
 // Run / attempt / outbox status                                             //
 // ------------------------------------------------------------------------ //
@@ -213,13 +187,14 @@ export type RunOutcome =
   | "crashed"
   | "outcome_unknown";
 export type TaskAttemptStatus = "claimed" | "started" | "ended";
-export type DispatchOutboxStatus = "pending" | "started" | "done";
+type DispatchOutboxStatus = "pending" | "started" | "done";
 
 // ------------------------------------------------------------------------ //
 // DispatchIntent (contract #1 — durable outbox intent)                      //
 // ------------------------------------------------------------------------ //
 
 export type DispatchIntentV1 = {
+  work?: import('./reviewer-work.js').ReviewWorkBinding;
   schemaVersion: 1;
   /** 1:1 with the attempt (intentId === attemptId) — deterministic. */
   intentId: string;
@@ -254,6 +229,7 @@ export type TaskLeaseSnapshot = {
 };
 
 export type TaskAttemptSnapshot = {
+  work?: import('./reviewer-work.js').ReviewWorkBinding;
   ref: TaskAttemptRef;
   revision: number;
   schemaVersion: 1;
@@ -266,6 +242,7 @@ export type TaskAttemptSnapshot = {
 };
 
 export type RunSnapshot = {
+  work?: import('./reviewer-work.js').ReviewWorkBinding;
   ref: RunRef;
   revision: number;
   schemaVersion: 1;
@@ -413,6 +390,13 @@ export type DispatchReadinessFacts = {
   resource: { tokenBudget: number; deadline: string | null; now: string };
 };
 
+/** 角色绑定不可受理的具体原因（RW-11；沿用既有 receipt 码，只细化 reason）。 */
+export type RoleBindingInadmissibleDetail =
+  | "role_not_registered"
+  | "role_spec_not_installed"
+  | "role_spec_stale"
+  | "permissions_exceed_spec";
+
 export type TaskIneligibilityReason =
   | { code: "goal_not_active"; message: string }
   | { code: "plan_not_accepted"; message: string }
@@ -437,132 +421,23 @@ export type TaskIneligibilityReason =
       taskId: string;
       detail: "leased" | "budget_exhausted" | "deadline_passed";
       message: string;
+    }
+  /**
+   * RW-11：角色绑定与项目角色矩阵/角色规格不符。claim 的**顶层**拒绝码仍然是既有的
+   * `ineligible`（不新造 receipt 码）；这条 reason 只负责说明是哪一项不符，与
+   * ReplacementIneligibilityReason 的 stale_packet／packet_mismatch 是同一处置方式。
+   * 命中即零写入，不会留下 lease／attempt／run／outbox。
+   */
+  | {
+      code: "role_binding_not_admissible";
+      roleId: string;
+      detail: RoleBindingInadmissibleDetail;
+      message: string;
     };
 
 export type TaskEligibility =
   | { eligible: true; reasons: [] }
   | { eligible: false; reasons: TaskIneligibilityReason[] };
-
-/**
- * Frozen eligibility rule (Acceptance 1):
- *   - goal desiredState active;
- *   - an accepted PlanRevision exists;
- *   - task is in the plan, taskKind = work (gates are reduced by evidence, P1-04);
- *   - disposition = active (desired state);
- *   - no Blocker: phase !== blocked, and phase is dispatchable (pending|ready);
- *   - EVERY explicit DAG hard dependency (dependsOn) target phase === "satisfied";
- *   - resource available: no active lease, positive tokenBudget, deadline not passed.
- * Reasons are accumulated in deterministic order; eligible <=> reasons = [].
- */
-export function evaluateTaskEligibility(
-  facts: DispatchReadinessFacts,
-  taskId: string,
-): TaskEligibility {
-  const reasons: TaskIneligibilityReason[] = [];
-
-  if (facts.goalDesiredState !== "active") {
-    reasons.push({
-      code: "goal_not_active",
-      message: "goal desiredState is not active: " + String(facts.goalDesiredState),
-    });
-  }
-  if (facts.goalActivePlanRevision === null || facts.plan === null) {
-    reasons.push({ code: "plan_not_accepted", message: "goal has no accepted PlanRevision" });
-  }
-
-  const plan = facts.plan;
-  if (plan !== null) {
-    const task = plan.tasks.find((t) => t.taskId === taskId);
-    if (task === undefined) {
-      reasons.push({
-        code: "task_not_found",
-        taskId,
-        message: "task is not part of the accepted plan",
-      });
-    } else {
-      if (task.taskKind !== "work") {
-        reasons.push({
-          code: "task_kind_not_work",
-          taskId,
-          taskKind: task.taskKind,
-          message: "only work tasks are dispatched; gate evidence reduction is P1-04",
-        });
-      }
-      if (task.disposition !== "active") {
-        reasons.push({
-          code: "task_not_active",
-          taskId,
-          disposition: task.disposition,
-          message: "task disposition is not active (desired state)",
-        });
-      }
-      if (task.phase === "blocked") {
-        reasons.push({
-          code: "task_phase_not_dispatchable",
-          taskId,
-          phase: task.phase,
-          blocked: true,
-          message: "task is blocked",
-        });
-      } else if (task.phase !== "pending" && task.phase !== "ready") {
-        reasons.push({
-          code: "task_phase_not_dispatchable",
-          taskId,
-          phase: task.phase,
-          blocked: false,
-          message: "task phase is not dispatchable (pending|ready)",
-        });
-      }
-
-      const unsatisfied = plan.executionDag.dependsOn
-        .filter((edge) => edge.taskId === taskId)
-        .map((edge) => {
-          const dep = plan.tasks.find((t) => t.taskId === edge.dependsOnId);
-          return {
-            dependsOnId: edge.dependsOnId,
-            requires: edge.requires,
-            phase: (dep?.phase ?? "missing") as Phase | "missing",
-          };
-        })
-        .filter((dep) => dep.phase !== "satisfied");
-      if (unsatisfied.length > 0) {
-        reasons.push({
-          code: "deps_unsatisfied",
-          taskId,
-          deps: unsatisfied,
-          message: unsatisfied.map((d) => d.dependsOnId + ":" + d.phase).join(", "),
-        });
-      }
-    }
-  }
-
-  if (facts.lease.status === "leased") {
-    reasons.push({
-      code: "resource_unavailable",
-      taskId,
-      detail: "leased",
-      message: "task already has an active lease (holder run " + facts.lease.holderRunId + ")",
-    });
-  }
-  if (!Number.isSafeInteger(facts.resource.tokenBudget) || !(facts.resource.tokenBudget > 0)) {
-    reasons.push({
-      code: "resource_unavailable",
-      taskId,
-      detail: "budget_exhausted",
-      message: "tokenBudget is not a positive integer",
-    });
-  }
-  if (facts.resource.deadline !== null && facts.resource.deadline < facts.resource.now) {
-    reasons.push({
-      code: "resource_unavailable",
-      taskId,
-      detail: "deadline_passed",
-      message: "deadline " + facts.resource.deadline + " is before now",
-    });
-  }
-
-  return reasons.length === 0 ? { eligible: true, reasons: [] } : { eligible: false, reasons };
-}
 
 // ------------------------------------------------------------------------ //
 // Readiness query (Control read-only entry)                                  //
@@ -597,7 +472,7 @@ export type DispatchClaimCommand = {
   identity: CommandIdentity;
   /** taskId — the TaskLease aggregate. */
   aggregateId: string;
-  /** expected TaskLease revision (P1-03: the first claim is always @0). */
+  /** expected TaskLease revision (the first claim is always @0). */
   expectedRevision: number;
   correlationId: string;
   submittedAt: string;

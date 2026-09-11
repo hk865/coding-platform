@@ -1,0 +1,61 @@
+{
+  "status": "PASS",
+  "checks": [
+    "gui-save-and-masked-read",
+    "refresh-preserves-settings-without-secret",
+    "actual-service-restart",
+    "no-key-in-browser-storage-url-or-response",
+    "gui-clear-prevents-future-provider-use",
+    "gui-credential-update-new-revision",
+    "no-browser-script-errors"
+  ],
+  "connections": [
+    {
+      "ok": true,
+      "code": "connected",
+      "message": "模型响应与工具调用验证通过，未执行任何工具。",
+      "configuration": {
+        "revision": "6036e230-f938-4227-8cb5-6c0c2bac769d",
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash-vision-exp",
+        "baseUrl": "https://api.deepseek.com",
+        "protocol": "chat-completions",
+        "updatedAt": "2026-09-07T10:22:35.506Z"
+      },
+      "startedAt": "2026-09-07T10:22:36.113Z",
+      "finishedAt": "2026-09-07T10:22:38.341Z",
+      "calls": [
+        {
+          "kind": "text",
+          "usage": {
+            "inputTokens": 133,
+            "outputTokens": 34,
+            "cachedInputTokens": 0,
+            "costUsdMicros": null
+          }
+        },
+        {
+          "kind": "tool",
+          "usage": {
+            "inputTokens": 433,
+            "outputTokens": 137,
+            "cachedInputTokens": 0,
+            "costUsdMicros": null
+          }
+        }
+      ],
+      "toolsExecuted": 0
+    }
+  ],
+  "finalConfiguration": {
+    "revision": "d6c00a9e-b67b-4ebc-a5a4-6a806b39e60a",
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash-vision-exp",
+    "baseUrl": "https://api.deepseek.com",
+    "protocol": "chat-completions",
+    "updatedAt": "2026-09-07T10:22:38.817Z"
+  },
+  "credentialRestored": true,
+  "rawPromptsSaved": false,
+  "browserTraceRecorded": false
+}

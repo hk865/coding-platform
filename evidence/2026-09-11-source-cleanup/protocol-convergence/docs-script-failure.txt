@@ -1,0 +1,4 @@
+The first execution of docs.mjs exited 1 before executing any edit:
+SyntaxError: missing ) after argument list
+Location: docs.mjs:12, Markdown backticks nested inside the JavaScript template string.
+Classification: cleanup tooling error, not product/test regression. Fixed the outer string quoting before rerunning.

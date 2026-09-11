@@ -1,0 +1,146 @@
+/**
+ * RW-12／RW-13 两套 harness 语义一致：同一份派发场景在 InMemory 与 SQLite 两套 harness 上
+ * 必须得到**逐字段相同**的工作身份结论。
+ *
+ * 两套 harness 共用同一个 DispatchEngineImpl（建立身份的唯一收口）与同一个
+ * ContextCompiler，因此差异只可能来自存储层。这里断言的不是"都能跑"，而是
+ * 落账后的 canonical WorkContextBinding 完全一致（含 revision、linkedRunRefs 顺序）。
+ *
+ * RW-13 追加：先由人／场景**显式绑定**一段工作的身份，再让派发面跑同一次派发——
+ * 两套存储都必须（a）复用那条显式身份、（b）账本里只有一条该任务的身份、
+ * （c）权威解析面给出逐字段相同的答案。
+ */
+import { expect, it } from 'vitest';
+import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
+import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
+import { buildCreateGoalCommand } from '../../src/contracts/fixtures/goal-fixtures.js';
+import { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildActivateCommand } from '../../src/contracts/fixtures/governance-fixtures.js';
+import { completionPolicyPinFor, architectureBaselinePinFor } from '../../src/contracts/governance.js';
+import { DISPATCH_PLAN_REVISION_FIXTURE_V1, DISPATCH_ELIGIBLE_TASK_ID, buildDispatchClaimCommand } from '../../src/contracts/fixtures/dispatch-fixtures.js';
+import { buildApplyPlanCommand } from '../../src/contracts/fixtures/plan-fixtures.js';
+import { buildBindWorkContextCommand } from '../../src/contracts/fixtures/context-fixtures.js';
+import { workIdFor } from '../../src/control/dispatch-engine/work-identity.js';
+import { workContextRefFor, type WorkContextBindingSnapshot } from '../../src/contracts/context-continuity.js';
+import { canonicalJson } from '../../src/contracts/fingerprint.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const scope = { projectId: 'rw12-consistency', workspaceId: 'rw12-ws', goalId: 'rw12-goal' };
+const at = '2026-09-10T00:00:00.000Z';
+const deps = (id: string) => ({ projectId: scope.projectId, commandId: id, correlationId: id, idempotencyKey: id, submittedAt: at });
+
+type Harness = {
+  bootstrap: (command: never) => Promise<{ status: string }>;
+  install: (command: never) => Promise<{ status: string }>;
+  activate: (command: never) => Promise<{ status: string }>;
+  applyPlan: (command: never) => Promise<{ status: string }>;
+  claimTask: (command: never) => Promise<{ status: string }>;
+  bindWorkContext: (command: never) => Promise<{ status: string }>;
+  drive: (trigger: { reason: string; maxIntents?: number }) => Promise<{ failures: unknown[] }>;
+  control: {
+    submit: (command: never) => Promise<{ status: string }>;
+    resolveTaskWorkIdentity: (query: never) => Promise<{ status: string; binding?: { workId: string } }>;
+  };
+  ledger: {
+    load: (ref: never) => Promise<{ status: string; snapshot?: unknown }>;
+    events: (query: never) => Promise<{ events: { event: { eventType: string; aggregateId?: string } }[] }>;
+  };
+};
+
+/** 共用的世界构造：bootstrap + 治理 + goal + plan + 一次 claim（真实 Run 聚合）。 */
+async function prepareWorld(h: Harness, objective: string, planId: string): Promise<void> {
+  expect((await h.bootstrap(buildBootstrapCommand({ schemaVersion: 1, entries: [{ ...scope }] }, deps('boot')) as never)).status).toBe('committed');
+  for (const [index, definition] of [COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1].entries()) {
+    const installed = buildInstallCommand(definition, deps('install-' + index));
+    expect((await h.install(installed as never)).status).toBe('committed');
+    const pin = installed.commandType === 'InstallCompletionPolicyRevision' ? completionPolicyPinFor(installed) : architectureBaselinePinFor(installed);
+    expect((await h.activate(buildActivateCommand(pin, { ...deps('activate-' + index), expectedRevision: 1 }) as never)).status).toBe('committed');
+  }
+  expect((await h.control.submit(buildCreateGoalCommand({ ...scope, objective, actor: { kind: 'human', id: 'tester' } }, deps('goal')) as never)).status).toBe('committed');
+  const plan = structuredClone(DISPATCH_PLAN_REVISION_FIXTURE_V1);
+  plan.goalId = scope.goalId;
+  plan.planId = planId;
+  expect((await h.applyPlan(buildApplyPlanCommand(plan, { ...deps('plan'), expectedRevision: 1 }) as never)).status).toBe('committed');
+}
+
+async function runScenario(h: Harness): Promise<string> {
+  await prepareWorld(h, '两套 harness 的工作身份一致', 'rw12-consistency-plan');
+  expect((await h.claimTask(buildDispatchClaimCommand({
+    ...deps('claim'), goalId: scope.goalId, taskId: DISPATCH_ELIGIBLE_TASK_ID, runId: 'real-consistency-run', attemptId: 'consistency-attempt',
+    declaredPermissions: { tools: ['read', 'write', 'shell'], writeScope: ['*'] }, budget: { tokenBudget: 10000, deadline: null },
+  }) as never)).status).toBe('committed');
+  const drive = await h.drive({ reason: 'rw12 consistency', maxIntents: 1 });
+  expect(drive.failures).toEqual([]);
+  const workId = workIdFor(scope, DISPATCH_ELIGIBLE_TASK_ID);
+  const binding = await h.ledger.load(workContextRefFor(scope.projectId, scope.workspaceId, workId) as never);
+  if (binding.status !== 'found') throw Error('binding missing in ' + JSON.stringify(scope));
+  const snapshot = binding.snapshot as WorkContextBindingSnapshot;
+  // 身份是确定性的：两套存储都必须算出同一个 workId。
+  expect(snapshot.binding.workId).toBe(workId);
+  return canonicalJson(snapshot as never);
+}
+
+/** RW-13：显式身份先存在，派发后跑——两套存储都必须复用它，且不产生第二条身份。 */
+async function runReuseScenario(h: Harness): Promise<string> {
+  const explicitId = 'rw13-explicit-identity';
+  await prepareWorld(h, '两套 harness 复用同一段工作的显式身份', 'rw13-consistency-plan');
+  const runId = 'rw13-reuse-run';
+  expect((await h.claimTask(buildDispatchClaimCommand({
+    ...deps('claim'), goalId: scope.goalId, taskId: DISPATCH_ELIGIBLE_TASK_ID, runId, attemptId: 'rw13-reuse-attempt',
+    declaredPermissions: { tools: ['read', 'write', 'shell'], writeScope: ['*'] }, budget: { tokenBudget: 10000, deadline: null },
+  }) as never)).status).toBe('committed');
+  // 人／场景显式声明这段工作的身份（workId 与推导规则算出的不同）。
+  expect((await h.bindWorkContext(buildBindWorkContextCommand({
+    commandId: 'rw13-explicit-bind', projectId: scope.projectId, workId: explicitId, workspaceId: scope.workspaceId,
+    goalId: scope.goalId, taskId: DISPATCH_ELIGIBLE_TASK_ID,
+    initialRunRef: { aggregateType: 'Run', projectId: scope.projectId, goalId: scope.goalId, runId },
+    idempotencyKey: 'rw13-explicit-bind', correlationId: 'rw13-explicit-bind', submittedAt: at,
+  }) as never)).status).toBe('committed');
+
+  const drive = await h.drive({ reason: 'rw13 reuse', maxIntents: 1 });
+  expect(drive.failures).toEqual([]);
+  const resolution = await h.control.resolveTaskWorkIdentity({
+    projectId: scope.projectId, workspaceId: scope.workspaceId, goalId: scope.goalId, taskId: DISPATCH_ELIGIBLE_TASK_ID,
+  } as never);
+  expect(resolution.status).toBe('resolved');
+  expect(resolution.binding?.workId).toBe(explicitId);
+  const binding = await h.ledger.load(workContextRefFor(scope.projectId, scope.workspaceId, explicitId) as never);
+  if (binding.status !== 'found') throw Error('显式身份没有被复用');
+  const snapshot = binding.snapshot as WorkContextBindingSnapshot;
+  // 该任务只有一条身份：另一套（推导 id）在账本里根本不存在。
+  expect((await h.ledger.load(workContextRefFor(scope.projectId, scope.workspaceId, workIdFor(scope, DISPATCH_ELIGIBLE_TASK_ID)) as never)).status).toBe('not_found');
+  const events = await h.ledger.events({ afterCursor: null, limit: 512 } as never);
+  const bound = events.events.filter((positioned) => positioned.event.eventType === 'WorkContextBound' && positioned.event.aggregateId === explicitId);
+  expect(bound).toHaveLength(1);
+  return canonicalJson({ resolution, snapshot } as never);
+}
+
+it('同一派发场景在 InMemory 与 SQLite harness 上得到逐字段相同的 canonical 工作身份', async () => {
+  const memory = createInMemoryHarness({});
+  const dir = await mkdtemp(join(tmpdir(), 'rw12-consistency-'));
+  const sqlite = await createPersistentSqliteHarness({ dir });
+  try {
+    const inMemory = await runScenario(memory as unknown as Harness);
+    const persistent = await runScenario(sqlite as unknown as Harness);
+    expect(persistent).toBe(inMemory);
+  } finally {
+    await sqlite.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 60000);
+
+it('RW-13 先显式绑定再派发：两套 harness 都复用同一条身份，账本里不多出第二条', async () => {
+  const memory = createInMemoryHarness({});
+  const dir = await mkdtemp(join(tmpdir(), 'rw13-consistency-'));
+  const sqlite = await createPersistentSqliteHarness({ dir });
+  try {
+    const inMemory = await runReuseScenario(memory as unknown as Harness);
+    const persistent = await runReuseScenario(sqlite as unknown as Harness);
+    expect(persistent).toBe(inMemory);
+  } finally {
+    await sqlite.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 60000);

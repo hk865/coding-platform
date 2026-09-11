@@ -1,0 +1,125 @@
+# VR-02-P：独立 Reviewer 与授权返工后继实施输入
+
+状态：只读准备交付，待主 Agent 在 VR-01 验收后确定实施票；本文件不冻结新 schema、不批准新权限、不表示后继功能已实现。入口：[VR-02-P](../../planning/active/core-verification/VR-02-P.md)。上游：[VR-01](../../planning/active/core-verification/VR-01.md)、[当前 Module 边界](../../interfaces/module-boundaries.md)、[核心接续](../2026-09-09-architecture-rebuild/core-continuation.md)。
+
+核对时产品固定清单为 `evidence/2026-09-09-core-verification/candidate-source-sha256.json`：697 项，生成时间 `2026-09-09T11:55:38.020Z`，摘要 `ddf3fa92797c7eb3ae46db809762cb6c25002fea10c41722ab8073d700741f6b`。这是读取的候选快照身份，主线整体验收仍在进行，不据此宣布通过。源码链接中的行号定位这一快照；实施前以主线最终验收清单复核。
+
+## 1. 下一票应交付的完整消费者
+
+建议下一张实施票覆盖：真实 Task 的已持久工具轮次 → 当前来源/权限/报告取材 → 正式独立 Reviewer Run → 有定位与义务覆盖的语义报告 → Verification 验证报告资格 → Control 接纳 verdict/归约 → FAIL 问题关联到已授权修复工作 → 新来源下重跑工具并重新审阅 → 保留原 FAIL、修复关系和正式回执。应用、SQLite、Vault、ReadModel 和现有工作台同步消费同一链路。
+
+[VerificationEngine](../../modules/control/verification-engine.md) 组织工具和 Reviewer；[ContextCompiler](../../modules/data/context-compiler.md) 只取材并检查来源、权限和容量；[DispatchEngine](../../modules/control/dispatch-engine.md) 驱动正式意图与 Run；[WorkerRuntime](../../modules/execution/worker-runtime.md) 承载模型和工具；[ControlEngine](../../modules/control/control-engine.md) 独占授权与 canonical 归约。不得让 Context 启动模型、让 Runtime 判断审阅通过，或由 UI 改 Task phase。
+
+[完成策略 §4](../../interfaces/completion-policy.md#4-completionpolicy-与分层验证) 已要求明确 static/dynamic FAIL 先返工，不启动昂贵 Reviewer。因此入口须区分工具 FAIL、INCONCLUSIVE/缺料、工具覆盖已通过且仅缺 Reviewer；不能只测 `round.outcome === PASS`，因为现有正常待审轮次总体就是 INCONCLUSIVE。审阅可以有多轮，但不把轮次数/调用数设置为用户未配置的累计预算。
+
+## 2. 可复用的真实接口及边界
+
+| 位置与实际接口 | 已有行为 | 后继接入约束 |
+| --- | --- | --- |
+| [verification-round.ts:44](/mnt/d/1.project/Software/agent_platform/src/contracts/verification-round.ts#L44)、[verification-service.ts:98](/mnt/d/1.project/Software/agent_platform/src/contracts/verification-service.ts#L98)：`startRound / round / roundReceipt / resumeRound` | 保存 scope、配置摘要、materialIdentity、VerificationPlan、逐项报告/coverage、聚合 Artifact、Evidence admission 与归约回执。View 另带 current/stale/unavailable。 | 按精确 scope + requestId 读取已存轮次；`forRun` 列表不是当前资格。缺 Reviewer 的 coverage.result 为 null；不改写旧工具轮次为模型 PASS。 |
+| [verification-rounds.ts:283](/mnt/d/1.project/Software/agent_platform/src/control/verification-engine/verification-rounds.ts#L283)：`originalReport / aggregateBody` | 重读原报告，核对 definition、owner、context、sourceDigest、observationId、effects、结果和完整报告集合；aggregate 为 `category: verification_round`。 | 这些方法当前私有。下一票应由 Verification 暴露经同一逻辑验证的精确材料描述，Context 不读其私有 journal 或复制报告接纳算法。原报告必须全部纳入，包括同类多检查和无 coverage 的额外工具 FAIL。 |
+| [verification-context.ts:56](/mnt/d/1.project/Software/agent_platform/src/data/context-compiler/verification-context.ts#L56)：`resolveRound(scope, expected?)` | canonical Run/Task/活动 Plan/Goal/Workspace/policy/baseline 与真实 source 前后复核；同源码下数字 revision 改变也拒绝；非 Git 可 ready，但变化范围未知、semantic 保守。 | 复用完整 identity，保留 Candidate 原 digest 和独立 sourceProofDigest。不能以调用者 `semanticChange:none`、空 changedFiles 或 Git HEAD 比较冒充 Run 前态。 |
+| [review-context.ts:39](/mnt/d/1.project/Software/agent_platform/src/contracts/review-context.ts#L39)、[review-context-compiler.ts:54](/mnt/d/1.project/Software/agent_platform/src/data/context-compiler/review-context-compiler.ts#L54)：`ReviewContextPort.assemble` | 有界 rubric、材料引用与摘要、精确活动 Plan、Workspace revision、声明权限子集、body-first Vault.put；上限 8 项/单摘要 4096 bytes/包 32 KiB。 | 现有材料只取 `request.runRef` 自身 envelope.bundleRef，未取被审 Run、工具报告或实际源码。旧接口和旧包保留兼容；新材料版本不能沿用旧包的 ready 证明完整性。 |
+| [dispatch.ts:100](/mnt/d/1.project/Software/agent_platform/src/contracts/dispatch.ts#L100)、[task-envelope.ts:25](/mnt/d/1.project/Software/agent_platform/src/contracts/task-envelope.ts#L25) | RoleBindingRef、DispatchIntent、Run、Attempt 与 TaskEnvelope 已有版本/权限/预算/来源绑定；`startRun` 比较持久 intent 中的绑定。 | RoleBindingRef 仅是最小引用，policyRevision 为 opaque；不存在可直接证明 Reviewer 独立职责的完整角色注册表。需要正式受理的 review 工作关联和职责/输出要求，不能只改 templateId 文本。 |
+| [dispatch-engine.ts:46](/mnt/d/1.project/Software/agent_platform/src/control/dispatch-engine/dispatch-engine.ts#L46)、[runtime-dispatch.ts:10](/mnt/d/1.project/Software/agent_platform/src/control/dispatch-engine/runtime-dispatch.ts#L10) | outbox → Context → Control.startRun → Runtime.start → runFact；RuntimeDispatch 串行驱动与恢复对账。 | 保留持久意图先于副作用、稳定启动/事件身份、未知不重跑；不能在 Verification 内另写模型循环或由 HTTP 直接启动模型。 |
+| [leased-worker-runtime.ts:22](/mnt/d/1.project/Software/agent_platform/src/control/dispatch-engine/leased-worker-runtime.ts#L22)、[observed-model-run.ts:20](/mnt/d/1.project/Software/agent_platform/src/execution/worker-runtime/observed-model-run.ts#L20) | 精确 read-only envelope 可取读 lease；共有 observed-model-run 支持只读工具、统一模型绑定/容量/用量和公开事件。 | 可复用执行内核，但真实 CodingAgentRuntime 目前只把 explore 模式视为只读；需正式 Reviewer 模式/职责接线。不能拿 QueryRun 或探索模式冒充 Reviewer 身份。 |
+| [material-access.ts:66](/mnt/d/1.project/Software/agent_platform/src/contracts/material-access.ts#L66)、[artifact-vault.ts:121](/mnt/d/1.project/Software/agent_platform/src/data/artifact-vault/artifact-vault.ts#L121)、[material-access-policy.ts:9](/mnt/d/1.project/Software/agent_platform/src/data/artifact-vault/material-access-policy.ts#L9) | Control.grantMaterialAccess、精确材料/读者/basis、sourcePin 实际重读、canonical 撤销复核；原 owner 默认历史读取保留。 | Reviewer 是新主体，必须实际以 Reviewer Run 读取原 producer 材料并核验 current grant；不能借 producer 身份代读，不能重新 put 冒充新 owner。 |
+| [exploration-context-drive.ts:13](/mnt/d/1.project/Software/agent_platform/src/control/dispatch-engine/exploration-context-drive.ts#L13) | 已有“Context 选择 → Dispatch 正式授权 → Vault current 读取 → Context 组装”的跨主体消费者。 | 复用职责和正式授权命令，不复用 exploration report/操作者 review 的业务资格。 |
+| [evidence-intake.ts:42](/mnt/d/1.project/Software/agent_platform/src/control/control-engine/evidence-intake.ts#L42)、[evidence.ts:94](/mnt/d/1.project/Software/agent_platform/src/contracts/evidence.ts#L94) | SubmitEvidence 不可变追加、CAS/幂等、覆盖 ref 检查；verdict 带正式 RunRef；Control.reduceTask/reduceGoal 决定状态。 | 现有通用入口不等于独立 Reviewer admission：未核验实际 Reviewer 工作绑定、模型报告正文、完整源身份、reviewer-kind 对应关系。下一票须明确新增受理守卫，不把旧通用命令的 committed 当语义资格。 |
+| [context-continuity.ts:17](/mnt/d/1.project/Software/agent_platform/src/contracts/context-continuity.ts#L17)、[work-record.ts:44](/mnt/d/1.project/Software/agent_platform/src/control/control-engine/work-record.ts#L44) | WorkContextBinding / linkWorkRun / ExecutionNote 可保留跨 Run 工作与理由。 | 工作留痕不是 Reviewer 授权、派发或失败处置政策；不继承全部 transcript，也不能凭 linkedRunRefs 相等证明审阅独立性。 |
+
+新普通人工计划已有 dynamic + reviewer required：[operator-plan-compiler.ts:83](/mnt/d/1.project/Software/agent_platform/src/control/plan-compiler/operator-plan-compiler.ts#L83)。工具 PASS 仍缺审阅是正常已实现行为。旧 dynamic-only 已受理 Plan 不可原地追加义务；也不能把新普通计划的约束外推为所有模型规划均已有完整语义资格。
+
+## 3. 必须在实施票冻结前解决的接口差异
+
+### 3.1 审阅对象、执行工作与独立身份
+
+ReviewPacketV1 的 taskId/runRef 未区分“被审 Task/Coder Run”与“执行审阅的工作/Reviewer Run”。实际组装器在第 170 行要求审阅 Run 已有 envelope，然后只引用它自己的 bundle；常规 Dispatch 又必须先得到 bundle 才能 startRun。这个历史测试顺序不能直接用作首次真实 Reviewer 的启动序列。
+
+建议主线冻结一份由 Control 受理的审阅工作身份：至少关联 subjectTask、subjectRun/attempt、精确 roundId/聚合摘要/配置摘要、review work/attempt/Run、角色版本、权限来源、提交人及稳定请求身份。执行审阅的 Run、session 和角色绑定必须与 Coder 分开，内容独立取材；同一个模型/同一供应商可以承载不同 Run，不靠虚构不同模型保证独立。模型输出不能自行改 subject、权限、coverage 或完成条件。
+
+现有普通 `claimTask` 会读取 TaskLease 和 live TaskReduction：[claim.ts:79](/mnt/d/1.project/Software/agent_platform/src/control/control-engine/claim.ts#L79)、[dispatch-facts.ts:31](/mnt/d/1.project/Software/agent_platform/src/control/control-engine/dispatch-facts.ts#L31)。[普通 eligibility:60](/mnt/d/1.project/Software/agent_platform/src/control/control-engine/policies/task-eligibility.ts#L60) 与 [replacement eligibility:47](/mnt/d/1.project/Software/agent_platform/src/control/control-engine/policies/replacement-eligibility.ts#L47) 仅允许 pending/ready；工具完成后被审 Task 已 blocked/failed，且旧 TaskLease 仍承担最新 Attempt 关联。因此不能重领原 Task 或将 Reviewer 作为 Coder replacement，后者还会改变 Task reducer 读取的最新 Run 信号。
+
+优先评估“正式 review 工作/意图关联被审 Task，拥有独立执行 Attempt/Run 与读 lease”的版本化扩展，复用 Dispatch 起止和事实协议，保留原 TaskLease/eligibility。它不是当前已有接口，必须由 Control/Dispatch owner 定义实际记录与守卫。若选择向 Plan 增加独立审阅 Task，则需明确 Plan 变更授权、重建工具来源锚、非循环的输出依赖以及审阅 Task 自身的完成义务，不能暗加一个不受完成策略约束的假 Task；不推荐为了接一次审阅直接改旧 Plan。
+
+### 3.2 当前材料与 Reviewer 的实际输入
+
+下一版有界包至少需要：被审 subject/producer、review 工作/Run 身份、冻结 VerificationRoundMaterialIdentity、VerificationPlan 与精确 required Reviewer coverage、原工具报告清单和聚合引用/摘要、policy/baseline 正文或已授权的精确引用、实际源码摘录及路径/版本、真实变化比较证明/gaps、规范审查点、权限与容量清单。必要材料缺失或超过上限显式 needs_material；可有界索引加精确按需读取，不静默裁剪报告或义务。旧 32 KiB ReviewPacket 与 64 KiB Reviewer capability 是不同现存上限，不可无声统一扩大。
+
+[runtime-context.ts:49](/mnt/d/1.project/Software/agent_platform/src/data/context-compiler/runtime-context.ts#L49) 验证的是 Task bundle schema；旧 Review bundle 外壳 `{schemaVersion,packetId,packet,note}` 不能直接作为 TaskEnvelope.bundleRef 通过它。当前 runtime material selection 还固定 consumer=executor、前驱必须来自已应用的探索操作者 PASS。需要独立的 Reviewer 材料扩展与实际模型输入验证，不继承这条探索前驱假设；最终模型请求中不能塞入完整 Coder transcript 或 reasoning。
+
+`resolveRound` 第 101 行拒绝同 Workspace 任意 prepared/running/outcome_unknown observation。Reviewer 自己一旦 prepare/start，原口就会拒绝。下一票需提供用途明确的 currentness 检查：仍复核被审 Run/源身份，并只豁免已由 canonical review binding 证明、权限精确为 readonly 的本次 Reviewer；不得接受 caller 给任意 runId 排除清单，也不得忽略外部 Writer/unknown Run。执行前、材料读取前后、模型报告返回后、接纳/恢复时都复核，来源 I/O 后再核对 canonical。读 lease 不是源内容原子快照。
+
+### 3.3 跨主体报告授权与来源格式
+
+工具原报告与聚合当前归 Coder Run 拥有；`VerificationContext.openReport(ref, owner)` 的 owner 读取用于既有检查恢复/历史，保持其语义。新的 Reviewer current use 要求以 Reviewer Run 调 `Vault.open`，带精确 basis 和 usage=current；由 Dispatch 经 Control 对所需原引用签发 grant，Context 不签授权。实际 grant 撤销、源 pin 改变、canonical 计划/工作区变化必须令下一次 current 读取及接纳失败。原 owner 仍能看旧报告；历史解释授权不能变成当前审阅依据。
+
+现服务注入的 source applicability 是 [ExplorationSourceApplicability:68](/mnt/d/1.project/Software/agent_platform/src/data/workspace-reader/exploration-source.ts#L68)，其 pin 标记 exploration-source-v1；VR-01 则保留 Candidate digest。两者不可赋值互换。下一票可提供明确的 Reviewer sourcePin provider 或可审计的两种身份关联，持久保存各自含义，保证路径范围与实际审阅来源一致。不得给旧 digest-only grant 自动补可信 pin，不得为适配权限改写旧 sourceDigest。非 Git、外层 Git 子目录、原忽略产物都需继续支持；只有真实当前来源不可完整读取才缺料。
+
+### 3.4 运行、报告与 Evidence admission
+
+[RunSpec.mode:5](/mnt/d/1.project/Software/agent_platform/src/contracts/runtime-preparation.ts#L5) 当前只有 explore；[CodingAgentRuntime.start:92](/mnt/d/1.project/Software/agent_platform/src/execution/worker-runtime/coding-agent-runtime.ts#L92) 对非 explore 要求 write + `*`，execute 也以该模式决定编辑/shell、工作目录安装等。新增 Reviewer readonly 路径必须落到正式 runtime 能力/权限检查和实际工具注册；复用 observed-model-run，不能开 write 权限后仅在 prompt 写“不要修改”。现 [service.ts:83](/mnt/d/1.project/Software/agent_platform/src/app/service.ts#L83) 只为 explore 提供额外材料，宿主需要接新的公开口；不存在真实 Reviewer provider 可直接换名启用。
+
+建议 ReviewReport 新版本绑定 reviewId/packetDigest、exact subject/round/source/角色/producer，包含每条被要求 Reviewer VR 的 PASS/FAIL/INCONCLUSIVE、理由、引用的代码/工具证据、定位问题、影响与未知项。报告中的覆盖声明需与冻结 rubric 一致：缺项、重复、陌生 VR、把 Reviewer 覆盖写到 static/dynamic、无据 PASS、空文本、错误版本、正文摘要/大小/owner 不符均不能接纳。模型输出仅形成原报告事实；保存正文后，由 Verification 解析并复核资格，再用稳定身份请求 Control。
+
+[Evidence 校验:1555](/mnt/d/1.project/Software/agent_platform/src/contracts/validation.ts#L1555) 对 verdict 目前主要要求 RunRef 形状；[Evidence intake:78](/mnt/d/1.project/Software/agent_platform/src/control/control-engine/evidence-intake.ts#L78) 读取 anchor Plan 与 coverage；[Ledger 校验:628](/mnt/d/1.project/Software/agent_platform/src/contracts/ledger-validation.ts#L628) 核对事件/命令 actor 与不可变内容，但没有上述审阅独立性与正文语义守卫。下一票必须明确 Control 如何检查正式 review authorization/result 关联，Verification 如何提供已验证报告，不让普通用户传 `{kind:verdict,outcome:PASS}` 冒充这条正式消费者。保留旧历史 Evidence 与通用入口兼容，不全量重写历史资格。
+
+持久进度至少区分：请求已受理、材料/授权待齐、启动意图已存、Run 未知/运行中、原报告已存、报告拒绝/过期、Evidence 待回执/已接纳、归约待回执/完成。字段名称由实施票确定。幂等键在每一步副作用前落盘；同键异载荷拒绝；回执丢失先查 canonical/原记录；缺最终报告或未知 Run 不自动重新调用模型。新审阅工作和新修复工作使用新身份，原始失败不复用为“再试一次”成功记录。
+
+## 4. FAIL 后授权返工与新来源重验
+
+这里有三种不同历史，下一票不可合并：工具检查 FAIL、Reviewer 语义 FAIL、Coder Run crashed/outcome_unknown。前两者的原报告/问题应关联修复工作；unknown 先对账，不能以修复 Run 掩盖未知副作用。
+
+现有 [RemediationTask:101](/mnt/d/1.project/Software/agent_platform/src/contracts/remediation.ts#L101) 针对 ArchitectureFinding + ArchitectureEvolutionPolicy allowlist，不是普通语义缺陷修复。它的 resolved guard 目前检查 payload evidenceRefs 非空/result.verified/PASS/版本数，见 [remediation.ts:322](/mnt/d/1.project/Software/agent_platform/src/control/control-engine/remediation.ts#L322)；不能把传入 verified=true 当真实重验。现 [GoalChange:211](/mnt/d/1.project/Software/agent_platform/src/control/control-engine/goal-change.ts#L211) 仍复用 sourcePlan.tasks，amendment 不表达新增修复任务。WorkContext 只留工作关联，同样不代替受理修复的政策。
+
+建议后继票将问题 → 修复授权 → 修复工作/Run → 新工具轮次 → 新审阅 → 问题处置结果贯穿为正式关联：原 Task/Run、失败 report/evidence/finding ID、来源身份、问题覆盖、授权策略/决定、允许修复范围、产出新 source/Workspace revision、重验配置、替代关系和回执。普通已授权的 in-scope 修复/重验自动受理；改变 requirement/acceptance/baseline 才走精确决定。不能通过删除失败、重置 TaskReduction、弱化测试或关闭 required 义务解除阻塞。
+
+新来源必须经有实际变化依据的 Control 版本受理，再执行新轮次及新 Reviewer；仅 requestId 变了、报告里声明“已修复”或重复旧 sourceDigest 都不足。若修复采用新 Task，必须说明它如何合法处置原 required failed Task，以及如何继承义务而不继承完成；若采用原 Task 的修复 Attempt，必须新增经授权的重开/修复守卫，不能放宽普通 replacement。
+
+[Evidence applicability:42](/mnt/d/1.project/Software/agent_platform/src/control/control-engine/policies/evidence.ts#L42) 当前只比较 plan/workspace/policy/baseline revision tuple，没有真实 sourceDigest；后到同 tuple PASS 可占有效位置。VR-01 的 stale View 不会自动撤销已接纳 Evidence。完整“修复后正确重验”必须在下一票明确正式来源推进/绑定与 supersession 规则：新源码不得沿用旧工具或旧 Reviewer PASS，旧 FAIL 仍可查。此处需提出兼容扩展，不在准备阶段修改共同 Evidence schema。
+
+[task-reducer.ts:79](/mnt/d/1.project/Software/agent_platform/src/control/control-engine/task-reducer.ts#L79) 取 TaskLease 指向的最新 Run 信号，且第 136 行 unresolvedFindings 当前传空数组。后继 Reviewer 问题不能只显示在 UI 而不参与正式守卫；将 Reviewer 挂为最新 Coder Attempt 也会污染失败/未知运行归约。上述两点都必须有真实 Control 反例。
+
+[CoordinationPolicyContentV1:87](/mnt/d/1.project/Software/agent_platform/src/contracts/human-role-collaboration.ts#L87) 存在旧 maxAutonomousReworks/maxClarifications 数字字段，但它不代表本用户配置了次数限制。[旧 P1-15 测试:144](/mnt/d/1.project/Software/agent_platform/tests/control/p1-15-role-rework-loop.test.ts#L144) 的 ONE rework 是测试内计数和 FakeRuntime crash→completed，没有正式工具 FAIL 后独立审阅的消费者。不可继承其中默认“1 次返工”。沿用 [RuntimeBudget](/mnt/d/1.project/Software/agent_platform/src/contracts/runtime-budget.ts#L1) 的未配置累计项 null、实际用量计量和显式单次容量；授权策略的新差异先由实施票确认。
+
+Task 满足与 Goal 完成仍分开。当前普通计划还含 required GoalGate，工具/Reviewer Evidence 的 subject 是精确 Task，不能仅因 obligation ID 同名就复制为 Gate PASS。下一票若不实现 Gate 取证，就必须如实保留 Goal 未完成；若承诺 Goal 完成，需要将 Gate 当前来源与真实 Evidence 路径一并纳入验收。
+
+## 5. 实施票建议分工与互斥写范围
+
+先由主 Agent 将 3.1 的执行工作身份、3.3 的材料 sourcePin、3.4 的报告/admission、4 的修复授权/来源推进与旧数据兼容方案定为具体契约，再并行独占实现。以下是分工建议，不是授权这些文件现在可写。
+
+| 独占角色 | 建议文件范围 | 必须交接的接口 |
+| --- | --- | --- |
+| Verification | 新 review 生命周期/报告校验/材料发布模块；`verification-service.ts`、`verification-rounds.ts`、`verification-journal.ts`；专属 review-report/service 契约；`tests/verification/**` | 经验证的轮次材料描述、request/read/receipt/reconcile/admit；不得直接读 Context 私有状态或另起执行器。旧工具轮次 JSON 原样兼容。 |
+| Context / WorkspaceReader | `contracts/review-context.ts`、`context/review-context-compiler.ts`、`contracts/verification-context.ts`、`context/verification-context.ts`、Reviewer 专属 source/material reader；`tests/context/**` 与所新增 reader 测试 | select/assemble/currentness，只读源/报告授权；由 Verification 传公开材料口，不依赖具体 Verification 实现。`runtime-context.ts` 若需改由本角色独占。 |
+| Control / Dispatch / Runtime | 新 review/rework 正式授权/意图/记录及守卫；`claim/start-run/run-facts/records` 必需扩展、Reviewer 驱动、`leased-worker-runtime.ts`、`runtime-preparation.ts`、`coding-agent-runtime.ts`；对应 tests/control/runtime/restart | 正式 review 工作与执行 Run 关联、只读启动/恢复/原报告引用；修复授权、源推进、失效与 supersession；复用公开内核不改 vendor。范围较大时先按顺序移交，不能两个 Agent 同写 Dispatch/Runtime。 |
+| 主 Agent | `app/**`、harness、UI/api/receipts、共享 exports/modules/validation/ledger-validation/两套 Ledger/ReadModel 及模块映射；完整 HTTP/SQLite/浏览器验收 | 服务仅 DI/路由，不持有业务 journal/权限政策；Reviewer 面板呈现真实 Run/报告/问题/返工/来源/回执。所有共享契约改动集中合并。 |
+| 独立审计 | 源码只读，独立审计与验收记录 | 审角色独立、材料 current 权限、执行前后变化、坏报告、恢复、失败保留与真实工具/模型证据边界。 |
+
+`contracts/evidence.ts`、`dispatch.ts`、`task-envelope.ts`、material-access/sourcePin 及任何新共同 schema 必须指定唯一 owner；需要改已有 Validation/Ledger 写入形状时先发差异，主线合并后各专属消费者跟进。不得同时按文件名替换进口、让 Context→活 Runtime→Context 回环复发，或将新业务政策塞进 contracts。
+
+## 6. 下一票反例验收清单
+
+| 场景 | 必须观察到的结果 |
+| --- | --- |
+| 两个工具同 VR，一 FAIL 一 PASS；或额外适用无 coverage 工具 FAIL | 原完整报告集与 FAIL 留存，不启动 Reviewer；需要修复。不能挑 PASS 子报告替代本轮结果。 |
+| 全部工具 PASS、required Reviewer 未运行 | Task 仍未满足、Goal 未完成；正式入口能受理独立 Reviewer，不因被审 Task blocked 或其旧 TaskLease 恒拒。 |
+| Coder 自报 PASS、QueryRun 答案、探索操作者 PASS、伪 templateId/同 Run/同 session、任意人工 verdict payload | 都不能成为独立 Reviewer Evidence。真实 Run/受理角色/subject/packet/source 必须一致，实际工具集合无 edit/shell。 |
+| 原包或工具 report 缺失、正文损坏、错误版本/owner/definition、假摘要、覆盖缺项/重复/陌生 VR、无据 PASS、容量不够 | 不执行或拒绝接纳；缺口明确且原正文保留。不能 fallback 默认成功/截断后 ready。至少一项真实 SQLite 坏正文重开反例。 |
+| 实际 grant 撤销、投影延迟、正文读取中撤销、history-only 或 digest-only grant | Reviewer 以自己身份读取 current 材料失败，接纳失败；producer owner 历史仍可读。不能只用 mock Context 拒绝来宣称真实撤销已验证。 |
+| 来源在取材前/I/O 中/Reviewer 执行中/报告已存后/接纳恢复前改变；canonical revision 改而文件不变；Plan/policy/baseline 同 ref 正文损坏 | 旧 Review 变为不适用、不可接纳，原工具/审阅报告仍留；不重绑新源到旧 request。精确本次 readonly Reviewer 可运行，其他 Writer 或 unknown 仍阻断。 |
+| 非 Git 或外层仓库子目录；变更前态未知；`.cache` 等既有忽略产物 | 当前完整材料可用时可以审阅，unknown 不变成 no-change。范围不混入外层仓库，不改旧 sourceDigest。 |
+| Reviewer 报告返回 FAIL/INCONCLUSIVE、崩溃或无最终正文 | 原报告/失败事实可读，缺失 coverage 不变 PASS；unknown 先对账；不因 Runtime completed/exit0 归约通过。 |
+| 请求并发、同键重放、同键异载荷；服务已提交但响应丢失；包/报告已存但 Run/接纳回执未保存；服务重开 | 同请求只有原正式 Run/原报告，查询回执能恢复关联；未知不重跑模型，已知报告补登记不重复调用；CAS 冲突使用持久新归约请求，旧拒绝可查。至少真实 HTTP 丢响应 + SQLite 重开 + 浏览器 pending/receipt。 |
+| 已正式 failed 的 Task 经授权修复 | 普通 replacement 仍拒 failed；正式修复路径可建立新工作/Attempt，原失败/问题/授权/新源/新轮次/新审阅完整关联，不在测试中直接重置 phase。 |
+| 新源码只补 Reviewer PASS、只补工具 PASS、沿用旧来源报告、仅换 requestId、报告自称问题已解决 | 都不能绕过新来源所需完整验证；未处置 required 问题与 unknown 效果继续阻断。新有效 PASS 仅依正式兼容 supersession 处置旧 FAIL，历史不删除。 |
+| 修复想扩大需求/验收/架构权限、私改配置跳过失败检查；用户没有累计预算 | 既有权限内修复继续；扩大范围产生精确决定缺口，不偷偷弱化义务，不新增固定次数/Token/时长累计限制。 |
+| Reviewer PASS 且本 Task 全部 required 证据齐全，但 GoalGate 或其他 required Task 仍缺料 | Control 可归约该 Task；Goal 仍未完成，UI 按正式回执显示。 |
+
+现有可作为回归起点的真实入口：[HTTP 轮次与原报告测试](/mnt/d/1.project/Software/agent_platform/tests/app/verification-rounds.test.ts#L26)、[轮次完整来源测试](/mnt/d/1.project/Software/agent_platform/tests/context/verification-round-context.test.ts#L53)、[轮次恢复/CAS 测试](/mnt/d/1.project/Software/agent_platform/tests/verification/verification-rounds.test.ts#L137)、[跨主体授权重开测试](/mnt/d/1.project/Software/agent_platform/tests/restart/material-access-restart.test.ts)、[VR-01 浏览器用例](/mnt/d/1.project/Software/agent_platform/src/ui/tests/verification-rounds.spec.ts)。读取这些源码不等于本次运行通过。旧 [ReviewContext 测试](/mnt/d/1.project/Software/agent_platform/tests/context/review-context-compiler.test.ts#L49) 和 [verdict 归约测试](/mnt/d/1.project/Software/agent_platform/tests/contract-suite/evidence.contract.suite.ts#L303) 仅证明各自有界组装/样例 Evidence 公式，不证明真实独立 Reviewer。
+
+正式验收分开记录确定性本地模型协议替身、真实 WorkerRuntime/工具沙箱接线、真实模型语义质量、独立进程强杀恢复。前两者的成功不能外推后两者。主线需要真实语义验收时使用已授权模型与可复现任务，记录模型/输入来源、报告问题质量与失败，不用固定 PASS 替身替代。
+
+## 7. 本次交付边界
+
+仅新增本文件。未修改产品源码、规范、模块状态或工作包；未运行测试、模型、浏览器或新执行器。按 VR-02-P 明确的只读准备范围，文档统一校验交主 Agent 执行；本次没有新增校验 PASS 声明。VR-01 是否验收及下一张实施票的字段/权限/范围由主 Agent 根据最终证据确定。

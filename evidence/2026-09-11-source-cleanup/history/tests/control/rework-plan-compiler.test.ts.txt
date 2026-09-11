@@ -1,0 +1,613 @@
+/**
+ * RW-03 返工提案编译器（PlanCompiler）单元测试。
+ *
+ * 本文件只针对 RW-03 的范围：由「当前 active plan revision + 一组未处置问题」机械推导出
+ * 一份返工提案。断言分四类：
+ *   1. 形状与内容：增量只含 addTask + replaceTask，义务正文与验收语义逐字不变；
+ *   2. 确定性：同一批问题、同一份源计划 → 逐字相同的提案（含 proposalId 与 patchId），
+ *      与输入顺序、编译器实例无关；
+ *   3. 边界：空问题集、不属于当前 revision、义务找不到、超出上限、原任务不可取代；
+ *   4. 边界证据：本票不产生任何账本写入（在真实 InMemoryLedger 上按事件与提交计数断言）。
+ *
+ * 夹具的 canonical 事实（bootstrap → goal → governance install/activate → 接受计划）走的是
+ * 与 P1-11 相同的正式路径，因此 sourcePlan／goalObjective 都是真实的账本快照，而不是手工拼的
+ * 对象；只有"问题"是手工构造的（VerificationEngine 的问题投影已有自己的测试）。
+ */
+import { describe, expect, it } from "vitest";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
+import type { LedgerCommit, LedgerCommitReceipt, GoalSnapshot, StateLedger } from "../../src/contracts/ledger.js";
+import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand, buildGoalCreateLedgerCommit, goalSnapshotFor } from "../../src/contracts/fixtures/goal-fixtures.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit } from "../../src/contracts/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
+import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
+import { buildPlanLedgerCommit } from "../../src/control/control-engine/records/plan.js";
+import { applyPlanGuardIssues } from "../../src/control/control-engine/plan-acceptance.js";
+import { deriveExpectedTaskGraph, deriveTaskAssignments, draftConsistencyIssues } from "../../src/control/control-engine/policies/goal-change-consistency.js";
+import { buildUserDecisionV1, P111_PROJECT, P111_WORKSPACE, p111GoalRef, p111PlanRef } from "../../src/contracts/fixtures/goal-change-fixtures.js";
+import { canonicalJson } from "../../src/contracts/fingerprint.js";
+import { reworkIssueIdFor, reworkPlanIdFor, reworkProposalIdFor, reworkTaskIdFor } from "../../src/contracts/rework.js";
+import type {
+  ReworkCompileRequestV1,
+  ReworkIssueViewV1,
+  ReworkProposalV1,
+} from "../../src/contracts/rework.js";
+import type { PlanRevisionDraft, PlanRevisionSnapshot, RuntimeTask } from "../../src/contracts/plan.js";
+import { ReworkPlanCompiler } from "../../src/control/plan-compiler/rework-plan-compiler.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+
+const FIXED = FIXED_ISO_2026_09_05;
+const FAILED_TASK = "task-verify";
+
+/** 提交计数账本：零写入断言需要看到"有没有发生过一次 commit"，而不只是事件条数。 */
+class RecordingLedger extends InMemoryLedger {
+  commits: LedgerCommit[] = [];
+  override async commit(batch: LedgerCommit): Promise<LedgerCommitReceipt> {
+    this.commits.push(batch);
+    return super.commit(batch);
+  }
+}
+
+type Scenario = {
+  ledger: RecordingLedger;
+  sourcePlan: PlanRevisionSnapshot;
+  goalObjective: string;
+};
+
+function scopeFor(projectId: string) {
+  const scope = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.scopes.find((s) => s.projectId === projectId);
+  if (!scope) throw new Error("unknown project: " + projectId);
+  return scope;
+}
+
+/**
+ * RW-07：源计划必须像真实被接受的计划那样携带指派。返工任务的 role 只能取自被取代任务的
+ * 指派，没有指派的计划不是"可以返工的计划"——编译器会以 replaceable_task_without_assignment
+ * 拒绝（见下面的用例）。这里给手写计划的每个 work 任务补上指派，其余字段逐字不动。
+ */
+function planDraftWithAssignments(): PlanRevisionDraft {
+  const draft = structuredClone(HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1);
+  draft.assignments = draft.tasks
+    .filter((task) => task.taskKind === "work")
+    .map((task) => ({
+      taskId: task.taskId,
+      // task-verify 刻意用另一个角色：返工任务的 role 必须是**继承**来的，不是默认值。
+      role: (task.taskId === FAILED_TASK ? "integrator" : "executor") as "executor" | "integrator",
+      instruction: "实现并验证「" + task.title + "」：按义务正文产出可独立复核的结果与运行事实。",
+    }));
+  return draft;
+}
+
+/** 建立真实 canonical 事实：bootstrap、goal、governance 安装并激活、接受手写计划。 */
+async function scenario(projectId = P111_PROJECT, withAssignments = true): Promise<Scenario> {
+  const ledger = new RecordingLedger();
+  const bootstrap = buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, {
+    commandId: "cmd-bootstrap", correlationId: "corr-bootstrap", submittedAt: FIXED,
+  });
+  expect((await ledger.commit(buildBootstrapLedgerCommit(bootstrap, {
+    eventIds: ["evt-bootstrap-1", "evt-bootstrap-2", "evt-bootstrap-3", "evt-bootstrap-4"], occurredAt: FIXED,
+  }))).status).toBe("committed");
+  const scope = scopeFor(projectId);
+  await ledger.commit(buildGoalCreateLedgerCommit(
+    buildCreateGoalCommand(scope, { commandId: "cmd-goal-" + projectId, correlationId: "corr-goal-" + projectId, submittedAt: FIXED }),
+    { eventId: "evt-goal-" + projectId, occurredAt: FIXED, projectRevision: 1, workspaceRevision: 1 },
+  ));
+  const cp = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+    commandId: "cmd-install-cp", correlationId: "corr-install-cp", submittedAt: FIXED, projectId, idempotencyKey: "inst-cp",
+  });
+  const ab = buildInstallCommand(ARCHITECTURE_BASELINE_FIXTURE_V1, {
+    commandId: "cmd-install-ab", correlationId: "corr-install-ab", submittedAt: FIXED, projectId, idempotencyKey: "inst-ab",
+  });
+  await ledger.commit(buildInstallLedgerCommit(cp as never, { eventId: "evt-install-cp", occurredAt: FIXED }));
+  await ledger.commit(buildInstallLedgerCommit(ab as never, { eventId: "evt-install-ab", occurredAt: FIXED }));
+  await ledger.commit(buildActivateLedgerCommit(
+    buildActivateCommand(completionPolicyPinFor(cp as never), { commandId: "cmd-act-cp", correlationId: "corr-act-cp", submittedAt: FIXED, projectId, expectedRevision: 1, idempotencyKey: "act-cp" }),
+    { eventId: "evt-act-cp", occurredAt: FIXED, activeAggregateRevision: 1, projectRevision: 1 },
+  ));
+  await ledger.commit(buildActivateLedgerCommit(
+    buildActivateCommand(architectureBaselinePinFor(ab as never), { commandId: "cmd-act-ab", correlationId: "corr-act-ab", submittedAt: FIXED, projectId, expectedRevision: 1, idempotencyKey: "act-ab" }),
+    { eventId: "evt-act-ab", occurredAt: FIXED, activeAggregateRevision: 1, projectRevision: 1 },
+  ));
+  const draft = planDraftWithAssignments();
+  if (!withAssignments) delete draft.assignments;
+  const accept = buildApplyPlanCommand(draft, {
+    commandId: "cmd-accept-plan", correlationId: "corr-accept-plan", submittedAt: FIXED, projectId, expectedRevision: 1, idempotencyKey: "accept-plan",
+  });
+  const baseGoal = goalSnapshotFor(buildCreateGoalCommand(scope, { commandId: "cmd-goal-" + projectId, correlationId: "corr-goal-" + projectId, submittedAt: FIXED }));
+  expect((await ledger.commit(buildPlanLedgerCommit(accept, {
+    eventId: "evt-accept-plan", occurredAt: FIXED, acceptedAt: FIXED,
+    pins: { completionPolicy: completionPolicyPinFor(cp as never), architectureBaseline: architectureBaselinePinFor(ab as never) },
+    baseGoal,
+  }))).status).toBe("committed");
+  const planLoad = await ledger.load(p111PlanRef(HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1.planId, projectId));
+  if (planLoad.status !== "found") throw new Error("source plan not found");
+  const goalLoad = await ledger.load(p111GoalRef(projectId));
+  if (goalLoad.status !== "found") throw new Error("goal not found");
+  return {
+    ledger,
+    sourcePlan: planLoad.snapshot as PlanRevisionSnapshot,
+    goalObjective: (goalLoad.snapshot as GoalSnapshot).objective,
+  };
+}
+
+/** 一条失败要求的结构化事实（形状与 VerificationEngine 持久化的一致）。 */
+function failureFact(result: "FAIL" | "INCONCLUSIVE", exitCode: number | null, stderr: string | null) {
+  return {
+    checkId: "check-1", failedCheckIds: ["check-1"], kind: "dynamic" as const, category: "tool_check",
+    result, command: "python3 -m pytest -q", timeoutMs: 60000, exitCode, timedOut: false, durationMs: 87,
+    stderrExcerpt: stderr, sourceDigest: "source-digest-1",
+    reportRef: { kind: "artifact" as const, contentType: "application/json", digest: "report-digest", sizeBytes: 10,
+      source: { kind: "artifact" as const, refId: "report-1", revision: "1" } },
+    gaps: [],
+  };
+}
+
+let issueCounter = 0;
+
+/**
+ * 构造一条问题视图。默认指向 task-verify 上的 obl-2/vr-2（源计划里由它单独承担），
+ * 与 VerificationEngine 的问题投影同形状：机械身份 + 来源 + 结构化失败事实 + 当前性标注。
+ */
+function issueView(overrides: {
+  taskId?: string;
+  roundId?: string;
+  failedRequirements?: ReworkIssueViewV1["failedRequirements"];
+  planRef?: ReworkIssueViewV1["planRef"];
+  planRevision?: number;
+  currentness?: ReworkIssueViewV1["currentness"];
+  projectId?: string;
+  workspaceId?: string;
+  goalId?: string;
+  reworkTaskId?: string;
+  detectedAt?: string;
+} = {}): ReworkIssueViewV1 {
+  issueCounter += 1;
+  const taskId = overrides.taskId ?? FAILED_TASK;
+  const roundId = overrides.roundId ?? "round-" + issueCounter;
+  const source = { kind: "verification_round" as const, roundId, requestId: roundId + "-request", outcome: "FAIL" as const, status: "completed" as const, sourceDigest: "source-digest-1" };
+  const failedRequirements = overrides.failedRequirements ?? [
+    { obligationId: "obl-2", requirementId: "vr-2", kind: "dynamic" as const,
+      reason: "命令检查 check-1：分类 tool_check，结论 FAIL；命令「python3 -m pytest -q」；退出码 3。",
+      failure: failureFact("FAIL", 3, "AssertionError: 期望 2，实际 3") },
+  ];
+  const issueId = reworkIssueIdFor({ taskId, source, failedRequirements });
+  return {
+    schemaVersion: 1,
+    issueId,
+    projectId: overrides.projectId ?? P111_PROJECT,
+    workspaceId: overrides.workspaceId ?? P111_WORKSPACE,
+    goalId: overrides.goalId ?? p111GoalRef().goalId,
+    taskId,
+    runRef: { aggregateType: "Run", projectId: overrides.projectId ?? P111_PROJECT, goalId: p111GoalRef().goalId, runId: roundId + "-run" },
+    planRef: overrides.planRef ?? p111PlanRef(HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1.planId),
+    planRevision: overrides.planRevision ?? HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1.planRevision,
+    source,
+    failedRequirements,
+    evidenceRefs: [{ aggregateType: "Evidence", projectId: overrides.projectId ?? P111_PROJECT, evidenceId: "evidence-" + issueCounter }],
+    summary: "工具验证轮次 " + roundId + " 在任务 " + taskId + " 上有 " + failedRequirements.length + " 项验收要求未通过（结论 FAIL）。",
+    detectedAt: overrides.detectedAt ?? FIXED,
+    currentness: overrides.currentness ?? { status: "open", issues: [] },
+    reworkTaskId: overrides.reworkTaskId ?? reworkTaskIdFor(issueId),
+  };
+}
+
+function request(sourcePlan: PlanRevisionSnapshot, goalObjective: string, issues: ReworkIssueViewV1[]): ReworkCompileRequestV1 {
+  return {
+    schemaVersion: 1,
+    projectId: P111_PROJECT,
+    workspaceId: P111_WORKSPACE,
+    goalRef: p111GoalRef(),
+    goalObjective,
+    activePlan: sourcePlan,
+    issues,
+  };
+}
+
+function proposalOf(result: ReturnType<ReworkPlanCompiler["compile"]>): ReworkProposalV1 {
+  if (result.status !== "proposal") throw new Error("expected a proposal, got " + JSON.stringify(result).slice(0, 400));
+  return result.proposal;
+}
+
+const deltaOf = (proposal: ReworkProposalV1) => proposal.patch.patchDraft.taskSetDelta ?? [];
+const taskById = (plan: { tasks: RuntimeTask[] }, taskId: string) => plan.tasks.find((task) => task.taskId === taskId);
+
+describe("RW-03 返工提案编译器", () => {
+  it("由单个问题推导出提案：增量只有 addTask + replaceTask，取代的是原失败任务", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const issue = issueView();
+    const proposal = proposalOf(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [issue])));
+
+    const delta = deltaOf(proposal);
+    expect(delta.map((op) => op.action)).toEqual(["addTask", "replaceTask"]);
+    const reworkTaskId = reworkTaskIdFor(issue.issueId);
+    const add = delta[0]!;
+    const replace = delta[1]!;
+    expect(add.action === "addTask" && add.task.taskId).toBe(reworkTaskId);
+    expect(add.action === "addTask" && add.task.phase).toBe("pending");
+    expect(add.action === "addTask" && add.task.disposition).toBe("active");
+    // 结构角色逐字继承源任务：换掉 kind／requirementLevel 会改变验收结构。
+    const sourceTask = taskById(sourcePlan, FAILED_TASK)!;
+    expect(add.action === "addTask" && add.task.requirementLevel).toBe(sourceTask.requirementLevel);
+    expect(add.action === "addTask" && add.task.taskKind).toBe(sourceTask.taskKind);
+    expect(add.action === "addTask" && add.task.stageId).toBe(sourceTask.stageId);
+    expect(replace).toMatchObject({ action: "replaceTask", supersededTaskId: FAILED_TASK, byTaskId: reworkTaskId });
+    // 不产生 cancelTask：取消承担者不会带来新的证明者。
+    expect(delta.some((op) => op.action === "cancelTask")).toBe(false);
+
+    // 新 revision 的任务集：源任务集顺序不变 + 返工任务；被取代任务退出默认执行集合。
+    expect(proposal.planDraft.tasks.map((task) => task.taskId)).toEqual([
+      "task-install-contract", "task-accept-plan", FAILED_TASK, "gate-goal", reworkTaskId,
+    ]);
+    const superseded = taskById(proposal.planDraft, FAILED_TASK)!;
+    expect(superseded.disposition).toBe("superseded");
+    expect(superseded.replacedByTaskId).toBe(reworkTaskId);
+    // 源快照没有被改写（PlanRevision 不可变）。
+    expect(taskById(sourcePlan, FAILED_TASK)!.disposition).toBe("active");
+    expect(taskById(sourcePlan, reworkTaskId)).toBeUndefined();
+  });
+
+  it("返工任务接手原任务承担的全部义务：义务正文、等级与 verificationRequirements 逐字不变，只改 taskIds", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const issue = issueView();
+    const proposal = proposalOf(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [issue])));
+    const reworkTaskId = reworkTaskIdFor(issue.issueId);
+
+    const sourceObligation = sourcePlan.obligations.find((obligation) => obligation.obligationId === "obl-2")!;
+    const derived = proposal.planDraft.obligations.find((obligation) => obligation.obligationId === "obl-2")!;
+    expect(derived.title).toBe(sourceObligation.title);
+    expect(derived.requirementLevel).toBe(sourceObligation.requirementLevel);
+    expect(canonicalJson(derived.verificationRequirements as never)).toBe(canonicalJson(sourceObligation.verificationRequirements as never));
+    expect(derived.taskIds).toEqual([reworkTaskId]);
+    // 其余义务逐字不动（承担者也没变）。
+    for (const obligation of sourcePlan.obligations) {
+      if (obligation.obligationId === "obl-2") continue;
+      expect(proposal.planDraft.obligations.find((o) => o.obligationId === obligation.obligationId)).toEqual(obligation);
+    }
+    // 新增任务声明的义务 = 源任务在源 revision 里承担的全部义务（不只是失败的那一条）。
+    const add = deltaOf(proposal)[0]!;
+    expect(add.action === "addTask" && add.obligationIds).toEqual(["obl-2"]);
+    expect(proposal.patch.patchDraft.obligationDeltas).toEqual([]);
+  });
+
+  it("确定性：同一批问题与同一份源计划两次编译逐字相同（proposalId／patchId 稳定），与问题顺序、编译器实例无关", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const first = issueView({ roundId: "round-a" });
+    const second = issueView({ roundId: "round-b", taskId: "gate-goal", failedRequirements: [
+      { obligationId: "obl-3", requirementId: "vr-3", kind: "reviewer" as const, reason: "独立审阅结论 FAIL：报告缺少独立复核来源。",
+        failure: { checkId: null, failedCheckIds: [], kind: "reviewer" as const, category: null, result: "FAIL" as const, command: null,
+          timeoutMs: null, exitCode: null, timedOut: null, durationMs: null, stderrExcerpt: null, sourceDigest: null, reportRef: null, gaps: [] } },
+    ] });
+    const compiler = new ReworkPlanCompiler();
+    const a = proposalOf(compiler.compile(request(sourcePlan, goalObjective, [first, second])));
+    const b = proposalOf(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [first, second])));
+    const reordered = proposalOf(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [second, first])));
+    expect(canonicalJson(a as never)).toBe(canonicalJson(b as never));
+    expect(canonicalJson(a as never)).toBe(canonicalJson(reordered as never));
+    // 身份只由「源计划 + 问题集合」决定。
+    expect(a.proposalId).toBe(reworkProposalIdFor({
+      projectId: P111_PROJECT, workspaceId: P111_WORKSPACE, goalRef: p111GoalRef(),
+      sourcePlanRef: sourcePlan.ref, sourcePlanRevision: sourcePlan.planRevision,
+      issues: [first, second].map((issue) => ({ issueId: issue.issueId, taskId: issue.taskId })),
+    }));
+    expect(a.patch.patchId).toBe("patch-" + a.proposalId);
+    expect(a.planDraft.planId).toBe(reworkPlanIdFor(a.proposalId));
+    expect(a.planDraft.planRevision).toBe(sourcePlan.planRevision + 1);
+    // 不同的问题集合必须得到不同的提案身份（否则两条返工会撞成一个聚合）。
+    const single = proposalOf(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [first])));
+    expect(single.proposalId).not.toBe(a.proposalId);
+  });
+
+  it("返工任务 id 由 reworkTaskIdFor(issueId) 推导：不随机、可重建，且与问题一一对应", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const issue = issueView();
+    const proposal = proposalOf(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [issue])));
+    const expected = reworkTaskIdFor(issue.issueId);
+    expect(proposal.rework.tasks).toHaveLength(1);
+    expect(proposal.rework.tasks[0]).toMatchObject({
+      taskId: expected, primaryIssueId: issue.issueId, issueIds: [issue.issueId], supersedesTaskId: FAILED_TASK, obligationIds: ["obl-2"],
+    });
+    expect(taskById(proposal.planDraft, expected)).toBeDefined();
+    // 同一 issueId 在任何一次编译里都得到同一个任务 id（身份来自事实，而不是编译过程）。
+    const again = proposalOf(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [issue])));
+    expect(again.rework.tasks[0]!.taskId).toBe(expected);
+    expect(reworkTaskIdFor(issue.issueId)).toBe(expected);
+  });
+
+  it("提案带来源问题引用与人类可读摘要：失败要求与原因来自问题事实，不重新判定", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const issue = issueView();
+    const proposal = proposalOf(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [issue])));
+    expect(proposal.rework.issues).toHaveLength(1);
+    const carried = proposal.rework.issues[0]!;
+    expect(carried.issueId).toBe(issue.issueId);
+    expect(carried.taskId).toBe(issue.taskId);
+    expect(carried.source).toEqual(issue.source);
+    expect(carried.runRef).toEqual(issue.runRef);
+    expect(carried.evidenceRefs).toEqual(issue.evidenceRefs);
+    expect(carried.planRef).toEqual(issue.planRef);
+    // 失败事实逐字引用（含 exitCode／stderr 摘要），提案不产生第二套判断。
+    expect(carried.failedRequirements[0]!.failure).toEqual(issue.failedRequirements[0]!.failure);
+    expect(carried.failedRequirements[0]!.reason).toBe(issue.failedRequirements[0]!.reason);
+    // 视图标注不进提案：currentness 是相对当前 revision 的派生判断。
+    expect("currentness" in carried).toBe(false);
+    expect(proposal.summary).toContain(issue.issueId);
+    expect(proposal.summary).toContain("obl-2/vr-2");
+    expect(proposal.summary).toContain("退出码 3");
+    expect(proposal.summary).toContain(sourcePlan.ref.planId + "@" + sourcePlan.planRevision);
+  });
+
+  it("影响分析由提案真实推导：工作身份、待刷新材料与被推翻的假设都带具体 revision 与任务", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const issue = issueView();
+    // The pure compiler receives resolved identities; it cannot derive a binding from a task id.
+    const input = request(sourcePlan, goalObjective, [issue]);
+    input.workIdentities = sourcePlan.tasks.map(task => ({ taskId: task.taskId, originTaskId: task.taskId,
+      status: 'resolved', workRef: { aggregateType: 'WorkContextBinding', projectId: P111_PROJECT,
+        workspaceId: P111_WORKSPACE, workId: 'declared-' + task.taskId } }));
+    const proposal = proposalOf(new ReworkPlanCompiler().compile(input));
+    const impact = proposal.impact;
+    expect(impact.analysisId).toBe("impact-" + proposal.proposalId);
+    expect(impact.affectedWorks.map((row) => row.workRef.workId)).toEqual(["declared-" + FAILED_TASK]);
+    expect(impact.affectedWorks[0]!.refreshRequired).toBe(true);
+    expect(impact.affectedWorks[0]!.reason).toContain("1 项未通过要求");
+    expect(impact.affectedWorks[0]!.reason).toContain(reworkTaskIdFor(issue.issueId));
+    // 旧结论在新 revision 下不再覆盖当前要求：假设被推翻，理由里给出两个版本身份。
+    const stale = impact.staleAssumptions.map((row) => row.assumption + " | " + row.reason).join("\n");
+    expect(stale).toContain(sourcePlan.ref.planId + "@" + sourcePlan.planRevision);
+    expect(stale).toContain(proposal.planDraft.planId + "@" + proposal.planDraft.planRevision);
+    expect(stale).toContain("OUT_OF_SCOPE");
+    // 材料清单带具体身份，而不是固定的两个词。
+    expect(impact.materialsToRefresh).toContain("planContext:" + proposal.planDraft.planId + "@" + proposal.planDraft.planRevision);
+    expect(impact.materialsToRefresh).toContain("evidenceBindings:" + sourcePlan.ref.planId + "@" + sourcePlan.planRevision);
+    expect(impact.materialsToRefresh).toContain("workContext:declared-" + FAILED_TASK);
+    // 未受影响的工作可继续：源计划里其余任务都在清单里。
+    expect(impact.independentWork.map((row) => row.workRef.workId).sort()).toEqual([
+      "declared-gate-goal", "declared-task-accept-plan", "declared-task-install-contract",
+    ]);
+  });
+
+  it("执行 DAG 与层级重指到返工任务：不让下游任务永远等一个已被取代的前驱", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const issue = issueView();
+    const proposal = proposalOf(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [issue])));
+    const reworkTaskId = reworkTaskIdFor(issue.issueId);
+    // 源计划里 gate-goal dependsOn task-verify、且 task-verify dependsOn task-accept-plan。
+    expect(sourcePlan.executionDag.dependsOn.some((edge) => edge.dependsOnId === FAILED_TASK)).toBe(true);
+    expect(proposal.planDraft.executionDag.dependsOn.some((edge) => edge.taskId === FAILED_TASK || edge.dependsOnId === FAILED_TASK)).toBe(false);
+    expect(proposal.planDraft.executionDag.dependsOn.some((edge) => edge.taskId === "gate-goal" && edge.dependsOnId === reworkTaskId)).toBe(true);
+    expect(proposal.planDraft.executionDag.dependsOn.some((edge) => edge.taskId === reworkTaskId && edge.dependsOnId === "task-accept-plan")).toBe(true);
+    // 层级同样重指：返工任务留在它接手的工作分解下。
+    expect(proposal.planDraft.taskHierarchy.parentOf).toContainEqual({ parentTaskId: "gate-goal", childTaskId: reworkTaskId });
+    expect(proposal.planDraft.taskHierarchy.parentOf.some((edge) => edge.childTaskId === FAILED_TASK)).toBe(false);
+  });
+
+  it("提案能被既有受理链机械消费：决定目标一致、草稿一致性守卫与 P1-02 非空守卫都无 issue", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const issue = issueView();
+    const proposal = proposalOf(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [issue])));
+    // applyPlanChange 守卫 f2：草稿必须是「源 revision + 增量」的确定性推导结果。
+    const decision = buildUserDecisionV1({ proposal, outcome: "accept" });
+    expect(draftConsistencyIssues(proposal, decision, proposal.planDraft as never, sourcePlan)).toEqual([]);
+    // 组装后的新计划必须原样通过 P1-02 非空／引用／无环守卫。
+    const assembled = {
+      schemaVersion: 1 as const,
+      planId: proposal.planDraft.planId,
+      planRevision: proposal.planDraft.planRevision,
+      goalId: p111GoalRef().goalId,
+      stages: proposal.planDraft.stages,
+      tasks: proposal.planDraft.tasks,
+      obligations: proposal.planDraft.obligations,
+      taskHierarchy: proposal.planDraft.taskHierarchy,
+      executionDag: proposal.planDraft.executionDag,
+    };
+    expect(applyPlanGuardIssues(assembled, COMPLETION_POLICY_FIXTURE_V1.content)).toEqual([]);
+    // 决定绑定的 target 就是提案的内容摘要，返工没有绕过人的决定的绑定面。
+    expect(decision.authorizedTarget.newObjective).toBe(goalObjective);
+    expect(proposal.patch.patchDraft.objective).toBe(goalObjective);
+  });
+
+  it("RW-05 重指由共享函数派生：没有任何边落在被取代任务上，且不重指的草稿会被守卫拒绝", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const issue = issueView();
+    const proposal = proposalOf(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [issue])));
+    const reworkTaskId = reworkTaskIdFor(issue.issueId);
+
+    // 编译器的草稿直接过守卫 f2（同一函数逐项比对重指结果）。
+    const decision = buildUserDecisionV1({ proposal, outcome: "accept" });
+    expect(draftConsistencyIssues(proposal, decision, proposal.planDraft as never, sourcePlan)).toEqual([]);
+
+    // 重指结果等于「源图经唯一权威函数重指」的结果：提案侧与守卫侧不可能各写一套规则。
+    const expected = deriveExpectedTaskGraph(sourcePlan, new Map([[FAILED_TASK, reworkTaskId]]));
+    expect(canonicalJson(proposal.planDraft.executionDag as never)).toBe(canonicalJson(expected.executionDag as never));
+    expect(canonicalJson(proposal.planDraft.taskHierarchy as never)).toBe(canonicalJson(expected.taskHierarchy as never));
+
+    // 反例：不重指（沿用源图）的草稿必须被拒绝——下游会永久等一个 superseded 的前驱。
+    // 为什么这条反例在 RW-05 之前不成立：那时守卫对 DAG/层级只做悬空引用检查，
+    // 被取代任务在新 revision 里仍然存在（只是 superseded），沿用源图的草稿会被放行。
+    const stale = { ...proposal.planDraft, executionDag: { dependsOn: sourcePlan.executionDag.dependsOn.map((e) => ({ ...e, requires: { ...e.requires } })) } };
+    expect(draftConsistencyIssues(proposal, decision, stale as never, sourcePlan).length).toBeGreaterThan(0);
+  });
+
+  it("空问题集明确拒绝，且不写出任何提案", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    expect(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, []))).toMatchObject({
+      status: "rejected", code: "empty_issue_set",
+    });
+  });
+
+  it("超出上限明确拒绝（问题条数）", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const issues = Array.from({ length: 33 }, (_unused, index) => issueView({ roundId: "round-many-" + index }));
+    const result = new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, issues));
+    expect(result).toMatchObject({ status: "rejected", code: "too_many_issues" });
+  });
+
+  it("问题不属于当前 active revision 时拒绝：已取代、来源计划不同、revision 不同", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const compiler = new ReworkPlanCompiler();
+    const superseded = issueView({ currentness: { status: "superseded", issues: ["该问题来自已不再生效的 plan revision"] } });
+    expect(compiler.compile(request(sourcePlan, goalObjective, [superseded]))).toMatchObject({ status: "rejected", code: "issue_not_current" });
+    const unknown = issueView({ currentness: { status: "unknown", issues: ["Goal 当前没有 active plan revision"] } });
+    expect(compiler.compile(request(sourcePlan, goalObjective, [unknown]))).toMatchObject({ status: "rejected", code: "issue_not_current" });
+    const otherPlan = issueView({ planRef: p111PlanRef("plan-other") });
+    expect(compiler.compile(request(sourcePlan, goalObjective, [otherPlan]))).toMatchObject({ status: "rejected", code: "issue_not_current" });
+    const otherRevision = issueView({ planRevision: sourcePlan.planRevision + 1 });
+    expect(compiler.compile(request(sourcePlan, goalObjective, [otherRevision]))).toMatchObject({ status: "rejected", code: "issue_not_current" });
+  });
+
+  it("问题要求的义务在源计划里找不到、或不由该任务承担时拒绝，不伪造增量", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const compiler = new ReworkPlanCompiler();
+    const invented = issueView({ failedRequirements: [
+      { obligationId: "obl-does-not-exist", requirementId: "vr-x", kind: "static" as const, reason: "不存在的义务",
+        failure: failureFact("FAIL", 1, "") },
+    ] });
+    const notCarried = issueView({ failedRequirements: [
+      { obligationId: "obl-1", requirementId: "vr-1", kind: "static" as const, reason: "该义务由其它任务承担",
+        failure: failureFact("FAIL", 1, "") },
+    ] });
+    for (const [issue, code] of [[invented, "obligation_not_in_plan"], [notCarried, "obligation_not_carried_by_task"]] as const) {
+      const result = compiler.compile(request(sourcePlan, goalObjective, [issue]));
+      expect(result).toMatchObject({ status: "rejected", code });
+      if (result.status === "rejected") expect(result.issues.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("问题指向的任务不在源计划里、作用域不符、身份被改写时都拒绝", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const compiler = new ReworkPlanCompiler();
+    expect(compiler.compile(request(sourcePlan, goalObjective, [issueView({ taskId: "task-nope" })])))
+      .toMatchObject({ status: "rejected", code: "issue_task_not_in_plan" });
+    expect(compiler.compile(request(sourcePlan, goalObjective, [issueView({ projectId: "proj-other" })])))
+      .toMatchObject({ status: "rejected", code: "issue_out_of_scope" });
+    expect(compiler.compile(request(sourcePlan, goalObjective, [issueView({ reworkTaskId: "rework-tampered" })])))
+      .toMatchObject({ status: "rejected", code: "issue_identity_inconsistent" });
+  });
+
+  it("原失败任务已经处于其它处置时交给人决定（needs_decision），不产出伪造的增量", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const cancelled: PlanRevisionSnapshot = {
+      ...sourcePlan,
+      tasks: sourcePlan.tasks.map((task) => (task.taskId === FAILED_TASK ? { ...task, disposition: "cancelled" as const } : task)),
+    };
+    const result = new ReworkPlanCompiler().compile(request(cancelled, goalObjective, [issueView()]));
+    expect(result).toMatchObject({ status: "needs_decision", code: "task_not_replaceable" });
+    if (result.status === "needs_decision") {
+      expect(result.issues[0]).toContain(FAILED_TASK);
+      expect(result.message).toContain("唯一承担者");
+    }
+    // 同一个问题在健康的源 revision 上是可提案的：needs_decision 只由源事实决定。
+    expect(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [issueView()])).status).toBe("proposal");
+  });
+
+  it("同一任务的多条问题合并成一个返工任务（一次取代只能有一个取代者）", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const first = issueView({ roundId: "round-merge-1" });
+    const second = issueView({ roundId: "round-merge-2" });
+    expect(first.issueId).not.toBe(second.issueId);
+    const proposal = proposalOf(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [second, first])));
+    expect(proposal.rework.tasks).toHaveLength(1);
+    const merged = proposal.rework.tasks[0]!;
+    expect(merged.issueIds).toEqual([first.issueId, second.issueId].sort());
+    expect(merged.taskId).toBe(reworkTaskIdFor(merged.primaryIssueId));
+    expect(deltaOf(proposal).map((op) => op.action)).toEqual(["addTask", "replaceTask"]);
+    expect(proposal.rework.issues.map((issue) => issue.issueId).sort()).toEqual([first.issueId, second.issueId].sort());
+  });
+
+  it("同一 issueId 出现内容不同的两份问题时拒绝（身份必须唯一对应一组事实）", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const issue = issueView();
+    const tampered: ReworkIssueViewV1 = {
+      ...issue,
+      failedRequirements: [
+        ...issue.failedRequirements,
+        { obligationId: "obl-2", requirementId: "vr-extra", kind: "static", reason: "另一条要求", failure: failureFact("FAIL", 1, "") },
+      ],
+    };
+    const result = new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [issue, tampered]));
+    expect(result).toMatchObject({ status: "rejected", code: "issue_identity_conflict" });
+  });
+
+  it("RW-07 返工任务的指派由「被取代任务的 role + 失败事实与义务正文」推导，且随草稿一起给出", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const issue = issueView();
+    const proposal = proposalOf(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [issue])));
+    const reworkTaskId = reworkTaskIdFor(issue.issueId);
+    const sourceAssignment = sourcePlan.assignments!.find((entry) => entry.taskId === FAILED_TASK)!;
+    expect(sourceAssignment.role).toBe("integrator");
+    const add = deltaOf(proposal)[0]!;
+    expect(add.action).toBe("addTask");
+    if (add.action !== "addTask") return;
+    // role 继承被取代任务（不是默认值），taskId 就是那个返工任务。
+    expect(add.assignment).toMatchObject({ taskId: reworkTaskId, role: "integrator" });
+    const instruction = add.assignment!.instruction;
+    // 指令写清验收义务与逐条失败事实（引用 ReworkFailureFactV1 的既有字段，不重新判定）。
+    expect(instruction).toContain("obl-2");
+    expect(instruction).toContain("vr-2");
+    expect(instruction).toContain(sourcePlan.obligations.find((o) => o.obligationId === "obl-2")!.title);
+    expect(instruction).toContain("已提交的失败事实");
+    expect(instruction).toContain("python3 -m pytest -q");
+    expect(instruction).toContain("AssertionError: 期望 2，实际 3");
+    expect(instruction).toContain("report-1@1");
+    expect(instruction).toContain("输入：");
+    expect(instruction).toContain("期望产出：");
+    expect(instruction).toContain("检查：");
+    // 指令有界（与初始规划对 assignment.instruction 同一约定）。
+    expect(Buffer.byteLength(instruction)).toBeLessThanOrEqual(4096);
+    // 草稿的指派集合 = 「源 revision 的指派 + 增量新增任务的指派」（与守卫 f2 同一推导函数）。
+    expect(proposal.planDraft.assignments).toEqual(deriveTaskAssignments(sourcePlan, proposal.patch.patchDraft.taskSetDelta));
+    expect(proposal.planDraft.assignments).toHaveLength(sourcePlan.assignments!.length + 1);
+  });
+
+  it("RW-07 源 revision 的 work 任务没有指派时拒绝返工：不从别处推断承担者角色", async () => {
+    const { sourcePlan, goalObjective } = await scenario(P111_PROJECT, false);
+    expect(sourcePlan.assignments).toBeUndefined();
+    const result = new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [issueView()]));
+    expect(result.status).toBe("rejected");
+    if (result.status !== "rejected") return;
+    expect(result.code).toBe("replaceable_task_without_assignment");
+    expect(result.issues.join(" ")).toContain(FAILED_TASK);
+  });
+
+  it("RW-07 gate 任务被取代时新增任务不带实现指派（与初始规划「gate 没有实现指派」同一约定）", async () => {
+    const { sourcePlan, goalObjective } = await scenario();
+    const issue = issueView({
+      taskId: "gate-goal",
+      failedRequirements: [
+        { obligationId: "obl-3", requirementId: "vr-3", kind: "reviewer" as const, reason: "独立审阅结论 FAIL：报告缺少独立复核来源。",
+          failure: { checkId: null, failedCheckIds: [], kind: "reviewer" as const, category: null, result: "FAIL" as const, command: null,
+            timeoutMs: null, exitCode: null, timedOut: null, durationMs: null, stderrExcerpt: null, sourceDigest: null, reportRef: null, gaps: [] } },
+      ],
+    });
+    const proposal = proposalOf(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [issue])));
+    const add = deltaOf(proposal)[0]!;
+    expect(add.action).toBe("addTask");
+    if (add.action !== "addTask") return;
+    expect(add.task.taskKind).toBe("gate");
+    expect(add.assignment).toBeNull();
+    expect(proposal.planDraft.assignments.some((entry) => entry.taskId === add.task.taskId)).toBe(false);
+  });
+
+  it("编译过程零账本写入：事件流与提交计数都不变", async () => {
+    const { ledger, sourcePlan, goalObjective } = await scenario();
+    const eventsBefore = (await ledger.events({ afterCursor: null, limit: 1000 })).events.length;
+    const commitsBefore = ledger.commits.length;
+    const issue = issueView();
+    const result = new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [issue]));
+    expect(result.status).toBe("proposal");
+    // 拒绝分支同样零写入。
+    expect(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [])).status).toBe("rejected");
+    expect(new ReworkPlanCompiler().compile(request(sourcePlan, goalObjective, [issueView({ taskId: "task-nope" })])).status).toBe("rejected");
+    const eventsAfter = (await ledger.events({ afterCursor: null, limit: 1000 })).events.length;
+    expect(eventsAfter).toBe(eventsBefore);
+    expect(ledger.commits.length).toBe(commitsBefore);
+    // 账本里没有 PlanProposal / UserDecision / 新 PlanRevision：本票只产出提案对象。
+    const json = JSON.stringify((await ledger.events({ afterCursor: null, limit: 1000 })).events);
+    expect(json).not.toContain("PlanProposalRecorded");
+    expect(json).not.toContain("UserDecisionRecorded");
+    const accepted = (await ledger.events({ afterCursor: null, limit: 1000 })).events.filter((page) => page.event.eventType === "PlanRevisionAccepted");
+    expect(accepted).toHaveLength(1);
+    if (result.status === "proposal") expect(result.proposal.planDraft.planId).not.toBe(sourcePlan.ref.planId);
+  });
+});

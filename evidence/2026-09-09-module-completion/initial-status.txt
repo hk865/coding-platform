@@ -1,0 +1,116 @@
+ M .gitignore
+ M AGENTS.md
+ M IMPLEMENTATION-HANDOFF.md
+ M README.md
+ M package.json
+ M pnpm-lock.yaml
+ M src/context/completed-work-context-compiler.ts
+ M src/context/context-compiler.ts
+ M src/context/query-context-compiler.ts
+ M src/context/work-context-compiler.ts
+ M src/contracts/architecture-inspection.ts
+ M src/contracts/architecture-reconciler.ts
+ M src/contracts/artifact.ts
+ M src/contracts/completed-work-context.ts
+ M src/contracts/events.ts
+ M src/contracts/fixtures/baseline-evolution-fixtures.ts
+ M src/contracts/fixtures/query-job-fixtures.ts
+ M src/contracts/fixtures/workspace-fixtures.ts
+ M src/contracts/goal-phase.ts
+ M src/contracts/goal-view.ts
+ M src/contracts/index.ts
+ M src/contracts/ledger-validation.ts
+ M src/contracts/ledger.ts
+ M src/contracts/modules.ts
+ M src/contracts/query-job.ts
+ M src/contracts/testing/control.double.ts
+ M src/contracts/testing/read-model.double.ts
+ M src/contracts/validation.ts
+ M src/contracts/workspace-lease.ts
+ M src/control/architecture-reconciler.ts
+ M src/control/baseline-evolution.ts
+ M src/control/control-engine.ts
+ M src/control/query-job.ts
+ M src/control/replacement-claim.ts
+ M src/control/task-reducer.ts
+ M src/control/workspace-lease.ts
+ M src/harness/in-memory-harness.ts
+ M src/harness/persistent-harness.ts
+ M src/ledger/in-memory-ledger.ts
+ M src/read-model/read-model-index.ts
+ M src/sqlite-ledger/sqlite-ledger.ts
+ M src/sqlite-read-model/sqlite-read-model-index.ts
+ M src/vault/artifact-vault.ts
+ M tests/context/work-context-compiler.test.ts
+ M tests/contract-suite/console.contract.suite.ts
+ M tests/contracts/goal-phase.test.ts
+ M tests/control/architecture-reconciler.test.ts
+ M tests/control/baseline-evolution.test.ts
+ M tests/control/p1-15-role-rework-loop.test.ts
+ M tests/control/work-record.test.ts
+ M tests/integration/p1-15-role-e2e.integration.test.ts
+ M tests/integration/p1-16.real-kernel.continuity.test.ts
+ M tests/integration/real-kernel/replay-server.ts
+ M tests/vault/artifact-vault.test.ts
+ M tsconfig.json
+?? .pnpm-store/
+?? "D\357\200\272\357\201\234.pnpm-store\357\201\234v11/"
+?? evaluation/
+?? evidence/2026-09-07-coding-agent-vendoring/
+?? evidence/rat-00/
+?? evidence/rat-01/
+?? evidence/rat-02/
+?? evidence/rat-03/
+?? pnpm-workspace.yaml
+?? scripts/
+?? src/README.md
+?? src/app/
+?? src/context/README.md
+?? src/context/runtime-context.ts
+?? src/contracts/README.md
+?? src/contracts/fixtures/material-access-fixtures.ts
+?? src/contracts/material-access.ts
+?? src/control/README.md
+?? src/control/material-access.ts
+?? src/control/query-drive.ts
+?? src/data/README.md
+?? src/data/source-index.ts
+?? src/harness/README.md
+?? src/harness/material-access-resolver.ts
+?? src/interaction/README.md
+?? src/ledger/README.md
+?? src/read-model/README.md
+?? src/read-model/completed-work-eligibility.ts
+?? src/runtime/README.md
+?? src/runtime/coding-agent-runtime.ts
+?? src/runtime/exploration-tools.ts
+?? src/runtime/model-budget.ts
+?? src/runtime/run-limits.ts
+?? src/sqlite-ledger/README.md
+?? src/sqlite-read-model/README.md
+?? src/ui/
+?? src/vault/README.md
+?? src/vault/sqlite-artifact-vault.ts
+?? src/verification/README.md
+?? src/verification/command-check-provider.ts
+?? test-results/
+?? tests/app/
+?? tests/context/completed-work-regression.test.ts
+?? tests/contracts/material-access.test.ts
+?? tests/control/architecture-delta-regression.test.ts
+?? tests/control/live-frontier-regression.test.ts
+?? tests/control/material-access.test.ts
+?? tests/control/workspace-lease-regression.test.ts
+?? tests/data/source-index.test.ts
+?? tests/integration/p1-09-query-regression.test.ts
+?? tests/read-model/completed-work-filter.test.ts
+?? tests/read-model/material-access-lookup.test.ts
+?? tests/read-model/material-access-projection.test.ts
+?? tests/restart/material-access-restart.test.ts
+?? tests/sqlite-read-model/material-access-projection.test.ts
+?? tests/ui/
+?? tests/vault/material-access-grant.test.ts
+?? tests/vault/persistent-vault.test.ts
+?? tests/verification/command-check-provider.test.ts
+?? tsconfig.app.json
+?? vendor/

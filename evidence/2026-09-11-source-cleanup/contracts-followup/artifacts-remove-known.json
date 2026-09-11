@@ -1,0 +1,11 @@
+{
+  "checkedAt": "2026-09-11T09:24:44.546Z",
+  "count": 323,
+  "stale": [
+    "dist/contracts/rework-acceptance.js",
+    "dist/contracts/rework-disposition.js",
+    "dist/contracts/rework-drive.js",
+    "dist/contracts/rework.js",
+    "dist/contracts/validation.js"
+  ]
+}

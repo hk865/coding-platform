@@ -1,0 +1,18 @@
+{
+  "root": "/tmp/coding-agent-bench-recovery-exactly-once-oHjZPY/workspace",
+  "before": {
+    ".env": "f5f79f70797692780283ee10305dabe4f9f29c3fed64a2651a88d2a383bca1b5",
+    ".platform-runtime/bin/node": "41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c",
+    "src/recover.mjs": "ac0503dceb392d7620b6f264362f498d57d336d38786d3f19c4e814e80525590",
+    "test.mjs": "c3361883f39a39f87c07b9469934da54ba889d7e26cc88749aabd4d89cfe322f"
+  },
+  "budget": {
+    "contextWindowTokens": 1000000,
+    "inputTokens": 200000,
+    "outputTokens": 16384,
+    "maxRequests": 12,
+    "maxToolCalls": 36,
+    "timeoutMs": 30000,
+    "perResponseTokens": 2048
+  }
+}

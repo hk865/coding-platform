@@ -7,13 +7,13 @@
  * checkContinuation must never fabricate a restored_original.
  */
 import { describe, expect, it } from "vitest";
-import { FakeContextContinuationRuntimeAdapter } from "../../src/runtime/context-continuation-adapter.js";
-import { createFakeRuntimeAdapter } from "../../src/runtime/fake-runtime-adapter.js";
-import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../../src/contracts/fixtures/dispatch-fixtures.js";
+import { FakeContextContinuationRuntimeAdapter } from "../../src/execution/worker-runtime/context-continuation-adapter.js";
+import { createFakeRuntimeAdapter } from "../../src/execution/worker-runtime/fake-runtime-adapter.js";
+import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../../src/fixtures/dispatch-fixtures.js";
 import { runRefFor } from "../../src/contracts/dispatch.js";
-import { p116WorkContextRef } from "../../src/contracts/fixtures/context-fixtures.js";
-import { P116_PROJECT_A, P116_WORK } from "../../src/contracts/fixtures/context-fixtures.js";
-import { P116_WORKSPACE } from "../../src/contracts/fixtures/context-fixtures.js";
+import { p116WorkContextRef } from "../contract-support/fixtures/context-fixtures.js";
+import { P116_PROJECT_A, P116_WORK } from "../contract-support/fixtures/context-fixtures.js";
+import { P116_WORKSPACE } from "../contract-support/fixtures/context-fixtures.js";
 import type { ContextContinuationCheckV1 } from "../../src/contracts/context-continuation-port.js";
 
 const PROJECT = P116_PROJECT_A;

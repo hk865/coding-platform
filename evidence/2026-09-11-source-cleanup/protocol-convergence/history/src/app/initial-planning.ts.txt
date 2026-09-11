@@ -1,0 +1,19 @@
+// Composition facade; business rules live in PlanCompiler and DispatchEngine.
+import type { PlanCompilerPort, PlanningScope } from '../contracts/planning.js';
+import type { InitialPlanningView } from '../data/read-model-index/initial-planning-view.js';
+export class InitialPlanning {
+  constructor(private readonly compiler: PlanCompilerPort, private readonly dispatch: { drivePending(): Promise<unknown> },
+    private readonly views: InitialPlanningView, private readonly driveQueries: () => Promise<unknown>) {}
+  async submit(scope: PlanningScope, input: Record<string, unknown>, referenceContext = '') {
+    const result = await this.compiler.request({ schemaVersion: 1, kind: 'initial', scope, input, referenceContext });
+    if (result.status === 'rejected') throw Error(result.message);
+    return result.submission;
+  }
+  view(...args: Parameters<InitialPlanningView['view']>) { return this.views.view(...args); }
+  async advance() {
+    await this.driveQueries();
+    const result = await this.compiler.accept({ reason: 'initial-coordination' });
+    if (result.status === 'rejected') throw Error(result.message);
+    await this.dispatch.drivePending();
+  }
+}

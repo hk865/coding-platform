@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-14 LANE-C SQLite projection tests — baselineChangeView over the real
  * SqliteReadModelIndex (the same event stream as the InMemory twin, fed as a
@@ -9,36 +10,15 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSqliteReadModelIndex } from "../../src/sqlite-read-model/sqlite-read-model-index.js";
+import { createSqliteReadModelIndex } from "../../src/data/read-model-index/sqlite-read-model-index.js";
 import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import { canonicalJson, sha256Hex } from "../../src/contracts/fingerprint.js";
-import { buildP112ArtifactRef, buildP112Proposal } from "../../src/contracts/fixtures/architecture-fixtures.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  buildInstallCommand,
-  architectureBaselinePinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
-import {
-  P114_PROJECT,
-  P114_WORKSPACE,
-  P114_SCHEMA,
-  P114_PROPOSAL,
-  P114_CANDIDATE,
-  p114ProposalRef,
-  buildP114Candidate,
-  buildP114Decision,
-  buildP114Gate,
-  buildP114Activation,
-  buildP114MaterializeCommand,
-  buildP114DecisionCommand,
-  buildP114GateCommand,
-  buildP114ActivationCommand,
-  buildP114CandidateFold,
-  buildP114DecisionFold,
-  buildP114GateFold,
-  buildP114ActivationFold,
-} from "../../src/contracts/fixtures/baseline-evolution-fixtures.js";
+import { buildP112ArtifactRef, buildP112Proposal } from "../../src/fixtures/architecture-fixtures.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
+import { architectureBaselinePinFor } from "../../src/contracts/governance.js";
+import { P114_PROJECT, P114_WORKSPACE, P114_SCHEMA, P114_PROPOSAL, P114_CANDIDATE, p114ProposalRef, buildP114Candidate, buildP114Decision, buildP114Gate, buildP114Activation, buildP114MaterializeCommand, buildP114DecisionCommand, buildP114GateCommand, buildP114ActivationCommand } from "../contract-support/fixtures/baseline-evolution-fixtures.js";
+import { buildP114CandidateFold, buildP114DecisionFold, buildP114GateFold, buildP114ActivationFold } from "../../src/control/control-engine/records/baseline-evolution.js";
 import type { ArchitectureCandidateProposalV1 } from "../../src/contracts/architecture-inspection.js";
 import type { ArchitectureBaselinePin } from "../../src/contracts/governance.js";
 import type { InstallArchitectureBaselineRevisionCommand } from "../../src/contracts/governance.js";
@@ -106,7 +86,7 @@ describe("P1-14 LANE-C SQLite projection: baselineChangeView", () => {
   it("projects candidate/decision/gate/activation rows and a ready post-activation view", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p114-rm-"));
     const path = join(dir, "rm.sqlite");
-    const rm = createSqliteReadModelIndex({ path });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
     try {
       const { page } = buildP114Page();
       const receipt = await rm.advance(page);
@@ -147,7 +127,7 @@ describe("P1-14 LANE-C SQLite projection: baselineChangeView", () => {
   it("isolates the same local ids across projects (hard scope key)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p114-rm-"));
     const path = join(dir, "rm.sqlite");
-    const rm = createSqliteReadModelIndex({ path });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
     try {
       const { page } = buildP114Page();
       await rm.advance(page);
@@ -162,7 +142,7 @@ describe("P1-14 LANE-C SQLite projection: baselineChangeView", () => {
   it("a never-advanced index returns not_found (no cursor claim)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p114-rm-"));
     const path = join(dir, "rm.sqlite");
-    const rm = createSqliteReadModelIndex({ path });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
     try {
       const view = await rm.baselineChangeView({ projectId: P114_PROJECT, workspaceId: P114_WORKSPACE });
       expect(view.status).toBe("not_found");
@@ -175,14 +155,14 @@ describe("P1-14 LANE-C SQLite projection: baselineChangeView", () => {
   it("rebuild equivalence: close/reopen against the SAME db file reproduces the view", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p114-rm-"));
     const path = join(dir, "rm.sqlite");
-    const rm = createSqliteReadModelIndex({ path });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
     try {
       const { page } = buildP114Page();
       await rm.advance(page);
       const before = await rm.baselineChangeView({ projectId: P114_PROJECT, workspaceId: P114_WORKSPACE });
       await rm.close();
 
-      const reopened = createSqliteReadModelIndex({ path });
+      const reopened = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
       try {
         await reopened.advance(page);
         const after = await reopened.baselineChangeView({ projectId: P114_PROJECT, workspaceId: P114_WORKSPACE });

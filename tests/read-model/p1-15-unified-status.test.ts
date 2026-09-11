@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-15 LANE-B InMemory projection tests — unifiedStatusView over the
  * InitialDesignProposalRecorded / InitialDesignDecisionRecorded /
@@ -17,32 +18,12 @@
  * scenario is fed to the read model as a plain EventPage).
  */
 import { describe, expect, it } from "vitest";
-import { ReadModelIndexImpl } from "../../src/read-model/read-model-index.js";
+import { ReadModelIndexImpl } from "../../src/data/read-model-index/read-model-index.js";
 import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import { canonicalJson } from "../../src/contracts/fingerprint.js";
-import {
-  P115_PROJECT,
-  P115_WORKSPACE,
-  P115_SCHEMA,
-  P115_DESIGN,
-  P115_DECISION,
-  P115_POLICY,
-  p115DesignRef,
-  p115DecisionRef,
-  p115PolicyRef,
-  p115PolicyActiveRef,
-  buildP115Proposal,
-  buildP115Decision,
-  buildP115ProposalCommand,
-  buildP115DecisionCommand,
-  buildP115InstallCommand,
-  buildP115ActivateCommand,
-  buildP115ProposalFold,
-  buildP115DecisionFold,
-  buildP115PolicyInstallFold,
-  buildP115PolicyActivateFold,
-} from "../../src/contracts/fixtures/human-role-collaboration-fixtures.js";
+import { P115_PROJECT, P115_WORKSPACE, P115_SCHEMA, P115_DESIGN, P115_DECISION, P115_POLICY, p115DesignRef, p115DecisionRef, p115PolicyRef, p115PolicyActiveRef, buildP115Proposal, buildP115Decision, buildP115ProposalCommand, buildP115DecisionCommand, buildP115InstallCommand, buildP115ActivateCommand } from "../contract-support/fixtures/human-role-collaboration-fixtures.js";
+import { buildP115ProposalFold, buildP115DecisionFold, buildP115PolicyInstallFold, buildP115PolicyActivateFold } from "../../src/control/control-engine/records/human-role-collaboration.js";
 import type { UnifiedStatusViewResult } from "../../src/contracts/human-role-collaboration.js";
 
 const FIXED = FIXED_ISO_2026_09_05;
@@ -78,7 +59,7 @@ function buildP115Page(projectId: string = P115_PROJECT): { page: EventPage } {
 describe("P1-15 LANE-B InMemory projection: unifiedStatusView", () => {
   it("projects the 4 rows and returns a ready facts-first view", async () => {
     const { page } = buildP115Page();
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const receipt = await rm.advance(page);
     expect(receipt.appliedEventIds.length).toBe(4);
 
@@ -134,14 +115,14 @@ describe("P1-15 LANE-B InMemory projection: unifiedStatusView", () => {
   });
 
   it("a never-advanced index returns not_found (no cursor claim)", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const view = await rm.unifiedStatusView({ projectId: P115_PROJECT, workspaceId: P115_WORKSPACE });
     expect(view.status).toBe("not_found");
   });
 
   it("isolates the same local ids across projects (hard scope key)", async () => {
     const { page } = buildP115Page();
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await rm.advance(page);
 
     const other = await rm.unifiedStatusView({ projectId: "proj-beta", workspaceId: P115_WORKSPACE });
@@ -150,11 +131,11 @@ describe("P1-15 LANE-B InMemory projection: unifiedStatusView", () => {
 
   it("rebuild equivalence: a fresh InMemory index from the same events reproduces the view", async () => {
     const { page } = buildP115Page();
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await rm.advance(page);
     const before = await rm.unifiedStatusView({ projectId: P115_PROJECT, workspaceId: P115_WORKSPACE });
 
-    const fresh = new ReadModelIndexImpl();
+    const fresh = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await fresh.advance(page);
     const after = await fresh.unifiedStatusView({ projectId: P115_PROJECT, workspaceId: P115_WORKSPACE });
     expect(json(after)).toBe(json(before));

@@ -3,7 +3,7 @@
  * views (display only, NEVER judgement). Authority: IMPLEMENTATION-HANDOFF.md
  * "P1-07 契约与存储语义" item 7 + modules/data/read-model-index.md.
  *
- * FROZEN semantics: freshness reuses the opaque CommitCursor contract
+ * Semantics: freshness reuses the opaque CommitCursor contract
  * (not_ready != not_found; not_found only after observedCursor covered
  * atLeastCursor). IntegrationConflict view trusts the FIRST record per
  * conflictKey (authority — no judgement, no merge) and marks late duplicates;
@@ -14,7 +14,7 @@ import type { ConflictScopeV1, WorkspaceLeaseHolderV1 } from "./workspace-lease.
 import type { EvidenceConflictRecordV1, IntegrationGapV1, IntegrationInputRefV1 } from "./integration.js";
 import type { PatchCheckResultV1 } from "./patch.js";
 import type { EvidenceRef } from "./evidence.js";
-import type { PatchRecordRef, PatchRecordedEvent } from "./patch.js";
+import type { PatchRecordRef } from "./patch.js";
 import type { RunRef } from "./dispatch.js";
 
 // ------------------------------------------------------------------------ //

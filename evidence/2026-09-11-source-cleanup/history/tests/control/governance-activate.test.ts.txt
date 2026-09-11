@@ -1,0 +1,321 @@
+/**
+ * P1-02 Lane A — governance activated typed Project active refs (CAS).
+ *
+ * Driven purely through the REAL InMemoryLedger + ControlEngineImpl (no fake
+ * ledger). A RecordingLedger subclass only observes the committed batch so the
+ * deterministic fold can be asserted (fold-equality) against the shared
+ * fixture-fold builder.
+ *
+ * Coverage (IMPLEMENTATION-HANDOFF "P1-02 契约与存储语义" + ticket verification):
+ *   - happy path (policy + baseline independent);
+ *   - fold-equality (deep-equal buildActivateLedgerCommit);
+ *   - dangling target -> not_found, zero-write;
+ *   - digest mismatch on installed identity -> digest_mismatch, zero-write;
+ *   - CAS competition (stale expected Project revision) -> revision_conflict,
+ *     active ref unmoved;
+ *   - idempotent replay -> committed(replayed), same eventIds/cursor;
+ *   - two projects activate independently;
+ *   - install -> (no activate) still not_found (no auto-activation).
+ */
+import { describe, expect, it } from "vitest";
+import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildActivateCommand, buildActivateLedgerCommit } from "../../src/contracts/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
+import type {
+  ActivateProjectCompletionPolicyCommand,
+  InstallCompletionPolicyRevisionCommand,
+  ProjectCompletionPolicyActiveSnapshot,
+} from "../../src/contracts/governance.js";
+import type { LedgerCommit, LedgerCommitReceipt } from "../../src/contracts/ledger.js";
+import { makeCommitCursor } from "../../src/contracts/ledger.js";
+import { createControlEngine } from "../../src/control/control-engine/control-engine.js";
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
+
+const BOOT_DEPS = {
+  commandId: "cmd-boot",
+  correlationId: "corr-boot",
+  submittedAt: FIXED_ISO_2026_09_05,
+};
+
+class RecordingLedger extends InMemoryLedger {
+  commits: LedgerCommit[] = [];
+  override async commit(batch: LedgerCommit): Promise<LedgerCommitReceipt> {
+    this.commits.push(batch);
+    return super.commit(batch);
+  }
+}
+
+function makeEngine(ledger: InMemoryLedger = new RecordingLedger()) {
+  const deps = createDeterministicDeps();
+  const engine = createControlEngine({ ledger, now: deps.clock, eventId: deps.eventId });
+  return { ledger, engine, deps };
+}
+
+function activateDeps(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    commandId: "cmd-act",
+    correlationId: "corr-act",
+    submittedAt: FIXED_ISO_2026_09_05,
+    projectId: "proj-alpha",
+    expectedRevision: 1,
+    ...overrides,
+  };
+}
+
+async function eventsCount(ledger: InMemoryLedger): Promise<number> {
+  const page = await ledger.events({ afterCursor: null, limit: 100 });
+  return page.events.length;
+}
+
+/** Bootstrap + install a policy; return the installed policy pin + project. */
+async function bootstrappedPolicyPin(engine: ReturnType<typeof createControlEngine>): Promise<{ projectId: string; pin: ReturnType<typeof completionPolicyPinFor> }> {
+  const boot = await engine.bootstrap(buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, BOOT_DEPS));
+  expect(boot.status).toBe("committed");
+  const projectId = "proj-alpha";
+  const installed = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+    commandId: "cmd-install-cp",
+    correlationId: "corr-install-cp",
+    submittedAt: FIXED_ISO_2026_09_05,
+    projectId,
+    idempotencyKey: "inst-cp-alpha",
+  });
+  if (installed.commandType !== "InstallCompletionPolicyRevision") throw new Error("build error");
+  const rr = await engine.install(installed);
+  expect(rr.status).toBe("committed");
+  return { projectId, pin: completionPolicyPinFor(installed as InstallCompletionPolicyRevisionCommand) };
+}
+
+describe("P1-02 governance activate", () => {
+  it("happy path: install then CAS-activate sets a typed active ref (policy)", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const { projectId, pin } = await bootstrappedPolicyPin(engine);
+    const receipt = await engine.activate(buildActivateCommand(pin, activateDeps({ projectId })));
+    expect(receipt.status).toBe("committed");
+    if (receipt.status !== "committed") return;
+    expect(receipt.activeRef).toEqual({ aggregateType: "ProjectCompletionPolicyActive", projectId });
+    expect(receipt.activeRevision).toEqual(pin.ref);
+    expect(receipt.replayed).toBe(false);
+
+    const active = await ledger.load({ aggregateType: "ProjectCompletionPolicyActive", projectId });
+    expect(active.status).toBe("found");
+    if (active.status !== "found") return;
+    const snap = active.snapshot as ProjectCompletionPolicyActiveSnapshot;
+    expect(snap.activeRevision).toEqual(pin.ref);
+    expect(snap.revision).toBe(1);
+  });
+
+  it("baseline active is independent of the policy active (per-kind)", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const boot = await engine.bootstrap(buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, BOOT_DEPS));
+    expect(boot.status).toBe("committed");
+    const projectId = "proj-alpha";
+
+    const installedPolicy = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+      commandId: "cmd-install-cp",
+      correlationId: "corr-cp",
+      submittedAt: FIXED_ISO_2026_09_05,
+      projectId,
+      idempotencyKey: "inst-cp-alpha",
+    });
+    await engine.install(installedPolicy);
+    if (installedPolicy.commandType !== "InstallCompletionPolicyRevision") throw new Error("build");
+    const policyPin = completionPolicyPinFor(installedPolicy);
+
+    const installedBaseline = buildInstallCommand(ARCHITECTURE_BASELINE_FIXTURE_V1, {
+      commandId: "cmd-install-ab",
+      correlationId: "corr-ab",
+      submittedAt: FIXED_ISO_2026_09_05,
+      projectId,
+      idempotencyKey: "inst-ab-alpha",
+    });
+    await engine.install(installedBaseline);
+    if (installedBaseline.commandType !== "InstallArchitectureBaselineRevision") throw new Error("build");
+    const baselinePin = architectureBaselinePinFor(installedBaseline);
+
+    const baselineReceipt = await engine.activate(
+      buildActivateCommand(baselinePin, activateDeps({ commandId: "cmd-act-ab", projectId })),
+    );
+    expect(baselineReceipt.status).toBe("committed");
+    if (baselineReceipt.status !== "committed") return;
+    expect(baselineReceipt.activeRef).toEqual({ aggregateType: "ProjectArchitectureBaselineActive", projectId });
+    expect(baselineReceipt.activeRevision).toEqual(baselinePin.ref);
+
+    // policy active still ABSENT (independent kinds) — activating baseline does
+    // not create the policy active ref.
+    const policyActive = await ledger.load({ aggregateType: "ProjectCompletionPolicyActive", projectId });
+    expect(policyActive.status).toBe("not_found");
+    const baselineActive = await ledger.load({ aggregateType: "ProjectArchitectureBaselineActive", projectId });
+    expect(baselineActive.status).toBe("found");
+  });
+
+  it("fold-equality: activation commit equals buildActivateLedgerCommit", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    // Fresh ledger (no project -> Project CAS at 0). Install then activate.
+    const installed = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+      commandId: "cmd-install-cp",
+      correlationId: "corr-install-cp",
+      submittedAt: FIXED_ISO_2026_09_05,
+      projectId: "proj-alpha",
+      idempotencyKey: "inst-cp-alpha",
+    });
+    await engine.install(installed);
+    if (installed.commandType !== "InstallCompletionPolicyRevision") throw new Error("build");
+    const pin: ReturnType<typeof completionPolicyPinFor> = completionPolicyPinFor(installed);
+
+    const activateCmd = buildActivateCommand(pin, activateDeps({ expectedRevision: 0 }));
+    const receipt = await engine.activate(activateCmd);
+
+    const expected = buildActivateLedgerCommit(activateCmd, {
+      eventId: "evt-0002",
+      occurredAt: FIXED_ISO_2026_09_05,
+      activeAggregateRevision: 1,
+      projectRevision: 0,
+    });
+    expect(ledger.commits).toHaveLength(2);
+    expect(ledger.commits[1]).toEqual(expected);
+    expect(expected.events[0]!.aggregateRevision).toBe(1);
+    expect(expected.expectedVersions[0]!.revision).toBe(0);
+    expect(expected.expectedVersions[1]!.revision).toBe(0);
+
+    expect(receipt.status).toBe("committed");
+    if (receipt.status !== "committed") return;
+    expect(receipt.replayed).toBe(false);
+    expect(receipt.activeRevision).toEqual(pin.ref);
+    expect(receipt.eventIds).toEqual(["evt-0002"]);
+    expect(receipt.commitCursor).toEqual(makeCommitCursor(2));
+  });
+
+  it("dangling target -> not_found, zero-write", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const { projectId, pin } = await bootstrappedPolicyPin(engine);
+    const before = await eventsCount(ledger);
+    const dangling = buildActivateCommand(
+      { ref: { aggregateType: "CompletionPolicyRevision", projectId, policyId: "policy-absent", revision: 1 }, digest: "1".repeat(64) },
+      activateDeps({ projectId }),
+    );
+    const receipt = await engine.activate(dangling);
+    expect(receipt).toEqual({ status: "rejected", commandId: "cmd-act", code: "not_found" });
+    expect(await eventsCount(ledger)).toBe(before);
+    expect(ledger.commits).toHaveLength(2); // bootstrap + install only
+  });
+
+  it("digest mismatch on installed identity -> digest_mismatch, zero-write", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const { projectId, pin } = await bootstrappedPolicyPin(engine);
+    const before = await eventsCount(ledger);
+    const wrongDigest = buildActivateCommand(
+      { ...pin, digest: "2".repeat(64) },
+      activateDeps({ projectId, commandId: "cmd-act-digest" }),
+    );
+    const receipt = await engine.activate(wrongDigest);
+    expect(receipt).toEqual({ status: "rejected", commandId: "cmd-act-digest", code: "digest_mismatch" });
+    expect(await eventsCount(ledger)).toBe(before);
+    expect(ledger.commits).toHaveLength(2);
+  });
+
+  it("CAS competition (stale expected Project revision) -> revision_conflict, active ref unmoved", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const { projectId, pin } = await bootstrappedPolicyPin(engine);
+    // first activation succeeds (Project revision is 1 after bootstrap)
+    const first = await engine.activate(buildActivateCommand(pin, activateDeps({ projectId })));
+    expect(first.status).toBe("committed");
+    const before = await eventsCount(ledger);
+
+    // stale CAS: expected Project revision 99 is never true
+    const stale = await engine.activate(buildActivateCommand(pin, activateDeps({ projectId, commandId: "cmd-act-stale", expectedRevision: 99, idempotencyKey: "act-stale" })));
+    expect(stale.status).toBe("rejected");
+    if (stale.status !== "rejected") return;
+    expect(stale.code).toBe("revision_conflict");
+    expect(await eventsCount(ledger)).toBe(before);
+
+    const active = await ledger.load({ aggregateType: "ProjectCompletionPolicyActive", projectId });
+    expect(active.status).toBe("found");
+    if (active.status !== "found") return;
+    const snap = active.snapshot as ProjectCompletionPolicyActiveSnapshot;
+    expect(snap.activeRevision).toEqual(pin.ref);
+    expect(snap.revision).toBe(1);
+  });
+
+  it("idempotent replay -> committed(replayed), same eventIds/cursor", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const { projectId, pin } = await bootstrappedPolicyPin(engine);
+    const cmd = buildActivateCommand(pin, activateDeps({ projectId }));
+    const first = await engine.activate(cmd);
+    expect(first.status).toBe("committed");
+    if (first.status !== "committed") return;
+    const after = await eventsCount(ledger);
+
+    const replay = await engine.activate(cmd);
+    expect(replay.status).toBe("committed");
+    if (replay.status !== "committed") return;
+    expect(replay.replayed).toBe(true);
+    expect(replay.eventIds).toEqual(first.eventIds);
+    expect(replay.commitCursor).toEqual(first.commitCursor);
+    expect(await eventsCount(ledger)).toBe(after);
+  });
+
+  it("two projects install and activate independently", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    await engine.bootstrap(buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, BOOT_DEPS));
+    for (const projectId of ["proj-alpha", "proj-beta"]) {
+      const installed = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+        commandId: "cmd-install-" + projectId,
+        correlationId: "corr-" + projectId,
+        submittedAt: FIXED_ISO_2026_09_05,
+        projectId,
+        idempotencyKey: "inst-" + projectId,
+      });
+      await engine.install(installed);
+      if (installed.commandType !== "InstallCompletionPolicyRevision") throw new Error("build");
+      const ok = await engine.activate(buildActivateCommand(completionPolicyPinFor(installed), activateDeps({ projectId, commandId: "cmd-act-" + projectId })));
+      expect(ok.status).toBe("committed");
+    }
+    const alphaActive = await ledger.load({ aggregateType: "ProjectCompletionPolicyActive", projectId: "proj-alpha" });
+    const betaActive = await ledger.load({ aggregateType: "ProjectCompletionPolicyActive", projectId: "proj-beta" });
+    expect(alphaActive.status).toBe("found");
+    expect(betaActive.status).toBe("found");
+    if (alphaActive.status !== "found" || betaActive.status !== "found") return;
+    const alphaSnap = alphaActive.snapshot as ProjectCompletionPolicyActiveSnapshot;
+    const betaSnap = betaActive.snapshot as ProjectCompletionPolicyActiveSnapshot;
+    expect(alphaSnap.activeRevision.projectId).toBe("proj-alpha");
+    expect(betaSnap.activeRevision.projectId).toBe("proj-beta");
+  });
+
+  it("install does NOT auto-activate: active ref stays not_found until an activate", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    await engine.bootstrap(buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, BOOT_DEPS));
+    await engine.install(buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, {
+      commandId: "cmd-install-cp",
+      correlationId: "corr-cp",
+      submittedAt: FIXED_ISO_2026_09_05,
+      projectId: "proj-alpha",
+      idempotencyKey: "inst-cp-alpha",
+    }));
+    const active = await ledger.load({ aggregateType: "ProjectCompletionPolicyActive", projectId: "proj-alpha" });
+    expect(active.status).toBe("not_found");
+  });
+
+  it("invalid activate command -> invalid, zero-write", async () => {
+    const ledger = new RecordingLedger();
+    const { engine } = makeEngine(ledger);
+    const { projectId, pin } = await bootstrappedPolicyPin(engine);
+    const before = await eventsCount(ledger);
+    const cmd = buildActivateCommand(pin, activateDeps({ projectId }));
+    // structurally invalid: aggregateId empty string
+    const bad = { ...cmd, aggregateId: "" } as ActivateProjectCompletionPolicyCommand;
+    const receipt = await engine.activate(bad);
+    expect(receipt).toEqual({ status: "rejected", commandId: "cmd-act", code: "invalid" });
+    expect(await eventsCount(ledger)).toBe(before);
+  });
+});

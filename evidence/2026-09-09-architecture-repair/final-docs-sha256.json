@@ -1,0 +1,38 @@
+[
+  {
+    "path": "dev_docs/verification/2026-09-09-architecture-repair.md",
+    "sha256": "B48B49994321423BD27A7811926B1A4FEB93E532179C2924BDBF1468BECE412C"
+  },
+  {
+    "path": "dev_docs/verification/README.md",
+    "sha256": "A4A04DBF003926E1A8A27DD9C3DFA9F2E49AF04A0B85F7896FFC703EAAE0283E"
+  },
+  {
+    "path": "human/module-status.md",
+    "sha256": "0755A433E4E3F39DE847C3C81097A70315F65EEAE00E5287D4A54B1FF856443B"
+  },
+  {
+    "path": "dev_docs/modules/data/context-compiler.md",
+    "sha256": "DF755A39FBB950B4A6591433859A983F5DD134012E83B8F432EBB6900D421000"
+  },
+  {
+    "path": "dev_docs/modules/control/plan-compiler.md",
+    "sha256": "BEBCA2AB3DF9D46F60B1D9997EBF63D2CD460C279D1CD038DE910FFB3B4360FD"
+  },
+  {
+    "path": "dev_docs/modules/control/dispatch-engine.md",
+    "sha256": "2EBDDDCE49580692FC651EF4E1E3B6248EC8014167A553A0BEDE3E73A0741C78"
+  },
+  {
+    "path": "dev_docs/modules/control/verification-engine.md",
+    "sha256": "8FE7C05D1FD47F08A292ADFE4796F081205F108740228B8CBCF3071A72BF40BB"
+  },
+  {
+    "path": "dev_docs/modules/data/workspace-reader.md",
+    "sha256": "9A1E692455408BB71A9485310172139BD3A7C0D66AAED196A81BFE3FB555B478"
+  },
+  {
+    "path": "dev_docs/interfaces/runtime-collaboration.md",
+    "sha256": "623461FC210FC5CFFB71661CA972C6E428E01E70CEF7487EC386DA11B2003A0E"
+  }
+]

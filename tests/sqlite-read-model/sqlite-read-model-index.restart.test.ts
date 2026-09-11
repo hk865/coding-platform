@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-01 lane B — file-backed restart/rebuild proof for SqliteReadModelIndex.
  *
@@ -18,21 +19,21 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createSqliteReadModelIndex } from "../../src/sqlite-read-model/sqlite-read-model-index.js";
+import { createSqliteReadModelIndex } from "../../src/data/read-model-index/sqlite-read-model-index.js";
 import type { ReadModelIndex } from "../../src/contracts/goal-view.js";
 import type { CommitCursor } from "../../src/contracts/command-event.js";
 import type { DomainEvent } from "../../src/contracts/events.js";
 import type { EventPage, PositionedEvent } from "../../src/contracts/ledger.js";
 import { makeCommitCursor } from "../../src/contracts/ledger.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { bootstrapEventsFor } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import { bootstrapEventsFor } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
   buildCreateGoalCommand,
   goalCreatedEventFor,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 
 const OCCURRED = FIXED_ISO_2026_09_05;
 
@@ -115,18 +116,18 @@ describe("SqliteReadModelIndex — file-backed restart/rebuild", () => {
       const pages = buildPages("A");
 
       // Incremental to file "inc", with a mid-way reopen (close() + fresh instance).
-      let inc = createSqliteReadModelIndex({ path: incPath });
+      let inc = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: incPath });
       await inc.advance(pages[0]!);
       await inc.advance(pages[1]!);
       await inc.close();
-      inc = createSqliteReadModelIndex({ path: incPath }); // reopen same file
+      inc = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: incPath }); // reopen same file
       await inc.advance(pages[2]!);
       const incAlpha = await inc.goal(queryFor(0, makeCommitCursor(6)));
       const incBeta = await inc.goal(queryFor(1, makeCommitCursor(6)));
       await inc.close();
 
       // Fresh file rebuilt by replaying the SAME EventPage stream in one session.
-      const reb = createSqliteReadModelIndex({ path: rebPath });
+      const reb = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: rebPath });
       await advanceAll(reb, pages);
       const rebAlpha = await reb.goal(queryFor(0, makeCommitCursor(6)));
       const rebBeta = await reb.goal(queryFor(1, makeCommitCursor(6)));
@@ -147,10 +148,10 @@ describe("SqliteReadModelIndex — file-backed restart/rebuild", () => {
       const pages = buildPages("B");
 
       // Incremental: page0 in one instance, close, reopen, then page1 + page2.
-      let inc = createSqliteReadModelIndex({ path: incPath });
+      let inc = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: incPath });
       await inc.advance(pages[0]!);
       await inc.close();
-      inc = createSqliteReadModelIndex({ path: incPath });
+      inc = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: incPath });
       await inc.advance(pages[1]!);
       await inc.advance(pages[2]!);
       const incAlpha = await inc.goal(queryFor(0, makeCommitCursor(6)));
@@ -158,7 +159,7 @@ describe("SqliteReadModelIndex — file-backed restart/rebuild", () => {
       await inc.close();
 
       // One-shot: full replay from a fresh file, never closed mid-way.
-      const one = createSqliteReadModelIndex({ path: onePath });
+      const one = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: onePath });
       await advanceAll(one, pages);
       const oneAlpha = await one.goal(queryFor(0, makeCommitCursor(6)));
       const oneBeta = await one.goal(queryFor(1, makeCommitCursor(6)));
@@ -179,12 +180,12 @@ describe("SqliteReadModelIndex — file-backed restart/rebuild", () => {
       const pages = buildPages("C");
       const prefix = pages.slice(0, 2); // bootstrap + alpha goal
 
-      const inc = createSqliteReadModelIndex({ path: incPath });
+      const inc = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: incPath });
       await advanceAll(inc, prefix);
       const incAlpha = await inc.goal(queryFor(0, makeCommitCursor(5)));
       await inc.close();
 
-      const reb = createSqliteReadModelIndex({ path: rebPath });
+      const reb = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: rebPath });
       await advanceAll(reb, prefix);
       const rebAlpha = await reb.goal(queryFor(0, makeCommitCursor(5)));
       await reb.close();
@@ -201,12 +202,12 @@ describe("SqliteReadModelIndex — file-backed restart/rebuild", () => {
       const dupPath = join(dir, "dup.sqlite");
       const page = pageOf([goalEventAt(2, 0, 7)]);
 
-      let idx = createSqliteReadModelIndex({ path: dupPath });
+      let idx = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: dupPath });
       const first = await idx.advance(page);
       expect(first.appliedEventIds).toEqual(["rm-evt-7"]);
       await idx.close();
 
-      idx = createSqliteReadModelIndex({ path: dupPath });
+      idx = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: dupPath });
       const second = await idx.advance(page);
       expect(second.appliedEventIds).toEqual([]);
 
@@ -245,7 +246,7 @@ describe("SqliteReadModelIndex — file-backed restart/rebuild", () => {
       };
       const pages = [pageOf([initial]), pageOf([updated])];
 
-      const inc = createSqliteReadModelIndex({ path: incPath });
+      const inc = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: incPath });
       await advanceAll(inc, pages);
       const incView = await inc.goal({
         projectId: "proj-alpha",
@@ -255,7 +256,7 @@ describe("SqliteReadModelIndex — file-backed restart/rebuild", () => {
       });
       await inc.close();
 
-      const reb = createSqliteReadModelIndex({ path: rebPath });
+      const reb = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: rebPath });
       await advanceAll(reb, pages);
       const rebView = await reb.goal({
         projectId: "proj-alpha",

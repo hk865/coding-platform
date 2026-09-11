@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-05 InMemory goal-phase projection tests — GoalPhaseUpdated -> goalStatus /
  * goalTimeline (rebuild equivalence, full-key isolation, freshness, dedupe).
@@ -5,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
-import { ReadModelIndexImpl } from "../../src/read-model/read-model-index.js";
+import { ReadModelIndexImpl } from "../../src/data/read-model-index/read-model-index.js";
 import {
   prepareP105Scenario,
   satisfyEverythingP105,
@@ -68,7 +69,7 @@ describe("P1-05 InMemory goal-phase projection", () => {
     const before = await h.goalStatus({ projectId: sc.projectId, goalId: sc.goalId });
     expect(before.status).toBe("ready");
 
-    const fresh = new ReadModelIndexImpl();
+    const fresh = new ReadModelIndexImpl(new ControlPolicyExplanation());
     let cursor = null;
     for (;;) {
       const page = await h.ledger.events({ afterCursor: cursor, limit: 64 });
@@ -110,7 +111,7 @@ describe("P1-05 InMemory goal-phase projection", () => {
     expect(missingTl.status).toBe("not_ready");
 
     // replay the SAME event page into a fresh index: dedupe -> timeline unchanged
-    const fresh = new ReadModelIndexImpl();
+    const fresh = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const page = await h.ledger.events({ afterCursor: null, limit: 500 });
     await fresh.advance(page);
     const first = await fresh.goalTimeline({ projectId: sc.projectId, goalId: sc.goalId });
@@ -134,7 +135,7 @@ describe("P1-05 InMemory goal-phase projection", () => {
   });
 
   it("full-scope isolation: two Projects share the same goalId without colliding", async () => {
-    const fresh = new ReadModelIndexImpl();
+    const fresh = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await fresh.advance({
       afterCursor: null, throughCursor: makeCommitCursor(2),
       events: [

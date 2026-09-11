@@ -1,0 +1,68 @@
+tests\control\canonical-record-scope.test.ts:73:    const newPlanDraft = buildP111NewPlanDraft(sourcePlan, [], "scope-local objective");
+tests\control\canonical-record-scope.test.ts:74:    const command = buildApplyPlanChangeCommand(proposal, decision, newPlanDraft, { commandId: "scope-change", expectedRevision: 2 });
+tests\control\canonical-record-scope.test.ts:77:    const batch = buildGoalChangeApplyCommit(command, { eventId: "scope-change-event", occurredAt: now, changedAt: now, pins, sourcePlan, newPlanDraft,
+tests\read-model\plan-change-timeline.test.ts:74:  const newPlanDraft = buildP111NewPlanDraft(sourceSnap, proposal.patch.patchDraft.obligationDeltas, proposal.patch.patchDraft.objective);
+tests\read-model\plan-change-timeline.test.ts:75:  const baseCommand = buildApplyPlanChangeCommand(proposal, decision, newPlanDraft, { commandId: 'rw09-cmd-apply', expectedRevision: 1, actor: acceptance.actor });
+tests\read-model\plan-change-timeline.test.ts:85:  const applyCommit = buildGoalChangeApplyCommit(applyCmd, { eventId: 'evt-rw09-apply', occurredAt: FIXED, changedAt: FIXED, pins, sourcePlan: sourceSnap, newPlanDraft, baseGoal });
+tests\sqlite-read-model\p1-11-plan-change.test.ts:85:  const newPlanDraft = buildP111NewPlanDraft(sourceSnap, deltas, proposal.patch.patchDraft.objective);
+tests\sqlite-read-model\p1-11-plan-change.test.ts:86:  const applyCmd = buildApplyPlanChangeCommand(proposal, decision, newPlanDraft, {
+tests\sqlite-read-model\p1-11-plan-change.test.ts:104:    newPlanDraft,
+tests\read-model\p1-11-plan-change.test.ts:93:  const newPlanDraft = buildP111NewPlanDraft(sourceSnap, deltas, proposal.patch.patchDraft.objective);
+tests\read-model\p1-11-plan-change.test.ts:94:  const applyCmd = buildApplyPlanChangeCommand(proposal, decision, newPlanDraft, {
+tests\read-model\p1-11-plan-change.test.ts:112:    newPlanDraft,
+src\interaction\human-collaboration\human-collaboration.ts:32:import type { PlanProposalPort } from "../../contracts/goal-change.js";
+src\interaction\human-collaboration\human-collaboration.ts:38:  planProposal?: PlanProposalPort;
+src\control\plan-compiler\rework-proposal.ts:7:import { reworkPlanIdFor, reworkProposalIdFor, type ReworkCompileRequestV1, type ReworkPlanDraftV1, type ReworkProposalTaskV1, type ReworkProposalV1 } from '../../contracts/rework/proposal.js';
+src\control\plan-compiler\rework-proposal.ts:266:  const planDraft: ReworkPlanDraftV1 = {
+src\control\plan-compiler\plan-compiler.ts:26:export type PlanProposalResult =
+src\control\plan-compiler\plan-compiler.ts:40:  request(intent: AmendGoalRequestV1): Promise<PlanProposalResult>;
+src\control\plan-compiler\plan-compiler.ts:42:  async request(intent: AmendGoalRequestV1 | InitialPlanningRequest): Promise<PlanProposalResult | InitialPlanningRequestResult> {
+src\harness\persistent-harness.ts:83:import type { PlanProposalPort, PlanningContextPort } from "../contracts/goal-change.js";
+src\harness\persistent-harness.ts:175:  /** explicit PlanProposalPort (default PlanCompilerImpl). */
+src\harness\persistent-harness.ts:176:  planProposal?: PlanProposalPort;
+src\harness\persistent-harness.ts:237:  planProposal: PlanProposalPort;
+src\harness\persistent-harness.ts:451:  planProposal: PlanProposalPort;
+src\harness\persistent-harness.ts:488:  const planProposal: PlanProposalPort = planProposalOverride ?? new PlanCompilerImpl({ workIdentity: control, materials: new CoordinationContextCompiler({ ledger }), now: d.clock });
+src\harness\in-memory-harness.ts:114:import type { PlanProposalPort, PlanningContextPort } from "../contracts/goal-change.js";
+src\harness\in-memory-harness.ts:166:  /** explicit PlanProposalPort (default PlanCompilerImpl). */
+src\harness\in-memory-harness.ts:167:  planProposal?: PlanProposalPort;
+src\harness\in-memory-harness.ts:225:  planProposal: PlanProposalPort;
+src\harness\in-memory-harness.ts:419:  const planProposal: PlanProposalPort = options.planProposal ?? new PlanCompilerImpl({ workIdentity: control, materials: new CoordinationContextCompiler({ ledger }), now: d.clock });
+tests\control\goal-change.test.ts:254:type RWDraft = NonNullable<ApplyPlanChangeCommand["payload"]["newPlanDraft"]>;
+tests\control\goal-change.test.ts:380:        newPlanDraft: draft,
+tests\control\goal-change.test.ts:529:      const emptyDraft: NonNullable<ApplyPlanChangeCommand["payload"]["newPlanDraft"]> = {
+tests\context\verification-round-context.test.ts:14:import type { VerificationRoundScope, VerificationRuntimeFacts, VerificationRoundSourcePort, VerificationRoundMaterialResult } from '../../src/contracts/verification-context.js';
+tests\context\verification-round-context.test.ts:37:  const observations: ReturnType<VerificationRuntimeFacts['all']> = [{ spec: scope, status: 'completed' }];
+tests\context\query-execution-context.test.ts:3:import type { QueryExecutionMaterial, QuerySourceObservationPort } from '../../src/contracts/query-execution-context.js';
+tests\context\query-execution-context.test.ts:45:    const observations: QuerySourceObservationPort = { all: () => [{ runRef, status: 'completed', input, sourceAfter: 'source-before' }] };
+tests\context\persisted-query-source.test.ts:10:import type { QuerySourceObservationPort } from '../../src/contracts/query-execution-context.js';
+tests\context\persisted-query-source.test.ts:15:type Observation = ReturnType<QuerySourceObservationPort['all']>[number];
+tests\contract-support\fixtures\goal-change-fixtures.ts:136:): NonNullable<ApplyPlanChangeCommand["payload"]["newPlanDraft"]> {
+tests\contract-support\fixtures\goal-change-fixtures.ts:199:  newPlanDraft: NonNullable<ApplyPlanChangeCommand["payload"]["newPlanDraft"]>,
+tests\contract-support\fixtures\goal-change-fixtures.ts:214:      newPlanDraft,
+src\contracts\goal-change.ts:323:    newPlanDraft: {
+src\contracts\goal-change.ts:374:export interface PlanProposalPort {
+tests\contract-suite\p1-11-harness.ts:183:  const newPlanDraft = buildP111NewPlanDraft(sourcePlan, deltas, proposal.patch.patchDraft.objective);
+tests\contract-suite\p1-11-harness.ts:184:  const applyCommand = buildApplyPlanChangeCommand(proposal, decision, newPlanDraft, {
+src\contracts\query-execution-context.ts:15:export interface QuerySourceObservationPort extends RuntimeObservationSource<{ runRef: QueryRunRef; status: string; input: string; sourceAfter: string | null }> {}
+src\contracts\planning.ts:1:import type { AmendGoalRequestV1, PlanProposalPort } from './goal-change.js';
+src\contracts\planning.ts:27:export interface PlanCompilerPort extends PlanProposalPort {
+src\contracts\planning.ts:28:  request(intent: AmendGoalRequestV1): ReturnType<PlanProposalPort['request']>;
+src\control\control-engine\autonomous-rework.ts:405:        newPlanDraft: proposalToRecord.planDraft,
+src\control\control-engine\goal-change.ts:66:type NewPlanDraft = NonNullable<ApplyPlanChangeCommand["payload"]["newPlanDraft"]>;
+src\control\control-engine\goal-change.ts:200:    const draft: NewPlanDraft = command.payload.newPlanDraft as NewPlanDraft;
+src\control\control-engine\goal-change.ts:284:      newPlanDraft: completedDraft,
+src\control\control-engine\goal-change.ts:337:    if (command.payload.newPlanDraft === null || command.payload.newPlanDraft === undefined) return false;
+src\control\control-engine\records\goal-change.ts:50:  draft: NonNullable<ApplyPlanChangeCommand["payload"]["newPlanDraft"]>,
+src\control\control-engine\records\goal-change.ts:159:    newPlanDraft: NonNullable<ApplyPlanChangeCommand["payload"]["newPlanDraft"]>;
+src\control\control-engine\records\goal-change.ts:166:    deps.newPlanDraft,
+src\control\control-engine\records\goal-change.ts:170:    { aggregateType: "PlanRevision", projectId: proposalRef.projectId, planId: deps.newPlanDraft.planId },
+src\contracts\rework\proposal.ts:33:  planDraft: ReworkPlanDraftV1;
+src\contracts\rework\proposal.ts:73: * applyPlanChange 消费的草稿形状（与 ApplyPlanChangeCommand.payload.newPlanDraft 一致）。
+src\contracts\rework\proposal.ts:81:export type ReworkPlanDraftV1 = {
+src\control\control-engine\policies\goal-change-consistency.ts:21:type NewPlanDraft = NonNullable<ApplyPlanChangeCommand["payload"]["newPlanDraft"]>;
+src\contracts\verification-context.ts:27:export interface VerificationRuntimeFacts {
+src\data\context-compiler\query-execution-context.ts:4:import type { QueryExecutionMaterialPort, QueryExecutionMaterial, QueryExecutionRequest, QuerySourceObservationPort, QuerySourceRevisionPort } from '../../contracts/query-execution-context.js';
+src\data\context-compiler\query-execution-context.ts:47:  constructor(private readonly deps: { ledger: () => Pick<StateLedger, 'load'>; observations: QuerySourceObservationPort; source: QuerySourceRevisionPort }) {}
+src\data\context-compiler\verification-context.ts:12:import type { VerificationContextPort, VerificationMaterialResult, VerificationRuntimeFacts, VerificationRoundScope, VerificationRoundMaterialIdentity, VerificationRoundMaterialResult, VerificationRoundSourcePort } from '../../contracts/verification-context.js';
+src\data\context-compiler\verification-context.ts:54:  runtime?: VerificationRuntimeFacts;

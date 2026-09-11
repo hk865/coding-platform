@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import type { P1_09TestHarness } from "./p1-09-harness.js";
 import { runP109QueryScenario, type P109QueryScenarioResult } from "./p1-09-harness.js";
-import { P109_PROJECT, P109_WORKSPACE, P109_QUERY } from "../../src/contracts/fixtures/query-job-fixtures.js";
+import { P109_PROJECT, P109_WORKSPACE, P109_QUERY } from "../contract-support/fixtures/query-job-fixtures.js";
 import { P108_PROJECT_A } from "./p1-08-harness.js";
 
 export function defineQueryJobContractSuite(

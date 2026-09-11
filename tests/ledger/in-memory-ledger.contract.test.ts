@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defineStateLedgerContractSuite } from "../contract-suite/state-ledger.contract.suite.js";
-import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
 import type { StateLedger } from "../../src/contracts/ledger.js";
 
 /**

@@ -1,0 +1,24 @@
+{
+  "request": {
+    "projectId": "local-8e34ec09f730639a3cea",
+    "workspaceId": "workspace-main",
+    "goalId": "50cf3d6f-57df-4fd1-92a6-898df7935e82",
+    "requestId": "bf092353-d15f-4d59-9d15-6916576f6b06",
+    "instruction": "# 修复 slug 规范化\n\n`slug.py` 当前只替换单个普通空格，会为连续空白生成多个连字符，也不会处理制表符。请让 `slugify`\n把任意连续空白折叠成一个 `-`，去掉首尾空白，并保留已有的小写行为。\n\n运行 `python3 test_slug.py` 可执行公开测试。不要修改测试文件。\n",
+    "allowWrite": true,
+    "budget": {
+      "contextWindowTokens": 1000000,
+      "inputTokens": 200000,
+      "outputTokens": 16384,
+      "maxRequests": 10,
+      "maxToolCalls": 30,
+      "timeoutMs": 30000,
+      "perResponseTokens": 2048
+    }
+  },
+  "accepted": {
+    "runId": "real-bf092353-d15f-4d59-9d15-6916576f6b06",
+    "status": "accepted",
+    "executor": "coding-agent"
+  }
+}

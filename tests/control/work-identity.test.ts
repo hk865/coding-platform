@@ -1,0 +1,413 @@
+/**
+ * RW-12 DispatchEngine — 真实 Run 的持久工作身份。
+ *
+ * 这里跑的是真实 ControlEngine + 真实账本（InMemoryLedger），不是替身：
+ *   - 工作身份在派发收口由 DispatchEngine 建立，写入只经 ControlEngine 的既有命令面；
+ *   - 重复派发命中同一个 WorkContextBinding（CAS@0 + 幂等键），不会出现第二个身份；
+ *   - 同一段工作的第二个 Run 是 link 进来，不是新建身份；
+ *   - workId 规则是 canonical 计划事实的纯函数：返工替换链收敛到同一个身份；
+ *   - 身份已被别的 goal/task 占用时拒绝派发（零写入）。
+ *
+ * RW-13 追加（同一个 describe('RW-13 …')）：一段工作只能有一个持久身份——
+ *   - 派发面**先解析、后建立**：已存在的身份（哪怕 workId 不等于推导 id）被复用，只做 link；
+ *   - 先显式绑定再派发同一任务：账本里仍只有一条 WorkContextBinding；
+ *   - 解析不到／读不完整：拒绝派发且零写入，绝不凭推导 id 硬写；
+ *   - 多目标／多工作区不互相命中；重启后同一任务解析到同一身份。
+ */
+import { describe, expect, it } from 'vitest';
+import { createControlEngine } from '../../src/control/control-engine/control-engine.js';
+import { InMemoryLedger } from '../../src/data/state-ledger/in-memory-ledger.js';
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from '../../src/testing/sequences.js';
+import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from '../contract-support/fixtures/bootstrap-fixture-v1.js';
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand, buildGoalCreateLedgerCommit } from '../contract-support/fixtures/goal-fixtures.js';
+import { DISPATCH_PLAN_REVISION_FIXTURE_V1, DISPATCH_ELIGIBLE_TASK_ID, DISPATCH_DEPENDENT_TASK_ID, buildDispatchClaimCommand } from '../../src/fixtures/dispatch-fixtures.js';
+import { buildDispatchClaimLedgerCommit } from '../../src/control/control-engine/records/dispatch.js';
+import { buildBindWorkContextCommand } from '../contract-support/fixtures/context-fixtures.js';
+import { workContextRefFor, type WorkContextBindingSnapshot } from '../../src/contracts/context-continuity.js';
+import type { DispatchIntentV1, RunRef } from '../../src/contracts/dispatch.js';
+import type { PlanRevisionSnapshot } from '../../src/contracts/plan.js';
+import type { StateLedger } from '../../src/contracts/ledger.js';
+import { workIdFor, resolveOriginTaskId, ensureWorkIdentity, WORK_IDENTITY_MAX_CHAIN_HOPS } from '../../src/control/dispatch-engine/work-identity.js';
+import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
+import { seedLegacyWorkContextBinding } from '../support/legacy-work-context-seed.js';
+import {
+  createP108ScenarioRuntime,
+  prepareP108Scenario,
+  claimP108Task,
+  toP1_08Harness,
+  P108_PROJECT_A,
+  P108_WORKSPACE,
+  P108_GOAL,
+  P108_TASK_WORK,
+  P108_SCHEMA,
+} from '../contract-suite/p1-08-harness.js';
+
+const FIXED = FIXED_ISO_2026_09_05;
+const SCOPE = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.scopes[0]!;
+const PROJECT = SCOPE.projectId;
+const WORKSPACE = SCOPE.workspaceId;
+const GOAL = SCOPE.goalId;
+const PLAN_REF = { aggregateType: 'PlanRevision' as const, projectId: PROJECT, planId: DISPATCH_PLAN_REVISION_FIXTURE_V1.planId };
+
+async function seed(): Promise<{ ledger: InMemoryLedger; control: ReturnType<typeof createControlEngine> }> {
+  const ledger = new InMemoryLedger();
+  const deps = createDeterministicDeps();
+  const control = createControlEngine({ ledger, now: deps.clock, eventId: deps.eventId });
+  const boot = buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, { commandId: 'cmd-boot', correlationId: 'corr-boot', submittedAt: FIXED });
+  expect((await ledger.commit(buildBootstrapLedgerCommit(boot, { eventIds: ['e1', 'e2', 'e3', 'e4'], occurredAt: FIXED }))).status).toBe('committed');
+  const goal = buildCreateGoalCommand(SCOPE, { commandId: 'cmd-goal', correlationId: 'corr-goal', submittedAt: FIXED });
+  expect((await ledger.commit(buildGoalCreateLedgerCommit(goal, { eventId: 'e5', occurredAt: FIXED, projectRevision: 1, workspaceRevision: 1 }))).status).toBe('committed');
+  let seq = 6;
+  for (const [taskId, runId] of [[DISPATCH_ELIGIBLE_TASK_ID, 'real-run-1'], [DISPATCH_DEPENDENT_TASK_ID, 'real-run-2']] as const) {
+    await claimRun(ledger, taskId, runId, seq++);
+  }
+  return { ledger, control };
+}
+
+/** 直接落一条 claim（真实 Run 聚合 + outbox intent），供需要「另一个 Run」的用例复用。 */
+async function claimRun(ledger: InMemoryLedger, taskId: string, runId: string, seq: number): Promise<RunRef> {
+  const claim = buildDispatchClaimCommand({
+    commandId: 'claim-' + runId, correlationId: 'corr-' + runId, submittedAt: FIXED, idempotencyKey: 'idem-' + runId,
+    projectId: PROJECT, goalId: GOAL, taskId, attemptId: 'attempt-' + runId, runId,
+  });
+  const receipt = await ledger.commit(buildDispatchClaimLedgerCommit(claim, {
+    eventId: 'e' + String(seq), occurredAt: FIXED, workspaceId: WORKSPACE, planRef: PLAN_REF, workspaceRevision: 1,
+  }));
+  expect(receipt.status, 'seed claim ' + runId).toBe('committed');
+  return runRef(runId);
+}
+
+/** 显式声明一段任务的持久身份（人／场景路径，不是派发推导），返回该 workId。 */
+async function bindExplicitWork(
+  control: ReturnType<typeof createControlEngine>,
+  taskId: string,
+  workId: string,
+  initialRunRef: RunRef,
+  goalId: string = GOAL,
+  workspaceId: string = WORKSPACE,
+): Promise<void> {
+  const receipt = await control.bindWorkContext(buildBindWorkContextCommand({
+    commandId: 'explicit-bind-' + workId, projectId: PROJECT, workId, workspaceId,
+    goalId, taskId, initialRunRef, idempotencyKey: 'explicit-idem-' + workId,
+    correlationId: 'explicit-corr-' + workId, submittedAt: FIXED,
+  }));
+  expect(receipt.status, '显式绑定 ' + workId).toBe('committed');
+}
+
+/** 该 (goal, task) 在账本里的全部 WorkContextBound 事件（用于证明「一个任务一个身份」）。 */
+async function taskBoundEvents(ledger: InMemoryLedger, goalId: string, taskId: string): Promise<{ workId: string; actorId: string }[]> {
+  const page = await ledger.events({ afterCursor: null, limit: 512 });
+  return page.events
+    .filter((positioned) => positioned.event.eventType === 'WorkContextBound')
+    .map((positioned) => positioned.event as unknown as { projectId: string; workspaceId: string; aggregateId: string; actor: { id: string }; payload: { binding: { workKind: string; goalId: string | null; taskId: string | null } } })
+    .filter((event) => event.projectId === PROJECT && event.workspaceId === WORKSPACE
+      && event.payload.binding.workKind === 'task' && event.payload.binding.goalId === goalId && event.payload.binding.taskId === taskId)
+    .map((event) => ({ workId: event.aggregateId, actorId: event.actor.id }));
+}
+
+async function intents(ledger: InMemoryLedger): Promise<DispatchIntentV1[]> {
+  return (await ledger.pendingDispatchIntents(10, { workKind: 'ordinary' })).map((entry) => entry.intent);
+}
+
+const runRef = (runId: string): RunRef => ({ aggregateType: 'Run', projectId: PROJECT, goalId: GOAL, runId });
+
+describe('RW-12 work identity (rule + dispatch wiring)', () => {
+  it('workId 是 canonical 计划事实的纯函数：同输入同输出，不同作用域不同身份', () => {
+    const a = workIdFor({ projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL }, 'task-A');
+    expect(a).toBe(workIdFor({ projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL }, 'task-A'));
+    expect(a.startsWith('work-')).toBe(true);
+    expect(a).not.toBe(workIdFor({ projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL }, 'task-B'));
+    expect(a).not.toBe(workIdFor({ projectId: PROJECT, workspaceId: WORKSPACE, goalId: 'other-goal' }, 'task-A'));
+    expect(a).not.toBe(workIdFor({ projectId: PROJECT, workspaceId: 'other-ws', goalId: GOAL }, 'task-A'));
+  });
+
+  it('替换链回溯：返工（只换承担者）收敛到同一段工作的起源任务，并拒绝环', async () => {
+    const plan = {
+      ref: PLAN_REF, revision: 1, schemaVersion: 1, planId: PLAN_REF.planId, planRevision: 7,
+      tasks: [
+        { taskId: 'task-origin', disposition: 'superseded', replacedByTaskId: 'task-rework-1' },
+        { taskId: 'task-rework-1', disposition: 'superseded', replacedByTaskId: 'task-rework-2' },
+        { taskId: 'task-rework-2', disposition: 'active', replacedByTaskId: null },
+        /** 故意造成的环：回溯必须在上限内停下，不能死循环。 */
+        { taskId: 'task-cycle-a', disposition: 'superseded', replacedByTaskId: 'task-cycle-b' },
+        { taskId: 'task-cycle-b', disposition: 'superseded', replacedByTaskId: 'task-cycle-a' },
+      ],
+    } as unknown as PlanRevisionSnapshot;
+    const ledger = { load: async (ref: unknown) => ({ status: 'found' as const, snapshot: ref === PLAN_REF ? plan : plan }) } as unknown as StateLedger;
+
+    const origin = await resolveOriginTaskId(ledger, PLAN_REF, 'task-rework-2');
+    expect(origin.originTaskId).toBe('task-origin');
+    expect(origin.chain).toEqual(['task-rework-2', 'task-rework-1', 'task-origin']);
+    expect(origin.chainResolved).toBe(true);
+    expect(origin.planRevision).toBe(7);
+    // 返工任务与起源任务得到同一个 workId —— 返工不会另起一段工作。
+    expect(workIdFor({ projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL }, 'task-origin'))
+      .toBe(workIdFor({ projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL }, origin.originTaskId));
+
+    const cycle = await resolveOriginTaskId(ledger, PLAN_REF, 'task-cycle-a');
+    expect(cycle.chain.length).toBeLessThanOrEqual(WORK_IDENTITY_MAX_CHAIN_HOPS + 1);
+  });
+
+  it('计划读不到时诚实回退到"任务自身即起源"，不编造链', async () => {
+    const ledger = { load: async (ref: unknown) => ({ status: 'not_found' as const, ref }) } as unknown as StateLedger;
+    const origin = await resolveOriginTaskId(ledger, PLAN_REF, 'task-x');
+    expect(origin).toMatchObject({ originTaskId: 'task-x', chainResolved: false, planRevision: null });
+  });
+
+  it('重复派发命中同一身份：不产生第二个 WorkContextBinding，第二个 Run 只是 link 进来', async () => {
+    const { ledger, control } = await seed();
+    const [first, second] = await intents(ledger);
+    expect(first!.taskId).toBe(DISPATCH_ELIGIBLE_TASK_ID);
+
+    const a = await ensureWorkIdentity({ ledger, control, now: () => FIXED }, first!);
+    expect(a).toMatchObject({ status: 'established', originTaskId: DISPATCH_ELIGIBLE_TASK_ID, linked: true });
+    const workId = a.status === 'established' ? a.workId : '';
+    const ref = workContextRefFor(PROJECT, WORKSPACE, workId);
+
+    // 同一段工作的第二个 Run（不同 runId）：只 link，不新建身份。
+    const secondRun = { ...second!, taskId: DISPATCH_ELIGIBLE_TASK_ID, planRef: PLAN_REF };
+    const b = await ensureWorkIdentity({ ledger, control, now: () => FIXED }, secondRun);
+    expect(b).toMatchObject({ status: 'established', workId, linked: true });
+    // 重复同一 Run：幂等，不再 link。
+    const c = await ensureWorkIdentity({ ledger, control, now: () => FIXED }, first!);
+    expect(c).toMatchObject({ status: 'established', workId, revision: 2 });
+
+    const binding = await ledger.load(ref);
+    if (binding.status !== 'found') throw Error('work binding missing');
+    const snapshot = binding.snapshot as WorkContextBindingSnapshot;
+    expect(snapshot.revision).toBe(2);
+    expect(snapshot.binding.initialRunRef).toEqual(runRef('real-run-1'));
+    expect(snapshot.binding.linkedRunRefs).toEqual([runRef('real-run-1'), runRef('real-run-2')]);
+    expect(snapshot.binding.goalId).toBe(GOAL);
+    expect(snapshot.binding.taskId).toBe(DISPATCH_ELIGIBLE_TASK_ID);
+
+    // 账本里只可能有一条 WorkContextBound（身份只创建一次）。
+    const events = await ledger.events({ afterCursor: null, limit: 256 });
+    expect(events.events.filter((p) => p.event.eventType === 'WorkContextBound')).toHaveLength(1);
+    expect(events.events.filter((p) => p.event.eventType === 'WorkRunLinked')).toHaveLength(1);
+  });
+
+  it('workId 已被另一段工作占用时拒绝派发：零写入，不复用别人的身份', async () => {
+    const { ledger, control } = await seed();
+    const [first] = await intents(ledger);
+    const workId = workIdFor({ projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL }, DISPATCH_ELIGIBLE_TASK_ID);
+    // 预置一条同 workId 但属于别的 goal 的绑定（只有 workId 规则被破坏时才可能出现）。
+    const pre = await control.bindWorkContext(buildBindWorkContextCommand({
+      commandId: 'pre-bind', projectId: PROJECT, workId, workspaceId: WORKSPACE,
+      goalId: 'other-goal', taskId: 'other-task', initialRunRef: runRef('real-run-1'),
+      idempotencyKey: 'pre-bind-idem', correlationId: 'pre-bind-corr', submittedAt: FIXED,
+    }));
+    expect(pre.status).toBe('committed');
+
+    const result = await ensureWorkIdentity({ ledger, control, now: () => FIXED }, first!);
+    expect(result.status).toBe('rejected');
+    if (result.status === 'rejected') expect(result.code).toBe('work_identity_conflict');
+    const ref = workContextRefFor(PROJECT, WORKSPACE, workId);
+    const binding = await ledger.load(ref);
+    if (binding.status !== 'found') throw Error('pre-bound work missing');
+    const snapshot = binding.snapshot as WorkContextBindingSnapshot;
+    expect(snapshot.revision).toBe(1);
+    expect(snapshot.binding.taskId).toBe('other-task');
+  });
+
+  it('接续可重建：重启后重新构造 ControlEngine，读同一账本得到完全相同的身份结论', async () => {
+    const { ledger, control } = await seed();
+    const [first] = await intents(ledger);
+    const before = await ensureWorkIdentity({ ledger, control, now: () => FIXED }, first!);
+    // 重启：账本是权威事实，引擎与派发侧都是新建的（不共享任何进程内状态）。
+    const deps = createDeterministicDeps();
+    const restarted = createControlEngine({ ledger, now: deps.clock, eventId: deps.eventId });
+    const replayed = await intents(ledger);
+    const after = await ensureWorkIdentity({ ledger, control: restarted, now: () => FIXED }, replayed[0]!);
+    expect(after).toEqual(before);
+  });
+});
+describe('RW-13 一个任务只有一个持久工作身份（ControlEngine 权威解析 + 先解析后建立）', () => {
+  const scope = { projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL };
+  const derivedIdFor = (taskId: string) => workIdFor(scope, taskId);
+
+  it('先显式绑定再派发同一任务：账本里只有一条身份，派发复用显式那条，只做 link', async () => {
+    const { ledger, control } = await seed();
+    const [first, second] = await intents(ledger);
+    expect(first!.taskId).toBe(DISPATCH_ELIGIBLE_TASK_ID);
+    const explicitId = 'work-explicit-1';
+    // 人／场景**显式**声明这段工作的身份（workId 与推导规则算出的不同）。
+    await bindExplicitWork(control, DISPATCH_ELIGIBLE_TASK_ID, explicitId, runRef('real-run-1'));
+
+    const a = await ensureWorkIdentity({ ledger, control, now: () => FIXED }, first!);
+    expect(a).toMatchObject({ status: 'established', workId: explicitId, originTaskId: DISPATCH_ELIGIBLE_TASK_ID, linked: true, revision: 1 });
+
+    // 同一段工作的第二个 Run：也只 link 到同一条身份。
+    const secondRun = { ...second!, taskId: DISPATCH_ELIGIBLE_TASK_ID, planRef: PLAN_REF };
+    const b = await ensureWorkIdentity({ ledger, control, now: () => FIXED }, secondRun);
+    expect(b).toMatchObject({ status: 'established', workId: explicitId, linked: true, revision: 2 });
+
+    const binding = await ledger.load(workContextRefFor(PROJECT, WORKSPACE, explicitId));
+    if (binding.status !== 'found') throw Error('显式身份在账本里不存在');
+    const snapshot = binding.snapshot as WorkContextBindingSnapshot;
+    expect(snapshot.binding.linkedRunRefs).toEqual([runRef('real-run-1'), runRef('real-run-2')]);
+    // 推导 id 那条身份**根本没有被建立**：派发面复用了既存身份，没有为同一任务再造一个。
+    expect((await ledger.load(workContextRefFor(PROJECT, WORKSPACE, derivedIdFor(DISPATCH_ELIGIBLE_TASK_ID)))).status).toBe('not_found');
+    // 账本里该任务只有一条 WorkContextBound，而且它不是派发面写的。
+    const events = await taskBoundEvents(ledger, GOAL, DISPATCH_ELIGIBLE_TASK_ID);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.workId).toBe(explicitId);
+    expect(events[0]!.actorId).not.toBe('dispatch-work-identity');
+  });
+
+  it('无既存身份时才按推导规则建立（解析面 absent → 推导兜底身份）', async () => {
+    const { ledger, control } = await seed();
+    const [first] = await intents(ledger);
+    expect(await control.resolveTaskWorkIdentity({ ...scope, taskId: DISPATCH_ELIGIBLE_TASK_ID })).toEqual({ status: 'absent' });
+
+    const created = await ensureWorkIdentity({ ledger, control, now: () => FIXED }, first!);
+    expect(created).toMatchObject({ status: 'established', workId: derivedIdFor(DISPATCH_ELIGIBLE_TASK_ID) });
+
+    const resolved = await control.resolveTaskWorkIdentity({ ...scope, taskId: DISPATCH_ELIGIBLE_TASK_ID });
+    expect(resolved).toMatchObject({ status: 'resolved', authority: 'derived', candidateCount: 1 });
+    if (resolved.status === 'resolved') {
+      expect(resolved.workContextRef).toEqual(workContextRefFor(PROJECT, WORKSPACE, derivedIdFor(DISPATCH_ELIGIBLE_TASK_ID)));
+      expect(resolved.binding.taskId).toBe(DISPATCH_ELIGIBLE_TASK_ID);
+    }
+  });
+
+  it('解析按 (项目, 工作区, 目标, 任务) 命中：不同目标／工作区／项目／任务不互相命中', async () => {
+    const { ledger, control } = await seed();
+    await bindExplicitWork(control, DISPATCH_ELIGIBLE_TASK_ID, 'work-explicit-scope', runRef('real-run-1'));
+
+    const hit = await control.resolveTaskWorkIdentity({ ...scope, taskId: DISPATCH_ELIGIBLE_TASK_ID });
+    expect(hit).toMatchObject({ status: 'resolved', authority: 'declared' });
+    if (hit.status === 'resolved') expect(hit.binding.workId).toBe('work-explicit-scope');
+
+    for (const query of [
+      { ...scope, taskId: DISPATCH_DEPENDENT_TASK_ID },
+      { ...scope, goalId: 'other-goal', taskId: DISPATCH_ELIGIBLE_TASK_ID },
+      { ...scope, workspaceId: 'other-workspace', taskId: DISPATCH_ELIGIBLE_TASK_ID },
+      { ...scope, projectId: 'other-project', taskId: DISPATCH_ELIGIBLE_TASK_ID },
+    ]) {
+      expect(await control.resolveTaskWorkIdentity(query), JSON.stringify(query)).toEqual({ status: 'absent' });
+    }
+    // 隔离不靠猜测：账本里确实只有那一条身份。
+    expect(await taskBoundEvents(ledger, GOAL, DISPATCH_ELIGIBLE_TASK_ID)).toHaveLength(1);
+  });
+
+  it('解析不到（账本事件不可读）时拒绝派发且零写入：不凭推导 id 硬写新身份', async () => {
+    const { ledger, control } = await seed();
+    void control;
+    const [first] = await intents(ledger);
+    const other = createDeterministicDeps();
+    // 真实账本 + 只坏掉事件读取的账本视图：解析面必须诚实返回 unavailable。
+    const unreadable: StateLedger = {
+      load: (ref) => ledger.load(ref),
+      commit: (batch) => ledger.commit(batch),
+      events: async () => { throw new Error('账本事件不可读'); },
+      pendingDispatchIntents: (limit, selection) => ledger.pendingDispatchIntents(limit, selection),
+    };
+    const unreadableControl = createControlEngine({ ledger: unreadable, now: other.clock, eventId: other.eventId });
+    expect(await unreadableControl.resolveTaskWorkIdentity({ ...scope, taskId: DISPATCH_ELIGIBLE_TASK_ID }))
+      .toMatchObject({ status: 'unavailable' });
+
+    const result = await ensureWorkIdentity({ ledger: unreadable, control: unreadableControl, now: () => FIXED }, first!);
+    expect(result.status).toBe('rejected');
+    if (result.status === 'rejected') expect(result.code).toBe('work_identity_unavailable');
+    // 零写入：推导 id 那条身份没有被硬写出来，该任务也仍然没有任何身份。
+    expect((await ledger.load(workContextRefFor(PROJECT, WORKSPACE, derivedIdFor(DISPATCH_ELIGIBLE_TASK_ID)))).status).toBe('not_found');
+    expect(await taskBoundEvents(ledger, GOAL, DISPATCH_ELIGIBLE_TASK_ID)).toEqual([]);
+  });
+
+  it('账本里已有两条历史身份时给出唯一答案：显式身份优先，落选者不被改名也不被删除', async () => {
+    const { ledger, control } = await seed();
+    const [first, second] = await intents(ledger);
+    // RW-13 之前的历史不一致：先按推导规则建了一条，之后才有人显式声明同一任务的身份。
+    const derived = await ensureWorkIdentity({ ledger, control, now: () => FIXED }, first!);
+    expect(derived.status).toBe('established');
+    const derivedId = derived.status === 'established' ? derived.workId : '';
+
+    // RC-03 起，第二条身份**不可能再由命令面产生**：同一命令走真实入口会被权威守卫拒绝（零写）。
+    const declaredCommand = buildBindWorkContextCommand({
+      commandId: 'explicit-bind-work-explicit-2', projectId: PROJECT, workId: 'work-explicit-2', workspaceId: WORKSPACE,
+      goalId: GOAL, taskId: DISPATCH_ELIGIBLE_TASK_ID, initialRunRef: runRef('real-run-2'),
+      idempotencyKey: 'explicit-idem-work-explicit-2', correlationId: 'explicit-corr-work-explicit-2', submittedAt: FIXED,
+    });
+    const refused = await control.bindWorkContext(declaredCommand);
+    expect(refused.status, 'RC-03：命令面不再允许为同一任务补第二条身份').toBe('rejected');
+    if (refused.status === 'rejected') {
+      expect(refused.code).toBe('already_bound');
+      expect(refused.existingWorkContextRef?.workId).toBe(derivedId);
+    }
+
+    // 这种形状于是只剩下来自旧数据库的历史事实：夹具按「RC-03 之前的账本」把它写进存储
+    // （见 tests/support/legacy-work-context-seed.ts），解析面与派发面都必须继续正确消费它。
+    await seedLegacyWorkContextBinding(ledger, declaredCommand, { eventId: 'legacy-evt-explicit-2', occurredAt: FIXED });
+
+    const resolved = await control.resolveTaskWorkIdentity({ ...scope, taskId: DISPATCH_ELIGIBLE_TASK_ID });
+    expect(resolved).toMatchObject({ status: 'resolved', authority: 'declared', candidateCount: 2 });
+    if (resolved.status === 'resolved') expect(resolved.binding.workId).toBe('work-explicit-2');
+
+    // 不可变的持久事实：落选的推导身份原样保留（workId、revision、链接都不动）。
+    const kept = await ledger.load(workContextRefFor(PROJECT, WORKSPACE, derivedId));
+    if (kept.status !== 'found') throw Error('落选身份被删除了');
+    const keptSnapshot = kept.snapshot as WorkContextBindingSnapshot;
+    expect(keptSnapshot.revision).toBe(1);
+    expect(keptSnapshot.binding.workId).toBe(derivedId);
+    expect(keptSnapshot.binding.linkedRunRefs).toEqual([runRef('real-run-1')]);
+    expect((await taskBoundEvents(ledger, GOAL, DISPATCH_ELIGIBLE_TASK_ID)).map((event) => event.workId))
+      .toEqual([derivedId, 'work-explicit-2']);
+
+    // 之后的派发按权威答案复用（不会再产生第三条身份）。
+    const next = await ensureWorkIdentity({ ledger, control, now: () => FIXED }, { ...second!, taskId: DISPATCH_ELIGIBLE_TASK_ID, planRef: PLAN_REF });
+    expect(next).toMatchObject({ status: 'established', workId: 'work-explicit-2' });
+    expect(await taskBoundEvents(ledger, GOAL, DISPATCH_ELIGIBLE_TASK_ID)).toHaveLength(2);
+  });
+
+  it('重启后同一任务解析到同一身份，派发仍复用同一条', async () => {
+    const { ledger, control } = await seed();
+    const [first] = await intents(ledger);
+    await bindExplicitWork(control, DISPATCH_ELIGIBLE_TASK_ID, 'work-explicit-3', runRef('real-run-2'));
+    const before = await control.resolveTaskWorkIdentity({ ...scope, taskId: DISPATCH_ELIGIBLE_TASK_ID });
+
+    // 重启：账本是权威事实，引擎是新建的（不共享任何进程内状态）。
+    const other = createDeterministicDeps();
+    const restarted = createControlEngine({ ledger, now: other.clock, eventId: other.eventId });
+    const after = await restarted.resolveTaskWorkIdentity({ ...scope, taskId: DISPATCH_ELIGIBLE_TASK_ID });
+    expect(after).toEqual(before);
+    expect(await ensureWorkIdentity({ ledger, control: restarted, now: () => FIXED }, first!))
+      .toMatchObject({ status: 'established', workId: 'work-explicit-3' });
+  });
+
+  it('派发面解析／核对失败时 Drive 记为失败且 Run 不启动（零写入，可证明未启动）', async () => {
+    // 真实 InMemoryHarness：真实 ControlEngine + 真实账本 + 真实 DispatchEngineImpl。
+    const h = createInMemoryHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const p108 = toP1_08Harness(h as never);
+    await prepareP108Scenario(p108);
+    const claimed = await claimP108Task(p108, P108_PROJECT_A, P108_TASK_WORK, 'rw13-unstarted-run');
+    // 预置一条「同 workId、却属于另一段工作」的身份（只有 workId 规则被破坏时才可能出现）：
+    // 派发面必须把它当成可见的冲突失败，而不是悄悄复用别人的身份。
+    const foreignId = workIdFor(
+      { projectId: P108_PROJECT_A, workspaceId: P108_WORKSPACE, goalId: P108_GOAL },
+      P108_TASK_WORK,
+    );
+    expect((await h.bindWorkContext(buildBindWorkContextCommand({
+      commandId: 'rw13-foreign-bind', projectId: P108_PROJECT_A, workId: foreignId, workspaceId: P108_WORKSPACE,
+      goalId: 'other-goal', taskId: 'other-task', initialRunRef: claimed,
+      idempotencyKey: 'rw13-foreign-bind', correlationId: 'rw13-foreign-bind', submittedAt: P108_SCHEMA,
+    }))).status).toBe('committed');
+
+    const drive = await h.drive({ reason: 'rw13 conflict', maxIntents: 1 });
+    expect(drive.started).toBe(0);
+    expect(drive.failures).toHaveLength(1);
+    expect(JSON.stringify(drive.failures[0])).toContain('work_identity_conflict');
+    // Run 不启动：outbox 保持已提交状态可重试，运行记录仍停在 claim 之后（没有 startRun）。
+    expect(await h.ledger.pendingDispatchIntents(10, { workKind: 'ordinary' })).toHaveLength(1);
+    const run = await h.ledger.load(claimed);
+    if (run.status !== 'found') throw Error('claim 之后的运行记录不见了');
+    expect((run.snapshot as { revision: number }).revision).toBe(1);
+    // 那段外来身份没有被改写，也没有被这条任务复用。
+    const foreign = await h.ledger.load(workContextRefFor(P108_PROJECT_A, P108_WORKSPACE, foreignId));
+    if (foreign.status !== 'found') throw Error('外来身份被删除了');
+    const foreignSnapshot = foreign.snapshot as WorkContextBindingSnapshot;
+    expect(foreignSnapshot.revision).toBe(1);
+    expect(foreignSnapshot.binding.taskId).toBe('other-task');
+  });
+});

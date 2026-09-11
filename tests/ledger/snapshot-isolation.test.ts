@@ -1,0 +1,85 @@
+import { describe, expect, it } from 'vitest';
+import { InMemoryLedger } from '../../src/data/state-ledger/in-memory-ledger.js';
+import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from '../contract-support/fixtures/bootstrap-fixture-v1.js';
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand, buildGoalCreateLedgerCommit } from '../contract-support/fixtures/goal-fixtures.js';
+import { buildDispatchClaimCommand, DISPATCH_PLAN_REVISION_FIXTURE_V1, DISPATCH_ELIGIBLE_TASK_ID } from '../../src/fixtures/dispatch-fixtures.js';
+import { buildDispatchClaimLedgerCommit } from '../../src/control/control-engine/records/dispatch.js';
+import { FIXED_ISO_2026_09_05 as now } from '../../src/testing/sequences.js';
+
+const scope = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.scopes[0]!;
+function boot() {
+  return buildBootstrapLedgerCommit(buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, {
+    commandId: 'boot', correlationId: 'boot', submittedAt: now,
+  }), { eventIds: ['b1', 'b2', 'b3', 'b4'], occurredAt: now });
+}
+function goal() {
+  return buildGoalCreateLedgerCommit(buildCreateGoalCommand(scope, {
+    commandId: 'goal', correlationId: 'goal', submittedAt: now,
+  }), { eventId: 'g1', occurredAt: now, projectRevision: 1, workspaceRevision: 1 });
+}
+describe('in-memory ledger value isolation', () => {
+  it('isolates committed input, snapshot/event reads and durable receipt replays', async () => {
+    const ledger = new InMemoryLedger();
+    expect((await ledger.commit(boot())).status).toBe('committed');
+    const input = goal();
+    const original = structuredClone(input);
+    const pending = ledger.commit(input);
+    // Mutation before the Promise resolves must not alter an in-flight commit.
+    input.snapshots[0]!.objective = 'changed by caller';
+    input.events[0]!.payload.objective = 'changed event by caller';
+    const receipt = await pending;
+    expect(receipt.status).toBe('committed');
+    if (receipt.status !== 'committed') throw Error('expected commit');
+    const durable = structuredClone(receipt);
+    const receiptRef = receipt.aggregateRevisions[0]!.ref;
+    if (!('projectId' in receiptRef)) throw Error('expected project-scoped ref');
+    receiptRef.projectId = 'foreign';
+    receipt.eventIds.push('fake');
+    receipt.identity.actor.id = 'foreign';
+    const read = await ledger.load(original.snapshots[0]!.ref);
+    expect(read).toEqual({ status: 'found', snapshot: original.snapshots[0] });
+    if (read.status !== 'found') throw Error('missing snapshot');
+    if (!('projectId' in read.snapshot.ref)) throw Error('expected project-scoped snapshot');
+    read.snapshot.ref.projectId = 'foreign';
+    expect(await ledger.load(original.snapshots[0]!.ref)).toEqual({ status: 'found', snapshot: original.snapshots[0] });
+    const events = await ledger.events({ afterCursor: null, limit: 100 });
+    const durableEvents = structuredClone(events);
+    events.events.at(-1)!.event.actor.id = 'foreign';
+    expect(await ledger.events({ afterCursor: null, limit: 100 })).toEqual(durableEvents);
+    const replay = await ledger.commit(original);
+    expect(replay).toEqual({ ...durable, replayed: true });
+    if (replay.status !== 'committed') throw Error('missing replay');
+    replay.aggregateRevisions[0]!.revision = 999;
+    expect(await ledger.commit(original)).toEqual({ ...durable, replayed: true });
+  });
+  it('isolates pending outbox snapshots and nested intent fields', async () => {
+    const ledger = new InMemoryLedger();
+    await ledger.commit(boot());
+    await ledger.commit(goal());
+    const command = buildDispatchClaimCommand({
+      commandId: 'claim', correlationId: 'claim', submittedAt: now, idempotencyKey: 'claim',
+      projectId: scope.projectId, goalId: scope.goalId, taskId: DISPATCH_ELIGIBLE_TASK_ID,
+      attemptId: 'attempt', runId: 'run',
+    });
+    const input = buildDispatchClaimLedgerCommit(command, {
+      eventId: 'claim-event', occurredAt: now, workspaceId: scope.workspaceId, workspaceRevision: 1,
+      planRef: { aggregateType: 'PlanRevision', projectId: scope.projectId, planId: DISPATCH_PLAN_REVISION_FIXTURE_V1.planId },
+    });
+    expect((await ledger.commit(input)).status).toBe('committed');
+    const pending = await ledger.pendingDispatchIntents(10);
+    expect(pending).toHaveLength(1);
+    const durable = structuredClone(pending);
+    pending[0]!.intent.runRef.projectId = 'foreign';
+    pending[0]!.status = 'done';
+    input.outboxIntents[0]!.runRef.projectId = 'changed input';
+    expect(await ledger.pendingDispatchIntents(10)).toEqual(durable);
+  });
+  it('preserves a failed commit as zero writes', async () => {
+    const ledger = new InMemoryLedger({ beforeWrite: () => { throw Error('injected failure'); } });
+    const input = boot();
+    await expect(ledger.commit(input)).rejects.toThrow('injected failure');
+    expect((await ledger.events({ afterCursor: null, limit: 100 })).events).toEqual([]);
+    expect((await ledger.load(input.snapshots[0]!.ref)).status).toBe('not_found');
+  });
+});

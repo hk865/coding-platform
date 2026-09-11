@@ -38,8 +38,8 @@ import {
   buildRecordCandidateBaselineProposalCommand,
   buildP112CurrentGraph,
   buildP112BaselineGraph,
-} from "../../src/contracts/fixtures/architecture-fixtures.js";
-import { computeArchitectureDelta } from "../../src/contracts/architecture-inspection.js";
+} from "../../src/fixtures/architecture-fixtures.js";
+import { computeArchitectureDelta } from "../../src/control/architecture-reconciler/architecture-delta.js";
 import { architectureFindingRefFor } from "../../src/contracts/architecture-inspection.js";
 
 export interface P1_12TestHarness extends P1_16TestHarness {

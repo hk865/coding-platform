@@ -1,0 +1,77 @@
+{
+  "reviewedAt": "2026-09-10T04:14:21.162Z",
+  "files": [
+    {
+      "path": "src/contracts/reviewer-context.ts",
+      "sha256": "8fe6bffcb545fbd725a7b6979331a3f4ae8983b4850f6120cabe8f452d105d6b"
+    },
+    {
+      "path": "src/contracts/reviewer-verification.ts",
+      "sha256": "1fd43a4e020786697f1129f8da1a07646abbd356d396c866dab09984bcffe689"
+    },
+    {
+      "path": "src/contracts/reviewer-work.ts",
+      "sha256": "f1080d626ceb43150a550912c53a283ec94476929e49359a58e19f9d0f7baa2e"
+    },
+    {
+      "path": "src/context/reviewer-context.ts",
+      "sha256": "1c7fb1791d06cd466a8698da400661b28d6716c8c86153dec970d9c3a3992485"
+    },
+    {
+      "path": "src/control/reviewer-work.ts",
+      "sha256": "19ebfde5c5e0e6532375889540e964dec28e58433ccdf72708296ddfeebbf1cd"
+    },
+    {
+      "path": "src/verification/reviewer-record.ts",
+      "sha256": "b40593e284a2aff2e81d769ebd2fc7128cd71c652e92714f8b613d362f3a9787"
+    },
+    {
+      "path": "src/verification/reviewer-verification.ts",
+      "sha256": "e4e1a4cafeeebf79a8feca8d24b2927277752ad3b0be226be1234e96df0178b1"
+    },
+    {
+      "path": "src/verification/verification-service.ts",
+      "sha256": "708d2830de0ef2ebd8578d7944de3c82b8f197e23851e0029dcf3177ba4d66ba"
+    },
+    {
+      "path": "src/app/service.ts",
+      "sha256": "a43ac772fd1ef2927a9074373fe4e0cbf41da5d1ee776359e2bae15827553e77"
+    },
+    {
+      "path": "src/ui/src/api/client.ts",
+      "sha256": "dd96ca1f5c14524a89c373709289bd43814e146610ee8fb98b601647398f6b19"
+    },
+    {
+      "path": "src/ui/src/features/independent-review.tsx",
+      "sha256": "edf5ef9768932174e036f2591c09e0a61b8d796d6a648a8cb778967f0bf1e72a"
+    },
+    {
+      "path": "src/read-model/read-model-index.ts",
+      "sha256": "7c434282b4359ce9f36942aa55555a8ad7a4ca710fcc1e3caa6e7e631bdcfbbb"
+    },
+    {
+      "path": "src/sqlite-read-model/sqlite-read-model-index.ts",
+      "sha256": "c864a12c9d7f5a83812c8dbb6081eaf04991863a87350bbb1eb6a5630bcd297e"
+    },
+    {
+      "path": "tests/verification/reviewer-recovery.test.ts",
+      "sha256": "a91fa25993723004cef246f8154bb092267bafc2dbae8ef1ae90d870bd1a1c7a"
+    },
+    {
+      "path": "tests/app/reviewer-product-recovery.test.ts",
+      "sha256": "c0ebb2dfc0ebc2bc2dbcab798205706489843bf5b45d3a13de5c81a4967f7c60"
+    },
+    {
+      "path": "tests/app/reviewer-recovery-fixture.ts",
+      "sha256": "088c604646e0a9ad3a98778684b4611d7c50b568089f6acc3f297773d7f57a95"
+    },
+    {
+      "path": "src/ui/tests/reviewer-recovery.spec.ts",
+      "sha256": "c0a00d2f198c1d9445187af7b17d3500ca30f7a14f1aecabaa850f463eeebfaf"
+    },
+    {
+      "path": "src/vault/runtime-observation-journal.ts",
+      "sha256": "c1909adec3abf9805336b1f8622b7fb04d813d6c9ffc0dc2590ef596d646c431"
+    }
+  ]
+}

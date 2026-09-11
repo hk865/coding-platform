@@ -1,7 +1,8 @@
+import { VerificationMigrationContextCompiler } from '../../src/data/context-compiler/verification-migration-context.js';
 /**
  * P1-14 lane B unit tests — MigrationGatePortImpl.run (VerificationEngine
  * seam). Covers the frozen verdict branches:
- *   - pass: candidate present + source consistent + workspace revision matches;
+ *   - unsupported: source versions match but no migration check is configured;
  *   - fail: workspace_revision_mismatch;
  *   - fail: plan_ref_missing;
  *   - stale: candidate not found / source baseline moved / workspace missing.
@@ -9,19 +10,17 @@
 import { describe, expect, it } from "vitest";
 import {
   MigrationGatePortImpl,
-  migrationGateIdFor,
-  migrationGateEvidenceIdFor,
-} from "../../src/verification/migration-gate-port.js";
+} from "../../src/control/verification-engine/migration-gate-port.js";
 import type { CandidateArchitectureBaselineSnapshot } from "../../src/contracts/baseline-evolution.js";
-import { ScriptedStateLedger } from "../../src/contracts/testing/state-ledger.double.js";
+import { ScriptedStateLedger } from "../contract-support/testing/state-ledger.double.js";
 import type { AggregateRef, AggregateSnapshot, SnapshotResult, WorkspaceSnapshot } from "../../src/contracts/ledger.js";
 import type {
   ArchitectureBaselinePin,
   ArchitectureBaselineRevisionSnapshot,
   ProjectArchitectureBaselineActiveSnapshot,
 } from "../../src/contracts/governance.js";
-import { buildP112Proposal } from "../../src/contracts/fixtures/architecture-fixtures.js";
-import { buildP114Candidate, p114CandidateRef, P114_PROJECT, P114_WORKSPACE, P114_SCHEMA } from "../../src/contracts/fixtures/baseline-evolution-fixtures.js";
+import { buildP112Proposal } from "../../src/fixtures/architecture-fixtures.js";
+import { buildP114Candidate, p114CandidateRef, P114_PROJECT, P114_WORKSPACE, P114_SCHEMA } from "../contract-support/fixtures/baseline-evolution-fixtures.js";
 import { canonicalJson } from "../../src/contracts/fingerprint.js";
 
 const NOW = "2026-09-06T00:00:00.000Z";
@@ -80,7 +79,7 @@ function makePort(extra: AggregateSnapshot[] = []): MigrationGatePortImpl {
     ...activeBaselineSnapshots(sourcePin),
     ...extra,
   ];
-  return new MigrationGatePortImpl({ ledger: seededLedger(state), now: () => NOW });
+  return new MigrationGatePortImpl({ context: new VerificationMigrationContextCompiler({ ledger: seededLedger(state) }), now: () => NOW });
 }
 
 function input(overrides: { workspaceRevision?: number; planRef?: string } = {}) {
@@ -92,28 +91,10 @@ function input(overrides: { workspaceRevision?: number; planRef?: string } = {})
 }
 
 describe("MigrationGatePortImpl.run", () => {
-  it("passes when candidate + source + workspace revision are consistent", async () => {
+  it("does not manufacture PASS or Evidence from matching source versions", async () => {
     const port = makePort();
     const res = await port.run(input());
-    expect(res.status).toBe("pass");
-    if (res.status !== "pass") return;
-    expect(res.gate.schemaVersion).toBe(1);
-    expect(res.gate.gateId).toBe(migrationGateIdFor(input()));
-    expect(res.gate.projectId).toBe(P114_PROJECT);
-    expect(res.gate.workspaceId).toBe(P114_WORKSPACE);
-    expect(res.gate.planRef).toBe(PLAN);
-    expect(res.gate.candidateRef).toEqual(p114CandidateRef(P114_PROJECT));
-    expect(res.gate.workspaceRevision).toBe(WORKSPACE_REVISION);
-    expect(res.gate.status).toBe("pass");
-    expect(res.gate.createdAt).toBe(NOW);
-    expect(res.gate.updatedAt).toBe(NOW);
-    // deterministic single gate-evidence handle
-    expect(res.gate.gateEvidenceRefs).toHaveLength(1);
-    expect(res.gate.gateEvidenceRefs[0]).toEqual({
-      aggregateType: "Evidence",
-      projectId: P114_PROJECT,
-      evidenceId: migrationGateEvidenceIdFor(input()),
-    });
+    expect(res).toEqual({ status: 'unsupported', message: expect.stringContaining('no actual migration check') });
   });
 
   it("fails with workspace_revision_mismatch when the required revision is stale", async () => {
@@ -153,7 +134,7 @@ describe("MigrationGatePortImpl.run", () => {
     // only the MOVED active baseline is installed (the candidate's source pin is
     // no longer the current active pin).
     const state: AggregateSnapshot[] = [candidateSnap, workspaceSnap(), ...activeBaselineSnapshots(movedPin)];
-    const port = new MigrationGatePortImpl({ ledger: seededLedger(state), now: () => NOW });
+    const port = new MigrationGatePortImpl({ context: new VerificationMigrationContextCompiler({ ledger: seededLedger(state) }), now: () => NOW });
     const res = await port.run(input());
     expect(res.status).toBe("stale");
     if (res.status !== "stale") return;
@@ -163,7 +144,7 @@ describe("MigrationGatePortImpl.run", () => {
   it("reports stale when the active baseline aggregate is unavailable", async () => {
     // no active baseline snapshots => resolveProjectArchitectureBaseline not_found
     const state: AggregateSnapshot[] = [candidateSnap, workspaceSnap()];
-    const port = new MigrationGatePortImpl({ ledger: seededLedger(state), now: () => NOW });
+    const port = new MigrationGatePortImpl({ context: new VerificationMigrationContextCompiler({ ledger: seededLedger(state) }), now: () => NOW });
     const res = await port.run(input());
     expect(res.status).toBe("stale");
     if (res.status !== "stale") return;
@@ -172,7 +153,7 @@ describe("MigrationGatePortImpl.run", () => {
 
   it("reports stale when the candidate workspace is missing", async () => {
     const state: AggregateSnapshot[] = [candidateSnap, ...activeBaselineSnapshots(sourcePin)];
-    const port = new MigrationGatePortImpl({ ledger: seededLedger(state), now: () => NOW });
+    const port = new MigrationGatePortImpl({ context: new VerificationMigrationContextCompiler({ ledger: seededLedger(state) }), now: () => NOW });
     const res = await port.run(input());
     expect(res.status).toBe("stale");
     if (res.status !== "stale") return;

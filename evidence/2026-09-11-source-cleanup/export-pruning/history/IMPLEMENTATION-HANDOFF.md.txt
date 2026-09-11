@@ -1,0 +1,11 @@
+# Agent Platform 当前交接
+
+更新：2026-09-11。产品根 D:/1.project/Software/agent_platform；权威根 D:/1.project/Software/agent_learn/agent_dev/agent_platform。
+
+已实施指定语义编排链的源码、契约与文档整理。续轮将3510行总校验拆成16个直接协议入口，返工协议整理为问题材料、提案、驱动、Control受理四个入口；组合根专用 ReworkIssueReadPort 移回 harness，删除无消费者同义别名。跨模块消费者直接引用对应协议，无汇总 barrel。保留前轮测试材料分离、模块内部依赖归位、返工编译器分责与宿主共享接线。
+
+contracts 当前116个TS文件、85个顶层文件；校验器内部共享声明增加12个语法导出，不能据此声称公共导出全面减少。1572项保留契约声明比对无差异；独立复核170个迁移声明及真实消费者。全仓299文件/1951项、真实浏览器26项通过，类型/边界/完整构建/产物检查通过。Windows依赖解析、测试完成后的外层脚本解析、浏览器默认端口占用及旧产物首检失败均单独保留，未用PASS覆盖。完整验证、文档结果、消费者依据、历史兼容项和起点/交付源码身份见[续轮证据](evidence/2026-09-11-source-cleanup/contracts-followup/verification.md)，前轮记录留在同一有界evidence根。
+
+下一步：VerificationService.openIssues提供验证问题，组合根读取后作为issueMaterials交Dispatch；ExecutionFeedbackCompiler→正式只读Query目前实际调查执行者公开反馈。现有机械返工由ReworkPlanCompiler提案，Dispatch经acceptReworkProposal进入Control的recordPlanChangeProposal/recordUserDecision/applyPlanChange。**工具FAIL进入协调角色语义调查、协调结果形成正式调整提案并受理的连接仍未实现**。service.ts的continueEndedRun连接普通Run终态/启动扫描、重验和必要Reviewer准备，不代表语义改计划完成。
+
+Control唯一正式权威、12 Module和依赖图、旧FAIL/计划/未处置义务、精确材料授权、requiredOutputs声明性语义与Reviewer独立性不变。持久字段和HTTP形状不变；内部源码路径迁移不保证未知外部deep-import。所有有效未完义务继续由[唯一模块状态](../agent_learn/agent_dev/agent_platform/human/module-status.md)维护。两个仓库已有dirty改动保留；未提交推送或重装依赖。前交接原文已保存在续轮history，本次有限清理完成后停止。

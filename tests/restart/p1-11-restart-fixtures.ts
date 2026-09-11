@@ -1,3 +1,4 @@
+import { classifyRestartProbeError } from "./readiness-probe.js";
 /** P1-11 restart-path fixtures + readiness probe. */
 import { expect } from "vitest";
 import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
@@ -15,8 +16,8 @@ export async function isP111Ready(): Promise<boolean> {
     } finally {
       await h.cleanup().catch(() => undefined);
     }
-  } catch {
-    return false;
+  } catch (error) {
+    return classifyRestartProbeError(error);
   }
 }
 

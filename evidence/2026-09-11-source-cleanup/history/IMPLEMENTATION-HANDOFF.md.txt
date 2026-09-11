@@ -1,0 +1,15 @@
+# Agent Platform 当前交接
+
+更新：2026-09-11。产品根 D:/1.project/Software/agent_platform；权威根 D:/1.project/Software/agent_learn/agent_dev/agent_platform。
+
+本轮为用户明确授权的最小语义协作实现，沿用已有12 Module架构审查。**已走通一条有来源补料和自动返工重验的真实工具纵向路径，整项完整协作验收尚未完成。** 当前能力与全部有效未完义务由[模块状态](../agent_learn/agent_dev/agent_platform/human/module-status.md)统一维护。
+
+同一标签函数任务经真实HTTP、SQLite、coding-agent内核：初始协调规划→Control受理→执行者公开缺料反馈→PlanCompiler提交只读协调Query→实际读取规则→精确授权的补料→首次工具FAIL→正式新PlanRevision返工→后继Run消费补料并以版本校验edit修改Python源码→自动工具重验PASS→Evidence接纳→Control将返工Task归约为satisfied。旧FAIL保留；Goal不因这个Task完成而自动完成。外部模型为标明身份的本地协议替身，仅证明产品流程。
+
+反馈使用既有QueryJob、ArtifactVault及工作身份；ContextCompiler验证真实读取见证、来源与精确授权并组装补料。Verification继承正式返工来源的冻结检查，复用原journal和Control接纳/归约；必要Reviewer准备走现有独立路径。组合根仅连接终态与重启对账，再取得Verification问题材料传给Dispatch，未新增Dispatch→Verification依赖。Query grant提交后推进投影再读取，避免刚接受的授权不可见。
+
+剩余检查点：尚无旧调查过期后的替代调查和自动恢复；needs_decision拒绝已测，但具体人的选择受理及受影响Run消费全链未接；语义调整计划、连续多失败/中途checkpoint恢复及后续对账异常的持久UI解释未完整验收。不能把安全拒绝或服务正常重开等同这些能力。优先续作决定/调查刷新并验证其中途恢复，不扩展长期记忆或通用编排。
+
+接口、模块责任、实测日志、真实失败及修复、独立复核边界、浏览器结果和最终源码身份统一见[本轮证据](evidence/2026-09-11-semantic-loop/verification.md)。[起点](evidence/2026-09-11-semantic-loop/baseline.json)记录两个HEAD及dirty逐文件摘要；保留既有未提交改动，未提交/推送、reset、clean、stash或重装依赖。交接改写前原文[原样保存](evidence/2026-09-11-semantic-loop/previous-handoff.md.txt)，相对链接按原产品根解释。
+
+已有架构验收及1939项行为/25项浏览器证据仍只适用于其固定源码，见[历史证据](evidence/2026-09-11-architecture-convergence/verification.md)。requiredOutputs仍是声明性期望，Plan正式义务不变；跨工作历史仍需精确授权；本轮无需用户新增产品语义或技术选型决定。

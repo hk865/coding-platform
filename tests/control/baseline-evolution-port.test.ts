@@ -5,13 +5,14 @@
  * The port is READ-ONLY (never commits to the ledger).
  */
 import { describe, expect, it } from "vitest";
-import { BaselineEvolutionPortImpl } from "../../src/control/baseline-evolution-port.js";
-import { ScriptedStateLedger } from "../../src/contracts/testing/state-ledger.double.js";
+import { BaselineEvolutionPortImpl } from "../../src/control/architecture-reconciler/baseline-evolution-port.js";
+import { BaselineEvolutionContextCompiler } from '../../src/data/context-compiler/baseline-evolution-context.js';
+import { ScriptedStateLedger } from "../contract-support/testing/state-ledger.double.js";
 import type { AggregateRef, AggregateSnapshot, SnapshotResult } from "../../src/contracts/ledger.js";
 import type { ArchitectureCandidateProposalV1, ArchitectureCandidateProposalSnapshot } from "../../src/contracts/architecture-inspection.js";
 import type { ArchitectureBaselinePin, ArchitectureBaselineRevisionSnapshot, ProjectArchitectureBaselineActiveSnapshot } from "../../src/contracts/governance.js";
-import { buildP112Proposal } from "../../src/contracts/fixtures/architecture-fixtures.js";
-import { p114ProposalRef, P114_PROJECT, P114_WORKSPACE, P114_PROPOSAL, P114_SCHEMA } from "../../src/contracts/fixtures/baseline-evolution-fixtures.js";
+import { buildP112Proposal } from "../../src/fixtures/architecture-fixtures.js";
+import { p114ProposalRef, P114_PROJECT, P114_WORKSPACE, P114_PROPOSAL, P114_SCHEMA } from "../contract-support/fixtures/baseline-evolution-fixtures.js";
 import { candidateContentDigest, candidateIdFromDigest } from "../../src/contracts/baseline-evolution.js";
 import { canonicalJson } from "../../src/contracts/fingerprint.js";
 
@@ -76,7 +77,7 @@ function proposalSnap(proposal: ArchitectureCandidateProposalV1): ArchitectureCa
 }
 
 function makePort(snapshots: AggregateSnapshot[]): BaselineEvolutionPortImpl {
-  return new BaselineEvolutionPortImpl({ ledger: seededLedger(snapshots), now: () => NOW });
+  return new BaselineEvolutionPortImpl({ context: new BaselineEvolutionContextCompiler(seededLedger(snapshots)), now: () => NOW });
 }
 
 describe("BaselineEvolutionPortImpl.materialize", () => {

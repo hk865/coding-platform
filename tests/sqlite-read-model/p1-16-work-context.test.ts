@@ -20,7 +20,7 @@ import {
   P108_PROJECT_B,
   P108_TASK_WORK,
 } from "../contract-suite/p1-08-harness.js";
-import { toP1_16Harness, type P1_16TestHarness } from "../contract-suite/p1-16-harness.js";
+import { p116DeclareWorkIdentity, toP1_16Harness, type P1_16TestHarness } from "../contract-suite/p1-16-harness.js";
 import {
   P116_WORK,
   P116_WORKSPACE,
@@ -30,7 +30,7 @@ import {
   buildLinkWorkRunCommand,
   buildExecutionNoteV1,
   buildRecordExecutionNoteCommand,
-} from "../../src/contracts/fixtures/context-fixtures.js";
+} from "../contract-support/fixtures/context-fixtures.js";
 import type { BindWorkContextCommand } from "../../src/contracts/context-continuity.js";
 
 const A = P108_PROJECT_A;
@@ -54,7 +54,9 @@ function workView(h: P1_16TestHarness, projectId: string, workId: string) {
 
 async function seedWorld(h: P1_16TestHarness) {
   const p108 = toP1_08Harness(h as never);
-  const world = await runP108TwoProjectScenario(p108);
+  // RC-03：显式工作身份必须在派发建立兜底身份之前落地（命令面不再允许事后补第二条），
+  // 因此任务身份由夹具在 claim 之后、drive 之前声明；用例只消费既有身份做投影。
+  const world = await runP108TwoProjectScenario(p108, { afterClaim: p116DeclareWorkIdentity(h) });
   const goalA = world.previews.find((p) => p.projectId === A)!.goalId;
   const goalB = world.previews.find((p) => p.projectId === B)!.goalId;
   return { world, goalA, goalB };
@@ -65,12 +67,9 @@ describe("P1-16 LANE-A SQLite work-context projection", () => {
     const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
     const h16 = toP1_16Harness(h as never);
     try {
-      const { world, goalA } = await seedWorld(h16);
+      const { world } = await seedWorld(h16);
       const runRef = world.projectA.workRun;
-      await h16.bindWorkContext(bindCmd({
-        commandId: "sq-bind-w1", projectId: A, workId: P116_WORK, workspaceId: WSPACE,
-        workKind: "task", goalId: goalA, taskId: P108_TASK_WORK, initialRunRef: runRef,
-      }));
+      // 任务身份已由 seedWorld 的挂钩在派发之前声明（RC-03）：这里直接消费它。
       const note = buildExecutionNoteV1({ noteId: P116_NOTE_1, workId: P116_WORK, projectId: A, runRef, kind: "checkpoint" });
       await h16.recordExecutionNote(buildRecordExecutionNoteCommand({ commandId: "sq-note-1", projectId: A, note }));
       await h16.advanceProjection();
@@ -104,15 +103,9 @@ describe("P1-16 LANE-A SQLite work-context projection", () => {
     const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
     const h16 = toP1_16Harness(h as never);
     try {
-      const { world, goalA, goalB } = await seedWorld(h16);
-      await h16.bindWorkContext(bindCmd({
-        commandId: "sq-bind-a", projectId: A, workId: P116_WORK, workspaceId: WSPACE,
-        workKind: "task", goalId: goalA, taskId: P108_TASK_WORK, initialRunRef: world.projectA.workRun,
-      }));
-      await h16.bindWorkContext(bindCmd({
-        commandId: "sq-bind-b", projectId: B, workId: P116_WORK, workspaceId: WSPACE,
-        workKind: "task", goalId: goalB, taskId: P108_TASK_WORK, initialRunRef: world.projectB.workRun,
-      }));
+      const { world } = await seedWorld(h16);
+      // 两个项目的 work 任务身份都已由挂钩在各自派发之前声明（RC-03）：
+      // 同一个本地 workId 在两个项目里各自存在一条身份，互不覆盖。
       await h16.advanceProjection();
 
       const va = await workView(h16, A, P116_WORK);

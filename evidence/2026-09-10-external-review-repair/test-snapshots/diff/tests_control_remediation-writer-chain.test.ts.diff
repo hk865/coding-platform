@@ -1,0 +1,20 @@
+--- evidence/2026-09-10-external-review-repair/before/tests/tests/control/remediation-writer-chain.test.ts	2026-09-07 05:37:01.000000000 +0800
++++ tests/control/remediation-writer-chain.test.ts	2026-09-10 01:37:04.081796900 +0800
+@@ -87,9 +87,7 @@
+     if (!live) {
+       // Lane B not landed: the stub cannot exercise the advance guard. The
+       // rejection is asserted when the remediation engine is live (post lane B).
+-      expect(async () => {
+-        await h.advanceRemediationTask(h as never);
+-      }).toBeDefined();
++      await expect(h.advanceRemediationTask(h as never)).rejects.toThrow(/not implemented yet/i);
+       return;
+     }
+     // Stop the chain with the task in "verifying" (revision 3, evidence admitted
+@@ -108,4 +106,4 @@
+       expect(["evidence_mismatch", "terminal_status"]).toContain(stale.receipt.code);
+     }
+   });
+-});
+\ No newline at end of file
++});

@@ -1,0 +1,197 @@
+/** plan protocol schema validation. Structural checks do not grant authority. */
+import type { ValidationIssue, UnknownRecord } from './common.js';
+import { isRecord, stringField, safePositiveIntField, validateEnum } from './common.js';
+import { validateCommandIdentity } from './identity.js';
+
+function validateTaskScope(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  const kind = value["kind"];
+  if (kind === "goal") return;
+  if (kind === "stage") {
+    stringField(value, "stageId", issues, path + ".stageId");
+    return;
+  }
+  if (kind === "module") {
+    stringField(value, "stageId", issues, path + ".stageId");
+    stringField(value, "moduleRef", issues, path + ".moduleRef");
+    return;
+  }
+  issues.push({ path: path + ".kind", code: "bad_scope", message: "scope kind must be goal|stage|module" });
+}
+
+const REQUIREMENT_LEVELS = ["required", "optional"] as const;
+
+const TASK_KINDS = ["work", "gate"] as const;
+
+const DISPOSITIONS = ["active", "deferred", "cancelled", "superseded"] as const;
+
+const PHASES = ["pending", "ready", "running", "verifying", "blocked", "satisfied", "failed"] as const;
+
+function validateRuntimeTask(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  stringField(value, "taskId", issues, path + ".taskId");
+  if (value["stageId"] !== undefined) stringField(value, "stageId", issues, path + ".stageId");
+  stringField(value, "title", issues, path + ".title");
+  validateEnum(value["requirementLevel"], REQUIREMENT_LEVELS, path + ".requirementLevel", issues);
+  validateEnum(value["taskKind"], TASK_KINDS, path + ".taskKind", issues);
+  validateEnum(value["disposition"], DISPOSITIONS, path + ".disposition", issues);
+  validateEnum(value["phase"], PHASES, path + ".phase", issues);
+  validateTaskScope(value["scope"], path + ".scope", issues);
+}
+
+function validateVerificationRequirement(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  stringField(value, "requirementId", issues, path + ".requirementId");
+  validateEnum(value["requirementLevel"], REQUIREMENT_LEVELS, path + ".requirementLevel", issues);
+  stringField(value, "kind", issues, path + ".kind");
+  stringField(value, "description", issues, path + ".description");
+}
+
+function validateAcceptanceObligation(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  stringField(value, "obligationId", issues, path + ".obligationId");
+  stringField(value, "title", issues, path + ".title");
+  validateEnum(value["requirementLevel"], REQUIREMENT_LEVELS, path + ".requirementLevel", issues);
+  if (!Array.isArray(value["taskIds"])) {
+    issues.push({ path: path + ".taskIds", code: "bad_type", message: "taskIds must be an array" });
+  } else {
+    for (const taskId of value["taskIds"]) {
+      if (typeof taskId !== "string" || taskId.length === 0) {
+        issues.push({ path: path + ".taskIds", code: "bad_type", message: "taskIds items must be non-empty strings" });
+        break;
+      }
+    }
+  }
+  if (!Array.isArray(value["verificationRequirements"])) {
+    issues.push({ path: path + ".verificationRequirements", code: "bad_type", message: "verificationRequirements must be an array" });
+  } else {
+    for (let i = 0; i < (value["verificationRequirements"] as unknown[]).length; i += 1) {
+      validateVerificationRequirement((value["verificationRequirements"] as unknown[])[i], path + ".verificationRequirements[" + i + "]", issues);
+    }
+  }
+}
+
+/** Validate the schema of a hand-authored plan draft (structural only). */
+function validatePlanRevisionDraft(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "PlanRevisionDraft must be an object" });
+    return issues;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "planId", issues);
+  safePositiveIntField(value["planRevision"], "planRevision", issues);
+  stringField(value, "goalId", issues);
+  if (!Array.isArray(value["stages"]) || (value["stages"] as unknown[]).length === 0) {
+    issues.push({ path: "stages", code: "empty_collection", message: "stages must be a non-empty array" });
+  } else {
+    for (let i = 0; i < (value["stages"] as unknown[]).length; i += 1) {
+      const stage = (value["stages"] as unknown[])[i] as unknown;
+      const spath = "stages[" + i + "]";
+      if (!isRecord(stage)) {
+        issues.push({ path: spath, code: "bad_type", message: "stage must be an object" });
+        continue;
+      }
+      stringField(stage, "stageId", issues, spath + ".stageId");
+      stringField(stage, "title", issues, spath + ".title");
+    }
+  }
+  if (!Array.isArray(value["tasks"]) || (value["tasks"] as unknown[]).length === 0) {
+    issues.push({ path: "tasks", code: "empty_collection", message: "tasks must be a non-empty array" });
+  } else {
+    for (let i = 0; i < (value["tasks"] as unknown[]).length; i += 1) {
+      validateRuntimeTask((value["tasks"] as unknown[])[i], "tasks[" + i + "]", issues);
+    }
+  }
+  if (!Array.isArray(value["obligations"]) || (value["obligations"] as unknown[]).length === 0) {
+    issues.push({ path: "obligations", code: "empty_collection", message: "obligations must be a non-empty array" });
+  } else {
+    for (let i = 0; i < (value["obligations"] as unknown[]).length; i += 1) {
+      validateAcceptanceObligation((value["obligations"] as unknown[])[i], "obligations[" + i + "]", issues);
+    }
+  }
+  const hierarchy = value["taskHierarchy"];
+  if (!isRecord(hierarchy)) {
+    issues.push({ path: "taskHierarchy", code: "bad_type", message: "taskHierarchy must be an object" });
+  } else if (!Array.isArray(hierarchy["parentOf"])) {
+    issues.push({ path: "taskHierarchy.parentOf", code: "bad_type", message: "parentOf must be an array" });
+  } else {
+    for (let i = 0; i < (hierarchy["parentOf"] as unknown[]).length; i += 1) {
+      const edge = (hierarchy["parentOf"] as unknown[])[i] as unknown;
+      const epath = "taskHierarchy.parentOf[" + i + "]";
+      if (!isRecord(edge)) {
+        issues.push({ path: epath, code: "bad_type", message: "edge must be an object" });
+        continue;
+      }
+      stringField(edge, "parentTaskId", issues, epath + ".parentTaskId");
+      stringField(edge, "childTaskId", issues, epath + ".childTaskId");
+    }
+  }
+  const dag = value["executionDag"];
+  if (!isRecord(dag)) {
+    issues.push({ path: "executionDag", code: "bad_type", message: "executionDag must be an object" });
+  } else if (!Array.isArray(dag["dependsOn"])) {
+    issues.push({ path: "executionDag.dependsOn", code: "bad_type", message: "dependsOn must be an array" });
+  } else {
+    for (let i = 0; i < (dag["dependsOn"] as unknown[]).length; i += 1) {
+      const edge = (dag["dependsOn"] as unknown[])[i] as unknown;
+      const epath = "executionDag.dependsOn[" + i + "]";
+      if (!isRecord(edge)) {
+        issues.push({ path: epath, code: "bad_type", message: "edge must be an object" });
+        continue;
+      }
+      stringField(edge, "taskId", issues, epath + ".taskId");
+      stringField(edge, "dependsOnId", issues, epath + ".dependsOnId");
+      if (isRecord(edge["requires"])) {
+        validateEnum(edge["requires"]!["kind"], ["output-contract", "artifact", "decision", "environment-revision", "gate-result"], epath + ".requires.kind", issues);
+        stringField(edge["requires"] as UnknownRecord, "label", issues, epath + ".requires.label");
+      } else {
+        issues.push({ path: epath + ".requires", code: "bad_type", message: "requires must be an object" });
+      }
+    }
+  }
+  return issues;
+}
+
+export function validateApplyPlanRevisionCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "ApplyPlanRevision") {
+    issues.push({ path: "commandType", code: "invalid_command_type", message: 'commandType must be "ApplyPlanRevision"' });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "commandId", issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (value["expectedRevision"] !== 0 && !Number.isSafeInteger(value["expectedRevision"])) {
+    issues.push({ path: "expectedRevision", code: "bad_expected_revision", message: "expectedRevision must be a non-negative integer" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (isRecord(payload)) {
+    issues.push(...validatePlanRevisionDraft(payload["plan"]).map((issue) => ({ ...issue, path: "payload.plan." + issue.path })));
+  } else {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+  }
+  return issues;
+}

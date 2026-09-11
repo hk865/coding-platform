@@ -1,0 +1,56 @@
+import { describe, expect, it } from 'vitest';
+import { QueryExecutionContextCompiler, QuerySourceContextCompiler } from '../../src/data/context-compiler/query-execution-context.js';
+import type { QueryExecutionMaterial, QuerySourceObservationPort } from '../../src/contracts/query-execution-context.js';
+import { planningScenario, planningScope } from '../control/planning-fixture.js';
+import { ReadOnlyQueryRuntime } from '../../src/execution/worker-runtime/read-only-query-runtime.js';
+
+describe('query role execution and source Context', () => {
+  it('compiles the actual claimed coordination input with its role contract and unchanged null limits', async () => {
+    const s = await planningScenario();
+    const context = new QueryExecutionContextCompiler({ ledger: () => s.h.ledger, vault: () => s.h.vault });
+    const results: QueryExecutionMaterial[] = [];
+    s.onRequest(async request => {
+      results.push(await context.assemble(request));
+      expect(await context.assemble({ ...request, question: 'A different role intent' })).toMatchObject({ status: 'rejected', message: 'query runtime requires exact real role intent' });
+      for (const code of ['invalid_claim', 'unavailable'] as const) {
+        const runtime = new ReadOnlyQueryRuntime('unused-query-runtime', {
+          materials: { assemble: async () => ({ status: 'rejected', code, message: 'material refused' }) },
+          rootFor: () => { throw Error('must not resolve workspace'); }, bind: async () => { throw Error('must not bind model'); }
+        });
+        if (code === 'invalid_claim') await expect(runtime.startQuery(request)).rejects.toThrow('material refused');
+        else expect(await runtime.startQuery(request)).toMatchObject({ outcome: 'gap', message: 'material refused' });
+        expect(runtime.all()).toEqual([]);
+      }
+    });
+    expect(await s.compiler.request(s.request)).toMatchObject({ status: 'accepted' });
+    expect(await s.h.driveQuery({ reason: 'context-input' })).toMatchObject({ started: 1, answered: 1, failures: [] });
+    expect(results).toHaveLength(1);
+    const result = results[0]!;
+    if (result.status !== 'ready') throw Error(result.message);
+    expect(result.budget).toMatchObject({ inputTokens: null, outputTokens: null, maxRequests: null, maxToolCalls: null, timeoutMs: null });
+    expect(result.deadline).toBeNull();
+    const input = JSON.parse(result.input);
+    expect(input).toMatchObject({ kind: 'initial_coordination', responsibilities: ['clarify_user_intent', 'propose_acceptance_and_dependency_plan', 'explain_tradeoffs'],
+      permissions: { tools: ['read'], writeScope: [] }, question: s.request.input.instruction,
+      material: { goalContext: { ref: { goalId: planningScope.goalId }, revision: 1, workspaceRevision: 1 } } });
+    expect(input.responseContract).toContain('needs_decision');
+    expect(input.rules).toContain('Stored history is explanatory unless current applicability is separately verified.');
+  });
+
+  it('compares persisted public records against current source and scope without runtime business logic', async () => {
+    const s = await planningScenario();
+    const runRef = { aggregateType: 'QueryRun' as const, projectId: planningScope.projectId, workspaceId: planningScope.workspaceId, queryJobId: 'old-query', runId: 'old-run' };
+    const context = { ref: { aggregateType: 'Goal', projectId: planningScope.projectId, goalId: planningScope.goalId }, revision: 1, workspaceRevision: 1 };
+    let input = JSON.stringify({ material: { goalContext: context } }), source = 'source-before';
+    const observations: QuerySourceObservationPort = { all: () => [{ runRef, status: 'completed', input, sourceAfter: 'source-before' }] };
+    const compiler = new QuerySourceContextCompiler({ ledger: () => s.h.ledger, observations, source: { sourceRevision: async () => source } });
+    const current = () => compiler.currentness(planningScope.projectId, planningScope.workspaceId);
+    expect((await current()).get('old-query')).toBe(true);
+    source = 'source-after'; expect((await current()).get('old-query')).toBe(false);
+    source = 'source-before';
+    input = JSON.stringify({ material: { goalContext: { ...context, revision: 99 } } }); expect((await current()).get('old-query')).toBe(false);
+    input = JSON.stringify({ material: { goalContext: { ...context, ref: { ...context.ref, projectId: 'other-project' } } } }); expect((await current()).get('old-query')).toBe(false);
+    input = 'corrupt legacy input'; expect((await current()).get('old-query')).toBe(false);
+    expect(await compiler.currentness(planningScope.projectId, 'other-workspace')).toEqual(new Map());
+  });
+});

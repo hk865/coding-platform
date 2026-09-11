@@ -10,19 +10,19 @@ import { describe, expect, it } from "vitest";
 import {
   HumanCollaborationImpl,
   createHumanCollaboration,
-} from "../../src/interaction/human-collaboration.js";
+} from "../../src/interaction/human-collaboration/human-collaboration.js";
 import { commandIdentityKey } from "../../src/contracts/command-event.js";
 import { makeCommitCursor } from "../../src/contracts/ledger.js";
 import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
-import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import {
   ScriptedControlEngine,
   committedReceiptFor,
   rejectedReceiptFor,
-} from "../../src/contracts/testing/control.double.js";
-import { ScriptedReadModelIndex } from "../../src/contracts/testing/read-model.double.js";
+} from "../contract-support/testing/control.double.js";
+import { ScriptedReadModelIndex } from "../contract-support/testing/read-model.double.js";
 import type { CreateGoalRequest } from "../../src/contracts/modules.js";
 
 const FIXTURE = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1;

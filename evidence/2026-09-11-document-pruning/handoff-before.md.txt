@@ -1,0 +1,17 @@
+# Agent Platform 当前交接
+
+更新：2026-09-11。产品根 D:/1.project/Software/agent_platform；权威根 D:/1.project/Software/agent_learn/agent_dev/agent_platform。
+
+当前任务：12 Module 架构一致性收口。已完成全模块责任/接口/生产消费者审查，确认偏差已修复，全仓296文件/1939项、浏览器25项、前后端类型、构建、结构与文档验证通过；最终结果以[偏差摘要](../agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-11-architecture-convergence/summary.md)为准。保留12 Module和现有依赖图。用户已选择问题材料传递，不允许Dispatch持有Verification回调。
+
+当前能力与全部未完义务只有[模块状态](../agent_learn/agent_dev/agent_platform/human/module-status.md)及其[核心义务映射](../agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-10-core-obligations-map.md)负责；旧施工票不能覆盖当前规范或自动授权下一阶段。
+
+本次修复：治理视图归ReadModel；Verification底层读取归Context、处置资格归Control；Plan影响引用真实工作身份；旧库工作唯一性与内存账本值隔离；源码I/O稳定性与canonical复核；unknown不误报已处置。WorkRun材料维持领域步骤，历史施工说明退出源码主流程。所用12模块和允许边不变。
+
+[初始身份](evidence/2026-09-11-architecture-convergence/baseline.json)、[恢复身份](evidence/2026-09-11-architecture-convergence/resumed.json)、[最终身份](evidence/2026-09-11-architecture-convergence/final.json)记录HEAD及未提交工作树逐文件SHA256；不能用HEAD替代dirty实现。外部执行者暂停后才写入，保留原修改。命令/实际日志与实现者交叉复核见[证据入口](evidence/2026-09-11-architecture-convergence/verification.md)。没有提交、重置或清空工作树。
+
+本次决定的来源与替代关系见[ADR0003](../agent_learn/agent_dev/agent_platform/dev_docs/decisions/0003-rework-role-spec-architecture-reconciliation.md)；requiredOutputs只取消独立角色门禁，不取消Plan正式义务；跨工作历史仍需精确授权。
+
+本次验收已完成并停止，不启动新功能。剩余能力由用户选择；未知副作用/补料/全面角色协作/新版本返工重验/架构语义治理/长期记忆等仍有效，未因归档取消。
+
+修改前交接的全部历史身份、验收和失败[原样保留](../agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-11-architecture-convergence/history/IMPLEMENTATION-HANDOFF.md.txt)；按原产品根路径解释其相对链接。

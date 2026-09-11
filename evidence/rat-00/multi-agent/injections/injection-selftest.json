@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "layer": "directive-selection-selftest",
+  "status": "PASS",
+  "results": [
+    {
+      "scenarioId": "MA-04",
+      "injectionId": "MA-04-contradictory-reports",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-04",
+      "injectionId": "MA-04-competing-writers",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-04",
+      "injectionId": "MA-04-stale-write",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-04",
+      "injectionId": "MA-04-outside-write",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-04",
+      "injectionId": "MA-04-current-fail",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-05",
+      "injectionId": "MA-05-replay-message",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-05",
+      "injectionId": "MA-05-late-binding",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-05",
+      "injectionId": "MA-05-orphan-body",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-05",
+      "injectionId": "MA-05-cross-project",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-06",
+      "injectionId": "MA-06-reader-crash",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-06",
+      "injectionId": "MA-06-coordinator-crash",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-06",
+      "injectionId": "MA-06-writer-ack-gap",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-06",
+      "injectionId": "MA-06-restore-service",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-06",
+      "injectionId": "MA-06-stale-feedback",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-07",
+      "injectionId": "MA-07-query-progress",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-07",
+      "injectionId": "MA-07-formal-change",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-07",
+      "injectionId": "MA-07-late-old-report",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-07",
+      "injectionId": "MA-07-cancel-one",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-07",
+      "injectionId": "MA-07-cancel-goal-control",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-08",
+      "injectionId": "MA-08-near-miss-candidate",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-08",
+      "injectionId": "MA-08-concurrent-claims",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-08",
+      "injectionId": "MA-08-repair",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    },
+    {
+      "scenarioId": "MA-08",
+      "injectionId": "MA-08-final-review",
+      "knownTrigger": "PASS",
+      "missingTrigger": "PASS",
+      "wrongTrigger": "PASS"
+    }
+  ],
+  "productInjectionAdapter": "NOT_PREPARED",
+  "realFlowInjection": "NOT_RUN"
+}

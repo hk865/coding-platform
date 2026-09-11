@@ -1,0 +1,2029 @@
+{
+  "exports": 1463,
+  "zero": [
+    {
+      "file": "src/contracts/architecture-context.ts",
+      "name": "ArchitectureInspectionMaterials",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/architecture-evolution-policy.ts",
+      "name": "ARCHITECTURE_EVOLUTION_POLICY_MAX_ALLOWLIST_ENTRIES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/architecture-evolution-policy.ts",
+      "name": "ARCHITECTURE_EVOLUTION_POLICY_MAX_DRIFT_BUDGET",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/architecture-evolution-policy.ts",
+      "name": "ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_MAX_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/architecture-evolution-policy.ts",
+      "name": "ArchitectureEvolutionPolicyScopeKind",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/architecture-evolution-policy.ts",
+      "name": "ArchitectureEvolutionPolicyAllowlistEntryV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/architecture-evolution-policy.ts",
+      "name": "ProjectArchitectureEvolutionPolicyActiveResolution",
+      "kind": "TypeAliasDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "INSPECTION_MAX_AFFECTED_REFS",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "INSPECTION_SNAPSHOT_MAX_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "INSPECTION_PROPOSAL_MAX_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "architectureDeltaRef",
+      "kind": "FunctionDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "CodeGraphIndexCapabilities",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "CodeGraphSnapshot",
+      "kind": "TypeAliasDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "DeltaChangeKind",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "DeltaChangeLevel",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "ArchitectureFindingSource",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "ArchitectureFindingRisk",
+      "kind": "TypeAliasDeclaration",
+      "local": 5
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "ArchitectureFindingConfidence",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "ArchitectureDecisionBriefOption",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "candidateProposalPayload",
+      "kind": "FunctionDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "InspectionSource",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "RecordArchitectureInspectionRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "RecordArchitectureFindingRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "RecordArchitectureDecisionBriefRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "name": "RecordCandidateBaselineProposalRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/baseline-evolution.ts",
+      "name": "BASELINE_EVOLUTION_MIGRATION_SUMMARY_MAX_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/baseline-evolution.ts",
+      "name": "BASELINE_EVOLUTION_MAX_AFFECTED_PLANS",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/baseline-evolution.ts",
+      "name": "BASELINE_EVOLUTION_MAX_GATE_EVIDENCE",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/baseline-evolution.ts",
+      "name": "MigrationGateStatus",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/baseline-evolution.ts",
+      "name": "migrationPlanConsistent",
+      "kind": "FunctionDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/baseline-evolution.ts",
+      "name": "ArchitectureDecisionPort",
+      "kind": "InterfaceDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/bootstrap.ts",
+      "name": "BootstrapManifestId",
+      "kind": "TypeAliasDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/bootstrap.ts",
+      "name": "DEFAULT_BOOTSTRAP_ACTOR",
+      "kind": "FirstStatement",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/bootstrap.ts",
+      "name": "BuildBootstrapCommandDeps",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/command-event.ts",
+      "name": "CommandEnvelope",
+      "kind": "TypeAliasDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/command-event.ts",
+      "name": "commandIdentityEqual",
+      "kind": "FunctionDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/commands/architecture.ts",
+      "name": "BuildArchitectureCommandDeps",
+      "kind": "TypeAliasDeclaration",
+      "local": 5
+    },
+    {
+      "file": "src/contracts/commands/context.ts",
+      "name": "BuildBindWorkContextDeps",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/commands/context.ts",
+      "name": "BuildLinkWorkRunDeps",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/commands/goal.ts",
+      "name": "CreateGoalScope",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/commands/workspace.ts",
+      "name": "BuildAcquireReadDeps",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/commands/workspace.ts",
+      "name": "BuildAcquireWriteDeps",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/commands/workspace.ts",
+      "name": "BuildReleaseDeps",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/commands/workspace.ts",
+      "name": "BuildRecordPatchDeps",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/commands/workspace.ts",
+      "name": "WorkspaceCommandActor",
+      "kind": "TypeAliasDeclaration",
+      "local": 5
+    },
+    {
+      "file": "src/contracts/completed-work-context.ts",
+      "name": "COMPLETED_WORK_MAX_RELATED_REFS",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/completed-work-context.ts",
+      "name": "COMPLETED_WORK_MAX_SOURCES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/completed-work-context.ts",
+      "name": "COMPLETED_WORK_SELECTION_MAX_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/completed-work-context.ts",
+      "name": "COMPLETED_WORK_BUNDLE_MAX_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/completed-work-context.ts",
+      "name": "CompletedWorkRelatedRef",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/completed-work-context.ts",
+      "name": "CompletedWorkApplicability",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/completed-work-context.ts",
+      "name": "ExecutionMemorySelectionV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/console-views.ts",
+      "name": "ConsoleExplanationStatus",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/console-views.ts",
+      "name": "CONSOLE_EVIDENCE_SUMMARY_MAX_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/console-views.ts",
+      "name": "WorkspaceSelectionRoute",
+      "kind": "TypeAliasDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "EXECUTION_NOTE_BODY_MAX_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/control-intent.ts",
+      "name": "CONTROL_INTENT_MAX_REASONS",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/control-intent.ts",
+      "name": "CONTROL_STEER_PAYLOAD_MAX_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/control-intent.ts",
+      "name": "CONTROL_INTENT_SUMMARY_MAX_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/control-intent.ts",
+      "name": "CONTROL_TIMELINE_MAX_ENTRIES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/control-intent.ts",
+      "name": "ControlTargetScope",
+      "kind": "TypeAliasDeclaration",
+      "local": 7
+    },
+    {
+      "file": "src/contracts/control-intent.ts",
+      "name": "SubmitControlRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/control-intent.ts",
+      "name": "RecordSafePointAckRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/control-intent.ts",
+      "name": "ControlCommandPort",
+      "kind": "InterfaceDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/events.ts",
+      "name": "DomainEventV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/evidence.ts",
+      "name": "EvidenceSourceV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/evidence.ts",
+      "name": "EvidenceSummaryV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/evidence.ts",
+      "name": "RequirementKey",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/evidence.ts",
+      "name": "SubmitEvidenceRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/exploration-session.ts",
+      "name": "ExplorationSessionView",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/exploration.ts",
+      "name": "ExplorationTask",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/fingerprint.ts",
+      "name": "JsonPrimitive",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/fingerprint.ts",
+      "name": "CanonicalJsonError",
+      "kind": "ClassDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/goal-change.ts",
+      "name": "PLAN_CHANGE_MAX_REASONS",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/goal-change.ts",
+      "name": "PLAN_CHANGE_PROPOSAL_MAX_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/goal-change.ts",
+      "name": "PLAN_CHANGE_DECISION_SUMMARY_MAX_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/goal-phase.ts",
+      "name": "GOAL_PHASES",
+      "kind": "FirstStatement",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/goal-phase.ts",
+      "name": "GOAL_PHASE_REASON_CODES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/goal-phase.ts",
+      "name": "GoalChangePendingFact",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/goal-phase.ts",
+      "name": "GoalDecisionNeedFact",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/goal-phase.ts",
+      "name": "ReduceGoalRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/goal-view.ts",
+      "name": "ProjectionStallReason",
+      "kind": "TypeAliasDeclaration",
+      "local": 3
+    },
+    {
+      "file": "src/contracts/handoff-control.ts",
+      "name": "HANDOFF_CONTROL_MAX_REPORT_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/handoff.ts",
+      "name": "HandoffSourceV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/handoff.ts",
+      "name": "HandoffCompletedItemV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/handoff.ts",
+      "name": "HandoffUnresolvedKind",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/handoff.ts",
+      "name": "HandoffUnresolvedItemV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/handoff.ts",
+      "name": "handoffPacketBody",
+      "kind": "FunctionDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/handoff.ts",
+      "name": "RecordHandoffRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/handoff.ts",
+      "name": "ClaimReplacementRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/history-materials.ts",
+      "name": "HistoryMaterialRead",
+      "kind": "TypeAliasDeclaration",
+      "local": 3
+    },
+    {
+      "file": "src/contracts/human-role-collaboration.ts",
+      "name": "InitialDesignOptionV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/human-role-collaboration.ts",
+      "name": "InitialDesignPort",
+      "kind": "InterfaceDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/human-role-collaboration.ts",
+      "name": "UnifiedStatusPort",
+      "kind": "InterfaceDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/human-role-collaboration.ts",
+      "name": "CoordinationPolicyPort",
+      "kind": "InterfaceDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/human-role-collaboration.ts",
+      "name": "Result",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/integration.ts",
+      "name": "RecordIntegrationResultRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/operator-planning.ts",
+      "name": "PublicExplorationPlan",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/patch.ts",
+      "name": "PatchCheckOutcome",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/patch.ts",
+      "name": "RecordPatchRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "QUERY_JOB_MAX_SOURCES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/read-model.ts",
+      "name": "ReviewReadModelPort",
+      "kind": "InterfaceDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/reduction.ts",
+      "name": "TaskReductionCauseCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/reduction.ts",
+      "name": "ReduceTaskRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/reduction.ts",
+      "name": "reductionPhaseOf",
+      "kind": "FunctionDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/remediation.ts",
+      "name": "REMEDIATION_MAX_PATCH_CHANGED_PATHS",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/remediation.ts",
+      "name": "REMEDIATION_PATCH_SUMMARY_MAX_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/remediation.ts",
+      "name": "RemediationTaskResultV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 3
+    },
+    {
+      "file": "src/contracts/remediation.ts",
+      "name": "SubmitRemediationPlanPatchRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/remediation.ts",
+      "name": "CreateRemediationTaskRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/remediation.ts",
+      "name": "AdvanceRemediationTaskRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/review-context.ts",
+      "name": "REVIEW_SUMMARY_MAX_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/review-context.ts",
+      "name": "ReviewManifestV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/role-material-channels.ts",
+      "name": "RoleSourceIndexEntryV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/role-material-channels.ts",
+      "name": "RoleSourceIndexExcerptV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "RoleResponsibilityV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 3
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "RoleResponsibilitySpecV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "RoleMaterialRequirementV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 3
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "RoleOutputRequirementV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "RoleSpecPermissionsV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "RoleSpecBudgetV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "RoleSpecExitV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "name": "RoleSpecPort",
+      "kind": "InterfaceDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/runtime-preparation.ts",
+      "name": "PreparedRunStatus",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/validation/architecture.ts",
+      "name": "validateArchitectureFinding",
+      "kind": "FunctionDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/validation/architecture.ts",
+      "name": "validateArchitectureDecisionBrief",
+      "kind": "FunctionDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/validation/architecture.ts",
+      "name": "validateArchitectureCandidateProposal",
+      "kind": "FunctionDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/validation/bootstrap.ts",
+      "name": "validateBootstrapEntries",
+      "kind": "FunctionDeclaration",
+      "local": 3
+    },
+    {
+      "file": "src/contracts/validation/common.ts",
+      "name": "ValidationIssueCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/validation/context.ts",
+      "name": "validateExecutionNote",
+      "kind": "FunctionDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/validation/context.ts",
+      "name": "validateContextContinuationResult",
+      "kind": "FunctionDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/validation/context.ts",
+      "name": "validateContinuationCheckRequest",
+      "kind": "FunctionDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/validation/evidence.ts",
+      "name": "validateEvidenceSource",
+      "kind": "FunctionDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/validation/evidence.ts",
+      "name": "validateEvidenceCoverage",
+      "kind": "FunctionDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/validation/goal.ts",
+      "name": "validateGoalViewQuery",
+      "kind": "FunctionDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/validation/governance.ts",
+      "name": "validateCompletionPolicyContent",
+      "kind": "FunctionDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/validation/governance.ts",
+      "name": "validateArchitectureEvolutionPolicyFixture",
+      "kind": "FunctionDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/validation/role.ts",
+      "name": "validateRoleSpecContent",
+      "kind": "FunctionDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/validation/role.ts",
+      "name": "validateRoleSpecPin",
+      "kind": "FunctionDeclaration",
+      "local": 3
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "CHANGE_SCOPE_SUMMARY_MAX_BYTES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/work-context-port.ts",
+      "name": "WorkContextBundleV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/work-context-port.ts",
+      "name": "WorkContextRejectionCode",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/workspace-capability.ts",
+      "name": "WORKSPACE_CAPABILITY_SCHEMA_VERSION",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/workspace-capability.ts",
+      "name": "WorkspaceCapabilitySource",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/workspace-capability.ts",
+      "name": "workspaceCapabilityFingerprintInput",
+      "kind": "FunctionDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/workspace-lease.ts",
+      "name": "WORKSPACE_LEASE_MAX_ACTIVE_READ_LEASES",
+      "kind": "FirstStatement",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/workspace-lease.ts",
+      "name": "ConflictScopeKind",
+      "kind": "TypeAliasDeclaration",
+      "local": 4
+    },
+    {
+      "file": "src/contracts/workspace-lease.ts",
+      "name": "isPathLikeScopeKind",
+      "kind": "FunctionDeclaration",
+      "local": 5
+    },
+    {
+      "file": "src/contracts/workspace-lease.ts",
+      "name": "WorkspaceWriteLeaseV1",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/workspace-lease.ts",
+      "name": "WorkspaceLeaseDomainEvent",
+      "kind": "TypeAliasDeclaration",
+      "local": 1
+    },
+    {
+      "file": "src/contracts/workspace-views.ts",
+      "name": "WorkspaceLeaseViewWriteEntry",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    },
+    {
+      "file": "src/contracts/workspace-views.ts",
+      "name": "WorkspaceLeaseViewReadEntry",
+      "kind": "TypeAliasDeclaration",
+      "local": 2
+    }
+  ],
+  "singleOwner": [
+    {
+      "file": "src/contracts/architecture-context.ts",
+      "name": "ArchitectureContextResult",
+      "consumers": [
+        "src/data/context-compiler/architecture-context-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/architecture-context.ts",
+      "name": "BaselineProposalRef",
+      "consumers": [
+        "src/data/context-compiler/baseline-evolution-context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/commands/context.ts",
+      "name": "buildBindWorkContextCommand",
+      "consumers": [
+        "src/control/dispatch-engine/work-identity.ts",
+        "tests/app/work-material-delivery.test.ts",
+        "tests/contract-suite/context.continuity.contract.suite.ts",
+        "tests/contract-suite/p1-16-harness.ts",
+        "tests/contract-support/fixtures/context-fixtures.ts",
+        "tests/control/p1-15-role-rework-loop.test.ts",
+        "tests/control/plan-impact-work-identity.test.ts",
+        "tests/control/work-identity-harness.test.ts",
+        "tests/control/work-identity-uniqueness.test.ts",
+        "tests/control/work-identity.test.ts",
+        "tests/control/work-record.test.ts",
+        "tests/ledger/identity-upgrade.test.ts",
+        "tests/read-model/completed-work-merge-visibility.test.ts",
+        "tests/read-model/p1-16-work-context.test.ts",
+        "tests/sqlite-read-model/p1-16-work-context.test.ts",
+        "tests/verification/role-output-completeness.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/commands/context.ts",
+      "name": "buildLinkWorkRunCommand",
+      "consumers": [
+        "src/control/dispatch-engine/work-identity.ts",
+        "tests/contract-suite/context.continuity.contract.suite.ts",
+        "tests/contract-suite/p1-16-harness.ts",
+        "tests/contract-support/fixtures/context-fixtures.ts",
+        "tests/control/p1-15-role-rework-loop.test.ts",
+        "tests/control/work-record.test.ts",
+        "tests/read-model/p1-16-work-context.test.ts",
+        "tests/sqlite-read-model/p1-16-work-context.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/commands/dispatch.ts",
+      "name": "BuildDispatchClaimDeps",
+      "consumers": [
+        "src/fixtures/dispatch-fixtures.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/commands/dispatch.ts",
+      "name": "BuildRunFactDeps",
+      "consumers": [
+        "src/fixtures/dispatch-fixtures.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/completed-work-context.ts",
+      "name": "COMPLETED_WORK_MAX_SELECTED",
+      "consumers": [
+        "src/data/context-compiler/completed-work-context-compiler.ts",
+        "tests/contract-support/fixtures/completed-work-fixtures.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/completed-work-context.ts",
+      "name": "COMPLETED_WORK_MAX_NOTES",
+      "consumers": [
+        "src/data/context-compiler/completed-work-context-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/completed-work-context.ts",
+      "name": "CompletedWorkSelectionItemV1",
+      "consumers": [
+        "src/data/context-compiler/completed-work-context-compiler.ts",
+        "tests/contract-support/fixtures/completed-work-fixtures.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/completed-work-context.ts",
+      "name": "CompletedWorkGap",
+      "consumers": [
+        "src/data/context-compiler/completed-work-context-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/completed-work-context.ts",
+      "name": "CompletedWorkViewRow",
+      "consumers": [
+        "src/data/read-model-index/read-model-index.ts",
+        "src/data/read-model-index/sqlite-read-model-index.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/context-continuation-port.ts",
+      "name": "ContextContinuationCheckV1",
+      "consumers": [
+        "src/execution/worker-runtime/context-continuation-adapter.ts",
+        "tests/runtime/context-continuation-adapter.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/context-continuation-port.ts",
+      "name": "ContextContinuationObservationV1",
+      "consumers": [
+        "src/execution/worker-runtime/context-continuation-adapter.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "WORK_CONTEXT_VIEW_MAX_NOTES",
+      "consumers": [
+        "src/data/context-compiler/work-context-compiler.ts",
+        "tests/context/work-context-compiler.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "WORK_CONTEXT_VIEW_MAX_CONTINUATIONS",
+      "consumers": [
+        "src/data/read-model-index/read-model-index.ts",
+        "src/data/read-model-index/sqlite-read-model-index.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "WORK_CONTEXT_BUNDLE_MAX_BYTES",
+      "consumers": [
+        "src/data/context-compiler/work-context-compiler.ts",
+        "src/data/context-compiler/work-run-materials.ts",
+        "tests/context/work-context-compiler.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "ContextContinuationResultV1",
+      "consumers": [
+        "src/control/control-engine/work-record.ts",
+        "tests/contract-support/fixtures/context-fixtures.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "bindWorkContextFingerprint",
+      "consumers": [
+        "src/control/control-engine/records/context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "linkWorkRunFingerprint",
+      "consumers": [
+        "src/control/control-engine/records/context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "recordExecutionNoteFingerprint",
+      "consumers": [
+        "src/control/control-engine/records/context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "recordContinuationFingerprint",
+      "consumers": [
+        "src/control/control-engine/records/context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "name": "WorkRecordPort",
+      "consumers": [
+        "src/control/control-engine/work-record.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/dispatch.ts",
+      "name": "DispatchReadinessFacts",
+      "consumers": [
+        "src/control/control-engine/claim.ts",
+        "src/control/control-engine/policies/task-eligibility.ts",
+        "src/control/control-engine/readiness.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/dispatch.ts",
+      "name": "RoleBindingInadmissibleDetail",
+      "consumers": [
+        "src/control/control-engine/policies/role-binding-admission.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/dispatch.ts",
+      "name": "TaskEligibility",
+      "consumers": [
+        "src/control/control-engine/claim.ts",
+        "src/control/control-engine/policies/task-eligibility.ts",
+        "src/control/control-engine/readiness.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/dispatch.ts",
+      "name": "RunFactRejectionCode",
+      "consumers": [
+        "src/control/control-engine/run-facts.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/dispatch.ts",
+      "name": "dispatchClaimFingerprint",
+      "consumers": [
+        "src/control/control-engine/records/dispatch.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/dispatch.ts",
+      "name": "dispatchStartFingerprint",
+      "consumers": [
+        "src/control/control-engine/records/dispatch.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/execution-feedback.ts",
+      "name": "EXECUTION_FEEDBACK_GUIDE",
+      "consumers": [
+        "src/data/context-compiler/feedback-materials.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/execution-feedback.ts",
+      "name": "FEEDBACK_RESPONSE_GUIDE",
+      "consumers": [
+        "src/data/context-compiler/query-execution-context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/execution-feedback.ts",
+      "name": "parseExecutionFeedback",
+      "consumers": [
+        "src/data/context-compiler/execution-feedback-context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/execution-feedback.ts",
+      "name": "parseFeedbackResolution",
+      "consumers": [
+        "src/data/context-compiler/feedback-materials.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/handoff-context.ts",
+      "name": "HandoffContextRejectionCode",
+      "consumers": [
+        "src/data/context-compiler/handoff-context-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/handoff-context.ts",
+      "name": "HandoffContextManifestV1",
+      "consumers": [
+        "src/data/context-compiler/handoff-context-compiler.ts",
+        "tests/control/handoff-drive.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/initial-planning.ts",
+      "name": "INITIAL_PLANNING_RESPONSE_GUIDE",
+      "consumers": [
+        "src/data/context-compiler/query-execution-context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/operator-dispatch.ts",
+      "name": "OperatorDispatchPort",
+      "consumers": [
+        "src/control/dispatch-engine/operator-task-dispatch.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/planning.ts",
+      "name": "InitialPlanningRequest",
+      "consumers": [
+        "src/control/plan-compiler/initial-plan-compiler.ts",
+        "src/control/plan-compiler/plan-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/planning.ts",
+      "name": "InitialPlanningRequestResult",
+      "consumers": [
+        "src/control/plan-compiler/initial-plan-compiler.ts",
+        "src/control/plan-compiler/plan-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/planning.ts",
+      "name": "PlanningAcceptanceTrigger",
+      "consumers": [
+        "src/control/plan-compiler/initial-plan-compiler.ts",
+        "src/control/plan-compiler/plan-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/planning.ts",
+      "name": "PlanningAcceptanceReport",
+      "consumers": [
+        "src/control/plan-compiler/initial-plan-compiler.ts",
+        "src/control/plan-compiler/plan-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/planning.ts",
+      "name": "InitialPlanningResultMaterial",
+      "consumers": [
+        "src/data/context-compiler/coordination-context-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/ports.ts",
+      "name": "RunCapabilities",
+      "consumers": [
+        "src/execution/worker-runtime/fake-runtime-adapter.ts",
+        "tests/contract-suite/console.contract.suite.ts",
+        "tests/contract-suite/p1-07-harness.ts",
+        "tests/contract-suite/p1-08-harness.ts",
+        "tests/contract-suite/workspace.contract.suite.ts",
+        "tests/control/dispatch-drive.test.ts",
+        "tests/control/handoff-drive.test.ts",
+        "tests/control/workspace-drive.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/ports.ts",
+      "name": "DispatchDriveFailure",
+      "consumers": [
+        "src/control/dispatch-engine/dispatch-engine.ts",
+        "src/control/dispatch-engine/workspace-drive.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-execution-context.ts",
+      "name": "QueryExecutionRequest",
+      "consumers": [
+        "src/data/context-compiler/query-execution-context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-execution-context.ts",
+      "name": "QueryExecutionMaterial",
+      "consumers": [
+        "src/data/context-compiler/query-execution-context.ts",
+        "tests/context/query-execution-context.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-execution-context.ts",
+      "name": "QuerySourceObservationPort",
+      "consumers": [
+        "src/data/context-compiler/query-execution-context.ts",
+        "tests/context/persisted-query-source.test.ts",
+        "tests/context/query-execution-context.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "QUERY_JOB_MAX_FOCUS_REFS",
+      "consumers": [
+        "src/data/context-compiler/query-context-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "QUERY_JOB_QUESTION_MAX_BYTES",
+      "consumers": [
+        "src/data/context-compiler/query-context-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "QUERY_JOB_MAX_ROUNDS",
+      "consumers": [
+        "src/data/state-ledger/ledger-validation.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "QUERY_JOB_ANSWER_MAX_BYTES",
+      "consumers": [
+        "src/control/dispatch-engine/query-drive.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "queryJobRefFor",
+      "consumers": [
+        "src/control/control-engine/query-job.ts",
+        "src/control/control-engine/records/query-job.ts",
+        "tests/contract-support/fixtures/query-job-fixtures.ts",
+        "tests/integration/p1-09-query-regression.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "queryJobAnswerRefFor",
+      "consumers": [
+        "src/control/control-engine/query-job.ts",
+        "src/control/control-engine/records/query-job.ts",
+        "tests/contract-suite/p1-09-harness.ts",
+        "tests/contract-support/fixtures/query-job-fixtures.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "submitQueryJobFingerprint",
+      "consumers": [
+        "src/control/control-engine/records/query-job.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "recordQueryAnswerFingerprint",
+      "consumers": [
+        "src/control/control-engine/records/query-job.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "closeQueryJobFingerprint",
+      "consumers": [
+        "src/control/control-engine/records/query-job.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "PublicSnapshotQueryV1",
+      "consumers": [
+        "src/harness/in-memory-harness.ts",
+        "src/harness/persistent-harness.ts",
+        "tests/contract-suite/p1-09-harness.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "PublicSnapshotResultV1",
+      "consumers": [
+        "src/harness/in-memory-harness.ts",
+        "src/harness/persistent-harness.ts",
+        "tests/contract-suite/p1-09-harness.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "SnapshotPort",
+      "consumers": [
+        "src/harness/in-memory-harness.ts",
+        "src/harness/persistent-harness.ts",
+        "tests/contract-suite/p1-09-harness.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "QueryJobDrivePort",
+      "consumers": [
+        "src/control/dispatch-engine/query-drive.ts",
+        "tests/integration/p1-09-query-regression.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "name": "startQueryJobFingerprint",
+      "consumers": [
+        "src/control/control-engine/query-job.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/review-context.ts",
+      "name": "REVIEW_PACKET_MAX_MATERIALS",
+      "consumers": [
+        "src/data/context-compiler/review-context-compiler.ts",
+        "tests/context/review-context-compiler.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/review-context.ts",
+      "name": "REVIEW_PACKET_MAX_BYTES",
+      "consumers": [
+        "src/data/context-compiler/review-context-compiler.ts",
+        "tests/context/review-context-compiler.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/review-context.ts",
+      "name": "ReviewContextRejectionCode",
+      "consumers": [
+        "src/data/context-compiler/review-context-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/review-context.ts",
+      "name": "ReviewPacketV1",
+      "consumers": [
+        "src/data/context-compiler/review-context-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/reviewer-context.ts",
+      "name": "REVIEWER_PACKET_MAX_BYTES",
+      "consumers": [
+        "src/data/context-compiler/reviewer-context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/reviewer-context.ts",
+      "name": "REVIEWER_SOURCE_MAX_LINES",
+      "consumers": [
+        "src/data/workspace-reader/reviewer-source-reader.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/reviewer-context.ts",
+      "name": "ReviewerRoundContextPort",
+      "consumers": [
+        "src/data/context-compiler/reviewer-context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/reviewer-context.ts",
+      "name": "ReviewerRuntimeObservations",
+      "consumers": [
+        "src/data/context-compiler/reviewer-context.ts",
+        "src/data/context-compiler/reviewer-profile.ts",
+        "src/data/context-compiler/verification-context.ts",
+        "tests/context/reviewer-context.test.ts",
+        "tests/verification/reviewer-fixture.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/reviewer-context.ts",
+      "name": "ReviewerContextFailure",
+      "consumers": [
+        "src/data/context-compiler/reviewer-context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/reviewer-context.ts",
+      "name": "ReviewerRecoveryResult",
+      "consumers": [
+        "src/data/context-compiler/reviewer-context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/reviewer-context.ts",
+      "name": "ReviewerMaterialPageRequest",
+      "consumers": [
+        "src/data/context-compiler/reviewer-context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/reviewer-context.ts",
+      "name": "ReviewerSourcePage",
+      "consumers": [
+        "src/data/workspace-reader/reviewer-source-reader.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/reviewer-verification.ts",
+      "name": "ReviewerCitationV1",
+      "consumers": [
+        "src/control/verification-engine/reviewer-report.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/reviewer-verification.ts",
+      "name": "ReviewAssessmentV1",
+      "consumers": [
+        "src/control/verification-engine/reviewer-record.ts",
+        "src/control/verification-engine/reviewer-report.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/reviewer-verification.ts",
+      "name": "ReviewResumeInput",
+      "consumers": [
+        "src/control/verification-engine/reviewer-verification.ts",
+        "src/control/verification-engine/verification-service.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/reviewer-verification.ts",
+      "name": "ReviewPhase",
+      "consumers": [
+        "src/ui/src/features/independent-review.tsx"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/acceptance.ts",
+      "name": "ReworkAcceptanceRejectionCode",
+      "consumers": [
+        "src/control/control-engine/autonomous-rework.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/drive.ts",
+      "name": "ReworkDriveScopeV1",
+      "consumers": [
+        "src/control/dispatch-engine/rework-drive.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/drive.ts",
+      "name": "ReworkIssueDispositionTraceV1",
+      "consumers": [
+        "src/control/dispatch-engine/rework-drive.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/drive.ts",
+      "name": "ReworkProposalPreviewV1",
+      "consumers": [
+        "src/control/dispatch-engine/rework-drive.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/drive.ts",
+      "name": "ReworkAcceptanceViewV1",
+      "consumers": [
+        "src/control/dispatch-engine/rework-drive.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/issues.ts",
+      "name": "REWORK_MAX_FAILED_REQUIREMENTS",
+      "consumers": [
+        "src/control/verification-engine/verification-open-issues.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/issues.ts",
+      "name": "ReworkIssueSourceV1",
+      "consumers": [
+        "src/control/verification-engine/verification-open-issues.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/issues.ts",
+      "name": "COMMAND_CHECK_CATEGORIES",
+      "consumers": [
+        "src/control/verification-engine/verification-open-issues.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/issues.ts",
+      "name": "REWORK_FAILURE_STDERR_MAX_BYTES",
+      "consumers": [
+        "src/control/verification-engine/verification-open-issues.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/issues.ts",
+      "name": "ReworkFailureFactV1",
+      "consumers": [
+        "src/control/verification-engine/verification-open-issues.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/issues.ts",
+      "name": "ReworkFailedRequirementV1",
+      "consumers": [
+        "src/control/verification-engine/verification-open-issues.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/issues.ts",
+      "name": "reworkIssueIdFor",
+      "consumers": [
+        "src/control/verification-engine/verification-open-issues.ts",
+        "tests/control/autonomous-rework-fixture.ts",
+        "tests/control/rework-plan-compiler.test.ts",
+        "tests/verification/rework-issues.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/issues.ts",
+      "name": "reworkIssueFactFor",
+      "consumers": [
+        "src/control/plan-compiler/rework-plan-compiler.ts",
+        "src/control/plan-compiler/rework-proposal.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/proposal.ts",
+      "name": "ReworkProposalTaskV1",
+      "consumers": [
+        "src/control/plan-compiler/rework-proposal.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/proposal.ts",
+      "name": "ReworkPlanDraftV1",
+      "consumers": [
+        "src/control/plan-compiler/rework-proposal.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/proposal.ts",
+      "name": "ReworkCompileRequestV1",
+      "consumers": [
+        "src/control/plan-compiler/rework-plan-compiler.ts",
+        "src/control/plan-compiler/rework-proposal.ts",
+        "tests/control/rework-plan-compiler.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/proposal.ts",
+      "name": "ReworkCompileResultV1",
+      "consumers": [
+        "src/control/plan-compiler/rework-plan-compiler.ts",
+        "tests/control/autonomous-rework-fixture.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/proposal.ts",
+      "name": "ReworkCompileRejectionCode",
+      "consumers": [
+        "src/control/plan-compiler/rework-plan-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/proposal.ts",
+      "name": "ReworkNeedsDecisionCode",
+      "consumers": [
+        "src/control/plan-compiler/rework-plan-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/proposal.ts",
+      "name": "REWORK_MAX_ISSUES_PER_PROPOSAL",
+      "consumers": [
+        "src/control/plan-compiler/rework-plan-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/runtime-context-materials.ts",
+      "name": "RuntimeContextScope",
+      "consumers": [
+        "src/data/context-compiler/runtime-context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/runtime-context-materials.ts",
+      "name": "RuntimeContextText",
+      "consumers": [
+        "src/data/context-compiler/exploration-context-compiler.ts",
+        "src/data/context-compiler/role-material-sources.ts",
+        "src/data/context-compiler/runtime-context.ts",
+        "src/data/context-compiler/work-run-materials.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/runtime-context-materials.ts",
+      "name": "RuntimeHistoryMaterial",
+      "consumers": [
+        "src/data/context-compiler/runtime-context.ts",
+        "src/data/context-compiler/work-run-materials.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/runtime-context-materials.ts",
+      "name": "RuntimeWorkContextMaterials",
+      "consumers": [
+        "src/data/context-compiler/runtime-context.ts",
+        "src/data/context-compiler/work-run-materials.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/runtime-context-materials.ts",
+      "name": "RuntimeRoleMaterialEntryV1",
+      "consumers": [
+        "src/data/context-compiler/role-material-sources.ts",
+        "src/data/context-compiler/role-source-index.ts",
+        "src/data/context-compiler/work-run-materials.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/runtime-context-materials.ts",
+      "name": "RuntimeRoleMaterialsV1",
+      "consumers": [
+        "src/data/context-compiler/runtime-context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/runtime-dispatch.ts",
+      "name": "DispatchScope",
+      "consumers": [
+        "src/control/dispatch-engine/runtime-dispatch.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/runtime-dispatch.ts",
+      "name": "RuntimeDriveRequest",
+      "consumers": [
+        "src/control/dispatch-engine/runtime-dispatch.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/runtime-dispatch.ts",
+      "name": "RecoveryResult",
+      "consumers": [
+        "src/control/dispatch-engine/runtime-dispatch.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/runtime-dispatch.ts",
+      "name": "RuntimeDispatchPort",
+      "consumers": [
+        "src/control/dispatch-engine/runtime-dispatch.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/context.ts",
+      "name": "validateBindWorkContextCommand",
+      "consumers": [
+        "src/control/control-engine/work-record.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/context.ts",
+      "name": "validateLinkWorkRunCommand",
+      "consumers": [
+        "src/control/control-engine/work-record.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/context.ts",
+      "name": "validateRecordExecutionNoteCommand",
+      "consumers": [
+        "src/control/control-engine/work-record.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/context.ts",
+      "name": "validateRecordContinuationCommand",
+      "consumers": [
+        "src/control/control-engine/work-record.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/context.ts",
+      "name": "validateWorkContextRequest",
+      "consumers": [
+        "src/data/context-compiler/work-context-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/dispatch.ts",
+      "name": "validateDispatchClaimCommand",
+      "consumers": [
+        "src/control/control-engine/claim.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/dispatch.ts",
+      "name": "validateDispatchStartCommand",
+      "consumers": [
+        "src/control/control-engine/start-run.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/dispatch.ts",
+      "name": "validateRunFactCommand",
+      "consumers": [
+        "src/control/control-engine/run-facts.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/dispatch.ts",
+      "name": "validateTaskEnvelope",
+      "consumers": [
+        "src/data/context-compiler/context-compiler.ts",
+        "src/data/context-compiler/handoff-context-compiler.ts",
+        "src/data/context-compiler/reviewer-context.ts",
+        "src/data/context-compiler/runtime-context.ts",
+        "tests/context/context-compiler.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/dispatch.ts",
+      "name": "validateTaskContextRequest",
+      "consumers": [
+        "src/data/context-compiler/context-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-context.ts",
+      "name": "VerificationMaterialResult",
+      "consumers": [
+        "src/data/context-compiler/verification-context.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-context.ts",
+      "name": "VerificationRuntimeFacts",
+      "consumers": [
+        "src/data/context-compiler/verification-context.ts",
+        "tests/context/verification-round-context.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-context.ts",
+      "name": "VerificationReworkMaterialResult",
+      "consumers": [
+        "src/data/context-compiler/verification-context.ts",
+        "tests/verification/semantic-reverification.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-context.ts",
+      "name": "VerificationRoundSourceResult",
+      "consumers": [
+        "src/data/workspace-reader/verification-workspace-reader.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-import.ts",
+      "name": "Benchmark",
+      "consumers": [
+        "src/control/verification-engine/benchmark-verification.ts",
+        "src/control/verification-engine/verification-input.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-round.ts",
+      "name": "VerificationRegisteredCheck",
+      "consumers": [
+        "src/control/verification-engine/rework-verification.ts",
+        "src/control/verification-engine/verification-rounds.ts",
+        "tests/app/governance.test.ts",
+        "tests/app/plan-changes.test.ts",
+        "tests/app/rework-dispatch.test.ts",
+        "tests/app/rework-drive.test.ts",
+        "tests/app/rework-issues.test.ts",
+        "tests/app/verification-rounds.test.ts",
+        "tests/control/role-material-completion.test.ts",
+        "tests/verification/rework-issues.test.ts",
+        "tests/verification/verification-rounds.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-round.ts",
+      "name": "VerificationRoundConfiguration",
+      "consumers": [
+        "src/control/verification-engine/verification-rounds.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-round.ts",
+      "name": "VerificationRoundRoleOutput",
+      "consumers": [
+        "src/control/verification-engine/role-output-completeness.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-round.ts",
+      "name": "VerificationRoundRoleOutputs",
+      "consumers": [
+        "src/control/verification-engine/role-output-completeness.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-round.ts",
+      "name": "VerificationRoundCoverage",
+      "consumers": [
+        "src/control/verification-engine/verification-open-issues.ts",
+        "src/control/verification-engine/verification-rounds.ts",
+        "tests/control/rework-drive-fixture.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-service.ts",
+      "name": "CommandCheckProgress",
+      "consumers": [
+        "src/control/verification-engine/command-check-provider.ts",
+        "tests/verification/command-check-provider.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-service.ts",
+      "name": "VerificationRunView",
+      "consumers": [
+        "src/control/verification-engine/verification-journal.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-service.ts",
+      "name": "VerificationReportMaterial",
+      "consumers": [
+        "src/control/verification-engine/command-check-lifecycle.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-service.ts",
+      "name": "VerificationServicePort",
+      "consumers": [
+        "src/control/verification-engine/verification-service.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-view.ts",
+      "name": "EvidenceBindingView",
+      "consumers": [
+        "src/data/read-model-index/read-model-index.ts",
+        "src/data/read-model-index/sqlite-read-model-index.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification-view.ts",
+      "name": "TaskVerificationView",
+      "consumers": [
+        "src/data/read-model-index/read-model-index.ts",
+        "src/data/read-model-index/sqlite-read-model-index.ts",
+        "tests/read-model/p1-04-verification-projection.test.ts",
+        "tests/restart/p1-04-restart-fixtures.ts",
+        "tests/sqlite-read-model/p1-04-verification-projection.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "CHANGE_SCOPE_MAX_FILES",
+      "consumers": [
+        "src/data/workspace-reader/verification-workspace-reader.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "REVIEWER_SEMANTIC_CHECK_ID",
+      "consumers": [
+        "src/control/verification-engine/verification-plan-compiler.ts",
+        "tests/contract-suite/verification.contract.suite.ts",
+        "tests/verification/verification-engine.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "NO_CHANGE_FAST_PATH_CHECK_ID",
+      "consumers": [
+        "src/control/verification-engine/verification-plan-compiler.ts",
+        "tests/contract-suite/verification.contract.suite.ts",
+        "tests/verification/verification-engine.test.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "ObservationDraftV1",
+      "consumers": [
+        "src/control/verification-engine/verification-engine.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "VerificationRejectionCode",
+      "consumers": [
+        "src/control/verification-engine/verification-engine.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "ReviewerCapabilities",
+      "consumers": [
+        "src/testing/check-providers.double.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "REVIEWER_MAX_PACKET_BYTES",
+      "consumers": [
+        "src/testing/check-providers.double.ts",
+        "tests/contract-suite/verification.contract.suite.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/work-context-port.ts",
+      "name": "WorkContextBucketRow",
+      "consumers": [
+        "src/data/context-compiler/work-context-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/work-context-port.ts",
+      "name": "WorkContextGap",
+      "consumers": [
+        "src/data/context-compiler/work-context-compiler.ts"
+      ]
+    },
+    {
+      "file": "src/contracts/work-context-port.ts",
+      "name": "WorkContextManifestV1",
+      "consumers": [
+        "src/data/context-compiler/work-context-compiler.ts"
+      ]
+    }
+  ]
+}

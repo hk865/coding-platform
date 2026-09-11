@@ -1,0 +1,360 @@
+/**
+ * RW-07：**返工任务按当前生效 revision 被派发**（补上返工闭环的执行跳）。
+ *
+ * 背景缺口（本票要修的）：PlannedTaskDispatch 过去只遍历「初始协调 origin.assignments」，
+ * 而返工受理生成的新 revision 里新增的任务在那个 origin 里根本不存在——任务进了计划、
+ * readiness 也说 ready，却没有任何路径会认领它。RW-06 的 harness 用例是用测试自己
+ * claimTask 证明链路可用的，产品链上这一跳仍然是断的。
+ *
+ * 本文件因此**不自己 claimTask**：它调用产品同一个派发入口（PlannedTaskDispatch.drivePending，
+ * 组合根在 src/app/service.ts 装配、由初始规划推进步调用），断言那个入口自己把新 revision 的
+ * 返工任务认领成真实 Run。场景是真实的：真实 bootstrap／Goal／治理 install+activate（含人经
+ * 正式路径授予的自动化返工预算）→ 真实初始协调（模型桩只提供提案文本）→ 真实计划受理 →
+ * 真实 FAIL 轮次与已提交结论 → 真实返工驱动受理成新 revision → 真实派发与 outbox 驱动。
+ */
+import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { PlanRevisionSnapshot, RuntimeTask } from '../../src/contracts/plan.js';
+import type { GoalSnapshot, StateLedger } from '../../src/contracts/ledger.js';
+import type { RunSpec, RuntimePreparationPort } from '../../src/contracts/runtime-preparation.js';
+import type { RunSnapshot } from '../../src/contracts/dispatch.js';
+import type { ReadOnlyQueryPort } from '../../src/contracts/query-job.js';
+import type { ReworkDriveResultV1 } from '../../src/contracts/rework-drive.js';
+import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
+import {
+  ARCHITECTURE_BASELINE_FIXTURE_V1,
+  COMPLETION_POLICY_FIXTURE_V1,
+  buildActivateCommand,
+  buildInstallCommand,
+} from '../../src/contracts/fixtures/governance-fixtures.js';
+import { architectureBaselinePinFor, completionPolicyPinFor } from '../../src/contracts/governance.js';
+import { buildP115ActivateCommand, buildP115InstallCommand } from '../../src/contracts/fixtures/human-role-collaboration-fixtures.js';
+import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
+import { PlanCompilerImpl } from '../../src/control/plan-compiler/plan-compiler.js';
+import { CoordinationContextCompiler } from '../../src/data/context-compiler/coordination-context-compiler.js';
+import { LedgerScopeCatalog } from '../../src/data/state-ledger/ledger-scope-catalog.js';
+import type { PlanningMaterialPort, PlanningScope } from '../../src/contracts/planning.js';
+import { PlannedTaskDispatch } from '../../src/control/dispatch-engine/planned-task-dispatch.js';
+import { admitConclusion, type Ledger } from './autonomous-rework-fixture.js';
+import { appendFailRound, openJournalPort } from './rework-drive-fixture.js';
+
+const PROJECT = 'rw07-project';
+const WORKSPACE = 'rw07-workspace';
+const GOAL = 'rw07-goal';
+const TASK_A = 'task-a';
+const TASK_B = 'task-b';
+const GATE = 'gate-goal';
+const OBL_A = 'obl-a';
+const REQ_A = 'vr-a';
+const FAILING_COMMAND = 'pnpm test -- --rw07-failing-check';
+const AT = '2026-09-10T00:00:00.000Z';
+
+const scope = { projectId: PROJECT, workspaceId: WORKSPACE };
+const request = { schemaVersion: 1 as const, ...scope, goalId: GOAL };
+const issueRequest = { ...request, taskIds: [] };
+
+/**
+ * 初始协调的模型桩返回的提案：两个 work 任务（各自承担一条义务）+ 一个 goal gate。
+ * 每个 work 任务都带指派（初始规划对 assignment 的既有约定），且 task-a 的角色是
+ * integrator——用它证明返工任务的 role 是**从被取代任务继承**的，不是默认值。
+ */
+function planningResponse(): string {
+  return JSON.stringify({
+    kind: 'plan',
+    summary: '实现两件可独立验证的事，并由 goal gate 整体验收。',
+    assignments: [
+      { taskId: TASK_A, role: 'integrator', instruction: '实现第一件事，产出可独立复核的结果与运行事实。' },
+      { taskId: TASK_B, role: 'executor', instruction: '实现第二件事，产出可独立复核的结果与运行事实。' },
+    ],
+    plan: {
+      stages: [{ stageId: 'work', title: 'RW-07 返工派发' }],
+      tasks: [
+        { taskId: TASK_A, stageId: 'work', title: '做第一件可独立验证的事', taskKind: 'work', requirementLevel: 'required', disposition: 'active', phase: 'pending', scope: { kind: 'stage', stageId: 'work' } },
+        { taskId: TASK_B, stageId: 'work', title: '做第二件可独立验证的事', taskKind: 'work', requirementLevel: 'required', disposition: 'active', phase: 'pending', scope: { kind: 'stage', stageId: 'work' } },
+        { taskId: GATE, title: '整体独立验收', taskKind: 'gate', requirementLevel: 'required', disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
+      ],
+      obligations: [
+        { obligationId: OBL_A, title: '第一件事的结果满足要求', requirementLevel: 'required', taskIds: [TASK_A], verificationRequirements: [{ requirementId: REQ_A, requirementLevel: 'required', kind: 'dynamic', description: '候选实现需独立验证' }] },
+        { obligationId: 'obl-b', title: '第二件事的结果满足要求', requirementLevel: 'required', taskIds: [TASK_B], verificationRequirements: [{ requirementId: 'vr-b', requirementLevel: 'required', kind: 'dynamic', description: '候选实现需独立验证' }] },
+        { obligationId: 'obl-gate', title: '整体验收', requirementLevel: 'required', taskIds: [GATE], verificationRequirements: [{ requirementId: 'vr-gate', requirementLevel: 'required', kind: 'reviewer', description: '独立语义审阅' }] },
+      ],
+      taskHierarchy: { parentOf: [{ parentTaskId: GATE, childTaskId: TASK_A }, { parentTaskId: GATE, childTaskId: TASK_B }] },
+      executionDag: { dependsOn: [
+        { taskId: GATE, dependsOnId: TASK_A, requires: { kind: 'gate-result', label: '第一件事的检查证据' } },
+        { taskId: GATE, dependsOnId: TASK_B, requires: { kind: 'gate-result', label: '第二件事的检查证据' } },
+      ] },
+    },
+  });
+}
+
+/** 只读查询面桩：规划请求的唯一外部输入（提案文本），其余全部是真实链路。 */
+function readOnlyQueryStub(): ReadOnlyQueryPort {
+  return {
+    capabilities: () => ({ supported: true, readOnly: true, maxQuestionBytes: 4096, maxAnswerBytes: 16384 }),
+    startQuery: async (input) => ({ schemaVersion: 1, runRef: input.runRef, outcome: 'answered', answer: planningResponse(), sources: [], message: null, endedAt: AT }),
+  };
+}
+
+const directories: string[] = [];
+afterEach(async () => {
+  for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
+});
+
+type Harness = Awaited<ReturnType<typeof createPersistentSqliteHarness>> | ReturnType<typeof createInMemoryHarness>;
+type Backend = 'memory' | 'persistent';
+
+/**
+ * 派发器工厂：真实的 ControlEngine／账本／材料选择都在 harness 里，这里只把「执行内核的准备面」
+ * 换成替身（本票不跑模型；真实运行由 harness 自己的 outbox 驱动负责启动），并记下每次
+ * launch 回调——组合根就是用这个回调把已认领的 Run 交给真实驱动。
+ */
+function dispatcherFor(harness: Harness, materials: PlanningMaterialPort) {
+  /** 预检过的规格与真正 prepare 过的规格分开记：一次派发两步都要有，但不重复计数。 */
+  const preflights: RunSpec[] = [];
+  const specs: RunSpec[] = [];
+  const launches: string[] = [];
+  const driveResults: { started: number; completed: number; failures: unknown[] }[] = [];
+  const driving: Promise<unknown>[] = [];
+  const runtime: RuntimePreparationPort = {
+    all: () => [],
+    preflight: async (spec) => { preflights.push(spec); },
+    prepare: async (spec) => { specs.push(spec); },
+  };
+  const dispatch = new PlannedTaskDispatch(
+    harness,
+    runtime,
+    (projectId, workspaceId) => '/' + projectId + '/' + workspaceId,
+    (_launchScope, runId) => {
+      launches.push(runId);
+      driving.push(harness.drive({ reason: 'rw07-planned-dispatch' }).then((result) => { driveResults.push(result); }));
+    },
+    materials,
+    () => AT,
+  );
+  return { dispatch, preflights, specs, launches, driveResults, settle: () => Promise.all(driving) };
+}
+
+async function scenario(backend: Backend) {
+  const directory = await mkdtemp(join(tmpdir(), 'rw07-dispatch-'));
+  directories.push(directory);
+  const journalDirectory = join(directory, 'verification-journal');
+  const holder: { current: Ledger | null } = { current: null };
+  const firstPort = await openJournalPort({ directory: journalDirectory, current: () => holder.current as Ledger });
+  let currentPort = firstPort;
+  const query = readOnlyQueryStub();
+  let harness: Harness = backend === 'persistent'
+    ? await createPersistentSqliteHarness({ dir: directory, reworkIssues: firstPort.port, readOnlyQuery: query })
+    : createInMemoryHarness({ reworkIssues: firstPort.port, readOnlyQuery: query });
+  holder.current = harness.ledger;
+
+  // 真实 bootstrap / Goal / 治理安装并激活。
+  expect(await harness.bootstrap(buildBootstrapCommand({ schemaVersion: 1, entries: [scope] }, { commandId: 'rw07-boot', correlationId: 'rw07-boot', submittedAt: AT }))).toMatchObject({ status: 'committed' });
+  expect(await harness.collaboration.createGoal({ ...scope, goalId: GOAL, objective: 'RW-07：返工任务在新的 revision 上被真正派发', actor: { kind: 'human', id: 'operator' }, idempotencyKey: 'rw07-goal' })).toMatchObject({ status: 'persisted' });
+  for (const [index, fixture] of [COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1].entries()) {
+    const deps = { projectId: PROJECT, commandId: 'rw07-install-' + index, correlationId: 'rw07-governance', idempotencyKey: 'rw07-install-' + index, submittedAt: AT };
+    const install = buildInstallCommand(fixture, deps);
+    expect(await harness.install(install)).toMatchObject({ status: 'committed' });
+    const pin = install.commandType === 'InstallCompletionPolicyRevision' ? completionPolicyPinFor(install) : architectureBaselinePinFor(install);
+    expect(await harness.activate(buildActivateCommand(pin, { ...deps, commandId: 'rw07-activate-' + index, idempotencyKey: 'rw07-activate-' + index, expectedRevision: 1 }))).toMatchObject({ status: 'committed' });
+  }
+  // 人经正式 install/activate 路径显式授予自动化返工预算（没有默认值，也不套用回退）。
+  const policyInstall = buildP115InstallCommand(PROJECT, { commandId: 'rw07-policy-install' });
+  expect(await harness.installCoordinationPolicy(policyInstall)).toMatchObject({ status: 'committed' });
+  expect(await harness.activateCoordinationPolicy(buildP115ActivateCommand(PROJECT, { commandId: 'rw07-policy-activate', expectedRevision: 1 }))).toMatchObject({ status: 'committed' });
+
+  // 真实初始协调：request → 查询驱动（模型桩作答）→ accept（Control 受理计划）。
+  // 材料端口总是建在**当前**账本连接上：重启后必须重建（与产品一致），否则会读到已关闭的连接。
+  const materialsFor = () => {
+    const catalog = new LedgerScopeCatalog(harness.ledger);
+    return new CoordinationContextCompiler({
+      ledger: harness.ledger,
+      catalog,
+      sources: { currentness: async () => new Map((await catalog.jobs()).map((row) => [row.job.queryJobId, true])) },
+    }) as PlanningMaterialPort;
+  };
+  let materials = materialsFor();
+  const compiler = new PlanCompilerImpl({ materials, control: harness, now: () => AT });
+  const planningScope: PlanningScope = { ...scope, goalId: GOAL };
+  expect(await compiler.request({ schemaVersion: 1, kind: 'initial', scope: planningScope, input: { requestId: 'rw07-work', instruction: '实现两件可独立验证的事并留下运行事实。', allowWrite: true } })).toMatchObject({ status: 'accepted' });
+  expect(await harness.driveQuery({ reason: 'rw07-initial-coordination' })).toMatchObject({ started: 1, answered: 1 });
+  expect(await compiler.accept({ reason: 'rw07-initial-coordination' })).toMatchObject({ status: 'processed', issues: [], needsDecision: [] });
+  expect((await materials.acceptedInitialPlans())).toHaveLength(1);
+
+  async function loadGoal(): Promise<GoalSnapshot> {
+    const loaded = await holder.current!.load({ aggregateType: 'Goal', projectId: PROJECT, goalId: GOAL });
+    if (loaded.status !== 'found') throw new Error('goal not found');
+    return loaded.snapshot as GoalSnapshot;
+  }
+  async function loadPlan(planId: string): Promise<PlanRevisionSnapshot> {
+    const loaded = await holder.current!.load({ aggregateType: 'PlanRevision', projectId: PROJECT, planId });
+    if (loaded.status !== 'found') throw new Error('plan not found: ' + planId);
+    return loaded.snapshot as PlanRevisionSnapshot;
+  }
+  async function pendingTaskIds(): Promise<string[]> {
+    return (await (holder.current as Ledger).pendingDispatchIntents(50)).map((entry) => entry.intent.taskId);
+  }
+
+  return {
+    backend,
+    harness: () => harness,
+    ledger: () => holder.current as Ledger,
+    materials: () => materials,
+    port: () => currentPort,
+    loadGoal,
+    loadPlan,
+    pendingTaskIds,
+    dispatcher: () => dispatcherFor(harness, materials),
+    /** 一轮真实的工具 FAIL 轮次 + 一条真实已提交结论（问题出口因此有真实来源）。 */
+    fail: async (taskId: string, obligationId: string, requirementId: string) => {
+      const active = await loadGoal();
+      const activePlan = await loadPlan(active.activePlanRevision!.planId);
+      await appendFailRound({
+        journal: currentPort.journal,
+        scope: { ...scope, goalId: GOAL, runId: 'run-rw07-a', taskId },
+        plan: activePlan,
+        sourceDigest: 'source-digest-rw07',
+        check: { checkId: 'rw07-failing-check', command: FAILING_COMMAND, obligationId, requirementId, kind: 'dynamic' },
+        evidenceId: 'ev-rw07-fail',
+        requestId: 'rw07-round',
+      });
+      await admitConclusion(harness.control, holder.current as Ledger, {
+        plan: activePlan, taskId, obligationId, requirementId, outcome: 'FAIL', evidenceId: 'ev-rw07-fail', projectId: PROJECT, goalId: GOAL,
+      });
+    },
+    driveRework: (): Promise<ReworkDriveResultV1> => harness.driveRework(issueRequest),
+    /** 重启：关闭连接后在同一文件上重建 harness（只有 SQLite 后端有连接）。 */
+    restart: async () => {
+      if (backend !== 'persistent') return;
+      await (harness as { close: () => Promise<void> }).close();
+      const reopenedPort = await openJournalPort({ directory: journalDirectory, current: () => holder.current as Ledger });
+      harness = await createPersistentSqliteHarness({ dir: directory, reworkIssues: reopenedPort.port, readOnlyQuery: query });
+      currentPort = reopenedPort;
+      holder.current = harness.ledger;
+      // 重启后重建材料端口（与产品一致：端口绑定当前账本连接）。
+      materials = materialsFor();
+    },
+    close: async () => {
+      if ('close' in harness) await (harness as { close: () => Promise<void> }).close();
+    },
+  };
+}
+
+describe('RW-07 返工任务的派发（按当前生效 revision 驱动）', () => {
+  it('初始计划的派发保持原样：候选来自生效 revision 的指派，gate 不在候选里', async () => {
+    const s = await scenario('memory');
+    try {
+      const d = s.dispatcher();
+      expect((await d.dispatch.drivePending()).issues).toEqual([]);
+      // 原有行为：第一个任务沿用既有确定性命名（real-<requestId>）。
+      expect(d.launches).toEqual(['real-rw07-work']);
+      expect(await s.pendingTaskIds()).toEqual([TASK_A]);
+      await d.settle();
+      expect(d.driveResults[0]).toMatchObject({ started: 1, completed: 1, failures: [] });
+
+      // 第二个任务：同一个入口的下一次调用（既有行为是一次推进认领一个任务）。
+      expect((await d.dispatch.drivePending()).issues).toEqual([]);
+      expect(d.launches).toHaveLength(2);
+      expect(d.launches[1]!.startsWith('real-rw07-work-')).toBe(true);
+      expect(await s.pendingTaskIds()).toEqual([TASK_B]);
+      await d.settle();
+
+      // gate 是 required + active 的任务，但它是 gate：候选规则不含它，也没有任何 intent。
+      const plan = await s.loadPlan((await s.loadGoal()).activePlanRevision!.planId);
+      expect(plan.tasks.find((t: RuntimeTask) => t.taskId === GATE)!.taskKind).toBe('gate');
+      expect((await s.ledger().pendingDispatchIntents(50)).length).toBe(0);
+    } finally {
+      await s.close();
+    }
+  }, 60000);
+
+  it('受理新增任务的 revision 后，既有派发入口自己认领返工任务并跑出一个 Run；被取代任务不再被派发', async () => {
+    const s = await scenario('persistent');
+    try {
+      const d = s.dispatcher();
+      // 先把初始 revision 的两个任务派发出去（原有的初始计划派发行为）。
+      for (const expected of ['real-rw07-work', null]) {
+        expect((await d.dispatch.drivePending()).issues).toEqual([]);
+        if (expected !== null) expect(d.launches[0]).toBe(expected);
+        await d.settle();
+      }
+      expect(d.launches).toHaveLength(2);
+      const runIdsBefore = d.launches.slice();
+
+      // 真实 FAIL → 返工驱动受理成新 revision（四条边界都满足：策略已由人显式授予预算）。
+      await s.fail(TASK_A, OBL_A, REQ_A);
+      const driven = await s.driveRework();
+      expect(driven.status, JSON.stringify(driven)).toBe('driven');
+      const outcome = driven.outcomes[0]!;
+      expect(outcome.status, JSON.stringify(outcome)).toBe('accepted');
+      if (outcome.status !== 'accepted') return;
+      expect(outcome.boundaries.every((entry) => entry.satisfied)).toBe(true);
+
+      const goalAfter = await s.loadGoal();
+      expect(goalAfter.activePlanRevision?.planId).toBe(outcome.planRef.planId);
+      const plan = await s.loadPlan(outcome.planRef.planId);
+      const superseded = plan.tasks.find((task: RuntimeTask) => task.taskId === TASK_A)!;
+      expect(superseded.disposition).toBe('superseded');
+      const reworkTaskId = superseded.replacedByTaskId!;
+
+      // 任务与指派同属一个 revision：返工任务在**同一个快照**里带着自己的指派，
+      // role 继承被取代任务（integrator），instruction 由失败事实与义务正文拼出。
+      const reworkAssignment = (plan.assignments ?? []).find((entry) => entry.taskId === reworkTaskId);
+      expect(reworkAssignment, JSON.stringify(plan.assignments)).toBeDefined();
+      expect(reworkAssignment!.role).toBe('integrator');
+      expect(reworkAssignment!.instruction).toContain(OBL_A);
+      expect(reworkAssignment!.instruction).toContain('已提交的失败事实');
+      expect(reworkAssignment!.instruction).toContain(FAILING_COMMAND);
+      expect(reworkAssignment!.instruction).toContain('独立验证');
+
+      // 既有派发入口自己认领返工任务（测试没有调用 claimTask）：
+      // 被取代任务与被取代关系都让它退出候选；task-b 已经跑过，不会被换一个身份重跑。
+      expect((await d.dispatch.drivePending()).issues).toEqual([]);
+      expect(await s.pendingTaskIds()).toEqual([reworkTaskId]);
+      expect(d.launches).toHaveLength(3);
+      expect(d.launches[2]!.startsWith('real-rw07-work-')).toBe(true);
+      expect(d.launches[0]).toBe(runIdsBefore[0]);
+      expect(d.launches[1]).toBe(runIdsBefore[1]);
+      await d.settle();
+      expect(d.driveResults.at(-1)).toMatchObject({ started: 1, failures: [] });
+
+      // 真实 Run：canonical Run 聚合由派发/驱动真实写入，任务身份就是返工任务。
+      const reworkRun = await s.ledger().load({ aggregateType: 'Run', projectId: PROJECT, goalId: GOAL, runId: d.launches[2]! });
+      expect(reworkRun.status, JSON.stringify(reworkRun)).toBe('found');
+      if (reworkRun.status !== 'found') return;
+      const run = reworkRun.snapshot as RunSnapshot;
+      expect(run.ref.runId).toBe(d.launches[2]);
+      expect(run.task.taskId).toBe(reworkTaskId);
+      expect(run.envelope).not.toBeNull();
+      // 指令正文（交给执行内核的那一份）引用的是已提交的失败事实，而不是重新判定的说法。
+      const reworkSpec = d.specs.find((spec) => spec.taskId === reworkTaskId);
+      expect(reworkSpec, JSON.stringify(d.specs.map((spec) => spec.taskId))).toBeDefined();
+      expect(reworkSpec!.instruction).toContain('已提交的失败事实');
+      expect(reworkSpec!.instruction).toContain(FAILING_COMMAND);
+      // 被取代的任务与 gate 都没有被派发：没有它们的规格，也没有它们的 launch。
+      expect(d.specs.some((spec) => spec.taskId === TASK_A)).toBe(true); // 返工之前派发过一次
+      expect(d.specs.filter((spec) => spec.taskId === TASK_A)).toHaveLength(1);
+      expect(d.specs.some((spec) => spec.taskId === GATE)).toBe(false);
+
+      // 被取代任务即使被显式询问也不再可派发（canonical readiness 只放行 active 任务）。
+      const readiness = await s.harness().dispatchReadiness({ projectId: PROJECT, goalId: GOAL, taskId: TASK_A });
+      expect(readiness.status).toBe('ready');
+      if (readiness.status !== 'ready') return;
+      expect(readiness.eligibility.eligible).toBe(false);
+
+      // 重启后一致：候选仍来自 canonical 的生效 revision，重复推进不产生新的认领或 Run。
+      await s.restart();
+      const after = s.dispatcher();
+      expect((await after.dispatch.drivePending()).issues).toEqual([]);
+      expect(after.launches).toEqual([]);
+      expect((await s.ledger().pendingDispatchIntents(50)).length).toBe(0);
+      const reopenedPlan = await s.loadPlan((await s.loadGoal()).activePlanRevision!.planId);
+      expect(reopenedPlan.assignments).toEqual(plan.assignments);
+      expect(reopenedPlan.tasks).toEqual(plan.tasks);
+    } finally {
+      await s.close();
+    }
+  }, 120000);
+});

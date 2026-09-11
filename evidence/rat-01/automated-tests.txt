@@ -1,0 +1,13 @@
+Already up to date
+Done in 389ms using pnpm v11.21.0
+Already up to date
+Done in 390ms using pnpm v11.21.0
+
+ RUN  v4.1.10 /home/han001/projects/agents/agent_platform
+
+
+ Test Files  3 passed (3)
+      Tests  23 passed (23)
+   Start at  18:26:09
+   Duration  6.36s (transform 3.75s, setup 0ms, import 3.45s, tests 12.28s, environment 0ms)
+

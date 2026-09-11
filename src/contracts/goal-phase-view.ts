@@ -4,7 +4,7 @@
  * modules/data/read-model-index.md, ticket 05 output artifact
  * deterministic-goal-phase + goal-completion-explanation + goal-timeline-events.
  *
- * FROZEN semantics:
+ * Semantics:
  *   - goalStatus and goalTimeline rebuild ONLY from committed GoalPhaseUpdated
  *     events. They are projections: the canonical GoalPhase snapshot lives in
  *     the ledger and is the ONLY writer surface (goal-reduction commit).

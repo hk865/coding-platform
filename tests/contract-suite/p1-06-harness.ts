@@ -13,17 +13,11 @@ import type { RecordHandoffCommand, RecordHandoffReceipt, ClaimReplacementComman
 import type { ArtifactRef } from "../../src/contracts/artifact.js";
 import type { RunRef, TaskAttemptRef, RuntimeEventV1 } from "../../src/contracts/dispatch.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  COMPLETION_POLICY_FIXTURE_V1,
-  architectureBaselinePinFor,
-  buildActivateCommand,
-  buildInstallCommand,
-  completionPolicyPinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
-import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../../src/contracts/fixtures/goal-fixtures.js";
-import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
+import { architectureBaselinePinFor, completionPolicyPinFor } from "../../src/contracts/governance.js";
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../contract-support/fixtures/goal-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
 import {
   P106_BUDGET_V1,
   P106_DECLARED_PERMISSIONS_V1,
@@ -40,10 +34,10 @@ import {
   freshP106Id,
   p106PlanRef,
   type P106ScenarioPreview,
-} from "../../src/contracts/fixtures/handoff-fixtures.js";
+} from "../contract-support/fixtures/handoff-fixtures.js";
 import { artifactBodyDigest } from "../../src/contracts/artifact.js";
 import { runRefFor, taskAttemptRefFor } from "../../src/contracts/dispatch.js";
-import { buildDispatchClaimCommand, buildDispatchStartCommand, buildRunFactCommand, rebaseScriptForRun, FAKE_RUNTIME_SCRIPT_CRASHED_V1, FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../../src/contracts/fixtures/dispatch-fixtures.js";
+import { buildDispatchClaimCommand, buildDispatchStartCommand, buildRunFactCommand, rebaseScriptForRun, FAKE_RUNTIME_SCRIPT_CRASHED_V1, FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../../src/fixtures/dispatch-fixtures.js";
 import type { PlanRevisionRef } from "../../src/contracts/plan.js";
 
 export type { P1_04HarnessFactory };

@@ -43,13 +43,15 @@ import {
   taskAttemptRefFor,
 } from "../contract-suite/p1-07-harness.js";
 import type { P1_07TestHarness } from "../contract-suite/p1-07-harness.js";
-import { evaluateLeaseAdmissibility, workspaceReadLeaseRefFor, workspaceWriteLeaseRefFor, workspaceReadLeaseIndexRefFor, workspaceWriteLeaseIndexRefFor, type ConflictScopeV1, type WorkspaceReadLeaseV1 } from "../../src/contracts/workspace-lease.js";
+import { evaluateLeaseAdmissibility } from "../../src/control/control-engine/policies/workspace-lease.js";
+import { workspaceReadLeaseRefFor, workspaceWriteLeaseRefFor, workspaceReadLeaseIndexRefFor, workspaceWriteLeaseIndexRefFor, type ConflictScopeV1, type WorkspaceReadLeaseV1 } from "../../src/contracts/workspace-lease.js";
 import type { RunRef } from "../../src/contracts/dispatch.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildActivateCommand, completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/fixtures/governance-fixtures.js";
-import { buildCreateGoalCommand } from "../../src/contracts/fixtures/goal-fixtures.js";
-import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
-import { P107_PLAN_REVISION_FIXTURE_V1 } from "../../src/contracts/fixtures/workspace-fixtures.js";
+import { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildActivateCommand } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
+import { buildCreateGoalCommand } from "../contract-support/fixtures/goal-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { P107_PLAN_REVISION_FIXTURE_V1 } from "../contract-support/fixtures/workspace-fixtures.js";
 
 /** Clock used by the harness ControlEngine (a lease expiring earlier than NOW is expired). */
 const NOW = P107_SCHEMA; // "2026-09-06T12:00:00.000Z"

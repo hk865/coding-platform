@@ -20,18 +20,8 @@
  *   - no ArchitectureEvolutionPolicy artifact anywhere.
  */
 import { describe, expect, it } from "vitest";
-import {
-  COMPLETION_POLICY_FIXTURE_V1,
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  buildInstallCommand,
-  buildInstallLedgerCommit,
-  completionPolicyInstalledEventFor,
-  completionPolicyRevisionSnapshotFor,
-  architectureBaselineInstalledEventFor,
-  architectureBaselineRevisionSnapshotFor,
-  completionPolicyRevisionRefFor,
-  architectureBaselineRevisionRefFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
+import { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildInstallLedgerCommit, completionPolicyInstalledEventFor, completionPolicyRevisionSnapshotFor, architectureBaselineInstalledEventFor, architectureBaselineRevisionSnapshotFor } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyRevisionRefFor, architectureBaselineRevisionRefFor } from "../../src/contracts/governance.js";
 import type {
   GovernanceInstallCommand,
   InstallArchitectureBaselineRevisionCommand,
@@ -40,9 +30,9 @@ import type {
 import { governanceContentDigest } from "../../src/contracts/governance.js";
 import { makeCommitCursor } from "../../src/contracts/ledger.js";
 import type { LedgerCommit, LedgerCommitReceipt } from "../../src/contracts/ledger.js";
-import { createControlEngine } from "../../src/control/control-engine.js";
-import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
-import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
+import { createControlEngine } from "../../src/control/control-engine/control-engine.js";
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
 import { KNOWN_EVENT_TYPES } from "../../src/contracts/events.js";
 
 /** Real InMemoryLedger that additionally records the committed batch (observation only). */

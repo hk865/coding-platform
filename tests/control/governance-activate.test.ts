@@ -19,16 +19,9 @@
  */
 import { describe, expect, it } from "vitest";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
-import {
-  COMPLETION_POLICY_FIXTURE_V1,
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  buildInstallCommand,
-  buildActivateCommand,
-  buildActivateLedgerCommit,
-  completionPolicyPinFor,
-  architectureBaselinePinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
+import { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildActivateCommand, buildActivateLedgerCommit } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
 import type {
   ActivateProjectCompletionPolicyCommand,
   InstallCompletionPolicyRevisionCommand,
@@ -36,9 +29,9 @@ import type {
 } from "../../src/contracts/governance.js";
 import type { LedgerCommit, LedgerCommitReceipt } from "../../src/contracts/ledger.js";
 import { makeCommitCursor } from "../../src/contracts/ledger.js";
-import { createControlEngine } from "../../src/control/control-engine.js";
-import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
-import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
+import { createControlEngine } from "../../src/control/control-engine/control-engine.js";
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
 
 const BOOT_DEPS = {
   commandId: "cmd-boot",

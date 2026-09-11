@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "files": [
+    {
+      "path": ".local/toolchains/activate.sh",
+      "sha256": "8cba2b8d7e86af74027c187f2fb1579b248c044e34bf15e915fbffd45fcf55b6",
+      "bytes": 519
+    },
+    {
+      "path": ".local/evaluation/rat-00/environment/collect-environment.py",
+      "sha256": "d218cab573777cbe456312ddab37732beb1dbc48591ce58a47a576821f80bdf6",
+      "bytes": 10089
+    },
+    {
+      "path": ".local/evaluation/rat-00/environment/stage-workspace-runtime.py",
+      "sha256": "bca893efdce04c389071c1e1ad66aad359f9fc8beae7e651fcde1cd8739b9fe2",
+      "bytes": 1634
+    },
+    {
+      "path": ".local/evaluation/rat-00/environment/probe-runtime-overlay.mjs",
+      "sha256": "b936ae543ab1cd4464223778f8f5860146d80708ee8a0c3ab2d1118e609943a9",
+      "bytes": 3477
+    },
+    {
+      "path": ".local/evaluation/rat-00/environment/probe.mjs",
+      "sha256": "b4f1378ea5984f8c513d3e4b92c7a5787fe2c71bb55a84cf74d044c6c31ee1d5",
+      "bytes": 4418
+    }
+  ]
+}

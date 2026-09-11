@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 1,
+  "ticketId": "RAT-00",
+  "status": "CHECKED_WITH_BLOCKERS",
+  "recordedAt": "2026-09-07T10:00:39.092816+00:00",
+  "toolchains": {
+    "node": {
+      "status": "READY",
+      "version": "v24.18.0",
+      "path": {
+        "path": "/home/han001/projects/agents/agent_platform/.local/toolchains/node-v24.18.0-linux-x64/bin/node",
+        "resolved": "/home/han001/projects/agents/agent_platform/.local/toolchains/node-v24.18.0-linux-x64/bin/node"
+      }
+    },
+    "npm": {
+      "status": "READY",
+      "version": "11.16.0",
+      "path": {
+        "path": "/home/han001/projects/agents/agent_platform/.local/toolchains/node-v24.18.0-linux-x64/bin/npm",
+        "resolved": "/home/han001/projects/agents/agent_platform/.local/toolchains/node-v24.18.0-linux-x64/lib/node_modules/npm/bin/npm-cli.js"
+      }
+    },
+    "pnpm": {
+      "status": "READY",
+      "version": "11.21.0",
+      "path": {
+        "path": "/home/han001/projects/agents/agent_platform/.local/toolchains/node-v24.18.0-linux-x64/bin/pnpm",
+        "resolved": "/home/han001/projects/agents/agent_platform/.local/toolchains/node-v24.18.0-linux-x64/lib/node_modules/corepack/dist/pnpm.js"
+      }
+    },
+    "python": {
+      "status": "READY",
+      "version": "Python 3.12.3",
+      "path": {
+        "path": "/usr/bin/python3",
+        "resolved": "/usr/bin/python3.12"
+      }
+    },
+    "git": {
+      "status": "READY",
+      "version": "git version 2.43.0",
+      "path": {
+        "path": "/usr/bin/git",
+        "resolved": "/usr/bin/git"
+      }
+    },
+    "bubblewrap": {
+      "status": "READY",
+      "version": "bubblewrap 0.9.0",
+      "path": {
+        "path": "/home/han001/projects/agents/agent_platform/.local/toolchains/bwrap/usr/bin/bwrap",
+        "resolved": "/home/han001/projects/agents/agent_platform/.local/toolchains/bwrap/usr/bin/bwrap"
+      }
+    }
+  },
+  "productionIsolation": {
+    "status": "READY",
+    "profile": {
+      "available": true,
+      "version": "bwrap-m3-v4:bubblewrap 0.9.0",
+      "bwrapPath": "/home/han001/projects/agents/agent_platform/.local/toolchains/bwrap/usr/bin/bwrap",
+      "reason": null
+    },
+    "securityChecks": {
+      "workspace_write": "PASS",
+      "hidden_materials": "PASS",
+      "source_boundary": "PASS",
+      "host_write_boundary": "PASS",
+      "network_isolation": "PASS"
+    },
+    "evidence": "evidence/rat-00/environment/isolation-probe.json"
+  },
+  "defaultSandboxNode": {
+    "status": "BLOCKED",
+    "reason": "Production ProcessSandbox exposes system /usr,/bin,/lib paths only; locally bundled Node is outside the sandbox PATH and mount namespace. Host Node availability does not prove shell Node availability.",
+    "evidence": {
+      "status": "FAIL",
+      "command": "node --version",
+      "exitCode": 127,
+      "signal": null,
+      "timedOut": false,
+      "cancelled": false,
+      "stdout": {
+        "text": "",
+        "totalBytes": 0,
+        "truncated": false
+      },
+      "stderr": {
+        "text": "/bin/bash: line 1: node: command not found\n",
+        "totalBytes": 43,
+        "truncated": false
+      },
+      "effects": {
+        "sideEffect": "possible",
+        "changedPaths": [],
+        "workspaceRevision": "6b21b0f1c5e931c891d48bf66e714648e9ea564796be12a44d0d6d6ee1daeb4f",
+        "artifactRefs": []
+      },
+      "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+      "timings": {
+        "snapshotBeforeMs": 1.434032000000002,
+        "executionMs": 6.274587999999994,
+        "snapshotAfterMs": 1.6910410000000127
+      }
+    }
+  },
+  "workspaceNodeProbe": {
+    "status": "READY",
+    "meaning": "Feasibility probe only; formal canary baseline remains BLOCKED",
+    "version": "v24.18.0",
+    "commandPrefix": "PATH=/workspace/.runtime/bin:$PATH",
+    "changedPaths": [],
+    "runtimeSha256": "41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c",
+    "evidence": "evidence/rat-00/environment/runtime-overlay-probe.json"
+  },
+  "containerRuntime": {
+    "status": "BLOCKED",
+    "reason": "Docker CLI and daemon socket not found"
+  },
+  "disk": {
+    "status": "READY",
+    "values": {
+      "/home/han001/projects/agents/agent_platform": {
+        "totalBytes": 1081101176832,
+        "usedBytes": 47557832704,
+        "freeBytes": 978550988800
+      },
+      "/mnt/d/1.project/Software/agent_learn": {
+        "totalBytes": 700458201088,
+        "usedBytes": 177004040192,
+        "freeBytes": 523454160896
+      }
+    },
+    "assessment": "WSL free disk exceeds the documented 120 GB full-suite guidance; no per-task image/storage measurement has been performed."
+  },
+  "modelConfiguration": {
+    "providedFileExists": true,
+    "providedFileNonempty": true,
+    "fileContentsRead": false,
+    "environmentVariablesPresent": {
+      "OPENAI_API_KEY": false,
+      "DEEPSEEK_API_KEY": false
+    },
+    "modelBinding": "UNBOUND_RAT_01",
+    "connectionTest": "NOT_RUN",
+    "externalModelCalls": 0
+  },
+  "officialRepoqaScorer": {
+    "status": "READY",
+    "controls": "PASS 30/30",
+    "python": ".local/evaluation/rat-00/repoqa/scorer-env/bin/python",
+    "lockedDependencies": "evaluation/rat-00-v1/repoqa/scorer-requirements.lock",
+    "globalPythonUnchanged": true
+  },
+  "requiredExecutionBlockers": [
+    {
+      "id": "model-and-cost-binding",
+      "status": "UNBOUND",
+      "owner": "RAT-01",
+      "detail": "Provider/model, actual context/output capacity and monetary ceiling must be bound before model trials; supplied credential file is present/nonempty but not read or tested."
+    },
+    {
+      "id": "sandbox-node-environment",
+      "status": "BLOCKED",
+      "owner": "RAT-02/RAT-03",
+      "detail": "Default production sandbox cannot resolve node; dedicated environment-layer probe passes, but formal pre-snapshot staging, layer protection and PATH are not integrated."
+    },
+    {
+      "id": "cumulative-role-budget-enforcement",
+      "status": "NOT_IMPLEMENTED",
+      "owner": "RAT-02/RAT-03/RAT-04/RAT-08",
+      "detail": "runtime.tokenBudget denotes context capacity. Cumulative input/output across roles, continuations and retries must be metered and stopped separately."
+    },
+    {
+      "id": "real-worker-gui-integration",
+      "status": "NOT_IMPLEMENTED",
+      "owner": "RAT-02",
+      "detail": "GUI still uses test adapters; preparation does not establish real run/query integration."
+    },
+    {
+      "id": "multi-agent-raw-evidence-and-fault-adapters",
+      "status": "NOT_PREPARED",
+      "owner": "RAT-04/RAT-08",
+      "detail": "23 symbolic fault directives and normalized-trace assertions are prepared; platform raw-evidence authentication/export and real fault execution remain to be connected."
+    }
+  ],
+  "optionalExecutionBlockers": [
+    {
+      "id": "official-snf-tokenizer",
+      "status": "BLOCKED",
+      "owner": "RAT-04/RAT-06 if official SNF is selected",
+      "detail": "Official function scorer is READY and controls PASS; exact 16384-token SNF preprocessing still lacks a frozen tokenizer revision/assets. Derived tool navigation is separate."
+    },
+    {
+      "id": "container-diagnostics",
+      "status": "BLOCKED",
+      "owner": "RAT-06",
+      "detail": "Docker/Podman and task image inventory unavailable. sympy__sympy-20590 and cancel-async-tasks remain selected IDs with environment/data/image preparation pending."
+    }
+  ],
+  "note": "The environment worker report preserves its earlier system-package inventory. The official scorer is subsequently installed in its dedicated local environment as recorded here."
+}

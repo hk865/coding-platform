@@ -1,0 +1,14 @@
+node_modules
+dist
+coverage
+.tooling
+package-lock.json
+tests/scenarios/vendor/**
+benchmarks/results
+benchmarks/tasks/*/task.yaml
+AGENTS.md
+*.orig
+# 用户交接文档保持原样（prettier 会重排中文长行）
+docs/development/post-m6-large-repo-roadmap.md
+docs/agent_history/评审agent_01.md
+docs/development/m6-independent-quality-review-2026-08-28.md

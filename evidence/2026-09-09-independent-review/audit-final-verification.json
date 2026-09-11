@@ -1,0 +1,2396 @@
+{
+  "fiveManifests": [
+    {
+      "name": "candidate-04",
+      "files": 730,
+      "declaredDigest": "1234c2efa1bd3698a2836ed29f5dc8af6edf9e8202dee7755fe3b72a67bfcfd0",
+      "computedDigest": "1234c2efa1bd3698a2836ed29f5dc8af6edf9e8202dee7755fe3b72a67bfcfd0",
+      "exactCandidateFiles": true,
+      "mismatchedActualFiles": []
+    },
+    {
+      "name": "build-end-04",
+      "files": 730,
+      "declaredDigest": "1234c2efa1bd3698a2836ed29f5dc8af6edf9e8202dee7755fe3b72a67bfcfd0",
+      "computedDigest": "1234c2efa1bd3698a2836ed29f5dc8af6edf9e8202dee7755fe3b72a67bfcfd0",
+      "exactCandidateFiles": true,
+      "mismatchedActualFiles": []
+    },
+    {
+      "name": "browser-end-04",
+      "files": 730,
+      "declaredDigest": "1234c2efa1bd3698a2836ed29f5dc8af6edf9e8202dee7755fe3b72a67bfcfd0",
+      "computedDigest": "1234c2efa1bd3698a2836ed29f5dc8af6edf9e8202dee7755fe3b72a67bfcfd0",
+      "exactCandidateFiles": true,
+      "mismatchedActualFiles": []
+    },
+    {
+      "name": "full-end-04",
+      "files": 730,
+      "declaredDigest": "1234c2efa1bd3698a2836ed29f5dc8af6edf9e8202dee7755fe3b72a67bfcfd0",
+      "computedDigest": "1234c2efa1bd3698a2836ed29f5dc8af6edf9e8202dee7755fe3b72a67bfcfd0",
+      "exactCandidateFiles": true,
+      "mismatchedActualFiles": []
+    },
+    {
+      "name": "release-04",
+      "files": 730,
+      "declaredDigest": "1234c2efa1bd3698a2836ed29f5dc8af6edf9e8202dee7755fe3b72a67bfcfd0",
+      "computedDigest": "1234c2efa1bd3698a2836ed29f5dc8af6edf9e8202dee7755fe3b72a67bfcfd0",
+      "exactCandidateFiles": true,
+      "mismatchedActualFiles": []
+    }
+  ],
+  "identityMatchesResults": true,
+  "identityMatchesSource": true,
+  "priorDigestDeclared": "ddf3fa92797c7eb3ae46db809762cb6c25002fea10c41722ab8073d700741f6b",
+  "priorDigestComputed": "ddf3fa92797c7eb3ae46db809762cb6c25002fea10c41722ab8073d700741f6b",
+  "priorMatchesIdentity": true,
+  "changedCount": 87,
+  "added": 33,
+  "modified": 54,
+  "deleted": 0,
+  "changesMatchIdentity": true,
+  "changedOutsideSourceScope": [],
+  "logsChecked": 18,
+  "mismatchedLogs": [],
+  "missingResultLogs": [],
+  "full": {
+    "filesParsed": 249,
+    "uniqueFiles": 249,
+    "testsFromFiles": 1633,
+    "summary": [
+      " Test Files  249 passed (249)",
+      "      Tests  1633 passed (1633)",
+      "   Start at  23:23:04",
+      "   Duration  1531.30s (transform 144.19s, setup 0ms, import 1033.93s, tests 694.54s, environment 15ms)"
+    ],
+    "otherLines": [
+      "stdout | tests/integration/p1-16.real-kernel.continuity.test.ts > P1-16 real-kernel continuity evidence (real coding-agent CLI) > run(2 requests: read -> final) -> resume(same session) -> second turn; evidence recorded",
+      "P1-16-REAL-KERNEL-EVIDENCE",
+      "{",
+      "  \"kernelRoot\": \"/mnt/d/1.project/Software/agent_platform/vendor/coding-agent/\",",
+      "  \"sessionId\": \"p116-real-kernel-session\",",
+      "  \"turn1\": {",
+      "    \"args\": [",
+      "      \"run\"",
+      "    ],",
+      "    \"exit\": null,",
+      "    \"requests\": 3,",
+      "    \"stdoutTail\": \"\"",
+      "  },",
+      "  \"turn2\": {",
+      "    \"args\": [",
+      "      \"resume\",",
+      "      \"--session\",",
+      "      \"p116-real-kernel-session\"",
+      "    ],",
+      "    \"exit\": 0,",
+      "    \"requests\": 3,",
+      "    \"stdoutTail\": \"第二阶段完成：从持久会话接续并继续同一工作\\n\"",
+      "  },",
+      "  \"sessionDbBytes\": 77824,",
+      "  \"observed\": \"restored_original\",",
+      "  \"capability\": {",
+      "    \"sessionRestore\": true,",
+      "    \"contextResume\": true,",
+      "    \"takeoverRun\": true",
+      "  },",
+      "  \"note\": \"真实内核应用路径验证（真实 CLI 进程 + 真实会话持久化 + 真实 resume 语义）；模型端点为本地 SSE 替身（无 provider 凭证时的显式降级证据）——见 IMPLEMENTATION-HANDOFF P1-16 真实内核证据设计。\"",
+      "}",
+      "stdout | tests/integration/p1-15-role-e2e.integration.test.ts > P1-15 lane C — 模型协作集成端到端 (真实内核 CLI + 本地模型 fixture) > run(collaboration turn 1) -> resume(close/reopen same session) -> 续接; evidence recorded",
+      "P1-15-MODEL-E2E-EVIDENCE",
+      "{",
+      "  \"p115\": {",
+      "    \"kernelRoot\": \"/mnt/d/1.project/Software/agent_platform/vendor/coding-agent/\",",
+      "    \"sessionId\": \"p115-lane-c-model-e2e-session\",",
+      "    \"modelEndpoint\": \"local-fixture-sse (DEEPSEEK_API_KEY=fixture-secret)\",",
+      "    \"turn1\": {",
+      "      \"args\": [",
+      "        \"run\"",
+      "      ],",
+      "      \"exit\": null,",
+      "      \"requests\": 3,",
+      "      \"stdoutTail\": \"\"",
+      "    },",
+      "    \"turn2\": {",
+      "      \"args\": [",
+      "        \"resume\",",
+      "        \"--session\",",
+      "        \"p115-lane-c-model-e2e-session\"",
+      "      ],",
+      "      \"exit\": 0,",
+      "      \"requests\": 3,",
+      "      \"stdoutTail\": \"P1-15 模型协作闭环（真实内核，close/reopen 续接）：需求歧义→选项(opt-a/opt-b)→决定(accept opt-a)→派发→验证→返工(一次)→接续——从持久事实与 Handoff 继续\\n\"",
+      "    },",
+      "    \"sessionDbBytes\": 77824,",
+      "    \"observed\": \"collaboration_loop_model_fixture\",",
+      "    \"capability\": {",
+      "      \"modelEndpointDegraded\": true,",
+      "      \"sessionRestore\": true,",
+      "      \"closeReopen\": true,",
+      "      \"noExternalNetwork\": true",
+      "    },",
+      "    \"note\": \"真实内核应用路径验证：真实 CLI 进程 + 真实 SQLite 会话持久化 + 真实 resume 语义 + 本地 OpenAI 兼容模型 fixture（无 provider 凭证时的显式降级证据，DEEPSEEK_API_KEY=fixture-secret）。\"",
+      "  }",
+      "}",
+      "stdout | tests/restart/evidence/p1-07-evidence.test.ts > P1-07 restart-path evidence > collects the P1-07 evidence block",
+      "P1-07-EVIDENCE {",
+      "  \"ticket\": \"P1-07\",",
+      "  \"path\": \"two-independent-reader-tasks (parallel readers -> join -> single writer -> patch record -> goal gate)\",",
+      "  \"workspaceRevisionAfter\": 2,",
+      "  \"readers\": {",
+      "    \"a\": \"run-p107-read-a\",",
+      "    \"b\": \"run-p107-read-b\"",
+      "  },",
+      "  \"joinResultId\": \"result-p107-1\",",
+      "  \"patch\": {",
+      "    \"patchId\": \"patch-p107-1\",",
+      "    \"kind\": \"patch\"",
+      "  },",
+      "  \"restart\": {",
+      "    \"workspaceRevisionEqual\": true,",
+      "    \"leaseSnapshotEqual\": true,",
+      "    \"patchSnapshotEqual\": true,",
+      "    \"viewsRebuilt\": true,",
+      "    \"observedCursorEqual\": true",
+      "  }",
+      "}",
+      "stdout | tests/restart/evidence/p1-08-evidence.test.ts > P1-08 restart-path evidence > collects the P1-08 evidence block",
+      "P1-08-EVIDENCE {",
+      "  \"ticket\": \"P1-08\",",
+      "  \"path\": \"two-project read-only console (portfolio -> workspace summary -> plan matrix -> active agents -> task evidence -> timeline)\",",
+      "  \"scopes\": {",
+      "    \"projectA\": \"proj-alpha\",",
+      "    \"projectB\": \"proj-beta\",",
+      "    \"sharedWorkspaceId\": \"ws-shared\",",
+      "    \"sharedGoalId\": \"goal-p108-1\"",
+      "  },",
+      "  \"projectA\": {",
+      "    \"workRun\": \"run-p108-a-work\",",
+      "    \"extraRun\": \"run-p108-a-extra\",",
+      "    \"replacementRun\": \"run-p108-a-extra-b\",",
+      "    \"packet\": \"packet-p108-a-extra\",",
+      "    \"goalPhase\": \"COMPLETED\"",
+      "  },",
+      "  \"projectB\": {",
+      "    \"workRun\": \"run-p108-b-work\",",
+      "    \"extraRun\": \"run-p108-b-extra\",",
+      "    \"outcomeUnknownPreserved\": true,",
+      "    \"goalPhase\": \"NEEDS_DECISION\"",
+      "  },",
+      "  \"restart\": {",
+      "    \"sixViewsFieldIdentical\": true,",
+      "    \"observedCursorEqual\": true",
+      "  }",
+      "}",
+      "stdout | tests/restart/evidence/p1-06-evidence.test.ts > P1-06 restart-path evidence > collects the P1-06 evidence block",
+      "P1-06-EVIDENCE {",
+      "  \"ticket\": \"P1-06\",",
+      "  \"path\": \"bootstrap -> install/activate -> CreateGoal -> applyPlan -> A claim/start/crash -> body-first packet register -> B replacement claim -> driveHandoff -> close -> reopen -> packet/replacement/lease/B-run identical + provenance rebuilt\",",
+      "  \"packet\": {",
+      "    \"noFullTranscript\": true,",
+      "    \"sizeBounded\": true",
+      "  },",
+      "  \"replacement\": {",
+      "    \"movedLeaseToB\": true,",
+      "    \"priorRunRef\": \"run-rs-a\"",
+      "  },",
+      "  \"bRunOutcome\": \"completed\",",
+      "  \"provenanceTimelineKinds\": [",
+      "    \"packet_recorded\",",
+      "    \"replacement_claimed\"",
+      "  ],",
+      "  \"outcomeUnknownPreserved\": true,",
+      "  \"restart\": {",
+      "    \"snapshotsMatch\": true,",
+      "    \"provenanceRebuild\": true,",
+      "    \"observedCursorEqual\": true",
+      "  },",
+      "  \"eventTypes\": [",
+      "    \"ProjectBootstrapped\",",
+      "    \"ProjectBootstrapped\",",
+      "    \"WorkspaceBootstrapped\",",
+      "    \"WorkspaceBootstrapped\",",
+      "    \"CompletionPolicyInstalled\",",
+      "    \"ArchitectureBaselineInstalled\",",
+      "    \"CompletionPolicyActivated\",",
+      "    \"ArchitectureBaselineActivated\",",
+      "    \"GoalCreated\",",
+      "    \"PlanRevisionAccepted\",",
+      "    \"TaskClaimed\",",
+      "    \"RunStarted\",",
+      "    \"RunEventRecorded\",",
+      "    \"RunEventRecorded\",",
+      "    \"HandoffRecorded\",",
+      "    \"ReplacementClaimed\",",
+      "    \"RunStarted\",",
+      "    \"RunEventRecorded\",",
+      "    \"RunEventRecorded\"",
+      "  ]",
+      "}",
+      "stdout | tests/restart/evidence/p1-17-evidence.test.ts > P1-17-EVIDENCE",
+      "P1-17-EVIDENCE-BLOCK",
+      "{",
+      "  \"cursorBefore\": \"c0000000057\",",
+      "  \"viewBytes\": 313,",
+      "  \"selectionStatus\": \"ready\"",
+      "}",
+      "stdout | tests/restart/evidence/p1-09-evidence.test.ts > P1-09-EVIDENCE",
+      "P1-09-EVIDENCE-BLOCK {\"cursorBefore\":\"c0000000053\",\"viewBytes\":4479}",
+      "stdout | tests/restart/evidence/p1-05-evidence.test.ts > P1-05 restart-path evidence > collects the P1-05 evidence block",
+      "P1-05-EVIDENCE {",
+      "  \"ticket\": \"P1-05\",",
+      "  \"path\": \"bootstrap -> install/activate -> CreateGoal -> applyPlan -> claim -> FakeRuntime events -> PASS evidence -> TaskReduction -> GoalPhase reduction -> commit -> close -> reopen -> GoalPhase snapshot / goalStatus / goalTimeline identical\",",
+      "  \"goalPhase\": \"COMPLETED\",",
+      "  \"previousPhase\": \"COMPLETED\",",
+      "  \"reasonCodes\": [",
+      "    \"optional_task_not_satisfied\",",
+      "    \"completion_guard_ok\"",
+      "  ],",
+      "  \"explanationHeadline\": \"goal goal-105 phase = COMPLETED (2 reason(s), completion guard holds)\",",
+      "  \"explanationItems\": [",
+      "    {",
+      "      \"code\": \"optional_task_not_satisfied\",",
+      "      \"message\": \"optional task(s) not satisfied — attention flag; NEVER blocks completion. (tasks=task-optional-105)\"",
+      "    },",
+      "    {",
+      "      \"code\": \"completion_guard_ok\",",
+      "      \"message\": \"GoalCompletionGuard holds: active plan non-empty, every required work/gate task satisfied, every required obligation satisfied, no unreconciled side effect. (tasks=task-work-105,gate-module-105,gate-stage-105,gate-goal-105; obligations=obl-work-105,obl-module-105,obl-stage-105,obl-goal-105)\"",
+      "    }",
+      "  ],",
+      "  \"timelineLength\": 2,",
+      "  \"observedCursorEqual\": true,",
+      "  \"snapshotsMatch\": true,",
+      "  \"viewsRebuild\": true,",
+      "  \"eventTypes\": [",
+      "    \"ProjectBootstrapped\",",
+      "    \"ProjectBootstrapped\",",
+      "    \"WorkspaceBootstrapped\",",
+      "    \"WorkspaceBootstrapped\",",
+      "    \"CompletionPolicyInstalled\",",
+      "    \"ArchitectureBaselineInstalled\",",
+      "    \"CompletionPolicyActivated\",",
+      "    \"ArchitectureBaselineActivated\",",
+      "    \"GoalCreated\",",
+      "    \"PlanRevisionAccepted\",",
+      "    \"TaskClaimed\",",
+      "    \"RunStarted\",",
+      "    \"RunEventRecorded\",",
+      "    \"RunEventRecorded\",",
+      "    \"EvidenceAdmitted\",",
+      "    \"EvidenceAdmitted\",",
+      "    \"EvidenceAdmitted\",",
+      "    \"EvidenceAdmitted\",",
+      "    \"EvidenceAdmitted\",",
+      "    \"TaskReductionUpdated\",",
+      "    \"TaskReductionUpdated\",",
+      "    \"TaskReductionUpdated\",",
+      "    \"TaskReductionUpdated\",",
+      "    \"GoalPhaseUpdated\",",
+      "    \"GoalPhaseUpdated\"",
+      "  ]",
+      "}",
+      "stdout | tests/restart/evidence/p1-04-evidence.test.ts > P1-04 restart-path evidence > collects the P1-04 evidence block",
+      "P1-04-EVIDENCE {",
+      "  \"ticket\": \"P1-04\",",
+      "  \"path\": \"bootstrap -> install/activate -> CreateGoal -> applyPlan -> claim -> FakeRuntime events -> VerificationPlan -> claim/observation/verdict admission -> TaskReduction -> commit -> close -> reopen -> Evidence/Index/TaskReduction/verification view identical\",",
+      "  \"reduction\": {",
+      "    \"implementPhase\": \"satisfied\",",
+      "    \"implementEffectiveEvidenceIds\": [",
+      "      \"ev-rs-dynamic\",",
+      "      \"ev-rs-static\"",
+      "    ],",
+      "    \"implementBlockingEvidenceIds\": [],",
+      "    \"reviewPhase\": \"satisfied\",",
+      "    \"gatePhase\": \"satisfied\"",
+      "  },",
+      "  \"evidenceCount\": 6,",
+      "  \"bindingApplicability\": [",
+      "    {",
+      "      \"id\": \"ev-rs-claim\",",
+      "      \"kind\": \"claim\",",
+      "      \"applicability\": \"APPLICABLE\"",
+      "    },",
+      "    {",
+      "      \"id\": \"ev-rs-static\",",
+      "      \"kind\": \"observation\",",
+      "      \"applicability\": \"APPLICABLE\"",
+      "    },",
+      "    {",
+      "      \"id\": \"ev-rs-dynamic\",",
+      "      \"kind\": \"observation\",",
+      "      \"applicability\": \"APPLICABLE\"",
+      "    }",
+      "  ],",
+      "  \"workerCannotWriteTaskPhase\": true,",
+      "  \"verdictAloneNotSatisfying\": true,",
+      "  \"restart\": {",
+      "    \"snapshotsMatch\": true,",
+      "    \"verificationViewRebuild\": true,",
+      "    \"observedCursorEqual\": true",
+      "  },",
+      "  \"eventTypes\": [",
+      "    \"ProjectBootstrapped\",",
+      "    \"ProjectBootstrapped\",",
+      "    \"WorkspaceBootstrapped\",",
+      "    \"WorkspaceBootstrapped\",",
+      "    \"CompletionPolicyInstalled\",",
+      "    \"ArchitectureBaselineInstalled\",",
+      "    \"CompletionPolicyActivated\",",
+      "    \"ArchitectureBaselineActivated\",",
+      "    \"GoalCreated\",",
+      "    \"PlanRevisionAccepted\",",
+      "    \"TaskClaimed\",",
+      "    \"RunStarted\",",
+      "    \"RunEventRecorded\",",
+      "    \"RunEventRecorded\",",
+      "    \"EvidenceAdmitted\",",
+      "    \"EvidenceAdmitted\",",
+      "    \"EvidenceAdmitted\",",
+      "    \"TaskReductionUpdated\",",
+      "    \"TaskClaimed\",",
+      "    \"RunStarted\",",
+      "    \"RunEventRecorded\",",
+      "    \"RunEventRecorded\",",
+      "    \"EvidenceAdmitted\",",
+      "    \"EvidenceAdmitted\",",
+      "    \"TaskReductionUpdated\",",
+      "    \"EvidenceAdmitted\",",
+      "    \"TaskReductionUpdated\"",
+      "  ]",
+      "}",
+      "stdout | tests/restart/evidence/p1-02-evidence.test.ts > P1-02 restart-path evidence > collects the P1-02 restart evidence block",
+      "P1-02-EVIDENCE {",
+      "  \"ticket\": \"P1-02\",",
+      "  \"path\": \"bootstrap -> install x2 -> activate x2 (CAS) -> CreateGoal -> applyPlan -> commit -> close -> reopen -> canonical refs/pins + Plan Graph/Task Detail/active revision identical\",",
+      "  \"commitCursors\": {",
+      "    \"bootstrap\": \"c0000000004\",",
+      "    \"installCompletionPolicy\": \"c0000000005\",",
+      "    \"installArchitectureBaseline\": \"c0000000006\",",
+      "    \"activateCompletionPolicy\": \"c0000000007\",",
+      "    \"activateArchitectureBaseline\": \"c0000000008\",",
+      "    \"createGoal\": \"c0000000009\",",
+      "    \"applyPlan\": \"c0000000010\"",
+      "  },",
+      "  \"canonicalRefs\": {",
+      "    \"completionPolicy\": {",
+      "      \"ref\": {",
+      "        \"aggregateType\": \"CompletionPolicyRevision\",",
+      "        \"projectId\": \"proj-alpha\",",
+      "        \"policyId\": \"policy-completion-mvp\",",
+      "        \"revision\": 1",
+      "      },",
+      "      \"digest\": \"4680201b5cb8e4807db836eaaf8fbfc78ec565134e0a40cf20a5f813b309186e\"",
+      "    },",
+      "    \"architectureBaseline\": {",
+      "      \"ref\": {",
+      "        \"aggregateType\": \"ArchitectureBaselineRevision\",",
+      "        \"projectId\": \"proj-alpha\",",
+      "        \"baselineId\": \"baseline-architecture-mvp\",",
+      "        \"revision\": 1",
+      "      },",
+      "      \"digest\": \"19a578923f4fc100e37ef3f907d23a4d945e8825c653b7c467cf8712d1db7a8b\"",
+      "    }",
+      "  },",
+      "  \"activeRefs\": {",
+      "    \"completionPolicy\": {",
+      "      \"activeRevision\": {",
+      "        \"aggregateType\": \"CompletionPolicyRevision\",",
+      "        \"projectId\": \"proj-alpha\",",
+      "        \"policyId\": \"policy-completion-mvp\",",
+      "        \"revision\": 1",
+      "      },",
+      "      \"aggregateRevision\": 1",
+      "    },",
+      "    \"architectureBaseline\": {",
+      "      \"activeRevision\": {",
+      "        \"aggregateType\": \"ArchitectureBaselineRevision\",",
+      "        \"projectId\": \"proj-alpha\",",
+      "        \"baselineId\": \"baseline-architecture-mvp\",",
+      "        \"revision\": 1",
+      "      },",
+      "      \"aggregateRevision\": 1",
+      "    }",
+      "  },",
+      "  \"pins\": {",
+      "    \"completionPolicy\": {",
+      "      \"ref\": {",
+      "        \"aggregateType\": \"CompletionPolicyRevision\",",
+      "        \"projectId\": \"proj-alpha\",",
+      "        \"policyId\": \"policy-completion-mvp\",",
+      "        \"revision\": 1",
+      "      },",
+      "      \"digest\": \"4680201b5cb8e4807db836eaaf8fbfc78ec565134e0a40cf20a5f813b309186e\"",
+      "    },",
+      "    \"architectureBaseline\": {",
+      "      \"ref\": {",
+      "        \"aggregateType\": \"ArchitectureBaselineRevision\",",
+      "        \"projectId\": \"proj-alpha\",",
+      "        \"baselineId\": \"baseline-architecture-mvp\",",
+      "        \"revision\": 1",
+      "      },",
+      "      \"digest\": \"19a578923f4fc100e37ef3f907d23a4d945e8825c653b7c467cf8712d1db7a8b\"",
+      "    }",
+      "  },",
+      "  \"goalSnapshot\": {",
+      "    \"activePlanRevision\": {",
+      "      \"aggregateType\": \"PlanRevision\",",
+      "      \"projectId\": \"proj-alpha\",",
+      "      \"planId\": \"plan-mvp-1\"",
+      "    },",
+      "    \"revision\": 2",
+      "  },",
+      "  \"planGraphFields\": {",
+      "    \"planRef\": {",
+      "      \"aggregateType\": \"PlanRevision\",",
+      "      \"projectId\": \"proj-alpha\",",
+      "      \"planId\": \"plan-mvp-1\"",
+      "    },",
+      "    \"planRevision\": 1,",
+      "    \"acceptedAt\": \"2026-09-05T12:00:00.000Z\",",
+      "    \"stages\": 2,",
+      "    \"tasks\": 4,",
+      "    \"parentOf\": 3,",
+      "    \"dependsOn\": 3",
+      "  },",
+      "  \"eventTypes\": [",
+      "    \"ProjectBootstrapped\",",
+      "    \"WorkspaceBootstrapped\",",
+      "    \"CompletionPolicyInstalled\",",
+      "    \"ArchitectureBaselineInstalled\",",
+      "    \"CompletionPolicyActivated\",",
+      "    \"ArchitectureBaselineActivated\",",
+      "    \"GoalCreated\",",
+      "    \"PlanRevisionAccepted\"",
+      "  ],",
+      "  \"restart\": {",
+      "    \"observedCursorBefore\": \"c0000000010\",",
+      "    \"observedCursorAfter\": \"c0000000010\",",
+      "    \"cursorEqual\": true,",
+      "    \"canonicalGoalSnapshotActivePlanMatches\": true,",
+      "    \"goalRevisionMatches\": true,",
+      "    \"canonicalPolicyResolves\": true,",
+      "    \"canonicalBaselineResolves\": true,",
+      "    \"planGraphMatches\": true,",
+      "    \"taskDetailCount\": 4,",
+      "    \"taskDetailsMatch\": true,",
+      "    \"pinsUnchanged\": true,",
+      "    \"goalViewActivePlanAfterRestart\": {",
+      "      \"aggregateType\": \"PlanRevision\",",
+      "      \"projectId\": \"proj-alpha\",",
+      "      \"planId\": \"plan-mvp-1\"",
+      "    }",
+      "  }",
+      "}",
+      "stdout | tests/restart/p1-06-restart.test.ts > P1-06 restart-path evidence > collects the P1-06 evidence block",
+      "P1-06-EVIDENCE {",
+      "  \"ticket\": \"P1-06\",",
+      "  \"path\": \"bootstrap -> install/activate -> CreateGoal -> applyPlan -> A claim/start/crash -> body-first packet register -> B replacement claim -> driveHandoff -> close -> reopen -> packet/replacement/lease/B-run identical + provenance rebuilt\",",
+      "  \"packet\": {",
+      "    \"noFullTranscript\": true,",
+      "    \"sizeBounded\": true",
+      "  },",
+      "  \"replacement\": {",
+      "    \"movedLeaseToB\": true,",
+      "    \"priorRunRef\": \"run-rs-a\"",
+      "  },",
+      "  \"bRunOutcome\": \"completed\",",
+      "  \"provenanceTimelineKinds\": [",
+      "    \"packet_recorded\",",
+      "    \"replacement_claimed\"",
+      "  ],",
+      "  \"outcomeUnknownPreserved\": true,",
+      "  \"restart\": {",
+      "    \"snapshotsMatch\": true,",
+      "    \"provenanceRebuild\": true,",
+      "    \"observedCursorEqual\": true",
+      "  },",
+      "  \"eventTypes\": [",
+      "    \"ProjectBootstrapped\",",
+      "    \"ProjectBootstrapped\",",
+      "    \"WorkspaceBootstrapped\",",
+      "    \"WorkspaceBootstrapped\",",
+      "    \"CompletionPolicyInstalled\",",
+      "    \"ArchitectureBaselineInstalled\",",
+      "    \"CompletionPolicyActivated\",",
+      "    \"ArchitectureBaselineActivated\",",
+      "    \"GoalCreated\",",
+      "    \"PlanRevisionAccepted\",",
+      "    \"TaskClaimed\",",
+      "    \"RunStarted\",",
+      "    \"RunEventRecorded\",",
+      "    \"RunEventRecorded\",",
+      "    \"HandoffRecorded\",",
+      "    \"ReplacementClaimed\",",
+      "    \"RunStarted\",",
+      "    \"RunEventRecorded\",",
+      "    \"RunEventRecorded\"",
+      "  ]",
+      "}",
+      "stdout | tests/restart/evidence/p1-16-evidence.test.ts > P1-16-EVIDENCE",
+      "P1-16-EVIDENCE-BLOCK",
+      "{",
+      "  \"cursorBefore\": \"c0000000057\",",
+      "  \"ledgerCurve\": 57,",
+      "  \"workAViewBytes\": 942,",
+      "  \"workCoordViewBytes\": 3640,",
+      "  \"workBViewBytes\": 938,",
+      "  \"bindingSnapshotBytes\": 854",
+      "}",
+      "stdout | tests/restart/evidence/p1-03-evidence.test.ts > P1-03 restart-path evidence > collects the P1-03 restart evidence block",
+      "P1-03-EVIDENCE {",
+      "  \"ticket\": \"P1-03\",",
+      "  \"path\": \"bootstrap -> install/activate -> CreateGoal -> applyPlan -> claim -> start -> FakeRuntime events -> commit -> close -> reopen -> outbox/lease/Attempt/Run/ActiveAgents/TaskDetail identical\",",
+      "  \"run\": {",
+      "    \"runId\": \"run-p103-0001\",",
+      "    \"status\": \"ended\",",
+      "    \"outcome\": \"completed\",",
+      "    \"lastEventSeq\": 2,",
+      "    \"exitCode\": 0,",
+      "    \"envelopeBounded\": true,",
+      "    \"envelopeHasTranscript\": false",
+      "  },",
+      "  \"outbox\": {",
+      "    \"status\": \"done\",",
+      "    \"pendingAfterTerminal\": true,",
+      "    \"intentTaskId\": \"task-run-adaptor\",",
+      "    \"bindingVersion\": 1",
+      "  },",
+      "  \"lease\": {",
+      "    \"holderRunId\": \"run-p103-0001\",",
+      "    \"revision\": 1",
+      "  },",
+      "  \"attempt\": {",
+      "    \"status\": \"ended\",",
+      "    \"endOutcome\": \"completed\"",
+      "  },",
+      "  \"views\": {",
+      "    \"activeAgentOutcome\": \"completed\",",
+      "    \"taskDetailPhase\": \"pending\",",
+      "    \"taskDetailRunOutcome\": \"completed\"",
+      "  },",
+      "  \"afterTerminalTaskPhaseNotSatisfied\": true,",
+      "  \"restart\": {",
+      "    \"observedCursorEqual\": true,",
+      "    \"snapshotsMatch\": true,",
+      "    \"agentRebuild\": true,",
+      "    \"taskDetailRebuild\": true",
+      "  },",
+      "  \"eventTypes\": [",
+      "    \"ProjectBootstrapped\",",
+      "    \"ProjectBootstrapped\",",
+      "    \"WorkspaceBootstrapped\",",
+      "    \"WorkspaceBootstrapped\",",
+      "    \"CompletionPolicyInstalled\",",
+      "    \"ArchitectureBaselineInstalled\",",
+      "    \"CompletionPolicyActivated\",",
+      "    \"ArchitectureBaselineActivated\",",
+      "    \"GoalCreated\",",
+      "    \"PlanRevisionAccepted\",",
+      "    \"TaskClaimed\",",
+      "    \"RunStarted\",",
+      "    \"RunEventRecorded\",",
+      "    \"RunEventRecorded\"",
+      "  ]",
+      "}",
+      "stdout | tests/restart/evidence/p1-01-evidence.test.ts > P1-01 restart-path evidence > collects the restart evidence block",
+      "P1-01-EVIDENCE {",
+      "  \"ticket\": \"P1-01\",",
+      "  \"path\": \"bootstrap -> CreateGoal(alpha+beta) -> SQLite commit -> close -> reopen -> canonical snapshot load + EventPage rebuild -> same GoalView\",",
+      "  \"commitCursors\": {",
+      "    \"bootstrap\": \"c0000000004\",",
+      "    \"alpha\": \"c0000000005\",",
+      "    \"beta\": \"c0000000006\"",
+      "  },",
+      "  \"manifest\": {",
+      "    \"schemaVersion\": 1,",
+      "    \"sourceDigest\": \"26badb1e84f539c2efd17bec0eb8302820b2045f5e678975bfb89df84012a142\",",
+      "    \"bootstrapRevision\": 1,",
+      "    \"entries\": 2",
+      "  },",
+      "  \"cursor\": {",
+      "    \"observedBeforeRestart\": \"c0000000006\",",
+      "    \"rebuiltObservedAfter\": \"c0000000006\"",
+      "  },",
+      "  \"canonicalSnapshotLoad\": {",
+      "    \"alpha\": {",
+      "      \"matches\": true,",
+      "      \"pre\": {",
+      "        \"ref\": {",
+      "          \"aggregateType\": \"Goal\",",
+      "          \"projectId\": \"proj-alpha\",",
+      "          \"goalId\": \"goal-1\"",
+      "        },",
+      "        \"workspaceRef\": {",
+      "          \"aggregateType\": \"Workspace\",",
+      "          \"projectId\": \"proj-alpha\",",
+      "          \"workspaceId\": \"ws-shared\"",
+      "        },",
+      "        \"objective\": \"为 proj-alpha 完成第一个可观察目标：contract pack 可运行\",",
+      "        \"desiredState\": \"active\",",
+      "        \"activePlanRevision\": null,",
+      "        \"revision\": 1",
+      "      },",
+      "      \"post\": {",
+      "        \"ref\": {",
+      "          \"aggregateType\": \"Goal\",",
+      "          \"projectId\": \"proj-alpha\",",
+      "          \"goalId\": \"goal-1\"",
+      "        },",
+      "        \"workspaceRef\": {",
+      "          \"aggregateType\": \"Workspace\",",
+      "          \"projectId\": \"proj-alpha\",",
+      "          \"workspaceId\": \"ws-shared\"",
+      "        },",
+      "        \"objective\": \"为 proj-alpha 完成第一个可观察目标：contract pack 可运行\",",
+      "        \"desiredState\": \"active\",",
+      "        \"activePlanRevision\": null,",
+      "        \"revision\": 1",
+      "      }",
+      "    },",
+      "    \"beta\": {",
+      "      \"matches\": true,",
+      "      \"pre\": {",
+      "        \"ref\": {",
+      "          \"aggregateType\": \"Goal\",",
+      "          \"projectId\": \"proj-beta\",",
+      "          \"goalId\": \"goal-1\"",
+      "        },",
+      "        \"workspaceRef\": {",
+      "          \"aggregateType\": \"Workspace\",",
+      "          \"projectId\": \"proj-beta\",",
+      "          \"workspaceId\": \"ws-shared\"",
+      "        },",
+      "        \"objective\": \"为 proj-beta 完成第一个可观察目标：contract pack 可运行\",",
+      "        \"desiredState\": \"active\",",
+      "        \"activePlanRevision\": null,",
+      "        \"revision\": 1",
+      "      },",
+      "      \"post\": {",
+      "        \"ref\": {",
+      "          \"aggregateType\": \"Goal\",",
+      "          \"projectId\": \"proj-beta\",",
+      "          \"goalId\": \"goal-1\"",
+      "        },",
+      "        \"workspaceRef\": {",
+      "          \"aggregateType\": \"Workspace\",",
+      "          \"projectId\": \"proj-beta\",",
+      "          \"workspaceId\": \"ws-shared\"",
+      "        },",
+      "        \"objective\": \"为 proj-beta 完成第一个可观察目标：contract pack 可运行\",",
+      "        \"desiredState\": \"active\",",
+      "        \"activePlanRevision\": null,",
+      "        \"revision\": 1",
+      "      }",
+      "    }",
+      "  },",
+      "  \"eventRebuildView\": {",
+      "    \"alpha\": {",
+      "      \"matches\": true,",
+      "      \"pre\": {",
+      "        \"status\": \"ready\",",
+      "        \"goal\": {",
+      "          \"goalId\": \"goal-1\",",
+      "          \"projectId\": \"proj-alpha\",",
+      "          \"workspaceId\": \"ws-shared\",",
+      "          \"objective\": \"为 proj-alpha 完成第一个可观察目标：contract pack 可运行\",",
+      "          \"desiredState\": \"active\",",
+      "          \"activePlanRevision\": null,",
+      "          \"aggregateRevision\": 1,",
+      "          \"sourceCursor\": \"c0000000005\"",
+      "        },",
+      "        \"observedCursor\": \"c0000000006\"",
+      "      },",
+      "      \"post\": {",
+      "        \"status\": \"ready\",",
+      "        \"goal\": {",
+      "          \"goalId\": \"goal-1\",",
+      "          \"projectId\": \"proj-alpha\",",
+      "          \"workspaceId\": \"ws-shared\",",
+      "          \"objective\": \"为 proj-alpha 完成第一个可观察目标：contract pack 可运行\",",
+      "          \"desiredState\": \"active\",",
+      "          \"activePlanRevision\": null,",
+      "          \"aggregateRevision\": 1,",
+      "          \"sourceCursor\": \"c0000000005\"",
+      "        },",
+      "        \"observedCursor\": \"c0000000006\"",
+      "      }",
+      "    },",
+      "    \"beta\": {",
+      "      \"matches\": true,",
+      "      \"pre\": {",
+      "        \"status\": \"ready\",",
+      "        \"goal\": {",
+      "          \"goalId\": \"goal-1\",",
+      "          \"projectId\": \"proj-beta\",",
+      "          \"workspaceId\": \"ws-shared\",",
+      "          \"objective\": \"为 proj-beta 完成第一个可观察目标：contract pack 可运行\",",
+      "          \"desiredState\": \"active\",",
+      "          \"activePlanRevision\": null,",
+      "          \"aggregateRevision\": 1,",
+      "          \"sourceCursor\": \"c0000000006\"",
+      "        },",
+      "        \"observedCursor\": \"c0000000006\"",
+      "      },",
+      "      \"post\": {",
+      "        \"status\": \"ready\",",
+      "        \"goal\": {",
+      "          \"goalId\": \"goal-1\",",
+      "          \"projectId\": \"proj-beta\",",
+      "          \"workspaceId\": \"ws-shared\",",
+      "          \"objective\": \"为 proj-beta 完成第一个可观察目标：contract pack 可运行\",",
+      "          \"desiredState\": \"active\",",
+      "          \"activePlanRevision\": null,",
+      "          \"aggregateRevision\": 1,",
+      "          \"sourceCursor\": \"c0000000006\"",
+      "        },",
+      "        \"observedCursor\": \"c0000000006\"",
+      "      }",
+      "    }",
+      "  },",
+      "  \"files\": {",
+      "    \"ledger\": \"/tmp/agent-platform-p1-01-5FVEnx/ledger.sqlite\",",
+      "    \"readModelRebuilt\": \"/tmp/agent-platform-p1-01-5FVEnx/readmodel-rebuilt.sqlite\"",
+      "  }",
+      "}",
+      "stdout | tests/restart/evidence/p1-12-evidence.test.ts > P1-12-EVIDENCE",
+      "P1-12-EVIDENCE-BLOCK",
+      "{",
+      "  \"cursorBefore\": \"c0000000055\",",
+      "  \"ledgerEventIds\": 55,",
+      "  \"viewBytes\": 10335,",
+      "  \"deltaChanges\": 4,",
+      "  \"proposalDigest\": \"e9a112f23da7f3a338d5a60d8952275c4576d18f638a87560abf29b3034cd28e\"",
+      "}"
+    ]
+  },
+  "browser": {
+    "casesParsed": 23,
+    "sequential": true,
+    "summary": [
+      "  23 passed (3.6m)"
+    ]
+  },
+  "changes": [
+    {
+      "path": "scripts/module-map.mjs",
+      "before": "dd6f737fbceb7ad5b628f110da7ad8bc6e297667a1310e92dfb355bee156d0ef",
+      "after": "bce8a8eba8ec9319bc7c2914053cd742845762103a61e623fdf35041afc75968"
+    },
+    {
+      "path": "src/app/public/live-runs.js",
+      "before": "a348c66750a14e73de8f30c7db581e494563aef23838aa57e04b73e9e78f6772",
+      "after": "0d445885933665971ca98ce28892884e73b18841dc7d35050700cbc61da69aab"
+    },
+    {
+      "path": "src/app/server.ts",
+      "before": "328f8dec83b3ac0de5880b05e5e64e32aab79a214b361aaa263bf80c229653f4",
+      "after": "962ad86d04476ef538d9769a1a9ff1b9ec9f50e0fe3cf35ebbaca7f839f02214"
+    },
+    {
+      "path": "src/app/service.ts",
+      "before": "4eb9f48383fec7e788f91a806708a9df6a90a1b5bfa7813ce75b6bca5c10174b",
+      "after": "e45bcbc45ff36f52915162920d2ea27166b86917b95a23f55da6cb0bdeccf980"
+    },
+    {
+      "path": "src/context/reviewer-context.ts",
+      "before": null,
+      "after": "77ab9a2aa22da314491c01f8f525dd311d190921176ca4f04d1cb13416d66c64"
+    },
+    {
+      "path": "src/context/reviewer-profile.ts",
+      "before": null,
+      "after": "b2dc9e4addeaa989a6ddc662da1841c96a3485b7f905ef48dd83c6b837b590fc"
+    },
+    {
+      "path": "src/context/reviewer-runtime-context.ts",
+      "before": null,
+      "after": "38f2d66a1f12441057ce2f3a321b5796f61c1bf5427389eda67df009b048606c"
+    },
+    {
+      "path": "src/context/runtime-context.ts",
+      "before": "91e6a74c49c051f91c6f027f8a6e77d6bd5ad3f722dfc0e1000b8729a4448166",
+      "after": "c688fa9088524579b2b197b378c12feaa6b0b8237ad3aee976c517b37f20e157"
+    },
+    {
+      "path": "src/context/verification-context.ts",
+      "before": "254d21b20fb88401577074f2785001440d134344385698988791d47b37713901",
+      "after": "e52acd576e04e3570eeda6603dfbd07eac1a146f95dbb504f7972bf92c11248f"
+    },
+    {
+      "path": "src/contracts/commands/reviewer-work.ts",
+      "before": null,
+      "after": "cb2d33e46ef82be9bde533a600a6fcebea144229e2638fbbd03d2654b40110bd"
+    },
+    {
+      "path": "src/contracts/console-views.ts",
+      "before": "ef95f84abc91f85a9f815a65eac4b7d76fc2b5de9602efc3303c501aa620eebd",
+      "after": "afc9112262bfb475cb1aa0183bc0297a2f12b9915d926715c79ce6f95c8aed12"
+    },
+    {
+      "path": "src/contracts/dispatch.ts",
+      "before": "9a4d22f554877f609ff5e3a90666cc60094abda12e5967fdd04878829c5a9145",
+      "after": "acb53603191d5df1432fcc47263fea0719d14cf92893db4c9cae1ccb77123493"
+    },
+    {
+      "path": "src/contracts/events.ts",
+      "before": "7cdbb1006b021f992a9f9a79eb28de7d64d8f8a901e20ce875cde86b2cb94d5b",
+      "after": "e823087ce2c4a8eec8c194d2c46b1f290c79dce9dfbea2f0b1d599ef64864107"
+    },
+    {
+      "path": "src/contracts/evidence.ts",
+      "before": "7dc8946d881aa97a77eaf3a80b4302128353b589bde7ce5dad42e74b0e00fb07",
+      "after": "6fe436f34b673fa9b72d5b0abe73cfba91bed5d11971a7d93528242d4709f828"
+    },
+    {
+      "path": "src/contracts/ledger-validation.ts",
+      "before": "70d30297a1895ce521336bc0cf042c1b3724caade33d87317e6ded9feb2dc5f4",
+      "after": "d7eb4b7ec23e90d1cf2b9e55211d6eed8e6ccc61af50ce729f95d8f2d48d4ba0"
+    },
+    {
+      "path": "src/contracts/ledger.ts",
+      "before": "592644d6304e30053cb6ce5f3cbf0fb97a0a9d302f6461bc999c9d4efcdaef80",
+      "after": "ae4f730bdf29a710e5d8651a046cd7efe0d9faf2262e489d15b362d71a32eef0"
+    },
+    {
+      "path": "src/contracts/material-access.ts",
+      "before": "f13a46e88925a5b1fba66671877bf3ae2f66e4ec5957cc8d6494894f91978b96",
+      "after": "2917ab80339a6068e2f16a1278a136a972721d81e92c2a1a275f7e4c3a5beff3"
+    },
+    {
+      "path": "src/contracts/plan.ts",
+      "before": "c3317527fbf49a366b775ea6a85ee4d4f45e350c68bf527466ae9d4a1498cf8c",
+      "after": "dcd9054a5317168322e16d6a35b2a24faefac6d42e39ad276cba11ce9819365d"
+    },
+    {
+      "path": "src/contracts/policy-explanation.ts",
+      "before": "f28af6faddc3e54023775135df42fb53f67a3ba8d082b3ceaa5b3e543c2286c3",
+      "after": "88e81aa6b8c6f24c34309baf812e9c0f6dd520aac47e3dc02c71729d5f09cd5c"
+    },
+    {
+      "path": "src/contracts/read-model.ts",
+      "before": null,
+      "after": "53f2a1dabfb0788510cd447df4610ec9af9dc552cd63e7d6c9b59ba22830e8c9"
+    },
+    {
+      "path": "src/contracts/reviewer-context.ts",
+      "before": null,
+      "after": "e19cf3ef5e00054ef3b3c9b1f0e625d2702c464189261e2ce5f984d0e365bdb6"
+    },
+    {
+      "path": "src/contracts/reviewer-verification.ts",
+      "before": null,
+      "after": "2e7090cf43b6b0ff82264123a225dd50fc748357453894a58b1b63bfb19e1092"
+    },
+    {
+      "path": "src/contracts/reviewer-work.ts",
+      "before": null,
+      "after": "caa1a540a68706258bb96bf550a8afb92d0b68a0a0b77056d14700ccd35a2a0d"
+    },
+    {
+      "path": "src/contracts/runtime-preparation.ts",
+      "before": "dc6f84e310155426c88d9d2bd2216bd3fbc6d88f7a15de4fa940916e4b327c37",
+      "after": "905b8daf5d64871a859f7b8d642ec1c5c216f67608e4e880b42aba935be95df7"
+    },
+    {
+      "path": "src/contracts/task-envelope.ts",
+      "before": "a4e3b0fb4627f7cd7f14d4bab05fba867a3b43801cf4b28fc08e902aeb3da054",
+      "after": "d1546b950f7d84641fbd921d953ad2775618823330fbcaa7c2eb1959429f0fc0"
+    },
+    {
+      "path": "src/contracts/validation.ts",
+      "before": "892b64c55f9e9f7bff617a453ef37baa54236c30634607f8345d63c0876810b4",
+      "after": "67cbaef49529f1c2974f24b05e5be54fc834c2031714883afdc3a2b2c6cc0fa6"
+    },
+    {
+      "path": "src/contracts/verification-service.ts",
+      "before": "dbbeccdd45368a87192cd2662b3024d5c5ff7136d1418887a3feb7a975e7c580",
+      "after": "9bb3ace517bc629081d8d189e68fecbedc8a7bc0d0f3f1949343376da2d2958a"
+    },
+    {
+      "path": "src/control/dispatch-engine.ts",
+      "before": "f5301b4342c1c49a84946c08c421342db0af8cd6fb768017be4ab364ce734617",
+      "after": "d0129f772d7f7425661d9b00e13f2192268eaf14329092f7b12938f929a589fb"
+    },
+    {
+      "path": "src/control/dispatch-facts.ts",
+      "before": "80c74b8b0c6d6ad9e3deb9b169cde695ffbad1affc4e5b22e96d82e50559b5c9",
+      "after": "8c2175e2d2e87c15bfff3149215444c1d952dc80c85010263468944b642ae896"
+    },
+    {
+      "path": "src/control/evidence-intake.ts",
+      "before": "7098086e491b3eac9161cbf8c8b2ad5935c37d3b7fb5bb8dc2a5e2938247dcdc",
+      "after": "b24a7c66568f0dbc0a535005a8120bfabbcae0adf2ab5b7521a767de39571360"
+    },
+    {
+      "path": "src/control/goal-reducer.ts",
+      "before": "ad54bf951feb2ea95516310667435149abb90daec46bb8f27e7aeb97e2a14ef9",
+      "after": "aa27d2997356350af0e0efdabfe363b5f88f984b03033e3c5133af8a3fe0a1a7"
+    },
+    {
+      "path": "src/control/handoff-drive.ts",
+      "before": "ffdb63c75806a3bd621830de14036845b1fda9450dfbddea8474fd44e4209921",
+      "after": "086bb03a42ed7d261f6cd1125585810ef5a27dc7d5429f0beb3157a5c0b33c1c"
+    },
+    {
+      "path": "src/control/leased-worker-runtime.ts",
+      "before": "9ccb60ba04bed3dc05501ad745d56dfeaba3044923862439215794098f603645",
+      "after": "df41462e83222e31e00f2c67a01d327db4664639ea388743982bb34f42709db2"
+    },
+    {
+      "path": "src/control/operator-plan-compiler.ts",
+      "before": "ee990b0806d160ace1860bbe4f2be6847bfa991f3df8cc52f4f544d3d279a691",
+      "after": "827449d7602e6f0b33886bc92107aa528733fec30cdf667453700ffe08487fdd"
+    },
+    {
+      "path": "src/control/policies/initial-plan-admission.ts",
+      "before": "485557609ae9ed2391efe818eaed7a04598bdc27aefefa3bb4663b101b360edf",
+      "after": "3652fc1d44f9f38e6db3377321b35f7133e9673ab5df1f9a558d238e56281ec9"
+    },
+    {
+      "path": "src/control/policies/reviewer-evidence.ts",
+      "before": null,
+      "after": "780daa7cfec8fabaa555c5e7869d2fe3abe44f9909ccd8a9e433956cc148cb81"
+    },
+    {
+      "path": "src/control/policy-explanation.ts",
+      "before": "ac62493b47667e96494ea55625af7ae2e1783b8193e69583b793e42e8c5ca19b",
+      "after": "493f54e10fdf303c4de88af5abc6d8030768ff01ee1a26fd0b79270fca14a0cf"
+    },
+    {
+      "path": "src/control/records/plan.ts",
+      "before": "e40b85e0b621862a7a78dc139c1a0019a38aae5ca5f40a56df4fc10ff6a01a50",
+      "after": "dc6553195c13313ddc129a565b32d8da0cea71d01fefc95824ab82d4416932ff"
+    },
+    {
+      "path": "src/control/reviewer-dispatch.ts",
+      "before": null,
+      "after": "c523433b0139be2427d2ea1b3705681735c79fbc02281fb28fd45e75c334e2f6"
+    },
+    {
+      "path": "src/control/reviewer-work.ts",
+      "before": null,
+      "after": "914c1795e5bf59a819ceeee7668f57cb69d2f632f1afd8d29ba46109adf5383f"
+    },
+    {
+      "path": "src/control/runtime-dispatch.ts",
+      "before": "d3185ab65deeb316808caca15978b29549fc90a1ac0a676fd8fe951cd92e7077",
+      "after": "12c5f09f88131b235934b46d24237b4993fe07ef5165a64dd6c495c747641f7e"
+    },
+    {
+      "path": "src/control/start-run.ts",
+      "before": "9e46808b6339aed395ab1d32f7e4617bd1a2bc4069f713ca0a2239b9214ea2a3",
+      "after": "bede85395a712fd553e838ac597630cf4d2669b0ff3320acd30dd72d60768282"
+    },
+    {
+      "path": "src/control/task-reducer.ts",
+      "before": "282bb437bdc2afec99a084b5f78b18665b92143cfbae4d2beccee15e81b9f590",
+      "after": "e09448a123ea5ffeee4d833561debadaddcc45b3680028eeb432f8d5ac7df021"
+    },
+    {
+      "path": "src/control/workspace-drive.ts",
+      "before": "b8fb9c648dd6a3584bd63183a5f3bd1a5607406c240525cb0ab6bfb93e23d1fd",
+      "after": "a1ca68a53b62c99e2c410755b7aab6ebf430ac1a4f967ac484ce2442a3094c71"
+    },
+    {
+      "path": "src/data/reviewer-source-reader.ts",
+      "before": null,
+      "after": "c0015ac238537f8c590cb1290c1ea75873f26c18d94e55ce4d078efe9424bdcb"
+    },
+    {
+      "path": "src/data/source-applicability.ts",
+      "before": "f97248d7ca1cc887163f9c12b63e5e548f185b0c83e711d839b1afb02395c164",
+      "after": "24cbe9753abcc96b39c88b94ebe9046f0beb772f064c83ae1e3b15b54a0efe5d"
+    },
+    {
+      "path": "src/data/verification-source-applicability.ts",
+      "before": null,
+      "after": "80a735fdcf4a88db5afa2a5395fe734e704a8f39e6a48be024a3983917f2b0fd"
+    },
+    {
+      "path": "src/interaction/history-materials.ts",
+      "before": "67d31db2813866c0997757c96fa44bc2d16dc2810273cc58df692e8b54a5b553",
+      "after": "f3a30ba58110f482578cb57466cdc6cd8b29223d1eae589e4b11317fc7180e13"
+    },
+    {
+      "path": "src/ledger/in-memory-ledger.ts",
+      "before": "e11c534cc80f92819c07406ed76206021f96712bcce7cff90426db7e3a0f3a9b",
+      "after": "e60b5201256f1294c4c933628174714dca7ebd3374771631490ee42a84cf9c12"
+    },
+    {
+      "path": "src/read-model/read-model-index.ts",
+      "before": "c22b2ebdab6196e7a496d8d733d0727119d1ff638e918413c473124db1a69c9c",
+      "after": "7286c158a60181baf20ea4c46cdcee59bd826c123ef2926addf949ee65ad6062"
+    },
+    {
+      "path": "src/read-model/reviewer-projection.ts",
+      "before": null,
+      "after": "e7c2e2263ea40578300b279504252bbb2c6b3b8c5f7afa441013c13d2e59c77d"
+    },
+    {
+      "path": "src/runtime/coding-agent-runtime.ts",
+      "before": "71c17ec3b76fe1ecbf468c5db9b24c7bc4fa4284961a984b52ecf9f291c6193e",
+      "after": "357194139974fd65e730ffc0d2ea4bb2097c36d8286fe56f7d5a2a5f040a308c"
+    },
+    {
+      "path": "src/runtime/exploration-tools.ts",
+      "before": "f64894bb9e29ed4a1fb01a1b8804e7d555ee95d1734fed0fe96b54f6a7603536",
+      "after": "d11c8bd13048ac92da20902f47858822806398df6ce70d7218600ae7e6a3db5e"
+    },
+    {
+      "path": "src/runtime/observed-model-run.ts",
+      "before": "6a26dd871c2e1ab139ecdd551af2ce24d1fd913214af4d420cf09002a98dee4b",
+      "after": "44538eb84e44cc5e31b0e76fa3759f8442ce7dd050c30a87712892702ce2f276"
+    },
+    {
+      "path": "src/runtime/reviewer-material-tools.ts",
+      "before": null,
+      "after": "c3496db263a093710572db1f6be2b5ef6cfc444866cea63c22ba850eeaa7f931"
+    },
+    {
+      "path": "src/sqlite-ledger/sqlite-ledger.ts",
+      "before": "5fab6320e19041a9ec027a37145bfdaa7a6fbe094f0f583e1581dcb30fc9d25b",
+      "after": "aa4201876ac262348836ae300ebada6758670ae963439fa4f21ab6f332bb98f6"
+    },
+    {
+      "path": "src/sqlite-read-model/sqlite-read-model-index.ts",
+      "before": "a05a7155dfb9873efce818240c036a64916c4f4f33e8f066ceb0fa6f2d060126",
+      "after": "8a9b040f6c3c173a289ab891905e8bae36c4f54ffa6ab4f43e01aeb24e302d09"
+    },
+    {
+      "path": "src/ui/src/api/client.ts",
+      "before": "9ae338d983f5abe7c1d2a3a1b9bfa5e2e8d68fada5efe9db11df469178d7b7e6",
+      "after": "69789cad9537325ad711c163abb4ad62a85d77e840b93589ad2b7a5ae967c32b"
+    },
+    {
+      "path": "src/ui/src/api/types.ts",
+      "before": "33395d24ac99296693f4f4c984b0e6ce5ce3dd4843e16acc767bd5aeaf84ee1c",
+      "after": "d7f937a353e822bfeefeefab859528d92764e6f320595919c8196a0b54e9422a"
+    },
+    {
+      "path": "src/ui/src/features/conversation.tsx",
+      "before": "ea3a0088e9079e30e2705427ccebce428a48b0076a514368b1331d4edd11eb4c",
+      "after": "fd06ce20b3456b5ac6486128318dcf2dd7643d3525a933f935437bd5c5579b30"
+    },
+    {
+      "path": "src/ui/src/features/independent-review.tsx",
+      "before": null,
+      "after": "e54083261958fce120f3c29091e0dda43e2f43a15df4ecd668204abe4d9b1736"
+    },
+    {
+      "path": "src/ui/src/features/misc.tsx",
+      "before": "29ada5b485ebe4a5af6d93d10ee9f764a26fc5af3f4930bf2bb408883f946c22",
+      "after": "40d4fb0fa95c1f8d1ed02000d355d10b5cdb533049c8037543d531769aa3e919"
+    },
+    {
+      "path": "src/ui/src/features/verification.tsx",
+      "before": "b5285934ad098e4b72c3282d53cb7eb89df2680579b2cc14c377d266316b51c3",
+      "after": "32315e9712a1261d153f7114f6e228ea8b3c0018b04bdcfa77cea6725355bdc3"
+    },
+    {
+      "path": "src/ui/src/state/pending.ts",
+      "before": "caf23ce626b96710e7e9aa72addfb1f331360363ea9c65c77f99d058fad66993",
+      "after": "184050e5ff6889c4b343e63b78a5c34138a450f830f979283cdd6d94f881862d"
+    },
+    {
+      "path": "src/ui/tests/independent-review.spec.ts",
+      "before": null,
+      "after": "88cc32357199ef4d42d56227625532895e1144e6d9fe14786ef52f60dc026644"
+    },
+    {
+      "path": "src/ui/tests/ui-06-07-08.spec.ts",
+      "before": "82cb8c240ef00debcb7aac693db3c3e0414d94b7b6ea6038a7e1739e778888b6",
+      "after": "5fc886de65ce0ac259c183929ee1723098d3b8a8b296264797ab03390c9e56be"
+    },
+    {
+      "path": "src/ui/tests/ui-10-11.spec.ts",
+      "before": "bfbcd80f95d4b7b6131f7d5d2daf330bbeef58257b050282aeb94b77f01813c4",
+      "after": "742c885dc36cd26a913bc72fadbd4d0a4d75264ad62cdfeafe9104faa02305a2"
+    },
+    {
+      "path": "src/verification/reviewer-record.ts",
+      "before": null,
+      "after": "fdddb0894d4dea4cd55e388d9439718aac81df5846a01e11b4596cb3750b66ad"
+    },
+    {
+      "path": "src/verification/reviewer-report.ts",
+      "before": null,
+      "after": "2b601ca5287cceb5e7aec67110b5632602ea31dd2760748b231eeafaaa9e494f"
+    },
+    {
+      "path": "src/verification/reviewer-verification.ts",
+      "before": null,
+      "after": "74898a52f6ff8be4060c93df0a078809f8ec09418b03974f193696076d17e782"
+    },
+    {
+      "path": "src/verification/verification-journal.ts",
+      "before": "89eed10f491c5cb900aa6eda270bd3cfeba715874e11569d9758cd8a88fa2c4c",
+      "after": "c126543afb3b8b2cb4e4fd7ab70054c7c8f4b34434b841777e1831ac0dd6107b"
+    },
+    {
+      "path": "src/verification/verification-rounds.ts",
+      "before": "143025f6f9fbfa730d6ab823e287b942570ee9a1d68113c862f39950e6c6127f",
+      "after": "877d1d3dee2acbc0075ca41704ae79d9ba977df394e594c5a000fed8daf9fa80"
+    },
+    {
+      "path": "src/verification/verification-service.ts",
+      "before": "3622de1b872577722c4e0be5000d1bc80ec45261c39b5c36d9e965aeae4e50c1",
+      "after": "bd13cf764e65295260ea975415d0e7b36e43b406feb37dcd42e22160035e2484"
+    },
+    {
+      "path": "tests/app/independent-review-fixture.ts",
+      "before": null,
+      "after": "8f020fb3f609caa2b3707914a465d8714580ba6f448f232659b50ba922e2a90b"
+    },
+    {
+      "path": "tests/app/independent-review.test.ts",
+      "before": null,
+      "after": "0b0b81dcd4dc73dc9472247902f976693d724acd1d6ded5fac349f3658049770"
+    },
+    {
+      "path": "tests/app/reviewer-source-tools.test.ts",
+      "before": null,
+      "after": "f9847f7e13973abc055ba12865d19a76a283fa481c92b28ba231e3b6e0a7f7a8"
+    },
+    {
+      "path": "tests/app/verification-round-fixture.ts",
+      "before": "9cb1b63c2f4d5bb31c45ba8b53629affe25a35d4a0935ba810c0e5543c191791",
+      "after": "65b3a051aa3cee2ca6e73ad2c32aadb092af04ec0522396195618df1007488b2"
+    },
+    {
+      "path": "tests/context/reviewer-context.test.ts",
+      "before": null,
+      "after": "20a28e168ed1a2ec5b2a3451b8c6d3af1c31da437c04dedfa1051f2731d65324"
+    },
+    {
+      "path": "tests/control/reviewer-dispatch-isolation.test.ts",
+      "before": null,
+      "after": "e41c1c40b3873b43a278397bca2a6f3f901392e017c1f5ed588912fa72a60b8c"
+    },
+    {
+      "path": "tests/control/reviewer-existing-drivers-isolation.test.ts",
+      "before": null,
+      "after": "4d77dc82ee71c83a69f3eb8a4c9f1cbf8d5431c07002e5399a1b35789bb88ceb"
+    },
+    {
+      "path": "tests/control/reviewer-reduction-race.test.ts",
+      "before": null,
+      "after": "3dfe5f0dcc2c822e133ca6dc3440e2bca92ede6a9949f1e2ac6283b0ad7a5523"
+    },
+    {
+      "path": "tests/control/reviewer-work-fixture.ts",
+      "before": null,
+      "after": "5b3d84ea55f68e137cab2386ac5c719c8dcc1d13d89ab9fe18a5817cab2a21b1"
+    },
+    {
+      "path": "tests/control/reviewer-work-persistence.test.ts",
+      "before": null,
+      "after": "80afc81d10b3c1d806cd71f9eefc1bfc02deaef338091db18ef3bfb7b238fe37"
+    },
+    {
+      "path": "tests/control/reviewer-work.test.ts",
+      "before": null,
+      "after": "b5b6bfe5d4c2b3b42e96ce508ef3822ebb41d53153b31bacffdc66da67abed4f"
+    },
+    {
+      "path": "tests/vault/verification-source-pin.test.ts",
+      "before": null,
+      "after": "2a83ad5bb569007eef4c7e4f403a07134d72cb4f01d40d3e36fe58c248aa6828"
+    },
+    {
+      "path": "tests/verification/reviewer-fixture.ts",
+      "before": null,
+      "after": "92c69453b05c352e9c4b13d620ff4a4da4a0ad93ceac634c1fac7cdba8f4fac9"
+    },
+    {
+      "path": "tests/verification/reviewer-verification.test.ts",
+      "before": null,
+      "after": "7fc2f2fea84e85649cacf5623cd8eb9d639dd0665d1f37d2b1112cb6173b284d"
+    }
+  ],
+  "logChecks": [
+    {
+      "path": "types-final-04.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "actual": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "ui-types-final-04.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "actual": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "build-final-04.log",
+      "sha256": "dedbb4c272d460872bf269cd4e1dceaaf8a391bb8f33bd90e27716ddc758b01b",
+      "actual": "dedbb4c272d460872bf269cd4e1dceaaf8a391bb8f33bd90e27716ddc758b01b"
+    },
+    {
+      "path": "module-boundaries-final-04.log",
+      "sha256": "a2da45e248c4394c0cec0bbd5c7ea96e4238fadd1590b5306f000ba86da9f0e1",
+      "actual": "a2da45e248c4394c0cec0bbd5c7ea96e4238fadd1590b5306f000ba86da9f0e1"
+    },
+    {
+      "path": "module-boundaries-final-04.json",
+      "sha256": "2ce9bd3770d5148a205eb332a3bea4df934f19e7e033d507991013aec51da297",
+      "actual": "2ce9bd3770d5148a205eb332a3bea4df934f19e7e033d507991013aec51da297"
+    },
+    {
+      "path": "audit-dag.json",
+      "sha256": "08a0d38032300627803b327f4a5cf9502603918cc2f88eb40e73183c1111cd7f",
+      "actual": "08a0d38032300627803b327f4a5cf9502603918cc2f88eb40e73183c1111cd7f"
+    },
+    {
+      "path": "a04-regression-final.log",
+      "sha256": "a18682fc0b9d99017004626335fbc21d91fdf1f57a5f82f9db2f010261c39b8b",
+      "actual": "a18682fc0b9d99017004626335fbc21d91fdf1f57a5f82f9db2f010261c39b8b"
+    },
+    {
+      "path": "browser-final-04.log",
+      "sha256": "cca38318a6156169f8408f58882fd812c71df29c20dfd8c41f1ab9fd36805b11",
+      "actual": "cca38318a6156169f8408f58882fd812c71df29c20dfd8c41f1ab9fd36805b11"
+    },
+    {
+      "path": "full-tests-final-workers2.log",
+      "sha256": "52a20dabf432bb1dbd3a40815100bae0086cda359f2203b5eb4fe7db322115d6",
+      "actual": "52a20dabf432bb1dbd3a40815100bae0086cda359f2203b5eb4fe7db322115d6"
+    },
+    {
+      "path": "docs-final-preaudit.log",
+      "sha256": "17d741a7c14529eb566de8f33e1bcc4bf1afe0dedb1ae3c3c91a8189193d50f5",
+      "actual": "17d741a7c14529eb566de8f33e1bcc4bf1afe0dedb1ae3c3c91a8189193d50f5"
+    },
+    {
+      "path": "full-tests-workers2.log",
+      "sha256": "b5ed46d1ae97632faa2d6addef32bfdb478a9f75ca7fd308e2e5141bbb056085",
+      "actual": "b5ed46d1ae97632faa2d6addef32bfdb478a9f75ca7fd308e2e5141bbb056085"
+    },
+    {
+      "path": "audit-guards-fixed-02.log",
+      "sha256": "c6ac89ccc18fba351f0e6b54f3110ffc17f3f9f69cb3eb463670770c66b2ef5c",
+      "actual": "c6ac89ccc18fba351f0e6b54f3110ffc17f3f9f69cb3eb463670770c66b2ef5c"
+    },
+    {
+      "path": "audit-legacy-dispatch-isolation-01.log",
+      "sha256": "86dd6ed36175edcde347e5964433c6a115aa8f5b604a0bc59ab5bd7c3c35d6aa",
+      "actual": "86dd6ed36175edcde347e5964433c6a115aa8f5b604a0bc59ab5bd7c3c35d6aa"
+    },
+    {
+      "path": "root-http-05.log",
+      "sha256": "123382a77828ad934c48b92f36794f8210537d48df39d1157493ee8617607859",
+      "actual": "123382a77828ad934c48b92f36794f8210537d48df39d1157493ee8617607859"
+    },
+    {
+      "path": "root-source-tools-02.log",
+      "sha256": "ecda8e9cfcb67650c19ad86a8dec2476a94fa69ef814e1f07ef41c91a09c0972",
+      "actual": "ecda8e9cfcb67650c19ad86a8dec2476a94fa69ef814e1f07ef41c91a09c0972"
+    },
+    {
+      "path": "control-existing-drivers-01.log",
+      "sha256": "f0814dbc11110a2b03fb569fd162763f4c6a0f46f2817003734d60d59bddbb28",
+      "actual": "f0814dbc11110a2b03fb569fd162763f4c6a0f46f2817003734d60d59bddbb28"
+    },
+    {
+      "path": "verification-focused-04.log",
+      "sha256": "a3f23f3aeb17abe3321b5b0798018ada81145545d8880d0d16f9adde8e750da5",
+      "actual": "a3f23f3aeb17abe3321b5b0798018ada81145545d8880d0d16f9adde8e750da5"
+    },
+    {
+      "path": "context-focused-06.log",
+      "sha256": "7ad488bf39a3b94e97697b5cf13ab70911f67300f3d035093418c9d70c37f3fe",
+      "actual": "7ad488bf39a3b94e97697b5cf13ab70911f67300f3d035093418c9d70c37f3fe"
+    }
+  ],
+  "fileSummaries": [
+    {
+      "path": "tests/app/real-runtime.test.ts",
+      "tests": 12
+    },
+    {
+      "path": "tests/app/independent-review.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/integration/p1-16.real-kernel.continuity.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-15-role-e2e.integration.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/app/explorations.test.ts",
+      "tests": 8
+    },
+    {
+      "path": "tests/app/verification-imports.test.ts",
+      "tests": 10
+    },
+    {
+      "path": "tests/integration/p1-02.contract-suite.sqlite.test.ts",
+      "tests": 29
+    },
+    {
+      "path": "tests/data/python-source-index.test.ts",
+      "tests": 12
+    },
+    {
+      "path": "tests/integration/p1-06.contract-suite.sqlite.test.ts",
+      "tests": 25
+    },
+    {
+      "path": "tests/app/verification-rounds.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/integration/p1-07.contract-suite.sqlite.test.ts",
+      "tests": 12
+    },
+    {
+      "path": "tests/integration/p1-04.contract-suite.sqlite.test.ts",
+      "tests": 18
+    },
+    {
+      "path": "tests/integration/p1-03.contract-suite.sqlite.test.ts",
+      "tests": 15
+    },
+    {
+      "path": "tests/control/workspace-lease-regression.test.ts",
+      "tests": 20
+    },
+    {
+      "path": "tests/restart/material-access-restart.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-08-matrix-agents-evidence-timeline.test.ts",
+      "tests": 5
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-12-brief-proposal-projection.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/restart/material-source-applicability.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/verification/reviewer-verification.test.ts",
+      "tests": 21
+    },
+    {
+      "path": "tests/integration/p1-01.integration.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-08-portfolio-summary.test.ts",
+      "tests": 5
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-03-run-projection.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/sqlite-read-model/sqlite-read-model-index.restart.test.ts",
+      "tests": 5
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-16-work-context.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-05-goal-phase-projection.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/app/gui.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/app/runtime-context.test.ts",
+      "tests": 20
+    },
+    {
+      "path": "tests/app/semantic-query.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-08.contract-suite.sqlite.test.ts",
+      "tests": 12
+    },
+    {
+      "path": "tests/integration/p1-07.integration.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/verification/verification-rounds.test.ts",
+      "tests": 16
+    },
+    {
+      "path": "tests/app/initial-planning.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-11-plan-change.test.ts",
+      "tests": 5
+    },
+    {
+      "path": "tests/integration/p1-02.integration.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/control/live-frontier-regression.test.ts",
+      "tests": 8
+    },
+    {
+      "path": "tests/restart/evidence/p1-07-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-14-baseline-change-view.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/data/cpp-source-index.test.ts",
+      "tests": 8
+    },
+    {
+      "path": "tests/restart/evidence/p1-08-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/sqlite-read-model/plan-view.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/integration/p1-10.integration.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/integration/p1-17.integration.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/restart/p1-08-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-12.integration.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/integration/p1-06.integration.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-09.integration.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/app/multi-workspace.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/p1-10-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/evidence/p1-06-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-16.integration.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/read-model/completed-work-filter.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/integration/p1-11.integration.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/restart/evidence/p1-17-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-12.contract-suite.sqlite.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/restart/p1-02-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-09.contract-suite.sqlite.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/restart/p1-16-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/app/exploration-runtime.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/restart/evidence/p1-09-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-03.integration.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/app/model-settings.test.ts",
+      "tests": 17
+    },
+    {
+      "path": "tests/restart/evidence/p1-05-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-04.integration.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-15-unified-status.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/restart/p1-12-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-09-query-regression.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/integration/p1-10.contract-suite.sqlite.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/restart/evidence/p1-04-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/p1-17-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-05.integration.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-08.integration.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/p1-07-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/p1-09-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/app/workspace-tools.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/restart/p1-04-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/evidence/p1-02-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/p1-05-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/p1-06-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-16.contract-suite.sqlite.test.ts",
+      "tests": 16
+    },
+    {
+      "path": "tests/restart/evidence/p1-16-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-15.integration.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/evidence/p1-03-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/evidence/p1-01-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/p1-03-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/evidence/p1-12-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/p1-11-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-17.contract-suite.sqlite.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/integration/p1-14.contract-suite.sqlite.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/restart/persistent-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-06-handoff-projection.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/control/source-architecture.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/data/project-source-index.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/integration/p1-11.contract-suite.sqlite.test.ts",
+      "tests": 10
+    },
+    {
+      "path": "tests/restart/evidence/p1-15-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/evidence/p1-14-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-13-writer-chain.integration.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/material-revocation.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/control/reviewer-work-persistence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-13.contract-suite.sqlite.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/integration/p1-13.integration.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/p1-15-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/p1-13-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/context/reviewer-context.test.ts",
+      "tests": 11
+    },
+    {
+      "path": "tests/restart/evidence/p1-13-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/restart/evidence/p1-11-evidence.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-14.integration.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/integration/p1-15.contract-suite.sqlite.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/control/reviewer-work.test.ts",
+      "tests": 20
+    },
+    {
+      "path": "tests/restart/p1-14-restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/control/workspace-registration.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-07-projection.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/sqlite-read-model/material-access-projection.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/vault/persistent-vault.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/context/verification-workspace-reader.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/verification/command-check-provider.test.ts",
+      "tests": 5
+    },
+    {
+      "path": "tests/runtime/runtime-observation-journal.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/context/verification-round-context.test.ts",
+      "tests": 12
+    },
+    {
+      "path": "tests/control/work-record.test.ts",
+      "tests": 14
+    },
+    {
+      "path": "tests/context/persisted-query-source.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/data/source-applicability.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/control/baseline-evolution.test.ts",
+      "tests": 31
+    },
+    {
+      "path": "tests/app/exploration-tools.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/data/source-index.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/app/exploration-source.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/sqlite-ledger/sqlite-ledger.restart.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/vault/verification-source-pin.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/read-model/p1-08-matrix-agents-evidence-timeline.test.ts",
+      "tests": 5
+    },
+    {
+      "path": "tests/read-model/p1-08-portfolio-summary.test.ts",
+      "tests": 5
+    },
+    {
+      "path": "tests/integration/p1-05.contract-suite.sqlite.test.ts",
+      "tests": 8
+    },
+    {
+      "path": "tests/integration/p1-07.contract-suite.inmemory.test.ts",
+      "tests": 12
+    },
+    {
+      "path": "tests/control/evidence-intake.test.ts",
+      "tests": 10
+    },
+    {
+      "path": "tests/integration/p1-04.contract-suite.inmemory.test.ts",
+      "tests": 18
+    },
+    {
+      "path": "tests/read-model/p1-16-work-context.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/read-model/p1-12-brief-proposal-projection.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/integration/p1-05.contract-suite.inmemory.test.ts",
+      "tests": 8
+    },
+    {
+      "path": "tests/read-model/p1-05-goal-phase-projection.test.ts",
+      "tests": 5
+    },
+    {
+      "path": "tests/control/reviewer-reduction-race.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/control/goal-reducer.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/control/remediation.test.ts",
+      "tests": 21
+    },
+    {
+      "path": "tests/app/reviewer-source-tools.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/verification/verification-service.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/integration/p1-03.contract-suite.inmemory.test.ts",
+      "tests": 15
+    },
+    {
+      "path": "tests/control/workspace-lease.test.ts",
+      "tests": 13
+    },
+    {
+      "path": "tests/control/integration-join.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/integration/p1-02.contract-suite.inmemory.test.ts",
+      "tests": 29
+    },
+    {
+      "path": "tests/integration/p1-06.contract-suite.inmemory.test.ts",
+      "tests": 25
+    },
+    {
+      "path": "tests/integration/p1-08.contract-suite.inmemory.test.ts",
+      "tests": 11
+    },
+    {
+      "path": "tests/control/reviewer-existing-drivers-isolation.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/read-model/material-access-lookup.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/app/file-references.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/control/task-reducer.test.ts",
+      "tests": 11
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-04-verification-projection.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/control/goal-change.test.ts",
+      "tests": 15
+    },
+    {
+      "path": "tests/verification/verification-engine.test.ts",
+      "tests": 10
+    },
+    {
+      "path": "tests/control/reviewer-dispatch-isolation.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/verification/candidate-patch-check.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/control/handoff.test.ts",
+      "tests": 8
+    },
+    {
+      "path": "tests/context/review-context-compiler.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/interaction/exploration-session.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/sqlite-read-model/sqlite-read-model-index.contract.test.ts",
+      "tests": 11
+    },
+    {
+      "path": "tests/control/human-role-collaboration.test.ts",
+      "tests": 20
+    },
+    {
+      "path": "tests/control/planning-interface.test.ts",
+      "tests": 5
+    },
+    {
+      "path": "tests/data/ledger-scope-catalog.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/integration/p1-12.contract-suite.inmemory.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/control/replacement-claim.test.ts",
+      "tests": 8
+    },
+    {
+      "path": "tests/control/workspace-drive.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/control/remediation-writer-chain.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/control/handoff-drive.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/control/plan-acceptance.test.ts",
+      "tests": 22
+    },
+    {
+      "path": "tests/control/p1-15-role-rework-loop.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/vault/exploration-material-reader.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/integration/p1-16.contract-suite.inmemory.test.ts",
+      "tests": 16
+    },
+    {
+      "path": "tests/control/patch-record.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/data/exploration-source-applicability.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/ui/client.test.ts",
+      "tests": 5
+    },
+    {
+      "path": "tests/integration/p1-10.contract-suite.inmemory.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/app/history-materials.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/data/candidate-workspace-reader.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/integration/p1-17.contract-suite.inmemory.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/control/material-access.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/integration/p1-09.contract-suite.inmemory.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/context/planning-context-compiler.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/control/dispatch-start.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/control/architecture-inspection.test.ts",
+      "tests": 10
+    },
+    {
+      "path": "tests/sqlite-ledger/sqlite-ledger.contract.test.ts",
+      "tests": 16
+    },
+    {
+      "path": "tests/control/dispatch-claim.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/integration/p1-11.contract-suite.inmemory.test.ts",
+      "tests": 10
+    },
+    {
+      "path": "tests/control/plan-compiler.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/control/initial-plan-source.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/context/handoff-context-compiler.test.ts",
+      "tests": 5
+    },
+    {
+      "path": "tests/integration/p1-00.integration.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/control/architecture-evolution-policy.test.ts",
+      "tests": 13
+    },
+    {
+      "path": "tests/control/dispatch-drive.test.ts",
+      "tests": 5
+    },
+    {
+      "path": "tests/control/architecture-reconciler.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/control/run-facts.test.ts",
+      "tests": 10
+    },
+    {
+      "path": "tests/context/query-execution-context.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/context/completed-work-regression.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-16-continuation-projection.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/control/control-engine.test.ts",
+      "tests": 22
+    },
+    {
+      "path": "tests/control/dispatch-readiness.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/control/governance-activate.test.ts",
+      "tests": 10
+    },
+    {
+      "path": "tests/read-model/p1-03-run-projection.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/integration/p1-13.contract-suite.inmemory.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/control/governance-install.test.ts",
+      "tests": 13
+    },
+    {
+      "path": "tests/read-model/p1-04-verification-projection.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/read-model/p1-07-projection.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/ledger/in-memory-ledger.contract.test.ts",
+      "tests": 16
+    },
+    {
+      "path": "tests/read-model/p1-11-plan-change.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/read-model/p1-06-handoff-projection.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/read-model/read-model-index.contract.test.ts",
+      "tests": 11
+    },
+    {
+      "path": "tests/read-model/plan-view.test.ts",
+      "tests": 8
+    },
+    {
+      "path": "tests/context/work-context-compiler.test.ts",
+      "tests": 11
+    },
+    {
+      "path": "tests/ui/pending.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/contracts/goal-phase.test.ts",
+      "tests": 25
+    },
+    {
+      "path": "tests/context/context-compiler.test.ts",
+      "tests": 12
+    },
+    {
+      "path": "tests/context/material-selection.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/app/model-budget.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/control/canonical-record-scope.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/ledger/in-memory-ledger.boundary.test.ts",
+      "tests": 11
+    },
+    {
+      "path": "tests/read-model/p1-14-baseline-change-view.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/integration/p1-14.contract-suite.inmemory.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/read-model/read-model-index.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/integration/p1-15.contract-suite.inmemory.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/vault/material-access-grant.test.ts",
+      "tests": 8
+    },
+    {
+      "path": "tests/read-model/p1-15-unified-status.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/contracts/fixtures.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/read-model/material-access-projection.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/read-model/p1-16-continuation-projection.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/contracts/material-access.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/vault/artifact-vault.test.ts",
+      "tests": 16
+    },
+    {
+      "path": "tests/read-model/plan-view.rebuild.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/control/runtime-dispatch.test.ts",
+      "tests": 4
+    },
+    {
+      "path": "tests/interaction/human-collaboration.test.ts",
+      "tests": 13
+    },
+    {
+      "path": "tests/control/workspace-capability-policy.test.ts",
+      "tests": 16
+    },
+    {
+      "path": "tests/data/workspace-reader-adapter.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/contracts/validation.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/runtime/fake-runtime-adapter.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/ui/layout.test.ts",
+      "tests": 5
+    },
+    {
+      "path": "tests/app/live-content.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/verification/code-graph-port.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/contracts/fingerprint.test.ts",
+      "tests": 9
+    },
+    {
+      "path": "tests/verification/migration-gate-port.test.ts",
+      "tests": 7
+    },
+    {
+      "path": "tests/contracts/cursor.test.ts",
+      "tests": 3
+    },
+    {
+      "path": "tests/runtime/handoff-control-adapter.test.ts",
+      "tests": 10
+    },
+    {
+      "path": "tests/control/baseline-evolution-port.test.ts",
+      "tests": 5
+    },
+    {
+      "path": "tests/runtime/context-continuation-adapter.test.ts",
+      "tests": 6
+    },
+    {
+      "path": "tests/control/architecture-delta-regression.test.ts",
+      "tests": 2
+    },
+    {
+      "path": "tests/runtime/unconfigured-capabilities.test.ts",
+      "tests": 1
+    },
+    {
+      "path": "tests/ui/rendering.test.ts",
+      "tests": 4
+    }
+  ],
+  "browserCases": [
+    {
+      "index": 1,
+      "case": "src/ui/tests/independent-review.spec.ts:32:1 › independent Reviewer uses actual materials, displays admitted PASS and reopens its original report without another model run (56.7s)"
+    },
+    {
+      "index": 2,
+      "case": "src/ui/tests/independent-review.spec.ts:61:1 › a committed response can be lost; reload finds the original Reviewer, keeps FAIL and shows its actual issue location (8.3s)"
+    },
+    {
+      "index": 3,
+      "case": "src/ui/tests/ui-01-scope.spec.ts:5:3 › UI-01 作用域隔离与旧响应忽略 › 草稿、目标与文件引用不跨项目串用，延迟的旧请求不覆盖新作用域 (9.4s)"
+    },
+    {
+      "index": 4,
+      "case": "src/ui/tests/ui-02-layout.spec.ts:5:3 › UI-02 布局、标签与恢复 › 调整宽度、固定与关闭标签、刷新后恢复，中栏不小于 280px (869ms)"
+    },
+    {
+      "index": 5,
+      "case": "src/ui/tests/ui-02-layout.spec.ts:41:3 › UI-02 布局、标签与恢复 › 折叠底部工具区不会终止终端会话 (1.4s)"
+    },
+    {
+      "index": 6,
+      "case": "src/ui/tests/ui-03-reading.spec.ts:18:3 › UI-03 稳定阅读 › 向上阅读时刷新不抢滚动、不丢焦点与草稿，新消息提示可用 (15.9s)"
+    },
+    {
+      "index": 7,
+      "case": "src/ui/tests/ui-04-reference.spec.ts:20:3 › UI-04 文件引用与版本核对 › 定位行、选择片段、加入草稿；提交前文件变化会被服务器拒绝 (2.3s)"
+    },
+    {
+      "index": 8,
+      "case": "src/ui/tests/ui-05-09-detail.spec.ts:12:3 › UI-05 任务与 Agent 详情一致 › 列表、图与 Agent 打开同一对象；运行结束不使任务自动通过 (7.9s)"
+    },
+    {
+      "index": 9,
+      "case": "src/ui/tests/ui-05-09-detail.spec.ts:55:3 › UI-09 重复提交与未知结果 › 后端已提交但响应 dropped：阻止覆盖，刷新重试不重复创建 (4.1s)"
+    },
+    {
+      "index": 10,
+      "case": "src/ui/tests/ui-05-09-detail.spec.ts:55:3 › UI-09 重复提交与未知结果 › 后端已提交但响应 malformed：阻止覆盖，刷新重试不重复创建 (3.8s)"
+    },
+    {
+      "index": 11,
+      "case": "src/ui/tests/ui-05-09-detail.spec.ts:112:3 › UI-09 重复提交与未知结果 › 后端已提交但响应丢失：刷新后查询回执即可确认，不重复创建 (3.3s)"
+    },
+    {
+      "index": 12,
+      "case": "src/ui/tests/ui-05-09-detail.spec.ts:142:3 › UI-09 重复提交与未知结果 › 网络失败显示结果未知，重试复用同一请求标识且不重复创建 (6.8s)"
+    },
+    {
+      "index": 13,
+      "case": "src/ui/tests/ui-06-07-08.spec.ts:8:3 › UI-06 检查与报告 › 真实运行前不提供假报告；检查入口只在有真实运行时出现 (7.4s)"
+    },
+    {
+      "index": 14,
+      "case": "src/ui/tests/ui-06-07-08.spec.ts:29:3 › UI-07 终端 › 真实命令输出、显式中断、折叠与重连 (4.4s)"
+    },
+    {
+      "index": 15,
+      "case": "src/ui/tests/ui-06-07-08.spec.ts:74:3 › UI-08 模型设置 › 保存回执、密钥不泄漏，消费者版本对照可见 (1.3s)"
+    },
+    {
+      "index": 16,
+      "case": "src/ui/tests/ui-06-report-scope.spec.ts:17:3 › UI-06 报告作用域隔离 › 延迟的报告响应不显示在新目标下，切换后展示新作用域自身状态 (11.4s)"
+    },
+    {
+      "index": 17,
+      "case": "src/ui/tests/ui-10-11.spec.ts:5:3 › UI-10 未接通能力的准确呈现 › 架构、记忆与续跑说明缺项，Reviewer只呈现真实材料状态而不使用固定示例 (2.7s)"
+    },
+    {
+      "index": 18,
+      "case": "src/ui/tests/ui-10-11.spec.ts:33:5 › UI-11 三种尺寸与键盘操作 › 桌面 1440x900 核心操作可达且无横向溢出 (1.6s)"
+    },
+    {
+      "index": 19,
+      "case": "src/ui/tests/ui-10-11.spec.ts:33:5 › UI-11 三种尺寸与键盘操作 › 平板 1024x768 核心操作可达且无横向溢出 (1.1s)"
+    },
+    {
+      "index": 20,
+      "case": "src/ui/tests/ui-10-11.spec.ts:33:5 › UI-11 三种尺寸与键盘操作 › 手机 390x844 核心操作可达且无横向溢出 (1.2s)"
+    },
+    {
+      "index": 21,
+      "case": "src/ui/tests/ui-10-11.spec.ts:56:3 › UI-11 三种尺寸与键盘操作 › 标签方向键、菜单 Escape 焦点返回、分隔条键盘调整与主题切换 (1.9s)"
+    },
+    {
+      "index": 22,
+      "case": "src/ui/tests/verification-rounds.spec.ts:46:3 › VR-01 工具验证轮次 › FAIL 与 PASS 按同一要求聚合，保留 Reviewer 缺项和服务重开后的原始失败报告 (5.5s)"
+    },
+    {
+      "index": 23,
+      "case": "src/ui/tests/verification-rounds.spec.ts:94:3 › VR-01 工具验证轮次 › 提交后丢响应保留请求，reload 查询原回执不重跑；源文件改变只把旧轮次标为过期 (5.4s)"
+    }
+  ]
+}

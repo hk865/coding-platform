@@ -1,0 +1,116 @@
+{
+  "checkedAt": "2026-09-10T04:22:22.141Z",
+  "root": "D:\\1.project\\Software\\agent_platform",
+  "fileCount": 747,
+  "calculatedDigest": "c399856b781f56862ae18af72bed80c2220aa26d9d3b144be87a6167cd6bac61",
+  "declaredDigest": "c399856b781f56862ae18af72bed80c2220aa26d9d3b144be87a6167cd6bac61",
+  "errors": [],
+  "duplicateListedPaths": 0,
+  "independentlyScannedFileCount": 747,
+  "unlistedPaths": [],
+  "listedOutsideScope": [],
+  "since739": {
+    "added": [
+      "src/app/public/workbench/assets/index-DG2ORAex.js",
+      "src/app/public/workbench/assets/task-graph-CSUjHNLE.js",
+      "src/app/public/workbench/assets/terminal-DkrGBGBp.js",
+      "src/ui/tests/reviewer-recovery.spec.ts",
+      "tests/app/reviewer-product-recovery.test.ts",
+      "tests/app/reviewer-recovery-fixture.ts",
+      "tests/control/reviewer-runtime-start-rejection.test.ts",
+      "tests/verification/reviewer-recovery.test.ts"
+    ],
+    "modified": [
+      "src/app/public/workbench/index.html",
+      "src/app/service.ts",
+      "src/context/reviewer-context.ts",
+      "src/contracts/reviewer-context.ts",
+      "src/contracts/reviewer-verification.ts",
+      "src/contracts/runtime-observations.ts",
+      "src/control/reviewer-work.ts",
+      "src/read-model/read-model-index.ts",
+      "src/sqlite-read-model/sqlite-read-model-index.ts",
+      "src/ui/src/api/client.ts",
+      "src/ui/src/features/independent-review.tsx",
+      "src/vault/runtime-observation-journal.ts",
+      "src/verification/reviewer-record.ts",
+      "src/verification/reviewer-verification.ts",
+      "src/verification/verification-service.ts",
+      "tests/runtime/runtime-observation-journal.test.ts",
+      "tests/verification/reviewer-fixture.ts"
+    ],
+    "deleted": []
+  },
+  "sinceInitialReviewScope": [
+    {
+      "path": "src/contracts/reviewer-context.ts",
+      "initial": "8fe6bffcb545fbd725a7b6979331a3f4ae8983b4850f6120cabe8f452d105d6b",
+      "candidate": "3e44f87875a05dafa6f469ec239ae9ac22ec9ec3e4a91ee5d3c63f1d4dd116ca"
+    },
+    {
+      "path": "src/context/reviewer-context.ts",
+      "initial": "1c7fb1791d06cd466a8698da400661b28d6716c8c86153dec970d9c3a3992485",
+      "candidate": "ecd86e343a6f38ad7842a6b99d5dc6de86483b5abbf3e4d9bea9478d43478135"
+    },
+    {
+      "path": "tests/app/reviewer-product-recovery.test.ts",
+      "initial": "c0ebb2dfc0ebc2bc2dbcab798205706489843bf5b45d3a13de5c81a4967f7c60",
+      "candidate": "6941a3327e8f10a22d5173ee0a19836a6c7e3ea2fec13bb9950aaab39495f7ab"
+    },
+    {
+      "path": "src/vault/runtime-observation-journal.ts",
+      "initial": "c1909adec3abf9805336b1f8622b7fb04d813d6c9ffc0dc2590ef596d646c431",
+      "candidate": "978be2930c6913294a52589e6353e4fc1a168daef0e99e31404add8b90ff23d2"
+    }
+  ],
+  "workbench": {
+    "listedFiles": 10,
+    "builtFiles": 7,
+    "builtComparison": [
+      {
+        "built": "dist/app/public/workbench/assets/index-BDq-QD5v.css",
+        "source": "src/app/public/workbench/assets/index-BDq-QD5v.css",
+        "equal": true
+      },
+      {
+        "built": "dist/app/public/workbench/assets/index-DG2ORAex.js",
+        "source": "src/app/public/workbench/assets/index-DG2ORAex.js",
+        "equal": true
+      },
+      {
+        "built": "dist/app/public/workbench/assets/task-graph-CSUjHNLE.js",
+        "source": "src/app/public/workbench/assets/task-graph-CSUjHNLE.js",
+        "equal": true
+      },
+      {
+        "built": "dist/app/public/workbench/assets/task-graph-DLioOiRN.css",
+        "source": "src/app/public/workbench/assets/task-graph-DLioOiRN.css",
+        "equal": true
+      },
+      {
+        "built": "dist/app/public/workbench/assets/terminal-B1njb2Cr.css",
+        "source": "src/app/public/workbench/assets/terminal-B1njb2Cr.css",
+        "equal": true
+      },
+      {
+        "built": "dist/app/public/workbench/assets/terminal-DkrGBGBp.js",
+        "source": "src/app/public/workbench/assets/terminal-DkrGBGBp.js",
+        "equal": true
+      },
+      {
+        "built": "dist/app/public/workbench/index.html",
+        "source": "src/app/public/workbench/index.html",
+        "equal": true
+      }
+    ],
+    "retainedUnreferencedByBuiltTree": [
+      "src/app/public/workbench/assets/index-BJI4SUZf.js",
+      "src/app/public/workbench/assets/task-graph-BnQsuTHk.js",
+      "src/app/public/workbench/assets/terminal-B65Zetzd.js"
+    ],
+    "htmlAssetReferences": [
+      "/workbench/assets/index-DG2ORAex.js",
+      "/workbench/assets/index-BDq-QD5v.css"
+    ]
+  }
+}

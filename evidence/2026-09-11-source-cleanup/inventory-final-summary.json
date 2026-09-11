@@ -1,0 +1,153 @@
+{
+  "owners": {
+    "Host": {
+      "files": 14,
+      "lines": 3481,
+      "exports": 24
+    },
+    "Contracts": {
+      "files": 101,
+      "lines": 19943,
+      "exports": 1521
+    },
+    "ArchitectureReconciler": {
+      "files": 3,
+      "lines": 263,
+      "exports": 7
+    },
+    "ControlEngine": {
+      "files": 72,
+      "lines": 15636,
+      "exports": 209
+    },
+    "DispatchEngine": {
+      "files": 14,
+      "lines": 2700,
+      "exports": 33
+    },
+    "PlanCompiler": {
+      "files": 7,
+      "lines": 1494,
+      "exports": 14
+    },
+    "VerificationEngine": {
+      "files": 23,
+      "lines": 4014,
+      "exports": 53
+    },
+    "ArtifactVault": {
+      "files": 5,
+      "lines": 446,
+      "exports": 9
+    },
+    "ContextCompiler": {
+      "files": 29,
+      "lines": 5375,
+      "exports": 83
+    },
+    "ReadModelIndex": {
+      "files": 8,
+      "lines": 9049,
+      "exports": 17
+    },
+    "StateLedger": {
+      "files": 5,
+      "lines": 4464,
+      "exports": 75
+    },
+    "WorkspaceReader": {
+      "files": 17,
+      "lines": 1322,
+      "exports": 28
+    },
+    "WorkerRuntime": {
+      "files": 13,
+      "lines": 1237,
+      "exports": 28
+    },
+    "Fixtures": {
+      "files": 6,
+      "lines": 1751,
+      "exports": 103
+    },
+    "HumanCollaboration": {
+      "files": 3,
+      "lines": 437,
+      "exports": 6
+    },
+    "Storage": {
+      "files": 1,
+      "lines": 18,
+      "exports": 1
+    },
+    "TestDoubles": {
+      "files": 2,
+      "lines": 137,
+      "exports": 17
+    },
+    "UI": {
+      "files": 56,
+      "lines": 7266,
+      "exports": 212
+    }
+  },
+  "largest": [
+    {
+      "file": "src/data/read-model-index/sqlite-read-model-index.ts",
+      "lines": 4628
+    },
+    {
+      "file": "src/data/read-model-index/read-model-index.ts",
+      "lines": 3582
+    },
+    {
+      "file": "src/contracts/validation.ts",
+      "lines": 3510
+    },
+    {
+      "file": "src/data/state-ledger/ledger-validation.ts",
+      "lines": 2213
+    },
+    {
+      "file": "src/data/state-ledger/sqlite-ledger.ts",
+      "lines": 1057
+    },
+    {
+      "file": "src/contracts/ledger.ts",
+      "lines": 983
+    },
+    {
+      "file": "src/data/state-ledger/in-memory-ledger.ts",
+      "lines": 942
+    },
+    {
+      "file": "src/data/context-compiler/work-run-materials.ts",
+      "lines": 910
+    },
+    {
+      "file": "src/app/service.ts",
+      "lines": 827
+    },
+    {
+      "file": "src/control/control-engine/control-engine.ts",
+      "lines": 812
+    },
+    {
+      "file": "src/harness/persistent-harness.ts",
+      "lines": 805
+    },
+    {
+      "file": "src/control/control-engine/policies/goal-change-consistency.ts",
+      "lines": 720
+    },
+    {
+      "file": "src/control/control-engine/autonomous-rework.ts",
+      "lines": 698
+    },
+    {
+      "file": "src/control/dispatch-engine/rework-drive.ts",
+      "lines": 662
+    }
+  ],
+  "support": []
+}

@@ -1,0 +1,42 @@
+[
+  {
+    "path": "dev_docs/planning/active/architecture-rebuild/PAUSED.md",
+    "sha256": "2B2E9CD90C840349620A35FA443B5DEB49BC0636298CBAD2388319E5769A514C"
+  },
+  {
+    "path": "dev_docs/planning/active/architecture-rebuild/README.md",
+    "sha256": "5624DEB77D13E3FB877EAD652EDB415AF064A117F24C7E53876C83587E736709"
+  },
+  {
+    "path": "dev_docs/planning/active/architecture-rebuild/AR-01.md",
+    "sha256": "AE181D5774FE7EB416D68D85D2B5DDF43DFBEA7ACE90AC022F912B935B0E8889"
+  },
+  {
+    "path": "dev_docs/planning/active/architecture-rebuild/AR-02.md",
+    "sha256": "0CBC5C8833C9F9ABA2F5ECD9D304695633E2BC180AB282985CD2EDDDB503C543"
+  },
+  {
+    "path": "dev_docs/planning/active/architecture-rebuild/AR-03.md",
+    "sha256": "615D5E71AA14C6ABEE43AB722450E5977D6C0540C5D8D95C95BA5726D437C3C4"
+  },
+  {
+    "path": "dev_docs/verification/2026-09-09-architecture-rebuild/audit-handoff.md",
+    "sha256": "52A5866F03B7B48487627601A16AF31869A8E81500D51F1A03738AB50A6E5438"
+  },
+  {
+    "path": "dev_docs/verification/2026-09-09-architecture-rebuild/module-audit.md",
+    "sha256": "789EBDFF8079CDF3FEC8A06F1E9F4E005A9B93C167136E8EB0CF5D4D4DB405D5"
+  },
+  {
+    "path": "dev_docs/verification/2026-09-09-architecture-rebuild/planning-handoff.md",
+    "sha256": "9728041E88E9D305E16291FDCEF4E3B15BC85C7F0F3400147796AA36E7429DD2"
+  },
+  {
+    "path": "dev_docs/verification/2026-09-09-architecture-rebuild/verification-handoff.md",
+    "sha256": "B42082FBF08018B8BA5A9C6467C4B38214F1FFC298CA242A8696B5552130330B"
+  },
+  {
+    "path": "human/module-status.md",
+    "sha256": "2EC945DD9A897E317E6DBC65F2ADA26BCDD079B9D93C18415D9BDCEB7122CD47"
+  }
+]

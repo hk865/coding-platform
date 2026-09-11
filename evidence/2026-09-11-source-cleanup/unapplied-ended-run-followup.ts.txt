@@ -1,0 +1,35 @@
+import type { ExecutionFeedbackCompiler } from '../control/plan-compiler/execution-feedback-compiler.js';
+import type { RuntimePreparationPort } from '../contracts/runtime-preparation.js';
+import type { VerificationServicePort } from '../contracts/verification-service.js';
+import type { VerificationScope } from '../contracts/verification-import.js';
+import type { QueryJobDrivePort } from '../contracts/query-job.js';
+import type { ReviewRequestView } from '../contracts/reviewer-verification.js';
+
+/** Composition used after ordinary runs end and during startup reconciliation.
+ * Each module retains its own persisted identity, admission and recovery rules. */
+export class EndedRunFollowup {
+  constructor(private readonly deps: {
+    runtime: Pick<RuntimePreparationPort, 'all'>;
+    feedback: Pick<ExecutionFeedbackCompiler, 'request'>;
+    queries: QueryJobDrivePort;
+    verification: Pick<VerificationServicePort, 'reverifyRework' | 'prepareReworkReview'>;
+    launchReview: (view: ReviewRequestView) => void;
+    triggerRework: (scope: VerificationScope) => Promise<void>;
+  }) {}
+
+  async continue(scope: VerificationScope): Promise<void> {
+    const record = this.deps.runtime.all().find(({ spec }) =>
+      spec.projectId === scope.projectId && spec.workspaceId === scope.workspaceId &&
+      spec.goalId === scope.goalId && spec.runId === scope.runId);
+    if (!record || record.spec.mode || ['prepared', 'running', 'outcome_unknown'].includes(record.status)) return;
+    await this.deps.feedback.request({ aggregateType: 'Run', projectId: scope.projectId, goalId: scope.goalId, runId: scope.runId });
+    await this.deps.queries.driveQuery({ reason: 'execution-feedback' });
+    const verificationScope = { ...scope, taskId: record.spec.taskId };
+    const result = await this.deps.verification.reverifyRework(verificationScope);
+    if (!('status' in result)) {
+      const review = await this.deps.verification.prepareReworkReview(verificationScope, result.round.requestId);
+      if (review) this.deps.launchReview(review.review);
+      await this.deps.triggerRework(scope);
+    }
+  }
+}

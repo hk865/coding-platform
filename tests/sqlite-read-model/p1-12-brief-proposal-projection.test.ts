@@ -27,7 +27,7 @@ import {
   buildP112Proposal,
   buildRecordArchitectureDecisionBriefCommand,
   buildRecordCandidateBaselineProposalCommand,
-} from "../../src/contracts/fixtures/architecture-fixtures.js";
+} from "../../src/fixtures/architecture-fixtures.js";
 import { candidateProposalDigest } from "../../src/contracts/architecture-inspection.js";
 import type { ArchitectureBaselinePin } from "../../src/contracts/governance.js";
 

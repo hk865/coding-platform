@@ -1,0 +1,115 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
+/**
+ * P1-18 InMemory projection of MaterialAccessGranted: immutable grant rows,
+ * bounded/filtered lookup, rebuild equivalence and honest freshness.
+ *
+ * This view is what the host feeds to the ArtifactVault resolver, so the test
+ * also asserts the exact filter the resolver uses (project + material digest +
+ * reader run) and that a fresh index rebuilt from the same events reproduces
+ * the rows (restart/rebuild equivalence at the projection level).
+ */
+import { describe, expect, it } from "vitest";
+import { ReadModelIndexImpl } from "../../src/data/read-model-index/read-model-index.js";
+import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
+import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from "../../src/contracts/fixtures/material-access-fixtures.js";
+import { buildMaterialAccessGrantLedgerCommit } from "../../src/control/control-engine/records/material-access.js";
+import { materialAccessGrantIdFor } from "../../src/contracts/material-access.js";
+import type { MaterialAccessGrantedEvent } from "../../src/contracts/material-access.js";
+import type { ArtifactRef } from "../../src/contracts/artifact.js";
+import type { RunRef } from "../../src/contracts/dispatch.js";
+
+const PROJECT_A = "proj-alpha";
+const PROJECT_B = "proj-beta";
+const WORKSPACE = "ws-shared";
+const GOAL = "goal-1";
+const AT = "2026-09-08T00:00:00.000Z";
+const DIGEST = "a".repeat(64);
+
+const artifact = (digest = DIGEST): ArtifactRef => ({
+  kind: "artifact", contentType: "text/plain", digest, sizeBytes: 10,
+  source: { kind: "artifact", refId: digest, revision: "1", digest },
+});
+const run = (projectId: string, runId: string): RunRef => ({ aggregateType: "Run", projectId, goalId: GOAL, runId });
+const BASIS = { planRef: null, workspaceRevision: 2, sourceDigest: null };
+
+function grantedEvent(projectId: string, readerRunId: string, digest: string, eventId: string): MaterialAccessGrantedEvent {
+  const reader = run(projectId, readerRunId);
+  const materials = [artifact(digest)];
+  const grant = buildMaterialAccessGrantV1({
+    grantId: materialAccessGrantIdFor(reader, materials, BASIS),
+    scope: { projectId, workspaceId: WORKSPACE, goalId: GOAL },
+    materials, reader,
+    issuedBy: { aggregateType: "Control", projectId, goalId: GOAL },
+    purpose: "评审运行读取执行运行材料",
+    basis: BASIS,
+    grantedAt: AT,
+  });
+  const command = buildGrantMaterialAccessCommand(grant, {
+    commandId: "cmd-" + eventId, projectId, actorKind: "system", actorId: "test",
+    idempotencyKey: eventId, correlationId: eventId, submittedAt: AT,
+  });
+  return buildMaterialAccessGrantLedgerCommit(command, { eventId, occurredAt: AT }).events[0]!;
+}
+
+const pos = (event: { eventType: string }, seq: number): PositionedEvent => ({ cursor: makeCommitCursor(seq), event: event as never });
+const page = (events: PositionedEvent[], throughSeq: number): EventPage => ({ afterCursor: null, throughCursor: makeCommitCursor(throughSeq), events, hasMore: false });
+
+describe("P1-18 material-access grant projection (InMemory)", () => {
+  it("is not_ready before any event and projects one immutable row per grant", async () => {
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
+    expect(await rm.materialAccessGrants({ projectId: PROJECT_A })).toEqual({ status: "not_ready", observedCursor: null });
+
+    const event = grantedEvent(PROJECT_A, "run-reader", DIGEST, "ev-grant-1");
+    await rm.advance(page([pos(event, 1)], 1));
+    const view = await rm.materialAccessGrants({ projectId: PROJECT_A });
+    expect(view.status).toBe("ready");
+    if (view.status !== "ready") throw new Error("unreachable");
+    expect(view.grants).toHaveLength(1);
+    expect(view.grants[0]).toMatchObject({
+      ref: { aggregateType: "MaterialAccessGrant", projectId: PROJECT_A, workspaceId: WORKSPACE, goalId: GOAL, grantId: event.aggregateId },
+      revision: 1,
+      grant: { reader: run(PROJECT_A, "run-reader"), materials: [artifact()] },
+      sourceCursor: makeCommitCursor(1),
+    });
+  });
+
+  it("filters by the resolver's keys and isolates identical local ids across projects", async () => {
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
+    await rm.advance(page([
+      pos(grantedEvent(PROJECT_A, "run-reader", DIGEST, "ev-a1"), 1),
+      pos(grantedEvent(PROJECT_A, "run-other", DIGEST, "ev-a2"), 2),
+      pos(grantedEvent(PROJECT_A, "run-reader", "b".repeat(64), "ev-a3"), 3),
+      pos(grantedEvent(PROJECT_B, "run-reader", DIGEST, "ev-b1"), 4),
+    ], 4));
+
+    const byMaterialAndReader = await rm.materialAccessGrants({ projectId: PROJECT_A, materialDigest: DIGEST, readerRunId: "run-reader" });
+    expect(byMaterialAndReader.status).toBe("ready");
+    if (byMaterialAndReader.status !== "ready") throw new Error("unreachable");
+    expect(byMaterialAndReader.grants.map((g) => g.ref.grantId)).toEqual([grantedEvent(PROJECT_A, "run-reader", DIGEST, "ev-a1").aggregateId]);
+    expect((await rm.materialAccessGrants({ projectId: PROJECT_B })).status).toBe("ready");
+    expect(await rm.materialAccessGrants({ projectId: "proj-missing" })).toMatchObject({ status: "ready", grants: [] });
+    expect(await rm.materialAccessGrants({ projectId: PROJECT_A, goalId: "goal-other" })).toMatchObject({ status: "ready", grants: [] });
+  });
+
+  it("rebuilds identically from a full replay and never duplicates an applied event", async () => {
+    const events = [
+      pos(grantedEvent(PROJECT_A, "run-reader", DIGEST, "ev-1"), 1),
+      pos(grantedEvent(PROJECT_A, "run-other", DIGEST, "ev-2"), 2),
+    ];
+    const incremental = new ReadModelIndexImpl(new ControlPolicyExplanation());
+    await incremental.advance(page([events[0]!], 1));
+    await incremental.advance(page([events[1]!], 2));
+    const fresh = new ReadModelIndexImpl(new ControlPolicyExplanation());
+    await fresh.advance(page(events, 2));
+
+    const a = await incremental.materialAccessGrants({ projectId: PROJECT_A });
+    const b = await fresh.materialAccessGrants({ projectId: PROJECT_A });
+    expect(JSON.stringify(b)).toBe(JSON.stringify(a));
+
+    const replay = new ReadModelIndexImpl(new ControlPolicyExplanation());
+    await replay.advance(page([events[0]!], 1));
+    await replay.advance(page([events[0]!], 1));
+    const replayed = await replay.materialAccessGrants({ projectId: PROJECT_A });
+    expect(replayed).toMatchObject({ grants: [{ ref: { grantId: events[0]!.event.aggregateId } }] });
+  });
+});

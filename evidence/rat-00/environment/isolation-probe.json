@@ -1,0 +1,230 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-07T09:43:30.521Z",
+  "kernelProfile": {
+    "available": true,
+    "version": "bwrap-m3-v4:bubblewrap 0.9.0",
+    "bwrapPath": "/home/han001/projects/agents/agent_platform/.local/toolchains/bwrap/usr/bin/bwrap",
+    "reason": null
+  },
+  "externalModelCalls": 0,
+  "usedRealCredentials": false,
+  "status": "READY",
+  "checks": {
+    "workspace_write": {
+      "status": "PASS",
+      "command": "printf 'rat-00-write-ok\\n' > /workspace/write-proof.txt && test -s /workspace/write-proof.txt && printf 'workspace_write=PASS\\n'",
+      "exitCode": 0,
+      "signal": null,
+      "timedOut": false,
+      "cancelled": false,
+      "stdout": {
+        "text": "workspace_write=PASS\n",
+        "totalBytes": 21,
+        "truncated": false
+      },
+      "stderr": {
+        "text": "",
+        "totalBytes": 0,
+        "truncated": false
+      },
+      "effects": {
+        "sideEffect": "possible",
+        "changedPaths": [],
+        "workspaceRevision": "6b21b0f1c5e931c891d48bf66e714648e9ea564796be12a44d0d6d6ee1daeb4f",
+        "artifactRefs": []
+      },
+      "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+      "timings": {
+        "snapshotBeforeMs": 2.668005000000001,
+        "executionMs": 6.362384000000006,
+        "snapshotAfterMs": 1.672276999999994
+      }
+    },
+    "hidden_materials": {
+      "status": "PASS",
+      "command": "test ! -s /workspace/.env && for item in .oracle .evaluator hidden-tests; do test -z \"$(ls -A \"/workspace/$item\")\" || exit 1; done && printf 'hidden_materials=PASS\\n'",
+      "exitCode": 0,
+      "signal": null,
+      "timedOut": false,
+      "cancelled": false,
+      "stdout": {
+        "text": "hidden_materials=PASS\n",
+        "totalBytes": 22,
+        "truncated": false
+      },
+      "stderr": {
+        "text": "",
+        "totalBytes": 0,
+        "truncated": false
+      },
+      "effects": {
+        "sideEffect": "possible",
+        "changedPaths": [],
+        "workspaceRevision": "6b21b0f1c5e931c891d48bf66e714648e9ea564796be12a44d0d6d6ee1daeb4f",
+        "artifactRefs": []
+      },
+      "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+      "timings": {
+        "snapshotBeforeMs": 1.6707329999999985,
+        "executionMs": 7.893248,
+        "snapshotAfterMs": 1.868579000000011
+      }
+    },
+    "source_boundary": {
+      "status": "PASS",
+      "command": "test ! -e \"/home/han001/projects/agents/coding-agent/AGENTS.md\" && test ! -e \"/home/han001/projects/agents/agent_platform/vendor/coding-agent/AGENTS.md\" && test ! -e \"/mnt/d/1.project/Software/agent_learn/agent_dev/agent_platform/AGENTS.md\" && test ! -e \"/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/environment/host-only-marker.txt\" && printf 'source_boundary=PASS\\n'",
+      "exitCode": 0,
+      "signal": null,
+      "timedOut": false,
+      "cancelled": false,
+      "stdout": {
+        "text": "source_boundary=PASS\n",
+        "totalBytes": 21,
+        "truncated": false
+      },
+      "stderr": {
+        "text": "",
+        "totalBytes": 0,
+        "truncated": false
+      },
+      "effects": {
+        "sideEffect": "possible",
+        "changedPaths": [],
+        "workspaceRevision": "6b21b0f1c5e931c891d48bf66e714648e9ea564796be12a44d0d6d6ee1daeb4f",
+        "artifactRefs": []
+      },
+      "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+      "timings": {
+        "snapshotBeforeMs": 1.6674509999999998,
+        "executionMs": 7.241409000000004,
+        "snapshotAfterMs": 1.8434910000000002
+      }
+    },
+    "host_write_boundary": {
+      "status": "PASS",
+      "command": "test ! -e /etc/shadow && test ! -e /proc/self/fd/3 && test ! -e /home/han001 && ! touch /usr/.rat00-write-probe 2>/dev/null && ! touch /workspace/.git/.rat00-write-probe 2>/dev/null && printf 'host_write_boundary=PASS\\n'",
+      "exitCode": 0,
+      "signal": null,
+      "timedOut": false,
+      "cancelled": false,
+      "stdout": {
+        "text": "host_write_boundary=PASS\n",
+        "totalBytes": 25,
+        "truncated": false
+      },
+      "stderr": {
+        "text": "",
+        "totalBytes": 0,
+        "truncated": false
+      },
+      "effects": {
+        "sideEffect": "possible",
+        "changedPaths": [],
+        "workspaceRevision": "6b21b0f1c5e931c891d48bf66e714648e9ea564796be12a44d0d6d6ee1daeb4f",
+        "artifactRefs": []
+      },
+      "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+      "timings": {
+        "snapshotBeforeMs": 2.060501000000002,
+        "executionMs": 7.283422999999999,
+        "snapshotAfterMs": 1.5253409999999974
+      }
+    },
+    "network_isolation": {
+      "status": "PASS",
+      "command": "python3 - <<'PY'\nimport socket,json\ninterfaces=socket.if_nameindex()\nassert all(name=='lo' for _,name in interfaces),interfaces\ns=socket.socket();s.settimeout(1)\ntry:\n s.connect(('127.0.0.1',39623))\n raise AssertionError('host listener accessible')\nexcept (ConnectionRefusedError,OSError) as e:\n print(json.dumps({'interfaces':interfaces,'hostListenerUnreachable':True,'reason':str(e)}))\nfinally:s.close()\nPY",
+      "exitCode": 0,
+      "signal": null,
+      "timedOut": false,
+      "cancelled": false,
+      "stdout": {
+        "text": "{\"interfaces\": [[1, \"lo\"]], \"hostListenerUnreachable\": true, \"reason\": \"[Errno 111] Connection refused\"}\n",
+        "totalBytes": 105,
+        "truncated": false
+      },
+      "stderr": {
+        "text": "",
+        "totalBytes": 0,
+        "truncated": false
+      },
+      "effects": {
+        "sideEffect": "possible",
+        "changedPaths": [],
+        "workspaceRevision": "6b21b0f1c5e931c891d48bf66e714648e9ea564796be12a44d0d6d6ee1daeb4f",
+        "artifactRefs": []
+      },
+      "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+      "timings": {
+        "snapshotBeforeMs": 1.8157070000000033,
+        "executionMs": 23.447520999999995,
+        "snapshotAfterMs": 1.6846709999999803
+      }
+    },
+    "runtime_python": {
+      "status": "PASS",
+      "command": "python3 --version",
+      "exitCode": 0,
+      "signal": null,
+      "timedOut": false,
+      "cancelled": false,
+      "stdout": {
+        "text": "Python 3.12.3\n",
+        "totalBytes": 14,
+        "truncated": false
+      },
+      "stderr": {
+        "text": "",
+        "totalBytes": 0,
+        "truncated": false
+      },
+      "effects": {
+        "sideEffect": "possible",
+        "changedPaths": [],
+        "workspaceRevision": "6b21b0f1c5e931c891d48bf66e714648e9ea564796be12a44d0d6d6ee1daeb4f",
+        "artifactRefs": []
+      },
+      "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+      "timings": {
+        "snapshotBeforeMs": 1.5022170000000017,
+        "executionMs": 6.333268000000004,
+        "snapshotAfterMs": 1.6188240000000178
+      }
+    },
+    "runtime_node": {
+      "status": "FAIL",
+      "command": "node --version",
+      "exitCode": 127,
+      "signal": null,
+      "timedOut": false,
+      "cancelled": false,
+      "stdout": {
+        "text": "",
+        "totalBytes": 0,
+        "truncated": false
+      },
+      "stderr": {
+        "text": "/bin/bash: line 1: node: command not found\n",
+        "totalBytes": 43,
+        "truncated": false
+      },
+      "effects": {
+        "sideEffect": "possible",
+        "changedPaths": [],
+        "workspaceRevision": "6b21b0f1c5e931c891d48bf66e714648e9ea564796be12a44d0d6d6ee1daeb4f",
+        "artifactRefs": []
+      },
+      "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+      "timings": {
+        "snapshotBeforeMs": 1.434032000000002,
+        "executionMs": 6.274587999999994,
+        "snapshotAfterMs": 1.6910410000000127
+      }
+    }
+  },
+  "limitations": [
+    "宿主持久写入仅允许测试 workspace；/tmp 和隐藏目录空挂载可临时写入但不会改动宿主对应路径。"
+  ],
+  "workspaceWriteObserved": true,
+  "hostHiddenMaterialsUnchanged": true
+}

@@ -1,0 +1,87 @@
+{
+  "generatedAt": "2026-09-10",
+  "objective": "Reorganise the product source tree so a human can tell which product Module a file belongs to from its path alone.",
+  "result": "COMPLETE - every one of the 12 Modules owns exactly one directory; owner() is purely path-prefix based.",
+
+  "layout": {
+    "moduleDirectories": {
+      "ControlEngine": "src/control/control-engine/",
+      "PlanCompiler": "src/control/plan-compiler/",
+      "DispatchEngine": "src/control/dispatch-engine/",
+      "VerificationEngine": "src/control/verification-engine/",
+      "ArchitectureReconciler": "src/control/architecture-reconciler/",
+      "HumanCollaboration": "src/interaction/human-collaboration/",
+      "WorkerRuntime": "src/execution/worker-runtime/",
+      "StateLedger": "src/data/state-ledger/",
+      "ArtifactVault": "src/data/artifact-vault/",
+      "ReadModelIndex": "src/data/read-model-index/",
+      "ContextCompiler": "src/data/context-compiler/",
+      "WorkspaceReader": "src/data/workspace-reader/"
+    },
+    "keptInPlace": ["src/contracts/", "src/harness/", "src/app/", "src/ui/", "src/storage/"],
+    "generatedUntouched": ["src/app/public/workbench/", "src/ui/test-results/"],
+    "subDirectoriesPreserved": ["src/control/control-engine/policies/", "src/control/control-engine/records/"],
+    "oldDirectoriesRemoved": [
+      "src/control/", "src/context/", "src/data/ (emptied)", "src/interaction/",
+      "src/ledger/", "src/read-model/", "src/runtime/", "src/sqlite-ledger/",
+      "src/sqlite-read-model/", "src/vault/", "src/verification/"
+    ]
+  },
+
+  "migration": {
+    "filesMoved": 181,
+    "oldPathsRemoved": 180,
+    "newPathsAdded": 187,
+    "movedByteIdentical": 8,
+    "movedContentRewritten": 173,
+    "note": "The 173 rewritten files changed only relative import specifiers or runtime path references required by the move; 8 files (pure README/code with no path references) moved byte-identically. A README's markdown link depth also changed where it moved one directory deeper. See content-preservation.json."
+  },
+
+  "manifests": {
+    "before": { "path": "before-source-sha256.json", "fileCount": 745, "digest": "7637193c9bcac3289dff922f199d789c80708706fa2a7b38c30f37650175cfc6", "gitStatusPorcelainCount": 433 },
+    "after": { "path": "after-source-sha256.json", "fileCount": 752, "digest": "01c88e55eac13171ff1cd0abe82a9ad55cf86a69ca0118c391495753efdfd4d9", "gitStatusPorcelainCount": 380 },
+    "scope": "src/**, tests/**, scripts/**, root configs (package.json, tsconfig.json, tsconfig.app.json, vitest.config.ts, pnpm-workspace.yaml)",
+    "excludes": ["node_modules", "dist", "test-results", ".vite"]
+  },
+
+  "verification": [
+    { "command": "node .local/linux-test-tools/node_modules/typescript/bin/tsc --noEmit", "exit": 0, "result": "clean" },
+    { "command": "node scripts/check-module-boundaries.mjs", "exit": 0, "result": "366 source files / 367 inventory / 0 issues / 0 Unmapped; owner counts and coverage byte-identical to the pre-migration baseline" },
+    { "command": "bash scripts/test-wsl.sh --maxWorkers=2", "exit": 0, "result": "257 files passed / 1672 tests passed / 0 failed" },
+    { "command": "pnpm --dir src/ui exec tsc -p tsconfig.json --noEmit", "exit": 0, "result": "clean" },
+    { "command": "pnpm build", "exit": 0, "result": "vendor kernel + tsc -p tsconfig.app.json + copy-ui + vite build all succeed" },
+    { "command": "pnpm ui:test with CHROME_PATH and CODING_AGENT_BWRAP_PATH set", "exit": 0, "result": "25 browser tests passed" },
+    { "command": "node dev_docs/verification/validate-docs.mjs (docs root)", "exit": 0, "result": "13/13 checks passed" },
+    { "command": "node scripts/verify-source-index.mjs", "exit": 0, "result": "status passed; resolves SourceIndex through the new dist/data/workspace-reader/ path" },
+    { "command": "node scripts/verify-vault-crash.mjs", "exit": 0, "result": "status passed through the new dist/data/artifact-vault/ path" },
+    { "command": "node scripts/verify-ui-build.mjs", "exit": 0, "result": "passed after copy-ui.mjs was corrected to emit dist/execution/worker-runtime/terminal-sandbox.py" }
+  ],
+
+  "baselineComparison": {
+    "testSuite": { "before": "256 files / 1664 tests / exit 0", "after": "257 files / 1672 tests / exit 0", "delta": "+1 test file (the new regression test) and +8 tests (its 8 cases)" },
+    "boundaries": { "before": "366 source / 367 inventory / 0 issues", "after": "identical" },
+    "docs": { "before": "13/13", "after": "13/13" },
+    "browser": { "before": "23/23", "after": "25/25", "note": "the suite has 25 specs now; all pass" }
+  },
+
+  "knownPreExistingIssues": [
+    "src/contracts/human-role-collaboration.ts has two self-imports ('./human-role-collaboration.js') and src/contracts/ledger.ts has one; both files are byte-unchanged by this migration, so these are pre-existing and were left alone.",
+    "dev_docs/interfaces/runtime-collaboration.md references 'src/app/explorations.ts', which does not exist (never part of the before-manifest). Left as-is; outside the moved set.",
+    "src/app/README.md links to 'explorations.ts' and 'verification-imports.ts', neither of which exists (verified absent in the before-manifest)."
+  ],
+
+  "uncertainties": [
+    "resolveTiered resolved 526 rewrites by basename rather than directory path, because an intermediate codemod pass had already corrupted those specifiers. 3 of those were ambiguous; all 3 resolved correctly by scoring (a Module file vs a contract, and workspace-reader vs app) and every rewrite was validated by tsc, the boundary checker and the full test suite.",
+    "One file appeared mid-task at scripts/module-map.d.ts that this agent did not create; it was removed and its function folded into scripts/module-map.d.mts, which is the declaration NodeNext actually resolves for module-map.mjs.",
+    "dist/ is gitignored build output; it contained artifacts from the failed intermediate pass and was deleted and rebuilt. This was necessary to expose two real defects (a stale test fixture import and the copy-ui target)."
+  ],
+
+  "artifacts": [
+    "before-source-sha256.json",
+    "after-source-sha256.json",
+    "path-migration-map.json",
+    "content-preservation.json",
+    "report-data.json",
+    "reorg-report.md"
+  ]
+}

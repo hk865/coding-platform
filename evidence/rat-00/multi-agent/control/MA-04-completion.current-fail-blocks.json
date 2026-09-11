@@ -1,0 +1,105 @@
+{
+  "trace": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-04",
+    "origin": "constructed-evaluator-selftest-only",
+    "observations": {
+      "currentRevision": "v2",
+      "conflict": {
+        "method": "executable-evidence",
+        "consideredRefs": [
+          "conflict-a",
+          "conflict-b"
+        ],
+        "evidenceRefs": [
+          "check-1"
+        ],
+        "evidenceRevision": "v2"
+      },
+      "leases": [
+        {
+          "id": "l1",
+          "workspace": "w",
+          "start": 1,
+          "end": 3
+        },
+        {
+          "id": "l2",
+          "workspace": "w",
+          "start": 3,
+          "end": 8
+        }
+      ],
+      "writeAttempts": [
+        {
+          "accepted": false,
+          "reason": "expired-lease"
+        },
+        {
+          "accepted": false,
+          "reason": "out-of-scope"
+        },
+        {
+          "accepted": true,
+          "reason": "current",
+          "revision": "v2",
+          "lease": "l2",
+          "workspace": "w",
+          "at": 4
+        }
+      ],
+      "checkpoint": {
+        "acceptedFiles": [
+          {
+            "path": "proposal.json",
+            "digest": "d1"
+          }
+        ],
+        "afterFiles": [
+          {
+            "path": "proposal.json",
+            "digest": "d1"
+          }
+        ]
+      },
+      "completion": {
+        "phase": "COMPLETED",
+        "effectiveEvidence": [
+          {
+            "required": true,
+            "result": "FAIL"
+          }
+        ]
+      },
+      "configuration": "parallel-with-injection"
+    }
+  },
+  "expectedFailure": "completion.current-fail-blocks",
+  "result": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-04",
+    "layer": "normalized-trace-assertion-evaluator",
+    "inputOrigin": "constructed-evaluator-selftest-only",
+    "status": "FAIL",
+    "assertions": [
+      {
+        "id": "conflict.evidence-adjudication",
+        "status": "PASS"
+      },
+      {
+        "id": "lease.exclusive-current-and-scoped",
+        "status": "PASS"
+      },
+      {
+        "id": "lease.accepted-change-preserved",
+        "status": "PASS"
+      },
+      {
+        "id": "completion.current-fail-blocks",
+        "status": "FAIL"
+      }
+    ],
+    "productCapabilityResult": "NOT_RUN",
+    "note": "A normalized trace can only test evaluator logic here. A platform export adapter and independent raw-evidence authentication are NOT_PREPARED; constructed traces are never product evidence."
+  }
+}

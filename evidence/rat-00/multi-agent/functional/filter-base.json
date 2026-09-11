@@ -1,0 +1,78 @@
+{
+  "control": {
+    "id": "filter-base",
+    "kind": "filter",
+    "overlays": [],
+    "expected": "FAIL",
+    "requiredFailures": [
+      "filter.api-parameters-and-total",
+      "filter.persistence-after-reconstruction"
+    ]
+  },
+  "result": {
+    "schemaVersion": 1,
+    "layer": "fixture-functional-evaluator",
+    "kind": "filter",
+    "status": "FAIL",
+    "assertions": [
+      {
+        "id": "regression.http-ui-assets",
+        "status": "PASS"
+      },
+      {
+        "id": "regression.unfiltered-pagination",
+        "status": "PASS"
+      },
+      {
+        "id": "pagination.filter-before-slice",
+        "status": "FAIL",
+        "reason": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n+   '5'\n-   '7',\n-   '9',\n-   '11'\n  ]\n"
+      },
+      {
+        "id": "pagination.filter-resets-ui-page",
+        "status": "FAIL",
+        "reason": "Expected values to be strictly equal:\n\n3 !== 1\n"
+      },
+      {
+        "id": "filter.api-parameters-and-total",
+        "status": "FAIL",
+        "reason": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n    '1',\n-   '3'\n  ]\n"
+      },
+      {
+        "id": "filter.empty-result",
+        "status": "FAIL",
+        "reason": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   {\n+     id: '1',\n+     status: 'open',\n+     title: 'Plan release'\n+   },\n+   {\n+     id: '2',\n+     status: 'done',\n+     title: 'Update docs'\n+   },\n+   {\n+     id: '3',\n+     status: 'open',\n+     title: 'Review release'\n+   }\n+ ]\n- []\n"
+      },
+      {
+        "id": "filter.controller-http-render",
+        "status": "FAIL",
+        "reason": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n    '1',\n    '3',\n-   '5'\n  ]\n"
+      },
+      {
+        "id": "filter.persistence-after-reconstruction",
+        "status": "FAIL",
+        "reason": "Expected values to be strictly equal:\n\n'all' !== 'done'\n"
+      },
+      {
+        "id": "filter.invalid-storage-fallback",
+        "status": "PASS"
+      },
+      {
+        "id": "filter.ui-controls-and-events",
+        "status": "FAIL",
+        "reason": "visible search input"
+      },
+      {
+        "id": "regression.create-idempotent-and-escaped",
+        "status": "PASS"
+      }
+    ],
+    "browserEngine": "NOT_PREPARED",
+    "realModelExecution": "NOT_RUN"
+  },
+  "publicSmoke": {
+    "exitCode": 0,
+    "stdout": "✔ unfiltered first page (3.571919ms)\n✔ board renders returned tasks (0.552222ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 40.435289\n",
+    "stderr": ""
+  }
+}

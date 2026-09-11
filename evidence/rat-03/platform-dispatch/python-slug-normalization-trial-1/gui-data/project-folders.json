@@ -1,0 +1,20 @@
+[
+  {
+    "projectId": "acceptance-alpha",
+    "workspaceId": "workspace-main",
+    "root": "/home/han001/projects/agents/agent_platform",
+    "name": "主验收项目"
+  },
+  {
+    "projectId": "acceptance-beta",
+    "workspaceId": "workspace-main",
+    "root": "/home/han001/projects/agents/agent_platform/evidence/rat-03/platform-dispatch/python-slug-normalization-trial-1/gui-data/workspaces/acceptance-beta",
+    "name": "隔离对照项目"
+  },
+  {
+    "projectId": "local-8e34ec09f730639a3cea",
+    "workspaceId": "workspace-main",
+    "root": "/tmp/coding-agent-bench-python-slug-normalization-MtnX3u/workspace",
+    "name": "workspace"
+  }
+]

@@ -18,25 +18,29 @@
  *   - deferred disposition -> verifying (never satisfied).
  */
 import { describe, expect, it } from "vitest";
-import { createControlEngine } from "../../src/control/control-engine.js";
-import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
+import { createControlEngine } from "../../src/control/control-engine/control-engine.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
 import type { StateLedger, LedgerCommit, LedgerCommitReceipt, GoalSnapshot } from "../../src/contracts/ledger.js";
-import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
-import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand, buildGoalCreateLedgerCommit } from "../../src/contracts/fixtures/goal-fixtures.js";
-import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit, completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/fixtures/governance-fixtures.js";
-import { buildApplyPlanCommand, buildPlanLedgerCommit } from "../../src/contracts/fixtures/plan-fixtures.js";
-import { P104_GOAL, P104_OBL_GATE, P104_OBL_IMPLEMENT, P104_OBL_REVIEW, P104_PLAN_REVISION_FIXTURE_V1, P104_TASK_DEFERRED, P104_TASK_GATE, P104_TASK_IMPLEMENT, P104_TASK_REVIEW, buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand, buildReduceTaskCommand, buildTaskReductionSnapshot, buildTaskReductionLedgerCommit, coverage } from "../../src/contracts/fixtures/evidence-fixtures.js";
-import { FAKE_RUNTIME_SCRIPT_BUDGET_EXHAUSTED_V1, FAKE_RUNTIME_SCRIPT_COMPLETED_V1, FAKE_RUNTIME_SCRIPT_CRASHED_V1, buildDispatchClaimCommand, buildDispatchStartCommand, buildManifestFixture, buildRunFactCommand, rebaseScriptForRun } from "../../src/contracts/fixtures/dispatch-fixtures.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand, buildGoalCreateLedgerCommit } from "../contract-support/fixtures/goal-fixtures.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { buildPlanLedgerCommit } from "../../src/control/control-engine/records/plan.js";
+import { P104_GOAL, P104_OBL_GATE, P104_OBL_IMPLEMENT, P104_OBL_REVIEW, P104_PLAN_REVISION_FIXTURE_V1, P104_TASK_DEFERRED, P104_TASK_GATE, P104_TASK_IMPLEMENT, P104_TASK_REVIEW, buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand, buildReduceTaskCommand, coverage } from "../contract-support/fixtures/evidence-fixtures.js";
+import { buildTaskReductionSnapshot, buildTaskReductionLedgerCommit } from "../../src/control/control-engine/records/evidence.js";
+import { FAKE_RUNTIME_SCRIPT_BUDGET_EXHAUSTED_V1, FAKE_RUNTIME_SCRIPT_COMPLETED_V1, FAKE_RUNTIME_SCRIPT_CRASHED_V1, buildDispatchClaimCommand, buildDispatchStartCommand, buildManifestFixture, buildRunFactCommand, rebaseScriptForRun } from "../../src/fixtures/dispatch-fixtures.js";
 import { artifactBodyDigest } from "../../src/contracts/artifact.js";
 import { runRefFor, taskAttemptRefFor } from "../../src/contracts/dispatch.js";
 import type { PlanRevisionSnapshot } from "../../src/contracts/plan.js";
 import type { EvidenceV1 } from "../../src/contracts/evidence.js";
 import { evidenceRefFor, taskEvidenceIndexRefFor } from "../../src/contracts/evidence.js";
 import { taskReductionRefFor } from "../../src/contracts/reduction.js";
-import { reduceTaskVerification, type TaskReductionInput, type TaskReductionSnapshot } from "../../src/contracts/reduction.js";
-import { buildCurrentEffectivityAnchor } from "../../src/control/task-reducer.js";
+import { reduceTaskVerification } from "../../src/control/control-engine/policies/task-reduction.js";
+import { type TaskReductionInput, type TaskReductionSnapshot } from "../../src/contracts/reduction.js";
+import { buildCurrentEffectivityAnchor } from "../../src/control/control-engine/task-reducer.js";
 
 const FIXED = FIXED_ISO_2026_09_05;
 const PROJECT = "proj-alpha";

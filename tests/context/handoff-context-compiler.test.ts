@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
-import { createArtifactVault } from "../../src/vault/artifact-vault.js";
+import { createArtifactVault } from "../../src/data/artifact-vault/artifact-vault.js";
 import {
   toP1_06Harness,
   prepareP106Scenario,
@@ -18,20 +18,12 @@ import {
   P106_WORKSPACE,
   type P1_06TestHarness,
 } from "../contract-suite/p1-06-harness.js";
-import { HandoffContextCompilerImpl } from "../../src/context/handoff-context-compiler.js";
+import { HandoffContextCompilerImpl } from "../../src/data/context-compiler/handoff-context-compiler.js";
 import { handoffPacketRefFor, HANDOFF_CONTEXT_BUNDLE_MAX_BYTES } from "../../src/contracts/handoff.js";
 import type { HandoffPacketV1 } from "../../src/contracts/handoff.js";
 import { runRefFor, taskAttemptRefFor } from "../../src/contracts/dispatch.js";
-import {
-  P106_ROLE_BINDING_V1,
-  P106_SCHEMA,
-  buildP106ArtifactRef,
-  buildHandoffPacketV1,
-  buildRecordHandoffCommand,
-  buildHandoffRecordLedgerCommit,
-  handoffPacketSnapshotFor,
-  buildHandoffContextRequest,
-} from "../../src/contracts/fixtures/handoff-fixtures.js";
+import { P106_ROLE_BINDING_V1, P106_SCHEMA, buildP106ArtifactRef, buildHandoffPacketV1, buildRecordHandoffCommand, buildHandoffContextRequest } from "../contract-support/fixtures/handoff-fixtures.js";
+import { buildHandoffRecordLedgerCommit, handoffPacketSnapshotFor } from "../../src/control/control-engine/records/handoff.js";
 import type { AggregateRef, AggregateSnapshot, SnapshotResult, StateLedger } from "../../src/contracts/ledger.js";
 import type { HandoffContextRequestV1 } from "../../src/contracts/handoff-context.js";
 import type { PlanRevisionRef, PlanRevisionSnapshot } from "../../src/contracts/plan.js";

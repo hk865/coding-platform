@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { ContextCompilerImpl } from "../../src/context/context-compiler.js";
-import { ScriptedStateLedger, notFoundResult } from "../../src/contracts/testing/state-ledger.double.js";
+import { ContextCompilerImpl } from "../../src/data/context-compiler/context-compiler.js";
+import { ScriptedStateLedger, notFoundResult } from "../contract-support/testing/state-ledger.double.js";
 import type { AggregateRef, SnapshotResult } from "../../src/contracts/ledger.js";
-import { ArtifactVault } from "../../src/vault/artifact-vault.js";
+import { ArtifactVault } from "../../src/data/artifact-vault/artifact-vault.js";
 import { artifactBodyDigest, artifactBodySize } from "../../src/contracts/artifact.js";
 import type {
   ArtifactOpenResult,
@@ -19,11 +19,11 @@ import {
   DISPATCH_ELIGIBLE_TASK_ID,
   DISPATCH_PLAN_REVISION_FIXTURE_V1,
   ROLE_BINDING_FIXTURE_V1,
-} from "../../src/contracts/fixtures/dispatch-fixtures.js";
+} from "../../src/fixtures/dispatch-fixtures.js";
 import type { PlanRevisionSnapshot } from "../../src/contracts/plan.js";
 import type { ArchitectureBaselinePin, CompletionPolicyPin } from "../../src/contracts/governance.js";
-import { buildEnvelopeFixture } from "../../src/contracts/fixtures/dispatch-fixtures.js";
-import { validateTaskEnvelope } from "../../src/contracts/validation.js";
+import { buildEnvelopeFixture } from "../../src/fixtures/dispatch-fixtures.js";
+import { validateTaskEnvelope } from '../../src/contracts/validation/dispatch.js';
 
 const NOW = "2026-09-05T12:00:00.000Z";
 const now = () => NOW;

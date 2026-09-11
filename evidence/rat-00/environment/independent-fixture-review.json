@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "ticketId": "RAT-00",
+  "kind": "independent-fixture-review",
+  "reviewedAt": "2026-09-07T09:52:32.699537+00:00",
+  "checks": [
+    {
+      "sampleId": "BD-01",
+      "declaredFilesMatch": true,
+      "baseOracleOverlayMatch": true,
+      "evaluatorHashMatch": true,
+      "containsTargetDefect": true,
+      "publicFileCount": 2
+    },
+    {
+      "sampleId": "BD-02",
+      "declaredFilesMatch": true,
+      "baseOracleOverlayMatch": true,
+      "evaluatorHashMatch": true,
+      "containsTargetDefect": true,
+      "publicFileCount": 2
+    },
+    {
+      "sampleId": "BD-03",
+      "declaredFilesMatch": true,
+      "baseOracleOverlayMatch": true,
+      "evaluatorHashMatch": true,
+      "containsTargetDefect": false,
+      "publicFileCount": 3
+    },
+    {
+      "sampleId": "BD-04",
+      "declaredFilesMatch": true,
+      "baseOracleOverlayMatch": true,
+      "evaluatorHashMatch": true,
+      "containsTargetDefect": true,
+      "publicFileCount": 3
+    },
+    {
+      "sampleId": "BD-05",
+      "declaredFilesMatch": true,
+      "baseOracleOverlayMatch": true,
+      "evaluatorHashMatch": true,
+      "containsTargetDefect": true,
+      "publicFileCount": 2
+    },
+    {
+      "sampleId": "BD-06",
+      "declaredFilesMatch": true,
+      "baseOracleOverlayMatch": true,
+      "evaluatorHashMatch": true,
+      "containsTargetDefect": false,
+      "publicFileCount": 2
+    },
+    {
+      "sampleId": "BD-07",
+      "declaredFilesMatch": true,
+      "baseOracleOverlayMatch": true,
+      "evaluatorHashMatch": true,
+      "containsTargetDefect": false,
+      "publicFileCount": 2
+    },
+    {
+      "sampleId": "BD-08",
+      "declaredFilesMatch": true,
+      "baseOracleOverlayMatch": true,
+      "evaluatorHashMatch": true,
+      "containsTargetDefect": false,
+      "publicFileCount": 2
+    }
+  ],
+  "positiveCount": 4,
+  "negativeCount": 4,
+  "instructionsIdenticalAndGeneric": true,
+  "publicManifestHasNoLabelsOrOracleMapping": true,
+  "unknownFindingsRequireReview": true,
+  "bugPreflightDefaultOutput": "/home/han001/projects/agents/agent_platform/evidence/rat-00/bug-discovery",
+  "canaryPreflightDefaultOutput": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/canary",
+  "canaryPrivateOutputIntentConfirmedByParent": true,
+  "sourceDrift": [],
+  "sourceBeforeFileCount": 39,
+  "sourceAfterFileCount": 39,
+  "pycachePathsAfter": [],
+  "runs": {
+    "bug": {
+      "command": [
+        "python3",
+        "/home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/bug-discovery/evaluator-only/preflight.py",
+        "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/environment/review/bug"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"passed\": 8, \"total\": 8, \"modelCalls\": 0}\n",
+      "stderr": "",
+      "outputRoot": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/environment/review/bug"
+    },
+    "canary": {
+      "command": [
+        "node",
+        "/home/han001/projects/agents/agent_platform/evaluation/rat-00-v1/scripts/canary-preflight.mjs",
+        "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/environment/review/canary"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"status\":\"PASS\",\"checks\":16,\"modelCalls\":0,\"outputRoot\":\"/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/environment/review/canary\"}\n",
+      "stderr": "",
+      "outputRoot": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/environment/review/canary"
+    }
+  },
+  "modelCalls": 0,
+  "limitations": [
+    "本审查者读过隐藏标签，不可作为后续真实发现试验的解题 Agent。",
+    "仅单样本 instruction/workspace 可提供给独立解题上下文；全量 public manifest 或其他配对样本不得挂入同一试验。",
+    "报告匹配是冻结规则，语义匹配与独立复现绑定尚待 RAT-05 实现。"
+  ],
+  "status": "PASS"
+}

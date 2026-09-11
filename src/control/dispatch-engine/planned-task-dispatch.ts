@@ -1,0 +1,167 @@
+import { createHash } from 'node:crypto';
+import type { StateLedger, GoalSnapshot } from '../../contracts/ledger.js';
+import type { ControlEngine } from '../../contracts/modules.js';
+import type { RunSnapshot } from '../../contracts/dispatch.js';
+import type { RuntimePreparationPort } from '../../contracts/runtime-preparation.js';
+import type { PlanningMaterialPort } from '../../contracts/planning.js';
+import type { QueryJobSnapshot } from '../../contracts/query-job.js';
+import type { AcceptedInitialPlan } from '../../contracts/initial-planning.js';
+import { revisionAssignments } from '../../contracts/plan.js';
+import type { PlanRevisionSnapshot, PlanTaskAssignment, RuntimeTask } from '../../contracts/plan.js';
+import { canonicalJson } from '../../contracts/fingerprint.js';
+import { buildDispatchClaimCommand } from '../../contracts/commands/dispatch.js';
+import { issueMatrixRoleBinding } from './role-spec-read.js';
+type Scope = {
+    projectId: string;
+    workspaceId: string;
+    goalId: string;
+};
+const sha = (value: unknown) => createHash('sha256').update(canonicalJson(value as never)).digest('hex').slice(0, 32);
+
+/**
+ * 计划任务派发（DispatchEngine）：把**当前生效 revision** 里可执行的任务认领成真实 Run。
+ *
+ * RW-07 之前：候选只来自初始协调 origin.assignments。返工受理会生成新的 PlanRevision，新
+ * revision 里新增的任务在旧 origin 里根本不存在，因此它们进了计划、readiness 也说 ready，
+ * 却没有任何路径会认领——返工闭环缺的正是这一跳。现在改为按当前 active revision 驱动。
+ *
+ * 候选来源（唯一）：Goal 当前 active PlanRevision 里
+ *   requirementLevel = required && taskKind = work && disposition = active
+ * 的任务，按该 revision 的指派列表顺序。指派一律经 contracts/plan.ts 的 revisionAssignments
+ * 读取（任务与指派同属一个 revision），因此：
+ *   - 被取代（superseded）／取消／延后（deferred）的任务不在候选里 —— 派发只放行 disposition=active；
+ *   - gate 任务不在候选里 —— 它的结论由证据归约产生，不派发实现运行（task-eligibility 同样拒绝）；
+ *   - 是否现在可派发仍由 ControlEngine 的 canonical dispatchReadiness 判定，本类不自己解释依赖。
+ *
+ * Run 身份（确定性，沿用既有命名规则）：runId = 'real-' + <初始实现授权 requestId>
+ *   + (position === 0 ? '' : '-' + sha256(canonicalJson(taskId)).slice(0, 12))，
+ * 其中 position 是该任务在**当前 revision 指派列表中的位置**。指派列表 = 源 revision 的指派
+ * （顺序保留）+ 新 revision 新增任务的指派（追加），因此同一任务在不同 revision 里的位置不变：
+ * 已经开始的 Run 不会被换成另一个身份重复派发，重启后也重建出同一个身份。
+ *
+ * 授权来源：候选任务属于同一个 Goal 的既定实现范围（返工是按 ADR 0003 D1 的「同义务、同验收
+ * 语义、只换承担者」受理的），因此沿用该 Goal 那次已提交的初始协调请求的
+ * implementationAuthorization（writeScope／referenceContext）与 runtimeBudget，不新造授权、
+ * 也不放宽权限。
+ *
+ * 角色绑定（RW-18）：不再由本文件写死 `templateId: assignment.role` + `templateRevision: '1'`，
+ * 而是按**当前生效的角色矩阵**签发（见 role-spec-read.ts 的 issueMatrixRoleBinding）：
+ * 矩阵登记了该角色时，templateId／templateRevision 取自矩阵 pin，policyRevision 记录签发的
+ * policy 与 pin 摘要；**没有矩阵的项目逐字沿用原来那份绑定**（既有语义不变）。
+ * 指派里的 `assignment.role` 仍是"这条任务要哪个角色"的唯一声明，本文件不另造角色目录。
+ */
+export class PlannedTaskDispatch {
+    constructor(private readonly h: Pick<ControlEngine, 'claimTask' | 'dispatchReadiness' | 'closeQueryJob'> & {
+        ledger: Pick<StateLedger, 'load'>;
+    }, private readonly runtime: RuntimePreparationPort, private readonly rootFor: (projectId: string, workspaceId: string) => string, private readonly launch: (scope: Scope, runId: string) => void,
+    private readonly materials: Pick<PlanningMaterialPort, 'acceptedInitialPlans'>, private readonly now: () => string) { }
+    async drivePending() {
+        const issues: { queryJobId: string; message: string }[] = [];
+        for (const accepted of await this.materials.acceptedInitialPlans()) {
+            const issue = await this.drive(accepted);
+            if (!issue) continue;
+            const receipt = await this.recordIssue(accepted.snapshot, issue);
+            issues.push({ queryJobId: accepted.snapshot.job.queryJobId, message: issue });
+            if (receipt.status !== 'committed') throw Error('派发问题登记被拒绝：' + canonicalJson(receipt));
+        }
+        return { issues };
+    }
+    /** Goal 当前生效的 PlanRevision（canonical 只读；缺失即 null，不猜、不回退旧版本）。 */
+    private async activePlan(scope: Scope): Promise<PlanRevisionSnapshot | null> {
+        const loaded = await this.h.ledger.load({ aggregateType: 'Goal', projectId: scope.projectId, goalId: scope.goalId });
+        if (loaded.status !== 'found' || loaded.snapshot.ref.aggregateType !== 'Goal')
+            return null;
+        const goal = loaded.snapshot as GoalSnapshot;
+        if (goal.activePlanRevision === null)
+            return null;
+        const plan = await this.h.ledger.load(goal.activePlanRevision);
+        return plan.status === 'found' && plan.snapshot.ref.aggregateType === 'PlanRevision'
+            ? plan.snapshot as PlanRevisionSnapshot
+            : null;
+    }
+    private recordIssue(snapshot: QueryJobSnapshot, message: string) {
+        const job = snapshot.job, id = 'planning-close-' + sha(snapshot.ref);
+        return this.h.closeQueryJob({
+            schemaVersion: 1, commandType: 'CloseQueryJob', commandId: id,
+            identity: { projectId: job.projectId, actor: { kind: 'system', id: 'initial-planning' }, idempotencyKey: id },
+            aggregateId: job.queryJobId, expectedRevision: snapshot.revision, correlationId: job.intent.correlationId, submittedAt: this.now(),
+            payload: { jobRef: snapshot.ref, runRef: job.runRef!, reason: { code: 'gap', message } },
+        });
+    }
+    async drive({ snapshot }: AcceptedInitialPlan): Promise<string | null> {
+        const job = snapshot.job, scope = {
+            projectId: job.projectId, workspaceId: job.workspaceId, goalId: job.goalId!
+        };
+        const authorization = job.intent.execution!.implementationAuthorization!;
+        // 当前生效 revision：以 Goal 的 canonical activePlanRevision 为准。读不到就没有可派发的
+        // 任务（不退回"初始 origin 的那份快照"，否则会拿已经失效的版本当派发依据）。
+        const active = await this.activePlan(scope);
+        if (active === null)
+            return null;
+        const taskById = new Map(active.tasks.map(task => [task.taskId, task]));
+        const candidates = revisionAssignments(active)
+            .map((assignment, position) => ({ assignment, position, task: taskById.get(assignment.taskId) }))
+            .filter((entry): entry is { assignment: PlanTaskAssignment; position: number; task: RuntimeTask } => entry.task !== undefined &&
+            entry.task.requirementLevel === 'required' && entry.task.taskKind === 'work' && entry.task.disposition === 'active');
+        for (const { assignment, position } of candidates) {
+            const runId = 'real-' + authorization.requestId + (position === 0 ? '' : '-' + sha(assignment.taskId).slice(0, 12));
+            const loaded = await this.h.ledger.load({
+                aggregateType: 'Run', projectId: scope.projectId, goalId: scope.goalId, runId
+            });
+            const prior = loaded.status === 'found' ? loaded.snapshot as RunSnapshot : null;
+            // Only an outbox that has never started can be resumed automatically.
+            // A persisted runtime side effect or started envelope requires recovery.
+            if (prior && (prior.status !== 'starting' || prior.envelope !== null))
+                continue;
+            if (this.runtime.all().some(run => run.spec.projectId === scope.projectId && run.spec.workspaceId === scope.workspaceId &&
+                (['running', 'outcome_unknown'].includes(run.status) || (run.status === 'prepared' && (run.spec.goalId !== scope.goalId || run.spec.runId !== runId)))))
+                break;
+            const readiness = await this.h.dispatchReadiness({
+                projectId: scope.projectId, goalId: scope.goalId, taskId: assignment.taskId
+            });
+            if (!prior && (readiness.status !== 'ready' || !readiness.eligibility.eligible))
+                continue;
+            const budget = job.intent.execution!.runtimeBudget;
+            const spec = {
+                ...scope, runId, taskId: assignment.taskId, root: this.rootFor(scope.projectId, scope.workspaceId), instruction: assignment.instruction + (authorization.referenceContext ?? ''), budget
+            };
+            try {
+                await this.runtime.preflight(spec);
+            }
+            catch (error) {
+                return '执行预检失败：' + String(error);
+            }
+            if (prior) {
+                await this.runtime.prepare(spec);
+                this.launch(scope, runId);
+                break;
+            }
+            // 角色绑定由当前生效矩阵的 pin 签发；没有矩阵时逐字使用既有绑定。
+            const issued = await issueMatrixRoleBinding({ ledger: this.h.ledger }, {
+                projectId: scope.projectId, roleId: assignment.role,
+                fallback: {
+                    schemaVersion: 1, bindingId: runId, templateId: assignment.role, templateRevision: '1', bindingVersion: 1, policyRevision: 'human-implementation-v1'
+                },
+            });
+            const claim = await this.h.claimTask(buildDispatchClaimCommand({
+                projectId: scope.projectId, goalId: scope.goalId, taskId: assignment.taskId, runId, attemptId: 'attempt-' + runId,
+                commandId: 'claim-' + runId, correlationId: job.intent.correlationId, idempotencyKey: 'claim-' + runId, actor: {
+                    kind: 'system', id: 'initial-planning'
+                }, submittedAt: job.submittedAt, roleBinding: issued.roleBinding,
+                declaredPermissions: {
+                    tools: ['read', 'write', 'shell'], writeScope: authorization.writeScope
+                }, budget: {
+                    tokenBudget: budget.contextWindowTokens, deadline: null
+                }
+            }));
+            if (claim.status === 'committed') {
+                await this.runtime.prepare(spec);
+                this.launch(scope, runId);
+            }
+            else
+                return 'Control 拒绝派发：' + canonicalJson(claim);
+            break;
+        }
+        return null;
+    }
+}

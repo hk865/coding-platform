@@ -1,0 +1,52 @@
+--- evidence/2026-09-10-external-review-repair/before/tests/src/contracts/testing/state-ledger.double.ts	2026-09-06 02:15:15.000000000 +0800
++++ src/contracts/testing/state-ledger.double.ts	2026-09-10 09:58:31.747942700 +0800
+@@ -8,8 +8,10 @@
+   LedgerCommitReceipt,
+   SnapshotResult,
+   StateLedger,
++  PendingDispatchSelection,
+ } from "../ledger.js";
+ import { makeCommitCursor } from "../ledger.js";
++import { canonicalJson } from "../fingerprint.js";
+ import type { DispatchOutboxEntrySnapshot } from "../dispatch.js";
+ 
+ export type LoadBehavior = (ref: AggregateRef) => Promise<SnapshotResult> | SnapshotResult;
+@@ -32,14 +34,14 @@
+   };
+ }
+ 
+-export type PendingIntentsBehavior = (
+-    limit: number,
+-  ) => Promise<DispatchOutboxEntrySnapshot[]> | DispatchOutboxEntrySnapshot[];
++/** Supplies the scripted outbox population; the double owns production-order
++ * selection, deterministic ordering, and only then limit application. */
++export type PendingIntentsBehavior = () => Promise<DispatchOutboxEntrySnapshot[]> | DispatchOutboxEntrySnapshot[];
+ 
+ export class ScriptedStateLedger implements StateLedger {
+   readonly loads: AggregateRef[] = [];
+   readonly commits: LedgerCommit[] = [];
+-  readonly pendingIntentsCalls: number[] = [];
++  readonly pendingIntentsCalls: Array<{ limit: number; selection?: PendingDispatchSelection }> = [];
+ 
+   constructor(
+     private readonly options: {
+@@ -65,9 +67,15 @@
+     throw new Error("ScriptedStateLedger.events is not used by ControlEngine tests");
+   }
+ 
+-  async pendingDispatchIntents(limit: number): Promise<DispatchOutboxEntrySnapshot[]> {
+-    this.pendingIntentsCalls.push(limit);
+-    if (this.options.pendingIntents) return this.options.pendingIntents(limit);
+-    return [];
++  async pendingDispatchIntents(limit: number, selection?: PendingDispatchSelection): Promise<DispatchOutboxEntrySnapshot[]> {
++    this.pendingIntentsCalls.push({ limit, ...(selection ? { selection } : {}) });
++    const candidates = this.options.pendingIntents ? await this.options.pendingIntents() : [];
++    return candidates
++      .filter((entry) => entry.status === "pending")
++      .filter((entry) => !selection || (entry.intent.work?.kind === "review" ? "review" : "ordinary") === selection.workKind)
++      // Production orders by canonicalJson(ref) (key-sorted), not by literal
++      // insertion order; the double must select the same rows in the same order.
++      .sort((a, b) => canonicalJson(a.ref).localeCompare(canonicalJson(b.ref)))
++      .slice(0, Math.max(0, limit));
+   }
+ }

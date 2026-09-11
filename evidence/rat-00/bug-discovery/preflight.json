@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "kind": "known-positive-negative-baseline-check",
+  "modelCalls": 0,
+  "passed": 8,
+  "total": 8,
+  "results": [
+    {
+      "sampleId": "BD-01",
+      "expected": "unresolved",
+      "actual": "unresolved",
+      "pass": true,
+      "stdout": "",
+      "stderr": "Expected values to be strictly equal:\n\ntrue !== false\n\n"
+    },
+    {
+      "sampleId": "BD-02",
+      "expected": "unresolved",
+      "actual": "unresolved",
+      "pass": true,
+      "stdout": "",
+      "stderr": "  Many   Spaces  \n"
+    },
+    {
+      "sampleId": "BD-03",
+      "expected": "resolved",
+      "actual": "resolved",
+      "pass": true,
+      "stdout": "{\"resolved\":true,\"checks\":5}\n",
+      "stderr": ""
+    },
+    {
+      "sampleId": "BD-04",
+      "expected": "unresolved",
+      "actual": "unresolved",
+      "pass": true,
+      "stdout": "",
+      "stderr": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n    {\n+     id: 'a'\n+   },\n+   {\n      id: 'b'\n    },\n+   {\n+     id: 'c'\n+   }\n  ]\n\n"
+    },
+    {
+      "sampleId": "BD-05",
+      "expected": "unresolved",
+      "actual": "unresolved",
+      "pass": true,
+      "stdout": "",
+      "stderr": "Expected values to be strictly equal:\n\n5000 !== 0\n\n"
+    },
+    {
+      "sampleId": "BD-06",
+      "expected": "resolved",
+      "actual": "resolved",
+      "pass": true,
+      "stdout": "{\"resolved\":true,\"checks\":5}\n",
+      "stderr": ""
+    },
+    {
+      "sampleId": "BD-07",
+      "expected": "resolved",
+      "actual": "resolved",
+      "pass": true,
+      "stdout": "{\"resolved\":true,\"checks\":5}\n",
+      "stderr": ""
+    },
+    {
+      "sampleId": "BD-08",
+      "expected": "resolved",
+      "actual": "resolved",
+      "pass": true,
+      "stdout": "{\"resolved\":true,\"checks\":5}\n",
+      "stderr": ""
+    }
+  ]
+}

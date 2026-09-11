@@ -1,0 +1,5 @@
+import type { BindReviewOutputCommand, ValidatedReviewMaterialCommand, ValidatedReviewResultCommand } from '../reviewer-work.js';
+/** Deliberately no default actor, scope, trusted flag or evidence construction. */
+export function buildCreateReviewWorkCommand(input: ValidatedReviewMaterialCommand): ValidatedReviewMaterialCommand { return structuredClone(input); }
+export function buildBindReviewOutputCommand(input: BindReviewOutputCommand): BindReviewOutputCommand { return structuredClone(input); }
+export function buildValidatedReviewResultCommand(input: ValidatedReviewResultCommand): ValidatedReviewResultCommand { return structuredClone(input); }

@@ -1,0 +1,7 @@
+--- a/src/timeout.mjs
++++ b/src/timeout.mjs
+@@ -1,3 +1,3 @@
+ export function effectiveTimeout(config, fallback) {
+-  return config.timeoutMs || fallback;
++  return config.timeoutMs ?? fallback;
+ }

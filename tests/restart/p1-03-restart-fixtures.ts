@@ -1,3 +1,4 @@
+import { classifyRestartProbeError } from "./readiness-probe.js";
 /**
  * P1-03 restart-path fixtures + readiness probe — owned by lane D.
  *   bootstrap -> governance(install/activate) -> CreateGoal -> applyPlan ->
@@ -12,15 +13,15 @@
 import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import {
   ARCHITECTURE_BASELINE_FIXTURE_V1,
   COMPLETION_POLICY_FIXTURE_V1,
   buildActivateCommand,
   buildInstallCommand,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
-import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../../src/contracts/fixtures/goal-fixtures.js";
-import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
+} from "../../src/fixtures/governance-fixtures.js";
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../contract-support/fixtures/goal-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
 import {
   DISPATCH_BLOCKED_TASK_ID,
   DISPATCH_ELIGIBLE_TASK_ID,
@@ -30,7 +31,7 @@ import {
   buildRunFactCommand,
   rebaseScriptForRun,
   FAKE_RUNTIME_SCRIPT_COMPLETED_V1,
-} from "../../src/contracts/fixtures/dispatch-fixtures.js";
+} from "../../src/fixtures/dispatch-fixtures.js";
 import type { DispatchOutboxEntrySnapshot, RunSnapshot, TaskAttemptSnapshot, TaskLeaseSnapshot } from "../../src/contracts/dispatch.js";
 import { runRefFor, taskAttemptRefFor, taskLeaseRefFor } from "../../src/contracts/dispatch.js";
 import { artifactBodyDigest } from "../../src/contracts/artifact.js";
@@ -53,8 +54,8 @@ export async function isP103Ready(): Promise<boolean> {
     } finally {
       await h.cleanup().catch(() => undefined);
     }
-  } catch {
-    return false;
+  } catch (error) {
+    return classifyRestartProbeError(error);
   }
 }
 
@@ -75,7 +76,7 @@ export async function runP103Path(h: PersistentSqliteHarness) {
   const installedCp = await h.install(cpCmd);
   const installedAb = await h.install(abCmd);
   if (installedCp.status !== "committed" || installedAb.status !== "committed") throw new Error("install");
-  const { completionPolicyPinFor, architectureBaselinePinFor } = await import("../../src/contracts/fixtures/governance-fixtures.js");
+  const { completionPolicyPinFor, architectureBaselinePinFor } = await import("../../src/fixtures/governance-fixtures.js");
   const actCp = await h.activate(buildActivateCommand(completionPolicyPinFor(cpCmd as never), {
     commandId: "cmd-p103-actcp", correlationId: "corr-p103-actcp", submittedAt: SCHEMA, projectId: "proj-alpha", expectedRevision: 1, idempotencyKey: "activate-p103-cp",
   }));

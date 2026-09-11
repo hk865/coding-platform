@@ -1,0 +1,611 @@
+[
+  {
+    "symbol": "reduceTaskVerification",
+    "source": "src/contracts/reduction.ts",
+    "dest": "src/control/policies/task-reduction.ts"
+  },
+  {
+    "symbol": "evidenceApplicability",
+    "source": "src/contracts/evidence.ts",
+    "dest": "src/control/policies/evidence.ts"
+  },
+  {
+    "symbol": "evidenceBindingFor",
+    "source": "src/contracts/evidence.ts",
+    "dest": "src/control/policies/evidence.ts"
+  },
+  {
+    "symbol": "selectEffectiveEvidenceSet",
+    "source": "src/contracts/evidence.ts",
+    "dest": "src/control/policies/evidence.ts"
+  },
+  {
+    "symbol": "reconcileGoalSideEffects",
+    "source": "src/contracts/goal-phase.ts",
+    "dest": "src/control/policies/goal-phase.ts"
+  },
+  {
+    "symbol": "evaluateGoalCompletionGuard",
+    "source": "src/contracts/goal-phase.ts",
+    "dest": "src/control/policies/goal-phase.ts"
+  },
+  {
+    "symbol": "reduceGoalPhase",
+    "source": "src/contracts/goal-phase.ts",
+    "dest": "src/control/policies/goal-phase.ts"
+  },
+  {
+    "symbol": "renderGoalCompletionExplanation",
+    "source": "src/contracts/goal-phase.ts",
+    "dest": "src/control/policies/goal-phase.ts"
+  },
+  {
+    "symbol": "evaluateTaskEligibility",
+    "source": "src/contracts/dispatch.ts",
+    "dest": "src/control/policies/task-eligibility.ts"
+  },
+  {
+    "symbol": "evaluateReplacementEligibility",
+    "source": "src/contracts/handoff.ts",
+    "dest": "src/control/policies/replacement-eligibility.ts"
+  },
+  {
+    "symbol": "evaluateLeaseAdmissibility",
+    "source": "src/contracts/workspace-lease.ts",
+    "dest": "src/control/policies/workspace-lease.ts"
+  },
+  {
+    "symbol": "computeTaskDispositions",
+    "source": "src/contracts/goal-change.ts",
+    "dest": "src/control/policies/goal-change.ts"
+  },
+  {
+    "symbol": "resolveCompletionPolicyRevision",
+    "source": "src/contracts/governance.ts",
+    "dest": "src/data/governance-records.ts"
+  },
+  {
+    "symbol": "resolveArchitectureBaselineRevision",
+    "source": "src/contracts/governance.ts",
+    "dest": "src/data/governance-records.ts"
+  },
+  {
+    "symbol": "loadProjectCompletionPolicyActive",
+    "source": "src/contracts/governance.ts",
+    "dest": "src/data/governance-records.ts"
+  },
+  {
+    "symbol": "loadProjectArchitectureBaselineActive",
+    "source": "src/contracts/governance.ts",
+    "dest": "src/data/governance-records.ts"
+  },
+  {
+    "symbol": "resolveProjectCompletionPolicy",
+    "source": "src/contracts/governance.ts",
+    "dest": "src/data/governance-records.ts"
+  },
+  {
+    "symbol": "resolveProjectArchitectureBaseline",
+    "source": "src/contracts/governance.ts",
+    "dest": "src/data/governance-records.ts"
+  },
+  {
+    "symbol": "resolveArchitectureEvolutionPolicyRevision",
+    "source": "src/contracts/architecture-evolution-policy.ts",
+    "dest": "src/control/policies/architecture-evolution-policy.ts"
+  },
+  {
+    "symbol": "resolveProjectArchitectureEvolutionPolicy",
+    "source": "src/contracts/architecture-evolution-policy.ts",
+    "dest": "src/control/policies/architecture-evolution-policy.ts"
+  },
+  {
+    "symbol": "buildArchitectureInspectionRecordLedgerCommit",
+    "source": "src/contracts/fixtures/architecture-fixtures.ts",
+    "dest": "src/control/records/architecture.ts"
+  },
+  {
+    "symbol": "buildArchitectureFindingRecordLedgerCommit",
+    "source": "src/contracts/fixtures/architecture-fixtures.ts",
+    "dest": "src/control/records/architecture.ts"
+  },
+  {
+    "symbol": "buildArchitectureBriefRecordLedgerCommit",
+    "source": "src/contracts/fixtures/architecture-fixtures.ts",
+    "dest": "src/control/records/architecture.ts"
+  },
+  {
+    "symbol": "buildArchitectureProposalRecordLedgerCommit",
+    "source": "src/contracts/fixtures/architecture-fixtures.ts",
+    "dest": "src/control/records/architecture.ts"
+  },
+  {
+    "symbol": "buildP114CandidateFold",
+    "source": "src/contracts/fixtures/baseline-evolution-fixtures.ts",
+    "dest": "src/control/records/baseline-evolution.ts"
+  },
+  {
+    "symbol": "buildP114DecisionFold",
+    "source": "src/contracts/fixtures/baseline-evolution-fixtures.ts",
+    "dest": "src/control/records/baseline-evolution.ts"
+  },
+  {
+    "symbol": "buildP114GateFold",
+    "source": "src/contracts/fixtures/baseline-evolution-fixtures.ts",
+    "dest": "src/control/records/baseline-evolution.ts"
+  },
+  {
+    "symbol": "buildP114ActivationFold",
+    "source": "src/contracts/fixtures/baseline-evolution-fixtures.ts",
+    "dest": "src/control/records/baseline-evolution.ts"
+  },
+  {
+    "symbol": "buildClaimedRunSnapshot",
+    "source": "src/contracts/fixtures/dispatch-fixtures.ts",
+    "dest": "src/control/records/dispatch.ts"
+  },
+  {
+    "symbol": "buildDispatchIntentFor",
+    "source": "src/contracts/fixtures/dispatch-fixtures.ts",
+    "dest": "src/control/records/dispatch.ts"
+  },
+  {
+    "symbol": "buildDispatchClaimLedgerCommit",
+    "source": "src/contracts/fixtures/dispatch-fixtures.ts",
+    "dest": "src/control/records/dispatch.ts"
+  },
+  {
+    "symbol": "buildDispatchStartLedgerCommit",
+    "source": "src/contracts/fixtures/dispatch-fixtures.ts",
+    "dest": "src/control/records/dispatch.ts"
+  },
+  {
+    "symbol": "nextRunSnapshotForRuntimeEvent",
+    "source": "src/contracts/fixtures/dispatch-fixtures.ts",
+    "dest": "src/control/records/dispatch.ts"
+  },
+  {
+    "symbol": "nextRunSnapshotForOutcomeUnknown",
+    "source": "src/contracts/fixtures/dispatch-fixtures.ts",
+    "dest": "src/control/records/dispatch.ts"
+  },
+  {
+    "symbol": "nextAttemptSnapshotForTerminal",
+    "source": "src/contracts/fixtures/dispatch-fixtures.ts",
+    "dest": "src/control/records/dispatch.ts"
+  },
+  {
+    "symbol": "nextOutboxSnapshotForTerminal",
+    "source": "src/contracts/fixtures/dispatch-fixtures.ts",
+    "dest": "src/control/records/dispatch.ts"
+  },
+  {
+    "symbol": "buildP110IntentSnapshot",
+    "source": "src/contracts/fixtures/control-fixtures.ts",
+    "dest": "src/control/records/control.ts"
+  },
+  {
+    "symbol": "buildControlIntentRecordLedgerCommit",
+    "source": "src/contracts/fixtures/control-fixtures.ts",
+    "dest": "src/control/records/control.ts"
+  },
+  {
+    "symbol": "buildControlAckRecordLedgerCommit",
+    "source": "src/contracts/fixtures/control-fixtures.ts",
+    "dest": "src/control/records/control.ts"
+  },
+  {
+    "symbol": "buildEvidenceIntakeLedgerCommit",
+    "source": "src/contracts/fixtures/evidence-fixtures.ts",
+    "dest": "src/control/records/evidence.ts"
+  },
+  {
+    "symbol": "buildTaskReductionSnapshot",
+    "source": "src/contracts/fixtures/evidence-fixtures.ts",
+    "dest": "src/control/records/evidence.ts"
+  },
+  {
+    "symbol": "buildTaskReductionLedgerCommit",
+    "source": "src/contracts/fixtures/evidence-fixtures.ts",
+    "dest": "src/control/records/evidence.ts"
+  },
+  {
+    "symbol": "planProposalSnapshotFor",
+    "source": "src/contracts/fixtures/goal-change-fixtures.ts",
+    "dest": "src/control/records/goal-change.ts"
+  },
+  {
+    "symbol": "userDecisionSnapshotFor",
+    "source": "src/contracts/fixtures/goal-change-fixtures.ts",
+    "dest": "src/control/records/goal-change.ts"
+  },
+  {
+    "symbol": "buildGoalRevisionV1",
+    "source": "src/contracts/fixtures/goal-change-fixtures.ts",
+    "dest": "src/control/records/goal-change.ts"
+  },
+  {
+    "symbol": "goalRevisionSnapshotFor",
+    "source": "src/contracts/fixtures/goal-change-fixtures.ts",
+    "dest": "src/control/records/goal-change.ts"
+  },
+  {
+    "symbol": "buildP111PlanRevisionSnapshot",
+    "source": "src/contracts/fixtures/goal-change-fixtures.ts",
+    "dest": "src/control/records/goal-change.ts"
+  },
+  {
+    "symbol": "buildPlanChangeProposalRecordCommit",
+    "source": "src/contracts/fixtures/goal-change-fixtures.ts",
+    "dest": "src/control/records/goal-change.ts"
+  },
+  {
+    "symbol": "buildUserDecisionRecordCommit",
+    "source": "src/contracts/fixtures/goal-change-fixtures.ts",
+    "dest": "src/control/records/goal-change.ts"
+  },
+  {
+    "symbol": "buildGoalChangeApplyCommit",
+    "source": "src/contracts/fixtures/goal-change-fixtures.ts",
+    "dest": "src/control/records/goal-change.ts"
+  },
+  {
+    "symbol": "BuildGoalPhaseSnapshotDeps",
+    "source": "src/contracts/fixtures/goal-phase-fixtures.ts",
+    "dest": "src/control/records/goal-phase.ts"
+  },
+  {
+    "symbol": "buildGoalPhaseSnapshot",
+    "source": "src/contracts/fixtures/goal-phase-fixtures.ts",
+    "dest": "src/control/records/goal-phase.ts"
+  },
+  {
+    "symbol": "buildGoalReductionLedgerCommit",
+    "source": "src/contracts/fixtures/goal-phase-fixtures.ts",
+    "dest": "src/control/records/goal-phase.ts"
+  },
+  {
+    "symbol": "handoffRecordedEventFor",
+    "source": "src/contracts/fixtures/handoff-fixtures.ts",
+    "dest": "src/control/records/handoff.ts"
+  },
+  {
+    "symbol": "handoffPacketSnapshotFor",
+    "source": "src/contracts/fixtures/handoff-fixtures.ts",
+    "dest": "src/control/records/handoff.ts"
+  },
+  {
+    "symbol": "buildHandoffRecordLedgerCommit",
+    "source": "src/contracts/fixtures/handoff-fixtures.ts",
+    "dest": "src/control/records/handoff.ts"
+  },
+  {
+    "symbol": "nextTaskLeaseSnapshotForReplacement",
+    "source": "src/contracts/fixtures/handoff-fixtures.ts",
+    "dest": "src/control/records/handoff.ts"
+  },
+  {
+    "symbol": "buildReplacementClaimLedgerCommit",
+    "source": "src/contracts/fixtures/handoff-fixtures.ts",
+    "dest": "src/control/records/handoff.ts"
+  },
+  {
+    "symbol": "buildP115ProposalFold",
+    "source": "src/contracts/fixtures/human-role-collaboration-fixtures.ts",
+    "dest": "src/control/records/human-role-collaboration.ts"
+  },
+  {
+    "symbol": "buildP115DecisionFold",
+    "source": "src/contracts/fixtures/human-role-collaboration-fixtures.ts",
+    "dest": "src/control/records/human-role-collaboration.ts"
+  },
+  {
+    "symbol": "buildP115PolicyInstallFold",
+    "source": "src/contracts/fixtures/human-role-collaboration-fixtures.ts",
+    "dest": "src/control/records/human-role-collaboration.ts"
+  },
+  {
+    "symbol": "buildP115PolicyActivateFold",
+    "source": "src/contracts/fixtures/human-role-collaboration-fixtures.ts",
+    "dest": "src/control/records/human-role-collaboration.ts"
+  },
+  {
+    "symbol": "BuildP107ReadAcquireCommitDeps",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/control/records/workspace.ts"
+  },
+  {
+    "symbol": "buildWorkspaceReadLeaseAcquireLedgerCommit",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/control/records/workspace.ts"
+  },
+  {
+    "symbol": "BuildP107ReadReleaseCommitDeps",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/control/records/workspace.ts"
+  },
+  {
+    "symbol": "buildWorkspaceReadLeaseReleaseLedgerCommit",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/control/records/workspace.ts"
+  },
+  {
+    "symbol": "BuildP107WriteAcquireCommitDeps",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/control/records/workspace.ts"
+  },
+  {
+    "symbol": "buildWorkspaceWriteLeaseAcquireLedgerCommit",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/control/records/workspace.ts"
+  },
+  {
+    "symbol": "BuildP107WriteReleaseCommitDeps",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/control/records/workspace.ts"
+  },
+  {
+    "symbol": "buildWorkspaceWriteLeaseReleaseLedgerCommit",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/control/records/workspace.ts"
+  },
+  {
+    "symbol": "BuildP107IntegrationCommitDeps",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/control/records/workspace.ts"
+  },
+  {
+    "symbol": "buildIntegrationRecordLedgerCommit",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/control/records/workspace.ts"
+  },
+  {
+    "symbol": "BuildP107PatchCommitDeps",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/control/records/workspace.ts"
+  },
+  {
+    "symbol": "buildPatchRecordLedgerCommit",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/control/records/workspace.ts"
+  },
+  {
+    "symbol": "buildMaterialAccessGrantLedgerCommit",
+    "source": "src/contracts/fixtures/material-access-fixtures.ts",
+    "dest": "src/control/records/material-access.ts"
+  },
+  {
+    "symbol": "planRevisionRefFor",
+    "source": "src/contracts/fixtures/plan-fixtures.ts",
+    "dest": "src/contracts/plan.ts"
+  },
+  {
+    "symbol": "goalRefFor",
+    "source": "src/contracts/fixtures/plan-fixtures.ts",
+    "dest": "src/contracts/plan.ts"
+  },
+  {
+    "symbol": "planRevisionSnapshotFor",
+    "source": "src/contracts/fixtures/plan-fixtures.ts",
+    "dest": "src/control/records/plan.ts"
+  },
+  {
+    "symbol": "planRevisionAcceptedEventFor",
+    "source": "src/contracts/fixtures/plan-fixtures.ts",
+    "dest": "src/control/records/plan.ts"
+  },
+  {
+    "symbol": "updatedGoalSnapshotFor",
+    "source": "src/contracts/fixtures/plan-fixtures.ts",
+    "dest": "src/control/records/plan.ts"
+  },
+  {
+    "symbol": "buildPlanLedgerCommit",
+    "source": "src/contracts/fixtures/plan-fixtures.ts",
+    "dest": "src/control/records/plan.ts"
+  },
+  {
+    "symbol": "buildQueryJobRecordCommit",
+    "source": "src/contracts/fixtures/query-job-fixtures.ts",
+    "dest": "src/control/records/query-job.ts"
+  },
+  {
+    "symbol": "buildQueryAnswerRecordCommit",
+    "source": "src/contracts/fixtures/query-job-fixtures.ts",
+    "dest": "src/control/records/query-job.ts"
+  },
+  {
+    "symbol": "buildQueryCloseRecordCommit",
+    "source": "src/contracts/fixtures/query-job-fixtures.ts",
+    "dest": "src/control/records/query-job.ts"
+  },
+  {
+    "symbol": "buildP113PlanPatchRecordCommit",
+    "source": "src/contracts/fixtures/remediation-fixtures.ts",
+    "dest": "src/control/records/remediation.ts"
+  },
+  {
+    "symbol": "buildP113TaskRecordCommit",
+    "source": "src/contracts/fixtures/remediation-fixtures.ts",
+    "dest": "src/control/records/remediation.ts"
+  },
+  {
+    "symbol": "buildP113TaskAdvanceCommit",
+    "source": "src/contracts/fixtures/remediation-fixtures.ts",
+    "dest": "src/control/records/remediation.ts"
+  },
+  {
+    "symbol": "buildWorkContextBindLedgerCommit",
+    "source": "src/contracts/fixtures/context-fixtures.ts",
+    "dest": "src/control/records/context.ts"
+  },
+  {
+    "symbol": "buildWorkContextLinkLedgerCommit",
+    "source": "src/contracts/fixtures/context-fixtures.ts",
+    "dest": "src/control/records/context.ts"
+  },
+  {
+    "symbol": "buildExecutionNoteRecordLedgerCommit",
+    "source": "src/contracts/fixtures/context-fixtures.ts",
+    "dest": "src/control/records/context.ts"
+  },
+  {
+    "symbol": "buildContinuationRecordLedgerCommit",
+    "source": "src/contracts/fixtures/context-fixtures.ts",
+    "dest": "src/control/records/context.ts"
+  },
+  {
+    "symbol": "buildCreateGoalCommand",
+    "source": "src/contracts/fixtures/goal-fixtures.ts",
+    "dest": "src/contracts/commands/goal.ts"
+  },
+  {
+    "symbol": "buildInstallCommand",
+    "source": "src/contracts/fixtures/governance-fixtures.ts",
+    "dest": "src/contracts/commands/governance.ts"
+  },
+  {
+    "symbol": "buildActivateCommand",
+    "source": "src/contracts/fixtures/governance-fixtures.ts",
+    "dest": "src/contracts/commands/governance.ts"
+  },
+  {
+    "symbol": "buildApplyPlanCommand",
+    "source": "src/contracts/fixtures/plan-fixtures.ts",
+    "dest": "src/contracts/commands/plan.ts"
+  },
+  {
+    "symbol": "buildDispatchClaimCommand",
+    "source": "src/contracts/fixtures/dispatch-fixtures.ts",
+    "dest": "src/contracts/commands/dispatch.ts"
+  },
+  {
+    "symbol": "buildDispatchStartCommand",
+    "source": "src/contracts/fixtures/dispatch-fixtures.ts",
+    "dest": "src/contracts/commands/dispatch.ts"
+  },
+  {
+    "symbol": "buildRunFactCommand",
+    "source": "src/contracts/fixtures/dispatch-fixtures.ts",
+    "dest": "src/contracts/commands/dispatch.ts"
+  },
+  {
+    "symbol": "buildEvidenceV1",
+    "source": "src/contracts/fixtures/evidence-fixtures.ts",
+    "dest": "src/contracts/commands/evidence.ts"
+  },
+  {
+    "symbol": "buildEffectivityAnchorV1",
+    "source": "src/contracts/fixtures/evidence-fixtures.ts",
+    "dest": "src/contracts/commands/evidence.ts"
+  },
+  {
+    "symbol": "buildSubmitEvidenceCommand",
+    "source": "src/contracts/fixtures/evidence-fixtures.ts",
+    "dest": "src/contracts/commands/evidence.ts"
+  },
+  {
+    "symbol": "buildReduceTaskCommand",
+    "source": "src/contracts/fixtures/evidence-fixtures.ts",
+    "dest": "src/contracts/commands/evidence.ts"
+  },
+  {
+    "symbol": "buildReduceGoalCommand",
+    "source": "src/contracts/fixtures/goal-phase-fixtures.ts",
+    "dest": "src/contracts/commands/goal-phase.ts"
+  },
+  {
+    "symbol": "buildP107AcquireReadLeaseCommand",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/contracts/commands/workspace.ts",
+    "newSymbol": "buildAcquireReadLeaseCommand"
+  },
+  {
+    "symbol": "buildP107AcquireWriteLeaseCommand",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/contracts/commands/workspace.ts",
+    "newSymbol": "buildAcquireWriteLeaseCommand"
+  },
+  {
+    "symbol": "buildP107ReleaseLeaseCommand",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/contracts/commands/workspace.ts",
+    "newSymbol": "buildReleaseLeaseCommand"
+  },
+  {
+    "symbol": "buildP107RecordPatchCommand",
+    "source": "src/contracts/fixtures/workspace-fixtures.ts",
+    "dest": "src/contracts/commands/workspace.ts",
+    "newSymbol": "buildRecordPatchCommand"
+  },
+  {
+    "symbol": "buildRecordArchitectureInspectionCommand",
+    "source": "src/contracts/fixtures/architecture-fixtures.ts",
+    "dest": "src/contracts/commands/architecture.ts"
+  },
+  {
+    "symbol": "buildRecordArchitectureFindingCommand",
+    "source": "src/contracts/fixtures/architecture-fixtures.ts",
+    "dest": "src/contracts/commands/architecture.ts"
+  },
+  {
+    "symbol": "buildRecordArchitectureDecisionBriefCommand",
+    "source": "src/contracts/fixtures/architecture-fixtures.ts",
+    "dest": "src/contracts/commands/architecture.ts"
+  },
+  {
+    "symbol": "buildRecordCandidateBaselineProposalCommand",
+    "source": "src/contracts/fixtures/architecture-fixtures.ts",
+    "dest": "src/contracts/commands/architecture.ts"
+  },
+  {
+    "symbol": "buildMaterialAccessGrantV1",
+    "source": "src/contracts/fixtures/material-access-fixtures.ts",
+    "dest": "src/contracts/commands/material-access.ts"
+  },
+  {
+    "symbol": "buildGrantMaterialAccessCommand",
+    "source": "src/contracts/fixtures/material-access-fixtures.ts",
+    "dest": "src/contracts/commands/material-access.ts"
+  },
+  {
+    "symbol": "completionPolicyRevisionRefFor",
+    "source": "src/contracts/fixtures/governance-fixtures.ts",
+    "dest": "src/contracts/governance.ts"
+  },
+  {
+    "symbol": "architectureBaselineRevisionRefFor",
+    "source": "src/contracts/fixtures/governance-fixtures.ts",
+    "dest": "src/contracts/governance.ts"
+  },
+  {
+    "symbol": "completionPolicyPinFor",
+    "source": "src/contracts/fixtures/governance-fixtures.ts",
+    "dest": "src/contracts/governance.ts"
+  },
+  {
+    "symbol": "architectureBaselinePinFor",
+    "source": "src/contracts/fixtures/governance-fixtures.ts",
+    "dest": "src/contracts/governance.ts"
+  },
+  {
+    "symbol": "evaluateWorkspaceOperation",
+    "source": "src/contracts/workspace-capability.ts",
+    "dest": "src/control/policies/workspace-operation.ts"
+  },
+  {
+    "symbol": "scopeWithinCapability",
+    "source": "src/contracts/workspace-capability.ts",
+    "dest": "src/control/policies/workspace-operation.ts"
+  },
+  {
+    "symbol": "draftConsistencyIssues",
+    "source": "src/contracts/goal-change.ts",
+    "dest": "src/control/policies/goal-change-consistency.ts"
+  },
+  {
+    "symbol": "evolutionPolicyDecision",
+    "source": "src/contracts/architecture-evolution-policy.ts",
+    "dest": "src/control/policies/architecture-remediation.ts"
+  }
+]

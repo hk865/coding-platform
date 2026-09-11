@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-11 LANE-C InMemory projection tests — planChangeView over
  * PlanProposalRecorded / UserDecisionRecorded / GoalRevisionRecorded /
@@ -14,40 +15,15 @@
  * fed to the read model as a plain EventPage).
  */
 import { describe, expect, it } from "vitest";
-import { ReadModelIndexImpl } from "../../src/read-model/read-model-index.js";
+import { ReadModelIndexImpl } from "../../src/data/read-model-index/read-model-index.js";
 import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
-import {
-  P111_GOAL,
-  P111_PROJECT,
-  P111_PROJECT_B,
-  P111_SOURCE_PLAN,
-  P111_WORKSPACE,
-  buildApplyPlanChangeCommand,
-  buildP111NewPlanDraft,
-  buildPlanChangeProposalRecordCommit,
-  buildGoalChangeApplyCommit,
-  buildPlanProposalV1,
-  buildRecordPlanChangeProposalCommand,
-  buildRecordUserDecisionCommand,
-  buildUserDecisionRecordCommit,
-  buildUserDecisionV1,
-  p111GoalRef,
-  p111PlanRef,
-} from "../../src/contracts/fixtures/goal-change-fixtures.js";
-import {
-  HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1,
-  buildApplyPlanCommand,
-  planRevisionAcceptedEventFor,
-  planRevisionSnapshotFor,
-} from "../../src/contracts/fixtures/plan-fixtures.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  COMPLETION_POLICY_FIXTURE_V1,
-  architectureBaselinePinFor,
-  buildInstallCommand,
-  completionPolicyPinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
+import { P111_GOAL, P111_PROJECT, P111_PROJECT_B, P111_SOURCE_PLAN, P111_WORKSPACE, buildApplyPlanChangeCommand, buildP111NewPlanDraft, buildPlanProposalV1, buildRecordPlanChangeProposalCommand, buildRecordUserDecisionCommand, buildUserDecisionV1, p111GoalRef, p111PlanRef } from "../contract-support/fixtures/goal-change-fixtures.js";
+import { buildPlanChangeProposalRecordCommit, buildGoalChangeApplyCommit, buildUserDecisionRecordCommit } from "../../src/control/control-engine/records/goal-change.js";
+import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { planRevisionAcceptedEventFor, planRevisionSnapshotFor } from "../../src/control/control-engine/records/plan.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
+import { architectureBaselinePinFor, completionPolicyPinFor } from "../../src/contracts/governance.js";
 import type { InstallArchitectureBaselineRevisionCommand, InstallCompletionPolicyRevisionCommand } from "../../src/contracts/governance.js";
 import type { GoalSnapshot } from "../../src/contracts/ledger.js";
 import type { PlanChangeViewResult } from "../../src/contracts/goal-change.js";
@@ -151,9 +127,25 @@ function buildP111Page(projectId: string = P111_PROJECT): { page: EventPage } {
 }
 
 describe("P1-11 LANE-C InMemory projection: planChangeView", () => {
+  it("gets disposition explanations through the Control port while preserving projected decisions and cursor", async () => {
+    const policy = new ControlPolicyExplanation(), base = policy.explainPlanChange.bind(policy);
+    let calls = 0;
+    policy.explainPlanChange = request => { calls++; return base(request).map(row => ({ ...row, reason: 'control-policy-explanation' })); };
+    const rm = new ReadModelIndexImpl(policy), { page } = buildP111Page();
+    await rm.advance(page);
+    expect(calls).toBe(0);
+    const view = await rm.planChangeView({ projectId: P111_PROJECT, workspaceId: P111_WORKSPACE, goalId: P111_GOAL });
+    expect(view).toMatchObject({ status: 'ready', freshness: makeCommitCursor(6) });
+    if (view.status !== 'ready') throw Error('view absent');
+    expect(view.dispositions.every(row => row.reason === 'control-policy-explanation')).toBe(true);
+    expect(view.decisions).toHaveLength(1);
+    expect(calls).toBe(1);
+    expect((await rm.advance(page)).appliedEventIds).toEqual([]);
+  });
+
   it("projects proposals/decisions/revisions and computes task dispositions", async () => {
     const { page } = buildP111Page();
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const receipt = await rm.advance(page);
     expect(receipt.appliedEventIds.length).toBe(6);
 
@@ -183,7 +175,7 @@ describe("P1-11 LANE-C InMemory projection: planChangeView", () => {
 
   it("isolates the same local goal id across projects (hard scope key)", async () => {
     const { page } = buildP111Page();
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await rm.advance(page);
 
     // Same goalId but another project -> no rows under that scope.
@@ -192,18 +184,18 @@ describe("P1-11 LANE-C InMemory projection: planChangeView", () => {
   });
 
   it("a never-advanced index returns not_found (no cursor claim)", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const view = await rm.planChangeView({ projectId: P111_PROJECT, workspaceId: P111_WORKSPACE, goalId: P111_GOAL });
     expect(view.status).toBe("not_found");
   });
 
   it("rebuild equivalence: a fresh InMemory index from the same events reproduces the view", async () => {
     const { page } = buildP111Page();
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await rm.advance(page);
     const before = await rm.planChangeView({ projectId: P111_PROJECT, workspaceId: P111_WORKSPACE, goalId: P111_GOAL });
 
-    const fresh = new ReadModelIndexImpl();
+    const fresh = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await fresh.advance(page);
     const after = await fresh.planChangeView({ projectId: P111_PROJECT, workspaceId: P111_WORKSPACE, goalId: P111_GOAL });
     expect(json(after)).toBe(json(before));
@@ -216,7 +208,7 @@ describe("P1-11 LANE-C InMemory projection: planChangeView", () => {
     // Build the stream without the source-plan accept: the revision references a
     // superseded ref for which no PlanRevisionSnapshot exists -> dispositions [].
     const { page } = buildP111Page();
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     // First event (source accept) is intentionally dropped; skip to proposal.
     const reduced: EventPage = {
       ...page,

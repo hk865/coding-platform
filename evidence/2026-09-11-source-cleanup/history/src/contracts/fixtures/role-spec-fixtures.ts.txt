@@ -1,0 +1,344 @@
+/**
+ * RW-11 角色规格的**版本化 source**（八个角色各一份），以及把它们装进策略正文的角色矩阵构造器。
+ *
+ * 为什么放在 fixtures：与 governance-fixtures.ts 里的 ARCHITECTURE_BASELINE_FIXTURE_V1 同一定位——
+ * 这是「source 内容」，不是内置默认值：它本身不产生任何授权，必须经
+ * buildRoleSpecInstallCommand → ControlEngine.installRoleSpec（CAS@0）+ activateRoleSpec
+ * 走同一条正式治理路径才会生效（ARCHITECTURE 不变量 #11）。
+ *
+ * 规格内容与 dev_docs/agent/templates/short-lived-agent.md 的配置模板对齐：
+ * role_label → label、purpose → purpose、inputs.source_refs → requiredMaterials／optionalMaterials、
+ * permissions → permissions、outputs → requiredOutputs、exit → exit。
+ *
+ * 权限没有一处比既有实现更宽：
+ *   - planner：只读（初始协调走只读查询内核，tools=['read']）；
+ *   - executor／integrator：tools=['read','write','shell']、writeScope=workspace，
+ *     与 planned-task-dispatch.ts 实际声明的权限逐项相同（具体写入范围仍由已接受计划的授权决定）；
+ *   - independent-reviewer：tools=['read']、writeScope=none、预算取生产者 Task 的已提交预算，
+ *     与 INDEPENDENT_REVIEWER_ROLE + ReviewerProfileCompiler 的既有规则逐项相同（另见
+ *     tests/control/role-spec.test.ts 里锁死两者一致性的用例）；
+ *   - secretary／advisor／recorder／investigator：只读，没有任何写入授权。
+ */
+import type { CoordinationPolicyContentV1 } from "../human-role-collaboration.js";
+import { P15_COORDINATION_BUDGET_MAX, P15_COORDINATION_POLICY_REVISION, coordinationPolicyContentDigest } from "../human-role-collaboration.js";
+import type { CoordinationRoleMatrixV1 } from "../human-role-collaboration.js";
+import type { RoleSpecContentV1, RoleSpecPinV1 } from "../role-spec.js";
+import { ROLE_SPEC_REVISION, roleSpecContentDigest, roleSpecRevisionRefFor } from "../role-spec.js";
+import { buildRoleSpecActivateCommand, buildRoleSpecInstallCommand, type BuildGovernanceCommandDeps } from "../commands/governance.js";
+
+/** 一个 roleId + 它的版本化规格正文（内容不可改写；换内容即换 roleId）。 */
+export type VersionedRoleSpecSourceV1 = { roleId: string; revision: typeof ROLE_SPEC_REVISION; content: RoleSpecContentV1 };
+
+export const ROLE_SOURCE_PLANNER = "planner";
+export const ROLE_SOURCE_EXECUTOR = "executor";
+export const ROLE_SOURCE_INTEGRATOR = "integrator";
+export const ROLE_SOURCE_SECRETARY = "secretary";
+export const ROLE_SOURCE_ADVISOR = "advisor";
+export const ROLE_SOURCE_RECORDER = "recorder";
+export const ROLE_SOURCE_INVESTIGATOR = "investigator";
+export const ROLE_SOURCE_INDEPENDENT_REVIEWER = "independent-reviewer";
+
+/** 规格 source 清单（顺序即「一个项目默认登记哪些角色」的顺序，身份仍是 roleId）。 */
+export const ROLE_SPEC_SOURCES_V1: readonly VersionedRoleSpecSourceV1[] = [
+  {
+    roleId: ROLE_SOURCE_PLANNER,
+    revision: ROLE_SPEC_REVISION,
+    content: {
+      schemaVersion: 1,
+      label: "规划者",
+      purpose: "把已明确的目标拆成有依赖关系的工作包，并说明每个工作包的验收义务、承担角色与不确定项。",
+      responsibility: ["planning"],
+      requiredMaterials: [
+        { kind: "contract", reason: "没有当前版本的义务与验收语义，拆出来的工作包无法验收" },
+        { kind: "decision", reason: "已接受的需求与架构决定是拆分的边界，不能被重新解释" },
+        { kind: "history", reason: "相关前驱报告与失败原因决定本次拆分要避开什么" },
+      ],
+      optionalMaterials: [
+        { kind: "code", reason: "了解当前模块与接口关系，判断工作包是否可独立完成" },
+        { kind: "evidence", reason: "已有证据说明哪些部分其实已经满足，不必重复排任务" },
+      ],
+      permissions: { tools: ["read"], writeScope: "none" },
+      budget: { source: "task-budget", scope: "assigned-task" },
+      requiredOutputs: [
+        { kind: "proposal", reason: "规划只产出提案：任务集、依赖、承担角色与影响，由 Control 受理后才成为计划" },
+      ],
+      exit: {
+        success: "提案含任务集、依赖边、每项验收义务与来源引用，且写明不确定项",
+        stop: "目标或验收语义缺失、材料不可用、预算耗尽时停止并上报缺口",
+        handoff: "已确认的拆分、未解问题、需要人决定的事项与下一步",
+      },
+    },
+  },
+  {
+    roleId: ROLE_SOURCE_EXECUTOR,
+    revision: ROLE_SPEC_REVISION,
+    content: {
+      schemaVersion: 1,
+      label: "执行者",
+      purpose: "在已分配任务与权限内实现改动，并留下可核对的实现结果与未验证判断。",
+      responsibility: ["execution"],
+      requiredMaterials: [
+        { kind: "contract", reason: "必要规则与公开契约决定这次实现不能越过的边界" },
+        { kind: "code", reason: "当前源码入口是实现的对象，不能凭历史记忆改代码" },
+        { kind: "evidence", reason: "直接前驱的正式通过与纠正事项决定本次从哪继续" },
+      ],
+      optionalMaterials: [
+        { kind: "history", reason: "相关历史取舍帮助避免重复踩坑，但旧结论不授予新权限" },
+        { kind: "decision", reason: "影响接口或验收的已接受决定" },
+      ],
+      permissions: { tools: ["read", "write", "shell"], writeScope: "workspace" },
+      budget: { source: "task-budget", scope: "assigned-task" },
+      requiredOutputs: [
+        { kind: "implementation-result", reason: "实现结果必须可核对：改动位置、命令、观察到的结果与仍未验证的判断" },
+      ],
+      exit: {
+        success: "改动落在授权工作区内且给出可复现的验证观察",
+        stop: "缺少写入授权、预算耗尽、被取消或无法继续时在安全点停止并报告未完成部分",
+        handoff: "已做事项、改动位置、未解问题、未知副作用与下一步",
+      },
+    },
+  },
+  {
+    roleId: ROLE_SOURCE_INTEGRATOR,
+    revision: ROLE_SPEC_REVISION,
+    content: {
+      schemaVersion: 1,
+      label: "集成者",
+      purpose: "把多个工作包的产物合成一个可验证的整体，识别冲突、缺失与返工范围。",
+      responsibility: ["integration"],
+      requiredMaterials: [
+        { kind: "evidence", reason: "只有正式通过的证据才能作为集成的输入，未验收的产物不能当已满足" },
+        { kind: "code", reason: "冲突判断必须落在当前源码上，不能只看报告文字" },
+        { kind: "contract", reason: "接口与验收义务是判断「能不能合」的判据" },
+      ],
+      optionalMaterials: [
+        { kind: "history", reason: "同类冲突的历史处置方式" },
+        { kind: "decision", reason: "影响接口形状的已接受决定" },
+      ],
+      permissions: { tools: ["read", "write", "shell"], writeScope: "workspace" },
+      budget: { source: "task-budget", scope: "assigned-task" },
+      requiredOutputs: [
+        { kind: "integration-result", reason: "集成结论要能回到具体产物与冲突项，说明合并了什么、还剩什么" },
+        { kind: "conflict-report", reason: "识别出的耦合冲突必须单独成项，并给出返工范围（不能只报「集成失败」）" },
+      ],
+      exit: {
+        success: "集成结果含输入清单、冲突与缺口、剩余工作及来源",
+        stop: "输入证据不适用或缺失、预算耗尽时停止并列出缺口",
+        handoff: "已合入的产物、未解决的冲突、建议的返工范围",
+      },
+    },
+  },
+  {
+    roleId: ROLE_SOURCE_SECRETARY,
+    revision: ROLE_SPEC_REVISION,
+    content: {
+      schemaVersion: 1,
+      label: "秘书",
+      purpose: "面向人组织架构／接口变化与取舍：把用户目标、已接受决定、关键选项、影响和未解分歧摆到人面前。",
+      responsibility: ["human_decision_support"],
+      requiredMaterials: [
+        { kind: "decision", reason: "已接受的决定是提出新取舍的起点，不能被重新解释成未定" },
+        { kind: "history", reason: "相关工作反馈与未解分歧的来源与时间" },
+        { kind: "contract", reason: "公开契约变化才需要人决定，普通实现细节不需要打扰人" },
+      ],
+      optionalMaterials: [
+        { kind: "evidence", reason: "支撑取舍判断的当前证据与缺口" },
+        { kind: "code", reason: "说明影响面时引用真实源码位置" },
+      ],
+      permissions: { tools: ["read"], writeScope: "none" },
+      budget: { source: "task-budget", scope: "assigned-task" },
+      requiredOutputs: [
+        { kind: "answer-with-sources", reason: "选项、影响与未解分歧必须带来源；整理不能代替人的接受决定" },
+      ],
+      exit: {
+        success: "给出了带来源的选项与影响，并明确标出需要人决定的事项",
+        stop: "材料不足或涉及未授权的范围变化时停止并说明缺口",
+        handoff: "待决事项、各自影响、相关来源与建议的下一步",
+      },
+    },
+  },
+  {
+    roleId: ROLE_SOURCE_ADVISOR,
+    revision: ROLE_SPEC_REVISION,
+    content: {
+      schemaVersion: 1,
+      label: "参谋",
+      purpose: "参与需求与架构讨论，给出方案与影响分析；涉及需求含义、验收或基线的取舍升级给人。",
+      responsibility: ["human_decision_support", "planning"],
+      requiredMaterials: [
+        { kind: "contract", reason: "方案不能改变验收语义，除非经正式决定路径" },
+        { kind: "decision", reason: "已接受的架构决定是方案的约束" },
+        { kind: "history", reason: "相关讨论与未解分歧" },
+      ],
+      optionalMaterials: [
+        { kind: "code", reason: "评估方案对当前实现的影响面" },
+        { kind: "evidence", reason: "用现有证据判断问题是否真实存在" },
+      ],
+      permissions: { tools: ["read"], writeScope: "none" },
+      budget: { source: "task-budget", scope: "assigned-task" },
+      requiredOutputs: [
+        { kind: "proposal", reason: "方案与影响必须以提案形式给出，由人或有权限的角色决定" },
+      ],
+      exit: {
+        success: "方案含至少两个实质不同的选项、各自影响与来源",
+        stop: "缺少必要材料或超出授权范围时停止并要求决定",
+        handoff: "选项、影响、推荐与仍需人决定的部分",
+      },
+    },
+  },
+  {
+    roleId: ROLE_SOURCE_RECORDER,
+    revision: ROLE_SPEC_REVISION,
+    content: {
+      schemaVersion: 1,
+      label: "书记",
+      purpose: "整理各方依据与分歧，保留作者、来源与决定理由，形成可追溯的工作记录。",
+      responsibility: ["fact_consolidation"],
+      requiredMaterials: [
+        { kind: "decision", reason: "决定理由与作出决定的身份必须原样保留，不能被整理改写" },
+        { kind: "history", reason: "各方主张与其来源、时间" },
+        { kind: "evidence", reason: "记录必须能回到证据与产物引用，而不是复述模型说法" },
+      ],
+      optionalMaterials: [{ kind: "contract", reason: "区分「已接受的约束」与「普通记录」" }],
+      permissions: { tools: ["read"], writeScope: "none" },
+      budget: { source: "task-budget", scope: "assigned-task" },
+      requiredOutputs: [
+        { kind: "work-record", reason: "工作记录要保留来源、作者与未解分歧；整理不产生新的授权或结论" },
+      ],
+      exit: {
+        success: "记录含各项主张的来源、作者、时间与未解分歧",
+        stop: "关键来源缺失时标注不确定，不补造理由",
+        handoff: "记录正文、未解分歧与需要谁决定",
+      },
+    },
+  },
+  {
+    roleId: ROLE_SOURCE_INVESTIGATOR,
+    revision: ROLE_SPEC_REVISION,
+    content: {
+      schemaVersion: 1,
+      label: "调查者",
+      purpose: "对需要新语义判断的问题做独立只读调查，返回带来源的答案与不确定性。",
+      responsibility: ["investigation"],
+      requiredMaterials: [
+        { kind: "code", reason: "调查必须读真实源码／索引，不能凭摘要推断" },
+        { kind: "contract", reason: "判断标准取自当前规范版本" },
+      ],
+      optionalMaterials: [
+        { kind: "history", reason: "已有报告能回答时优先复用，避免重复调查" },
+        { kind: "evidence", reason: "相关证据与适用版本" },
+      ],
+      permissions: { tools: ["read"], writeScope: "none" },
+      budget: { source: "task-budget", scope: "assigned-task" },
+      requiredOutputs: [
+        { kind: "answer-with-sources", reason: "答案必须带来源与版本；来源不可用时要标注不确定而不是给确定结论" },
+      ],
+      exit: {
+        success: "答案有来源、版本与覆盖范围说明",
+        stop: "缺少必要的只读能力或材料时返回缺口",
+        handoff: "结论、来源、未覆盖的部分与建议的下一步调查",
+      },
+    },
+  },
+  {
+    roleId: ROLE_SOURCE_INDEPENDENT_REVIEWER,
+    revision: ROLE_SPEC_REVISION,
+    content: {
+      schemaVersion: 1,
+      label: "独立审阅者",
+      purpose: "对当前版本的验收义务与被审对象做独立只读核对，逐条给出有来源的 PASS／FAIL／INCONCLUSIVE。",
+      responsibility: ["verification"],
+      requiredMaterials: [
+        { kind: "contract", reason: "当前版本的验收义务与架构／接口约束是核对判据" },
+        { kind: "code", reason: "变更范围与当前源码必须自己读，不能以 Worker 自述代替" },
+        { kind: "evidence", reason: "静态与动态检查证据、风险与历史问题" },
+      ],
+      optionalMaterials: [{ kind: "history", reason: "相关历史问题与既往结论，仅用于定位，不替代本次核对" }],
+      // 只读：与 INDEPENDENT_REVIEWER_ROLE（templateId=independent-reviewer, tools=['read']）逐项一致。
+      permissions: { tools: ["read"], writeScope: "none" },
+      // 预算取**生产者 Task 的已提交预算**：与 ReviewerProfileCompiler.current() 选中的那份同一来源，
+      // 规格不写数字，避免出现第二套审阅预算。
+      budget: { source: "task-budget", scope: "producer-task" },
+      requiredOutputs: [
+        { kind: "verification-verdict", reason: "逐条给出 PASS／FAIL／INCONCLUSIVE 与来源；结论不可溯源时标不确定" },
+      ],
+      exit: {
+        success: "每条覆盖项都有结论与来源，且与所核对版本一致",
+        stop: "来源不可用或材料缺失时按缺口结束，不生成确定结论",
+        handoff: "逐项结论、未覆盖项、不确定来源与需要人判断的部分",
+      },
+    },
+  },
+];
+
+const ROLE_SPEC_BY_ID = new Map(ROLE_SPEC_SOURCES_V1.map((source) => [source.roleId, source]));
+
+export function roleSpecSourceFor(roleId: string): VersionedRoleSpecSourceV1 {
+  const source = ROLE_SPEC_BY_ID.get(roleId);
+  if (source === undefined) throw new Error("未知角色规格 source：" + roleId);
+  return source;
+}
+
+/** 角色矩阵 pin：roleId + 该 source 的 revision 与内容摘要。 */
+export function roleSpecPinFor(projectId: string, roleId: string): RoleSpecPinV1 {
+  const source = roleSpecSourceFor(roleId);
+  return { ref: roleSpecRevisionRefFor(projectId, roleId, source.revision), digest: roleSpecContentDigest(source.content, roleId, source.revision) };
+}
+
+/** 安装某个角色规格的正式命令（薄包装：字段级构造仍在契约命令层）。 */
+export function buildRoleSpecInstallCommandFor(roleId: string, deps: BuildGovernanceCommandDeps): import("../role-spec.js").InstallRoleSpecRevisionCommand {
+  const source = roleSpecSourceFor(roleId);
+  return buildRoleSpecInstallCommand({ roleId: source.roleId, content: source.content }, deps);
+}
+
+/** 激活某个角色规格的正式命令。 */
+export function buildRoleSpecActivateCommandFor(roleId: string, deps: BuildGovernanceCommandDeps & { expectedRevision: number }): import("../role-spec.js").ActivateRoleSpecRevisionCommand {
+  const pin = roleSpecPinFor(deps.projectId, roleId);
+  return buildRoleSpecActivateCommand(pin, deps);
+}
+
+export const RW11_ROLE_MATRIX_COORDINATOR = ROLE_SOURCE_PLANNER;
+
+/**
+ * 项目角色矩阵：默认登记全部八个角色，收敛责任默认在规划者（ARCHITECTURE：各工作包可有规划／
+ * 集成负责人，跨包议题有指定收敛责任）。若调用方只登记了部分角色、且规划者不在其中，
+ * 收敛责任取登记集合里的第一个角色——fixture 不制造悬空 coordinator（那会被安装守卫拒绝）。
+ */
+export function buildRoleMatrixFixture(projectId: string, roleIds: readonly string[] = ROLE_SPEC_SOURCES_V1.map((source) => source.roleId), coordinator: string = RW11_ROLE_MATRIX_COORDINATOR): CoordinationRoleMatrixV1 {
+  const catalog: Record<string, RoleSpecPinV1> = {};
+  for (const roleId of roleIds) catalog[roleId] = roleSpecPinFor(projectId, roleId);
+  const resolved = roleIds.includes(coordinator) ? coordinator : roleIds[0];
+  if (resolved === undefined) throw new Error("角色矩阵必须至少登记一个角色");
+  return { catalog, coordinator: { roleId: resolved, note: "跨工作包议题由该角色收敛并上报需要人决定的事项" } };
+}
+
+/**
+ * 带角色矩阵的协调策略正文 source：额度等其他字段与 P1-15 的既有正文同值，
+ * 额外的只有 roles——安装期仍走同一条 InstallCoordinationPolicy 路径。
+ */
+export function buildCoordinationPolicyContentWithRolesV1(projectId: string, roleIds?: readonly string[]): CoordinationPolicyContentV1 {
+  return {
+    schemaVersion: 1,
+    budget: { maxAutonomousReworks: P15_COORDINATION_BUDGET_MAX, maxClarifications: 8 },
+    allowed: { inScopeRework: true, inScopeTesting: true },
+    scope: { changesRequireHumanDecision: ["requirement", "acceptance", "baseline"] },
+    upgrade: { path: "manual-decision", note: "策略变化必须由人经 install + activate 提交新 revision" },
+    roles: buildRoleMatrixFixture(projectId, roleIds),
+  };
+}
+
+/** 与上一份同内容、但没有角色矩阵的正文：用于验证「没有矩阵即沿用既有绑定语义」。 */
+export function buildCoordinationPolicyContentWithoutRolesV1(): CoordinationPolicyContentV1 {
+  return {
+    schemaVersion: 1,
+    budget: { maxAutonomousReworks: P15_COORDINATION_BUDGET_MAX, maxClarifications: 8 },
+    allowed: { inScopeRework: true, inScopeTesting: true },
+    scope: { changesRequireHumanDecision: ["requirement", "acceptance", "baseline"] },
+    upgrade: { path: "manual-decision", note: "策略变化必须由人经 install + activate 提交新 revision" },
+  };
+}
+
+/** 该正文装进策略时的摘要口径（与 P1-15 完全同一个函数，不另立一份）。 */
+export function roleMatrixPolicyDigest(content: CoordinationPolicyContentV1, policyId: string): string {
+  return coordinationPolicyContentDigest(content, policyId, P15_COORDINATION_POLICY_REVISION);
+}

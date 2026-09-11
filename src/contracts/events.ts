@@ -9,6 +9,7 @@
  * consumers, never skip.
  */
 import type { GoalCreatedEvent } from "./command-event.js";
+import type { WorkspaceRegisteredEvent } from './workspace-registration.js';
 import type { ProjectBootstrappedEventV1, WorkspaceBootstrappedEventV1 } from "./bootstrap.js";
 import type {
   ArchitectureBaselineActivatedEvent,
@@ -54,11 +55,15 @@ import type { ArchitectureEvolutionPolicyActivatedEvent, ArchitectureEvolutionPo
 import type { RemediationPlanPatchRecordedEvent, RemediationTaskAdvancedEvent, RemediationTaskCreatedEvent } from "./remediation.js";
 import type { ArchitectureChangeDecisionRecordedEvent, BaselineActivationRecordedEvent, CandidateBaselineMaterializedEvent, MigrationGateRecordedEvent } from "./baseline-evolution.js";
 import type { CoordinationPolicyActivatedEvent, CoordinationPolicyInstalledEvent, InitialDesignDecisionRecordedEvent, InitialDesignProposalRecordedEvent } from "./human-role-collaboration.js";
+import type { MaterialAccessGrantedEvent } from "./material-access.js";
+import type { RoleSpecActivatedEvent, RoleSpecInstalledEvent } from "./role-spec.js";
 
 export type DomainEventV1 =
+  | import('./reviewer-work.js').ReviewDomainEvent
   | GoalCreatedEvent
   | ProjectBootstrappedEventV1
   | WorkspaceBootstrappedEventV1
+  | WorkspaceRegisteredEvent
   | CompletionPolicyInstalledEvent
   | ArchitectureBaselineInstalledEvent
   | CompletionPolicyActivatedEvent
@@ -109,15 +114,21 @@ export type DomainEventV1 =
   | InitialDesignProposalRecordedEvent
   | InitialDesignDecisionRecordedEvent
   | CoordinationPolicyInstalledEvent
-  | CoordinationPolicyActivatedEvent;
+  | CoordinationPolicyActivatedEvent
+  | RoleSpecInstalledEvent
+  | RoleSpecActivatedEvent
+  | MaterialAccessGrantedEvent
+  | import("./material-access.js").MaterialAccessRevokedEvent;
 
 export type DomainEvent = DomainEventV1;
 
 /** All known v1 event types. Anything else is unknown-version input. */
 export const KNOWN_EVENT_TYPES = [
+  'TaskReviewProtocolAdopted', 'ReviewWorkCreated', 'FailedReviewWorkReplaced', 'ReviewInputBound', 'ReviewOutputBound', 'ReviewResultRecorded',
   "GoalCreated",
   "ProjectBootstrapped",
   "WorkspaceBootstrapped",
+  "WorkspaceRegistered",
   "CompletionPolicyInstalled",
   "ArchitectureBaselineInstalled",
   "CompletionPolicyActivated",
@@ -169,6 +180,10 @@ export const KNOWN_EVENT_TYPES = [
   "InitialDesignDecisionRecorded",
   "CoordinationPolicyInstalled",
   "CoordinationPolicyActivated",
+  "RoleSpecInstalled",
+  "RoleSpecActivated",
+  "MaterialAccessGranted",
+  "MaterialAccessRevoked",
 ] as const;
 
 export function isKnownEventType(eventType: string): eventType is (typeof KNOWN_EVENT_TYPES)[number] {

@@ -1,0 +1,9 @@
+/** Candidate source bytes. This is distinct from the complete exploration source pin. */
+export interface CandidateWorkspaceSourcePort {
+  digest(root: string): Promise<string>;
+}
+
+/** Checks that the submitted patch describes the already-applied candidate; does not modify the workspace. */
+export interface CandidatePatchCheckPort {
+  check(material: { root: string; patchFile: string }): Promise<void>;
+}

@@ -11,20 +11,20 @@
  */
 import { describe, expect, it } from "vitest";
 import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
-import { ControlEngineImpl } from "../../src/control/control-engine.js";
+import { ControlEngineImpl } from "../../src/control/control-engine/control-engine.js";
 import type {
   DispatchOutboxEntrySnapshot,
   RunSnapshot,
   TaskAttemptSnapshot,
   TaskLeaseSnapshot,
 } from "../../src/contracts/dispatch.js";
-import { sequenceIdGen } from "../../src/contracts/testing/sequences.js";
+import { sequenceIdGen } from "../../src/testing/sequences.js";
 import type { P1_03TestHarness } from "../contract-suite/p1-03-harness.js";
 import {
   buildPreparedClaim,
   prepareDispatchScenario,
 } from "../contract-suite/p1-03-harness.js";
-import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../../src/contracts/fixtures/dispatch-fixtures.js";
+import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../../src/fixtures/dispatch-fixtures.js";
 
 const SCHEMA = "2026-09-05T12:00:00.000Z";
 const PROJECT = "proj-alpha";

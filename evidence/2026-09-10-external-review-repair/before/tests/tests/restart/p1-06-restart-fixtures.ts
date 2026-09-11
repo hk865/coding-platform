@@ -1,0 +1,160 @@
+/**
+ * P1-06 restart-path fixtures + readiness probe.
+ *   bootstrap -> install/activate -> CreateGoal -> applyPlan -> A claim/start/
+ *   crash -> recordHandoff (body-first vault put) -> B claimReplacement ->
+ *   driveHandoff (B run via FakeRuntime) -> commit -> close -> reopen ->
+ *   (a) HandoffPacket / ReplacementAttempt / TaskLease / B-Run snapshots
+ *       field-identical,
+ *   (b) handoffProvenance view rebuilt from persisted EventPages
+ *       field-for-field identical,
+ *   (c) observedCursor identical.
+ * NEVER fakes; the probe runs the full pre-restart path and any remaining
+ * "P1-06: ... not implemented yet" stub throw makes it false (auto-skip).
+ */
+import { expect } from "vitest";
+import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { toP1_06Harness, type P1_06TestHarness } from "../contract-suite/p1-06-harness.js";
+import { prepareP106Scenario, endP106RunA } from "../contract-suite/p1-06-harness.js";
+import {
+  P106_TASK_ID,
+  P106_GOAL,
+  buildHandoffPacketV1,
+  buildRecordHandoffCommand,
+  buildClaimReplacementCommand,
+} from "../../src/contracts/fixtures/handoff-fixtures.js";
+import { handoffPacketRefFor, replacementAttemptRefFor } from "../../src/contracts/handoff.js";
+import { runRefFor, taskAttemptRefFor, taskLeaseRefFor } from "../../src/contracts/dispatch.js";
+import { artifactBodyDigest } from "../../src/contracts/artifact.js";
+
+export async function isP106Ready(): Promise<boolean> {
+  try {
+    const h = await createPersistentSqliteHarness({ deps: {} });
+    try {
+      await runP106Path(h);
+      return true;
+    } finally {
+      await h.cleanup().catch(() => undefined);
+    }
+  } catch {
+    return false;
+  }
+}
+
+export async function runP106Path(h: PersistentSqliteHarness) {
+  const th: P1_06TestHarness = toP1_06Harness(h);
+  const sc = await prepareP106Scenario(th);
+  const projectId = sc.projectId;
+
+  // 1) A runs and crashes.
+  await endP106RunA(th, { projectId, taskId: P106_TASK_ID, runId: "run-rs-a", attemptId: "att-rs-a", script: "crashed" });
+  const aRun = runRefFor(projectId, P106_GOAL, "run-rs-a");
+
+  // 2) body-first packet registration.
+  const packet = buildHandoffPacketV1({
+    packetId: "packet-rs-1",
+    projectId,
+    goalId: P106_GOAL,
+    taskId: P106_TASK_ID,
+    planRef: sc.planRef,
+    taskRevision: 1,
+    runRef: aRun,
+    attemptRef: taskAttemptRefFor(projectId, P106_GOAL, P106_TASK_ID, "att-rs-a"),
+  });
+  const put = await h.vault.put({
+    contentType: "application/json",
+    body: JSON.stringify(packet),
+    sourceRefs: [{ kind: "artifact", refId: "packet-rs-body", revision: "1", digest: artifactBodyDigest(JSON.stringify(packet)) }],
+    ownerRef: aRun,
+    requestedAt: packet.generatedAt,
+  });
+  expect(put.status).toBe("stored");
+  const record = await h.recordHandoff(
+    buildRecordHandoffCommand({
+      commandId: "cmd-rs-record",
+      correlationId: "corr-rs-record",
+      submittedAt: packet.generatedAt,
+      projectId,
+      packet: { ...packet, bodyRef: put.status === "stored" ? put.ref : packet.bodyRef },
+    }),
+  );
+  expect(record.status).toBe("committed");
+
+  // 3) B's replacement claim.
+  const claim = await h.claimReplacement(
+    buildClaimReplacementCommand({
+      commandId: "cmd-rs-claim",
+      correlationId: "corr-rs-claim",
+      submittedAt: packet.generatedAt,
+      projectId,
+      goalId: P106_GOAL,
+      taskId: P106_TASK_ID,
+      expectedRevision: 1,
+      attemptId: "att-rs-b",
+      runId: "run-rs-b",
+      handoffPacketRef: handoffPacketRefFor(projectId, P106_GOAL, P106_TASK_ID, "packet-rs-1"),
+      reason: "run_crashed",
+    }),
+  );
+  expect(claim.status).toBe("committed");
+
+  // 4) HandoffPort drives B's run to completion.
+  const driven = await h.handoffDrive.driveHandoff({ reason: "p1-06 restart path" });
+  expect(driven.started).toBe(1);
+
+  // 5) Projection + snapshot collection.
+  await h.advanceProjection();
+  const packetLoad = await h.ledger.load(handoffPacketRefFor(projectId, P106_GOAL, P106_TASK_ID, "packet-rs-1"));
+  const replacementLoad = await h.ledger.load(replacementAttemptRefFor(projectId, P106_GOAL, P106_TASK_ID, "att-rs-b"));
+  const leaseLoad = await h.ledger.load(taskLeaseRefFor(projectId, P106_GOAL, P106_TASK_ID));
+  const bRunLoad = await h.ledger.load(runRefFor(projectId, P106_GOAL, "run-rs-b"));
+  for (const load of [packetLoad, replacementLoad, leaseLoad, bRunLoad]) {
+    if (load.status !== "found") throw new Error("P1-06 restart snapshot missing: " + String(load.status));
+  }
+  const prov = await th.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
+  if (prov.status !== "ready") throw new Error("provenance not ready: " + String(prov.status));
+  return {
+    projectId,
+    goalId: P106_GOAL,
+    packet: packetLoad.status === "found" ? packetLoad.snapshot : null,
+    replacement: replacementLoad.status === "found" ? replacementLoad.snapshot : null,
+    lease: leaseLoad.status === "found" ? leaseLoad.snapshot : null,
+    bRun: bRunLoad.status === "found" ? bRunLoad.snapshot : null,
+    provenance: prov.status === "ready" ? prov.provenance : null,
+    observedCursor: h.observedCursor(),
+    eventTypes: (await h.ledger.events({ afterCursor: null, limit: 500 })).events.map((p) => p.event.eventType),
+  };
+}
+
+export async function verifyP106AfterRestart(
+  h: PersistentSqliteHarness,
+  before: Awaited<ReturnType<typeof runP106Path>>,
+): Promise<void> {
+  const json = (v: unknown) => JSON.stringify(v);
+  const packetLoad = await h.ledger.load(handoffPacketRefFor(before.projectId, before.goalId, P106_TASK_ID, "packet-rs-1"));
+  if (packetLoad.status !== "found" || json(packetLoad.snapshot) !== json(before.packet)) {
+    throw new Error("packet mismatch after restart");
+  }
+  const replacementLoad = await h.ledger.load(replacementAttemptRefFor(before.projectId, before.goalId, P106_TASK_ID, "att-rs-b"));
+  if (replacementLoad.status !== "found" || json(replacementLoad.snapshot) !== json(before.replacement)) {
+    throw new Error("replacement mismatch after restart");
+  }
+  const leaseLoad = await h.ledger.load(taskLeaseRefFor(before.projectId, before.goalId, P106_TASK_ID));
+  if (leaseLoad.status !== "found" || json(leaseLoad.snapshot) !== json(before.lease)) {
+    throw new Error("lease mismatch after restart");
+  }
+  const bRunLoad = await h.ledger.load(runRefFor(before.projectId, before.goalId, "run-rs-b"));
+  if (bRunLoad.status !== "found" || json(bRunLoad.snapshot) !== json(before.bRun)) {
+    throw new Error("B run mismatch after restart");
+  }
+  await h.advanceProjection();
+  const prov = await toP1_06Harness(h).handoffProvenance({ projectId: before.projectId, goalId: before.goalId, taskId: P106_TASK_ID });
+  if (prov.status !== "ready" || json(prov.provenance) !== json(before.provenance)) {
+    throw new Error("provenance view mismatch after restart");
+  }
+  if (String(h.observedCursor()) !== String(before.observedCursor)) {
+    throw new Error("observedCursor mismatch after restart");
+  }
+}
+
+export { P106_GOAL, P106_TASK_ID };

@@ -31,28 +31,28 @@ import {
   buildRunFactCommand,
   FAKE_RUNTIME_SCRIPT_COMPLETED_V1,
   rebaseScriptForRun,
-} from "../../src/contracts/fixtures/dispatch-fixtures.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+} from "../../src/fixtures/dispatch-fixtures.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import {
   ARCHITECTURE_BASELINE_FIXTURE_V1,
   COMPLETION_POLICY_FIXTURE_V1,
   buildActivateCommand,
   buildInstallCommand,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
-import { buildCreateGoalCommand } from "../../src/contracts/fixtures/goal-fixtures.js";
-import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
+} from "../../src/fixtures/governance-fixtures.js";
+import { buildCreateGoalCommand } from "../contract-support/fixtures/goal-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
 
 import {
   buildEffectivityAnchorV1,
   buildEvidenceV1,
   buildSubmitEvidenceCommand,
-} from "../../src/contracts/fixtures/evidence-fixtures.js";
+} from "../contract-support/fixtures/evidence-fixtures.js";
 import {
   P105_GOAL,
   P105_PLAN_ID,
   P105_PLAN_REVISION_FIXTURE_V1,
   buildReduceGoalCommand,
-} from "../../src/contracts/fixtures/goal-phase-fixtures.js";
+} from "../contract-support/fixtures/goal-phase-fixtures.js";
 import type { TaskVerificationViewQuery, TaskVerificationViewResult } from "../../src/contracts/verification-view.js";
 
 export interface P1_05TestHarness extends P1_04TestHarness {
@@ -118,7 +118,7 @@ export async function prepareP105Scenario(h: P1_05TestHarness): Promise<P105Prev
   expect(
     (
       await h.activate(
-        buildActivateCommand((await import("../../src/contracts/fixtures/governance-fixtures.js")).completionPolicyPinFor(cpCmd as never), {
+        buildActivateCommand((await import("../../src/fixtures/governance-fixtures.js")).completionPolicyPinFor(cpCmd as never), {
           commandId: "cmd-p105-activate-cp",
           correlationId: "corr-p105-activate-cp",
           submittedAt: SCHEMA,
@@ -132,7 +132,7 @@ export async function prepareP105Scenario(h: P1_05TestHarness): Promise<P105Prev
   expect(
     (
       await h.activate(
-        buildActivateCommand((await import("../../src/contracts/fixtures/governance-fixtures.js")).architectureBaselinePinFor(abCmd as never), {
+        buildActivateCommand((await import("../../src/fixtures/governance-fixtures.js")).architectureBaselinePinFor(abCmd as never), {
           commandId: "cmd-p105-activate-ab",
           correlationId: "corr-p105-activate-ab",
           submittedAt: SCHEMA,

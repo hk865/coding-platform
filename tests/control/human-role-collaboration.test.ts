@@ -31,33 +31,14 @@
  *     aggregates).
  */
 import { describe, expect, it } from "vitest";
-import { createControlEngine } from "../../src/control/control-engine.js";
-import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
+import { createControlEngine } from "../../src/control/control-engine/control-engine.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
 import type { StateLedger, LedgerCommit, LedgerCommitReceipt } from "../../src/contracts/ledger.js";
 import { canonicalJson } from "../../src/contracts/fingerprint.js";
-import { createDeterministicDeps } from "../../src/contracts/testing/sequences.js";
+import { createDeterministicDeps } from "../../src/testing/sequences.js";
 import { initialDesignProposalDigest, coordinationPolicyContentDigest, type InitialDesignProposalV1 } from "../../src/contracts/human-role-collaboration.js";
-import {
-  P115_PROJECT,
-  P115_WORKSPACE,
-  P115_DESIGN,
-  P115_POLICY,
-  P115_COORDINATION_POLICY_CONTENT,
-  buildP115Proposal,
-  buildP115Decision,
-  buildP115ProposalCommand,
-  buildP115DecisionCommand,
-  buildP115InstallCommand,
-  buildP115ActivateCommand,
-  buildP115ProposalFold,
-  buildP115DecisionFold,
-  buildP115PolicyInstallFold,
-  buildP115PolicyActivateFold,
-  p115DesignRef,
-  p115DecisionRef,
-  p115PolicyRef,
-  p115PolicyActiveRef,
-} from "../../src/contracts/fixtures/human-role-collaboration-fixtures.js";
+import { P115_PROJECT, P115_WORKSPACE, P115_DESIGN, P115_POLICY, P115_COORDINATION_POLICY_CONTENT, buildP115Proposal, buildP115Decision, buildP115ProposalCommand, buildP115DecisionCommand, buildP115InstallCommand, buildP115ActivateCommand, p115DesignRef, p115DecisionRef, p115PolicyRef, p115PolicyActiveRef } from "../contract-support/fixtures/human-role-collaboration-fixtures.js";
+import { buildP115ProposalFold, buildP115DecisionFold, buildP115PolicyInstallFold, buildP115PolicyActivateFold } from "../../src/control/control-engine/records/human-role-collaboration.js";
 import { p111BootstrapGoalGovernance } from "../contract-suite/p1-11-harness.js";
 
 /** Thin recorder over the real InMemoryLedger (captures the submitted batch and

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "runId": "kernel-direct",
+  "dataset": "internal-mvp",
+  "datasetVersion": "0.1.0",
+  "trialCount": 4,
+  "counts": {
+    "resolved": 4,
+    "unresolved": 0,
+    "agent_error": 0,
+    "timeout": 0,
+    "environment_error": 0,
+    "evaluator_error": 0,
+    "policy_violation": 0
+  },
+  "resolvedAt1": 1,
+  "startedAt": "2026-09-07T11:44:25.727Z",
+  "endedAt": "2026-09-07T11:45:26.658Z"
+}

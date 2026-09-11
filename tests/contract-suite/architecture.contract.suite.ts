@@ -17,8 +17,8 @@ import {
   P112_BRIEF,
   P112_PROPOSAL,
   buildP112InspectionIntent,
-} from "../../src/contracts/fixtures/architecture-fixtures.js";
-import { computeArchitectureDelta } from "../../src/contracts/architecture-inspection.js";
+} from "../../src/fixtures/architecture-fixtures.js";
+import { computeArchitectureDelta } from "../../src/control/architecture-reconciler/architecture-delta.js";
 
 export interface P1_12FactoryOptions {
   workspaceReader?: import("../../src/contracts/workspace-read.js").WorkspaceReadPort;
@@ -116,10 +116,12 @@ export function defineArchitectureInspectionContractSuite(
     });
 
     describe("restart-view-rebuild-test", () => {
-      it("view rebuild equivalence is verified in tests/restart + integration (isP112Ready probe)", () => {
-        expect(true).toBe(true);
+      it("repeated projection reads are stable for the persisted inspection facts", async () => {
+        const first = await h.architectureInspectionView({ projectId: P112_PROJECT, workspaceId: P112_WORKSPACE });
+        const second = await h.architectureInspectionView({ projectId: P112_PROJECT, workspaceId: P112_WORKSPACE });
+        expect(first).toEqual(second);
+        expect(first.status).toBe("ready");
       });
     });
   });
 }
-

@@ -1,0 +1,119 @@
+import type { ArtifactRef } from './artifact.js';
+import type { AcquireWriteLeaseReceipt } from './workspace-lease.js';
+import type { ExplorationReview } from './exploration.js';
+import type { PlanRevisionSnapshot } from './plan.js';
+import type { RunRef, RunSnapshot } from './dispatch.js';
+import type { CheckContextV1, CheckOutcomeV1, VerificationResultV1 } from './verification.js';
+import type { VerificationScope, VerificationAttempt, VerificationCandidate } from './verification-import.js';
+import type { VerificationRoundCheckBinding, VerificationRoundRecord, VerificationRoundResult, VerificationRoundResumeInput, VerificationRoundStartInput, VerificationRoundView } from './verification-round.js';
+import type { VerificationRoundScope } from './verification-context.js';
+import type { VerificationPort } from './verification.js';
+import type { ReviewReceipt, ReviewerVerificationPort } from './reviewer-verification.js';
+
+export type CommandCheckProgress = {
+  phase: 'executing';
+  observationId: string;
+  context: CheckContextV1;
+  sourceDigest: string;
+  startedAt: string;
+} | {
+  phase: 'report_stored';
+  observationId: string;
+  context: CheckContextV1;
+  sourceDigest: string;
+  artifactRef: ArtifactRef;
+  result: CheckOutcomeV1['result'];
+  category: string;
+  effects: 'not_started' | 'known' | 'unknown';
+};
+export type CommandCheckRecord = VerificationScope & {
+  requestId: string;
+  fingerprint: string;
+  status: 'running' | 'finished' | 'interrupted';
+  command: string | null;
+  kind: 'static' | 'dynamic' | null;
+  timeoutMs: number | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  result: VerificationResultV1 | null;
+  roundBinding?: VerificationRoundCheckBinding;
+  lifecycle?: 'intent_recorded' | 'acquisition_rejected' | 'lease_acquired' | 'executing' | 'report_stored' | 'result_recorded' | 'lease_released' | 'reconciliation_required';
+  acquisitionRejection?: Extract<AcquireWriteLeaseReceipt, { status: 'rejected' }>;
+  leaseId?: string;
+  progress?: CommandCheckProgress;
+  recovery?: {
+    reason: string;
+    commandReplayAllowed: false;
+  };
+  evidenceAdmission?: {
+    status: 'pending' | 'admitted';
+    reportDigest: string;
+    evidenceIds: string[];
+  };
+};
+
+export type VerificationRunView = {
+  reviews: ReviewReceipt[];
+  rounds: VerificationRoundRecord[];
+  commandChecks: CommandCheckRecord[];
+  candidates: Array<Omit<VerificationCandidate, 'patch' | 'fingerprint' | 'benchmark'> & {
+    benchmark: Pick<VerificationCandidate['benchmark'], 'instanceId' | 'datasetRevision'>;
+  }>;
+  verifications: Array<Omit<VerificationAttempt, 'reportBody' | 'fingerprint'>>;
+};
+type CommandCheckReports = Pick<CommandCheckRecord, 'requestId' | 'status' | 'command' | 'kind' | 'timeoutMs' | 'startedAt' | 'finishedAt'> & {
+  lifecycle: CommandCheckRecord['lifecycle'] | null;
+  recovery: CommandCheckRecord['recovery'] | null;
+  evidenceAdmission: CommandCheckRecord['evidenceAdmission'] | null;
+  observations: Extract<VerificationResultV1, {
+    status: 'ready';
+  }>['observations'];
+  reports: unknown[];
+};
+/** Source references eligible for history lookup, including durable interrupted reports. */
+export type VerificationReportMaterial = {
+  id: string;
+  label: string;
+  workspaceId: string;
+  owner: RunRef;
+  artifactRef: ArtifactRef;
+};
+export interface RecordedVerificationPort {
+  exploration(review: ExplorationReview, plan: PlanRevisionSnapshot, artifactRef: ArtifactRef): Promise<ExplorationReview['control']>;
+  benchmark(attempt: VerificationAttempt, candidate: VerificationCandidate, plan: PlanRevisionSnapshot, run: RunSnapshot, artifactRef: ArtifactRef): Promise<VerificationAttempt['control']>;
+}
+/** Verification lifecycle API. Commands and benchmark records keep independent identities. */
+export interface VerificationServicePort extends VerificationPort, ReviewerVerificationPort {
+  reverifyRework(scope: VerificationRoundScope): Promise<VerificationRoundResult | { status: 'not_rework' }>;
+  prepareReworkReview(scope: VerificationRoundScope, roundRequestId: string): Promise<import('./reviewer-verification.js').ReviewRequestResult | null>;
+  readonly recorded: RecordedVerificationPort;
+  init(): Promise<void>;
+  forRun(scope: VerificationScope): VerificationRunView;
+  startRound(scope: VerificationRoundScope, input: VerificationRoundStartInput): Promise<VerificationRoundResult>;
+  round(scope: VerificationRoundScope, requestId: string): Promise<VerificationRoundView>;
+  roundReceipt(scope: Omit<VerificationScope, 'runId'>, requestId: string): Promise<Pick<VerificationRoundRecord, 'roundId' | 'requestId' | 'status'> & { runId: string; taskId: string } | null>;
+  resumeRound(scope: VerificationRoundScope, input: VerificationRoundResumeInput): Promise<VerificationRoundResult>;
+  checkReportMaterials(scope?: VerificationScope): VerificationReportMaterial[];
+  runChecks(scope: VerificationScope, input: Record<string, unknown>): Promise<{
+    check: CommandCheckRecord;
+    replayed: boolean;
+  }>;
+  checkReceipt(scope: Omit<VerificationScope, 'runId'>, requestId: string): Promise<(Pick<CommandCheckRecord, 'runId' | 'status' | 'command' | 'kind' | 'timeoutMs' | 'startedAt' | 'finishedAt'>) | null>;
+  checkReports(scope: VerificationScope, requestId: string): Promise<CommandCheckReports>;
+  admitCheckEvidence(scope: VerificationScope, input: Record<string, unknown>): Promise<{
+    admission: NonNullable<CommandCheckRecord['evidenceAdmission']>;
+    replayed: boolean;
+  }>;
+  reconcileCheck(scope: VerificationScope, requestId: string): Promise<{
+    check: CommandCheckRecord;
+    replayed: boolean;
+  }>;
+  register(scope: VerificationScope, input: Record<string, unknown>): Promise<{
+    candidate: VerificationRunView['candidates'][number] | undefined;
+    replayed: boolean;
+  }>;
+  import(scope: VerificationScope, input: Record<string, unknown>): Promise<{
+    verification: VerificationRunView['verifications'][number] | undefined;
+    replayed: boolean;
+  }>;
+}

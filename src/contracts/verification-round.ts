@@ -1,0 +1,142 @@
+import type { ArtifactRef } from './artifact.js';
+import type { CommandCheckRecord } from './verification-service.js';
+import type { VerificationRoundMaterialIdentity, VerificationRoundScope, VerificationRoundSourceProof } from './verification-context.js';
+import type { VerificationCheckPlan, VerificationPlanV1 } from './verification.js';
+
+export type VerificationRegisteredCheck = {
+  checkId: string;
+  kind: 'static' | 'dynamic';
+  command: string;
+  cwd: string;
+  timeoutMs: number;
+  /** Scope registration is explicit; unknown changes never skip a scoped check. */
+  appliesTo: { workspaceId: string; taskIds: 'all' | string[] };
+};
+export type VerificationRoundConfigurationInput = { checks: VerificationRegisteredCheck[] };
+export type VerificationRoundConfiguration = VerificationRoundConfigurationInput & {
+  schemaVersion: 1;
+  version: 1;
+  digest: string;
+};
+export type VerificationRoundStartInput = {
+  requestId: string;
+  allowExecute: true;
+  configuration?: VerificationRoundConfigurationInput | null;
+};
+export type VerificationRoundResumeInput = { requestId: string; allowExecute: true };
+type VerificationRoundGap = {
+  code: string;
+  message: string;
+  coverage?: { obligationId: string; requirementId: string };
+};
+
+/**
+ * 角色规格「产出期望（requiredOutputs）」在本次轮次里的**见证报告**（RW-15 建立，RW-18 改为审计）。
+ *
+ * 这只是**本次轮次的事实记录**，既不是完成状态，也不是完成判据：它说明「哪一个产出期望被哪条既有
+ * 事实见证过、哪一些没有见证到」。归约仍然只由 ControlEngine 依据正式 Evidence 决定。
+ *
+ * `requiredOutputs` 是角色规格的**声明性产出期望**（用户的判断：逐次核对"必须产出什么"
+ * 会给 Agent 不必要的认知负担，而且它本质属于记忆／交互历史）。因此从 RW-18 起本记录**不产生
+ * 任何门禁后果**：`incomplete` 不降级轮次结论、不扣留归约、也不写进轮次 gaps。它不是
+ * 「已满足」的假声明 —— 没有见证事实的种类仍在 `missing` 里如实列出、逐类的原因仍在
+ * `required[].detail` 里。取舍与退出条件见 control/verification-engine/role-output-completeness.ts。
+ *   - status 'complete'   ：每一个产出期望都有见证通道且本次确实被见证；
+ *   - status 'incomplete' ：至少一个种类没有见证事实 —— 如实记录（审计），不改变任何判据；
+ *   - status 'absent'     ：本次没有可核对的规格（未接线／未安装／绑定已不再被受理），
+ *                           如实记录，不改变任何既有判据。
+ */
+export type VerificationRoundRoleOutput = {
+  kind: string;
+  reason: string;
+  /**
+   * 见证该种类用的是哪条通道（取值集合见
+   * control/verification-engine/role-output-completeness.ts 的 RoleOutputWitnessChannelV1）。
+   * 契约层不 import 控制层的类型，因此这里只记通道名；null = 本引擎今天没有这种通道。
+   */
+  channel: string | null;
+  /** 见证该种类的既有事实（写明是哪一条事实、带身份）；null = 本引擎今天没有这种通道。 */
+  witness: string | null;
+  /** 为什么是 / 不是这个见证（含「需要哪条通道才能见证」）。 */
+  detail: string;
+};
+export type VerificationRoundRoleOutputs = {
+  schemaVersion: 1;
+  status: 'complete' | 'incomplete' | 'absent';
+  roleId: string | null;
+  revision: number | null;
+  required: VerificationRoundRoleOutput[];
+  /** 没有见证事实的种类（审计信息，不是缺项门禁）。status='incomplete' 时非空。 */
+  missing: string[];
+  detail: string;
+};
+export type VerificationRoundCoverage = {
+  obligationId: string;
+  requirementId: string;
+  kind: 'static' | 'dynamic' | 'reviewer';
+  checkIds: string[];
+  result: 'PASS' | 'FAIL' | 'INCONCLUSIVE' | null;
+};
+type VerificationRoundCheck = {
+  definition: VerificationRegisteredCheck;
+  requestId: string;
+  coverage: VerificationCheckPlan['coverage'];
+};
+export type VerificationRoundRecord = {
+  schemaVersion: 1;
+  roundId: string;
+  requestId: string;
+  scope: VerificationRoundScope;
+  fingerprint: string;
+  configuration: VerificationRoundConfiguration | null;
+  materialIdentity: VerificationRoundMaterialIdentity | null;
+  sourceProof: VerificationRoundSourceProof | null;
+  plan: VerificationPlanV1 | null;
+  checks: VerificationRoundCheck[];
+  coverage: VerificationRoundCoverage[];
+  status: 'incomplete' | 'rejected' | 'running' | 'interrupted' | 'completed';
+  outcome: 'PASS' | 'FAIL' | 'INCONCLUSIVE' | null;
+  gaps: VerificationRoundGap[];
+  /**
+   * 本次轮次冻结时的角色产出期望见证报告（RW-15 建立，RW-18 起仅为审计信息）。
+   * 早于本字段落盘的轮次为 null —— 那时没有这条检查，因此不补算、也不据此阻断
+   * （历史轮次按原判据保留，不批量重写）。
+   */
+  roleOutputs: VerificationRoundRoleOutputs | null;
+  createdAt: string;
+  finishedAt: string | null;
+  aggregate: {
+    artifactRef: ArtifactRef;
+    submittedAt: string;
+    admissions: Array<{ evidenceId: string; coverage: VerificationRoundCoverage; status: 'pending' | 'admitted' }>;
+  } | null;
+  control: { taskPhase: string | null; goalPhase: string | null };
+  reduction: {
+    task: { key: string; revision: number; phase: string | null } | null;
+    goal: { key: string; revision: number; phase: string | null } | null;
+    rejected?: Array<{ target: 'task' | 'goal'; key: string; revision: number; code: 'revision_conflict'; rejectedAt: string }>;
+    /**
+     * RW-15 历史字段：当时"没有发起归约请求"的原因（必产出缺项）。
+     *
+     * RW-18 起**不再写入**：requiredOutputs 已改为声明性产出期望，缺项不再扣留归约
+     * （见 verification-rounds.ts 的 reduce()）。字段保留是为了不让 RW-15／RW-16 期间
+     * 落盘的历史轮次失去它已有的记录 —— 历史事实按原样保留，不批量重写。
+     */
+    withheld?: { code: 'role_required_output_missing'; missing: string[]; message: string; at: string };
+  };
+};
+export type VerificationRoundView = Omit<VerificationRoundRecord, 'checks'> & {
+  current: { status: 'current' | 'stale' | 'unavailable'; issues: string[] };
+  checks: Array<VerificationRoundCheck & { record: CommandCheckRecord | null }>;
+};
+export type VerificationRoundResult = { round: VerificationRoundView; replayed: boolean };
+
+/** Round-bound children cannot be admitted through the independent command API. */
+export type VerificationRoundCheckBinding = {
+  roundId: string;
+  configurationDigest: string;
+  definition: VerificationRegisteredCheck;
+  identity: VerificationRoundMaterialIdentity;
+  plan: VerificationPlanV1;
+};
+

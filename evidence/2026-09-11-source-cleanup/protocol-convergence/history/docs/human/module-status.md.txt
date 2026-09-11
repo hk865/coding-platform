@@ -1,0 +1,153 @@
+# 当前模块状态
+
+更新：2026-09-11。本页是唯一当前实现状态入口；产品要求见 [PRODUCT](../PRODUCT.md)，模块责任和依赖见 [ARCHITECTURE](../ARCHITECTURE.md)。本次委托为指定语义编排生产链的技术债整理，沿用现有 12 Module，未新增产品能力。
+
+当前事实：已有公开执行反馈驱动只读协调调查、精确授权补料、正式机械返工、当前版本工具重验和必要 Reviewer 准备。协调角色实际消费工具 FAIL 后形成语义计划调整仍未接通；下列全部有效未完义务保留。
+
+## 本次源码与契约整理
+
+前轮已完成测试材料分离、模块内部依赖归位、返工编译分责、Query组合接线以及16个协议校验入口/四个返工协议入口。本轮进一步删除9个无消费者声明，54个仅文件内使用的声明取消export，5个Module内部类型移回实现，删除3个无用转导出。contracts直接命名导出1531→1463、TS文件116→115。真实HumanCollaboration、SnapshotPort和所有公开结果字段保留，持久数据、HTTP、正式权限/义务与历史兼容不变。
+
+相关154项、全仓299文件/1951项、真实浏览器26项通过；1562个保留契约声明等价，独立复核真实消费者和归属。类型、边界、构建、文档、旧产物检查、原文保留、起点/交付源码身份与剩余债统一见[本轮导出删减证据](../../../../agent_platform/evidence/2026-09-11-source-cleanup/export-pruning/verification.md)。同目录baseline.json/final.json记录dirty工作树，HEAD不代替源码；前轮证据及所有历史失败保留。本轮未实现新语义编排能力，也未断言剩余导出全部必要。
+
+## 当前语义协作增量（整项验收未完成）
+
+已有公开结构化执行反馈→PlanCompiler提交只读协调Query→实际规则调查→精确授权的同工作后继Run补料组装；查询视图显示反馈来源，运行manifest保存材料摘要与选择原因。Verification已有正式返工后的当前版本工具重验和必要Reviewer准备，组合根终态与重启扫描调用原持久流程。协议见[运行时协作](../dev_docs/interfaces/runtime-collaboration.md#2026-09-11-定向执行反馈增量)。
+
+材料增长同时暴露内核把完整模型输入误用作16KiB辅助空记忆查询的问题，已仅约束辅助query，真实请求仍携带完整Context；未新增长期记忆能力。
+
+这些增量不取消下面14项未完能力。尚不能宣称完整闭环：旧调查过期后的自动替代、人的决定针对调查的完整回流、连续多失败/多工作并发及checkpoint恢复专项均需单独证明。替身模型只证明流程，不证明真实模型协作质量。该语义增量实测与限制记录在[本次证据](../../../../agent_platform/evidence/2026-09-11-semantic-loop/verification.md)。
+
+## 产品流程与未形成的连接
+
+这两张图是[ARCHITECTURE的Plane图](../ARCHITECTURE.md#plane)的当前实现投影，分别展开主业务和支撑能力。它们表达运行时请求、材料和反馈，**不是源码依赖图**；箭头可能经组合根、Control命令、账本或outbox传递，不授权新增Module依赖。合并显示的框仍对应原12 Module。
+
+实线＝标注范围已有真实消费者；虚线及编号＝该产品连接尚未形成完整闭环，可能已有局部接口。模块内实现用文字单独注明，不把“有代码”画成“已接产品”。
+
+### 目标、执行、验证与反馈
+
+```mermaid
+flowchart TB
+  H["人类协作界面<br/>HumanCollaboration"]
+  P["协调与规划<br/>PlanCompiler"]
+  C["权限、义务与正式状态<br/>ControlEngine"]
+  E["派发与内核执行<br/>DispatchEngine · WorkerRuntime"]
+  V["工具检查与独立Reviewer<br/>VerificationEngine"]
+  R["状态图、证据与治理查询<br/>ReadModelIndex"]
+
+  H -->|已有：初始及人工规划| P
+  H -->|已有：授权、控制与独立查询请求| C
+  P -->|已有：提案受理| C
+  C -->|已有：经outbox派发任务与权限| E
+  E -->|已有：运行事实与结果引用| C
+  C -->|已有：验证所用义务与版本，经宿主组织| V
+  V -->|已有：正式证据接纳与归约请求| C
+  C -->|已有：经账本提交后投影| R
+  R -->|已有：状态、来源与回执展示| H
+
+  C -.->|① 执行反馈驱动持续重规划| P
+  E -->|② 已有：正式返工后自动重验；完整恢复仍缺| V
+  H -.->|③ 暂停、继续与换手| E
+  E -.->|④ 执行中按需提供公开报告| H
+  linkStyle 9,11,12 stroke:#dc2626,stroke-width:2px;
+```
+
+②已有正式返工Run结束后的工具重验和必要Reviewer准备接线；同一任务已证明工具PASS、Evidence与Task归约，连续失败/中途恢复和必要重审的完整联合验收仍缺。①已有只读协调调查与定向补料，完整语义改计划仍缺。④不否认现有事件展示与独立QueryJob；缺的是源Worker公开材料的按需响应。
+
+### 材料、记忆、来源与架构治理
+
+```mermaid
+flowchart TB
+  H["人类协作界面<br/>HumanCollaboration"]
+  S["权威事实与正文<br/>StateLedger · ArtifactVault"]
+  W["受限源码与来源读取<br/>WorkspaceReader<br/>完整增量、历史Git差异仍缺"]
+  X["有界选材与来源核对<br/>ContextCompiler<br/>完整容量和最终输入验证仍缺"]
+  U["已有材料消费者<br/>规划 · 执行 · 独立查询 · 审阅"]
+  A["ArchitectureReconciler<br/>已有模块内差分与Finding<br/>主要产品入口未接"]
+  C["正式权限、版本与状态<br/>ControlEngine"]
+
+  S -->|已有：事实、精确授权历史与正文| X
+  W -->|已有：受限来源材料| X
+  X -->|已有：对应消费者的有界材料| U
+  X -->|模块内：图材料，harness可调用| A
+
+  X -.->|⑤ 已有定向调查与补料；决定回流和调查刷新仍缺| U
+  H -.->|⑥ 长期记忆查询、维护与适用性管理| S
+  H -.->|⑦ 持续架构协商与产品inspect入口| A
+  A -.->|⑦ 真实基线、语义审阅与演进闭环| C
+  W -.->|⑧ 来源变化被正式证据失效流程消费| C
+  linkStyle 4,5,6,7,8 stroke:#dc2626,stroke-width:2px;
+```
+
+⑥不表示存储或历史授权未实现；缺的是长期记忆管理及更多实际消费者。⑦包含已有局部守卫/机械算法尚不能组成的产品闭环。⑧不表示所有来源检查失效：读取及接纳时已有复核，缺的是已接纳Evidence的一般来源变化失效消费。
+
+| 未形成的产品连接 | 主要责任Module | 对应下方剩余能力 |
+| --- | --- | --- |
+| ① 持续角色协作、反馈重规划与人的决定回流 | HumanCollaboration、PlanCompiler、ControlEngine，Dispatch/Runtime承载运行 | 1、2、5、13 |
+| ② 返工后新版本执行到重验、重审、正式归约 | DispatchEngine、VerificationEngine、ControlEngine、ContextCompiler | 10 |
+| ③ 暂停、继续、换手及中断后的可追溯接续 | WorkerRuntime、DispatchEngine、ControlEngine及Data | 6、7 |
+| ④ 源Worker公开材料的按需响应 | HumanCollaboration、WorkerRuntime、DispatchEngine、ContextCompiler | 4 |
+| ⑤ 缺料调查、带来源响应、重新编译和真实消费 | ContextCompiler、ControlEngine、PlanCompiler、DispatchEngine、WorkerRuntime | 3、5、9 |
+| ⑥ 长期记忆管理、产出历史核对与真实使用 | ArtifactVault、ReadModelIndex、ContextCompiler；Control保留授权/策略权威 | 8、13 |
+| ⑦ 需求/架构协商、真实基线、检查和演进 | HumanCollaboration、PlanCompiler、ArchitectureReconciler、ContextCompiler、WorkspaceReader、VerificationEngine、ControlEngine | 5、11 |
+| ⑧ 一般来源失效及完整源码/历史差异能力 | WorkspaceReader、ContextCompiler、ControlEngine、VerificationEngine | 12 |
+
+另外两项是跨链路验收要求，不能只靠连上一条箭头解决：材料容量及最终输入一致性（9），真实任务、故障恢复和效率证据（14）。下一阶段分工应以一条有明确结果的缺失连接为范围，不给每个Module同时领取“全部补齐”。
+
+## 12 Module 审查结论与生产接线
+
+| Module | 当前实现与实际消费者 | 本次结论、修复与限制 |
+| --- | --- | --- |
+| HumanCollaboration | createGoal/查询、探索审阅和历史授权入口；工作台经服务消费正式模块结果 | 交互不裁决完成；治理显示读取已移入 ReadModelIndex。完整秘书/参谋对话、跨工作包协调和决定送达消费仍缺 |
+| PlanCompiler | 初始协调、人工任务计划、目标变更与机械返工提案；新增公开执行反馈→正式只读协调Query，app实际消费 | 影响报告改读 Control 权威工作身份，保留自定义ID和返工起源，不再猜work-taskId；缺身份材料显式列缺口。完整语义反馈规划/角色持续收敛仍缺 |
+| ControlEngine | 正式命令、权限/版本/义务/租约守卫、Task/Goal归约与治理激活；Plan/Dispatch/Verification消费 | 唯一状态写入与工作身份权威保留；返工处置采用当前canonical承担者与正式适用Evidence，不能凭旧PASS消除失败义务。一般来源失效触发归约、完整恢复与决定反馈尚缺 |
+| DispatchEngine | outbox驱动普通Run、Reviewer、独立Query和人工计划；真实派发前建立/链接工作身份并准备材料 | 多失败按当前承担者逐组处理，计划换版不等于义务已处置。宿主先取得验证问题材料再传入，Dispatch不回调Verification；处置复核走Control。已接精确授权的同工作补料；完整暂停/接续/换手和调查刷新仍缺 |
+| VerificationEngine | 工具轮次、独立Reviewer、报告/配置/恢复journal、openIssues；新增正式返工reverifyRework及prepareReworkReview；HTTP/UI消费真实报告 | canonical计划与运行产出材料经Context取得，不直读Ledger；失败消除须正式当前Evidence，局部verdict或拒绝回执不够。requiredOutputs只记录声明性期望和见证，不降级轮次或扣留归约。返工后全自动重验/重审/最终归约尚未证明完整产品闭环 |
+| ArchitectureReconciler | 精确图材料→差分→Finding/Brief→逐次Control回执；harness可调用inspect | 模块内机械路径存在、拒绝停止；未接产品inspect、真实初始sourceBinding、完整语义审查和MigrationGate。未知图关系不能生成确定业务结论 |
+| WorkerRuntime | 复用coding-agent内核的真实执行、只读查询和Reviewer；公开观察交ArtifactVault，Query成功read产生实际路径/版本见证 | 不自行规划或完成Task；取消、部分重启对账已接。真实暂停/继续/steer、公开snapshot和新Run换手仍unsupported或未接；未知副作用不靠重跑猜测 |
+| StateLedger | Control提交事件/快照/幂等/outbox；持久宿主用SQLite，内存用于隔离测试 | 新库身份槽原已具备；本次补旧库无槽时事务内canonical冲突检查，旧多身份不删不选赢家。内存入/出边界隔离可变引用，消除无commit改状态旁路 |
+| ArtifactVault | 不可变正文/owner/来源，探索、Reviewer、工作历史消费；授权候选由ReadModel发现，canonical与来源再核对 | 保留精确授权、撤销、完整读者/owner范围及摘要检查。跨工作历史准入看显式授权，与本Run可写/只读正交；不同来源算法不强行合并。长期记忆管理仍未完成 |
+| ReadModelIndex | 状态/任务图/时间线/证据/角色查询；治理视图经GovernanceViewPort供app/UI消费 | 治理读取和公共wire类型已归位；角色就绪仍复用Control同一政策。矩阵与policy标识取同一revision，扫描不足显式gaps；按需治理查询不是跨聚合原子快照。旧双后端投影重复是内部维护债 |
+| ContextCompiler | Task/Work/History/Planning/Query/Reviewer/Verification/Architecture材料进入真实消费者；新增反馈协议和定向补料经ContextBundle入模型及manifest | 源码适配已属WorkspaceReader；本次补I/O后canonical版本复核及Verification材料读取。WorkRun主流程已有领域步骤；必需材料缺失拒绝，历史不继承权限/完成。完整补料/模型token精确计量/清单与最终输入验证仍缺 |
+| WorkspaceReader | 路径沙箱、源码/索引/来源pin；Runtime工具、Context、Vault来源检查实际消费 | 角色code通道已归位，本次重读所选正文与有界清单，变化明确拒绝；仅保证可观察变化检测，不声称多文件原子快照。完整多语言/外部依赖/持久增量/历史Git树与通用差异接口仍缺 |
+
+审查原文：[Data](../../../../agent_platform/evidence/2026-09-11-architecture-convergence/audit-data.md)、[Control](../../../../agent_platform/evidence/2026-09-11-architecture-convergence/audit-control.md)、[Human/Execution](../../../../agent_platform/evidence/2026-09-11-architecture-convergence/audit-interaction.md)。独立责任与可读性复核：[Data](../../../../agent_platform/evidence/2026-09-11-architecture-convergence/final-review-data.md)、[治理视图](../../../../agent_platform/evidence/2026-09-11-architecture-convergence/final-review-view.md)、[规划身份](../../../../agent_platform/evidence/2026-09-11-architecture-convergence/final-review-plan.md)。这些报告保留发现时点，不自行覆盖当前规范。
+
+历史[延期登记](../dev_docs/planning/active/external-review-repair/deferred-register.md)继续保留为维护事项入口：未复核条目不自动视为已修，也不直接当成当前确认缺陷；重新实施前须核对现码，不能因旧审计归档而取消。
+
+## 当前行为口径
+
+- 工作身份由Control/账本权威保证，Dispatch复用正式解析结果；旧重复历史不靠归档或自动改名消除。返工起源链的既有有界行为不等于完整异常链治理。
+- 角色必读材料仍有权限、版本和缺口检查；requiredOutputs保留声明与见证，缺项不再作为角色门禁。[用户原话第5项与收口第7项](user-replies-2026-09-11.md)说明后续约束；不据“记忆相关”另增第13个Module。
+- 跨工作历史指其他工作的运行历史；必须有精确读取授权。工作区工具/写权限既不自动授予、也不自动禁止该历史。显式跨Workspace授权保留，禁止自动共享；同工作留痕与开发记忆按各自语义处理。
+- 返工已有失败分类、提案、自动受理、派发、可见回执及停用开关；不能继续写“FAIL没有消费者”。自动受理仍受既有授权/预算/人的拒绝/版本守卫约束；已接新版本工具重验并走通单任务；完整恢复和重审联合验收仍缺。普通取消、停用自动返工和暂停正在运行的内核是不同能力。
+
+## 剩余产品能力（不是实施顺序）
+
+以下14项承接旧映射与全部有效未完义务；详细要求、模块和证据见 [核心义务映射](../dev_docs/verification/2026-09-10-core-obligations-map.md)。它们不授权本轮扩展功能，也不表示全部技术选型已决定。
+
+1. 秘书/参谋/书记/规划/集成的真实角色生成、持续分工和跨工作包收敛。
+2. 执行反馈驱动的语义重规划，范围外变更的具体选项与人的受理入口。
+3. 已有同工作反馈→只读协调调查→带来源补料→后继Run消费；仍缺调查过期后的替代、更多角色路由和与人的决定联合回流。
+4. 执行中公开进展/决策材料的按需索取、主动上报和独立查询；不读取隐藏思维。
+5. 需求/架构冲突在测试前提出、讨论、决定，送达全部受影响工作并证实材料刷新。
+6. 暂停/继续/steer/换手与新Run接续；保留关键理由、义务和未决事项。
+7. 强杀/重启后的未知副作用、租约、outbox与证据对账，不用重跑冒充恢复。
+8. 长期记忆查看/更新/检索/作废、适用性与跨任务实际消费者，保持授权边界。
+9. 相关性选材、单次token容量与字节上限协同，必需材料及manifest与最终模型输入一致性。
+10. 已实测返工后的新版本执行→工具重验→Evidence→Control Task归约；必要Reviewer准备已接，仍缺完整重审联合链和连续失败/checkpoint恢复验收。
+11. 真实初始架构来源/基线绑定、inspect产品入口、语义与机械审查、MigrationGate和演进反馈。
+12. 全角色来源/Evidence失效消费、完整配置/外部依赖/多语言增量、按Git版本读历史树和通用差异。
+13. 面向人的解释、规则/记忆/角色设置保存与真实生效、必要提醒及可追溯反馈；已有布局/文件预览/模型设置不重新算缺失。
+14. 真实任务贯穿提问、分工、取材、验证返工、重启与决定回流；随后按已批准题面做公开基准，测成功率、重复探索、用量/耗时和不必要人工介入，区分真实模型质量与替身流程证据。
+
+以上存在局部产物依赖，例如重审需当前修订及来源，消费回执需已接受材料；不等于必须按此编号串行实施。新产品语义、模块边界和未定技术选型仍须具体选项交用户决定；等待期间可推进独立已授权工作。用户未设置累计Token/调用/时长预算，不自行新增。
+
+## 验证与历史
+
+此前语义协作增量验收与限制见[本轮证据](../../../../agent_platform/evidence/2026-09-11-semantic-loop/verification.md)。此前架构专项、类型/构建/全仓/浏览器/文档验证以 [历史产品证据](../../../../agent_platform/evidence/2026-09-11-architecture-convergence/data-changes.md) 及其同目录日志为准；最终实测：296文件/1939项行为测试、25项浏览器测试全部通过；前后端类型与构建通过、模块结构0问题、文档13/13。完整命令、身份与历史失败见[本次偏差摘要](../dev_docs/verification/2026-09-11-architecture-convergence/summary.md)。该次架构收口已结束；本次源码清理未扩展产品语义，验证以本页顶部清理证据为准。
+
+原本页所有历史验收、真实失败、图与旧状态已在改写前[原样保存](../dev_docs/verification/2026-09-11-architecture-convergence/history/module-status.md.txt)，与写前SHA256一致；旧相对链接按原human/module-status.md位置解释。工具验证、独立Reviewer、DEF-17、目录整理及RW系列的历史证据仍有效于其当时范围，不能当当前完整产品PASS。历史中的建议、阶段顺序和候选方案不提供新的执行授权。
+
+
+

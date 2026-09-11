@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+import path from 'node:path';
+const relative='dev_docs/verification/2026-09-09-independent-review/control-handoff.md';
+const file=`../agent_learn/agent_dev/agent_platform/${relative}`;
+const original=fs.readFileSync(file,'utf8');
+const old='[commands/reviewer-work.ts](D:/1.project/Software/agent_platform/src/contracts/commands/reviewer-work.ts)';
+const replacement='[commands/reviewer-work.ts 历史原文](D:/1.project/Software/agent_platform/evidence/2026-09-11-source-cleanup/export-pruning/history/src/contracts/commands/reviewer-work.ts.txt)';
+if(!original.includes(old))throw Error('Expected historical link missing');
+const archive=`evidence/2026-09-11-source-cleanup/export-pruning/history/docs/${relative}.txt`;
+fs.mkdirSync(path.dirname(archive),{recursive:true});fs.writeFileSync(archive,original,{flag:'wx'});
+fs.writeFileSync(`${file}.cleanup-tmp`,original.replace(old,replacement),{flag:'wx'});fs.renameSync(`${file}.cleanup-tmp`,file);

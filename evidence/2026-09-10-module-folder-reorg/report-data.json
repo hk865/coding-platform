@@ -1,0 +1,87 @@
+{
+ "generatedAt": "2026-09-10T06:52:01.757Z",
+ "before": {
+  "fileCount": 745,
+  "digest": "7637193c9bcac3289dff922f199d789c80708706fa2a7b38c30f37650175cfc6",
+  "countsByRoot": {
+   "root-config": 5,
+   "scripts": 11,
+   "src": 403,
+   "tests": 326
+  },
+  "gitStatusPorcelainCount": 433
+ },
+ "after": {
+  "fileCount": 752,
+  "digest": "01c88e55eac13171ff1cd0abe82a9ad55cf86a69ca0118c391495753efdfd4d9",
+  "countsByRoot": {
+   "root-config": 5,
+   "scripts": 12,
+   "src": 408,
+   "tests": 327
+  },
+  "gitStatusPorcelainCount": 380
+ },
+ "movedFiles": 181,
+ "movedByteIdentical": 8,
+ "movedContentRewritten": 173,
+ "pathsAdded": 187,
+ "pathsRemoved": 180,
+ "moduleDirectoryFileCounts": {
+  "HumanCollaboration": 4,
+  "PlanCompiler": 4,
+  "ControlEngine": 65,
+  "DispatchEngine": 11,
+  "VerificationEngine": 20,
+  "ArchitectureReconciler": 4,
+  "WorkerRuntime": 15,
+  "StateLedger": 7,
+  "ArtifactVault": 6,
+  "ReadModelIndex": 9,
+  "ContextCompiler": 24,
+  "WorkspaceReader": 16
+ },
+ "moduleOwnedFilesNow": 185,
+ "subDirectoriesPerModule": {
+  "ArchitectureReconciler": [
+   ""
+  ],
+  "ControlEngine": [
+   "",
+   "policies",
+   "records"
+  ],
+  "DispatchEngine": [
+   ""
+  ],
+  "PlanCompiler": [
+   ""
+  ],
+  "VerificationEngine": [
+   ""
+  ],
+  "ArtifactVault": [
+   ""
+  ],
+  "ContextCompiler": [
+   ""
+  ],
+  "ReadModelIndex": [
+   ""
+  ],
+  "StateLedger": [
+   ""
+  ],
+  "WorkspaceReader": [
+   ""
+  ],
+  "WorkerRuntime": [
+   ""
+  ],
+  "HumanCollaboration": [
+   ""
+  ]
+ },
+ "ownershipMismatches": [],
+ "reportDigest": "2a10192f475eac3a621ca661813303e62e19c6a94d0b24906e30cad02d9a72db"
+}

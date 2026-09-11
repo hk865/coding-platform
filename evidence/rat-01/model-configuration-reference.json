@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "selectedBy": "user, RAT-01",
+  "provider": "deepseek",
+  "model": "deepseek-v4-flash-vision-exp",
+  "baseUrl": "https://api.deepseek.com",
+  "protocol": "chat-completions",
+  "configuration": {
+    "revision": "d6c00a9e-b67b-4ebc-a5a4-6a806b39e60a",
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash-vision-exp",
+    "baseUrl": "https://api.deepseek.com",
+    "protocol": "chat-completions",
+    "updatedAt": "2026-09-07T10:22:38.817Z"
+  },
+  "successfulConnectionConfiguration": {
+    "revision": "6036e230-f938-4227-8cb5-6c0c2bac769d",
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash-vision-exp",
+    "baseUrl": "https://api.deepseek.com",
+    "protocol": "chat-completions",
+    "updatedAt": "2026-09-07T10:22:35.506Z"
+  },
+  "restoredConfigurationNote": "Key was cleared then restored via GUI after successful live test. New revision; same selected provider/model/endpoint. No extra live trial on restored revision.",
+  "providerDocumentedLimits": {
+    "source": "https://api-docs.deepseek.com/quick_start/pricing/",
+    "checkedOn": "2026-09-07",
+    "notStressTested": true,
+    "contextLengthLabel": "1M",
+    "maximumOutputLabel": "384K",
+    "note": "Preserve official labels; exact numeric allocation must be confirmed before long-context trials."
+  },
+  "thinking": "provider default enabled/high; no override",
+  "connectionTestLimits": {
+    "maxRequests": 2,
+    "maxOutputTokensPerRequest": 256,
+    "timeoutMs": 30000,
+    "automaticRetries": 0,
+    "toolsExecuted": 0
+  },
+  "observedUsage": {
+    "inputTokens": 566,
+    "outputTokens": 171,
+    "cachedInputTokens": 0
+  },
+  "cost": {
+    "currency": "USD",
+    "billedAmount": null,
+    "peakEstimate": 0.00047476,
+    "pricePerMillion": {
+      "peakInputCacheMiss": 0.44,
+      "peakInputCacheHit": 0.014,
+      "peakOutput": 1.32
+    },
+    "note": "Conservative peak estimate, not a provider invoice or enforced dollar limit."
+  },
+  "futureTrialBudgets": {
+    "source": "evaluation/rat-00-v1/budget-policy.json",
+    "smallMultiAgentTrialPeakEstimateUsd": 0.52448,
+    "largeModuleRolePeakEstimateUsd": 11.16896,
+    "cumulativeEnforcement": "NOT_IMPLEMENTED; RAT-02/03 prerequisite",
+    "contextWindowIsNotCumulativeInput": true
+  },
+  "credential": {
+    "contentsInEvidence": false,
+    "storage": "current user ~/.config/agent-platform/<sha256 absolute data directory, first 24>/settings.json",
+    "directoryMode": "0700",
+    "fileMode": "0600"
+  },
+  "runtimeComposition": "GUI project Run/Query still fixture; bindRun(runId) ready for RAT-02",
+  "visionInput": "not tested; kernel current ModelRequest accepts text only"
+}

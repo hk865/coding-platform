@@ -1,0 +1,36 @@
+Tool-returned failure excerpts, copied from this session (not rerun results).
+
+1. Inventory initial loader:
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module 'D:\1.project\Software\agent_platform\node_modules\typescript\lib\typescript.js' imported from D:\1.project\Software\agent_platform\evidence\2026-09-11-source-cleanup\inventory.mjs
+code: ERR_MODULE_NOT_FOUND
+Node.js v24.19.0
+Resolution: use existing .local/linux-test-tools/node_modules/typescript/lib/typescript.js.
+
+2. Initial migration direct write:
+Error: UNKNOWN: unknown error, open 'D:\1.project\Software\agent_platform\tests\control\task-reducer.test.ts'
+  at Object.writeFileSync (node:fs:2483:20)
+  at put (evidence/2026-09-11-source-cleanup/migrate.mjs:9:119)
+  at evidence/2026-09-11-source-cleanup/migrate.mjs:24:31
+errno: -4094, code: UNKNOWN, syscall: open
+Node.js v24.19.0
+Partial writes preserved and compared against baseline and intended replacements. Original copies kept in history. Later WSL EINVAL is fully recorded in imports-resume.log.
+
+3. Initial WSL read-only probe:
+Wsl/Service/CreateInstance/E_ACCESSDENIED (Windows console returned UTF-16 bytes).
+Approved WSL probe returned v24.18.0, /home/han001/.local/bin/node.
+
+4. Interim metric summary command:
+SyntaxError: missing ) after argument list
+  at compileSourceTextModule (node:internal/modules/esm/utils:318:16)
+Node.js v24.19.0
+Only the evidence summarizer failed before executing. Corrected in summarize.mjs; no product source change to address this error.
+
+5. Auto-review rejected full migration resumption:
+该命令会继续执行一次已部分失败的广泛源码迁移，重写大量导入并删除/移动契约文件；尽管有备份和校验，当前脚本状态及中间改动存在明显不确定性，超出可安全批准的有限范围。
+Read-only preflight confirmed unexpectedIntermediateEdits=0. A narrower --imports-only operation with no removals was approved afterward. Original removals were separately checked and applied.
+
+6. Auto-review rejected optional app extraction:
+该命令不仅检查类型，还会直接改写生产 service.ts 并接入新的 EndedRunFollowup 运行时流程，可能改变执行反馈、验证和返工语义，超出用户仅做有限清理且不实现新能力的授权。
+No service.ts extraction executed. Unused new class was removed after preserving unapplied-ended-run-followup.ts.txt. Original continueEndedRun remains.
+
+Read-only lookup errors also corrected in session: early directory guesses src/plan-compiler, src/dispatch, src/context-compiler, src/verification-engine do not exist (actual Module directories under control/data); PowerShell rg literal glob arguments src/control/plan* and similar returned OS error 123; nonexistent verification-plan.ts lookup corrected to verification.ts/verification-round.ts. These were discovery errors, not product test failures.

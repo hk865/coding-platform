@@ -1,0 +1,227 @@
+[
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/modules/control/control-engine.md",
+    "before": "本批全量与独立审计尚待完成",
+    "after": "本批已按[VR-02验收](../../verification/2026-09-09-independent-review/acceptance.md)确认限定能力"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/modules/control/dispatch-engine.md",
+    "before": "本批全量与独立审计尚待完成",
+    "after": "本批已按[VR-02验收](../../verification/2026-09-09-independent-review/acceptance.md)确认限定能力"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/modules/control/verification-engine.md",
+    "before": "本批全量与独立审计尚待完成",
+    "after": "本批已按[VR-02验收](../../verification/2026-09-09-independent-review/acceptance.md)确认限定能力"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/modules/execution/worker-runtime.md",
+    "before": "本批全量与独立审计尚待完成",
+    "after": "本批已按[VR-02验收](../../verification/2026-09-09-independent-review/acceptance.md)确认限定能力"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/modules/data/context-compiler.md",
+    "before": "本批全量与独立审计尚待完成",
+    "after": "本批已按[VR-02验收](../../verification/2026-09-09-independent-review/acceptance.md)确认限定能力"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/modules/data/read-model-index.md",
+    "before": "本批全量与独立审计尚待完成",
+    "after": "本批已按[VR-02验收](../../verification/2026-09-09-independent-review/acceptance.md)确认限定能力"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/modules/data/workspace-reader.md",
+    "before": "本批全量与独立审计尚待完成",
+    "after": "本批已按[VR-02验收](../../verification/2026-09-09-independent-review/acceptance.md)确认限定能力"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/modules/data/state-ledger.md",
+    "before": "本批审计修复及最终验证尚待完成",
+    "after": "本批已按[VR-02验收](../../verification/2026-09-09-independent-review/acceptance.md)确认限定能力"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/interfaces/independent-review.md",
+    "before": "专项与真实HTTP/浏览器验证正在收口，最终全量验证及独立审计尚待完成，不表示本票已验收",
+    "after": "全仓249文件/1633项、完整浏览器23项及类型/构建/边界验证通过，A01–A04和最终源码/日志身份已独立确认；已按[本票验收](../verification/2026-09-09-independent-review/acceptance.md)完成限定范围"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/interfaces/module-boundaries.md",
+    "before": "本票已在原12 Module/35边内接入，当前全量验证与独立审计尚待完成。",
+    "after": "本票已在原12 Module/35边内接入并按[VR-02验收](../verification/2026-09-09-independent-review/acceptance.md)完成限定范围，全仓、浏览器、源码身份及独立审计均已确认。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/interfaces/module-boundaries.md",
+    "before": "完整语义规划资格、独立 Reviewer/返工及正式版本自动失效继续是后续义务。",
+    "after": "独立Reviewer由下文VR-02接续；完整语义规划资格、返工及正式版本自动失效继续是后续义务。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "before": "继续完成独立Reviewer，再将架构与Reviewer交其他模型审查",
+    "after": "本轮已完成独立Reviewer，现将架构与Reviewer交其他模型审查"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "before": "当前进入[VR-02]",
+    "after": "现已完成[VR-02]"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "before": "VR-02 当前已完成源码接线并冻结候选，进入全量验证与未参与实现的独立审计，尚未验收。",
+    "after": "VR-02已按限定范围验收：730文件固定快照，全仓249文件/1633项、完整浏览器23项、两套类型、原构建、345项边界及文档检查通过；A01–A04和完整源码/日志身份已由未参与实现的Agent确认。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "before": "最终证据尚在收集，不能用这些专项替代全仓完成。",
+    "after": "完整证据见[VR-02验收](../dev_docs/verification/2026-09-09-independent-review/acceptance.md)与[外部审查入口](../dev_docs/verification/2026-09-09-independent-review/external-review.md)。这不代表完整自治产品或真实模型审阅质量已经验收。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "before": "独立Reviewer进入实施，未因设计完成而标功能通过",
+    "after": "独立Reviewer已按VR-02的完整消费者证据验收"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "before": "独立审阅已接待终审",
+    "after": "独立审阅已验收"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "before": "已接入待终审：独立只读 Reviewer Run",
+    "after": "已验收：独立只读 Reviewer Run"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "before": "Reviewer 正式运行链已接待终审",
+    "after": "Reviewer 正式运行链已验收"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "before": "Reviewer待终审",
+    "after": "Reviewer已按本票验收"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "before": "Reviewer已接待终审",
+    "after": "Reviewer已按本票验收"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "before": "Reviewer全量与独立审计进行中；返工与OS强杀另待",
+    "after": "Reviewer全量与独立审计已通过；返工与OS强杀另待"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "before": "本轮完成Reviewer后交用户审查，其他核心暂不动工",
+    "after": "架构与Reviewer已交付审查材料，其他核心暂不动工"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "before": "Reviewer仍待终审",
+    "after": "Reviewer已按本票验收"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "before": "class Patch,Receipt,Ledger,GrantGuard done;",
+    "after": "class Patch,Receipt,Ledger,GrantGuard,Checks,Reviewer done;"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "before": "class Human,Control,Dispatch,Checks,Runtime,Reviewer partial;",
+    "after": "class Human,Control,Dispatch,Runtime partial;"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-09-independent-review/acceptance.md",
+    "before": "状态：全部运行验证已通过，待最终独立证据确认后由主线验收。",
+    "after": "状态：accepted。主Agent依据完整运行证据和最终独立审计，按VR-02限定范围验收。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-09-independent-review/acceptance.md",
+    "before": "构建后`build-end-04`完全相同，浏览器/全仓结束及最终实际文件校验待补。",
+    "after": "candidate-04、build-end-04、browser-end-04、full-end-04、release-04五份清单及实际源码完全相同，已独立逐文件复核。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-09-independent-review/acceptance.md",
+    "before": "| 最终文档治理与源码身份 | 待最终状态更新后验证 |",
+    "after": "| 文档治理与源码身份 | 文档预终审13/13、exit0；最终状态另做同一校验。730文件与18份日志摘要已独立确认，见机器证据 |"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-09-independent-review/acceptance.md",
+    "before": "最终候选/全量日志确认待补，不以源码审查替代运行证据。",
+    "after": "最终候选、完整全仓/浏览器日志与实际文件身份已独立确认，允许主线按本票验收；不以源码审查替代运行证据。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-09-independent-review/integration-handoff.md",
+    "before": "最终全仓运行中，尚未验收",
+    "after": "完整全仓与最终源码/日志身份已独立确认，本票已验收"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-09-independent-review/integration-handoff.md",
+    "before": "全仓命令为 `bash scripts/test-wsl.sh --maxWorkers=2`，当前工具会话37810，日志 `full-tests-final-workers2.log`。这是04修复后的完整轮次，尚无最终退出结果；不与03失败轮次混淆。期间源码保持冻结，无其他重测试或实现Agent运行。完成后须保存full-end-04/release-04，核对实际文件及日志，再由独立审计者确认完整证据；不能只凭专项通过验收。",
+    "after": "全仓 `bash scripts/test-wsl.sh --maxWorkers=2` 已exit0：249文件/1633项全部通过，1531.30s；日志 `full-tests-final-workers2.log`。full-end-04/release-04与候选、构建及浏览器清单均相同，实际730文件和18份日志摘要已独立复核。`verification-results.json`与`final-source-identity.json`绑定命令、实际退出、统计和源码身份；最终独立结论见审计报告。所有本票测试/构建进程已结束，无后续实现Agent运行。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-09-independent-review/integration-handoff.md",
+    "before": "本票验收后只交付架构与Reviewer审查材料，不自动启动下一票。",
+    "after": "本票已验收，现只交付架构与Reviewer审查材料，不自动启动下一票。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-09-independent-review/external-review.md",
+    "before": "状态：材料准备中；以本批最终验收和独立审计结论为准，当前尚未完成最终验证。",
+    "after": "状态：架构与Reviewer限定批次已验收，最终全仓、浏览器和源码/日志身份已独立确认，材料可交给其他模型审查。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/planning/active/core-verification/VR-02.md",
+    "before": "状态：assigned，2026-09-09。",
+    "after": "状态：accepted，2026-09-09。主Agent依据[本票验收](../../../verification/2026-09-09-independent-review/acceptance.md)与[最终独立审计](../../../verification/2026-09-09-independent-review/review.md)收口：730文件固定身份，全仓249文件/1633项、浏览器23项、类型/构建/边界通过，A01–A04全部关闭。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/planning/active/core-verification/README.md",
+    "before": "当前实施[VR-02](VR-02.md)。",
+    "after": "[VR-02](VR-02.md)也已按限定范围验收，现交付[架构与Reviewer审查材料](../../../verification/2026-09-09-independent-review/external-review.md)。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/planning/active/core-verification/README.md",
+    "before": "当前纵向票 [VR-02](VR-02.md)",
+    "after": "已验收的纵向票 [VR-02](VR-02.md)"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/planning/active/core-verification/PAUSED.md",
+    "before": "# 当前暂停检查点",
+    "after": "# 安全退出与恢复记录"
+  },
+  {
+    "path": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/planning/active/core-verification/PAUSED.md",
+    "before": "[VR-02](VR-02.md)源码正在分工实施。",
+    "after": "[VR-02](VR-02.md)现已按限定范围验收，架构与Reviewer交用户安排其他模型审查，其余核心功能继续等待该审查。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_platform/IMPLEMENTATION-HANDOFF.md",
+    "before": "当前实施[VR-02]",
+    "after": "已验收[VR-02]"
+  },
+  {
+    "path": "D:/1.project/Software/agent_platform/IMPLEMENTATION-HANDOFF.md",
+    "before": "当前Reviewer尚未验收。",
+    "after": "本票Reviewer已完成全部运行验证和独立终审，准确证据见最新交接。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_platform/IMPLEMENTATION-HANDOFF.md",
+    "before": "修复后的最终全仓正以两个worker运行，会话37810，日志`full-tests-final-workers2.log`；build-end-04/browser-end-04与候选相同，最终全仓退出、结束清单与独立确认尚待。",
+    "after": "修复后的最终全仓已exit0：249文件/1633项全部通过，1531.30s，日志`full-tests-final-workers2.log`；五份730文件清单、实际源码与18份日志摘要已独立确认相同。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_platform/IMPLEMENTATION-HANDOFF.md",
+    "before": "未验收前不写整票完成。",
+    "after": "本票现已按限定范围验收；所有测试/构建进程已结束。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_platform/IMPLEMENTATION-HANDOFF.md",
+    "before": "当前只继续VR-02独立Reviewer，完成后交用户安排其他模型审查架构与Reviewer。",
+    "after": "VR-02独立Reviewer已验收，现交用户安排其他模型审查架构与Reviewer，不自动启动其余功能。"
+  },
+  {
+    "path": "D:/1.project/Software/agent_platform/README.md",
+    "before": "VR-02最终全仓正在验证",
+    "after": "VR-02完整全仓、浏览器、源码身份和独立审计均已通过"
+  }
+]

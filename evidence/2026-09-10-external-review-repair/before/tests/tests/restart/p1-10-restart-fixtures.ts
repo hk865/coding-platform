@@ -1,0 +1,40 @@
+/** P1-10 restart-path fixtures + readiness probe. */
+import { expect } from "vitest";
+import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { toP1_10Harness, runP110ControlScenario, type P1_10HarnessLike, type P1_10TestHarness, type P110ControlScenarioResult } from "../contract-suite/p1-10-harness.js";
+import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
+import { P110_PROJECT, P110_WORKSPACE } from "../../src/contracts/fixtures/control-fixtures.js";
+
+export async function isP110Ready(): Promise<boolean> {
+  try {
+    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    try {
+      await runP110RestartScenario(h);
+      return true;
+    } finally {
+      await h.cleanup().catch(() => undefined);
+    }
+  } catch {
+    return false;
+  }
+}
+
+export type P110RestartEvidence = { cursorBefore: string; timelineBefore: string };
+
+export async function runP110RestartScenario(h: PersistentSqliteHarness): Promise<P110RestartEvidence> {
+  const th: P1_10TestHarness = toP1_10Harness(h as unknown as P1_10HarnessLike);
+  await runP110ControlScenario(th);
+  await th.advanceProjection();
+  const cursorBefore = String(h.observedCursor());
+  const timelineBefore = JSON.stringify(await th.controlTimelineView({ projectId: P110_PROJECT, workspaceId: P110_WORKSPACE }));
+  return { cursorBefore, timelineBefore };
+}
+
+export async function verifyP110AfterRestart(restarted: PersistentSqliteHarness, evidence: P110RestartEvidence): Promise<void> {
+  const th: P1_10TestHarness = toP1_10Harness(restarted as unknown as P1_10HarnessLike);
+  await restarted.advanceProjection();
+  expect(String(restarted.observedCursor())).toBe(evidence.cursorBefore);
+  const timeline = await th.controlTimelineView({ projectId: P110_PROJECT, workspaceId: P110_WORKSPACE });
+  expect(JSON.stringify(timeline)).toBe(evidence.timelineBefore);
+}

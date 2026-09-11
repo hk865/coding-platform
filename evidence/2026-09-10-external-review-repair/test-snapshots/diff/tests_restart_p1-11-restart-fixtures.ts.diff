@@ -1,0 +1,18 @@
+--- evidence/2026-09-10-external-review-repair/before/tests/tests/restart/p1-11-restart-fixtures.ts	2026-09-07 05:01:25.000000000 +0800
++++ tests/restart/p1-11-restart-fixtures.ts	2026-09-10 01:37:38.462597100 +0800
+@@ -1,3 +1,4 @@
++import { classifyRestartProbeError } from "./readiness-probe.js";
+ /** P1-11 restart-path fixtures + readiness probe. */
+ import { expect } from "vitest";
+ import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+@@ -15,8 +16,8 @@
+     } finally {
+       await h.cleanup().catch(() => undefined);
+     }
+-  } catch {
+-    return false;
++  } catch (error) {
++    return classifyRestartProbeError(error);
+   }
+ }
+ 

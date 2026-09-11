@@ -1,0 +1,29 @@
+import type { ArtifactPort } from '../../contracts/artifact.js';
+import type { ControlEngine } from '../../contracts/modules.js';
+import type { WorkspaceLeasePort } from '../../contracts/workspace-lease.js';
+import type { VerificationContextPort } from '../../contracts/verification-context.js';
+import type { CandidatePatchCheckPort } from '../../contracts/verification-source.js';
+import type { ReviewerContextPort, ReviewerProfilePort } from '../../contracts/reviewer-context.js';
+import type { RoleSpecReadPort } from '../../contracts/role-spec-materials.js';
+import type { ReviewLifecycleControlPort } from '../../contracts/reviewer-work.js';
+export type VerificationControlPort = Pick<ControlEngine, 'submitEvidence' | 'reduceTask' | 'reduceGoal' | 'recordPatch'>;
+export type RecordedVerificationDeps = {
+  context: Pick<VerificationContextPort, 'policy' | 'baseline' | 'taskReductionRevision' | 'goalPhaseRevision'>;
+  control: Pick<VerificationControlPort, 'submitEvidence' | 'reduceTask' | 'reduceGoal'>;
+};
+export type VerificationServiceDeps = RecordedVerificationDeps & {
+  directory: string;
+  disposition: import('../../contracts/rework/issues.js').ReworkDispositionPort;
+  context: VerificationContextPort;
+  control: VerificationControlPort;
+  vault: Pick<ArtifactPort, 'put'>;
+  workspaceLease: Pick<WorkspaceLeasePort, 'acquireWriteLease' | 'releaseLease'>;
+  candidatePatchCheck: CandidatePatchCheckPort;
+  /**
+   * 角色规格只读端口（与 ContextCompiler 派发时用的是**同一个**契约，
+   * 实现由组合根注入 ControlEngine 自己的受理判据）。缺省表示宿主没有接线：
+   * 轮次如实记一条「必产出未核对」的缺口，不据此阻断，也不假装核对过。
+   */
+  roleSpec?: RoleSpecReadPort;
+  review?: { context: ReviewerContextPort; profiles: ReviewerProfilePort; control: ReviewLifecycleControlPort };
+};

@@ -18,14 +18,9 @@
  *   - provenance timeline is display-only (never writes a phase).
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { validateHandoffPacket, validateRecordHandoffCommand, validateClaimReplacementCommand, validateHandoffContextRequest, validateHandoffControlCommand, validateHandoffSnapshotQuery } from "../../src/contracts/validation.js";
-import {
-  evaluateReplacementEligibility,
-  handoffPacketRefFor,
-  replacementAttemptRefFor,
-  HANDOFF_PACKET_MAX_BYTES,
-  HANDOFF_SUMMARY_MAX_BYTES,
-} from "../../src/contracts/handoff.js";
+import { validateHandoffPacket, validateRecordHandoffCommand, validateClaimReplacementCommand, validateHandoffContextRequest, validateHandoffControlCommand, validateHandoffSnapshotQuery } from '../../src/contracts/validation/handoff.js';
+import { evaluateReplacementEligibility } from "../../src/control/control-engine/policies/replacement-eligibility.js";
+import { handoffPacketRefFor, replacementAttemptRefFor, HANDOFF_PACKET_MAX_BYTES, HANDOFF_SUMMARY_MAX_BYTES } from "../../src/contracts/handoff.js";
 import {
   P106_BUDGET_V1,
   P106_DECLARED_PERMISSIONS_V1,
@@ -38,7 +33,7 @@ import {
   buildClaimReplacementCommand,
   buildHandoffPacketV1,
   buildRecordHandoffCommand,
-} from "../../src/contracts/fixtures/handoff-fixtures.js";
+} from "../contract-support/fixtures/handoff-fixtures.js";
 import {
   prepareP106Scenario,
   endP106RunA,
@@ -49,13 +44,13 @@ import {
 import type { P1_06HarnessFactory } from "./p1-06-harness.js";
 import { runRefFor, taskAttemptRefFor, taskLeaseRefFor } from "../../src/contracts/dispatch.js";
 import { artifactBodyDigest, type ArtifactRef } from "../../src/contracts/artifact.js";
-import { buildRunFactCommand, rebaseScriptForRun, FAKE_RUNTIME_SCRIPT_CRASHED_V1 } from "../../src/contracts/fixtures/dispatch-fixtures.js";
+import { buildRunFactCommand, rebaseScriptForRun, FAKE_RUNTIME_SCRIPT_CRASHED_V1 } from "../../src/fixtures/dispatch-fixtures.js";
 import { p106PlanRefFor } from "./p1-06-harness.js";
 import { handoffPacketRefFor as hpr } from "../../src/contracts/handoff.js";
-import { FakeHandoffControlPort } from "../../src/contracts/testing/handoff-control.double.js";
+import { FakeHandoffControlPort } from "../contract-support/testing/handoff-control.double.js";
 import { sha256Hex } from "../../src/contracts/fingerprint.js";
-import { buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand } from "../../src/contracts/fixtures/evidence-fixtures.js";
-import { P106_OBL_HANDOFF, P106_TASK_ID as P106_TASK, P106_VR_DYNAMIC, P106_VR_STATIC } from "../../src/contracts/fixtures/handoff-fixtures.js";
+import { buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand } from "../contract-support/fixtures/evidence-fixtures.js";
+import { P106_OBL_HANDOFF, P106_TASK_ID as P106_TASK, P106_VR_DYNAMIC, P106_VR_STATIC } from "../contract-support/fixtures/handoff-fixtures.js";
 
 let harness: P1_06TestHarness | null = null;
 

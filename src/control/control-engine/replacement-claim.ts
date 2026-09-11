@@ -1,0 +1,313 @@
+/**
+ * P1-06 Control entry: replacement claim — B's NEW Attempt/lifecycle for the
+ * SAME Task after A ended (or A's lease expired).
+ *
+ * ENTRY FILE (shared baseline - exported signature FROZEN; lane A fills the
+ * implementation). Frozen semantics (IMPLEMENTATION-HANDOFF "P1-06 契约与存储
+ * 语义" items 2/5/6/7):
+ *   1. schema validation (validateClaimReplacementCommand) -> invalid;
+ *   2. Goal/Workspace/Plan resolution -> not_found (zero write);
+ *   3. load TaskLease (aggregateId) + prior TaskAttempt (lease.attemptId) +
+ *      registered packet (payload.handoffPacketRef), construct the
+ *      ReplacementEligibilityFacts and run the PURE evaluateReplacementEligibility:
+ *        - no_prior_attempt / structural -> ineligible with issues (zero write);
+ *        - ONLY lease_active -> rejected(lease_active);
+ *        - ONLY stale_packet / packet_not_found / packet_mismatch ->
+ *          rejected(the specific code; packet_not_found maps to not_found,
+ *          packet_mismatch has no top-level code -> ineligible with issues);
+ *        - never silently reusing a stale packet.
+ *   4. one atomic replacement-claim commit (ReplacementClaimedEvent + lease CAS
+ *      @N + TaskAttempt/Run/DispatchOutboxEntry/ReplacementAttempt@0) with FULL
+ *      ledger idempotency; A's late facts still target A's own ended Run and are
+ *      rejected by the P1-03 per-run sequence semantics (never roll back B).
+ * A competing replacement (wrong CAS window) loses as revision_conflict at the
+ * atomic commit — the singleWriter guarantee.
+ */
+import type {
+  ClaimReplacementCommand,
+  ClaimReplacementReceipt,
+  ReplacementEligibilityFacts,
+  ReplacementIneligibilityReason,
+} from "../../contracts/handoff.js";
+import { evaluateReplacementEligibility } from "./policies/replacement-eligibility.js";
+import { replacementAttemptRefFor } from "../../contracts/handoff.js";
+import type { LedgerCommitReceipt, GoalSnapshot, WorkspaceSnapshot } from "../../contracts/ledger.js";
+import type { PlanRevisionSnapshot, PlanRevisionRef } from "../../contracts/plan.js";
+import {
+  taskLeaseRefFor,
+  taskAttemptRefFor,
+  runRefFor,
+  dispatchOutboxRefFor,
+} from "../../contracts/dispatch.js";
+import type { TaskAttemptSnapshot, TaskLeaseSnapshot } from "../../contracts/dispatch.js";
+import { validateClaimReplacementCommand } from '../../contracts/validation/handoff.js';
+import { buildReplacementClaimLedgerCommit } from "./records/handoff.js";
+import type { ControlEngineDeps } from "./control-engine.js";
+import { loadLivePlan } from "./dispatch-facts.js";
+
+const STRUCTURAL_CODES = new Set([
+  "goal_not_active",
+  "plan_not_accepted",
+  "task_not_found",
+  "task_kind_not_work",
+  "task_not_active",
+  "task_phase_not_dispatchable",
+  "deps_unsatisfied",
+  "no_prior_attempt",
+  "resource_unavailable",
+]);
+const PACKET_CATEGORY_CODES = new Set(["stale_packet", "packet_not_found", "packet_mismatch"]);
+
+export function claimReplacement(
+  deps: ControlEngineDeps,
+  command: ClaimReplacementCommand,
+): Promise<ClaimReplacementReceipt> {
+  return claimReplacementImpl(deps, command);
+}
+
+async function claimReplacementImpl(
+  deps: ControlEngineDeps,
+  command: ClaimReplacementCommand,
+): Promise<ClaimReplacementReceipt> {
+  // Guard 1: schema / shape validation (zero write).
+  const issues = validateClaimReplacementCommand(command);
+  if (issues.length > 0) {
+    return { status: "rejected", commandId: command.commandId, code: "invalid" };
+  }
+
+  const projectId = command.identity.projectId;
+  const goalId = command.payload.goalId;
+  const taskId = command.aggregateId;
+
+  // Guard 2: Goal exists (else not_found), its Workspace exists (else
+  // not_found), and the accepted PlanRevision snapshot exists (else not_found).
+  const goalRef = { aggregateType: "Goal" as const, projectId, goalId };
+  const goalResult = await deps.ledger.load(goalRef);
+  if (goalResult.status === "not_found") {
+    return { status: "rejected", commandId: command.commandId, code: "not_found" };
+  }
+  const goal = goalResult.snapshot as GoalSnapshot;
+  const workspaceResult = await deps.ledger.load(goal.workspaceRef);
+  if (workspaceResult.status === "not_found") {
+    return { status: "rejected", commandId: command.commandId, code: "not_found" };
+  }
+  const workspace = workspaceResult.snapshot as WorkspaceSnapshot;
+  const workspaceId = goal.workspaceRef.workspaceId;
+  const workspaceRevision = workspace.revision;
+
+  const planRef: PlanRevisionRef | null = goal.activePlanRevision;
+  let plan: PlanRevisionSnapshot | null = null;
+  if (planRef !== null) {
+    const planResult = await deps.ledger.load(planRef);
+    if (planResult.status === "found") {
+      plan = await loadLivePlan(deps.ledger, planResult.snapshot as PlanRevisionSnapshot);
+    } else {
+      // A declared-but-unloadable plan is a dangling PlanRevision (not_found).
+      return { status: "rejected", commandId: command.commandId, code: "not_found" };
+    }
+  }
+
+  // Guard 3: load the aggregate facts and run the PURE eligibility decision.
+  const leaseRef = taskLeaseRefFor(projectId, goalId, taskId);
+  const leaseResult = await deps.ledger.load(leaseRef);
+  const leaseSnapshot: TaskLeaseSnapshot | null =
+    leaseResult.status === "found" && leaseResult.snapshot.ref.aggregateType === "TaskLease"
+      ? (leaseResult.snapshot as TaskLeaseSnapshot)
+      : null;
+
+  // Prior attempt facts (the attempt the lease holds if any).
+  let priorAttempt: ReplacementEligibilityFacts["priorAttempt"] = null;
+  if (leaseSnapshot !== null) {
+    const attemptRef = taskAttemptRefFor(projectId, goalId, taskId, leaseSnapshot.attemptId);
+    const attemptResult = await deps.ledger.load(attemptRef);
+    if (attemptResult.status === "found" && attemptResult.snapshot.ref.aggregateType === "TaskAttempt") {
+      const attempt = attemptResult.snapshot as TaskAttemptSnapshot;
+      priorAttempt =
+        attempt.status === "ended"
+          ? { status: "ended", endedAt: attempt.endedAt, endOutcome: attempt.endOutcome }
+          : { status: attempt.status, endedAt: null, endOutcome: null };
+    }
+  }
+
+  // Registered packet facts (bounded; the eligibility never opens the vault).
+  const packetResult = await deps.ledger.load(command.payload.handoffPacketRef);
+  const packet = packetResult.status === "found" && packetResult.snapshot.ref.aggregateType === "HandoffPacket"
+    ? (() => {
+        const snap = packetResult.snapshot as { packet: import("../../contracts/handoff.js").HandoffPacketV1 };
+        const p = snap.packet;
+        return {
+          present: true as const,
+          projectId: p.projectId,
+          goalId: p.goalId,
+          taskId: p.taskId,
+          planRef: p.planRef,
+          taskRevision: p.taskRevision,
+          workspaceSnapshot: p.workspaceSnapshot,
+        };
+      })()
+    : { present: false as const };
+
+  const facts: ReplacementEligibilityFacts = {
+    projectId,
+    goalId,
+    goalDesiredState: goal.desiredState,
+    goalActivePlanRevision: goal.activePlanRevision,
+    plan,
+    taskId,
+    priorLease:
+      leaseSnapshot === null
+        ? { status: "none" }
+        : {
+            status: "leased",
+            holderRunId: leaseSnapshot.holderRunId,
+            attemptId: leaseSnapshot.attemptId,
+            grantedAt: leaseSnapshot.grantedAt,
+            expiresAt: leaseSnapshot.expiresAt,
+          },
+    priorAttempt,
+    packet,
+    canonicalWorkspaceRevision: workspaceRevision,
+    resource: {
+      tokenBudget: command.payload.budget.tokenBudget,
+      deadline: command.payload.budget.deadline,
+      now: deps.now(),
+    },
+  };
+
+  const eligibility = evaluateReplacementEligibility(facts);
+  if (!eligibility.eligible) {
+    // A "self-lease" is the caller's OWN prior claim (the lease is already held
+    // by the command's runId): the only blocker is the live lease, so this may
+    // be an IDEMPOTENT REPLAY (full idempotency is decided inside the ledger by
+    // identity+fingerprint). Fall through to the commit and let the ledger
+    // return committed(replayed) or a genuine CAS conflict. A lease held by a
+    // DIFFERENT run is a real blocker -> lease_active (or the structural map).
+    const selfLeaseActive =
+      eligibility.reasons.length > 0 &&
+      eligibility.reasons.every((r) => r.code === "lease_active") &&
+      leaseSnapshot !== null &&
+      leaseSnapshot.holderRunId === command.payload.runId;
+    if (!selfLeaseActive) {
+      return mapIneligible(command, eligibility.reasons);
+    }
+  }
+
+  // An eligible replacement ALWAYS has a prior lease (no_prior_attempt is a
+  // structural reason) and an accepted plan (plan_not_accepted is structural),
+  // so both refs are available for the deterministic fold.
+  if (leaseSnapshot === null || planRef === null) {
+    return { status: "rejected", commandId: command.commandId, code: "ineligible", issues: [] };
+  }
+
+  // Guard 4: deterministic fold (fold-equality with the shared fixture builder,
+  // given the same ids) -> atomic ledger.commit -> receipt mapping. The CAS on
+  // TaskLease@expectedRevision resolves a competing replacement atomically
+  // (exactly one wins; the loser gets revision_conflict, zero write). The fold
+  // is built against the command's EXPECTED lease revision (the single-writer
+  // window the caller declares), NOT the re-loaded revision — that keeps the
+  // batch self-consistent for the validator (expectedRevision === lease.rev-1)
+  // so the ledger resolves replay vs CAS conflict rather than a malformed batch.
+  const eventId = deps.eventId();
+  const occurredAt = deps.now();
+  const priorRunRef = runRefFor(projectId, goalId, leaseSnapshot.holderRunId);
+  const priorAttemptRef = taskAttemptRefFor(projectId, goalId, taskId, leaseSnapshot.attemptId);
+  const foldLease: TaskLeaseSnapshot = { ...leaseSnapshot, revision: command.expectedRevision };
+  const batch = buildReplacementClaimLedgerCommit(command, {
+    eventId,
+    occurredAt,
+    workspaceId,
+    workspaceRevision,
+    planRef,
+    priorLease: foldLease,
+    priorRunRef,
+    priorAttemptRef,
+  });
+
+  const receipt = await deps.ledger.commit(batch);
+  return mapClaimReplacementReceipt(receipt, command);
+}
+
+function mapIneligible(
+  command: ClaimReplacementCommand,
+  reasons: ReplacementIneligibilityReason[],
+): ClaimReplacementReceipt {
+  // A structural ineligibility (goal/plan/task/deps/resource, or no_prior_attempt
+  // — "there is nothing to replace") is a HARD failure -> ineligible with the full
+  // reason set. The caller reads the issues to learn why.
+  if (reasons.some((r) => STRUCTURAL_CODES.has(r.code))) {
+    return { status: "rejected", commandId: command.commandId, code: "ineligible", issues: reasons };
+  }
+
+  // A live prior lease is The specific replacement blocker -> the dedicated
+  // lease_active code. It TAKES PRIORITY over a soft packet condition (the suite
+  // asserts lease_active even when the packet is also not found).
+  if (reasons.some((r) => r.code === "lease_active")) {
+    return { status: "rejected", commandId: command.commandId, code: "lease_active" };
+  }
+
+  // Otherwise the ONLY remaining reason set is the packet lifecycle codes ->
+  // a specific code where one exists (never silently reuses a stale/missing/mixed
+  // packet).
+  if (reasons.length > 0 && reasons.every((r) => PACKET_CATEGORY_CODES.has(r.code))) {
+    if (reasons.some((r) => r.code === "stale_packet")) {
+      return { status: "rejected", commandId: command.commandId, code: "stale_packet" };
+    }
+    if (reasons.some((r) => r.code === "packet_not_found")) {
+      return { status: "rejected", commandId: command.commandId, code: "not_found" };
+    }
+    // packet_mismatch has no top-level code -> surface as ineligible with issues.
+    return { status: "rejected", commandId: command.commandId, code: "ineligible", issues: reasons };
+  }
+
+  // Any other combination -> ineligible with the full reason set.
+  return { status: "rejected", commandId: command.commandId, code: "ineligible", issues: reasons };
+}
+
+function mapClaimReplacementReceipt(
+  receipt: LedgerCommitReceipt,
+  command: ClaimReplacementCommand,
+): ClaimReplacementReceipt {
+  const projectId = command.identity.projectId;
+  const goalId = command.payload.goalId;
+  const taskId = command.aggregateId;
+  const attemptId = command.payload.attemptId;
+
+  if (receipt.status === "committed") {
+    return {
+      status: "committed",
+      commandId: command.commandId,
+      replayed: receipt.replayed,
+      replacementRef: replacementAttemptRefFor(projectId, goalId, taskId, attemptId),
+      leaseRef: taskLeaseRefFor(projectId, goalId, taskId),
+      attemptRef: taskAttemptRefFor(projectId, goalId, taskId, attemptId),
+      runRef: runRefFor(projectId, goalId, command.payload.runId),
+      outboxRef: dispatchOutboxRefFor(projectId, goalId, taskId, attemptId),
+      eventIds: receipt.eventIds,
+      commitCursor: receipt.commitCursor,
+    };
+  }
+
+  switch (receipt.code) {
+    case "invalid_commit":
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+    case "idempotency_conflict":
+      return { status: "rejected", commandId: command.commandId, code: "idempotency_conflict" };
+    case "unavailable":
+      return { status: "rejected", commandId: command.commandId, code: "unavailable" };
+    case "not_empty":
+      // Not reachable for a replacement-claim commit (non-empty expected versions).
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+    case "revision_conflict": {
+      const target = receipt.currentVersions?.find(
+        (v) => v.ref.aggregateType === "TaskLease" && v.ref.projectId === projectId && v.ref.goalId === goalId && v.ref.taskId === taskId,
+      );
+      const currentRevision = target?.revision ?? receipt.currentVersions?.[0]?.revision;
+      return {
+        status: "rejected",
+        commandId: command.commandId,
+        code: "revision_conflict",
+        ...(currentRevision !== undefined ? { currentRevision } : {}),
+      };
+    }
+  }
+}

@@ -1,3 +1,4 @@
+import { classifyRestartProbeError } from "./readiness-probe.js";
 /**
  * P1-02 restart-path fixtures: full persistent path
  *   bootstrap -> install(CompletionPolicy, ArchitectureBaseline) ->
@@ -12,24 +13,18 @@
  * so the restart / evidence tests SKIP until then (never fake).
  */
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  COMPLETION_POLICY_FIXTURE_V1,
-  buildActivateCommand,
-  buildInstallCommand,
-  completionPolicyPinFor,
-  architectureBaselinePinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
-import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
-import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../../src/contracts/fixtures/goal-fixtures.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
+import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../contract-support/fixtures/goal-fixtures.js";
 import type {
   CompletionPolicyPin,
   ArchitectureBaselinePin,
   CompletionPolicyRevisionRef,
   ArchitectureBaselineRevisionRef,
 } from "../../src/contracts/governance.js";
-import { resolveProjectCompletionPolicy, resolveProjectArchitectureBaseline } from "../../src/contracts/governance.js";
+import { resolveProjectCompletionPolicy, resolveProjectArchitectureBaseline } from "../../src/data/state-ledger/governance-records.js";
 import type { PlanRevisionRef } from "../../src/contracts/plan.js";
 import type { GoalSnapshot } from "../../src/contracts/ledger.js";
 import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
@@ -94,8 +89,8 @@ export async function isP102Ready(): Promise<boolean> {
   try {
     await runP102Path(h);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return classifyRestartProbeError(error);
   } finally {
     await h.cleanup().catch(() => undefined);
   }

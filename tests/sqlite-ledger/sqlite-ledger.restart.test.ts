@@ -3,18 +3,18 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SqliteStateLedger } from "../../src/sqlite-ledger/sqlite-ledger.js";
+import { SqliteStateLedger } from "../../src/data/state-ledger/sqlite-ledger.js";
 import {
   WORKSPACE_BOOTSTRAP_FIXTURE_V1,
   buildBootstrapLedgerCommit,
-} from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+} from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
 import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
   buildCreateGoalCommand,
   buildGoalCreateLedgerCommit,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import { seqOfCommitCursor } from "../../src/contracts/ledger.js";
 import type { CommitCursor } from "../../src/contracts/command-event.js";
 import type { LedgerCommitReceipt } from "../../src/contracts/ledger.js";

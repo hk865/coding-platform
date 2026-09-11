@@ -1,0 +1,119 @@
+{
+  "trace": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-02",
+    "origin": "constructed-evaluator-selftest-only",
+    "observations": {
+      "configuration": "parallel",
+      "runs": [
+        {
+          "id": "a",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/a",
+          "toolEventRef": "synthetic/tools/a"
+        },
+        {
+          "id": "b",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/b",
+          "toolEventRef": "synthetic/tools/b"
+        },
+        {
+          "id": "c",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/c",
+          "toolEventRef": "synthetic/tools/c"
+        }
+      ],
+      "reports": [
+        {
+          "ref": "r1",
+          "revision": "v1",
+          "authorRun": "a",
+          "accepted": true,
+          "publishedAt": 2
+        },
+        {
+          "ref": "r2",
+          "revision": "v1",
+          "authorRun": "b",
+          "accepted": true,
+          "publishedAt": 3
+        }
+      ],
+      "consumptions": [
+        {
+          "ref": "r1",
+          "revision": "v1",
+          "runId": "c",
+          "at": 4
+        },
+        {
+          "ref": "r2",
+          "revision": "v1",
+          "runId": "c",
+          "at": 4
+        }
+      ],
+      "proposal": {
+        "accepted": true,
+        "ref": "proposal-v1",
+        "authorRun": "a",
+        "acceptedAt": 3
+      },
+      "writer": {
+        "runId": "c",
+        "start": 4,
+        "finishedAt": 8,
+        "inputRefs": [
+          "proposal-v1"
+        ]
+      },
+      "candidateDigest": "candidate2",
+      "verifier": {
+        "runId": "verify",
+        "startedAt": 9,
+        "finishedAt": 10,
+        "candidateDigest": "stale",
+        "result": "PASS",
+        "ref": "verify-evidence"
+      },
+      "reviewer": {
+        "runId": "review",
+        "startedAt": 11,
+        "candidateDigest": "candidate2",
+        "inputRefs": [
+          "verify-evidence"
+        ]
+      }
+    }
+  },
+  "expectedFailure": "feature.independent-verification",
+  "result": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-02",
+    "layer": "normalized-trace-assertion-evaluator",
+    "inputOrigin": "constructed-evaluator-selftest-only",
+    "status": "FAIL",
+    "assertions": [
+      {
+        "id": "feature.accepted-proposal-consumed",
+        "status": "PASS"
+      },
+      {
+        "id": "feature.independent-verification",
+        "status": "FAIL"
+      },
+      {
+        "id": "feature.review-after-checks",
+        "status": "PASS"
+      },
+      {
+        "id": "collaboration.real-consumption",
+        "status": "PASS"
+      }
+    ],
+    "productCapabilityResult": "NOT_RUN",
+    "note": "A normalized trace can only test evaluator logic here. A platform export adapter and independent raw-evidence authentication are NOT_PREPARED; constructed traces are never product evidence."
+  }
+}

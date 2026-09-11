@@ -1,0 +1,10 @@
+*** Begin Patch
+*** Delete File: src/contracts/fixtures/architecture-evolution-policy-fixtures.ts
+*** Delete File: src/contracts/fixtures/architecture-fixtures.ts
+*** Delete File: src/contracts/fixtures/dispatch-fixtures.ts
+*** Delete File: src/contracts/fixtures/governance-fixtures.ts
+*** Delete File: src/contracts/fixtures/plan-fixtures.ts
+*** Delete File: src/contracts/fixtures/role-spec-fixtures.ts
+*** Delete File: src/contracts/testing/check-providers.double.ts
+*** Delete File: src/contracts/testing/sequences.ts
+*** End Patch

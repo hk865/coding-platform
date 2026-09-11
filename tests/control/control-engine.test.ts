@@ -14,26 +14,26 @@
  *     unknown schemaVersion, and atomic not_empty / idempotency via commit.
  */
 import { describe, expect, it } from "vitest";
-import { ControlEngineImpl, createControlEngine } from "../../src/control/control-engine.js";
+import { ControlEngineImpl, createControlEngine } from "../../src/control/control-engine/control-engine.js";
 import {
   ScriptedStateLedger,
   notFoundResult,
-} from "../../src/contracts/testing/state-ledger.double.js";
-import type { LoadBehavior } from "../../src/contracts/testing/state-ledger.double.js";
-import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+} from "../contract-support/testing/state-ledger.double.js";
+import type { LoadBehavior } from "../contract-support/testing/state-ledger.double.js";
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
   buildCreateGoalCommand,
   buildGoalCreateLedgerCommit,
   goalCreatedEventFor,
   goalSnapshotFor,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
 import {
   WORKSPACE_BOOTSTRAP_FIXTURE_V1,
   buildBootstrapLedgerCommit,
   bootstrapSnapshotsFor,
   fixtureDigest,
-} from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+} from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import { buildBootstrapCommand, manifestFromSnapshot } from "../../src/contracts/bootstrap.js";
 import { commandFingerprint, commandIdentityKey } from "../../src/contracts/command-event.js";
 import type { CommitCursor, CreateGoalCommand } from "../../src/contracts/command-event.js";

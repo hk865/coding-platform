@@ -1,0 +1,147 @@
+{
+  "trace": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-01",
+    "origin": "constructed-evaluator-selftest-only",
+    "observations": {
+      "configuration": "parallel",
+      "runs": [
+        {
+          "id": "a",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/a",
+          "toolEventRef": "synthetic/tools/a"
+        },
+        {
+          "id": "b",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/b",
+          "toolEventRef": "synthetic/tools/b"
+        },
+        {
+          "id": "c",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/c",
+          "toolEventRef": "synthetic/tools/c"
+        }
+      ],
+      "reports": [
+        {
+          "ref": "r1",
+          "revision": "v1",
+          "authorRun": "a",
+          "accepted": true,
+          "publishedAt": 2
+        },
+        {
+          "ref": "r2",
+          "revision": "v1",
+          "authorRun": "b",
+          "accepted": true,
+          "publishedAt": 3
+        }
+      ],
+      "consumptions": [
+        {
+          "ref": "r1",
+          "revision": "v1",
+          "runId": "c",
+          "at": 4
+        },
+        {
+          "ref": "r2",
+          "revision": "v1",
+          "runId": "c",
+          "at": 4
+        }
+      ],
+      "sourceDigest": "7ab3a51e314c30274e95001f4e54fb5d4d27135d542739b7629e91eba1ad1727",
+      "edges": [
+        {
+          "from": "src/browser.mjs:mount",
+          "to": "src/ui.mjs:mount",
+          "reportRef": "r2"
+        },
+        {
+          "from": "src/ui.mjs:mount",
+          "to": "src/ui.mjs:createBoard",
+          "reportRef": "r1"
+        },
+        {
+          "from": "src/ui.mjs:createBoard",
+          "to": "src/api.mjs:handleApi",
+          "reportRef": "r1"
+        },
+        {
+          "from": "src/api.mjs:handleApi",
+          "to": "src/store.mjs:listTasks",
+          "reportRef": "r2"
+        },
+        {
+          "from": "src/store.mjs:listTasks",
+          "to": "src/store.mjs:readTasks",
+          "reportRef": "r2"
+        },
+        {
+          "from": "src/ui.mjs:createBoard",
+          "to": "src/ui.mjs:createBoard.render",
+          "reportRef": "r1"
+        }
+      ],
+      "reportRefs": [
+        "r1",
+        "r2"
+      ],
+      "readerIntervals": [
+        {
+          "runId": "a",
+          "start": 1,
+          "end": 4
+        },
+        {
+          "runId": "b",
+          "start": 2,
+          "end": 5
+        }
+      ],
+      "findings": [
+        {
+          "canonicalLocation": "src/ui.mjs:createBoard"
+        },
+        {
+          "canonicalLocation": "src/store.mjs:listTasks"
+        }
+      ],
+      "unknowns": [
+        "external deployment behavior"
+      ]
+    }
+  },
+  "result": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-01",
+    "layer": "normalized-trace-assertion-evaluator",
+    "inputOrigin": "constructed-evaluator-selftest-only",
+    "status": "PASS",
+    "assertions": [
+      {
+        "id": "exploration.source-call-chain",
+        "status": "PASS"
+      },
+      {
+        "id": "exploration.reader-overlap",
+        "status": "PASS"
+      },
+      {
+        "id": "exploration.merge-and-unknowns",
+        "status": "PASS"
+      },
+      {
+        "id": "collaboration.real-consumption",
+        "status": "PASS"
+      }
+    ],
+    "productCapabilityResult": "NOT_RUN",
+    "note": "A normalized trace can only test evaluator logic here. A platform export adapter and independent raw-evidence authentication are NOT_PREPARED; constructed traces are never product evidence."
+  }
+}

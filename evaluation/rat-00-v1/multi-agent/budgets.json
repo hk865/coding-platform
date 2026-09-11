@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "status": "FIXED_LIMITS_MODEL_UNBOUND",
+  "inputTokenLimit": 1000000,
+  "outputTokenLimit": 64000,
+  "wallTimeSeconds": 900,
+  "repeats": 3,
+  "scope": "Per scenario/configuration/trial cumulative across all roles, coordination, verification model work, review, retries, and messages included by provider usage. All three paired configurations use identical total resource caps.",
+  "inputAccounting": "Repeated/cached provider input counts toward cumulative input cap; retain cache categories separately when available.",
+  "costLimitUsd": null,
+  "provider": "unbound",
+  "model": "unbound",
+  "bindingStage": "RAT-01",
+  "realExecutionGate": "Provider/model, usage enforcement and USD cost ceiling must be bound before any model trial.",
+  "largeModuleRoleBudgetRef": "../budget-policy.json#/profiles/large-module-role"
+}

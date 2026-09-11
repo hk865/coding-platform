@@ -1,0 +1,153 @@
+/** Shared issue format for consumers and structural primitives for validators.
+ * The primitives describe wire shape; they do not decide business admission. */
+
+export type ValidationIssueCode =
+  | "missing_field"
+  | "bad_type"
+  | "unknown_schema_version"
+  | "invalid_command_type"
+  | "empty_entries"
+  | "incomplete_scope"
+  | "duplicate_identity"
+  | "digest_mismatch"
+  | "empty_objective"
+  | "bad_expected_revision"
+  | "unknown_event_type"
+  | "bad_revision"
+  | "invalid_fixture"
+  | "empty_collection"
+  | "conflict_unresolved"
+  | "invalid_escalate"
+  | "unknown_task_ref"
+  | "unknown_stage_ref"
+  | "unknown_obligation_ref"
+  | "bad_scope"
+  | "bad_enum"
+  | "bad_sequence"
+  | "size_exceeded"
+  | "bad_binding_ref"
+  | "bad_ref"
+  | "unknown_field";
+
+export type ValidationIssue = {
+  path: string;
+  code: ValidationIssueCode;
+  message: string;
+};
+
+export type UnknownRecord = Record<string, unknown>;
+
+export function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function stringField(
+  record: UnknownRecord,
+  key: string,
+  issues: ValidationIssue[],
+  displayPath: string = key,
+): string | null {
+  const value = record[key];
+  if (typeof value === "string" && value.length > 0) return value;
+  if (value === undefined) {
+    issues.push({ path: displayPath, code: "missing_field", message: `${displayPath} is required` });
+  } else if (typeof value === "string") {
+    issues.push({ path: displayPath, code: "missing_field", message: `${displayPath} must be a non-empty string` });
+  } else {
+    issues.push({ path: displayPath, code: "bad_type", message: `${displayPath} must be a string` });
+  }
+  return null;
+}
+
+export function issuesToErrorMessage(issues: ValidationIssue[]): string {
+  return issues.map((i) => `${i.path}: ${i.message} (${i.code})`).join("; ");
+}
+
+export function safePositiveIntField(value: unknown, path: string, issues: ValidationIssue[]): number | null {
+  if (Number.isSafeInteger(value) && (value as number) >= 1) return value as number;
+  if (value === undefined) {
+    issues.push({ path, code: "missing_field", message: path + " is required" });
+  } else {
+    issues.push({ path, code: "bad_revision", message: path + " must be a positive integer" });
+  }
+  return null;
+}
+
+export function validateStringArray(value: unknown, path: string, issues: ValidationIssue[]): string[] | null {
+  if (!Array.isArray(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an array" });
+    return null;
+  }
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || item.length === 0) {
+      issues.push({ path, code: "bad_type", message: path + " items must be non-empty strings" });
+      return null;
+    }
+    out.push(item);
+  }
+  return out;
+}
+
+export function validateEnum(value: unknown, allowed: readonly string[], path: string, issues: ValidationIssue[]): void {
+  if (typeof value !== "string" || !(allowed as readonly string[]).includes(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be one of " + allowed.join("|") });
+  }
+}
+
+export function numberField(
+  record: UnknownRecord,
+  key: string,
+  issues: ValidationIssue[],
+  displayPath: string = key,
+  min: number = 0,
+): number | null {
+  const value = record[key];
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= min) return value;
+  issues.push({
+    path: displayPath,
+    code: "bad_sequence",
+    message: displayPath + " must be a non-negative integer",
+  });
+  return null;
+}
+
+export function stringArrayField(
+  record: UnknownRecord,
+  key: string,
+  issues: ValidationIssue[],
+  displayPath: string = key,
+  allowEmpty: boolean = true,
+): string[] | null {
+  const value = record[key];
+  if (Array.isArray(value) && value.every((v) => typeof v === "string" && v.length > 0)) {
+    if (!allowEmpty && value.length === 0) {
+      issues.push({
+        path: displayPath,
+        code: "bad_scope",
+        message: displayPath + " must not be empty",
+      });
+      return null;
+    }
+    return [...value];
+  }
+  issues.push({
+    path: displayPath,
+    code: "bad_type",
+    message: displayPath + " must be an array of non-empty strings",
+  });
+  return null;
+}
+
+export function rejectUnknownFields(
+  record: UnknownRecord,
+  allowed: readonly string[],
+  path: string,
+  issues: ValidationIssue[],
+): void {
+  for (const key of Object.keys(record)) {
+    if (!allowed.includes(key)) {
+      issues.push({ path: path + "." + key, code: "unknown_field", message: "unknown field '" + key + "'" });
+    }
+  }
+}

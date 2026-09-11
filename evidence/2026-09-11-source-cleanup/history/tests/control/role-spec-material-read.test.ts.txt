@@ -1,0 +1,116 @@
+/**
+ * RW-12 × RW-11：角色规格的只读解析复用 ControlEngine 的受理判据。
+ *
+ * 这里刻意不重新实现"角色是否存在／revision 是否过期／权限是否越界"：
+ * LedgerRoleSpecRead 读账本事实，判定交给 ControlEngine 的 evaluateRoleBindingAdmission。
+ * 下面用真实 ControlEngine + 真实账本走完整治理路径（install/activate），再核对四类结论。
+ */
+import { describe, expect, it } from 'vitest';
+import { createControlEngine } from '../../src/control/control-engine/control-engine.js';
+import { InMemoryLedger } from '../../src/data/state-ledger/in-memory-ledger.js';
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from '../../src/contracts/testing/sequences.js';
+import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from '../../src/contracts/fixtures/bootstrap-fixture-v1.js';
+import {
+  ROLE_SOURCE_EXECUTOR, ROLE_SOURCE_PLANNER,
+  buildRoleSpecActivateCommandFor, buildRoleSpecInstallCommandFor,
+  buildCoordinationPolicyContentWithRolesV1, roleMatrixPolicyDigest,
+} from '../../src/contracts/fixtures/role-spec-fixtures.js';
+import { buildCoordinationPolicyInstallCommand, buildCoordinationPolicyActivateCommand } from '../../src/contracts/commands/governance.js';
+import { LedgerRoleSpecRead } from '../../src/control/dispatch-engine/role-spec-read.js';
+import { P15_COORDINATION_POLICY_REVISION } from '../../src/contracts/human-role-collaboration.js';
+import type { RoleBindingRefV1 } from '../../src/contracts/dispatch.js';
+
+const FIXED = FIXED_ISO_2026_09_05;
+/** 用 bootstrap fixture 里真实存在的项目：治理安装/激活没有"自动建项目"的路径。 */
+const PROJECT = 'proj-alpha';
+const WORKSPACE = 'ws-shared';
+const POLICY_ID = 'coordination-rw12';
+
+const bindingFor = (templateId: string, templateRevision = '1'): RoleBindingRefV1 => ({
+  schemaVersion: 1, bindingId: 'binding-' + templateId, templateId, templateRevision, bindingVersion: 1, policyRevision: 'auth-v1',
+});
+
+async function harness() {
+  const ledger = new InMemoryLedger();
+  const deps = createDeterministicDeps();
+  const control = createControlEngine({ ledger, now: deps.clock, eventId: deps.eventId });
+  const boot = buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, { commandId: 'b', correlationId: 'b', submittedAt: FIXED });
+  expect((await ledger.commit(buildBootstrapLedgerCommit(boot, { eventIds: ['e1', 'e2', 'e3', 'e4'], occurredAt: FIXED }))).status).toBe('committed');
+  const identity = (id: string) => ({ projectId: PROJECT, actor: { kind: 'human' as const, id: 'user-1' }, idempotencyKey: id, commandId: id, correlationId: id, submittedAt: FIXED });
+  /** Project 聚合的当前 revision：治理激活是 CAS，必须用真实读到的版本，不能假设。 */
+  const projectRevision = async (): Promise<number> => {
+    const loaded = await ledger.load({ aggregateType: 'Project', projectId: PROJECT } as never);
+    if (loaded.status !== 'found') throw Error('project missing');
+    return loaded.snapshot.revision;
+  };
+  for (const roleId of [ROLE_SOURCE_EXECUTOR, ROLE_SOURCE_PLANNER]) {
+    expect((await control.installRoleSpec(buildRoleSpecInstallCommandFor(roleId, identity('inst-' + roleId)))).status).toBe('committed');
+    const activated = await control.activateRoleSpec(buildRoleSpecActivateCommandFor(roleId, { ...identity('act-' + roleId), expectedRevision: await projectRevision() }));
+    expect(activated.status, JSON.stringify(activated)).toBe('committed');
+  }
+  const content = buildCoordinationPolicyContentWithRolesV1(PROJECT, [ROLE_SOURCE_EXECUTOR, ROLE_SOURCE_PLANNER]);
+  expect((await control.installCoordinationPolicy(buildCoordinationPolicyInstallCommand({ policyId: POLICY_ID, content }, identity('inst-policy')))).status).toBe('committed');
+  const pin = {
+    ref: { aggregateType: 'CoordinationPolicyRevision' as const, projectId: PROJECT, policyId: POLICY_ID, revision: P15_COORDINATION_POLICY_REVISION },
+    digest: roleMatrixPolicyDigest(content, POLICY_ID),
+  };
+  expect((await control.activateCoordinationPolicy(buildCoordinationPolicyActivateCommand(pin, { ...identity('act-policy'), expectedRevision: await projectRevision() }))).status).toBe('committed');
+  return { ledger, reader: new LedgerRoleSpecRead({ ledger }) };
+}
+
+describe('RW-12 role spec read (reuses ControlEngine admission)', () => {
+  it('矩阵 pin 命中的角色：解析出规格正文（必要材料、权限上界、必产出）', async () => {
+    const { reader } = await harness();
+    const resolved = await reader.resolve({
+      projectId: PROJECT, roleBinding: bindingFor(ROLE_SOURCE_EXECUTOR),
+      declaredPermissions: { tools: ['read', 'write', 'shell'], writeScope: ['*'] },
+    });
+    expect(resolved.status).toBe('resolved');
+    if (resolved.status !== 'resolved') return;
+    expect(resolved.roleId).toBe(ROLE_SOURCE_EXECUTOR);
+    expect(resolved.revision.revision).toBe(1);
+    expect(resolved.spec.requiredMaterials.length).toBeGreaterThan(0);
+    expect(resolved.spec.requiredOutputs.length).toBeGreaterThan(0);
+  });
+
+  it('权限越界由 ControlEngine 的判据判定：只读角色声明 shell 即 inadmissible', async () => {
+    const { reader } = await harness();
+    const resolved = await reader.resolve({
+      projectId: PROJECT, roleBinding: bindingFor(ROLE_SOURCE_PLANNER),
+      declaredPermissions: { tools: ['read', 'shell'], writeScope: ['*'] },
+    });
+    expect(resolved.status).toBe('inadmissible');
+    if (resolved.status !== 'inadmissible') return;
+    expect(resolved.reasons.some((reason) => reason.code === 'role_binding_not_admissible' && reason.detail === 'permissions_exceed_spec')).toBe(true);
+  });
+
+  it('revision 过期即 inadmissible；未登记角色与未登记矩阵都返回 absent（不编造规格）', async () => {
+    const { reader } = await harness();
+    const stale = await reader.resolve({
+      projectId: PROJECT, roleBinding: bindingFor(ROLE_SOURCE_EXECUTOR, '99'),
+      declaredPermissions: { tools: ['read'], writeScope: [] },
+    });
+    expect(stale.status).toBe('inadmissible');
+
+    const unregistered = await reader.resolve({
+      projectId: PROJECT, roleBinding: bindingFor('nobody'),
+      declaredPermissions: { tools: ['read'], writeScope: [] },
+    });
+    expect(unregistered.status).toBe('absent');
+
+    const legacy = await reader.resolve({
+      projectId: PROJECT, roleBinding: bindingFor(ROLE_SOURCE_EXECUTOR, '2026-09-05'),
+      declaredPermissions: { tools: ['read'], writeScope: [] },
+    });
+    expect(legacy.status).toBe('absent');
+    if (legacy.status === 'absent') expect(legacy.reason).toContain('不是角色规格 revision');
+
+    const otherProject = await reader.resolve({
+      projectId: 'proj-without-policy', roleBinding: bindingFor(ROLE_SOURCE_EXECUTOR),
+      declaredPermissions: { tools: ['read'], writeScope: [] },
+    });
+    expect(otherProject.status).toBe('absent');
+    if (otherProject.status === 'absent') expect(otherProject.reason).toContain('角色矩阵');
+  });
+});

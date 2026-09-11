@@ -1,10 +1,17 @@
 # Agent Platform Architecture Map
 
 ```yaml
-status: draft
+status: historical_copy
+historical_copy: true
 updated: 2026-09-06
+authoritative: D:/1.project/Software/agent_learn/agent_dev/agent_platform/ARCHITECTURE.md
 scope: Plane、Module registry、长期依赖与全局不变量
 ```
+
+> **本文件是历史副本（2026-09-10 登记）。** 产品根这份 `ARCHITECTURE.md` 停留在 2026-09-06 的 23 条依赖边，
+> 已落后于当前架构。**权威入口是文档根** `D:/1.project/Software/agent_learn/agent_dev/agent_platform/ARCHITECTURE.md`（当前 34 条边）。
+> 产品根 `dev_docs/` 同样是**不完整的历史副本**（缺 `interfaces/module-boundaries.md`、`interfaces/independent-review.md`、
+> `human/module-status.md`、`verification/README.md` 等）。追溯旧结论请读文档根；是否把副本移出产品仓库需用户决定，本批未移动。
 
 本文是低分辨率地图。Module 内部机制、字段和状态转换只存在于对应 Module 或 Interface 文档。
 

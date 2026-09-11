@@ -1,0 +1,136 @@
+{
+  "status": "PASS",
+  "scope": "evidence completeness and consistency, separate from ability gate",
+  "trialCount": 8,
+  "abilityGate": "PASS",
+  "rows": [
+    {
+      "runner": "kernel-direct",
+      "taskId": "node-bearer-auth",
+      "status": "resolved",
+      "evaluatorStatus": "resolved",
+      "modelRequests": 5,
+      "toolCalls": 5,
+      "inputTokens": 18963,
+      "outputTokens": 2473,
+      "cachedInputTokens": 17280,
+      "unknownUsageRequests": 0,
+      "runtimeMs": 23791,
+      "changedPaths": [
+        "src/auth.mjs"
+      ]
+    },
+    {
+      "runner": "kernel-direct",
+      "taskId": "python-slug-normalization",
+      "status": "resolved",
+      "evaluatorStatus": "resolved",
+      "modelRequests": 4,
+      "toolCalls": 4,
+      "inputTokens": 11145,
+      "outputTokens": 884,
+      "cachedInputTokens": 9856,
+      "unknownUsageRequests": 0,
+      "runtimeMs": 9553,
+      "changedPaths": [
+        "slug.py"
+      ]
+    },
+    {
+      "runner": "kernel-direct",
+      "taskId": "recovery-exactly-once",
+      "status": "resolved",
+      "evaluatorStatus": "resolved",
+      "modelRequests": 4,
+      "toolCalls": 5,
+      "inputTokens": 13630,
+      "outputTokens": 1374,
+      "cachedInputTokens": 11776,
+      "unknownUsageRequests": 0,
+      "runtimeMs": 14154,
+      "changedPaths": [
+        "src/recover.mjs"
+      ]
+    },
+    {
+      "runner": "kernel-direct",
+      "taskId": "ts-nullish-timeout",
+      "status": "resolved",
+      "evaluatorStatus": "resolved",
+      "modelRequests": 4,
+      "toolCalls": 4,
+      "inputTokens": 11087,
+      "outputTokens": 920,
+      "cachedInputTokens": 9728,
+      "unknownUsageRequests": 0,
+      "runtimeMs": 10458,
+      "changedPaths": [
+        "src/timeout.mjs"
+      ]
+    },
+    {
+      "runner": "platform-dispatch",
+      "taskId": "node-bearer-auth",
+      "status": "resolved",
+      "evaluatorStatus": "resolved",
+      "modelRequests": 5,
+      "toolCalls": 5,
+      "inputTokens": 16927,
+      "outputTokens": 1726,
+      "cachedInputTokens": 15360,
+      "unknownUsageRequests": 0,
+      "runtimeMs": 19711,
+      "changedPaths": [
+        "src/auth.mjs"
+      ]
+    },
+    {
+      "runner": "platform-dispatch",
+      "taskId": "python-slug-normalization",
+      "status": "resolved",
+      "evaluatorStatus": "resolved",
+      "modelRequests": 5,
+      "toolCalls": 5,
+      "inputTokens": 15344,
+      "outputTokens": 1135,
+      "cachedInputTokens": 13696,
+      "unknownUsageRequests": 0,
+      "runtimeMs": 14754,
+      "changedPaths": [
+        "slug.py"
+      ]
+    },
+    {
+      "runner": "platform-dispatch",
+      "taskId": "recovery-exactly-once",
+      "status": "resolved",
+      "evaluatorStatus": "resolved",
+      "modelRequests": 5,
+      "toolCalls": 5,
+      "inputTokens": 16115,
+      "outputTokens": 1467,
+      "cachedInputTokens": 14336,
+      "unknownUsageRequests": 0,
+      "runtimeMs": 17631,
+      "changedPaths": [
+        "src/recover.mjs"
+      ]
+    },
+    {
+      "runner": "platform-dispatch",
+      "taskId": "ts-nullish-timeout",
+      "status": "resolved",
+      "evaluatorStatus": "resolved",
+      "modelRequests": 5,
+      "toolCalls": 5,
+      "inputTokens": 14305,
+      "outputTokens": 806,
+      "cachedInputTokens": 12672,
+      "unknownUsageRequests": 0,
+      "runtimeMs": 11652,
+      "changedPaths": [
+        "src/timeout.mjs"
+      ]
+    }
+  ]
+}

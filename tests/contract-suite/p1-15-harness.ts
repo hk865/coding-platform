@@ -3,7 +3,7 @@ import { expect } from "vitest";
 import { p111BootstrapGoalGovernance } from "./p1-11-harness.js";
 import type { P114HarnessLike } from "./p1-14-harness.js";
 import type { InitialDesignProposalV1, InitialDesignDecisionV1, UnifiedStatusViewResult } from "../../src/contracts/human-role-collaboration.js";
-import { buildP115Proposal, buildP115Decision, buildP115ProposalCommand, buildP115DecisionCommand, buildP115InstallCommand, buildP115ActivateCommand, P115_PROJECT, P115_WORKSPACE, P115_DESIGN, P115_DECISION, p115DesignRef, P115_COORDINATION_POLICY_CONTENT } from "../../src/contracts/fixtures/human-role-collaboration-fixtures.js";
+import { buildP115Proposal, buildP115Decision, buildP115ProposalCommand, buildP115DecisionCommand, buildP115InstallCommand, buildP115ActivateCommand, P115_PROJECT, P115_WORKSPACE, P115_DESIGN, P115_DECISION, p115DesignRef, P115_COORDINATION_POLICY_CONTENT } from "../contract-support/fixtures/human-role-collaboration-fixtures.js";
 import { coordinationPolicyContentDigest } from "../../src/contracts/human-role-collaboration.js";
 
 export type P115HarnessLike = P114HarnessLike & {

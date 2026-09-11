@@ -1,0 +1,15 @@
+diff --git a/evidence/2026-09-10-module-folder-reorg/independent-review/before/src/contracts/ledger-validation.ts b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/src/contracts/ledger-validation.ts
+index ab6e47a..1897b80 100644
+--- a/evidence/2026-09-10-module-folder-reorg/independent-review/before/src/contracts/ledger-validation.ts
++++ b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/src/contracts/ledger-validation.ts
+@@ -2037,8 +2037,8 @@ export function validateQueryJobStartCommit(batch: import("./ledger.js").QueryJo
+ // StateLedger-level validators shared by BOTH adapters (ERR R-1)            //
+ // ------------------------------------------------------------------------- //
+ // `identityKeyFor`, `validateGoalCreate` and `validateBootstrap` previously
+-// existed as a private copy in each adapter (src/ledger/in-memory-ledger.ts and
+-// src/sqlite-ledger/sqlite-ledger.ts). Both copies were logically identical but
++// existed as a private copy in each adapter (src/data/state-ledger/in-memory-ledger.ts and
++// src/data/state-ledger/sqlite-ledger.ts). Both copies were logically identical but
+ // could drift silently, and dev_docs/modules/data/state-ledger.md already
+ // promises that event/snapshot/expected alignment rules live here and are
+ // shared. These are that single implementation.

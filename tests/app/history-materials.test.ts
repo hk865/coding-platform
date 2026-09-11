@@ -1,0 +1,95 @@
+import { expect, it } from 'vitest';
+import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
+import { HistoryMaterials } from '../../src/interaction/human-collaboration/history-materials.js';
+import { HistoryMaterialsContext } from '../../src/data/context-compiler/history-materials-context.js';
+import type { HistoryMaterial, HistoryMaterialPort } from '../../src/contracts/history-materials.js';
+import type { StateLedger } from '../../src/contracts/ledger.js';
+import type { RunRef } from '../../src/contracts/dispatch.js';
+import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
+import { buildBootstrapLedgerCommit } from '../contract-support/fixtures/bootstrap-fixture-v1.js';
+import { buildCreateGoalCommand, buildGoalCreateLedgerCommit } from '../contract-support/fixtures/goal-fixtures.js';
+import { buildDispatchClaimCommand } from '../../src/fixtures/dispatch-fixtures.js';
+import { buildDispatchClaimLedgerCommit } from '../../src/control/control-engine/records/dispatch.js';
+
+const AT = '2026-09-09T00:00:00.000Z';
+const scope = { projectId: 'history-project', workspaceId: 'target-workspace', goalId: 'target-goal' };
+const owner: RunRef = { aggregateType: 'Run', projectId: scope.projectId, goalId: 'source-goal', runId: 'source-run' };
+const reader: RunRef = { aggregateType: 'Run', projectId: scope.projectId, goalId: scope.goalId, runId: 'reader-run' };
+const input = { requestId: 'selected-history', materialId: 'report', runId: reader.runId, purpose: 'Read original reasoning', allowHistoricalRead: true };
+
+async function scenario() {
+  const h = createInMemoryHarness();
+  const boot = buildBootstrapCommand({ schemaVersion: 1, entries: [scope, { projectId: scope.projectId, workspaceId: 'source-workspace' }] }, { commandId: 'boot', correlationId: 'boot', submittedAt: AT });
+  expect(await h.ledger.commit(buildBootstrapLedgerCommit(boot, { eventIds: ['project', 'target', 'source'], occurredAt: AT }))).toMatchObject({ status: 'committed' });
+  for (const [run, workspaceId] of [[owner, 'source-workspace'], [reader, scope.workspaceId]] as const) {
+    const id = run.goalId;
+    const goal = buildCreateGoalCommand({ ...scope, workspaceId, goalId: id, objective: 'Historical material test', actor: { kind: 'human', id: 'operator' } }, { commandId: id, correlationId: id, idempotencyKey: id, submittedAt: AT });
+    expect(await h.ledger.commit(buildGoalCreateLedgerCommit(goal, { eventId: id, occurredAt: AT, projectRevision: 1, workspaceRevision: 1 }))).toMatchObject({ status: 'committed' });
+    const claim = buildDispatchClaimCommand({ commandId: run.runId, ...scope, goalId: id, taskId: 'task-' + id, runId: run.runId, attemptId: 'attempt-' + id, idempotencyKey: run.runId, correlationId: run.runId, submittedAt: AT });
+    expect(await h.ledger.commit(buildDispatchClaimLedgerCommit(claim, { eventId: run.runId, occurredAt: AT, workspaceId, planRef: { aggregateType: 'PlanRevision', projectId: scope.projectId, planId: 'plan-' + id }, workspaceRevision: 1 }))).toMatchObject({ status: 'committed' });
+  }
+  const stored = await h.vault.put({ contentType: 'text/plain', body: 'Original source report', sourceRefs: [{ kind: 'workspace', refId: 'source-workspace', revision: '1' }], ownerRef: owner, requestedAt: AT });
+  if (stored.status !== 'stored') throw Error('put failed');
+  const item: HistoryMaterial = { id: 'report', label: 'Original report', workspaceId: 'source-workspace', owner, artifactRef: stored.ref };
+  return { h, item };
+}
+
+it('filters canonical source/owner scope and never authorizes catalog selection', async () => {
+  const { h, item } = await scenario();
+  const candidates: HistoryMaterial[] = [item,
+    { ...item, id: 'foreign', owner: { ...owner, projectId: 'other-project' } },
+    { ...item, id: 'wrong-workspace', workspaceId: scope.workspaceId },
+    { ...item, id: 'missing-run', owner: { ...owner, runId: 'missing' } },
+    { ...item, id: 'forged-owner', owner: reader, workspaceId: scope.workspaceId }];
+  const materials = new HistoryMaterialsContext({ ledger: h.ledger, vault: h.vault });
+  const history: HistoryMaterialPort = new HistoryMaterials({ materials, catalog: () => candidates, control: h, grants: h, now: () => AT });
+  const before = await h.ledger.events({ afterCursor: null, limit: 256 });
+  expect(await history.view(scope)).toMatchObject({ materials: [item] });
+  await expect(history.grant(scope, { ...input, allowHistoricalRead: false })).rejects.toThrow('明确授权');
+  await expect(history.read(scope, { grantId: '' })).rejects.toThrow('无效字段');
+  for (const materialId of ['foreign', 'wrong-workspace', 'missing-run', 'forged-owner'])
+    await expect(history.grant(scope, { ...input, materialId })).rejects.toThrow('来源报告');
+  await expect(history.grant({ ...scope, workspaceId: 'source-workspace' }, input)).rejects.toThrow('目标运行');
+  expect(await h.ledger.events({ afterCursor: null, limit: 256 })).toEqual(before);
+  expect(await h.vault.open(item.artifactRef, { requesterRunRef: reader })).toMatchObject({ status: 'rejected', code: 'forbidden' });
+});
+
+it('replays the original grant basis/time through new Context facts and retains changed-intent conflicts', async () => {
+  const { h, item } = await scenario();
+  let advanced = false;
+  // The public Ledger seam supplies a newer target version on the retry. The
+  // immutable recorded grant must still produce the original Control command.
+  const ledger: Pick<StateLedger, 'load'> = { load: async ref => {
+    const loaded = await h.ledger.load(ref);
+    if (!advanced || loaded.status !== 'found') return loaded;
+    if (ref.aggregateType === 'Workspace' && ref.workspaceId === scope.workspaceId) return { ...loaded, snapshot: { ...loaded.snapshot, revision: 99 } } as typeof loaded;
+    if (ref.aggregateType === 'Run' && ref.runId === reader.runId) return { ...loaded, snapshot: { ...loaded.snapshot, planRef: { aggregateType: 'PlanRevision', projectId: scope.projectId, planId: 'new-plan' } } } as typeof loaded;
+    return loaded;
+  } };
+  const make = (): HistoryMaterialPort => new HistoryMaterials({ materials: new HistoryMaterialsContext({ ledger, vault: h.vault }), catalog: () => [item], control: h, grants: h, now: () => advanced ? '2026-09-10T12:00:00.000Z' : AT });
+  const original = await make().grant(scope, input);
+  expect(original.grant).toMatchObject({ grantedAt: AT, basis: { workspaceRevision: 1, planRef: { planId: 'plan-target-goal' } } });
+  advanced = true;
+  expect(await make().grant(scope, input)).toEqual({ receipt: { ...original.receipt, replayed: true }, grant: original.grant });
+  await expect(make().grant(scope, { ...input, purpose: 'Different authorization' })).rejects.toThrow('idempotency_conflict');
+  await expect(make().read({ ...scope, projectId: 'other-project' }, { grantId: original.grant.grantId })).rejects.toThrow('授权不存在');
+  const revoked = await make().revoke(scope, { grantId: original.grant.grantId, requestId: 'revoke', reason: 'Ended' });
+  expect(revoked.status).toBe('committed');
+  expect(await make().grant(scope, input)).toMatchObject({ receipt: { replayed: true }, grant: original.grant });
+  await expect(make().read(scope, { grantId: original.grant.grantId })).rejects.toThrow('已撤销');
+});
+
+it('preserves Vault source rejection and unavailable results under the exact historical reader/basis', async () => {
+  const { h, item } = await scenario();
+  const initial: HistoryMaterialPort = new HistoryMaterials({ materials: new HistoryMaterialsContext({ ledger: h.ledger, vault: h.vault }), catalog: () => [item], control: h, grants: h, now: () => AT });
+  const { grant } = await initial.grant(scope, input);
+  for (const result of [{ status: 'rejected', code: 'stale', issues: ['changed target basis'] }, { status: 'unavailable', ref: item.artifactRef }] as const) {
+    const materials = new HistoryMaterialsContext({ ledger: h.ledger, vault: { open: async (ref, query) => {
+      expect(ref).toEqual(item.artifactRef);
+      expect(query).toEqual({ requesterRunRef: grant.reader, currentBasis: grant.basis, includeOwner: true, usage: 'historical_explanation' });
+      return structuredClone(result) as import('../../src/contracts/artifact.js').ArtifactOpenResult;
+    } } });
+    const history: HistoryMaterialPort = new HistoryMaterials({ materials, catalog: () => [], control: h, grants: h, now: () => AT });
+    expect(await history.read(scope, { grantId: grant.grantId })).toEqual({ grant, result, applicability: 'historical_explanation' });
+  }
+});

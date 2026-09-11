@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-02 lane C — InMemory rebuild equivalence for the plan views.
  *
@@ -7,7 +8,7 @@
  * EventPage(s); no state is carried across instances).
  */
 import { describe, expect, it } from "vitest";
-import { createReadModelIndex } from "../../src/read-model/read-model-index.js";
+import { createReadModelIndex } from "../../src/data/read-model-index/read-model-index.js";
 import type { ReadModelIndex } from "../../src/contracts/goal-view.js";
 import type { CommitCursor } from "../../src/contracts/command-event.js";
 import type { EventPage, PositionedEvent } from "../../src/contracts/ledger.js";
@@ -16,21 +17,12 @@ import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
   buildCreateGoalCommand,
   goalCreatedEventFor,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
-import {
-  HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1,
-  buildApplyPlanCommand,
-  planRevisionSnapshotFor,
-  planRevisionAcceptedEventFor,
-} from "../../src/contracts/fixtures/plan-fixtures.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  COMPLETION_POLICY_FIXTURE_V1,
-  buildInstallCommand,
-  completionPolicyPinFor,
-  architectureBaselinePinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
+import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { planRevisionSnapshotFor, planRevisionAcceptedEventFor } from "../../src/control/control-engine/records/plan.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 
 const OCCURRED = FIXED_ISO_2026_09_05;
 const ACCEPTED_AT = "2026-09-05T12:00:00.000Z";
@@ -129,7 +121,7 @@ const PAGES = (prefix: string): EventPage[] => [
 describe("ReadModelIndexImpl plan view rebuild (lane C, InMemory)", () => {
   it("fresh instance replayed from the same pages equals the incremental projection", async () => {
     const pages = PAGES("R");
-    const inc = createReadModelIndex();
+    const inc = createReadModelIndex(new ControlPolicyExplanation());
     await inc.advance(pages[0]!);
     await inc.advance(pages[1]!);
     const incGraph = await inc.planGraph(alphaGraphQuery(makeCommitCursor(4)));
@@ -141,7 +133,7 @@ describe("ReadModelIndexImpl plan view rebuild (lane C, InMemory)", () => {
     });
     const incGoal = await inc.goal(alphaGoalQuery(makeCommitCursor(4)));
 
-    const fresh = createReadModelIndex();
+    const fresh = createReadModelIndex(new ControlPolicyExplanation());
     await advanceAll(fresh, pages);
     const freshGraph = await fresh.planGraph(alphaGraphQuery(makeCommitCursor(4)));
     const freshGate = await fresh.taskDetail({
@@ -160,11 +152,11 @@ describe("ReadModelIndexImpl plan view rebuild (lane C, InMemory)", () => {
   it("a partial prefix rebuild equals the incremental prefix", async () => {
     const pages = PAGES("S");
     const prefix = pages.slice(0, 1);
-    const inc = createReadModelIndex();
+    const inc = createReadModelIndex(new ControlPolicyExplanation());
     await advanceAll(inc, prefix);
     const incGraph = await inc.planGraph(alphaGraphQuery(makeCommitCursor(2)));
 
-    const fresh = createReadModelIndex();
+    const fresh = createReadModelIndex(new ControlPolicyExplanation());
     await advanceAll(fresh, prefix);
     const freshGraph = await fresh.planGraph(alphaGraphQuery(makeCommitCursor(2)));
 

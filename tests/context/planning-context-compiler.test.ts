@@ -17,16 +17,16 @@
  */
 import { describe, expect, it } from "vitest";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
-import { PlanningContextCompilerImpl } from "../../src/context/planning-context-compiler.js";
-import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
-import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1 } from "../../src/contracts/fixtures/plan-fixtures.js";
+import { PlanningContextCompilerImpl } from "../../src/data/context-compiler/planning-context-compiler.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1 } from "../../src/fixtures/plan-fixtures.js";
 import {
   P111_PROJECT,
   p111GoalRef,
   p111PlanRef,
-} from "../../src/contracts/fixtures/goal-change-fixtures.js";
+} from "../contract-support/fixtures/goal-change-fixtures.js";
 import { p111BootstrapGoalGovernance } from "../contract-suite/p1-11-harness.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import type { TaskContextPort, TaskContextRequestV1, TaskContextResultV1 } from "../../src/contracts/task-envelope.js";
 
 const FIXED = FIXED_ISO_2026_09_05;

@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-03 lane D — InMemory ActiveAgent + TaskDetail.run projection.
  * Same EventPage stream semantics as the SQLite adapter test; these assertions
@@ -11,7 +12,7 @@
  * idempotency; rebuild (fresh instance from the same pages) equivalence.
  */
 import { describe, expect, it } from "vitest";
-import { createReadModelIndex } from "../../src/read-model/read-model-index.js";
+import { createReadModelIndex } from "../../src/data/read-model-index/read-model-index.js";
 import type { ReadModelIndex } from "../../src/contracts/goal-view.js";
 import type { CommitCursor } from "../../src/contracts/command-event.js";
 import type { DomainEvent } from "../../src/contracts/events.js";
@@ -21,19 +22,11 @@ import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
   buildCreateGoalCommand,
   goalCreatedEventFor,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
-import {
-  buildApplyPlanCommand,
-  planRevisionSnapshotFor,
-  planRevisionAcceptedEventFor,
-} from "../../src/contracts/fixtures/plan-fixtures.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  COMPLETION_POLICY_FIXTURE_V1,
-  buildInstallCommand,
-  completionPolicyPinFor,
-  architectureBaselinePinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { planRevisionSnapshotFor, planRevisionAcceptedEventFor } from "../../src/control/control-engine/records/plan.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
 import {
   BUDGET_FIXTURE_V1,
   DECLARED_PERMISSIONS_FIXTURE_V1,
@@ -45,7 +38,7 @@ import {
   buildEnvelopeFixture,
   buildManifestFixture,
   rebaseScriptForRun,
-} from "../../src/contracts/fixtures/dispatch-fixtures.js";
+} from "../../src/fixtures/dispatch-fixtures.js";
 import { artifactBodyDigest } from "../../src/contracts/artifact.js";
 import {
   runRefFor,
@@ -59,7 +52,7 @@ import {
   type TaskClaimedEvent,
 } from "../../src/contracts/dispatch.js";
 import type { PlanRevisionRef } from "../../src/contracts/plan.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 
 const OCCURRED = FIXED_ISO_2026_09_05;
 const ACCEPTED_AT = "2026-09-05T12:00:00.000Z";
@@ -294,7 +287,7 @@ const BETA = scopeOf(1);
 
 describe("ReadModelIndexImpl active agent + task-run projection (P1-03, InMemory)", () => {
   it("claim -> start -> facts: ActiveAgent + TaskDetail.run fold field-for-field", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     const sc: RunScenario = {
       scope: 0,
       runId: "run-full",
@@ -353,7 +346,7 @@ describe("ReadModelIndexImpl active agent + task-run projection (P1-03, InMemory
   });
 
   it("crash and outcome_unknown project to DIFFERENT outcomes (unknown never guessed from crash)", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     // crash run
     const crash: RunScenario = {
       scope: 0,
@@ -413,7 +406,7 @@ describe("ReadModelIndexImpl active agent + task-run projection (P1-03, InMemory
     };
     const page = pageOf(positioned(scenarioEvents(sc), 1));
 
-    const inc = createReadModelIndex();
+    const inc = createReadModelIndex(new ControlPolicyExplanation());
     await inc.advance(page);
     const incAgent = await inc.activeAgent({
       projectId: ALPHA.projectId,
@@ -428,7 +421,7 @@ describe("ReadModelIndexImpl active agent + task-run projection (P1-03, InMemory
       atLeastCursor: makeCommitCursor(6),
     });
 
-    const fresh = createReadModelIndex();
+    const fresh = createReadModelIndex(new ControlPolicyExplanation());
     await fresh.advance(pageOf([...page.events.map((e) => ({ ...e }))]));
     const freshAgent = await fresh.activeAgent({
       projectId: ALPHA.projectId,
@@ -448,7 +441,7 @@ describe("ReadModelIndexImpl active agent + task-run projection (P1-03, InMemory
   });
 
   it("full-scope isolation: same goalId/taskId under different Projects never collide", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     const alpha: RunScenario = {
       scope: 0,
       runId: "run-iso-a",
@@ -491,7 +484,7 @@ describe("ReadModelIndexImpl active agent + task-run projection (P1-03, InMemory
   });
 
   it("freshness: not_ready != not_found for the active agent view", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     // never advanced -> not_ready (not not_found)
     const early = await index.activeAgent({
       projectId: ALPHA.projectId,
@@ -541,7 +534,7 @@ describe("ReadModelIndexImpl active agent + task-run projection (P1-03, InMemory
   });
 
   it("dedupe: re-advancing the same page is idempotent (no re-apply, no base advance)", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     const sc: RunScenario = {
       scope: 0,
       runId: "run-dedupe",
@@ -569,7 +562,7 @@ describe("ReadModelIndexImpl active agent + task-run projection (P1-03, InMemory
   });
 
   it("late/stale runtime event (sequence <= lastEventSeq) does not regress the fold", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     const sc: RunScenario = {
       scope: 0,
       runId: "run-late",

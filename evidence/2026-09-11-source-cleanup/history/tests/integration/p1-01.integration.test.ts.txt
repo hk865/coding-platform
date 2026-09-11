@@ -1,0 +1,364 @@
+/**
+ * P1-01 integration test — the acceptance tracer bullet with REAL SQLite adapters:
+ *   bootstrap -> CreateGoal -> SqliteStateLedger.commit -> close -> reopen ->
+ *   (a) canonical GoalSnapshot load, (b) EventPage rebuild -> same GoalView.
+ * No fakes: ControlEngineImpl, HumanCollaborationImpl, SqliteStateLedger and
+ * SqliteReadModelIndex are the actual product modules. The P1-00 InMemory
+ * integration (tests/integration/p1-00.integration.test.ts) stays untouched;
+ * the P1-00 contract suites additionally gate both adapters
+ * (tests/ledger + tests/sqlite-ledger and tests/read-model + tests/sqlite-read-model).
+ * Integrator-owned (P1-01).
+ */
+import { describe, expect, it } from "vitest";
+import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import {
+  MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
+  buildCreateGoalCommand,
+  goalCreatedEventFor,
+  goalSnapshotFor,
+} from "../../src/contracts/fixtures/goal-fixtures.js";
+import { FIXED_ISO_2026_09_05, createDeterministicDeps } from "../../src/contracts/testing/sequences.js";
+import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createSqliteStateLedger } from "../../src/data/state-ledger/sqlite-ledger.js";
+import { ControlEngineImpl } from "../../src/control/control-engine/control-engine.js";
+import { verifyBootstrapManifest } from "./p1-00-assertions.js";
+import {
+  RESTART_ALPHA,
+  RESTART_BETA,
+  bootCommandFor,
+  runBootstrapAndCreateGoals,
+} from "../restart/restart-fixtures.js";
+import {
+  capturePreRestart,
+  verifyRebuildViews,
+  verifySnapshotLoadPath,
+} from "../restart/restart-assertions.js";
+import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+
+const FIXTURE = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1;
+const ALPHA = FIXTURE.scopes[0]!;
+const BETA = FIXTURE.scopes[1]!;
+
+describe("P1-01 integration: real SQLite Ledger/View adapters, full path", () => {
+  it("bootstrap on an empty SQLite file via the supported contract; replay idempotent; other identity rejected not_empty", async () => {
+    const harness = await createPersistentSqliteHarness();
+    try {
+      const first = await harness.bootstrap(bootCommandFor("boot-1"));
+      expect(first.status).toBe("committed");
+      if (first.status !== "committed") return;
+      expect(first.replayed).toBe(false);
+      verifyBootstrapManifest(first.manifest);
+
+      // same identity + fingerprint -> replayed with the ORIGINAL outcome
+      const replay = await harness.bootstrap(bootCommandFor("boot-1"));
+      expect(replay.status).toBe("committed");
+      if (replay.status === "committed") {
+        expect(replay.replayed).toBe(true);
+        expect(replay.commitCursor).toBe(first.commitCursor);
+        expect(replay.eventIds).toEqual(first.eventIds);
+      }
+
+      // different identity on a non-empty ledger -> not_empty, zero extra writes
+      const other = await harness.control.bootstrap(
+        buildBootstrapCommand(
+          { schemaVersion: 1, entries: [{ projectId: "proj-gamma", workspaceId: "ws-gamma" }] },
+          {
+            commandId: "boot-2",
+            correlationId: "corr-boot-2",
+            submittedAt: FIXED_ISO_2026_09_05,
+            idempotencyKey: "k-other",
+          },
+        ),
+      );
+      expect(other.status).toBe("rejected");
+      if (other.status === "rejected") expect(other.code).toBe("not_empty");
+      const page = await harness.ledger.events({ afterCursor: null, limit: 100 });
+      expect(page.events).toHaveLength(4); // 2 Project + 2 Workspace bootstrapped
+      expect(page.events.map((p) => p.event.eventType)).toEqual([
+        "ProjectBootstrapped",
+        "ProjectBootstrapped",
+        "WorkspaceBootstrapped",
+        "WorkspaceBootstrapped",
+      ]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("CreateGoal persists two isolated scopes; replay idempotent; same-key conflict; rejections zero-write", async () => {
+    const harness = await createPersistentSqliteHarness();
+    try {
+      await harness.bootstrap(bootCommandFor("boot-3"));
+      const alpha = await harness.collaboration.createGoal({
+        projectId: ALPHA.projectId,
+        workspaceId: ALPHA.workspaceId,
+        goalId: ALPHA.goalId,
+        objective: ALPHA.objective,
+        actor: ALPHA.actor,
+        idempotencyKey: FIXTURE.sharedIdempotencyKey,
+      });
+      const beta = await harness.collaboration.createGoal({
+        projectId: BETA.projectId,
+        workspaceId: BETA.workspaceId,
+        goalId: BETA.goalId,
+        objective: BETA.objective,
+        actor: BETA.actor,
+        idempotencyKey: FIXTURE.sharedIdempotencyKey,
+      });
+      expect(alpha.status).toBe("persisted");
+      expect(beta.status).toBe("persisted");
+      if (alpha.status !== "persisted" || beta.status !== "persisted") return;
+
+      // full-scope isolation: same local goalId under different projects
+      const alphaSnapshot = await harness.ledger.load({
+        aggregateType: "Goal",
+        projectId: ALPHA.projectId,
+        goalId: ALPHA.goalId,
+      });
+      const betaSnapshot = await harness.ledger.load({
+        aggregateType: "Goal",
+        projectId: BETA.projectId,
+        goalId: BETA.goalId,
+      });
+      expect(alphaSnapshot.status).toBe("found");
+      expect(betaSnapshot.status).toBe("found");
+      if (alphaSnapshot.status === "found" && betaSnapshot.status === "found") {
+        expect(alphaSnapshot.snapshot).not.toEqual(betaSnapshot.snapshot);
+        expect(alphaSnapshot.snapshot).toMatchObject({ ref: { projectId: "proj-alpha" } });
+      }
+
+      // idempotent replay: same request -> same commitCursor, no second event
+      const replay = await harness.collaboration.createGoal({
+        projectId: ALPHA.projectId,
+        workspaceId: ALPHA.workspaceId,
+        goalId: ALPHA.goalId,
+        objective: ALPHA.objective,
+        actor: ALPHA.actor,
+        idempotencyKey: FIXTURE.sharedIdempotencyKey,
+      });
+      expect(replay.status).toBe("persisted");
+      if (replay.status === "persisted") expect(replay.commitCursor).toBe(alpha.commitCursor);
+
+      // same idempotency key + different objective -> conflict, zero writes
+      const conflict = await harness.collaboration.createGoal({
+        projectId: ALPHA.projectId,
+        workspaceId: ALPHA.workspaceId,
+        goalId: ALPHA.goalId,
+        objective: "a completely different objective",
+        actor: ALPHA.actor,
+        idempotencyKey: FIXTURE.sharedIdempotencyKey,
+      });
+      expect(conflict).toEqual({ status: "rejected", code: "conflict" });
+
+      // scope rejections: unknown project / unknown workspace
+      expect(
+        await harness.collaboration.createGoal({
+          projectId: "proj-not-bootstrapped",
+          workspaceId: ALPHA.workspaceId,
+          goalId: ALPHA.goalId,
+          objective: ALPHA.objective,
+          actor: ALPHA.actor,
+          idempotencyKey: "k-bad-project",
+        }),
+      ).toEqual({ status: "rejected", code: "scope_not_found" });
+      expect(
+        await harness.collaboration.createGoal({
+          projectId: ALPHA.projectId,
+          workspaceId: "ws-not-bootstrapped",
+          goalId: ALPHA.goalId,
+          objective: ALPHA.objective,
+          actor: ALPHA.actor,
+          idempotencyKey: "k-bad-ws",
+        }),
+      ).toEqual({ status: "rejected", code: "scope_not_found" });
+
+      // zero writes: still exactly 4 bootstrap + 2 GoalCreated events
+      const page = await harness.ledger.events({ afterCursor: null, limit: 100 });
+      expect(page.events.filter((p) => p.event.eventType === "GoalCreated")).toHaveLength(2);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("freshness: not_ready until the persisted EventPage(s) are advanced, then ready", async () => {
+    const harness = await createPersistentSqliteHarness();
+    try {
+      await harness.bootstrap(bootCommandFor("boot-4"));
+      const result = await harness.collaboration.createGoal({
+        projectId: ALPHA.projectId,
+        workspaceId: ALPHA.workspaceId,
+        goalId: ALPHA.goalId,
+        objective: ALPHA.objective,
+        actor: ALPHA.actor,
+        idempotencyKey: FIXTURE.sharedIdempotencyKey,
+      });
+      expect(result.status).toBe("persisted");
+      if (result.status !== "persisted") return;
+
+      const before = await harness.collaboration.goalView({
+        projectId: ALPHA.projectId,
+        workspaceId: ALPHA.workspaceId,
+        goalId: ALPHA.goalId,
+        atLeastCursor: result.commitCursor,
+      });
+      expect(before.status).toBe("not_ready");
+
+      await harness.advanceProjection();
+      const after = await harness.collaboration.goalView({
+        projectId: ALPHA.projectId,
+        workspaceId: ALPHA.workspaceId,
+        goalId: ALPHA.goalId,
+        atLeastCursor: result.commitCursor,
+      });
+      expect(after.status).toBe("ready");
+      if (after.status === "ready") {
+        expect(after.goal.activePlanRevision).toBeNull();
+        expect(after.goal.objective).toBe(ALPHA.objective.trim());
+        expect(after.goal.sourceCursor).toBe(result.commitCursor);
+      }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("commit atomicity: fault injection mid-commit rolls back ALL writes (events + snapshot + idempotency), adapter recovers", async () => {
+    // Direct adapter-level proof of the single-transaction boundary (the shared
+    // contract suite covers the same for bootstrap; here both kinds + recovery).
+    const dir = await (await import("node:fs/promises")).mkdtemp(
+      (await import("node:os")).tmpdir() + "/agent-platform-p1-01-fault-",
+    );
+    const path = dir + "/ledger.sqlite";
+    let armed = false;
+    const ledger = createSqliteStateLedger({
+      path,
+      beforeWrite: () => {
+        if (armed) throw new Error("simulated crash inside the commit transaction");
+      },
+    });
+    const deps = createDeterministicDeps();
+    const control = new ControlEngineImpl({ ledger, now: deps.clock, eventId: deps.eventId });
+
+    try {
+      // bootstrap with fault: nothing may be written
+      armed = true;
+      await expect(control.bootstrap(bootCommandFor("boot-fault-1"))).rejects.toThrow();
+      expect((await ledger.events({ afterCursor: null, limit: 100 })).events).toHaveLength(0);
+      expect(
+        await ledger.load({ aggregateType: "Project", projectId: "proj-alpha" }),
+      ).toMatchObject({ status: "not_found" });
+
+      // recovery: disarm -> same bootstrap succeeds against the still-empty ledger
+      armed = false;
+      const boot = await control.bootstrap(bootCommandFor("boot-fault-1"));
+      expect(boot.status).toBe("committed");
+
+      // goal-create with fault: events/snapshot/idempotency all roll back together
+      const command = buildCreateGoalCommand(ALPHA, {
+        commandId: "cmd-fault-1",
+        correlationId: "corr-fault-1",
+        submittedAt: FIXED_ISO_2026_09_05,
+        idempotencyKey: "k-fault-1",
+      });
+      armed = true;
+      await expect(control.submit(command)).rejects.toThrow();
+      const page = await ledger.events({ afterCursor: null, limit: 100 });
+      expect(page.events.filter((p) => p.event.eventType === "GoalCreated")).toHaveLength(0);
+      expect(
+        await ledger.load({ aggregateType: "Goal", projectId: ALPHA.projectId, goalId: ALPHA.goalId }),
+      ).toMatchObject({ status: "not_found" });
+      // no idempotency residue either: the SAME command after disarm commits fresh
+      armed = false;
+      const commit = await control.submit(command);
+      expect(commit.status).toBe("committed");
+      if (commit.status === "committed") expect(commit.replayed).toBe(false);
+    } finally {
+      await ledger.close();
+      await (await import("node:fs/promises")).rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("restart: canonical GoalSnapshot loads from SQLite; GoalView rebuilt from persisted EventPage — same as before", async () => {
+    const harness = await createPersistentSqliteHarness();
+    try {
+      const runs = await runBootstrapAndCreateGoals(harness);
+      expect(runs.alpha.status).toBe("persisted");
+      expect(runs.beta.status).toBe("persisted");
+      if (runs.alpha.status !== "persisted" || runs.beta.status !== "persisted") return;
+
+      await harness.advanceProjection();
+      const capture = await capturePreRestart(harness, runs, RESTART_ALPHA, RESTART_BETA);
+
+      // path (a): canonical from persisted snapshot — never folded from Events
+      await harness.close();
+      const after = await harness.reopen();
+      await verifySnapshotLoadPath(after, capture, RESTART_ALPHA, RESTART_BETA);
+
+      // idempotency survives the restart: the SAME request replays against the
+      // reopened ledger with the original outcome (no second GoalCreated).
+      const replay = await after.collaboration.createGoal({
+        projectId: ALPHA.projectId,
+        workspaceId: ALPHA.workspaceId,
+        goalId: ALPHA.goalId,
+        objective: ALPHA.objective,
+        actor: ALPHA.actor,
+        idempotencyKey: FIXTURE.sharedIdempotencyKey,
+      });
+      // Replay after restart returns the ORIGINAL alpha outcome (cursor c5 is
+      // alpha's commit cursor; c6 belongs to beta).
+      expect(replay.status).toBe("persisted");
+      if (replay.status === "persisted") {
+        expect(replay.commitCursor).toBe(runs.alpha.status === "persisted" ? runs.alpha.commitCursor : undefined);
+      }
+
+      // contract cross-module equality: with deterministic deps the committed
+      // Event/Snapshot equal the shared contract builders (fold equality).
+      // (read BEFORE closing the restarted ledger)
+      const page = await after.ledger.events({ afterCursor: null, limit: 100 });
+      const alphaEvent = page.events.find(
+        (p) => p.event.eventType === "GoalCreated" && p.event.projectId === "proj-alpha",
+      )?.event;
+      const expected = buildCreateGoalCommand(ALPHA, {
+        commandId: "cmd-0001",
+        correlationId: "corr-0001",
+        submittedAt: FIXED_ISO_2026_09_05,
+        idempotencyKey: FIXTURE.sharedIdempotencyKey,
+      });
+      expect(alphaEvent).toEqual(
+        goalCreatedEventFor(expected, { eventId: "evt-0005", occurredAt: FIXED_ISO_2026_09_05 }),
+      );
+      const loaded = await after.ledger.load({
+        aggregateType: "Goal",
+        projectId: ALPHA.projectId,
+        goalId: ALPHA.goalId,
+      });
+      expect(loaded.status).toBe("found");
+      if (loaded.status === "found") {
+        expect(loaded.snapshot).toEqual(goalSnapshotFor(expected));
+      }
+      await after.close();
+
+      // path (b): fresh read model rebuild from the persisted EventPage(s)
+      const rebuilt = await after.reopen({ readModelFile: "readmodel-rebuilt.sqlite" });
+      await rebuilt.advanceProjection();
+      await verifyRebuildViews(rebuilt, capture, RESTART_ALPHA, RESTART_BETA);
+      await rebuilt.close();
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("no implicit Plan/Task/Run side effects: only bootstrap + GoalCreated events exist", async () => {
+    const harness = await createPersistentSqliteHarness();
+    try {
+      await harness.bootstrap(bootCommandFor("boot-5"));
+      await runBootstrapAndCreateGoals(harness);
+      await harness.advanceProjection();
+      const page = await harness.ledger.events({ afterCursor: null, limit: 100 });
+      const types = [...new Set(page.events.map((p) => p.event.eventType))].sort();
+      expect(types).toEqual(["GoalCreated", "ProjectBootstrapped", "WorkspaceBootstrapped"]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+});

@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-14 LANE-C InMemory projection tests — baselineChangeView over
  * CandidateBaselineMaterialized / ArchitectureChangeDecisionRecorded /
@@ -16,43 +17,15 @@
  * scenario is fed to the read model as a plain EventPage).
  */
 import { describe, expect, it } from "vitest";
-import { ReadModelIndexImpl } from "../../src/read-model/read-model-index.js";
+import { ReadModelIndexImpl } from "../../src/data/read-model-index/read-model-index.js";
 import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import { canonicalJson, sha256Hex, type JsonValue } from "../../src/contracts/fingerprint.js";
-import { buildP112Proposal } from "../../src/contracts/fixtures/architecture-fixtures.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  buildInstallCommand,
-  architectureBaselinePinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
-import {
-  P114_PROJECT,
-  P114_WORKSPACE,
-  P114_SCHEMA,
-  P114_PROPOSAL,
-  P114_CANDIDATE,
-  P114_DECISION,
-  P114_GATE,
-  P114_ACTIVATION,
-  p114CandidateRef,
-  p114DecisionRef,
-  p114GateRef,
-  p114ProposalRef,
-  p114ActivationRef,
-  buildP114Candidate,
-  buildP114Decision,
-  buildP114Gate,
-  buildP114Activation,
-  buildP114MaterializeCommand,
-  buildP114DecisionCommand,
-  buildP114GateCommand,
-  buildP114ActivationCommand,
-  buildP114CandidateFold,
-  buildP114DecisionFold,
-  buildP114GateFold,
-  buildP114ActivationFold,
-} from "../../src/contracts/fixtures/baseline-evolution-fixtures.js";
+import { buildP112Proposal } from "../../src/fixtures/architecture-fixtures.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
+import { architectureBaselinePinFor } from "../../src/contracts/governance.js";
+import { P114_PROJECT, P114_WORKSPACE, P114_SCHEMA, P114_PROPOSAL, P114_CANDIDATE, P114_DECISION, P114_GATE, P114_ACTIVATION, p114CandidateRef, p114DecisionRef, p114GateRef, p114ProposalRef, p114ActivationRef, buildP114Candidate, buildP114Decision, buildP114Gate, buildP114Activation, buildP114MaterializeCommand, buildP114DecisionCommand, buildP114GateCommand, buildP114ActivationCommand } from "../contract-support/fixtures/baseline-evolution-fixtures.js";
+import { buildP114CandidateFold, buildP114DecisionFold, buildP114GateFold, buildP114ActivationFold } from "../../src/control/control-engine/records/baseline-evolution.js";
 import type { ArchitectureCandidateProposalV1 } from "../../src/contracts/architecture-inspection.js";
 import type { ArchitectureBaselinePin } from "../../src/contracts/governance.js";
 import type { InstallArchitectureBaselineRevisionCommand } from "../../src/contracts/governance.js";
@@ -146,7 +119,7 @@ function buildP114Page(projectId: string = P114_PROJECT): {
 describe("P1-14 LANE-C InMemory projection: baselineChangeView", () => {
   it("projects candidate/decision/gate/activation rows and a ready post-activation view", async () => {
     const { page, candidate, decision, gate, activation, sourcePin, toPin } = buildP114Page();
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const receipt = await rm.advance(page);
     expect(receipt.appliedEventIds.length).toBe(4);
 
@@ -202,14 +175,14 @@ describe("P1-14 LANE-C InMemory projection: baselineChangeView", () => {
   });
 
   it("a never-advanced index returns not_found (no cursor claim)", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const view = await rm.baselineChangeView({ projectId: P114_PROJECT, workspaceId: P114_WORKSPACE });
     expect(view.status).toBe("not_found");
   });
 
   it("isolates the same local ids across projects (hard scope key)", async () => {
     const { page } = buildP114Page();
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await rm.advance(page);
 
     const other = await rm.baselineChangeView({ projectId: "proj-beta", workspaceId: P114_WORKSPACE });
@@ -218,11 +191,11 @@ describe("P1-14 LANE-C InMemory projection: baselineChangeView", () => {
 
   it("rebuild equivalence: a fresh InMemory index from the same events reproduces the view", async () => {
     const { page } = buildP114Page();
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await rm.advance(page);
     const before = await rm.baselineChangeView({ projectId: P114_PROJECT, workspaceId: P114_WORKSPACE });
 
-    const fresh = new ReadModelIndexImpl();
+    const fresh = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await fresh.advance(page);
     const after = await fresh.baselineChangeView({ projectId: P114_PROJECT, workspaceId: P114_WORKSPACE });
     expect(json(after)).toBe(json(before));

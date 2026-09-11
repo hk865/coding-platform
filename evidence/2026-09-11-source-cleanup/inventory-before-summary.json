@@ -1,0 +1,332 @@
+{
+  "owners": {
+    "Host": {
+      "files": 13,
+      "lines": 3496,
+      "exports": 23
+    },
+    "Contracts": {
+      "files": 104,
+      "lines": 22362,
+      "exports": 1586
+    },
+    "Fixtures": {
+      "files": 23,
+      "lines": 4930,
+      "exports": 430
+    },
+    "TestDoubles": {
+      "files": 8,
+      "lines": 1262,
+      "exports": 80
+    },
+    "ArchitectureReconciler": {
+      "files": 3,
+      "lines": 263,
+      "exports": 7
+    },
+    "ControlEngine": {
+      "files": 72,
+      "lines": 15636,
+      "exports": 209
+    },
+    "DispatchEngine": {
+      "files": 14,
+      "lines": 2717,
+      "exports": 33
+    },
+    "PlanCompiler": {
+      "files": 6,
+      "lines": 1563,
+      "exports": 12
+    },
+    "VerificationEngine": {
+      "files": 22,
+      "lines": 3999,
+      "exports": 51
+    },
+    "ArtifactVault": {
+      "files": 5,
+      "lines": 446,
+      "exports": 9
+    },
+    "ContextCompiler": {
+      "files": 29,
+      "lines": 5442,
+      "exports": 83
+    },
+    "ReadModelIndex": {
+      "files": 8,
+      "lines": 9049,
+      "exports": 17
+    },
+    "StateLedger": {
+      "files": 4,
+      "lines": 2251,
+      "exports": 13
+    },
+    "WorkspaceReader": {
+      "files": 17,
+      "lines": 1322,
+      "exports": 28
+    },
+    "WorkerRuntime": {
+      "files": 13,
+      "lines": 1237,
+      "exports": 28
+    },
+    "HumanCollaboration": {
+      "files": 3,
+      "lines": 437,
+      "exports": 6
+    },
+    "Storage": {
+      "files": 1,
+      "lines": 18,
+      "exports": 1
+    },
+    "UI": {
+      "files": 56,
+      "lines": 7266,
+      "exports": 212
+    }
+  },
+  "largest": [
+    {
+      "file": "src/data/read-model-index/sqlite-read-model-index.ts",
+      "lines": 4628
+    },
+    {
+      "file": "src/data/read-model-index/read-model-index.ts",
+      "lines": 3582
+    },
+    {
+      "file": "src/contracts/validation.ts",
+      "lines": 3510
+    },
+    {
+      "file": "src/contracts/ledger-validation.ts",
+      "lines": 2213
+    },
+    {
+      "file": "src/data/state-ledger/sqlite-ledger.ts",
+      "lines": 1057
+    },
+    {
+      "file": "src/control/plan-compiler/rework-plan-compiler.ts",
+      "lines": 1004
+    },
+    {
+      "file": "src/contracts/ledger.ts",
+      "lines": 983
+    },
+    {
+      "file": "src/data/state-ledger/in-memory-ledger.ts",
+      "lines": 942
+    },
+    {
+      "file": "src/data/context-compiler/work-run-materials.ts",
+      "lines": 924
+    },
+    {
+      "file": "src/app/service.ts",
+      "lines": 827
+    },
+    {
+      "file": "src/harness/persistent-harness.ts",
+      "lines": 823
+    },
+    {
+      "file": "src/control/control-engine/control-engine.ts",
+      "lines": 812
+    },
+    {
+      "file": "src/control/control-engine/policies/goal-change-consistency.ts",
+      "lines": 720
+    },
+    {
+      "file": "src/control/control-engine/autonomous-rework.ts",
+      "lines": 698
+    }
+  ],
+  "support": [
+    {
+      "file": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts",
+      "production": [
+        "src/app/service.ts"
+      ],
+      "consumers": 14
+    },
+    {
+      "file": "src/contracts/fixtures/architecture-fixtures.ts",
+      "production": [
+        "src/data/workspace-reader/workspace-reader-adapter.ts"
+      ],
+      "consumers": 22
+    },
+    {
+      "file": "src/contracts/fixtures/baseline-evolution-fixtures.ts",
+      "production": [],
+      "consumers": 10
+    },
+    {
+      "file": "src/contracts/fixtures/bootstrap-fixture-v1.ts",
+      "production": [],
+      "consumers": 60
+    },
+    {
+      "file": "src/contracts/fixtures/completed-work-fixtures.ts",
+      "production": [],
+      "consumers": 7
+    },
+    {
+      "file": "src/contracts/fixtures/console-fixtures.ts",
+      "production": [],
+      "consumers": 1
+    },
+    {
+      "file": "src/contracts/fixtures/context-fixtures.ts",
+      "production": [],
+      "consumers": 23
+    },
+    {
+      "file": "src/contracts/fixtures/control-fixtures.ts",
+      "production": [],
+      "consumers": 5
+    },
+    {
+      "file": "src/contracts/fixtures/dispatch-fixtures.ts",
+      "production": [
+        "src/app/service.ts",
+        "src/execution/worker-runtime/fake-runtime-adapter.ts",
+        "src/harness/in-memory-harness.ts",
+        "src/harness/in-memory-harness.ts",
+        "src/harness/persistent-harness.ts",
+        "src/harness/persistent-harness.ts"
+      ],
+      "consumers": 72
+    },
+    {
+      "file": "src/contracts/fixtures/evidence-fixtures.ts",
+      "production": [],
+      "consumers": 24
+    },
+    {
+      "file": "src/contracts/fixtures/goal-change-fixtures.ts",
+      "production": [],
+      "consumers": 14
+    },
+    {
+      "file": "src/contracts/fixtures/goal-fixtures.ts",
+      "production": [],
+      "consumers": 73
+    },
+    {
+      "file": "src/contracts/fixtures/goal-phase-fixtures.ts",
+      "production": [],
+      "consumers": 8
+    },
+    {
+      "file": "src/contracts/fixtures/governance-fixtures.ts",
+      "production": [
+        "src/app/service.ts"
+      ],
+      "consumers": 64
+    },
+    {
+      "file": "src/contracts/fixtures/handoff-fixtures.ts",
+      "production": [],
+      "consumers": 15
+    },
+    {
+      "file": "src/contracts/fixtures/human-role-collaboration-fixtures.ts",
+      "production": [],
+      "consumers": 13
+    },
+    {
+      "file": "src/contracts/fixtures/index.ts",
+      "production": [],
+      "consumers": 0
+    },
+    {
+      "file": "src/contracts/fixtures/material-access-fixtures.ts",
+      "production": [],
+      "consumers": 9
+    },
+    {
+      "file": "src/contracts/fixtures/plan-fixtures.ts",
+      "production": [
+        "src/app/service.ts"
+      ],
+      "consumers": 60
+    },
+    {
+      "file": "src/contracts/fixtures/query-job-fixtures.ts",
+      "production": [],
+      "consumers": 4
+    },
+    {
+      "file": "src/contracts/fixtures/remediation-fixtures.ts",
+      "production": [],
+      "consumers": 6
+    },
+    {
+      "file": "src/contracts/fixtures/role-spec-fixtures.ts",
+      "production": [
+        "src/app/service.ts"
+      ],
+      "consumers": 14
+    },
+    {
+      "file": "src/contracts/fixtures/workspace-fixtures.ts",
+      "production": [],
+      "consumers": 17
+    },
+    {
+      "file": "src/contracts/testing/check-providers.double.ts",
+      "production": [
+        "src/harness/in-memory-harness.ts",
+        "src/harness/persistent-harness.ts"
+      ],
+      "consumers": 5
+    },
+    {
+      "file": "src/contracts/testing/control.double.ts",
+      "production": [],
+      "consumers": 3
+    },
+    {
+      "file": "src/contracts/testing/handoff-control.double.ts",
+      "production": [],
+      "consumers": 2
+    },
+    {
+      "file": "src/contracts/testing/index.ts",
+      "production": [],
+      "consumers": 0
+    },
+    {
+      "file": "src/contracts/testing/query-context.stub.ts",
+      "production": [],
+      "consumers": 0
+    },
+    {
+      "file": "src/contracts/testing/read-model.double.ts",
+      "production": [],
+      "consumers": 3
+    },
+    {
+      "file": "src/contracts/testing/sequences.ts",
+      "production": [
+        "src/harness/in-memory-harness.ts",
+        "src/harness/persistent-harness.ts"
+      ],
+      "consumers": 64
+    },
+    {
+      "file": "src/contracts/testing/state-ledger.double.ts",
+      "production": [],
+      "consumers": 8
+    }
+  ]
+}

@@ -6,7 +6,7 @@ import { expect } from "vitest";
 import type { P1_08HarnessLike, P1_08TestHarness } from "./p1-08-harness.js";
 import { runP108TwoProjectScenario, type P108TwoProjectScenarioResult } from "./p1-08-harness.js";
 import type { LifecycleControlPort, ControlTimelineViewQuery, ControlTimelineViewResult, SubmitControlCommand, SubmitControlReceipt, RecordSafePointAckCommand, RecordSafePointAckReceipt, ControlIntentV1 } from "../../src/contracts/control-intent.js";
-import { buildP110Intent, buildP110SubmitControlCommand, buildP110Ack, buildP110RecordAckCommand, P110_PROJECT, P110_WORKSPACE, p110RunRef, p110IntentId } from "../../src/contracts/fixtures/control-fixtures.js";
+import { buildP110Intent, buildP110SubmitControlCommand, buildP110Ack, buildP110RecordAckCommand, P110_PROJECT, P110_WORKSPACE, p110RunRef, p110IntentId } from "../contract-support/fixtures/control-fixtures.js";
 import { P108_PROJECT_A, P108_TASK_WORK } from "./p1-08-harness.js";
 
 export interface P1_10TestHarness extends P1_08TestHarness {

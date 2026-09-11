@@ -1,0 +1,35 @@
+{
+  "sourceFiles": 336,
+  "sourceCommit": "03334ecec9f22a8982fed5af5f91d4cb754649a7",
+  "sourceTreeSha256": "ca48c35b61fe09371968ebdeeac27fc453c085b7866a8411bc8478ebb64132f8",
+  "sourceUnchanged": true,
+  "importIntegrity": "PASS",
+  "existingPlatformFilesChangedByThisStage": [
+    "AGENTS.md",
+    "README.md",
+    "package.json",
+    "tests/integration/real-kernel/replay-server.ts",
+    "IMPLEMENTATION-HANDOFF.md"
+  ],
+  "originalPlatformChangesPreserved": true,
+  "kernelTypecheck": "PASS",
+  "kernelBuild": "PASS",
+  "kernelArchitecture": "PASS",
+  "scenarioValidation": "PASS",
+  "canaryEvaluatorPreflight": {
+    "passed": 4,
+    "total": 4
+  },
+  "platformTypecheck": "PASS",
+  "platformBuild": "PASS",
+  "platformKernelIntegration": {
+    "passed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "model": "local-fixture",
+    "kernelRoot": "/home/han001/projects/agents/agent_platform/vendor/coding-agent",
+    "externalApiCalls": 0
+  },
+  "documentationValidation": "PASS",
+  "versionedImportedAndMetadataFiles": 338
+}

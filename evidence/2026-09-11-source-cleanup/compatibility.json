@@ -1,0 +1,625 @@
+{
+  "checkedAt": "2026-09-11T08:55:33.022Z",
+  "scope": "Public contracts plus relocated ledger validation; compares all non-import/non-reexport declaration bodies with canonicalized inline type-import paths, excluding three module-private constructor dependency aliases.",
+  "comparisons": [
+    {
+      "file": "src/contracts/active-agent.ts",
+      "destination": "src/contracts/active-agent.ts",
+      "declarations": 4,
+      "unchanged": 4
+    },
+    {
+      "file": "src/contracts/architecture-context.ts",
+      "destination": "src/contracts/architecture-context.ts",
+      "declarations": 5,
+      "unchanged": 5
+    },
+    {
+      "file": "src/contracts/architecture-evolution-policy.ts",
+      "destination": "src/contracts/architecture-evolution-policy.ts",
+      "declarations": 25,
+      "unchanged": 25
+    },
+    {
+      "file": "src/contracts/architecture-inspection.ts",
+      "destination": "src/contracts/architecture-inspection.ts",
+      "declarations": 69,
+      "unchanged": 69
+    },
+    {
+      "file": "src/contracts/architecture-reconciler.ts",
+      "destination": "src/contracts/architecture-reconciler.ts",
+      "declarations": 5,
+      "unchanged": 5
+    },
+    {
+      "file": "src/contracts/architecture-source.ts",
+      "destination": "src/contracts/architecture-source.ts",
+      "declarations": 5,
+      "unchanged": 5
+    },
+    {
+      "file": "src/contracts/artifact.ts",
+      "destination": "src/contracts/artifact.ts",
+      "declarations": 11,
+      "unchanged": 11
+    },
+    {
+      "file": "src/contracts/baseline-evolution.ts",
+      "destination": "src/contracts/baseline-evolution.ts",
+      "declarations": 45,
+      "unchanged": 45
+    },
+    {
+      "file": "src/contracts/bootstrap.ts",
+      "destination": "src/contracts/bootstrap.ts",
+      "declarations": 19,
+      "unchanged": 19
+    },
+    {
+      "file": "src/contracts/command-event.ts",
+      "destination": "src/contracts/command-event.ts",
+      "declarations": 12,
+      "unchanged": 12
+    },
+    {
+      "file": "src/contracts/commands/architecture.ts",
+      "destination": "src/contracts/commands/architecture.ts",
+      "declarations": 5,
+      "unchanged": 5
+    },
+    {
+      "file": "src/contracts/commands/context.ts",
+      "destination": "src/contracts/commands/context.ts",
+      "declarations": 4,
+      "unchanged": 4
+    },
+    {
+      "file": "src/contracts/commands/dispatch.ts",
+      "destination": "src/contracts/commands/dispatch.ts",
+      "declarations": 5,
+      "unchanged": 5
+    },
+    {
+      "file": "src/contracts/commands/evidence.ts",
+      "destination": "src/contracts/commands/evidence.ts",
+      "declarations": 7,
+      "unchanged": 7
+    },
+    {
+      "file": "src/contracts/commands/goal-phase.ts",
+      "destination": "src/contracts/commands/goal-phase.ts",
+      "declarations": 2,
+      "unchanged": 2
+    },
+    {
+      "file": "src/contracts/commands/goal.ts",
+      "destination": "src/contracts/commands/goal.ts",
+      "declarations": 3,
+      "unchanged": 3
+    },
+    {
+      "file": "src/contracts/commands/governance.ts",
+      "destination": "src/contracts/commands/governance.ts",
+      "declarations": 9,
+      "unchanged": 9
+    },
+    {
+      "file": "src/contracts/commands/material-access.ts",
+      "destination": "src/contracts/commands/material-access.ts",
+      "declarations": 2,
+      "unchanged": 2
+    },
+    {
+      "file": "src/contracts/commands/plan.ts",
+      "destination": "src/contracts/commands/plan.ts",
+      "declarations": 2,
+      "unchanged": 2
+    },
+    {
+      "file": "src/contracts/commands/reviewer-work.ts",
+      "destination": "src/contracts/commands/reviewer-work.ts",
+      "declarations": 3,
+      "unchanged": 3
+    },
+    {
+      "file": "src/contracts/commands/workspace.ts",
+      "destination": "src/contracts/commands/workspace.ts",
+      "declarations": 9,
+      "unchanged": 9
+    },
+    {
+      "file": "src/contracts/completed-work-context.ts",
+      "destination": "src/contracts/completed-work-context.ts",
+      "declarations": 17,
+      "unchanged": 17
+    },
+    {
+      "file": "src/contracts/console-views.ts",
+      "destination": "src/contracts/console-views.ts",
+      "declarations": 37,
+      "unchanged": 37
+    },
+    {
+      "file": "src/contracts/context-continuation-port.ts",
+      "destination": "src/contracts/context-continuation-port.ts",
+      "declarations": 5,
+      "unchanged": 5
+    },
+    {
+      "file": "src/contracts/context-continuity.ts",
+      "destination": "src/contracts/context-continuity.ts",
+      "declarations": 55,
+      "unchanged": 55
+    },
+    {
+      "file": "src/contracts/control-intent.ts",
+      "destination": "src/contracts/control-intent.ts",
+      "declarations": 29,
+      "unchanged": 29
+    },
+    {
+      "file": "src/contracts/dispatch.ts",
+      "destination": "src/contracts/dispatch.ts",
+      "declarations": 49,
+      "unchanged": 49
+    },
+    {
+      "file": "src/contracts/events.ts",
+      "destination": "src/contracts/events.ts",
+      "declarations": 4,
+      "unchanged": 4
+    },
+    {
+      "file": "src/contracts/evidence.ts",
+      "destination": "src/contracts/evidence.ts",
+      "declarations": 28,
+      "unchanged": 28
+    },
+    {
+      "file": "src/contracts/execution-capability.ts",
+      "destination": "src/contracts/execution-capability.ts",
+      "declarations": 1,
+      "unchanged": 1
+    },
+    {
+      "file": "src/contracts/execution-feedback.ts",
+      "destination": "src/contracts/execution-feedback.ts",
+      "declarations": 8,
+      "unchanged": 8
+    },
+    {
+      "file": "src/contracts/exploration-materials.ts",
+      "destination": "src/contracts/exploration-materials.ts",
+      "declarations": 2,
+      "unchanged": 2
+    },
+    {
+      "file": "src/contracts/exploration-session.ts",
+      "destination": "src/contracts/exploration-session.ts",
+      "declarations": 10,
+      "unchanged": 10
+    },
+    {
+      "file": "src/contracts/exploration.ts",
+      "destination": "src/contracts/exploration.ts",
+      "declarations": 5,
+      "unchanged": 5
+    },
+    {
+      "file": "src/contracts/fingerprint.ts",
+      "destination": "src/contracts/fingerprint.ts",
+      "declarations": 6,
+      "unchanged": 6
+    },
+    {
+      "file": "src/contracts/goal-change.ts",
+      "destination": "src/contracts/goal-change.ts",
+      "declarations": 44,
+      "unchanged": 44
+    },
+    {
+      "file": "src/contracts/goal-phase-view.ts",
+      "destination": "src/contracts/goal-phase-view.ts",
+      "declarations": 6,
+      "unchanged": 6
+    },
+    {
+      "file": "src/contracts/goal-phase.ts",
+      "destination": "src/contracts/goal-phase.ts",
+      "declarations": 27,
+      "unchanged": 27
+    },
+    {
+      "file": "src/contracts/goal-view.ts",
+      "destination": "src/contracts/goal-view.ts",
+      "declarations": 7,
+      "unchanged": 7
+    },
+    {
+      "file": "src/contracts/governance-view.ts",
+      "destination": "src/contracts/governance-view.ts",
+      "declarations": 21,
+      "unchanged": 21
+    },
+    {
+      "file": "src/contracts/governance.ts",
+      "destination": "src/contracts/governance.ts",
+      "declarations": 37,
+      "unchanged": 37
+    },
+    {
+      "file": "src/contracts/handoff-context.ts",
+      "destination": "src/contracts/handoff-context.ts",
+      "declarations": 5,
+      "unchanged": 5
+    },
+    {
+      "file": "src/contracts/handoff-control.ts",
+      "destination": "src/contracts/handoff-control.ts",
+      "declarations": 8,
+      "unchanged": 8
+    },
+    {
+      "file": "src/contracts/handoff-view.ts",
+      "destination": "src/contracts/handoff-view.ts",
+      "declarations": 4,
+      "unchanged": 4
+    },
+    {
+      "file": "src/contracts/handoff.ts",
+      "destination": "src/contracts/handoff.ts",
+      "declarations": 39,
+      "unchanged": 39
+    },
+    {
+      "file": "src/contracts/history-materials.ts",
+      "destination": "src/contracts/history-materials.ts",
+      "declarations": 4,
+      "unchanged": 4
+    },
+    {
+      "file": "src/contracts/human-role-collaboration.ts",
+      "destination": "src/contracts/human-role-collaboration.ts",
+      "declarations": 44,
+      "unchanged": 44
+    },
+    {
+      "file": "src/contracts/initial-planning.ts",
+      "destination": "src/contracts/initial-planning.ts",
+      "declarations": 7,
+      "unchanged": 7
+    },
+    {
+      "file": "src/contracts/integration.ts",
+      "destination": "src/contracts/integration.ts",
+      "declarations": 18,
+      "unchanged": 18
+    },
+    {
+      "file": "src/contracts/ledger-validation.ts",
+      "destination": "src/data/state-ledger/ledger-validation.ts",
+      "declarations": 67,
+      "unchanged": 67
+    },
+    {
+      "file": "src/contracts/ledger.ts",
+      "destination": "src/contracts/ledger.ts",
+      "declarations": 73,
+      "unchanged": 73
+    },
+    {
+      "file": "src/contracts/material-access.ts",
+      "destination": "src/contracts/material-access.ts",
+      "declarations": 40,
+      "unchanged": 40
+    },
+    {
+      "file": "src/contracts/modules.ts",
+      "destination": "src/contracts/modules.ts",
+      "declarations": 5,
+      "unchanged": 5
+    },
+    {
+      "file": "src/contracts/opaque.ts",
+      "destination": "src/contracts/opaque.ts",
+      "declarations": 1,
+      "unchanged": 1
+    },
+    {
+      "file": "src/contracts/operator-dispatch.ts",
+      "destination": "src/contracts/operator-dispatch.ts",
+      "declarations": 1,
+      "unchanged": 1
+    },
+    {
+      "file": "src/contracts/operator-planning.ts",
+      "destination": "src/contracts/operator-planning.ts",
+      "declarations": 3,
+      "unchanged": 3
+    },
+    {
+      "file": "src/contracts/patch.ts",
+      "destination": "src/contracts/patch.ts",
+      "declarations": 15,
+      "unchanged": 15
+    },
+    {
+      "file": "src/contracts/plan-view.ts",
+      "destination": "src/contracts/plan-view.ts",
+      "declarations": 6,
+      "unchanged": 6
+    },
+    {
+      "file": "src/contracts/plan.ts",
+      "destination": "src/contracts/plan.ts",
+      "declarations": 29,
+      "unchanged": 29
+    },
+    {
+      "file": "src/contracts/planning-work-materials.ts",
+      "destination": "src/contracts/planning.ts",
+      "declarations": 1,
+      "unchanged": 1
+    },
+    {
+      "file": "src/contracts/planning.ts",
+      "destination": "src/contracts/planning.ts",
+      "declarations": 11,
+      "unchanged": 11
+    },
+    {
+      "file": "src/contracts/policy-explanation.ts",
+      "destination": "src/contracts/policy-explanation.ts",
+      "declarations": 4,
+      "unchanged": 4
+    },
+    {
+      "file": "src/contracts/ports.ts",
+      "destination": "src/contracts/ports.ts",
+      "declarations": 7,
+      "unchanged": 7
+    },
+    {
+      "file": "src/contracts/query-execution-context.ts",
+      "destination": "src/contracts/query-execution-context.ts",
+      "declarations": 5,
+      "unchanged": 5
+    },
+    {
+      "file": "src/contracts/query-job.ts",
+      "destination": "src/contracts/query-job.ts",
+      "declarations": 57,
+      "unchanged": 57
+    },
+    {
+      "file": "src/contracts/read-model.ts",
+      "destination": "src/contracts/read-model.ts",
+      "declarations": 3,
+      "unchanged": 3
+    },
+    {
+      "file": "src/contracts/reduction.ts",
+      "destination": "src/contracts/reduction.ts",
+      "declarations": 16,
+      "unchanged": 16
+    },
+    {
+      "file": "src/contracts/remediation.ts",
+      "destination": "src/contracts/remediation.ts",
+      "declarations": 29,
+      "unchanged": 29
+    },
+    {
+      "file": "src/contracts/review-context.ts",
+      "destination": "src/contracts/review-context.ts",
+      "declarations": 9,
+      "unchanged": 9
+    },
+    {
+      "file": "src/contracts/reviewer-context.ts",
+      "destination": "src/contracts/reviewer-context.ts",
+      "declarations": 22,
+      "unchanged": 22
+    },
+    {
+      "file": "src/contracts/reviewer-verification.ts",
+      "destination": "src/contracts/reviewer-verification.ts",
+      "declarations": 14,
+      "unchanged": 14
+    },
+    {
+      "file": "src/contracts/reviewer-work.ts",
+      "destination": "src/contracts/reviewer-work.ts",
+      "declarations": 33,
+      "unchanged": 33
+    },
+    {
+      "file": "src/contracts/rework-acceptance.ts",
+      "destination": "src/contracts/rework-acceptance.ts",
+      "declarations": 7,
+      "unchanged": 7
+    },
+    {
+      "file": "src/contracts/rework-disposition.ts",
+      "destination": "src/contracts/rework-disposition.ts",
+      "declarations": 2,
+      "unchanged": 2
+    },
+    {
+      "file": "src/contracts/rework-drive.ts",
+      "destination": "src/contracts/rework-drive.ts",
+      "declarations": 10,
+      "unchanged": 10
+    },
+    {
+      "file": "src/contracts/rework.ts",
+      "destination": "src/contracts/rework.ts",
+      "declarations": 28,
+      "unchanged": 28
+    },
+    {
+      "file": "src/contracts/role-material-channels.ts",
+      "destination": "src/contracts/role-material-channels.ts",
+      "declarations": 8,
+      "unchanged": 8
+    },
+    {
+      "file": "src/contracts/role-spec-materials.ts",
+      "destination": "src/contracts/role-spec-materials.ts",
+      "declarations": 3,
+      "unchanged": 3
+    },
+    {
+      "file": "src/contracts/role-spec.ts",
+      "destination": "src/contracts/role-spec.ts",
+      "declarations": 32,
+      "unchanged": 32
+    },
+    {
+      "file": "src/contracts/run-output-materials.ts",
+      "destination": "src/contracts/run-output-materials.ts",
+      "declarations": 3,
+      "unchanged": 3
+    },
+    {
+      "file": "src/contracts/runtime-budget.ts",
+      "destination": "src/contracts/runtime-budget.ts",
+      "declarations": 3,
+      "unchanged": 3
+    },
+    {
+      "file": "src/contracts/runtime-context-materials.ts",
+      "destination": "src/contracts/runtime-context-materials.ts",
+      "declarations": 9,
+      "unchanged": 9
+    },
+    {
+      "file": "src/contracts/runtime-dispatch.ts",
+      "destination": "src/contracts/runtime-dispatch.ts",
+      "declarations": 4,
+      "unchanged": 4
+    },
+    {
+      "file": "src/contracts/runtime-observations.ts",
+      "destination": "src/contracts/runtime-observations.ts",
+      "declarations": 1,
+      "unchanged": 1
+    },
+    {
+      "file": "src/contracts/runtime-preparation.ts",
+      "destination": "src/contracts/runtime-preparation.ts",
+      "declarations": 5,
+      "unchanged": 5
+    },
+    {
+      "file": "src/contracts/scope-catalog.ts",
+      "destination": "src/contracts/scope-catalog.ts",
+      "declarations": 2,
+      "unchanged": 2
+    },
+    {
+      "file": "src/contracts/task-envelope.ts",
+      "destination": "src/contracts/task-envelope.ts",
+      "declarations": 8,
+      "unchanged": 8
+    },
+    {
+      "file": "src/contracts/task-work-identity.ts",
+      "destination": "src/contracts/task-work-identity.ts",
+      "declarations": 10,
+      "unchanged": 10
+    },
+    {
+      "file": "src/contracts/validation.ts",
+      "destination": "src/contracts/validation.ts",
+      "declarations": 124,
+      "unchanged": 124
+    },
+    {
+      "file": "src/contracts/verification-context.ts",
+      "destination": "src/contracts/verification-context.ts",
+      "declarations": 13,
+      "unchanged": 13
+    },
+    {
+      "file": "src/contracts/verification-import.ts",
+      "destination": "src/contracts/verification-import.ts",
+      "declarations": 4,
+      "unchanged": 4
+    },
+    {
+      "file": "src/contracts/verification-round.ts",
+      "destination": "src/contracts/verification-round.ts",
+      "declarations": 14,
+      "unchanged": 14
+    },
+    {
+      "file": "src/contracts/verification-service.ts",
+      "destination": "src/contracts/verification-service.ts",
+      "declarations": 7,
+      "unchanged": 7
+    },
+    {
+      "file": "src/contracts/verification-source.ts",
+      "destination": "src/contracts/verification-source.ts",
+      "declarations": 2,
+      "unchanged": 2
+    },
+    {
+      "file": "src/contracts/verification-view.ts",
+      "destination": "src/contracts/verification-view.ts",
+      "declarations": 4,
+      "unchanged": 4
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "destination": "src/contracts/verification.ts",
+      "declarations": 26,
+      "unchanged": 26
+    },
+    {
+      "file": "src/contracts/work-context-port.ts",
+      "destination": "src/contracts/work-context-port.ts",
+      "declarations": 8,
+      "unchanged": 8
+    },
+    {
+      "file": "src/contracts/workspace-capability.ts",
+      "destination": "src/contracts/workspace-capability.ts",
+      "declarations": 8,
+      "unchanged": 8
+    },
+    {
+      "file": "src/contracts/workspace-drive.ts",
+      "destination": "src/contracts/workspace-drive.ts",
+      "declarations": 2,
+      "unchanged": 2
+    },
+    {
+      "file": "src/contracts/workspace-lease.ts",
+      "destination": "src/contracts/workspace-lease.ts",
+      "declarations": 43,
+      "unchanged": 43
+    },
+    {
+      "file": "src/contracts/workspace-read.ts",
+      "destination": "src/contracts/workspace-read.ts",
+      "declarations": 3,
+      "unchanged": 3
+    },
+    {
+      "file": "src/contracts/workspace-registration.ts",
+      "destination": "src/contracts/workspace-registration.ts",
+      "declarations": 5,
+      "unchanged": 5
+    },
+    {
+      "file": "src/contracts/workspace-views.ts",
+      "destination": "src/contracts/workspace-views.ts",
+      "declarations": 13,
+      "unchanged": 13
+    }
+  ],
+  "differences": []
+}

@@ -1,0 +1,28 @@
+diff --git a/evidence/2026-09-10-module-folder-reorg/independent-review/before/src/data/python-source-index.ts b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/src/data/python-source-index.ts
+index 8872c16..085beab 100644
+--- a/evidence/2026-09-10-module-folder-reorg/independent-review/before/src/data/python-source-index.ts
++++ b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/src/data/python-source-index.ts
+@@ -24,10 +24,10 @@ export class PythonSourceIndex {
+     const identity = await this.access.sourceIdentity(), inventory = await this.access.inventory(signal);
+     if (inventory.truncated) throw Error('project inventory incomplete');
+     const [script, archive, expectedArchive, manifest] = await Promise.all([
+-      readFile(resolve(import.meta.dirname, '../../scripts/python-source-query.py')),
+-      readFile(resolve(import.meta.dirname, '../../.local/source-analyzers/analyzers.zip')),
+-      readFile(resolve(import.meta.dirname, '../../.local/source-analyzers/analyzers.sha256'), 'utf8'),
+-      readFile(resolve(import.meta.dirname, '../../.local/source-analyzers/manifest.json')),
++      readFile(resolve(import.meta.dirname, '../../../scripts/python-source-query.py')),
++      readFile(resolve(import.meta.dirname, '../../../.local/source-analyzers/analyzers.zip')),
++      readFile(resolve(import.meta.dirname, '../../../.local/source-analyzers/analyzers.sha256'), 'utf8'),
++      readFile(resolve(import.meta.dirname, '../../../.local/source-analyzers/manifest.json')),
+     ]);
+     const toolchain = { scriptDigest: hash(script), dependencyArchiveDigest: hash(archive), dependencyManifestDigest: hash(manifest) };
+     if (toolchain.dependencyArchiveDigest !== expectedArchive.trim()) throw Error('Python analyzer dependency archive integrity mismatch');
+@@ -72,7 +72,7 @@ export class PythonSourceIndex {
+       const semanticQuery = { operation: query.operation, path: query.path, prefix: query.prefix, configPath: query.configPath, line: query.line, column: query.column };
+       const key = JSON.stringify([captured.snapshot, semanticQuery]), cached = structuredClone(this.responses.get(key));
+       const response = cached ?? await new Promise<PythonResult>((resolveResult, reject) => {
+-        const child = execFile('/usr/bin/python3', ['-I', resolve(import.meta.dirname, '../../scripts/python-source-query.py')], { timeout: 60000, maxBuffer: 4 * 1024 * 1024, signal, windowsHide: true }, (error, stdout) => {
++        const child = execFile('/usr/bin/python3', ['-I', resolve(import.meta.dirname, '../../../scripts/python-source-query.py')], { timeout: 60000, maxBuffer: 4 * 1024 * 1024, signal, windowsHide: true }, (error, stdout) => {
+           if (error) reject(Error('Python analyzer failed or exceeded capacity: ' + error.message));
+           else { try { resolveResult(JSON.parse(stdout) as PythonResult); } catch { reject(Error('invalid Python analyzer response')); } }
+         });

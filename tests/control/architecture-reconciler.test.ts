@@ -1,3 +1,4 @@
+import { computeArchitectureDelta } from '../../src/control/architecture-reconciler/architecture-delta.js';
 /**
  * P1-12 lane A unit tests — ArchitectureReconcilerImpl.inspect.
  *
@@ -11,19 +12,19 @@
  *   - zero baseline side effects (no install/activate, no baseline commit).
  */
 import { describe, expect, it } from "vitest";
-import { ArchitectureReconcilerImpl } from "../../src/control/architecture-reconciler.js";
-import { ScriptedControlEngine } from "../../src/contracts/testing/control.double.js";
-import { ScriptedStateLedger } from "../../src/contracts/testing/state-ledger.double.js";
-import { FakeWorkspaceReaderAdapter } from "../../src/data/workspace-reader-adapter.js";
-import { CodeGraphPortImpl } from "../../src/verification/code-graph-port.js";
-import { createArtifactVault } from "../../src/vault/artifact-vault.js";
+import { ArchitectureReconcilerImpl } from "../../src/control/architecture-reconciler/architecture-reconciler.js";
+import { ArchitectureContextCompiler } from "../../src/data/context-compiler/architecture-context-compiler.js";
+import { ScriptedControlEngine } from "../contract-support/testing/control.double.js";
+import { ScriptedStateLedger } from "../contract-support/testing/state-ledger.double.js";
+import { FakeWorkspaceReaderAdapter } from "../../src/data/workspace-reader/workspace-reader-adapter.js";
+import { CodeGraphPortImpl } from "../../src/control/verification-engine/code-graph-port.js";
+import { createArtifactVault } from "../../src/data/artifact-vault/artifact-vault.js";
 import { makeCommitCursor } from "../../src/contracts/ledger.js";
 import {
   architectureFindingRefFor,
   architectureDecisionBriefRefFor,
   architectureCandidateProposalRefFor,
   architectureInspectionRefFor,
-  computeArchitectureDelta,
   candidateProposalDigest,
 } from "../../src/contracts/architecture-inspection.js";
 import {
@@ -37,14 +38,25 @@ import {
   P112_INSPECTION_REPORT,
   P112_FINDING_DELTA,
   P112_FINDING_REPORT,
-} from "../../src/contracts/fixtures/architecture-fixtures.js";
+} from "../../src/fixtures/architecture-fixtures.js";
 import type { ArchitectureInspectionIntentV1 } from "../../src/contracts/architecture-inspection.js";
 import type { ArchitectureBaselineRevisionRef, ArchitectureBaselineRevisionSnapshot } from "../../src/contracts/governance.js";
 import type { StateLedger } from "../../src/contracts/ledger.js";
 import type { ControlEngine } from "../../src/contracts/modules.js";
 import type { WorkspaceReadPort } from "../../src/contracts/workspace-read.js";
+import { governanceContentDigest } from '../../src/contracts/governance.js';
+import type { ArchitectureSourceSnapshotV1 } from '../../src/contracts/architecture-source.js';
+import type { AggregateSnapshot } from '../../src/contracts/ledger.js';
+import { sha256Hex } from '../../src/contracts/fingerprint.js';
 
 const NOW = "2026-09-06T00:00:00.000Z";
+
+function source(current=false):ArchitectureSourceSnapshotV1 {
+ const graph=current?buildP112CurrentGraph():buildP112BaselineGraph();
+ return {schemaVersion:1,projectId:graph.projectId,workspaceId:graph.workspaceId,workspaceRevision:current?2:1,
+   sourceDigest:(current?'b':'a').repeat(64),commitHash:'a'.repeat(40),indexVersion:'test-provider@1',configPath:null,
+   mappings:[{id:'data',kind:'module',paths:['src/data']}],nodes:graph.nodes.filter(n=>n.kind==='module'||n.kind==='interface').map(n=>({...n,contentDigest:sha256Hex(n.contentDigest)})),edges:graph.edges,unresolved:[]};
+}
 
 function committedControl(): ScriptedControlEngine {
   return new ScriptedControlEngine({
@@ -56,8 +68,11 @@ function committedControl(): ScriptedControlEngine {
 }
 
 function loadingLedger(intent: ArchitectureInspectionIntentV1, contentDigest?: string): ScriptedStateLedger {
+  const content={schemaVersion:1 as const,description:'Explicit test baseline',constraints:[],sourceBinding:source()};
+  if(intent.baselinePin.digest) intent.baselinePin={...intent.baselinePin,digest:governanceContentDigest({schemaVersion:1,identity:{baselineId:intent.baselinePin.ref.baselineId},revision:1,content})};
+  intent.requestedByRunRef={aggregateType:'Run',projectId:intent.projectId,goalId:'inspection-goal',runId:'inspection-reader'};
   return new ScriptedStateLedger({
-    load: (ref) => ({
+    load: (ref) => ref.aggregateType==='ArchitectureInspection'?{status:'not_found',ref}:ref.aggregateType==='PlanRevision'?{status:'found',snapshot:{ref,revision:1,goalRef:{goalId:'inspection-goal'},effectiveArchitectureBaseline:intent.baselinePin} as AggregateSnapshot}:ref.aggregateType==='Run'?{status:'found',snapshot:{ref,revision:1,planRef:intent.planRef,envelope:{workspaceId:intent.workspaceId}} as AggregateSnapshot}:({
       status: "found",
       snapshot: {
         ref: ref as ArchitectureBaselineRevisionRef,
@@ -66,7 +81,7 @@ function loadingLedger(intent: ArchitectureInspectionIntentV1, contentDigest?: s
         baselineId: (ref as ArchitectureBaselineRevisionRef).baselineId,
         contentRevision: 1,
         contentDigest: contentDigest ?? intent.baselinePin.digest,
-        content: { schemaVersion: 1, description: "P1-12 fixture baseline", constraints: [] },
+        content,
       } as ArchitectureBaselineRevisionSnapshot,
     }),
   });
@@ -90,21 +105,27 @@ function makeReconciler(opts: {
 }): ReconcilerFixture {
   const control = opts.control ?? committedControl();
   const ledger = opts.ledger ?? loadingLedger(opts.intent);
-  const reader = opts.reader ?? new FakeWorkspaceReaderAdapter({ now: () => NOW });
+  const reader = opts.reader ?? new FakeWorkspaceReaderAdapter({ now: () => NOW, graphs:new Map([[2,{...buildP112CurrentGraph(),sourceSnapshot:source(true)}]]) });
   const reconciler = new ArchitectureReconcilerImpl({
-    ledger,
+    context: new ArchitectureContextCompiler({ ledger, workspaceReader: reader }),
     vault: createArtifactVault(),
     control,
-    workspaceReader: reader,
-    codeGraph: new CodeGraphPortImpl(),
     now: () => NOW,
-    eventId: () => "evt-reconciler",
   });
   return { reconciler, control, ledger };
 }
 
 describe("ArchitectureReconcilerImpl.inspect", () => {
-  it("mechanic source records an inspection + delta-backed finding (fixture delta finding is not material/ambiguous)", async () => {
+  it("stops on a rejected inspection receipt instead of claiming recorded or submitting findings", async () => {
+    const intent = buildP112InspectionIntent({ inspectionId: 'rejected-inspection' });
+    const control = new ScriptedControlEngine({
+      recordArchitectureInspection: cmd => ({ status: 'rejected', commandId: cmd.commandId, code: 'revision_conflict' }),
+    });
+    const fixture = makeReconciler({ intent, control });
+    expect(await fixture.reconciler.inspect(intent)).toMatchObject({ status: 'fail_closed', code: 'recording_rejected' });
+    expect(control.recordArchitectureFindingCalls).toHaveLength(0);
+  });
+  it("mechanic source records actual delta-backed findings and questions from mapped interfaces/dependencies", async () => {
     const intent = buildP112InspectionIntent({ inspectionId: P112_INSPECTION });
     const fixture = makeReconciler({ intent });
     const res = await fixture.reconciler.inspect(intent);
@@ -112,16 +133,16 @@ describe("ArchitectureReconcilerImpl.inspect", () => {
     if (res.status !== "recorded") return;
     expect(res.outcome.status).toBe("recorded");
     if (res.outcome.status !== "recorded") return;
-    expect(res.outcome.findingCount).toBe(1);
+    expect(res.outcome.findingCount).toBe(computeArchitectureDelta(buildP112BaselineGraph(),buildP112CurrentGraph()).changes.length);
     expect(res.outcome.inspectionRef).toEqual(architectureInspectionRefFor(P112_PROJECT, P112_WORKSPACE, P112_INSPECTION));
     expect(fixture.control.recordArchitectureInspectionCalls).toHaveLength(1);
-    expect(fixture.control.recordArchitectureFindingCalls).toHaveLength(1);
+    expect(fixture.control.recordArchitectureFindingCalls).toHaveLength(res.outcome.findingCount);
     const finding = fixture.control.recordArchitectureFindingCalls[0]!.payload.finding;
-    expect(finding.findingId).toBe(P112_FINDING_DELTA);
+    expect(finding.findingId).toContain(P112_INSPECTION+'-');
     expect(finding.source).toBe("workspace_delta");
     expect(finding.deltaRef).not.toBeNull();
-    expect(finding.category).toBe("structure");
-    expect(fixture.control.recordArchitectureDecisionBriefCalls).toHaveLength(0);
+    expect(fixture.control.recordArchitectureFindingCalls.some(c=>c.payload.finding.category==='structure')).toBe(true);
+    expect(fixture.control.recordArchitectureDecisionBriefCalls).toHaveLength(1);
     expect(fixture.control.recordCandidateBaselineProposalCalls).toHaveLength(0);
   });
 
@@ -148,7 +169,8 @@ describe("ArchitectureReconcilerImpl.inspect", () => {
     expect(fixture.control.recordArchitectureInspectionCalls[0]!.payload.inspection.deltaRef).toBeNull();
     expect(fixture.control.recordArchitectureFindingCalls).toHaveLength(1);
     const finding = fixture.control.recordArchitectureFindingCalls[0]!.payload.finding;
-    expect(finding.findingId).toBe(P112_FINDING_REPORT);
+    expect(finding.findingId).toBe(P112_INSPECTION_REPORT+'-report');
+    expect(finding.summary).toBe(intent.reportInput!.description);
     expect(finding.source).toBe("interface_report");
     expect(finding.deltaRef).toBeNull();
     expect(fixture.control.recordArchitectureDecisionBriefCalls).toHaveLength(1);
@@ -214,7 +236,7 @@ describe("ArchitectureReconcilerImpl.inspect", () => {
     expect(fixture.control.installCalls).toHaveLength(0);
     expect(fixture.control.activateCalls).toHaveLength(0);
     expect(fixture.ledger.commits).toHaveLength(0);
-    expect(fixture.ledger.loads).toHaveLength(1);
+    expect(fixture.ledger.loads).toHaveLength(4);
     expect(fixture.ledger.loads[0]).toEqual(intent.baselinePin.ref);
   });
 });

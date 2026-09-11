@@ -35,9 +35,9 @@ import {
 } from "./p1-08-harness.js";
 import { consoleWorkspaceKey } from "../../src/contracts/console-views.js";
 import { makeCommitCursor } from "../../src/contracts/ledger.js";
-import { HumanCollaborationImpl } from "../../src/interaction/human-collaboration.js";
+import { HumanCollaborationImpl } from "../../src/interaction/human-collaboration/human-collaboration.js";
 import { createP108ScenarioRuntime } from "./p1-08-harness.js";
-import { ScriptedReadModelIndex } from "../../src/contracts/testing/read-model.double.js";
+import { ScriptedReadModelIndex } from "../contract-support/testing/read-model.double.js";
 import type { ControlEngine } from "../../src/contracts/modules.js";
 import type { StateLedger } from "../../src/contracts/ledger.js";
 import type { P108TwoProjectScenarioResult } from "./p1-08-harness.js";
@@ -57,8 +57,8 @@ export class CountingRuntime implements RunPort {
     this.inner = inner;
   }
 
-  setScript(runId: string, script: import("../../src/contracts/fixtures/dispatch-fixtures.js").FakeRuntimeScriptV1): void {
-    const inner = this.inner as RunPort & { setScript?: (runId: string, script: import("../../src/contracts/fixtures/dispatch-fixtures.js").FakeRuntimeScriptV1) => void };
+  setScript(runId: string, script: import("../../src/fixtures/dispatch-fixtures.js").FakeRuntimeScriptV1): void {
+    const inner = this.inner as RunPort & { setScript?: (runId: string, script: import("../../src/fixtures/dispatch-fixtures.js").FakeRuntimeScriptV1) => void };
     if (inner.setScript) inner.setScript(runId, script);
   }
 
@@ -103,6 +103,7 @@ export class TrapControlEngine implements ControlEngine {
   }
   submit(): never { return this.trap("submit"); }
   bootstrap(): never { return this.trap("bootstrap"); }
+  registerWorkspace(): never { return this.trap("registerWorkspace"); }
   install(): never { return this.trap("install"); }
   activate(): never { return this.trap("activate"); }
   applyPlan(): never { return this.trap("applyPlan"); }
@@ -122,6 +123,8 @@ export class TrapControlEngine implements ControlEngine {
   recordPatch(): never { return this.trap("recordPatch"); }
   bindWorkContext(): never { return this.trap("bindWorkContext"); }
   linkWorkRun(): never { return this.trap("linkWorkRun"); }
+  // RW-13：控制台路径的身份答案来自 ReadModel 投影，绝不回读 ControlEngine 或账本事件。
+  resolveTaskWorkIdentity(): never { return this.trap("resolveTaskWorkIdentity"); }
   recordExecutionNote(): never { return this.trap("recordExecutionNote"); }
   recordContinuation(): never { return this.trap("recordContinuation"); }
   recordArchitectureInspection(): never { return this.trap("recordArchitectureInspection"); }
@@ -130,12 +133,14 @@ export class TrapControlEngine implements ControlEngine {
   recordCandidateBaselineProposal(): never { return this.trap("recordCandidateBaselineProposal"); }
   submitControl(): never { return this.trap("submitControl"); }
   recordSafePointAck(): never { return this.trap("recordSafePointAck"); }
+  startQueryJob(): never { return this.trap("startQueryJob"); }
   submitQueryJob(): never { return this.trap("submitQueryJob"); }
   recordQueryAnswer(): never { return this.trap("recordQueryAnswer"); }
   closeQueryJob(): never { return this.trap("closeQueryJob"); }
   recordPlanChangeProposal(): never { return this.trap("recordPlanChangeProposal"); }
   recordUserDecision(): never { return this.trap("recordUserDecision"); }
   applyPlanChange(): never { return this.trap("applyPlanChange"); }
+  acceptReworkProposal(): never { return this.trap("acceptReworkProposal"); }
   installArchitectureEvolutionPolicy(): never { return this.trap("installArchitectureEvolutionPolicy"); }
   activateArchitectureEvolutionPolicy(): never { return this.trap("activateArchitectureEvolutionPolicy"); }
   submitRemediationPlanPatch(): never { return this.trap("submitRemediationPlanPatch"); }
@@ -149,6 +154,10 @@ export class TrapControlEngine implements ControlEngine {
   recordInitialDesignDecision(): never { return this.trap("recordInitialDesignDecision"); }
   installCoordinationPolicy(): never { return this.trap("installCoordinationPolicy"); }
   activateCoordinationPolicy(): never { return this.trap("activateCoordinationPolicy"); }
+  installRoleSpec(): never { return this.trap("installRoleSpec"); }
+  activateRoleSpec(): never { return this.trap("activateRoleSpec"); }
+  grantMaterialAccess(): never { return this.trap("grantMaterialAccess"); }
+  revokeMaterialAccess(): never { return this.trap("revokeMaterialAccess"); }
 }
 
 export function defineConsoleContractSuite(

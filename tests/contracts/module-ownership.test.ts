@@ -1,0 +1,229 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative, sep } from "node:path";
+import { describe, expect, it } from "vitest";
+import { modules, owner } from "../../scripts/module-map.mjs";
+
+/**
+ * The property this migration buys: a human can tell which product Module a file
+ * belongs to from its path alone. `owner()` therefore reads nothing but path
+ * prefixes, and every Module owns exactly one directory.
+ *
+ * These tests fail if someone later drops a ControlEngine file into the
+ * dispatch-engine folder, gives a Module a second home, or brings back filename-
+ * or regex-based ownership.
+ */
+
+const PRODUCT_ROOT = join(import.meta.dirname, "..", "..");
+
+/** Module -> the single directory that owns it. Duplicated deliberately: this
+ * table is the readable contract, and a second copy in the checker cannot hide
+ * a layout drift from this test. */
+const MODULE_DIRS: ReadonlyArray<readonly [string, string]> = [
+  ["HumanCollaboration", "src/interaction/human-collaboration"],
+  ["PlanCompiler", "src/control/plan-compiler"],
+  ["ControlEngine", "src/control/control-engine"],
+  ["DispatchEngine", "src/control/dispatch-engine"],
+  ["VerificationEngine", "src/control/verification-engine"],
+  ["ArchitectureReconciler", "src/control/architecture-reconciler"],
+  ["WorkerRuntime", "src/execution/worker-runtime"],
+  ["StateLedger", "src/data/state-ledger"],
+  ["ArtifactVault", "src/data/artifact-vault"],
+  ["ReadModelIndex", "src/data/read-model-index"],
+  ["ContextCompiler", "src/data/context-compiler"],
+  ["WorkspaceReader", "src/data/workspace-reader"],
+];
+
+/** Sibling Module directories that must never appear nested inside each other. */
+const MODULE_FOLDER_NAMES = MODULE_DIRS.map(([, dir]) => dir.split("/").at(-1) as string);
+
+function walkFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === "node_modules" || entry.name === "dist" || entry.name === "test-results") continue;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) walkFiles(full, out);
+    else out.push(full);
+  }
+  return out;
+}
+
+/** Product source files, as repo-relative POSIX paths. */
+function sourceFiles(): string[] {
+  return walkFiles(join(PRODUCT_ROOT, "src"))
+    .map((f) => relative(PRODUCT_ROOT, f).split(sep).join("/"))
+    // src/app/public and src/ui are build output / the browser shell, excluded
+    // from the kernel module layout by design.
+    .filter((f) => !f.startsWith("src/app/public/") && !f.startsWith("src/ui/") && !f.includes("/node_modules/"))
+    // Published source files only, matching scripts/check-module-boundaries.mjs:
+    // a stray README.md is documentation, not an unowned source file.
+    .filter((f) => /\.(ts|tsx|js|py)$/.test(f));
+}
+
+/** Exact contents of each Module directory, relative to that directory.
+ * Recorded from the 2026-09-10 reorganisation (see
+ * evidence/2026-09-10-module-folder-reorg/path-migration-map.json), plus later
+ * additions such as RC-02's WorkspaceReader path-boundary files
+ * (`denied-prefixes.ts`, `role-source-reader.ts`). This is what
+ * makes 'one Module = one directory' checkable: a stray file dropped into the
+ * wrong Module folder changes its inventory and fails the test even though
+ * owner() would happily mislabel it by path.
+ */
+const MODULE_FILE_INVENTORY: Readonly<Record<string, readonly string[]>> = {
+  "ControlEngine": ["rework-disposition.ts", "README.md", "architecture-evolution-policy.ts", "architecture-inspection.ts", "autonomous-rework.ts", "baseline-evolution.ts", "claim.ts", "control-engine.ts", "control-intent.ts", "dispatch-facts.ts", "evidence-intake.ts", "exploration-startup-reconciliation.ts", "goal-change.ts", "goal-reducer.ts", "governance-activate.ts", "governance-install.ts", "handoff.ts", "human-role-collaboration.ts", "initial-plan-source.ts", "integration-join.ts", "material-access-revocation.ts", "material-access.ts", "patch-record.ts", "plan-acceptance.ts", "policies/architecture-evolution-policy.ts", "policies/architecture-remediation.ts", "policies/autonomous-rework.ts", "policies/coordination-policy.ts", "policies/evidence.ts", "policies/goal-change-consistency.ts", "policies/goal-change.ts", "policies/goal-phase.ts", "policies/initial-plan-admission.ts", "policies/integration.ts", "policies/remediation.ts", "policies/replacement-eligibility.ts", "policies/reviewer-evidence.ts", "policies/role-binding-admission.ts", "policies/task-eligibility.ts", "policies/task-reduction.ts", "policies/workspace-capability.ts", "policies/workspace-lease.ts", "policies/workspace-operation.ts", "policy-explanation.ts", "query-job.ts", "readiness.ts", "records/architecture.ts", "records/baseline-evolution.ts", "records/context.ts", "records/control.ts", "records/dispatch.ts", "records/evidence.ts", "records/goal-change.ts", "records/goal-phase.ts", "records/handoff.ts", "records/human-role-collaboration.ts", "records/material-access.ts", "records/plan.ts", "records/query-job.ts", "records/remediation.ts", "records/role-spec.ts", "records/workspace.ts", "remediation.ts", "replacement-claim.ts", "reviewer-work.ts", "role-spec.ts", "run-facts.ts", "start-run.ts", "task-reducer.ts", "work-identity-resolution.ts", "work-record.ts", "workspace-lease.ts", "workspace-registration.ts"],
+  "PlanCompiler": ["rework-proposal.ts", "execution-feedback-compiler.ts", "planning-work-materials.ts", "README.md", "initial-plan-compiler.ts", "operator-plan-compiler.ts", "plan-compiler.ts", "rework-plan-compiler.ts"],
+  "DispatchEngine": ["README.md", "dispatch-engine.ts", "exploration-context-drive.ts", "handoff-drive.ts", "leased-worker-runtime.ts", "operator-task-dispatch.ts", "planned-task-dispatch.ts", "query-drive.ts", "rework-drive.ts", "reviewer-dispatch.ts", "role-spec-read.ts", "runtime-dispatch.ts", "work-identity.ts", "work-material-drive.ts", "workspace-drive.ts"],
+  "VerificationEngine": ["verification-deps.ts", "rework-verification.ts", "README.md", "benchmark-verification.ts", "candidate-patch-check.ts", "code-graph-port.ts", "command-check-lifecycle.ts", "command-check-provider.ts", "evidence-admission.ts", "exploration-report-verifier.ts", "migration-gate-port.ts", "recorded-verification.ts", "reviewer-record.ts", "reviewer-report.ts", "reviewer-verification.ts", "role-output-completeness.ts", "verification-engine.ts", "verification-input.ts", "verification-journal.ts", "verification-open-issues.ts", "verification-plan-compiler.ts", "verification-reports.ts", "verification-rounds.ts", "verification-service.ts"],
+  "ArchitectureReconciler": ["README.md", "architecture-delta.ts", "architecture-reconciler.ts", "baseline-evolution-port.ts"],
+  "HumanCollaboration": ["README.md", "exploration-session.ts", "history-materials.ts", "human-collaboration.ts"],
+  "WorkerRuntime": ["README.md", "coding-agent-runtime.ts", "context-continuation-adapter.ts", "exploration-tools.ts", "fake-runtime-adapter.ts", "handoff-control-adapter.ts", "lifecycle-control-adapter.ts", "model-budget.ts", "observed-model-run.ts", "read-only-query-adapter.ts", "read-only-query-runtime.ts", "reviewer-material-tools.ts", "run-limits.ts", "terminal-sandbox.py", "unconfigured-capabilities.ts"],
+  "StateLedger": ["ledger-validation.ts", "README.in-memory.md", "README.md", "README.sqlite.md", "governance-records.ts", "in-memory-ledger.ts", "ledger-scope-catalog.ts", "sqlite-ledger.ts"],
+  "ArtifactVault": ["README.md", "artifact-vault.ts", "exploration-material-reader.ts", "material-access-policy.ts", "runtime-observation-journal.ts", "sqlite-artifact-vault.ts"],
+  "ReadModelIndex": ["governance-view.ts", "README.in-memory.md", "README.md", "README.sqlite.md", "baseline-change-projection.ts", "completed-work-eligibility.ts", "completed-work-merge.ts", "initial-planning-view.ts", "read-model-index.ts", "reviewer-projection.ts", "sqlite-read-model-index.ts"],
+  "ContextCompiler": ["execution-feedback-context.ts", "feedback-materials.ts", "run-output-materials.ts", "README.md", "architecture-context-compiler.ts", "baseline-evolution-context.ts", "completed-work-context-compiler.ts", "context-compiler.ts", "coordination-context-compiler.ts", "exploration-context-compiler.ts", "exploration-session-context.ts", "handoff-context-compiler.ts", "history-materials-context.ts", "material-selection.ts", "operator-planning-context.ts", "planning-context-compiler.ts", "query-context-compiler.ts", "query-execution-context.ts", "review-context-compiler.ts", "reviewer-context.ts", "reviewer-profile.ts", "reviewer-runtime-context.ts", "role-material-sources.ts", "role-source-index.ts", "runtime-context.ts", "source-graph-context.ts", "verification-context.ts", "verification-migration-context.ts", "work-context-compiler.ts", "work-run-materials.ts"],
+  "WorkspaceReader": ["README.md", "architecture-source.ts", "candidate-workspace-reader.ts", "cpp-source-index.ts", "denied-prefixes.ts", "exploration-source.ts", "project-source-index.ts", "python-source-index.ts", "query-workspace-source-reader.ts", "reviewer-source-reader.ts", "role-source-reader.ts", "source-applicability.ts", "source-identity.ts", "source-index.ts", "source-workspace-reader.ts", "verification-source-applicability.ts", "verification-workspace-reader.ts", "workspace-reader-adapter.ts"],
+};
+
+describe("module ownership is decidable from the path", () => {
+  it("declares exactly twelve Modules, each with exactly one owning directory", () => {
+    expect(MODULE_DIRS).toHaveLength(12);
+    expect(new Set(MODULE_DIRS.map(([m]) => m)).size).toBe(12);
+    expect(new Set(MODULE_DIRS.map(([, d]) => d)).size).toBe(12);
+    // the declared layout must not drift from the checker's authoritative list
+    expect([...MODULE_DIRS.map(([m]) => m)].sort()).toEqual([...modules].sort());
+  });
+
+  it("derives owner() from the path alone, with no filename or regex special-casing", () => {
+    // Same basename, different directories -> different owners. This is the
+    // exact defect the migration removed from the old filename Sets.
+    expect(owner("src/control/dispatch-engine/dispatch-engine.ts")).toBe("DispatchEngine");
+    expect(owner("src/control/control-engine/control-engine.ts")).toBe("ControlEngine");
+    expect(owner("src/control/plan-compiler/plan-compiler.ts")).toBe("PlanCompiler");
+    expect(owner("src/control/architecture-reconciler/architecture-reconciler.ts")).toBe("ArchitectureReconciler");
+
+    // StateLedger's two adapters are both StateLedger, by directory not by name.
+    expect(owner("src/data/state-ledger/in-memory-ledger.ts")).toBe("StateLedger");
+    expect(owner("src/data/state-ledger/sqlite-ledger.ts")).toBe("StateLedger");
+    expect(owner("src/data/state-ledger/governance-records.ts")).toBe("StateLedger");
+    expect(owner("src/data/state-ledger/ledger-scope-catalog.ts")).toBe("StateLedger");
+
+    // WorkspaceReader and ReadModelIndex are not confused by name.
+    expect(owner("src/data/workspace-reader/source-index.ts")).toBe("WorkspaceReader");
+    expect(owner("src/data/read-model-index/read-model-index.ts")).toBe("ReadModelIndex");
+
+    // The composition root and shared surfaces keep their classifications.
+    expect(owner("src/contracts/artifact.ts")).toBe("Contracts");
+    expect(owner("src/fixtures/goal-fixtures.ts")).toBe("Fixtures");
+    expect(owner("src/testing/state-ledger.double.ts")).toBe("TestDoubles");
+    expect(owner("src/app/service.ts")).toBe("Host");
+    expect(owner("src/harness/index.ts")).toBe("Host");
+    expect(owner("src/storage/atomic-file.ts")).toBe("Storage");
+    expect(owner("src/ui/src/App.tsx")).toBe("UI");
+  });
+
+  it("gives every owned file a path under the directory its Module name implies", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles()) {
+      const ownerOfFile = owner(file);
+      if (!modules.includes(ownerOfFile)) continue;
+      const expected = MODULE_DIRS.find(([m]) => m === ownerOfFile)?.[1];
+      if (expected && !file.startsWith(expected + "/")) offenders.push(`${file} -> owner ${ownerOfFile}, expected under ${expected}/`);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("puts every file inside a Module directory under that same Module", () => {
+    // The inverse direction: a file physically inside the dispatch-engine folder
+    // must BE DispatchEngine.
+    const owners = MODULE_DIRS.map(([, dir]) => dir);
+    const offenders: string[] = [];
+    for (const file of sourceFiles()) {
+      const containing = owners.find((dir) => file.startsWith(dir + "/"));
+      if (!containing) continue;
+      const expected = MODULE_DIRS.find(([, dir]) => dir === containing)?.[0];
+      if (owner(file) !== expected) offenders.push(`${file} sits in ${containing}/ but owner() says ${owner(file)}`);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("holds exactly the recorded file inventory in every Module directory", () => {
+    // The real regression guard. owner() is path-based, so dropping a ControlEngine
+    // file into dispatch-engine/ cannot be detected from the path alone — it would
+    // simply be relabelled DispatchEngine. Comparing against the recorded inventory
+    // catches it: the stray file is not in dispatch-engine's list and is missing
+    // from control-engine's.
+    const expected = MODULE_FILE_INVENTORY;
+    expect(Object.keys(expected).sort()).toEqual([...modules].sort());
+
+    const problems: string[] = [];
+    for (const [moduleName, dir] of MODULE_DIRS) {
+      const prefix = dir + "/";
+      const onDisk = walkFiles(join(PRODUCT_ROOT, dir))
+        .map((f) => relative(join(PRODUCT_ROOT, dir), f).split(sep).join("/"))
+        .sort();
+      const recorded = [...(expected[moduleName] ?? [])].sort();
+      const extra = onDisk.filter((f) => !recorded.includes(f));
+      const missing = recorded.filter((f) => !onDisk.includes(f));
+      if (extra.length) problems.push(`${dir}/ has unrecorded file(s): ${extra.join(", ")}`);
+      if (missing.length) problems.push(`${dir}/ is missing recorded file(s): ${missing.join(", ")}`);
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it("nests no Module directory inside another Module directory", () => {
+    const nested = MODULE_FOLDER_NAMES.flatMap((name) =>
+      MODULE_DIRS.filter(([, dir]) => (dir + "/").includes("/" + name + "/") && dir.split("/").at(-1) !== name)
+        .map(([m, dir]) => `${dir} nests ${name}/ (${m})`),
+    );
+    expect(nested).toEqual([]);
+  });
+
+  it("leaves no product source file unmapped", () => {
+    const unmapped = sourceFiles().filter((f) => owner(f) === "Unmapped");
+    expect(unmapped).toEqual([]);
+  });
+
+  it("keeps the workspace path-boundary policy in exactly one WorkspaceReader file", () => {
+    // RC-02: 拒绝前缀（哪些路径连列目录都不能出现）是 WorkspaceReader 隐藏的实现。它只能有一处声明，
+    // 并且本 Module 里**用**它的读取器必须 import 那一处，而不是各自再写一份字面量。
+    // 已知仍未收敛的三处（execution/worker-runtime 两个运行入口、control/verification-engine 的
+    // 命令检查）属于各自 Module 的写入范围，其中 VerificationEngine → WorkspaceReader 还不是声明的
+    // 依赖边，故不在这里断言；它们收敛之后本测试不需要改。
+    const body = (file: string) => readFileSync(join(PRODUCT_ROOT, file), "utf8");
+    // 声明处唯一：那条清单只在 denied-prefixes.ts 里被**赋值**一次。
+    const declarations = sourceFiles().filter((file) => /WORKSPACE_DENIED_PREFIXES\s*(?::[^=]*)?=\s*\[/.test(body(file)));
+    expect(declarations).toEqual(["src/data/workspace-reader/denied-prefixes.ts"]);
+    // 本 Module 的每个读取器都引用那一处，不内联一份字面量。
+    for (const reader of ["src/data/workspace-reader/source-workspace-reader.ts", "src/data/workspace-reader/query-workspace-source-reader.ts", "src/data/workspace-reader/role-source-reader.ts"]) {
+      expect(body(reader), reader).toContain("denied-prefixes.js");
+      expect(body(reader), reader).toMatch(/deniedPrefixes:\s*\[\.\.\.WORKSPACE_DENIED_PREFIXES\]/);
+      expect(body(reader), reader).not.toMatch(/deniedPrefixes:\s*\[[^\]]*['"]/);
+    }
+    // 本票写入范围内，没有任何 WorkspaceSandbox 构造再内联一份拒绝前缀字面量。
+    const inline = sourceFiles()
+      .filter((file) => !file.startsWith("src/execution/") && !file.startsWith("src/control/verification-engine/"))
+      .filter((file) => /deniedPrefixes:\s*\[[^\]]*['"]/.test(body(file)));
+    expect(inline).toEqual([]);
+    // ContextCompiler 侧只消费窄端口：它不再持有拒绝前缀，也不再拼工作区读取实现。
+    for (const file of sourceFiles().filter((f) => f.startsWith("src/data/context-compiler/"))) {
+      const text = readFileSync(join(PRODUCT_ROOT, file), "utf8");
+      expect(text, file).not.toContain(".platform-runtime");
+      expect(text, file).not.toContain("WorkspaceSandbox");
+    }
+  });
+
+  it("keeps the legacy split directories gone", () => {
+    const legacy = [
+      "src/control/control-engine/control-engine",
+      "src/control/dispatch-engine/dispatch-engine",
+      "src/data/workspace-reader/workspace-reader",
+      "src/data/state-ledger/state-ledger",
+      "src/interaction/human-collaboration/human-collaboration",
+      "src/execution/worker-runtime/worker-runtime",
+    ];
+    for (const dir of legacy) {
+      const full = join(PRODUCT_ROOT, dir);
+      const exists = (() => { try { return statSync(full).isDirectory(); } catch { return false; } })();
+      expect(exists, `${dir} must not exist`).toBe(false);
+    }
+  });
+});
+

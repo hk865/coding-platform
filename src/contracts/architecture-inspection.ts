@@ -15,7 +15,7 @@
  *   - ARCHITECTURE.md global invariants #11/#12/#13 (baseline revision
  *     immutability; plan pins; candidate source-ref discipline)
  *
- * FROZEN semantics:
+ * Semantics:
  *   - The ONLY baseline input of ArchitectureReconciler is the PlanRevision
  *     pin: it loads the digest/revision-matching immutable
  *     ArchitectureBaseline along THAT pin; Project active refs and built-in
@@ -181,6 +181,8 @@ export type CodeGraphSnapshotV1 = {
   nodes: CodeGraphNode[];
   edges: CodeGraphEdge[];
   indexCapabilities: CodeGraphIndexCapabilities;
+  /** Exact permission-filtered source material used by a real graph provider. */
+  sourceSnapshot?: import('./architecture-source.js').ArchitectureSourceSnapshotV1;
   bodyRef: ArtifactRef;
   generatedAt: string;
 };
@@ -223,54 +225,6 @@ export type ArchitectureDeltaV1 = {
   bodyRef: ArtifactRef;
   generatedAt: string;
 };
-
-/** Deterministic mechanical diff: same inputs -> identical Delta JSON. PURE. */
-export function computeArchitectureDelta(before: CodeGraphSnapshotV1, after: CodeGraphSnapshotV1): ArchitectureDeltaV1 {
-  const changes: ArchitectureDeltaChange[] = [];
-  const beforeNodes = new Map(before.nodes.map((n) => [n.structuralKey, n]));
-  const afterNodes = new Map(after.nodes.map((n) => [n.structuralKey, n]));
-  for (const key of [...beforeNodes.keys()].sort()) {
-    const b = beforeNodes.get(key)!;
-    const a = afterNodes.get(key);
-    if (a === undefined) {
-      changes.push({ changeId: "node:" + key, level: "node", kind: "removed", structuralKey: key, beforeDigest: b.contentDigest, afterDigest: null, label: "node removed: " + b.name });
-    } else if (a.contentDigest !== b.contentDigest) {
-      changes.push({ changeId: "node:" + key, level: "node", kind: "modified", structuralKey: key, beforeDigest: b.contentDigest, afterDigest: a.contentDigest, label: "node modified: " + a.name });
-    }
-  }
-  for (const key of [...afterNodes.keys()].sort()) {
-    const a = afterNodes.get(key)!;
-    if (!beforeNodes.has(key)) {
-      changes.push({ changeId: "node:" + key, level: "node", kind: "added", structuralKey: key, beforeDigest: null, afterDigest: a.contentDigest, label: "node added: " + a.name });
-    }
-  }
-  const beforeEdges = new Map(before.edges.map((e) => [e.structuralKey, e]));
-  const afterEdges = new Map(after.edges.map((e) => [e.structuralKey, e]));
-  for (const key of [...beforeEdges.keys()].sort()) {
-    if (!afterEdges.has(key)) {
-      changes.push({ changeId: "edge:" + key, level: "edge", kind: "removed", structuralKey: key, beforeDigest: sha256Hex(canonicalJson(beforeEdges.get(key)!)), afterDigest: null, label: "edge removed: " + key });
-    }
-  }
-  for (const key of [...afterEdges.keys()].sort()) {
-    if (!beforeEdges.has(key)) {
-      changes.push({ changeId: "edge:" + key, level: "edge", kind: "added", structuralKey: key, beforeDigest: null, afterDigest: sha256Hex(canonicalJson(afterEdges.get(key)!)), label: "edge added: " + key });
-    }
-  }
-  return {
-    schemaVersion: 1,
-    deltaId: "delta-" + sha256Hex(canonicalJson({ before: before.snapshotId, after: after.snapshotId, changes })).slice(0, 16),
-    projectId: before.projectId,
-    workspaceId: before.workspaceId,
-    workspaceRevision: after.workspaceRevision,
-    planRef: { ...before.planRef },
-    baselinePin: { ...before.baselinePin },
-    changes,
-    noVerdict: true,
-    sourceSnapshotRef: after.bodyRef,
-    bodyRef: after.bodyRef,
-    generatedAt: after.generatedAt,
-  };
-}
 
 // ------------------------------------------------------------------------ //
 // Finding / DecisionBrief / CandidateProposal                               //
@@ -361,7 +315,7 @@ export type ArchitectureCandidateProposalV1 = {
   selectedDeltaRef: ArtifactRef;
   selectedOptionId: string;
   /** Normalized content of the candidate baseline (content-addressed). */
-  normalizedContent: { description: string; constraints: { name: string; scope: string }[] };
+  normalizedContent: Omit<import('./governance.js').ArchitectureBaselineContentV1, 'schemaVersion'>;
   /** Deterministic proposal digest = sha256(canonicalJson(payload)). */
   proposalDigest: string;
   /** Expected candidate baseline digest once materialized by P1-14. */
@@ -411,7 +365,7 @@ export type ArchitectureInspectionIntentV1 = {
     risk: ArchitectureFindingRisk;
     affectedRefs: { moduleRefs: string[]; interfaceRefs: string[]; pathRefs: string[] };
   } | null;
-  budget: { maxTokens: number; deadline: string | null };
+  budget: { maxTokens: number | null; deadline: string | null };
 };
 
 export type ArchitectureInspectionSnapshot = {

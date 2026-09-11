@@ -1,3 +1,4 @@
+import { classifyRestartProbeError } from "./readiness-probe.js";
 /**
  * P1-08 restart-path fixtures + readiness probe.
  *   runP108TwoProjectScenario (two isolated projects -> same local ids ->
@@ -20,8 +21,8 @@ export async function isP108Ready(): Promise<boolean> {
     } finally {
       await h.cleanup().catch(() => undefined);
     }
-  } catch {
-    return false;
+  } catch (error) {
+    return classifyRestartProbeError(error);
   }
 }
 

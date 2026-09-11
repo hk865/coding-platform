@@ -14,6 +14,10 @@
  * a workspaceRevision changed since the snapshot -> stale (re-read before
  * reconciling). A missing graph capability is an explicit
  * hasCodeGraph=false + degradesToText flag — never a fabricated graph.
+ *
+ * Current composition: raw source capture is ArchitectureSourceCapturePort.
+ * SourceGraphContextCompiler preserves this legacy bound-bundle wire shape;
+ * it performs canonical binding and Vault persistence in ContextCompiler.
  */
 import type { CodeGraphSnapshotV1 } from "./architecture-inspection.js";
 import type { CommitCursor } from "./command-event.js";
@@ -33,6 +37,8 @@ export type CodeGraphReadQueryV1 = {
   /** Bounded result (<= INSPECTION_MAX_NODES / EDGES). */
   maxNodes: number;
   maxEdges: number;
+  /** Real readers own persisted graph material; omitted legacy callers receive unsupported. */
+  requesterRunRef?: import('./dispatch.js').RunRef;
 };
 
 export type CodeGraphReadResultV1 =

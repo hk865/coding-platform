@@ -1,0 +1,47 @@
+/** P1-17 restart-path fixtures + readiness probe (selection from persisted facts survives reopen). */
+import { expect } from "vitest";
+import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { toP1_17Harness, runP117SelectionScenario, type P1_17HarnessLike, type P1_17TestHarness, type P117SelectionScenarioResult } from "../contract-suite/p1-17-harness.js";
+import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
+import { P117_WORKSPACE } from "../../src/contracts/fixtures/completed-work-fixtures.js";
+import { P108_PROJECT_A } from "../contract-suite/p1-08-harness.js";
+
+export async function isP117Ready(): Promise<boolean> {
+  try {
+    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    try {
+      await runP117RestartScenario(h);
+      return true;
+    } finally {
+      await h.cleanup().catch(() => undefined);
+    }
+  } catch {
+    return false;
+  }
+}
+
+export type P117RestartEvidence = {
+  before: P117SelectionScenarioResult;
+  cursorBefore: string;
+  viewBefore: string;
+  selectionBefore: string;
+};
+
+export async function runP117RestartScenario(h: PersistentSqliteHarness): Promise<P117RestartEvidence> {
+  const th: P1_17TestHarness = toP1_17Harness(h as unknown as P1_17HarnessLike);
+  const before = await runP117SelectionScenario(th);
+  await th.advanceProjection();
+  const cursorBefore = String(h.observedCursor());
+  const viewBefore = JSON.stringify(await th.completedWorkView({ projectId: P108_PROJECT_A, workspaceId: P117_WORKSPACE }));
+  const selectionBefore = JSON.stringify(before.selection);
+  return { before, cursorBefore, viewBefore, selectionBefore };
+}
+
+export async function verifyP117AfterRestart(restarted: PersistentSqliteHarness, evidence: P117RestartEvidence): Promise<void> {
+  const th: P1_17TestHarness = toP1_17Harness(restarted as unknown as P1_17HarnessLike);
+  await restarted.advanceProjection();
+  expect(String(restarted.observedCursor())).toBe(evidence.cursorBefore);
+  const view = await th.completedWorkView({ projectId: P108_PROJECT_A, workspaceId: P117_WORKSPACE });
+  expect(JSON.stringify(view)).toBe(evidence.viewBefore);
+}

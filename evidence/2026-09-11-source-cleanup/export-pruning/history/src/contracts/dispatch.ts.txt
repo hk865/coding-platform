@@ -1,0 +1,657 @@
+/**
+ * Run identities, role-binding references and observed runtime facts.
+ * Run completion never sets Task phase. Control admits claims, starts and facts;
+ * monotonic per-run sequences reject duplicate/stale/conflicting facts without writes.
+ * The role-spec and admission protocols resolve the referenced role and permissions.
+ */
+import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
+import { canonicalJson, sha256Hex } from "./fingerprint.js";
+import type { DependencyRequirement, Disposition, Phase, PlanRevisionRef, PlanRevisionSnapshot } from "./plan.js";
+import type { ContextManifestV1, TaskEnvelopeV1 } from "./task-envelope.js";
+
+// ------------------------------------------------------------------------ //
+// Aggregate refs                                                             //
+// ------------------------------------------------------------------------ //
+
+export type TaskTriple = {
+  projectId: string;
+  goalId: string;
+  taskId: string;
+};
+
+export type TaskLeaseRef = {
+  aggregateType: "TaskLease";
+  projectId: string;
+  goalId: string;
+  taskId: string;
+};
+
+export type TaskAttemptRef = {
+  aggregateType: "TaskAttempt";
+  projectId: string;
+  goalId: string;
+  taskId: string;
+  attemptId: string;
+};
+
+export type RunRef = {
+  aggregateType: "Run";
+  projectId: string;
+  goalId: string;
+  runId: string;
+};
+
+export type DispatchOutboxRef = {
+  aggregateType: "DispatchOutboxEntry";
+  projectId: string;
+  goalId: string;
+  taskId: string;
+  attemptId: string;
+};
+
+export function taskLeaseRefFor(projectId: string, goalId: string, taskId: string): TaskLeaseRef {
+  return { aggregateType: "TaskLease", projectId, goalId, taskId };
+}
+
+export function taskAttemptRefFor(
+  projectId: string,
+  goalId: string,
+  taskId: string,
+  attemptId: string,
+): TaskAttemptRef {
+  return { aggregateType: "TaskAttempt", projectId, goalId, taskId, attemptId };
+}
+
+export function runRefFor(projectId: string, goalId: string, runId: string): RunRef {
+  return { aggregateType: "Run", projectId, goalId, runId };
+}
+
+export function dispatchOutboxRefFor(
+  projectId: string,
+  goalId: string,
+  taskId: string,
+  attemptId: string,
+): DispatchOutboxRef {
+  return { aggregateType: "DispatchOutboxEntry", projectId, goalId, taskId, attemptId };
+}
+
+// ------------------------------------------------------------------------ //
+// Shared value types                                                         //
+// ------------------------------------------------------------------------ //
+
+/** Minimal versioned RoleBinding reference (no full RoleBinding contract yet — P1-15). */
+export type RoleBindingRefV1 = {
+  schemaVersion: 1;
+  bindingId: string;
+  templateId: string;
+  /** template_revision of agent/templates/short-lived-agent.md. */
+  templateRevision: string;
+  /** Binding instance version; the Run references the exact version used. */
+  bindingVersion: number;
+  /** Authorization policy version the binding was resolved under (opaque; no registry in P1-03). */
+  policyRevision: string;
+};
+
+/**
+ * Versioned source reference. P1-03 kinds are the sources a bounded envelope
+ * can declare; further kinds extend with a versioned schema upgrade.
+ */
+export type SourceRefV1 = {
+  kind: "plan-revision" | "workspace" | "governance" | "artifact";
+  refId: string;
+  revision: string;
+  digest?: string;
+};
+
+export type TaskBudgetV1 = {
+  tokenBudget: number;
+  deadline: string | null;
+};
+
+// ------------------------------------------------------------------------ //
+// RuntimeEvent (contract #5)                                                //
+// ------------------------------------------------------------------------ //
+
+export type RuntimeEventType =
+  | "run_started"
+  | "run_completed"
+  | "run_crashed"
+  | "run_cancelled"
+  | "run_budget_exhausted";
+
+export const RUNTIME_EVENT_TYPES: readonly RuntimeEventType[] = [
+  "run_started",
+  "run_completed",
+  "run_crashed",
+  "run_cancelled",
+  "run_budget_exhausted",
+];
+
+export const TERMINAL_RUNTIME_EVENT_TYPES: readonly RuntimeEventType[] = [
+  "run_completed",
+  "run_crashed",
+  "run_cancelled",
+  "run_budget_exhausted",
+];
+
+export function isTerminalRuntimeEvent(event: RuntimeEventV1): boolean {
+  return (TERMINAL_RUNTIME_EVENT_TYPES as readonly string[]).includes(event.eventType);
+}
+
+/**
+ * The outcome a terminal RuntimeEvent contributes. NEVER maps to Task.phase —
+ * satisfaction is P1-04 evidence reduction.
+ */
+export function runtimeEventTerminalOutcome(event: RuntimeEventV1): RunOutcome | null {
+  switch (event.eventType) {
+    case "run_completed":
+      return "completed";
+    case "run_crashed":
+      return "crashed";
+    case "run_cancelled":
+      return "cancelled";
+    case "run_budget_exhausted":
+      return "budget_exhausted";
+    case "run_started":
+      return null;
+  }
+}
+
+export type RuntimeEventV1 = {
+  eventType: RuntimeEventType;
+  schemaVersion: 1;
+  /** Runtime-adapter-assigned event id (unique per run in practice). */
+  eventId: string;
+  runRef: RunRef;
+  /** Per-run strictly increasing sequence; the ordering authority for dedupe. */
+  sequence: number;
+  occurredAt: string;
+  payload:
+    | { kind: "started"; startedAt: string }
+    | { kind: "completed"; exitCode: number }
+    | { kind: "crashed"; error: string }
+    | { kind: "cancelled"; reason: string }
+    | { kind: "budget_exhausted"; exhaustedAt: string };
+};
+
+export type RuntimeEvent = RuntimeEventV1;
+
+// ------------------------------------------------------------------------ //
+// Run / attempt / outbox status                                             //
+// ------------------------------------------------------------------------ //
+
+export type RunStatus = "starting" | "running" | "ended";
+export type RunOutcome =
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "budget_exhausted"
+  | "crashed"
+  | "outcome_unknown";
+export type TaskAttemptStatus = "claimed" | "started" | "ended";
+export type DispatchOutboxStatus = "pending" | "started" | "done";
+
+// ------------------------------------------------------------------------ //
+// DispatchIntent (contract #1 — durable outbox intent)                      //
+// ------------------------------------------------------------------------ //
+
+export type DispatchIntentV1 = {
+  work?: import('./reviewer-work.js').ReviewWorkBinding;
+  schemaVersion: 1;
+  /** 1:1 with the attempt (intentId === attemptId) — deterministic. */
+  intentId: string;
+  projectId: string;
+  workspaceId: string;
+  goalId: string;
+  taskId: string;
+  planRef: PlanRevisionRef;
+  attemptRef: TaskAttemptRef;
+  runRef: RunRef;
+  roleBinding: RoleBindingRefV1;
+  /** Canonical Workspace revision bound at claim (no worktree digest machinery in P1-03). */
+  workspaceSnapshot: { workspaceId: string; revision: number };
+  declaredPermissions: { tools: string[]; writeScope: string[] };
+  budget: TaskBudgetV1;
+  requestedAt: string;
+  correlationId: string;
+};
+
+// ------------------------------------------------------------------------ //
+// Canonical snapshots                                                        //
+// ------------------------------------------------------------------------ //
+
+export type TaskLeaseSnapshot = {
+  ref: TaskLeaseRef;
+  revision: number;
+  schemaVersion: 1;
+  holderRunId: string;
+  attemptId: string;
+  grantedAt: string;
+  expiresAt: string | null;
+};
+
+export type TaskAttemptSnapshot = {
+  work?: import('./reviewer-work.js').ReviewWorkBinding;
+  ref: TaskAttemptRef;
+  revision: number;
+  schemaVersion: 1;
+  runId: string;
+  planRef: PlanRevisionRef;
+  status: TaskAttemptStatus;
+  startedAt: string | null;
+  endedAt: string | null;
+  endOutcome: RunOutcome | null;
+};
+
+export type RunSnapshot = {
+  work?: import('./reviewer-work.js').ReviewWorkBinding;
+  ref: RunRef;
+  revision: number;
+  schemaVersion: 1;
+  task: TaskTriple;
+  attemptId: string;
+  planRef: PlanRevisionRef;
+  roleBinding: RoleBindingRefV1;
+  budget: TaskBudgetV1;
+  workspaceSnapshot: { workspaceId: string; revision: number };
+  status: RunStatus;
+  outcome: RunOutcome | null;
+  /** exitCode of the LAST run_completed event (null until then). NEVER a satisfaction signal. */
+  exitCode: number | null;
+  /** Highest runtime event sequence applied so far (0 before any fact). */
+  lastEventSeq: number;
+  /** Runtime-event id with lastEventSeq ("" before any fact). */
+  lastRuntimeEventId: string;
+  /** Domain event id of the run-fact commit that applied lastEventSeq ("" before any fact). */
+  lastFactEventId: string;
+  /** The bounded envelope recorded at start (the Run input). */
+  envelope: TaskEnvelopeV1 | null;
+  startedAt: string | null;
+  endedAt: string | null;
+};
+
+export type DispatchOutboxEntrySnapshot = {
+  ref: DispatchOutboxRef;
+  revision: number;
+  schemaVersion: 1;
+  status: DispatchOutboxStatus;
+  intent: DispatchIntentV1;
+  pendingAt: string;
+  startedAt: string | null;
+  doneAt: string | null;
+};
+
+// ------------------------------------------------------------------------ //
+// Domain events (P1-03 v1)                                                  //
+// ------------------------------------------------------------------------ //
+
+export type TaskClaimedEvent = {
+  eventId: string;
+  eventType: "TaskClaimed";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "TaskLease";
+  aggregateId: string;
+  aggregateRevision: 1;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: {
+    goalId: string;
+    taskId: string;
+    attemptRef: TaskAttemptRef;
+    runRef: RunRef;
+    planRef: PlanRevisionRef;
+    roleBinding: RoleBindingRefV1;
+    declaredPermissions: { tools: string[]; writeScope: string[] };
+    budget: TaskBudgetV1;
+    intentId: string;
+    claimedAt: string;
+  };
+};
+
+export type RunStartedEvent = {
+  eventId: string;
+  eventType: "RunStarted";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "Run";
+  aggregateId: string;
+  aggregateRevision: 2;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: {
+    taskId: string;
+    attemptId: string;
+    envelope: TaskEnvelopeV1;
+    manifest: ContextManifestV1;
+    startedAt: string;
+  };
+};
+
+export type RunEventRecordedEvent = {
+  eventId: string;
+  eventType: "RunEventRecorded";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "Run";
+  aggregateId: string;
+  aggregateRevision: number;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: {
+    taskId: string;
+    runtimeEvent: RuntimeEventV1;
+  };
+};
+
+/** Explicit "no terminal signal" fact — projected SEPARATELY from crash. */
+export type RunOutcomeUnknownEvent = {
+  eventId: string;
+  eventType: "RunOutcomeUnknown";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "Run";
+  aggregateId: string;
+  aggregateRevision: number;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: {
+    taskId: string;
+    reason: string;
+    observedAt: string;
+  };
+};
+
+// ------------------------------------------------------------------------ //
+// Eligibility (readiness) — PURE decision, table-testable                    //
+// ------------------------------------------------------------------------ //
+
+export type DispatchReadinessFacts = {
+  projectId: string;
+  goalId: string;
+  goalDesiredState: string;
+  goalActivePlanRevision: PlanRevisionRef | null;
+  plan: PlanRevisionSnapshot | null;
+  lease: { status: "none" } | { status: "leased"; holderRunId: string; grantedAt: string };
+  resource: { tokenBudget: number; deadline: string | null; now: string };
+};
+
+/** 角色绑定不可受理的具体原因（RW-11；沿用既有 receipt 码，只细化 reason）。 */
+export type RoleBindingInadmissibleDetail =
+  | "role_not_registered"
+  | "role_spec_not_installed"
+  | "role_spec_stale"
+  | "permissions_exceed_spec";
+
+export type TaskIneligibilityReason =
+  | { code: "goal_not_active"; message: string }
+  | { code: "plan_not_accepted"; message: string }
+  | { code: "task_not_found"; taskId: string; message: string }
+  | { code: "task_kind_not_work"; taskId: string; taskKind: string; message: string }
+  | { code: "task_not_active"; taskId: string; disposition: Disposition; message: string }
+  | {
+      code: "task_phase_not_dispatchable";
+      taskId: string;
+      phase: Phase;
+      blocked: boolean;
+      message: string;
+    }
+  | {
+      code: "deps_unsatisfied";
+      taskId: string;
+      deps: { dependsOnId: string; requires: DependencyRequirement; phase: Phase | "missing" }[];
+      message: string;
+    }
+  | {
+      code: "resource_unavailable";
+      taskId: string;
+      detail: "leased" | "budget_exhausted" | "deadline_passed";
+      message: string;
+    }
+  /**
+   * RW-11：角色绑定与项目角色矩阵/角色规格不符。claim 的**顶层**拒绝码仍然是既有的
+   * `ineligible`（不新造 receipt 码）；这条 reason 只负责说明是哪一项不符，与
+   * ReplacementIneligibilityReason 的 stale_packet／packet_mismatch 是同一处置方式。
+   * 命中即零写入，不会留下 lease／attempt／run／outbox。
+   */
+  | {
+      code: "role_binding_not_admissible";
+      roleId: string;
+      detail: RoleBindingInadmissibleDetail;
+      message: string;
+    };
+
+export type TaskEligibility =
+  | { eligible: true; reasons: [] }
+  | { eligible: false; reasons: TaskIneligibilityReason[] };
+
+// ------------------------------------------------------------------------ //
+// Readiness query (Control read-only entry)                                  //
+// ------------------------------------------------------------------------ //
+
+export type DispatchReadinessQuery = {
+  projectId: string;
+  goalId: string;
+  taskId: string;
+  /** Declared budget for the resource check (optional; the lease is always checked). */
+  budget?: TaskBudgetV1;
+};
+
+export type DispatchReadinessResult =
+  | {
+      status: "ready";
+      eligibility: TaskEligibility;
+      goalRevision: number;
+      workspaceRevision: number;
+      planRef: PlanRevisionRef;
+    }
+  | { status: "not_found"; code: "goal" | "workspace" | "plan" };
+
+// ------------------------------------------------------------------------ //
+// Commands / receipts                                                        //
+// ------------------------------------------------------------------------ //
+
+export type DispatchClaimCommand = {
+  commandId: string;
+  commandType: "DispatchClaimTask";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  /** taskId — the TaskLease aggregate. */
+  aggregateId: string;
+  /** expected TaskLease revision (the first claim is always @0). */
+  expectedRevision: number;
+  correlationId: string;
+  submittedAt: string;
+  payload: {
+    goalId: string;
+    attemptId: string;
+    runId: string;
+    roleBinding: RoleBindingRefV1;
+    declaredPermissions: { tools: string[]; writeScope: string[] };
+    budget: TaskBudgetV1;
+  };
+};
+
+export type DispatchClaimReceipt =
+  | {
+      status: "committed";
+      commandId: string;
+      replayed: boolean;
+      leaseRef: TaskLeaseRef;
+      attemptRef: TaskAttemptRef;
+      runRef: RunRef;
+      outboxRef: DispatchOutboxRef;
+      eventIds: string[];
+      commitCursor: CommitCursor;
+    }
+  | {
+      status: "rejected";
+      commandId: string;
+      code:
+        | "invalid"
+        | "ineligible"
+        | "not_found"
+        | "revision_conflict"
+        | "idempotency_conflict"
+        | "unavailable";
+      issues?: TaskIneligibilityReason[];
+      currentRevision?: number;
+    };
+
+export type DispatchStartCommand = {
+  commandId: string;
+  commandType: "DispatchStartRun";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  /** runId — the Run aggregate. */
+  aggregateId: string;
+  /** expected Run revision (1 right after claim). */
+  expectedRevision: number;
+  correlationId: string;
+  submittedAt: string;
+  payload: {
+    envelope: TaskEnvelopeV1;
+    manifest: ContextManifestV1;
+  };
+};
+
+export type DispatchStartReceipt =
+  | {
+      status: "committed";
+      commandId: string;
+      replayed: boolean;
+      runRef: RunRef;
+      outboxRef: DispatchOutboxRef;
+      eventIds: string[];
+      commitCursor: CommitCursor;
+    }
+  | {
+      status: "rejected";
+      commandId: string;
+      code:
+        | "invalid"
+        | "not_found"
+        | "stale_binding"
+        | "revision_conflict"
+        | "idempotency_conflict"
+        | "unavailable";
+      currentRevision?: number;
+    };
+
+export type RunFactV1 =
+  | { kind: "runtime_event"; event: RuntimeEventV1 }
+  /** Explicit "no terminal signal" fact — carries its Run identity (mirrors runtime_event). */
+  | { kind: "outcome_unknown"; runRef: RunRef; reason: string };
+
+export type RunFactCommand = {
+  commandId: string;
+  commandType: "RunFact";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  /** runId — the Run aggregate. */
+  aggregateId: string;
+  /** Run revision the caller observed (single-writer CAS; stale -> revision_conflict). */
+  expectedRevision: number;
+  correlationId: string;
+  submittedAt: string;
+  payload: { fact: RunFactV1 };
+};
+
+export type RunFactRejectionCode =
+  | "invalid"
+  | "not_found"
+  | "duplicate_event"
+  | "stale_event"
+  | "conflict_event"
+  | "after_terminal"
+  | "revision_conflict"
+  | "unavailable";
+
+export type RunFactReceipt =
+  | {
+      status: "committed";
+      commandId: string;
+      /** Always false: run-fact commits have no ledger-level idempotency replay. */
+      replayed: false;
+      runRef: RunRef;
+      runRevision: number;
+      applied:
+        | { kind: "runtime_event"; runtimeEventId: string; sequence: number }
+        | { kind: "outcome_unknown" };
+      /** true when the fact ended the Run (terminal event / outcome_unknown). */
+      terminal: boolean;
+      eventIds: string[];
+      commitCursor: CommitCursor;
+    }
+  | {
+      status: "rejected";
+      commandId: string;
+      code: RunFactRejectionCode;
+      currentRevision?: number;
+    };
+
+// ------------------------------------------------------------------------ //
+// Fingerprints (JCS + SHA-256; volatile ids excluded — P1-00/02 convention)  //
+// ------------------------------------------------------------------------ //
+
+export function dispatchClaimFingerprint(command: DispatchClaimCommand): CommandFingerprint {
+  const shape = {
+    schemaVersion: command.schemaVersion,
+    commandType: command.commandType,
+    projectId: command.identity.projectId,
+    aggregateId: command.aggregateId,
+    expectedRevision: command.expectedRevision,
+    payload: {
+      goalId: command.payload.goalId,
+      attemptId: command.payload.attemptId,
+      runId: command.payload.runId,
+      roleBinding: command.payload.roleBinding,
+      declaredPermissions: command.payload.declaredPermissions,
+      budget: command.payload.budget,
+    },
+  };
+  return sha256Hex(canonicalJson(shape)) as CommandFingerprint;
+}
+
+export function dispatchStartFingerprint(command: DispatchStartCommand): CommandFingerprint {
+  const shape = {
+    schemaVersion: command.schemaVersion,
+    commandType: command.commandType,
+    projectId: command.identity.projectId,
+    aggregateId: command.aggregateId,
+    expectedRevision: command.expectedRevision,
+    payload: {
+      envelope: command.payload.envelope,
+      manifest: command.payload.manifest,
+    },
+  };
+  return sha256Hex(canonicalJson(shape)) as CommandFingerprint;
+}
+
+export function runFactFingerprint(command: RunFactCommand): CommandFingerprint {
+  const shape = {
+    schemaVersion: command.schemaVersion,
+    commandType: command.commandType,
+    projectId: command.identity.projectId,
+    aggregateId: command.aggregateId,
+    expectedRevision: command.expectedRevision,
+    payload: command.payload,
+  };
+  return sha256Hex(canonicalJson(shape)) as CommandFingerprint;
+}

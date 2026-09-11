@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import type { P1_10TestHarness } from "./p1-10-harness.js";
 import { runP110ControlScenario, type P110ControlScenarioResult } from "./p1-10-harness.js";
-import { buildP110Intent, buildP110SubmitControlCommand, buildP110Ack, buildP110RecordAckCommand, p110IntentId, P110_PROJECT, P110_WORKSPACE, p110RunRef } from "../../src/contracts/fixtures/control-fixtures.js";
+import { buildP110Intent, buildP110SubmitControlCommand, buildP110Ack, buildP110RecordAckCommand, p110IntentId, P110_PROJECT, P110_WORKSPACE, p110RunRef } from "../contract-support/fixtures/control-fixtures.js";
 import { P108_PROJECT_A, P108_TASK_WORK } from "./p1-08-harness.js";
 
 export function defineLifecycleControlContractSuite(

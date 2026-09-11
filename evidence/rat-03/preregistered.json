@@ -1,0 +1,77 @@
+{
+  "stage": "RAT-03",
+  "revision": "82a9e45a148f810ecc36916493c9e6913932fc03",
+  "source": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-03/source",
+  "configuration": {
+    "revision": "d6c00a9e-b67b-4ebc-a5a4-6a806b39e60a",
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash-vision-exp",
+    "baseUrl": "https://api.deepseek.com",
+    "protocol": "chat-completions",
+    "updatedAt": "2026-09-07T10:22:38.817Z"
+  },
+  "scriptSha256": "ab07581238864cbc8c28d04721624bb99c8666b26ba36f9c9606a1022fc1a8c2",
+  "repeats": 1,
+  "runnerOrder": [
+    "kernel-direct",
+    "platform-dispatch"
+  ],
+  "tasks": [
+    {
+      "taskId": "node-bearer-auth",
+      "digest": "sha256:bda555545b6017be51d0f4f84d420e7c01df4f15ab6ee645ee160b91ba90e10c",
+      "budget": {
+        "contextWindowTokens": 1000000,
+        "inputTokens": 200000,
+        "outputTokens": 16384,
+        "maxRequests": 10,
+        "maxToolCalls": 30,
+        "timeoutMs": 30000,
+        "perResponseTokens": 2048
+      }
+    },
+    {
+      "taskId": "python-slug-normalization",
+      "digest": "sha256:5bf48adad5466603431058b40550c7e4a314a1c0f05b7cd91cd2ac070f22440a",
+      "budget": {
+        "contextWindowTokens": 1000000,
+        "inputTokens": 200000,
+        "outputTokens": 16384,
+        "maxRequests": 10,
+        "maxToolCalls": 30,
+        "timeoutMs": 30000,
+        "perResponseTokens": 2048
+      }
+    },
+    {
+      "taskId": "recovery-exactly-once",
+      "digest": "sha256:aa7972146e6dce65170294101e5b78d4a0d66b3edf23904257d7ea88527ae304",
+      "budget": {
+        "contextWindowTokens": 1000000,
+        "inputTokens": 200000,
+        "outputTokens": 16384,
+        "maxRequests": 12,
+        "maxToolCalls": 36,
+        "timeoutMs": 30000,
+        "perResponseTokens": 2048
+      }
+    },
+    {
+      "taskId": "ts-nullish-timeout",
+      "digest": "sha256:47f7f4ff6abd2b0daf38716ebfa651b3eb25acb4cfa5271966eb2274c392ee7c",
+      "budget": {
+        "contextWindowTokens": 1000000,
+        "inputTokens": 200000,
+        "outputTokens": 16384,
+        "maxRequests": 8,
+        "maxToolCalls": 24,
+        "timeoutMs": 30000,
+        "perResponseTokens": 2048
+      }
+    }
+  ],
+  "network": "disabled for tools; provider HTTPS only in host",
+  "modelOptions": "RAT-01 bound client defaults on both paths; no thinking override",
+  "oracleIsolation": "only public base workspace and original instruction passed to worker; evaluator outside workspace",
+  "onFailure": "Preserve every trial, no automatic retries, budget increases or best-result selection"
+}

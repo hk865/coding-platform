@@ -1,0 +1,346 @@
+import type { ArtifactPort, ArtifactRef } from '../../contracts/artifact.js';
+import type { SourceRefV1 } from '../../contracts/dispatch.js';
+import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
+import { selectContextMaterials, type MaterialSelectionEntry } from './material-selection.js';
+
+import type { RuntimeContextScope, RuntimeContextText, RuntimeContextMaterials, RuntimeHistoryMaterial, RuntimeWorkContextMaterials } from '../../contracts/runtime-context-materials.js';
+import type { ReviewerRuntimeAccess, ReviewerProfileV1 } from '../../contracts/reviewer-context.js';
+import type { ReviewWorkRef } from '../../contracts/reviewer-work.js';
+import { reviewerRuntimeInput } from './reviewer-runtime-context.js';
+export type { RuntimeContextScope, RuntimeContextText, RuntimeContextMaterials } from '../../contracts/runtime-context-materials.js';
+export type RuntimeContextAccess = { vault: ArtifactPort; materials?: RuntimeContextMaterials; reviewer?: ReviewerRuntimeAccess };
+export type RuntimeContextManifest = {
+  schemaVersion: 1;
+  bundleRef: ArtifactRef;
+  scope: RuntimeContextScope;
+  planRef: TaskEnvelopeV1['planRef'];
+  workspaceSnapshot: TaskEnvelopeV1['workspaceSnapshot'];
+  permissions: TaskEnvelopeV1['permissions'];
+  selected: Array<{
+    kind: string; id: string; digest: string; sourceRefs: SourceRefV1[]; selectedBecause: string;
+    /** RW-12：材料在本 Run 中的资格。历史材料恒为 historical_explanation —— 它不是当前事实，
+     * 不授予权限，也不满足验收；只有这一种取值会被接受。 */
+    applicability?: 'historical_explanation';
+  }>;
+  gaps: string[];
+  truncated: Array<{ id: string; reason: string }>;
+  inputDigest: string;
+  selection?: MaterialSelectionEntry[];
+};
+export type RuntimeContextAssembly = { input: string; manifest: RuntimeContextManifest };
+
+import { artifactBodyDigest, artifactBodySize, ARTIFACT_MAX_SIZE_BYTES } from '../../contracts/artifact.js';
+import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
+import { validateTaskEnvelope } from '../../contracts/validation.js';
+
+export class RuntimeContextError extends Error {
+  constructor(readonly code: string, message: string) { super(message); }
+}
+const same = (a: unknown, b: unknown) => canonicalJson(a as JsonValue) === canonicalJson(b as JsonValue);
+function ensure(condition: unknown, message: string): asserts condition { if (!condition) throw new RuntimeContextError('invalid_context', message); }
+const object = (v: unknown): Record<string, unknown> => { ensure(v !== null && typeof v === 'object' && !Array.isArray(v), 'Context 材料必须为对象'); return v as Record<string, unknown>; };
+function sources(value: unknown): asserts value is SourceRefV1[] {
+  ensure(Array.isArray(value), 'Context 来源索引缺失');
+  for (const item of value) {
+    const ref = object(item);
+    ensure(['plan-revision', 'workspace', 'governance', 'artifact'].includes(String(ref['kind'])) && typeof ref['refId'] === 'string' && ref['refId'].length > 0 && typeof ref['revision'] === 'string' && ref['revision'].length > 0, 'Context 来源标识或版本无效');
+    ensure(ref['digest'] === undefined || typeof ref['digest'] === 'string', 'Context 来源摘要无效');
+  }
+}
+function checkedText(item: RuntimeContextText) {
+  ensure(item && typeof item.content === 'string' && item.content.length > 0 && typeof item.selectedBecause === 'string' && item.selectedBecause.length > 0, 'Context 正文或选入原因缺失');
+  ensure(artifactBodyDigest(item.content) === item.digest, 'Context 补充材料摘要不匹配');
+  sources(item.sourceRefs); ensure(item.sourceRefs.length > 0, 'Context 补充材料来源缺失');
+}
+
+/** Consume only the task-bound Vault bundle and explicitly selected current-scope materials. */
+export async function assembleRuntimeContext(
+  spec: RuntimeContextScope & { instruction: string; budget: { contextWindowTokens: number }; mode?: string; review?: { workRef: ReviewWorkRef; profile: ReviewerProfileV1 } },
+  envelope: TaskEnvelopeV1,
+  access: RuntimeContextAccess | undefined,
+): Promise<RuntimeContextAssembly> {
+  ensure(validateTaskEnvelope(envelope).length === 0, 'TaskEnvelope 结构无效');
+  const scope: RuntimeContextScope = { projectId: spec.projectId, workspaceId: spec.workspaceId, goalId: spec.goalId, taskId: spec.taskId, runId: spec.runId };
+  ensure(envelope.projectId === scope.projectId && envelope.workspaceId === scope.workspaceId && envelope.goalId === scope.goalId && envelope.taskId === scope.taskId, 'Context 与运行作用域不匹配');
+  ensure(same(envelope.runRef, { aggregateType: 'Run', projectId: scope.projectId, goalId: scope.goalId, runId: scope.runId }), 'Context Run 绑定不匹配');
+  ensure(envelope.attemptRef.projectId === scope.projectId && envelope.attemptRef.goalId === scope.goalId && envelope.attemptRef.taskId === scope.taskId && envelope.planRef.projectId === scope.projectId && envelope.workspaceSnapshot.workspaceId === scope.workspaceId, 'Context 任务、计划或工作区绑定不匹配');
+  ensure(envelope.budget.tokenBudget === spec.budget.contextWindowTokens, 'Context 上下文窗口与运行配置不匹配');
+  ensure(access?.vault, '真实运行缺少 ContextBundle 读取入口');
+  const opened = await access.vault.open(envelope.bundleRef, { requesterRunRef: envelope.runRef });
+  ensure(opened.status === 'ready', 'ContextBundle 不可用或当前 Run 无读取权限');
+  ensure(same(opened.record.ref, envelope.bundleRef) && artifactBodyDigest(opened.record.body) === envelope.bundleRef.digest && artifactBodySize(opened.record.body) === envelope.bundleRef.sizeBytes && envelope.bundleRef.contentType === 'application/json', 'ContextBundle 摘要、大小或格式不匹配');
+  let body: Record<string, unknown>;
+  try { body = object(JSON.parse(opened.record.body)); } catch { throw new RuntimeContextError('invalid_context', 'ContextBundle 正文不是有效 JSON'); }
+  ensure(body['schemaVersion'] === 1, 'ContextBundle 版本不支持；未隐式改写历史输入');
+  for (const key of ['projectId', 'workspaceId', 'goalId', 'taskId'] as const) ensure(body[key] === envelope[key], 'ContextBundle 作用域不匹配');
+  for (const key of ['runRef', 'attemptRef', 'planRef', 'workspaceSnapshot', 'permissions', 'budget', 'roleBinding'] as const) ensure(body[key] !== undefined && same(body[key], envelope[key]), 'ContextBundle ' + key + ' 绑定不匹配');
+  sources(body['sources']); sources(opened.record.sourceRefs);
+  ensure(same(body['sources'], envelope.sourceRefs) && same(opened.record.sourceRefs, envelope.sourceRefs), 'ContextBundle 来源清单与信封不匹配');
+  const task = object(body['task']);
+  ensure(typeof task['title'] === 'string' && task['title'].length > 0 && Array.isArray(task['obligations']), '已接受任务或义务缺失');
+  for (const item of task['obligations']) { const obligation = object(item); ensure(typeof obligation['obligationId'] === 'string' && typeof obligation['title'] === 'string', '已接受义务无效'); }
+  const dependencies = body['dependencies'];
+  ensure(Array.isArray(dependencies) && dependencies.every(d => typeof d === 'string') && new Set(dependencies).size === dependencies.length, 'ContextBundle 直接依赖清单缺失');
+  const manifest: RuntimeContextManifest = {
+    schemaVersion: 1, bundleRef: envelope.bundleRef, scope, planRef: envelope.planRef, workspaceSnapshot: envelope.workspaceSnapshot, permissions: envelope.permissions,
+    selected: [
+      { kind: 'accepted-task-bundle', id: envelope.envelopeId, digest: envelope.bundleRef.digest, sourceRefs: envelope.sourceRefs, selectedBecause: '当前 Control 已接受的任务、义务、角色权限和版本绑定' },
+      { kind: 'operator-instruction', id: spec.runId, digest: artifactBodyDigest(spec.instruction), sourceRefs: envelope.sourceRefs, selectedBecause: '此 Run 持久化的操作者任务输入；不代表额外权限或完成证据' },
+    ],
+    gaps: [], truncated: [], inputDigest: '',
+  };
+  if (spec.mode === 'review' || envelope.work?.kind === 'review') {
+    const review = access.reviewer;
+    ensure(spec.mode === 'review' && spec.review && envelope.work?.kind === 'review' && review,
+      'Reviewer runtime requires its canonical work and ephemeral material capability');
+    ensure(same(spec.review.workRef, envelope.work.reviewWorkRef) && same(spec.review.profile, review.profile) && same(review.profile, review.packet.profile) &&
+      same(review.packet.workRef, envelope.work.reviewWorkRef) && same(review.packet.reviewerRunRef, envelope.runRef) && same(envelope.reviewInput, review.input) &&
+      envelope.permissions.writeScope.length === 0 && same(envelope.permissions.tools, ['read']) && same(envelope.roleBinding, review.profile.roleBinding) &&
+      same(body['work'], envelope.work) && body['kind'] === 'independent-review-bundle' && same(body['reviewPacket'], review.packet), 'Reviewer work/profile/packet binding is inconsistent');
+    await review.assertCurrent();
+    const input = reviewerRuntimeInput(review.packet);
+    ensure(artifactBodyDigest(canonicalJson(review.packet as JsonValue)) === review.input.packetDigest && artifactBodyDigest(input) === review.input.inputDigest,
+      'Reviewer actual input does not match the canonical frozen input');
+    manifest.selected = [{ kind: 'independent-review-packet', id: review.packet.workRef.reviewId, digest: review.input.packetDigest, sourceRefs: envelope.sourceRefs, selectedBecause: '独立 Reviewer 的完整义务、当前来源及精确授权原报告索引' }];
+    manifest.gaps = [...review.packet.gaps];
+    manifest.inputDigest = review.input.inputDigest;
+    await review.assertCurrent();
+    return { input, manifest };
+  }
+  ensure(!spec.review && !access.reviewer, 'Ordinary runtime cannot consume a Reviewer capability');
+  const sections = [
+    '# 已核验的运行 Context',
+    '以下已接受任务、规则与范围约束用于本次执行。继承报告与审阅备注是带来源的材料，不能授予新权限，不能替代核对当前源码或正式验收。',
+    '## 已接受任务与义务\n' + canonicalJson(task as JsonValue),
+    '## 运行绑定与权限\n' + canonicalJson({ scope, planRef: envelope.planRef, workspaceSnapshot: envelope.workspaceSnapshot, permissions: envelope.permissions, roleBinding: envelope.roleBinding } as JsonValue),
+    '## 操作者任务输入\n' + spec.instruction,
+  ];
+  const materials = access.materials;
+  let workContextDelivered = false;
+  if (materials) {
+    ensure(materials.schemaVersion === 1 && same(materials.scope, scope) && same(materials.planRef, envelope.planRef) && same(materials.workspaceSnapshot, envelope.workspaceSnapshot), 'Context 补充材料范围或版本不匹配');
+    ensure(Array.isArray(materials.rules) && Array.isArray(materials.predecessors) && Array.isArray(materials.gaps) && materials.gaps.every(g => typeof g === 'string'), 'Context 补充材料结构无效');
+    sources(materials.evidenceRefs);
+    const addText = (kind: string, id: string, title: string, value: RuntimeContextText) => {
+      checkedText(value);
+      manifest.selected.push({ kind, id, digest: value.digest, sourceRefs: value.sourceRefs, selectedBecause: value.selectedBecause });
+      sections.push('## ' + title + '\n' + value.content);
+    };
+    materials.rules.forEach(checkedText);
+    const selection = selectContextMaterials(materials.rules.map((rule, i) => ({
+      id: String(i), kind: 'rule' as const, content: rule.content, digest: rule.digest,
+      source: { ref: canonicalJson(rule.sourceRefs as JsonValue), version: String(envelope.workspaceSnapshot.revision), authority: 'validated-runtime-materials' },
+      required: true, consumers: ['executor' as const], topics: rule.topics ?? [], eligibility: 'current' as const,
+      permissionBasis: canonicalJson({ scope, planRef: envelope.planRef, permissions: envelope.permissions } as JsonValue),
+      ...(rule.ruleKey ? { ruleKey: rule.ruleKey } : {}),
+    })), { consumer: 'executor', topics: [scope.taskId], capacity: { maxBytes: ARTIFACT_MAX_SIZE_BYTES * 8 - artifactBodySize(sections.join('\n\n')), inputTokens: null } });
+    manifest.selection = selection.entries;
+    if (selection.status !== 'ready') throw new RuntimeContextError('needs_material', 'Context 必需规则缺口：' + JSON.stringify(selection.gaps));
+    for (const chosen of selection.selected) {
+      const index = Number(chosen.id);
+      addText('rule', chosen.id, '本次规则 ' + (index + 1), materials.rules[index]!);
+    }
+    const seen = new Set<string>();
+    for (const predecessor of materials.predecessors) {
+      ensure(dependencies.includes(predecessor.taskId) && !seen.has(predecessor.taskId), 'Context 前驱不是本任务的唯一直接依赖');
+      seen.add(predecessor.taskId);
+      ensure(predecessor.runRef.aggregateType === 'Run' && predecessor.runRef.projectId === scope.projectId && predecessor.runRef.goalId === scope.goalId && predecessor.runRef.runId !== scope.runId, 'Context 前驱运行作用域不匹配');
+      ensure(predecessor.review.verdict === 'PASS' && predecessor.review.status === 'applied' && typeof predecessor.review.reviewId === 'string' && predecessor.review.reviewId.length > 0, 'Context 前驱缺少已正式应用的 PASS 审阅');
+      addText('predecessor-report', predecessor.runRef.runId, '直接前驱报告：' + predecessor.taskId, predecessor.report);
+      addText('operator-review', predecessor.review.reviewId, '操作者审阅备注（来源 operator，非模型原报告）：' + predecessor.taskId, predecessor.review.text);
+      if (predecessor.evidenceRefs) { sources(predecessor.evidenceRefs); sections.push('前驱正式证据索引：' + canonicalJson(predecessor.evidenceRefs as JsonValue)); }
+    }
+    ensure(dependencies.every(d => seen.has(d)), 'Context 缺少已验收的直接前驱材料');
+    manifest.selected.push({ kind: 'evidence-index', id: spec.taskId, digest: artifactBodyDigest(canonicalJson(materials.evidenceRefs as JsonValue)), sourceRefs: materials.evidenceRefs, selectedBecause: '当前直接前驱正式验收的证据索引；仅索引，不将未读取正文当作已核验事实' });
+    sections.push('## 本次证据索引\n' + canonicalJson(materials.evidenceRefs as JsonValue));
+    manifest.gaps.push(...materials.gaps);
+    // RW-12：工作身份与历史材料。它们的资格由类型固定为"历史解释"：只进 manifest.selected
+    // 的审计条目与正文的参考小节，不参与权限判定，也不参与完成归约。
+    workContextDelivered = appendWorkContextMaterials(materials.workContext, scope, sections, manifest);
+    // RW-17：角色必读材料的**取材结果**（contract／code／evidence／decision）。每一条都带
+    // selectedBecause 与 sourceRefs（含版本），并进入 manifest.selected 供逐条核对。
+    appendRoleMaterials(materials.roleMaterials, manifest, sections);
+    // RW-11/RW-12：角色规格只作为"这次工作的要求"被记录（必读材料供给了哪些、必产出是什么）。
+    // 它不产生完成状态：必产出的完备性判定属于 VerificationEngine 的既有归约（ADR 0003 D4-3）。
+    appendRoleSpecMaterials(materials.roleSpec, manifest, sections);
+  } else {
+    ensure(dependencies.length === 0, 'Context 缺少已验收的直接前驱材料');
+    manifest.gaps.push('未提供额外规则、已验收前驱或证据索引；仅消费已接受任务包和此 Run 原始指令。');
+  }
+  if (!workContextDelivered) {
+    // 诚实缺口：本包没有携带工作身份与历史材料时明确说出来，而不是让读者以为
+    // "没有历史"等同于"历史不存在"。
+    manifest.gaps.push('本次 Context 未携带 WorkContext 工作身份与历史材料（该运行没有派发时编译的工作身份，或宿主未接线 CompletedWork 历史检索与 ExecutionMemory 层级）；此包不代表完整长期 Context。');
+  }
+  sections.push('## 来源、选入原因与材料缺口\n' + canonicalJson({ selected: manifest.selected, selection: manifest.selection ?? [], gaps: manifest.gaps, truncated: manifest.truncated } as JsonValue));
+  const input = sections.join('\n\n');
+  ensure(artifactBodySize(input) <= ARTIFACT_MAX_SIZE_BYTES * 8, 'Context 材料超过有界组装上限；未静默截断，需缩小选材范围');
+  manifest.inputDigest = artifactBodyDigest(input);
+  return { input, manifest };
+}
+
+/**
+ * RW-12：把派发时编译好的工作身份与历史材料写进既有 ContextBundle 的正文与 manifest。
+ *
+ * 边界（写进正文，而不只是写进代码注释）：
+ *  - 材料只有"历史解释"资格：类型上 `RuntimeHistoryMaterial.applicability` 只能是
+ *    `historical_explanation`，这里再校验一次；不合法即抛错，模型看不到不合法材料；
+ *  - 材料不改变权限：本函数据不写 manifest.permissions，也不触碰 envelope.permissions；
+ *  - 每条材料都必须有正文、摘要、来源（含版本）与选入理由，否则整包 fail-closed；
+ *  - 缺失项与上限造成的未选入都进 manifest.gaps，正文里也重复一遍，便于人核对
+ *    "选了什么、为什么、还缺什么"。
+ */
+/**
+ * RW-12：把解析出来的角色规格写进 manifest 与正文。
+ *
+ * 只读审计：这里既不判定必产出是否完成，也不产生任何完成状态——运行结束时的完备性判定属于
+ * VerificationEngine 的既有归约路径（ADR 0003 D4-3），本文件不新造完成语义。
+ * 必读材料的供给状态（RW-17）：`supplied: true` + `selection: 'selected'` 表示本次选入了具体条目；
+ * `supplied: true` + `selection: 'empty'` 表示通道读到了"本次范围内确定没有"这一事实；
+ * `supplied: false` 表示本入口拥有该通道但这次没有供应（可选材料）；
+ * `supplied: null` 只能表示"本运行入口不拥有该通道"——RW-17 之后桥表全键接通，它不可达，
+ * 但形状保留，将来新增类别时按同一口径表态。任何情况下都不得把"未核对"写成已满足。
+ */
+function appendRoleSpecMaterials(
+  roleSpec: import('../../contracts/role-spec-materials.js').RuntimeRoleSpecMaterials | undefined,
+  manifest: RuntimeContextManifest,
+  sections: string[],
+): void {
+  if (roleSpec === undefined) return;
+  ensure(roleSpec.schemaVersion === 1 && typeof roleSpec.roleId === 'string' && roleSpec.roleId.length > 0, '角色规格记录无效');
+  ensure(Array.isArray(roleSpec.requiredMaterials) && Array.isArray(roleSpec.requiredOutputs) && Array.isArray(roleSpec.responsibility), '角色规格记录结构无效');
+  sources(roleSpec.sourceRefs);
+  for (const requirement of roleSpec.requiredMaterials) {
+    ensure(requirement.supplied === true || requirement.supplied === false || requirement.supplied === null, '必读材料的供给状态无效');
+    ensure(typeof requirement.detail === 'string' && requirement.detail.length > 0, '必读材料缺少供给说明');
+  }
+  manifest.selected.push({
+    kind: 'role-spec',
+    id: roleSpec.roleId,
+    digest: artifactBodyDigest(canonicalJson(roleSpec as unknown as JsonValue)),
+    sourceRefs: roleSpec.sourceRefs,
+    selectedBecause: roleSpec.selectedBecause,
+  });
+  sections.push('## 角色规格（要求，不是授权）\n' + canonicalJson({
+    roleId: roleSpec.roleId,
+    revision: roleSpec.revision,
+    label: roleSpec.label,
+    purpose: roleSpec.purpose,
+    responsibility: roleSpec.responsibility,
+    requiredMaterials: roleSpec.requiredMaterials,
+    requiredOutputs: roleSpec.requiredOutputs,
+    note: '必产出是否完备由运行结束时的既有归约判定；本记录不表示已完成任何产出。',
+  } as JsonValue));
+}
+
+/**
+ * RW-17：把角色必读材料的取材结果写进既有 ContextBundle 的正文与 manifest。
+ *
+ * 边界（写进行为，不只是注释）：
+ *  - 材料资格在类型上只有 `reference` 一种：这里再校验一次，不合法即整包 fail-closed，
+ *    模型看不到不合法材料；
+ *  - 每条都必须有正文、摘要、来源（含版本）与选入理由，否则整包抛错（不静默放行）；
+ *  - 它不写 `manifest.permissions`，也不触碰 envelope.permissions：材料只是参考，
+ *    完成判定与证据接纳仍只来自既有归约路径；
+ *  - `selection: 'empty'` 的条目照常进入 manifest：它表示"本次范围内确实没有"这一**读到的确定事实**，
+ *    与该类别"缺失"（那时根本走不到这里）是两件事，不能互相冒充。
+ */
+function appendRoleMaterials(
+  roleMaterials: import('../../contracts/runtime-context-materials.js').RuntimeRoleMaterialsV1 | undefined,
+  manifest: RuntimeContextManifest,
+  sections: string[],
+): void {
+  if (roleMaterials === undefined) return;
+  ensure(roleMaterials.schemaVersion === 1 && Array.isArray(roleMaterials.entries), '角色材料记录结构无效');
+  if (roleMaterials.entries.length === 0) return;
+  sections.push('# 角色必读材料（按角色规格取材）');
+  sections.push('以下材料是**参考**：它们不授予任何工具、写入范围或租约，也不构成当前验收依据；'
+    + '每条都写明选入理由与来源版本，未选入或确定为空的原因在 manifest.gaps 与下面的缺口小节里。');
+  for (const entry of roleMaterials.entries) {
+    ensure(typeof entry.kind === 'string' && entry.kind.length > 0, '角色材料缺少类别');
+    ensure(typeof entry.materialId === 'string' && entry.materialId.length > 0, '角色材料缺少稳定标识');
+    ensure(entry.qualification === 'reference', '角色材料的资格只能是"参考"');
+    ensure(entry.selection === 'selected' || entry.selection === 'empty', '角色材料的选材状态无效');
+    ensure(typeof entry.content === 'string' && entry.content.length > 0 && artifactBodyDigest(entry.content) === entry.digest, '角色材料正文或摘要不匹配');
+    ensure(typeof entry.selectedBecause === 'string' && entry.selectedBecause.length > 0, '角色材料缺少选入理由');
+    sources(entry.sourceRefs);
+    ensure(entry.sourceRefs.length > 0, '角色材料缺少来源（含版本）');
+    ensure(entry.versions !== null && typeof entry.versions === 'object' &&
+      (entry.versions.workspaceRevision === null || Number.isSafeInteger(entry.versions.workspaceRevision)) &&
+      (entry.versions.planRevision === null || Number.isSafeInteger(entry.versions.planRevision)), '角色材料缺少版本标注');
+    manifest.selected.push({
+      kind: 'role-material:' + entry.kind,
+      id: entry.materialId,
+      digest: entry.digest,
+      sourceRefs: entry.sourceRefs,
+      selectedBecause: entry.selectedBecause,
+    });
+    sections.push('## 角色必读材料：' + entry.kind + '（' + (entry.selection === 'selected' ? '本次选入的条目' : '本次范围内为空') + '）\n' + entry.content);
+  }
+}
+
+function appendWorkContextMaterials(
+  workContext: RuntimeWorkContextMaterials | undefined,
+  scope: RuntimeContextScope,
+  sections: string[],
+  manifest: RuntimeContextManifest,
+): boolean {
+  if (workContext === undefined) return false;
+  ensure(workContext.schemaVersion === 1 && typeof workContext === 'object' && workContext.identity !== undefined, '工作身份材料结构无效');
+  ensure(
+    Array.isArray(workContext.notes) && Array.isArray(workContext.history) &&
+    Array.isArray(workContext.gaps) && workContext.gaps.every(g => typeof g === 'string'),
+    '历史材料结构无效',
+  );
+  const identity = workContext.identity;
+  ensure(typeof identity.workId === 'string' && identity.workId.length > 0 && Array.isArray(identity.linkedRunIds), '工作身份缺少标识或参与运行清单');
+  ensure(identity.goalId === null || identity.goalId === scope.goalId, '工作身份不属于当前目标');
+  sources(identity.sourceRefs);
+  ensure(identity.sourceRefs.length > 0 && typeof identity.selectedBecause === 'string' && identity.selectedBecause.length > 0, '工作身份缺少来源或选入理由');
+
+  sections.push('# 本 Run 的工作身份与历史材料');
+  sections.push('以下工作身份与历史材料只是**参考**：它们不授予任何工具、写入范围或租约，也不构成当前验收依据；'
+    + '当前权限与验收只来自上面已核验的任务包、规则与正式证据。历史材料中的结论必须结合当前源码与规范重新核对。');
+  sections.push('## 工作身份\n' + canonicalJson({
+    workId: identity.workId,
+    workKind: identity.workKind,
+    goalId: identity.goalId,
+    taskId: identity.taskId,
+    planRef: identity.planRef,
+    planRevision: identity.planRevision,
+    workspaceRevision: identity.workspaceRevision,
+    linkedRunIds: identity.linkedRunIds,
+    createdAt: identity.createdAt,
+  } as JsonValue));
+  manifest.selected.push({
+    kind: 'work-identity',
+    id: identity.workId,
+    digest: artifactBodyDigest(canonicalJson(identity as unknown as JsonValue)),
+    sourceRefs: identity.sourceRefs,
+    selectedBecause: identity.selectedBecause,
+    applicability: 'historical_explanation',
+  });
+
+  const appendHistory = (kind: 'work-note' | 'completed-work', item: RuntimeHistoryMaterial) => {
+    checkedText(item);
+    ensure(item.applicability === 'historical_explanation', '历史材料的资格不能是当前事实');
+    ensure(typeof item.materialId === 'string' && item.materialId.length > 0, '历史材料缺少稳定标识');
+    ensure(
+      item.versions !== null && typeof item.versions === 'object' &&
+      (item.versions.workspaceRevision === null || Number.isSafeInteger(item.versions.workspaceRevision)) &&
+      (item.versions.planRevision === null || Number.isSafeInteger(item.versions.planRevision)),
+      '历史材料缺少版本标注',
+    );
+    manifest.selected.push({
+      kind, id: item.materialId, digest: item.digest, sourceRefs: item.sourceRefs,
+      selectedBecause: item.selectedBecause, applicability: 'historical_explanation',
+    });
+    sections.push('## ' + (kind === 'work-note' ? '本工作留痕' : '相关已完成工作') + '\n' + item.content);
+  };
+  for (const note of workContext.notes) appendHistory('work-note', note);
+  for (const item of workContext.history) appendHistory('completed-work', item);
+  // materials.gaps 里已经包含同一批缺口（编译器产出的两个视图是同一份列表）；
+  // 这里只补上尚未出现过的，避免正文里同一缺口出现两遍造成误读。
+  for (const gap of workContext.gaps) if (!manifest.gaps.includes(gap)) manifest.gaps.push(gap);
+  return true;
+}

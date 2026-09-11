@@ -1,0 +1,18 @@
+--- evidence/2026-09-10-external-review-repair/before/tests/tests/restart/p1-02-restart-fixtures.ts	2026-09-09 17:57:18.263909000 +0800
++++ tests/restart/p1-02-restart-fixtures.ts	2026-09-10 01:37:38.449734300 +0800
+@@ -1,3 +1,4 @@
++import { classifyRestartProbeError } from "./readiness-probe.js";
+ /**
+  * P1-02 restart-path fixtures: full persistent path
+  *   bootstrap -> install(CompletionPolicy, ArchitectureBaseline) ->
+@@ -88,8 +89,8 @@
+   try {
+     await runP102Path(h);
+     return true;
+-  } catch {
+-    return false;
++  } catch (error) {
++    return classifyRestartProbeError(error);
+   } finally {
+     await h.cleanup().catch(() => undefined);
+   }

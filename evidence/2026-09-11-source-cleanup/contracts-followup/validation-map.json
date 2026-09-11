@@ -1,0 +1,746 @@
+[
+  {
+    "name": "ValidationIssueCode",
+    "group": "common",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "ValidationIssue",
+    "group": "common",
+    "public": true,
+    "shared": true
+  },
+  {
+    "name": "UnknownRecord",
+    "group": "common",
+    "public": false,
+    "shared": true
+  },
+  {
+    "name": "isRecord",
+    "group": "common",
+    "public": false,
+    "shared": true
+  },
+  {
+    "name": "stringField",
+    "group": "common",
+    "public": false,
+    "shared": true
+  },
+  {
+    "name": "validateActor",
+    "group": "identity",
+    "public": true,
+    "shared": true
+  },
+  {
+    "name": "validateCommandIdentity",
+    "group": "identity",
+    "public": true,
+    "shared": true
+  },
+  {
+    "name": "validateCreateGoalCommand",
+    "group": "goal",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateBootstrapEntries",
+    "group": "bootstrap",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateWorkspaceBootstrapFixture",
+    "group": "bootstrap",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateWorkspaceBootstrapCommand",
+    "group": "bootstrap",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateDomainEvent",
+    "group": "event",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateGoalViewQuery",
+    "group": "goal",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "issuesToErrorMessage",
+    "group": "common",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "safePositiveIntField",
+    "group": "common",
+    "public": false,
+    "shared": true
+  },
+  {
+    "name": "validateStringArray",
+    "group": "common",
+    "public": false,
+    "shared": true
+  },
+  {
+    "name": "validateCompletionPolicyContent",
+    "group": "governance",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateArchitectureBaselineContent",
+    "group": "governance",
+    "public": true,
+    "shared": true
+  },
+  {
+    "name": "validateCompletionPolicyFixture",
+    "group": "governance",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateArchitectureBaselineFixture",
+    "group": "governance",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateGovernanceInstallCommon",
+    "group": "governance",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateContentDigest",
+    "group": "governance",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateInstallCompletionPolicyRevisionCommand",
+    "group": "governance",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateInstallArchitectureBaselineRevisionCommand",
+    "group": "governance",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validatePin",
+    "group": "governance",
+    "public": false,
+    "shared": true
+  },
+  {
+    "name": "validateActivateCommon",
+    "group": "governance",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateActivateProjectCompletionPolicyCommand",
+    "group": "governance",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateActivateProjectArchitectureBaselineCommand",
+    "group": "governance",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateTaskScope",
+    "group": "plan",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "REQUIREMENT_LEVELS",
+    "group": "plan",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "TASK_KINDS",
+    "group": "plan",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "DISPOSITIONS",
+    "group": "plan",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "PHASES",
+    "group": "plan",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateEnum",
+    "group": "common",
+    "public": false,
+    "shared": true
+  },
+  {
+    "name": "validateRuntimeTask",
+    "group": "plan",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateVerificationRequirement",
+    "group": "plan",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateAcceptanceObligation",
+    "group": "plan",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validatePlanRevisionDraft",
+    "group": "plan",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateApplyPlanRevisionCommand",
+    "group": "plan",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "numberField",
+    "group": "common",
+    "public": false,
+    "shared": true
+  },
+  {
+    "name": "stringArrayField",
+    "group": "common",
+    "public": false,
+    "shared": true
+  },
+  {
+    "name": "validateRoleBindingRef",
+    "group": "dispatch",
+    "public": true,
+    "shared": true
+  },
+  {
+    "name": "validateTaskBudget",
+    "group": "dispatch",
+    "public": true,
+    "shared": true
+  },
+  {
+    "name": "validateDeclaredPermissions",
+    "group": "dispatch",
+    "public": false,
+    "shared": true
+  },
+  {
+    "name": "validateRunRef",
+    "group": "dispatch",
+    "public": false,
+    "shared": true
+  },
+  {
+    "name": "validateDispatchClaimCommand",
+    "group": "dispatch",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateDispatchStartCommand",
+    "group": "dispatch",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateRunFactCommand",
+    "group": "dispatch",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateTaskEnvelope",
+    "group": "dispatch",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateContextManifest",
+    "group": "dispatch",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateRuntimeEvent",
+    "group": "dispatch",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateTaskContextRequest",
+    "group": "dispatch",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateEvidenceSource",
+    "group": "evidence",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateArtifactRefRef",
+    "group": "evidence",
+    "public": true,
+    "shared": true
+  },
+  {
+    "name": "validateEvidenceCoverage",
+    "group": "evidence",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateSubmitEvidenceCommand",
+    "group": "evidence",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateReduceTaskCommand",
+    "group": "evidence",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateReduceGoalCommand",
+    "group": "evidence",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "HANDOFF_PACKET_KEYS",
+    "group": "handoff",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "rejectUnknownFields",
+    "group": "common",
+    "public": false,
+    "shared": true
+  },
+  {
+    "name": "validateHandoffSource",
+    "group": "handoff",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateHandoffCompletedItem",
+    "group": "handoff",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "HANDOFF_UNRESOLVED_KINDS",
+    "group": "handoff",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateHandoffUnresolvedItem",
+    "group": "handoff",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateHandoffPacketRef",
+    "group": "handoff",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateHandoffPacket",
+    "group": "handoff",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateRecordHandoffCommand",
+    "group": "handoff",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateClaimReplacementCommand",
+    "group": "handoff",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateHandoffContextRequest",
+    "group": "handoff",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "HANDOFF_CONTROL_KINDS",
+    "group": "handoff",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateHandoffControlCommand",
+    "group": "handoff",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateHandoffSnapshotQuery",
+    "group": "handoff",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateConflictScope",
+    "group": "workspace",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateWorkspaceLeaseHolder",
+    "group": "workspace",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateLeaseBase",
+    "group": "workspace",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateAcquireWorkspaceReadLeaseCommand",
+    "group": "workspace",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateAcquireWorkspaceWriteLeaseCommand",
+    "group": "workspace",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateReleaseWorkspaceLeaseCommand",
+    "group": "workspace",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateEvidenceInputRef",
+    "group": "integration",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateRecordIntegrationResultCommand",
+    "group": "integration",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateRecordPatchCommand",
+    "group": "integration",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "WORK_CONTEXT_BIND_KEYS",
+    "group": "context",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateWorkContextBindingValue",
+    "group": "context",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "EXECUTION_NOTE_KEYS",
+    "group": "context",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateExecutionNote",
+    "group": "context",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "CONTINUATION_RESULT_KEYS",
+    "group": "context",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateContextContinuationResult",
+    "group": "context",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateBindWorkContextCommand",
+    "group": "context",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateLinkWorkRunCommand",
+    "group": "context",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateRecordExecutionNoteCommand",
+    "group": "context",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateRecordContinuationCommand",
+    "group": "context",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateArtifactOwnerRunRef",
+    "group": "material-access",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateMaterialBasis",
+    "group": "material-access",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateMaterialAccessGrant",
+    "group": "material-access",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateGrantMaterialAccessCommand",
+    "group": "material-access",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateRevokeMaterialAccessCommand",
+    "group": "material-access",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateWorkContextRequest",
+    "group": "context",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateContinuationCheckRequest",
+    "group": "context",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "INSPECTION_INTENT_KEYS",
+    "group": "architecture",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateArchitectureInspectionIntent",
+    "group": "architecture",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateArchitectureBaselinePin",
+    "group": "architecture",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "FINDING_KEYS",
+    "group": "architecture",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateArchitectureFinding",
+    "group": "architecture",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "BRIEF_KEYS",
+    "group": "architecture",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateArchitectureDecisionBrief",
+    "group": "architecture",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "PROPOSAL_KEYS",
+    "group": "architecture",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateArchitectureCandidateProposal",
+    "group": "architecture",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateP112CommandShape",
+    "group": "architecture",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateRecordArchitectureInspectionCommand",
+    "group": "architecture",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateRecordArchitectureFindingCommand",
+    "group": "architecture",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateRecordArchitectureDecisionBriefCommand",
+    "group": "architecture",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateRecordCandidateBaselineProposalCommand",
+    "group": "architecture",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateArchitectureEvolutionPolicyFixture",
+    "group": "governance",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateArchitectureEvolutionPolicyContent",
+    "group": "governance",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateInstallArchitectureEvolutionPolicyRevisionCommand",
+    "group": "governance",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateActivateProjectArchitectureEvolutionPolicyCommand",
+    "group": "governance",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateRoleSpecContent",
+    "group": "role",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateRoleMaterialList",
+    "group": "role",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateRoleOutputList",
+    "group": "role",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateCoordinationRoleMatrix",
+    "group": "role",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateRoleSpecPin",
+    "group": "role",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateRoleSpecInstallCommon",
+    "group": "role",
+    "public": false,
+    "shared": false
+  },
+  {
+    "name": "validateInstallRoleSpecRevisionCommand",
+    "group": "role",
+    "public": true,
+    "shared": false
+  },
+  {
+    "name": "validateActivateRoleSpecRevisionCommand",
+    "group": "role",
+    "public": true,
+    "shared": false
+  }
+]

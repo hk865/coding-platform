@@ -1,0 +1,174 @@
+{
+  "ticket": "VR-02-C",
+  "generatedAt": "2026-09-09T14:30:17.7841901Z",
+  "root": "D:/1.project/Software/agent_platform",
+  "fileCount": 41,
+  "digestAlgorithm": "sha256 UTF-8 listed path + space + sha256 lines joined by LF without trailing LF",
+  "digest": "7556b919f647abf243ea40c2768a26cf9ce64a06f7295c9149b0766ec0907b5a",
+  "files": [
+    {
+      "path": "src/contracts/commands/reviewer-work.ts",
+      "sha256": "cb2d33e46ef82be9bde533a600a6fcebea144229e2638fbbd03d2654b40110bd"
+    },
+    {
+      "path": "src/contracts/console-views.ts",
+      "sha256": "afc9112262bfb475cb1aa0183bc0297a2f12b9915d926715c79ce6f95c8aed12"
+    },
+    {
+      "path": "src/contracts/dispatch.ts",
+      "sha256": "acb53603191d5df1432fcc47263fea0719d14cf92893db4c9cae1ccb77123493"
+    },
+    {
+      "path": "src/contracts/events.ts",
+      "sha256": "e823087ce2c4a8eec8c194d2c46b1f290c79dce9dfbea2f0b1d599ef64864107"
+    },
+    {
+      "path": "src/contracts/evidence.ts",
+      "sha256": "6fe436f34b673fa9b72d5b0abe73cfba91bed5d11971a7d93528242d4709f828"
+    },
+    {
+      "path": "src/contracts/ledger-validation.ts",
+      "sha256": "d7eb4b7ec23e90d1cf2b9e55211d6eed8e6ccc61af50ce729f95d8f2d48d4ba0"
+    },
+    {
+      "path": "src/contracts/ledger.ts",
+      "sha256": "ae4f730bdf29a710e5d8651a046cd7efe0d9faf2262e489d15b362d71a32eef0"
+    },
+    {
+      "path": "src/contracts/plan.ts",
+      "sha256": "dcd9054a5317168322e16d6a35b2a24faefac6d42e39ad276cba11ce9819365d"
+    },
+    {
+      "path": "src/contracts/policy-explanation.ts",
+      "sha256": "88e81aa6b8c6f24c34309baf812e9c0f6dd520aac47e3dc02c71729d5f09cd5c"
+    },
+    {
+      "path": "src/contracts/read-model.ts",
+      "sha256": "53f2a1dabfb0788510cd447df4610ec9af9dc552cd63e7d6c9b59ba22830e8c9"
+    },
+    {
+      "path": "src/contracts/reviewer-work.ts",
+      "sha256": "caa1a540a68706258bb96bf550a8afb92d0b68a0a0b77056d14700ccd35a2a0d"
+    },
+    {
+      "path": "src/contracts/task-envelope.ts",
+      "sha256": "d1546b950f7d84641fbd921d953ad2775618823330fbcaa7c2eb1959429f0fc0"
+    },
+    {
+      "path": "src/contracts/validation.ts",
+      "sha256": "67cbaef49529f1c2974f24b05e5be54fc834c2031714883afdc3a2b2c6cc0fa6"
+    },
+    {
+      "path": "src/control/dispatch-engine.ts",
+      "sha256": "d0129f772d7f7425661d9b00e13f2192268eaf14329092f7b12938f929a589fb"
+    },
+    {
+      "path": "src/control/dispatch-facts.ts",
+      "sha256": "8c2175e2d2e87c15bfff3149215444c1d952dc80c85010263468944b642ae896"
+    },
+    {
+      "path": "src/control/evidence-intake.ts",
+      "sha256": "b24a7c66568f0dbc0a535005a8120bfabbcae0adf2ab5b7521a767de39571360"
+    },
+    {
+      "path": "src/control/goal-reducer.ts",
+      "sha256": "aa27d2997356350af0e0efdabfe363b5f88f984b03033e3c5133af8a3fe0a1a7"
+    },
+    {
+      "path": "src/control/handoff-drive.ts",
+      "sha256": "086bb03a42ed7d261f6cd1125585810ef5a27dc7d5429f0beb3157a5c0b33c1c"
+    },
+    {
+      "path": "src/control/leased-worker-runtime.ts",
+      "sha256": "df41462e83222e31e00f2c67a01d327db4664639ea388743982bb34f42709db2"
+    },
+    {
+      "path": "src/control/operator-plan-compiler.ts",
+      "sha256": "827449d7602e6f0b33886bc92107aa528733fec30cdf667453700ffe08487fdd"
+    },
+    {
+      "path": "src/control/policies/initial-plan-admission.ts",
+      "sha256": "3652fc1d44f9f38e6db3377321b35f7133e9673ab5df1f9a558d238e56281ec9"
+    },
+    {
+      "path": "src/control/policies/reviewer-evidence.ts",
+      "sha256": "780daa7cfec8fabaa555c5e7869d2fe3abe44f9909ccd8a9e433956cc148cb81"
+    },
+    {
+      "path": "src/control/policy-explanation.ts",
+      "sha256": "493f54e10fdf303c4de88af5abc6d8030768ff01ee1a26fd0b79270fca14a0cf"
+    },
+    {
+      "path": "src/control/records/plan.ts",
+      "sha256": "dc6553195c13313ddc129a565b32d8da0cea71d01fefc95824ab82d4416932ff"
+    },
+    {
+      "path": "src/control/reviewer-dispatch.ts",
+      "sha256": "c523433b0139be2427d2ea1b3705681735c79fbc02281fb28fd45e75c334e2f6"
+    },
+    {
+      "path": "src/control/reviewer-work.ts",
+      "sha256": "914c1795e5bf59a819ceeee7668f57cb69d2f632f1afd8d29ba46109adf5383f"
+    },
+    {
+      "path": "src/control/runtime-dispatch.ts",
+      "sha256": "12c5f09f88131b235934b46d24237b4993fe07ef5165a64dd6c495c747641f7e"
+    },
+    {
+      "path": "src/control/start-run.ts",
+      "sha256": "bede85395a712fd553e838ac597630cf4d2669b0ff3320acd30dd72d60768282"
+    },
+    {
+      "path": "src/control/task-reducer.ts",
+      "sha256": "e09448a123ea5ffeee4d833561debadaddcc45b3680028eeb432f8d5ac7df021"
+    },
+    {
+      "path": "src/control/workspace-drive.ts",
+      "sha256": "a1ca68a53b62c99e2c410755b7aab6ebf430ac1a4f967ac484ce2442a3094c71"
+    },
+    {
+      "path": "src/ledger/in-memory-ledger.ts",
+      "sha256": "e60b5201256f1294c4c933628174714dca7ebd3374771631490ee42a84cf9c12"
+    },
+    {
+      "path": "src/read-model/read-model-index.ts",
+      "sha256": "7286c158a60181baf20ea4c46cdcee59bd826c123ef2926addf949ee65ad6062"
+    },
+    {
+      "path": "src/read-model/reviewer-projection.ts",
+      "sha256": "e7c2e2263ea40578300b279504252bbb2c6b3b8c5f7afa441013c13d2e59c77d"
+    },
+    {
+      "path": "src/sqlite-ledger/sqlite-ledger.ts",
+      "sha256": "aa4201876ac262348836ae300ebada6758670ae963439fa4f21ab6f332bb98f6"
+    },
+    {
+      "path": "src/sqlite-read-model/sqlite-read-model-index.ts",
+      "sha256": "8a9b040f6c3c173a289ab891905e8bae36c4f54ffa6ab4f43e01aeb24e302d09"
+    },
+    {
+      "path": "tests/control/reviewer-dispatch-isolation.test.ts",
+      "sha256": "e41c1c40b3873b43a278397bca2a6f3f901392e017c1f5ed588912fa72a60b8c"
+    },
+    {
+      "path": "tests/control/reviewer-existing-drivers-isolation.test.ts",
+      "sha256": "4d77dc82ee71c83a69f3eb8a4c9f1cbf8d5431c07002e5399a1b35789bb88ceb"
+    },
+    {
+      "path": "tests/control/reviewer-reduction-race.test.ts",
+      "sha256": "3dfe5f0dcc2c822e133ca6dc3440e2bca92ede6a9949f1e2ac6283b0ad7a5523"
+    },
+    {
+      "path": "tests/control/reviewer-work-fixture.ts",
+      "sha256": "5b3d84ea55f68e137cab2386ac5c719c8dcc1d13d89ab9fe18a5817cab2a21b1"
+    },
+    {
+      "path": "tests/control/reviewer-work-persistence.test.ts",
+      "sha256": "80afc81d10b3c1d806cd71f9eefc1bfc02deaef338091db18ef3bfb7b238fe37"
+    },
+    {
+      "path": "tests/control/reviewer-work.test.ts",
+      "sha256": "b5b6bfe5d4c2b3b42e96ce508ef3822ebb41d53153b31bacffdc66da67abed4f"
+    }
+  ]
+}

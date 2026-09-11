@@ -1,0 +1,247 @@
+/** role protocol schema validation. Structural checks do not grant authority. */
+import { ROLE_MATERIAL_KINDS } from '../role-spec.js';
+import { ROLE_OUTPUT_KINDS } from '../role-spec.js';
+import { ROLE_RESPONSIBILITIES } from '../role-spec.js';
+import type { ValidationIssue } from './common.js';
+import type { UnknownRecord } from './common.js';
+import { isRecord } from './common.js';
+import { stringField } from './common.js';
+import { validateCommandIdentity } from './identity.js';
+import { stringArrayField } from './common.js';
+
+// RW-11 role spec: content + matrix + install/activate commands              //
+
+/**
+ * 角色规格正文的形状校验（安装期判据，零写入）。
+ *
+ * 为什么这些字段是**必填**而不是可选：规格存在的意义就是「框架按规格校验绑定」，
+ * 允许缺项等于允许一个没有权限上界、没有必产出、没有退出条件的角色被登记进来——
+ * 那比不登记更危险（看起来已校验）。因此这里要求的字段与 ADR 0003 D4-1 列举的一致：
+ * 职责、必读材料、可选材料、权限与工具、必产出、退出条件。
+ */
+export function validateRoleSpecContent(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: path + ".schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "label", issues, path + ".label");
+  stringField(value, "purpose", issues, path + ".purpose");
+
+  const responsibility = value["responsibility"];
+  if (
+    !Array.isArray(responsibility) ||
+    responsibility.length === 0 ||
+    responsibility.some((item) => typeof item !== "string" || !(ROLE_RESPONSIBILITIES as readonly string[]).includes(item))
+  ) {
+    issues.push({
+      path: path + ".responsibility",
+      code: "bad_enum",
+      message: path + ".responsibility must be a non-empty subset of " + ROLE_RESPONSIBILITIES.join("|"),
+    });
+  } else if (new Set(responsibility).size !== responsibility.length) {
+    issues.push({ path: path + ".responsibility", code: "duplicate_identity", message: path + ".responsibility must not repeat a view" });
+  }
+
+  validateRoleMaterialList(value["requiredMaterials"], path + ".requiredMaterials", issues, false);
+  validateRoleMaterialList(value["optionalMaterials"], path + ".optionalMaterials", issues, true);
+  validateRoleOutputList(value["requiredOutputs"], path + ".requiredOutputs", issues);
+
+  const permissions = value["permissions"];
+  if (!isRecord(permissions)) {
+    issues.push({ path: path + ".permissions", code: "bad_type", message: path + ".permissions must be an object" });
+  } else {
+    const tools = stringArrayField(permissions, "tools", issues, path + ".permissions.tools", false);
+    if (tools !== null && new Set(tools).size !== tools.length) {
+      issues.push({ path: path + ".permissions.tools", code: "duplicate_identity", message: path + ".permissions.tools must not repeat a tool" });
+    }
+    if (permissions["writeScope"] !== "none" && permissions["writeScope"] !== "workspace") {
+      issues.push({ path: path + ".permissions.writeScope", code: "bad_enum", message: path + '.permissions.writeScope must be "none" or "workspace"' });
+    }
+  }
+
+  const budget = value["budget"];
+  if (!isRecord(budget)) {
+    issues.push({ path: path + ".budget", code: "bad_type", message: path + ".budget must be an object" });
+  } else {
+    if (budget["source"] !== "task-budget") {
+      issues.push({ path: path + ".budget.source", code: "bad_enum", message: path + '.budget.source must be "task-budget"（规格不内置预算数字）' });
+    }
+    if (budget["scope"] !== "assigned-task" && budget["scope"] !== "producer-task") {
+      issues.push({ path: path + ".budget.scope", code: "bad_enum", message: path + '.budget.scope must be "assigned-task" or "producer-task"' });
+    }
+  }
+
+  const exit = value["exit"];
+  if (!isRecord(exit)) {
+    issues.push({ path: path + ".exit", code: "bad_type", message: path + ".exit must be an object" });
+  } else {
+    stringField(exit, "success", issues, path + ".exit.success");
+    stringField(exit, "stop", issues, path + ".exit.stop");
+    stringField(exit, "handoff", issues, path + ".exit.handoff");
+  }
+}
+
+function validateRoleMaterialList(value: unknown, path: string, issues: ValidationIssue[], allowEmpty: boolean): void {
+  if (!Array.isArray(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an array" });
+    return;
+  }
+  if (!allowEmpty && value.length === 0) {
+    issues.push({ path, code: "missing_field", message: path + " must name at least one material" });
+  }
+  value.forEach((item, index) => {
+    const itemPath = path + "[" + index + "]";
+    if (!isRecord(item)) {
+      issues.push({ path: itemPath, code: "bad_type", message: itemPath + " must be an object" });
+      return;
+    }
+    if (typeof item["kind"] !== "string" || !(ROLE_MATERIAL_KINDS as readonly string[]).includes(item["kind"])) {
+      issues.push({ path: itemPath + ".kind", code: "bad_enum", message: itemPath + ".kind must be one of " + ROLE_MATERIAL_KINDS.join("|") });
+    }
+    stringField(item, "reason", issues, itemPath + ".reason");
+  });
+}
+
+function validateRoleOutputList(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!Array.isArray(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an array" });
+    return;
+  }
+  if (value.length === 0) {
+    issues.push({ path, code: "missing_field", message: path + " must name at least one output" });
+  }
+  value.forEach((item, index) => {
+    const itemPath = path + "[" + index + "]";
+    if (!isRecord(item)) {
+      issues.push({ path: itemPath, code: "bad_type", message: itemPath + " must be an object" });
+      return;
+    }
+    if (typeof item["kind"] !== "string" || !(ROLE_OUTPUT_KINDS as readonly string[]).includes(item["kind"])) {
+      issues.push({ path: itemPath + ".kind", code: "bad_enum", message: itemPath + ".kind must be one of " + ROLE_OUTPUT_KINDS.join("|") });
+    }
+    stringField(item, "reason", issues, itemPath + ".reason");
+  });
+}
+
+/**
+ * 角色矩阵形状校验（装在协调策略正文里）。catalog 的每个 pin 必须是完整的
+ * RoleSpecRevision 三元组 + 摘要；coordinator 必须指向 catalog 里存在的角色——
+ * 悬空的收敛责任等于没有收敛责任，安装期就要拒绝，而不是等到跨包议题出现才发现。
+ */
+export function validateCoordinationRoleMatrix(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  const catalog = value["catalog"];
+  if (!isRecord(catalog)) {
+    issues.push({ path: path + ".catalog", code: "bad_type", message: path + ".catalog must be an object" });
+  } else {
+    const roleIds = Object.keys(catalog);
+    if (roleIds.length === 0) {
+      issues.push({ path: path + ".catalog", code: "empty_entries", message: path + ".catalog must name at least one role" });
+    }
+    for (const roleId of roleIds) {
+      const pinPath = path + ".catalog." + roleId;
+      validateRoleSpecPin(catalog[roleId], pinPath, issues);
+      const pin = catalog[roleId];
+      if (isRecord(pin) && isRecord(pin["ref"]) && pin["ref"]["roleId"] !== roleId) {
+        issues.push({ path: pinPath + ".ref.roleId", code: "bad_scope", message: pinPath + ".ref.roleId must be the catalog key " + roleId });
+      }
+    }
+  }
+  const coordinator = value["coordinator"];
+  if (!isRecord(coordinator)) {
+    issues.push({ path: path + ".coordinator", code: "bad_type", message: path + ".coordinator must be an object" });
+    return;
+  }
+  const coordinatorRoleId = stringField(coordinator, "roleId", issues, path + ".coordinator.roleId");
+  stringField(coordinator, "note", issues, path + ".coordinator.note");
+  if (coordinatorRoleId !== null && isRecord(catalog) && !Object.prototype.hasOwnProperty.call(catalog, coordinatorRoleId)) {
+    issues.push({ path: path + ".coordinator.roleId", code: "bad_scope", message: path + ".coordinator.roleId must be one of the registered roles" });
+  }
+}
+
+export function validateRoleSpecPin(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  const ref = value["ref"];
+  if (!isRecord(ref)) {
+    issues.push({ path: path + ".ref", code: "bad_type", message: path + ".ref must be an object" });
+  } else {
+    if (ref["aggregateType"] !== "RoleSpecRevision") {
+      issues.push({ path: path + ".ref.aggregateType", code: "bad_type", message: path + ".ref.aggregateType must be RoleSpecRevision" });
+    }
+    stringField(ref, "projectId", issues, path + ".ref.projectId");
+    stringField(ref, "roleId", issues, path + ".ref.roleId");
+    if (!Number.isSafeInteger(ref["revision"]) || (ref["revision"] as number) < 1) {
+      issues.push({ path: path + ".ref.revision", code: "bad_revision", message: path + ".ref.revision must be a positive integer" });
+    }
+  }
+  stringField(value, "digest", issues, path + ".digest");
+}
+
+function validateRoleSpecInstallCommon(value: UnknownRecord, issues: ValidationIssue[]): void {
+  if (value["commandType"] !== "InstallRoleSpecRevision") {
+    issues.push({ path: "commandType", code: "invalid_command_type", message: 'commandType must be "InstallRoleSpecRevision"' });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "commandId", issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+}
+
+export function validateInstallRoleSpecRevisionCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  validateRoleSpecInstallCommon(value, issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  stringField(payload, "roleId", issues, "payload.roleId");
+  stringField(payload, "contentDigest", issues, "payload.contentDigest");
+  validateRoleSpecContent(payload["content"], "payload.content", issues);
+  return issues;
+}
+
+export function validateActivateRoleSpecRevisionCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "ActivateRoleSpecRevision") {
+    issues.push({ path: "commandType", code: "invalid_command_type", message: 'commandType must be "ActivateRoleSpecRevision"' });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "commandId", issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (!Number.isSafeInteger(value["expectedRevision"]) || (value["expectedRevision"] as number) < 0) {
+    issues.push({ path: "expectedRevision", code: "bad_expected_revision", message: "expectedRevision must be a non-negative integer (Project CAS)" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  validateRoleSpecPin(payload["target"], "payload.target", issues);
+  return issues;
+}

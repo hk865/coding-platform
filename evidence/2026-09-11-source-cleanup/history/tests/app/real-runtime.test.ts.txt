@@ -1,0 +1,183 @@
+import { storeRuntimeTestBundle } from './runtime-context-fixture.js';
+import { afterEach, expect, it } from 'vitest';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
+import { createGuiServer } from '../../src/app/server.js';
+import { CodingAgentRuntime, type RuntimeRecord } from '../../src/execution/worker-runtime/coding-agent-runtime.js';
+const cleanup: Array<() => Promise<void>> = [];
+afterEach(async () => { for (const c of cleanup.splice(0).reverse()) await c(); });
+async function start(model = 'normal', contextOnlyTask = false) {
+  const dir = await mkdtemp(join(tmpdir(), 'rat02-')); cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  const root = join(dir, 'project'); await mkdir(root);
+  let requests = 0; const payloads: Record<string, unknown>[] = [];
+  const provider = createServer(async (req, res) => {
+    let text = ''; for await (const c of req) text += c; const body = JSON.parse(text); payloads.push(body); requests++;
+    if (body.model === 'hang') return;
+    if (body.model === 'bad-key') { res.writeHead(401, { 'content-type': 'application/json' }); res.end('{"error":{"message":"synthetic-secret"}}'); return; }
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    const emit = (v: unknown) => res.write(`data: ${JSON.stringify(v)}\n\n`);
+    const n = body.messages.filter((m: { role: string }) => m.role === 'tool').length;
+    const create = { name: 'edit', arguments: JSON.stringify({ mode: 'create', path: 'answer.txt', newText: 'real kernel output\n' }) };
+    // "long" keeps asking for a harmless read so a run without a configured
+    // cumulative budget must pass the old 16-request platform default.
+    const call = model === 'long'
+      ? (n === 0 ? create : n <= 18 ? { name: 'read', arguments: JSON.stringify({ path: 'answer.txt' }) } : null)
+      : n === 0 ? create : n === 1 ? { name: 'shell', arguments: JSON.stringify({ command: 'set -e; node --version && test "$(cat answer.txt)" = "real kernel output"; test ! -r /etc/passwd; if echo bad > .platform-runtime/bin/node; then exit 7; fi', timeoutMs: 3000 }) } : null;
+    emit({ choices: [{ index: 0, delta: call ? { tool_calls: [{ index: 0, id: `call-${n}`, type: 'function', function: call }] } : { content: 'Finished; independent verification is required.' }, finish_reason: null }] });
+    emit({ choices: [{ index: 0, delta: {}, finish_reason: call ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 200, completion_tokens: 50, prompt_cache_hit_tokens: 40 } });
+    res.end('data: [DONE]\n\n');
+  });
+  await new Promise<void>(r => provider.listen(0, '127.0.0.1', r)); cleanup.push(async () => { provider.closeAllConnections(); await new Promise<void>(r => provider.close(() => r())); });
+  const addr = provider.address(); if (!addr || typeof addr === 'string') throw Error();
+  const data = join(dir, 'data'), options = { modelSettings: { directory: join(dir, 'secret') }, ...(contextOnlyTask ? { contextOnlyTask: { root, requestId: 'test-request' } } : {}) };
+  let app = await createGuiServer(data, options); let base = '', token = '';
+  async function listen() { await new Promise<void>(r => app.server.listen(0, '127.0.0.1', r)); const a = app.server.address(); if (!a || typeof a === 'string') throw Error(); base = `http://127.0.0.1:${a.port}`; token = ((await (await fetch(base + '/api/meta')).json()) as { workspaceToken: string }).workspaceToken; }
+  await listen(); cleanup.push(() => app.close());
+  async function post(path: string, input: unknown) { const response = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-platform-token': token }, body: JSON.stringify(input) }); return { status: response.status, body: await response.json() as Record<string, unknown> }; }
+  await post('/api/model-settings', { provider: 'deepseek', model, baseUrl: `http://127.0.0.1:${addr.port}`, apiKey: 'synthetic-local-key' });
+  const project = (await post('/api/projects/add', { path: root })).body;
+  const scope = { projectId: project['projectId'], workspaceId: project['workspaceId'], goalId: 'test-goal' };
+  await post('/api/goals', { ...scope, requestId: 'test-goal', objective: 'create answer.txt and check with Node' });
+  const request = { ...scope, requestId: 'test-request', instruction: 'create answer.txt and check with Node', allowWrite: true };
+  async function state() { return (await (await fetch(base + '/api/state?' + new URLSearchParams(scope as Record<string, string>))).json()) as { liveRuns: RuntimeRecord[]; agents: { agents?: { rows: Array<{ displayState: string }> } }; matrix: { matrix?: { rows: Array<{ livePhase: string }> } } }; }
+  return { dir, root, data, post, scope, request, state, requests: () => requests, payloads, restart: async () => { await app.close(); app = await createGuiServer(data, options); await listen(); } };
+}
+async function until<T>(fn: () => Promise<T>, check: (v: T) => boolean, timeout = 20000) { const start = Date.now(); for (;;) { const value = await fn(); if (check(value)) return value; if (Date.now() - start > timeout) throw Error('timed out: ' + JSON.stringify(value)); await new Promise(r => setTimeout(r, 30)); } }
+it('GUI dispatch runs real edit/shell tools, publishes facts, blocks fake fallback and never repeats on refresh/restart', async () => {
+  const t = await start();
+  expect(await t.post('/api/real/tasks', t.request)).toMatchObject({ status: 200, body: { status: 'accepted' } });
+  const state = await until(t.state, s => s.agents.agents?.rows.some(r => r.displayState === 'completed_run') ?? false);
+  expect(state.liveRuns[0]?.status).toBe('completed');
+  expect(await readFile(join(t.root, 'answer.txt'), 'utf8')).toBe('real kernel output\n');
+  expect(state.liveRuns[0]?.trace.filter(e => e.type === 'tool.completed')).toHaveLength(2);
+  expect(JSON.stringify(state.liveRuns[0]?.trace)).toMatch(/Read-only file system|read-only/);
+  expect(state.liveRuns[0]?.configuration?.revision).toBeTruthy();
+  expect(state.liveRuns[0]?.usage).toHaveLength(3);
+  expect(state.matrix.matrix?.rows.every(r => r.livePhase !== 'satisfied')).toBe(true);
+  const before = t.requests(); await t.post('/api/real/tasks', t.request); await t.state(); await t.restart(); await t.post('/api/real/tasks', t.request);
+  expect(t.requests()).toBe(before);
+  expect((await t.post('/api/queries', { ...t.scope, requestId: 'q', question: 'status?' })).status).toBe(400);
+  expect((await t.post('/api/real/tasks', { ...t.request, instruction: 'changed' })).status).toBe(400);
+}, 30000);
+it('remains observable while a model is slow and cancels without blocking state requests', async () => {
+  const t = await start('hang'); await t.post('/api/real/tasks', t.request);
+  await until(async () => t.requests(), n => n === 1);
+  expect((await t.state()).liveRuns[0]?.status).toBe('running');
+  expect((await t.post('/api/real/cancel', { ...t.scope, runId: 'real-test-request' })).status).toBe(200);
+  expect((await until(t.state, s => s.liveRuns[0]?.status === 'cancelled')).liveRuns[0]?.cancelRequested).toBe(true);
+}, 30000);
+it('stops before a model request when cumulative reservation does not fit, without changing context capacity', async () => {
+  const { DEFAULT_RUNTIME_BUDGET } = await import('../../src/execution/worker-runtime/model-budget.js');
+  const t = await start(); await t.post('/api/real/tasks', { ...t.request, budget: { inputTokens: 1 } });
+  const result = await until(t.state, s => s.liveRuns[0]?.status === 'budget_exhausted');
+  expect(result.liveRuns[0]?.spec.budget.contextWindowTokens).toBe(DEFAULT_RUNTIME_BUDGET.contextWindowTokens);
+  // The operator set only inputTokens; the other cumulative limits stay null.
+  expect(result.liveRuns[0]?.spec.budget).toMatchObject({ inputTokens: 1, outputTokens: null, maxRequests: null, maxToolCalls: null, timeoutMs: null });
+  expect(t.requests()).toBe(0);
+}, 30000);
+it('reports a provider authentication failure and makes no fixture response', async () => {
+  const t = await start('bad-key'); await t.post('/api/real/tasks', t.request);
+  const s = await until(t.state, s => s.liveRuns[0]?.status === 'failed');
+  expect(s.liveRuns[0]?.trace.some(e => e.type === 'model.request_failed')).toBe(true);
+  expect(t.requests()).toBe(1); expect(JSON.stringify(s)).not.toContain('synthetic-secret');
+}, 30000);
+it('marks interrupted persisted runtime records unknown and refuses to restart them', async () => {
+  const t = await start('hang'); await t.post('/api/real/tasks', t.request);
+  await until(async () => t.requests(), n => n === 1);
+  // Independent runtime reader models a new host seeing an in-flight durable record.
+  const reader = new CodingAgentRuntime(join(t.data, 'real-runs'), async () => { throw Error('must not call provider during recovery'); });
+  await reader.init();
+  const recovered = reader.all()[0]; expect(recovered?.status).toBe('outcome_unknown');
+  expect(t.requests()).toBe(1);
+  await t.post('/api/real/cancel', { ...t.scope, runId: 'real-test-request' });
+}, 30000);
+it('rejects a second goal writer while the first writer still holds the checkout', async () => {
+  const t = await start('hang'); await t.post('/api/real/tasks', t.request); await until(async () => t.requests(), n => n === 1);
+  await t.post('/api/goals', { ...t.scope, requestId: 'goal-two', objective: 'another write' });
+  expect((await t.post('/api/real/tasks', { ...t.request, goalId: 'goal-two', requestId: 'second' })).status).toBe(400);
+  expect(t.requests()).toBe(1); await t.post('/api/real/cancel', { ...t.scope, runId: 'real-test-request' });
+}, 30000);
+it('honors a short deadline and rejects cross-goal cancellation', async () => {
+  const t = await start('hang'); await t.post('/api/real/tasks', { ...t.request, budget: { timeoutMs: 500 } });
+  expect((await t.post('/api/real/cancel', { ...t.scope, goalId: 'absent', runId: 'real-test-request' })).status).toBe(400);
+  expect((await until(t.state, s => s.liveRuns[0]?.status === 'budget_exhausted')).liveRuns[0]?.error).toContain('时间');
+}, 30000);
+
+it('keeps an unknown tool outcome locked even when the kernel ends cancelled', async () => {
+  const kernel = await import('../../vendor/coding-agent/dist/public-api.js');
+  const { buildEnvelopeFixture } = await import('../../src/contracts/fixtures/dispatch-fixtures.js');
+  const { artifactBodyDigest } = await import('../../src/contracts/artifact.js');
+  const { DEFAULT_RUNTIME_BUDGET } = await import('../../src/execution/worker-runtime/model-budget.js');
+  const dir = await mkdtemp(join(tmpdir(), 'rat02-unknown-'));
+  cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  const root = join(dir, 'project'); await mkdir(root);
+  const runtime = new CodingAgentRuntime(join(dir, 'runs'), async () => ({
+    configuration: { revision: 'controlled', provider: 'deepseek', model: 'controlled', baseUrl: 'http://127.0.0.1' },
+    client: { async *stream() { throw Error('must not call model'); } },
+  }));
+  await runtime.init(); cleanup.push(() => runtime.close());
+  // Controlled kernel boundary; all host start/poll/persistence/lock handling is real.
+  Object.assign(runtime, { kernel: { ...kernel, runCodingAgent: async (input: Parameters<typeof kernel.runCodingAgent>[0]) => {
+    await input.observerEventSinks?.[0]?.publish({ type: 'tool.outcome_unknown', meta: { schemaVersion: 1, eventId: 'unknown-event', runId: 'r', turnId: 'turn', sequence: 1, occurredAt: new Date().toISOString(), elapsedMs: 0 }, payload: { callId: 'call', toolName: 'shell', effectClass: 'process', reason: 'cancelled_while_running', retryPolicy: 'never_automatic', recordedCallEventId: 'started', synthesizedResult: { schemaVersion: 1, callId: 'call', status: 'error', error: { code: 'outcome_unknown', message: 'controlled unknown', retryable: false }, output: [], effects: { sideEffect: 'possible', changedPaths: [], workspaceRevision: null, artifactRefs: [] } } } }, { signal: new AbortController().signal });
+    return { state: { status: 'cancelled', outcome: { kind: 'cancelled' } } };
+  } } });
+  const envelope = buildEnvelopeFixture({ envelopeId: 'unknown', projectId: 'p', workspaceId: 'w', goalId: 'g', taskId: 't', runId: 'r', attemptId: 'a', planRef: { aggregateType: 'PlanRevision', projectId: 'p', planId: 'plan' }, workspaceRevision: 1, bundleRef: { kind: 'artifact', contentType: 'text/plain', digest: artifactBodyDigest('test'), sizeBytes: 4, source: { kind: 'plan-revision', refId: 'plan', revision: '1' } } });
+  envelope.budget = { tokenBudget: DEFAULT_RUNTIME_BUDGET.contextWindowTokens, deadline: null };
+  envelope.permissions = { policyRevision: 'test', tools: ['read', 'write', 'shell'], writeScope: ['*'] };
+  await runtime.prepare({ projectId: 'p', workspaceId: 'w', goalId: 'g', taskId: 't', runId: 'r', root, instruction: 'controlled unknown outcome', budget: DEFAULT_RUNTIME_BUDGET });
+  const handle = await runtime.start(envelope, await storeRuntimeTestBundle(envelope));
+  const events = []; for (;;) { const fresh = await handle.pollFreshEvents(); if (!fresh.length) break; events.push(...fresh); }
+  expect(runtime.all()[0]?.status).toBe('outcome_unknown');
+  expect(events.map(e => e.eventType)).toEqual(['run_started']);
+  expect(await readFile(join(root, '.platform-runtime/run.lock'), 'utf8')).toBeTruthy();
+  await expect(runtime.prepare({ ...runtime.all()[0]!.spec, runId: 'next' })).rejects.toThrow('未对账');
+}, 30000);
+
+it('keeps explicit null cumulative limits and only widens the single-response capacity for a scoped task', async () => {
+  const { DEFAULT_RUNTIME_BUDGET } = await import('../../src/execution/worker-runtime/model-budget.js');
+  const t = await start('normal', true);
+  const budget = { contextWindowTokens: DEFAULT_RUNTIME_BUDGET.contextWindowTokens, inputTokens: null, outputTokens: null, maxRequests: null, maxToolCalls: null, timeoutMs: null, perResponseTokens: 8192 };
+  // A larger single response is only allowed for the explicitly scoped task.
+  expect((await t.post('/api/real/tasks', { ...t.request, requestId: 'not-scoped', budget: { ...budget, perResponseTokens: 32768 } })).status).toBe(400);
+  expect((await t.post('/api/real/tasks', { ...t.request, budget })).status).toBe(200);
+  const s = await until(t.state, s => s.liveRuns[0]?.status === 'completed');
+  expect(s.liveRuns[0]?.spec.budget).toEqual(budget);
+  expect(s.liveRuns[0]?.usage).toHaveLength(3);
+  expect(await readFile(join(t.root, 'answer.txt'), 'utf8')).toBe('real kernel output\n');
+  await t.restart();
+  expect((await t.post('/api/real/tasks', { ...t.request, budget })).status).toBe(200);
+  expect(t.requests()).toBe(3);
+}, 30000);
+
+it('runs a task with no configured cumulative budget past the old default request count', async () => {
+  const t = await start('long');
+  expect((await t.post('/api/real/tasks', t.request)).status).toBe(200);
+  const s = await until(t.state, state => state.liveRuns[0]?.status === 'completed', 60000);
+  expect(s.liveRuns[0]?.spec.budget).toMatchObject({ inputTokens: null, outputTokens: null, maxRequests: null, maxToolCalls: null, timeoutMs: null });
+  expect(t.requests()).toBeGreaterThan(16);
+  expect(s.liveRuns[0]?.usage.length).toBe(t.requests());
+}, 90000);
+it('can manually cancel a context-only task with no deadline', async () => {
+  const t = await start('hang', true);
+  await t.post('/api/real/tasks', { ...t.request, budget: { inputTokens: null, outputTokens: null, maxRequests: null, maxToolCalls: null, timeoutMs: null } });
+  await until(async () => t.requests(), n => n === 1);
+  expect((await t.post('/api/real/cancel', { ...t.scope, runId: 'real-test-request' })).status).toBe(200);
+  expect((await until(t.state, s => s.liveRuns[0]?.status === 'cancelled')).liveRuns[0]?.cancelRequested).toBe(true);
+}, 30000);
+
+it('passes verified file references into real kernel input and rejects stale drafts before starting a run', async () => {
+  const t = await start();
+  const content='Reference-only design note';await writeFile(join(t.root,'design.md'),content);
+  const {createHash}=await import('node:crypto');
+  const sha256=createHash('sha256').update(content).digest('hex');
+  const rejected=await t.post('/api/real/tasks',{...t.request,references:[{path:'design.md',sha256:'0'.repeat(64)}]});
+  expect(rejected.status).toBe(400);expect(t.requests()).toBe(0);expect((await t.state()).liveRuns).toHaveLength(0);
+  expect((await t.post('/api/real/tasks',{...t.request,references:[{path:'design.md',sha256}]})).status).toBe(200);
+  const completed=await until(t.state,s=>s.liveRuns[0]?.status==='completed');
+  expect(completed.liveRuns[0]?.spec.instruction).toContain('"design.md"');
+  expect(completed.liveRuns[0]?.spec.instruction).toContain(sha256);
+  expect(JSON.stringify(t.payloads[0])).toContain(sha256);
+  expect(JSON.stringify(t.payloads[0])).not.toContain(content);
+},30000);

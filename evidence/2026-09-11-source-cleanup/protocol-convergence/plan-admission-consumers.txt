@@ -1,0 +1,98 @@
+tests\contract-support\testing\control.double.ts:466:    if (this.options.recordPlanChangeProposal) return this.options.recordPlanChangeProposal(command);
+tests\contract-support\testing\control.double.ts:472:    if (this.options.recordUserDecision) return this.options.recordUserDecision(command);
+tests\contract-support\testing\control.double.ts:478:    if (this.options.applyPlanChange) return this.options.applyPlanChange(command);
+tests\control\autonomous-rework.test.ts:136:  const recorded = await scope.engine.recordPlanChangeProposal({
+tests\control\autonomous-rework.test.ts:148:  const decided = await scope.engine.recordUserDecision(
+tests\control\autonomous-rework.test.ts:734:        const recorded = await engine2.recordPlanChangeProposal({
+tests\control\autonomous-rework.test.ts:746:        const decided = await engine2.recordUserDecision(
+src\interaction\human-collaboration\human-collaboration.ts:125:    const receipt = await this.deps.control.recordPlanChangeProposal({
+src\interaction\human-collaboration\human-collaboration.ts:143:    return this.deps.control.recordUserDecision(command);
+src\interaction\human-collaboration\human-collaboration.ts:147:    return this.deps.control.applyPlanChange(command);
+src\harness\persistent-harness.ts:746:    recordPlanChangeProposal: (command) => built.control.recordPlanChangeProposal(command),
+src\harness\persistent-harness.ts:747:    recordUserDecision: (command) => built.control.recordUserDecision(command),
+src\harness\persistent-harness.ts:748:    applyPlanChange: (command) => built.control.applyPlanChange(command),
+src\harness\in-memory-harness.ts:625:    recordPlanChangeProposal: (command) => control.recordPlanChangeProposal(command),
+src\harness\in-memory-harness.ts:626:    recordUserDecision: (command) => control.recordUserDecision(command),
+src\harness\in-memory-harness.ts:627:    applyPlanChange: (command) => control.applyPlanChange(command),
+tests\contract-suite\p1-11-harness.ts:177:  const proposalReceipt = await h.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "p111-cmd-proposal" }));
+tests\contract-suite\p1-11-harness.ts:181:  const decisionReceipt = await h.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "p111-cmd-decision" }));
+tests\contract-suite\p1-11-harness.ts:190:  const applyReceipt = await h.applyPlanChange(applyCommand);
+tests\control\goal-change.test.ts:295:  expect((await base.engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: commandIdPrefix + "-prop" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:296:  expect((await base.engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: commandIdPrefix + "-dec" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:319:      const propRec = await engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "cmd-prop" }));
+tests\control\goal-change.test.ts:323:      const decRec = await engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "cmd-dec" }));
+tests\control\goal-change.test.ts:330:      const applyRec = await engine.applyPlanChange(applyCmd);
+tests\control\goal-change.test.ts:369:      const applyRec = await engine.applyPlanChange(applyCmd);
+tests\control\goal-change.test.ts:397:      const receipt = await engine.applyPlanChange(cmd);
+tests\control\goal-change.test.ts:405:      expect((await engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "cmd-prop2" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:412:      const receipt = await engine.applyPlanChange(cmd);
+tests\control\goal-change.test.ts:420:      expect((await engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "cmd-prop3" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:422:      expect((await engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "cmd-dec3" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:427:      const receipt = await engine.applyPlanChange(applyCmd);
+tests\control\goal-change.test.ts:435:      expect((await engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "cmd-prop4" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:437:      expect((await engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "cmd-dec4" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:442:      const receipt = await engine.applyPlanChange(applyCmd);
+tests\control\goal-change.test.ts:452:      expect((await engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "cmd-prop5" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:466:        const receipt = await engine.applyPlanChange(applyCmd);
+tests\control\goal-change.test.ts:477:      expect((await engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "cmd-prop6" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:479:      expect((await engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "cmd-dec6" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:485:      const receipt = await engine.applyPlanChange(applyCmd);
+tests\control\goal-change.test.ts:496:      expect((await engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "cmd-prop7" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:498:      expect((await engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "cmd-dec7" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:502:      expect((await engine.applyPlanChange(first)).status).toBe("committed");
+tests\control\goal-change.test.ts:505:      const receipt = await engine.applyPlanChange(second);
+tests\control\goal-change.test.ts:525:      expect((await engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "cmd-prop8" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:527:      expect((await engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "cmd-dec8" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:540:      const receipt = await engine.applyPlanChange(applyCmd);
+tests\control\goal-change.test.ts:551:      expect((await engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "cmd-prop9" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:553:      expect((await engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "cmd-dec9" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:558:      const receipt = await engine.applyPlanChange(applyCmd);
+tests\control\goal-change.test.ts:570:      expect((await engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "cmd-prop10" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:572:      expect((await engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "cmd-dec10" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:576:      const first = await engine.applyPlanChange(cmd);
+tests\control\goal-change.test.ts:580:      const replay = await engine.applyPlanChange(cmd);
+tests\control\goal-change.test.ts:594:      const first = await engine.recordPlanChangeProposal(cmd);
+tests\control\goal-change.test.ts:597:      const replay = await engine.recordPlanChangeProposal(cmd);
+tests\control\goal-change.test.ts:607:      const second = await engine.recordPlanChangeProposal(conflict);
+tests\control\goal-change.test.ts:614:      expect((await engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "cmd-prop-a" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:616:      const receipt = await engine.recordPlanChangeProposal(dup);
+tests\control\goal-change.test.ts:629:      expect((await alpha.engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(propA, { commandId: "alpha-prop" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:630:      expect((await beta.engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(propB, { commandId: "beta-prop" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:647:    const receipt = await s.engine.applyPlanChange(
+tests\control\goal-change.test.ts:706:    expect((await s.engine.applyPlanChange(
+tests\control\goal-change.test.ts:729:    const receipt = await s.engine.applyPlanChange(
+tests\control\goal-change.test.ts:752:    const receipt = await s.engine.applyPlanChange(
+tests\control\goal-change.test.ts:778:      const receipt = await s.engine.applyPlanChange(
+tests\control\goal-change.test.ts:814:    const record = await s.engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(smuggledProposal, { commandId: "rw-smuggle-prop" }));
+tests\control\goal-change.test.ts:816:    expect((await s.engine.recordUserDecision(buildRecordUserDecisionCommand(smuggledDecision, { commandId: "rw-smuggle-dec" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:817:    const receipt = await s.engine.applyPlanChange(
+tests\control\goal-change.test.ts:837:    const rec = await s1.engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(brokenProposal, { commandId: "rw-broken-prop" }));
+tests\control\goal-change.test.ts:857:    expect((await s2.engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(inventedProposal, { commandId: "rw-invented-prop" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:858:    expect((await s2.engine.recordUserDecision(buildRecordUserDecisionCommand(inventedDecision, { commandId: "rw-invented-dec" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:870:    const receipt = await s2.engine.applyPlanChange(
+tests\control\goal-change.test.ts:891:    const receipt = await s.engine.applyPlanChange(
+tests\control\goal-change.test.ts:990:      const receipt = await s.engine.applyPlanChange(
+tests\control\goal-change.test.ts:1004:    expect((await engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "rw05-nodelta-prop" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:1006:    expect((await engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "rw05-nodelta-dec" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:1008:    const receipt = await engine.applyPlanChange(
+tests\control\goal-change.test.ts:1037:    const recorded = await s.engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "rw07-noassign-prop" }));
+tests\control\goal-change.test.ts:1039:    expect((await s.engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "rw07-noassign-dec" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:1041:    const receipt = await s.engine.applyPlanChange(
+tests\control\goal-change.test.ts:1061:    const recorded = await s.engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "rw07-wrongtask-prop" }));
+tests\control\goal-change.test.ts:1063:    expect((await s.engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "rw07-wrongtask-dec" }))).status).toBe("committed");
+tests\control\goal-change.test.ts:1065:    const receipt = await s.engine.applyPlanChange(
+tests\control\goal-change.test.ts:1095:      const receipt = await s.engine.applyPlanChange(
+tests\control\goal-change.test.ts:1110:    const first = await s.engine.applyPlanChange(cmd);
+tests\control\goal-change.test.ts:1117:    const replay = await s.engine.applyPlanChange(cmd);
+tests\control\rework-drive-harness.test.ts:193:        const recorded = await harness.recordPlanChangeProposal({
+tests\control\rework-drive-harness.test.ts:201:        const decided = await harness.recordUserDecision(buildRecordUserDecisionCommand(
+tests\control\rework-drive.test.ts:364:    const recorded = await scope.engine.recordPlanChangeProposal({
+tests\control\rework-drive.test.ts:371:    const decided = await scope.engine.recordUserDecision(
+tests\control\rework-drive.test.ts:616:    const recorded = await scope.engine.recordPlanChangeProposal({
+tests\control\rework-drive.test.ts:623:    const decided = await scope.engine.recordUserDecision(
+src\control\control-engine\autonomous-rework.ts:368:      const recordProposal = await this.goalChange.recordPlanChangeProposal(
+src\control\control-engine\autonomous-rework.ts:380:      const recordDecision = await this.goalChange.recordUserDecision(
+src\control\control-engine\autonomous-rework.ts:412:    const applied = await this.goalChange.applyPlanChange(applyCommand);
+src\control\control-engine\control-engine.ts:434:    return this.goalChange.recordPlanChangeProposal(command);
+src\control\control-engine\control-engine.ts:438:    return this.goalChange.recordUserDecision(command);
+src\control\control-engine\control-engine.ts:442:    return this.goalChange.applyPlanChange(command);

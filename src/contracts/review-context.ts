@@ -1,17 +1,6 @@
 /**
- * P1-04 Review Context contracts — ContextCompiler.ReviewContextPort (FROZEN,
- * this ticket is its first real consumer) + the bounded ReviewPacket.
- *
- * Authority:
- *   - dev_docs/modules/data/context-compiler.md (versioned extension of the
- *     P1-03 TaskContextPort; the frozen assemble(TaskContextRequestV1) is NOT
- *     touched)
- *   - dev_docs/interfaces/runtime-collaboration.md (bounded review Context,
- *     body-first in ArtifactVault, reviewer work is a formal dispatch Run)
- *   - dev_docs/planning/proposed/P1-foundation/tickets/04-evidence-satisfies-task.md
- *   - IMPLEMENTATION-HANDOFF.md "P1-04 契约与存储语义（冻结）"
- *
- * FROZEN semantics:
+ * review-context protocol. Control retains canonical admission and completion authority.
+ * Semantics:
  *   - assemble is a bounded, read-only material assembly: it verifies the
  *     exact pins + workspace snapshot + declared scope, then builds a bounded
  *     ReviewPacket + stores the compact bundle body FIRST in the vault.
@@ -22,7 +11,7 @@
  *     structured rejection, zero write (except the body-first vault.put, whose
  *     failure leaves only an un-adopted artifact).
  *   - This port NEVER starts a Reviewer/Agent; review WORK is a formal
- *     dispatch Run (P1-03 FakeRuntime path) whose verdict arrives as a
+ *     dispatch Run  whose verdict arrives as a
  *     kind=verdict evidence through Control.
  */
 import type { PlanRevisionRef } from "./plan.js";

@@ -9,17 +9,21 @@
  * the fold-equality assertion can pin exact values.
  */
 import { describe, expect, it } from "vitest";
-import { createControlEngine } from "../../src/control/control-engine.js";
-import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
+import { createControlEngine } from "../../src/control/control-engine/control-engine.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
+import { ReadModelIndexImpl } from "../../src/data/read-model-index/read-model-index.js";
+import { ControlPolicyExplanation } from "../../src/control/control-engine/policy-explanation.js";
 import type { LedgerCommit, LedgerCommitReceipt, GoalSnapshot, StateLedger } from "../../src/contracts/ledger.js";
-import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
-import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand, buildGoalCreateLedgerCommit, goalSnapshotFor } from "../../src/contracts/fixtures/goal-fixtures.js";
-import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit, completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/fixtures/governance-fixtures.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand, buildGoalCreateLedgerCommit, goalSnapshotFor } from "../contract-support/fixtures/goal-fixtures.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
 import type { InstallArchitectureBaselineRevisionCommand, InstallCompletionPolicyRevisionCommand } from "../../src/contracts/governance.js";
-import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand, buildPlanLedgerCommit } from "../../src/contracts/fixtures/plan-fixtures.js";
-import type { PlanRevisionSnapshot } from "../../src/contracts/plan.js";
+import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { buildPlanLedgerCommit } from "../../src/control/control-engine/records/plan.js";
+import type { PlanRevisionSnapshot, RuntimeTask } from "../../src/contracts/plan.js";
 import { decisionTargetFor } from "../../src/contracts/goal-change.js";
 import {
   P111_NEW_PLAN,
@@ -27,27 +31,37 @@ import {
   P111_SOURCE_PLAN,
   P111_WORKSPACE,
   buildApplyPlanChangeCommand,
-  buildGoalChangeApplyCommit,
   buildP111NewPlanDraft,
-  buildPlanChangeProposalRecordCommit,
   buildPlanPatchV1,
   buildPlanProposalV1,
   buildRecordPlanChangeProposalCommand,
   buildRecordUserDecisionCommand,
-  buildUserDecisionRecordCommit,
   buildUserDecisionV1,
   p111DecisionRef,
   p111GoalRef,
   p111PlanRef,
   p111ProposalRef,
-} from "../../src/contracts/fixtures/goal-change-fixtures.js";
+} from "../contract-support/fixtures/goal-change-fixtures.js";
+import {
+  buildGoalChangeApplyCommit,
+  buildPlanChangeProposalRecordCommit,
+  buildUserDecisionRecordCommit,
+} from "../../src/control/control-engine/records/goal-change.js";
 import type {
   ApplyPlanChangeCommand,
   PlanPatchV1,
   PlanProposalV1,
+  PlanTaskSetDeltaV1,
   UserDecisionV1,
 } from "../../src/contracts/goal-change.js";
 import { canonicalJson } from "../../src/contracts/fingerprint.js";
+import {
+  deriveExpectedTaskGraph,
+  deriveObligationSet,
+  deriveTaskAssignments,
+  deriveTaskSet,
+  draftConsistencyIssues,
+} from "../../src/control/control-engine/policies/goal-change-consistency.js";
 
 const FIXED = FIXED_ISO_2026_09_05;
 
@@ -192,6 +206,109 @@ async function eventCount(ledger: StateLedger): Promise<number> {
 async function lastEvents(ledger: StateLedger, n: number) {
   const page = await ledger.events({ afterCursor: null, limit: 1000 });
   return page.events.slice(-n);
+}
+
+// ------------------------------------------------------------------------ //
+// RW-02: 计划变更的任务集增量（ADR 0003 D1 承载形态）                        //
+// ------------------------------------------------------------------------ //
+
+const RW_SUPERSEDED = "task-verify";
+const RW_REPLACEMENT = "task-verify-2";
+
+/**
+ * 一次「只换承担者」的增量：源计划里 obl-2 只由 task-verify 承担，因此新增一个
+ * 承担同一义务的返工任务并取代原承担者，不触碰任何义务正文与验收语义。
+ */
+function rwTaskSetDelta(): PlanTaskSetDeltaV1[] {
+  return [
+    {
+      action: "addTask",
+      task: {
+        taskId: RW_REPLACEMENT,
+        stageId: "stage-execution",
+        title: "返工：按新版本重新运行契约套件与重启证据验证",
+        requirementLevel: "required",
+        taskKind: "work",
+        disposition: "active",
+        phase: "pending",
+        scope: { kind: "stage", stageId: "stage-execution" },
+      },
+      // RW-07：新增任务必须随增量携带它的指派（任务与指派同属一个 revision）。
+      assignment: {
+        taskId: RW_REPLACEMENT,
+        role: "executor",
+        instruction: "在同一批义务上重新取证：运行契约套件与重启证据，并留下可独立复核的运行事实。",
+      },
+      obligationIds: ["obl-2"],
+      reason: "验证结论 FAIL 后的返工任务：同一义务、同一验收语义，只换承担者",
+    },
+    {
+      action: "replaceTask",
+      supersededTaskId: RW_SUPERSEDED,
+      byTaskId: RW_REPLACEMENT,
+      reason: "旧承担者已被失败版本占用，改由返工任务在新 revision 上重新证明",
+    },
+  ];
+}
+
+type RWDraft = NonNullable<ApplyPlanChangeCommand["payload"]["newPlanDraft"]>;
+
+/**
+ * 新计划草稿：源任务集 + 增量（任务、义务承担者、执行 DAG 与层级都由增量推导）。
+ *
+ * RW-05 起，执行 DAG 与层级的重指由 ControlEngine 的**唯一权威函数**
+ * deriveExpectedTaskGraph 定义，本夹具调用它而不是自己重写一遍映射——否则夹具会变成
+ * 第二份规则实现（而且它旧的那份把悬空边直接丢掉，与守卫 f2 现在要求的"必须等于重指结果"
+ * 恰好相反）。
+ */
+function rwDraftWithDelta(sourcePlan: PlanRevisionSnapshot, delta: PlanTaskSetDeltaV1[], objective: string): RWDraft {
+  const derived = deriveTaskSet(sourcePlan, delta);
+  const obligations = deriveObligationSet(sourcePlan, delta, derived.replacedBy);
+  const graph = deriveExpectedTaskGraph(sourcePlan, derived.replacedBy);
+  return {
+    planId: P111_NEW_PLAN,
+    planRevision: sourcePlan.planRevision + 1,
+    objective,
+    stages: sourcePlan.stages.map((s) => ({ ...s })),
+    tasks: derived.tasks,
+    // RW-07：指派同样来自「源 revision + 增量」的确定性推导（守卫 f2 用同一个函数比对）。
+    assignments: deriveTaskAssignments(sourcePlan, delta),
+    taskHierarchy: graph.taskHierarchy,
+    executionDag: graph.executionDag,
+    obligations,
+  };
+}
+
+type RWSetup = Setup & { delta: PlanTaskSetDeltaV1[]; proposal: PlanProposalV1; decision: UserDecisionV1; objective: string };
+
+/** 在 setupP111 之上构造「任务集增量」提案与决定，并记录它们。 */
+async function setupRW02(projectId = P111_PROJECT, commandIdPrefix = "rw"): Promise<RWSetup> {
+  const base = await setupP111(projectId);
+  const delta = rwTaskSetDelta();
+  const objective = "RW-02 目标：返工任务落在新的 PlanRevision 内（任务集增量）";
+  const proposal = proposalFor(projectId, {
+    patch: patchFor(projectId, {
+      patchDraft: { objective, obligationDeltas: [], taskHierarchy: null, taskSetDelta: delta },
+    }),
+  });
+  const decision = acceptedDecision(proposal);
+  expect((await base.engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: commandIdPrefix + "-prop" }))).status).toBe("committed");
+  expect((await base.engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: commandIdPrefix + "-dec" }))).status).toBe("committed");
+  return { ...base, delta, proposal, decision, objective };
+}
+
+/** 用账本事件推进一份真实的读模型投影（处置视图由 Control 策略解释端口计算）。 */
+async function projectPlanChange(ledger: StateLedger): Promise<ReadModelIndexImpl> {
+  const readModel = new ReadModelIndexImpl(new ControlPolicyExplanation());
+  let cursor: import("../../src/contracts/command-event.js").CommitCursor | null = null;
+  for (;;) {
+    const page = await ledger.events({ afterCursor: cursor, limit: 64 });
+    if (page.events.length === 0) break;
+    await readModel.advance(page);
+    cursor = page.throughCursor;
+    if (!page.hasMore) break;
+  }
+  return readModel;
 }
 
 describe("P1-11 goal-change engine", () => {
@@ -522,3 +639,495 @@ describe("P1-11 goal-change engine", () => {
     });
   });
 });
+
+describe("RW-02 计划变更的任务集增量（ADR 0003 D1）", () => {
+  it("合法增量被受理：新 PlanRevision 带新任务集、旧任务 superseded、旧 revision 保留、activePlanRevision 移动", async () => {
+    const s = await setupRW02();
+    const draft = rwDraftWithDelta(s.sourcePlan, s.delta, s.objective);
+    const receipt = await s.engine.applyPlanChange(
+      buildApplyPlanChangeCommand(s.proposal, s.decision, draft, { commandId: "rw-apply", expectedRevision: s.sourceGoal.revision }),
+    );
+    expect(receipt.status).toBe("committed");
+    if (receipt.status !== "committed") throw new Error("apply rejected: " + JSON.stringify(receipt));
+
+    const newLoad = await s.ledger.load(p111PlanRef(P111_NEW_PLAN, P111_PROJECT));
+    expect(newLoad.status).toBe("found");
+    if (newLoad.status !== "found") throw new Error("new plan not found");
+    const newPlan = newLoad.snapshot as PlanRevisionSnapshot;
+    // 新任务集 = 源任务集（保持顺序）+ 增量新增；任务不删除，只改处置。
+    expect(newPlan.tasks.map((t: RuntimeTask) => t.taskId)).toEqual([
+      "task-install-contract",
+      "task-accept-plan",
+      RW_SUPERSEDED,
+      "gate-goal",
+      RW_REPLACEMENT,
+    ]);
+    const superseded = newPlan.tasks.find((t: RuntimeTask) => t.taskId === RW_SUPERSEDED)!;
+    expect(superseded.disposition).toBe("superseded");
+    expect(superseded.replacedByTaskId).toBe(RW_REPLACEMENT);
+    const replacement = newPlan.tasks.find((t: RuntimeTask) => t.taskId === RW_REPLACEMENT)!;
+    expect(replacement.disposition).toBe("active");
+    expect(replacement.phase).toBe("pending");
+    // 义务只换承担者：正文、等级与验收要求逐字不变。
+    const sourceObl2 = s.sourcePlan.obligations.find((o) => o.obligationId === "obl-2")!;
+    const newObl2 = newPlan.obligations.find((o) => o.obligationId === "obl-2")!;
+    expect(newObl2.title).toBe(sourceObl2.title);
+    expect(newObl2.requirementLevel).toBe(sourceObl2.requirementLevel);
+    expect(canonicalJson(newObl2.verificationRequirements)).toBe(canonicalJson(sourceObl2.verificationRequirements));
+    expect(newObl2.taskIds).toEqual([RW_REPLACEMENT]);
+    // 执行 DAG 重指到取代者，且不再引用已退出的任务（P1-02 守卫要求无悬空引用）。
+    expect(newPlan.executionDag.dependsOn.some((e) => e.taskId === RW_REPLACEMENT || e.dependsOnId === RW_REPLACEMENT)).toBe(true);
+    expect(newPlan.executionDag.dependsOn.some((e) => e.taskId === RW_SUPERSEDED || e.dependsOnId === RW_SUPERSEDED)).toBe(false);
+    // RW-07：指派与任务同属一个 revision——新任务的指派随同一次受理落进新快照。
+    expect(newPlan.assignments).toEqual(deriveTaskAssignments(s.sourcePlan, s.delta));
+    expect(newPlan.assignments!.find((entry) => entry.taskId === RW_REPLACEMENT)!.instruction).toContain("重新取证");
+
+    // 旧 revision 原样保留（不可改写），其中被取代任务仍是 active。
+    const oldLoad = await s.ledger.load(p111PlanRef(P111_SOURCE_PLAN, P111_PROJECT));
+    expect(oldLoad.status).toBe("found");
+    if (oldLoad.status !== "found") throw new Error("old plan gone");
+    const oldPlan = oldLoad.snapshot as PlanRevisionSnapshot;
+    expect(canonicalJson(oldPlan)).toBe(canonicalJson(s.sourcePlan));
+    expect(oldPlan.tasks.some((t: RuntimeTask) => t.taskId === RW_SUPERSEDED && t.disposition === "active")).toBe(true);
+    expect(oldPlan.tasks.some((t: RuntimeTask) => t.taskId === RW_REPLACEMENT)).toBe(false);
+
+    // goal.activePlanRevision 移动到新 revision，Goal CAS +1。
+    const goalLoad = await s.ledger.load(p111GoalRef(P111_PROJECT));
+    expect(goalLoad.status).toBe("found");
+    if (goalLoad.status !== "found") throw new Error("goal gone");
+    const goal = goalLoad.snapshot as GoalSnapshot;
+    expect(goal.activePlanRevision).toEqual(p111PlanRef(P111_NEW_PLAN, P111_PROJECT));
+    expect(goal.revision).toBe(s.sourceGoal.revision + 1);
+  });
+
+  it("计划变更视图的 dispositions 指出被取代任务、取代者与原因", async () => {
+    const s = await setupRW02(P111_PROJECT, "rw-view");
+    const draft = rwDraftWithDelta(s.sourcePlan, s.delta, s.objective);
+    expect((await s.engine.applyPlanChange(
+      buildApplyPlanChangeCommand(s.proposal, s.decision, draft, { commandId: "rw-view-apply", expectedRevision: s.sourceGoal.revision }),
+    )).status).toBe("committed");
+
+    const readModel = await projectPlanChange(s.ledger);
+    const view = await readModel.planChangeView({ projectId: P111_PROJECT, workspaceId: P111_WORKSPACE, goalId: p111GoalRef(P111_PROJECT).goalId });
+    expect(view.status).toBe("ready");
+    if (view.status !== "ready") throw new Error("view not ready");
+    const row = view.dispositions.find((d) => d.taskId === RW_SUPERSEDED);
+    expect(row).toBeDefined();
+    expect(row?.disposition).toBe("replace");
+    expect(row?.replacedByTaskId).toBe(RW_REPLACEMENT);
+    expect((row?.reason ?? "").length).toBeGreaterThan(0);
+  });
+
+  it("义务正文被增量改写即拒绝（obligation_semantics_forbidden），且零写", async () => {
+    const s = await setupRW02(P111_PROJECT, "rw-text");
+    const draft = rwDraftWithDelta(s.sourcePlan, s.delta, s.objective);
+    const tampered: RWDraft = {
+      ...draft,
+      obligations: draft.obligations.map((o) => (o.obligationId === "obl-2" ? { ...o, title: o.title + "（被增量改写）" } : o)),
+    };
+    const before = await eventCount(s.ledger);
+    const receipt = await s.engine.applyPlanChange(
+      buildApplyPlanChangeCommand(s.proposal, s.decision, tampered, { commandId: "rw-text-apply", expectedRevision: s.sourceGoal.revision }),
+    );
+    expect(receipt.status).toBe("rejected");
+    if (receipt.status !== "rejected") return;
+    // 专用拒绝码：改写义务正文属于「必须由人的决定」的范围，不是普通草稿不一致。
+    expect(receipt.code).toBe("obligation_semantics_forbidden");
+    expect((receipt.issues ?? []).some((i) => i.includes("obl-2"))).toBe(true);
+    expect(await eventCount(s.ledger)).toBe(before);
+  });
+
+  it("验收语义（verificationRequirements）被改动即拒绝（obligation_semantics_forbidden），且零写", async () => {
+    const s = await setupRW02(P111_PROJECT, "rw-vr");
+    const draft = rwDraftWithDelta(s.sourcePlan, s.delta, s.objective);
+    const tampered: RWDraft = {
+      ...draft,
+      obligations: draft.obligations.map((o) =>
+        o.obligationId === "obl-2"
+          ? { ...o, verificationRequirements: [{ ...o.verificationRequirements[0]!, requirementLevel: "optional" as const }] }
+          : o,
+      ),
+    };
+    const before = await eventCount(s.ledger);
+    const receipt = await s.engine.applyPlanChange(
+      buildApplyPlanChangeCommand(s.proposal, s.decision, tampered, { commandId: "rw-vr-apply", expectedRevision: s.sourceGoal.revision }),
+    );
+    expect(receipt.status).toBe("rejected");
+    if (receipt.status !== "rejected") return;
+    expect(receipt.code).toBe("obligation_semantics_forbidden");
+    expect((receipt.issues ?? []).some((i) => i.includes("obl-2"))).toBe(true);
+    expect(await eventCount(s.ledger)).toBe(before);
+  });
+
+  it("草稿与「源任务集 + 增量」不一致 -> draft_mismatch，且零写", async () => {
+    const s = await setupRW02(P111_PROJECT, "rw-mismatch");
+    const good = rwDraftWithDelta(s.sourcePlan, s.delta, s.objective);
+    const smuggled: RuntimeTask = { taskId: "task-smuggled", title: "未声明的任务", requirementLevel: "required", taskKind: "work", disposition: "active", phase: "pending", scope: { kind: "goal" } };
+    const cases: { name: string; draft: RWDraft }[] = [
+      // 私自新增一个增量里没有声明的任务。
+      { name: "extra-task", draft: { ...good, tasks: [...good.tasks!, smuggled] } },
+      // 改写源任务的字段（把增量当成整体任务集重写入口）。
+      { name: "rewritten-source-task", draft: { ...good, tasks: good.tasks!.map((t) => (t.taskId === "task-accept-plan" ? { ...t, requirementLevel: "optional" as const } : t)) } },
+      // 抹掉增量的换人结果（把被取代任务继续留在义务承担者里）。
+      { name: "carrier-not-rewired", draft: { ...good, obligations: good.obligations.map((o) => (o.obligationId === "obl-2" ? { ...o, taskIds: [RW_SUPERSEDED, RW_REPLACEMENT] } : o)) } },
+      // 抹掉被取代任务在新 revision 里的处置标注。
+      { name: "superseded-flag-dropped", draft: { ...good, tasks: good.tasks!.map((t) => (t.taskId === RW_SUPERSEDED ? { ...t, disposition: "active" as const, replacedByTaskId: null } : t)) } },
+    ];
+    for (const c of cases) {
+      const before = await eventCount(s.ledger);
+      const receipt = await s.engine.applyPlanChange(
+        buildApplyPlanChangeCommand(s.proposal, s.decision, c.draft, { commandId: "rw-mismatch-" + c.name, expectedRevision: s.sourceGoal.revision }),
+      );
+      expect(receipt.status, c.name).toBe("rejected");
+      if (receipt.status !== "rejected") continue;
+      expect(receipt.code, c.name).toBe("draft_mismatch");
+      expect((receipt.issues ?? []).length, c.name).toBeGreaterThan(0);
+      expect(await eventCount(s.ledger), c.name).toBe(before);
+    }
+  });
+
+  it("通过增量把任务挂到义务上（换承担者）必须由增量本身声明，否则 draft_mismatch", async () => {
+    const s = await setupRW02(P111_PROJECT, "rw-carrier");
+    const good = rwDraftWithDelta(s.sourcePlan, s.delta, s.objective);
+    // 增量只新增任务、不声明它承担 obl-2，但草稿私自把新任务挂到 obl-2 上——
+    // 这是「绕过义务换人声明」的典型写法，必须被逐项比对拦下。
+    const partialDelta: PlanTaskSetDeltaV1[] = [
+      {
+        action: "addTask",
+        task: { taskId: RW_REPLACEMENT, stageId: "stage-execution", title: "返工", requirementLevel: "required", taskKind: "work", disposition: "active", phase: "pending", scope: { kind: "stage", stageId: "stage-execution" } },
+        assignment: { taskId: RW_REPLACEMENT, role: "executor", instruction: "重新取证：本用例要让义务承担者的私下改写被 f2 拦下。" },
+        obligationIds: [],
+        reason: "未声明承担的义务",
+      },
+    ];
+    // 提案 id 必须与 setupRW02 已记录的那条不同：聚合 id 是 (projectId, proposalId)。
+    const smuggledProposal = proposalFor(P111_PROJECT, {
+      proposalId: "proposal-rw-carrier",
+      patch: patchFor(P111_PROJECT, { patchDraft: { objective: s.objective, obligationDeltas: [], taskHierarchy: null, taskSetDelta: partialDelta } }),
+    });
+    const smuggledDecision = acceptedDecision(smuggledProposal, { decisionId: "decision-rw-smuggle" });
+    const smuggledDraft: RWDraft = {
+      ...good,
+      obligations: good.obligations.map((o) => (o.obligationId === "obl-2" ? { ...o, taskIds: [RW_SUPERSEDED, RW_REPLACEMENT] } : o)),
+    };
+    const before = await eventCount(s.ledger);
+    const record = await s.engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(smuggledProposal, { commandId: "rw-smuggle-prop" }));
+    expect(record.status).toBe("committed");
+    expect((await s.engine.recordUserDecision(buildRecordUserDecisionCommand(smuggledDecision, { commandId: "rw-smuggle-dec" }))).status).toBe("committed");
+    const receipt = await s.engine.applyPlanChange(
+      buildApplyPlanChangeCommand(smuggledProposal, smuggledDecision, smuggledDraft, { commandId: "rw-smuggle-apply", expectedRevision: s.sourceGoal.revision }),
+    );
+    expect(receipt.status).toBe("rejected");
+    if (receipt.status !== "rejected") return;
+    expect(receipt.code).toBe("draft_mismatch");
+    expect((receipt.issues ?? []).some((i) => i.includes("obl-2"))).toBe(true);
+    expect(await eventCount(s.ledger)).toBe(before + 2); // 只有提案与决定两条记录，没有 PlanRevision
+    const accepted = (await s.ledger.events({ afterCursor: null, limit: 1000 })).events.filter((p) => p.event.eventType === "PlanRevisionAccepted");
+    expect(accepted.length).toBe(1); // 只有源计划
+  });
+
+  it("增量本身不合法：缺取代者在记录期 invalid；引用源里不存在的义务在应用期 task_set_delta_invalid，且零写", async () => {
+    // (1) replaceTask 缺 byTaskId：记录期就能判定的形状问题 -> invalid
+    const s1 = await setupP111("proj-alpha");
+    const brokenDelta = [{ action: "replaceTask", supersededTaskId: RW_SUPERSEDED, reason: "缺少取代者" }] as unknown as PlanTaskSetDeltaV1[];
+    const brokenProposal = proposalFor("proj-alpha", {
+      patch: patchFor("proj-alpha", { patchDraft: { objective: "RW-02 缺取代者", obligationDeltas: [], taskHierarchy: null, taskSetDelta: brokenDelta } }),
+    });
+    const before1 = await eventCount(s1.ledger);
+    const rec = await s1.engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(brokenProposal, { commandId: "rw-broken-prop" }));
+    expect(rec.status).toBe("rejected");
+    if (rec.status === "rejected") expect(rec.code).toBe("invalid");
+    expect(await eventCount(s1.ledger)).toBe(before1);
+
+    // (2) addTask 声明源 revision 里不存在的义务：形状合法，语义由 applyPlanChange 守卫判定
+    const s2 = await setupP111("proj-alpha");
+    const inventedDelta: PlanTaskSetDeltaV1[] = [
+      {
+        action: "addTask",
+        task: { taskId: "task-x", title: "承担不存在的义务", requirementLevel: "required", taskKind: "work", disposition: "active", phase: "pending", scope: { kind: "goal" } },
+        assignment: { taskId: "task-x", role: "executor", instruction: "本用例只考察义务引用：形状合法，义务不存在由守卫 f1 判定。" },
+        obligationIds: ["obl-does-not-exist"],
+        reason: "测试：义务只能换承担者，不能凭空发明",
+      },
+    ];
+    const inventedProposal = proposalFor("proj-alpha", {
+      patch: patchFor("proj-alpha", { patchDraft: { objective: "RW-02 不存在的义务", obligationDeltas: [], taskHierarchy: null, taskSetDelta: inventedDelta } }),
+    });
+    const inventedDecision = acceptedDecision(inventedProposal);
+    expect((await s2.engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(inventedProposal, { commandId: "rw-invented-prop" }))).status).toBe("committed");
+    expect((await s2.engine.recordUserDecision(buildRecordUserDecisionCommand(inventedDecision, { commandId: "rw-invented-dec" }))).status).toBe("committed");
+    const inventedDraft: RWDraft = {
+      planId: P111_NEW_PLAN,
+      planRevision: s2.sourcePlan.planRevision + 1,
+      objective: "RW-02 不存在的义务",
+      stages: s2.sourcePlan.stages.map((st) => ({ ...st })),
+      tasks: deriveTaskSet(s2.sourcePlan, inventedDelta).tasks,
+      taskHierarchy: { parentOf: s2.sourcePlan.taskHierarchy.parentOf.map((e) => ({ ...e })) },
+      executionDag: { dependsOn: s2.sourcePlan.executionDag.dependsOn.map((e) => ({ ...e, requires: { ...e.requires } })) },
+      obligations: s2.sourcePlan.obligations.map((o) => ({ ...o, taskIds: [...o.taskIds], verificationRequirements: o.verificationRequirements.map((v) => ({ ...v })) })),
+    };
+    const before2 = await eventCount(s2.ledger);
+    const receipt = await s2.engine.applyPlanChange(
+      buildApplyPlanChangeCommand(inventedProposal, inventedDecision, inventedDraft, { commandId: "rw-invented-apply", expectedRevision: s2.sourceGoal.revision }),
+    );
+    expect(receipt.status).toBe("rejected");
+    if (receipt.status !== "rejected") return;
+    expect(receipt.code).toBe("task_set_delta_invalid");
+    expect((receipt.issues ?? []).some((i) => i.includes("obl-does-not-exist"))).toBe(true);
+    expect(await eventCount(s2.ledger)).toBe(before2);
+  });
+
+  // ---------------------------------------------------------------------- //
+  // RW-05：重指规则下沉 + 守卫 f2 校验重指结果 + 时间线如实说明               //
+  // ---------------------------------------------------------------------- //
+
+  it("RW-05 取代后下游任务的前驱被重指：C 依赖 A、A 被 B 取代 ⇒ 新 revision 里 C 依赖 B", async () => {
+    const s = await setupRW02(P111_PROJECT, "rw05-rewire");
+    // 源事实：gate-goal dependsOn task-verify（下游），task-verify dependsOn task-accept-plan。
+    const downstreamInSource = s.sourcePlan.executionDag.dependsOn.filter((e) => e.dependsOnId === RW_SUPERSEDED);
+    expect(downstreamInSource.map((e) => e.taskId)).toEqual(["gate-goal"]);
+
+    const draft = rwDraftWithDelta(s.sourcePlan, s.delta, s.objective);
+    const receipt = await s.engine.applyPlanChange(
+      buildApplyPlanChangeCommand(s.proposal, s.decision, draft, { commandId: "rw05-apply", expectedRevision: s.sourceGoal.revision }),
+    );
+    expect(receipt.status).toBe("committed");
+    if (receipt.status !== "committed") throw new Error("apply rejected: " + JSON.stringify(receipt));
+
+    const newLoad = await s.ledger.load(p111PlanRef(P111_NEW_PLAN, P111_PROJECT));
+    if (newLoad.status !== "found") throw new Error("new plan not found");
+    const newPlan = newLoad.snapshot as PlanRevisionSnapshot;
+
+    // 下游任务的前驱现在是取代者：这是"新增任务继承被取代任务的执行 DAG 位置"的可观察事实。
+    expect(newPlan.executionDag.dependsOn).toContainEqual({
+      taskId: "gate-goal",
+      dependsOnId: RW_REPLACEMENT,
+      requires: { kind: "gate-result", label: "契约套件与重启证据" },
+    });
+    expect(newPlan.executionDag.dependsOn.some((e) => e.taskId === "gate-goal" && e.dependsOnId === RW_SUPERSEDED)).toBe(false);
+    // 取代者接手被取代任务的下游位置：返工任务自己的前驱仍是 task-accept-plan。
+    expect(newPlan.executionDag.dependsOn).toContainEqual({
+      taskId: RW_REPLACEMENT,
+      dependsOnId: "task-accept-plan",
+      requires: { kind: "output-contract", label: "accepted plan revision + fixed pins" },
+    });
+    // 新 revision 里没有任何一条边还落在被取代任务上（否则下游永远等不到 satisfied 前驱）。
+    expect(newPlan.executionDag.dependsOn.some((e) => e.taskId === RW_SUPERSEDED || e.dependsOnId === RW_SUPERSEDED)).toBe(false);
+    // 层级同步重指；源 revision 原样保留（重指只作用于新 revision）。
+    expect(newPlan.taskHierarchy.parentOf).toContainEqual({ parentTaskId: "gate-goal", childTaskId: RW_REPLACEMENT });
+    expect(newPlan.taskHierarchy.parentOf.some((e) => e.childTaskId === RW_SUPERSEDED)).toBe(false);
+    const oldLoad = await s.ledger.load(p111PlanRef(P111_SOURCE_PLAN, P111_PROJECT));
+    if (oldLoad.status !== "found") throw new Error("old plan gone");
+    expect(canonicalJson(oldLoad.snapshot as never)).toBe(canonicalJson(s.sourcePlan as never));
+
+    // 时间线如实说明：这次 revision 的原因是受理命令里的 changeReason，不是硬编码文案。
+    const revLoad = await s.ledger.load(receipt.goalRevision);
+    expect(revLoad.status).toBe("found");
+    if (revLoad.status === "found") {
+      expect((revLoad.snapshot as { change: { reason: string } }).change.reason).toBe("user-decision-accepted");
+    }
+  });
+
+  it("RW-05 草稿篡改重指结果（少一条／多一条／指向不存在的任务）一律 draft_mismatch 且零写", async () => {
+    const s = await setupRW02(P111_PROJECT, "rw05-tamper");
+    const good = rwDraftWithDelta(s.sourcePlan, s.delta, s.objective);
+    const goodDag = good.executionDag!;
+    const goodHierarchy = good.taskHierarchy!;
+    // 少一条重指后的 DAG 边：下游仍依赖被取代任务 —— 这正是"守卫 f2 只做悬空检查"会放行的致命草稿。
+    const staleDependencyEdge: (typeof goodDag.dependsOn)[number] = {
+      taskId: "gate-goal",
+      dependsOnId: RW_SUPERSEDED,
+      requires: { kind: "gate-result", label: "契约套件与重启证据" },
+    };
+    const dagMissingRewired: RWDraft = {
+      ...good,
+      executionDag: { dependsOn: [...goodDag.dependsOn.filter((e) => !(e.taskId === "gate-goal" && e.dependsOnId === RW_REPLACEMENT)), staleDependencyEdge] },
+    };
+    // 少一条重指后的层级边：返工任务失去工作分解归属。
+    const hierarchyMissingRewired: RWDraft = {
+      ...good,
+      taskHierarchy: {
+        parentOf: [
+          ...goodHierarchy.parentOf.filter((e) => !(e.parentTaskId === "gate-goal" && e.childTaskId === RW_REPLACEMENT)),
+          { parentTaskId: "gate-goal", childTaskId: RW_SUPERSEDED },
+        ],
+      },
+    };
+    // 多一条重指边：增量没有声明这个依赖，草稿不得自行发明。
+    const dagExtraEdge: RWDraft = {
+      ...good,
+      executionDag: {
+        dependsOn: [...goodDag.dependsOn, { taskId: "task-install-contract", dependsOnId: RW_REPLACEMENT, requires: { kind: "artifact", label: "自造的依赖" } }],
+      },
+    };
+    const hierarchyExtraEdge: RWDraft = {
+      ...good,
+      taskHierarchy: { parentOf: [...goodHierarchy.parentOf, { parentTaskId: "task-accept-plan", childTaskId: RW_REPLACEMENT }] },
+    };
+    // 指向不存在的任务：悬空引用（既有判据，必须在重指校验里仍然成立）。
+    const dagUnknownTask: RWDraft = {
+      ...good,
+      executionDag: { dependsOn: [...goodDag.dependsOn, { taskId: "gate-goal", dependsOnId: "task-does-not-exist", requires: { kind: "gate-result", label: "不存在的任务" } }] },
+    };
+    const hierarchyUnknownTask: RWDraft = {
+      ...good,
+      taskHierarchy: { parentOf: [...goodHierarchy.parentOf, { parentTaskId: "gate-goal", childTaskId: "task-does-not-exist" }] },
+    };
+
+    // 基准：守卫 f2 本身不拦"合法的重指结果"——同一份未篡改草稿直接过一致性检查。
+    expect(draftConsistencyIssues(s.proposal, s.decision, good as never, s.sourcePlan)).toEqual([]);
+
+    const cases: { name: string; draft: RWDraft; fragment: string }[] = [
+      { name: "dag-missing-rewired-edge", draft: dagMissingRewired, fragment: "gate-goal->" + RW_SUPERSEDED },
+      { name: "hierarchy-missing-rewired-edge", draft: hierarchyMissingRewired, fragment: "gate-goal->" + RW_SUPERSEDED },
+      { name: "dag-extra-edge", draft: dagExtraEdge, fragment: "task-install-contract->" + RW_REPLACEMENT },
+      { name: "hierarchy-extra-edge", draft: hierarchyExtraEdge, fragment: "task-accept-plan->" + RW_REPLACEMENT },
+      { name: "dag-unknown-task", draft: dagUnknownTask, fragment: "task-does-not-exist" },
+      { name: "hierarchy-unknown-task", draft: hierarchyUnknownTask, fragment: "task-does-not-exist" },
+    ];
+    for (const c of cases) {
+      const before = await eventCount(s.ledger);
+      const receipt = await s.engine.applyPlanChange(
+        buildApplyPlanChangeCommand(s.proposal, s.decision, c.draft, { commandId: "rw05-tamper-" + c.name, expectedRevision: s.sourceGoal.revision }),
+      );
+      expect(receipt.status, c.name).toBe("rejected");
+      if (receipt.status !== "rejected") continue;
+      expect(receipt.code, c.name).toBe("draft_mismatch");
+      expect((receipt.issues ?? []).some((i) => i.includes(c.fragment)), c.name + " :: " + JSON.stringify(receipt.issues)).toBe(true);
+      expect(await eventCount(s.ledger), c.name).toBe(before);
+    }
+  });
+
+  it("RW-05 无任务集增量时草稿仍逐字沿用源图与源任务集：层级与执行 DAG 原样保留", async () => {
+    const { ledger, engine, sourcePlan, sourceGoal } = await setupP111("proj-alpha");
+    const proposal = proposalFor("proj-alpha");
+    expect((await engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "rw05-nodelta-prop" }))).status).toBe("committed");
+    const decision = acceptedDecision(proposal);
+    expect((await engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "rw05-nodelta-dec" }))).status).toBe("committed");
+    const draft = buildP111NewPlanDraft(sourcePlan, proposal.patch.patchDraft.obligationDeltas, proposal.patch.patchDraft.objective);
+    const receipt = await engine.applyPlanChange(
+      buildApplyPlanChangeCommand(proposal, decision, draft, { commandId: "rw05-nodelta-apply", expectedRevision: sourceGoal.revision }),
+    );
+    expect(receipt.status).toBe("committed");
+    if (receipt.status !== "committed") throw new Error("apply rejected: " + JSON.stringify(receipt));
+    const newLoad = await ledger.load(p111PlanRef(P111_NEW_PLAN, "proj-alpha"));
+    if (newLoad.status !== "found") throw new Error("new plan not found");
+    const newPlan = newLoad.snapshot as PlanRevisionSnapshot;
+    // 没有取代关系就没有重指：图与任务集与源 revision 逐字相同（旧行为不变）。
+    expect(canonicalJson(newPlan.executionDag as never)).toBe(canonicalJson(sourcePlan.executionDag as never));
+    expect(canonicalJson(newPlan.taskHierarchy as never)).toBe(canonicalJson(sourcePlan.taskHierarchy as never));
+    expect(canonicalJson(newPlan.tasks as never)).toBe(canonicalJson(sourcePlan.tasks as never));
+  });
+
+  // ---------------------------------------------------------------------- //
+  // RW-07：新增任务必须携带指派，且草稿的指派必须等于「源指派 + 增量」的推导     //
+  // ---------------------------------------------------------------------- //
+
+  it("新增 work 任务缺 assignment：守卫 f1 以 task_set_delta_invalid 拒绝且零写", async () => {
+    // 前置夹具的命令 id 前缀与下面用例的命令 id 必须不同（账本按身份幂等）。
+    const s = await setupRW02(P111_PROJECT, "rw07-f1-a");
+    const noAssignment = s.delta.map((op) =>
+      op.action === "addTask" ? ({ action: "addTask", task: op.task, obligationIds: op.obligationIds, reason: op.reason } as unknown as PlanTaskSetDeltaV1) : op,
+    );
+    const proposal = proposalFor(P111_PROJECT, {
+      proposalId: "proposal-rw07-noassign",
+      patch: patchFor(P111_PROJECT, { patchDraft: { objective: s.objective, obligationDeltas: [], taskHierarchy: null, taskSetDelta: noAssignment } }),
+    });
+    const decision = acceptedDecision(proposal, { decisionId: "decision-rw07-noassign" });
+    const recorded = await s.engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "rw07-noassign-prop" }));
+    expect(recorded.status, JSON.stringify(recorded)).toBe("committed");
+    expect((await s.engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "rw07-noassign-dec" }))).status).toBe("committed");
+    const before = await eventCount(s.ledger);
+    const receipt = await s.engine.applyPlanChange(
+      buildApplyPlanChangeCommand(proposal, decision, rwDraftWithDelta(s.sourcePlan, s.delta, s.objective), { commandId: "rw07-noassign-apply", expectedRevision: s.sourceGoal.revision }),
+    );
+    expect(receipt.status).toBe("rejected");
+    if (receipt.status !== "rejected") return;
+    expect(receipt.code).toBe("task_set_delta_invalid");
+    expect((receipt.issues ?? []).some((i) => i.includes("must carry its assignment"))).toBe(true);
+    expect(await eventCount(s.ledger)).toBe(before);
+  });
+
+  it("新增任务的 assignment 指向别的任务：守卫 f1 以 task_set_delta_invalid 拒绝且零写", async () => {
+    const s = await setupRW02(P111_PROJECT, "rw07-f1-b");
+    const wrongTarget: PlanTaskSetDeltaV1[] = s.delta.map((op) =>
+      op.action === "addTask" ? { ...op, assignment: { taskId: "task-install-contract", role: op.assignment!.role, instruction: op.assignment!.instruction } } : op,
+    );
+    const proposal = proposalFor(P111_PROJECT, {
+      proposalId: "proposal-rw07-wrongtask",
+      patch: patchFor(P111_PROJECT, { patchDraft: { objective: s.objective, obligationDeltas: [], taskHierarchy: null, taskSetDelta: wrongTarget } }),
+    });
+    const decision = acceptedDecision(proposal, { decisionId: "decision-rw07-wrongtask" });
+    const recorded = await s.engine.recordPlanChangeProposal(buildRecordPlanChangeProposalCommand(proposal, { commandId: "rw07-wrongtask-prop" }));
+    expect(recorded.status, JSON.stringify(recorded)).toBe("committed");
+    expect((await s.engine.recordUserDecision(buildRecordUserDecisionCommand(decision, { commandId: "rw07-wrongtask-dec" }))).status).toBe("committed");
+    const before = await eventCount(s.ledger);
+    const receipt = await s.engine.applyPlanChange(
+      buildApplyPlanChangeCommand(proposal, decision, rwDraftWithDelta(s.sourcePlan, wrongTarget, s.objective), { commandId: "rw07-wrongtask-apply", expectedRevision: s.sourceGoal.revision }),
+    );
+    expect(receipt.status).toBe("rejected");
+    if (receipt.status !== "rejected") return;
+    expect(receipt.code).toBe("task_set_delta_invalid");
+    expect((receipt.issues ?? []).some((i) => i.includes("assignment.taskId"))).toBe(true);
+    expect(await eventCount(s.ledger)).toBe(before);
+  });
+
+  it("草稿的指派与推导结果不一致（缺失／篡改角色／重复／指向不存在或 gate 的任务）一律 draft_mismatch 且零写", async () => {
+    const s = await setupRW02(P111_PROJECT, "rw07-draftassign");
+    const good = rwDraftWithDelta(s.sourcePlan, s.delta, s.objective);
+    const entry = good.assignments![0]!;
+    const cases: { name: string; assignments: NonNullable<RWDraft["assignments"]>; expect: string }[] = [
+      // 新增任务的指派被删掉：任务进了计划却没有"谁按什么指令承担"。
+      { name: "missing", assignments: [], expect: "missing from the draft" },
+      // 角色被私下改成另一个角色（增量里声明的是 executor）。
+      { name: "tampered-role", assignments: [{ ...entry, role: "integrator" }], expect: "differs from the source revision plus the task set delta" },
+      // 指令正文被改写。
+      { name: "tampered-instruction", assignments: [{ ...entry, instruction: "另一段指令" }], expect: "differs from the source revision plus the task set delta" },
+      // 同一任务两条指派。
+      { name: "duplicate", assignments: [entry, { ...entry }], expect: "the same task must not carry two assignments" },
+      // 指向不存在的任务。
+      { name: "unknown-task", assignments: [entry, { taskId: "task-does-not-exist", role: "executor", instruction: "x" }], expect: "not part of the derived task set" },
+      // 指向 gate 任务：gate 没有实现指派。
+      { name: "gate-target", assignments: [entry, { taskId: "gate-goal", role: "executor", instruction: "x" }], expect: "only work tasks carry an implementation assignment" },
+    ];
+    for (const c of cases) {
+      const before = await eventCount(s.ledger);
+      const receipt = await s.engine.applyPlanChange(
+        buildApplyPlanChangeCommand(s.proposal, s.decision, { ...good, assignments: c.assignments }, { commandId: "rw07-draftassign-" + c.name, expectedRevision: s.sourceGoal.revision }),
+      );
+      expect(receipt.status, c.name).toBe("rejected");
+      if (receipt.status !== "rejected") continue;
+      expect(receipt.code, c.name).toBe("draft_mismatch");
+      expect((receipt.issues ?? []).some((i) => i.includes(c.expect)), c.name + " -> " + JSON.stringify(receipt.issues)).toBe(true);
+      expect(await eventCount(s.ledger), c.name).toBe(before);
+    }
+  });
+
+  it("重复提交同一命令得到 replayed，而不是二次应用", async () => {
+    const s = await setupRW02(P111_PROJECT, "rw-replay");
+    const draft = rwDraftWithDelta(s.sourcePlan, s.delta, s.objective);
+    const cmd = buildApplyPlanChangeCommand(s.proposal, s.decision, draft, { commandId: "rw-replay-apply", expectedRevision: s.sourceGoal.revision });
+    const first = await s.engine.applyPlanChange(cmd);
+    expect(first.status).toBe("committed");
+    if (first.status !== "committed") return;
+    expect(first.replayed).toBe(false);
+    const acceptedAfterFirst = (await s.ledger.events({ afterCursor: null, limit: 1000 })).events.filter((p) => p.event.eventType === "PlanRevisionAccepted");
+    expect(acceptedAfterFirst.length).toBe(2); // 源计划 + 本次新 revision
+
+    const replay = await s.engine.applyPlanChange(cmd);
+    expect(replay.status).toBe("committed");
+    if (replay.status !== "committed") return;
+    expect(replay.replayed).toBe(true);
+    expect(replay.eventIds).toEqual(first.eventIds);
+    expect(replay.commitCursor).toEqual(first.commitCursor);
+    expect(replay.activePlanRef).toEqual(first.activePlanRef);
+    expect(replay.goalRevision).toEqual(first.goalRevision);
+
+    // 没有二次应用：事件流里仍然只有两个 PlanRevisionAccepted，Goal 也只推进一次。
+    const acceptedAfterReplay = (await s.ledger.events({ afterCursor: null, limit: 1000 })).events.filter((p) => p.event.eventType === "PlanRevisionAccepted");
+    expect(acceptedAfterReplay.length).toBe(2);
+    const goalLoad = await s.ledger.load(p111GoalRef(P111_PROJECT));
+    if (goalLoad.status === "found") expect((goalLoad.snapshot as GoalSnapshot).revision).toBe(s.sourceGoal.revision + 1);
+  });
+});
+

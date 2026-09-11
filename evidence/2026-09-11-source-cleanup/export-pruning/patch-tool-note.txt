@@ -1,0 +1,1 @@
+One multi-file apply_patch returned expected-line mismatch for verification-plan-compiler.ts. Readback showed that first file already contained the exact intended import grouping and comment update, while remaining two files were unchanged. Only remaining patches were applied. No unexpected same-file change was observed; original files are archived in history.

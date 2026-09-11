@@ -1,24 +1,15 @@
-/**
- * ArtifactVault contracts (interface frozen by P1-03 — first consumer).
- * Authority: modules/data/artifact-vault.md + runtime-collaboration.md.
- * Content-addressed immutable bodies; the vault NEVER judges business truth.
- * P1-03: text bodies only (bounded bundle), size cap, integrity by digest.
- */
+/** Content-addressed immutable bodies. ArtifactVault checks integrity and exact
+ * read authorization; storing or reading a body never establishes business truth. */
 import { createHash } from "node:crypto";
 import type { RunRef, SourceRefV1, TaskAttemptRef } from "./dispatch.js";
+import type { QueryRunRef } from "./query-job.js";
+import type { MaterialBasisV1 } from "./material-access.js";
 
 export const ARTIFACT_MAX_SIZE_BYTES = 256 * 1024;
 
-/**
- * FROZEN P1-03 content-addressing semantics (integrator ruling on lane-C gap 3/4):
- *   - FIRST put wins: a re-put of identical body/contentType returns the ORIGINAL
- *     ref (original source + original ownerRunId). Open authorization stays with
- *     the first recorded owner run.
- *   - open authorization: only a recorded OWNER RunRef requester may open
- *     (requesterRunRef.runId === ownerRunId). A TaskAttempt owner records
- *     ownerRunId = null -> deny-by-default (the attempt ref has no runId and is
- *     not an open-authorized principal in P1-03).
- */
+/** Identical body/contentType retains the first recorded reference and owner.
+ * Reads require matching owner identity or an applicable exact material grant;
+ * TaskAttempt ownership alone grants no Run principal access. */
 export type ArtifactRef = {
   kind: "artifact";
   contentType: string;
@@ -27,12 +18,15 @@ export type ArtifactRef = {
   source: SourceRefV1;
 };
 
+/** P1-09 additive read principal: query runs retain their own full identity. */
+export type ArtifactOwnerRunRef = RunRef | QueryRunRef;
+
 export type ArtifactPutRecord = {
   contentType: string;
   body: string;
   sourceRefs: SourceRefV1[];
   /** Informational owner — the run/attempt the artifact was assembled for. */
-  ownerRef: RunRef | TaskAttemptRef;
+  ownerRef: ArtifactOwnerRunRef | TaskAttemptRef;
   requestedAt: string;
 };
 
@@ -40,21 +34,47 @@ export type ArtifactPutResult =
   | { status: "stored"; ref: ArtifactRef; replayed: boolean }
   | { status: "rejected"; code: "invalid" | "size_exceeded" | "missing_source"; issues: string[] };
 
+/**
+ * P1-03 frozen shape plus one versioned additive field.
+ *
+ * P1-18 additive extension (recorded in modules/data/artifact-vault.md):
+ *   `currentBasis` is the version basis the REQUESTER is reading under. When a
+ *   non-owner requester relies on a recorded MaterialAccessGrant, the grant's
+ *   basis must equal it; otherwise the material is refused with
+ *   rejected/stale. Omitting it can only ever satisfy an UNCONDITIONAL grant —
+ *   a conditional grant is never applied to a requester that declares no basis.
+ *   Old callers that pass only requesterRunRef keep the exact P1-03 behavior.
+ */
 export type ArtifactOpenQuery = {
-  /** P1-03 minimal read authorization: only the recorded owner run may open. */
-  requesterRunRef: RunRef;
+  /** Only the recorded worker or query run may open, with its complete scope. */
+  requesterRunRef: ArtifactOwnerRunRef;
+  /** Version basis the requester reads under (see MaterialBasisV1). */
+  currentBasis?: MaterialBasisV1;
+  /** Return canonical provenance after the ordinary permission check. */
+  includeOwner?: boolean;
+  /** Current source use must pass a trusted grant/source-pin check. History
+   * permission never satisfies current use, including for legacy callers. */
+  usage?: 'current' | 'historical_explanation';
 };
 
 export type ArtifactRecord = {
   ref: ArtifactRef;
   body: string;
   sourceRefs: SourceRefV1[];
+  ownerRunRef?: ArtifactOwnerRunRef | null;
+  /** History is always marked. Other legacy reads make no currentness assertion. */
+  applicability?: 'current' | 'historical_explanation';
 };
 
 export type ArtifactOpenResult =
   | { status: "ready"; record: ArtifactRecord }
   | { status: "unavailable"; ref: ArtifactRef }
-  | { status: "rejected"; code: "forbidden" | "invalid"; issues: string[] };
+  /**
+   * P1-18 additive rejection code "stale": a recorded grant exists for this
+   * reader and material, but the grant's basis is not the requester's current
+   * basis — the inherited material must be re-sourced, not silently reused.
+   */
+  | { status: "rejected"; code: "forbidden" | "invalid" | "stale"; issues: string[] };
 
 export interface ArtifactPort {
   put(record: ArtifactPutRecord): Promise<ArtifactPutResult>;

@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+import path from 'node:path';
+const relative='dev_docs/verification/2026-09-09-core-verification/reviewer-continuation.md';
+const file=`../agent_learn/agent_dev/agent_platform/${relative}`;
+const original=fs.readFileSync(file,'utf8');
+const old='[Evidence 校验:1555](/mnt/d/1.project/Software/agent_platform/src/contracts/validation.ts#L1555)';
+const replacement='[Evidence 校验:114](/mnt/d/1.project/Software/agent_platform/src/contracts/validation/evidence.ts#L114)';
+if(!original.includes(old))throw Error('Expected historical source link missing');
+const archive=`evidence/2026-09-11-source-cleanup/contracts-followup/history/docs/${relative}.txt`;
+fs.mkdirSync(path.dirname(archive),{recursive:true});fs.writeFileSync(archive,original,{flag:'wx'});
+fs.writeFileSync(`${file}.cleanup-tmp`,original.replace(old,replacement),{flag:'wx'});fs.renameSync(`${file}.cleanup-tmp`,file);

@@ -1,0 +1,13 @@
+{
+  "realModel": false,
+  "kind": "browser-real-kernel-labelled-model-stub",
+  "temp": "/tmp/planning-ui-YxKw2D",
+  "steps": [
+    "alpha: normal UI proposal, exact source admission, implementation and receipt verified",
+    "independent query UI displayed public model response",
+    "beta: normal UI proposal, exact source admission, implementation and receipt verified",
+    "fresh service preserved planner/source/results and did not rerun models"
+  ],
+  "passed": true,
+  "modelCalls": 5
+}

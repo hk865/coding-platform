@@ -6,11 +6,13 @@ import { describe, it, expect, beforeAll } from "vitest";
 import type { P1_13TestHarness } from "./p1-13-harness.js";
 import { runP113Scenario, type P113ScenarioResult } from "./p1-13-harness.js";
 import { buildP112ReportFinding, P113_PROJECT, P113_TASK, P113_FINDING } from "./p1-13-harness.js";
-import { buildP113TaskV1, buildP113CreateTaskCommand, buildP113AdvanceTaskCommand, p113PatchRef, p113DedupKey } from "../../src/contracts/fixtures/remediation-fixtures.js";
-import { p113ActiveRef, p113PolicyRef } from "../../src/contracts/fixtures/architecture-evolution-policy-fixtures.js";
-import { architectureEvolutionPolicyContentDigest, evolutionPolicyDecision, resolveProjectArchitectureEvolutionPolicy } from "../../src/contracts/architecture-evolution-policy.js";
-import { ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1 } from "../../src/contracts/fixtures/architecture-evolution-policy-fixtures.js";
-import { P113_POLICY } from "../../src/contracts/fixtures/architecture-evolution-policy-fixtures.js";
+import { buildP113TaskV1, buildP113CreateTaskCommand, buildP113AdvanceTaskCommand, p113PatchRef, p113DedupKey } from "../contract-support/fixtures/remediation-fixtures.js";
+import { p113ActiveRef, p113PolicyRef } from "../../src/fixtures/architecture-evolution-policy-fixtures.js";
+import { architectureEvolutionPolicyContentDigest } from "../../src/contracts/architecture-evolution-policy.js";
+import { evolutionPolicyDecision } from "../../src/control/control-engine/policies/architecture-remediation.js";
+import { resolveProjectArchitectureEvolutionPolicy } from "../../src/control/control-engine/policies/architecture-evolution-policy.js";
+import { ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1 } from "../../src/fixtures/architecture-evolution-policy-fixtures.js";
+import { P113_POLICY } from "../../src/fixtures/architecture-evolution-policy-fixtures.js";
 
 export function defineArchitectureEvolutionContractSuite(
   factory: () => Promise<P1_13TestHarness>,

@@ -1,0 +1,147 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
+/**
+ * P1-15 LANE-B InMemory projection tests — unifiedStatusView over the
+ * InitialDesignProposalRecorded / InitialDesignDecisionRecorded /
+ * CoordinationPolicyInstalled / CoordinationPolicyActivated event stream.
+ * Asserts:
+ *   - the fold projects proposal / decision / policy / activation rows and a
+ *     ready facts-first view (fact + decision counts, per-fact kind/revision/
+ *     stale/sourceCursor/refKey lineage);
+ *   - a never-advanced index -> not_found (no cursor claim);
+ *   - cross-project isolation (same local ids under another project -> not_found,
+ *     because proposal/decision are workspace-scoped and policy/activation are
+ *     project-scoped and only the advanced project has rows);
+ *   - rebuild equivalence (a fresh index replayed from the same events
+ *     reproduces the view field-for-field).
+ * The events are built DIRECTLY from the P1-15 human-role-collaboration fixture
+ * ledger-commit builders (the control lane is a stub in this worktree, so the
+ * scenario is fed to the read model as a plain EventPage).
+ */
+import { describe, expect, it } from "vitest";
+import { ReadModelIndexImpl } from "../../src/data/read-model-index/read-model-index.js";
+import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { canonicalJson } from "../../src/contracts/fingerprint.js";
+import { P115_PROJECT, P115_WORKSPACE, P115_SCHEMA, P115_DESIGN, P115_DECISION, P115_POLICY, p115DesignRef, p115DecisionRef, p115PolicyRef, p115PolicyActiveRef, buildP115Proposal, buildP115Decision, buildP115ProposalCommand, buildP115DecisionCommand, buildP115InstallCommand, buildP115ActivateCommand } from "../../src/contracts/fixtures/human-role-collaboration-fixtures.js";
+import { buildP115ProposalFold, buildP115DecisionFold, buildP115PolicyInstallFold, buildP115PolicyActivateFold } from "../../src/control/control-engine/records/human-role-collaboration.js";
+import type { UnifiedStatusViewResult } from "../../src/contracts/human-role-collaboration.js";
+
+const FIXED = FIXED_ISO_2026_09_05;
+
+function json(v: unknown): string {
+  return JSON.stringify(v);
+}
+
+/** Build the P1-15 event stream (proposal -> decision -> policy-install ->
+ * policy-activate) as a directly-advanceable EventPage for ONE project. */
+function buildP115Page(projectId: string = P115_PROJECT): { page: EventPage } {
+  const proposal = buildP115Proposal({ projectId });
+  const decision = buildP115Decision(proposal);
+
+  const proposalCmd = buildP115ProposalCommand(proposal, { commandId: "p115-cmd-proposal" });
+  const proposalFold = buildP115ProposalFold(proposalCmd, { eventId: "evt-p115-proposal", occurredAt: FIXED });
+  const decisionCmd = buildP115DecisionCommand(decision, { commandId: "p115-cmd-decision" });
+  const decisionFold = buildP115DecisionFold(decisionCmd, { eventId: "evt-p115-decision", occurredAt: FIXED });
+  const installCmd = buildP115InstallCommand(projectId, { commandId: "p115-cmd-install-policy" });
+  const installFold = buildP115PolicyInstallFold(installCmd, { eventId: "evt-p115-install", occurredAt: FIXED });
+  const activateCmd = buildP115ActivateCommand(projectId, { commandId: "p115-cmd-activate-policy", expectedRevision: 1 });
+  const activateFold = buildP115PolicyActivateFold(activateCmd, { eventId: "evt-p115-activate", occurredAt: FIXED, activeAggregateRevision: 1, projectRevision: 1 });
+
+  const events: PositionedEvent[] = [
+    { cursor: makeCommitCursor(1), event: proposalFold.events[0]! },
+    { cursor: makeCommitCursor(2), event: decisionFold.events[0]! },
+    { cursor: makeCommitCursor(3), event: installFold.events[0]! },
+    { cursor: makeCommitCursor(4), event: activateFold.events[0]! },
+  ];
+  return { page: { afterCursor: null, throughCursor: makeCommitCursor(4), events, hasMore: false } };
+}
+
+describe("P1-15 LANE-B InMemory projection: unifiedStatusView", () => {
+  it("projects the 4 rows and returns a ready facts-first view", async () => {
+    const { page } = buildP115Page();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
+    const receipt = await rm.advance(page);
+    expect(receipt.appliedEventIds.length).toBe(4);
+
+    const view: UnifiedStatusViewResult = await rm.unifiedStatusView({ projectId: P115_PROJECT, workspaceId: P115_WORKSPACE });
+    expect(view.status).toBe("ready");
+    if (view.status !== "ready") throw new Error("view not ready");
+
+    // facts: proposal + decision + policy + activation rows, in rank order.
+    expect(view.facts.length).toBe(4);
+    expect(view.facts.map((f) => f.kind)).toEqual(["proposal", "decision", "baseline", "baseline"]);
+
+    // Proposal fact.
+    expect(view.facts[0]!.kind).toBe("proposal");
+    expect(view.facts[0]!.refKey).toBe(canonicalJson(p115DesignRef(P115_PROJECT)));
+    expect(view.facts[0]!.display).toBe("InitialDesignProposal(" + P115_DESIGN + ")");
+    expect(view.facts[0]!.revision).toBe(1);
+    expect(view.facts[0]!.stale).toBe(false);
+    expect(view.facts[0]!.sourceCursor).toBe(makeCommitCursor(1));
+
+    // Decision fact.
+    expect(view.facts[1]!.kind).toBe("decision");
+    expect(view.facts[1]!.refKey).toBe(canonicalJson(p115DecisionRef(P115_PROJECT)));
+    expect(view.facts[1]!.display).toBe("InitialDesignDecision(" + P115_DECISION + ", accept)");
+    expect(view.facts[1]!.revision).toBe(1);
+    expect(view.facts[1]!.stale).toBe(false);
+    expect(view.facts[1]!.sourceCursor).toBe(makeCommitCursor(2));
+
+    // Policy fact (maps to contract kind "baseline"; no dedicated policy kind).
+    expect(view.facts[2]!.kind).toBe("baseline");
+    expect(view.facts[2]!.refKey).toBe(canonicalJson(p115PolicyRef(P115_PROJECT)));
+    expect(view.facts[2]!.display).toBe("CoordinationPolicy(" + P115_POLICY + "@r1)");
+    expect(view.facts[2]!.revision).toBe(1);
+    expect(view.facts[2]!.stale).toBe(false);
+    expect(view.facts[2]!.sourceCursor).toBe(makeCommitCursor(3));
+
+    // Activation fact (maps to contract kind "baseline").
+    expect(view.facts[3]!.kind).toBe("baseline");
+    expect(view.facts[3]!.refKey).toBe(canonicalJson(p115PolicyActiveRef(P115_PROJECT)));
+    expect(view.facts[3]!.display.startsWith("CoordinationPolicyActive(" + P115_PROJECT)).toBe(true);
+    expect(view.facts[3]!.revision).toBe(1);
+    expect(view.facts[3]!.stale).toBe(false);
+    expect(view.facts[3]!.sourceCursor).toBe(makeCommitCursor(4));
+
+    // decisions: the single initial-design decision row.
+    expect(view.decisions.length).toBe(1);
+    expect(view.decisions[0]).toEqual({ decisionId: P115_DECISION, outcome: "accept", summary: "接受包含查询入口的初始设计", stale: false });
+
+    // explanations: fixed facts-first explanation for the design option.
+    expect(view.explanations).toEqual([{ fact: "design option", explanation: "由 HumanCollaboration 解释", stale: false }]);
+
+    // freshness = observed cursor after the 4-event fold.
+    expect(view.freshness).toBe(makeCommitCursor(4));
+  });
+
+  it("a never-advanced index returns not_found (no cursor claim)", async () => {
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
+    const view = await rm.unifiedStatusView({ projectId: P115_PROJECT, workspaceId: P115_WORKSPACE });
+    expect(view.status).toBe("not_found");
+  });
+
+  it("isolates the same local ids across projects (hard scope key)", async () => {
+    const { page } = buildP115Page();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
+    await rm.advance(page);
+
+    const other = await rm.unifiedStatusView({ projectId: "proj-beta", workspaceId: P115_WORKSPACE });
+    expect(other.status).toBe("not_found");
+  });
+
+  it("rebuild equivalence: a fresh InMemory index from the same events reproduces the view", async () => {
+    const { page } = buildP115Page();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
+    await rm.advance(page);
+    const before = await rm.unifiedStatusView({ projectId: P115_PROJECT, workspaceId: P115_WORKSPACE });
+
+    const fresh = new ReadModelIndexImpl(new ControlPolicyExplanation());
+    await fresh.advance(page);
+    const after = await fresh.unifiedStatusView({ projectId: P115_PROJECT, workspaceId: P115_WORKSPACE });
+    expect(json(after)).toBe(json(before));
+    if (after.status === "ready") {
+      expect(after.facts.length).toBe(4);
+      expect(after.decisions.length).toBe(1);
+    }
+  });
+});

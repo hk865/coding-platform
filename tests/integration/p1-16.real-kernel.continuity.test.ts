@@ -64,7 +64,7 @@ describe.skipIf(!ready.ready)("P1-16 real-kernel continuity evidence (real codin
       "--session",
       SESSION_ID,
       "--non-interactive",
-    ], undefined, 30_000, 3_500);
+    ], undefined, 30_000, () => server1.requests.length >= 2);
     expect(runResult.signal).toBe("SIGKILL"); // interrupted mid-turn => open turn in the session
     expect(server1.requests.length).toBeGreaterThanOrEqual(1);
 

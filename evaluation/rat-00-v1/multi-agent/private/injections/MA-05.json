@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "MA-05",
+  "origin": "deterministic-test-input",
+  "adapterStatus": "NOT_PREPARED",
+  "guard": "Only run in a fresh scenario workspace; resolve all symbolic refs from captured current state; never use fixture claims as model output.",
+  "steps": [
+    {
+      "id": "MA-05-replay-message",
+      "after": {
+        "type": "message-committed"
+      },
+      "occurrence": 1,
+      "action": "replay_same_envelope",
+      "args": {
+        "copies": 2,
+        "preserve": [
+          "correlation",
+          "idempotencyKey",
+          "bodyRef"
+        ]
+      }
+    },
+    {
+      "id": "MA-05-late-binding",
+      "after": {
+        "type": "role-binding-replaced"
+      },
+      "occurrence": 1,
+      "action": "deliver_delayed_report",
+      "args": {
+        "bindingRef": "previous",
+        "expected": "reject-stale"
+      }
+    },
+    {
+      "id": "MA-05-orphan-body",
+      "after": {
+        "type": "artifact-body-saved"
+      },
+      "occurrence": 1,
+      "action": "fail_control_commit_once",
+      "args": {
+        "expected": "body-unaccepted-and-not-visible"
+      }
+    },
+    {
+      "id": "MA-05-cross-project",
+      "after": {
+        "type": "independent-package-running"
+      },
+      "occurrence": 1,
+      "action": "submit_cross_project_report",
+      "args": {
+        "targetProject": "other-project",
+        "expected": "reject-scope"
+      }
+    }
+  ]
+}

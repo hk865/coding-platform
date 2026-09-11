@@ -1,0 +1,17 @@
+{
+  "root": "/tmp/coding-agent-bench-python-slug-normalization-9fmd5K/workspace",
+  "before": {
+    ".platform-runtime/bin/node": "41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c",
+    "slug.py": "98076353248658f7e1e35f0ba2f67cfc3be4b991aee5f171310c415ed3b8e96d",
+    "test_slug.py": "8ce98a6643f990d81f4a353e6be62b169bd250a4d69f38562c2082af8e5af103"
+  },
+  "budget": {
+    "contextWindowTokens": 1000000,
+    "inputTokens": 200000,
+    "outputTokens": 16384,
+    "maxRequests": 10,
+    "maxToolCalls": 30,
+    "timeoutMs": 30000,
+    "perResponseTokens": 2048
+  }
+}

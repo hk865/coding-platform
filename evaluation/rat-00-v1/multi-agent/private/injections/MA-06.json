@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "MA-06",
+  "origin": "deterministic-test-input",
+  "adapterStatus": "NOT_PREPARED",
+  "guard": "Only run in a fresh scenario workspace; resolve all symbolic refs from captured current state; never use fixture claims as model output.",
+  "steps": [
+    {
+      "id": "MA-06-reader-crash",
+      "after": {
+        "type": "reader-tool-started"
+      },
+      "occurrence": 1,
+      "action": "terminate_run_process",
+      "args": {
+        "role": "reader-api",
+        "signal": "SIGKILL"
+      }
+    },
+    {
+      "id": "MA-06-coordinator-crash",
+      "after": {
+        "type": "coordinator-checkpoint-persisted"
+      },
+      "occurrence": 1,
+      "action": "terminate_run_process",
+      "args": {
+        "role": "coordinator",
+        "signal": "SIGKILL"
+      }
+    },
+    {
+      "id": "MA-06-writer-ack-gap",
+      "after": {
+        "type": "side-effect-persisted"
+      },
+      "occurrence": 1,
+      "action": "interrupt_before_receipt",
+      "args": {
+        "role": "writer",
+        "operationId": "create-trial-note",
+        "phase": "after-write-before-ack"
+      }
+    },
+    {
+      "id": "MA-06-restore-service",
+      "after": {
+        "type": "unknown-outcome-recorded"
+      },
+      "occurrence": 1,
+      "action": "restart_service_and_handoff",
+      "args": {
+        "inherit": [
+          "obligations",
+          "rationaleRefs",
+          "unresolved",
+          "acceptedRefs"
+        ],
+        "reconcileFirst": true
+      }
+    },
+    {
+      "id": "MA-06-stale-feedback",
+      "after": {
+        "type": "successor-lease-granted"
+      },
+      "occurrence": 1,
+      "action": "deliver_old_lease_feedback",
+      "args": {
+        "expected": "no-state-advance"
+      }
+    }
+  ]
+}

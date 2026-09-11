@@ -1,0 +1,61 @@
+{
+  "ranAt": "2026-09-09T16:45:19.923Z",
+  "checks": {
+    "sourceIdentity": {
+      "files": 730,
+      "declaredDigest": "1234c2efa1bd3698a2836ed29f5dc8af6edf9e8202dee7755fe3b72a67bfcfd0",
+      "recomputedDigest": "1234c2efa1bd3698a2836ed29f5dc8af6edf9e8202dee7755fe3b72a67bfcfd0",
+      "duplicatePaths": 0,
+      "missing": [],
+      "changed": [],
+      "matchesCurrentTree": true
+    },
+    "logs": {
+      "count": 18,
+      "mismatched": []
+    },
+    "changeSet": {
+      "added": 33,
+      "modified": 54,
+      "removed": 0,
+      "total": 87,
+      "matchesIdentity": true
+    },
+    "dag": {
+      "archEdges": 35,
+      "humanEdges": 35,
+      "mapEdges": 35,
+      "archOnly": [],
+      "mapOnly": [],
+      "humanOnly": [],
+      "mapOnlyVsHuman": [],
+      "cycle": null
+    },
+    "fullRun": {
+      "fileLines": 249,
+      "summedTests": 1633,
+      "summary": [
+        "Test Files  249 passed (249)",
+        "Tests  1633 passed (1633)",
+        "Start at  23:23:04",
+        "Duration  1531.30s (transform 144.19s, setup 0ms, import 1033.93s, tests 694.54s, environment 15ms)"
+      ],
+      "skippedOrTodo": 0,
+      "reviewerAndExplorationFiles": [
+        "✓ tests/app/independent-review.test.ts (7 tests) 61260ms",
+        "✓ tests/app/explorations.test.ts (8 tests) 28556ms",
+        "✓ tests/verification/reviewer-verification.test.ts (21 tests) 16999ms",
+        "✓ tests/control/reviewer-work-persistence.test.ts (1 test) 1321ms",
+        "✓ tests/context/reviewer-context.test.ts (11 tests) 1088ms",
+        "✓ tests/control/reviewer-work.test.ts (20 tests) 776ms",
+        "✓ tests/control/reviewer-reduction-race.test.ts (4 tests) 68ms",
+        "✓ tests/app/reviewer-source-tools.test.ts (2 tests) 55ms",
+        "✓ tests/control/reviewer-existing-drivers-isolation.test.ts (2 tests) 37ms",
+        "✓ tests/control/reviewer-dispatch-isolation.test.ts (2 tests) 33ms"
+      ]
+    },
+    "browser": [
+      "23 passed (3.6m)"
+    ]
+  }
+}

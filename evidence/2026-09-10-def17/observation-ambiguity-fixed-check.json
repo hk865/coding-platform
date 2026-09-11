@@ -1,0 +1,13 @@
+{
+  "checkedAt": "2026-09-10T04:23:11.210Z",
+  "executableRecords": 0,
+  "publicRows": 2,
+  "statuses": [
+    "failed",
+    "outcome_unknown"
+  ],
+  "integrityIssues": [
+    "Multiple persisted runtime observations share identity: 402ca031d0f51ebdb7fbbfb0e2cc8f0ac4b0d940c8c378d4e907dcb96bcb687b"
+  ],
+  "saveRefused": true
+}

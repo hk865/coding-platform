@@ -14,7 +14,7 @@
  *     暂停与当前运行状态的区别；能力不足显式)
  *   - dev_docs/interfaces/runtime-collaboration.md (执行指令在声明的安全点加载)
  *
- * FROZEN semantics:
+ * Semantics:
  *   - DESIRED STATE FIRST: every control command persists the desired state /
  *     control intent (durable) BEFORE any runtime side effect; the console
  *     shows desired vs current SEPARATELY until a runtime fact (safe-point
@@ -38,7 +38,6 @@
 import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
 import { canonicalJson, sha256Hex } from "./fingerprint.js";
 import type { RunRef } from "./dispatch.js";
-import type { ContinuationStatus } from "./context-continuity.js";
 
 // ------------------------------------------------------------------------ //
 // Limits                                                                    //

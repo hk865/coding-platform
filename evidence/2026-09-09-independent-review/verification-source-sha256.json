@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "count": 10,
+  "digest": "2a5c72bc19e4f952e3c7852d27eb2a2c967644eec0c39ecde23406e1a5c1906f",
+  "format": "sorted sha256 + two spaces + relative path, LF joined, no terminal LF",
+  "files": [
+    {
+      "path": "src/contracts/reviewer-verification.ts",
+      "sha256": "2e7090cf43b6b0ff82264123a225dd50fc748357453894a58b1b63bfb19e1092"
+    },
+    {
+      "path": "src/contracts/verification-service.ts",
+      "sha256": "9bb3ace517bc629081d8d189e68fecbedc8a7bc0d0f3f1949343376da2d2958a"
+    },
+    {
+      "path": "src/verification/reviewer-record.ts",
+      "sha256": "fdddb0894d4dea4cd55e388d9439718aac81df5846a01e11b4596cb3750b66ad"
+    },
+    {
+      "path": "src/verification/reviewer-report.ts",
+      "sha256": "2b601ca5287cceb5e7aec67110b5632602ea31dd2760748b231eeafaaa9e494f"
+    },
+    {
+      "path": "src/verification/reviewer-verification.ts",
+      "sha256": "74898a52f6ff8be4060c93df0a078809f8ec09418b03974f193696076d17e782"
+    },
+    {
+      "path": "src/verification/verification-journal.ts",
+      "sha256": "c126543afb3b8b2cb4e4fd7ab70054c7c8f4b34434b841777e1831ac0dd6107b"
+    },
+    {
+      "path": "src/verification/verification-rounds.ts",
+      "sha256": "d4e9c41ec0d19d2c05071eb16348cfd829d5be19cc50df59a7e61520934e7313"
+    },
+    {
+      "path": "src/verification/verification-service.ts",
+      "sha256": "bd13cf764e65295260ea975415d0e7b36e43b406feb37dcd42e22160035e2484"
+    },
+    {
+      "path": "tests/verification/reviewer-fixture.ts",
+      "sha256": "92c69453b05c352e9c4b13d620ff4a4da4a0ad93ceac634c1fac7cdba8f4fac9"
+    },
+    {
+      "path": "tests/verification/reviewer-verification.test.ts",
+      "sha256": "7fc2f2fea84e85649cacf5623cd8eb9d639dd0665d1f37d2b1112cb6173b284d"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+{"type":"task.prepared","trialId":"ts-nullish-timeout-trial-1"}
+{"type":"workspace.changed","paths":["src/timeout.mjs"]}
+{"type":"evaluator.completed","status":"resolved"}
+{"type":"agent.process","exitCode":0,"summary":{"status":"completed","sessionId":"2b17e072-048b-4f81-9657-21eda354bf6a","configuration":{"revision":"d6c00a9e-b67b-4ebc-a5a4-6a806b39e60a","provider":"deepseek","model":"deepseek-v4-flash-vision-exp","baseUrl":"https://api.deepseek.com","protocol":"chat-completions","updatedAt":"2026-09-07T10:22:38.817Z"},"usage":{"modelRequestCount":5,"toolCallCount":5,"inputTokens":14305,"outputTokens":806,"cachedInputTokens":12672,"costUsdMicros":null},"traceArtifact":"native-trace.jsonl","runtimeArtifact":"runtime.json","budget":{"contextWindowTokens":1000000,"inputTokens":200000,"outputTokens":16384,"maxRequests":8,"maxToolCalls":24,"timeoutMs":30000,"perResponseTokens":2048}}}

@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * Lane-C supplemental ReadModelIndex tests, on top of the shared contract
  * suite. Focus: multi-page cursor gaps, out-of-order, dedupe, normalization,
@@ -7,7 +8,7 @@
  * is the query key).
  */
 import { describe, expect, it } from "vitest";
-import { createReadModelIndex } from "../../src/read-model/read-model-index.js";
+import { createReadModelIndex } from "../../src/data/read-model-index/read-model-index.js";
 import type { CommitCursor } from "../../src/contracts/command-event.js";
 import type { DomainEvent } from "../../src/contracts/events.js";
 import type { EventPage } from "../../src/contracts/ledger.js";
@@ -16,8 +17,8 @@ import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
   buildCreateGoalCommand,
   goalCreatedEventFor,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 
 const FIXTURE = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1;
 const ALPHA = FIXTURE.scopes[0]!;
@@ -82,7 +83,7 @@ function betaQuery(atLeastCursor?: CommitCursor) {
 
 describe("ReadModelIndexImpl (lane C), supplemental", () => {
   it("normalizes objective from the Event (NFC + whitespace trim)", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     const a = goalEventAt(1, 0, 1);
     await index.advance(pageOf([a.positioned]));
     const result = await index.goal(alphaQuery(makeCommitCursor(1)));
@@ -95,7 +96,7 @@ describe("ReadModelIndexImpl (lane C), supplemental", () => {
   });
 
   it("cursor gap across pages stalls without partial application", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     const a = goalEventAt(1, 0, 2); // alpha @1
     const gap = goalEventAt(3, 1, 3); // beta @3, cursor 2 missing
     await index.advance(pageOf([a.positioned]));
@@ -109,7 +110,7 @@ describe("ReadModelIndexImpl (lane C), supplemental", () => {
   });
 
   it("out-of-order within a page stalls and applies nothing", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     const b = goalEventAt(3, 0, 4);
     const a = goalEventAt(2, 0, 5);
     await expect(index.advance(pageOf([b.positioned, a.positioned]))).rejects.toMatchObject({
@@ -120,7 +121,7 @@ describe("ReadModelIndexImpl (lane C), supplemental", () => {
   });
 
   it("unknown schema version stalls", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     const a = goalEventAt(2, 0, 6);
     const bad = {
       ...a.positioned,
@@ -132,7 +133,7 @@ describe("ReadModelIndexImpl (lane C), supplemental", () => {
   });
 
   it("re-applying the same page is idempotent and not re-reported", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     const a = goalEventAt(2, 0, 7);
     const page = pageOf([a.positioned]);
     const first = await index.advance(page);
@@ -143,7 +144,7 @@ describe("ReadModelIndexImpl (lane C), supplemental", () => {
   });
 
   it("not_ready until observedCursor covers atLeastCursor, then ready", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     const a = goalEventAt(2, 0, 8);
     await index.advance(pageOf([a.positioned]));
     const behind = await index.goal(alphaQuery(makeCommitCursor(5)));
@@ -157,7 +158,7 @@ describe("ReadModelIndexImpl (lane C), supplemental", () => {
   });
 
   it("without atLeastCursor: row -> ready, no row -> not_ready (never not_found)", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     const a = goalEventAt(1, 0, 9);
     await index.advance(pageOf([a.positioned]));
     const hasRow = await index.goal(alphaQuery());
@@ -173,7 +174,7 @@ describe("ReadModelIndexImpl (lane C), supplemental", () => {
   });
 
   it("keeps shared local workspaceId/goalId isolated by projectId", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     const a = goalEventAt(1, 0, 10);
     const b = goalEventAt(2, 1, 11);
     await index.advance(pageOf([a.positioned]));
@@ -198,7 +199,7 @@ describe("ReadModelIndexImpl (lane C), supplemental", () => {
   });
 
   it("known non-goal events advance the cursor without projecting views", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     // Feed bootstrap-like known events then a goal.
     const boot: Positioned[] = [1, 2, 3, 4].map((seq) => ({
       cursor: makeCommitCursor(seq),

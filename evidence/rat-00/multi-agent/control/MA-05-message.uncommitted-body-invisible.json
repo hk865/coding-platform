@@ -1,0 +1,93 @@
+{
+  "trace": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-05",
+    "origin": "constructed-evaluator-selftest-only",
+    "observations": {
+      "messages": [
+        {
+          "correlation": "c1"
+        },
+        {
+          "correlation": "c1"
+        }
+      ],
+      "wakeups": [
+        {
+          "correlation": "c1"
+        }
+      ],
+      "dispatches": [
+        {
+          "correlation": "c1"
+        }
+      ],
+      "acceptedEffects": [
+        {
+          "correlation": "c1"
+        }
+      ],
+      "rejections": [
+        {
+          "reason": "stale-binding",
+          "beforeDigest": "d",
+          "afterDigest": "d"
+        },
+        {
+          "reason": "cross-project",
+          "beforeDigest": "d",
+          "afterDigest": "d"
+        }
+      ],
+      "artifactWrites": [
+        {
+          "ref": "orphan",
+          "commitSucceeded": false
+        }
+      ],
+      "acceptedReports": [
+        "committed"
+      ],
+      "visibleReports": [
+        "committed",
+        "orphan"
+      ],
+      "failureAt": 5,
+      "independentEvents": [
+        {
+          "kind": "tool-completed",
+          "at": 6
+        }
+      ],
+      "configuration": "parallel-with-injection"
+    }
+  },
+  "expectedFailure": "message.uncommitted-body-invisible",
+  "result": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-05",
+    "layer": "normalized-trace-assertion-evaluator",
+    "inputOrigin": "constructed-evaluator-selftest-only",
+    "status": "FAIL",
+    "assertions": [
+      {
+        "id": "message.replay-exactly-once",
+        "status": "PASS"
+      },
+      {
+        "id": "message.stale-and-cross-project-rejected",
+        "status": "PASS"
+      },
+      {
+        "id": "message.uncommitted-body-invisible",
+        "status": "FAIL"
+      },
+      {
+        "id": "isolation.independent-progress",
+        "status": "PASS"
+      }
+    ],
+    "productCapabilityResult": "NOT_RUN",
+    "note": "A normalized trace can only test evaluator logic here. A platform export adapter and independent raw-evidence authentication are NOT_PREPARED; constructed traces are never product evidence."
+  }
+}

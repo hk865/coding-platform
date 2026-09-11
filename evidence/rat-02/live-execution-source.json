@@ -1,0 +1,293 @@
+{
+  "scope": "Source/build files present for successful live trial, before final robustness fixes",
+  "files": [
+    {
+      "path": "src/app/model-settings.ts",
+      "sha256": "3cfb12ca4a36211e66b36aa9b58e3ff57bf26e33086cffd610bf9211a2c9c8d6"
+    },
+    {
+      "path": "src/app/server.ts",
+      "sha256": "706e3ad6157ddddb4c3a663145adc48ac50d66d4c039cdfb20a81d1cac63d7f8"
+    },
+    {
+      "path": "src/app/workspace-tools.ts",
+      "sha256": "522b7b4440093dee395c2be143e141f2553e7ea3abd3621790dfe099a22210b2"
+    },
+    {
+      "path": "src/app/service.ts",
+      "sha256": "7926dd1e312be1259db1215ee69f73d5640603466d9c33696892927cc9f3e06e"
+    },
+    {
+      "path": "src/app/terminal-sandbox.py",
+      "sha256": "fefd6bebc4c41778a2f724361db206583beae9e4d72ff667b07c8dfe7bb6d31a"
+    },
+    {
+      "path": "src/app/public/styles.css",
+      "sha256": "a88d2cf49b90b176fc3776b020c199a219e508df64564d8c0b9e0e32e4f40393"
+    },
+    {
+      "path": "src/app/public/real-tasks.js",
+      "sha256": "fe368a0f8a3a7f40fe209d8683c8c18363f969332809a2946f1e25897efc273e"
+    },
+    {
+      "path": "src/app/public/layout.js",
+      "sha256": "694c3223c94ecfeab69ba60a93b70b94511cbd0751e5c04497d07dd363fc3e54"
+    },
+    {
+      "path": "src/app/public/index.html",
+      "sha256": "a5312a07e1d9165e9ae6d3ca5d7df46cd14bebf221e0f02e1c247d050517b21e"
+    },
+    {
+      "path": "src/app/public/app.js",
+      "sha256": "65ae6f8005b0c81c71861342b6e03b364bbe8169da8749cb3be669d6bca7dd6c"
+    },
+    {
+      "path": "src/app/public/workspace.js",
+      "sha256": "287ac1f60fea85e1d1f0768f2da522a19ba36ef252f4b0df6e1aa1acac2e5ae5"
+    },
+    {
+      "path": "src/app/public/model-settings.js",
+      "sha256": "c663c9718038e124ab80d6a934775df5cd9bc69a786f907e53b4c1363cd3c937"
+    },
+    {
+      "path": "src/runtime/handoff-control-adapter.ts",
+      "sha256": "aa233ba983c23924c0845de20e5d2ae662142bbcb03698605af5d0f241775c2b"
+    },
+    {
+      "path": "src/runtime/read-only-query-adapter.ts",
+      "sha256": "300b02e5bf8172ab4958ada3c1c020f7994e92ade200f7ec432b63e5b87c9947"
+    },
+    {
+      "path": "src/runtime/model-budget.ts",
+      "sha256": "3783e36b579dbcc081c4238943d999d8f94cf54194eb71b7b7f2664e30920357"
+    },
+    {
+      "path": "src/runtime/coding-agent-runtime.ts",
+      "sha256": "565dc4ea038b83776d5f0693a3fbf8fc58b0df4211cbd8e77d8ab4876b1edf3f"
+    },
+    {
+      "path": "src/runtime/context-continuation-adapter.ts",
+      "sha256": "1e38cd33b2990e63f13a3c1b29604b276ed5b51e52d058157e35d34194b120e8"
+    },
+    {
+      "path": "src/runtime/workspace-capability-adapter.ts",
+      "sha256": "d6b9a64151699fad3ea68a602baa75a1e43e02dad56b2d65d40d3aaed9693300"
+    },
+    {
+      "path": "src/runtime/lifecycle-control-adapter.ts",
+      "sha256": "673861b4545c0da2c4f42f34ed2aa1fab7c9052bcc87976c46c1b175bc062143"
+    },
+    {
+      "path": "src/runtime/fake-runtime-adapter.ts",
+      "sha256": "ed671bb2fce725c145fc9604c4c0037e0d6c674245a000b53c3197c4d7a5e253"
+    },
+    {
+      "path": "dist/app/service.js",
+      "sha256": "88bd8ded7ddc1a8befec36cdb0e9f3762a3b7b3127ce398c36652d03d96f3940"
+    },
+    {
+      "path": "dist/app/workspace-tools.js",
+      "sha256": "9fcd476174045f732c0e12983d62fa60aa260a82f4ad110f61ab2c73998a0e11"
+    },
+    {
+      "path": "dist/app/server.js",
+      "sha256": "a5d3869c1a77406900b5b94e68c1a5e34dac39ae216f34c7fad1ad4cac76d910"
+    },
+    {
+      "path": "dist/app/model-settings.js",
+      "sha256": "0d7aefef6b7545e4a94687482918bfa106548328393a5e5b0df89e5187d2853f"
+    },
+    {
+      "path": "dist/app/terminal-sandbox.py",
+      "sha256": "fefd6bebc4c41778a2f724361db206583beae9e4d72ff667b07c8dfe7bb6d31a"
+    },
+    {
+      "path": "dist/app/public/styles.css",
+      "sha256": "a88d2cf49b90b176fc3776b020c199a219e508df64564d8c0b9e0e32e4f40393"
+    },
+    {
+      "path": "dist/app/public/real-tasks.js",
+      "sha256": "fe368a0f8a3a7f40fe209d8683c8c18363f969332809a2946f1e25897efc273e"
+    },
+    {
+      "path": "dist/app/public/layout.js",
+      "sha256": "694c3223c94ecfeab69ba60a93b70b94511cbd0751e5c04497d07dd363fc3e54"
+    },
+    {
+      "path": "dist/app/public/index.html",
+      "sha256": "a5312a07e1d9165e9ae6d3ca5d7df46cd14bebf221e0f02e1c247d050517b21e"
+    },
+    {
+      "path": "dist/app/public/app.js",
+      "sha256": "65ae6f8005b0c81c71861342b6e03b364bbe8169da8749cb3be669d6bca7dd6c"
+    },
+    {
+      "path": "dist/app/public/workspace.js",
+      "sha256": "287ac1f60fea85e1d1f0768f2da522a19ba36ef252f4b0df6e1aa1acac2e5ae5"
+    },
+    {
+      "path": "dist/app/public/model-settings.js",
+      "sha256": "c663c9718038e124ab80d6a934775df5cd9bc69a786f907e53b4c1363cd3c937"
+    },
+    {
+      "path": "dist/app/public/vendor/xterm.css",
+      "sha256": "854a7c0fb70e8b1a083c16797ab827299fb18744f5ad34f227b48337e33293c6"
+    },
+    {
+      "path": "dist/app/public/vendor/addon-fit.js",
+      "sha256": "ba3ea256ce0620a0992a197d6c9baea64823fc93d8da07a9e366ca9943c18527"
+    },
+    {
+      "path": "dist/app/public/vendor/xterm.js",
+      "sha256": "14903579ff54664cd72f8e8699e6961a6272c21863ec1c3b118cdc8af5d4a972"
+    },
+    {
+      "path": "dist/runtime/workspace-capability-adapter.js",
+      "sha256": "71002eb522d1ac50d4e8565a41e0a7c28a71da3bc658454f13c3a0267bcbb09a"
+    },
+    {
+      "path": "dist/runtime/handoff-control-adapter.js",
+      "sha256": "d95266d2b1e5a13f49b692fce19e9ee6f41209d297c24090ae4230e03ba06c72"
+    },
+    {
+      "path": "dist/runtime/read-only-query-adapter.js",
+      "sha256": "c11b0772d423947af6545ba415ed108d47a3729eda3c906395eaa0d7cbbe96f5"
+    },
+    {
+      "path": "dist/runtime/context-continuation-adapter.js",
+      "sha256": "47262cb970e780ac47cf126cf857ed7c8fd5e106341bee6f52e98f2d34a04da5"
+    },
+    {
+      "path": "dist/runtime/fake-runtime-adapter.js",
+      "sha256": "910207a51efb39920576fc5d0c699c50dbd93a345616ee41a56f98bfc0fa1654"
+    },
+    {
+      "path": "dist/runtime/lifecycle-control-adapter.js",
+      "sha256": "c2b8d9fa15161ac98c990635e37e0a2ff0a468f3070991fbbe69b23f9616b768"
+    },
+    {
+      "path": "dist/runtime/model-budget.js",
+      "sha256": "deae6204988ce9ec5d503ca9a94d6ae190533c1e999fd7fc41f73b8435cb0eed"
+    },
+    {
+      "path": "dist/runtime/coding-agent-runtime.js",
+      "sha256": "77edbb005e96e885259c437b0e4d670a77cbaaeca30d2aa946e2dd7f7053b6b4"
+    },
+    {
+      "path": "vendor/coding-agent/src/app/composition/README.md",
+      "sha256": "660145639a8ae1c295120b374122e239365a35717dfeda75ae3e3dc527c9e3d3"
+    },
+    {
+      "path": "vendor/coding-agent/src/app/composition/composition-root.ts",
+      "sha256": "9af8ce889687909fe65033243b6bf404682548fd7222c7bd7fec416ac990fcbc"
+    },
+    {
+      "path": "vendor/coding-agent/src/app/composition/app-config.ts",
+      "sha256": "66ed63d02c543907ea2f733ca56e01cc18fc61b9727df1d6b24dd0ab5afb3aa7"
+    },
+    {
+      "path": "vendor/coding-agent/src/app/composition/resume-composition.ts",
+      "sha256": "5eaf2608dca2512a206fd9a9cdeffba7ce86cde91292f7e564f4ee2fe3834f2c"
+    },
+    {
+      "path": "vendor/coding-agent/src/sandbox/README.md",
+      "sha256": "b9d0bd3041dacd48dcc9a77dafa1bd6d814989371ce5c00257a54c638b334d55"
+    },
+    {
+      "path": "vendor/coding-agent/src/sandbox/workspace/README.md",
+      "sha256": "8f1f6af6c92123fa9d624f0935e27cda3b60233c81253d5d81ff47de944d5d4b"
+    },
+    {
+      "path": "vendor/coding-agent/src/sandbox/workspace/workspace-sandbox.ts",
+      "sha256": "fc23ccd8a917e9d9f1393912b6e70cbcb74042ff11f967dfc19a81f9acb1b9a2"
+    },
+    {
+      "path": "vendor/coding-agent/src/sandbox/process/README.md",
+      "sha256": "930d8b74e265c756af6288b0c8f0138bbb6b2c05e49daee72ed7dc10347201ed"
+    },
+    {
+      "path": "vendor/coding-agent/src/sandbox/process/process-sandbox.ts",
+      "sha256": "a2345e7a8054ca462e8a8f20a21d15dad9c5b6a41d9bd5b22c34cee8fdc977e1"
+    },
+    {
+      "path": "vendor/coding-agent/dist/app/composition/app-config.d.ts",
+      "sha256": "ccba5b4c52c94eb45996e55437d0d48c379c120104cdcf78a6ddbd2d6f1a5837"
+    },
+    {
+      "path": "vendor/coding-agent/dist/app/composition/app-config.js.map",
+      "sha256": "384c11eab22e1fe96682422e3c54e4224a0a184938cfc8389f3f7a94b261377d"
+    },
+    {
+      "path": "vendor/coding-agent/dist/app/composition/resume-composition.js",
+      "sha256": "a8fdec760f1e68e483a1a0947ee3f027932aa86e1c4b347c6e08c3451258cb3a"
+    },
+    {
+      "path": "vendor/coding-agent/dist/app/composition/resume-composition.d.ts.map",
+      "sha256": "68db009f0b188894bbca17df094b06d6018a792b28e5011ce7bb94c064717d74"
+    },
+    {
+      "path": "vendor/coding-agent/dist/app/composition/composition-root.d.ts.map",
+      "sha256": "291626d9d0a3a742ab57e1df3e5d76e133db5187b02ce649c510b5d8fac16614"
+    },
+    {
+      "path": "vendor/coding-agent/dist/app/composition/composition-root.js",
+      "sha256": "720f7d8d1e2f8480c2e2b596f177b570ed71fcb7c8b3ac362f117f548f654cce"
+    },
+    {
+      "path": "vendor/coding-agent/dist/app/composition/composition-root.d.ts",
+      "sha256": "a412d138194081aa1f10641a190435ba841a34d191e506a69604918a0dfe219e"
+    },
+    {
+      "path": "vendor/coding-agent/dist/app/composition/composition-root.js.map",
+      "sha256": "7640045e3f17f56dae45327a8608fe4bd7b091c0034daf96098d706c447eb248"
+    },
+    {
+      "path": "vendor/coding-agent/dist/app/composition/resume-composition.d.ts",
+      "sha256": "819d9ed55a642aaa15dbf5bd8a4270e7eb4fbf5520188fea2fbb2178c741cbc7"
+    },
+    {
+      "path": "vendor/coding-agent/dist/app/composition/app-config.js",
+      "sha256": "17487c9793caf9c05e018ae550f095466ddb044963eb46e681fbddbded05015b"
+    },
+    {
+      "path": "vendor/coding-agent/dist/app/composition/resume-composition.js.map",
+      "sha256": "447f6977944c688f6428972b86725980bb413063f8f5a5458c3691cdbbb6f769"
+    },
+    {
+      "path": "vendor/coding-agent/dist/app/composition/app-config.d.ts.map",
+      "sha256": "0f3eb60ec435ef9a6a0ab275e0be047b0cc43eb83e505cbe3ef1191c14d0a7af"
+    },
+    {
+      "path": "vendor/coding-agent/dist/sandbox/workspace/workspace-sandbox.d.ts",
+      "sha256": "94819ea3dd4225712df11f4c54618b851e62b6454512e0d4fd39d2d390a9785a"
+    },
+    {
+      "path": "vendor/coding-agent/dist/sandbox/workspace/workspace-sandbox.js.map",
+      "sha256": "cf175140a9e0cddad822838d1e9775b931e01ba08ca9711074b3d9d357e606f3"
+    },
+    {
+      "path": "vendor/coding-agent/dist/sandbox/workspace/workspace-sandbox.js",
+      "sha256": "7a40cd6b3d77ab6953caa4e2f84bd3e7691902ec606d96604283901092efb663"
+    },
+    {
+      "path": "vendor/coding-agent/dist/sandbox/workspace/workspace-sandbox.d.ts.map",
+      "sha256": "35dea953d933c9dea91b4d53de0d1b0b9869e7879f88eab6c9ca873ed8afd3e4"
+    },
+    {
+      "path": "vendor/coding-agent/dist/sandbox/process/process-sandbox.d.ts.map",
+      "sha256": "4fd0760bc0a4b6373741ef70eb4cc0df4a7b0eb58e11da79cd2a567e4eaf75da"
+    },
+    {
+      "path": "vendor/coding-agent/dist/sandbox/process/process-sandbox.js.map",
+      "sha256": "1082a888933054e41421fd21db0a1df5a221442f35f3a02a26b4405ab6bbb245"
+    },
+    {
+      "path": "vendor/coding-agent/dist/sandbox/process/process-sandbox.d.ts",
+      "sha256": "18e04c40abd820d7fbfa4d6cef0766e14ca503866f7428397952b69f3a8e71bd"
+    },
+    {
+      "path": "vendor/coding-agent/dist/sandbox/process/process-sandbox.js",
+      "sha256": "03ed4ebd006940c44340d130b4431c9102b08c26b7dfb5ec50d5e369840c9aa6"
+    }
+  ]
+}

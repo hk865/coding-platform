@@ -1,0 +1,12 @@
+import type { OpenIssuesRequestV1, OpenIssuesViewV1, ReworkIssueViewV1 } from './rework.js';
+
+/** Control explains current obligation carriers and effective admitted evidence.
+ * Input issues retain their original verification provenance; this read cannot
+ * accept a proposal or change a Task. */
+export interface ReworkDispositionPort {
+  projectIssues(request: OpenIssuesRequestV1, issues: ReworkIssueViewV1[]): Promise<ReworkIssueViewV1[]>;
+}
+
+/** Verification results passed by the composition root, never a callback into
+ * VerificationEngine from DispatchEngine. Refreshed on each product request. */
+export type ReworkIssueMaterials = OpenIssuesViewV1;

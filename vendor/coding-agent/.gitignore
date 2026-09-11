@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+.tooling/
+.env
+*.log
+benchmarks/results/*
+!benchmarks/results/README.md
+!benchmarks/tasks/**/.env

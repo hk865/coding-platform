@@ -1,0 +1,4 @@
+{"type":"task.prepared","trialId":"node-bearer-auth-trial-1"}
+{"type":"workspace.changed","paths":["src/auth.mjs"]}
+{"type":"evaluator.completed","status":"resolved"}
+{"type":"agent.process","exitCode":0,"summary":{"status":"completed","sessionId":"cf2c099c-8bf7-4267-a484-514e9fe52d19","configuration":{"revision":"d6c00a9e-b67b-4ebc-a5a4-6a806b39e60a","provider":"deepseek","model":"deepseek-v4-flash-vision-exp","baseUrl":"https://api.deepseek.com","protocol":"chat-completions","updatedAt":"2026-09-07T10:22:38.817Z"},"usage":{"modelRequestCount":5,"toolCallCount":5,"inputTokens":18963,"outputTokens":2473,"cachedInputTokens":17280,"costUsdMicros":null},"traceArtifact":"native-trace.jsonl","runtimeArtifact":"runtime.json","budget":{"contextWindowTokens":1000000,"inputTokens":200000,"outputTokens":16384,"maxRequests":10,"maxToolCalls":30,"timeoutMs":30000,"perResponseTokens":2048}}}

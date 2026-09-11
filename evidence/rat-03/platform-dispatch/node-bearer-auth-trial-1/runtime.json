@@ -1,0 +1,665 @@
+{
+  "runner": "platform-dispatch",
+  "taskId": "node-bearer-auth",
+  "taskDigest": "sha256:bda555545b6017be51d0f4f84d420e7c01df4f15ab6ee645ee160b91ba90e10c",
+  "status": "resolved",
+  "runtimeMs": 19711,
+  "evaluatorStatus": "resolved",
+  "run": {
+    "spec": {
+      "projectId": "local-c3489f8237f3b81b1cf9",
+      "workspaceId": "workspace-main",
+      "goalId": "be70cfeb-9b52-478b-ae4a-7889049d300b",
+      "runId": "real-2d451bc8-b7b9-433b-a547-a688c070cb29",
+      "taskId": "coding-task",
+      "root": "/tmp/coding-agent-bench-node-bearer-auth-slN2PP/workspace",
+      "instruction": "# 收紧 Bearer token 验证\n\n`src/auth.mjs` 使用子串匹配验证 Authorization header，导致额外前后缀也能通过。修复\n`isAuthorized`：只接受完整且大小写敏感的 `Bearer <token>`，并安全处理缺失或非字符串 header。\n\n运行 `node test.mjs` 可执行公开测试。不要修改测试文件。",
+      "budget": {
+        "contextWindowTokens": 1000000,
+        "inputTokens": 200000,
+        "outputTokens": 16384,
+        "maxRequests": 10,
+        "maxToolCalls": 30,
+        "timeoutMs": 30000,
+        "perResponseTokens": 2048
+      }
+    },
+    "status": "completed",
+    "sessionId": "4b46f012-9eb4-48de-97c0-4c4685522fa4",
+    "configuration": {
+      "revision": "d6c00a9e-b67b-4ebc-a5a4-6a806b39e60a",
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash-vision-exp",
+      "baseUrl": "https://api.deepseek.com",
+      "protocol": "chat-completions",
+      "updatedAt": "2026-09-07T10:22:38.817Z"
+    },
+    "events": [
+      {
+        "schemaVersion": 1,
+        "eventId": "4b46f012-9eb4-48de-97c0-4c4685522fa4-1",
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "local-c3489f8237f3b81b1cf9",
+          "goalId": "be70cfeb-9b52-478b-ae4a-7889049d300b",
+          "runId": "real-2d451bc8-b7b9-433b-a547-a688c070cb29"
+        },
+        "sequence": 1,
+        "occurredAt": "2026-09-07T11:45:28.950Z",
+        "eventType": "run_started",
+        "payload": {
+          "kind": "started",
+          "startedAt": "2026-09-07T11:45:28.950Z"
+        }
+      },
+      {
+        "schemaVersion": 1,
+        "eventId": "4b46f012-9eb4-48de-97c0-4c4685522fa4-2",
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "local-c3489f8237f3b81b1cf9",
+          "goalId": "be70cfeb-9b52-478b-ae4a-7889049d300b",
+          "runId": "real-2d451bc8-b7b9-433b-a547-a688c070cb29"
+        },
+        "sequence": 2,
+        "occurredAt": "2026-09-07T11:45:46.716Z",
+        "eventType": "run_completed",
+        "payload": {
+          "kind": "completed",
+          "exitCode": 0
+        }
+      }
+    ],
+    "trace": [
+      {
+        "type": "run.started",
+        "sequence": 1,
+        "at": "2026-09-07T11:45:29.454Z",
+        "data": {}
+      },
+      {
+        "type": "model.request_started",
+        "sequence": 2,
+        "at": "2026-09-07T11:45:29.474Z",
+        "data": {
+          "requestId": "372e3ccd-554d-4a08-b3e1-4474c233bfe1",
+          "retryOfRequestId": null
+        }
+      },
+      {
+        "type": "model.usage_recorded",
+        "sequence": 3,
+        "at": "2026-09-07T11:45:30.944Z",
+        "data": {
+          "requestId": "372e3ccd-554d-4a08-b3e1-4474c233bfe1",
+          "delta": {
+            "inputTokens": 1898,
+            "outputTokens": 132,
+            "cachedInputTokens": 1792,
+            "costUsdMicros": null
+          }
+        }
+      },
+      {
+        "type": "assistant.message_completed",
+        "sequence": 4,
+        "at": "2026-09-07T11:45:30.956Z",
+        "data": {
+          "requestId": "372e3ccd-554d-4a08-b3e1-4474c233bfe1",
+          "message": {
+            "schemaVersion": 1,
+            "messageId": "93c7d01e-e149-4d1a-9e6b-c1a8cbdd0d99",
+            "role": "assistant",
+            "content": "I'll start by reading `src/auth.mjs` and `test.mjs` to understand the current implementation and the expected behavior."
+          },
+          "toolCalls": [
+            {
+              "schemaVersion": 1,
+              "callId": "call_00_MPP4SpFm5sk6XcK2jRhY5879",
+              "name": "read",
+              "arguments": {
+                "path": "src/auth.mjs"
+              }
+            },
+            {
+              "schemaVersion": 1,
+              "callId": "call_01_3q1tTQINg2CLIyOpS3jR8509",
+              "name": "read",
+              "arguments": {
+                "path": "test.mjs"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "type": "tool.started",
+        "sequence": 5,
+        "at": "2026-09-07T11:45:30.976Z",
+        "data": {
+          "call": {
+            "schemaVersion": 1,
+            "callId": "call_00_MPP4SpFm5sk6XcK2jRhY5879",
+            "name": "read",
+            "arguments": {
+              "path": "src/auth.mjs"
+            }
+          }
+        }
+      },
+      {
+        "type": "tool.started",
+        "sequence": 6,
+        "at": "2026-09-07T11:45:30.990Z",
+        "data": {
+          "call": {
+            "schemaVersion": 1,
+            "callId": "call_01_3q1tTQINg2CLIyOpS3jR8509",
+            "name": "read",
+            "arguments": {
+              "path": "test.mjs"
+            }
+          }
+        }
+      },
+      {
+        "type": "tool.completed",
+        "sequence": 7,
+        "at": "2026-09-07T11:45:31.005Z",
+        "data": {
+          "callId": "call_00_MPP4SpFm5sk6XcK2jRhY5879",
+          "result": {
+            "schemaVersion": 1,
+            "callId": "call_00_MPP4SpFm5sk6XcK2jRhY5879",
+            "output": [
+              {
+                "kind": "text",
+                "text": "export function isAuthorized(header, expectedToken) {\n  return typeof header === \"string\" && header.includes(expectedToken);\n}\n"
+              },
+              {
+                "kind": "json",
+                "value": {
+                  "path": "src/auth.mjs",
+                  "startLine": 1,
+                  "endLine": 4,
+                  "totalLines": 4,
+                  "totalLinesKnown": true,
+                  "truncated": false,
+                  "utf8Bytes": 127,
+                  "revision": "bca6e1de32db4b5deae1d0262b1c032a3e4f5a6bcd6224cc4122e4aa312978a1"
+                }
+              }
+            ],
+            "effects": {
+              "sideEffect": "none",
+              "changedPaths": [],
+              "workspaceRevision": null,
+              "artifactRefs": []
+            },
+            "status": "success"
+          }
+        }
+      },
+      {
+        "type": "tool.completed",
+        "sequence": 8,
+        "at": "2026-09-07T11:45:31.017Z",
+        "data": {
+          "callId": "call_01_3q1tTQINg2CLIyOpS3jR8509",
+          "result": {
+            "schemaVersion": 1,
+            "callId": "call_01_3q1tTQINg2CLIyOpS3jR8509",
+            "output": [
+              {
+                "kind": "text",
+                "text": "import assert from \"node:assert/strict\";\n\nimport { isAuthorized } from \"./src/auth.mjs\";\n\nassert.equal(isAuthorized(\"Bearer abc\", \"abc\"), true);\nassert.equal(isAuthorized(undefined, \"abc\"), false);\nconsole.log(\"public tests passed\");\n"
+              },
+              {
+                "kind": "json",
+                "value": {
+                  "path": "test.mjs",
+                  "startLine": 1,
+                  "endLine": 8,
+                  "totalLines": 8,
+                  "totalLinesKnown": true,
+                  "truncated": false,
+                  "utf8Bytes": 234,
+                  "revision": "24af6f4836d15a5bb620bd8344390726c44d2536042034075f9bfb3d051879d3"
+                }
+              }
+            ],
+            "effects": {
+              "sideEffect": "none",
+              "changedPaths": [],
+              "workspaceRevision": null,
+              "artifactRefs": []
+            },
+            "status": "success"
+          }
+        }
+      },
+      {
+        "type": "model.request_started",
+        "sequence": 9,
+        "at": "2026-09-07T11:45:31.038Z",
+        "data": {
+          "requestId": "f2254a15-8c68-4bf3-b46d-18dccae535e0",
+          "retryOfRequestId": null
+        }
+      },
+      {
+        "type": "model.usage_recorded",
+        "sequence": 10,
+        "at": "2026-09-07T11:45:39.762Z",
+        "data": {
+          "requestId": "f2254a15-8c68-4bf3-b46d-18dccae535e0",
+          "delta": {
+            "inputTokens": 2484,
+            "outputTokens": 990,
+            "cachedInputTokens": 1920,
+            "costUsdMicros": null
+          }
+        }
+      },
+      {
+        "type": "assistant.message_completed",
+        "sequence": 11,
+        "at": "2026-09-07T11:45:39.774Z",
+        "data": {
+          "requestId": "f2254a15-8c68-4bf3-b46d-18dccae535e0",
+          "message": {
+            "schemaVersion": 1,
+            "messageId": "dbfdbef7-8009-4768-9414-4319c8152ae9",
+            "role": "assistant",
+            "content": "The current code uses `header.includes(expectedToken)`, which allows extra prefixes/suffixes and is not case-sensitive. I'll change it to require an exact, case-sensitive match of the full `Bearer <token>` header, while still guarding against missing/non-string headers."
+          },
+          "toolCalls": [
+            {
+              "schemaVersion": 1,
+              "callId": "call_00_qzVWi5zo7wXx35pyqvXi7699",
+              "name": "edit",
+              "arguments": {
+                "mode": "replace",
+                "path": "src/auth.mjs",
+                "oldText": "export function isAuthorized(header, expectedToken) {\n  return typeof header === \"string\" && header.includes(expectedToken);\n}",
+                "newText": "export function isAuthorized(header, expectedToken) {\n  return typeof header === \"string\" && header === `Bearer ${expectedToken}`;\n}",
+                "expectedRevision": "bca6e1de32db4b5deae1d0262b1c032a3e4f5a6bcd6224cc4122e4aa312978a1"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "type": "tool.started",
+        "sequence": 12,
+        "at": "2026-09-07T11:45:39.792Z",
+        "data": {
+          "call": {
+            "schemaVersion": 1,
+            "callId": "call_00_qzVWi5zo7wXx35pyqvXi7699",
+            "name": "edit",
+            "arguments": {
+              "mode": "replace",
+              "path": "src/auth.mjs",
+              "oldText": "export function isAuthorized(header, expectedToken) {\n  return typeof header === \"string\" && header.includes(expectedToken);\n}",
+              "newText": "export function isAuthorized(header, expectedToken) {\n  return typeof header === \"string\" && header === `Bearer ${expectedToken}`;\n}",
+              "expectedRevision": "bca6e1de32db4b5deae1d0262b1c032a3e4f5a6bcd6224cc4122e4aa312978a1"
+            }
+          }
+        }
+      },
+      {
+        "type": "tool.completed",
+        "sequence": 13,
+        "at": "2026-09-07T11:45:39.814Z",
+        "data": {
+          "callId": "call_00_qzVWi5zo7wXx35pyqvXi7699",
+          "result": {
+            "schemaVersion": 1,
+            "callId": "call_00_qzVWi5zo7wXx35pyqvXi7699",
+            "output": [
+              {
+                "kind": "text",
+                "text": "--- a/src/auth.mjs\n+++ b/src/auth.mjs\n-export function isAuthorized(header, expectedToken) {\n  return typeof header === \"string\" && header.includes(expectedToken);\n}\n+export function isAuthorized(header, expectedToken) {\n  return typeof header === \"string\" && header === `Bearer ${expectedToken}`;\n}"
+              },
+              {
+                "kind": "json",
+                "value": {
+                  "path": "src/auth.mjs",
+                  "oldRevision": "bca6e1de32db4b5deae1d0262b1c032a3e4f5a6bcd6224cc4122e4aa312978a1",
+                  "newRevision": "45db5cade2a461cf7753cb13449b058bbb39b87821b18f412b864073a8e109c6",
+                  "changedBytes": 6
+                }
+              }
+            ],
+            "effects": {
+              "sideEffect": "confirmed",
+              "changedPaths": [
+                "src/auth.mjs"
+              ],
+              "workspaceRevision": "d12e54ae08d24d56a6dd0369953fa5cc15654ee62dc08ce7d44b0397f2567aaf",
+              "artifactRefs": []
+            },
+            "status": "success"
+          }
+        }
+      },
+      {
+        "type": "model.request_started",
+        "sequence": 14,
+        "at": "2026-09-07T11:45:39.834Z",
+        "data": {
+          "requestId": "41be1b50-8bfc-42e3-bfa3-b669a8bd0984",
+          "retryOfRequestId": null
+        }
+      },
+      {
+        "type": "model.usage_recorded",
+        "sequence": 15,
+        "at": "2026-09-07T11:45:40.880Z",
+        "data": {
+          "requestId": "41be1b50-8bfc-42e3-bfa3-b669a8bd0984",
+          "delta": {
+            "inputTokens": 3780,
+            "outputTokens": 62,
+            "cachedInputTokens": 3456,
+            "costUsdMicros": null
+          }
+        }
+      },
+      {
+        "type": "assistant.message_completed",
+        "sequence": 16,
+        "at": "2026-09-07T11:45:40.892Z",
+        "data": {
+          "requestId": "41be1b50-8bfc-42e3-bfa3-b669a8bd0984",
+          "message": {
+            "schemaVersion": 1,
+            "messageId": "fd339ae4-dae8-4bd7-88b3-9756f64d57db",
+            "role": "assistant",
+            "content": "The edit is applied. Now I'll run the public test to confirm it passes."
+          },
+          "toolCalls": [
+            {
+              "schemaVersion": 1,
+              "callId": "call_00_ET_bWAGzpfSDNwZBWlVSOoF4654",
+              "name": "shell",
+              "arguments": {
+                "command": "node test.mjs"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "type": "tool.started",
+        "sequence": 17,
+        "at": "2026-09-07T11:45:40.911Z",
+        "data": {
+          "call": {
+            "schemaVersion": 1,
+            "callId": "call_00_ET_bWAGzpfSDNwZBWlVSOoF4654",
+            "name": "shell",
+            "arguments": {
+              "command": "node test.mjs"
+            }
+          }
+        }
+      },
+      {
+        "type": "tool.completed",
+        "sequence": 18,
+        "at": "2026-09-07T11:45:40.962Z",
+        "data": {
+          "callId": "call_00_ET_bWAGzpfSDNwZBWlVSOoF4654",
+          "result": {
+            "schemaVersion": 1,
+            "callId": "call_00_ET_bWAGzpfSDNwZBWlVSOoF4654",
+            "output": [
+              {
+                "kind": "text",
+                "text": "public tests passed\n"
+              },
+              {
+                "kind": "json",
+                "value": {
+                  "exitCode": 0,
+                  "signal": null,
+                  "stdout": {
+                    "totalBytes": 20,
+                    "truncated": false
+                  },
+                  "stderr": {
+                    "text": "",
+                    "totalBytes": 0,
+                    "truncated": false
+                  },
+                  "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+                  "timings": {
+                    "snapshotBeforeMs": 0.6065769999986514,
+                    "executionMs": 32.64007500000298,
+                    "snapshotAfterMs": 1.1008049999945797
+                  }
+                }
+              }
+            ],
+            "effects": {
+              "sideEffect": "possible",
+              "changedPaths": [],
+              "workspaceRevision": "d12e54ae08d24d56a6dd0369953fa5cc15654ee62dc08ce7d44b0397f2567aaf",
+              "artifactRefs": []
+            },
+            "status": "success"
+          }
+        }
+      },
+      {
+        "type": "model.request_started",
+        "sequence": 19,
+        "at": "2026-09-07T11:45:40.982Z",
+        "data": {
+          "requestId": "ac5734b3-3e03-470f-ab55-a97e40f10fab",
+          "retryOfRequestId": null
+        }
+      },
+      {
+        "type": "model.usage_recorded",
+        "sequence": 20,
+        "at": "2026-09-07T11:45:44.191Z",
+        "data": {
+          "requestId": "ac5734b3-3e03-470f-ab55-a97e40f10fab",
+          "delta": {
+            "inputTokens": 4079,
+            "outputTokens": 318,
+            "cachedInputTokens": 3840,
+            "costUsdMicros": null
+          }
+        }
+      },
+      {
+        "type": "assistant.message_completed",
+        "sequence": 21,
+        "at": "2026-09-07T11:45:44.203Z",
+        "data": {
+          "requestId": "ac5734b3-3e03-470f-ab55-a97e40f10fab",
+          "message": {
+            "schemaVersion": 1,
+            "messageId": "642bba8b-96fb-4a65-8dbf-5a299b03d535",
+            "role": "assistant",
+            "content": "Public test passes. Let me verify the edge cases the fix targets (extra prefix/suffix, case sensitivity, non-string headers) to confirm the behavior is correct."
+          },
+          "toolCalls": [
+            {
+              "schemaVersion": 1,
+              "callId": "call_00_E8dEuPlLF1YfcWzQop2f1673",
+              "name": "shell",
+              "arguments": {
+                "command": "node --input-type=module -e '\nimport { isAuthorized } from \"./src/auth.mjs\";\nconst t = (name, got, want) => console.log((got === want ? \"PASS\" : \"FAIL\"), name, \"=>\", got);\nt(\"valid\", isAuthorized(\"Bearer abc\", \"abc\"), true);\nt(\"prefix\", isAuthorized(\"xBearer abc\", \"abc\"), false);\nt(\"suffix\", isAuthorized(\"Bearer abcxyz\", \"abc\"), false);\nt(\"trailing space\", isAuthorized(\"Bearer abc \", \"abc\"), false);\nt(\"lowercase bearer\", isAuthorized(\"bearer abc\", \"abc\"), false);\nt(\"uppercase bearer\", isAuthorized(\"BEARER abc\", \"abc\"), false);\nt(\"undefined\", isAuthorized(undefined, \"abc\"), false);\nt(\"number header\", isAuthorized(123, \"abc\"), false);\nt(\"no space\", isAuthorized(\"Bearerabc\", \"abc\"), false);\n'"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "type": "tool.started",
+        "sequence": 22,
+        "at": "2026-09-07T11:45:44.228Z",
+        "data": {
+          "call": {
+            "schemaVersion": 1,
+            "callId": "call_00_E8dEuPlLF1YfcWzQop2f1673",
+            "name": "shell",
+            "arguments": {
+              "command": "node --input-type=module -e '\nimport { isAuthorized } from \"./src/auth.mjs\";\nconst t = (name, got, want) => console.log((got === want ? \"PASS\" : \"FAIL\"), name, \"=>\", got);\nt(\"valid\", isAuthorized(\"Bearer abc\", \"abc\"), true);\nt(\"prefix\", isAuthorized(\"xBearer abc\", \"abc\"), false);\nt(\"suffix\", isAuthorized(\"Bearer abcxyz\", \"abc\"), false);\nt(\"trailing space\", isAuthorized(\"Bearer abc \", \"abc\"), false);\nt(\"lowercase bearer\", isAuthorized(\"bearer abc\", \"abc\"), false);\nt(\"uppercase bearer\", isAuthorized(\"BEARER abc\", \"abc\"), false);\nt(\"undefined\", isAuthorized(undefined, \"abc\"), false);\nt(\"number header\", isAuthorized(123, \"abc\"), false);\nt(\"no space\", isAuthorized(\"Bearerabc\", \"abc\"), false);\n'"
+            }
+          }
+        }
+      },
+      {
+        "type": "tool.completed",
+        "sequence": 23,
+        "at": "2026-09-07T11:45:44.288Z",
+        "data": {
+          "callId": "call_00_E8dEuPlLF1YfcWzQop2f1673",
+          "result": {
+            "schemaVersion": 1,
+            "callId": "call_00_E8dEuPlLF1YfcWzQop2f1673",
+            "output": [
+              {
+                "kind": "text",
+                "text": "PASS valid => true\nPASS prefix => false\nPASS suffix => false\nPASS trailing space => false\nPASS lowercase bearer => false\nPASS uppercase bearer => false\nPASS undefined => false\nPASS number header => false\nPASS no space => false\n"
+              },
+              {
+                "kind": "json",
+                "value": {
+                  "exitCode": 0,
+                  "signal": null,
+                  "stdout": {
+                    "totalBytes": 227,
+                    "truncated": false
+                  },
+                  "stderr": {
+                    "text": "",
+                    "totalBytes": 0,
+                    "truncated": false
+                  },
+                  "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+                  "timings": {
+                    "snapshotBeforeMs": 0.8659409999963827,
+                    "executionMs": 35.66981599999417,
+                    "snapshotAfterMs": 1.120840000003227
+                  }
+                }
+              }
+            ],
+            "effects": {
+              "sideEffect": "possible",
+              "changedPaths": [],
+              "workspaceRevision": "d12e54ae08d24d56a6dd0369953fa5cc15654ee62dc08ce7d44b0397f2567aaf",
+              "artifactRefs": []
+            },
+            "status": "success"
+          }
+        }
+      },
+      {
+        "type": "model.request_started",
+        "sequence": 24,
+        "at": "2026-09-07T11:45:44.312Z",
+        "data": {
+          "requestId": "21e80969-8585-4028-912c-25e85a01d901",
+          "retryOfRequestId": null
+        }
+      },
+      {
+        "type": "model.usage_recorded",
+        "sequence": 25,
+        "at": "2026-09-07T11:45:46.656Z",
+        "data": {
+          "requestId": "21e80969-8585-4028-912c-25e85a01d901",
+          "delta": {
+            "inputTokens": 4686,
+            "outputTokens": 224,
+            "cachedInputTokens": 4352,
+            "costUsdMicros": null
+          }
+        }
+      },
+      {
+        "type": "assistant.message_completed",
+        "sequence": 26,
+        "at": "2026-09-07T11:45:46.671Z",
+        "data": {
+          "requestId": "21e80969-8585-4028-912c-25e85a01d901",
+          "message": {
+            "schemaVersion": 1,
+            "messageId": "e7d616b6-6922-415a-b011-c733ed83570d",
+            "role": "assistant",
+            "content": "已修复 `src/auth.mjs` 的 `isAuthorized`。\n\n变更内容：将原来的子串匹配改为要求整个 header 精确、大小写敏感地等于 `Bearer <token>`：\n\n```js\nexport function isAuthorized(header, expectedToken) {\n  return typeof header === \"string\" && header === `Bearer ${expectedToken}`;\n}\n```\n\n逻辑说明：\n- `typeof header === \"string\"` 安全处理缺失（`undefined`）或非字符串 header。\n- `header === \\`Bearer ${expectedToken}\\`` 拒绝任何额外前缀/后缀以及大小写变体（如 `xBearer abc`、`Bearer abcxyz`、`bearer abc`）。\n\n验证结果：\n- `node test.mjs` 通过，输出 `public tests passed`。\n- 额外验证了前缀、后缀、尾随空格、大小写变体、非字符串/缺失 header、缺少空格等情况，均返回预期的布尔值。\n\n未修改测试文件。"
+          },
+          "toolCalls": []
+        }
+      },
+      {
+        "type": "run.completed",
+        "sequence": 27,
+        "at": "2026-09-07T11:45:46.690Z",
+        "data": {
+          "finalMessageId": "e7d616b6-6922-415a-b011-c733ed83570d"
+        }
+      }
+    ],
+    "usage": [
+      {
+        "requestId": "372e3ccd-554d-4a08-b3e1-4474c233bfe1",
+        "reservedInput": 11400,
+        "reservedOutput": 2048,
+        "inputTokens": 1898,
+        "outputTokens": 132,
+        "cachedInputTokens": 1792,
+        "status": "reported"
+      },
+      {
+        "requestId": "f2254a15-8c68-4bf3-b46d-18dccae535e0",
+        "reservedInput": 13361,
+        "reservedOutput": 2048,
+        "inputTokens": 2484,
+        "outputTokens": 990,
+        "cachedInputTokens": 1920,
+        "status": "reported"
+      },
+      {
+        "requestId": "41be1b50-8bfc-42e3-bfa3-b669a8bd0984",
+        "reservedInput": 18194,
+        "reservedOutput": 2048,
+        "inputTokens": 3780,
+        "outputTokens": 62,
+        "cachedInputTokens": 3456,
+        "status": "reported"
+      },
+      {
+        "requestId": "ac5734b3-3e03-470f-ab55-a97e40f10fab",
+        "reservedInput": 19187,
+        "reservedOutput": 2048,
+        "inputTokens": 4079,
+        "outputTokens": 318,
+        "cachedInputTokens": 3840,
+        "status": "reported"
+      },
+      {
+        "requestId": "21e80969-8585-4028-912c-25e85a01d901",
+        "reservedInput": 21406,
+        "reservedOutput": 2048,
+        "inputTokens": 4686,
+        "outputTokens": 224,
+        "cachedInputTokens": 4352,
+        "status": "reported"
+      }
+    ],
+    "error": null,
+    "nodeSha256": "41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c",
+    "workspaceRevision": "e899fcdf863b83f6dabfa61bc33deb3036ebf295c2ebb39191e036bb042ac8c5",
+    "cancelRequested": false,
+    "timeout": false
+  }
+}

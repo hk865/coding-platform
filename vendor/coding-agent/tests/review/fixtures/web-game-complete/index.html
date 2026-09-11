@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>星光记忆翻牌</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="game-shell">
+      <header>
+        <p class="eyebrow">MEMORY CONSTELLATION</p>
+        <h1>星光记忆翻牌</h1>
+        <p class="intro">翻开两张牌，找到藏在夜空中的八组成对符号。</p>
+      </header>
+
+      <section class="stats" aria-label="游戏统计">
+        <div><span>移动</span><strong id="moves">0</strong></div>
+        <div>
+          <span>配对</span><strong><b id="matches">0</b>/8</strong>
+        </div>
+        <div>
+          <span>用时</span><strong><b id="timer">0</b>s</strong>
+        </div>
+        <div><span>得分</span><strong id="score">800</strong></div>
+      </section>
+
+      <p id="status" class="status" role="status" aria-live="polite">选择第一张牌</p>
+      <div id="board" class="board" role="grid" aria-label="4 乘 4 记忆翻牌棋盘"></div>
+
+      <section id="victory" class="victory" role="dialog" aria-labelledby="victory-title" hidden>
+        <p>✦ COMPLETE ✦</p>
+        <h2 id="victory-title">星图已完整点亮</h2>
+        <p id="victory-summary"></p>
+        <button id="play-again" type="button">再玩一局</button>
+      </section>
+
+      <button id="restart" class="restart" type="button">重新开始并洗牌</button>
+    </main>
+    <script type="module" src="script.js"></script>
+  </body>
+</html>

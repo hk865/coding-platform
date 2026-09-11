@@ -1,0 +1,6 @@
+import fs from 'node:fs';import path from 'node:path';
+const root='evidence/2026-09-11-source-cleanup';
+for(const file of ['tests/app/semantic-collaboration-fixture.ts','src/ui/tests/semantic-collaboration.spec.ts']){const h=root+'/history/'+file+'.txt';fs.mkdirSync(path.dirname(h),{recursive:true});if(!fs.existsSync(h))fs.copyFileSync(file,h);let s=fs.readFileSync(file,'utf8');
+if(file.startsWith('tests/'))s=s.replaceAll("join(process.cwd(),'evidence/2026-09-11-semantic-loop')","join(process.cwd(),process.env['SEMANTIC_EVIDENCE_DIR'] ?? '.local/test-evidence/semantic-collaboration')").replace("join(process.cwd(),'evidence/2026-09-11-semantic-loop','semantic-task-'","join(process.cwd(),process.env['SEMANTIC_EVIDENCE_DIR'] ?? '.local/test-evidence/semantic-collaboration','semantic-task-'");
+else s=s.replace("async({page})=>", "async({page},testInfo)=>").replace("'evidence/2026-09-11-semantic-loop/semantic-conversation.png'","testInfo.outputPath('semantic-conversation.png')").replace("'evidence/2026-09-11-semantic-loop/semantic-original-fail.png'","testInfo.outputPath('semantic-original-fail.png')");
+fs.writeFileSync(file+'.cleanup-tmp',s,{flag:'wx'});fs.renameSync(file+'.cleanup-tmp',file);}

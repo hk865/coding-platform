@@ -35,16 +35,16 @@ import {
   buildRecordHandoffCommand,
   buildClaimReplacementCommand,
   p106PlanRef,
-} from "../../src/contracts/fixtures/handoff-fixtures.js";
-import { buildDispatchClaimCommand, buildDispatchStartCommand, buildRunFactCommand, buildEnvelopeFixture, buildManifestFixture, rebaseScriptForRun, FAKE_RUNTIME_SCRIPT_CRASHED_V1 } from "../../src/contracts/fixtures/dispatch-fixtures.js";
+} from "../contract-support/fixtures/handoff-fixtures.js";
+import { buildDispatchClaimCommand, buildDispatchStartCommand, buildRunFactCommand, buildEnvelopeFixture, buildManifestFixture, rebaseScriptForRun, FAKE_RUNTIME_SCRIPT_CRASHED_V1 } from "../../src/fixtures/dispatch-fixtures.js";
 import { runRefFor, taskAttemptRefFor, dispatchOutboxRefFor } from "../../src/contracts/dispatch.js";
 import { handoffPacketRefFor } from "../../src/contracts/handoff.js";
 import { artifactBodyDigest, type ArtifactRef } from "../../src/contracts/artifact.js";
 import type { HandoffContextPort, HandoffContextRequestV1, HandoffContextResultV1 } from "../../src/contracts/handoff-context.js";
 import type { RunPort, RunCapabilities, RunHandle } from "../../src/contracts/ports.js";
 import type { TaskEnvelopeV1 } from "../../src/contracts/task-envelope.js";
-import type { HandoffDriveDeps } from "../../src/control/handoff-drive.js";
-import { createHandoffDriveEngine } from "../../src/control/handoff-drive.js";
+import type { HandoffDriveDeps } from "../../src/control/dispatch-engine/handoff-drive.js";
+import { createHandoffDriveEngine } from "../../src/control/dispatch-engine/handoff-drive.js";
 
 const FIXED = "2026-09-05T12:00:00.000Z";
 const BUNDLE: ArtifactRef = {

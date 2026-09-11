@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+const base='evidence/2026-09-11-semantic-loop';
+const scan=dir=>fs.readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?scan(path.join(dir,e.name)):[path.join(dir,e.name)]);
+const emitted=scan('dist').filter(p=>p.endsWith('.js')&&!p.replaceAll('\\','/').startsWith('dist/app/public/'));
+const stale=emitted.filter(p=>!fs.existsSync(p.replace(/^dist[\\/]/,'src/').replace(/\.js$/,'.ts')));
+fs.writeFileSync(base+'/build-artifacts.json',JSON.stringify({checkedAt:new Date().toISOString(),count:emitted.length,stale,files:emitted.map(p=>({path:p.replaceAll('\\','/'),sha256:crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex')}))},null,2));
+console.log(JSON.stringify({emitted:emitted.length,stale}));
+if(stale.length)process.exitCode=1;

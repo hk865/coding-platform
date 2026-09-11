@@ -1,0 +1,182 @@
+/** integration protocol schema validation. Structural checks do not grant authority. */
+import { INTEGRATION_MAX_CONFLICTS } from '../integration.js';
+import { INTEGRATION_MAX_EXPLANATION_BYTES } from '../integration.js';
+import { INTEGRATION_MAX_GAPS } from '../integration.js';
+import { INTEGRATION_MAX_INPUTS } from '../integration.js';
+import { PATCH_MAX_CHANGED_PATHS } from '../patch.js';
+import { PATCH_MAX_CHECK_RESULTS } from '../patch.js';
+import { PATCH_MAX_CHECK_SUMMARY_BYTES } from '../patch.js';
+import { PATCH_MAX_USED_INPUT_EVIDENCE } from '../patch.js';
+import type { ValidationIssue } from './common.js';
+import { isRecord } from './common.js';
+import { stringField } from './common.js';
+import { validateCommandIdentity } from './identity.js';
+import { validateEnum } from './common.js';
+import { validateRunRef } from './dispatch.js';
+
+function validateEvidenceInputRef(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: "input must be an object" });
+    return;
+  }
+  stringField(value, "sourceTaskId", issues, path + ".sourceTaskId");
+  validateRunRef(value["sourceRunRef"], path + ".sourceRunRef", issues);
+  validateEnum(value["kind"], ["evidence", "artifact", "handoff"], path + ".kind", issues);
+}
+
+export function validateRecordIntegrationResultCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "RecordIntegrationResult") {
+    issues.push({ path: "commandType", code: "bad_type", message: "commandType must be RecordIntegrationResult" });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (!Number.isSafeInteger(value["expectedRevision"]) || (value["expectedRevision"] as number) < 0) {
+    issues.push({ path: "expectedRevision", code: "bad_type", message: "expectedRevision must be a non-negative integer" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  const result = payload["result"];
+  if (!isRecord(result)) {
+    issues.push({ path: "payload.result", code: "bad_type", message: "result must be an object" });
+    return issues;
+  }
+  if (result["schemaVersion"] !== 1) {
+    issues.push({ path: "payload.result.schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(result, "resultId", issues, "payload.result.resultId");
+  stringField(result, "projectId", issues, "payload.result.projectId");
+  stringField(result, "workspaceId", issues, "payload.result.workspaceId");
+  stringField(result, "goalId", issues, "payload.result.goalId");
+  stringField(result, "taskId", issues, "payload.result.taskId");
+  if (!Number.isSafeInteger(result["taskRevision"])) {
+    issues.push({ path: "payload.result.taskRevision", code: "bad_type", message: "taskRevision must be an integer" });
+  }
+  validateRunRef(result["runRef"], "payload.result.runRef", issues);
+  if (!Number.isSafeInteger(result["workspaceRevision"])) {
+    issues.push({ path: "payload.result.workspaceRevision", code: "bad_type", message: "workspaceRevision must be an integer" });
+  }
+  const inputs = result["inputs"];
+  if (!Array.isArray(inputs) || inputs.length > INTEGRATION_MAX_INPUTS) {
+    issues.push({ path: "payload.result.inputs", code: "size_exceeded", message: "inputs must be an array <= " + INTEGRATION_MAX_INPUTS });
+  } else {
+    inputs.forEach((e: unknown, i: number) => validateEvidenceInputRef(e, "payload.result.inputs[" + i + "]", issues));
+  }
+  const conflicts = result["conflicts"];
+  if (!Array.isArray(conflicts) || conflicts.length > INTEGRATION_MAX_CONFLICTS) {
+    issues.push({ path: "payload.result.conflicts", code: "size_exceeded", message: "conflicts must be an array <= " + INTEGRATION_MAX_CONFLICTS });
+  }
+  const gaps = result["gaps"];
+  if (!Array.isArray(gaps) || gaps.length > INTEGRATION_MAX_GAPS) {
+    issues.push({ path: "payload.result.gaps", code: "size_exceeded", message: "gaps must be an array <= " + INTEGRATION_MAX_GAPS });
+  }
+  const explanation = result["explanation"];
+  if (explanation === null || typeof explanation === "string") {
+    if (typeof explanation === "string" && Buffer.byteLength(explanation, "utf8") > INTEGRATION_MAX_EXPLANATION_BYTES) {
+      issues.push({ path: "payload.result.explanation", code: "size_exceeded", message: "explanation exceeds " + INTEGRATION_MAX_EXPLANATION_BYTES + " bytes" });
+    }
+  } else {
+    issues.push({ path: "payload.result.explanation", code: "bad_type", message: "explanation must be a string or null" });
+  }
+  if (typeof result["escalate"] !== "boolean") {
+    issues.push({ path: "payload.result.escalate", code: "bad_type", message: "escalate must be a boolean" });
+  }
+  const conflictCount = Array.isArray(conflicts) ? conflicts.length : 0;
+  if (conflictCount > 0 && explanation === null && result["escalate"] !== true) {
+    issues.push({ path: "payload.result.explanation", code: "conflict_unresolved", message: "conflicts require explanation or escalate" });
+  }
+  if (result["escalate"] === true && conflictCount === 0) {
+    issues.push({ path: "payload.result.escalate", code: "invalid_escalate", message: "escalate requires at least one conflict" });
+  }
+  stringField(result, "generatedAt", issues, "payload.result.generatedAt");
+  return issues;
+}
+
+export function validateRecordPatchCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "RecordPatch") {
+    issues.push({ path: "commandType", code: "bad_type", message: "commandType must be RecordPatch" });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (value["expectedRevision"] !== 0) {
+    issues.push({ path: "expectedRevision", code: "bad_type", message: "expectedRevision must be 0 for a new patch" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  const patch = payload["patch"];
+  if (!isRecord(patch)) {
+    issues.push({ path: "payload.patch", code: "bad_type", message: "patch must be an object" });
+    return issues;
+  }
+  if (patch["schemaVersion"] !== 1) {
+    issues.push({ path: "payload.patch.schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(patch, "patchId", issues, "payload.patch.patchId");
+  stringField(patch, "projectId", issues, "payload.patch.projectId");
+  stringField(patch, "workspaceId", issues, "payload.patch.workspaceId");
+  stringField(patch, "goalId", issues, "payload.patch.goalId");
+  stringField(patch, "taskId", issues, "payload.patch.taskId");
+  if (!Number.isSafeInteger(patch["taskRevision"])) {
+    issues.push({ path: "payload.patch.taskRevision", code: "bad_type", message: "taskRevision must be an integer" });
+  }
+  validateRunRef(patch["runRef"], "payload.patch.runRef", issues);
+  validateEnum(patch["kind"], ["patch", "commit"], "payload.patch.kind", issues);
+  stringField(patch, "title", issues, "payload.patch.title");
+  const changedPaths = patch["changedPaths"];
+  if (!Array.isArray(changedPaths) || changedPaths.length > PATCH_MAX_CHANGED_PATHS || changedPaths.some((e: unknown) => typeof e !== "string" || e.length === 0)) {
+    issues.push({ path: "payload.patch.changedPaths", code: "size_exceeded", message: "changedPaths must be a non-empty-string array <= " + PATCH_MAX_CHANGED_PATHS });
+  }
+  if (!isRecord(patch["bodyRef"])) {
+    issues.push({ path: "payload.patch.bodyRef", code: "bad_type", message: "bodyRef must be an object" });
+  }
+  if (!Number.isSafeInteger(patch["beforeWorkspaceRevision"]) || !Number.isSafeInteger(patch["afterWorkspaceRevision"])) {
+    issues.push({ path: "payload.patch.workspaceRevisions", code: "bad_type", message: "workspace revisions must be integers" });
+  }
+  const checkResults = patch["checkResults"];
+  if (!Array.isArray(checkResults) || checkResults.length > PATCH_MAX_CHECK_RESULTS) {
+    issues.push({ path: "payload.patch.checkResults", code: "size_exceeded", message: "checkResults must be an array <= " + PATCH_MAX_CHECK_RESULTS });
+  } else {
+    checkResults.forEach((c: unknown, i: number) => {
+      if (!isRecord(c)) {
+        issues.push({ path: "payload.patch.checkResults[" + i + "]", code: "bad_type", message: "checkResult must be an object" });
+        return;
+      }
+      stringField(c, "checkId", issues, "payload.patch.checkResults[" + i + "].checkId");
+      validateEnum(c["outcome"], ["PASS", "FAIL", "INCONCLUSIVE"], "payload.patch.checkResults[" + i + "].outcome", issues);
+      if (typeof c["summary"] !== "string" || Buffer.byteLength(c["summary"] as string, "utf8") > PATCH_MAX_CHECK_SUMMARY_BYTES) {
+        issues.push({ path: "payload.patch.checkResults[" + i + "].summary", code: "size_exceeded", message: "summary exceeds " + PATCH_MAX_CHECK_SUMMARY_BYTES + " bytes" });
+      }
+    });
+  }
+  const usedInput = patch["usedInputEvidenceRefs"];
+  if (!Array.isArray(usedInput) || usedInput.length > PATCH_MAX_USED_INPUT_EVIDENCE) {
+    issues.push({ path: "payload.patch.usedInputEvidenceRefs", code: "size_exceeded", message: "usedInputEvidenceRefs must be an array <= " + PATCH_MAX_USED_INPUT_EVIDENCE });
+  }
+  stringField(patch, "generatedAt", issues, "payload.patch.generatedAt");
+  return issues;
+}

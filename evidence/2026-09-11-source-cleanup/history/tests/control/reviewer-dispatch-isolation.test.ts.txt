@@ -1,0 +1,50 @@
+import { describe, expect, it } from 'vitest';
+import { InMemoryLedger } from '../../src/data/state-ledger/in-memory-ledger.js';
+import { SqliteStateLedger } from '../../src/data/state-ledger/sqlite-ledger.js';
+import { DispatchEngineImpl } from '../../src/control/dispatch-engine/dispatch-engine.js';
+import { buildDispatchClaimCommand } from '../../src/contracts/commands/dispatch.js';
+import { ROLE_BINDING_FIXTURE_V1 } from '../../src/contracts/fixtures/dispatch-fixtures.js';
+import { reviewFixture, scope, cmd } from './reviewer-work-fixture.js';
+
+for (const storage of ['memory', 'sqlite'] as const) describe('review dispatch isolation ' + storage, () => {
+  it('filters ReviewWork before limiting ordinary dispatch and preserves the default query', async () => {
+    const ledger = storage === 'memory' ? new InMemoryLedger() : new SqliteStateLedger({ path: ':memory:' });
+    const h = await reviewFixture(ledger, { reviewers: 1, independentTasks: true });
+    expect(await h.ports.lifecycle.createWork(h.create)).toMatchObject({ status: 'accepted' });
+    expect(await h.control.claimTask(buildDispatchClaimCommand({
+      ...cmd('ordinary-task'), ...scope, taskId: 'task-verify-view',
+      attemptId: 'zz-ordinary', runId: 'ordinary-other-task',
+      roleBinding: ROLE_BINDING_FIXTURE_V1,
+      declaredPermissions: { tools: ['read'], writeScope: [] },
+      budget: { tokenBudget: 128000, deadline: null },
+    }))).toMatchObject({ status: 'committed' });
+
+    const all = await ledger.pendingDispatchIntents(10);
+    expect(all).toHaveLength(2);
+    expect(all[0]!.intent.work?.kind).toBe('review');
+    expect(await ledger.pendingDispatchIntents(1)).toEqual([all[0]]);
+    expect(await ledger.pendingDispatchIntents(1, { workKind: 'ordinary' })).toEqual([all[1]]);
+    expect(await ledger.pendingDispatchIntents(1, { workKind: 'review' })).toEqual([all[0]]);
+
+    const selected: string[] = [];
+    const dispatch = new DispatchEngineImpl({
+      ledger, control: h.control,
+      contextCompiler: {
+        assemble: async request => {
+          selected.push(request.runRef.runId);
+          return { status: 'needs_material', gaps: [], selectedRefs: [] };
+        },
+      },
+      runtime: {
+        capabilities: async () => ({ replayable: true, supportsSnapshot: false, maxEnvelopeBytes: 65536 }),
+        start: async () => { throw Error('Missing material must prevent Runtime.start'); },
+      },
+    });
+    for (let i = 0; i < 3; i++) {
+      expect(await dispatch.drive({ reason: 'review-isolation', maxIntents: 1 })).toMatchObject({ scanned: 1, started: 0 });
+    }
+    expect(selected).toEqual(Array(3).fill('ordinary-other-task'));
+    expect(await ledger.pendingDispatchIntents(10)).toEqual(all);
+    if ('close' in ledger) await ledger.close();
+  });
+});

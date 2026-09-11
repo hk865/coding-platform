@@ -1,0 +1,93 @@
+{
+  "createdAt": "2026-09-10T04:45:55.306Z",
+  "scope": "Final current state and directly relevant normative/review entries; separate from the 747-file source identity",
+  "fileCount": 17,
+  "digest": "1a320f11670930796c633daabf611f0be96ab15c8ebafabc5ab61f77bfad0f4b",
+  "files": [
+    {
+      "root": "docs",
+      "path": "human/module-status.md",
+      "sha256": "c924726c7abd12b2da47dd80752d87df906f3f0dd0accaad8b989eabf17bcf28"
+    },
+    {
+      "root": "docs",
+      "path": "dev_docs/planning/active/external-review-repair/README.md",
+      "sha256": "bca4c924869a03c41cd80aa599089fa28cd37121fa81e089715fd92403d5f956"
+    },
+    {
+      "root": "docs",
+      "path": "dev_docs/planning/active/external-review-repair/ERR-01-reviewer-recovery.md",
+      "sha256": "62922e2dfed216e95c6d186d1fdad745199416d4fe7041a85309dafbd230aa0b"
+    },
+    {
+      "root": "docs",
+      "path": "dev_docs/planning/active/external-review-repair/ERR-02-test-trust.md",
+      "sha256": "423b382f8de6a1c8c88f35c8679011f32e9556efe97072deeadc8ae1ff5ed185"
+    },
+    {
+      "root": "docs",
+      "path": "dev_docs/planning/active/external-review-repair/ERR-03-boundaries-doc-audit.md",
+      "sha256": "2a6513c55a3bab974fc99a5dcafa9f6f5cb2966926e45ba7194ef001e8d3bc6d"
+    },
+    {
+      "root": "docs",
+      "path": "dev_docs/planning/active/external-review-repair/DEF-17-reviewer-product-recovery.md",
+      "sha256": "5d632a27df406268754b1f399917c0c824eadb1198d61e25973f9020064e2b3c"
+    },
+    {
+      "root": "docs",
+      "path": "dev_docs/planning/active/external-review-repair/deferred-register.md",
+      "sha256": "966e2cd5b766d38a32f0186e71319d106a7ad709ea46a2fa120259298e26cf3d"
+    },
+    {
+      "root": "docs",
+      "path": "dev_docs/interfaces/independent-review.md",
+      "sha256": "a41575585804b156c0c764bd7e6b19e42e58153bbf12e4a39f5851ab906c78b7"
+    },
+    {
+      "root": "docs",
+      "path": "dev_docs/modules/control/verification-engine.md",
+      "sha256": "0734371996a0f8781992f193d964a4397085c7de435625b1daabff6d1d1b1299"
+    },
+    {
+      "root": "docs",
+      "path": "dev_docs/verification/README.md",
+      "sha256": "5abcab95a66537ca6442872057fa673b04980ca78dc817929bd4932a47630767"
+    },
+    {
+      "root": "docs",
+      "path": "dev_docs/verification/2026-09-10-def17/acceptance.md",
+      "sha256": "ec7566a0348a9031bea8e7ebccf9803da98bf36fefad63ad5d6fca4f37ef0711"
+    },
+    {
+      "root": "docs",
+      "path": "dev_docs/verification/2026-09-10-external-review-repair/integration-handoff.md",
+      "sha256": "02d195c936ba910c97136172bffd8683fb2ee9ee8f9e0f40f3cd1664e248d5c8"
+    },
+    {
+      "root": "docs",
+      "path": "dev_docs/verification/2026-09-10-external-review-repair/independent-review.md",
+      "sha256": "817528584fc2b4e06ea0f1d936087c18467ceb4993daea7fcdc82a935b9331ea"
+    },
+    {
+      "root": "product",
+      "path": "IMPLEMENTATION-HANDOFF.md",
+      "sha256": "8573b00ccdfc009622ee3abfa284f709df9cf77c78867fe34cfdafafca2216aa"
+    },
+    {
+      "root": "product",
+      "path": "evidence/2026-09-10-external-review-repair/acceptance.md",
+      "sha256": "3f5035d497b73f28405fa3de6f60d282671156568468e0c38fd5933ba2d9e71a"
+    },
+    {
+      "root": "product",
+      "path": "evidence/2026-09-10-external-review-repair/state-audit/acceptance.md",
+      "sha256": "0581256f1c702fc49a33a91e1b5ec42350fe24e5ec55ff9517dcdb4da1b43c43"
+    },
+    {
+      "root": "product",
+      "path": "evidence/2026-09-10-def17/acceptance.md",
+      "sha256": "9932b4b5c09ad81a93bb877fbf08827bd5bc559a601f05eaf926c7f537a72069"
+    }
+  ]
+}

@@ -1,0 +1,1182 @@
+{
+  "before": {
+    "directories": {
+      "src/app/exploration-source.ts": {
+        "files": 1,
+        "lines": 3
+      },
+      "src/app/file-references.ts": {
+        "files": 1,
+        "lines": 20
+      },
+      "src/app/governance.ts": {
+        "files": 1,
+        "lines": 644
+      },
+      "src/app/initial-planning.ts": {
+        "files": 1,
+        "lines": 20
+      },
+      "src/app/model-settings.ts": {
+        "files": 1,
+        "lines": 150
+      },
+      "src/app/plan-changes.ts": {
+        "files": 1,
+        "lines": 67
+      },
+      "src/app/server.ts": {
+        "files": 1,
+        "lines": 114
+      },
+      "src/app/service.ts": {
+        "files": 1,
+        "lines": 827
+      },
+      "src/app/workspace-tools.ts": {
+        "files": 1,
+        "lines": 133
+      },
+      "src/contracts/active-agent.ts": {
+        "files": 1,
+        "lines": 82
+      },
+      "src/contracts/architecture-context.ts": {
+        "files": 1,
+        "lines": 32
+      },
+      "src/contracts/architecture-evolution-policy.ts": {
+        "files": 1,
+        "lines": 233
+      },
+      "src/contracts/architecture-inspection.ts": {
+        "files": 1,
+        "lines": 602
+      },
+      "src/contracts/architecture-reconciler.ts": {
+        "files": 1,
+        "lines": 71
+      },
+      "src/contracts/architecture-source.ts": {
+        "files": 1,
+        "lines": 41
+      },
+      "src/contracts/artifact.ts": {
+        "files": 1,
+        "lines": 92
+      },
+      "src/contracts/baseline-evolution.ts": {
+        "files": 1,
+        "lines": 315
+      },
+      "src/contracts/bootstrap.ts": {
+        "files": 1,
+        "lines": 202
+      },
+      "src/contracts/command-event.ts": {
+        "files": 1,
+        "lines": 133
+      },
+      "src/contracts/commands": {
+        "files": 10,
+        "lines": 914
+      },
+      "src/contracts/completed-work-context.ts": {
+        "files": 1,
+        "lines": 213
+      },
+      "src/contracts/console-views.ts": {
+        "files": 1,
+        "lines": 512
+      },
+      "src/contracts/context-continuation-port.ts": {
+        "files": 1,
+        "lines": 75
+      },
+      "src/contracts/context-continuity.ts": {
+        "files": 1,
+        "lines": 623
+      },
+      "src/contracts/control-intent.ts": {
+        "files": 1,
+        "lines": 315
+      },
+      "src/contracts/dispatch.ts": {
+        "files": 1,
+        "lines": 656
+      },
+      "src/contracts/events.ts": {
+        "files": 1,
+        "lines": 192
+      },
+      "src/contracts/evidence.ts": {
+        "files": 1,
+        "lines": 282
+      },
+      "src/contracts/execution-capability.ts": {
+        "files": 1,
+        "lines": 19
+      },
+      "src/contracts/execution-feedback.ts": {
+        "files": 1,
+        "lines": 43
+      },
+      "src/contracts/exploration-materials.ts": {
+        "files": 1,
+        "lines": 13
+      },
+      "src/contracts/exploration-session.ts": {
+        "files": 1,
+        "lines": 92
+      },
+      "src/contracts/exploration.ts": {
+        "files": 1,
+        "lines": 65
+      },
+      "src/contracts/fingerprint.ts": {
+        "files": 1,
+        "lines": 53
+      },
+      "src/contracts/goal-change.ts": {
+        "files": 1,
+        "lines": 452
+      },
+      "src/contracts/goal-phase-view.ts": {
+        "files": 1,
+        "lines": 88
+      },
+      "src/contracts/goal-phase.ts": {
+        "files": 1,
+        "lines": 397
+      },
+      "src/contracts/goal-view.ts": {
+        "files": 1,
+        "lines": 142
+      },
+      "src/contracts/governance-view.ts": {
+        "files": 1,
+        "lines": 286
+      },
+      "src/contracts/governance.ts": {
+        "files": 1,
+        "lines": 472
+      },
+      "src/contracts/handoff-context.ts": {
+        "files": 1,
+        "lines": 100
+      },
+      "src/contracts/handoff-control.ts": {
+        "files": 1,
+        "lines": 79
+      },
+      "src/contracts/handoff-view.ts": {
+        "files": 1,
+        "lines": 81
+      },
+      "src/contracts/handoff.ts": {
+        "files": 1,
+        "lines": 499
+      },
+      "src/contracts/history-materials.ts": {
+        "files": 1,
+        "lines": 29
+      },
+      "src/contracts/human-role-collaboration.ts": {
+        "files": 1,
+        "lines": 256
+      },
+      "src/contracts/initial-planning.ts": {
+        "files": 1,
+        "lines": 55
+      },
+      "src/contracts/integration.ts": {
+        "files": 1,
+        "lines": 251
+      },
+      "src/contracts/ledger.ts": {
+        "files": 1,
+        "lines": 983
+      },
+      "src/contracts/material-access.ts": {
+        "files": 1,
+        "lines": 365
+      },
+      "src/contracts/modules.ts": {
+        "files": 1,
+        "lines": 252
+      },
+      "src/contracts/opaque.ts": {
+        "files": 1,
+        "lines": 8
+      },
+      "src/contracts/operator-dispatch.ts": {
+        "files": 1,
+        "lines": 8
+      },
+      "src/contracts/operator-planning.ts": {
+        "files": 1,
+        "lines": 23
+      },
+      "src/contracts/patch.ts": {
+        "files": 1,
+        "lines": 192
+      },
+      "src/contracts/plan-view.ts": {
+        "files": 1,
+        "lines": 104
+      },
+      "src/contracts/plan.ts": {
+        "files": 1,
+        "lines": 340
+      },
+      "src/contracts/planning.ts": {
+        "files": 1,
+        "lines": 61
+      },
+      "src/contracts/policy-explanation.ts": {
+        "files": 1,
+        "lines": 32
+      },
+      "src/contracts/ports.ts": {
+        "files": 1,
+        "lines": 63
+      },
+      "src/contracts/query-execution-context.ts": {
+        "files": 1,
+        "lines": 21
+      },
+      "src/contracts/query-job.ts": {
+        "files": 1,
+        "lines": 345
+      },
+      "src/contracts/read-model.ts": {
+        "files": 1,
+        "lines": 8
+      },
+      "src/contracts/reduction.ts": {
+        "files": 1,
+        "lines": 219
+      },
+      "src/contracts/remediation.ts": {
+        "files": 1,
+        "lines": 284
+      },
+      "src/contracts/review-context.ts": {
+        "files": 1,
+        "lines": 122
+      },
+      "src/contracts/reviewer-context.ts": {
+        "files": 1,
+        "lines": 112
+      },
+      "src/contracts/reviewer-verification.ts": {
+        "files": 1,
+        "lines": 108
+      },
+      "src/contracts/reviewer-work.ts": {
+        "files": 1,
+        "lines": 82
+      },
+      "src/contracts/rework": {
+        "files": 4,
+        "lines": 846
+      },
+      "src/contracts/role-material-channels.ts": {
+        "files": 1,
+        "lines": 81
+      },
+      "src/contracts/role-spec-materials.ts": {
+        "files": 1,
+        "lines": 61
+      },
+      "src/contracts/role-spec.ts": {
+        "files": 1,
+        "lines": 258
+      },
+      "src/contracts/run-output-materials.ts": {
+        "files": 1,
+        "lines": 18
+      },
+      "src/contracts/runtime-budget.ts": {
+        "files": 1,
+        "lines": 40
+      },
+      "src/contracts/runtime-context-materials.ts": {
+        "files": 1,
+        "lines": 138
+      },
+      "src/contracts/runtime-dispatch.ts": {
+        "files": 1,
+        "lines": 15
+      },
+      "src/contracts/runtime-observations.ts": {
+        "files": 1,
+        "lines": 8
+      },
+      "src/contracts/runtime-preparation.ts": {
+        "files": 1,
+        "lines": 34
+      },
+      "src/contracts/scope-catalog.ts": {
+        "files": 1,
+        "lines": 14
+      },
+      "src/contracts/task-envelope.ts": {
+        "files": 1,
+        "lines": 105
+      },
+      "src/contracts/task-work-identity.ts": {
+        "files": 1,
+        "lines": 113
+      },
+      "src/contracts/validation": {
+        "files": 16,
+        "lines": 3519
+      },
+      "src/contracts/verification-context.ts": {
+        "files": 1,
+        "lines": 127
+      },
+      "src/contracts/verification-import.ts": {
+        "files": 1,
+        "lines": 64
+      },
+      "src/contracts/verification-round.ts": {
+        "files": 1,
+        "lines": 143
+      },
+      "src/contracts/verification-service.ts": {
+        "files": 1,
+        "lines": 120
+      },
+      "src/contracts/verification-source.ts": {
+        "files": 1,
+        "lines": 5
+      },
+      "src/contracts/verification-view.ts": {
+        "files": 1,
+        "lines": 87
+      },
+      "src/contracts/verification.ts": {
+        "files": 1,
+        "lines": 210
+      },
+      "src/contracts/work-context-port.ts": {
+        "files": 1,
+        "lines": 111
+      },
+      "src/contracts/workspace-capability.ts": {
+        "files": 1,
+        "lines": 67
+      },
+      "src/contracts/workspace-drive.ts": {
+        "files": 1,
+        "lines": 27
+      },
+      "src/contracts/workspace-lease.ts": {
+        "files": 1,
+        "lines": 555
+      },
+      "src/contracts/workspace-read.ts": {
+        "files": 1,
+        "lines": 64
+      },
+      "src/contracts/workspace-registration.ts": {
+        "files": 1,
+        "lines": 28
+      },
+      "src/contracts/workspace-views.ts": {
+        "files": 1,
+        "lines": 150
+      },
+      "src/control/architecture-reconciler": {
+        "files": 3,
+        "lines": 263
+      },
+      "src/control/control-engine": {
+        "files": 72,
+        "lines": 15599
+      },
+      "src/control/dispatch-engine": {
+        "files": 14,
+        "lines": 2686
+      },
+      "src/control/plan-compiler": {
+        "files": 7,
+        "lines": 1496
+      },
+      "src/control/verification-engine": {
+        "files": 23,
+        "lines": 4028
+      },
+      "src/data/artifact-vault": {
+        "files": 5,
+        "lines": 446
+      },
+      "src/data/context-compiler": {
+        "files": 29,
+        "lines": 5377
+      },
+      "src/data/read-model-index": {
+        "files": 8,
+        "lines": 9049
+      },
+      "src/data/state-ledger": {
+        "files": 5,
+        "lines": 4464
+      },
+      "src/data/workspace-reader": {
+        "files": 17,
+        "lines": 1322
+      },
+      "src/execution/worker-runtime": {
+        "files": 13,
+        "lines": 1237
+      },
+      "src/fixtures/architecture-evolution-policy-fixtures.ts": {
+        "files": 1,
+        "lines": 149
+      },
+      "src/fixtures/architecture-fixtures.ts": {
+        "files": 1,
+        "lines": 283
+      },
+      "src/fixtures/dispatch-fixtures.ts": {
+        "files": 1,
+        "lines": 505
+      },
+      "src/fixtures/governance-fixtures.ts": {
+        "files": 1,
+        "lines": 295
+      },
+      "src/fixtures/plan-fixtures.ts": {
+        "files": 1,
+        "lines": 174
+      },
+      "src/fixtures/role-spec-fixtures.ts": {
+        "files": 1,
+        "lines": 345
+      },
+      "src/harness/in-memory-harness.ts": {
+        "files": 1,
+        "lines": 656
+      },
+      "src/harness/index.ts": {
+        "files": 1,
+        "lines": 3
+      },
+      "src/harness/persistent-harness.ts": {
+        "files": 1,
+        "lines": 800
+      },
+      "src/harness/query-composition.ts": {
+        "files": 1,
+        "lines": 17
+      },
+      "src/harness/rework-composition.ts": {
+        "files": 1,
+        "lines": 21
+      },
+      "src/interaction/human-collaboration": {
+        "files": 3,
+        "lines": 437
+      },
+      "src/storage/atomic-file.ts": {
+        "files": 1,
+        "lines": 18
+      },
+      "src/testing/check-providers.double.ts": {
+        "files": 1,
+        "lines": 85
+      },
+      "src/testing/sequences.ts": {
+        "files": 1,
+        "lines": 52
+      },
+      "src/ui/src": {
+        "files": 37,
+        "lines": 5709
+      },
+      "src/ui/tests": {
+        "files": 14,
+        "lines": 1111
+      },
+      "src/ui/vite.config.ts": {
+        "files": 1,
+        "lines": 25
+      }
+    },
+    "contracts": {
+      "files": 115,
+      "lines": 19797,
+      "namedExports": 1463,
+      "interfaces": 92
+    },
+    "forwarders": [
+      {
+        "file": "src/harness/in-memory-harness.ts",
+        "name": "assembleWorkContext",
+        "body": "(request) => workContext.assembleWorkContext(request)"
+      },
+      {
+        "file": "src/harness/in-memory-harness.ts",
+        "name": "assembleCompletedWorkContext",
+        "body": "(request) => completedWork.assembleCompletedWorkContext(request)"
+      },
+      {
+        "file": "src/harness/in-memory-harness.ts",
+        "name": "assembleQueryContext",
+        "body": "(request) => queryContext.assembleQueryContext(request)"
+      },
+      {
+        "file": "src/harness/in-memory-harness.ts",
+        "name": "recordPlanChangeProposal",
+        "body": "(command) => control.recordPlanChangeProposal(command)"
+      },
+      {
+        "file": "src/harness/in-memory-harness.ts",
+        "name": "recordUserDecision",
+        "body": "(command) => control.recordUserDecision(command)"
+      },
+      {
+        "file": "src/harness/in-memory-harness.ts",
+        "name": "applyPlanChange",
+        "body": "(command) => control.applyPlanChange(command)"
+      },
+      {
+        "file": "src/harness/in-memory-harness.ts",
+        "name": "planProposalRequest",
+        "body": "(request) => planProposal.request(request)"
+      },
+      {
+        "file": "src/harness/in-memory-harness.ts",
+        "name": "assemblePlanningContext",
+        "body": "(request) => planningContext.assemblePlanningContext(request)"
+      },
+      {
+        "file": "src/harness/in-memory-harness.ts",
+        "name": "amend",
+        "body": "(request) => collaboration.amend(request)"
+      },
+      {
+        "file": "src/harness/persistent-harness.ts",
+        "name": "assembleWorkContext",
+        "body": "(request) => built.workContext.assembleWorkContext(request)"
+      },
+      {
+        "file": "src/harness/persistent-harness.ts",
+        "name": "assembleCompletedWorkContext",
+        "body": "(request) => built.completedWork.assembleCompletedWorkContext(request)"
+      },
+      {
+        "file": "src/harness/persistent-harness.ts",
+        "name": "recordPlanChangeProposal",
+        "body": "(command) => built.control.recordPlanChangeProposal(command)"
+      },
+      {
+        "file": "src/harness/persistent-harness.ts",
+        "name": "recordUserDecision",
+        "body": "(command) => built.control.recordUserDecision(command)"
+      },
+      {
+        "file": "src/harness/persistent-harness.ts",
+        "name": "applyPlanChange",
+        "body": "(command) => built.control.applyPlanChange(command)"
+      },
+      {
+        "file": "src/harness/persistent-harness.ts",
+        "name": "planProposalRequest",
+        "body": "(request) => built.planProposal.request(request)"
+      },
+      {
+        "file": "src/harness/persistent-harness.ts",
+        "name": "assemblePlanningContext",
+        "body": "(request) => built.planningContext.assemblePlanningContext(request)"
+      },
+      {
+        "file": "src/harness/persistent-harness.ts",
+        "name": "amend",
+        "body": "(request) => built.collaboration.amend(request)"
+      },
+      {
+        "file": "src/harness/persistent-harness.ts",
+        "name": "assembleQueryContext",
+        "body": "(request) => built.queryContext.assembleQueryContext(request)"
+      }
+    ]
+  },
+  "after": {
+    "directories": {
+      "src/app/exploration-source.ts": {
+        "files": 1,
+        "lines": 3
+      },
+      "src/app/file-references.ts": {
+        "files": 1,
+        "lines": 20
+      },
+      "src/app/governance.ts": {
+        "files": 1,
+        "lines": 644
+      },
+      "src/app/initial-planning.ts": {
+        "files": 1,
+        "lines": 20
+      },
+      "src/app/model-settings.ts": {
+        "files": 1,
+        "lines": 150
+      },
+      "src/app/plan-changes.ts": {
+        "files": 1,
+        "lines": 67
+      },
+      "src/app/server.ts": {
+        "files": 1,
+        "lines": 114
+      },
+      "src/app/service.ts": {
+        "files": 1,
+        "lines": 827
+      },
+      "src/app/workspace-tools.ts": {
+        "files": 1,
+        "lines": 133
+      },
+      "src/contracts/active-agent.ts": {
+        "files": 1,
+        "lines": 82
+      },
+      "src/contracts/architecture-context.ts": {
+        "files": 1,
+        "lines": 32
+      },
+      "src/contracts/architecture-evolution-policy.ts": {
+        "files": 1,
+        "lines": 233
+      },
+      "src/contracts/architecture-inspection.ts": {
+        "files": 1,
+        "lines": 602
+      },
+      "src/contracts/architecture-reconciler.ts": {
+        "files": 1,
+        "lines": 71
+      },
+      "src/contracts/architecture-source.ts": {
+        "files": 1,
+        "lines": 41
+      },
+      "src/contracts/artifact.ts": {
+        "files": 1,
+        "lines": 92
+      },
+      "src/contracts/baseline-evolution.ts": {
+        "files": 1,
+        "lines": 315
+      },
+      "src/contracts/bootstrap.ts": {
+        "files": 1,
+        "lines": 202
+      },
+      "src/contracts/command-event.ts": {
+        "files": 1,
+        "lines": 133
+      },
+      "src/contracts/commands": {
+        "files": 10,
+        "lines": 914
+      },
+      "src/contracts/completed-work-context.ts": {
+        "files": 1,
+        "lines": 213
+      },
+      "src/contracts/console-views.ts": {
+        "files": 1,
+        "lines": 512
+      },
+      "src/contracts/context-continuation-port.ts": {
+        "files": 1,
+        "lines": 75
+      },
+      "src/contracts/context-continuity.ts": {
+        "files": 1,
+        "lines": 623
+      },
+      "src/contracts/control-intent.ts": {
+        "files": 1,
+        "lines": 315
+      },
+      "src/contracts/dispatch.ts": {
+        "files": 1,
+        "lines": 656
+      },
+      "src/contracts/events.ts": {
+        "files": 1,
+        "lines": 192
+      },
+      "src/contracts/evidence.ts": {
+        "files": 1,
+        "lines": 282
+      },
+      "src/contracts/execution-capability.ts": {
+        "files": 1,
+        "lines": 19
+      },
+      "src/contracts/execution-feedback.ts": {
+        "files": 1,
+        "lines": 43
+      },
+      "src/contracts/exploration-materials.ts": {
+        "files": 1,
+        "lines": 13
+      },
+      "src/contracts/exploration-session.ts": {
+        "files": 1,
+        "lines": 92
+      },
+      "src/contracts/exploration.ts": {
+        "files": 1,
+        "lines": 65
+      },
+      "src/contracts/fingerprint.ts": {
+        "files": 1,
+        "lines": 53
+      },
+      "src/contracts/goal-change.ts": {
+        "files": 1,
+        "lines": 425
+      },
+      "src/contracts/goal-phase-view.ts": {
+        "files": 1,
+        "lines": 88
+      },
+      "src/contracts/goal-phase.ts": {
+        "files": 1,
+        "lines": 397
+      },
+      "src/contracts/goal-view.ts": {
+        "files": 1,
+        "lines": 142
+      },
+      "src/contracts/governance-view.ts": {
+        "files": 1,
+        "lines": 286
+      },
+      "src/contracts/governance.ts": {
+        "files": 1,
+        "lines": 472
+      },
+      "src/contracts/handoff-context.ts": {
+        "files": 1,
+        "lines": 100
+      },
+      "src/contracts/handoff-control.ts": {
+        "files": 1,
+        "lines": 79
+      },
+      "src/contracts/handoff-view.ts": {
+        "files": 1,
+        "lines": 81
+      },
+      "src/contracts/handoff.ts": {
+        "files": 1,
+        "lines": 499
+      },
+      "src/contracts/history-materials.ts": {
+        "files": 1,
+        "lines": 29
+      },
+      "src/contracts/human-role-collaboration.ts": {
+        "files": 1,
+        "lines": 256
+      },
+      "src/contracts/initial-planning.ts": {
+        "files": 1,
+        "lines": 55
+      },
+      "src/contracts/integration.ts": {
+        "files": 1,
+        "lines": 251
+      },
+      "src/contracts/ledger.ts": {
+        "files": 1,
+        "lines": 983
+      },
+      "src/contracts/material-access.ts": {
+        "files": 1,
+        "lines": 365
+      },
+      "src/contracts/modules.ts": {
+        "files": 1,
+        "lines": 252
+      },
+      "src/contracts/opaque.ts": {
+        "files": 1,
+        "lines": 8
+      },
+      "src/contracts/operator-dispatch.ts": {
+        "files": 1,
+        "lines": 8
+      },
+      "src/contracts/operator-planning.ts": {
+        "files": 1,
+        "lines": 23
+      },
+      "src/contracts/patch.ts": {
+        "files": 1,
+        "lines": 192
+      },
+      "src/contracts/plan-view.ts": {
+        "files": 1,
+        "lines": 104
+      },
+      "src/contracts/plan.ts": {
+        "files": 1,
+        "lines": 340
+      },
+      "src/contracts/planning.ts": {
+        "files": 1,
+        "lines": 99
+      },
+      "src/contracts/policy-explanation.ts": {
+        "files": 1,
+        "lines": 32
+      },
+      "src/contracts/ports.ts": {
+        "files": 1,
+        "lines": 63
+      },
+      "src/contracts/query-execution-context.ts": {
+        "files": 1,
+        "lines": 21
+      },
+      "src/contracts/query-job.ts": {
+        "files": 1,
+        "lines": 345
+      },
+      "src/contracts/read-model.ts": {
+        "files": 1,
+        "lines": 8
+      },
+      "src/contracts/reduction.ts": {
+        "files": 1,
+        "lines": 219
+      },
+      "src/contracts/remediation.ts": {
+        "files": 1,
+        "lines": 284
+      },
+      "src/contracts/review-context.ts": {
+        "files": 1,
+        "lines": 122
+      },
+      "src/contracts/reviewer-context.ts": {
+        "files": 1,
+        "lines": 112
+      },
+      "src/contracts/reviewer-verification.ts": {
+        "files": 1,
+        "lines": 108
+      },
+      "src/contracts/reviewer-work.ts": {
+        "files": 1,
+        "lines": 82
+      },
+      "src/contracts/rework": {
+        "files": 4,
+        "lines": 824
+      },
+      "src/contracts/role-material-channels.ts": {
+        "files": 1,
+        "lines": 81
+      },
+      "src/contracts/role-spec-materials.ts": {
+        "files": 1,
+        "lines": 61
+      },
+      "src/contracts/role-spec.ts": {
+        "files": 1,
+        "lines": 258
+      },
+      "src/contracts/run-output-materials.ts": {
+        "files": 1,
+        "lines": 18
+      },
+      "src/contracts/runtime-budget.ts": {
+        "files": 1,
+        "lines": 40
+      },
+      "src/contracts/runtime-context-materials.ts": {
+        "files": 1,
+        "lines": 138
+      },
+      "src/contracts/runtime-dispatch.ts": {
+        "files": 1,
+        "lines": 15
+      },
+      "src/contracts/runtime-observations.ts": {
+        "files": 1,
+        "lines": 8
+      },
+      "src/contracts/runtime-preparation.ts": {
+        "files": 1,
+        "lines": 34
+      },
+      "src/contracts/scope-catalog.ts": {
+        "files": 1,
+        "lines": 14
+      },
+      "src/contracts/task-envelope.ts": {
+        "files": 1,
+        "lines": 105
+      },
+      "src/contracts/task-work-identity.ts": {
+        "files": 1,
+        "lines": 113
+      },
+      "src/contracts/validation": {
+        "files": 16,
+        "lines": 3519
+      },
+      "src/contracts/verification-context.ts": {
+        "files": 1,
+        "lines": 127
+      },
+      "src/contracts/verification-import.ts": {
+        "files": 1,
+        "lines": 64
+      },
+      "src/contracts/verification-round.ts": {
+        "files": 1,
+        "lines": 143
+      },
+      "src/contracts/verification-service.ts": {
+        "files": 1,
+        "lines": 120
+      },
+      "src/contracts/verification-source.ts": {
+        "files": 1,
+        "lines": 5
+      },
+      "src/contracts/verification-view.ts": {
+        "files": 1,
+        "lines": 87
+      },
+      "src/contracts/verification.ts": {
+        "files": 1,
+        "lines": 210
+      },
+      "src/contracts/work-context-port.ts": {
+        "files": 1,
+        "lines": 110
+      },
+      "src/contracts/workspace-capability.ts": {
+        "files": 1,
+        "lines": 67
+      },
+      "src/contracts/workspace-drive.ts": {
+        "files": 1,
+        "lines": 27
+      },
+      "src/contracts/workspace-lease.ts": {
+        "files": 1,
+        "lines": 555
+      },
+      "src/contracts/workspace-read.ts": {
+        "files": 1,
+        "lines": 64
+      },
+      "src/contracts/workspace-registration.ts": {
+        "files": 1,
+        "lines": 28
+      },
+      "src/contracts/workspace-views.ts": {
+        "files": 1,
+        "lines": 150
+      },
+      "src/control/architecture-reconciler": {
+        "files": 3,
+        "lines": 263
+      },
+      "src/control/control-engine": {
+        "files": 72,
+        "lines": 15599
+      },
+      "src/control/dispatch-engine": {
+        "files": 14,
+        "lines": 2686
+      },
+      "src/control/plan-compiler": {
+        "files": 7,
+        "lines": 1493
+      },
+      "src/control/verification-engine": {
+        "files": 23,
+        "lines": 4028
+      },
+      "src/data/artifact-vault": {
+        "files": 5,
+        "lines": 446
+      },
+      "src/data/context-compiler": {
+        "files": 29,
+        "lines": 5352
+      },
+      "src/data/read-model-index": {
+        "files": 8,
+        "lines": 9049
+      },
+      "src/data/state-ledger": {
+        "files": 5,
+        "lines": 4464
+      },
+      "src/data/workspace-reader": {
+        "files": 17,
+        "lines": 1322
+      },
+      "src/execution/worker-runtime": {
+        "files": 13,
+        "lines": 1237
+      },
+      "src/fixtures/architecture-evolution-policy-fixtures.ts": {
+        "files": 1,
+        "lines": 149
+      },
+      "src/fixtures/architecture-fixtures.ts": {
+        "files": 1,
+        "lines": 283
+      },
+      "src/fixtures/dispatch-fixtures.ts": {
+        "files": 1,
+        "lines": 505
+      },
+      "src/fixtures/governance-fixtures.ts": {
+        "files": 1,
+        "lines": 295
+      },
+      "src/fixtures/plan-fixtures.ts": {
+        "files": 1,
+        "lines": 174
+      },
+      "src/fixtures/role-spec-fixtures.ts": {
+        "files": 1,
+        "lines": 345
+      },
+      "src/harness/in-memory-harness.ts": {
+        "files": 1,
+        "lines": 630
+      },
+      "src/harness/index.ts": {
+        "files": 1,
+        "lines": 3
+      },
+      "src/harness/persistent-harness.ts": {
+        "files": 1,
+        "lines": 774
+      },
+      "src/harness/query-composition.ts": {
+        "files": 1,
+        "lines": 17
+      },
+      "src/harness/rework-composition.ts": {
+        "files": 1,
+        "lines": 21
+      },
+      "src/interaction/human-collaboration": {
+        "files": 3,
+        "lines": 438
+      },
+      "src/storage/atomic-file.ts": {
+        "files": 1,
+        "lines": 18
+      },
+      "src/testing/check-providers.double.ts": {
+        "files": 1,
+        "lines": 85
+      },
+      "src/testing/sequences.ts": {
+        "files": 1,
+        "lines": 52
+      },
+      "src/ui/src": {
+        "files": 37,
+        "lines": 5709
+      },
+      "src/ui/tests": {
+        "files": 14,
+        "lines": 1111
+      },
+      "src/ui/vite.config.ts": {
+        "files": 1,
+        "lines": 25
+      }
+    },
+    "contracts": {
+      "files": 115,
+      "lines": 19785,
+      "namedExports": 1465,
+      "interfaces": 91
+    },
+    "forwarders": []
+  },
+  "files": [
+    {
+      "file": "src/app/initial-planning.ts",
+      "beforeLines": 20,
+      "afterLines": 20
+    },
+    {
+      "file": "src/contracts/goal-change.ts",
+      "beforeLines": 452,
+      "afterLines": 425
+    },
+    {
+      "file": "src/contracts/planning.ts",
+      "beforeLines": 61,
+      "afterLines": 99
+    },
+    {
+      "file": "src/contracts/rework/proposal.ts",
+      "beforeLines": 200,
+      "afterLines": 178
+    },
+    {
+      "file": "src/contracts/work-context-port.ts",
+      "beforeLines": 111,
+      "afterLines": 110
+    },
+    {
+      "file": "src/control/plan-compiler/plan-compiler.ts",
+      "beforeLines": 229,
+      "afterLines": 226
+    },
+    {
+      "file": "src/control/plan-compiler/rework-proposal.ts",
+      "beforeLines": 519,
+      "afterLines": 519
+    },
+    {
+      "file": "src/data/context-compiler/planning-context-compiler.ts",
+      "beforeLines": 185,
+      "afterLines": 160
+    },
+    {
+      "file": "src/harness/in-memory-harness.ts",
+      "beforeLines": 656,
+      "afterLines": 630
+    },
+    {
+      "file": "src/harness/persistent-harness.ts",
+      "beforeLines": 800,
+      "afterLines": 774
+    },
+    {
+      "file": "src/interaction/human-collaboration/human-collaboration.ts",
+      "beforeLines": 179,
+      "afterLines": 180
+    }
+  ],
+  "runtimeContractDifferences": [],
+  "consumerPaths": {}
+}

@@ -13,25 +13,22 @@
  */
 import { describe, expect, it } from "vitest";
 import { createInMemoryHarness, type InMemoryHarness } from "../../src/harness/in-memory-harness.js";
-import { VerificationEngineImpl } from "../../src/verification/verification-engine.js";
+import { VerificationContextCompiler } from "../../src/data/context-compiler/verification-context.js";
+import { compileVerificationPlan } from "../../src/control/verification-engine/verification-plan-compiler.js";
+import { VerificationEngineImpl } from "../../src/control/verification-engine/verification-engine.js";
 import {
   DeterministicStaticCheckProvider,
   FAKE_REVIEWER_PORT,
-} from "../../src/contracts/testing/check-providers.double.js";
-import type {
-  CheckCapabilityV1,
-  CheckPort,
-  VerificationPlanCompileInput,
-  VerificationRequestV1,
-} from "../../src/contracts/verification.js";
+} from "../../src/testing/check-providers.double.js";
+import type { CheckCapabilityV1, CheckPort, VerificationRequestV1 } from '../../src/contracts/verification.js';
+import type { VerificationPlanCompileInput } from '../../src/control/verification-engine/verification-plan-compiler.js';
 import {
-  compileVerificationPlan,
   NO_CHANGE_FAST_PATH_CHECK_ID,
   REVIEWER_SEMANTIC_CHECK_ID,
 } from "../../src/contracts/verification.js";
 import type { PlanRevisionRef, PlanRevisionSnapshot } from "../../src/contracts/plan.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import {
   ARCHITECTURE_BASELINE_FIXTURE_V1,
   COMPLETION_POLICY_FIXTURE_V1,
@@ -39,12 +36,12 @@ import {
   buildActivateCommand,
   buildInstallCommand,
   completionPolicyPinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
+} from "../../src/fixtures/governance-fixtures.js";
 import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
   buildCreateGoalCommand,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
-import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
 import {
   COMPLETION_POLICY_FASTPATH_FIXTURE_V1,
   P104_GOAL,
@@ -52,7 +49,7 @@ import {
   P104_PLAN_REVISION_FIXTURE_V1,
   P104_TASK_IMPLEMENT,
   P104_TASK_REVIEW,
-} from "../../src/contracts/fixtures/evidence-fixtures.js";
+} from "../contract-support/fixtures/evidence-fixtures.js";
 
 const FLOW = "2026-09-05T12:00:00.000Z";
 const clock = (): string => FLOW;
@@ -390,7 +387,7 @@ describe("P1-04 Lane B — VerificationEngineImpl", () => {
     // Only the STATIC provider is registered -> the dynamic required VR has no
     // coverage -> deterministic no_check_coverage (never a silent skip).
     const engine = new VerificationEngineImpl(
-      { ledger: h.ledger, now: clock },
+      { context: new VerificationContextCompiler({ ledger: h.ledger, vault: h.vault }), now: clock },
       [new DeterministicStaticCheckProvider()],
       FAKE_REVIEWER_PORT,
     );
@@ -416,7 +413,7 @@ describe("P1-04 Lane B — VerificationEngineImpl", () => {
       },
     };
     const engine = new VerificationEngineImpl(
-      { ledger: h.ledger, now: clock },
+      { context: new VerificationContextCompiler({ ledger: h.ledger, vault: h.vault }), now: clock },
       [malformed],
       FAKE_REVIEWER_PORT,
     );

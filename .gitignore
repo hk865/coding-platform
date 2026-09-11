@@ -3,3 +3,10 @@ dist/
 .lane/
 *.log
 .DS_Store
+
+.local/
+src/app/public/workbench/
+.pnpm-store/
+/D.pnpm-storev11/
+/test-results/
+/src/ui/test-results/

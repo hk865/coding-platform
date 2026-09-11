@@ -1,0 +1,51 @@
+{
+  "taskReduction": {
+    "unchanged": true,
+    "functionSha256": "fff658b8dbcc0bbe780c45a99189b12fec41935beae332cef73c9255109fe4d9",
+    "nulBefore": 2,
+    "nulAfter": 2
+  },
+  "violations": [],
+  "recordFiles": [
+    "src/control/records/architecture.ts",
+    "src/control/records/baseline-evolution.ts",
+    "src/control/records/context.ts",
+    "src/control/records/control.ts",
+    "src/control/records/dispatch.ts",
+    "src/control/records/evidence.ts",
+    "src/control/records/goal-change.ts",
+    "src/control/records/goal-phase.ts",
+    "src/control/records/handoff.ts",
+    "src/control/records/human-role-collaboration.ts",
+    "src/control/records/material-access.ts",
+    "src/control/records/plan.ts",
+    "src/control/records/query-job.ts",
+    "src/control/records/remediation.ts",
+    "src/control/records/workspace.ts"
+  ],
+  "policyFiles": [
+    "src/control/policies/architecture-evolution-policy.ts",
+    "src/control/policies/architecture-remediation.ts",
+    "src/control/policies/evidence.ts",
+    "src/control/policies/goal-change-consistency.ts",
+    "src/control/policies/goal-change.ts",
+    "src/control/policies/goal-phase.ts",
+    "src/control/policies/initial-plan-admission.ts",
+    "src/control/policies/replacement-eligibility.ts",
+    "src/control/policies/task-eligibility.ts",
+    "src/control/policies/task-reduction.ts",
+    "src/control/policies/workspace-lease.ts",
+    "src/control/policies/workspace-operation.ts"
+  ],
+  "commandFiles": [
+    "src/contracts/commands/architecture.ts",
+    "src/contracts/commands/dispatch.ts",
+    "src/contracts/commands/evidence.ts",
+    "src/contracts/commands/goal-phase.ts",
+    "src/contracts/commands/goal.ts",
+    "src/contracts/commands/governance.ts",
+    "src/contracts/commands/material-access.ts",
+    "src/contracts/commands/plan.ts",
+    "src/contracts/commands/workspace.ts"
+  ]
+}

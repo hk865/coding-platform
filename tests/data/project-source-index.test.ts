@@ -1,0 +1,71 @@
+import { afterEach, expect, it } from 'vitest';
+import { mkdtemp, writeFile, mkdir, rm, rename } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ProjectSourceIndex } from '../../src/data/workspace-reader/project-source-index.js';
+import { WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
+
+const roots: string[] = [];
+const indexes: ProjectSourceIndex[] = [];
+afterEach(async () => { indexes.splice(0).forEach(i => i.dispose()); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+async function fixture() {
+  const root = await mkdtemp(join(tmpdir(), 'project-index-')); roots.push(root);
+  await mkdir(join(root, 'src'));
+  await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'esnext', module: 'esnext', moduleResolution: 'bundler', paths: { '@lib/*': ['./src/*'] }, plugins: [{ name: 'MUST_NOT_EXECUTE' }] }, include: ['src/**/*.ts'] }));
+  await writeFile(join(root, 'src/a.ts'), 'export function chosen() { return 1; }\n');
+  await writeFile(join(root, 'src/b.ts'), 'import { chosen } from "@lib/a";\nchosen();\n');
+  for (let n = 0; n < 70; n++) await writeFile(join(root, `src/unit${n}.ts`), `export const v${n} = ${n};\n`);
+  await writeFile(join(root, 'excluded.ts'), 'export const excluded = 1;\n');
+  const ws = await WorkspaceSandbox.create(root, { deniedPrefixes: ['private'] });
+  let commit = 'a'.repeat(40);
+  const access = { read: (p: string, n: number) => ws.read(p, n), allowed: (p: string) => !p.startsWith('private'), inventory: (signal: AbortSignal) => ws.listFiles(10000, { signal }), sourceIdentity: async () => ({ workspace: ws.identity, commit }) };
+  const index = new ProjectSourceIndex(access); indexes.push(index);
+  return { root, index, access, changeCommit: () => { commit = 'b'.repeat(40); } };
+}
+it('discovers over 64 sources, honors tsconfig include and aliases, returns source-bound cross-file results', async () => {
+  const { index } = await fixture();
+  const result = await index.query({ operation: 'definitions', path: 'src/b.ts', line: 2, column: 2 });
+  expect(result).toMatchObject({ status: 'sourced', provenance: { commit: 'a'.repeat(40) }, results: [expect.objectContaining({ path: 'src/a.ts', digest: expect.any(String), symbolId: expect.any(String) })], coverage: { projectConfiguration: 'tsconfig.json', indexedSourceCount: 72 } });
+  const symbols = await index.query({ operation: 'symbols', limit: 200 });
+  expect(symbols.status).toBe('sourced');
+  if (symbols.status !== 'sourced') throw Error('missing index');
+  expect(symbols.results.some(r => r['path'] === 'src/unit69.ts')).toBe(true);
+  expect(symbols.results.some(r => r['path'] === 'excluded.ts')).toBe(false);
+  expect(await index.query({ operation: 'references', path: 'src/a.ts', line: 1, column: 18 })).toMatchObject({ status: 'sourced', results: expect.arrayContaining([expect.objectContaining({ path: 'src/b.ts', line: 2 })]) });
+  expect(await index.query({ operation: 'calls', path: 'src/b.ts' })).toMatchObject({ status: 'sourced', results: [expect.objectContaining({ resolution: 'static_candidate', target: expect.objectContaining({ path: 'src/a.ts' }) })] });
+});
+it('invalidates additions, edits, renames, config and branch identity; reuses unchanged files and reconstructs after reopen', async () => {
+  const { root, index, access, changeCommit } = await fixture();
+  const first = await index.query({ operation: 'symbols', limit: 1 });
+  if (first.status !== 'sourced') throw Error('missing index');
+  expect(await index.query({ operation: 'symbols', limit: 1, expectedSnapshot: first.snapshot })).toMatchObject({ status: 'sourced', changes: { total: 0 } });
+  await writeFile(join(root, 'src/new.ts'), 'export const fresh = 1;');
+  expect(await index.query({ operation: 'symbols', expectedSnapshot: first.snapshot })).toMatchObject({ status: 'stale' });
+  const added = await index.query({ operation: 'symbols' });
+  expect(added).toMatchObject({ status: 'sourced', changes: { added: ['src/new.ts'] } });
+  await rename(join(root, 'src/new.ts'), join(root, 'src/renamed.ts'));
+  expect(await index.query({ operation: 'symbols' })).toMatchObject({ status: 'sourced', changes: { added: ['src/renamed.ts'], deleted: ['src/new.ts'] } });
+  await writeFile(join(root, 'src/a.ts'), 'export function changed() {}');
+  expect(await index.query({ operation: 'symbols' })).toMatchObject({ status: 'sourced', changes: { modified: ['src/a.ts'] } });
+  const before = await index.query({ operation: 'symbols' });
+  if (before.status !== 'sourced') throw Error('missing index');
+  changeCommit();
+  expect(await index.query({ operation: 'symbols', expectedSnapshot: before.snapshot })).toMatchObject({ status: 'stale' });
+  const restored = new ProjectSourceIndex(access); indexes.push(restored);
+  const current = await index.query({ operation: 'symbols' });
+  expect(await restored.query({ operation: 'symbols' })).toMatchObject({ status: 'sourced', snapshot: current.status === 'sourced' ? current.snapshot : '' });
+  await writeFile(join(root, 'tsconfig.json'), '{"include":["src/a.ts"]}');
+  expect(await index.query({ operation: 'symbols' })).toMatchObject({ status: 'sourced', coverage: { indexedSourceCount: 1 } });
+});
+it('reports denied/config escape, unsupported languages, incomplete discovery and unknown imports honestly', async () => {
+  const { root, index, access } = await fixture();
+  expect(await index.query({ operation: 'symbols', prefix: '../src' })).toMatchObject({ status: 'rejected' });
+  expect(await index.query({ operation: 'definitions', path: 'private/file.ts', line: 1, column: 1 })).toMatchObject({ status: 'rejected' });
+  expect(await index.query({ operation: 'symbols', path: 'example.py' })).toMatchObject({ status: 'unsupported' });
+  await writeFile(join(root, 'src/b.ts'), 'import { missing } from "unavailable";\nmissing();');
+  expect(await index.query({ operation: 'imports', path: 'src/b.ts' })).toMatchObject({ status: 'sourced', results: [expect.objectContaining({ module: 'unavailable', resolution: 'unknown', targets: [] })] });
+  const incomplete = new ProjectSourceIndex({ ...access, inventory: async () => ({ paths: ['src/a.ts'], truncated: true }) }); indexes.push(incomplete);
+  expect(await incomplete.query({ operation: 'symbols' })).toMatchObject({ status: 'rejected', message: expect.stringContaining('inventory incomplete') });
+  await writeFile(join(root, 'tsconfig.json'), '{"extends":"../outside.json"}');
+  expect(await index.query({ operation: 'symbols' })).toMatchObject({ status: 'rejected' });
+});

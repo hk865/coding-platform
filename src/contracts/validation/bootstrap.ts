@@ -1,0 +1,118 @@
+/** bootstrap protocol schema validation. Structural checks do not grant authority. */
+import type { WorkspaceBootstrapEntry } from '../bootstrap.js';
+import { bootstrapSourceDigest } from '../bootstrap.js';
+import type { ValidationIssue } from './common.js';
+import { isRecord, stringField } from './common.js';
+import { validateActor } from './identity.js';
+
+export function validateBootstrapEntries(
+  entries: unknown,
+  path: string,
+  issues: ValidationIssue[],
+): WorkspaceBootstrapEntry[] | null {
+  if (!Array.isArray(entries)) {
+    issues.push({ path, code: "bad_type", message: "entries must be an array" });
+    return null;
+  }
+  if (entries.length === 0) {
+    issues.push({ path, code: "empty_entries", message: "entries must be non-empty" });
+  }
+  const seenProjects = new Set<string>();
+  const seenWorkspaces = new Set<string>();
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i] as unknown;
+    const entryPath = `${path}[${i}]`;
+    if (!isRecord(entry)) {
+      issues.push({ path: entryPath, code: "bad_type", message: "entry must be an object" });
+      continue;
+    }
+    const projectId = stringField(entry, "projectId", issues, `${entryPath}.projectId`);
+    const workspaceId = stringField(entry, "workspaceId", issues, `${entryPath}.workspaceId`);
+    if (projectId === null || workspaceId === null) {
+      issues.push({
+        path: entryPath,
+        code: "incomplete_scope",
+        message: "entry must carry full (projectId, workspaceId) scope",
+      });
+      continue;
+    }
+    const scopeKey = projectId + "\u0000" + workspaceId;
+    if (seenProjects.has(projectId) || seenWorkspaces.has(scopeKey)) {
+      issues.push({
+        path: entryPath,
+        code: "duplicate_identity",
+        message: `duplicate project/workspace identity: ${projectId}/${workspaceId}`,
+      });
+    }
+    seenProjects.add(projectId);
+    seenWorkspaces.add(scopeKey);
+  }
+  return entries as WorkspaceBootstrapEntry[];
+}
+
+export function validateWorkspaceBootstrapFixture(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "WorkspaceBootstrapFixture must be an object" });
+    return issues;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({
+      path: "schemaVersion",
+      code: "unknown_schema_version",
+      message: "only schemaVersion 1 is supported",
+    });
+  }
+  validateBootstrapEntries(value["entries"], "entries", issues);
+  return issues;
+}
+
+export function validateWorkspaceBootstrapCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "WorkspaceBootstrapCommand must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "WorkspaceBootstrap") {
+    issues.push({
+      path: "commandType",
+      code: "invalid_command_type",
+      message: 'commandType must be "WorkspaceBootstrap"',
+    });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({
+      path: "schemaVersion",
+      code: "unknown_schema_version",
+      message: "only schemaVersion 1 is supported",
+    });
+  }
+  stringField(value, "commandId", issues);
+  const identity = value["identity"];
+  if (isRecord(identity)) {
+    validateActor(identity["actor"], "identity.actor", issues);
+    stringField(identity, "idempotencyKey", issues);
+  } else {
+    issues.push({ path: "identity", code: "bad_type", message: "identity must be an object" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  const digest = stringField(payload, "sourceDigest", issues);
+  const entries = validateBootstrapEntries(payload["entries"], "payload.entries", issues);
+  if (digest !== null && entries !== null && !issues.some((i) => i.code === "empty_entries")) {
+    const computed = bootstrapSourceDigest({ schemaVersion: 1, entries });
+    if (computed !== digest) {
+      issues.push({
+        path: "payload.sourceDigest",
+        code: "digest_mismatch",
+        message: "sourceDigest does not match canonical digest of entries",
+      });
+    }
+  }
+  return issues;
+}

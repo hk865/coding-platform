@@ -1,0 +1,18 @@
+--- evidence/2026-09-10-external-review-repair/before/tests/tests/restart/p1-12-restart-fixtures.ts	2026-09-07 01:03:17.000000000 +0800
++++ tests/restart/p1-12-restart-fixtures.ts	2026-09-10 01:37:38.464591900 +0800
+@@ -1,3 +1,4 @@
++import { classifyRestartProbeError } from "./readiness-probe.js";
+ /**
+  * P1-12 restart-path fixtures + readiness probe (deterministic inspection
+  * scenario -> close -> reopen -> architectureInspectionView field-identical +
+@@ -20,8 +21,8 @@
+     } finally {
+       await h.cleanup().catch(() => undefined);
+     }
+-  } catch {
+-    return false;
++  } catch (error) {
++    return classifyRestartProbeError(error);
+   }
+ }
+ 

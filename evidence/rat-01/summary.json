@@ -1,0 +1,33 @@
+{
+  "stage": "RAT-01",
+  "status": "DELIVERED_FOR_REVIEW",
+  "settingsAndConnection": "PASS",
+  "automatedTests": {
+    "files": 3,
+    "passed": 23
+  },
+  "typecheck": "PASS",
+  "build": "PASS",
+  "docs": {
+    "passed": 13,
+    "total": 13
+  },
+  "live": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash-vision-exp",
+    "requests": 2,
+    "inputTokens": 566,
+    "outputTokens": 171,
+    "toolsExecuted": 0
+  },
+  "redaction": "PASS",
+  "projectRuntimeComposition": "NOT_STARTED_RAT02",
+  "nextStageRequiresUserConfirmation": true,
+  "outputs": [
+    "model-configuration-reference.json",
+    "browser-live.json",
+    "automated-tests.txt",
+    "credential-redaction-check.json",
+    "implementation-files.json"
+  ]
+}

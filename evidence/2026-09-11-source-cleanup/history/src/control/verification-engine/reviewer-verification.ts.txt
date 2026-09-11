@@ -1,0 +1,477 @@
+import { artifactBodyDigest } from '../../contracts/artifact.js';
+import type { ArtifactOpenResult } from '../../contracts/artifact.js';
+import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
+import { reviewCommandFingerprint, reviewWorkRefFor } from '../../contracts/reviewer-work.js';
+import type { ReviewWorkSnapshot } from '../../contracts/reviewer-work.js';
+import type { ReviewerCurrentResult, ReviewerPacketV1 } from '../../contracts/reviewer-context.js';
+import type { ReviewMaterialResult, ReviewReceipt, ReviewRequestResult, ReviewRequestView, ReviewResumeInput, ReviewStartInput, ReviewRecoverInput } from '../../contracts/reviewer-verification.js';
+import type { VerificationRoundScope } from '../../contracts/verification-context.js';
+import type { VerificationServiceDeps } from '../../contracts/verification-service.js';
+import { buildReduceTaskCommand } from '../../contracts/commands/evidence.js';
+import { buildReduceGoalCommand } from '../../contracts/commands/goal-phase.js';
+import { VerificationJournal } from './verification-journal.js';
+import { VerificationRounds } from './verification-rounds.js';
+import type { ReviewJournalRecord } from './reviewer-record.js';
+import { assessReviewerReport, readReviewArtifact } from './reviewer-report.js';
+import { digest, ensure, sha, text, vScope } from './verification-input.js';
+
+const same = (a: unknown, b: unknown) => canonicalJson(a as JsonValue) === canonicalJson(b as JsonValue);
+const actor = { kind: 'system' as const, id: 'independent-review-verification' };
+const normalize = (scope: VerificationRoundScope): VerificationRoundScope => ({ ...vScope(scope), taskId: scope.taskId });
+const goalKey = (scope: VerificationRoundScope, requestId: string) => canonicalJson([scope.projectId, scope.workspaceId, scope.goalId, requestId]);
+const journalId = (r: ReviewJournalRecord) => digest(goalKey(r.scope, r.requestId));
+
+/** Independent Review is a Verification lifecycle, not a second model runner.
+ * Host Dispatch consumes canonical Work and returns through the same resume. */
+export class ReviewerVerification {
+  private readonly operations = new Map<string, Promise<ReviewRequestResult>>();
+  constructor(private readonly deps: VerificationServiceDeps, private readonly journal: VerificationJournal,
+    private readonly rounds: VerificationRounds) { }
+
+  reviewMaterial(scope: VerificationRoundScope, roundRequestId: string): Promise<ReviewMaterialResult> {
+    return this.rounds.reviewMaterial(normalize(scope), roundRequestId);
+  }
+
+  async startReview(scope: VerificationRoundScope, input: ReviewStartInput): Promise<ReviewRequestResult> {
+    scope = normalize(scope);
+    for (const key of ['projectId', 'workspaceId', 'goalId', 'runId', 'taskId'] as const) text(scope[key], key, 128);
+    ensure(input.allowExecute === true, '需要明确授权独立 Reviewer');
+    text(input.requestId, 'requestId', 128); text(input.roundRequestId, 'roundRequestId', 128);
+    text(input.reviewerConfigRef?.configId, 'reviewerConfigRef.configId', 128);
+    ensure(Number.isSafeInteger(input.reviewerConfigRef.revision) && input.reviewerConfigRef.revision >= 1, 'Reviewer 配置 revision 无效');
+    sha(input.reviewerConfigRef.digest, 'reviewerConfigRef.digest');
+    input = { requestId: input.requestId, roundRequestId: input.roundRequestId,
+      reviewerConfigRef: { configId: input.reviewerConfigRef.configId, revision: input.reviewerConfigRef.revision, digest: input.reviewerConfigRef.digest }, allowExecute: true };
+    const key = goalKey(scope, input.requestId), active = this.operations.get(key);
+    if (active) { await active; return this.startReview(scope, input); }
+    const operation = this.start(scope, input);
+    this.operations.set(key, operation);
+    try { return await operation; } finally { this.operations.delete(key); }
+  }
+
+  private async start(scope: VerificationRoundScope, input: ReviewStartInput): Promise<ReviewRequestResult> {
+    const fingerprint = digest(canonicalJson({ scope, input }));
+    const prior = this.find(scope, input.requestId);
+    if (prior) {
+      ensure(prior.fingerprint === fingerprint, '同一 Reviewer 请求内容已改变');
+      return { review: await this.view(prior), replayed: true };
+    }
+    ensure(!this.journal.reviews.some(r => goalKey(r.scope, r.requestId) === goalKey(scope, input.requestId)), '同一目标的 Reviewer 请求身份已用于其他 Run 或 Task');
+    const record: ReviewJournalRecord = {
+      schemaVersion: 1, requestId: input.requestId, reviewId: reviewWorkRefFor(scope, input.requestId).reviewId,
+      scope, roundRequestId: input.roundRequestId, workRef: null, phase: 'requested', fingerprint,
+      input: structuredClone(input), createdAt: new Date().toISOString(), descriptor: null, descriptorRef: null, planRef: null,
+      profile: null, createCommand: null, createReceipt: null, assessment: null,
+      resultCommand: null, resultReceipt: null, rejectedResultAttempts: [],
+      adoptionReduction: { task: null, goal: null },
+      reduction: { task: null, goal: null }, control: { taskPhase: null, goalPhase: null },
+      terminalRejection: null, gaps: [],
+    };
+    await this.save(record);
+    this.journal.reviews.push(record);
+    await this.advance(record);
+    return { review: await this.view(record), replayed: false };
+  }
+
+  async review(scope: VerificationRoundScope, requestId: string): Promise<ReviewRequestView> {
+    const record = this.find(scope, text(requestId, 'requestId', 128));
+    ensure(record, '该作用域不存在 Reviewer 请求');
+    return this.view(record);
+  }
+
+  async recoverReview(scope: VerificationRoundScope, input: ReviewRecoverInput): Promise<ReviewRequestResult> {
+    scope = normalize(scope);
+    for (const key of ['projectId', 'workspaceId', 'goalId', 'runId', 'taskId'] as const) text(scope[key], key, 128);
+    ensure(input.allowExecute === true, '需要明确授权重新受理 Reviewer');
+    input = { requestId: text(input.requestId, 'requestId', 128), previousRequestId: text(input.previousRequestId, 'previousRequestId', 128),
+      allowExecute: true, reason: text(input.reason, 'reason', 2000) };
+    const key = goalKey(scope, input.requestId), active = this.operations.get(key);
+    if (active) { await active; return this.recoverReview(scope, input); }
+    const operation = this.recover(scope, input);
+    this.operations.set(key, operation);
+    try { return await operation; } finally { this.operations.delete(key); }
+  }
+
+  private async recover(scope: VerificationRoundScope, input: ReviewRecoverInput): Promise<ReviewRequestResult> {
+    const fingerprint = digest(canonicalJson({ scope, recovery: input }));
+    const prior = this.find(scope, input.requestId);
+    if (prior) {
+      ensure(prior.fingerprint === fingerprint && prior.recovery, '同一 Reviewer 请求内容已改变');
+      if (!prior.terminalRejection && prior.phase !== 'settled' && prior.phase !== 'assessment_rejected') await this.advance(prior);
+      return { review: await this.view(prior), replayed: true };
+    }
+    ensure(!this.journal.reviews.some(r => goalKey(r.scope, r.requestId) === goalKey(scope, input.requestId)), '同一目标的 Reviewer 请求身份已用于其他 Run 或 Task');
+    const previous = this.find(scope, input.previousRequestId);
+    ensure(previous, '该作用域不存在原 Reviewer 请求');
+    const record: ReviewJournalRecord = {
+      schemaVersion: 1, requestId: input.requestId, reviewId: reviewWorkRefFor(scope, input.requestId).reviewId, scope,
+      roundRequestId: previous.roundRequestId, workRef: null, phase: 'requested', fingerprint,
+      input: { ...structuredClone(previous.input), requestId: input.requestId }, planRef: null, recovery: { input: structuredClone(input), command: null, receipt: null },
+      recoveryRequest: { previousRequestId: input.previousRequestId, reason: input.reason }, createdAt: new Date().toISOString(),
+      descriptor: structuredClone(previous.descriptor), descriptorRef: structuredClone(previous.descriptorRef), profile: structuredClone(previous.profile),
+      createCommand: null, createReceipt: null, assessment: null, resultCommand: null, resultReceipt: null, rejectedResultAttempts: [],
+      adoptionReduction: { task: null, goal: null }, reduction: { task: null, goal: null }, control: { taskPhase: null, goalPhase: null }, terminalRejection: null, gaps: [],
+    };
+    await this.save(record); this.journal.reviews.push(record);
+    await this.advance(record);
+    return { review: await this.view(record), replayed: false };
+  }
+
+  async reviewReceipt(scope: Pick<VerificationRoundScope, 'projectId' | 'workspaceId' | 'goalId'>, requestId: string): Promise<ReviewReceipt | null> {
+    const matches = this.journal.reviews.filter(r => r.requestId === requestId && r.scope.projectId === scope.projectId && r.scope.workspaceId === scope.workspaceId && r.scope.goalId === scope.goalId);
+    ensure(matches.length <= 1, 'Reviewer 请求回执存在歧义');
+    const record = matches[0];
+    if (!record) return null;
+    const view = await this.view(record);
+    return this.receipt(view);
+  }
+
+  async resumeReview(scope: VerificationRoundScope, input: ReviewResumeInput): Promise<ReviewRequestResult> {
+    const record = this.find(scope, text(input.requestId, 'requestId', 128));
+    ensure(record, '该作用域不存在 Reviewer 请求');
+    const key = goalKey(record.scope, record.requestId), active = this.operations.get(key);
+    if (active) { await active; return { review: await this.view(record), replayed: true }; }
+    if (record.terminalRejection || record.phase === 'settled' || record.phase === 'assessment_rejected') return { review: await this.view(record), replayed: true };
+    const operation = (async () => { await this.advance(record); return { review: await this.view(record), replayed: false }; })();
+    this.operations.set(key, operation);
+    try { return await operation; } finally { this.operations.delete(key); }
+  }
+
+  private find(scope: VerificationRoundScope, requestId: string) {
+    return this.journal.reviews.find(r => r.requestId === requestId && same(r.scope, normalize(scope)));
+  }
+  private receipt(record: ReviewReceipt): ReviewReceipt {
+    return structuredClone({ requestId: record.requestId, reviewId: record.reviewId, scope: record.scope,
+      roundRequestId: record.roundRequestId, workRef: record.workRef, phase: record.phase,
+      ...(record.recoveryRequest ? { recoveryRequest: record.recoveryRequest } : {}) });
+  }
+  private save(record: ReviewJournalRecord) { return this.journal.save('review', journalId(record), record); }
+  private async gap(record: ReviewJournalRecord, code: string, message: string) {
+    record.gaps = [{ code, message }]; await this.save(record);
+  }
+  private async reject(record: ReviewJournalRecord, code: string, message: string) {
+    record.terminalRejection = { code, message }; record.phase = 'work_rejected';
+    await this.gap(record, code, message);
+  }
+
+  private async create(record: ReviewJournalRecord) {
+    if (record.recovery) { await this.replace(record); return; }
+    const ports = this.deps.review;
+    if (!ports) { record.phase = 'material_pending'; await this.gap(record, 'review_unconfigured', '独立 Reviewer 的 Context、配置和受限 Control 口未接入'); return; }
+    const profile = await ports.profiles.resolve(record.scope, record.input.reviewerConfigRef);
+    if (profile.status !== 'ready') {
+      if (profile.status === 'rejected') await this.reject(record, profile.code, profile.issues.join('; '));
+      else { record.phase = 'material_pending'; await this.gap(record, 'profile_unavailable', profile.missing.join('; ')); }
+      return;
+    }
+    ensure(same(profile.ref, record.input.reviewerConfigRef), '配置读取没有返回所选精确版本');
+    const resolved = await this.reviewMaterial(record.scope, record.roundRequestId);
+    if (resolved.status !== 'ready') {
+      if (resolved.status === 'rejected') await this.reject(record, resolved.code, resolved.issues.join('; '));
+      else { record.phase = 'material_pending'; await this.gap(record, resolved.code, resolved.missing.join('; ')); }
+      return;
+    }
+    if (record.descriptor) ensure(same(record.descriptor, resolved.descriptor) && same(record.profile, profile.profile), '已冻结 Reviewer 材料或配置已变化');
+    else {
+      record.descriptor = structuredClone(resolved.descriptor); record.profile = structuredClone(profile.profile);
+      await this.save(record);
+    }
+    if (!record.descriptorRef) {
+      const stored = await this.deps.vault.put({ body: canonicalJson(record.descriptor), contentType: 'application/json',
+        ownerRef: record.descriptor.subject.producerRunRef, sourceRefs: [record.descriptor.toolRound.aggregateRef.source], requestedAt: record.createdAt });
+      ensure(stored.status === 'stored', 'Reviewer 材料描述持久化失败：' + JSON.stringify(stored));
+      record.descriptorRef = stored.ref; await this.save(record);
+    }
+    const current = await this.deps.context.resolveRound(record.scope, record.descriptor.materialIdentity);
+    ensure(current.status === 'ready', '创建 Reviewer 前来源不再可用：' + JSON.stringify(current));
+    const finalProfile = await ports.profiles.resolve(record.scope, record.input.reviewerConfigRef);
+    ensure(finalProfile.status === 'ready' && same(finalProfile.profile, record.profile), '创建 Reviewer 前配置已变化');
+    if (!record.createCommand) {
+      record.createCommand = { identity: { projectId: record.scope.projectId, actor,
+        idempotencyKey: record.reviewId + '-create' }, requestId: record.requestId,
+        descriptor: record.descriptor, descriptorRef: record.descriptorRef,
+        reviewerConfigRef: record.input.reviewerConfigRef, reviewerProfile: record.profile! };
+      record.workRef = reviewWorkRefFor(record.scope, record.requestId); record.phase = 'work_pending';
+      await this.save(record);
+    }
+    const receipt = await ports.control.createWork(record.createCommand);
+    record.createReceipt = receipt;
+    if (receipt.status === 'rejected') {
+      if (receipt.code === 'unavailable' || receipt.code === 'revision_conflict') await this.gap(record, receipt.code, 'Reviewer Work 尚未确认；原请求身份保留');
+      else await this.reject(record, receipt.code, receipt.issues?.join('; ') ?? 'Control 拒绝建立 Reviewer Work');
+    } else {
+      ensure(same(receipt.workRef, record.workRef), 'Control 返回了其他 Reviewer Work');
+      record.phase = 'awaiting_result'; record.gaps = []; await this.save(record);
+    }
+  }
+
+  private async replace(record: ReviewJournalRecord) {
+    const ports = this.deps.review, recovery = record.recovery!;
+    if (!ports) { await this.gap(record, 'review_unconfigured', 'Reviewer 恢复端口未配置'); return; }
+    if (!recovery.command) {
+      const previous = this.find(record.scope, recovery.input.previousRequestId);
+      if (!previous?.workRef || previous.terminalRejection) { await this.reject(record, 'recovery_ineligible', '原请求未受理或已永久拒绝'); return; }
+      const canonical = await ports.context.inspect(previous.workRef);
+      if (!canonical) { await this.reject(record, 'recovery_evidence_insufficient', '原 Work 持久事实缺失'); return; }
+      this.bindWork(previous, canonical.work);
+      const eligibility = await ports.context.recovery(previous.workRef);
+      if (!eligibility.allowed) { await this.reject(record, eligibility.code, eligibility.issues.join('; ')); return; }
+      recovery.command = { identity: { projectId: record.scope.projectId, actor: { kind: 'human', id: 'local-reviewer-recovery-operator' },
+        idempotencyKey: record.reviewId + '-replace' }, previousWorkRef: previous.workRef,
+        expectedWorkRevision: eligibility.expectedWorkRevision, expectedProtocolRevision: eligibility.expectedProtocolRevision,
+        requestId: record.requestId, proof: eligibility.proof };
+      record.workRef = reviewWorkRefFor(record.scope, record.requestId); record.phase = 'work_pending';
+      await this.save(record);
+    }
+    // Do not regenerate the proof/CAS on retry. Control first replays committed
+    // identity, even after the old Work has ceased to be the protocol tail.
+    const replacement = await ports.context.inspect(reviewWorkRefFor(record.scope, record.requestId));
+    if (!replacement) {
+      const eligibility = await ports.context.recovery(recovery.command.previousWorkRef);
+      if (!eligibility.allowed) { await this.reject(record, eligibility.code, eligibility.issues.join('; ')); return; }
+      if (!same(eligibility.proof, recovery.command.proof) || eligibility.expectedWorkRevision !== recovery.command.expectedWorkRevision
+          || eligibility.expectedProtocolRevision !== recovery.command.expectedProtocolRevision) {
+        await this.reject(record, 'recovery_evidence_changed', '已冻结恢复授权的资格发生变化；未替换证明或重开执行'); return;
+      }
+    }
+    // A prior failed atomic save may have left the frozen command only in this
+    // process's object. Require durable bytes again before every submission.
+    await this.save(record);
+    const receipt = await ports.control.replaceFailedWork(recovery.command);
+    recovery.receipt = receipt;
+    if (receipt.status === 'rejected') {
+      if (receipt.code === 'unavailable') await this.gap(record, receipt.code, '授权已持久保存；替代受理回执未知，保留原命令身份');
+      else await this.reject(record, receipt.code, receipt.issues?.join('; ') ?? 'Control 拒绝重新受理 Reviewer');
+    } else {
+      ensure(same(receipt.workRef, record.workRef), 'Control 返回了其他替代 Work');
+      record.phase = 'awaiting_result'; record.gaps = []; await this.save(record);
+    }
+  }
+
+  private async advance(record: ReviewJournalRecord) {
+    try {
+      const ports = this.deps.review;
+      if (record.recovery?.command && (!record.recovery.receipt || record.recovery.receipt.status === 'rejected')) {
+        await this.replace(record);
+        if (record.terminalRejection || !record.recovery.receipt || record.recovery.receipt.status === 'rejected') return;
+      }
+      let canonical = ports ? await ports.context.inspect(reviewWorkRefFor(record.scope, record.requestId)) : null;
+      if (!canonical) {
+        await this.create(record);
+        if (record.terminalRejection || !ports || !record.workRef) return;
+        canonical = await ports.context.inspect(record.workRef);
+      }
+      if (!canonical || !ports) return;
+      this.bindWork(record, canonical.work);
+      record.workRef = canonical.work.ref;
+      if (!await this.reduceCheckpoints(record, 'adoption')) return;
+      if (canonical.result) {
+        ensure(record.resultCommand && canonical.result.commandFingerprint === reviewCommandFingerprint('review-result-admission', record.resultCommand), '正式 Reviewer 结果不属于已持久接纳请求');
+        if (canonical.result.decision.status === 'rejected') {
+          record.phase = 'assessment_rejected'; record.gaps = canonical.result.decision.reasonCodes.map(message => ({ code: 'report_rejected', message }));
+          await this.save(record); return;
+        }
+        await this.reduce(record); return;
+      }
+      if (!canonical.work.output) {
+        record.phase = 'awaiting_result';
+        record.gaps = canonical.run.status === 'ended'
+          ? [{ code: 'output_unavailable', message: '独立 Run 尚无可接纳的正式原报告绑定；由 Dispatch 对账，不重开模型' }] : [];
+        await this.save(record); return;
+      }
+      record.phase = 'report_recorded'; await this.save(record);
+      const checked = await this.current(record);
+      if (!checked) return;
+      const { work, packet } = checked;
+      const opened = await ports.context.openReport(work.ref);
+      if (opened.status !== 'ready') {
+        await this.gap(record, 'report_unavailable', '原始报告当前不可读取：' + JSON.stringify(opened)); return;
+      }
+      ensure(same(opened.record.ref, work.output!.reportRef), 'Context 返回了未绑定的原始报告');
+      const assessment = await assessReviewerReport({ work, packet, body: opened.record.body, context: ports.context,
+        materialIdentityDigest: digest(canonicalJson(work.descriptor.materialIdentity)) });
+      if (record.assessment) ensure(same(record.assessment.body, assessment), '同一原始报告的固定资格评估已改变');
+      else {
+        const stored = await this.deps.vault.put({ body: canonicalJson(assessment), contentType: 'application/json',
+          ownerRef: work.reviewerRunRef, sourceRefs: [work.output!.reportRef.source], requestedAt: record.createdAt });
+        ensure(stored.status === 'stored', 'Reviewer 资格评估持久化失败：' + JSON.stringify(stored));
+        record.assessment = { ref: stored.ref, body: assessment }; await this.save(record);
+      }
+      if (!await this.current(record)) return;
+      if (!record.resultCommand) {
+        record.resultCommand = { identity: { projectId: record.scope.projectId, actor,
+          idempotencyKey: record.reviewId + '-result-' + work.revision + '-' + record.rejectedResultAttempts.length },
+          workRef: work.ref, expectedWorkRevision: work.revision, output: work.output!,
+          validatedMaterialIdentityDigest: assessment.materialIdentityDigest, assessmentRef: record.assessment.ref,
+          assessmentDigest: record.assessment.ref.digest, decision: assessment.decision };
+        record.phase = 'admission_pending'; await this.save(record);
+      }
+      const receipt = await ports.control.recordValidatedResult(record.resultCommand);
+      record.resultReceipt = receipt;
+      if (receipt.status === 'rejected') {
+        if (receipt.code === 'revision_conflict') {
+          record.rejectedResultAttempts.push({ command: record.resultCommand, receipt }); record.resultCommand = null;
+          await this.gap(record, 'revision_conflict', '结果接纳 CAS 明确拒绝；下次恢复读取新版本，不重跑 Reviewer');
+        } else if (receipt.code === 'unavailable') await this.gap(record, receipt.code, '结果接纳回执未知；保持原接纳身份');
+        else await this.reject(record, receipt.code, receipt.issues?.join('; ') ?? 'Control 拒绝 Reviewer 结果');
+        return;
+      }
+      await this.save(record);
+      if (assessment.decision.status === 'rejected') {
+        record.phase = 'assessment_rejected'; record.gaps = assessment.decision.reasonCodes.map(message => ({ code: 'report_rejected', message }));
+        await this.save(record); return;
+      }
+      await this.reduce(record);
+    } catch (error) { await this.gap(record, 'material_or_receipt_unavailable', String(error)); }
+  }
+
+  private bindWork(record: ReviewJournalRecord, work: ReviewWorkSnapshot) {
+    const command = record.recovery?.command ?? record.createCommand;
+    ensure(command && work.requestFingerprint === reviewCommandFingerprint(record.recovery ? 'review-work-replace' : 'review-work-create', command)
+      && work.requestId === record.requestId && same(work.descriptor, record.descriptor)
+      && same(work.descriptorRef, record.descriptorRef) && same(work.reviewerProfile, record.profile)
+      && same(work.ref, reviewWorkRefFor(record.scope, record.requestId)), '正式 Reviewer Work 与原请求的冻结绑定不一致');
+    // 记录被审工作当时固定的 plan revision：审阅问题要能判断它属于哪一版计划，
+    // 否则后续读投影只能把它当作来源不明的问题。
+    record.planRef = structuredClone(work.planRef);
+  }
+
+  private async current(record: ReviewJournalRecord): Promise<{ work: ReviewWorkSnapshot; packet: ReviewerPacketV1 } | null> {
+    const ports = this.deps.review!;
+    const current = await ports.context.current(record.workRef!);
+    if (current.status !== 'ready') {
+      await this.currentFailure(record, current); return null;
+    }
+    this.bindWork(record, current.work);
+    const work = current.work;
+    ensure(work.input && work.output, 'Reviewer 输入或原始报告尚未正式绑定');
+    const packet = await ports.context.packet(work.ref);
+    ensure(packet.schemaVersion === 1 && packet.kind === 'independent-review-packet'
+      && same(packet.workRef, work.ref) && same(packet.reviewerRunRef, work.reviewerRunRef)
+      && packet.descriptorDigest === work.descriptorRef.digest && same(packet.profile, work.reviewerProfile)
+      && same(packet.materialIdentity, work.descriptor.materialIdentity)
+      && same(packet.coverage, work.descriptor.requirements), 'Reviewer 输入包与冻结材料或配置不一致');
+    ensure(artifactBodyDigest(canonicalJson(packet)) === work.input.packetDigest
+      && work.input.packetRef.digest === work.input.packetDigest
+      && work.output.packetDigest === work.input.packetDigest
+      && work.output.inputDigest === work.input.inputDigest
+      && work.output.descriptorDigest === work.descriptorRef.digest
+      && work.input.descriptorDigest === work.descriptorRef.digest, 'Reviewer 输入/输出摘要绑定不一致');
+    const canonical = await ports.context.inspect(work.ref);
+    ensure(canonical && canonical.run.status === 'ended' && canonical.run.outcome === 'completed' && canonical.run.exitCode === 0
+      && same(canonical.run.ref, work.reviewerRunRef) && canonical.run.attemptId === work.reviewerAttemptRef.attemptId
+      && canonical.run.ref.runId !== work.producerRunRef.runId && canonical.run.attemptId !== work.producerAttemptRef.attemptId
+      && canonical.run.revision === work.output.runRevision && same(work.output.runRef, canonical.run.ref)
+      && canonical.run.lastRuntimeEventId === work.output.terminalEventId && canonical.run.lastEventSeq === work.output.terminalEventSeq
+      && same(canonical.run.roleBinding, work.reviewerProfile.roleBinding)
+      && same(canonical.run.envelope?.permissions.tools, work.reviewerProfile.permissions.tools)
+      && canonical.run.envelope?.permissions.writeScope.length === 0
+      && same(canonical.run.envelope?.reviewInput, work.input), 'Reviewer Run 不是绑定的独立、已结束只读执行');
+    if (!current.producerSessionId || !current.reviewerSessionId) {
+      await this.gap(record, 'session_unavailable', 'Producer 或 Reviewer 的持久会话身份尚未提供'); return null;
+    }
+    if (current.producerSessionId === current.reviewerSessionId || work.output.sessionId !== current.reviewerSessionId) {
+      await this.reject(record, 'session_not_independent', 'Reviewer 持久会话复用了 Producer，或与正式输出会话不一致'); return null;
+    }
+    ensure(canonical.producerSessionId === current.producerSessionId && canonical.reviewerSessionId === current.reviewerSessionId,
+      '取材期间持久会话观察发生变化');
+    const descriptor = await this.rounds.reviewDescriptor(record.scope, record.roundRequestId, current.material, async ref => {
+      const body = await readReviewArtifact(ports.context, work, ref);
+      return { status: 'ready', record: { ref, body, sourceRefs: [ref.source] } } as ArtifactOpenResult;
+    });
+    ensure(same(descriptor, work.descriptor), 'Reviewer 材料索引不是完整适用工具集合');
+    const again = await ports.context.current(work.ref);
+    if (again.status !== 'ready') { await this.currentFailure(record, again); return null; }
+    ensure(same(again.work, work) && same(again.material.identity, current.material.identity), '审阅取材期间正式 Work 或来源发生变化');
+    return { work, packet };
+  }
+
+  private async currentFailure(record: ReviewJournalRecord, result: Exclude<ReviewerCurrentResult, { status: 'ready' }>) {
+    const message = result.status === 'incomplete' ? result.missing.join('; ') : result.issues.join('; ');
+    if (result.status === 'rejected' && ['source_changed', 'stale_material', 'stale_configuration', 'scope_mismatch', 'invalid_scope'].includes(result.code)) {
+      await this.reject(record, result.code, message);
+    } else await this.gap(record, result.code, message);
+  }
+
+  private async reduce(record: ReviewJournalRecord) {
+    record.phase = 'reduction_pending'; await this.save(record);
+    if (!await this.reduceCheckpoints(record, 'result')) return;
+    record.phase = 'settled'; record.gaps = []; await this.save(record);
+  }
+
+  private async reduceCheckpoints(record: ReviewJournalRecord, stage: 'adoption' | 'result') {
+    record.adoptionReduction ??= { task: null, goal: null };
+    const reduction = stage === 'adoption' ? record.adoptionReduction : record.reduction;
+    const assertCurrent = async () => {
+      if (stage === 'result') return Boolean(await this.current(record));
+      const current = await this.deps.review!.context.current(record.workRef!);
+      if (current.status !== 'ready') { await this.currentFailure(record, current); return false; }
+      this.bindWork(record, current.work);
+      return true;
+    };
+    const scope = record.scope;
+    const identity = { projectId: scope.projectId, goalId: scope.goalId, actor: { kind: 'system' as const, id: 'control-engine' },
+      correlationId: record.requestId, submittedAt: record.createdAt };
+    for (const target of ['task', 'goal'] as const) {
+      if (!reduction[target]) {
+        const revision = target === 'task'
+          ? await this.deps.context.taskReductionRevision({ projectId: scope.projectId, goalId: scope.goalId, taskId: scope.taskId })
+          : await this.deps.context.goalPhaseRevision({ projectId: scope.projectId, goalId: scope.goalId });
+        reduction[target] = { revision, key: record.reviewId + '-' + stage + '-reduce-' + target + '-' + revision + '-' + (reduction.rejected?.length ?? 0), phase: null };
+        await this.save(record);
+      }
+      const attempt = reduction[target]!;
+      if (attempt.phase) continue;
+      if (!await assertCurrent()) return false;
+      const common = { ...identity, commandId: attempt.key, idempotencyKey: attempt.key, expectedRevision: attempt.revision };
+      const receipt = target === 'task'
+        ? await this.deps.control.reduceTask(buildReduceTaskCommand({ ...common, taskId: scope.taskId }))
+        : await this.deps.control.reduceGoal(buildReduceGoalCommand(common));
+      if (receipt.status === 'rejected' && receipt.code === 'revision_conflict') {
+        reduction.rejected ??= [];
+        reduction.rejected.push({ target, key: attempt.key, revision: attempt.revision, code: 'revision_conflict', rejectedAt: new Date().toISOString() });
+        reduction[target] = null; await this.save(record);
+      }
+      ensure(receipt.status === 'committed', 'Reviewer ' + target + ' 归约未确认：' + JSON.stringify(receipt));
+      attempt.phase = receipt.phase;
+      if (target === 'task') record.control.taskPhase = receipt.phase;
+      else record.control.goalPhase = receipt.phase;
+      await this.save(record);
+    }
+    return true;
+  }
+
+  private async view(record: ReviewJournalRecord): Promise<ReviewRequestView> {
+    const ports = this.deps.review;
+    let canonical: Awaited<ReturnType<NonNullable<VerificationServiceDeps['review']>['context']['inspect']>> = null;
+    let current: ReviewRequestView['current'] = { status: 'unavailable', issues: ['Reviewer Work 尚未建立'] };
+    let recovery: ReviewRequestView['recovery'] = { allowed: false, code: 'recovery_work_unavailable', failureReason: null, issues: ['Reviewer Work 尚未建立'] };
+    if (ports && record.workRef) {
+      try {
+        canonical = await ports.context.inspect(record.workRef);
+        if (canonical) {
+          this.bindWork(record, canonical.work);
+          const state = await ports.context.current(record.workRef);
+          current = state.status === 'ready' ? { status: 'current', issues: [] }
+            : state.status === 'incomplete' ? { status: 'unavailable', issues: state.missing }
+              : { status: 'stale', issues: state.issues };
+          const eligibility = await ports.context.recovery(record.workRef);
+          recovery = { allowed: eligibility.allowed, code: eligibility.code, failureReason: eligibility.failureReason, issues: eligibility.issues };
+        }
+      } catch (error) { current = { status: 'unavailable', issues: [String(error)] }; }
+    }
+    if (record.terminalRejection) {
+      current = { status: 'stale', issues: [record.terminalRejection.message] };
+      recovery = { allowed: false, code: record.terminalRejection.code, failureReason: recovery.failureReason, issues: [record.terminalRejection.message] };
+    }
+    let phase = record.phase;
+    if (canonical?.result?.decision.status === 'rejected') phase = 'assessment_rejected';
+    else if (canonical?.result && phase !== 'settled' && !record.terminalRejection) phase = 'reduction_pending';
+    else if (canonical?.work && !record.terminalRejection && phase === 'work_pending') phase = 'awaiting_result';
+    return { ...this.receipt(record), phase, recovery, descriptorRef: record.descriptorRef, profile: structuredClone(record.profile),
+      work: canonical ? structuredClone(canonical.work) : null, execution: canonical ? structuredClone(canonical.run) : null,
+      rawReportRef: canonical?.work.output?.reportRef ?? null, assessment: structuredClone(record.assessment),
+      formal: { resultRef: canonical?.work.resultRef ?? null, evidenceRefs: canonical?.result?.decision.evidenceRefs ?? [],
+        taskPhase: record.control.taskPhase, goalPhase: record.control.goalPhase }, current, gaps: structuredClone(record.gaps) };
+  }
+}

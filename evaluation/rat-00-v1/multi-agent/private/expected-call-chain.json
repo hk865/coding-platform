@@ -1,0 +1,37 @@
+{
+  "requiredNodes": [
+    "src/browser.mjs:mount",
+    "src/ui.mjs:mount",
+    "src/ui.mjs:createBoard",
+    "src/api.mjs:handleApi",
+    "src/store.mjs:listTasks",
+    "src/store.mjs:readTasks",
+    "src/ui.mjs:createBoard.render"
+  ],
+  "requiredEdges": [
+    [
+      "src/browser.mjs:mount",
+      "src/ui.mjs:mount"
+    ],
+    [
+      "src/ui.mjs:mount",
+      "src/ui.mjs:createBoard"
+    ],
+    [
+      "src/ui.mjs:createBoard",
+      "src/api.mjs:handleApi"
+    ],
+    [
+      "src/api.mjs:handleApi",
+      "src/store.mjs:listTasks"
+    ],
+    [
+      "src/store.mjs:listTasks",
+      "src/store.mjs:readTasks"
+    ],
+    [
+      "src/ui.mjs:createBoard",
+      "src/ui.mjs:createBoard.render"
+    ]
+  ]
+}

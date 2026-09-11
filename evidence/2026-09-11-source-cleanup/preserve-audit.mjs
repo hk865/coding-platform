@@ -1,0 +1,6 @@
+import fs from 'node:fs';import crypto from 'node:crypto';
+const dir='evidence/2026-09-11-source-cleanup/',changes=JSON.parse(fs.readFileSync(dir+'changes.json'));
+const missing=[],mismatched=[];let checked=0;
+for(const [repo,rows]of Object.entries(changes)){for(const row of rows){if(!row.before)continue;const h=dir+'history/'+(repo==='docs'?'docs/':'')+row.path+'.txt';if(!fs.existsSync(h)){missing.push({repo,path:row.path});continue;}checked++;const digest=crypto.createHash('sha256').update(fs.readFileSync(h)).digest('hex');if(digest!==row.before)mismatched.push({repo,path:row.path,expected:row.before,actual:digest});}}
+console.log(JSON.stringify({checked,missing,mismatched},null,2));fs.writeFileSync(dir+'preservation.json',JSON.stringify({checked,missing,mismatched},null,2));if(missing.length||mismatched.length)process.exitCode=1;
+const final=JSON.parse(fs.readFileSync(dir+'final.json'));fs.appendFileSync(dir+'verification.md','\n最终封存：产品 '+final.roots.product.digest+'（'+final.roots.product.files.length+' 文件），文档 '+final.roots.docs.digest+'（'+final.roots.docs.files.length+' 文件）。相对起点产品 '+changes.product.length+' 路径、文档 '+changes.docs.length+' 路径变化（包含新增/删除/搬移两端及导入调整）；两个 HEAD 不变。详细身份见 final.json；原文件保护复核见 preservation.json。\n');

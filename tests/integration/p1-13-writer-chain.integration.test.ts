@@ -11,8 +11,8 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { createPersistentSqliteHarness, type PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import { runP113WriterChain, type P113WriterHarness } from "../control/p1-13-writer-chain-fixture.js";
-import { P113_PROJECT } from "../../src/contracts/fixtures/architecture-evolution-policy-fixtures.js";
-import { P113_WORKSPACE, P113_PATCH } from "../../src/contracts/fixtures/remediation-fixtures.js";
+import { P113_PROJECT } from "../../src/fixtures/architecture-evolution-policy-fixtures.js";
+import { P113_WORKSPACE, P113_PATCH } from "../contract-support/fixtures/remediation-fixtures.js";
 import { remediationTaskRefFor } from "../../src/contracts/remediation.js";
 import { remediationPlanPatchRefFor } from "../../src/contracts/remediation.js";
 import { evidenceRefFor } from "../../src/contracts/evidence.js";

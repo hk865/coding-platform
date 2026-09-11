@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "taskId": "ts-nullish-timeout",
+  "dataset": "internal-mvp",
+  "datasetVersion": "0.1.0",
+  "language": "typescript",
+  "domain": "frontend",
+  "taskType": "bugfix",
+  "difficulty": "easy",
+  "baseRevision": "synthetic:ts-nullish-timeout-v1",
+  "environmentDigest": "node24:host-fixture-v1",
+  "timeoutSeconds": 30,
+  "maxModelRequests": 8,
+  "maxToolCalls": 24,
+  "network": "disabled",
+  "requireBubblewrap": true,
+  "allowedChangedPaths": ["src/timeout.mjs"],
+  "evaluator": {
+    "command": "{node}",
+    "args": ["{taskRoot}/hidden_tests/evaluate.mjs", "{workspace}"]
+  },
+  "variants": {
+    "base": "workspace/base",
+    "oracle": "workspace/oracle",
+    "nearMiss": "workspace/near-miss"
+  }
+}

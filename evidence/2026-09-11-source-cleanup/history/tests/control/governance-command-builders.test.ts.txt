@@ -1,0 +1,92 @@
+/**
+ * RW-10（P4）：治理命令的字段级构造只有一处。
+ *
+ * 独立验收的缺口 2 是「两种治理命令由应用层手工构造」：P1-15／P1-13 的安装与激活命令在
+ * src/app/governance.ts 与各自的 fixture 里各拼了一遍字段（第二、第三份复制）。修法是把构造
+ * 提升到契约命令层（contracts/commands/governance.ts，与 P1-02 的 buildInstallCommand 同处），
+ * 应用层只给 identity／时间／幂等键，fixture builder 退化成只填测试默认值的薄包装。
+ *
+ * 本文件断言的就是这件事本身：既有 fixture builder 的输出与契约 builder **逐字段相同**，
+ * 摘要口径就是契约里的 digest 函数。夹具与生产因此不可能各自漂移——一旦有人在夹具里再抄一份
+ * 字段，这里会立刻失败。
+ */
+import { describe, expect, it } from 'vitest';
+import {
+  buildArchitectureEvolutionPolicyActivateCommand,
+  buildArchitectureEvolutionPolicyInstallCommand,
+  buildCoordinationPolicyActivateCommand,
+  buildCoordinationPolicyInstallCommand,
+} from '../../src/contracts/commands/governance.js';
+import { architectureEvolutionPolicyContentDigest } from '../../src/contracts/architecture-evolution-policy.js';
+import {
+  P15_COORDINATION_POLICY_REVISION,
+  coordinationPolicyContentDigest,
+} from '../../src/contracts/human-role-collaboration.js';
+import {
+  P115_COORDINATION_POLICY_CONTENT,
+  P115_POLICY,
+  P115_PROJECT,
+  P115_SCHEMA,
+  buildP115ActivateCommand,
+  buildP115InstallCommand,
+  p115PolicyRef,
+} from '../../src/contracts/fixtures/human-role-collaboration-fixtures.js';
+import {
+  ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1,
+  P113_PROJECT,
+  P113_SCHEMA,
+  buildP113ActivateCommand,
+  buildP113InstallCommand,
+  p113PolicyPin,
+} from '../../src/contracts/fixtures/architecture-evolution-policy-fixtures.js';
+
+describe('RW-10 治理命令 builder 提升到契约层（P4）', () => {
+  it('P1-15 协调策略：fixture builder 与契约 builder 逐字段相同，digest 口径一致', () => {
+    const installDeps = {
+      commandId: 'p115-probe-install',
+      correlationId: 'p115-probe-install-corr',
+      submittedAt: P115_SCHEMA,
+      projectId: P115_PROJECT,
+      actor: { kind: 'human' as const, id: 'user-owner-1' },
+      idempotencyKey: 'p115-probe-install-idem',
+    };
+    const formalInstall = buildCoordinationPolicyInstallCommand(
+      { policyId: P115_POLICY, content: P115_COORDINATION_POLICY_CONTENT },
+      installDeps,
+    );
+    expect(buildP115InstallCommand(P115_PROJECT, { commandId: 'p115-probe-install' })).toEqual(formalInstall);
+    // 摘要不是第二份规则：就是契约里的 coordinationPolicyContentDigest(content, policyId, revision=1)。
+    expect(formalInstall.payload.contentDigest).toBe(
+      coordinationPolicyContentDigest(P115_COORDINATION_POLICY_CONTENT, P115_POLICY, P15_COORDINATION_POLICY_REVISION),
+    );
+    expect(formalInstall.identity).toEqual({ projectId: P115_PROJECT, actor: installDeps.actor, idempotencyKey: installDeps.idempotencyKey });
+
+    const pin = { ref: p115PolicyRef(P115_PROJECT), digest: formalInstall.payload.contentDigest };
+    const formalActivate = buildCoordinationPolicyActivateCommand(pin, { ...installDeps, expectedRevision: 7 });
+    const fixtureActivate = buildP115ActivateCommand(P115_PROJECT, { commandId: 'p115-probe-install', expectedRevision: 7 });
+    expect(fixtureActivate).toEqual(formalActivate);
+    // 激活的 CAS 窗口与目标 pin 原样透传，应用层不再有机会改写它们。
+    expect(formalActivate.expectedRevision).toBe(7);
+    expect(formalActivate.aggregateId).toBe(P115_PROJECT);
+    expect(formalActivate.payload.target).toEqual(pin);
+  });
+
+  it('P1-13 架构演进策略：fixture builder 与契约 builder 逐字段相同', () => {
+    const installDeps = {
+      commandId: 'p113-probe-install',
+      correlationId: 'p113-probe-install-corr',
+      submittedAt: P113_SCHEMA,
+      projectId: P113_PROJECT,
+      actor: { kind: 'human' as const, id: 'user-1' },
+      idempotencyKey: 'p113-probe-install-idem',
+    };
+    const formalInstall = buildArchitectureEvolutionPolicyInstallCommand(ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1, installDeps);
+    expect(buildP113InstallCommand(ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1, { commandId: 'p113-probe-install', projectId: P113_PROJECT, idempotencyKey: 'p113-probe-install-idem' })).toEqual(formalInstall);
+    expect(formalInstall.payload.contentDigest).toBe(architectureEvolutionPolicyContentDigest(ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1));
+
+    const pin = p113PolicyPin();
+    const formalActivate = buildArchitectureEvolutionPolicyActivateCommand(pin, { ...installDeps, expectedRevision: 2 });
+    expect(buildP113ActivateCommand(pin, { commandId: 'p113-probe-install', projectId: P113_PROJECT, expectedRevision: 2, idempotencyKey: 'p113-probe-install-idem' })).toEqual(formalActivate);
+    expect(formalActivate.payload.target).toEqual(pin);
+  });
+});

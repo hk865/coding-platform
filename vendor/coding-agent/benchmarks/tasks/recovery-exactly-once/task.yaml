@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "taskId": "recovery-exactly-once",
+  "dataset": "internal-mvp",
+  "datasetVersion": "0.1.0",
+  "language": "javascript",
+  "domain": "security-recovery",
+  "taskType": "recovery-fix",
+  "difficulty": "hard",
+  "baseRevision": "synthetic:recovery-exactly-once-v1",
+  "environmentDigest": "node24:host-fixture-v1",
+  "timeoutSeconds": 30,
+  "maxModelRequests": 12,
+  "maxToolCalls": 36,
+  "network": "disabled",
+  "requireBubblewrap": true,
+  "allowedChangedPaths": ["src/recover.mjs"],
+  "evaluator": {
+    "command": "{node}",
+    "args": ["{taskRoot}/hidden_tests/evaluate.mjs", "{workspace}"]
+  },
+  "variants": {
+    "base": "workspace/base",
+    "oracle": "workspace/oracle",
+    "nearMiss": "workspace/near-miss"
+  }
+}

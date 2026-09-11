@@ -1,0 +1,400 @@
+{
+  "dryRun": true,
+  "unexpectedIntermediateEdits": 0,
+  "pending": [
+    {
+      "file": "tests/interaction/human-collaboration.test.ts",
+      "action": "write",
+      "bytes": 9580
+    },
+    {
+      "file": "tests/ledger/identity-upgrade.test.ts",
+      "action": "write",
+      "bytes": 6236
+    },
+    {
+      "file": "tests/ledger/in-memory-ledger.boundary.test.ts",
+      "action": "write",
+      "bytes": 12181
+    },
+    {
+      "file": "tests/ledger/snapshot-isolation.test.ts",
+      "action": "write",
+      "bytes": 5119
+    },
+    {
+      "file": "tests/read-model/completed-work-merge-visibility.test.ts",
+      "action": "write",
+      "bytes": 6757
+    },
+    {
+      "file": "tests/read-model/material-access-lookup.test.ts",
+      "action": "write",
+      "bytes": 3392
+    },
+    {
+      "file": "tests/read-model/material-access-projection.test.ts",
+      "action": "write",
+      "bytes": 6602
+    },
+    {
+      "file": "tests/read-model/p1-03-run-projection.test.ts",
+      "action": "write",
+      "bytes": 23513
+    },
+    {
+      "file": "tests/read-model/p1-04-verification-projection.test.ts",
+      "action": "write",
+      "bytes": 23114
+    },
+    {
+      "file": "tests/read-model/p1-06-handoff-projection.test.ts",
+      "action": "write",
+      "bytes": 17513
+    },
+    {
+      "file": "tests/read-model/p1-07-projection.test.ts",
+      "action": "write",
+      "bytes": 20627
+    },
+    {
+      "file": "tests/read-model/p1-11-plan-change.test.ts",
+      "action": "write",
+      "bytes": 11298
+    },
+    {
+      "file": "tests/read-model/p1-14-baseline-change-view.test.ts",
+      "action": "write",
+      "bytes": 10553
+    },
+    {
+      "file": "tests/read-model/p1-15-unified-status.test.ts",
+      "action": "write",
+      "bytes": 8543
+    },
+    {
+      "file": "tests/read-model/p1-16-continuation-projection.test.ts",
+      "action": "write",
+      "bytes": 7969
+    },
+    {
+      "file": "tests/read-model/p1-16-work-context.test.ts",
+      "action": "write",
+      "bytes": 8870
+    },
+    {
+      "file": "tests/read-model/plan-change-timeline.test.ts",
+      "action": "write",
+      "bytes": 10419
+    },
+    {
+      "file": "tests/read-model/plan-view.rebuild.test.ts",
+      "action": "write",
+      "bytes": 6508
+    },
+    {
+      "file": "tests/read-model/plan-view.test.ts",
+      "action": "write",
+      "bytes": 16750
+    },
+    {
+      "file": "tests/read-model/read-model-index.test.ts",
+      "action": "write",
+      "bytes": 9182
+    },
+    {
+      "file": "tests/restart/evidence/p1-01-evidence.test.ts",
+      "action": "write",
+      "bytes": 7728
+    },
+    {
+      "file": "tests/restart/material-access-restart.test.ts",
+      "action": "write",
+      "bytes": 11785
+    },
+    {
+      "file": "tests/restart/material-revocation.test.ts",
+      "action": "write",
+      "bytes": 18108
+    },
+    {
+      "file": "tests/restart/material-source-applicability.test.ts",
+      "action": "write",
+      "bytes": 14122
+    },
+    {
+      "file": "tests/restart/p1-02-restart-fixtures.ts",
+      "action": "write",
+      "bytes": 15302
+    },
+    {
+      "file": "tests/restart/p1-03-restart-fixtures.ts",
+      "action": "write",
+      "bytes": 12633
+    },
+    {
+      "file": "tests/restart/p1-06-restart-fixtures.ts",
+      "action": "write",
+      "bytes": 7241
+    },
+    {
+      "file": "tests/restart/p1-09-restart-fixtures.ts",
+      "action": "write",
+      "bytes": 2204
+    },
+    {
+      "file": "tests/restart/p1-10-restart-fixtures.ts",
+      "action": "write",
+      "bytes": 2130
+    },
+    {
+      "file": "tests/restart/p1-14-restart-fixtures.ts",
+      "action": "write",
+      "bytes": 2771
+    },
+    {
+      "file": "tests/restart/p1-16-restart-fixtures.ts",
+      "action": "write",
+      "bytes": 3721
+    },
+    {
+      "file": "tests/restart/p1-17-restart-fixtures.ts",
+      "action": "write",
+      "bytes": 2394
+    },
+    {
+      "file": "tests/restart/persistent-restart.test.ts",
+      "action": "write",
+      "bytes": 4452
+    },
+    {
+      "file": "tests/restart/restart-assertions.ts",
+      "action": "write",
+      "bytes": 6677
+    },
+    {
+      "file": "tests/restart/restart-fixtures.ts",
+      "action": "write",
+      "bytes": 2563
+    },
+    {
+      "file": "tests/runtime/context-continuation-adapter.test.ts",
+      "action": "write",
+      "bytes": 5239
+    },
+    {
+      "file": "tests/sqlite-ledger/sqlite-ledger.restart.test.ts",
+      "action": "write",
+      "bytes": 6934
+    },
+    {
+      "file": "tests/sqlite-read-model/material-access-projection.test.ts",
+      "action": "write",
+      "bytes": 5304
+    },
+    {
+      "file": "tests/sqlite-read-model/p1-03-run-projection.test.ts",
+      "action": "write",
+      "bytes": 25202
+    },
+    {
+      "file": "tests/sqlite-read-model/p1-04-verification-projection.test.ts",
+      "action": "write",
+      "bytes": 21970
+    },
+    {
+      "file": "tests/sqlite-read-model/p1-06-handoff-projection.test.ts",
+      "action": "write",
+      "bytes": 17557
+    },
+    {
+      "file": "tests/sqlite-read-model/p1-07-projection.test.ts",
+      "action": "write",
+      "bytes": 20317
+    },
+    {
+      "file": "tests/sqlite-read-model/p1-11-plan-change.test.ts",
+      "action": "write",
+      "bytes": 10575
+    },
+    {
+      "file": "tests/sqlite-read-model/p1-14-baseline-change-view.test.ts",
+      "action": "write",
+      "bytes": 9180
+    },
+    {
+      "file": "tests/sqlite-read-model/p1-15-unified-status.test.ts",
+      "action": "write",
+      "bytes": 8592
+    },
+    {
+      "file": "tests/sqlite-read-model/p1-16-continuation-projection.test.ts",
+      "action": "write",
+      "bytes": 7522
+    },
+    {
+      "file": "tests/sqlite-read-model/p1-16-work-context.test.ts",
+      "action": "write",
+      "bytes": 8441
+    },
+    {
+      "file": "tests/sqlite-read-model/plan-view.test.ts",
+      "action": "write",
+      "bytes": 13425
+    },
+    {
+      "file": "tests/sqlite-read-model/sqlite-read-model-index.restart.test.ts",
+      "action": "write",
+      "bytes": 11564
+    },
+    {
+      "file": "tests/vault/material-access-grant.test.ts",
+      "action": "write",
+      "bytes": 9063
+    },
+    {
+      "file": "tests/verification/migration-gate-port.test.ts",
+      "action": "write",
+      "bytes": 7383
+    },
+    {
+      "file": "tests/verification/reviewer-fixture.ts",
+      "action": "write",
+      "bytes": 13997
+    },
+    {
+      "file": "tests/verification/role-output-completeness.test.ts",
+      "action": "write",
+      "bytes": 33620
+    },
+    {
+      "file": "tests/verification/verification-engine.test.ts",
+      "action": "write",
+      "bytes": 19408
+    },
+    {
+      "file": "tests/verification/verification-rounds.test.ts",
+      "action": "write",
+      "bytes": 45724
+    },
+    {
+      "file": "src/contracts/planning.ts",
+      "action": "write",
+      "bytes": 3539
+    },
+    {
+      "file": "src/contracts/index.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/index.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/testing/index.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/testing/query-context.stub.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/baseline-evolution-fixtures.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/bootstrap-fixture-v1.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/completed-work-fixtures.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/console-fixtures.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/context-fixtures.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/control-fixtures.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/evidence-fixtures.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/goal-change-fixtures.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/goal-fixtures.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/goal-phase-fixtures.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/handoff-fixtures.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/human-role-collaboration-fixtures.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/material-access-fixtures.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/query-job-fixtures.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/remediation-fixtures.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/fixtures/workspace-fixtures.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/testing/control.double.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/testing/handoff-control.double.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/testing/read-model.double.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/testing/state-ledger.double.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/ledger-validation.ts",
+      "action": "remove-after-copy"
+    },
+    {
+      "file": "src/contracts/planning-work-materials.ts",
+      "action": "remove-after-copy"
+    }
+  ],
+  "retained": [
+    "src/contracts/fixtures/governance-fixtures.ts",
+    "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts",
+    "src/contracts/fixtures/role-spec-fixtures.ts",
+    "src/contracts/fixtures/plan-fixtures.ts",
+    "src/contracts/fixtures/dispatch-fixtures.ts",
+    "src/contracts/fixtures/architecture-fixtures.ts",
+    "src/contracts/testing/sequences.ts",
+    "src/contracts/testing/check-providers.double.ts"
+  ]
+}

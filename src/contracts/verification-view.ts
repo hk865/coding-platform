@@ -4,7 +4,7 @@
  * ("ReadModelIndex 扩展：验证详情；不把报告文字投影为正式完成状态") +
  * ticket 04 output artifact task-detail-verification-view.
  *
- * FROZEN semantics:
+ * Semantics:
  *   - Verdict/claim/observation evidence set rebuilds ONLY from committed
  *     events (EvidenceAdmitted / TaskReductionUpdated). Display only: the
  *     view never grants completion — the canonical TaskReduction phase is a

@@ -1,0 +1,349 @@
+{
+  "schemaVersion": 1,
+  "ticketId": "RAT-00",
+  "version": "rat-00-v1",
+  "frozenAt": "2026-09-07T10:00:39.092816+00:00",
+  "preparationStatus": "INPUTS_PREPARED_WITH_EXPLICIT_EXECUTION_BLOCKERS",
+  "liveAcceptance": "NOT_RUN",
+  "modelCalls": 0,
+  "sourceBaselineRef": "../../evidence/rat-00/source-baseline.json",
+  "kernelSnapshotCommit": "411eff052b67ddab7706208ccc7b9ab07d919a83",
+  "kernelSourceTreeSha256": "bd26bd576d098b5fd19746963bc65b8cedbacc40760506991fd252db76caad61",
+  "platformSourceTreeSha256": "52857a799f8ca9b46928722e2e336876036e4746e4c979d63654bef1167d7916",
+  "budgetPolicyRef": "budget-policy.json",
+  "executionBinding": {
+    "provider": null,
+    "model": null,
+    "costCapUsd": null,
+    "contextWindowTokens": null,
+    "perResponseMaxOutputTokens": null,
+    "bindingStage": "RAT-01",
+    "refreezeAfterRuntimeIntegrationBeforeAnyTrial": true
+  },
+  "taskGroups": {
+    "canary": {
+      "tasks": [
+        {
+          "taskId": "node-bearer-auth",
+          "taskDigest": "sha256:bda555545b6017be51d0f4f84d420e7c01df4f15ab6ee645ee160b91ba90e10c",
+          "datasetVersion": "0.1.0",
+          "taskRoot": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/kernel-baseline/benchmarks/tasks/node-bearer-auth",
+          "taskSpec": {
+            "schemaVersion": 1,
+            "taskId": "node-bearer-auth",
+            "dataset": "internal-mvp",
+            "datasetVersion": "0.1.0",
+            "language": "javascript",
+            "domain": "backend",
+            "taskType": "security-fix",
+            "difficulty": "medium",
+            "baseRevision": "synthetic:node-bearer-auth-v1",
+            "environmentDigest": "node24:host-fixture-v1",
+            "timeoutSeconds": 30,
+            "maxModelRequests": 10,
+            "maxToolCalls": 30,
+            "network": "disabled",
+            "requireBubblewrap": true,
+            "allowedChangedPaths": [
+              "src/auth.mjs"
+            ],
+            "evaluator": {
+              "command": "{node}",
+              "args": [
+                "{taskRoot}/hidden_tests/evaluate.mjs",
+                "{workspace}"
+              ]
+            },
+            "variants": {
+              "base": "workspace/base",
+              "oracle": "workspace/oracle",
+              "nearMiss": "workspace/near-miss"
+            }
+          },
+          "instructionSha256": "b7a3b0a60e1b0e7488efba607eee412788958b726a63bd248c0deba41b1c5ddf",
+          "trialsPerRunner": 1,
+          "runners": [
+            "kernel-direct",
+            "platform-dispatch"
+          ],
+          "realExecution": "NOT_RUN"
+        },
+        {
+          "taskId": "python-slug-normalization",
+          "taskDigest": "sha256:5bf48adad5466603431058b40550c7e4a314a1c0f05b7cd91cd2ac070f22440a",
+          "datasetVersion": "0.1.0",
+          "taskRoot": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/kernel-baseline/benchmarks/tasks/python-slug-normalization",
+          "taskSpec": {
+            "schemaVersion": 1,
+            "taskId": "python-slug-normalization",
+            "dataset": "internal-mvp",
+            "datasetVersion": "0.1.0",
+            "language": "python",
+            "domain": "backend",
+            "taskType": "bugfix",
+            "difficulty": "medium",
+            "baseRevision": "synthetic:python-slug-normalization-v1",
+            "environmentDigest": "python3.12:host-fixture-v1",
+            "timeoutSeconds": 30,
+            "maxModelRequests": 10,
+            "maxToolCalls": 30,
+            "network": "disabled",
+            "requireBubblewrap": true,
+            "allowedChangedPaths": [
+              "slug.py"
+            ],
+            "evaluator": {
+              "command": "python3",
+              "args": [
+                "{taskRoot}/hidden_tests/evaluate.py",
+                "{workspace}"
+              ]
+            },
+            "variants": {
+              "base": "workspace/base",
+              "oracle": "workspace/oracle",
+              "nearMiss": "workspace/near-miss"
+            }
+          },
+          "instructionSha256": "7eeca0a999aa7bc49843c4fc887fe49d9d587807ff285cc3c46df991b1818db0",
+          "trialsPerRunner": 1,
+          "runners": [
+            "kernel-direct",
+            "platform-dispatch"
+          ],
+          "realExecution": "NOT_RUN"
+        },
+        {
+          "taskId": "recovery-exactly-once",
+          "taskDigest": "sha256:aa7972146e6dce65170294101e5b78d4a0d66b3edf23904257d7ea88527ae304",
+          "datasetVersion": "0.1.0",
+          "taskRoot": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/kernel-baseline/benchmarks/tasks/recovery-exactly-once",
+          "taskSpec": {
+            "schemaVersion": 1,
+            "taskId": "recovery-exactly-once",
+            "dataset": "internal-mvp",
+            "datasetVersion": "0.1.0",
+            "language": "javascript",
+            "domain": "security-recovery",
+            "taskType": "recovery-fix",
+            "difficulty": "hard",
+            "baseRevision": "synthetic:recovery-exactly-once-v1",
+            "environmentDigest": "node24:host-fixture-v1",
+            "timeoutSeconds": 30,
+            "maxModelRequests": 12,
+            "maxToolCalls": 36,
+            "network": "disabled",
+            "requireBubblewrap": true,
+            "allowedChangedPaths": [
+              "src/recover.mjs"
+            ],
+            "evaluator": {
+              "command": "{node}",
+              "args": [
+                "{taskRoot}/hidden_tests/evaluate.mjs",
+                "{workspace}"
+              ]
+            },
+            "variants": {
+              "base": "workspace/base",
+              "oracle": "workspace/oracle",
+              "nearMiss": "workspace/near-miss"
+            }
+          },
+          "instructionSha256": "421be173c171c43edc91be26ac953d7ca0a822114ab65d6a6431eff37b2995be",
+          "trialsPerRunner": 1,
+          "runners": [
+            "kernel-direct",
+            "platform-dispatch"
+          ],
+          "realExecution": "NOT_RUN"
+        },
+        {
+          "taskId": "ts-nullish-timeout",
+          "taskDigest": "sha256:47f7f4ff6abd2b0daf38716ebfa651b3eb25acb4cfa5271966eb2274c392ee7c",
+          "datasetVersion": "0.1.0",
+          "taskRoot": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/kernel-baseline/benchmarks/tasks/ts-nullish-timeout",
+          "taskSpec": {
+            "schemaVersion": 1,
+            "taskId": "ts-nullish-timeout",
+            "dataset": "internal-mvp",
+            "datasetVersion": "0.1.0",
+            "language": "typescript",
+            "domain": "frontend",
+            "taskType": "bugfix",
+            "difficulty": "easy",
+            "baseRevision": "synthetic:ts-nullish-timeout-v1",
+            "environmentDigest": "node24:host-fixture-v1",
+            "timeoutSeconds": 30,
+            "maxModelRequests": 8,
+            "maxToolCalls": 24,
+            "network": "disabled",
+            "requireBubblewrap": true,
+            "allowedChangedPaths": [
+              "src/timeout.mjs"
+            ],
+            "evaluator": {
+              "command": "{node}",
+              "args": [
+                "{taskRoot}/hidden_tests/evaluate.mjs",
+                "{workspace}"
+              ]
+            },
+            "variants": {
+              "base": "workspace/base",
+              "oracle": "workspace/oracle",
+              "nearMiss": "workspace/near-miss"
+            }
+          },
+          "instructionSha256": "bf46e6006e47b07a73b8b04db51cf9ae15fa2e3db3488b521ddf94123497310e",
+          "trialsPerRunner": 1,
+          "runners": [
+            "kernel-direct",
+            "platform-dispatch"
+          ],
+          "realExecution": "NOT_RUN"
+        }
+      ],
+      "evaluatorPreflightChecks": 16,
+      "originalBudgetPreserved": true
+    },
+    "bugDiscovery": {
+      "manifestRef": "bug-discovery/public/manifest.json",
+      "labelsRef": "bug-discovery/evaluator-only/labels.json",
+      "matchingRulesRef": "bug-discovery/evaluator-only/matching-rules.json",
+      "samples": 8,
+      "positiveSamples": 4,
+      "negativeSamples": 4,
+      "repeats": 1,
+      "budgetRef": "budget-policy.json#/profiles/bug-discovery",
+      "separateFreshContextsRequired": true,
+      "limitations": "Derived from existing canaries; no claim of novelty or general bug absence."
+    },
+    "repoqaNavigation": {
+      "manifestRef": "repoqa/manifest.json",
+      "datasetTag": "2024-06-23",
+      "datasetSha256": "c050a2ad90a7df89d9dc1f1c3b3b20683edd20a56293b35fcaae43dec115d681",
+      "repositoryCommit": "815f799310a5627c000d4a5156c1c958e4947b4c",
+      "scorerCommit": "ae876deb1365dbf5a15b0533723c8ed123eee586",
+      "taskIds": [
+        "repoqa-express-01",
+        "repoqa-express-02",
+        "repoqa-express-03",
+        "repoqa-express-04",
+        "repoqa-express-05",
+        "repoqa-express-06",
+        "repoqa-express-07",
+        "repoqa-express-08",
+        "repoqa-express-09",
+        "repoqa-express-10"
+      ],
+      "selection": "All 10 Express needles in original released order",
+      "repeats": 1,
+      "budgetRef": "budget-policy.json#/profiles/repoqa-navigation",
+      "officialScorerControls": 30,
+      "officialSnfContext": "BLOCKED_SEPARATE_PROTOCOL"
+    },
+    "multiAgent": {
+      "manifestRef": "multi-agent/manifest.json",
+      "scenarioIds": [
+        "MA-01",
+        "MA-02",
+        "MA-03",
+        "MA-04",
+        "MA-05",
+        "MA-06",
+        "MA-07",
+        "MA-08"
+      ],
+      "trialRegistryRef": "multi-agent/trials.json",
+      "plannedTrials": 42,
+      "realTrialsRun": 0,
+      "assetTreeSha256": "e92e36e1a5c0367d1bb84c9b2643c00e3a619c9bc1db43e4edee7ac041f6126c",
+      "budgetRef": "multi-agent/budgets.json"
+    },
+    "optionalPublicDiagnostics": {
+      "tasks": [
+        {
+          "id": "sympy__sympy-20590",
+          "suite": "SWE-bench",
+          "dataVersion": null,
+          "imageDigest": null,
+          "status": "NOT_PREPARED"
+        },
+        {
+          "id": "cancel-async-tasks",
+          "suite": "Terminal-Bench 2",
+          "dataVersion": null,
+          "imageDigest": null,
+          "status": "NOT_PREPARED"
+        }
+      ],
+      "blockingCore": false
+    }
+  },
+  "materializedTaskCount": 30,
+  "plannedCoreTrialCount": 68,
+  "boundary": {
+    "agentInput": "Exactly one selected prompt plus allowed source, through the group materializer",
+    "forbidden": [
+      "operator asset root",
+      "oracle",
+      "hidden evaluator",
+      "labels",
+      "other trials",
+      "credentials",
+      "full released datasets"
+    ],
+    "workspaceChecksRef": "../../evidence/rat-00/workspace-boundary-report.json",
+    "sandboxChecksRef": "../../evidence/rat-00/environment/isolation-probe.json",
+    "actualTrialRuntimeBoundaryMustBeRechecked": true
+  },
+  "executionBlockers": [
+    {
+      "id": "model-and-cost-binding",
+      "status": "UNBOUND",
+      "owner": "RAT-01",
+      "detail": "Provider/model, actual context/output capacity and monetary ceiling must be bound before model trials; supplied credential file is present/nonempty but not read or tested."
+    },
+    {
+      "id": "sandbox-node-environment",
+      "status": "BLOCKED",
+      "owner": "RAT-02/RAT-03",
+      "detail": "Default production sandbox cannot resolve node; dedicated environment-layer probe passes, but formal pre-snapshot staging, layer protection and PATH are not integrated."
+    },
+    {
+      "id": "cumulative-role-budget-enforcement",
+      "status": "NOT_IMPLEMENTED",
+      "owner": "RAT-02/RAT-03/RAT-04/RAT-08",
+      "detail": "runtime.tokenBudget denotes context capacity. Cumulative input/output across roles, continuations and retries must be metered and stopped separately."
+    },
+    {
+      "id": "real-worker-gui-integration",
+      "status": "NOT_IMPLEMENTED",
+      "owner": "RAT-02",
+      "detail": "GUI still uses test adapters; preparation does not establish real run/query integration."
+    },
+    {
+      "id": "multi-agent-raw-evidence-and-fault-adapters",
+      "status": "NOT_PREPARED",
+      "owner": "RAT-04/RAT-08",
+      "detail": "23 symbolic fault directives and normalized-trace assertions are prepared; platform raw-evidence authentication/export and real fault execution remain to be connected."
+    }
+  ],
+  "optionalBlockers": [
+    {
+      "id": "official-snf-tokenizer",
+      "status": "BLOCKED",
+      "owner": "RAT-04/RAT-06 if official SNF is selected",
+      "detail": "Official function scorer is READY and controls PASS; exact 16384-token SNF preprocessing still lacks a frozen tokenizer revision/assets. Derived tool navigation is separate."
+    },
+    {
+      "id": "container-diagnostics",
+      "status": "BLOCKED",
+      "owner": "RAT-06",
+      "detail": "Docker/Podman and task image inventory unavailable. sympy__sympy-20590 and cancel-async-tasks remain selected IDs with environment/data/image preparation pending."
+    }
+  ],
+  "retainAllTrials": true,
+  "changesAfterModelResultsRequireNewVersion": true
+}

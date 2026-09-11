@@ -1,0 +1,11 @@
+# Agent Platform 当前交接
+
+更新：2026-09-11。产品根 D:/1.project/Software/agent_platform；权威根 D:/1.project/Software/agent_learn/agent_dev/agent_platform。
+
+本次已实施指定语义编排链的源码与文档整理，未实现新的语义编排能力。公共契约目录从135个TS文件收敛为101个：纯测试材料迁到tests/contract-support，真实宿主默认值留在src/fixtures和src/testing；内部依赖/校验回到Verification与StateLedger，规划工作身份材料并入planning协议。返工编译器分为输入校验/分组与提案组装；两种宿主共用Query授权后投影接线，保留原生命周期。旧施工指令、无消费者stub/barrel及失效路径已处理，原文归档。
+
+全仓299文件/1951项、真实浏览器26项通过；兼容声明体1640项无差异，独立复核26个返工函数体一致。完整命令、类型/边界/构建/文档结果、真实失败、消费者迁移、历史兼容路径及最终源码身份只保存在[本轮证据](evidence/2026-09-11-source-cleanup/verification.md)。当前能力与全部有效未完义务由[模块状态](../agent_learn/agent_dev/agent_platform/human/module-status.md)维护；没有另建长期状态表。
+
+下一项的真实入口：VerificationService.openIssues提供验证问题，组合根先读取后交Dispatch；ExecutionFeedbackCompiler→正式只读Query目前实际消费的是执行者公开反馈；机械返工通过ReworkPlanCompiler→acceptReworkProposal进入Control的recordPlanChangeProposal/recordUserDecision/applyPlanChange。service.ts的continueEndedRun连接普通Run终态及启动扫描、工具重验和必要Reviewer准备。**工具FAIL→协调角色语义调查→正式调整提案的连接仍未实现**，不能因整理后入口更清楚而声称完成。仍需调查刷新/决定回流、必要重审联合链和中途恢复验收。
+
+保留12 Module和依赖图、Control唯一权威、旧FAIL/计划/未处置义务、精确跨工作授权、requiredOutputs声明性语义及Reviewer独立性。所有既有dirty改动保留；未reset/clean/stash、提交推送或重装依赖。旧交接原文在[归档副本](evidence/2026-09-11-source-cleanup/history/IMPLEMENTATION-HANDOFF.md.txt)。本次有限整理到此停止，不自动启动下一工程。

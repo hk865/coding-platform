@@ -1,0 +1,17 @@
+# 网页游戏场景环境与预算
+scenario: web-game
+title: 网页游戏开发：从空目录实现记忆翻牌小游戏
+runtime: node >= 24
+dependencies: none（禁止 CDN/外部库/构建工具）
+tools: read, edit, shell, check
+permissions:
+  sandbox_mode: workspace_only
+  approval_policy: on_request
+budget:
+  max_model_requests: 300
+  max_tool_calls: 600
+  max_input_tokens: 300000
+  deadline_minutes: 90
+evaluation:
+  layers: L2
+  metrics: total_time, model_rounds, tool_calls, tokens, session_size, workspace_scan_cost

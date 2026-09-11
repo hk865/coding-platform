@@ -1,0 +1,7 @@
+Full regression itself completed: 299 files / 1951 tests PASS; full-tests.exit=0. The outer bash wrapper then exited 1 with syntax error near unexpected token ;; at line 27 because the agent added a types-final case to the same script while bash was executing its earlier full case. This is an evidence-runner mutation error, not a product/test failure. No assertions changed or skipped. Freeze runner from now on and verify bash -n before further use. Original tool session: 88106.
+
+Original wrapper stderr returned after the completed Vitest summary:
+evidence/2026-09-11-source-cleanup/contracts-followup/check.sh: line 27: syntax error near unexpected token `;;'
+evidence/2026-09-11-source-cleanup/contracts-followup/check.sh: line 27: `/ui/tests/playwright.config.ts --output="$evidence/browser-results" ;;'
+Outer process exit code: 1. The child result captured by run(): 0.
+Subsequent read-only bash -n check: exit 0; no further mutation of the running wrapper.

@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "status": "FIXED_LIMITS_MODEL_UNBOUND",
+  "unitConvention": "K=1000, M=1000000; cumulative provider-reported input includes cached tokens where the provider reports them. Cost accounting separately uses provider pricing.",
+  "countingScope": "Sum across roles, continuations, reviews and retries in one trial; not context-window capacity or per-response maxOutputTokens.",
+  "realCallsAllowedByThisStage": false,
+  "modelBinding": {
+    "provider": null,
+    "model": null,
+    "providerModelVersion": null,
+    "singleRequestContextWindow": null,
+    "singleResponseOutputCap": null,
+    "costCapUsd": null,
+    "status": "UNBOUND_RAT_01",
+    "bindBeforeFirstModelTrial": true
+  },
+  "profiles": {
+    "canary": {
+      "source": "Frozen task.yaml request/tool/time limits; model runner maxOutputTokens=2048 per response.",
+      "repeatsPerTaskPerRunner": 1,
+      "runners": [
+        "kernel-direct",
+        "platform-dispatch"
+      ],
+      "tasks": 4,
+      "totalTrials": 8
+    },
+    "repoqa-navigation": {
+      "maxCumulativeInputTokens": 1000000,
+      "maxCumulativeOutputTokens": 64000,
+      "wallTimeSeconds": 900,
+      "repeatsPerTask": 1,
+      "taskCount": 10,
+      "scope": "Initial single-worker derived navigation baseline; official SNF and later multi-reader comparisons separately preregistered."
+    },
+    "bug-discovery": {
+      "maxCumulativeInputTokens": 1000000,
+      "maxCumulativeOutputTokens": 64000,
+      "wallTimeSeconds": 900,
+      "repeatsPerSample": 1,
+      "samples": 8,
+      "scope": "Discovery plus independent verifier aggregate; same limits for each positive/negative sample."
+    },
+    "multi-agent": {
+      "budgetRef": "multi-agent/budgets.json",
+      "totalTrials": 42,
+      "countingScope": "Every role in one scenario/configuration/trial shares the referenced cap."
+    },
+    "large-module-role": {
+      "appliesToRoles": [
+        "module-foreman",
+        "coding"
+      ],
+      "maxCumulativeInputTokens": 25000000,
+      "maxCumulativeOutputTokens": 128000,
+      "scope": "Cumulative limit for each applicable role on a large module, across continuations; reserved profile, not used in this small test suite.",
+      "activation": "Only when a future large-module task explicitly selects this profile.",
+      "interpretationSource": "User clarified cumulative role use; shared-module aggregate budget remains to be specified for that future task."
+    }
+  },
+  "onExhaustion": "Record budget_exhausted or timeout in the preserved trial; do not silently increase budget/retry or keep only the best result.",
+  "comparisonRules": [
+    "Same model and total input/output/tool/time budgets for paired configurations.",
+    "Coordinator and reviewer consumption count toward the same trial total.",
+    "Changing a budget, model, input or scorer after results requires a new explicit preregistered revision; retain previous trials."
+  ],
+  "implementationGuard": {
+    "status": "NOT_IMPLEMENTED_IN_CURRENT_PLATFORM",
+    "reason": "Existing runtime.tokenBudget is context-window capacity. Separate cumulative input/output caps across roles need RAT-02/03/04/08 host accounting; do not assign these large cumulative values to runtime.tokenBudget."
+  }
+}

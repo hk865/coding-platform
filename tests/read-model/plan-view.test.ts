@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-02 lane C — InMemory Plan Graph / Task Detail projection supplemental tests.
  *
@@ -20,7 +21,7 @@
  * the frozen, goal()-consistent rule here; see the lane C handoff report.
  */
 import { describe, expect, it } from "vitest";
-import { createReadModelIndex } from "../../src/read-model/read-model-index.js";
+import { createReadModelIndex } from "../../src/data/read-model-index/read-model-index.js";
 import type { CommitCursor } from "../../src/contracts/command-event.js";
 import type { DomainEvent } from "../../src/contracts/events.js";
 import type { EventPage, PositionedEvent } from "../../src/contracts/ledger.js";
@@ -29,21 +30,12 @@ import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
   buildCreateGoalCommand,
   goalCreatedEventFor,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
-import {
-  HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1,
-  buildApplyPlanCommand,
-  planRevisionSnapshotFor,
-  planRevisionAcceptedEventFor,
-} from "../../src/contracts/fixtures/plan-fixtures.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  COMPLETION_POLICY_FIXTURE_V1,
-  buildInstallCommand,
-  completionPolicyPinFor,
-  architectureBaselinePinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
+import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { planRevisionSnapshotFor, planRevisionAcceptedEventFor } from "../../src/control/control-engine/records/plan.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import { ProjectionStallError } from "../../src/contracts/goal-view.js";
 
 const OCCURRED = FIXED_ISO_2026_09_05;
@@ -134,7 +126,7 @@ function alphaPlanQuery(atLeastCursor?: CommitCursor) {
 
 describe("ReadModelIndexImpl plan view (lane C, InMemory)", () => {
   it("ready: Plan Graph fields equal the accepted snapshot with exact pins", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     await index.advance(pageOf([goalEventAt(1, 0, "a"), planEventAt(2, 0, "a")]));
     const result = await index.planGraph(alphaPlanQuery(makeCommitCursor(2)));
     expect(result.status).toBe("ready");
@@ -158,7 +150,7 @@ describe("ReadModelIndexImpl plan view (lane C, InMemory)", () => {
   });
 
   it("ready: Task Detail projections obligations correctly per task", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     await index.advance(pageOf([goalEventAt(1, 0, "b"), planEventAt(2, 0, "b")]));
     const gate = await index.taskDetail({
       projectId: "proj-alpha",
@@ -194,7 +186,7 @@ describe("ReadModelIndexImpl plan view (lane C, InMemory)", () => {
   });
 
   it("goal view activePlanRevision refreshed by PlanRevisionAccepted", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     await index.advance(pageOf([goalEventAt(1, 0, "c")]));
     let g = await index.goal({
       projectId: "proj-alpha",
@@ -226,7 +218,7 @@ describe("ReadModelIndexImpl plan view (lane C, InMemory)", () => {
   });
 
   it("not_ready != not_found for plan graph / task detail", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     // projection never advanced -> not_ready (not not_found).
     const early = await index.planGraph({ projectId: "proj-alpha", goalId: "goal-1" });
     expect(early.status).toBe("not_ready");
@@ -264,7 +256,7 @@ describe("ReadModelIndexImpl plan view (lane C, InMemory)", () => {
   });
 
   it("dedupe: re-advancing the same page does not re-apply or re-advance", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     const page = pageOf([goalEventAt(1, 0, "e"), planEventAt(2, 0, "e")]);
     const first = await index.advance(page);
     expect(first.appliedEventIds).toEqual(["evt-goal-e", "evt-plan-e"]);
@@ -275,7 +267,7 @@ describe("ReadModelIndexImpl plan view (lane C, InMemory)", () => {
   });
 
   it("unknown schema version stalls the whole page", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     const bad: Positioned = {
       cursor: makeCommitCursor(1),
       event: { ...goalEventAt(1, 0, "f").event, schemaVersion: 2 } as unknown as DomainEvent,
@@ -287,7 +279,7 @@ describe("ReadModelIndexImpl plan view (lane C, InMemory)", () => {
   });
 
   it("known governance install/activate events advance cursor without views (no stall)", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     // A page with only install/activate events: no views, cursor advances.
     const installs: Positioned[] = [
       {
@@ -380,7 +372,7 @@ describe("ReadModelIndexImpl plan view (lane C, InMemory)", () => {
   });
 
   it("full-scope isolation: same goalId/taskId reused across Projects never collide", async () => {
-    const index = createReadModelIndex();
+    const index = createReadModelIndex(new ControlPolicyExplanation());
     // distinct eventIds per project (same local goalId/taskId, different scope).
     await index.advance(pageOf([goalEventAt(1, 0, "h"), planEventAt(2, 0, "h")]));
     await index.advance(pageOf([goalEventAt(3, 1, "i"), planEventAt(4, 1, "i")]));

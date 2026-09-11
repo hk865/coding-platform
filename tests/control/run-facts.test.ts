@@ -31,20 +31,10 @@ import {
 import type { AggregateRef, StateLedger } from "../../src/contracts/ledger.js";
 import { canonicalJson } from "../../src/contracts/fingerprint.js";
 import { artifactBodyDigest } from "../../src/contracts/artifact.js";
-import { createInMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
-import { createControlEngine } from "../../src/control/control-engine.js";
-import {
-  DISPATCH_ELIGIBLE_TASK_ID,
-  buildDispatchClaimCommand,
-  buildDispatchClaimLedgerCommit,
-  buildDispatchStartCommand,
-  buildDispatchStartLedgerCommit,
-  buildEnvelopeFixture,
-  buildManifestFixture,
-  buildRunEventRecordedCommit,
-  buildRunFactCommand,
-  buildRunOutcomeUnknownCommit,
-} from "../../src/contracts/fixtures/dispatch-fixtures.js";
+import { createInMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
+import { createControlEngine } from "../../src/control/control-engine/control-engine.js";
+import { DISPATCH_ELIGIBLE_TASK_ID, buildDispatchClaimCommand, buildDispatchStartCommand, buildEnvelopeFixture, buildManifestFixture, buildRunEventRecordedCommit, buildRunFactCommand, buildRunOutcomeUnknownCommit } from "../../src/fixtures/dispatch-fixtures.js";
+import { buildDispatchClaimLedgerCommit, buildDispatchStartLedgerCommit } from "../../src/control/control-engine/records/dispatch.js";
 
 const PROJECT = "proj-alpha";
 const GOAL = "goal-1";

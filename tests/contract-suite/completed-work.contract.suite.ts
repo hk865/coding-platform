@@ -6,8 +6,8 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import type { P1_17TestHarness } from "./p1-17-harness.js";
 import { runP117SelectionScenario, type P117SelectionScenarioResult } from "./p1-17-harness.js";
-import { buildP117Request } from "../../src/contracts/fixtures/completed-work-fixtures.js";
-import { P117_WORKSPACE } from "../../src/contracts/fixtures/completed-work-fixtures.js";
+import { buildP117Request } from "../contract-support/fixtures/completed-work-fixtures.js";
+import { P117_WORKSPACE } from "../contract-support/fixtures/completed-work-fixtures.js";
 import { P108_PROJECT_A, P108_PROJECT_B } from "./p1-08-harness.js";
 
 export function defineCompletedWorkContractSuite(
@@ -50,7 +50,7 @@ export function defineCompletedWorkContractSuite(
 
     describe("missing-history-test", () => {
       it("a scope with NO records is an explicit gap / empty — never a fabricated ready with items", async () => {
-        const none = await h.assembleCompletedWorkContext(buildP117Request({ requestId: "req-p117-none", workspaceId: "ws-unknown" }));
+        const none = await h.completedWork.assembleCompletedWorkContext(buildP117Request({ requestId: "req-p117-none", workspaceId: "ws-unknown" }));
         expect(["needs_material", "rejected"]).toContain(none.status);
       });
     });
@@ -65,8 +65,11 @@ export function defineCompletedWorkContractSuite(
     });
 
     describe("restart-rebuild-test", () => {
-      it("view/selection rebuild equivalence verified in tests/restart + integration (isP117Ready probe)", () => {
-        expect(true).toBe(true);
+      it("repeated persisted view reads remain stable after selection", async () => {
+        const first = await h.completedWorkView({ projectId: P108_PROJECT_A, workspaceId: P117_WORKSPACE });
+        const second = await h.completedWorkView({ projectId: P108_PROJECT_A, workspaceId: P117_WORKSPACE });
+        expect(first).toEqual(second);
+        expect(first.status).toBe("ready");
       });
     });
   });

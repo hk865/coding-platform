@@ -1,0 +1,4940 @@
+{
+  "createdAt": "2026-09-10T10:09:27.425Z",
+  "root": "D:\\1.project\\Software\\agent_platform",
+  "finalIdentity": {
+    "declared": "f36287a561fe4499043d370d1c73a7adbf012289db7d153974828760b3ec8d3a",
+    "recomputed": "f36287a561fe4499043d370d1c73a7adbf012289db7d153974828760b3ec8d3a",
+    "count": 744,
+    "invalid": []
+  },
+  "moves": {
+    "rows": 181,
+    "uniqueOld": 180,
+    "uniqueNew": 180,
+    "duplicates": [
+      {
+        "from": "src/app/terminal-sandbox.py",
+        "to": "src/execution/worker-runtime/terminal-sandbox.py",
+        "module": "WorkerRuntime",
+        "previousGuessedFrom": "src/runtime/terminal-sandbox.py"
+      }
+    ]
+  },
+  "afterToFinal": {
+    "common": 742,
+    "changed": [],
+    "added": [
+      "AGENTS.md",
+      "pnpm-lock.yaml"
+    ],
+    "excluded": [
+      "src/app/public/workbench/assets/index-BDq-QD5v.css",
+      "src/app/public/workbench/assets/index-BJI4SUZf.js",
+      "src/app/public/workbench/assets/index-DG2ORAex.js",
+      "src/app/public/workbench/assets/task-graph-BnQsuTHk.js",
+      "src/app/public/workbench/assets/task-graph-CSUjHNLE.js",
+      "src/app/public/workbench/assets/task-graph-DLioOiRN.css",
+      "src/app/public/workbench/assets/terminal-B1njb2Cr.css",
+      "src/app/public/workbench/assets/terminal-B65Zetzd.js",
+      "src/app/public/workbench/assets/terminal-DkrGBGBp.js",
+      "src/app/public/workbench/index.html"
+    ]
+  },
+  "inverseImportAudit": {
+    "method": "Resolve current AST relative module references, map targets and owners back to old paths, reconstruct old specifiers, compare entire reconstructed bytes to before SHA256. A hash match proves both content and target mapping against the recorded hash; mismatches require further investigation and are not automatically defects.",
+    "files": 685,
+    "relativeReferences": 6066,
+    "unresolved": [],
+    "exactBeforeHashMatches": 672,
+    "notProven": [
+      {
+        "oldPath": "scripts/check-module-boundaries.mjs",
+        "newPath": "scripts/check-module-boundaries.mjs",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "scripts/copy-ui.mjs",
+        "newPath": "scripts/copy-ui.mjs",
+        "imports": 0,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "scripts/module-map.mjs",
+        "newPath": "scripts/module-map.mjs",
+        "imports": 0,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "scripts/verify-source-index.mjs",
+        "newPath": "scripts/verify-source-index.mjs",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "scripts/verify-vault-crash.mjs",
+        "newPath": "scripts/verify-vault-crash.mjs",
+        "imports": 1,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "src/app/workspace-tools.ts",
+        "newPath": "src/app/workspace-tools.ts",
+        "imports": 0,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "src/contracts/ledger-validation.ts",
+        "newPath": "src/contracts/ledger-validation.ts",
+        "imports": 82,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "src/read-model/read-model-index.ts",
+        "newPath": "src/data/read-model-index/read-model-index.ts",
+        "imports": 158,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "src/data/cpp-source-index.ts",
+        "newPath": "src/data/workspace-reader/cpp-source-index.ts",
+        "imports": 1,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "src/data/python-source-index.ts",
+        "newPath": "src/data/workspace-reader/python-source-index.ts",
+        "imports": 1,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "src/runtime/coding-agent-runtime.ts",
+        "newPath": "src/execution/worker-runtime/coding-agent-runtime.ts",
+        "imports": 15,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "src/runtime/observed-model-run.ts",
+        "newPath": "src/execution/worker-runtime/observed-model-run.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "tests/app/reviewer-recovery-fixture.ts",
+        "newPath": "tests/app/reviewer-recovery-fixture.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      }
+    ],
+    "results": [
+      {
+        "oldPath": "scripts/check-module-boundaries.mjs",
+        "newPath": "scripts/check-module-boundaries.mjs",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "scripts/copy-ui.mjs",
+        "newPath": "scripts/copy-ui.mjs",
+        "imports": 0,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "scripts/module-map.mjs",
+        "newPath": "scripts/module-map.mjs",
+        "imports": 0,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "scripts/verify-source-index.mjs",
+        "newPath": "scripts/verify-source-index.mjs",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "scripts/verify-ui-build.mjs",
+        "newPath": "scripts/verify-ui-build.mjs",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "scripts/verify-vault-crash.mjs",
+        "newPath": "scripts/verify-vault-crash.mjs",
+        "imports": 1,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "src/app/exploration-source.ts",
+        "newPath": "src/app/exploration-source.ts",
+        "imports": 1,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/app/file-references.ts",
+        "newPath": "src/app/file-references.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/app/initial-planning.ts",
+        "newPath": "src/app/initial-planning.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/app/model-settings.ts",
+        "newPath": "src/app/model-settings.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/app/server.ts",
+        "newPath": "src/app/server.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/app/service.ts",
+        "newPath": "src/app/service.ts",
+        "imports": 66,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/app/workspace-tools.ts",
+        "newPath": "src/app/workspace-tools.ts",
+        "imports": 0,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "src/contracts/active-agent.ts",
+        "newPath": "src/contracts/active-agent.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/architecture-context.ts",
+        "newPath": "src/contracts/architecture-context.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/architecture-evolution-policy.ts",
+        "newPath": "src/contracts/architecture-evolution-policy.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/architecture-inspection.ts",
+        "newPath": "src/contracts/architecture-inspection.ts",
+        "imports": 8,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/architecture-reconciler.ts",
+        "newPath": "src/contracts/architecture-reconciler.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/architecture-source.ts",
+        "newPath": "src/contracts/architecture-source.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/artifact.ts",
+        "newPath": "src/contracts/artifact.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/baseline-evolution.ts",
+        "newPath": "src/contracts/baseline-evolution.ts",
+        "imports": 12,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/bootstrap.ts",
+        "newPath": "src/contracts/bootstrap.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/command-event.ts",
+        "newPath": "src/contracts/command-event.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/commands/architecture.ts",
+        "newPath": "src/contracts/commands/architecture.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/commands/dispatch.ts",
+        "newPath": "src/contracts/commands/dispatch.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/commands/evidence.ts",
+        "newPath": "src/contracts/commands/evidence.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/commands/goal-phase.ts",
+        "newPath": "src/contracts/commands/goal-phase.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/commands/goal.ts",
+        "newPath": "src/contracts/commands/goal.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/commands/governance.ts",
+        "newPath": "src/contracts/commands/governance.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/commands/material-access.ts",
+        "newPath": "src/contracts/commands/material-access.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/commands/plan.ts",
+        "newPath": "src/contracts/commands/plan.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/commands/reviewer-work.ts",
+        "newPath": "src/contracts/commands/reviewer-work.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/commands/workspace.ts",
+        "newPath": "src/contracts/commands/workspace.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/completed-work-context.ts",
+        "newPath": "src/contracts/completed-work-context.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/console-views.ts",
+        "newPath": "src/contracts/console-views.ts",
+        "imports": 10,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/context-continuation-port.ts",
+        "newPath": "src/contracts/context-continuation-port.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/context-continuity.ts",
+        "newPath": "src/contracts/context-continuity.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/control-intent.ts",
+        "newPath": "src/contracts/control-intent.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/dispatch.ts",
+        "newPath": "src/contracts/dispatch.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/events.ts",
+        "newPath": "src/contracts/events.ts",
+        "imports": 25,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/evidence.ts",
+        "newPath": "src/contracts/evidence.ts",
+        "imports": 10,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/execution-capability.ts",
+        "newPath": "src/contracts/execution-capability.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/exploration-materials.ts",
+        "newPath": "src/contracts/exploration-materials.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/exploration-session.ts",
+        "newPath": "src/contracts/exploration-session.ts",
+        "imports": 11,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/exploration.ts",
+        "newPath": "src/contracts/exploration.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fingerprint.ts",
+        "newPath": "src/contracts/fingerprint.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts",
+        "newPath": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/architecture-fixtures.ts",
+        "newPath": "src/contracts/fixtures/architecture-fixtures.ts",
+        "imports": 11,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/baseline-evolution-fixtures.ts",
+        "newPath": "src/contracts/fixtures/baseline-evolution-fixtures.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/bootstrap-fixture-v1.ts",
+        "newPath": "src/contracts/fixtures/bootstrap-fixture-v1.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/completed-work-fixtures.ts",
+        "newPath": "src/contracts/fixtures/completed-work-fixtures.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/console-fixtures.ts",
+        "newPath": "src/contracts/fixtures/console-fixtures.ts",
+        "imports": 23,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/context-fixtures.ts",
+        "newPath": "src/contracts/fixtures/context-fixtures.ts",
+        "imports": 8,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/control-fixtures.ts",
+        "newPath": "src/contracts/fixtures/control-fixtures.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/dispatch-fixtures.ts",
+        "newPath": "src/contracts/fixtures/dispatch-fixtures.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/evidence-fixtures.ts",
+        "newPath": "src/contracts/fixtures/evidence-fixtures.ts",
+        "imports": 10,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/goal-change-fixtures.ts",
+        "newPath": "src/contracts/fixtures/goal-change-fixtures.ts",
+        "imports": 12,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/goal-fixtures.ts",
+        "newPath": "src/contracts/fixtures/goal-fixtures.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/goal-phase-fixtures.ts",
+        "newPath": "src/contracts/fixtures/goal-phase-fixtures.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/governance-fixtures.ts",
+        "newPath": "src/contracts/fixtures/governance-fixtures.ts",
+        "imports": 8,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/handoff-fixtures.ts",
+        "newPath": "src/contracts/fixtures/handoff-fixtures.ts",
+        "imports": 11,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/human-role-collaboration-fixtures.ts",
+        "newPath": "src/contracts/fixtures/human-role-collaboration-fixtures.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/index.ts",
+        "newPath": "src/contracts/fixtures/index.ts",
+        "imports": 8,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/material-access-fixtures.ts",
+        "newPath": "src/contracts/fixtures/material-access-fixtures.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/plan-fixtures.ts",
+        "newPath": "src/contracts/fixtures/plan-fixtures.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/query-job-fixtures.ts",
+        "newPath": "src/contracts/fixtures/query-job-fixtures.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/remediation-fixtures.ts",
+        "newPath": "src/contracts/fixtures/remediation-fixtures.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/fixtures/workspace-fixtures.ts",
+        "newPath": "src/contracts/fixtures/workspace-fixtures.ts",
+        "imports": 14,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/goal-change.ts",
+        "newPath": "src/contracts/goal-change.ts",
+        "imports": 8,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/goal-phase-view.ts",
+        "newPath": "src/contracts/goal-phase-view.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/goal-phase.ts",
+        "newPath": "src/contracts/goal-phase.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/goal-view.ts",
+        "newPath": "src/contracts/goal-view.ts",
+        "imports": 46,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/governance.ts",
+        "newPath": "src/contracts/governance.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/handoff-context.ts",
+        "newPath": "src/contracts/handoff-context.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/handoff-control.ts",
+        "newPath": "src/contracts/handoff-control.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/handoff-view.ts",
+        "newPath": "src/contracts/handoff-view.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/handoff.ts",
+        "newPath": "src/contracts/handoff.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/history-materials.ts",
+        "newPath": "src/contracts/history-materials.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/human-role-collaboration.ts",
+        "newPath": "src/contracts/human-role-collaboration.ts",
+        "imports": 12,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/index.ts",
+        "newPath": "src/contracts/index.ts",
+        "imports": 39,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/initial-planning.ts",
+        "newPath": "src/contracts/initial-planning.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/integration.ts",
+        "newPath": "src/contracts/integration.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/ledger-validation.ts",
+        "newPath": "src/contracts/ledger-validation.ts",
+        "imports": 82,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "src/contracts/ledger.ts",
+        "newPath": "src/contracts/ledger.ts",
+        "imports": 35,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/material-access.ts",
+        "newPath": "src/contracts/material-access.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/modules.ts",
+        "newPath": "src/contracts/modules.ts",
+        "imports": 70,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/opaque.ts",
+        "newPath": "src/contracts/opaque.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/operator-dispatch.ts",
+        "newPath": "src/contracts/operator-dispatch.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/operator-planning.ts",
+        "newPath": "src/contracts/operator-planning.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/patch.ts",
+        "newPath": "src/contracts/patch.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/plan-view.ts",
+        "newPath": "src/contracts/plan-view.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/plan.ts",
+        "newPath": "src/contracts/plan.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/planning.ts",
+        "newPath": "src/contracts/planning.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/policy-explanation.ts",
+        "newPath": "src/contracts/policy-explanation.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/ports.ts",
+        "newPath": "src/contracts/ports.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/query-execution-context.ts",
+        "newPath": "src/contracts/query-execution-context.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/query-job.ts",
+        "newPath": "src/contracts/query-job.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/read-model.ts",
+        "newPath": "src/contracts/read-model.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/reduction.ts",
+        "newPath": "src/contracts/reduction.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/remediation.ts",
+        "newPath": "src/contracts/remediation.ts",
+        "imports": 11,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/review-context.ts",
+        "newPath": "src/contracts/review-context.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/reviewer-context.ts",
+        "newPath": "src/contracts/reviewer-context.ts",
+        "imports": 9,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/reviewer-verification.ts",
+        "newPath": "src/contracts/reviewer-verification.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/reviewer-work.ts",
+        "newPath": "src/contracts/reviewer-work.ts",
+        "imports": 17,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/runtime-budget.ts",
+        "newPath": "src/contracts/runtime-budget.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/runtime-context-materials.ts",
+        "newPath": "src/contracts/runtime-context-materials.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/runtime-dispatch.ts",
+        "newPath": "src/contracts/runtime-dispatch.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/runtime-observations.ts",
+        "newPath": "src/contracts/runtime-observations.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/runtime-preparation.ts",
+        "newPath": "src/contracts/runtime-preparation.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/scope-catalog.ts",
+        "newPath": "src/contracts/scope-catalog.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/task-envelope.ts",
+        "newPath": "src/contracts/task-envelope.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/testing/check-providers.double.ts",
+        "newPath": "src/contracts/testing/check-providers.double.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/testing/control.double.ts",
+        "newPath": "src/contracts/testing/control.double.ts",
+        "imports": 184,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/testing/handoff-control.double.ts",
+        "newPath": "src/contracts/testing/handoff-control.double.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/testing/index.ts",
+        "newPath": "src/contracts/testing/index.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/testing/query-context.stub.ts",
+        "newPath": "src/contracts/testing/query-context.stub.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/testing/read-model.double.ts",
+        "newPath": "src/contracts/testing/read-model.double.ts",
+        "imports": 110,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/testing/sequences.ts",
+        "newPath": "src/contracts/testing/sequences.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/testing/state-ledger.double.ts",
+        "newPath": "src/contracts/testing/state-ledger.double.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/validation.ts",
+        "newPath": "src/contracts/validation.ts",
+        "imports": 17,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/verification-context.ts",
+        "newPath": "src/contracts/verification-context.ts",
+        "imports": 10,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/verification-import.ts",
+        "newPath": "src/contracts/verification-import.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/verification-round.ts",
+        "newPath": "src/contracts/verification-round.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/verification-service.ts",
+        "newPath": "src/contracts/verification-service.ts",
+        "imports": 16,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/verification-source.ts",
+        "newPath": "src/contracts/verification-source.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/verification-view.ts",
+        "newPath": "src/contracts/verification-view.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/verification.ts",
+        "newPath": "src/contracts/verification.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/work-context-port.ts",
+        "newPath": "src/contracts/work-context-port.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/workspace-capability.ts",
+        "newPath": "src/contracts/workspace-capability.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/workspace-drive.ts",
+        "newPath": "src/contracts/workspace-drive.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/workspace-lease.ts",
+        "newPath": "src/contracts/workspace-lease.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/workspace-read.ts",
+        "newPath": "src/contracts/workspace-read.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/workspace-registration.ts",
+        "newPath": "src/contracts/workspace-registration.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/contracts/workspace-views.ts",
+        "newPath": "src/contracts/workspace-views.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/architecture-delta.ts",
+        "newPath": "src/control/architecture-reconciler/architecture-delta.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/architecture-reconciler.ts",
+        "newPath": "src/control/architecture-reconciler/architecture-reconciler.ts",
+        "imports": 11,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/baseline-evolution-port.ts",
+        "newPath": "src/control/architecture-reconciler/baseline-evolution-port.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/architecture-evolution-policy.ts",
+        "newPath": "src/control/control-engine/architecture-evolution-policy.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/architecture-inspection.ts",
+        "newPath": "src/control/control-engine/architecture-inspection.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/baseline-evolution.ts",
+        "newPath": "src/control/control-engine/baseline-evolution.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/claim.ts",
+        "newPath": "src/control/control-engine/claim.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/control-engine.ts",
+        "newPath": "src/control/control-engine/control-engine.ts",
+        "imports": 91,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/control-intent.ts",
+        "newPath": "src/control/control-engine/control-intent.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/dispatch-facts.ts",
+        "newPath": "src/control/control-engine/dispatch-facts.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/evidence-intake.ts",
+        "newPath": "src/control/control-engine/evidence-intake.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/exploration-startup-reconciliation.ts",
+        "newPath": "src/control/control-engine/exploration-startup-reconciliation.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/goal-change.ts",
+        "newPath": "src/control/control-engine/goal-change.ts",
+        "imports": 11,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/goal-reducer.ts",
+        "newPath": "src/control/control-engine/goal-reducer.ts",
+        "imports": 30,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/governance-activate.ts",
+        "newPath": "src/control/control-engine/governance-activate.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/governance-install.ts",
+        "newPath": "src/control/control-engine/governance-install.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/handoff.ts",
+        "newPath": "src/control/control-engine/handoff.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/human-role-collaboration.ts",
+        "newPath": "src/control/control-engine/human-role-collaboration.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/initial-plan-source.ts",
+        "newPath": "src/control/control-engine/initial-plan-source.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/integration-join.ts",
+        "newPath": "src/control/control-engine/integration-join.ts",
+        "imports": 15,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/material-access-revocation.ts",
+        "newPath": "src/control/control-engine/material-access-revocation.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/material-access.ts",
+        "newPath": "src/control/control-engine/material-access.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/patch-record.ts",
+        "newPath": "src/control/control-engine/patch-record.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/plan-acceptance.ts",
+        "newPath": "src/control/control-engine/plan-acceptance.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/architecture-evolution-policy.ts",
+        "newPath": "src/control/control-engine/policies/architecture-evolution-policy.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/architecture-remediation.ts",
+        "newPath": "src/control/control-engine/policies/architecture-remediation.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/evidence.ts",
+        "newPath": "src/control/control-engine/policies/evidence.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/goal-change-consistency.ts",
+        "newPath": "src/control/control-engine/policies/goal-change-consistency.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/goal-change.ts",
+        "newPath": "src/control/control-engine/policies/goal-change.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/goal-phase.ts",
+        "newPath": "src/control/control-engine/policies/goal-phase.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/initial-plan-admission.ts",
+        "newPath": "src/control/control-engine/policies/initial-plan-admission.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/integration.ts",
+        "newPath": "src/control/control-engine/policies/integration.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/remediation.ts",
+        "newPath": "src/control/control-engine/policies/remediation.ts",
+        "imports": 1,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/replacement-eligibility.ts",
+        "newPath": "src/control/control-engine/policies/replacement-eligibility.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/reviewer-evidence.ts",
+        "newPath": "src/control/control-engine/policies/reviewer-evidence.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/task-eligibility.ts",
+        "newPath": "src/control/control-engine/policies/task-eligibility.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/task-reduction.ts",
+        "newPath": "src/control/control-engine/policies/task-reduction.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/workspace-capability.ts",
+        "newPath": "src/control/control-engine/policies/workspace-capability.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/workspace-lease.ts",
+        "newPath": "src/control/control-engine/policies/workspace-lease.ts",
+        "imports": 1,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policies/workspace-operation.ts",
+        "newPath": "src/control/control-engine/policies/workspace-operation.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/policy-explanation.ts",
+        "newPath": "src/control/control-engine/policy-explanation.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/query-job.ts",
+        "newPath": "src/control/control-engine/query-job.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/readiness.ts",
+        "newPath": "src/control/control-engine/readiness.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/records/architecture.ts",
+        "newPath": "src/control/control-engine/records/architecture.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/records/baseline-evolution.ts",
+        "newPath": "src/control/control-engine/records/baseline-evolution.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/records/context.ts",
+        "newPath": "src/control/control-engine/records/context.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/records/control.ts",
+        "newPath": "src/control/control-engine/records/control.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/records/dispatch.ts",
+        "newPath": "src/control/control-engine/records/dispatch.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/records/evidence.ts",
+        "newPath": "src/control/control-engine/records/evidence.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/records/goal-change.ts",
+        "newPath": "src/control/control-engine/records/goal-change.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/records/goal-phase.ts",
+        "newPath": "src/control/control-engine/records/goal-phase.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/records/handoff.ts",
+        "newPath": "src/control/control-engine/records/handoff.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/records/human-role-collaboration.ts",
+        "newPath": "src/control/control-engine/records/human-role-collaboration.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/records/material-access.ts",
+        "newPath": "src/control/control-engine/records/material-access.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/records/plan.ts",
+        "newPath": "src/control/control-engine/records/plan.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/records/query-job.ts",
+        "newPath": "src/control/control-engine/records/query-job.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/records/remediation.ts",
+        "newPath": "src/control/control-engine/records/remediation.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/records/workspace.ts",
+        "newPath": "src/control/control-engine/records/workspace.ts",
+        "imports": 21,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/remediation.ts",
+        "newPath": "src/control/control-engine/remediation.ts",
+        "imports": 15,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/replacement-claim.ts",
+        "newPath": "src/control/control-engine/replacement-claim.ts",
+        "imports": 12,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/reviewer-work.ts",
+        "newPath": "src/control/control-engine/reviewer-work.ts",
+        "imports": 21,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/run-facts.ts",
+        "newPath": "src/control/control-engine/run-facts.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/start-run.ts",
+        "newPath": "src/control/control-engine/start-run.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/task-reducer.ts",
+        "newPath": "src/control/control-engine/task-reducer.ts",
+        "imports": 20,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/work-record.ts",
+        "newPath": "src/control/control-engine/work-record.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/workspace-lease.ts",
+        "newPath": "src/control/control-engine/workspace-lease.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/workspace-registration.ts",
+        "newPath": "src/control/control-engine/workspace-registration.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/dispatch-engine.ts",
+        "newPath": "src/control/dispatch-engine/dispatch-engine.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/exploration-context-drive.ts",
+        "newPath": "src/control/dispatch-engine/exploration-context-drive.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/handoff-drive.ts",
+        "newPath": "src/control/dispatch-engine/handoff-drive.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/leased-worker-runtime.ts",
+        "newPath": "src/control/dispatch-engine/leased-worker-runtime.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/operator-task-dispatch.ts",
+        "newPath": "src/control/dispatch-engine/operator-task-dispatch.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/planned-task-dispatch.ts",
+        "newPath": "src/control/dispatch-engine/planned-task-dispatch.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/query-drive.ts",
+        "newPath": "src/control/dispatch-engine/query-drive.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/reviewer-dispatch.ts",
+        "newPath": "src/control/dispatch-engine/reviewer-dispatch.ts",
+        "imports": 14,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/runtime-dispatch.ts",
+        "newPath": "src/control/dispatch-engine/runtime-dispatch.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/workspace-drive.ts",
+        "newPath": "src/control/dispatch-engine/workspace-drive.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/initial-plan-compiler.ts",
+        "newPath": "src/control/plan-compiler/initial-plan-compiler.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/operator-plan-compiler.ts",
+        "newPath": "src/control/plan-compiler/operator-plan-compiler.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/control/plan-compiler.ts",
+        "newPath": "src/control/plan-compiler/plan-compiler.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/benchmark-verification.ts",
+        "newPath": "src/control/verification-engine/benchmark-verification.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/candidate-patch-check.ts",
+        "newPath": "src/control/verification-engine/candidate-patch-check.ts",
+        "imports": 1,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/code-graph-port.ts",
+        "newPath": "src/control/verification-engine/code-graph-port.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/command-check-lifecycle.ts",
+        "newPath": "src/control/verification-engine/command-check-lifecycle.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/command-check-provider.ts",
+        "newPath": "src/control/verification-engine/command-check-provider.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/evidence-admission.ts",
+        "newPath": "src/control/verification-engine/evidence-admission.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/exploration-report-verifier.ts",
+        "newPath": "src/control/verification-engine/exploration-report-verifier.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/migration-gate-port.ts",
+        "newPath": "src/control/verification-engine/migration-gate-port.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/recorded-verification.ts",
+        "newPath": "src/control/verification-engine/recorded-verification.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/reviewer-record.ts",
+        "newPath": "src/control/verification-engine/reviewer-record.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/reviewer-report.ts",
+        "newPath": "src/control/verification-engine/reviewer-report.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/reviewer-verification.ts",
+        "newPath": "src/control/verification-engine/reviewer-verification.ts",
+        "imports": 16,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/verification-engine.ts",
+        "newPath": "src/control/verification-engine/verification-engine.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/verification-input.ts",
+        "newPath": "src/control/verification-engine/verification-input.ts",
+        "imports": 1,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/verification-journal.ts",
+        "newPath": "src/control/verification-engine/verification-journal.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/verification-plan-compiler.ts",
+        "newPath": "src/control/verification-engine/verification-plan-compiler.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/verification-reports.ts",
+        "newPath": "src/control/verification-engine/verification-reports.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/verification-rounds.ts",
+        "newPath": "src/control/verification-engine/verification-rounds.ts",
+        "imports": 17,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/verification/verification-service.ts",
+        "newPath": "src/control/verification-engine/verification-service.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/vault/artifact-vault.ts",
+        "newPath": "src/data/artifact-vault/artifact-vault.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/vault/exploration-material-reader.ts",
+        "newPath": "src/data/artifact-vault/exploration-material-reader.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/vault/material-access-policy.ts",
+        "newPath": "src/data/artifact-vault/material-access-policy.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/vault/runtime-observation-journal.ts",
+        "newPath": "src/data/artifact-vault/runtime-observation-journal.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/vault/sqlite-artifact-vault.ts",
+        "newPath": "src/data/artifact-vault/sqlite-artifact-vault.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/architecture-context-compiler.ts",
+        "newPath": "src/data/context-compiler/architecture-context-compiler.ts",
+        "imports": 11,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/baseline-evolution-context.ts",
+        "newPath": "src/data/context-compiler/baseline-evolution-context.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/completed-work-context-compiler.ts",
+        "newPath": "src/data/context-compiler/completed-work-context-compiler.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/context-compiler.ts",
+        "newPath": "src/data/context-compiler/context-compiler.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/coordination-context-compiler.ts",
+        "newPath": "src/data/context-compiler/coordination-context-compiler.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/exploration-context-compiler.ts",
+        "newPath": "src/data/context-compiler/exploration-context-compiler.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/exploration-session-context.ts",
+        "newPath": "src/data/context-compiler/exploration-session-context.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/handoff-context-compiler.ts",
+        "newPath": "src/data/context-compiler/handoff-context-compiler.ts",
+        "imports": 12,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/history-materials-context.ts",
+        "newPath": "src/data/context-compiler/history-materials-context.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/material-selection.ts",
+        "newPath": "src/data/context-compiler/material-selection.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/operator-planning-context.ts",
+        "newPath": "src/data/context-compiler/operator-planning-context.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/planning-context-compiler.ts",
+        "newPath": "src/data/context-compiler/planning-context-compiler.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/query-context-compiler.ts",
+        "newPath": "src/data/context-compiler/query-context-compiler.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/query-execution-context.ts",
+        "newPath": "src/data/context-compiler/query-execution-context.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/review-context-compiler.ts",
+        "newPath": "src/data/context-compiler/review-context-compiler.ts",
+        "imports": 11,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/reviewer-context.ts",
+        "newPath": "src/data/context-compiler/reviewer-context.ts",
+        "imports": 15,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/reviewer-profile.ts",
+        "newPath": "src/data/context-compiler/reviewer-profile.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/reviewer-runtime-context.ts",
+        "newPath": "src/data/context-compiler/reviewer-runtime-context.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/runtime-context.ts",
+        "newPath": "src/data/context-compiler/runtime-context.ts",
+        "imports": 12,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/source-graph-context.ts",
+        "newPath": "src/data/context-compiler/source-graph-context.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/verification-context.ts",
+        "newPath": "src/data/context-compiler/verification-context.ts",
+        "imports": 15,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/verification-migration-context.ts",
+        "newPath": "src/data/context-compiler/verification-migration-context.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/context/work-context-compiler.ts",
+        "newPath": "src/data/context-compiler/work-context-compiler.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/read-model/baseline-change-projection.ts",
+        "newPath": "src/data/read-model-index/baseline-change-projection.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/read-model/completed-work-eligibility.ts",
+        "newPath": "src/data/read-model-index/completed-work-eligibility.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/read-model/initial-planning-view.ts",
+        "newPath": "src/data/read-model-index/initial-planning-view.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/read-model/read-model-index.ts",
+        "newPath": "src/data/read-model-index/read-model-index.ts",
+        "imports": 158,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "src/read-model/reviewer-projection.ts",
+        "newPath": "src/data/read-model-index/reviewer-projection.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/sqlite-read-model/sqlite-read-model-index.ts",
+        "newPath": "src/data/read-model-index/sqlite-read-model-index.ts",
+        "imports": 203,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/data/governance-records.ts",
+        "newPath": "src/data/state-ledger/governance-records.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ledger/in-memory-ledger.ts",
+        "newPath": "src/data/state-ledger/in-memory-ledger.ts",
+        "imports": 57,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/data/ledger-scope-catalog.ts",
+        "newPath": "src/data/state-ledger/ledger-scope-catalog.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/sqlite-ledger/sqlite-ledger.ts",
+        "newPath": "src/data/state-ledger/sqlite-ledger.ts",
+        "imports": 95,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/data/architecture-source.ts",
+        "newPath": "src/data/workspace-reader/architecture-source.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/data/candidate-workspace-reader.ts",
+        "newPath": "src/data/workspace-reader/candidate-workspace-reader.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/data/cpp-source-index.ts",
+        "newPath": "src/data/workspace-reader/cpp-source-index.ts",
+        "imports": 1,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "src/data/exploration-source.ts",
+        "newPath": "src/data/workspace-reader/exploration-source.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/data/project-source-index.ts",
+        "newPath": "src/data/workspace-reader/project-source-index.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/data/python-source-index.ts",
+        "newPath": "src/data/workspace-reader/python-source-index.ts",
+        "imports": 1,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "src/data/query-workspace-source-reader.ts",
+        "newPath": "src/data/workspace-reader/query-workspace-source-reader.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/data/reviewer-source-reader.ts",
+        "newPath": "src/data/workspace-reader/reviewer-source-reader.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/data/source-applicability.ts",
+        "newPath": "src/data/workspace-reader/source-applicability.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/data/source-identity.ts",
+        "newPath": "src/data/workspace-reader/source-identity.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/data/source-index.ts",
+        "newPath": "src/data/workspace-reader/source-index.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/data/source-workspace-reader.ts",
+        "newPath": "src/data/workspace-reader/source-workspace-reader.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/data/verification-source-applicability.ts",
+        "newPath": "src/data/workspace-reader/verification-source-applicability.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/data/verification-workspace-reader.ts",
+        "newPath": "src/data/workspace-reader/verification-workspace-reader.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/data/workspace-reader-adapter.ts",
+        "newPath": "src/data/workspace-reader/workspace-reader-adapter.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/runtime/coding-agent-runtime.ts",
+        "newPath": "src/execution/worker-runtime/coding-agent-runtime.ts",
+        "imports": 15,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "src/runtime/context-continuation-adapter.ts",
+        "newPath": "src/execution/worker-runtime/context-continuation-adapter.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/runtime/exploration-tools.ts",
+        "newPath": "src/execution/worker-runtime/exploration-tools.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/runtime/fake-runtime-adapter.ts",
+        "newPath": "src/execution/worker-runtime/fake-runtime-adapter.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/runtime/handoff-control-adapter.ts",
+        "newPath": "src/execution/worker-runtime/handoff-control-adapter.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/runtime/lifecycle-control-adapter.ts",
+        "newPath": "src/execution/worker-runtime/lifecycle-control-adapter.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/runtime/model-budget.ts",
+        "newPath": "src/execution/worker-runtime/model-budget.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/runtime/observed-model-run.ts",
+        "newPath": "src/execution/worker-runtime/observed-model-run.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "src/runtime/read-only-query-adapter.ts",
+        "newPath": "src/execution/worker-runtime/read-only-query-adapter.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/runtime/read-only-query-runtime.ts",
+        "newPath": "src/execution/worker-runtime/read-only-query-runtime.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/runtime/reviewer-material-tools.ts",
+        "newPath": "src/execution/worker-runtime/reviewer-material-tools.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/runtime/run-limits.ts",
+        "newPath": "src/execution/worker-runtime/run-limits.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/runtime/unconfigured-capabilities.ts",
+        "newPath": "src/execution/worker-runtime/unconfigured-capabilities.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/harness/in-memory-harness.ts",
+        "newPath": "src/harness/in-memory-harness.ts",
+        "imports": 152,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/harness/index.ts",
+        "newPath": "src/harness/index.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/harness/persistent-harness.ts",
+        "newPath": "src/harness/persistent-harness.ts",
+        "imports": 140,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/interaction/exploration-session.ts",
+        "newPath": "src/interaction/human-collaboration/exploration-session.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/interaction/history-materials.ts",
+        "newPath": "src/interaction/human-collaboration/history-materials.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/interaction/human-collaboration.ts",
+        "newPath": "src/interaction/human-collaboration/human-collaboration.ts",
+        "imports": 22,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/storage/atomic-file.ts",
+        "newPath": "src/storage/atomic-file.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/App.tsx",
+        "newPath": "src/ui/src/App.tsx",
+        "imports": 11,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/api/client.ts",
+        "newPath": "src/ui/src/api/client.ts",
+        "imports": 74,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/api/hooks.ts",
+        "newPath": "src/ui/src/api/hooks.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/api/types.ts",
+        "newPath": "src/ui/src/api/types.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/components/Resizer.tsx",
+        "newPath": "src/ui/src/components/Resizer.tsx",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/components/states.tsx",
+        "newPath": "src/ui/src/components/states.tsx",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/agents.tsx",
+        "newPath": "src/ui/src/features/agents.tsx",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/check-report.ts",
+        "newPath": "src/ui/src/features/check-report.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/conversation.tsx",
+        "newPath": "src/ui/src/features/conversation.tsx",
+        "imports": 9,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/diff.tsx",
+        "newPath": "src/ui/src/features/diff.tsx",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/exploration.tsx",
+        "newPath": "src/ui/src/features/exploration.tsx",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/files.tsx",
+        "newPath": "src/ui/src/features/files.tsx",
+        "imports": 8,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/history-materials.tsx",
+        "newPath": "src/ui/src/features/history-materials.tsx",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/independent-review.tsx",
+        "newPath": "src/ui/src/features/independent-review.tsx",
+        "imports": 8,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/initial-planning.tsx",
+        "newPath": "src/ui/src/features/initial-planning.tsx",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/misc.tsx",
+        "newPath": "src/ui/src/features/misc.tsx",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/settings.tsx",
+        "newPath": "src/ui/src/features/settings.tsx",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/task-graph.tsx",
+        "newPath": "src/ui/src/features/task-graph.tsx",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/tasks.tsx",
+        "newPath": "src/ui/src/features/tasks.tsx",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/terminal.tsx",
+        "newPath": "src/ui/src/features/terminal.tsx",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/verification-check-editor.tsx",
+        "newPath": "src/ui/src/features/verification-check-editor.tsx",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/verification-round.tsx",
+        "newPath": "src/ui/src/features/verification-round.tsx",
+        "imports": 9,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/features/verification.tsx",
+        "newPath": "src/ui/src/features/verification.tsx",
+        "imports": 8,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/format.ts",
+        "newPath": "src/ui/src/format.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/main.tsx",
+        "newPath": "src/ui/src/main.tsx",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/markdown.tsx",
+        "newPath": "src/ui/src/markdown.tsx",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/state/app-store.tsx",
+        "newPath": "src/ui/src/state/app-store.tsx",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/state/drafts.ts",
+        "newPath": "src/ui/src/state/drafts.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/state/layout.ts",
+        "newPath": "src/ui/src/state/layout.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/state/pending.ts",
+        "newPath": "src/ui/src/state/pending.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/theme.ts",
+        "newPath": "src/ui/src/theme.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/workbench/Workbench.tsx",
+        "newPath": "src/ui/src/workbench/Workbench.tsx",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/workbench/registry.ts",
+        "newPath": "src/ui/src/workbench/registry.ts",
+        "imports": 13,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/src/workbench/view-props.ts",
+        "newPath": "src/ui/src/workbench/view-props.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/fixture-server.mjs",
+        "newPath": "src/ui/tests/fixture-server.mjs",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/helpers.ts",
+        "newPath": "src/ui/tests/helpers.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/independent-review.spec.ts",
+        "newPath": "src/ui/tests/independent-review.spec.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/playwright.config.ts",
+        "newPath": "src/ui/tests/playwright.config.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/real-server.mjs",
+        "newPath": "src/ui/tests/real-server.mjs",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/reviewer-recovery.spec.ts",
+        "newPath": "src/ui/tests/reviewer-recovery.spec.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/screenshots.mjs",
+        "newPath": "src/ui/tests/screenshots.mjs",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/ui-01-scope.spec.ts",
+        "newPath": "src/ui/tests/ui-01-scope.spec.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/ui-02-layout.spec.ts",
+        "newPath": "src/ui/tests/ui-02-layout.spec.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/ui-03-reading.spec.ts",
+        "newPath": "src/ui/tests/ui-03-reading.spec.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/ui-04-reference.spec.ts",
+        "newPath": "src/ui/tests/ui-04-reference.spec.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/ui-05-09-detail.spec.ts",
+        "newPath": "src/ui/tests/ui-05-09-detail.spec.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/ui-06-07-08.spec.ts",
+        "newPath": "src/ui/tests/ui-06-07-08.spec.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/ui-06-report-scope.spec.ts",
+        "newPath": "src/ui/tests/ui-06-report-scope.spec.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/ui-10-11.spec.ts",
+        "newPath": "src/ui/tests/ui-10-11.spec.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/ui12-acceptance.mjs",
+        "newPath": "src/ui/tests/ui12-acceptance.mjs",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/tests/verification-rounds.spec.ts",
+        "newPath": "src/ui/tests/verification-rounds.spec.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "src/ui/vite.config.ts",
+        "newPath": "src/ui/vite.config.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/exploration-runtime.test.ts",
+        "newPath": "tests/app/exploration-runtime.test.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/exploration-source.test.ts",
+        "newPath": "tests/app/exploration-source.test.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/exploration-tools.test.ts",
+        "newPath": "tests/app/exploration-tools.test.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/explorations.test.ts",
+        "newPath": "tests/app/explorations.test.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/file-references.test.ts",
+        "newPath": "tests/app/file-references.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/gui.test.ts",
+        "newPath": "tests/app/gui.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/history-materials.test.ts",
+        "newPath": "tests/app/history-materials.test.ts",
+        "imports": 12,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/independent-review-fixture.ts",
+        "newPath": "tests/app/independent-review-fixture.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/independent-review.test.ts",
+        "newPath": "tests/app/independent-review.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/initial-planning.test.ts",
+        "newPath": "tests/app/initial-planning.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/legacy-command-only-plan.ts",
+        "newPath": "tests/app/legacy-command-only-plan.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/live-content.test.ts",
+        "newPath": "tests/app/live-content.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/model-budget.test.ts",
+        "newPath": "tests/app/model-budget.test.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/model-settings.test.ts",
+        "newPath": "tests/app/model-settings.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/multi-workspace.test.ts",
+        "newPath": "tests/app/multi-workspace.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/real-runtime.test.ts",
+        "newPath": "tests/app/real-runtime.test.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/reviewer-product-recovery.test.ts",
+        "newPath": "tests/app/reviewer-product-recovery.test.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/reviewer-recovery-fixture.ts",
+        "newPath": "tests/app/reviewer-recovery-fixture.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": false
+      },
+      {
+        "oldPath": "tests/app/reviewer-source-tools.test.ts",
+        "newPath": "tests/app/reviewer-source-tools.test.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/runtime-context-fixture.ts",
+        "newPath": "tests/app/runtime-context-fixture.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/runtime-context.test.ts",
+        "newPath": "tests/app/runtime-context.test.ts",
+        "imports": 15,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/semantic-query.test.ts",
+        "newPath": "tests/app/semantic-query.test.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/verification-imports.test.ts",
+        "newPath": "tests/app/verification-imports.test.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/verification-round-fixture.ts",
+        "newPath": "tests/app/verification-round-fixture.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/verification-rounds.test.ts",
+        "newPath": "tests/app/verification-rounds.test.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/app/workspace-tools.test.ts",
+        "newPath": "tests/app/workspace-tools.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/context/completed-work-regression.test.ts",
+        "newPath": "tests/context/completed-work-regression.test.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/context/context-compiler.test.ts",
+        "newPath": "tests/context/context-compiler.test.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/context/handoff-context-compiler.test.ts",
+        "newPath": "tests/context/handoff-context-compiler.test.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/context/material-selection.test.ts",
+        "newPath": "tests/context/material-selection.test.ts",
+        "imports": 1,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/context/persisted-query-source.test.ts",
+        "newPath": "tests/context/persisted-query-source.test.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/context/planning-context-compiler.test.ts",
+        "newPath": "tests/context/planning-context-compiler.test.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/context/query-execution-context.test.ts",
+        "newPath": "tests/context/query-execution-context.test.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/context/review-context-compiler.test.ts",
+        "newPath": "tests/context/review-context-compiler.test.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/context/reviewer-context.test.ts",
+        "newPath": "tests/context/reviewer-context.test.ts",
+        "imports": 22,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/context/verification-round-context.test.ts",
+        "newPath": "tests/context/verification-round-context.test.ts",
+        "imports": 11,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/context/verification-workspace-reader.test.ts",
+        "newPath": "tests/context/verification-workspace-reader.test.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/context/work-context-compiler.test.ts",
+        "newPath": "tests/context/work-context-compiler.test.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/architecture-evolution.contract.suite.ts",
+        "newPath": "tests/contract-suite/architecture-evolution.contract.suite.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/architecture.contract.suite.ts",
+        "newPath": "tests/contract-suite/architecture.contract.suite.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/baseline-evolution.contract.suite.ts",
+        "newPath": "tests/contract-suite/baseline-evolution.contract.suite.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/completed-work.contract.suite.ts",
+        "newPath": "tests/contract-suite/completed-work.contract.suite.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/console.contract.suite.ts",
+        "newPath": "tests/contract-suite/console.contract.suite.ts",
+        "imports": 14,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/context.continuity.contract.suite.ts",
+        "newPath": "tests/contract-suite/context.continuity.contract.suite.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/dispatch.contract.suite.ts",
+        "newPath": "tests/contract-suite/dispatch.contract.suite.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/evidence.contract.suite.ts",
+        "newPath": "tests/contract-suite/evidence.contract.suite.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/goal-change.contract.suite.ts",
+        "newPath": "tests/contract-suite/goal-change.contract.suite.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/goal-phase.contract.suite.ts",
+        "newPath": "tests/contract-suite/goal-phase.contract.suite.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/goal-view.contract.suite.ts",
+        "newPath": "tests/contract-suite/goal-view.contract.suite.ts",
+        "imports": 11,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/governance.contract.suite.ts",
+        "newPath": "tests/contract-suite/governance.contract.suite.ts",
+        "imports": 8,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/handoff.contract.suite.ts",
+        "newPath": "tests/contract-suite/handoff.contract.suite.ts",
+        "imports": 16,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/human-role-collaboration.contract.suite.ts",
+        "newPath": "tests/contract-suite/human-role-collaboration.contract.suite.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/lifecycle-control.contract.suite.ts",
+        "newPath": "tests/contract-suite/lifecycle-control.contract.suite.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-02-harness.ts",
+        "newPath": "tests/contract-suite/p1-02-harness.ts",
+        "imports": 8,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-03-harness.ts",
+        "newPath": "tests/contract-suite/p1-03-harness.ts",
+        "imports": 23,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-04-harness.ts",
+        "newPath": "tests/contract-suite/p1-04-harness.ts",
+        "imports": 50,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-05-harness.ts",
+        "newPath": "tests/contract-suite/p1-05-harness.ts",
+        "imports": 23,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-06-harness.ts",
+        "newPath": "tests/contract-suite/p1-06-harness.ts",
+        "imports": 26,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-07-harness.ts",
+        "newPath": "tests/contract-suite/p1-07-harness.ts",
+        "imports": 36,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-08-harness.ts",
+        "newPath": "tests/contract-suite/p1-08-harness.ts",
+        "imports": 20,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-09-harness.ts",
+        "newPath": "tests/contract-suite/p1-09-harness.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-10-harness.ts",
+        "newPath": "tests/contract-suite/p1-10-harness.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-11-harness.ts",
+        "newPath": "tests/contract-suite/p1-11-harness.ts",
+        "imports": 17,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-12-harness.ts",
+        "newPath": "tests/contract-suite/p1-12-harness.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-13-harness.ts",
+        "newPath": "tests/contract-suite/p1-13-harness.ts",
+        "imports": 23,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-14-harness.ts",
+        "newPath": "tests/contract-suite/p1-14-harness.ts",
+        "imports": 21,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-15-harness.ts",
+        "newPath": "tests/contract-suite/p1-15-harness.ts",
+        "imports": 14,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-16-harness.ts",
+        "newPath": "tests/contract-suite/p1-16-harness.ts",
+        "imports": 16,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/p1-17-harness.ts",
+        "newPath": "tests/contract-suite/p1-17-harness.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/plan.contract.suite.ts",
+        "newPath": "tests/contract-suite/plan.contract.suite.ts",
+        "imports": 9,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/query-job.contract.suite.ts",
+        "newPath": "tests/contract-suite/query-job.contract.suite.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/run.contract.suite.ts",
+        "newPath": "tests/contract-suite/run.contract.suite.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/state-ledger.contract.suite.ts",
+        "newPath": "tests/contract-suite/state-ledger.contract.suite.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/verification.contract.suite.ts",
+        "newPath": "tests/contract-suite/verification.contract.suite.ts",
+        "imports": 16,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contract-suite/workspace.contract.suite.ts",
+        "newPath": "tests/contract-suite/workspace.contract.suite.ts",
+        "imports": 23,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contracts/cursor.test.ts",
+        "newPath": "tests/contracts/cursor.test.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contracts/fingerprint.test.ts",
+        "newPath": "tests/contracts/fingerprint.test.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contracts/fixtures.test.ts",
+        "newPath": "tests/contracts/fixtures.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contracts/goal-phase.test.ts",
+        "newPath": "tests/contracts/goal-phase.test.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contracts/material-access.test.ts",
+        "newPath": "tests/contracts/material-access.test.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contracts/state-ledger.double.test.ts",
+        "newPath": "tests/contracts/state-ledger.double.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/contracts/validation.test.ts",
+        "newPath": "tests/contracts/validation.test.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/architecture-delta-regression.test.ts",
+        "newPath": "tests/control/architecture-delta-regression.test.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/architecture-evolution-policy.test.ts",
+        "newPath": "tests/control/architecture-evolution-policy.test.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/architecture-inspection.test.ts",
+        "newPath": "tests/control/architecture-inspection.test.ts",
+        "imports": 11,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/architecture-reconciler.test.ts",
+        "newPath": "tests/control/architecture-reconciler.test.ts",
+        "imports": 20,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/baseline-evolution-port.test.ts",
+        "newPath": "tests/control/baseline-evolution-port.test.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/baseline-evolution.test.ts",
+        "newPath": "tests/control/baseline-evolution.test.ts",
+        "imports": 20,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/canonical-record-scope.test.ts",
+        "newPath": "tests/control/canonical-record-scope.test.ts",
+        "imports": 16,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/control-engine.test.ts",
+        "newPath": "tests/control/control-engine.test.ts",
+        "imports": 12,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/dispatch-claim.test.ts",
+        "newPath": "tests/control/dispatch-claim.test.ts",
+        "imports": 17,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/dispatch-drive.test.ts",
+        "newPath": "tests/control/dispatch-drive.test.ts",
+        "imports": 21,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/dispatch-readiness.test.ts",
+        "newPath": "tests/control/dispatch-readiness.test.ts",
+        "imports": 14,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/dispatch-start.test.ts",
+        "newPath": "tests/control/dispatch-start.test.ts",
+        "imports": 18,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/evidence-intake.test.ts",
+        "newPath": "tests/control/evidence-intake.test.ts",
+        "imports": 19,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/goal-change.test.ts",
+        "newPath": "tests/control/goal-change.test.ts",
+        "imports": 18,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/goal-reducer.test.ts",
+        "newPath": "tests/control/goal-reducer.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/governance-activate.test.ts",
+        "newPath": "tests/control/governance-activate.test.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/governance-install.test.ts",
+        "newPath": "tests/control/governance-install.test.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/handoff-drive.test.ts",
+        "newPath": "tests/control/handoff-drive.test.ts",
+        "imports": 14,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/handoff.test.ts",
+        "newPath": "tests/control/handoff.test.ts",
+        "imports": 20,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/human-role-collaboration.test.ts",
+        "newPath": "tests/control/human-role-collaboration.test.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/initial-plan-source.test.ts",
+        "newPath": "tests/control/initial-plan-source.test.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/integration-join.test.ts",
+        "newPath": "tests/control/integration-join.test.ts",
+        "imports": 16,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/live-frontier-regression.test.ts",
+        "newPath": "tests/control/live-frontier-regression.test.ts",
+        "imports": 11,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/material-access.test.ts",
+        "newPath": "tests/control/material-access.test.ts",
+        "imports": 15,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/p1-13-writer-chain-fixture.ts",
+        "newPath": "tests/control/p1-13-writer-chain-fixture.ts",
+        "imports": 28,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/p1-15-model-e2e-fixture.ts",
+        "newPath": "tests/control/p1-15-model-e2e-fixture.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/p1-15-role-rework-loop.test.ts",
+        "newPath": "tests/control/p1-15-role-rework-loop.test.ts",
+        "imports": 15,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/patch-record.test.ts",
+        "newPath": "tests/control/patch-record.test.ts",
+        "imports": 15,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/plan-acceptance.test.ts",
+        "newPath": "tests/control/plan-acceptance.test.ts",
+        "imports": 15,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/plan-compiler.test.ts",
+        "newPath": "tests/control/plan-compiler.test.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/planning-fixture.ts",
+        "newPath": "tests/control/planning-fixture.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/planning-interface.test.ts",
+        "newPath": "tests/control/planning-interface.test.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/remediation-writer-chain.test.ts",
+        "newPath": "tests/control/remediation-writer-chain.test.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/remediation.test.ts",
+        "newPath": "tests/control/remediation.test.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/replacement-claim.test.ts",
+        "newPath": "tests/control/replacement-claim.test.ts",
+        "imports": 24,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/reviewer-dispatch-isolation.test.ts",
+        "newPath": "tests/control/reviewer-dispatch-isolation.test.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/reviewer-existing-drivers-isolation.test.ts",
+        "newPath": "tests/control/reviewer-existing-drivers-isolation.test.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/reviewer-lease-conflict-recovery.test.ts",
+        "newPath": "tests/control/reviewer-lease-conflict-recovery.test.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/reviewer-reduction-race.test.ts",
+        "newPath": "tests/control/reviewer-reduction-race.test.ts",
+        "imports": 12,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/reviewer-runtime-start-rejection.test.ts",
+        "newPath": "tests/control/reviewer-runtime-start-rejection.test.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/reviewer-unknown-outcome-preservation.test.ts",
+        "newPath": "tests/control/reviewer-unknown-outcome-preservation.test.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/reviewer-work-fixture.ts",
+        "newPath": "tests/control/reviewer-work-fixture.ts",
+        "imports": 21,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/reviewer-work-persistence.test.ts",
+        "newPath": "tests/control/reviewer-work-persistence.test.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/reviewer-work.test.ts",
+        "newPath": "tests/control/reviewer-work.test.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/run-facts.test.ts",
+        "newPath": "tests/control/run-facts.test.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/runtime-dispatch.test.ts",
+        "newPath": "tests/control/runtime-dispatch.test.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/source-architecture.test.ts",
+        "newPath": "tests/control/source-architecture.test.ts",
+        "imports": 15,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/task-reducer.test.ts",
+        "newPath": "tests/control/task-reducer.test.ts",
+        "imports": 23,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/work-record.test.ts",
+        "newPath": "tests/control/work-record.test.ts",
+        "imports": 14,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/workspace-capability-policy.test.ts",
+        "newPath": "tests/control/workspace-capability-policy.test.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/workspace-drive.test.ts",
+        "newPath": "tests/control/workspace-drive.test.ts",
+        "imports": 13,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/workspace-lease-regression.test.ts",
+        "newPath": "tests/control/workspace-lease-regression.test.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/workspace-lease.test.ts",
+        "newPath": "tests/control/workspace-lease.test.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/control/workspace-registration.test.ts",
+        "newPath": "tests/control/workspace-registration.test.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/data/candidate-workspace-reader.test.ts",
+        "newPath": "tests/data/candidate-workspace-reader.test.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/data/cpp-source-index.test.ts",
+        "newPath": "tests/data/cpp-source-index.test.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/data/exploration-source-applicability.test.ts",
+        "newPath": "tests/data/exploration-source-applicability.test.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/data/ledger-scope-catalog.test.ts",
+        "newPath": "tests/data/ledger-scope-catalog.test.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/data/project-source-index.test.ts",
+        "newPath": "tests/data/project-source-index.test.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/data/python-source-index.test.ts",
+        "newPath": "tests/data/python-source-index.test.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/data/source-applicability-fixture.ts",
+        "newPath": "tests/data/source-applicability-fixture.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/data/source-applicability.test.ts",
+        "newPath": "tests/data/source-applicability.test.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/data/source-index.test.ts",
+        "newPath": "tests/data/source-index.test.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/data/workspace-reader-adapter.test.ts",
+        "newPath": "tests/data/workspace-reader-adapter.test.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-00-assertions.ts",
+        "newPath": "tests/integration/p1-00-assertions.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-00.integration.test.ts",
+        "newPath": "tests/integration/p1-00.integration.test.ts",
+        "imports": 8,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-01.integration.test.ts",
+        "newPath": "tests/integration/p1-01.integration.test.ts",
+        "imports": 11,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-02.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-02.contract-suite.inmemory.test.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-02.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-02.contract-suite.sqlite.test.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-02.integration.test.ts",
+        "newPath": "tests/integration/p1-02.integration.test.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-03.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-03.contract-suite.inmemory.test.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-03.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-03.contract-suite.sqlite.test.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-03.integration.test.ts",
+        "newPath": "tests/integration/p1-03.integration.test.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-04.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-04.contract-suite.inmemory.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-04.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-04.contract-suite.sqlite.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-04.integration.test.ts",
+        "newPath": "tests/integration/p1-04.integration.test.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-05.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-05.contract-suite.inmemory.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-05.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-05.contract-suite.sqlite.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-05.integration.test.ts",
+        "newPath": "tests/integration/p1-05.integration.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-06.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-06.contract-suite.inmemory.test.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-06.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-06.contract-suite.sqlite.test.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-06.integration.test.ts",
+        "newPath": "tests/integration/p1-06.integration.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-07.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-07.contract-suite.inmemory.test.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-07.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-07.contract-suite.sqlite.test.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-07.integration.test.ts",
+        "newPath": "tests/integration/p1-07.integration.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-08.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-08.contract-suite.inmemory.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-08.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-08.contract-suite.sqlite.test.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-08.integration.test.ts",
+        "newPath": "tests/integration/p1-08.integration.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-09-query-regression.test.ts",
+        "newPath": "tests/integration/p1-09-query-regression.test.ts",
+        "imports": 12,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-09.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-09.contract-suite.inmemory.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-09.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-09.contract-suite.sqlite.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-09.integration.test.ts",
+        "newPath": "tests/integration/p1-09.integration.test.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-10.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-10.contract-suite.inmemory.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-10.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-10.contract-suite.sqlite.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-10.integration.test.ts",
+        "newPath": "tests/integration/p1-10.integration.test.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-11.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-11.contract-suite.inmemory.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-11.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-11.contract-suite.sqlite.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-11.integration.test.ts",
+        "newPath": "tests/integration/p1-11.integration.test.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-12.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-12.contract-suite.inmemory.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-12.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-12.contract-suite.sqlite.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-12.integration.test.ts",
+        "newPath": "tests/integration/p1-12.integration.test.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-13-writer-chain.integration.test.ts",
+        "newPath": "tests/integration/p1-13-writer-chain.integration.test.ts",
+        "imports": 9,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-13.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-13.contract-suite.inmemory.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-13.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-13.contract-suite.sqlite.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-13.integration.test.ts",
+        "newPath": "tests/integration/p1-13.integration.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-14.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-14.contract-suite.inmemory.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-14.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-14.contract-suite.sqlite.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-14.integration.test.ts",
+        "newPath": "tests/integration/p1-14.integration.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-15-role-e2e.integration.test.ts",
+        "newPath": "tests/integration/p1-15-role-e2e.integration.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-15.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-15.contract-suite.inmemory.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-15.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-15.contract-suite.sqlite.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-15.integration.test.ts",
+        "newPath": "tests/integration/p1-15.integration.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-16.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-16.contract-suite.inmemory.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-16.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-16.contract-suite.sqlite.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-16.integration.test.ts",
+        "newPath": "tests/integration/p1-16.integration.test.ts",
+        "imports": 9,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-16.real-kernel.continuity.test.ts",
+        "newPath": "tests/integration/p1-16.real-kernel.continuity.test.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-17.contract-suite.inmemory.test.ts",
+        "newPath": "tests/integration/p1-17.contract-suite.inmemory.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-17.contract-suite.sqlite.test.ts",
+        "newPath": "tests/integration/p1-17.contract-suite.sqlite.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/p1-17.integration.test.ts",
+        "newPath": "tests/integration/p1-17.integration.test.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/integration/real-kernel/replay-server.ts",
+        "newPath": "tests/integration/real-kernel/replay-server.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/interaction/exploration-session.test.ts",
+        "newPath": "tests/interaction/exploration-session.test.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/interaction/human-collaboration.test.ts",
+        "newPath": "tests/interaction/human-collaboration.test.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/ledger/in-memory-ledger.boundary.test.ts",
+        "newPath": "tests/ledger/in-memory-ledger.boundary.test.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/ledger/in-memory-ledger.contract.test.ts",
+        "newPath": "tests/ledger/in-memory-ledger.contract.test.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/completed-work-filter.test.ts",
+        "newPath": "tests/read-model/completed-work-filter.test.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/material-access-lookup.test.ts",
+        "newPath": "tests/read-model/material-access-lookup.test.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/material-access-projection.test.ts",
+        "newPath": "tests/read-model/material-access-projection.test.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/p1-03-run-projection.test.ts",
+        "newPath": "tests/read-model/p1-03-run-projection.test.ts",
+        "imports": 17,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/p1-04-verification-projection.test.ts",
+        "newPath": "tests/read-model/p1-04-verification-projection.test.ts",
+        "imports": 16,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/p1-05-goal-phase-projection.test.ts",
+        "newPath": "tests/read-model/p1-05-goal-phase-projection.test.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/p1-06-handoff-projection.test.ts",
+        "newPath": "tests/read-model/p1-06-handoff-projection.test.ts",
+        "imports": 12,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/p1-07-projection.test.ts",
+        "newPath": "tests/read-model/p1-07-projection.test.ts",
+        "imports": 23,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/p1-08-matrix-agents-evidence-timeline.test.ts",
+        "newPath": "tests/read-model/p1-08-matrix-agents-evidence-timeline.test.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/p1-08-portfolio-summary.test.ts",
+        "newPath": "tests/read-model/p1-08-portfolio-summary.test.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/p1-11-plan-change.test.ts",
+        "newPath": "tests/read-model/p1-11-plan-change.test.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/p1-12-brief-proposal-projection.test.ts",
+        "newPath": "tests/read-model/p1-12-brief-proposal-projection.test.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/p1-14-baseline-change-view.test.ts",
+        "newPath": "tests/read-model/p1-14-baseline-change-view.test.ts",
+        "imports": 14,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/p1-15-unified-status.test.ts",
+        "newPath": "tests/read-model/p1-15-unified-status.test.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/p1-16-continuation-projection.test.ts",
+        "newPath": "tests/read-model/p1-16-continuation-projection.test.ts",
+        "imports": 11,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/p1-16-work-context.test.ts",
+        "newPath": "tests/read-model/p1-16-work-context.test.ts",
+        "imports": 10,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/plan-view.rebuild.test.ts",
+        "newPath": "tests/read-model/plan-view.rebuild.test.ts",
+        "imports": 12,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/plan-view.test.ts",
+        "newPath": "tests/read-model/plan-view.test.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/read-model-index.contract.test.ts",
+        "newPath": "tests/read-model/read-model-index.contract.test.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/read-model/read-model-index.test.ts",
+        "newPath": "tests/read-model/read-model-index.test.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-01-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-01-evidence.test.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-02-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-02-evidence.test.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-03-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-03-evidence.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-04-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-04-evidence.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-05-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-05-evidence.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-06-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-06-evidence.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-07-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-07-evidence.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-08-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-08-evidence.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-09-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-09-evidence.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-11-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-11-evidence.test.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-12-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-12-evidence.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-13-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-13-evidence.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-14-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-14-evidence.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-15-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-15-evidence.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-16-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-16-evidence.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/evidence/p1-17-evidence.test.ts",
+        "newPath": "tests/restart/evidence/p1-17-evidence.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/material-access-restart.test.ts",
+        "newPath": "tests/restart/material-access-restart.test.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/material-revocation.test.ts",
+        "newPath": "tests/restart/material-revocation.test.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/material-source-applicability.test.ts",
+        "newPath": "tests/restart/material-source-applicability.test.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/material-source-process.mjs",
+        "newPath": "tests/restart/material-source-process.mjs",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-02-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-02-restart-fixtures.ts",
+        "imports": 16,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-02-restart.test.ts",
+        "newPath": "tests/restart/p1-02-restart.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-03-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-03-restart-fixtures.ts",
+        "imports": 16,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-03-restart.test.ts",
+        "newPath": "tests/restart/p1-03-restart.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-04-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-04-restart-fixtures.ts",
+        "imports": 9,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-04-restart.test.ts",
+        "newPath": "tests/restart/p1-04-restart.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-05-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-05-restart-fixtures.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-05-restart.test.ts",
+        "newPath": "tests/restart/p1-05-restart.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-06-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-06-restart-fixtures.ts",
+        "imports": 9,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-06-restart.test.ts",
+        "newPath": "tests/restart/p1-06-restart.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-07-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-07-restart-fixtures.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-07-restart.test.ts",
+        "newPath": "tests/restart/p1-07-restart.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-08-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-08-restart-fixtures.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-08-restart.test.ts",
+        "newPath": "tests/restart/p1-08-restart.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-09-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-09-restart-fixtures.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-09-restart.test.ts",
+        "newPath": "tests/restart/p1-09-restart.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-10-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-10-restart-fixtures.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-10-restart.test.ts",
+        "newPath": "tests/restart/p1-10-restart.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-11-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-11-restart-fixtures.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-11-restart.test.ts",
+        "newPath": "tests/restart/p1-11-restart.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-12-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-12-restart-fixtures.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-12-restart.test.ts",
+        "newPath": "tests/restart/p1-12-restart.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-13-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-13-restart-fixtures.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-13-restart.test.ts",
+        "newPath": "tests/restart/p1-13-restart.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-14-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-14-restart-fixtures.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-14-restart.test.ts",
+        "newPath": "tests/restart/p1-14-restart.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-15-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-15-restart-fixtures.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-15-restart.test.ts",
+        "newPath": "tests/restart/p1-15-restart.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-16-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-16-restart-fixtures.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-16-restart.test.ts",
+        "newPath": "tests/restart/p1-16-restart.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-17-restart-fixtures.ts",
+        "newPath": "tests/restart/p1-17-restart-fixtures.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/p1-17-restart.test.ts",
+        "newPath": "tests/restart/p1-17-restart.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/persistent-restart.test.ts",
+        "newPath": "tests/restart/persistent-restart.test.ts",
+        "imports": 11,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/readiness-probe.test.ts",
+        "newPath": "tests/restart/readiness-probe.test.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/readiness-probe.ts",
+        "newPath": "tests/restart/readiness-probe.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/restart-assertions.ts",
+        "newPath": "tests/restart/restart-assertions.ts",
+        "imports": 8,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/restart/restart-fixtures.ts",
+        "newPath": "tests/restart/restart-fixtures.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/runtime/context-continuation-adapter.test.ts",
+        "newPath": "tests/runtime/context-continuation-adapter.test.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/runtime/fake-runtime-adapter.test.ts",
+        "newPath": "tests/runtime/fake-runtime-adapter.test.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/runtime/handoff-control-adapter.test.ts",
+        "newPath": "tests/runtime/handoff-control-adapter.test.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/runtime/runtime-observation-journal.test.ts",
+        "newPath": "tests/runtime/runtime-observation-journal.test.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/runtime/unconfigured-capabilities.test.ts",
+        "newPath": "tests/runtime/unconfigured-capabilities.test.ts",
+        "imports": 2,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-ledger/sqlite-ledger.contract.test.ts",
+        "newPath": "tests/sqlite-ledger/sqlite-ledger.contract.test.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-ledger/sqlite-ledger.restart.test.ts",
+        "newPath": "tests/sqlite-ledger/sqlite-ledger.restart.test.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/material-access-projection.test.ts",
+        "newPath": "tests/sqlite-read-model/material-access-projection.test.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/p1-03-run-projection.test.ts",
+        "newPath": "tests/sqlite-read-model/p1-03-run-projection.test.ts",
+        "imports": 18,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/p1-04-verification-projection.test.ts",
+        "newPath": "tests/sqlite-read-model/p1-04-verification-projection.test.ts",
+        "imports": 15,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/p1-05-goal-phase-projection.test.ts",
+        "newPath": "tests/sqlite-read-model/p1-05-goal-phase-projection.test.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/p1-06-handoff-projection.test.ts",
+        "newPath": "tests/sqlite-read-model/p1-06-handoff-projection.test.ts",
+        "imports": 12,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/p1-07-projection.test.ts",
+        "newPath": "tests/sqlite-read-model/p1-07-projection.test.ts",
+        "imports": 23,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/p1-08-matrix-agents-evidence-timeline.test.ts",
+        "newPath": "tests/sqlite-read-model/p1-08-matrix-agents-evidence-timeline.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/p1-08-portfolio-summary.test.ts",
+        "newPath": "tests/sqlite-read-model/p1-08-portfolio-summary.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/p1-11-plan-change.test.ts",
+        "newPath": "tests/sqlite-read-model/p1-11-plan-change.test.ts",
+        "imports": 12,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/p1-12-brief-proposal-projection.test.ts",
+        "newPath": "tests/sqlite-read-model/p1-12-brief-proposal-projection.test.ts",
+        "imports": 7,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/p1-14-baseline-change-view.test.ts",
+        "newPath": "tests/sqlite-read-model/p1-14-baseline-change-view.test.ts",
+        "imports": 13,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/p1-15-unified-status.test.ts",
+        "newPath": "tests/sqlite-read-model/p1-15-unified-status.test.ts",
+        "imports": 8,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/p1-16-continuation-projection.test.ts",
+        "newPath": "tests/sqlite-read-model/p1-16-continuation-projection.test.ts",
+        "imports": 11,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/p1-16-work-context.test.ts",
+        "newPath": "tests/sqlite-read-model/p1-16-work-context.test.ts",
+        "imports": 5,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/plan-view.test.ts",
+        "newPath": "tests/sqlite-read-model/plan-view.test.ts",
+        "imports": 12,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/sqlite-read-model-index.contract.test.ts",
+        "newPath": "tests/sqlite-read-model/sqlite-read-model-index.contract.test.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/sqlite-read-model/sqlite-read-model-index.restart.test.ts",
+        "newPath": "tests/sqlite-read-model/sqlite-read-model-index.restart.test.ts",
+        "imports": 12,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/ui/client.test.ts",
+        "newPath": "tests/ui/client.test.ts",
+        "imports": 1,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/ui/layout.test.ts",
+        "newPath": "tests/ui/layout.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/ui/pending.test.ts",
+        "newPath": "tests/ui/pending.test.ts",
+        "imports": 3,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/ui/rendering.test.ts",
+        "newPath": "tests/ui/rendering.test.ts",
+        "imports": 4,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/vault/artifact-vault.test.ts",
+        "newPath": "tests/vault/artifact-vault.test.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/vault/exploration-material-reader.test.ts",
+        "newPath": "tests/vault/exploration-material-reader.test.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/vault/material-access-grant.test.ts",
+        "newPath": "tests/vault/material-access-grant.test.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/vault/persistent-vault.test.ts",
+        "newPath": "tests/vault/persistent-vault.test.ts",
+        "imports": 2,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/vault/verification-source-pin.test.ts",
+        "newPath": "tests/vault/verification-source-pin.test.ts",
+        "imports": 7,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/verification/candidate-patch-check.test.ts",
+        "newPath": "tests/verification/candidate-patch-check.test.ts",
+        "imports": 3,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/verification/code-graph-port.test.ts",
+        "newPath": "tests/verification/code-graph-port.test.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/verification/command-check-provider.test.ts",
+        "newPath": "tests/verification/command-check-provider.test.ts",
+        "imports": 4,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/verification/migration-gate-port.test.ts",
+        "newPath": "tests/verification/migration-gate-port.test.ts",
+        "imports": 9,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/verification/reviewer-fixture.ts",
+        "newPath": "tests/verification/reviewer-fixture.ts",
+        "imports": 21,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/verification/reviewer-recovery.test.ts",
+        "newPath": "tests/verification/reviewer-recovery.test.ts",
+        "imports": 6,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/verification/reviewer-verification.test.ts",
+        "newPath": "tests/verification/reviewer-verification.test.ts",
+        "imports": 6,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/verification/verification-engine.test.ts",
+        "newPath": "tests/verification/verification-engine.test.ts",
+        "imports": 14,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/verification/verification-rounds.test.ts",
+        "newPath": "tests/verification/verification-rounds.test.ts",
+        "imports": 15,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "tests/verification/verification-service.test.ts",
+        "newPath": "tests/verification/verification-service.test.ts",
+        "imports": 5,
+        "byteIdentical": false,
+        "reverseImportRewriteMatchesBefore": true
+      },
+      {
+        "oldPath": "vitest.config.ts",
+        "newPath": "vitest.config.ts",
+        "imports": 0,
+        "byteIdentical": true,
+        "reverseImportRewriteMatchesBefore": true
+      }
+    ]
+  }
+}

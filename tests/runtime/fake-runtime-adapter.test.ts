@@ -8,7 +8,7 @@
  *   - idempotent start: same runRef -> same handle + identical (replayable)
  *     event batch; different runRef -> distinct handle;
  *   - poll order (sequence order) + drain-to-empty + terminal => [];
- *   - rebase field-identical to contracts/fixtures rebaseScriptForRun.
+ *   - rebase field-identical to fixtures rebaseScriptForRun.
  */
 import { describe, expect, it } from "vitest";
 import { canonicalJson } from "../../src/contracts/fingerprint.js";
@@ -21,8 +21,8 @@ import {
   FAKE_RUNTIME_SCRIPT_CRASHED_V1,
   buildEnvelopeFixture,
   rebaseScriptForRun,
-} from "../../src/contracts/fixtures/dispatch-fixtures.js";
-import { FakeRuntimeAdapter } from "../../src/runtime/fake-runtime-adapter.js";
+} from "../../src/fixtures/dispatch-fixtures.js";
+import { FakeRuntimeAdapter } from "../../src/execution/worker-runtime/fake-runtime-adapter.js";
 
 const PROJECT = "proj-alpha";
 const GOAL = "goal-1";

@@ -1,0 +1,107 @@
+[
+  {
+    "Id": 3084,
+    "StartTime": "2026-09-11T11:53:40.373883+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 9620,
+    "StartTime": "2026-09-11T19:09:21.8728845+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 12172,
+    "StartTime": "2026-09-11T13:46:18.8932446+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 12272,
+    "StartTime": "2026-09-11T11:53:40.3397397+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 22764,
+    "StartTime": "2026-09-11T14:18:13.9212378+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 23916,
+    "StartTime": "2026-09-11T14:18:13.9938364+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 25928,
+    "StartTime": "2026-09-11T14:18:13.9462424+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 32200,
+    "StartTime": "2026-09-11T13:46:18.9465284+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 34584,
+    "StartTime": "2026-09-11T11:53:40.4461533+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 39048,
+    "StartTime": "2026-09-11T17:15:40.8913927+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 40276,
+    "StartTime": "2026-09-11T11:53:40.4234261+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 41016,
+    "StartTime": "2026-09-11T11:53:40.4721958+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 41184,
+    "StartTime": "2026-09-11T11:53:40.5339612+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 41920,
+    "StartTime": "2026-09-11T13:46:18.8632926+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 42268,
+    "StartTime": "2026-09-11T18:54:57.9285364+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 42408,
+    "StartTime": "2026-09-11T18:54:57.9731294+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 42476,
+    "StartTime": "2026-09-11T19:09:21.7555612+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 42748,
+    "StartTime": "2026-09-11T19:09:21.695184+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 43940,
+    "StartTime": "2026-09-11T17:15:38.4542049+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 46484,
+    "StartTime": "2026-09-11T18:54:57.9913481+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  },
+  {
+    "Id": 46792,
+    "StartTime": "2026-09-11T17:38:23.8922429+08:00",
+    "Path": "C:\\Users\\han001\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\b58ca2eaa616c2da\\bin\\node.exe"
+  }
+]

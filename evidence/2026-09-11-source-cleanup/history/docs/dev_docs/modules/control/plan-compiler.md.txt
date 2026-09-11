@@ -1,0 +1,51 @@
+# PlanCompiler Module
+
+> 当前代码与接线评价见 [模块审计](../../../human/module-status.md) 的对应条目。本页保留职责、Interface 要求及明确标注的首切片约定；旧切片状态不能代替当前实现结论。
+
+
+```yaml
+status: draft
+updated: 2026-09-11
+plane: Control
+```
+
+## Purpose
+
+执行反馈增量：`execution-feedback-compiler.ts` 消费 Context 提供的公开反馈与来源，提交确定身份的 execution_coordination QueryJob；不直接运行模型或写账本。协调回答的补料/阻塞资格由真实消费者核对；完整语义重规划和决定回流不因该入口自动具备。契约见[运行时协作](../../interfaces/runtime-collaboration.md#2026-09-11-定向执行反馈增量)。
+
+把人的意图与运行反馈组织成有界协调工作及可受理提案；保留名称但不限于生成计划。
+
+## Interface
+
+候选操作：`request(intent) / accept(resultRef)`。共享字段、拒绝与状态语义唯一来源为 [运行时协作契约](../../interfaces/runtime-collaboration.md)，本页不复制 wire schema。首个消费者：P1-11；P1-15 扩展初始协商；设计已展开不代表契约已冻结或实现。
+
+## Dependencies
+
+ControlEngine、ContextCompiler。计划正文不直接打开 Vault 正文；需要正文时经 Context 取材。长期调用关系以 [ModuleDependencyDAG](../../../ARCHITECTURE.md#moduledependencydag) 为准；运行时事件反馈不是反向源码依赖。
+
+## Hidden Implementation
+
+请求去重、来源关联、缺口补充和结果分类。模型运行经持久 intent 交 Dispatch，持续议题记录由 Data 保存；本 Module 不把完整 transcript 作为唯一状态，相关 Context 可按工作继续或换手。
+
+## Test seam
+
+通过上述 Interface 注入依赖 Adapter，验证：重复结果、过期提案、缺少材料、预算耗尽；已知事实不必调用模型。 不以内部表或私有方法作为唯一测试入口。
+
+## Context load
+
+实现或扩展本 Module 时读取本页、当前 Ticket 与直接消费的 [运行时协作契约](../../interfaces/runtime-collaboration.md) 小节；初始协商及图文集成另读 [初始设计与统一展示](../../interfaces/human-design-status.md)。原始对话和完整历史按需追溯，不默认装入 Run。
+
+## Context 生命周期与协作扩展
+
+初始协调的已实现处理入口为 `src/control/plan-compiler/initial-plan-compiler.ts`：提交持久只读协调意图，解析已登记回答，保留 needs_decision/无效/过期结果，并向 Control 请求接受计划。`app/initial-planning.ts` 只组合处理器、派发器与 Data 视图。已接受分工的预检、claim 和启动/未启动恢复由 Dispatch 的 planned-task-dispatch 承担；不得在此调用真实 Worker 启动。原 AmendGoal request 接口保持不变。协调材料与当前性事实已由 CoordinationContext 提供，PlanCompiler 不直接读 Ledger；完整角色反馈及语义协调验收仍缺。
+
+P1-11／15 组织跨包冲突、有限调查与变更提案；秘书／参谋贯穿执行上报。持续议题可跨 Run，运行承载与提案受理分开。 行为依据：[Context 生命周期](../../interfaces/context-lifecycle.md)、[运行时协作](../../interfaces/runtime-collaboration.md)、[人类交互](../../interfaces/human-design-status.md)。精确 schema 在对应消费者冻结，文档同步不表示已有实现。
+## 当前源码边界（2026-09-11）
+
+计划影响报告使用 Control 的 `resolveTaskWorkIdentity` 读取实际工作绑定；`planning-work-materials.ts` 为已接受源计划的任务取材，两种提案编译器只消费显式材料，不再用 taskId 拼造 workId。派发与影响报告共用 `taskWorkOrigin` 的同一返工起源链规则；显式身份与已有推导身份均原样保留。没有绑定时不虚构引用，读取不可用或未供材料时明确影响清单不完整。该说明不授予权限，不代替 Control 的受理守卫，也不声称受影响 Context 的实际刷新已全部接通。
+
+`src/control/plan-compiler/plan-compiler.ts` 暴露统一 request/accept，内部协调实现为 initial-plan-compiler 与 amendment compiler；OperatorPlanCompiler 单独处理明确标识的人工计划。确定性模型结果规范化是 Control 入场政策，位于 `control/policies/initial-plan-admission.ts`；协调模块复用它，Control 来源 guard 不反调协调器。
+
+跨 Module 的精确入口与失败/持久兼容规则见 [当前 Module 边界](../../interfaces/module-boundaries.md)。此源码映射不代替整体功能验收。
+
+VR-01 修正 OperatorPlanCompiler 的新普通开发计划：同一工作/目标门禁要求同时具有 required dynamic 与 reviewer。旧已接受 Plan 保持不变，不能在验证阶段私自增加或删除义务。初始模型规划的通用语义资格政策仍需单独定义和验收，不能将这一个入口的修正外推到全部规划路径。

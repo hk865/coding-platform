@@ -1,0 +1,11 @@
+--- /tmp/agent-platform-eu1c-20260910/exploration-context-compiler.before.ts	2026-09-10 02:12:44.303600675 +0800
++++ /tmp/agent-platform-eu1c-20260910/src/context/exploration-context-compiler.ts	2026-09-10 02:12:44.309012944 +0800
+@@ -75,7 +75,7 @@
+         });
+         ensure(source.status === 'sourced' && source.pin.manifestDigest === plan.sourceDigest, '探索来源快照已改变或不可读取，请新建目标重新探索');
+         const basis: MaterialBasisV1 = {
+-            planRef: e.planRef, workspaceRevision: e.workspaceSnapshot.revision, sourceDigest: plan.sourceDigest, sourcePin: source.pin
++            planRef: e.planRef, workspaceRevision: e.workspaceSnapshot.revision, sourceDigest: plan.sourceDigest
+         };
+         const selected: ExplorationMaterialSelection = {
+             envelope: e, basis, predecessors: []

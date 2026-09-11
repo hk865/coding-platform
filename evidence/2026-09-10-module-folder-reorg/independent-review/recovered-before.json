@@ -1,0 +1,93 @@
+[
+  {
+    "path": "scripts/check-module-boundaries.mjs",
+    "recovered": true,
+    "oid": "7e9d11631716c352bf9402a8a78722f0b75c26ad",
+    "sha256": "8bfa17f87dd12a4a39d89b800bdccac95a4885bfc9ea529b03eac6c0d4cb2841",
+    "diff": "evidence/2026-09-10-module-folder-reorg/independent-review/diffs/scripts/check-module-boundaries.mjs.diff"
+  },
+  {
+    "path": "scripts/copy-ui.mjs",
+    "recovered": true,
+    "oid": "d4d5a055f0a63d2d2f779b6cedd66e9c24220a61",
+    "sha256": "802aaf50f963d08072c627a5817b011ed9a0e515519f205e2e24060435b19d80",
+    "diff": "evidence/2026-09-10-module-folder-reorg/independent-review/diffs/scripts/copy-ui.mjs.diff"
+  },
+  {
+    "path": "scripts/module-map.mjs",
+    "recovered": true,
+    "oid": "41c86bafd6380fa732aff1f0fee78574f4dac956",
+    "sha256": "9b6a6d535aba10de70ba685977976dd5425caa2fe71ba075b4d8b14a588cf78e",
+    "diff": "evidence/2026-09-10-module-folder-reorg/independent-review/diffs/scripts/module-map.mjs.diff"
+  },
+  {
+    "path": "scripts/verify-source-index.mjs",
+    "recovered": true,
+    "oid": "a04421cb8d4b1c63b152ab7e7ffe9aa621a9d705",
+    "sha256": "514617251d3dfe990ef43cbd703b1ee6964034387def4862fd66a21d81a2724f",
+    "diff": "evidence/2026-09-10-module-folder-reorg/independent-review/diffs/scripts/verify-source-index.mjs.diff"
+  },
+  {
+    "path": "scripts/verify-vault-crash.mjs",
+    "recovered": true,
+    "oid": "2f59e211880eafd71d9c43f9a2a868e91961026c",
+    "sha256": "404da6d80ba6998db198226e2596be9a1636121093026b93988448a289b9c125",
+    "diff": "evidence/2026-09-10-module-folder-reorg/independent-review/diffs/scripts/verify-vault-crash.mjs.diff"
+  },
+  {
+    "path": "src/app/workspace-tools.ts",
+    "recovered": true,
+    "oid": "f8cefcf04642aad5d4273a418afb46f4877309b7",
+    "sha256": "a71d5439678f8cda4b79aa21b4f8059ea384fc8f017d312c42ed818da82d173e",
+    "diff": "evidence/2026-09-10-module-folder-reorg/independent-review/diffs/src/app/workspace-tools.ts.diff"
+  },
+  {
+    "path": "src/contracts/ledger-validation.ts",
+    "recovered": true,
+    "oid": "ab6e47ad36910ff207f939951367764db10d5cb0",
+    "sha256": "ad8848ffa3ef44b49b7751d08d25656fff0ab39a790fa358b37982f0cf8be06f",
+    "diff": "evidence/2026-09-10-module-folder-reorg/independent-review/diffs/src/contracts/ledger-validation.ts.diff"
+  },
+  {
+    "path": "src/read-model/read-model-index.ts",
+    "recovered": true,
+    "oid": "1f3ec6f361226ca743dd8cc250602595baf704c7",
+    "sha256": "7c434282b4359ce9f36942aa55555a8ad7a4ca710fcc1e3caa6e7e631bdcfbbb",
+    "diff": "evidence/2026-09-10-module-folder-reorg/independent-review/diffs/src/read-model/read-model-index.ts.diff"
+  },
+  {
+    "path": "src/data/cpp-source-index.ts",
+    "recovered": true,
+    "oid": "0876fb9c9927e2da68776486f7a31a584f609b10",
+    "sha256": "deb24b54b251d285bea7d45a05f3558f86d1c962aa571f0527cb14927efbff05",
+    "diff": "evidence/2026-09-10-module-folder-reorg/independent-review/diffs/src/data/cpp-source-index.ts.diff"
+  },
+  {
+    "path": "src/data/python-source-index.ts",
+    "recovered": true,
+    "oid": "8872c16d5cae94eee8ed95ad5f0d3584baf1ab1c",
+    "sha256": "a4d1efcfbc30f4e041a619d9a6b6c108766525ea31d8e5cc1e6582216423a29a",
+    "diff": "evidence/2026-09-10-module-folder-reorg/independent-review/diffs/src/data/python-source-index.ts.diff"
+  },
+  {
+    "path": "src/runtime/coding-agent-runtime.ts",
+    "recovered": true,
+    "oid": "e3a70311647f5ae70eb545fe4cddc0e71b983ae7",
+    "sha256": "357194139974fd65e730ffc0d2ea4bb2097c36d8286fe56f7d5a2a5f040a308c",
+    "diff": "evidence/2026-09-10-module-folder-reorg/independent-review/diffs/src/runtime/coding-agent-runtime.ts.diff"
+  },
+  {
+    "path": "src/runtime/observed-model-run.ts",
+    "recovered": true,
+    "oid": "9e65fb78e7fc84720fbd26f0093e95cc05ec6210",
+    "sha256": "44538eb84e44cc5e31b0e76fa3759f8442ce7dd050c30a87712892702ce2f276",
+    "diff": "evidence/2026-09-10-module-folder-reorg/independent-review/diffs/src/runtime/observed-model-run.ts.diff"
+  },
+  {
+    "path": "tests/app/reviewer-recovery-fixture.ts",
+    "recovered": true,
+    "oid": "a7ad3eac061a116ce3d1f2b5ac5a469c902ab71d",
+    "sha256": "088c604646e0a9ad3a98778684b4611d7c50b568089f6acc3f297773d7f57a95",
+    "diff": "evidence/2026-09-10-module-folder-reorg/independent-review/diffs/tests/app/reviewer-recovery-fixture.ts.diff"
+  }
+]

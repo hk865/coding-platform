@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import {
   ARCHITECTURE_BASELINE_FIXTURE_V1,
   COMPLETION_POLICY_FIXTURE_V1,
@@ -18,12 +18,12 @@ import {
   buildInstallCommand,
   completionPolicyPinFor,
   architectureBaselinePinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
+} from "../../src/fixtures/governance-fixtures.js";
 import {
   HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1,
   buildApplyPlanCommand,
-} from "../../src/contracts/fixtures/plan-fixtures.js";
-import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../../src/contracts/fixtures/goal-fixtures.js";
+} from "../../src/fixtures/plan-fixtures.js";
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../contract-support/fixtures/goal-fixtures.js";
 import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
 import { runP102Path, verifyP102AfterRestart } from "../restart/p1-02-restart-fixtures.js";
 

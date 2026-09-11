@@ -1,0 +1,79 @@
+# VR-02-C：Control / Dispatch 与正式协议交接
+
+日期：2026-09-09。入口 [VR-02](../../planning/active/core-verification/VR-02.md) 与 [独立审阅 Interface](../../interfaces/independent-review.md)。上游 VR-01 固定 697 文件摘要为 `ddf3fa92797c7eb3ae46db809762cb6c25002fea10c41722ab8073d700741f6b`。本记录只交付 VR-02-C 的实现与专项证据，不标开发票、Task 或 Goal 完成；不启动返工、来源正式推进或其余后继核心功能。旧资料、失败日志及无关未提交修改均保留。
+
+## 正式接口与宿主接线
+
+唯一值与协议正文是 [reviewer-work.ts](D:/1.project/Software/agent_platform/src/contracts/reviewer-work.ts)；对应 [commands/reviewer-work.ts](D:/1.project/Software/agent_platform/src/contracts/commands/reviewer-work.ts) 只构造明确传入的命令，不补权限或请求身份。
+
+`createReviewControlPorts({ledger,now,eventId})` 位于 [control/reviewer-work.ts](D:/1.project/Software/agent_platform/src/control/reviewer-work.ts)，返回 `{lifecycle,dispatch}`。宿主仅把 `lifecycle.createWork/recordValidatedResult` 注入 Verification，把 `dispatch.bindOutput` 注入 ReviewerDispatch；它们没有加入普通 ControlEngine/HTTP 提交口。三个方法返回 accepted/replayed/rejected 及正式 Work/Result 引用。这里的安全边界是受信模块的 DI 分发；actor 字符串不授予该能力，不宣称可防同进程恶意代码。
+
+`new ReviewerDispatch(deps)` 的公开入口为 `drive(workRef):Promise<ReviewDriveResult>` 与 `recover(workRefs):Promise<ReviewDriveResult[]>`。结果状态为 output_bound、already_bound、awaiting_runtime、incomplete、rejected。依赖准确形状为：
+
+```ts
+{
+  ledger: StateLedger;
+  control: Pick<ControlEngine, 'startRun' | 'runFact' | 'grantMaterialAccess'>;
+  reviewControl: ReviewDispatchControlPort;
+  context: ReviewerContextPort;
+  runtime: RuntimePreparationPort & RuntimeReconciliationPort;
+  execution: RunPort;
+  observations: RuntimeObservationSource<ReviewExecutionObservation>;
+  vault: ArtifactPort;
+  now: () => string;
+}
+```
+
+宿主在 Verification start/resume 返回 canonical Work 后后台驱动该 Work，并在输出后再次调用 Verification resume；读取回执无须等待模型完成。ReviewDispatch 不管理 Verification 请求 journal。两套 Ledger 的 `pendingDispatchIntents(limit, selection?)` 支持 `{workKind:'ordinary'|'review'}`；省略 selection 保留原默认查询。普通 DispatchEngine、既有 HandoffDrive 和 WorkspaceDrive 的 pending/remaining 查询均选择 ordinary，使类别过滤发生于 limit 之前；pending Reviewer 不会占满这些窗口或进入普通 Context。Handoff 对普通非 replacement 的原有错误语义、Parallel 的原有执行语义保持不变，没有开发新接续或并行功能。普通 RuntimeDispatch.recover 跳过 review spec，避免默认驱动抢占独立 Work。
+
+`LeasedWorkerRuntime` 保留既有 `materials(spec,envelope)`，新增 `reviewerMaterials?:(spec,envelope)=>Promise<ReviewerRuntimeAccess>`。review 模式在 canonical start 绑定 Work.input 后取得 Context runtime capability；要求固定只读 envelope，调用同一 Runtime.start 并传 `{vault,reviewer}`。执行事件使用从既有 DispatchEngine 提取的 `consumeDispatchedRun`，没有另一套模型执行循环。
+
+这些接口已经交给主线且主线报告已实际接线；C 不将主线 HTTP 或真实内核结果冒充自己的单元证据。
+
+## 已落盘的控制不变量
+
+首次 Work 创建校验精确 Task/Plan/Goal/Workspace、终态 producer Run/Attempt/原 TaskLease、完整 descriptor 摘要与固定 profile。descriptorId 是排除自身字段的正文摘要；descriptorRef.digest 是含 descriptorId 全文的 Artifact 摘要。profile 使用 X 的 `INDEPENDENT_REVIEWER_ROLE`，摘要排除 profileId/revision/digest，保留原 Task 预算及已保存模型 revision。工具覆盖不完整、未处置负证据、已有同 Task/Plan Work 均拒绝创建；同一完整请求精确回放，不允许换请求重抽。
+
+四种独立事务为 `review-work-create`、`review-start`、`review-output-bind`、`review-result-admission`，两套 Ledger 使用同一纯事务校验器。首次事务同时写 TaskReviewProtocol、Work、独立 Run/Attempt/Outbox，禁止缺少协议采用或混入 TaskLease/Plan/TaskReduction 写入。原 TaskLease 不变，也不伪造 TaskClaimed。start 复用既有 RunStarted/Attempt/Outbox fold，同时写 Work.input；完整 canonical 材料、协议和 grant 读版本加入该事务的 CAS。
+
+Work 只有 `input`、`output`、`resultRef` 这条正式链；原报告固定为 `output.reportRef`。输出绑定要求 canonical completed/exit0、精确 Run revision/terminal event/输入摘要；正式当前 grant 已撤销则拒绝。Dispatch 从独立公开运行观察取得非空、不同于 producer 的 session 和无后续 tool call 的最终 assistant 正文，body-first 写 Vault，再读取确认原 owner/body，最后绑定。模型退出成功没有被当作语义 PASS。
+
+Verification 传入的合法逐 VR 结果按 PASS/FAIL/INCONCLUSIVE 分组，最多三条 Evidence；Work.resultRef、Result、Evidence 和 Index 同事务提交。原报告完整保留每个 VR 的依据，Evidence 只携带组覆盖与原报告引用。共享 512 Evidence 上限在整个分组提交前检查；坏报告的 rejected Result 不生成 Evidence。请求完整 fingerprint 包含原命令身份与 CAS，丢回执后不以新身份伪装 replay。
+
+新普通 operator/model 计划显式带独立审阅协议，原探索计划不因本票改语义；旧 Plan 仅在精确 Task/Plan 首次 Work 创建时采用。旧 Plan/Evidence 正文及原 fingerprint 保留。已采用或新协议计划的 generic reviewer verdict/observation 被拒绝；纯资格函数核对 Result/Work/Run/output/readonly 输入链，未获正式接纳的 PASS 不参与当前 reviewer 覆盖，历史原文仍可展示。旧适用 FAIL/INCONCLUSIVE 保留阻断作用。
+
+canonical Task reducer 与 ReadModel EvidenceExplanation 共用 `qualifyProjectedReviewEvidence`；`loadLivePlan` 和 Goal reducer 额外复核旧 satisfied 缓存的 reviewer 资格，避免首次采用后尚未刷新缓存就解锁下游。包含 reviewer 的旧计划也捕获协议不存在的 `TaskReviewProtocol@0`；Task/Goal 归约事务将首次读到的 Goal/Plan/Workspace/Evidence/Reduction/协议/Work/Result/Run 版本作为 CAS 前提。首次采用或资格事实在读取与提交之间变化时，旧计算返回 revision_conflict，不写 satisfied/COMPLETED。新可选 batch.reviewProtocol 只扩展事务读取前提，原命令 fingerprint 和事件/Snapshot JSON 不变。
+
+两套 ReadModel 保存正式 Work/Result/独立 Run 投影，consoleActiveAgents 展示独立 Reviewer 行并仍引用 producer 原 TaskLease；普通 activeAgent(task) 不被独立 Run 覆盖。SQLite Ledger 与 ReadModel 均支持这些新记录重开与回放。
+
+## 执行证据
+
+证据目录：[evidence/2026-09-09-independent-review](D:/1.project/Software/agent_platform/evidence/2026-09-09-independent-review)。在 WSL Ubuntu-24.04 中，从产品根执行现有 `scripts/test-wsl.sh`；没有运行 C 自己的全仓、构建、浏览器或真实模型质量验证。
+
+主要专项命令（审计前基线与审计修复分别保留日志）：
+
+```sh
+bash scripts/test-wsl.sh tests/control/reviewer-work.test.ts tests/control/reviewer-work-persistence.test.ts tests/control/dispatch-start.test.ts tests/control/evidence-intake.test.ts tests/control/task-reducer.test.ts tests/control/replacement-claim.test.ts
+bash scripts/test-wsl.sh tests/control/reviewer-reduction-race.test.ts tests/control/reviewer-dispatch-isolation.test.ts tests/control/reviewer-work.test.ts tests/control/reviewer-work-persistence.test.ts tests/control/task-reducer.test.ts tests/control/goal-reducer.test.ts tests/control/dispatch-drive.test.ts
+bash scripts/test-wsl.sh tests/control/reviewer-existing-drivers-isolation.test.ts tests/control/reviewer-dispatch-isolation.test.ts tests/control/handoff-drive.test.ts tests/control/workspace-drive.test.ts
+node .local/linux-test-tools/node_modules/typescript/bin/tsc --noEmit --pretty false
+```
+
+- [control-tests-06.log](D:/1.project/Software/agent_platform/evidence/2026-09-09-independent-review/control-tests-06.log)：6 文件、56 项 PASS，测试进程 exit0。双 Ledger 实际创建/start/混合三结果/TaskLease 不变、独立投影、generic 伪审阅拒绝、旧协议/旧 FAIL、创建已提交丢回执、同 key 改参、缺协议事务零写入、结果事务中断后完整回滚/恢复、伪终态、真实 Control 撤 grant，以及 511 条既存 Evidence 后分组越界零写入均已执行。磁盘 SQLite 用例创建 30 个 reviewer VR，精确形成 3 条各 10 项覆盖的 Evidence，重开 Ledger/ReadModel 后 Work/Result/投影相等，原命令可 replay。
+- [control-audit-fixes-01.log](D:/1.project/Software/agent_platform/evidence/2026-09-09-independent-review/control-audit-fixes-01.log)：7 文件、49 项 PASS，进程 exit0。包括双 Ledger Task/Goal 首次采用插入并发反例、普通派发 maxIntents=1 被 Reviewer 占窗的反例及既有回归；旧计算拒绝提交，重新计算与两套 Goal 投影均不错误 COMPLETED。最后补齐新派发夹具接口要求的空 selectedRefs 后，[control-dispatch-isolation-02.log](D:/1.project/Software/agent_platform/evidence/2026-09-09-independent-review/control-dispatch-isolation-02.log) 两项再次 PASS、exit0。
+- [control-existing-drivers-01.log](D:/1.project/Software/agent_platform/evidence/2026-09-09-independent-review/control-existing-drivers-01.log)：最终角色隔离补查 4 文件、11 项 PASS，进程 exit0。双 Ledger 证明只有 ReviewWork 时既有 Handoff/Parallel 零扫描、零错误且不编包；Review 排前而普通 intent 排后时，maxIntents=1 连续三次仍只处理普通 intent，Reviewer outbox 不变。原 Handoff 4 项、Parallel 3 项回归同时通过。
+- [control-types-08.log](D:/1.project/Software/agent_platform/evidence/2026-09-09-independent-review/control-types-08.log)：最终空输出，TypeScript 进程 exit0。types04、types07 为此前候选的类型通过；types05 的新 race 用例 page 显式类型与 types06 的新 isolation 用例 selectedRefs 缺项均已修正，原错误日志保留。
+- `control-tests-01.log` 的两项失败定位为未资格 PASS 派生空覆盖记录仍参与 phase 判断，修正后 `control-tests-02.log` 4 文件 35 项 PASS，`control-tests-03.log` Reviewer 14 项 PASS。
+- `control-tests-04.log` 两项失败是新 cap 夹具把 claim 复制为 PASS，违反既有 claim 必为 INCONCLUSIVE 的规则；修正的是夹具，没有放宽产品拒绝规则。`control-tests-05.log` 实际 55 项 PASS，但 PowerShell/bash exit 中转转义错误令外层 exit1，该轮不作为绿色退出证据；06 修正引用并保留准确退出状态。
+- 早期类型检查保留并行 C/V/X 中间态错误；最终依据为 types08，不能把早期部分模块无报错当作全局通过。
+
+C 最终定点清单位于 [control-source-snapshot-03.json](D:/1.project/Software/agent_platform/evidence/2026-09-09-independent-review/control-source-snapshot-03.json)：41 个此次相关完整源码/测试文件，2026-09-09T14:30:17Z，清单摘要 `7556b919f647abf243ea40c2768a26cf9ce64a06f7295c9149b0766ec0907b5a`。此前 36/38 文件候选清单均保留。它们不是全仓摘要，也不声称这些文件中的所有既存修改都属于 C；摘要算法和逐文件 hash 见清单。
+
+独立审计先用公开 Control 构造了 Goal 的首次协议采用/旧归约提交交错，证明当时可错误 COMPLETED；另以排前 pending Reviewer 证明普通派发饥饿。C 按反例修复，保留审计原错误证明，审计者通知两项均已用原时序重验关闭；正式独立审计结论及全仓快照由主线记录。
+
+## 未解决项与信任范围
+
+1. Control 只读取 Ledger，不能亲自重读磁盘、Vault 原文或模型 session；完整工具语义与报告覆盖由 Verification 校验，真实 current source/grant 读取由 Context/Vault 校验，最终正文与独立 session 由 Dispatch 校验。必须保持上述 DI 组合，不能把任意已存在 payload 当合格输入。
+2. V 的 adoptionReduction 与结果后 reduction 各有 journal checkpoint。C 已用 CAS 修复新的并发旧计算错误提交；ReadModel 中保存的先前 Task/Goal phase 仍来自真实 reduction 事件，在 adoption checkpoint 尚未成功的窗口，先前 phase 标签与已失效的 reviewer EvidenceExplanation 可能暂不一致。这是保留历史投影与 checkpoint 刷新的边界，不声称协议采用和全部 phase 缓存原子刷新。
+3. C 的故障专项覆盖提交前事务中断、创建已提交丢响应和磁盘重开；包正文、原报告 Vault 写入、输出绑定的各宿主中断点及真实 HTTP 恢复以主线/V/X 的独立证据为准。canonical 已 start 而观察 prepared/unknown 的恢复保留 unknown 并拒绝自动新 session，不保证未知效果能自动恢复完成。
+4. 本次确定性夹具不证明真实模型的语义质量，也不证明任意 OS 强杀时点；所有全仓、构建、浏览器、边界检查及未参与实现者的审计结论由主线固定源码后记录。当前没有开启 failed Task 的重抽或授权返工流程。

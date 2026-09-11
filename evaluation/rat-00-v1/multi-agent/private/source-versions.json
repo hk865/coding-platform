@@ -1,0 +1,140 @@
+{
+  "base": {
+    "algorithm": "sha256(UTF8 concatenation of sorted relative-path + NUL + file-sha256 + LF)",
+    "digest": "7ab3a51e314c30274e95001f4e54fb5d4d27135d542739b7629e91eba1ad1727",
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "bb538b21b1c4665729a0157d0277276bed2d98384b57eaf4cca82b836d8e6d69"
+      },
+      {
+        "path": "data/tasks.json",
+        "sha256": "5461785b779dc235be7b403e3b7229c7346177a0eedbb8faf9a124fca283b2de"
+      },
+      {
+        "path": "index.html",
+        "sha256": "2a03e2d71c1cfb4b83d17ec87bb680463c4b8bc51837db1b1f95250c90e5e47d"
+      },
+      {
+        "path": "package.json",
+        "sha256": "8fe8be0be439d0e1bdbb0e81ec3682ec9f6a718702943bc133bf92bda9a3b3fe"
+      },
+      {
+        "path": "server.mjs",
+        "sha256": "51053df96b016daaaa243c1ecbcc8fcfe1043bc46a7cf4ec2a420b3e6e56b6b7"
+      },
+      {
+        "path": "src/api.mjs",
+        "sha256": "d6098031979b060f6272bf91040c500049ef8a03762206ba78b5679c1ff05f0c"
+      },
+      {
+        "path": "src/browser.mjs",
+        "sha256": "3b67968bf69fdfdaf271f7aef596e6ccd594799dffc6c6bb0ad980153694f608"
+      },
+      {
+        "path": "src/store.mjs",
+        "sha256": "e030a89e3b04340b38baedb7dbb74ca231c1b2cd8697d1f4aa9c9040e12ac362"
+      },
+      {
+        "path": "src/ui.mjs",
+        "sha256": "1dda499220117e4b4b4e27dc0d1b418d8f16f0baf527e95ebe2b47c992cc2d75"
+      },
+      {
+        "path": "test/public.test.mjs",
+        "sha256": "79d9f8d29c663d161734d0f446512d01a39f3efdf0eeadd7f2fc50f0a049450b"
+      }
+    ]
+  },
+  "paginationFixed": {
+    "algorithm": "sha256(UTF8 concatenation of sorted relative-path + NUL + file-sha256 + LF)",
+    "digest": "e6b6ab996c2b80ef91915d072b4587a06b9fd7bd9d89db5faab72ee564ee6c45",
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "bb538b21b1c4665729a0157d0277276bed2d98384b57eaf4cca82b836d8e6d69"
+      },
+      {
+        "path": "data/tasks.json",
+        "sha256": "5461785b779dc235be7b403e3b7229c7346177a0eedbb8faf9a124fca283b2de"
+      },
+      {
+        "path": "index.html",
+        "sha256": "2a03e2d71c1cfb4b83d17ec87bb680463c4b8bc51837db1b1f95250c90e5e47d"
+      },
+      {
+        "path": "package.json",
+        "sha256": "8fe8be0be439d0e1bdbb0e81ec3682ec9f6a718702943bc133bf92bda9a3b3fe"
+      },
+      {
+        "path": "server.mjs",
+        "sha256": "51053df96b016daaaa243c1ecbcc8fcfe1043bc46a7cf4ec2a420b3e6e56b6b7"
+      },
+      {
+        "path": "src/api.mjs",
+        "sha256": "d6098031979b060f6272bf91040c500049ef8a03762206ba78b5679c1ff05f0c"
+      },
+      {
+        "path": "src/browser.mjs",
+        "sha256": "3b67968bf69fdfdaf271f7aef596e6ccd594799dffc6c6bb0ad980153694f608"
+      },
+      {
+        "path": "src/store.mjs",
+        "sha256": "946fb9d54281e9e0d5552cd85d8fc046b157f2d91aa754d857bf2de09753bff5"
+      },
+      {
+        "path": "src/ui.mjs",
+        "sha256": "9f9ae2146cb9c4d4ac53abd5bcf3d72cb2eb333cb17c806df3f86a30a376d38f"
+      },
+      {
+        "path": "test/public.test.mjs",
+        "sha256": "79d9f8d29c663d161734d0f446512d01a39f3efdf0eeadd7f2fc50f0a049450b"
+      }
+    ]
+  },
+  "filterFixed": {
+    "algorithm": "sha256(UTF8 concatenation of sorted relative-path + NUL + file-sha256 + LF)",
+    "digest": "d44d1718b8ffd557930eab545d7d9d1376df95e645dbde571704f1550d5c745a",
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "bb538b21b1c4665729a0157d0277276bed2d98384b57eaf4cca82b836d8e6d69"
+      },
+      {
+        "path": "data/tasks.json",
+        "sha256": "5461785b779dc235be7b403e3b7229c7346177a0eedbb8faf9a124fca283b2de"
+      },
+      {
+        "path": "index.html",
+        "sha256": "2a03e2d71c1cfb4b83d17ec87bb680463c4b8bc51837db1b1f95250c90e5e47d"
+      },
+      {
+        "path": "package.json",
+        "sha256": "8fe8be0be439d0e1bdbb0e81ec3682ec9f6a718702943bc133bf92bda9a3b3fe"
+      },
+      {
+        "path": "server.mjs",
+        "sha256": "51053df96b016daaaa243c1ecbcc8fcfe1043bc46a7cf4ec2a420b3e6e56b6b7"
+      },
+      {
+        "path": "src/api.mjs",
+        "sha256": "eeab198d6d3c326824a65c9bab3f1ca8ecc144869da8dfb89c7056a0596b54f3"
+      },
+      {
+        "path": "src/browser.mjs",
+        "sha256": "3b67968bf69fdfdaf271f7aef596e6ccd594799dffc6c6bb0ad980153694f608"
+      },
+      {
+        "path": "src/store.mjs",
+        "sha256": "370596157c66633b9118a4edbd030d13fc92ad9dd0ddc37441911273cf000cab"
+      },
+      {
+        "path": "src/ui.mjs",
+        "sha256": "76a8304f8e057364caca3f1d82c8638c0ae2ad45910d663164a861d1d73d223d"
+      },
+      {
+        "path": "test/public.test.mjs",
+        "sha256": "79d9f8d29c663d161734d0f446512d01a39f3efdf0eeadd7f2fc50f0a049450b"
+      }
+    ]
+  }
+}

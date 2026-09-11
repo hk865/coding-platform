@@ -1,0 +1,406 @@
+{
+  "product": [
+    {
+      "path": "IMPLEMENTATION-HANDOFF.md",
+      "before": "cd3bb289f95482ec0fdf332b407b80ffd4475c2f67083bca548ee478fb5233d6",
+      "after": "1e5b758d3569175f3611eea8fc46a8e00dd078c0fd0e6003497f8cb0719e4065"
+    },
+    {
+      "path": "src/app/governance.ts",
+      "before": "013ce3661f20f971167f77450f5e84939fb76840cf65eb9be9ff4534b9f191c1",
+      "after": "52b227c2876a1ed52837892176850b9c481c085308a631dfbd479f0be120ccfa"
+    },
+    {
+      "path": "src/app/service.ts",
+      "before": "5de02a2c839439d2a855cdc01a28ae4f7ce1be7078d93b4efcb1331a0cb09fcd",
+      "after": "5a7dadd10fd754d5d1ac72da72dd30bf714b634541c7ed0c5fe539dda1ffe623"
+    },
+    {
+      "path": "src/contracts/rework-drive.ts",
+      "before": "a96986254f38ae30c073598102fa51ba791b7dd70e65b9c026123ab67d570070",
+      "after": "49c878064dbff48adbd89e996829d5e47777003db90f1c58a7c5ab9805aa4901"
+    },
+    {
+      "path": "src/contracts/rework.ts",
+      "before": "7a595e9e2703ca25b09ce9527343a8563ceb0c10a4b40734a5bcf3652e03ebe1",
+      "after": "b16b4978e679e08669242fe1145b4d1b6660f8beaf0a1703bb80b93cd60c4819"
+    },
+    {
+      "path": "src/contracts/task-work-identity.ts",
+      "before": "9c09dc781b6ffa58bf15121122eafd0385170b76ba6b4d2a36228139a76c82fd",
+      "after": "a2cb6a8b6fad9c14491c3f43e963cccd98d149eea7580d0a308a39c2062261be"
+    },
+    {
+      "path": "src/contracts/verification-context.ts",
+      "before": "6ad1b6cf8d2c9bc49ab94c0db6229a3daaed2b7344c43c8c2a77cdc211a0a8af",
+      "after": "3406181126310299e7f5c92e378c9c465303ccf55f8c5a7729ebaeed7b3d363e"
+    },
+    {
+      "path": "src/contracts/verification-service.ts",
+      "before": "a998402ffbe7046b8130628975f5916be30817f838458a9d8711c6da3b91ac59",
+      "after": "490961f6c3a3943ca20f9a52daf30954f81be64fd890ead3da350125ad0971be"
+    },
+    {
+      "path": "src/control/control-engine/policies/role-binding-admission.ts",
+      "before": "ecf6e6acea1562ca863ace0e9a54d051dd0d4b6a53c4b4a1073dd80814de1217",
+      "after": "b85e93141d4476e48a936eee38cc274971a05ddfcd04aa7f5c722ea41ba6716e"
+    },
+    {
+      "path": "src/control/dispatch-engine/rework-drive.ts",
+      "before": "ce499bb7774eccc23517c3a6d185a26a2fb90dc510e2739f1c039a36883ea32c",
+      "after": "8a46f25cab96e8431eddd83f67790c8c0e0533ff73a47ad17e866402246aa358"
+    },
+    {
+      "path": "src/control/dispatch-engine/work-identity.ts",
+      "before": "5e3964a179c820f71f8b05b937ac85ecac9a9b3d02c018c094c55eb494875844",
+      "after": "ba3a4c1474c091ab9e47f7ec1ceadd413eb6536c039e96203407afcb820bc976"
+    },
+    {
+      "path": "src/control/plan-compiler/plan-compiler.ts",
+      "before": "6f5ee1392a5083b5257a654239cffec5c2bb66104f406e4d85fe5ff715021b7e",
+      "after": "95243258caeb48e99acff7bc4145b34afdb80710fc1db1cbaee724f0dd93391c"
+    },
+    {
+      "path": "src/control/plan-compiler/rework-plan-compiler.ts",
+      "before": "7acadf8b12758ba0a6f6e9bead7f92a5c7d51e823f562e9842306d3ac6afb1a2",
+      "after": "9ead6de7b33cc95de6099ce8371dd7e0dd1babefca4281d7284fcb896623e4d2"
+    },
+    {
+      "path": "src/control/verification-engine/role-output-completeness.ts",
+      "before": "eb5e0604e592e0c8357927edcdc46b810e69d4ca46088ac488d81f59f477b5ea",
+      "after": "3770cb4747c5fb19cf709392df3154e9e871ed2d2fcb6fba03ddd5641f54c54c"
+    },
+    {
+      "path": "src/control/verification-engine/verification-open-issues.ts",
+      "before": "92d5fa54e573c8920d6ab93024ec02b08f263f47d589337869cd4b2e30d22d47",
+      "after": "eb71d7d0b574aabb833877b2b391818c9fb1f33d15de803ded166aff76e03886"
+    },
+    {
+      "path": "src/control/verification-engine/verification-rounds.ts",
+      "before": "c804be49e63721d2eb2ca75993a7cf88cb515bd8b933ebd448b38c37fc7e8dc8",
+      "after": "b1e1cd0eb4738f7d73f04fe23c4dfb1e3b03b7dd7e7eddc82794925fe25ebc1e"
+    },
+    {
+      "path": "src/control/verification-engine/verification-service.ts",
+      "before": "2124ad7f1628d1b67a96cdfa5daf23d6fbf84944c8ab33376f74df621ce5c514",
+      "after": "83de70caa8625c5f2eb26ffedaeeba50ce673098a829332fbfd78196702d8c77"
+    },
+    {
+      "path": "src/data/context-compiler/role-source-index.ts",
+      "before": "ab8029275b6f07df57c4b525525fac881bc107e91b92d3e1987f0bdb2d89e065",
+      "after": "54cc932a5c73b9caa4bd9da7acaa10cb83f0a8579fd7a92c5de35c0ebb8c7958"
+    },
+    {
+      "path": "src/data/context-compiler/verification-context.ts",
+      "before": "0f7152f0aca54033f45cd03498a8f479c0e9f26c123be5adfef805856164ea95",
+      "after": "d787323cb146c9dd4a313b065333b5fd124087d2e5b0af9e211c3d57023b8214"
+    },
+    {
+      "path": "src/data/context-compiler/work-run-materials.ts",
+      "before": "7a5481cd14d9fc91cdb564320c4f01347367d9e8151fc8110e1ee6dd0788b9a5",
+      "after": "9a92e2be65aae2d0a2bf9d6764c6473a3def6cb9a5018ec14bac437cdf9f0a2c"
+    },
+    {
+      "path": "src/data/state-ledger/in-memory-ledger.ts",
+      "before": "4ce7f81cd3ab1cee8031184bcd5d4f7fbd1d7b009ffbb36b093dfd273b5f3876",
+      "after": "7066364b2484008141996f27888a4b4e39d263683c0aa5ba1d6dacd98332fc87"
+    },
+    {
+      "path": "src/data/state-ledger/sqlite-ledger.ts",
+      "before": "c1660e9ff4fd75c2b39f2c858cc28cab3ca32b36602c23eb1b0557e2dceaffb2",
+      "after": "c874c528f17f0a01fe129a050c3c60da63aafa8bb03a7c7b9e53347d0e10f02b"
+    },
+    {
+      "path": "src/data/workspace-reader/role-source-reader.ts",
+      "before": "6eab75c3c1e8539d0ce4873c80014dcb7c11fabdc7dd591fcaeb79977c8ffa3b",
+      "after": "d360e5a9298955404cf9b68d8b92174045324e84a73a55d7f3d198b14560dd70"
+    },
+    {
+      "path": "src/harness/in-memory-harness.ts",
+      "before": "c60c6dde4aa333b8ef1f8a26983e834b4bb074bdd67e1f35927cdd308daec093",
+      "after": "faa7ec990fa680a04ed4c50133d04c7e8735730b1988bf09f54bca5716dd406e"
+    },
+    {
+      "path": "src/harness/persistent-harness.ts",
+      "before": "1aa35b050db7d744d218d333dd14eb6530b6af1a1f91b79eb1f4ef4deee9ff94",
+      "after": "4bfc6095da8667240bd4d9a6742398c11f5a6d6dd5524933ef8596cd9054570a"
+    },
+    {
+      "path": "src/ui/src/features/governance.tsx",
+      "before": "abb28d3b6bbf5e513748f06d10b39401bac716ef03432698c61acd56732c01a3",
+      "after": "9ce22d803d57da3504ed8ca5182203fe34214e88833d5dcd9e15f41c24089572"
+    },
+    {
+      "path": "tests/app/governance-commands.test.ts",
+      "before": "cb640af62732a85e5d8d1f3769f3aec5c9a69127cf2e672c9110c604d91903be",
+      "after": "d0bf51f48657cb8f3bec2f5654ad730ca4a67541274c0cf2bd8d123b6e008eea"
+    },
+    {
+      "path": "tests/app/governance.test.ts",
+      "before": "c071b3becdc9bb210dad54814a2c7d50e9268de1e1a3d7939da2464509013fcd",
+      "after": "fb110173f6cf913d1d09b3fd25ece9dab71de5f7eb55e3f7dd3e9a09bc6beb0f"
+    },
+    {
+      "path": "tests/app/plan-changes.test.ts",
+      "before": "63ec9b8c1e06482c433273a7527b153fdbb65cb8d990bbb291627a115c4570d8",
+      "after": "0d664a2d12f96a1a09e88e689db9d1f19499c1c557254d95024d88f79d8f3e6c"
+    },
+    {
+      "path": "tests/app/rework-dispatch.test.ts",
+      "before": "fd634fe0227480022c45a2cc60c6d69308b0cd997ea58f5ea175eddc2ee331b8",
+      "after": "9ad131a009ffaf93951b53c7173e52e72fcbac6107921e0d6a26876262a288d5"
+    },
+    {
+      "path": "tests/app/role-material-run.test.ts",
+      "before": "b077b67c7e9fc143e6af211b09e3a1996da0de583b0aa24e0e49766040f1ee07",
+      "after": "b3fceabdaf4968e5ce1921fe14765b868fc2e7ae3bde448498d54c60568ce099"
+    },
+    {
+      "path": "tests/app/role-spec-governance.test.ts",
+      "before": "aa85be36dcba5a4fece7b5775458096013076c5eecb69f10e511e166ce8bb8bc",
+      "after": "a788afad40bddddfaa771162bd33e7900dca5f922f24398174f72659dbb542c4"
+    },
+    {
+      "path": "tests/contracts/module-ownership.test.ts",
+      "before": "c176070eca2abbec9bf5efd8a199d99aef334817be3a721fe4f12085d89388e3",
+      "after": "8d9cb5754b94bf292274f43c61e3dc932f48ac88bfc41ad6d1752b09542aa8ef"
+    },
+    {
+      "path": "tests/control/autonomous-rework-fixture.ts",
+      "before": "435b4c0c86afe9d0c6c50c755aacea4441fd59d2e239bf0a2b107aa65c0acef5",
+      "after": "bd6e9600292b4bd9896dff2f9d59da517a2efcc304e06a64bf6800bef1d01985"
+    },
+    {
+      "path": "tests/control/plan-compiler.test.ts",
+      "before": "82d184ec6e7f49ff9eb6b4d3e4cb55f39436520b16ce25ecb7549f98867dc81a",
+      "after": "dc19f26a4a25c19c844d525d936563e43c08d35184ade7d6a856886db549d261"
+    },
+    {
+      "path": "tests/control/rework-drive-fixture.ts",
+      "before": "34242376c92af35e04c85be5fe4c4f62da23ce1650ed43625fbcd6a7100ec7ea",
+      "after": "56257dbe7428a8bf67c163069fb66b5c3f99ad3afe9710c8782e645e29eec593"
+    },
+    {
+      "path": "tests/control/rework-drive.test.ts",
+      "before": "02e4c0cbf290ac7810cb2fa2968df534bf37627e4170ab717a27758fae1eda64",
+      "after": "60fbc672b29c80aaa1e1569ac5eb724bf8dc7f5f81fff5dd149cd24f236731ff"
+    },
+    {
+      "path": "tests/control/rework-plan-compiler.test.ts",
+      "before": "ede75a07ab6d1476cbbbc66146891915dc22eb8f4ad671ba18243a469dcdce9a",
+      "after": "8c29c0a27371ae86afba16f9c2edc282225d92970d9aedaab388041b80d43658"
+    },
+    {
+      "path": "tests/control/role-material-completion.test.ts",
+      "before": "59eb3d52d571b1d915c956de38c71bcfbabc2f0ed91072552851c774feb7202a",
+      "after": "0e4a8a83dc4c4c02fc8cfd6de9a9c7dff5beda6a6e9a08ea86ad4740d87a9ef8"
+    },
+    {
+      "path": "tests/verification/reviewer-fixture.ts",
+      "before": "f8b02e4a408ca155abe59efa7881e5d31eeea2557745ba87c9863e07f4f07411",
+      "after": "bbfaed14cda22bb87b173baf382005e1dbcc2bc6624cb46de2ede22d4c933b4e"
+    },
+    {
+      "path": "tests/verification/rework-issues.test.ts",
+      "before": "6808f6ca4730f4af57ed01815746378e3e56cc723bc2e22726dace8ef6147854",
+      "after": "c876226b2ca0d3d14f9671a8c9cfd503cb1b97e986c038ff19df974fb64face0"
+    },
+    {
+      "path": "tests/verification/role-output-completeness.test.ts",
+      "before": "a8d222198a07333b40936996b8fab56cb91cffc1cc3c85ac99ac9772aaec13b5",
+      "after": "495522c45e97fddb468a45cfd1c1a97a52377d1b40f253389a4b82588f3b2cff"
+    },
+    {
+      "path": "tests/verification/verification-rounds.test.ts",
+      "before": "f6505f2b06d9f9160c8c04b7de0364fa222e1df96b0c275276fde179afe77c5b",
+      "after": "0b545d5c40975067c7363038bd7a7c3cfe57f5f18ff139ab81c3672d075fe87a"
+    },
+    {
+      "path": "tests/verification/verification-service.test.ts",
+      "before": "796ff52292c4f9340baee7a5109792a106b5205bf7960a433fd83e08e93d24f4",
+      "after": "48d72f6e84da552d0d05df950300bcb726626e9fe0c6631bee0c657a1b3abdcf"
+    },
+    {
+      "path": "src/contracts/governance-view.ts",
+      "before": null,
+      "after": "2a6bc2bb5eb5248b01b55583da0be08fbbeb466b183114338f9178981cbd2434"
+    },
+    {
+      "path": "src/contracts/planning-work-materials.ts",
+      "before": null,
+      "after": "4c38640ac593ba1af30f2d3f09a31ede7cc2535fa8cceec8895df91a1999929b"
+    },
+    {
+      "path": "src/contracts/rework-disposition.ts",
+      "before": null,
+      "after": "f16e616378e573b3bd2396069b325b8ee6946aa7b6fa9e584bce2cf047cc8232"
+    },
+    {
+      "path": "src/contracts/run-output-materials.ts",
+      "before": null,
+      "after": "9c2a4717c6c7385a799533ca9a06dc8855058f1f0215de334c9425f311028987"
+    },
+    {
+      "path": "src/control/control-engine/rework-disposition.ts",
+      "before": null,
+      "after": "d00ac2c70efee7e82c9f588dd32f2d691c9b75d9c6efdd6c604770de22f22802"
+    },
+    {
+      "path": "src/control/plan-compiler/planning-work-materials.ts",
+      "before": null,
+      "after": "f281fdbf18db674f6c2649999312078499d2a625caf085805a155d1a393d153f"
+    },
+    {
+      "path": "src/data/context-compiler/run-output-materials.ts",
+      "before": null,
+      "after": "8168f79e62ab745c9b0c86fa57195e2a2b7fd95e4159eab481bb226fda62fe27"
+    },
+    {
+      "path": "src/data/read-model-index/governance-view.ts",
+      "before": null,
+      "after": "462e7db0959188ac0dc3d8eb5e717d2bdfb90588a86923ebc04fa8ef9fadd10a"
+    },
+    {
+      "path": "src/harness/rework-composition.ts",
+      "before": null,
+      "after": "9f89a6860a095c63a01d5da4b35e3d5277377474f8353344875f5d4b35841d62"
+    },
+    {
+      "path": "tests/context/role-source-stability.test.ts",
+      "before": null,
+      "after": "1c47dd50113fd240c6421a5f23cbb9ed1cecb9d8360f20a2bc1db6ba3557bec0"
+    },
+    {
+      "path": "tests/control/plan-impact-work-identity.test.ts",
+      "before": null,
+      "after": "456d4d0d77a0c1601c23a5bc26723d387c3f57a9f6c3708bfb2d63ee36e8d94a"
+    },
+    {
+      "path": "tests/control/rework-disposition-authority.test.ts",
+      "before": null,
+      "after": "d7fc9f09bfce0da25c3dffcafd92fff5d52513b2cc705abc8621795f8e7b43f3"
+    },
+    {
+      "path": "tests/control/rework-unknown-disposition-review.test.ts",
+      "before": null,
+      "after": "d2ec158cfa3826d31a71cce919818f0a1cc833f5cf18d4125c2ed1c9f2219e32"
+    },
+    {
+      "path": "tests/ledger/identity-upgrade.test.ts",
+      "before": null,
+      "after": "85caaf3311300b0a1b9f378be59b022ccae0f77d6d277e73ba1b69df7a565271"
+    },
+    {
+      "path": "tests/ledger/snapshot-isolation.test.ts",
+      "before": null,
+      "after": "c6b17683d788db7cf9c1e17830ed7c96087a56dcfc5300211540071173acdf0c"
+    },
+    {
+      "path": "tests/read-model/governance-view.test.ts",
+      "before": null,
+      "after": "68cc7d0303ea52adcacb51df12ca2ea5fab984db55b48e5328fcef8181e954c9"
+    }
+  ],
+  "docs": [
+    {
+      "path": "ARCHITECTURE.md",
+      "before": "2baf82038b29a94309896e2d467d1163e00c0a80617a07430fb3588da5c76380",
+      "after": "ddf41aeb00a12ef8745d72984e5d19fa6fae7bac323175ddce8ff7e258734518"
+    },
+    {
+      "path": "dev_docs/decisions/0003-rework-role-spec-architecture-reconciliation.md",
+      "before": "ffd53c13aaeb0909600dfdbb6d5bbc93a64d1339b508fd2646686405f7fa9a89",
+      "after": "54f68928ae65b18639ce60a64513fe1394324e6f44e30ffadce00f81fb5fa0b7"
+    },
+    {
+      "path": "dev_docs/interfaces/context-lifecycle.md",
+      "before": "f3011ff78cd3fb83375b9b6540b9f7b5696283b6bbe56bbf17a064594f8ff825",
+      "after": "521a5a063d101f5d7f962775517bf6b32fa808f3f483391ae60758f82051716a"
+    },
+    {
+      "path": "dev_docs/interfaces/module-boundaries.md",
+      "before": "3960a7b4d23607a2444082456b90b808afc50cf1db5b63e621c48cb52d4fc369",
+      "after": "2769e72be0162b03700a5c9277f41cbb4a622f0189be86a1a22f1f81031b948c"
+    },
+    {
+      "path": "dev_docs/interfaces/runtime-collaboration.md",
+      "before": "15f535fb9648669587da7d83c7c580cc0e7c1f5d91070eb084171f3df72b4c30",
+      "after": "140b0d9f477e50c7e55bfa0344718cffadd8bd0facea55e61f307d0f76ca8ed4"
+    },
+    {
+      "path": "dev_docs/modules/control/architecture-reconciler.md",
+      "before": "999299500b2de20b401c64be9df7ba6c9c44c0cdf6fc93af49e30027f78388dc",
+      "after": "b385142cff137b1347ec586d17328f63cb9704396b0905dbf316b159deb405c2"
+    },
+    {
+      "path": "dev_docs/modules/control/control-engine.md",
+      "before": "01a6726366aa241602656b29d52d97d1c5223b8f52b54e4f1141fc499ba01d56",
+      "after": "5a374f2ba316625e05abb4a12f0a17d73d76efdb5f943747e651799eb359bf6d"
+    },
+    {
+      "path": "dev_docs/modules/control/dispatch-engine.md",
+      "before": "fd6f7902b48d2c7443ec5a1b9cf2b32034355a37a2db52c9744f4541ba3c4199",
+      "after": "072de6c1d62470f17b028b80b65c7af00048f281324c03ff985e91116284be8c"
+    },
+    {
+      "path": "dev_docs/modules/control/plan-compiler.md",
+      "before": "7d21da54df93370d635f83f79a885a3b30dd353400f45961d6dc23932efae11b",
+      "after": "2cabd4c13c04669bdce2bb6a59a80a001f8bb8cf7acc6419fbe630b412dc80a7"
+    },
+    {
+      "path": "dev_docs/modules/control/verification-engine.md",
+      "before": "98fc328214b296fbc9177de7e033c8fe5a3ce3ceecddb98f0f09bd1ace80fb64",
+      "after": "a95c49a804cd56faab77643347570b08cef55a54161a56097b5cbff159343878"
+    },
+    {
+      "path": "dev_docs/modules/data/artifact-vault.md",
+      "before": "da4ba050c5b970bb5cabf2e0083a65d93a0f8e5a54c5bfc81742a5704b6f42bc",
+      "after": "1e33a6a0cd6a8add528de235417b3b6c0cc182befc8ef16a9c022e129333cc2f"
+    },
+    {
+      "path": "dev_docs/modules/data/context-compiler.md",
+      "before": "048e54608ff9f34d88fc6cd535c522b653b70adf541812f2c8a5b1138affb70c",
+      "after": "a408e8184ea450d3b1733163457d101c30ae7af085c236a83961ac58fb4965fc"
+    },
+    {
+      "path": "dev_docs/modules/data/read-model-index.md",
+      "before": "10d42b3b5f1b687af4adabc5840918fd6a0d1349d18d3dff0daa4376d1fe2692",
+      "after": "190a27d9bad6bcfa25e79002c3a870e1ac6e3cf9a6701eded2cdd2b294b54376"
+    },
+    {
+      "path": "dev_docs/modules/data/state-ledger.md",
+      "before": "1411fe3fb833bdd358806055b0dbee27292510daa9ded4b3bc3fefa84568302e",
+      "after": "e78b8647e2a0f3761fd485e1032ed1f7fcd2f0eabf7066492aecc6f41b101d13"
+    },
+    {
+      "path": "dev_docs/modules/data/workspace-reader.md",
+      "before": "9f690898b74283c6e4d43c8dfe9393e60f06e59265db5abb571e7052237cc1ae",
+      "after": "9efbab21aa90416fd9f6c18e721d6a4f149ddaf626cd122ddf08f654ded09ff6"
+    },
+    {
+      "path": "dev_docs/modules/execution/worker-runtime.md",
+      "before": "77283f05955e5c5491fa56256fb36d16b532ed94369de363e99f02099f79162c",
+      "after": "87e282b5fea37250e124c7ec389aaaae2ff294214e18f09b2342997f939e58e2"
+    },
+    {
+      "path": "dev_docs/verification/2026-09-10-core-obligations-map.md",
+      "before": "abf76614189e9b12707798283c120b372f27fc7072c6a04790a4805e8df48800",
+      "after": "f5ece8a3badcbf650e3cfabc2a2da0f7255b2f937bea557d91502d7c531c5be5"
+    },
+    {
+      "path": "human/module-status.md",
+      "before": "41e304ebde3b873661101c2b8e9c21471c447e29f09f76c9a79dfaceae0d7472",
+      "after": "8bf3bd1285386c38a78429d8baea377b179300d6dd41b7d5e27952a28828c276"
+    },
+    {
+      "path": "human/user-replies-2026-09-11.md",
+      "before": "bff167c301ab0ea69a5394889c40e7f38eec7d74a7be72371fe8845d1c441a95",
+      "after": "f7beeaab4837590c4bd62a27c0a670cc5f59c59bfa604d489a3774774511da0d"
+    },
+    {
+      "path": "PRODUCT.md",
+      "before": "ea3211d17aa641f9bea0e914cb78becd5ea1dc5978dd8afb45acb73590d52ff2",
+      "after": "397f709d9acbfff9933a552787798ee18feb08d14b77f0947148f7afe1fa59c9"
+    }
+  ]
+}

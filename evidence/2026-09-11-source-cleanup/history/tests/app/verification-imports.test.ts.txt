@@ -1,0 +1,223 @@
+import { afterEach, expect, it } from 'vitest';
+import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
+import { createGuiService } from '../../src/app/service.js';
+import { CodingAgentRuntime, type RuntimeRecord, type RunSpec } from '../../src/execution/worker-runtime/coding-agent-runtime.js';
+import { FakeRuntimeAdapter } from '../../src/execution/worker-runtime/fake-runtime-adapter.js';
+import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from '../../src/contracts/fixtures/dispatch-fixtures.js';
+import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
+import { evaluateBenchmark } from '../../src/control/verification-engine/benchmark-verification.js';
+import { canonicalJson } from '../../src/contracts/fingerprint.js';
+import { RuntimeObservationJournal } from '../../src/data/artifact-vault/runtime-observation-journal.js';
+import { installLegacyCommandOnlyPlan } from './legacy-command-only-plan.js';
+const cleanup: Array<() => Promise<void>> = [];
+afterEach(async () => { for (const work of cleanup.splice(0).reverse()) await work(); });
+const hash = (s: string) => createHash('sha256').update(s).digest('hex');
+const benchmark = { instanceId: 'example-task', datasetRevision: 'fixed-dataset', failToPass: ['new behavior'], passToPass: ['regression'] };
+const patch = 'diff --git a/answer.txt b/answer.txt\nindex 3367afd..bcbf2bf 100644\n--- a/answer.txt\n+++ b/answer.txt\n@@ -1 +1 @@\n-before\n+after\n';
+const repairPatch = patch.replace('+after\n', '+repaired\n');
+async function setup() {
+  const directory = await mkdtemp(join(tmpdir(), 'verification-import-'));
+  cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  const root = join(directory, 'project'); await mkdir(root); await writeFile(join(root, 'answer.txt'), 'after\n');
+  const records: RuntimeRecord[] = [];
+  const observationJournal = new RuntimeObservationJournal<RuntimeRecord>(join(directory, 'runtime-observations'), {
+    keyFor: record => hash(canonicalJson([record.spec.projectId, record.spec.workspaceId, record.spec.goalId, record.spec.runId])),
+    serialize: record => JSON.stringify(record),
+    writeOrder: 'per_record',
+  });
+  await observationJournal.init();
+  const persistRecords = async () => { for (const record of records) await observationJournal.save(record); };
+  const fake = new FakeRuntimeAdapter(FAKE_RUNTIME_SCRIPT_COMPLETED_V1, { scriptFor: () => ({ schemaVersion: 1, items: FAKE_RUNTIME_SCRIPT_COMPLETED_V1.items.map(i => ({ ...i, occurredAt: new Date().toISOString() })) }) });
+  const runtime = {
+    all: () => structuredClone(records),
+    observations: observationJournal.observations,
+    prepare: async (spec: RunSpec) => { if (!records.length) records.push({ spec, status: 'prepared', sessionId: 'test-session', configuration: null, events: [], trace: [], usage: [], error: null, nodeSha256: null, workspaceRevision: null, cancelRequested: false }); await persistRecords(); },
+    capabilities: () => fake.capabilities(),
+    start: async (envelope: TaskEnvelopeV1) => { const handle = await fake.start(envelope); records[0]!.status = 'completed'; await persistRecords(); return handle; }
+  } as unknown as CodingAgentRuntime;
+  const projectScope = { projectId: 'verification-project', workspaceId: 'workspace-main' };
+  const scope = { ...projectScope, goalId: 'verification-goal', runId: 'real-verification-run' };
+  let clockTick = Date.now();
+  const options = { runtime, rootFor: () => root, clock: () => { clockTick = Math.max(Date.now(), clockTick + 1); return new Date(clockTick).toISOString(); } };
+  let service = await createGuiService(join(directory, 'data'), [projectScope], options); cleanup.push(() => service.close());
+  await service.action('/api/goals', { ...projectScope, requestId: scope.goalId, objective: 'verify behavior' });
+  // Retain the old accepted dynamic-only contract explicitly. New ordinary
+  // development plans now require independent Reviewer evidence as well.
+  await installLegacyCommandOnlyPlan(join(directory, 'data', 'projects', encodeURIComponent(scope.projectId)), scope);
+  await service.action('/api/real/tasks', { ...scope, requestId: 'verification-run', allowWrite: true, instruction: 'Create a change requiring independent checks' });
+  const readyDeadline = Date.now() + 10000; let ended = false;
+  while (Date.now() < readyDeadline) { const state = await service.state(scope); if ('liveRuns' in state && state.liveRuns?.[0]?.status === 'completed' && state.agents.status === 'ready' && state.agents.agents.rows.some(r => r.displayState === 'completed_run')) { ended = true; break; } await new Promise(r => setTimeout(r, 25)); }
+  expect(ended, 'formal ended-run projection must be visible before verification').toBe(true);
+  return { directory, root, scope, records, persistRecords, state: () => service.state(scope),
+    action: (path: string, input: Record<string, unknown>) => service.action(path, { ...scope, ...input }),
+    candidate: (input: Record<string, unknown> = {}) => service.action('/api/real/verifications/candidates', { ...scope, requestId: 'original-candidate', patch, patchSha256: hash(patch), origin: 'model', benchmark, ...input }) as Promise<{ candidate: { candidateId: string; candidateDigest: string; workspaceRevision: number }; replayed: boolean }>,
+    restart: async () => { await service.close(); service = await createGuiService(join(directory, 'data'), [projectScope], options); } };
+}
+function report(candidate: { candidateId: string; candidateDigest: string; workspaceRevision: number }, tests: Array<{ name: string; status: string }>, overrides: Record<string, unknown> = {}) {
+  const reportBody = JSON.stringify({ tests }), completedAt = new Date().toISOString();
+  return { ...candidate, requestId: 'first-score', purpose: 'original', source: { name: 'official-test-runner', reportUri: 'local-evidence/output.json', reportDigest: hash(reportBody) }, startedAt: completedAt, completedAt, reportBody, ...overrides };
+}
+const passing = [{ name: 'new behavior', status: 'PASSED' }, { name: 'regression', status: 'PASSED' }];
+it('calculates PASS, FAIL and MISSING from exact required sets, never overall output counts', () => {
+  expect(() => evaluateBenchmark(benchmark, JSON.stringify({ tests: [{ name: 'new behavior', status: 'toString' }] }))).toThrow('未知测试状态');
+  expect(evaluateBenchmark(benchmark, JSON.stringify({ tests: passing.concat({ name: 'unrequired', status: 'FAILED' }) })).verdict).toBe('PASS');
+  expect(evaluateBenchmark(benchmark, JSON.stringify({ tests: passing.slice(0, 1) }))).toMatchObject({ verdict: 'FAIL', completeness: 'missing', missingTests: ['regression'] });
+  expect(evaluateBenchmark(benchmark, JSON.stringify({ tests: passing.concat({ name: 'regression', status: 'FAILED' }) }))).toMatchObject({ verdict: 'FAIL', failedTests: ['regression'] });
+});
+it('commits genuine PatchRecord/Evidence and reduces work, gate and Goal; restart/replay never repeats attempts', async () => {
+  const t = await setup();
+  const registration = await t.candidate(); expect(registration.candidate.workspaceRevision).toBe(2);
+  const body = report(registration.candidate, passing);
+  const imported = await t.action('/api/real/verifications/import', body) as { verification: { verdict: string; control: { status: string; taskPhase: string; goalPhase: string; evidenceIds: string[] } } };
+  expect(imported.verification).toMatchObject({ verdict: 'PASS', control: { status: 'applied', taskPhase: 'satisfied', goalPhase: 'COMPLETED' } });
+  expect(imported.verification.control.evidenceIds).toHaveLength(2);
+  const before = await t.state(); expect(before.matrix.status === 'ready' && before.matrix.matrix.rows.every(r => r.livePhase === 'satisfied')).toBe(true);
+  await t.restart(); expect(await t.candidate()).toMatchObject({ replayed: true });
+  expect(await t.action('/api/real/verifications/import', body)).toMatchObject({ replayed: true });
+  const state = await t.state(); expect('liveRuns' in state && state.liveRuns?.[0]?.verifications).toHaveLength(1);
+  expect(state.goalStatus).toMatchObject({ status: 'ready', goal: { phase: 'COMPLETED' } });
+},30000);
+it('keeps original FAIL, diagnostic and assisted repair as distinct evidence and candidates', async () => {
+  const t = await setup(); const original = (await t.candidate()).candidate;
+  const fail = report(original, passing.map(v => ({ ...v, status: v.name === 'regression' ? 'FAILED' : v.status })), { verdict: 'PASS' });
+  expect(await t.action('/api/real/verifications/import', fail)).toMatchObject({ verification: { verdict: 'FAIL', control: { taskPhase: 'failed' } } });
+  await t.action('/api/real/verifications/import', { ...fail, requestId: 'diagnostic-score', purpose: 'diagnostic' });
+  await writeFile(join(t.root, 'answer.txt'), 'repaired\n');
+  await expect(t.action('/api/real/verifications/import', { ...fail, requestId: 'stale-score', purpose: 'diagnostic' })).rejects.toThrow('候选已过期');
+  const repaired = (await t.candidate({ requestId: 'repair-candidate', origin: 'assisted-repair', patch: repairPatch, patchSha256: hash(repairPatch) })).candidate;
+  expect(repaired.workspaceRevision).toBe(3);
+  await t.action('/api/real/verifications/import', report(repaired, passing, { requestId: 'repair-score', purpose: 'repair' }));
+  const state = await t.state(); const attempts = 'liveRuns' in state ? state.liveRuns?.[0]?.verifications : [];
+  expect(attempts?.map(a => [a.purpose, a.verdict])).toEqual([['original', 'FAIL'], ['diagnostic', 'FAIL'], ['repair', 'PASS']]);
+  expect(state.matrix.status === 'ready' && state.matrix.matrix.rows.every(r => r.livePhase === 'satisfied')).toBe(true);
+},30000);
+it('rejects scope, patch, report and revision mismatches; active runs and altered idempotent input are blocked', async () => {
+  const t = await setup();
+  await expect(t.candidate({ patchSha256: '0'.repeat(64) })).rejects.toThrow('补丁摘要');
+  await expect(t.candidate({ patch: repairPatch, patchSha256: hash(repairPatch) })).rejects.toThrow('工作区不匹配');
+  t.records[0]!.status = 'running'; await t.persistRecords(); await expect(t.candidate()).rejects.toThrow('已结束');
+  t.records[0]!.status = 'completed'; await t.persistRecords();
+  const c = (await t.candidate()).candidate;
+  await expect(t.candidate({ origin: 'assisted-repair' })).rejects.toThrow('内容已改变');
+  await expect(t.action('/api/real/verifications/import', report(c, passing, { runId: 'real-other' }))).rejects.toThrow('作用域');
+  await expect(t.action('/api/real/verifications/import', report(c, passing, { workspaceRevision: 1 }))).rejects.toThrow('版本不一致');
+  const body = report(c, passing); await expect(t.action('/api/real/verifications/import', { ...body, reportBody: body.reportBody + ' ' })).rejects.toThrow('报告摘要');
+});
+it('missing required results fail the required-set benchmark in Control and cannot complete the Goal', async () => {
+  const t = await setup(); const c = (await t.candidate()).candidate;
+  expect(await t.action('/api/real/verifications/import', report(c, passing.slice(0, 1), { verdict: 'PASS' }))).toMatchObject({ verification: { verdict: 'FAIL', completeness: 'missing', missingTests: ['regression'], control: { taskPhase: 'failed' } } });
+  const state = await t.state(); expect(state.matrix.status === 'ready' && state.matrix.matrix.rows.some(r => r.livePhase !== 'satisfied')).toBe(true);
+});
+
+it('resumes a journal after PatchRecord commit without advancing the workspace again', async () => {
+  const t = await setup(); const original = (await t.candidate()).candidate;
+  const dir = join(t.directory, 'data', 'projects', t.scope.projectId, 'verifications');
+  const file = join(dir, 'candidate-' + original.candidateId + '.json');
+  await writeFile(join(dir, 'pending-' + original.candidateId + '.json'), await readFile(file));
+  await rm(file); await t.restart();
+  expect(await t.candidate()).toMatchObject({ replayed: true, candidate: { workspaceRevision: 2, candidateId: original.candidateId } });
+  expect(await t.action('/api/real/verifications/import', report(original, passing))).toMatchObject({ verification: { control: { taskPhase: 'satisfied' } } });
+},30000);
+it('persists and rehydrates a real-size multi-chunk report without exposing full report bodies in state', async () => {
+  const t = await setup(); const c = (await t.candidate()).candidate;
+  const tests = passing.concat(Array.from({ length: 4000 }, (_, i) => ({ name: 'extra-' + i + '-' + 'x'.repeat(100), status: 'PASSED' })));
+  const body = report(c, tests); expect(Buffer.byteLength(body.reportBody)).toBeGreaterThan(256 * 1024);
+  await t.action('/api/real/verifications/import', body); await t.restart();
+  expect(await t.action('/api/real/verifications/import', body)).toMatchObject({ replayed: true });
+  const state = await t.state(); expect(JSON.stringify(state)).not.toContain('extra-3999');
+  expect('liveRuns' in state && state.liveRuns?.[0]?.verifications?.[0]?.source.reportDigest).toBe(hash(body.reportBody));
+},30000);
+
+it('runs an actual command through VerificationEngine, persists the result, and never infers Task completion', async () => {
+ const t=await setup();
+ const input={requestId:'actual-check',kind:'dynamic',command:'printf independent-check',timeoutMs:3000,allowExecute:true};
+ const first=await t.action('/api/real/verifications/run-check',input);
+ expect(first).toMatchObject({replayed:false,check:{status:'finished',lifecycle:'lease_released',result:{status:'ready',observations:[expect.objectContaining({result:'PASS',artifactRef:expect.objectContaining({kind:'artifact'})})]}}});
+ const state=await t.state();
+ expect('liveRuns' in state && state.liveRuns?.[0]?.commandChecks).toHaveLength(1);
+ expect(state.goalStatus.status==='ready' && state.goalStatus.goal.phase).not.toBe('COMPLETED');
+ const checkRecord=first as {check:{result:{observations:Array<{artifactRef:{digest:string}}>}}};
+ const reportDigest=checkRecord.check.result.observations[0]!.artifactRef.digest;
+ await expect(t.action('/api/real/verifications/check-evidence',{requestId:input.requestId,reportDigest:'0'.repeat(64)})).rejects.toThrow('精确摘要');
+ expect(await t.action('/api/real/verifications/check-evidence',{requestId:input.requestId,reportDigest})).toMatchObject({admission:{status:'admitted',reportDigest,evidenceIds:[expect.any(String)]}});
+ await t.restart();
+ expect(await t.action('/api/real/verifications/check-evidence',{requestId:input.requestId,reportDigest})).toMatchObject({replayed:true,admission:{status:'admitted'}});
+ const reports=await t.action('/api/real/verifications/check-report',{requestId:'actual-check'});
+ // The response projects the record (command/kind/timestamps) AND returns the persisted
+ // report body, where the command, classification and sandbox output actually live.
+ expect(reports).toMatchObject({
+   requestId:'actual-check', status:'finished', command:'printf independent-check', kind:'dynamic', timeoutMs:3000,
+   startedAt:expect.any(String), finishedAt:expect.any(String),
+   observations:[expect.objectContaining({checkId:'command-dynamic',kind:'dynamic',result:'PASS',summary:expect.stringContaining('tool_check')})],
+   reports:[expect.objectContaining({category:'tool_check',result:'PASS',sourceDigest:expect.stringMatching(/^[a-f0-9]{64}$/),
+     definition:expect.objectContaining({command:'printf independent-check',kind:'dynamic',timeoutMs:3000}),
+     context:expect.objectContaining({workspaceRevision:expect.any(Number),taskId:'coding-task',planRef:expect.objectContaining({aggregateType:'PlanRevision',planId:'real-plan-verification-goal'})}),
+     execution:expect.objectContaining({exitCode:0,timedOut:false,stdout:expect.objectContaining({text:'independent-check'}),stderr:expect.objectContaining({text:''})})})],
+ });
+ // A persisted check record must survive a restart with the same projection.
+ expect(await t.action('/api/receipts',{kind:'command-check',requestId:'actual-check'})).toMatchObject({found:true,check:{runId:t.scope.runId,status:'finished',command:'printf independent-check'}});
+ expect(await t.action('/api/receipts',{kind:'command-check',requestId:'never-sent'})).toMatchObject({found:false,check:null});
+ // Same requestId + same payload replays; a changed payload for the same id is rejected.
+ expect(await t.action('/api/real/verifications/run-check',input)).toMatchObject({replayed:true,check:{status:'finished'}});
+ await expect(t.action('/api/real/verifications/run-check',{...input,command:'exit 1'})).rejects.toThrow('内容已改变');
+ await expect(t.action('/api/real/verifications/run-check',{...input,requestId:'no-permission',allowExecute:false})).rejects.toThrow('授权');
+ // A new requestId for the same command is a NEW execution with its own record and report.
+ const repeat=await t.action('/api/real/verifications/run-check',{...input,requestId:'actual-check-again'});
+ expect(repeat).toMatchObject({replayed:false,check:{requestId:'actual-check-again',status:'finished',command:'printf independent-check'}});
+ const repeatReport=await t.action('/api/real/verifications/check-report',{requestId:'actual-check-again'});
+ expect(repeatReport).toMatchObject({requestId:'actual-check-again',reports:[expect.objectContaining({category:'tool_check',result:'PASS',execution:expect.objectContaining({stdout:expect.objectContaining({text:'independent-check'})})})]});
+ const afterRepeat=await t.state();
+ expect('liveRuns' in afterRepeat && afterRepeat.liveRuns?.[0]?.commandChecks?.map(c=>c.requestId)).toEqual(['actual-check','actual-check-again']);
+ const failure=await t.action('/api/real/verifications/run-check',{...input,requestId:'failed-check',command:'exit 1'});
+ expect(failure).toMatchObject({check:{status:'finished',command:'exit 1',result:{status:'ready',observations:[expect.objectContaining({result:'FAIL'})]}}});
+ const timeout=await t.action('/api/real/verifications/run-check',{...input,requestId:'timeout-check',command:'sleep 5',timeoutMs:500});
+ expect(timeout).toMatchObject({check:{status:'finished',result:{status:'ready',observations:[expect.objectContaining({result:'INCONCLUSIVE'})]}}});
+ const timeoutReport=await t.action('/api/real/verifications/check-report',{requestId:'timeout-check'});
+ expect(timeoutReport).toMatchObject({reports:[expect.objectContaining({category:'timeout',result:'INCONCLUSIVE',execution:expect.objectContaining({timedOut:true})})]});
+ const finalState=await t.state();
+ expect(finalState.goalStatus.status==='ready' && finalState.goalStatus.goal.phase).not.toBe('COMPLETED');
+},60000);
+
+it('retains an orphan command report after interruption without re-executing or claiming accepted evidence', async () => {
+ const t = await setup();
+ const input = {requestId:'orphan-report',kind:'dynamic',command:'printf durable-report',timeoutMs:3000,allowExecute:true};
+ await t.action('/api/real/verifications/run-check', input);
+ const file = join(t.directory,'data','projects',t.scope.projectId,'verifications','check-'+hash(canonicalJson([t.scope,input.requestId]))+'.json');
+ const stored = JSON.parse(await readFile(file,'utf8'));
+ expect(stored.progress).toMatchObject({phase:'report_stored',effects:'known'});
+ // Emulate the durable checkpoint at process loss after Vault put, before result registration.
+ stored.status='running'; stored.lifecycle='report_stored'; stored.result=null; stored.finishedAt=null;
+ await writeFile(file,JSON.stringify(stored)); await t.restart();
+ const read = await t.action('/api/real/verifications/check-report',{requestId:input.requestId});
+ expect(read).toMatchObject({status:'interrupted',lifecycle:'reconciliation_required',observations:[],recovery:{commandReplayAllowed:false},
+   reports:[expect.objectContaining({observationId:stored.progress.observationId,execution:expect.objectContaining({stdout:expect.objectContaining({text:'durable-report'})})})]});
+ expect(await t.action('/api/real/verifications/run-check',input)).toMatchObject({replayed:true,check:{status:'interrupted',result:null}});
+ const state=await t.state(); expect(state.goalStatus.status==='ready' && state.goalStatus.goal.phase).not.toBe('COMPLETED');
+ expect(await t.action('/api/real/verifications/reconcile-check',{requestId:input.requestId})).toMatchObject({check:{status:'finished',lifecycle:'lease_released',result:{status:'ready',observations:[expect.objectContaining({result:'PASS',artifactRef:stored.progress.artifactRef})]},recovery:{commandReplayAllowed:false}}});
+ expect(await t.action('/api/real/verifications/reconcile-check',{requestId:input.requestId})).toMatchObject({replayed:true});
+ // A persisted finished result alone is also insufficient to infer lease release.
+ stored.status='finished'; stored.lifecycle='result_recorded'; stored.result={status:'rejected',code:'invalid',issues:[]};
+ await writeFile(file,JSON.stringify(stored)); await t.restart();
+ expect(await t.action('/api/real/verifications/check-report',{requestId:input.requestId})).toMatchObject({status:'finished',lifecycle:'reconciliation_required',recovery:{commandReplayAllowed:false}});
+},30000);
+
+it('keeps a reopened report historical after source changes and never executes the check again', async () => {
+ const t = await setup();
+ const input = {requestId:'changed-source-report',kind:'dynamic',command:'printf original-source-report',timeoutMs:3000,allowExecute:true};
+ await t.action('/api/real/verifications/run-check', input);
+ const file = join(t.directory,'data','projects',t.scope.projectId,'verifications','check-'+hash(canonicalJson([t.scope,input.requestId]))+'.json');
+ const stored = JSON.parse(await readFile(file,'utf8'));
+ stored.status='running'; stored.lifecycle='report_stored'; stored.result=null; stored.finishedAt=null;
+ await writeFile(file,JSON.stringify(stored));
+ await writeFile(join(t.root,'answer.txt'),'changed-after-check\n');
+ await t.restart();
+ await expect(t.action('/api/real/verifications/reconcile-check',{requestId:input.requestId})).rejects.toThrow('历史报告仅供解释');
+ expect(await t.action('/api/real/verifications/run-check',input)).toMatchObject({replayed:true,check:{status:'interrupted',result:null}});
+ const read = await t.action('/api/real/verifications/check-report',{requestId:input.requestId});
+ expect(read).toMatchObject({status:'interrupted',observations:[],reports:[expect.objectContaining({observationId:stored.progress.observationId,
+   execution:expect.objectContaining({stdout:expect.objectContaining({text:'original-source-report'})})})]});
+ await expect(t.action('/api/real/verifications/check-evidence',{requestId:input.requestId,reportDigest:stored.progress.artifactRef.digest})).rejects.toThrow('不可登记证据');
+},30000);

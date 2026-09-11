@@ -1,0 +1,24 @@
+{
+  "request": {
+    "projectId": "local-63e994ee4899e1207528",
+    "workspaceId": "workspace-main",
+    "goalId": "a5e9ec73-ab74-425a-8e71-82626fe29729",
+    "requestId": "b2b828ea-f9d2-44e0-899e-70c088efc0ae",
+    "instruction": "# 保留显式的零超时\n\n`src/timeout.mjs` 会把配置中的 `timeoutMs: 0`\n错误地替换成默认值。修复这个问题：只有值缺失时才使用 fallback，同时保持现有导出和其他数值行为不变。\n\n运行 `node test.mjs` 可执行公开测试。不要修改测试文件。\n",
+    "allowWrite": true,
+    "budget": {
+      "contextWindowTokens": 1000000,
+      "inputTokens": 200000,
+      "outputTokens": 16384,
+      "maxRequests": 8,
+      "maxToolCalls": 24,
+      "timeoutMs": 30000,
+      "perResponseTokens": 2048
+    }
+  },
+  "accepted": {
+    "runId": "real-b2b828ea-f9d2-44e0-899e-70c088efc0ae",
+    "status": "accepted",
+    "executor": "coding-agent"
+  }
+}

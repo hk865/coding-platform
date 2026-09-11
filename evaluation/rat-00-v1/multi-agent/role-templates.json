@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "revision": "rat-ma-roles-v1",
+  "roles": {
+    "coordinator": {
+      "task": "Coordinate source-grounded findings and integration; consume upstream refs."
+    },
+    "reader-ui": {
+      "task": "Investigate browser/UI behavior and publish a versioned report."
+    },
+    "reader-api": {
+      "task": "Investigate API/data behavior and publish a versioned report."
+    },
+    "writer": {
+      "task": "Consume accepted report/proposal, implement within the active lease."
+    },
+    "verifier": {
+      "task": "Independently reproduce or validate candidate revision."
+    },
+    "reviewer": {
+      "task": "Review remaining semantics after mechanical checks pass."
+    }
+  },
+  "single": "One Run owns the same functional work and may use the same public tools; no distinct-Run collaboration credit is required for this ablation. Independent external scoring remains identical.",
+  "serial": "Same six-role template as parallel, overlapping Reader execution disabled; all roles count against the same aggregate trial budget.",
+  "parallel": "Same six-role template as serial, Reader concurrency enabled; same-checkout Writer remains serial.",
+  "scenarioWork": {
+    "MA-01": [
+      "coordinator",
+      "reader-ui",
+      "reader-api"
+    ],
+    "MA-02": [
+      "coordinator",
+      "reader-ui",
+      "reader-api",
+      "writer",
+      "verifier",
+      "reviewer"
+    ],
+    "MA-03": [
+      "coordinator",
+      "reader-ui",
+      "reader-api",
+      "writer",
+      "verifier",
+      "reviewer"
+    ]
+  }
+}

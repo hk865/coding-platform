@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-12 LANE-B InMemory projection tests — decision brief + candidate proposal
  * rows (ArchitectureDecisionBriefRecorded / ArchitectureCandidateProposalRecorded)
@@ -12,7 +13,7 @@
  *     the view field-for-field.
  */
 import { describe, expect, it } from "vitest";
-import { ReadModelIndexImpl } from "../../src/read-model/read-model-index.js";
+import { ReadModelIndexImpl } from "../../src/data/read-model-index/read-model-index.js";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
 import {
   createP108ScenarioRuntime,
@@ -34,7 +35,7 @@ import {
   buildP112Proposal,
   buildRecordArchitectureDecisionBriefCommand,
   buildRecordCandidateBaselineProposalCommand,
-} from "../../src/contracts/fixtures/architecture-fixtures.js";
+} from "../../src/fixtures/architecture-fixtures.js";
 import { candidateProposalDigest } from "../../src/contracts/architecture-inspection.js";
 import type { ArchitectureBaselinePin } from "../../src/contracts/governance.js";
 
@@ -127,7 +128,7 @@ describe("P1-12 LANE-B InMemory projection: brief/proposal isolation", () => {
   });
 
   it("freshness: a never-advanced index returns not_ready (not not_found)", async () => {
-    const fresh = new ReadModelIndexImpl();
+    const fresh = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const view = await fresh.architectureInspectionView({ projectId: P112_PROJECT, workspaceId: P108_WORKSPACE });
     expect(view.status).toBe("not_ready");
     if (view.status === "not_ready") expect(view.observedCursor).toBeNull();
@@ -141,7 +142,7 @@ describe("P1-12 LANE-B InMemory projection: brief/proposal isolation", () => {
     await H.advanceProjection();
 
     const page = await h.ledger.events({ afterCursor: null, limit: 2000 });
-    const fresh = new ReadModelIndexImpl();
+    const fresh = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await fresh.advance(page);
 
     const a = await H.architectureInspectionView({ projectId: P112_PROJECT, workspaceId: P108_WORKSPACE });

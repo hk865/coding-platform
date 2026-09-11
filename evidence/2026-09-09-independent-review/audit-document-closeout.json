@@ -1,0 +1,31 @@
+{
+  "executionRecordsUnchanged": true,
+  "identitySourceAndChangesUnchanged": true,
+  "embeddedResultsMatch": true,
+  "documents": {
+    "exitCode": 0,
+    "sessionId": 32914,
+    "checks": 13,
+    "stage": "Accepted status documents validated after independent full-run/source confirmation",
+    "cwd": "/mnt/d/1.project/Software/agent_learn/agent_dev/agent_platform",
+    "command": "node dev_docs/verification/validate-docs.mjs",
+    "log": "docs-final.log"
+  },
+  "documentLogHasCompleteSuccess": true,
+  "logsChecked": 18,
+  "mismatchedLogs": [],
+  "addedLogs": [
+    {
+      "path": "docs-final.log",
+      "sha256": "17d741a7c14529eb566de8f33e1bcc4bf1afe0dedb1ae3c3c91a8189193d50f5"
+    }
+  ],
+  "removedLogs": [
+    {
+      "path": "docs-final-preaudit.log",
+      "sha256": "17d741a7c14529eb566de8f33e1bcc4bf1afe0dedb1ae3c3c91a8189193d50f5"
+    }
+  ],
+  "retainedLogsUnchanged": true,
+  "scope": "Documentation and machine index closeout only; no product source hashing or test execution repeated."
+}

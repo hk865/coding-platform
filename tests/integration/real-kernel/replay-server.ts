@@ -12,9 +12,11 @@ import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const KERNEL_ROOT =
-  process.env["AGENT_PLATFORM_KERNEL_ROOT"] ?? "/home/han001/projects/agents/coding-agent";
+  process.env["AGENT_PLATFORM_KERNEL_ROOT"] ??
+  fileURLToPath(new URL("../../../vendor/coding-agent/", import.meta.url));
 
 export async function kernelCliReady(): Promise<{ ready: boolean; reason: string }> {
   try {
@@ -120,7 +122,7 @@ export type CliRunResult = {
   stderr: string;
 };
 
-export function spawnCli(args: readonly string[], cwd?: string, timeoutMs = 20_000, killAfterMs?: number): Promise<CliRunResult> {
+export function spawnCli(args: readonly string[], cwd?: string, timeoutMs = 20_000, killWhen?: () => boolean): Promise<CliRunResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [path.join(KERNEL_ROOT, "dist", "app", "cli", "main.js"), ...args], {
       cwd,
@@ -136,12 +138,13 @@ export function spawnCli(args: readonly string[], cwd?: string, timeoutMs = 20_0
       reject(new Error("CLI timeout after " + String(timeoutMs) + "ms"));
     }, timeoutMs);
     timer.unref?.();
-    const killTimer = killAfterMs === undefined ? null : setTimeout(() => child.kill("SIGKILL"), killAfterMs);
+    // Interrupt an observed protocol milestone, not an assumed startup speed.
+    const killTimer = killWhen === undefined ? null : setInterval(() => { if (killWhen()) child.kill("SIGKILL"); }, 20);
     killTimer?.unref?.();
     child.once("error", reject);
     child.once("close", (code, signal) => {
       clearTimeout(timer);
-      if (killTimer !== null) clearTimeout(killTimer);
+      if (killTimer !== null) clearInterval(killTimer);
       resolve({ code, signal, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8") });
     });
   });

@@ -1,0 +1,74 @@
+/**
+ * Shared P1-09 contract-suite harness: query-job scenario over the P1-08
+ * world + helpers (FROZEN surface; lanes fill submit/answer/close/drive/view).
+ */
+import { expect } from "vitest";
+import type { P1_08HarnessLike, P1_08TestHarness } from "./p1-08-harness.js";
+import { runP108TwoProjectScenario, type P108TwoProjectScenarioResult } from "./p1-08-harness.js";
+import type { QueryJobViewQuery, QueryJobViewResult, SubmitQueryJobCommand, SubmitQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, CloseQueryJobCommand, CloseQueryJobReceipt, QueryContextRequestV1, QueryContextResultV1, PublicSnapshotQueryV1, PublicSnapshotResultV1, ReadOnlyQueryPort, SnapshotPort, QueryContextPort, QueryJobIntentV1 } from "../../src/contracts/query-job.js";
+import { buildP109Intent, buildP109Job, buildP109Run, buildP109Answer, buildP109SubmitCommand, buildP109AnswerCommand, buildP109CloseCommand, p109RunRef, p109QuestRef, P109_PROJECT, P109_WORKSPACE, P109_QUERY, P109_RUN, P109_ANSWER } from "../contract-support/fixtures/query-job-fixtures.js";
+import { queryJobAnswerRefFor } from "../../src/contracts/query-job.js";
+import { P108_PROJECT_A, P108_PROJECT_B, P108_TASK_WORK } from "./p1-08-harness.js";
+
+export interface P1_09TestHarness extends P1_08TestHarness {
+  readOnlyQuery: ReadOnlyQueryPort;
+  queryContext: QueryContextPort;
+  snapshot: SnapshotPort;
+  submitQueryJob(command: SubmitQueryJobCommand): Promise<SubmitQueryJobReceipt>;
+  recordQueryAnswer(command: RecordQueryAnswerCommand): Promise<RecordQueryAnswerReceipt>;
+  closeQueryJob(command: CloseQueryJobCommand): Promise<CloseQueryJobReceipt>;
+  queryJobView(query: QueryJobViewQuery): Promise<QueryJobViewResult>;
+  assembleQueryContext(request: QueryContextRequestV1): Promise<QueryContextResultV1>;
+  publicSnapshot(query: PublicSnapshotQueryV1): Promise<PublicSnapshotResultV1>;
+}
+
+export type P1_09HarnessLike = P1_08HarnessLike & {
+  readOnlyQuery: ReadOnlyQueryPort;
+  queryContext: QueryContextPort;
+  snapshot: SnapshotPort;
+  submitQueryJob: (command: SubmitQueryJobCommand) => Promise<SubmitQueryJobReceipt>;
+  recordQueryAnswer: (command: RecordQueryAnswerCommand) => Promise<RecordQueryAnswerReceipt>;
+  closeQueryJob: (command: CloseQueryJobCommand) => Promise<CloseQueryJobReceipt>;
+  queryJobView: (query: QueryJobViewQuery) => Promise<QueryJobViewResult>;
+  assembleQueryContext: (request: QueryContextRequestV1) => Promise<QueryContextResultV1>;
+  publicSnapshot: (query: PublicSnapshotQueryV1) => Promise<PublicSnapshotResultV1>;
+};
+
+export function toP1_09Harness(h: P1_09HarnessLike): P1_09TestHarness {
+  return h as unknown as P1_09TestHarness;
+}
+
+export type P109QueryScenarioResult = {
+  world: P108TwoProjectScenarioResult;
+  intent: QueryJobIntentV1;
+  job: ReturnType<typeof buildP109Job>;
+  runRef: ReturnType<typeof p109QuestRef>;
+  answer1: ReturnType<typeof buildP109Answer>;
+  answer2: ReturnType<typeof buildP109Answer>;
+  view: QueryJobViewResult;
+};
+
+export async function runP109QueryScenario(h: P1_09HarnessLike): Promise<P109QueryScenarioResult> {
+  const world = await runP108TwoProjectScenario(h);
+  const goalId = world.previews.find((p) => p.projectId === P108_PROJECT_A)!.goalId;
+  const intent = buildP109Intent({ goalId });
+  const runRef = p109QuestRef(P109_RUN);
+  const job = buildP109Job(intent, runRef);
+  const submit = await h.submitQueryJob(buildP109SubmitCommand(job, runRef, { commandId: "p109-cmd-submit" }));
+  expect(submit.status).toBe("committed");
+
+  const run = buildP109Run(job, P109_RUN, "running", null);
+  const answer1 = buildP109Answer(runRef, 1, false);
+  const jobAnswered = { ...job, status: "answered" as const, answerRefs: [queryJobAnswerRefFor(P109_PROJECT, P109_WORKSPACE, P109_QUERY, answer1.answerId)], updatedAt: "2026-09-06T00:00:00.000Z" };
+  const a1 = await h.recordQueryAnswer(buildP109AnswerCommand(jobAnswered, { ...run, status: "answered" as const, outcome: "answered" as const }, answer1, 1, { commandId: "p109-cmd-answer-1" }));
+  expect(a1.status).toBe("committed");
+
+  const answer2 = buildP109Answer(runRef, 2, true);
+  const jobAnswered2 = { ...jobAnswered, answerRefs: [...jobAnswered.answerRefs, queryJobAnswerRefFor(P109_PROJECT, P109_WORKSPACE, P109_QUERY, answer2.answerId)], updatedAt: "2026-09-06T00:00:00.000Z" };
+  const a2 = await h.recordQueryAnswer(buildP109AnswerCommand(jobAnswered2, { ...run, status: "answered" as const, outcome: "answered" as const }, answer2, 2, { commandId: "p109-cmd-answer-2" }));
+  expect(a2.status).toBe("committed");
+
+  await h.advanceProjection();
+  const view = await h.queryJobView({ projectId: P109_PROJECT, workspaceId: P109_WORKSPACE, queryJobId: P109_QUERY });
+  return { world, intent, job, runRef, answer1, answer2, view };
+}

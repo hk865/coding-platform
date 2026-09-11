@@ -1,0 +1,225 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-rounded, "Segoe UI", sans-serif;
+  background: #060817;
+  color: #f8f5ee;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 280px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 20% 10%, rgba(91, 104, 255, 0.25), transparent 28rem),
+    radial-gradient(circle at 85% 65%, rgba(250, 173, 91, 0.15), transparent 25rem), #060817;
+}
+
+.game-shell {
+  width: min(100% - 28px, 760px);
+  margin: 0 auto;
+  padding: 32px 0 40px;
+  text-align: center;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: #aeb7ff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+}
+
+h1 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2rem, 8vw, 4rem);
+  font-weight: 500;
+  letter-spacing: -0.04em;
+}
+
+.intro {
+  max-width: 34rem;
+  margin: 10px auto 20px;
+  color: #adb1c8;
+  line-height: 1.6;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.stats div {
+  padding: 10px 6px;
+  border: 1px solid rgba(174, 183, 255, 0.16);
+  border-radius: 14px;
+  background: rgba(14, 18, 42, 0.72);
+}
+
+.stats span,
+.stats strong {
+  display: block;
+}
+
+.stats span {
+  color: #9298b2;
+  font-size: 0.72rem;
+}
+
+.stats strong {
+  margin-top: 2px;
+  font-size: 1.15rem;
+}
+
+.stats b {
+  font-weight: inherit;
+}
+
+.status {
+  min-height: 1.5em;
+  margin: 8px 0 12px;
+  color: #f6cf91;
+  font-weight: 700;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(7px, 1.6vw, 12px);
+  width: min(100%, 590px);
+  margin: 0 auto;
+  perspective: 1000px;
+}
+
+.card {
+  position: relative;
+  aspect-ratio: 1;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(185, 192, 255, 0.28);
+  border-radius: clamp(11px, 2vw, 19px);
+  background: linear-gradient(145deg, #1b214d, #0c1028);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.card::before {
+  content: "✦";
+  position: absolute;
+  inset: 50% auto auto 50%;
+  color: #8e9aff;
+  font-size: clamp(1.2rem, 5vw, 2.6rem);
+  transform: translate(-50%, -50%);
+  transition: opacity 120ms ease;
+}
+
+.card .symbol {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  background: linear-gradient(145deg, #fff0cf, #e6a55c);
+  color: #151327;
+  font-size: clamp(1.45rem, 6vw, 3.2rem);
+  opacity: 0;
+  transform: rotateY(90deg);
+  transition:
+    opacity 120ms ease,
+    transform 180ms ease;
+}
+
+.card.revealed,
+.card.matched {
+  transform: translateY(-2px);
+  border-color: #ffd69a;
+}
+
+.card.revealed::before,
+.card.matched::before {
+  opacity: 0;
+}
+
+.card.revealed .symbol,
+.card.matched .symbol {
+  opacity: 1;
+  transform: rotateY(0);
+}
+
+.card.matched {
+  border-color: #8bf0c4;
+  box-shadow: 0 0 0 2px rgba(139, 240, 196, 0.16);
+  cursor: default;
+}
+
+.card:focus-visible,
+button:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+
+.restart,
+.victory button {
+  margin-top: 20px;
+  padding: 11px 18px;
+  border: 1px solid #6875dc;
+  border-radius: 999px;
+  background: transparent;
+  color: #f7f4ff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.victory {
+  width: min(100%, 590px);
+  margin: 18px auto 0;
+  padding: 20px;
+  border: 1px solid rgba(139, 240, 196, 0.5);
+  border-radius: 20px;
+  background: rgba(11, 39, 39, 0.9);
+}
+
+.victory p,
+.victory h2 {
+  margin: 4px 0;
+}
+
+.victory button {
+  margin-top: 12px;
+  border-color: #8bf0c4;
+}
+
+@media (max-width: 480px) {
+  .game-shell {
+    width: min(100% - 18px, 760px);
+    padding-top: 20px;
+  }
+
+  .stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .intro {
+    font-size: 0.9rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

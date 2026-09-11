@@ -1,0 +1,237 @@
+/**
+ * Verification plans and observation drafts for tool and reviewer requirements.
+ * Compilation is a pure function of the exact task, workspace, baseline, policy,
+ * change scope, risks and available checks. Missing pins/coverage reject without defaults.
+ * Reviewer requirements use review packets unless the versioned policy explicitly
+ * allows a mechanical no-change proof. Reviewer work runs through formal dispatch;
+ * the capability port alone does not perform a review. Control admits Evidence and
+ * reduces formal Task/Goal state; a ready verification result is not completion.
+ */
+import type { TaskTriple } from "./dispatch.js";
+import type { PlanRevisionRef, PlanRevisionSnapshot } from "./plan.js";
+import type { ArchitectureBaselinePin, CompletionPolicyPin } from "./governance.js";
+import type { ArtifactRef } from "./artifact.js";
+import type { TaskBudgetV1 } from "./dispatch.js";
+import type { VerificationPlanRefV1 } from "./evidence.js";
+import type { VerificationRoundConfigurationInput } from './verification-round.js';
+
+// ------------------------------------------------------------------------ //
+// Change scope / risks / semantic classification                             //
+// ------------------------------------------------------------------------ //
+
+export type ChangeScopeV1 = {
+  /** Machine-readable diff class, e.g. "docs-only" | "code-change" | "contract". */
+  diffClass: string;
+  /** Bounded file list (<= CHANGE_SCOPE_MAX_FILES). */
+  changedFiles: string[];
+  /** Bounded human summary (<= CHANGE_SCOPE_SUMMARY_MAX_BYTES). */
+  writeSummary: string;
+};
+
+export const CHANGE_SCOPE_MAX_FILES = 64;
+export const CHANGE_SCOPE_SUMMARY_MAX_BYTES = 2048;
+
+export type RiskV1 = {
+  level: "low" | "medium" | "high";
+  description: string;
+};
+
+export type SemanticChangeClassification = "none" | "semantic";
+
+// ------------------------------------------------------------------------ //
+// Checks                                                                     //
+// ------------------------------------------------------------------------ //
+
+/** Static / dynamic / reviewer correspond to the policy requirement kinds. */
+export type CheckKind = "static" | "dynamic" | "reviewer";
+
+export type CheckCapabilityV1 = {
+  checkId: string;
+  kind: CheckKind;
+  /** Policy requirement kinds this check can produce PASS/FAIL evidence for. */
+  coversKinds: string[];
+  replayable: boolean;
+};
+
+export type CheckContextV1 = {
+  projectId: string;
+  goalId: string;
+  taskId: string;
+  planRef: PlanRevisionRef;
+  workspaceRevision: number;
+  changeScope: ChangeScopeV1;
+};
+
+export type CheckOutcomeV1 = {
+  result: "PASS" | "FAIL" | "INCONCLUSIVE";
+  /** Provider-stable observation id (audit). */
+  observationId: string;
+  summary: string;
+  artifactRef: ArtifactRef | null;
+};
+
+/**
+ * CheckPort: static/dynamic checks supplied by production CommandCheckProvider
+ * or the explicit deterministic providers in src/testing.
+ */
+export interface CheckPort {
+  capabilities(): Promise<CheckCapabilityV1[]>;
+  runCheck(ctx: CheckContextV1, checkId: string): Promise<CheckOutcomeV1>;
+}
+
+// ------------------------------------------------------------------------ //
+// VerificationPlan (compile is PURE)                                         //
+// ------------------------------------------------------------------------ //
+
+export type VerificationCheckPlan = {
+  /** Registered check id (static/dynamic) or the pseudo ids below for reviewer. */
+  checkId: string;
+  kind: CheckKind;
+  /** The policy requirement kind this check satisfies. */
+  satisfiesKind: string;
+  coverage: { obligationId: string; requirementId: string }[];
+  satisfactionPath: "predicate" | "review-packet" | "no-change-fast-path";
+  noChangeFastPath?: { diffClass: string; reason: string };
+};
+
+export const REVIEWER_SEMANTIC_CHECK_ID = "reviewer-semantic-check";
+export const NO_CHANGE_FAST_PATH_CHECK_ID = "no-change-fast-path";
+
+export type VerificationPlanV1 = {
+  schemaVersion: 1;
+  /** Content address: the plan digest == planId (deterministic compile). */
+  planId: string;
+  planDigest: string;
+  taskRef: TaskTriple;
+  planRef: PlanRevisionRef;
+  planRevision: number;
+  workspaceRevision: number;
+  pinnedCompletionPolicy: CompletionPolicyPin;
+  pinnedArchitectureBaseline: ArchitectureBaselinePin;
+  changeScope: ChangeScopeV1;
+  semanticChange: SemanticChangeClassification;
+  risks: RiskV1[];
+  checks: VerificationCheckPlan[];
+  /** Present only for the explicit registry mode; absent preserves old plan digests. */
+  uncovered?: { obligationId: string; requirementId: string; kind: CheckKind }[];
+  configurationDigest?: string;
+};
+
+export type VerificationIssue = { path: string; message: string };
+
+export type VerificationPlanRejectionCode =
+  | "missing_pin"
+  | "pin_mismatch"
+  | "unknown_check"
+  | "no_check_coverage"
+  | "invalid";
+
+export type VerificationPlanCompileInput = {
+  schemaVersion: 1;
+  taskRef: TaskTriple;
+  planRef: PlanRevisionRef;
+  planSnapshot: PlanRevisionSnapshot;
+  workspaceRevision: number;
+  changeScope: ChangeScopeV1;
+  semanticChange: SemanticChangeClassification;
+  risks: RiskV1[];
+  checkCapabilities: CheckCapabilityV1[];
+  selection?: 'all-applicable';
+  configurationDigest?: string;
+  /** Resolved policy content (never a built-in default). */
+  policy: { requirementKinds: string[]; fastPathDiffClasses?: string[] };
+};
+
+export type VerificationPlanCompileResult =
+  | { status: "ready"; plan: VerificationPlanV1 }
+  | { status: "rejected"; code: VerificationPlanRejectionCode; issues: VerificationIssue[] };
+
+
+// ------------------------------------------------------------------------ //
+// Verification request + result (the WHOLE module port)                      //
+// ------------------------------------------------------------------------ //
+
+export type VerificationRequestV1 = {
+  schemaVersion: 1;
+  requestId: string;
+  projectId: string;
+  goalId: string;
+  taskId: string;
+  planRef: PlanRevisionRef;
+  /** Optional: default = canonical Workspace revision. */
+  workspaceRevision?: number;
+  /** Optional: caller-declared cap on the number of checks executed (<= 64). */
+  maxChecks?: number;
+  changeScope: ChangeScopeV1;
+  semanticChange: SemanticChangeClassification;
+  risks: RiskV1[];
+  /** Registered immutable revision of the effective policy the request was
+   * produced under (a stale pin is rejected — no fallback). */
+  pinnedCompletionPolicy?: CompletionPolicyPin;
+  pinnedArchitectureBaseline?: ArchitectureBaselinePin;
+  budget?: TaskBudgetV1;
+  /** Actual execution needs an explicit Run and registry; never infer a recent Run. */
+  round?: {
+    workspaceId: string;
+    runId: string;
+    configuration: VerificationRoundConfigurationInput;
+    allowExecute: true;
+  };
+};
+
+export type ObservationDraftV1 = {
+  checkId: string;
+  kind: "static" | "dynamic";
+  result: "PASS" | "FAIL" | "INCONCLUSIVE";
+  coverage: { obligationId: string; requirementId: string }[];
+  summary: string;
+  artifactRef: ArtifactRef | null;
+};
+
+export type VerificationRejectionCode =
+  | "invalid"
+  | "not_found"
+  | "missing_pin"
+  | "dangling_ref"
+  | "unknown_check"
+  | "no_check_coverage"
+  | "budget_exhausted";
+
+export type VerificationResultV1 =
+  | {
+      status: "ready";
+      plan: VerificationPlanV1;
+      /** Check results for predicate checks (static/dynamic). Reviewer-layer
+       * checks are NOT executed here — they need a ReviewPacket + review run. */
+      observations: ObservationDraftV1[];
+      verificationPlanRef: VerificationPlanRefV1;
+    }
+  | { status: "incomplete"; gaps: string[]; issues: VerificationIssue[] }
+  | {
+      status: "rejected";
+      code: VerificationRejectionCode;
+      issues: VerificationIssue[];
+    };
+
+/** VerificationEngine public verification entry. */
+export interface VerificationPort {
+  verify(request: VerificationRequestV1): Promise<VerificationResultV1>;
+}
+
+// ------------------------------------------------------------------------ //
+// ReviewerPort (minimal frozen shape — review WORK is a dispatch Run)        //
+// ------------------------------------------------------------------------ //
+
+export type ReviewerCapabilities = {
+  mode: "dispatch-run";
+  /** Review packet hard cap (bytes, canonical JSON — bounded, no transcript). */
+  maxPacketBytes: number;
+  /** The adapter NEVER sees a transcript, only the bounded ReviewPacket. */
+  noFullTranscript: true;
+};
+
+export interface ReviewerPort {
+  capabilities(): Promise<ReviewerCapabilities>;
+}
+
+export const REVIEWER_MAX_PACKET_BYTES = 64 * 1024;

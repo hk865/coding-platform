@@ -1,0 +1,230 @@
+{
+  "checkedAt": "2026-09-10T04:29:28.809Z",
+  "scope": "Existing .local roots whose names contain data/browser/sep09 evidence, max five nested directory levels; only runtime/review JSON and read-only Reviewer canonical snapshots. Source/fixture/dependencies excluded. Known external-review and original-repair logs indexed separately.",
+  "roots": [
+    ".local/architecture-rebuild-browser-20260909",
+    ".local/architecture-rebuild-browser-20260909-chromium",
+    ".local/architecture-rebuild-browser-final-20260909",
+    ".local/core-verification-browser-20260909",
+    ".local/core-verification-browser-20260909-02",
+    ".local/core-verification-browser-20260909-final",
+    ".local/independent-review-browser-20260909",
+    ".local/independent-review-browser-20260909-final",
+    ".local/independent-review-browser-20260909-final-02",
+    ".local/independent-review-browser-20260909-final-03",
+    ".local/independent-review-browser-20260909-final-04",
+    ".local/pending-repair-data",
+    ".local/probe-data",
+    ".local/sep09-data",
+    ".local/sep09-real-data",
+    ".local/sep09-real-evidence",
+    ".local/showcase-data",
+    ".local/ui-fixture-data",
+    ".local/ui-recheck-data",
+    ".local/ui-test-data",
+    ".local/ui12-data",
+    ".local/ui12-data-repair"
+  ],
+  "directories": [
+    ".local/architecture-rebuild-browser-20260909/data/real-runs",
+    ".local/architecture-rebuild-browser-20260909/data/verifications",
+    ".local/architecture-rebuild-browser-20260909-chromium/data/real-runs",
+    ".local/architecture-rebuild-browser-20260909-chromium/data/verifications",
+    ".local/architecture-rebuild-browser-final-20260909/data/real-runs",
+    ".local/architecture-rebuild-browser-final-20260909/data/verifications",
+    ".local/core-verification-browser-20260909/data/real-runs",
+    ".local/core-verification-browser-20260909/data/verifications",
+    ".local/core-verification-browser-20260909-02/data/real-runs",
+    ".local/core-verification-browser-20260909-02/data/verifications",
+    ".local/core-verification-browser-20260909-final/data/real-runs",
+    ".local/core-verification-browser-20260909-final/data/verifications",
+    ".local/independent-review-browser-20260909/data/real-runs",
+    ".local/independent-review-browser-20260909/data/verifications",
+    ".local/independent-review-browser-20260909-final/data/real-runs",
+    ".local/independent-review-browser-20260909-final/data/verifications",
+    ".local/independent-review-browser-20260909-final-02/data/real-runs",
+    ".local/independent-review-browser-20260909-final-02/data/verifications",
+    ".local/independent-review-browser-20260909-final-03/data/real-runs",
+    ".local/independent-review-browser-20260909-final-03/data/verifications",
+    ".local/independent-review-browser-20260909-final-04/data/real-runs",
+    ".local/independent-review-browser-20260909-final-04/data/verifications",
+    ".local/pending-repair-data/real-runs",
+    ".local/pending-repair-data/verifications",
+    ".local/probe-data/real-runs",
+    ".local/probe-data/verifications",
+    ".local/sep09-data/real-runs",
+    ".local/sep09-data/verifications",
+    ".local/sep09-real-data/real-runs",
+    ".local/sep09-real-data/verifications",
+    ".local/showcase-data/real-runs",
+    ".local/showcase-data/verifications",
+    ".local/ui-fixture-data/real-runs",
+    ".local/ui-fixture-data/verifications",
+    ".local/ui-recheck-data/real-runs",
+    ".local/ui-recheck-data/verifications",
+    ".local/ui-test-data/real-runs",
+    ".local/ui-test-data/verifications",
+    ".local/ui12-data/real-runs",
+    ".local/ui12-data/verifications",
+    ".local/ui12-data-repair/real-runs",
+    ".local/ui12-data-repair/verifications"
+  ],
+  "records": [
+    {
+      "file": ".local/sep09-real-data/real-runs/1b089b5bd56b2f01aae617a8170d6ee903ce08ae9eae61dd72a7945a68801c22.json",
+      "bytes": 20515,
+      "sha256": "87971ddfb7952b1e19ec474a0a2ab4a683e1629081749eff2f85a6e6acff3003",
+      "kind": "runtime-observation",
+      "scope": {
+        "projectId": "acceptance-alpha",
+        "workspaceId": "workspace-main",
+        "goalId": "c5575b1e-fbd1-47a3-81de-32a375fed5b7",
+        "runId": "real-100956c3-53e4-49eb-b8e3-6419fb15c682",
+        "taskId": "coding-task"
+      },
+      "mode": null,
+      "status": "completed",
+      "requestId": null,
+      "workRef": null
+    },
+    {
+      "file": ".local/ui12-data/real-runs/f79f3a7bc3ad780cc84c80bc31e560fc11bc4ad6968f796f2b33c60e95273c19.json",
+      "bytes": 23981,
+      "sha256": "da01cdd9035f6525810a952f13773fdaf261b0da1248fd08ab103c11822462a9",
+      "kind": "runtime-observation",
+      "scope": {
+        "projectId": "acceptance-alpha",
+        "workspaceId": "workspace-main",
+        "goalId": "b937ba98-82c1-4d3d-b7e6-bc8707f4b1c2",
+        "runId": "real-67367d59-bb3e-4cf8-9b9f-b5ff05cf6df6",
+        "taskId": "coding-task"
+      },
+      "mode": null,
+      "status": "completed",
+      "requestId": null,
+      "workRef": null
+    },
+    {
+      "file": ".local/ui12-data-repair/real-runs/0b3552fadd7ff417c5c963aa0a6f993af7ea5be1d9703d874e705bdc2aa32e27.json",
+      "bytes": 20088,
+      "sha256": "23ec4e1540c59a449c0469a0d4f7c2203bcbe3ea0e1a417d6ae40b4f84f97209",
+      "kind": "runtime-observation",
+      "scope": {
+        "projectId": "acceptance-alpha",
+        "workspaceId": "workspace-main",
+        "goalId": "2c3d7e75-78de-4c3c-a458-58f2dd29a730",
+        "runId": "real-a5f6538c-db3b-4ab0-b1cb-6126f920b4ee",
+        "taskId": "coding-task"
+      },
+      "mode": null,
+      "status": "completed",
+      "requestId": null,
+      "workRef": null
+    }
+  ],
+  "reviewerRecords": [],
+  "canonical": [
+    {
+      "file": ".local/architecture-rebuild-browser-20260909/data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/architecture-rebuild-browser-20260909-chromium/data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/architecture-rebuild-browser-final-20260909/data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/core-verification-browser-20260909/data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/core-verification-browser-20260909-02/data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/core-verification-browser-20260909-final/data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/independent-review-browser-20260909/data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/independent-review-browser-20260909-final/data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/independent-review-browser-20260909-final-02/data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/independent-review-browser-20260909-final-03/data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/independent-review-browser-20260909-final-04/data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/pending-repair-data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/probe-data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/sep09-data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/sep09-real-data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/showcase-data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/ui-fixture-data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/ui-recheck-data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/ui-test-data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/ui12-data/ledger.sqlite",
+      "reviewerSnapshots": []
+    },
+    {
+      "file": ".local/ui12-data-repair/ledger.sqlite",
+      "reviewerSnapshots": []
+    }
+  ],
+  "errors": [],
+  "logs": [
+    {
+      "file": "evidence/2026-09-10-external-review/lease-refusal.log",
+      "bytes": 718,
+      "sha256": "6e46bb4456d8c3d26dd7c4d5d47b7975a0e7c5c5d3976342bebbc20aed316d4d"
+    },
+    {
+      "file": "evidence/2026-09-10-external-review-repair/f01-prefix-reproduction/prefix-f01-wedge.log",
+      "bytes": 2952,
+      "sha256": "125e821cbd1a6bd971a83a36127a52d0c7d0baefe31e692a6d1e03fd162d079c"
+    },
+    {
+      "file": "evidence/2026-09-10-external-review-repair/err01-targeted-pass.log",
+      "bytes": 10310,
+      "sha256": "1adf198d92ceb06bcaa67cd94eae20ff27cd8aef6b04dc9231a2ca6db388777c"
+    }
+  ]
+}

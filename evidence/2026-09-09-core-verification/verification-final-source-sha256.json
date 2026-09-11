@@ -1,0 +1,56 @@
+{
+  "ticket": "VR-01-V",
+  "count": 12,
+  "digestAlgorithm": "sha256(UTF8(JSON compact sorted file entries)))",
+  "digest": "e01450ba5bed70fb02cc2ce6a380a3f6dfbc26e850432f1835a74be4807fa59b",
+  "files": [
+    {
+      "path": "src/contracts/verification-round.ts",
+      "sha256": "5b50995bd895a473ebd5018d06301264700b57746088a1018ed57124d073c817"
+    },
+    {
+      "path": "src/contracts/verification-service.ts",
+      "sha256": "dbbeccdd45368a87192cd2662b3024d5c5ff7136d1418887a3feb7a975e7c580"
+    },
+    {
+      "path": "src/contracts/verification.ts",
+      "sha256": "8659857a4246abcf6904ff83a1dff879372752e8e20f7d6076341c7e405cd31c"
+    },
+    {
+      "path": "src/verification/command-check-lifecycle.ts",
+      "sha256": "dc65d5841b6a9c6f2deff0b666d8d92ff93ad1729b73459ff214a864b2f6c590"
+    },
+    {
+      "path": "src/verification/command-check-provider.ts",
+      "sha256": "b9a648325050226c3fbcf93f01f81b222375fe8efc394d79fe2a8e160f164b49"
+    },
+    {
+      "path": "src/verification/verification-engine.ts",
+      "sha256": "87673b450182437a77f203a82074f6ae02135b8f6b463fafed6eef0870d7d094"
+    },
+    {
+      "path": "src/verification/verification-journal.ts",
+      "sha256": "89eed10f491c5cb900aa6eda270bd3cfeba715874e11569d9758cd8a88fa2c4c"
+    },
+    {
+      "path": "src/verification/verification-plan-compiler.ts",
+      "sha256": "98f056967c50d3d50eb004a6ed19bb9b8f328bff21a67066909d7d5e509d3e60"
+    },
+    {
+      "path": "src/verification/verification-rounds.ts",
+      "sha256": "143025f6f9fbfa730d6ab823e287b942570ee9a1d68113c862f39950e6c6127f"
+    },
+    {
+      "path": "src/verification/verification-service.ts",
+      "sha256": "3622de1b872577722c4e0be5000d1bc80ec45261c39b5c36d9e965aeae4e50c1"
+    },
+    {
+      "path": "tests/verification/verification-rounds.test.ts",
+      "sha256": "c22719f7f3385bfe7fd2d11243a394bcd4e093413aa1c0e49b73f26eaada264c"
+    },
+    {
+      "path": "tests/verification/verification-service.test.ts",
+      "sha256": "25e0adc6decbf547bd0b1a30431368dc68ed738693c3081cab3ee13c8a928a9c"
+    }
+  ]
+}

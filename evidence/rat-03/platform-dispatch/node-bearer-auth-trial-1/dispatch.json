@@ -1,0 +1,24 @@
+{
+  "request": {
+    "projectId": "local-c3489f8237f3b81b1cf9",
+    "workspaceId": "workspace-main",
+    "goalId": "be70cfeb-9b52-478b-ae4a-7889049d300b",
+    "requestId": "2d451bc8-b7b9-433b-a547-a688c070cb29",
+    "instruction": "# 收紧 Bearer token 验证\n\n`src/auth.mjs` 使用子串匹配验证 Authorization header，导致额外前后缀也能通过。修复\n`isAuthorized`：只接受完整且大小写敏感的 `Bearer <token>`，并安全处理缺失或非字符串 header。\n\n运行 `node test.mjs` 可执行公开测试。不要修改测试文件。\n",
+    "allowWrite": true,
+    "budget": {
+      "contextWindowTokens": 1000000,
+      "inputTokens": 200000,
+      "outputTokens": 16384,
+      "maxRequests": 10,
+      "maxToolCalls": 30,
+      "timeoutMs": 30000,
+      "perResponseTokens": 2048
+    }
+  },
+  "accepted": {
+    "runId": "real-2d451bc8-b7b9-433b-a547-a688c070cb29",
+    "status": "accepted",
+    "executor": "coding-agent"
+  }
+}

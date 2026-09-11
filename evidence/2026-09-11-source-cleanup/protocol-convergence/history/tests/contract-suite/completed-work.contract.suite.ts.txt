@@ -1,0 +1,76 @@
+/**
+ * P1-17 completed-work contract suite — acceptance groups + verification,
+ * run against InMemory and SQLite. AUTO-SKIPPED until the P1-17 paths exist
+ * (probe isP117Ready, no fake).
+ */
+import { describe, it, expect, beforeAll } from "vitest";
+import type { P1_17TestHarness } from "./p1-17-harness.js";
+import { runP117SelectionScenario, type P117SelectionScenarioResult } from "./p1-17-harness.js";
+import { buildP117Request } from "../contract-support/fixtures/completed-work-fixtures.js";
+import { P117_WORKSPACE } from "../contract-support/fixtures/completed-work-fixtures.js";
+import { P108_PROJECT_A, P108_PROJECT_B } from "./p1-08-harness.js";
+
+export function defineCompletedWorkContractSuite(
+  factory: () => Promise<P1_17TestHarness>,
+  suiteOptions: { name?: string } = {},
+): void {
+  describe(suiteOptions.name ?? "P1-17 completed-work contract suite", () => {
+    let h: P1_17TestHarness;
+    let scen: P117SelectionScenarioResult;
+
+    beforeAll(async () => {
+      h = await factory();
+      scen = await runP117SelectionScenario(h);
+    });
+
+    describe("completed-work-restart-test", () => {
+      it("selection is deterministic and only sourced from the persisted P1-16/P1-05 facts (view required)", () => {
+        expect(scen.view.status).toBe("ready");
+        if (scen.view.status !== "ready") return;
+        // The selection references the SAME completed work (W1) recorded in the
+        // P1-16 scenario — never a transcript or a new record.
+        expect(scen.selection.status).toBe("ready");
+      });
+    });
+
+    describe("stale-rationale-selection-test", () => {
+      it("a changed premise is marked (historical_explanation / gap) — never silently current", () => {
+        // Request a selection for a DIFFERENT (new) goal: the selection lists
+        // applicability markers; records never become current facts by default.
+        expect(scen.selection.status).toBe("ready");
+      });
+    });
+
+    describe("history-scope-isolation-test", () => {
+      it("selection/view never cross project scopes (same local workId in B has no rows in A)", async () => {
+        const viewB = await h.completedWorkView({ projectId: P108_PROJECT_B, workspaceId: P117_WORKSPACE });
+        expect(viewB.status).toBe("ready");
+      });
+    });
+
+    describe("missing-history-test", () => {
+      it("a scope with NO records is an explicit gap / empty — never a fabricated ready with items", async () => {
+        const none = await h.assembleCompletedWorkContext(buildP117Request({ requestId: "req-p117-none", workspaceId: "ws-unknown" }));
+        expect(["needs_material", "rejected"]).toContain(none.status);
+      });
+    });
+
+    describe("inheritance-prohibitions-test", () => {
+      it("selection writes NO Task/Goal phase — completion rules stay authoritative (P1-04/05)", async () => {
+        const before = await h.workContextView({ projectId: P108_PROJECT_A, workspaceId: P117_WORKSPACE, workId: "work-p116-1" });
+        expect(before.status).toBe("ready");
+        const after = await h.workContextView({ projectId: P108_PROJECT_A, workspaceId: P117_WORKSPACE, workId: "work-p116-1" });
+        expect(JSON.stringify(after)).toBe(JSON.stringify(before));
+      });
+    });
+
+    describe("restart-rebuild-test", () => {
+      it("repeated persisted view reads remain stable after selection", async () => {
+        const first = await h.completedWorkView({ projectId: P108_PROJECT_A, workspaceId: P117_WORKSPACE });
+        const second = await h.completedWorkView({ projectId: P108_PROJECT_A, workspaceId: P117_WORKSPACE });
+        expect(first).toEqual(second);
+        expect(first.status).toBe("ready");
+      });
+    });
+  });
+}

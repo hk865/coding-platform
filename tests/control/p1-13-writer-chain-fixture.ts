@@ -50,21 +50,8 @@ import type { DispatchDriveTrigger, DispatchDriveResult } from "../../src/contra
 import { runRefFor, taskAttemptRefFor } from "../../src/contracts/dispatch.js";
 
 import { p111BootstrapGoalGovernance } from "../contract-suite/p1-11-harness.js";
-import {
-  P113_WORKSPACE,
-  P113_FINDING,
-  P113_TASK,
-  P113_PATCH,
-  buildP113PlanPatchV1,
-  buildP113TaskV1,
-  buildP113SubmitPatchCommand,
-  buildP113CreateTaskCommand,
-  buildP113AdvanceTaskCommand,
-  buildP113PlanPatchRecordCommit,
-  buildP113TaskRecordCommit,
-  buildP113TaskAdvanceCommit,
-  p113PatchRef,
-} from "../../src/contracts/fixtures/remediation-fixtures.js";
+import { P113_WORKSPACE, P113_FINDING, P113_TASK, P113_PATCH, buildP113PlanPatchV1, buildP113TaskV1, buildP113SubmitPatchCommand, buildP113CreateTaskCommand, buildP113AdvanceTaskCommand, p113PatchRef } from "../contract-support/fixtures/remediation-fixtures.js";
+import { buildP113PlanPatchRecordCommit, buildP113TaskRecordCommit, buildP113TaskAdvanceCommit } from "../../src/control/control-engine/records/remediation.js";
 import {
   P113_PROJECT,
   ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1,
@@ -73,12 +60,15 @@ import {
   p113PolicyPin,
   buildP113InstallLedgerCommit,
   buildP113ActivateLedgerCommit,
-} from "../../src/contracts/fixtures/architecture-evolution-policy-fixtures.js";
-import { buildP112DeltaFinding, buildRecordArchitectureFindingCommand } from "../../src/contracts/fixtures/architecture-fixtures.js";
-import { buildApplyPlanCommand, planRevisionRefFor } from "../../src/contracts/fixtures/plan-fixtures.js";
-import { buildP107ArtifactRef } from "../../src/contracts/fixtures/workspace-fixtures.js";
-import { buildDispatchClaimCommand } from "../../src/contracts/fixtures/dispatch-fixtures.js";
-import { buildEvidenceV1, buildSubmitEvidenceCommand, buildEffectivityAnchorV1, coverage } from "../../src/contracts/fixtures/evidence-fixtures.js";
+} from "../../src/fixtures/architecture-evolution-policy-fixtures.js";
+import { buildP112DeltaFinding, buildRecordArchitectureFindingCommand } from "../../src/fixtures/architecture-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { planRevisionRefFor } from "../../src/contracts/plan.js";
+import { buildP107ArtifactRef } from "../contract-support/fixtures/workspace-fixtures.js";
+import { buildDispatchClaimCommand } from "../../src/fixtures/dispatch-fixtures.js";
+import { buildEvidenceV1, buildSubmitEvidenceCommand, buildEffectivityAnchorV1, coverage } from "../contract-support/fixtures/evidence-fixtures.js";
+import { P113_PLAN_FIXTURE, p113PlanPinnedAnchor } from "../contract-suite/p1-13-harness.js";
+export { P113_PLAN_FIXTURE };
 import { sha256Hex } from "../../src/contracts/fingerprint.js";
 import {
   P107_ROLE_BINDING_WRITER_V1,
@@ -86,7 +76,7 @@ import {
   P107_SCOPE_WRITER,
   P107_WRITE_SCOPE,
   P107_BUDGET_WRITER_V1,
-} from "../../src/contracts/fixtures/workspace-fixtures.js";
+} from "../contract-support/fixtures/workspace-fixtures.js";
 
 export const P113_SCHEMA = "2026-09-06T00:00:00.000Z";
 
@@ -114,66 +104,10 @@ export interface P113WriterHarness {
   startRun(c: DispatchStartCommand): Promise<DispatchStartReceipt>;
   runFact(c: RunFactCommand): Promise<RunFactReceipt>;
 }
+// P113 计划与证据递交的唯一实现见 tests/contract-suite/p1-13-harness.ts；
+// 本文件只负责在该计划上跑真实的 writer 链路，避免出现两份近似夹具。
 
-// ------------------------------------------------------------------------ //
-// P113 plan (a minimal, valid hand-authored plan over the P113 goal)         //
-// ------------------------------------------------------------------------ //
-
-export const P113_PLAN_FIXTURE: PlanRevisionDraft = {
-  schemaVersion: 1,
-  planId: "plan-p113-1",
-  planRevision: 1,
-  goalId: "goal-1",
-  stages: [{ stageId: "stage-p113-write", title: "writer applies the allowlisted remediation patch" }],
-  tasks: [
-    {
-      taskId: P113_TASK,
-      stageId: "stage-p113-write",
-      title: "Writer applies and verifies the remediation patch",
-      requirementLevel: "required",
-      taskKind: "work",
-      disposition: "active",
-      phase: "pending",
-      scope: { kind: "stage", stageId: "stage-p113-write" },
-    },
-    {
-      taskId: "gate-p113-writer",
-      title: "GoalGate: remediation verified at the post-fix revision",
-      requirementLevel: "required",
-      taskKind: "gate",
-      disposition: "active",
-      phase: "pending",
-      scope: { kind: "goal" },
-    },
-  ],
-  obligations: [
-    {
-      obligationId: "obl-p113-write",
-      title: "Allowlisted, reversible remediation is written and verified",
-      requirementLevel: "required",
-      taskIds: [P113_TASK],
-      verificationRequirements: [
-        { requirementId: "vr-p113-write", requirementLevel: "required", kind: "dynamic", description: "remediation patch verified at the post-fix workspace revision" },
-      ],
-    },
-    {
-      obligationId: "obl-p113-gate",
-      title: "Goal gate for the remediation slice",
-      requirementLevel: "required",
-      taskIds: ["gate-p113-writer"],
-      verificationRequirements: [
-        { requirementId: "vr-p113-gate", requirementLevel: "required", kind: "reviewer", description: "independent review of the remediation slice" },
-      ],
-    },
-  ],
-  taskHierarchy: { parentOf: [{ parentTaskId: "gate-p113-writer", childTaskId: P113_TASK }] },
-  executionDag: { dependsOn: [{ taskId: "gate-p113-writer", dependsOnId: P113_TASK, requires: { kind: "gate-result", label: "writer patch verified" } }] },
-};
-
-// ------------------------------------------------------------------------ //
-// Real-or-fallback helpers                                                  //
-// ------------------------------------------------------------------------ //
-
+/** 尚未落地的实现以固定文案报告缺口；其它异常必须照常抛出。 */
 function isLaneStub(error: unknown): boolean {
   return error instanceof Error && error.message.includes("not implemented yet");
 }
@@ -382,15 +316,8 @@ export function buildP113RecordPatchCommand(
   return cmd;
 }
 
-export function planPinnedAnchor(planSnapshot: PlanRevisionSnapshot, workspaceRevision: number): EffectivityAnchorV1 {
-  return buildEffectivityAnchorV1({
-    planRef: planSnapshot.ref,
-    planRevision: planSnapshot.planRevision,
-    workspaceRevision,
-    pinnedCompletionPolicy: planSnapshot.effectiveCompletionPolicy,
-    pinnedArchitectureBaseline: planSnapshot.effectiveArchitectureBaseline,
-  });
-}
+/** 与契约套件共用同一份 anchor 规则：计划固定版本 + 工作区版本。 */
+export const planPinnedAnchor = p113PlanPinnedAnchor;
 
 export async function submitP113VerificationEvidence(
   h: P113WriterHarness,

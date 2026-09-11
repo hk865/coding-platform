@@ -1,0 +1,145 @@
+{
+  "checkedAt": "2026-09-10T04:39:55.611Z",
+  "manifests": [
+    {
+      "file": "candidate-source-sha256.json",
+      "root": "/mnt/d/1.project/Software/agent_platform",
+      "count": 747,
+      "declared": "c399856b781f56862ae18af72bed80c2220aa26d9d3b144be87a6167cd6bac61",
+      "recomputed": "c399856b781f56862ae18af72bed80c2220aa26d9d3b144be87a6167cd6bac61"
+    },
+    {
+      "file": "full-end-source-sha256.json",
+      "root": "/mnt/d/1.project/Software/agent_platform",
+      "count": 747,
+      "declared": "c399856b781f56862ae18af72bed80c2220aa26d9d3b144be87a6167cd6bac61",
+      "recomputed": "c399856b781f56862ae18af72bed80c2220aa26d9d3b144be87a6167cd6bac61"
+    },
+    {
+      "file": "browser-end-source-sha256.json",
+      "root": "/mnt/d/1.project/Software/agent_platform",
+      "count": 747,
+      "declared": "c399856b781f56862ae18af72bed80c2220aa26d9d3b144be87a6167cd6bac61",
+      "recomputed": "c399856b781f56862ae18af72bed80c2220aa26d9d3b144be87a6167cd6bac61"
+    },
+    {
+      "file": "final-source-sha256.json",
+      "root": "D:\\1.project\\Software\\agent_platform",
+      "count": 747,
+      "declared": "c399856b781f56862ae18af72bed80c2220aa26d9d3b144be87a6167cd6bac61",
+      "recomputed": "c399856b781f56862ae18af72bed80c2220aa26d9d3b144be87a6167cd6bac61"
+    }
+  ],
+  "allManifestFilesEqual": true,
+  "actualMismatches": [],
+  "logs": [
+    {
+      "file": "full-tests-final.log",
+      "bytes": 113135,
+      "sha256": "f9cc1591f046202bb0d48ad3254f91cdfddc8e7b8499dbd8e01120a4a4dd1f71",
+      "exitCode": 0
+    },
+    {
+      "file": "browser-final.log",
+      "bytes": 4667,
+      "sha256": "233b951c69775d5fbedd701376b8cb0451665a6452547768b4d4f67a437b820f",
+      "exitCode": 0
+    },
+    {
+      "file": "backend-types.log",
+      "bytes": 92,
+      "sha256": "ba059482e72c448cd9c83ff8bd411599dc787ae1f4fc19bf5c25961144bec501",
+      "exitCode": 0
+    },
+    {
+      "file": "ui-types.log",
+      "bytes": 75,
+      "sha256": "565f62f61d330dde5c112f26ef1befd350adb3dbdff706362ff72cdf9fee800c",
+      "exitCode": 0
+    },
+    {
+      "file": "build.log",
+      "bytes": 1132,
+      "sha256": "c0af009326a82d4ff2f33a1ed7928c672ddbd28d3f196205b2d7fa275770a587",
+      "exitCode": 0
+    },
+    {
+      "file": "module-boundaries.log",
+      "bytes": 1238,
+      "sha256": "69f52c17412a127a7a75388b345876ddfb6c2f1b2708a1cb50a1d26a27f07e37",
+      "exitCode": 0
+    },
+    {
+      "file": "validate-docs-progress.log",
+      "bytes": 802,
+      "sha256": "3931a948ec67ba92649f6741a014a40d5219d6e224d64cf4b94d514c192baebe",
+      "exitCode": 0
+    }
+  ],
+  "full": {
+    "fileSummary": "256 passed (256)",
+    "testSummary": "1664 passed (1664)",
+    "parsedFileRows": 256,
+    "parsedTestSum": 1664,
+    "focus": [
+      {
+        "file": "tests/app/reviewer-product-recovery.test.ts",
+        "tests": 8
+      },
+      {
+        "file": "tests/verification/reviewer-recovery.test.ts",
+        "tests": 11
+      },
+      {
+        "file": "tests/control/reviewer-runtime-start-rejection.test.ts",
+        "tests": 2
+      },
+      {
+        "file": "tests/control/reviewer-lease-conflict-recovery.test.ts",
+        "tests": 2
+      },
+      {
+        "file": "tests/control/reviewer-unknown-outcome-preservation.test.ts",
+        "tests": 1
+      },
+      {
+        "file": "tests/runtime/runtime-observation-journal.test.ts",
+        "tests": 6
+      }
+    ]
+  },
+  "browser": {
+    "summary": "25 passed (3.2m)",
+    "parsedPassedRows": 25,
+    "recoveryCases": [
+      "  ✓   3 tests/reviewer-recovery.spec.ts:31:1 › authorizes a real lease-conflict recovery, preserves a lost receipt through reload, and completes the actual Reviewer result chain once (13.0s)",
+      "  ✓   4 tests/reviewer-recovery.spec.ts:74:1 › a persisted unknown checkpoint displays a refusal and cannot be authorized from the UI (5.2s)"
+    ],
+    "skippedSummary": false
+  },
+  "boundary": {
+    "sourceFiles": 366,
+    "inventoryFiles": 367,
+    "issues": [],
+    "coverage": {
+      "parsedExtensions": [
+        ".ts",
+        ".tsx",
+        ".js"
+      ],
+      "ownerOnlyExtensions": [
+        ".py"
+      ],
+      "excluded": [
+        "dependencies",
+        "generated dist",
+        ".vite"
+      ],
+      "notASandboxVerification": true
+    }
+  },
+  "documentation": {
+    "progressPassed": true,
+    "finalStatusSyncStillPending": true
+  }
+}

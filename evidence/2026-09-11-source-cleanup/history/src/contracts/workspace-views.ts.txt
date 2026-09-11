@@ -1,0 +1,149 @@
+/**
+ * P1-07 ReadModel surface — workspace lease / integration conflict / patch
+ * views (display only, NEVER judgement). Authority: IMPLEMENTATION-HANDOFF.md
+ * "P1-07 契约与存储语义" item 7 + modules/data/read-model-index.md.
+ *
+ * FROZEN semantics: freshness reuses the opaque CommitCursor contract
+ * (not_ready != not_found; not_found only after observedCursor covered
+ * atLeastCursor). IntegrationConflict view trusts the FIRST record per
+ * conflictKey (authority — no judgement, no merge) and marks late duplicates;
+ * escalation is a bare fact marker (semantic routing = P1-15).
+ */
+import type { CommitCursor } from "./command-event.js";
+import type { ConflictScopeV1, WorkspaceLeaseHolderV1 } from "./workspace-lease.js";
+import type { EvidenceConflictRecordV1, IntegrationGapV1, IntegrationInputRefV1 } from "./integration.js";
+import type { PatchCheckResultV1 } from "./patch.js";
+import type { EvidenceRef } from "./evidence.js";
+import type { PatchRecordRef } from "./patch.js";
+import type { RunRef } from "./dispatch.js";
+
+// ------------------------------------------------------------------------ //
+// Workspace lease status view                                               //
+// ------------------------------------------------------------------------ //
+
+export type WorkspaceLeaseViewQuery = {
+  projectId: string;
+  workspaceId: string;
+  atLeastCursor?: CommitCursor;
+};
+
+export type WorkspaceLeaseViewWriteEntry = {
+  status: "active" | "released";
+  leaseId: string;
+  scope: ConflictScopeV1;
+  holder: WorkspaceLeaseHolderV1;
+  grantedAt: string;
+  expiresAt: string | null;
+  releasedAt: string | null;
+  releasedBy: "holder" | null;
+  releasedVia: "explicit" | "patch-record" | "expiry-vacate" | null;
+  patches: PatchRecordRef[];
+  postWriteWorkspaceRevision: number | null;
+};
+
+export type WorkspaceLeaseViewReadEntry = {
+  status: "active" | "released";
+  leaseId: string;
+  scope: ConflictScopeV1;
+  holder: WorkspaceLeaseHolderV1;
+  grantedAt: string;
+  expiresAt: string | null;
+  releasedAt: string | null;
+};
+
+export type WorkspaceLeaseView = {
+  projectId: string;
+  workspaceId: string;
+  /** null = never a winner (exclusivity invariant holds — display only). */
+  writeLease: WorkspaceLeaseViewWriteEntry | null;
+  readLeases: WorkspaceLeaseViewReadEntry[];
+  sourceCursor: CommitCursor;
+  updatedAt: string | null;
+};
+
+export type WorkspaceLeaseViewResult =
+  | { status: "ready"; lease: WorkspaceLeaseView; observedCursor: CommitCursor }
+  | { status: "not_ready"; requiredCursor: CommitCursor; observedCursor: CommitCursor | null }
+  | { status: "not_found"; observedCursor: CommitCursor | null };
+
+// ------------------------------------------------------------------------ //
+// Integration conflict view                                                 //
+// ------------------------------------------------------------------------ //
+
+export type IntegrationConflictViewQuery = {
+  projectId: string;
+  goalId: string;
+  taskId: string;
+  atLeastCursor?: CommitCursor;
+};
+
+export type IntegrationConflictViewRecord = {
+  resultId: string;
+  runRef: RunRef;
+  workspaceRevision: number;
+  inputs: IntegrationInputRefV1[];
+  conflicts: EvidenceConflictRecordV1[];
+  gaps: IntegrationGapV1[];
+  explanation: string | null;
+  escalate: boolean;
+  generatedAt: string;
+  sourceCursor: CommitCursor;
+};
+
+export type IntegrationConflictView = {
+  projectId: string;
+  goalId: string;
+  taskId: string;
+  /** Join records in arrival order (first per conflictKey is authoritative). */
+  records: IntegrationConflictViewRecord[];
+  /** conflictKey -> first-arrival record resultId (authority map, display only). */
+  authoritativeKeys: Record<string, string>;
+  sourceCursor: CommitCursor;
+  updatedAt: string | null;
+};
+
+export type IntegrationConflictViewResult =
+  | { status: "ready"; integration: IntegrationConflictView; observedCursor: CommitCursor }
+  | { status: "not_ready"; requiredCursor: CommitCursor; observedCursor: CommitCursor | null }
+  | { status: "not_found"; observedCursor: CommitCursor | null };
+
+// ------------------------------------------------------------------------ //
+// Workspace patch view                                                      //
+// ------------------------------------------------------------------------ //
+
+export type WorkspacePatchViewQuery = {
+  projectId: string;
+  workspaceId: string;
+  atLeastCursor?: CommitCursor;
+};
+
+export type WorkspacePatchViewEntry = {
+  patchId: string;
+  goalId: string;
+  taskId: string;
+  runRef: RunRef;
+  kind: "patch" | "commit";
+  title: string;
+  changedPaths: string[];
+  beforeWorkspaceRevision: number;
+  afterWorkspaceRevision: number;
+  checkResults: PatchCheckResultV1[];
+  usedInputEvidenceRefs: EvidenceRef[];
+  recordedAt: string;
+  sourceCursor: CommitCursor;
+};
+
+export type WorkspacePatchView = {
+  projectId: string;
+  workspaceId: string;
+  /** Monotonic canonical revision progression (last event wins — CAS record). */
+  workspaceRevision: number;
+  patches: WorkspacePatchViewEntry[];
+  sourceCursor: CommitCursor;
+  updatedAt: string | null;
+};
+
+export type WorkspacePatchViewResult =
+  | { status: "ready"; patch: WorkspacePatchView; observedCursor: CommitCursor }
+  | { status: "not_ready"; requiredCursor: CommitCursor; observedCursor: CommitCursor | null }
+  | { status: "not_found"; observedCursor: CommitCursor | null };

@@ -1,0 +1,13 @@
+diff --git a/evidence/2026-09-10-module-folder-reorg/independent-review/before/src/runtime/coding-agent-runtime.ts b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/src/runtime/coding-agent-runtime.ts
+index e3a7031..b423552 100644
+--- a/evidence/2026-09-10-module-folder-reorg/independent-review/before/src/runtime/coding-agent-runtime.ts
++++ b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/src/runtime/coding-agent-runtime.ts
+@@ -82,7 +82,7 @@ export class CodingAgentRuntime implements RunPort {
+   }
+   async init() {
+     await mkdir(this.directory, { recursive: true, mode: 0o700 });
+-    this.kernel = await import(pathToFileURL(resolve(import.meta.dirname, '../../vendor/coding-agent/dist/public-api.js')).href) as typeof this.kernel;
++    this.kernel = await import(pathToFileURL(resolve(import.meta.dirname, '../../../vendor/coding-agent/dist/public-api.js')).href) as typeof this.kernel;
+     for (const r of await this.journal.init()) {
+       this.records.set(keyFor(r.spec), r);
+       if (r.status === 'running') { r.status = 'outcome_unknown'; r.error = '宿主服务中断；工作区副作用须核对，未自动重跑。'; await this.save(r); }

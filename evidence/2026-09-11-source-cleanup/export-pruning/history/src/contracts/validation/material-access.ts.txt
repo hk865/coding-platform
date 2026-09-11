@@ -1,0 +1,177 @@
+/** material-access protocol schema validation. Structural checks do not grant authority. */
+import { MATERIAL_ACCESS_MAX_MATERIALS, MATERIAL_ACCESS_PURPOSE_MAX_BYTES, validMaterialSourcePin } from '../material-access.js';
+import type { ValidationIssue } from './common.js';
+import { isRecord, stringField } from './common.js';
+import { validateCommandIdentity } from './identity.js';
+import { validateArtifactRefRef } from './evidence.js';
+
+/** Run or QueryRun principal; QueryRun retains its own full identity. */
+function validateArtifactOwnerRunRef(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  const kind = value["aggregateType"];
+  if (kind === "Run") {
+    stringField(value, "projectId", issues, path + ".projectId");
+    stringField(value, "goalId", issues, path + ".goalId");
+    stringField(value, "runId", issues, path + ".runId");
+    return;
+  }
+  if (kind === "QueryRun") {
+    stringField(value, "projectId", issues, path + ".projectId");
+    stringField(value, "workspaceId", issues, path + ".workspaceId");
+    stringField(value, "queryJobId", issues, path + ".queryJobId");
+    stringField(value, "runId", issues, path + ".runId");
+    return;
+  }
+  issues.push({ path: path + ".aggregateType", code: "bad_type", message: 'aggregateType must be "Run" or "QueryRun"' });
+}
+
+export function validateMaterialBasis(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  const planRef = value["planRef"];
+  if (planRef !== null) {
+    if (!isRecord(planRef)) {
+      issues.push({ path: path + ".planRef", code: "bad_type", message: path + ".planRef must be an object or null" });
+    } else {
+      stringField(planRef, "planId", issues, path + ".planRef.planId");
+    }
+  }
+  if (value["workspaceRevision"] !== null && !Number.isSafeInteger(value["workspaceRevision"])) {
+    issues.push({ path: path + ".workspaceRevision", code: "bad_type", message: path + ".workspaceRevision must be an integer or null" });
+  }
+  if (value["sourceDigest"] !== null) {
+    const digest = stringField(value, "sourceDigest", issues, path + ".sourceDigest");
+    if (digest !== null && !/^[0-9a-f]{64}$/.test(digest)) {
+      issues.push({ path: path + ".sourceDigest", code: "bad_type", message: path + ".sourceDigest must be a lowercase sha256 hex string" });
+    }
+  }
+  if (value["sourcePin"] !== undefined && !validMaterialSourcePin(value["sourcePin"])) {
+    issues.push({ path: path + ".sourcePin", code: "bad_type", message: "sourcePin must name a valid Project/Workspace, canonical source set, host identity and manifest digest" });
+  }
+}
+
+export function validateMaterialAccessGrant(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: path + ".schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "grantId", issues, path + ".grantId");
+  const scope = value["scope"];
+  if (!isRecord(scope)) {
+    issues.push({ path: path + ".scope", code: "bad_type", message: path + ".scope must be an object" });
+  } else {
+    stringField(scope, "projectId", issues, path + ".scope.projectId");
+    stringField(scope, "workspaceId", issues, path + ".scope.workspaceId");
+    stringField(scope, "goalId", issues, path + ".scope.goalId");
+  }
+  const materials = value["materials"];
+  if (!Array.isArray(materials) || materials.length === 0) {
+    issues.push({ path: path + ".materials", code: "empty_collection", message: path + ".materials must be a non-empty array" });
+  } else if (materials.length > MATERIAL_ACCESS_MAX_MATERIALS) {
+    issues.push({ path: path + ".materials", code: "size_exceeded", message: path + ".materials exceeds " + MATERIAL_ACCESS_MAX_MATERIALS });
+  } else {
+    materials.forEach((material, index) => validateArtifactRefRef(material, path + ".materials[" + index + "]", issues));
+  }
+  validateArtifactOwnerRunRef(value["reader"], path + ".reader", issues);
+  const issuedBy = value["issuedBy"];
+  if (!isRecord(issuedBy)) {
+    issues.push({ path: path + ".issuedBy", code: "bad_type", message: path + ".issuedBy must be an object" });
+  } else if (issuedBy["aggregateType"] === "Control") {
+    stringField(issuedBy, "projectId", issues, path + ".issuedBy.projectId");
+    stringField(issuedBy, "goalId", issues, path + ".issuedBy.goalId");
+  } else {
+    validateArtifactOwnerRunRef(issuedBy, path + ".issuedBy", issues);
+  }
+  const purpose = stringField(value, "purpose", issues, path + ".purpose");
+  if (purpose !== null && Buffer.byteLength(purpose, "utf8") > MATERIAL_ACCESS_PURPOSE_MAX_BYTES) {
+    issues.push({ path: path + ".purpose", code: "size_exceeded", message: path + ".purpose exceeds " + MATERIAL_ACCESS_PURPOSE_MAX_BYTES + " bytes" });
+  }
+  validateMaterialBasis(value["basis"], path + ".basis", issues);
+  stringField(value, "grantedAt", issues, path + ".grantedAt");
+  const history = value["history"];
+  if (history !== undefined) {
+    if (!isRecord(history)) issues.push({ path: path + ".history", code: "bad_type", message: "history must be an object" });
+    else {
+      validateArtifactOwnerRunRef(history["owner"], path + ".history.owner", issues);
+      if (history["usage"] !== "historical_explanation") issues.push({ path: path + ".history.usage", code: "bad_type", message: "history grants only authorize historical explanation" });
+      const cross = history["crossWorkspace"];
+      if (cross !== undefined) {
+        if (!isRecord(cross)) issues.push({ path: path + ".history.crossWorkspace", code: "bad_type", message: "cross-workspace authorization must be an object" });
+        else {
+          stringField(cross, "sourceWorkspaceId", issues, path + ".history.crossWorkspace.sourceWorkspaceId");
+          const actor = cross["authorizedBy"];
+          if (!isRecord(actor) || actor["kind"] !== "human") issues.push({ path: path + ".history.crossWorkspace.authorizedBy", code: "bad_type", message: "cross-workspace history requires explicit human authorization" });
+          else stringField(actor, "id", issues, path + ".history.crossWorkspace.authorizedBy.id");
+        }
+      }
+    }
+    if (!isRecord(issuedBy) || issuedBy["aggregateType"] !== "Control") issues.push({ path: path + ".issuedBy", code: "bad_type", message: "history grants require Control authority" });
+  }
+}
+
+export function validateGrantMaterialAccessCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "GrantMaterialAccess") {
+    issues.push({ path: "commandType", code: "invalid_command_type", message: 'commandType must be "GrantMaterialAccess"' });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "commandId", issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (value["expectedRevision"] !== 0) {
+    issues.push({ path: "expectedRevision", code: "bad_expected_revision", message: "expectedRevision must be 0" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  validateMaterialAccessGrant(payload["grant"], "payload.grant", issues);
+  const grant = payload["grant"];
+  const history = isRecord(grant) ? grant["history"] : undefined;
+  const cross = isRecord(history) ? history["crossWorkspace"] : undefined;
+  const identity = value["identity"];
+  const actor = isRecord(identity) ? identity["actor"] : undefined;
+  if (isRecord(cross) && (!isRecord(actor) || actor["kind"] !== "human" || !isRecord(cross["authorizedBy"]) || actor["id"] !== cross["authorizedBy"]["id"])) {
+    issues.push({ path: "identity.actor", code: "bad_ref", message: "the human submitting this exact grant must be its cross-workspace authorizer" });
+  }
+  if (isRecord(grant) && typeof grant["grantId"] === "string" && grant["grantId"] !== value["aggregateId"]) {
+    issues.push({ path: "aggregateId", code: "bad_ref", message: "aggregateId must equal payload.grant.grantId" });
+  }
+  return issues;
+}
+
+export function validateRevokeMaterialAccessCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) return [{ path: "$", code: "bad_type", message: "command must be an object" }];
+  if (value["commandType"] !== "RevokeMaterialAccess") issues.push({ path: "commandType", code: "invalid_command_type", message: "expected RevokeMaterialAccess" });
+  if (value["schemaVersion"] !== 1) issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "expected schemaVersion 1" });
+  if (value["expectedRevision"] !== 1) issues.push({ path: "expectedRevision", code: "bad_expected_revision", message: "expected revision 1" });
+  for (const key of ["commandId", "aggregateId", "correlationId", "submittedAt"]) stringField(value, key, issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) return [...issues, { path: "payload", code: "bad_type", message: "payload must be an object" }];
+  const reason = stringField(payload, "reason", issues, "payload.reason");
+  if (reason !== null && Buffer.byteLength(reason, "utf8") > MATERIAL_ACCESS_PURPOSE_MAX_BYTES) issues.push({ path: "payload.reason", code: "size_exceeded", message: "reason too large" });
+  const ref = payload["grantRef"];
+  if (!isRecord(ref)) return [...issues, { path: "payload.grantRef", code: "bad_ref", message: "grantRef required" }];
+  for (const key of ["projectId", "workspaceId", "goalId", "grantId"]) stringField(ref, key, issues, "payload.grantRef." + key);
+  if (ref["aggregateType"] !== "MaterialAccessGrant" || ref["grantId"] !== value["aggregateId"]) issues.push({ path: "payload.grantRef", code: "bad_ref", message: "grant reference does not match aggregate" });
+  return issues;
+}

@@ -1,0 +1,228 @@
+/**
+ * P1-04 Task/Gate reduction contracts — the pure TaskSatisfied formula and
+ * the Control entry that applies it (the ONLY writer of the canonical Task
+ * reduction; Goal phase is P1-05).
+ *
+ * Authority:
+ *   - dev_docs/interfaces/completion-policy.md §6 (TaskSatisfied) + §3 non-empty
+ *     guards + §10 permission boundary
+ *   - dev_docs/planning/proposed/P1-foundation/tickets/04-evidence-satisfies-task.md
+ *   - IMPLEMENTATION-HANDOFF.md "P1-04 契约与存储语义（冻结）"
+ *
+ * FROZEN semantics:
+ *   - reduceTaskVerification is a PURE function: same canonical inputs -> same
+ *     reduction. The Control handler computes it from canonical state and
+ *     commits the TaskReduction aggregate via a verification-result commit
+ *     (full idempotency + CAS).
+ *   - Worker/Reviewer NEVER write Task.phase. Only this Control path writes
+ *     the canonical TaskReduction; the ReadModel only projects it.
+ *   - The formula requires ALL of: task in the CURRENT active plan revision +
+ *     disposition active + every required AcceptanceObligation satisfied +
+ *     EffectiveEvidenceSet covers every required VerificationRequirement + no
+ *     blocking Finding + no unreconciled high-risk/outcome_unknown side effect.
+ *   - Static/dynamic FAIL -> failed (rework); missing required input -> blocked
+ *     (nothing applicable at all); stale/out-of-scope bindings -> verifying with
+ *     STALE displayed on the bindings (never satisfied); outcome_unknown or a
+ *     failed run signal -> explicitly not satisfied.
+ *   - Single exit=0 / worker claim / reviewer verdict each alone NEVER satisfy.
+ *   - Goal phase is NOT touched here (P1-05 Goal reducer).
+ */
+import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
+import { canonicalJson, sha256Hex } from "./fingerprint.js";
+import type { RunRef } from "./dispatch.js";
+import type { PlanRevisionRef, PlanRevisionSnapshot } from "./plan.js";
+import type { Disposition, RequirementLevel, TaskKind } from "./plan.js";
+import type { EffectivityAnchorV1, EffectiveEvidenceSet, EvidenceV1 } from "./evidence.js";
+
+import type { RunOutcome } from "./dispatch.js";
+
+// ------------------------------------------------------------------------ //
+// Aggregate                                                                  //
+// ------------------------------------------------------------------------ //
+
+export type TaskReductionRef = {
+  aggregateType: "TaskReduction";
+  projectId: string;
+  goalId: string;
+  taskId: string;
+};
+
+export function taskReductionRefFor(projectId: string, goalId: string, taskId: string): TaskReductionRef {
+  return { aggregateType: "TaskReduction", projectId, goalId, taskId };
+}
+
+// ------------------------------------------------------------------------ //
+// Reduction result                                                           //
+// ------------------------------------------------------------------------ //
+
+/**
+ * The reduction phase is chosen from the four states the evidence rule can
+ * produce. It is NEVER merged with the Task's orthogonal phase dimension—
+ * it drives the verification view; pending/ready/running remain plan facts.
+ */
+export type TaskReductionPhase = "verifying" | "blocked" | "failed" | "satisfied";
+
+export type TaskReductionCauseCode =
+  | "not_current_plan"
+  | "not_active"
+  | "missing_evidence"
+  | "blocking_evidence"
+  | "stale_or_out_of_scope"
+  | "run_failed_signal"
+  | "unreconciled_side_effect"
+  | "unresolved_finding"
+  | "no_required_obligation";
+
+export type TaskReductionCause = {
+  code: TaskReductionCauseCode;
+  message: string;
+  requirementKey?: string;
+  evidenceIds?: string[];
+};
+
+export type RunSignal = {
+  runRef: RunRef;
+  outcome: RunOutcome;
+  exitCode: number | null;
+  terminal: boolean;
+};
+
+export type TaskReductionInput = {
+  projectId: string;
+  goalId: string;
+  taskId: string;
+  /** The GoAL's currently active plan revision (authoritative current plan). */
+  plan: PlanRevisionSnapshot;
+  /** Must equal plan.ref, else the reduction refuses (not_current_plan). */
+  goalActivePlanRevision: PlanRevisionRef;
+  /** The canonical current effectivity tuple the reduction is evaluated under. */
+  currentAnchor: EffectivityAnchorV1;
+  /** Evidence for the task, in admission order (from the index). */
+  evidence: EvidenceV1[];
+  /** The task's latest run facts (none if never claimed). */
+  runSignals: RunSignal[];
+  /** Findings block satisfaction per the policy; P1-04 has no Findings
+   * mechanism yet, so the caller always passes []. */
+  unresolvedFindings: { findingId: string; severity: string; status: string }[];
+  /** outcome_unknown / high-risk side effects (from run facts) block satisfaction. */
+  unreconciledSideEffects: { kind: "outcome_unknown" | "high_risk"; runRef: RunRef }[];
+};
+
+export type TaskReductionComputation = {
+  satisfied: boolean;
+  phase: TaskReductionPhase;
+  causes: TaskReductionCause[];
+  effectiveEvidenceIds: string[];
+  blockingEvidenceIds: string[];
+  staleEvidenceIds: string[];
+  outOfScopeEvidenceIds: string[];
+  satisfiedObligationIds: string[];
+  effectiveSet: EffectiveEvidenceSet;
+};
+
+// ------------------------------------------------------------------------ //
+// Snapshot / command                                                         //
+// ------------------------------------------------------------------------ //
+
+export type TaskReductionSnapshot = {
+  ref: TaskReductionRef;
+  /** 1 on first reduction; k+1 on each later one (evidence set changed). */
+  revision: number;
+  schemaVersion: 1;
+  planRef: PlanRevisionRef;
+  planRevision: number;
+  taskKind: TaskKind;
+  requirementLevel: RequirementLevel;
+  disposition: Disposition;
+  phase: TaskReductionPhase;
+  currentAnchor: EffectivityAnchorV1;
+  effectiveEvidenceIds: string[];
+  blockingEvidenceIds: string[];
+  staleEvidenceIds: string[];
+  outOfScopeEvidenceIds: string[];
+  satisfiedObligationIds: string[];
+  causes: TaskReductionCause[];
+  reducedAt: string;
+};
+
+export type ReduceTaskCommand = {
+  commandId: string;
+  commandType: "ReduceTask";
+  schemaVersion: 1;
+  identity: CommandIdentity;
+  /** taskId — the TaskReduction aggregate. */
+  aggregateId: string;
+  /** TaskReduction CAS window (0 = first reduction). */
+  expectedRevision: number;
+  correlationId: string;
+  submittedAt: string;
+  payload: { goalId: string };
+};
+
+export type ReduceTaskRejectionCode =
+  | "invalid"
+  | "not_found"
+  | "task_not_in_plan"
+  | "revision_conflict"
+  | "idempotency_conflict"
+  | "unavailable";
+
+export type ReduceTaskReceipt =
+  | {
+      status: "committed";
+      commandId: string;
+      replayed: boolean;
+      reductionRef: TaskReductionRef;
+      phase: TaskReductionPhase;
+      eventIds: string[];
+      commitCursor: CommitCursor;
+    }
+  | {
+      status: "rejected";
+      commandId: string;
+      code: ReduceTaskRejectionCode;
+      currentRevision?: number;
+    };
+
+export function reduceTaskFingerprint(command: ReduceTaskCommand): CommandFingerprint {
+  const shape = {
+    schemaVersion: command.schemaVersion,
+    commandType: command.commandType,
+    projectId: command.identity.projectId,
+    aggregateId: command.aggregateId,
+    expectedRevision: command.expectedRevision,
+    payload: { goalId: command.payload.goalId },
+  };
+  return sha256Hex(canonicalJson(shape)) as CommandFingerprint;
+}
+
+// ------------------------------------------------------------------------ //
+// Event (P1-04 v1)                                                           //
+// ------------------------------------------------------------------------ //
+
+export type TaskReductionUpdatedEvent = {
+  eventId: string;
+  eventType: "TaskReductionUpdated";
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: "TaskReduction";
+  aggregateId: string;
+  /** k — advancing aggregate revision (1 on first reduction). */
+  aggregateRevision: number;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: {
+    goalId: string;
+    taskId: string;
+    reduction: TaskReductionSnapshot;
+  };
+};
+
+export type Phase = TaskReductionPhase;
+export function reductionPhaseOf(phase: TaskReductionPhase): Phase {
+  return phase;
+}

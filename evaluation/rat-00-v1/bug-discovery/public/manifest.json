@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "samples": [
+    {
+      "id": "BD-01",
+      "workspace": "public/BD-01/workspace",
+      "instruction": "public/BD-01/instruction.md",
+      "workspaceDigest": "914286d5c3a34c0f63fcdb25e529d6a8503cedc737f42f4e03da34a60ccf139e",
+      "files": [
+        {
+          "path": "src/auth.mjs",
+          "sha256": "bca6e1de32db4b5deae1d0262b1c032a3e4f5a6bcd6224cc4122e4aa312978a1"
+        },
+        {
+          "path": "test.mjs",
+          "sha256": "24af6f4836d15a5bb620bd8344390726c44d2536042034075f9bfb3d051879d3"
+        }
+      ],
+      "allowedSourceChanges": [],
+      "realExecution": "NOT_RUN"
+    },
+    {
+      "id": "BD-02",
+      "workspace": "public/BD-02/workspace",
+      "instruction": "public/BD-02/instruction.md",
+      "workspaceDigest": "c9f6dd5af63e28395facb89451d1fd44b6ef908d6d7f3185730551c2bbb4ce0f",
+      "files": [
+        {
+          "path": "slug.py",
+          "sha256": "98076353248658f7e1e35f0ba2f67cfc3be4b991aee5f171310c415ed3b8e96d"
+        },
+        {
+          "path": "test_slug.py",
+          "sha256": "8ce98a6643f990d81f4a353e6be62b169bd250a4d69f38562c2082af8e5af103"
+        }
+      ],
+      "allowedSourceChanges": [],
+      "realExecution": "NOT_RUN"
+    },
+    {
+      "id": "BD-03",
+      "workspace": "public/BD-03/workspace",
+      "instruction": "public/BD-03/instruction.md",
+      "workspaceDigest": "9f0b8d048f6d9dbcadc6a928f4ac9d179455c32a6c3e12f21ceb5cb98457caba",
+      "files": [
+        {
+          "path": ".env",
+          "sha256": "f5f79f70797692780283ee10305dabe4f9f29c3fed64a2651a88d2a383bca1b5"
+        },
+        {
+          "path": "src/recover.mjs",
+          "sha256": "6f6ce35c1cb88ba43ef28e97103d5a689329a596757a6deffd3ec6615b7b8468"
+        },
+        {
+          "path": "test.mjs",
+          "sha256": "c3361883f39a39f87c07b9469934da54ba889d7e26cc88749aabd4d89cfe322f"
+        }
+      ],
+      "allowedSourceChanges": [],
+      "realExecution": "NOT_RUN"
+    },
+    {
+      "id": "BD-04",
+      "workspace": "public/BD-04/workspace",
+      "instruction": "public/BD-04/instruction.md",
+      "workspaceDigest": "80435762bb7545da2300348aaa29804dd3748cea6737bf610fb10f802f4b66e0",
+      "files": [
+        {
+          "path": ".env",
+          "sha256": "f5f79f70797692780283ee10305dabe4f9f29c3fed64a2651a88d2a383bca1b5"
+        },
+        {
+          "path": "src/recover.mjs",
+          "sha256": "ac0503dceb392d7620b6f264362f498d57d336d38786d3f19c4e814e80525590"
+        },
+        {
+          "path": "test.mjs",
+          "sha256": "c3361883f39a39f87c07b9469934da54ba889d7e26cc88749aabd4d89cfe322f"
+        }
+      ],
+      "allowedSourceChanges": [],
+      "realExecution": "NOT_RUN"
+    },
+    {
+      "id": "BD-05",
+      "workspace": "public/BD-05/workspace",
+      "instruction": "public/BD-05/instruction.md",
+      "workspaceDigest": "e82926c32007aa43c1c369245ac74aec0959578ccecf3677a1732513655c1c98",
+      "files": [
+        {
+          "path": "src/timeout.mjs",
+          "sha256": "b03cfa94f6325fa6fd3342c096d0221ce854d78f6e57bc42b11a3b1b911a8756"
+        },
+        {
+          "path": "test.mjs",
+          "sha256": "75859e4751cd9779dcc4127860ea7469a8332454e062bea8ce6db076c72c990c"
+        }
+      ],
+      "allowedSourceChanges": [],
+      "realExecution": "NOT_RUN"
+    },
+    {
+      "id": "BD-06",
+      "workspace": "public/BD-06/workspace",
+      "instruction": "public/BD-06/instruction.md",
+      "workspaceDigest": "073d761a3d3aa61d299d965c128cc2ad719fc7ff90f2e28ef73fa514eccd3b19",
+      "files": [
+        {
+          "path": "src/timeout.mjs",
+          "sha256": "d488f8e2e691436136ddf545d636dc155cd4615dd670e88258c23649aa464f55"
+        },
+        {
+          "path": "test.mjs",
+          "sha256": "75859e4751cd9779dcc4127860ea7469a8332454e062bea8ce6db076c72c990c"
+        }
+      ],
+      "allowedSourceChanges": [],
+      "realExecution": "NOT_RUN"
+    },
+    {
+      "id": "BD-07",
+      "workspace": "public/BD-07/workspace",
+      "instruction": "public/BD-07/instruction.md",
+      "workspaceDigest": "790e2fad790dbd62d2f6bec7d4003cbe24cdfe9fba3e796a2de56f09024f9805",
+      "files": [
+        {
+          "path": "src/auth.mjs",
+          "sha256": "45db5cade2a461cf7753cb13449b058bbb39b87821b18f412b864073a8e109c6"
+        },
+        {
+          "path": "test.mjs",
+          "sha256": "24af6f4836d15a5bb620bd8344390726c44d2536042034075f9bfb3d051879d3"
+        }
+      ],
+      "allowedSourceChanges": [],
+      "realExecution": "NOT_RUN"
+    },
+    {
+      "id": "BD-08",
+      "workspace": "public/BD-08/workspace",
+      "instruction": "public/BD-08/instruction.md",
+      "workspaceDigest": "a0ccfb8eacc5803dfff755f9d75594f6b6ca9f86bb4612e8e004b395d708d8ef",
+      "files": [
+        {
+          "path": "slug.py",
+          "sha256": "9bb3915b1432874fe8ab03e1972857df08fc9831849ef97b5bf963a34d56505c"
+        },
+        {
+          "path": "test_slug.py",
+          "sha256": "8ce98a6643f990d81f4a353e6be62b169bd250a4d69f38562c2082af8e5af103"
+        }
+      ],
+      "allowedSourceChanges": [],
+      "realExecution": "NOT_RUN"
+    }
+  ]
+}

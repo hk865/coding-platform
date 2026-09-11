@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "MA-07",
+  "origin": "deterministic-test-input",
+  "adapterStatus": "NOT_PREPARED",
+  "guard": "Only run in a fresh scenario workspace; resolve all symbolic refs from captured current state; never use fixture claims as model output.",
+  "steps": [
+    {
+      "id": "MA-07-query-progress",
+      "after": {
+        "type": "two-runs-active"
+      },
+      "occurrence": 1,
+      "action": "query_fact",
+      "args": {
+        "sourceRunRef": "writer",
+        "captureBeforeAfter": [
+          "contextDigest",
+          "lease",
+          "budgetUsed",
+          "obligationRevision",
+          "runState"
+        ]
+      }
+    },
+    {
+      "id": "MA-07-formal-change",
+      "after": {
+        "type": "query-result-returned"
+      },
+      "occurrence": 1,
+      "action": "accept_human_change",
+      "args": {
+        "newRevision": "v2",
+        "rule": "Text search becomes case-sensitive, still trimmed; retain status combination and persistence.",
+        "affectedScope": [
+          "src/store.mjs",
+          "src/ui.mjs"
+        ]
+      }
+    },
+    {
+      "id": "MA-07-late-old-report",
+      "after": {
+        "type": "new-revision-activated"
+      },
+      "occurrence": 1,
+      "action": "deliver_delayed_report",
+      "args": {
+        "revision": "v1",
+        "expected": "cannot-satisfy-v2"
+      }
+    },
+    {
+      "id": "MA-07-cancel-one",
+      "after": {
+        "type": "independent-package-progressed"
+      },
+      "occurrence": 1,
+      "action": "cancel_run",
+      "args": {
+        "runRef": "reader-api",
+        "expectedGoal": "RUNNING"
+      }
+    },
+    {
+      "id": "MA-07-cancel-goal-control",
+      "after": {
+        "type": "run-cancel-observed"
+      },
+      "occurrence": 1,
+      "action": "cancel_goal",
+      "args": {
+        "branch": "separate-control-reset",
+        "authority": "goal",
+        "expected": "CANCELLED"
+      }
+    }
+  ]
+}

@@ -15,9 +15,10 @@
  */
 import { describe, expect, it } from "vitest";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
-import { PlanCompilerImpl } from "../../src/control/plan-compiler.js";
-import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
-import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1 } from "../../src/contracts/fixtures/plan-fixtures.js";
+import { CoordinationContextCompiler } from "../../src/data/context-compiler/coordination-context-compiler.js";
+import { PlanCompilerImpl } from "../../src/control/plan-compiler/plan-compiler.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1 } from "../../src/fixtures/plan-fixtures.js";
 import {
   buildAmendGoalRequestV1,
   P111_PROJECT,
@@ -25,9 +26,9 @@ import {
   P111_SOURCE_PLAN,
   p111GoalRef,
   p111PlanRef,
-} from "../../src/contracts/fixtures/goal-change-fixtures.js";
+} from "../contract-support/fixtures/goal-change-fixtures.js";
 import { p111BootstrapGoalGovernance } from "../contract-suite/p1-11-harness.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import type { AmendGoalRequestV1 } from "../../src/contracts/goal-change.js";
 
 const FIXED = FIXED_ISO_2026_09_05;
@@ -54,9 +55,19 @@ function eventCount(h: ReturnType<typeof createInMemoryHarness>): Promise<number
 }
 
 describe("PlanCompilerImpl.request", () => {
+  it("rejects foreign scope and stale requested plans before producing a proposal", async () => {
+    const h = await committedScenario();
+    const compiler = new PlanCompilerImpl({ materials: new CoordinationContextCompiler({ ledger: h.ledger }), now: NOW });
+    const intent = buildAmendGoalRequestV1({ projectId: P111_PROJECT, workspaceId: P111_WORKSPACE, goalRef: p111GoalRef(P111_PROJECT), planRef: p111PlanRef(P111_SOURCE_PLAN, P111_PROJECT) });
+    const before = await eventCount(h);
+    expect(await compiler.request({ ...intent, goalRef: { ...intent.goalRef, projectId: 'foreign-project' } })).toMatchObject({ status: 'rejected', code: 'forbidden_tool_or_scope' });
+    expect(await compiler.request({ ...intent, planRef: { ...intent.planRef!, planId: 'old-plan' } })).toMatchObject({ status: 'rejected', code: 'source_stale' });
+    expect(await eventCount(h)).toBe(before);
+  });
+
   it("produces a bounded, deterministic ZERO-write proposal for an accepted plan goal", async () => {
     const h = await committedScenario();
-    const compiler = new PlanCompilerImpl({ ledger: h.ledger, readModel: h.readModel, now: NOW });
+    const compiler = new PlanCompilerImpl({ materials: new CoordinationContextCompiler({ ledger: h.ledger }), now: NOW });
 
     const intent = buildAmendGoalRequestV1({
       projectId: P111_PROJECT,
@@ -99,11 +110,9 @@ describe("PlanCompilerImpl.request", () => {
     expect(p.impact.schemaVersion).toBe(1);
     expect(p.impact.patchRef).toEqual(p.sourcePlanRef);
     expect(p.impact.materialsToRefresh).toEqual(["planContext", "evidenceBindings"]);
-    const taskVerify = p.impact.affectedWorks.find(
-      (w) => w.workRef.workId === "work-task-verify",
-    );
-    expect(taskVerify).toBeDefined();
-    expect(taskVerify!.refreshRequired).toBe(true);
+    // Without a configured authority, no guessed work id may appear.
+    expect(p.impact.affectedWorks).toEqual([]);
+    expect(p.impact.staleAssumptions.some(row => row.assumption.startsWith('工作影响清单完整'))).toBe(true);
     expect(p.impact.staleAssumptions.length).toBeGreaterThan(0);
     expect(p.impact.independentWork).toEqual([]);
     expect(p.alternatives).toEqual([]);
@@ -112,7 +121,7 @@ describe("PlanCompilerImpl.request", () => {
 
   it("is deterministic for the same intent (only derived proposalId/generatedAt vary with now)", async () => {
     const h = await committedScenario();
-    const compiler = new PlanCompilerImpl({ ledger: h.ledger, readModel: h.readModel, now: NOW });
+    const compiler = new PlanCompilerImpl({ materials: new CoordinationContextCompiler({ ledger: h.ledger }), now: NOW });
     const intent = buildAmendGoalRequestV1({ projectId: P111_PROJECT, workspaceId: P111_WORKSPACE, goalRef: p111GoalRef(P111_PROJECT), planRef: p111PlanRef(P111_SOURCE_PLAN, P111_PROJECT) });
     const a = await compiler.request(intent);
     const b = await compiler.request(intent);
@@ -127,7 +136,7 @@ describe("PlanCompilerImpl.request", () => {
 
   it("rejects a non-existent goal with not_found and zero writes", async () => {
     const h = await committedScenario();
-    const compiler = new PlanCompilerImpl({ ledger: h.ledger, readModel: h.readModel, now: NOW });
+    const compiler = new PlanCompilerImpl({ materials: new CoordinationContextCompiler({ ledger: h.ledger }), now: NOW });
     const intent = buildAmendGoalRequestV1({
       projectId: P111_PROJECT,
       workspaceId: P111_WORKSPACE,
@@ -147,7 +156,7 @@ describe("PlanCompilerImpl.request", () => {
     const h = createInMemoryHarness();
     await p111BootstrapGoalGovernance(h.ledger, P111_PROJECT);
     // goal created, but NO accepted plan revision yet -> activePlanRevision is null
-    const compiler = new PlanCompilerImpl({ ledger: h.ledger, readModel: h.readModel, now: NOW });
+    const compiler = new PlanCompilerImpl({ materials: new CoordinationContextCompiler({ ledger: h.ledger }), now: NOW });
     const intent = buildAmendGoalRequestV1({
       projectId: P111_PROJECT,
       workspaceId: P111_WORKSPACE,
@@ -165,7 +174,7 @@ describe("PlanCompilerImpl.request", () => {
 
   it("rejects an invalid objectiveDelta.kind with invalid_request", async () => {
     const h = await committedScenario();
-    const compiler = new PlanCompilerImpl({ ledger: h.ledger, readModel: h.readModel, now: NOW });
+    const compiler = new PlanCompilerImpl({ materials: new CoordinationContextCompiler({ ledger: h.ledger }), now: NOW });
     const intent = buildAmendGoalRequestV1({
       projectId: P111_PROJECT,
       workspaceId: P111_WORKSPACE,
@@ -184,7 +193,7 @@ describe("PlanCompilerImpl.request", () => {
 
   it("rejects an obligation delta with an empty justification as invalid_request", async () => {
     const h = await committedScenario();
-    const compiler = new PlanCompilerImpl({ ledger: h.ledger, readModel: h.readModel, now: NOW });
+    const compiler = new PlanCompilerImpl({ materials: new CoordinationContextCompiler({ ledger: h.ledger }), now: NOW });
     const intent = buildAmendGoalRequestV1({
       projectId: P111_PROJECT,
       workspaceId: P111_WORKSPACE,

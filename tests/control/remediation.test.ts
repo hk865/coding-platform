@@ -17,9 +17,16 @@
  */
 import { describe, expect, it } from "vitest";
 import type { StateLedger, LedgerCommit, LedgerCommitReceipt } from "../../src/contracts/ledger.js";
-import { createControlEngine } from "../../src/control/control-engine.js";
-import { InMemoryLedger } from "../../src/ledger/in-memory-ledger.js";
-import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { createControlEngine } from "../../src/control/control-engine/control-engine.js";
+import { InMemoryLedger } from "../../src/data/state-ledger/in-memory-ledger.js";
+import { createDeterministicDeps, sequenceIdGen, FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { planRevisionRefFor } from "../../src/contracts/plan.js";
+import type { PlanRevisionSnapshot } from "../../src/contracts/plan.js";
+import { buildEvidenceV1, buildSubmitEvidenceCommand, buildEffectivityAnchorV1, coverage } from "../contract-support/fixtures/evidence-fixtures.js";
+import { sha256Hex } from "../../src/contracts/fingerprint.js";
+import type { EvidenceRef } from "../../src/contracts/evidence.js";
+import { P113_PLAN_FIXTURE } from "./p1-13-writer-chain-fixture.js";
 import { p111BootstrapGoalGovernance } from "../contract-suite/p1-11-harness.js";
 import {
   ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1,
@@ -29,23 +36,10 @@ import {
   buildP113ActivateLedgerCommit,
   p113PolicyPin,
   P113_PROJECT,
-} from "../../src/contracts/fixtures/architecture-evolution-policy-fixtures.js";
-import {
-  P113_WORKSPACE,
-  P113_FINDING,
-  P113_TASK,
-  buildP113PlanPatchV1,
-  buildP113TaskV1,
-  buildP113SubmitPatchCommand,
-  buildP113CreateTaskCommand,
-  buildP113AdvanceTaskCommand,
-  buildP113PlanPatchRecordCommit,
-  buildP113TaskRecordCommit,
-  buildP113TaskAdvanceCommit,
-  p113PatchRef,
-  p113FindingRef,
-} from "../../src/contracts/fixtures/remediation-fixtures.js";
-import { buildP112DeltaFinding, buildP112ReportFinding, buildRecordArchitectureFindingCommand } from "../../src/contracts/fixtures/architecture-fixtures.js";
+} from "../../src/fixtures/architecture-evolution-policy-fixtures.js";
+import { P113_WORKSPACE, P113_GOAL, P113_FINDING, P113_TASK, buildP113PlanPatchV1, buildP113TaskV1, buildP113SubmitPatchCommand, buildP113CreateTaskCommand, buildP113AdvanceTaskCommand, p113PatchRef, p113FindingRef } from "../contract-support/fixtures/remediation-fixtures.js";
+import { buildP113PlanPatchRecordCommit, buildP113TaskRecordCommit, buildP113TaskAdvanceCommit } from "../../src/control/control-engine/records/remediation.js";
+import { buildP112DeltaFinding, buildP112ReportFinding, buildRecordArchitectureFindingCommand } from "../../src/fixtures/architecture-fixtures.js";
 import { architectureFindingRefFor } from "../../src/contracts/architecture-inspection.js";
 import type { ArchitectureFindingV1 } from "../../src/contracts/architecture-inspection.js";
 import type { RemediationPlanPatchV1, RemediationTaskV1 } from "../../src/contracts/remediation.js";
@@ -64,13 +58,81 @@ class RecordingLedger extends InMemoryLedger {
   }
 }
 
-type Harness = { ledger: RecordingLedger; engine: ReturnType<typeof createControlEngine> };
+type Harness = { ledger: RecordingLedger; engine: ReturnType<typeof createControlEngine>; plan: PlanRevisionSnapshot | null };
 
 function makeHarness(): Harness {
   const ledger = new RecordingLedger();
   const deps = createDeterministicDeps();
   const engine = createControlEngine({ ledger, now: deps.clock, eventId: deps.eventId });
-  return { ledger, engine };
+  return { ledger, engine, plan: null };
+}
+
+/**
+ * 独立的“证据铺设”引擎：与主引擎共用同一条真实账本，但使用不同的确定性事件号
+ * 前缀，使主流程（finding -> patch -> task -> advance）的固定事件号断言不受铺设
+ * 步骤影响（两套 id 生成器不会产生重复 eventId）。
+ */
+function makeSetupEngine(ledger: StateLedger) {
+  const deps = createDeterministicDeps();
+  return createControlEngine({ ledger, now: deps.clock, eventId: sequenceIdGen("setup-evt") });
+}
+
+/** 应用 P113 计划（真实 ControlEngine 受理），返回 canonical PlanRevision 快照。 */
+async function applyP113Plan(engine: ReturnType<typeof createControlEngine>, ledger: StateLedger): Promise<PlanRevisionSnapshot> {
+  const cmd = buildApplyPlanCommand(P113_PLAN_FIXTURE, {
+    commandId: "p113-cmd-apply-plan",
+    correlationId: "corr-p113-apply-plan",
+    submittedAt: FIXED,
+    projectId: PROJECT,
+    expectedRevision: 1,
+    idempotencyKey: "p113-apply-plan-idem",
+  });
+  const receipt = await engine.applyPlan(cmd);
+  expect(receipt.status).toBe("committed");
+  const loaded = await ledger.load(planRevisionRefFor(cmd));
+  expect(loaded.status).toBe("found");
+  if (loaded.status !== "found") throw new Error("P113 plan not found after acceptance");
+  return loaded.snapshot as PlanRevisionSnapshot;
+}
+
+/**
+ * 通过真实 ControlEngine 受理一条 Evidence（不是替身，也不是夹具折叠）：
+ * subject 默认指向本返工任务，anchor 落在返工后的工作区版本。
+ */
+async function admitEvidence(
+  engine: ReturnType<typeof createControlEngine>,
+  plan: PlanRevisionSnapshot,
+  opts: { evidenceId: string; outcome: "PASS" | "FAIL" | "INCONCLUSIVE"; workspaceRevision?: number; taskId?: string },
+): Promise<EvidenceRef> {
+  const evidence = buildEvidenceV1({
+    evidenceId: opts.evidenceId,
+    kind: "observation",
+    outcome: opts.outcome,
+    projectId: PROJECT,
+    goalId: P113_GOAL,
+    taskId: opts.taskId ?? P113_TASK,
+    coverage: [coverage("obl-p113-write", "vr-p113-write")],
+    anchor: buildEffectivityAnchorV1({
+      planRef: plan.ref,
+      planRevision: plan.planRevision,
+      workspaceRevision: opts.workspaceRevision ?? 2,
+      pinnedCompletionPolicy: plan.effectiveCompletionPolicy,
+      pinnedArchitectureBaseline: plan.effectiveArchitectureBaseline,
+    }),
+    verificationPlanRef: { planId: "vp-p113-writer", planDigest: sha256Hex("vp-p113-writer") },
+    runRef: null,
+    checkId: "vr-p113-write",
+  });
+  const receipt = await engine.submitEvidence(
+    buildSubmitEvidenceCommand({
+      commandId: "p113-cmd-evidence-" + opts.evidenceId,
+      correlationId: "corr-p113-evidence-" + opts.evidenceId,
+      submittedAt: FIXED,
+      evidence,
+    }),
+  );
+  expect(receipt.status).toBe("committed");
+  return { aggregateType: "Evidence", projectId: PROJECT, evidenceId: opts.evidenceId };
 }
 
 /** Delta finding (allowlist-hit) recorded at the PATCH fixture's finding id. */
@@ -117,17 +179,22 @@ async function recordFinding(
   expect(result.status).toBe("committed");
 }
 
-/** Full happy-path state: bootstrap+goal+governance, active policy, delta finding, committed patch. */
+/**
+ * Full happy-path state: bootstrap+goal+governance, active policy, an accepted
+ * P113 plan (so REAL evidence can be admitted), delta finding, committed patch.
+ */
 async function setupCommittedPatch(): Promise<Harness> {
-  const { ledger, engine } = makeHarness();
+  const harness = makeHarness();
+  const { ledger, engine } = harness;
   await p111BootstrapGoalGovernance(ledger, PROJECT);
   await installActivatePolicy(ledger);
+  harness.plan = await applyP113Plan(makeSetupEngine(ledger), ledger);
   await recordFinding(engine, deltaFindingForP113());
   const sub = await engine.submitRemediationPlanPatch(
     buildP113SubmitPatchCommand(buildP113PlanPatchV1(), { commandId: "p113-cmd-patch" }),
   );
   expect(sub.status).toBe("committed");
-  return { ledger, engine };
+  return harness;
 }
 
 async function eventCount(ledger: StateLedger): Promise<number> {
@@ -140,11 +207,13 @@ async function eventTypes(ledger: StateLedger): Promise<string[]> {
   return page.events.map((p) => p.event.eventType);
 }
 
-async function resolveTask(
-  engine: ReturnType<typeof createControlEngine>,
-  taskId: string,
-  evidenceId = "p113-evidence-1",
-): Promise<void> {
+/**
+ * writing -> verifying -> resolved。resolved 引用的是一条真实受理的 PASS Evidence
+ * （经真实 ControlEngine.submitEvidence 写入 canonical 账本），不再使用自报的假引用。
+ */
+async function resolveTask(h: Harness, taskId: string, evidenceId = "p113-evidence-1"): Promise<void> {
+  const { engine, plan } = h;
+  if (plan === null) throw new Error("resolveTask requires an accepted plan");
   const adv1 = await engine.advanceRemediationTask(
     buildP113AdvanceTaskCommand(taskId, 1, { status: "writing" }, { commandId: "p113-adv-w-" + taskId }),
   );
@@ -153,13 +222,14 @@ async function resolveTask(
     buildP113AdvanceTaskCommand(taskId, 2, { status: "verifying" }, { commandId: "p113-adv-v-" + taskId }),
   );
   expect(adv2.status).toBe("committed");
+  const evidenceRef = await admitEvidence(engine, plan, { evidenceId, outcome: "PASS" });
   const adv3 = await engine.advanceRemediationTask(
     buildP113AdvanceTaskCommand(
       taskId,
       3,
       {
         status: "resolved",
-        evidenceRefs: [{ aggregateType: "Evidence" as const, projectId: PROJECT, evidenceId }],
+        evidenceRefs: [evidenceRef],
         result: { workspaceRevisionAfter: 2, verified: true, outcome: "PASS" },
       },
       { commandId: "p113-adv-r-" + taskId },
@@ -173,6 +243,10 @@ describe("remediation: happy path", () => {
     const { ledger, engine } = makeHarness();
     await p111BootstrapGoalGovernance(ledger, PROJECT);
     await installActivatePolicy(ledger);
+    // 计划与证据由独立事件号前缀的铺设引擎写入同一条真实账本，因此主引擎的事件号
+    // 序列（evt-0001 recordArchitectureFinding ...）保持不变。
+    const setupEngine = makeSetupEngine(ledger);
+    const plan = await applyP113Plan(setupEngine, ledger);
     await recordFinding(engine, deltaFindingForP113());
     // engine eventId sequence so far: recordArchitectureFinding consumed evt-0001.
     const evtPatch = "evt-0002";
@@ -228,7 +302,8 @@ describe("remediation: happy path", () => {
       ),
     );
 
-    const evidenceRef = { aggregateType: "Evidence" as const, projectId: PROJECT, evidenceId: "p113-evidence-1" };
+    // 真实受理一条 PASS Evidence（subject = 本返工任务，anchor = 返工后的版本）。
+    const evidenceRef = await admitEvidence(setupEngine, plan, { evidenceId: "p113-evidence-1", outcome: "PASS", workspaceRevision: 2 });
     const adv3 = await engine.advanceRemediationTask(
       buildP113AdvanceTaskCommand(
         P113_TASK,
@@ -390,10 +465,11 @@ describe("remediation: createTask guards + dedup", () => {
   });
 
   it("terminal (resolved) does NOT occupy the dedup key -> a new task on the same key is allowed", async () => {
-    const { ledger, engine } = await setupCommittedPatch();
+    const harness = await setupCommittedPatch();
+    const { ledger, engine } = harness;
     const first = await engine.createRemediationTask(buildP113CreateTaskCommand(p113PatchRef(), { commandId: "p113-cmd-task" }));
     expect(first.status).toBe("committed");
-    await resolveTask(engine, P113_TASK);
+    await resolveTask(harness, P113_TASK);
     const before = await eventCount(ledger);
     const second = await engine.createRemediationTask(buildP113CreateTaskCommand(p113PatchRef(), { commandId: "p113-cmd-task-after", taskId: "task-p113-after" }));
     expect(second.status).toBe("committed");
@@ -429,9 +505,10 @@ describe("remediation: advance guards (zero write)", () => {
   });
 
   it("terminal status -> terminal_status, zero write", async () => {
-    const { ledger, engine } = await setupCommittedPatch();
+    const harness = await setupCommittedPatch();
+    const { ledger, engine } = harness;
     await engine.createRemediationTask(buildP113CreateTaskCommand(p113PatchRef(), { commandId: "p113-cmd-task" }));
-    await resolveTask(engine, P113_TASK);
+    await resolveTask(harness, P113_TASK);
     const before = await eventCount(ledger);
     const result = await engine.advanceRemediationTask(buildP113AdvanceTaskCommand(P113_TASK, 4, { status: "failed" }, { commandId: "p113-adv-after" }));
     expect(result.status).toBe("rejected");
@@ -559,5 +636,246 @@ describe("remediation: submit idempotency", () => {
     const second = await engine.submitRemediationPlanPatch(buildP113SubmitPatchCommand(differentPatch, { commandId: "p113-cmd-patch-x" }));
     expect(second.status).toBe("rejected");
     if (second.status === "rejected") expect(second.code).toBe("idempotency_conflict");
+  });
+});
+
+// ------------------------------------------------------------------------ //
+// FIX-REMEDIATION-EVIDENCE A: the resolved guard must read canonical         //
+// Evidence (existence, subject/workspace scope, post-fix revision, PASS).    //
+// ------------------------------------------------------------------------ //
+
+describe("remediation: resolved guard reads canonical Evidence", () => {
+  /** patch committed -> task created -> writing -> verifying（全部真实写入）。 */
+  async function taskInVerifying(): Promise<Harness> {
+    const harness = await setupCommittedPatch();
+    const { engine } = harness;
+    const created = await engine.createRemediationTask(buildP113CreateTaskCommand(p113PatchRef(), { commandId: "p113-cmd-task" }));
+    expect(created.status).toBe("committed");
+    const writing = await engine.advanceRemediationTask(buildP113AdvanceTaskCommand(P113_TASK, 1, { status: "writing" }, { commandId: "p113-adv-w" }));
+    expect(writing.status).toBe("committed");
+    const verifying = await engine.advanceRemediationTask(buildP113AdvanceTaskCommand(P113_TASK, 2, { status: "verifying" }, { commandId: "p113-adv-v" }));
+    expect(verifying.status).toBe("committed");
+    return harness;
+  }
+
+  /** 自报字段完全成立（verified + PASS + 版本足够）的命令载荷。 */
+  function resolvedPayload(evidenceRefs: EvidenceRef[]) {
+    return {
+      status: "resolved" as const,
+      evidenceRefs,
+      result: { workspaceRevisionAfter: 2, verified: true, outcome: "PASS" as const },
+    };
+  }
+
+  it("伪造证据引用（账本中不存在该 Evidence）-> evidence_mismatch, zero write", async () => {
+    const { ledger, engine } = await taskInVerifying();
+    const before = await eventCount(ledger);
+    const result = await engine.advanceRemediationTask(
+      buildP113AdvanceTaskCommand(P113_TASK, 3, resolvedPayload([
+        { aggregateType: "Evidence", projectId: PROJECT, evidenceId: "p113-evidence-forged" },
+      ]), { commandId: "p113-adv-forged" }),
+    );
+    expect(result.status).toBe("rejected");
+    if (result.status === "rejected") {
+      expect(result.code).toBe("evidence_mismatch");
+      expect(result.issues).toContain("evidence_not_admitted");
+    }
+    expect(await eventCount(ledger)).toBe(before);
+    const taskLoad = await ledger.load({ aggregateType: "RemediationTask" as const, projectId: PROJECT, workspaceId: WS, taskId: P113_TASK });
+    if (taskLoad.status === "found") expect((taskLoad.snapshot as { task: RemediationTaskV1 }).task.status).toBe("verifying");
+  });
+
+  it("真实受理但 outcome=FAIL 的证据 -> evidence_mismatch, zero write", async () => {
+    const harness = await taskInVerifying();
+    const { ledger, engine, plan } = harness;
+    if (plan === null) throw new Error("plan missing");
+    const failRef = await admitEvidence(engine, plan, { evidenceId: "p113-evidence-fail", outcome: "FAIL" });
+    const before = await eventCount(ledger);
+    const result = await engine.advanceRemediationTask(
+      buildP113AdvanceTaskCommand(P113_TASK, 3, resolvedPayload([failRef]), { commandId: "p113-adv-fail-evidence" }),
+    );
+    expect(result.status).toBe("rejected");
+    if (result.status === "rejected") {
+      expect(result.code).toBe("evidence_mismatch");
+      expect(result.issues).toContain("evidence_outcome_not_pass");
+    }
+    expect(await eventCount(ledger)).toBe(before);
+  });
+
+  it("证据 subject 是别的任务 -> evidence_mismatch, zero write", async () => {
+    const harness = await taskInVerifying();
+    const { ledger, engine, plan } = harness;
+    if (plan === null) throw new Error("plan missing");
+    const otherTaskId = P113_PLAN_FIXTURE.tasks.find((t) => t.taskKind === "gate")!.taskId;
+    const otherRef = await admitEvidence(engine, plan, { evidenceId: "p113-evidence-other-task", outcome: "PASS", taskId: otherTaskId });
+    const before = await eventCount(ledger);
+    const result = await engine.advanceRemediationTask(
+      buildP113AdvanceTaskCommand(P113_TASK, 3, resolvedPayload([otherRef]), { commandId: "p113-adv-other-task" }),
+    );
+    expect(result.status).toBe("rejected");
+    if (result.status === "rejected") {
+      expect(result.code).toBe("evidence_mismatch");
+      expect(result.issues).toContain("evidence_subject_out_of_scope");
+    }
+    expect(await eventCount(ledger)).toBe(before);
+  });
+
+  it("证据 anchor 早于返工补丁的工作区版本（修复前的旧证据）-> evidence_mismatch, zero write", async () => {
+    const harness = await taskInVerifying();
+    const { ledger, engine, plan } = harness;
+    if (plan === null) throw new Error("plan missing");
+    // patch.workspaceRevision = 2，证据在版本 1 产生 -> 不能证明修复后成立。
+    const staleRef = await admitEvidence(engine, plan, { evidenceId: "p113-evidence-stale", outcome: "PASS", workspaceRevision: 1 });
+    const before = await eventCount(ledger);
+    const result = await engine.advanceRemediationTask(
+      buildP113AdvanceTaskCommand(P113_TASK, 3, resolvedPayload([staleRef]), { commandId: "p113-adv-stale-evidence" }),
+    );
+    expect(result.status).toBe("rejected");
+    if (result.status === "rejected") {
+      expect(result.code).toBe("evidence_mismatch");
+      expect(result.issues).toContain("evidence_stale_workspace_revision");
+    }
+    expect(await eventCount(ledger)).toBe(before);
+  });
+
+  it("本任务范围内、返工后版本、PASS 的真实证据 -> committed（守卫不是无条件拒绝）", async () => {
+    const harness = await taskInVerifying();
+    const { ledger, engine, plan } = harness;
+    if (plan === null) throw new Error("plan missing");
+    const passRef = await admitEvidence(engine, plan, { evidenceId: "p113-evidence-real-pass", outcome: "PASS", workspaceRevision: 2 });
+    const result = await engine.advanceRemediationTask(
+      buildP113AdvanceTaskCommand(P113_TASK, 3, resolvedPayload([passRef]), { commandId: "p113-adv-real-pass" }),
+    );
+    expect(result.status).toBe("committed");
+    const taskLoad = await ledger.load({ aggregateType: "RemediationTask" as const, projectId: PROJECT, workspaceId: WS, taskId: P113_TASK });
+    expect(taskLoad.status).toBe("found");
+    if (taskLoad.status === "found") {
+      const task = (taskLoad.snapshot as { task: RemediationTaskV1 }).task;
+      expect(task.status).toBe("resolved");
+      expect(task.evidenceRefs).toEqual([passRef]);
+    }
+  });
+});
+
+// ------------------------------------------------------------------------ //
+// FIX-REMEDIATION-EVIDENCE B: remediationCountThisCycle is a real count      //
+// (driftBudget.maxRemediationsPerCycle is no longer unreachable).            //
+// ------------------------------------------------------------------------ //
+
+describe("remediation: drift budget counts occupied dedup keys per cycle", () => {
+  /** 记录一个 delta Finding（allowlist 命中；可指定 id 与工作区版本）。 */
+  async function recordDelta(
+    engine: ReturnType<typeof createControlEngine>,
+    findingId: string,
+    workspaceRevision = 2,
+  ): Promise<void> {
+    const finding: ArchitectureFindingV1 = { ...buildP112DeltaFinding(), findingId, workspaceRevision };
+    const result = await engine.recordArchitectureFinding(
+      buildRecordArchitectureFindingCommand(finding, { commandId: "p113-cmd-finding-" + findingId }),
+    );
+    expect(result.status).toBe("committed");
+  }
+
+  function patchFor(findingId: string, patchId: string, workspaceRevision = 2): RemediationPlanPatchV1 {
+    return buildP113PlanPatchV1({
+      patchId,
+      findingRef: architectureFindingRefFor(PROJECT, WS, findingId),
+      findingId,
+      workspaceRevision,
+    });
+  }
+
+  it("同一 cycle 内第 3 个返工任务超过 maxRemediationsPerCycle=2 -> allowlist_rejected + zero write", async () => {
+    const { ledger, engine } = makeHarness();
+    await p111BootstrapGoalGovernance(ledger, PROJECT);
+    await installActivatePolicy(ledger);
+
+    // cycle = (policyRevision 1, workspaceRevision 2)；同一 cycle 内不同 Finding 共享额度。
+    await recordDelta(engine, P113_FINDING, 2);
+    await recordDelta(engine, "finding-p113-2", 2);
+    await recordDelta(engine, "finding-p113-3", 2);
+
+    // 提案本身还不占用去重键，因此三个提案都在额度内被受理（计数仍是 0）。
+    const proposals: ReadonlyArray<readonly [string, string, string]> = [
+      [P113_FINDING, "patch-p113-1", "p113-cmd-patch-1"],
+      ["finding-p113-2", "patch-p113-2", "p113-cmd-patch-2"],
+      ["finding-p113-3", "patch-p113-3", "p113-cmd-patch-3"],
+    ];
+    for (const [findingId, patchId, commandId] of proposals) {
+      const submitted = await engine.submitRemediationPlanPatch(
+        buildP113SubmitPatchCommand(patchFor(findingId, patchId), { commandId }),
+      );
+      expect(submitted.status).toBe("committed");
+    }
+
+    const firstTask = await engine.createRemediationTask(
+      buildP113CreateTaskCommand(remediationPlanPatchRefFor(PROJECT, WS, "patch-p113-1"), { commandId: "p113-cmd-task-1", taskId: "task-p113-1" }),
+    );
+    expect(firstTask.status).toBe("committed"); // 计数 0 < 2
+    const secondTask = await engine.createRemediationTask(
+      buildP113CreateTaskCommand(remediationPlanPatchRefFor(PROJECT, WS, "patch-p113-2"), { commandId: "p113-cmd-task-2", taskId: "task-p113-2" }),
+    );
+    expect(secondTask.status).toBe("committed"); // 计数 1 < 2
+
+    // 两个去重键已被占用（都是非终态）-> 第三个任务必须被真实预算拒绝且零写。
+    const before = await eventCount(ledger);
+    const thirdTask = await engine.createRemediationTask(
+      buildP113CreateTaskCommand(remediationPlanPatchRefFor(PROJECT, WS, "patch-p113-3"), { commandId: "p113-cmd-task-3", taskId: "task-p113-3" }),
+    );
+    expect(thirdTask.status).toBe("rejected");
+    if (thirdTask.status === "rejected") {
+      expect(thirdTask.code).toBe("allowlist_rejected");
+      expect(thirdTask.issues).toContain("drift_budget_exhausted");
+    }
+    expect(await eventCount(ledger)).toBe(before);
+
+    // 同一预算也拦住新提案：计数来自真实已占用任务，而不是恒定 0。
+    await recordDelta(engine, "finding-p113-4", 2);
+    const beforeFourthProposal = await eventCount(ledger);
+    const fourthProposal = await engine.submitRemediationPlanPatch(
+      buildP113SubmitPatchCommand(patchFor("finding-p113-4", "patch-p113-4"), { commandId: "p113-cmd-patch-4" }),
+    );
+    expect(fourthProposal.status).toBe("rejected");
+    if (fourthProposal.status === "rejected") {
+      expect(fourthProposal.code).toBe("allowlist_rejected");
+      expect(fourthProposal.issues).toContain("drift_budget_exhausted");
+    }
+    expect(await eventCount(ledger)).toBe(beforeFourthProposal);
+  });
+
+  it("工作区版本前进即进入新 cycle -> 额度重新开始", async () => {
+    const { ledger, engine } = makeHarness();
+    await p111BootstrapGoalGovernance(ledger, PROJECT);
+    await installActivatePolicy(ledger);
+
+    await recordDelta(engine, P113_FINDING, 2);
+    await recordDelta(engine, "finding-p113-2", 2);
+    await recordDelta(engine, "finding-p113-next-cycle", 3);
+
+    const first = await engine.submitRemediationPlanPatch(
+      buildP113SubmitPatchCommand(patchFor(P113_FINDING, "patch-p113-1"), { commandId: "p113-cmd-patch-1" }),
+    );
+    expect(first.status).toBe("committed");
+    const firstTask = await engine.createRemediationTask(
+      buildP113CreateTaskCommand(remediationPlanPatchRefFor(PROJECT, WS, "patch-p113-1"), { commandId: "p113-cmd-task-1", taskId: "task-p113-1" }),
+    );
+    expect(firstTask.status).toBe("committed");
+
+    // 第二个键仍在同一 cycle 且额度内（计数 1 < 2）-> 放行，占用第二个键
+    const sameCycle = await engine.submitRemediationPlanPatch(
+      buildP113SubmitPatchCommand(patchFor("finding-p113-2", "patch-p113-2"), { commandId: "p113-cmd-patch-2" }),
+    );
+    expect(sameCycle.status).toBe("committed");
+    const sameCycleTask = await engine.createRemediationTask(
+      buildP113CreateTaskCommand(remediationPlanPatchRefFor(PROJECT, WS, "patch-p113-2"), { commandId: "p113-cmd-task-2", taskId: "task-p113-2" }),
+    );
+    expect(sameCycleTask.status).toBe("committed");
+
+    // 第三个提案固定到工作区版本 3：cycle 变化 -> 计数归零 -> 再次放行
+    // （这条正向对照证明被拒绝的额度既不是恒定值也不是永久耗尽）。
+    const nextCycle = await engine.submitRemediationPlanPatch(
+      buildP113SubmitPatchCommand(patchFor("finding-p113-next-cycle", "patch-p113-next-cycle", 3), { commandId: "p113-cmd-patch-next-cycle" }),
+    );
+    expect(nextCycle.status).toBe("committed");
   });
 });

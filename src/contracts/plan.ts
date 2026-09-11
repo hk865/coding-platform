@@ -1,19 +1,8 @@
 /**
- * PlanRevision contracts — P1-02 "PlanRevision accepted -> Plan/Task view".
- *
- * Authority:
- *   - dev_docs/interfaces/completion-policy.md (orthogonal Task dimensions,
- *     TaskHierarchy vs RuntimeExecutionDAG, non-empty guard set)
- *   - dev_docs/interfaces/goal-view.md + modules/data/read-model-index.md
- *     (views are event projections; freshness by cursor)
- *   - dev_docs/planning/proposed/P1-foundation/tickets/02-plan-revision-visible.md
- *   - IMPLEMENTATION-HANDOFF.md "P1-02 契约与存储语义（冻结）"
- *
- * Guard order (frozen): schema -> ref resolution -> non-empty guards ->
- * hierarchy/DAG legality -> atomic commit. Every rejection is zero-write.
- * P1-02 does NOT dispatch tasks, create Runs/TaskAttempts, produce a dispatch
- * outbox or reduce Goals; Stage does not synthesize dependencies; completed
- * state is left to later tickets.
+ * Versioned tasks, assignments, obligations and acceptance commands.
+ * Control checks schema, references, non-empty obligations and hierarchy/DAG legality
+ * before atomically accepting a revision; rejected commands do not write.
+ * Task hierarchy, execution dependencies and display stages have distinct meanings.
  */
 import type {
   ActorRef,
@@ -49,6 +38,15 @@ export type TaskScope =
   | { kind: "stage"; stageId: string }
   | { kind: "module"; stageId: string; moduleRef: string };
 
+/**
+ * 任务承担者指派（任务 → 角色 + 指令）。
+ *
+ * 形状的唯一正文仍在 contracts/initial-planning.ts：初始规划响应的公开约定与它的解析
+ * 规则（role 取值、instruction 非空有界、每个 work 任务恰好一条）都写在那里。这里只给它
+ * 一个与 revision 语境一致的名字，避免同一形状出现第二份定义。
+ */
+export type PlanTaskAssignment = import('./initial-planning.js').InitialPlanAssignment;
+
 // ------------------------------------------------------------------------ //
 // Plan structures                                                           //
 // ------------------------------------------------------------------------ //
@@ -72,10 +70,14 @@ export type RuntimeTask = {
   disposition: Disposition;
   phase: Phase;
   scope: TaskScope;
+  /**
+   * ADR 0003 D1: 只在 disposition="superseded" 时有意义——该任务在**后一个**
+   * PlanRevision 里由哪个任务接手（同一义务、同一验收语义，只换承担者）。
+   * null 表示本次取消没有取代者。旧 revision 的任务不带本字段（未定义即无取代）。
+   * 这是历史/处置视图的事实来源：任务本身不删除，只是退出默认视图。
+   */
+  replacedByTaskId?: string | null;
 };
-
-/** Gate tasks are runtime tasks with taskKind = "gate" (same lifecycle rules). */
-export type GateTask = RuntimeTask & { taskKind: "gate" };
 
 export type VerificationRequirement = {
   requirementId: string;
@@ -99,7 +101,7 @@ export type AcceptanceObligation = {
 };
 
 /** parent_of ONLY expresses work-breakdown/read-model grouping. */
-export type ParentOfEdge = {
+type ParentOfEdge = {
   parentTaskId: string;
   childTaskId: string;
 };
@@ -114,7 +116,7 @@ export type DependencyRequirement = {
   label: string;
 };
 
-export type DependsOnEdge = {
+type DependsOnEdge = {
   taskId: string;
   dependsOnId: string;
   requires: DependencyRequirement;
@@ -126,13 +128,22 @@ export type RuntimeExecutionDAG = {
 };
 
 export type PlanRevisionDraft = {
+  reviewAdmissionProtocol?: 'independent-review-v1';
   schemaVersion: 1;
+  origin?: import('./initial-planning.js').InitialPlanOrigin;
   planId: string;
   planRevision: number;
   /** local goalId within the command project. */
   goalId: string;
   stages: PlanStage[];
   tasks: RuntimeTask[];
+  /**
+   * 本 revision 的指派集合。它**随 revision 一起被接受**，「谁按什么指令承担这项
+   * 任务」因此不会属于另一个版本。可选：RW-07 之前接受的 revision 没有这个字段，其任务的
+   * 指派只可能来自同一个快照的 origin.assignments——读取一律经 revisionAssignments，
+   * 调用方不自己挑字段。
+   */
+  assignments?: PlanTaskAssignment[];
   obligations: AcceptanceObligation[];
   taskHierarchy: TaskHierarchy;
   executionDag: RuntimeExecutionDAG;
@@ -187,7 +198,7 @@ export type PlanRevisionReceipt =
 // PlanValidationError                                                        //
 // ------------------------------------------------------------------------ //
 
-export type PlanValidationCode =
+type PlanValidationCode =
   | "missing_required_executable_task"
   | "missing_active_required_goal_gate"
   | "missing_required_obligation"
@@ -224,6 +235,8 @@ export type PlanRevisionRef = {
  * PlanRevision/PlanRebase (later tickets).
  */
 export type PlanRevisionSnapshot = {
+  reviewAdmissionProtocol?: 'independent-review-v1';
+  origin?: import('./initial-planning.js').InitialPlanOrigin;
   ref: PlanRevisionRef;
   /** Aggregate revision: a plan is accepted once -> 1. */
   revision: 1;
@@ -236,6 +249,8 @@ export type PlanRevisionSnapshot = {
   effectiveArchitectureBaseline: ArchitectureBaselinePin;
   stages: PlanStage[];
   tasks: RuntimeTask[];
+  /** 本 revision 的指派集合（见 PlanRevisionDraft.assignments 的说明）。 */
+  assignments?: PlanTaskAssignment[];
   obligations: AcceptanceObligation[];
   taskHierarchy: TaskHierarchy;
   executionDag: RuntimeExecutionDAG;
@@ -285,4 +300,40 @@ export function planValidationError(
   message: string,
 ): PlanValidationError {
   return { path, code, message };
+}
+
+export function planRevisionRefFor(command: ApplyPlanRevisionCommand): PlanRevisionRef {
+  return {
+    aggregateType: "PlanRevision",
+    projectId: command.identity.projectId,
+    planId: command.payload.plan.planId,
+  };
+}
+
+export function goalRefFor(command: ApplyPlanRevisionCommand): GoalRef {
+  return {
+    aggregateType: "Goal",
+    projectId: command.identity.projectId,
+    goalId: command.aggregateId,
+  };
+}
+
+/**
+ * 一个 revision 的指派集合的唯一读取入口。
+ *
+ * 顺序：先取 revision 自带的 assignments；没有时取**同一个快照内** origin 的 assignments
+ * （初始规划提案给出的指派随该 revision 一起被接受，就落在快照的 origin 里）；两者都没有
+ * 就返回空数组。这不是两套真相：接受时逐字沿用，同一个 revision 上两者不会给出不同结果，
+ * 回退兼容尚无顶层 assignments、仅在 origin 保存指派的已接受旧 revision。
+ *
+ * 为什么必须由契约提供：派发（DispatchEngine）、计划变更守卫（ControlEngine 策略）与返工
+ * 编译器都要拿同一份指派。若各自挑字段，就会出现"派发按 origin 读、守卫按 assignments 判"
+ * 这类分叉。旧计划仍有消费者时必须保留同快照回退，不据此扩大指派或授权。
+ */
+export function revisionAssignments(plan: {
+  assignments?: PlanTaskAssignment[];
+  origin?: import('./initial-planning.js').InitialPlanOrigin;
+}): PlanTaskAssignment[] {
+  const source = plan.assignments ?? plan.origin?.assignments ?? [];
+  return source.map((entry) => ({ taskId: entry.taskId, role: entry.role, instruction: entry.instruction }));
 }

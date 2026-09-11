@@ -1,0 +1,90 @@
+{
+  "trace": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-07",
+    "origin": "constructed-evaluator-selftest-only",
+    "observations": {
+      "query": {
+        "kind": "fact",
+        "before": {
+          "contextDigest": "d",
+          "lease": "l",
+          "budgetUsed": 100,
+          "obligationRevision": "v1",
+          "runState": "running"
+        },
+        "after": {
+          "contextDigest": "d",
+          "lease": "l",
+          "budgetUsed": 100,
+          "obligationRevision": "v1",
+          "runState": "running"
+        },
+        "injectedExecutionMessages": 0
+      },
+      "change": {
+        "oldRevision": "v1",
+        "newRevision": "v2",
+        "accepted": true,
+        "affectedPaths": [
+          "src/store.mjs",
+          "src/ui.mjs"
+        ],
+        "refreshedRuns": [
+          {
+            "runId": "w",
+            "revision": "v1"
+          }
+        ],
+        "at": 4
+      },
+      "oldResult": {
+        "revision": "v1",
+        "satisfiesCurrent": false
+      },
+      "independentEvents": [
+        {
+          "kind": "tool-completed",
+          "at": 5
+        }
+      ],
+      "cancelRun": {
+        "runPhase": "cancelled",
+        "goalPhase": "RUNNING"
+      },
+      "cancelGoal": {
+        "authority": "goal",
+        "goalPhase": "CANCELLED"
+      },
+      "configuration": "parallel-with-injection"
+    }
+  },
+  "expectedFailure": "human.change-version-and-affected-scope",
+  "result": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-07",
+    "layer": "normalized-trace-assertion-evaluator",
+    "inputOrigin": "constructed-evaluator-selftest-only",
+    "status": "FAIL",
+    "assertions": [
+      {
+        "id": "human.query-preserves-source-run",
+        "status": "PASS"
+      },
+      {
+        "id": "human.change-version-and-affected-scope",
+        "status": "FAIL"
+      },
+      {
+        "id": "human.stale-result-and-independent-work",
+        "status": "PASS"
+      },
+      {
+        "id": "human.cancel-run-versus-goal",
+        "status": "PASS"
+      }
+    ],
+    "productCapabilityResult": "NOT_RUN",
+    "note": "A normalized trace can only test evaluator logic here. A platform export adapter and independent raw-evidence authentication are NOT_PREPARED; constructed traces are never product evidence."
+  }
+}

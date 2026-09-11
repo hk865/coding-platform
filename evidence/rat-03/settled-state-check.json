@@ -1,0 +1,34 @@
+{
+  "status": "PASS",
+  "scope": "Separate post-run persisted projection read after host restart; original immediate snapshots retained",
+  "reports": [
+    {
+      "taskId": "node-bearer-auth",
+      "runId": "real-2d451bc8-b7b9-433b-a547-a688c070cb29",
+      "canonicalOutcome": "completed",
+      "requests": 5,
+      "newRequests": 0
+    },
+    {
+      "taskId": "python-slug-normalization",
+      "runId": "real-bf092353-d15f-4d59-9d15-6916576f6b06",
+      "canonicalOutcome": "completed",
+      "requests": 5,
+      "newRequests": 0
+    },
+    {
+      "taskId": "recovery-exactly-once",
+      "runId": "real-a3fa8e80-a585-4d17-8c55-38b29238f7e0",
+      "canonicalOutcome": "completed",
+      "requests": 5,
+      "newRequests": 0
+    },
+    {
+      "taskId": "ts-nullish-timeout",
+      "runId": "real-b2b828ea-f9d2-44e0-899e-70c088efc0ae",
+      "canonicalOutcome": "completed",
+      "requests": 5,
+      "newRequests": 0
+    }
+  ]
+}

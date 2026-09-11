@@ -4,7 +4,7 @@
  * (7 contracts) + dev_docs/interfaces/{goal-view,runtime-collaboration,human-design-status}.md
  * + IMPLEMENTATION-HANDOFF.md "P1-08 只读控制台契约与查询语义" (integrator rulings).
  *
- * FROZEN semantics:
+ * Semantics:
  *   - The console is a VERSIONED extension of HumanCollaboration (no new
  *     Module; ARCHITECTURE §Plane — query tools are a candidate access
  *     capability of HumanCollaboration). It is a READ-ONLY face: every
@@ -153,7 +153,7 @@ export type PortfolioEntry = {
   projectId: string;
   workspaceId: string;
   /** Bootstrap manifest entry projection (P1-00): the bootstrapped revision. */
-  projectRevision: 1;
+  projectRevision: number;
   workspaceRevision: 1;
   /** Source digest of the versioned bootstrap manifest (source provenance). */
   sourceDigest: string;
@@ -297,6 +297,7 @@ export type RunDisplayState =
   | "ended_no_outcome";
 
 export type ActiveAgentRunRow = {
+  work?: import('./reviewer-work.js').ReviewWorkBinding;
   projectId: string;
   workspaceId: string;
   goalId: string;
@@ -444,6 +445,26 @@ export type TimelineEntryKind =
   | "handoff_recorded"
   | "replacement_claimed";
 
+/**
+ * 计划变更类时间线条目的事实补充。
+ *
+ * 为什么在读模型里补而不是在界面里拼：条目一旦落进投影，界面只应搬运事实。变更原因来自
+ * canonical 的 `GoalRevisionRecorded.change.reason`（受理命令逐字落账，人的决定受理是
+ * `user-decision-accepted`，ControlEngine 的自动受理是 `autonomous-rework:<proposalId>`），
+ * actor 来自同一条已提交事件。界面据此区分「系统自动受理」与「人的决定」，既不解析 id 形状，
+ * 也不自己拼字符串——同一条规则若在每套投影里各写一次，两套读模型迟早会分叉。
+ */
+export type TimelineChangeFact = {
+  /** `GoalRevisionRecorded.change.reason` 逐字（不做映射、不补齐、不推断）。 */
+  reason: string;
+  /** 同一条已提交事件的 actor：系统自动受理为 system，人的决定受理为 human。 */
+  actor: import("./command-event.js").ActorRef;
+  /** 这次 revision 的编号与它生效／取代的计划，逐字来自同一条 canonical 事实。 */
+  goalRevision: number;
+  activePlanId: string;
+  supersededPlanIds: string[];
+};
+
 export type TimelineEntry = {
   /** 1-based arrival order within the workspace timeline (display order). */
   seq: number;
@@ -460,9 +481,17 @@ export type TimelineEntry = {
     runId?: string;
     evidenceId?: string;
     packetId?: string;
+    /** the plan the entry is about (plan_accepted entries carry it). */
+    planId?: string;
   };
   /** Deterministic one-line summary (no model, no interpretation — display only). */
   summary: string;
+  /**
+   * present only when this entry was produced by a v1 plan-change batch
+   * (the GoalRevisionRecorded event in the same commit carries the reason).
+   * Absent means "not a plan-change acceptance" — never "unknown reason".
+   */
+  change?: TimelineChangeFact;
 };
 
 export type TimelineView = {

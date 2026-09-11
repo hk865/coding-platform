@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "MA-08",
+  "origin": "deterministic-test-input",
+  "adapterStatus": "NOT_PREPARED",
+  "guard": "Only run in a fresh scenario workspace; resolve all symbolic refs from captured current state; never use fixture claims as model output.",
+  "steps": [
+    {
+      "id": "MA-08-near-miss-candidate",
+      "after": {
+        "type": "writer-ready-to-submit"
+      },
+      "occurrence": 1,
+      "action": "stage_test_candidate_overlay",
+      "args": {
+        "overlayRef": "private/near-miss/no-persistence",
+        "baseOverlayRef": "private/oracles/filter",
+        "label": "test-input-not-model-output"
+      }
+    },
+    {
+      "id": "MA-08-concurrent-claims",
+      "after": {
+        "type": "hidden-check-failed"
+      },
+      "occurrence": 1,
+      "action": "submit_test_claims",
+      "args": {
+        "roles": [
+          "writer",
+          "reviewer"
+        ],
+        "result": "completed",
+        "expected": "no-completion"
+      }
+    },
+    {
+      "id": "MA-08-repair",
+      "after": {
+        "type": "rework-requested"
+      },
+      "occurrence": 1,
+      "action": "release_worker_feedback",
+      "args": {
+        "feedback": "Persisted filter is lost after reload.",
+        "expected": "new-candidate-then-independent-verification"
+      }
+    },
+    {
+      "id": "MA-08-final-review",
+      "after": {
+        "type": "all-required-checks-passed"
+      },
+      "occurrence": 1,
+      "action": "allow_contract_review",
+      "args": {
+        "expected": "Control-reduction-after-review-current-version"
+      }
+    }
+  ]
+}

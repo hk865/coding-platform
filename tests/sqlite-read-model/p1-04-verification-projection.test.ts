@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-04 lane D — SQLite read-model taskVerification projection tests.
  *
@@ -11,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import {
   SqliteReadModelIndex,
   createSqliteReadModelIndex,
-} from "../../src/sqlite-read-model/sqlite-read-model-index.js";
+} from "../../src/data/read-model-index/sqlite-read-model-index.js";
 import { ProjectionStallError } from "../../src/contracts/goal-view.js";
 import type { EventPage } from "../../src/contracts/ledger.js";
 import { makeCommitCursor } from "../../src/contracts/ledger.js";
@@ -21,23 +22,10 @@ import type {
   EvidenceCoverageV1,
   EvidenceV1,
 } from "../../src/contracts/evidence.js";
-import {
-  buildEffectivityAnchorV1,
-  buildEvidenceV1,
-  buildTaskReductionSnapshot,
-  P104_GOAL,
-  P104_OBL_IMPLEMENT,
-  P104_OBL_REVIEW,
-  P104_PLAN_ID,
-  P104_PLAN_REVISION_FIXTURE_V1,
-  P104_TASK_IMPLEMENT,
-  P104_TASK_REVIEW,
-} from "../../src/contracts/fixtures/evidence-fixtures.js";
-import {
-  buildApplyPlanCommand,
-  planRevisionAcceptedEventFor,
-  planRevisionSnapshotFor,
-} from "../../src/contracts/fixtures/plan-fixtures.js";
+import { buildEffectivityAnchorV1, buildEvidenceV1, P104_GOAL, P104_OBL_IMPLEMENT, P104_OBL_REVIEW, P104_PLAN_ID, P104_PLAN_REVISION_FIXTURE_V1, P104_TASK_IMPLEMENT, P104_TASK_REVIEW } from "../contract-support/fixtures/evidence-fixtures.js";
+import { buildTaskReductionSnapshot } from "../../src/control/control-engine/records/evidence.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { planRevisionAcceptedEventFor, planRevisionSnapshotFor } from "../../src/control/control-engine/records/plan.js";
 import type { PlanRevisionAcceptedEvent, PlanRevisionRef, PlanRevisionSnapshot } from "../../src/contracts/plan.js";
 import type { TaskReductionSnapshot, TaskReductionUpdatedEvent } from "../../src/contracts/reduction.js";
 import type {
@@ -243,8 +231,34 @@ function buildImplementScenario(projectId: string): {
 }
 
 describe("P1-04 verification projection (SQLite)", () => {
+  it("uses the injected policy explanation for both evidence views without rewriting reduction facts", async () => {
+    let calls = 0;
+    const policy = new ControlPolicyExplanation();
+    policy.explainEvidence = request => {
+      calls++;
+      expect(request.evidence.map(item => item.evidenceId)).toEqual(['ev-impl-static', 'ev-impl-dynamic']);
+      return { bindings: request.evidence.map(item => ({ evidenceId: item.evidenceId, applicability: 'STALE' })), effectiveEvidenceIds: [], blockingEvidenceIds: ['display-explanation'] };
+    };
+    const rm = createSqliteReadModelIndex({ path: ':memory:', policyExplanation: policy });
+    try {
+      const sc = buildImplementScenario(PROJECT_A);
+      await feed(rm, 1, [sc.plan, sc.evidence[0].evad, sc.evidence[1].evad, sc.reduction.event]);
+      expect(calls).toBe(0);
+      const result = await rm.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: P104_TASK_IMPLEMENT });
+      expect(result).toMatchObject({ status: 'ready', observedCursor: makeCommitCursor(4), verification: {
+        effectiveEvidenceIds: [], blockingEvidenceIds: ['display-explanation'],
+        evidence: [{ applicability: 'STALE' }, { applicability: 'STALE' }],
+        reduction: { phase: 'satisfied', effectiveEvidenceIds: ['ev-impl-static', 'ev-impl-dynamic'] }
+      } });
+      expect(await rm.consoleTaskEvidence({ projectId: PROJECT_A, workspaceId: WS, goalId: GOAL, taskId: P104_TASK_IMPLEMENT })).toMatchObject({ status: 'ready', evidence: {
+        effectiveEvidenceIds: [], blockingEvidenceIds: ['display-explanation'], reduction: { phase: 'satisfied' }
+      } });
+      expect(calls).toBe(2);
+    } finally { await rm.close(); }
+  });
+
   it("incremental projection rebuilds a verification view from events (applicability recomputed, reduction is a projected fact)", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const sc = buildImplementScenario(PROJECT_A);
     await feed(rm, 1, [sc.plan]);
     await feed(rm, 2, [sc.evidence[0].evad, sc.evidence[1].evad, sc.reduction.event]);
@@ -275,7 +289,7 @@ describe("P1-04 verification projection (SQLite)", () => {
   });
 
   it("repeated evidence event is idempotent (dedupe by eventId)", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const sc = buildImplementScenario(PROJECT_A);
     await feed(rm, 1, [sc.plan]);
     await feed(rm, 2, [sc.evidence[0].evad, sc.evidence[1].evad, sc.reduction.event]);
@@ -291,7 +305,7 @@ describe("P1-04 verification projection (SQLite)", () => {
 
   it("rebuild equivalence: a fresh SQLite instance fed the same events produces the identical view", async () => {
     const sc = buildImplementScenario(PROJECT_A);
-    const rm1 = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm1 = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     await feed(rm1, 1, [sc.plan]);
     await feed(rm1, 2, [sc.evidence[0].evad, sc.evidence[1].evad, sc.reduction.event]);
     const v1 = await rm1.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: P104_TASK_IMPLEMENT });
@@ -299,7 +313,7 @@ describe("P1-04 verification projection (SQLite)", () => {
     if (v1.status !== "ready") return;
     await rm1.close();
 
-    const rm2 = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm2 = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     await feed(rm2, 1, [sc.plan]);
     await feed(rm2, 2, [sc.evidence[0].evad, sc.evidence[1].evad, sc.reduction.event]);
     const v2 = await rm2.taskVerification({ projectId: PROJECT_A, goalId: GOAL, taskId: P104_TASK_IMPLEMENT });
@@ -310,7 +324,7 @@ describe("P1-04 verification projection (SQLite)", () => {
   });
 
   it("full-key isolation: identical goalId/taskId under different projects never collide", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const a = buildImplementScenario(PROJECT_A);
     const b = buildImplementScenario(PROJECT_B);
     await feed(rm, 1, [a.plan]);
@@ -339,7 +353,7 @@ describe("P1-04 verification projection (SQLite)", () => {
   });
 
   it("not_found only after covered; not_ready before coverage", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const sc = buildImplementScenario(PROJECT_A);
     await feed(rm, 1, [sc.plan]);
     await feed(rm, 2, [sc.evidence[0].evad, sc.evidence[1].evad, sc.reduction.event]);
@@ -360,21 +374,21 @@ describe("P1-04 verification projection (SQLite)", () => {
   it("stall behaviours: cursor_gap / out_of_order / unknown event type never apply a page", async () => {
     const sc = buildImplementScenario(PROJECT_A);
 
-    const rmGap = createSqliteReadModelIndex({ path: ":memory:" });
+    const rmGap = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     await feed(rmGap, 1, [sc.plan]);
     await rmGap.advance(page(3, [sc.evidence[0].evad])).catch((e: unknown) => {
       expect((e as ProjectionStallError).reason).toBe("cursor_gap");
     });
     await rmGap.close();
 
-    const rmOoo = createSqliteReadModelIndex({ path: ":memory:" });
+    const rmOoo = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     await rmOoo.advance(page(2, [sc.plan])).catch(() => undefined);
     await rmOoo.advance(page(1, [sc.evidence[0].evad])).catch((e: unknown) => {
       expect((e as ProjectionStallError).reason).toBe("out_of_order");
     });
     await rmOoo.close();
 
-    const rmUnknown = createSqliteReadModelIndex({ path: ":memory:" });
+    const rmUnknown = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const unknown = { ...sc.plan, eventType: "NoSuchEvent" as const } as unknown as DomainEvent;
     await rmUnknown.advance(page(1, [unknown])).catch((e: unknown) => {
       expect(e).toBeInstanceOf(ProjectionStallError);
@@ -384,7 +398,7 @@ describe("P1-04 verification projection (SQLite)", () => {
   });
 
   it("applicability recompute: STALE / OUT_OF_SCOPE rows displayed, history untouched", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const { event: plan } = planEvent(PROJECT_A);
     const pass = evidenceEvent({ projectId: PROJECT_A, taskId: P104_TASK_IMPLEMENT, evidenceId: "ev-app-pass", kind: "observation", outcome: "PASS", coverage: covImplementStatic(), checkId: "static-check-lint", evidenceIndex: 1 });
     const stale = evidenceEvent({ projectId: PROJECT_A, taskId: P104_TASK_IMPLEMENT, evidenceId: "ev-app-stale", kind: "observation", outcome: "PASS", coverage: covImplementStatic(), checkId: "static-check-lint", workspaceRevision: 2, evidenceIndex: 2 });
@@ -415,7 +429,7 @@ describe("P1-04 verification projection (SQLite)", () => {
   });
 
   it("reduction null -> currentAnchor null and every binding applicability null (no report-derived phase)", async () => {
-    const rm = createSqliteReadModelIndex({ path: ":memory:" });
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const { event: plan } = planEvent(PROJECT_A);
     const pass = evidenceEvent({ projectId: PROJECT_A, taskId: P104_TASK_IMPLEMENT, evidenceId: "ev-only-pass", kind: "observation", outcome: "PASS", coverage: covImplementBoth(), checkId: "static-check-lint", evidenceIndex: 1 });
     await feed(rm, 1, [plan]);

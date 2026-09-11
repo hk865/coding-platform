@@ -1,0 +1,18 @@
+--- evidence/2026-09-10-external-review-repair/before/tests/tests/restart/p1-16-restart-fixtures.ts	2026-09-07 00:46:46.000000000 +0800
++++ tests/restart/p1-16-restart-fixtures.ts	2026-09-10 01:37:38.470674500 +0800
+@@ -1,3 +1,4 @@
++import { classifyRestartProbeError } from "./readiness-probe.js";
+ /**
+  * P1-16 restart-path fixtures + readiness probe.
+  *   runP116RestartScenario: the full continuity scenario (bind/link/note/
+@@ -23,8 +24,8 @@
+     } finally {
+       await h.cleanup().catch(() => undefined);
+     }
+-  } catch {
+-    return false;
++  } catch (error) {
++    return classifyRestartProbeError(error);
+   }
+ }
+ 

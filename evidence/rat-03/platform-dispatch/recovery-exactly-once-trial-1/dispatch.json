@@ -1,0 +1,24 @@
+{
+  "request": {
+    "projectId": "local-0e240f792710932932cd",
+    "workspaceId": "workspace-main",
+    "goalId": "0e4a0d40-a636-4e5d-bbb7-4bac3e7824dc",
+    "requestId": "a3fa8e80-a585-4d17-8c55-38b29238f7e0",
+    "instruction": "# 恢复时避免重复副作用\n\n`src/recover.mjs` 在恢复 pending effects 时会重新执行已经出现在 `completedEffectIds`\n中的 effect。修复 `effectsToReplay`，保持输入顺序，只返回尚未完成的 effect，且不要修改输入数组。\n\n运行 `node test.mjs` 可执行公开测试。不要读取或修改 `.env`。\n",
+    "allowWrite": true,
+    "budget": {
+      "contextWindowTokens": 1000000,
+      "inputTokens": 200000,
+      "outputTokens": 16384,
+      "maxRequests": 12,
+      "maxToolCalls": 36,
+      "timeoutMs": 30000,
+      "perResponseTokens": 2048
+    }
+  },
+  "accepted": {
+    "runId": "real-a3fa8e80-a585-4d17-8c55-38b29238f7e0",
+    "status": "accepted",
+    "executor": "coding-agent"
+  }
+}

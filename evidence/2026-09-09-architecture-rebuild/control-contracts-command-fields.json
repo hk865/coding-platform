@@ -1,0 +1,264 @@
+[
+  {
+    "symbol": "buildCreateGoalCommand",
+    "newSymbol": "buildCreateGoalCommand",
+    "dest": "src/contracts/commands/goal.ts",
+    "required": {
+      "deps": [
+        "idempotencyKey"
+      ]
+    }
+  },
+  {
+    "symbol": "buildInstallCommand",
+    "newSymbol": "buildInstallCommand",
+    "dest": "src/contracts/commands/governance.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey"
+      ]
+    }
+  },
+  {
+    "symbol": "buildActivateCommand",
+    "newSymbol": "buildActivateCommand",
+    "dest": "src/contracts/commands/governance.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey"
+      ]
+    }
+  },
+  {
+    "symbol": "buildApplyPlanCommand",
+    "newSymbol": "buildApplyPlanCommand",
+    "dest": "src/contracts/commands/plan.ts",
+    "required": {
+      "deps": [
+        "goalId",
+        "actor",
+        "idempotencyKey"
+      ]
+    }
+  },
+  {
+    "symbol": "buildDispatchClaimCommand",
+    "newSymbol": "buildDispatchClaimCommand",
+    "dest": "src/contracts/commands/dispatch.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey",
+        "taskId",
+        "goalId",
+        "attemptId",
+        "runId",
+        "roleBinding",
+        "declaredPermissions",
+        "budget"
+      ]
+    }
+  },
+  {
+    "symbol": "buildDispatchStartCommand",
+    "newSymbol": "buildDispatchStartCommand",
+    "dest": "src/contracts/commands/dispatch.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey",
+        "expectedRevision"
+      ]
+    }
+  },
+  {
+    "symbol": "buildRunFactCommand",
+    "newSymbol": "buildRunFactCommand",
+    "dest": "src/contracts/commands/dispatch.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey"
+      ]
+    }
+  },
+  {
+    "symbol": "buildEvidenceV1",
+    "newSymbol": "buildEvidenceV1",
+    "dest": "src/contracts/commands/evidence.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "runRef",
+        "checkId",
+        "summaryText",
+        "artifactRef"
+      ]
+    }
+  },
+  {
+    "symbol": "buildEffectivityAnchorV1",
+    "newSymbol": "buildEffectivityAnchorV1",
+    "dest": "src/contracts/commands/evidence.ts",
+    "required": {}
+  },
+  {
+    "symbol": "buildSubmitEvidenceCommand",
+    "newSymbol": "buildSubmitEvidenceCommand",
+    "dest": "src/contracts/commands/evidence.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey"
+      ]
+    }
+  },
+  {
+    "symbol": "buildReduceTaskCommand",
+    "newSymbol": "buildReduceTaskCommand",
+    "dest": "src/contracts/commands/evidence.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey"
+      ]
+    }
+  },
+  {
+    "symbol": "buildReduceGoalCommand",
+    "newSymbol": "buildReduceGoalCommand",
+    "dest": "src/contracts/commands/goal-phase.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey"
+      ]
+    }
+  },
+  {
+    "symbol": "buildP107AcquireReadLeaseCommand",
+    "newSymbol": "buildAcquireReadLeaseCommand",
+    "dest": "src/contracts/commands/workspace.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey",
+        "correlationId",
+        "submittedAt",
+        "workspaceId",
+        "scope",
+        "expiresAt"
+      ]
+    }
+  },
+  {
+    "symbol": "buildP107AcquireWriteLeaseCommand",
+    "newSymbol": "buildAcquireWriteLeaseCommand",
+    "dest": "src/contracts/commands/workspace.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey",
+        "correlationId",
+        "submittedAt",
+        "workspaceId",
+        "scope",
+        "expiresAt",
+        "declaredWriteScope"
+      ]
+    }
+  },
+  {
+    "symbol": "buildP107ReleaseLeaseCommand",
+    "newSymbol": "buildReleaseLeaseCommand",
+    "dest": "src/contracts/commands/workspace.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey",
+        "correlationId",
+        "submittedAt",
+        "workspaceId"
+      ]
+    }
+  },
+  {
+    "symbol": "buildP107RecordPatchCommand",
+    "newSymbol": "buildRecordPatchCommand",
+    "dest": "src/contracts/commands/workspace.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey",
+        "correlationId",
+        "submittedAt"
+      ]
+    }
+  },
+  {
+    "symbol": "buildRecordArchitectureInspectionCommand",
+    "newSymbol": "buildRecordArchitectureInspectionCommand",
+    "dest": "src/contracts/commands/architecture.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey",
+        "correlationId",
+        "submittedAt"
+      ]
+    }
+  },
+  {
+    "symbol": "buildRecordArchitectureFindingCommand",
+    "newSymbol": "buildRecordArchitectureFindingCommand",
+    "dest": "src/contracts/commands/architecture.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey",
+        "correlationId",
+        "submittedAt"
+      ]
+    }
+  },
+  {
+    "symbol": "buildRecordArchitectureDecisionBriefCommand",
+    "newSymbol": "buildRecordArchitectureDecisionBriefCommand",
+    "dest": "src/contracts/commands/architecture.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey",
+        "correlationId",
+        "submittedAt"
+      ]
+    }
+  },
+  {
+    "symbol": "buildRecordCandidateBaselineProposalCommand",
+    "newSymbol": "buildRecordCandidateBaselineProposalCommand",
+    "dest": "src/contracts/commands/architecture.ts",
+    "required": {
+      "deps": [
+        "actor",
+        "idempotencyKey",
+        "correlationId",
+        "submittedAt"
+      ]
+    }
+  },
+  {
+    "symbol": "buildMaterialAccessGrantV1",
+    "newSymbol": "buildMaterialAccessGrantV1",
+    "dest": "src/contracts/commands/material-access.ts",
+    "required": {}
+  },
+  {
+    "symbol": "buildGrantMaterialAccessCommand",
+    "newSymbol": "buildGrantMaterialAccessCommand",
+    "dest": "src/contracts/commands/material-access.ts",
+    "required": {}
+  }
+]

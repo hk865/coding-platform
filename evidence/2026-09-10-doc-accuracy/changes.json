@@ -1,0 +1,27 @@
+[
+  {
+    "target": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/human/module-status.md",
+    "beforeSha256": "8409cafada749ec9dbd0ba809c214b8b2482e9a34055415faff5a47998e7055f",
+    "staged": "D:\\1.project\\Software\\agent_platform\\evidence\\2026-09-10-doc-accuracy\\0.after.md"
+  },
+  {
+    "target": "D:/1.project/Software/agent_platform/IMPLEMENTATION-HANDOFF.md",
+    "beforeSha256": "8573b00ccdfc009622ee3abfa284f709df9cf77c78867fe34cfdafafca2216aa",
+    "staged": "D:\\1.project\\Software\\agent_platform\\evidence\\2026-09-10-doc-accuracy\\1.after.md"
+  },
+  {
+    "target": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-09-architecture-rebuild/core-continuation.md",
+    "beforeSha256": "c4036f53eb2a7878a6509afc61e39a84a292b7ee5ec1af1ade7b53c05185cd57",
+    "staged": "D:\\1.project\\Software\\agent_platform\\evidence\\2026-09-10-doc-accuracy\\2.after.md"
+  },
+  {
+    "target": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-10-progress-audit.md",
+    "beforeSha256": "4f9e3799e7f274d59b798d7d5324873218f4fb548799e8f8c829abdce1d5db3c",
+    "staged": "D:\\1.project\\Software\\agent_platform\\evidence\\2026-09-10-doc-accuracy\\3.after.md"
+  },
+  {
+    "target": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-10-doc-accuracy.md",
+    "beforeSha256": null,
+    "staged": "D:\\1.project\\Software\\agent_platform\\evidence\\2026-09-10-doc-accuracy\\4.after.md"
+  }
+]

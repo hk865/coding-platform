@@ -1,0 +1,201 @@
+{
+  "docs": [
+    {
+      "after": "d090f0fed40bcfc650f3b4b6da28dc229ccab159b3956dcf0318209058531a7e",
+      "path": "dev_docs/interfaces/runtime-collaboration.md",
+      "before": "140b0d9f477e50c7e55bfa0344718cffadd8bd0facea55e61f307d0f76ca8ed4"
+    },
+    {
+      "after": "4d52356b52c40382081fc46763c3a0617929b8d9ff7d3f3222d67024f70e4b0c",
+      "path": "dev_docs/modules/control/plan-compiler.md",
+      "before": "2cabd4c13c04669bdce2bb6a59a80a001f8bb8cf7acc6419fbe630b412dc80a7"
+    },
+    {
+      "after": "9f011512140421fc26f114cb3520646550b34551ad4480c838b8da94d643db57",
+      "path": "dev_docs/modules/control/verification-engine.md",
+      "before": "a95c49a804cd56faab77643347570b08cef55a54161a56097b5cbff159343878"
+    },
+    {
+      "after": "aaacea34c0ee4188aa75808212ba07b9b926047fb01d45d445597bf7180cd17e",
+      "path": "dev_docs/modules/data/context-compiler.md",
+      "before": "a408e8184ea450d3b1733163457d101c30ae7af085c236a83961ac58fb4965fc"
+    },
+    {
+      "after": "d6a367cce36f2b53db21be72c03e2535428fdb68dab38ed18d883a1ff58b9c9b",
+      "path": "human/module-status.md",
+      "before": "c7b755d83865773bd257c6a1c900d017af6612badb80b6851b6a5ffc7afe5e55"
+    }
+  ],
+  "product": [
+    {
+      "after": "62ed190ec604e76e07b605bc2c4778503bf8c9d6562bbff38a8d39b691dc9f87",
+      "path": "IMPLEMENTATION-HANDOFF.md",
+      "before": "87d61405446bc001d1b69931988b2843e96525755551ae428db7b8ff57e5e65e"
+    },
+    {
+      "after": "d71685ec527a18d0a326e405727e7db3a3c6889f7649fa26ff2281386ca821bc",
+      "path": "src/app/service.ts",
+      "before": "5a7dadd10fd754d5d1ac72da72dd30bf714b634541c7ed0c5fe539dda1ffe623"
+    },
+    {
+      "after": "39842e9678053cafcb78337ec5b9f7a0773d10b45d5296bf7c3d31acd54d1491",
+      "path": "src/contracts/execution-feedback.ts",
+      "before": null
+    },
+    {
+      "after": "edee6b8fe18f12d0f4a0b93e4f6502099ce34abca4ef47c474e6ce055c7b11a1",
+      "path": "src/contracts/query-job.ts",
+      "before": "aa1a4f4710f17baa42629b162260593df3b281b86bafc4c025ca2ee72f7ea2d0"
+    },
+    {
+      "after": "6e9da2ba1212340ae4f6550ad90cce922cc3064147c393f8e12173d32fca9e9a",
+      "path": "src/contracts/verification-context.ts",
+      "before": "3406181126310299e7f5c92e378c9c465303ccf55f8c5a7729ebaeed7b3d363e"
+    },
+    {
+      "after": "7ca82d2045a23d8859deeea1651174aa06fb8d89ad7b1cbd984f8c6a00a367cb",
+      "path": "src/contracts/verification-service.ts",
+      "before": "490961f6c3a3943ca20f9a52daf30954f81be64fd890ead3da350125ad0971be"
+    },
+    {
+      "after": "6ba9b75ee3f82f2c1a5a47574a4306ee0412c8d3154e5efd21f354a6e9fcd889",
+      "path": "src/control/control-engine/goal-change.ts",
+      "before": "604ee1179c770d3d830c55f9885f7ccc909b0267eccd96dc48b09467c99b6a74"
+    },
+    {
+      "after": "484ddcef97a3e4ac2538a4d6fcb11932ce98a41a15d387d109ed4a9ec90a6fd6",
+      "path": "src/control/control-engine/query-job.ts",
+      "before": "9f051e33d313b1a6afa2353075c580d87ac064738838b390a8cde417c6bbe11a"
+    },
+    {
+      "after": "3b1ab31e50f6207e1fdfd6358f212750ba63513693b173c3d544a7443f8de2d2",
+      "path": "src/control/dispatch-engine/query-drive.ts",
+      "before": "c35fc6ddb7b0a8d4b1a66258787548fbd2caafa9726b5a6f025e22925ce83dd2"
+    },
+    {
+      "after": "3662d967dcf4326959d10352abf7a678f52dfd2ab22e9468c555bf090cded7dd",
+      "path": "src/control/dispatch-engine/work-material-drive.ts",
+      "before": "24afb15a594f916a51407a53969f33e925046b1869bf68885c33e49e9cf53ba1"
+    },
+    {
+      "after": "416825a596b1513963578b06cd13a3e3847007348ed0664e27cf6fb6ff24e695",
+      "path": "src/control/plan-compiler/execution-feedback-compiler.ts",
+      "before": null
+    },
+    {
+      "after": "e1ba8079c3d1ca303eed5d8b5235efbf44edeeb2f69350b0d22438c437de00d7",
+      "path": "src/control/verification-engine/rework-verification.ts",
+      "before": null
+    },
+    {
+      "after": "d7fef2db5477e1e7e5cc09bed3234b682383a4425e81389593f0c00a772297ea",
+      "path": "src/control/verification-engine/verification-service.ts",
+      "before": "83de70caa8625c5f2eb26ffedaeeba50ce673098a829332fbfd78196702d8c77"
+    },
+    {
+      "after": "e609e0bd3ddd5306d5f0e5f933a8b84bdadcfb2550ccd207f625b6e8edd396ec",
+      "path": "src/data/context-compiler/execution-feedback-context.ts",
+      "before": null
+    },
+    {
+      "after": "a03513d4239c78605ef491f63239113e0446d514e4dc751ea61113a99b0d8687",
+      "path": "src/data/context-compiler/feedback-materials.ts",
+      "before": null
+    },
+    {
+      "after": "6f69bff5f809442b7d9f0558ec8b1777608681019055c170c56a8670f2328a72",
+      "path": "src/data/context-compiler/query-context-compiler.ts",
+      "before": "c0111ef1aef9a7ee577b5752704bcca5dd395015519e41e5863f80573545c771"
+    },
+    {
+      "after": "5c835f9d63edb8b954d5ca6c625dfec3c5298c8411d8ca3828da4c6a819dcd75",
+      "path": "src/data/context-compiler/query-execution-context.ts",
+      "before": "2ce46333052b357d3dfdcab66d0bcff30d81954715e841c73938d4b4534f2a8f"
+    },
+    {
+      "after": "2d3e15a05fe5c42e84aec4bc505c31e8149739883e996497c3eada008af08320",
+      "path": "src/data/context-compiler/verification-context.ts",
+      "before": "d787323cb146c9dd4a313b065333b5fd124087d2e5b0af9e211c3d57023b8214"
+    },
+    {
+      "after": "94b9fdc2d74a3891ef42ec345c739b4bc8ef27a7cc4a1ead691e95411277cdf3",
+      "path": "src/execution/worker-runtime/read-only-query-runtime.ts",
+      "before": "646de88eebcae96f7716ae6dbf2f8bd6c33a087ea1b8a4656e1d7e20ef27f652"
+    },
+    {
+      "after": "9637b3f74b35e90f4b9f82f5c966d31aebe0576c1ae026fb562e19820aac334f",
+      "path": "src/harness/in-memory-harness.ts",
+      "before": "faa7ec990fa680a04ed4c50133d04c7e8735730b1988bf09f54bca5716dd406e"
+    },
+    {
+      "after": "7bb3618c68a70981262e50302133fd8eca5c56876ed83dfb6168d742b4d0cb34",
+      "path": "src/harness/persistent-harness.ts",
+      "before": "4bfc6095da8667240bd4d9a6742398c11f5a6d6dd5524933ef8596cd9054570a"
+    },
+    {
+      "after": "b46ddf4fcd1148b379d07de7de89da7a354a1a0008c0b9054dba259fe8599b69",
+      "path": "src/ui/src/api/types.ts",
+      "before": "5659703c3844cffb2a378588d790d62b2473cac6497f23cf85818743eff76a51"
+    },
+    {
+      "after": "dde543cd33cfe1b31fbffe5a61bd8c55726eb57cd5d33f665d03347fa8cb2048",
+      "path": "src/ui/src/features/conversation.tsx",
+      "before": "3e3ebc3a38821313553cd8b018327b5649b7786becddd3eaba7874631e4c06c1"
+    },
+    {
+      "after": "fb33865e8afa94d422041c6e5679a36c8efa024ecf61f3f95d9017aeefc922b1",
+      "path": "src/ui/tests/semantic-collaboration.spec.ts",
+      "before": null
+    },
+    {
+      "after": "633d33de7afc8ae842cb2ea667facad28169005d2292a4d32325f5143dd949b6",
+      "path": "tests/app/plan-changes.test.ts",
+      "before": "0d664a2d12f96a1a09e88e689db9d1f19499c1c557254d95024d88f79d8f3e6c"
+    },
+    {
+      "after": "b7bfaa0cac7209a03e45b93cc4a2e4c68e1c1eb2a6188834593fdb9710958ab5",
+      "path": "tests/app/rework-dispatch.test.ts",
+      "before": "9ad131a009ffaf93951b53c7173e52e72fcbac6107921e0d6a26876262a288d5"
+    },
+    {
+      "after": "a61c456a01bb698ad29616ab909c4811c3e1040b92ac3e8fd5dfcf43b2845999",
+      "path": "tests/app/role-material-run.test.ts",
+      "before": "b3fceabdaf4968e5ce1921fe14765b868fc2e7ae3bde448498d54c60568ce099"
+    },
+    {
+      "after": "08260dc527d29e1d6413af97ea95e1416a5cf74e3318e18cb7622fef73e01dc7",
+      "path": "tests/app/semantic-collaboration-fixture.ts",
+      "before": null
+    },
+    {
+      "after": "b8dbc3f025c3d4ee8f4b9210e78fc143b2305b9485d1bb915e7a4d8e758fcc7a",
+      "path": "tests/app/semantic-collaboration.test.ts",
+      "before": null
+    },
+    {
+      "after": "94ba137f50320499013c1f6030fa4d14db0d10dcf125b46b174d3bca9d18b8cb",
+      "path": "tests/contracts/module-ownership.test.ts",
+      "before": "8d9cb5754b94bf292274f43c61e3dc932f48ac88bfc41ad6d1752b09542aa8ef"
+    },
+    {
+      "after": "ec986db911d9127369d0b8c9cf52e3fee2d8d1174016e1cc2801b629f0f03684",
+      "path": "tests/verification/feedback-investigation-authority.test.ts",
+      "before": null
+    },
+    {
+      "after": "2c3d1b57512b6281fe7014de405f58cfaf018824dedc5f160c5e6ae6d9f61366",
+      "path": "tests/verification/semantic-reverification.test.ts",
+      "before": null
+    },
+    {
+      "after": "57bc0d8e3932c38decba7d1b0ff0e9e56bd19845e1431832e63fc87f946b43b7",
+      "path": "vendor/coding-agent/INTEGRATION.md",
+      "before": "7ce5295a6d35761e51517a38a47ddeeae91b6fb765c749164ab55317f3941265"
+    },
+    {
+      "after": "53c83852499488ab3f6f1c923f120f40951952c915b3ab38709063c1dab858d6",
+      "path": "vendor/coding-agent/src/app/composition/composition-root.ts",
+      "before": "263004d6abd7a852c1a2493e6ee9170e85195b7d8cae3c4c6cd84c5d1e071818"
+    }
+  ]
+}

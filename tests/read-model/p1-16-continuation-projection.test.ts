@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-16 LANE-B InMemory continuation projection tests — the ContinuationRecorded
  * event folds into a full-scope-keyed ContinuationRecordSnapshot list, recent
@@ -10,20 +11,11 @@
  *     binding is not_found, never a fabricated ready).
  */
 import { describe, expect, it } from "vitest";
-import { ReadModelIndexImpl } from "../../src/read-model/read-model-index.js";
+import { ReadModelIndexImpl } from "../../src/data/read-model-index/read-model-index.js";
 import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
 import { canonicalJson } from "../../src/contracts/fingerprint.js";
-import {
-  P116_PROJECT_A,
-  P116_PROJECT_B,
-  P116_WORKSPACE,
-  P116_SCHEMA,
-  P116_REPORT_1,
-  P116_REPORT_2,
-  buildContextContinuationResultV1,
-  buildRecordContinuationCommand,
-  buildContinuationRecordLedgerCommit,
-} from "../../src/contracts/fixtures/context-fixtures.js";
+import { P116_PROJECT_A, P116_PROJECT_B, P116_WORKSPACE, P116_SCHEMA, P116_REPORT_1, P116_REPORT_2, buildContextContinuationResultV1, buildRecordContinuationCommand } from "../contract-support/fixtures/context-fixtures.js";
+import { buildContinuationRecordLedgerCommit } from "../../src/control/control-engine/records/context.js";
 import { runRefFor } from "../../src/contracts/dispatch.js";
 import { workContextRefFor } from "../../src/contracts/context-continuity.js";
 import type { ContinuationRecordedEvent } from "../../src/contracts/context-continuity.js";
@@ -88,7 +80,7 @@ function rows(rm: ReadModelIndexImpl, key: string): import("../../src/contracts/
 
 describe("P1-16 LANE-B InMemory continuation projection", () => {
   it("projects ContinuationRecorded rows (status / takeoverRunRef / unsupportedCapabilities), recent-first", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const proj = P116_PROJECT_A;
     const workId = "work-p116-coord";
     await rm.advance(page([pos(continuationEvent(proj, workId, P116_REPORT_1, "ev-cont-1", "took_over", "run-b"), 1)], 1));
@@ -115,17 +107,17 @@ describe("P1-16 LANE-B InMemory continuation projection", () => {
     const ev1 = continuationEvent(proj, workId, P116_REPORT_1, "ev-cont-1", "took_over", "run-b");
     const ev2 = continuationEvent(proj, workId, P116_REPORT_2, "ev-cont-2", "unsupported", "run-b");
 
-    const incremental = new ReadModelIndexImpl();
+    const incremental = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await incremental.advance(page([pos(ev1, 1)], 1));
     await incremental.advance(page([pos(ev2, 2)], 2));
 
-    const fresh = new ReadModelIndexImpl();
+    const fresh = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await fresh.advance(page([pos(ev1, 1), pos(ev2, 2)], 2));
 
     const key = scopeKey(proj, P116_WORKSPACE, workId);
     expect(JSON.stringify(rows(fresh, key))).toBe(JSON.stringify(rows(incremental, key)));
     // Idempotent replay: re-applying the SAME page does not duplicate a row.
-    const one = new ReadModelIndexImpl();
+    const one = new ReadModelIndexImpl(new ControlPolicyExplanation());
     await one.advance(page([pos(ev1, 1)], 1));
     const before = rows(one, key).length;
     await one.advance(page([pos(ev1, 1)], 1));
@@ -133,7 +125,7 @@ describe("P1-16 LANE-B InMemory continuation projection", () => {
   });
 
   it("full-scope key isolation: the SAME local workId across two projects never collides", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const workId = "work-p116-1";
     await rm.advance(
       page(
@@ -154,7 +146,7 @@ describe("P1-16 LANE-B InMemory continuation projection", () => {
   });
 
   it("freshness: opaque observedCursor advances with each applied ContinuationRecorded", async () => {
-    const rm = new ReadModelIndexImpl();
+    const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const proj = P116_PROJECT_A;
     const workId = "work-p116-coord";
     const before = (rm as unknown as { observedCursor: unknown }).observedCursor;

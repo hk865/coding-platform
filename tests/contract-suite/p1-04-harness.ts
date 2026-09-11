@@ -12,15 +12,9 @@ import type { ReduceTaskCommand, ReduceTaskReceipt, TaskReductionSnapshot } from
 import type { ArtifactRef } from "../../src/contracts/artifact.js";
 import type { RunRef } from "../../src/contracts/dispatch.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
-import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  COMPLETION_POLICY_FIXTURE_V1,
-  architectureBaselinePinFor,
-  buildActivateCommand,
-  buildInstallCommand,
-  completionPolicyPinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
+import { architectureBaselinePinFor, completionPolicyPinFor } from "../../src/contracts/governance.js";
 import {
   COMPLETION_POLICY_FASTPATH_FIXTURE_V1,
   P104_GOAL,
@@ -32,9 +26,9 @@ import {
   buildEffectivityAnchorV1,
   buildEvidenceV1,
   buildSubmitEvidenceCommand,
-} from "../../src/contracts/fixtures/evidence-fixtures.js";
-import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../../src/contracts/fixtures/goal-fixtures.js";
-import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
+} from "../contract-support/fixtures/evidence-fixtures.js";
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../contract-support/fixtures/goal-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
 import {
   FAKE_RUNTIME_SCRIPT_COMPLETED_V1,
   buildDispatchClaimCommand,
@@ -42,7 +36,7 @@ import {
   buildManifestFixture,
   buildRunFactCommand,
   rebaseScriptForRun,
-} from "../../src/contracts/fixtures/dispatch-fixtures.js";
+} from "../../src/fixtures/dispatch-fixtures.js";
 import { artifactBodyDigest } from "../../src/contracts/artifact.js";
 import { runRefFor, taskAttemptRefFor } from "../../src/contracts/dispatch.js";
 import type {

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "MA-03": {
+    "positive": "base",
+    "negativeOverlay": "private/oracles/pagination",
+    "defects": [
+      "src/store.mjs:listTasks paginates before status filtering",
+      "src/ui.mjs:createBoard.setFilter retains stale page"
+    ]
+  },
+  "MA-08": {
+    "nearMiss": "private/near-miss/no-persistence",
+    "hiddenBoundary": "filter state survives reconstruction with same storage"
+  }
+}

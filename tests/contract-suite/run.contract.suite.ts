@@ -18,7 +18,7 @@ import {
   buildDispatchStartCommand,
   FAKE_RUNTIME_SCRIPT_CRASHED_V1,
   rebaseScriptForRun,
-} from "../../src/contracts/fixtures/dispatch-fixtures.js";
+} from "../../src/fixtures/dispatch-fixtures.js";
 import { artifactBodyDigest } from "../../src/contracts/artifact.js";
 import type { P1_03HarnessFactory } from "./p1-03-harness.js";
 import {

@@ -1,0 +1,165 @@
+/**
+ * P1-18 cross-principal material read — REAL persistent chain across restart.
+ *
+ * Everything here is the production adapter stack: SQLite StateLedger, SQLite
+ * ReadModelIndex, SqliteArtifactVault with the host-injected grant resolver, and
+ * the real ControlEngine handler. No doubles.
+ *
+ * Proven:
+ *   - a grant recorded through Control is resolvable by the vault and lets a
+ *     NON-owner run open another run's material;
+ *   - after a full close/reopen (new ledger, read-model and vault instances on
+ *     the same files) the same read still works, so authorization is durable;
+ *   - a changed basis is refused with "stale" after restart (inherited material
+ *     cannot advance a new version);
+ *   - an unrelated run stays forbidden.
+ */
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { expect, it } from 'vitest';
+import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from '../contract-support/fixtures/bootstrap-fixture-v1.js';
+import { buildGoalCreateLedgerCommit } from '../contract-support/fixtures/goal-fixtures.js';
+import { buildCreateGoalCommand } from '../contract-support/fixtures/goal-fixtures.js';
+import { buildDispatchClaimCommand } from "../../src/fixtures/dispatch-fixtures.js";
+import { buildDispatchClaimLedgerCommit } from "../../src/control/control-engine/records/dispatch.js";
+import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from "../contract-support/fixtures/material-access-fixtures.js";
+import { buildMaterialAccessGrantLedgerCommit } from "../../src/control/control-engine/records/material-access.js";
+import { materialAccessGrantIdFor } from '../../src/contracts/material-access.js';
+import type { MaterialBasisV1 } from '../../src/contracts/material-access.js';
+import type { RunRef } from '../../src/contracts/dispatch.js';
+
+const PROJECT = 'proj-alpha';
+const WORKSPACE = 'ws-shared';
+const GOAL = 'goal-1';
+const AT = '2026-09-08T00:00:00.000Z';
+const PLAN_REF = { aggregateType: 'PlanRevision' as const, projectId: PROJECT, planId: 'plan-restart' };
+// This suite tests durable authorization and candidate lookup, without claiming
+// source currentness. Real source pins are exercised in material-source-applicability.
+const BASIS: MaterialBasisV1 = { planRef: PLAN_REF, workspaceRevision: 1, sourceDigest: null };
+const BODY = '执行运行的任务包正文：义务、权限与来源版本';
+const runRef = (runId: string): RunRef => ({ aggregateType: 'Run', projectId: PROJECT, goalId: GOAL, runId });
+
+async function seedRun(host: Awaited<ReturnType<typeof createPersistentSqliteHarness>>, runId: string, taskId: string) {
+  const command = buildDispatchClaimCommand({
+    commandId: 'cmd-claim-' + runId, projectId: PROJECT, goalId: GOAL, taskId, runId,
+    attemptId: 'attempt-' + runId, idempotencyKey: 'claim-' + runId, correlationId: 'corr-' + runId, submittedAt: AT,
+  });
+  const receipt = await host.ledger.commit(buildDispatchClaimLedgerCommit(command, {
+    eventId: 'evt-claim-' + runId, occurredAt: AT, workspaceId: WORKSPACE, planRef: PLAN_REF, workspaceRevision: 1,
+  }));
+  expect(receipt.status, 'seed ' + runId).toBe('committed');
+}
+
+it.each([false, true])('keeps valid grants across SQLite restart even behind more than 256 newer candidates (crowded=%s)', async crowded => {
+  const dir = await mkdtemp(join(tmpdir(), 'material-grant-restart-'));
+  let host = await createPersistentSqliteHarness({ dir });
+  const producer = runRef('run-producer');
+  const consumer = runRef('run-consumer');
+  let ref: import('../../src/contracts/artifact.js').ArtifactRef;
+  try {
+    const bootstrap = buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, { commandId: 'cmd-bootstrap', correlationId: 'corr-bootstrap', submittedAt: AT });
+    expect(await host.ledger.commit(buildBootstrapLedgerCommit(bootstrap, { eventIds: ['evt-b1', 'evt-b2', 'evt-b3', 'evt-b4'], occurredAt: AT }))).toMatchObject({ status: 'committed' });
+    const goalCommand = buildCreateGoalCommand(
+      { projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL, objective: '跨角色材料读取', actor: { kind: 'human', id: 'tester' } },
+      { commandId: 'cmd-goal', correlationId: 'corr-goal', submittedAt: AT, idempotencyKey: 'goal-restart' },
+    );
+    expect(await host.ledger.commit(buildGoalCreateLedgerCommit(goalCommand, { eventId: 'evt-goal', occurredAt: AT, projectRevision: 1, workspaceRevision: 1 })))
+      .toMatchObject({ status: 'committed' });
+    await seedRun(host, 'run-producer', 'task-producer');
+    await seedRun(host, 'run-consumer', 'task-consumer');
+
+    const put = await host.vault.put({
+      contentType: 'application/json', body: BODY, ownerRef: producer, requestedAt: AT,
+      sourceRefs: [{ kind: 'workspace', refId: WORKSPACE, revision: '1' }],
+    });
+    expect(put.status).toBe('stored');
+    if (put.status !== 'stored') throw new Error('put failed');
+    ref = put.ref;
+
+    const grant = buildMaterialAccessGrantV1({
+      grantId: materialAccessGrantIdFor(consumer, [ref], BASIS),
+      scope: { projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL },
+      materials: [ref], reader: consumer,
+      issuedBy: { aggregateType: 'Control', projectId: PROJECT, goalId: GOAL },
+      purpose: '评审运行读取执行运行的任务包', basis: BASIS, grantedAt: AT,
+    });
+    const command = buildGrantMaterialAccessCommand(grant, {
+      commandId: 'cmd-grant', projectId: PROJECT, actorKind: 'system', actorId: 'tester',
+      idempotencyKey: 'grant-1', correlationId: 'grant-1', submittedAt: AT,
+    });
+    expect(await host.grantMaterialAccess(command)).toMatchObject({ status: 'committed', replayed: false });
+    // Replay on the SQLite adapter is idempotent: same identity + fingerprint.
+    expect(await host.grantMaterialAccess(command)).toMatchObject({ status: 'committed', replayed: true });
+
+    if (crowded) {
+      for (let i = 0; i < 257; i++) {
+        const basis = { ...BASIS, sourceDigest: i.toString(16).padStart(64, '0') };
+        const newer = { ...grant, grantId: materialAccessGrantIdFor(consumer, [ref], basis), basis };
+        expect(await host.grantMaterialAccess(buildGrantMaterialAccessCommand(newer, {
+          commandId: 'newer-' + i, projectId: PROJECT, actorKind: 'system', actorId: 'tester',
+          idempotencyKey: 'newer-' + i, correlationId: 'newer-' + i, submittedAt: AT,
+        }))).toMatchObject({ status: 'committed' });
+      }
+    }
+
+    // Before restart: the non-owner reader is authorized by the recorded grant.
+    expect(await host.vault.open(ref, { requesterRunRef: consumer, currentBasis: BASIS }))
+      .toMatchObject({ status: 'ready', record: { body: BODY } });
+    expect(await host.vault.open(ref, { requesterRunRef: runRef('run-unrelated'), currentBasis: BASIS }))
+      .toMatchObject({ status: 'rejected', code: 'forbidden' });
+
+    await host.close();
+    host = await host.reopen();
+
+    // After restart the grant is still the authorization (durable, not in-memory).
+    expect(await host.vault.open(ref, { requesterRunRef: consumer, currentBasis: BASIS }))
+      .toMatchObject({ status: 'ready', record: { body: BODY } });
+    expect(await host.vault.open(ref, { requesterRunRef: consumer, currentBasis: { ...BASIS, workspaceRevision: 2 } }))
+      .toMatchObject({ status: 'rejected', code: 'stale' });
+    expect(await host.vault.open(ref, { requesterRunRef: consumer, currentBasis: { ...BASIS, planRef: { ...PLAN_REF, planId: 'plan-2' } } }))
+      .toMatchObject({ status: 'rejected', code: 'stale' });
+    const view = await host.materialAccessGrants({ projectId: PROJECT, materialDigest: ref.digest, readerRunId: consumer.runId });
+    expect(view.status).toBe('ready');
+    if (view.status === 'ready') expect(view.grants).toHaveLength(crowded ? 256 : 1);
+  } finally {
+    await host.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 30000);
+
+it('rejects wrong-workspace grants at submission and denies legacy bad grants after reopening', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'material-grant-scope-'));
+  let host = await createPersistentSqliteHarness({ dir });
+  const consumer = runRef('reader');
+  try {
+    const boot = buildBootstrapCommand({ schemaVersion: 1, entries: [
+      { projectId: PROJECT, workspaceId: WORKSPACE }, { projectId: PROJECT, workspaceId: 'unrelated' },
+    ] }, { commandId: 'boot', correlationId: 'boot', submittedAt: AT });
+    expect(await host.ledger.commit(buildBootstrapLedgerCommit(boot, { eventIds: ['b1', 'b2', 'b3'], occurredAt: AT }))).toMatchObject({ status: 'committed' });
+    const goal = buildCreateGoalCommand({ projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL, objective: 'scope test', actor: { kind: 'human', id: 'test' } },
+      { commandId: 'goal', correlationId: 'goal', idempotencyKey: 'goal', submittedAt: AT });
+    expect(await host.ledger.commit(buildGoalCreateLedgerCommit(goal, { eventId: 'goal', occurredAt: AT, projectRevision: 1, workspaceRevision: 1 }))).toMatchObject({ status: 'committed' });
+    await seedRun(host, 'reader', 'task-reader');
+    const stored = await host.vault.put({ contentType: 'text/plain', body: BODY, sourceRefs: [{ kind: 'workspace', refId: WORKSPACE, revision: '1' }], ownerRef: runRef('writer'), requestedAt: AT });
+    if (stored.status !== 'stored') throw Error('put failed');
+    const grant = buildMaterialAccessGrantV1({ grantId: 'legacy-bad', scope: { projectId: PROJECT, workspaceId: 'unrelated', goalId: GOAL }, materials: [stored.ref], reader: consumer,
+      issuedBy: { aggregateType: 'Control', projectId: PROJECT, goalId: GOAL }, basis: BASIS, purpose: 'legacy mismatch', grantedAt: AT });
+    const command = buildGrantMaterialAccessCommand(grant, { commandId: 'bad', projectId: PROJECT, actorKind: 'system', actorId: 'test', idempotencyKey: 'bad', correlationId: 'bad', submittedAt: AT });
+    expect(await host.grantMaterialAccess(command)).toMatchObject({ status: 'rejected', code: 'scope_mismatch' });
+    expect(await host.ledger.load({ aggregateType: 'MaterialAccessGrant', ...grant.scope, grantId: grant.grantId })).toMatchObject({ status: 'not_found' });
+    // Emulate a record written by the previous Control implementation. The ledger
+    // validates a fold's shape; read-time authorization must recheck actual scope.
+    expect(await host.ledger.commit(buildMaterialAccessGrantLedgerCommit(command, { eventId: 'legacy', occurredAt: AT }))).toMatchObject({ status: 'committed' });
+    await host.advanceProjection();
+    expect(await host.vault.open(stored.ref, { requesterRunRef: consumer, currentBasis: BASIS })).toMatchObject({ status: 'rejected', code: 'forbidden' });
+    await host.close(); host = await host.reopen();
+    expect(await host.vault.open(stored.ref, { requesterRunRef: consumer, currentBasis: BASIS })).toMatchObject({ status: 'rejected', code: 'forbidden' });
+    // A current valid grant still works after rejecting the historical one.
+    const valid = { ...grant, grantId: 'valid', scope: { ...grant.scope, workspaceId: WORKSPACE } };
+    expect(await host.grantMaterialAccess(buildGrantMaterialAccessCommand(valid, { commandId: 'valid', projectId: PROJECT, actorKind: 'system', actorId: 'test', idempotencyKey: 'valid', correlationId: 'valid', submittedAt: AT }))).toMatchObject({ status: 'committed' });
+    expect(await host.vault.open(stored.ref, { requesterRunRef: consumer, currentBasis: BASIS })).toMatchObject({ status: 'ready' });
+  } finally { await host.close(); await rm(dir, { recursive: true, force: true }); }
+}, 30000);

@@ -17,8 +17,8 @@ import {
   remediationEngineLive,
 } from "./p1-13-writer-chain-fixture.js";
 import type { P113WriterHarness } from "./p1-13-writer-chain-fixture.js";
-import { P113_PROJECT } from "../../src/contracts/fixtures/architecture-evolution-policy-fixtures.js";
-import { P113_WORKSPACE } from "../../src/contracts/fixtures/remediation-fixtures.js";
+import { P113_PROJECT } from "../../src/fixtures/architecture-evolution-policy-fixtures.js";
+import { P113_WORKSPACE } from "../contract-support/fixtures/remediation-fixtures.js";
 import { workspaceWriteLeaseRefFor } from "../../src/contracts/workspace-lease.js";
 
 function makeHarness(): P113WriterHarness {
@@ -85,11 +85,11 @@ describe("P1-13 writer chain — InMemory", () => {
     const h = makeHarness();
     const live = await remediationEngineLive(h);
     if (!live) {
-      // Lane B not landed: the stub cannot exercise the advance guard. The
-      // rejection is asserted when the remediation engine is live (post lane B).
-      expect(async () => {
-        await h.advanceRemediationTask(h as never);
-      }).toBeDefined();
+      // Lane B not landed. `advanceRemediationTask` is not part of the stub's
+      // surface at all, so calling it fails with a plain TypeError rather than a
+      // "not implemented" sentinel. Assert only that the stub cannot drive the
+      // advance guard, without pinning an error text the stub never produces.
+      await expect(h.advanceRemediationTask(h as never)).rejects.toThrow();
       return;
     }
     // Stop the chain with the task in "verifying" (revision 3, evidence admitted

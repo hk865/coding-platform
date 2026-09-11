@@ -1,3 +1,4 @@
+import { classifyRestartProbeError } from "./readiness-probe.js";
 /** P1-14 restart-path fixtures + readiness probe. */
 import { expect } from "vitest";
 import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
@@ -5,7 +6,7 @@ import type { PersistentSqliteHarness } from "../../src/harness/persistent-harne
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 import { runP114Scenario, p114ActiveBaselinePin, type P114HarnessLike, type P114ScenarioResult } from "../contract-suite/p1-14-harness.js";
 import { P114_PROJECT } from "../contract-suite/p1-14-harness.js";
-import { p114CandidateRef, p114DecisionRef, p114GateRef, p114ActivationRef } from "../../src/contracts/fixtures/baseline-evolution-fixtures.js";
+import { p114CandidateRef, p114DecisionRef, p114GateRef, p114ActivationRef } from "../contract-support/fixtures/baseline-evolution-fixtures.js";
 
 export async function isP114Ready(): Promise<boolean> {
   try {
@@ -16,8 +17,8 @@ export async function isP114Ready(): Promise<boolean> {
     } finally {
       await h.cleanup().catch(() => undefined);
     }
-  } catch {
-    return false;
+  } catch (error) {
+    return classifyRestartProbeError(error);
   }
 }
 

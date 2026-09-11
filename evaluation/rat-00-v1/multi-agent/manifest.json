@@ -1,0 +1,373 @@
+{
+  "schemaVersion": 1,
+  "fixtureSet": "rat-ma-v1",
+  "type": "self-authored-local-acceptance-set",
+  "preparationStatus": "PREPARED_WITH_EXPLICIT_GAPS",
+  "realModelExecution": "NOT_RUN",
+  "upstreamKernel": {
+    "commit": "03334ecec9f22a8982fed5af5f91d4cb754649a7",
+    "sourceTreeSha256": "ca48c35b61fe09371968ebdeeac27fc453c085b7866a8411bc8478ebb64132f8",
+    "manifestRef": "../../../vendor/coding-agent/UPSTREAM.json"
+  },
+  "sourceSpec": {
+    "ticket": "/mnt/d/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/planning/proposed/real-agent-acceptance/tickets/08-multi-agent-collaboration.md",
+    "sha256": "4904f9fc445a08d94d51f8e37fbedc55dbba82f33efe549c34956b557148cba7"
+  },
+  "baselineDigestAlgorithm": "sha256(UTF8 concatenation of sorted relative-path + NUL + file-sha256 + LF)",
+  "scenarios": [
+    {
+      "scenarioId": "MA-01",
+      "fixtureStatus": "PREPARED_WITH_INTEGRATION_GAPS",
+      "realResult": "NOT_RUN",
+      "baseline": {
+        "path": "base",
+        "digest": "7ab3a51e314c30274e95001f4e54fb5d4d27135d542739b7629e91eba1ad1727"
+      },
+      "visibleTask": {
+        "path": "public/MA-01/TASK.md",
+        "sha256": "d535eadcade758302a58e9e556a9cf16ba649174b3685a0b18bf7f31171ed83f"
+      },
+      "hiddenAssertions": {
+        "controlEvaluator": "private/evaluator/control.mjs",
+        "requiredControlAssertions": [
+          "exploration.source-call-chain",
+          "exploration.reader-overlap",
+          "exploration.merge-and-unknowns",
+          "collaboration.real-consumption"
+        ],
+        "functionalEvaluator": null,
+        "functionalKind": null,
+        "functionalRequirement": "Read-only baseline/source-call-chain assertions apply."
+      },
+      "rolesRef": "role-templates.json",
+      "budgetRef": "budgets.json",
+      "trialRegistryRef": "trials.json",
+      "repeats": 3,
+      "configurations": [
+        "single",
+        "serial",
+        "parallel"
+      ],
+      "injectionPlan": null
+    },
+    {
+      "scenarioId": "MA-02",
+      "fixtureStatus": "PREPARED_WITH_INTEGRATION_GAPS",
+      "realResult": "NOT_RUN",
+      "baseline": {
+        "path": "base",
+        "digest": "7ab3a51e314c30274e95001f4e54fb5d4d27135d542739b7629e91eba1ad1727"
+      },
+      "visibleTask": {
+        "path": "public/MA-02/TASK.md",
+        "sha256": "5bcd23d640f8a497e475a619bfe72549cea9fbb867a7cc91ca7c94ed99ad3737"
+      },
+      "hiddenAssertions": {
+        "controlEvaluator": "private/evaluator/control.mjs",
+        "requiredControlAssertions": [
+          "feature.accepted-proposal-consumed",
+          "feature.independent-verification",
+          "feature.review-after-checks",
+          "collaboration.real-consumption"
+        ],
+        "functionalEvaluator": "private/evaluator/functional.mjs",
+        "functionalKind": "filter",
+        "functionalRequirement": "Every assertion returned for this kind must PASS on final candidate."
+      },
+      "rolesRef": "role-templates.json",
+      "budgetRef": "budgets.json",
+      "trialRegistryRef": "trials.json",
+      "repeats": 3,
+      "configurations": [
+        "single",
+        "serial",
+        "parallel"
+      ],
+      "injectionPlan": null
+    },
+    {
+      "scenarioId": "MA-03",
+      "fixtureStatus": "PREPARED_WITH_INTEGRATION_GAPS",
+      "realResult": "NOT_RUN",
+      "baseline": {
+        "path": "base",
+        "digest": "7ab3a51e314c30274e95001f4e54fb5d4d27135d542739b7629e91eba1ad1727"
+      },
+      "visibleTask": {
+        "path": "public/MA-03/TASK.md",
+        "sha256": "1480d1b17e228cc2dbdae1497df741410e70e793bc5d507eed50dfd4c1b40db1"
+      },
+      "hiddenAssertions": {
+        "controlEvaluator": "private/evaluator/control.mjs",
+        "requiredControlAssertions": [
+          "bug.reproduce-then-fix",
+          "bug.fixed-negative-not-confirmed",
+          "bug.independent-chain",
+          "collaboration.real-consumption"
+        ],
+        "functionalEvaluator": "private/evaluator/functional.mjs",
+        "functionalKind": "pagination",
+        "functionalRequirement": "Every assertion returned for this kind must PASS on final candidate."
+      },
+      "rolesRef": "role-templates.json",
+      "budgetRef": "budgets.json",
+      "trialRegistryRef": "trials.json",
+      "repeats": 3,
+      "configurations": [
+        "single",
+        "serial",
+        "parallel"
+      ],
+      "injectionPlan": null
+    },
+    {
+      "scenarioId": "MA-04",
+      "fixtureStatus": "PREPARED_WITH_INTEGRATION_GAPS",
+      "realResult": "NOT_RUN",
+      "baseline": {
+        "path": "base",
+        "digest": "7ab3a51e314c30274e95001f4e54fb5d4d27135d542739b7629e91eba1ad1727"
+      },
+      "visibleTask": {
+        "path": "public/MA-04/TASK.md",
+        "sha256": "64f0b653a7c644e0e41e7ef8338b71b97a4951c9af4c07d980d8ec672b6a66ff"
+      },
+      "hiddenAssertions": {
+        "controlEvaluator": "private/evaluator/control.mjs",
+        "requiredControlAssertions": [
+          "conflict.evidence-adjudication",
+          "lease.exclusive-current-and-scoped",
+          "lease.accepted-change-preserved",
+          "completion.current-fail-blocks"
+        ],
+        "functionalEvaluator": "private/evaluator/functional.mjs",
+        "functionalKind": "filter",
+        "functionalRequirement": "Every assertion returned for this kind must PASS on final candidate."
+      },
+      "rolesRef": "role-templates.json",
+      "budgetRef": "budgets.json",
+      "trialRegistryRef": "trials.json",
+      "repeats": 3,
+      "configurations": [
+        "parallel-with-injection"
+      ],
+      "injectionPlan": {
+        "path": "private/injections/MA-04.json",
+        "sha256": "3595a1188b2a678692723ef844c65a165b1306edce15f30586c4bf8b425973d6",
+        "status": "DETERMINISTIC_PLAN_AND_SELECTOR_PREPARED",
+        "realAdapter": "NOT_PREPARED"
+      }
+    },
+    {
+      "scenarioId": "MA-05",
+      "fixtureStatus": "PREPARED_WITH_INTEGRATION_GAPS",
+      "realResult": "NOT_RUN",
+      "baseline": {
+        "path": "base",
+        "digest": "7ab3a51e314c30274e95001f4e54fb5d4d27135d542739b7629e91eba1ad1727"
+      },
+      "visibleTask": {
+        "path": "public/MA-05/TASK.md",
+        "sha256": "eaa63cd57ea6b3b7b087bd437b693dbf4127a7d95516bdf53ab1be392cd26c4a"
+      },
+      "hiddenAssertions": {
+        "controlEvaluator": "private/evaluator/control.mjs",
+        "requiredControlAssertions": [
+          "message.replay-exactly-once",
+          "message.stale-and-cross-project-rejected",
+          "message.uncommitted-body-invisible",
+          "isolation.independent-progress"
+        ],
+        "functionalEvaluator": "private/evaluator/functional.mjs",
+        "functionalKind": "filter",
+        "functionalRequirement": "Every assertion returned for this kind must PASS on final candidate."
+      },
+      "rolesRef": "role-templates.json",
+      "budgetRef": "budgets.json",
+      "trialRegistryRef": "trials.json",
+      "repeats": 3,
+      "configurations": [
+        "parallel-with-injection"
+      ],
+      "injectionPlan": {
+        "path": "private/injections/MA-05.json",
+        "sha256": "43303ba966c79dff923f77db508202703d49c8cb28250a07119af0940abaa023",
+        "status": "DETERMINISTIC_PLAN_AND_SELECTOR_PREPARED",
+        "realAdapter": "NOT_PREPARED"
+      }
+    },
+    {
+      "scenarioId": "MA-06",
+      "fixtureStatus": "PREPARED_WITH_INTEGRATION_GAPS",
+      "realResult": "NOT_RUN",
+      "baseline": {
+        "path": "base",
+        "digest": "7ab3a51e314c30274e95001f4e54fb5d4d27135d542739b7629e91eba1ad1727"
+      },
+      "visibleTask": {
+        "path": "public/MA-06/TASK.md",
+        "sha256": "757fa41a5c530ec5e012e64b7bd07bafc803a3f48bf90fe27eefa42c0be276a0"
+      },
+      "hiddenAssertions": {
+        "controlEvaluator": "private/evaluator/control.mjs",
+        "requiredControlAssertions": [
+          "failure.no-cascade",
+          "handoff.inherits-obligations-and-reasons",
+          "recovery.reconcile-before-retry-once",
+          "recovery.stale-lease-cannot-advance"
+        ],
+        "functionalEvaluator": "private/evaluator/functional.mjs",
+        "functionalKind": "filter",
+        "functionalRequirement": "Every assertion returned for this kind must PASS on final candidate."
+      },
+      "rolesRef": "role-templates.json",
+      "budgetRef": "budgets.json",
+      "trialRegistryRef": "trials.json",
+      "repeats": 3,
+      "configurations": [
+        "parallel-with-injection"
+      ],
+      "injectionPlan": {
+        "path": "private/injections/MA-06.json",
+        "sha256": "673a27d2c6270591eed906fe6cc939cd744aabf0707d14d124fbe0613d60e563",
+        "status": "DETERMINISTIC_PLAN_AND_SELECTOR_PREPARED",
+        "realAdapter": "NOT_PREPARED"
+      }
+    },
+    {
+      "scenarioId": "MA-07",
+      "fixtureStatus": "PREPARED_WITH_INTEGRATION_GAPS",
+      "realResult": "NOT_RUN",
+      "baseline": {
+        "path": "base",
+        "digest": "7ab3a51e314c30274e95001f4e54fb5d4d27135d542739b7629e91eba1ad1727"
+      },
+      "visibleTask": {
+        "path": "public/MA-07/TASK.md",
+        "sha256": "6b07d6e430a2d3b155672b14165af26492c192475637f7d2bf000bff7a5b60a0"
+      },
+      "hiddenAssertions": {
+        "controlEvaluator": "private/evaluator/control.mjs",
+        "requiredControlAssertions": [
+          "human.query-preserves-source-run",
+          "human.change-version-and-affected-scope",
+          "human.stale-result-and-independent-work",
+          "human.cancel-run-versus-goal"
+        ],
+        "functionalEvaluator": "private/evaluator/functional.mjs",
+        "functionalKind": "case-sensitive",
+        "functionalRequirement": "Every assertion returned for this kind must PASS on final candidate."
+      },
+      "rolesRef": "role-templates.json",
+      "budgetRef": "budgets.json",
+      "trialRegistryRef": "trials.json",
+      "repeats": 3,
+      "configurations": [
+        "parallel-with-injection"
+      ],
+      "injectionPlan": {
+        "path": "private/injections/MA-07.json",
+        "sha256": "ab534d0e69b20cfc7f479507b705dec03e4ce5c8687af0b278a5912d27be5a2a",
+        "status": "DETERMINISTIC_PLAN_AND_SELECTOR_PREPARED",
+        "realAdapter": "NOT_PREPARED"
+      }
+    },
+    {
+      "scenarioId": "MA-08",
+      "fixtureStatus": "PREPARED_WITH_INTEGRATION_GAPS",
+      "realResult": "NOT_RUN",
+      "baseline": {
+        "path": "base",
+        "digest": "7ab3a51e314c30274e95001f4e54fb5d4d27135d542739b7629e91eba1ad1727"
+      },
+      "visibleTask": {
+        "path": "public/MA-08/TASK.md",
+        "sha256": "ab5d6036ca6e79a09c3ac820138fe739c89e55d74395c826c5ae4cd080b5ce96"
+      },
+      "hiddenAssertions": {
+        "controlEvaluator": "private/evaluator/control.mjs",
+        "requiredControlAssertions": [
+          "rework.failure-before-review",
+          "rework.failure-preserved-and-new-evidence",
+          "rework.independent-review-after-pass",
+          "completion.control-current-evidence-only"
+        ],
+        "functionalEvaluator": "private/evaluator/functional.mjs",
+        "functionalKind": "filter",
+        "functionalRequirement": "Every assertion returned for this kind must PASS on final candidate."
+      },
+      "rolesRef": "role-templates.json",
+      "budgetRef": "budgets.json",
+      "trialRegistryRef": "trials.json",
+      "repeats": 3,
+      "configurations": [
+        "parallel-with-injection"
+      ],
+      "injectionPlan": {
+        "path": "private/injections/MA-08.json",
+        "sha256": "8b0b245d2323d83fd8663fc46ce55ffdd49fe6b82eb79ebda6f4bf746150b798",
+        "status": "DETERMINISTIC_PLAN_AND_SELECTOR_PREPARED",
+        "realAdapter": "NOT_PREPARED"
+      }
+    }
+  ],
+  "minimumGate": {
+    "allApplicableMandatoryAssertions": "PASS across every registered repeat",
+    "unauthorizedWrites": 0,
+    "duplicateSideEffects": 0,
+    "staleEvidenceCompletions": 0,
+    "efficiencyThreshold": null,
+    "singleAblationDistinctRunMetrics": "NOT_APPLICABLE; independently score functionality with the same evaluator",
+    "aggregateSeparate": [
+      "task-functionality",
+      "collaboration-provenance",
+      "fault-control-invariants",
+      "efficiency"
+    ]
+  },
+  "metrics": [
+    "final-task-pass-rate",
+    "qualified-collaboration-provenance-rate",
+    "wall-time",
+    "input-tokens",
+    "output-tokens",
+    "cost",
+    "repeated-investigation",
+    "false-positives",
+    "rework",
+    "message-overhead",
+    "human-interventions"
+  ],
+  "notPrepared": [
+    {
+      "item": "platform trace export and cross-check against raw sessions/artifacts",
+      "status": "NOT_PREPARED"
+    },
+    {
+      "item": "product fault-injection adapter for all 23 symbolic directives",
+      "status": "NOT_PREPARED"
+    },
+    {
+      "item": "actual browser-engine E2E and GUI integration",
+      "status": "NOT_PREPARED"
+    },
+    {
+      "item": "real provider/model, cost ceiling and limit enforcement binding",
+      "status": "UNBOUND_RAT-01"
+    },
+    {
+      "item": "runtime isolation excluding hidden assets, other trials and credentials",
+      "status": "ROOT_ENVIRONMENT_GATE_REQUIRED"
+    }
+  ],
+  "selfchecks": {
+    "functionalControls": 12,
+    "controlKnownSuccess": 8,
+    "controlKnownFailure": 32,
+    "invalidConfigurationControls": 24,
+    "ablationApplicabilityControls": 1,
+    "deterministicInjectionSelectors": 23,
+    "visibleMaterializations": 8,
+    "meaning": "Evaluator and fixture tests only; never count constructed traces as product runs."
+  }
+}

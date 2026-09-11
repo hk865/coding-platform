@@ -1,0 +1,12 @@
+diff --git a/evidence/2026-09-10-module-folder-reorg/independent-review/before/scripts/check-module-boundaries.mjs b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/scripts/check-module-boundaries.mjs
+index 7e9d116..8a8bcac 100644
+--- a/evidence/2026-09-10-module-folder-reorg/independent-review/before/scripts/check-module-boundaries.mjs
++++ b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/scripts/check-module-boundaries.mjs
+@@ -54,5 +54,6 @@ if(issues.length)process.exitCode=1;
+ // capabilities; any additional production consumer requires review here.
+ function fixtureConsumersInit(){return new Set([
+  'src/harness/in-memory-harness.ts','src/harness/persistent-harness.ts','src/app/service.ts',
+- 'src/runtime/fake-runtime-adapter.ts','src/data/workspace-reader-adapter.ts','src/verification/code-graph-port.ts',
++ 'src/execution/worker-runtime/fake-runtime-adapter.ts','src/data/workspace-reader/workspace-reader-adapter.ts',
++ 'src/control/verification-engine/code-graph-port.ts',
+ ]);}

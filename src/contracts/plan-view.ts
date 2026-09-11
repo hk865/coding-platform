@@ -10,7 +10,6 @@
  */
 import type { CommitCursor } from "./command-event.js";
 import type {
-  AcceptanceObligation,
   PlanRevisionRef,
   PlanStage,
   RequirementLevel,
@@ -89,7 +88,7 @@ export type TaskDetailView = {
     requirementLevel: RequirementLevel;
     verificationRequirements: VerificationRequirement[];
   }[];
-  /** P1-03: run-state projection (null until a TaskClaimed event exists). */
+  /** run-state projection (null until a TaskClaimed event exists). */
   run: TaskRunState | null;
   sourceCursor: CommitCursor;
 };

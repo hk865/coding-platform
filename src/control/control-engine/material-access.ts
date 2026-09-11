@@ -1,0 +1,161 @@
+/**
+ * P1-18 Control entry: MaterialAccessEngineImpl — registers ONE immutable
+ * cross-principal material read grant.
+ *
+ * Authority: src/contracts/material-access.ts (frozen v1 semantics) +
+ * dev_docs/interfaces/runtime-collaboration.md (共享引用与角色绑定: identity,
+ * scope, correlation and version on every request; timestamps never replace
+ * versions).
+ *
+ * Guard order (all zero-write except the single atomic fold):
+ *   1. shape validation (validateGrantMaterialAccessCommand) -> invalid;
+ *   2. the grant scope must exist: Workspace + Goal load -> not_found;
+ *   3. the READER principal must be a real Run/QueryRun aggregate inside the
+ *      grant scope -> not_found / scope_mismatch;
+ *   4. a run-shaped issuer must also be a real run inside the scope ->
+ *      not_found / scope_mismatch;
+ *   5. ONE atomic commit (CAS@0 + full ledger idempotency) reproducing the
+ *      shared fixture-fold builder byte-for-byte.
+ *
+ * What this handler deliberately does NOT do:
+ *   - it does not read the ArtifactVault, so it cannot prove the materials
+ *     exist. The vault answers that at read time (unavailable), and it is also
+ *     the vault that enforces issuer authority (owner-or-Control) and basis
+ *     invalidation. Control registers the decision; the vault applies it.
+ *   - it never writes Goal/Task phase, never satisfies evidence, and never
+ *     changes a CompletionPolicy.
+ */
+import type {
+  GrantMaterialAccessCommand,
+  GrantMaterialAccessReceipt,
+  MaterialAccessGrantV1,
+  MaterialGrantIssuer,
+} from "../../contracts/material-access.js";
+import { materialAccessGrantRefFor } from "../../contracts/material-access.js";
+import type { ArtifactOwnerRunRef } from "../../contracts/artifact.js";
+import { validateGrantMaterialAccessCommand } from '../../contracts/validation/material-access.js';
+import { buildMaterialAccessGrantLedgerCommit } from "./records/material-access.js";
+import type { LedgerCommitReceipt, GoalSnapshot } from "../../contracts/ledger.js";
+import type { RunSnapshot } from "../../contracts/dispatch.js";
+import type { ControlEngineDeps } from "./control-engine.js";
+
+type Scope = { projectId: string; workspaceId: string; goalId: string };
+
+export class MaterialAccessEngineImpl {
+  constructor(private readonly deps: ControlEngineDeps) {}
+
+  async grantMaterialAccess(command: GrantMaterialAccessCommand): Promise<GrantMaterialAccessReceipt> {
+    // Guard 1: shape / schema validation (zero write).
+    if (validateGrantMaterialAccessCommand(command).length > 0) {
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+    }
+
+    const grant: MaterialAccessGrantV1 = command.payload.grant;
+    const scope: Scope = { projectId: command.identity.projectId, workspaceId: grant.scope.workspaceId, goalId: grant.scope.goalId };
+    if (grant.scope.projectId !== scope.projectId || grant.issuedBy.projectId !== scope.projectId ||
+        (grant.issuedBy.aggregateType === "Control" && grant.issuedBy.goalId !== scope.goalId) ||
+        (grant.basis.planRef !== null && grant.basis.planRef.projectId !== scope.projectId) ||
+        (grant.basis.sourcePin !== undefined && (grant.basis.sourcePin.projectId !== scope.projectId || grant.basis.sourcePin.workspaceId !== scope.workspaceId))) {
+      return { status: "rejected", commandId: command.commandId, code: "scope_mismatch" };
+    }
+
+    // Guard 2: the grant scope must be real (workspace under the project, goal
+    // under the same project).
+    if ((await this.deps.ledger.load({ aggregateType: "Workspace", projectId: scope.projectId, workspaceId: scope.workspaceId })).status === "not_found") {
+      return { status: "rejected", commandId: command.commandId, code: "not_found" };
+    }
+    const goal = await this.deps.ledger.load({ aggregateType: "Goal", projectId: scope.projectId, goalId: scope.goalId });
+    if (goal.status === "not_found") {
+      return { status: "rejected", commandId: command.commandId, code: "not_found" };
+    }
+    const workspace = (goal.snapshot as GoalSnapshot).workspaceRef;
+    if (workspace.projectId !== scope.projectId || workspace.workspaceId !== scope.workspaceId) {
+      return { status: "rejected", commandId: command.commandId, code: "scope_mismatch" };
+    }
+
+    // Guard 3: the reader must be a real principal inside the scope.
+    const readerIssues = await this.checkPrincipal(grant.reader, scope);
+    if (readerIssues !== null) return { status: "rejected", commandId: command.commandId, code: readerIssues };
+
+    if (grant.history) {
+      const owner = grant.history.owner;
+      if (owner.projectId !== scope.projectId) return { status: "rejected", commandId: command.commandId, code: "scope_mismatch" };
+      const source = await this.deps.ledger.load(owner);
+      if (source.status !== "found") return { status: "rejected", commandId: command.commandId, code: "not_found" };
+      const sourceWorkspace = owner.aggregateType === "Run" ? (source.snapshot as RunSnapshot).workspaceSnapshot.workspaceId : owner.workspaceId;
+      const cross = grant.history.crossWorkspace;
+      if (sourceWorkspace !== scope.workspaceId ? cross?.sourceWorkspaceId !== sourceWorkspace : cross !== undefined) return { status: "rejected", commandId: command.commandId, code: "scope_mismatch" };
+      if ((await this.deps.ledger.load({ aggregateType: "Workspace", projectId: scope.projectId, workspaceId: sourceWorkspace })).status !== "found") return { status: "rejected", commandId: command.commandId, code: "not_found" };
+      if (owner.aggregateType === "Run") {
+        const sourceGoal = await this.deps.ledger.load({ aggregateType: "Goal", projectId: owner.projectId, goalId: owner.goalId });
+        if (sourceGoal.status !== "found" || (sourceGoal.snapshot as GoalSnapshot).workspaceRef.workspaceId !== sourceWorkspace) return { status: "rejected", commandId: command.commandId, code: "scope_mismatch" };
+      }
+    }
+
+    // Guard 4: a run-shaped issuer must be real and in scope; a Control issuer
+    // has already been checked against this project and goal above.
+    if (grant.issuedBy.aggregateType !== "Control") {
+      const issuerIssues = await this.checkPrincipal(grant.issuedBy, scope);
+      if (issuerIssues !== null) return { status: "rejected", commandId: command.commandId, code: issuerIssues };
+    }
+
+    // Guard 5: deterministic fold -> atomic commit (CAS@0 + idempotency).
+    const batch = buildMaterialAccessGrantLedgerCommit(command, {
+      eventId: this.deps.eventId(),
+      occurredAt: this.deps.now(),
+    });
+    const receipt = await this.deps.ledger.commit(batch);
+    return mapReceipt(receipt, command, grant);
+  }
+
+  /** A reader/issuer run principal must exist and belong to the grant scope. */
+  private async checkPrincipal(
+    principal: ArtifactOwnerRunRef | MaterialGrantIssuer,
+    scope: Scope,
+  ): Promise<"not_found" | "scope_mismatch" | null> {
+    if (principal.aggregateType === "Control") return null;
+    if (principal.projectId !== scope.projectId) return "scope_mismatch";
+    // A principal identity already carries its scope: a Run is goal-scoped, a
+    // QueryRun is workspace-scoped. Declaring the mismatch explicitly (instead
+    // of relying on the load to return not_found) keeps the rejection reason
+    // truthful for the caller.
+    if (principal.aggregateType === "Run") {
+      if (principal.goalId !== scope.goalId) return "scope_mismatch";
+    } else if (principal.workspaceId !== scope.workspaceId) {
+      return "scope_mismatch";
+    }
+    const loaded = await this.deps.ledger.load(principal);
+    if (loaded.status === "not_found") return "not_found";
+    if (principal.aggregateType === "Run" && (loaded.snapshot as RunSnapshot).workspaceSnapshot.workspaceId !== scope.workspaceId) return "scope_mismatch";
+    return null;
+  }
+}
+
+function mapReceipt(
+  receipt: LedgerCommitReceipt,
+  command: GrantMaterialAccessCommand,
+  grant: MaterialAccessGrantV1,
+): GrantMaterialAccessReceipt {
+  if (receipt.status === "committed") {
+    return {
+      status: "committed",
+      commandId: command.commandId,
+      replayed: receipt.replayed,
+      grantRef: materialAccessGrantRefFor(command.identity.projectId, grant.scope.workspaceId, grant.scope.goalId, command.aggregateId),
+      eventIds: receipt.eventIds,
+      commitCursor: receipt.commitCursor,
+    };
+  }
+  switch (receipt.code) {
+    case "invalid_commit":
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+    case "revision_conflict":
+      return { status: "rejected", commandId: command.commandId, code: "revision_conflict" };
+    case "idempotency_conflict":
+      return { status: "rejected", commandId: command.commandId, code: "idempotency_conflict" };
+    case "unavailable":
+      return { status: "rejected", commandId: command.commandId, code: "unavailable" };
+    case "not_empty":
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+  }
+}

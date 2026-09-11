@@ -1,0 +1,70 @@
+{
+  "control": {
+    "id": "changed-rule-oracle",
+    "kind": "case-sensitive",
+    "overlays": [
+      "private/oracles/filter",
+      "private/oracles/case-sensitive"
+    ],
+    "expected": "PASS"
+  },
+  "result": {
+    "schemaVersion": 1,
+    "layer": "fixture-functional-evaluator",
+    "kind": "case-sensitive",
+    "status": "PASS",
+    "assertions": [
+      {
+        "id": "regression.http-ui-assets",
+        "status": "PASS"
+      },
+      {
+        "id": "regression.unfiltered-pagination",
+        "status": "PASS"
+      },
+      {
+        "id": "pagination.filter-before-slice",
+        "status": "PASS"
+      },
+      {
+        "id": "pagination.filter-resets-ui-page",
+        "status": "PASS"
+      },
+      {
+        "id": "filter.api-parameters-and-total",
+        "status": "PASS"
+      },
+      {
+        "id": "filter.empty-result",
+        "status": "PASS"
+      },
+      {
+        "id": "filter.controller-http-render",
+        "status": "PASS"
+      },
+      {
+        "id": "filter.persistence-after-reconstruction",
+        "status": "PASS"
+      },
+      {
+        "id": "filter.invalid-storage-fallback",
+        "status": "PASS"
+      },
+      {
+        "id": "filter.ui-controls-and-events",
+        "status": "PASS"
+      },
+      {
+        "id": "regression.create-idempotent-and-escaped",
+        "status": "PASS"
+      }
+    ],
+    "browserEngine": "NOT_PREPARED",
+    "realModelExecution": "NOT_RUN"
+  },
+  "publicSmoke": {
+    "exitCode": 0,
+    "stdout": "✔ unfiltered first page (3.626159ms)\n✔ board renders returned tasks (1.011698ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 44.258604\n",
+    "stderr": ""
+  }
+}

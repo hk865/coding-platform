@@ -1,46 +1,28 @@
+import type { PlanRevisionDraft } from './plan.js';
 /**
- * P1-11 Goal/Plan change contracts — AmendGoalRequest / PlanProposal /
- * PlanPatch / ChangeImpactAnalysis / UserDecision / GoalRevision /
- * PlanRevisionSupersededEvent (first consumer freeze of
- * HumanCollaboration.GoalChangePort, PlanCompiler.PlanProposalPort,
- * ContextCompiler.PlanningContextPort).
- *
- * Authority:
- *   - dev_docs/planning/proposed/P1-foundation/tickets/11-goal-plan-change-revision.md
- *     (Acceptance incl. 2026-09-06: affected-context refresh; decision
- *      authority; revision CAS; evidence applicability recompute via new
- *      binding; versioned planning interfaces)
- *   - ARCHITECTURE.md invariants #1 (Planner proposes; Control accepts),
- *     #6 (revision+source bindings), #8/#9 (required sets non-empty)
- *
- * FROZEN semantics:
- *   - AmendGoalRequest is bounded and NEVER mutates: it names the goal and
- *     the requested objective/obligation DELTA (add/change/remove with
- *     in-scope justification). A plan change request is explicit.
- *   - PlanCompiler produces a BOUNDED proposal/patch + impact analysis
- *     (affected work context refs + refresh/recompute requirements + stale
- *     assumptions). Compilers never mutate canonical state.
- *   - user Decision: subject/outcome(accept|reject|defer)/actor/authority/
- *     authorizedTarget EXACT match is required — reject/defer/unauthorized
- *     never changes the active revision (zero write).
- *   - applyPlanChange: ONLY an accepted decision whose authorized target
- *     matches the proposal source + a CAS on the Goal @expectedRevision and
- *     PlanRevision @0 creates/activates the NEW revision through the P1-02
- *     guard path (required sets re-validated); the OLD revision and FAILs are
- *     preserved; Evidence applicability recomputes through the NEW binding
- *     anchor (P1-04 anchoring at the new planRevision).
- *   - Display: which tasks keep/cancel/replace/re-verify/resume.
+ * Bounded goal amendments, plan proposals, patches, impact and decision records.
+ * PlanCompiler proposes; Control accepts against canonical scope and revision.
+ * Affected work retains explicit refresh/recompute information. Accepting a new
+ * PlanRevision preserves earlier plans, evidence and unresolved obligations.
+ * Decision authority and required non-empty obligations remain admission constraints.
  */
 import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
 import { canonicalJson, sha256Hex } from "./fingerprint.js";
-import type { PlanRevisionRef, AcceptanceObligation, TaskHierarchy, PlanStage, RuntimeExecutionDAG } from "./plan.js";
+import type { PlanRevisionRef, TaskHierarchy } from "./plan.js";
 import type { GoalRef } from "./ledger.js";
 import type { WorkContextRef } from "./context-continuity.js";
 
 export const PLAN_CHANGE_MAX_OBLIGATION_DELTAS = 64;
+export const PLAN_CHANGE_MAX_TASK_DELTAS = 64;
 export const PLAN_CHANGE_MAX_AFFECTED_WORKS = 64;
 export const PLAN_CHANGE_MAX_REASONS = 16;
 export const PLAN_CHANGE_PROPOSAL_MAX_BYTES = 32 * 1024;
+/**
+ * 新增任务指派指令的字节上限。取值与初始规划对 assignment.instruction 的既有约定
+ * 同一个界（contracts/initial-planning.ts 的解析上限 4096 字节）：一个任务的指派在两个入口
+ * 上是同一种东西，界也必须一致，否则返工任务会因为一个初始任务不可能踩到的界而被拒。
+ */
+export const PLAN_CHANGE_MAX_INSTRUCTION_BYTES = 4096;
 export const PLAN_CHANGE_DECISION_SUMMARY_MAX_BYTES = 4096;
 
 // ------------------------------------------------------------------------ //
@@ -72,6 +54,50 @@ export type AmendGoalRequestV1 = {
   submittedAt: string;
 };
 
+/**
+ * ADR 0003 D1 任务集增量。这是计划变更里**唯一**能改动任务集的通道：
+ * 任务集从来不是整体重写，而是“源 revision 的任务集 + 本增量”确定性推导的结果。
+ * 每个操作都只能改“谁承担义务”，不能改义务正文与验收语义：
+ *   - addTask：新增完整 RuntimeTask 定义 + 它的指派（assignment）+ 它承担的义务（obligationIds）；
+ *     任务与指派必须同属一个 revision：只给任务定义而不给「谁按什么指令承担」，新任务就会进了
+ *     计划却永远没有派发入口（RW-07 修的就是这个缺口），因此在守卫 f1 就被拒绝；
+ *   - replaceTask：加入一条“被取代 → 取代者”记录，替换者必须是同一 revision 中已存在且 active 的任务；
+ *   - cancelTask：取消并必须给出理由，无取代者。
+ *
+ * 不允许：直接改写任务字段（通过增量源任务传入）、改义务正文/验收语义、
+ * 把已取代任务当作取代者（链式取代）。违反者在 applyPlanChange 阶段拒绝且零写。
+ */
+export type PlanTaskSetDeltaV1 =
+  | {
+      action: "addTask";
+      /** 新增任务的完整 RuntimeTask 定义（不允许缺字段的部分定义）。 */
+      task: import("./plan.js").RuntimeTask;
+      /**
+       * 新增任务的指派。taskId 必须就是上面那个任务的 id（不允许指向别的任务）。
+       * work 任务必须携带（否则新任务会进了计划却没有派发入口）；gate 任务必须为 null
+       * ——与初始规划对同一形状的约定一致：「Gates have no implementation assignment」
+       * （contracts/initial-planning.ts），gate 的结论由证据归约产生，不派发实现运行。
+       * instruction 的界与初始规划一致（PLAN_CHANGE_MAX_INSTRUCTION_BYTES）。
+       */
+      assignment: import("./plan.js").PlanTaskAssignment | null;
+      /** 这个新任务承担的义务，必须是源 revision 里已存在的义务；义务正文不变。 */
+      obligationIds: string[];
+      reason: string;
+    }
+  | {
+      action: "replaceTask";
+      /** 被取代的源任务（新 revision 里 disposition=superseded）。 */
+      supersededTaskId: string;
+      /** 取代者：同一 revision 里已存在的 active 任务。 */
+      byTaskId: string;
+      reason: string;
+    }
+  | {
+      action: "cancelTask";
+      taskId: string;
+      reason: string;
+    };
+
 export type PlanPatchV1 = {
   schemaVersion: 1;
   patchId: string;
@@ -84,6 +110,13 @@ export type PlanPatchV1 = {
     objective: string;
     obligationDeltas: AmendGoalRequestV1["obligationDeltas"];
     taskHierarchy: TaskHierarchy | null;
+    /**
+     * ADR 0003 任务集增量。null 表示本次变更不改动任务集（兼容旧提案）；
+     * 只要求包含上限内的操作，不接受整体任务集重写。
+     * 它同时进入 planProposalDigest，因此人的决定的 authorizedTarget 自动绑定这份增量，事后篡改会被 decision_target_mismatch 拦下。
+     * 缺省（undefined）等价于 null。
+     */
+    taskSetDelta?: PlanTaskSetDeltaV1[] | null;
   };
   inScope: string[];
   outOfScope: string[];
@@ -123,7 +156,7 @@ export type PlanProposalSnapshot = {
   recordedAt: string;
 };
 
-export type UserDecisionOutcome = "accept" | "reject" | "defer";
+type UserDecisionOutcome = "accept" | "reject" | "defer";
 
 export type UserDecisionV1 = {
   schemaVersion: 1;
@@ -288,60 +321,44 @@ export type ApplyPlanChangeCommand = {
     decisionRef: { aggregateType: "UserDecision"; projectId: string; workspaceId: string; decisionId: string };
     proposalRef: { aggregateType: "PlanProposal"; projectId: string; workspaceId: string; proposalId: string };
     /** The NEW PlanRevision draft (P1-02 guards re-run on it). */
-    newPlanDraft: {
-      planId: string;
-      planRevision: number;
+    newPlanDraft: (Pick<PlanRevisionDraft, 'planId' | 'planRevision' | 'obligations'> & {
       objective: string;
-      stages: PlanStage[] | null;
-      taskHierarchy: TaskHierarchy | null;
-      executionDag: RuntimeExecutionDAG | null;
-      obligations: AcceptanceObligation[];
-    } | null;
+      stages: PlanRevisionDraft['stages'] | null;
+      taskHierarchy: PlanRevisionDraft['taskHierarchy'] | null;
+      executionDag: PlanRevisionDraft['executionDag'] | null;
+      /** Omission inherits source tasks; supplied tasks must match the accepted delta. */
+      tasks?: PlanRevisionDraft['tasks'];
+      /** Null/omission inherits source assignments; supplied values are re-derived and checked. */
+      assignments?: NonNullable<PlanRevisionDraft['assignments']> | null;
+    }) | null;
     changeReason: string;
   };
 };
 
-export type RecordPlanChangeProposalRejectionCode = "invalid" | "not_found" | "revision_conflict" | "idempotency_conflict" | "unavailable";
+type RecordPlanChangeProposalRejectionCode = "invalid" | "not_found" | "revision_conflict" | "idempotency_conflict" | "unavailable";
 export type RecordPlanChangeProposalReceipt =
   | { status: "committed"; commandId: string; replayed: boolean; proposalRef: PlanProposalSnapshot["ref"]; eventIds: string[]; commitCursor: CommitCursor }
   | { status: "rejected"; commandId: string; code: RecordPlanChangeProposalRejectionCode; issues?: string[] };
 
-export type RecordUserDecisionRejectionCode = "invalid" | "not_found" | "proposal_not_found" | "revision_conflict" | "idempotency_conflict" | "unavailable";
+type RecordUserDecisionRejectionCode = "invalid" | "not_found" | "proposal_not_found" | "revision_conflict" | "idempotency_conflict" | "unavailable";
 export type RecordUserDecisionReceipt =
   | { status: "committed"; commandId: string; replayed: boolean; decisionRef: UserDecisionSnapshot["ref"]; eventIds: string[]; commitCursor: CommitCursor }
   | { status: "rejected"; commandId: string; code: RecordUserDecisionRejectionCode; issues?: string[] };
 
-export type ApplyPlanChangeRejectionCode =
+type ApplyPlanChangeRejectionCode =
   | "invalid" | "not_found" | "proposal_not_found" | "decision_not_found" | "decision_not_accepted"
-  | "decision_target_mismatch" | "draft_mismatch" | "source_stale" | "guards_failed" | "revision_conflict" | "idempotency_conflict" | "unavailable";
+  | "decision_target_mismatch" | "draft_mismatch" | "source_stale" | "guards_failed"
+  /** ADR 0003 D1-2：任务集增量本身不合法（缺字段、无理由、指向不存在/非 active 的任务、链式取代）。 */
+  | "task_set_delta_invalid"
+  /** ADR 0003 D1-2：尝试用增量改义务正文或验收语义（属于人的决定，不在 inScopeRework 内）。 */
+  | "obligation_semantics_forbidden"
+  | "revision_conflict" | "idempotency_conflict" | "unavailable";
 export type ApplyPlanChangeReceipt =
   | { status: "committed"; commandId: string; replayed: boolean; goalRevision: GoalRevisionSnapshot["ref"]; activePlanRef: PlanRevisionRef; eventIds: string[]; commitCursor: CommitCursor }
   | { status: "rejected"; commandId: string; code: ApplyPlanChangeRejectionCode; issues?: string[] };
 
 // ------------------------------------------------------------------------ //
-// Ports (interfaces_to_freeze)                                              //
-// ------------------------------------------------------------------------ //
-
-export interface PlanProposalPort {
-  /** Deterministic bounded proposal + impact analysis (never mutates). */
-  request(intent: AmendGoalRequestV1): Promise<{ status: "proposal"; proposal: PlanProposalV1 } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
-}
-
-export interface PlanningContextPort {
-  assemblePlanningContext(request: { schemaVersion: 1; requestId: string; projectId: string; workspaceId: string; goalRef: GoalRef; planRef: PlanRevisionRef | null; budget: { maxBundleBytes: number } }): Promise<
-    | { status: "ready"; bundleRef: import("./artifact.js").ArtifactRef; manifest: { selectedSources: string[]; freshnessCursor: CommitCursor | null; totalBytes: number } }
-    | { status: "needs_material"; gaps: string[] }
-    | { status: "rejected"; code: "invalid_request" | "forbidden_tool_or_scope" | "unavailable"; message: string }
-  >;
-}
-
-export interface GoalChangePort {
-  amend(request: AmendGoalRequestV1): Promise<{ status: "accepted"; proposalRef: PlanProposalSnapshot["ref"] } | { status: "rejected"; code: string; message: string }>;
-  decide(command: RecordUserDecisionCommand): Promise<RecordUserDecisionReceipt>;
-  applyChange(command: ApplyPlanChangeCommand): Promise<ApplyPlanChangeReceipt>;
-}
-// ------------------------------------------------------------------------ //
-// Pure helpers (P1-11 frozen): digest / target / consistency / dispositions //
+// Pure helpers: digest / target / consistency / dispositions //
 // — deterministic, no state access, no writes.                              //
 // ------------------------------------------------------------------------ //
 
@@ -377,7 +394,7 @@ export function decisionTargetFor(proposal: PlanProposalV1): UserDecisionV1["aut
   };
 }
 
-export type TaskChangeDisposition = "keep" | "cancel" | "replace" | "reverify" | "resume";
+type TaskChangeDisposition = "keep" | "cancel" | "replace" | "reverify" | "resume";
 
 export type TaskDispositionRow = {
   taskId: string;
@@ -388,156 +405,6 @@ export type TaskDispositionRow = {
   obligationSignatureChanged: boolean;
   reason: string;
 };
-
-/** Deterministic per-task obligation/VR signature within one plan snapshot. */
-function obligationSignatureFor(plan: import("./plan.js").PlanRevisionSnapshot, taskId: string): string {
-  const mapped = plan.obligations
-    .filter((o) => o.taskIds.includes(taskId))
-    .map((o) => ({
-      obligationId: o.obligationId,
-      title: o.title,
-      requirementLevel: o.requirementLevel,
-      taskIds: o.taskIds,
-      verificationRequirements: o.verificationRequirements.map((v) => ({ requirementId: v.requirementId, requirementLevel: v.requirementLevel, kind: v.kind, description: v.description })),
-    }))
-    .sort((a, b) => (a.obligationId < b.obligationId ? -1 : a.obligationId > b.obligationId ? 1 : 0));
-  return canonicalJson(mapped);
-}
-
-/**
- * Pure disposition computation: which Tasks keep / cancel / replace /
- * reverify / resume when the active plan revision changes.
- */
-export function computeTaskDispositions(
-  source: import("./plan.js").PlanRevisionSnapshot,
-  target: import("./plan.js").PlanRevisionSnapshot,
-  pausedTaskIds: string[],
-): TaskDispositionRow[] {
-  const targetById = new Map(target.tasks.map((t) => [t.taskId, t]));
-  const paused = new Set(pausedTaskIds);
-  const signatureCache = new Map<string, string>();
-  const sourcePlanId = source.ref.planId;
-  const targetPlanId = target.ref.planId;
-  const signatureFor = (plan: import("./plan.js").PlanRevisionSnapshot, keyId: string, taskId: string): string => {
-    let s = signatureCache.get(keyId + "@" + taskId);
-    if (s === undefined) {
-      s = obligationSignatureFor(plan, taskId);
-      signatureCache.set(keyId + "@" + taskId, s);
-    }
-    return s;
-  };
-  const rows: TaskDispositionRow[] = [];
-  for (const task of source.tasks) {
-    if (!targetById.has(task.taskId)) {
-      const candidates = target.tasks
-        .filter((t) => t.taskKind === task.taskKind && t.phase === task.phase && t.requirementLevel === task.requirementLevel && t.scope.kind === task.scope.kind)
-        .map((t) => t.taskId);
-      if (candidates.length === 1) {
-        rows.push({ taskId: task.taskId, disposition: "replace", sourcePlanRef: source.ref, targetPlanRef: target.ref, replacedByTaskId: candidates[0]!, obligationSignatureChanged: true, reason: `replaced by task ${candidates[0]} (same ${task.taskKind}/${task.phase} key)` });
-      } else {
-        rows.push({ taskId: task.taskId, disposition: "cancel", sourcePlanRef: source.ref, targetPlanRef: target.ref, replacedByTaskId: null, obligationSignatureChanged: true, reason: "removed by the plan change; no unique replacement" });
-      }
-      continue;
-    }
-    const changed = signatureFor(source, sourcePlanId, task.taskId) !== signatureFor(target, targetPlanId, task.taskId);
-    if (changed) {
-      rows.push({ taskId: task.taskId, disposition: "reverify", sourcePlanRef: source.ref, targetPlanRef: target.ref, replacedByTaskId: null, obligationSignatureChanged: true, reason: "obligation(s)/verification requirement(s) changed — evidence must be re-verified" });
-    } else if (paused.has(task.taskId)) {
-      rows.push({ taskId: task.taskId, disposition: "resume", sourcePlanRef: source.ref, targetPlanRef: target.ref, replacedByTaskId: null, obligationSignatureChanged: false, reason: "task unchanged and was paused at a safe point — may resume" });
-    } else {
-      rows.push({ taskId: task.taskId, disposition: "keep", sourcePlanRef: source.ref, targetPlanRef: target.ref, replacedByTaskId: null, obligationSignatureChanged: false, reason: "task and obligations unchanged" });
-    }
-  }
-  return rows;
-}
-
-/**
- * Draft-consistency guard (pure): the new plan draft an ACCEPTED decision
- * bounds must exactly reflect the approved proposal/patch.
- */
-export function draftConsistencyIssues(
-  proposal: PlanProposalV1,
-  decision: UserDecisionV1,
-  draft: NonNullable<ApplyPlanChangeCommand["payload"]["newPlanDraft"]>,
-  source: import("./plan.js").PlanRevisionSnapshot,
-): string[] {
-  const issues: string[] = [];
-  if (draft.objective !== decision.authorizedTarget.newObjective) {
-    issues.push("objective does not match the decision authorized target");
-  }
-  if (draft.objective !== proposal.patch.patchDraft.objective) {
-    issues.push("objective does not match the proposal patch objective");
-  }
-  if (draft.planRevision !== proposal.sourcePlanRevision + 1) {
-    issues.push(`planRevision ${draft.planRevision} != source ${proposal.sourcePlanRevision} + 1`);
-  }
-  const deltaById = new Map(proposal.patch.patchDraft.obligationDeltas.map((d) => [d.obligationId, d]));
-  const sourceObById = new Map(source.obligations.map((o) => [o.obligationId, o]));
-  const targetObById = new Map(draft.obligations.map((o) => [o.obligationId, o]));
-  for (const o of source.obligations) {
-    const delta = deltaById.get(o.obligationId);
-    if (delta === undefined) {
-      const t = targetObById.get(o.obligationId);
-      if (t === undefined || canonicalJson(t) !== canonicalJson(o)) {
-        issues.push(`obligation ${o.obligationId}: untouched obligation must be unchanged`);
-      }
-    } else if (delta.action === "remove") {
-      if (targetObById.has(o.obligationId)) {
-        issues.push(`obligation ${o.obligationId}: remove delta but obligation still present`);
-      }
-    } else if (delta.action === "change") {
-      const t = targetObById.get(o.obligationId);
-      if (t === undefined) {
-        issues.push(`obligation ${o.obligationId}: change delta but obligation absent`);
-      } else {
-        const expected = { ...o, title: delta.newText ?? o.title };
-        if (canonicalJson(t) !== canonicalJson(expected)) {
-          issues.push(`obligation ${o.obligationId}: change delta allows only a title change`);
-        }
-      }
-    } else if (delta.action === "add") {
-      if (sourceObById.has(o.obligationId)) {
-        issues.push(`obligation ${o.obligationId}: add delta but obligation already exists in source`);
-      }
-    }
-  }
-  for (const d of proposal.patch.patchDraft.obligationDeltas) {
-    if (d.action === "add") {
-      const t = targetObById.get(d.obligationId);
-      if (sourceObById.has(d.obligationId)) {
-        issues.push(`obligation ${d.obligationId}: add delta but obligation exists in source`);
-      } else if (t === undefined || t.title !== d.newText) {
-        issues.push(`obligation ${d.obligationId}: add delta requires a new obligation with title == delta.newText`);
-      }
-    }
-  }
-  // The plan-change draft has NO task list: the task set is inherited from
-  // the source revision. Ref checks run against the SOURCE task set.
-  const sourceTaskById = new Map(source.tasks.map((t) => [t.taskId, t]));
-  if (draft.taskHierarchy !== null && draft.taskHierarchy !== undefined) {
-    for (const e of draft.taskHierarchy.parentOf) {
-      if (!sourceTaskById.has(e.parentTaskId) || !sourceTaskById.has(e.childTaskId)) {
-        issues.push(`hierarchy edge ${e.parentTaskId}->${e.childTaskId}: dangling task ref`);
-      }
-    }
-  }
-  if (draft.executionDag !== null && draft.executionDag !== undefined) {
-    for (const e of draft.executionDag.dependsOn) {
-      if (!sourceTaskById.has(e.taskId) || !sourceTaskById.has(e.dependsOnId)) {
-        issues.push(`dag edge ${e.taskId}->${e.dependsOnId}: dangling task ref`);
-      }
-    }
-  }
-  if (draft.stages !== null && draft.stages !== undefined) {
-    const stageIds = new Set(draft.stages.map((s) => s.stageId));
-    for (const t of source.tasks) {
-      if (t.stageId !== undefined && !stageIds.has(t.stageId)) {
-        issues.push(`task ${t.taskId}: dangling stage ref ${t.stageId}`);
-      }
-    }
-  }
-  return issues;
-}
 
 // ------------------------------------------------------------------------ //
 // Plan-change read view (ReadModelIndex.planChangeView)                     //
@@ -555,4 +422,3 @@ export type PlanChangeViewResult =
       freshness: CommitCursor | null;
     }
   | { status: "not_found" };
-

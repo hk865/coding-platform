@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-03 lane D — SQLite ActiveAgent + TaskDetail.run projection.
  * Mirrors tests/read-model/p1-03-run-projection.test.ts field-for-field (same
@@ -14,7 +15,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createSqliteReadModelIndex } from "../../src/sqlite-read-model/sqlite-read-model-index.js";
+import { createSqliteReadModelIndex } from "../../src/data/read-model-index/sqlite-read-model-index.js";
 import type { ReadModelIndex } from "../../src/contracts/goal-view.js";
 import type { CommitCursor } from "../../src/contracts/command-event.js";
 import type { DomainEvent } from "../../src/contracts/events.js";
@@ -24,19 +25,11 @@ import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
   buildCreateGoalCommand,
   goalCreatedEventFor,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
-import {
-  buildApplyPlanCommand,
-  planRevisionSnapshotFor,
-  planRevisionAcceptedEventFor,
-} from "../../src/contracts/fixtures/plan-fixtures.js";
-import {
-  ARCHITECTURE_BASELINE_FIXTURE_V1,
-  COMPLETION_POLICY_FIXTURE_V1,
-  buildInstallCommand,
-  completionPolicyPinFor,
-  architectureBaselinePinFor,
-} from "../../src/contracts/fixtures/governance-fixtures.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { planRevisionSnapshotFor, planRevisionAcceptedEventFor } from "../../src/control/control-engine/records/plan.js";
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
+import { completionPolicyPinFor, architectureBaselinePinFor } from "../../src/contracts/governance.js";
 import {
   BUDGET_FIXTURE_V1,
   DECLARED_PERMISSIONS_FIXTURE_V1,
@@ -48,7 +41,7 @@ import {
   buildEnvelopeFixture,
   buildManifestFixture,
   rebaseScriptForRun,
-} from "../../src/contracts/fixtures/dispatch-fixtures.js";
+} from "../../src/fixtures/dispatch-fixtures.js";
 import { artifactBodyDigest } from "../../src/contracts/artifact.js";
 import {
   runRefFor,
@@ -63,7 +56,7 @@ import {
 } from "../../src/contracts/dispatch.js";
 import type { PlanRevisionSnapshot } from "../../src/contracts/plan.js";
 import type { PlanRevisionRef } from "../../src/contracts/plan.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 
 const OCCURRED = FIXED_ISO_2026_09_05;
 const ACCEPTED_AT = "2026-09-05T12:00:00.000Z";
@@ -323,7 +316,7 @@ async function tempDir(prefix: string): Promise<string> {
 describe("SqliteReadModelIndex active agent + task-run projection (P1-03)", () => {
   it("claim -> start -> facts: ActiveAgent + TaskDetail.run fold field-for-field", async () => {
     const dir = await tempDir("p1-03-rm-");
-    const index = createSqliteReadModelIndex({ path: join(dir, "a.sqlite") });
+    const index = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: join(dir, "a.sqlite") });
     try {
       const sc: RunScenario = {
         scope: 0,
@@ -381,7 +374,7 @@ describe("SqliteReadModelIndex active agent + task-run projection (P1-03)", () =
 
   it("crash and outcome_unknown project to DIFFERENT outcomes (unknown never guessed from crash)", async () => {
     const dir = await tempDir("p1-03-rm-");
-    const index = createSqliteReadModelIndex({ path: join(dir, "a.sqlite") });
+    const index = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: join(dir, "a.sqlite") });
     try {
       const crash: RunScenario = {
         scope: 0,
@@ -434,8 +427,8 @@ describe("SqliteReadModelIndex active agent + task-run projection (P1-03)", () =
 
   it("fresh file rebuilt from the same pages reproduces the projection field-for-field", async () => {
     const dir = await tempDir("p1-03-rm-");
-    const inc = createSqliteReadModelIndex({ path: join(dir, "inc.sqlite") });
-    const fresh = createSqliteReadModelIndex({ path: join(dir, "fresh.sqlite") });
+    const inc = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: join(dir, "inc.sqlite") });
+    const fresh = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: join(dir, "fresh.sqlite") });
     try {
       const sc: RunScenario = {
         scope: 0,
@@ -471,7 +464,7 @@ describe("SqliteReadModelIndex active agent + task-run projection (P1-03)", () =
 
   it("full-scope isolation: same goalId/taskId under different Projects never collide", async () => {
     const dir = await tempDir("p1-03-rm-");
-    const index = createSqliteReadModelIndex({ path: join(dir, "a.sqlite") });
+    const index = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: join(dir, "a.sqlite") });
     try {
       const alpha: RunScenario = {
         scope: 0, runId: "run-iso-a", attemptId: "att-iso-a", prefix: "isoa",
@@ -507,7 +500,7 @@ describe("SqliteReadModelIndex active agent + task-run projection (P1-03)", () =
 
   it("freshness: not_ready != not_found for the active agent view", async () => {
     const dir = await tempDir("p1-03-rm-");
-    const index = createSqliteReadModelIndex({ path: join(dir, "a.sqlite") });
+    const index = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: join(dir, "a.sqlite") });
     try {
       const early = await index.activeAgent({
         projectId: ALPHA.projectId, goalId: ALPHA.goalId, taskId: DISPATCH_ELIGIBLE_TASK_ID,
@@ -541,7 +534,7 @@ describe("SqliteReadModelIndex active agent + task-run projection (P1-03)", () =
 
   it("dedupe: re-advancing the same page is idempotent (no re-apply, no base advance)", async () => {
     const dir = await tempDir("p1-03-rm-");
-    const index = createSqliteReadModelIndex({ path: join(dir, "a.sqlite") });
+    const index = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: join(dir, "a.sqlite") });
     try {
       const sc: RunScenario = {
         scope: 0, runId: "run-dedupe", attemptId: "att-dedupe", prefix: "dedupe",
@@ -568,7 +561,7 @@ describe("SqliteReadModelIndex active agent + task-run projection (P1-03)", () =
 
   it("late/stale runtime event (sequence <= lastEventSeq) does not regress the fold", async () => {
     const dir = await tempDir("p1-03-rm-");
-    const index = createSqliteReadModelIndex({ path: join(dir, "a.sqlite") });
+    const index = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: join(dir, "a.sqlite") });
     try {
       const sc: RunScenario = {
         scope: 0, runId: "run-late", attemptId: "att-late", prefix: "late",

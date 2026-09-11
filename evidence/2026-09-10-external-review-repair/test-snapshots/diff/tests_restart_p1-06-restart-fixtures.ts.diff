@@ -1,0 +1,18 @@
+--- evidence/2026-09-10-external-review-repair/before/tests/tests/restart/p1-06-restart-fixtures.ts	2026-09-06 14:39:30.000000000 +0800
++++ tests/restart/p1-06-restart-fixtures.ts	2026-09-10 01:37:38.455592500 +0800
+@@ -1,3 +1,4 @@
++import { classifyRestartProbeError } from "./readiness-probe.js";
+ /**
+  * P1-06 restart-path fixtures + readiness probe.
+  *   bootstrap -> install/activate -> CreateGoal -> applyPlan -> A claim/start/
+@@ -36,8 +37,8 @@
+     } finally {
+       await h.cleanup().catch(() => undefined);
+     }
+-  } catch {
+-    return false;
++  } catch (error) {
++    return classifyRestartProbeError(error);
+   }
+ }
+ 

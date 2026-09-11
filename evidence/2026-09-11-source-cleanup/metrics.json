@@ -1,0 +1,56 @@
+{
+  "before": {
+    "contracts": 135,
+    "topLevel": 93,
+    "publicNamedExports": 1586,
+    "pipeline": [
+      {
+        "file": "src/contracts/verification-service.ts",
+        "lines": 145
+      },
+      {
+        "file": "src/control/plan-compiler/rework-plan-compiler.ts",
+        "lines": 1004
+      },
+      {
+        "file": "src/harness/in-memory-harness.ts",
+        "lines": 675
+      },
+      {
+        "file": "src/harness/persistent-harness.ts",
+        "lines": 823
+      }
+    ]
+  },
+  "after": {
+    "contracts": 101,
+    "topLevel": 90,
+    "publicNamedExports": 1521,
+    "pipeline": [
+      {
+        "file": "src/contracts/verification-service.ts",
+        "lines": 122
+      },
+      {
+        "file": "src/control/plan-compiler/rework-plan-compiler.ts",
+        "lines": 417
+      },
+      {
+        "file": "src/control/plan-compiler/rework-proposal.ts",
+        "lines": 518
+      },
+      {
+        "file": "src/control/verification-engine/verification-deps.ts",
+        "lines": 29
+      },
+      {
+        "file": "src/harness/in-memory-harness.ts",
+        "lines": 661
+      },
+      {
+        "file": "src/harness/persistent-harness.ts",
+        "lines": 805
+      }
+    ]
+  }
+}

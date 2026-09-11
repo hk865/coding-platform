@@ -1,0 +1,51 @@
+{
+  "recordedAt": "2026-09-09T11:08:09.664Z",
+  "architectureCandidate": {
+    "files": 685,
+    "digest": "33c9c4091fddf5bb4aa1aeabab5ce3fb024f8fcb74326d27b30f8e51a4044695",
+    "fullTestSnapshotUnchanged": true
+  },
+  "finalBrowserCandidate": {
+    "files": 685,
+    "digest": "0b9bfba8162e48a34aeec9f7c08253b1362ce4249c70e3de1505c9382260de56",
+    "browserSnapshotUnchanged": true
+  },
+  "changed": [
+    "src/ui/tests/ui-05-09-detail.spec.ts"
+  ],
+  "change": "Browser fault injection follows the real /api/real/work route. Production, Vitest assertions and timeouts unchanged.",
+  "logs": [
+    {
+      "path": "full-tests.log",
+      "sha256": "6cff1c2e11eed67e0324a1d0404b48152ddf6ae3a2d7535ec00ea5eb74dbe072"
+    },
+    {
+      "path": "full-tests-workers4.log",
+      "sha256": "bb2af1e530422d4031b96aacd2831cf3ce91a28eb008f4e51337a8cfa899f433"
+    },
+    {
+      "path": "ar12-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "ui-types-01.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "build-03.log",
+      "sha256": "19b57931228a9be860cc7caff02e93ab32b9c28b42b9bf41170b7054348471da"
+    },
+    {
+      "path": "browser-tests.log",
+      "sha256": "c83b6c675c3aca57d921032671b483fe2ab0ec15663661b3bcd2b30593c9bd08"
+    },
+    {
+      "path": "browser-tests-chromium.log",
+      "sha256": "3d42a36880b22bdd6e2b38cef8ba113dc9289d8c708f3c8cbebeb6212ee7466b"
+    },
+    {
+      "path": "browser-tests-final.log",
+      "sha256": "4ea5771c6d9dd8558a84196f5aad459c2dedb1127235de0b3b7d4210cbf3289a"
+    }
+  ]
+}

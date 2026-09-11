@@ -1,0 +1,12 @@
+
+> agent-platform@0.1.0 build
+> npm run kernel:build && tsc -p tsconfig.app.json && node scripts/copy-ui.mjs
+
+
+> agent-platform@0.1.0 kernel:build
+> npm --prefix vendor/coding-agent run build
+
+
+> coding-agent-learning@0.0.0 build
+> tsc -p tsconfig.build.json
+

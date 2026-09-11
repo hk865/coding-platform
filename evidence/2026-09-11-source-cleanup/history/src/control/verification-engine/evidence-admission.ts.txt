@@ -1,0 +1,53 @@
+import type { ActorRef } from '../../contracts/command-event.js';
+import type { RecordedVerificationDeps } from '../../contracts/verification-service.js';
+import type { EvidenceV1, EffectivityAnchorV1 } from '../../contracts/evidence.js';
+import type { PlanRevisionSnapshot } from '../../contracts/plan.js';
+import { buildSubmitEvidenceCommand, buildReduceTaskCommand } from '../../contracts/commands/evidence.js';
+import { buildReduceGoalCommand } from '../../contracts/commands/goal-phase.js';
+type Identity = {
+    correlationId: string;
+    submittedAt: string;
+};
+/** Copy the resolved source identity into Evidence; Control decides its applicability. */
+export function verificationAnchor({ plan, workspaceRevision }: { plan: PlanRevisionSnapshot; workspaceRevision: number }): EffectivityAnchorV1 {
+    return {
+        schemaVersion: 1, planRef: { ...plan.ref }, planRevision: plan.planRevision, workspaceRevision,
+        pinnedCompletionPolicy: { ...plan.effectiveCompletionPolicy },
+        pinnedArchitectureBaseline: { ...plan.effectiveArchitectureBaseline },
+    };
+}
+/** Shared sequencing for recorded verification consumers. Exact historical
+ * command keys are supplied by each protocol; rejection stops the sequence. */
+export class EvidenceAdmission {
+    constructor(private readonly deps: RecordedVerificationDeps) { }
+    async task(evidence: EvidenceV1, actor: ActorRef, identity: Identity, reductionKey: string) {
+        const evidenceId = evidence.evidenceId;
+        const admitted = await this.deps.control.submitEvidence(buildSubmitEvidenceCommand({
+            ...identity, commandId: evidenceId, idempotencyKey: evidenceId, actor, evidence
+        }));
+        if (admitted.status !== 'committed')
+            throw Error('正式证据接纳失败：' + JSON.stringify(admitted));
+        const { projectId, goalId, taskId } = evidence.subject;
+        const revision = await this.deps.context.taskReductionRevision({ projectId, goalId, taskId });
+        const key = reductionKey + revision;
+        const reduced = await this.deps.control.reduceTask(buildReduceTaskCommand({
+            ...identity, projectId, goalId, taskId, actor: { kind: 'system', id: 'control-engine' }, commandId: key, idempotencyKey: key, expectedRevision: revision
+        }));
+        if (reduced.status !== 'committed')
+            throw Error('正式任务归约失败：' + JSON.stringify(reduced));
+        return reduced.phase;
+    }
+    async goal(scope: {
+        projectId: string;
+        goalId: string;
+    }, identity: Identity, reductionKey: string) {
+        const revision = await this.deps.context.goalPhaseRevision(scope);
+        const key = reductionKey + revision;
+        const reduced = await this.deps.control.reduceGoal(buildReduceGoalCommand({
+            ...identity, ...scope, actor: { kind: 'system', id: 'control-engine' }, commandId: key, idempotencyKey: key, expectedRevision: revision
+        }));
+        if (reduced.status !== 'committed')
+            throw Error('正式目标归约失败：' + JSON.stringify(reduced));
+        return reduced.phase;
+    }
+}

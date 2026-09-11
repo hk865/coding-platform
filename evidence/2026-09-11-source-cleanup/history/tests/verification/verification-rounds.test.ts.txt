@@ -1,0 +1,555 @@
+import { ControlReworkDisposition } from '../../src/control/control-engine/rework-disposition.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { VerificationService } from '../../src/control/verification-engine/verification-service.js';
+import { VerificationJournal } from '../../src/control/verification-engine/verification-journal.js';
+import { VerificationContextCompiler } from '../../src/data/context-compiler/verification-context.js';
+import { VerificationWorkspaceReader } from '../../src/data/workspace-reader/verification-workspace-reader.js';
+import { CandidateWorkspaceReader } from '../../src/data/workspace-reader/candidate-workspace-reader.js';
+import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
+import { canonicalJson, sha256Hex } from '../../src/contracts/fingerprint.js';
+import type { VerificationRoundScope } from '../../src/contracts/verification-context.js';
+import type { VerificationRegisteredCheck, VerificationRoundStartInput } from '../../src/contracts/verification-round.js';
+import type { CommandCheckRecord, VerificationServiceDeps } from '../../src/contracts/verification-service.js';
+import {
+  P107_PLAN_REVISION_FIXTURE_V1, P107_DECLARED_WRITE_PERMISSIONS_V1, P107_SCOPE_WRITER,
+  buildP107ArtifactRef, buildP107RecordIntegrationCommand, buildP107RecordPatchCommand,
+} from '../../src/contracts/fixtures/workspace-fixtures.js';
+import { buildAcquireWriteLeaseCommand, buildReleaseLeaseCommand } from '../../src/contracts/commands/workspace.js';
+import { VerificationEngineImpl } from '../../src/control/verification-engine/verification-engine.js';
+import { compileVerificationPlan } from '../../src/control/verification-engine/verification-plan-compiler.js';
+import { LedgerRoleSpecRead } from '../../src/control/dispatch-engine/role-spec-read.js';
+import { ROLE_SPEC_REVISION } from '../../src/contracts/role-spec.js';
+import {
+  ROLE_SOURCE_EXECUTOR, ROLE_SOURCE_INTEGRATOR,
+  buildCoordinationPolicyContentWithRolesV1, buildRoleSpecActivateCommandFor, buildRoleSpecInstallCommandFor, roleMatrixPolicyDigest,
+} from '../../src/contracts/fixtures/role-spec-fixtures.js';
+import { buildCoordinationPolicyActivateCommand, buildCoordinationPolicyInstallCommand } from '../../src/contracts/commands/governance.js';
+import { P15_COORDINATION_POLICY_REVISION } from '../../src/contracts/human-role-collaboration.js';
+import type { RoleBindingRefV1, RunSnapshot } from '../../src/contracts/dispatch.js';
+import { taskAttemptRefFor } from '../../src/contracts/dispatch.js';
+import type { PatchArtifactV1 } from '../../src/contracts/patch.js';
+import type { IntegrationTaskResultV1 } from '../../src/contracts/integration.js';
+import {
+  prepareP107Scenario, runP107Task, toP1_07Harness, P107_PROJECT, P107_WORKSPACE, P107_GOAL, P107_SCHEMA,
+  P107_TASK_WRITER_B, P107_ROLE_BINDING_WRITER_V1, P107_BUDGET_WRITER_V1,
+} from '../contract-suite/p1-07-harness.js';
+
+const roots: string[] = [];
+afterEach(async () => { vi.restoreAllMocks(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+const scope: VerificationRoundScope = { projectId: P107_PROJECT, workspaceId: P107_WORKSPACE, goalId: P107_GOAL, taskId: P107_TASK_WRITER_B, runId: 'verification-round-run' };
+const definition = (checkId: string, kind: 'static' | 'dynamic' = 'dynamic', command = 'printf passed'): VerificationRegisteredCheck => ({ checkId, kind, command, cwd: '.', timeoutMs: 3000, appliesTo: { workspaceId: scope.workspaceId, taskIds: [scope.taskId] } });
+const request = (...checks: VerificationRegisteredCheck[]): VerificationRoundStartInput => ({ requestId: 'round-request', allowExecute: true, configuration: { checks } });
+const countCommand = (id: string, exit = 0) => 'mkdir -p .cache; printf x >> .cache/' + id + '; exit ' + exit;
+
+/**
+ * RW-16：夹具允许把该 Run 的角色绑定换成某个**已登记角色**（默认仍是 P1-07 的短生命周期绑定）。
+ * 判据没有改变：角色矩阵生效后，claim 守卫按 RW-11 的同一份策略判定声明权限与 revision。
+ */
+type FixtureOptions = {
+  roleBinding?: typeof P107_ROLE_BINDING_WRITER_V1;
+  declaredPermissions?: { tools: string[]; writeScope: string[] };
+};
+
+async function fixture(kinds: Array<'static' | 'dynamic' | 'reviewer'> = ['dynamic', 'dynamic', 'static', 'reviewer'], options: FixtureOptions = {}) {
+  const root = await mkdtemp(join(tmpdir(), 'verification-round-')); roots.push(root);
+  const directory = await mkdtemp(join(tmpdir(), 'verification-round-journal-')); roots.push(directory);
+  await writeFile(join(root, 'source.txt'), 'source');
+  const h = createInMemoryHarness({ deps: { clock: () => P107_SCHEMA } }), p107 = toP1_07Harness(h);
+  const draft = structuredClone(P107_PLAN_REVISION_FIXTURE_V1);
+  draft.obligations.push({ obligationId: 'round-obligation', title: 'Explicit tool and Reviewer requirements', requirementLevel: 'required', taskIds: [scope.taskId],
+    verificationRequirements: kinds.map((kind, index) => ({ requirementId: 'round-vr-' + index, kind, requirementLevel: 'required', description: 'required ' + kind })) });
+  await prepareP107Scenario(p107, draft);
+  await runP107Task(p107, { taskId: scope.taskId, runId: scope.runId, attemptId: 'round-attempt', roleBinding: options.roleBinding ?? P107_ROLE_BINDING_WRITER_V1, declaredPermissions: options.declaredPermissions ?? { tools: ['read', 'write'], writeScope: ['*'] }, budget: P107_BUDGET_WRITER_V1 });
+  const context = new VerificationContextCompiler({ ledger: h.ledger, vault: h.vault, runtime: { all: () => [{ spec: scope, status: 'completed' }] }, rootFor: () => root, workspaceSource: new CandidateWorkspaceReader(), roundSource: new VerificationWorkspaceReader() });
+  const deps: VerificationServiceDeps = { directory, disposition: new ControlReworkDisposition(h.ledger as never), context, vault: h.vault, control: h.control, workspaceLease: h.workspaceLease, candidatePatchCheck: { check: async () => { throw Error('candidate patch checks are not part of round execution'); } } };
+  const reopen = async () => { const service = new VerificationService(deps); await service.init(); return service; };
+  return { root, directory, h, deps, context, service: await reopen(), reopen };
+}
+
+// ------------------------------------------------------------------------ //
+// RW-16：真实治理安装 + 真实产出登记（本 Run 的既有事实）                      //
+// ------------------------------------------------------------------------ //
+
+/** 某个已登记角色的绑定（revision 用角色规格 revision 的十进制写法，与矩阵 pin 一致）。 */
+function roleBindingFor(roleId: string): RoleBindingRefV1 {
+  return { schemaVersion: 1, bindingId: 'binding-' + roleId + '-round-v1', templateId: roleId, templateRevision: String(ROLE_SPEC_REVISION), bindingVersion: 1, policyRevision: 'auth-policy-runtime-v1' };
+}
+
+/**
+ * 用**产品自己的治理命令**安装并激活角色规格 + 一份含 roles 的协调策略。
+ * 为什么放在轮次用例里：RW-16 要证明的正是「装了 executor／integrator 规格之后轮次仍然能完成」，
+ * 所以安装必须走 install+activate 三段式（CAS 与摘要都由 ControlEngine 判定），不能替身伪造。
+ */
+async function installRole(s: Awaited<ReturnType<typeof fixture>>, roleId: string): Promise<void> {
+  const h = s.h;
+  const identity = (id: string) => ({ projectId: P107_PROJECT, actor: { kind: 'human' as const, id: 'user-1' }, idempotencyKey: id, commandId: id, correlationId: id, submittedAt: P107_SCHEMA });
+  const projectRevision = async (): Promise<number> => {
+    const loaded = await h.ledger.load({ aggregateType: 'Project', projectId: P107_PROJECT } as never);
+    if (loaded.status !== 'found') throw Error('project missing');
+    return loaded.snapshot.revision;
+  };
+  expect((await h.control.installRoleSpec(buildRoleSpecInstallCommandFor(roleId, identity('inst-' + roleId)))).status).toBe('committed');
+  expect((await h.control.activateRoleSpec(buildRoleSpecActivateCommandFor(roleId, { ...identity('act-' + roleId), expectedRevision: await projectRevision() }))).status).toBe('committed');
+  const policyId = 'coordination-' + roleId;
+  const content = buildCoordinationPolicyContentWithRolesV1(P107_PROJECT, [roleId]);
+  expect((await h.control.installCoordinationPolicy(buildCoordinationPolicyInstallCommand({ policyId, content }, identity('inst-policy-' + roleId)))).status).toBe('committed');
+  const pin = {
+    ref: { aggregateType: 'CoordinationPolicyRevision' as const, projectId: P107_PROJECT, policyId, revision: P15_COORDINATION_POLICY_REVISION },
+    digest: roleMatrixPolicyDigest(content, policyId),
+  };
+  expect((await h.control.activateCoordinationPolicy(buildCoordinationPolicyActivateCommand(pin, { ...identity('act-policy-' + roleId), expectedRevision: await projectRevision() }))).status).toBe('committed');
+  // 轮次侧消费角色规格的判据与派发侧是**同一个**端口实现（ControlEngine 的策略），这里原样注入。
+  s.deps.roleSpec = new LedgerRoleSpecRead({ ledger: h.ledger });
+}
+
+/** 本 Run 当前的冻结材料（用于取得 canonical run 与工作区版本）。 */
+async function roundRun(s: Awaited<ReturnType<typeof fixture>>): Promise<{ run: RunSnapshot; workspaceRevision: number }> {
+  const material = await s.context.resolveRound(scope);
+  if (material.status !== 'ready') throw Error('fixture material unavailable: ' + JSON.stringify(material));
+  return { run: material.material.run, workspaceRevision: material.material.workspaceRevision };
+}
+
+/** 真实 recordPatch：本 Run 的实现结果（先取活动写租约，再原子登记并推进工作区版本）。 */
+async function recordRunPatch(s: Awaited<ReturnType<typeof fixture>>, patchId: string): Promise<void> {
+  const { run, workspaceRevision } = await roundRun(s);
+  const leaseId = 'round-patch-lease-' + patchId;
+  const attemptRef = taskAttemptRefFor(P107_PROJECT, P107_GOAL, run.task.taskId, run.attemptId);
+  expect((await s.h.workspaceLease.acquireWriteLease(buildAcquireWriteLeaseCommand({
+    commandId: leaseId, leaseId, idempotencyKey: leaseId, correlationId: leaseId, submittedAt: P107_SCHEMA,
+    actor: { kind: 'system', id: 'round-patch' }, projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
+    scope: P107_SCOPE_WRITER, declaredWriteScope: P107_DECLARED_WRITE_PERMISSIONS_V1.writeScope,
+    holder: { runRef: run.ref, attemptRef, roleBinding: run.roleBinding }, expiresAt: null,
+  })))).toMatchObject({ status: 'committed' });
+  const patch: PatchArtifactV1 = {
+    schemaVersion: 1, patchId, projectId: P107_PROJECT, workspaceId: P107_WORKSPACE, goalId: P107_GOAL,
+    taskId: run.task.taskId, planRef: run.planRef, taskRevision: 1, runRef: run.ref, attemptRef,
+    roleBinding: run.roleBinding, kind: 'patch', title: '本 Run 的实现结果', changedPaths: ['src/p107/round-fix.ts'],
+    bodyRef: buildP107ArtifactRef(patchId), beforeWorkspaceRevision: workspaceRevision, afterWorkspaceRevision: workspaceRevision + 1,
+    checkResults: [{ checkId: 'round-patch-check', outcome: 'PASS', summary: 'deterministic checks passed' }],
+    usedInputEvidenceRefs: [], generatedAt: P107_SCHEMA,
+  };
+  expect((await s.h.recordPatch(buildP107RecordPatchCommand({ commandId: 'cmd-' + patchId, projectId: P107_PROJECT, patch }))).status).toBe('committed');
+}
+
+/** 真实 recordIntegrationResult：本 Run 的集成结果记录（含冲突面）。 */
+async function recordRunIntegration(s: Awaited<ReturnType<typeof fixture>>, resultId: string): Promise<void> {
+  const { run, workspaceRevision } = await roundRun(s);
+  const result: IntegrationTaskResultV1 = {
+    schemaVersion: 1, resultId, projectId: P107_PROJECT, workspaceId: P107_WORKSPACE, goalId: P107_GOAL,
+    taskId: run.task.taskId, planRef: run.planRef, taskRevision: 1, runRef: run.ref,
+    attemptRef: taskAttemptRefFor(P107_PROJECT, P107_GOAL, run.task.taskId, run.attemptId),
+    workspaceRevision, inputs: [], conflicts: [], gaps: [], explanation: null, escalate: false, generatedAt: P107_SCHEMA,
+  };
+  expect((await s.h.recordIntegrationResult(buildP107RecordIntegrationCommand({ commandId: 'cmd-' + resultId, projectId: P107_PROJECT, expectedRevision: 0, result }))).status).toBe('committed');
+}
+
+describe('durable explicit verification rounds', () => {
+  it('runs every applicable immutable check once, merges repeated coverage, aggregates FAIL over later PASS and leaves Reviewer pending', async () => {
+    const s = await fixture();
+    const input = request(definition('a-fail', 'dynamic', countCommand('a', 1)), definition('b-pass', 'dynamic', countCommand('b')), definition('c-static', 'static', countCommand('c')), { ...definition('foreign'), appliesTo: { workspaceId: 'foreign', taskIds: 'all' } });
+    const { round } = await s.service.startRound(scope, input);
+    expect(round.status, JSON.stringify(round.gaps)).toBe('completed');
+    expect(round.current).toEqual({ status: 'current', issues: [] });
+    expect(round.checks).toHaveLength(3);
+    expect(round.checks[0]!.coverage).toHaveLength(2);
+    expect(round.coverage.map(c => c.result)).toEqual(['FAIL', 'FAIL', 'PASS', null]);
+    expect(round.outcome).toBe('FAIL');
+    expect(round.gaps.some(g => g.code === 'reviewer_required')).toBe(true);
+    expect(round.aggregate!.admissions.map(a => a.coverage.result)).toEqual(['FAIL', 'FAIL', 'PASS']);
+    expect(round.aggregate!.admissions.every(a => a.status === 'admitted')).toBe(true);
+    for (const id of ['a', 'b', 'c']) expect(await readFile(join(s.root, '.cache', id), 'utf8')).toBe('x');
+    const raw = await s.service.checkReports(scope, round.checks[0]!.requestId);
+    expect(raw.reports[0]).toMatchObject({ definition: { checkId: 'a-fail' }, category: 'tool_check', result: 'FAIL' });
+    await expect(s.service.admitCheckEvidence(scope, { requestId: round.checks[1]!.requestId, reportDigest: round.checks[1]!.record!.progress!.phase === 'report_stored' ? round.checks[1]!.record!.progress!.artifactRef.digest : '' })).rejects.toThrow('完整覆盖聚合');
+    const replay = await (await s.reopen()).startRound(scope, input);
+    expect(replay.replayed).toBe(true); expect(replay.round.roundId).toBe(round.roundId);
+    for (const id of ['a', 'b', 'c']) expect(await readFile(join(s.root, '.cache', id), 'utf8')).toBe('x');
+    await expect(s.service.startRound(scope, request(definition('different')))).rejects.toThrow('内容已改变');
+    expect(await s.service.roundReceipt(scope, input.requestId)).toMatchObject({ runId: scope.runId, taskId: scope.taskId, roundId: round.roundId });
+  });
+
+  it('shows missing and malformed configuration without creating command journals, and never infers generic verify scope', async () => {
+    const s = await fixture();
+    expect((await s.service.startRound(scope, { requestId: 'missing', allowExecute: true })).round).toMatchObject({ status: 'incomplete', checks: [], gaps: [{ code: 'missing_configuration' }] });
+    expect((await s.service.startRound(scope, { ...request(definition('duplicate'), definition('duplicate')), requestId: 'bad' })).round.status).toBe('rejected');
+    expect((await s.service.startRound(scope, { ...request({ ...definition('foreign'), appliesTo: { workspaceId: 'foreign', taskIds: 'all' } }), requestId: 'foreign' })).round.gaps.some(g => g.code === 'no_applicable_checks')).toBe(true);
+    expect(s.service.forRun(scope).commandChecks).toEqual([]);
+    expect(await s.service.verify({ schemaVersion: 1, requestId: 'no-run', ...scope, planRef: { aggregateType: 'PlanRevision', projectId: scope.projectId, planId: 'absent' }, changeScope: { diffClass: 'none', changedFiles: [], writeSummary: 'caller claim' }, semanticChange: 'none', risks: [] })).toMatchObject({ status: 'incomplete', issues: [{ path: 'round' }] });
+  });
+
+  it('runs available checks while exposing missing coverage, and treats a known timeout as INCONCLUSIVE', async () => {
+    const s = await fixture(['dynamic', 'static', 'reviewer']);
+    const input = request({ ...definition('timeout', 'dynamic', 'sleep 10'), timeoutMs: 50 });
+    const { round } = await s.service.startRound(scope, input);
+    expect(round.status, JSON.stringify(round.gaps)).toBe('completed');
+    expect(round.coverage.find(c => c.kind === 'dynamic')!.result).toBe('INCONCLUSIVE');
+    expect(round.coverage.filter(c => c.checkIds.length === 0)).toHaveLength(2);
+    expect(round.outcome).toBe('INCONCLUSIVE');
+    expect(round.aggregate!.admissions[0]).toMatchObject({ status: 'admitted', coverage: { result: 'INCONCLUSIVE' } });
+  });
+
+  it('reopens a body-first partial round using its original full plan and continues only the never-started child', async () => {
+    const s = await fixture(['dynamic', 'static']);
+    const save = VerificationJournal.prototype.save;
+    let stop = true;
+    vi.spyOn(VerificationJournal.prototype, 'save').mockImplementation(async function (this: VerificationJournal, kind, id, value) {
+      if (stop && kind === 'round' && (value as any).status === 'running' && (value as any).coverage.some((c: any) => c.result !== null)) { stop = false; throw Error('injected stop after first durable report'); }
+      return save.call(this, kind, id, value);
+    });
+    const input = request(definition('a-dynamic', 'dynamic', countCommand('a')), definition('b-static', 'static', countCommand('b')));
+    const first = await s.service.startRound(scope, input);
+    expect(first.round.status).toBe('interrupted');
+    expect(first.round.checks[1]!.record).toBeNull();
+    const item = first.round.checks[0]!, key = sha256Hex(canonicalJson([{ projectId: scope.projectId, workspaceId: scope.workspaceId, goalId: scope.goalId, runId: scope.runId }, item.requestId]));
+    // The provider report is durable before the derived VerificationResult. A
+    // process loss at that exact boundary leaves this supported disk shape.
+    const filename = join(s.directory, 'check-' + key + '.json');
+    const stored = JSON.parse(await readFile(filename, 'utf8')) as CommandCheckRecord;
+    stored.result = null; stored.status = 'running'; stored.lifecycle = 'report_stored';
+    await writeFile(filename, JSON.stringify(stored));
+    const reopened = await s.reopen();
+    expect((await reopened.startRound(scope, input)).round.status).toBe('interrupted');
+    expect(await readFile(join(s.root, '.cache/a'), 'utf8')).toBe('x');
+    const resumed = await reopened.resumeRound(scope, { requestId: input.requestId, allowExecute: true });
+    expect(resumed.round.status, JSON.stringify(resumed.round.gaps)).toBe('completed');
+    expect(resumed.round.plan!.planDigest).toBe(first.round.plan!.planDigest);
+    expect(await readFile(join(s.root, '.cache/a'), 'utf8')).toBe('x');
+    expect(await readFile(join(s.root, '.cache/b'), 'utf8')).toBe('x');
+  });
+
+  it('refuses source changes during execution and after reports while keeping old FAIL and same-key replay historical', async () => {
+    const s = await fixture(['dynamic']);
+    const original = request(definition('original-fail', 'dynamic', 'exit 1'));
+    const fail = await s.service.startRound(scope, original);
+    expect(fail.round.outcome).toBe('FAIL');
+    await writeFile(join(s.root, 'source.txt'), 'changed after report');
+    expect((await s.service.startRound(scope, original)).round.current.status).toBe('stale');
+    const changed = await s.service.startRound(scope, { ...request(definition('mutates', 'dynamic', 'printf new > source.txt'), definition('never', 'dynamic', countCommand('never'))), requestId: 'changed' });
+    expect(changed.round.status).toBe('interrupted');
+    expect(changed.round.aggregate).toBeNull();
+    expect(changed.round.checks[1]!.record).toBeNull();
+    expect((await s.service.checkReports(scope, changed.round.checks[0]!.requestId)).reports[0]).toMatchObject({ category: 'stale_source', result: 'INCONCLUSIVE', effects: 'known' });
+    expect((await s.service.resumeRound(scope, { requestId: 'changed', allowExecute: true })).round.status).toBe('interrupted');
+    expect((await s.service.round(scope, original.requestId)).outcome).toBe('FAIL');
+  });
+
+  it('retries a partially accepted aggregate with byte-identical stable Evidence commands and no new executions', async () => {
+    const s = await fixture(['dynamic', 'dynamic']);
+    const submit = s.deps.control.submitEvidence.bind(s.deps.control), commands: string[] = [];
+    let call = 0;
+    vi.spyOn(s.deps.control, 'submitEvidence').mockImplementation(async command => {
+      commands.push(canonicalJson(command)); call++;
+      const receipt = await submit(command);
+      if (call === 2) throw Error('receipt lost after commit');
+      return receipt;
+    });
+    const input = request(definition('count', 'dynamic', countCommand('count')));
+    const first = await s.service.startRound(scope, input);
+    expect(first.round.status).toBe('interrupted');
+    expect(first.round.aggregate!.admissions.map(a => a.status)).toEqual(['admitted', 'pending']);
+    const result = await (await s.reopen()).resumeRound(scope, { requestId: input.requestId, allowExecute: true });
+    expect(result.round.status, JSON.stringify(result.round.gaps)).toBe('completed');
+    expect(commands).toHaveLength(3); expect(commands[2]).toBe(commands[1]);
+    expect(await readFile(join(s.root, '.cache/count'), 'utf8')).toBe('x');
+  });
+
+  it('does not continue remaining checks after an unknown executing checkpoint, even when the same request is replayed', async () => {
+    const s = await fixture(['dynamic', 'static']);
+    const save = VerificationJournal.prototype.save;
+    let stop = true;
+    vi.spyOn(VerificationJournal.prototype, 'save').mockImplementation(async function (this: VerificationJournal, kind, id, value) {
+      if (stop && kind === 'round' && (value as any).status === 'running' && (value as any).coverage.some((c: any) => c.result !== null)) { stop = false; throw Error('stop between children'); }
+      return save.call(this, kind, id, value);
+    });
+    const input = request(definition('a-started', 'dynamic', countCommand('a')), definition('b-never', 'static', countCommand('b')));
+    const first = await s.service.startRound(scope, input), item = first.round.checks[0]!;
+    const key = sha256Hex(canonicalJson([{ projectId: scope.projectId, workspaceId: scope.workspaceId, goalId: scope.goalId, runId: scope.runId }, item.requestId]));
+    const filename = join(s.directory, 'check-' + key + '.json'), record = JSON.parse(await readFile(filename, 'utf8')) as CommandCheckRecord;
+    const progress = record.progress!;
+    record.result = null; record.status = 'running'; record.lifecycle = 'executing';
+    record.progress = { phase: 'executing', observationId: progress.observationId, context: progress.context, sourceDigest: progress.sourceDigest, startedAt: record.startedAt! };
+    await writeFile(filename, JSON.stringify(record));
+    const reopened = await s.reopen(), release = vi.spyOn(s.deps.workspaceLease, 'releaseLease');
+    expect((await reopened.startRound(scope, input)).replayed).toBe(true);
+    const resumed = await reopened.resumeRound(scope, { requestId: input.requestId, allowExecute: true });
+    expect(resumed.round.status).toBe('interrupted');
+    expect(resumed.round.checks[1]!.record).toBeNull();
+    expect(resumed.round.aggregate).toBeNull();
+    expect(release).not.toHaveBeenCalled();
+    expect(await readFile(join(s.root, '.cache/a'), 'utf8')).toBe('x');
+    await expect(readFile(join(s.root, '.cache/b'), 'utf8')).rejects.toThrow('ENOENT');
+  });
+
+  it.each(['revoked', 'bad-digest'] as const)('refuses aggregate recovery when an original report is %s, preserving pending admission and raw history', async mode => {
+    const s = await fixture(['dynamic']);
+    vi.spyOn(s.deps.control, 'submitEvidence').mockImplementation(async () => { throw Error('intake temporarily unavailable'); });
+    const input = request(definition('original', 'dynamic', countCommand('original')));
+    const first = await s.service.startRound(scope, input);
+    expect(first.round.aggregate!.admissions[0]!.status).toBe('pending');
+    const report = first.round.checks[0]!.record!.progress!;
+    if (report.phase !== 'report_stored') throw Error('expected persisted original report');
+    const open = s.context.openReport.bind(s.context);
+    vi.spyOn(s.context, 'openReport').mockImplementation((ref, owner) => ref.digest === report.artifactRef.digest
+      ? mode === 'revoked' ? Promise.resolve({ status: 'rejected', code: 'forbidden', issues: ['recorded access revoked'] }) : open({ ...ref, digest: '0'.repeat(64) }, owner)
+      : open(ref, owner));
+    const reopened = await s.reopen();
+    expect((await reopened.round(scope, input.requestId)).current.status).toBe('stale');
+    const resumed = await reopened.resumeRound(scope, { requestId: input.requestId, allowExecute: true });
+    expect(resumed.round.status).toBe('interrupted');
+    expect(resumed.round.aggregate!.admissions[0]!.status).toBe('pending');
+    expect(await readFile(join(s.root, '.cache/original'), 'utf8')).toBe('x');
+    expect(reopened.checkReportMaterials(scope)).toHaveLength(1);
+  });
+
+  it('uses the generic VerificationPort for a real explicit round and serializes concurrent same-key submissions', async () => {
+    const s = await fixture(['dynamic']);
+    const material = await s.context.resolveRound(scope);
+    if (material.status !== 'ready') throw Error('fixture material unavailable');
+    const input = request(definition('generic', 'dynamic', countCommand('generic')));
+    const generic = { schemaVersion: 1 as const, requestId: input.requestId, ...scope, planRef: material.material.plan.ref,
+      changeScope: { diffClass: 'none', changedFiles: [], writeSummary: 'untrusted caller claim' }, semanticChange: 'none' as const, risks: [],
+      round: { workspaceId: scope.workspaceId, runId: scope.runId, allowExecute: true as const, configuration: input.configuration! } };
+    const results = await Promise.all([s.service.verify(generic), s.service.verify(generic)]);
+    expect(results.map(r => r.status)).toEqual(['ready', 'ready']);
+    expect(results[0]).toMatchObject({ plan: { semanticChange: 'semantic' }, observations: [{ result: 'PASS' }] });
+    expect(await readFile(join(s.root, '.cache/generic'), 'utf8')).toBe('x');
+    expect(s.service.forRun(scope).rounds).toHaveLength(1);
+    expect((await s.service.round(scope, input.requestId)).aggregate!.admissions).toHaveLength(1);
+  });
+
+  it('persists a definitively rejected acquisition without blocking a new round, while the original request never executes', async () => {
+    const s = await fixture(['dynamic']);
+    const material = await s.context.resolveRound(scope);
+    if (material.status !== 'ready') throw Error('fixture material unavailable');
+    const m = material.material, leaseId = 'other-active-check';
+    const acquired = await s.h.workspaceLease.acquireWriteLease(buildAcquireWriteLeaseCommand({
+      commandId: leaseId, leaseId, idempotencyKey: leaseId, correlationId: leaseId, submittedAt: P107_SCHEMA,
+      actor: { kind: 'system', id: 'integrator' }, projectId: scope.projectId, workspaceId: scope.workspaceId,
+      scope: { schemaVersion: 1, projectId: scope.projectId, workspaceId: scope.workspaceId, kind: 'workspace', id: scope.workspaceId, revision: m.workspaceRevision },
+      declaredWriteScope: ['*'], expiresAt: null,
+      holder: { runRef: m.run.ref, attemptRef: m.run.envelope!.attemptRef, roleBinding: m.run.envelope!.roleBinding },
+    }));
+    expect(acquired.status).toBe('committed');
+    const input = request(definition('check', 'dynamic', countCommand('after-rejection')));
+    const blocked = await s.service.startRound(scope, input);
+    expect(blocked.round.checks[0]!.record).toMatchObject({ lifecycle: 'acquisition_rejected', acquisitionRejection: { code: 'write_lease_conflict' } });
+    expect(await s.h.workspaceLease.releaseLease(buildReleaseLeaseCommand({
+      commandId: leaseId + '-release', idempotencyKey: leaseId + '-release', correlationId: leaseId,
+      submittedAt: P107_SCHEMA, actor: { kind: 'system', id: 'integrator' }, projectId: scope.projectId,
+      workspaceId: scope.workspaceId, leaseId, kind: 'write', holderRunRef: m.run.ref,
+    }))).toMatchObject({ status: 'committed' });
+    const reopened = await s.reopen();
+    expect((await reopened.startRound(scope, input)).replayed).toBe(true);
+    expect((await reopened.resumeRound(scope, { requestId: input.requestId, allowExecute: true })).round.status).toBe('interrupted');
+    const fresh = await reopened.startRound(scope, { ...input, requestId: 'new-request' });
+    expect(fresh.round.status, JSON.stringify(fresh.round.gaps)).toBe('completed');
+    expect(await readFile(join(s.root, '.cache/after-rejection'), 'utf8')).toBe('x');
+  });
+
+  it.each(['task', 'goal'] as const)('preserves a rejected %s reduction attempt and resumes a new canonical CAS identity without repeating tools', async target => {
+    const s = await fixture(['dynamic']);
+    const commands: Array<{ commandId: string; expectedRevision: number }> = [];
+    let race = true;
+    if (target === 'task') {
+      const reduce = s.deps.control.reduceTask.bind(s.deps.control);
+      vi.spyOn(s.deps.control, 'reduceTask').mockImplementation(async command => {
+        commands.push(command);
+        if (race) { race = false; expect((await reduce({ ...command, commandId: 'other-task-reduction', identity: { ...command.identity, idempotencyKey: 'other-task-reduction' } })).status).toBe('committed'); }
+        return reduce(command);
+      });
+    } else {
+      const reduce = s.deps.control.reduceGoal.bind(s.deps.control);
+      vi.spyOn(s.deps.control, 'reduceGoal').mockImplementation(async command => {
+        commands.push(command);
+        if (race) { race = false; expect((await reduce({ ...command, commandId: 'other-goal-reduction', identity: { ...command.identity, idempotencyKey: 'other-goal-reduction' } })).status).toBe('committed'); }
+        return reduce(command);
+      });
+    }
+    const input = request(definition('cas', 'dynamic', countCommand('cas')));
+    const first = await s.service.startRound(scope, input);
+    expect(first.round.status).toBe('interrupted');
+    expect(first.round.reduction.rejected).toMatchObject([{ target, code: 'revision_conflict' }]);
+    const resumed = await (await s.reopen()).resumeRound(scope, { requestId: input.requestId, allowExecute: true });
+    expect(resumed.round.status, JSON.stringify(resumed.round.gaps)).toBe('completed');
+    expect(commands).toHaveLength(2);
+    expect(commands[1]!.commandId).not.toBe(commands[0]!.commandId);
+    expect(commands[1]!.expectedRevision).toBeGreaterThan(commands[0]!.expectedRevision);
+    expect(await readFile(join(s.root, '.cache/cas'), 'utf8')).toBe('x');
+  });
+
+  it('includes an additional applicable failing tool in round outcome without inventing a formal obligation', async () => {
+    const s = await fixture(['dynamic']);
+    const { round } = await s.service.startRound(scope, request(definition('a-dynamic'), definition('b-static', 'static', 'exit 1')));
+    expect(round.status, JSON.stringify(round.gaps)).toBe('completed');
+    expect(round.checks[1]!.coverage).toEqual([]);
+    expect(round.coverage).toMatchObject([{ kind: 'dynamic', result: 'PASS' }]);
+    expect(round.aggregate!.admissions).toHaveLength(1);
+    expect(round.outcome).toBe('FAIL');
+  });
+
+  it('preserves legacy planner first-match output while execution deduplicates coverage and round planning selects all registrations', async () => {
+    const s = await fixture(['dynamic', 'dynamic']), material = await s.context.resolveRound(scope);
+    if (material.status !== 'ready') throw Error('fixture material unavailable');
+    const m = material.material, calls: string[] = [];
+    const port = {
+      capabilities: async () => ['b', 'a'].map(checkId => ({ checkId, kind: 'dynamic' as const, coversKinds: ['dynamic'], replayable: false })),
+      runCheck: async (_context: unknown, checkId: string) => { calls.push(checkId); return { result: 'PASS' as const, observationId: checkId, summary: checkId, artifactRef: null }; },
+    };
+    const input = { schemaVersion: 1 as const, taskRef: m.run.task, planRef: m.plan.ref, planSnapshot: m.plan, workspaceRevision: m.workspaceRevision, changeScope: m.changeScope, semanticChange: m.semanticChange, risks: [], policy: m.policyContent, checkCapabilities: await port.capabilities() };
+    const legacy = compileVerificationPlan(input), all = compileVerificationPlan({ ...input, selection: 'all-applicable', configurationDigest: 'c'.repeat(64) });
+    expect(legacy).toMatchObject({ status: 'ready', plan: { checks: [{ checkId: 'a' }, { checkId: 'a' }] } });
+    expect(all).toMatchObject({ status: 'ready', plan: { checks: [{ checkId: 'a', coverage: [{ requirementId: 'round-vr-0' }, { requirementId: 'round-vr-1' }] }, { checkId: 'b' }] } });
+    const engine = new VerificationEngineImpl({ context: s.context, now: () => P107_SCHEMA }, [port], { capabilities: async () => ({ mode: 'dispatch-run', maxPacketBytes: 65536, noFullTranscript: true }) });
+    const result = await engine.verify({ schemaVersion: 1, ...scope, requestId: 'legacy-engine', planRef: m.plan.ref, changeScope: m.changeScope, semanticChange: 'semantic', risks: [], maxChecks: 1 });
+    expect(result).toMatchObject({ status: 'ready', observations: [{ checkId: 'a', coverage: [{ requirementId: 'round-vr-0' }, { requirementId: 'round-vr-1' }] }] });
+    expect(calls).toEqual(['a']);
+  });
+
+  it('RW-16 executor：安装规格后正常任务轮次仍能完成 —— 本 Run 的 PatchRecord 见证产出期望（真实链）', async () => {
+    // 该 Run 的角色绑定落在角色目录里的 executor（RW-14 的 M3 口径），声明权限 ⊆ 规格上界。
+    // 工具检查要独占工作区写租约，而检查租约的声明范围取自**该 Run 信封上的写范围**：
+    // 因此这里的运行必须真的被授予工作区写权限（executor 规格的上界本来就是 workspace 可写）。
+    const s = await fixture(['dynamic'], { roleBinding: roleBindingFor(ROLE_SOURCE_EXECUTOR), declaredPermissions: { tools: ['read', 'write'], writeScope: ['*'] } });
+    await installRole(s, ROLE_SOURCE_EXECUTOR);
+    const reduceTask = vi.spyOn(s.deps.control, 'reduceTask'), reduceGoal = vi.spyOn(s.deps.control, 'reduceGoal');
+    const input = request(definition('passes', 'dynamic', countCommand('passes')));
+    // 1) RW-18：本 Run 还没有登记实现结果时，这条产出期望**只是如实记为没有见证事实**，不再是门禁 ——
+    //    轮次结论不降级、归约照常发起（见本文件末尾的 RW-18 验收用例说明取舍）。
+    const unwitnessed = await (await s.reopen()).startRound(scope, input);
+    expect(unwitnessed.round.status, JSON.stringify(unwitnessed.round.gaps)).toBe('completed');
+    expect(unwitnessed.round.roleOutputs).toMatchObject({ status: 'incomplete', roleId: ROLE_SOURCE_EXECUTOR, missing: ['implementation-result'] });
+    expect(unwitnessed.round.roleOutputs!.required[0]).toMatchObject({ kind: 'implementation-result', channel: 'run-bound-patch-record', witness: null });
+    expect(unwitnessed.round.outcome).toBe('PASS');
+    expect(unwitnessed.round.reduction.withheld).toBeUndefined();
+    expect(reduceTask).toHaveBeenCalled();
+    // 2) 登记本 Run 的真实实现结果（writer 链的正式 PatchRecord），同一个 Task 再跑一次轮次。
+    await recordRunPatch(s, 'round-rw16-patch');
+    reduceTask.mockClear();
+    const reduced = await (await s.reopen()).startRound(scope, { ...input, requestId: 'round-with-registered-result' });
+    expect(reduced.round.status, JSON.stringify(reduced.round.gaps)).toBe('completed');
+    expect(reduced.round.roleOutputs).toMatchObject({ status: 'complete', roleId: ROLE_SOURCE_EXECUTOR, missing: [] });
+    expect(reduced.round.roleOutputs!.required[0]).toMatchObject({ kind: 'implementation-result', channel: 'run-bound-patch-record' });
+    expect(reduced.round.roleOutputs!.required[0]!.witness).toContain('round-rw16-patch');
+    expect(reduced.round.reduction.withheld).toBeUndefined();
+    // 3) 结论是 PASS，并且**确实发起了归约**：Task 走到 satisfied（这正是本票要保住的完成路径）。
+    expect(reduced.round.outcome).toBe('PASS');
+    expect(reduceTask).toHaveBeenCalled();
+    expect(reduceGoal).toHaveBeenCalled();
+    expect(reduced.round.control.taskPhase).toBe('satisfied');
+    expect(reduced.round.control.goalPhase).not.toBeNull();
+    // 4) 结论随轮次持久化：重开同一请求读回同一条见证事实，不重跑工具。
+    const replayed = await (await s.reopen()).startRound(scope, { ...input, requestId: 'round-with-registered-result' });
+    expect(replayed.replayed).toBe(true);
+    expect(replayed.round.roleOutputs).toMatchObject({ status: 'complete' });
+  });
+
+  it('RW-16 integrator：安装规格后集成轮次仍能完成 —— 本 Run 的 IntegrationResult 记录见证必产出（真实链）', async () => {
+    const s = await fixture(['dynamic'], { roleBinding: roleBindingFor(ROLE_SOURCE_INTEGRATOR), declaredPermissions: { tools: ['read', 'write'], writeScope: ['*'] } });
+    await installRole(s, ROLE_SOURCE_INTEGRATOR);
+    const reduceTask = vi.spyOn(s.deps.control, 'reduceTask');
+    const input = request(definition('integration-passes', 'dynamic', countCommand('integration-passes')));
+    // RW-18：没有集成记录时这两条期望如实记为没有见证事实，但不再降级结论、不再扣留归约。
+    const unwitnessed = await (await s.reopen()).startRound(scope, input);
+    expect(unwitnessed.round.roleOutputs).toMatchObject({ status: 'incomplete', roleId: ROLE_SOURCE_INTEGRATOR, missing: ['integration-result', 'conflict-report'] });
+    expect(unwitnessed.round.outcome).toBe('PASS');
+    expect(unwitnessed.round.reduction.withheld).toBeUndefined();
+    await recordRunIntegration(s, 'round-rw16-integration');
+    const reduced = await (await s.reopen()).startRound(scope, { ...input, requestId: 'round-with-integration-result' });
+    expect(reduced.round.status, JSON.stringify(reduced.round.gaps)).toBe('completed');
+    expect(reduced.round.roleOutputs).toMatchObject({ status: 'complete', roleId: ROLE_SOURCE_INTEGRATOR, missing: [] });
+    expect(reduced.round.roleOutputs!.required.map(entry => entry.channel)).toEqual(['run-bound-integration-result', 'run-bound-conflict-surface']);
+    expect(reduced.round.roleOutputs!.required[1]!.witness).toContain('round-rw16-integration');
+    expect(reduced.round.reduction.withheld).toBeUndefined();
+    expect(reduced.round.outcome).toBe('PASS');
+    expect(reduceTask).toHaveBeenCalled();
+    expect(reduced.round.control.taskPhase).toBe('satisfied');
+  });
+
+  it('RW-18 验收核心：装了 executor 规格、没有登记实现结果时，轮次不再降级也不再扣留归约（见证知识仍如实记录）', async () => {
+    const s = await fixture(['dynamic']);
+    s.deps.roleSpec = {
+      resolve: async () => ({
+        status: 'resolved', roleId: 'executor',
+        revision: { aggregateType: 'RoleSpecRevision', projectId: scope.projectId, roleId: 'executor', revision: 1 },
+        spec: {
+          schemaVersion: 1, label: '执行者', purpose: '实现已接受的任务', responsibility: ['execution'],
+          requiredMaterials: [], optionalMaterials: [],
+          permissions: { tools: ['read', 'write'], writeScope: 'workspace' },
+          budget: { source: 'task-budget', scope: 'assigned-task' },
+          // RW-18：今天仍无见证通道的类别。它照样**如实**记进 roleOutputs.missing（不是"永远满足"），
+          // 但不再是完成判据 —— 这正是本条要区分的两件事。
+          requiredOutputs: [{ kind: 'proposal', reason: '方案必须以提案形式给出' }],
+          exit: { success: 's', stop: 't', handoff: 'h' },
+        },
+      }),
+    };
+    const reduceTask = vi.spyOn(s.deps.control, 'reduceTask'), reduceGoal = vi.spyOn(s.deps.control, 'reduceGoal');
+    const taskReductionBefore = await s.context.taskReductionRevision(scope);
+    const input = request(definition('passes', 'dynamic', countCommand('passes')));
+    const { round } = await (await s.reopen()).startRound(scope, input);
+    // 1) 工具检查全部通过、Evidence 照常接纳（那是关于计划验收要求的正式事实）。
+    expect(round.status, JSON.stringify(round.gaps)).toBe('completed');
+    expect(round.coverage.map(c => c.result)).toEqual(['PASS']);
+    expect(round.aggregate!.admissions.map(a => a.status)).toEqual(['admitted']);
+    // 2) 产出期望没有见证事实 —— **如实**记录在轮次记录上（审计信息），措辞说清它为什么没有见证。
+    expect(round.roleOutputs).toMatchObject({ status: 'incomplete', roleId: 'executor', missing: ['proposal'] });
+    expect(round.roleOutputs!.required[0]).toMatchObject({ kind: 'proposal', channel: null, witness: null });
+    expect(round.roleOutputs!.required[0]!.detail).toContain('需要的通道');
+    expect(round.roleOutputs!.detail).toContain('声明性产出期望');
+    // 3) 但它**不是**完成判据：结论仍由覆盖结果决定（PASS），不写进 gaps、不设 reduction.withheld。
+    expect(round.outcome).toBe('PASS');
+    expect(round.gaps.some(g => g.code === 'role_required_output_missing' || g.code === 'role_outputs_not_checked')).toBe(false);
+    expect(round.reduction.withheld).toBeUndefined();
+    // 4) 归约照常发起：Task 走到 satisfied，TaskReduction revision 真的前进。
+    expect(reduceTask).toHaveBeenCalledTimes(1);
+    expect(reduceGoal).toHaveBeenCalledTimes(1);
+    expect(round.control.taskPhase).toBe('satisfied');
+    expect(round.control.goalPhase).not.toBeNull();
+    expect(await s.context.taskReductionRevision(scope)).toBeGreaterThan(taskReductionBefore);
+    // 5) 结论随轮次持久化：重开同一请求仍读回同一条见证报告，且不重跑工具、不重复归约。
+    const replayed = await (await s.reopen()).startRound(scope, input);
+    expect(replayed.replayed).toBe(true);
+    expect(replayed.round.roleOutputs).toMatchObject({ status: 'incomplete', missing: ['proposal'] });
+    expect(replayed.round.reduction.withheld).toBeUndefined();
+    expect(replayed.round.outcome).toBe('PASS');
+
+    // 6) 对照：没有角色规格（宿主未接线／未安装）时判据完全不变 —— 结论 PASS 且照常发起归约；
+    //    与"有规格但无见证事实"这一情形在**结论**上逐字一致（差别只在 roleOutputs 的审计内容）。
+    delete s.deps.roleSpec;
+    const control = await (await s.reopen()).startRound(scope, { ...input, requestId: 'round-without-role-spec' });
+    expect(control.round.outcome).toBe('PASS');
+    expect(control.round.reduction.withheld).toBeUndefined();
+    expect(control.round.roleOutputs).toMatchObject({ status: 'absent' });
+    expect(control.round.control.taskPhase).toBe('satisfied');
+  });
+
+  it('refuses a Vault-stored unsupported report version before aggregate admission', async () => {
+    const s = await fixture(['dynamic']);
+    vi.spyOn(s.deps.control, 'submitEvidence').mockImplementation(async () => { throw Error('pause before intake'); });
+    const input = request(definition('original'));
+    const first = await s.service.startRound(scope, input), item = first.round.checks[0]!, progress = item.record!.progress!;
+    if (progress.phase !== 'report_stored') throw Error('expected report checkpoint');
+    const opened = await s.context.openReport(progress.artifactRef, first.round.materialIdentity!.runRef);
+    if (opened.status !== 'ready') throw Error('expected original Vault report');
+    const body = JSON.parse(opened.record.body); body.schemaVersion = 2;
+    const stored = await s.h.vault.put({ body: canonicalJson(body), contentType: 'application/json', ownerRef: body.owner, sourceRefs: opened.record.sourceRefs, requestedAt: body.startedAt });
+    if (stored.status !== 'stored') throw Error('expected versioned Vault body');
+    const key = sha256Hex(canonicalJson([{ projectId: scope.projectId, workspaceId: scope.workspaceId, goalId: scope.goalId, runId: scope.runId }, item.requestId]));
+    const filename = join(s.directory, 'check-' + key + '.json'), record = JSON.parse(await readFile(filename, 'utf8')) as CommandCheckRecord;
+    if (record.progress?.phase !== 'report_stored' || record.result?.status !== 'ready') throw Error('expected complete check');
+    record.progress.artifactRef = stored.ref; record.result.observations[0]!.artifactRef = stored.ref;
+    await writeFile(filename, JSON.stringify(record));
+    const reopened = await s.reopen(), result = await reopened.resumeRound(scope, { requestId: input.requestId, allowExecute: true });
+    expect(result.round.status).toBe('interrupted');
+    expect(result.round.current.issues.join(' ')).toContain('版本不受支持');
+    expect(result.round.aggregate!.admissions[0]!.status).toBe('pending');
+    record.result = null; record.status = 'running'; record.lifecycle = 'report_stored';
+    await writeFile(filename, JSON.stringify(record));
+    const bodyFirst = await s.reopen(), leaseRead = vi.spyOn(s.context, 'writeLease'), release = vi.spyOn(s.deps.workspaceLease, 'releaseLease');
+    await expect(bodyFirst.reconcileCheck(scope, item.requestId)).rejects.toThrow('版本不受支持');
+    expect(leaseRead).not.toHaveBeenCalled(); expect(release).not.toHaveBeenCalled();
+  });
+});

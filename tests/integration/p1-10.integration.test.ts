@@ -5,7 +5,7 @@ import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 import { toP1_10Harness, type P1_10HarnessLike } from "../contract-suite/p1-10-harness.js";
 import { isP110Ready, runP110RestartScenario, verifyP110AfterRestart, type P110RestartEvidence } from "../restart/p1-10-restart-fixtures.js";
-import { P110_PROJECT, P110_WORKSPACE } from "../../src/contracts/fixtures/control-fixtures.js";
+import { P110_PROJECT, P110_WORKSPACE } from "../contract-support/fixtures/control-fixtures.js";
 import { runP110ControlScenario } from "../contract-suite/p1-10-harness.js";
 
 const READY = await isP110Ready();

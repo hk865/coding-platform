@@ -1,0 +1,814 @@
+{
+  "MA-01": {
+    "positive": {
+      "configuration": "parallel",
+      "runs": [
+        {
+          "id": "a",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/a",
+          "toolEventRef": "synthetic/tools/a"
+        },
+        {
+          "id": "b",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/b",
+          "toolEventRef": "synthetic/tools/b"
+        },
+        {
+          "id": "c",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/c",
+          "toolEventRef": "synthetic/tools/c"
+        }
+      ],
+      "reports": [
+        {
+          "ref": "r1",
+          "revision": "v1",
+          "authorRun": "a",
+          "accepted": true,
+          "publishedAt": 2
+        },
+        {
+          "ref": "r2",
+          "revision": "v1",
+          "authorRun": "b",
+          "accepted": true,
+          "publishedAt": 3
+        }
+      ],
+      "consumptions": [
+        {
+          "ref": "r1",
+          "revision": "v1",
+          "runId": "c",
+          "at": 4
+        },
+        {
+          "ref": "r2",
+          "revision": "v1",
+          "runId": "c",
+          "at": 4
+        }
+      ],
+      "sourceDigest": "7ab3a51e314c30274e95001f4e54fb5d4d27135d542739b7629e91eba1ad1727",
+      "edges": [
+        {
+          "from": "src/browser.mjs:mount",
+          "to": "src/ui.mjs:mount",
+          "reportRef": "r2"
+        },
+        {
+          "from": "src/ui.mjs:mount",
+          "to": "src/ui.mjs:createBoard",
+          "reportRef": "r1"
+        },
+        {
+          "from": "src/ui.mjs:createBoard",
+          "to": "src/api.mjs:handleApi",
+          "reportRef": "r1"
+        },
+        {
+          "from": "src/api.mjs:handleApi",
+          "to": "src/store.mjs:listTasks",
+          "reportRef": "r2"
+        },
+        {
+          "from": "src/store.mjs:listTasks",
+          "to": "src/store.mjs:readTasks",
+          "reportRef": "r2"
+        },
+        {
+          "from": "src/ui.mjs:createBoard",
+          "to": "src/ui.mjs:createBoard.render",
+          "reportRef": "r1"
+        }
+      ],
+      "reportRefs": [
+        "r1",
+        "r2"
+      ],
+      "readerIntervals": [
+        {
+          "runId": "a",
+          "start": 1,
+          "end": 4
+        },
+        {
+          "runId": "b",
+          "start": 2,
+          "end": 5
+        }
+      ],
+      "findings": [
+        {
+          "canonicalLocation": "src/ui.mjs:createBoard"
+        },
+        {
+          "canonicalLocation": "src/store.mjs:listTasks"
+        }
+      ],
+      "unknowns": [
+        "external deployment behavior"
+      ]
+    },
+    "negativeMutations": [
+      {
+        "assertion": "exploration.source-call-chain",
+        "path": "edges.0.to",
+        "value": "wrong"
+      },
+      {
+        "assertion": "exploration.reader-overlap",
+        "path": "readerIntervals.1.start",
+        "value": 5
+      },
+      {
+        "assertion": "exploration.merge-and-unknowns",
+        "path": "findings.1.canonicalLocation",
+        "value": "src/ui.mjs:createBoard"
+      },
+      {
+        "assertion": "collaboration.real-consumption",
+        "path": "consumptions.1.revision",
+        "value": "stale"
+      }
+    ]
+  },
+  "MA-02": {
+    "positive": {
+      "configuration": "parallel",
+      "runs": [
+        {
+          "id": "a",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/a",
+          "toolEventRef": "synthetic/tools/a"
+        },
+        {
+          "id": "b",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/b",
+          "toolEventRef": "synthetic/tools/b"
+        },
+        {
+          "id": "c",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/c",
+          "toolEventRef": "synthetic/tools/c"
+        }
+      ],
+      "reports": [
+        {
+          "ref": "r1",
+          "revision": "v1",
+          "authorRun": "a",
+          "accepted": true,
+          "publishedAt": 2
+        },
+        {
+          "ref": "r2",
+          "revision": "v1",
+          "authorRun": "b",
+          "accepted": true,
+          "publishedAt": 3
+        }
+      ],
+      "consumptions": [
+        {
+          "ref": "r1",
+          "revision": "v1",
+          "runId": "c",
+          "at": 4
+        },
+        {
+          "ref": "r2",
+          "revision": "v1",
+          "runId": "c",
+          "at": 4
+        }
+      ],
+      "proposal": {
+        "accepted": true,
+        "ref": "proposal-v1",
+        "authorRun": "a",
+        "acceptedAt": 3
+      },
+      "writer": {
+        "runId": "c",
+        "start": 4,
+        "finishedAt": 8,
+        "inputRefs": [
+          "proposal-v1"
+        ]
+      },
+      "candidateDigest": "candidate2",
+      "verifier": {
+        "runId": "verify",
+        "startedAt": 9,
+        "finishedAt": 10,
+        "candidateDigest": "candidate2",
+        "result": "PASS",
+        "ref": "verify-evidence"
+      },
+      "reviewer": {
+        "runId": "review",
+        "startedAt": 11,
+        "candidateDigest": "candidate2",
+        "inputRefs": [
+          "verify-evidence"
+        ]
+      }
+    },
+    "negativeMutations": [
+      {
+        "assertion": "feature.accepted-proposal-consumed",
+        "path": "writer.inputRefs",
+        "value": []
+      },
+      {
+        "assertion": "feature.independent-verification",
+        "path": "verifier.candidateDigest",
+        "value": "stale"
+      },
+      {
+        "assertion": "feature.review-after-checks",
+        "path": "reviewer.startedAt",
+        "value": 9
+      },
+      {
+        "assertion": "collaboration.real-consumption",
+        "path": "reports.1.accepted",
+        "value": false
+      }
+    ]
+  },
+  "MA-03": {
+    "positive": {
+      "configuration": "parallel",
+      "runs": [
+        {
+          "id": "a",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/a",
+          "toolEventRef": "synthetic/tools/a"
+        },
+        {
+          "id": "b",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/b",
+          "toolEventRef": "synthetic/tools/b"
+        },
+        {
+          "id": "c",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/c",
+          "toolEventRef": "synthetic/tools/c"
+        }
+      ],
+      "reports": [
+        {
+          "ref": "r1",
+          "revision": "v1",
+          "authorRun": "a",
+          "accepted": true,
+          "publishedAt": 2
+        },
+        {
+          "ref": "r2",
+          "revision": "v1",
+          "authorRun": "b",
+          "accepted": true,
+          "publishedAt": 3
+        }
+      ],
+      "consumptions": [
+        {
+          "ref": "r1",
+          "revision": "v1",
+          "runId": "c",
+          "at": 4
+        },
+        {
+          "ref": "r2",
+          "revision": "v1",
+          "runId": "c",
+          "at": 4
+        }
+      ],
+      "reproduction": {
+        "baseResult": "FAIL",
+        "candidateResult": "PASS",
+        "baseDigest": "bugged",
+        "candidateDigest": "fixed",
+        "baseFinishedAt": 3,
+        "candidateStartedAt": 8
+      },
+      "negativeControl": {
+        "checkoutDigest": "e6b6ab996c2b80ef91915d072b4587a06b9fd7bd9d89db5faab72ee564ee6c45",
+        "findings": [],
+        "executedChecks": 2
+      },
+      "candidateDigest": "fixed",
+      "finder": {
+        "runId": "a",
+        "ref": "finding"
+      },
+      "reproducer": {
+        "runId": "rep",
+        "ref": "repro",
+        "inputRefs": [
+          "finding"
+        ]
+      },
+      "writer": {
+        "runId": "w",
+        "start": 4,
+        "finishedAt": 7,
+        "ref": "patch",
+        "inputRefs": [
+          "repro"
+        ]
+      },
+      "verifier": {
+        "runId": "v",
+        "inputRefs": [
+          "patch"
+        ],
+        "candidateDigest": "fixed"
+      }
+    },
+    "negativeMutations": [
+      {
+        "assertion": "bug.reproduce-then-fix",
+        "path": "reproduction.baseFinishedAt",
+        "value": 6
+      },
+      {
+        "assertion": "bug.fixed-negative-not-confirmed",
+        "path": "negativeControl.findings",
+        "value": [
+          {
+            "defectId": "pagination-status-v1",
+            "confirmed": true
+          }
+        ]
+      },
+      {
+        "assertion": "bug.independent-chain",
+        "path": "verifier.runId",
+        "value": "w"
+      },
+      {
+        "assertion": "collaboration.real-consumption",
+        "path": "runs.0.modelInvocations",
+        "value": 0
+      }
+    ]
+  },
+  "MA-04": {
+    "positive": {
+      "currentRevision": "v2",
+      "conflict": {
+        "method": "executable-evidence",
+        "consideredRefs": [
+          "conflict-a",
+          "conflict-b"
+        ],
+        "evidenceRefs": [
+          "check-1"
+        ],
+        "evidenceRevision": "v2"
+      },
+      "leases": [
+        {
+          "id": "l1",
+          "workspace": "w",
+          "start": 1,
+          "end": 3
+        },
+        {
+          "id": "l2",
+          "workspace": "w",
+          "start": 3,
+          "end": 8
+        }
+      ],
+      "writeAttempts": [
+        {
+          "accepted": false,
+          "reason": "expired-lease"
+        },
+        {
+          "accepted": false,
+          "reason": "out-of-scope"
+        },
+        {
+          "accepted": true,
+          "reason": "current",
+          "revision": "v2",
+          "lease": "l2",
+          "workspace": "w",
+          "at": 4
+        }
+      ],
+      "checkpoint": {
+        "acceptedFiles": [
+          {
+            "path": "proposal.json",
+            "digest": "d1"
+          }
+        ],
+        "afterFiles": [
+          {
+            "path": "proposal.json",
+            "digest": "d1"
+          }
+        ]
+      },
+      "completion": {
+        "phase": "verifying",
+        "effectiveEvidence": [
+          {
+            "required": true,
+            "result": "FAIL"
+          }
+        ]
+      },
+      "configuration": "parallel-with-injection"
+    },
+    "negativeMutations": [
+      {
+        "assertion": "conflict.evidence-adjudication",
+        "path": "conflict.method",
+        "value": "majority-vote"
+      },
+      {
+        "assertion": "lease.exclusive-current-and-scoped",
+        "path": "leases.1.start",
+        "value": 2
+      },
+      {
+        "assertion": "lease.accepted-change-preserved",
+        "path": "checkpoint.afterFiles.0.digest",
+        "value": "overwritten"
+      },
+      {
+        "assertion": "completion.current-fail-blocks",
+        "path": "completion.phase",
+        "value": "COMPLETED"
+      }
+    ]
+  },
+  "MA-05": {
+    "positive": {
+      "messages": [
+        {
+          "correlation": "c1"
+        },
+        {
+          "correlation": "c1"
+        }
+      ],
+      "wakeups": [
+        {
+          "correlation": "c1"
+        }
+      ],
+      "dispatches": [
+        {
+          "correlation": "c1"
+        }
+      ],
+      "acceptedEffects": [
+        {
+          "correlation": "c1"
+        }
+      ],
+      "rejections": [
+        {
+          "reason": "stale-binding",
+          "beforeDigest": "d",
+          "afterDigest": "d"
+        },
+        {
+          "reason": "cross-project",
+          "beforeDigest": "d",
+          "afterDigest": "d"
+        }
+      ],
+      "artifactWrites": [
+        {
+          "ref": "orphan",
+          "commitSucceeded": false
+        }
+      ],
+      "acceptedReports": [
+        "committed"
+      ],
+      "visibleReports": [
+        "committed"
+      ],
+      "failureAt": 5,
+      "independentEvents": [
+        {
+          "kind": "tool-completed",
+          "at": 6
+        }
+      ],
+      "configuration": "parallel-with-injection"
+    },
+    "negativeMutations": [
+      {
+        "assertion": "message.replay-exactly-once",
+        "path": "wakeups",
+        "value": [
+          {
+            "correlation": "c1"
+          },
+          {
+            "correlation": "c1"
+          }
+        ]
+      },
+      {
+        "assertion": "message.stale-and-cross-project-rejected",
+        "path": "rejections.1.afterDigest",
+        "value": "changed"
+      },
+      {
+        "assertion": "message.uncommitted-body-invisible",
+        "path": "visibleReports",
+        "value": [
+          "committed",
+          "orphan"
+        ]
+      },
+      {
+        "assertion": "isolation.independent-progress",
+        "path": "independentEvents.0.kind",
+        "value": "cancelled"
+      }
+    ]
+  },
+  "MA-06": {
+    "positive": {
+      "failures": [
+        {
+          "role": "reader",
+          "at": 2
+        },
+        {
+          "role": "coordinator",
+          "at": 3
+        }
+      ],
+      "independentEvents": [
+        {
+          "kind": "tool-completed",
+          "at": 4
+        }
+      ],
+      "handoff": {
+        "previousRun": "old",
+        "successorRun": "new",
+        "before": {
+          "obligations": [
+            "persist-filter"
+          ],
+          "rationaleRefs": [
+            "decision-ref"
+          ],
+          "unresolved": [
+            "unknown-effect"
+          ],
+          "acceptedRefs": [
+            "proposal"
+          ]
+        },
+        "after": {
+          "obligations": [
+            "persist-filter"
+          ],
+          "rationaleRefs": [
+            "decision-ref"
+          ],
+          "unresolved": [
+            "unknown-effect"
+          ],
+          "acceptedRefs": [
+            "proposal"
+          ]
+        }
+      },
+      "operation": {
+        "outcomeBefore": "unknown",
+        "interruptedAt": 5,
+        "reconciledAt": 7,
+        "retries": [],
+        "records": [
+          {
+            "id": "trial-note"
+          }
+        ],
+        "claims": [
+          {
+            "at": 8
+          }
+        ]
+      },
+      "currentLease": "new",
+      "staleFeedback": {
+        "lease": "old",
+        "accepted": false,
+        "beforeDigest": "d",
+        "afterDigest": "d"
+      },
+      "configuration": "parallel-with-injection"
+    },
+    "negativeMutations": [
+      {
+        "assertion": "failure.no-cascade",
+        "path": "independentEvents.0.kind",
+        "value": "cancelled"
+      },
+      {
+        "assertion": "handoff.inherits-obligations-and-reasons",
+        "path": "handoff.after.rationaleRefs",
+        "value": []
+      },
+      {
+        "assertion": "recovery.reconcile-before-retry-once",
+        "path": "operation.records",
+        "value": [
+          {
+            "id": "trial-note"
+          },
+          {
+            "id": "trial-note"
+          }
+        ]
+      },
+      {
+        "assertion": "recovery.stale-lease-cannot-advance",
+        "path": "staleFeedback.accepted",
+        "value": true
+      }
+    ]
+  },
+  "MA-07": {
+    "positive": {
+      "query": {
+        "kind": "fact",
+        "before": {
+          "contextDigest": "d",
+          "lease": "l",
+          "budgetUsed": 100,
+          "obligationRevision": "v1",
+          "runState": "running"
+        },
+        "after": {
+          "contextDigest": "d",
+          "lease": "l",
+          "budgetUsed": 100,
+          "obligationRevision": "v1",
+          "runState": "running"
+        },
+        "injectedExecutionMessages": 0
+      },
+      "change": {
+        "oldRevision": "v1",
+        "newRevision": "v2",
+        "accepted": true,
+        "affectedPaths": [
+          "src/store.mjs",
+          "src/ui.mjs"
+        ],
+        "refreshedRuns": [
+          {
+            "runId": "w",
+            "revision": "v2"
+          }
+        ],
+        "at": 4
+      },
+      "oldResult": {
+        "revision": "v1",
+        "satisfiesCurrent": false
+      },
+      "independentEvents": [
+        {
+          "kind": "tool-completed",
+          "at": 5
+        }
+      ],
+      "cancelRun": {
+        "runPhase": "cancelled",
+        "goalPhase": "RUNNING"
+      },
+      "cancelGoal": {
+        "authority": "goal",
+        "goalPhase": "CANCELLED"
+      },
+      "configuration": "parallel-with-injection"
+    },
+    "negativeMutations": [
+      {
+        "assertion": "human.query-preserves-source-run",
+        "path": "query.after.lease",
+        "value": "changed"
+      },
+      {
+        "assertion": "human.change-version-and-affected-scope",
+        "path": "change.refreshedRuns.0.revision",
+        "value": "v1"
+      },
+      {
+        "assertion": "human.stale-result-and-independent-work",
+        "path": "oldResult.satisfiesCurrent",
+        "value": true
+      },
+      {
+        "assertion": "human.cancel-run-versus-goal",
+        "path": "cancelRun.goalPhase",
+        "value": "CANCELLED"
+      }
+    ]
+  },
+  "MA-08": {
+    "positive": {
+      "attempts": [
+        {
+          "candidateDigest": "bad",
+          "checks": [
+            {
+              "result": "FAIL",
+              "ref": "f1",
+              "at": 1
+            }
+          ],
+          "reviewRuns": [],
+          "phase": "verifying",
+          "claims": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "candidateDigest": "fixed",
+          "checks": [
+            {
+              "result": "PASS",
+              "ref": "p1",
+              "at": 3
+            }
+          ],
+          "writerRun": "w",
+          "reviewRuns": [
+            {
+              "runId": "r",
+              "at": 4,
+              "candidateDigest": "fixed"
+            }
+          ]
+        }
+      ],
+      "preservedEvidenceRefs": [
+        "f1"
+      ],
+      "reduction": {
+        "author": "Control",
+        "candidateDigest": "fixed",
+        "phase": "COMPLETED",
+        "evidenceRefs": [
+          "p1"
+        ],
+        "at": 5
+      },
+      "configuration": "parallel-with-injection"
+    },
+    "negativeMutations": [
+      {
+        "assertion": "rework.failure-before-review",
+        "path": "attempts.0.phase",
+        "value": "satisfied"
+      },
+      {
+        "assertion": "rework.failure-preserved-and-new-evidence",
+        "path": "preservedEvidenceRefs",
+        "value": []
+      },
+      {
+        "assertion": "rework.independent-review-after-pass",
+        "path": "attempts.1.reviewRuns.0.at",
+        "value": 2
+      },
+      {
+        "assertion": "completion.control-current-evidence-only",
+        "path": "reduction.author",
+        "value": "Reviewer"
+      }
+    ]
+  }
+}

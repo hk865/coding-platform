@@ -5,7 +5,7 @@
  * 1, 2, 3, 5, 6, 7, 8) + tickets/07-parallel-readers-single-writer.md +
  * ARCHITECTURE.md invariant #7.
  *
- * FROZEN semantics:
+ * Semantics:
  *   - ConflictScope is the full-scope conflict key (project+workspace+
  *     scope-kind+id; revision is INFORMATIONAL and never participates in
  *     overlap). Overlap = syntactic intersection only (no semantic
@@ -13,7 +13,9 @@
  *     kinds never overlap).
  *   - WorkspaceReadLease: SHARED / overlapping / re-entrant. Read-read never
  *     conflicts (any number of readers, including the same run, may hold
- *     overlapping read leases). Read-write overlap is a hard conflict.
+ *     overlapping read leases). Read-write overlap is a hard conflict. Each
+ *     acquire commit validates both lease-index versions atomically, including
+ *     the opposing index read during conflict checks (0 when absent).
  *   - WorkspaceWriteLease: EXCLUSIVE. Uniqueness is enforced by the
  *     WorkspaceWriteLeaseIndex aggregate per (project, workspace) — the
  *     workspace-level exclusivity is the MVP reading of invariant #7 (ONE
@@ -270,21 +272,6 @@ export type WorkspaceWriteLeaseIndexSnapshot = {
 export type LeaseAdmissibility =
   | { admissible: true }
   | { admissible: false; reason: "expired" | "released" };
-
-/**
- * FROZEN pure admissibility: a lease is effective ONLY while
- * status === "active" AND (expiresAt === null OR expiresAt > now). An expired
- * lease is not admissible but remains a recorded fact the holder may release
- * (already_expired — zero write).
- */
-export function evaluateLeaseAdmissibility(
-  lease: { status: "active" | "released"; expiresAt: string | null },
-  now: string,
-): LeaseAdmissibility {
-  if (lease.status !== "active") return { admissible: false, reason: "released" };
-  if (lease.expiresAt !== null && lease.expiresAt <= now) return { admissible: false, reason: "expired" };
-  return { admissible: true };
-}
 
 // ------------------------------------------------------------------------ //
 // Commands / receipts                                                       //

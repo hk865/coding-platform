@@ -1,3 +1,5 @@
+import { ControlPolicyExplanation } from '../../../src/control/control-engine/policy-explanation.js';
+import { classifyRestartProbeError } from '../readiness-probe.js';
 /**
  * P1-01 evidence collector — repeatable command:
  *   pnpm vitest run tests/restart/evidence/p1-01-evidence.test.ts
@@ -24,16 +26,16 @@ import { buildBootstrapCommand } from "../../../src/contracts/bootstrap.js";
 import {
   WORKSPACE_BOOTSTRAP_FIXTURE_V1,
   buildBootstrapLedgerCommit,
-} from "../../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+} from "../../contract-support/fixtures/bootstrap-fixture-v1.js";
 import { makeCommitCursor } from "../../../src/contracts/ledger.js";
-import { FIXED_ISO_2026_09_05 } from "../../../src/contracts/testing/sequences.js";
+import { FIXED_ISO_2026_09_05 } from "../../../src/testing/sequences.js";
 import type { WorkspaceBootstrapReceipt } from "../../../src/contracts/bootstrap.js";
 import type { CreateGoalResult } from "../../../src/contracts/modules.js";
 
 async function adaptersImplemented(): Promise<boolean> {
   try {
-    const ledgerMod = await import("../../../src/sqlite-ledger/sqlite-ledger.js");
-    const readModelMod = await import("../../../src/sqlite-read-model/sqlite-read-model-index.js");
+    const ledgerMod = await import("../../../src/data/state-ledger/sqlite-ledger.js");
+    const readModelMod = await import("../../../src/data/read-model-index/sqlite-read-model-index.js");
     const command = buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, {
       commandId: "probe-boot-1",
       correlationId: "probe-corr-1",
@@ -45,11 +47,10 @@ async function adaptersImplemented(): Promise<boolean> {
     });
     const ledger = ledgerMod.createSqliteStateLedger({ path: ":memory:" });
     const receipt = await ledger.commit(batch);
-    if (receipt.status !== "committed") {
-      await ledger.close();
-      return false;
-    }
-    const index = readModelMod.createSqliteReadModelIndex({ path: ":memory:" });
+    // A non-committed bootstrap through the real adapter is a regression, not a
+    // missing capability; let it fail instead of skipping the suite.
+    if (receipt.status !== "committed") throw new Error("P1-01 probe: bootstrap commit was not committed: " + JSON.stringify(receipt));
+    const index = readModelMod.createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
     const projected = await index.advance({
       afterCursor: null,
       throughCursor: makeCommitCursor(batch.events.length),
@@ -58,8 +59,8 @@ async function adaptersImplemented(): Promise<boolean> {
     });
     await Promise.allSettled([ledger.close(), index.close()]);
     return projected.throughCursor !== null;
-  } catch {
-    return false;
+  } catch (error) {
+    return classifyRestartProbeError(error);
   }
 }
 

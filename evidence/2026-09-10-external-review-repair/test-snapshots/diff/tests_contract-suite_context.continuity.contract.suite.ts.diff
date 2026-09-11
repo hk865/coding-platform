@@ -1,0 +1,18 @@
+--- evidence/2026-09-10-external-review-repair/before/tests/tests/contract-suite/context.continuity.contract.suite.ts	2026-09-07 00:47:34.000000000 +0800
++++ tests/contract-suite/context.continuity.contract.suite.ts	2026-09-10 01:37:01.841479400 +0800
+@@ -235,15 +235,6 @@
+       });
+     });
+ 
+-    describe("real-kernel-continuity-test", () => {
+-      it("the REAL coding-agent adaptation path is verified ONCE by the integration evidence (this suite runs the Fake contract path only)", () => {
+-        // The Fake contract suite never substitutes for the real-kernel run —
+-        // tests/integration/p1-16.real-kernel.continuity.test.ts holds the
+-        // evidence block; this group exists so the group name is present in
+-        // BOTH suites (verification grouping completeness).
+-        expect(true).toBe(true);
+-      });
+-    });
+   });
+ }
+ 

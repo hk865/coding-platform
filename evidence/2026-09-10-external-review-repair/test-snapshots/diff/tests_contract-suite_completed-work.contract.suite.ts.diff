@@ -1,0 +1,16 @@
+--- evidence/2026-09-10-external-review-repair/before/tests/tests/contract-suite/completed-work.contract.suite.ts	2026-09-07 01:09:36.000000000 +0800
++++ tests/contract-suite/completed-work.contract.suite.ts	2026-09-10 01:36:59.587467300 +0800
+@@ -65,8 +65,11 @@
+     });
+ 
+     describe("restart-rebuild-test", () => {
+-      it("view/selection rebuild equivalence verified in tests/restart + integration (isP117Ready probe)", () => {
+-        expect(true).toBe(true);
++      it("repeated persisted view reads remain stable after selection", async () => {
++        const first = await h.completedWorkView({ projectId: P108_PROJECT_A, workspaceId: P117_WORKSPACE });
++        const second = await h.completedWorkView({ projectId: P108_PROJECT_A, workspaceId: P117_WORKSPACE });
++        expect(first).toEqual(second);
++        expect(first.status).toBe("ready");
+       });
+     });
+   });

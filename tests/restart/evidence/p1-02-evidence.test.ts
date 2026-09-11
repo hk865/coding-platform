@@ -12,10 +12,7 @@
 import { describe, it } from "vitest";
 import { createPersistentSqliteHarness } from "../../../src/harness/persistent-harness.js";
 import type { GoalSnapshot } from "../../../src/contracts/ledger.js";
-import {
-  resolveProjectCompletionPolicy,
-  resolveProjectArchitectureBaseline,
-} from "../../../src/contracts/governance.js";
+import { resolveProjectCompletionPolicy, resolveProjectArchitectureBaseline } from "../../../src/data/state-ledger/governance-records.js";
 import { isP102Ready, runP102Path, verifyP102AfterRestart } from "../p1-02-restart-fixtures.js";
 
 const READY = await isP102Ready();

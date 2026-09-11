@@ -1,0 +1,914 @@
+[
+  {
+    "file": "src/app/explorations.ts",
+    "owned": false,
+    "imports": [
+      "import { buildReduceGoalCommand } from \"../contracts/commands/goal-phase.js\";",
+      "import { reduceGoalPhase } from \"../control/policies/goal-phase.js\";"
+    ]
+  },
+  {
+    "file": "src/app/history-materials.ts",
+    "owned": false,
+    "imports": [
+      "import { buildGrantMaterialAccessCommand } from \"../contracts/commands/material-access.js\";"
+    ]
+  },
+  {
+    "file": "src/app/service.ts",
+    "owned": false,
+    "imports": [
+      "import { buildInstallCommand, buildActivateCommand } from \"../contracts/commands/governance.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../contracts/governance.js\";\nimport { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1 } from \"../contracts/fixtures/governance-fixtures.js\";",
+      "import { buildApplyPlanCommand } from \"../contracts/commands/plan.js\";\nimport { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1 } from \"../contracts/fixtures/plan-fixtures.js\";",
+      "import { buildDispatchClaimCommand } from \"../contracts/commands/dispatch.js\";\nimport { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from \"../contracts/fixtures/dispatch-fixtures.js\";"
+    ]
+  },
+  {
+    "file": "src/context/verification-context.ts",
+    "owned": false,
+    "imports": [
+      "import { resolveArchitectureBaselineRevision, resolveCompletionPolicyRevision } from \"../data/governance-records.js\";"
+    ]
+  },
+  {
+    "file": "src/context/verification-migration-context.ts",
+    "owned": false,
+    "imports": [
+      "import { resolveProjectArchitectureBaseline } from \"../data/governance-records.js\";"
+    ]
+  },
+  {
+    "file": "src/contracts/fixtures/architecture-fixtures.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand } from \"./governance-fixtures.js\";\nimport { architectureBaselinePinFor } from \"../governance.js\";"
+    ]
+  },
+  {
+    "file": "src/control/architecture-inspection.ts",
+    "owned": true,
+    "imports": [
+      "import { buildArchitectureBriefRecordLedgerCommit, buildArchitectureFindingRecordLedgerCommit, buildArchitectureInspectionRecordLedgerCommit, buildArchitectureProposalRecordLedgerCommit } from \"./records/architecture.js\";"
+    ]
+  },
+  {
+    "file": "src/control/architecture-reconciler.ts",
+    "owned": false,
+    "imports": [
+      "import { buildRecordArchitectureInspectionCommand, buildRecordArchitectureFindingCommand, buildRecordArchitectureDecisionBriefCommand } from \"../contracts/commands/architecture.js\";"
+    ]
+  },
+  {
+    "file": "src/control/baseline-evolution-port.ts",
+    "owned": true,
+    "imports": [
+      "import { resolveProjectArchitectureBaseline } from \"../data/governance-records.js\";"
+    ]
+  },
+  {
+    "file": "src/control/baseline-evolution.ts",
+    "owned": true,
+    "imports": [
+      "import { resolveProjectArchitectureBaseline, loadProjectArchitectureBaselineActive } from \"../data/governance-records.js\";\nimport { type ArchitectureBaselinePin } from \"../contracts/governance.js\";",
+      "import { buildP114ActivationFold, buildP114CandidateFold, buildP114DecisionFold, buildP114GateFold } from \"./records/baseline-evolution.js\";"
+    ]
+  },
+  {
+    "file": "src/control/claim.ts",
+    "owned": true,
+    "imports": [
+      "import { dispatchOutboxRefFor, runRefFor, taskAttemptRefFor, taskLeaseRefFor } from \"../contracts/dispatch.js\";\nimport { evaluateTaskEligibility } from \"./policies/task-eligibility.js\";",
+      "import { buildDispatchClaimLedgerCommit } from \"./records/dispatch.js\";"
+    ]
+  },
+  {
+    "file": "src/control/control-intent.ts",
+    "owned": true,
+    "imports": [
+      "import { buildControlIntentRecordLedgerCommit, buildControlAckRecordLedgerCommit } from \"./records/control.js\";"
+    ]
+  },
+  {
+    "file": "src/control/dispatch-engine.ts",
+    "owned": true,
+    "imports": [
+      "import { buildDispatchStartCommand, buildRunFactCommand } from \"../contracts/commands/dispatch.js\";"
+    ]
+  },
+  {
+    "file": "src/control/evidence-intake.ts",
+    "owned": true,
+    "imports": [
+      "import { buildEvidenceIntakeLedgerCommit } from \"./records/evidence.js\";"
+    ]
+  },
+  {
+    "file": "src/control/exploration-context-drive.ts",
+    "owned": false,
+    "imports": [
+      "import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from \"../contracts/commands/material-access.js\";"
+    ]
+  },
+  {
+    "file": "src/control/goal-change.ts",
+    "owned": true,
+    "imports": [
+      "import { resolveProjectArchitectureBaseline, resolveProjectCompletionPolicy } from \"../data/governance-records.js\";",
+      "import { buildGoalChangeApplyCommit, buildPlanChangeProposalRecordCommit, buildUserDecisionRecordCommit } from \"./records/goal-change.js\";"
+    ]
+  },
+  {
+    "file": "src/control/goal-reducer.ts",
+    "owned": true,
+    "imports": [
+      "import { goalPhaseRefFor } from \"../contracts/goal-phase.js\";\nimport { reduceGoalPhase, renderGoalCompletionExplanation, reconcileGoalSideEffects } from \"./policies/goal-phase.js\";",
+      "import { buildGoalPhaseSnapshot, buildGoalReductionLedgerCommit } from \"./records/goal-phase.js\";",
+      "import { taskEvidenceIndexRefFor, evidenceRefFor, requirementKeyOf } from \"../contracts/evidence.js\";\nimport { selectEffectiveEvidenceSet } from \"./policies/evidence.js\";"
+    ]
+  },
+  {
+    "file": "src/control/handoff-drive.ts",
+    "owned": true,
+    "imports": [
+      "import { buildDispatchStartCommand, buildRunFactCommand } from \"../contracts/commands/dispatch.js\";"
+    ]
+  },
+  {
+    "file": "src/control/handoff.ts",
+    "owned": true,
+    "imports": [
+      "import { buildHandoffRecordLedgerCommit } from \"./records/handoff.js\";"
+    ]
+  },
+  {
+    "file": "src/control/human-role-collaboration.ts",
+    "owned": true,
+    "imports": [
+      "import { buildP115ProposalFold, buildP115DecisionFold, buildP115PolicyInstallFold, buildP115PolicyActivateFold } from \"./records/human-role-collaboration.js\";"
+    ]
+  },
+  {
+    "file": "src/control/initial-plan-compiler.ts",
+    "owned": false,
+    "imports": [
+      "import { buildApplyPlanCommand } from \"../contracts/commands/plan.js\";"
+    ]
+  },
+  {
+    "file": "src/control/integration-join.ts",
+    "owned": true,
+    "imports": [
+      "import { evidenceApplicability } from \"./policies/evidence.js\";",
+      "import { buildEffectivityAnchorV1 } from \"../contracts/commands/evidence.js\";",
+      "import { buildIntegrationRecordLedgerCommit } from \"./records/workspace.js\";"
+    ]
+  },
+  {
+    "file": "src/control/leased-worker-runtime.ts",
+    "owned": false,
+    "imports": [
+      "import { buildAcquireReadLeaseCommand as buildP107AcquireReadLeaseCommand, buildAcquireWriteLeaseCommand as buildP107AcquireWriteLeaseCommand, buildReleaseLeaseCommand as buildP107ReleaseLeaseCommand } from \"../contracts/commands/workspace.js\";"
+    ]
+  },
+  {
+    "file": "src/control/material-access.ts",
+    "owned": true,
+    "imports": [
+      "import { buildMaterialAccessGrantLedgerCommit } from \"./records/material-access.js\";"
+    ]
+  },
+  {
+    "file": "src/control/operator-plan-compiler.ts",
+    "owned": false,
+    "imports": [
+      "import { buildApplyPlanCommand } from \"../contracts/commands/plan.js\";"
+    ]
+  },
+  {
+    "file": "src/control/patch-record.ts",
+    "owned": true,
+    "imports": [
+      "import { evidenceApplicability } from \"./policies/evidence.js\";",
+      "import { evaluateLeaseAdmissibility } from \"./policies/workspace-lease.js\";\nimport { scopeCoversPath, workspaceWriteLeaseIndexRefFor, workspaceWriteLeaseRefFor, type WorkspaceWriteLeaseIndexSnapshot, type WorkspaceWriteLeaseSnapshot } from \"../contracts/workspace-lease.js\";",
+      "import { buildPatchRecordLedgerCommit } from \"./records/workspace.js\";"
+    ]
+  },
+  {
+    "file": "src/control/plan-acceptance.ts",
+    "owned": true,
+    "imports": [
+      "import { resolveProjectArchitectureBaseline, resolveProjectCompletionPolicy } from \"../data/governance-records.js\";",
+      "import { buildPlanLedgerCommit } from \"./records/plan.js\";\nimport { goalRefFor, planRevisionRefFor } from \"../contracts/plan.js\";"
+    ]
+  },
+  {
+    "file": "src/control/planned-task-dispatch.ts",
+    "owned": false,
+    "imports": [
+      "import { buildDispatchClaimCommand } from \"../contracts/commands/dispatch.js\";"
+    ]
+  },
+  {
+    "file": "src/control/policies/task-reduction.ts",
+    "owned": true,
+    "imports": [
+      "import { selectEffectiveEvidenceSet } from \"./evidence.js\";"
+    ]
+  },
+  {
+    "file": "src/control/query-job.ts",
+    "owned": true,
+    "imports": [
+      "import { buildQueryJobRecordCommit, buildQueryAnswerRecordCommit, buildQueryCloseRecordCommit } from \"./records/query-job.js\";"
+    ]
+  },
+  {
+    "file": "src/control/readiness.ts",
+    "owned": true,
+    "imports": [
+      "import { evaluateTaskEligibility } from \"./policies/task-eligibility.js\";\nimport { taskLeaseRefFor } from \"../contracts/dispatch.js\";"
+    ]
+  },
+  {
+    "file": "src/control/remediation.ts",
+    "owned": true,
+    "imports": [
+      "import { resolveProjectArchitectureEvolutionPolicy } from \"./policies/architecture-evolution-policy.js\";\nimport { evolutionPolicyDecision, type EvolutionPolicyDecision } from \"../contracts/architecture-evolution-policy.js\";",
+      "import { buildP113PlanPatchRecordCommit, buildP113TaskRecordCommit, buildP113TaskAdvanceCommit } from \"./records/remediation.js\";"
+    ]
+  },
+  {
+    "file": "src/control/replacement-claim.ts",
+    "owned": true,
+    "imports": [
+      "import { evaluateReplacementEligibility } from \"./policies/replacement-eligibility.js\";\nimport { replacementAttemptRefFor } from \"../contracts/handoff.js\";",
+      "import { buildReplacementClaimLedgerCommit } from \"./records/handoff.js\";"
+    ]
+  },
+  {
+    "file": "src/control/run-facts.ts",
+    "owned": true,
+    "imports": [
+      "import { nextAttemptSnapshotForTerminal, nextOutboxSnapshotForTerminal, nextRunSnapshotForOutcomeUnknown, nextRunSnapshotForRuntimeEvent } from \"./records/dispatch.js\";"
+    ]
+  },
+  {
+    "file": "src/control/runtime-dispatch.ts",
+    "owned": false,
+    "imports": [
+      "import { buildRunFactCommand } from \"../contracts/commands/dispatch.js\";"
+    ]
+  },
+  {
+    "file": "src/control/start-run.ts",
+    "owned": true,
+    "imports": [
+      "import { buildDispatchStartLedgerCommit } from \"./records/dispatch.js\";"
+    ]
+  },
+  {
+    "file": "src/control/task-reducer.ts",
+    "owned": true,
+    "imports": [
+      "import { reduceTaskVerification } from \"./policies/task-reduction.js\";\nimport { type TaskReductionInput } from \"../contracts/reduction.js\";",
+      "import { buildTaskReductionLedgerCommit, buildTaskReductionSnapshot } from \"./records/evidence.js\";"
+    ]
+  },
+  {
+    "file": "src/control/work-record.ts",
+    "owned": true,
+    "imports": [
+      "import { buildContinuationRecordLedgerCommit, buildExecutionNoteRecordLedgerCommit, buildWorkContextBindLedgerCommit, buildWorkContextLinkLedgerCommit } from \"./records/context.js\";"
+    ]
+  },
+  {
+    "file": "src/control/workspace-drive.ts",
+    "owned": true,
+    "imports": [
+      "import { buildDispatchStartCommand, buildRunFactCommand } from \"../contracts/commands/dispatch.js\";"
+    ]
+  },
+  {
+    "file": "src/control/workspace-lease.ts",
+    "owned": true,
+    "imports": [
+      "import { evaluateLeaseAdmissibility } from \"./policies/workspace-lease.js\";\nimport { scopeOverlap, scopeCoveredByWriteScope, workspaceReadLeaseRefFor, workspaceWriteLeaseRefFor, workspaceReadLeaseIndexRefFor, workspaceWriteLeaseIndexRefFor } from \"../contracts/workspace-lease.js\";",
+      "import { buildWorkspaceReadLeaseAcquireLedgerCommit, buildWorkspaceWriteLeaseAcquireLedgerCommit, buildWorkspaceReadLeaseReleaseLedgerCommit, buildWorkspaceWriteLeaseReleaseLedgerCommit, type BuildP107WriteAcquireCommitDeps } from \"./records/workspace.js\";"
+    ]
+  },
+  {
+    "file": "src/read-model/read-model-index.ts",
+    "owned": false,
+    "imports": [
+      "import { computeTaskDispositions } from \"../control/policies/goal-change.js\";\nimport { planChangeScopeKey } from \"../contracts/goal-change.js\";",
+      "import { evidenceApplicability, selectEffectiveEvidenceSet } from \"../control/policies/evidence.js\";"
+    ]
+  },
+  {
+    "file": "src/sqlite-read-model/sqlite-read-model-index.ts",
+    "owned": false,
+    "imports": [
+      "import { evidenceApplicability, selectEffectiveEvidenceSet } from \"../control/policies/evidence.js\";",
+      "import { computeTaskDispositions } from \"../control/policies/goal-change.js\";\nimport { planChangeScopeKey } from \"../contracts/goal-change.js\";"
+    ]
+  },
+  {
+    "file": "src/verification/benchmark-verification.ts",
+    "owned": false,
+    "imports": [
+      "import { buildAcquireWriteLeaseCommand as buildP107AcquireWriteLeaseCommand, buildRecordPatchCommand as buildP107RecordPatchCommand } from \"../contracts/commands/workspace.js\";"
+    ]
+  },
+  {
+    "file": "src/verification/command-check-lifecycle.ts",
+    "owned": false,
+    "imports": [
+      "import { buildAcquireWriteLeaseCommand as buildP107AcquireWriteLeaseCommand, buildReleaseLeaseCommand as buildP107ReleaseLeaseCommand } from \"../contracts/commands/workspace.js\";",
+      "import { buildEvidenceV1, buildSubmitEvidenceCommand } from \"../contracts/commands/evidence.js\";"
+    ]
+  },
+  {
+    "file": "src/verification/evidence-admission.ts",
+    "owned": false,
+    "imports": [
+      "import { buildSubmitEvidenceCommand, buildReduceTaskCommand } from \"../contracts/commands/evidence.js\";",
+      "import { buildReduceGoalCommand } from \"../contracts/commands/goal-phase.js\";"
+    ]
+  },
+  {
+    "file": "src/verification/recorded-verification.ts",
+    "owned": false,
+    "imports": [
+      "import { buildEvidenceV1 } from \"../contracts/commands/evidence.js\";"
+    ]
+  },
+  {
+    "file": "tests/app/runtime-context.test.ts",
+    "owned": false,
+    "imports": [
+      "import { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildActivateCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/context/handoff-context-compiler.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P106_ROLE_BINDING_V1, P106_SCHEMA, buildP106ArtifactRef, buildHandoffPacketV1, buildRecordHandoffCommand, buildHandoffContextRequest } from \"../../src/contracts/fixtures/handoff-fixtures.js\";\nimport { buildHandoffRecordLedgerCommit, handoffPacketSnapshotFor } from \"../../src/control/records/handoff.js\";"
+    ]
+  },
+  {
+    "file": "tests/contract-suite/architecture-evolution.contract.suite.ts",
+    "owned": true,
+    "imports": [
+      "import { architectureEvolutionPolicyContentDigest, evolutionPolicyDecision } from \"../../src/contracts/architecture-evolution-policy.js\";\nimport { resolveProjectArchitectureEvolutionPolicy } from \"../../src/control/policies/architecture-evolution-policy.js\";"
+    ]
+  },
+  {
+    "file": "tests/contract-suite/dispatch.contract.suite.ts",
+    "owned": true,
+    "imports": [
+      "import { evaluateTaskEligibility } from \"../../src/control/policies/task-eligibility.js\";"
+    ]
+  },
+  {
+    "file": "tests/contract-suite/evidence.contract.suite.ts",
+    "owned": true,
+    "imports": [
+      "import { evidenceRefFor, taskEvidenceIndexRefFor } from \"../../src/contracts/evidence.js\";\nimport { evidenceApplicability, selectEffectiveEvidenceSet } from \"../../src/control/policies/evidence.js\";"
+    ]
+  },
+  {
+    "file": "tests/contract-suite/goal-change.contract.suite.ts",
+    "owned": true,
+    "imports": [
+      "import { evidenceApplicability } from \"../../src/control/policies/evidence.js\";"
+    ]
+  },
+  {
+    "file": "tests/contract-suite/governance.contract.suite.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/contract-suite/handoff.contract.suite.ts",
+    "owned": true,
+    "imports": [
+      "import { evaluateReplacementEligibility } from \"../../src/control/policies/replacement-eligibility.js\";\nimport { handoffPacketRefFor, replacementAttemptRefFor, HANDOFF_PACKET_MAX_BYTES, HANDOFF_SUMMARY_MAX_BYTES } from \"../../src/contracts/handoff.js\";"
+    ]
+  },
+  {
+    "file": "tests/contract-suite/p1-03-harness.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { architectureBaselinePinFor, completionPolicyPinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/contract-suite/p1-04-harness.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { architectureBaselinePinFor, completionPolicyPinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/contract-suite/p1-06-harness.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { architectureBaselinePinFor, completionPolicyPinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/contract-suite/p1-07-harness.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { architectureBaselinePinFor, completionPolicyPinFor } from \"../../src/contracts/governance.js\";",
+      "import { evidenceRefFor } from \"../../src/contracts/evidence.js\";\nimport { evidenceApplicability } from \"../../src/control/policies/evidence.js\";"
+    ]
+  },
+  {
+    "file": "tests/contract-suite/p1-08-harness.ts",
+    "owned": true,
+    "imports": [
+      "import { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";\nimport { buildInstallCommand, buildActivateCommand, COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1 } from \"../../src/contracts/fixtures/governance-fixtures.js\";"
+    ]
+  },
+  {
+    "file": "tests/contract-suite/p1-11-harness.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { architectureBaselinePinFor, completionPolicyPinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/contract-suite/plan.contract.suite.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/contract-suite/verification.contract.suite.ts",
+    "owned": true,
+    "imports": [
+      "import { selectEffectiveEvidenceSet } from \"../../src/control/policies/evidence.js\";"
+    ]
+  },
+  {
+    "file": "tests/contract-suite/workspace.contract.suite.ts",
+    "owned": true,
+    "imports": [
+      "import { scopeOverlap, scopeCoveredByWriteScope, conflictScopeKeyFor, workspaceReadLeaseRefFor, workspaceWriteLeaseRefFor } from \"../../src/contracts/workspace-lease.js\";\nimport { evaluateLeaseAdmissibility } from \"../../src/control/policies/workspace-lease.js\";",
+      "import { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/contracts/goal-phase.test.ts",
+    "owned": true,
+    "imports": [
+      "import { reduceGoalPhase, renderGoalCompletionExplanation, reconcileGoalSideEffects } from \"../../src/control/policies/goal-phase.js\";\nimport { type GoalReductionInput, type GoalObligationFact, type GoalTaskReductionFact, type GoalSideEffectFact, type GoalDecisionFact, type GoalPlanningFact } from \"../../src/contracts/goal-phase.js\";",
+      "import { buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { planRevisionSnapshotFor } from \"../../src/control/records/plan.js\";"
+    ]
+  },
+  {
+    "file": "tests/contracts/material-access.test.ts",
+    "owned": true,
+    "imports": [
+      "import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from \"../../src/contracts/fixtures/material-access-fixtures.js\";\nimport { buildMaterialAccessGrantLedgerCommit } from \"../../src/control/records/material-access.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/architecture-inspection.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P112_PROJECT, P112_WORKSPACE, P112_INSPECTION, P112_INSPECTION_REPORT, P112_FINDING_DELTA, P112_FINDING_REPORT, P112_BRIEF, P112_PROPOSAL, p112BaselinePin, buildP112InspectionIntent, buildP112InspectionSnapshot, buildP112DeltaFinding, buildP112ReportFinding, buildP112Brief, buildP112Proposal, buildRecordArchitectureInspectionCommand, buildRecordArchitectureFindingCommand, buildRecordArchitectureDecisionBriefCommand, buildRecordCandidateBaselineProposalCommand } from \"../../src/contracts/fixtures/architecture-fixtures.js\";\nimport { buildArchitectureInspectionRecordLedgerCommit, buildArchitectureFindingRecordLedgerCommit, buildArchitectureBriefRecordLedgerCommit, buildArchitectureProposalRecordLedgerCommit } from \"../../src/control/records/architecture.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/baseline-evolution.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P114_PROJECT, P114_WORKSPACE, P114_PROPOSAL, buildP114Candidate, buildP114Decision, buildP114Gate, buildP114Activation, buildP114MaterializeCommand, buildP114DecisionCommand, buildP114GateCommand, buildP114ActivationCommand, p114ProposalRef, p114CandidateRef, p114DecisionRef, p114GateRef, p114ActivationRef } from \"../../src/contracts/fixtures/baseline-evolution-fixtures.js\";\nimport { buildP114CandidateFold, buildP114DecisionFold, buildP114GateFold, buildP114ActivationFold } from \"../../src/control/records/baseline-evolution.js\";",
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildInstallLedgerCommit, buildActivateCommand, buildActivateLedgerCommit } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/dispatch-claim.test.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";",
+      "import { DISPATCH_PLAN_REVISION_FIXTURE_V1, DISPATCH_DEPENDENT_TASK_ID, buildDispatchClaimCommand } from \"../../src/contracts/fixtures/dispatch-fixtures.js\";\nimport { buildDispatchClaimLedgerCommit } from \"../../src/control/records/dispatch.js\";",
+      "import { buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { buildPlanLedgerCommit } from \"../../src/control/records/plan.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/dispatch-drive.test.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";",
+      "import { buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { buildPlanLedgerCommit } from \"../../src/control/records/plan.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/dispatch-readiness.test.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";",
+      "import { buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { buildPlanLedgerCommit } from \"../../src/control/records/plan.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/dispatch-start.test.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";",
+      "import { DISPATCH_PLAN_REVISION_FIXTURE_V1, buildDispatchClaimCommand, buildDispatchStartCommand, buildEnvelopeFixture, buildManifestFixture, ROLE_BINDING_FIXTURE_V1, BUDGET_FIXTURE_V1 } from \"../../src/contracts/fixtures/dispatch-fixtures.js\";\nimport { buildDispatchStartLedgerCommit } from \"../../src/control/records/dispatch.js\";",
+      "import { buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { buildPlanLedgerCommit } from \"../../src/control/records/plan.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/evidence-intake.test.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";",
+      "import { buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { buildPlanLedgerCommit } from \"../../src/control/records/plan.js\";",
+      "import { P104_GOAL, P104_OBL_IMPLEMENT, P104_PLAN_REVISION_FIXTURE_V1, P104_TASK_IMPLEMENT, buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand, coverage } from \"../../src/contracts/fixtures/evidence-fixtures.js\";\nimport { buildEvidenceIntakeLedgerCommit } from \"../../src/control/records/evidence.js\";",
+      "import { evidenceRefFor, taskEvidenceIndexRefFor, MAX_EVIDENCE_PER_TASK } from \"../../src/contracts/evidence.js\";\nimport { evidenceApplicability } from \"../../src/control/policies/evidence.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/goal-change.test.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";",
+      "import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { buildPlanLedgerCommit } from \"../../src/control/records/plan.js\";",
+      "import { P111_NEW_PLAN, P111_PROJECT, P111_SOURCE_PLAN, P111_WORKSPACE, buildApplyPlanChangeCommand, buildP111NewPlanDraft, buildPlanPatchV1, buildPlanProposalV1, buildRecordPlanChangeProposalCommand, buildRecordUserDecisionCommand, buildUserDecisionV1, p111DecisionRef, p111GoalRef, p111PlanRef, p111ProposalRef } from \"../../src/contracts/fixtures/goal-change-fixtures.js\";\nimport { buildGoalChangeApplyCommit, buildPlanChangeProposalRecordCommit, buildUserDecisionRecordCommit } from \"../../src/control/records/goal-change.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/governance-activate.test.ts",
+    "owned": true,
+    "imports": [
+      "import { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildActivateCommand, buildActivateLedgerCommit } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/governance-install.test.ts",
+    "owned": true,
+    "imports": [
+      "import { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildInstallLedgerCommit, completionPolicyInstalledEventFor, completionPolicyRevisionSnapshotFor, architectureBaselineInstalledEventFor, architectureBaselineRevisionSnapshotFor } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyRevisionRefFor, architectureBaselineRevisionRefFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/handoff.test.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";",
+      "import { buildHandoffRecordLedgerCommit } from \"../../src/control/records/handoff.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/human-role-collaboration.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P115_PROJECT, P115_WORKSPACE, P115_DESIGN, P115_POLICY, P115_COORDINATION_POLICY_CONTENT, buildP115Proposal, buildP115Decision, buildP115ProposalCommand, buildP115DecisionCommand, buildP115InstallCommand, buildP115ActivateCommand, p115DesignRef, p115DecisionRef, p115PolicyRef, p115PolicyActiveRef } from \"../../src/contracts/fixtures/human-role-collaboration-fixtures.js\";\nimport { buildP115ProposalFold, buildP115DecisionFold, buildP115PolicyInstallFold, buildP115PolicyActivateFold } from \"../../src/control/records/human-role-collaboration.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/initial-plan-source.test.ts",
+    "owned": false,
+    "imports": [
+      "import { buildInstallCommand, buildActivateCommand, COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1 } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/integration-join.test.ts",
+    "owned": true,
+    "imports": [
+      "import { buildInstallCommand, buildActivateCommand, ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1 } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/material-access.test.ts",
+    "owned": true,
+    "imports": [
+      "import { buildDispatchClaimCommand } from \"../../src/contracts/fixtures/dispatch-fixtures.js\";\nimport { buildDispatchClaimLedgerCommit } from \"../../src/control/records/dispatch.js\";",
+      "import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from \"../../src/contracts/fixtures/material-access-fixtures.js\";\nimport { buildMaterialAccessGrantLedgerCommit } from \"../../src/control/records/material-access.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/p1-13-writer-chain-fixture.ts",
+    "owned": true,
+    "imports": [
+      "import { P113_WORKSPACE, P113_FINDING, P113_TASK, P113_PATCH, buildP113PlanPatchV1, buildP113TaskV1, buildP113SubmitPatchCommand, buildP113CreateTaskCommand, buildP113AdvanceTaskCommand, p113PatchRef } from \"../../src/contracts/fixtures/remediation-fixtures.js\";\nimport { buildP113PlanPatchRecordCommit, buildP113TaskRecordCommit, buildP113TaskAdvanceCommit } from \"../../src/control/records/remediation.js\";",
+      "import { buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { planRevisionRefFor } from \"../../src/contracts/plan.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/patch-record.test.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";",
+      "import { buildPatchRecordLedgerCommit, type BuildP107PatchCommitDeps } from \"../../src/control/records/workspace.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/plan-acceptance.test.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";",
+      "import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { buildPlanLedgerCommit } from \"../../src/control/records/plan.js\";\nimport { goalRefFor, planRevisionRefFor } from \"../../src/contracts/plan.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/planning-fixture.ts",
+    "owned": false,
+    "imports": [
+      "import { buildInstallCommand, buildActivateCommand, COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1 } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/remediation.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P113_WORKSPACE, P113_FINDING, P113_TASK, buildP113PlanPatchV1, buildP113TaskV1, buildP113SubmitPatchCommand, buildP113CreateTaskCommand, buildP113AdvanceTaskCommand, p113PatchRef, p113FindingRef } from \"../../src/contracts/fixtures/remediation-fixtures.js\";\nimport { buildP113PlanPatchRecordCommit, buildP113TaskRecordCommit, buildP113TaskAdvanceCommit } from \"../../src/control/records/remediation.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/replacement-claim.test.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";",
+      "import { buildReplacementClaimLedgerCommit } from \"../../src/control/records/handoff.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/run-facts.test.ts",
+    "owned": true,
+    "imports": [
+      "import { DISPATCH_ELIGIBLE_TASK_ID, buildDispatchClaimCommand, buildDispatchStartCommand, buildEnvelopeFixture, buildManifestFixture, buildRunEventRecordedCommit, buildRunFactCommand, buildRunOutcomeUnknownCommit } from \"../../src/contracts/fixtures/dispatch-fixtures.js\";\nimport { buildDispatchClaimLedgerCommit, buildDispatchStartLedgerCommit } from \"../../src/control/records/dispatch.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/source-architecture.test.ts",
+    "owned": true,
+    "imports": [
+      "import { buildInstallCommand, buildActivateCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/task-reducer.test.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";",
+      "import { buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { buildPlanLedgerCommit } from \"../../src/control/records/plan.js\";",
+      "import { P104_GOAL, P104_OBL_GATE, P104_OBL_IMPLEMENT, P104_OBL_REVIEW, P104_PLAN_REVISION_FIXTURE_V1, P104_TASK_DEFERRED, P104_TASK_GATE, P104_TASK_IMPLEMENT, P104_TASK_REVIEW, buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand, buildReduceTaskCommand, coverage } from \"../../src/contracts/fixtures/evidence-fixtures.js\";\nimport { buildTaskReductionSnapshot, buildTaskReductionLedgerCommit } from \"../../src/control/records/evidence.js\";",
+      "import { reduceTaskVerification } from \"../../src/control/policies/task-reduction.js\";\nimport { type TaskReductionInput, type TaskReductionSnapshot } from \"../../src/contracts/reduction.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/work-record.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P116_SCHEMA, P116_WORK, P116_WORKSPACE, P116_NOTE_1, P116_REPORT_1, P116_REPORT_2, buildBindWorkContextCommand, buildLinkWorkRunCommand, buildExecutionNoteV1, buildRecordExecutionNoteCommand, buildContextContinuationResultV1, buildRecordContinuationCommand, p116WorkContextRef } from \"../../src/contracts/fixtures/context-fixtures.js\";\nimport { buildWorkContextBindLedgerCommit, buildWorkContextLinkLedgerCommit } from \"../../src/control/records/context.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/workspace-drive.test.ts",
+    "owned": true,
+    "imports": [
+      "import { buildInstallCommand, buildActivateCommand, ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1 } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/control/workspace-lease.test.ts",
+    "owned": true,
+    "imports": [
+      "import { evaluateLeaseAdmissibility } from \"../../src/control/policies/workspace-lease.js\";\nimport { workspaceReadLeaseRefFor, workspaceWriteLeaseRefFor, workspaceReadLeaseIndexRefFor, workspaceWriteLeaseIndexRefFor, type ConflictScopeV1, type WorkspaceReadLeaseV1 } from \"../../src/contracts/workspace-lease.js\";",
+      "import { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildActivateCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/integration/p1-02.integration.test.ts",
+    "owned": false,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/read-model/material-access-lookup.test.ts",
+    "owned": true,
+    "imports": [
+      "import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from \"../../src/contracts/fixtures/material-access-fixtures.js\";\nimport { buildMaterialAccessGrantLedgerCommit } from \"../../src/control/records/material-access.js\";"
+    ]
+  },
+  {
+    "file": "tests/read-model/material-access-projection.test.ts",
+    "owned": true,
+    "imports": [
+      "import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from \"../../src/contracts/fixtures/material-access-fixtures.js\";\nimport { buildMaterialAccessGrantLedgerCommit } from \"../../src/control/records/material-access.js\";"
+    ]
+  },
+  {
+    "file": "tests/read-model/p1-03-run-projection.test.ts",
+    "owned": true,
+    "imports": [
+      "import { buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { planRevisionSnapshotFor, planRevisionAcceptedEventFor } from \"../../src/control/records/plan.js\";",
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/read-model/p1-04-verification-projection.test.ts",
+    "owned": true,
+    "imports": [
+      "import { buildEffectivityAnchorV1, buildEvidenceV1, P104_GOAL, P104_OBL_IMPLEMENT, P104_OBL_REVIEW, P104_PLAN_ID, P104_PLAN_REVISION_FIXTURE_V1, P104_TASK_IMPLEMENT, P104_TASK_REVIEW } from \"../../src/contracts/fixtures/evidence-fixtures.js\";\nimport { buildTaskReductionSnapshot } from \"../../src/control/records/evidence.js\";",
+      "import { buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { planRevisionAcceptedEventFor, planRevisionSnapshotFor } from \"../../src/control/records/plan.js\";"
+    ]
+  },
+  {
+    "file": "tests/read-model/p1-06-handoff-projection.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P106_GOAL, P106_OBL_HANDOFF, P106_SCHEMA, P106_TASK_ID, P106_VR_STATIC, P106_WORKSPACE, buildClaimReplacementCommand, buildHandoffPacketV1, buildRecordHandoffCommand, p106PlanRef } from \"../../src/contracts/fixtures/handoff-fixtures.js\";\nimport { buildReplacementClaimLedgerCommit, handoffRecordedEventFor } from \"../../src/control/records/handoff.js\";",
+      "import { buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand } from \"../../src/contracts/fixtures/evidence-fixtures.js\";\nimport { buildEvidenceIntakeLedgerCommit } from \"../../src/control/records/evidence.js\";"
+    ]
+  },
+  {
+    "file": "tests/read-model/p1-07-projection.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P107_GOAL, P107_PROJECT, P107_WORKSPACE, P107_SCHEMA, P107_TASK_INTEGRATION, P107_TASK_READER_A, P107_TASK_READER_B, P107_TASK_WRITER, P107_SCOPE_READER_A, P107_SCOPE_READER_B, P107_SCOPE_WRITER, P107_ROLE_BINDING_READER_V1, P107_ROLE_BINDING_WRITER_V1, p107PlanRef, buildP107AcquireReadLeaseCommand, buildP107AcquireWriteLeaseCommand, buildP107ReleaseLeaseCommand, buildP107RecordIntegrationCommand, buildP107RecordPatchCommand, buildP107ArtifactRef } from \"../../src/contracts/fixtures/workspace-fixtures.js\";\nimport { buildWorkspaceReadLeaseAcquireLedgerCommit, buildWorkspaceReadLeaseReleaseLedgerCommit, buildWorkspaceWriteLeaseAcquireLedgerCommit, buildWorkspaceWriteLeaseReleaseLedgerCommit, buildIntegrationRecordLedgerCommit, buildPatchRecordLedgerCommit } from \"../../src/control/records/workspace.js\";"
+    ]
+  },
+  {
+    "file": "tests/read-model/p1-11-plan-change.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P111_GOAL, P111_PROJECT, P111_PROJECT_B, P111_SOURCE_PLAN, P111_WORKSPACE, buildApplyPlanChangeCommand, buildP111NewPlanDraft, buildPlanProposalV1, buildRecordPlanChangeProposalCommand, buildRecordUserDecisionCommand, buildUserDecisionV1, p111GoalRef, p111PlanRef } from \"../../src/contracts/fixtures/goal-change-fixtures.js\";\nimport { buildPlanChangeProposalRecordCommit, buildGoalChangeApplyCommit, buildUserDecisionRecordCommit } from \"../../src/control/records/goal-change.js\";",
+      "import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { planRevisionAcceptedEventFor, planRevisionSnapshotFor } from \"../../src/control/records/plan.js\";",
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { architectureBaselinePinFor, completionPolicyPinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/read-model/p1-14-baseline-change-view.test.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { architectureBaselinePinFor } from \"../../src/contracts/governance.js\";",
+      "import { P114_PROJECT, P114_WORKSPACE, P114_SCHEMA, P114_PROPOSAL, P114_CANDIDATE, P114_DECISION, P114_GATE, P114_ACTIVATION, p114CandidateRef, p114DecisionRef, p114GateRef, p114ProposalRef, p114ActivationRef, buildP114Candidate, buildP114Decision, buildP114Gate, buildP114Activation, buildP114MaterializeCommand, buildP114DecisionCommand, buildP114GateCommand, buildP114ActivationCommand } from \"../../src/contracts/fixtures/baseline-evolution-fixtures.js\";\nimport { buildP114CandidateFold, buildP114DecisionFold, buildP114GateFold, buildP114ActivationFold } from \"../../src/control/records/baseline-evolution.js\";"
+    ]
+  },
+  {
+    "file": "tests/read-model/p1-15-unified-status.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P115_PROJECT, P115_WORKSPACE, P115_SCHEMA, P115_DESIGN, P115_DECISION, P115_POLICY, p115DesignRef, p115DecisionRef, p115PolicyRef, p115PolicyActiveRef, buildP115Proposal, buildP115Decision, buildP115ProposalCommand, buildP115DecisionCommand, buildP115InstallCommand, buildP115ActivateCommand } from \"../../src/contracts/fixtures/human-role-collaboration-fixtures.js\";\nimport { buildP115ProposalFold, buildP115DecisionFold, buildP115PolicyInstallFold, buildP115PolicyActivateFold } from \"../../src/control/records/human-role-collaboration.js\";"
+    ]
+  },
+  {
+    "file": "tests/read-model/p1-16-continuation-projection.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P116_PROJECT_A, P116_PROJECT_B, P116_WORKSPACE, P116_SCHEMA, P116_REPORT_1, P116_REPORT_2, buildContextContinuationResultV1, buildRecordContinuationCommand } from \"../../src/contracts/fixtures/context-fixtures.js\";\nimport { buildContinuationRecordLedgerCommit } from \"../../src/control/records/context.js\";"
+    ]
+  },
+  {
+    "file": "tests/read-model/plan-view.rebuild.test.ts",
+    "owned": true,
+    "imports": [
+      "import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { planRevisionSnapshotFor, planRevisionAcceptedEventFor } from \"../../src/control/records/plan.js\";",
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/read-model/plan-view.test.ts",
+    "owned": true,
+    "imports": [
+      "import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { planRevisionSnapshotFor, planRevisionAcceptedEventFor } from \"../../src/control/records/plan.js\";",
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/restart/evidence/p1-02-evidence.test.ts",
+    "owned": true,
+    "imports": [
+      "import { resolveProjectCompletionPolicy, resolveProjectArchitectureBaseline } from \"../../../src/data/governance-records.js\";"
+    ]
+  },
+  {
+    "file": "tests/restart/material-access-restart.test.ts",
+    "owned": true,
+    "imports": [
+      "import { buildDispatchClaimCommand } from \"../../src/contracts/fixtures/dispatch-fixtures.js\";\nimport { buildDispatchClaimLedgerCommit } from \"../../src/control/records/dispatch.js\";",
+      "import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from \"../../src/contracts/fixtures/material-access-fixtures.js\";\nimport { buildMaterialAccessGrantLedgerCommit } from \"../../src/control/records/material-access.js\";"
+    ]
+  },
+  {
+    "file": "tests/restart/material-revocation.test.ts",
+    "owned": true,
+    "imports": [
+      "import { buildDispatchClaimCommand } from \"../../src/contracts/fixtures/dispatch-fixtures.js\";\nimport { buildDispatchClaimLedgerCommit } from \"../../src/control/records/dispatch.js\";",
+      "import { buildGrantMaterialAccessCommand } from \"../../src/contracts/fixtures/material-access-fixtures.js\";\nimport { buildMaterialAccessGrantLedgerCommit } from \"../../src/control/records/material-access.js\";"
+    ]
+  },
+  {
+    "file": "tests/restart/material-source-applicability.test.ts",
+    "owned": true,
+    "imports": [
+      "import { buildDispatchClaimCommand } from \"../../src/contracts/fixtures/dispatch-fixtures.js\";\nimport { buildDispatchClaimLedgerCommit } from \"../../src/control/records/dispatch.js\";",
+      "import { buildGrantMaterialAccessCommand } from \"../../src/contracts/fixtures/material-access-fixtures.js\";\nimport { buildMaterialAccessGrantLedgerCommit } from \"../../src/control/records/material-access.js\";"
+    ]
+  },
+  {
+    "file": "tests/restart/p1-02-restart-fixtures.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";",
+      "import { resolveProjectCompletionPolicy, resolveProjectArchitectureBaseline } from \"../../src/data/governance-records.js\";"
+    ]
+  },
+  {
+    "file": "tests/sqlite-read-model/material-access-projection.test.ts",
+    "owned": true,
+    "imports": [
+      "import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from \"../../src/contracts/fixtures/material-access-fixtures.js\";\nimport { buildMaterialAccessGrantLedgerCommit } from \"../../src/control/records/material-access.js\";"
+    ]
+  },
+  {
+    "file": "tests/sqlite-read-model/p1-03-run-projection.test.ts",
+    "owned": true,
+    "imports": [
+      "import { buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { planRevisionSnapshotFor, planRevisionAcceptedEventFor } from \"../../src/control/records/plan.js\";",
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/sqlite-read-model/p1-04-verification-projection.test.ts",
+    "owned": true,
+    "imports": [
+      "import { buildEffectivityAnchorV1, buildEvidenceV1, P104_GOAL, P104_OBL_IMPLEMENT, P104_OBL_REVIEW, P104_PLAN_ID, P104_PLAN_REVISION_FIXTURE_V1, P104_TASK_IMPLEMENT, P104_TASK_REVIEW } from \"../../src/contracts/fixtures/evidence-fixtures.js\";\nimport { buildTaskReductionSnapshot } from \"../../src/control/records/evidence.js\";",
+      "import { buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { planRevisionAcceptedEventFor, planRevisionSnapshotFor } from \"../../src/control/records/plan.js\";"
+    ]
+  },
+  {
+    "file": "tests/sqlite-read-model/p1-06-handoff-projection.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P106_GOAL, P106_OBL_HANDOFF, P106_SCHEMA, P106_TASK_ID, P106_VR_STATIC, P106_WORKSPACE, buildClaimReplacementCommand, buildHandoffPacketV1, buildRecordHandoffCommand, p106PlanRef } from \"../../src/contracts/fixtures/handoff-fixtures.js\";\nimport { buildReplacementClaimLedgerCommit, handoffRecordedEventFor } from \"../../src/control/records/handoff.js\";",
+      "import { buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand } from \"../../src/contracts/fixtures/evidence-fixtures.js\";\nimport { buildEvidenceIntakeLedgerCommit } from \"../../src/control/records/evidence.js\";"
+    ]
+  },
+  {
+    "file": "tests/sqlite-read-model/p1-07-projection.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P107_GOAL, P107_PROJECT, P107_WORKSPACE, P107_SCHEMA, P107_TASK_INTEGRATION, P107_TASK_READER_A, P107_TASK_READER_B, P107_TASK_WRITER, P107_SCOPE_READER_A, P107_SCOPE_WRITER, P107_ROLE_BINDING_READER_V1, P107_ROLE_BINDING_WRITER_V1, p107PlanRef, buildP107AcquireReadLeaseCommand, buildP107AcquireWriteLeaseCommand, buildP107ReleaseLeaseCommand, buildP107RecordIntegrationCommand, buildP107RecordPatchCommand, buildP107ArtifactRef } from \"../../src/contracts/fixtures/workspace-fixtures.js\";\nimport { buildWorkspaceReadLeaseAcquireLedgerCommit, buildWorkspaceReadLeaseReleaseLedgerCommit, buildWorkspaceWriteLeaseAcquireLedgerCommit, buildWorkspaceWriteLeaseReleaseLedgerCommit, buildIntegrationRecordLedgerCommit, buildPatchRecordLedgerCommit } from \"../../src/control/records/workspace.js\";"
+    ]
+  },
+  {
+    "file": "tests/sqlite-read-model/p1-11-plan-change.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P111_GOAL, P111_PROJECT, P111_SOURCE_PLAN, P111_WORKSPACE, buildApplyPlanChangeCommand, buildP111NewPlanDraft, buildPlanProposalV1, buildRecordPlanChangeProposalCommand, buildRecordUserDecisionCommand, buildUserDecisionV1, p111GoalRef, p111PlanRef } from \"../../src/contracts/fixtures/goal-change-fixtures.js\";\nimport { buildPlanChangeProposalRecordCommit, buildGoalChangeApplyCommit, buildUserDecisionRecordCommit } from \"../../src/control/records/goal-change.js\";",
+      "import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { planRevisionAcceptedEventFor, planRevisionSnapshotFor } from \"../../src/control/records/plan.js\";",
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { architectureBaselinePinFor, completionPolicyPinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/sqlite-read-model/p1-14-baseline-change-view.test.ts",
+    "owned": true,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { architectureBaselinePinFor } from \"../../src/contracts/governance.js\";",
+      "import { P114_PROJECT, P114_WORKSPACE, P114_SCHEMA, P114_PROPOSAL, P114_CANDIDATE, p114ProposalRef, buildP114Candidate, buildP114Decision, buildP114Gate, buildP114Activation, buildP114MaterializeCommand, buildP114DecisionCommand, buildP114GateCommand, buildP114ActivationCommand } from \"../../src/contracts/fixtures/baseline-evolution-fixtures.js\";\nimport { buildP114CandidateFold, buildP114DecisionFold, buildP114GateFold, buildP114ActivationFold } from \"../../src/control/records/baseline-evolution.js\";"
+    ]
+  },
+  {
+    "file": "tests/sqlite-read-model/p1-15-unified-status.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P115_PROJECT, P115_WORKSPACE, P115_DESIGN, P115_DECISION, P115_POLICY, p115DesignRef, p115DecisionRef, p115PolicyRef, p115PolicyActiveRef, buildP115Proposal, buildP115Decision, buildP115ProposalCommand, buildP115DecisionCommand, buildP115InstallCommand, buildP115ActivateCommand } from \"../../src/contracts/fixtures/human-role-collaboration-fixtures.js\";\nimport { buildP115ProposalFold, buildP115DecisionFold, buildP115PolicyInstallFold, buildP115PolicyActivateFold } from \"../../src/control/records/human-role-collaboration.js\";"
+    ]
+  },
+  {
+    "file": "tests/sqlite-read-model/p1-16-continuation-projection.test.ts",
+    "owned": true,
+    "imports": [
+      "import { P116_PROJECT_A, P116_PROJECT_B, P116_WORKSPACE, P116_SCHEMA, P116_REPORT_1, P116_REPORT_2, buildContextContinuationResultV1, buildRecordContinuationCommand } from \"../../src/contracts/fixtures/context-fixtures.js\";\nimport { buildContinuationRecordLedgerCommit } from \"../../src/control/records/context.js\";"
+    ]
+  },
+  {
+    "file": "tests/sqlite-read-model/plan-view.test.ts",
+    "owned": true,
+    "imports": [
+      "import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1, buildApplyPlanCommand } from \"../../src/contracts/fixtures/plan-fixtures.js\";\nimport { planRevisionSnapshotFor, planRevisionAcceptedEventFor } from \"../../src/control/records/plan.js\";",
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { completionPolicyPinFor, architectureBaselinePinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  },
+  {
+    "file": "tests/verification/verification-engine.test.ts",
+    "owned": false,
+    "imports": [
+      "import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildInstallCommand } from \"../../src/contracts/fixtures/governance-fixtures.js\";\nimport { architectureBaselinePinFor, completionPolicyPinFor } from \"../../src/contracts/governance.js\";"
+    ]
+  }
+]

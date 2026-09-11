@@ -1,0 +1,68 @@
+{
+  "dateUtc": "2026-09-10T10:15:15.6320785Z",
+  "hashes": [
+    {
+      "sha256": "b836f45288421eea4cd55197e9782ade437829c82c1b625c7ffdcc6d3edb9103",
+      "file": "original-browser2.log"
+    },
+    {
+      "sha256": "ea8a60583f2545744fdd73370c8108abd277a62f20999eab039e2feecc3d945d",
+      "file": "original-build2.log"
+    },
+    {
+      "sha256": "2db0e97f6684848f61ab771b9625ccec24be05da57b131565dc20d326145e474",
+      "file": "original-build3.log"
+    },
+    {
+      "sha256": "17d741a7c14529eb566de8f33e1bcc4bf1afe0dedb1ae3c3c91a8189193d50f5",
+      "file": "original-docs-validate.txt"
+    },
+    {
+      "sha256": "66658721b556fbc7bcc57cfd5064abc6ceb5f093e8dee2eae31b04be00e38144",
+      "file": "ownership-tests.log"
+    },
+    {
+      "sha256": "6d8c5fa0679ca6a207e54cc16743332e8f57e24aa388bb10cc478f0d5eb34d7b",
+      "file": "boundaries.json"
+    },
+    {
+      "sha256": "cb61999e06b1d01e7f8ef7d93045ee104f1111a54b797ca67ce328d225afa494",
+      "file": "audit.json"
+    },
+    {
+      "sha256": "fba2cb133756c776eb433aedab674f6716f26049b2cad66ee12ccf599e2ced31",
+      "file": "recovered-before.json"
+    },
+    {
+      "sha256": "0fd2ea17ad7479547b5f4add90d7dc55d0ccdb20f35a44978ef7c1810ca465e5",
+      "file": "module-boundaries-reviewed.md"
+    },
+    {
+      "sha256": "bc3b25191c21d60e19088f508fcf557207191d4868cb98a095969de419332575",
+      "file": "review.md"
+    }
+  ],
+  "fileCount": 744,
+  "reviewStatus": "code migration inspected; documentation and evidence corrections required",
+  "findings": [
+    "S-01:P2",
+    "P-01:P2",
+    "P-02:P3",
+    "P-03:P3"
+  ],
+  "endSourceMismatches": [],
+  "fullSuiteRerun": false,
+  "checksRun": {
+    "ownershipTests": {
+      "passed": 8,
+      "exit": 0
+    },
+    "boundaries": {
+      "issues": 0,
+      "exit": 0
+    }
+  },
+  "originalLogsCopiedFrom": "/tmp/reorg (WSL)",
+  "finalDigest": "f36287a561fe4499043d370d1c73a7adbf012289db7d153974828760b3ec8d3a",
+  "browserRerun": false
+}

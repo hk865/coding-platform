@@ -1,0 +1,1 @@
+{"name":"rat-taskboard","private":true,"version":"1.0.0","type":"module","scripts":{"start":"node server.mjs","test":"node --test test/public.test.mjs"},"engines":{"node":">=22"}}

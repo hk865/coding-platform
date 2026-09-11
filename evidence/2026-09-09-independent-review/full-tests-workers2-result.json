@@ -1,0 +1,14 @@
+{
+  "sourceCandidate": "candidate-03",
+  "endSnapshot": "full-end-03",
+  "sourceFiles": 730,
+  "digest": "f2b453c48ece299f4545680e6cba305328e5b85f88572b01bb908acb24e9bae7",
+  "sessionId": 27357,
+  "exitCode": 1,
+  "testFiles": { "total": 249, "passed": 248, "failed": 1 },
+  "tests": { "total": 1633, "passed": 1632, "failed": 1 },
+  "durationSeconds": 1623.62,
+  "log": "full-tests-workers2.log",
+  "failure": "VR2-A04: old HTTP corrupted-report error message lost the contiguous substring 报告不可读取",
+  "interpretation": "Completed failing full run, preserved as pre-fix evidence. Does not establish acceptance."
+}

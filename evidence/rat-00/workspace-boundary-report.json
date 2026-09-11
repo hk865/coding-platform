@@ -1,0 +1,624 @@
+{
+  "schemaVersion": 1,
+  "status": "PASS",
+  "checks": 30,
+  "modelCalls": 0,
+  "kind": "allowlisted-single-task-materialization",
+  "note": "Structural source/prompt boundary only; production sandbox namespace and deny-read probes are recorded independently.",
+  "results": [
+    {
+      "group": "canary",
+      "taskId": "node-bearer-auth",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/canary/node-bearer-auth",
+      "files": [
+        {
+          "path": "TASK.md",
+          "sha256": "b7a3b0a60e1b0e7488efba607eee412788958b726a63bd248c0deba41b1c5ddf"
+        },
+        {
+          "path": "src/auth.mjs",
+          "sha256": "bca6e1de32db4b5deae1d0262b1c032a3e4f5a6bcd6224cc4122e4aa312978a1"
+        },
+        {
+          "path": "test.mjs",
+          "sha256": "24af6f4836d15a5bb620bd8344390726c44d2536042034075f9bfb3d051879d3"
+        }
+      ]
+    },
+    {
+      "group": "canary",
+      "taskId": "python-slug-normalization",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/canary/python-slug-normalization",
+      "files": [
+        {
+          "path": "TASK.md",
+          "sha256": "7eeca0a999aa7bc49843c4fc887fe49d9d587807ff285cc3c46df991b1818db0"
+        },
+        {
+          "path": "slug.py",
+          "sha256": "98076353248658f7e1e35f0ba2f67cfc3be4b991aee5f171310c415ed3b8e96d"
+        },
+        {
+          "path": "test_slug.py",
+          "sha256": "8ce98a6643f990d81f4a353e6be62b169bd250a4d69f38562c2082af8e5af103"
+        }
+      ]
+    },
+    {
+      "group": "canary",
+      "taskId": "recovery-exactly-once",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/canary/recovery-exactly-once",
+      "files": [
+        {
+          "path": ".env",
+          "sha256": "f5f79f70797692780283ee10305dabe4f9f29c3fed64a2651a88d2a383bca1b5"
+        },
+        {
+          "path": "TASK.md",
+          "sha256": "421be173c171c43edc91be26ac953d7ca0a822114ab65d6a6431eff37b2995be"
+        },
+        {
+          "path": "src/recover.mjs",
+          "sha256": "ac0503dceb392d7620b6f264362f498d57d336d38786d3f19c4e814e80525590"
+        },
+        {
+          "path": "test.mjs",
+          "sha256": "c3361883f39a39f87c07b9469934da54ba889d7e26cc88749aabd4d89cfe322f"
+        }
+      ]
+    },
+    {
+      "group": "canary",
+      "taskId": "ts-nullish-timeout",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/canary/ts-nullish-timeout",
+      "files": [
+        {
+          "path": "TASK.md",
+          "sha256": "bf46e6006e47b07a73b8b04db51cf9ae15fa2e3db3488b521ddf94123497310e"
+        },
+        {
+          "path": "src/timeout.mjs",
+          "sha256": "b03cfa94f6325fa6fd3342c096d0221ce854d78f6e57bc42b11a3b1b911a8756"
+        },
+        {
+          "path": "test.mjs",
+          "sha256": "75859e4751cd9779dcc4127860ea7469a8332454e062bea8ce6db076c72c990c"
+        }
+      ]
+    },
+    {
+      "group": "bug-discovery",
+      "taskId": "BD-01",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/bug-discovery/BD-01",
+      "files": [
+        {
+          "path": "TASK.md",
+          "sha256": "5a8351bfda7051b46a985ddc1889298c1c22d4ef0c34a5f145ba150ca10798aa"
+        },
+        {
+          "path": "src/auth.mjs",
+          "sha256": "bca6e1de32db4b5deae1d0262b1c032a3e4f5a6bcd6224cc4122e4aa312978a1"
+        },
+        {
+          "path": "test.mjs",
+          "sha256": "24af6f4836d15a5bb620bd8344390726c44d2536042034075f9bfb3d051879d3"
+        }
+      ]
+    },
+    {
+      "group": "bug-discovery",
+      "taskId": "BD-02",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/bug-discovery/BD-02",
+      "files": [
+        {
+          "path": "TASK.md",
+          "sha256": "5a8351bfda7051b46a985ddc1889298c1c22d4ef0c34a5f145ba150ca10798aa"
+        },
+        {
+          "path": "slug.py",
+          "sha256": "98076353248658f7e1e35f0ba2f67cfc3be4b991aee5f171310c415ed3b8e96d"
+        },
+        {
+          "path": "test_slug.py",
+          "sha256": "8ce98a6643f990d81f4a353e6be62b169bd250a4d69f38562c2082af8e5af103"
+        }
+      ]
+    },
+    {
+      "group": "bug-discovery",
+      "taskId": "BD-03",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/bug-discovery/BD-03",
+      "files": [
+        {
+          "path": ".env",
+          "sha256": "f5f79f70797692780283ee10305dabe4f9f29c3fed64a2651a88d2a383bca1b5"
+        },
+        {
+          "path": "TASK.md",
+          "sha256": "5a8351bfda7051b46a985ddc1889298c1c22d4ef0c34a5f145ba150ca10798aa"
+        },
+        {
+          "path": "src/recover.mjs",
+          "sha256": "6f6ce35c1cb88ba43ef28e97103d5a689329a596757a6deffd3ec6615b7b8468"
+        },
+        {
+          "path": "test.mjs",
+          "sha256": "c3361883f39a39f87c07b9469934da54ba889d7e26cc88749aabd4d89cfe322f"
+        }
+      ]
+    },
+    {
+      "group": "bug-discovery",
+      "taskId": "BD-04",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/bug-discovery/BD-04",
+      "files": [
+        {
+          "path": ".env",
+          "sha256": "f5f79f70797692780283ee10305dabe4f9f29c3fed64a2651a88d2a383bca1b5"
+        },
+        {
+          "path": "TASK.md",
+          "sha256": "5a8351bfda7051b46a985ddc1889298c1c22d4ef0c34a5f145ba150ca10798aa"
+        },
+        {
+          "path": "src/recover.mjs",
+          "sha256": "ac0503dceb392d7620b6f264362f498d57d336d38786d3f19c4e814e80525590"
+        },
+        {
+          "path": "test.mjs",
+          "sha256": "c3361883f39a39f87c07b9469934da54ba889d7e26cc88749aabd4d89cfe322f"
+        }
+      ]
+    },
+    {
+      "group": "bug-discovery",
+      "taskId": "BD-05",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/bug-discovery/BD-05",
+      "files": [
+        {
+          "path": "TASK.md",
+          "sha256": "5a8351bfda7051b46a985ddc1889298c1c22d4ef0c34a5f145ba150ca10798aa"
+        },
+        {
+          "path": "src/timeout.mjs",
+          "sha256": "b03cfa94f6325fa6fd3342c096d0221ce854d78f6e57bc42b11a3b1b911a8756"
+        },
+        {
+          "path": "test.mjs",
+          "sha256": "75859e4751cd9779dcc4127860ea7469a8332454e062bea8ce6db076c72c990c"
+        }
+      ]
+    },
+    {
+      "group": "bug-discovery",
+      "taskId": "BD-06",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/bug-discovery/BD-06",
+      "files": [
+        {
+          "path": "TASK.md",
+          "sha256": "5a8351bfda7051b46a985ddc1889298c1c22d4ef0c34a5f145ba150ca10798aa"
+        },
+        {
+          "path": "src/timeout.mjs",
+          "sha256": "d488f8e2e691436136ddf545d636dc155cd4615dd670e88258c23649aa464f55"
+        },
+        {
+          "path": "test.mjs",
+          "sha256": "75859e4751cd9779dcc4127860ea7469a8332454e062bea8ce6db076c72c990c"
+        }
+      ]
+    },
+    {
+      "group": "bug-discovery",
+      "taskId": "BD-07",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/bug-discovery/BD-07",
+      "files": [
+        {
+          "path": "TASK.md",
+          "sha256": "5a8351bfda7051b46a985ddc1889298c1c22d4ef0c34a5f145ba150ca10798aa"
+        },
+        {
+          "path": "src/auth.mjs",
+          "sha256": "45db5cade2a461cf7753cb13449b058bbb39b87821b18f412b864073a8e109c6"
+        },
+        {
+          "path": "test.mjs",
+          "sha256": "24af6f4836d15a5bb620bd8344390726c44d2536042034075f9bfb3d051879d3"
+        }
+      ]
+    },
+    {
+      "group": "bug-discovery",
+      "taskId": "BD-08",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/bug-discovery/BD-08",
+      "files": [
+        {
+          "path": "TASK.md",
+          "sha256": "5a8351bfda7051b46a985ddc1889298c1c22d4ef0c34a5f145ba150ca10798aa"
+        },
+        {
+          "path": "slug.py",
+          "sha256": "9bb3915b1432874fe8ab03e1972857df08fc9831849ef97b5bf963a34d56505c"
+        },
+        {
+          "path": "test_slug.py",
+          "sha256": "8ce98a6643f990d81f4a353e6be62b169bd250a4d69f38562c2082af8e5af103"
+        }
+      ]
+    },
+    {
+      "group": "repoqa",
+      "taskId": "repoqa-express-01",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/repoqa/repoqa-express-01",
+      "files": [
+        "LICENSE",
+        "TASK.md",
+        "lib/application.js",
+        "lib/express.js",
+        "lib/middleware/init.js",
+        "lib/middleware/query.js",
+        "lib/request.js",
+        "lib/response.js",
+        "lib/router/index.js",
+        "lib/router/layer.js",
+        "lib/router/route.js",
+        "lib/utils.js",
+        "lib/view.js"
+      ]
+    },
+    {
+      "group": "repoqa",
+      "taskId": "repoqa-express-02",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/repoqa/repoqa-express-02",
+      "files": [
+        "LICENSE",
+        "TASK.md",
+        "lib/application.js",
+        "lib/express.js",
+        "lib/middleware/init.js",
+        "lib/middleware/query.js",
+        "lib/request.js",
+        "lib/response.js",
+        "lib/router/index.js",
+        "lib/router/layer.js",
+        "lib/router/route.js",
+        "lib/utils.js",
+        "lib/view.js"
+      ]
+    },
+    {
+      "group": "repoqa",
+      "taskId": "repoqa-express-03",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/repoqa/repoqa-express-03",
+      "files": [
+        "LICENSE",
+        "TASK.md",
+        "lib/application.js",
+        "lib/express.js",
+        "lib/middleware/init.js",
+        "lib/middleware/query.js",
+        "lib/request.js",
+        "lib/response.js",
+        "lib/router/index.js",
+        "lib/router/layer.js",
+        "lib/router/route.js",
+        "lib/utils.js",
+        "lib/view.js"
+      ]
+    },
+    {
+      "group": "repoqa",
+      "taskId": "repoqa-express-04",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/repoqa/repoqa-express-04",
+      "files": [
+        "LICENSE",
+        "TASK.md",
+        "lib/application.js",
+        "lib/express.js",
+        "lib/middleware/init.js",
+        "lib/middleware/query.js",
+        "lib/request.js",
+        "lib/response.js",
+        "lib/router/index.js",
+        "lib/router/layer.js",
+        "lib/router/route.js",
+        "lib/utils.js",
+        "lib/view.js"
+      ]
+    },
+    {
+      "group": "repoqa",
+      "taskId": "repoqa-express-05",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/repoqa/repoqa-express-05",
+      "files": [
+        "LICENSE",
+        "TASK.md",
+        "lib/application.js",
+        "lib/express.js",
+        "lib/middleware/init.js",
+        "lib/middleware/query.js",
+        "lib/request.js",
+        "lib/response.js",
+        "lib/router/index.js",
+        "lib/router/layer.js",
+        "lib/router/route.js",
+        "lib/utils.js",
+        "lib/view.js"
+      ]
+    },
+    {
+      "group": "repoqa",
+      "taskId": "repoqa-express-06",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/repoqa/repoqa-express-06",
+      "files": [
+        "LICENSE",
+        "TASK.md",
+        "lib/application.js",
+        "lib/express.js",
+        "lib/middleware/init.js",
+        "lib/middleware/query.js",
+        "lib/request.js",
+        "lib/response.js",
+        "lib/router/index.js",
+        "lib/router/layer.js",
+        "lib/router/route.js",
+        "lib/utils.js",
+        "lib/view.js"
+      ]
+    },
+    {
+      "group": "repoqa",
+      "taskId": "repoqa-express-07",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/repoqa/repoqa-express-07",
+      "files": [
+        "LICENSE",
+        "TASK.md",
+        "lib/application.js",
+        "lib/express.js",
+        "lib/middleware/init.js",
+        "lib/middleware/query.js",
+        "lib/request.js",
+        "lib/response.js",
+        "lib/router/index.js",
+        "lib/router/layer.js",
+        "lib/router/route.js",
+        "lib/utils.js",
+        "lib/view.js"
+      ]
+    },
+    {
+      "group": "repoqa",
+      "taskId": "repoqa-express-08",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/repoqa/repoqa-express-08",
+      "files": [
+        "LICENSE",
+        "TASK.md",
+        "lib/application.js",
+        "lib/express.js",
+        "lib/middleware/init.js",
+        "lib/middleware/query.js",
+        "lib/request.js",
+        "lib/response.js",
+        "lib/router/index.js",
+        "lib/router/layer.js",
+        "lib/router/route.js",
+        "lib/utils.js",
+        "lib/view.js"
+      ]
+    },
+    {
+      "group": "repoqa",
+      "taskId": "repoqa-express-09",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/repoqa/repoqa-express-09",
+      "files": [
+        "LICENSE",
+        "TASK.md",
+        "lib/application.js",
+        "lib/express.js",
+        "lib/middleware/init.js",
+        "lib/middleware/query.js",
+        "lib/request.js",
+        "lib/response.js",
+        "lib/router/index.js",
+        "lib/router/layer.js",
+        "lib/router/route.js",
+        "lib/utils.js",
+        "lib/view.js"
+      ]
+    },
+    {
+      "group": "repoqa",
+      "taskId": "repoqa-express-10",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/repoqa/repoqa-express-10",
+      "files": [
+        "LICENSE",
+        "TASK.md",
+        "lib/application.js",
+        "lib/express.js",
+        "lib/middleware/init.js",
+        "lib/middleware/query.js",
+        "lib/request.js",
+        "lib/response.js",
+        "lib/router/index.js",
+        "lib/router/layer.js",
+        "lib/router/route.js",
+        "lib/utils.js",
+        "lib/view.js"
+      ]
+    },
+    {
+      "group": "multi-agent",
+      "taskId": "MA-01",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/multi-agent/MA-01",
+      "files": [
+        "README.md",
+        "TASK.md",
+        "data/tasks.json",
+        "index.html",
+        "package.json",
+        "server.mjs",
+        "src/api.mjs",
+        "src/browser.mjs",
+        "src/store.mjs",
+        "src/ui.mjs",
+        "test/public.test.mjs"
+      ]
+    },
+    {
+      "group": "multi-agent",
+      "taskId": "MA-02",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/multi-agent/MA-02",
+      "files": [
+        "README.md",
+        "TASK.md",
+        "data/tasks.json",
+        "index.html",
+        "package.json",
+        "server.mjs",
+        "src/api.mjs",
+        "src/browser.mjs",
+        "src/store.mjs",
+        "src/ui.mjs",
+        "test/public.test.mjs"
+      ]
+    },
+    {
+      "group": "multi-agent",
+      "taskId": "MA-03",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/multi-agent/MA-03",
+      "files": [
+        "README.md",
+        "TASK.md",
+        "data/tasks.json",
+        "index.html",
+        "package.json",
+        "server.mjs",
+        "src/api.mjs",
+        "src/browser.mjs",
+        "src/store.mjs",
+        "src/ui.mjs",
+        "test/public.test.mjs"
+      ]
+    },
+    {
+      "group": "multi-agent",
+      "taskId": "MA-04",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/multi-agent/MA-04",
+      "files": [
+        "README.md",
+        "TASK.md",
+        "data/tasks.json",
+        "index.html",
+        "package.json",
+        "server.mjs",
+        "src/api.mjs",
+        "src/browser.mjs",
+        "src/store.mjs",
+        "src/ui.mjs",
+        "test/public.test.mjs"
+      ]
+    },
+    {
+      "group": "multi-agent",
+      "taskId": "MA-05",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/multi-agent/MA-05",
+      "files": [
+        "README.md",
+        "TASK.md",
+        "data/tasks.json",
+        "index.html",
+        "package.json",
+        "server.mjs",
+        "src/api.mjs",
+        "src/browser.mjs",
+        "src/store.mjs",
+        "src/ui.mjs",
+        "test/public.test.mjs"
+      ]
+    },
+    {
+      "group": "multi-agent",
+      "taskId": "MA-06",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/multi-agent/MA-06",
+      "files": [
+        "README.md",
+        "TASK.md",
+        "data/tasks.json",
+        "index.html",
+        "package.json",
+        "server.mjs",
+        "src/api.mjs",
+        "src/browser.mjs",
+        "src/store.mjs",
+        "src/ui.mjs",
+        "test/public.test.mjs"
+      ]
+    },
+    {
+      "group": "multi-agent",
+      "taskId": "MA-07",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/multi-agent/MA-07",
+      "files": [
+        "README.md",
+        "TASK.md",
+        "data/tasks.json",
+        "index.html",
+        "package.json",
+        "server.mjs",
+        "src/api.mjs",
+        "src/browser.mjs",
+        "src/store.mjs",
+        "src/ui.mjs",
+        "test/public.test.mjs"
+      ]
+    },
+    {
+      "group": "multi-agent",
+      "taskId": "MA-08",
+      "status": "PASS",
+      "workspace": "/home/han001/projects/agents/agent_platform/.local/evaluation/rat-00/workspace-boundary-check/multi-agent/MA-08",
+      "files": [
+        "README.md",
+        "TASK.md",
+        "data/tasks.json",
+        "index.html",
+        "package.json",
+        "server.mjs",
+        "src/api.mjs",
+        "src/browser.mjs",
+        "src/store.mjs",
+        "src/ui.mjs",
+        "test/public.test.mjs"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "date": "2026-09-09",
+  "state": "paused_by_user",
+  "reason": "User work-environment change and offline interval",
+  "resumeRequiresUserInstruction": true,
+  "resumeEntry": "D:/1.project/Software/agent_learn/agent_dev/agent_platform/dev_docs/planning/active/architecture-rebuild/PAUSED.md",
+  "sourceIdentity": "paused-source-sha256.json",
+  "sourcePaths": 578,
+  "planningAgent": "checkpoint_saved_and_finished",
+  "verificationAgent": "checkpoint_saved_and_finished",
+  "auditAgent": "interrupted_findings_saved_by_root",
+  "newTestsOrBuildsExecuted": false,
+  "currentSnapshotValidated": false,
+  "knownIncomplete": [
+    "ArchitectureReconciler constructors in two tests have not been migrated to ArchitectureContextCompiler.",
+    "Planning and Verification contracts are unintegrated drafts.",
+    "Full module audit and all remaining migrations are unfinished."
+  ],
+  "commitsPushesResetStash": false,
+  "historicalCleanup": false,
+  "automaticResumeScheduled": false
+}

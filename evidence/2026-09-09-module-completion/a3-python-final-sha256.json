@@ -1,0 +1,26 @@
+[
+  {
+    "path": "D:\\1.project\\Software\\agent_platform\\src\\data\\python-source-index.ts",
+    "sha256": "a4d1efcfbc30f4e041a619d9a6b6c108766525ea31d8e5cc1e6582216423a29a"
+  },
+  {
+    "path": "D:\\1.project\\Software\\agent_platform\\scripts\\python-source-query.py",
+    "sha256": "aff8108c82c3c99359e78187cfdbb90e54143491566d68144fab0b3413f0936b"
+  },
+  {
+    "path": "D:\\1.project\\Software\\agent_platform\\tests\\data\\python-source-index.test.ts",
+    "sha256": "52966d8544ed09cd30a5cdc8fb3570b79a759d23f0ea22c285b404355f996a34"
+  },
+  {
+    "path": "D:\\1.project\\Software\\agent_platform\\.local\\source-analyzers\\analyzers.zip",
+    "sha256": "a6019ba893d89ce407bb140201ceb8dc62683ad786adce443b4fdec8f576958b"
+  },
+  {
+    "path": "D:\\1.project\\Software\\agent_platform\\.local\\source-analyzers\\analyzers.sha256",
+    "sha256": "c92c62d2e6f78820a3d7a44d9ee5a419401e44a2b577ca720083f906bcef920f"
+  },
+  {
+    "path": "D:\\1.project\\Software\\agent_platform\\.local\\source-analyzers\\manifest.json",
+    "sha256": "c2526c71e433f69c38475c65e8f0996084f4ec577972f48970494edf69584716"
+  }
+]

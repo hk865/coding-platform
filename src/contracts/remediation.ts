@@ -281,7 +281,3 @@ export function advanceRemediationTaskFingerprint(command: AdvanceRemediationTas
   })) as CommandFingerprint;
 }
 
-/** Pure: the only statuses that keep the dedup key "occupied" (at most ONE effective task). */
-export function remediationTaskOccupiesDedupKey(status: RemediationTaskStatus): boolean {
-  return status === "pending" || status === "writing" || status === "verifying";
-}

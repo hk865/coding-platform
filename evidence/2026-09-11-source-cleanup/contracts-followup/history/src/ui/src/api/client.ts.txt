@@ -1,0 +1,201 @@
+/**
+ * HTTP client for the Node host.
+ *
+ * Every request carries the local session token, is bounded by a timeout, and is
+ * abortable so a scope switch cancels in-flight reads instead of letting a late
+ * response overwrite the current screen. Errors keep their category (offline,
+ * timeout, rejected, expired session) because the UI must not show a rejected
+ * command as a success.
+ */
+
+export type ApiErrorKind = 'offline' | 'timeout' | 'aborted' | 'rejected' | 'session-expired' | 'malformed' | 'server';
+
+export class ApiError extends Error {
+  readonly kind: ApiErrorKind;
+  readonly status: number | null;
+  readonly detail: unknown;
+  constructor(kind: ApiErrorKind, message: string, options: { status?: number | null; detail?: unknown } = {}) {
+    super(message);
+    this.name = 'ApiError';
+    this.kind = kind;
+    this.status = options.status ?? null;
+    this.detail = options.detail;
+  }
+  /** True when the request may have reached the server without a known outcome. */
+  get outcomeUnknown(): boolean { return ['offline', 'timeout', 'aborted', 'malformed', 'server'].includes(this.kind); }
+}
+
+export function errorMessage(error: unknown): string {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+type RequestOptions = { signal?: AbortSignal | undefined; timeoutMs?: number | undefined };
+
+export type Api = ReturnType<typeof createApi>;
+
+export function createApi(token: string) {
+  let sessionExpired = false;
+
+  async function request<T>(path: string, init: RequestInit & RequestOptions = {}): Promise<T> {
+    const { signal, timeoutMs = 15000, ...rest } = init;
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    let response: Response;
+    try {
+      response = await fetch(path, { ...rest, signal: combined, headers: { 'x-platform-token': token, ...(rest.headers ?? {}) } });
+    } catch (error) {
+      if (signal?.aborted) throw new ApiError('aborted', '请求已取消');
+      if (timeout.aborted) throw new ApiError('timeout', '请求超时，未收到服务器回执');
+      if (error instanceof DOMException && error.name === 'AbortError') throw new ApiError('aborted', '请求已取消');
+      throw new ApiError('offline', '无法连接本地服务，请确认服务仍在运行');
+    }
+    let body: unknown = null;
+    try { body = await response.json(); } catch { body = null; }
+    // An HTTP status alone is not a receipt: the operation may have committed
+    // before its response was truncated or the server failed while replying.
+    if (body === null) throw new ApiError('malformed', '服务器返回了无法解析的内容', { status: response.status });
+    if (response.status >= 500) throw new ApiError('server', `服务器异常（HTTP ${response.status}），请查询回执`, { status: response.status, detail: body });
+    if (!response.ok) {
+      const message = body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string'
+        ? (body as { error: string }).error
+        : `请求失败（HTTP ${response.status}）`;
+      if (response.status === 403 && message.includes('会话')) { sessionExpired = true; return Promise.reject(new ApiError('session-expired', message, { status: 403 })); }
+      throw new ApiError('rejected', message, { status: response.status, detail: body });
+    }
+    return body as T;
+  }
+
+  const query = (path: string, params: Record<string, string | number | undefined>, options: RequestOptions = {}) => {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== '') search.set(key, String(value));
+    return request<unknown>(`${path}?${search.toString()}`, { ...options });
+  };
+  const send = (path: string, body: unknown, options: RequestOptions = {}) =>
+    request<unknown>(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), ...options });
+
+  return {
+    token,
+    semanticQuery: (scope: import('./types').GoalScope, payload: { requestId: string; question: string }) => send('/api/real/queries', { ...scope, ...payload }),
+    historyView: (scope: import('./types').GoalScope) => send('/api/real/history/view', scope) as Promise<import('./types').HistoryView>,
+    historyGrant: (scope: import('./types').GoalScope, payload: unknown) => send('/api/real/history/grant', { ...scope, ...(payload as object) }),
+    historyRevoke: (scope: import('./types').GoalScope, payload: unknown) => send('/api/real/history/revoke', { ...scope, ...(payload as object) }),
+    historyRead: (scope: import('./types').GoalScope, grantId: string) => send('/api/real/history/read', { ...scope, grantId }),
+    /** True once the host rejected our session token; the UI must ask for a reload. */
+    get sessionExpired() { return sessionExpired; },
+    meta: (options?: RequestOptions) => request<import('./types').Meta>('/api/meta', { timeoutMs: 8000, ...options }),
+    state: (scope: import('./types').Scope & { goalId?: string }, options?: RequestOptions) =>
+      query('/api/state', { projectId: scope.projectId, workspaceId: scope.workspaceId, goalId: scope.goalId }, options) as Promise<import('./types').GuiState>,
+    files: (scope: import('./types').Scope, path: string, options?: RequestOptions) =>
+      query('/api/files', { ...scope, path }, options) as Promise<import('./types').DirectoryListing>,
+    preview: (scope: import('./types').Scope, path: string, options?: RequestOptions) =>
+      query('/api/files/preview', { ...scope, path }, options) as Promise<import('./types').FilePreview>,
+    workspace: (scope: import('./types').Scope, options?: RequestOptions) => query('/api/workspace', scope, options) as Promise<{ root: string; shell: string; terminalPolicy: string }>,
+    terminals: (scope: import('./types').Scope, options?: RequestOptions) => query('/api/terminals', scope, options) as Promise<{ sessions: import('./types').TerminalSession[] }>,
+    terminalOutput: (scope: import('./types').Scope, sessionId: string, after: number, options?: RequestOptions) =>
+      query('/api/terminals/output', { ...scope, sessionId, after }, options) as Promise<import('./types').TerminalOutput>,
+    modelSettings: (options?: RequestOptions) => request<import('./types').ModelSettingsView>('/api/model-settings', options),
+    modelSettingsSave: (body: { provider: string; model: string; baseUrl: string; apiKey: string }, options?: RequestOptions) =>
+      send('/api/model-settings', body, options) as Promise<import('./types').ModelSettingsView>,
+    modelSettingsClear: (options?: RequestOptions) => send('/api/model-settings/clear', {}, options) as Promise<import('./types').ModelSettingsView>,
+    modelSettingsTest: (options?: RequestOptions) => send('/api/model-settings/test', {}, { timeoutMs: 45000, ...options }) as Promise<import('./types').ModelTestResult>,
+    createGoal: (scope: import('./types').Scope, input: { requestId: string; objective: string }, options?: RequestOptions) =>
+      send('/api/goals', { ...scope, ...input }, options) as Promise<{ goalId: string }>,
+    addProject: (path: string, options?: RequestOptions) =>
+      send('/api/projects/add', { path }, options) as Promise<import('./types').ProjectEntry>,
+    addWorkspace: (projectId: string, path: string, options?: RequestOptions) =>
+      send('/api/workspaces/add', { projectId, path }, options) as Promise<import('./types').ProjectEntry>,
+    installSamplePlan: (scope: import('./types').GoalScope, options?: RequestOptions) =>
+      send('/api/plans/sample', scope, options) as Promise<Record<string, unknown>>,
+    runSampleTask: (scope: import('./types').GoalScope, taskId: string, options?: RequestOptions) =>
+      send('/api/tasks/run', { ...scope, taskId }, options) as Promise<Record<string, unknown>>,
+    submitQuery: (scope: import('./types').GoalScope, input: { requestId: string; question: string; focusTaskId?: string }, options?: RequestOptions) =>
+      send('/api/queries', { ...scope, ...input }, options) as Promise<Record<string, unknown>>,
+    runRealTask: (scope: import('./types').GoalScope, input: { requestId: string; instruction: string; allowWrite: boolean; references?: import('./types').RequestReference[]; budget?: unknown }, options?: RequestOptions) =>
+      send('/api/real/work', { ...scope, ...input }, options) as Promise<{ runId: string; status: string; executor: string }>,
+    cancelRealTask: (scope: import('./types').GoalScope, runId: string, options?: RequestOptions) =>
+      send('/api/real/cancel', { ...scope, runId }, options) as Promise<Record<string, unknown>>,
+    runCheck: (scope: import('./types').GoalScope, input: { runId: string; requestId: string; command: string; kind: string; timeoutMs: number; allowExecute: boolean }, options?: RequestOptions) =>
+      send('/api/real/verifications/run-check', { ...scope, ...input }, { timeoutMs: 660000, ...options }) as Promise<Record<string, unknown>>,
+    startVerificationRound: (scope: import('../../../contracts/verification-context.js').VerificationRoundScope, input: import('../../../contracts/verification-round.js').VerificationRoundStartInput, options?: RequestOptions) =>
+      send('/api/real/verifications/rounds/start', { ...scope, ...input }, { timeoutMs: 660000, ...options }) as Promise<import('../../../contracts/verification-round.js').VerificationRoundResult>,
+    verificationRound: (scope: import('../../../contracts/verification-context.js').VerificationRoundScope, requestId: string, options?: RequestOptions) =>
+      send('/api/real/verifications/rounds/read', { ...scope, requestId }, options) as Promise<import('../../../contracts/verification-round.js').VerificationRoundView>,
+    resumeVerificationRound: (scope: import('../../../contracts/verification-context.js').VerificationRoundScope, requestId: string, options?: RequestOptions) =>
+      send('/api/real/verifications/rounds/resume', { ...scope, requestId, allowExecute: true }, { timeoutMs: 660000, ...options }) as Promise<import('../../../contracts/verification-round.js').VerificationRoundResult>,
+    reviewerProfile: (scope: import('../../../contracts/verification-context.js').VerificationRoundScope, options?: RequestOptions) =>
+      send('/api/real/verifications/reviews/profile', scope, options) as Promise<import('../../../contracts/reviewer-context.js').ReviewerProfileResult>,
+    reviewMaterial: (scope: import('../../../contracts/verification-context.js').VerificationRoundScope, roundRequestId: string, options?: RequestOptions) =>
+      send('/api/real/verifications/reviews/material', { ...scope, roundRequestId }, options) as Promise<import('../../../contracts/reviewer-verification.js').ReviewMaterialResult>,
+    startReview: (scope: import('../../../contracts/verification-context.js').VerificationRoundScope, input: import('../../../contracts/reviewer-verification.js').ReviewStartInput, options?: RequestOptions) =>
+      send('/api/real/verifications/reviews/start', { ...scope, ...input }, options) as Promise<import('../../../contracts/reviewer-verification.js').ReviewRequestResult>,
+    review: (scope: import('../../../contracts/verification-context.js').VerificationRoundScope, requestId: string, options?: RequestOptions) =>
+      send('/api/real/verifications/reviews/read', { ...scope, requestId }, options) as Promise<import('../../../contracts/reviewer-verification.js').ReviewRequestView>,
+    recoverReview: (scope: import('../../../contracts/verification-context.js').VerificationRoundScope, input: import('../../../contracts/reviewer-verification.js').ReviewRecoverInput, options?: RequestOptions) =>
+      send('/api/real/verifications/reviews/recover', { ...scope, ...input }, options) as Promise<import('../../../contracts/reviewer-verification.js').ReviewRequestResult>,
+    resumeReview: (scope: import('../../../contracts/verification-context.js').VerificationRoundScope, requestId: string, options?: RequestOptions) =>
+      send('/api/real/verifications/reviews/resume', { ...scope, requestId }, options) as Promise<import('../../../contracts/reviewer-verification.js').ReviewRequestResult>,
+    reviewReport: (scope: import('../../../contracts/verification-context.js').VerificationRoundScope, requestId: string, options?: RequestOptions) =>
+      send('/api/real/verifications/reviews/report', { ...scope, requestId }, options) as Promise<{ ref: import('../../../contracts/artifact.js').ArtifactRef; body: string; applicability: 'historical_explanation' }>,
+    checkReport: (scope: import('./types').GoalScope, runId: string, requestId: string, options?: RequestOptions) =>
+      send('/api/real/verifications/check-report', { ...scope, runId, requestId }, options) as Promise<import('./types').CheckReportsResponse>,
+    reconcileCheck: (scope: import('./types').GoalScope, runId: string, requestId: string, options?: RequestOptions) =>
+      send('/api/real/verifications/reconcile-check', { ...scope, runId, requestId }, options) as Promise<Record<string, unknown>>,
+    admitCheckEvidence: (scope: import('./types').GoalScope, runId: string, requestId: string, reportDigest: string, options?: RequestOptions) =>
+      send('/api/real/verifications/check-evidence', { ...scope, runId, requestId, reportDigest }, options) as Promise<Record<string, unknown>>,
+    /**
+     * 治理（CompletionPolicy / ArchitectureBaseline / CoordinationPolicy /
+     * ArchitectureEvolutionPolicy / RoleSpecRevision）的产品入口。
+     *
+     * 读侧回答“当前生效的是哪一份、谁在什么时候装的、内容是什么”；写侧就是既有的
+     * install/activate 命令，参数是既有的版本化 source／精确 pin，CAS 由 ControlEngine 判定。
+     * 界面不解释策略正文的含义，也不在本机保存任何治理状态：每次都以服务端回执与视图为准。
+     * RoleSpecRevision 多一个 roleId：安装一份规格就是登记一个角色，不给出 source 时用服务端
+     * 注入的内置 source（与 CompletionPolicy 同一定位）。
+     */
+    governanceView: (scope: import('./types').Scope, options?: RequestOptions) =>
+      send('/api/real/governance/view', scope, options) as Promise<import('../../../app/governance.js').GovernanceViewV1>,
+    governanceInstall: (scope: import('./types').Scope, input: { kind: import('../../../app/governance.js').GovernanceKindV1; roleId?: string; source?: unknown; expectedRevision?: number }, options?: RequestOptions) =>
+      send('/api/real/governance/install', { ...scope, ...input }, options) as Promise<import('../../../app/governance.js').GovernanceInstallResultV1>,
+    governanceActivate: (scope: import('./types').Scope, input: { kind: import('../../../app/governance.js').GovernanceKindV1; pin: { ref: unknown; digest: string }; expectedRevision?: number }, options?: RequestOptions) =>
+      send('/api/real/governance/activate', { ...scope, ...input }, options) as Promise<import('../../../app/governance.js').GovernanceActivateResultV1>,
+    /** 未处置问题 + 提案 + 受理事实（canonical 重建），外加本进程最近一次自动触发的结果。 */
+    reworkStatus: (scope: import('./types').GoalScope, options?: RequestOptions) =>
+      send('/api/real/rework/status', scope, options) as Promise<{ view: import('../../../contracts/rework-drive.js').ReworkDriveViewV1; lastDrive: import('../../../contracts/rework-drive.js').ReworkDriveResultV1 | null }>,
+    /** Ask the server what it recorded for a request whose response we lost. */
+    /**
+     * 计划变更只读视图（RW-09）：提案／受理决定／Goal revision／任务处置行。
+     *
+     * 后端直接转发既有投影 ReadModelIndex.planChangeView，因此界面拿到的是与账本事件同源的事实，
+     * 不是第二份重算结果；`empty` 与 `unavailable` 是后端给出的两种"读不到"的原因，界面照实显示。
+     */
+    planChangesView: (scope: import('./types').GoalScope, options?: RequestOptions) =>
+      send('/api/real/plan-changes/view', scope, options) as Promise<import('../../../app/plan-changes.js').PlanChangesViewV1>,
+    /** 未处置的验收问题：来自已提交的验证轮次与独立审阅结论，只读。 */
+    reworkIssues: (scope: import('./types').GoalScope, taskIds: string[] = [], options?: RequestOptions) =>
+      send('/api/real/rework/issues', { ...scope, taskIds }, options) as Promise<import('../../../contracts/rework.js').OpenIssuesViewV1>,
+    receipt: (scope: import('./types').GoalScope, input: { requestId: string; kind: 'goal' | 'real-task' | 'command-check' | 'verification-round' | 'independent-review'; runId?: string }, options?: RequestOptions) =>
+      send('/api/receipts', { ...scope, ...input }, options) as Promise<import('./types').ReceiptView>,
+    importVerification: (scope: import('./types').GoalScope, input: Record<string, unknown>, options?: RequestOptions) =>
+      send('/api/real/verifications/import', { ...scope, ...input }, options) as Promise<Record<string, unknown>>,
+    registerVerificationCandidate: (scope: import('./types').GoalScope, input: Record<string, unknown>, options?: RequestOptions) =>
+      send('/api/real/verifications/candidates', { ...scope, ...input }, options) as Promise<Record<string, unknown>>,
+    explorationPlan: (scope: import('./types').GoalScope, input: Record<string, unknown>, options?: RequestOptions) =>
+      send('/api/real/explorations/plan', { ...scope, ...input }, options) as Promise<Record<string, unknown>>,
+    explorationRun: (scope: import('./types').GoalScope, input: Record<string, unknown>, options?: RequestOptions) =>
+      send('/api/real/explorations/run', { ...scope, ...input }, options) as Promise<Record<string, unknown>>,
+    explorationReview: (scope: import('./types').GoalScope, input: Record<string, unknown>, options?: RequestOptions) =>
+      send('/api/real/explorations/review', { ...scope, ...input }, options) as Promise<Record<string, unknown>>,
+    createTerminal: (scope: import('./types').Scope, input: { path?: string; requestId: string; cols: number; rows: number }, options?: RequestOptions) =>
+      send('/api/terminals/create', { ...scope, ...input }, options) as Promise<import('./types').TerminalSession>,
+    terminalInput: (scope: import('./types').Scope, input: { sessionId: string; data: string; requestId: string }, options?: RequestOptions) =>
+      send('/api/terminals/input', { ...scope, ...input }, options) as Promise<{ accepted: boolean; replayed: boolean }>,
+    terminalResize: (scope: import('./types').Scope, input: { sessionId: string; cols: number; rows: number }, options?: RequestOptions) =>
+      send('/api/terminals/resize', { ...scope, ...input }, options) as Promise<import('./types').TerminalSession>,
+    terminalClose: (scope: import('./types').Scope, sessionId: string, options?: RequestOptions) =>
+      send('/api/terminals/close', { ...scope, sessionId }, options) as Promise<import('./types').TerminalSession>,
+    createFolder: (scope: import('./types').Scope, input: { path: string; name: string }, options?: RequestOptions) =>
+      send('/api/files/mkdir', { ...scope, ...input }, options) as Promise<{ path: string }>,
+  };
+}

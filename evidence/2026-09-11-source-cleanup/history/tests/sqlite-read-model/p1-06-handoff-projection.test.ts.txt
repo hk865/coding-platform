@@ -1,0 +1,393 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
+/**
+ * P1-06 SQLite handoff-provenance projection tests — HandoffRecorded /
+ * ReplacementClaimed / EvidenceAdmitted -> handoffProvenance timeline.
+ *
+ * Mirror of tests/read-model/p1-06-handoff-projection.test.ts against the
+ * SQLite adapter (dual-adapter requirement). Covers:
+ *   - incremental projection (ordered timeline);
+ *   - rebuild equivalence (empty fresh instance -> full replay == incremental);
+ *   - full-key isolation (two Projects, same goalId/taskId, never collide);
+ *   - freshness (not_ready != not_found; covered-atLeastCursor + no row ->
+ *     not_found; no atLeastCursor + no row -> not_ready);
+ *   - outcomeUnknownPreserved constant true;
+ *   - projection persists across close()/reopen (persistence of the projection
+ *     row + checkpoint) and replays to the same view;
+ *   - handled event types (HandoffRecorded / ReplacementClaimed) advance
+ *     WITHOUT stalling.
+ */
+import { describe, expect, it } from "vitest";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { createSqliteReadModelIndex } from "../../src/data/read-model-index/sqlite-read-model-index.js";
+import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../src/contracts/ledger.js";
+import { P106_GOAL, P106_OBL_HANDOFF, P106_SCHEMA, P106_TASK_ID, P106_VR_STATIC, P106_WORKSPACE, buildClaimReplacementCommand, buildHandoffPacketV1, buildRecordHandoffCommand, p106PlanRef } from "../../src/contracts/fixtures/handoff-fixtures.js";
+import { buildReplacementClaimLedgerCommit, handoffRecordedEventFor } from "../../src/control/control-engine/records/handoff.js";
+import { buildEffectivityAnchorV1, buildEvidenceV1, buildSubmitEvidenceCommand } from "../../src/contracts/fixtures/evidence-fixtures.js";
+import { buildEvidenceIntakeLedgerCommit } from "../../src/control/control-engine/records/evidence.js";
+import { taskAttemptRefFor, taskLeaseRefFor, runRefFor, type TaskLeaseSnapshot } from "../../src/contracts/dispatch.js";
+import { handoffPacketRefFor } from "../../src/contracts/handoff.js";
+import type { ArchitectureBaselinePin, CompletionPolicyPin } from "../../src/contracts/governance.js";
+import type { HandoffRecordedEvent, ReplacementClaimedEvent } from "../../src/contracts/handoff.js";
+import type { EvidenceAdmittedEvent } from "../../src/contracts/evidence.js";
+
+function json(v: unknown): string {
+  return JSON.stringify(v);
+}
+
+function pins(projectId: string): { pinnedCompletionPolicy: CompletionPolicyPin; pinnedArchitectureBaseline: ArchitectureBaselinePin } {
+  return {
+    pinnedCompletionPolicy: {
+      ref: { aggregateType: "CompletionPolicyRevision", projectId, policyId: "pol-handoff", revision: 1 },
+      digest: "digest-pol-handoff",
+    },
+    pinnedArchitectureBaseline: {
+      ref: { aggregateType: "ArchitectureBaselineRevision", projectId, baselineId: "arch-handoff", revision: 1 },
+      digest: "digest-arch-handoff",
+    },
+  };
+}
+
+function recordedEvent(projectId: string, packetId: string, eventId: string): HandoffRecordedEvent {
+  const packet = buildHandoffPacketV1({
+    packetId,
+    projectId,
+    goalId: P106_GOAL,
+    taskId: P106_TASK_ID,
+    planRef: p106PlanRef(projectId),
+    taskRevision: 1,
+    runRef: runRefFor(projectId, P106_GOAL, "run-a-" + packetId),
+    attemptRef: taskAttemptRefFor(projectId, P106_GOAL, P106_TASK_ID, "att-a-" + packetId),
+  });
+  const command = buildRecordHandoffCommand({
+    commandId: "cmd-rec-" + eventId,
+    correlationId: "corr-rec-" + eventId,
+    submittedAt: P106_SCHEMA,
+    projectId,
+    packet,
+  });
+  return handoffRecordedEventFor(command, { eventId, occurredAt: P106_SCHEMA, workspaceId: P106_WORKSPACE });
+}
+
+function claimedEvent(
+  projectId: string,
+  packetId: string,
+  eventId: string,
+  attemptB: string,
+  runB: string,
+): ReplacementClaimedEvent {
+  const packetRef = handoffPacketRefFor(projectId, P106_GOAL, P106_TASK_ID, packetId);
+  const priorLease: TaskLeaseSnapshot = {
+    ref: taskLeaseRefFor(projectId, P106_GOAL, P106_TASK_ID),
+    revision: 1,
+    schemaVersion: 1,
+    holderRunId: "run-a",
+    attemptId: "att-a",
+    grantedAt: P106_SCHEMA,
+    expiresAt: null,
+  };
+  const command = buildClaimReplacementCommand({
+    commandId: "cmd-claim-" + eventId,
+    correlationId: "corr-claim-" + eventId,
+    submittedAt: P106_SCHEMA,
+    projectId,
+    goalId: P106_GOAL,
+    taskId: P106_TASK_ID,
+    expectedRevision: 1,
+    attemptId: attemptB,
+    runId: runB,
+    handoffPacketRef: packetRef,
+    reason: "run_crashed",
+  });
+  const commit = buildReplacementClaimLedgerCommit(command, {
+    eventId,
+    occurredAt: P106_SCHEMA,
+    workspaceId: P106_WORKSPACE,
+    workspaceRevision: 1,
+    planRef: p106PlanRef(projectId),
+    priorLease,
+    priorRunRef: runRefFor(projectId, P106_GOAL, "run-a"),
+    priorAttemptRef: taskAttemptRefFor(projectId, P106_GOAL, P106_TASK_ID, "att-a"),
+  });
+  return commit.events[0];
+}
+
+function evidenceEvent(projectId: string, evidenceId: string, eventId: string, runId: string): EvidenceAdmittedEvent {
+  const pr = pins(projectId);
+  const anchor = buildEffectivityAnchorV1({
+    planRef: p106PlanRef(projectId),
+    planRevision: 1,
+    workspaceRevision: 1,
+    pinnedCompletionPolicy: pr.pinnedCompletionPolicy,
+    pinnedArchitectureBaseline: pr.pinnedArchitectureBaseline,
+  });
+  const evidence = buildEvidenceV1({
+    evidenceId,
+    kind: "observation",
+    outcome: "PASS",
+    projectId,
+    goalId: P106_GOAL,
+    taskId: P106_TASK_ID,
+    coverage: [{ obligationId: P106_OBL_HANDOFF, requirementId: P106_VR_STATIC }],
+    runRef: runRefFor(projectId, P106_GOAL, runId),
+    checkId: "static-lint",
+    anchor,
+    verificationPlanRef: { planId: "vp-handoff", planDigest: "digest-handoff" },
+  });
+  const command = buildSubmitEvidenceCommand({
+    commandId: "cmd-ev-" + eventId,
+    evidence,
+    correlationId: "corr-ev-" + eventId,
+    submittedAt: P106_SCHEMA,
+  });
+  const commit = buildEvidenceIntakeLedgerCommit(command, {
+    eventId,
+    occurredAt: P106_SCHEMA,
+    workspaceId: P106_WORKSPACE,
+    priorIndex: null,
+  });
+  return commit.events[0];
+}
+
+function pos(event: { eventType: string }, seq: number): PositionedEvent {
+  return { cursor: makeCommitCursor(seq), event: event as never };
+}
+
+function page(events: PositionedEvent[], throughSeq: number): EventPage {
+  return {
+    afterCursor: null,
+    throughCursor: makeCommitCursor(throughSeq),
+    events,
+    hasMore: false,
+  };
+}
+
+function evSet(projectId: string) {
+  return {
+    rec: recordedEvent(projectId, "packet-1", "ev-rec-1"),
+    claim: claimedEvent(projectId, "packet-1", "ev-claim-2", "att-b-2", "run-b-2"),
+    evA: evidenceEvent(projectId, "ev-a-3", "ev-ev-3", "run-a-1"),
+    evB: evidenceEvent(projectId, "ev-b-4", "ev-ev-4", "run-b-2"),
+  };
+}
+
+describe("P1-06 SQLite handoff-provenance projection", () => {
+  it("incremental projection: packet_recorded -> replacement_claimed -> evidence_admitted in event order", async () => {
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
+    const projectId = "proj-alpha";
+    const { rec, claim, evA, evB } = evSet(projectId);
+    await rm.advance(page([pos(rec, 1)], 1));
+    await rm.advance(page([pos(claim, 2)], 2));
+    await rm.advance(page([pos(evA, 3)], 3));
+    await rm.advance(page([pos(evB, 4)], 4));
+
+    const result = await rm.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") return;
+    const prov = result.provenance;
+
+    expect(prov.projectId).toBe(projectId);
+    expect(prov.outcomeUnknownPreserved).toBe(true);
+    expect(prov.taskRevision).toBe(1);
+    expect(json(prov.planRef)).toBe(json(p106PlanRef(projectId)));
+    expect(prov.packetRefs).toHaveLength(1);
+    expect(prov.packetRefs[0]!.packetId).toBe("packet-1");
+    expect(prov.replacementRefs).toHaveLength(1);
+    expect(prov.replacementRefs[0]!.attemptId).toBe("att-b-2");
+    expect(prov.timeline.map((e) => e.kind)).toEqual([
+      "packet_recorded",
+      "replacement_claimed",
+      "evidence_admitted",
+      "evidence_admitted",
+    ]);
+    const pk = prov.timeline[0];
+    if (pk!.kind === "packet_recorded") {
+      expect(pk!.sourceRunRef.runId).toBe("run-a-packet-1");
+      expect(pk!.sourceCursor).toBe(makeCommitCursor(1));
+    }
+    const cp = prov.timeline[1];
+    if (cp!.kind === "replacement_claimed") {
+      expect(cp!.runRef.runId).toBe("run-b-2");
+      expect(cp!.reason).toBe("run_crashed");
+      expect(cp!.sourceCursor).toBe(makeCommitCursor(2));
+    }
+    const ea = prov.timeline[2];
+    if (ea!.kind === "evidence_admitted") {
+      expect(ea!.evidenceId).toBe("ev-a-3");
+      expect(ea!.sourceRunRef!.runId).toBe("run-a-1");
+      expect(ea!.planRevision).toBe(1);
+      expect(ea!.sourceCursor).toBe(makeCommitCursor(3));
+    }
+    await rm.close();
+  });
+
+  it("rebuild equivalence: empty fresh instance -> full replay == incremental (field-for-field)", async () => {
+    const projectId = "proj-alpha";
+    const { rec, claim, evA, evB } = evSet(projectId);
+
+    const incremental = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
+    await incremental.advance(page([pos(rec, 1)], 1));
+    await incremental.advance(page([pos(claim, 2)], 2));
+    await incremental.advance(page([pos(evA, 3)], 3));
+    await incremental.advance(page([pos(evB, 4)], 4));
+    const before = await incremental.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
+    expect(before.status).toBe("ready");
+
+    const fresh = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
+    await fresh.advance(page([pos(rec, 1), pos(claim, 2), pos(evA, 3), pos(evB, 4)], 4));
+    const rebuilt = await fresh.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
+    expect(rebuilt.status).toBe("ready");
+    if (before.status === "ready" && rebuilt.status === "ready") {
+      expect(json(rebuilt.provenance)).toBe(json(before.provenance));
+    }
+    await incremental.close();
+    await fresh.close();
+  });
+
+  it("full-key isolation: two Projects share goalId/taskId without colliding", async () => {
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
+    const alpha = recordedEvent("proj-alpha", "packet-isol-a", "ev-isol-a");
+    const beta = recordedEvent("proj-beta", "packet-isol-b", "ev-isol-b");
+    await rm.advance(page([pos(alpha, 1), pos(beta, 2)], 2));
+
+    const a = await rm.handoffProvenance({ projectId: "proj-alpha", goalId: P106_GOAL, taskId: P106_TASK_ID });
+    const b = await rm.handoffProvenance({ projectId: "proj-beta", goalId: P106_GOAL, taskId: P106_TASK_ID });
+    expect(a.status).toBe("ready");
+    expect(b.status).toBe("ready");
+    if (a.status === "ready") {
+      expect(a.provenance.projectId).toBe("proj-alpha");
+      expect(a.provenance.packetRefs[0]!.packetId).toBe("packet-isol-a");
+    }
+    if (b.status === "ready") {
+      expect(b.provenance.projectId).toBe("proj-beta");
+      expect(b.provenance.packetRefs[0]!.packetId).toBe("packet-isol-b");
+    }
+    if (a.status === "ready") expect(JSON.stringify(a.provenance)).not.toContain("packet-isol-b");
+    await rm.close();
+  });
+
+  it("freshness: not_ready != not_found; covered-atLeastCursor with no row -> not_found", async () => {
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
+    const cold = await rm.handoffProvenance({ projectId: "proj-alpha", goalId: P106_GOAL, taskId: P106_TASK_ID });
+    expect(cold.status).toBe("not_ready");
+
+    const rec = recordedEvent("proj-alpha", "packet-fresh", "ev-rec-fresh");
+    await rm.advance(page([pos(rec, 1)], 1));
+    const covered = makeCommitCursor(1);
+
+    const missing = await rm.handoffProvenance({
+      projectId: "proj-alpha",
+      goalId: P106_GOAL,
+      taskId: "task-never",
+      atLeastCursor: covered,
+    });
+    expect(missing.status).toBe("not_found");
+    const notCovered = await rm.handoffProvenance({
+      projectId: "proj-alpha",
+      goalId: P106_GOAL,
+      taskId: "task-never",
+      atLeastCursor: makeCommitCursor(2),
+    });
+    expect(notCovered.status).toBe("not_ready");
+    const noCursor = await rm.handoffProvenance({ projectId: "proj-alpha", goalId: P106_GOAL, taskId: "task-never" });
+    expect(noCursor.status).toBe("not_ready");
+    const ready = await rm.handoffProvenance({
+      projectId: "proj-alpha",
+      goalId: P106_GOAL,
+      taskId: P106_TASK_ID,
+      atLeastCursor: covered,
+    });
+    expect(ready.status).toBe("ready");
+    await rm.close();
+  });
+
+  it("outcomeUnknownPreserved always true; timeline order survives mixed writes", async () => {
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
+    const projectId = "proj-alpha";
+    const rec = recordedEvent(projectId, "packet-ou", "ev-ou-1");
+    const claim = claimedEvent(projectId, "packet-ou", "ev-ou-2", "att-b-ou", "run-b-ou");
+    const ev = evidenceEvent(projectId, "ev-ou-3", "ev-ou-3", "run-b-ou");
+    await rm.advance(page([pos(rec, 1), pos(claim, 2), pos(ev, 3)], 3));
+    const r = await rm.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
+    expect(r.status).toBe("ready");
+    if (r.status === "ready") {
+      expect(r.provenance.outcomeUnknownPreserved).toBe(true);
+      expect(r.provenance.timeline.map((e) => e.kind)).toEqual([
+        "packet_recorded",
+        "replacement_claimed",
+        "evidence_admitted",
+      ]);
+      expect(r.provenance.timeline.filter((e) => e.kind === "replacement_claimed")).toHaveLength(1);
+    }
+    await rm.close();
+  });
+
+  it("projection persists across close()/reopen and the reopen replays to the same view", async () => {
+    const projectId = "proj-alpha";
+    const path = join(tmpdir(), "p1-06-handoff-projection-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8) + ".sqlite");
+    try {
+      const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
+      const { rec, claim, evA, evB } = evSet(projectId);
+      await rm.advance(page([pos(rec, 1)], 1));
+      await rm.advance(page([pos(claim, 2)], 2));
+      await rm.advance(page([pos(evA, 3)], 3));
+      await rm.advance(page([pos(evB, 4)], 4));
+      const before = await rm.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
+      expect(before.status).toBe("ready");
+      const beforeJson = before.status === "ready" ? json(before.provenance) : "";
+      await rm.close();
+
+      // Reopen the SAME file with a fresh instance: the persisted projection row
+      // + checkpoint survive close()/reopen.
+      const reopened = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
+      const persisted = await reopened.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
+      expect(persisted.status).toBe("ready");
+      if (persisted.status === "ready") expect(json(persisted.provenance)).toBe(beforeJson);
+      await reopened.close();
+
+      // Rebuild: a brand-new FILE instance replaying the SAME EventPages equals
+      // the persisted/incremental view (empty -> full replay == incremental).
+      const rebuilt = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
+      await rebuilt.advance(page([pos(rec, 1), pos(claim, 2), pos(evA, 3), pos(evB, 4)], 4));
+      const rebuiltRes = await rebuilt.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
+      expect(rebuiltRes.status).toBe("ready");
+      if (rebuiltRes.status === "ready") expect(json(rebuiltRes.provenance)).toBe(beforeJson);
+      await rebuilt.close();
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
+  it("HandoffRecorded / ReplacementClaimed advance without stalling (handled event types)", async () => {
+    const rm = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path: ":memory:" });
+    const projectId = "proj-alpha";
+    const rec = recordedEvent(projectId, "packet-nostall", "ev-nostall-1");
+    const claim = claimedEvent(projectId, "packet-nostall", "ev-nostall-2", "att-b-ns", "run-b-ns");
+    const boot = {
+      eventId: "ev-boot-ns",
+      eventType: "WorkspaceBootstrapped",
+      schemaVersion: 1,
+      projectId,
+      workspaceId: P106_WORKSPACE,
+      aggregateType: "Workspace",
+      aggregateId: P106_WORKSPACE,
+      aggregateRevision: 1,
+      causationId: "cmd-boot",
+      correlationId: "corr-boot",
+      idempotencyKey: "boot-ns",
+      actor: { kind: "system", id: "bootstrap" },
+      occurredAt: P106_SCHEMA,
+      payload: { workspaceId: P106_WORKSPACE, projectId, desiredState: "active" },
+    };
+    const receipt = await rm.advance(page([pos(boot as never, 1), pos(rec, 2), pos(claim, 3)], 3));
+    expect(receipt.appliedEventIds).toHaveLength(3);
+    const r = await rm.handoffProvenance({ projectId, goalId: P106_GOAL, taskId: P106_TASK_ID });
+    expect(r.status).toBe("ready");
+    if (r.status === "ready") {
+      expect(r.provenance.timeline.map((e) => e.kind)).toEqual(["packet_recorded", "replacement_claimed"]);
+    }
+    await rm.close();
+  });
+});
+

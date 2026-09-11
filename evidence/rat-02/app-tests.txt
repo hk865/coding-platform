@@ -1,0 +1,9 @@
+
+ RUN  v4.1.10 /home/han001/projects/agents/agent_platform
+
+
+ Test Files  5 passed (5)
+      Tests  32 passed (32)
+   Start at  19:33:44
+   Duration  20.39s (transform 5.40s, setup 0ms, import 4.93s, tests 32.62s, environment 1ms)
+

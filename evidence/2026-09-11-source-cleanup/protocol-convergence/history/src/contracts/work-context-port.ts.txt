@@ -1,0 +1,110 @@
+/**
+ * P1-16 ContextCompiler.WorkContextPort — bounded work-context assembly
+ * (first consumer freeze of ContextCompiler.WorkContextPort).
+ *
+ * Authority: dev_docs/interfaces/context-lifecycle.md (ContextCompiler 按当前
+ * 工作、权限、版本和预算选取材料；manifest 列出来源、缺失、截断和适用性；
+ * 必要约束缺失时返回 needs_material；过期历史作为解释材料带标识保留).
+ *
+ * Semantics:
+ *   - assembleWorkContext(request) NEVER starts a model, never allocates work,
+ *     never changes roles. It selects the binding facts + bounded notes +
+ *     latest continuation record + work frontier, checks scope/permissions,
+ *     versions and budget, then saves the bounded Bundle body-first into the
+ *     ArtifactVault (owner = request.requestedByRunRef) and returns ready with
+ *     the bundleRef + manifest.
+ *   - needs_material: binding missing / fresh workspace or plan material
+ *     missing / no vault access -> explicit gaps. Bucket truncation is
+ *     reported in the manifest — NEVER silently claim ready with a full
+ *     context.
+ *   - Old notes are preserved as explanatory material with applicability
+ *     markers; they are NOT current facts.
+ */
+import type { CommitCursor } from "./command-event.js";
+import type { RunRef } from "./dispatch.js";
+import type { RoleBindingRefV1 } from "./dispatch.js";
+import type { ArtifactRef } from "./artifact.js";
+import type { WorkContextBindingV1, WorkContextRef } from "./context-continuity.js";
+
+export type WorkContextRequestV1 = {
+  schemaVersion: 1;
+  /** The work to compile context for. */
+  workContextRef: WorkContextRef;
+  /** The run that will use the bundle (owner of the body-first vault put). */
+  requestedByRunRef: RunRef;
+  roleBindingRef: RoleBindingRefV1;
+  declaredPermissions: { tools: string[]; writeScope: string[] };
+  /** Required material kinds (facts / reasons / frontier / sources). */
+  requiredMaterial: ("binding" | "notes" | "continuation" | "sources")[];
+  /** Hard budget: max bundle bytes (<= WORK_CONTEXT_BUNDLE_MAX_BYTES). */
+  maxBundleBytes: number;
+  /** Wanted note kinds (subset of EXECUTION_NOTE_KINDS; bounded overall). */
+  noteKinds: string[];
+  maxNotes: number;
+};
+
+export type WorkContextBucketRow = {
+  noteId: string;
+  kind: string;
+  summary: string;
+  runRef: RunRef;
+  createdAt: string;
+  sourceCursor: CommitCursor | null;
+  /** true when the note body could NOT be included (truncation/gap report). */
+  truncated: boolean;
+  /** true when this is historical explanation, not a current fact. */
+  historical: boolean;
+};
+
+export type WorkContextBundleV1 = {
+  schemaVersion: 1;
+  workContextRef: WorkContextRef;
+  binding: WorkContextBindingV1 | null;
+  bucketRows: WorkContextBucketRow[];
+  latestContinuation: { status: string; summary: string; recordedAt: string } | null;
+  selectedSources: { kind: string; refKey: string; version: number | null; label: string | null }[];
+  generatedAt: string;
+};
+
+export type WorkContextGap =
+  | { code: "binding_missing"; message: string }
+  | { code: "workspace_material_missing"; message: string }
+  | { code: "vault_unavailable"; message: string }
+  | { code: "budget_exhausted"; message: string }
+  | { code: "scope_forbidden"; message: string };
+
+export type WorkContextAssemblyResultV1 =
+  | {
+      status: "ready";
+      bundleRef: ArtifactRef;
+      manifest: WorkContextManifestV1;
+    }
+  | { status: "needs_material"; gaps: WorkContextGap[]; selectedRefs: ArtifactRef[] }
+  | { status: "rejected"; code: WorkContextRejectionCode; message: string };
+
+export type WorkContextRejectionCode =
+  | "invalid_request"
+  | "work_not_found"
+  | "forbidden_tool_or_scope"
+  | "budget_exhausted"
+  | "stale_versions"
+  | "unavailable";
+
+export type WorkContextManifestV1 = {
+  bundleRef: ArtifactRef;
+  selected: { kind: string; refKey: string; version: number | null; label: string | null }[];
+  truncated: { noteIds: string[]; reason: string }[];
+  gaps: WorkContextGap[];
+  freshness: {
+    bindingCursor: CommitCursor | null;
+    notesCursor: CommitCursor | null;
+    continuationCursor: CommitCursor | null;
+    observedCursor: CommitCursor | null;
+  };
+  totalBytes: number;
+};
+
+/** ContextCompiler.WorkContextPort — bounded assembly (interfaces_to_freeze). */
+export interface WorkContextPort {
+  assembleWorkContext(request: WorkContextRequestV1): Promise<WorkContextAssemblyResultV1>;
+}

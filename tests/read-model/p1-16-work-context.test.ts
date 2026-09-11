@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-16 LANE-A InMemory projection tests — workContext (binding + notes rows;
  * continuations are LANE-B). Reference: tests/read-model/p1-08-portfolio-summary.test.ts.
@@ -21,8 +22,8 @@ import {
   P108_PROJECT_B,
   P108_TASK_WORK,
 } from "../contract-suite/p1-08-harness.js";
-import { toP1_16Harness } from "../contract-suite/p1-16-harness.js";
-import { createReadModelIndex } from "../../src/read-model/read-model-index.js";
+import { p116DeclareWorkIdentity, toP1_16Harness } from "../contract-suite/p1-16-harness.js";
+import { createReadModelIndex } from "../../src/data/read-model-index/read-model-index.js";
 import type { ReadModelIndex } from "../../src/contracts/goal-view.js";
 import {
   P116_WORK,
@@ -33,7 +34,7 @@ import {
   buildLinkWorkRunCommand,
   buildExecutionNoteV1,
   buildRecordExecutionNoteCommand,
-} from "../../src/contracts/fixtures/context-fixtures.js";
+} from "../contract-support/fixtures/context-fixtures.js";
 import type { BindWorkContextCommand } from "../../src/contracts/context-continuity.js";
 
 const A = P108_PROJECT_A;
@@ -54,8 +55,10 @@ function bindCmd(deps: Parameters<typeof buildBindWorkContextCommand>[0]): BindW
 async function makeWorld() {
   const h = createInMemoryHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
   const p108 = toP1_08Harness(h as never);
-  const world = await runP108TwoProjectScenario(p108);
   const h16 = toP1_16Harness(h as never);
+  // RC-03：显式工作身份必须在派发建立兜底身份之前落地（命令面不再允许事后补第二条），
+  // 因此任务身份由夹具在 claim 之后、drive 之前声明；下面的用例只用既有身份做投影。
+  const world = await runP108TwoProjectScenario(p108, { afterClaim: p116DeclareWorkIdentity(h16) });
   const goalA = world.previews.find((p) => p.projectId === A)!.goalId;
   return { h: h16, harness: h, world, goalA };
 }
@@ -68,10 +71,7 @@ describe("P1-16 LANE-A InMemory work-context projection", () => {
   it("projects the binding + notes rows for one work and rebuilds identically from a fresh index", async () => {
     const ctx = await makeWorld();
     const runRef = ctx.world.projectA.workRun;
-    await ctx.h.bindWorkContext(bindCmd({
-      commandId: "rm-bind-w1", projectId: A, workId: P116_WORK, workspaceId: WSPACE,
-      workKind: "task", goalId: ctx.goalA, taskId: P108_TASK_WORK, initialRunRef: runRef,
-    }));
+    // 任务身份已由 makeWorld 的挂钩在派发之前声明（RC-03）：这里直接消费它。
     const note = buildExecutionNoteV1({
       noteId: P116_NOTE_1, workId: P116_WORK, projectId: A, runRef, kind: "checkpoint",
     });
@@ -89,7 +89,7 @@ describe("P1-16 LANE-A InMemory work-context projection", () => {
 
     // Rebuild equivalence: a FRESH index replayed over the same EventPages
     // reproduces the same binding + notes rows.
-    const fresh = createReadModelIndex();
+    const fresh = createReadModelIndex(new ControlPolicyExplanation());
     await replayAllEvents(ctx.harness.ledger, fresh);
     const fv = await fresh.workContext({ projectId: A, workspaceId: WSPACE, workId: P116_WORK });
     expect(fv.status).toBe("ready");
@@ -99,17 +99,8 @@ describe("P1-16 LANE-A InMemory work-context projection", () => {
 
   it("scope isolation: the SAME local workId in project B has its OWN rows (no cross-project read)", async () => {
     const ctx = await makeWorld();
-    // Project A work.
-    await ctx.h.bindWorkContext(bindCmd({
-      commandId: "rm-bind-a", projectId: A, workId: P116_WORK, workspaceId: WSPACE,
-      workKind: "task", goalId: ctx.goalA, taskId: P108_TASK_WORK, initialRunRef: ctx.world.projectA.workRun,
-    }));
-    // Project B work — SAME local workId, SAME workspaceId, isolated by projectId.
-    await ctx.h.bindWorkContext(bindCmd({
-      commandId: "rm-bind-b", projectId: B, workId: P116_WORK, workspaceId: WSPACE,
-      workKind: "task", goalId: ctx.world.previews.find((p) => p.projectId === B)!.goalId,
-      taskId: P108_TASK_WORK, initialRunRef: ctx.world.projectB.workRun,
-    }));
+    // 两个项目的 work 任务身份都已由 makeWorld 的挂钩在各自派发之前声明（RC-03）：
+    // 同一个本地 workId 在两个项目里各自存在一条身份，互不覆盖。
     await ctx.h.advanceProjection();
 
     const va = await workView(ctx.h, A, P116_WORK);
@@ -155,7 +146,7 @@ describe("P1-16 LANE-A InMemory work-context projection", () => {
   it("freshness: not_ready before any advance, not_found for a never-bound work", async () => {
     const ctx = await makeWorld();
     // Fresh index with NO events applied -> not_ready (cannot judge existence).
-    const fresh = createReadModelIndex();
+    const fresh = createReadModelIndex(new ControlPolicyExplanation());
     const z = await fresh.workContext({ projectId: A, workspaceId: WSPACE, workId: "work-never-bound" });
     expect(z.status).toBe("not_ready");
 

@@ -1,0 +1,174 @@
+/**
+ * P1-17 ContextCompiler.CompletedWorkContextPort — applicability-annotated
+ * selection of COMPLETED work for a related new task (selection ONLY; zero
+ * ledger writes; no MemoryStore).
+ *
+ * RW-18：本端口只做**选材**，不做历史访问的授权判定（判据见 completed-work-context.ts 的文件头：
+ * 它属于"对那段工作的历史访问权限"，与请求运行是否只读无关）。因此入参里的 declaredPermissions
+ * 只被形状校验并原样回显，供审计与调用方自查；真正的准入在派发时编译历史材料的那一步。
+ */
+import type { CompletedWorkContextPort, CompletedWorkContextRequestV1, CompletedWorkContextResultV1, CompletedWorkSelectionItemV1, CompletedWorkGap } from "../../contracts/completed-work-context.js";
+import { COMPLETED_WORK_MAX_NOTES, COMPLETED_WORK_MAX_SELECTED } from "../../contracts/completed-work-context.js";
+import { canonicalJson } from "../../contracts/fingerprint.js";
+import type { StateLedger } from "../../contracts/ledger.js";
+import type { ArtifactPort } from "../../contracts/artifact.js";
+import type { ReadModelIndex } from "../../contracts/goal-view.js";
+import type { WorkContextBindingSnapshot } from "../../contracts/context-continuity.js";
+import type { ExecutionNoteSnapshot } from "../../contracts/context-continuity.js";
+
+export type CompletedWorkCompilerDeps = {
+  ledger: StateLedger;
+  vault: ArtifactPort;
+  readModel: ReadModelIndex;
+  now: () => string;
+};
+
+export class CompletedWorkContextCompilerImpl implements CompletedWorkContextPort {
+  private readonly deps: CompletedWorkCompilerDeps;
+
+  constructor(deps: CompletedWorkCompilerDeps) {
+    this.deps = deps;
+  }
+
+  async assembleCompletedWorkContext(request: CompletedWorkContextRequestV1): Promise<CompletedWorkContextResultV1> {
+    if (request.schemaVersion !== 1 || !request.requestId || !request.projectId || !request.workspaceId) {
+      return { status: "rejected", code: "invalid_request", message: "schemaVersion/ids required" };
+    }
+    if (!request.requestedByRunRef || request.requestedByRunRef.projectId !== request.projectId ||
+        request.requestedByRunRef.aggregateType !== 'Run' ||
+        (request.newWorkGoalId !== null && request.requestedByRunRef.goalId !== request.newWorkGoalId) ||
+        (request.applicableVersions?.planRef && request.applicableVersions.planRef.projectId !== request.projectId)) {
+      return { status: 'rejected', code: 'forbidden_tool_or_scope', message: 'requesting run or plan is outside the requested scope' };
+    }
+    if (!request.declaredPermissions || !Array.isArray(request.declaredPermissions.tools) ||
+        !Array.isArray(request.declaredPermissions.writeScope) || !Array.isArray(request.relatedRefs) ||
+        request.relatedRefs.length > 32 || request.relatedRefs.some(r => !r || !r.refKey?.trim()) ||
+        !request.applicableVersions || !Number.isSafeInteger(request.applicableVersions.workspaceRevision) ||
+        request.applicableVersions.workspaceRevision < 0 || !request.budget ||
+        !Number.isSafeInteger(request.budget.maxSelected) || !Number.isSafeInteger(request.budget.maxBundleBytes)) {
+      return { status: 'rejected', code: 'invalid_request', message: 'invalid permissions, related refs, versions or budget' };
+    }
+    // RW-18：这里**不再**要求请求运行是只读的。曾经这条判据把"本运行是否只读"当成了跨工作历史的
+    // 准入条件，那是把两件事混在一起：只读是运行自身的执行权限（由信封 permissions／租约决定），
+    // 读别的工作的历史是**对那段工作的历史访问权限**，两者正交。准入判定在派发时编译历史材料的
+    // 那一步（work-run-materials.ts 的 selectHistory），依据是既有授权权威（ArtifactVault + Control
+    // 登记的 MaterialAccessGrant 历史授权）给出的"这个申请者能不能读这段工作的历史"，未获授权即
+    // 如实缺项。本端口不复制那条判据，也不因为运行可写就放宽它 —— declaredPermissions 只作审计回显。
+    if (request.budget.maxSelected < 1 || request.budget.maxSelected > COMPLETED_WORK_MAX_SELECTED) {
+      return { status: "rejected", code: "budget_exhausted", message: "maxSelected out of bounds" };
+    }
+    if (request.budget.maxBundleBytes <= 0 || request.budget.maxBundleBytes > 256 * 1024) {
+      return { status: "rejected", code: "budget_exhausted", message: "maxBundleBytes out of bounds" };
+    }
+
+    const view = await this.deps.readModel.completedWorkView({ projectId: request.projectId, workspaceId: request.workspaceId });
+    if (view.status === "not_ready") {
+      return { status: "needs_material", gaps: [{ code: "stale_versions", message: "projection not ready" }], selectedRefs: [] };
+    }
+    if (view.status === "not_found" || view.rows.length === 0) {
+      return { status: "needs_material", gaps: [{ code: "no_records", message: "no completed work records in scope" }], selectedRefs: [] };
+    }
+
+    const gaps: CompletedWorkGap[] = [];
+    const changedPremises: { workRef: import("../../contracts/context-continuity.js").WorkContextRef; premise: string; reason: string }[] = [];
+    const selected: CompletedWorkSelectionItemV1[] = [];
+
+    for (const row of view.rows) {
+      if (selected.length >= request.budget.maxSelected) break;
+      if (row.goalId !== null && row.goalId === request.newWorkGoalId) continue;
+      if (row.workRef.projectId !== request.projectId || row.workRef.workspaceId !== request.workspaceId) {
+        return { status: 'needs_material', gaps: [{ code: 'cross_scope', message: 'history view returned a foreign work' }], selectedRefs: [] };
+      }
+      const wc = await this.deps.readModel.workContext({ projectId: request.projectId, workspaceId: request.workspaceId, workId: row.workRef.workId });
+      if (wc.status !== 'ready' || canonicalJson(wc.binding.ref) !== canonicalJson(row.workRef)) {
+        return { status: 'needs_material', gaps: [{ code: 'missing_body', message: 'work binding or notes are unavailable' }], selectedRefs: [] };
+      }
+      const notes = wc.status === "ready" ? wc.notes.slice(0, COMPLETED_WORK_MAX_NOTES) : [];
+      const recorded: ExecutionNoteSnapshot[] = [];
+      for (const n of notes) {
+        if (n.noteRef.projectId !== request.projectId || n.noteRef.workspaceId !== request.workspaceId || n.noteRef.workId !== row.workRef.workId) {
+          return { status: 'needs_material', gaps: [{ code: 'cross_scope', message: 'note is outside the selected work' }], selectedRefs: [] };
+        }
+        const loaded = await this.deps.ledger.load(n.noteRef);
+        if (loaded.status !== 'found' || loaded.snapshot.ref.aggregateType !== 'ExecutionNote' ||
+            canonicalJson(loaded.snapshot.ref) !== canonicalJson(n.noteRef)) {
+          return { status: 'needs_material', gaps: [{ code: 'missing_body', message: 'recorded execution note unavailable' }], selectedRefs: [] };
+        }
+        recorded.push(loaded.snapshot as ExecutionNoteSnapshot);
+      }
+      const matched = request.relatedRefs.some((ref) =>
+        row.workKind.includes(ref.refKey) || row.taskId?.includes(ref.refKey) || recorded.some((n) => n.note.summary.includes(ref.refKey)),
+      );
+      // Text relevance cannot prove a typed module/path/spec revision. This port
+      // has no resolver for those references; retain history without authority.
+      const unverifiedRelatedVersion = request.relatedRefs.some(ref => ref.version !== null);
+      const changes = new Set<string>();
+      for (const { note } of recorded) {
+        const prior = note.applicableVersions, current = request.applicableVersions;
+        for (const key of ['workspaceRevision', 'planRevision', 'governanceRevision', 'planRef'] as const) {
+          if (current[key] !== null && canonicalJson(prior[key]) !== canonicalJson(current[key])) changes.add(key);
+        }
+      }
+      for (const premise of changes) changedPremises.push({ workRef: row.workRef, premise,
+        reason: 'requested version differs from recorded execution note versions' });
+      const applicability: CompletedWorkSelectionItemV1['applicability'] = matched && recorded.length > 0 && changes.size === 0 && !unverifiedRelatedVersion
+        ? { status: 'applicable', because: 'related text matched and recorded note versions match; no completion or authorization inherited' }
+        : { status: 'historical_explanation', because: !matched ? 'related refs not matched' : recorded.length === 0 ? 'no recorded versions available' : unverifiedRelatedVersion ? 'explicit related-source version is unverified' : 'recorded premises changed',
+            premiseChanged: changes.size ? [...changes].join(', ') : null };
+      selected.push({
+        workRef: row.workRef,
+        workKind: row.workKind,
+        goalId: row.goalId,
+        taskId: row.taskId,
+        runRefs: (wc.status === "ready" ? wc.binding.binding.linkedRunRefs : []).map((r) => ({ ...r })),
+        notes: notes.map((n, i) => ({ noteRef: n.noteRef, kind: recorded[i]!.note.kind, summary: recorded[i]!.note.summary, createdAt: recorded[i]!.note.createdAt, sourceCursor: n.sourceCursor,
+          reason: recorded[i]!.note.reason, alternatives: recorded[i]!.note.alternatives,
+          sourceRefs: recorded[i]!.note.sourceRefs, applicableVersions: recorded[i]!.note.applicableVersions })),
+        applicability,
+        sources: [{ kind: "binding", refKey: canonicalJson(row.workRef), version: String(wc.binding.revision), label: "work binding" },
+          ...recorded.map(n => ({ kind: 'execution-note', refKey: canonicalJson(n.ref), version: String(n.revision), label: n.note.noteId }))],
+      });
+    }
+
+    if (selected.length === 0) {
+      return { status: 'needs_material', gaps: [{ code: 'no_records', message: 'no eligible completed work after filtering' }], selectedRefs: [] };
+    }
+
+    const selection = {
+      schemaVersion: 1 as const,
+      selectionId: "sel-" + request.requestId,
+      projectId: request.projectId,
+      workspaceId: request.workspaceId,
+      requestedByRunRef: { ...request.requestedByRunRef },
+      applicableVersions: request.applicableVersions,
+      selected,
+      gaps,
+      changedPremises,
+      generatedAt: this.deps.now(),
+      bodyRef: null as unknown as import("../../contracts/artifact.js").ArtifactRef,
+    };
+    const body = canonicalJson(selection);
+    if (Buffer.byteLength(body, "utf8") > request.budget.maxBundleBytes) {
+      return { status: "needs_material", gaps: [{ code: "over_budget", message: "selection exceeds maxBundleBytes" }], selectedRefs: [] };
+    }
+    const put = await this.deps.vault.put({ contentType: "application/json", body, sourceRefs: [{ kind: "artifact", refId: selection.selectionId, revision: "1", digest: "" }], ownerRef: request.requestedByRunRef, requestedAt: selection.generatedAt });
+    if (put.status !== "stored") {
+      return { status: "needs_material", gaps: [{ code: "missing_body", message: put.status === "rejected" ? put.issues.join("; ") : "vault unavailable" }], selectedRefs: [] };
+    }
+    selection.bodyRef = put.ref;
+    return {
+      status: "ready",
+      selectionRef: put.ref,
+      manifest: {
+        requestId: request.requestId,
+        selectedCount: selected.length,
+        gapCount: gaps.length,
+        changedPremiseCount: changedPremises.length,
+        freshness: { observedCursor: view.status === "ready" ? view.sourceCursor : null, worksCursor: view.status === "ready" ? view.sourceCursor : null, notesCursor: view.status === "ready" ? view.sourceCursor : null },
+        totalBytes: Buffer.byteLength(body, "utf8"),
+      },
+    };
+  }
+}
+
+export type { WorkContextBindingSnapshot };

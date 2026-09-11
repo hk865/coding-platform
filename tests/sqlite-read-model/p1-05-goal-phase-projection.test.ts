@@ -1,3 +1,4 @@
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
  * P1-05 SQLite goal-phase projection tests (persistent adapter) — the same
  * semantics as the InMemory suite against the SQLite read model, including
@@ -8,7 +9,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
-import { createSqliteReadModelIndex } from "../../src/sqlite-read-model/sqlite-read-model-index.js";
+import { createSqliteReadModelIndex } from "../../src/data/read-model-index/sqlite-read-model-index.js";
 import { makeCommitCursor } from "../../src/contracts/ledger.js";
 import {
   prepareP105Scenario,
@@ -133,7 +134,7 @@ describe("P1-05 SQLite goal-phase projection", () => {
   it("full-scope isolation: two Projects share the same goalId without colliding", async () => {
     const dir = await mkdtemp(join(tmpdir(), "p105-iso-"));
     const path = join(dir, "iso.sqlite");
-    const idx = createSqliteReadModelIndex({ path });
+    const idx = createSqliteReadModelIndex({ policyExplanation: new ControlPolicyExplanation(), path });
     try {
       await idx.advance({
         afterCursor: null, throughCursor: makeCommitCursor(2),

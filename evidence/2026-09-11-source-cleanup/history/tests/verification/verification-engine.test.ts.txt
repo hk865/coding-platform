@@ -1,0 +1,485 @@
+/**
+ * P1-04 Lane B — VerificationEngine.verify tests.
+ *
+ * Scope: the engine resolves canonical facts (goal/workspace/plan/pins/policy),
+ * delegates compilation to the PURE compileVerificationPlan, runs only the
+ * PREDICATE (static/dynamic) checks, produces observation drafts, and NEVER
+ * writes the ledger. Reviewer-layer checks are NOT executed here.
+ *
+ * The shared contract suite exercises the same behavior through the harness;
+ * this file drives the engine directly (constructing its own scenario because
+ * the shared prepareP104Scenario queries planGraph before advanceProjection —
+ * a harness concern outside this lane's write scope).
+ */
+import { describe, expect, it } from "vitest";
+import { createInMemoryHarness, type InMemoryHarness } from "../../src/harness/in-memory-harness.js";
+import { VerificationContextCompiler } from "../../src/data/context-compiler/verification-context.js";
+import { compileVerificationPlan } from "../../src/control/verification-engine/verification-plan-compiler.js";
+import { VerificationEngineImpl } from "../../src/control/verification-engine/verification-engine.js";
+import {
+  DeterministicStaticCheckProvider,
+  FAKE_REVIEWER_PORT,
+} from "../../src/contracts/testing/check-providers.double.js";
+import type {
+  CheckCapabilityV1,
+  CheckPort,
+  VerificationPlanCompileInput,
+  VerificationRequestV1,
+} from "../../src/contracts/verification.js";
+import {
+  NO_CHANGE_FAST_PATH_CHECK_ID,
+  REVIEWER_SEMANTIC_CHECK_ID,
+} from "../../src/contracts/verification.js";
+import type { PlanRevisionRef, PlanRevisionSnapshot } from "../../src/contracts/plan.js";
+import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+import {
+  ARCHITECTURE_BASELINE_FIXTURE_V1,
+  COMPLETION_POLICY_FIXTURE_V1,
+  architectureBaselinePinFor,
+  buildActivateCommand,
+  buildInstallCommand,
+  completionPolicyPinFor,
+} from "../../src/contracts/fixtures/governance-fixtures.js";
+import {
+  MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
+  buildCreateGoalCommand,
+} from "../../src/contracts/fixtures/goal-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/contracts/fixtures/plan-fixtures.js";
+import {
+  COMPLETION_POLICY_FASTPATH_FIXTURE_V1,
+  P104_GOAL,
+  P104_PLAN_ID,
+  P104_PLAN_REVISION_FIXTURE_V1,
+  P104_TASK_IMPLEMENT,
+  P104_TASK_REVIEW,
+} from "../../src/contracts/fixtures/evidence-fixtures.js";
+
+const FLOW = "2026-09-05T12:00:00.000Z";
+const clock = (): string => FLOW;
+
+function planRefFor(projectId: string): PlanRevisionRef {
+  return { aggregateType: "PlanRevision", projectId, planId: P104_PLAN_ID };
+}
+
+async function bootstrap(h: InMemoryHarness): Promise<void> {
+  const boot = await h.bootstrap(
+    buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, {
+      commandId: "cmd-boot",
+      correlationId: "corr-boot",
+      submittedAt: FLOW,
+    }),
+  );
+  expect(boot.status).toBe("committed");
+}
+
+/** Mirror the shared harness's prepareP104Project (minus the planGraph query). */
+async function prepareProject(
+  h: InMemoryHarness,
+  projectId: string,
+  suffix: string,
+  policyFixture: typeof COMPLETION_POLICY_FIXTURE_V1,
+): Promise<{ plan: PlanRevisionSnapshot; planRef: PlanRevisionRef; pins: { policy: unknown; baseline: unknown } }> {
+  const cpCmd = buildInstallCommand(policyFixture, {
+    commandId: "cmd-ins-cp-" + suffix,
+    correlationId: "corr-ins-cp-" + suffix,
+    submittedAt: FLOW,
+    projectId,
+    idempotencyKey: "k-ins-cp-" + suffix,
+  });
+  expect((await h.install(cpCmd)).status).toBe("committed");
+  const abCmd = buildInstallCommand(ARCHITECTURE_BASELINE_FIXTURE_V1, {
+    commandId: "cmd-ins-ab-" + suffix,
+    correlationId: "corr-ins-ab-" + suffix,
+    submittedAt: FLOW,
+    projectId,
+    idempotencyKey: "k-ins-ab-" + suffix,
+  });
+  expect((await h.install(abCmd)).status).toBe("committed");
+  expect(
+    (
+      await h.activate(
+        buildActivateCommand(completionPolicyPinFor(cpCmd as never), {
+          commandId: "cmd-act-cp-" + suffix,
+          correlationId: "corr-act-cp-" + suffix,
+          submittedAt: FLOW,
+          projectId,
+          expectedRevision: 1,
+          idempotencyKey: "k-act-cp-" + suffix,
+        }),
+      )
+    ).status,
+  ).toBe("committed");
+  expect(
+    (
+      await h.activate(
+        buildActivateCommand(architectureBaselinePinFor(abCmd as never), {
+          commandId: "cmd-act-ab-" + suffix,
+          correlationId: "corr-act-ab-" + suffix,
+          submittedAt: FLOW,
+          projectId,
+          expectedRevision: 1,
+          idempotencyKey: "k-act-ab-" + suffix,
+        }),
+      )
+    ).status,
+  ).toBe("committed");
+  const scope = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.scopes.find((s) => s.projectId === projectId);
+  if (scope === undefined) throw new Error("scope missing");
+  expect(
+    (
+      await h.control.submit(
+        buildCreateGoalCommand(scope, {
+          commandId: "cmd-goal-" + suffix,
+          correlationId: "corr-goal-" + suffix,
+          submittedAt: FLOW,
+        }),
+      )
+    ).status,
+  ).toBe("committed");
+  expect(
+    (
+      await h.applyPlan(
+        buildApplyPlanCommand(P104_PLAN_REVISION_FIXTURE_V1, {
+          commandId: "cmd-plan-" + suffix,
+          correlationId: "corr-plan-" + suffix,
+          submittedAt: FLOW,
+          projectId,
+          expectedRevision: 1,
+        }),
+      )
+    ).status,
+  ).toBe("committed");
+  await h.advanceProjection();
+  const planRef = planRefFor(projectId);
+  const load = await h.ledger.load(planRef);
+  expect(load.status).toBe("found");
+  if (load.status !== "found") throw new Error("plan snapshot missing");
+  const plan = load.snapshot as PlanRevisionSnapshot;
+  return {
+    plan,
+    planRef,
+    pins: {
+      policy: plan.effectiveCompletionPolicy,
+      baseline: plan.effectiveArchitectureBaseline,
+    },
+  };
+}
+
+function requestFor(
+  projectId: string,
+  planRef: PlanRevisionRef,
+  overrides: Partial<VerificationRequestV1> = {},
+): VerificationRequestV1 {
+  return {
+    schemaVersion: 1,
+    requestId: "req-1",
+    projectId,
+    goalId: P104_GOAL,
+    taskId: P104_TASK_IMPLEMENT,
+    planRef,
+    changeScope: { diffClass: "code-change", changedFiles: ["src/a.ts"], writeSummary: "change" },
+    semanticChange: "semantic",
+    risks: [{ level: "low", description: "local" }],
+    ...overrides,
+  };
+}
+
+async function eventsCount(h: InMemoryHarness): Promise<number> {
+  const page = await h.ledger.events({ afterCursor: null, limit: 1000 });
+  return page.events.length;
+}
+
+describe("P1-04 Lane B — VerificationEngineImpl", () => {
+  it("verify: ready + deterministic plan/observation drafts; NEVER writes the ledger", async () => {
+    const h = createInMemoryHarness({ deps: {} });
+    await bootstrap(h);
+    const { planRef } = await prepareProject(h, "proj-alpha", "a", COMPLETION_POLICY_FIXTURE_V1);
+
+    const before = await eventsCount(h);
+    const req = requestFor("proj-alpha", planRef);
+    const r1 = await h.verification.verify(req);
+    expect(r1.status).toBe("ready");
+    if (r1.status !== "ready") return;
+
+    expect(r1.plan.planId).toBe(r1.plan.planDigest);
+    expect(r1.plan.checks.map((c) => c.kind).sort()).toEqual(["dynamic", "static"]);
+    expect(r1.observations.length).toBe(2);
+    expect(r1.observations.every((o) => o.result === "PASS")).toBe(true);
+    expect(r1.verificationPlanRef.planId).toBe(r1.plan.planId);
+    expect(r1.verificationPlanRef.planDigest).toBe(r1.plan.planDigest);
+    // observations carry the plan's coverage + summary + artifactRef per check
+    const staticObs = r1.observations.find((o) => o.checkId === "static-check-lint");
+    expect(staticObs).toBeDefined();
+    expect(staticObs!.coverage).toEqual([{ obligationId: "obl-implement", requirementId: "vr-impl-static" }]);
+
+    // Determinism: same request -> same planId + observations.
+    const r2 = await h.verification.verify(req);
+    expect(r2.status).toBe("ready");
+    if (r2.status === "ready") {
+      expect(r2.plan.planId).toBe(r1.plan.planId);
+      expect(r2.observations).toEqual(r1.observations);
+    }
+
+    const after = await eventsCount(h);
+    expect(after).toBe(before);
+  });
+
+  it("observation results are diffClass-tabulated (static-fail -> FAIL, etc.)", async () => {
+    const h = createInMemoryHarness({ deps: {} });
+    await bootstrap(h);
+    const { planRef } = await prepareProject(h, "proj-alpha", "a", COMPLETION_POLICY_FIXTURE_V1);
+
+    const fail = await h.verification.verify(
+      requestFor("proj-alpha", planRef, {
+        changeScope: { diffClass: "static-fail", changedFiles: ["src/a.ts"], writeSummary: "x" },
+      }),
+    );
+    expect(fail.status).toBe("ready");
+    if (fail.status === "ready") {
+      const staticObs = fail.observations.find((o) => o.checkId === "static-check-lint")!;
+      const dynamicObs = fail.observations.find((o) => o.checkId === "dynamic-check-tests")!;
+      expect(staticObs.result).toBe("FAIL");
+      expect(dynamicObs.result).toBe("PASS");
+      expect(fail.observations.length).toBe(2);
+    }
+
+    const dynFail = await h.verification.verify(
+      requestFor("proj-alpha", planRef, {
+        changeScope: { diffClass: "dynamic-fail", changedFiles: ["src/a.ts"], writeSummary: "x" },
+      }),
+    );
+    expect(dynFail.status).toBe("ready");
+    if (dynFail.status === "ready") {
+      const dynamicObs = dynFail.observations.find((o) => o.checkId === "dynamic-check-tests")!;
+      expect(dynamicObs.result).toBe("FAIL");
+    }
+
+    const inconclusive = await h.verification.verify(
+      requestFor("proj-alpha", planRef, {
+        changeScope: {
+          diffClass: "static-inconclusive",
+          changedFiles: ["src/a.ts"],
+          writeSummary: "x",
+        },
+      }),
+    );
+    expect(inconclusive.status).toBe("ready");
+    if (inconclusive.status === "ready") {
+      const staticObs = inconclusive.observations.find((o) => o.checkId === "static-check-lint")!;
+      expect(staticObs.result).toBe("INCONCLUSIVE");
+    }
+  });
+
+  it("reviewer-layer checks are planned but NOT executed (review-packet path)", async () => {
+    const h = createInMemoryHarness({ deps: {} });
+    await bootstrap(h);
+    const { planRef } = await prepareProject(h, "proj-alpha", "a", COMPLETION_POLICY_FIXTURE_V1);
+
+    const r = await h.verification.verify(
+      requestFor("proj-alpha", planRef, {
+        taskId: P104_TASK_REVIEW,
+        changeScope: { diffClass: "docs-only", changedFiles: ["docs/x.md"], writeSummary: "docs" },
+        semanticChange: "semantic",
+        risks: [],
+      }),
+    );
+    expect(r.status).toBe("ready");
+    if (r.status !== "ready") return;
+    const reviewer = r.plan.checks.find((c) => c.kind === "reviewer");
+    expect(reviewer).toBeDefined();
+    expect(reviewer!.checkId).toBe(REVIEWER_SEMANTIC_CHECK_ID);
+    expect(reviewer!.satisfactionPath).toBe("review-packet");
+    // Only the predicate (static) check is executed; the reviewer check never runs.
+    expect(r.observations.length).toBe(1);
+    expect(r.observations.every((o) => o.kind === "static")).toBe(true);
+    expect(r.observations.some((o) => o.checkId === REVIEWER_SEMANTIC_CHECK_ID)).toBe(false);
+  });
+
+  it("fast-path plan: no-change + policy allows -> no-change-fast-path; no-change + policy disallows -> review-packet", async () => {
+    const h = createInMemoryHarness({ deps: {} });
+    await bootstrap(h);
+    const alpha = await prepareProject(h, "proj-alpha", "a", COMPLETION_POLICY_FIXTURE_V1);
+    const beta = await prepareProject(h, "proj-beta", "b", COMPLETION_POLICY_FASTPATH_FIXTURE_V1);
+
+    const reviewReq = (projectId: string, planRef: PlanRevisionRef): VerificationRequestV1 =>
+      requestFor(projectId, planRef, {
+        taskId: P104_TASK_REVIEW,
+        changeScope: { diffClass: "docs-only", changedFiles: ["docs/x.md"], writeSummary: "docs" },
+        semanticChange: "none",
+        risks: [],
+      });
+
+    // alpha: no fast-path in the policy -> still a review packet.
+    const alphaR = await h.verification.verify(reviewReq("proj-alpha", alpha.planRef));
+    expect(alphaR.status).toBe("ready");
+    if (alphaR.status === "ready") {
+      const reviewer = alphaR.plan.checks.find((c) => c.kind === "reviewer")!;
+      expect(reviewer.satisfactionPath).toBe("review-packet");
+      expect(reviewer.checkId).toBe(REVIEWER_SEMANTIC_CHECK_ID);
+    }
+
+    // beta: policy explicitly allows docs-only fast-path -> no-change-fast-path.
+    const betaR = await h.verification.verify(reviewReq("proj-beta", beta.planRef));
+    expect(betaR.status).toBe("ready");
+    if (betaR.status === "ready") {
+      const reviewer = betaR.plan.checks.find((c) => c.kind === "reviewer")!;
+      expect(reviewer.checkId).toBe(NO_CHANGE_FAST_PATH_CHECK_ID);
+      expect(reviewer.satisfactionPath).toBe("no-change-fast-path");
+      expect(reviewer.noChangeFastPath!.diffClass).toBe("docs-only");
+    }
+  });
+
+  it("rejections: not_found (goal/plan/workspace) with zero ledger writes", async () => {
+    const h = createInMemoryHarness({ deps: {} });
+    await bootstrap(h);
+    const { planRef } = await prepareProject(h, "proj-alpha", "a", COMPLETION_POLICY_FIXTURE_V1);
+    const before = await eventsCount(h);
+
+    // Missing goal.
+    const noGoal = await h.verification.verify(
+      requestFor("proj-alpha", planRef, { goalId: "goal-missing" }),
+    );
+    expect(noGoal.status).toBe("rejected");
+    if (noGoal.status === "rejected") expect(noGoal.code).toBe("not_found");
+
+    // Missing plan (goal exists, planRef points to a non-existent plan).
+    const noPlan = await h.verification.verify(
+      requestFor("proj-alpha", {
+        aggregateType: "PlanRevision",
+        projectId: "proj-alpha",
+        planId: "plan-nope",
+      }),
+    );
+    expect(noPlan.status).toBe("rejected");
+    if (noPlan.status === "rejected") expect(noPlan.code).toBe("not_found");
+
+    expect(await eventsCount(h)).toBe(before);
+  });
+
+  it("rejections: dangling_ref when a declared pin is stale (no built-in default)", async () => {
+    const h = createInMemoryHarness({ deps: {} });
+    await bootstrap(h);
+    const { planRef } = await prepareProject(h, "proj-alpha", "a", COMPLETION_POLICY_FIXTURE_V1);
+    const before = await eventsCount(h);
+
+    // Declare a CompletionPolicy pin that differs from the plan snapshot's pin.
+    const stalePin = {
+      ref: {
+        aggregateType: "CompletionPolicyRevision" as const,
+        projectId: "proj-alpha",
+        policyId: "policy-not-installed",
+        revision: 1,
+      },
+      digest: "f".repeat(64),
+    };
+    const r = await h.verification.verify(
+      requestFor("proj-alpha", planRef, { pinnedCompletionPolicy: stalePin }),
+    );
+    expect(r.status).toBe("rejected");
+    if (r.status === "rejected") expect(r.code).toBe("dangling_ref");
+
+    expect(await eventsCount(h)).toBe(before);
+  });
+
+  it("rejections: no_check_coverage when a required kind has no provider", async () => {
+    const h = createInMemoryHarness({ deps: {} });
+    await bootstrap(h);
+    const { planRef } = await prepareProject(h, "proj-alpha", "a", COMPLETION_POLICY_FIXTURE_V1);
+    const before = await eventsCount(h);
+
+    // Only the STATIC provider is registered -> the dynamic required VR has no
+    // coverage -> deterministic no_check_coverage (never a silent skip).
+    const engine = new VerificationEngineImpl(
+      { context: new VerificationContextCompiler({ ledger: h.ledger, vault: h.vault }), now: clock },
+      [new DeterministicStaticCheckProvider()],
+      FAKE_REVIEWER_PORT,
+    );
+    const r = await engine.verify(requestFor("proj-alpha", planRef));
+    expect(r.status).toBe("rejected");
+    if (r.status === "rejected") expect(r.code).toBe("no_check_coverage");
+
+    expect(await eventsCount(h)).toBe(before);
+  });
+
+  it("rejections: unknown_check for a malformed capability", async () => {
+    const h = createInMemoryHarness({ deps: {} });
+    await bootstrap(h);
+    const { planRef } = await prepareProject(h, "proj-alpha", "a", COMPLETION_POLICY_FIXTURE_V1);
+    const before = await eventsCount(h);
+
+    const malformed: CheckPort = {
+      async capabilities(): Promise<CheckCapabilityV1[]> {
+        return [{ checkId: "", kind: "static", coversKinds: ["static"], replayable: true }];
+      },
+      async runCheck(): Promise<never> {
+        throw new Error("must not run");
+      },
+    };
+    const engine = new VerificationEngineImpl(
+      { context: new VerificationContextCompiler({ ledger: h.ledger, vault: h.vault }), now: clock },
+      [malformed],
+      FAKE_REVIEWER_PORT,
+    );
+    const r = await engine.verify(requestFor("proj-alpha", planRef));
+    expect(r.status).toBe("rejected");
+    if (r.status === "rejected") expect(r.code).toBe("unknown_check");
+
+    expect(await eventsCount(h)).toBe(before);
+  });
+
+  it("rejections: budget_exhausted when predicate checks exceed maxChecks", async () => {
+    const h = createInMemoryHarness({ deps: {} });
+    await bootstrap(h);
+    const { planRef } = await prepareProject(h, "proj-alpha", "a", COMPLETION_POLICY_FIXTURE_V1);
+    const before = await eventsCount(h);
+
+    // IMPLEMENT has two predicate checks (static + dynamic); maxChecks 1 overruns.
+    const r = await h.verification.verify(requestFor("proj-alpha", planRef, { maxChecks: 1 }));
+    expect(r.status).toBe("rejected");
+    if (r.status === "rejected") expect(r.code).toBe("budget_exhausted");
+
+    expect(await eventsCount(h)).toBe(before);
+  });
+
+  it("pure compile: a plan snapshot missing pins is rejected missing_pin (no default)", async () => {
+    const h = createInMemoryHarness({ deps: {} });
+    await bootstrap(h);
+    const { plan, planRef } = await prepareProject(h, "proj-alpha", "a", COMPLETION_POLICY_FIXTURE_V1);
+
+    const noPins: PlanRevisionSnapshot = {
+      ...plan,
+      effectiveCompletionPolicy: {
+        ref: { aggregateType: "CompletionPolicyRevision", projectId: "", policyId: "", revision: 0 },
+        digest: "",
+      },
+      effectiveArchitectureBaseline: {
+        ref: { aggregateType: "ArchitectureBaselineRevision", projectId: "", baselineId: "", revision: 0 },
+        digest: "",
+      },
+    };
+    const input: VerificationPlanCompileInput = {
+      schemaVersion: 1,
+      taskRef: { projectId: "proj-alpha", goalId: P104_GOAL, taskId: P104_TASK_IMPLEMENT },
+      planRef,
+      planSnapshot: noPins,
+      workspaceRevision: 1,
+      changeScope: { diffClass: "code-change", changedFiles: ["src/a.ts"], writeSummary: "change" },
+      semanticChange: "semantic",
+      risks: [{ level: "low", description: "local" }],
+      checkCapabilities: [
+        { checkId: "static-check-lint", kind: "static", coversKinds: ["static"], replayable: true },
+        { checkId: "dynamic-check-tests", kind: "dynamic", coversKinds: ["dynamic"], replayable: true },
+      ],
+      policy: { requirementKinds: ["static", "dynamic", "reviewer"] },
+    };
+    const compiled = compileVerificationPlan(input);
+    expect(compiled.status).toBe("rejected");
+    if (compiled.status === "rejected") expect(compiled.code).toBe("missing_pin");
+
+    // NOTE: at the ENGINE boundary the engine resolves the plan-snapshot pins
+    // first (governance helpers); a genuinely unresolvable pin surfaces as
+    // dangling_ref, and a declared-stale pin is also dangling_ref (tested above).
+    // missing_pin is the pure planner's guard for a snapshots with no valid pin.
+  });
+});

@@ -1,0 +1,1 @@
+export default { root: '/mnt/d/1.project/Software/agent_platform', test: { environment: 'node', include: ['/mnt/d/1.project/Software/agent_platform/evidence/2026-09-10-external-review/lease-refusal.test.ts'], clearMocks: true, restoreMocks: true, testTimeout: 60000 } };

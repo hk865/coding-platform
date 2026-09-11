@@ -1,0 +1,1387 @@
+{
+  "checkedAt": "2026-09-11T08:04:05.788Z",
+  "count": 345,
+  "stale": [],
+  "files": [
+    {
+      "path": "dist/app/exploration-source.js",
+      "sha256": "ec86a85f49639ba7645abadb60298369b932075ca50c17e0a7bbb39722b0f7b5"
+    },
+    {
+      "path": "dist/app/file-references.js",
+      "sha256": "8e220a0a1ef1bd75b6547c6820674dc97252e86248db696bd7a4f088f56cd64b"
+    },
+    {
+      "path": "dist/app/governance.js",
+      "sha256": "6ede838212603e78ab8c55cb0c06a7c55f9e46c1aa901f8799f1a708f6562134"
+    },
+    {
+      "path": "dist/app/initial-planning.js",
+      "sha256": "1f562f8d3d1feff07a19bf4f1f5f6a1c49971e4d8700478bb22988ead525e34a"
+    },
+    {
+      "path": "dist/app/model-settings.js",
+      "sha256": "0d7aefef6b7545e4a94687482918bfa106548328393a5e5b0df89e5187d2853f"
+    },
+    {
+      "path": "dist/app/plan-changes.js",
+      "sha256": "35b776c3f33e28c3df9feca7c5a492d164862b517b1f7391dd0621a236028f95"
+    },
+    {
+      "path": "dist/app/server.js",
+      "sha256": "568bb42028259cdfaa0c8ba6ac88a641b7cce664223f247f235b07ff824831ff"
+    },
+    {
+      "path": "dist/app/service.js",
+      "sha256": "4387726a209612a9a2c4bf2380bfb71f17aab21be261466411d97fed6d6063b3"
+    },
+    {
+      "path": "dist/app/workspace-tools.js",
+      "sha256": "8734c4ce9e045055a17db1e8f39e571f200c5b5f8ee20bfaf6795263cd07b935"
+    },
+    {
+      "path": "dist/contracts/active-agent.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/architecture-context.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/architecture-evolution-policy.js",
+      "sha256": "aea07a190ad6565cc7de633a0996b37a9987f9205c21d858e3a7f5bda06ba935"
+    },
+    {
+      "path": "dist/contracts/architecture-inspection.js",
+      "sha256": "93ad78c8edd926f1684c46030c5306f82a4ca2a5a65ae03258198f706fe399e6"
+    },
+    {
+      "path": "dist/contracts/architecture-reconciler.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/architecture-source.js",
+      "sha256": "b5ca331282c1873dfd977ea397d50e6ff5f0134c916132af04cb0cbc280d849b"
+    },
+    {
+      "path": "dist/contracts/artifact.js",
+      "sha256": "2c31d5450cd8be3c8e76e8eda5ca40378a987604b5d9300f1f413b4c2cb72f28"
+    },
+    {
+      "path": "dist/contracts/baseline-evolution.js",
+      "sha256": "8c9ec736c7e04cdd82563422ec3276e526a1d3fb9cfd1aec328165b5b0386ddf"
+    },
+    {
+      "path": "dist/contracts/bootstrap.js",
+      "sha256": "8a5a33fe4aa0abb4f503cb7e53de89a4dd43611018c22a24db09ec640a72ed92"
+    },
+    {
+      "path": "dist/contracts/command-event.js",
+      "sha256": "7734219c0b74f580bbf99acaf69b0e9053a5d8ec539c91009d69eb314b6bdc16"
+    },
+    {
+      "path": "dist/contracts/commands/architecture.js",
+      "sha256": "5e008e11944008f19d92ea032cf9105fab8f075f1e391b4e2012e415e5a6e2a7"
+    },
+    {
+      "path": "dist/contracts/commands/context.js",
+      "sha256": "ad60aeaa3816387046354ecce2dabc53b0b21782608d295bb2961ef6f19a2adb"
+    },
+    {
+      "path": "dist/contracts/commands/dispatch.js",
+      "sha256": "8ddacf3564132f37b80162cdf68e48460584cfbcfdc11b8436c9f4c7083b6201"
+    },
+    {
+      "path": "dist/contracts/commands/evidence.js",
+      "sha256": "aead542337fce7ccf120a93ece153855babb92cebd624c617e554ad92bbb3fd6"
+    },
+    {
+      "path": "dist/contracts/commands/goal-phase.js",
+      "sha256": "c590391b8c96b1d347f866dbaf5fdcf7deb596f97716e662b4e87bd143e6ddac"
+    },
+    {
+      "path": "dist/contracts/commands/goal.js",
+      "sha256": "b70e9b271321e19a7fa54b1006acf45c5e7a099b08b936a65054afc3dcc49b63"
+    },
+    {
+      "path": "dist/contracts/commands/governance.js",
+      "sha256": "f2309c95b3b6e88df8535db82a2da5ae80ffadb3e0c0044d62248328ad85e6cd"
+    },
+    {
+      "path": "dist/contracts/commands/material-access.js",
+      "sha256": "210888c3841913daa9966aed9e6bf21200c977247c73ac64861d711a5000091f"
+    },
+    {
+      "path": "dist/contracts/commands/plan.js",
+      "sha256": "d2be1b7d1c40991e9925016a4a16fef4e0682b6dfa9352652f9df47987d77048"
+    },
+    {
+      "path": "dist/contracts/commands/reviewer-work.js",
+      "sha256": "272fe4d8fe0559cefb41f057df690315b07e83b3d8cb960bd00081fcfe8f8917"
+    },
+    {
+      "path": "dist/contracts/commands/workspace.js",
+      "sha256": "a683eac72ff3d741b5ca7276992b6dee5b3b3deed4d1e924b22e5db20455b262"
+    },
+    {
+      "path": "dist/contracts/completed-work-context.js",
+      "sha256": "cef38d5334fce603c7f496451bb8ce5108484a2a0816ebd7bcc74da2eecb5642"
+    },
+    {
+      "path": "dist/contracts/console-views.js",
+      "sha256": "42a548b82bcfb0a12592fa02648d09d313df5a40db9f191c9eecf997da3c62ba"
+    },
+    {
+      "path": "dist/contracts/context-continuation-port.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/context-continuity.js",
+      "sha256": "69ef9ab8afda1c7e04969f5e611b08b2fed4bd73504918bc24aaa3f8a7572db1"
+    },
+    {
+      "path": "dist/contracts/control-intent.js",
+      "sha256": "31d006503af800d93980e571481009fcb6ffcd96f6a89c5b4745c2956bb99547"
+    },
+    {
+      "path": "dist/contracts/dispatch.js",
+      "sha256": "e18fa5367bc64409b72a60f3825751f3ca30a2e65a9152658fac49fb51cfeb9b"
+    },
+    {
+      "path": "dist/contracts/events.js",
+      "sha256": "48e3fe4865233e2f029ad579e3e65c8c8316258fbeacf95ef21af0af78c851c2"
+    },
+    {
+      "path": "dist/contracts/evidence.js",
+      "sha256": "f465e64a844e27b90a1def890b08315edf69698d6261cfddb95ea566187cd970"
+    },
+    {
+      "path": "dist/contracts/execution-capability.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/execution-feedback.js",
+      "sha256": "71dac1c09e7805f95ba75d68932d0f70d7a625b51e49a57f58f38a780e679889"
+    },
+    {
+      "path": "dist/contracts/exploration-materials.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/exploration-session.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/exploration.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/fingerprint.js",
+      "sha256": "2075e89d7276cb36b6f6376db951a532166405952b9471659f51645c1e708564"
+    },
+    {
+      "path": "dist/contracts/fixtures/architecture-evolution-policy-fixtures.js",
+      "sha256": "429e855493399b12b90b0730bfa79ec14e8e4901b0badad9fb1784fd4df16d06"
+    },
+    {
+      "path": "dist/contracts/fixtures/architecture-fixtures.js",
+      "sha256": "cea02fd8bf379465b4ad7da878ebee57dd9ed048f514ef1ead77de6b24b475d6"
+    },
+    {
+      "path": "dist/contracts/fixtures/baseline-evolution-fixtures.js",
+      "sha256": "a4522efa3d5585692446fbaba27411c3d5680602caafea242fbc29299050ffb5"
+    },
+    {
+      "path": "dist/contracts/fixtures/bootstrap-fixture-v1.js",
+      "sha256": "778afbf49b7bf243e3d92ff8d36a643adb8e32019fc6036175febb3d9920858a"
+    },
+    {
+      "path": "dist/contracts/fixtures/completed-work-fixtures.js",
+      "sha256": "b730f08f302edfaa6cdea385693e0e168c000165c97c8eef899f521747e60cff"
+    },
+    {
+      "path": "dist/contracts/fixtures/console-fixtures.js",
+      "sha256": "865df4a4f149dacf9ccb5c707ca6dad0dbd8104de9f7bebec78ec232da71a6d1"
+    },
+    {
+      "path": "dist/contracts/fixtures/context-fixtures.js",
+      "sha256": "b47091029e185cd950b05fa8524b7542232d398fb6fe50285a7f94ff65764757"
+    },
+    {
+      "path": "dist/contracts/fixtures/control-fixtures.js",
+      "sha256": "40f5a096d6ca33b5ca5860b36e5e1ce4d3ecf5c56ecf511239e31e0162eef2ee"
+    },
+    {
+      "path": "dist/contracts/fixtures/dispatch-fixtures.js",
+      "sha256": "cf29f8b81dcc79c62c6532dab429fb507c5788621c412e49aef5fa81d558f734"
+    },
+    {
+      "path": "dist/contracts/fixtures/evidence-fixtures.js",
+      "sha256": "89535b5c174592f963c523733809d2a24beb01592c6b5f3895af006a55b3c2e8"
+    },
+    {
+      "path": "dist/contracts/fixtures/goal-change-fixtures.js",
+      "sha256": "52b3f5032ff7f29e07ad2d19fe3620139d3aa8f92f986d9d7f287aeb4380a90f"
+    },
+    {
+      "path": "dist/contracts/fixtures/goal-fixtures.js",
+      "sha256": "3ce3c2b0ad7e65bd8668401313039d46a12b10cb359f45aa1e96e3f1bbe0594f"
+    },
+    {
+      "path": "dist/contracts/fixtures/goal-phase-fixtures.js",
+      "sha256": "12ba8d8e76bf8cdc245da1324bd5cdc6a6028a0c37f42ca1049752ecc1e5d62a"
+    },
+    {
+      "path": "dist/contracts/fixtures/governance-fixtures.js",
+      "sha256": "c751c57a6d8dd0530115a45beee991dcac044bf4930f90b3e7ceefe7e3f1c529"
+    },
+    {
+      "path": "dist/contracts/fixtures/handoff-fixtures.js",
+      "sha256": "af11fa735292c47ce313ead2e04cc3ace12496a8dc63dcb19d2c9a5cc6cf0c66"
+    },
+    {
+      "path": "dist/contracts/fixtures/human-role-collaboration-fixtures.js",
+      "sha256": "e0f041ec421df55803cc708ac0878b4b8972354b071b1f139b1476dbffc44d96"
+    },
+    {
+      "path": "dist/contracts/fixtures/index.js",
+      "sha256": "cc4a37321bf434258311679afdb4067e5c662f574a37f68335b02a927822107b"
+    },
+    {
+      "path": "dist/contracts/fixtures/material-access-fixtures.js",
+      "sha256": "59e9da7da1fca8e0457c903a01cf13bd36ad9abf1167f0f28966346e80f94e39"
+    },
+    {
+      "path": "dist/contracts/fixtures/plan-fixtures.js",
+      "sha256": "103d9880e7a327e71f50381cfd271f36309682b32761ad36e6f3d17acb249f30"
+    },
+    {
+      "path": "dist/contracts/fixtures/query-job-fixtures.js",
+      "sha256": "cf2614e77e1ecbc7b955018c7b1698de5b05bc3e5826ce3a63301b07001df84c"
+    },
+    {
+      "path": "dist/contracts/fixtures/remediation-fixtures.js",
+      "sha256": "3ce9008845ea48c0e390cb6a4af3e0b5b7b19de190c33df60f788da78a4ed55e"
+    },
+    {
+      "path": "dist/contracts/fixtures/role-spec-fixtures.js",
+      "sha256": "6c6db90aa0e269c9b3a6184d3a461a6a5ba2a561496bfeb68e72ed7269e9af22"
+    },
+    {
+      "path": "dist/contracts/fixtures/workspace-fixtures.js",
+      "sha256": "4fbcaa74fa6cfb5dbaa80244221690b27ec41f4f23304d2378dbb9207b04fec5"
+    },
+    {
+      "path": "dist/contracts/goal-change.js",
+      "sha256": "520fbe720ae2709c59ec1d2105a59c6d60b305a046104db6130d9001b5f266fb"
+    },
+    {
+      "path": "dist/contracts/goal-phase-view.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/goal-phase.js",
+      "sha256": "11c4b918743b4038d8bd98a0a6dc4f20816ec27318d04f57e530586cb7aa3e61"
+    },
+    {
+      "path": "dist/contracts/goal-view.js",
+      "sha256": "7fb8d4ae312416abc8cb70a143c5bf37425689145f542f746166033289efa50b"
+    },
+    {
+      "path": "dist/contracts/governance-view.js",
+      "sha256": "51b5041a8c329c789d646d6c898f049a00aa86d6afb4765f9fd671e33405126c"
+    },
+    {
+      "path": "dist/contracts/governance.js",
+      "sha256": "9ba21649fc73d4e40bb53a59fe0685e77624512e7b378159cae7a33b1dea8745"
+    },
+    {
+      "path": "dist/contracts/handoff-context.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/handoff-control.js",
+      "sha256": "5cea4876bde0213ae714f643e82f6a6eca93482327dfe98dff13028018f8e618"
+    },
+    {
+      "path": "dist/contracts/handoff-view.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/handoff.js",
+      "sha256": "fdc79d83bee44c44e22c7475ea6d4dd309d8c757153d910ef7a58c3fb206060e"
+    },
+    {
+      "path": "dist/contracts/history-materials.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/human-role-collaboration.js",
+      "sha256": "dcf37019b06fdc462bfcf0daf7a08618334b19fc028b01715f0263564370ffd7"
+    },
+    {
+      "path": "dist/contracts/index.js",
+      "sha256": "4f531d06c237947d9a0289b8e05fb1417f0797e5594be2fc9e7651fd12b2c370"
+    },
+    {
+      "path": "dist/contracts/initial-planning.js",
+      "sha256": "2d26bfc7b234a5dcc70921c9f09edc3c59fdeae8f7e17f89c322bd671c40857f"
+    },
+    {
+      "path": "dist/contracts/integration.js",
+      "sha256": "5dcce01096b440f8788fbe2cf65847bd88ce9d3d68029f0b036dee563506cfaa"
+    },
+    {
+      "path": "dist/contracts/ledger-validation.js",
+      "sha256": "be87b4d4184c4a2c92c7e97e2d2f378ae0f9f8ed7e3f7bc5d302801c2b74838f"
+    },
+    {
+      "path": "dist/contracts/ledger.js",
+      "sha256": "4dbda55c561a3a7670a83e32de86cdf2c2c0b91465bb730e83edeba10ec8e6db"
+    },
+    {
+      "path": "dist/contracts/material-access.js",
+      "sha256": "1afd6f2ee785d117f10a829dfaf0f56b09837da0a6c63198596b50bdcf3066e8"
+    },
+    {
+      "path": "dist/contracts/modules.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/opaque.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/operator-dispatch.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/operator-planning.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/patch.js",
+      "sha256": "4871ddb1edf756eb550bce51fbdd84feb41f8effad214f2bdd85a2be69fdf0a7"
+    },
+    {
+      "path": "dist/contracts/plan-view.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/plan.js",
+      "sha256": "54704edfd87ff65bcda2c0560a2ed584cca628a0b7e708f96d3954b9661cdd7b"
+    },
+    {
+      "path": "dist/contracts/planning-work-materials.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/planning.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/policy-explanation.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/ports.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/query-execution-context.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/query-job.js",
+      "sha256": "023f275ba872ded90c6931e12a1e9211dd3af1c619236bf81557351d12c66e3c"
+    },
+    {
+      "path": "dist/contracts/read-model.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/reduction.js",
+      "sha256": "a4f29d6b9d75f943a7f175082c320fb3d1ff0422fd58c626df4dca3be980e807"
+    },
+    {
+      "path": "dist/contracts/remediation.js",
+      "sha256": "4088c4ad0d056ae5b997533f81057a9f1811bca4f86d82830a76a81698f8085a"
+    },
+    {
+      "path": "dist/contracts/review-context.js",
+      "sha256": "01296fbb0ab67db79f7af8490fa7b13755b27780f60170abca1e079984a27fcc"
+    },
+    {
+      "path": "dist/contracts/reviewer-context.js",
+      "sha256": "15a211c4ca060d41c6edae6bb298dffd9e0254a6a584a46ad9e8b774b77e2245"
+    },
+    {
+      "path": "dist/contracts/reviewer-verification.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/reviewer-work.js",
+      "sha256": "9538f08b971801911b5ad34cec37534c2d885a1933ed701b8b74ce6b7200a42a"
+    },
+    {
+      "path": "dist/contracts/rework-acceptance.js",
+      "sha256": "ec071599f360bd385ace70a60cf0845313ce9ce97aae22aacc70915655cae9b1"
+    },
+    {
+      "path": "dist/contracts/rework-disposition.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/rework-drive.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/rework.js",
+      "sha256": "6ad0ac7f6a650f04da6ac10985ede25830c93a5902f53cba7a31e2ff9d4f4ebf"
+    },
+    {
+      "path": "dist/contracts/role-material-channels.js",
+      "sha256": "76bbbef3fb0cdcd8f2d15098462a5b18ef437376602d0b55721779570a91799c"
+    },
+    {
+      "path": "dist/contracts/role-spec-materials.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/role-spec.js",
+      "sha256": "55c4012c009aa1836468efe0ca00ba4d7085ba7656a67873d9ca9ccadebb1d87"
+    },
+    {
+      "path": "dist/contracts/run-output-materials.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/runtime-budget.js",
+      "sha256": "9354d42c5af757aeb94978065ebfc4273b69522d68a744a749df3dd1bcc10916"
+    },
+    {
+      "path": "dist/contracts/runtime-context-materials.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/runtime-dispatch.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/runtime-observations.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/runtime-preparation.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/scope-catalog.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/task-envelope.js",
+      "sha256": "5a5787761d2d62deff666b843511c2bbf0641abd220773fb1abb769b81384e7b"
+    },
+    {
+      "path": "dist/contracts/task-work-identity.js",
+      "sha256": "973d794e8f295b17d433e373cca6e9b91f6b2f47b2ebeb99bf612365d72ff66a"
+    },
+    {
+      "path": "dist/contracts/testing/check-providers.double.js",
+      "sha256": "4ec7b4f30aa1f9bff7c7701857127e4c479f258075904650a20f04ebe3f403c1"
+    },
+    {
+      "path": "dist/contracts/testing/control.double.js",
+      "sha256": "d367d15cfe88c59d710a7744e2688c913e693f3b76f7be4de798c4fda4001029"
+    },
+    {
+      "path": "dist/contracts/testing/handoff-control.double.js",
+      "sha256": "c3a0180240cdad4f207246abf9e9d553c9336e6c1219912e8c0d3ff9d7aa0168"
+    },
+    {
+      "path": "dist/contracts/testing/index.js",
+      "sha256": "d88addbbdf505f298d925ff05c3685a26cf2da2b3d12f5ad2e0da1aeda7179a5"
+    },
+    {
+      "path": "dist/contracts/testing/query-context.stub.js",
+      "sha256": "254956f3b6dd23a65aacba7d259e44702a36c77a1cb423a19cd5d5a99fb1ab46"
+    },
+    {
+      "path": "dist/contracts/testing/read-model.double.js",
+      "sha256": "5f0783c281a5cbfbdb7fb96da5ea3c5b5af5b022043b0a388de68daad08e7dc1"
+    },
+    {
+      "path": "dist/contracts/testing/sequences.js",
+      "sha256": "539e7a32f6f975ab3f1c29faa9d8cb385aed6e291326bf3b78500dee087bd022"
+    },
+    {
+      "path": "dist/contracts/testing/state-ledger.double.js",
+      "sha256": "0c9041a4c9201cbc5afbc128cd71981db473f04188b5f92c1eaad0815e0f940b"
+    },
+    {
+      "path": "dist/contracts/validation.js",
+      "sha256": "32bf6f4bdbbdfb8d161070b4bc89ad0eae2b2629c6227f1fbcf0d7ec7890d31b"
+    },
+    {
+      "path": "dist/contracts/verification-context.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/verification-import.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/verification-round.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/verification-service.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/verification-source.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/verification-view.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/verification.js",
+      "sha256": "8e581142961d0cd51e1316906bc4aa6d774ef06db6000828a955f4cb05f7b86d"
+    },
+    {
+      "path": "dist/contracts/work-context-port.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/workspace-capability.js",
+      "sha256": "3bc4ca4e674fcfffdb55e032184b690a854272027742023d60fcc43b8d258921"
+    },
+    {
+      "path": "dist/contracts/workspace-drive.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/workspace-lease.js",
+      "sha256": "c9b94b00967669bb794d09149419c23553c2f958c1ea1084be461b9a91bcaf27"
+    },
+    {
+      "path": "dist/contracts/workspace-read.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/contracts/workspace-registration.js",
+      "sha256": "1a8b2f1c750816db5bffdb3db7f95d478717ba9944e44296b2f856126929689a"
+    },
+    {
+      "path": "dist/contracts/workspace-views.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/control/architecture-reconciler/architecture-delta.js",
+      "sha256": "f034245cfe6d358c03a4cc9c9737541b13d24d659b95367d661032a7699fb327"
+    },
+    {
+      "path": "dist/control/architecture-reconciler/architecture-reconciler.js",
+      "sha256": "c453aeb7a122dfd01d5ea32c0286be0588aa012672bfbb8ea67f26290caff30a"
+    },
+    {
+      "path": "dist/control/architecture-reconciler/baseline-evolution-port.js",
+      "sha256": "97686697b8728ac73d3bbf8825e32a4f0843fb310b6400ad186c8a159bc934ca"
+    },
+    {
+      "path": "dist/control/control-engine/architecture-evolution-policy.js",
+      "sha256": "7580c03c3a33975381f52daed1756440596e371791a92807468d1e081381b407"
+    },
+    {
+      "path": "dist/control/control-engine/architecture-inspection.js",
+      "sha256": "3bf42ef613b5894e81b17ab47ecba2f48dedc3880d1b39ad085c4fd7a11c614f"
+    },
+    {
+      "path": "dist/control/control-engine/autonomous-rework.js",
+      "sha256": "a0c416f4359f10a10784b7dce5ee3324e79a844a0a7af58729f6af69d8438c76"
+    },
+    {
+      "path": "dist/control/control-engine/baseline-evolution.js",
+      "sha256": "06a82b4320191dc1f53e2ea3ab2578980e2386c66a1940b8fe61d158ad282538"
+    },
+    {
+      "path": "dist/control/control-engine/claim.js",
+      "sha256": "881437e10edf01536b10fb88686068546a5669eb234fc8b15898831445aa3ea1"
+    },
+    {
+      "path": "dist/control/control-engine/control-engine.js",
+      "sha256": "7f0d4e5c4f2e275b4355f19568c2344d2ed11935771ae39acded6cd8e3a7387f"
+    },
+    {
+      "path": "dist/control/control-engine/control-intent.js",
+      "sha256": "17b957ad1092335a42fe5567590ab9343b27e7d903ac0467199f44bd3bf17fcb"
+    },
+    {
+      "path": "dist/control/control-engine/dispatch-facts.js",
+      "sha256": "519fb84a4b584392c5e34401cb8483ff794622c26024820b885d5c691c987760"
+    },
+    {
+      "path": "dist/control/control-engine/evidence-intake.js",
+      "sha256": "2b098d320a39c067939bc15ff330e402b7c094048d076bdf939f23b2e91a305a"
+    },
+    {
+      "path": "dist/control/control-engine/exploration-startup-reconciliation.js",
+      "sha256": "d9eecd71c6d1d5d20f37d2d960594740c5937746346ae253709d4cbfbdf5d3f3"
+    },
+    {
+      "path": "dist/control/control-engine/goal-change.js",
+      "sha256": "56c46a9ab0b4942bc12e4f3450e18fca2e9383dce6cd3bf67e7a3673f60a5cd1"
+    },
+    {
+      "path": "dist/control/control-engine/goal-reducer.js",
+      "sha256": "627a7c8fc277f942228c195472b18f5f10ce35c97175278851c76506960cb21c"
+    },
+    {
+      "path": "dist/control/control-engine/governance-activate.js",
+      "sha256": "56d17349f2214107efad862caab03c459b278e2a31becb1748b54ab72f234b2b"
+    },
+    {
+      "path": "dist/control/control-engine/governance-install.js",
+      "sha256": "82ada921b352b0b3f9b4703644b08239f475a1763fa856e483c609bfef04913a"
+    },
+    {
+      "path": "dist/control/control-engine/handoff.js",
+      "sha256": "c09d49b08e22a124f8fe538b864208909cf7ce198edaaf25d5f5ffb34eace6ab"
+    },
+    {
+      "path": "dist/control/control-engine/human-role-collaboration.js",
+      "sha256": "ec0d8bde355566f6adabcb7bc56efceb61253b607384dd5a5482889fc4f57218"
+    },
+    {
+      "path": "dist/control/control-engine/initial-plan-source.js",
+      "sha256": "0e848c6fbd85ea36899eba8273c62c93079b221766af72b37b4719676062055b"
+    },
+    {
+      "path": "dist/control/control-engine/integration-join.js",
+      "sha256": "4499de4470facb00f35a0974ccdc2f674a76efd3e518adeebb3e80c0ece17bc6"
+    },
+    {
+      "path": "dist/control/control-engine/material-access-revocation.js",
+      "sha256": "7db1f0d1f4435788de4646528785347f796038bac3b859708e0f948c52d7fdc9"
+    },
+    {
+      "path": "dist/control/control-engine/material-access.js",
+      "sha256": "d446755f38fdcef8fae2af55329c7947f6b9d731f0d78a31b4a9716c18fb1a27"
+    },
+    {
+      "path": "dist/control/control-engine/patch-record.js",
+      "sha256": "097cfb2fcecaaace5a031b240be0a1f883463f17cae4f3d58ffb5f51e6f4fb13"
+    },
+    {
+      "path": "dist/control/control-engine/plan-acceptance.js",
+      "sha256": "c0723babca5db201f132786a528e332d1bd5f9a03dd06a0bf3da2c5574078c91"
+    },
+    {
+      "path": "dist/control/control-engine/policies/architecture-evolution-policy.js",
+      "sha256": "5655f01c70506d34be7d8daf0e8b79b4e4666fba930d5dd3979e8cf27c975a78"
+    },
+    {
+      "path": "dist/control/control-engine/policies/architecture-remediation.js",
+      "sha256": "3d697a82c6f2833d08fce3d76a4baf0539b9eecee3b52f084de495027343314a"
+    },
+    {
+      "path": "dist/control/control-engine/policies/autonomous-rework.js",
+      "sha256": "0a06710e079e8e9b657f6efb34402849a81aa51ec570bc17596c304d5e10c8e9"
+    },
+    {
+      "path": "dist/control/control-engine/policies/coordination-policy.js",
+      "sha256": "73ad885dbc91538056c9df7e196db5e6e6190a03676d6ed95bb93113e925d80b"
+    },
+    {
+      "path": "dist/control/control-engine/policies/evidence.js",
+      "sha256": "af919b29dbba61248fbf668090038a09aa5368befd94b4bc3f025f0134b38d37"
+    },
+    {
+      "path": "dist/control/control-engine/policies/goal-change-consistency.js",
+      "sha256": "4cce10bfad12375db447ab566530f1769699836f7909631a67d45618d1b7c752"
+    },
+    {
+      "path": "dist/control/control-engine/policies/goal-change.js",
+      "sha256": "77088e6db29ea6b25c57b94c64d20f01ef189450ab06d3acc5c99f79c9f7f2ab"
+    },
+    {
+      "path": "dist/control/control-engine/policies/goal-phase.js",
+      "sha256": "09a9dc8d04468aa3add73cdf18476914476b1cebd4a93d21e8e0198be700a817"
+    },
+    {
+      "path": "dist/control/control-engine/policies/initial-plan-admission.js",
+      "sha256": "267a6c02b95f0dab6da062acd738e7385a3122182a2a7998a166bcc88d40b12f"
+    },
+    {
+      "path": "dist/control/control-engine/policies/integration.js",
+      "sha256": "14e70fbd9884881d750f76fca49ad9121037480834c2eb8c338537f10faad485"
+    },
+    {
+      "path": "dist/control/control-engine/policies/remediation.js",
+      "sha256": "b5326418b017c98d2283bff1a9f912a699edf8219e57a18ec108ecde539a82ea"
+    },
+    {
+      "path": "dist/control/control-engine/policies/replacement-eligibility.js",
+      "sha256": "4d50bbdb231920c422fc53eed353fa2f471be5aa1f8679711bf28902d34805ff"
+    },
+    {
+      "path": "dist/control/control-engine/policies/reviewer-evidence.js",
+      "sha256": "a5c2a9ea45d2feefefbb4d2ca460820345072b44f818605111a0820f4b785d73"
+    },
+    {
+      "path": "dist/control/control-engine/policies/role-binding-admission.js",
+      "sha256": "f847a03fdc2b8dc0a9c10d38ede058636285843b18a1f26b21afe5e61c32f449"
+    },
+    {
+      "path": "dist/control/control-engine/policies/task-eligibility.js",
+      "sha256": "d87ffebff84437f9e33c5ccbea4cba7769b67f4d23ecd0a215f2b6bb78bf1b85"
+    },
+    {
+      "path": "dist/control/control-engine/policies/task-reduction.js",
+      "sha256": "31306715d445c256c399d446e21e8e39b2f815be0a1f7966f996a74ea31142ed"
+    },
+    {
+      "path": "dist/control/control-engine/policies/workspace-capability.js",
+      "sha256": "39b3ae139d5d89a24039696641353629f56a3245466c1822d3ee23559f73a9a0"
+    },
+    {
+      "path": "dist/control/control-engine/policies/workspace-lease.js",
+      "sha256": "a6fa8c79af319770315a3fbbbc51d61ec12a2977560979f85f1fdfa1765d4931"
+    },
+    {
+      "path": "dist/control/control-engine/policies/workspace-operation.js",
+      "sha256": "b6e8c93468943b20445c5401f00e0e9d8a2c3ef67c53e707b4954936ecb7967b"
+    },
+    {
+      "path": "dist/control/control-engine/policy-explanation.js",
+      "sha256": "e64e0491ff9833865e1c9a433d602321e65a247cb845ac9ac85a201b0275da29"
+    },
+    {
+      "path": "dist/control/control-engine/query-job.js",
+      "sha256": "dd530e870fc163967a0d6778fd323b5e5eea738caea8a21ae44d27593ddad699"
+    },
+    {
+      "path": "dist/control/control-engine/readiness.js",
+      "sha256": "aaf8a79ad2ada7e7773e0930a489fe2e25375ba0e976d367424eb13b22365bc2"
+    },
+    {
+      "path": "dist/control/control-engine/records/architecture.js",
+      "sha256": "0af178854467daaef6104e20ae8f844fe727615c26ecce4ac7865451294f4f38"
+    },
+    {
+      "path": "dist/control/control-engine/records/baseline-evolution.js",
+      "sha256": "adbff1234f46b3590c8a238bba71be883777ec23fefa0d3387d6c8c912f03456"
+    },
+    {
+      "path": "dist/control/control-engine/records/context.js",
+      "sha256": "c137e86cf9b6f60159f025f2dcaac7c8ff574309d06e5f42ce766d72cb186021"
+    },
+    {
+      "path": "dist/control/control-engine/records/control.js",
+      "sha256": "e22ebc063070a4b90fd60f25e6967e1f9805fe5d8536b8e75ff3d8cf3f48dbfd"
+    },
+    {
+      "path": "dist/control/control-engine/records/dispatch.js",
+      "sha256": "e1c96c04a495c738f18392e9a010bc927fbdca5c29ff98af18824e98bc1a8447"
+    },
+    {
+      "path": "dist/control/control-engine/records/evidence.js",
+      "sha256": "915b3dd225803d4238c117fa25a740eb64fb3d0e3fb6f6811cd81c021fa4f4db"
+    },
+    {
+      "path": "dist/control/control-engine/records/goal-change.js",
+      "sha256": "ce1f3f0014c43f88c357b68b1aebf2c33fc2d8330673eb1032677ec0324949d5"
+    },
+    {
+      "path": "dist/control/control-engine/records/goal-phase.js",
+      "sha256": "20c82e670db9e934b1d115d9cd1361b1dfa303a078d46266a35e2d1602c930f1"
+    },
+    {
+      "path": "dist/control/control-engine/records/handoff.js",
+      "sha256": "a107e47992e81c903f769d47b9c935728ede2786dcfdecbe794d56dfeb11e98d"
+    },
+    {
+      "path": "dist/control/control-engine/records/human-role-collaboration.js",
+      "sha256": "a79f885baa501499827f3339aed9a6a117f39bfd324b30d18ccb77a048b2f8e1"
+    },
+    {
+      "path": "dist/control/control-engine/records/material-access.js",
+      "sha256": "ed3fc7eb8cdf7a48d0c711583dcf76b094dacf3efda83bf7a4e895bcbf64408c"
+    },
+    {
+      "path": "dist/control/control-engine/records/plan.js",
+      "sha256": "188325903325e8cefd44f37a2d3ff42bfd1dd5782db057b0072207dc3fc3037f"
+    },
+    {
+      "path": "dist/control/control-engine/records/query-job.js",
+      "sha256": "f58dd20ad880def7bc85708f63924e7bb98a2c7f9aab5e6f03a2aa8b2b7721a8"
+    },
+    {
+      "path": "dist/control/control-engine/records/remediation.js",
+      "sha256": "8ee2004653e6594d0a897b4fbe62f9f814d23f213de3a49850165e3f33399557"
+    },
+    {
+      "path": "dist/control/control-engine/records/role-spec.js",
+      "sha256": "f374c6375b47d2304734f867253b3c8fd18d72b1814b398afa29f5868fabdef3"
+    },
+    {
+      "path": "dist/control/control-engine/records/workspace.js",
+      "sha256": "cf51c01ebaaf3fd09b7d7e101a68db763a6b727774900edb431aff4da97ac387"
+    },
+    {
+      "path": "dist/control/control-engine/remediation.js",
+      "sha256": "4575dac872d76c851116640ef1be886f02edaf45dd740380f15bfc63adaedbb5"
+    },
+    {
+      "path": "dist/control/control-engine/replacement-claim.js",
+      "sha256": "734b8bbab8e59b3bb6b325eae468cfba04f6d2a580cca70475e90f2a223904f3"
+    },
+    {
+      "path": "dist/control/control-engine/reviewer-work.js",
+      "sha256": "223bba21d79c1e5e11fa1945887b295570c8ada02db731067c931e30b89b0beb"
+    },
+    {
+      "path": "dist/control/control-engine/rework-disposition.js",
+      "sha256": "5550e66ef381ac89b17fb97a888bfa3c8102562cddf75903c40c93838ed4e616"
+    },
+    {
+      "path": "dist/control/control-engine/role-spec.js",
+      "sha256": "81895e69f9a249c9779ea78a29e371fc21caccd6fa2aaf7b6cda54e6773444d0"
+    },
+    {
+      "path": "dist/control/control-engine/run-facts.js",
+      "sha256": "dd9f7b96fc590bf113eeb9b4f4188beab6eb6ac6ddf7617c70233a4ce42280c9"
+    },
+    {
+      "path": "dist/control/control-engine/start-run.js",
+      "sha256": "e57cd172c2bc7e1b299123e698d443bca87ec4eaef4c9c72b19edb4205ae80c9"
+    },
+    {
+      "path": "dist/control/control-engine/task-reducer.js",
+      "sha256": "f09bfc9ee45f94e212498b3bd0e4e62139163676b85404441c3cce6a94629ab0"
+    },
+    {
+      "path": "dist/control/control-engine/work-identity-resolution.js",
+      "sha256": "be8e5e0f5f4c2fe5f098e826cc1a625159f959555b631883d125cb0e6e6f6b85"
+    },
+    {
+      "path": "dist/control/control-engine/work-record.js",
+      "sha256": "064701b57441c39f75f25ac5ce7ca2b8c5542126fc5881ce207f4a79c384e713"
+    },
+    {
+      "path": "dist/control/control-engine/workspace-lease.js",
+      "sha256": "01d87fa2215187e195ed693bce70b54d740be6143763ea36ecf96085ddb762fe"
+    },
+    {
+      "path": "dist/control/control-engine/workspace-registration.js",
+      "sha256": "606ae534a005e3261c0e554c0185436ba1c73f098a12a5189f68e0cb7add71fe"
+    },
+    {
+      "path": "dist/control/dispatch-engine/dispatch-engine.js",
+      "sha256": "948ddd05cb694bbf9fdc7e11afe6048b1452ee276ee63d4d2cd30cb97410d892"
+    },
+    {
+      "path": "dist/control/dispatch-engine/exploration-context-drive.js",
+      "sha256": "b54cf86bfe64c6f8cd96bb0fed2760441e3ed032f11d263f0f69244f3bb2b637"
+    },
+    {
+      "path": "dist/control/dispatch-engine/handoff-drive.js",
+      "sha256": "df213ef613293d6fb49a2bdb4c722cbae03f2c319382fb53879bf26d6c7f4a8c"
+    },
+    {
+      "path": "dist/control/dispatch-engine/leased-worker-runtime.js",
+      "sha256": "012bb9d1fe362f670fc1f92e59a5924549f0b24993a4c0d86423e524b5e1972b"
+    },
+    {
+      "path": "dist/control/dispatch-engine/operator-task-dispatch.js",
+      "sha256": "fef1c700f2222108eb8f95a9c52cf570e6602d9e2021cdab5d67c66c6fdf8ad8"
+    },
+    {
+      "path": "dist/control/dispatch-engine/planned-task-dispatch.js",
+      "sha256": "f1ef326b7ba6f5893523fb2f12896a86952ed8d63520cdf7f89c5005477538d4"
+    },
+    {
+      "path": "dist/control/dispatch-engine/query-drive.js",
+      "sha256": "5d36e39697f18878226c134e2b84e803babba93f1d40b3bca5dddf8f5354a1af"
+    },
+    {
+      "path": "dist/control/dispatch-engine/reviewer-dispatch.js",
+      "sha256": "05ce4efedd1ed364d82c450aabee25ee369085997e34d28c65b58f7eef35aea8"
+    },
+    {
+      "path": "dist/control/dispatch-engine/rework-drive.js",
+      "sha256": "b18670a9b660e58b49161560cfb403f58c41728ec20577c297ed39cef8406512"
+    },
+    {
+      "path": "dist/control/dispatch-engine/role-spec-read.js",
+      "sha256": "a5820cb017c9db592d1c6b93de2c3f71b339de0462f106790d941a1214ffb353"
+    },
+    {
+      "path": "dist/control/dispatch-engine/runtime-dispatch.js",
+      "sha256": "83ea0ab468210755388cdfd283c94c1a4f36852e7a0ee6b6cbc656f3c70e1069"
+    },
+    {
+      "path": "dist/control/dispatch-engine/work-identity.js",
+      "sha256": "c7ff768c5563fa8e43ec2c1146ef4d3b9b2c393b1e54978dba74f18757dee24b"
+    },
+    {
+      "path": "dist/control/dispatch-engine/work-material-drive.js",
+      "sha256": "a8cefbc52d7cb4e4f5851b92736f3949611ae2f23c08b5d9f0264886ba09f7c6"
+    },
+    {
+      "path": "dist/control/dispatch-engine/workspace-drive.js",
+      "sha256": "c5bb133ed34ce41f98af46a96416be7bf0429500d5b39ceb54b54258383ff7e1"
+    },
+    {
+      "path": "dist/control/plan-compiler/execution-feedback-compiler.js",
+      "sha256": "4a3fd9689def29d8398f99e4f2ff61d637de9920650494c875add3c8b302cec4"
+    },
+    {
+      "path": "dist/control/plan-compiler/initial-plan-compiler.js",
+      "sha256": "d5946f8dbd67f05a9cf4d2743f7c968d5a1bd56db1d0b5bd89fd7c13ac003641"
+    },
+    {
+      "path": "dist/control/plan-compiler/operator-plan-compiler.js",
+      "sha256": "26c3437281dc5956cc3e0adfaab9e506def19747749d202794583401cdd71ada"
+    },
+    {
+      "path": "dist/control/plan-compiler/plan-compiler.js",
+      "sha256": "f3f69b1c594f6f525f2711623d088a4af4f76669f04603b68de15da3d5a6b071"
+    },
+    {
+      "path": "dist/control/plan-compiler/planning-work-materials.js",
+      "sha256": "15be861588e8f2565639216d1e12fd51fee001beec1192537dca062adf4b4084"
+    },
+    {
+      "path": "dist/control/plan-compiler/rework-plan-compiler.js",
+      "sha256": "fc6b3b68c1c10a09a6f4f9f1d02b6817132ca253aec128099016a6f4300245ea"
+    },
+    {
+      "path": "dist/control/verification-engine/benchmark-verification.js",
+      "sha256": "555b32bcbf817010a28a6f621ba3eeff5c9caa67fd2f7ac0bf46e924eabb74ae"
+    },
+    {
+      "path": "dist/control/verification-engine/candidate-patch-check.js",
+      "sha256": "5d43e6d1b472fa79d39c4d51c8f9d9290f8545db09d558b82c9f66f8eb4770ba"
+    },
+    {
+      "path": "dist/control/verification-engine/code-graph-port.js",
+      "sha256": "ec48ed1ae753d0b2f364bdd0fe16387a18c9c742c10d3bb1619bac5a6dd609a2"
+    },
+    {
+      "path": "dist/control/verification-engine/command-check-lifecycle.js",
+      "sha256": "03bdae21b7b928e107996d3622ab8438d82b156f6bf9c6d0a14d667d0fab988a"
+    },
+    {
+      "path": "dist/control/verification-engine/command-check-provider.js",
+      "sha256": "76565cd2a17f3e0270efb3453559ef0e17ca6eddec5db59b052a0a08176b3fff"
+    },
+    {
+      "path": "dist/control/verification-engine/evidence-admission.js",
+      "sha256": "3eb774b60c6554979297df1d5a70b2dadbb7fd902927f15afdea7ce4cc59385c"
+    },
+    {
+      "path": "dist/control/verification-engine/exploration-report-verifier.js",
+      "sha256": "bf3027f45592f705051f27c5c8578fe702fb05fd8a05193a46bc113d7c7e1a4f"
+    },
+    {
+      "path": "dist/control/verification-engine/migration-gate-port.js",
+      "sha256": "beaf17024cf0f216b7b2e3926e5e880d413a16fe691d46fd903e66af4dbed3cd"
+    },
+    {
+      "path": "dist/control/verification-engine/recorded-verification.js",
+      "sha256": "3a345a07f90aff816e55ea069bf1456244924d1a124ab02230f568ead1a5e325"
+    },
+    {
+      "path": "dist/control/verification-engine/reviewer-record.js",
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    {
+      "path": "dist/control/verification-engine/reviewer-report.js",
+      "sha256": "f7ee0bda3ed9593e62b0b860c9f592ba32cf35af03263b0b568bcaa6c3f8a3c9"
+    },
+    {
+      "path": "dist/control/verification-engine/reviewer-verification.js",
+      "sha256": "a7a89d17623b27d2f2a2469b719726913cc1bd8a6e8e08ec73880a6c69d0be37"
+    },
+    {
+      "path": "dist/control/verification-engine/rework-verification.js",
+      "sha256": "9af31a8407614a0a52d2fddabafcf1eb002eb9766404857a949bd074ddd57848"
+    },
+    {
+      "path": "dist/control/verification-engine/role-output-completeness.js",
+      "sha256": "27ad26a5dfe4645b167d54fdfa4d04babd5d1f7710af718b103b136453ad7c01"
+    },
+    {
+      "path": "dist/control/verification-engine/verification-engine.js",
+      "sha256": "9f6d99b080d5df928e8fa3bf7da2f337b89cef7c78b641e2a7374e977682f0c5"
+    },
+    {
+      "path": "dist/control/verification-engine/verification-input.js",
+      "sha256": "d5c9305289f63f2492ab7c68838aa0125f7a2c816280d0c103f730681d312e6b"
+    },
+    {
+      "path": "dist/control/verification-engine/verification-journal.js",
+      "sha256": "3887b63cfb3677215fa921448a9b97cb709fb86d88a4e6ff88c359a5fedccafc"
+    },
+    {
+      "path": "dist/control/verification-engine/verification-open-issues.js",
+      "sha256": "c50746d1e001efe8ad4534f561e3b9fcc5f47a4088dcd9b0d282e2e327ee92dc"
+    },
+    {
+      "path": "dist/control/verification-engine/verification-plan-compiler.js",
+      "sha256": "a920b02d612debf820138e5d0a29b4e54dd9ac458c26a759eccddce783a49290"
+    },
+    {
+      "path": "dist/control/verification-engine/verification-reports.js",
+      "sha256": "b4114c6f89ba921a2fa89e02a8e1b40e47c15163a148ad162d3617bd8c734f9d"
+    },
+    {
+      "path": "dist/control/verification-engine/verification-rounds.js",
+      "sha256": "f5abb2dce55a864127778abd7f9ff25c1bc536c0d52d76885d698dbc25d3d3d4"
+    },
+    {
+      "path": "dist/control/verification-engine/verification-service.js",
+      "sha256": "de7539f4dac1eb6b8518f584c93dc5b6d1267aaf99fe21eb631c536d640edc6d"
+    },
+    {
+      "path": "dist/data/artifact-vault/artifact-vault.js",
+      "sha256": "d5b8c88315556ab51f05a78bd75f73b1ac9117ff2b7d0c08a8191b21dd2a2f5f"
+    },
+    {
+      "path": "dist/data/artifact-vault/exploration-material-reader.js",
+      "sha256": "63ac5d80bea62a84fba7852ee52142397830243dbe7f880308f265bb09201d6a"
+    },
+    {
+      "path": "dist/data/artifact-vault/material-access-policy.js",
+      "sha256": "0f995472213d24c2508185ace8a5763a3525e9265ddc6fa04e1d06b6f4a9b763"
+    },
+    {
+      "path": "dist/data/artifact-vault/runtime-observation-journal.js",
+      "sha256": "38e551e4ba50486e6bd5741915b73500f39ec8a93f030ad88dd75e20fc4a7e59"
+    },
+    {
+      "path": "dist/data/artifact-vault/sqlite-artifact-vault.js",
+      "sha256": "0348bfb048022710a8fbbb5762761b2a819925151afc45e63f3ba31948617359"
+    },
+    {
+      "path": "dist/data/context-compiler/architecture-context-compiler.js",
+      "sha256": "6cb817cfb848fbeba6f8d09e6394d0dcc80d181b4dccc62a4e1abd6cea8715c9"
+    },
+    {
+      "path": "dist/data/context-compiler/baseline-evolution-context.js",
+      "sha256": "d8bdbe471b60b26e4cceccb93d93796d74cb10fe7550ae7c846ceb007665efad"
+    },
+    {
+      "path": "dist/data/context-compiler/completed-work-context-compiler.js",
+      "sha256": "656c9fa180108396a3752576b66cdc22a3d15e888d4d984071a9a7daa022a07a"
+    },
+    {
+      "path": "dist/data/context-compiler/context-compiler.js",
+      "sha256": "0349c59da26651c13a6ffb49aef6edb57303944eedf71a544f19ae733fe86bff"
+    },
+    {
+      "path": "dist/data/context-compiler/coordination-context-compiler.js",
+      "sha256": "da2ba37d395b6206ef4c7114eed14d2a05d44d328cfbb1d15bcd1ed8f5c231cf"
+    },
+    {
+      "path": "dist/data/context-compiler/execution-feedback-context.js",
+      "sha256": "d42a59758fd3e29c888e3766d50560ecfab9e01c4c922ac78b1b0d768d5634d8"
+    },
+    {
+      "path": "dist/data/context-compiler/exploration-context-compiler.js",
+      "sha256": "c1030ca27110edce21e56e1279a8662e18f16adf9db937810b2f33da5b04ce5a"
+    },
+    {
+      "path": "dist/data/context-compiler/exploration-session-context.js",
+      "sha256": "0f81c21b79c992a1a36804b742d37fb0099037759adc81355b742db69d2d813a"
+    },
+    {
+      "path": "dist/data/context-compiler/feedback-materials.js",
+      "sha256": "5d3da89b3f331a525ffca22990d4afb0d7af2845139585f6180c0b3832779dce"
+    },
+    {
+      "path": "dist/data/context-compiler/handoff-context-compiler.js",
+      "sha256": "50a128e3e7ea67d65afe3bc877411b5c327bf886229b2b814978f3f5cbb623cf"
+    },
+    {
+      "path": "dist/data/context-compiler/history-materials-context.js",
+      "sha256": "39fea9fe548cd31d8574ceb26071332228b0783f9019c23eabd25397e39b3094"
+    },
+    {
+      "path": "dist/data/context-compiler/material-selection.js",
+      "sha256": "2ca261e0d3ae35ef7bfb83a8269cd543373465fc4ad1f6b6097b64f61fd6cdcf"
+    },
+    {
+      "path": "dist/data/context-compiler/operator-planning-context.js",
+      "sha256": "a3bd36cbbd5788037eb9fa261f220ecf5f2c705e7391b16efcb0683dce62bf6c"
+    },
+    {
+      "path": "dist/data/context-compiler/planning-context-compiler.js",
+      "sha256": "189e5d3de44c767c252848ce40009fcdbc523c30202285ffdecc3ddca77c724b"
+    },
+    {
+      "path": "dist/data/context-compiler/query-context-compiler.js",
+      "sha256": "07c5930c1eec7ed661d1e489cc752c5f1c81d10091f715c48c0c1b80063ab55e"
+    },
+    {
+      "path": "dist/data/context-compiler/query-execution-context.js",
+      "sha256": "e0657ba11c3c2a8e52bef2a8d945d44de1aa124a64b435628aa78201655318d3"
+    },
+    {
+      "path": "dist/data/context-compiler/review-context-compiler.js",
+      "sha256": "d5b5244554891d6a759a55285fc9322642853c495433e60b495063ee89c03c5d"
+    },
+    {
+      "path": "dist/data/context-compiler/reviewer-context.js",
+      "sha256": "f6945b9bd45842b39c20a8b53bd04caf6945c76a9c7313e5db91a904136b9eca"
+    },
+    {
+      "path": "dist/data/context-compiler/reviewer-profile.js",
+      "sha256": "aab081490b5dc32d57fa2f3807bc696cab5a176fc5ba019aa279b71a956d65fa"
+    },
+    {
+      "path": "dist/data/context-compiler/reviewer-runtime-context.js",
+      "sha256": "0f49ff3424cb34de9e4e781c6c1776827ba2c2fe3c037d87d9dd4a95cc21c83c"
+    },
+    {
+      "path": "dist/data/context-compiler/role-material-sources.js",
+      "sha256": "ed8dea1f30c71a479267b27bc3e559ca64f8c376d4f1c7e30d47c78d89d06088"
+    },
+    {
+      "path": "dist/data/context-compiler/role-source-index.js",
+      "sha256": "3b468fd6163781bc2faae724c45066a18c3f807194e7bcf15185ec437a8b96ab"
+    },
+    {
+      "path": "dist/data/context-compiler/run-output-materials.js",
+      "sha256": "f9a61e6b5acfc62085632c2c581938b838faa1385caf78ca244d8d5fb429ac6b"
+    },
+    {
+      "path": "dist/data/context-compiler/runtime-context.js",
+      "sha256": "571ce86e2c730ca282a1d983ff9528507647198b55a5af7a10a60f2806af5f24"
+    },
+    {
+      "path": "dist/data/context-compiler/source-graph-context.js",
+      "sha256": "d93a0d22e6bb4451c6706573c2e34824e5e0f782dd7538086d6e467aec5fa1d8"
+    },
+    {
+      "path": "dist/data/context-compiler/verification-context.js",
+      "sha256": "3f4a9a26b52dd4c5969843fa55ade82387b38a4848f0b13abe8b62ac2eadee4a"
+    },
+    {
+      "path": "dist/data/context-compiler/verification-migration-context.js",
+      "sha256": "30d10337a91a2dbe45e99ce21d50cb3dc19d84dff2f9ade8ff4af41ac00aded4"
+    },
+    {
+      "path": "dist/data/context-compiler/work-context-compiler.js",
+      "sha256": "52b1c565b0ddf27721c8b4a271cb3879d13065192597e7a4ecbd74c1724f418a"
+    },
+    {
+      "path": "dist/data/context-compiler/work-run-materials.js",
+      "sha256": "adaf9bedaf4a69c5e46ea870345ee11d0824a7c8f6d5645716eb149105933b69"
+    },
+    {
+      "path": "dist/data/read-model-index/baseline-change-projection.js",
+      "sha256": "33269aa83114a23e266368891f7058936e923de9868d0f552a64cf57872a794c"
+    },
+    {
+      "path": "dist/data/read-model-index/completed-work-eligibility.js",
+      "sha256": "979efb03e5af91aa56ef2f14bc364c427deb525eda73fe49b553fe897b4067f8"
+    },
+    {
+      "path": "dist/data/read-model-index/completed-work-merge.js",
+      "sha256": "901899a1a0a27571a39545552d5c376ac6685d9f4d9d5e7d8ef4f74e93d1498e"
+    },
+    {
+      "path": "dist/data/read-model-index/governance-view.js",
+      "sha256": "b1a469d3b33f9547fde8b87bf88e912776b8a9a5aa5302f21eb7ed5967f099e5"
+    },
+    {
+      "path": "dist/data/read-model-index/initial-planning-view.js",
+      "sha256": "35251785cf0e889aa2bef4826edf71ad0b5a6e19f222ff55e2de14489316903e"
+    },
+    {
+      "path": "dist/data/read-model-index/read-model-index.js",
+      "sha256": "1ab52a38516a633fddffd063dade4cec4973fbbfd14ba6df9f79398228bdc51a"
+    },
+    {
+      "path": "dist/data/read-model-index/reviewer-projection.js",
+      "sha256": "5bf3ef9734f767969fa45d42cd1610e671c0e74e9617de812c88dcb2b86aa8d2"
+    },
+    {
+      "path": "dist/data/read-model-index/sqlite-read-model-index.js",
+      "sha256": "06930cc90bcd3c1016cd5defec83ebe76a06ea4bd9e6104aba8d85559ca8ef70"
+    },
+    {
+      "path": "dist/data/state-ledger/governance-records.js",
+      "sha256": "23ace24d0c68b19c6c2dc7faaa298303ba96089b4b65034a27f416d8138cee0f"
+    },
+    {
+      "path": "dist/data/state-ledger/in-memory-ledger.js",
+      "sha256": "20efd83624963510856a3b7a0666030f02314faa5b50b30357fdb74e77e7748c"
+    },
+    {
+      "path": "dist/data/state-ledger/ledger-scope-catalog.js",
+      "sha256": "19ce71d1412f304aa4742d298d0eca4b164dc9e7ed05f8adf1b63381915567e6"
+    },
+    {
+      "path": "dist/data/state-ledger/sqlite-ledger.js",
+      "sha256": "b290b293763dbc0c281de31231fc7c20242b3eca950b4129a98fed2575e93ca8"
+    },
+    {
+      "path": "dist/data/workspace-reader/architecture-source.js",
+      "sha256": "ef513bfd0f8274eb91de77c19b737d3a8137a9333bf41e1de7b16dd8430c9e36"
+    },
+    {
+      "path": "dist/data/workspace-reader/candidate-workspace-reader.js",
+      "sha256": "190ff085797c96fc96a231330cee61961c8be274680b0d6ec9db5f67d3632926"
+    },
+    {
+      "path": "dist/data/workspace-reader/cpp-source-index.js",
+      "sha256": "7f48d89f37fa5f5f0eb5ee3bb084257389db099f93443a3eb10abca44ab97029"
+    },
+    {
+      "path": "dist/data/workspace-reader/denied-prefixes.js",
+      "sha256": "5fe3036bbe22509aa9ab2f8526f8ae95b668226b76f5d050ce61dc07e06e21e9"
+    },
+    {
+      "path": "dist/data/workspace-reader/exploration-source.js",
+      "sha256": "ca1b046e0f418e3d2465986bdbc119d2febd5dd4ec6ee8a5ae996b8cca634dd7"
+    },
+    {
+      "path": "dist/data/workspace-reader/project-source-index.js",
+      "sha256": "57d64195973cccffe767cff7e92aaf21967498c16897ba606efda32757ca538f"
+    },
+    {
+      "path": "dist/data/workspace-reader/python-source-index.js",
+      "sha256": "41931878832b4753e2fed9552170108f748b24f6957bf53ce24c1f9c6077f422"
+    },
+    {
+      "path": "dist/data/workspace-reader/query-workspace-source-reader.js",
+      "sha256": "2447002b57687abc3c36cdf81279ecec614be657048acbfa260979e28958345b"
+    },
+    {
+      "path": "dist/data/workspace-reader/reviewer-source-reader.js",
+      "sha256": "74576abde9d91f5c2e859cdbf5495f3929884db7bab43c02dbd1680572f8b7d9"
+    },
+    {
+      "path": "dist/data/workspace-reader/role-source-reader.js",
+      "sha256": "86dbb8548396472a8e218343304df19f457955492d26ca31a1077fa073fe3650"
+    },
+    {
+      "path": "dist/data/workspace-reader/source-applicability.js",
+      "sha256": "0ec1f0f99a6c41c1105b9010a5aebd76ec11bde94c1ea40e243f926c614fbf75"
+    },
+    {
+      "path": "dist/data/workspace-reader/source-identity.js",
+      "sha256": "7b06218bd4c92ca5133f2fcbd19a9e0d32b7729e365fd72c67154a4603d02e74"
+    },
+    {
+      "path": "dist/data/workspace-reader/source-index.js",
+      "sha256": "b44b2f83e21c0986ea9916b50e56c43376114df4c25b48a94b76e8c7b35bf3ad"
+    },
+    {
+      "path": "dist/data/workspace-reader/source-workspace-reader.js",
+      "sha256": "d1613b418f6daa348e2fd395f291859ddfb3a925e755ddad9b4f00ed12af0b25"
+    },
+    {
+      "path": "dist/data/workspace-reader/verification-source-applicability.js",
+      "sha256": "1b165ba7c466e4f06e342a90dc2c2f2eec147dcd7738ab2c05cc06bb7cb030da"
+    },
+    {
+      "path": "dist/data/workspace-reader/verification-workspace-reader.js",
+      "sha256": "61e559c3684857c8701eb2c4b4d9b598408aca97c03f8ecf66f3a8e9458582c2"
+    },
+    {
+      "path": "dist/data/workspace-reader/workspace-reader-adapter.js",
+      "sha256": "e61b2cab9cefbb3cc6498d598fd5a25059183858104b1b78f09eabb659516260"
+    },
+    {
+      "path": "dist/execution/worker-runtime/coding-agent-runtime.js",
+      "sha256": "d4ad6ff9f9058401d07888ad683e47ae8733897e369d5f129ffddab6c0226fbc"
+    },
+    {
+      "path": "dist/execution/worker-runtime/context-continuation-adapter.js",
+      "sha256": "47262cb970e780ac47cf126cf857ed7c8fd5e106341bee6f52e98f2d34a04da5"
+    },
+    {
+      "path": "dist/execution/worker-runtime/exploration-tools.js",
+      "sha256": "5504b52023265fc48a80c88f03ff3f7559bf773ea99d1f0809d0dde09728f63a"
+    },
+    {
+      "path": "dist/execution/worker-runtime/fake-runtime-adapter.js",
+      "sha256": "a64b0108e4ed6203b799e043c856716a2ae9e0fb2aa0e6026e03f2a9ecc6ab2c"
+    },
+    {
+      "path": "dist/execution/worker-runtime/handoff-control-adapter.js",
+      "sha256": "d95266d2b1e5a13f49b692fce19e9ee6f41209d297c24090ae4230e03ba06c72"
+    },
+    {
+      "path": "dist/execution/worker-runtime/lifecycle-control-adapter.js",
+      "sha256": "168b41f6df08dec512d72add2728323e7429f1aeac39f4917475691f67531f92"
+    },
+    {
+      "path": "dist/execution/worker-runtime/model-budget.js",
+      "sha256": "df6fd071a62fb8fbc442ded13372d0b46bd89fc54243c0f12e6833539d4e4e63"
+    },
+    {
+      "path": "dist/execution/worker-runtime/observed-model-run.js",
+      "sha256": "e65c9807b1a87cf004b5fa7ef86eca664b6a51f3fe2793e18fb31a7a17eda4fd"
+    },
+    {
+      "path": "dist/execution/worker-runtime/read-only-query-adapter.js",
+      "sha256": "c11b0772d423947af6545ba415ed108d47a3729eda3c906395eaa0d7cbbe96f5"
+    },
+    {
+      "path": "dist/execution/worker-runtime/read-only-query-runtime.js",
+      "sha256": "bb5fbecaf2773a0682c6cb7724a1d874fdddd321f1114d2b64e6f9d270a5a2ef"
+    },
+    {
+      "path": "dist/execution/worker-runtime/reviewer-material-tools.js",
+      "sha256": "392845080aac02725ac48d3ea22dda59e9622dd13a73b4280aac3c84ea5c24f9"
+    },
+    {
+      "path": "dist/execution/worker-runtime/run-limits.js",
+      "sha256": "fad4fda5b9f6915e5ede381d217aeb7a547b5a59d545af7d32e5b182d2417167"
+    },
+    {
+      "path": "dist/execution/worker-runtime/unconfigured-capabilities.js",
+      "sha256": "4b52142917dffebd57ca34215ff1a57dc176e3c94d48ba8b6234d5bcdc0123bd"
+    },
+    {
+      "path": "dist/harness/in-memory-harness.js",
+      "sha256": "a4bb730ff9f97cdb3331a5620df1df238ed744f10cebc8971610388ea09eb3c7"
+    },
+    {
+      "path": "dist/harness/index.js",
+      "sha256": "cb4786f6c93c07e35bb122b250f67dc606ee5a453087da252e84b0d08b20d0da"
+    },
+    {
+      "path": "dist/harness/persistent-harness.js",
+      "sha256": "afa6774e26c427123195cfd579650bceeddab37ae2fda2e529ab796366e951b3"
+    },
+    {
+      "path": "dist/harness/rework-composition.js",
+      "sha256": "9e53a44bba485525cfab7d01677a85d9a59129d1aebf6bd9098bb5f2fd75e622"
+    },
+    {
+      "path": "dist/interaction/human-collaboration/exploration-session.js",
+      "sha256": "f41ad9eac4f1445acf62589ba068ea13c91f1219fd1246392b08ecce5b9fc3fe"
+    },
+    {
+      "path": "dist/interaction/human-collaboration/history-materials.js",
+      "sha256": "e0b7b36e2cae0528dcea7f2590642f7481a962fbf7e516f111705e21e2d04ec4"
+    },
+    {
+      "path": "dist/interaction/human-collaboration/human-collaboration.js",
+      "sha256": "aacc94606ec10f74cc8dc634aab50420aade12f9716d3b6681d04da3271359ec"
+    },
+    {
+      "path": "dist/storage/atomic-file.js",
+      "sha256": "e33a6dfd444157847ce686ab6ef8e13c9ce5a349ad27341cb25d8fad4208098e"
+    }
+  ]
+}

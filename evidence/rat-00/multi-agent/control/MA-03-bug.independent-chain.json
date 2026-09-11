@@ -1,0 +1,129 @@
+{
+  "trace": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-03",
+    "origin": "constructed-evaluator-selftest-only",
+    "observations": {
+      "configuration": "parallel",
+      "runs": [
+        {
+          "id": "a",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/a",
+          "toolEventRef": "synthetic/tools/a"
+        },
+        {
+          "id": "b",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/b",
+          "toolEventRef": "synthetic/tools/b"
+        },
+        {
+          "id": "c",
+          "modelInvocations": 1,
+          "sessionRef": "synthetic/session/c",
+          "toolEventRef": "synthetic/tools/c"
+        }
+      ],
+      "reports": [
+        {
+          "ref": "r1",
+          "revision": "v1",
+          "authorRun": "a",
+          "accepted": true,
+          "publishedAt": 2
+        },
+        {
+          "ref": "r2",
+          "revision": "v1",
+          "authorRun": "b",
+          "accepted": true,
+          "publishedAt": 3
+        }
+      ],
+      "consumptions": [
+        {
+          "ref": "r1",
+          "revision": "v1",
+          "runId": "c",
+          "at": 4
+        },
+        {
+          "ref": "r2",
+          "revision": "v1",
+          "runId": "c",
+          "at": 4
+        }
+      ],
+      "reproduction": {
+        "baseResult": "FAIL",
+        "candidateResult": "PASS",
+        "baseDigest": "bugged",
+        "candidateDigest": "fixed",
+        "baseFinishedAt": 3,
+        "candidateStartedAt": 8
+      },
+      "negativeControl": {
+        "checkoutDigest": "e6b6ab996c2b80ef91915d072b4587a06b9fd7bd9d89db5faab72ee564ee6c45",
+        "findings": [],
+        "executedChecks": 2
+      },
+      "candidateDigest": "fixed",
+      "finder": {
+        "runId": "a",
+        "ref": "finding"
+      },
+      "reproducer": {
+        "runId": "rep",
+        "ref": "repro",
+        "inputRefs": [
+          "finding"
+        ]
+      },
+      "writer": {
+        "runId": "w",
+        "start": 4,
+        "finishedAt": 7,
+        "ref": "patch",
+        "inputRefs": [
+          "repro"
+        ]
+      },
+      "verifier": {
+        "runId": "w",
+        "inputRefs": [
+          "patch"
+        ],
+        "candidateDigest": "fixed"
+      }
+    }
+  },
+  "expectedFailure": "bug.independent-chain",
+  "result": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-03",
+    "layer": "normalized-trace-assertion-evaluator",
+    "inputOrigin": "constructed-evaluator-selftest-only",
+    "status": "FAIL",
+    "assertions": [
+      {
+        "id": "bug.reproduce-then-fix",
+        "status": "PASS"
+      },
+      {
+        "id": "bug.fixed-negative-not-confirmed",
+        "status": "PASS"
+      },
+      {
+        "id": "bug.independent-chain",
+        "status": "FAIL"
+      },
+      {
+        "id": "collaboration.real-consumption",
+        "status": "PASS"
+      }
+    ],
+    "productCapabilityResult": "NOT_RUN",
+    "note": "A normalized trace can only test evaluator logic here. A platform export adapter and independent raw-evidence authentication are NOT_PREPARED; constructed traces are never product evidence."
+  }
+}

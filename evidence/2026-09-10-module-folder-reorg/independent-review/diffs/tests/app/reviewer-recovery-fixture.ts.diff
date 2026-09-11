@@ -1,0 +1,21 @@
+diff --git a/evidence/2026-09-10-module-folder-reorg/independent-review/before/tests/app/reviewer-recovery-fixture.ts b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/tests/app/reviewer-recovery-fixture.ts
+index a7ad3ea..9f95649 100644
+--- a/evidence/2026-09-10-module-folder-reorg/independent-review/before/tests/app/reviewer-recovery-fixture.ts
++++ b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/tests/app/reviewer-recovery-fixture.ts
+@@ -30,13 +30,13 @@ export async function reviewerRecoveryFixture(cleanup: Array<() => Promise<void>
+     // Browser tests compile with the UI's stricter settings. Load the current
+     // build at runtime so this shared fixture does not pull every backend
+     // implementation into that unrelated TypeScript program.
+-    const { SqliteStateLedger } = await import(new URL('../../dist/sqlite-ledger/sqlite-ledger.js', import.meta.url).href) as {
++    const { SqliteStateLedger } = await import(new URL('../../dist/data/state-ledger/sqlite-ledger.js', import.meta.url).href) as {
+       SqliteStateLedger: new (options: { path: string }) => StateLedger & { close(): void };
+     };
+-    const { WorkspaceLeaseEngineImpl } = await import(new URL('../../dist/control/workspace-lease.js', import.meta.url).href) as {
++    const { WorkspaceLeaseEngineImpl } = await import(new URL('../../dist/control/control-engine/workspace-lease.js', import.meta.url).href) as {
+       WorkspaceLeaseEngineImpl: new (deps: { ledger: StateLedger; now(): string; eventId(): string; workspaceCapability: WorkspaceCapabilityPort }) => WorkspaceLeasePort;
+     };
+-    const { ConfiguredWorkspaceCapabilityPolicy } = await import(new URL('../../dist/control/policies/workspace-capability.js', import.meta.url).href) as {
++    const { ConfiguredWorkspaceCapabilityPolicy } = await import(new URL('../../dist/control/control-engine/policies/workspace-capability.js', import.meta.url).href) as {
+       ConfiguredWorkspaceCapabilityPolicy: new (support: { workspaceRead: boolean; workspaceWrite: boolean; maxWriteScope: null }) => WorkspaceCapabilityPort;
+     };
+     const ledger = new SqliteStateLedger({ path: ledgerPath });

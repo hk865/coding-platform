@@ -1,0 +1,479 @@
+import { RunOutputFacts } from '../../src/data/context-compiler/run-output-materials.js';
+import type { RunOutputMaterialPort } from '../../src/contracts/run-output-materials.js';
+const outputMaterials = (ledger: Pick<StateLedger, 'load' | 'events'>): RunOutputMaterialPort => ({ runOutputWitness: (run, channel) => new RunOutputFacts(run, ledger).witness(channel) });
+/**
+ * RW-16：VerificationEngine 的**必产出见证通道**（ADR 0003 D4-3）。
+ *
+ * RW-15 接上了「角色必产出」的消费者，但见证表里七类只有一类（独立审阅原报告）有真实通道，
+ * 其余六类 `channel: null` —— 于是只要项目安装 executor 规格，此后每个普通任务的轮次都不再 PASS、
+ * Task 永远无法归约成 satisfied。本票为每一类接上**可归因到本次运行的既有已提交事实**，
+ * 并且**不放松 fail-closed**：
+ *
+ *   1. 见证表全键穷尽（`Record<RoleOutputKindV1, ...>`）：新增一类必产出而表里没有键即编译失败；
+ *   2. 每条通道读的都是 canonical 聚合或带 runRef 的落账事件，并逐字段复核归属（runRef／taskId／
+ *      workspaceId／planRef 全等）；别的运行的事实、模型自述、调用方声明都不算见证；
+ *   3. 事实不存在、读不到、账本扫描超限 → 仍是缺项（这里有正反两面的真实用例）。
+ *
+ * 事实由**真实命令**产生：InMemoryHarness 的真实 ControlEngine／真实账本／真实治理
+ * install+activate（RoleSpecRevision + 带 roles 的 CoordinationPolicy）+ 真实 recordPatch／
+ * recordIntegrationResult／recordExecutionNote／bindWorkContext。角色规格解析用的是产品自己的
+ * `LedgerRoleSpecRead`（判据完全来自 ControlEngine），不是替身。
+ */
+import { expect, it } from 'vitest';
+import {
+  evaluateRoleOutputCompleteness, ROLE_OUTPUT_WITNESS_V1,
+  type RoleOutputWitnessChannelV1,
+} from '../../src/control/verification-engine/role-output-completeness.js';
+import type { RunRef, RunSnapshot, RoleBindingRefV1 } from '../../src/contracts/dispatch.js';
+import { taskAttemptRefFor } from '../../src/contracts/dispatch.js';
+import type { AggregateSnapshot, StateLedger } from '../../src/contracts/ledger.js';
+import type { ReviewWorkSnapshot } from '../../src/contracts/reviewer-work.js';
+import type { RoleSpecReadPort } from '../../src/contracts/role-spec-materials.js';
+import { ROLE_OUTPUT_KINDS, ROLE_SPEC_REVISION, type RoleOutputKindV1, type RoleSpecContentV1 } from '../../src/contracts/role-spec.js';
+import type { PatchArtifactV1 } from '../../src/contracts/patch.js';
+import type { IntegrationTaskResultV1 } from '../../src/contracts/integration.js';
+import { createControlEngine } from '../../src/control/control-engine/control-engine.js';
+import { InMemoryLedger } from '../../src/data/state-ledger/in-memory-ledger.js';
+import { LedgerRoleSpecRead } from '../../src/control/dispatch-engine/role-spec-read.js';
+import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
+import { createDeterministicDeps } from '../../src/contracts/testing/sequences.js';
+import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from '../../src/contracts/fixtures/bootstrap-fixture-v1.js';
+import {
+  ROLE_SOURCE_EXECUTOR, ROLE_SOURCE_INTEGRATOR, ROLE_SOURCE_RECORDER,
+  buildCoordinationPolicyContentWithRolesV1, buildRoleSpecActivateCommandFor, buildRoleSpecInstallCommandFor,
+  roleMatrixPolicyDigest,
+} from '../../src/contracts/fixtures/role-spec-fixtures.js';
+import { buildCoordinationPolicyActivateCommand, buildCoordinationPolicyInstallCommand } from '../../src/contracts/commands/governance.js';
+import { P15_COORDINATION_POLICY_REVISION } from '../../src/contracts/human-role-collaboration.js';
+import {
+  P107_BUDGET_WRITER_V1, P107_DECLARED_WRITE_PERMISSIONS_V1, P107_GOAL, P107_PLAN_REVISION_FIXTURE_V1, P107_PROJECT,
+  P107_SCHEMA, P107_SCOPE_WRITER, P107_TASK_INTEGRATION, P107_TASK_READER_A, P107_TASK_WRITER, P107_WORKSPACE,
+  buildP107AcquireWriteLeaseCommand, buildP107RecordIntegrationCommand, buildP107RecordPatchCommand, buildP107ArtifactRef,
+  p107PlanRef,
+} from '../../src/contracts/fixtures/workspace-fixtures.js';
+import { buildBindWorkContextCommand, buildExecutionNoteV1, buildRecordExecutionNoteCommand } from '../../src/contracts/fixtures/context-fixtures.js';
+import { toP1_07Harness, prepareP107Scenario, runP107Task } from '../contract-suite/p1-07-harness.js';
+
+const deterministic = createDeterministicDeps();
+
+const PROJECT = 'proj-rw16';
+const GOAL = 'goal-rw16';
+const AT = '2026-09-10T00:00:00.000Z';
+/** 只读替身：本票不再用「调用方声明」充当见证，替身只用于构造读不到规格的极端情况。 */
+const emptyLedger: Pick<StateLedger, 'load' | 'events'> = {
+  load: async ref => ({ status: 'not_found' as const, ref }),
+  events: async query => ({ afterCursor: query.afterCursor, throughCursor: null, events: [], hasMore: false }),
+};
+
+function runSnapshot(overrides: Partial<RunSnapshot> = {}): RunSnapshot {
+  return {
+    ref: { aggregateType: 'Run', projectId: PROJECT, goalId: GOAL, runId: 'run-rw16' },
+    revision: 3,
+    schemaVersion: 1,
+    task: { projectId: PROJECT, goalId: GOAL, taskId: 'task-rw16' },
+    attemptId: 'attempt-rw16',
+    planRef: { aggregateType: 'PlanRevision', projectId: PROJECT, planId: 'plan-rw16' },
+    roleBinding: { schemaVersion: 1, bindingId: 'binding-rw16', templateId: 'executor', templateRevision: '1', bindingVersion: 1, policyRevision: 'human-implementation-v1' },
+    budget: { tokenBudget: 1000, deadline: null },
+    workspaceSnapshot: { workspaceId: 'ws-rw16', revision: 1 },
+    status: 'ended',
+    outcome: 'completed',
+    exitCode: 0,
+    lastEventSeq: 1,
+    lastRuntimeEventId: 'evt-1',
+    lastFactEventId: 'fact-1',
+    envelope: {
+      schemaVersion: 1, envelopeId: 'envelope-rw16', projectId: PROJECT, workspaceId: 'ws-rw16', goalId: GOAL, taskId: 'task-rw16',
+      runRef: { aggregateType: 'Run', projectId: PROJECT, goalId: GOAL, runId: 'run-rw16' },
+      attemptRef: { aggregateType: 'TaskAttempt', projectId: PROJECT, goalId: GOAL, taskId: 'task-rw16', attemptId: 'attempt-rw16' },
+      planRef: { aggregateType: 'PlanRevision', projectId: PROJECT, planId: 'plan-rw16' },
+      workspaceSnapshot: { workspaceId: 'ws-rw16', revision: 1 },
+      roleBinding: { schemaVersion: 1, bindingId: 'binding-rw16', templateId: 'executor', templateRevision: '1', bindingVersion: 1, policyRevision: 'human-implementation-v1' },
+      permissions: { policyRevision: 'policies-rw16', tools: ['read', 'write', 'shell'], writeScope: ['*'] },
+      budget: { tokenBudget: 1000, deadline: null },
+      sourceRefs: [],
+      bundleRef: { kind: 'artifact', contentType: 'application/json', digest: 'b'.repeat(64), sizeBytes: 1, source: { kind: 'artifact', refId: 'bundle-rw16', revision: '1' } },
+      task: { title: '任务', obligations: [{ obligationId: 'ob-1', title: '义务' }] },
+      dependencies: [],
+    } as RunSnapshot['envelope'],
+    startedAt: AT,
+    endedAt: AT,
+    ...overrides,
+  };
+}
+
+function specContent(requiredOutputs: RoleSpecContentV1['requiredOutputs']): RoleSpecContentV1 {
+  return {
+    schemaVersion: 1, label: '执行者', purpose: '实现已接受的任务', responsibility: ['execution'],
+    requiredMaterials: [], optionalMaterials: [],
+    permissions: { tools: ['read', 'write', 'shell'], writeScope: 'workspace' },
+    budget: { source: 'task-budget', scope: 'assigned-task' },
+    requiredOutputs,
+    exit: { success: 's', stop: 't', handoff: 'h' },
+  };
+}
+
+function rolePort(content: RoleSpecContentV1): RoleSpecReadPort {
+  return {
+    resolve: async () => ({
+      status: 'resolved', roleId: 'executor',
+      revision: { aggregateType: 'RoleSpecRevision', projectId: PROJECT, roleId: 'executor', revision: 1 },
+      spec: content,
+    }),
+  };
+}
+
+// ------------------------------------------------------------------------ //
+// 1. 见证表：全键穷尽 + 每一类今天由哪条事实见证                              //
+// ------------------------------------------------------------------------ //
+
+it('见证表全键穷尽：新增一类必产出必须显式表态由哪条既有事实见证', async () => {
+  // 编译期保证：ROLE_OUTPUT_WITNESS_V1 的类型是 Record<RoleOutputKindV1, ...>。在
+  // src/contracts/role-spec.ts 的 ROLE_OUTPUT_KINDS 里临时加一个成员，`npx tsc --noEmit -p tsconfig.json`
+  // 就会报 "Property '<新成员>' is missing"；删掉该成员即恢复。下面这条赋值在编译期复核同一件事。
+  const table: Record<RoleOutputKindV1, { channel: string | null; because: string }> = ROLE_OUTPUT_WITNESS_V1;
+  expect(Object.keys(table).sort()).toEqual([...ROLE_OUTPUT_KINDS].sort());
+  for (const kind of ROLE_OUTPUT_KINDS) expect(table[kind].because.length).toBeGreaterThan(0);
+});
+
+it('RW-16 接通的五类通道逐类点名；仍无通道的两类写明需要的通道与产品后果', async () => {
+  const channels: Record<RoleOutputKindV1, RoleOutputWitnessChannelV1> = {
+    'answer-with-sources': null,
+    proposal: null,
+    'conflict-report': 'run-bound-conflict-surface',
+    'verification-verdict': 'run-bound-review-output',
+    'implementation-result': 'run-bound-patch-record',
+    'integration-result': 'run-bound-integration-result',
+    'work-record': 'run-bound-execution-note',
+  };
+  for (const kind of ROLE_OUTPUT_KINDS) expect(ROLE_OUTPUT_WITNESS_V1[kind].channel).toBe(channels[kind]);
+  // 没有通道的两类必须把「需要哪条通道」与「产品后果」说出来，不能只写一句「没有通道」。
+  for (const kind of ['answer-with-sources', 'proposal'] as const) {
+    expect(ROLE_OUTPUT_WITNESS_V1[kind].because).toContain('需要的通道');
+    expect(ROLE_OUTPUT_WITNESS_V1[kind].because).toContain('产品后果');
+  }
+});
+
+// ------------------------------------------------------------------------ //
+// 2. fail-closed 语义：读不到一律记缺项，绝不默认满足                          //
+// ------------------------------------------------------------------------ //
+
+it('没有规格可依时如实记 absent：不据此阻断，也不假装核对过', async () => {
+  const without = await evaluateRoleOutputCompleteness({ projectId: PROJECT, run: runSnapshot(), materials: outputMaterials(emptyLedger) });
+  expect(without.status).toBe('absent');
+  expect(without.detail).toContain('RoleSpecReadPort');
+  const absent = await evaluateRoleOutputCompleteness({
+    projectId: PROJECT, run: runSnapshot(), materials: outputMaterials(emptyLedger),
+    roleSpec: { resolve: async () => ({ status: 'absent', roleId: 'executor', reason: '本次运行没有角色规格可依' }) },
+  });
+  expect(absent.status).toBe('absent');
+  const inadmissible = await evaluateRoleOutputCompleteness({
+    projectId: PROJECT, run: runSnapshot(), materials: outputMaterials(emptyLedger),
+    roleSpec: { resolve: async () => ({ status: 'inadmissible', roleId: 'executor', reasons: [{ code: 'role_binding_not_admissible', roleId: 'executor', detail: 'role_spec_stale', message: '角色已撤下' }] }) },
+  });
+  expect(inadmissible.status).toBe('absent');
+  expect(inadmissible.detail).toContain('角色已撤下');
+  const noEnvelope = await evaluateRoleOutputCompleteness({
+    projectId: PROJECT, run: runSnapshot({ envelope: null }), materials: outputMaterials(emptyLedger),
+    roleSpec: rolePort(specContent([{ kind: 'implementation-result', reason: 'r' }])),
+  });
+  expect(noEnvelope.status).toBe('absent');
+});
+
+it('规格读不到时记为缺项（fail-closed），不把"读不到"当成"已满足"', async () => {
+  const result = await evaluateRoleOutputCompleteness({
+    projectId: PROJECT, run: runSnapshot(), materials: outputMaterials(emptyLedger),
+    roleSpec: { resolve: async () => { throw Error('账本不可读'); } },
+  });
+  expect(result.status).toBe('incomplete');
+  expect(result.detail).toContain('账本不可读');
+  expect(result.detail).toContain('缺项');
+});
+
+it('见证通道读不到（账本事件扫描失败）时同样是缺项，不写成"大概产出了"', async () => {
+  const result = await evaluateRoleOutputCompleteness({
+    projectId: PROJECT, run: runSnapshot(),
+    materials: outputMaterials({ ...emptyLedger, events: async () => { throw Error('事件扫描不可用'); } }),
+    roleSpec: rolePort(specContent([{ kind: 'implementation-result', reason: '实现结果必须可核对' }])),
+  });
+  expect(result.status).toBe('incomplete');
+  expect(result.missing).toEqual(['implementation-result']);
+  expect(result.required[0]!.witness).toBeNull();
+  expect(result.required[0]!.channel).toBe('run-bound-patch-record');
+  expect(result.required[0]!.detail).toContain('见证通道读取失败');
+});
+
+it('独立审阅运行：正式绑定的原报告见证 verification-verdict（complete），别的运行的报告不算', async () => {
+  const reviewWorkRef = { aggregateType: 'ReviewWork' as const, projectId: PROJECT, workspaceId: 'ws-rw16', goalId: GOAL, reviewId: 'review-rw16' };
+  const work = {
+    ref: reviewWorkRef, schemaVersion: 1, revision: 2, protocol: 'independent-review-v1',
+    output: {
+      reportRef: { kind: 'artifact', contentType: 'application/json', digest: 'c'.repeat(64), sizeBytes: 10, source: { kind: 'artifact', refId: 'report-rw16', revision: '1' } },
+      reportDigest: 'd'.repeat(64), runRef: { aggregateType: 'Run', projectId: PROJECT, goalId: GOAL, runId: 'run-rw16' },
+      runRevision: 4, terminalEventId: 'evt', terminalEventSeq: 2, observationId: 'obs', sessionId: 'session',
+      packetDigest: 'e'.repeat(64), inputDigest: 'f'.repeat(64), descriptorDigest: 'a'.repeat(64),
+    },
+  } as unknown as ReviewWorkSnapshot;
+  const ledger: Pick<StateLedger, 'load' | 'events'> = { ...emptyLedger, load: async () => ({ status: 'found' as const, snapshot: work as unknown as AggregateSnapshot }) };
+  const reviewRun = runSnapshot({ work: { kind: 'review', reviewWorkRef } });
+  const resolved = await evaluateRoleOutputCompleteness({
+    projectId: PROJECT, run: reviewRun, materials: outputMaterials(ledger),
+    roleSpec: rolePort(specContent([{ kind: 'verification-verdict', reason: '逐条给出有来源的结论' }])),
+  });
+  expect(resolved.status).toBe('complete');
+  expect(resolved.missing).toEqual([]);
+  expect(resolved.required[0]!.witness).toContain('reportRef');
+  // 同一条规格在**普通任务运行**上就没有这个见证：报告必须绑定到本 Run，别的运行的报告不算数。
+  const ordinary = await evaluateRoleOutputCompleteness({
+    projectId: PROJECT, run: runSnapshot(), materials: outputMaterials(ledger),
+    roleSpec: rolePort(specContent([{ kind: 'verification-verdict', reason: '逐条给出有来源的结论' }])),
+  });
+  expect(ordinary.status).toBe('incomplete');
+  expect(ordinary.missing).toEqual(['verification-verdict']);
+});
+
+it('真实治理安装的 executor 规格在真实 reader 下解析出来：没有实现结果的运行仍然是缺项', async () => {
+  const ledger = new InMemoryLedger();
+  const control = createControlEngine({ ledger, now: () => AT, eventId: deterministic.eventId });
+  const projectId = 'proj-alpha';
+  const boot = buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, { commandId: 'b', correlationId: 'b', submittedAt: AT });
+  expect((await ledger.commit(buildBootstrapLedgerCommit(boot, { eventIds: ['e1', 'e2', 'e3', 'e4'], occurredAt: AT }))).status).toBe('committed');
+  const identity = (id: string) => ({ projectId, actor: { kind: 'human' as const, id: 'user-1' }, idempotencyKey: id, commandId: id, correlationId: id, submittedAt: AT });
+  const projectRevision = async (): Promise<number> => {
+    const loaded = await ledger.load({ aggregateType: 'Project', projectId } as never);
+    if (loaded.status !== 'found') throw Error('project missing');
+    return loaded.snapshot.revision;
+  };
+  expect((await control.installRoleSpec(buildRoleSpecInstallCommandFor(ROLE_SOURCE_EXECUTOR, identity('inst-executor')))).status).toBe('committed');
+  expect((await control.activateRoleSpec(buildRoleSpecActivateCommandFor(ROLE_SOURCE_EXECUTOR, { ...identity('act-executor'), expectedRevision: await projectRevision() }))).status).toBe('committed');
+  const policyId = 'coordination-rw16';
+  const content = buildCoordinationPolicyContentWithRolesV1(projectId, [ROLE_SOURCE_EXECUTOR]);
+  expect((await control.installCoordinationPolicy(buildCoordinationPolicyInstallCommand({ policyId, content }, identity('inst-policy')))).status).toBe('committed');
+  const pin = {
+    ref: { aggregateType: 'CoordinationPolicyRevision' as const, projectId, policyId, revision: P15_COORDINATION_POLICY_REVISION },
+    digest: roleMatrixPolicyDigest(content, policyId),
+  };
+  expect((await control.activateCoordinationPolicy(buildCoordinationPolicyActivateCommand(pin, { ...identity('act-policy'), expectedRevision: await projectRevision() }))).status).toBe('committed');
+
+  const run = runSnapshot({
+    ref: { aggregateType: 'Run', projectId, goalId: GOAL, runId: 'run-rw16' },
+    roleBinding: { schemaVersion: 1, bindingId: 'binding-executor', templateId: ROLE_SOURCE_EXECUTOR, templateRevision: String(ROLE_SPEC_REVISION), bindingVersion: 1, policyRevision: 'human-implementation-v1' },
+  });
+  const result = await evaluateRoleOutputCompleteness({ projectId, run, materials: outputMaterials(ledger), roleSpec: new LedgerRoleSpecRead({ ledger }) });
+  expect(result.roleId).toBe(ROLE_SOURCE_EXECUTOR);
+  expect(result.status).toBe('incomplete');
+  expect(result.missing).toEqual(['implementation-result']);
+  expect(result.required[0]!.reason).toContain('实现结果必须可核对');
+  expect(result.required[0]!.detail).toContain('本 Run 没有登记实现结果');
+});
+
+// ------------------------------------------------------------------------ //
+// 3. 真实事实见证：真实 harness + 真实命令 + 真实治理安装                       //
+// ------------------------------------------------------------------------ //
+
+type RoleWorld = {
+  h: ReturnType<typeof createInMemoryHarness>;
+  p107: ReturnType<typeof toP1_07Harness>;
+  workspaceRevision: number;
+};
+
+/** 真实治理：按既有 install/activate 三段式安装并激活一份角色规格 + 带 roles 的协调策略。 */
+async function installRole(world: RoleWorld, roleId: string): Promise<void> {
+  const control = createControlEngine({ ledger: world.h.ledger, now: () => P107_SCHEMA, eventId: deterministic.eventId });
+  const identity = (id: string) => ({ projectId: P107_PROJECT, actor: { kind: 'human' as const, id: 'user-1' }, idempotencyKey: id, commandId: id, correlationId: id, submittedAt: P107_SCHEMA });
+  const projectRevision = async (): Promise<number> => {
+    const loaded = await world.h.ledger.load({ aggregateType: 'Project', projectId: P107_PROJECT } as never);
+    if (loaded.status !== 'found') throw Error('project missing');
+    return loaded.snapshot.revision;
+  };
+  expect((await control.installRoleSpec(buildRoleSpecInstallCommandFor(roleId, identity('inst-' + roleId)))).status).toBe('committed');
+  expect((await control.activateRoleSpec(buildRoleSpecActivateCommandFor(roleId, { ...identity('act-' + roleId), expectedRevision: await projectRevision() }))).status).toBe('committed');
+  const policyId = 'coordination-' + roleId;
+  const content = buildCoordinationPolicyContentWithRolesV1(P107_PROJECT, [roleId]);
+  expect((await control.installCoordinationPolicy(buildCoordinationPolicyInstallCommand({ policyId, content }, identity('inst-policy-' + roleId)))).status).toBe('committed');
+  const pin = { ref: { aggregateType: 'CoordinationPolicyRevision' as const, projectId: P107_PROJECT, policyId, revision: P15_COORDINATION_POLICY_REVISION }, digest: roleMatrixPolicyDigest(content, policyId) };
+  expect((await control.activateCoordinationPolicy(buildCoordinationPolicyActivateCommand(pin, { ...identity('act-policy-' + roleId), expectedRevision: await projectRevision() }))).status).toBe('committed');
+}
+
+/** 真实 P1-07 场景（真实 bootstrap／治理／目标／计划），但 DAG 边留空：本文件只关心"某个 Run 的产出"。 */
+async function world(): Promise<RoleWorld> {
+  const h = createInMemoryHarness({ deps: { clock: () => P107_SCHEMA } });
+  const p107 = toP1_07Harness(h);
+  const draft = structuredClone(P107_PLAN_REVISION_FIXTURE_V1);
+  draft.executionDag = { dependsOn: [] };
+  const preview = await prepareP107Scenario(p107, draft);
+  return { h, p107, workspaceRevision: preview.workspaceRevision };
+}
+
+function bindingFor(roleId: string): RoleBindingRefV1 {
+  return { schemaVersion: 1, bindingId: 'binding-' + roleId + '-v1', templateId: roleId, templateRevision: String(ROLE_SPEC_REVISION), bindingVersion: 1, policyRevision: 'auth-policy-runtime-v1' };
+}
+
+async function runFor(world: RoleWorld, deps: { taskId: string; runId: string; roleId: string }): Promise<RunSnapshot> {
+  const roleBinding = bindingFor(deps.roleId);
+  const declaredPermissions = deps.roleId === ROLE_SOURCE_EXECUTOR ? P107_DECLARED_WRITE_PERMISSIONS_V1 : { tools: ['read'], writeScope: [] as string[] };
+  const runRef = await runP107Task(world.p107, {
+    taskId: deps.taskId, runId: deps.runId, attemptId: 'attempt-' + deps.runId,
+    roleBinding, declaredPermissions, budget: P107_BUDGET_WRITER_V1,
+  });
+  const loaded = await world.h.ledger.load(runRef);
+  if (loaded.status !== 'found') throw Error('run missing');
+  return loaded.snapshot as RunSnapshot;
+}
+
+/** 真实 recordPatch：先取活动写租约（holder=本 Run），再登记补丁（原子推进工作区版本）。 */
+async function recordRunPatch(world: RoleWorld, run: RunSnapshot, patchId: string): Promise<void> {
+  const roleBinding = bindingFor(ROLE_SOURCE_EXECUTOR);
+  const attemptRef = taskAttemptRefFor(P107_PROJECT, P107_GOAL, run.task.taskId, run.attemptId);
+  const leaseId = 'lease-' + run.ref.runId;
+  expect((await world.h.acquireWorkspaceWriteLease(buildP107AcquireWriteLeaseCommand({
+    commandId: 'cmd-' + leaseId, projectId: P107_PROJECT, leaseId, scope: P107_SCOPE_WRITER,
+    declaredWriteScope: P107_DECLARED_WRITE_PERMISSIONS_V1.writeScope,
+    holder: { runRef: run.ref, attemptRef, roleBinding },
+  }))).status).toBe('committed');
+  const patch: PatchArtifactV1 = {
+    schemaVersion: 1, patchId, projectId: P107_PROJECT, workspaceId: P107_WORKSPACE, goalId: P107_GOAL,
+    taskId: run.task.taskId, planRef: run.planRef, taskRevision: 1, runRef: run.ref, attemptRef, roleBinding,
+    kind: 'patch', title: '本 Run 的实现结果', changedPaths: ['src/p107/fix-a.ts'], bodyRef: buildP107ArtifactRef(patchId),
+    beforeWorkspaceRevision: world.workspaceRevision, afterWorkspaceRevision: world.workspaceRevision + 1,
+    checkResults: [{ checkId: 'p107-check', outcome: 'PASS', summary: 'deterministic checks passed' }],
+    usedInputEvidenceRefs: [], generatedAt: P107_SCHEMA,
+  };
+  expect((await world.h.recordPatch(buildP107RecordPatchCommand({ commandId: 'cmd-' + patchId, projectId: P107_PROJECT, patch }))).status).toBe('committed');
+}
+
+/** 真实 recordIntegrationResult：join 记录带 runRef，聚合按 (project, goal, task) 累积。 */
+async function recordRunIntegration(world: RoleWorld, run: RunSnapshot, resultId: string): Promise<void> {
+  const result: IntegrationTaskResultV1 = {
+    schemaVersion: 1, resultId, projectId: P107_PROJECT, workspaceId: P107_WORKSPACE, goalId: P107_GOAL,
+    taskId: run.task.taskId, planRef: run.planRef, taskRevision: 1, runRef: run.ref,
+    attemptRef: taskAttemptRefFor(P107_PROJECT, P107_GOAL, run.task.taskId, run.attemptId),
+    workspaceRevision: world.workspaceRevision, inputs: [], conflicts: [], gaps: [], explanation: null, escalate: false, generatedAt: P107_SCHEMA,
+  };
+  expect((await world.h.recordIntegrationResult(buildP107RecordIntegrationCommand({ commandId: 'cmd-' + resultId, projectId: P107_PROJECT, expectedRevision: 0, result }))).status).toBe('committed');
+}
+
+/**
+ * 真实 recordExecutionNote：工作身份 + 留痕（body-first，作者运行必须已 link）。
+ *
+ * RC-03：这个任务的持久工作身份已由派发面在建立 Run 时创建，并且它是**唯一**的那条。
+ * 这里从权威解析面取它（不在测试里复制推导规则），而不是用 'work-'+taskId 另造一条 ——
+ * 命令面会以 already_bound 拒绝，账本里也不会再有第二条身份。
+ */
+async function recordRunNote(world: RoleWorld, run: RunSnapshot, noteId: string): Promise<void> {
+  const roleBinding = run.roleBinding;
+  const resolution = await world.h.control.resolveTaskWorkIdentity({
+    projectId: P107_PROJECT, workspaceId: P107_WORKSPACE, goalId: P107_GOAL, taskId: run.task.taskId,
+  });
+  if (resolution.status !== 'resolved') throw Error('本 Run 的工作身份不可用：' + resolution.status);
+  const workId = resolution.binding.workId;
+  const note = buildExecutionNoteV1({
+    noteId, workId, projectId: P107_PROJECT, workspaceId: P107_WORKSPACE, runRef: run.ref,
+    attemptRef: taskAttemptRefFor(P107_PROJECT, P107_GOAL, run.task.taskId, run.attemptId),
+    roleBindingRef: roleBinding, kind: 'result',
+    applicableVersions: { planRef: run.planRef, planRevision: 1, workspaceRevision: world.workspaceRevision, governanceRevision: null },
+    bodyRef: buildP107ArtifactRef(noteId),
+  });
+  expect((await world.h.recordExecutionNote(buildRecordExecutionNoteCommand({ commandId: 'cmd-note-' + noteId, projectId: P107_PROJECT, note }))).status).toBe('committed');
+}
+
+const ledgerOf = (world: RoleWorld) => world.h.ledger;
+
+it('executor：本 Run 的 canonical PatchRecord 见证 implementation-result（安装 executor 规格后不再无条件扣留）', async () => {
+  const w = await world();
+  await installRole(w, ROLE_SOURCE_EXECUTOR);
+  const run = await runFor(w, { taskId: P107_TASK_WRITER, runId: 'run-rw16-executor', roleId: ROLE_SOURCE_EXECUTOR });
+  // 先证明"没有实现结果就是缺项"，再登记真实补丁 —— 正反两面用同一条链。
+  const before = await evaluateRoleOutputCompleteness({ projectId: P107_PROJECT, run, materials: outputMaterials(ledgerOf(w)), roleSpec: new LedgerRoleSpecRead({ ledger: ledgerOf(w) }) });
+  expect(before.status).toBe('incomplete');
+  expect(before.missing).toEqual(['implementation-result']);
+  await recordRunPatch(w, run, 'patch-rw16-executor');
+  const after = await evaluateRoleOutputCompleteness({ projectId: P107_PROJECT, run, materials: outputMaterials(ledgerOf(w)), roleSpec: new LedgerRoleSpecRead({ ledger: ledgerOf(w) }) });
+  expect(after.status).toBe('complete');
+  expect(after.missing).toEqual([]);
+  expect(after.required[0]).toMatchObject({ kind: 'implementation-result', channel: 'run-bound-patch-record' });
+  expect(after.required[0]!.witness).toContain('patch-rw16-executor');
+  expect(after.required[0]!.witness).toContain('1 条改动路径');
+  expect(after.detail).toContain('全部被既有事实见证');
+});
+
+it('executor：别的运行的 PatchRecord 不能见证本 Run（按 runRef 归因，不接受近似）', async () => {
+  const w = await world();
+  await installRole(w, ROLE_SOURCE_EXECUTOR);
+  const other = await runFor(w, { taskId: P107_TASK_WRITER, runId: 'run-rw16-other', roleId: ROLE_SOURCE_EXECUTOR });
+  await recordRunPatch(w, other, 'patch-rw16-other');
+  // 本 Run 是同一个任务的**另一次尝试**：它的产出没有登记，别人的补丁不算数。
+  const run = await runFor(w, { taskId: P107_TASK_READER_A, runId: 'run-rw16-target', roleId: ROLE_SOURCE_EXECUTOR });
+  const result = await evaluateRoleOutputCompleteness({ projectId: P107_PROJECT, run, materials: outputMaterials(ledgerOf(w)), roleSpec: new LedgerRoleSpecRead({ ledger: ledgerOf(w) }) });
+  expect(result.status).toBe('incomplete');
+  expect(result.missing).toEqual(['implementation-result']);
+  expect(result.required[0]!.detail).toContain('本 Run 没有登记实现结果');
+});
+
+it('integrator：本 Run 的 IntegrationResult 记录同时见证 integration-result 与 conflict-report', async () => {
+  const w = await world();
+  await installRole(w, ROLE_SOURCE_INTEGRATOR);
+  const run = await runFor(w, { taskId: P107_TASK_INTEGRATION, runId: 'run-rw16-integrator', roleId: ROLE_SOURCE_INTEGRATOR });
+  const before = await evaluateRoleOutputCompleteness({ projectId: P107_PROJECT, run, materials: outputMaterials(ledgerOf(w)), roleSpec: new LedgerRoleSpecRead({ ledger: ledgerOf(w) }) });
+  expect(before.status).toBe('incomplete');
+  expect(before.missing).toEqual(['integration-result', 'conflict-report']);
+  await recordRunIntegration(w, run, 'result-rw16-1');
+  const after = await evaluateRoleOutputCompleteness({ projectId: P107_PROJECT, run, materials: outputMaterials(ledgerOf(w)), roleSpec: new LedgerRoleSpecRead({ ledger: ledgerOf(w) }) });
+  expect(after.status).toBe('complete');
+  expect(after.required.map(entry => entry.channel)).toEqual(['run-bound-integration-result', 'run-bound-conflict-surface']);
+  // 冲突清单为空是"机械检测后未发现冲突"的正式结论，不是"没有报告"。
+  expect(after.required[1]!.witness).toContain('共 0 条冲突项');
+  expect(after.required[1]!.witness).toContain('机械检测未发现冲突');
+});
+
+it('归因复核是承重的：补丁事实指向本 Run，但 canonical 记录的工作区／计划版本与本 Run 不符时不作见证', async () => {
+  const run = runSnapshot();
+  const patchId = 'patch-rw16-tampered';
+  const event = {
+    eventId: 'evt-patch', eventType: 'PatchRecorded', schemaVersion: 1, projectId: PROJECT, workspaceId: 'ws-rw16',
+    aggregateType: 'PatchRecord', aggregateId: patchId, aggregateRevision: 1, causationId: 'c', correlationId: 'c',
+    idempotencyKey: 'c', actor: { kind: 'system', id: 'writer' }, occurredAt: AT,
+    payload: { patchId, goalId: GOAL, taskId: run.task.taskId, runRef: run.ref, attemptRef: { aggregateType: 'TaskAttempt', projectId: PROJECT, goalId: GOAL, taskId: run.task.taskId, attemptId: run.attemptId }, kind: 'patch', title: 't', changedPaths: ['a.ts'], beforeWorkspaceRevision: 1, afterWorkspaceRevision: 2, checkResults: [], usedInputEvidenceRefs: [], generatedAt: AT },
+  };
+  const basePatch = {
+    schemaVersion: 1, patchId, projectId: PROJECT, workspaceId: 'ws-rw16', goalId: GOAL, taskId: run.task.taskId,
+    planRef: run.planRef, taskRevision: 1, runRef: run.ref,
+    attemptRef: { aggregateType: 'TaskAttempt', projectId: PROJECT, goalId: GOAL, taskId: run.task.taskId, attemptId: run.attemptId },
+    roleBinding: run.roleBinding, kind: 'patch', title: 't', changedPaths: ['a.ts'],
+    bodyRef: { kind: 'artifact', contentType: 'application/json', digest: '0'.repeat(64), sizeBytes: 1, source: { kind: 'artifact', refId: 'body', revision: '1' } },
+    beforeWorkspaceRevision: 1, afterWorkspaceRevision: 2, checkResults: [], usedInputEvidenceRefs: [], generatedAt: AT,
+  };
+  const withRecord = (patch: unknown): Pick<StateLedger, 'load' | 'events'> => ({
+    ...emptyLedger,
+    events: async query => ({ afterCursor: query.afterCursor, throughCursor: query.afterCursor, events: [{ cursor: 'c000000001' as never, event: event as never }], hasMore: false }),
+    load: async () => ({ status: 'found' as const, snapshot: { ref: { aggregateType: 'PatchRecord', projectId: PROJECT, patchId }, revision: 1, schemaVersion: 1, patch, recordedAt: AT } as unknown as AggregateSnapshot }),
+  });
+  const evaluate = (ledger: Pick<StateLedger, 'load' | 'events'>) => evaluateRoleOutputCompleteness({
+    projectId: PROJECT, run, materials: outputMaterials(ledger), roleSpec: rolePort(specContent([{ kind: 'implementation-result', reason: '实现结果必须可核对' }])),
+  });
+  const otherWorkspace = await evaluate(withRecord({ ...basePatch, workspaceId: 'ws-other' }));
+  expect(otherWorkspace.status).toBe('incomplete');
+  expect(otherWorkspace.required[0]!.detail).toContain('与本 Run 冻结的工作区不同');
+  const otherPlan = await evaluate(withRecord({ ...basePatch, planRef: { aggregateType: 'PlanRevision', projectId: PROJECT, planId: 'plan-other' } }));
+  expect(otherPlan.status).toBe('incomplete');
+  expect(otherPlan.required[0]!.detail).toContain('计划版本不同');
+  const otherTask = await evaluate(withRecord({ ...basePatch, taskId: 'task-other' }));
+  expect(otherTask.status).toBe('incomplete');
+  expect(otherTask.required[0]!.detail).toContain('与本 Run 的任务不同');
+});
+
+it('recorder：本 Run 的 canonical ExecutionNote 见证 work-record（body-first 留痕）', async () => {
+  const w = await world();
+  await installRole(w, ROLE_SOURCE_RECORDER);
+  const run = await runFor(w, { taskId: P107_TASK_READER_A, runId: 'run-rw16-recorder', roleId: ROLE_SOURCE_RECORDER });
+  const before = await evaluateRoleOutputCompleteness({ projectId: P107_PROJECT, run, materials: outputMaterials(ledgerOf(w)), roleSpec: new LedgerRoleSpecRead({ ledger: ledgerOf(w) }) });
+  expect(before.status).toBe('incomplete');
+  expect(before.missing).toEqual(['work-record']);
+  await recordRunNote(w, run, 'note-rw16-1');
+  const after = await evaluateRoleOutputCompleteness({ projectId: P107_PROJECT, run, materials: outputMaterials(ledgerOf(w)), roleSpec: new LedgerRoleSpecRead({ ledger: ledgerOf(w) }) });
+  expect(after.status).toBe('complete');
+  expect(after.required[0]).toMatchObject({ kind: 'work-record', channel: 'run-bound-execution-note' });
+  expect(after.required[0]!.witness).toContain('note-rw16-1');
+  expect(after.required[0]!.witness).toContain('noFullTranscript=true');
+});

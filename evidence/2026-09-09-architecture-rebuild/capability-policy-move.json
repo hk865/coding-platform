@@ -1,0 +1,22 @@
+[
+  {
+    "name": "detectEvidenceConflicts",
+    "source": "src/contracts/integration.ts",
+    "target": "src/control/policies/integration.ts",
+    "sha256": "5b646baa43063eeb64e64374ecd547df5ca153cf9976232a62d0b6540af002ac",
+    "byteLength": 2893,
+    "literalNulBytes": 0,
+    "escapedNulSequences": 2,
+    "exactCopy": true
+  },
+  {
+    "name": "remediationTaskOccupiesDedupKey",
+    "source": "src/contracts/remediation.ts",
+    "target": "src/control/policies/remediation.ts",
+    "sha256": "61fa0030c129abfaee29238b78c841a6fda0179ce9464fdd10b879004a3a4009",
+    "byteLength": 269,
+    "literalNulBytes": 0,
+    "escapedNulSequences": 0,
+    "exactCopy": true
+  }
+]

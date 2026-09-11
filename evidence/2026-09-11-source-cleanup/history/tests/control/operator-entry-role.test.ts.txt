@@ -1,0 +1,502 @@
+/**
+ * RW-14（M3）：operator／探索入口在「项目装了含 roles 的角色矩阵」之后仍然能被派发。
+ *
+ * 背景（独立验收阻断项 M3）：这条入口原来绑定 `template-short-lived-runner`（templateRevision
+ * '2026-09-05'）。它既不在任何角色矩阵的 catalog 里，revision 也不是角色规格 revision 的十进制写法，
+ * 因此只要有人装上一份含 roles 的协调策略，人工真实运行与探索入口的每条 claim 都会被守卫拒绝
+ * （role_not_registered／role_spec_stale，ineligible 且零写），把整个产品的派发一起打断。
+ *
+ * 本文件断言修好之后的行为，并且断言**守卫没有被放宽**：
+ *   1. 入口绑定的是已登记角色，且角色的规格权限上界覆盖入口实际声明的权限（纯函数交叉检查）；
+ *   2. 矩阵启用后 develop／explore 两种模式的 dispatch 仍然提交成功，落账 Run 的角色绑定就是那个角色；
+ *   3. 矩阵**没有登记**该角色时仍然拒绝且零写（拒绝能力没有被削弱）；
+ *   4. 没有矩阵的项目沿用既有语义（既有产品行为不被静默改变）。
+ *
+ * 同一个场景跑在两套 StateLedger 后端上（内存 / 真实 SQLite）：角色规格的 install／activate、
+ * claim 的角色校验在两边语义一致，不存在“只有某个适配器才成立”的结论。
+ */
+import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createControlEngine } from '../../src/control/control-engine/control-engine.js';
+import { InMemoryLedger } from '../../src/data/state-ledger/in-memory-ledger.js';
+import { createSqliteStateLedger } from '../../src/data/state-ledger/sqlite-ledger.js';
+import type { StateLedger } from '../../src/contracts/ledger.js';
+import { createDeterministicDeps, FIXED_ISO_2026_09_05 } from '../../src/contracts/testing/sequences.js';
+import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from '../../src/contracts/fixtures/bootstrap-fixture-v1.js';
+import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand, buildGoalCreateLedgerCommit, goalSnapshotFor } from '../../src/contracts/fixtures/goal-fixtures.js';
+import { ARCHITECTURE_BASELINE_FIXTURE_V1, COMPLETION_POLICY_FIXTURE_V1, buildActivateCommand, buildActivateLedgerCommit, buildInstallCommand, buildInstallLedgerCommit } from '../../src/contracts/fixtures/governance-fixtures.js';
+import { architectureBaselinePinFor, completionPolicyPinFor } from '../../src/contracts/governance.js';
+import type { InstallArchitectureBaselineRevisionCommand, InstallCompletionPolicyRevisionCommand } from '../../src/contracts/governance.js';
+import { DISPATCH_PLAN_REVISION_FIXTURE_V1 } from '../../src/contracts/fixtures/dispatch-fixtures.js';
+import { buildPlanLedgerCommit } from '../../src/control/control-engine/records/plan.js';
+import { buildApplyPlanCommand } from '../../src/contracts/fixtures/plan-fixtures.js';
+import { runRefFor, type RunSnapshot } from '../../src/contracts/dispatch.js';
+import { ROLE_SPEC_REVISION } from '../../src/contracts/role-spec.js';
+import { P15_COORDINATION_POLICY_REVISION } from '../../src/contracts/human-role-collaboration.js';
+import {
+  ROLE_SOURCE_EXECUTOR,
+  ROLE_SOURCE_INVESTIGATOR,
+  ROLE_SOURCE_RECORDER,
+  buildCoordinationPolicyContentWithRolesV1,
+  buildCoordinationPolicyContentWithoutRolesV1,
+  buildRoleSpecActivateCommandFor,
+  buildRoleSpecInstallCommandFor,
+  roleSpecPinFor,
+  roleSpecSourceFor,
+} from '../../src/contracts/fixtures/role-spec-fixtures.js';
+import { buildCoordinationPolicyActivateCommand, buildCoordinationPolicyInstallCommand } from '../../src/contracts/commands/governance.js';
+import { buildDispatchClaimCommand } from '../../src/contracts/commands/dispatch.js';
+import type { DispatchClaimCommand } from '../../src/contracts/dispatch.js';
+import { DEFAULT_RUNTIME_BUDGET } from '../../src/contracts/runtime-budget.js';
+import type { RunSpec } from '../../src/contracts/runtime-preparation.js';
+import { OPERATOR_ENTRY_ROLES, OperatorTaskDispatch, operatorEntryBinding } from '../../src/control/dispatch-engine/operator-task-dispatch.js';
+import { issueMatrixRoleBinding } from '../../src/control/dispatch-engine/role-spec-read.js';
+
+// 身份取自引导夹具（与 tests/control/role-binding-admission.test.ts 同一组）：bootstrap 只登记
+// MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.scopes[0]，用别的 projectId 会找不到 Goal。
+const PROJECT = 'proj-alpha';
+const GOAL = 'goal-1';
+const WORKSPACE = 'ws-shared';
+const TASK = 'task-run-adaptor';
+const FIXED = FIXED_ISO_2026_09_05;
+const AT = '2026-09-14T00:00:00.000Z';
+const ACTOR = { kind: 'human', id: 'tester' } as const;
+
+const created: Array<() => Promise<void>> = [];
+afterEach(async () => { for (const dispose of created.splice(0).reverse()) await dispose(); });
+
+type Harness = { ledger: StateLedger; engine: ReturnType<typeof createControlEngine> };
+
+/** 两套后端：同一场景两边都跑，语义必须一致。 */
+const backends: Array<{ name: string; make: () => Promise<Harness> }> = [
+  {
+    name: 'InMemory',
+    make: async () => {
+      const ledger = new InMemoryLedger();
+      const d = createDeterministicDeps();
+      return { ledger, engine: createControlEngine({ ledger, now: d.clock, eventId: d.eventId }) };
+    },
+  },
+  {
+    name: 'SQLite',
+    make: async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'rw14-role-spec-ledger-'));
+      created.push(() => rm(directory, { recursive: true, force: true }));
+      const ledger = createSqliteStateLedger({ path: join(directory, 'ledger.sqlite') });
+      created.push(() => ledger.close());
+      const d = createDeterministicDeps();
+      return { ledger, engine: createControlEngine({ ledger, now: d.clock, eventId: d.eventId }) };
+    },
+  },
+];
+
+async function bootstrapGoalAndPlan(ledger: StateLedger): Promise<void> {
+  const bootCmd = buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, { commandId: 'cmd-bootstrap', correlationId: 'corr-bootstrap', submittedAt: FIXED });
+  expect((await ledger.commit(buildBootstrapLedgerCommit(bootCmd, { eventIds: ['evt-b1', 'evt-b2', 'evt-b3', 'evt-b4'], occurredAt: FIXED }))).status).toBe('committed');
+  const scope = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.scopes[0]!;
+  const goalCmd = buildCreateGoalCommand(scope, { commandId: 'cmd-goal', correlationId: 'corr-goal', submittedAt: FIXED });
+  expect((await ledger.commit(buildGoalCreateLedgerCommit(goalCmd, { eventId: 'evt-goal', occurredAt: FIXED, projectRevision: 1, workspaceRevision: 1 }))).status).toBe('committed');
+
+  const cp = buildInstallCommand(COMPLETION_POLICY_FIXTURE_V1, { commandId: 'cmd-install-cp', correlationId: 'corr-install-cp', submittedAt: FIXED, projectId: PROJECT, idempotencyKey: 'inst-cp' }) as InstallCompletionPolicyRevisionCommand;
+  await ledger.commit(buildInstallLedgerCommit(cp, { eventId: 'evt-install-cp', occurredAt: FIXED }));
+  const ab = buildInstallCommand(ARCHITECTURE_BASELINE_FIXTURE_V1, { commandId: 'cmd-install-ab', correlationId: 'corr-install-ab', submittedAt: FIXED, projectId: PROJECT, idempotencyKey: 'inst-ab' }) as InstallArchitectureBaselineRevisionCommand;
+  await ledger.commit(buildInstallLedgerCommit(ab, { eventId: 'evt-install-ab', occurredAt: FIXED }));
+  await ledger.commit(buildActivateLedgerCommit(buildActivateCommand(completionPolicyPinFor(cp), { commandId: 'cmd-act-cp', correlationId: 'corr-act-cp', submittedAt: FIXED, projectId: PROJECT, expectedRevision: 1, idempotencyKey: 'act-cp' }), { eventId: 'evt-act-cp', occurredAt: FIXED, activeAggregateRevision: 1, projectRevision: 1 }));
+  await ledger.commit(buildActivateLedgerCommit(buildActivateCommand(architectureBaselinePinFor(ab), { commandId: 'cmd-act-ab', correlationId: 'corr-act-ab', submittedAt: FIXED, projectId: PROJECT, expectedRevision: 1, idempotencyKey: 'act-ab' }), { eventId: 'evt-act-ab', occurredAt: FIXED, activeAggregateRevision: 1, projectRevision: 1 }));
+
+  const apply = buildApplyPlanCommand(DISPATCH_PLAN_REVISION_FIXTURE_V1, { commandId: 'cmd-apply', correlationId: 'corr-apply', submittedAt: FIXED, projectId: PROJECT, expectedRevision: 1, idempotencyKey: 'apply' });
+  const goal = await ledger.load({ aggregateType: 'Goal', projectId: PROJECT, goalId: GOAL });
+  if (goal.status !== 'found') throw new Error('goal not found');
+  expect((await ledger.commit(buildPlanLedgerCommit(apply, {
+    eventId: 'evt-apply', occurredAt: FIXED, acceptedAt: FIXED,
+    pins: { completionPolicy: completionPolicyPinFor(cp), architectureBaseline: architectureBaselinePinFor(ab) },
+    baseGoal: goalSnapshotFor(buildCreateGoalCommand(scope, { commandId: 'cmd-goal', correlationId: 'corr-goal', submittedAt: FIXED })),
+  }))).status).toBe('committed');
+}
+
+async function installAndActivateRole(harness: Harness, roleId: string, suffix: string): Promise<void> {
+  const install = await harness.engine.installRoleSpec(buildRoleSpecInstallCommandFor(roleId, {
+    commandId: 'entry-install-' + roleId + '-' + suffix, correlationId: 'entry-corr-' + roleId + '-' + suffix,
+    submittedAt: AT, projectId: PROJECT, actor: ACTOR, idempotencyKey: 'entry-install-key-' + roleId + '-' + suffix,
+  }));
+  expect(install.status, 'install ' + roleId).toBe('committed');
+  const activate = await harness.engine.activateRoleSpec(buildRoleSpecActivateCommandFor(roleId, {
+    commandId: 'entry-activate-' + roleId + '-' + suffix, correlationId: 'entry-corr-act-' + roleId + '-' + suffix,
+    submittedAt: AT, projectId: PROJECT, actor: ACTOR, idempotencyKey: 'entry-activate-key-' + roleId + '-' + suffix,
+    expectedRevision: 1,
+  }));
+  expect(activate.status, 'activate ' + roleId).toBe('committed');
+}
+
+async function installMatrix(harness: Harness, roleIds: readonly string[], policyId: string): Promise<void> {
+  const content = buildCoordinationPolicyContentWithRolesV1(PROJECT, roleIds);
+  const install = await harness.engine.installCoordinationPolicy(buildCoordinationPolicyInstallCommand({ policyId, content }, {
+    commandId: 'entry-policy-' + policyId, correlationId: 'entry-corr-policy-' + policyId,
+    submittedAt: AT, projectId: PROJECT, actor: ACTOR, idempotencyKey: 'entry-policy-key-' + policyId,
+  }));
+  expect(install.status, JSON.stringify(install)).toBe('committed');
+  if (install.status !== 'committed') throw new Error('policy install failed');
+  const activate = await harness.engine.activateCoordinationPolicy(buildCoordinationPolicyActivateCommand({ ref: install.revisionRef, digest: install.contentDigest }, {
+    commandId: 'entry-policy-act-' + policyId, correlationId: 'entry-corr-policy-act-' + policyId,
+    submittedAt: AT, projectId: PROJECT, actor: ACTOR, idempotencyKey: 'entry-policy-act-key-' + policyId, expectedRevision: 1,
+  }));
+  expect(activate.status, JSON.stringify(activate)).toBe('committed');
+}
+
+async function installPolicyWithoutMatrix(harness: Harness, policyId: string): Promise<void> {
+  const content = buildCoordinationPolicyContentWithoutRolesV1();
+  const install = await harness.engine.installCoordinationPolicy(buildCoordinationPolicyInstallCommand({ policyId, content }, {
+    commandId: 'entry-policy-' + policyId, correlationId: 'entry-corr-policy-' + policyId,
+    submittedAt: AT, projectId: PROJECT, actor: ACTOR, idempotencyKey: 'entry-policy-key-' + policyId,
+  }));
+  expect(install.status).toBe('committed');
+  if (install.status !== 'committed') throw new Error('policy install failed');
+  const activate = await harness.engine.activateCoordinationPolicy(buildCoordinationPolicyActivateCommand({ ref: install.revisionRef, digest: install.contentDigest }, {
+    commandId: 'entry-policy-act-' + policyId, correlationId: 'entry-corr-policy-act-' + policyId,
+    submittedAt: AT, projectId: PROJECT, actor: ACTOR, idempotencyKey: 'entry-policy-act-key-' + policyId, expectedRevision: 1,
+  }));
+  expect(activate.status).toBe('committed');
+}
+
+/** dispatch 的外部依赖：准备/取消用桩，launch 只记录；Control 与账本是真的。 */
+function dispatchFor(harness: Harness, launched: string[]) {
+  const prepared: RunSpec[] = [];
+  return {
+    prepared,
+    dispatch: new OperatorTaskDispatch({
+      ledger: harness.ledger,
+      control: harness.engine,
+      runtime: {
+        all: () => [],
+        prepare: async (spec: RunSpec) => { prepared.push(spec); },
+        preflight: async () => { },
+        cancel: async () => ({ status: 'cancelled' }),
+      },
+      planning: { ensureTaskPlan: async () => { } },
+      launch: (_scope, runId) => { launched.push(runId); },
+      now: () => AT,
+    }),
+  };
+}
+
+function specFor(runId: string, mode?: RunSpec['mode']): RunSpec {
+  return {
+    ...(mode === undefined ? {} : { mode }), projectId: PROJECT, workspaceId: WORKSPACE, goalId: GOAL, runId,
+    taskId: TASK, root: '/tmp/operator-entry-root', instruction: 'operator entry', budget: { ...DEFAULT_RUNTIME_BUDGET },
+  };
+}
+
+/** 直接提交的 claim（用于对照入口自身的 dispatch：竞争与越权两种拒绝）。 */
+let claimCounter = 0;
+function claimFor(runId: string, declaredPermissions: { tools: string[]; writeScope: string[] } = { tools: ['read', 'write', 'shell'], writeScope: ['*'] }): DispatchClaimCommand {
+  const id = 'parity-claim-' + String(++claimCounter);
+  return buildDispatchClaimCommand({
+    commandId: id, correlationId: id, submittedAt: AT, projectId: PROJECT, idempotencyKey: id,
+    actor: { kind: 'system', id: 'tester' }, goalId: GOAL, taskId: TASK, attemptId: 'attempt-' + runId, runId,
+    roleBinding: {
+      schemaVersion: 1, bindingId: 'parity-binding', templateId: ROLE_SOURCE_EXECUTOR,
+      templateRevision: String(ROLE_SPEC_REVISION), bindingVersion: 1, policyRevision: 'parity',
+    },
+    declaredPermissions,
+    budget: { tokenBudget: DEFAULT_RUNTIME_BUDGET.contextWindowTokens, deadline: null },
+  });
+}
+
+async function eventCount(ledger: StateLedger): Promise<number> {
+  const page = await ledger.events({ afterCursor: null, limit: 5000 });
+  return page.events.length;
+}
+
+// ------------------------------------------------------------------------ //
+// 纯函数交叉检查（与后端无关，跑一次）                                        //
+// ------------------------------------------------------------------------ //
+
+describe('RW-14（M3）入口绑定的静态一致性', () => {
+  it('入口绑定的是已登记角色，且规格权限上界覆盖入口实际声明的权限', () => {
+    const develop = operatorEntryBinding(undefined);
+    const explore = operatorEntryBinding('explore');
+    // 两种模式绑定的角色必须不同：写入运行与只读探索运行的权限上界不是同一份授权。
+    expect(develop.roleBinding.templateId).toBe(OPERATOR_ENTRY_ROLES.develop);
+    expect(explore.roleBinding.templateId).toBe(OPERATOR_ENTRY_ROLES.explore);
+    expect(develop.roleBinding.templateId).not.toBe(explore.roleBinding.templateId);
+
+    for (const entry of [develop, explore]) {
+      // revision 必须是角色规格 revision 的十进制写法（否则守卫按过期绑定拒绝）。
+      expect(entry.roleBinding.templateRevision).toBe(String(ROLE_SPEC_REVISION));
+      expect(Number.isSafeInteger(Number(entry.roleBinding.templateRevision))).toBe(true);
+      // 角色必须真的在内置规格清单里，否则矩阵永远 pin 不到它。
+      const source = roleSpecSourceFor(entry.roleBinding.templateId);
+      for (const tool of entry.declaredPermissions.tools) {
+        expect(source.content.permissions.tools, entry.roleBinding.templateId + ' 的规格没有授权工具 ' + tool).toContain(tool);
+      }
+      if (entry.declaredPermissions.writeScope.length > 0) {
+        expect(source.content.permissions.writeScope).not.toBe('none');
+      }
+    }
+    // 声明本身没有被放宽：写入运行要写，探索运行仍然只读。
+    expect(develop.declaredPermissions.tools).toEqual(['read', 'write', 'shell']);
+    expect(develop.declaredPermissions.writeScope).toEqual(['*']);
+    expect(explore.declaredPermissions.tools).toEqual(['read']);
+    expect(explore.declaredPermissions.writeScope).toEqual([]);
+  });
+});
+
+// ------------------------------------------------------------------------ //
+// 两套 StateLedger 后端上的同一场景                                           //
+// ------------------------------------------------------------------------ //
+
+for (const backend of backends) {
+  describe('RW-14（M3）operator／探索入口与角色矩阵 — ' + backend.name, () => {
+    it('矩阵启用后 develop 入口仍然能派发，落账 Run 的角色绑定就是那个已登记角色', async () => {
+      const harness = await backend.make();
+      await bootstrapGoalAndPlan(harness.ledger);
+      await installAndActivateRole(harness, ROLE_SOURCE_EXECUTOR, 'm3-develop');
+      await installMatrix(harness, [ROLE_SOURCE_EXECUTOR], 'm3-develop-matrix');
+
+      const launched: string[] = [];
+      const dispatch = dispatchFor(harness, launched).dispatch;
+      const develop = await dispatch.dispatch({ spec: specFor('real-operator-develop'), requestId: 'req-develop' });
+      expect(develop).toMatchObject({ runId: 'real-operator-develop', status: 'accepted' });
+      const run = await harness.ledger.load(runRefFor(PROJECT, GOAL, 'real-operator-develop'));
+      expect(run.status).toBe('found');
+      if (run.status !== 'found') return;
+      expect((run.snapshot as RunSnapshot).roleBinding).toMatchObject({
+        templateId: OPERATOR_ENTRY_ROLES.develop, templateRevision: String(ROLE_SPEC_REVISION),
+      });
+      expect(launched).toEqual(['real-operator-develop']);
+    });
+
+    it('矩阵启用后探索入口仍然能派发，落账 Run 的角色绑定是只读角色（与写入入口不是同一份授权）', async () => {
+      const harness = await backend.make();
+      await bootstrapGoalAndPlan(harness.ledger);
+      await installAndActivateRole(harness, ROLE_SOURCE_INVESTIGATOR, 'm3-explore');
+      await installMatrix(harness, [ROLE_SOURCE_INVESTIGATOR], 'm3-explore-matrix');
+
+      const launched: string[] = [];
+      const dispatch = dispatchFor(harness, launched).dispatch;
+      const explore = await dispatch.dispatch({ spec: specFor('real-operator-explore', 'explore'), requestId: 'req-explore' });
+      expect(explore).toMatchObject({ runId: 'real-operator-explore', status: 'accepted' });
+      const run = await harness.ledger.load(runRefFor(PROJECT, GOAL, 'real-operator-explore'));
+      expect(run.status).toBe('found');
+      if (run.status !== 'found') return;
+      expect((run.snapshot as RunSnapshot).roleBinding).toMatchObject({
+        templateId: OPERATOR_ENTRY_ROLES.explore, templateRevision: String(ROLE_SPEC_REVISION),
+      });
+      expect(launched).toEqual(['real-operator-explore']);
+    });
+
+    it('矩阵没有登记入口角色时仍然拒绝且零写（守卫没有被放宽）', async () => {
+      const harness = await backend.make();
+      await bootstrapGoalAndPlan(harness.ledger);
+      // 只登记 recorder：入口要用的 executor／investigator 都不在目录里。
+      await installAndActivateRole(harness, ROLE_SOURCE_RECORDER, 'narrow');
+      await installMatrix(harness, [ROLE_SOURCE_RECORDER], 'narrow-matrix');
+
+      const launched: string[] = [];
+      const dispatch = dispatchFor(harness, launched).dispatch;
+      const before = await eventCount(harness.ledger);
+      await expect(dispatch.dispatch({ spec: specFor('real-operator-rejected'), requestId: 'req-rejected' })).rejects.toThrow('role_not_registered');
+      // 零写：事件数不变，没有 Run、没有 launch。
+      expect(await eventCount(harness.ledger)).toBe(before);
+      expect((await harness.ledger.load(runRefFor(PROJECT, GOAL, 'real-operator-rejected'))).status).toBe('not_found');
+      expect(launched).toEqual([]);
+    });
+
+    it('没有角色矩阵的项目沿用既有语义：入口照样派发（既有产品行为不被静默改变）', async () => {
+      const harness = await backend.make();
+      await bootstrapGoalAndPlan(harness.ledger);
+      await installPolicyWithoutMatrix(harness, 'no-matrix');
+
+      const launched: string[] = [];
+      const dispatch = dispatchFor(harness, launched).dispatch;
+      const result = await dispatch.dispatch({ spec: specFor('real-operator-no-matrix'), requestId: 'req-no-matrix' });
+      expect(result).toMatchObject({ status: 'accepted' });
+      expect(launched).toEqual(['real-operator-no-matrix']);
+    });
+
+    // -------------------------------------------------------------------- //
+    // RW-18：绑定由矩阵签发                                                  //
+    // -------------------------------------------------------------------- //
+
+    it('RW-18 矩阵登记了角色：绑定由 pin 签发（revision 与摘要都能从绑定／落账 Run 复核）', async () => {
+      const harness = await backend.make();
+      await bootstrapGoalAndPlan(harness.ledger);
+      await installAndActivateRole(harness, ROLE_SOURCE_EXECUTOR, 'rw18-issue');
+      await installMatrix(harness, [ROLE_SOURCE_EXECUTOR], 'rw18-issue-matrix');
+      const pin = roleSpecPinFor(PROJECT, ROLE_SOURCE_EXECUTOR);
+      const fallback = operatorEntryBinding(undefined).roleBinding;
+
+      const issued = await issueMatrixRoleBinding({ ledger: harness.ledger }, {
+        projectId: PROJECT, roleId: OPERATOR_ENTRY_ROLES.develop, fallback,
+      });
+      // 来源与 pin 被签发方原样交出：revision 用 pin 的十进制 revision，摘要可从绑定本身复核。
+      expect(issued.source).toBe('matrix');
+      expect(issued.matrixPin).toEqual({
+        policyId: 'rw18-issue-matrix', contentRevision: P15_COORDINATION_POLICY_REVISION, ref: pin.ref, digest: pin.digest,
+      });
+      expect(issued.roleBinding).toMatchObject({ templateId: pin.ref.roleId, templateRevision: String(pin.ref.revision), bindingVersion: 1 });
+      expect(issued.roleBinding.policyRevision).toContain(pin.digest.slice(0, 16));
+      expect(issued.roleBinding.policyRevision).toContain('rw18-issue-matrix');
+      // 绑定不再等于调用方写死的那份（revision 与摘要来自矩阵，而不是常量）。
+      expect(issued.roleBinding).not.toEqual(fallback);
+
+      // 真正落账的 Run 用的就是这份签发结果（不是另算一份）。
+      const launched: string[] = [];
+      const dispatch = dispatchFor(harness, launched).dispatch;
+      expect(await dispatch.dispatch({ spec: specFor('real-matrix-issued'), requestId: 'req-matrix-issued' })).toMatchObject({ status: 'accepted' });
+      const run = await harness.ledger.load(runRefFor(PROJECT, GOAL, 'real-matrix-issued'));
+      expect(run.status).toBe('found');
+      if (run.status !== 'found') return;
+      expect((run.snapshot as RunSnapshot).roleBinding).toEqual(issued.roleBinding);
+    });
+
+    it('RW-18 矩阵 pin 指向未激活规格：绑定照签，claim 由未改动的守卫拒绝且零写', async () => {
+      const harness = await backend.make();
+      await bootstrapGoalAndPlan(harness.ledger);
+      // 只 install、**不** activate：矩阵 pin 指向一份没有生效引用的规格。
+      expect((await harness.engine.installRoleSpec(buildRoleSpecInstallCommandFor(ROLE_SOURCE_EXECUTOR, {
+        commandId: 'rw18-install-only', correlationId: 'rw18-install-only', submittedAt: AT, projectId: PROJECT,
+        actor: ACTOR, idempotencyKey: 'rw18-install-only-key',
+      }))).status).toBe('committed');
+      await installMatrix(harness, [ROLE_SOURCE_EXECUTOR], 'rw18-unactivated-matrix');
+
+      const launched: string[] = [];
+      const dispatch = dispatchFor(harness, launched).dispatch;
+      const before = await eventCount(harness.ledger);
+      await expect(dispatch.dispatch({ spec: specFor('real-matrix-unactivated'), requestId: 'req-matrix-unactivated' }))
+        .rejects.toThrow('role_spec_stale');
+      // 零写：事件数不变（矩阵照签，判定仍归守卫）。
+      expect(await eventCount(harness.ledger)).toBe(before);
+      expect((await harness.ledger.load(runRefFor(PROJECT, GOAL, 'real-matrix-unactivated'))).status).toBe('not_found');
+      expect(launched).toEqual([]);
+    });
+
+    it('RW-18 没有矩阵／矩阵未登记该角色：不签发，逐字沿用既有绑定（与改动前一致）', async () => {
+      for (const setup of ['no-matrix', 'narrow-matrix'] as const) {
+        const harness = await backend.make();
+        await bootstrapGoalAndPlan(harness.ledger);
+        if (setup === 'no-matrix') await installPolicyWithoutMatrix(harness, 'rw18-fallback-none');
+        else {
+          await installAndActivateRole(harness, ROLE_SOURCE_RECORDER, 'rw18-fallback-narrow');
+          await installMatrix(harness, [ROLE_SOURCE_RECORDER], 'rw18-fallback-narrow');
+        }
+        for (const mode of [undefined, 'explore'] as const) {
+          const entry = operatorEntryBinding(mode);
+          const issued = await issueMatrixRoleBinding({ ledger: harness.ledger }, {
+            projectId: PROJECT, roleId: entry.roleBinding.templateId, fallback: entry.roleBinding,
+          });
+          expect(issued.source, setup).toBe('static-fallback');
+          expect(issued.matrixPin, setup).toBeNull();
+          // 逐字一致：字段一个不差，没有多造 revision／摘要，也没有编造角色目录。
+          expect(issued.roleBinding, setup).toEqual(entry.roleBinding);
+        }
+      }
+    });
+
+    it('角色规格的 install／activate 与角色矩阵的 claim 校验在两套后端上给出同样的结论', async () => {
+      const harness = await backend.make();
+      await bootstrapGoalAndPlan(harness.ledger);
+      const install = await harness.engine.installRoleSpec(buildRoleSpecInstallCommandFor(ROLE_SOURCE_EXECUTOR, {
+        commandId: 'parity-install', correlationId: 'parity-corr-install', submittedAt: AT, projectId: PROJECT, actor: ACTOR, idempotencyKey: 'parity-install-key',
+      }));
+      expect(install.status).toBe('committed');
+      if (install.status !== 'committed') return;
+      // 摘要口径与内容 revision 逐字来自落账快照（两套后端都必须一样）。
+      expect(install.contentDigest).toHaveLength(64);
+      expect(install.revisionRef).toMatchObject({ aggregateType: 'RoleSpecRevision', roleId: ROLE_SOURCE_EXECUTOR, revision: ROLE_SPEC_REVISION });
+      // 重放（同一个幂等键）：同一份 source 不产生第二个 revision。
+      const replay = await harness.engine.installRoleSpec(buildRoleSpecInstallCommandFor(ROLE_SOURCE_EXECUTOR, {
+        commandId: 'parity-install-2', correlationId: 'parity-corr-install-2', submittedAt: AT, projectId: PROJECT, actor: ACTOR, idempotencyKey: 'parity-install-key',
+      }));
+      expect(replay).toMatchObject({ status: 'committed', replayed: true });
+      if (replay.status === 'committed') expect(replay.revisionRef).toEqual(install.revisionRef);
+      // 同一 roleId 上换内容（另一个幂等键）：revision 不可改写，两套后端都必须拒绝并保留原摘要。
+      const conflicting = await harness.engine.installRoleSpec(buildRoleSpecInstallCommandFor(ROLE_SOURCE_RECORDER, {
+        commandId: 'parity-install-conflict', correlationId: 'parity-corr-install-conflict', submittedAt: AT, projectId: PROJECT, actor: ACTOR, idempotencyKey: 'parity-install-conflict-key',
+      }));
+      expect(conflicting.status).toBe('committed');
+      const conflictReplay = await harness.engine.installRoleSpec(buildRoleSpecInstallCommandFor(ROLE_SOURCE_RECORDER, {
+        commandId: 'parity-install-conflict-2', correlationId: 'parity-corr-install-conflict-2', submittedAt: AT, projectId: PROJECT, actor: ACTOR, idempotencyKey: 'parity-install-conflict-key-2',
+      }));
+      expect(conflictReplay.status === 'rejected' && conflictReplay.code === 'revision_conflict', JSON.stringify(conflictReplay)).toBe(true);
+      const activate = await harness.engine.activateRoleSpec(buildRoleSpecActivateCommandFor(ROLE_SOURCE_EXECUTOR, {
+        commandId: 'parity-activate', correlationId: 'parity-corr-activate', submittedAt: AT, projectId: PROJECT, actor: ACTOR, idempotencyKey: 'parity-activate-key', expectedRevision: 1,
+      }));
+      expect(activate.status).toBe('committed');
+      if (activate.status !== 'committed') return;
+      expect(activate.activeRevision).toEqual(install.revisionRef);
+      // 生效引用是可读的 canonical 事实（两套后端都由重开读回）。
+      const active = await harness.ledger.load({ aggregateType: 'ProjectRoleSpecActive', projectId: PROJECT, roleId: ROLE_SOURCE_EXECUTOR });
+      expect(active.status).toBe('found');
+      if (active.status !== 'found') return;
+      expect((active.snapshot as { activeRevision: unknown }).activeRevision).toEqual(install.revisionRef);
+      const stored = await harness.ledger.load(install.revisionRef);
+      expect(stored.status).toBe('found');
+      if (stored.status !== 'found') return;
+      expect((stored.snapshot as { contentDigest: string }).contentDigest).toBe(install.contentDigest);
+
+      // 装上矩阵之后：合法绑定受理，越权声明拒绝且零写。
+      await installAndActivateRole(harness, ROLE_SOURCE_INVESTIGATOR, 'parity');
+      await installMatrix(harness, [ROLE_SOURCE_EXECUTOR, ROLE_SOURCE_INVESTIGATOR], 'parity-matrix');
+      const launched: string[] = [];
+      const dispatch = dispatchFor(harness, launched).dispatch;
+      expect(await dispatch.dispatch({ spec: specFor('real-parity-ok'), requestId: 'req-parity-ok' })).toMatchObject({ status: 'accepted' });
+
+      // 同一 task 上的第二次不同 run 是竞争 claim：两套后端都必须给出 revision_conflict。
+      const competing = await harness.engine.claimTask(claimFor('real-parity-competing'));
+      expect(competing.status === 'rejected' && competing.code === 'revision_conflict', JSON.stringify(competing)).toBe(true);
+    });
+
+    it('越权声明被拒且零写：矩阵 pin 的规格没有授权这个工具时，claim 不落账', async () => {
+      const harness = await backend.make();
+      await bootstrapGoalAndPlan(harness.ledger);
+      await installAndActivateRole(harness, ROLE_SOURCE_EXECUTOR, 'overreach');
+      await installMatrix(harness, [ROLE_SOURCE_EXECUTOR], 'overreach-matrix');
+
+      // 这一条 claim 是目标上第一条（没有既有 lease），因此先过任务资格，再撞角色权限上界。
+      const before = await eventCount(harness.ledger);
+      const overreach = await harness.engine.claimTask(claimFor('real-parity-overreach', { tools: ['read', 'write', 'shell', 'git-push'], writeScope: ['*'] }));
+      expect(overreach.status).toBe('rejected');
+      if (overreach.status !== 'rejected') return;
+      expect(overreach.code).toBe('ineligible');
+      expect(overreach.issues?.some(issue => issue.code === 'role_binding_not_admissible' && issue.detail === 'permissions_exceed_spec')).toBe(true);
+      // 零写：事件数不变，没有 Run／lease／attempt。
+      expect(await eventCount(harness.ledger)).toBe(before);
+      expect((await harness.ledger.load(runRefFor(PROJECT, GOAL, 'real-parity-overreach'))).status).toBe('not_found');
+      // 界内的同一条 claim（去掉越界工具）仍然受理——拒绝只针对越权声明。
+      const withinBounds = await harness.engine.claimTask(claimFor('real-parity-within'));
+      expect(withinBounds.status, JSON.stringify(withinBounds)).toBe('committed');
+    });
+  });
+}
+
+// ------------------------------------------------------------------------ //
+// RW-18：签发只依赖 canonical 矩阵事实 —— 重启后逐字相同（真实 SQLite 重开）  //
+// ------------------------------------------------------------------------ //
+
+describe('RW-18 矩阵签发与重启一致', () => {
+  it('SQLite 重开后同一条矩阵的签发结果逐字相同（签发不依赖任何进程内状态）', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'rw18-matrix-reopen-'));
+    created.push(() => rm(directory, { recursive: true, force: true }));
+    const path = join(directory, 'ledger.sqlite');
+    const d = createDeterministicDeps();
+
+    let ledger = createSqliteStateLedger({ path });
+    const engine = createControlEngine({ ledger, now: d.clock, eventId: d.eventId });
+    await bootstrapGoalAndPlan(ledger);
+    await installAndActivateRole({ ledger, engine }, ROLE_SOURCE_EXECUTOR, 'rw18-reopen');
+    await installMatrix({ ledger, engine }, [ROLE_SOURCE_EXECUTOR], 'rw18-reopen-matrix');
+    const fallback = operatorEntryBinding(undefined).roleBinding;
+    const first = await issueMatrixRoleBinding({ ledger }, { projectId: PROJECT, roleId: OPERATOR_ENTRY_ROLES.develop, fallback });
+    expect(first.source).toBe('matrix');
+    ledger.close();
+
+    ledger = createSqliteStateLedger({ path });
+    created.push(() => ledger.close());
+    const reopened = await issueMatrixRoleBinding({ ledger }, { projectId: PROJECT, roleId: OPERATOR_ENTRY_ROLES.develop, fallback });
+    expect(reopened).toEqual(first);
+  }, 120000);
+});

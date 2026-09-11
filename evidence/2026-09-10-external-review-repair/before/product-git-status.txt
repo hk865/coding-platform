@@ -1,0 +1,402 @@
+## main
+ M .gitignore
+ M AGENTS.md
+ M IMPLEMENTATION-HANDOFF.md
+ M README.md
+ M package.json
+ M pnpm-lock.yaml
+ M src/context/completed-work-context-compiler.ts
+ M src/context/context-compiler.ts
+ M src/context/query-context-compiler.ts
+ M src/context/work-context-compiler.ts
+ M src/contracts/architecture-evolution-policy.ts
+ M src/contracts/architecture-inspection.ts
+ M src/contracts/architecture-reconciler.ts
+ M src/contracts/artifact.ts
+ M src/contracts/completed-work-context.ts
+ M src/contracts/console-views.ts
+ M src/contracts/control-intent.ts
+ M src/contracts/dispatch.ts
+ M src/contracts/events.ts
+ M src/contracts/evidence.ts
+ M src/contracts/fixtures/architecture-evolution-policy-fixtures.ts
+ M src/contracts/fixtures/architecture-fixtures.ts
+ M src/contracts/fixtures/baseline-evolution-fixtures.ts
+ M src/contracts/fixtures/bootstrap-fixture-v1.ts
+ M src/contracts/fixtures/completed-work-fixtures.ts
+ M src/contracts/fixtures/context-fixtures.ts
+ M src/contracts/fixtures/control-fixtures.ts
+ M src/contracts/fixtures/dispatch-fixtures.ts
+ M src/contracts/fixtures/evidence-fixtures.ts
+ M src/contracts/fixtures/goal-change-fixtures.ts
+ M src/contracts/fixtures/goal-fixtures.ts
+ M src/contracts/fixtures/goal-phase-fixtures.ts
+ M src/contracts/fixtures/governance-fixtures.ts
+ M src/contracts/fixtures/handoff-fixtures.ts
+ M src/contracts/fixtures/human-role-collaboration-fixtures.ts
+ M src/contracts/fixtures/plan-fixtures.ts
+ M src/contracts/fixtures/query-job-fixtures.ts
+ M src/contracts/fixtures/remediation-fixtures.ts
+ M src/contracts/fixtures/workspace-fixtures.ts
+ M src/contracts/goal-change.ts
+ M src/contracts/goal-phase.ts
+ M src/contracts/goal-view.ts
+ M src/contracts/governance.ts
+ M src/contracts/handoff.ts
+ M src/contracts/index.ts
+ M src/contracts/integration.ts
+ M src/contracts/ledger-validation.ts
+ M src/contracts/ledger.ts
+ M src/contracts/modules.ts
+ M src/contracts/plan-view.ts
+ M src/contracts/plan.ts
+ M src/contracts/query-job.ts
+ M src/contracts/reduction.ts
+ M src/contracts/remediation.ts
+ M src/contracts/task-envelope.ts
+ M src/contracts/testing/control.double.ts
+ M src/contracts/testing/read-model.double.ts
+ M src/contracts/validation.ts
+ M src/contracts/verification.ts
+ M src/contracts/workspace-capability.ts
+ M src/contracts/workspace-lease.ts
+ M src/contracts/workspace-read.ts
+ M src/contracts/workspace-views.ts
+ M src/control/architecture-inspection.ts
+ M src/control/architecture-reconciler.ts
+ M src/control/baseline-evolution-port.ts
+ M src/control/baseline-evolution.ts
+ M src/control/claim.ts
+ M src/control/control-engine.ts
+ M src/control/control-intent.ts
+ M src/control/dispatch-engine.ts
+ M src/control/dispatch-facts.ts
+ M src/control/evidence-intake.ts
+ M src/control/goal-change.ts
+ M src/control/goal-reducer.ts
+ M src/control/handoff-drive.ts
+ M src/control/handoff.ts
+ M src/control/human-role-collaboration.ts
+ M src/control/integration-join.ts
+ M src/control/patch-record.ts
+ M src/control/plan-acceptance.ts
+ M src/control/plan-compiler.ts
+ M src/control/query-job.ts
+ M src/control/readiness.ts
+ M src/control/remediation.ts
+ M src/control/replacement-claim.ts
+ M src/control/run-facts.ts
+ M src/control/start-run.ts
+ M src/control/task-reducer.ts
+ M src/control/work-record.ts
+ M src/control/workspace-drive.ts
+ M src/control/workspace-lease.ts
+ M src/harness/in-memory-harness.ts
+ M src/harness/persistent-harness.ts
+ M src/ledger/in-memory-ledger.ts
+ M src/read-model/read-model-index.ts
+ D src/runtime/workspace-capability-adapter.ts
+ M src/sqlite-ledger/sqlite-ledger.ts
+ M src/sqlite-read-model/sqlite-read-model-index.ts
+ M src/vault/artifact-vault.ts
+ M src/verification/migration-gate-port.ts
+ M src/verification/verification-engine.ts
+ M tests/context/handoff-context-compiler.test.ts
+ M tests/context/work-context-compiler.test.ts
+ M tests/contract-suite/architecture-evolution.contract.suite.ts
+ M tests/contract-suite/architecture.contract.suite.ts
+ M tests/contract-suite/console.contract.suite.ts
+ M tests/contract-suite/dispatch.contract.suite.ts
+ M tests/contract-suite/evidence.contract.suite.ts
+ M tests/contract-suite/goal-change.contract.suite.ts
+ M tests/contract-suite/governance.contract.suite.ts
+ M tests/contract-suite/handoff.contract.suite.ts
+ M tests/contract-suite/p1-03-harness.ts
+ M tests/contract-suite/p1-04-harness.ts
+ M tests/contract-suite/p1-06-harness.ts
+ M tests/contract-suite/p1-07-harness.ts
+ M tests/contract-suite/p1-08-harness.ts
+ M tests/contract-suite/p1-11-harness.ts
+ M tests/contract-suite/p1-12-harness.ts
+ M tests/contract-suite/plan.contract.suite.ts
+ M tests/contract-suite/verification.contract.suite.ts
+ M tests/contract-suite/workspace.contract.suite.ts
+ M tests/contracts/goal-phase.test.ts
+ M tests/control/architecture-inspection.test.ts
+ M tests/control/architecture-reconciler.test.ts
+ M tests/control/baseline-evolution-port.test.ts
+ M tests/control/baseline-evolution.test.ts
+ M tests/control/dispatch-claim.test.ts
+ M tests/control/dispatch-drive.test.ts
+ M tests/control/dispatch-readiness.test.ts
+ M tests/control/dispatch-start.test.ts
+ M tests/control/evidence-intake.test.ts
+ M tests/control/goal-change.test.ts
+ M tests/control/governance-activate.test.ts
+ M tests/control/governance-install.test.ts
+ M tests/control/handoff.test.ts
+ M tests/control/human-role-collaboration.test.ts
+ M tests/control/integration-join.test.ts
+ M tests/control/p1-13-writer-chain-fixture.ts
+ M tests/control/p1-15-role-rework-loop.test.ts
+ M tests/control/patch-record.test.ts
+ M tests/control/plan-acceptance.test.ts
+ M tests/control/plan-compiler.test.ts
+ M tests/control/remediation.test.ts
+ M tests/control/replacement-claim.test.ts
+ M tests/control/run-facts.test.ts
+ M tests/control/task-reducer.test.ts
+ M tests/control/work-record.test.ts
+ M tests/control/workspace-drive.test.ts
+ M tests/control/workspace-lease.test.ts
+ M tests/integration/p1-15-role-e2e.integration.test.ts
+ M tests/integration/p1-16.real-kernel.continuity.test.ts
+ M tests/integration/real-kernel/replay-server.ts
+ M tests/read-model/p1-03-run-projection.test.ts
+ M tests/read-model/p1-04-verification-projection.test.ts
+ M tests/read-model/p1-05-goal-phase-projection.test.ts
+ M tests/read-model/p1-06-handoff-projection.test.ts
+ M tests/read-model/p1-07-projection.test.ts
+ M tests/read-model/p1-08-matrix-agents-evidence-timeline.test.ts
+ M tests/read-model/p1-11-plan-change.test.ts
+ M tests/read-model/p1-12-brief-proposal-projection.test.ts
+ M tests/read-model/p1-14-baseline-change-view.test.ts
+ M tests/read-model/p1-15-unified-status.test.ts
+ M tests/read-model/p1-16-continuation-projection.test.ts
+ M tests/read-model/p1-16-work-context.test.ts
+ M tests/read-model/plan-view.rebuild.test.ts
+ M tests/read-model/plan-view.test.ts
+ M tests/read-model/read-model-index.contract.test.ts
+ M tests/read-model/read-model-index.test.ts
+ M tests/restart/evidence/p1-01-evidence.test.ts
+ M tests/restart/evidence/p1-02-evidence.test.ts
+ M tests/restart/p1-02-restart-fixtures.ts
+ M tests/restart/persistent-restart.test.ts
+ D tests/runtime/workspace-capability-adapter.test.ts
+ M tests/sqlite-read-model/p1-03-run-projection.test.ts
+ M tests/sqlite-read-model/p1-04-verification-projection.test.ts
+ M tests/sqlite-read-model/p1-05-goal-phase-projection.test.ts
+ M tests/sqlite-read-model/p1-06-handoff-projection.test.ts
+ M tests/sqlite-read-model/p1-07-projection.test.ts
+ M tests/sqlite-read-model/p1-11-plan-change.test.ts
+ M tests/sqlite-read-model/p1-14-baseline-change-view.test.ts
+ M tests/sqlite-read-model/p1-15-unified-status.test.ts
+ M tests/sqlite-read-model/p1-16-continuation-projection.test.ts
+ M tests/sqlite-read-model/plan-view.test.ts
+ M tests/sqlite-read-model/sqlite-read-model-index.contract.test.ts
+ M tests/sqlite-read-model/sqlite-read-model-index.restart.test.ts
+ M tests/vault/artifact-vault.test.ts
+ M tests/verification/migration-gate-port.test.ts
+ M tests/verification/verification-engine.test.ts
+ M tsconfig.json
+?? .pnpm-store/
+?? "D\357\200\272\357\201\234.pnpm-store\357\201\234v11/"
+?? evaluation/
+?? evidence/2026-09-07-coding-agent-vendoring/
+?? evidence/2026-09-09-architecture-rebuild/
+?? evidence/2026-09-09-architecture-repair/
+?? evidence/2026-09-09-core-verification/
+?? evidence/2026-09-09-independent-review/
+?? evidence/2026-09-09-module-completion/
+?? evidence/2026-09-10-external-review-repair/
+?? evidence/2026-09-10-external-review/
+?? evidence/rat-00/
+?? evidence/rat-01/
+?? evidence/rat-02/
+?? evidence/rat-03/
+?? pnpm-workspace.yaml
+?? scripts/
+?? src/README.md
+?? src/app/
+?? src/context/README.md
+?? src/context/architecture-context-compiler.ts
+?? src/context/baseline-evolution-context.ts
+?? src/context/coordination-context-compiler.ts
+?? src/context/exploration-context-compiler.ts
+?? src/context/exploration-session-context.ts
+?? src/context/history-materials-context.ts
+?? src/context/material-selection.ts
+?? src/context/operator-planning-context.ts
+?? src/context/query-execution-context.ts
+?? src/context/reviewer-context.ts
+?? src/context/reviewer-profile.ts
+?? src/context/reviewer-runtime-context.ts
+?? src/context/runtime-context.ts
+?? src/context/source-graph-context.ts
+?? src/context/verification-context.ts
+?? src/context/verification-migration-context.ts
+?? src/contracts/README.md
+?? src/contracts/architecture-context.ts
+?? src/contracts/architecture-source.ts
+?? src/contracts/commands/
+?? src/contracts/exploration-materials.ts
+?? src/contracts/exploration-session.ts
+?? src/contracts/exploration.ts
+?? src/contracts/fixtures/material-access-fixtures.ts
+?? src/contracts/history-materials.ts
+?? src/contracts/initial-planning.ts
+?? src/contracts/material-access.ts
+?? src/contracts/operator-dispatch.ts
+?? src/contracts/operator-planning.ts
+?? src/contracts/planning.ts
+?? src/contracts/policy-explanation.ts
+?? src/contracts/query-execution-context.ts
+?? src/contracts/read-model.ts
+?? src/contracts/reviewer-context.ts
+?? src/contracts/reviewer-verification.ts
+?? src/contracts/reviewer-work.ts
+?? src/contracts/runtime-budget.ts
+?? src/contracts/runtime-context-materials.ts
+?? src/contracts/runtime-dispatch.ts
+?? src/contracts/runtime-observations.ts
+?? src/contracts/runtime-preparation.ts
+?? src/contracts/scope-catalog.ts
+?? src/contracts/verification-context.ts
+?? src/contracts/verification-import.ts
+?? src/contracts/verification-round.ts
+?? src/contracts/verification-service.ts
+?? src/contracts/verification-source.ts
+?? src/contracts/workspace-registration.ts
+?? src/control/README.md
+?? src/control/architecture-delta.ts
+?? src/control/exploration-context-drive.ts
+?? src/control/exploration-startup-reconciliation.ts
+?? src/control/initial-plan-compiler.ts
+?? src/control/initial-plan-source.ts
+?? src/control/leased-worker-runtime.ts
+?? src/control/material-access-revocation.ts
+?? src/control/material-access.ts
+?? src/control/operator-plan-compiler.ts
+?? src/control/operator-task-dispatch.ts
+?? src/control/planned-task-dispatch.ts
+?? src/control/policies/
+?? src/control/policy-explanation.ts
+?? src/control/query-drive.ts
+?? src/control/records/
+?? src/control/reviewer-dispatch.ts
+?? src/control/reviewer-work.ts
+?? src/control/runtime-dispatch.ts
+?? src/control/workspace-registration.ts
+?? src/data/README.md
+?? src/data/architecture-source.ts
+?? src/data/candidate-workspace-reader.ts
+?? src/data/cpp-source-index.ts
+?? src/data/exploration-source.ts
+?? src/data/governance-records.ts
+?? src/data/ledger-scope-catalog.ts
+?? src/data/project-source-index.ts
+?? src/data/python-source-index.ts
+?? src/data/query-workspace-source-reader.ts
+?? src/data/reviewer-source-reader.ts
+?? src/data/source-applicability.ts
+?? src/data/source-identity.ts
+?? src/data/source-index.ts
+?? src/data/source-workspace-reader.ts
+?? src/data/verification-source-applicability.ts
+?? src/data/verification-workspace-reader.ts
+?? src/harness/README.md
+?? src/interaction/README.md
+?? src/interaction/exploration-session.ts
+?? src/interaction/history-materials.ts
+?? src/ledger/README.md
+?? src/read-model/README.md
+?? src/read-model/completed-work-eligibility.ts
+?? src/read-model/initial-planning-view.ts
+?? src/read-model/reviewer-projection.ts
+?? src/runtime/README.md
+?? src/runtime/coding-agent-runtime.ts
+?? src/runtime/exploration-tools.ts
+?? src/runtime/model-budget.ts
+?? src/runtime/observed-model-run.ts
+?? src/runtime/read-only-query-runtime.ts
+?? src/runtime/reviewer-material-tools.ts
+?? src/runtime/run-limits.ts
+?? src/runtime/unconfigured-capabilities.ts
+?? src/sqlite-ledger/README.md
+?? src/sqlite-read-model/README.md
+?? src/storage/
+?? src/ui/
+?? src/vault/README.md
+?? src/vault/exploration-material-reader.ts
+?? src/vault/material-access-policy.ts
+?? src/vault/runtime-observation-journal.ts
+?? src/vault/sqlite-artifact-vault.ts
+?? src/verification/README.md
+?? src/verification/benchmark-verification.ts
+?? src/verification/candidate-patch-check.ts
+?? src/verification/command-check-lifecycle.ts
+?? src/verification/command-check-provider.ts
+?? src/verification/evidence-admission.ts
+?? src/verification/exploration-report-verifier.ts
+?? src/verification/recorded-verification.ts
+?? src/verification/reviewer-record.ts
+?? src/verification/reviewer-report.ts
+?? src/verification/reviewer-verification.ts
+?? src/verification/verification-input.ts
+?? src/verification/verification-journal.ts
+?? src/verification/verification-plan-compiler.ts
+?? src/verification/verification-reports.ts
+?? src/verification/verification-rounds.ts
+?? src/verification/verification-service.ts
+?? test-results/
+?? tests/app/
+?? tests/context/completed-work-regression.test.ts
+?? tests/context/material-selection.test.ts
+?? tests/context/persisted-query-source.test.ts
+?? tests/context/query-execution-context.test.ts
+?? tests/context/reviewer-context.test.ts
+?? tests/context/verification-round-context.test.ts
+?? tests/context/verification-workspace-reader.test.ts
+?? tests/contracts/material-access.test.ts
+?? tests/control/architecture-delta-regression.test.ts
+?? tests/control/canonical-record-scope.test.ts
+?? tests/control/initial-plan-source.test.ts
+?? tests/control/live-frontier-regression.test.ts
+?? tests/control/material-access.test.ts
+?? tests/control/planning-fixture.ts
+?? tests/control/planning-interface.test.ts
+?? tests/control/reviewer-dispatch-isolation.test.ts
+?? tests/control/reviewer-existing-drivers-isolation.test.ts
+?? tests/control/reviewer-reduction-race.test.ts
+?? tests/control/reviewer-work-fixture.ts
+?? tests/control/reviewer-work-persistence.test.ts
+?? tests/control/reviewer-work.test.ts
+?? tests/control/runtime-dispatch.test.ts
+?? tests/control/source-architecture.test.ts
+?? tests/control/workspace-capability-policy.test.ts
+?? tests/control/workspace-lease-regression.test.ts
+?? tests/control/workspace-registration.test.ts
+?? tests/data/candidate-workspace-reader.test.ts
+?? tests/data/cpp-source-index.test.ts
+?? tests/data/exploration-source-applicability.test.ts
+?? tests/data/ledger-scope-catalog.test.ts
+?? tests/data/project-source-index.test.ts
+?? tests/data/python-source-index.test.ts
+?? tests/data/source-applicability-fixture.ts
+?? tests/data/source-applicability.test.ts
+?? tests/data/source-index.test.ts
+?? tests/integration/p1-09-query-regression.test.ts
+?? tests/interaction/exploration-session.test.ts
+?? tests/read-model/completed-work-filter.test.ts
+?? tests/read-model/material-access-lookup.test.ts
+?? tests/read-model/material-access-projection.test.ts
+?? tests/restart/material-access-restart.test.ts
+?? tests/restart/material-revocation.test.ts
+?? tests/restart/material-source-applicability.test.ts
+?? tests/restart/material-source-process.mjs
+?? tests/runtime/runtime-observation-journal.test.ts
+?? tests/runtime/unconfigured-capabilities.test.ts
+?? tests/sqlite-read-model/material-access-projection.test.ts
+?? tests/ui/
+?? tests/vault/exploration-material-reader.test.ts
+?? tests/vault/material-access-grant.test.ts
+?? tests/vault/persistent-vault.test.ts
+?? tests/vault/verification-source-pin.test.ts
+?? tests/verification/candidate-patch-check.test.ts
+?? tests/verification/command-check-provider.test.ts
+?? tests/verification/reviewer-fixture.ts
+?? tests/verification/reviewer-verification.test.ts
+?? tests/verification/verification-rounds.test.ts
+?? tests/verification/verification-service.test.ts
+?? tsconfig.app.json
+?? vendor/

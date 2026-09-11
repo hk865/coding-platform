@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "runId": "kernel-direct",
+  "trialId": "ts-nullish-timeout-trial-1",
+  "taskId": "ts-nullish-timeout",
+  "taskDigest": "sha256:47f7f4ff6abd2b0daf38716ebfa651b3eb25acb4cfa5271966eb2274c392ee7c",
+  "dataset": "internal-mvp",
+  "datasetVersion": "0.1.0",
+  "status": "resolved",
+  "failure": null,
+  "agent": {
+    "revision": "82a9e45a148f810ecc36916493c9e6913932fc03",
+    "runnerMode": "agent"
+  },
+  "model": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash-vision-exp",
+    "options": {
+      "configurationRevision": "d6c00a9e-b67b-4ebc-a5a4-6a806b39e60a",
+      "thinking": "bound-client-default",
+      "contextWindowTokens": 1000000
+    }
+  },
+  "promptVersion": "m6-canary-v1",
+  "taskLimits": {
+    "timeoutSeconds": 30,
+    "maxModelRequests": 8,
+    "maxToolCalls": 24,
+    "network": "disabled"
+  },
+  "startedAt": "2026-09-07T11:45:15.440Z",
+  "endedAt": "2026-09-07T11:45:26.657Z",
+  "environment": {
+    "platform": "linux-x64",
+    "node": "v24.18.0",
+    "isolation": "bubblewrap-required"
+  },
+  "changedPaths": [
+    "src/timeout.mjs"
+  ],
+  "evaluator": {
+    "exitCode": 0,
+    "stdout": "{\"resolved\":true,\"checks\":5}\n",
+    "stderr": ""
+  },
+  "metrics": {
+    "modelRequestCount": 4,
+    "toolCallCount": 4,
+    "shellCommandCount": 0,
+    "testRunCount": 0,
+    "inputTokens": 11087,
+    "outputTokens": 920,
+    "cachedInputTokens": 9728,
+    "totalCostUsdMicros": null,
+    "timeToFirstActionMs": null,
+    "timeToFirstTestMs": null,
+    "wallClockMs": 10493
+  },
+  "artifacts": {
+    "trace": "ts-nullish-timeout-trial-1/trace.jsonl",
+    "diff": "ts-nullish-timeout-trial-1/diff.json",
+    "evaluatorLog": "ts-nullish-timeout-trial-1/evaluator.log"
+  }
+}

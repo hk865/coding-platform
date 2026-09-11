@@ -1,0 +1,378 @@
+/**
+ * P1-16 Control entry: WorkRecordEngineImpl — durable work identity + reason
+ * trail (WorkRecordPort implementor).
+ *
+ * ENTRY FILE (shared baseline — exported signatures FROZEN; lane A fills the
+ * implementations). Frozen semantics (IMPLEMENTATION-HANDOFF "P1-16 契约与
+ * 存储语义" items 1-6):
+ *   1. shape validation (validateBindWorkContextCommand / ...) -> invalid;
+ *   2. referential guards (Project/Workspace/Binding/run existence; workKind-
+ *      goal/task consistency) -> not_found; binding already exists -> CAS;
+ *   3. ExecutionNote author must be a run LINKED to the work binding ->
+ *      run_not_in_work (zero write); the note body must already be
+ *      body-first'd into the ArtifactVault by the author;
+ *   4. run links bounded (WORK_CONTEXT_MAX_RUN_LINKS) -> links_exceeded;
+ *   5. ONE atomic commit per command (fold-equality with the shared fixture
+ *      builders) with FULL ledger idempotency.
+ * No Goal/Task phase write; no CompletionPolicy change; the runtime capability
+ * declaration is recorded as reported (capabilitySource), never fabricated.
+ */
+import type {
+  BindWorkContextCommand,
+  BindWorkContextReceipt,
+  LinkWorkRunCommand,
+  LinkWorkRunReceipt,
+  RecordContinuationCommand,
+  RecordContinuationReceipt,
+  RecordExecutionNoteCommand,
+  RecordExecutionNoteReceipt,
+  WorkContextBindingSnapshot,
+  WorkRecordPort,
+} from "../../contracts/context-continuity.js";
+import { WORK_CONTEXT_MAX_RUN_LINKS, continuationRecordRefFor, executionNoteRefFor, workContextRefFor } from "../../contracts/context-continuity.js";
+import { canonicalJson } from "../../contracts/fingerprint.js";
+import type { LedgerCommitReceipt, WorkspaceRef } from "../../contracts/ledger.js";
+import { validateBindWorkContextCommand, validateLinkWorkRunCommand, validateRecordContinuationCommand, validateRecordExecutionNoteCommand } from '../../contracts/validation/context.js';
+import { buildContinuationRecordLedgerCommit, buildExecutionNoteRecordLedgerCommit, buildWorkContextBindLedgerCommit, buildWorkContextLinkLedgerCommit } from "./records/context.js";
+import { resolveTaskWorkIdentity } from "./work-identity-resolution.js";
+import type { ControlEngineDeps } from "./control-engine.js";
+
+export class WorkRecordEngineImpl implements WorkRecordPort {
+  private readonly deps: ControlEngineDeps;
+
+  constructor(deps: ControlEngineDeps) {
+    this.deps = deps;
+  }
+
+  // --------------------------------------------------------------------- //
+  // bindWorkContext — create the durable work identity exactly once       //
+  // --------------------------------------------------------------------- //
+
+  async bindWorkContext(command: BindWorkContextCommand): Promise<BindWorkContextReceipt> {
+    // Guard 1: schema / shape validation (zero write).
+    const issues = validateBindWorkContextCommand(command);
+    if (issues.length > 0) {
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+    }
+
+    // workKind-goal/task consistency: a task work is anchored to a goal + task.
+    if (command.payload.workKind === "task" && (command.payload.goalId === null || command.payload.taskId === null)) {
+      return { status: "rejected", commandId: command.commandId, code: "not_found" };
+    }
+
+    // Guard 2: referential guards — the workspace must exist (a work lives in a
+    // real workspace scope), and the initial run must be a real Run aggregate.
+    const workspaceRef: WorkspaceRef = {
+      aggregateType: "Workspace",
+      projectId: command.identity.projectId,
+      workspaceId: command.payload.workspaceId,
+    };
+    if ((await this.deps.ledger.load(workspaceRef)).status === "not_found") {
+      return { status: "rejected", commandId: command.commandId, code: "not_found" };
+    }
+    if ((await this.deps.ledger.load(command.payload.initialRunRef)).status === "not_found") {
+      return { status: "rejected", commandId: command.commandId, code: "not_found" };
+    }
+
+    // Guard 4（RC-03）: 一个任务只有一个工作身份。
+    //
+    // 为什么这条守卫属于 ControlEngine 而不是调用方：RW-13 让**派发面**先解析、后建立，但那是
+    // 调用方约定——任何别的调用方直接调 bindWorkContext，仍能为同一 (项目, 工作区, 目标, 任务)
+    // 换一个 workId 造出第二条 WorkContextBound（两条绑定的聚合 ref 不同，CAS@0 各自成立）。
+    // 身份是 Control 的持久事实，唯一性就必须由持有这个事实的 Module 判定：这里复用 RW-13 已经
+    // 建立的**唯一权威读面**（同一个 resolveTaskWorkIdentity，规则不复制第二份），命令面因此与
+    // 派发面得到同一个答案，而不是"谁问谁自算"。
+    //
+    // 三种结果各有明确处置（全部零写入）：
+    //   resolved（已有身份，且 workId 与本次 aggregateId 不同）→ already_bound + 回执带既有身份，
+    //       调用方要接着干这段工作只能显式 link 到它，不能另建；
+    //   resolved（已有身份就是本次这个 workId）→ 放行到下面的提交：同 workId 的重复提交仍由
+    //       既有语义决定（同一命令幂等重放 → committed/replayed；不同命令 → revision_conflict），
+    //       这里不改变既有回执，避免"守卫顺手改了 CAS 语义"；
+    //   absent → 放行（这个任务确实还没有身份）；
+    //   unavailable（账本事件读不到／读不完整）→ 拒绝：读不完整就**不能**证明这个任务没有身份，
+    //       硬写很可能造出第二条；这与派发面同一条判据（work_identity_unavailable）。
+    //
+    // 边界（如实写下来）：这条守卫是"先查后写"，因此**不构成**并发/跨进程保证。真正的原子性
+    // 由 StateLedger 的提交语义给出——work-context-bind 在同一个事务里占用任务身份槽
+    // （data/state-ledger/ledger-validation.ts 的 workContextIdentityClaim）。两层合起来才是
+    // 「唯一性由权威保证」：守卫给出可读的拒绝原因，账本给出不可绕过的唯一约束。
+    if (command.payload.workKind === "task" && command.payload.goalId !== null && command.payload.taskId !== null) {
+      const resolution = await resolveTaskWorkIdentity(
+        { ledger: this.deps.ledger },
+        {
+          projectId: command.identity.projectId,
+          workspaceId: command.payload.workspaceId,
+          goalId: command.payload.goalId,
+          taskId: command.payload.taskId,
+        },
+      );
+      if (resolution.status === "unavailable") {
+        return { status: "rejected", commandId: command.commandId, code: "unavailable", issues: [resolution.reason] };
+      }
+      if (resolution.status === "resolved" && resolution.workContextRef.workId !== command.aggregateId) {
+        return {
+          status: "rejected",
+          commandId: command.commandId,
+          code: "already_bound",
+          issues: [
+            "任务 " + command.payload.taskId + " 已有工作身份 " + resolution.workContextRef.workId +
+            "（权威解析 authority=" + resolution.authority + "，candidateCount=" + String(resolution.candidateCount) +
+            "）；同一任务不再建立第二条身份，要接着做这段工作请对该身份 linkWorkRun",
+          ],
+          existingWorkContextRef: resolution.workContextRef,
+        };
+      }
+    }
+
+    // Guard 5: deterministic fold (fold-equality with the shared fixture builder)
+    // -> atomic ledger.commit (CAS@0 + idempotency) -> receipt mapping.
+    const batch = buildWorkContextBindLedgerCommit(command, {
+      eventId: this.deps.eventId(),
+      occurredAt: this.deps.now(),
+    });
+    const receipt = await this.deps.ledger.commit(batch);
+    return mapBindReceipt(receipt, command);
+  }
+
+  // --------------------------------------------------------------------- //
+  // linkWorkRun — append a run to the binding (CAS@N)                     //
+  // --------------------------------------------------------------------- //
+
+  async linkWorkRun(command: LinkWorkRunCommand): Promise<LinkWorkRunReceipt> {
+    // Guard 1: schema / shape validation (zero write).
+    const issues = validateLinkWorkRunCommand(command);
+    if (issues.length > 0) {
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+    }
+
+    // Guard 2: referential guards — the binding must exist and the run to link
+    // must be a real Run aggregate.
+    const workRef = workContextRefFor(command.identity.projectId, command.payload.workspaceId, command.aggregateId);
+    const bindingResult = await this.deps.ledger.load(workRef);
+    if (bindingResult.status === "not_found") {
+      return { status: "rejected", commandId: command.commandId, code: "not_found" };
+    }
+    const binding = bindingResult.snapshot as WorkContextBindingSnapshot;
+    if ((await this.deps.ledger.load(command.payload.runRef)).status === "not_found") {
+      return { status: "rejected", commandId: command.commandId, code: "not_found" };
+    }
+
+    // Guard 3: duplicate link of the SAME run -> already_linked (zero write).
+    const runKey = canonicalJson(command.payload.runRef);
+    if (binding.binding.linkedRunRefs.some((r) => canonicalJson(r) === runKey)) {
+      return { status: "rejected", commandId: command.commandId, code: "already_linked" };
+    }
+
+    // Guard 4: run links bounded -> links_exceeded (zero write).
+    if (binding.binding.linkedRunRefs.length >= WORK_CONTEXT_MAX_RUN_LINKS) {
+      return { status: "rejected", commandId: command.commandId, code: "links_exceeded" };
+    }
+
+    // Guard 5: deterministic fold (append the run) -> atomic commit -> mapping.
+    const nextBinding = {
+      ...binding.binding,
+      linkedRunRefs: [...binding.binding.linkedRunRefs.map((r) => ({ ...r })), { ...command.payload.runRef }],
+    };
+    const batch = buildWorkContextLinkLedgerCommit(command, {
+      eventId: this.deps.eventId(),
+      occurredAt: this.deps.now(),
+      currentRevision: binding.revision,
+      nextBinding,
+    });
+    const receipt = await this.deps.ledger.commit(batch);
+    return mapLinkReceipt(receipt, command, binding, workRef);
+  }
+
+  // --------------------------------------------------------------------- //
+  // recordExecutionNote — one immutable note (body-first; CAS@0)          //
+  // --------------------------------------------------------------------- //
+
+  async recordExecutionNote(command: RecordExecutionNoteCommand): Promise<RecordExecutionNoteReceipt> {
+    // Guard 1: schema / shape validation (zero write).
+    const issues = validateRecordExecutionNoteCommand(command);
+    if (issues.length > 0) {
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+    }
+
+    const note = command.payload.note;
+
+    // Guard 2: referential guards — the work binding must exist and the note
+    // author run must be a real Run aggregate.
+    const workRef = workContextRefFor(command.identity.projectId, note.workspaceId, note.workId);
+    const bindingResult = await this.deps.ledger.load(workRef);
+    if (bindingResult.status === "not_found") {
+      return { status: "rejected", commandId: command.commandId, code: "not_found" };
+    }
+    const binding = bindingResult.snapshot as WorkContextBindingSnapshot;
+    if ((await this.deps.ledger.load(note.runRef)).status === "not_found") {
+      return { status: "rejected", commandId: command.commandId, code: "not_found" };
+    }
+
+    // Guard 3: the note author run must be LINKED to the work binding (the note
+    // is authored within the work — never by a foreign run). Zero write.
+    const runKey = canonicalJson(note.runRef);
+    if (!binding.binding.linkedRunRefs.some((r) => canonicalJson(r) === runKey)) {
+      return { status: "rejected", commandId: command.commandId, code: "run_not_in_work" };
+    }
+
+    // Guard 5: deterministic fold (body-first: the note body was already put
+    // into the ArtifactVault by the author) -> atomic commit -> mapping.
+    const batch = buildExecutionNoteRecordLedgerCommit(command, {
+      eventId: this.deps.eventId(),
+      occurredAt: this.deps.now(),
+    });
+    const receipt = await this.deps.ledger.commit(batch);
+    return mapNoteReceipt(receipt, command, note);
+  }
+
+  // --------------------------------------------------------------------- //
+  // recordContinuation — one immutable observed continuation report       //
+  // --------------------------------------------------------------------- //
+
+  async recordContinuation(command: RecordContinuationCommand): Promise<RecordContinuationReceipt> {
+    // Guard 1: schema / shape validation (zero write).
+    const issues = validateRecordContinuationCommand(command);
+    if (issues.length > 0) {
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+    }
+
+    const result = command.payload.result;
+
+    // Guard 2: the work binding must exist (a continuation report is recorded
+    // for a durable work identity). Zero write.
+    const workRef = workContextRefFor(command.identity.projectId, result.workspaceId, result.workId);
+    if ((await this.deps.ledger.load(workRef)).status === "not_found") {
+      return { status: "rejected", commandId: command.commandId, code: "not_found" };
+    }
+
+    // Guard 5: deterministic fold -> atomic commit -> mapping.
+    const batch = buildContinuationRecordLedgerCommit(command, {
+      eventId: this.deps.eventId(),
+      occurredAt: this.deps.now(),
+    });
+    const receipt = await this.deps.ledger.commit(batch);
+    return mapContinuationReceipt(receipt, command, result);
+  }
+}
+
+// --------------------------------------------------------------------- //
+// Receipt mapping helpers (ledger.commit receipt -> P1-16 receipts)       //
+// --------------------------------------------------------------------- //
+
+function mapBindReceipt(receipt: LedgerCommitReceipt, command: BindWorkContextCommand): BindWorkContextReceipt {
+  if (receipt.status === "committed") {
+    return {
+      status: "committed",
+      commandId: command.commandId,
+      replayed: receipt.replayed,
+      workContextRef: workContextRefFor(command.identity.projectId, command.payload.workspaceId, command.aggregateId),
+      eventIds: receipt.eventIds,
+      commitCursor: receipt.commitCursor,
+    };
+  }
+  switch (receipt.code) {
+    case "invalid_commit":
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+    case "revision_conflict":
+      return { status: "rejected", commandId: command.commandId, code: "revision_conflict" };
+    case "idempotency_conflict":
+      return { status: "rejected", commandId: command.commandId, code: "idempotency_conflict" };
+    case "unavailable":
+      return { status: "rejected", commandId: command.commandId, code: "unavailable" };
+    case "not_empty":
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+  }
+}
+
+function mapLinkReceipt(
+  receipt: LedgerCommitReceipt,
+  command: LinkWorkRunCommand,
+  binding: WorkContextBindingSnapshot,
+  workRef: import("../../contracts/context-continuity.js").WorkContextRef,
+): LinkWorkRunReceipt {
+  if (receipt.status === "committed") {
+    const revision =
+      receipt.aggregateRevisions.find((v) => v.ref.aggregateType === "WorkContextBinding")?.revision ??
+      binding.revision + 1;
+    return {
+      status: "committed",
+      commandId: command.commandId,
+      replayed: receipt.replayed,
+      workContextRef: workRef,
+      revision,
+      eventIds: receipt.eventIds,
+      commitCursor: receipt.commitCursor,
+    };
+  }
+  switch (receipt.code) {
+    case "invalid_commit":
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+    case "revision_conflict":
+      return { status: "rejected", commandId: command.commandId, code: "revision_conflict" };
+    case "idempotency_conflict":
+      return { status: "rejected", commandId: command.commandId, code: "idempotency_conflict" };
+    case "unavailable":
+      return { status: "rejected", commandId: command.commandId, code: "unavailable" };
+    case "not_empty":
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+  }
+}
+
+function mapNoteReceipt(
+  receipt: LedgerCommitReceipt,
+  command: RecordExecutionNoteCommand,
+  note: import("../../contracts/context-continuity.js").ExecutionNoteV1,
+): RecordExecutionNoteReceipt {
+  if (receipt.status === "committed") {
+    return {
+      status: "committed",
+      commandId: command.commandId,
+      replayed: receipt.replayed,
+      noteRef: executionNoteRefFor(command.identity.projectId, note.workspaceId, note.workId, note.noteId),
+      eventIds: receipt.eventIds,
+      commitCursor: receipt.commitCursor,
+    };
+  }
+  switch (receipt.code) {
+    case "invalid_commit":
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+    case "revision_conflict":
+      return { status: "rejected", commandId: command.commandId, code: "revision_conflict" };
+    case "idempotency_conflict":
+      return { status: "rejected", commandId: command.commandId, code: "idempotency_conflict" };
+    case "unavailable":
+      return { status: "rejected", commandId: command.commandId, code: "unavailable" };
+    case "not_empty":
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+  }
+}
+
+function mapContinuationReceipt(
+  receipt: LedgerCommitReceipt,
+  command: RecordContinuationCommand,
+  result: import("../../contracts/context-continuity.js").ContextContinuationResultV1,
+): RecordContinuationReceipt {
+  if (receipt.status === "committed") {
+    return {
+      status: "committed",
+      commandId: command.commandId,
+      replayed: receipt.replayed,
+      continuationRef: continuationRecordRefFor(command.identity.projectId, result.workspaceId, result.workId, result.reportId),
+      eventIds: receipt.eventIds,
+      commitCursor: receipt.commitCursor,
+    };
+  }
+  switch (receipt.code) {
+    case "invalid_commit":
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+    case "revision_conflict":
+      return { status: "rejected", commandId: command.commandId, code: "revision_conflict" };
+    case "idempotency_conflict":
+      return { status: "rejected", commandId: command.commandId, code: "idempotency_conflict" };
+    case "unavailable":
+      return { status: "rejected", commandId: command.commandId, code: "unavailable" };
+    case "not_empty":
+      return { status: "rejected", commandId: command.commandId, code: "invalid" };
+  }
+}

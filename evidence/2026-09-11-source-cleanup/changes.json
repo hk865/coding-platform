@@ -1,0 +1,1801 @@
+{
+  "product": [
+    {
+      "path": "IMPLEMENTATION-HANDOFF.md",
+      "before": "62ed190ec604e76e07b605bc2c4778503bf8c9d6562bbff38a8d39b691dc9f87",
+      "after": "d255a6b5f94535a91d7dbe53dcd78865338226a9949762735d62958f4a49c0de"
+    },
+    {
+      "path": "package.json",
+      "before": "58addc67a925dbe6362f6c0016fef1ebc788d209d8b9eb4fc378c2be2be3b246",
+      "after": "f396b8a18957089b70993f0c6b26a59436a205faa3a8ee8792abe3633f1150cb"
+    },
+    {
+      "path": "scripts/module-map.mjs",
+      "before": "271b18c1efbfa3b1bc3942816257058cdf013a8ff2dd6f050e777e9f4317f9c8",
+      "after": "b2c87719675e0eb150ca35bdb29c0e79b01a1579577035aa097a7e6c4dcacf99"
+    },
+    {
+      "path": "src/app/service.ts",
+      "before": "d71685ec527a18d0a326e405727e7db3a3c6889f7649fa26ff2281386ca821bc",
+      "after": "25c63d8293ed1a3a02b276dcbfcf4669aaa9455f2e5d541652e930185221b576"
+    },
+    {
+      "path": "src/contracts/architecture-inspection.ts",
+      "before": "0078d67612c86f18cb1772e897c47d2d207ba6145fbf558071721c7f4f0e2297",
+      "after": "a6467c4b22e6f1f5fb9345eb82c643a0cc6a277282eea47efbbe84864525ffdc"
+    },
+    {
+      "path": "src/contracts/architecture-reconciler.ts",
+      "before": "a4561c02de687c410adbaad3a23eb7251b6ebba0e7db74dc3a8f4f7c7fe2f706",
+      "after": "3091c0f35808efd2d9c06d338f8a3658a1cd899cb2c5771688a70332484d2914"
+    },
+    {
+      "path": "src/contracts/artifact.ts",
+      "before": "97eea31c871206b3aff8e8bd95474f0015a66b497092199c6c99a1d7b4b43d28",
+      "after": "ede46dfbb1096f07960232aa66048c297611a0276df3323f3d6df87cd32f61cc"
+    },
+    {
+      "path": "src/contracts/commands/context.ts",
+      "before": "0556c2f14cd6a7b046563f7e5b0017332472155bf9bd4e2862fbc838d5272534",
+      "after": "8ede1e3082f766c8918d17a3e8ba38d4c2aa54a0608efc89557d0cd38aa20945"
+    },
+    {
+      "path": "src/contracts/commands/governance.ts",
+      "before": "034b99d36e60d34c79bd3f77a1f29dcafbfbba2ef9e95bb2f07f69f13cccd27d",
+      "after": "1f5b77765dcee4d419f6aac19f05747173c025cc9e2be722700b80db07cf437d"
+    },
+    {
+      "path": "src/contracts/completed-work-context.ts",
+      "before": "e593a7246471dc60f0dcc6adb4fcd3b28c72eeb9a64eb325a7736c87f4d45813",
+      "after": "336b8565d533cc767184c1913cf9d11e36da7544ebc0c0d21f24b25f70134796"
+    },
+    {
+      "path": "src/contracts/console-views.ts",
+      "before": "95ee8a8b08251fc7b78d47ea89d42831d30713e92c46076a1450ff8be9d9c9ef",
+      "after": "47a424eeeb96ac1ca98d0a13b18171a23043fa25ad455ca8e7d79b2ea92ed0d7"
+    },
+    {
+      "path": "src/contracts/context-continuation-port.ts",
+      "before": "6c2313908912d9819be470239cd60425279096a304d007c8e38de54e813f9769",
+      "after": "2c9b260c3a7eab6a54a06f964c38c5139e92d4b015a4677a3417616fd9c96bbe"
+    },
+    {
+      "path": "src/contracts/context-continuity.ts",
+      "before": "8f6b1ad8c8ff985cb8c42509e1f6a0e5d5f38310049a7f34bcb5edd16778b655",
+      "after": "e523ffef1d5cb8a4edcc4bfa3f5f036ceb26f64da0d4fd093cb1211ec4e73a8d"
+    },
+    {
+      "path": "src/contracts/control-intent.ts",
+      "before": "1495acb2b510b84874f00031c31f976fd3ef097f4cc84d639b68436e3a0c8c55",
+      "after": "cd724126b32c608713204588d89b163fd2e79bcadc0f7e6d4ba497f797a81a20"
+    },
+    {
+      "path": "src/contracts/dispatch.ts",
+      "before": "4c2d6cc69d57f87d4597a3bdd109462ad3aa5bc15c7e1e83dd6b656db9b4879f",
+      "after": "58aff2a6e3a1bb3c922c234be601fc22b6a4c3e6e7efcd895e00803bdc325574"
+    },
+    {
+      "path": "src/contracts/evidence.ts",
+      "before": "6fe436f34b673fa9b72d5b0abe73cfba91bed5d11971a7d93528242d4709f828",
+      "after": "a6a28c544a611050846360a0fee0d50b94628fb3dd436ff85180154a1e3321ab"
+    },
+    {
+      "path": "src/contracts/fixtures/architecture-evolution-policy-fixtures.ts",
+      "before": "1762180d41bae3da7a919ab4211653188f96498bdff373bf1b18b27b9f9aaea6",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/architecture-fixtures.ts",
+      "before": "55bc3c10e41d4a53c4a46d60e6dd43e21af103a1aa87597875fcf502145821bb",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/baseline-evolution-fixtures.ts",
+      "before": "90b1564fedbbc46ce749b9659e28c75844c9c0e811152ee88b7df5e272aba247",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/bootstrap-fixture-v1.ts",
+      "before": "bc3372f06022d4b7c2e07e15cec46393c922bd1b6fa0cca628b84c12e462606a",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/completed-work-fixtures.ts",
+      "before": "39f6959db614debedcb94e8ed9762df2663c29eeceb0e90e83f31f49c53c1cf1",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/console-fixtures.ts",
+      "before": "abad20cc34d559179fc082a56d008a279ebdee952fb997bd0e52261a9a141eba",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/context-fixtures.ts",
+      "before": "529c19f0154ac3b42994ac896dca0e13510dff24fe001c1dbb52e9739bd457f9",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/control-fixtures.ts",
+      "before": "c40de9c4e20d47265f7810870799cac6b84f99afbb071f8d145243cf99f75bdb",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/dispatch-fixtures.ts",
+      "before": "c3283b50b7865fbd9decf06fcbffc11c827047f7b312402907209e8b2d84a966",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/evidence-fixtures.ts",
+      "before": "252c768e9389d2b46e8abbc8898463e19a8d5ddc9141123f2c5617e2cd6675dd",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/goal-change-fixtures.ts",
+      "before": "650db16488f103273c88bc77cd60638d794dfecb521f8caeae290bb6e237a3fa",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/goal-fixtures.ts",
+      "before": "5f78593cfc7cf1ab064e431cd804f803789a0201b8023d6006881d1a940a0af4",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/goal-phase-fixtures.ts",
+      "before": "2bfdf455b4d31ee77aaaf41ecc1498f3fa47bd021baa21cc3c1e41501ca82e92",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/governance-fixtures.ts",
+      "before": "ffd66b3c6b07cc94ad4fbd22dee2673fe06a8aedaf248098d7ac97d3cec3a79b",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/handoff-fixtures.ts",
+      "before": "276ce0223aae6cdec8947136502474e7176e9d1d8c305507e3b6e7ff90a3068b",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/human-role-collaboration-fixtures.ts",
+      "before": "b7864b086bb63f4e4c1a4fedad22cb4ffd0fb08050a6d59cd1b0a8e3d65e1439",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/index.ts",
+      "before": "cc4a37321bf434258311679afdb4067e5c662f574a37f68335b02a927822107b",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/material-access-fixtures.ts",
+      "before": "acb48ba31ba19e193f5651aafe7fcae01a0dc612d3b817aebb652a48421d6ecd",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/plan-fixtures.ts",
+      "before": "787269b81ce4b3022600cd3a3c3a8dbbb8cc97d183062e86b9598908988f1efb",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/query-job-fixtures.ts",
+      "before": "bd3708e7cfa45dc43972871bab8163eef441d04ded5b1e619f242807debc9ba2",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/remediation-fixtures.ts",
+      "before": "2ca29d5c0315d5be33315eda0e461b2a4ab50bf1fe9cc1ccfc4c54426a915632",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/role-spec-fixtures.ts",
+      "before": "6d88d473887f201b5e226149a759412d87d79244b6fc50aa63c1314e84842994",
+      "after": null
+    },
+    {
+      "path": "src/contracts/fixtures/workspace-fixtures.ts",
+      "before": "5d0c6cc6adbda9074d7361c4c0167735c115eca3b7ce0b19f0b4278c25fa3591",
+      "after": null
+    },
+    {
+      "path": "src/contracts/goal-change.ts",
+      "before": "fa15338718e21e817a660024eed250a3af37cdcb091896c903cd50f155960f73",
+      "after": "8afe915246a170a9aafb642d8edba44b1c5fc9e0d3f031b3c83f38fc7aa399bb"
+    },
+    {
+      "path": "src/contracts/goal-phase-view.ts",
+      "before": "19ce11dc64104367b7de074f1b89ad6441326bca20a5aee3e9bdc772d2d91e32",
+      "after": "7352e500fa89ad0bdb263c36a5ba30ebc58dbda4a4d7a07352798b703a63ce74"
+    },
+    {
+      "path": "src/contracts/goal-phase.ts",
+      "before": "413f60c189d35a314a398f22086daacf84e7f541a26aa43cffa48f0d73a6ab57",
+      "after": "a87c63b633b50c4c5b36cb5a89ca8ba57d283e47ce10180f1aefded7fbe88098"
+    },
+    {
+      "path": "src/contracts/goal-view.ts",
+      "before": "5815a338c971158d5d98cfd89f1b0f973b61e0d2d86ec44b769f7fbc7e3ba825",
+      "after": "af8dc11e47b515accad0512be368cfecd1582bc3efd91bdee31d4a1a921ba9f0"
+    },
+    {
+      "path": "src/contracts/governance-view.ts",
+      "before": "2a6bc2bb5eb5248b01b55583da0be08fbbeb466b183114338f9178981cbd2434",
+      "after": "1380f560556ac52a05703e190c4444f05712a9dbeefa6234163b7d92a63fd911"
+    },
+    {
+      "path": "src/contracts/handoff-context.ts",
+      "before": "8dadefc1e5216067819c234e452a79b7faccb67bab2d7761e4b3c999b9d96ef9",
+      "after": "7995098006f5392d8891b9d2a1ad27738e93bfb48cd4772bdda4970ea32e6e81"
+    },
+    {
+      "path": "src/contracts/handoff-control.ts",
+      "before": "4ec9c18161134f565d7a9ddbedf4664be6b54527e2dd3a7f534efb70c7ce7374",
+      "after": "1cfa439e7149ae1a54e54d878512d532e945befa45477ea3fda9965ee66952a5"
+    },
+    {
+      "path": "src/contracts/handoff.ts",
+      "before": "5cbea10385fea75720884f1f53a4beb8946f82b72b515e2f0901541e72241246",
+      "after": "c5f7a944671726e6dc2f0cd8051735652aae35363b8962305f09b632e3473d23"
+    },
+    {
+      "path": "src/contracts/human-role-collaboration.ts",
+      "before": "cb02c38af4a0619239dd73fe3c8c4570e5fcfc54a3dfb3cf0694a941c4b88ec2",
+      "after": "e46b557584644d4bd3d8cfaf8c920a2dcbd65e8abb1c547daf44988c6ea18622"
+    },
+    {
+      "path": "src/contracts/index.ts",
+      "before": "4f531d06c237947d9a0289b8e05fb1417f0797e5594be2fc9e7651fd12b2c370",
+      "after": null
+    },
+    {
+      "path": "src/contracts/integration.ts",
+      "before": "5e2b7064e42418b8328e5754eea47684b55847635c019042a5f2276d83d963d2",
+      "after": "ad2ee05a4eb2791506c3efef15cf2ffef8ecdda260fb9e40cb761507b731392a"
+    },
+    {
+      "path": "src/contracts/ledger-validation.ts",
+      "before": "0241b7b74f37a980ab668e4769079a9eeeda75f1d3b21c347fb3c8982c880e7e",
+      "after": null
+    },
+    {
+      "path": "src/contracts/ledger.ts",
+      "before": "5887a74bd9f777d69e438212fb3c62343ffd10931dfd5b788854829f3a6bead8",
+      "after": "fc09e7d9cf9e8d58789491a013131f9d1e6fa434cfd236947690912f52863272"
+    },
+    {
+      "path": "src/contracts/modules.ts",
+      "before": "ba4b0d088cbe205bc99a6751c597e35e3b2de757e8afd00f0632d0f3680b8b1f",
+      "after": "2fabc5db7023dc96751053a1be1aaa934a3e0f40f75979a2479f9f8ab1e824ea"
+    },
+    {
+      "path": "src/contracts/patch.ts",
+      "before": "a58126666f23f6c60e1a0ac49e082982b5af529e29c85907a1bff73da1f6ce02",
+      "after": "657866b940618691ea0d6765feccbdec67b75a79899c9b8bbdb637e7b4814fdf"
+    },
+    {
+      "path": "src/contracts/plan-view.ts",
+      "before": "4c38a47fd650a8b8e72737182562348ef1e84891597748fc3baaa5817815571c",
+      "after": "c66cfe0b42ed2f501382803905deadd39416649631ab08d12efc2541506ad892"
+    },
+    {
+      "path": "src/contracts/plan.ts",
+      "before": "b5207b353e491070a009b7edb85a102e94a7d72834cea33559f72da77f597621",
+      "after": "9f3ec959f2c69286033fc6248eff4ae537002452196bf58796594048372c5ffe"
+    },
+    {
+      "path": "src/contracts/planning-work-materials.ts",
+      "before": "4c38640ac593ba1af30f2d3f09a31ede7cc2535fa8cceec8895df91a1999929b",
+      "after": null
+    },
+    {
+      "path": "src/contracts/planning.ts",
+      "before": "4eb962b70a6df2a886ae902d8b028172ae241666a66589d0ef29cce2dbde7171",
+      "after": "627a474057c97ad99c4b9e633bfe2f9fb9e1a35762df7457d4eb1a7dbedbc515"
+    },
+    {
+      "path": "src/contracts/ports.ts",
+      "before": "f80d1494796468c00f99bb20cb7b9557b6d82e88538690630a0f67d96696bd19",
+      "after": "ed51cbc70d8e1b9a83ab9d0105da412c69c50e115b63d968bc724ed5f7763f69"
+    },
+    {
+      "path": "src/contracts/query-job.ts",
+      "before": "edee6b8fe18f12d0f4a0b93e4f6502099ce34abca4ef47c474e6ce055c7b11a1",
+      "after": "078e1db15b178b599fe9a827f8dc73e0ebbe9fa156793b43b7c6d5b64a8c54f9"
+    },
+    {
+      "path": "src/contracts/README.md",
+      "before": "42c856b3f907953e2880bf1c1828427b0a5b513dff2fd02ad7bf17944f7c94c4",
+      "after": "d2f88fb81d4e61b7a3be97c9e58a0341d4538dfff29b17861ac09cb4d8101252"
+    },
+    {
+      "path": "src/contracts/reduction.ts",
+      "before": "102e0f6a82a21bd016d2b34c91a185916994147d961478f9f04c0a34435c7efb",
+      "after": "3a4641165044b4e57fb40039101eb681967f477bb6e6b1ccea942343e2715817"
+    },
+    {
+      "path": "src/contracts/review-context.ts",
+      "before": "c702c2f39eb5bae31286c9cc5490e6507510451c4880656966df6f9307456281",
+      "after": "91b30c4b2e6d7bf4587f847370fed1fbffad4423a0c30edc24250e05284ad7e6"
+    },
+    {
+      "path": "src/contracts/rework-drive.ts",
+      "before": "49c878064dbff48adbd89e996829d5e47777003db90f1c58a7c5ab9805aa4901",
+      "after": "5451142502f6796c1050300e0db7ba31055eacecc2c2e965548b045c076141d7"
+    },
+    {
+      "path": "src/contracts/rework.ts",
+      "before": "b16b4978e679e08669242fe1145b4d1b6660f8beaf0a1703bb80b93cd60c4819",
+      "after": "f023c58416f3b7b60ad6b7fc07eb585ef759abae0c3aa55c4778c0a6c1bda285"
+    },
+    {
+      "path": "src/contracts/role-spec-materials.ts",
+      "before": "b0b7353e7508357f977767dd867fb999b9dfc4f180990b05fed0b9ade0144ace",
+      "after": "4b5c59441419a2b11aac1b7c4f64a2e929f22ed2b3bdadc5a690ba316e2b12b7"
+    },
+    {
+      "path": "src/contracts/runtime-context-materials.ts",
+      "before": "0c697ea00dcb44b302f194c4d7fb2542a05416ca9229b28eb72c4be4d1f740af",
+      "after": "4c8928fb636a15bd0854fa10f541c3322d5ec1d44525f4549d25c4ab9516ba92"
+    },
+    {
+      "path": "src/contracts/testing/check-providers.double.ts",
+      "before": "5ae0eeb3ffe7e4d54ed92ed385beb292ff639dec9101f4097631d656e77c97db",
+      "after": null
+    },
+    {
+      "path": "src/contracts/testing/control.double.ts",
+      "before": "35f201911de4a8e90841e2fdc403123007c1be9d505e569aeb28a9bd574fdbcf",
+      "after": null
+    },
+    {
+      "path": "src/contracts/testing/handoff-control.double.ts",
+      "before": "6e1f779fbfe30a18765b1496eda5203b950a6dbc3bc57be95c5adb1248d973d4",
+      "after": null
+    },
+    {
+      "path": "src/contracts/testing/index.ts",
+      "before": "d88addbbdf505f298d925ff05c3685a26cf2da2b3d12f5ad2e0da1aeda7179a5",
+      "after": null
+    },
+    {
+      "path": "src/contracts/testing/query-context.stub.ts",
+      "before": "a7d0dd89e976d1fd865bfe9d95bbac0265e1238faa3342062bf6db831a4fa14d",
+      "after": null
+    },
+    {
+      "path": "src/contracts/testing/read-model.double.ts",
+      "before": "ac49ef70a9c40e77a79048c2857b1f94bd4715941899cf8fd9ba56b91fbb020a",
+      "after": null
+    },
+    {
+      "path": "src/contracts/testing/sequences.ts",
+      "before": "896f589deb4cad518ea41945d3499a112af285a557ecf6ec1c0952a70d289fc0",
+      "after": null
+    },
+    {
+      "path": "src/contracts/testing/state-ledger.double.ts",
+      "before": "8662c31f71d9cc38b375c456042ffe0d979f1f34ee05089157951ff7aae2e707",
+      "after": null
+    },
+    {
+      "path": "src/contracts/validation.ts",
+      "before": "30b30dfd12d1d6c9a40d035721cec03d05454d823c006815e4a5fc013fdd62a8",
+      "after": "61d7303ef52468bd7acde3d0812ee5c6e51ae30f64dbbe6c4e836045ec513a5e"
+    },
+    {
+      "path": "src/contracts/verification-round.ts",
+      "before": "7bd223e7fa76057411ee29bf491d088871dd909532ee3b82662701e025ced589",
+      "after": "c1f5b8be7b057a72c646ef97c2554f4bbdbeb1d26bf55c828d9ba1eb1aaeede6"
+    },
+    {
+      "path": "src/contracts/verification-service.ts",
+      "before": "7ca82d2045a23d8859deeea1651174aa06fb8d89ad7b1cbd984f8c6a00a367cb",
+      "after": "73731df0376463ff3fdf6733cf3a854a1b92f8bac63e82d81788cce934b66df4"
+    },
+    {
+      "path": "src/contracts/verification-view.ts",
+      "before": "3f16d308809aae07af873ac58221331ae0c8e1acf2eae873b19c13f3b43d31f8",
+      "after": "bba9f1eae59b907755579de58599836d21fab5b9c2ef2cb835b1db3f5d1917f5"
+    },
+    {
+      "path": "src/contracts/verification.ts",
+      "before": "8659857a4246abcf6904ff83a1dff879372752e8e20f7d6076341c7e405cd31c",
+      "after": "3122890db4dfcde3f17581dd45f552e683e27ba5510e9d1394d41b27ff8ea060"
+    },
+    {
+      "path": "src/contracts/work-context-port.ts",
+      "before": "cb3501e26bf5bf41178f34dd47ca64cd1dc5f96dfd9cb306a7ae972bc759b576",
+      "after": "a12538ced79e8a8e0276f3d377ae3d36293a9ac8401cc9a92b651bec0e84b792"
+    },
+    {
+      "path": "src/contracts/workspace-lease.ts",
+      "before": "164d92c15ad1cd7d7955a45febceaf494f3b2aae4f76a540d788b506b8e92205",
+      "after": "82b2d71de6aa77935dd0e69f291fcedcefaf3b17c70127d1d45d2a2d4ce800cb"
+    },
+    {
+      "path": "src/contracts/workspace-views.ts",
+      "before": "a1f4fb38ae575b7dbf2f964911ad81649bb01fe9f3e425e1784ff9fe951de5e2",
+      "after": "8e4585e0d8ef9ef24f0155bd70365c2626928b82e877b8c7d45669094e30dc18"
+    },
+    {
+      "path": "src/control/control-engine/work-record.ts",
+      "before": "83e343592a58ee4b1cd09bb6d5abcd281fd521314fe92f391f9bc1417921f3fa",
+      "after": "73321a277d5ffc1ccaf5dc1849fbfec5aef2affba8af65918484372f2c321549"
+    },
+    {
+      "path": "src/control/dispatch-engine/dispatch-engine.ts",
+      "before": "7c26e1a90b7a8d959208419574207e90aca4d481e1827365ad4d100957ba1f91",
+      "after": "fe376c820d7bff167a3cb5a7a532547e89da442ca15a5f7984882930bbbdbb6e"
+    },
+    {
+      "path": "src/control/dispatch-engine/operator-task-dispatch.ts",
+      "before": "6efa5c738ffe1d5f6ed0a396ade74d91a047fdfa3acdda2497f41440adc25dbb",
+      "after": "45470fd2705e23add91c402b776195170227109315f0ad07b29fc81ef9d741c7"
+    },
+    {
+      "path": "src/control/dispatch-engine/planned-task-dispatch.ts",
+      "before": "bd9dc92da69f533f7575eaab74011cdd15666d382c4801cd8d545b506d9074bb",
+      "after": "f94ab8fa8111ff2a6587a54c75fb58f876c239ffb8e5c8f62413dfffc3f70ddc"
+    },
+    {
+      "path": "src/control/dispatch-engine/rework-drive.ts",
+      "before": "8a46f25cab96e8431eddd83f67790c8c0e0533ff73a47ad17e866402246aa358",
+      "after": "c423cbe28ef7f1da2f4890b70efa3315ee4805b5183ec17f28852c94c9dd432a"
+    },
+    {
+      "path": "src/control/dispatch-engine/role-spec-read.ts",
+      "before": "ae23a6dfbb6ad55ee36dede25cb34c7f711ab7cf3a665377cf638dbd181e5145",
+      "after": "0ed175cbc5b42944a25f7500245e7c85329825f2cc32ac9392cd8587e7525d98"
+    },
+    {
+      "path": "src/control/dispatch-engine/work-identity.ts",
+      "before": "ba3a4c1474c091ab9e47f7ec1ceadd413eb6536c039e96203407afcb820bc976",
+      "after": "ad02a5e0605b491436046c1c5865522b5b9078dcda6a47a23e97272ad3e447cc"
+    },
+    {
+      "path": "src/control/dispatch-engine/work-material-drive.ts",
+      "before": "3662d967dcf4326959d10352abf7a678f52dfd2ab22e9468c555bf090cded7dd",
+      "after": "b3664474087585e7e47e3e790578edbae2cc6e4e0fc47ee10c566101838cf034"
+    },
+    {
+      "path": "src/control/plan-compiler/operator-plan-compiler.ts",
+      "before": "2efd8c65a7e2abf282864b08040d95e89d4f5cde4a48c081c82e22f8f5c4bb3d",
+      "after": "adeca95f1a24d2f143a9b21e310774191bb36a79c1fab41dbc140774e9cb98af"
+    },
+    {
+      "path": "src/control/plan-compiler/plan-compiler.ts",
+      "before": "95243258caeb48e99acff7bc4145b34afdb80710fc1db1cbaee724f0dd93391c",
+      "after": "3718fe85e382135a55333e18f2f01594b953093da1c1a630dea7f655c4d43cae"
+    },
+    {
+      "path": "src/control/plan-compiler/planning-work-materials.ts",
+      "before": "f281fdbf18db674f6c2649999312078499d2a625caf085805a155d1a393d153f",
+      "after": "36d7f5b24d3f1e735ecb495787bfb01ea6447e4fc7542e749d49dfda0d2ad8a3"
+    },
+    {
+      "path": "src/control/plan-compiler/README.md",
+      "before": "d54f9486aba006d0a267c6ad39136957a9eb0ed05b2c28c8fbb02ec6b1ac9826",
+      "after": "b78ea71f62eaf9922c2b7c306a2705776a6ba00d840bc387165cb7e4de9b1b8f"
+    },
+    {
+      "path": "src/control/plan-compiler/rework-plan-compiler.ts",
+      "before": "9ead6de7b33cc95de6099ce8371dd7e0dd1babefca4281d7284fcb896623e4d2",
+      "after": "f378511d9c521e1051c146062e19699c69da041d3e49f47de166b05f04df80cb"
+    },
+    {
+      "path": "src/control/verification-engine/benchmark-verification.ts",
+      "before": "1f2adada486429618cdffde85c9b08e2c8d80413c6ec8cc52e2da388ee30871f",
+      "after": "a09ad19db2967486e26c19de2ef9c6b2a916b986c6e90581f377879a34cb73b9"
+    },
+    {
+      "path": "src/control/verification-engine/command-check-lifecycle.ts",
+      "before": "c44f1e87da1ccce0d4d53e5f03ddd0270528dc1a3981745ac28fc239db726592",
+      "after": "8bd2cf11a1c54ce54ab35ded916469e1dffcef0dac33eb53af0cadedffcb6b11"
+    },
+    {
+      "path": "src/control/verification-engine/evidence-admission.ts",
+      "before": "5f07c641f443fdc0a6569e0746482bfd24eacb143bb0522b83290f84e17450d9",
+      "after": "ddfc89085b31c1e8a88edae8938fd792539b2f3573291d83246184c45d966518"
+    },
+    {
+      "path": "src/control/verification-engine/README.md",
+      "before": "3e74ec5881ea74ea86580b2ed3896a6cd697ad83f523ae1bd3f39922aff85085",
+      "after": "7c3b244623d198845587270cb17a8cdd1f51f9b844d54e279505ebf06bdade1c"
+    },
+    {
+      "path": "src/control/verification-engine/recorded-verification.ts",
+      "before": "0b907606d4ae172141666b4c66b2b980b51042644883e565889781897d47b3ac",
+      "after": "69cf9b9af3f1c81d1b2cb52ff4e4bba3e9df8cfaaf55e0092f477cbfdd5b216c"
+    },
+    {
+      "path": "src/control/verification-engine/reviewer-verification.ts",
+      "before": "3117cc14bdf548a6f940a3257511eee0e0510f925e6b8cd0298396ec413beb80",
+      "after": "fa7f9ec126ae39dd9ce74f58b9d242049151665461f46fcd827c6860fa217113"
+    },
+    {
+      "path": "src/control/verification-engine/rework-verification.ts",
+      "before": "e1ba8079c3d1ca303eed5d8b5235efbf44edeeb2f69350b0d22438c437de00d7",
+      "after": "f8ec50e3c4dc31225f1215bd46216b420f584f1737d14cf8a92888b0e914b162"
+    },
+    {
+      "path": "src/control/verification-engine/role-output-completeness.ts",
+      "before": "3770cb4747c5fb19cf709392df3154e9e871ed2d2fcb6fba03ddd5641f54c54c",
+      "after": "70bb42c3caf372af7f739db3f7eab687c066f22770f1d05bf3bde5fbe7cd8364"
+    },
+    {
+      "path": "src/control/verification-engine/verification-engine.ts",
+      "before": "7e85c7b31276af25c31454b32ba5c6217f3fc43b00ae343603140533a4c8ebab",
+      "after": "0222f38514c0828aac450e5eb33481619fb40557295e2fc577068ae72df0a025"
+    },
+    {
+      "path": "src/control/verification-engine/verification-rounds.ts",
+      "before": "b1e1cd0eb4738f7d73f04fe23c4dfb1e3b03b7dd7e7eddc82794925fe25ebc1e",
+      "after": "2d9a2a94213d94d87d251bfa95ae589f1c81f854a11573cb88439b13c0137992"
+    },
+    {
+      "path": "src/control/verification-engine/verification-service.ts",
+      "before": "d7fef2db5477e1e7e5cc09bed3234b682383a4425e81389593f0c00a772297ea",
+      "after": "72b436025c43c5ea3d8ed635ae1bb6d4aa9fd566ff1c847ae37dfcc2a2f46fae"
+    },
+    {
+      "path": "src/data/context-compiler/completed-work-context-compiler.ts",
+      "before": "cca68d43181995a9090876a3906db2cda4a8a3faced980405f0ddcc8157f844b",
+      "after": "f7ecb309baa67db490bf3272574f0dcbeee207e1882786f2f9273a864edcb03b"
+    },
+    {
+      "path": "src/data/context-compiler/context-compiler.ts",
+      "before": "7875765e31f2c6947fcdc689ac66a8c4411fb79b708f464d61707865c4da8608",
+      "after": "479b271becc85a8cd99e9b861c0893d7a33e76888ee6a6486a4b56da6dbd8146"
+    },
+    {
+      "path": "src/data/context-compiler/planning-context-compiler.ts",
+      "before": "f06141e318d0b159c928fcc8b14c321053e00c7ee92bfc15c5ea8822f68fb8ef",
+      "after": "647533b419c5e96a51349211be3b436f96a5f32ad404a181efb005242134bb60"
+    },
+    {
+      "path": "src/data/context-compiler/review-context-compiler.ts",
+      "before": "ff517bb863e01a5d5769044fa50b91c5eb2b7fe0bd7c3ec11ab9b350730ccb49",
+      "after": "b071a6e34066c07df5c2e062a45ab9efc1739785643851a17e0982f146e3c11b"
+    },
+    {
+      "path": "src/data/context-compiler/runtime-context.ts",
+      "before": "eb71dec888e49f587e50df85736977b341b05181714532fea18fadc6fcace9bc",
+      "after": "46dd9435796f755579746280df81617cb639d486869b4f4f69ed05c0ec65918d"
+    },
+    {
+      "path": "src/data/context-compiler/work-context-compiler.ts",
+      "before": "1fb15d164a4a224936b4c59e732c1c4b42e2ef7d31f276ca76094d593edc47ea",
+      "after": "e86faed5e16439fe5a29c1c168fcfd3249c97ebe3678a66e8b206739f424d9cc"
+    },
+    {
+      "path": "src/data/context-compiler/work-run-materials.ts",
+      "before": "9a92e2be65aae2d0a2bf9d6764c6473a3def6cb9a5018ec14bac437cdf9f0a2c",
+      "after": "964fb6ef4e71bf2ace66d234ada106edda4bce62de062a56712a3dae528884a5"
+    },
+    {
+      "path": "src/data/state-ledger/in-memory-ledger.ts",
+      "before": "7066364b2484008141996f27888a4b4e39d263683c0aa5ba1d6dacd98332fc87",
+      "after": "d94bc8aaeeef3a1dc614554db08062ff16f01cc97300b77d35655ef37968f621"
+    },
+    {
+      "path": "src/data/state-ledger/README.md",
+      "before": "d5b727aceeaad4dc54d7079fd5987b312130b6db9fd448e5649a5ea319958029",
+      "after": "6cea1a06bfd7abaf0cfbb5be53d9bfffddec46194690cbdc2e80f155d3e1becc"
+    },
+    {
+      "path": "src/data/state-ledger/sqlite-ledger.ts",
+      "before": "c874c528f17f0a01fe129a050c3c60da63aafa8bb03a7c7b9e53347d0e10f02b",
+      "after": "b10fc7b58c61f7c948fdae49b1d7bde572ca76057b12de4ba62d88aa86be0862"
+    },
+    {
+      "path": "src/data/workspace-reader/workspace-reader-adapter.ts",
+      "before": "5f96d5645e3afdd094545226e863e8a2569d4876d8f5ff16c8bd30a8320dad72",
+      "after": "0e180d91ca3d10ddcf916336a2379dea22c71a758033605f5075c6466bbdef2a"
+    },
+    {
+      "path": "src/execution/worker-runtime/fake-runtime-adapter.ts",
+      "before": "3567c419f35da370ccef2c621ca7d86e7ae4bda9a439234d97cf10e58b24253d",
+      "after": "a9b1b43c63b24fe904140b555760f802b5d920576d743db2bb28566186b903fc"
+    },
+    {
+      "path": "src/harness/in-memory-harness.ts",
+      "before": "9637b3f74b35e90f4b9f82f5c966d31aebe0576c1ae026fb562e19820aac334f",
+      "after": "05827f8de53a10c1fcadbfbc74b27620cd57c9c08e11c6fb003d1b1d224e752c"
+    },
+    {
+      "path": "src/harness/persistent-harness.ts",
+      "before": "7bb3618c68a70981262e50302133fd8eca5c56876ed83dfb6168d742b4d0cb34",
+      "after": "3311de47742711bf60e1503b3586cbfc9555182dac47c5cff6c98a35ed2eaaf4"
+    },
+    {
+      "path": "src/harness/README.md",
+      "before": "aa38c691eefdcd46450a523395d9cf3830e4571c33b731e00e2dbda3d8fff814",
+      "after": "2b2cf530c0dd095240874febdc1d3a0b21f5d4cf0eab328d5277c3b702c19d63"
+    },
+    {
+      "path": "src/ui/tests/semantic-collaboration.spec.ts",
+      "before": "fb33865e8afa94d422041c6e5679a36c8efa024ecf61f3f95d9017aeefc922b1",
+      "after": "638938e4e0388fd14727df396ca6e5f102dc5df07201b56ea4271fa24945d8ba"
+    },
+    {
+      "path": "tests/app/exploration-runtime.test.ts",
+      "before": "fc9f2d6858e75fe79ac47144e47c937045759c47bd55dae4464ab9ed5a51ac96",
+      "after": "de0a67cf5d14653e120c0d4fe41107cea3edcecdb858a5aedc17fab99893d7c5"
+    },
+    {
+      "path": "tests/app/governance-commands.test.ts",
+      "before": "d0bf51f48657cb8f3bec2f5654ad730ca4a67541274c0cf2bd8d123b6e008eea",
+      "after": "18efbbe25ad3f1f06837c1b97163852e4231d52bdb011aa4bcdb1e4bf925007b"
+    },
+    {
+      "path": "tests/app/history-materials.test.ts",
+      "before": "5e0529b11c354dc85cdebd4b6fcb7774cbcfc1cd9ffee7a03d830cd8e314360a",
+      "after": "4333583c9051a25c4a101925393f3a614731bdc0dc9e7b426b07d9dff17b902b"
+    },
+    {
+      "path": "tests/app/real-runtime.test.ts",
+      "before": "0527ddc75bce79d90b2d6487f1492f57edeac06fc548c009c43e79f1a59bf45b",
+      "after": "de5036bd296ac1b542e28055a60ec66ce29f095158b27589ba573a1a60d96a33"
+    },
+    {
+      "path": "tests/app/role-material-run.test.ts",
+      "before": "a61c456a01bb698ad29616ab909c4811c3e1040b92ac3e8fd5dfcf43b2845999",
+      "after": "edde8be437b4aa095806e0da0c3343ffd755b57cb5c3a8dac65fa9a0e4a55a03"
+    },
+    {
+      "path": "tests/app/role-spec-governance.test.ts",
+      "before": "a788afad40bddddfaa771162bd33e7900dca5f922f24398174f72659dbb542c4",
+      "after": "9050a52e9b3c6fe020d5354547f700a85aeaef554390cb7e70af3b63a2e6456b"
+    },
+    {
+      "path": "tests/app/runtime-context.test.ts",
+      "before": "5408ad567c2bc192dc4a88abcf5795ae2e5c79850f408ce487a11394ea4f48f1",
+      "after": "9a70aa3475324a8bfa447f6ee20bcdc569fd49d9505e49113b189ac8fb732a56"
+    },
+    {
+      "path": "tests/app/semantic-collaboration-fixture.ts",
+      "before": "08260dc527d29e1d6413af97ea95e1416a5cf74e3318e18cb7622fef73e01dc7",
+      "after": "6d4c900804f8c89223909c844a2a6ef377f2329b2cf625587df7d5bc539a3958"
+    },
+    {
+      "path": "tests/app/verification-imports.test.ts",
+      "before": "8963d7c8370aeb7cd361cf710fe4f49360143298602d9d054ac4f53e5131b33f",
+      "after": "066d955ca31de27582a4d05bb6034d2df63fc0941dd8aa15f53b2c61a0c9e065"
+    },
+    {
+      "path": "tests/app/work-material-delivery.test.ts",
+      "before": "14ce6118750782fd705c525095b6e5177dbb8ca24a74f1158673f725c147d2ca",
+      "after": "954ec4b955f18b11513791795c1a9200aa834bbeb8fe30d775bf51f32ff1604e"
+    },
+    {
+      "path": "tests/context/completed-work-regression.test.ts",
+      "before": "df7740f444d1bca1543982836f1aec8ca6bf14760dbf31742713b17da0301b18",
+      "after": "266c143aeb2005bd4ef68db14530c3576ab1498ca5d1bb9739c7938ab0f6bcb3"
+    },
+    {
+      "path": "tests/context/context-compiler.test.ts",
+      "before": "ce407106cba358f5fcc53ee254ae1ebcf042197888dbdcb231d5f9dbf0bca279",
+      "after": "3b418e20243382385d9d4a212071b1f9492bf7ba7bbc37fb1869a9de6f856a01"
+    },
+    {
+      "path": "tests/context/handoff-context-compiler.test.ts",
+      "before": "340a1165a2353c11a2cfbfce73d647bf0b378406a021108d38f34c85823d5759",
+      "after": "929a516164ea74597b3bf6d6ea5ca2df7a58c103f004086f3d852b185e63fb33"
+    },
+    {
+      "path": "tests/context/planning-context-compiler.test.ts",
+      "before": "7a3ef2de72cb5727a1e5fba22c18d44ca58bd36079fbeb5c8e50af22800e2baf",
+      "after": "efd042021885c189c5b0a93aef6b12706e657389775bd81164027b8433147d6a"
+    },
+    {
+      "path": "tests/context/work-context-compiler.test.ts",
+      "before": "d5a8654e44a89b52f8ef07a1935970f46211455b6ec176fdf39508e48c114b9d",
+      "after": "387936119b07f17c1fa8e164ff6de9a953df74785b3675c35dc65d37692b5ad3"
+    },
+    {
+      "path": "tests/context/work-run-materials.test.ts",
+      "before": "7e8f4ed37f5e7f99712887909a728a61e4caae48f733cb3d1e65ecab59c6df17",
+      "after": "e99e6e075f8a55fe211d4dd0dfae10e5aefe159d471db50f893cd3e1007cb446"
+    },
+    {
+      "path": "tests/contract-suite/architecture-evolution.contract.suite.ts",
+      "before": "a25d4419720321a8a844861c5937fc5af6b09f73b6bcc3e759b1ed173a5342ee",
+      "after": "6beb3fdd30d491373495890627f34ceb0be2900633a9fe56f6769a2465c2bead"
+    },
+    {
+      "path": "tests/contract-suite/architecture.contract.suite.ts",
+      "before": "eea89d26097d71118a31c9984c77011ff93e0cbc43cc2649bf9e3dab41eb304d",
+      "after": "212fcc0461cb35da956ddd5292bc384ca101bb265fe9bcc212f9a6f40a4cc292"
+    },
+    {
+      "path": "tests/contract-suite/baseline-evolution.contract.suite.ts",
+      "before": "baff835ab1bebc9cda2f139fbdfa6801c39090c1834a7292f71bd2c0a35cafd3",
+      "after": "b9d1224f6106e22a3542c0087d93d7286b1f90aa5935e475b3601a82b97e21af"
+    },
+    {
+      "path": "tests/contract-suite/completed-work.contract.suite.ts",
+      "before": "5654a52a1c863ef20bb3e57ad236d139e65077951baf0106eb39180a2c585186",
+      "after": "087592cc837d9123d71841d4b5ce2e24bd534131865e929af8e993a43cb628be"
+    },
+    {
+      "path": "tests/contract-suite/console.contract.suite.ts",
+      "before": "fa578fec1fbea02f4abdeed5f1754d5a8c32afe3dbd993cbfc425c9afdaa634b",
+      "after": "45888ae555130a9a4934df1e36dbc3163e8b8722637e3cf343063eb546577f92"
+    },
+    {
+      "path": "tests/contract-suite/context.continuity.contract.suite.ts",
+      "before": "508d5d451b6c25b6ff3d43d12e35c8efdeb99e874626ca3492207f64ad0ff476",
+      "after": "18a95b418be0f5a5a235fdc71dc0740bbcef5b01a3a3b17dcc6de4f6d7d73304"
+    },
+    {
+      "path": "tests/contract-suite/dispatch.contract.suite.ts",
+      "before": "0542aafd7200eec6f8e43ff30a352331ef63e2a46e24498d2b0721e91f58e3fc",
+      "after": "e8cbe4ea5c19c24a195891aab666a6bc456e69d83b80920f349e48090f92154c"
+    },
+    {
+      "path": "tests/contract-suite/evidence.contract.suite.ts",
+      "before": "af3e127ef269fb9011bdae2e87552ad7c94347c690e40acf7e99366888c28669",
+      "after": "23d955c2637082e1566b4e7da3da34997b11354f9b470e46190ff3f741b18c76"
+    },
+    {
+      "path": "tests/contract-suite/goal-change.contract.suite.ts",
+      "before": "c9904b2526dc7a5d0f15ed393b92634a4e0a9d3601413c98cb3c8303e1a5cb2a",
+      "after": "a8b44dc0fe63cd3a0e73c9821e6da9b84c26298c12454cff903ee809687adcd7"
+    },
+    {
+      "path": "tests/contract-suite/goal-phase.contract.suite.ts",
+      "before": "72142846ccab45681316c69a379a2727b0fc7f5637f55dc44b6d660c2238b7a1",
+      "after": "6db261f351442b43bff194b374636b275fb5b64da4635d1861cecf69fe3c2378"
+    },
+    {
+      "path": "tests/contract-suite/goal-view.contract.suite.ts",
+      "before": "09d23ea500882596276b0ee6deb989d27acfe8092c503c86ed7f386ad3956b32",
+      "after": "261ceddf12e603be392a784d66eb6926b0c747f1fa9cc5fbca11aaaf3afd81cf"
+    },
+    {
+      "path": "tests/contract-suite/governance.contract.suite.ts",
+      "before": "2804828d6ce036c93a9c9f1f34120707cdb0c662af825c693f4d93127ca1bc6b",
+      "after": "27632a3e8a6fe2e78a1b244579f06700256b08adeb3a473b5cd2ea8b854f6996"
+    },
+    {
+      "path": "tests/contract-suite/handoff.contract.suite.ts",
+      "before": "3982cb0f3ed375ea3d9908030e3726043d4abd1c527162f28c1d935cacfab201",
+      "after": "d927124a4494ea6d3c5f892c6ee663dab91a5c391df6599e452bfd80d378cf88"
+    },
+    {
+      "path": "tests/contract-suite/human-role-collaboration.contract.suite.ts",
+      "before": "4c6df9dc13b32f0ac1663e69f475dd4ceb93b46d3b73052b0c900246470d892a",
+      "after": "f685c8ebda9c3b0e38a5b90979894aea1826dca0e07a2670c4fb6adde6801ce5"
+    },
+    {
+      "path": "tests/contract-suite/lifecycle-control.contract.suite.ts",
+      "before": "51ed749da4f7f2674ca7c4e5abbe49bdb06daa1a62f00bca6e24fead64a8aa94",
+      "after": "c38f53ae4161a3e333683254adbf6ab20df15d9894364defb8b2475c93861442"
+    },
+    {
+      "path": "tests/contract-suite/p1-03-harness.ts",
+      "before": "adeb7465bf4cb24d38d59318d84fb4bbba0e5de241cba7030d9bb943ccef88f9",
+      "after": "d2fdb8211a3b28477181069cd72bce1558e027ab7abb84b8ddb3d29f545278a0"
+    },
+    {
+      "path": "tests/contract-suite/p1-04-harness.ts",
+      "before": "93bb71e355cb0565cb2916cbe9d52f8f9a4e20c40b9d34c8f9b14779effe2960",
+      "after": "6bc1cc7ab9c13bebc106dfadcc749b64f8543e94d5d2d893a99c9d2ffdaf8ebc"
+    },
+    {
+      "path": "tests/contract-suite/p1-05-harness.ts",
+      "before": "48967f3c499de9dd4a8627c789cf1ebf23f64bc9f9d44c49c1667399c68eec62",
+      "after": "b939030057ab6d1e4e6daeaa37ac5a87da32a36a5d6788d4753db4ca1482454f"
+    },
+    {
+      "path": "tests/contract-suite/p1-06-harness.ts",
+      "before": "7e509df089a7e0690b5d98b32b817ce828090730522487a2adf5c232b490dbca",
+      "after": "af3ff1e919eb5ffd41afe9088ecdf73fce9b38236cead545884569c57c9174d1"
+    },
+    {
+      "path": "tests/contract-suite/p1-07-harness.ts",
+      "before": "c3f56cb72e5350f681dc926875b7547ed42f35213cc2872d5123a4b91d0a9814",
+      "after": "98ddfb8656a01f28fdd41b34e5d69e3ab05b97a6ddcb3fb8cdba1027f8367257"
+    },
+    {
+      "path": "tests/contract-suite/p1-08-harness.ts",
+      "before": "827600910a0c3465bd366a8848744c9a750c1f5d6f1d79798c62a63a54df8822",
+      "after": "e8016cfe442c8d8aba945e1d2628a897178c7d57b6b2b7e917cdeab137e8c137"
+    },
+    {
+      "path": "tests/contract-suite/p1-09-harness.ts",
+      "before": "cbc5b8f8ba4cbbf7e01b76a837e612bfbe7550da92376d895aeba7d68db28615",
+      "after": "f400dd9a79453116f259b0bd80a4084534a0ab9761f672fac1e023c0e1dc5301"
+    },
+    {
+      "path": "tests/contract-suite/p1-10-harness.ts",
+      "before": "abb2807e75f5740296b00ec77289e34e8130b0c2e62e1a62f56d22d4af7beffe",
+      "after": "eee1f5e7243fbc03371966c44cce0cd66156f16696880b2982bdf214d4a305c5"
+    },
+    {
+      "path": "tests/contract-suite/p1-11-harness.ts",
+      "before": "37b56a57a80e32b5df861732b9f69ad102b6d408e6b1f80b10d86680a79ffa96",
+      "after": "4476c41f78c4f2778b59c625d4f90d177ed37c3a49e6284eb1844e689bcbc0dd"
+    },
+    {
+      "path": "tests/contract-suite/p1-12-harness.ts",
+      "before": "1d7b51c23cacc953a51b9a733e49ab69b20158ddc2b20240925096826e0c8e09",
+      "after": "f580dc650c8b73be71f3a1834f0e8bf45a09717bdc687f49b819549b22923f43"
+    },
+    {
+      "path": "tests/contract-suite/p1-13-harness.ts",
+      "before": "925412d7a250e89b354b4e1404571b74be3a99388f5acf2ec38f2e4917ed3050",
+      "after": "8c06344995d3ca28bc94fddb5d7cfe0c77759bb395713467d2a7f5c26c9e41c9"
+    },
+    {
+      "path": "tests/contract-suite/p1-14-harness.ts",
+      "before": "fc8ed6017bd17ad965afd4db0d1115b23476b34e4fec256e3c3c16b9b216440d",
+      "after": "9faf1ac3e7552a12be611bf69f24ddecdb12acaf343135d3fc5d62d27781c581"
+    },
+    {
+      "path": "tests/contract-suite/p1-15-harness.ts",
+      "before": "e8599a10cc82354eb9402f124e86f2d3cc3e5c3c29eb4a67592e1534a303849b",
+      "after": "ddd60def2f7deb7e8697e1c2de134040c0b96b107616f7fdb90615a0efa44d91"
+    },
+    {
+      "path": "tests/contract-suite/p1-16-harness.ts",
+      "before": "243172e24bb2c8bb6c172e78f64fde633aa93d780e767608305d7cb28c179709",
+      "after": "9655250f99c944c4c2f62279d06467fdf45ad530e84a7fbd0839aaaeb5ac444e"
+    },
+    {
+      "path": "tests/contract-suite/p1-17-harness.ts",
+      "before": "ea2dfd45e05d930642923e8f2b6dc0127c81fea14a18f8e380e2c68875cbe7fa",
+      "after": "915765830ff2d7ed93d9b3bb7d0f99f8b2c9ec26136a6841850185e975599189"
+    },
+    {
+      "path": "tests/contract-suite/plan.contract.suite.ts",
+      "before": "f4ff4ce45ec8d6169bf8269501944dbbcf256510650a93f9d78d92cd71152f41",
+      "after": "d2f3e3d926db38a2cd8f20c0b555ac5c26afa8f6d0144492c9b6c3d6fcc04035"
+    },
+    {
+      "path": "tests/contract-suite/query-job.contract.suite.ts",
+      "before": "dce2bdeb7daf65db8499cd85545bf94b9ef3a8a66f6cb37043466abb23949bde",
+      "after": "f45d9a6811a43bc97b3a40847b73821691be89ff6bcf4f6c37227122e7bf6cb7"
+    },
+    {
+      "path": "tests/contract-suite/run.contract.suite.ts",
+      "before": "20651aa4ee22f88616a171064c5dbb63ccdeaede0ddc561777bad9e5287a9628",
+      "after": "c872931b2beea8b5fbe127de3783c3449c0a2316d47de971aa4ac3e55ea64411"
+    },
+    {
+      "path": "tests/contract-suite/state-ledger.contract.suite.ts",
+      "before": "0c8af3a5aa8baba5cbcd5e46b21b8ae0948db8bf4561136940c4b43089b26857",
+      "after": "7ba64457ce062d70107f1f97f5c0e62284fec7e7e3a0c5ced5bf2e8c05e1567f"
+    },
+    {
+      "path": "tests/contract-suite/verification.contract.suite.ts",
+      "before": "40eba770bac9779f8a581e1d99aa7f65e0d698b864f0f8cbddde050ac7d3b0ef",
+      "after": "19b197e9c10b060354364acfc548454768bef5ba7cbc4aa7117221c2f83592a9"
+    },
+    {
+      "path": "tests/contract-suite/workspace.contract.suite.ts",
+      "before": "ee2415b6e90047415d627f8c565cbb53467dd01d4577be7ba67e6b8753253a90",
+      "after": "08b12effcfb7fc26656acdc53d000ea05b2129e1361d3f662e5c59944f83cf88"
+    },
+    {
+      "path": "tests/contracts/fingerprint.test.ts",
+      "before": "697d9ffe1bc135b2040d7c8f7cdcfb1b28582bdd461f506de2cc3d50d5da6c0c",
+      "after": "f30c955c96b3a9ec29c65da2d2343476f3c5c0670830f150371cec94710d36c4"
+    },
+    {
+      "path": "tests/contracts/fixtures.test.ts",
+      "before": "ae3589886047e262c87f6cf535f2fda97da9a18caf8afb090de6de5cad911d6b",
+      "after": "7efce2dfef551bafc1c76d56da6cf50c0b7b6425a186536435959270ca7a9fa8"
+    },
+    {
+      "path": "tests/contracts/goal-phase.test.ts",
+      "before": "dbfa90af7debfc6ad764e90b0c60f13c6505abc81e026d16f370a9f145217aa9",
+      "after": "b0078a2207edeec8807725bde03e90c617ed87f5cf1da0000e834ea8f02c0100"
+    },
+    {
+      "path": "tests/contracts/material-access.test.ts",
+      "before": "0ba7804409c5d77e2541ee2b976820c948c1341a6da67618a196bb30ef701541",
+      "after": "e0b91c6a04ed575b1d74c0fece8cc6a40de8263267e5596d3ceb6dafb2880373"
+    },
+    {
+      "path": "tests/contracts/module-ownership.test.ts",
+      "before": "94ba137f50320499013c1f6030fa4d14db0d10dcf125b46b174d3bca9d18b8cb",
+      "after": "1d8b2fccfba80ab9f42fdbe249abcf587844f2a1637a4cd77604b6fd27bf13cf"
+    },
+    {
+      "path": "tests/contracts/state-ledger.double.test.ts",
+      "before": "8eb99ace3f4cfd3753eaeb0a9dfbb9f96d62978e3bae322374837ba2deef97e2",
+      "after": "bf4b4c9908230a9b6862158838753b06a35aa2a296e2ef586bfbabafaa42f284"
+    },
+    {
+      "path": "tests/contracts/validation.test.ts",
+      "before": "079479aebfc0e7dfea56a2582e3ed5f2754ac0391e4cc6c24b34cb014ab8aa12",
+      "after": "662ea2d2d1f4b7596a0c8877fb77dd92a2824def888e3c321f3f82819b16202a"
+    },
+    {
+      "path": "tests/control/architecture-delta-regression.test.ts",
+      "before": "cbecdaf1ae740af7a82ef4a82fb427db205347f5aeff501c4ef415499dceb8c7",
+      "after": "be3bad05d95dcba9032c4c0ecf3d3c7b9bdf816274534e2a47d5722e6750e959"
+    },
+    {
+      "path": "tests/control/architecture-evolution-policy.test.ts",
+      "before": "244458ba77ce79f0ac2196dc1b83484cbc0a43fe9daf9a005f37429a65a3f36f",
+      "after": "d8e1b5ad277189860f5ef8240ef393f0c1b96098b3b506b1bd9bca995d518526"
+    },
+    {
+      "path": "tests/control/architecture-inspection.test.ts",
+      "before": "4bb16d537af0d635415619b0c94c54f332c8084884489a1f9312ad3f138c3b4d",
+      "after": "2143e0496389e0e47b65634bea3238a9aab47faf192559670929f6f3acd66142"
+    },
+    {
+      "path": "tests/control/architecture-reconciler.test.ts",
+      "before": "ba44b48517cb19e2e632c66de457f4e4ba67116cdb4485d2682b420af318ef2f",
+      "after": "ef1a15bc6a662430dd2c0f750675e9b8a90c1b53e7aa9ee8af7785f3a09a5f6a"
+    },
+    {
+      "path": "tests/control/autonomous-rework-fixture.ts",
+      "before": "bd6e9600292b4bd9896dff2f9d59da517a2efcc304e06a64bf6800bef1d01985",
+      "after": "adec0e5e1f4dc305395b1e55f47e2dd996d37e5bbc58e4ee77936fded5e688dd"
+    },
+    {
+      "path": "tests/control/autonomous-rework.test.ts",
+      "before": "769407083e6bf092105d95e3bd16275858d92cdb06db7b76a5d2f46b7de01f87",
+      "after": "d0a42d1792a62c9794f187af24f6818f4633b91be76c93b3d921f4167a176309"
+    },
+    {
+      "path": "tests/control/baseline-evolution-port.test.ts",
+      "before": "58dcb8107d6c575ee0909d8010345294ea107077843cc57db097d0eff3e87169",
+      "after": "6db6b3fda2e8788cdb6cfb273141f596eaf51892ec5cf31ee3bb6aa661385676"
+    },
+    {
+      "path": "tests/control/baseline-evolution.test.ts",
+      "before": "94d325c1b3b9c2221c2736557530370620a5cd6b51bcbcffc870ccca41d24ac9",
+      "after": "46f055f2be356224b5cc3c693dd58d12426df09044e91420847a1ea2574b3032"
+    },
+    {
+      "path": "tests/control/canonical-record-scope.test.ts",
+      "before": "bdad5a4d4f9f3bf53e327aef69079f7bec3699b8a8d0bdf3bbfcb4bbfeeb8ed5",
+      "after": "4029e776d4c80ed1258bcad2573370a432f3c55fc7903f14d394407ed8100654"
+    },
+    {
+      "path": "tests/control/control-engine.test.ts",
+      "before": "5dd35455900bf2d274202b0d327582ce204ee82bb5175bc8736daa11a2f8d442",
+      "after": "2ceb9d5adf585dc3964ccb64cbe8156dc18d52201ab520ef23d73494e4e60e0d"
+    },
+    {
+      "path": "tests/control/dispatch-claim.test.ts",
+      "before": "1e976ab8461452323a28ad2fd7925e631103c12e66aee6954603f6e9f9c10507",
+      "after": "aa96a3a6a9f06b9c9e2d0e1a4f1c9315c5d85ffa4027eeed690fe4bdbaba8233"
+    },
+    {
+      "path": "tests/control/dispatch-drive.test.ts",
+      "before": "a109bc9ea29099af85b188de23a4e50c42188955f2f98f4a18f230b996204fc0",
+      "after": "a1318fd6383eaba09bea0162451d30740e7e55d37ad5efab425242da7238c700"
+    },
+    {
+      "path": "tests/control/dispatch-readiness.test.ts",
+      "before": "3963716fd7d4795f428e8ee2ba17198be879c40cf4865b98b8a6578a097163f0",
+      "after": "386edc17ff6800b2dea61113ecd6277cb4757e14eeada3b0ecd46b752af70156"
+    },
+    {
+      "path": "tests/control/dispatch-start.test.ts",
+      "before": "6eb229dc77f5235aba336f4ebac243af04774d82d36dd56abd993e1f090f81d5",
+      "after": "dbac94846cd530417f0b23fefec111d0c8d550b8119ea285f34fbfb9b3713a57"
+    },
+    {
+      "path": "tests/control/evidence-intake.test.ts",
+      "before": "679db9de3b2a72906d94787293fff2f5845bbab07ad1b83ef142ced067cb4b3c",
+      "after": "d5764ebc37cfb0bda9212521e35fe27c51830e9ca3d21ab04e862ee8081b1619"
+    },
+    {
+      "path": "tests/control/goal-change.test.ts",
+      "before": "cf00da42b37ecbd92a8f377249a404e94cadbdec704a07d7c1f10e635570b62d",
+      "after": "4b883d326e3e9a1742855999d4512025212e415d580776ebb2c01c4389e4b38c"
+    },
+    {
+      "path": "tests/control/governance-activate.test.ts",
+      "before": "0dd9acf7cf503c7cdf19761325d604e8cc5904bfb32c376c8bcfe1bd8b4da953",
+      "after": "34ce19298d73464f3ccecaf37a135459f0371e2f472195fbd07f934b6d62e6c9"
+    },
+    {
+      "path": "tests/control/governance-command-builders.test.ts",
+      "before": "3fa7ea1301027af9563a5e8fafd71b4c11783caa436a273031eeb7e44e429eff",
+      "after": "1bb59e74c560358bc236733c828c8de63f5f75f70930dc0d469c2c3df920151f"
+    },
+    {
+      "path": "tests/control/governance-install.test.ts",
+      "before": "8c1eff51a1c1bd965f790c44ae7bd9d0fc1367cf26472a4e21f7c76db6f551b2",
+      "after": "b8ef2cf541d3c20f5c29c39a77fc034073431e8920e995f7741d1df416c790a0"
+    },
+    {
+      "path": "tests/control/handoff-drive.test.ts",
+      "before": "c13de70a1f5ad22b1e1dca8c969d8ea5b07b5097712d9ca781dceebbe838fab7",
+      "after": "64fb33ee24ebdd09b1c2c60e9ee1dccc98998edce2f66875d3c2ca977ff6ae87"
+    },
+    {
+      "path": "tests/control/handoff.test.ts",
+      "before": "41dc424b8b29737aec7692c79f9933c144b39f466873a525fdc8084c60960042",
+      "after": "a811eac701bb6d60952ea576ce90a8dc9081c786240f1f7cc25155b2a025d73c"
+    },
+    {
+      "path": "tests/control/human-role-collaboration.test.ts",
+      "before": "31781f672a8bc2f6f75a3843b74c36c5c2b6625ebfd73e3ad61f3901c9494043",
+      "after": "bab418496ca652ea76c77123bb7959f2b7989f328b4e6c8f761706df4994e408"
+    },
+    {
+      "path": "tests/control/initial-plan-source.test.ts",
+      "before": "764a0879a06460924232ca1da5f14cdab966c9ba0c1f7f2bd89627d1923f1407",
+      "after": "bb32637cf1e266362780761f7173749b2904eaa65924d4a77ca68d5af73a7b71"
+    },
+    {
+      "path": "tests/control/integration-join.test.ts",
+      "before": "c1e1a2f8c67bd3ded3c203f2364fd8d23d794a63bf754adcf254086743f41501",
+      "after": "451f575a7f4b75b33768083548c905d2a4be24feb5aedd4f04d77208da0d2b69"
+    },
+    {
+      "path": "tests/control/live-frontier-regression.test.ts",
+      "before": "6e6260e9ea56a2128e615addac75596ce91a4ab56cbe6b0f653c73bf7198765b",
+      "after": "5ff2d52ffc206f54ac5ba1f26205ca17cf6558705a0727d06429463e2feeb051"
+    },
+    {
+      "path": "tests/control/material-access.test.ts",
+      "before": "7ac5625da386683c63dd00c966f0468548853cfe8e25045c98e94a8c3b1f5279",
+      "after": "dcd42536234d23f72f26ea000393560bdb5fb203b8293029e42a25a6bef5df1b"
+    },
+    {
+      "path": "tests/control/operator-entry-role.test.ts",
+      "before": "2f07735996457beb2597514dc714ff5271968e32941b600a604ac1cd839fa944",
+      "after": "a2f1a235fef40095dba04bda60fea512147c29d66ca662174f26393077adefa4"
+    },
+    {
+      "path": "tests/control/p1-13-writer-chain-fixture.ts",
+      "before": "4bc7ed2c89ff131f1512db3b8b56104c7af5052c0bce6154e5a3cfe5d8789aba",
+      "after": "f5e5b27e91bfe9c0d3b87b59f73049e6ff0377c104599c1c8299b5266753ae64"
+    },
+    {
+      "path": "tests/control/p1-15-role-rework-loop.test.ts",
+      "before": "aae1e81e321fd3c9704fa018001bd6ad54b848906eeb1472f4968ade07ca420b",
+      "after": "d0a79caa8f8d10db8a32ab1c1093388f39dac225505eef268ed227553170a5f2"
+    },
+    {
+      "path": "tests/control/patch-record.test.ts",
+      "before": "5f6058c84dd7f8da38fd805b37b34fc021d4927d5220037c59735c4ecbf44d38",
+      "after": "5f723fe6939913516d8084ef7462d0bf141a8dd3057f2556dbbe4112f7967b56"
+    },
+    {
+      "path": "tests/control/plan-acceptance.test.ts",
+      "before": "11dc5ae8ab943dfc5be4181716e03b8479bb727f643aaa4378ad12a60dfd40b5",
+      "after": "fae9dde0f772e95059c7effa1b58ca36c37debfc788ddc2ea91a7faec3b14dc3"
+    },
+    {
+      "path": "tests/control/plan-compiler.test.ts",
+      "before": "dc19f26a4a25c19c844d525d936563e43c08d35184ade7d6a856886db549d261",
+      "after": "9ae753b9c62ef8cdebe47954d940808d30dbac29663ed1513bdbcc0a940ecc9c"
+    },
+    {
+      "path": "tests/control/plan-impact-work-identity.test.ts",
+      "before": "456d4d0d77a0c1601c23a5bc26723d387c3f57a9f6c3708bfb2d63ee36e8d94a",
+      "after": "33e5ead098d9b05cd422f3e316230f8de4ed38aa7267700be51670a0409b5575"
+    },
+    {
+      "path": "tests/control/planning-fixture.ts",
+      "before": "e86d7184ce0b6342e78455be02b590765294d184dbb5f16dc3d7c3600592750c",
+      "after": "989bf8ba84ecafe40a5d086f23a8fc5e1e931003712d574a975da957af9600d3"
+    },
+    {
+      "path": "tests/control/remediation-writer-chain.test.ts",
+      "before": "79091d079fdc9423812a2274aa258f821b336e43477ddd03c7c55bc58517330e",
+      "after": "b3784ad74d55f9ca168e47b430a490670a683b7d9d41c221348bd9975fc15c6e"
+    },
+    {
+      "path": "tests/control/remediation.test.ts",
+      "before": "f9b3978cd4861d404766402d6ad1fdb2e814889f6fd47b1ccef15595e5467345",
+      "after": "8e7eec0dc4372f9fb38d70059d41f0da7cc990bd21145241dfea1de21a2f34a5"
+    },
+    {
+      "path": "tests/control/replacement-claim.test.ts",
+      "before": "8af6026a91a9c320244ac2d62f23a9dfed48b9529cfc8b963b8fc0e6e09ed4f7",
+      "after": "5118ca66bb6adfc5e61fe83e10b60e3641fa64a84e5b780a8ba6971bb9cff006"
+    },
+    {
+      "path": "tests/control/reviewer-dispatch-isolation.test.ts",
+      "before": "da0bfc71f55877d6f963805508107aa3b11c66406ce4fa35ecaaddc8232bd271",
+      "after": "aa2a5e6bd0f4d3afaa13c3c2eab013ae379ffc9a6e38ad46c6c8182f4a429872"
+    },
+    {
+      "path": "tests/control/reviewer-existing-drivers-isolation.test.ts",
+      "before": "24702f8850fe08354316db6dba2a922ebed3f5c1b74694c8bf23eedfd0a3cf41",
+      "after": "e1cf4ebd819c37f6494619657e9073c999d2ba58c296a01524b2da4fd1954551"
+    },
+    {
+      "path": "tests/control/reviewer-work-fixture.ts",
+      "before": "c92b78607e641bd6028dc97064ae5d35abe06d444d5311406914dae33a1e9e9a",
+      "after": "3308f5acdda26468ce4611ea38d98dce6a8e7c3d2a88ac0daf0cb3028e47d181"
+    },
+    {
+      "path": "tests/control/rework-drive-harness.test.ts",
+      "before": "cbee0f71317ca7031360df3858c93fff554026b8770e395656957f9f4a813e4d",
+      "after": "22019029fcdbb6766fa4a0eb2db6e132e6bb8395c1d5a96394a9b90cfaedd7fd"
+    },
+    {
+      "path": "tests/control/rework-drive.test.ts",
+      "before": "60fbc672b29c80aaa1e1569ac5eb724bf8dc7f5f81fff5dd149cd24f236731ff",
+      "after": "e1ef42adc26fb9517561284d7471979f995138e7a761b96c194c161389add0ed"
+    },
+    {
+      "path": "tests/control/rework-plan-compiler.test.ts",
+      "before": "8c29c0a27371ae86afba16f9c2edc282225d92970d9aedaab388041b80d43658",
+      "after": "0ec272e7060cdcc4eda136775c93223ba3f6a6ce8bae39096732b2811a09eb83"
+    },
+    {
+      "path": "tests/control/rework-task-dispatch.test.ts",
+      "before": "22f5f8afcd20673574f38ffe48ce42fddc903d77c7ddbe877ae3055533978c91",
+      "after": "a15d14a67fa829c7b36d2e4b355f4f91b4114670b7d138423bf6af232c474c51"
+    },
+    {
+      "path": "tests/control/role-binding-admission.test.ts",
+      "before": "9f222227f7ff6f56af516df71bd9f10555ee8c5cf23907513a0bd487df0e7bf8",
+      "after": "ce3d61816c0a573dab3f6485b8bdd42ebc04df7abf4d4594965c35103e1a9260"
+    },
+    {
+      "path": "tests/control/role-material-completion.test.ts",
+      "before": "0e4a8a83dc4c4c02fc8cfd6de9a9c7dff5beda6a6e9a08ea86ad4740d87a9ef8",
+      "after": "8fc4d59ccabff4a405d0327695e33cd3df6ce476c083e6311ab36e77efcfcabe"
+    },
+    {
+      "path": "tests/control/role-spec-material-read.test.ts",
+      "before": "7f8b7b589a22d589d91692ff7fd2663672c5d4c3c1c13bc61b62b6970f74a811",
+      "after": "855db817a4b9cee9de9f8012b8f2d23649002c7d412f54b195e73e70be08bf61"
+    },
+    {
+      "path": "tests/control/role-spec.test.ts",
+      "before": "5a8adec1068fc7b98df48b8d5ab93493642fac9333849124bba7d5c79515deec",
+      "after": "f1f6a7c118ef11800c752372fce4c6511c0afa2eddb5799786e18048fd03913a"
+    },
+    {
+      "path": "tests/control/run-facts.test.ts",
+      "before": "99cbc4759747b0188b26a7e1e013f67aa4ee325c425a5da2c2bad3034e2a2a01",
+      "after": "20744dca899d2a5edb3c60a9a519896ca2efc79152a7c6b4c99c5148b7342a9b"
+    },
+    {
+      "path": "tests/control/source-architecture.test.ts",
+      "before": "6204b882bd530c6e662a6f417c31fc6f96c885db76a8b0fea64d5af31f03ac6b",
+      "after": "8881b1f6ee32191a284c02b523135d1d4677ecf1bedbefcfc7f0a7bd872647e7"
+    },
+    {
+      "path": "tests/control/task-reducer.test.ts",
+      "before": "f7e103758f4244f41a554d9f47cd00e64d76704bc5ec85e2044af9ce89ad95f1",
+      "after": "9ab6d7b9995af84da01bbfae84ef8c7ea172e9c92f097a3da77f4ec818b0c652"
+    },
+    {
+      "path": "tests/control/work-identity-harness.test.ts",
+      "before": "1da76f027ee5387516c8346788b18177a74d8a63a2d8e3b6526b3d03b340efcd",
+      "after": "8c95d0cc2f8d7ba230af3cd5375972533afb1d765cd8151d87af99b92464a829"
+    },
+    {
+      "path": "tests/control/work-identity-uniqueness.test.ts",
+      "before": "0172a4327dbb13c1353cdc71abc7a71b88f2d963b030bebf19c09d06a72837fe",
+      "after": "b61a44d20eb1b305f99a46140b0c929b75b3fb5f2523e4e263185a6808c688b7"
+    },
+    {
+      "path": "tests/control/work-identity.test.ts",
+      "before": "e517c873555166a6778b60a38317d19d5ed8afea8e5974e32f44b232cc8394c1",
+      "after": "4f13bfd4592e1b8979c142b85eca9d13ce3efb5517d030a804405a7c1993beab"
+    },
+    {
+      "path": "tests/control/work-material-gate.test.ts",
+      "before": "bbfda9bdf83e28efcf0072670a7dc260da4292136942e2e435837cbd672ba080",
+      "after": "e3db3f62ba1bdfbe68fff5ebc707f97032364785fc2702247213107fb3a22ff5"
+    },
+    {
+      "path": "tests/control/work-record.test.ts",
+      "before": "5cf8ca5a98935c9a50248ac7ab7a4b0f4846a31dc84758a2374a859603c5513b",
+      "after": "3b0dc98c96e662c1ec2342a1397801896cda44f866c2b385d2037478d88b046f"
+    },
+    {
+      "path": "tests/control/workspace-capability-policy.test.ts",
+      "before": "365d66af72431a16343ed590b53163ef349424858fb38a6398df84f1ffe8a97c",
+      "after": "f6cfa5b3defd70b94c9a8d5a52e9a3872f4e59402f918e6e55b6ac1a2d3f3d6f"
+    },
+    {
+      "path": "tests/control/workspace-drive.test.ts",
+      "before": "9d658bbb37b52206160d9d1da43a5f15145bb25453a9ed26c026847f39688014",
+      "after": "2d30897dc9adab1093b93b2c05fff7f4010d793054f1af1e4e53f60b7454eb19"
+    },
+    {
+      "path": "tests/control/workspace-lease.test.ts",
+      "before": "2b41f9c9d871e03413ef013fc052648bc82a232c76499c0c89f6407e3eeda21a",
+      "after": "107272297cbb9add0a709904c55920445b64fdcd3ec118f8b976a1c8250875e3"
+    },
+    {
+      "path": "tests/data/ledger-scope-catalog.test.ts",
+      "before": "db0e7168f69e2260c1356510f1c63ae065f4a3f098d2286ef5a326f9a43f883b",
+      "after": "3e8c91fbf20d9440576d30a091d9660d9b8b68d11881969c0c8b4d122758a4d1"
+    },
+    {
+      "path": "tests/data/workspace-reader-adapter.test.ts",
+      "before": "9df54fb342c609b019aca3de9cd427cb829f5ee8628562670086a2e01533bdf8",
+      "after": "e9e6570751b03656ad7be7756d1d95d92d3960bb450525e6b7f2d2d07a6101de"
+    },
+    {
+      "path": "tests/integration/p1-00-assertions.ts",
+      "before": "69aa3d45a1883b5c82823d094a91bb5b0062931a732535c21d815f5bb0f46671",
+      "after": "02f45b48550cdde949ba3608c009b332705fd8873e50012a2afb4c4c8d8000fd"
+    },
+    {
+      "path": "tests/integration/p1-00.integration.test.ts",
+      "before": "be5d821cbe25b511c0af318e81a6bfd6f0e0e28ac6845fc30139450015eba07b",
+      "after": "5fd4a6f72f320ace3ad0142b402f9da293c5a8d15d57decabcdde2e95988b521"
+    },
+    {
+      "path": "tests/integration/p1-01.integration.test.ts",
+      "before": "947c7c7acba722e10f85677de94fbe18391e8918ebecf242e63025353cfa740d",
+      "after": "ecc2fcf8146f9a995a48515153c40299d42962412e12862493730df40b19a17e"
+    },
+    {
+      "path": "tests/integration/p1-02.integration.test.ts",
+      "before": "a5d1887c6d57d275048e53160ec76b8a6bf3efa28e3e1292f6ec617840165cd8",
+      "after": "78af5ae0f1c703620206767c7cfa70de9979585f07d9ef0a792f7234a69868a7"
+    },
+    {
+      "path": "tests/integration/p1-03.integration.test.ts",
+      "before": "11aa9960452c0dcd06df84c02a60de3cfdff077517934db491ac5792338cf591",
+      "after": "d416fd5642fe01be490588071a0ffff2b2fa34d47475192da38ac20909713141"
+    },
+    {
+      "path": "tests/integration/p1-09-query-regression.test.ts",
+      "before": "87143bfcc798d0621be2167755ad9976430740d9a687a05a3eb135ab47b0e401",
+      "after": "66d27af4d3a5d5509c7ee3a825bb269a77a8417e1b8bfeae75814f4c07adf789"
+    },
+    {
+      "path": "tests/integration/p1-09.integration.test.ts",
+      "before": "00dfe822a95085c14c39e3489e92140afd811d9870d15546205ac22f2ab36d42",
+      "after": "72219728463d577f7b0acce566b707f34469e1fc2741d0c06b1926f1dc476727"
+    },
+    {
+      "path": "tests/integration/p1-10.integration.test.ts",
+      "before": "3aaafab7178d59d77b48ed0c746e2e620fad620d04608beace4906d688d8c4c4",
+      "after": "fc61b6601235b4cd1f3a1ddcb4493feb62dd8aad75ff12c0f76670a6a0eea7bd"
+    },
+    {
+      "path": "tests/integration/p1-12.integration.test.ts",
+      "before": "f7f1ec6b2ea167eb5e91768348fc66b1cc50b0a20a939704b654dccce23df742",
+      "after": "95053fc3f18dbbf4cba182481a114abdc6497a21e49de5f3959bc4afa4b1ec74"
+    },
+    {
+      "path": "tests/integration/p1-13-writer-chain.integration.test.ts",
+      "before": "c750db8f3b4a90e4b5b3b35405416e3b8708fcdca30e5b31333bb607f028468e",
+      "after": "ad347e69691e86f7d0974d95c8fdb95b7ab996016a8be7e16231397e12e4c545"
+    },
+    {
+      "path": "tests/integration/p1-16.integration.test.ts",
+      "before": "c45c3a6f5e38ea5c9eeebf3e4dbd224826e79e80f3efc0588a3b171fbde35cc4",
+      "after": "fac9c9bc89b10d46cfb8110f393fbd2f7b36665bbdf0bbde8a1e24bfaa684b78"
+    },
+    {
+      "path": "tests/integration/p1-17.integration.test.ts",
+      "before": "e8d083075d8d8f5ba936eab1e0e2cc9263f594360eaacf3ec6bcfa348d8bbe0e",
+      "after": "b0ac6c6b0db8da7c5628332945fba37f900f4fbee66d2cbbfefc3ad9cc3fedb8"
+    },
+    {
+      "path": "tests/interaction/human-collaboration.test.ts",
+      "before": "6fb2f8e79f7a8eefe76b1944fb017fe5db9d419d30c0329578ef74a5f83584f0",
+      "after": "f5a7874e8561e772c20e743e4b303e664e2c608ff8cd5dec9e3eb38bec2e1880"
+    },
+    {
+      "path": "tests/ledger/identity-upgrade.test.ts",
+      "before": "85caaf3311300b0a1b9f378be59b022ccae0f77d6d277e73ba1b69df7a565271",
+      "after": "b941348bb3a0fb8c5e8e1b6c1c7aab2901a1bd7e8294066a0387a281fdb6eeff"
+    },
+    {
+      "path": "tests/ledger/in-memory-ledger.boundary.test.ts",
+      "before": "8888db7780e4a121a02fb0b224f3b8121a6a171591364ebdb43c07d9955acea6",
+      "after": "14006a675c2cc7e5dbaacddf32e6e1125910eeadde27b30c26a531e249bc1216"
+    },
+    {
+      "path": "tests/ledger/snapshot-isolation.test.ts",
+      "before": "c6b17683d788db7cf9c1e17830ed7c96087a56dcfc5300211540071173acdf0c",
+      "after": "0efc7afbe6525db2706ab5672422a9232959c222006c228ec0f775aa176f6ac6"
+    },
+    {
+      "path": "tests/read-model/completed-work-merge-visibility.test.ts",
+      "before": "1d9d8f9675d30acd322ac5f3781991d35723ad261cf8fd5a3828a0b576d428c6",
+      "after": "600f8b7818c1bde54318cba0c8db74c1609aaadf396fc1f54f5b3a7e924ea9e2"
+    },
+    {
+      "path": "tests/read-model/governance-view.test.ts",
+      "before": "68cc7d0303ea52adcacb51df12ca2ea5fab984db55b48e5328fcef8181e954c9",
+      "after": "370c3293cb5b38f0f4f3b25227192e8e76cb1578d25a84c44dc53e4dc3673dda"
+    },
+    {
+      "path": "tests/read-model/material-access-lookup.test.ts",
+      "before": "97cbcaf424c68b57424930deba9178e1758685a0b184266a062fed077677e7ba",
+      "after": "f26059fb9352d35b04eef6d87d2999e62e76864c20475d603372351fba52436e"
+    },
+    {
+      "path": "tests/read-model/material-access-projection.test.ts",
+      "before": "75061602c72f93422400e78cdc291ccd69027b8e3596573614f5cf7959a7809d",
+      "after": "90e598432b3fb9949a46c893aa72b73be74224aed8dac99990c5248e0b24b5c4"
+    },
+    {
+      "path": "tests/read-model/p1-03-run-projection.test.ts",
+      "before": "fcebac0b72490eec9d9d01693df10a55f3485d7d80e3f504ecbe2bbf22167107",
+      "after": "29df6e924feb7699c8241ec607280a7799675b5cb6c0785bfc0505c31578afb3"
+    },
+    {
+      "path": "tests/read-model/p1-04-verification-projection.test.ts",
+      "before": "683631cff2e7c2ff2f368daa360048d034530f62c5494c5b58f6cab43c02ded9",
+      "after": "9004ed587be1e6b6849d35827fe2e325aa6c6ee711f79f14d6461c493800dbd5"
+    },
+    {
+      "path": "tests/read-model/p1-06-handoff-projection.test.ts",
+      "before": "fd61c8004278ebfa19da9a182ce510fc96c1561176409ff8c637a809c563a41f",
+      "after": "03c6fd0fbb7d74c396dd570ee685e5e5ae147c610738e9f3acb7a783374428b9"
+    },
+    {
+      "path": "tests/read-model/p1-07-projection.test.ts",
+      "before": "aa8f59641d49b7d002a00a44a766843c13359c966c8d09ce4c8952a4a5bcdb98",
+      "after": "f9e37829f4f88d16e7c214191147f90e64cff2bfd40e7cd1ade565bd82bc849b"
+    },
+    {
+      "path": "tests/read-model/p1-11-plan-change.test.ts",
+      "before": "52a82ee78fdd492d963dc125eeb1b032b2fa46f912379baae0ac1ce03ffd4206",
+      "after": "d173e5f950ee112f22df10b83316f90d4ae7f0cf35749c1242b66b6213fdc721"
+    },
+    {
+      "path": "tests/read-model/p1-12-brief-proposal-projection.test.ts",
+      "before": "9c414a0a7662a5b4ae8fda3f33a5bf94ee7eec6415bca4e013d6db842c5e0598",
+      "after": "2e6aed273757dc49556107bf04dd377391115c7dc39afc6e96b6ae735ea6ecd8"
+    },
+    {
+      "path": "tests/read-model/p1-14-baseline-change-view.test.ts",
+      "before": "3d9150a050d4b40c8f824aceba9ed6d1b075e571e882d0e627e2b23b1065d209",
+      "after": "954acaadafabacd57c72ba7cde42e03efe32dc76d00f8fb8c683608d8ce36552"
+    },
+    {
+      "path": "tests/read-model/p1-15-unified-status.test.ts",
+      "before": "2708aef5a5615ff469a91d6c07e551aabd382fdb7a9ee91f3224abfa456e81af",
+      "after": "4431fa91307d8956b4c482deb8fcfb51f105d8996e5c4a17b52a229763fcf9e9"
+    },
+    {
+      "path": "tests/read-model/p1-16-continuation-projection.test.ts",
+      "before": "eafb28ce895ded927f4d96e690de4c6df3cf8d85dc7fee06fe50b816e1fcb65c",
+      "after": "a002f20cba481cfb080c677fa1c07631826110158ea763450a82005a3b1e3cd0"
+    },
+    {
+      "path": "tests/read-model/p1-16-work-context.test.ts",
+      "before": "9dc822d8fccf2ea260a72c99f8e72dc02761fe0d5823aa18cd9b9baaf9c4ace6",
+      "after": "7b2ed972baf850aaa8066d0fff6be518fd2d3b673da75236ce4f77aac15cc6cc"
+    },
+    {
+      "path": "tests/read-model/plan-change-timeline.test.ts",
+      "before": "5497b4f251cf46c2c6c83c1b5d602a3ccb31cf8b862f9f887163c52a477dbf7e",
+      "after": "8d3442403b5f7e7fb187b478cc0e5e4d2e5aa76fb334ebf2e9b9b750359c4c21"
+    },
+    {
+      "path": "tests/read-model/plan-view.rebuild.test.ts",
+      "before": "cdce038c435052daf29137c9f7c7a205544091b078c6ce6c1e2a16be12da4406",
+      "after": "ceeefd724e40d1d14af08cbff25dbb917ae3bc279e09f6a8be566171279b4343"
+    },
+    {
+      "path": "tests/read-model/plan-view.test.ts",
+      "before": "1f35faff09a7108b3d4772c4f00361965558de915bf7b9980706b7dd561454bc",
+      "after": "96b2b5985f63fa24ae7c3ca213703ad5fe0148181ee7571cd837806eb0e285a7"
+    },
+    {
+      "path": "tests/read-model/read-model-index.test.ts",
+      "before": "540d67bf9300342b0bf999a2c7a7aeec162b74e9bc2ab5f227acce46da1ae33e",
+      "after": "5a97032074748327115e8059a6c7292b9951e9ab8e1b668cb7265ccebe7fe2fe"
+    },
+    {
+      "path": "tests/restart/material-access-restart.test.ts",
+      "before": "94762862a0f9bef3acaa915067c0a911930e003769b9a97ca49ca557feb8faac",
+      "after": "7707c8468f731d24b8aca26f8bbdd6c2eb2e383210e023c3eaae4a41f887b4dd"
+    },
+    {
+      "path": "tests/restart/material-revocation.test.ts",
+      "before": "158f8884ea93aa7e3137fc0c5828a1938a5443c8ab63442d961bed374b093f3a",
+      "after": "aef844de33841f589b491b0cf5f7dbe8416881519741a6262c099bcaf7cec6d6"
+    },
+    {
+      "path": "tests/restart/material-source-applicability.test.ts",
+      "before": "cf446ebbd6ad687ea8a499a9e27affafaf545eb21c7bdeef6df7e5fba188dc84",
+      "after": "1295e169bfc4483a71513a40c8683c301ed18f2ae0f341f0f0ac85dfd02ab743"
+    },
+    {
+      "path": "tests/restart/p1-02-restart-fixtures.ts",
+      "before": "1ba116919dcbf27a5bc2b9b9cf16d8efa94309388bff9fc2a175aac6d2354ca0",
+      "after": "4f325f82d4270d5cef5b2d07c483b4119ed7885491974798ef63047359b3125f"
+    },
+    {
+      "path": "tests/restart/p1-03-restart-fixtures.ts",
+      "before": "b68f0ca33c14b6f4be5a9d19bfadfdc426a54a01c9ff858cbc951c66860ff772",
+      "after": "bb349f0c7c41514fb643e72f689dcdde8ea34878381a3b5b39339332d5480608"
+    },
+    {
+      "path": "tests/restart/p1-06-restart-fixtures.ts",
+      "before": "b171b55f7e22fb291b691929a230d78bf7f6a58cb9bcf0dbe960eeba6a665edb",
+      "after": "56962da05aa759ad096505f9f8278c4665f805172f7fa971645e0be0d18d1b39"
+    },
+    {
+      "path": "tests/restart/p1-09-restart-fixtures.ts",
+      "before": "02791ba639a94a8046a94918a5163752573812800963e25cf0691940abf2a3a6",
+      "after": "8b7faf27b664449109b10d1f84dac50b485e00320b95628f8f9e0cb7c25f00df"
+    },
+    {
+      "path": "tests/restart/p1-10-restart-fixtures.ts",
+      "before": "bc323eb121fcea037eb0258634abe539d1b4a9e65f0b7a2c01eb48bc8b1c9243",
+      "after": "c102dcba703f046ddef78e437d4ec2c29231197c4a10aecbece80186313a7e77"
+    },
+    {
+      "path": "tests/restart/p1-12-restart-fixtures.ts",
+      "before": "caf1a55587bfd3c1b132cfe51bd972a21b3844dbe44027f3b1f503001f444b1e",
+      "after": "6c56f6face9ae0a3912e8dcf51cd70eb9819c9b92cb4b478184714f0dc6408e4"
+    },
+    {
+      "path": "tests/restart/p1-14-restart-fixtures.ts",
+      "before": "f413c0971bb3909cc83903895b234c9dc7cdec2ec745eb6f8beb36a19b995901",
+      "after": "4ad21b7e85e1138c2dbc30c5a302c2e8a8c108116cb3c49feb0d0768c1bdc9ef"
+    },
+    {
+      "path": "tests/restart/p1-16-restart-fixtures.ts",
+      "before": "d0dff2df04c92e839337137bd964bdd3222cc95cafc4bca2533d5229500e4ddb",
+      "after": "317ed7a88563006594ac8459812046cfbce8d995d79574ea51ed83caea00550f"
+    },
+    {
+      "path": "tests/restart/p1-17-restart-fixtures.ts",
+      "before": "72f1bfae59a9d5fef2905222c63d6b543923e755907bffd49ebffb573d626896",
+      "after": "d16e4f8bdf7d0e43c9d4c086b201435420480fed2f8837bde1dd413a3008b387"
+    },
+    {
+      "path": "tests/restart/persistent-restart.test.ts",
+      "before": "4add46a0c2be2008e6b82110aa646798a1b1eb10f244138200fadcc6d465ec66",
+      "after": "e819ec84ef204fa87a5dcf58fa4b7d2fdf364f227a3f220a7e44467f16cf2fed"
+    },
+    {
+      "path": "tests/restart/restart-assertions.ts",
+      "before": "0f6cdc2d120c64f11bc7ae8f23e0fa829e8c9dec4d268654eb849ba9b7a6d4d7",
+      "after": "c80fb9cf7fb6da2050111b4c025e0f457e74f1d3e9d262384e55fdde757bb99d"
+    },
+    {
+      "path": "tests/restart/restart-fixtures.ts",
+      "before": "0cb58791a425701c98864ce2cde62a5e2c62472ef2eadfcb2f4cff486e9bac10",
+      "after": "b7bad09ef75ca8943e6600a90e93a7abd02335b0d8a41dc54c07651bd33d0e3e"
+    },
+    {
+      "path": "tests/runtime/context-continuation-adapter.test.ts",
+      "before": "6fc2554655571f9a11b3ab7ec50a3f1ff21bf85212cba2f1bfe840e7858712c9",
+      "after": "401154f1eee71ba7b1ace1fca3aa6f3076bf43a040031a5dc3bab1d16de36c5f"
+    },
+    {
+      "path": "tests/runtime/fake-runtime-adapter.test.ts",
+      "before": "a085e8047f329feb2a531738bfd419206772854ad9af923057c9a023f0769a43",
+      "after": "fc136f267042189eeef230ee819c5b86c2da87bfcde96a2faa6d861aac91f5d5"
+    },
+    {
+      "path": "tests/runtime/handoff-control-adapter.test.ts",
+      "before": "4a6b30a60816f404fc1b9f789eecc8d92c0db7e732eef2888021a8f7a3509f9a",
+      "after": "cf4f1782ac01c81f35bf34f56071afc93831c00b52ddb3cc6cafa6a53735443b"
+    },
+    {
+      "path": "tests/sqlite-ledger/sqlite-ledger.restart.test.ts",
+      "before": "8d0d18cb01957f273c98886e015eafef11a3dd648fe722a64ad766d798a596cc",
+      "after": "59e4d08ff8e7481d8f2fccfbfe111c8a5da8cb6444d05c710079e29c22beb7b4"
+    },
+    {
+      "path": "tests/sqlite-read-model/material-access-projection.test.ts",
+      "before": "e6373fe0e2a6271d7cccea5923a98398aa8dd6574ed65000f664898432ff9fa5",
+      "after": "948d848e2a6ceae69dec502b9d138f9dc9097787b3a4be4246415ffdd75337ee"
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-03-run-projection.test.ts",
+      "before": "6736819b440b49c5ef0194680f35e6e260edea1b14ffea1b2797b9d024810a55",
+      "after": "74a14a1061bbfc6b96ec69acdec06e7d60469e36caa55be3afe00208606c8528"
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-04-verification-projection.test.ts",
+      "before": "13a6e15f11feffbabe002191b67699555faa1a90e2ba992fee5c6705d1358732",
+      "after": "3b88846e8811a741abcb1535b32bcbfc27ee545b364ccb45bdb719a022af8902"
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-06-handoff-projection.test.ts",
+      "before": "33f98b95d4a339eecc156ed2e0d9b2ea2eb9338e2ae1ef1deb8aa6eabde2db22",
+      "after": "772823b762bf6546a48c231a846d5ed534336bd776cd2a027eec08aca700977a"
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-07-projection.test.ts",
+      "before": "cb153fd0451211223161a10f8a2ca857f6b287e2a7ea0e5467d6c767ab32437d",
+      "after": "5fcf8a101d52255bff6ed81e72c3f5520671776364fac39ef86227623520b410"
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-11-plan-change.test.ts",
+      "before": "27feb20d0f24710e7f880eb93e1e63e90e3737e0d1d098bf51bc46c445cf1a0f",
+      "after": "0a2b44d4bf9b8c2406667ed68654a300d5eab6fe8e484b912c1de41fccf0343a"
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-12-brief-proposal-projection.test.ts",
+      "before": "92cfc33f5ce5b7a956053b72540340442f9d609d40491e6d7486134cc98267e6",
+      "after": "acbd1a9e511390603cde947e54b34cb7632cfc25199a184cdc375b68be6b4664"
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-14-baseline-change-view.test.ts",
+      "before": "634e197a71b890abfc55a8d09157450d37c065c9b0ed240622e5f346f1a3666a",
+      "after": "e4f13e3440d5c01fffff8662e4ea3139feef693b1e2c6a738486051e9328d8c4"
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-15-unified-status.test.ts",
+      "before": "d63be57fd290df4fef40ebd5eccc119592b72b8dc9ec932058167ff53f034761",
+      "after": "4dc53882b5384d6340fc202f45ea627950f5beb37b82337fbb53ae5ceb2e50fc"
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-16-continuation-projection.test.ts",
+      "before": "28bfe20614069ac0e46a4b8759ed7df91a7dcbe4e48bdd6fa0a9cff1cd914c0d",
+      "after": "ecdac2e29cc4675a9d0778684810f3ff89160594635a44ced201ae6058e5e77b"
+    },
+    {
+      "path": "tests/sqlite-read-model/p1-16-work-context.test.ts",
+      "before": "00426875d2e30401b4c59fd746e07a611ccb3dca64ec83ba789d397dae0c3c48",
+      "after": "d5a61c6f6c95602615d1577d0b2922ade3a7d39a572e272f1b137b7bbf3f530f"
+    },
+    {
+      "path": "tests/sqlite-read-model/plan-view.test.ts",
+      "before": "b0ada3e1fdb90544dd55ead4cbfc8f4198915e889249697a5c68434436a993df",
+      "after": "c84913d4f374b0a408773e283a0113bd15b05709fc718381b83c919122e588d0"
+    },
+    {
+      "path": "tests/sqlite-read-model/sqlite-read-model-index.restart.test.ts",
+      "before": "426fb1747594c3e205aa4925c88d793d1daecdda138d505836ac2effec7959b0",
+      "after": "b28f50e968032e66bb6a5073c00768e7fc6c39e4b28fba8185350265ef326ac9"
+    },
+    {
+      "path": "tests/vault/material-access-grant.test.ts",
+      "before": "4e1501be18f21eef48edb2dcc9b4631a7c5a66c07fa1c5fe2ed7d179a0f5c20c",
+      "after": "1160e9de48221a45392a7cae8568a9c685cb223244d3a87b25508b24242b203f"
+    },
+    {
+      "path": "tests/verification/code-graph-port.test.ts",
+      "before": "c5f945f43e681b83a0314067f2ae6310b4a0eff5c3fe5e97308505b1d76aa2e4",
+      "after": "c78bdd91f6d0890e6b841f23e2e02ed5bf626cce8de42e78ec5844b7cd53ffa9"
+    },
+    {
+      "path": "tests/verification/migration-gate-port.test.ts",
+      "before": "d486925618fe3867488492060b02c21592bbe6102bf26ea054037a6cc6fed62e",
+      "after": "590ebf0b44e57faec4ca5d5bbc88d6ca4656a58b0bd8fbe2ab1fb91aa8c9af45"
+    },
+    {
+      "path": "tests/verification/reviewer-fixture.ts",
+      "before": "bbfaed14cda22bb87b173baf382005e1dbcc2bc6624cb46de2ede22d4c933b4e",
+      "after": "70f8c1887ad506f1b939797cc70f5f3a55f72c01eea4ac74960e19bbbeb31742"
+    },
+    {
+      "path": "tests/verification/role-output-completeness.test.ts",
+      "before": "495522c45e97fddb468a45cfd1c1a97a52377d1b40f253389a4b82588f3b2cff",
+      "after": "d570f326227f555cbec7044f9ed87011f130ec2789a7253d4ea4925cb761a59e"
+    },
+    {
+      "path": "tests/verification/semantic-reverification.test.ts",
+      "before": "2c3d1b57512b6281fe7014de405f58cfaf018824dedc5f160c5e6ae6d9f61366",
+      "after": "29ba353674668d1a7555fa3ae21f8beea76f18f652ae869341d8475e0884607f"
+    },
+    {
+      "path": "tests/verification/verification-engine.test.ts",
+      "before": "42fe3ce57a246c674333dd56516bd7cb0d3dde7995e01a655e7c023d10104715",
+      "after": "64b9d732c1823af6a8f39a58ac82c7a692a62957b5c76ea8922fcac20d0eb0cd"
+    },
+    {
+      "path": "tests/verification/verification-rounds.test.ts",
+      "before": "0b545d5c40975067c7363038bd7a7c3cfe57f5f18ff139ab81c3672d075fe87a",
+      "after": "dabe2a3ec795035da3643f9e1d75b0f49602bf8f0547380da887cb10f35e1ee9"
+    },
+    {
+      "path": "tests/verification/verification-service.test.ts",
+      "before": "48d72f6e84da552d0d05df950300bcb726626e9fe0c6631bee0c657a1b3abdcf",
+      "after": "e55a7b803b8537f11d562e3743a50bbc9e61f82efd9049059462f463a3c007f6"
+    },
+    {
+      "path": "src/control/plan-compiler/rework-proposal.ts",
+      "before": null,
+      "after": "118b7fd5812a54c28c9bc1cc5a5280e81a5a931e96daed59ea285bc64ed2636c"
+    },
+    {
+      "path": "src/control/verification-engine/verification-deps.ts",
+      "before": null,
+      "after": "e775b441be1332d88592755d6beb7a452e64ab0ee468bb6b79c42ba8a3adb82c"
+    },
+    {
+      "path": "src/data/state-ledger/ledger-validation.ts",
+      "before": null,
+      "after": "b5c9e0e406e564760c958ad685c319baef11a884889161c3a96c522da4c55c11"
+    },
+    {
+      "path": "src/fixtures/architecture-evolution-policy-fixtures.ts",
+      "before": null,
+      "after": "5347b81eeb9a79eb98e705c185809688164a0256a187ca31ab9fa4d889e97aa8"
+    },
+    {
+      "path": "src/fixtures/architecture-fixtures.ts",
+      "before": null,
+      "after": "d8a133b4f6654cdf9c91919cdf275a175e229483830125bc33765bee1c3742a2"
+    },
+    {
+      "path": "src/fixtures/dispatch-fixtures.ts",
+      "before": null,
+      "after": "5327cf5450a3a4618f29713f907cfccabedf67dc87b71f03dc8b95492d88ec2c"
+    },
+    {
+      "path": "src/fixtures/governance-fixtures.ts",
+      "before": null,
+      "after": "9f950c7b4f1562400d7986a25fa8bfbeaf5a90c2f5cfba3eaa8874ce1608e1c8"
+    },
+    {
+      "path": "src/fixtures/plan-fixtures.ts",
+      "before": null,
+      "after": "5ceac3a5cc3ed0933f8adda55cce2af8f4a34f1323a1a704db7bfe3e5d04a27f"
+    },
+    {
+      "path": "src/fixtures/README.md",
+      "before": null,
+      "after": "f7deb29ff91a43a25dff0ed04a71548afed4c8b31ad95bab9e866d9a49286472"
+    },
+    {
+      "path": "src/fixtures/role-spec-fixtures.ts",
+      "before": null,
+      "after": "a55b18384be5e9caab692316ec84c0ec931769cdde962b96068a38380732df94"
+    },
+    {
+      "path": "src/harness/query-composition.ts",
+      "before": null,
+      "after": "fed713f4d0831171b605c5c5cb402ac17f429b7172d4c3c9215e85a804662529"
+    },
+    {
+      "path": "src/testing/check-providers.double.ts",
+      "before": null,
+      "after": "71835acf2cd1f274be8d38870c8179493bec04c80a287fd22321196bf16168d6"
+    },
+    {
+      "path": "src/testing/README.md",
+      "before": null,
+      "after": "9ce23f12cd6a977f581e86ea8a5670c20e56cc38e66f9a92a59cc2f5d1d879a8"
+    },
+    {
+      "path": "src/testing/sequences.ts",
+      "before": null,
+      "after": "896f589deb4cad518ea41945d3499a112af285a557ecf6ec1c0952a70d289fc0"
+    },
+    {
+      "path": "tests/contract-support/fixtures/baseline-evolution-fixtures.ts",
+      "before": null,
+      "after": "d694cbdf314a4c79fdd6f4a58fcd0ce8fb7420fc83cfc3ce7232b6c2be699eb2"
+    },
+    {
+      "path": "tests/contract-support/fixtures/bootstrap-fixture-v1.ts",
+      "before": null,
+      "after": "3363857b3ae48134e759b0750b0c8aaa333139442cf8436191f9d25d0fca0539"
+    },
+    {
+      "path": "tests/contract-support/fixtures/completed-work-fixtures.ts",
+      "before": null,
+      "after": "aa18fee13049c1757f5f1d5ce632c366e9f508f400575291bb79e21b76550f21"
+    },
+    {
+      "path": "tests/contract-support/fixtures/console-fixtures.ts",
+      "before": null,
+      "after": "34e9d619b970fa543478b1bc7007b70777413146b775b7be21c84ea8cebf0e95"
+    },
+    {
+      "path": "tests/contract-support/fixtures/context-fixtures.ts",
+      "before": null,
+      "after": "053e72436639b2a3895afab5c2a13d7c6db6b8769557b244dbea303c98d47923"
+    },
+    {
+      "path": "tests/contract-support/fixtures/control-fixtures.ts",
+      "before": null,
+      "after": "45406fc01bbe8a58c53537fd983d326f0b60142e0f8e2e83f6c15d68c0b1ae9d"
+    },
+    {
+      "path": "tests/contract-support/fixtures/evidence-fixtures.ts",
+      "before": null,
+      "after": "ae8ade4749848a90caa8b9380f5ace0591fbf8767da56f18023bc685ce233a6d"
+    },
+    {
+      "path": "tests/contract-support/fixtures/goal-change-fixtures.ts",
+      "before": null,
+      "after": "2c5d8400cdadf546134c1f55f8a4000c514a9783fd2f76095daa67d08af2e971"
+    },
+    {
+      "path": "tests/contract-support/fixtures/goal-fixtures.ts",
+      "before": null,
+      "after": "817f27d2be13e3bf48f610d99e78964255049f3da92c9840d2dd8331cc8e444f"
+    },
+    {
+      "path": "tests/contract-support/fixtures/goal-phase-fixtures.ts",
+      "before": null,
+      "after": "b67710eb4c2b406542e16126e5edb4756195dc3b70e2303448e4c56cf2aa7dc0"
+    },
+    {
+      "path": "tests/contract-support/fixtures/handoff-fixtures.ts",
+      "before": null,
+      "after": "119152d1c4ded8e15498fd4bc6ab694e7d6a0e81b0feba47f2296b5402c8bd77"
+    },
+    {
+      "path": "tests/contract-support/fixtures/human-role-collaboration-fixtures.ts",
+      "before": null,
+      "after": "ac5d6bd13c23130ee0af53b1340b97674543d82ed6fcee85ff4a4bad4853d81f"
+    },
+    {
+      "path": "tests/contract-support/fixtures/material-access-fixtures.ts",
+      "before": null,
+      "after": "74deca08ff2f0fc8abda4c9ab4ee4e5073fc1abdefff3bd4d1298db4813a4c2a"
+    },
+    {
+      "path": "tests/contract-support/fixtures/query-job-fixtures.ts",
+      "before": null,
+      "after": "1e797a331189b65188e7c988972b790f69e7ef28b4386a04582ba1927a5c826d"
+    },
+    {
+      "path": "tests/contract-support/fixtures/remediation-fixtures.ts",
+      "before": null,
+      "after": "38cc50d9088886f17a27095f11ce9aa2bc4db8451c2240d2c9676898ecfed8e6"
+    },
+    {
+      "path": "tests/contract-support/fixtures/workspace-fixtures.ts",
+      "before": null,
+      "after": "492e70ecbb4e1031f72dd711d141f9c5d9c9100e03b2eeb58da8b3a4a0038a02"
+    },
+    {
+      "path": "tests/contract-support/README.md",
+      "before": null,
+      "after": "569a1daa252a88c99c9ad06b9a52b7234ef7a0dac70e4baa487c4e3d29c64e38"
+    },
+    {
+      "path": "tests/contract-support/testing/control.double.ts",
+      "before": null,
+      "after": "1de662921f39dbaa44da07beec4533c193cc448e2c8e9f39daa6960a177cb0d2"
+    },
+    {
+      "path": "tests/contract-support/testing/handoff-control.double.ts",
+      "before": null,
+      "after": "ee57351031b927fcdef4ae2b4302a40a7d1447b357d4753451e2b58eb4fd3a4d"
+    },
+    {
+      "path": "tests/contract-support/testing/read-model.double.ts",
+      "before": null,
+      "after": "7d49e4f7ec26ac5a03939a4bb56f78c2523c960780e05b0332336b9a177ed724"
+    },
+    {
+      "path": "tests/contract-support/testing/state-ledger.double.ts",
+      "before": null,
+      "after": "02c9dd7e6d64ce6827f5e4b7cf6ba137ec67ca52b4808da72c86c6d5dec6ab3c"
+    }
+  ],
+  "docs": [
+    {
+      "path": "dev_docs/interfaces/module-boundaries.md",
+      "before": "2769e72be0162b03700a5c9277f41cbb4a622f0189be86a1a22f1f81031b948c",
+      "after": "b710de1a0db2ce2932421a8ada25a59556713648bbfd88b8d3dc505c14fab2d4"
+    },
+    {
+      "path": "dev_docs/modules/control/plan-compiler.md",
+      "before": "4d52356b52c40382081fc46763c3a0617929b8d9ff7d3f3222d67024f70e4b0c",
+      "after": "a7943e9ae97d7e8f3c77fa96dc75958d8c0ac3ad0ca188776589017f033dc53f"
+    },
+    {
+      "path": "dev_docs/modules/control/verification-engine.md",
+      "before": "9f011512140421fc26f114cb3520646550b34551ad4480c838b8da94d643db57",
+      "after": "0c131e167d3bc4dd77c186d4ca5929b2c28f6942903b39f6cf2b882a5ad6c706"
+    },
+    {
+      "path": "dev_docs/modules/data/state-ledger.md",
+      "before": "e78b8647e2a0f3761fd485e1032ed1f7fcd2f0eabf7066492aecc6f41b101d13",
+      "after": "9c2d181499e3c73a7d2ea05350ddcd31237b64425ea73ec16d46c8f996e7ae9c"
+    },
+    {
+      "path": "dev_docs/verification/2026-09-09-core-verification/reviewer-continuation.md",
+      "before": "48af83ada73fbbf45b0cc36522249847b2dcf8c0cfc171ef65ada0b2f5c219cb",
+      "after": "d1ede89ceeb93c29188aa7226537661ba5c39c1648211b84da08a7c184ad66b6"
+    },
+    {
+      "path": "human/module-status.md",
+      "before": "d6a367cce36f2b53db21be72c03e2535428fdb68dab38ed18d883a1ff58b9c9b",
+      "after": "9f4e2d56037d7df2cbed8187fb3986545d2017338f6055bf3fdb6f2f05937681"
+    }
+  ]
+}

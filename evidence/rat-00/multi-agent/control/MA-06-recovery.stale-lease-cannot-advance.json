@@ -1,0 +1,109 @@
+{
+  "trace": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-06",
+    "origin": "constructed-evaluator-selftest-only",
+    "observations": {
+      "failures": [
+        {
+          "role": "reader",
+          "at": 2
+        },
+        {
+          "role": "coordinator",
+          "at": 3
+        }
+      ],
+      "independentEvents": [
+        {
+          "kind": "tool-completed",
+          "at": 4
+        }
+      ],
+      "handoff": {
+        "previousRun": "old",
+        "successorRun": "new",
+        "before": {
+          "obligations": [
+            "persist-filter"
+          ],
+          "rationaleRefs": [
+            "decision-ref"
+          ],
+          "unresolved": [
+            "unknown-effect"
+          ],
+          "acceptedRefs": [
+            "proposal"
+          ]
+        },
+        "after": {
+          "obligations": [
+            "persist-filter"
+          ],
+          "rationaleRefs": [
+            "decision-ref"
+          ],
+          "unresolved": [
+            "unknown-effect"
+          ],
+          "acceptedRefs": [
+            "proposal"
+          ]
+        }
+      },
+      "operation": {
+        "outcomeBefore": "unknown",
+        "interruptedAt": 5,
+        "reconciledAt": 7,
+        "retries": [],
+        "records": [
+          {
+            "id": "trial-note"
+          }
+        ],
+        "claims": [
+          {
+            "at": 8
+          }
+        ]
+      },
+      "currentLease": "new",
+      "staleFeedback": {
+        "lease": "old",
+        "accepted": true,
+        "beforeDigest": "d",
+        "afterDigest": "d"
+      },
+      "configuration": "parallel-with-injection"
+    }
+  },
+  "expectedFailure": "recovery.stale-lease-cannot-advance",
+  "result": {
+    "schemaVersion": 1,
+    "scenarioId": "MA-06",
+    "layer": "normalized-trace-assertion-evaluator",
+    "inputOrigin": "constructed-evaluator-selftest-only",
+    "status": "FAIL",
+    "assertions": [
+      {
+        "id": "failure.no-cascade",
+        "status": "PASS"
+      },
+      {
+        "id": "handoff.inherits-obligations-and-reasons",
+        "status": "PASS"
+      },
+      {
+        "id": "recovery.reconcile-before-retry-once",
+        "status": "PASS"
+      },
+      {
+        "id": "recovery.stale-lease-cannot-advance",
+        "status": "FAIL"
+      }
+    ],
+    "productCapabilityResult": "NOT_RUN",
+    "note": "A normalized trace can only test evaluator logic here. A platform export adapter and independent raw-evidence authentication are NOT_PREPARED; constructed traces are never product evidence."
+  }
+}

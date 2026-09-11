@@ -1,0 +1,7 @@
+{
+  "checkedAt": "2026-09-11T11:08:15.556Z",
+  "count": 338,
+  "stale": [
+    "dist/contracts/commands/reviewer-work.js"
+  ]
+}

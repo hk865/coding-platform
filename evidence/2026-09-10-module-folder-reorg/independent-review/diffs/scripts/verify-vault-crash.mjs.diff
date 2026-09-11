@@ -1,0 +1,22 @@
+diff --git a/evidence/2026-09-10-module-folder-reorg/independent-review/before/scripts/verify-vault-crash.mjs b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/scripts/verify-vault-crash.mjs
+index 2f59e21..b689613 100644
+--- a/evidence/2026-09-10-module-folder-reorg/independent-review/before/scripts/verify-vault-crash.mjs
++++ b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/scripts/verify-vault-crash.mjs
+@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
+ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+ import assert from 'node:assert/strict';
+-import { SqliteArtifactVault } from '../dist/vault/sqlite-artifact-vault.js';
++import { SqliteArtifactVault } from '../dist/data/artifact-vault/sqlite-artifact-vault.js';
+ 
+ const dir = await mkdtemp(join(tmpdir(), 'platform-vault-crash-'));
+ const path = join(dir, 'artifacts.sqlite');
+@@ -14,7 +14,7 @@ const record = { ownerRef: owner, body: 'Interrupted producer: keep reasons and
+   sourceRefs: [{ kind: 'workspace', refId: 'workspace', revision: '7', digest: 'source-v7' }] };
+ let restored;
+ try {
+-  const adapter = new URL('../dist/vault/sqlite-artifact-vault.js', import.meta.url).href;
++  const adapter = new URL('../dist/data/artifact-vault/sqlite-artifact-vault.js', import.meta.url).href;
+   const script = `
+     import { readFileSync } from 'node:fs';
+     const { path, record, adapter } = JSON.parse(readFileSync(0, 'utf8'));

@@ -1,3 +1,4 @@
+import { classifyRestartProbeError } from "./readiness-probe.js";
 /** P1-15 restart fixtures + probe (compact). */
 import { expect } from "vitest";
 import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
@@ -10,7 +11,9 @@ export async function isP115Ready(): Promise<boolean> {
   try {
     const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
     try { await runP115RestartScenario(h); return true; } finally { await h.cleanup().catch(() => undefined); }
-  } catch { return false; }
+  } catch (error) {
+    return classifyRestartProbeError(error);
+  }
 }
 
 export type P115RestartEvidence = { proposalDigest: string; policyActive: string };

@@ -19,17 +19,8 @@
  *   - historical FAIL preserved; only current applicable evidence participates.
  */
 import { describe, expect, it } from "vitest";
-import {
-  reduceGoalPhase,
-  renderGoalCompletionExplanation,
-  reconcileGoalSideEffects,
-  type GoalReductionInput,
-  type GoalObligationFact,
-  type GoalTaskReductionFact,
-  type GoalSideEffectFact,
-  type GoalDecisionFact,
-  type GoalPlanningFact,
-} from "../../src/contracts/goal-phase.js";
+import { reduceGoalPhase, renderGoalCompletionExplanation, reconcileGoalSideEffects } from "../../src/control/control-engine/policies/goal-phase.js";
+import { type GoalReductionInput, type GoalObligationFact, type GoalTaskReductionFact, type GoalSideEffectFact, type GoalDecisionFact, type GoalPlanningFact } from "../../src/contracts/goal-phase.js";
 import {
   P105_GOAL,
   P105_OBL_GOAL,
@@ -44,8 +35,9 @@ import {
   P105_TASK_OPTIONAL,
   P105_TASK_STAGE_GATE,
   P105_TASK_WORK,
-} from "../../src/contracts/fixtures/goal-phase-fixtures.js";
-import { buildApplyPlanCommand, planRevisionSnapshotFor } from "../../src/contracts/fixtures/plan-fixtures.js";
+} from "../contract-support/fixtures/goal-phase-fixtures.js";
+import { buildApplyPlanCommand } from "../../src/fixtures/plan-fixtures.js";
+import { planRevisionSnapshotFor } from "../../src/control/control-engine/records/plan.js";
 import type { PlanRevisionSnapshot } from "../../src/contracts/plan.js";
 
 const PROJECT = "proj-alpha";
@@ -381,5 +373,71 @@ describe("P1-05 pure Goal phase reducer", () => {
   it("PLANNING before NEEDS_DECISION/BLOCKED/FAILED when no active plan and actions remain", () => {
     const input: GoalReductionInput = { ...completedInput, plan: null, goalActivePlanRevision: null, taskReductions: [], obligations: [], sideEffects: [{ kind: "outcome_unknown", runRef: { aggregateType: "Run", projectId: PROJECT, goalId: P105_GOAL, runId: "run-x" }, note: null, reconciled: false }], planning: { possible: true, failed: false, blockedReason: null } };
     expect(reduceGoalPhase(input).phase).toBe("PLANNING");
+  });
+});
+
+
+// FIX-02: pending downstream work/gates require current, satisfied inputs.
+function dependencyFrontier(source: "satisfied" | "blocked" | "failed"): GoalReductionInput {
+  const input = allSatisfiedPlan();
+  const ids = [P105_TASK_WORK, P105_TASK_MODULE_GATE, P105_TASK_GOAL_GATE];
+  input.plan!.tasks = input.plan!.tasks.filter(t => ids.includes(t.taskId));
+  input.plan!.executionDag.dependsOn = [
+    { taskId: P105_TASK_MODULE_GATE, dependsOnId: P105_TASK_WORK, requires: { kind: "artifact", label: "verified source" } },
+    { taskId: P105_TASK_GOAL_GATE, dependsOnId: P105_TASK_MODULE_GATE, requires: { kind: "artifact", label: "verified gate" } },
+  ];
+  input.taskReductions = [
+    source === "satisfied" ? satisfied(P105_TASK_WORK) : unsat(P105_TASK_WORK, source),
+    unsat(P105_TASK_MODULE_GATE, null), unsat(P105_TASK_GOAL_GATE, null),
+  ];
+  input.obligations = input.obligations.filter(o => o.taskIds.every(id => ids.includes(id)));
+  return input;
+}
+
+describe("FIX-02 dependency frontier priority", () => {
+  it("blocked input blocks the entire pending gate chain; it does not invent an active frontier", () => {
+    const r = reduceGoalPhase(dependencyFrontier("blocked"));
+    expect(r.phase).toBe("BLOCKED");
+    expect(r.reasonCodes).not.toContain("required_frontier_available");
+  });
+
+  it("PASS reduction unlocks its immediate gate even when immutable Plan phase remains pending", () => {
+    const input = dependencyFrontier("satisfied");
+    for (const task of input.plan!.tasks) task.phase = "pending";
+    const r = reduceGoalPhase(input);
+    expect(r.phase).toBe("RUNNING");
+    expect(r.refsByCode.required_frontier_available?.taskIds).toEqual([P105_TASK_MODULE_GATE]);
+  });
+
+  it("only declared dependsOn creates a blocker; hierarchy does not", () => {
+    const input = dependencyFrontier("failed");
+    input.plan!.executionDag.dependsOn = [];
+    expect(reduceGoalPhase(input).phase).toBe("RUNNING");
+  });
+
+  it("failure with no frontier preserves pause and decision priority", () => {
+    const input = dependencyFrontier("failed");
+    expect(reduceGoalPhase({ ...input, desiredState: "paused" }).phase).toBe("PAUSED");
+    expect(reduceGoalPhase({ ...input, decisionNeeds: [{ kind: "subjective_oracle", note: "operator decision required" }] }).phase)
+      .toBe("NEEDS_DECISION");
+    const deferred = structuredClone(input);
+    deferred.plan!.tasks.find(t => t.taskId === P105_TASK_MODULE_GATE)!.disposition = "deferred";
+    expect(reduceGoalPhase(deferred).phase).toBe("NEEDS_DECISION");
+  });
+
+  it("an actual active Run stays visible even if an upstream later fails", () => {
+    const input = dependencyFrontier("failed");
+    input.taskReductions.find(t => t.taskId === P105_TASK_MODULE_GATE)!.runFact =
+      { status: "running", outcome: null, exitCode: null };
+    const r = reduceGoalPhase(input);
+    expect(r.phase).toBe("RUNNING");
+    expect(r.reasonCodes).toContain("terminal_failure_exhausted");
+  });
+
+  it("an ended Run and a pending reduction do not implicitly authorize a retry", () => {
+    const input = dependencyFrontier("satisfied");
+    input.taskReductions.find(t => t.taskId === P105_TASK_MODULE_GATE)!.runFact =
+      { status: "ended", outcome: "completed", exitCode: 0 };
+    expect(reduceGoalPhase(input).phase).toBe("BLOCKED");
   });
 });

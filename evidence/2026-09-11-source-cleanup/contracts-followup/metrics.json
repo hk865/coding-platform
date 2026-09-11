@@ -1,0 +1,420 @@
+{
+  "before": {
+    "files": 101,
+    "topLevel": 90,
+    "exports": 1521
+  },
+  "after": {
+    "files": 116,
+    "topLevel": 85,
+    "exports": 1531
+  },
+  "beforeRelevant": [
+    {
+      "file": "src/contracts/rework-acceptance.ts",
+      "lines": 141,
+      "exports": [
+        "REWORK_BOUNDARY_CODES",
+        "ReworkBoundaryCode",
+        "ReworkBoundaryOutcomeV1",
+        "ReworkBudgetFactsV1",
+        "ReworkAcceptanceRequestV1",
+        "ReworkAcceptanceRejectionCode",
+        "ReworkAcceptanceReceiptV1"
+      ]
+    },
+    {
+      "file": "src/contracts/rework-disposition.ts",
+      "lines": 13,
+      "exports": [
+        "ReworkDispositionPort",
+        "ReworkIssueMaterials"
+      ]
+    },
+    {
+      "file": "src/contracts/rework-drive.ts",
+      "lines": 217,
+      "exports": [
+        "ReworkIssueReadPort",
+        "ReworkDriveScopeV1",
+        "ReworkDriveRequestV1",
+        "ReworkDriveOutcomeV1",
+        "ReworkIssueDispositionTraceV1",
+        "ReworkDriveResultV1",
+        "ReworkProposalPreviewV1",
+        "ReworkAcceptanceViewV1",
+        "ReworkDriveViewV1",
+        "ReworkDrivePort"
+      ]
+    },
+    {
+      "file": "src/contracts/rework.ts",
+      "lines": 529,
+      "exports": [
+        "REWORK_MAX_ISSUES",
+        "REWORK_MAX_FAILED_REQUIREMENTS",
+        "ReworkIssueSourceV1",
+        "COMMAND_CHECK_CATEGORIES",
+        "REWORK_FAILURE_STDERR_MAX_BYTES",
+        "ReworkFailureFactV1",
+        "ReworkFailedRequirementV1",
+        "ReworkIssueV1",
+        "reworkIssueIdFor",
+        "reworkTaskIdFor",
+        "ReworkProposalV1",
+        "ReworkProposalOriginV1",
+        "ReworkProposalTaskV1",
+        "ReworkPlanDraftV1",
+        "ReworkCompileRequestV1",
+        "ReworkCompileResultV1",
+        "ReworkCompileRejectionCode",
+        "ReworkNeedsDecisionCode",
+        "REWORK_MAX_ISSUES_PER_PROPOSAL",
+        "reworkProposalIdFor",
+        "reworkPlanIdFor",
+        "reworkIssueFactFor",
+        "ReworkIssueDispositionV1",
+        "ReworkIssueViewV1",
+        "reworkIssueUnaddressed",
+        "obligationCarrierTaskIds",
+        "OpenIssuesViewV1",
+        "OpenIssuesRequestV1"
+      ]
+    },
+    {
+      "file": "src/contracts/validation.ts",
+      "lines": 3510,
+      "exports": [
+        "ValidationIssueCode",
+        "ValidationIssue",
+        "validateActor",
+        "validateCommandIdentity",
+        "validateCreateGoalCommand",
+        "validateBootstrapEntries",
+        "validateWorkspaceBootstrapFixture",
+        "validateWorkspaceBootstrapCommand",
+        "validateDomainEvent",
+        "validateGoalViewQuery",
+        "issuesToErrorMessage",
+        "validateCompletionPolicyContent",
+        "validateArchitectureBaselineContent",
+        "validateCompletionPolicyFixture",
+        "validateArchitectureBaselineFixture",
+        "validateInstallCompletionPolicyRevisionCommand",
+        "validateInstallArchitectureBaselineRevisionCommand",
+        "validateActivateProjectCompletionPolicyCommand",
+        "validateActivateProjectArchitectureBaselineCommand",
+        "validatePlanRevisionDraft",
+        "validateApplyPlanRevisionCommand",
+        "validateRoleBindingRef",
+        "validateTaskBudget",
+        "validateDispatchClaimCommand",
+        "validateDispatchStartCommand",
+        "validateRunFactCommand",
+        "validateTaskEnvelope",
+        "validateContextManifest",
+        "validateRuntimeEvent",
+        "validateTaskContextRequest",
+        "validateEvidenceSource",
+        "validateArtifactRefRef",
+        "validateEvidenceCoverage",
+        "validateSubmitEvidenceCommand",
+        "validateReduceTaskCommand",
+        "validateReduceGoalCommand",
+        "validateHandoffPacket",
+        "validateRecordHandoffCommand",
+        "validateClaimReplacementCommand",
+        "validateHandoffContextRequest",
+        "validateHandoffControlCommand",
+        "validateHandoffSnapshotQuery",
+        "validateAcquireWorkspaceReadLeaseCommand",
+        "validateAcquireWorkspaceWriteLeaseCommand",
+        "validateReleaseWorkspaceLeaseCommand",
+        "validateRecordIntegrationResultCommand",
+        "validateRecordPatchCommand",
+        "validateExecutionNote",
+        "validateContextContinuationResult",
+        "validateBindWorkContextCommand",
+        "validateLinkWorkRunCommand",
+        "validateRecordExecutionNoteCommand",
+        "validateRecordContinuationCommand",
+        "validateMaterialBasis",
+        "validateMaterialAccessGrant",
+        "validateGrantMaterialAccessCommand",
+        "validateRevokeMaterialAccessCommand",
+        "validateWorkContextRequest",
+        "validateContinuationCheckRequest",
+        "validateArchitectureInspectionIntent",
+        "validateArchitectureFinding",
+        "validateArchitectureDecisionBrief",
+        "validateArchitectureCandidateProposal",
+        "validateRecordArchitectureInspectionCommand",
+        "validateRecordArchitectureFindingCommand",
+        "validateRecordArchitectureDecisionBriefCommand",
+        "validateRecordCandidateBaselineProposalCommand",
+        "validateArchitectureEvolutionPolicyFixture",
+        "validateInstallArchitectureEvolutionPolicyRevisionCommand",
+        "validateActivateProjectArchitectureEvolutionPolicyCommand",
+        "validateRoleSpecContent",
+        "validateCoordinationRoleMatrix",
+        "validateRoleSpecPin",
+        "validateInstallRoleSpecRevisionCommand",
+        "validateActivateRoleSpecRevisionCommand"
+      ]
+    }
+  ],
+  "afterRelevant": [
+    {
+      "file": "src/contracts/rework/acceptance.ts",
+      "lines": 126,
+      "exports": [
+        "REWORK_BOUNDARY_CODES",
+        "ReworkBoundaryCode",
+        "ReworkBoundaryOutcomeV1",
+        "ReworkBudgetFactsV1",
+        "ReworkAcceptanceRequestV1",
+        "ReworkAcceptanceRejectionCode",
+        "ReworkAcceptanceReceiptV1"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/drive.ts",
+      "lines": 215,
+      "exports": [
+        "ReworkDriveScopeV1",
+        "ReworkDriveRequestV1",
+        "ReworkDriveOutcomeV1",
+        "ReworkIssueDispositionTraceV1",
+        "ReworkDriveResultV1",
+        "ReworkProposalPreviewV1",
+        "ReworkAcceptanceViewV1",
+        "ReworkDriveViewV1",
+        "ReworkDrivePort"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/issues.ts",
+      "lines": 305,
+      "exports": [
+        "REWORK_MAX_ISSUES",
+        "REWORK_MAX_FAILED_REQUIREMENTS",
+        "ReworkIssueSourceV1",
+        "COMMAND_CHECK_CATEGORIES",
+        "REWORK_FAILURE_STDERR_MAX_BYTES",
+        "ReworkFailureFactV1",
+        "ReworkFailedRequirementV1",
+        "ReworkIssueV1",
+        "reworkIssueIdFor",
+        "reworkIssueFactFor",
+        "ReworkIssueDispositionV1",
+        "ReworkIssueViewV1",
+        "reworkIssueUnaddressed",
+        "obligationCarrierTaskIds",
+        "OpenIssuesViewV1",
+        "OpenIssuesRequestV1",
+        "ReworkDispositionPort"
+      ]
+    },
+    {
+      "file": "src/contracts/rework/proposal.ts",
+      "lines": 200,
+      "exports": [
+        "reworkTaskIdFor",
+        "ReworkProposalV1",
+        "ReworkProposalOriginV1",
+        "ReworkProposalTaskV1",
+        "ReworkPlanDraftV1",
+        "ReworkCompileRequestV1",
+        "ReworkCompileResultV1",
+        "ReworkCompileRejectionCode",
+        "ReworkNeedsDecisionCode",
+        "REWORK_MAX_ISSUES_PER_PROPOSAL",
+        "reworkProposalIdFor",
+        "reworkPlanIdFor"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/architecture.ts",
+      "lines": 296,
+      "exports": [
+        "validateArchitectureInspectionIntent",
+        "validateArchitectureFinding",
+        "validateArchitectureDecisionBrief",
+        "validateArchitectureCandidateProposal",
+        "validateRecordArchitectureInspectionCommand",
+        "validateRecordArchitectureFindingCommand",
+        "validateRecordArchitectureDecisionBriefCommand",
+        "validateRecordCandidateBaselineProposalCommand"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/bootstrap.ts",
+      "lines": 119,
+      "exports": [
+        "validateBootstrapEntries",
+        "validateWorkspaceBootstrapFixture",
+        "validateWorkspaceBootstrapCommand"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/common.ts",
+      "lines": 154,
+      "exports": [
+        "ValidationIssueCode",
+        "ValidationIssue",
+        "UnknownRecord",
+        "isRecord",
+        "stringField",
+        "issuesToErrorMessage",
+        "safePositiveIntField",
+        "validateStringArray",
+        "validateEnum",
+        "numberField",
+        "stringArrayField",
+        "rejectUnknownFields"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/context.ts",
+      "lines": 383,
+      "exports": [
+        "validateExecutionNote",
+        "validateContextContinuationResult",
+        "validateBindWorkContextCommand",
+        "validateLinkWorkRunCommand",
+        "validateRecordExecutionNoteCommand",
+        "validateRecordContinuationCommand",
+        "validateWorkContextRequest",
+        "validateContinuationCheckRequest"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/dispatch.ts",
+      "lines": 382,
+      "exports": [
+        "validateRoleBindingRef",
+        "validateTaskBudget",
+        "validateDeclaredPermissions",
+        "validateRunRef",
+        "validateDispatchClaimCommand",
+        "validateDispatchStartCommand",
+        "validateRunFactCommand",
+        "validateTaskEnvelope",
+        "validateContextManifest",
+        "validateRuntimeEvent",
+        "validateTaskContextRequest"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/event.ts",
+      "lines": 246,
+      "exports": [
+        "validateDomainEvent"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/evidence.ts",
+      "lines": 237,
+      "exports": [
+        "validateEvidenceSource",
+        "validateArtifactRefRef",
+        "validateEvidenceCoverage",
+        "validateSubmitEvidenceCommand",
+        "validateReduceTaskCommand",
+        "validateReduceGoalCommand"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/goal.ts",
+      "lines": 75,
+      "exports": [
+        "validateCreateGoalCommand",
+        "validateGoalViewQuery"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/governance.ts",
+      "lines": 336,
+      "exports": [
+        "validateCompletionPolicyContent",
+        "validateArchitectureBaselineContent",
+        "validateCompletionPolicyFixture",
+        "validateArchitectureBaselineFixture",
+        "validateInstallCompletionPolicyRevisionCommand",
+        "validateInstallArchitectureBaselineRevisionCommand",
+        "validatePin",
+        "validateActivateProjectCompletionPolicyCommand",
+        "validateActivateProjectArchitectureBaselineCommand",
+        "validateArchitectureEvolutionPolicyFixture",
+        "validateInstallArchitectureEvolutionPolicyRevisionCommand",
+        "validateActivateProjectArchitectureEvolutionPolicyCommand"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/handoff.ts",
+      "lines": 341,
+      "exports": [
+        "validateHandoffPacket",
+        "validateRecordHandoffCommand",
+        "validateClaimReplacementCommand",
+        "validateHandoffContextRequest",
+        "validateHandoffControlCommand",
+        "validateHandoffSnapshotQuery"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/identity.ts",
+      "lines": 30,
+      "exports": [
+        "validateActor",
+        "validateCommandIdentity"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/integration.ts",
+      "lines": 175,
+      "exports": [
+        "validateRecordIntegrationResultCommand",
+        "validateRecordPatchCommand"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/material-access.ts",
+      "lines": 178,
+      "exports": [
+        "validateMaterialBasis",
+        "validateMaterialAccessGrant",
+        "validateGrantMaterialAccessCommand",
+        "validateRevokeMaterialAccessCommand"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/plan.ts",
+      "lines": 199,
+      "exports": [
+        "validatePlanRevisionDraft",
+        "validateApplyPlanRevisionCommand"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/role.ts",
+      "lines": 242,
+      "exports": [
+        "validateRoleSpecContent",
+        "validateCoordinationRoleMatrix",
+        "validateRoleSpecPin",
+        "validateInstallRoleSpecRevisionCommand",
+        "validateActivateRoleSpecRevisionCommand"
+      ]
+    },
+    {
+      "file": "src/contracts/validation/workspace.ts",
+      "lines": 127,
+      "exports": [
+        "validateAcquireWorkspaceReadLeaseCommand",
+        "validateAcquireWorkspaceWriteLeaseCommand",
+        "validateReleaseWorkspaceLeaseCommand"
+      ]
+    }
+  ]
+}

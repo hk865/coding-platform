@@ -4,7 +4,7 @@ import {
   bootstrapEventsFor,
   bootstrapSnapshotsFor,
   fixtureDigest,
-} from "../../src/contracts/fixtures/bootstrap-fixture-v1.js";
+} from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import { bootstrapSourceDigest, buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
 import {
   MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1,
@@ -12,9 +12,9 @@ import {
   buildGoalCreateLedgerCommit,
   goalCreatedEventFor,
   goalSnapshotFor,
-} from "../../src/contracts/fixtures/goal-fixtures.js";
+} from "../contract-support/fixtures/goal-fixtures.js";
 import { normalizeObjective } from "../../src/contracts/command-event.js";
-import { FIXED_ISO_2026_09_05 } from "../../src/contracts/testing/sequences.js";
+import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 
 describe("workspace bootstrap fixture", () => {
   it("has schemaVersion, 2 isolated scopes, and reuses the local workspaceId", () => {

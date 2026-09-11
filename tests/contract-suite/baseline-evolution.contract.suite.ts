@@ -7,7 +7,7 @@ import type { P114HarnessLike } from "./p1-14-harness.js";
 import { runP114Scenario, p114ActiveBaselinePin, type P114ScenarioResult } from "./p1-14-harness.js";
 import { P114_PROJECT, P114_WORKSPACE } from "./p1-14-harness.js";
 import { candidateContentDigest, baselineEvolutionChainConsistent, isSourceStale } from "../../src/contracts/baseline-evolution.js";
-import { p114CandidateRef, p114DecisionRef, p114GateRef, p114ActivationRef } from "../../src/contracts/fixtures/baseline-evolution-fixtures.js";
+import { p114CandidateRef, p114DecisionRef, p114GateRef, p114ActivationRef } from "../contract-support/fixtures/baseline-evolution-fixtures.js";
 
 export function defineBaselineEvolutionContractSuite(
   factory: () => Promise<P114HarnessLike>,
@@ -28,7 +28,7 @@ export function defineBaselineEvolutionContractSuite(
     describe("architecture-notification-idempotency-test", () => {
       it("candidate/decision/gate/activation re-submission replays idempotently", async () => {
         const x = s();
-        const replay = await h.materializeCandidateBaseline((await import("../../src/contracts/fixtures/baseline-evolution-fixtures.js")).buildP114MaterializeCommand((await import("../../src/contracts/fixtures/baseline-evolution-fixtures.js")).p114ProposalRef(P114_PROJECT), { commandId: "p114-cmd-materialize" }));
+        const replay = await h.materializeCandidateBaseline((await import("../contract-support/fixtures/baseline-evolution-fixtures.js")).buildP114MaterializeCommand((await import("../contract-support/fixtures/baseline-evolution-fixtures.js")).p114ProposalRef(P114_PROJECT), { commandId: "p114-cmd-materialize" }));
         expect(replay.status).toBe("committed");
         if (replay.status === "committed") expect(replay.replayed).toBe(true);
       });

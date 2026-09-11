@@ -1,38 +1,21 @@
+import type { WorkContextPort } from '../../src/contracts/work-context-port.js';
 /**
  * Shared P1-16 contract-suite harness: same-work continuity scenario over the
  * established P1-08 two-project world + work-context helpers, used by BOTH
  * adapter suites (InMemory + SQLite, same fixtures) and by the restart path.
  *
- * The helper surface below is FROZEN by the shared baseline: the lanes fill
- * the work-record control (A: bind/link/note/continuation) and the work-context
- * projection + assembly (B); the helpers only call frozen signatures.
+ * Control owns work records; Context owns projection and bounded material assembly.
  */
 import { expect } from "vitest";
 import type { P1_08HarnessLike, P1_08TestHarness } from "./p1-08-harness.js";
 import { runP108TwoProjectScenario, type P108TwoProjectScenarioResult } from "./p1-08-harness.js";
 import type { WorkContextViewQuery, WorkContextViewResult, BindWorkContextCommand, BindWorkContextReceipt, LinkWorkRunCommand, LinkWorkRunReceipt, RecordExecutionNoteCommand, RecordExecutionNoteReceipt, RecordContinuationCommand, RecordContinuationReceipt } from "../../src/contracts/context-continuity.js";
 import { workContextRefFor } from "../../src/contracts/context-continuity.js";
-import type { WorkContextRequestV1, WorkContextAssemblyResultV1 } from "../../src/contracts/work-context-port.js";
+
 import type { ContextContinuationCapabilityResult } from "../../src/contracts/context-continuation-port.js";
 import type { RunRef } from "../../src/contracts/dispatch.js";
-import {
-  P116_PROJECT_A,
-  P116_PROJECT_B,
-  P116_WORKSPACE,
-  P116_WORK,
-  P116_NOTE_1,
-  P116_NOTE_2,
-  P116_REPORT_1,
-  P116_REPORT_2,
-  buildBindWorkContextCommand,
-  buildLinkWorkRunCommand,
-  buildExecutionNoteV1,
-  buildRecordExecutionNoteCommand,
-  buildContextContinuationResultV1,
-  buildRecordContinuationCommand,
-  p116WorkContextRef,
-} from "../../src/contracts/fixtures/context-fixtures.js";
-import { P108_PROJECT_A, P108_PROJECT_B, P108_TASK_WORK } from "./p1-08-harness.js";
+import { P116_WORKSPACE, P116_WORK, P116_NOTE_1, P116_NOTE_2, P116_REPORT_1, P116_REPORT_2, buildBindWorkContextCommand, buildLinkWorkRunCommand, buildExecutionNoteV1, buildRecordExecutionNoteCommand, buildContextContinuationResultV1, buildRecordContinuationCommand, p116WorkContextRef } from "../contract-support/fixtures/context-fixtures.js";
+import { P108_GOAL, P108_PROJECT_A, P108_PROJECT_B, P108_TASK_WORK } from "./p1-08-harness.js";
 
 export interface P1_16TestHarness extends P1_08TestHarness {
   workContextView(query: WorkContextViewQuery): Promise<WorkContextViewResult>;
@@ -40,7 +23,7 @@ export interface P1_16TestHarness extends P1_08TestHarness {
   linkWorkRun(command: LinkWorkRunCommand): Promise<LinkWorkRunReceipt>;
   recordExecutionNote(command: RecordExecutionNoteCommand): Promise<RecordExecutionNoteReceipt>;
   recordContinuation(command: RecordContinuationCommand): Promise<RecordContinuationReceipt>;
-  assembleWorkContext(request: WorkContextRequestV1): Promise<WorkContextAssemblyResultV1>;
+  workContext: WorkContextPort;
   continuationCapabilities(request: { workContextRef: import("../../src/contracts/context-continuity.js").WorkContextRef; runRef: RunRef | null }): Promise<ContextContinuationCapabilityResult>;
 }
 
@@ -50,7 +33,7 @@ export type P1_16HarnessLike = P1_08HarnessLike & {
   linkWorkRun: (command: LinkWorkRunCommand) => Promise<LinkWorkRunReceipt>;
   recordExecutionNote: (command: RecordExecutionNoteCommand) => Promise<RecordExecutionNoteReceipt>;
   recordContinuation: (command: RecordContinuationCommand) => Promise<RecordContinuationReceipt>;
-  assembleWorkContext: (request: WorkContextRequestV1) => Promise<WorkContextAssemblyResultV1>;
+  workContext: WorkContextPort;
   continuationCapabilities: (request: { workContextRef: import("../../src/contracts/context-continuity.js").WorkContextRef; runRef: RunRef | null }) => Promise<ContextContinuationCapabilityResult>;
 };
 
@@ -93,23 +76,44 @@ export type P116ContinuityScenarioResult = {
  * The P1-08 world is already verified: both projects reuse the same local
  * workspaceId/goalId/taskId/run ids.
  */
-export async function runP116ContinuityScenario(h: P1_16HarnessLike): Promise<P116ContinuityScenarioResult> {
-  const world = await runP108TwoProjectScenario(h);
+/**
+ * RC-03：在 claim 之后、drive 之前为两个项目的 work 任务声明显式工作身份。
+ *
+ * 为什么必须在这个时机：命令面从 RC-03 起不再允许为一个已经有身份的 (项目, 工作区, 目标, 任务)
+ * 补第二条身份。而本场景一直声称的语义正是「一个任务只应有一个持久工作身份」——所以显式身份必须
+ * 先于派发落地，派发面随后**复用**它（只做 link），而不是先让派发建兜底身份、再补一条。
+ * 需要显式身份的其他场景（P1-16 投影、P1-17 取材等）也复用这个挂钩，避免各自写一套时机。
+ */
+export function p116DeclareWorkIdentity(
+  h: P1_16HarnessLike,
+): (context: { project: string; taskId: string; runId: string; runRef: RunRef }) => Promise<void> {
+  return async (context) => {
+    if (context.taskId !== P108_TASK_WORK) return;
+    const bound = await h.bindWorkContext(buildBindWorkContextCommand({
+      commandId: "p116-cmd-bind-w1-" + context.project,
+      projectId: context.project,
+      workId: P116_WORK,
+      workspaceId: P116_WORKSPACE,
+      workKind: "task",
+      goalId: P108_GOAL,
+      taskId: P108_TASK_WORK,
+      planRevision: 1,
+      initialRunRef: context.runRef,
+    }));
+    expect(bound.status, JSON.stringify(bound)).toBe("committed");
+  };
+}
 
-  // W1 — durable work identity bound once for the work task (project A).
+export async function runP116ContinuityScenario(h: P1_16HarnessLike): Promise<P116ContinuityScenarioResult> {
+  const world = await runP108TwoProjectScenario(h, { afterClaim: p116DeclareWorkIdentity(h) });
+
+  // W1 — durable work identity declared BEFORE the run was driven (project A).
   const aWorkRun = world.projectA.workRun;
-  const bindW1 = await h.bindWorkContext(buildBindWorkContextCommand({
-    commandId: "p116-cmd-bind-w1",
-    projectId: P108_PROJECT_A,
-    workId: P116_WORK,
-    workspaceId: P116_WORKSPACE,
-    workKind: "task",
-    goalId: world.previews.find((p) => p.projectId === P108_PROJECT_A)!.goalId,
-    taskId: P108_TASK_WORK,
-    initialRunRef: aWorkRun,
-  }));
-  expect(bindW1.status).toBe("committed");
   const w1Ref = p116WorkContextRef(P108_PROJECT_A, P116_WORK);
+  // 身份确实已由本次场景建立（不是"以为绑了"）：读回来核对它是那个任务的 task 身份。
+  const w1View = await h.workContextView({ projectId: P108_PROJECT_A, workspaceId: P116_WORKSPACE, workId: P116_WORK });
+  expect(w1View.status).toBe("ready");
+  if (w1View.status === "ready") expect(w1View.binding.binding.taskId).toBe(P108_TASK_WORK);
 
   // W2 — coordination work, one work across TWO runs (A workRun + A extra replacement run).
   const aCoordRun = world.projectA.extraReplacementRun;
@@ -201,20 +205,12 @@ export async function runP116ContinuityScenario(h: P1_16HarnessLike): Promise<P1
   }));
   expect(cont2.status).toBe("committed");
 
-  // W1' — SAME local workId in project B (scope isolation).
+  // W1' — SAME local workId in project B (scope isolation); declared before B's drive by the hook.
   const bWorkRun = world.projectB.workRun;
-  const bindB1 = await h.bindWorkContext(buildBindWorkContextCommand({
-    commandId: "p116-cmd-bind-b1",
-    projectId: P108_PROJECT_B,
-    workId: P116_WORK,
-    workspaceId: P116_WORKSPACE,
-    workKind: "task",
-    goalId: world.previews.find((p) => p.projectId === P108_PROJECT_B)!.goalId,
-    taskId: P108_TASK_WORK,
-    initialRunRef: bWorkRun,
-  }));
-  expect(bindB1.status).toBe("committed");
   const bW1Ref = p116WorkContextRef(P108_PROJECT_B, P116_WORK);
+  const bW1View = await h.workContextView({ projectId: P108_PROJECT_B, workspaceId: P116_WORKSPACE, workId: P116_WORK });
+  expect(bW1View.status).toBe("ready");
+  if (bW1View.status === "ready") expect(bW1View.binding.binding.taskId).toBe(P108_TASK_WORK);
 
   await p116Advance(h);
   return {

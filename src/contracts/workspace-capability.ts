@@ -1,6 +1,7 @@
 /**
- * P1-07 frozen contract: WorkerRuntime.WorkspaceCapabilityPort (interfaces_to_freeze
- * #2 — first consumer P1-07). Explicit capability declaration: a run declares
+ * P1-07 frozen wire: ControlEngine.WorkspaceCapabilityPort (interfaces_to_freeze
+ * #2 — first consumer P1-07). Control admission intersects configured execution
+ * support with declared task permissions. The resulting run capability declares
  * workspaceRead / workspaceWrite + a max scope CAP. No capability ->
  * unsupported, NEVER a silent degrade (a lease guard receiving unsupported
  * rejects capability_unsupported, zero write).
@@ -32,7 +33,8 @@ export type WorkspaceCapabilityResultV1 =
   | { status: "unsupported" }
   | { status: "rejected"; reason: string };
 
-/** WorkerRuntime.WorkspaceCapabilityPort — P1-07 first consumer (frozen v1). */
+/** Control admission contract — async frozen v1 wire, without live Runtime calls.
+ * `source` describes the support facts' provenance, not this policy's owner. */
 export interface WorkspaceCapabilityPort {
   capabilitiesFor(envelope: TaskEnvelopeV1): Promise<WorkspaceCapabilityResultV1>;
 }
@@ -58,75 +60,6 @@ export type WorkspaceOperationVerdict =
         | "workspace_mismatch";
       message: string;
     };
-
-/**
- * FROZEN pure capability check (read-only-capability-enforcement):
- *   - no capability (present=false) -> capability_unsupported (never silent);
- *   - write operation requires workspaceWrite (capability_readonly — a reader
- *     run can NEVER upgrade to a write);
- *   - write scope must be ⊆ maxWriteScope (scope_exceeds_capability);
- *   - read operation requires workspaceRead.
- * A read NEVER yields a write: verdicts are per-operation, no upgrades.
- */
-export function evaluateWorkspaceOperation(
-  capabilities: WorkspaceCapabilitiesV1 | null,
-  operation: WorkspaceOperationV1,
-): WorkspaceOperationVerdict {
-  if (capabilities === null) {
-    return {
-      allowed: false,
-      code: "capability_unsupported",
-      message: "no workspace capability declared (unsupported — no silent degrade)",
-    };
-  }
-  if (capabilities.workspaceId !== operation.scope.workspaceId) {
-    return {
-      allowed: false,
-      code: "workspace_mismatch",
-      message: "capability is for workspace " + capabilities.workspaceId + ", not " + operation.scope.workspaceId,
-    };
-  }
-  if (operation.kind === "read") {
-    if (!capabilities.workspaceRead) {
-      return {
-        allowed: false,
-        code: "capability_readonly",
-        message: "workspaceRead capability not declared",
-      };
-    }
-    return { allowed: true };
-  }
-  if (!capabilities.workspaceWrite) {
-    return {
-      allowed: false,
-      code: "capability_readonly",
-      message: "workspaceWrite capability not declared (reader run cannot upgrade to write)",
-    };
-  }
-  if (capabilities.maxWriteScope !== null && !scopeWithinCapability(capabilities.maxWriteScope, operation.scope)) {
-    return {
-      allowed: false,
-      code: "scope_exceeds_capability",
-      message: "write scope exceeds the declared capability cap",
-    };
-  }
-  return { allowed: true };
-}
-
-/** scope ⊆ cap: label kinds require exact kind+id; path-like uses ancestor prefix. */
-export function scopeWithinCapability(cap: ConflictScopeV1, scope: ConflictScopeV1): boolean {
-  if (cap.kind === "workspace" || cap.kind === "path" || cap.kind === "module") {
-    if (scope.kind === "task" || scope.kind === "stage" || scope.kind === "goal") {
-      // A path-like cap cannot statically cover a label scope (no semantic inference).
-      return false;
-    }
-    const capId = cap.id.replace(/\/+$/, "");
-    const scopeId = scope.id.replace(/\/+$/, "");
-    return capId === scopeId || scopeId.startsWith(capId + "/");
-  }
-  // label cap: exact kind + id only.
-  return cap.kind === scope.kind && cap.id === scope.id;
-}
 
 export function workspaceCapabilityFingerprintInput(caps: WorkspaceCapabilitiesV1): string {
   return JSON.stringify(caps);

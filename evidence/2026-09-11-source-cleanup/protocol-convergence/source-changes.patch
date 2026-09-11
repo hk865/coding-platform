@@ -1,0 +1,667 @@
+diff --git a/src/interaction/human-collaboration/human-collaboration.ts b/src/interaction/human-collaboration/human-collaboration.ts
+index 8475daf..8389e94 100644
+--- a/src/interaction/human-collaboration/human-collaboration.ts
++++ b/src/interaction/human-collaboration/human-collaboration.ts
+@@ -1,3 +1,4 @@
++import type { PlanCompilerPort } from '../../contracts/planning.js';
+ /**
+  * HumanCollaborationImpl — Goal create slice (Lane C, P1-00).
+  * Authority: dev_docs/modules/interaction/human-collaboration.md +
+@@ -29,13 +30,13 @@ import type {
+   HumanCollaboration,
+   UserFacingRejectionCode,
+ } from "../../contracts/modules.js";
+-import type { PlanProposalPort } from "../../contracts/goal-change.js";
++
+ 
+ export interface HumanCollaborationDeps {
+   control: ControlEngine;
+   readModel: ReadModelIndex;
+   /** P1-11: bounded PlanCompiler proposal port (never mutates; CompilerImpl is a lane stub until it lands). */
+-  planProposal?: PlanProposalPort;
++  planProposal?: Pick<PlanCompilerPort, 'request'>;
+   commandId: () => string;
+   correlationId: () => string;
+   now: () => string;
+diff --git a/src/harness/persistent-harness.ts b/src/harness/persistent-harness.ts
+index 938909d..6d0d132 100644
+--- a/src/harness/persistent-harness.ts
++++ b/src/harness/persistent-harness.ts
+@@ -1,3 +1,4 @@
++import type { PlanCompilerPort, PlanningContextPort } from '../contracts/planning.js';
+ import { composeReworkDrive } from './rework-composition.js';
+ import { ArchitectureContextCompiler } from '../data/context-compiler/architecture-context-compiler.js';
+ import { ControlPolicyExplanation } from '../control/control-engine/policy-explanation.js';
+@@ -73,20 +74,20 @@ import { CompletedWorkContextCompilerImpl } from "../data/context-compiler/compl
+ import { FakeLifecycleControlAdapter } from "../execution/worker-runtime/lifecycle-control-adapter.js";
+ import { FakeReadOnlyQueryAdapter } from "../execution/worker-runtime/read-only-query-adapter.js";
+ import { QueryContextCompilerImpl } from "../data/context-compiler/query-context-compiler.js";
+-import type { ReadOnlyQueryPort, QueryJobViewQuery, QueryJobViewResult, SubmitQueryJobCommand, SubmitQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, CloseQueryJobCommand, CloseQueryJobReceipt, QueryContextPort, QueryContextRequestV1, QueryContextResultV1, SnapshotPort, PublicSnapshotQueryV1, PublicSnapshotResultV1 } from "../contracts/query-job.js";
++import type { ReadOnlyQueryPort, QueryJobViewQuery, QueryJobViewResult, SubmitQueryJobCommand, SubmitQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, CloseQueryJobCommand, CloseQueryJobReceipt, QueryContextPort, SnapshotPort, PublicSnapshotQueryV1, PublicSnapshotResultV1 } from "../contracts/query-job.js";
+ import type { LifecycleControlPort, ControlTimelineViewQuery, ControlTimelineViewResult, SubmitControlCommand, SubmitControlReceipt, RecordSafePointAckCommand, RecordSafePointAckReceipt } from "../contracts/control-intent.js";
+-import type { CompletedWorkContextPort, CompletedWorkContextRequestV1, CompletedWorkContextResultV1 } from "../contracts/completed-work-context.js";
++import type { CompletedWorkContextPort } from "../contracts/completed-work-context.js";
+ import { FakeContextContinuationRuntimeAdapter } from "../execution/worker-runtime/context-continuation-adapter.js";
+ import { ArchitectureReconcilerImpl } from "../control/architecture-reconciler/architecture-reconciler.js";
+ import { PlanCompilerImpl } from "../control/plan-compiler/plan-compiler.js";
+ import { PlanningContextCompilerImpl } from "../data/context-compiler/planning-context-compiler.js";
+-import type { PlanProposalPort, PlanningContextPort } from "../contracts/goal-change.js";
++
+ import { FakeWorkspaceReaderAdapter } from "../data/workspace-reader/workspace-reader-adapter.js";
+ import { CodeGraphPortImpl } from "../control/verification-engine/code-graph-port.js";
+ import type { InspectionPort, InspectResultV1, CodeGraphPort } from "../contracts/architecture-reconciler.js";
+ import type { WorkspaceReadPort, CodeGraphReadQueryV1, CodeGraphReadResultV1 } from "../contracts/workspace-read.js";
+ import type { ArchitectureInspectionViewQuery, ArchitectureInspectionViewResult, RecordArchitectureInspectionCommand, RecordArchitectureInspectionReceipt, RecordArchitectureFindingCommand, RecordArchitectureFindingReceipt, RecordArchitectureDecisionBriefCommand, RecordArchitectureDecisionBriefReceipt, RecordCandidateBaselineProposalCommand, RecordCandidateBaselineProposalReceipt, ArchitectureInspectionIntentV1 } from "../contracts/architecture-inspection.js";
+-import type { WorkContextPort, WorkContextRequestV1, WorkContextAssemblyResultV1 } from "../contracts/work-context-port.js";
++import type { WorkContextPort } from "../contracts/work-context-port.js";
+ import type { ContextContinuationPort } from "../contracts/context-continuation-port.js";
+ import type { WorkContextViewQuery, WorkContextViewResult, BindWorkContextCommand, BindWorkContextReceipt, LinkWorkRunCommand, LinkWorkRunReceipt, RecordExecutionNoteCommand, RecordExecutionNoteReceipt, RecordContinuationCommand, RecordContinuationReceipt } from "../contracts/context-continuity.js";
+ import { HandoffDriveEngineImpl } from "../control/dispatch-engine/handoff-drive.js";
+@@ -117,7 +118,7 @@ import { createDeterministicDeps, type InjectableDeps } from "../testing/sequenc
+ import { DETERMINISTIC_CHECK_PROVIDERS, FAKE_REVIEWER_PORT } from "../testing/check-providers.double.js";
+ import { VerificationEngineImpl } from "../control/verification-engine/verification-engine.js";
+ import { ReviewContextCompilerImpl } from "../data/context-compiler/review-context-compiler.js";
+-import { ReworkDriveEngine } from "../control/dispatch-engine/rework-drive.js";
++
+ import type { ReworkDrivePort, ReworkDriveRequestV1, ReworkDriveResultV1, ReworkDriveViewV1 } from '../contracts/rework/drive.js';
+ import type { ReworkIssueReadPort } from './rework-composition.js';
+ 
+@@ -172,8 +173,8 @@ export interface PersistentSqliteHarnessOptions {
+   codeGraph?: CodeGraphPort;
+   /** explicit InspectionPort (default ArchitectureReconcilerImpl). */
+   inspection?: InspectionPort;
+-  /** explicit PlanProposalPort (default PlanCompilerImpl). */
+-  planProposal?: PlanProposalPort;
++  /** amendment proposal entry (default PlanCompilerImpl). */
++  planProposal?: Pick<PlanCompilerPort, 'request'>;
+   /** explicit PlanningContextPort (default PlanningContextCompilerImpl). */
+   planningContext?: PlanningContextPort;
+   /**
+@@ -234,7 +235,7 @@ export interface PersistentSqliteHarness {
+   /** ArchitectureReconciler.InspectionPort seam. */
+   inspection: InspectionPort;
+   /** bounded PlanCompiler proposal port (default implementation). */
+-  planProposal: PlanProposalPort;
++  planProposal: Pick<PlanCompilerPort, 'request'>;
+   /** bounded planning-context port (default implementation). */
+   planningContext: PlanningContextPort;
+   /** 返工触发驱动（读未处置问题 → RW-03 编译 → RW-04 四条边界受理）。 */
+@@ -342,10 +343,6 @@ export interface PersistentSqliteHarness {
+   codeGraphQuery(query: import("../contracts/architecture-reconciler.js").CodeGraphQueryV1): Promise<import("../contracts/architecture-reconciler.js").CodeGraphResultV1>;
+   /** run one architecture inspection (pin-only baseline; fail closed). */
+   inspect(intent: ArchitectureInspectionIntentV1): Promise<InspectResultV1>;
+-  /** bounded work-context assembly. */
+-  assembleWorkContext(request: WorkContextRequestV1): Promise<WorkContextAssemblyResultV1>;
+-  /** bounded completed-work selection for a related new task. */
+-  assembleCompletedWorkContext(request: CompletedWorkContextRequestV1): Promise<CompletedWorkContextResultV1>;
+   /** submit one durable control intent (desired state first). */
+   submitControl(command: SubmitControlCommand): Promise<SubmitControlReceipt>;
+   /** record one safe-point acknowledgement. */
+@@ -360,24 +357,10 @@ export interface PersistentSqliteHarness {
+   recordQueryAnswer(command: RecordQueryAnswerCommand): Promise<RecordQueryAnswerReceipt>;
+   closeQueryJob(command: CloseQueryJobCommand): Promise<CloseQueryJobReceipt>;
+   queryJobView(query: QueryJobViewQuery): Promise<QueryJobViewResult>;
+-  /** assemble the bounded query context (never a transcript). */
+-  assembleQueryContext(request: QueryContextRequestV1): Promise<QueryContextResultV1>;
+   /** read the runtime public snapshot (explicit unsupported/stale). */
+   publicSnapshot(query: PublicSnapshotQueryV1): Promise<PublicSnapshotResultV1>;
+-  /** record one immutable plan-change proposal (Planner proposes only). */
+-  recordPlanChangeProposal(command: import("../contracts/goal-change.js").RecordPlanChangeProposalCommand): Promise<import("../contracts/goal-change.js").RecordPlanChangeProposalReceipt>;
+-  /** record one immutable user decision. */
+-  recordUserDecision(command: import("../contracts/goal-change.js").RecordUserDecisionCommand): Promise<import("../contracts/goal-change.js").RecordUserDecisionReceipt>;
+-  /** apply an ACCEPTED decision (CAS new revision + goal). */
+-  applyPlanChange(command: import("../contracts/goal-change.js").ApplyPlanChangeCommand): Promise<import("../contracts/goal-change.js").ApplyPlanChangeReceipt>;
+   /** plan-change view (display only). */
+   planChangeView(query: import("../contracts/goal-change.js").PlanChangeViewQuery): Promise<import("../contracts/goal-change.js").PlanChangeViewResult>;
+-  /** bounded proposal request (compiler port). */
+-  planProposalRequest(request: import("../contracts/goal-change.js").AmendGoalRequestV1): Promise<{ status: "proposal"; proposal: import("../contracts/goal-change.js").PlanProposalV1 } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
+-  /** bounded planning-context assembly. */
+-  assemblePlanningContext(request: { schemaVersion: 1; requestId: string; projectId: string; workspaceId: string; goalRef: import("../contracts/ledger.js").GoalRef; planRef: import("../contracts/plan.js").PlanRevisionRef | null; budget: { maxBundleBytes: number } }): Promise<{ status: "ready"; bundleRef: import("../contracts/artifact.js").ArtifactRef; manifest: { selectedSources: string[]; freshnessCursor: import("../contracts/command-event.js").CommitCursor | null; totalBytes: number } } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: "invalid_request" | "forbidden_tool_or_scope" | "unavailable"; message: string }>;
+-  /** HumanCollaboration goal-change face (amend compiles then records). */
+-  amend(request: import("../contracts/goal-change.js").AmendGoalRequestV1): Promise<{ status: "accepted"; proposalRef: import("../contracts/goal-change.js").PlanProposalSnapshot["ref"] } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
+   /** baseline evolution entries (candidate/decision/gate/activation) + view. */
+   materializeCandidateBaseline(command: import("../contracts/baseline-evolution.js").MaterializeCandidateBaselineCommand): Promise<import("../contracts/baseline-evolution.js").MaterializeCandidateBaselineReceipt>;
+   recordArchitectureChangeDecision(command: import("../contracts/baseline-evolution.js").RecordArchitectureChangeDecisionCommand): Promise<import("../contracts/baseline-evolution.js").RecordArchitectureChangeDecisionReceipt>;
+@@ -448,7 +431,7 @@ interface BuiltHarness {
+   workspaceReader: WorkspaceReadPort;
+   codeGraph: CodeGraphPort;
+   inspection: InspectionPort;
+-  planProposal: PlanProposalPort;
++  planProposal: Pick<PlanCompilerPort, 'request'>;
+   planningContext: PlanningContextPort;
+   reworkDrive: ReworkDrivePort;
+   readOnlyQuery: ReadOnlyQueryPort;
+@@ -485,7 +468,7 @@ function buildHarness(
+   const workspaceCapability: WorkspaceCapabilityPort =
+     workspaceCapabilityOverride ?? new ConfiguredWorkspaceCapabilityPolicy({ workspaceRead: true, workspaceWrite: true, maxWriteScope: null });
+   const control = new ControlEngineImpl({ ledger, now: d.clock, eventId: d.eventId, workspaceCapability });
+-  const planProposal: PlanProposalPort = planProposalOverride ?? new PlanCompilerImpl({ workIdentity: control, materials: new CoordinationContextCompiler({ ledger }), now: d.clock });
++  const planProposal: Pick<PlanCompilerPort, 'request'> = planProposalOverride ?? new PlanCompilerImpl({ workIdentity: control, materials: new CoordinationContextCompiler({ ledger }), now: d.clock });
+   const collaboration = new HumanCollaborationImpl({
+     control,
+     readModel,
+@@ -733,8 +716,6 @@ export async function createPersistentSqliteHarness(
+       linkWorkRun: (command) => built.control.linkWorkRun(command),
+       recordExecutionNote: (command) => built.control.recordExecutionNote(command),
+       recordContinuation: (command) => built.control.recordContinuation(command),
+-      assembleWorkContext: (request) => built.workContext.assembleWorkContext(request),
+-      assembleCompletedWorkContext: (request) => built.completedWork.assembleCompletedWorkContext(request),
+       submitControl: (command) => built.control.submitControl(command),
+       recordSafePointAck: (command) => built.control.recordSafePointAck(command),
+       controlTimelineView: (query) => built.readModel.controlTimelineView(query),
+@@ -744,13 +725,7 @@ export async function createPersistentSqliteHarness(
+       recordQueryAnswer: (command) => built.control.recordQueryAnswer(command),
+       closeQueryJob: (command) => built.control.closeQueryJob(command),
+       queryJobView: (query) => built.readModel.queryJobView(query),
+-    recordPlanChangeProposal: (command) => built.control.recordPlanChangeProposal(command),
+-    recordUserDecision: (command) => built.control.recordUserDecision(command),
+-    applyPlanChange: (command) => built.control.applyPlanChange(command),
+     planChangeView: (query) => built.readModel.planChangeView(query),
+-    planProposalRequest: (request) => built.planProposal.request(request),
+-    assemblePlanningContext: (request) => built.planningContext.assemblePlanningContext(request),
+-    amend: (request) => built.collaboration.amend(request),
+     installArchitectureEvolutionPolicy: (command) => built.control.installArchitectureEvolutionPolicy(command),
+     activateArchitectureEvolutionPolicy: (command) => built.control.activateArchitectureEvolutionPolicy(command),
+     submitRemediationPlanPatch: (command) => built.control.submitRemediationPlanPatch(command),
+@@ -766,7 +741,6 @@ export async function createPersistentSqliteHarness(
+     activateCoordinationPolicy: (command) => built.control.activateCoordinationPolicy(command),
+     unifiedStatusView: (query) => built.readModel.unifiedStatusView(query),
+     baselineChangeView: (query) => built.readModel.baselineChangeView(query),
+-      assembleQueryContext: (request) => built.queryContext.assembleQueryContext(request),
+       publicSnapshot: (query) => built.snapshot.snapshot(query),
+       continuationCapabilities: (request) => built.contextContinuation.capabilities(request),
+       assembleHandoff: (request) => built.handoffContext.assemble(request),
+diff --git a/src/harness/in-memory-harness.ts b/src/harness/in-memory-harness.ts
+index 985912b..af65848 100644
+--- a/src/harness/in-memory-harness.ts
++++ b/src/harness/in-memory-harness.ts
+@@ -1,3 +1,4 @@
++import type { PlanCompilerPort, PlanningContextPort } from '../contracts/planning.js';
+ import { composeReworkDrive } from './rework-composition.js';
+ import { ArchitectureContextCompiler } from '../data/context-compiler/architecture-context-compiler.js';
+ import { ControlPolicyExplanation } from '../control/control-engine/policy-explanation.js';
+@@ -96,9 +97,9 @@ import { CompletedWorkContextCompilerImpl } from "../data/context-compiler/compl
+ import { QueryContextCompilerImpl } from "../data/context-compiler/query-context-compiler.js";
+ import { FakeLifecycleControlAdapter } from "../execution/worker-runtime/lifecycle-control-adapter.js";
+ import { FakeReadOnlyQueryAdapter } from "../execution/worker-runtime/read-only-query-adapter.js";
+-import type { ReadOnlyQueryPort, QueryJobViewQuery, QueryJobViewResult, SubmitQueryJobCommand, SubmitQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, CloseQueryJobCommand, CloseQueryJobReceipt, QueryContextPort, QueryContextRequestV1, QueryContextResultV1, SnapshotPort, PublicSnapshotQueryV1, PublicSnapshotResultV1 } from "../contracts/query-job.js";
+-import type { LifecycleControlPort, ControlIntentRef, ControlTimelineViewQuery, ControlTimelineViewResult, SubmitControlCommand, SubmitControlReceipt, RecordSafePointAckCommand, RecordSafePointAckReceipt, ControlIntentPort } from "../contracts/control-intent.js";
+-import type { CompletedWorkContextPort, CompletedWorkContextRequestV1, CompletedWorkContextResultV1 } from "../contracts/completed-work-context.js";
++import type { ReadOnlyQueryPort, QueryJobViewQuery, QueryJobViewResult, SubmitQueryJobCommand, SubmitQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, CloseQueryJobCommand, CloseQueryJobReceipt, QueryContextPort, SnapshotPort, PublicSnapshotQueryV1, PublicSnapshotResultV1 } from "../contracts/query-job.js";
++import type { LifecycleControlPort, ControlTimelineViewQuery, ControlTimelineViewResult, SubmitControlCommand, SubmitControlReceipt, RecordSafePointAckCommand, RecordSafePointAckReceipt } from "../contracts/control-intent.js";
++import type { CompletedWorkContextPort } from "../contracts/completed-work-context.js";
+ import { FakeContextContinuationRuntimeAdapter } from "../execution/worker-runtime/context-continuation-adapter.js";
+ import { ArchitectureReconcilerImpl } from "../control/architecture-reconciler/architecture-reconciler.js";
+ import { FakeWorkspaceReaderAdapter } from "../data/workspace-reader/workspace-reader-adapter.js";
+@@ -106,13 +107,13 @@ import { CodeGraphPortImpl } from "../control/verification-engine/code-graph-por
+ import type { InspectionPort, InspectResultV1, CodeGraphPort } from "../contracts/architecture-reconciler.js";
+ import type { WorkspaceReadPort, CodeGraphReadQueryV1, CodeGraphReadResultV1 } from "../contracts/workspace-read.js";
+ import type { ArchitectureInspectionViewQuery, ArchitectureInspectionViewResult, RecordArchitectureInspectionCommand, RecordArchitectureInspectionReceipt, RecordArchitectureFindingCommand, RecordArchitectureFindingReceipt, RecordArchitectureDecisionBriefCommand, RecordArchitectureDecisionBriefReceipt, RecordCandidateBaselineProposalCommand, RecordCandidateBaselineProposalReceipt, ArchitectureInspectionIntentV1 } from "../contracts/architecture-inspection.js";
+-import type { WorkContextPort, WorkContextRequestV1, WorkContextAssemblyResultV1 } from "../contracts/work-context-port.js";
++import type { WorkContextPort } from "../contracts/work-context-port.js";
+ import type { ContextContinuationPort } from "../contracts/context-continuation-port.js";
+ import type { WorkContextViewQuery, WorkContextViewResult, BindWorkContextCommand, BindWorkContextReceipt, LinkWorkRunCommand, LinkWorkRunReceipt, RecordExecutionNoteCommand, RecordExecutionNoteReceipt, RecordContinuationCommand, RecordContinuationReceipt } from "../contracts/context-continuity.js";
+ import { PlanCompilerImpl } from "../control/plan-compiler/plan-compiler.js";
+ import { PlanningContextCompilerImpl } from "../data/context-compiler/planning-context-compiler.js";
+-import type { PlanProposalPort, PlanningContextPort } from "../contracts/goal-change.js";
+-import { ReworkDriveEngine } from "../control/dispatch-engine/rework-drive.js";
++
++
+ import type { ReworkDrivePort, ReworkDriveRequestV1, ReworkDriveResultV1, ReworkDriveViewV1 } from '../contracts/rework/drive.js';
+ import type { ReworkIssueReadPort } from './rework-composition.js';
+ 
+@@ -163,8 +164,8 @@ export interface InMemoryHarnessOptions {
+   codeGraph?: CodeGraphPort;
+   /** explicit InspectionPort (default ArchitectureReconcilerImpl). */
+   inspection?: InspectionPort;
+-  /** explicit PlanProposalPort (default PlanCompilerImpl). */
+-  planProposal?: PlanProposalPort;
++  /** amendment proposal entry (default PlanCompilerImpl). */
++  planProposal?: Pick<PlanCompilerPort, 'request'>;
+   /** explicit PlanningContextPort (default PlanningContextCompilerImpl). */
+   planningContext?: PlanningContextPort;
+   /**
+@@ -222,7 +223,7 @@ export interface InMemoryHarness {
+   /** ArchitectureReconciler.InspectionPort seam. */
+   inspection: InspectionPort;
+   /** bounded PlanCompiler proposal port (default implementation). */
+-  planProposal: PlanProposalPort;
++  planProposal: Pick<PlanCompilerPort, 'request'>;
+   /** bounded planning-context port (default implementation). */
+   planningContext: PlanningContextPort;
+   /** 返工触发驱动（读未处置问题 → RW-03 编译 → RW-04 四条边界受理）。 */
+@@ -325,10 +326,6 @@ export interface InMemoryHarness {
+   codeGraphQuery(query: import("../contracts/architecture-reconciler.js").CodeGraphQueryV1): Promise<import("../contracts/architecture-reconciler.js").CodeGraphResultV1>;
+   /** run one architecture inspection (pin-only baseline; fail closed). */
+   inspect(intent: ArchitectureInspectionIntentV1): Promise<InspectResultV1>;
+-  /** bounded work-context assembly. */
+-  assembleWorkContext(request: WorkContextRequestV1): Promise<WorkContextAssemblyResultV1>;
+-  /** bounded completed-work selection for a related new task. */
+-  assembleCompletedWorkContext(request: CompletedWorkContextRequestV1): Promise<CompletedWorkContextResultV1>;
+   /** submit one durable control intent (desired state first). */
+   submitControl(command: SubmitControlCommand): Promise<SubmitControlReceipt>;
+   /** record one safe-point acknowledgement. */
+@@ -343,24 +340,10 @@ export interface InMemoryHarness {
+   recordQueryAnswer(command: RecordQueryAnswerCommand): Promise<RecordQueryAnswerReceipt>;
+   closeQueryJob(command: CloseQueryJobCommand): Promise<CloseQueryJobReceipt>;
+   queryJobView(query: QueryJobViewQuery): Promise<QueryJobViewResult>;
+-  /** assemble the bounded query context (never a transcript). */
+-  assembleQueryContext(request: QueryContextRequestV1): Promise<QueryContextResultV1>;
+   /** read the runtime public snapshot (explicit unsupported/stale). */
+   publicSnapshot(query: PublicSnapshotQueryV1): Promise<PublicSnapshotResultV1>;
+-  /** record one immutable plan-change proposal (Planner proposes only). */
+-  recordPlanChangeProposal(command: import("../contracts/goal-change.js").RecordPlanChangeProposalCommand): Promise<import("../contracts/goal-change.js").RecordPlanChangeProposalReceipt>;
+-  /** record one immutable user decision. */
+-  recordUserDecision(command: import("../contracts/goal-change.js").RecordUserDecisionCommand): Promise<import("../contracts/goal-change.js").RecordUserDecisionReceipt>;
+-  /** apply an ACCEPTED decision (CAS new revision + goal). */
+-  applyPlanChange(command: import("../contracts/goal-change.js").ApplyPlanChangeCommand): Promise<import("../contracts/goal-change.js").ApplyPlanChangeReceipt>;
+   /** plan-change view (display only). */
+   planChangeView(query: import("../contracts/goal-change.js").PlanChangeViewQuery): Promise<import("../contracts/goal-change.js").PlanChangeViewResult>;
+-  /** bounded proposal request (compiler port). */
+-  planProposalRequest(request: import("../contracts/goal-change.js").AmendGoalRequestV1): Promise<{ status: "proposal"; proposal: import("../contracts/goal-change.js").PlanProposalV1 } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
+-  /** bounded planning-context assembly. */
+-  assemblePlanningContext(request: { schemaVersion: 1; requestId: string; projectId: string; workspaceId: string; goalRef: import("../contracts/ledger.js").GoalRef; planRef: import("../contracts/plan.js").PlanRevisionRef | null; budget: { maxBundleBytes: number } }): Promise<{ status: "ready"; bundleRef: import("../contracts/artifact.js").ArtifactRef; manifest: { selectedSources: string[]; freshnessCursor: import("../contracts/command-event.js").CommitCursor | null; totalBytes: number } } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: "invalid_request" | "forbidden_tool_or_scope" | "unavailable"; message: string }>;
+-  /** HumanCollaboration goal-change face (amend compiles then records). */
+-  amend(request: import("../contracts/goal-change.js").AmendGoalRequestV1): Promise<{ status: "accepted"; proposalRef: import("../contracts/goal-change.js").PlanProposalSnapshot["ref"] } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
+   /** baseline evolution entries (candidate/decision/gate/activation) + view. */
+   materializeCandidateBaseline(command: import("../contracts/baseline-evolution.js").MaterializeCandidateBaselineCommand): Promise<import("../contracts/baseline-evolution.js").MaterializeCandidateBaselineReceipt>;
+   recordArchitectureChangeDecision(command: import("../contracts/baseline-evolution.js").RecordArchitectureChangeDecisionCommand): Promise<import("../contracts/baseline-evolution.js").RecordArchitectureChangeDecisionReceipt>;
+@@ -416,7 +399,7 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
+     workspaceCapability,
+   });
+   const readModel = new ReadModelIndexImpl(new ControlPolicyExplanation());
+-  const planProposal: PlanProposalPort = options.planProposal ?? new PlanCompilerImpl({ workIdentity: control, materials: new CoordinationContextCompiler({ ledger }), now: d.clock });
++  const planProposal: Pick<PlanCompilerPort, 'request'> = options.planProposal ?? new PlanCompilerImpl({ workIdentity: control, materials: new CoordinationContextCompiler({ ledger }), now: d.clock });
+   const collaboration = new HumanCollaborationImpl({
+     control,
+     readModel,
+@@ -610,8 +593,6 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
+     linkWorkRun: (command) => control.linkWorkRun(command),
+     recordExecutionNote: (command) => control.recordExecutionNote(command),
+     recordContinuation: (command) => control.recordContinuation(command),
+-    assembleWorkContext: (request) => workContext.assembleWorkContext(request),
+-    assembleCompletedWorkContext: (request) => completedWork.assembleCompletedWorkContext(request),
+     submitControl: (command) => control.submitControl(command),
+     recordSafePointAck: (command) => control.recordSafePointAck(command),
+     controlTimelineView: (query) => readModel.controlTimelineView(query),
+@@ -621,15 +602,8 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
+     recordQueryAnswer: (command) => control.recordQueryAnswer(command),
+     closeQueryJob: (command) => control.closeQueryJob(command),
+     queryJobView: (query) => readModel.queryJobView(query),
+-    assembleQueryContext: (request) => queryContext.assembleQueryContext(request),
+     publicSnapshot: (query) => snapshot.snapshot(query),
+-    recordPlanChangeProposal: (command) => control.recordPlanChangeProposal(command),
+-    recordUserDecision: (command) => control.recordUserDecision(command),
+-    applyPlanChange: (command) => control.applyPlanChange(command),
+     planChangeView: (query) => readModel.planChangeView(query),
+-    planProposalRequest: (request) => planProposal.request(request),
+-    assemblePlanningContext: (request) => planningContext.assemblePlanningContext(request),
+-    amend: (request) => collaboration.amend(request),
+     installArchitectureEvolutionPolicy: (command) => control.installArchitectureEvolutionPolicy(command),
+     activateArchitectureEvolutionPolicy: (command) => control.activateArchitectureEvolutionPolicy(command),
+     submitRemediationPlanPatch: (command) => control.submitRemediationPlanPatch(command),
+diff --git a/src/data/context-compiler/planning-context-compiler.ts b/src/data/context-compiler/planning-context-compiler.ts
+index 5b0bf84..9e309a3 100644
+--- a/src/data/context-compiler/planning-context-compiler.ts
++++ b/src/data/context-compiler/planning-context-compiler.ts
+@@ -4,11 +4,11 @@
+  * the task compiler. Preserve manifest provenance and needs_material; map rejection
+  * codes to the planning protocol. The result is material for proposal construction.
+  */
+-import type { PlanningContextPort } from "../../contracts/goal-change.js";
+-import type { StateLedger, GoalRef, WorkspaceSnapshot } from "../../contracts/ledger.js";
++import type { PlanningContextPort, PlanningContextRequest, PlanningContextResult, PlanningContextRejectionCode } from "../../contracts/planning.js";
++import type { StateLedger, WorkspaceSnapshot } from "../../contracts/ledger.js";
+ import type { ArtifactPort } from "../../contracts/artifact.js";
+ import type { TaskContextPort, TaskContextRequestV1 } from "../../contracts/task-envelope.js";
+-import type { PlanRevisionRef } from "../../contracts/plan.js";
++
+ import type { ReadModelIndex } from "../../contracts/goal-view.js";
+ 
+ export type PlanningContextCompilerDeps = {
+@@ -19,32 +19,7 @@ export type PlanningContextCompilerDeps = {
+   now: () => string;
+ };
+ 
+-export type PlanningContextRequest = {
+-  schemaVersion: 1;
+-  requestId: string;
+-  projectId: string;
+-  workspaceId: string;
+-  goalRef: GoalRef;
+-  planRef: PlanRevisionRef | null;
+-  budget: { maxBundleBytes: number };
+-};
+-
+-export type PlanningContextRejectionCode = "invalid_request" | "forbidden_tool_or_scope" | "unavailable";
+-
+-export type PlanningContextResult =
+-  | {
+-      status: "ready";
+-      bundleRef: import("../../contracts/artifact.js").ArtifactRef;
+-      manifest: {
+-        selectedSources: string[];
+-        freshnessCursor: import("../../contracts/command-event.js").CommitCursor | null;
+-        totalBytes: number;
+-      };
+-    }
+-  | { status: "needs_material"; gaps: string[] }
+-  | { status: "rejected"; code: PlanningContextRejectionCode; message: string };
+-
+-/** LANE-B implementation (ctor deps frozen; never starts a model; no canonical write). */
++/** Task-context adaptation with planning-specific material gaps and size limits. */
+ export class PlanningContextCompilerImpl implements PlanningContextPort {
+   private readonly deps: PlanningContextCompilerDeps;
+   constructor(deps: PlanningContextCompilerDeps) {
+diff --git a/src/control/plan-compiler/rework-proposal.ts b/src/control/plan-compiler/rework-proposal.ts
+index 28449a2..75b20c8 100644
+--- a/src/control/plan-compiler/rework-proposal.ts
++++ b/src/control/plan-compiler/rework-proposal.ts
+@@ -4,7 +4,7 @@ import type { AcceptanceObligation, PlanRevisionSnapshot, PlanTaskAssignment, Ru
+ import type { ChangeImpactAnalysisV1, PlanPatchV1, PlanTaskSetDeltaV1 } from '../../contracts/goal-change.js';
+ import { PLAN_CHANGE_MAX_AFFECTED_WORKS, PLAN_CHANGE_MAX_INSTRUCTION_BYTES } from '../../contracts/goal-change.js';
+ import { reworkIssueFactFor, type ReworkIssueViewV1 } from '../../contracts/rework/issues.js';
+-import { reworkPlanIdFor, reworkProposalIdFor, type ReworkCompileRequestV1, type ReworkPlanDraftV1, type ReworkProposalTaskV1, type ReworkProposalV1 } from '../../contracts/rework/proposal.js';
++import { reworkPlanIdFor, reworkProposalIdFor, type ReworkCompileRequestV1, type ReworkProposalTaskV1, type ReworkProposalV1 } from '../../contracts/rework/proposal.js';
+ import { planningWorkRef, planningWorkGaps } from './planning-work-materials.js';
+ import { deriveExpectedTaskGraph, deriveObligationSet, deriveTaskAssignments, deriveTaskSet } from '../control-engine/policies/goal-change-consistency.js';
+ const REWORK_SUMMARY_MAX_REQUIREMENTS_PER_ISSUE = 8;
+@@ -263,7 +263,7 @@ export function buildProposal(
+   // 执行 DAG 与层级的重指：调用下沉后的**唯一权威函数**（与守卫 f2 同一个），本文件不再自己实现。
+   const graph = deriveExpectedTaskGraph(sourcePlan, derived.replacedBy);
+ 
+-  const planDraft: ReworkPlanDraftV1 = {
++  const planDraft: ReworkProposalV1['planDraft'] = {
+     planId,
+     planRevision: sourcePlan.planRevision + 1,
+     // 目标正文逐字沿用：返工不改变目标含义，也不能借返工改验收。
+diff --git a/src/control/plan-compiler/plan-compiler.ts b/src/control/plan-compiler/plan-compiler.ts
+index 7c6f191..21ae2d0 100644
+--- a/src/control/plan-compiler/plan-compiler.ts
++++ b/src/control/plan-compiler/plan-compiler.ts
+@@ -8,7 +8,7 @@ import type {
+ } from "../../contracts/goal-change.js";
+ import { PLAN_CHANGE_MAX_OBLIGATION_DELTAS } from "../../contracts/goal-change.js";
+ import type { GoalSnapshot } from "../../contracts/ledger.js";
+-import type { PlanCompilerPort, PlanningMaterialPort, InitialPlanningRequest, InitialPlanningRequestResult, PlanningAcceptanceTrigger, PlanningAcceptanceReport } from '../../contracts/planning.js';
++import type { PlanCompilerPort, PlanProposalResult, PlanningMaterialPort, InitialPlanningRequest, InitialPlanningRequestResult, PlanningAcceptanceTrigger, PlanningAcceptanceReport } from '../../contracts/planning.js';
+ import { InitialPlanCompiler, type InitialPlanningControl } from './initial-plan-compiler.js';
+ import type { PlanRevisionSnapshot } from "../../contracts/plan.js";
+ import type { WorkContextRef } from "../../contracts/context-continuity.js";
+@@ -23,11 +23,6 @@ export type PlanCompilerDeps = {
+   now: () => string;
+ };
+ 
+-export type PlanProposalResult =
+-  | { status: "proposal"; proposal: PlanProposalV1 }
+-  | { status: "needs_material"; gaps: string[] }
+-  | { status: "rejected"; code: string; message: string };
+-
+ /** Module entry: bounded amendment proposals and durable initial coordination. */
+ export class PlanCompilerImpl implements PlanCompilerPort {
+   private readonly deps: PlanCompilerDeps;
+@@ -37,12 +32,14 @@ export class PlanCompilerImpl implements PlanCompilerPort {
+     this.initial = deps.control ? new InitialPlanCompiler(deps.control, deps.materials, deps.now) : undefined;
+   }
+ 
+-  request(intent: AmendGoalRequestV1): Promise<PlanProposalResult>;
+-  request(intent: InitialPlanningRequest): Promise<InitialPlanningRequestResult>;
+-  async request(intent: AmendGoalRequestV1 | InitialPlanningRequest): Promise<PlanProposalResult | InitialPlanningRequestResult> {
++  async requestInitial(intent: InitialPlanningRequest): Promise<InitialPlanningRequestResult> {
+     if (!intent || typeof intent !== 'object') return { status: 'rejected', code: 'invalid_request', message: 'planning intent is required' };
+-    if ('kind' in intent && intent.kind === 'initial') return this.initial?.request(intent) ?? { status: 'rejected', code: 'unavailable', message: 'initial coordination is not configured' };
+-    const amendment = intent as AmendGoalRequestV1;
++    if (intent.kind !== 'initial') return { status: 'rejected', code: 'invalid_request', message: 'initial planning kind is required' };
++    return this.initial?.request(intent) ?? { status: 'rejected', code: 'unavailable', message: 'initial coordination is not configured' };
++  }
++
++  async request(amendment: AmendGoalRequestV1): Promise<PlanProposalResult> {
++    if (!amendment || typeof amendment !== 'object') return { status: 'rejected', code: 'invalid_request', message: 'planning intent is required' };
+     // 1) Bounded intent validation (zero-write).
+     const invalid = validateAmendIntent(amendment);
+     if (invalid !== null) {
+diff --git a/src/contracts/work-context-port.ts b/src/contracts/work-context-port.ts
+index 0aa82e2..153f614 100644
+--- a/src/contracts/work-context-port.ts
++++ b/src/contracts/work-context-port.ts
+@@ -1,6 +1,5 @@
+ /**
+- * P1-16 ContextCompiler.WorkContextPort — bounded work-context assembly
+- * (first consumer freeze of ContextCompiler.WorkContextPort).
++ * ContextCompiler.WorkContextPort — bounded work-context assembly
+  *
+  * Authority: dev_docs/interfaces/context-lifecycle.md (ContextCompiler 按当前
+  * 工作、权限、版本和预算选取材料；manifest 列出来源、缺失、截断和适用性；
+@@ -104,7 +103,7 @@ export type WorkContextManifestV1 = {
+   totalBytes: number;
+ };
+ 
+-/** ContextCompiler.WorkContextPort — bounded assembly (interfaces_to_freeze). */
++/** ContextCompiler.WorkContextPort — bounded assembly. */
+ export interface WorkContextPort {
+   assembleWorkContext(request: WorkContextRequestV1): Promise<WorkContextAssemblyResultV1>;
+ }
+diff --git a/src/contracts/rework/proposal.ts b/src/contracts/rework/proposal.ts
+index e41c7e7..85f6893 100644
+--- a/src/contracts/rework/proposal.ts
++++ b/src/contracts/rework/proposal.ts
+@@ -1,6 +1,6 @@
+ /** PlanCompiler proposals reuse PlanRevision and the existing Control admission chain. Old failures and obligations remain. */
+ import type { GoalRef } from '../ledger.js';
+-import type { AcceptanceObligation, PlanRevisionRef, PlanRevisionSnapshot, PlanStage, PlanTaskAssignment, RuntimeExecutionDAG, RuntimeTask, TaskHierarchy } from '../plan.js';
++import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '../plan.js';
+ import type { PlanProposalV1 } from '../goal-change.js';
+ import { canonicalJson, sha256Hex } from '../fingerprint.js';
+ import { REWORK_MAX_ISSUES } from './issues.js';
+@@ -30,7 +30,9 @@ export function reworkTaskIdFor(issueId: string): string {
+  */
+ export type ReworkProposalV1 = PlanProposalV1 & {
+   rework: ReworkProposalOriginV1;
+-  planDraft: ReworkPlanDraftV1;
++  /** Complete plan content; rework must include tasks and assignments. Control
++   * re-derives them before admission. Ordinary amendments retain nullable defaults. */
++  planDraft: Required<Pick<PlanRevisionDraft, 'planId' | 'planRevision' | 'stages' | 'tasks' | 'assignments' | 'taskHierarchy' | 'executionDag' | 'obligations'>> & { objective: string };
+   /** 人类可读摘要：处置了哪些问题、哪条要求失败、为什么失败（引用失败事实，不重新判定）。 */
+   summary: string;
+ };
+@@ -69,31 +71,7 @@ export type ReworkProposalTaskV1 = {
+   reason: string;
+ };
+ 
+-/**
+- * applyPlanChange 消费的草稿形状（与 ApplyPlanChangeCommand.payload.newPlanDraft 一致）。
+- * 这里显式重复声明而不是引用命令类型，是为了让「提案内容」与「提交命令」保持可分辨：
+- * 命令还可以由别的来源构造，而本类型只描述返工推导出的计划。
+- *
+- * 返工要新增／取代任务，因此草稿必须带上
+- * 「源任务集 + 任务集增量」的完整推导结果，而不是让 Control 侧再推导一次。
+- * assignments 同样随草稿给出：新增任务与其指派必须同属一个 revision。
+- */
+-export type ReworkPlanDraftV1 = {
+-  planId: string;
+-  planRevision: number;
+-  objective: string;
+-  stages: PlanStage[];
+-  tasks: RuntimeTask[];
+-  /**
+-   * 新 revision 的指派集合 = 「源 revision 的指派（顺序不变）+ 本提案新增任务的
+-   * assignment」。它随草稿一起提交，因此返工任务在**受理当刻**就带着「谁按什么指令承担」，
+-   * 派发无需再去旧版本查找指派。
+-   */
+-  assignments: PlanTaskAssignment[];
+-  taskHierarchy: TaskHierarchy;
+-  executionDag: RuntimeExecutionDAG;
+-  obligations: AcceptanceObligation[];
+-};
++
+ 
+ /**
+  * 返工提案的编译输入。三项都必须是调用方已经持有的 canonical 事实：
+diff --git a/src/contracts/planning.ts b/src/contracts/planning.ts
+index 74ee498..de7a9f6 100644
+--- a/src/contracts/planning.ts
++++ b/src/contracts/planning.ts
+@@ -1,5 +1,5 @@
+-import type { AmendGoalRequestV1, PlanProposalPort } from './goal-change.js';
+-import type { GoalSnapshot } from './ledger.js';
++import type { AmendGoalRequestV1, PlanProposalV1 } from './goal-change.js';
++import type { GoalRef, GoalSnapshot } from './ledger.js';
+ import type { PlanRevisionRef, PlanRevisionSnapshot } from './plan.js';
+ import type { QueryJobAnswerRef, QueryJobAnswerV1, QueryJobSnapshot, SubmitQueryJobReceipt } from './query-job.js';
+ import type { AcceptedInitialPlan } from './initial-planning.js';
+@@ -21,12 +21,19 @@ export type PlanningAcceptanceReport = {
+   issues: { resultRef: QueryJobAnswerRef; message: string }[];
+ } | PlanningRejection;
+ 
++export type PlanProposalResult =
++  | { status: 'proposal'; proposal: PlanProposalV1 }
++  | { status: 'needs_material'; gaps: string[] }
++  | PlanningRejection;
++
+ /** Existing amendment requests and durable initial coordination share one module.
+  * accept discovers persisted results; callers never traverse private workflow state.
+  * It requests admission from Control and never starts an implementation run. */
+-export interface PlanCompilerPort extends PlanProposalPort {
+-  request(intent: AmendGoalRequestV1): ReturnType<PlanProposalPort['request']>;
+-  request(intent: InitialPlanningRequest): Promise<InitialPlanningRequestResult>;
++export interface PlanCompilerPort {
++  /** Bounded amendment proposal; no Control write. */
++  request(intent: AmendGoalRequestV1): Promise<PlanProposalResult>;
++  /** Persist a read-only initial-coordination request through Control. */
++  requestInitial(intent: InitialPlanningRequest): Promise<InitialPlanningRequestResult>;
+   accept(trigger: PlanningAcceptanceTrigger): Promise<PlanningAcceptanceReport>;
+ }
+ 
+@@ -58,3 +65,34 @@ export type PlanningTaskWorkMaterial = {
+   | { status: 'absent' }
+   | { status: 'unavailable'; reason: string }
+ );
++
++export type PlanningContextRequest = {
++  schemaVersion: 1;
++  requestId: string;
++  projectId: string;
++  workspaceId: string;
++  goalRef: GoalRef;
++  planRef: PlanRevisionRef | null;
++  budget: { maxBundleBytes: number };
++};
++
++export type PlanningContextRejectionCode = "invalid_request" | "forbidden_tool_or_scope" | "unavailable";
++
++export type PlanningContextResult =
++  | {
++      status: "ready";
++      bundleRef: import("./artifact.js").ArtifactRef;
++      manifest: {
++        selectedSources: string[];
++        freshnessCursor: import("./command-event.js").CommitCursor | null;
++        totalBytes: number;
++      };
++    }
++  | { status: "needs_material"; gaps: string[] }
++  | { status: "rejected"; code: PlanningContextRejectionCode; message: string };
++
++
++/** Bounded planning material. This compiles sources; it does not run an Agent. */
++export interface PlanningContextPort {
++  assemblePlanningContext(request: PlanningContextRequest): Promise<PlanningContextResult>;
++}
+diff --git a/src/contracts/goal-change.ts b/src/contracts/goal-change.ts
+index ea476fd..3356c2f 100644
+--- a/src/contracts/goal-change.ts
++++ b/src/contracts/goal-change.ts
+@@ -1,3 +1,4 @@
++import type { PlanRevisionDraft } from './plan.js';
+ /**
+  * Bounded goal amendments, plan proposals, patches, impact and decision records.
+  * PlanCompiler proposes; Control accepts against canonical scope and revision.
+@@ -7,7 +8,7 @@
+  */
+ import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
+ import { canonicalJson, sha256Hex } from "./fingerprint.js";
+-import type { PlanRevisionRef, AcceptanceObligation, TaskHierarchy, PlanStage, RuntimeExecutionDAG } from "./plan.js";
++import type { PlanRevisionRef, TaskHierarchy } from "./plan.js";
+ import type { GoalRef } from "./ledger.js";
+ import type { WorkContextRef } from "./context-continuity.js";
+ 
+@@ -320,27 +321,16 @@ export type ApplyPlanChangeCommand = {
+     decisionRef: { aggregateType: "UserDecision"; projectId: string; workspaceId: string; decisionId: string };
+     proposalRef: { aggregateType: "PlanProposal"; projectId: string; workspaceId: string; proposalId: string };
+     /** The NEW PlanRevision draft (P1-02 guards re-run on it). */
+-    newPlanDraft: {
+-      planId: string;
+-      planRevision: number;
++    newPlanDraft: (Pick<PlanRevisionDraft, 'planId' | 'planRevision' | 'obligations'> & {
+       objective: string;
+-      stages: PlanStage[] | null;
+-      taskHierarchy: TaskHierarchy | null;
+-      executionDag: RuntimeExecutionDAG | null;
+-      obligations: AcceptanceObligation[];
+-      /**
+-       * 新 revision 的任务集。它不是“自由草稿”：applyPlanChange 会用源 revision 任务集加
+-       * 提案的 taskSetDelta 重新推导一遍并逐项比对，不一致即 draft_mismatch。
+-       * 缺省（未提供）时保持原有行为：任务集继承自源 revision。
+-       */
+-      tasks?: import("./plan.js").RuntimeTask[];
+-      /**
+-       * 新 revision 的指派集合。它与 tasks 一样不是自由草稿：applyPlanChange 会用
+-       * 「源 revision 的指派 + 增量的 assignment」重新推导并逐项比对，不一致即 draft_mismatch。
+-       * null／缺省表示本次变更不改动指派集合（沿用源 revision），与 tasks 的既有约定一致。
+-       */
+-      assignments?: import("./plan.js").PlanTaskAssignment[] | null;
+-    } | null;
++      stages: PlanRevisionDraft['stages'] | null;
++      taskHierarchy: PlanRevisionDraft['taskHierarchy'] | null;
++      executionDag: PlanRevisionDraft['executionDag'] | null;
++      /** Omission inherits source tasks; supplied tasks must match the accepted delta. */
++      tasks?: PlanRevisionDraft['tasks'];
++      /** Null/omission inherits source assignments; supplied values are re-derived and checked. */
++      assignments?: NonNullable<PlanRevisionDraft['assignments']> | null;
++    }) | null;
+     changeReason: string;
+   };
+ };
+@@ -368,23 +358,7 @@ export type ApplyPlanChangeReceipt =
+   | { status: "rejected"; commandId: string; code: ApplyPlanChangeRejectionCode; issues?: string[] };
+ 
+ // ------------------------------------------------------------------------ //
+-// Ports (interfaces_to_freeze)                                              //
+-// ------------------------------------------------------------------------ //
+-
+-export interface PlanProposalPort {
+-  /** Deterministic bounded proposal + impact analysis (never mutates). */
+-  request(intent: AmendGoalRequestV1): Promise<{ status: "proposal"; proposal: PlanProposalV1 } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }>;
+-}
+-
+-export interface PlanningContextPort {
+-  assemblePlanningContext(request: { schemaVersion: 1; requestId: string; projectId: string; workspaceId: string; goalRef: GoalRef; planRef: PlanRevisionRef | null; budget: { maxBundleBytes: number } }): Promise<
+-    | { status: "ready"; bundleRef: import("./artifact.js").ArtifactRef; manifest: { selectedSources: string[]; freshnessCursor: CommitCursor | null; totalBytes: number } }
+-    | { status: "needs_material"; gaps: string[] }
+-    | { status: "rejected"; code: "invalid_request" | "forbidden_tool_or_scope" | "unavailable"; message: string }
+-  >;
+-}
+-// ------------------------------------------------------------------------ //
+-// Pure helpers (P1-11 frozen): digest / target / consistency / dispositions //
++// Pure helpers: digest / target / consistency / dispositions //
+ // — deterministic, no state access, no writes.                              //
+ // ------------------------------------------------------------------------ //
+ 
+@@ -448,4 +422,3 @@ export type PlanChangeViewResult =
+       freshness: CommitCursor | null;
+     }
+   | { status: "not_found" };
+-
+diff --git a/src/app/initial-planning.ts b/src/app/initial-planning.ts
+index da06480..67c1e64 100644
+--- a/src/app/initial-planning.ts
++++ b/src/app/initial-planning.ts
+@@ -5,7 +5,7 @@ export class InitialPlanning {
+   constructor(private readonly compiler: PlanCompilerPort, private readonly dispatch: { drivePending(): Promise<unknown> },
+     private readonly views: InitialPlanningView, private readonly driveQueries: () => Promise<unknown>) {}
+   async submit(scope: PlanningScope, input: Record<string, unknown>, referenceContext = '') {
+-    const result = await this.compiler.request({ schemaVersion: 1, kind: 'initial', scope, input, referenceContext });
++    const result = await this.compiler.requestInitial({ schemaVersion: 1, kind: 'initial', scope, input, referenceContext });
+     if (result.status === 'rejected') throw Error(result.message);
+     return result.submission;
+   }

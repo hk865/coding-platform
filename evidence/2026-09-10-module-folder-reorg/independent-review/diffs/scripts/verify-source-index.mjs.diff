@@ -1,0 +1,16 @@
+diff --git a/evidence/2026-09-10-module-folder-reorg/independent-review/before/scripts/verify-source-index.mjs b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/scripts/verify-source-index.mjs
+index a04421c..9d74fa2 100644
+--- a/evidence/2026-09-10-module-folder-reorg/independent-review/before/scripts/verify-source-index.mjs
++++ b/evidence/2026-09-10-module-folder-reorg/independent-review/reconstructed/scripts/verify-source-index.mjs
+@@ -1,9 +1,9 @@
+-import { SourceIndex } from '../dist/data/source-index.js';
++import { SourceIndex } from '../dist/data/workspace-reader/source-index.js';
+ import { WorkspaceSandbox } from '../vendor/coding-agent/dist/public-api.js';
+ import assert from 'node:assert/strict';
+ 
+ const workspace = await WorkspaceSandbox.create(process.cwd(), { deniedPrefixes: ['.git', '.env', '.evaluator', '.oracle'] });
+-const paths = ['src/runtime/exploration-tools.ts', 'src/data/source-index.ts'];
++const paths = ['src/execution/worker-runtime/exploration-tools.ts', 'src/data/workspace-reader/source-index.ts'];
+ const index = new SourceIndex({ read: (p, bytes) => workspace.read(p, bytes), allowed: p => paths.includes(p) });
+ const source = await workspace.read(paths[0], 256 * 1024);
+ const prefix = source.content.slice(0, source.content.indexOf('new SourceIndex') + 4);

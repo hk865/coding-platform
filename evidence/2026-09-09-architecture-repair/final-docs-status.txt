@@ -1,0 +1,539 @@
+ M AGENTS.md
+ M ARCHITECTURE.md
+ M README.md
+ M dev_docs/agent/README.md
+ M dev_docs/agent/project-location.md
+ M dev_docs/archive/INDEX.md
+ M dev_docs/design/context-lifecycle-human-review.md
+ M dev_docs/design/human-framework-role-review.md
+ M dev_docs/document-ownership.md
+ M dev_docs/interfaces/context-lifecycle.md
+ M dev_docs/interfaces/human-design-status.md
+ M dev_docs/interfaces/runtime-collaboration.md
+ M dev_docs/modules/control/architecture-reconciler.md
+ M dev_docs/modules/control/control-engine.md
+ M dev_docs/modules/control/dispatch-engine.md
+ M dev_docs/modules/control/plan-compiler.md
+ M dev_docs/modules/control/verification-engine.md
+ M dev_docs/modules/data/artifact-vault.md
+ M dev_docs/modules/data/context-compiler.md
+ M dev_docs/modules/data/read-model-index.md
+ M dev_docs/modules/data/state-ledger.md
+ M dev_docs/modules/data/workspace-reader.md
+ M dev_docs/modules/execution/worker-runtime.md
+ M dev_docs/modules/interaction/human-collaboration.md
+ M dev_docs/planning/ROADMAP.md
+ M dev_docs/planning/active/P0/tickets/01-archive-source.md
+ M dev_docs/planning/active/P0/tickets/02-rewrite-maps.md
+ M dev_docs/planning/active/P0/tickets/03-module-dag.md
+ M dev_docs/planning/active/P0/tickets/04-first-slice-contracts.md
+ M dev_docs/planning/active/P0/tickets/05-proposed-build-dag.md
+ M dev_docs/planning/active/P0/tickets/06-user-review.md
+ M dev_docs/planning/proposed/P1-foundation/DAG.md
+ M dev_docs/planning/proposed/P1-foundation/tickets/00-contract-pack.md
+ M dev_docs/planning/proposed/P1-foundation/tickets/03-fake-run-visible.md
+ M dev_docs/verification/2026-09-06-context-lifecycle-human-review.md
+ M dev_docs/verification/2026-09-06-context-orchestration-sync.md
+ M dev_docs/verification/2026-09-07-p1-13-baseline-plan.md
+ M dev_docs/verification/2026-09-07-p1-14-baseline-plan.md
+ M dev_docs/verification/consultant-p109-query-run-path.md
+ M dev_docs/verification/control-context-query-dialogue-review.md
+ M dev_docs/verification/data-context-coordination-review.md
+ M dev_docs/verification/document-convergence.md
+ M dev_docs/verification/document-ownership-split.md
+ M dev_docs/verification/g1-foundation-evidence.md
+ M dev_docs/verification/g2-continuity-evidence.md
+ M dev_docs/verification/g3-gate-evidence.md
+ M dev_docs/verification/g4-gate-evidence.md
+ M dev_docs/verification/g5-gate-evidence.md
+ M dev_docs/verification/memory-role-template-review.md
+ M dev_docs/verification/mvp-review.md
+ M dev_docs/verification/p0-documentation-evidence.md
+ M dev_docs/verification/p1-00-implementation-evidence.md
+ M dev_docs/verification/p1-01-implementation-evidence.md
+ M dev_docs/verification/p1-02-implementation-evidence.md
+ M dev_docs/verification/p1-03-implementation-evidence.md
+ M dev_docs/verification/p1-04-implementation-evidence.md
+ M dev_docs/verification/p1-05-implementation-evidence.md
+ M dev_docs/verification/p1-06-implementation-evidence.md
+ M dev_docs/verification/p1-07-implementation-evidence.md
+ M dev_docs/verification/p1-08-implementation-evidence.md
+ M dev_docs/verification/p1-09-implementation-evidence.md
+ M dev_docs/verification/p1-10-implementation-evidence.md
+ M dev_docs/verification/p1-11-implementation-evidence.md
+ M dev_docs/verification/p1-12-implementation-evidence.md
+ M dev_docs/verification/p1-13-implementation-evidence.md
+ M dev_docs/verification/p1-14-implementation-evidence.md
+ M dev_docs/verification/p1-15-implementation-evidence.md
+ M dev_docs/verification/p1-16-implementation-evidence.md
+ M dev_docs/verification/p1-17-implementation-evidence.md
+ M dev_docs/verification/product-architecture-review-2026-09-05.md
+ M dev_docs/verification/project-location-confirmation.md
+ M dev_docs/verification/reconciliation-2026-09-06-p1-00-06-vs-docs.md
+ M dev_docs/verification/runtime-collaboration-impact.md
+ M human/README.md
+?? dev_docs/agent/module-completion-prompt.md
+?? dev_docs/agent/ui-implementation-prompt.md
+?? dev_docs/archive/2026-09-08-before-module-audit/ARCHIVE-NOTE.md
+?? dev_docs/archive/2026-09-08-before-module-audit/entry-snapshots/AGENTS.md
+?? dev_docs/archive/2026-09-08-before-module-audit/entry-snapshots/README.md
+?? dev_docs/archive/2026-09-08-before-module-audit/entry-snapshots/human/README.md
+?? dev_docs/archive/2026-09-08-before-module-audit/human/capability-completion-path.md
+?? dev_docs/archive/2026-09-08-before-module-audit/human/current-capabilities.md
+?? dev_docs/archive/2026-09-08-before-module-audit/product/AGENTS.md
+?? dev_docs/archive/2026-09-08-before-module-audit/product/IMPLEMENTATION-HANDOFF.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-06-context-lifecycle-human-review.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-06-context-orchestration-sync.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-07-chat-workspace.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-07-coding-agent-vendoring.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-07-local-gui.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-07-multi-agent-test-task-sync.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-07-p1-13-baseline-plan.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-07-p1-14-baseline-plan.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-07-real-agent-test-task-sync.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-07-review-fixes.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-07-ui-feedback-swepro-preflight.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-07-workspace-tools.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-capability-completion-audit/CAP-01-result.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-capability-completion-audit/CAP-01.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-capability-completion-audit/CAP-02-result.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-capability-completion-audit/CAP-02.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-capability-completion-audit/CAP-03-result.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-capability-completion-audit/README.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-framework-acceptance/foundation-repair.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-framework-acceptance/plane-status-source-check.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-module-audit/README.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-orchestration-diagnosis/DIAG-01-audit.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-orchestration-diagnosis/DIAG-01.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-orchestration-diagnosis/DIAG-02-result.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-orchestration-diagnosis/DIAG-02.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-orchestration-diagnosis/DIAG-03-report.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-orchestration-diagnosis/DIAG-03.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-orchestration-diagnosis/DIAG-04.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-orchestration-diagnosis/README.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-product-wiring-repair/FIX-01-audit.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-product-wiring-repair/FIX-01.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-product-wiring-repair/FIX-02-result.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-product-wiring-repair/FIX-02.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-product-wiring-repair/FIX-03-report.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-product-wiring-repair/FIX-03.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-product-wiring-repair/README.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-project-exploration/EXP-01.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-project-exploration/EXP-02.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-project-exploration/EXP-03.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-project-exploration/EXP-04.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-project-exploration/EXP-05.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-project-exploration/README.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-project-exploration/evidence/original-failed/reports/inventory.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-project-exploration/evidence/original/inventory.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-project-exploration/evidence/revision/build-map.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-project-exploration/evidence/revision/inventory.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-project-exploration/evidence/revision/runtime-map.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-project-exploration/project-findings.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-repair/UIR-01.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-repair/UIR-02.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-repair/UIR-03-result.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-repair/UIR-03.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-swepro-context-only-trial.md
+?? dev_docs/archive/2026-09-08-verification-history/2026-09-08-ui-workflow-repair.md
+?? dev_docs/archive/2026-09-08-verification-history/ARCHIVE-NOTE.md
+?? dev_docs/archive/2026-09-08-verification-history/consultant-p109-query-run-path.md
+?? dev_docs/archive/2026-09-08-verification-history/control-context-query-dialogue-review.md
+?? dev_docs/archive/2026-09-08-verification-history/data-context-coordination-review.md
+?? dev_docs/archive/2026-09-08-verification-history/document-convergence.md
+?? dev_docs/archive/2026-09-08-verification-history/document-ownership-split.md
+?? dev_docs/archive/2026-09-08-verification-history/g1-foundation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/g2-continuity-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/g3-gate-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/g4-gate-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/g5-gate-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/memory-role-template-review.md
+?? dev_docs/archive/2026-09-08-verification-history/move-manifest.json
+?? dev_docs/archive/2026-09-08-verification-history/mvp-review.md
+?? dev_docs/archive/2026-09-08-verification-history/p0-documentation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-00-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-01-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-02-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-03-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-04-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-05-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-06-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-07-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-08-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-09-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-10-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-11-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-12-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-13-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-14-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-15-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-16-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/p1-17-implementation-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/product-architecture-review-2026-09-05.md
+?? dev_docs/archive/2026-09-08-verification-history/project-location-confirmation.md
+?? dev_docs/archive/2026-09-08-verification-history/rat-00-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/rat-01-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/rat-02-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/rat-03-evidence.md
+?? dev_docs/archive/2026-09-08-verification-history/reconciliation-2026-09-06-p1-00-06-vs-docs.md
+?? dev_docs/archive/2026-09-08-verification-history/runtime-collaboration-impact.md
+?? dev_docs/design/2026-09-07-ui-workflow-feedback.md
+?? dev_docs/evaluation/2026-09-07-coding-agent-benchmarks.md
+?? dev_docs/evaluation/2026-09-07-exploration-acceptance.md
+?? dev_docs/evaluation/2026-09-07-full-acceptance.md
+?? dev_docs/interfaces/local-gui-verification.md
+?? dev_docs/planning/proposed/module-completion/tickets/A1-source-applicability.md
+?? dev_docs/planning/proposed/module-completion/tickets/A3-cpp-project.md
+?? dev_docs/planning/proposed/module-completion/tickets/A3-python-project.md
+?? dev_docs/planning/proposed/real-agent-acceptance/DAG.md
+?? dev_docs/planning/proposed/real-agent-acceptance/tickets/00-benchmark-fixtures-and-environment.md
+?? dev_docs/planning/proposed/real-agent-acceptance/tickets/01-api-settings-and-connection.md
+?? dev_docs/planning/proposed/real-agent-acceptance/tickets/02-gui-kernel-runtime.md
+?? dev_docs/planning/proposed/real-agent-acceptance/tickets/03-real-canary-baseline.md
+?? dev_docs/planning/proposed/real-agent-acceptance/tickets/04-exploration-and-human-discussion.md
+?? dev_docs/planning/proposed/real-agent-acceptance/tickets/05-bug-discovery-reproduction.md
+?? dev_docs/planning/proposed/real-agent-acceptance/tickets/06-public-benchmark-diagnostics.md
+?? dev_docs/planning/proposed/real-agent-acceptance/tickets/07-end-to-end-gui-and-comparison.md
+?? dev_docs/planning/proposed/real-agent-acceptance/tickets/08-multi-agent-collaboration.md
+?? dev_docs/product/frontend-workbench.md
+?? dev_docs/verification/2026-09-07-chat-workspace.md
+?? dev_docs/verification/2026-09-07-coding-agent-vendoring.md
+?? dev_docs/verification/2026-09-07-local-gui.md
+?? dev_docs/verification/2026-09-07-multi-agent-test-task-sync.md
+?? dev_docs/verification/2026-09-07-real-agent-test-task-sync.md
+?? dev_docs/verification/2026-09-07-review-fixes.md
+?? dev_docs/verification/2026-09-07-ui-feedback-swepro-preflight.md
+?? dev_docs/verification/2026-09-07-workspace-tools.md
+?? dev_docs/verification/2026-09-08-capability-completion-audit/CAP-01-result.md
+?? dev_docs/verification/2026-09-08-capability-completion-audit/CAP-01.md
+?? dev_docs/verification/2026-09-08-capability-completion-audit/CAP-02-result.md
+?? dev_docs/verification/2026-09-08-capability-completion-audit/CAP-02.md
+?? dev_docs/verification/2026-09-08-capability-completion-audit/CAP-03-result.md
+?? dev_docs/verification/2026-09-08-capability-completion-audit/README.md
+?? dev_docs/verification/2026-09-08-capability-completion-audit/docs-check.log
+?? dev_docs/verification/2026-09-08-framework-acceptance/acceptance-plan.md
+?? dev_docs/verification/2026-09-08-framework-acceptance/benchmark-research.md
+?? dev_docs/verification/2026-09-08-framework-acceptance/foundation-repair.md
+?? dev_docs/verification/2026-09-08-framework-acceptance/pilot-public-task.json
+?? dev_docs/verification/2026-09-08-framework-acceptance/plane-status-source-check.md
+?? dev_docs/verification/2026-09-08-framework-acceptance/review-record.json
+?? dev_docs/verification/2026-09-08-module-audit/README.md
+?? dev_docs/verification/2026-09-08-module-audit/audit-completion.json
+?? dev_docs/verification/2026-09-08-module-audit/diagram-comparison.json
+?? dev_docs/verification/2026-09-08-module-audit/docs-check.log
+?? dev_docs/verification/2026-09-08-module-audit/documentation-migration.json
+?? dev_docs/verification/2026-09-08-module-audit/modules.json
+?? dev_docs/verification/2026-09-08-module-audit/probe-foundation.json
+?? dev_docs/verification/2026-09-08-module-audit/probe-foundation.mjs
+?? dev_docs/verification/2026-09-08-module-audit/representative-tests.log
+?? dev_docs/verification/2026-09-08-module-audit/source-manifest.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/DIAG-01-audit.md
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/DIAG-01-evidence/check-consistency.mjs
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/DIAG-01-evidence/consistency-result.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/DIAG-01-evidence/offline-result.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/DIAG-01-evidence/runtime-report-diagnosis.png
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/DIAG-01.md
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/DIAG-02-result.md
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/DIAG-02.md
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/DIAG-03-report.md
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/DIAG-03.md
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/DIAG-04.md
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/README.md
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/code-digests.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/current-symptom.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/docs-validation.log
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/DIAG-03/context-runtime-evidence.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/DIAG-03/context-runtime-replay.py
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/DIAG-03/context-runtime-replay.py.log
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/DIAG-03/read-source-checks.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/DIAG-03/replay-checks.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/DIAG-03/runtime-order-replay.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/DIAG-03/runtime-order-replay.py
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/DIAG-03/runtime-order-replay.py.log
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/diag-02/SHA256SUMS
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/diag-02/baseline-first.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/diag-02/baseline-terminal.txt
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/diag-02/executions.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/diag-02/probe-result.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/diag-02/probe-terminal.txt
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/diag-02/repro.mjs
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/evidence/diag-02/result.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/goal-existing-tests.log
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/goal-frontier-false.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/goal-frontier-red.log
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/goal-frontier-true.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/goal-frontier.test.ts
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/inspect-live-state.mjs
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/live-goal-symptom.json
+?? dev_docs/verification/2026-09-08-orchestration-diagnosis/reproduce-goal-frontier.sh
+?? dev_docs/verification/2026-09-08-p1-18-independent-review.md
+?? dev_docs/verification/2026-09-08-p1-18-material-access.md
+?? dev_docs/verification/2026-09-08-product-wiring-repair/FIX-01-audit.md
+?? dev_docs/verification/2026-09-08-product-wiring-repair/FIX-01-capability-probe.mjs
+?? dev_docs/verification/2026-09-08-product-wiring-repair/FIX-01-doc-check.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/FIX-01-probe-after-state.json
+?? dev_docs/verification/2026-09-08-product-wiring-repair/FIX-01-probe-after.json
+?? dev_docs/verification/2026-09-08-product-wiring-repair/FIX-01-probe-before.json
+?? dev_docs/verification/2026-09-08-product-wiring-repair/FIX-01.md
+?? dev_docs/verification/2026-09-08-product-wiring-repair/FIX-02-result.md
+?? dev_docs/verification/2026-09-08-product-wiring-repair/FIX-02.md
+?? dev_docs/verification/2026-09-08-product-wiring-repair/FIX-03-doc-check.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/FIX-03-report.md
+?? dev_docs/verification/2026-09-08-product-wiring-repair/FIX-03-tests.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/FIX-03-typecheck.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/FIX-03.md
+?? dev_docs/verification/2026-09-08-product-wiring-repair/README.md
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/final/app-tests.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/final/build.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/final/docs-check.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/final/kernel-tests.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/final/live-after.json
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/final/live-before.json
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/final/live-comparison.json
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/final/original-diag-02-green.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/final/source-sha256.json
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/final/typecheck.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/fix-02/diag-04-green.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/fix-02/focused-green.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/fix-02/goal-frontier-false.json
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/fix-02/goal-frontier-true.json
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/fix-02/regression-green.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/fix-02/regression-red.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/fix-02/source-sha256.json
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/fix-02/typecheck-latest-shared-wip.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/fix-02/typecheck-shared-wip.log
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/real-source-analysis/summary.json
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/real-source-analysis/tool-results.json
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/ui/historical.png
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/ui/new-context-fixture.png
+?? dev_docs/verification/2026-09-08-product-wiring-repair/evidence/ui/result.json
+?? dev_docs/verification/2026-09-08-product-wiring-repair/manifest.json
+?? dev_docs/verification/2026-09-08-product-wiring-repair/verify-context-ui.mjs
+?? dev_docs/verification/2026-09-08-product-wiring-repair/verify-real-source-tools.mjs
+?? dev_docs/verification/2026-09-08-project-exploration/EXP-01.md
+?? dev_docs/verification/2026-09-08-project-exploration/EXP-02.md
+?? dev_docs/verification/2026-09-08-project-exploration/EXP-03.md
+?? dev_docs/verification/2026-09-08-project-exploration/EXP-04.md
+?? dev_docs/verification/2026-09-08-project-exploration/EXP-05.md
+?? dev_docs/verification/2026-09-08-project-exploration/README.md
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/MANIFEST.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/authorization.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/blocked-synthesis.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/create-goal.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/final-docs-check.log
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/final-regression.log
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/implementation-manifest-final.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/implementation-manifest.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/install-plan.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/operator-plan.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/operator-tools/operate-exploration.mjs
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/operator-tools/serve-exploration.mjs
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/original-failed/latest-state.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/original-failed/operator-plan.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/original-failed/receipts/add-project.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/original-failed/receipts/create-goal.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/original-failed/receipts/install-plan.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/original-failed/receipts/review-inventory.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/original-failed/receipts/run-inventory.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/original-failed/reports/inventory.md
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/original-failed/review-inventory.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/original-failed/trial.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/original/inventory.md
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/original/reviews.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/original/state.json.gz
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/pre-restart-status.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/pre-source-fix/latest-state.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/pre-source-fix/operator-plan.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/pre-source-fix/receipts/add-project.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/pre-source-fix/receipts/create-goal.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/pre-source-fix/receipts/install-plan.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/pre-source-fix/trial.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/restart-check-final.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/restart-check.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/restart-order-failure.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/revision/build-map.md
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/revision/inventory.md
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/revision/reviews.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/revision/runtime-map.md
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/revision/state-final.json.gz
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/revision/state.json.gz
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/source-integrity-final.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/source-integrity.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/trial.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision-ui/before-review-note/result.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision-ui/before-review-note/v2-failed-dependencies.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision-ui/before-review-note/v2-original-report-fail.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision-ui/before-review-note/v3-separate-revision.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision-ui/result.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision-ui/v2-failed-dependencies.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision-ui/v2-original-report-fail.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision-ui/v3-separate-revision.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision/before-review-note/result.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision/before-review-note/v2-failed-dependencies.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision/before-review-note/v2-original-report-fail.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision/before-review-note/v3-separate-revision.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision/result.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision/v2-failed-dependencies.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision/v2-original-report-fail.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fail-revision/v3-separate-revision.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-final/final-taskgraph.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-final/result.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-final/runtime-report-fail.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fixture/dependency-layers.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fixture/exploration-ui.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fixture/narrow-center.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-fixture/result.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-live/live-overview.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-live/live-tool-read.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-live/result.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-queue-ui/agent-execution-queue.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-queue-ui/live-overview.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-queue-ui/live-report.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-queue-ui/live-tool-read.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-queue-ui/result.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-real/real-model-settings-readonly.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-real/real-plan-narrow-center.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-real/real-plan.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-real/real-settings.png
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/ui-real/result.json
+?? dev_docs/verification/2026-09-08-project-exploration/evidence/usage-summary.json
+?? dev_docs/verification/2026-09-08-project-exploration/project-findings.md
+?? dev_docs/verification/2026-09-08-real-model-minimal-acceptance.md
+?? dev_docs/verification/2026-09-08-repair/UIR-01.md
+?? dev_docs/verification/2026-09-08-repair/UIR-02.md
+?? dev_docs/verification/2026-09-08-repair/UIR-03-result.md
+?? dev_docs/verification/2026-09-08-repair/UIR-03.md
+?? dev_docs/verification/2026-09-08-swepro-context-only-trial.md
+?? dev_docs/verification/2026-09-08-ui-workbench-acceptance.md
+?? dev_docs/verification/2026-09-08-ui-workflow-repair.md
+?? dev_docs/verification/2026-09-08-windows-migration/agent_platform-source-files.json
+?? dev_docs/verification/2026-09-08-windows-migration/chat-overlap-fixed.png
+?? dev_docs/verification/2026-09-08-windows-migration/chat-overlap-result.json
+?? dev_docs/verification/2026-09-08-windows-migration/coding-agent-source-files.json
+?? dev_docs/verification/2026-09-08-windows-migration/copy-manifest.json
+?? dev_docs/verification/2026-09-08-windows-migration/run-windows.cjs
+?? dev_docs/verification/2026-09-08-windows-migration/verify-chat-overlap.mjs
+?? dev_docs/verification/2026-09-09-architecture-repair.md
+?? dev_docs/verification/2026-09-09-material-access-repair.md
+?? dev_docs/verification/2026-09-09-module-closeout.md
+?? dev_docs/verification/2026-09-09-module-completion.md
+?? dev_docs/verification/2026-09-09-ui-repair-acceptance.md
+?? dev_docs/verification/README.md
+?? dev_docs/verification/assets/2026-09-07-swepro-single/selected-task.json
+?? dev_docs/verification/assets/2026-09-07-swepro-single/sources.json
+?? dev_docs/verification/assets/2026-09-08-repair/asset-index.json
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/asset-index.json
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/candidate-stat.txt
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/candidate.patch
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/checksums.json
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/compatibility-fix.patch
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/evaluator-attempt-01.log
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/fixed-evaluator-verification.json
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/import-evidence/README.json
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/import-evidence/benchmark.json
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/import-evidence/diagnostic.json
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/import-evidence/duplicate-name-analysis.json
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/import-evidence/original.json
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/import-evidence/repair.json
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/manifest.json
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/official-result-analysis.json
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/eval_results.json
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/_entryscript.sh
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/_output.json
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/_patch.diff
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/_stderr.log
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/_stdout.log
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/workspace/entryscript.sh
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/workspace/output.json
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/workspace/parser.py
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/workspace/patch.diff
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/workspace/run_script.sh
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/workspace/stderr.log
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/workspace/stdout.log
+?? dev_docs/verification/assets/2026-09-08-repair/assisted-repair/run-evaluator.sh
+?? dev_docs/verification/assets/2026-09-08-repair/browser-regression/UIR-01-handoff.txt
+?? dev_docs/verification/assets/2026-09-08-repair/browser-regression/stable-reading/historical-run-summary.png
+?? dev_docs/verification/assets/2026-09-08-repair/browser-regression/stable-reading/observations.json
+?? dev_docs/verification/assets/2026-09-08-repair/browser-regression/verifications-fixed.json
+?? dev_docs/verification/assets/2026-09-08-repair/browser-regression/verify-root-ui-fixed.mjs
+?? dev_docs/verification/assets/2026-09-08-repair/browser-regression/verify-stable-reading.mjs
+?? dev_docs/verification/assets/2026-09-08-repair/integration/assisted-candidate.json
+?? dev_docs/verification/assets/2026-09-08-repair/integration/original-candidate.json
+?? dev_docs/verification/assets/2026-09-08-repair/integration/original-fail-state.json.gz
+?? dev_docs/verification/assets/2026-09-08-repair/integration/repair-pass-state.json.gz
+?? dev_docs/verification/assets/2026-09-08-repair/integration/repair-ui-assisted-candidate.request.json.gz
+?? dev_docs/verification/assets/2026-09-08-repair/integration/repair-ui-assisted-candidate.response.json
+?? dev_docs/verification/assets/2026-09-08-repair/integration/repair-ui-diagnostic.request.json.gz
+?? dev_docs/verification/assets/2026-09-08-repair/integration/repair-ui-diagnostic.response.json
+?? dev_docs/verification/assets/2026-09-08-repair/integration/repair-ui-original-candidate.request.json.gz
+?? dev_docs/verification/assets/2026-09-08-repair/integration/repair-ui-original-candidate.response.json
+?? dev_docs/verification/assets/2026-09-08-repair/integration/repair-ui-original.request.json.gz
+?? dev_docs/verification/assets/2026-09-08-repair/integration/repair-ui-original.response.json
+?? dev_docs/verification/assets/2026-09-08-repair/integration/repair-ui-repair.request.json.gz
+?? dev_docs/verification/assets/2026-09-08-repair/integration/repair-ui-repair.response.json
+?? dev_docs/verification/assets/2026-09-08-repair/integration/restart-observations.json
+?? dev_docs/verification/assets/2026-09-08-repair/integration/restart-state.json.gz
+?? dev_docs/verification/assets/2026-09-08-repair/integration/ui/final-file-sidebar-narrow.png
+?? dev_docs/verification/assets/2026-09-08-repair/integration/ui/final-observations.json
+?? dev_docs/verification/assets/2026-09-08-repair/integration/ui/final-settings.png
+?? dev_docs/verification/assets/2026-09-08-repair/integration/ui/final-taskgraph-history.png
+?? dev_docs/verification/assets/2026-09-08-repair/integration/ui/real-import-observations.json
+?? dev_docs/verification/assets/2026-09-08-repair/integration/ui/repair-pass-history.png
+?? dev_docs/verification/assets/2026-09-08-repair/integration/ui/repair-pass-taskgraph.png
+?? dev_docs/verification/assets/2026-09-08-repair/platform-repair.patch
+?? dev_docs/verification/assets/2026-09-08-repair/reproduction/capture-final-repair-ui.mjs
+?? dev_docs/verification/assets/2026-09-08-repair/reproduction/check-repair-restart.mjs
+?? dev_docs/verification/assets/2026-09-08-repair/reproduction/import-original-repair-ui.mjs
+?? dev_docs/verification/assets/2026-09-08-repair/reproduction/import-repair-via-browser.mjs
+?? dev_docs/verification/assets/2026-09-08-repair/reproduction/inspect-repair-ui.mjs
+?? dev_docs/verification/assets/2026-09-08-repair/reproduction/register-assist-repair-ui.mjs
+?? dev_docs/verification/assets/2026-09-08-repair/reproduction/repair-data-snapshot.json
+?? dev_docs/verification/assets/2026-09-08-repair/source-index.json
+?? dev_docs/verification/assets/2026-09-08-repair/validation-results.json
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/candidate-stat.txt
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/candidate-summary.json
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/candidate.patch
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/checksums.json
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/completed-run.json.gz
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/completed-state.json.gz
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/dispatch-context-only.mjs
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/dispatch-receipt.json
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/freeze-candidate.py
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/inspect-dock.mjs
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/inspect-live-ui.mjs
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/official-result-analysis.json
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/official/empty-control/eval_results.json
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/official/empty-control/parsed-tests.json.gz
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/official/empty-control/stdout.log.gz
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/official/gold-control/eval_results.json
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/official/gold-control/parsed-tests.json.gz
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/official/gold-control/stdout.log.gz
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/official/platform-replay-diagnostic/eval_results.json
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/official/platform-replay-diagnostic/parsed-tests.json.gz
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/official/platform-replay-diagnostic/stdout.log.gz
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/official/platform-trial/eval_results.json
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/official/platform-trial/parsed-tests.json.gz
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/official/platform-trial/stdout.log.gz
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/platform-adjustment.patch
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/platform-context-only-manifest.json
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/post-evaluation-state.json.gz
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/progress.jsonl
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/regression-probe.json
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/run-evaluator.sh
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/serve-context-only.mjs
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/submitted-task.json
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/trial-context-only.json
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/ui-evidence/dock-menu-and-width.png
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/ui-evidence/dock-observations.json
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/ui-evidence/live-chat-top.png
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/ui-evidence/live-observations.json
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/ui-evidence/live-tools-after-refresh.png
+?? dev_docs/verification/assets/2026-09-08-swepro-context-only/ui-evidence/live-tools-open.png
+?? dev_docs/verification/rat-00-evidence.md
+?? dev_docs/verification/rat-01-evidence.md
+?? dev_docs/verification/rat-02-evidence.md
+?? dev_docs/verification/rat-03-evidence.md
+?? human/capability-completion-path.md
+?? human/context-management.md
+?? human/current-capabilities.md
+?? human/module-status.md

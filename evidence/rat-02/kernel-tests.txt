@@ -1,0 +1,9 @@
+
+ RUN  v4.1.10 /home/han001/projects/agents/agent_platform/vendor/coding-agent
+
+
+ Test Files  2 passed (2)
+      Tests  3 passed (3)
+   Start at  19:19:12
+   Duration  821ms (transform 470ms, setup 0ms, import 791ms, tests 533ms, environment 0ms)
+
