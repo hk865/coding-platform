@@ -15,6 +15,7 @@ import { ReworkPlanCompiler } from '../plan-compiler/rework-plan-compiler.js';
 import { resolvePlanningWorkIdentities } from '../plan-compiler/planning-work-materials.js';
 
 export type ReworkDriveDeps = {
+  coordination?: Pick<import('../plan-compiler/execution-feedback-compiler.js').ExecutionFeedbackCompiler,'validate'>;
   /** 只读 canonical 事实：Goal 的当前 active revision 与已落账的提案聚合。 */
   ledger: Pick<StateLedger, 'load'>;
   /** 唯一写入面：ControlEngine 的既有自动受理入口（本文件不直接 commit）。 */
@@ -162,7 +163,15 @@ export class ReworkDriveEngine implements ReworkDrivePort {
 
       // 机械推导提案。编译器自己会按「源任务 + 处置它的问题」建组，因此传进去的是
       // 本任务分组的问题集合；调用方不重复它的分组规则。
+      const coordination = request.coordination?.find(row => row.taskId === plannedGroup.taskId &&
+        canonicalJson([...row.issueIds].sort()) === canonicalJson(open.map(i => i.issueId).sort()));
+      if (request.coordination && !coordination) {
+        outcomes.push({groupTaskId:plannedGroup.taskId,issueIds:open.map(i=>i.issueId),status:'rejected',origin:'compiler',
+          code:'coordination_pending',reasons:['等待协调角色消费当前失败并返回带来源的计划调整；调查、阻塞或人的选择见对应 Query。'],supersededByPlanId:null});
+        continue;
+      }
       const compiled = this.compiler.compile({
+        ...(coordination ? {coordination} : {}),
         schemaVersion: 1,
         projectId: request.projectId,
         workspaceId: canonical.workspaceId,
@@ -200,6 +209,11 @@ export class ReworkDriveEngine implements ReworkDrivePort {
       }
 
       // 四条边界受理入口。本文件不预判边界，也不缓存它的结论。
+      if(coordination && !await this.deps.coordination?.validate(coordination)) {
+        outcomes.push({groupTaskId:plannedGroup.taskId,issueIds:open.map(i=>i.issueId),status:'rejected',origin:'compiler',
+          code:'coordination_stale',reasons:['协调来源在提交前已变化；保留原调查，重新调查后才能提出当前调整。'],supersededByPlanId:null});
+        continue;
+      }
       const receipt = await this.deps.control.acceptReworkProposal({ schemaVersion: 1, proposal: compiled.proposal });
       if (receipt.status === 'accepted') {
         acceptedPlanRefs.push(receipt.activePlanRef);

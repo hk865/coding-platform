@@ -1,0 +1,1 @@
+Run interrupted after detecting feedback/choose nested serial queue deadlock: action awaited triggerRework whose projection awaited the owning serial action. Fixed by using the existing long-running action path; original log retained. The renewal mock also needed a canonical UserDecision after the new material guard.

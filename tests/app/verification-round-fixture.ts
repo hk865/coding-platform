@@ -23,6 +23,20 @@ export async function verificationRoundFixture(cleanup: Array<() => Promise<void
     for await (const chunk of request) raw += chunk;
     const body = JSON.parse(raw) as ReviewProtocolRequest;
     modelRequests++;
+    if(JSON.stringify(body.messages).includes('execution_coordination')) {
+      // Exercise the real QueryRun read tool before declaring sourced repair
+      // material. Its verification requirements are kept by formal acceptance.
+      const read=body.messages?.find(message=>message.role==='tool' && JSON.stringify(message.content).includes('subject.txt') && JSON.stringify(message.content).includes('revision'));
+      const reply:ReviewProtocolReply=read?{content:JSON.stringify({kind:'feedback_resolution',action:'adjust_plan',availability:'available',
+        summary:'Read current subject.txt and investigate the retained verification failure.',
+        material:'Inspect the current subject.txt, whose expected fixture content is expected followed by a newline. Address the reported failure while preserving all existing acceptance obligations, registered checks and independent Reviewer requirements. A tool failure remains unresolved until a current successful verification.',sourcePaths:['subject.txt']})}:
+        {calls:[{id:'coordination-read-subject',name:'read',arguments:{path:'subject.txt'}}]};
+      response.writeHead(200,{'content-type':'text/event-stream'});
+      response.end('data: '+JSON.stringify({choices:[{index:0,delta:{...(reply.content!==undefined?{content:reply.content}:{}),
+        ...(reply.calls?{tool_calls:reply.calls.map((call,index)=>({index,id:call.id,type:'function',function:{name:call.name,arguments:JSON.stringify(call.arguments)}}))}:{})},finish_reason:null}]})+
+        '\n\ndata: '+JSON.stringify({choices:[{index:0,delta:{},finish_reason:reply.calls?'tool_calls':'stop'}],usage:{prompt_tokens:200,completion_tokens:100}})+'\n\ndata: [DONE]\n\n');
+      return;
+    }
     if (options.reviewer && body.tools?.some(tool => tool.function?.name === 'read_source')) {
       try {
         const reply = await options.reviewer(body);

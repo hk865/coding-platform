@@ -1,0 +1,8 @@
+src/data/context-compiler/feedback-materials.ts(38,25): error TS2345: Argument of type 'InitialPlanAssignment[] | undefined' is not assignable to parameter of type 'JsonValue'.
+  Type 'undefined' is not assignable to type 'JsonValue'.
+src/data/context-compiler/feedback-materials.ts(39,25): error TS2345: Argument of type 'InitialPlanAssignment | undefined' is not assignable to parameter of type 'JsonValue'.
+  Type 'undefined' is not assignable to type 'JsonValue'.
+src/data/context-compiler/feedback-materials.ts(73,15): error TS7022: 'parent' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+tests/verification/feedback-renewal.test.ts(38,22): error TS2322: Type '{ runId: string; aggregateType: string; projectId: string; goalId: string; }' is not assignable to type 'RunRef'.
+  Types of property 'aggregateType' are incompatible.
+    Type 'string' is not assignable to type '"Run"'.

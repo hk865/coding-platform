@@ -3,7 +3,7 @@
 import type { AcceptanceObligation, PlanRevisionSnapshot, PlanTaskAssignment, RuntimeTask } from '../../contracts/plan.js';
 import { revisionAssignments } from '../../contracts/plan.js';
 import type { GoalRef } from '../../contracts/ledger.js';
-import { PLAN_CHANGE_MAX_TASK_DELTAS } from '../../contracts/goal-change.js';
+import { PLAN_CHANGE_MAX_TASK_DELTAS, PLAN_CHANGE_MAX_INSTRUCTION_BYTES } from '../../contracts/goal-change.js';
 import { REWORK_MAX_ISSUES_PER_PROPOSAL, reworkTaskIdFor, type ReworkCompileRejectionCode, type ReworkCompileRequestV1, type ReworkCompileResultV1, type ReworkNeedsDecisionCode } from '../../contracts/rework/proposal.js';
 import { reworkIssueFactFor, reworkIssueUnaddressed, type ReworkIssueViewV1 } from '../../contracts/rework/issues.js';
 import { canonicalJson } from '../../contracts/fingerprint.js';
@@ -266,6 +266,18 @@ export class ReworkPlanCompiler {
     }
 
     const delta = buildTaskSetDelta(groups, activePlan);
+    if (request.coordination) {
+      const material = request.coordination;
+      if (groups.length !== 1 || groups[0]!.sourceTask.taskId !== material.taskId ||
+          canonicalJson([...material.issueIds].sort()) !== canonicalJson(request.issues.map(i => i.issueId).sort()) ||
+          !material.instruction.trim() || Buffer.byteLength(material.instruction) > 8192)
+        return rejected('invalid_request', [{code:'invalid_request',issueId:null,message:'Coordination does not bind this exact failure group'}]);
+      for (const op of delta) if (op.action === 'addTask' && op.assignment) {
+        op.assignment.instruction = '协调调查 ' + canonicalJson(material.answerRef) + ' @' + material.answerDigest + '\n' + material.instruction + '\n' + op.assignment.instruction;
+        if(Buffer.byteLength(op.assignment.instruction)>PLAN_CHANGE_MAX_INSTRUCTION_BYTES)
+          return rejected('delta_exceeds_bound',[{code:'delta_exceeds_bound',issueId:null,message:'Sourced repair instruction exceeds the formal assignment bound; shorten the proposal without dropping its sources'}]);
+      }
+    }
     if (delta.length > PLAN_CHANGE_MAX_TASK_DELTAS) {
       return rejected('delta_exceeds_bound', [
         {

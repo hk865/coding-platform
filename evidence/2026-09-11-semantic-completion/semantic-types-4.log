@@ -1,0 +1,2 @@
+src/control/control-engine/query-job.ts(48,108): error TS2345: Argument of type '{ aggregateType: "UserDecision"; projectId: string; workspaceId: string; decisionId: string; } | undefined' is not assignable to parameter of type 'JsonValue'.
+  Type 'undefined' is not assignable to type 'JsonValue'.

@@ -50,6 +50,8 @@ import type { ReworkIssueV1 } from '../../contracts/rework/issues.js';
 import type { ReworkProposalV1 } from '../../contracts/rework/proposal.js';
 import type { ReworkAcceptanceReceiptV1, ReworkAcceptanceRejectionCode, ReworkAcceptanceRequestV1, ReworkBoundaryOutcomeV1, ReworkBudgetFactsV1 } from '../../contracts/rework/acceptance.js';
 import { canonicalJson } from '../../contracts/fingerprint.js';
+import { sha256Hex } from '../../contracts/fingerprint.js';
+import { parseFeedbackResolution } from '../../contracts/execution-feedback.js';
 // RW-11：生效策略的解析只有一份实现，自动受理与 claim 角色守卫共用（避免两处默认行为分叉）。
 import { resolveActiveCoordinationPolicy } from './policies/coordination-policy.js';
 import { draftAdmissionRejectionCode, draftConsistencyIssues } from './policies/goal-change-consistency.js';
@@ -208,6 +210,31 @@ export class AutonomousReworkEngineImpl {
       return rejected('not_found', ['active plan revision ' + activePlanRef.planId + ' 读不到，无法核对提案']);
     }
     const sourcePlan = sourcePlanLoad.snapshot as PlanRevisionSnapshot;
+    if (proposal.coordination) {
+      const row=proposal.coordination;
+      const answerLoad=await this.ledger.load(row.answerRef);
+      const jobLoad=await this.ledger.load({aggregateType:'QueryJob',projectId:row.answerRef.projectId,workspaceId:row.answerRef.workspaceId,queryJobId:row.answerRef.queryJobId});
+      if(answerLoad.status!=='found' || answerLoad.snapshot.ref.aggregateType!=='QueryJobAnswer' ||
+         jobLoad.status!=='found' || jobLoad.snapshot.ref.aggregateType!=='QueryJob') return rejected('invalid',['Coordination answer unavailable']);
+      const answer=(answerLoad.snapshot as import('../../contracts/query-job.js').QueryJobAnswerSnapshot).answer;
+      const job=(jobLoad.snapshot as import('../../contracts/query-job.js').QueryJobSnapshot).job;
+      const feedback=job.intent.execution?.feedback;
+      const workspace=await this.ledger.load({aggregateType:'Workspace',projectId:proposal.projectId,workspaceId});
+      try {
+        const resolution=parseFeedbackResolution(answer.answer);
+        const expected=proposal.rework.issues.map(i=>i.issueId).sort();
+        if(job.status!=='answered' || answer.stale || !answer.bodyRef || !feedback || workspace.status!=='found' || workspace.snapshot.revision!==feedback.workspaceRevision ||
+           row.answerRef.projectId!==proposal.projectId || row.answerRef.workspaceId!==workspaceId || job.goalId!==goalRef.goalId ||
+           canonicalJson(answer.runRef)!==canonicalJson(job.runRef) ||
+           canonicalJson(feedback.planRef)!==canonicalJson(proposal.sourcePlanRef) ||
+           canonicalJson([...(feedback.failureIssueIds??[])].sort())!==canonicalJson(expected) ||
+           canonicalJson([...row.issueIds].sort())!==canonicalJson(expected) || feedback.taskId!==row.taskId ||
+           sha256Hex(answer.answer)!==row.answerDigest || resolution.action!=='adjust_plan' || resolution.material!==row.instruction ||
+           resolution.sourcePaths.some(path=>!answer.sources.some(s=>s.kind==='workspace_read' && s.refKey===path && !!s.version)) ||
+           proposal.planDraft.assignments.filter(a=>proposal.rework.tasks.some(t=>t.taskId===a.taskId)).some(a=>!a.instruction.includes(row.instruction)))
+          return rejected('invalid',['Coordination must be an exact sourced adjustment for these failures']);
+      } catch { return rejected('invalid',['Invalid coordination resolution']); }
+    }
     if (sourcePlan.planRevision !== proposal.sourcePlanRevision) {
       return rejected('source_not_current', [
         '提案声明的源 planRevision（' + proposal.sourcePlanRevision + '）与帐本里的 ' + sourcePlan.planRevision + ' 不一致',

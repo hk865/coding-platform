@@ -34,6 +34,8 @@ import { ExplorationStartupReconciler } from '../control/control-engine/explorat
 import { VerificationService } from '../control/verification-engine/verification-service.js';
 import { ReworkDriveEngine } from '../control/dispatch-engine/rework-drive.js';
 import type { ReworkDriveRequestV1, ReworkDriveResultV1 } from '../contracts/rework/drive.js';
+import { FeedbackDecisionCompiler } from '../control/plan-compiler/feedback-decision-compiler.js';
+import { FeedbackDecisionContext } from '../data/context-compiler/feedback-decision-context.js';
 import { VerificationContextCompiler } from '../data/context-compiler/verification-context.js';
 import { ReviewerContextCompiler } from '../data/context-compiler/reviewer-context.js';
 import { ReviewerProfileCompiler } from '../data/context-compiler/reviewer-profile.js';
@@ -206,6 +208,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
     // 自动受理入口，组合根不直接 commit。因此 DispatchEngine 与 VerificationEngine 之间
     // 没有源码依赖，ModuleDependencyDAG 的 VerificationEngine → ControlEngine 方向不被破坏。
     const reworkDrive = composeReworkDrive({
+        coordination:{validate:row=>feedbackCompiler?.validate(row)??Promise.resolve(false)},
         ledger: h.ledger,
         control: h.control,
         issues: request => verifications
@@ -248,7 +251,9 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
     await explorations?.init();
     const planningMaterials = new CoordinationContextCompiler({ ledger: h.ledger, catalog, ...(querySources ? { sources: querySources } : {}) });
     const feedbackCompiler = real ? new ExecutionFeedbackCompiler({control:h.control,now,
-      materials:new ExecutionFeedbackContext({ledger:h.ledger,vault:h.vault,catalog,observations:real.runtime.observations,source:sourceApplicability!})}) : undefined;
+      materials:new ExecutionFeedbackContext({ledger:h.ledger,vault:h.vault,catalog,observations:real.runtime.observations,source:sourceApplicability!,querySource:new QueryWorkspaceSourceReader(real.rootFor)})}) : undefined;
+    const feedbackDecisionMaterials=new FeedbackDecisionContext(h.ledger,real?new QueryWorkspaceSourceReader(real.rootFor):undefined,catalog);
+    const feedbackDecisions=new FeedbackDecisionCompiler({materials:feedbackDecisionMaterials,planning:h.planProposal,control:h.control,now});
     const initialPlanning = real && realQueries ? new InitialPlanning(new PlanCompilerImpl({ workIdentity: h.control, materials: planningMaterials, control: h, now }), new PlannedTaskDispatch(h, real.runtime, real.rootFor, (scope, runId) => launchRealDrive(scope, scope.goalId, runId), planningMaterials, now), new InitialPlanningView(h, catalog, realQueries), () => h.driveQuery({ reason: 'initial-coordination' })) : undefined;
     let planningQueue: Promise<unknown> = Promise.resolve();
     let closing = false;
@@ -400,9 +405,30 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
      * 失败隔离：驱动自身的异常只记录在结果/日志里，不改变原有动作的返回值；驱动幂等，
      * 重复触发不会产生第二份提案或第二个 revision。
      */
+    let semanticReworkQueue:Promise<unknown> = Promise.resolve();
     function triggerRework(scope: Scope, goalId: string): Promise<void> {
         const request: ReworkDriveRequestV1 = { schemaVersion: 1, projectId: scope.projectId, workspaceId: scope.workspaceId, goalId };
-        const work = reworkDrive.driveRework(request).then(async result => {
+        const work = semanticReworkQueue.then(async () => {
+          const accepted:ReworkDriveResultV1['acceptedPlanRefs'] = [];
+          for (;;) {
+            if (feedbackCompiler && verifications) {
+                request.issueMaterials = await verifications.openIssues({...request,taskIds:[]});
+                const refs = await feedbackCompiler.requestFailures(request.issueMaterials);
+                if(refs.length) await feedbackCompiler.renew({...scope,goalId});
+                await h.driveQuery({reason:'verification-feedback'});
+                request.coordination = [];
+                for (const ref of refs) {
+                    const result = await feedbackCompiler.failureResolution(ref.queryJobId);
+                    if (result) request.coordination.push(result);
+                }
+            }
+            const result=await reworkDrive.driveRework(request);
+            accepted.push(...result.acceptedPlanRefs);
+            // Each successful acceptance changes canonical plan identity. Re-capture
+            // remaining failures before dispatching workers against that new plan.
+            if(!feedbackCompiler || !result.acceptedPlanRefs.length) return {...result,acceptedPlanRefs:accepted};
+          }
+        }).then(async result => {
             lastReworkDrives.set(reworkKey(scope, goalId), result);
             // 受理会推进 plan revision；新 revision 的任务继续走既有派发收口。
             if (result.acceptedPlanRefs.length > 0)
@@ -411,7 +437,12 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         }).catch(error => {
             // 自动返工是原有动作之后的收尾步骤：它失败不能让验证动作看起来失败。
             console.error('自动返工触发失败：' + String(error));
+        }).finally(() => {
+            // A committed acceptance may have lost its reply or be followed by
+            // another group's failure. Dispatch reconciles canonical pending work.
+            advancePlanning();
         });
+        semanticReworkQueue=work;
         background.add(work);
         void work.finally(() => background.delete(work)).catch(() => { });
         return work;
@@ -537,6 +568,15 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
             // 提案／人的决定／Goal revision／任务处置行四类事实一次取回，界面据此回答
             // "谁受理了什么、为什么"。这里没有任何重算，也不存在第二条读取路径。
             return planChanges.view({ projectId: scope.projectId, workspaceId: scope.workspaceId, goalId });
+        }
+        if(path==='/api/real/feedback/choose') {
+            if(!feedbackCompiler) throw Error('真实协调未配置');
+            const result=await feedbackDecisions.choose({...scope,goalId},input['answerRef'] as import('../contracts/query-job.js').QueryJobAnswerRef,required(input,'optionId'));
+            const queryJobRef=await feedbackCompiler.requestDecision(result.sourceJob,result.decisionRef);
+            await h.driveQuery({reason:'human-feedback-decision'});
+            await triggerRework(scope,goalId);
+            await project();
+            return {status:result.status,decisionRef:result.decisionRef,planRef:result.planRef,queryJobRef};
         }
         if (path === '/api/real/rework/issues') {
             // 只读问题出口：让界面与返工提案拿到同一份带来源的未处置问题。
@@ -718,11 +758,21 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
     // identities replay; uncertain runtime/tool outcomes are never restarted.
     if(real) {
       const recovery=(async()=>{
+        for(const choice of await feedbackDecisionMaterials.recordedChoices()) {
+          try {
+            const applied=await feedbackDecisions.choose(choice.scope,choice.answerRef,choice.optionId);
+            await feedbackCompiler?.requestDecision(applied.sourceJob,applied.decisionRef);
+          }
+          catch(error) {console.error('人的决定投递待处理：'+choice.decisionRef.decisionId+': '+String(error));}
+        }
+        const recoveredGoals=new Map<string,{scope:Scope;goalId:string}>();
         for(const record of real.runtime.observations.all()) {
           if(record.spec.mode || ['prepared','running','outcome_unknown'].includes(record.status)) continue;
+          recoveredGoals.set(canonicalJson([record.spec.projectId,record.spec.workspaceId,record.spec.goalId]),{scope:record.spec,goalId:record.spec.goalId});
           try {await continueEndedRun(record.spec,record.spec.goalId,record.spec.runId);}
           catch(error) {console.error('运行后续对账待处理：'+record.spec.runId+': '+String(error));}
         }
+        for(const item of recoveredGoals.values()) await triggerRework(item.scope,item.goalId);
         await project();
         advancePlanning();
       })();
@@ -743,7 +793,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         action: (path: string, input: Record<string, unknown>) => {
             if (closing)
                 return Promise.reject(Error('服务正在关闭'));
-            if (['/api/real/verifications/rounds/start', '/api/real/verifications/rounds/resume', '/api/real/verifications/verify'].includes(path)) {
+            if (['/api/real/verifications/rounds/start', '/api/real/verifications/rounds/resume', '/api/real/verifications/verify', '/api/real/feedback/choose'].includes(path)) {
                 // Verification owns request/round concurrency and Control owns leases.
                 // Keep reads available while tools run; shutdown still waits for them.
                 const work = action(path, input).then(async (result) => {

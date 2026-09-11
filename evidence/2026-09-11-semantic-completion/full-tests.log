@@ -1,0 +1,1979 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/app/rework-dispatch.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 16426[2mms[22m[39m
+   [33m[2m✓[22m[39m 真实 FAIL 自动受理成新 revision 之后，产品自己的派发入口把返工任务认领并跑出一个 Run [33m 16425[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/p1-08-matrix-agents-evidence-timeline.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 25783[2mms[22m[39m
+     [33m[2m✓[22m[39m consolePlanMatrix: 3 rows, planned vs live phase separation, project isolation [33m 3973[2mms[22m[39m
+     [33m[2m✓[22m[39m consoleActiveAgents: sourcing, outcome_unknown, replacement handoff, isolation, goalId filter [33m 4418[2mms[22m[39m
+     [33m[2m✓[22m[39m consoleTaskEvidence: admission order, markers, effective set, ref_only [33m 4681[2mms[22m[39m
+     [33m[2m✓[22m[39m consoleTimeline: arrival seq, kinds, ref chain, bounded window, goalId filter [33m 5422[2mms[22m[39m
+     [33m[2m✓[22m[39m rebuild equivalence: close/reopen with a fresh read-model file reproduces the views [33m 7287[2mms[22m[39m
+ [32m✓[39m tests/app/plan-changes.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 25493[2mms[22m[39m
+   [33m[2m✓[22m[39m 安装并激活协调策略后真实 FAIL 被自动受理：提案、system 决定、changeReason 与处置行都可见 [33m 16444[2mms[22m[39m
+   [33m[2m✓[22m[39m 没有计划变更时视图明确说明，而不是空白 [33m 9047[2mms[22m[39m
+ [32m✓[39m tests/restart/material-access-restart.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 31304[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps valid grants across SQLite restart even behind more than 256 newer candidates (crowded=false) [33m 1902[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps valid grants across SQLite restart even behind more than 256 newer candidates (crowded=true) [33m 26723[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects wrong-workspace grants at submission and denies legacy bad grants after reopening [33m 2677[2mms[22m[39m
+ [32m✓[39m tests/control/workspace-lease-regression.test.ts [2m([22m[2m20 tests[22m[2m)[22m[33m 32565[2mms[22m[39m
+     [33m[2m✓[22m[39m configured support rejects a write lease with capability_unsupported and appends no events [33m 2357[2mms[22m[39m
+     [33m[2m✓[22m[39m configured support rejects a write lease with capability_readonly and appends no events [33m 2564[2mms[22m[39m
+     [33m[2m✓[22m[39m configured support rejects a write lease with scope_exceeds_capability and appends no events [33m 2661[2mms[22m[39m
+     [33m[2m✓[22m[39m retries the same write command with the original committed receipt [33m 2954[2mms[22m[39m
+     [33m[2m✓[22m[39m replays a concurrent duplicate even when its capability response arrives after the first commit [33m 2943[2mms[22m[39m
+     [33m[2m✓[22m[39m does not accept a changed command or another identity as a replay [33m 3401[2mms[22m[39m
+     [33m[2m✓[22m[39m replays a released lease without disturbing a newer active lease [33m 3433[2mms[22m[39m
+     [33m[2m✓[22m[39m concurrent overlapping read and write requests cannot both acquire a lease (read first: true) [33m 3097[2mms[22m[39m
+     [33m[2m✓[22m[39m concurrent overlapping read and write requests cannot both acquire a lease (read first: false) [33m 3041[2mms[22m[39m
+   [33m[2m✓[22m[39m SQLite replay survives close and reopen with the same receipt and no appended events [33m 3077[2mms[22m[39m
+   [33m[2m✓[22m[39m separate SQLite connections cannot grant overlapping read and write leases [33m 2915[2mms[22m[39m
+ [32m✓[39m tests/app/role-spec-governance.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 31313[2mms[22m[39m
+     [33m[2m✓[22m[39m 视图给出逐角色事实与「本策略含不含角色矩阵」，安装/激活/重启后仍可读 [33m 5387[2mms[22m[39m
+     [33m[2m✓[22m[39m M3：没有矩阵时既有入口照常派发；含 roles 的矩阵生效后，规格装齐同一个入口仍然派发 [33m 12856[2mms[22m[39m
+     [33m[2m✓[22m[39m 越权声明被拒且零写：矩阵 pin 的是只读规格时，写入入口的 claim 不落账 [33m 6336[2mms[22m[39m
+     [33m[2m✓[22m[39m M3（探索侧）：只读探索入口在矩阵启用后照常派发（绑定只读角色 investigator） [33m 6733[2mms[22m[39m
+ [32m✓[39m tests/app/rework-issues.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 33062[2mms[22m[39m
+   [33m[2m✓[22m[39m 真实失败的检查轮次成为带来源的未处置问题，并通过 HTTP 只读出口返回 [33m 12009[2mms[22m[39m
+   [33m[2m✓[22m[39m 真实超时被杀：问题直接回报 timeout，而不是只给一个 FAIL [33m 13623[2mms[22m[39m
+   [33m[2m✓[22m[39m 没有失败结论时问题出口返回明确的空状态，而不是编造问题 [33m 7428[2mms[22m[39m
+ [31m❯[39m tests/app/rework-drive.test.ts [2m([22m[2m3 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 37063[2mms[22m[39m
+   [33m[2m✓[22m[39m 工具轮次真实 FAIL 之后自动触发：产生真实提案，边界不满足时停住并可见，且零写入；重复触发幂等、重启后由 canonical 重建 [33m 12792[2mms[22m[39m
+[31m   [31m×[31m 独立审阅交付 FAIL 结论之后同样触发驱动：问题来源是审阅结论，提案照样机械推导出来[39m[33m 16957[2mms[22m[39m
+   [33m[2m✓[22m[39m 没有任何验证结论时：只读视图不编造提案，也没有触发结果 [33m 7311[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-03.contract-suite.sqlite.test.ts [2m([22m[2m15 tests[22m[2m)[22m[33m 41337[2mms[22m[39m
+     [33m[2m✓[22m[39m readiness table: only deps-satisfied active unblocked budgeted WORK tasks are eligible [33m 1688[2mms[22m[39m
+     [33m[2m✓[22m[39m readiness: goal without accepted plan -> plan_not_accepted [33m 2366[2mms[22m[39m
+     [33m[2m✓[22m[39m claim commits the durable intent + lease + attempt + run atomically (all fields exact) [33m 2595[2mms[22m[39m
+     [33m[2m✓[22m[39m competing claims: two ControlEngine instances -> at most one lease/attempt/run [33m 2772[2mms[22m[39m
+     [33m[2m✓[22m[39m same identity+fingerprint replays committed(replayed); different fingerprint -> idempotency_conflict [33m 3000[2mms[22m[39m
+     [33m[2m✓[22m[39m claim of an ineligible task -> ineligible, zero write [33m 2971[2mms[22m[39m
+     [33m[2m✓[22m[39m claim of a missing goal -> not_found, zero write [33m 3356[2mms[22m[39m
+     [33m[2m✓[22m[39m start commits envelope + outbox started (CAS); stale start -> revision_conflict zero-write [33m 3512[2mms[22m[39m
+     [33m[2m✓[22m[39m run_completed(exit=0) -> ended/completed + exitCode 0; Task.phase stays pending [33m 3334[2mms[22m[39m
+     [33m[2m✓[22m[39m duplicate / invalid-sequence / conflicting / late-after-terminal facts are rejected zero-write (no regress) [33m 3105[2mms[22m[39m
+     [33m[2m✓[22m[39m out-of-order NEWER-then-OLDER events: late old event after a terminal NEVER regresses [33m 3144[2mms[22m[39m
+     [33m[2m✓[22m[39m crash and outcome_unknown project to DIFFERENT outcomes; unknown never guessed from crash [33m 3344[2mms[22m[39m
+     [33m[2m✓[22m[39m ActiveAgent + TaskDetail views rebuild field-identically after a fresh projection [33m 3120[2mms[22m[39m
+     [33m[2m✓[22m[39m outcome_unknown after crash: crash run never becomes satisfied either [33m 3026[2mms[22m[39m
+ [32m✓[39m tests/data/python-source-index.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 41833[2mms[22m[39m
+   [33m[2m✓[22m[39m resolves Python aliases across project files without executing source and invalidates dirty code [33m 3815[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects Python scope escapes and keeps unresolved dependencies unknown [33m 760[2mms[22m[39m
+   [33m[2m✓[22m[39m resolves configured package and workspace dependency roots from pyproject.toml [33m 2173[2mms[22m[39m
+   [33m[2m✓[22m[39m resolves configured package and workspace dependency roots from pyrightconfig.json [33m 2484[2mms[22m[39m
+   [33m[2m✓[22m[39m resolves configured package and workspace dependency roots from setup.cfg [33m 3348[2mms[22m[39m
+   [33m[2m✓[22m[39m recognizes a src namespace layout and safely parses setuptools discovery metadata [33m 2926[2mms[22m[39m
+   [33m[2m✓[22m[39m invalidates configuration, dependency content, manifests, deletes and source identity without reusing stale results [33m 8732[2mms[22m[39m
+   [33m[2m✓[22m[39m reports one-based UTF-16 locations while converting AST UTF-8 byte offsets and Jedi code points [33m 5818[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects denied, absolute and traversing configuration roots and declares unsupported environment semantics [33m 7585[2mms[22m[39m
+   [33m[2m✓[22m[39m refuses an incomplete inventory and detects source changes during analysis [33m 1286[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps module file anchors distinct from declarations and isolates cached results from caller mutation [33m 2874[2mms[22m[39m
+ [32m✓[39m tests/verification/reviewer-verification.test.ts [2m([22m[2m21 tests[22m[2m)[22m[33m 37558[2mms[22m[39m
+     [33m[2m✓[22m[39m creates one canonical independent Work, admits precise per-VR outcomes and replays after reopen without rerunning tools [33m 2303[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects an applicable extra tool FAIL with no VR coverage before Work creation [33m 620[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects unknown schema and preserves the original raw report across reopen [33m 1843[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects duplicate VR and preserves the original raw report across reopen [33m 2158[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects missing VR and preserves the original raw report across reopen [33m 2096[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects invented source digest and preserves the original raw report across reopen [33m 2244[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects missing source lines and preserves the original raw report across reopen [33m 2133[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects pin excluded path and preserves the original raw report across reopen [33m 1972[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects missing artifact pointer and preserves the original raw report across reopen [33m 1712[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects PASS with unresolved unknown and preserves the original raw report across reopen [33m 2050[2mms[22m[39m
+     [33m[2m✓[22m[39m recovers a lost creation receipt from canonical Work without creating another Run [33m 854[2mms[22m[39m
+     [33m[2m✓[22m[39m recovers a lost result receipt using its persisted command and canonical Result without re-admission [33m 2537[2mms[22m[39m
+     [33m[2m✓[22m[39m leaves a temporary raw report outage pending, then reads the same binding without a new model session [33m 3090[2mms[22m[39m
+     [33m[2m✓[22m[39m refuses actual source/configuration changes without reviving the old request [33m 1891[2mms[22m[39m
+     [33m[2m✓[22m[39m refuses a real revoked cross-subject grant even while the projection still contains its old candidate [33m 1096[2mms[22m[39m
+     [33m[2m✓[22m[39m recovers a genuine concurrent task reduction CAS by keeping the rejected attempt and using a new key [33m 3051[2mms[22m[39m
+     [33m[2m✓[22m[39m recovers a genuine concurrent goal reduction CAS by keeping the rejected attempt and using a new key [33m 2873[2mms[22m[39m
+     [33m[2m✓[22m[39m does not accept a completed report whose persisted Reviewer session reused the Producer [33m 992[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps missing tool material retryable before creation and freezes the same explicit request [33m 650[2mms[22m[39m
+     [33m[2m✓[22m[39m waits for an existing unknown reviewer execution and ignores caller-provided report fields [33m 751[2mms[22m[39m
+     [33m[2m✓[22m[39m recomputes legacy satisfied state after adopting the independent protocol without changing original Evidence [33m 641[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-07.contract-suite.sqlite.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 41377[2mms[22m[39m
+       [33m[2m✓[22m[39m A1/A2 two readers overlap for real; started before any poll; independent attempts/contexts/budgets [33m 2701[2mms[22m[39m
+       [33m[2m✓[22m[39m A3 read + parallel read leases; reader can NEVER obtain a write lease [33m 6239[2mms[22m[39m
+       [33m[2m✓[22m[39m A5 competing writers: at most one effective write lease; loser zero write; readback [33m 4856[2mms[22m[39m
+       [33m[2m✓[22m[39m A5b lease release + expiry-vacate; expired lease does not block a new writer [33m 4917[2mms[22m[39m
+       [33m[2m✓[22m[39m A4 conflict preserved, never overwritten; explanation or escalate required [33m 3782[2mms[22m[39m
+       [33m[2m✓[22m[39m A6 writer uses accepted reader outputs; patch carries changed paths, checks, revision [33m 4258[2mms[22m[39m
+       [33m[2m✓[22m[39m A7 full gate check via runP107FullScenario (happy path: goal COMPLETED) [33m 4592[2mms[22m[39m
+       [33m[2m✓[22m[39m A7b failure facts stay traceable: gate FAIL -> goal never COMPLETED; timeline shows both [33m 4513[2mms[22m[39m
+       [33m[2m✓[22m[39m A8 coordinator exit does not revoke an independent worker's legal lease; role contexts isolated [33m 2973[2mms[22m[39m
+       [33m[2m✓[22m[39m V1 views: not_ready vs not_found freshness semantics; display-only conflict view [33m 2540[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/p1-08-portfolio-summary.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 23464[2mms[22m[39m
+     [33m[2m✓[22m[39m consolePortfolio lists both isolated bootstrapped scopes in scope-key order [33m 4965[2mms[22m[39m
+     [33m[2m✓[22m[39m consoleSummary aggregates counters per project; local ids never cross-read [33m 4734[2mms[22m[39m
+     [33m[2m✓[22m[39m phaseCounts track the LATEST reduction phase per task and the latest goal phase [33m 4775[2mms[22m[39m
+     [33m[2m✓[22m[39m freshness: covered+no row -> not_found; uncovered -> not_ready; no cursor+no row -> not_ready [33m 4563[2mms[22m[39m
+     [33m[2m✓[22m[39m portfolio freshness mirrors summary (covered ready; uncovered not_ready) [33m 4425[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/p1-16-work-context.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 18556[2mms[22m[39m
+     [33m[2m✓[22m[39m projects the binding + notes rows and survives close/reopen (restart equivalence) [33m 4970[2mms[22m[39m
+     [33m[2m✓[22m[39m scope isolation: the SAME local workId in project B has its OWN rows (no cross-project read) [33m 4663[2mms[22m[39m
+     [33m[2m✓[22m[39m notes append in order and the multi-run link path is projected [33m 4653[2mms[22m[39m
+     [33m[2m✓[22m[39m freshness: a never-bound work is not_found (distinct from not_ready) [33m 4269[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-04.contract-suite.sqlite.test.ts [2m([22m[2m18 tests[22m[2m)[22m[33m 48489[2mms[22m[39m
+       [33m[2m✓[22m[39m claim admission: commit -> immutable evidence + atomic index; replay; conflicts; zero-write [33m 2426[2mms[22m[39m
+       [33m[2m✓[22m[39m a CompletionClaim is never evidence PASS: PASS claim rejected, invalid claim zero-write [33m 2552[2mms[22m[39m
+       [33m[2m✓[22m[39m claim/verdict without a producing run and dangling coverage are rejected zero-write [33m 2358[2mms[22m[39m
+       [33m[2m✓[22m[39m single exit=0 / claim alone NEVER satisfy: blocked with missing-evidence causes [33m 3074[2mms[22m[39m
+       [33m[2m✓[22m[39m FAIL -> failed (rework); newer PASS supersedes -> satisfied; old FAIL stays auditable [33m 3204[2mms[22m[39m
+       [33m[2m✓[22m[39m revision change only recomputes applicability: STALE / OUT_OF_SCOPE displayed, history untouched [33m 3632[2mms[22m[39m
+       [33m[2m✓[22m[39m reviewer verdict alone never satisfies; verdict + bounded-packet static evidence satisfies [33m 3478[2mms[22m[39m
+       [33m[2m✓[22m[39m pure applicability table: APPLICABLE / STALE / OUT_OF_SCOPE and effective-set supersession [33m 2945[2mms[22m[39m
+       [33m[2m✓[22m[39m plan compilation is a deterministic pure function (content-addressed, no model/timestamp) [33m 2668[2mms[22m[39m
+       [33m[2m✓[22m[39m deterministic failures: missing pin / unknown check / no check coverage — never a built-in default [33m 2821[2mms[22m[39m
+       [33m[2m✓[22m[39m VerificationEngine.verify: ready plan + deterministic observation drafts; NEVER writes the ledger [33m 2613[2mms[22m[39m
+       [33m[2m✓[22m[39m semantic change -> reviewer plan goes through a ReviewPacket (never a silent fast path) [33m 3117[2mms[22m[39m
+       [33m[2m✓[22m[39m gate reduces to SATISFIED only with its static gate evidence; deferred never satisfies [33m 2649[2mms[22m[39m
+       [33m[2m✓[22m[39m reducer table: crashed run -> failed; outcome_unknown side effect -> never satisfied; FAIL/INCONCLUSIVE table [33m 3102[2mms[22m[39m
+       [33m[2m✓[22m[39m pure effective-set table: INCONCLUSIVE verdict blocks; superseded by later PASS [33m 2523[2mms[22m[39m
+       [33m[2m✓[22m[39m assemble: bounded ReviewPacket, body-first in the vault, no transcript [33m 2846[2mms[22m[39m
+       [33m[2m✓[22m[39m rejections are zero-write: forbidden scope / stale workspace / not-semantic / exhausted budget [33m 2474[2mms[22m[39m
+[90mstdout[2m | tests/integration/p1-16.real-kernel.continuity.test.ts[2m > [22m[2mP1-16 real-kernel continuity evidence (real coding-agent CLI)[2m > [22m[2mrun(2 requests: read -> final) -> resume(same session) -> second turn; evidence recorded
+[22m[39mP1-16-REAL-KERNEL-EVIDENCE
+{
+  "kernelRoot": "/mnt/d/1.project/Software/agent_platform/vendor/coding-agent/",
+  "sessionId": "p116-real-kernel-session",
+  "turn1": {
+    "args": [
+      "run"
+    ],
+    "exit": null,
+    "requests": 3,
+    "stdoutTail": ""
+  },
+  "turn2": {
+    "args": [
+      "resume",
+      "--session",
+      "p116-real-kernel-session"
+    ],
+    "exit": 0,
+    "requests": 3,
+    "stdoutTail": "第二阶段完成：从持久会话接续并继续同一工作\n"
+  },
+  "sessionDbBytes": 77824,
+  "observed": "restored_original",
+  "capability": {
+    "sessionRestore": true,
+    "contextResume": true,
+    "takeoverRun": true
+  },
+  "note": "真实内核应用路径验证（真实 CLI 进程 + 真实会话持久化 + 真实 resume 语义）；模型端点为本地 SSE 替身（无 provider 凭证时的显式降级证据）——见 IMPLEMENTATION-HANDOFF P1-16 真实内核证据设计。"
+}
+
+ [32m✓[39m tests/integration/p1-16.real-kernel.continuity.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 18760[2mms[22m[39m
+     [33m[2m✓[22m[39m run(2 requests: read -> final) -> resume(same session) -> second turn; evidence recorded [33m 18753[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/p1-03-run-projection.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 15704[2mms[22m[39m
+     [33m[2m✓[22m[39m claim -> start -> facts: ActiveAgent + TaskDetail.run fold field-for-field [33m 2091[2mms[22m[39m
+     [33m[2m✓[22m[39m crash and outcome_unknown project to DIFFERENT outcomes (unknown never guessed from crash) [33m 2161[2mms[22m[39m
+     [33m[2m✓[22m[39m fresh file rebuilt from the same pages reproduces the projection field-for-field [33m 3896[2mms[22m[39m
+     [33m[2m✓[22m[39m full-scope isolation: same goalId/taskId under different Projects never collide [33m 2090[2mms[22m[39m
+     [33m[2m✓[22m[39m freshness: not_ready != not_found for the active agent view [33m 1732[2mms[22m[39m
+     [33m[2m✓[22m[39m dedupe: re-advancing the same page is idempotent (no re-apply, no base advance) [33m 1982[2mms[22m[39m
+     [33m[2m✓[22m[39m late/stale runtime event (sequence <= lastEventSeq) does not regress the fold [33m 1750[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/p1-12-brief-proposal-projection.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 15123[2mms[22m[39m
+     [33m[2m✓[22m[39m surfaces lane-B briefs/proposals per full scope key with cross-project isolation [33m 4528[2mms[22m[39m
+     [33m[2m✓[22m[39m freshness: a never-advanced index returns not_ready (not not_found) [33m 4245[2mms[22m[39m
+     [33m[2m✓[22m[39m rebuild equivalence: close/reopen with a fresh read-model file reproduces the view [33m 6348[2mms[22m[39m
+[90mstdout[2m | tests/integration/p1-15-role-e2e.integration.test.ts[2m > [22m[2mP1-15 lane C — 模型协作集成端到端 (真实内核 CLI + 本地模型 fixture)[2m > [22m[2mrun(collaboration turn 1) -> resume(close/reopen same session) -> 续接; evidence recorded
+[22m[39mP1-15-MODEL-E2E-EVIDENCE
+{
+  "p115": {
+    "kernelRoot": "/mnt/d/1.project/Software/agent_platform/vendor/coding-agent/",
+    "sessionId": "p115-lane-c-model-e2e-session",
+    "modelEndpoint": "local-fixture-sse (DEEPSEEK_API_KEY=fixture-secret)",
+    "turn1": {
+      "args": [
+        "run"
+      ],
+      "exit": null,
+      "requests": 3,
+      "stdoutTail": ""
+    },
+    "turn2": {
+      "args": [
+        "resume",
+        "--session",
+        "p115-lane-c-model-e2e-session"
+      ],
+      "exit": 0,
+      "requests": 3,
+      "stdoutTail": "P1-15 模型协作闭环（真实内核，close/reopen 续接）：需求歧义→选项(opt-a/opt-b)→决定(accept opt-a)→派发→验证→返工(一次)→接续——从持久事实与 Handoff 继续\n"
+    },
+    "sessionDbBytes": 77824,
+    "observed": "collaboration_loop_model_fixture",
+    "capability": {
+      "modelEndpointDegraded": true,
+      "sessionRestore": true,
+      "closeReopen": true,
+      "noExternalNetwork": true
+    },
+    "note": "真实内核应用路径验证：真实 CLI 进程 + 真实 SQLite 会话持久化 + 真实 resume 语义 + 本地 OpenAI 兼容模型 fixture（无 provider 凭证时的显式降级证据，DEEPSEEK_API_KEY=fixture-secret）。"
+  }
+}
+
+ [32m✓[39m tests/integration/p1-15-role-e2e.integration.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 17790[2mms[22m[39m
+     [33m[2m✓[22m[39m run(collaboration turn 1) -> resume(close/reopen same session) -> 续接; evidence recorded [33m 17780[2mms[22m[39m
+ [32m✓[39m tests/verification/reviewer-recovery.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 15250[2mms[22m[39m
+   [33m[2m✓[22m[39m replaces a proven prestart failure and follows the original PASS result/evidence/reduction chain across reopen [33m 3292[2mms[22m[39m
+   [33m[2m✓[22m[39m replaces a proven prestart failure and follows the original FAIL result/evidence/reduction chain across reopen [33m 3108[2mms[22m[39m
+   [33m[2m✓[22m[39m replays same-key concurrent recovery, conflicts on changed payload, and admits only one competing authorization [33m 988[2mms[22m[39m
+   [33m[2m✓[22m[39m lets protocol CAS choose one Work for different simultaneous authorization identities [33m 995[2mms[22m[39m
+   [33m[2m✓[22m[39m persists a committed Control receipt after response loss and replays the frozen command after restart [33m 1099[2mms[22m[39m
+   [33m[2m✓[22m[39m resumes authorization saved before Control submission and refuses a later unknown observation without refreshing its frozen proof [33m 837[2mms[22m[39m
+   [33m[2m✓[22m[39m resumes a saved unsubmitted authorization when the same complete proof remains current [33m 1085[2mms[22m[39m
+   [33m[2m✓[22m[39m does not submit an in-memory frozen command until its failed journal save has durably succeeded [33m 1146[2mms[22m[39m
+   [33m[2m✓[22m[39m reopens authorization intent saved before the replacement command could be frozen [33m 1105[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps canonical outcome_unknown blocked even when a persisted runtime row claims the exact prestart failure [33m 801[2mms[22m[39m
+   [33m[2m✓[22m[39m requires complete exact durable failure facts and refuses absent, ambiguous, started, malformed, or unknown records [33m 793[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-01.integration.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 13295[2mms[22m[39m
+     [33m[2m✓[22m[39m bootstrap on an empty SQLite file via the supported contract; replay idempotent; other identity rejected not_empty [33m 2238[2mms[22m[39m
+     [33m[2m✓[22m[39m CreateGoal persists two isolated scopes; replay idempotent; same-key conflict; rejections zero-write [33m 2326[2mms[22m[39m
+     [33m[2m✓[22m[39m freshness: not_ready until the persisted EventPage(s) are advanced, then ready [33m 2174[2mms[22m[39m
+     [33m[2m✓[22m[39m restart: canonical GoalSnapshot loads from SQLite; GoalView rebuilt from persisted EventPage — same as before [33m 4071[2mms[22m[39m
+     [33m[2m✓[22m[39m no implicit Plan/Task/Run side effects: only bootstrap + GoalCreated events exist [33m 2225[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/p1-05-goal-phase-projection.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 13185[2mms[22m[39m
+     [33m[2m✓[22m[39m GoalPhaseUpdated projects goalStatus + timeline (RUNNING -> COMPLETED, ordered) [33m 3370[2mms[22m[39m
+     [33m[2m✓[22m[39m rebuild equivalence: same ledger + FRESH read-model file -> field-for-field views [33m 4810[2mms[22m[39m
+     [33m[2m✓[22m[39m full-key isolation + not_found only after coverage + read-only [33m 3145[2mms[22m[39m
+     [33m[2m✓[22m[39m full-scope isolation: two Projects share the same goalId without colliding [33m 1858[2mms[22m[39m
+ [32m✓[39m tests/control/live-frontier-regression.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 11659[2mms[22m[39m
+     [33m[2m✓[22m[39m source FAIL with independent frontier=false [33m 2777[2mms[22m[39m
+     [33m[2m✓[22m[39m source FAIL with independent frontier=true [33m 2929[2mms[22m[39m
+     [33m[2m✓[22m[39m replacement uses formally satisfied predecessor after restart; plan stays immutable [33m 3047[2mms[22m[39m
+     [33m[2m✓[22m[39m replacement cannot reset its own formally failed task or erase FAIL history [33m 2756[2mms[22m[39m
+ [32m✓[39m tests/restart/material-source-applicability.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 11550[2mms[22m[39m
+   [33m[2m✓[22m[39m source applicability checks real files without counter bumps and preserves historical reads/revocation (sqlite) [33m 11362[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/plan-view.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 9259[2mms[22m[39m
+     [33m[2m✓[22m[39m fresh rebuild from the same EventPages equals the incremental projection [33m 3947[2mms[22m[39m
+     [33m[2m✓[22m[39m reopening the same file and continuing equals a one-shot full replay [33m 3658[2mms[22m[39m
+     [33m[2m✓[22m[39m persisted dedupe: re-advancing an applied page after reopen is idempotent [33m 1625[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-08.contract-suite.sqlite.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 12151[2mms[22m[39m
+         [33m[2m✓[22m[39m console queries never call the runtime (no model start, no lease refresh) [33m 4030[2mms[22m[39m
+     [33m[2m✓[22m[39m the console adapter can never read/write ledger tables (read-only-adapter, sqlite path) [33m 3840[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-02.integration.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 10641[2mms[22m[39m
+     [33m[2m✓[22m[39m A1-A4: fixture digest/schema; install persists immutable revision; same identity/revision never overwritten [33m 2290[2mms[22m[39m
+     [33m[2m✓[22m[39m A3: activation accepts only installed exact target; CAS failure leaves active ref unmoved [33m 2194[2mms[22m[39m
+     [33m[2m✓[22m[39m A4/A5/A6/A7/A12/A13: full path with restart; pins survive default-ref movement; idempotency [33m 4036[2mms[22m[39m
+     [33m[2m✓[22m[39m A14: no dispatch outbox / TaskAttempt / AgentRun on the whole path [33m 2118[2mms[22m[39m
+ [32m✓[39m tests/app/verification-imports.test.ts [2m([22m[2m10 tests[22m[2m)[22m[33m 59932[2mms[22m[39m
+   [33m[2m✓[22m[39m commits genuine PatchRecord/Evidence and reduces work, gate and Goal; restart/replay never repeats attempts [33m 6129[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps original FAIL, diagnostic and assisted repair as distinct evidence and candidates [33m 7764[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects scope, patch, report and revision mismatches; active runs and altered idempotent input are blocked [33m 7136[2mms[22m[39m
+   [33m[2m✓[22m[39m missing required results fail the required-set benchmark in Control and cannot complete the Goal [33m 6782[2mms[22m[39m
+   [33m[2m✓[22m[39m resumes a journal after PatchRecord commit without advancing the workspace again [33m 6853[2mms[22m[39m
+   [33m[2m✓[22m[39m persists and rehydrates a real-size multi-chunk report without exposing full report bodies in state [33m 6821[2mms[22m[39m
+   [33m[2m✓[22m[39m runs an actual command through VerificationEngine, persists the result, and never infers Task completion [33m 7342[2mms[22m[39m
+   [33m[2m✓[22m[39m retains an orphan command report after interruption without re-executing or claiming accepted evidence [33m 5879[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps a reopened report historical after source changes and never executes the check again [33m 5221[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-06.contract-suite.sqlite.test.ts [2m([22m[2m25 tests[22m[2m)[22m[33m 63603[2mms[22m[39m
+         [33m[2m✓[22m[39m valid packet passes validation with no issues [33m 2039[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects a hidden transcript field (strict unknown-field rejection) [33m 2100[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects noFullTranscript=false (explicit guarantee) [33m 2434[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects an over-cap packet with size_exceeded [33m 2257[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects an over-cap summary with size_exceeded [33m 2382[2mms[22m[39m
+         [33m[2m✓[22m[39m commits a bounded packet after A ended (crash) and replays idempotently [33m 3298[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects a handoff while A's run is still active (run_not_ended) [33m 3171[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects a stale-source packet explicitly (stale_source) — re-project a fresh one [33m 3128[2mms[22m[39m
+         [33m[2m✓[22m[39m eligible when A ended [33m 2297[2mms[22m[39m
+         [33m[2m✓[22m[39m eligible when A's lease is EXPIRED (even though attempt not ended) [33m 2572[2mms[22m[39m
+         [33m[2m✓[22m[39m lease_active when A neither ended nor expired [33m 2263[2mms[22m[39m
+         [33m[2m✓[22m[39m stale_packet explicit (workspace revision mismatch) — never silently reused [33m 2272[2mms[22m[39m
+         [33m[2m✓[22m[39m packet_mismatch when packet targets a different task [33m 2511[2mms[22m[39m
+         [33m[2m✓[22m[39m no_prior_attempt when there is no lease [33m 2295[2mms[22m[39m
+         [33m[2m✓[22m[39m commits B's new attempt/run/outbox/replacement after A crashed [33m 2964[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects lease_active: replacement while A is still running [33m 2489[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects a competing CAS window (revision_conflict, zero-write) [33m 2781[2mms[22m[39m
+         [33m[2m✓[22m[39m A's late runtime fact after B's claim is rejected (after_terminal) and B is untouched [33m 2516[2mms[22m[39m
+         [33m[2m✓[22m[39m A's stale-sequence fact (duplicate) inside A's own run is still rejected [33m 2502[2mms[22m[39m
+         [33m[2m✓[22m[39m explicit stale on source revision mismatch, then re-project -> ready (no silent old-use) [33m 2617[2mms[22m[39m
+         [33m[2m✓[22m[39m forbidden scope rejected; packet_not_found rejected [33m 2591[2mms[22m[39m
+         [33m[2m✓[22m[39m A crash -> record -> B claim -> driveHandoff -> B facts -> provenance timeline [33m 2618[2mms[22m[39m
+         [33m[2m✓[22m[39m A outcome_unknown -> packet unresolved keeps it; view preserves; no extra replacement [33m 2327[2mms[22m[39m
+         [33m[2m✓[22m[39m B's later evidence traces to A and B runs under the same plan revision [33m 2535[2mms[22m[39m
+         [33m[2m✓[22m[39m pause/stop states + public snapshot never expose hidden context [33m 2643[2mms[22m[39m
+ [32m✓[39m tests/app/explorations.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 64248[2mms[22m[39m
+   [33m[2m✓[22m[39m executes a real read-only dependency chain, requires operator review and preserves reports across restart [33m 9265[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects mismatched, fabricated and changed review requests and changed source snapshots [33m 8644[2mms[22m[39m
+   [33m[2m✓[22m[39m does not admit a completed answer with no successful read as exploration evidence [33m 7466[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps source-only exploration on the ordinary declared capacities with no cumulative limit outside the configured snapshot roots [33m 7498[2mms[22m[39m
+   [33m[2m✓[22m[39m refuses cycles, duplicate nodes and replacement plans before any model call [33m 5779[2mms[22m[39m
+   [33m[2m✓[22m[39m serializes independent real dispatch requests without duplicate model calls or unknown outcomes [33m 7868[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects review when an actually read dist file changes after exploration was frozen [33m 6400[2mms[22m[39m
+   [33m[2m✓[22m[39m inherits only directly required applied PASS review notes, keeping reports and failed-goal history separate [33m 11326[2mms[22m[39m
+ [32m✓[39m tests/app/gui.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 11478[2mms[22m[39m
+   [33m[2m✓[22m[39m serves the GUI and persists scoped goals, plans, runs and sourced queries across restart [33m 3381[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects invalid scope, unplanned query, conflicting goal retry and cross-origin writes [33m 2429[2mms[22m[39m
+   [33m[2m✓[22m[39m answers a formal receipt for a goal whose response was lost and replays the retry [33m 2654[2mms[22m[39m
+   [33m[2m✓[22m[39m scopes agent-focused chat to its task and exposes the formal project view without inventing completion [33m 3013[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-02.contract-suite.sqlite.test.ts [2m([22m[2m29 tests[22m[2m)[22m[33m 69761[2mms[22m[39m
+     [33m[2m✓[22m[39m install persists the exact immutable revision; load resolves digest/revision [33m 1362[2mms[22m[39m
+     [33m[2m✓[22m[39m install NEVER auto-activates (no active aggregates, no activated events) [33m 1835[2mms[22m[39m
+     [33m[2m✓[22m[39m same identity/fingerprint replay is committed(replayed) with the ORIGINAL outcome [33m 2050[2mms[22m[39m
+     [33m[2m✓[22m[39m same identity with a DIFFERENT fingerprint is idempotency_conflict, zero-write [33m 2148[2mms[22m[39m
+     [33m[2m✓[22m[39m same identity/revision (different command) is NOT overwritable — revision_conflict, zero-write [33m 2210[2mms[22m[39m
+     [33m[2m✓[22m[39m digest mismatch -> digest_mismatch, zero-write [33m 2466[2mms[22m[39m
+     [33m[2m✓[22m[39m activation: only installed exact target accepted; dangling -> not_found zero-write; per-kind independence [33m 2540[2mms[22m[39m
+     [33m[2m✓[22m[39m activation CAS: stale expected Project revision -> revision_conflict, active ref unmoved [33m 2835[2mms[22m[39m
+     [33m[2m✓[22m[39m two projects install their own revisions and activate independently (no id collision) [33m 3061[2mms[22m[39m
+     [33m[2m✓[22m[39m no ArchitectureEvolutionPolicy artifact exists anywhere in the ledger [33m 2587[2mms[22m[39m
+     [33m[2m✓[22m[39m full path: accept plan, goal active revision, views ready, pins exact, one event [33m 2876[2mms[22m[39m
+     [33m[2m✓[22m[39m unresolved governance refs -> unresolved_governance_ref, zero-write (no fallback) [33m 2532[2mms[22m[39m
+     [33m[2m✓[22m[39m goal not found -> not_found, zero-write [33m 2673[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: no required executable task -> plan_guard_failed, zero-write [33m 2621[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: no active required GoalGateTask -> plan_guard_failed, zero-write [33m 2825[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: no required obligation -> plan_guard_failed, zero-write [33m 2546[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: required obligation without any required VR -> plan_guard_failed, zero-write [33m 2604[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: required executable task without required obligation mapping -> rejected, zero-write [33m 2422[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: required obligation without mapped work/gate task -> rejected, zero-write [33m 2390[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: VR kind outside the effective policy requirementKinds -> rejected, zero-write [33m 2452[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: hierarchy dangling ref -> rejected, zero-write [33m 2326[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: hierarchy cycle -> rejected, zero-write [33m 2202[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: DAG dangling edge -> rejected, zero-write [33m 2428[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: DAG self dependency -> rejected, zero-write [33m 2304[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: DAG cycle -> rejected, zero-write [33m 2172[2mms[22m[39m
+     [33m[2m✓[22m[39m stale goal CAS: wrong expectedRevision -> revision_conflict, zero-write; replay idempotent [33m 2135[2mms[22m[39m
+     [33m[2m✓[22m[39m pin immutability: moving the active ref does NOT change the accepted plan pins [33m 2323[2mms[22m[39m
+     [33m[2m✓[22m[39m freshness: not_ready != not_found for plan graph and task detail; cross-project isolation [33m 2476[2mms[22m[39m
+     [33m[2m✓[22m[39m no dispatch outbox, TaskAttempt or AgentRun anywhere in the path [33m 2351[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-12.integration.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 8598[2mms[22m[39m
+     [33m[2m✓[22m[39m InMemory and SQLite inspection views agree (same deterministic scenario) [33m 4468[2mms[22m[39m
+ [32m✓[39m tests/app/verification-rounds.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 67881[2mms[22m[39m
+   [33m[2m✓[22m[39m real HTTP executes each registered check once and a later PASS cannot erase the same requirement FAIL; reopens exact reports [33m 13176[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects a corrupted original SQLite report through HTTP after restart without replacing historical Evidence [33m 16979[2mms[22m[39m
+   [33m[2m✓[22m[39m serves persisted progress and receipts while a real check is still executing [33m 11312[2mms[22m[39m
+   [33m[2m✓[22m[39m the formal VerificationPort executes the same durable round and cannot trust caller no-change claims or complete a new manual Plan [33m 7678[2mms[22m[39m
+   [33m[2m✓[22m[39m accepted Reviewer obligations remain unmet after all tools PASS, and source edits make the old round stale without deleting reports [33m 11987[2mms[22m[39m
+   [33m[2m✓[22m[39m persists explicit missing/invalid configuration and enforces full HTTP Task/Run scope and execution permission [33m 6747[2mms[22m[39m
+ [32m✓[39m tests/verification/verification-rounds.test.ts [2m([22m[2m19 tests[22m[2m)[22m[33m 9646[2mms[22m[39m
+     [33m[2m✓[22m[39m runs every applicable immutable check once, merges repeated coverage, aggregates FAIL over later PASS and leaves Reviewer pending [33m 897[2mms[22m[39m
+     [33m[2m✓[22m[39m runs available checks while exposing missing coverage, and treats a known timeout as INCONCLUSIVE [33m 473[2mms[22m[39m
+     [33m[2m✓[22m[39m reopens a body-first partial round using its original full plan and continues only the never-started child [33m 782[2mms[22m[39m
+     [33m[2m✓[22m[39m refuses source changes during execution and after reports while keeping old FAIL and same-key replay historical [33m 683[2mms[22m[39m
+     [33m[2m✓[22m[39m retries a partially accepted aggregate with byte-identical stable Evidence commands and no new executions [33m 518[2mms[22m[39m
+     [33m[2m✓[22m[39m does not continue remaining checks after an unknown executing checkpoint, even when the same request is replayed [33m 338[2mms[22m[39m
+     [33m[2m✓[22m[39m refuses aggregate recovery when an original report is revoked, preserving pending admission and raw history [33m 402[2mms[22m[39m
+     [33m[2m✓[22m[39m refuses aggregate recovery when an original report is bad-digest, preserving pending admission and raw history [33m 411[2mms[22m[39m
+     [33m[2m✓[22m[39m uses the generic VerificationPort for a real explicit round and serializes concurrent same-key submissions [33m 435[2mms[22m[39m
+     [33m[2m✓[22m[39m persists a definitively rejected acquisition without blocking a new round, while the original request never executes [33m 550[2mms[22m[39m
+     [33m[2m✓[22m[39m preserves a rejected task reduction attempt and resumes a new canonical CAS identity without repeating tools [33m 465[2mms[22m[39m
+     [33m[2m✓[22m[39m preserves a rejected goal reduction attempt and resumes a new canonical CAS identity without repeating tools [33m 425[2mms[22m[39m
+     [33m[2m✓[22m[39m includes an additional applicable failing tool in round outcome without inventing a formal obligation [33m 495[2mms[22m[39m
+     [33m[2m✓[22m[39m RW-16 executor：安装规格后正常任务轮次仍能完成 —— 本 Run 的 PatchRecord 见证产出期望（真实链） [33m 721[2mms[22m[39m
+     [33m[2m✓[22m[39m RW-16 integrator：安装规格后集成轮次仍能完成 —— 本 Run 的 IntegrationResult 记录见证必产出（真实链） [33m 746[2mms[22m[39m
+     [33m[2m✓[22m[39m RW-18 验收核心：装了 executor 规格、没有登记实现结果时，轮次不再降级也不再扣留归约（见证知识仍如实记录） [33m 857[2mms[22m[39m
+     [33m[2m✓[22m[39m refuses a Vault-stored unsupported report version before aggregate admission [33m 355[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-16.integration.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 9065[2mms[22m[39m
+     [33m[2m✓[22m[39m InMemory and SQLite work-context views agree (same scenario, same expectations) [33m 4436[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-10.integration.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 9083[2mms[22m[39m
+     [33m[2m✓[22m[39m InMemory and SQLite control timelines agree [33m 4431[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-04.integration.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 7870[2mms[22m[39m
+     [33m[2m✓[22m[39m T1: full evidence path -> satisfies -> views -> close/reopen identical; acceptance checks 1-8 [33m 5064[2mms[22m[39m
+     [33m[2m✓[22m[39m T2: exit=0 / claim-only / verdict-only never satisfy (real SQLite) [33m 2804[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-09.integration.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 8683[2mms[22m[39m
+     [33m[2m✓[22m[39m InMemory and SQLite query-job views agree [33m 4274[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/p1-14-baseline-change-view.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 7485[2mms[22m[39m
+     [33m[2m✓[22m[39m projects candidate/decision/gate/activation rows and a ready post-activation view [33m 2062[2mms[22m[39m
+     [33m[2m✓[22m[39m isolates the same local ids across projects (hard scope key) [33m 1770[2mms[22m[39m
+     [33m[2m✓[22m[39m a never-advanced index returns not_found (no cursor claim) [33m 1861[2mms[22m[39m
+     [33m[2m✓[22m[39m rebuild equivalence: close/reopen against the SAME db file reproduces the view [33m 1789[2mms[22m[39m
+ [32m✓[39m tests/control/rework-drive-harness.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 7531[2mms[22m[39m
+     [33m[2m✓[22m[39m 真实 FAIL → 自动触发 → 受理成新 revision → 返工任务走既有 claim/drive 被真正派发；重复触发幂等 [33m 2953[2mms[22m[39m
+     [33m[2m✓[22m[39m 人显式 reject 之后同一问题不再自动受理；两个后端给出同一份结论 [33m 2625[2mms[22m[39m
+     [33m[2m✓[22m[39m 没有注入问题出口时两个后端都返回显式不可用，不假装"没有问题" [33m 1951[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/p1-11-plan-change.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 7503[2mms[22m[39m
+     [33m[2m✓[22m[39m projects proposals/decisions/revisions and computes task dispositions [33m 2009[2mms[22m[39m
+     [33m[2m✓[22m[39m isolates the same local goal id across projects (hard scope key) [33m 1792[2mms[22m[39m
+     [33m[2m✓[22m[39m a never-advanced index returns not_found (no cursor claim) [33m 1854[2mms[22m[39m
+     [33m[2m✓[22m[39m rebuild equivalence: close/reopen against the SAME db file reproduces the view [33m 1823[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-03.integration.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 7343[2mms[22m[39m
+     [33m[2m✓[22m[39m T1: claim -> drive (ContextCompiler+Vault+start+facts, outbox first) -> views -> close/reopen identical [33m 4795[2mms[22m[39m
+     [33m[2m✓[22m[39m T2: two Dispatchers race the SAME task on real SQLite -> at most one lease/Attempt succeeds [33m 2546[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/p1-15-unified-status.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 7464[2mms[22m[39m
+     [33m[2m✓[22m[39m projects the 4 rows and returns a ready facts-first view [33m 1900[2mms[22m[39m
+     [33m[2m✓[22m[39m a never-advanced index returns not_found (no cursor claim) [33m 1741[2mms[22m[39m
+     [33m[2m✓[22m[39m isolates the same local ids across projects (hard scope key) [33m 1881[2mms[22m[39m
+     [33m[2m✓[22m[39m rebuild equivalence: close/reopen against the SAME db file reproduces the view [33m 1939[2mms[22m[39m
+ [32m✓[39m tests/app/role-material-run.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 8164[2mms[22m[39m
+   [33m[2m✓[22m[39m 装了 executor 规格 + 含 roles 的矩阵之后，/api/real/tasks 的普通运行真的开始（模型被调用） [33m 8161[2mms[22m[39m
+ [32m✓[39m tests/app/initial-planning.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 7948[2mms[22m[39m
+   [33m[2m✓[22m[39m drives initial readonly model proposals through Control and durable dispatch, keeps distinct plans and replays without another model call [33m 7946[2mms[22m[39m
+ [32m✓[39m tests/control/operator-entry-role.test.ts [2m([22m[2m20 tests[22m[2m)[22m[33m 6723[2mms[22m[39m
+     [33m[2m✓[22m[39m 矩阵启用后 develop 入口仍然能派发，落账 Run 的角色绑定就是那个已登记角色 [33m 640[2mms[22m[39m
+     [33m[2m✓[22m[39m 矩阵启用后探索入口仍然能派发，落账 Run 的角色绑定是只读角色（与写入入口不是同一份授权） [33m 639[2mms[22m[39m
+     [33m[2m✓[22m[39m 矩阵没有登记入口角色时仍然拒绝且零写（守卫没有被放宽） [33m 531[2mms[22m[39m
+     [33m[2m✓[22m[39m 没有角色矩阵的项目沿用既有语义：入口照样派发（既有产品行为不被静默改变） [33m 546[2mms[22m[39m
+     [33m[2m✓[22m[39m RW-18 矩阵登记了角色：绑定由 pin 签发（revision 与摘要都能从绑定／落账 Run 复核） [33m 666[2mms[22m[39m
+     [33m[2m✓[22m[39m RW-18 矩阵 pin 指向未激活规格：绑定照签，claim 由未改动的守卫拒绝且零写 [33m 582[2mms[22m[39m
+     [33m[2m✓[22m[39m RW-18 没有矩阵／矩阵未登记该角色：不签发，逐字沿用既有绑定（与改动前一致） [33m 1033[2mms[22m[39m
+     [33m[2m✓[22m[39m 角色规格的 install／activate 与角色矩阵的 claim 校验在两套后端上给出同样的结论 [33m 762[2mms[22m[39m
+     [33m[2m✓[22m[39m 越权声明被拒且零写：矩阵 pin 的规格没有授权这个工具时，claim 不落账 [33m 680[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite 重开后同一条矩阵的签发结果逐字相同（签发不依赖任何进程内状态） [33m 567[2mms[22m[39m
+ [31m❯[39m tests/contracts/module-ownership.test.ts [2m([22m[2m9 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 8663[2mms[22m[39m
+     [32m✓[39m declares exactly twelve Modules, each with exactly one owning directory[32m 3[2mms[22m[39m
+     [32m✓[39m derives owner() from the path alone, with no filename or regex special-casing[32m 1[2mms[22m[39m
+     [32m✓[39m gives every owned file a path under the directory its Module name implies[32m 240[2mms[22m[39m
+     [32m✓[39m puts every file inside a Module directory under that same Module[32m 222[2mms[22m[39m
+[31m     [31m×[31m holds exactly the recorded file inventory in every Module directory[39m[32m 104[2mms[22m[39m
+     [32m✓[39m nests no Module directory inside another Module directory[32m 0[2mms[22m[39m
+     [32m✓[39m leaves no product source file unmapped[32m 250[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps the workspace path-boundary policy in exactly one WorkspaceReader file [33m 7809[2mms[22m[39m
+     [32m✓[39m keeps the legacy split directories gone[32m 32[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-17.integration.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 6224[2mms[22m[39m
+     [33m[2m✓[22m[39m InMemory and SQLite completed-work views agree [33m 1931[2mms[22m[39m
+ [32m✓[39m tests/app/real-runtime.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 79692[2mms[22m[39m
+   [33m[2m✓[22m[39m GUI dispatch runs real edit/shell tools, publishes facts, blocks fake fallback and never repeats on refresh/restart [33m 7291[2mms[22m[39m
+   [33m[2m✓[22m[39m remains observable while a model is slow and cancels without blocking state requests [33m 7599[2mms[22m[39m
+   [33m[2m✓[22m[39m stops before a model request when cumulative reservation does not fit, without changing context capacity [33m 7793[2mms[22m[39m
+   [33m[2m✓[22m[39m reports a provider authentication failure and makes no fixture response [33m 7659[2mms[22m[39m
+   [33m[2m✓[22m[39m marks interrupted persisted runtime records unknown and refuses to restart them [33m 7095[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects a second goal writer while the first writer still holds the checkout [33m 6705[2mms[22m[39m
+   [33m[2m✓[22m[39m honors a short deadline and rejects cross-goal cancellation [33m 5782[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps an unknown tool outcome locked even when the kernel ends cancelled [33m 586[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps explicit null cumulative limits and only widens the single-response capacity for a scoped task [33m 6876[2mms[22m[39m
+   [33m[2m✓[22m[39m runs a task with no configured cumulative budget past the old default request count [33m 9553[2mms[22m[39m
+   [33m[2m✓[22m[39m can manually cancel a context-only task with no deadline [33m 6470[2mms[22m[39m
+   [33m[2m✓[22m[39m passes verified file references into real kernel input and rejects stale drafts before starting a run [33m 6280[2mms[22m[39m
+ [32m✓[39m tests/restart/p1-04-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4911[2mms[22m[39m
+     [33m[2m✓[22m[39m restart: Evidence/Index/TaskReduction snapshots + taskVerification view identical [33m 4909[2mms[22m[39m
+[90mstdout[2m | tests/restart/evidence/p1-04-evidence.test.ts[2m > [22m[2mP1-04 restart-path evidence[2m > [22m[2mcollects the P1-04 evidence block
+[22m[39mP1-04-EVIDENCE {
+  "ticket": "P1-04",
+  "path": "bootstrap -> install/activate -> CreateGoal -> applyPlan -> claim -> FakeRuntime events -> VerificationPlan -> claim/observation/verdict admission -> TaskReduction -> commit -> close -> reopen -> Evidence/Index/TaskReduction/verification view identical",
+  "reduction": {
+    "implementPhase": "satisfied",
+    "implementEffectiveEvidenceIds": [
+      "ev-rs-dynamic",
+      "ev-rs-static"
+    ],
+    "implementBlockingEvidenceIds": [],
+    "reviewPhase": "satisfied",
+    "gatePhase": "satisfied"
+  },
+  "evidenceCount": 6,
+  "bindingApplicability": [
+    {
+      "id": "ev-rs-claim",
+      "kind": "claim",
+      "applicability": "APPLICABLE"
+    },
+    {
+      "id": "ev-rs-static",
+      "kind": "observation",
+      "applicability": "APPLICABLE"
+    },
+    {
+      "id": "ev-rs-dynamic",
+      "kind": "observation",
+      "applicability": "APPLICABLE"
+    }
+  ],
+  "workerCannotWriteTaskPhase": true,
+  "verdictAloneNotSatisfying": true,
+  "restart": {
+    "snapshotsMatch": true,
+    "verificationViewRebuild": true,
+    "observedCursorEqual": true
+  },
+  "eventTypes": [
+    "ProjectBootstrapped",
+    "ProjectBootstrapped",
+    "WorkspaceBootstrapped",
+    "WorkspaceBootstrapped",
+    "CompletionPolicyInstalled",
+    "ArchitectureBaselineInstalled",
+    "CompletionPolicyActivated",
+    "ArchitectureBaselineActivated",
+    "GoalCreated",
+    "PlanRevisionAccepted",
+    "TaskClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded",
+    "EvidenceAdmitted",
+    "EvidenceAdmitted",
+    "EvidenceAdmitted",
+    "TaskReductionUpdated",
+    "TaskClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded",
+    "EvidenceAdmitted",
+    "EvidenceAdmitted",
+    "TaskReductionUpdated",
+    "EvidenceAdmitted",
+    "TaskReductionUpdated"
+  ]
+}
+
+ [32m✓[39m tests/restart/evidence/p1-04-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4834[2mms[22m[39m
+     [33m[2m✓[22m[39m collects the P1-04 evidence block [33m 4832[2mms[22m[39m
+[90mstdout[2m | tests/restart/evidence/p1-08-evidence.test.ts[2m > [22m[2mP1-08 restart-path evidence[2m > [22m[2mcollects the P1-08 evidence block
+[22m[39mP1-08-EVIDENCE {
+  "ticket": "P1-08",
+  "path": "two-project read-only console (portfolio -> workspace summary -> plan matrix -> active agents -> task evidence -> timeline)",
+  "scopes": {
+    "projectA": "proj-alpha",
+    "projectB": "proj-beta",
+    "sharedWorkspaceId": "ws-shared",
+    "sharedGoalId": "goal-p108-1"
+  },
+  "projectA": {
+    "workRun": "run-p108-a-work",
+    "extraRun": "run-p108-a-extra",
+    "replacementRun": "run-p108-a-extra-b",
+    "packet": "packet-p108-a-extra",
+    "goalPhase": "COMPLETED"
+  },
+  "projectB": {
+    "workRun": "run-p108-b-work",
+    "extraRun": "run-p108-b-extra",
+    "outcomeUnknownPreserved": true,
+    "goalPhase": "NEEDS_DECISION"
+  },
+  "restart": {
+    "sixViewsFieldIdentical": true,
+    "observedCursorEqual": true
+  }
+}
+
+ [32m✓[39m tests/restart/evidence/p1-08-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 5990[2mms[22m[39m
+     [33m[2m✓[22m[39m collects the P1-08 evidence block [33m 5988[2mms[22m[39m
+[90mstdout[2m | tests/restart/p1-06-restart.test.ts[2m > [22m[2mP1-06 restart-path evidence[2m > [22m[2mcollects the P1-06 evidence block
+[22m[39mP1-06-EVIDENCE {
+  "ticket": "P1-06",
+  "path": "bootstrap -> install/activate -> CreateGoal -> applyPlan -> A claim/start/crash -> body-first packet register -> B replacement claim -> driveHandoff -> close -> reopen -> packet/replacement/lease/B-run identical + provenance rebuilt",
+  "packet": {
+    "noFullTranscript": true,
+    "sizeBounded": true
+  },
+  "replacement": {
+    "movedLeaseToB": true,
+    "priorRunRef": "run-rs-a"
+  },
+  "bRunOutcome": "completed",
+  "provenanceTimelineKinds": [
+    "packet_recorded",
+    "replacement_claimed"
+  ],
+  "outcomeUnknownPreserved": true,
+  "restart": {
+    "snapshotsMatch": true,
+    "provenanceRebuild": true,
+    "observedCursorEqual": true
+  },
+  "eventTypes": [
+    "ProjectBootstrapped",
+    "ProjectBootstrapped",
+    "WorkspaceBootstrapped",
+    "WorkspaceBootstrapped",
+    "CompletionPolicyInstalled",
+    "ArchitectureBaselineInstalled",
+    "CompletionPolicyActivated",
+    "ArchitectureBaselineActivated",
+    "GoalCreated",
+    "PlanRevisionAccepted",
+    "TaskClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded",
+    "HandoffRecorded",
+    "ReplacementClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded"
+  ]
+}
+
+ [32m✓[39m tests/restart/p1-06-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4595[2mms[22m[39m
+     [33m[2m✓[22m[39m collects the P1-06 evidence block [33m 4592[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-06.integration.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4623[2mms[22m[39m
+     [33m[2m✓[22m[39m full handoff path + restart equivalence [33m 4621[2mms[22m[39m
+ [32m✓[39m tests/app/semantic-query.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 6222[2mms[22m[39m
+   [33m[2m✓[22m[39m runs sourced semantic queries without a plan and alongside a live writer, persists real kernel inputs and denies writes [33m 6220[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-08.integration.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 5986[2mms[22m[39m
+     [33m[2m✓[22m[39m full two-project console path + restart equivalence [33m 5984[2mms[22m[39m
+ [32m✓[39m tests/restart/p1-08-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 6041[2mms[22m[39m
+     [33m[2m✓[22m[39m six views + cursor identical after close/reopen (rebuild from persisted events) [33m 6038[2mms[22m[39m
+ [32m✓[39m tests/restart/p1-07-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 5764[2mms[22m[39m
+     [33m[2m✓[22m[39m snapshots + rebuilt views + cursor identical after close/reopen [33m 5762[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-09-query-regression.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 5294[2mms[22m[39m
+     [33m[2m✓[22m[39m preserves arbitrary query and scope identities, including after restart [33m 2131[2mms[22m[39m
+   [33m[2m✓[22m[39m resumes pending SQLite queries without modifying their source Worker, and does not replay claimed runs [33m 3077[2mms[22m[39m
+ [32m✓[39m tests/app/multi-workspace.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 6337[2mms[22m[39m
+   [33m[2m✓[22m[39m registers a second workspace in one Project, isolates files and goals, explicitly grants original reports and preserves scope after restart [33m 6336[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-07.integration.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 5749[2mms[22m[39m
+     [33m[2m✓[22m[39m full parallel-readers + single-writer path + restart equivalence [33m 5748[2mms[22m[39m
+[90mstdout[2m | tests/restart/evidence/p1-07-evidence.test.ts[2m > [22m[2mP1-07 restart-path evidence[2m > [22m[2mcollects the P1-07 evidence block
+[22m[39mP1-07-EVIDENCE {
+  "ticket": "P1-07",
+  "path": "two-independent-reader-tasks (parallel readers -> join -> single writer -> patch record -> goal gate)",
+  "workspaceRevisionAfter": 2,
+  "readers": {
+    "a": "run-p107-read-a",
+    "b": "run-p107-read-b"
+  },
+  "joinResultId": "result-p107-1",
+  "patch": {
+    "patchId": "patch-p107-1",
+    "kind": "patch"
+  },
+  "restart": {
+    "workspaceRevisionEqual": true,
+    "leaseSnapshotEqual": true,
+    "patchSnapshotEqual": true,
+    "viewsRebuilt": true,
+    "observedCursorEqual": true
+  }
+}
+
+ [32m✓[39m tests/restart/evidence/p1-07-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 5844[2mms[22m[39m
+     [33m[2m✓[22m[39m collects the P1-07 evidence block [33m 5843[2mms[22m[39m
+ [32m✓[39m tests/app/runtime-context.test.ts [2m([22m[2m20 tests[22m[2m)[22m[33m 5850[2mms[22m[39m
+   [33m[2m✓[22m[39m delivers the accepted task and obligations from the real compiler bundle to the actual kernel model request [33m 544[2mms[22m[39m
+   [33m[2m✓[22m[39m delivers selected rules and an honest material manifest without changing the persisted operator input [33m 657[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps a historical ended run idempotent after restart without manufacturing a new context [33m 662[2mms[22m[39m
+   [33m[2m✓[22m[39m executes the registered file listing, search and syntax analysis tools through the real kernel [33m 1585[2mms[22m[39m
+   [33m[2m✓[22m[39m makes the source index available to a development run through the actual kernel [33m 1307[2mms[22m[39m
+ [32m✓[39m tests/app/workspace-tools.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 6551[2mms[22m[39m
+   [33m[2m✓[22m[39m persists added project folders, deduplicates canonical paths and starts without an invented goal [33m 5884[2mms[22m[39m
+   [33m[2m✓[22m[39m runs a scoped PTY with deduplicated input, resize, interruption and enforced filesystem/network restrictions [33m 622[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/sqlite-read-model-index.restart.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 17219[2mms[22m[39m
+     [33m[2m✓[22m[39m fresh rebuild from the same EventPages equals the incremental projection [33m 3726[2mms[22m[39m
+     [33m[2m✓[22m[39m reopening the same file and continuing equals a one-shot full replay [33m 3638[2mms[22m[39m
+     [33m[2m✓[22m[39m partial rebuild of a prefix equals the incremental prefix [33m 3921[2mms[22m[39m
+     [33m[2m✓[22m[39m persisted dedupe: re-advancing an applied page after reopen is idempotent [33m 1809[2mms[22m[39m
+     [33m[2m✓[22m[39m rebuilt view reflects a same-key update identically (upsert == rebuild) [33m 4123[2mms[22m[39m
+ [32m✓[39m tests/restart/p1-03-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4753[2mms[22m[39m
+     [33m[2m✓[22m[39m restart: outbox/lease/Attempt/Run snapshots + ActiveAgents/TaskDetail identical [33m 4751[2mms[22m[39m
+ [32m✓[39m tests/read-model/completed-work-merge-visibility.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 5113[2mms[22m[39m
+   [33m[2m✓[22m[39m completed-work view exposes a merged duplicate identity instead of dropping it silently (sqlite) [33m 4952[2mms[22m[39m
+ [32m✓[39m tests/control/work-identity-harness.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 5626[2mms[22m[39m
+   [33m[2m✓[22m[39m 同一派发场景在 InMemory 与 SQLite harness 上得到逐字段相同的 canonical 工作身份 [33m 2622[2mms[22m[39m
+   [33m[2m✓[22m[39m RW-13 先显式绑定再派发：两套 harness 都复用同一条身份，账本里不多出第二条 [33m 3003[2mms[22m[39m
+[90mstdout[2m | tests/restart/evidence/p1-05-evidence.test.ts[2m > [22m[2mP1-05 restart-path evidence[2m > [22m[2mcollects the P1-05 evidence block
+[22m[39mP1-05-EVIDENCE {
+  "ticket": "P1-05",
+  "path": "bootstrap -> install/activate -> CreateGoal -> applyPlan -> claim -> FakeRuntime events -> PASS evidence -> TaskReduction -> GoalPhase reduction -> commit -> close -> reopen -> GoalPhase snapshot / goalStatus / goalTimeline identical",
+  "goalPhase": "COMPLETED",
+  "previousPhase": "COMPLETED",
+  "reasonCodes": [
+    "optional_task_not_satisfied",
+    "completion_guard_ok"
+  ],
+  "explanationHeadline": "goal goal-105 phase = COMPLETED (2 reason(s), completion guard holds)",
+  "explanationItems": [
+    {
+      "code": "optional_task_not_satisfied",
+      "message": "optional task(s) not satisfied — attention flag; NEVER blocks completion. (tasks=task-optional-105)"
+    },
+    {
+      "code": "completion_guard_ok",
+      "message": "GoalCompletionGuard holds: active plan non-empty, every required work/gate task satisfied, every required obligation satisfied, no unreconciled side effect. (tasks=task-work-105,gate-module-105,gate-stage-105,gate-goal-105; obligations=obl-work-105,obl-module-105,obl-stage-105,obl-goal-105)"
+    }
+  ],
+  "timelineLength": 2,
+  "observedCursorEqual": true,
+  "snapshotsMatch": true,
+  "viewsRebuild": true,
+  "eventTypes": [
+    "ProjectBootstrapped",
+    "ProjectBootstrapped",
+    "WorkspaceBootstrapped",
+    "WorkspaceBootstrapped",
+    "CompletionPolicyInstalled",
+    "ArchitectureBaselineInstalled",
+    "CompletionPolicyActivated",
+    "ArchitectureBaselineActivated",
+    "GoalCreated",
+    "PlanRevisionAccepted",
+    "TaskClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded",
+    "EvidenceAdmitted",
+    "EvidenceAdmitted",
+    "EvidenceAdmitted",
+    "EvidenceAdmitted",
+    "EvidenceAdmitted",
+    "TaskReductionUpdated",
+    "TaskReductionUpdated",
+    "TaskReductionUpdated",
+    "TaskReductionUpdated",
+    "GoalPhaseUpdated",
+    "GoalPhaseUpdated"
+  ]
+}
+
+ [32m✓[39m tests/restart/evidence/p1-05-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 5496[2mms[22m[39m
+     [33m[2m✓[22m[39m collects the P1-05 evidence block [33m 5494[2mms[22m[39m
+ [32m✓[39m tests/restart/p1-16-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 5058[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-05.integration.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 5556[2mms[22m[39m
+     [33m[2m✓[22m[39m T1: full vertical -> Goal phase COMPLETED -> restart identical; phase surface & side-effect compare [33m 5553[2mms[22m[39m
+ [32m✓[39m tests/app/model-settings.test.ts [2m([22m[2m17 tests[22m[2m)[22m[33m 4656[2mms[22m[39m
+   [33m[2m✓[22m[39m classifies synthetic / timeout and redacts provider payloads [33m 358[2mms[22m[39m
+   [33m[2m✓[22m[39m guards HTTP settings and hides credentials from project tools across server restart [33m 3220[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-11.integration.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 5681[2mms[22m[39m
+     [33m[2m✓[22m[39m InMemory and SQLite plan-change views agree [33m 2777[2mms[22m[39m
+ [32m✓[39m tests/restart/p1-05-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 5586[2mms[22m[39m
+     [33m[2m✓[22m[39m restart: GoalPhase snapshot + goalStatus/goalTimeline field-identical [33m 5584[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-09.contract-suite.sqlite.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 4787[2mms[22m[39m
+[90mstdout[2m | tests/restart/evidence/p1-06-evidence.test.ts[2m > [22m[2mP1-06 restart-path evidence[2m > [22m[2mcollects the P1-06 evidence block
+[22m[39mP1-06-EVIDENCE {
+  "ticket": "P1-06",
+  "path": "bootstrap -> install/activate -> CreateGoal -> applyPlan -> A claim/start/crash -> body-first packet register -> B replacement claim -> driveHandoff -> close -> reopen -> packet/replacement/lease/B-run identical + provenance rebuilt",
+  "packet": {
+    "noFullTranscript": true,
+    "sizeBounded": true
+  },
+  "replacement": {
+    "movedLeaseToB": true,
+    "priorRunRef": "run-rs-a"
+  },
+  "bRunOutcome": "completed",
+  "provenanceTimelineKinds": [
+    "packet_recorded",
+    "replacement_claimed"
+  ],
+  "outcomeUnknownPreserved": true,
+  "restart": {
+    "snapshotsMatch": true,
+    "provenanceRebuild": true,
+    "observedCursorEqual": true
+  },
+  "eventTypes": [
+    "ProjectBootstrapped",
+    "ProjectBootstrapped",
+    "WorkspaceBootstrapped",
+    "WorkspaceBootstrapped",
+    "CompletionPolicyInstalled",
+    "ArchitectureBaselineInstalled",
+    "CompletionPolicyActivated",
+    "ArchitectureBaselineActivated",
+    "GoalCreated",
+    "PlanRevisionAccepted",
+    "TaskClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded",
+    "HandoffRecorded",
+    "ReplacementClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded"
+  ]
+}
+
+ [32m✓[39m tests/restart/evidence/p1-06-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 5273[2mms[22m[39m
+     [33m[2m✓[22m[39m collects the P1-06 evidence block [33m 5271[2mms[22m[39m
+[90mstdout[2m | tests/restart/evidence/p1-17-evidence.test.ts[2m > [22m[2mP1-17-EVIDENCE
+[22m[39mP1-17-EVIDENCE-BLOCK
+{
+  "cursorBefore": "c0000000059",
+  "viewBytes": 361,
+  "selectionStatus": "ready"
+}
+
+ [32m✓[39m tests/restart/evidence/p1-17-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 5056[2mms[22m[39m
+ [32m✓[39m tests/restart/p1-12-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4985[2mms[22m[39m
+ [32m✓[39m tests/restart/p1-09-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4939[2mms[22m[39m
+ [32m✓[39m tests/restart/p1-10-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 5149[2mms[22m[39m
+[90mstdout[2m | tests/restart/evidence/p1-12-evidence.test.ts[2m > [22m[2mP1-12-EVIDENCE
+[22m[39mP1-12-EVIDENCE-BLOCK
+{
+  "cursorBefore": "c0000000059",
+  "ledgerEventIds": 59,
+  "viewBytes": 10335,
+  "deltaChanges": 4,
+  "proposalDigest": "e9a112f23da7f3a338d5a60d8952275c4576d18f638a87560abf29b3034cd28e"
+}
+
+ [32m✓[39m tests/restart/evidence/p1-12-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 5016[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-16.contract-suite.sqlite.test.ts [2m([22m[2m15 tests[22m[2m)[22m[33m 5123[2mms[22m[39m
+ [32m✓[39m tests/read-model/completed-work-filter.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 5236[2mms[22m[39m
+   [33m[2m✓[22m[39m completed-work view excludes uncompleted coordination bindings (sqlite) [33m 5132[2mms[22m[39m
+ [32m✓[39m tests/restart/p1-02-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4863[2mms[22m[39m
+     [33m[2m✓[22m[39m restart: canonical refs + pins + Plan Graph/Task Detail/active revision identical [33m 4861[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-12.contract-suite.sqlite.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 5108[2mms[22m[39m
+[90mstdout[2m | tests/restart/evidence/p1-03-evidence.test.ts[2m > [22m[2mP1-03 restart-path evidence[2m > [22m[2mcollects the P1-03 restart evidence block
+[22m[39mP1-03-EVIDENCE {
+  "ticket": "P1-03",
+  "path": "bootstrap -> install/activate -> CreateGoal -> applyPlan -> claim -> start -> FakeRuntime events -> commit -> close -> reopen -> outbox/lease/Attempt/Run/ActiveAgents/TaskDetail identical",
+  "run": {
+    "runId": "run-p103-0001",
+    "status": "ended",
+    "outcome": "completed",
+    "lastEventSeq": 2,
+    "exitCode": 0,
+    "envelopeBounded": true,
+    "envelopeHasTranscript": false
+  },
+  "outbox": {
+    "status": "done",
+    "pendingAfterTerminal": true,
+    "intentTaskId": "task-run-adaptor",
+    "bindingVersion": 1
+  },
+  "lease": {
+    "holderRunId": "run-p103-0001",
+    "revision": 1
+  },
+  "attempt": {
+    "status": "ended",
+    "endOutcome": "completed"
+  },
+  "views": {
+    "activeAgentOutcome": "completed",
+    "taskDetailPhase": "pending",
+    "taskDetailRunOutcome": "completed"
+  },
+  "afterTerminalTaskPhaseNotSatisfied": true,
+  "restart": {
+    "observedCursorEqual": true,
+    "snapshotsMatch": true,
+    "agentRebuild": true,
+    "taskDetailRebuild": true
+  },
+  "eventTypes": [
+    "ProjectBootstrapped",
+    "ProjectBootstrapped",
+    "WorkspaceBootstrapped",
+    "WorkspaceBootstrapped",
+    "CompletionPolicyInstalled",
+    "ArchitectureBaselineInstalled",
+    "CompletionPolicyActivated",
+    "ArchitectureBaselineActivated",
+    "GoalCreated",
+    "PlanRevisionAccepted",
+    "TaskClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded"
+  ]
+}
+
+ [32m✓[39m tests/restart/evidence/p1-03-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4967[2mms[22m[39m
+     [33m[2m✓[22m[39m collects the P1-03 restart evidence block [33m 4964[2mms[22m[39m
+ [32m✓[39m tests/restart/material-revocation.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 3187[2mms[22m[39m
+   [33m[2m✓[22m[39m revokes immediately despite projection lag, preserves provenance, replays and rebuilds (sqlite) [33m 3131[2mms[22m[39m
+ [32m✓[39m tests/restart/p1-17-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4887[2mms[22m[39m
+[90mstdout[2m | tests/restart/evidence/p1-01-evidence.test.ts[2m > [22m[2mP1-01 restart-path evidence[2m > [22m[2mcollects the restart evidence block
+[22m[39mP1-01-EVIDENCE {
+  "ticket": "P1-01",
+  "path": "bootstrap -> CreateGoal(alpha+beta) -> SQLite commit -> close -> reopen -> canonical snapshot load + EventPage rebuild -> same GoalView",
+  "commitCursors": {
+    "bootstrap": "c0000000004",
+    "alpha": "c0000000005",
+    "beta": "c0000000006"
+  },
+  "manifest": {
+    "schemaVersion": 1,
+    "sourceDigest": "26badb1e84f539c2efd17bec0eb8302820b2045f5e678975bfb89df84012a142",
+    "bootstrapRevision": 1,
+    "entries": 2
+  },
+  "cursor": {
+    "observedBeforeRestart": "c0000000006",
+    "rebuiltObservedAfter": "c0000000006"
+  },
+  "canonicalSnapshotLoad": {
+    "alpha": {
+      "matches": true,
+      "pre": {
+        "ref": {
+          "aggregateType": "Goal",
+          "projectId": "proj-alpha",
+          "goalId": "goal-1"
+        },
+        "workspaceRef": {
+          "aggregateType": "Workspace",
+          "projectId": "proj-alpha",
+          "workspaceId": "ws-shared"
+        },
+        "objective": "为 proj-alpha 完成第一个可观察目标：contract pack 可运行",
+        "desiredState": "active",
+        "activePlanRevision": null,
+        "revision": 1
+      },
+      "post": {
+        "ref": {
+          "aggregateType": "Goal",
+          "projectId": "proj-alpha",
+          "goalId": "goal-1"
+        },
+        "workspaceRef": {
+          "aggregateType": "Workspace",
+          "projectId": "proj-alpha",
+          "workspaceId": "ws-shared"
+        },
+        "objective": "为 proj-alpha 完成第一个可观察目标：contract pack 可运行",
+        "desiredState": "active",
+        "activePlanRevision": null,
+        "revision": 1
+      }
+    },
+    "beta": {
+      "matches": true,
+      "pre": {
+        "ref": {
+          "aggregateType": "Goal",
+          "projectId": "proj-beta",
+          "goalId": "goal-1"
+        },
+        "workspaceRef": {
+          "aggregateType": "Workspace",
+          "projectId": "proj-beta",
+          "workspaceId": "ws-shared"
+        },
+        "objective": "为 proj-beta 完成第一个可观察目标：contract pack 可运行",
+        "desiredState": "active",
+        "activePlanRevision": null,
+        "revision": 1
+      },
+      "post": {
+        "ref": {
+          "aggregateType": "Goal",
+          "projectId": "proj-beta",
+          "goalId": "goal-1"
+        },
+        "workspaceRef": {
+          "aggregateType": "Workspace",
+          "projectId": "proj-beta",
+          "workspaceId": "ws-shared"
+        },
+        "objective": "为 proj-beta 完成第一个可观察目标：contract pack 可运行",
+        "desiredState": "active",
+        "activePlanRevision": null,
+        "revision": 1
+      }
+    }
+  },
+  "eventRebuildView": {
+    "alpha": {
+      "matches": true,
+      "pre": {
+        "status": "ready",
+        "goal": {
+          "goalId": "goal-1",
+          "projectId": "proj-alpha",
+          "workspaceId": "ws-shared",
+          "objective": "为 proj-alpha 完成第一个可观察目标：contract pack 可运行",
+          "desiredState": "active",
+          "activePlanRevision": null,
+          "aggregateRevision": 1,
+          "sourceCursor": "c0000000005"
+        },
+        "observedCursor": "c0000000006"
+      },
+      "post": {
+        "status": "ready",
+        "goal": {
+          "goalId": "goal-1",
+          "projectId": "proj-alpha",
+          "workspaceId": "ws-shared",
+          "objective": "为 proj-alpha 完成第一个可观察目标：contract pack 可运行",
+          "desiredState": "active",
+          "activePlanRevision": null,
+          "aggregateRevision": 1,
+          "sourceCursor": "c0000000005"
+        },
+        "observedCursor": "c0000000006"
+      }
+    },
+    "beta": {
+      "matches": true,
+      "pre": {
+        "status": "ready",
+        "goal": {
+          "goalId": "goal-1",
+          "projectId": "proj-beta",
+          "workspaceId": "ws-shared",
+          "objective": "为 proj-beta 完成第一个可观察目标：contract pack 可运行",
+          "desiredState": "active",
+          "activePlanRevision": null,
+          "aggregateRevision": 1,
+          "sourceCursor": "c0000000006"
+        },
+        "observedCursor": "c0000000006"
+      },
+      "post": {
+        "status": "ready",
+        "goal": {
+          "goalId": "goal-1",
+          "projectId": "proj-beta",
+          "workspaceId": "ws-shared",
+          "objective": "为 proj-beta 完成第一个可观察目标：contract pack 可运行",
+          "desiredState": "active",
+          "activePlanRevision": null,
+          "aggregateRevision": 1,
+          "sourceCursor": "c0000000006"
+        },
+        "observedCursor": "c0000000006"
+      }
+    }
+  },
+  "files": {
+    "ledger": "/tmp/agent-platform-p1-01-Yb4DSy/ledger.sqlite",
+    "readModelRebuilt": "/tmp/agent-platform-p1-01-Yb4DSy/readmodel-rebuilt.sqlite"
+  }
+}
+
+ [32m✓[39m tests/restart/evidence/p1-01-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4443[2mms[22m[39m
+     [33m[2m✓[22m[39m collects the restart evidence block [33m 4439[2mms[22m[39m
+ [32m✓[39m tests/control/rework-task-dispatch.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 3665[2mms[22m[39m
+     [33m[2m✓[22m[39m 受理新增任务的 revision 后，既有派发入口自己认领返工任务并跑出一个 Run；被取代任务不再被派发 [33m 3580[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-13-writer-chain.integration.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 3034[2mms[22m[39m
+     [33m[2m✓[22m[39m task / patch / evidence survive close+reopen byte-identically [33m 3030[2mms[22m[39m
+ [32m✓[39m tests/restart/persistent-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4342[2mms[22m[39m
+     [33m[2m✓[22m[39m bootstrap -> CreateGoal -> commit -> close -> reopen -> snapshot load + event rebuild -> same GoalView [33m 4339[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-10.contract-suite.sqlite.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 4761[2mms[22m[39m
+[90mstdout[2m | tests/restart/evidence/p1-09-evidence.test.ts[2m > [22m[2mP1-09-EVIDENCE
+[22m[39mP1-09-EVIDENCE-BLOCK {"cursorBefore":"c0000000057","viewBytes":4479}
+
+ [32m✓[39m tests/restart/evidence/p1-09-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4342[2mms[22m[39m
+[90mstdout[2m | tests/restart/evidence/p1-16-evidence.test.ts[2m > [22m[2mP1-16-EVIDENCE
+[22m[39mP1-16-EVIDENCE-BLOCK
+{
+  "cursorBefore": "c0000000059",
+  "ledgerCurve": 59,
+  "workAViewBytes": 939,
+  "workCoordViewBytes": 3640,
+  "workBViewBytes": 935,
+  "bindingSnapshotBytes": 851
+}
+
+ [32m✓[39m tests/restart/evidence/p1-16-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4515[2mms[22m[39m
+[90mstdout[2m | tests/restart/evidence/p1-02-evidence.test.ts[2m > [22m[2mP1-02 restart-path evidence[2m > [22m[2mcollects the P1-02 restart evidence block
+[22m[39mP1-02-EVIDENCE {
+  "ticket": "P1-02",
+  "path": "bootstrap -> install x2 -> activate x2 (CAS) -> CreateGoal -> applyPlan -> commit -> close -> reopen -> canonical refs/pins + Plan Graph/Task Detail/active revision identical",
+  "commitCursors": {
+    "bootstrap": "c0000000004",
+    "installCompletionPolicy": "c0000000005",
+    "installArchitectureBaseline": "c0000000006",
+    "activateCompletionPolicy": "c0000000007",
+    "activateArchitectureBaseline": "c0000000008",
+    "createGoal": "c0000000009",
+    "applyPlan": "c0000000010"
+  },
+  "canonicalRefs": {
+    "completionPolicy": {
+      "ref": {
+        "aggregateType": "CompletionPolicyRevision",
+        "projectId": "proj-alpha",
+        "policyId": "policy-completion-mvp",
+        "revision": 1
+      },
+      "digest": "4680201b5cb8e4807db836eaaf8fbfc78ec565134e0a40cf20a5f813b309186e"
+    },
+    "architectureBaseline": {
+      "ref": {
+        "aggregateType": "ArchitectureBaselineRevision",
+        "projectId": "proj-alpha",
+        "baselineId": "baseline-architecture-mvp",
+        "revision": 1
+      },
+      "digest": "19a578923f4fc100e37ef3f907d23a4d945e8825c653b7c467cf8712d1db7a8b"
+    }
+  },
+  "activeRefs": {
+    "completionPolicy": {
+      "activeRevision": {
+        "aggregateType": "CompletionPolicyRevision",
+        "projectId": "proj-alpha",
+        "policyId": "policy-completion-mvp",
+        "revision": 1
+      },
+      "aggregateRevision": 1
+    },
+    "architectureBaseline": {
+      "activeRevision": {
+        "aggregateType": "ArchitectureBaselineRevision",
+        "projectId": "proj-alpha",
+        "baselineId": "baseline-architecture-mvp",
+        "revision": 1
+      },
+      "aggregateRevision": 1
+    }
+  },
+  "pins": {
+    "completionPolicy": {
+      "ref": {
+        "aggregateType": "CompletionPolicyRevision",
+        "projectId": "proj-alpha",
+        "policyId": "policy-completion-mvp",
+        "revision": 1
+      },
+      "digest": "4680201b5cb8e4807db836eaaf8fbfc78ec565134e0a40cf20a5f813b309186e"
+    },
+    "architectureBaseline": {
+      "ref": {
+        "aggregateType": "ArchitectureBaselineRevision",
+        "projectId": "proj-alpha",
+        "baselineId": "baseline-architecture-mvp",
+        "revision": 1
+      },
+      "digest": "19a578923f4fc100e37ef3f907d23a4d945e8825c653b7c467cf8712d1db7a8b"
+    }
+  },
+  "goalSnapshot": {
+    "activePlanRevision": {
+      "aggregateType": "PlanRevision",
+      "projectId": "proj-alpha",
+      "planId": "plan-mvp-1"
+    },
+    "revision": 2
+  },
+  "planGraphFields": {
+    "planRef": {
+      "aggregateType": "PlanRevision",
+      "projectId": "proj-alpha",
+      "planId": "plan-mvp-1"
+    },
+    "planRevision": 1,
+    "acceptedAt": "2026-09-05T12:00:00.000Z",
+    "stages": 2,
+    "tasks": 4,
+    "parentOf": 3,
+    "dependsOn": 3
+  },
+  "eventTypes": [
+    "ProjectBootstrapped",
+    "WorkspaceBootstrapped",
+    "CompletionPolicyInstalled",
+    "ArchitectureBaselineInstalled",
+    "CompletionPolicyActivated",
+    "ArchitectureBaselineActivated",
+    "GoalCreated",
+    "PlanRevisionAccepted"
+  ],
+  "restart": {
+    "observedCursorBefore": "c0000000010",
+    "observedCursorAfter": "c0000000010",
+    "cursorEqual": true,
+    "canonicalGoalSnapshotActivePlanMatches": true,
+    "goalRevisionMatches": true,
+    "canonicalPolicyResolves": true,
+    "canonicalBaselineResolves": true,
+    "planGraphMatches": true,
+    "taskDetailCount": 4,
+    "taskDetailsMatch": true,
+    "pinsUnchanged": true,
+    "goalViewActivePlanAfterRestart": {
+      "aggregateType": "PlanRevision",
+      "projectId": "proj-alpha",
+      "planId": "plan-mvp-1"
+    }
+  }
+}
+
+ [32m✓[39m tests/restart/evidence/p1-02-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4221[2mms[22m[39m
+     [33m[2m✓[22m[39m collects the P1-02 restart evidence block [33m 4219[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-17.contract-suite.sqlite.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 4433[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-14.integration.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2560[2mms[22m[39m
+ [32m✓[39m tests/restart/evidence/p1-11-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2624[2mms[22m[39m
+     [33m[2m✓[22m[39m produces the P1-11-EVIDENCE JSON block [33m 2599[2mms[22m[39m
+ [32m✓[39m tests/control/source-architecture.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 3607[2mms[22m[39m
+   [33m[2m✓[22m[39m binds real TS sources to an immutable baseline, records distinct deltas, reopens bodies, rejects stale and mismatched inputs [33m 3605[2mms[22m[39m
+ [32m✓[39m tests/data/project-source-index.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 4665[2mms[22m[39m
+   [33m[2m✓[22m[39m discovers over 64 sources, honors tsconfig include and aliases, returns source-bound cross-file results [33m 1266[2mms[22m[39m
+   [33m[2m✓[22m[39m invalidates additions, edits, renames, config and branch identity; reuses unchanged files and reconstructs after reopen [33m 2832[2mms[22m[39m
+   [33m[2m✓[22m[39m reports denied/config escape, unsupported languages, incomplete discovery and unknown imports honestly [33m 565[2mms[22m[39m
+ [32m✓[39m tests/app/exploration-runtime.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 3389[2mms[22m[39m
+     [33m[2m✓[22m[39m exposes only read, denies paths and fabricated write tools, preserves source and persists an actual report without replay [33m 2903[2mms[22m[39m
+ [32m✓[39m tests/control/reviewer-work-persistence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 3016[2mms[22m[39m
+   [33m[2m✓[22m[39m reopens SQLite Work/output/Result/evidence and read projections with the same accepted command identity [33m 3014[2mms[22m[39m
+ [32m✓[39m tests/data/cpp-source-index.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 5393[2mms[22m[39m
+   [33m[2m✓[22m[39m uses actual libclang and compile configuration to resolve headers, overloads and project references [33m 1135[2mms[22m[39m
+   [33m[2m✓[22m[39m invalidates dirty files, compile flags, inventory and commit and reports actual changes [33m 1424[2mms[22m[39m
+   [33m[2m✓[22m[39m does not execute hostile compilation commands or load plugins and fails closed on unknown configuration [33m 306[2mms[22m[39m
+   [33m[2m✓[22m[39m blocks source and include escapes, symbolic links and absent analyzer/config with explicit gaps [33m 630[2mms[22m[39m
+   [33m[2m✓[22m[39m delivers real C++ semantic tool output into the next model request through the shared kernel (labelled model stub) [33m 1012[2mms[22m[39m
+   [33m[2m✓[22m[39m parses a quoted command as data, honors a C forced include, and rejects ambiguous compilation variants [33m 368[2mms[22m[39m
+ [32m✓[39m tests/context/reviewer-context.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 3091[2mms[22m[39m
+     [33m[2m✓[22m[39m assembles the first packet without an existing Reviewer envelope and consumes its exact frozen runtime input [33m 463[2mms[22m[39m
+     [33m[2m✓[22m[39m returns exact bounded original text and source citations, rejects invented refs and excluded/symlink paths [33m 1032[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-15.contract-suite.sqlite.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 2303[2mms[22m[39m
+ [32m✓[39m tests/restart/evidence/p1-13-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2471[2mms[22m[39m
+     [33m[2m✓[22m[39m produces the P1-13-EVIDENCE JSON block [33m 2448[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-13.integration.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2556[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-13.contract-suite.sqlite.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 2538[2mms[22m[39m
+ [32m✓[39m tests/restart/p1-13-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2483[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-11.contract-suite.sqlite.test.ts [2m([22m[2m10 tests[22m[2m)[22m[33m 2380[2mms[22m[39m
+ [32m✓[39m tests/vault/persistent-vault.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2034[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves artifact bodies, source revisions and owner authorization across host restart [33m 2033[2mms[22m[39m
+ [32m✓[39m tests/control/workspace-registration.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 2119[2mms[22m[39m
+   [33m[2m✓[22m[39m sqlite: registers explicit workspaces without rewriting bootstrap, rejects stale/forged inputs and replays after reopen [33m 2091[2mms[22m[39m
+ [32m✓[39m tests/restart/p1-14-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2382[2mms[22m[39m
+ [32m✓[39m tests/restart/evidence/p1-15-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2380[2mms[22m[39m
+     [33m[2m✓[22m[39m produces the P1-15-EVIDENCE JSON block [33m 2361[2mms[22m[39m
+ [32m✓[39m tests/restart/evidence/p1-14-evidence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2402[2mms[22m[39m
+     [33m[2m✓[22m[39m produces the P1-14-EVIDENCE JSON block [33m 2384[2mms[22m[39m
+ [32m✓[39m tests/control/reviewer-runtime-start-rejection.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 2661[2mms[22m[39m
+   [33m[2m✓[22m[39m classifies the real runtime.start closing rejection as one canonical crash with no model execution [33m 1386[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves unknown effects when the same runtime.start catch cannot prove that execution never started [33m 1274[2mms[22m[39m
+[90mstdout[2m | tests/control/reviewer-lease-conflict-recovery.test.ts[2m > [22m[2mends a reviewer run as known failed when its read lease is refused before model/tool start
+[22m[39m{
+  "first": {
+    "status": "incomplete",
+    "workRef": {
+      "aggregateType": "ReviewWork",
+      "projectId": "proj-alpha",
+      "workspaceId": "ws-shared",
+      "goalId": "goal-p107-1",
+      "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+    },
+    "code": "review_execution_incomplete"
+  },
+  "second": {
+    "status": "incomplete",
+    "workRef": {
+      "aggregateType": "ReviewWork",
+      "projectId": "proj-alpha",
+      "workspaceId": "ws-shared",
+      "goalId": "goal-p107-1",
+      "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+    },
+    "code": "review_execution_incomplete"
+  },
+  "canonicalRun": {
+    "ref": {
+      "aggregateType": "Run",
+      "projectId": "proj-alpha",
+      "goalId": "goal-p107-1",
+      "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run"
+    },
+    "revision": 3,
+    "schemaVersion": 1,
+    "work": {
+      "kind": "review",
+      "reviewWorkRef": {
+        "aggregateType": "ReviewWork",
+        "projectId": "proj-alpha",
+        "workspaceId": "ws-shared",
+        "goalId": "goal-p107-1",
+        "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+      }
+    },
+    "task": {
+      "projectId": "proj-alpha",
+      "goalId": "goal-p107-1",
+      "taskId": "task-p107-writer-b"
+    },
+    "attemptId": "review-1a1454b787101235e47007adf396c875a4c0ae03-attempt",
+    "planRef": {
+      "aggregateType": "PlanRevision",
+      "projectId": "proj-alpha",
+      "planId": "plan-p107-parallel"
+    },
+    "roleBinding": {
+      "schemaVersion": 1,
+      "bindingId": "independent-reviewer-v1",
+      "templateId": "independent-reviewer",
+      "templateRevision": "1",
+      "bindingVersion": 1,
+      "policyRevision": "independent-review-v1"
+    },
+    "budget": {
+      "tokenBudget": 80000,
+      "deadline": null
+    },
+    "workspaceSnapshot": {
+      "workspaceId": "ws-shared",
+      "revision": 1
+    },
+    "status": "ended",
+    "outcome": "crashed",
+    "exitCode": null,
+    "lastEventSeq": 1,
+    "lastRuntimeEventId": "d7871d64-695d-46b2-97e2-5f71f331726d-1",
+    "lastFactEventId": "evt-0027",
+    "envelope": {
+      "schemaVersion": 1,
+      "envelopeId": "review-env-review-1a1454b787101235e47007adf396c875a4c0ae03",
+      "projectId": "proj-alpha",
+      "workspaceId": "ws-shared",
+      "goalId": "goal-p107-1",
+      "taskId": "task-p107-writer-b",
+      "runRef": {
+        "aggregateType": "Run",
+        "projectId": "proj-alpha",
+        "goalId": "goal-p107-1",
+        "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run"
+      },
+      "attemptRef": {
+        "aggregateType": "TaskAttempt",
+        "projectId": "proj-alpha",
+        "goalId": "goal-p107-1",
+        "taskId": "task-p107-writer-b",
+        "attemptId": "review-1a1454b787101235e47007adf396c875a4c0ae03-attempt"
+      },
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "proj-alpha",
+        "planId": "plan-p107-parallel"
+      },
+      "roleBinding": {
+        "schemaVersion": 1,
+        "bindingId": "independent-reviewer-v1",
+        "templateId": "independent-reviewer",
+        "templateRevision": "1",
+        "bindingVersion": 1,
+        "policyRevision": "independent-review-v1"
+      },
+      "workspaceSnapshot": {
+        "workspaceId": "ws-shared",
+        "revision": 1
+      },
+      "permissions": {
+        "policyRevision": "independent-review-v1",
+        "tools": [
+          "read"
+        ],
+        "writeScope": []
+      },
+      "budget": {
+        "tokenBudget": 80000,
+        "deadline": null
+      },
+      "sourceRefs": [
+        {
+          "kind": "plan-revision",
+          "refId": "plan-p107-parallel",
+          "revision": "1"
+        },
+        {
+          "kind": "workspace",
+          "refId": "ws-shared",
+          "revision": "1",
+          "digest": "88f9a983bc7921b33239b2cc15186b90438115fde46a6b5c2d4aba4badcabd9c"
+        },
+        {
+          "kind": "artifact",
+          "refId": "e78a9bbd81a703bef8c599158014aa83cd41e5b0c0127e52e4583563fd29516a",
+          "revision": "1",
+          "digest": "e78a9bbd81a703bef8c599158014aa83cd41e5b0c0127e52e4583563fd29516a"
+        }
+      ],
+      "bundleRef": {
+        "kind": "artifact",
+        "contentType": "application/json",
+        "digest": "e9d273149e31a4a776186ebed93c8f7d297911f75713b495a4770f122ada4f2b",
+        "sizeBytes": 7866,
+        "source": {
+          "kind": "plan-revision",
+          "refId": "plan-p107-parallel",
+          "revision": "1"
+        }
+      },
+      "work": {
+        "kind": "review",
+        "reviewWorkRef": {
+          "aggregateType": "ReviewWork",
+          "projectId": "proj-alpha",
+          "workspaceId": "ws-shared",
+          "goalId": "goal-p107-1",
+          "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+        }
+      },
+      "reviewInput": {
+        "packetRef": {
+          "kind": "artifact",
+          "contentType": "application/json",
+          "digest": "58c2ea2a5504d8e62e655d3a10c2c20113d1aec51acfe5ccd3f2eb6522c4178d",
+          "sizeBytes": 6083,
+          "source": {
+            "kind": "plan-revision",
+            "refId": "plan-p107-parallel",
+            "revision": "1"
+          }
+        },
+        "packetDigest": "58c2ea2a5504d8e62e655d3a10c2c20113d1aec51acfe5ccd3f2eb6522c4178d",
+        "inputDigest": "5b092579322053eed4679275bf8f7546d50a060bb27bb2f7ac880c89ff1dc0f8",
+        "descriptorDigest": "e78a9bbd81a703bef8c599158014aa83cd41e5b0c0127e52e4583563fd29516a",
+        "grantRefs": [
+          {
+            "aggregateType": "MaterialAccessGrant",
+            "projectId": "proj-alpha",
+            "workspaceId": "ws-shared",
+            "goalId": "goal-p107-1",
+            "grantId": "grant-0f13a640466aa032c51a8c1209bf6538"
+          }
+        ]
+      }
+    },
+    "startedAt": "2026-09-06T12:00:00.000Z",
+    "endedAt": "2026-09-11T13:09:53.501Z"
+  },
+  "runtime": [
+    {
+      "spec": {
+        "mode": "review",
+        "review": {
+          "workRef": {
+            "aggregateType": "ReviewWork",
+            "projectId": "proj-alpha",
+            "workspaceId": "ws-shared",
+            "goalId": "goal-p107-1",
+            "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+          },
+          "profile": {
+            "schemaVersion": 1,
+            "subjectScope": {
+              "projectId": "proj-alpha",
+              "workspaceId": "ws-shared",
+              "goalId": "goal-p107-1",
+              "taskId": "task-p107-writer-b",
+              "runId": "independent-review-producer"
+            },
+            "roleBinding": {
+              "schemaVersion": 1,
+              "bindingId": "independent-reviewer-v1",
+              "templateId": "independent-reviewer",
+              "templateRevision": "1",
+              "bindingVersion": 1,
+              "policyRevision": "independent-review-v1"
+            },
+            "mode": "review",
+            "permissions": {
+              "tools": [
+                "read"
+              ],
+              "writeScope": []
+            },
+            "model": {
+              "configurationRevision": "model-1",
+              "provider": "fixture",
+              "model": "reviewer",
+              "baseUrl": "http://localhost:1"
+            },
+            "budget": {
+              "contextWindowTokens": 80000,
+              "inputTokens": null,
+              "outputTokens": null,
+              "maxRequests": null,
+              "maxToolCalls": null,
+              "timeoutMs": null,
+              "perResponseTokens": 4096
+            },
+            "profileId": "reviewer-profile-daf16c07d1a827612d802e965f61ccb4ccbfbd141aa429ec47165d63e0b30b35",
+            "revision": 1,
+            "digest": "daf16c07d1a827612d802e965f61ccb4ccbfbd141aa429ec47165d63e0b30b35"
+          }
+        },
+        "projectId": "proj-alpha",
+        "workspaceId": "ws-shared",
+        "goalId": "goal-p107-1",
+        "taskId": "task-p107-writer-b",
+        "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run",
+        "root": "/tmp/independent-review-source-tOcJet",
+        "instruction": "Independently review the pinned task, current source, and complete tool reports. Use the read-only source and material tools. Return exactly the independent-review-result JSON schema supplied in the packet. Report every required reviewer item with citations and concrete rationale; do not infer PASS from process completion.",
+        "budget": {
+          "contextWindowTokens": 80000,
+          "inputTokens": null,
+          "outputTokens": null,
+          "maxRequests": null,
+          "maxToolCalls": null,
+          "timeoutMs": null,
+          "perResponseTokens": 4096
+        }
+      },
+      "createdAt": "2026-09-11T13:09:53.362Z",
+      "status": "failed",
+      "sessionId": "d7871d64-695d-46b2-97e2-5f71f331726d",
+      "configuration": null,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "eventId": "d7871d64-695d-46b2-97e2-5f71f331726d-1",
+          "runRef": {
+            "aggregateType": "Run",
+            "projectId": "proj-alpha",
+            "goalId": "goal-p107-1",
+            "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run"
+          },
+          "sequence": 1,
+          "occurredAt": "2026-09-11T13:09:53.501Z",
+          "eventType": "run_crashed",
+          "payload": {
+            "kind": "crashed",
+            "error": "执行前材料校验失败：工作区读租约被拒绝：read_lease_conflict"
+          }
+        }
+      ],
+      "trace": [],
+      "usage": [],
+      "error": "执行前材料校验失败：工作区读租约被拒绝：read_lease_conflict",
+      "nodeSha256": null,
+      "workspaceRevision": null,
+      "cancelRequested": false
+    }
+  ]
+}
+
+ [32m✓[39m tests/sqlite-read-model/p1-07-projection.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 2013[2mms[22m[39m
+     [33m[2m✓[22m[39m projection persists across close()/reopen and rebuild == incremental [33m 1980[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/p1-06-handoff-projection.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 2138[2mms[22m[39m
+     [33m[2m✓[22m[39m projection persists across close()/reopen and the reopen replays to the same view [33m 2097[2mms[22m[39m
+ [32m✓[39m tests/control/role-spec.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 2525[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite 重开后角色规格与生效引用仍在，claim 守卫按同一份矩阵裁决 [33m 2461[2mms[22m[39m
+ [32m✓[39m tests/restart/p1-11-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2623[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-15.integration.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2692[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/material-access-projection.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 2162[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps grant rows across a close/open cycle on the same file [33m 2144[2mms[22m[39m
+ [32m✓[39m tests/control/reviewer-work.test.ts [2m([22m[2m20 tests[22m[2m)[22m[33m 2144[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a grouped report exceeding the shared 512 evidence cap without a partial Result or index update [33m 806[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a grouped report exceeding the shared 512 evidence cap without a partial Result or index update [33m 868[2mms[22m[39m
+ [32m✓[39m tests/ledger/identity-upgrade.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 1035[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects competing binds from two connections after the legacy schema is reopened [33m 342[2mms[22m[39m
+     [33m[2m✓[22m[39m preserves both legacy identities and their receipts while rejecting any new identity [33m 361[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a second identity after upgrading a database without the identity table, preserving history and replay [33m 329[2mms[22m[39m
+ [32m✓[39m tests/control/autonomous-rework.test.ts [2m([22m[2m14 tests[22m[2m)[22m[33m 1038[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite 重启后：预算计数与人工拒绝事实都从账本重建 [33m 770[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-14.contract-suite.sqlite.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 2794[2mms[22m[39m
+ [32m✓[39m tests/control/reviewer-lease-conflict-recovery.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 2899[2mms[22m[39m
+   [33m[2m✓[22m[39m ends a reviewer run as known failed when its read lease is refused before model/tool start [33m 1820[2mms[22m[39m
+   [33m[2m✓[22m[39m ends a reviewer run as known failed when execution.start rejects before any model or tool call [33m 1077[2mms[22m[39m
+ [32m✓[39m tests/app/independent-review.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 118445[2mms[22m[39m
+   [33m[2m✓[22m[39m runs a real independent read-only Reviewer, admits its cited report, preserves the original lease, and never copies Task evidence to the Goal gate [33m 17838[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves a valid Reviewer FAIL as blocking evidence without restarting the original Task [33m 18507[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves a valid Reviewer INCONCLUSIVE as blocking evidence without restarting the original Task [33m 16388[2mms[22m[39m
+   [33m[2m✓[22m[39m never dispatches when an applicable tool failed, and permanently rejects a report that omits required coverage [33m 25163[2mms[22m[39m
+   [33m[2m✓[22m[39m source changed after actual material reads cannot produce newly accepted Reviewer evidence [33m 13043[2mms[22m[39m
+   [33m[2m✓[22m[39m clearing the saved model configuration during review cannot silently switch the profile or admit its answer [33m 14082[2mms[22m[39m
+   [33m[2m✓[22m[39m a real human revocation after Reviewer material reads prevents admission and remains revoked after restart [33m 13423[2mms[22m[39m
+ [32m✓[39m tests/restart/p1-15-restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2477[2mms[22m[39m
+ [32m✓[39m tests/control/role-material-completion.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2379[2mms[22m[39m
+   [33m[2m✓[22m[39m 装 executor 规格 + 矩阵：运行开始 → 登记实现结果 → 轮次 PASS → Task satisfied [33m 2378[2mms[22m[39m
+ [32m✓[39m tests/control/rework-drive.test.ts [2m([22m[2m22 tests[22m[2m)[22m[33m 1535[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite 重启后一致：多失败分组的处置事实与逐项交代都由持久／canonical 事实重建 [33m 694[2mms[22m[39m
+ [32m✓[39m tests/control/work-identity-uniqueness.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 652[2mms[22m[39m
+     [33m[2m✓[22m[39m 宿主 B 的守卫看到宿主 A 已提交的身份并拒绝；绕过守卫直接提交也由账本拒绝 [33m 325[2mms[22m[39m
+ [32m✓[39m tests/context/verification-workspace-reader.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 730[2mms[22m[39m
+ [32m✓[39m tests/data/source-applicability.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 413[2mms[22m[39m
+   [33m[2m✓[22m[39m pins real selected files and detects edits, additions, deletion, rename and Git identity changes [33m 327[2mms[22m[39m
+ [32m✓[39m tests/control/work-record.test.ts [2m([22m[2m14 tests[22m[2m)[22m[33m 629[2mms[22m[39m
+ [32m✓[39m tests/control/baseline-evolution.test.ts [2m([22m[2m31 tests[22m[2m)[22m[33m 340[2mms[22m[39m
+ [32m✓[39m tests/control/reviewer-unknown-outcome-preservation.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 987[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps an unprovable reviewer start as outcome_unknown and never reruns the model [33m 985[2mms[22m[39m
+ [32m✓[39m tests/control/evidence-intake.test.ts [2m([22m[2m10 tests[22m[2m)[22m[33m 382[2mms[22m[39m
+     [33m[2m✓[22m[39m evidence_limit_exceeded at MAX_EVIDENCE_PER_TASK with zero write [33m 325[2mms[22m[39m
+ [32m✓[39m tests/app/exploration-source.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 338[2mms[22m[39m
+   [33m[2m✓[22m[39m binds all regular files, including generated, dependency, hidden and nested ignored-name directories [33m 302[2mms[22m[39m
+ [32m✓[39m tests/read-model/p1-08-portfolio-summary.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 309[2mms[22m[39m
+ [32m✓[39m tests/app/work-material-delivery.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 1679[2mms[22m[39m
+   [33m[2m✓[22m[39m 真实 Run 的 bundle 里能看到工作身份与选中的历史材料（含理由与来源），且不改变权限 [33m 1677[2mms[22m[39m
+ [32m✓[39m tests/sqlite-ledger/sqlite-ledger.restart.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 279[2mms[22m[39m
+ [32m✓[39m tests/read-model/p1-08-matrix-agents-evidence-timeline.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 315[2mms[22m[39m
+ [32m✓[39m tests/context/verification-round-context.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 400[2mms[22m[39m
+ [32m✓[39m tests/vault/verification-source-pin.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 213[2mms[22m[39m
+ [32m✓[39m tests/app/reviewer-product-recovery.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 123399[2mms[22m[39m
+   [33m[2m✓[22m[39m reopens the complete host after replacement admission before dispatch and executes the persisted Reviewer exactly once [33m 20447[2mms[22m[39m
+   [33m[2m✓[22m[39m authorizes a real lease-conflict recovery through HTTP and admits actual Reviewer PASS evidence [33m 19047[2mms[22m[39m
+   [33m[2m✓[22m[39m authorizes a real lease-conflict recovery through HTTP and admits actual Reviewer FAIL evidence [33m 17906[2mms[22m[39m
+   [33m[2m✓[22m[39m deduplicates same-key and different-key concurrent authorizations and rejects altered identity payloads [33m 16251[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps a durable recovery receipt when the HTTP response is lost and replays it after restart [33m 17557[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects missing authentication and client-supplied proof, actor, or verdict before any replacement [33m 10897[2mms[22m[39m
+   [33m[2m✓[22m[39m does not turn an ambiguous persisted runtime checkpoint into restart authorization (unknown) [33m 10178[2mms[22m[39m
+   [33m[2m✓[22m[39m does not turn an ambiguous persisted runtime checkpoint into restart authorization (duplicate) [33m 11115[2mms[22m[39m
+ [32m✓[39m tests/control/remediation.test.ts [2m([22m[2m28 tests[22m[2m)[22m[32m 185[2mms[22m[39m
+ [32m✓[39m tests/read-model/p1-16-work-context.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 228[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-05.contract-suite.inmemory.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 171[2mms[22m[39m
+ [32m✓[39m tests/control/goal-reducer.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 169[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-04.contract-suite.inmemory.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 169[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-07.contract-suite.inmemory.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 259[2mms[22m[39m
+ [32m✓[39m tests/control/rework-disposition-authority.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 130[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-05.contract-suite.sqlite.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 164[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-03.contract-suite.inmemory.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 142[2mms[22m[39m
+ [32m✓[39m tests/control/reviewer-reduction-race.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 154[2mms[22m[39m
+ [32m✓[39m tests/read-model/p1-05-goal-phase-projection.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 144[2mms[22m[39m
+ [32m✓[39m tests/control/goal-change.test.ts [2m([22m[2m29 tests[22m[2m)[22m[32m 202[2mms[22m[39m
+ [32m✓[39m tests/read-model/p1-12-brief-proposal-projection.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 141[2mms[22m[39m
+ [32m✓[39m tests/control/workspace-lease.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 121[2mms[22m[39m
+ [32m✓[39m tests/verification/role-output-completeness.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 107[2mms[22m[39m
+ [32m✓[39m tests/control/work-material-gate.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 1442[2mms[22m[39m
+   [33m[2m✓[22m[39m 装 executor 规格 + 含 roles 的矩阵之后，普通 develop 运行真正开始（模型被调用），四类材料各有来源 [33m 1439[2mms[22m[39m
+ [32m✓[39m tests/verification/command-check-provider.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 618[2mms[22m[39m
+ [32m✓[39m tests/control/work-identity.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 92[2mms[22m[39m
+ [32m✓[39m tests/control/role-binding-admission.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 87[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/p1-04-verification-projection.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 68[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-02.contract-suite.inmemory.test.ts [2m([22m[2m29 tests[22m[2m)[22m[32m 107[2mms[22m[39m
+ [32m✓[39m tests/control/integration-join.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 113[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-06.contract-suite.inmemory.test.ts [2m([22m[2m25 tests[22m[2m)[22m[32m 143[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-08.contract-suite.inmemory.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 104[2mms[22m[39m
+ [32m✓[39m tests/control/human-role-collaboration.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 60[2mms[22m[39m
+ [32m✓[39m tests/runtime/runtime-observation-journal.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 1371[2mms[22m[39m
+     [33m[2m✓[22m[39m recovers both Runtime protocols without executing, retaining old identities, bytes and scope [33m 1187[2mms[22m[39m
+ [32m✓[39m tests/control/task-reducer.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 80[2mms[22m[39m
+ [32m✓[39m tests/control/reviewer-existing-drivers-isolation.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 71[2mms[22m[39m
+ [32m✓[39m tests/control/p1-15-role-rework-loop.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 50[2mms[22m[39m
+ [32m✓[39m tests/data/source-index.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 168[2mms[22m[39m
+ [32m✓[39m tests/control/remediation-writer-chain.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 52[2mms[22m[39m
+ [32m✓[39m tests/control/patch-record.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 51[2mms[22m[39m
+ [32m✓[39m tests/control/planning-interface.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 60[2mms[22m[39m
+ [32m✓[39m tests/control/reviewer-dispatch-isolation.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 58[2mms[22m[39m
+ [32m✓[39m tests/data/ledger-scope-catalog.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 55[2mms[22m[39m
+ [32m✓[39m tests/control/handoff.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 60[2mms[22m[39m
+ [32m✓[39m tests/control/replacement-claim.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 80[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/sqlite-read-model-index.contract.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 59[2mms[22m[39m
+ [32m✓[39m tests/app/exploration-tools.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 221[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-17.contract-suite.inmemory.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 74[2mms[22m[39m
+ [32m✓[39m tests/verification/rework-issues.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 93[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-12.contract-suite.inmemory.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 80[2mms[22m[39m
+ [32m✓[39m tests/control/plan-acceptance.test.ts [2m([22m[2m22 tests[22m[2m)[22m[32m 64[2mms[22m[39m
+ [32m✓[39m tests/verification/verification-engine.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 62[2mms[22m[39m
+ [32m✓[39m tests/control/handoff-drive.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 52[2mms[22m[39m
+ [32m✓[39m tests/control/rework-plan-compiler.test.ts [2m([22m[2m21 tests[22m[2m)[22m[32m 88[2mms[22m[39m
+ [32m✓[39m tests/control/workspace-drive.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 48[2mms[22m[39m
+ [32m✓[39m tests/control/plan-compiler.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 32[2mms[22m[39m
+ [32m✓[39m tests/vault/exploration-material-reader.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 40[2mms[22m[39m
+ [32m✓[39m tests/interaction/exploration-session.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 48[2mms[22m[39m
+ [32m✓[39m tests/read-model/material-access-lookup.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 51[2mms[22m[39m
+ [32m✓[39m tests/context/review-context-compiler.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 66[2mms[22m[39m
+ [32m✓[39m tests/app/reviewer-source-tools.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 118[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-09.contract-suite.inmemory.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 58[2mms[22m[39m
+ [32m✓[39m tests/control/dispatch-claim.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 42[2mms[22m[39m
+ [32m✓[39m tests/control/plan-impact-work-identity.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 50[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-16.contract-suite.inmemory.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 69[2mms[22m[39m
+ [32m✓[39m tests/sqlite-ledger/sqlite-ledger.contract.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 35[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-10.contract-suite.inmemory.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 62[2mms[22m[39m
+ [32m✓[39m tests/ui/client.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 34[2mms[22m[39m
+ [32m✓[39m tests/control/architecture-inspection.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 29[2mms[22m[39m
+ [32m✓[39m tests/context/planning-context-compiler.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 34[2mms[22m[39m
+ [32m✓[39m tests/app/history-materials.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 33[2mms[22m[39m
+ [32m✓[39m tests/verification/candidate-patch-check.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 32[2mms[22m[39m
+ [32m✓[39m tests/context/handoff-context-compiler.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m tests/context/work-run-materials.test.ts [2m([22m[2m22 tests[22m[2m)[22m[32m 26[2mms[22m[39m
+ [32m✓[39m tests/verification/verification-service.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 58[2mms[22m[39m
+ [32m✓[39m tests/control/dispatch-drive.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 26[2mms[22m[39m
+ [32m✓[39m tests/control/dispatch-readiness.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m tests/control/initial-plan-source.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 27[2mms[22m[39m
+ [32m✓[39m tests/data/candidate-workspace-reader.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 40[2mms[22m[39m
+ [32m✓[39m tests/context/persisted-query-source.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 63[2mms[22m[39m
+ [32m✓[39m tests/app/file-references.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 36[2mms[22m[39m
+ [32m✓[39m tests/control/dispatch-start.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 34[2mms[22m[39m
+ [32m✓[39m tests/data/exploration-source-applicability.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m tests/control/run-facts.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 29[2mms[22m[39m
+ [32m✓[39m tests/ledger/in-memory-ledger.contract.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m tests/control/material-access.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 25[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-00.integration.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 23[2mms[22m[39m
+ [32m✓[39m tests/control/architecture-evolution-policy.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-11.contract-suite.inmemory.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 23[2mms[22m[39m
+ [32m✓[39m tests/control/architecture-reconciler.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m tests/data/workspace-path-boundary.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 45[2mms[22m[39m
+ [32m✓[39m tests/read-model/p1-04-verification-projection.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m tests/control/governance-activate.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 21[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-13.contract-suite.inmemory.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m tests/read-model/plan-change-timeline.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 25[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/p1-16-continuation-projection.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 23[2mms[22m[39m
+ [32m✓[39m tests/control/role-spec-material-read.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m tests/contracts/goal-phase.test.ts [2m([22m[2m25 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m tests/control/governance-install.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m tests/read-model/p1-11-plan-change.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m tests/control/control-engine.test.ts [2m([22m[2m22 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m tests/read-model/p1-07-projection.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m tests/read-model/plan-view.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m tests/context/role-source-stability.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 50[2mms[22m[39m
+ [32m✓[39m tests/read-model/p1-03-run-projection.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m tests/ledger/in-memory-ledger.boundary.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m tests/read-model/p1-06-handoff-projection.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m tests/ui/pending.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m tests/control/canonical-record-scope.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m tests/read-model/read-model-index.contract.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m tests/context/context-compiler.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m tests/context/work-context-compiler.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/read-model/p1-14-baseline-change-view.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/context/material-selection.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/ledger/snapshot-isolation.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/vault/artifact-vault.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/read-model/read-model-index.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/app/model-budget.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-15.contract-suite.inmemory.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m tests/read-model/p1-15-unified-status.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/read-model/governance-view.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/read-model/material-access-projection.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/control/workspace-capability-policy.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-14.contract-suite.inmemory.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/read-model/p1-16-continuation-projection.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/contracts/material-access.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/interaction/human-collaboration.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/read-model/plan-view.rebuild.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/app/governance-commands.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/contracts/fixtures.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/ui/layout.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/context/role-code-channel.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m tests/contracts/validation.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/control/runtime-dispatch.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/context/completed-work-regression.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [31m❯[39m tests/verification/feedback-decision-recovery.test.ts [2m([22m[2m7 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[32m 27[2mms[22m[39m
+   [32m✓[39m recovers the exact persisted human choice after decision commit but before plan application, then replays idempotently[32m 8[2mms[22m[39m
+   [32m✓[39m rejects a different option after a human choice was committed[32m 1[2mms[22m[39m
+   [32m✓[39m rejects changed source before the first choice can be recorded[32m 1[2mms[22m[39m
+   [32m✓[39m does not recover an unbound decision summary or a tampered authorized target[32m 2[2mms[22m[39m
+   [32m✓[39m recovers only an exact legacy option summary and preserves it for replay[32m 2[2mms[22m[39m
+[31m   [31m×[31m does not treat a proposal-only crash as human authorization after the source changes[39m[32m 10[2mms[22m[39m
+[31m   [31m×[31m rejects a new choice on a changed active plan after a proposal-only crash[39m[32m 2[2mms[22m[39m
+ [32m✓[39m tests/vault/material-access-grant.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m tests/data/workspace-reader-adapter.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m tests/runtime/fake-runtime-adapter.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m tests/verification/feedback-renewal.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/context/query-execution-context.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 29[2mms[22m[39m
+ [32m✓[39m tests/runtime/handoff-control-adapter.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/verification/migration-gate-port.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/control/governance-command-builders.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/control/baseline-evolution-port.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/runtime/context-continuation-adapter.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/contracts/fingerprint.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/verification/code-graph-port.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/verification/feedback-investigation-authority.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/control/architecture-delta-regression.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/app/live-content.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/runtime/unconfigured-capabilities.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/contracts/cursor.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m tests/restart/readiness-probe.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m tests/control/rework-unknown-disposition-review.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/contracts/state-ledger.double.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 3[2mms[22m[39m
+ [32m✓[39m tests/verification/semantic-reverification.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [31m❯[39m tests/app/governance.test.ts [2m([22m[2m5 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[33m 167503[2mms[22m[39m
+   [33m[2m✓[22m[39m 产品入口完成治理种类的 install/activate：默认只有两条内置基线生效，协调策略必须由人显式提交，视图回答"哪一份、谁在什么时候装的、内容是什么" [33m 2946[2mms[22m[39m
+   [33m[2m✓[22m[39m 激活另一份策略之后，旧激活请求的重放不会被当成"当前生效"：控制守卫复核 canonical，不谎报成功 [33m 3225[2mms[22m[39m
+   [33m[2m✓[22m[39m 基线：没有经 install/activate 生效的协调策略时，真实失败链停在 governance_unavailable 且零写入 [33m 14080[2mms[22m[39m
+[31m   [31m×[31m 真实 HTTP 安装并激活协调策略之后：同一条失败链自动受理成功，新 revision 生效，额度按生效策略计数[39m[33m 73416[2mms[22m[39m
+[31m   [31m×[31m RW-10 人的暂停开关：inScopeRework=false 的协调策略生效后，真实失败链转人工且零写入；重新启用后恢复自动受理[39m[33m 73833[2mms[22m[39m
+ [32m✓[39m tests/app/semantic-collaboration.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 168881[2mms[22m[39m
+   [33m[2m✓[22m[39m real HTTP/SQLite/kernel task investigates material and FAIL, repairs from sourced coordination, admits required independent review and replays settled records [33m 33041[2mms[22m[39m
+   [33m[2m✓[22m[39m the same repaired task remains unsatisfied when tools pass but its required independent Reviewer returns FAIL [33m 30357[2mms[22m[39m
+   [33m[2m✓[22m[39m a human selects an exact published clarification after FAIL, replays that decision and returns through sourced repair and required independent review [33m 38839[2mms[22m[39m
+   [33m[2m✓[22m[39m real host recovers a saved human choice after one before_apply fault using the labelled model stub [33m 40831[2mms[22m[39m
+   [33m[2m✓[22m[39m real host recovers a saved human choice after one before_query fault using the labelled model stub [33m 25810[2mms[22m[39m
+ [32m✓[39m tests/ui/rendering.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/ui/plan-changes.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 6 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/app/governance.test.ts[2m > [22m真实 HTTP 安装并激活协调策略之后：同一条失败链自动受理成功，新 revision 生效，额度按生效策略计数
+[31m[1mError[22m[39m: 安装协调策略之后自动返工仍然没有被受理：{"schemaVersion":1,"status":"driven","scope":{"projectId":"local-bdc97b46f506cc7f1930","workspaceId":"workspace-main","goalId":"round-goal"},"issues":{"status":"ready","issues":[{"schemaVersion":1,"issueId":"rework-issue-d8262c207835c8e525d94e106d1d4df4008d74c2","projectId":"local-bdc97b46f506cc7f1930","workspaceId":"workspace-main","goalId":"round-goal","taskId":"coding-task","runRef":{"aggregateType":"Run","projectId":"local-bdc97b46f506cc7f1930","goalId":"round-goal","runId":"real-round-task"},"planRef":{"aggregateType":"PlanRevision","projectId":"local-bdc97b46f506cc7f1930","planId":"model-plan-061387b22f3897b5cae3c76a3609c26e"},"planRevision":1,"source":{"kind":"verification_round","roundId":"4abafc7c01d9e361d0dd83f53688fb12af3640880574e388168cd63228f7bc81","requestId":"rw08-failing-round","outcome":"FAIL","status":"completed","sourceDigest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49"},"failedRequirements":[{"obligationId":"file-behavior","requirementId":"behavior","kind":"dynamic","reason":"命令检查 rw08-failing-check：分类 tool_check，结论 FAIL；命令「exit 1」；退出码 1；耗时 26.669495000001916ms。","failure":{"checkId":"rw08-failing-check","failedCheckIds":["rw08-failing-check"],"kind":"dynamic","category":"tool_check","result":"FAIL","command":"exit 1","timeoutMs":3000,"exitCode":1,"timedOut":false,"durationMs":26.669495000001916,"stderrExcerpt":"","sourceDigest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49","reportRef":{"kind":"artifact","contentType":"application/json","digest":"4401143e1e7c6078e58330c0dba2318b75533083f1f6ef5cf4c52e3da2243b28","sizeBytes":1475,"source":{"kind":"workspace","refId":"workspace-main","revision":"1","digest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49"}},"gaps":[]}}],"evidenceRefs":[{"aggregateType":"Evidence","projectId":"local-bdc97b46f506cc7f1930","evidenceId":"round-evidence-fb2d5354c493be2dc330694f25447b3789d8965c20b735cbcaa446a67500daeb"}],"summary":"工具验证轮次 4abafc7c01d9e361d0dd83f53688fb12af3640880574e388168cd63228f7bc81 在任务 coding-task 上有 1 项验收要求未通过（结论 FAIL）。","detectedAt":"2026-09-11T13:08:26.378Z","currentness":{"status":"superseded","issues":["该问题来自已不再生效的 plan revision；既有 FAIL 与报告仍保留在账本中"]},"reworkTaskId":"rework-255b7d46eca7f3b2803c483039d144ab","disposition":{"status":"disposed_by_rework","carrierTaskIds":["rework-0e6f529fd1ff04177f751ef8ff028293"],"issues":["当前 revision（plan-rework-9a7f5e374659a22e8a82bf6830e6ef6e）里这些义务已经不由任务 coding-task 承担，改由 rework-0e6f529fd1ff04177f751ef8ff028293 承担：承担者已换人"]}},{"schemaVersion":1,"issueId":"rework-issue-2c566375a20baa5d3424bfa6d7d8bba6bafb8ecd","projectId":"local-bdc97b46f506cc7f1930","workspaceId":"workspace-main","goalId":"round-goal","taskId":"rework-0e6f529fd1ff04177f751ef8ff028293","runRef":{"aggregateType":"Run","projectId":"local-bdc97b46f506cc7f1930","goalId":"round-goal","runId":"real-round-task-3b396a8d36ba"},"planRef":{"aggregateType":"PlanRevision","projectId":"local-bdc97b46f506cc7f1930","planId":"plan-rework-9a7f5e374659a22e8a82bf6830e6ef6e"},"planRevision":3,"source":{"kind":"verification_round","roundId":"6d1dda2ccb931c185669d0154fb6e13656a43f5031bd372f1d1b35c64321bf7f","requestId":"rework-check-6e8ea93dc0681acdd683281465b9a10f8fd40703374737ed2e5374650b5d0c06","outcome":"FAIL","status":"completed","sourceDigest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49"},"failedRequirements":[{"obligationId":"file-behavior","requirementId":"behavior","kind":"dynamic","reason":"命令检查 rw08-failing-check：分类 tool_check，结论 FAIL；命令「exit 1」；退出码 1；耗时 16.155572000003303ms。","failure":{"checkId":"rw08-failing-check","failedCheckIds":["rw08-failing-check"],"kind":"dynamic","category":"tool_check","result":"FAIL","command":"exit 1","timeoutMs":3000,"exitCode":1,"timedOut":false,"durationMs":16.155572000003303,"stderrExcerpt":"","sourceDigest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49","reportRef":{"kind":"artifact","contentType":"application/json","digest":"9b000b71839b8cec6699fe7f722f6ab2c8d7e4c4285227715d09890fc723c6ff","sizeBytes":1517,"source":{"kind":"workspace","refId":"workspace-main","revision":"1","digest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49"}},"gaps":[]}}],"evidenceRefs":[{"aggregateType":"Evidence","projectId":"local-bdc97b46f506cc7f1930","evidenceId":"round-evidence-80795ae1784b5cc3d278d26c0409c50df514af35d14ccaf0ff5121906f449027"}],"summary":"工具验证轮次 6d1dda2ccb931c185669d0154fb6e13656a43f5031bd372f1d1b35c64321bf7f 在任务 rework-0e6f529fd1ff04177f751ef8ff028293 上有 1 项验收要求未通过（结论 FAIL）。","detectedAt":"2026-09-11T13:08:40.007Z","currentness":{"status":"open","issues":[]},"reworkTaskId":"rework-ff34729dcb412d96f90b263b9eba125b","disposition":{"status":"unaddressed","carrierTaskIds":["rework-0e6f529fd1ff04177f751ef8ff028293"],"issues":[]}},{"schemaVersion":1,"issueId":"rework-issue-e6aa08ee3e7afdbe1d988aee530a69fada0f752c","projectId":"local-bdc97b46f506cc7f1930","workspaceId":"workspace-main","goalId":"round-goal","taskId":"rework-255b7d46eca7f3b2803c483039d144ab","runRef":{"aggregateType":"Run","projectId":"local-bdc97b46f506cc7f1930","goalId":"round-goal","runId":"real-round-task-56c271222a17"},"planRef":{"aggregateType":"PlanRevision","projectId":"local-bdc97b46f506cc7f1930","planId":"plan-rework-f6bc686e392d575c41467cf329d09306"},"planRevision":2,"source":{"kind":"verification_round","roundId":"8a841c0f51a7114ff82dd8b6fe5a8002ded93e89e9601622b84770a0ff4eb965","requestId":"rework-check-4c4db2f3fdfb50907310e8abd46b61d7d9d6d049c8949a994d6d10a44592ec52","outcome":"FAIL","status":"completed","sourceDigest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49"},"failedRequirements":[{"obligationId":"file-behavior","requirementId":"behavior","kind":"dynamic","reason":"命令检查 rw08-failing-check：分类 tool_check，结论 FAIL；命令「exit 1」；退出码 1；耗时 24.776817999998457ms。","failure":{"checkId":"rw08-failing-check","failedCheckIds":["rw08-failing-check"],"kind":"dynamic","category":"tool_check","result":"FAIL","command":"exit 1","timeoutMs":3000,"exitCode":1,"timedOut":false,"durationMs":24.776817999998457,"stderrExcerpt":"","sourceDigest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49","reportRef":{"kind":"artifact","contentType":"application/json","digest":"12527a38d6fffca3155785b348e6445b9e97e80c5d5f3a240604fac27c9e3177","sizeBytes":1517,"source":{"kind":"workspace","refId":"workspace-main","revision":"1","digest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49"}},"gaps":[]}}],"evidenceRefs":[{"aggregateType":"Evidence","projectId":"local-bdc97b46f506cc7f1930","evidenceId":"round-evidence-834b5947b06a47e09d897c8e3862b0686b103c6d03b9e6803120ab9f2b7475a0"}],"summary":"工具验证轮次 8a841c0f51a7114ff82dd8b6fe5a8002ded93e89e9601622b84770a0ff4eb965 在任务 rework-255b7d46eca7f3b2803c483039d144ab 上有 1 项验收要求未通过（结论 FAIL）。","detectedAt":"2026-09-11T13:08:34.828Z","currentness":{"status":"superseded","issues":["该问题来自已不再生效的 plan revision；既有 FAIL 与报告仍保留在账本中"]},"reworkTaskId":"rework-0e6f529fd1ff04177f751ef8ff028293","disposition":{"status":"disposed_by_rework","carrierTaskIds":["rework-0e6f529fd1ff04177f751ef8ff028293"],"issues":["当前 revision（plan-rework-9a7f5e374659a22e8a82bf6830e6ef6e）里这些义务已经不由任务 rework-255b7d46eca7f3b2803c483039d144ab 承担，改由 rework-0e6f529fd1ff04177f751ef8ff028293 承担：承担者已换人"]}}],"gaps":[]},"outcomes":[{"groupTaskId":"rework-0e6f529fd1ff04177f751ef8ff028293","issueIds":["rework-issue-2c566375a20baa5d3424bfa6d7d8bba6bafb8ecd"],"status":"rejected","origin":"compiler","code":"coordination_pending","reasons":["等待协调角色消费当前失败并返回带来源的计划调整；调查、阻塞或人的选择见对应 Query。"],"supersededByPlanId":null}],"acceptedPlanRefs":[],"dispositions":[{"issueId":"rework-issue-2c566375a20baa5d3424bfa6d7d8bba6bafb8ecd","taskId":"rework-0e6f529fd1ff04177f751ef8ff028293","obligationIds":["file-behavior"],"status":"rejected_input","carrierTaskIds":["rework-0e6f529fd1ff04177f751ef8ff028293"],"reworkTaskIds":[],"reasons":["输入与 canonical 事实不一致（coordination_pending）：等待协调角色消费当前失败并返回带来源的计划调整；调查、阻塞或人的选择见对应 Query。"]},{"issueId":"rework-issue-d8262c207835c8e525d94e106d1d4df4008d74c2","taskId":"coding-task","obligationIds":["file-behavior"],"status":"disposed_by_rework","carrierTaskIds":["rework-0e6f529fd1ff04177f751ef8ff028293"],"reworkTaskIds":[],"reasons":["本次触发没有受理这条问题；它的处置事实是 disposed_by_rework。","当前 revision（plan-rework-9a7f5e374659a22e8a82bf6830e6ef6e）里这些义务已经不由任务 coding-task 承担，改由 rework-0e6f529fd1ff04177f751ef8ff028293 承担：承担者已换人"]},{"issueId":"rework-issue-e6aa08ee3e7afdbe1d988aee530a69fada0f752c","taskId":"rework-255b7d46eca7f3b2803c483039d144ab","obligationIds":["file-behavior"],"status":"disposed_by_rework","carrierTaskIds":["rework-0e6f529fd1ff04177f751ef8ff028293"],"reworkTaskIds":[],"reasons":["本次触发没有受理这条问题；它的处置事实是 disposed_by_rework。","当前 revision（plan-rework-9a7f5e374659a22e8a82bf6830e6ef6e）里这些义务已经不由任务 rework-255b7d46eca7f3b2803c483039d144ab 承担，改由 rework-0e6f529fd1ff04177f751ef8ff028293 承担：承担者已换人"]}],"gaps":[]}
+[36m [2m❯[22m waitForDrive tests/app/governance.test.ts:[2m256:39[22m[39m
+    [90m254|[39m     const status = (await fixture.post<ReworkStatus>('/api/real/rework…
+    [90m255|[39m     [35mif[39m ([34mpredicate[39m(status)) [35mreturn[39m status[33m;[39m
+    [90m256|[39m     if (Date.now() >= deadline) throw Error(describe + '：' + JSON.stri…
+    [90m   |[39m                                       [31m^[39m
+    [90m257|[39m     [35mawait[39m [35mnew[39m [33mPromise[39m(done [33m=>[39m [34msetTimeout[39m(done[33m,[39m [34m50[39m))[33m;[39m
+    [90m258|[39m   }
+[90m [2m❯[22m tests/app/governance.test.ts:[2m300:19[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/app/governance.test.ts[2m > [22mRW-10 人的暂停开关：inScopeRework=false 的协调策略生效后，真实失败链转人工且零写入；重新启用后恢复自动受理
+[31m[1mError[22m[39m: 重新启用之后自动返工仍然没有被受理：{"schemaVersion":1,"status":"driven","scope":{"projectId":"local-5709e6ab5bec30175b7c","workspaceId":"workspace-main","goalId":"round-goal"},"issues":{"status":"ready","issues":[{"schemaVersion":1,"issueId":"rework-issue-175248a32c79f8de9ceafe8cf84e933c21437219","projectId":"local-5709e6ab5bec30175b7c","workspaceId":"workspace-main","goalId":"round-goal","taskId":"coding-task","runRef":{"aggregateType":"Run","projectId":"local-5709e6ab5bec30175b7c","goalId":"round-goal","runId":"real-round-task"},"planRef":{"aggregateType":"PlanRevision","projectId":"local-5709e6ab5bec30175b7c","planId":"model-plan-94c0cb6b8f03839e83af18c440a9f783"},"planRevision":1,"source":{"kind":"verification_round","roundId":"962c7d00987543fa7a8dff4ef7a0b0cc5092a2057a66989c2e0a352fd98abace","requestId":"rw08-failing-round","outcome":"FAIL","status":"completed","sourceDigest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49"},"failedRequirements":[{"obligationId":"file-behavior","requirementId":"behavior","kind":"dynamic","reason":"命令检查 rw08-failing-check：分类 tool_check，结论 FAIL；命令「exit 1」；退出码 1；耗时 28.766890000013518ms。","failure":{"checkId":"rw08-failing-check","failedCheckIds":["rw08-failing-check"],"kind":"dynamic","category":"tool_check","result":"FAIL","command":"exit 1","timeoutMs":3000,"exitCode":1,"timedOut":false,"durationMs":28.766890000013518,"stderrExcerpt":"","sourceDigest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49","reportRef":{"kind":"artifact","contentType":"application/json","digest":"da1af3bb468fa6beaa31656a0c2fa93f884feb87cd30cec10c018379bb379be8","sizeBytes":1475,"source":{"kind":"workspace","refId":"workspace-main","revision":"1","digest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49"}},"gaps":[]}}],"evidenceRefs":[{"aggregateType":"Evidence","projectId":"local-5709e6ab5bec30175b7c","evidenceId":"round-evidence-a86eae502ead31d20d720bdd9a3d8498678f416c51c9e9ee891e4b5eaaf98b65"}],"summary":"工具验证轮次 962c7d00987543fa7a8dff4ef7a0b0cc5092a2057a66989c2e0a352fd98abace 在任务 coding-task 上有 1 项验收要求未通过（结论 FAIL）。","detectedAt":"2026-09-11T13:09:39.616Z","currentness":{"status":"superseded","issues":["该问题来自已不再生效的 plan revision；既有 FAIL 与报告仍保留在账本中"]},"reworkTaskId":"rework-dc9855d4ab57faef47535eabee25076b","disposition":{"status":"disposed_by_rework","carrierTaskIds":["rework-16d5ab67dd8f0ceb5cf63018ac662d00"],"issues":["当前 revision（plan-rework-7c6a2d0b3456c16969416216ec31eda7）里这些义务已经不由任务 coding-task 承担，改由 rework-16d5ab67dd8f0ceb5cf63018ac662d00 承担：承担者已换人"]}},{"schemaVersion":1,"issueId":"rework-issue-8fb9561408ac84c1e2c5b65f89744ba2829f8729","projectId":"local-5709e6ab5bec30175b7c","workspaceId":"workspace-main","goalId":"round-goal","taskId":"rework-16d5ab67dd8f0ceb5cf63018ac662d00","runRef":{"aggregateType":"Run","projectId":"local-5709e6ab5bec30175b7c","goalId":"round-goal","runId":"real-round-task-d78ffffc0ac4"},"planRef":{"aggregateType":"PlanRevision","projectId":"local-5709e6ab5bec30175b7c","planId":"plan-rework-7c6a2d0b3456c16969416216ec31eda7"},"planRevision":3,"source":{"kind":"verification_round","roundId":"598c1adc52fdc34f2dba619519bec343f23c65bfe8d7a6182265d91d0c8fda83","requestId":"rework-check-190abe840dcf9d9fc56e9a519124e604bbe4a7fb3926edee16659178ed1ca862","outcome":"FAIL","status":"completed","sourceDigest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49"},"failedRequirements":[{"obligationId":"file-behavior","requirementId":"behavior","kind":"dynamic","reason":"命令检查 rw08-failing-check：分类 tool_check，结论 FAIL；命令「exit 1」；退出码 1；耗时 27.37803699998767ms。","failure":{"checkId":"rw08-failing-check","failedCheckIds":["rw08-failing-check"],"kind":"dynamic","category":"tool_check","result":"FAIL","command":"exit 1","timeoutMs":3000,"exitCode":1,"timedOut":false,"durationMs":27.37803699998767,"stderrExcerpt":"","sourceDigest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49","reportRef":{"kind":"artifact","contentType":"application/json","digest":"b732d49d227c29b8d78443bec7c23062c210cb34598e07e4b98f0c390aaee5af","sizeBytes":1517,"source":{"kind":"workspace","refId":"workspace-main","revision":"1","digest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49"}},"gaps":[]}}],"evidenceRefs":[{"aggregateType":"Evidence","projectId":"local-5709e6ab5bec30175b7c","evidenceId":"round-evidence-d3eb1c8491625f7d710ca879c69e8bddab5cc45ea9f14c6bb5ab389e786ad630"}],"summary":"工具验证轮次 598c1adc52fdc34f2dba619519bec343f23c65bfe8d7a6182265d91d0c8fda83 在任务 rework-16d5ab67dd8f0ceb5cf63018ac662d00 上有 1 项验收要求未通过（结论 FAIL）。","detectedAt":"2026-09-11T13:09:54.001Z","currentness":{"status":"open","issues":[]},"reworkTaskId":"rework-e1138a6b7f5d6d78a23802b261c7f35e","disposition":{"status":"unaddressed","carrierTaskIds":["rework-16d5ab67dd8f0ceb5cf63018ac662d00"],"issues":[]}},{"schemaVersion":1,"issueId":"rework-issue-9c6d2c9be7fe149ac340a9e2034d5235b652051d","projectId":"local-5709e6ab5bec30175b7c","workspaceId":"workspace-main","goalId":"round-goal","taskId":"rework-dc9855d4ab57faef47535eabee25076b","runRef":{"aggregateType":"Run","projectId":"local-5709e6ab5bec30175b7c","goalId":"round-goal","runId":"real-round-task-205dc7ee92b0"},"planRef":{"aggregateType":"PlanRevision","projectId":"local-5709e6ab5bec30175b7c","planId":"plan-rework-2020ba9d2c9052371573600edbf0c8ec"},"planRevision":2,"source":{"kind":"verification_round","roundId":"45af5cc23643701e7d066d2fbeca4a00a48e2a5a0f9b4e4fef5b753dbdfcedf2","requestId":"rework-check-6a8cf4ee53aa9bb3e1aae45e5b247c406f6787cca8a2a9ef8c419204924f11c8","outcome":"FAIL","status":"completed","sourceDigest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49"},"failedRequirements":[{"obligationId":"file-behavior","requirementId":"behavior","kind":"dynamic","reason":"命令检查 rw08-failing-check：分类 tool_check，结论 FAIL；命令「exit 1」；退出码 1；耗时 29.934315999998944ms。","failure":{"checkId":"rw08-failing-check","failedCheckIds":["rw08-failing-check"],"kind":"dynamic","category":"tool_check","result":"FAIL","command":"exit 1","timeoutMs":3000,"exitCode":1,"timedOut":false,"durationMs":29.934315999998944,"stderrExcerpt":"","sourceDigest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49","reportRef":{"kind":"artifact","contentType":"application/json","digest":"70af07c577d9553c495ebf9b55dccf4cfa32ab5a2373b693e12887d299cf2a26","sizeBytes":1517,"source":{"kind":"workspace","refId":"workspace-main","revision":"1","digest":"f9359bfcce2b328e0dfc60d906a298776f6afcf7c78bc85f745f843bb2e1aa49"}},"gaps":[]}}],"evidenceRefs":[{"aggregateType":"Evidence","projectId":"local-5709e6ab5bec30175b7c","evidenceId":"round-evidence-a79bf05924dc1b281796f177364d9190684f576fa152b56ab245e941eb2d2002"}],"summary":"工具验证轮次 45af5cc23643701e7d066d2fbeca4a00a48e2a5a0f9b4e4fef5b753dbdfcedf2 在任务 rework-dc9855d4ab57faef47535eabee25076b 上有 1 项验收要求未通过（结论 FAIL）。","detectedAt":"2026-09-11T13:09:48.903Z","currentness":{"status":"superseded","issues":["该问题来自已不再生效的 plan revision；既有 FAIL 与报告仍保留在账本中"]},"reworkTaskId":"rework-16d5ab67dd8f0ceb5cf63018ac662d00","disposition":{"status":"disposed_by_rework","carrierTaskIds":["rework-16d5ab67dd8f0ceb5cf63018ac662d00"],"issues":["当前 revision（plan-rework-7c6a2d0b3456c16969416216ec31eda7）里这些义务已经不由任务 rework-dc9855d4ab57faef47535eabee25076b 承担，改由 rework-16d5ab67dd8f0ceb5cf63018ac662d00 承担：承担者已换人"]}}],"gaps":[]},"outcomes":[{"groupTaskId":"rework-16d5ab67dd8f0ceb5cf63018ac662d00","issueIds":["rework-issue-8fb9561408ac84c1e2c5b65f89744ba2829f8729"],"status":"rejected","origin":"compiler","code":"coordination_pending","reasons":["等待协调角色消费当前失败并返回带来源的计划调整；调查、阻塞或人的选择见对应 Query。"],"supersededByPlanId":null}],"acceptedPlanRefs":[],"dispositions":[{"issueId":"rework-issue-175248a32c79f8de9ceafe8cf84e933c21437219","taskId":"coding-task","obligationIds":["file-behavior"],"status":"disposed_by_rework","carrierTaskIds":["rework-16d5ab67dd8f0ceb5cf63018ac662d00"],"reworkTaskIds":[],"reasons":["本次触发没有受理这条问题；它的处置事实是 disposed_by_rework。","当前 revision（plan-rework-7c6a2d0b3456c16969416216ec31eda7）里这些义务已经不由任务 coding-task 承担，改由 rework-16d5ab67dd8f0ceb5cf63018ac662d00 承担：承担者已换人"]},{"issueId":"rework-issue-8fb9561408ac84c1e2c5b65f89744ba2829f8729","taskId":"rework-16d5ab67dd8f0ceb5cf63018ac662d00","obligationIds":["file-behavior"],"status":"rejected_input","carrierTaskIds":["rework-16d5ab67dd8f0ceb5cf63018ac662d00"],"reworkTaskIds":[],"reasons":["输入与 canonical 事实不一致（coordination_pending）：等待协调角色消费当前失败并返回带来源的计划调整；调查、阻塞或人的选择见对应 Query。"]},{"issueId":"rework-issue-9c6d2c9be7fe149ac340a9e2034d5235b652051d","taskId":"rework-dc9855d4ab57faef47535eabee25076b","obligationIds":["file-behavior"],"status":"disposed_by_rework","carrierTaskIds":["rework-16d5ab67dd8f0ceb5cf63018ac662d00"],"reworkTaskIds":[],"reasons":["本次触发没有受理这条问题；它的处置事实是 disposed_by_rework。","当前 revision（plan-rework-7c6a2d0b3456c16969416216ec31eda7）里这些义务已经不由任务 rework-dc9855d4ab57faef47535eabee25076b 承担，改由 rework-16d5ab67dd8f0ceb5cf63018ac662d00 承担：承担者已换人"]}],"gaps":[]}
+[36m [2m❯[22m waitForDrive tests/app/governance.test.ts:[2m256:39[22m[39m
+    [90m254|[39m     const status = (await fixture.post<ReworkStatus>('/api/real/rework…
+    [90m255|[39m     [35mif[39m ([34mpredicate[39m(status)) [35mreturn[39m status[33m;[39m
+    [90m256|[39m     if (Date.now() >= deadline) throw Error(describe + '：' + JSON.stri…
+    [90m   |[39m                                       [31m^[39m
+    [90m257|[39m     [35mawait[39m [35mnew[39m [33mPromise[39m(done [33m=>[39m [34msetTimeout[39m(done[33m,[39m [34m50[39m))[33m;[39m
+    [90m258|[39m   }
+[90m [2m❯[22m tests/app/governance.test.ts:[2m377:20[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/app/rework-drive.test.ts[2m > [22m独立审阅交付 FAIL 结论之后同样触发驱动：问题来源是审阅结论，提案照样机械推导出来
+[31m[1mAssertionError[22m: expected 'coordination_pending' to be 'governance_unavailable' // Object.is equality[39m
+
+Expected: [32m"governance_unavailable"[39m
+Received: [31m"coordination_pending"[39m
+
+[36m [2m❯[22m tests/app/rework-drive.test.ts:[2m142:24[22m[39m
+    [90m140|[39m   [34mexpect[39m(outcome[33m.[39mstatus)[33m.[39m[34mtoBe[39m([32m'rejected'[39m)[33m;[39m
+    [90m141|[39m   [35mif[39m (outcome[33m.[39mstatus [33m!==[39m [32m'rejected'[39m) [35mreturn[39m[33m;[39m
+    [90m142|[39m   [34mexpect[39m(outcome[33m.[39mcode)[33m.[39m[34mtoBe[39m([32m'governance_unavailable'[39m)[33m;[39m
+    [90m   |[39m                        [31m^[39m
+    [90m143|[39m   [34mexpect[39m(view[33m.[39macceptance[33m.[39mapplied)[33m.[39m[34mtoBe[39m([35mfalse[39m)[33m;[39m
+    [90m144|[39m   expect(view.acceptance.activePlanRef!.planId).not.toBe(view.proposal…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/contracts/module-ownership.test.ts[2m > [22mmodule ownership is decidable from the path[2m > [22mholds exactly the recorded file inventory in every Module directory
+[31m[1mAssertionError[22m: expected [ …(2) ] to deeply equal [][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- [][39m
+[31m+ [[39m
+[31m+   "src/control/plan-compiler/ has unrecorded file(s): feedback-decision-compiler.ts",[39m
+[31m+   "src/data/context-compiler/ has unrecorded file(s): feedback-decision-context.ts",[39m
+[31m+ ][39m
+
+[36m [2m❯[22m tests/contracts/module-ownership.test.ts:[2m168:22[22m[39m
+    [90m166|[39m       if (missing.length) problems.push(`${dir}/ is missing recorded f…
+    [90m167|[39m     }
+    [90m168|[39m     [34mexpect[39m(problems)[33m.[39m[34mtoEqual[39m([])[33m;[39m
+    [90m   |[39m                      [31m^[39m
+    [90m169|[39m   })[33m;[39m
+    [90m170|[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/verification/feedback-decision-recovery.test.ts[2m > [22mdoes not treat a proposal-only crash as human authorization after the source changes
+[31m[1mAssertionError[22m: promise resolved "{ status: 'applied', …(3) }" instead of rejecting[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- Error {[39m
+[32m-   "message": "rejected promise",[39m
+[31m+ {[39m
+[31m+   "decisionRef": {[39m
+[31m+     "aggregateType": "UserDecision",[39m
+[31m+     "decisionId": "feedback-choice-096e08bdea4c3a5f7b9f8125f116df1e-decision",[39m
+[31m+     "projectId": "p",[39m
+[31m+     "workspaceId": "w",[39m
+[31m+   },[39m
+[31m+   "planRef": {[39m
+[31m+     "aggregateType": "PlanRevision",[39m
+[31m+     "planId": "plan-feedback-choice-096e08bdea4c3a5f7b9f8125f116df1e",[39m
+[31m+     "projectId": "p",[39m
+[31m+   },[39m
+[31m+   "sourceJob": {[39m
+[31m+     "job": {[39m
+[31m+       "answerRefs": [[39m
+[31m+         {[39m
+[31m+           "aggregateType": "QueryJobAnswer",[39m
+[31m+           "answerId": "a",[39m
+[31m+           "projectId": "p",[39m
+[31m+           "queryJobId": "q",[39m
+[31m+           "workspaceId": "w",[39m
+[31m+         },[39m
+[31m+       ],[39m
+[31m+       "goalId": "g",[39m
+[31m+       "intent": {[39m
+[31m+         "execution": {[39m
+[31m+           "feedback": {[39m
+[31m+             "planRef": {[39m
+[31m+               "aggregateType": "PlanRevision",[39m
+[31m+               "planId": "old",[39m
+[31m+               "projectId": "p",[39m
+[31m+             },[39m
+[31m+             "workspaceRevision": 1,[39m
+[31m+           },[39m
+[31m+         },[39m
+[31m+       },[39m
+[31m+       "projectId": "p",[39m
+[31m+       "queryJobId": "q",[39m
+[31m+       "runRef": {[39m
+[31m+         "aggregateType": "QueryRun",[39m
+[31m+         "projectId": "p",[39m
+[31m+         "queryJobId": "q",[39m
+[31m+         "runId": "qr",[39m
+[31m+         "workspaceId": "w",[39m
+[31m+       },[39m
+[31m+       "status": "answered",[39m
+[31m+       "workspaceId": "w",[39m
+[31m+     },[39m
+[31m+     "ref": {[39m
+[31m+       "aggregateType": "QueryJob",[39m
+[31m+       "answerId": undefined,[39m
+[31m+       "projectId": "p",[39m
+[31m+       "queryJobId": "q",[39m
+[31m+       "workspaceId": "w",[39m
+[31m+     },[39m
+[31m+   },[39m
+[31m+   "status": "applied",[39m
+[2m  }[22m
+
+[36m [2m❯[22m tests/verification/feedback-decision-recovery.test.ts:[2m78:59[22m[39m
+    [90m 76|[39m   [34mexpect[39m(f[33m.[39m[34mdecision[39m())[33m.[39m[34mtoBeNull[39m()[33m;[39m
+    [90m 77|[39m   f[33m.[39m[34mresume[39m()[33m;[39m f[33m.[39m[34mchangeSource[39m()[33m;[39m
+    [90m 78|[39m   await expect(f.compiler.choose(f.scope,f.answerRef,'a')).rejects.toT…
+    [90m   |[39m                                                           [31m^[39m
+    [90m 79|[39m   expect(f.decision()).toBeNull(); expect(f.counts()).toEqual({plannin…
+    [90m 80|[39m   [34mexpect[39m([35mawait[39m f[33m.[39mmaterials[33m.[39m[34mrecordedChoices[39m())[33m.[39m[34mtoEqual[39m([])[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/verification/feedback-decision-recovery.test.ts[2m > [22mrejects a new choice on a changed active plan after a proposal-only crash
+[31m[1mAssertionError[22m: promise resolved "{ status: 'applied', …(3) }" instead of rejecting[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- Error {[39m
+[32m-   "message": "rejected promise",[39m
+[31m+ {[39m
+[31m+   "decisionRef": {[39m
+[31m+     "aggregateType": "UserDecision",[39m
+[31m+     "decisionId": "feedback-choice-096e08bdea4c3a5f7b9f8125f116df1e-decision",[39m
+[31m+     "projectId": "p",[39m
+[31m+     "workspaceId": "w",[39m
+[31m+   },[39m
+[31m+   "planRef": {[39m
+[31m+     "aggregateType": "PlanRevision",[39m
+[31m+     "planId": "plan-feedback-choice-096e08bdea4c3a5f7b9f8125f116df1e",[39m
+[31m+     "projectId": "p",[39m
+[31m+   },[39m
+[31m+   "sourceJob": {[39m
+[31m+     "job": {[39m
+[31m+       "answerRefs": [[39m
+[31m+         {[39m
+[31m+           "aggregateType": "QueryJobAnswer",[39m
+[31m+           "answerId": "a",[39m
+[31m+           "projectId": "p",[39m
+[31m+           "queryJobId": "q",[39m
+[31m+           "workspaceId": "w",[39m
+[31m+         },[39m
+[31m+       ],[39m
+[31m+       "goalId": "g",[39m
+[31m+       "intent": {[39m
+[31m+         "execution": {[39m
+[31m+           "feedback": {[39m
+[31m+             "planRef": {[39m
+[31m+               "aggregateType": "PlanRevision",[39m
+[31m+               "planId": "old",[39m
+[31m+               "projectId": "p",[39m
+[31m+             },[39m
+[31m+             "workspaceRevision": 1,[39m
+[31m+           },[39m
+[31m+         },[39m
+[31m+       },[39m
+[31m+       "projectId": "p",[39m
+[31m+       "queryJobId": "q",[39m
+[31m+       "runRef": {[39m
+[31m+         "aggregateType": "QueryRun",[39m
+[31m+         "projectId": "p",[39m
+[31m+         "queryJobId": "q",[39m
+[31m+         "runId": "qr",[39m
+[31m+         "workspaceId": "w",[39m
+[31m+       },[39m
+[31m+       "status": "answered",[39m
+[31m+       "workspaceId": "w",[39m
+[31m+     },[39m
+[31m+     "ref": {[39m
+[31m+       "aggregateType": "QueryJob",[39m
+[31m+       "answerId": undefined,[39m
+[31m+       "projectId": "p",[39m
+[31m+       "queryJobId": "q",[39m
+[31m+       "workspaceId": "w",[39m
+[31m+     },[39m
+[31m+   },[39m
+[31m+   "status": "applied",[39m
+[2m  }[22m
+
+[36m [2m❯[22m tests/verification/feedback-decision-recovery.test.ts:[2m86:59[22m[39m
+    [90m 84|[39m   await expect(f.compiler.choose(f.scope,f.answerRef,'a')).rejects.toT…
+    [90m 85|[39m   f.resume(); f.goal.activePlanRevision={...f.goal.activePlanRevision,…
+    [90m 86|[39m   await expect(f.compiler.choose(f.scope,f.answerRef,'a')).rejects.toT…
+    [90m   |[39m                                                           [31m^[39m
+    [90m 87|[39m   [34mexpect[39m(f[33m.[39m[34mdecision[39m())[33m.[39m[34mtoBeNull[39m()[33m;[39m [34mexpect[39m(f[33m.[39m[34mcounts[39m()[33m.[39mapplies)[33m.[39m[34mtoBe[39m([34m0[39m)[33m;[39m
+    [90m 88|[39m })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m4 failed[39m[22m[2m | [22m[1m[32m297 passed[39m[22m[90m (301)[39m
+[2m      Tests [22m [1m[31m6 failed[39m[22m[2m | [22m[1m[32m1976 passed[39m[22m[90m (1982)[39m
+[2m   Start at [22m 21:07:33
+[2m   Duration [22m 218.67s[2m (transform 585.56s, setup 0ms, import 1365.74s, tests 2134.22s, environment 35ms)[22m
+

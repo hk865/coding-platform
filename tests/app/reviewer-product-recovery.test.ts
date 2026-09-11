@@ -108,7 +108,10 @@ it.each(['PASS', 'FAIL'] as const)('authorizes a real lease-conflict recovery th
     expect(tools).toContain('read_source'); expect(tools).toContain('read_material');
     expect(tools).not.toContain('edit'); expect(tools).not.toContain('shell');
   }
-  const calls = f.modelRequests(), works = reviewerWorks(f), evidence = f.snapshots('Evidence'), results = f.snapshots('ReviewResult');
+  // A settled FAIL also permits a separate coordination Query. Recovery must
+  // never repeat this Reviewer or its canonical execution and evidence.
+  const calls = f.modelRequests(), reviewCalls = f.reviewerRequests.length, works = reviewerWorks(f), evidence = f.snapshots('Evidence'), results = f.snapshots('ReviewResult');
+  const reviewRuns = f.snapshots<RunSnapshot>('Run').filter(run=>works.some(work=>work.reviewerRunRef.runId===run.ref.runId));
   expect(await f.recover()).toMatchObject({ status: 200, body: { replayed: true } });
   const denied = await f.recover('cannot-reroll', 'recovery');
   expect(denied.body.review.work).toBeNull();
@@ -117,7 +120,9 @@ it.each(['PASS', 'FAIL'] as const)('authorizes a real lease-conflict recovery th
   expect(await f.recover()).toMatchObject({ status: 200, body: { replayed: true } });
   expect((await f.post('/api/receipts', { ...f.scope, kind: 'independent-review', requestId: 'recovery' })).body).toMatchObject({ found: true, review: { phase: 'settled' } });
   expect(reviewerWorks(f)).toEqual(works); expect(f.snapshots('Evidence')).toEqual(evidence); expect(f.snapshots('ReviewResult')).toEqual(results);
-  expect(f.modelRequests()).toBe(calls);
+  expect(f.reviewerRequests).toHaveLength(reviewCalls);
+  expect(f.snapshots<RunSnapshot>('Run').filter(run=>works.some(work=>work.reviewerRunRef.runId===run.ref.runId))).toEqual(reviewRuns);
+  if(result==='PASS') expect(f.modelRequests()).toBe(calls);
 }, 90000);
 
 it('deduplicates same-key and different-key concurrent authorizations and rejects altered identity payloads', async () => {

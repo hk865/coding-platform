@@ -1,0 +1,15 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/app/semantic-collaboration.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 142750[2mms[22m[39m
+   [33m[2m✓[22m[39m real HTTP/SQLite/kernel task investigates material and FAIL, repairs from sourced coordination, admits required independent review and replays settled records [33m 14074[2mms[22m[39m
+   [33m[2m✓[22m[39m the same repaired task remains unsatisfied when tools pass but its required independent Reviewer returns FAIL [33m 15382[2mms[22m[39m
+   [33m[2m✓[22m[39m a human selects an exact published clarification after FAIL, replays that decision and returns through sourced repair and required independent review [33m 29282[2mms[22m[39m
+   [33m[2m✓[22m[39m real host recovers a saved human choice after one before_apply fault using the labelled model stub [33m 42760[2mms[22m[39m
+   [33m[2m✓[22m[39m real host recovers a saved human choice after one before_query fault using the labelled model stub [33m 41249[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m5 passed[39m[22m[90m (5)[39m
+[2m   Start at [22m 21:06:49
+[2m   Duration [22m 172.01s[2m (transform 21.05s, setup 0ms, import 27.59s, tests 142.75s, environment 0ms)[22m
+

@@ -4,6 +4,9 @@ import { resolve } from 'node:path';
 
 const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const chrome = process.env['CHROME_PATH'];
+const port = Number(process.env['GUI_TEST_PORT'] ?? 4399);
+if (!Number.isInteger(port) || port < 1024 || port > 65535) throw Error('Invalid GUI_TEST_PORT');
+const baseURL = `http://127.0.0.1:${port}`;
 
 /**
  * Browser acceptance for the workbench.
@@ -29,16 +32,16 @@ export default defineConfig({
   workers: 1,
   reporter: [['list']],
   use: {
-    baseURL: 'http://127.0.0.1:4399',
+    baseURL,
     viewport: { width: 1440, height: 900 },
     launchOptions: { args: ['--no-sandbox'], ...(chrome ? { executablePath: chrome } : {}) },
     trace: 'off',
     screenshot: 'only-on-failure',
   },
   webServer: {
-    command: 'pnpm build && FIXTURE_RESET=1 PORT=4399 node src/ui/tests/fixture-server.mjs',
+    command: `pnpm build && FIXTURE_RESET=1 PORT=${port} node src/ui/tests/fixture-server.mjs`,
     cwd: repoRoot,
-    url: 'http://127.0.0.1:4399/api/meta',
+    url: baseURL + '/api/meta',
     reuseExistingServer: false,
     timeout: 240_000,
   },

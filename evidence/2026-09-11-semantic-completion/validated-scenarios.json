@@ -1,0 +1,235 @@
+[
+  {
+    "file": "semantic-task-1789133777433.json",
+    "sha256": "dc45647b98af69c9f2482ee2b91c48719440288e680455c9c87c71ae76e9eda8",
+    "model": "labelled-local-protocol-stub",
+    "humanChoice": true,
+    "injectedControlBoundary": "before_query",
+    "modelRequestCount": 25,
+    "modelBranches": {
+      "planning": 2,
+      "worker": 2,
+      "feedback": 4,
+      "failure-feedback": 4,
+      "decision-feedback": 4,
+      "rework": 3,
+      "review": 6
+    },
+    "reviewerRequirements": [
+      {
+        "obligationId": "label-rule",
+        "requirementId": "semantic-review",
+        "outcome": "PASS",
+        "summary": "The actual source trims ends and translates only ASCII uppercase letters; the current original behavior report covers non-ASCII preservation and empty input."
+      }
+    ],
+    "taskPhase": "satisfied",
+    "goalPhase": "RUNNING",
+    "evidenceRefs": [
+      {
+        "aggregateType": "Evidence",
+        "projectId": "acceptance-alpha",
+        "evidenceId": "review-d630905bd7389e2c2b14256a9cb9d60e97f6f254-pass"
+      }
+    ],
+    "reviewWorkRef": {
+      "aggregateType": "ReviewWork",
+      "projectId": "acceptance-alpha",
+      "workspaceId": "workspace-main",
+      "goalId": "normalize-goal",
+      "reviewId": "review-d630905bd7389e2c2b14256a9cb9d60e97f6f254"
+    },
+    "planRef": {
+      "aggregateType": "PlanRevision",
+      "projectId": "acceptance-alpha",
+      "planId": "plan-rework-bf70594f2dd4d810620b5bef3fe8b6a8"
+    },
+    "recoveryBoundary": "A one-shot exception at before_query leaves the real human decision persisted; graceful host restart automatically applies/delivers it and completes repair before any choice replay. Final settled records also replay unchanged. This is not process-kill or unknown-runtime-side-effect recovery."
+  },
+  {
+    "file": "semantic-task-1789133753416.json",
+    "sha256": "e10bff66b4a3558684451ba91ec14e3e73e833b3d4184a35f0f7e4b9d378f3ca",
+    "model": "labelled-local-protocol-stub",
+    "humanChoice": true,
+    "injectedControlBoundary": "before_apply",
+    "modelRequestCount": 25,
+    "modelBranches": {
+      "planning": 2,
+      "worker": 2,
+      "feedback": 4,
+      "failure-feedback": 4,
+      "decision-feedback": 4,
+      "rework": 3,
+      "review": 6
+    },
+    "reviewerRequirements": [
+      {
+        "obligationId": "label-rule",
+        "requirementId": "semantic-review",
+        "outcome": "PASS",
+        "summary": "The actual source trims ends and translates only ASCII uppercase letters; the current original behavior report covers non-ASCII preservation and empty input."
+      }
+    ],
+    "taskPhase": "satisfied",
+    "goalPhase": "RUNNING",
+    "evidenceRefs": [
+      {
+        "aggregateType": "Evidence",
+        "projectId": "acceptance-alpha",
+        "evidenceId": "review-d00c96eda9642a13c4526b8ee7c52eeeece8a0b6-pass"
+      }
+    ],
+    "reviewWorkRef": {
+      "aggregateType": "ReviewWork",
+      "projectId": "acceptance-alpha",
+      "workspaceId": "workspace-main",
+      "goalId": "normalize-goal",
+      "reviewId": "review-d00c96eda9642a13c4526b8ee7c52eeeece8a0b6"
+    },
+    "planRef": {
+      "aggregateType": "PlanRevision",
+      "projectId": "acceptance-alpha",
+      "planId": "plan-rework-ffc70544cbaa6bc52591436b4a5c4a4a"
+    },
+    "recoveryBoundary": "A one-shot exception at before_apply leaves the real human decision persisted; graceful host restart automatically applies/delivers it and completes repair before any choice replay. Final settled records also replay unchanged. This is not process-kill or unknown-runtime-side-effect recovery."
+  },
+  {
+    "file": "semantic-task-1789133712733.json",
+    "sha256": "510f73fada87eb904f814ed3a73af83073413aa6b0154906c451e0fb069f7557",
+    "model": "labelled-local-protocol-stub",
+    "humanChoice": true,
+    "injectedControlBoundary": null,
+    "modelRequestCount": 25,
+    "modelBranches": {
+      "planning": 2,
+      "worker": 2,
+      "feedback": 4,
+      "failure-feedback": 4,
+      "decision-feedback": 4,
+      "rework": 3,
+      "review": 6
+    },
+    "reviewerRequirements": [
+      {
+        "obligationId": "label-rule",
+        "requirementId": "semantic-review",
+        "outcome": "PASS",
+        "summary": "The actual source trims ends and translates only ASCII uppercase letters; the current original behavior report covers non-ASCII preservation and empty input."
+      }
+    ],
+    "taskPhase": "satisfied",
+    "goalPhase": "RUNNING",
+    "evidenceRefs": [
+      {
+        "aggregateType": "Evidence",
+        "projectId": "acceptance-alpha",
+        "evidenceId": "review-833869ebf8cb07e4913208e67fc7b77b345b22bf-pass"
+      }
+    ],
+    "reviewWorkRef": {
+      "aggregateType": "ReviewWork",
+      "projectId": "acceptance-alpha",
+      "workspaceId": "workspace-main",
+      "goalId": "normalize-goal",
+      "reviewId": "review-833869ebf8cb07e4913208e67fc7b77b345b22bf"
+    },
+    "planRef": {
+      "aggregateType": "PlanRevision",
+      "projectId": "acceptance-alpha",
+      "planId": "plan-rework-25b57e1a4d5e6b6b40193190f63c7212"
+    },
+    "recoveryBoundary": "Settled records replay after graceful close; this is not an interrupted-runtime crash test."
+  },
+  {
+    "file": "semantic-task-1789133672331.json",
+    "sha256": "01151a617db54557429a89572bc0fab02952d74d1f99a45b22e620f192c81b71",
+    "model": "labelled-local-protocol-stub",
+    "humanChoice": false,
+    "injectedControlBoundary": null,
+    "modelRequestCount": 23,
+    "modelBranches": {
+      "planning": 2,
+      "worker": 2,
+      "feedback": 4,
+      "failure-feedback": 6,
+      "rework": 3,
+      "review": 6
+    },
+    "reviewerRequirements": [
+      {
+        "obligationId": "label-rule",
+        "requirementId": "semantic-review",
+        "outcome": "FAIL",
+        "summary": "Deliberate independent-review failure case; tool PASS cannot replace this required semantic verdict."
+      }
+    ],
+    "taskPhase": "failed",
+    "goalPhase": "FAILED",
+    "evidenceRefs": [
+      {
+        "aggregateType": "Evidence",
+        "projectId": "acceptance-alpha",
+        "evidenceId": "review-9df09b6e4b867c0923e578b25aa1b927d1c63faa-fail"
+      }
+    ],
+    "reviewWorkRef": {
+      "aggregateType": "ReviewWork",
+      "projectId": "acceptance-alpha",
+      "workspaceId": "workspace-main",
+      "goalId": "normalize-goal",
+      "reviewId": "review-9df09b6e4b867c0923e578b25aa1b927d1c63faa"
+    },
+    "planRef": {
+      "aggregateType": "PlanRevision",
+      "projectId": "acceptance-alpha",
+      "planId": "plan-rework-03a2cc7939e72e0bf912e6199848174d"
+    },
+    "recoveryBoundary": "Settled records replay after graceful close; this is not an interrupted-runtime crash test."
+  },
+  {
+    "file": "semantic-task-1789133637468.json",
+    "sha256": "c7484c6a9b9c05500c4589bd8df5e963bc1cae388cd44ddf60d24e07b868f012",
+    "model": "labelled-local-protocol-stub",
+    "humanChoice": false,
+    "injectedControlBoundary": null,
+    "modelRequestCount": 18,
+    "modelBranches": {
+      "planning": 2,
+      "worker": 2,
+      "feedback": 2,
+      "failure-feedback": 3,
+      "rework": 3,
+      "review": 6
+    },
+    "reviewerRequirements": [
+      {
+        "obligationId": "label-rule",
+        "requirementId": "semantic-review",
+        "outcome": "PASS",
+        "summary": "The actual source trims ends and translates only ASCII uppercase letters; the current original behavior report covers non-ASCII preservation and empty input."
+      }
+    ],
+    "taskPhase": "satisfied",
+    "goalPhase": "RUNNING",
+    "evidenceRefs": [
+      {
+        "aggregateType": "Evidence",
+        "projectId": "acceptance-alpha",
+        "evidenceId": "review-9df09b6e4b867c0923e578b25aa1b927d1c63faa-pass"
+      }
+    ],
+    "reviewWorkRef": {
+      "aggregateType": "ReviewWork",
+      "projectId": "acceptance-alpha",
+      "workspaceId": "workspace-main",
+      "goalId": "normalize-goal",
+      "reviewId": "review-9df09b6e4b867c0923e578b25aa1b927d1c63faa"
+    },
+    "planRef": {
+      "aggregateType": "PlanRevision",
+      "projectId": "acceptance-alpha",
+      "planId": "plan-rework-03a2cc7939e72e0bf912e6199848174d"
+    },
+    "recoveryBoundary": "Settled records replay after graceful close; this is not an interrupted-runtime crash test."
+  }
+]

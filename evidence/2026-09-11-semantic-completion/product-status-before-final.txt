@@ -1,0 +1,90 @@
+ M IMPLEMENTATION-HANDOFF.md
+ D evidence/2026-09-11-semantic-completion/browser-results/.playwright-artifacts-0/041e75dfada16928f8c71234c04416a0.png
+ D evidence/2026-09-11-semantic-completion/browser-results/.playwright-artifacts-0/55631f70b3973f5ea7f2e2f60425ef76.png
+ D evidence/2026-09-11-semantic-completion/browser-results/.playwright-artifacts-0/de1bbacc28feeedaf2ba2670ef9ae63b.png
+ D evidence/2026-09-11-semantic-completion/browser-results/.playwright-artifacts-0/df077b57091f135440bfaf09950239f5.png
+ D evidence/2026-09-11-semantic-completion/browser-results/.playwright-artifacts-0/e591ad539ce3d6fa3d40c7554cdab2af.png
+ D evidence/2026-09-11-semantic-completion/browser-results/semantic-collaboration-同一个真实开发任务显示协调调查来源、当前重验和原始-FAIL/semantic-conversation.png
+ D evidence/2026-09-11-semantic-completion/browser-results/semantic-collaboration-同一个真实开发任务显示协调调查来源、当前重验和原始-FAIL/semantic-original-fail.png
+ D evidence/2026-09-11-semantic-completion/browser-results/ui-01-scope-UI-01-作用域隔离与旧响应忽略-草稿、目标与文件引用不跨项目串用，延迟的旧请求不覆盖新作用域/error-context.md
+ M evidence/2026-09-11-semantic-completion/full-tests.exit
+ M src/app/service.ts
+ M src/contracts/execution-feedback.ts
+ M src/contracts/query-job.ts
+ M src/contracts/rework/drive.ts
+ M src/contracts/rework/proposal.ts
+ M src/control/control-engine/autonomous-rework.ts
+ M src/control/control-engine/query-job.ts
+ M src/control/dispatch-engine/rework-drive.ts
+ M src/control/plan-compiler/execution-feedback-compiler.ts
+ M src/control/plan-compiler/rework-plan-compiler.ts
+ M src/control/plan-compiler/rework-proposal.ts
+ M src/data/context-compiler/execution-feedback-context.ts
+ M src/data/context-compiler/feedback-materials.ts
+ M src/data/context-compiler/query-context-compiler.ts
+ M src/harness/rework-composition.ts
+ M src/ui/src/api/client.ts
+ M src/ui/src/api/types.ts
+ M src/ui/src/features/conversation.tsx
+ M src/ui/tests/independent-review.spec.ts
+ M src/ui/tests/playwright.config.ts
+ M src/ui/tests/semantic-collaboration.spec.ts
+ M tests/app/governance.test.ts
+ M tests/app/plan-changes.test.ts
+ M tests/app/reviewer-product-recovery.test.ts
+ M tests/app/rework-dispatch.test.ts
+ M tests/app/rework-drive.test.ts
+ M tests/app/semantic-collaboration-fixture.ts
+ M tests/app/semantic-collaboration.test.ts
+ M tests/app/verification-round-fixture.ts
+ M tests/contracts/module-ownership.test.ts
+ M tests/control/rework-drive.test.ts
+ M tests/verification/feedback-investigation-authority.test.ts
+?? evidence/2026-09-11-semantic-completion/backend-types-final.exit
+?? evidence/2026-09-11-semantic-completion/boundaries-final.exit
+?? evidence/2026-09-11-semantic-completion/boundaries-final.json
+?? evidence/2026-09-11-semantic-completion/browser-attempt-2-results/
+?? evidence/2026-09-11-semantic-completion/browser-attempt-2.exit
+?? evidence/2026-09-11-semantic-completion/browser.exit
+?? evidence/2026-09-11-semantic-completion/final-review.md
+?? evidence/2026-09-11-semantic-completion/full-tests-attempt-2.exit
+?? evidence/2026-09-11-semantic-completion/full-tests-final.exit
+?? evidence/2026-09-11-semantic-completion/product-status-before-final.txt
+?? evidence/2026-09-11-semantic-completion/publish-payload-review.json
+?? evidence/2026-09-11-semantic-completion/publish-payload-review.md
+?? evidence/2026-09-11-semantic-completion/semantic-targeted-6-interruption.txt
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789130231245.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789130246786.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789130654468.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789130668286.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789131162391.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789131178256.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789131408918.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789131424321.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789132052533.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789132067918.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789132097176.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789132109775.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789132139950.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789132140147.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789132178986.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789132181195.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789132219818.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789132245633.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789132927138.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789132972047.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789133014425.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789133060210.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789133090626.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789133637468.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789133672331.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789133712733.json
+?? evidence/2026-09-11-semantic-completion/semantic-task-1789133753416.json
+?? evidence/2026-09-11-semantic-completion/ui-types-final.exit
+?? evidence/2026-09-11-semantic-completion/verification.md
+?? src/control/plan-compiler/feedback-decision-compiler.ts
+?? src/data/context-compiler/feedback-decision-context.ts
+?? src/ui/src/features/feedback-choice.tsx
+?? tests/verification/failure-feedback-renewal.test.ts
+?? tests/verification/feedback-decision-recovery.test.ts
+?? tests/verification/feedback-renewal.test.ts

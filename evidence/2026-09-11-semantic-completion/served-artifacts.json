@@ -1,0 +1,40 @@
+{
+  "base": "http://127.0.0.1:4498",
+  "checkedAt": "2026-09-11T13:39:58.898Z",
+  "checks": [
+    {
+      "route": "/",
+      "status": 200,
+      "digest": "02b916bbee792a6606682bf7f356e0a4f271d2c23e55ee72d2970e27bd174f6f"
+    },
+    {
+      "route": "/workbench",
+      "status": 200,
+      "digest": "02b916bbee792a6606682bf7f356e0a4f271d2c23e55ee72d2970e27bd174f6f"
+    },
+    {
+      "route": "/workbench/assets/index-BPkpI4hu.js",
+      "status": 200,
+      "bytes": 698350,
+      "digest": "495271c3d4ee591847ca62966a4ac634a959637cbfedbaec6b196d94ea5b9e57",
+      "matchesBuiltBytes": true
+    },
+    {
+      "route": "/workbench/assets/index-BDq-QD5v.css",
+      "status": 200,
+      "bytes": 240077,
+      "digest": "31e07b53fb807f69cdd87080d72b766f7068766e4f48db383f586f8b129df514",
+      "matchesBuiltBytes": true
+    },
+    {
+      "route": "/legacy",
+      "status": 200,
+      "digest": "1194df76088e56c6c02b08fdd5314f05f29b09b1772d3e33449f8cd77ef2847f"
+    },
+    {
+      "route": "/app.js",
+      "status": 200,
+      "digest": "42695bdc5881e8e7275d3ae0263dd21cb73441bfbf86199d2b5100d1da83677b"
+    }
+  ]
+}

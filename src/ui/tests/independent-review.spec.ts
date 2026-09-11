@@ -85,9 +85,21 @@ test('a committed response can be lost; reload finds the original Reviewer, keep
   await expect(page.getByTestId('review-issue')).toContainText('subject.txt:1–1');
   expect((await app.read(original.requestId)).body.formal.taskPhase).not.toBe('satisfied');
   expect(network.submissions).toBe(1);
-  const calls = app.modelRequests();
+  // FAIL also starts a separate sourced coordination query. Count this exact
+  // Reviewer's model requests and retain its canonical identity/result instead
+  // of treating every platform model call as a duplicate Reviewer.
+  const calls = app.reviewerRequests.length;
+  const before = (await app.read(original.requestId)).body;
+  const reviewerRuns = (await app.state()).liveRuns.filter(run=>run.spec.mode==='review').map(run=>run.spec.runId).sort();
   await app.restart(); await open(page, app);
   await page.getByTestId('open-review-' + original.requestId).click();
   await expect(page.getByTestId('review-requirements')).toContainText('FAIL');
-  expect(app.modelRequests()).toBe(calls);
+  expect(app.reviewerRequests).toHaveLength(calls);
+  const after = (await app.read(original.requestId)).body;
+  expect(after.reviewId).toBe(original.reviewId);
+  expect(after.work).toEqual(before.work);
+  expect(after.formal.resultRef).toEqual(before.formal.resultRef);
+  expect(after.formal.evidenceRefs).toEqual(before.formal.evidenceRefs);
+  expect((await app.state()).liveRuns.filter(run=>run.spec.mode==='review').map(run=>run.spec.runId).sort()).toEqual(reviewerRuns);
+  expect(network.submissions).toBe(1);
 });

@@ -14,6 +14,8 @@ export type ReworkDriveScopeV1 = {
 export type ReworkDriveRequestV1 = {
   /** Captured by the composition root; omission is explicitly unavailable. */
   issueMaterials?: OpenIssuesViewV1;
+  /** Present for semantic coordination; missing answers block their task group. */
+  coordination?: import('../execution-feedback.js').ReworkCoordination[];
   schemaVersion: 1;
   projectId: string;
   workspaceId: string;

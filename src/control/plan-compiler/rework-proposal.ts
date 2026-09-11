@@ -320,6 +320,7 @@ export function buildProposal(
   return {
     schemaVersion: 1,
     proposalId,
+    ...(request.coordination ? { coordination: request.coordination } : {}),
     projectId: request.projectId,
     workspaceId: request.workspaceId,
     sourceGoalRef: request.goalRef,

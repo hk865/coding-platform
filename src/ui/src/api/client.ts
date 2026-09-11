@@ -175,6 +175,8 @@ export function createApi(token: string) {
     /** 未处置的验收问题：来自已提交的验证轮次与独立审阅结论，只读。 */
     reworkIssues: (scope: import('./types').GoalScope, taskIds: string[] = [], options?: RequestOptions) =>
       send('/api/real/rework/issues', { ...scope, taskIds }, options) as Promise<import('../../../contracts/rework/issues.js').OpenIssuesViewV1>,
+    chooseFeedback: (scope: import('./types').GoalScope, answerRef: import('../../../contracts/query-job.js').QueryJobAnswerRef, optionId:string) =>
+      send('/api/real/feedback/choose',{...scope,answerRef,optionId},{timeoutMs:120000}) as Promise<{status:string;decisionRef:{decisionId:string}}>,
     receipt: (scope: import('./types').GoalScope, input: { requestId: string; kind: 'goal' | 'real-task' | 'command-check' | 'verification-round' | 'independent-review'; runId?: string }, options?: RequestOptions) =>
       send('/api/receipts', { ...scope, ...input }, options) as Promise<import('./types').ReceiptView>,
     importVerification: (scope: import('./types').GoalScope, input: Record<string, unknown>, options?: RequestOptions) =>

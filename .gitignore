@@ -10,3 +10,6 @@ src/app/public/workbench/
 /D.pnpm-storev11/
 /test-results/
 /src/ui/test-results/
+
+# Local package caches with platform-encoded directory names.
+/*pnpm-store*/

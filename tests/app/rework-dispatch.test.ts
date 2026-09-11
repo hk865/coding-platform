@@ -19,6 +19,7 @@ import type { ReworkDriveResultV1, ReworkDriveViewV1 } from '../../src/contracts
 import type { GovernanceActivateResultV1, GovernanceInstallResultV1 } from '../../src/contracts/governance-view.js';
 import { verificationRoundFixture as createRoundFixture } from './verification-round-fixture.js';
 import { createGuiServer } from '../../src/app/server.js';
+import type { PlanChangesViewV1 } from '../../src/app/plan-changes.js';
 
 const cleanup: Array<() => Promise<void>> = [];
 /**
@@ -112,10 +113,14 @@ it('真实 FAIL 自动受理成新 revision 之后，产品自己的派发入口
   if (view === null || lastDrive === null || reworkRun === null) throw Error('unreachable');
 
   // 受理是真的自动受理：四条边界都满足，active revision 前进到新计划。
-  const outcome = lastDrive.outcomes[0]!;
-  expect(outcome.status, JSON.stringify(outcome)).toBe('accepted');
-  if (outcome.status !== 'accepted') return;
-  expect(view.acceptance.appliedProposalId).toBe(outcome.proposalId);
+  // Later automatic verification can replace lastDrive before this poll. Read
+  // the immutable accepted proposal and decision instead of a session receipt.
+  const changes=await fixture.post<PlanChangesViewV1>('/api/real/plan-changes/view',fixture.scope);
+  expect(changes.body.status).toBe('ready');
+  if(changes.body.status!=='ready') throw Error('Accepted plan history unavailable');
+  const proposalId=view.acceptance.appliedProposalId!;
+  expect(changes.body.proposals.some(row=>row.proposal.proposalId===proposalId)).toBe(true);
+  expect(changes.body.decisions.find(row=>row.decision.proposalRef.proposalId===proposalId)?.decision).toMatchObject({outcome:'accept',actor:{kind:'system',id:'autonomous-rework'},authority:{strategy:'delegated'}});
   expect(view.acceptance.activePlanRef!.planId).not.toBe(supersededPlanId);
 
   // 派发是真的：返工任务的 Run 由产品自己的派发入口认领（测试没有 claimTask），
@@ -137,7 +142,7 @@ it('真实 FAIL 自动受理成新 revision 之后，产品自己的派发入口
   const reopened = await fixture.post<{ view: ReworkDriveViewV1; lastDrive: ReworkDriveResultV1 | null }>('/api/real/rework/status', { ...fixture.scope });
   // 自动重验可能新增FAIL和待决定的提案预览；原受理身份和旧失败必须保留。
   expect(reopened.body.view.acceptance.applied).toBe(true);
-  expect(reopened.body.view.acceptance.appliedProposalId).toBe(outcome.proposalId);
+  expect(reopened.body.view.acceptance.appliedProposalId).toBe(proposalId);
   expect(reopened.body.view.acceptance.activePlanRef).toEqual(view.acceptance.activePlanRef);
   expect(reopened.body.view.issues.status).toBe('ready');
   if(reopened.body.view.issues.status==='ready' && view.issues.status==='ready') {

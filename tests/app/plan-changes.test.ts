@@ -25,6 +25,7 @@ import type { GovernanceActivateResultV1, GovernanceInstallResultV1 } from '../.
 import type { ReworkDriveResultV1, ReworkDriveViewV1 } from '../../src/contracts/rework/drive.js';
 import type { VerificationRegisteredCheck, VerificationRoundResult } from '../../src/contracts/verification-round.js';
 import { reworkTaskIdFor } from '../../src/contracts/rework/proposal.js';
+import type { ReworkProposalV1 } from '../../src/contracts/rework/proposal.js';
 import { verificationRoundFixture } from './verification-round-fixture.js';
 import { createGuiServer } from '../../src/app/server.js';
 
@@ -90,11 +91,17 @@ async function failRound(fixture: Fixture): Promise<void> {
 }
 
 /** 轮询只读入口直到自动受理发生（判据由调用方给出，测试不解释业务）。 */
-async function waitForAccepted(fixture: Fixture, timeoutMs = 60000): Promise<ReworkStatus> {
+async function waitForAccepted(fixture: Fixture, timeoutMs = 60000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const status = (await reworkStatusOf(fixture)).body;
-    if (status.lastDrive?.outcomes.some(outcome => outcome.status === 'accepted') === true) return status;
+    const changes=(await planChangesOf(fixture)).body;
+    if(changes.status==='ready') {
+      const entry=changes.proposals.find(row=>(row.proposal as ReworkProposalV1).rework?.tasks.some(task=>task.supersedesTaskId===fixture.taskId));
+      const revision=entry && changes.revisions.find(row=>row.change.reason==='autonomous-rework:'+entry.proposal.proposalId);
+      const decision=entry && changes.decisions.find(row=>row.decision.proposalRef.proposalId===entry.proposal.proposalId && row.decision.outcome==='accept');
+      if(entry && revision && decision) return {proposalId:entry.proposal.proposalId,issueIds:(entry.proposal as ReworkProposalV1).rework.issues.map(issue=>issue.issueId),planRef:revision.change.activePlanRef};
+    }
     if (Date.now() >= deadline) throw Error('自动受理没有发生：' + JSON.stringify(status.lastDrive));
     await new Promise(done => setTimeout(done, 50));
   }
@@ -112,9 +119,7 @@ it('安装并激活协调策略后真实 FAIL 被自动受理：提案、system 
 
   // 2) 真实失败链：工具轮次 FAIL → 组合根触发自动受理。
   await failRound(fixture);
-  const settled = await waitForAccepted(fixture);
-  const accepted = settled.lastDrive!.outcomes.find(outcome => outcome.status === 'accepted')!;
-  if (accepted.status !== 'accepted') throw Error('unreachable');
+  const accepted = await waitForAccepted(fixture);
   const primaryIssueId = accepted.issueIds[0]!;
 
   // 3) 只读入口：四类事实都在，并且能看出这是系统自动受理。

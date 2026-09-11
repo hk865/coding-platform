@@ -29,6 +29,7 @@ export function reworkTaskIdFor(issueId: string): string {
  *   - summary：人类可读摘要，直接引用问题里的失败事实，不重新判定失败。
  */
 export type ReworkProposalV1 = PlanProposalV1 & {
+  coordination?: import('../execution-feedback.js').ReworkCoordination;
   rework: ReworkProposalOriginV1;
   /** Complete plan content; rework must include tasks and assignments. Control
    * re-derives them before admission. Ordinary amendments retain nullable defaults. */
@@ -83,6 +84,7 @@ export type ReworkProposalTaskV1 = {
  *     自报、UI 状态）取得判断依据，因此输入里没有别的来源。
  */
 export type ReworkCompileRequestV1 = {
+  coordination?: import('../execution-feedback.js').ReworkCoordination;
   schemaVersion: 1;
   projectId: string;
   workspaceId: string;

@@ -10,9 +10,9 @@ export type ReworkIssueReadPort = (request: OpenIssuesRequestV1) => Promise<Open
 /** Composition only: capture verification material outside Dispatch, then hand
  * it to the module. Control owns currentness; Dispatch owns all sequencing. */
 export function composeReworkDrive(deps: Omit<ReworkDriveDeps, 'disposition'> & { issues: ReworkIssueReadPort }): ReworkDrivePort {
-  const engine = new ReworkDriveEngine({ ledger: deps.ledger, control: deps.control, disposition: new ControlReworkDisposition(deps.ledger as StateLedger) });
+  const engine = new ReworkDriveEngine({ ledger: deps.ledger, control: deps.control, disposition: new ControlReworkDisposition(deps.ledger as StateLedger),...(deps.coordination?{coordination:deps.coordination}:{}) });
   const material = async (request: Parameters<ReworkDrivePort['driveRework']>[0]) => ({ ...request,
-    issueMaterials: await deps.issues({ ...request, taskIds: [] }) });
+    issueMaterials: request.issueMaterials ?? await deps.issues({ ...request, taskIds: [] }) });
   return {
     driveRework: async request => engine.driveRework(await material(request)),
     reworkView: async request => engine.reworkView(await material(request)),

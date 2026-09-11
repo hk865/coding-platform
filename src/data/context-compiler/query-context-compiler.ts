@@ -66,6 +66,12 @@ export class QueryContextCompilerImpl implements QueryContextPort {
         currentBasis:{planRef:f.planRef,workspaceRevision:f.workspaceRevision,sourceDigest:f.sourcePin.manifestDigest,sourcePin:f.sourcePin},usage:'current'});
       if(opened.status!=='ready') return {status:'needs_material',gaps:[{code:'vault_unavailable',message:'Exact execution feedback is unavailable or forbidden'}]};
       executionFeedback = {source:f,report:JSON.parse(opened.record.body)};
+      if(f.decisionRef) {
+        const decision=await this.deps.ledger.load(f.decisionRef);
+        if(decision.status!=='found' || decision.snapshot.ref.aggregateType!=='UserDecision') return {status:'needs_material',gaps:[{code:'stale_versions',message:'Applied human decision unavailable'}]};
+        executionFeedback.report.humanDecision=(decision.snapshot as import('../../contracts/goal-change.js').UserDecisionSnapshot).decision;
+        selectedSources.push({kind:'decision',refKey:canonicalJson(f.decisionRef),version:String(decision.snapshot.revision)});
+      }
       selectedSources.push({kind:'artifact',refKey:f.reportRef.digest,version:f.reportRef.digest});
     }
     const queryLoad = await this.deps.ledger.load(request.queryJobRef);

@@ -10,6 +10,7 @@ import { Markdown } from '../markdown';
 import { useAppState } from '../state/app-store';
 import type { ViewProps } from '../workbench/view-props';
 import { InitialPlanningView } from './initial-planning';
+import { FeedbackChoice } from './feedback-choice';
 
 function StatusBadge({ status, label }: { status: string; label?: string }) {
   return <Badge color={statusTone(status)} variant="light" size="sm">{label ?? status}</Badge>;
@@ -149,7 +150,7 @@ function SemanticQuery({ api, goalScope, store, refresh }: ViewProps) {
   return <Box px="sm" py={6}><Group align="flex-end"><Textarea size="xs" style={{ flex: 1 }} label="独立只读提问" value={question} onChange={event => setQuestion(event.currentTarget.value)} maxLength={4096} autosize minRows={1} maxRows={3} data-testid="semantic-question" /><Button size="xs" loading={busy} disabled={!question.trim()} onClick={() => void submit()} data-testid="semantic-ask">提问</Button></Group><Text size="xs" c="dimmed">使用当前模型设置读取公开事实与源码，不中断开发运行。{message}</Text></Box>;
 }
 
-function FixtureAnswers({ data }: { data: NonNullable<ViewProps['data']> }) {
+function FixtureAnswers({ data,api,goalScope,refresh }: Pick<ViewProps,'api'|'goalScope'|'refresh'> & { data: NonNullable<ViewProps['data']> }) {
   const queries = data.queries.filter(query => query.status === 'ready' && query.job.goalId === data.goalId && query.job.intent.execution?.kind !== 'initial_coordination');
   if (!queries.length) return null;
   return (
@@ -163,6 +164,10 @@ function FixtureAnswers({ data }: { data: NonNullable<ViewProps['data']> }) {
             <div className="message-meta"><strong>项目助手</strong><Badge color="gray" variant="light">{query.job.intent.execution?.kind === 'execution_coordination' ? '协调角色调查' : query.job.intent.execution ? '独立只读模型查询' : '测试适配器回答'}</Badge></div>
             <div className="message-body">
               <Text size="sm">{query.currentAnswer?.answer ?? query.job.closeReason?.message ?? '查询已记录，等待回答…'}</Text>
+              {queries.some(next=>next.job.intent.execution?.feedback?.supersedesQueryJobId===query.job.queryJobId)
+                ? <Text size="xs" c="dimmed">已有后续调查，本回答保留为历史材料。</Text>
+                : query.currentAnswer?<FeedbackChoice answer={query.currentAnswer} api={api} goalScope={goalScope} refresh={refresh}/>:null}
+              {query.job.intent.execution?.feedback?.decisionRef?<Text size="xs">关联人的决定：{query.job.intent.execution.feedback.decisionRef.decisionId}</Text>:null}
               {query.currentAnswer?.stale ? <Text size="xs" c="orange">来源版本已变化，回答保留为历史材料。</Text> : null}
               {query.currentAnswer?.sources?.length ? (
                 <details className="usage-details"><summary>{query.currentAnswer.sources.length} 项事实与源码来源</summary>
@@ -444,7 +449,7 @@ export function ConversationView(props: ViewProps) {
               description={data.goalId ? '在下方描述要实现的内容并允许写入，提交后这里会显示真实的模型与工具活动。' : '左侧可以新建目标；目标保存后即可提交开发任务。'}
             />
           ) : null}
-          {data ? <FixtureAnswers data={data} /> : null}
+          {data ? <FixtureAnswers data={data} api={props.api} goalScope={props.goalScope} refresh={refresh} /> : null}
           {runs.map(run => <RunThread key={run.spec.runId} api={props.api} run={run} store={store} goalScope={props.goalScope} />)}
           {data?.exploration ? (
             <Paper withBorder p="sm" radius="sm">

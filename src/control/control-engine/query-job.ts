@@ -35,9 +35,38 @@ export class QueryJobEngineImpl {
         return {status:'rejected',commandId:command.commandId,code:'invalid'};
       const run = r.snapshot as import('../../contracts/dispatch.js').RunSnapshot;
       const goal = g.snapshot as import('../../contracts/ledger.js').GoalSnapshot;
+      if(f.decisionRef) {
+        const d=await this.deps.ledger.load(f.decisionRef);
+        const decision=d.status==='found' && d.snapshot.ref.aggregateType==='UserDecision' ? (d.snapshot as import('../../contracts/goal-change.js').UserDecisionSnapshot).decision : null;
+        if(!f.supersedesQueryJobId || !decision || decision.projectId!==intent.projectId || decision.workspaceId!==intent.workspaceId ||
+          decision.subject.goalRef.goalId!==intent.goalId || decision.outcome!=='accept' || decision.actor.kind!=='human')
+          return {status:'rejected',commandId:command.commandId,code:'invalid'};
+        const predecessor=await this.deps.ledger.load({aggregateType:'QueryJob',projectId:intent.projectId,workspaceId:intent.workspaceId,queryJobId:f.supersedesQueryJobId});
+        const priorFeedback=predecessor.status==='found' && predecessor.snapshot.ref.aggregateType==='QueryJob' ? (predecessor.snapshot as QueryJobSnapshot).job.intent.execution?.feedback : null;
+        // A validated renewal may retain the same applied decision. The exact
+        // same-work predecessor is checked below; this does not authorize a new choice.
+        let applied=!!priorFeedback?.decisionRef && canonicalJson(priorFeedback.decisionRef)===canonicalJson(f.decisionRef), cursor:import('../../contracts/command-event.js').CommitCursor|null=null;
+        for(;;) {
+          const page=await this.deps.ledger.events({afterCursor:cursor,limit:500});
+          applied ||= page.events.some(({event})=>event.eventType==='PlanRevisionSuperseded' &&
+            event.projectId===intent.projectId && canonicalJson(event.payload.decisionRef)===canonicalJson(f.decisionRef??null) && canonicalJson(event.payload.activeRef)===canonicalJson(f.planRef));
+          if(applied || !page.hasMore) break;
+          if(page.throughCursor===cursor) break; cursor=page.throughCursor;
+        }
+        if(!applied) return {status:'rejected',commandId:command.commandId,code:'invalid'};
+      }
+      if(f.supersedesQueryJobId) {
+        const previous=await this.deps.ledger.load({aggregateType:'QueryJob',projectId:intent.projectId,workspaceId:intent.workspaceId,queryJobId:f.supersedesQueryJobId});
+        const prior=previous.status==='found' && previous.snapshot.ref.aggregateType==='QueryJob' ? (previous.snapshot as QueryJobSnapshot).job : null;
+        const pf=prior?.intent.execution?.feedback;
+        if(!prior || !pf || prior.queryJobId===command.aggregateId || prior.goalId!==intent.goalId ||
+          prior.status==='running' || canonicalJson(pf.runRef)!==canonicalJson(f.runRef) || pf.taskId!==f.taskId ||
+          canonicalJson(pf.failureIssueIds??null)!==canonicalJson(f.failureIssueIds??null))
+          return {status:'rejected',commandId:command.commandId,code:'invalid'};
+      }
       if (run.status !== 'ended' || run.outcome !== 'completed' || run.task.taskId !== f.taskId || run.workspaceSnapshot.workspaceId !== intent.workspaceId ||
         goal.workspaceRef.workspaceId !== intent.workspaceId || canonicalJson(goal.activePlanRevision) !== canonicalJson(f.planRef) ||
-        canonicalJson(run.planRef) !== canonicalJson(f.planRef) || w.snapshot.revision !== f.workspaceRevision ||
+        (!f.failureIssueIds && !f.supersedesQueryJobId && canonicalJson(run.planRef) !== canonicalJson(f.planRef)) || w.snapshot.revision !== f.workspaceRevision ||
         canonicalJson(intent.focusTaskRefs) !== canonicalJson([{aggregateType:'Task',projectId:intent.projectId,goalId:intent.goalId,taskId:f.taskId}]))
         return {status:'rejected',commandId:command.commandId,code:'invalid'};
     }

@@ -1,0 +1,20 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [31m❯[39m tests/app/semantic-collaboration.test.ts [2m([22m[2m2 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[33m 27423[2mms[22m[39m
+[31m   [31m×[31m real HTTP/SQLite/kernel task investigates material and FAIL, repairs from sourced coordination, admits required independent review and replays settled records[39m[33m 13489[2mms[22m[39m
+[31m   [31m×[31m the same repaired task remains unsatisfied when tools pass but its required independent Reviewer returns FAIL[39m[33m 13933[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/app/semantic-collaboration.test.ts[2m > [22mreal HTTP/SQLite/kernel task investigates material and FAIL, repairs from sourced coordination, admits required independent review and replays settled records
+[41m[1m FAIL [22m[49m tests/app/semantic-collaboration.test.ts[2m > [22mthe same repaired task remains unsatisfied when tools pass but its required independent Reviewer returns FAIL
+[31m[1mError[22m: Server is not running.[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[90m (2)[39m
+[2m   Start at [22m 20:31:56
+[2m   Duration [22m 55.90s[2m (transform 18.91s, setup 0ms, import 26.67s, tests 27.42s, environment 0ms)[22m
+

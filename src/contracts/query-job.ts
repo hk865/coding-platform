@@ -81,6 +81,13 @@ export function validQueryExecution(value: QueryJobIntentV1['execution']): boole
   if (value === undefined) return true;
   if (!value || !['semantic_query', 'initial_coordination', 'execution_coordination'].includes(value.kind)) return false;
   if ((value.kind === 'execution_coordination') !== !!value.feedback) return false;
+  if(value.feedback?.decisionRef && (value.feedback.decisionRef.aggregateType!=='UserDecision' ||
+    typeof value.feedback.decisionRef.decisionId!=='string' || !value.feedback.decisionRef.decisionId)) return false;
+  if(value.feedback?.supersedesQueryJobId!==undefined && (typeof value.feedback.supersedesQueryJobId!=='string' ||
+    !value.feedback.supersedesQueryJobId || value.feedback.supersedesQueryJobId.length>256)) return false;
+  if (value.feedback?.failureIssueIds !== undefined && (!Array.isArray(value.feedback.failureIssueIds) ||
+    !value.feedback.failureIssueIds.length || value.feedback.failureIssueIds.length>32 ||
+    value.feedback.failureIssueIds.some(id=>typeof id!=='string' || !/^rework-issue-[a-f0-9]{40}$/.test(id)))) return false;
   if (value.feedback && (!value.feedback.runRef || value.feedback.runRef.aggregateType !== 'Run' || !value.feedback.taskId ||
     !value.feedback.planRef || value.feedback.planRef.aggregateType !== 'PlanRevision' || !Number.isSafeInteger(value.feedback.workspaceRevision) ||
     value.feedback.workspaceRevision < 1 || !validMaterialSourcePin(value.feedback.sourcePin) || !value.feedback.reportRef || !/^[a-f0-9]{64}$/.test(value.feedback.reportRef.digest))) return false;

@@ -208,7 +208,7 @@ export type QueryJob = {
 export type QueryJobView = {
   status: 'ready' | 'not_found' | 'not_ready';
   job: QueryJob;
-  currentAnswer: { answer: string; answeredAt: string; stale: boolean; sources: Array<{ label?: string; refKey: string; version: string }> } | null;
+  currentAnswer: import('../../../contracts/query-job.js').QueryJobAnswerV1 | null;
 };
 
 export type WorkspaceSummaryView = {

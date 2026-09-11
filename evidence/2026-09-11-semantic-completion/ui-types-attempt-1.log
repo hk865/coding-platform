@@ -1,0 +1,1 @@
+src/ui/src/features/conversation.tsx(167,52): error TS2740: Type '{ answer: string; answeredAt: string; stale: boolean; sources: { label?: string | undefined; refKey: string; version: string; }[]; }' is missing the following properties from type 'QueryJobAnswerV1': schemaVersion, answerId, queryJobRef, runRef, and 4 more.

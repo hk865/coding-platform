@@ -36,3 +36,8 @@ it('rejects a formerly witnessed supplement when the current workspace source ha
   const f = fixture({ availability: 'available', witnessed: true, current: 'new-source' });
   await expect(f.compiler.select(f.envelope, 'same-work')).rejects.toThrow('source changed');
 });
+
+it('does not consume an adjust_plan answer before its exact formal plan acceptance is available', async () => {
+  const f = fixture({ action: 'adjust_plan', availability: 'available', witnessed: true });
+  await expect(f.compiler.select(f.envelope, 'same-work')).rejects.toThrow('matching accepted plan');
+});

@@ -1,0 +1,37 @@
+[WebServer] $ npm run kernel:build && tsc -p tsconfig.app.json && node scripts/copy-ui.mjs && pnpm run ui:build
+[WebServer] $ npm --prefix vendor/coding-agent run build
+[WebServer] $ tsc -p tsconfig.build.json
+[WebServer] $ pnpm --dir src/ui run build
+[WebServer] $ vite build
+
+Running 27 tests using 1 worker
+
+  ✓   1 src/ui/tests/independent-review.spec.ts:32:1 › independent Reviewer uses actual materials, displays admitted PASS and reopens its original report without another model run (32.0s)
+  ✓   2 src/ui/tests/independent-review.spec.ts:61:1 › a committed response can be lost; reload finds the original Reviewer, keeps FAIL and shows its actual issue location (10.2s)
+  ✓   3 src/ui/tests/reviewer-recovery.spec.ts:31:1 › authorizes a real lease-conflict recovery, preserves a lost receipt through reload, and completes the actual Reviewer result chain once (11.4s)
+  ✓   4 src/ui/tests/reviewer-recovery.spec.ts:74:1 › a persisted unknown checkpoint displays a refusal and cannot be authorized from the UI (4.8s)
+  ✓   5 src/ui/tests/semantic-collaboration.spec.ts:5:1 › 同一个真实开发任务显示协调调查来源、必要独立审阅和原始 FAIL (17.0s)
+  ✓   6 src/ui/tests/semantic-collaboration.spec.ts:5:1 › 真实任务通过界面选择未决产品适用范围后完成必要独立审阅 (21.2s)
+  ✓   7 src/ui/tests/ui-01-scope.spec.ts:5:3 › UI-01 作用域隔离与旧响应忽略 › 草稿、目标与文件引用不跨项目串用，延迟的旧请求不覆盖新作用域 (9.1s)
+  ✓   8 src/ui/tests/ui-02-layout.spec.ts:5:3 › UI-02 布局、标签与恢复 › 调整宽度、固定与关闭标签、刷新后恢复，中栏不小于 280px (663ms)
+  ✓   9 src/ui/tests/ui-02-layout.spec.ts:41:3 › UI-02 布局、标签与恢复 › 折叠底部工具区不会终止终端会话 (1.5s)
+  ✓  10 src/ui/tests/ui-03-reading.spec.ts:18:3 › UI-03 稳定阅读 › 向上阅读时刷新不抢滚动、不丢焦点与草稿，新消息提示可用 (14.2s)
+  ✓  11 src/ui/tests/ui-04-reference.spec.ts:20:3 › UI-04 文件引用与版本核对 › 定位行、选择片段、加入草稿；提交前文件变化会被服务器拒绝 (1.8s)
+  ✓  12 src/ui/tests/ui-05-09-detail.spec.ts:12:3 › UI-05 任务与 Agent 详情一致 › 列表、图与 Agent 打开同一对象；运行结束不使任务自动通过 (7.2s)
+  ✓  13 src/ui/tests/ui-05-09-detail.spec.ts:55:3 › UI-09 重复提交与未知结果 › 后端已提交但响应 dropped：阻止覆盖，刷新重试不重复创建 (3.0s)
+  ✓  14 src/ui/tests/ui-05-09-detail.spec.ts:55:3 › UI-09 重复提交与未知结果 › 后端已提交但响应 malformed：阻止覆盖，刷新重试不重复创建 (2.7s)
+  ✓  15 src/ui/tests/ui-05-09-detail.spec.ts:112:3 › UI-09 重复提交与未知结果 › 后端已提交但响应丢失：刷新后查询回执即可确认，不重复创建 (2.7s)
+  ✓  16 src/ui/tests/ui-05-09-detail.spec.ts:142:3 › UI-09 重复提交与未知结果 › 网络失败显示结果未知，重试复用同一请求标识且不重复创建 (6.1s)
+  ✓  17 src/ui/tests/ui-06-07-08.spec.ts:8:3 › UI-06 检查与报告 › 真实运行前不提供假报告；检查入口只在有真实运行时出现 (6.5s)
+  ✓  18 src/ui/tests/ui-06-07-08.spec.ts:29:3 › UI-07 终端 › 真实命令输出、显式中断、折叠与重连 (3.9s)
+  ✓  19 src/ui/tests/ui-06-07-08.spec.ts:74:3 › UI-08 模型设置 › 保存回执、密钥不泄漏，消费者版本对照可见 (1.3s)
+  ✓  20 src/ui/tests/ui-06-report-scope.spec.ts:17:3 › UI-06 报告作用域隔离 › 延迟的报告响应不显示在新目标下，切换后展示新作用域自身状态 (10.8s)
+  ✓  21 src/ui/tests/ui-10-11.spec.ts:5:3 › UI-10 未接通能力的准确呈现 › 架构、记忆与续跑说明缺项，Reviewer只呈现真实材料状态而不使用固定示例 (2.0s)
+  ✓  22 src/ui/tests/ui-10-11.spec.ts:33:5 › UI-11 三种尺寸与键盘操作 › 桌面 1440x900 核心操作可达且无横向溢出 (1.1s)
+  ✓  23 src/ui/tests/ui-10-11.spec.ts:33:5 › UI-11 三种尺寸与键盘操作 › 平板 1024x768 核心操作可达且无横向溢出 (1.1s)
+  ✓  24 src/ui/tests/ui-10-11.spec.ts:33:5 › UI-11 三种尺寸与键盘操作 › 手机 390x844 核心操作可达且无横向溢出 (1.2s)
+  ✓  25 src/ui/tests/ui-10-11.spec.ts:56:3 › UI-11 三种尺寸与键盘操作 › 标签方向键、菜单 Escape 焦点返回、分隔条键盘调整与主题切换 (1.4s)
+  ✓  26 src/ui/tests/verification-rounds.spec.ts:46:3 › VR-01 工具验证轮次 › FAIL 与 PASS 按同一要求聚合，保留 Reviewer 缺项和服务重开后的原始失败报告 (6.2s)
+  ✓  27 src/ui/tests/verification-rounds.spec.ts:94:3 › VR-01 工具验证轮次 › 提交后丢响应保留请求，reload 查询原回执不重跑；源文件改变只把旧轮次标为过期 (5.2s)
+
+  27 passed (4.6m)

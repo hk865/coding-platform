@@ -119,7 +119,10 @@ it('独立审阅交付 FAIL 结论之后同样触发驱动：问题来源是审�
     const current = (await statusOf(fixture)).body;
     const issues = current.view.issues.status === 'ready' ? current.view.issues.issues : [];
     const reviewIssue = issues.find((issue) => issue.source.kind === 'review_verdict' && issue.currentness.status === 'open');
-    if (reviewIssue !== undefined && current.lastDrive?.outcomes.some((outcome) => outcome.issueIds.includes(reviewIssue.issueId))) {
+    // The reviewer publishes its issue before the sourced coordination query
+    // finishes. Await the acceptance attempt, not its transient pending entry.
+    if (reviewIssue !== undefined && current.lastDrive?.outcomes.some((outcome) => outcome.issueIds.includes(reviewIssue.issueId) &&
+      !(outcome.status==='rejected' && outcome.code==='coordination_pending'))) {
       view = current.view;
       lastDrive = current.lastDrive;
       break;

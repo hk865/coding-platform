@@ -12,7 +12,14 @@ import { composeReworkDrive } from '../../src/harness/rework-composition.js';
  * 真实已接纳证据），提案来自 RW-03 的真实编译器，受理来自 ControlEngine 的真实入口，
  * 账本是真实的 InMemory／SQLite StateLedger。
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ReworkCoordination } from '../../src/contracts/execution-feedback.js';
+import { ExecutionFeedbackCompiler } from '../../src/control/plan-compiler/execution-feedback-compiler.js';
+import { ReworkPlanCompiler } from '../../src/control/plan-compiler/rework-plan-compiler.js';
+import { sha256Hex } from '../../src/contracts/fingerprint.js';
+import { DEFAULT_RUNTIME_BUDGET } from '../../src/contracts/runtime-budget.js';
+import type { QueryJobSnapshot, QueryJobAnswerSnapshot } from '../../src/contracts/query-job.js';
+import { buildP109Answer, buildP109Intent, buildP109Job } from '../contract-support/fixtures/query-job-fixtures.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -130,6 +137,135 @@ function activeCarriers(plan: PlanRevisionSnapshot, obligationId: string): strin
 }
 
 describe('RW-06 返工触发驱动', () => {
+  it.each(['exact', 'digest', 'instruction', 'run_binding'] as const)('Control 复核已加载协调答案的 %s 绑定（只读 Query 快照 seam）', async mutation => {
+    const scope = await setup();
+    const port = await journalPort(() => scope.ledger);
+    await failOnce({ journal: port.journal, engine: scope.engine, ledger: scope.ledger, plan: scope.plan,
+      taskId: RW04_VERIFY_TASK, obligationId: RW04_OBLIGATION, requirementId: RW04_REQUIREMENT,
+      kind: 'dynamic', checkId: 'binding', evidenceId: 'ev-binding', requestId: 'round-binding' });
+    const issues = await port.port(issueRequest);
+    if (issues.status !== 'ready') throw Error('expected real FAIL');
+    const queryRef = { aggregateType: 'QueryJob' as const, projectId: RW04_PROJECT, workspaceId: RW04_WORKSPACE, queryJobId: 'binding-query' };
+    const runRef = { ...queryRef, aggregateType: 'QueryRun' as const, runId: 'binding-run' };
+    const answerRef = { ...queryRef, aggregateType: 'QueryJobAnswer' as const, answerId: 'binding-answer' };
+    const answer = { ...buildP109Answer(runRef), answerId: answerRef.answerId, queryJobRef: queryRef,
+      answer: JSON.stringify({ kind: 'feedback_resolution', action: 'adjust_plan', availability: 'available',
+        summary: '规则调查完成', material: '按当前规则修复实现并重跑失败验证。', sourcePaths: ['RULES.md'] }),
+      sources: [{ kind: 'workspace_read', refKey: 'RULES.md', version: 'd'.repeat(64), label: 'Read RULES.md' }] };
+    const workspace = await scope.ledger.load({ aggregateType: 'Workspace', projectId: RW04_PROJECT, workspaceId: RW04_WORKSPACE });
+    if (workspace.status !== 'found') throw Error('workspace missing');
+    const intent = buildP109Intent({ projectId: RW04_PROJECT, workspaceId: RW04_WORKSPACE, goalId: RW04_GOAL,
+      execution: { kind: 'execution_coordination', runtimeBudget: DEFAULT_RUNTIME_BUDGET,
+        roleBinding: { schemaVersion: 1, bindingId: 'binding', templateId: 'planner', templateRevision: '1', bindingVersion: 1, policyRevision: 'read-only' },
+        feedback: { taskId: RW04_VERIFY_TASK, runRef: { aggregateType: 'Run', projectId: RW04_PROJECT, goalId: RW04_GOAL, runId: 'source-run' },
+          planRef: scope.plan.ref, workspaceRevision: workspace.snapshot.revision, reportRef: answer.bodyRef!,
+          failureIssueIds: issues.issues.map(i => i.issueId), sourcePin: { schemaVersion: 1, projectId: RW04_PROJECT, workspaceId: RW04_WORKSPACE,
+            sourceSet: { kind: 'workspace_paths', paths: ['RULES.md'] }, identity: { workspace: '/fixture', commit: null }, manifestDigest: 'd'.repeat(64) } } } });
+    const jobSnapshot: QueryJobSnapshot = { ref: queryRef, schemaVersion: 1, revision: 2,
+      job: { ...buildP109Job(intent, runRef), ...queryRef, status: 'answered', answerRefs: [answerRef] } };
+    const answerSnapshot: QueryJobAnswerSnapshot = { ref: answerRef, schemaVersion: 1, revision: 1, answer };
+    const row: ReworkCoordination = { taskId: RW04_VERIFY_TASK, issueIds: issues.issues.map(i => i.issueId), answerRef,
+      answerDigest: sha256Hex(answer.answer), instruction: '按当前规则修复实现并重跑失败验证。' };
+    if (mutation === 'digest') row.answerDigest = '0'.repeat(64);
+    if (mutation === 'instruction') row.instruction = '未被答案授权的另一条指令。';
+    if (mutation === 'run_binding') answerSnapshot.answer.runRef = { ...runRef, runId: 'another-run' };
+    // Only Query reads are injected. FAIL evidence, plan compilation, Control guards,
+    // policy budget and resulting writes use the actual existing ledger and engine.
+    const load = scope.ledger.load.bind(scope.ledger);
+    vi.spyOn(scope.ledger, 'load').mockImplementation(async ref => {
+      if (ref.aggregateType === 'QueryJob' && ref.queryJobId === queryRef.queryJobId) return { status: 'found', snapshot: structuredClone(jobSnapshot) };
+      if (ref.aggregateType === 'QueryJobAnswer' && ref.answerId === answerRef.answerId) return { status: 'found', snapshot: structuredClone(answerSnapshot) };
+      return load(ref);
+    });
+    const compiled = new ReworkPlanCompiler().compile({ ...request, goalRef: scope.goal.ref, goalObjective: scope.goal.objective,
+      activePlan: scope.plan, issues: issues.issues, coordination: row,
+      workIdentities: await resolvePlanningWorkIdentities(request, scope.plan, scope.engine) });
+    if (compiled.status !== 'proposal') throw Error(JSON.stringify(compiled));
+    const before = await scope.ledger.events({ afterCursor: null, limit: 10000 });
+    const receipt = await scope.engine.acceptReworkProposal({ schemaVersion: 1, proposal: compiled.proposal });
+    if (mutation === 'exact') {
+      expect(receipt.status, JSON.stringify(receipt)).toBe('accepted');
+      expect(await reviseCount(scope.ledger)).toBe(2);
+    } else {
+      expect(receipt).toMatchObject({ status: 'rejected', code: 'invalid' });
+      expect(await scope.ledger.events({ afterCursor: null, limit: 10000 })).toEqual(before);
+    }
+  });
+
+  it('调查已返回，但提交前来源验证失效：零受理、零计划写入，旧失败仍有承担者', async () => {
+    const scope = await setup();
+    const port = await journalPort(() => scope.ledger);
+    await failOnce({ journal: port.journal, engine: scope.engine, ledger: scope.ledger, plan: scope.plan,
+      taskId: RW04_VERIFY_TASK, obligationId: RW04_OBLIGATION, requirementId: RW04_REQUIREMENT,
+      kind: 'dynamic', checkId: 'source-race', evidenceId: 'ev-source-race', requestId: 'round-source-race' });
+    const view = await port.port(issueRequest);
+    if (view.status !== 'ready') throw Error('expected real FAIL material');
+    const row: ReworkCoordination = { taskId: RW04_VERIFY_TASK, issueIds: view.issues.map(i => i.issueId),
+      answerRef: { aggregateType: 'QueryJobAnswer', projectId: RW04_PROJECT, workspaceId: RW04_WORKSPACE,
+        queryJobId: 'source-race-query', answerId: 'source-race-answer' },
+      answerDigest: 'a'.repeat(64), instruction: '修复失败行为并保留既有验收要求。' };
+    // Context boundary is injected here; real source capture itself is covered by feedback authority tests.
+    let current: ReworkCoordination | null = row;
+    const compiler = new ExecutionFeedbackCompiler({ control: scope.engine, now: () => FIXED,
+      materials: { jobs: async () => [], prepare: async () => null, failureResolution: async () => current } });
+    expect(await compiler.failureResolution(row.answerRef.queryJobId)).toEqual(row);
+    current = null;
+    const validate = vi.spyOn(compiler, 'validate');
+    const accept = vi.spyOn(scope.engine, 'acceptReworkProposal');
+    const before = await scope.ledger.events({ afterCursor: null, limit: 10000 });
+    const drive = composeReworkDrive({ ledger: scope.ledger, control: scope.engine, issues: port.port, coordination: compiler });
+    const result = await drive.driveRework({ ...request, coordination: [row] });
+    expect(result.outcomes).toMatchObject([{ status: 'rejected', code: 'coordination_stale' }]);
+    expect(validate).toHaveBeenCalledExactlyOnceWith(row);
+    expect(accept).not.toHaveBeenCalled();
+    expect(await scope.ledger.events({ afterCursor: null, limit: 10000 })).toEqual(before);
+    expect(activeCarriers(await loadActivePlan(scope.ledger, await loadGoal(scope.ledger)), RW04_OBLIGATION)).toEqual([RW04_VERIFY_TASK]);
+  });
+
+  it('一组缺协调材料时，其他独立组仍进入自己的来源复核与 Control 守卫', async () => {
+    const scope = await setup({ budget: 2 });
+    const port = await journalPort(() => scope.ledger);
+    for (const [taskId, obligationId, requirementId, kind] of [
+      ['task-install-contract', 'obl-1', 'vr-1', 'static'],
+      [RW04_VERIFY_TASK, RW04_OBLIGATION, RW04_REQUIREMENT, 'dynamic'],
+    ] as const) await failOnce({ journal: port.journal, engine: scope.engine, ledger: scope.ledger, plan: scope.plan,
+      taskId, obligationId, requirementId, kind, checkId: 'independent-' + taskId,
+      evidenceId: 'ev-independent-' + taskId, requestId: 'round-independent-' + taskId });
+    const view = await port.port(issueRequest);
+    if (view.status !== 'ready') throw Error('expected real FAIL material');
+    const row: ReworkCoordination = { taskId: RW04_VERIFY_TASK,
+      issueIds: view.issues.filter(i => i.taskId === RW04_VERIFY_TASK).map(i => i.issueId),
+      answerRef: { aggregateType: 'QueryJobAnswer', projectId: RW04_PROJECT, workspaceId: RW04_WORKSPACE,
+        queryJobId: 'independent-query', answerId: 'independent-answer' },
+      answerDigest: 'b'.repeat(64), instruction: '修复独立任务的失败行为并保留验收要求。' };
+    const validate = vi.fn(async () => true);
+    const accept = vi.spyOn(scope.engine, 'acceptReworkProposal');
+    const before = await scope.ledger.events({ afterCursor: null, limit: 10000 });
+    const drive = composeReworkDrive({ ledger: scope.ledger, control: scope.engine, issues: port.port, coordination: { validate } });
+    const result = await drive.driveRework({ ...request, coordination: [row] });
+    expect(result.outcomes[0]).toMatchObject({ groupTaskId: 'task-install-contract', code: 'coordination_pending' });
+    expect(validate).toHaveBeenCalledExactlyOnceWith(row);
+    expect(accept).toHaveBeenCalledTimes(1);
+    expect(accept.mock.calls[0]![0].proposal.coordination).toEqual(row);
+    // Passing Dispatch's source seam cannot replace Control's canonical answer authority.
+    expect(result.outcomes[1]).toMatchObject({ groupTaskId: RW04_VERIFY_TASK, origin: 'acceptance', code: 'invalid' });
+    expect(await scope.ledger.events({ afterCursor: null, limit: 10000 })).toEqual(before);
+  });
+
+  it.each(['answerRef', 'answerDigest', 'instruction'] as const)('协调绑定 %s 被替换时，编译器拒绝提交前验证', async field => {
+    const row: ReworkCoordination = { taskId: RW04_VERIFY_TASK, issueIds: ['issue-exact'],
+      answerRef: { aggregateType: 'QueryJobAnswer', projectId: RW04_PROJECT, workspaceId: RW04_WORKSPACE,
+        queryJobId: 'exact-query', answerId: 'exact-answer' }, answerDigest: 'c'.repeat(64), instruction: '精确的修复指令' };
+    const scope = await setup();
+    const compiler = new ExecutionFeedbackCompiler({ control: scope.engine, now: () => FIXED,
+      materials: { jobs: async () => [], prepare: async () => null, failureResolution: async () => row } });
+    expect(await compiler.validate(structuredClone(row))).toBe(true);
+    const changed = structuredClone(row);
+    if (field === 'answerRef') changed.answerRef.answerId = 'another-answer';
+    else changed[field] = 'different';
+    expect(await compiler.validate(changed)).toBe(false);
+  });
+
   it('真实 FAIL 之后：分组编译提案 → 四条边界受理 → 新 revision 生效、原任务 superseded、旧 revision 保留', async () => {
     const scope = await setup({ budget: 1 });
     const port = await journalPort(() => scope.ledger);

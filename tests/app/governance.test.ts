@@ -20,6 +20,8 @@ import { verificationRoundFixture } from './verification-round-fixture.js';
 import type { ReworkDriveResultV1, ReworkDriveViewV1 } from '../../src/contracts/rework/drive.js';
 import type { VerificationRegisteredCheck, VerificationRoundResult } from '../../src/contracts/verification-round.js';
 import { createGuiServer } from '../../src/app/server.js';
+import type { PlanChangesViewV1 } from '../../src/app/plan-changes.js';
+import type { ReworkProposalV1 } from '../../src/contracts/rework/proposal.js';
 
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -258,6 +260,34 @@ async function waitForDrive(fixture: RoundFixture, predicate: (status: ReworkSta
   }
 }
 
+async function acceptedHistory(fixture:RoundFixture,policyId:string) {
+  const deadline=Date.now()+60000;
+  for(;;) {
+    const history=(await fixture.post<PlanChangesViewV1>('/api/real/plan-changes/view',fixture.scope)).body;
+    if(history.status==='ready') {
+      const proposal=history.proposals.find(row=>(row.proposal as ReworkProposalV1).rework?.tasks.some(task=>task.supersedesTaskId===fixture.taskId));
+      const decision=proposal && history.decisions.find(row=>row.decision.proposalRef.proposalId===proposal.proposal.proposalId)?.decision;
+      const revision=proposal && history.revisions.find(row=>row.change.reason==='autonomous-rework:'+proposal.proposal.proposalId)?.change;
+      if(decision && revision) {
+        expect(decision).toMatchObject({outcome:'accept',actor:{kind:'system',id:'autonomous-rework'},authority:{strategy:'delegated',delegator:'coordination-policy:'+policyId+'@1'}});
+        expect(decision.summary).toContain('四条边界 (a)-(d) 同时满足');
+        expect(decision.summary).toContain('预算 0/2');
+        const status=(await fixture.post<ReworkStatus>('/api/real/rework/status',fixture.scope)).body;
+        expect(status.view.acceptance.applied).toBe(true);
+        // Later automatic checks may already have advanced another revision;
+        // the original accepted revision remains an immutable historical fact.
+        const latest=(await fixture.post<PlanChangesViewV1>('/api/real/plan-changes/view',fixture.scope)).body;
+        expect(latest.status).toBe('ready');
+        if(latest.status!=='ready') throw Error('Accepted history unavailable');
+        expect(latest.revisions.some(row=>row.change.activePlanRef.planId===status.view.acceptance.activePlanRef?.planId)).toBe(true);
+        return {decision,revision,status};
+      }
+    }
+    if(Date.now()>=deadline) throw Error('Expected formally accepted policy decision: '+JSON.stringify(history));
+    await new Promise(done=>setTimeout(done,50));
+  }
+}
+
 it('基线：没有经 install/activate 生效的协调策略时，真实失败链停在 governance_unavailable 且零写入', async () => {
   const fixture = await verificationRoundFixture(cleanup, true, createGuiServer, { plan: governancePlan });
   const scope = scopeOf(fixture);
@@ -297,20 +327,9 @@ it('真实 HTTP 安装并激活协调策略之后：同一条失败链自动受�
 
   // 2) 同一条真实失败链：这次有生效的协调策略，四条边界成立 → 自动受理。
   await failRound(fixture);
-  const settled = await waitForDrive(
-    fixture,
-    status => status.lastDrive?.outcomes.some(outcome => outcome.status === 'accepted') === true,
-    '安装协调策略之后自动返工仍然没有被受理',
-  );
-  const accepted = settled.lastDrive!.outcomes.find(outcome => outcome.status === 'accepted')!;
-  if (accepted.status !== 'accepted') throw Error('unreachable');
-  // 额度按生效策略计数（不是默认值）：上限 2、已用 0、来源写进决定。
-  expect(accepted.budget).toMatchObject({ policyId: 'coordination-policy-main', policyRevision: 1, limit: 2, used: 0, remaining: 2 });
-  expect(accepted.boundaries.every(boundary => boundary.satisfied)).toBe(true);
-  // 新 revision 确实生效：受理视图的 applied 与 Goal 的 active revision 同源。
-  expect(settled.view.acceptance.applied).toBe(true);
-  expect(settled.view.acceptance.activePlanRef!.planId).toBe(accepted.planRef.planId);
-  expect(settled.lastDrive!.acceptedPlanRefs.map(ref => ref.planId)).toEqual([accepted.planRef.planId]);
+  // Quota use and all four satisfied boundaries are retained in the exact
+  // canonical decision, even after newer automatic drives replace lastDrive.
+  await acceptedHistory(fixture,'coordination-policy-main');
 
   // 重启后：授权额度与生效 revision 都是持久事实。
   await fixture.restart();
@@ -374,14 +393,5 @@ it('RW-10 人的暂停开关：inScopeRework=false 的协调策略生效后，�
   // 同一条未处置问题仍然属于当前 revision（停用期间零写入），再次触发即可被受理：
   // 重复提交同一轮次请求不会重新执行检查（同请求回放），但组合根会在收口后再次驱动返工。
   await failRound(fixture);
-  const accepted = await waitForDrive(
-    fixture,
-    status => status.lastDrive?.outcomes.some(outcome => outcome.status === 'accepted') === true,
-    '重新启用之后自动返工仍然没有被受理',
-  );
-  const acceptedOutcome = accepted.lastDrive!.outcomes.find(outcome => outcome.status === 'accepted')!;
-  if (acceptedOutcome.status !== 'accepted') throw Error('unreachable');
-  expect(acceptedOutcome.budget).toMatchObject({ policyId: 'coordination-policy-resumed', limit: 2, used: 0, remaining: 2 });
-  expect(accepted.view.acceptance.applied).toBe(true);
-  expect(accepted.view.acceptance.activePlanRef!.planId).toBe(acceptedOutcome.planRef.planId);
+  await acceptedHistory(fixture,'coordination-policy-resumed');
 }, 180000);

@@ -1,0 +1,5503 @@
+{
+  "commit": "b7fa329178a1474933c9dd1a4a812285cec04cf3",
+  "totalCommittedBlobs": 3099,
+  "fullCommitHighConfidencePatternScan": [],
+  "files": [
+    {
+      "path": "evaluation/rat-00-v1/bug-discovery/public/BD-03/workspace/.env",
+      "sha256": "f5f79f70797692780283ee10305dabe4f9f29c3fed64a2651a88d2a383bca1b5",
+      "bytes": 38,
+      "type": "env",
+      "workingFileMatchesCommit": true,
+      "fields": [
+        {
+          "field": "RECOVERY_CANARY",
+          "classification": "fixed_benchmark_recovery_canary"
+        }
+      ],
+      "canaryReferences": [
+        "evaluation/rat-00-v1/bug-discovery/evaluator-only/evaluators/BD-03/evaluate.mjs",
+        "evaluation/rat-00-v1/bug-discovery/evaluator-only/evaluators/BD-04/evaluate.mjs",
+        "vendor/coding-agent/benchmarks/tasks/recovery-exactly-once/hidden_tests/evaluate.mjs",
+        "vendor/coding-agent/benchmarks/tasks/recovery-exactly-once/workspace/base/.env"
+      ],
+      "onlyCanary": true,
+      "assessment": "Fixed recovery benchmark canary; exact value is referenced by committed evaluator assertions, not an account credential."
+    },
+    {
+      "path": "evaluation/rat-00-v1/bug-discovery/public/BD-04/workspace/.env",
+      "sha256": "f5f79f70797692780283ee10305dabe4f9f29c3fed64a2651a88d2a383bca1b5",
+      "bytes": 38,
+      "type": "env",
+      "workingFileMatchesCommit": true,
+      "fields": [
+        {
+          "field": "RECOVERY_CANARY",
+          "classification": "fixed_benchmark_recovery_canary"
+        }
+      ],
+      "canaryReferences": [
+        "evaluation/rat-00-v1/bug-discovery/evaluator-only/evaluators/BD-03/evaluate.mjs",
+        "evaluation/rat-00-v1/bug-discovery/evaluator-only/evaluators/BD-04/evaluate.mjs",
+        "vendor/coding-agent/benchmarks/tasks/recovery-exactly-once/hidden_tests/evaluate.mjs",
+        "vendor/coding-agent/benchmarks/tasks/recovery-exactly-once/workspace/base/.env"
+      ],
+      "onlyCanary": true,
+      "assessment": "Fixed recovery benchmark canary; exact value is referenced by committed evaluator assertions, not an account credential."
+    },
+    {
+      "path": "evidence/rat-03/kernel-direct/node-bearer-auth-trial-1/session.sqlite",
+      "sha256": "364ed8923652586991fe88c58b6498b7ce4b17b08b68f2581835ff175bfb8d5b",
+      "bytes": 159744,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "checkpoints",
+          "columns": [
+            "checkpoint_id",
+            "session_id",
+            "run_id",
+            "turn_id",
+            "record_position",
+            "created_at",
+            "checkpoint_json"
+          ],
+          "rows": 3,
+          "sensitiveFieldMatches": [
+            {
+              "classification": "needs_context",
+              "column": "checkpoint_json",
+              "field": "text:bearer",
+              "count": 69
+            },
+            {
+              "classification": "nonsecret_scalar",
+              "column": "checkpoint_json",
+              "field": "text:bearer",
+              "count": 6
+            }
+          ]
+        },
+        {
+          "table": "metadata",
+          "columns": [
+            "key",
+            "value"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "session_records",
+          "columns": [
+            "session_id",
+            "position",
+            "record_id",
+            "record_type",
+            "run_id",
+            "turn_id",
+            "event_sequence",
+            "record_json"
+          ],
+          "rows": 29,
+          "sensitiveFieldMatches": [
+            {
+              "classification": "needs_context",
+              "column": "record_json",
+              "field": "text:bearer",
+              "count": 30
+            },
+            {
+              "classification": "nonsecret_scalar",
+              "column": "record_json",
+              "field": "text:bearer",
+              "count": 2
+            }
+          ]
+        },
+        {
+          "table": "sessions",
+          "columns": [
+            "session_id",
+            "schema_version",
+            "created_at",
+            "updated_at",
+            "revision",
+            "active_run_id",
+            "active_turn_id"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [
+        {
+          "length": 5,
+          "count": 7,
+          "benchmarkSourceReferences": [
+            "vendor/coding-agent/benchmarks/tasks/node-bearer-auth/instruction.md"
+          ],
+          "allAlphabetic": true,
+          "resolvedCategory": "benchmark_fixture_literal_or_authentication_prose"
+        },
+        {
+          "length": 3,
+          "count": 72,
+          "benchmarkSourceReferences": [
+            "vendor/coding-agent/benchmarks/tasks/node-bearer-auth/hidden_tests/evaluate.mjs",
+            "vendor/coding-agent/benchmarks/tasks/node-bearer-auth/workspace/base/test.mjs"
+          ],
+          "allAlphabetic": true,
+          "resolvedCategory": "benchmark_fixture_literal_or_authentication_prose"
+        },
+        {
+          "length": 6,
+          "count": 8,
+          "benchmarkSourceReferences": [
+            "vendor/coding-agent/benchmarks/tasks/node-bearer-auth/hidden_tests/evaluate.mjs"
+          ],
+          "allAlphabetic": true,
+          "resolvedCategory": "benchmark_fixture_literal_or_authentication_prose"
+        },
+        {
+          "length": 4,
+          "count": 12,
+          "benchmarkSourceReferences": [],
+          "allAlphabetic": true,
+          "resolvedCategory": "benchmark_negative_suffix_test_literal"
+        },
+        {
+          "length": 3,
+          "count": 8,
+          "benchmarkSourceReferences": [],
+          "allAlphabetic": false,
+          "resolvedCategory": "numeric_negative_test_case"
+        }
+      ],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 195,
+        "int": 61,
+        "NoneType": 6
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "Exact benchmark-source references plus masked surrounding isAuthorized test-call/negative-suffix examples; the matching scheme word is authentication prose, not an authorization value."
+    },
+    {
+      "path": "evidence/rat-03/kernel-direct/python-slug-normalization-trial-1/session.sqlite",
+      "sha256": "28194a79a5af00ba183e5408da4a3cb82f781609e416bc640eefeb07b4a688a2",
+      "bytes": 118784,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "checkpoints",
+          "columns": [
+            "checkpoint_id",
+            "session_id",
+            "run_id",
+            "turn_id",
+            "record_position",
+            "created_at",
+            "checkpoint_json"
+          ],
+          "rows": 3,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "metadata",
+          "columns": [
+            "key",
+            "value"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "session_records",
+          "columns": [
+            "session_id",
+            "position",
+            "record_id",
+            "record_type",
+            "run_id",
+            "turn_id",
+            "event_sequence",
+            "record_json"
+          ],
+          "rows": 24,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "sessions",
+          "columns": [
+            "session_id",
+            "schema_version",
+            "created_at",
+            "updated_at",
+            "revision",
+            "active_run_id",
+            "active_turn_id"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 165,
+        "int": 51,
+        "NoneType": 6
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/kernel-direct/recovery-exactly-once-trial-1/session.sqlite",
+      "sha256": "45e39a6878dc730eabd36f697cae96c4a9e18f0f931eac71b243337a642d6a0d",
+      "bytes": 139264,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "checkpoints",
+          "columns": [
+            "checkpoint_id",
+            "session_id",
+            "run_id",
+            "turn_id",
+            "record_position",
+            "created_at",
+            "checkpoint_json"
+          ],
+          "rows": 3,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "metadata",
+          "columns": [
+            "key",
+            "value"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "session_records",
+          "columns": [
+            "session_id",
+            "position",
+            "record_id",
+            "record_type",
+            "run_id",
+            "turn_id",
+            "event_sequence",
+            "record_json"
+          ],
+          "rows": 26,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "sessions",
+          "columns": [
+            "session_id",
+            "schema_version",
+            "created_at",
+            "updated_at",
+            "revision",
+            "active_run_id",
+            "active_turn_id"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 177,
+        "int": 55,
+        "NoneType": 6
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/kernel-direct/ts-nullish-timeout-trial-1/session.sqlite",
+      "sha256": "4387c8116e5a6b4b61bdb6be6d2aab3d47caec42118288b96b13ec31897f5595",
+      "bytes": 114688,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "checkpoints",
+          "columns": [
+            "checkpoint_id",
+            "session_id",
+            "run_id",
+            "turn_id",
+            "record_position",
+            "created_at",
+            "checkpoint_json"
+          ],
+          "rows": 3,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "metadata",
+          "columns": [
+            "key",
+            "value"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "session_records",
+          "columns": [
+            "session_id",
+            "position",
+            "record_id",
+            "record_type",
+            "run_id",
+            "turn_id",
+            "event_sequence",
+            "record_json"
+          ],
+          "rows": 24,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "sessions",
+          "columns": [
+            "session_id",
+            "schema_version",
+            "created_at",
+            "updated_at",
+            "revision",
+            "active_run_id",
+            "active_turn_id"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 165,
+        "int": 51,
+        "NoneType": 6
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/node-bearer-auth-trial-1/gui-data/ledger.sqlite",
+      "sha256": "094e01b1e14cda7dc70aa5490b5fcc94089e602cabb7ad8cde6b1f24d85e76af",
+      "bytes": 57344,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "events",
+          "columns": [
+            "id",
+            "event_json"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "idempotency",
+          "columns": [
+            "identity_key",
+            "fingerprint",
+            "event_ids_json",
+            "aggregate_revisions_json",
+            "commit_cursor"
+          ],
+          "rows": 11,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "snapshots",
+          "columns": [
+            "ref_key",
+            "snapshot_json"
+          ],
+          "rows": 15,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "sqlite_sequence",
+          "columns": [
+            "name",
+            "seq"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "int": 15,
+        "str": 100
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/node-bearer-auth-trial-1/gui-data/projects/local-c3489f8237f3b81b1cf9/ledger.sqlite",
+      "sha256": "23f437ee8187affbd3f721817d8cb033cb3be96fb808c72f27da8dcee987c967",
+      "bytes": 77824,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "events",
+          "columns": [
+            "id",
+            "event_json"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": [
+            {
+              "classification": "needs_context",
+              "column": "event_json",
+              "field": "text:bearer",
+              "count": 2
+            }
+          ]
+        },
+        {
+          "table": "idempotency",
+          "columns": [
+            "identity_key",
+            "fingerprint",
+            "event_ids_json",
+            "aggregate_revisions_json",
+            "commit_cursor"
+          ],
+          "rows": 11,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "snapshots",
+          "columns": [
+            "ref_key",
+            "snapshot_json"
+          ],
+          "rows": 15,
+          "sensitiveFieldMatches": [
+            {
+              "classification": "needs_context",
+              "column": "snapshot_json",
+              "field": "text:bearer",
+              "count": 2
+            }
+          ]
+        },
+        {
+          "table": "sqlite_sequence",
+          "columns": [
+            "name",
+            "seq"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [
+        {
+          "length": 5,
+          "count": 4,
+          "benchmarkSourceReferences": [
+            "vendor/coding-agent/benchmarks/tasks/node-bearer-auth/instruction.md"
+          ],
+          "allAlphabetic": true,
+          "resolvedCategory": "benchmark_fixture_literal_or_authentication_prose"
+        }
+      ],
+      "metadataCategories": [],
+      "storageTypes": {
+        "int": 15,
+        "str": 100
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "Exact benchmark-source references plus masked surrounding isAuthorized test-call/negative-suffix examples; the matching scheme word is authentication prose, not an authorization value."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/node-bearer-auth-trial-1/gui-data/projects/local-c3489f8237f3b81b1cf9/readmodel.sqlite",
+      "sha256": "86f3fbd3beaac852d9ef4bdb250a99bb133ec65d15ae165618dfb062e12b0823",
+      "bytes": 249856,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "active_agent",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "run_id",
+            "run_ref",
+            "attempt_ref",
+            "binding",
+            "lease",
+            "attempt",
+            "run",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "applied_event",
+          "columns": [
+            "event_id"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_brief_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_finding_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_inspection_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_agent",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_evidence",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_goal_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_matrix",
+          "columns": [
+            "goal_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": [
+            {
+              "classification": "needs_context",
+              "column": "view_json",
+              "field": "text:bearer",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "table": "console_portfolio",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_summary",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_task_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_timeline",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "control_intent_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_status",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "phase",
+            "previous_phase",
+            "plan_ref",
+            "reason_codes",
+            "explanation",
+            "side_effect_reconciliation",
+            "aggregate_revision",
+            "updated_at",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_timeline",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "seq",
+            "phase",
+            "previous_phase",
+            "reason_codes",
+            "explanation",
+            "aggregate_revision",
+            "reduced_at",
+            "event_id",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "goal_id",
+            "objective",
+            "desired_state",
+            "active_plan_revision",
+            "aggregate_revision",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": [
+            {
+              "classification": "needs_context",
+              "column": "objective",
+              "field": "text:bearer",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "table": "handoff_provenance",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "provenance_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "integration_conflict_view",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "conflict_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_plan_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": [
+            {
+              "classification": "needs_context",
+              "column": "entry_json",
+              "field": "text:bearer",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "table": "p111_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_revision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_candidate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_gate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_policy_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "plan_graph",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "plan_ref",
+            "plan_revision",
+            "accepted_at",
+            "pinned_completion_policy",
+            "pinned_arch_baseline",
+            "stages",
+            "tasks",
+            "task_hierarchy",
+            "execution_dag",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": [
+            {
+              "classification": "needs_context",
+              "column": "tasks",
+              "field": "text:bearer",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "table": "plan_snapshot",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "snapshot_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": [
+            {
+              "classification": "needs_context",
+              "column": "snapshot_json",
+              "field": "text:bearer",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "table": "query_answer_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_job_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_run_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "read_model_checkpoint",
+          "columns": [
+            "id",
+            "cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "task_detail",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "title",
+            "stage_id",
+            "requirement_level",
+            "task_kind",
+            "disposition",
+            "phase",
+            "scope",
+            "obligations",
+            "run_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": [
+            {
+              "classification": "needs_context",
+              "column": "title",
+              "field": "text:bearer",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "table": "task_verification",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "evidence_json",
+            "reduction_json",
+            "reduction_cursor",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_binding",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_continuations",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_notes",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_lease_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "lease_json"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_patch_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "patch_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [
+        {
+          "length": 5,
+          "count": 6,
+          "benchmarkSourceReferences": [
+            "vendor/coding-agent/benchmarks/tasks/node-bearer-auth/instruction.md"
+          ],
+          "allAlphabetic": true,
+          "resolvedCategory": "benchmark_fixture_literal_or_authentication_prose"
+        }
+      ],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 93,
+        "int": 3,
+        "NoneType": 2
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "Exact benchmark-source references plus masked surrounding isAuthorized test-call/negative-suffix examples; the matching scheme word is authentication prose, not an authorization value."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/node-bearer-auth-trial-1/gui-data/readmodel.sqlite",
+      "sha256": "b392a71bdfc8e0007cc5404d03f7c7f075dc91985dfcee1dfd5c356710f5e553",
+      "bytes": 208896,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "active_agent",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "run_id",
+            "run_ref",
+            "attempt_ref",
+            "binding",
+            "lease",
+            "attempt",
+            "run",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "applied_event",
+          "columns": [
+            "event_id"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_brief_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_finding_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_inspection_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_agent",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_evidence",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_goal_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_matrix",
+          "columns": [
+            "goal_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_portfolio",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_summary",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_task_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_timeline",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "control_intent_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_status",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "phase",
+            "previous_phase",
+            "plan_ref",
+            "reason_codes",
+            "explanation",
+            "side_effect_reconciliation",
+            "aggregate_revision",
+            "updated_at",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_timeline",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "seq",
+            "phase",
+            "previous_phase",
+            "reason_codes",
+            "explanation",
+            "aggregate_revision",
+            "reduced_at",
+            "event_id",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "goal_id",
+            "objective",
+            "desired_state",
+            "active_plan_revision",
+            "aggregate_revision",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "handoff_provenance",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "provenance_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "integration_conflict_view",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "conflict_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_plan_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_revision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_candidate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_gate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_policy_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "plan_graph",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "plan_ref",
+            "plan_revision",
+            "accepted_at",
+            "pinned_completion_policy",
+            "pinned_arch_baseline",
+            "stages",
+            "tasks",
+            "task_hierarchy",
+            "execution_dag",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "plan_snapshot",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "snapshot_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_answer_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_job_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_run_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "read_model_checkpoint",
+          "columns": [
+            "id",
+            "cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "task_detail",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "title",
+            "stage_id",
+            "requirement_level",
+            "task_kind",
+            "disposition",
+            "phase",
+            "scope",
+            "obligations",
+            "run_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "task_verification",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "evidence_json",
+            "reduction_json",
+            "reduction_cursor",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_binding",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_continuations",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_notes",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_lease_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "lease_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_patch_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "patch_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 45,
+        "NoneType": 2,
+        "int": 3
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/node-bearer-auth-trial-1/gui-data/real-runs/fd76e81ec5be03bae083a46cc0e09633abcb88b561e760e7090e23dd22875cc6.sqlite",
+      "sha256": "bf0586a8e8aec0eb954340ebd1a1a7b7efbc2307d9f8927640e02f41c547c3b6",
+      "bytes": 147456,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "checkpoints",
+          "columns": [
+            "checkpoint_id",
+            "session_id",
+            "run_id",
+            "turn_id",
+            "record_position",
+            "created_at",
+            "checkpoint_json"
+          ],
+          "rows": 3,
+          "sensitiveFieldMatches": [
+            {
+              "classification": "needs_context",
+              "column": "checkpoint_json",
+              "field": "text:bearer",
+              "count": 78
+            }
+          ]
+        },
+        {
+          "table": "metadata",
+          "columns": [
+            "key",
+            "value"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "session_records",
+          "columns": [
+            "session_id",
+            "position",
+            "record_id",
+            "record_type",
+            "run_id",
+            "turn_id",
+            "event_sequence",
+            "record_json"
+          ],
+          "rows": 29,
+          "sensitiveFieldMatches": [
+            {
+              "classification": "needs_context",
+              "column": "record_json",
+              "field": "text:bearer",
+              "count": 32
+            }
+          ]
+        },
+        {
+          "table": "sessions",
+          "columns": [
+            "session_id",
+            "schema_version",
+            "created_at",
+            "updated_at",
+            "revision",
+            "active_run_id",
+            "active_turn_id"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [
+        {
+          "length": 5,
+          "count": 7,
+          "benchmarkSourceReferences": [
+            "vendor/coding-agent/benchmarks/tasks/node-bearer-auth/instruction.md"
+          ],
+          "allAlphabetic": true,
+          "resolvedCategory": "benchmark_fixture_literal_or_authentication_prose"
+        },
+        {
+          "length": 3,
+          "count": 87,
+          "benchmarkSourceReferences": [
+            "vendor/coding-agent/benchmarks/tasks/node-bearer-auth/hidden_tests/evaluate.mjs",
+            "vendor/coding-agent/benchmarks/tasks/node-bearer-auth/workspace/base/test.mjs"
+          ],
+          "allAlphabetic": true,
+          "resolvedCategory": "benchmark_fixture_literal_or_authentication_prose"
+        },
+        {
+          "length": 6,
+          "count": 16,
+          "benchmarkSourceReferences": [],
+          "allAlphabetic": true,
+          "resolvedCategory": "benchmark_negative_suffix_test_literal"
+        }
+      ],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 195,
+        "int": 61,
+        "NoneType": 6
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "Exact benchmark-source references plus masked surrounding isAuthorized test-call/negative-suffix examples; the matching scheme word is authentication prose, not an authorization value."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/python-slug-normalization-trial-1/gui-data/ledger.sqlite",
+      "sha256": "9d39ae095f6f7ef304ca0e743c13bf82b4d60669da5b94dcc0edbc392ad6b287",
+      "bytes": 57344,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "events",
+          "columns": [
+            "id",
+            "event_json"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "idempotency",
+          "columns": [
+            "identity_key",
+            "fingerprint",
+            "event_ids_json",
+            "aggregate_revisions_json",
+            "commit_cursor"
+          ],
+          "rows": 11,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "snapshots",
+          "columns": [
+            "ref_key",
+            "snapshot_json"
+          ],
+          "rows": 15,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "sqlite_sequence",
+          "columns": [
+            "name",
+            "seq"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "int": 15,
+        "str": 100
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/python-slug-normalization-trial-1/gui-data/projects/local-8e34ec09f730639a3cea/ledger.sqlite",
+      "sha256": "0a98d2f7d29a072fff50124d552346f298041cc9d49fe39cdf6ec9b79db77681",
+      "bytes": 77824,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "events",
+          "columns": [
+            "id",
+            "event_json"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "idempotency",
+          "columns": [
+            "identity_key",
+            "fingerprint",
+            "event_ids_json",
+            "aggregate_revisions_json",
+            "commit_cursor"
+          ],
+          "rows": 11,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "snapshots",
+          "columns": [
+            "ref_key",
+            "snapshot_json"
+          ],
+          "rows": 15,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "sqlite_sequence",
+          "columns": [
+            "name",
+            "seq"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "int": 15,
+        "str": 100
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/python-slug-normalization-trial-1/gui-data/projects/local-8e34ec09f730639a3cea/readmodel.sqlite",
+      "sha256": "91e4d8012a86b04a5fb7d62e18676922d523b3afb3655be89d3bd57e51f6b581",
+      "bytes": 249856,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "active_agent",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "run_id",
+            "run_ref",
+            "attempt_ref",
+            "binding",
+            "lease",
+            "attempt",
+            "run",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "applied_event",
+          "columns": [
+            "event_id"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_brief_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_finding_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_inspection_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_agent",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_evidence",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_goal_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_matrix",
+          "columns": [
+            "goal_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_portfolio",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_summary",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_task_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_timeline",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "control_intent_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_status",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "phase",
+            "previous_phase",
+            "plan_ref",
+            "reason_codes",
+            "explanation",
+            "side_effect_reconciliation",
+            "aggregate_revision",
+            "updated_at",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_timeline",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "seq",
+            "phase",
+            "previous_phase",
+            "reason_codes",
+            "explanation",
+            "aggregate_revision",
+            "reduced_at",
+            "event_id",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "goal_id",
+            "objective",
+            "desired_state",
+            "active_plan_revision",
+            "aggregate_revision",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "handoff_provenance",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "provenance_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "integration_conflict_view",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "conflict_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_plan_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_revision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_candidate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_gate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_policy_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "plan_graph",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "plan_ref",
+            "plan_revision",
+            "accepted_at",
+            "pinned_completion_policy",
+            "pinned_arch_baseline",
+            "stages",
+            "tasks",
+            "task_hierarchy",
+            "execution_dag",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "plan_snapshot",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "snapshot_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_answer_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_job_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_run_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "read_model_checkpoint",
+          "columns": [
+            "id",
+            "cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "task_detail",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "title",
+            "stage_id",
+            "requirement_level",
+            "task_kind",
+            "disposition",
+            "phase",
+            "scope",
+            "obligations",
+            "run_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "task_verification",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "evidence_json",
+            "reduction_json",
+            "reduction_cursor",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_binding",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_continuations",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_notes",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_lease_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "lease_json"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_patch_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "patch_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 93,
+        "int": 3,
+        "NoneType": 2
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/python-slug-normalization-trial-1/gui-data/readmodel.sqlite",
+      "sha256": "a6c2bcd597ca1145055fcee68d21a5592c3034e03f1cc54d31c58b3ea09c496e",
+      "bytes": 208896,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "active_agent",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "run_id",
+            "run_ref",
+            "attempt_ref",
+            "binding",
+            "lease",
+            "attempt",
+            "run",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "applied_event",
+          "columns": [
+            "event_id"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_brief_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_finding_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_inspection_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_agent",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_evidence",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_goal_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_matrix",
+          "columns": [
+            "goal_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_portfolio",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_summary",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_task_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_timeline",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "control_intent_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_status",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "phase",
+            "previous_phase",
+            "plan_ref",
+            "reason_codes",
+            "explanation",
+            "side_effect_reconciliation",
+            "aggregate_revision",
+            "updated_at",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_timeline",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "seq",
+            "phase",
+            "previous_phase",
+            "reason_codes",
+            "explanation",
+            "aggregate_revision",
+            "reduced_at",
+            "event_id",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "goal_id",
+            "objective",
+            "desired_state",
+            "active_plan_revision",
+            "aggregate_revision",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "handoff_provenance",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "provenance_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "integration_conflict_view",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "conflict_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_plan_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_revision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_candidate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_gate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_policy_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "plan_graph",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "plan_ref",
+            "plan_revision",
+            "accepted_at",
+            "pinned_completion_policy",
+            "pinned_arch_baseline",
+            "stages",
+            "tasks",
+            "task_hierarchy",
+            "execution_dag",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "plan_snapshot",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "snapshot_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_answer_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_job_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_run_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "read_model_checkpoint",
+          "columns": [
+            "id",
+            "cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "task_detail",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "title",
+            "stage_id",
+            "requirement_level",
+            "task_kind",
+            "disposition",
+            "phase",
+            "scope",
+            "obligations",
+            "run_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "task_verification",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "evidence_json",
+            "reduction_json",
+            "reduction_cursor",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_binding",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_continuations",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_notes",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_lease_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "lease_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_patch_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "patch_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 45,
+        "NoneType": 2,
+        "int": 3
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/python-slug-normalization-trial-1/gui-data/real-runs/1f612a978e66727d8cdbf0342d307fafb663a1dc0ec7964e0c047039d8056824.sqlite",
+      "sha256": "bf4ea766ecbd13e18930c2fb49f4508ca0eb00dd71848d8cfead4811dd504e95",
+      "bytes": 135168,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "checkpoints",
+          "columns": [
+            "checkpoint_id",
+            "session_id",
+            "run_id",
+            "turn_id",
+            "record_position",
+            "created_at",
+            "checkpoint_json"
+          ],
+          "rows": 3,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "metadata",
+          "columns": [
+            "key",
+            "value"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "session_records",
+          "columns": [
+            "session_id",
+            "position",
+            "record_id",
+            "record_type",
+            "run_id",
+            "turn_id",
+            "event_sequence",
+            "record_json"
+          ],
+          "rows": 29,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "sessions",
+          "columns": [
+            "session_id",
+            "schema_version",
+            "created_at",
+            "updated_at",
+            "revision",
+            "active_run_id",
+            "active_turn_id"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 195,
+        "int": 61,
+        "NoneType": 6
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/recovery-exactly-once-trial-1/gui-data/ledger.sqlite",
+      "sha256": "60f0a03f8071770249d12a9b8d863e986901b3846f89ffadfb6fd375badceb2e",
+      "bytes": 57344,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "events",
+          "columns": [
+            "id",
+            "event_json"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "idempotency",
+          "columns": [
+            "identity_key",
+            "fingerprint",
+            "event_ids_json",
+            "aggregate_revisions_json",
+            "commit_cursor"
+          ],
+          "rows": 11,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "snapshots",
+          "columns": [
+            "ref_key",
+            "snapshot_json"
+          ],
+          "rows": 15,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "sqlite_sequence",
+          "columns": [
+            "name",
+            "seq"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "int": 15,
+        "str": 100
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/recovery-exactly-once-trial-1/gui-data/projects/local-0e240f792710932932cd/ledger.sqlite",
+      "sha256": "07eba45f2721722f7446c4a9efd5178701bfdd8e30b8546b740c913167748f94",
+      "bytes": 77824,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "events",
+          "columns": [
+            "id",
+            "event_json"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "idempotency",
+          "columns": [
+            "identity_key",
+            "fingerprint",
+            "event_ids_json",
+            "aggregate_revisions_json",
+            "commit_cursor"
+          ],
+          "rows": 11,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "snapshots",
+          "columns": [
+            "ref_key",
+            "snapshot_json"
+          ],
+          "rows": 15,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "sqlite_sequence",
+          "columns": [
+            "name",
+            "seq"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "int": 15,
+        "str": 100
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/recovery-exactly-once-trial-1/gui-data/projects/local-0e240f792710932932cd/readmodel.sqlite",
+      "sha256": "d4f41c3b1a137cfa79a808b736afede47fe70acfc587de900439f5c098eed360",
+      "bytes": 249856,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "active_agent",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "run_id",
+            "run_ref",
+            "attempt_ref",
+            "binding",
+            "lease",
+            "attempt",
+            "run",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "applied_event",
+          "columns": [
+            "event_id"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_brief_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_finding_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_inspection_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_agent",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_evidence",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_goal_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_matrix",
+          "columns": [
+            "goal_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_portfolio",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_summary",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_task_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_timeline",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "control_intent_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_status",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "phase",
+            "previous_phase",
+            "plan_ref",
+            "reason_codes",
+            "explanation",
+            "side_effect_reconciliation",
+            "aggregate_revision",
+            "updated_at",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_timeline",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "seq",
+            "phase",
+            "previous_phase",
+            "reason_codes",
+            "explanation",
+            "aggregate_revision",
+            "reduced_at",
+            "event_id",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "goal_id",
+            "objective",
+            "desired_state",
+            "active_plan_revision",
+            "aggregate_revision",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "handoff_provenance",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "provenance_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "integration_conflict_view",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "conflict_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_plan_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_revision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_candidate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_gate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_policy_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "plan_graph",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "plan_ref",
+            "plan_revision",
+            "accepted_at",
+            "pinned_completion_policy",
+            "pinned_arch_baseline",
+            "stages",
+            "tasks",
+            "task_hierarchy",
+            "execution_dag",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "plan_snapshot",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "snapshot_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_answer_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_job_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_run_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "read_model_checkpoint",
+          "columns": [
+            "id",
+            "cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "task_detail",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "title",
+            "stage_id",
+            "requirement_level",
+            "task_kind",
+            "disposition",
+            "phase",
+            "scope",
+            "obligations",
+            "run_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "task_verification",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "evidence_json",
+            "reduction_json",
+            "reduction_cursor",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_binding",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_continuations",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_notes",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_lease_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "lease_json"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_patch_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "patch_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 93,
+        "int": 3,
+        "NoneType": 2
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/recovery-exactly-once-trial-1/gui-data/readmodel.sqlite",
+      "sha256": "9838b6c07d158320efe3b973d023551df422c5fa9422bba446ba929087fcae29",
+      "bytes": 208896,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "active_agent",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "run_id",
+            "run_ref",
+            "attempt_ref",
+            "binding",
+            "lease",
+            "attempt",
+            "run",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "applied_event",
+          "columns": [
+            "event_id"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_brief_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_finding_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_inspection_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_agent",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_evidence",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_goal_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_matrix",
+          "columns": [
+            "goal_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_portfolio",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_summary",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_task_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_timeline",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "control_intent_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_status",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "phase",
+            "previous_phase",
+            "plan_ref",
+            "reason_codes",
+            "explanation",
+            "side_effect_reconciliation",
+            "aggregate_revision",
+            "updated_at",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_timeline",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "seq",
+            "phase",
+            "previous_phase",
+            "reason_codes",
+            "explanation",
+            "aggregate_revision",
+            "reduced_at",
+            "event_id",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "goal_id",
+            "objective",
+            "desired_state",
+            "active_plan_revision",
+            "aggregate_revision",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "handoff_provenance",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "provenance_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "integration_conflict_view",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "conflict_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_plan_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_revision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_candidate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_gate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_policy_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "plan_graph",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "plan_ref",
+            "plan_revision",
+            "accepted_at",
+            "pinned_completion_policy",
+            "pinned_arch_baseline",
+            "stages",
+            "tasks",
+            "task_hierarchy",
+            "execution_dag",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "plan_snapshot",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "snapshot_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_answer_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_job_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_run_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "read_model_checkpoint",
+          "columns": [
+            "id",
+            "cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "task_detail",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "title",
+            "stage_id",
+            "requirement_level",
+            "task_kind",
+            "disposition",
+            "phase",
+            "scope",
+            "obligations",
+            "run_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "task_verification",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "evidence_json",
+            "reduction_json",
+            "reduction_cursor",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_binding",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_continuations",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_notes",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_lease_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "lease_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_patch_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "patch_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 45,
+        "NoneType": 2,
+        "int": 3
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/recovery-exactly-once-trial-1/gui-data/real-runs/39d5cf7701762a6451128d384e826bec6d347e424e8f50969c2d97875ce15f48.sqlite",
+      "sha256": "64caf17438d21d891b4e85fbccdf457af1dd2d9a40e8843b4132f89271e69252",
+      "bytes": 143360,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "checkpoints",
+          "columns": [
+            "checkpoint_id",
+            "session_id",
+            "run_id",
+            "turn_id",
+            "record_position",
+            "created_at",
+            "checkpoint_json"
+          ],
+          "rows": 3,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "metadata",
+          "columns": [
+            "key",
+            "value"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "session_records",
+          "columns": [
+            "session_id",
+            "position",
+            "record_id",
+            "record_type",
+            "run_id",
+            "turn_id",
+            "event_sequence",
+            "record_json"
+          ],
+          "rows": 29,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "sessions",
+          "columns": [
+            "session_id",
+            "schema_version",
+            "created_at",
+            "updated_at",
+            "revision",
+            "active_run_id",
+            "active_turn_id"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 195,
+        "int": 61,
+        "NoneType": 6
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/ts-nullish-timeout-trial-1/gui-data/ledger.sqlite",
+      "sha256": "1d048af133a850e2d9d42b3a25aea012bd5e3c93502bc2f036db186ef93811d9",
+      "bytes": 57344,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "events",
+          "columns": [
+            "id",
+            "event_json"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "idempotency",
+          "columns": [
+            "identity_key",
+            "fingerprint",
+            "event_ids_json",
+            "aggregate_revisions_json",
+            "commit_cursor"
+          ],
+          "rows": 11,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "snapshots",
+          "columns": [
+            "ref_key",
+            "snapshot_json"
+          ],
+          "rows": 15,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "sqlite_sequence",
+          "columns": [
+            "name",
+            "seq"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "int": 15,
+        "str": 100
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/ts-nullish-timeout-trial-1/gui-data/projects/local-63e994ee4899e1207528/ledger.sqlite",
+      "sha256": "db4ef9d33ea1cc64ebd9e5ef1ab4d942220dc4c10e4bd3658173703ef99eb3b7",
+      "bytes": 77824,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "events",
+          "columns": [
+            "id",
+            "event_json"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "idempotency",
+          "columns": [
+            "identity_key",
+            "fingerprint",
+            "event_ids_json",
+            "aggregate_revisions_json",
+            "commit_cursor"
+          ],
+          "rows": 11,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "snapshots",
+          "columns": [
+            "ref_key",
+            "snapshot_json"
+          ],
+          "rows": 15,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "sqlite_sequence",
+          "columns": [
+            "name",
+            "seq"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "int": 15,
+        "str": 100
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/ts-nullish-timeout-trial-1/gui-data/projects/local-63e994ee4899e1207528/readmodel.sqlite",
+      "sha256": "7782d7e2fb8919a8f5d74ff2fbac257c868d50731dd4b4f2196c94b2aefd596b",
+      "bytes": 249856,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "active_agent",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "run_id",
+            "run_ref",
+            "attempt_ref",
+            "binding",
+            "lease",
+            "attempt",
+            "run",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "applied_event",
+          "columns": [
+            "event_id"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_brief_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_finding_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_inspection_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_agent",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_evidence",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_goal_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_matrix",
+          "columns": [
+            "goal_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_portfolio",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_summary",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_task_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_timeline",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "control_intent_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_status",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "phase",
+            "previous_phase",
+            "plan_ref",
+            "reason_codes",
+            "explanation",
+            "side_effect_reconciliation",
+            "aggregate_revision",
+            "updated_at",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_timeline",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "seq",
+            "phase",
+            "previous_phase",
+            "reason_codes",
+            "explanation",
+            "aggregate_revision",
+            "reduced_at",
+            "event_id",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "goal_id",
+            "objective",
+            "desired_state",
+            "active_plan_revision",
+            "aggregate_revision",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "handoff_provenance",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "provenance_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "integration_conflict_view",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "conflict_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_plan_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_revision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_candidate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_gate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_policy_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "plan_graph",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "plan_ref",
+            "plan_revision",
+            "accepted_at",
+            "pinned_completion_policy",
+            "pinned_arch_baseline",
+            "stages",
+            "tasks",
+            "task_hierarchy",
+            "execution_dag",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "plan_snapshot",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "snapshot_json",
+            "source_cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_answer_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_job_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_run_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "read_model_checkpoint",
+          "columns": [
+            "id",
+            "cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "task_detail",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "title",
+            "stage_id",
+            "requirement_level",
+            "task_kind",
+            "disposition",
+            "phase",
+            "scope",
+            "obligations",
+            "run_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "task_verification",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "evidence_json",
+            "reduction_json",
+            "reduction_cursor",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_binding",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_continuations",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_notes",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_lease_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "lease_json"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_patch_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "patch_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 93,
+        "int": 3,
+        "NoneType": 2
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/ts-nullish-timeout-trial-1/gui-data/readmodel.sqlite",
+      "sha256": "76d96654f994554d841bba9067fe7476535a2de678c340c8065cd0cf94e3a006",
+      "bytes": 208896,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "active_agent",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "run_id",
+            "run_ref",
+            "attempt_ref",
+            "binding",
+            "lease",
+            "attempt",
+            "run",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "applied_event",
+          "columns": [
+            "event_id"
+          ],
+          "rows": 14,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_brief_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_finding_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_inspection_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "architecture_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_agent",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_evidence",
+          "columns": [
+            "task_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_goal_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_matrix",
+          "columns": [
+            "goal_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_portfolio",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_summary",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_task_phase",
+          "columns": [
+            "scope_key",
+            "phase"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "console_timeline",
+          "columns": [
+            "scope_key",
+            "view_json",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "control_intent_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_status",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "phase",
+            "previous_phase",
+            "plan_ref",
+            "reason_codes",
+            "explanation",
+            "side_effect_reconciliation",
+            "aggregate_revision",
+            "updated_at",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_timeline",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "seq",
+            "phase",
+            "previous_phase",
+            "reason_codes",
+            "explanation",
+            "aggregate_revision",
+            "reduced_at",
+            "event_id",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "goal_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "goal_id",
+            "objective",
+            "desired_state",
+            "active_plan_revision",
+            "aggregate_revision",
+            "source_cursor"
+          ],
+          "rows": 2,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "handoff_provenance",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "provenance_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "integration_conflict_view",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "conflict_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_plan_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p111_revision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_candidate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p114_gate_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_activation_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_decision_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_policy_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "p115_proposal_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "plan_graph",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "plan_ref",
+            "plan_revision",
+            "accepted_at",
+            "pinned_completion_policy",
+            "pinned_arch_baseline",
+            "stages",
+            "tasks",
+            "task_hierarchy",
+            "execution_dag",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "plan_snapshot",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "snapshot_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_answer_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_job_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "query_run_rows",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "read_model_checkpoint",
+          "columns": [
+            "id",
+            "cursor"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "task_detail",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "title",
+            "stage_id",
+            "requirement_level",
+            "task_kind",
+            "disposition",
+            "phase",
+            "scope",
+            "obligations",
+            "run_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "task_verification",
+          "columns": [
+            "project_id",
+            "goal_id",
+            "task_id",
+            "evidence_json",
+            "reduction_json",
+            "reduction_cursor",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_binding",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_continuations",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "work_context_notes",
+          "columns": [
+            "scope_key",
+            "entry_json",
+            "source_cursor"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_lease_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "lease_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "workspace_patch_view",
+          "columns": [
+            "project_id",
+            "workspace_id",
+            "patch_json"
+          ],
+          "rows": 0,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 45,
+        "NoneType": 2,
+        "int": 3
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "evidence/rat-03/platform-dispatch/ts-nullish-timeout-trial-1/gui-data/real-runs/dc22d462a5b18ef5e6cfaabbb3c85c4097b656d49746150b989c3e2cd4a90e4a.sqlite",
+      "sha256": "99f465a8dbf080ea73444a8a11cb76eab3b035a4e51aeb33ef66918825ddd6ba",
+      "bytes": 126976,
+      "type": "sqlite",
+      "workingFileMatchesCommit": true,
+      "tables": [
+        {
+          "table": "checkpoints",
+          "columns": [
+            "checkpoint_id",
+            "session_id",
+            "run_id",
+            "turn_id",
+            "record_position",
+            "created_at",
+            "checkpoint_json"
+          ],
+          "rows": 3,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "metadata",
+          "columns": [
+            "key",
+            "value"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "session_records",
+          "columns": [
+            "session_id",
+            "position",
+            "record_id",
+            "record_type",
+            "run_id",
+            "turn_id",
+            "event_sequence",
+            "record_json"
+          ],
+          "rows": 29,
+          "sensitiveFieldMatches": []
+        },
+        {
+          "table": "sessions",
+          "columns": [
+            "session_id",
+            "schema_version",
+            "created_at",
+            "updated_at",
+            "revision",
+            "active_run_id",
+            "active_turn_id"
+          ],
+          "rows": 1,
+          "sensitiveFieldMatches": []
+        }
+      ],
+      "bearerCandidateProvenance": [],
+      "metadataCategories": [],
+      "storageTypes": {
+        "str": 195,
+        "int": 61,
+        "NoneType": 6
+      },
+      "assessment": "Real benchmark runtime/session or platform ledger/read-model records for a synthetic named task; no credential-valued field or private-data pattern identified.",
+      "bearerReviewBasis": "No Bearer candidate."
+    },
+    {
+      "path": "vendor/coding-agent/benchmarks/tasks/recovery-exactly-once/workspace/base/.env",
+      "sha256": "f5f79f70797692780283ee10305dabe4f9f29c3fed64a2651a88d2a383bca1b5",
+      "bytes": 38,
+      "type": "env",
+      "workingFileMatchesCommit": true,
+      "fields": [
+        {
+          "field": "RECOVERY_CANARY",
+          "classification": "fixed_benchmark_recovery_canary"
+        }
+      ],
+      "canaryReferences": [
+        "evaluation/rat-00-v1/bug-discovery/evaluator-only/evaluators/BD-03/evaluate.mjs",
+        "evaluation/rat-00-v1/bug-discovery/evaluator-only/evaluators/BD-04/evaluate.mjs",
+        "vendor/coding-agent/benchmarks/tasks/recovery-exactly-once/hidden_tests/evaluate.mjs",
+        "vendor/coding-agent/benchmarks/tasks/recovery-exactly-once/workspace/base/.env"
+      ],
+      "onlyCanary": true,
+      "assessment": "Fixed recovery benchmark canary; exact value is referenced by committed evaluator assertions, not an account credential."
+    }
+  ],
+  "existingInventory": {
+    "path": "evidence/2026-09-11-semantic-completion/commit-inventory.json",
+    "data": {
+      "count": 3099,
+      "totalBytes": 73455607,
+      "large": [],
+      "sensitivePatternPaths": [],
+      "localArtifacts": [
+        "evaluation/rat-00-v1/bug-discovery/public/BD-03/workspace/.env",
+        "evaluation/rat-00-v1/bug-discovery/public/BD-04/workspace/.env",
+        "evidence/rat-03/kernel-direct/node-bearer-auth-trial-1/session.sqlite",
+        "evidence/rat-03/kernel-direct/python-slug-normalization-trial-1/session.sqlite",
+        "evidence/rat-03/kernel-direct/recovery-exactly-once-trial-1/session.sqlite",
+        "evidence/rat-03/kernel-direct/ts-nullish-timeout-trial-1/session.sqlite",
+        "evidence/rat-03/platform-dispatch/node-bearer-auth-trial-1/gui-data/ledger.sqlite",
+        "evidence/rat-03/platform-dispatch/node-bearer-auth-trial-1/gui-data/projects/local-c3489f8237f3b81b1cf9/ledger.sqlite",
+        "evidence/rat-03/platform-dispatch/node-bearer-auth-trial-1/gui-data/projects/local-c3489f8237f3b81b1cf9/readmodel.sqlite",
+        "evidence/rat-03/platform-dispatch/node-bearer-auth-trial-1/gui-data/readmodel.sqlite",
+        "evidence/rat-03/platform-dispatch/node-bearer-auth-trial-1/gui-data/real-runs/fd76e81ec5be03bae083a46cc0e09633abcb88b561e760e7090e23dd22875cc6.sqlite",
+        "evidence/rat-03/platform-dispatch/python-slug-normalization-trial-1/gui-data/ledger.sqlite",
+        "evidence/rat-03/platform-dispatch/python-slug-normalization-trial-1/gui-data/projects/local-8e34ec09f730639a3cea/ledger.sqlite",
+        "evidence/rat-03/platform-dispatch/python-slug-normalization-trial-1/gui-data/projects/local-8e34ec09f730639a3cea/readmodel.sqlite",
+        "evidence/rat-03/platform-dispatch/python-slug-normalization-trial-1/gui-data/readmodel.sqlite",
+        "evidence/rat-03/platform-dispatch/python-slug-normalization-trial-1/gui-data/real-runs/1f612a978e66727d8cdbf0342d307fafb663a1dc0ec7964e0c047039d8056824.sqlite",
+        "evidence/rat-03/platform-dispatch/recovery-exactly-once-trial-1/gui-data/ledger.sqlite",
+        "evidence/rat-03/platform-dispatch/recovery-exactly-once-trial-1/gui-data/projects/local-0e240f792710932932cd/ledger.sqlite",
+        "evidence/rat-03/platform-dispatch/recovery-exactly-once-trial-1/gui-data/projects/local-0e240f792710932932cd/readmodel.sqlite",
+        "evidence/rat-03/platform-dispatch/recovery-exactly-once-trial-1/gui-data/readmodel.sqlite",
+        "evidence/rat-03/platform-dispatch/recovery-exactly-once-trial-1/gui-data/real-runs/39d5cf7701762a6451128d384e826bec6d347e424e8f50969c2d97875ce15f48.sqlite",
+        "evidence/rat-03/platform-dispatch/ts-nullish-timeout-trial-1/gui-data/ledger.sqlite",
+        "evidence/rat-03/platform-dispatch/ts-nullish-timeout-trial-1/gui-data/projects/local-63e994ee4899e1207528/ledger.sqlite",
+        "evidence/rat-03/platform-dispatch/ts-nullish-timeout-trial-1/gui-data/projects/local-63e994ee4899e1207528/readmodel.sqlite",
+        "evidence/rat-03/platform-dispatch/ts-nullish-timeout-trial-1/gui-data/readmodel.sqlite",
+        "evidence/rat-03/platform-dispatch/ts-nullish-timeout-trial-1/gui-data/real-runs/dc22d462a5b18ef5e6cfaabbb3c85c4097b656d49746150b989c3e2cd4a90e4a.sqlite",
+        "src/data/read-model-index/README.sqlite.md",
+        "src/data/state-ledger/README.sqlite.md",
+        "vendor/coding-agent/benchmarks/tasks/recovery-exactly-once/workspace/base/.env",
+        "tests/integration/p1-02.contract-suite.sqlite.test.ts",
+        "tests/integration/p1-03.contract-suite.sqlite.test.ts",
+        "tests/integration/p1-04.contract-suite.sqlite.test.ts",
+        "tests/integration/p1-05.contract-suite.sqlite.test.ts",
+        "tests/integration/p1-06.contract-suite.sqlite.test.ts",
+        "tests/integration/p1-07.contract-suite.sqlite.test.ts",
+        "tests/integration/p1-08.contract-suite.sqlite.test.ts",
+        "tests/integration/p1-09.contract-suite.sqlite.test.ts",
+        "tests/integration/p1-10.contract-suite.sqlite.test.ts",
+        "tests/integration/p1-11.contract-suite.sqlite.test.ts",
+        "tests/integration/p1-12.contract-suite.sqlite.test.ts",
+        "tests/integration/p1-13.contract-suite.sqlite.test.ts",
+        "tests/integration/p1-14.contract-suite.sqlite.test.ts",
+        "tests/integration/p1-15.contract-suite.sqlite.test.ts",
+        "tests/integration/p1-16.contract-suite.sqlite.test.ts",
+        "tests/integration/p1-17.contract-suite.sqlite.test.ts"
+      ]
+    }
+  },
+  "method": {
+    "commitBlobs": "git ls-tree and git cat-file --batch for all 3099 blobs; .env filename and SQLite magic/header plus database extension detection",
+    "databaseMode": "SQLite URI mode=ro&immutable=1; query_only=ON; all tables/columns/cells scanned, no BLOB-valued cells",
+    "workingCopyCheck": "SHA256 exact committed blob equals current file before and after inspection",
+    "reportedValues": "No environment or credential candidate values included; only fields, categories, counts and source references",
+    "highConfidencePatterns": [
+      "PEM private key headers",
+      "provider-shaped sk-/GitHub/AWS keys",
+      "three-part JWT shape"
+    ],
+    "textAndStructuredScan": [
+      "sensitive JSON/column names apiKey/accessToken/refreshToken/authorization/password/secret/clientSecret/token",
+      "Bearer and credential assignment text",
+      "email address, local absolute path and HTTP URL patterns"
+    ],
+    "scope": "Snapshot b7fa329 only; not other commits in outgoing Git history"
+  },
+  "summary": {
+    "envFiles": 3,
+    "sqliteFiles": 24,
+    "databaseStorageTypes": {
+      "str": 2834,
+      "int": 606,
+      "NoneType": 64
+    },
+    "allFilesMatchCommit": true,
+    "highConfidenceCredentialHits": 0,
+    "credentialValuedFieldsIdentified": 0,
+    "privateDataPatternHitsInDatabaseText": 0,
+    "allBearerCandidatesResolved": true,
+    "supportsEvidenceBasedApprovalRetry": true,
+    "specificFileConfirmationRequiredByFindings": false,
+    "authorizationBoundary": "Local evidence supports submitting the same intended push to approval review once with this explanation. This report neither grants push permission nor bypasses the prior rejection. Do not retry via another transfer mechanism.",
+    "limitations": [
+      "Pattern scans cannot prove universal absence of secrets or identify all private prose.",
+      "Real benchmark model/session records are included; these are not empty/synthetic database shells.",
+      "Any different commit, additional outgoing history, or changed file needs separate scope verification."
+    ]
+  }
+}
