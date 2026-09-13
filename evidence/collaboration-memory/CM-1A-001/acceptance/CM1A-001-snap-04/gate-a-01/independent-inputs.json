@@ -1,0 +1,18 @@
+[
+  {
+    "path": "host-witness.test.ts",
+    "sha256": "67c51a697065aee201697c16cbd9530b13d507660b7a75b7f9fdcf7c8c4dc813"
+  },
+  {
+    "path": "run-witness.sh",
+    "sha256": "4c852860b063589c45df3608ecfb1196d0c754faafb9a2901068399ca7454889"
+  },
+  {
+    "path": "run-targeted.sh",
+    "sha256": "879078b8b1cc90103cc42732c6dabc819f9d160ac04ddd32e4be38708a2c0f48"
+  },
+  {
+    "path": "witness-entry.sh",
+    "sha256": "74869b4af7cdec34c3722674722f5bcd34f409995bd0590af198642fc8b470fb"
+  }
+]

@@ -1,0 +1,16 @@
+2026-09-13T09:36:17+08:00 cwd=/mnt/d/1.project/Software/agent_platform command=bash -c node\ --version\;\ npm\ --version\;\ pnpm\ --version\;\ uname\ -a 
+environment exit=0
+2026-09-13T09:36:18+08:00 cwd=/mnt/d/1.project/Software/agent_platform command=pnpm build 
+build exit=0
+2026-09-13T09:37:19+08:00 cwd=/mnt/d/1.project/Software/agent_platform command=pnpm typecheck 
+typecheck exit=0
+2026-09-13T09:37:48+08:00 cwd=/mnt/d/1.project/Software/agent_platform command=pnpm check:architecture 
+boundaries exit=0
+2026-09-13T09:37:52+08:00 cwd=/mnt/d/1.project/Software/agent_platform command=bash scripts/test-wsl.sh tests/coordination tests/contracts/module-ownership.test.ts 
+coordination exit=0
+2026-09-13T09:38:41+08:00 cwd=/mnt/d/1.project/Software/agent_platform command=bash scripts/test-wsl.sh 
+full-tests exit=0
+2026-09-13T09:42:32+08:00 cwd=/mnt/d/1.project/Software/agent_platform command=pnpm ui:typecheck 
+ui-typecheck exit=0
+2026-09-13T09:43:40+08:00 cwd=/mnt/d/1.project/Software/agent_platform command=node ../agent_learn/agent_dev/agent_platform/dev_docs/verification/validate-docs.mjs 
+docs exit=0

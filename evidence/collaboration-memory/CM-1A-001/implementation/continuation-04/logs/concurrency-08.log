@@ -1,0 +1,83 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [31m❯[39m tests/coordination/runtime-concurrency.test.ts [2m([22m[2m2 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[33m 2940[2mms[22m[39m
+[31m   [31m×[31m ordinary drive overlaps two actual read-only Runtime/provider calls[39m[33m 1161[2mms[22m[39m
+[31m   [31m×[31m overlapping writers share the existing exclusive lease and only one reaches the provider[39m[33m 1777[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/runtime-concurrency.test.ts[2m > [22mordinary drive overlaps two actual read-only Runtime/provider calls
+[31m[1mAssertionError[22m: [{"status":"running","error":null},{"status":"failed","error":"执行前材料校验失败：工作区读租约被拒绝：revision_conflict"}]: expected { calls: +0, active: +0, maximum: +0 } to match object { active: 2, maximum: 2 }
+(1 matching property omitted from actual)[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "active": 2,[39m
+[32m-   "maximum": 2,[39m
+[31m+   "active": 0,[39m
+[31m+   "maximum": 0,[39m
+[2m  }[22m
+
+[36m [2m❯[22m tests/coordination/runtime-concurrency.test.ts:[2m73:106[22m[39m
+    [90m 71|[39m   [35mtry[39m {
+    [90m 72|[39m     await until(() => w.counts().calls === 2 || w.runtime.all().some(r…
+    [90m 73|[39m     expect(w.counts(), JSON.stringify(w.runtime.all().map(r => ({ stat…
+    [90m   |[39m                                                                                                          [31m^[39m
+    [90m 74|[39m   } [35mfinally[39m { w[33m.[39mfinish[33m.[39m[34mrelease[39m()[33m;[39m }
+    [90m 75|[39m   [35mconst[39m result [33m=[39m [35mawait[39m drive[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/runtime-concurrency.test.ts[2m > [22moverlapping writers share the existing exclusive lease and only one reaches the provider
+[31m[1mAssertionError[22m: expected 1 to be 2 // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 2[39m
+[31m+ 1[39m
+
+[36m [2m❯[22m tests/coordination/runtime-concurrency.test.ts:[2m90:28[22m[39m
+    [90m 88|[39m   [35mconst[39m result [33m=[39m [35mawait[39m drive[33m;[39m
+    [90m 89|[39m   [34mexpect[39m(result[33m.[39mfailures)[33m.[39m[34mtoEqual[39m([])[33m;[39m
+    [90m 90|[39m   expect(result.completed).toBe(2); // both actual outcomes, including…
+    [90m   |[39m                            [31m^[39m
+    [90m 91|[39m })[33m;[39m
+    [90m 92|[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Unhandled Errors [49m[22m[31m⎯⎯⎯⎯⎯⎯[39m
+[31m[1m
+Vitest caught 1 unhandled error during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.[22m[39m
+
+[31m⎯⎯⎯⎯[39m[1m[41m Unhandled Rejection [49m[22m[31m⎯⎯⎯⎯⎯[39m
+[31m[1mError[22m: database is not open[39m
+[36m [2m❯[22m SqliteStateLedger.pendingDispatchIntents src/data/state-ledger/sqlite-ledger.ts:[2m994:8[22m[39m
+    [90m992|[39m   async pendingDispatchIntents(limit: number, selection?: import('../.…
+    [90m993|[39m     [35mconst[39m rows [33m=[39m [35mthis[39m[33m.[39mdb
+    [90m994|[39m       [33m.[39m[34mprepare[39m([32m"SELECT snapshot_json FROM snapshots"[39m)
+    [90m   |[39m        [31m^[39m
+    [90m995|[39m       [33m.[39m[34mall[39m() [35mas[39m { snapshot_json[33m:[39m string }[][33m;[39m
+    [90m996|[39m     [35mconst[39m pending[33m:[39m [33mDispatchOutboxEntrySnapshot[39m[] [33m=[39m [][33m;[39m
+[90m [2m❯[22m DispatchEngineImpl.drive src/control/dispatch-engine/dispatch-engine.ts:[2m246:46[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22m[39m
+[31m[1mSerialized Error:[22m[39m [90m{ code: 'ERR_INVALID_STATE' }[39m
+[31mThis error originated in "[1mtests/coordination/runtime-concurrency.test.ts[22m" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.[39m
+[31mThe latest test that might've caused the error is "[1mordinary drive overlaps two actual read-only Runtime/provider calls[22m". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.[39m
+[31m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[90m (2)[39m
+[2m     Errors [22m [1m[31m1 error[39m[22m
+[2m   Start at [22m 14:41:44
+[2m   Duration [22m 29.28s[2m (transform 17.83s, setup 0ms, import 23.96s, tests 2.94s, environment 0ms)[22m
+

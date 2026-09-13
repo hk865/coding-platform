@@ -1,0 +1,66 @@
+{
+  "sourceFingerprint": "f930c3efb08d9d665117ddbc974f406a09e7d98efc2f24563ef3a78f709e4a81",
+  "full": {
+    "files": 315,
+    "tests": 2113,
+    "failed": 0
+  },
+  "coordination": {
+    "files": 13,
+    "tests": 111,
+    "suites": [
+      {
+        "path": "tests/coordination/route-drive.test.ts",
+        "tests": 19
+      },
+      {
+        "path": "tests/coordination/model-request-evidence-bypass.test.ts",
+        "tests": 7
+      },
+      {
+        "path": "tests/coordination/delivery-into-input.test.ts",
+        "tests": 6
+      },
+      {
+        "path": "tests/coordination/coordination-capability.test.ts",
+        "tests": 7
+      },
+      {
+        "path": "tests/coordination/host-tool-chain.test.ts",
+        "tests": 2
+      },
+      {
+        "path": "tests/coordination/process-recovery.test.ts",
+        "tests": 13
+      },
+      {
+        "path": "tests/coordination/runtime-concurrency.test.ts",
+        "tests": 2
+      },
+      {
+        "path": "tests/coordination/control.sqlite.test.ts",
+        "tests": 4
+      },
+      {
+        "path": "tests/coordination/material-isolation.test.ts",
+        "tests": 1
+      },
+      {
+        "path": "tests/coordination/route-continuity.test.ts",
+        "tests": 14
+      },
+      {
+        "path": "tests/coordination/participation-uniqueness.test.ts",
+        "tests": 1
+      },
+      {
+        "path": "tests/coordination/handoff-successor.test.ts",
+        "tests": 7
+      },
+      {
+        "path": "tests/coordination/control.test.ts",
+        "tests": 28
+      }
+    ]
+  }
+}

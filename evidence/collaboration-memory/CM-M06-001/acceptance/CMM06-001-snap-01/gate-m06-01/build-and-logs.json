@@ -1,0 +1,17 @@
+{
+  "buildFiles": 650,
+  "buildFingerprint": "5f8e1fb98bcf1b048fcf6a29007c79b62f91e00766fcc24bca25c3d96ebbcee2",
+  "expected": "5f8e1fb98bcf1b048fcf6a29007c79b62f91e00766fcc24bca25c3d96ebbcee2",
+  "sourceFingerprint": "fb3be7f46cf471269427f1f1e2ece8651f8b185ac2408618fc56740309991d96",
+  "fullExit": "0",
+  "logHashes": {
+    "boundaries.json": "3112cd10cf247489c014e0895996b986ef7904381cc77950adc967f68a2ae10a",
+    "build.log": "4eedf4de5f70fc63d4becfd4414da6ef7e36543bb34804f530d420f3a9d09cf4",
+    "checks.exit-codes": "0d7cbf17046b030dd2b49c7c11c75b58bce60b86cf3d781895bba6e9a00dd072",
+    "full-regression.exit-code": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "full-regression.log": "43f7735f1d8eedcab61f077c63c9552f4e58ed1ce9bd3626327102a375cd354a",
+    "types.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "ui-types.log": "38ac890c60e7f38d59ddfb410325cdfb5fca83c9411765c5481754e01c021630"
+  },
+  "errors": []
+}

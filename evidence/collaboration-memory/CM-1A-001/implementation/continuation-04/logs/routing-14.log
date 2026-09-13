@@ -1,0 +1,54 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/coordination/control.test.ts [2m([22m[2m28 tests[22m[2m)[22m[32m 63[2mms[22m[39m
+ [32m✓[39m tests/coordination/route-continuity.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 241[2mms[22m[39m
+ [32m✓[39m tests/coordination/control.sqlite.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 1809[2mms[22m[39m
+ [31m❯[39m tests/coordination/route-drive.test.ts [2m([22m[2m16 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 2208[2mms[22m[39m
+     [32m✓[39m 把正文投给订阅的 owner Work，并严格推进订阅 checkpoint[32m 40[2mms[22m[39m
+     [32m✓[39m rejects a canonical page with forged target without partial writes[32m 23[2mms[22m[39m
+     [32m✓[39m rejects a canonical page with forged body without partial writes[32m 13[2mms[22m[39m
+     [32m✓[39m rejects a canonical page with forged hasMore without partial writes[32m 15[2mms[22m[39m
+     [32m✓[39m communication-route-page 专用校验拒绝：越权目标 / 页内重复投递 / 事件位置回退（既有反例保留）[32m 2[2mms[22m[39m
+     [32m✓[39m communication-route-page 两个 intent 角色分别核对：续页的版本 / 确定性 id / 来源位置 / 分页边界 / 范围固定[32m 9[2mms[22m[39m
+     [32m✓[39m startCursor=null 在 SubscriptionCreated 同事务固定起点，且不补投订阅之前的事件[32m 13[2mms[22m[39m
+[31m     [31m×[31m 3 个订阅命中同一事件位置 → 必须翻 3 页：全部拿到 Delivery、页顺序确定、每页一次 CAS、重复 drive 不重复投递[39m[32m 33[2mms[22m[39m
+     [32m✓[39m 两个消费者竞争同一 intent：一个 claimed，另一个 owned_elsewhere；过期 generation 不能 settle[32m 8[2mms[22m[39m
+     [32m✓[39m sideEffectStarted 且租约过期的 intent 不被重领（requires_reconcile），只作为可见 backlog 报告[32m 8[2mms[22m[39m
+     [32m✓[39m wait 先注册、事件后到：页满足条件 → 前驱 active 不重叠启动 → 前驱结束后恰好一次后继[32m 38[2mms[22m[39m
+     [32m✓[39m 事件先发生、wait 后注册：条件事实已在账本里，仍然只产生一次后继[32m 26[2mms[22m[39m
+     [32m✓[39m 同一 intent 连续硬失败到上界：收敛为可见 quarantine，而不是无限重试[32m 39[2mms[22m[39m
+     [32m✓[39m deadline 到点：收敛为 timed_out，而不是接续[32m 7[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite close + reopen 后仍能领取既有 wait_admission intent 并完成唯一后继 [33m 1925[2mms[22m[39m
+     [32m✓[39m 同一个 intent 重复 drive 不会重复推进（页只提交一次）[32m 9[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-drive.test.ts[2m > [22m多页路由（A03）：同一事件位置的订阅超过一页时连续完成，末页之后没有多余 intent[2m > [22m3 个订阅命中同一事件位置 → 必须翻 3 页：全部拿到 Delivery、页顺序确定、每页一次 CAS、重复 drive 不重复投递
+[31m[1mAssertionError[22m: expected [ null, …(2) ] to deeply equal [ …(2) ][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  [[22m
+[31m+   null,[39m
+[2m    "{\"aggregateType\":\"Subscription\",\"projectId\":\"proj-alpha\",\"subscriptionId\":\"sub-a\",\"workspaceId\":\"ws-shared\"}",[22m
+[2m    "{\"aggregateType\":\"Subscription\",\"projectId\":\"proj-alpha\",\"subscriptionId\":\"sub-b\",\"workspaceId\":\"ws-shared\"}",[22m
+[2m  ][22m
+
+[36m [2m❯[22m tests/coordination/route-drive.test.ts:[2m994:43[22m[39m
+    [90m992|[39m     const recordedPositions = intentChain.map((entry) => entry.subscri…
+    [90m993|[39m     [34mexpect[39m(recordedPositions)[33m.[39mnot[33m.[39m[34mtoContain[39m(maxPosition)[33m;[39m
+    [90m994|[39m     expect([...recordedPositions].sort()).toEqual([canonicalJson(order…
+    [90m   |[39m                                           [31m^[39m
+    [90m995|[39m
+    [90m996|[39m     [90m// ── 断言 5：重复 drive 不产生重复 Delivery，也不再翻页。[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m3 passed[39m[22m[90m (4)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m56 passed[39m[22m[90m (57)[39m
+[2m   Start at [22m 14:52:22
+[2m   Duration [22m 13.46s[2m (transform 36.29s, setup 0ms, import 38.75s, tests 4.32s, environment 0ms)[22m
+

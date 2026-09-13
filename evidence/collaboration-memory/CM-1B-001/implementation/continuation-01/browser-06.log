@@ -1,0 +1,9 @@
+[WebServer] $ npm run kernel:build && tsc -p tsconfig.app.json && node scripts/copy-ui.mjs && pnpm run ui:build
+[WebServer] $ pnpm --dir src/ui run build
+[WebServer] $ vite build
+
+Running 1 test using 1 worker
+
+  ✓  1 tests/memory.spec.ts:5:1 › records public experience from an actual run through the browser and preserves it after restart (23.4s)
+
+  1 passed (1.5m)

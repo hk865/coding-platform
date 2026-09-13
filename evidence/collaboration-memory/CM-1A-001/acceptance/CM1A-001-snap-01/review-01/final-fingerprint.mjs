@@ -1,0 +1,14 @@
+import {readFileSync, writeFileSync, existsSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {dirname,join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+const out=dirname(fileURLToPath(import.meta.url));
+const sha=x=>createHash('sha256').update(x).digest('hex');
+const git=(...args)=>execFileSync('git',args,{encoding:'utf8',maxBuffer:16*1024*1024});
+const paths=[...new Set((git('ls-files','-z')+git('ls-files','--others','--exclude-standard','-z')).split('\0'))].sort();
+const files=paths.filter(p=>p && !p.split('/').some(x=>['node_modules','dist','coverage','.local','.git'].includes(x)) && (/^(src\/|tests\/|scripts\/|vendor\/coding-agent\/)/.test(p)||(!p.includes('/')&&(/\.(json|yaml|yml|mjs|ts)$/.test(p)||['.gitignore','.gitattributes'].includes(p))))).map(path=>({path,sha256:existsSync(path)?sha(readFileSync(path)):'deleted'}));
+const fingerprint=sha(files.map(x=>x.path+'\0'+x.sha256+'\n').join(''));
+const data={capturedAt:new Date().toISOString(),head:git('rev-parse','HEAD').trim(),sourceFileCount:files.length,sourceFingerprintSha256:fingerprint,files};
+writeFileSync(join(out,'snapshot-final.json'),JSON.stringify(data,null,2));
+console.log(JSON.stringify({...data,files:undefined},null,2));

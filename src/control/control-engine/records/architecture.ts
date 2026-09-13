@@ -103,7 +103,8 @@ export function buildArchitectureProposalRecordLedgerCommit(
     schemaVersion: 1,
     identity: command.identity,
     fingerprint: recordCandidateBaselineProposalFingerprint(command),
-    expectedVersions: [{ ref: architectureCandidateProposalRefFor(proposal.projectId, proposal.workspaceId, proposal.proposalId), revision: 0 }],
+    expectedVersions: [{ ref: architectureCandidateProposalRefFor(proposal.projectId, proposal.workspaceId, proposal.proposalId), revision: 0 },
+      ...(proposal.selectedBriefRef?[{ref:proposal.selectedBriefRef,revision:1}]:[])],
     events: [{
       eventId: deps.eventId, eventType: "ArchitectureCandidateProposalRecorded", schemaVersion: 1,
       projectId: proposal.projectId, workspaceId: proposal.workspaceId,

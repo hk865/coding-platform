@@ -1,0 +1,141 @@
+diff --git a/PRODUCT.md b/PRODUCT.md
+index 82271484145cfcd679eb79157cbd686c4881d959..15975db735af2be1688827646acde81bf61968ab 100644
+--- a/PRODUCT.md
++++ b/PRODUCT.md
+@@ -2,7 +2,7 @@
+ 
+ ```yaml
+ status: draft
+-updated: 2026-09-11
++updated: 2026-09-12
+ scope: 用户问题、产品承诺、MVP 结果与非目标
+ ```
+ 
+@@ -61,6 +61,27 @@ Agent可在已授权范围内选择和组合工具，新增能力申请须经框
+ 
+ 上述方向依据2026-09-11用户讨论及本次正式落盘委托；[讨论记录](dev_docs/design/2026-09-11-agent模板与通用协作角色-对话记录.md)保留来源与候选建议。它不表示通用模板编辑器、跨领域工具宿主或持续多工作包协作已经实现。
+ 
++### 记忆、经验复用与领域知识支持
++
++记忆用于让系统适应用户的沟通方式、项目与团队的工作环境，并从有来源的实际工作中改进后续协作。其用途包括：
++
++- 交互适配：秘书、参谋、书记通过适用 Context 了解用户习惯、偏好的信息密度、解释深度，以及对具体主题的熟悉程度。明确表达与推测分开，不给用户固化笼统的认知能力标签。
++- 项目与团队背景：保留工具链、工作约定、架构决定及理由、环境限制和验证过的处理经验；正式规范保持权威，不由记忆摘要替代。
++- 编排与工具选择：积累何时定向读取、调用解析器、集中探索或并行分工的条件与效果，保留实际结果和适用范围；单次成功不代表通用最优策略。
++- 协作与反馈：复用任务拆分、进度检查、阻塞上报、产物交接和反馈组织的经验，减少重复调查、信息遗漏与无效打断。
++- 工作连续性与决定追溯：在换手及后续任务中保留关键理由、已接受取舍和未决事项。实时进度、授权和完成状态仍由正式持久事实维护。
++- 失败恢复与方法复用：保存有证据的失败条件、纠正和有效方法；可重复执行的过程可以整理为 Skill，并保留其经验来源。
++
++经验可以在工作中增量记录，也可以通过阶段结束后的运行记录复核和跨任务整理形成；不要求每次重读完整会话，不把普通聊天摘要自动认作可靠经验。用户应能查看、纠正和移除可维护记忆。后续运行应能追溯哪些版本被检索、哪些实际进入 Context；是否改善结果需要独立效果证据。
++
++知识库是领域冷启动与基础质量支持的一种手段。软件工程场景可接入框架资料、编码规范、架构说明、验证方法和经过选择的案例，使系统在尚无自身经验时获得必要背景。知识库支持基本质量要求，但不能仅凭接入资料保证结果或替代实际验证；其内容可以持续更新，不限于静态文档集合。
++
++知识库也可以按个人用途、项目和领域组织，作为广义记忆的外部知识来源，与经验记忆和 Skill 共同为 Context 提供材料。资料本身不自动证明用户身份、职业或偏好。个人化知识库的完整采集、编辑、组织和独立产品体验属于后续探索，本次只确认产品定位并预留接入方向，不将其纳入当前交付或 MVP 验收。
++
++记忆库可以增长，每次实际加载的材料必须相关、适用且有界：少量必要背景、按需经验与 Skill、可回查的原始来源分层使用，不将全部记忆或知识库常驻注入。角色决定职责与材料使用范围，不需要为每个知识领域新增一个 Agent。
++
++本节依据 2026-09-12 用户对交互记忆、编排经验及个人化知识库的讨论与落盘委托；“PaaS”已由用户确认为语音误识别，不作为产品定位。知识来源预留见 [Context 生命周期与记忆](dev_docs/interfaces/context-lifecycle.md#知识库作为记忆来源的接入预留2026-09-12)。本节描述产品方向，不宣称上述能力全部实现；实现范围以 [当前模块状态](human/module-status.md) 为准。
++
+ ### 状态真实性
+ 
+ Goal、Runtime Task、Attempt 和 Run 的当前状态，以及 Evidence、Decision 和状态变化的来源，由框架持久维护。
+diff --git a/dev_docs/interfaces/context-lifecycle.md b/dev_docs/interfaces/context-lifecycle.md
+index b6a4184297cae0d2134c2c6c8392fbd2efa3295e..aae5eb330c1a8c5e5f09dff839f1fc043825030f 100644
+--- a/dev_docs/interfaces/context-lifecycle.md
++++ b/dev_docs/interfaces/context-lifecycle.md
+@@ -2,7 +2,7 @@
+ 
+ ```yaml
+ status: draft
+-updated: 2026-09-11
++updated: 2026-09-12
+ first_consumer: P1-16
+ ```
+ 
+@@ -86,3 +86,24 @@ CompletedWork selection 的 notes 新增兼容旧正文的可选 reason、altern
+ P1-15 rollover 的 replacement Run ended/completed 仅证明运行终止；无正式验证归约时，workContext 中接续／未解决笔记继续可见，completedWorkView 不纳入。P1-15 回归已明确这一负例，P1-17 双存储测试保留正式完成后的正例。此处未放宽产品完成状态机。
+ 
+ 2026-09-08 P1-18 补充：跨 Run 读取另一运行产出的材料不再依赖应用层副本，而是经账本登记的 `MaterialAccessGrantV1` 授权，并绑定授权时的 planRef／workspaceRevision／sourceDigest。读者声明的当前基线与授权基线不一致时，Vault 返回 `rejected/stale`，即“旧授权与旧版本结果不随新版本继承”；重新取材必须重新授权。该机制只约束正文读取，不改变完成状态、义务或授权范围。具体语义见 [运行时协作契约](runtime-collaboration.md) 的 P1-18 记录。
++
++
++## 2026-09-12 有来源工作记忆的版本链
++
++ExecutionNote 可附带 memory { key, revision, state, topics }，作为原工作内提炼的可复用知识记录，复用现有 Ledger/Vault/Control 路径。它不是新存储 Module，也不是任意日志自动升级为长期记忆。正文必须有公开来源，topics 为有界适用主题；来源版本、验证状态及正文引用继续沿用 ExecutionNote。
++
++noteId 由 memory key 的摘要及 revision 确定。首版必须 active；后续版本须有同工作、同 key 的前一版本，独立 CAS@0 防止并发覆盖与分叉。retired 版本保留旧正文；恢复须提交后继 active 版本。写作者仍必须属于原工作绑定，跨工作知识维护委派尚未实现。
++
++CompletedWorkContext 按相关主题选 active 版本，并在账本复核后继是否存在；有后继即排除旧版本，投影视图截断不能恢复旧记忆。实际 WorkRun Context 再次检查版本有效性，随后逐条核对原 ArtifactVault 的历史访问授权。被选入内容携带记忆版本、来源和验证状态，只作历史解释，不继承工具权限、任务完成状态或验收结论。角色模板标识和任务标识可作为检索主题。
++
++当前是记忆生命周期及 Context 选材的基础实现：自动提炼工具、产品写入入口、跨任务授权选择界面、语义检索与真实开放任务质量验证尚待接通，不能据此将完整长期记忆产品标记为完成。
++
++## 知识库作为记忆来源的接入预留（2026-09-12）
++
++产品用途以 [PRODUCT 的记忆与领域知识支持](../../PRODUCT.md#记忆经验复用与领域知识支持) 为准。本节仅预留外部知识作为记忆相关材料参与选材的方向，不新增 Memory Module、Provider 注册系统或源码依赖，不表示已有知识库连接器。
++
++后续知识来源应能表达来源身份与版本、个人／项目／领域适用范围、读取权限、更新时间及是否可核实。保留外部知识、正式规范、用户明确偏好和运行提炼经验的来源区别；共同检索不等于拥有相同权威。具体 schema 与读取适配在首个实际消费者中设计，不能把外部知识伪装成由某个 Work／Run 产生的 ExecutionNote。
++
++复用现有材料登记、正文授权和 Context 选材边界：ContextCompiler 负责按职责与当前任务选取有界材料，来源不可用、过期、冲突或无权限时显式处理；不直接承担网络采集、模型提炼或知识库编辑。接入具体外部系统时再确定适配归属，保持当前 ModuleDependencyDAG。
++
++知识读取、知识整理为经验、经验整理为 Skill 是不同操作，派生内容保留来源和适用条件。多 Agent 可以在授权范围内引用同一材料版本；检索命中、进入实际模型输入和效果改善分别留证。完整个人化知识库管理与独立产品体验暂不设计，本次不改变当前工作记忆的写入资格与历史授权规则。
+diff --git a/dev_docs/interfaces/runtime-collaboration.md b/dev_docs/interfaces/runtime-collaboration.md
+index 35f7bb45541bbbd7d56512562e11745550f7267b..36c6e639d38ee2918a42df60ef5ee898c9d63b4f 100644
+--- a/dev_docs/interfaces/runtime-collaboration.md
++++ b/dev_docs/interfaces/runtime-collaboration.md
+@@ -164,3 +164,14 @@ QueryJobIntentV1.execution 可选携 kind（semantic_query / initial_coordinatio
+ 
+ 真实只读 Adapter 与执行者使用同一个 observed-model-run：模型配置、最终输入容量检查、公开事件、工具结果和实际用量同源；只读运行仅开放读取和源码工具，不拥有 Coder 写租约、编辑或 shell。记录保留输入摘要、角色、源版本前后值；运行中来源变化返回 gap，展示时来源/Goal/Workspace 变化标历史。恢复中的 running 记录保持 outcome_unknown，不自动重跑。真实模型验收与完整中断恢复尚未执行。
+ 
++
++
++## 2026-09-12 可扩展角色模板与协作选材增量
++
++沿用 RoleSpecRevision、ProjectRoleSpecActive 和协调策略角色矩阵。InstallRoleSpecRevision.payload 新增可选 revision（正整数）；省略仍是 1，保留旧命令的摘要与幂等口径。每个 (projectId, roleId, revision) 独立 CAS@0，安装新版本不自动激活、不改旧版本及矩阵 pin。角色视图列出所有已观测安装版本；当前可选 pin 优先指向生效版本，没有生效版本时指向最新安装版本。扫描不完整仍显示缺口。
++
++初始规划可以输出自定义模板标识；Context 提供当前矩阵中已安装、摘要匹配且已激活的模板正文与精确来源。计划派发按模板上界与本任务授权取交集，Control 仍执行正式受理。无矩阵时仅沿用 executor/integrator 兼容入口，自定义角色不能以名称绕过规格。Runtime 以信封权限选择 read/edit/shell 及 read 所属的索引工具；探索与独立 Reviewer 保持原只读条件和资格核对。
++
++协调查询的 collaborationWork 提供当前计划各工作指派、依赖及持久 TaskReduction 的引用、版本与依据；reductionMatchesPlan 明示是否匹配计划，缺记录为 null，超过 64 项的遗漏单独计数。它是跨工作重规划的材料基础，不将旧归约、运行结束或模型摘要当作当前业务完成；不声称已具备任意多工作包的持续联合协商。
++
++产品设置支持创建有名称、简介、职责视角和现有工具集合的模板；安装、版本激活与矩阵选择使用原治理路径。尚未提供外部工具适配器注册、任意 Prompt 文件编辑或完整 Agent 实例管理。模板产出期望仍不替代任务验收义务。
+diff --git a/dev_docs/product/README.md b/dev_docs/product/README.md
+index aeb6206f52027fb4ca46f8efd3defd3389fb29bb..44bf8c395c888c735f7b746c3cb80f93b005fa0f 100644
+--- a/dev_docs/product/README.md
++++ b/dev_docs/product/README.md
+@@ -23,6 +23,8 @@ default_agent_context: false
+ 
+ ## 当前推导主线
+ 
++用户附件补充：[2026-09-12 Agent 通信、编排与记忆原始对话](conversations/2026-09-12-agent通信编排与记忆-原始对话.md)。保留 TXT 正文与来源摘要，覆盖通信基础设施、共享事实、编排、记忆／Skill／知识库讨论；不作为已批准方案或当前状态。
++
+ 以下是本次整理者的归纳，不是原话，也不表示外部实践证明了本项目全部架构选择：
+ 
+ 1. 一次 Run 使用有限且有时效的 Context；长期目标、责任、事实和进度需要在 Run 之外维护。
+diff --git a/human/module-status.md b/human/module-status.md
+index 5fc736c3c040abdc24abc40d20db0263ef7bed95..e805ad9ba745168c920188eebded3e4e7ab99b0f 100644
+--- a/human/module-status.md
++++ b/human/module-status.md
+@@ -1,9 +1,15 @@
+ # 当前模块状态
+ 
+-更新：2026-09-11。本页是唯一当前实现状态入口；产品要求见 [PRODUCT](../PRODUCT.md)，模块责任和依赖见 [ARCHITECTURE](../ARCHITECTURE.md)。技术债清理已形成基线；当前委托为最小完整语义协作闭环，沿用现有 12 Module。
++更新：2026-09-12。本页是唯一当前实现状态入口；产品要求见 [PRODUCT](../PRODUCT.md)，模块责任和依赖见 [ARCHITECTURE](../ARCHITECTURE.md)。技术债清理已形成基线；当前委托为通用角色模板、跨工作协作与长期记忆，沿用现有 12 Module。
+ 
+ 当前事实：已接公开反馈及正式 FAIL→只读协调调查→带精确答案绑定的语义返工提案→Control受理→后继消费→当前工具重验→必要独立Reviewer→Evidence及Task归约。必要目标澄清经人的正式决定回到调查和执行；本次最小样例验收完成：302文件/1994项行为测试、27项浏览器、类型/边界/构建产物及文档验证全部通过；[完整证据](../../../../agent_platform/evidence/2026-09-11-semantic-completion/verification.md)。下列范围外未完义务保留。
+ 
++## 当前增量：模板、协作选材与工作记忆
++
++新增同角色多版本安装与激活、模板创建及职责/工具展示、规划读取可用模板、按任务和模板交集派发、Runtime 按信封组装工具。协调 Context 新增跨工作指派/依赖及正式归约依据。ExecutionNote 新增有来源记忆版本链、更新与废止；Context 排除失效版本，历史授权仍独立核对。
++
++这是一批基础增量，不等同完整多 Agent 或长期记忆产品。持续联合协商与冲突闭环、自动记忆提炼/产品写入与维护界面、通用外部工具适配器仍未完成。本批 302 文件/1997 项行为测试、28 项浏览器、类型/边界及文档 13/13 通过；验证范围和结果见[本批证据](../../../../agent_platform/evidence/2026-09-12-agent-templates-memory/verification.md)，不得沿用前次 1994/27 的通过数描述本次改动。
++
+ ## 本次源码与契约整理
+ 
+ 前轮的材料/测试分离、校验协议拆分、返工实现分责及无消费者删减保持。本轮进一步收敛有消费者的重复：删除PlanProposalPort与ReworkPlanDraftV1，提案/规划Context协议统一到planning.ts，计划字段由PlanRevisionDraft派生并保留普通变更与返工差异；初始请求迁移至requestInitial。两宿主九类共18个纯转发删除，调用者使用现有模块对象，Control和Context的真实行为保留。contracts文件115→115、接口92→91、直接命名导出1463→1465；命名导出净增源于类型归位，不将其报告成数量下降。
+@@ -124,7 +130,7 @@ flowchart TB
+ 
+ ## 剩余产品能力（不是实施顺序）
+ 
+-2026-09-11下一步产品方向已同步到[PRODUCT](../PRODUCT.md#通用角色模板与工具组合)：通用角色模板、工具组合、名片及任务级授权，以及业务不确定时的完成边界。这里只记录方向落盘；模板创建/激活/实例展示、跨领域适配和持续多工作协作尚未据此实现。契约应先复用现有RoleSpec/RoleBinding，不另建平行编排系统。
++2026-09-11下一步产品方向已同步到[PRODUCT](../PRODUCT.md#通用角色模板与工具组合)：通用角色模板、工具组合、名片及任务级授权，以及业务不确定时的完成边界。2026-09-12 已开始实现：模板创建/多版本激活及按授权派发已接通；完整实例管理、外部领域适配和持续多工作协作仍未完成。契约应先复用现有RoleSpec/RoleBinding，不另建平行编排系统。
+ 
+ 以下14项承接旧映射与全部有效未完义务；详细要求、模块和证据见 [核心义务映射](../dev_docs/verification/2026-09-10-core-obligations-map.md)。它们不授权本轮扩展功能，也不表示全部技术选型已决定。
+ 

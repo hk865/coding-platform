@@ -1,0 +1,5 @@
+src/control/control-engine/communication-reconciliation.ts(24,3): error TS2322: Type '{ status: "committed"; commandId: string; replayed: boolean; eventIds: string[]; commitCursor: CommitCursor; }' is not assignable to type 'CommunicationWriteReceipt'.
+  Property 'revisions' is missing in type '{ status: "committed"; commandId: string; replayed: boolean; eventIds: string[]; commitCursor: CommitCursor; }' but required in type '{ status: "committed"; commandId: string; replayed: boolean; eventIds: string[]; commitCursor: CommitCursor; revisions: { refKey: string; revision: number; }[]; }'.
+src/data/state-ledger/ledger-validation.ts(3407,5): error TS2304: Cannot find name 'waitAdmissionIntentIdFor'.
+src/data/state-ledger/ledger-validation.ts(3416,19): error TS2345: Argument of type 'RunSnapshot | TaskAttemptSnapshot | DispatchOutboxEntrySnapshot | WaitConditionSnapshot | CommunicationAdmissionSnapshot | CommunicationIntentSnapshot | TaskLeaseSnapshot | undefined' is not assignable to parameter of type 'JsonValue'.
+  Type 'undefined' is not assignable to type 'JsonValue'.

@@ -1,0 +1,76 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/coordination/route-continuity.test.ts [2m([22m[2m15 tests[22m[2m)[22m[33m 1238[2mms[22m[39m
+   [33m[2m✓[22m[39m Host historical start advances a 512-event page and continues to its fixed horizon without silently truncating [33m 966[2mms[22m[39m
+ [32m✓[39m tests/coordination/coordination-capability.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 17486[2mms[22m[39m
+     [33m[2m✓[22m[39m 未授予的 Run：判定给出可读原因、不提供协调工具、调用被拒且平台状态零改动 [33m 3145[2mms[22m[39m
+     [33m[2m✓[22m[39m 授予的 Run：能力依据来自账本事实、工具可用、调用被受理，并随运行记录持久化 [33m 2995[2mms[22m[39m
+     [33m[2m✓[22m[39m 同一个 Run 在两个 Work 上都满足授予条件时：拒绝授予（可读原因），不替它挑一个身份 [33m 2195[2mms[22m[39m
+     [33m[2m✓[22m[39m 不存在第二条拿到协调工具的路径：唯一注入点是运行入口，且它只在 granted 时发生 [33m 2797[2mms[22m[39m
+     [33m[2m✓[22m[39m 换手之后：旧 Run 不再被授予，新参与段的 Run 被授予（显式规则可直接核对） [33m 3855[2mms[22m[39m
+     [33m[2m✓[22m[39m 内核策略层：工具被注入但未获宿主授权时，内核按未授权的未知操作拒绝，handler 不执行 [33m 407[2mms[22m[39m
+     [33m[2m✓[22m[39m 每个写操作在动 Vault/Control 之前校验能力：授予失效后拒绝，且零平台状态变更 [33m 2091[2mms[22m[39m
+ [32m✓[39m tests/coordination/model-request-evidence-bypass.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 19345[2mms[22m[39m
+   [33m[2m✓[22m[39m each actual provider request has already consumed its own exact permit (clock=2026-09-05T12:00:00.000Z) [33m 3246[2mms[22m[39m
+   [33m[2m✓[22m[39m each actual provider request has already consumed its own exact permit (clock=2030-01-01T00:00:00.000Z) [33m 3082[2mms[22m[39m
+   [33m[2m✓[22m[39m refuses refuse before any provider side effect and records a known failure [33m 2719[2mms[22m[39m
+   [33m[2m✓[22m[39m refuses tamper_context before any provider side effect and records a known failure [33m 2218[2mms[22m[39m
+   [33m[2m✓[22m[39m refuses tamper_request before any provider side effect and records a known failure [33m 2673[2mms[22m[39m
+   [33m[2m✓[22m[39m canonical cancellation between requests prevents the second provider request [33m 2936[2mms[22m[39m
+   [33m[2m✓[22m[39m direct ledger writes cannot forge a second consumed permit or a mismatched input digest [33m 2470[2mms[22m[39m
+ [32m✓[39m tests/coordination/delivery-into-input.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 20981[2mms[22m[39m
+     [33m[2m✓[22m[39m Delivery 正文、精确版本与选入理由都进入捕获的 ModelRequest 与 manifest.selected [33m 4409[2mms[22m[39m
+     [33m[2m✓[22m[39m 调用证据（D06）：model_request_evidence 落账，requestDigest = 捕获请求重算的 sha256，contextInputDigest = manifest.inputDigest，同一许可的第二次尝试被拒 [33m 3978[2mms[22m[39m
+     [33m[2m✓[22m[39m 撤权之后：该 Delivery 不允许进入新的输入（材料组装在模型调用之前失败） [33m 2803[2mms[22m[39m
+     [33m[2m✓[22m[39m 来源在本次运行期间被更新：basis 不一致 → 精确授权失效 → 拒绝进入新输入 [33m 3419[2mms[22m[39m
+   [33m[2m✓[22m[39m grant revocation racing the attempted commit prevents the actual provider even after authorization [33m 3826[2mms[22m[39m
+   [33m[2m✓[22m[39m source permission revoked after the first real request prevents a second request in the same Run [33m 2544[2mms[22m[39m
+ [32m✓[39m tests/contracts/module-ownership.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 6287[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps the workspace path-boundary policy in exactly one WorkspaceReader file [33m 5565[2mms[22m[39m
+ [32m✓[39m tests/coordination/host-tool-chain.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 12314[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='task'/'all' [33m 4325[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'all' [33m 4173[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'any' [33m 3815[2mms[22m[39m
+ [32m✓[39m tests/coordination/alternative-report-hosts.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4674[2mms[22m[39m
+   [33m[2m✓[22m[39m three distinct Works use real Host tools: first report resumes the coordinator, late reporter continues, restart does not repeat [33m 4673[2mms[22m[39m
+ [32m✓[39m tests/coordination/material-isolation.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 1594[2mms[22m[39m
+   [33m[2m✓[22m[39m three real Works share one formally routed body: two authorized readers, third denied even after identical-body put and SQLite reopen [33m 1593[2mms[22m[39m
+ [32m✓[39m tests/coordination/control.sqlite.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 1707[2mms[22m[39m
+ [32m✓[39m tests/coordination/runtime-concurrency.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 5176[2mms[22m[39m
+   [33m[2m✓[22m[39m ordinary drive overlaps two actual read-only Runtime/provider calls [33m 2455[2mms[22m[39m
+   [33m[2m✓[22m[39m overlapping writers share the existing exclusive lease and only one reaches the provider [33m 2720[2mms[22m[39m
+ [32m✓[39m tests/coordination/participation-uniqueness.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 238[2mms[22m[39m
+ [32m✓[39m tests/coordination/handoff-successor.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 231[2mms[22m[39m
+ [32m✓[39m tests/coordination/control.test.ts [2m([22m[2m28 tests[22m[2m)[22m[32m 71[2mms[22m[39m
+ [32m✓[39m tests/coordination/communication-view.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m tests/coordination/report-observation.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/coordination/route-drive.test.ts [2m([22m[2m30 tests[22m[2m)[22m[33m 54689[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'any' missing-first=false revoke-before=false report-first=undefined preserves actual conditions and retains late reports [33m 6771[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'all' missing-first=false revoke-before=false report-first=undefined preserves actual conditions and retains late reports [33m 1632[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'any' missing-first=true revoke-before=false report-first=undefined preserves actual conditions and retains late reports [33m 2776[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'any' missing-first=false revoke-before=true report-first=undefined preserves actual conditions and retains late reports [33m 2766[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite close + reopen 后仍能领取既有 wait_admission intent 并完成唯一后继 [33m 2246[2mms[22m[39m
+   [33m[2m✓[22m[39m independent process exit before_page recovers fixed subscription pages exactly once [33m 13336[2mms[22m[39m
+   [33m[2m✓[22m[39m independent process exit after_page recovers fixed subscription pages exactly once [33m 13513[2mms[22m[39m
+   [33m[2m✓[22m[39m independent consumers preserve the new generation result when the old process settles late [33m 11174[2mms[22m[39m
+ [32m✓[39m tests/coordination/process-recovery.test.ts [2m([22m[2m13 tests[22m[2m)[22m[33m 445886[2mms[22m[39m
+   [33m[2m✓[22m[39m two independent processes race the same durable outbox; only one enters the actual provider [33m 31478[2mms[22m[39m
+   [33m[2m✓[22m[39m process exit at before_start reopens SQLite and never repeats an ambiguous external action [33m 40397[2mms[22m[39m
+   [33m[2m✓[22m[39m process exit at after_bind reopens SQLite and never repeats an ambiguous external action [33m 32355[2mms[22m[39m
+   [33m[2m✓[22m[39m process exit at after_authorize reopens SQLite and never repeats an ambiguous external action [33m 30998[2mms[22m[39m
+   [33m[2m✓[22m[39m process exit at after_attempt reopens SQLite and never repeats an ambiguous external action [33m 29865[2mms[22m[39m
+   [33m[2m✓[22m[39m process exit at provider_effect reopens SQLite and never repeats an ambiguous external action [33m 30964[2mms[22m[39m
+   [33m[2m✓[22m[39m process exit at after_terminal reopens SQLite and never repeats an ambiguous external action [33m 34036[2mms[22m[39m
+   [33m[2m✓[22m[39m a committed claim with no wake survives process restart and executes exactly once [33m 19356[2mms[22m[39m
+   [33m[2m✓[22m[39m an unconsumed execution generation is fenced before retry; an old process arriving late cannot enter Runtime [33m 47181[2mms[22m[39m
+   [33m[2m✓[22m[39m a process exit after start authorization but before begin produces a durable no-effect retry [33m 43730[2mms[22m[39m
+   [33m[2m✓[22m[39m cancel intent persisted before a caller crash is applied after restart without any Runtime execution [33m 13887[2mms[22m[39m
+   [33m[2m✓[22m[39m late durable Runtime terminal receipt reconciles an unknown Run (cancel=false) without replay [33m 43747[2mms[22m[39m
+   [33m[2m✓[22m[39m late durable Runtime terminal receipt reconciles an unknown Run (cancel=true) without replay [33m 47892[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m17 passed[39m[22m[90m (17)[39m
+[2m      Tests [22m [1m[32m148 passed[39m[22m[90m (148)[39m
+[2m   Start at [22m 17:36:25
+[2m   Duration [22m 469.34s[2m (transform 65.40s, setup 0ms, import 110.52s, tests 591.93s, environment 1ms)[22m
+

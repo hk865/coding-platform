@@ -1,0 +1,21 @@
+import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+const root=process.cwd(), out=join(root,'evidence/collaboration-memory/CM-1B-001/implementation/CM1B-001-snap-01');
+const snapshot=JSON.parse(readFileSync(join(out,'source-snapshot.json')));
+const rc=readFileSync(join(out,'logs/full-regression.exit-code'),'utf8').trim();
+if(rc!=='0') throw Error('Full regression is not successful: '+rc);
+execFileSync(process.execPath,['scripts/source-snapshot.mjs','--out',join(out,'source-snapshot-after.json')],{cwd:root});
+const after=JSON.parse(readFileSync(join(out,'source-snapshot-after.json')));
+if(after.sourceFingerprintSha256!==snapshot.sourceFingerprintSha256) throw Error('Frozen source changed');
+if(readFileSync(join(out,'logs/checks.exit-codes'),'utf8').trim()!=='types=0 boundaries=0 ui=0 build=0')throw Error('Final checks did not pass');
+const files={};
+function walk(dir){for(const entry of readdirSync(dir,{withFileTypes:true})){const path=join(dir,entry.name); if(entry.isDirectory())walk(path);else files[relative(root,path).replaceAll('\\','/')]=createHash('sha256').update(readFileSync(path)).digest('hex');}}
+walk(join(root,'dist'));walk(join(root,'vendor/coding-agent/dist'));
+const digest=createHash('sha256');for(const path of Object.keys(files).sort())digest.update(path+'\0'+files[path]+'\n');
+writeFileSync(join(out,'build-origin.json'),JSON.stringify({sourceFingerprintSha256:snapshot.sourceFingerprintSha256,fileCount:Object.keys(files).length,sha256:digest.digest('hex'),files},null,2));
+const log=readFileSync(join(out,'logs/full-regression.log'),'utf8').replace(/\u001b\[[0-9;]*m/g,'');
+const summary=log.slice(log.lastIndexOf(' Test Files'));
+writeFileSync(join(out,'verification.md'),'# 冻结验证\n\n源码起止一致：'+snapshot.sourceFingerprintSha256+'。\n\n```text\n'+readFileSync(join(out,'logs/checks.exit-codes'),'utf8')+summary+'```\n\n完整日志位于logs/，构建文件摘要见build-origin.json。文档治理在WSL环境13/13通过，见logs/documents.log。浏览器和独立反例按handoff.md的准确覆盖范围引用，不扩大为整批通过。\n');
+console.log(summary);

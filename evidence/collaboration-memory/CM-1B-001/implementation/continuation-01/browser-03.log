@@ -1,0 +1,10 @@
+[WebServer] $ npm run kernel:build && tsc -p tsconfig.app.json && node scripts/copy-ui.mjs && pnpm run ui:build
+[WebServer] $ pnpm --dir src/ui run build
+[WebServer] $ vite build
+
+Running 2 tests using 1 worker
+
+  ✓  1 tests/memory.spec.ts:4:1 › maintains profile memory through UI, persists across projects and exposes conflicts without claiming adoption (1.9s)
+  ✓  2 tests/memory.spec.ts:32:1 › three purposes show different real responses and historical adoption versions after explicit UI saves (12.2s)
+
+  2 passed (1.4m)

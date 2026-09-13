@@ -1,0 +1,21 @@
+{
+  "oldHead": "0eb02717d16412298c786166a75ca1a9d3e05ac7",
+  "newHead": "0eb02717d16412298c786166a75ca1a9d3e05ac7",
+  "fingerprintChanged": true,
+  "added": [],
+  "removed": [],
+  "changed": [
+    "src/contracts/coordination-tools.ts",
+    "src/contracts/dispatch.ts",
+    "src/contracts/ledger.ts",
+    "src/contracts/ports.ts",
+    "src/control/dispatch-engine/coordination-tool-access.ts",
+    "src/control/dispatch-engine/dispatch-engine.ts",
+    "src/execution/worker-runtime/coordination-tools.ts",
+    "src/harness/persistent-harness.ts",
+    "tests/control/dispatch-drive.test.ts",
+    "tests/coordination/coordination-capability.test.ts",
+    "tests/coordination/model-request-evidence-bypass.test.ts",
+    "vendor/coding-agent/INTEGRATION.md"
+  ]
+}

@@ -1,0 +1,43 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/contracts/module-ownership.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 4550[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps the workspace path-boundary policy in exactly one WorkspaceReader file [33m 3995[2mms[22m[39m
+ [32m✓[39m tests/memory/host.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4134[2mms[22m[39m
+   [33m[2m✓[22m[39m host maintains a stable profile, isolates projects and requires selected-version copying across reopen [33m 4133[2mms[22m[39m
+ [32m✓[39m tests/app/semantic-query.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4973[2mms[22m[39m
+   [33m[2m✓[22m[39m runs sourced semantic queries without a plan and alongside a live writer, persists real kernel inputs and denies writes [33m 4972[2mms[22m[39m
+ [32m✓[39m tests/memory/query-input.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 7166[2mms[22m[39m
+   [33m[2m✓[22m[39m three response purposes adopt current persisted versions in real kernel requests and retain separate save/adoption facts [33m 7165[2mms[22m[39m
+ [32m✓[39m tests/memory/maintenance.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 370[2mms[22m[39m
+ [32m✓[39m tests/control/work-record.test.ts [2m([22m[2m15 tests[22m[2m)[22m[33m 352[2mms[22m[39m
+ [32m✓[39m tests/context/work-run-materials.test.ts [2m([22m[2m22 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m tests/memory/context.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 279[2mms[22m[39m
+ [31m❯[39m tests/coordination/host-tool-chain.test.ts [2m([22m[2m4 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 11611[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='task'/'all' memory=false [33m 4479[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'all' memory=false [33m 2472[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'any' memory=false [33m 2609[2mms[22m[39m
+[31m     [31m×[31m 模型经真实工具与重启形成精确输入；admission Work 类型='task'/'all' memory=true[39m[33m 2050[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/host-tool-chain.test.ts[2m > [22mHost 工具链（A02/A05/A06/A09）：请求 → 报告 → 订阅 → all-wait → 唯一后继 → 实际输入[2m > [22m模型经真实工具与重启形成精确输入；admission Work 类型='task'/'all' memory=true
+[31m[1mError[22m: Select an actual started run in this workspace[39m
+[36m [2m❯[22m recordExperience src/app/memory.ts:[2m25:128[22m[39m
+    [90m 23|[39m   if(loaded.status!=='found'||loaded.snapshot.ref.aggregateType!=='Run…
+    [90m 24|[39m   [35mconst[39m run[33m=[39mloaded[33m.[39msnapshot [35mas[39m [33mRunSnapshot[39m[33m;[39m
+    [90m 25|[39m   if(run.workspaceSnapshot.workspaceId!==workspaceId||!['running','com…
+    [90m   |[39m                                                                                                                                [31m^[39m
+    [90m 26|[39m   const work=await host.control.resolveTaskWorkIdentity({projectId,wor…
+    [90m 27|[39m   if(work.status!=='resolved')throw Error('Canonical task work is unav…
+[90m [2m❯[22m Object.action src/app/memory.ts:[2m122:51[22m[39m
+[90m [2m❯[22m tests/coordination/host-tool-chain.test.ts:[2m528:14[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m8 passed[39m[22m[90m (9)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m59 passed[39m[22m[90m (60)[39m
+[2m   Start at [22m 19:07:17
+[2m   Duration [22m 30.34s[2m (transform 39.10s, setup 0ms, import 57.55s, tests 33.45s, environment 1ms)[22m
+

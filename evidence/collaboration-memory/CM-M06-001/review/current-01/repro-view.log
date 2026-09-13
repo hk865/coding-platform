@@ -1,0 +1,9 @@
+{
+  "canonicalTerminal": true,
+  "actualReason": "waiting_for_predecessor",
+  "actualMatched": 1,
+  "actualAnySelection": {
+    "status": "pending"
+  },
+  "expectedAfterTerminal": "must not be waiting_for_predecessor"
+}

@@ -1,0 +1,40 @@
+{
+  "base": "http://127.0.0.1:4498",
+  "checkedAt": "2026-09-12T04:56:39.393Z",
+  "checks": [
+    {
+      "route": "/",
+      "status": 200,
+      "digest": "315b905debf45e3c8fd4485c72180c1051e34274c4e9f7e607e0b36d56f0bdff"
+    },
+    {
+      "route": "/workbench",
+      "status": 200,
+      "digest": "315b905debf45e3c8fd4485c72180c1051e34274c4e9f7e607e0b36d56f0bdff"
+    },
+    {
+      "route": "/workbench/assets/index-CdX2Ww2F.js",
+      "status": 200,
+      "bytes": 714918,
+      "digest": "69b6d310bbb2405a389a9c82736e96b8dfed8f57ccc65cac4134acddccbc4d1b",
+      "matchesBuiltBytes": true
+    },
+    {
+      "route": "/workbench/assets/index-BDq-QD5v.css",
+      "status": 200,
+      "bytes": 240077,
+      "digest": "31e07b53fb807f69cdd87080d72b766f7068766e4f48db383f586f8b129df514",
+      "matchesBuiltBytes": true
+    },
+    {
+      "route": "/legacy",
+      "status": 200,
+      "digest": "8bffa7ba095856ee8747a71eb85ef84fd86015dff2df6d11198d0531f7766d50"
+    },
+    {
+      "route": "/app.js",
+      "status": 200,
+      "digest": "42695bdc5881e8e7275d3ae0263dd21cb73441bfbf86199d2b5100d1da83677b"
+    }
+  ]
+}

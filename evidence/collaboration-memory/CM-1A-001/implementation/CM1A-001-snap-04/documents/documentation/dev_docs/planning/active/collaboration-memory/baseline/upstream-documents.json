@@ -1,0 +1,317 @@
+{
+  "schema": "cm-preparation-upstream-v1",
+  "generated_at": "2026-09-12T15:52:19.043Z",
+  "roots": {
+    "docs": "D:/1.project/Software/agent_learn/agent_dev/agent_platform",
+    "product": "D:/1.project/Software/agent_platform"
+  },
+  "path_resolution": "Paths are repository-root-relative. Map roots to the receiving workspace; compare raw-byte SHA256. This manifest and PREPARATION-CHECKS.md are excluded from inputs to avoid self-reference.",
+  "entries": [
+    {
+      "repository": "docs",
+      "path": "AGENTS.md",
+      "bytes": 2799,
+      "sha256": "1c761ec886c6cdd65a3073b7cae3d6b69a7b28cb9b962f9d084d92ce4c9f8fca"
+    },
+    {
+      "repository": "docs",
+      "path": "PRODUCT.md",
+      "bytes": 17157,
+      "sha256": "93cbd9d41ad72f6394512f952b97f3b8784133d691ee00b4b0f53c124c072c52"
+    },
+    {
+      "repository": "docs",
+      "path": "ARCHITECTURE.md",
+      "bytes": 30373,
+      "sha256": "ddf41aeb00a12ef8745d72984e5d19fa6fae7bac323175ddce8ff7e258734518"
+    },
+    {
+      "repository": "docs",
+      "path": "CONTEXT.md",
+      "bytes": 6017,
+      "sha256": "724c47d89bf65cf9440bffed82a1d01f7c2853f2779df198d83e0abfae4b456a"
+    },
+    {
+      "repository": "docs",
+      "path": "human/module-status.md",
+      "bytes": 20695,
+      "sha256": "a7004a46adfd58602146c65eba39f31497e47942c790dabfc18bdf20b155eb2e"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/document-ownership.md",
+      "bytes": 3998,
+      "sha256": "39afe3a13f0958271712534c1395e4f10da53355b61deef1949b195a7636788c"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/agent/README.md",
+      "bytes": 3988,
+      "sha256": "c1edb2d3e61d4c0dba482afab4f9dffd3b2812364db46f12840bd953eaca1ada"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/agent/project-location.md",
+      "bytes": 3675,
+      "sha256": "347f359fbda3d9ad6c32f0078b66b5637cf94f7ee6248a1c2ab5ad1c7abbbedc"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/interfaces/runtime-collaboration.md",
+      "bytes": 27231,
+      "sha256": "dbbd1e6036d9838ceb3af7d393e340ffa294e6be159b931aa4f79753c01574a0"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/interfaces/context-lifecycle.md",
+      "bytes": 12503,
+      "sha256": "0b61f7a4d06dede910a4eae0293005091785de35e2b7031c70db93db20f0f06c"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/interfaces/state-ledger.md",
+      "bytes": 12161,
+      "sha256": "c223d6251e421afa9d3cbc0ea99bacd88d711e437397f52618e8bb1bbcd2d58d"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/interfaces/command-event.md",
+      "bytes": 14586,
+      "sha256": "9b97295ee0e5987f30a9e1b317051888fb9841cceb38847ae2d3c98d2926883e"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/interfaces/module-boundaries.md",
+      "bytes": 28359,
+      "sha256": "1a4bba6205560fa8beb62cb1e2beb7b28d4dc21ef80c3e2dfc1ed6f70f93fe6c"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/interfaces/human-design-status.md",
+      "bytes": 5377,
+      "sha256": "5f1c72b91ba5ece6cffb60d34f8b585643a16c1febf2dd5fdd60dea318412271"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/modules/control/control-engine.md",
+      "bytes": 12127,
+      "sha256": "5a374f2ba316625e05abb4a12f0a17d73d76efdb5f943747e651799eb359bf6d"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/modules/control/dispatch-engine.md",
+      "bytes": 5408,
+      "sha256": "072de6c1d62470f17b028b80b65c7af00048f281324c03ff985e91116284be8c"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/modules/control/plan-compiler.md",
+      "bytes": 5311,
+      "sha256": "ca805c07ea8f41f458cc1c54768dc38c73d5f8bd3bbf24f7a4c73635c44aeac6"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/modules/data/state-ledger.md",
+      "bytes": 8183,
+      "sha256": "9c2d181499e3c73a7d2ea05350ddcd31237b64425ea73ec16d46c8f996e7ae9c"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/modules/data/context-compiler.md",
+      "bytes": 7602,
+      "sha256": "7c9e67ebde91f403e8e1be673809f1ff34792acaf6d1ebf7af10792b9ead932f"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/modules/data/artifact-vault.md",
+      "bytes": 8016,
+      "sha256": "259d44d58056f1ed69bbf20fb98a088fced1ed93f6ff9b4cc132d51418a62e21"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/modules/data/workspace-reader.md",
+      "bytes": 10564,
+      "sha256": "9efbab21aa90416fd9f6c18e721d6a4f149ddaf626cd122ddf08f654ded09ff6"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/modules/data/read-model-index.md",
+      "bytes": 12684,
+      "sha256": "190a27d9bad6bcfa25e79002c3a870e1ac6e3cf9a6701eded2cdd2b294b54376"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/modules/execution/worker-runtime.md",
+      "bytes": 5902,
+      "sha256": "87e282b5fea37250e124c7ec389aaaae2ff294214e18f09b2342997f939e58e2"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/modules/interaction/human-collaboration.md",
+      "bytes": 6863,
+      "sha256": "967fec0fa7e05e03cefe56ccacb33e657e369a9aa4c9430f30ca77ede04e6b4a"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/planning/active/collaboration-memory/PLAN.md",
+      "bytes": 97990,
+      "sha256": "3316e6e5dc26088304f1858139b155d0a94ce91673cb4d81115d70d76f3bbc0d"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/planning/active/collaboration-memory/READINESS.md",
+      "bytes": 15583,
+      "sha256": "dafd5181e4fc1ae9b51721dc06bf3af119e46889c835b55dea13a26b2e578fd0"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/planning/active/collaboration-memory/CURRENT-CALLCHAIN-EVIDENCE.md",
+      "bytes": 43296,
+      "sha256": "969188f7d1f95fb31f211ca81f29b820b9e0fdd3264195e2831f086f56ddf78a"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/planning/active/collaboration-memory/MEMORY-REUSE-EVIDENCE.md",
+      "bytes": 25114,
+      "sha256": "5eb277be9332813cb485c97d4cedd123e5808fc738cbe65327e2e60247f90274"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/planning/active/collaboration-memory/MAIN-AGENT-PROMPT.md",
+      "bytes": 9075,
+      "sha256": "8f65f9440bec9bd2a2a89966dbfd7713f4d6c86ed071225269f7f162ae71613e"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/planning/active/collaboration-memory/IMPLEMENTATION-PROMPT.md",
+      "bytes": 5695,
+      "sha256": "78bd7eb21b7f92e1f039dc1847976c8c26243d93dc4680c02fc2cbfb24818ff9"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/planning/active/collaboration-memory/ACCEPTANCE-PROMPT.md",
+      "bytes": 7157,
+      "sha256": "637f08d265fb7089b012b60edb935c3b9f843c079ca98862455493c3e87dbe55"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/planning/active/collaboration-memory/CM-1A-001.md",
+      "bytes": 19353,
+      "sha256": "5abddec87950399d4b97b07dadc1871ef138d4020d5b54353f1780890b2ebffc"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/planning/active/collaboration-memory/HANDOFF.md",
+      "bytes": 10641,
+      "sha256": "bb0d87e830f67d5d4c607160b12598ed58caffc7704ccf13b3ec2e404624dfab"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/planning/active/collaboration-memory/BASELINE.md",
+      "bytes": 11432,
+      "sha256": "b2d5828a05aa6abb2688ba2cf79c8e2f4f480712ef845a28f99805037a18f0fd"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/planning/active/collaboration-memory/baseline/preparation-baseline.json",
+      "bytes": 13545,
+      "sha256": "18ac4821695f8afc9e33b738af739cda9545950c54acc7c7edbbb9a12c519024"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/planning/active/collaboration-memory/baseline/product-working-tree.patch",
+      "bytes": 77572,
+      "sha256": "e81abc4503ddebfe964d9b10e9f35b351b023001a5e3f1d925924b587eb13148"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/planning/active/collaboration-memory/baseline/product-untracked-source.patch",
+      "bytes": 2082,
+      "sha256": "5a3ac31f22506b56c825bc626fddc580860c2ae2c4fede37fd0452cd790d3d4b"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/planning/active/collaboration-memory/baseline/docs-working-tree.patch",
+      "bytes": 16337,
+      "sha256": "e24c06e86f0bf1acf053dbc82fb89b903d207b04580527d145b7ed3cf1ebd124"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/planning/active/collaboration-memory/baseline/docs-untracked-sources.patch",
+      "bytes": 71267,
+      "sha256": "4b5c4350de89285cf89477effb03bcab5eede95fe68c408b45b517f93fd88b6d"
+    },
+    {
+      "repository": "docs",
+      "path": "dev_docs/product/conversations/2026-09-12-agent通信编排与记忆-原始对话.md",
+      "bytes": 55167,
+      "sha256": "b3579c574f9f8c657de36bbac44a5d52a43cd93898b189674aa19323a7504842"
+    },
+    {
+      "repository": "product",
+      "path": "AGENTS.md",
+      "bytes": 1283,
+      "sha256": "80f5ab9221fa7c98d081fe7c1f2e7af0003ac24b30751371cf05ad17e487ce1c"
+    },
+    {
+      "repository": "product",
+      "path": "package.json",
+      "bytes": 1270,
+      "sha256": "f396b8a18957089b70993f0c6b26a59436a205faa3a8ee8792abe3633f1150cb"
+    },
+    {
+      "repository": "product",
+      "path": "pnpm-lock.yaml",
+      "bytes": 24020,
+      "sha256": "36a59be6f7b7454cc6314bdbb79cf29bf019513139c40bf64ceac9c3b82573e0"
+    },
+    {
+      "repository": "product",
+      "path": "scripts/test-wsl.sh",
+      "bytes": 2862,
+      "sha256": "7b4ca64f0de135b955a3916e66bbe043896110d49ab83cd71ca509318f82aba0"
+    },
+    {
+      "repository": "product",
+      "path": "scripts/check-module-boundaries.mjs",
+      "bytes": 4655,
+      "sha256": "3761d7d02f678c4ee70d8a53dc13f11db52465a73f2a16cc18eb93c5ecde241d"
+    },
+    {
+      "repository": "product",
+      "path": "vendor/coding-agent/AGENTS.md",
+      "bytes": 5200,
+      "sha256": "702e6abb88f070cebfee31403f12d6f1e3cbcd5184b9cffe1411aae48c4da557"
+    },
+    {
+      "repository": "product",
+      "path": "vendor/coding-agent/INTEGRATION.md",
+      "bytes": 6197,
+      "sha256": "57bc0d8e3932c38decba7d1b0ff0e9e56bd19845e1431832e63fc87f946b43b7"
+    },
+    {
+      "repository": "product",
+      "path": "vendor/coding-agent/package.json",
+      "bytes": 1820,
+      "sha256": "80f90ed899a6a8a92dc9d5fef03543c3f360b86239315524c91dc4912d115960"
+    },
+    {
+      "repository": "product",
+      "path": "vendor/coding-agent/package-lock.json",
+      "bytes": 84994,
+      "sha256": "539c17ababb09c56cbf3ebdee29fc0d7364eea1de6be6e938b52a8cda0d00d9d"
+    },
+    {
+      "repository": "product",
+      "path": "src/ui/package.json",
+      "bytes": 914,
+      "sha256": "8488ea88e06217d3409585ac8b6e2b4eb5c291be14197492f1c34e349214cd12"
+    },
+    {
+      "repository": "product",
+      "path": "src/ui/tests/playwright.config.ts",
+      "bytes": 1881,
+      "sha256": "c5c162fd66c0108a399ab3fce31dce0884db3b984000dec9fbde67aee612a39e"
+    }
+  ]
+}

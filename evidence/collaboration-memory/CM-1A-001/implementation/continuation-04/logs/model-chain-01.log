@@ -1,0 +1,125 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/contracts/module-ownership.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 4558[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps the workspace path-boundary policy in exactly one WorkspaceReader file [33m 3944[2mms[22m[39m
+ [31m❯[39m tests/coordination/host-tool-chain.test.ts [2m([22m[2m1 test[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 1718[2mms[22m[39m
+[31m     [31m×[31m 模型经真实工具发起请求与报告；重启后唯一后继被受理、准备并带着精确报告版本跑起来[39m[33m 1717[2mms[22m[39m
+ [31m❯[39m tests/coordination/delivery-into-input.test.ts [2m([22m[2m4 tests[22m[2m | [22m[31m4 failed[39m[2m)[22m[33m 5180[2mms[22m[39m
+[31m     [31m×[31m Delivery 正文、精确版本与选入理由都进入捕获的 ModelRequest 与 manifest.selected[39m[33m 1712[2mms[22m[39m
+[31m     [31m×[31m 调用证据（D06）：model_request_evidence 落账，requestDigest = 捕获请求重算的 sha256，contextInputDigest = manifest.inputDigest，同一许可的第二次尝试被拒[39m[33m 1264[2mms[22m[39m
+[31m     [31m×[31m 撤权之后：该 Delivery 不允许进入新的输入（材料组装在模型调用之前失败）[39m[33m 1090[2mms[22m[39m
+[31m     [31m×[31m 来源在本次运行期间被更新：basis 不一致 → 精确授权失效 → 拒绝进入新输入[39m[33m 1112[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 5 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/delivery-into-input.test.ts[2m > [22m目标 Delivery 进入实际模型输入（A06）[2m > [22mDelivery 正文、精确版本与选入理由都进入捕获的 ModelRequest 与 manifest.selected
+[31m[1mAssertionError[22m: [{"runId":"run-pred","status":"failed","error":"真实执行失败，请检查模型配置、工作区隔离和运行记录。"}]: expected [] to have a length of 1 but got +0[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 1[39m
+[31m+ 0[39m
+
+[36m [2m❯[22m buildWorld tests/coordination/delivery-into-input.test.ts:[2m261:131[22m[39m
+    [90m259|[39m   [34mexpect[39m(first[33m.[39mfailures[33m,[39m [33mJSON[39m[33m.[39m[34mstringify[39m(first[33m.[39mfailures))[33m.[39m[34mtoEqual[39m([])[33m;[39m
+    [90m260|[39m   [34mexpect[39m(first[33m.[39mstarted)[33m.[39m[34mtoBe[39m([34m1[39m)[33m;[39m
+    [90m261|[39m   expect(requests, JSON.stringify(runtime.all().map((row) => ({ runId:…
+    [90m   |[39m                                                                                                                                   [31m^[39m
+    [90m262|[39m   [34mexpect[39m([33mJSON[39m[33m.[39m[34mstringify[39m(requests[[34m0[39m]))[33m.[39mnot[33m.[39m[34mtoContain[39m([33mDELIVERY_NONCE[39m)[33m;[39m
+    [90m263|[39m
+[90m [2m❯[22m tests/coordination/delivery-into-input.test.ts:[2m383:15[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/delivery-into-input.test.ts[2m > [22m目标 Delivery 进入实际模型输入（A06）[2m > [22m调用证据（D06）：model_request_evidence 落账，requestDigest = 捕获请求重算的 sha256，contextInputDigest = manifest.inputDigest，同一许可的第二次尝试被拒
+[31m[1mAssertionError[22m: [{"runId":"run-pred","status":"failed","error":"真实执行失败，请检查模型配置、工作区隔离和运行记录。"}]: expected [] to have a length of 1 but got +0[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 1[39m
+[31m+ 0[39m
+
+[36m [2m❯[22m buildWorld tests/coordination/delivery-into-input.test.ts:[2m261:131[22m[39m
+    [90m259|[39m   [34mexpect[39m(first[33m.[39mfailures[33m,[39m [33mJSON[39m[33m.[39m[34mstringify[39m(first[33m.[39mfailures))[33m.[39m[34mtoEqual[39m([])[33m;[39m
+    [90m260|[39m   [34mexpect[39m(first[33m.[39mstarted)[33m.[39m[34mtoBe[39m([34m1[39m)[33m;[39m
+    [90m261|[39m   expect(requests, JSON.stringify(runtime.all().map((row) => ({ runId:…
+    [90m   |[39m                                                                                                                                   [31m^[39m
+    [90m262|[39m   [34mexpect[39m([33mJSON[39m[33m.[39m[34mstringify[39m(requests[[34m0[39m]))[33m.[39mnot[33m.[39m[34mtoContain[39m([33mDELIVERY_NONCE[39m)[33m;[39m
+    [90m263|[39m
+[90m [2m❯[22m tests/coordination/delivery-into-input.test.ts:[2m428:15[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/delivery-into-input.test.ts[2m > [22m目标 Delivery 进入实际模型输入（A06）[2m > [22m撤权之后：该 Delivery 不允许进入新的输入（材料组装在模型调用之前失败）
+[31m[1mAssertionError[22m: [{"runId":"run-pred","status":"failed","error":"真实执行失败，请检查模型配置、工作区隔离和运行记录。"}]: expected [] to have a length of 1 but got +0[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 1[39m
+[31m+ 0[39m
+
+[36m [2m❯[22m buildWorld tests/coordination/delivery-into-input.test.ts:[2m261:131[22m[39m
+    [90m259|[39m   [34mexpect[39m(first[33m.[39mfailures[33m,[39m [33mJSON[39m[33m.[39m[34mstringify[39m(first[33m.[39mfailures))[33m.[39m[34mtoEqual[39m([])[33m;[39m
+    [90m260|[39m   [34mexpect[39m(first[33m.[39mstarted)[33m.[39m[34mtoBe[39m([34m1[39m)[33m;[39m
+    [90m261|[39m   expect(requests, JSON.stringify(runtime.all().map((row) => ({ runId:…
+    [90m   |[39m                                                                                                                                   [31m^[39m
+    [90m262|[39m   [34mexpect[39m([33mJSON[39m[33m.[39m[34mstringify[39m(requests[[34m0[39m]))[33m.[39mnot[33m.[39m[34mtoContain[39m([33mDELIVERY_NONCE[39m)[33m;[39m
+    [90m263|[39m
+[90m [2m❯[22m tests/coordination/delivery-into-input.test.ts:[2m531:15[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/delivery-into-input.test.ts[2m > [22m目标 Delivery 进入实际模型输入（A06）[2m > [22m来源在本次运行期间被更新：basis 不一致 → 精确授权失效 → 拒绝进入新输入
+[31m[1mAssertionError[22m: [{"runId":"run-pred","status":"failed","error":"真实执行失败，请检查模型配置、工作区隔离和运行记录。"}]: expected [] to have a length of 1 but got +0[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 1[39m
+[31m+ 0[39m
+
+[36m [2m❯[22m buildWorld tests/coordination/delivery-into-input.test.ts:[2m261:131[22m[39m
+    [90m259|[39m   [34mexpect[39m(first[33m.[39mfailures[33m,[39m [33mJSON[39m[33m.[39m[34mstringify[39m(first[33m.[39mfailures))[33m.[39m[34mtoEqual[39m([])[33m;[39m
+    [90m260|[39m   [34mexpect[39m(first[33m.[39mstarted)[33m.[39m[34mtoBe[39m([34m1[39m)[33m;[39m
+    [90m261|[39m   expect(requests, JSON.stringify(runtime.all().map((row) => ({ runId:…
+    [90m   |[39m                                                                                                                                   [31m^[39m
+    [90m262|[39m   [34mexpect[39m([33mJSON[39m[33m.[39m[34mstringify[39m(requests[[34m0[39m]))[33m.[39mnot[33m.[39m[34mtoContain[39m([33mDELIVERY_NONCE[39m)[33m;[39m
+    [90m263|[39m
+[90m [2m❯[22m tests/coordination/delivery-into-input.test.ts:[2m544:15[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/host-tool-chain.test.ts[2m > [22mHost 工具链（A02/A05/A06/A09）：请求 → 报告 → 订阅 → all-wait → 唯一后继 → 实际输入[2m > [22m模型经真实工具发起请求与报告；重启后唯一后继被受理、准备并带着精确报告版本跑起来
+[31m[1mAssertionError[22m: expected [] to deeply equal [ 'coordination_request', …(3) ][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- [[39m
+[32m-   "coordination_request",[39m
+[32m-   "coordination_subscribe",[39m
+[32m-   "coordination_respond",[39m
+[32m-   "coordination_wait",[39m
+[32m- ][39m
+[31m+ [][39m
+
+[36m [2m❯[22m tests/coordination/host-tool-chain.test.ts:[2m492:20[22m[39m
+    [90m490|[39m     [90m// ── A02：工具链真的发生了（模型调用记录 + 正文 body-first + Control 受理回执）──────[39m
+    [90m491|[39m     [35mconst[39m called [33m=[39m w[33m.[39mcaptured[33m.[39mtoolCalls[33m.[39m[34mmap[39m((call) [33m=>[39m call[33m.[39mname)[33m;[39m
+    [90m492|[39m     [34mexpect[39m(called)[33m.[39m[34mtoEqual[39m([
+    [90m   |[39m                    [31m^[39m
+    [90m493|[39m       "coordination_request", "coordination_subscribe", "coordination_…
+    [90m494|[39m     ])[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m1 passed[39m[22m[90m (3)[39m
+[2m      Tests [22m [1m[31m5 failed[39m[22m[2m | [22m[1m[32m9 passed[39m[22m[90m (14)[39m
+[2m   Start at [22m 14:22:03
+[2m   Duration [22m 22.38s[2m (transform 26.28s, setup 0ms, import 32.25s, tests 11.46s, environment 0ms)[22m
+

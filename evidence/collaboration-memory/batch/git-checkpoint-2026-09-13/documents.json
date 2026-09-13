@@ -1,0 +1,175 @@
+{
+  "sourceRepository": "D:/1.project/Software/agent_learn/agent_dev/agent_platform",
+  "commit": "18a337ced649f3539c58c48258bcc6dbc16993f8",
+  "scope": "42 files changed by this batch documentation checkpoint; not a complete documentation repository",
+  "files": [
+    {
+      "path": "PRODUCT.md",
+      "sha256": "93cbd9d41ad72f6394512f952b97f3b8784133d691ee00b4b0f53c124c072c52"
+    },
+    {
+      "path": "dev_docs/design/2026-09-12-agent通信基础设施与可扩展编排-讨论整理.md",
+      "sha256": "0b160743d46476ba52bc6f6de9372855f1fa49d83783ac7cc78f11b0e1535834"
+    },
+    {
+      "path": "dev_docs/interfaces/command-event.md",
+      "sha256": "e0ec88ebe28b7538b3667528e89fc992b8aad3cffedf18f9d87f41a99996e8a9"
+    },
+    {
+      "path": "dev_docs/interfaces/context-lifecycle.md",
+      "sha256": "41b82c52d201111a2601a2586ffb4ada22966fd79e94a7a4c08e24715ce9df9b"
+    },
+    {
+      "path": "dev_docs/interfaces/human-design-status.md",
+      "sha256": "56aa841b61f16d8d703e3c62f01ce6c20d19149923aebe8efdc8cfa3f882e909"
+    },
+    {
+      "path": "dev_docs/interfaces/memory-maintenance.md",
+      "sha256": "e652bc4edfce497ce0d4cadd1c06cd8bb7dc23a756553225dbf9199606787c84"
+    },
+    {
+      "path": "dev_docs/interfaces/runtime-collaboration.md",
+      "sha256": "ea80ac9ab0a029880869b9af2fc25d821cebf65735550c94d99228b2d1a4c7c0"
+    },
+    {
+      "path": "dev_docs/interfaces/state-ledger.md",
+      "sha256": "00d8e735387ce10d6c81cb8b34ab26c0f46431e7d2e1d602317f1be840ce5d18"
+    },
+    {
+      "path": "dev_docs/modules/control/control-engine.md",
+      "sha256": "df84633bec931f2ed7d68db2c6704744c694cceffa295fb6ea6915e0cf1962df"
+    },
+    {
+      "path": "dev_docs/modules/control/dispatch-engine.md",
+      "sha256": "b68d22ef55a44923d3614c2e9b4656bd5da85d15329144d81b91fc74f169110c"
+    },
+    {
+      "path": "dev_docs/modules/data/context-compiler.md",
+      "sha256": "bd57577abe352e7fda1f5e247add216162962a35583d2622c880c99efc7fd3c6"
+    },
+    {
+      "path": "dev_docs/modules/data/read-model-index.md",
+      "sha256": "96329cd9ab002adbec5fab476ce893defe8ff02cb8b25402dc6ab22cd7e5e50c"
+    },
+    {
+      "path": "dev_docs/modules/data/state-ledger.md",
+      "sha256": "7aad540cdbd8a46164a578973c7d9a051db322b45b187d92b0a8bb7b333c21dd"
+    },
+    {
+      "path": "dev_docs/modules/execution/worker-runtime.md",
+      "sha256": "76241b1b32465ac3a1931182c3a6390a71e4ede4d1a63ace38eb9d058d362352"
+    },
+    {
+      "path": "dev_docs/modules/interaction/human-collaboration.md",
+      "sha256": "d4694047b2d35d2c29614a7ba122b943560f7721fdd51ba2188b140f1bc4ab72"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/ACCEPTANCE-PROMPT.md",
+      "sha256": "637f08d265fb7089b012b60edb935c3b9f843c079ca98862455493c3e87dbe55"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/BASELINE.md",
+      "sha256": "b2d5828a05aa6abb2688ba2cf79c8e2f4f480712ef845a28f99805037a18f0fd"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/CM-1A-001-FOLLOWUP-PLAN.md",
+      "sha256": "58d1a3acc869c6a4b3e4a1fe97604288e0326c446038846740497883dadfdc4b"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/CM-1A-001-PROTOCOL-CONSTRAINTS.md",
+      "sha256": "834e2f01fa227478240986ec3a4e0f35ab47a66197bcfb5ee2717e874e19e12b"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/CM-1A-001.md",
+      "sha256": "20537dc9a26f61952ee3368d904659a8fb0dc5692fdc8044253640aeb90eee5d"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/CM-1B-001.md",
+      "sha256": "46d08db0378e966cf14881ef7df8ae212200005bc62c3ac1cb3b40eb6d2fa43f"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/CM-1C-001.md",
+      "sha256": "f78131da0868a3b518f87eee8d55e193006d1e9c99b6a5e5d2820ecdee872e90"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/CM-M06-001.md",
+      "sha256": "b6e56c05f4d53892da029cdb206b8eeda8fdac1c2896758181fc3d320b4e64a7"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/CM-M06-DRAFT.md",
+      "sha256": "56b1046c6905e982b124983eceb834f3656e67b5bfe1516a9c6355e2bfadb0a6"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/CURRENT-CALLCHAIN-EVIDENCE.md",
+      "sha256": "969188f7d1f95fb31f211ca81f29b820b9e0fdd3264195e2831f086f56ddf78a"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/HANDOFF.md",
+      "sha256": "74459e670e7687c79c023d6a81c9603b58d3a8269aad305299a3e87bf800e36e"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/IMPLEMENTATION-PROMPT.md",
+      "sha256": "78bd7eb21b7f92e1f039dc1847976c8c26243d93dc4680c02fc2cbfb24818ff9"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/MAIN-AGENT-PROMPT.md",
+      "sha256": "8f65f9440bec9bd2a2a89966dbfd7713f4d6c86ed071225269f7f162ae71613e"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/MEMORY-REUSE-EVIDENCE.md",
+      "sha256": "5eb277be9332813cb485c97d4cedd123e5808fc738cbe65327e2e60247f90274"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/PLAN.md",
+      "sha256": "3316e6e5dc26088304f1858139b155d0a94ce91673cb4d81115d70d76f3bbc0d"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/PREPARATION-CHECKS.md",
+      "sha256": "72210cd04bbe1ad30245250fd9654f0110c5549388d9b6843197e1c511704c59"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/READINESS.md",
+      "sha256": "dafd5181e4fc1ae9b51721dc06bf3af119e46889c835b55dea13a26b2e578fd0"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/baseline/docs-untracked-sources.patch",
+      "sha256": "4b5c4350de89285cf89477effb03bcab5eede95fe68c408b45b517f93fd88b6d"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/baseline/docs-working-tree.patch",
+      "sha256": "e24c06e86f0bf1acf053dbc82fb89b903d207b04580527d145b7ed3cf1ebd124"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/baseline/preparation-baseline.json",
+      "sha256": "18ac4821695f8afc9e33b738af739cda9545950c54acc7c7edbbb9a12c519024"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/baseline/product-untracked-source.patch",
+      "sha256": "5a3ac31f22506b56c825bc626fddc580860c2ae2c4fede37fd0452cd790d3d4b"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/baseline/product-working-tree.patch",
+      "sha256": "e81abc4503ddebfe964d9b10e9f35b351b023001a5e3f1d925924b587eb13148"
+    },
+    {
+      "path": "dev_docs/planning/active/collaboration-memory/baseline/upstream-documents.json",
+      "sha256": "c12ea312a2516f272844e6cda543fb416046a5ebc0b3abaec46137e79a71c537"
+    },
+    {
+      "path": "dev_docs/product/README.md",
+      "sha256": "218972b21732a77dee1cba056e8f789c514c83308166fd815951cf0585779694"
+    },
+    {
+      "path": "dev_docs/product/conversations/2026-09-12-agent通信编排与记忆-原始对话.md",
+      "sha256": "813a83c336c21641f57c101eb6c2f78e5931d19bbc856801e456fc0aa58c19ea"
+    },
+    {
+      "path": "dev_docs/verification/2026-09-12-memory-knowledge-product-scope.md",
+      "sha256": "8878da6b072e63b566989e218c706ae9bec009515923567be377a31e4e261932"
+    },
+    {
+      "path": "human/module-status.md",
+      "sha256": "fe01b7760e3bafe042df9beab24d67699688061d9a38c98763fc232fb7ffb2b5"
+    }
+  ]
+}

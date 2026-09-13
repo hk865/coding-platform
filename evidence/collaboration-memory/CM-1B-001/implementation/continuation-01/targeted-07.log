@@ -1,0 +1,29 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/contracts/module-ownership.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 4998[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps the workspace path-boundary policy in exactly one WorkspaceReader file [33m 4405[2mms[22m[39m
+ [32m✓[39m tests/app/semantic-query.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4950[2mms[22m[39m
+   [33m[2m✓[22m[39m runs sourced semantic queries without a plan and alongside a live writer, persists real kernel inputs and denies writes [33m 4949[2mms[22m[39m
+ [32m✓[39m tests/memory/host.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4097[2mms[22m[39m
+   [33m[2m✓[22m[39m host maintains a stable profile, isolates projects and requires selected-version copying across reopen [33m 4096[2mms[22m[39m
+ [32m✓[39m tests/memory/query-input.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 7269[2mms[22m[39m
+   [33m[2m✓[22m[39m three response purposes adopt current persisted versions in real kernel requests and retain separate save/adoption facts [33m 7268[2mms[22m[39m
+ [32m✓[39m tests/memory/maintenance.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 757[2mms[22m[39m
+   [33m[2m✓[22m[39m valid JSON with corrupt snapshot or receipt shape is unavailable and never silently replaced [33m 407[2mms[22m[39m
+   [33m[2m✓[22m[39m two SQLite connections preserve one profile and reject stale concurrent edits across reopen [33m 335[2mms[22m[39m
+ [32m✓[39m tests/context/work-run-materials.test.ts [2m([22m[2m22 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m tests/memory/context.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 373[2mms[22m[39m
+   [33m[2m✓[22m[39m refreshes applicable revisions and recursively invalidates copied sources without using stale cache [33m 372[2mms[22m[39m
+ [32m✓[39m tests/control/work-record.test.ts [2m([22m[2m15 tests[22m[2m)[22m[33m 464[2mms[22m[39m
+ [32m✓[39m tests/coordination/host-tool-chain.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 12956[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='task'/'all' memory=false [33m 4084[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'all' memory=false [33m 2786[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'any' memory=false [33m 2481[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='task'/'all' memory=true [33m 3605[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m9 passed[39m[22m[90m (9)[39m
+[2m      Tests [22m [1m[32m61 passed[39m[22m[90m (61)[39m
+[2m   Start at [22m 19:17:56
+[2m   Duration [22m 32.40s[2m (transform 39.64s, setup 0ms, import 57.64s, tests 35.89s, environment 1ms)[22m
+

@@ -1,0 +1,285 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/coordination/handoff-successor.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 320[2mms[22m[39m
+ [32m✓[39m tests/coordination/route-continuity.test.ts [2m([22m[2m14 tests[22m[2m)[22m[33m 457[2mms[22m[39m
+ [32m✓[39m tests/app/real-runtime.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 58173[2mms[22m[39m
+   [33m[2m✓[22m[39m GUI dispatch runs real edit/shell tools, publishes facts, blocks fake fallback and never repeats on refresh/restart [33m 6405[2mms[22m[39m
+   [33m[2m✓[22m[39m remains observable while a model is slow and cancels without blocking state requests [33m 4373[2mms[22m[39m
+   [33m[2m✓[22m[39m stops before a model request when cumulative reservation does not fit, without changing context capacity [33m 3887[2mms[22m[39m
+   [33m[2m✓[22m[39m reports a provider authentication failure and makes no fixture response [33m 4926[2mms[22m[39m
+   [33m[2m✓[22m[39m marks interrupted persisted runtime records unknown and refuses to restart them [33m 4729[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects a second goal writer while the first writer still holds the checkout [33m 4752[2mms[22m[39m
+   [33m[2m✓[22m[39m honors a short deadline and rejects cross-goal cancellation [33m 4442[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps an unknown tool outcome locked even when the kernel ends cancelled [33m 448[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps explicit null cumulative limits and only widens the single-response capacity for a scoped task [33m 5325[2mms[22m[39m
+   [33m[2m✓[22m[39m runs a task with no configured cumulative budget past the old default request count [33m 8596[2mms[22m[39m
+   [33m[2m✓[22m[39m can manually cancel a context-only task with no deadline [33m 4727[2mms[22m[39m
+   [33m[2m✓[22m[39m passes verified file references into real kernel input and rejects stale drafts before starting a run [33m 5562[2mms[22m[39m
+ [32m✓[39m tests/app/reviewer-product-recovery.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 97022[2mms[22m[39m
+   [33m[2m✓[22m[39m reopens the complete host after replacement admission before dispatch and executes the persisted Reviewer exactly once [33m 15524[2mms[22m[39m
+   [33m[2m✓[22m[39m authorizes a real lease-conflict recovery through HTTP and admits actual Reviewer PASS evidence [33m 13798[2mms[22m[39m
+   [33m[2m✓[22m[39m authorizes a real lease-conflict recovery through HTTP and admits actual Reviewer FAIL evidence [33m 20184[2mms[22m[39m
+   [33m[2m✓[22m[39m deduplicates same-key and different-key concurrent authorizations and rejects altered identity payloads [33m 13449[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps a durable recovery receipt when the HTTP response is lost and replays it after restart [33m 13187[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects missing authentication and client-supplied proof, actor, or verdict before any replacement [33m 6750[2mms[22m[39m
+   [33m[2m✓[22m[39m does not turn an ambiguous persisted runtime checkpoint into restart authorization (unknown) [33m 6531[2mms[22m[39m
+   [33m[2m✓[22m[39m does not turn an ambiguous persisted runtime checkpoint into restart authorization (duplicate) [33m 7597[2mms[22m[39m
+ [32m✓[39m tests/app/verification-rounds.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 49256[2mms[22m[39m
+   [33m[2m✓[22m[39m real HTTP executes each registered check once and a later PASS cannot erase the same requirement FAIL; reopens exact reports [33m 9871[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects a corrupted original SQLite report through HTTP after restart without replacing historical Evidence [33m 10660[2mms[22m[39m
+   [33m[2m✓[22m[39m serves persisted progress and receipts while a real check is still executing [33m 9016[2mms[22m[39m
+   [33m[2m✓[22m[39m the formal VerificationPort executes the same durable round and cannot trust caller no-change claims or complete a new manual Plan [33m 4211[2mms[22m[39m
+   [33m[2m✓[22m[39m accepted Reviewer obligations remain unmet after all tools PASS, and source edits make the old round stale without deleting reports [33m 10358[2mms[22m[39m
+   [33m[2m✓[22m[39m persists explicit missing/invalid configuration and enforces full HTTP Task/Run scope and execution permission [33m 5139[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-02.contract-suite.sqlite.test.ts [2m([22m[2m29 tests[22m[2m)[22m[33m 43547[2mms[22m[39m
+     [33m[2m✓[22m[39m install persists the exact immutable revision; load resolves digest/revision [33m 1319[2mms[22m[39m
+     [33m[2m✓[22m[39m install NEVER auto-activates (no active aggregates, no activated events) [33m 1395[2mms[22m[39m
+     [33m[2m✓[22m[39m same identity/fingerprint replay is committed(replayed) with the ORIGINAL outcome [33m 1688[2mms[22m[39m
+     [33m[2m✓[22m[39m same identity with a DIFFERENT fingerprint is idempotency_conflict, zero-write [33m 1764[2mms[22m[39m
+     [33m[2m✓[22m[39m same identity/revision (different command) is NOT overwritable — revision_conflict, zero-write [33m 1725[2mms[22m[39m
+     [33m[2m✓[22m[39m digest mismatch -> digest_mismatch, zero-write [33m 1448[2mms[22m[39m
+     [33m[2m✓[22m[39m activation: only installed exact target accepted; dangling -> not_found zero-write; per-kind independence [33m 1052[2mms[22m[39m
+     [33m[2m✓[22m[39m activation CAS: stale expected Project revision -> revision_conflict, active ref unmoved [33m 1302[2mms[22m[39m
+     [33m[2m✓[22m[39m two projects install their own revisions and activate independently (no id collision) [33m 1638[2mms[22m[39m
+     [33m[2m✓[22m[39m no ArchitectureEvolutionPolicy artifact exists anywhere in the ledger [33m 1611[2mms[22m[39m
+     [33m[2m✓[22m[39m full path: accept plan, goal active revision, views ready, pins exact, one event [33m 1572[2mms[22m[39m
+     [33m[2m✓[22m[39m unresolved governance refs -> unresolved_governance_ref, zero-write (no fallback) [33m 1439[2mms[22m[39m
+     [33m[2m✓[22m[39m goal not found -> not_found, zero-write [33m 1672[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: no required executable task -> plan_guard_failed, zero-write [33m 1282[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: no active required GoalGateTask -> plan_guard_failed, zero-write [33m 1309[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: no required obligation -> plan_guard_failed, zero-write [33m 1274[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: required obligation without any required VR -> plan_guard_failed, zero-write [33m 1256[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: required executable task without required obligation mapping -> rejected, zero-write [33m 1005[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: required obligation without mapped work/gate task -> rejected, zero-write [33m 1017[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: VR kind outside the effective policy requirementKinds -> rejected, zero-write [33m 1283[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: hierarchy dangling ref -> rejected, zero-write [33m 1658[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: hierarchy cycle -> rejected, zero-write [33m 1657[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: DAG dangling edge -> rejected, zero-write [33m 1786[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: DAG self dependency -> rejected, zero-write [33m 1539[2mms[22m[39m
+     [33m[2m✓[22m[39m guard: DAG cycle -> rejected, zero-write [33m 1725[2mms[22m[39m
+     [33m[2m✓[22m[39m stale goal CAS: wrong expectedRevision -> revision_conflict, zero-write; replay idempotent [33m 1679[2mms[22m[39m
+     [33m[2m✓[22m[39m pin immutability: moving the active ref does NOT change the accepted plan pins [33m 1917[2mms[22m[39m
+     [33m[2m✓[22m[39m freshness: not_ready != not_found for plan graph and task detail; cross-project isolation [33m 1680[2mms[22m[39m
+     [33m[2m✓[22m[39m no dispatch outbox, TaskAttempt or AgentRun anywhere in the path [33m 1845[2mms[22m[39m
+ [32m✓[39m tests/app/semantic-collaboration.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 163265[2mms[22m[39m
+   [33m[2m✓[22m[39m real HTTP/SQLite/kernel task investigates material and FAIL, repairs from sourced coordination, admits required independent review and replays settled records [33m 26331[2mms[22m[39m
+   [33m[2m✓[22m[39m the same repaired task remains unsatisfied when tools pass but its required independent Reviewer returns FAIL [33m 34115[2mms[22m[39m
+   [33m[2m✓[22m[39m a human selects the unresolved catalog-versus-display product scope after FAIL, replays that decision and returns through sourced repair and required independent review [33m 33440[2mms[22m[39m
+   [33m[2m✓[22m[39m real host recovers a saved human choice after one before_apply fault using the labelled model stub [33m 35268[2mms[22m[39m
+   [33m[2m✓[22m[39m real host recovers a saved human choice after one before_query fault using the labelled model stub [33m 34106[2mms[22m[39m
+ [32m✓[39m tests/app/explorations.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 45291[2mms[22m[39m
+   [33m[2m✓[22m[39m executes a real read-only dependency chain, requires operator review and preserves reports across restart [33m 7198[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects mismatched, fabricated and changed review requests and changed source snapshots [33m 5344[2mms[22m[39m
+   [33m[2m✓[22m[39m does not admit a completed answer with no successful read as exploration evidence [33m 4530[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps source-only exploration on the ordinary declared capacities with no cumulative limit outside the configured snapshot roots [33m 3790[2mms[22m[39m
+   [33m[2m✓[22m[39m refuses cycles, duplicate nodes and replacement plans before any model call [33m 3814[2mms[22m[39m
+   [33m[2m✓[22m[39m serializes independent real dispatch requests without duplicate model calls or unknown outcomes [33m 6731[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects review when an actually read dist file changes after exploration was frozen [33m 4832[2mms[22m[39m
+   [33m[2m✓[22m[39m inherits only directly required applied PASS review notes, keeping reports and failed-goal history separate [33m 9048[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-06.contract-suite.sqlite.test.ts [2m([22m[2m25 tests[22m[2m)[22m[33m 39222[2mms[22m[39m
+         [33m[2m✓[22m[39m valid packet passes validation with no issues [33m 1482[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects a hidden transcript field (strict unknown-field rejection) [33m 1604[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects noFullTranscript=false (explicit guarantee) [33m 1530[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects an over-cap packet with size_exceeded [33m 1499[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects an over-cap summary with size_exceeded [33m 1542[2mms[22m[39m
+         [33m[2m✓[22m[39m commits a bounded packet after A ended (crash) and replays idempotently [33m 1987[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects a handoff while A's run is still active (run_not_ended) [33m 1735[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects a stale-source packet explicitly (stale_source) — re-project a fresh one [33m 1770[2mms[22m[39m
+         [33m[2m✓[22m[39m eligible when A ended [33m 1382[2mms[22m[39m
+         [33m[2m✓[22m[39m eligible when A's lease is EXPIRED (even though attempt not ended) [33m 1432[2mms[22m[39m
+         [33m[2m✓[22m[39m lease_active when A neither ended nor expired [33m 1337[2mms[22m[39m
+         [33m[2m✓[22m[39m stale_packet explicit (workspace revision mismatch) — never silently reused [33m 1406[2mms[22m[39m
+         [33m[2m✓[22m[39m packet_mismatch when packet targets a different task [33m 1532[2mms[22m[39m
+         [33m[2m✓[22m[39m no_prior_attempt when there is no lease [33m 1380[2mms[22m[39m
+         [33m[2m✓[22m[39m commits B's new attempt/run/outbox/replacement after A crashed [33m 1084[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects lease_active: replacement while A is still running [33m 1072[2mms[22m[39m
+         [33m[2m✓[22m[39m rejects a competing CAS window (revision_conflict, zero-write) [33m 1141[2mms[22m[39m
+         [33m[2m✓[22m[39m A's late runtime fact after B's claim is rejected (after_terminal) and B is untouched [33m 1783[2mms[22m[39m
+         [33m[2m✓[22m[39m A's stale-sequence fact (duplicate) inside A's own run is still rejected [33m 1368[2mms[22m[39m
+         [33m[2m✓[22m[39m explicit stale on source revision mismatch, then re-project -> ready (no silent old-use) [33m 1507[2mms[22m[39m
+         [33m[2m✓[22m[39m forbidden scope rejected; packet_not_found rejected [33m 1300[2mms[22m[39m
+         [33m[2m✓[22m[39m A crash -> record -> B claim -> driveHandoff -> B facts -> provenance timeline [33m 2195[2mms[22m[39m
+         [33m[2m✓[22m[39m A outcome_unknown -> packet unresolved keeps it; view preserves; no extra replacement [33m 1973[2mms[22m[39m
+         [33m[2m✓[22m[39m B's later evidence traces to A and B runs under the same plan revision [33m 2227[2mms[22m[39m
+         [33m[2m✓[22m[39m pause/stop states + public snapshot never expose hidden context [33m 1951[2mms[22m[39m
+ [32m✓[39m tests/app/verification-imports.test.ts [2m([22m[2m10 tests[22m[2m)[22m[33m 40381[2mms[22m[39m
+   [33m[2m✓[22m[39m commits genuine PatchRecord/Evidence and reduces work, gate and Goal; restart/replay never repeats attempts [33m 4798[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps original FAIL, diagnostic and assisted repair as distinct evidence and candidates [33m 5057[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects scope, patch, report and revision mismatches; active runs and altered idempotent input are blocked [33m 3203[2mms[22m[39m
+   [33m[2m✓[22m[39m missing required results fail the required-set benchmark in Control and cannot complete the Goal [33m 3526[2mms[22m[39m
+   [33m[2m✓[22m[39m resumes a journal after PatchRecord commit without advancing the workspace again [33m 4600[2mms[22m[39m
+   [33m[2m✓[22m[39m persists and rehydrates a real-size multi-chunk report without exposing full report bodies in state [33m 4726[2mms[22m[39m
+   [33m[2m✓[22m[39m runs an actual command through VerificationEngine, persists the result, and never infers Task completion [33m 5179[2mms[22m[39m
+   [33m[2m✓[22m[39m retains an orphan command report after interruption without re-executing or claiming accepted evidence [33m 4760[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps a reopened report historical after source changes and never executes the check again [33m 4524[2mms[22m[39m
+ [32m✓[39m tests/app/governance.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 38475[2mms[22m[39m
+   [33m[2m✓[22m[39m 产品入口完成治理种类的 install/activate：默认只有两条内置基线生效，协调策略必须由人显式提交，视图回答"哪一份、谁在什么时候装的、内容是什么" [33m 2423[2mms[22m[39m
+   [33m[2m✓[22m[39m 激活另一份策略之后，旧激活请求的重放不会被当成"当前生效"：控制守卫复核 canonical，不谎报成功 [33m 2425[2mms[22m[39m
+   [33m[2m✓[22m[39m 基线：没有经 install/activate 生效的协调策略时，真实失败链停在 governance_unavailable 且零写入 [33m 9185[2mms[22m[39m
+   [33m[2m✓[22m[39m 真实 HTTP 安装并激活协调策略之后：同一条失败链自动受理成功，新 revision 生效，额度按生效策略计数 [33m 12197[2mms[22m[39m
+   [33m[2m✓[22m[39m RW-10 人的暂停开关：inScopeRework=false 的协调策略生效后，真实失败链转人工且零写入；重新启用后恢复自动受理 [33m 12244[2mms[22m[39m
+ [32m✓[39m tests/data/python-source-index.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 38214[2mms[22m[39m
+   [33m[2m✓[22m[39m resolves Python aliases across project files without executing source and invalidates dirty code [33m 6311[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects Python scope escapes and keeps unresolved dependencies unknown [33m 1198[2mms[22m[39m
+   [33m[2m✓[22m[39m resolves configured package and workspace dependency roots from pyproject.toml [33m 3671[2mms[22m[39m
+   [33m[2m✓[22m[39m resolves configured package and workspace dependency roots from pyrightconfig.json [33m 3360[2mms[22m[39m
+   [33m[2m✓[22m[39m resolves configured package and workspace dependency roots from setup.cfg [33m 3522[2mms[22m[39m
+   [33m[2m✓[22m[39m recognizes a src namespace layout and safely parses setuptools discovery metadata [33m 1932[2mms[22m[39m
+   [33m[2m✓[22m[39m invalidates configuration, dependency content, manifests, deletes and source identity without reusing stale results [33m 6003[2mms[22m[39m
+   [33m[2m✓[22m[39m reports one-based UTF-16 locations while converting AST UTF-8 byte offsets and Jedi code points [33m 4201[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects denied, absolute and traversing configuration roots and declares unsupported environment semantics [33m 4963[2mms[22m[39m
+   [33m[2m✓[22m[39m refuses an incomplete inventory and detects source changes during analysis [33m 860[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps module file anchors distinct from declarations and isolates cached results from caller mutation [33m 2169[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-04.contract-suite.sqlite.test.ts [2m([22m[2m18 tests[22m[2m)[22m[33m 29553[2mms[22m[39m
+       [33m[2m✓[22m[39m claim admission: commit -> immutable evidence + atomic index; replay; conflicts; zero-write [33m 2565[2mms[22m[39m
+       [33m[2m✓[22m[39m a CompletionClaim is never evidence PASS: PASS claim rejected, invalid claim zero-write [33m 2254[2mms[22m[39m
+       [33m[2m✓[22m[39m claim/verdict without a producing run and dangling coverage are rejected zero-write [33m 1770[2mms[22m[39m
+       [33m[2m✓[22m[39m single exit=0 / claim alone NEVER satisfy: blocked with missing-evidence causes [33m 1748[2mms[22m[39m
+       [33m[2m✓[22m[39m FAIL -> failed (rework); newer PASS supersedes -> satisfied; old FAIL stays auditable [33m 1578[2mms[22m[39m
+       [33m[2m✓[22m[39m revision change only recomputes applicability: STALE / OUT_OF_SCOPE displayed, history untouched [33m 1604[2mms[22m[39m
+       [33m[2m✓[22m[39m reviewer verdict alone never satisfies; verdict + bounded-packet static evidence satisfies [33m 1977[2mms[22m[39m
+       [33m[2m✓[22m[39m pure applicability table: APPLICABLE / STALE / OUT_OF_SCOPE and effective-set supersession [33m 1783[2mms[22m[39m
+       [33m[2m✓[22m[39m plan compilation is a deterministic pure function (content-addressed, no model/timestamp) [33m 1649[2mms[22m[39m
+       [33m[2m✓[22m[39m deterministic failures: missing pin / unknown check / no check coverage — never a built-in default [33m 1492[2mms[22m[39m
+       [33m[2m✓[22m[39m VerificationEngine.verify: ready plan + deterministic observation drafts; NEVER writes the ledger [33m 1516[2mms[22m[39m
+       [33m[2m✓[22m[39m semantic change -> reviewer plan goes through a ReviewPacket (never a silent fast path) [33m 1469[2mms[22m[39m
+       [33m[2m✓[22m[39m gate reduces to SATISFIED only with its static gate evidence; deferred never satisfies [33m 1647[2mms[22m[39m
+       [33m[2m✓[22m[39m reducer table: crashed run -> failed; outcome_unknown side effect -> never satisfied; FAIL/INCONCLUSIVE table [33m 2105[2mms[22m[39m
+       [33m[2m✓[22m[39m pure effective-set table: INCONCLUSIVE verdict blocks; superseded by later PASS [33m 1485[2mms[22m[39m
+       [33m[2m✓[22m[39m assemble: bounded ReviewPacket, body-first in the vault, no transcript [33m 1608[2mms[22m[39m
+       [33m[2m✓[22m[39m rejections are zero-write: forbidden scope / stale workspace / not-semantic / exhausted budget [33m 1296[2mms[22m[39m
+ [32m✓[39m tests/app/independent-review.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 95740[2mms[22m[39m
+   [33m[2m✓[22m[39m runs a real independent read-only Reviewer, admits its cited report, preserves the original lease, and never copies Task evidence to the Goal gate [33m 12864[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves a valid Reviewer FAIL as blocking evidence without restarting the original Task [33m 15519[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves a valid Reviewer INCONCLUSIVE as blocking evidence without restarting the original Task [33m 15514[2mms[22m[39m
+   [33m[2m✓[22m[39m never dispatches when an applicable tool failed, and permanently rejects a report that omits required coverage [33m 20736[2mms[22m[39m
+   [33m[2m✓[22m[39m source changed after actual material reads cannot produce newly accepted Reviewer evidence [33m 11350[2mms[22m[39m
+   [33m[2m✓[22m[39m clearing the saved model configuration during review cannot silently switch the profile or admit its answer [33m 10131[2mms[22m[39m
+   [33m[2m✓[22m[39m a real human revocation after Reviewer material reads prevents admission and remains revoked after restart [33m 9623[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-03.contract-suite.sqlite.test.ts [2m([22m[2m15 tests[22m[2m)[22m[33m 31363[2mms[22m[39m
+     [33m[2m✓[22m[39m readiness table: only deps-satisfied active unblocked budgeted WORK tasks are eligible [33m 1776[2mms[22m[39m
+     [33m[2m✓[22m[39m readiness: goal without accepted plan -> plan_not_accepted [33m 1841[2mms[22m[39m
+     [33m[2m✓[22m[39m claim commits the durable intent + lease + attempt + run atomically (all fields exact) [33m 2008[2mms[22m[39m
+     [33m[2m✓[22m[39m competing claims: two ControlEngine instances -> at most one lease/attempt/run [33m 1925[2mms[22m[39m
+     [33m[2m✓[22m[39m same identity+fingerprint replays committed(replayed); different fingerprint -> idempotency_conflict [33m 1904[2mms[22m[39m
+     [33m[2m✓[22m[39m claim of an ineligible task -> ineligible, zero write [33m 1924[2mms[22m[39m
+     [33m[2m✓[22m[39m claim of a missing goal -> not_found, zero write [33m 1939[2mms[22m[39m
+     [33m[2m✓[22m[39m start commits envelope + outbox started (CAS); stale start -> revision_conflict zero-write [33m 2773[2mms[22m[39m
+     [33m[2m✓[22m[39m run_completed(exit=0) -> ended/completed + exitCode 0; Task.phase stays pending [33m 3140[2mms[22m[39m
+     [33m[2m✓[22m[39m duplicate / invalid-sequence / conflicting / late-after-terminal facts are rejected zero-write (no regress) [33m 3089[2mms[22m[39m
+     [33m[2m✓[22m[39m out-of-order NEWER-then-OLDER events: late old event after a terminal NEVER regresses [33m 2672[2mms[22m[39m
+     [33m[2m✓[22m[39m crash and outcome_unknown project to DIFFERENT outcomes; unknown never guessed from crash [33m 2404[2mms[22m[39m
+     [33m[2m✓[22m[39m ActiveAgent + TaskDetail views rebuild field-identically after a fresh projection [33m 2037[2mms[22m[39m
+     [33m[2m✓[22m[39m outcome_unknown after crash: crash run never becomes satisfied either [33m 1926[2mms[22m[39m
+ [32m✓[39m tests/integration/p1-07.contract-suite.sqlite.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 30972[2mms[22m[39m
+       [33m[2m✓[22m[39m A1/A2 two readers overlap for real; started before any poll; independent attempts/contexts/budgets [33m 1819[2mms[22m[39m
+       [33m[2m✓[22m[39m A3 read + parallel read leases; reader can NEVER obtain a write lease [33m 4168[2mms[22m[39m
+       [33m[2m✓[22m[39m A5 competing writers: at most one effective write lease; loser zero write; readback [33m 2870[2mms[22m[39m
+       [33m[2m✓[22m[39m A5b lease release + expiry-vacate; expired lease does not block a new writer [33m 2898[2mms[22m[39m
+       [33m[2m✓[22m[39m A4 conflict preserved, never overwritten; explanation or escalate required [33m 2889[2mms[22m[39m
+       [33m[2m✓[22m[39m A6 writer uses accepted reader outputs; patch carries changed paths, checks, revision [33m 4391[2mms[22m[39m
+       [33m[2m✓[22m[39m A7 full gate check via runP107FullScenario (happy path: goal COMPLETED) [33m 4314[2mms[22m[39m
+       [33m[2m✓[22m[39m A7b failure facts stay traceable: gate FAIL -> goal never COMPLETED; timeline shows both [33m 3781[2mms[22m[39m
+       [33m[2m✓[22m[39m A8 coordinator exit does not revoke an independent worker's legal lease; role contexts isolated [33m 2176[2mms[22m[39m
+       [33m[2m✓[22m[39m V1 views: not_ready vs not_found freshness semantics; display-only conflict view [33m 1657[2mms[22m[39m
+ [32m✓[39m tests/app/rework-drive.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 30612[2mms[22m[39m
+   [33m[2m✓[22m[39m 工具轮次真实 FAIL 之后自动触发：产生真实提案，边界不满足时停住并可见，且零写入；重复触发幂等、重启后由 canonical 重建 [33m 9231[2mms[22m[39m
+   [33m[2m✓[22m[39m 独立审阅交付 FAIL 结论之后同样触发驱动：问题来源是审阅结论，提案照样机械推导出来 [33m 17448[2mms[22m[39m
+   [33m[2m✓[22m[39m 没有任何验证结论时：只读视图不编造提案，也没有触发结果 [33m 3932[2mms[22m[39m
+ [32m✓[39m tests/app/role-spec-governance.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 19666[2mms[22m[39m
+     [33m[2m✓[22m[39m 视图给出逐角色事实与「本策略含不含角色矩阵」，安装/激活/重启后仍可读 [33m 2638[2mms[22m[39m
+     [33m[2m✓[22m[39m M3：没有矩阵时既有入口照常派发；含 roles 的矩阵生效后，规格装齐同一个入口仍然派发 [33m 6028[2mms[22m[39m
+     [33m[2m✓[22m[39m 越权声明被拒且零写：矩阵 pin 的是只读规格时，写入入口的 claim 不落账 [33m 3331[2mms[22m[39m
+     [33m[2m✓[22m[39m M3（探索侧）：只读探索入口在矩阵启用后照常派发（绑定只读角色 investigator） [33m 3818[2mms[22m[39m
+     [33m[2m✓[22m[39m persists multiple immutable versions, preserves the active pin until activation, and survives restart [33m 3849[2mms[22m[39m
+ [32m✓[39m tests/verification/reviewer-verification.test.ts [2m([22m[2m21 tests[22m[2m)[22m[33m 23762[2mms[22m[39m
+     [33m[2m✓[22m[39m creates one canonical independent Work, admits precise per-VR outcomes and replays after reopen without rerunning tools [33m 1902[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects an applicable extra tool FAIL with no VR coverage before Work creation [33m 477[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects unknown schema and preserves the original raw report across reopen [33m 1152[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects duplicate VR and preserves the original raw report across reopen [33m 1145[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects missing VR and preserves the original raw report across reopen [33m 1120[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects invented source digest and preserves the original raw report across reopen [33m 1173[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects missing source lines and preserves the original raw report across reopen [33m 1198[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects pin excluded path and preserves the original raw report across reopen [33m 1302[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects missing artifact pointer and preserves the original raw report across reopen [33m 1272[2mms[22m[39m
+     [33m[2m✓[22m[39m permanently rejects PASS with unresolved unknown and preserves the original raw report across reopen [33m 1182[2mms[22m[39m
+     [33m[2m✓[22m[39m recovers a lost creation receipt from canonical Work without creating another Run [33m 465[2mms[22m[39m
+     [33m[2m✓[22m[39m recovers a lost result receipt using its persisted command and canonical Result without re-admission [33m 1723[2mms[22m[39m
+     [33m[2m✓[22m[39m leaves a temporary raw report outage pending, then reads the same binding without a new model session [33m 2110[2mms[22m[39m
+     [33m[2m✓[22m[39m refuses actual source/configuration changes without reviving the old request [33m 1142[2mms[22m[39m
+     [33m[2m✓[22m[39m refuses a real revoked cross-subject grant even while the projection still contains its old candidate [33m 699[2mms[22m[39m
+     [33m[2m✓[22m[39m recovers a genuine concurrent task reduction CAS by keeping the rejected attempt and using a new key [33m 1963[2mms[22m[39m
+     [33m[2m✓[22m[39m recovers a genuine concurrent goal reduction CAS by keeping the rejected attempt and using a new key [33m 1708[2mms[22m[39m
+     [33m[2m✓[22m[39m does not accept a completed report whose persisted Reviewer session reused the Producer [33m 623[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps missing tool material retryable before creation and freezes the same explicit request [33m 440[2mms[22m[39m
+     [33m[2m✓[22m[39m waits for an existing unknown reviewer execution and ignores caller-provided report fields [33m 496[2mms[22m[39m
+     [33m[2m✓[22m[39m recomputes legacy satisfied state after adopting the independent protocol without changing original Evidence [33m 470[2mms[22m[39m
+ [32m✓[39m tests/app/rework-issues.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 22373[2mms[22m[39m
+   [33m[2m✓[22m[39m 真实失败的检查轮次成为带来源的未处置问题，并通过 HTTP 只读出口返回 [33m 8823[2mms[22m[39m
+   [33m[2m✓[22m[39m 真实超时被杀：问题直接回报 timeout，而不是只给一个 FAIL [33m 8784[2mms[22m[39m
+   [33m[2m✓[22m[39m 没有失败结论时问题出口返回明确的空状态，而不是编造问题 [33m 4765[2mms[22m[39m
+ [32m✓[39m tests/restart/material-access-restart.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 15635[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps valid grants across SQLite restart even behind more than 256 newer candidates (crowded=false) [33m 1545[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps valid grants across SQLite restart even behind more than 256 newer candidates (crowded=true) [33m 12114[2mms[22m[39m
+   [33m[2m✓[22m[39m rejects wrong-workspace grants at submission and denies legacy bad grants after reopening [33m 1974[2mms[22m[39m
+ [32m✓[39m tests/app/plan-changes.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 20579[2mms[22m[39m
+   [33m[2m✓[22m[39m 安装并激活协调策略后真实 FAIL 被自动受理：提案、system 决定、changeReason 与处置行都可见 [33m 12257[2mms[22m[39m
+   [33m[2m✓[22m[39m 没有计划变更时视图明确说明，而不是空白 [33m 8320[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/p1-08-matrix-agents-evidence-timeline.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 16465[2mms[22m[39m
+     [33m[2m✓[22m[39m consolePlanMatrix: 3 rows, planned vs live phase separation, project isolation [33m 2508[2mms[22m[39m
+     [33m[2m✓[22m[39m consoleActiveAgents: sourcing, outcome_unknown, replacement handoff, isolation, goalId filter [33m 2140[2mms[22m[39m
+     [33m[2m✓[22m[39m consoleTaskEvidence: admission order, markers, effective set, ref_only [33m 4742[2mms[22m[39m
+     [33m[2m✓[22m[39m consoleTimeline: arrival seq, kinds, ref chain, bounded window, goalId filter [33m 3888[2mms[22m[39m
+     [33m[2m✓[22m[39m rebuild equivalence: close/reopen with a fresh read-model file reproduces the views [33m 3185[2mms[22m[39m
+ [32m✓[39m tests/coordination/route-drive.test.ts [2m([22m[2m19 tests[22m[2m)[22m[33m 42871[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite close + reopen 后仍能领取既有 wait_admission intent 并完成唯一后继 [33m 2229[2mms[22m[39m
+   [33m[2m✓[22m[39m independent process exit before_page recovers fixed subscription pages exactly once [33m 12228[2mms[22m[39m
+   [33m[2m✓[22m[39m independent process exit after_page recovers fixed subscription pages exactly once [33m 14010[2mms[22m[39m
+   [33m[2m✓[22m[39m independent consumers preserve the new generation result when the old process settles late [33m 14114[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/p1-08-portfolio-summary.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 10572[2mms[22m[39m
+     [33m[2m✓[22m[39m consolePortfolio lists both isolated bootstrapped scopes in scope-key order [33m 1899[2mms[22m[39m
+     [33m[2m✓[22m[39m consoleSummary aggregates counters per project; local ids never cross-read [33m 1836[2mms[22m[39m
+     [33m[2m✓[22m[39m phaseCounts track the LATEST reduction phase per task and the latest goal phase [33m 1680[2mms[22m[39m
+     [33m[2m✓[22m[39m freshness: covered+no row -> not_found; uncovered -> not_ready; no cursor+no row -> not_ready [33m 2062[2mms[22m[39m
+     [33m[2m✓[22m[39m portfolio freshness mirrors summary (covered ready; uncovered not_ready) [33m 3093[2mms[22m[39m
+ [32m✓[39m tests/sqlite-read-model/p1-16-work-context.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 8941[2mms[22m[39m
+     [33m[2m✓[22m[39m projects the binding + notes rows and survives close/reopen (restart equivalence) [33m 3099[2mms[22m[39m
+     [33m[2m✓[22m[39m scope isolation: the SAME local workId in project B has its OWN rows (no cross-project read) [33m 2157[2mms[22m[39m
+     [33m[2m✓[22m[39m notes append in order and the multi-run link path is projected [33m 1913[2mms[22m[39m
+     [33m[2m✓[22m[39m freshness: a never-bound work is not_found (distinct from not_ready) [33m 1771[2mms[22m[39m
+[90mstdout[2m | tests/integration/p1-16.real-kernel.continuity.test.ts[2m > [22m[2mP1-16 real-kernel continuity evidence (real coding-agent CLI)[2m > [22m[2mrun(2 requests: read -> final) -> resume(same session) -> second turn; evidence recorded
+[22m[39mP1-16-REAL-KERNEL-EVIDENCE
+{
+  "kernelRoot": "/mnt/d/1.project/Software/agent_platform/vendor/coding-agent/",
+  "sessionId": "p116-real-kernel-session",
+  "turn1": {
+    "args": [
+      "run"
+    ],
+    "exit": null,
+    "requests": 3,
+    "stdoutTail": ""
+  },
+  "turn2": {
+    "args": [
+      "resume",
+      "--session",
+      "p116-real-kernel-session"
+    ],
+    "exit": 0,
+    "requests": 3,
+    "stdoutTail": "第二阶段完成：从持久会话接续并继续同一工作\n"
+  },
+  "sessionDbBytes": 77824,
+  "observed": "restored_original",
+  "capability": {
+    "sessionRestore": true,
+    "contextResume": true,
+    "takeoverRun": true
+  },
+  "note": "真实内核应用路径验证（真实 CLI 进程 + 真实会话持久化 + 真实 resume 语义）；模型端点为本地 SSE 替身（无 provider 凭证时的显式降级证据）——见 IMPLEMENTATION-HANDOFF P1-16 真实内核证据设计。"
+}
+
+ [32m✓[39m tests/integration/p1-16.real-kernel.continuity.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 15342[2mms[22m[39m
+     [33m[2m✓[22m[39m run(2 requests: read -> final) -> resume(same session) -> second turn; evidence recorded [33m 15337[2mms[22m[39m

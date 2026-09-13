@@ -1,0 +1,15 @@
+file:///mnt/d/1.project/Software/agent_platform/.local/linux-test-tools/node_modules/vitest/dist/chunks/cac.DdICfEr1.js:2193
+			throw new Error(`Expected a single value for option "${command}", received [${received}]`);
+			      ^
+
+Error: Expected a single value for option "-c, --config <path>", received ["/mnt/d/1.project/Software/agent_platform/.local/linux-test-tools/vitest.config.mjs", "evidence/collaboration-memory/CM-1A-001/implementation/CM1A-001-snap-04/evidence-tests.config.mjs"]
+    at transform (file:///mnt/d/1.project/Software/agent_platform/.local/linux-test-tools/node_modules/vitest/dist/chunks/cac.DdICfEr1.js:2193:10)
+    at setDotProp (file:///mnt/d/1.project/Software/agent_platform/.local/linux-test-tools/node_modules/vitest/dist/chunks/cac.DdICfEr1.js:209:22)
+    at CAC.mri (file:///mnt/d/1.project/Software/agent_platform/.local/linux-test-tools/node_modules/vitest/dist/chunks/cac.DdICfEr1.js:593:9)
+    at CAC.parse (file:///mnt/d/1.project/Software/agent_platform/.local/linux-test-tools/node_modules/vitest/dist/chunks/cac.DdICfEr1.js:510:27)
+    at file:///mnt/d/1.project/Software/agent_platform/.local/linux-test-tools/node_modules/vitest/dist/cli.js:11:13
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+Node.js v24.18.0

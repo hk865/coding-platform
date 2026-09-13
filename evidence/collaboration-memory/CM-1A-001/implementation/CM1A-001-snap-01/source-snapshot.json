@@ -1,0 +1,60 @@
+{
+  "snapshotId": "CM1A-001-snap-01",
+  "capturedAt": "2026-09-12T18:43:48.499Z",
+  "productRoot": "/mnt/d/1.project/Software/agent_platform",
+  "head": "0eb02717d16412298c786166a75ca1a9d3e05ac7",
+  "branch": "main",
+  "sourceFingerprintAlgorithm": "BASELINE.md §5（path + NUL + sha256(file bytes) + LF，排除 node_modules/dist/coverage/.local/.git 与 evidence/）",
+  "sourceFileCount": 1211,
+  "sourceFingerprintSha256": "391d23a280689196da24efa0666d11912ad6cdac93891645d3abcbae157e85f2",
+  "workingTreeEntryCount": 226,
+  "toolchain": {
+    "node": "v24.18.0",
+    "note": "pnpm 11.21.0；WSL2；测试入口必须为 bash scripts/test-wsl.sh"
+  },
+  "changedByThisWorkSegment": [
+    "src/contracts/coordination.ts (new)",
+    "src/contracts/coordination-events.ts (new)",
+    "src/control/control-engine/records/coordination.ts (new)",
+    "src/control/control-engine/policies/coordination-rules.ts (new)",
+    "src/contracts/command-event.ts",
+    "src/contracts/validation/identity.ts",
+    "src/contracts/events.ts",
+    "src/contracts/ledger.ts",
+    "src/contracts/validation/event.ts",
+    "src/data/state-ledger/ledger-validation.ts",
+    "src/data/state-ledger/sqlite-ledger.ts",
+    "src/data/state-ledger/in-memory-ledger.ts",
+    "src/data/read-model-index/read-model-index.ts",
+    "src/data/read-model-index/sqlite-read-model-index.ts",
+    "tests/contracts/module-ownership.test.ts",
+    "src/control/dispatch-engine/coordination-drive.ts (new, 3rd work segment)",
+    "src/data/context-compiler/delivery-materials.ts (new, 3rd work segment)",
+    "tests/coordination/route-drive.test.ts (new)",
+    "tests/coordination/delivery-into-input.test.ts (new)",
+    "src/contracts/ports.ts",
+    "src/contracts/runtime-context-materials.ts",
+    "src/control/dispatch-engine/dispatch-engine.ts",
+    "src/control/dispatch-engine/work-material-drive.ts",
+    "src/harness/in-memory-harness.ts",
+    "src/harness/persistent-harness.ts"
+  ],
+  "workSegments": [
+    {
+      "id": "WS-1",
+      "scope": "契约层 + 账本层",
+      "result": "tsc 0 / boundaries 0 / 全量 302 文件 1997 用例通过"
+    },
+    {
+      "id": "WS-2",
+      "scope": "Control 受理面（12 handler + mailboxView + participation-end）",
+      "result": "tsc 0 / boundaries 0 / tests-coordination 40 用例通过 / 全量 304 文件 2028 用例 0 失败"
+    },
+    {
+      "id": "WS-3",
+      "scope": "Dispatch 协作路由驱动 + Context Delivery 接材",
+      "result": "tsc 0 / boundaries 0 / tests-coordination 55 用例通过 / 全量 306 文件 2043 用例 0 失败"
+    }
+  ],
+  "status": "实施中：WS-1 契约+账本层、WS-2 Control 受理面、WS-3 Dispatch 路由 + Context 接材均已完成。A01-A12 无一可标记通过；D06 的账本侧 provider 调用证据未实现。"
+}

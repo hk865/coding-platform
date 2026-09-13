@@ -1,0 +1,100 @@
+import { describe, expect, it } from 'vitest';
+import { PlanCompilerImpl } from '../../src/control/plan-compiler/plan-compiler.js';
+import { ReworkPlanCompiler } from '../../src/control/plan-compiler/rework-plan-compiler.js';
+import { resolvePlanningWorkIdentities } from '../../src/control/plan-compiler/planning-work-materials.js';
+import { CoordinationContextCompiler } from '../../src/data/context-compiler/coordination-context-compiler.js';
+import { buildAmendGoalRequestV1 } from '../contract-support/fixtures/goal-change-fixtures.js';
+import { buildBindWorkContextCommand } from '../contract-support/fixtures/context-fixtures.js';
+import { buildDispatchClaimCommand } from '../../src/fixtures/dispatch-fixtures.js';
+import { buildDispatchClaimLedgerCommit } from '../../src/control/control-engine/records/dispatch.js';
+import { workIdFor } from '../../src/contracts/task-work-identity.js';
+import { buildIssue, engineFor, memoryLedger, prepareScope, FIXED,
+  RW04_PROJECT, RW04_WORKSPACE, RW04_GOAL, RW04_VERIFY_TASK, RW04_OBLIGATION, RW04_REQUIREMENT } from './autonomous-rework-fixture.js';
+
+const scope = { projectId: RW04_PROJECT, workspaceId: RW04_WORKSPACE, goalId: RW04_GOAL };
+
+async function world(workId?: string) {
+  const ledger = memoryLedger();
+  const { goal, sourcePlan } = await prepareScope(ledger);
+  const control = engineFor(ledger);
+  if (workId) {
+    const claim = buildDispatchClaimCommand({ projectId: scope.projectId, goalId: scope.goalId,
+      taskId: RW04_VERIFY_TASK, runId: 'impact-run', attemptId: 'impact-attempt',
+      commandId: 'impact-claim', correlationId: 'impact', idempotencyKey: 'impact-claim', submittedAt: FIXED });
+    expect((await ledger.commit(buildDispatchClaimLedgerCommit(claim, {
+      eventId: 'impact-run-event', occurredAt: FIXED, workspaceId: scope.workspaceId,
+      planRef: sourcePlan.ref, workspaceRevision: 1,
+    }))).status).toBe('committed');
+    expect((await control.bindWorkContext(buildBindWorkContextCommand({
+      commandId: 'impact-bind', projectId: scope.projectId, workspaceId: scope.workspaceId,
+      goalId: scope.goalId, taskId: RW04_VERIFY_TASK, workKind: 'task', workId,
+      initialRunRef: { aggregateType: 'Run', projectId: scope.projectId, goalId: scope.goalId, runId: 'impact-run' },
+    }))).status).toBe('committed');
+  }
+  return { ledger, control, goal, sourcePlan };
+}
+
+describe('plan impact uses canonical work identities', () => {
+  for (const workId of ['customer-chosen-work', workIdFor(scope, RW04_VERIFY_TASK)]) {
+    it('preserves the actual binding ' + workId, async () => {
+      const { ledger, control, goal, sourcePlan } = await world(workId);
+      const compiler = new PlanCompilerImpl({ materials: new CoordinationContextCompiler({ ledger }), workIdentity: control, now: () => FIXED });
+      const result = await compiler.request(buildAmendGoalRequestV1({ planRef: sourcePlan.ref }));
+      expect(result.status).toBe('proposal');
+      if (result.status !== 'proposal') throw Error(JSON.stringify(result));
+      expect(result.proposal.impact.affectedWorks.map(row => row.workRef.workId)).toEqual([workId]);
+
+      const issue = buildIssue({ taskId: RW04_VERIFY_TASK, plan: sourcePlan,
+        failedRequirements: [{ obligationId: RW04_OBLIGATION, requirementId: RW04_REQUIREMENT }] });
+      const rework = new ReworkPlanCompiler().compile({ schemaVersion: 1, ...scope, goalRef: goal.ref,
+        goalObjective: goal.objective, activePlan: sourcePlan, issues: [issue],
+        workIdentities: await resolvePlanningWorkIdentities(scope, sourcePlan, control),
+      });
+      expect(rework.status).toBe('proposal');
+      if (rework.status !== 'proposal') throw Error(JSON.stringify(rework));
+      expect(rework.proposal.impact.affectedWorks.map(row => row.workRef.workId)).toEqual([workId]);
+      expect(rework.proposal.impact.materialsToRefresh).toContain('workContext:' + workId);
+      expect(rework.proposal.impact.materialsToRefresh).not.toContain('workContext:work-' + RW04_VERIFY_TASK);
+    });
+  }
+
+  it('rework successors resolve the existing origin binding without inventing a new id', async () => {
+    const { control, sourcePlan } = await world('retained-work');
+    const plan = structuredClone(sourcePlan);
+    const source = plan.tasks.find(task => task.taskId === RW04_VERIFY_TASK)!;
+    source.disposition = 'superseded';
+    source.replacedByTaskId = 'successor';
+    plan.tasks.push({ ...source, taskId: 'successor', disposition: 'active', replacedByTaskId: null });
+    const materials = await resolvePlanningWorkIdentities(scope, plan, control);
+    expect(materials.find(row => row.taskId === 'successor')).toMatchObject({
+      status: 'resolved', originTaskId: RW04_VERIFY_TASK, workRef: { workId: 'retained-work' },
+    });
+  });
+
+  it('distinguishes absent bindings from unreadable material', async () => {
+    const { ledger, control, sourcePlan } = await world();
+    const compile = (workIdentity?: Pick<typeof control, 'resolveTaskWorkIdentity'>) =>
+      new PlanCompilerImpl({ materials: new CoordinationContextCompiler({ ledger }), ...(workIdentity ? { workIdentity } : {}), now: () => FIXED })
+        .request(buildAmendGoalRequestV1({ planRef: sourcePlan.ref }));
+    const absent = await compile(control);
+    if (absent.status !== 'proposal') throw Error(JSON.stringify(absent));
+    expect(absent.proposal.impact.affectedWorks).toEqual([]);
+    expect(absent.proposal.impact.staleAssumptions.some(row => row.assumption.startsWith('工作影响清单完整'))).toBe(false);
+    for (const authority of [undefined, { resolveTaskWorkIdentity: async () => { throw Error('offline'); } }]) {
+      const unavailable = await compile(authority);
+      if (unavailable.status !== 'proposal') throw Error(JSON.stringify(unavailable));
+      expect(unavailable.proposal.impact.affectedWorks).toEqual([]);
+      expect(unavailable.proposal.impact.staleAssumptions.some(row => row.reason.includes('不能视为不存在'))).toBe(true);
+    }
+  });
+
+  it('does not put an identity returned for another goal in the impact report', async () => {
+    const { control, sourcePlan } = await world('private-work');
+    const legitimate = await control.resolveTaskWorkIdentity({ ...scope, taskId: RW04_VERIFY_TASK });
+    if (legitimate.status !== 'resolved') throw Error('missing binding');
+    const materials = await resolvePlanningWorkIdentities(scope, sourcePlan, {
+      resolveTaskWorkIdentity: async () => ({ ...legitimate, binding: { ...legitimate.binding, goalId: 'other-goal' } }),
+    });
+    expect(materials.every(row => row.status === 'unavailable')).toBe(true);
+  });
+});

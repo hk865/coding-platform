@@ -1,0 +1,258 @@
+import type { VerificationScope as Scope, VerificationCandidate, VerificationAttempt, Benchmark } from '../../contracts/verification-import.js';
+import type { VerificationServiceDeps } from "./verification-deps.js";
+import { canonicalJson } from '../../contracts/fingerprint.js';
+import { digest, ensure, object, text, sha, benchmark, time, changedPaths, vScope } from './verification-input.js';
+import { VerificationJournal } from './verification-journal.js';
+import { writeFile, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
+import { buildAcquireWriteLeaseCommand, buildRecordPatchCommand } from '../../contracts/commands/workspace.js';
+import type { RecordedVerificationPort } from '../../contracts/verification-service.js';
+import { VerificationReports } from './verification-reports.js';
+const actor = { kind: 'human' as const, id: 'local-benchmark-import' };
+export function evaluateBenchmark(b: Benchmark, reportBody: string) {
+  const report = object(JSON.parse(reportBody));
+  ensure(Array.isArray(report['tests']) && report['tests'].length <= 30000, '报告缺少 tests 数组');
+  const tests = new Map<string, string>();
+  const rank: Record<string, number> = { PASSED: 0, SKIPPED: 1, FAILED: 2 };
+  for (const entry of report['tests']) {
+    const t = object(entry),
+      name = text(t['name'], 'test.name'),
+      status = text(t['status'], 'test.status', 32);
+    ensure(Object.hasOwn(rank, status), '未知测试状态：' + status);
+    if (!tests.has(name) || rank[status]! > rank[tests.get(name)!]!)
+      tests.set(name, status);
+  }
+  const required = [...b.failToPass, ...b.passToPass];
+  const failedTests = required.filter(n => tests.get(n) === 'FAILED');
+  const missingTests = required.filter(n => !tests.has(n) || tests.get(n) === 'SKIPPED');
+  return {
+    verdict: failedTests.length || missingTests.length ? 'FAIL' as const : 'PASS' as const,
+    completeness: missingTests.length ? 'missing' as const : 'complete' as const,
+    failedTests,
+    missingTests,
+    counts: {
+      failToPass: b.failToPass.length,
+      passToPass: b.passToPass.length,
+      passed: required.length - failedTests.length - missingTests.length,
+      failed: failedTests.length,
+      missing: missingTests.length
+    }
+  };
+}
+/** Frozen candidate and original/diagnostic/repair scores retain separate durable identities. */
+export class BenchmarkVerification {
+  constructor(private readonly deps: VerificationServiceDeps, private readonly journal: VerificationJournal, private readonly reports: VerificationReports, private readonly recorded: RecordedVerificationPort) { }
+  async restoreArtifacts() {
+    for (const c of this.journal.candidates)
+      await this.reports.artifact(c.patch, c, c.registeredAt);
+    for (const a of this.journal.attempts)
+      await this.reports.reportArtifacts(a);
+  }
+  async register(scope: Scope, input: Record<string, unknown>) {
+    const requestId = text(input['requestId'], 'requestId', 128),
+      patch = text(input['patch'], 'patch', 200000),
+      candidateDigest = sha(input['patchSha256'], 'patchSha256');
+    ensure(digest(patch) === candidateDigest, '补丁摘要不一致');
+    const paths = changedPaths(patch);
+    const b = benchmark(input['benchmark']);
+    const origin = input['origin'];
+    ensure(origin === 'model' || origin === 'assisted-repair', '必须明确模型原候选或辅助修复');
+    const id = digest(canonicalJson([scope, requestId])),
+      fingerprint = digest(canonicalJson({ scope, patch, b, origin }));
+    const prior = this.journal.candidates.find(c => c.candidateId === id);
+    if (prior) {
+      ensure(prior.fingerprint === fingerprint, '同一候选请求内容已改变');
+      return {
+        candidate: this.journal.forRun(scope).candidates.find(c => c.candidateId === id),
+        replayed: true
+      };
+    }
+    ensure(
+      !this.journal.candidates.some(c => c.projectId === scope.projectId && c.goalId === scope.goalId && c.runId === scope.runId && c.candidateDigest === candidateDigest),
+      '同补丁请复用已登记候选，诊断不能伪装新修复'
+    );
+    const pending = this.journal.pending.get(id);
+    ensure(!pending || pending.fingerprint === fingerprint, '未完成候选请求的内容已改变');
+    const ctx = await this.deps.context.run(scope);
+    const registeredAt = pending?.registeredAt ?? new Date().toISOString();
+    const previous = this.journal.candidates.filter(c => c.projectId === scope.projectId && c.goalId === scope.goalId && c.runId === scope.runId);
+    ensure(!previous.length || origin === 'assisted-repair', '后续候选必须声明辅助修复，不得改写模型原成绩');
+    ensure(previous.every(c => canonicalJson(c.benchmark) === canonicalJson(b)), '同一运行的指定验收集合不可更换');
+    const patchFile = join(this.journal.directory, 'patch-' + id + '.diff');
+    await writeFile(patchFile, patch, { mode: 0o600 });
+    await this.deps.candidatePatchCheck.check({ root: ctx.root, patchFile });
+    const workspaceDigest = await this.deps.context.workspaceDigest(scope);
+    ensure(!pending || pending.workspaceDigest === workspaceDigest, '未完成候选的工作区已变化');
+    const artifactRef = await this.reports.artifact(patch, scope, registeredAt);
+    const draft: VerificationCandidate = pending ?? {
+      ...scope,
+      candidateId: id,
+      candidateDigest,
+      workspaceDigest,
+      workspaceRevision: ctx.workspaceRevision + 1,
+      origin,
+      benchmark: b,
+      registeredAt,
+      changedPaths: paths,
+      artifactRef,
+      fingerprint,
+      planRef: ctx.plan.ref,
+      patch
+    };
+    await this.journal.save('pending', id, draft);
+    this.journal.pending.set(id, draft);
+    const recorded = await this.deps.context.patchRecord(scope.projectId, id);
+    if (recorded) {
+      const saved = recorded;
+      ensure(
+        saved.patch.bodyRef.digest === candidateDigest && saved.patch.afterWorkspaceRevision === draft.workspaceRevision && ctx.workspaceRevision === draft.workspaceRevision,
+        '未完成候选的正式版本已变化'
+      );
+      await this.journal.save('candidate', id, draft);
+      this.journal.candidates.push(draft);
+      this.journal.pending.delete(id);
+      await unlink(join(this.journal.directory, 'pending-' + id + '.json'));
+      return {
+        candidate: this.journal.forRun(scope).candidates.find(c => c.candidateId === id),
+        replayed: true
+      };
+    }
+    ensure(ctx.workspaceRevision === draft.workspaceRevision - 1, '未完成候选的基础版本已变化');
+    const leaseId = 'verification-' + id,
+      envelope = ctx.run.envelope!;
+    const acquired = await this.deps.workspaceLease.acquireWriteLease(buildAcquireWriteLeaseCommand({
+      commandId: leaseId,
+      leaseId,
+      correlationId: leaseId,
+      expiresAt: null,
+      idempotencyKey: leaseId,
+      projectId: scope.projectId,
+      workspaceId: scope.workspaceId,
+      scope: {
+        schemaVersion: 1,
+        projectId: scope.projectId,
+        workspaceId: scope.workspaceId,
+        kind: 'workspace',
+        id: scope.workspaceId,
+        revision: ctx.workspaceRevision
+      },
+      holder: { runRef: ctx.run.ref, attemptRef: envelope.attemptRef, roleBinding: envelope.roleBinding },
+      declaredWriteScope: envelope.permissions.writeScope,
+      submittedAt: registeredAt,
+      actor
+    }));
+    ensure(acquired.status === 'committed', '候选登记无法取得正式工作区租约');
+    const committed = await this.deps.control.recordPatch(buildRecordPatchCommand({
+      commandId: 'patch-' + id,
+      correlationId: 'patch-' + id,
+      idempotencyKey: 'patch-' + id,
+      projectId: scope.projectId,
+      actor,
+      submittedAt: registeredAt,
+      patch: {
+        schemaVersion: 1,
+        patchId: id,
+        ...scope,
+        taskId: envelope.taskId,
+        planRef: ctx.plan.ref,
+        taskRevision: ctx.plan.planRevision,
+        runRef: ctx.run.ref,
+        attemptRef: envelope.attemptRef,
+        roleBinding: envelope.roleBinding,
+        kind: 'patch',
+        title: origin === 'model' ? '模型原始候选：冻结验收' : '辅助修复候选（非原模型成绩）',
+        changedPaths: paths,
+        bodyRef: artifactRef,
+        beforeWorkspaceRevision: ctx.workspaceRevision,
+        afterWorkspaceRevision: ctx.workspaceRevision + 1,
+        checkResults: [],
+        usedInputEvidenceRefs: [],
+        generatedAt: registeredAt
+      }
+    }));
+    ensure(committed.status === 'committed', '正式候选补丁登记被拒绝：' + JSON.stringify(committed));
+    const candidate: VerificationCandidate = draft;
+    await this.journal.save('candidate', id, candidate);
+    this.journal.candidates.push(candidate);
+    this.journal.pending.delete(id);
+    await unlink(join(this.journal.directory, 'pending-' + id + '.json'));
+    return {
+      candidate: this.journal.forRun(scope).candidates.find(c => c.candidateId === id),
+      replayed: false
+    };
+  }
+  async import(scope: Scope, input: Record<string, unknown>) {
+    const requestId = text(input['requestId'], 'requestId', 128),
+      candidateId = sha(input['candidateId'], 'candidateId');
+    const candidate = this.journal.candidates.find(c => c.candidateId === candidateId && canonicalJson(vScope(c)) === canonicalJson(scope));
+    ensure(candidate, '候选不属于此运行作用域');
+    ensure(input['candidateDigest'] === candidate.candidateDigest && input['workspaceRevision'] === candidate.workspaceRevision, '候选摘要或工作区版本不一致');
+    const purpose = input['purpose'];
+    ensure(purpose === 'original' || purpose === 'diagnostic' || purpose === 'repair', '无效验收用途');
+    ensure((candidate.origin === 'model' && purpose !== 'repair') || (candidate.origin === 'assisted-repair' && purpose !== 'original'), '辅助修复不能登记为原模型成绩');
+    const source = object(input['source']),
+      reportBody = text(input['reportBody'], 'reportBody', 1500000);
+    const sourceValue = {
+      name: text(source['name'], 'source.name'),
+      reportUri: text(source['reportUri'], 'source.reportUri', 4096),
+      reportDigest: sha(source['reportDigest'], 'source.reportDigest')
+    };
+    ensure(digest(reportBody) === sourceValue.reportDigest, '报告摘要不一致');
+    const startedAt = time(input['startedAt'], 'startedAt'),
+      completedAt = time(input['completedAt'], 'completedAt');
+    ensure(Date.parse(startedAt) <= Date.parse(completedAt) && Date.parse(completedAt) <= Date.now() + 60000, '验收时间范围不一致');
+    const evaluation = evaluateBenchmark(candidate.benchmark, reportBody),
+      verificationId = digest(canonicalJson([scope, requestId]));
+    const fingerprint = digest(canonicalJson({ scope, candidateId, sourceValue, startedAt, completedAt, purpose, reportBody }));
+    const prior = this.journal.attempts.find(a => a.verificationId === verificationId);
+    if (prior) {
+      ensure(prior.fingerprint === fingerprint, '同一验收请求内容已改变');
+      if (prior.control.status === 'pending')
+        await this.apply(prior, candidate);
+      return {
+        verification: this.journal.forRun(scope).verifications.find(a => a.verificationId === verificationId),
+        replayed: true
+      };
+    }
+    ensure(
+      !(purpose === 'original' && this.journal.attempts.some(a => canonicalJson(vScope(a)) === canonicalJson(scope) && a.purpose === 'original')),
+      '原模型成绩已存在；复测必须标为 diagnostic'
+    );
+    const ctx = await this.deps.context.run(scope);
+    ensure(
+      ctx.workspaceRevision === candidate.workspaceRevision && canonicalJson(ctx.plan.ref) === canonicalJson(candidate.planRef) && await this.deps.context.workspaceDigest(scope) === candidate.workspaceDigest,
+      '候选已过期：当前工作区或计划发生变化'
+    );
+    const attempt: VerificationAttempt = {
+      ...scope,
+      verificationId,
+      sequence: this.journal.attempts.length + 1,
+      candidateId,
+      candidateDigest: candidate.candidateDigest,
+      workspaceRevision: candidate.workspaceRevision,
+      purpose,
+      source: sourceValue,
+      startedAt,
+      completedAt,
+      importedAt: new Date().toISOString(),
+      ...evaluation,
+      fingerprint,
+      reportBody,
+      control: { status: 'pending', taskPhase: null, goalPhase: null, evidenceIds: [] }
+    };
+    // Durable before the first command. Retry resumes this exact identity, never emits a new attempt.
+    await this.journal.save('verification', verificationId, attempt);
+    this.journal.attempts.push(attempt);
+    await this.apply(attempt, candidate);
+    return {
+      verification: this.journal.forRun(scope).verifications.find(a => a.verificationId === verificationId),
+      replayed: false
+    };
+  }
+  private async apply(a: VerificationAttempt, c: VerificationCandidate) {
+    const ctx = await this.deps.context.run(a);
+    ensure(ctx.workspaceRevision === c.workspaceRevision && await this.deps.context.workspaceDigest(a) === c.workspaceDigest, '未完成验收的候选已过期');
+    a.control = await this.recorded.benchmark(a, c, ctx.plan, ctx.run, await this.reports.reportArtifacts(a));
+    await this.journal.save('verification', a.verificationId, a);
+  }
+}

@@ -1,0 +1,98 @@
+
+ RUN  v4.1.10 /mnt/d/1.project/Software/agent_platform
+
+ ✓ tests/contracts/state-ledger.double.test.ts (1 test) 5ms
+ ✓ tests/contracts/cursor.test.ts (3 tests) 7ms
+ ✓ tests/contracts/fingerprint.test.ts (9 tests) 8ms
+ ✓ tests/contracts/fixtures.test.ts (7 tests) 16ms
+ ✓ tests/contracts/validation.test.ts (9 tests) 12ms
+ ✓ tests/contracts/goal-phase.test.ts (25 tests) 26ms
+ ✓ tests/ledger/in-memory-ledger.boundary.test.ts (11 tests) 23ms
+ ✓ tests/ledger/in-memory-ledger.contract.test.ts (16 tests) 32ms
+ ✓ tests/contracts/material-access.test.ts (9 tests) 13ms
+ ✓ tests/ledger/snapshot-isolation.test.ts (3 tests) 16ms
+ ✓ tests/ledger/identity-upgrade.test.ts (3 tests) 482ms
+ ✓ tests/contracts/module-ownership.test.ts (9 tests) 6514ms
+     ✓ keeps the workspace path-boundary policy in exactly one WorkspaceReader file  5780ms
+ ✓ tests/coordination/participation-uniqueness.test.ts (1 test) 435ms
+     ✓ 两条独立 SQLite 连接：第二段 active 参与被账本拒绝（零写入），旧段结束后换手成立  434ms
+ ✓ tests/coordination/control.test.ts (28 tests) 78ms
+ ✓ tests/coordination/route-continuity.test.ts (8 tests) 219ms
+ ✓ tests/coordination/handoff-successor.test.ts (6 tests) 301ms
+ ✓ tests/coordination/control.sqlite.test.ts (4 tests) 1979ms
+ ✓ tests/coordination/route-drive.test.ts (15 tests) 2593ms
+     ✓ SQLite close + reopen 后仍能领取既有 wait_admission intent 并完成唯一后继  2244ms
+ ✓ tests/coordination/model-request-evidence-bypass.test.ts (1 test) 2915ms
+   ✓ 模型侧 run_completed 而证据未落账时：Run 仍是 completed，旁路失败可见  2912ms
+ ✓ tests/coordination/host-tool-chain.test.ts (1 test) 4997ms
+     ✓ 模型经真实工具发起请求与报告；重启后唯一后继被受理、准备并带着精确报告版本跑起来  4995ms
+ ❯ tests/coordination/coordination-capability.test.ts (6 tests | 3 failed) 10575ms
+     × 未授予的 Run：判定给出可读原因、不提供协调工具、调用被拒且平台状态零改动 2365ms
+     × 授予的 Run：能力依据来自账本事实、工具可用、调用被受理，并随运行记录持久化 2153ms
+     × 同一个 Run 对应多段 active 参与关系时：拒绝授予（可读原因），不替它挑一段 2019ms
+     ✓ 不存在第二条拿到协调工具的路径：唯一注入点是运行入口，且它只在 granted 时发生  1826ms
+     ✓ 内核策略层：工具被注入但未获宿主授权时，内核按未授权的未知操作拒绝，handler 不执行  407ms
+     ✓ 每个写操作在动 Vault/Control 之前校验能力：授予失效后拒绝，且零平台状态变更  1803ms
+ ✓ tests/coordination/delivery-into-input.test.ts (4 tests) 11879ms
+     ✓ Delivery 正文、精确版本与选入理由都进入捕获的 ModelRequest 与 manifest.selected  4292ms
+     ✓ 调用证据（D06）：model_request_evidence 落账，requestDigest = 捕获请求重算的 sha256，contextInputDigest = manifest.inputDigest，同一许可的第二次尝试被拒  3179ms
+     ✓ 撤权之后：该 Delivery 不允许进入新的输入（材料组装在模型调用之前失败）  2164ms
+     ✓ 来源在本次运行期间被更新：basis 不一致 → 精确授权失效 → 拒绝进入新输入  2242ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/coordination/coordination-capability.test.ts > 协议约束 2.3：协调能力必须由宿主显式授予 > 未授予的 Run：判定给出可读原因、不提供协调工具、调用被拒且平台状态零改动
+AssertionError: expected '该 Run 未被授予协调能力：这个 Run 既没有发起过参与关系，也不是任…' to contain '没有唯一一段 active 参与关系'
+
+Expected: "没有唯一一段 active 参与关系"
+Received: "该 Run 未被授予协调能力：这个 Run 既没有发起过参与关系，也不是任何接续受理记录的后继 Run（未授予时不装配协调工具，也不向内核声明该能力）"
+
+ ❯ tests/coordination/coordination-capability.test.ts:282:29
+    280|     if (decision.status !== "not_granted") throw new Error("expected n…
+    281|     expect(decision.reason).toContain("未被授予协调能力");
+    282|     expect(decision.reason).toContain("没有唯一一段 active 参与关系");
+       |                             ^
+    283|
+    284|     await runOnce(w.h);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/coordination/coordination-capability.test.ts > 协议约束 2.3：协调能力必须由宿主显式授予 > 授予的 Run：能力依据来自账本事实、工具可用、调用被受理，并随运行记录持久化
+AssertionError: expected 'work_current_participation' to be 'work_participation_started' // Object.is equality
+
+Expected: "work_participation_started"
+Received: "work_current_participation"
+
+ ❯ tests/coordination/coordination-capability.test.ts:307:39
+    305|     if (decision.status !== "granted") throw new Error("expected grant…
+    306|     expect(decision.capability).toBe("coordination");
+    307|     expect(decision.grant.basis.kind).toBe("work_participation_started…
+       |                                       ^
+    308|     expect(decision.grant.participationRef.participationId).toBe("part…
+    309|     expect(decision.grant.workContextRef.workId).toBe(WORK_C);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/coordination/coordination-capability.test.ts > 协议约束 2.3：协调能力必须由宿主显式授予 > 同一个 Run 对应多段 active 参与关系时：拒绝授予（可读原因），不替它挑一段
+AssertionError: expected '该 Run 未被授予协调能力：这个 Run 同时在多个 Work 上满足授…' to contain '多段 active 参与关系'
+
+Expected: "多段 active 参与关系"
+Received: "该 Run 未被授予协调能力：这个 Run 同时在多个 Work 上满足授予条件；宿主不替它挑一个身份，协调工具不装配（未授予时不装配协调工具，也不向内核声明该能力）"
+
+ ❯ tests/coordination/coordination-capability.test.ts:338:29
+    336|     if (decision.status !== "not_granted") throw new Error("expected n…
+    337|     expect(decision.reason).toContain("未被授予协调能力");
+    338|     expect(decision.reason).toContain("多段 active 参与关系");
+       |                             ^
+    339|     expect(decision.reason).toContain("不替它挑一段");
+    340|     // 宿主入口同样给不出访问面（拒绝而不是猜一个身份）。
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed | 21 passed (22)
+      Tests  3 failed | 176 passed (179)
+   Start at  13:31:57
+   Duration  38.18s (transform 201.20s, setup 0ms, import 229.41s, tests 43.12s, environment 3ms)
+
+coord rc=1

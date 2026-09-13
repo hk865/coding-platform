@@ -1,0 +1,55 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [31m❯[39m tests/coordination/runtime-concurrency.test.ts [2m([22m[2m2 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[33m 4903[2mms[22m[39m
+[31m   [31m×[31m ordinary drive overlaps two actual read-only Runtime/provider calls[39m[33m 2707[2mms[22m[39m
+[31m   [31m×[31m overlapping writers share the existing exclusive lease and only one reaches the provider[39m[33m 2194[2mms[22m[39m
+ [32m✓[39m tests/coordination/process-recovery.test.ts [2m([22m[2m8 tests[22m[2m | [22m[33m7 skipped[39m[2m)[22m[33m 24770[2mms[22m[39m
+   [33m[2m✓[22m[39m two independent processes race the same durable outbox; only one enters the actual provider [33m 24769[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/runtime-concurrency.test.ts[2m > [22mordinary drive overlaps two actual read-only Runtime/provider calls
+[31m[1mAssertionError[22m: expected 1 to be 2 // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 2[39m
+[31m+ 1[39m
+
+[36m [2m❯[22m tests/coordination/runtime-concurrency.test.ts:[2m77:28[22m[39m
+    [90m 75|[39m   [35mconst[39m result [33m=[39m [35mawait[39m drive[33m;[39m
+    [90m 76|[39m   expect(result.failures, JSON.stringify(w.runtime.all().map(r => ({ s…
+    [90m 77|[39m   [34mexpect[39m(result[33m.[39mcompleted)[33m.[39m[34mtoBe[39m([34m2[39m)[33m;[39m
+    [90m   |[39m                            [31m^[39m
+    [90m 78|[39m })[33m;[39m
+    [90m 79|[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/runtime-concurrency.test.ts[2m > [22moverlapping writers share the existing exclusive lease and only one reaches the provider
+[31m[1mAssertionError[22m: expected 1 to be 2 // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 2[39m
+[31m+ 1[39m
+
+[36m [2m❯[22m tests/coordination/runtime-concurrency.test.ts:[2m90:28[22m[39m
+    [90m 88|[39m   [35mconst[39m result [33m=[39m [35mawait[39m drive[33m;[39m
+    [90m 89|[39m   [34mexpect[39m(result[33m.[39mfailures)[33m.[39m[34mtoEqual[39m([])[33m;[39m
+    [90m 90|[39m   expect(result.completed).toBe(2); // both actual outcomes, including…
+    [90m   |[39m                            [31m^[39m
+    [90m 91|[39m })[33m;[39m
+    [90m 92|[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m1 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m1 passed[39m[22m[2m | [22m[33m7 skipped[39m[90m (10)[39m
+[2m   Start at [22m 14:43:37
+[2m   Duration [22m 44.29s[2m (transform 31.07s, setup 0ms, import 36.43s, tests 29.67s, environment 0ms)[22m
+

@@ -1,0 +1,1772 @@
+
+ RUN  v4.1.10 /mnt/d/1.project/Software/agent_platform
+
+ ✓ tests/sqlite-read-model/p1-08-portfolio-summary.test.ts (5 tests) 24989ms
+     ✓ consolePortfolio lists both isolated bootstrapped scopes in scope-key order  4543ms
+     ✓ consoleSummary aggregates counters per project; local ids never cross-read  4471ms
+     ✓ phaseCounts track the LATEST reduction phase per task and the latest goal phase  5516ms
+     ✓ freshness: covered+no row -> not_found; uncovered -> not_ready; no cursor+no row -> not_ready  5407ms
+     ✓ portfolio freshness mirrors summary (covered ready; uncovered not_ready)  5050ms
+ ✓ tests/sqlite-read-model/p1-08-matrix-agents-evidence-timeline.test.ts (5 tests) 27081ms
+     ✓ consolePlanMatrix: 3 rows, planned vs live phase separation, project isolation  4557ms
+     ✓ consoleActiveAgents: sourcing, outcome_unknown, replacement handoff, isolation, goalId filter  4357ms
+     ✓ consoleTaskEvidence: admission order, markers, effective set, ref_only  5379ms
+     ✓ consoleTimeline: arrival seq, kinds, ref chain, bounded window, goalId filter  5451ms
+     ✓ rebuild equivalence: close/reopen with a fresh read-model file reproduces the views  7335ms
+ ✓ tests/app/plan-changes.test.ts (2 tests) 27315ms
+   ✓ 安装并激活协调策略后真实 FAIL 被自动受理：提案、system 决定、changeReason 与处置行都可见  18652ms
+   ✓ 没有计划变更时视图明确说明，而不是空白  8660ms
+ ✓ tests/restart/material-access-restart.test.ts (3 tests) 31542ms
+   ✓ keeps valid grants across SQLite restart even behind more than 256 newer candidates (crowded=false)  2147ms
+   ✓ keeps valid grants across SQLite restart even behind more than 256 newer candidates (crowded=true)  26569ms
+   ✓ rejects wrong-workspace grants at submission and denies legacy bad grants after reopening  2825ms
+ ✓ tests/control/workspace-lease-regression.test.ts (20 tests) 33733ms
+     ✓ configured support rejects a write lease with capability_unsupported and appends no events  2786ms
+     ✓ configured support rejects a write lease with capability_readonly and appends no events  2637ms
+     ✓ configured support rejects a write lease with scope_exceeds_capability and appends no events  2565ms
+     ✓ retries the same write command with the original committed receipt  3140ms
+     ✓ replays a concurrent duplicate even when its capability response arrives after the first commit  3278ms
+     ✓ does not accept a changed command or another identity as a replay  3312ms
+     ✓ replays a released lease without disturbing a newer active lease  3359ms
+     ✓ concurrent overlapping read and write requests cannot both acquire a lease (read first: true)  2927ms
+     ✓ concurrent overlapping read and write requests cannot both acquire a lease (read first: false)  3209ms
+   ✓ SQLite replay survives close and reopen with the same receipt and no appended events  3194ms
+   ✓ separate SQLite connections cannot grant overlapping read and write leases  3149ms
+ ✓ tests/app/rework-issues.test.ts (3 tests) 35219ms
+   ✓ 真实失败的检查轮次成为带来源的未处置问题，并通过 HTTP 只读出口返回  13845ms
+   ✓ 真实超时被杀：问题直接回报 timeout，而不是只给一个 FAIL  13186ms
+   ✓ 没有失败结论时问题出口返回明确的空状态，而不是编造问题  8187ms
+ ✓ tests/app/role-spec-governance.test.ts (5 tests) 39088ms
+     ✓ 视图给出逐角色事实与「本策略含不含角色矩阵」，安装/激活/重启后仍可读  5489ms
+     ✓ M3：没有矩阵时既有入口照常派发；含 roles 的矩阵生效后，规格装齐同一个入口仍然派发  12989ms
+     ✓ 越权声明被拒且零写：矩阵 pin 的是只读规格时，写入入口的 claim 不落账  6310ms
+     ✓ M3（探索侧）：只读探索入口在矩阵启用后照常派发（绑定只读角色 investigator）  7135ms
+     ✓ persists multiple immutable versions, preserves the active pin until activation, and survives restart  7160ms
+ ✓ tests/integration/p1-03.contract-suite.sqlite.test.ts (15 tests) 44551ms
+     ✓ readiness table: only deps-satisfied active unblocked budgeted WORK tasks are eligible  2659ms
+     ✓ readiness: goal without accepted plan -> plan_not_accepted  2784ms
+     ✓ claim commits the durable intent + lease + attempt + run atomically (all fields exact)  2593ms
+     ✓ competing claims: two ControlEngine instances -> at most one lease/attempt/run  2817ms
+     ✓ same identity+fingerprint replays committed(replayed); different fingerprint -> idempotency_conflict  3211ms
+     ✓ claim of an ineligible task -> ineligible, zero write  3353ms
+     ✓ claim of a missing goal -> not_found, zero write  3324ms
+     ✓ start commits envelope + outbox started (CAS); stale start -> revision_conflict zero-write  3015ms
+     ✓ run_completed(exit=0) -> ended/completed + exitCode 0; Task.phase stays pending  3360ms
+     ✓ duplicate / invalid-sequence / conflicting / late-after-terminal facts are rejected zero-write (no regress)  3083ms
+     ✓ out-of-order NEWER-then-OLDER events: late old event after a terminal NEVER regresses  3344ms
+     ✓ crash and outcome_unknown project to DIFFERENT outcomes; unknown never guessed from crash  3579ms
+     ✓ ActiveAgent + TaskDetail views rebuild field-identically after a fresh projection  3871ms
+     ✓ outcome_unknown after crash: crash run never becomes satisfied either  3553ms
+ ✓ tests/verification/reviewer-verification.test.ts (21 tests) 37644ms
+     ✓ creates one canonical independent Work, admits precise per-VR outcomes and replays after reopen without rerunning tools  3286ms
+     ✓ rejects an applicable extra tool FAIL with no VR coverage before Work creation  954ms
+     ✓ permanently rejects unknown schema and preserves the original raw report across reopen  2023ms
+     ✓ permanently rejects duplicate VR and preserves the original raw report across reopen  2033ms
+     ✓ permanently rejects missing VR and preserves the original raw report across reopen  1794ms
+     ✓ permanently rejects invented source digest and preserves the original raw report across reopen  1762ms
+     ✓ permanently rejects missing source lines and preserves the original raw report across reopen  1604ms
+     ✓ permanently rejects pin excluded path and preserves the original raw report across reopen  1561ms
+     ✓ permanently rejects missing artifact pointer and preserves the original raw report across reopen  1874ms
+     ✓ permanently rejects PASS with unresolved unknown and preserves the original raw report across reopen  1725ms
+     ✓ recovers a lost creation receipt from canonical Work without creating another Run  642ms
+     ✓ recovers a lost result receipt using its persisted command and canonical Result without re-admission  2690ms
+     ✓ leaves a temporary raw report outage pending, then reads the same binding without a new model session  3035ms
+     ✓ refuses actual source/configuration changes without reviving the old request  1807ms
+     ✓ refuses a real revoked cross-subject grant even while the projection still contains its old candidate  1181ms
+     ✓ recovers a genuine concurrent task reduction CAS by keeping the rejected attempt and using a new key  3599ms
+     ✓ recovers a genuine concurrent goal reduction CAS by keeping the rejected attempt and using a new key  3189ms
+     ✓ does not accept a completed report whose persisted Reviewer session reused the Producer  951ms
+     ✓ keeps missing tool material retryable before creation and freezes the same explicit request  620ms
+     ✓ waits for an existing unknown reviewer execution and ignores caller-provided report fields  713ms
+     ✓ recomputes legacy satisfied state after adopting the independent protocol without changing original Evidence  600ms
+ ✓ tests/app/rework-drive.test.ts (3 tests) 44350ms
+   ✓ 工具轮次真实 FAIL 之后自动触发：产生真实提案，边界不满足时停住并可见，且零写入；重复触发幂等、重启后由 canonical 重建  14659ms
+   ✓ 独立审阅交付 FAIL 结论之后同样触发驱动：问题来源是审阅结论，提案照样机械推导出来  22044ms
+   ✓ 没有任何验证结论时：只读视图不编造提案，也没有触发结果  7645ms
+stdout | tests/integration/p1-16.real-kernel.continuity.test.ts > P1-16 real-kernel continuity evidence (real coding-agent CLI) > run(2 requests: read -> final) -> resume(same session) -> second turn; evidence recorded
+P1-16-REAL-KERNEL-EVIDENCE
+{
+  "kernelRoot": "/mnt/d/1.project/Software/agent_platform/vendor/coding-agent/",
+  "sessionId": "p116-real-kernel-session",
+  "turn1": {
+    "args": [
+      "run"
+    ],
+    "exit": null,
+    "requests": 3,
+    "stdoutTail": ""
+  },
+  "turn2": {
+    "args": [
+      "resume",
+      "--session",
+      "p116-real-kernel-session"
+    ],
+    "exit": 0,
+    "requests": 3,
+    "stdoutTail": "第二阶段完成：从持久会话接续并继续同一工作\n"
+  },
+  "sessionDbBytes": 77824,
+  "observed": "restored_original",
+  "capability": {
+    "sessionRestore": true,
+    "contextResume": true,
+    "takeoverRun": true
+  },
+  "note": "真实内核应用路径验证（真实 CLI 进程 + 真实会话持久化 + 真实 resume 语义）；模型端点为本地 SSE 替身（无 provider 凭证时的显式降级证据）——见 IMPLEMENTATION-HANDOFF P1-16 真实内核证据设计。"
+}
+
+ ✓ tests/integration/p1-16.real-kernel.continuity.test.ts (1 test) 19968ms
+     ✓ run(2 requests: read -> final) -> resume(same session) -> second turn; evidence recorded  19959ms
+ ✓ tests/integration/p1-07.contract-suite.sqlite.test.ts (12 tests) 44123ms
+       ✓ A1/A2 two readers overlap for real; started before any poll; independent attempts/contexts/budgets  2685ms
+       ✓ A3 read + parallel read leases; reader can NEVER obtain a write lease  6695ms
+       ✓ A5 competing writers: at most one effective write lease; loser zero write; readback  5015ms
+       ✓ A5b lease release + expiry-vacate; expired lease does not block a new writer  4668ms
+       ✓ A4 conflict preserved, never overwritten; explanation or escalate required  4049ms
+       ✓ A6 writer uses accepted reader outputs; patch carries changed paths, checks, revision  4472ms
+       ✓ A7 full gate check via runP107FullScenario (happy path: goal COMPLETED)  5142ms
+       ✓ A7b failure facts stay traceable: gate FAIL -> goal never COMPLETED; timeline shows both  5788ms
+       ✓ A8 coordinator exit does not revoke an independent worker's legal lease; role contexts isolated  3235ms
+       ✓ V1 views: not_ready vs not_found freshness semantics; display-only conflict view  2363ms
+ ✓ tests/data/python-source-index.test.ts (12 tests) 50241ms
+   ✓ resolves Python aliases across project files without executing source and invalidates dirty code  5550ms
+   ✓ rejects Python scope escapes and keeps unresolved dependencies unknown  955ms
+   ✓ resolves configured package and workspace dependency roots from pyproject.toml  3369ms
+   ✓ resolves configured package and workspace dependency roots from pyrightconfig.json  5270ms
+   ✓ resolves configured package and workspace dependency roots from setup.cfg  4965ms
+   ✓ recognizes a src namespace layout and safely parses setuptools discovery metadata  2745ms
+   ✓ invalidates configuration, dependency content, manifests, deletes and source identity without reusing stale results  8262ms
+   ✓ reports one-based UTF-16 locations while converting AST UTF-8 byte offsets and Jedi code points  6171ms
+   ✓ rejects denied, absolute and traversing configuration roots and declares unsupported environment semantics  8763ms
+   ✓ refuses an incomplete inventory and detects source changes during analysis  1170ms
+   ✓ keeps module file anchors distinct from declarations and isolates cached results from caller mutation  2979ms
+ ✓ tests/integration/p1-04.contract-suite.sqlite.test.ts (18 tests) 50797ms
+       ✓ claim admission: commit -> immutable evidence + atomic index; replay; conflicts; zero-write  2766ms
+       ✓ a CompletionClaim is never evidence PASS: PASS claim rejected, invalid claim zero-write  2576ms
+       ✓ claim/verdict without a producing run and dangling coverage are rejected zero-write  2371ms
+       ✓ single exit=0 / claim alone NEVER satisfy: blocked with missing-evidence causes  3204ms
+       ✓ FAIL -> failed (rework); newer PASS supersedes -> satisfied; old FAIL stays auditable  3356ms
+       ✓ revision change only recomputes applicability: STALE / OUT_OF_SCOPE displayed, history untouched  3516ms
+       ✓ reviewer verdict alone never satisfies; verdict + bounded-packet static evidence satisfies  3276ms
+       ✓ pure applicability table: APPLICABLE / STALE / OUT_OF_SCOPE and effective-set supersession  2664ms
+       ✓ plan compilation is a deterministic pure function (content-addressed, no model/timestamp)  2992ms
+       ✓ deterministic failures: missing pin / unknown check / no check coverage — never a built-in default  2758ms
+       ✓ VerificationEngine.verify: ready plan + deterministic observation drafts; NEVER writes the ledger  2902ms
+       ✓ semantic change -> reviewer plan goes through a ReviewPacket (never a silent fast path)  3350ms
+       ✓ gate reduces to SATISFIED only with its static gate evidence; deferred never satisfies  3609ms
+       ✓ reducer table: crashed run -> failed; outcome_unknown side effect -> never satisfied; FAIL/INCONCLUSIVE table  3669ms
+       ✓ pure effective-set table: INCONCLUSIVE verdict blocks; superseded by later PASS  2591ms
+       ✓ assemble: bounded ReviewPacket, body-first in the vault, no transcript  2566ms
+       ✓ rejections are zero-write: forbidden scope / stale workspace / not-semantic / exhausted budget  2619ms
+stdout | tests/integration/p1-15-role-e2e.integration.test.ts > P1-15 lane C — 模型协作集成端到端 (真实内核 CLI + 本地模型 fixture) > run(collaboration turn 1) -> resume(close/reopen same session) -> 续接; evidence recorded
+P1-15-MODEL-E2E-EVIDENCE
+{
+  "p115": {
+    "kernelRoot": "/mnt/d/1.project/Software/agent_platform/vendor/coding-agent/",
+    "sessionId": "p115-lane-c-model-e2e-session",
+    "modelEndpoint": "local-fixture-sse (DEEPSEEK_API_KEY=fixture-secret)",
+    "turn1": {
+      "args": [
+        "run"
+      ],
+      "exit": null,
+      "requests": 3,
+      "stdoutTail": ""
+    },
+    "turn2": {
+      "args": [
+        "resume",
+        "--session",
+        "p115-lane-c-model-e2e-session"
+      ],
+      "exit": 0,
+      "requests": 3,
+      "stdoutTail": "P1-15 模型协作闭环（真实内核，close/reopen 续接）：需求歧义→选项(opt-a/opt-b)→决定(accept opt-a)→派发→验证→返工(一次)→接续——从持久事实与 Handoff 继续\n"
+    },
+    "sessionDbBytes": 77824,
+    "observed": "collaboration_loop_model_fixture",
+    "capability": {
+      "modelEndpointDegraded": true,
+      "sessionRestore": true,
+      "closeReopen": true,
+      "noExternalNetwork": true
+    },
+    "note": "真实内核应用路径验证：真实 CLI 进程 + 真实 SQLite 会话持久化 + 真实 resume 语义 + 本地 OpenAI 兼容模型 fixture（无 provider 凭证时的显式降级证据，DEEPSEEK_API_KEY=fixture-secret）。"
+  }
+}
+
+ ✓ tests/integration/p1-15-role-e2e.integration.test.ts (1 test) 18730ms
+     ✓ run(collaboration turn 1) -> resume(close/reopen same session) -> 续接; evidence recorded  18722ms
+ ✓ tests/sqlite-read-model/p1-16-work-context.test.ts (4 tests) 21048ms
+     ✓ projects the binding + notes rows and survives close/reopen (restart equivalence)  5597ms
+     ✓ scope isolation: the SAME local workId in project B has its OWN rows (no cross-project read)  6042ms
+     ✓ notes append in order and the multi-run link path is projected  4941ms
+     ✓ freshness: a never-bound work is not_found (distinct from not_ready)  4465ms
+ ✓ tests/sqlite-read-model/sqlite-read-model-index.restart.test.ts (5 tests) 20174ms
+     ✓ fresh rebuild from the same EventPages equals the incremental projection  5347ms
+     ✓ reopening the same file and continuing equals a one-shot full replay  4938ms
+     ✓ partial rebuild of a prefix equals the incremental prefix  4004ms
+     ✓ persisted dedupe: re-advancing an applied page after reopen is idempotent  1920ms
+     ✓ rebuilt view reflects a same-key update identically (upsert == rebuild)  3962ms
+ ✓ tests/app/governance.test.ts (5 tests) 57057ms
+   ✓ 产品入口完成治理种类的 install/activate：默认只有两条内置基线生效，协调策略必须由人显式提交，视图回答"哪一份、谁在什么时候装的、内容是什么"  3096ms
+   ✓ 激活另一份策略之后，旧激活请求的重放不会被当成"当前生效"：控制守卫复核 canonical，不谎报成功  2966ms
+   ✓ 基线：没有经 install/activate 生效的协调策略时，真实失败链停在 governance_unavailable 且零写入  13973ms
+   ✓ 真实 HTTP 安装并激活协调策略之后：同一条失败链自动受理成功，新 revision 生效，额度按生效策略计数  19420ms
+   ✓ RW-10 人的暂停开关：inScopeRework=false 的协调策略生效后，真实失败链转人工且零写入；重新启用后恢复自动受理  17601ms
+ ✓ tests/sqlite-read-model/p1-12-brief-proposal-projection.test.ts (3 tests) 16444ms
+     ✓ surfaces lane-B briefs/proposals per full scope key with cross-project isolation  4727ms
+     ✓ freshness: a never-advanced index returns not_ready (not not_found)  4517ms
+     ✓ rebuild equivalence: close/reopen with a fresh read-model file reproduces the view  7197ms
+ ✓ tests/app/rework-dispatch.test.ts (1 test) 17546ms
+   ✓ 真实 FAIL 自动受理成新 revision 之后，产品自己的派发入口把返工任务认领并跑出一个 Run  17545ms
+ ✓ tests/verification/reviewer-recovery.test.ts (11 tests) 15933ms
+   ✓ replaces a proven prestart failure and follows the original PASS result/evidence/reduction chain across reopen  3069ms
+   ✓ replaces a proven prestart failure and follows the original FAIL result/evidence/reduction chain across reopen  2990ms
+   ✓ replays same-key concurrent recovery, conflicts on changed payload, and admits only one competing authorization  1217ms
+   ✓ lets protocol CAS choose one Work for different simultaneous authorization identities  1047ms
+   ✓ persists a committed Control receipt after response loss and replays the frozen command after restart  1054ms
+   ✓ resumes authorization saved before Control submission and refuses a later unknown observation without refreshing its frozen proof  893ms
+   ✓ resumes a saved unsubmitted authorization when the same complete proof remains current  1207ms
+   ✓ does not submit an in-memory frozen command until its failed journal save has durably succeeded  1166ms
+   ✓ reopens authorization intent saved before the replacement command could be frozen  1388ms
+   ✓ keeps canonical outcome_unknown blocked even when a persisted runtime row claims the exact prestart failure  914ms
+   ✓ requires complete exact durable failure facts and refuses absent, ambiguous, started, malformed, or unknown records  984ms
+ ✓ tests/sqlite-read-model/p1-05-goal-phase-projection.test.ts (4 tests) 14391ms
+     ✓ GoalPhaseUpdated projects goalStatus + timeline (RUNNING -> COMPLETED, ordered)  3200ms
+     ✓ rebuild equivalence: same ledger + FRESH read-model file -> field-for-field views  5296ms
+     ✓ full-key isolation + not_found only after coverage + read-only  3869ms
+     ✓ full-scope isolation: two Projects share the same goalId without colliding  2024ms
+ ✓ tests/control/live-frontier-regression.test.ts (8 tests) 13655ms
+     ✓ source FAIL with independent frontier=false  2949ms
+     ✓ source FAIL with independent frontier=true  3047ms
+     ✓ replacement uses formally satisfied predecessor after restart; plan stays immutable  3848ms
+     ✓ replacement cannot reset its own formally failed task or erase FAIL history  3633ms
+ ✓ tests/sqlite-read-model/p1-03-run-projection.test.ts (7 tests) 16399ms
+     ✓ claim -> start -> facts: ActiveAgent + TaskDetail.run fold field-for-field  1862ms
+     ✓ crash and outcome_unknown project to DIFFERENT outcomes (unknown never guessed from crash)  1979ms
+     ✓ fresh file rebuilt from the same pages reproduces the projection field-for-field  3929ms
+     ✓ full-scope isolation: same goalId/taskId under different Projects never collide  2042ms
+     ✓ freshness: not_ready != not_found for the active agent view  2280ms
+     ✓ dedupe: re-advancing the same page is idempotent (no re-apply, no base advance)  2228ms
+     ✓ late/stale runtime event (sequence <= lastEventSeq) does not regress the fold  2077ms
+ ✓ tests/integration/p1-01.integration.test.ts (6 tests) 14482ms
+     ✓ bootstrap on an empty SQLite file via the supported contract; replay idempotent; other identity rejected not_empty  2197ms
+     ✓ CreateGoal persists two isolated scopes; replay idempotent; same-key conflict; rejections zero-write  2348ms
+     ✓ freshness: not_ready until the persisted EventPage(s) are advanced, then ready  2364ms
+     ✓ restart: canonical GoalSnapshot loads from SQLite; GoalView rebuilt from persisted EventPage — same as before  4971ms
+     ✓ no implicit Plan/Task/Run side effects: only bootstrap + GoalCreated events exist  2365ms
+ ✓ tests/integration/p1-02.integration.test.ts (4 tests) 12456ms
+     ✓ A1-A4: fixture digest/schema; install persists immutable revision; same identity/revision never overwritten  2310ms
+     ✓ A3: activation accepts only installed exact target; CAS failure leaves active ref unmoved  2322ms
+     ✓ A4/A5/A6/A7/A12/A13: full path with restart; pins survive default-ref movement; idempotency  5228ms
+     ✓ A14: no dispatch outbox / TaskAttempt / AgentRun on the whole path  2592ms
+ ✓ tests/app/verification-imports.test.ts (10 tests) 64472ms
+   ✓ commits genuine PatchRecord/Evidence and reduces work, gate and Goal; restart/replay never repeats attempts  6070ms
+   ✓ keeps original FAIL, diagnostic and assisted repair as distinct evidence and candidates  8392ms
+   ✓ rejects scope, patch, report and revision mismatches; active runs and altered idempotent input are blocked  6696ms
+   ✓ missing required results fail the required-set benchmark in Control and cannot complete the Goal  7242ms
+   ✓ resumes a journal after PatchRecord commit without advancing the workspace again  8025ms
+   ✓ persists and rehydrates a real-size multi-chunk report without exposing full report bodies in state  7393ms
+   ✓ runs an actual command through VerificationEngine, persists the result, and never infers Task completion  7469ms
+   ✓ retains an orphan command report after interruption without re-executing or claiming accepted evidence  6358ms
+   ✓ keeps a reopened report historical after source changes and never executes the check again  6819ms
+ ✓ tests/restart/material-source-applicability.test.ts (2 tests) 13196ms
+   ✓ source applicability checks real files without counter bumps and preserves historical reads/revocation (sqlite)  13006ms
+ ✓ tests/integration/p1-08.contract-suite.sqlite.test.ts (12 tests) 14462ms
+         ✓ console queries never call the runtime (no model start, no lease refresh)  5296ms
+     ✓ the console adapter can never read/write ledger tables (read-only-adapter, sqlite path)  4567ms
+ ✓ tests/integration/p1-06.contract-suite.sqlite.test.ts (25 tests) 67592ms
+         ✓ valid packet passes validation with no issues  2071ms
+         ✓ rejects a hidden transcript field (strict unknown-field rejection)  2029ms
+         ✓ rejects noFullTranscript=false (explicit guarantee)  2308ms
+         ✓ rejects an over-cap packet with size_exceeded  2598ms
+         ✓ rejects an over-cap summary with size_exceeded  2576ms
+         ✓ commits a bounded packet after A ended (crash) and replays idempotently  3353ms
+         ✓ rejects a handoff while A's run is still active (run_not_ended)  2955ms
+         ✓ rejects a stale-source packet explicitly (stale_source) — re-project a fresh one  2926ms
+         ✓ eligible when A ended  2478ms
+         ✓ eligible when A's lease is EXPIRED (even though attempt not ended)  2380ms
+         ✓ lease_active when A neither ended nor expired  2551ms
+         ✓ stale_packet explicit (workspace revision mismatch) — never silently reused  2512ms
+         ✓ packet_mismatch when packet targets a different task  2644ms
+         ✓ no_prior_attempt when there is no lease  2985ms
+         ✓ commits B's new attempt/run/outbox/replacement after A crashed  3454ms
+         ✓ rejects lease_active: replacement while A is still running  2644ms
+         ✓ rejects a competing CAS window (revision_conflict, zero-write)  2605ms
+         ✓ A's late runtime fact after B's claim is rejected (after_terminal) and B is untouched  2678ms
+         ✓ A's stale-sequence fact (duplicate) inside A's own run is still rejected  2570ms
+         ✓ explicit stale on source revision mismatch, then re-project -> ready (no silent old-use)  2780ms
+         ✓ forbidden scope rejected; packet_not_found rejected  2744ms
+         ✓ A crash -> record -> B claim -> driveHandoff -> B facts -> provenance timeline  3280ms
+         ✓ A outcome_unknown -> packet unresolved keeps it; view preserves; no extra replacement  3031ms
+         ✓ B's later evidence traces to A and B runs under the same plan revision  2797ms
+         ✓ pause/stop states + public snapshot never expose hidden context  2642ms
+ ✓ tests/app/initial-planning.test.ts (1 test) 15301ms
+   ✓ drives initial readonly model proposals through Control and durable dispatch, keeps distinct plans and replays without another model call  15298ms
+ ✓ tests/app/explorations.test.ts (8 tests) 69623ms
+   ✓ executes a real read-only dependency chain, requires operator review and preserves reports across restart  9847ms
+   ✓ rejects mismatched, fabricated and changed review requests and changed source snapshots  8642ms
+   ✓ does not admit a completed answer with no successful read as exploration evidence  7338ms
+   ✓ keeps source-only exploration on the ordinary declared capacities with no cumulative limit outside the configured snapshot roots  8030ms
+   ✓ refuses cycles, duplicate nodes and replacement plans before any model call  6975ms
+   ✓ serializes independent real dispatch requests without duplicate model calls or unknown outcomes  8173ms
+   ✓ rejects review when an actually read dist file changes after exploration was frozen  7011ms
+   ✓ inherits only directly required applied PASS review notes, keeping reports and failed-goal history separate  13604ms
+ ✓ tests/sqlite-read-model/plan-view.test.ts (6 tests) 10091ms
+     ✓ fresh rebuild from the same EventPages equals the incremental projection  4068ms
+     ✓ reopening the same file and continuing equals a one-shot full replay  3934ms
+     ✓ persisted dedupe: re-advancing an applied page after reopen is idempotent  2051ms
+ ✓ tests/integration/p1-02.contract-suite.sqlite.test.ts (29 tests) 75283ms
+     ✓ install persists the exact immutable revision; load resolves digest/revision  2269ms
+     ✓ install NEVER auto-activates (no active aggregates, no activated events)  2344ms
+     ✓ same identity/fingerprint replay is committed(replayed) with the ORIGINAL outcome  2140ms
+     ✓ same identity with a DIFFERENT fingerprint is idempotency_conflict, zero-write  2141ms
+     ✓ same identity/revision (different command) is NOT overwritable — revision_conflict, zero-write  2440ms
+     ✓ digest mismatch -> digest_mismatch, zero-write  2578ms
+     ✓ activation: only installed exact target accepted; dangling -> not_found zero-write; per-kind independence  2761ms
+     ✓ activation CAS: stale expected Project revision -> revision_conflict, active ref unmoved  2896ms
+     ✓ two projects install their own revisions and activate independently (no id collision)  2795ms
+     ✓ no ArchitectureEvolutionPolicy artifact exists anywhere in the ledger  2443ms
+     ✓ full path: accept plan, goal active revision, views ready, pins exact, one event  2864ms
+     ✓ unresolved governance refs -> unresolved_governance_ref, zero-write (no fallback)  2391ms
+     ✓ goal not found -> not_found, zero-write  2792ms
+     ✓ guard: no required executable task -> plan_guard_failed, zero-write  2866ms
+     ✓ guard: no active required GoalGateTask -> plan_guard_failed, zero-write  3015ms
+     ✓ guard: no required obligation -> plan_guard_failed, zero-write  3325ms
+     ✓ guard: required obligation without any required VR -> plan_guard_failed, zero-write  2935ms
+     ✓ guard: required executable task without required obligation mapping -> rejected, zero-write  2443ms
+     ✓ guard: required obligation without mapped work/gate task -> rejected, zero-write  2387ms
+     ✓ guard: VR kind outside the effective policy requirementKinds -> rejected, zero-write  2381ms
+     ✓ guard: hierarchy dangling ref -> rejected, zero-write  2408ms
+     ✓ guard: hierarchy cycle -> rejected, zero-write  2407ms
+     ✓ guard: DAG dangling edge -> rejected, zero-write  2404ms
+     ✓ guard: DAG self dependency -> rejected, zero-write  2532ms
+     ✓ guard: DAG cycle -> rejected, zero-write  3090ms
+     ✓ stale goal CAS: wrong expectedRevision -> revision_conflict, zero-write; replay idempotent  2532ms
+     ✓ pin immutability: moving the active ref does NOT change the accepted plan pins  2627ms
+     ✓ freshness: not_ready != not_found for plan graph and task detail; cross-project isolation  2493ms
+     ✓ no dispatch outbox, TaskAttempt or AgentRun anywhere in the path  2564ms
+ ✓ tests/app/gui.test.ts (4 tests) 12963ms
+   ✓ serves the GUI and persists scoped goals, plans, runs and sourced queries across restart  4026ms
+   ✓ rejects invalid scope, unplanned query, conflicting goal retry and cross-origin writes  2760ms
+   ✓ answers a formal receipt for a goal whose response was lost and replays the retry  2962ms
+   ✓ scopes agent-focused chat to its task and exposes the formal project view without inventing completion  3212ms
+ ✓ tests/app/verification-rounds.test.ts (6 tests) 73816ms
+   ✓ real HTTP executes each registered check once and a later PASS cannot erase the same requirement FAIL; reopens exact reports  15365ms
+   ✓ rejects a corrupted original SQLite report through HTTP after restart without replacing historical Evidence  17121ms
+   ✓ serves persisted progress and receipts while a real check is still executing  12815ms
+   ✓ the formal VerificationPort executes the same durable round and cannot trust caller no-change claims or complete a new manual Plan  7831ms
+   ✓ accepted Reviewer obligations remain unmet after all tools PASS, and source edits make the old round stale without deleting reports  13338ms
+   ✓ persists explicit missing/invalid configuration and enforces full HTTP Task/Run scope and execution permission  7344ms
+ ✓ tests/integration/p1-04.integration.test.ts (2 tests) 8450ms
+     ✓ T1: full evidence path -> satisfies -> views -> close/reopen identical; acceptance checks 1-8  5428ms
+     ✓ T2: exit=0 / claim-only / verdict-only never satisfy (real SQLite)  3019ms
+ ✓ tests/sqlite-read-model/p1-14-baseline-change-view.test.ts (4 tests) 8110ms
+     ✓ projects candidate/decision/gate/activation rows and a ready post-activation view  1913ms
+     ✓ isolates the same local ids across projects (hard scope key)  2103ms
+     ✓ a never-advanced index returns not_found (no cursor claim)  2024ms
+     ✓ rebuild equivalence: close/reopen against the SAME db file reproduces the view  2067ms
+ ✓ tests/control/rework-drive-harness.test.ts (3 tests) 8379ms
+     ✓ 真实 FAIL → 自动触发 → 受理成新 revision → 返工任务走既有 claim/drive 被真正派发；重复触发幂等  3172ms
+     ✓ 人显式 reject 之后同一问题不再自动受理；两个后端给出同一份结论  2865ms
+     ✓ 没有注入问题出口时两个后端都返回显式不可用，不假装"没有问题"  2340ms
+ ✓ tests/sqlite-read-model/p1-11-plan-change.test.ts (5 tests) 8114ms
+     ✓ projects proposals/decisions/revisions and computes task dispositions  2106ms
+     ✓ isolates the same local goal id across projects (hard scope key)  1998ms
+     ✓ a never-advanced index returns not_found (no cursor claim)  2027ms
+     ✓ rebuild equivalence: close/reopen against the SAME db file reproduces the view  1957ms
+ ✓ tests/sqlite-read-model/p1-15-unified-status.test.ts (4 tests) 7897ms
+     ✓ projects the 4 rows and returns a ready facts-first view  1988ms
+     ✓ a never-advanced index returns not_found (no cursor claim)  2058ms
+     ✓ isolates the same local ids across projects (hard scope key)  2006ms
+     ✓ rebuild equivalence: close/reopen against the SAME db file reproduces the view  1841ms
+ ✓ tests/integration/p1-03.integration.test.ts (2 tests) 7903ms
+     ✓ T1: claim -> drive (ContextCompiler+Vault+start+facts, outbox first) -> views -> close/reopen identical  5216ms
+     ✓ T2: two Dispatchers race the SAME task on real SQLite -> at most one lease/Attempt succeeds  2683ms
+ ✓ tests/integration/p1-10.integration.test.ts (2 tests) 10098ms
+     ✓ InMemory and SQLite control timelines agree  4904ms
+ ✓ tests/verification/verification-rounds.test.ts (19 tests) 10249ms
+     ✓ runs every applicable immutable check once, merges repeated coverage, aggregates FAIL over later PASS and leaves Reviewer pending  960ms
+     ✓ runs available checks while exposing missing coverage, and treats a known timeout as INCONCLUSIVE  468ms
+     ✓ reopens a body-first partial round using its original full plan and continues only the never-started child  785ms
+     ✓ refuses source changes during execution and after reports while keeping old FAIL and same-key replay historical  719ms
+     ✓ retries a partially accepted aggregate with byte-identical stable Evidence commands and no new executions  555ms
+     ✓ does not continue remaining checks after an unknown executing checkpoint, even when the same request is replayed  346ms
+     ✓ refuses aggregate recovery when an original report is revoked, preserving pending admission and raw history  367ms
+     ✓ refuses aggregate recovery when an original report is bad-digest, preserving pending admission and raw history  404ms
+     ✓ uses the generic VerificationPort for a real explicit round and serializes concurrent same-key submissions  518ms
+     ✓ persists a definitively rejected acquisition without blocking a new round, while the original request never executes  606ms
+     ✓ preserves a rejected task reduction attempt and resumes a new canonical CAS identity without repeating tools  507ms
+     ✓ preserves a rejected goal reduction attempt and resumes a new canonical CAS identity without repeating tools  599ms
+     ✓ includes an additional applicable failing tool in round outcome without inventing a formal obligation  593ms
+     ✓ RW-16 executor：安装规格后正常任务轮次仍能完成 —— 本 Run 的 PatchRecord 见证产出期望（真实链）  766ms
+     ✓ RW-16 integrator：安装规格后集成轮次仍能完成 —— 本 Run 的 IntegrationResult 记录见证必产出（真实链）  720ms
+     ✓ RW-18 验收核心：装了 executor 规格、没有登记实现结果时，轮次不再降级也不再扣留归约（见证知识仍如实记录）  778ms
+     ✓ refuses a Vault-stored unsupported report version before aggregate admission  439ms
+ ✓ tests/integration/p1-12.integration.test.ts (3 tests) 9983ms
+     ✓ InMemory and SQLite inspection views agree (same deterministic scenario)  4872ms
+ ✓ tests/integration/p1-16.integration.test.ts (3 tests) 9881ms
+     ✓ InMemory and SQLite work-context views agree (same scenario, same expectations)  4841ms
+ ✓ tests/control/operator-entry-role.test.ts (20 tests) 7226ms
+     ✓ 矩阵启用后 develop 入口仍然能派发，落账 Run 的角色绑定就是那个已登记角色  699ms
+     ✓ 矩阵启用后探索入口仍然能派发，落账 Run 的角色绑定是只读角色（与写入入口不是同一份授权）  657ms
+     ✓ 矩阵没有登记入口角色时仍然拒绝且零写（守卫没有被放宽）  752ms
+     ✓ 没有角色矩阵的项目沿用既有语义：入口照样派发（既有产品行为不被静默改变）  541ms
+     ✓ RW-18 矩阵登记了角色：绑定由 pin 签发（revision 与摘要都能从绑定／落账 Run 复核）  598ms
+     ✓ RW-18 矩阵 pin 指向未激活规格：绑定照签，claim 由未改动的守卫拒绝且零写  562ms
+     ✓ RW-18 没有矩阵／矩阵未登记该角色：不签发，逐字沿用既有绑定（与改动前一致）  1191ms
+     ✓ 角色规格的 install／activate 与角色矩阵的 claim 校验在两套后端上给出同样的结论  845ms
+     ✓ 越权声明被拒且零写：矩阵 pin 的规格没有授权这个工具时，claim 不落账  635ms
+     ✓ SQLite 重开后同一条矩阵的签发结果逐字相同（签发不依赖任何进程内状态）  643ms
+ ✓ tests/integration/p1-09.integration.test.ts (2 tests) 9547ms
+     ✓ InMemory and SQLite query-job views agree  4664ms
+ ✓ tests/app/role-material-run.test.ts (1 test) 8562ms
+   ✓ 装了 executor 规格 + 含 roles 的矩阵之后，/api/real/tasks 的普通运行真的开始（模型被调用）  8561ms
+ ✓ tests/coordination/coordination-capability.test.ts (7 tests) 22815ms
+     ✓ 未授予的 Run：判定给出可读原因、不提供协调工具、调用被拒且平台状态零改动  3733ms
+     ✓ 授予的 Run：能力依据来自账本事实、工具可用、调用被受理，并随运行记录持久化  3873ms
+     ✓ 同一个 Run 在两个 Work 上都满足授予条件时：拒绝授予（可读原因），不替它挑一个身份  2907ms
+     ✓ 不存在第二条拿到协调工具的路径：唯一注入点是运行入口，且它只在 granted 时发生  4066ms
+     ✓ 换手之后：旧 Run 不再被授予，新参与段的 Run 被授予（显式规则可直接核对）  5025ms
+     ✓ 内核策略层：工具被注入但未获宿主授权时，内核按未授权的未知操作拒绝，handler 不执行  479ms
+     ✓ 每个写操作在动 Vault/Control 之前校验能力：授予失效后拒绝，且零平台状态变更  2730ms
+ ✓ tests/app/multi-workspace.test.ts (1 test) 6986ms
+   ✓ registers a second workspace in one Project, isolates files and goals, explicitly grants original reports and preserves scope after restart  6984ms
+ ✓ tests/app/real-runtime.test.ts (12 tests) 87402ms
+   ✓ GUI dispatch runs real edit/shell tools, publishes facts, blocks fake fallback and never repeats on refresh/restart  8034ms
+   ✓ remains observable while a model is slow and cancels without blocking state requests  8373ms
+   ✓ stops before a model request when cumulative reservation does not fit, without changing context capacity  7563ms
+   ✓ reports a provider authentication failure and makes no fixture response  7834ms
+   ✓ marks interrupted persisted runtime records unknown and refuses to restart them  8628ms
+   ✓ rejects a second goal writer while the first writer still holds the checkout  7018ms
+   ✓ honors a short deadline and rejects cross-goal cancellation  6143ms
+   ✓ keeps an unknown tool outcome locked even when the kernel ends cancelled  502ms
+   ✓ keeps explicit null cumulative limits and only widens the single-response capacity for a scoped task  8188ms
+   ✓ runs a task with no configured cumulative budget past the old default request count  10785ms
+   ✓ can manually cancel a context-only task with no deadline  6865ms
+   ✓ passes verified file references into real kernel input and rejects stale drafts before starting a run  7468ms
+ ✓ tests/coordination/delivery-into-input.test.ts (4 tests) 18908ms
+     ✓ Delivery 正文、精确版本与选入理由都进入捕获的 ModelRequest 与 manifest.selected  5324ms
+     ✓ 调用证据（D06）：model_request_evidence 落账，requestDigest = 捕获请求重算的 sha256，contextInputDigest = manifest.inputDigest，同一许可的第二次尝试被拒  4971ms
+     ✓ 撤权之后：该 Delivery 不允许进入新的输入（材料组装在模型调用之前失败）  4250ms
+     ✓ 来源在本次运行期间被更新：basis 不一致 → 精确授权失效 → 拒绝进入新输入  4361ms
+ ✓ tests/integration/p1-17.integration.test.ts (2 tests) 7196ms
+     ✓ InMemory and SQLite completed-work views agree  2159ms
+ ✓ tests/app/semantic-query.test.ts (1 test) 7169ms
+   ✓ runs sourced semantic queries without a plan and alongside a live writer, persists real kernel inputs and denies writes  7166ms
+ ✓ tests/integration/p1-09-query-regression.test.ts (7 tests) 5755ms
+     ✓ preserves arbitrary query and scope identities, including after restart  2550ms
+   ✓ resumes pending SQLite queries without modifying their source Worker, and does not replay claimed runs  3126ms
+ ✓ tests/contracts/module-ownership.test.ts (9 tests) 9260ms
+     ✓ gives every owned file a path under the directory its Module name implies  315ms
+     ✓ puts every file inside a Module directory under that same Module  330ms
+     ✓ leaves no product source file unmapped  345ms
+     ✓ keeps the workspace path-boundary policy in exactly one WorkspaceReader file  8115ms
+stdout | tests/restart/evidence/p1-08-evidence.test.ts > P1-08 restart-path evidence > collects the P1-08 evidence block
+P1-08-EVIDENCE {
+  "ticket": "P1-08",
+  "path": "two-project read-only console (portfolio -> workspace summary -> plan matrix -> active agents -> task evidence -> timeline)",
+  "scopes": {
+    "projectA": "proj-alpha",
+    "projectB": "proj-beta",
+    "sharedWorkspaceId": "ws-shared",
+    "sharedGoalId": "goal-p108-1"
+  },
+  "projectA": {
+    "workRun": "run-p108-a-work",
+    "extraRun": "run-p108-a-extra",
+    "replacementRun": "run-p108-a-extra-b",
+    "packet": "packet-p108-a-extra",
+    "goalPhase": "COMPLETED"
+  },
+  "projectB": {
+    "workRun": "run-p108-b-work",
+    "extraRun": "run-p108-b-extra",
+    "outcomeUnknownPreserved": true,
+    "goalPhase": "NEEDS_DECISION"
+  },
+  "restart": {
+    "sixViewsFieldIdentical": true,
+    "observedCursorEqual": true
+  }
+}
+
+ ✓ tests/restart/evidence/p1-08-evidence.test.ts (1 test) 6667ms
+     ✓ collects the P1-08 evidence block  6665ms
+ ✓ tests/control/work-identity-harness.test.ts (2 tests) 5630ms
+   ✓ 同一派发场景在 InMemory 与 SQLite harness 上得到逐字段相同的 canonical 工作身份  2788ms
+   ✓ RW-13 先显式绑定再派发：两套 harness 都复用同一条身份，账本里不多出第二条  2840ms
+ ✓ tests/integration/p1-08.integration.test.ts (1 test) 6636ms
+     ✓ full two-project console path + restart equivalence  6633ms
+ ✓ tests/restart/p1-08-restart.test.ts (1 test) 6792ms
+     ✓ six views + cursor identical after close/reopen (rebuild from persisted events)  6789ms
+stdout | tests/restart/evidence/p1-07-evidence.test.ts > P1-07 restart-path evidence > collects the P1-07 evidence block
+P1-07-EVIDENCE {
+  "ticket": "P1-07",
+  "path": "two-independent-reader-tasks (parallel readers -> join -> single writer -> patch record -> goal gate)",
+  "workspaceRevisionAfter": 2,
+  "readers": {
+    "a": "run-p107-read-a",
+    "b": "run-p107-read-b"
+  },
+  "joinResultId": "result-p107-1",
+  "patch": {
+    "patchId": "patch-p107-1",
+    "kind": "patch"
+  },
+  "restart": {
+    "workspaceRevisionEqual": true,
+    "leaseSnapshotEqual": true,
+    "patchSnapshotEqual": true,
+    "viewsRebuilt": true,
+    "observedCursorEqual": true
+  }
+}
+
+ ✓ tests/restart/evidence/p1-07-evidence.test.ts (1 test) 6309ms
+     ✓ collects the P1-07 evidence block  6307ms
+ ✓ tests/restart/p1-07-restart.test.ts (1 test) 6433ms
+     ✓ snapshots + rebuilt views + cursor identical after close/reopen  6432ms
+ ✓ tests/app/runtime-context.test.ts (20 tests) 6760ms
+   ✓ delivers the accepted task and obligations from the real compiler bundle to the actual kernel model request  681ms
+   ✓ delivers selected rules and an honest material manifest without changing the persisted operator input  720ms
+   ✓ keeps a historical ended run idempotent after restart without manufacturing a new context  741ms
+   ✓ executes the registered file listing, search and syntax analysis tools through the real kernel  1848ms
+   ✓ makes the source index available to a development run through the actual kernel  1378ms
+ ✓ tests/integration/p1-07.integration.test.ts (1 test) 6370ms
+     ✓ full parallel-readers + single-writer path + restart equivalence  6368ms
+ ✓ tests/data/cpp-source-index.test.ts (8 tests) 4818ms
+   ✓ uses actual libclang and compile configuration to resolve headers, overloads and project references  879ms
+   ✓ invalidates dirty files, compile flags, inventory and commit and reports actual changes  1498ms
+   ✓ does not execute hostile compilation commands or load plugins and fails closed on unknown configuration  370ms
+   ✓ blocks source and include escapes, symbolic links and absent analyzer/config with explicit gaps  552ms
+   ✓ delivers real C++ semantic tool output into the next model request through the shared kernel (labelled model stub)  807ms
+ ✓ tests/integration/p1-11.integration.test.ts (2 tests) 5277ms
+     ✓ InMemory and SQLite plan-change views agree  2583ms
+ ✓ tests/app/workspace-tools.test.ts (3 tests) 5828ms
+   ✓ persists added project folders, deduplicates canonical paths and starts without an invented goal  5456ms
+   ✓ runs a scoped PTY with deduplicated input, resize, interruption and enforced filesystem/network restrictions  348ms
+ ✓ tests/restart/p1-02-restart.test.ts (1 test) 4474ms
+     ✓ restart: canonical refs + pins + Plan Graph/Task Detail/active revision identical  4472ms
+ ✓ tests/restart/p1-04-restart.test.ts (1 test) 5261ms
+     ✓ restart: Evidence/Index/TaskReduction snapshots + taskVerification view identical  5259ms
+ ✓ tests/restart/p1-12-restart.test.ts (1 test) 4803ms
+ ✓ tests/integration/p1-05.integration.test.ts (1 test) 5118ms
+     ✓ T1: full vertical -> Goal phase COMPLETED -> restart identical; phase surface & side-effect compare  5116ms
+stdout | tests/restart/evidence/p1-01-evidence.test.ts > P1-01 restart-path evidence > collects the restart evidence block
+P1-01-EVIDENCE {
+  "ticket": "P1-01",
+  "path": "bootstrap -> CreateGoal(alpha+beta) -> SQLite commit -> close -> reopen -> canonical snapshot load + EventPage rebuild -> same GoalView",
+  "commitCursors": {
+    "bootstrap": "c0000000004",
+    "alpha": "c0000000005",
+    "beta": "c0000000006"
+  },
+  "manifest": {
+    "schemaVersion": 1,
+    "sourceDigest": "26badb1e84f539c2efd17bec0eb8302820b2045f5e678975bfb89df84012a142",
+    "bootstrapRevision": 1,
+    "entries": 2
+  },
+  "cursor": {
+    "observedBeforeRestart": "c0000000006",
+    "rebuiltObservedAfter": "c0000000006"
+  },
+  "canonicalSnapshotLoad": {
+    "alpha": {
+      "matches": true,
+      "pre": {
+        "ref": {
+          "aggregateType": "Goal",
+          "projectId": "proj-alpha",
+          "goalId": "goal-1"
+        },
+        "workspaceRef": {
+          "aggregateType": "Workspace",
+          "projectId": "proj-alpha",
+          "workspaceId": "ws-shared"
+        },
+        "objective": "为 proj-alpha 完成第一个可观察目标：contract pack 可运行",
+        "desiredState": "active",
+        "activePlanRevision": null,
+        "revision": 1
+      },
+      "post": {
+        "ref": {
+          "aggregateType": "Goal",
+          "projectId": "proj-alpha",
+          "goalId": "goal-1"
+        },
+        "workspaceRef": {
+          "aggregateType": "Workspace",
+          "projectId": "proj-alpha",
+          "workspaceId": "ws-shared"
+        },
+        "objective": "为 proj-alpha 完成第一个可观察目标：contract pack 可运行",
+        "desiredState": "active",
+        "activePlanRevision": null,
+        "revision": 1
+      }
+    },
+    "beta": {
+      "matches": true,
+      "pre": {
+        "ref": {
+          "aggregateType": "Goal",
+          "projectId": "proj-beta",
+          "goalId": "goal-1"
+        },
+        "workspaceRef": {
+          "aggregateType": "Workspace",
+          "projectId": "proj-beta",
+          "workspaceId": "ws-shared"
+        },
+        "objective": "为 proj-beta 完成第一个可观察目标：contract pack 可运行",
+        "desiredState": "active",
+        "activePlanRevision": null,
+        "revision": 1
+      },
+      "post": {
+        "ref": {
+          "aggregateType": "Goal",
+          "projectId": "proj-beta",
+          "goalId": "goal-1"
+        },
+        "workspaceRef": {
+          "aggregateType": "Workspace",
+          "projectId": "proj-beta",
+          "workspaceId": "ws-shared"
+        },
+        "objective": "为 proj-beta 完成第一个可观察目标：contract pack 可运行",
+        "desiredState": "active",
+        "activePlanRevision": null,
+        "revision": 1
+      }
+    }
+  },
+  "eventRebuildView": {
+    "alpha": {
+      "matches": true,
+      "pre": {
+        "status": "ready",
+        "goal": {
+          "goalId": "goal-1",
+          "projectId": "proj-alpha",
+          "workspaceId": "ws-shared",
+          "objective": "为 proj-alpha 完成第一个可观察目标：contract pack 可运行",
+          "desiredState": "active",
+          "activePlanRevision": null,
+          "aggregateRevision": 1,
+          "sourceCursor": "c0000000005"
+        },
+        "observedCursor": "c0000000006"
+      },
+      "post": {
+        "status": "ready",
+        "goal": {
+          "goalId": "goal-1",
+          "projectId": "proj-alpha",
+          "workspaceId": "ws-shared",
+          "objective": "为 proj-alpha 完成第一个可观察目标：contract pack 可运行",
+          "desiredState": "active",
+          "activePlanRevision": null,
+          "aggregateRevision": 1,
+          "sourceCursor": "c0000000005"
+        },
+        "observedCursor": "c0000000006"
+      }
+    },
+    "beta": {
+      "matches": true,
+      "pre": {
+        "status": "ready",
+        "goal": {
+          "goalId": "goal-1",
+          "projectId": "proj-beta",
+          "workspaceId": "ws-shared",
+          "objective": "为 proj-beta 完成第一个可观察目标：contract pack 可运行",
+          "desiredState": "active",
+          "activePlanRevision": null,
+          "aggregateRevision": 1,
+          "sourceCursor": "c0000000006"
+        },
+        "observedCursor": "c0000000006"
+      },
+      "post": {
+        "status": "ready",
+        "goal": {
+          "goalId": "goal-1",
+          "projectId": "proj-beta",
+          "workspaceId": "ws-shared",
+          "objective": "为 proj-beta 完成第一个可观察目标：contract pack 可运行",
+          "desiredState": "active",
+          "activePlanRevision": null,
+          "aggregateRevision": 1,
+          "sourceCursor": "c0000000006"
+        },
+        "observedCursor": "c0000000006"
+      }
+    }
+  },
+  "files": {
+    "ledger": "/tmp/agent-platform-p1-01-QXiQfv/ledger.sqlite",
+    "readModelRebuilt": "/tmp/agent-platform-p1-01-QXiQfv/readmodel-rebuilt.sqlite"
+  }
+}
+
+ ✓ tests/restart/evidence/p1-01-evidence.test.ts (1 test) 4185ms
+     ✓ collects the restart evidence block  4183ms
+ ✓ tests/read-model/completed-work-merge-visibility.test.ts (2 tests) 5022ms
+   ✓ completed-work view exposes a merged duplicate identity instead of dropping it silently (sqlite)  4896ms
+stdout | tests/restart/evidence/p1-02-evidence.test.ts > P1-02 restart-path evidence > collects the P1-02 restart evidence block
+P1-02-EVIDENCE {
+  "ticket": "P1-02",
+  "path": "bootstrap -> install x2 -> activate x2 (CAS) -> CreateGoal -> applyPlan -> commit -> close -> reopen -> canonical refs/pins + Plan Graph/Task Detail/active revision identical",
+  "commitCursors": {
+    "bootstrap": "c0000000004",
+    "installCompletionPolicy": "c0000000005",
+    "installArchitectureBaseline": "c0000000006",
+    "activateCompletionPolicy": "c0000000007",
+    "activateArchitectureBaseline": "c0000000008",
+    "createGoal": "c0000000009",
+    "applyPlan": "c0000000010"
+  },
+  "canonicalRefs": {
+    "completionPolicy": {
+      "ref": {
+        "aggregateType": "CompletionPolicyRevision",
+        "projectId": "proj-alpha",
+        "policyId": "policy-completion-mvp",
+        "revision": 1
+      },
+      "digest": "4680201b5cb8e4807db836eaaf8fbfc78ec565134e0a40cf20a5f813b309186e"
+    },
+    "architectureBaseline": {
+      "ref": {
+        "aggregateType": "ArchitectureBaselineRevision",
+        "projectId": "proj-alpha",
+        "baselineId": "baseline-architecture-mvp",
+        "revision": 1
+      },
+      "digest": "19a578923f4fc100e37ef3f907d23a4d945e8825c653b7c467cf8712d1db7a8b"
+    }
+  },
+  "activeRefs": {
+    "completionPolicy": {
+      "activeRevision": {
+        "aggregateType": "CompletionPolicyRevision",
+        "projectId": "proj-alpha",
+        "policyId": "policy-completion-mvp",
+        "revision": 1
+      },
+      "aggregateRevision": 1
+    },
+    "architectureBaseline": {
+      "activeRevision": {
+        "aggregateType": "ArchitectureBaselineRevision",
+        "projectId": "proj-alpha",
+        "baselineId": "baseline-architecture-mvp",
+        "revision": 1
+      },
+      "aggregateRevision": 1
+    }
+  },
+  "pins": {
+    "completionPolicy": {
+      "ref": {
+        "aggregateType": "CompletionPolicyRevision",
+        "projectId": "proj-alpha",
+        "policyId": "policy-completion-mvp",
+        "revision": 1
+      },
+      "digest": "4680201b5cb8e4807db836eaaf8fbfc78ec565134e0a40cf20a5f813b309186e"
+    },
+    "architectureBaseline": {
+      "ref": {
+        "aggregateType": "ArchitectureBaselineRevision",
+        "projectId": "proj-alpha",
+        "baselineId": "baseline-architecture-mvp",
+        "revision": 1
+      },
+      "digest": "19a578923f4fc100e37ef3f907d23a4d945e8825c653b7c467cf8712d1db7a8b"
+    }
+  },
+  "goalSnapshot": {
+    "activePlanRevision": {
+      "aggregateType": "PlanRevision",
+      "projectId": "proj-alpha",
+      "planId": "plan-mvp-1"
+    },
+    "revision": 2
+  },
+  "planGraphFields": {
+    "planRef": {
+      "aggregateType": "PlanRevision",
+      "projectId": "proj-alpha",
+      "planId": "plan-mvp-1"
+    },
+    "planRevision": 1,
+    "acceptedAt": "2026-09-05T12:00:00.000Z",
+    "stages": 2,
+    "tasks": 4,
+    "parentOf": 3,
+    "dependsOn": 3
+  },
+  "eventTypes": [
+    "ProjectBootstrapped",
+    "WorkspaceBootstrapped",
+    "CompletionPolicyInstalled",
+    "ArchitectureBaselineInstalled",
+    "CompletionPolicyActivated",
+    "ArchitectureBaselineActivated",
+    "GoalCreated",
+    "PlanRevisionAccepted"
+  ],
+  "restart": {
+    "observedCursorBefore": "c0000000010",
+    "observedCursorAfter": "c0000000010",
+    "cursorEqual": true,
+    "canonicalGoalSnapshotActivePlanMatches": true,
+    "goalRevisionMatches": true,
+    "canonicalPolicyResolves": true,
+    "canonicalBaselineResolves": true,
+    "planGraphMatches": true,
+    "taskDetailCount": 4,
+    "taskDetailsMatch": true,
+    "pinsUnchanged": true,
+    "goalViewActivePlanAfterRestart": {
+      "aggregateType": "PlanRevision",
+      "projectId": "proj-alpha",
+      "planId": "plan-mvp-1"
+    }
+  }
+}
+
+ ✓ tests/restart/evidence/p1-02-evidence.test.ts (1 test) 4408ms
+     ✓ collects the P1-02 restart evidence block  4405ms
+stdout | tests/restart/evidence/p1-04-evidence.test.ts > P1-04 restart-path evidence > collects the P1-04 evidence block
+P1-04-EVIDENCE {
+  "ticket": "P1-04",
+  "path": "bootstrap -> install/activate -> CreateGoal -> applyPlan -> claim -> FakeRuntime events -> VerificationPlan -> claim/observation/verdict admission -> TaskReduction -> commit -> close -> reopen -> Evidence/Index/TaskReduction/verification view identical",
+  "reduction": {
+    "implementPhase": "satisfied",
+    "implementEffectiveEvidenceIds": [
+      "ev-rs-dynamic",
+      "ev-rs-static"
+    ],
+    "implementBlockingEvidenceIds": [],
+    "reviewPhase": "satisfied",
+    "gatePhase": "satisfied"
+  },
+  "evidenceCount": 6,
+  "bindingApplicability": [
+    {
+      "id": "ev-rs-claim",
+      "kind": "claim",
+      "applicability": "APPLICABLE"
+    },
+    {
+      "id": "ev-rs-static",
+      "kind": "observation",
+      "applicability": "APPLICABLE"
+    },
+    {
+      "id": "ev-rs-dynamic",
+      "kind": "observation",
+      "applicability": "APPLICABLE"
+    }
+  ],
+  "workerCannotWriteTaskPhase": true,
+  "verdictAloneNotSatisfying": true,
+  "restart": {
+    "snapshotsMatch": true,
+    "verificationViewRebuild": true,
+    "observedCursorEqual": true
+  },
+  "eventTypes": [
+    "ProjectBootstrapped",
+    "ProjectBootstrapped",
+    "WorkspaceBootstrapped",
+    "WorkspaceBootstrapped",
+    "CompletionPolicyInstalled",
+    "ArchitectureBaselineInstalled",
+    "CompletionPolicyActivated",
+    "ArchitectureBaselineActivated",
+    "GoalCreated",
+    "PlanRevisionAccepted",
+    "TaskClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded",
+    "EvidenceAdmitted",
+    "EvidenceAdmitted",
+    "EvidenceAdmitted",
+    "TaskReductionUpdated",
+    "TaskClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded",
+    "EvidenceAdmitted",
+    "EvidenceAdmitted",
+    "TaskReductionUpdated",
+    "EvidenceAdmitted",
+    "TaskReductionUpdated"
+  ]
+}
+
+ ✓ tests/restart/evidence/p1-04-evidence.test.ts (1 test) 5222ms
+     ✓ collects the P1-04 evidence block  5220ms
+ ✓ tests/integration/p1-17.contract-suite.sqlite.test.ts (6 tests) 4739ms
+stdout | tests/restart/evidence/p1-05-evidence.test.ts > P1-05 restart-path evidence > collects the P1-05 evidence block
+P1-05-EVIDENCE {
+  "ticket": "P1-05",
+  "path": "bootstrap -> install/activate -> CreateGoal -> applyPlan -> claim -> FakeRuntime events -> PASS evidence -> TaskReduction -> GoalPhase reduction -> commit -> close -> reopen -> GoalPhase snapshot / goalStatus / goalTimeline identical",
+  "goalPhase": "COMPLETED",
+  "previousPhase": "COMPLETED",
+  "reasonCodes": [
+    "optional_task_not_satisfied",
+    "completion_guard_ok"
+  ],
+  "explanationHeadline": "goal goal-105 phase = COMPLETED (2 reason(s), completion guard holds)",
+  "explanationItems": [
+    {
+      "code": "optional_task_not_satisfied",
+      "message": "optional task(s) not satisfied — attention flag; NEVER blocks completion. (tasks=task-optional-105)"
+    },
+    {
+      "code": "completion_guard_ok",
+      "message": "GoalCompletionGuard holds: active plan non-empty, every required work/gate task satisfied, every required obligation satisfied, no unreconciled side effect. (tasks=task-work-105,gate-module-105,gate-stage-105,gate-goal-105; obligations=obl-work-105,obl-module-105,obl-stage-105,obl-goal-105)"
+    }
+  ],
+  "timelineLength": 2,
+  "observedCursorEqual": true,
+  "snapshotsMatch": true,
+  "viewsRebuild": true,
+  "eventTypes": [
+    "ProjectBootstrapped",
+    "ProjectBootstrapped",
+    "WorkspaceBootstrapped",
+    "WorkspaceBootstrapped",
+    "CompletionPolicyInstalled",
+    "ArchitectureBaselineInstalled",
+    "CompletionPolicyActivated",
+    "ArchitectureBaselineActivated",
+    "GoalCreated",
+    "PlanRevisionAccepted",
+    "TaskClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded",
+    "EvidenceAdmitted",
+    "EvidenceAdmitted",
+    "EvidenceAdmitted",
+    "EvidenceAdmitted",
+    "EvidenceAdmitted",
+    "TaskReductionUpdated",
+    "TaskReductionUpdated",
+    "TaskReductionUpdated",
+    "TaskReductionUpdated",
+    "GoalPhaseUpdated",
+    "GoalPhaseUpdated"
+  ]
+}
+
+ ✓ tests/restart/evidence/p1-05-evidence.test.ts (1 test) 5109ms
+     ✓ collects the P1-05 evidence block  5108ms
+ ✓ tests/restart/p1-05-restart.test.ts (1 test) 5120ms
+     ✓ restart: GoalPhase snapshot + goalStatus/goalTimeline field-identical  5118ms
+stdout | tests/restart/evidence/p1-16-evidence.test.ts > P1-16-EVIDENCE
+P1-16-EVIDENCE-BLOCK
+{
+  "cursorBefore": "c0000000063",
+  "ledgerCurve": 63,
+  "workAViewBytes": 939,
+  "workCoordViewBytes": 3640,
+  "workBViewBytes": 935,
+  "bindingSnapshotBytes": 851
+}
+
+ ✓ tests/restart/evidence/p1-16-evidence.test.ts (1 test) 4809ms
+ ✓ tests/read-model/completed-work-filter.test.ts (2 tests) 4908ms
+   ✓ completed-work view excludes uncompleted coordination bindings (sqlite)  4780ms
+ ✓ tests/coordination/model-request-evidence-bypass.test.ts (4 tests) 14072ms
+   ✓ T-A1 许可签发晚于 Run 结束 ⇒ 证据被 after_terminal 拒绝：Run 仍 completed，旁路失败可见  3682ms
+   ✓ T-A5 许可签发早于 Run 结束 ⇒ 证据允许在 Run 结束后落账（after_terminal 例外的正分支）  3489ms
+   ✓ T-A6 账本层独立拒绝第二次尝试：绕过 Control 提交 permit@3 ⇒ invalid_commit 且快照仍 @2  3428ms
+   ✓ T-A7（**已记录的验证上限**，不是被忽略的缺陷）：篡改 contextInputDigest 的证据事实会被接受  3470ms
+ ✓ tests/integration/p1-06.integration.test.ts (1 test) 4863ms
+     ✓ full handoff path + restart equivalence  4862ms
+stdout | tests/restart/evidence/p1-06-evidence.test.ts > P1-06 restart-path evidence > collects the P1-06 evidence block
+P1-06-EVIDENCE {
+  "ticket": "P1-06",
+  "path": "bootstrap -> install/activate -> CreateGoal -> applyPlan -> A claim/start/crash -> body-first packet register -> B replacement claim -> driveHandoff -> close -> reopen -> packet/replacement/lease/B-run identical + provenance rebuilt",
+  "packet": {
+    "noFullTranscript": true,
+    "sizeBounded": true
+  },
+  "replacement": {
+    "movedLeaseToB": true,
+    "priorRunRef": "run-rs-a"
+  },
+  "bRunOutcome": "completed",
+  "provenanceTimelineKinds": [
+    "packet_recorded",
+    "replacement_claimed"
+  ],
+  "outcomeUnknownPreserved": true,
+  "restart": {
+    "snapshotsMatch": true,
+    "provenanceRebuild": true,
+    "observedCursorEqual": true
+  },
+  "eventTypes": [
+    "ProjectBootstrapped",
+    "ProjectBootstrapped",
+    "WorkspaceBootstrapped",
+    "WorkspaceBootstrapped",
+    "CompletionPolicyInstalled",
+    "ArchitectureBaselineInstalled",
+    "CompletionPolicyActivated",
+    "ArchitectureBaselineActivated",
+    "GoalCreated",
+    "PlanRevisionAccepted",
+    "TaskClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded",
+    "HandoffRecorded",
+    "ReplacementClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded"
+  ]
+}
+
+ ✓ tests/restart/evidence/p1-06-evidence.test.ts (1 test) 4921ms
+     ✓ collects the P1-06 evidence block  4917ms
+ ✓ tests/restart/p1-10-restart.test.ts (1 test) 4883ms
+ ✓ tests/control/rework-task-dispatch.test.ts (2 tests) 3840ms
+     ✓ 受理新增任务的 revision 后，既有派发入口自己认领返工任务并跑出一个 Run；被取代任务不再被派发  3769ms
+stdout | tests/restart/p1-06-restart.test.ts > P1-06 restart-path evidence > collects the P1-06 evidence block
+P1-06-EVIDENCE {
+  "ticket": "P1-06",
+  "path": "bootstrap -> install/activate -> CreateGoal -> applyPlan -> A claim/start/crash -> body-first packet register -> B replacement claim -> driveHandoff -> close -> reopen -> packet/replacement/lease/B-run identical + provenance rebuilt",
+  "packet": {
+    "noFullTranscript": true,
+    "sizeBounded": true
+  },
+  "replacement": {
+    "movedLeaseToB": true,
+    "priorRunRef": "run-rs-a"
+  },
+  "bRunOutcome": "completed",
+  "provenanceTimelineKinds": [
+    "packet_recorded",
+    "replacement_claimed"
+  ],
+  "outcomeUnknownPreserved": true,
+  "restart": {
+    "snapshotsMatch": true,
+    "provenanceRebuild": true,
+    "observedCursorEqual": true
+  },
+  "eventTypes": [
+    "ProjectBootstrapped",
+    "ProjectBootstrapped",
+    "WorkspaceBootstrapped",
+    "WorkspaceBootstrapped",
+    "CompletionPolicyInstalled",
+    "ArchitectureBaselineInstalled",
+    "CompletionPolicyActivated",
+    "ArchitectureBaselineActivated",
+    "GoalCreated",
+    "PlanRevisionAccepted",
+    "TaskClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded",
+    "HandoffRecorded",
+    "ReplacementClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded"
+  ]
+}
+
+ ✓ tests/restart/p1-06-restart.test.ts (1 test) 4944ms
+     ✓ collects the P1-06 evidence block  4942ms
+ ✓ tests/restart/persistent-restart.test.ts (1 test) 4325ms
+     ✓ bootstrap -> CreateGoal -> commit -> close -> reopen -> snapshot load + event rebuild -> same GoalView  4322ms
+ ✓ tests/restart/p1-16-restart.test.ts (1 test) 5016ms
+stdout | tests/restart/evidence/p1-17-evidence.test.ts > P1-17-EVIDENCE
+P1-17-EVIDENCE-BLOCK
+{
+  "cursorBefore": "c0000000063",
+  "viewBytes": 361,
+  "selectionStatus": "ready"
+}
+
+ ✓ tests/restart/evidence/p1-17-evidence.test.ts (1 test) 4990ms
+stdout | tests/restart/evidence/p1-03-evidence.test.ts > P1-03 restart-path evidence > collects the P1-03 restart evidence block
+P1-03-EVIDENCE {
+  "ticket": "P1-03",
+  "path": "bootstrap -> install/activate -> CreateGoal -> applyPlan -> claim -> start -> FakeRuntime events -> commit -> close -> reopen -> outbox/lease/Attempt/Run/ActiveAgents/TaskDetail identical",
+  "run": {
+    "runId": "run-p103-0001",
+    "status": "ended",
+    "outcome": "completed",
+    "lastEventSeq": 2,
+    "exitCode": 0,
+    "envelopeBounded": true,
+    "envelopeHasTranscript": false
+  },
+  "outbox": {
+    "status": "done",
+    "pendingAfterTerminal": true,
+    "intentTaskId": "task-run-adaptor",
+    "bindingVersion": 1
+  },
+  "lease": {
+    "holderRunId": "run-p103-0001",
+    "revision": 1
+  },
+  "attempt": {
+    "status": "ended",
+    "endOutcome": "completed"
+  },
+  "views": {
+    "activeAgentOutcome": "completed",
+    "taskDetailPhase": "pending",
+    "taskDetailRunOutcome": "completed"
+  },
+  "afterTerminalTaskPhaseNotSatisfied": true,
+  "restart": {
+    "observedCursorEqual": true,
+    "snapshotsMatch": true,
+    "agentRebuild": true,
+    "taskDetailRebuild": true
+  },
+  "eventTypes": [
+    "ProjectBootstrapped",
+    "ProjectBootstrapped",
+    "WorkspaceBootstrapped",
+    "WorkspaceBootstrapped",
+    "CompletionPolicyInstalled",
+    "ArchitectureBaselineInstalled",
+    "CompletionPolicyActivated",
+    "ArchitectureBaselineActivated",
+    "GoalCreated",
+    "PlanRevisionAccepted",
+    "TaskClaimed",
+    "RunStarted",
+    "RunEventRecorded",
+    "RunEventRecorded"
+  ]
+}
+
+ ✓ tests/restart/evidence/p1-03-evidence.test.ts (1 test) 4846ms
+     ✓ collects the P1-03 restart evidence block  4843ms
+ ✓ tests/restart/p1-09-restart.test.ts (1 test) 5052ms
+ ✓ tests/coordination/host-tool-chain.test.ts (1 test) 6103ms
+     ✓ 模型经真实工具发起请求与报告；重启后唯一后继被受理、准备并带着精确报告版本跑起来  6102ms
+ ✓ tests/integration/p1-16.contract-suite.sqlite.test.ts (15 tests) 4993ms
+stdout | tests/restart/evidence/p1-12-evidence.test.ts > P1-12-EVIDENCE
+P1-12-EVIDENCE-BLOCK
+{
+  "cursorBefore": "c0000000063",
+  "ledgerEventIds": 63,
+  "viewBytes": 10335,
+  "deltaChanges": 4,
+  "proposalDigest": "e9a112f23da7f3a338d5a60d8952275c4576d18f638a87560abf29b3034cd28e"
+}
+
+ ✓ tests/restart/evidence/p1-12-evidence.test.ts (1 test) 4985ms
+ ✓ tests/restart/p1-17-restart.test.ts (1 test) 5067ms
+ ✓ tests/integration/p1-10.contract-suite.sqlite.test.ts (7 tests) 5061ms
+stdout | tests/restart/evidence/p1-09-evidence.test.ts > P1-09-EVIDENCE
+P1-09-EVIDENCE-BLOCK {"cursorBefore":"c0000000061","viewBytes":4479}
+
+ ✓ tests/restart/evidence/p1-09-evidence.test.ts (1 test) 4795ms
+ ✓ tests/restart/p1-03-restart.test.ts (1 test) 4627ms
+     ✓ restart: outbox/lease/Attempt/Run snapshots + ActiveAgents/TaskDetail identical  4625ms
+ ✓ tests/integration/p1-09.contract-suite.sqlite.test.ts (7 tests) 4674ms
+ ✓ tests/integration/p1-12.contract-suite.sqlite.test.ts (9 tests) 4840ms
+ ✓ tests/data/project-source-index.test.ts (3 tests) 4337ms
+   ✓ discovers over 64 sources, honors tsconfig include and aliases, returns source-bound cross-file results  1297ms
+   ✓ invalidates additions, edits, renames, config and branch identity; reuses unchanged files and reconstructs after reopen  2635ms
+   ✓ reports denied/config escape, unsupported languages, incomplete discovery and unknown imports honestly  403ms
+ ✓ tests/app/model-settings.test.ts (17 tests) 4871ms
+   ✓ classifies synthetic / timeout and redacts provider payloads  376ms
+   ✓ guards HTTP settings and hides credentials from project tools across server restart  3217ms
+   ✓ reports an unreachable Base URL without falling back to another provider  318ms
+ ✓ tests/integration/p1-13-writer-chain.integration.test.ts (1 test) 3200ms
+     ✓ task / patch / evidence survive close+reopen byte-identically  3194ms
+ ✓ tests/control/source-architecture.test.ts (1 test) 3713ms
+   ✓ binds real TS sources to an immutable baseline, records distinct deltas, reopens bodies, rejects stale and mismatched inputs  3712ms
+ ✓ tests/context/reviewer-context.test.ts (11 tests) 2508ms
+     ✓ assembles the first packet without an existing Reviewer envelope and consumes its exact frozen runtime input  355ms
+     ✓ returns exact bounded original text and source citations, rejects invented refs and excluded/symlink paths  820ms
+ ✓ tests/control/reviewer-work-persistence.test.ts (1 test) 2820ms
+   ✓ reopens SQLite Work/output/Result/evidence and read projections with the same accepted command identity  2818ms
+ ✓ tests/control/role-spec.test.ts (11 tests) 2316ms
+     ✓ SQLite 重开后角色规格与生效引用仍在，claim 守卫按同一份矩阵裁决  2238ms
+ ✓ tests/app/exploration-runtime.test.ts (6 tests) 2893ms
+     ✓ exposes only read, denies paths and fabricated write tools, preserves source and persists an actual report without replay  2523ms
+ ✓ tests/integration/p1-15.contract-suite.sqlite.test.ts (9 tests) 2427ms
+ ✓ tests/control/reviewer-work.test.ts (20 tests) 2021ms
+     ✓ rejects a grouped report exceeding the shared 512 evidence cap without a partial Result or index update  730ms
+     ✓ rejects a grouped report exceeding the shared 512 evidence cap without a partial Result or index update  852ms
+ ✓ tests/integration/p1-13.contract-suite.sqlite.test.ts (9 tests) 2659ms
+ ✓ tests/restart/evidence/p1-13-evidence.test.ts (1 test) 2610ms
+     ✓ produces the P1-13-EVIDENCE JSON block  2587ms
+ ✓ tests/integration/p1-13.integration.test.ts (1 test) 2688ms
+ ✓ tests/restart/p1-13-restart.test.ts (1 test) 2656ms
+ ✓ tests/restart/evidence/p1-11-evidence.test.ts (1 test) 2536ms
+     ✓ produces the P1-11-EVIDENCE JSON block  2511ms
+ ✓ tests/restart/p1-15-restart.test.ts (1 test) 2495ms
+ ✓ tests/integration/p1-15.integration.test.ts (1 test) 2505ms
+ ✓ tests/restart/p1-11-restart.test.ts (1 test) 2566ms
+ ✓ tests/integration/p1-14.contract-suite.sqlite.test.ts (9 tests) 2564ms
+ ✓ tests/control/reviewer-runtime-start-rejection.test.ts (2 tests) 2257ms
+   ✓ classifies the real runtime.start closing rejection as one canonical crash with no model execution  1158ms
+   ✓ preserves unknown effects when the same runtime.start catch cannot prove that execution never started  1098ms
+ ✓ tests/restart/evidence/p1-14-evidence.test.ts (1 test) 2756ms
+     ✓ produces the P1-14-EVIDENCE JSON block  2733ms
+stdout | tests/control/reviewer-lease-conflict-recovery.test.ts > ends a reviewer run as known failed when its read lease is refused before model/tool start
+{
+  "first": {
+    "status": "incomplete",
+    "workRef": {
+      "aggregateType": "ReviewWork",
+      "projectId": "proj-alpha",
+      "workspaceId": "ws-shared",
+      "goalId": "goal-p107-1",
+      "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+    },
+    "code": "review_execution_incomplete"
+  },
+  "second": {
+    "status": "incomplete",
+    "workRef": {
+      "aggregateType": "ReviewWork",
+      "projectId": "proj-alpha",
+      "workspaceId": "ws-shared",
+      "goalId": "goal-p107-1",
+      "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+    },
+    "code": "review_execution_incomplete"
+  },
+  "canonicalRun": {
+    "ref": {
+      "aggregateType": "Run",
+      "projectId": "proj-alpha",
+      "goalId": "goal-p107-1",
+      "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run"
+    },
+    "revision": 3,
+    "schemaVersion": 1,
+    "work": {
+      "kind": "review",
+      "reviewWorkRef": {
+        "aggregateType": "ReviewWork",
+        "projectId": "proj-alpha",
+        "workspaceId": "ws-shared",
+        "goalId": "goal-p107-1",
+        "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+      }
+    },
+    "task": {
+      "projectId": "proj-alpha",
+      "goalId": "goal-p107-1",
+      "taskId": "task-p107-writer-b"
+    },
+    "attemptId": "review-1a1454b787101235e47007adf396c875a4c0ae03-attempt",
+    "planRef": {
+      "aggregateType": "PlanRevision",
+      "projectId": "proj-alpha",
+      "planId": "plan-p107-parallel"
+    },
+    "roleBinding": {
+      "schemaVersion": 1,
+      "bindingId": "independent-reviewer-v1",
+      "templateId": "independent-reviewer",
+      "templateRevision": "1",
+      "bindingVersion": 1,
+      "policyRevision": "independent-review-v1"
+    },
+    "budget": {
+      "tokenBudget": 80000,
+      "deadline": null
+    },
+    "workspaceSnapshot": {
+      "workspaceId": "ws-shared",
+      "revision": 1
+    },
+    "status": "ended",
+    "outcome": "crashed",
+    "exitCode": null,
+    "lastEventSeq": 1,
+    "lastRuntimeEventId": "80428deb-39d9-43f1-8e4f-199e27fb6c01-1",
+    "lastFactEventId": "evt-0028",
+    "envelope": {
+      "schemaVersion": 1,
+      "envelopeId": "review-env-review-1a1454b787101235e47007adf396c875a4c0ae03",
+      "projectId": "proj-alpha",
+      "workspaceId": "ws-shared",
+      "goalId": "goal-p107-1",
+      "taskId": "task-p107-writer-b",
+      "runRef": {
+        "aggregateType": "Run",
+        "projectId": "proj-alpha",
+        "goalId": "goal-p107-1",
+        "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run"
+      },
+      "attemptRef": {
+        "aggregateType": "TaskAttempt",
+        "projectId": "proj-alpha",
+        "goalId": "goal-p107-1",
+        "taskId": "task-p107-writer-b",
+        "attemptId": "review-1a1454b787101235e47007adf396c875a4c0ae03-attempt"
+      },
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "proj-alpha",
+        "planId": "plan-p107-parallel"
+      },
+      "roleBinding": {
+        "schemaVersion": 1,
+        "bindingId": "independent-reviewer-v1",
+        "templateId": "independent-reviewer",
+        "templateRevision": "1",
+        "bindingVersion": 1,
+        "policyRevision": "independent-review-v1"
+      },
+      "workspaceSnapshot": {
+        "workspaceId": "ws-shared",
+        "revision": 1
+      },
+      "permissions": {
+        "policyRevision": "independent-review-v1",
+        "tools": [
+          "read"
+        ],
+        "writeScope": []
+      },
+      "budget": {
+        "tokenBudget": 80000,
+        "deadline": null
+      },
+      "sourceRefs": [
+        {
+          "kind": "plan-revision",
+          "refId": "plan-p107-parallel",
+          "revision": "1"
+        },
+        {
+          "kind": "workspace",
+          "refId": "ws-shared",
+          "revision": "1",
+          "digest": "88f9a983bc7921b33239b2cc15186b90438115fde46a6b5c2d4aba4badcabd9c"
+        },
+        {
+          "kind": "artifact",
+          "refId": "ce83846a3263639e209861e439071ed5926bb944268f009da55c5d9bcef52ad8",
+          "revision": "1",
+          "digest": "ce83846a3263639e209861e439071ed5926bb944268f009da55c5d9bcef52ad8"
+        }
+      ],
+      "bundleRef": {
+        "kind": "artifact",
+        "contentType": "application/json",
+        "digest": "29f64d5e9ae0d8626aeced117c8826f68fa48bc7553bc2b463094726eaf54bc8",
+        "sizeBytes": 7866,
+        "source": {
+          "kind": "plan-revision",
+          "refId": "plan-p107-parallel",
+          "revision": "1"
+        }
+      },
+      "work": {
+        "kind": "review",
+        "reviewWorkRef": {
+          "aggregateType": "ReviewWork",
+          "projectId": "proj-alpha",
+          "workspaceId": "ws-shared",
+          "goalId": "goal-p107-1",
+          "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+        }
+      },
+      "reviewInput": {
+        "packetRef": {
+          "kind": "artifact",
+          "contentType": "application/json",
+          "digest": "d2e63dce0db7a7720c28fabf785985006ac4a67478a81db82af48587baf5497f",
+          "sizeBytes": 6083,
+          "source": {
+            "kind": "plan-revision",
+            "refId": "plan-p107-parallel",
+            "revision": "1"
+          }
+        },
+        "packetDigest": "d2e63dce0db7a7720c28fabf785985006ac4a67478a81db82af48587baf5497f",
+        "inputDigest": "649a58f9d59903df75ce9d742d7a8ded872eb528dfc8e6f51ecc071c2a94810f",
+        "descriptorDigest": "ce83846a3263639e209861e439071ed5926bb944268f009da55c5d9bcef52ad8",
+        "grantRefs": [
+          {
+            "aggregateType": "MaterialAccessGrant",
+            "projectId": "proj-alpha",
+            "workspaceId": "ws-shared",
+            "goalId": "goal-p107-1",
+            "grantId": "grant-6670e2d8addb0bf9024ca5fff41fcd1c"
+          }
+        ]
+      }
+    },
+    "startedAt": "2026-09-06T12:00:00.000Z",
+    "endedAt": "2026-09-13T05:56:33.079Z"
+  },
+  "runtime": [
+    {
+      "spec": {
+        "mode": "review",
+        "review": {
+          "workRef": {
+            "aggregateType": "ReviewWork",
+            "projectId": "proj-alpha",
+            "workspaceId": "ws-shared",
+            "goalId": "goal-p107-1",
+            "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+          },
+          "profile": {
+            "schemaVersion": 1,
+            "subjectScope": {
+              "projectId": "proj-alpha",
+              "workspaceId": "ws-shared",
+              "goalId": "goal-p107-1",
+              "taskId": "task-p107-writer-b",
+              "runId": "independent-review-producer"
+            },
+            "roleBinding": {
+              "schemaVersion": 1,
+              "bindingId": "independent-reviewer-v1",
+              "templateId": "independent-reviewer",
+              "templateRevision": "1",
+              "bindingVersion": 1,
+              "policyRevision": "independent-review-v1"
+            },
+            "mode": "review",
+            "permissions": {
+              "tools": [
+                "read"
+              ],
+              "writeScope": []
+            },
+            "model": {
+              "configurationRevision": "model-1",
+              "provider": "fixture",
+              "model": "reviewer",
+              "baseUrl": "http://localhost:1"
+            },
+            "budget": {
+              "contextWindowTokens": 80000,
+              "inputTokens": null,
+              "outputTokens": null,
+              "maxRequests": null,
+              "maxToolCalls": null,
+              "timeoutMs": null,
+              "perResponseTokens": 4096
+            },
+            "profileId": "reviewer-profile-daf16c07d1a827612d802e965f61ccb4ccbfbd141aa429ec47165d63e0b30b35",
+            "revision": 1,
+            "digest": "daf16c07d1a827612d802e965f61ccb4ccbfbd141aa429ec47165d63e0b30b35"
+          }
+        },
+        "projectId": "proj-alpha",
+        "workspaceId": "ws-shared",
+        "goalId": "goal-p107-1",
+        "taskId": "task-p107-writer-b",
+        "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run",
+        "root": "/tmp/independent-review-source-1NV9EK",
+        "instruction": "Independently review the pinned task, current source, and complete tool reports. Use the read-only source and material tools. Return exactly the independent-review-result JSON schema supplied in the packet. Report every required reviewer item with citations and concrete rationale; do not infer PASS from process completion.",
+        "budget": {
+          "contextWindowTokens": 80000,
+          "inputTokens": null,
+          "outputTokens": null,
+          "maxRequests": null,
+          "maxToolCalls": null,
+          "timeoutMs": null,
+          "perResponseTokens": 4096
+        }
+      },
+      "createdAt": "2026-09-13T05:56:32.941Z",
+      "status": "failed",
+      "sessionId": "80428deb-39d9-43f1-8e4f-199e27fb6c01",
+      "configuration": null,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "eventId": "80428deb-39d9-43f1-8e4f-199e27fb6c01-1",
+          "runRef": {
+            "aggregateType": "Run",
+            "projectId": "proj-alpha",
+            "goalId": "goal-p107-1",
+            "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run"
+          },
+          "sequence": 1,
+          "occurredAt": "2026-09-13T05:56:33.079Z",
+          "eventType": "run_crashed",
+          "payload": {
+            "kind": "crashed",
+            "error": "执行前材料校验失败：工作区读租约被拒绝：read_lease_conflict"
+          }
+        }
+      ],
+      "trace": [],
+      "usage": [],
+      "error": "执行前材料校验失败：工作区读租约被拒绝：read_lease_conflict",
+      "nodeSha256": null,
+      "workspaceRevision": null,
+      "cancelRequested": false
+    }
+  ]
+}
+
+ ✓ tests/restart/p1-14-restart.test.ts (1 test) 2833ms
+ ✓ tests/integration/p1-11.contract-suite.sqlite.test.ts (10 tests) 2805ms
+ ✓ tests/control/reviewer-lease-conflict-recovery.test.ts (2 tests) 3099ms
+   ✓ ends a reviewer run as known failed when its read lease is refused before model/tool start  2104ms
+   ✓ ends a reviewer run as known failed when execution.start rejects before any model or tool call  994ms
+ ✓ tests/integration/p1-14.integration.test.ts (1 test) 2763ms
+ ✓ tests/control/workspace-registration.test.ts (2 tests) 2467ms
+   ✓ sqlite: registers explicit workspaces without rewriting bootstrap, rejects stale/forged inputs and replays after reopen  2440ms
+ ✓ tests/restart/evidence/p1-15-evidence.test.ts (1 test) 2676ms
+     ✓ produces the P1-15-EVIDENCE JSON block  2658ms
+ ✓ tests/vault/persistent-vault.test.ts (1 test) 2245ms
+   ✓ preserves artifact bodies, source revisions and owner authorization across host restart  2243ms
+ ✓ tests/sqlite-read-model/material-access-projection.test.ts (2 tests) 1881ms
+     ✓ keeps grant rows across a close/open cycle on the same file  1862ms
+ ✓ tests/control/rework-drive.test.ts (22 tests) 1922ms
+     ✓ SQLite 重启后一致：多失败分组的处置事实与逐项交代都由持久／canonical 事实重建  876ms
+ ✓ tests/sqlite-read-model/p1-07-projection.test.ts (6 tests) 1811ms
+     ✓ projection persists across close()/reopen and rebuild == incremental  1765ms
+ ✓ tests/control/autonomous-rework.test.ts (14 tests) 1010ms
+     ✓ SQLite 重启后：预算计数与人工拒绝事实都从账本重建  782ms
+ ✓ tests/restart/material-revocation.test.ts (2 tests) 3166ms
+   ✓ revokes immediately despite projection lag, preserves provenance, replays and rebuilds (sqlite)  3099ms
+ ✓ tests/sqlite-read-model/p1-06-handoff-projection.test.ts (7 tests) 2070ms
+     ✓ projection persists across close()/reopen and the reopen replays to the same view  2017ms
+ ✓ tests/coordination/control.sqlite.test.ts (4 tests) 2730ms
+ ✓ tests/coordination/route-drive.test.ts (15 tests) 3701ms
+     ✓ SQLite close + reopen 后仍能领取既有 wait_admission intent 并完成唯一后继  3259ms
+ ✓ tests/app/independent-review.test.ts (7 tests) 130590ms
+   ✓ runs a real independent read-only Reviewer, admits its cited report, preserves the original lease, and never copies Task evidence to the Goal gate  19040ms
+   ✓ preserves a valid Reviewer FAIL as blocking evidence without restarting the original Task  23556ms
+   ✓ preserves a valid Reviewer INCONCLUSIVE as blocking evidence without restarting the original Task  21139ms
+   ✓ never dispatches when an applicable tool failed, and permanently rejects a report that omits required coverage  27446ms
+   ✓ source changed after actual material reads cannot produce newly accepted Reviewer evidence  12997ms
+   ✓ clearing the saved model configuration during review cannot silently switch the profile or admit its answer  13028ms
+   ✓ a real human revocation after Reviewer material reads prevents admission and remains revoked after restart  13382ms
+ ✓ tests/ledger/identity-upgrade.test.ts (3 tests) 770ms
+ ✓ tests/control/work-record.test.ts (15 tests) 751ms
+ ✓ tests/context/verification-workspace-reader.test.ts (7 tests) 530ms
+ ✓ tests/control/work-identity-uniqueness.test.ts (9 tests) 590ms
+ ✓ tests/control/baseline-evolution.test.ts (31 tests) 488ms
+ ✓ tests/read-model/p1-08-portfolio-summary.test.ts (5 tests) 399ms
+ ✓ tests/read-model/p1-08-matrix-agents-evidence-timeline.test.ts (5 tests) 392ms
+ ✓ tests/control/evidence-intake.test.ts (10 tests) 408ms
+     ✓ evidence_limit_exceeded at MAX_EVIDENCE_PER_TASK with zero write  340ms
+ ✓ tests/app/reviewer-product-recovery.test.ts (8 tests) 134564ms
+   ✓ reopens the complete host after replacement admission before dispatch and executes the persisted Reviewer exactly once  20452ms
+   ✓ authorizes a real lease-conflict recovery through HTTP and admits actual Reviewer PASS evidence  21347ms
+   ✓ authorizes a real lease-conflict recovery through HTTP and admits actual Reviewer FAIL evidence  24891ms
+   ✓ deduplicates same-key and different-key concurrent authorizations and rejects altered identity payloads  16735ms
+   ✓ keeps a durable recovery receipt when the HTTP response is lost and replays it after restart  18028ms
+   ✓ rejects missing authentication and client-supplied proof, actor, or verdict before any replacement  10274ms
+   ✓ does not turn an ambiguous persisted runtime checkpoint into restart authorization (unknown)  10271ms
+   ✓ does not turn an ambiguous persisted runtime checkpoint into restart authorization (duplicate)  12564ms
+ ✓ tests/read-model/p1-16-work-context.test.ts (4 tests) 410ms
+ ✓ tests/context/verification-round-context.test.ts (12 tests) 392ms
+ ✓ tests/sqlite-ledger/sqlite-ledger.restart.test.ts (1 test) 307ms
+     ✓ close then reopen on same path preserves snapshot/events/cursor/idempotency; closed instance rejects  306ms
+ ✓ tests/control/work-material-gate.test.ts (1 test) 1917ms
+   ✓ 装 executor 规格 + 含 roles 的矩阵之后，普通 develop 运行真正开始（模型被调用），四类材料各有来源  1916ms
+ ✓ tests/app/work-material-delivery.test.ts (1 test) 1958ms
+   ✓ 真实 Run 的 bundle 里能看到工作身份与选中的历史材料（含理由与来源），且不改变权限  1956ms
+ ✓ tests/coordination/handoff-successor.test.ts (6 tests) 348ms
+ ✓ tests/integration/p1-07.contract-suite.inmemory.test.ts (12 tests) 372ms
+ ✓ tests/data/source-applicability.test.ts (2 tests) 301ms
+ ✓ tests/control/goal-change.test.ts (29 tests) 226ms
+ ✓ tests/app/exploration-source.test.ts (3 tests) 374ms
+   ✓ binds all regular files, including generated, dependency, hidden and nested ignored-name directories  336ms
+ ✓ tests/control/remediation.test.ts (28 tests) 245ms
+ ✓ tests/verification/command-check-provider.test.ts (5 tests) 761ms
+ ✓ tests/integration/p1-05.contract-suite.sqlite.test.ts (8 tests) 205ms
+ ✓ tests/control/reviewer-unknown-outcome-preservation.test.ts (1 test) 1046ms
+   ✓ keeps an unprovable reviewer start as outcome_unknown and never reruns the model  1044ms
+ ✓ tests/control/role-material-completion.test.ts (1 test) 2961ms
+   ✓ 装 executor 规格 + 矩阵：运行开始 → 登记实现结果 → 轮次 PASS → Task satisfied  2958ms
+ ✓ tests/integration/p1-05.contract-suite.inmemory.test.ts (8 tests) 191ms
+ ✓ tests/coordination/route-continuity.test.ts (8 tests) 238ms
+ ✓ tests/read-model/p1-12-brief-proposal-projection.test.ts (3 tests) 180ms
+ ✓ tests/coordination/participation-uniqueness.test.ts (1 test) 267ms
+ ✓ tests/vault/verification-source-pin.test.ts (2 tests) 186ms
+ ✓ tests/integration/p1-04.contract-suite.inmemory.test.ts (18 tests) 173ms
+ ✓ tests/control/goal-reducer.test.ts (6 tests) 190ms
+ ✓ tests/control/reviewer-reduction-race.test.ts (4 tests) 151ms
+ ✓ tests/integration/p1-03.contract-suite.inmemory.test.ts (15 tests) 156ms
+ ✓ tests/control/workspace-lease.test.ts (13 tests) 165ms
+ ✓ tests/read-model/p1-05-goal-phase-projection.test.ts (5 tests) 140ms
+ ✓ tests/control/rework-disposition-authority.test.ts (3 tests) 138ms
+ ✓ tests/verification/role-output-completeness.test.ts (12 tests) 97ms
+ ✓ tests/control/task-reducer.test.ts (11 tests) 97ms
+ ✓ tests/integration/p1-06.contract-suite.inmemory.test.ts (25 tests) 139ms
+ ✓ tests/control/reviewer-dispatch-isolation.test.ts (2 tests) 90ms
+ ✓ tests/integration/p1-08.contract-suite.inmemory.test.ts (11 tests) 142ms
+ ✓ tests/control/role-binding-admission.test.ts (12 tests) 112ms
+ ✓ tests/integration/p1-02.contract-suite.inmemory.test.ts (29 tests) 123ms
+ ✓ tests/sqlite-read-model/p1-04-verification-projection.test.ts (9 tests) 86ms
+ ✓ tests/control/integration-join.test.ts (6 tests) 125ms
+ ✓ tests/control/plan-acceptance.test.ts (22 tests) 131ms
+ ✓ tests/coordination/control.test.ts (28 tests) 155ms
+ ✓ tests/control/planning-interface.test.ts (7 tests) 119ms
+ ✓ tests/context/review-context-compiler.test.ts (4 tests) 83ms
+ ✓ tests/control/rework-plan-compiler.test.ts (21 tests) 107ms
+ ✓ tests/data/ledger-scope-catalog.test.ts (3 tests) 63ms
+ ✓ tests/data/source-index.test.ts (6 tests) 195ms
+ ✓ tests/control/remediation-writer-chain.test.ts (2 tests) 65ms
+ ✓ tests/runtime/runtime-observation-journal.test.ts (6 tests) 539ms
+     ✓ recovers both Runtime protocols without executing, retaining old identities, bytes and scope  356ms
+ ✓ tests/integration/p1-12.contract-suite.inmemory.test.ts (9 tests) 76ms
+ ✓ tests/verification/verification-engine.test.ts (10 tests) 82ms
+ ✓ tests/integration/p1-17.contract-suite.inmemory.test.ts (6 tests) 83ms
+ ✓ tests/control/work-identity.test.ts (13 tests) 81ms
+ ✓ tests/control/replacement-claim.test.ts (8 tests) 92ms
+ ✓ tests/app/exploration-tools.test.ts (9 tests) 206ms
+ ✓ tests/control/human-role-collaboration.test.ts (20 tests) 65ms
+ ✓ tests/control/p1-15-role-rework-loop.test.ts (1 test) 56ms
+ ✓ tests/integration/p1-10.contract-suite.inmemory.test.ts (7 tests) 87ms
+ ✓ tests/verification/rework-issues.test.ts (13 tests) 102ms
+ ✓ tests/control/reviewer-existing-drivers-isolation.test.ts (2 tests) 90ms
+ ✓ tests/vault/exploration-material-reader.test.ts (3 tests) 49ms
+ ✓ tests/data/candidate-workspace-reader.test.ts (3 tests) 50ms
+ ✓ tests/integration/p1-16.contract-suite.inmemory.test.ts (15 tests) 68ms
+ ✓ tests/interaction/exploration-session.test.ts (3 tests) 40ms
+ ✓ tests/control/handoff.test.ts (8 tests) 53ms
+ ✓ tests/control/plan-impact-work-identity.test.ts (5 tests) 38ms
+ ✓ tests/sqlite-read-model/sqlite-read-model-index.contract.test.ts (11 tests) 50ms
+ ✓ tests/control/workspace-drive.test.ts (3 tests) 48ms
+ ✓ tests/context/handoff-context-compiler.test.ts (5 tests) 31ms
+ ✓ tests/control/patch-record.test.ts (7 tests) 50ms
+ ✓ tests/control/handoff-drive.test.ts (4 tests) 57ms
+ ✓ tests/read-model/material-access-lookup.test.ts (2 tests) 47ms
+ ✓ tests/integration/p1-09.contract-suite.inmemory.test.ts (7 tests) 62ms
+ ✓ tests/data/exploration-source-applicability.test.ts (1 test) 28ms
+ ✓ tests/app/file-references.test.ts (2 tests) 33ms
+ ✓ tests/control/dispatch-start.test.ts (6 tests) 40ms
+ ✓ tests/app/reviewer-source-tools.test.ts (2 tests) 108ms
+ ✓ tests/app/history-materials.test.ts (3 tests) 37ms
+ ✓ tests/control/plan-compiler.test.ts (7 tests) 40ms
+ ✓ tests/control/dispatch-drive.test.ts (7 tests) 59ms
+ ✓ tests/sqlite-ledger/sqlite-ledger.contract.test.ts (16 tests) 33ms
+ ✓ tests/control/run-facts.test.ts (10 tests) 41ms
+ ✓ tests/control/architecture-inspection.test.ts (10 tests) 34ms
+ ✓ tests/control/dispatch-claim.test.ts (6 tests) 33ms
+ ✓ tests/control/initial-plan-source.test.ts (1 test) 30ms
+ ✓ tests/context/persisted-query-source.test.ts (1 test) 63ms
+ ✓ tests/context/work-run-materials.test.ts (22 tests) 35ms
+ ✓ tests/context/planning-context-compiler.test.ts (6 tests) 34ms
+ ✓ tests/ui/client.test.ts (5 tests) 32ms
+ ✓ tests/control/architecture-evolution-policy.test.ts (13 tests) 25ms
+ ✓ tests/integration/p1-00.integration.test.ts (7 tests) 29ms
+ ✓ tests/read-model/plan-change-timeline.test.ts (3 tests) 24ms
+ ✓ tests/control/governance-install.test.ts (13 tests) 20ms
+ ✓ tests/integration/p1-11.contract-suite.inmemory.test.ts (10 tests) 26ms
+ ✓ tests/control/dispatch-readiness.test.ts (6 tests) 25ms
+ ✓ tests/sqlite-read-model/p1-16-continuation-projection.test.ts (4 tests) 19ms
+ ✓ tests/read-model/p1-04-verification-projection.test.ts (9 tests) 20ms
+ ✓ tests/verification/verification-service.test.ts (4 tests) 64ms
+ ✓ tests/control/control-engine.test.ts (22 tests) 21ms
+ ✓ tests/control/material-access.test.ts (6 tests) 26ms
+ ✓ tests/control/governance-activate.test.ts (10 tests) 23ms
+ ✓ tests/data/workspace-path-boundary.test.ts (4 tests) 45ms
+ ✓ tests/read-model/p1-11-plan-change.test.ts (6 tests) 19ms
+ ✓ tests/verification/candidate-patch-check.test.ts (2 tests) 24ms
+ ✓ tests/control/architecture-reconciler.test.ts (9 tests) 23ms
+ ✓ tests/context/role-source-stability.test.ts (5 tests) 47ms
+ ✓ tests/read-model/p1-03-run-projection.test.ts (7 tests) 20ms
+ ✓ tests/context/work-context-compiler.test.ts (11 tests) 18ms
+ ✓ tests/control/role-spec-material-read.test.ts (3 tests) 20ms
+ ✓ tests/ledger/in-memory-ledger.contract.test.ts (16 tests) 22ms
+ ✓ tests/ledger/in-memory-ledger.boundary.test.ts (11 tests) 21ms
+ ✓ tests/read-model/p1-07-projection.test.ts (6 tests) 21ms
+ ✓ tests/ui/pending.test.ts (6 tests) 17ms
+ ✓ tests/verification/failure-feedback-renewal.test.ts (12 tests) 20ms
+ ✓ tests/read-model/p1-06-handoff-projection.test.ts (7 tests) 17ms
+ ✓ tests/integration/p1-13.contract-suite.inmemory.test.ts (9 tests) 26ms
+ ✓ tests/read-model/plan-view.test.ts (8 tests) 20ms
+ ✓ tests/context/material-selection.test.ts (6 tests) 13ms
+ ✓ tests/control/canonical-record-scope.test.ts (3 tests) 16ms
+ ✓ tests/context/context-compiler.test.ts (12 tests) 17ms
+ ✓ tests/ledger/snapshot-isolation.test.ts (3 tests) 12ms
+ ✓ tests/read-model/read-model-index.contract.test.ts (11 tests) 11ms
+ ✓ tests/context/completed-work-regression.test.ts (5 tests) 8ms
+ ✓ tests/verification/feedback-renewal.test.ts (8 tests) 9ms
+ ✓ tests/integration/p1-15.contract-suite.inmemory.test.ts (9 tests) 11ms
+ ✓ tests/read-model/read-model-index.test.ts (9 tests) 10ms
+ ✓ tests/verification/feedback-decision-recovery.test.ts (7 tests) 15ms
+ ✓ tests/interaction/human-collaboration.test.ts (13 tests) 10ms
+ ✓ tests/app/model-budget.test.ts (6 tests) 11ms
+ ✓ tests/integration/p1-14.contract-suite.inmemory.test.ts (9 tests) 10ms
+ ✓ tests/contracts/goal-phase.test.ts (25 tests) 12ms
+ ✓ tests/read-model/p1-14-baseline-change-view.test.ts (4 tests) 9ms
+ ✓ tests/read-model/material-access-projection.test.ts (3 tests) 8ms
+ ✓ tests/read-model/governance-view.test.ts (5 tests) 7ms
+ ✓ tests/read-model/p1-16-continuation-projection.test.ts (4 tests) 8ms
+ ✓ tests/app/governance-commands.test.ts (4 tests) 7ms
+ ✓ tests/read-model/p1-15-unified-status.test.ts (4 tests) 8ms
+ ✓ tests/runtime/handoff-control-adapter.test.ts (10 tests) 6ms
+ ✓ tests/read-model/plan-view.rebuild.test.ts (2 tests) 9ms
+ ✓ tests/control/workspace-capability-policy.test.ts (16 tests) 10ms
+ ✓ tests/vault/material-access-grant.test.ts (8 tests) 8ms
+ ✓ tests/context/role-code-channel.test.ts (6 tests) 7ms
+ ✓ tests/vault/artifact-vault.test.ts (16 tests) 11ms
+ ✓ tests/data/workspace-reader-adapter.test.ts (9 tests) 7ms
+ ✓ tests/contracts/fixtures.test.ts (7 tests) 13ms
+ ✓ tests/control/runtime-dispatch.test.ts (7 tests) 11ms
+ ✓ tests/ui/layout.test.ts (5 tests) 8ms
+ ✓ tests/verification/migration-gate-port.test.ts (7 tests) 7ms
+ ✓ tests/runtime/unconfigured-capabilities.test.ts (1 test) 5ms
+ ✓ tests/runtime/fake-runtime-adapter.test.ts (6 tests) 8ms
+ ✓ tests/contracts/material-access.test.ts (9 tests) 11ms
+ ✓ tests/control/governance-command-builders.test.ts (2 tests) 5ms
+ ✓ tests/verification/code-graph-port.test.ts (7 tests) 5ms
+ ✓ tests/app/live-content.test.ts (3 tests) 5ms
+ ✓ tests/contracts/validation.test.ts (9 tests) 7ms
+ ✓ tests/verification/feedback-investigation-authority.test.ts (4 tests) 6ms
+ ✓ tests/control/baseline-evolution-port.test.ts (5 tests) 6ms
+ ✓ tests/contracts/cursor.test.ts (3 tests) 4ms
+ ✓ tests/runtime/context-continuation-adapter.test.ts (6 tests) 5ms
+ ✓ tests/restart/readiness-probe.test.ts (5 tests) 4ms
+ ✓ tests/control/rework-unknown-disposition-review.test.ts (1 test) 4ms
+ ✓ tests/contracts/fingerprint.test.ts (9 tests) 9ms
+ ✓ tests/control/architecture-delta-regression.test.ts (2 tests) 5ms
+ ✓ tests/contracts/state-ledger.double.test.ts (1 test) 3ms
+ ✓ tests/context/query-execution-context.test.ts (2 tests) 28ms
+ ✓ tests/verification/semantic-reverification.test.ts (8 tests) 17ms
+ ✓ tests/app/semantic-collaboration.test.ts (5 tests) 193476ms
+   ✓ real HTTP/SQLite/kernel task investigates material and FAIL, repairs from sourced coordination, admits required independent review and replays settled records  38840ms
+   ✓ the same repaired task remains unsatisfied when tools pass but its required independent Reviewer returns FAIL  45594ms
+   ✓ a human selects the unresolved catalog-versus-display product scope after FAIL, replays that decision and returns through sourced repair and required independent review  43092ms
+   ✓ real host recovers a saved human choice after one before_apply fault using the labelled model stub  39852ms
+   ✓ real host recovers a saved human choice after one before_query fault using the labelled model stub  26094ms
+ ✓ tests/ui/rendering.test.ts (4 tests) 6ms
+ ✓ tests/ui/plan-changes.test.ts (4 tests) 4ms
+
+ Test Files  312 passed (312)
+      Tests  2080 passed (2080)
+   Start at  13:54:13
+   Duration  250.63s (transform 660.46s, setup 0ms, import 1582.70s, tests 2262.74s, environment 38ms)
+
+full rc=0

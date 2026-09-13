@@ -1,0 +1,48 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [31m❯[39m evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/no-successor-prepare.test.ts [2m([22m[2m3 tests[22m[2m | [22m[31m1 failed[39m[2m | [22m[33m2 skipped[39m[2m)[22m[33m 1565[2mms[22m[39m
+[31m     [31m×[31m Delivery 正文、精确版本与选入理由都进入捕获的 ModelRequest 与 manifest.selected[39m[33m 1564[2mms[22m[39m
+     [2m[90m↓[39m[22m 撤权之后：该 Delivery 不允许进入新的输入（材料组装在模型调用之前失败）
+     [2m[90m↓[39m[22m 来源在本次运行期间被更新：basis 不一致 → 精确授权失效 → 拒绝进入新输入
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/no-successor-prepare.test.ts[2m > [22m目标 Delivery 进入实际模型输入（A06）[2m > [22mDelivery 正文、精确版本与选入理由都进入捕获的 ModelRequest 与 manifest.selected
+[31m[1mAssertionError[22m: [{"intentId":"succ-9fbd65534a6951d59204b687","outboxRef":{"aggregateType":"DispatchOutboxEntry","projectId":"proj-alpha","goalId":"goal-1","taskId":"task-run-adaptor","attemptId":"succ-9fbd65534a6951d59204b687"},"code":"runtime_error","message":"Error: 真实运行缺少已登记输入"}]: expected [ { …(4) } ] to deeply equal [][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- [][39m
+[31m+ [[39m
+[31m+   {[39m
+[31m+     "code": "runtime_error",[39m
+[31m+     "intentId": "succ-9fbd65534a6951d59204b687",[39m
+[31m+     "message": "Error: 真实运行缺少已登记输入",[39m
+[31m+     "outboxRef": {[39m
+[31m+       "aggregateType": "DispatchOutboxEntry",[39m
+[31m+       "attemptId": "succ-9fbd65534a6951d59204b687",[39m
+[31m+       "goalId": "goal-1",[39m
+[31m+       "projectId": "proj-alpha",[39m
+[31m+       "taskId": "task-run-adaptor",[39m
+[31m+     },[39m
+[31m+   },[39m
+[31m+ ][39m
+
+[36m [2m❯[22m evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/no-successor-prepare.test.ts:[2m380:60[22m[39m
+    [90m378|[39m     expect(drive.coordination?.failures, JSON.stringify(drive.coordina…
+    [90m379|[39m     [34mexpect[39m(drive[33m.[39mcoordination[33m?.[39madmissions)[33m.[39m[34mtoBe[39m([34m1[39m)[33m;[39m
+    [90m380|[39m     [34mexpect[39m(drive[33m.[39mfailures[33m,[39m [33mJSON[39m[33m.[39m[34mstringify[39m(drive[33m.[39mfailures))[33m.[39m[34mtoEqual[39m([])[33m;[39m
+    [90m   |[39m                                                            [31m^[39m
+    [90m381|[39m
+    [90m382|[39m     [90m// 本次唯一后继真的跑了模型：捕获到第二个请求（第一个是前驱的输入）。[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[33m2 skipped[39m[90m (3)[39m
+[2m   Start at [22m 09:38:21
+[2m   Duration [22m 26.68s[2m (transform 15.80s, setup 0ms, import 22.66s, tests 1.57s, environment 0ms)[22m
+

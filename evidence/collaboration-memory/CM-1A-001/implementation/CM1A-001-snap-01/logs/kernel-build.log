@@ -1,0 +1,25 @@
+$ pnpm kernel:build
+cwd=/mnt/d/1.project/Software/agent_platform
+2026-09-13T00:37:31+08:00
+Already up to date
+Done in 407ms using pnpm v11.21.0
+$ npm --prefix vendor/coding-agent run build
+sh: 1: npm: not found
+[ELIFECYCLE] Command failed.
+
+EXIT_CODE=1
+2026-09-13T00:37:34+08:00
+
+=== RUN 2: 同一命令 pnpm kernel:build；仅把 node 工具链 bin 加入 PATH（该目录里有 npm，但未被 symlink 到 ~/.local/bin） ===
+npm=/home/han001/projects/agents/coding-agent/.tooling/node-v24.18.0-linux-x64/bin/npm  npm-version=11.16.0
+2026-09-13T00:38:58+08:00
+Already up to date
+Done in 343ms using pnpm v11.21.0
+$ npm --prefix vendor/coding-agent run build
+
+> coding-agent-learning@0.0.0 build
+> tsc -p tsconfig.build.json
+
+
+EXIT_CODE=0
+2026-09-13T00:39:15+08:00

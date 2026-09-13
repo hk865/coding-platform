@@ -1,4 +1,6 @@
 import { composeReworkDrive } from '../harness/rework-composition.js';
+import {createProfileMemory,projectMemory,type ProfileMemoryHost} from './memory.js';
+import { CommunicationViewIndex } from '../data/read-model-index/communication-view.js';
 import { ExecutionFeedbackContext } from '../data/context-compiler/execution-feedback-context.js';
 import { FeedbackMaterialCompiler } from '../data/context-compiler/feedback-materials.js';
 import { ExecutionFeedbackCompiler } from '../control/plan-compiler/execution-feedback-compiler.js';
@@ -7,6 +9,7 @@ import { evaluateRoleSpecPinReadiness } from '../control/control-engine/policies
 import { ControlReworkDisposition } from '../control/control-engine/rework-disposition.js';
 import { LeasedWorkerRuntime } from '../control/dispatch-engine/leased-worker-runtime.js';
 import { WorkMaterialDrive } from '../control/dispatch-engine/work-material-drive.js';
+import { DeliveryMaterialCompiler } from '../data/context-compiler/delivery-materials.js';
 import { LedgerRoleSpecRead } from '../control/dispatch-engine/role-spec-read.js';
 import { WorkRunMaterialCompiler } from '../data/context-compiler/work-run-materials.js';
 import { WorkspaceSourceIndexReader } from '../data/workspace-reader/role-source-reader.js';
@@ -101,7 +104,7 @@ type Scope = {
     projectId: string;
     workspaceId: string;
 };
-async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: boolean, real?: RealOptions) {
+async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: boolean, real: RealOptions | undefined, profileMemory: ProfileMemoryHost) {
     await mkdir(dir, { recursive: true });
     const now = real?.clock ?? (() => new Date().toISOString());
     const executionCapability: ExecutionCapabilityV1 = real
@@ -121,18 +124,23 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
     let workMaterialDrive: WorkMaterialDrive | undefined;
     const leasedRuntime = real ? new LeasedWorkerRuntime({ runtime: real.runtime, lease: () => h.workspaceLease, vault: () => h.vault,
         materials: (spec, envelope) => spec.mode === 'explore' ? explorationDrive!.assembleRun(spec, envelope) : workMaterialDrive!.assembleRun(spec, envelope),
+        // 协调 Host 工具（CM-1A-001 第 3 工作段）：按本次 Run 从 canonical 事实派生 exact principal
+        // 后装配 narrow port。模型拿不到身份字段，只能提供内容参数；正文 body-first，受理才算成功。
+        coordination: (spec) => h.coordinationGrant({ aggregateType: 'Run', projectId: spec.projectId, goalId: spec.goalId, runId: spec.runId }),
         reviewerMaterials: (spec, envelope) => {
             if (!reviewerContext || !spec.review) throw Error('独立审阅材料入口未配置');
             return reviewerContext.runtime(spec.review.workRef, envelope);
         }, now }) : undefined;
     const runtime: RunPort = leasedRuntime ? {
         capabilities: () => leasedRuntime.capabilities(),
-        start: envelope => envelope.roleBinding.templateId === 'gui-fixture' && envelope.roleBinding.policyRevision === 'fixture-only-v1'
-            ? fakeRuntime.start(envelope) : leasedRuntime.start(envelope),
+        start: (envelope, access) => envelope.roleBinding.templateId === 'gui-fixture' && envelope.roleBinding.policyRevision === 'fixture-only-v1'
+            ? fakeRuntime.start(envelope) : leasedRuntime.start(envelope, access),
     } : fakeRuntime;
     const workspaceCapability = new ConfiguredWorkspaceCapabilityPolicy({ workspaceRead: true, workspaceWrite: true, maxWriteScope: null });
     const queryFixture = new FakeReadOnlyQueryAdapter();
-    const realQueries = real ? new ReadOnlyQueryRuntime(resolve(dir, 'query-runs'), { materials: new QueryExecutionContextCompiler({ ledger: () => h.ledger, vault: () => h.vault }), rootFor: real.rootFor, bind: runId => real.runtime.bindModel(runId) }) : undefined;
+    let memory: ReturnType<typeof projectMemory>;
+    const realQueries = real ? new ReadOnlyQueryRuntime(resolve(dir, 'query-runs'), { materials: new QueryExecutionContextCompiler({ ledger: () => h.ledger, vault: () => h.vault,
+      memory: {select:request=>memory.context.select(request)},now }), rootFor: real.rootFor, bind: runId => real.runtime.bindModel(runId) }) : undefined;
     const querySources = realQueries && real ? new QuerySourceContextCompiler({ ledger: () => h.ledger, observations: realQueries.observations, source: new QueryWorkspaceSourceReader(real.rootFor) }) : undefined;
     await realQueries?.init();
     const readOnlyQuery = { capabilities: (request: Parameters<FakeReadOnlyQueryAdapter['capabilities']>[0]) => realQueries?.capabilities() ?? queryFixture.capabilities(request),
@@ -156,6 +164,9 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
             ? verificationSource!.capture(query, signal) : explorationSource!.capture(query, signal),
     } : undefined;
     h = await createPersistentSqliteHarness({ dir, runtime, readOnlyQuery, workspaceCapability, ...(sourceApplicability ? { sourceApplicability } : {}),
+        // 后继 Run 的准备面与工作区根：接续受理产生的后继在启动前由 Dispatch 从持久事实重建
+        // RunSpec 并 preflight/prepare（真实 Runtime 必须先有已登记的 exact runId spec）。
+        ...(real ? { runtimePreparation: real.runtime, workspaceRootFor: (projectId: string, workspaceId: string) => real.rootFor(projectId, workspaceId) } : {}),
         ...(real ? { checkPorts: [], ...unconfiguredRuntimeCapabilities(now),
             verification: { verify: async request => {
                 if (!verifications) throw Error('验证服务尚未完成初始化');
@@ -178,12 +189,13 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
     // Seed via public commands, with stable payloads and keys so restart is a replay.
     const boot = buildBootstrapCommand({ schemaVersion: 1, entries: scopes }, { commandId: 'gui-bootstrap-v1', correlationId: 'gui-bootstrap-v1', submittedAt: '2026-09-07T00:00:00.000Z' });
     check(await h.bootstrap(boot));
+    memory = projectMemory(h.ledger,profileMemory,now,{vault:h.vault,control:h.control});
     for (const scope of scopes) {
         await installGovernance(scope.projectId);
         if (seedGoals)
             check(await h.collaboration.createGoal({ ...scope, goalId: 'acceptance-demo', objective: scope.projectId.endsWith('alpha') ? '验收核心流程：计划、运行、查询与持久化' : '隔离对照项目：相同本地标识，独立数据', actor: { kind: 'human', id: 'local-gui' }, idempotencyKey: 'gui-demo-goal' }));
     }
-    const runtimeDispatch = real ? new RuntimeDispatch({ ledger: h.ledger, control: h, outbox: { drive: h.drive }, runtime: real.runtime, now }) : undefined;
+    const runtimeDispatch = real ? new RuntimeDispatch({ ledger: h.ledger, control: { runFact: h.runFact, reconcileRun: command => h.control.reconcileRun!(command) }, outbox: { drive: h.drive }, runtime: real.runtime, now }) : undefined;
     const recovery = await runtimeDispatch?.recover(scopes);
     if (recovery?.rejected.length)
         throw Error('运行恢复事实尚未被接纳：' + JSON.stringify(recovery.rejected));
@@ -228,7 +240,11 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         feedback: new FeedbackMaterialCompiler({ledger:h.ledger,vault:h.vault,catalog,source:new QueryWorkspaceSourceReader(real.rootFor),applicability:sourceApplicability!}),
         // 这次运行的工作身份由 ControlEngine 的权威解析面给出（派发面不重算第二份）。
         control: {resolveTaskWorkIdentity:query=>h.control.resolveTaskWorkIdentity(query),grantMaterialAccess:command=>h.grantMaterialAccess(command)},
+        // 后继 Run 的必需材料**只按 admission 固定的集合**取材（第 3 工作段收窄）：
+        // 正常任务运行读到 none（本次不消费任何 Delivery），不是"读不到邮箱"。
+        deliveries: new DeliveryMaterialCompiler({ admitted: h.admittedDeliveryRead, vault: h.vault, source: sourceApplicability! }),
         compiler: new WorkRunMaterialCompiler({
+            memory: memory.context, now,
             ledger: h.ledger, vault: h.vault, workContext: h.workContext, completedWork: h.completedWork,
             // 角色规格的解析判据来自 ControlEngine 自己的受理策略；组合根只做注入，
             // 不在这里复制矩阵 pin／revision／权限的判定规则。
@@ -346,9 +362,10 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         const queryIds = new Set((await catalog.jobs(scope)).map(snapshot => snapshot.job.queryJobId));
         const goals = await Promise.all([...goalIds].map(goalId => h.collaboration.goalView({ ...scope, goalId })));
         const goalId = typeof input['goalId'] === 'string' && input['goalId'] ? input['goalId'] : [...goalIds][0] ?? '';
+        const communication = await new CommunicationViewIndex(h.ledger).view({ ...scope, ...(goalId ? { goalId } : {}) });
         if (!goalId) {
             const empty = { status: 'not_found' as const, observedCursor: h.observedCursor() };
-            return { scope, goalId, goals, summary: await h.consoleSummary(scope), matrix: empty, agents: empty, timeline: await h.consoleTimeline(scope), graph: empty, evidence: [], queries: [], goalStatus: empty, observedCursor: h.observedCursor(), executor: executionCapability.executor, executionCapability, storage: 'SQLite' };
+            return { scope, goalId, goals, communication, summary: await h.consoleSummary(scope), matrix: empty, agents: empty, timeline: await h.consoleTimeline(scope), graph: empty, evidence: [], queries: [], goalStatus: empty, observedCursor: h.observedCursor(), executor: executionCapability.executor, executionCapability, storage: 'SQLite' };
         }
         if (!goalIds.has(goalId))
             throw new Error('该工作区中不存在此目标');
@@ -364,7 +381,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
                 view.stale = true;
                 view.currentAnswer = { ...view.currentAnswer, stale: true, staleReason: 'current_goal_workspace_or_source_changed' };
             }
-        return { scope, goalId, goals, summary, matrix, agents, timeline, graph, evidence, queries, goalStatus, exploration: await explorations?.view({ ...scope, goalId }) ?? null, planning: await initialPlanning?.view({ ...scope, goalId }) ?? [], liveRuns: real?.runtime.all().filter(r => r.spec.projectId === scope.projectId && r.spec.goalId === goalId && agents.status === 'ready' && agents.agents.rows.some(row => row.runRef.runId === r.spec.runId)).map(r => ({ ...r, ...verifications?.forRun({ projectId: r.spec.projectId, workspaceId: r.spec.workspaceId, goalId: r.spec.goalId, runId: r.spec.runId }) })) ?? [], observedCursor: h.observedCursor(), executor: executionCapability.executor, executionCapability, storage: 'SQLite' };
+        return { scope, goalId, goals, communication, summary, matrix, agents, timeline, graph, evidence, queries, goalStatus, exploration: await explorations?.view({ ...scope, goalId }) ?? null, planning: await initialPlanning?.view({ ...scope, goalId }) ?? [], liveRuns: real?.runtime.all().filter(r => r.spec.projectId === scope.projectId && r.spec.goalId === goalId && agents.status === 'ready' && agents.agents.rows.some(row => row.runRef.runId === r.spec.runId)).map(r => ({ ...r, ...verifications?.forRun({ projectId: r.spec.projectId, workspaceId: r.spec.workspaceId, goalId: r.spec.goalId, runId: r.spec.runId }) })) ?? [], observedCursor: h.observedCursor(), executor: executionCapability.executor, executionCapability, storage: 'SQLite' };
     }
     function launchRealDrive(scope: Scope, goalId: string, runId: string) {
         if (!runtimeDispatch)
@@ -513,12 +530,52 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
             return { goalId };
         }
         // 治理入口是**项目级**的，与 Goal 无关，因此放在 goalId 必填检查之前。
+        if(path==='/api/real/memory/project/adoption')return {runs:(realQueries?.all()??[])
+          .filter(run=>run.runRef.projectId===scope.projectId&&run.runRef.workspaceId===scope.workspaceId)
+          .map(run=>{
+            try{
+              const input=JSON.parse(run.input),selected=input.maintainedPreferences;
+              return {runId:run.runRef.runId,status:run.status,inputDigest:run.inputDigest,purpose:input.responsePurpose??null,
+                memory:selected?.status==='ready'?{profileRevision:selected.profileRevision,projectRevision:selected.projectRevision,
+                  entries:selected.entries.map((row:{scope:import('../contracts/memory.js').MemoryScope;entry:import('../contracts/memory.js').MemoryEntry})=>({scope:row.scope,entryId:row.entry.entryId,revision:row.entry.revision,digest:row.entry.digest}))}:null};
+            }catch{return {runId:run.runRef.runId,status:run.status,inputDigest:run.inputDigest,purpose:null,memory:null};}
+          })};
+        if (path.startsWith('/api/real/memory/project/')) return memory.action(path,input,scope.projectId);
         if (path === '/api/real/governance/view')
             return governance.view(scope);
         if (path === '/api/real/governance/install')
             return governance.install(scope, input);
         if (path === '/api/real/governance/activate')
             return governance.activate(scope, input);
+        if (path === '/api/real/queries' || path === '/api/real/queries/runs') {
+            const goalId=required(input,'goalId');
+            if((await h.collaboration.goalView({...scope,goalId})).status!=='ready')throw Error('目标不存在');
+            if(path==='/api/real/queries/runs')return {runs:realQueries?.all().filter(run=>run.runRef.projectId===scope.projectId&&run.runRef.workspaceId===scope.workspaceId&&run.goalId===goalId)??[]};
+            const focusTaskRefs:import('../contracts/query-job.js').QueryTaskRef[]=[];
+            if(input['focusTaskId']!==undefined){
+                if(typeof input['focusTaskId']!=='string')throw Error('请选择目标中的任务');
+                const ref={aggregateType:'Task' as const,projectId:scope.projectId,goalId,taskId:input['focusTaskId']};
+                const graph=await h.planGraph({projectId:scope.projectId,goalId});
+                if(graph.status!=='ready'||!graph.graph.tasks.some(task=>task.taskId===ref.taskId))throw Error('任务不存在');
+                focusTaskRefs.push(ref);
+            }
+            if (!real || !realQueries)
+                throw Error('真实查询未配置');
+            const id = required(input, 'requestId'), budget = validateRuntimeBudget(input['budget']);
+            const queryJobId = 'real-query-' + id, runId = queryJobId;
+            const original = await h.ledger.load({ aggregateType: 'QueryJob', ...scope, queryJobId });
+            const submittedAt = original.status === 'found' ? (original.snapshot as import('../contracts/query-job.js').QueryJobSnapshot).job.submittedAt : now();
+            const result = check(await h.submitQueryJob({ schemaVersion: 1, commandType: 'SubmitQueryJob', commandId: queryJobId, identity: { projectId: scope.projectId, actor: { kind: 'human', id: 'local-gui' }, idempotencyKey: queryJobId }, aggregateId: queryJobId, expectedRevision: 0, correlationId: queryJobId, submittedAt,
+                payload: { runId, intent: { schemaVersion: 1, intentId: queryJobId, ...scope, goalId, question: required(input, 'question'), focusTaskRefs,
+                        budget: { maxTokens: budget.contextWindowTokens, deadline: budget.timeoutMs === null ? null : new Date(Date.parse(submittedAt) + budget.timeoutMs).toISOString() }, multiTurn: { maxRounds: 1 }, correlationId: queryJobId,
+                        execution: { kind: 'semantic_query', ...(input['responsePurpose']===undefined?{}:{responsePurpose:input['responsePurpose'] as import('../contracts/memory.js').MemoryPurpose}), runtimeBudget: budget, roleBinding: { schemaVersion: 1, bindingId: queryJobId, bindingVersion: 1, templateId: 'query-reader', templateRevision: '1', policyRevision: 'read-only-v1' } } } } }));
+            if (result.status === 'committed' && !result.replayed) {
+                const work = h.driveQuery({ reason: 'human-semantic-query' }).then(() => project());
+                background.add(work);
+                void work.finally(() => background.delete(work)).catch(() => { });
+            }
+            return { queryJobId, runId, receipt: result };
+        }
         const goalId = required(input, 'goalId');
         const view = await h.collaboration.goalView({ ...scope, goalId });
         if (view.status !== 'ready')
@@ -535,26 +592,6 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         }
         if (path === '/api/real/planning')
             return { rows: await initialPlanning?.view({ ...scope, goalId }) ?? [] };
-        if (path === '/api/real/queries') {
-            if (!real || !realQueries)
-                throw Error('真实查询未配置');
-            const id = required(input, 'requestId'), budget = validateRuntimeBudget(input['budget']);
-            const queryJobId = 'real-query-' + id, runId = queryJobId;
-            const original = await h.ledger.load({ aggregateType: 'QueryJob', ...scope, queryJobId });
-            const submittedAt = original.status === 'found' ? (original.snapshot as import('../contracts/query-job.js').QueryJobSnapshot).job.submittedAt : now();
-            const result = check(await h.submitQueryJob({ schemaVersion: 1, commandType: 'SubmitQueryJob', commandId: queryJobId, identity: { projectId: scope.projectId, actor: { kind: 'human', id: 'local-gui' }, idempotencyKey: queryJobId }, aggregateId: queryJobId, expectedRevision: 0, correlationId: queryJobId, submittedAt,
-                payload: { runId, intent: { schemaVersion: 1, intentId: queryJobId, ...scope, goalId, question: required(input, 'question'), focusTaskRefs: [],
-                        budget: { maxTokens: budget.contextWindowTokens, deadline: budget.timeoutMs === null ? null : new Date(Date.parse(submittedAt) + budget.timeoutMs).toISOString() }, multiTurn: { maxRounds: 1 }, correlationId: queryJobId,
-                        execution: { kind: 'semantic_query', runtimeBudget: budget, roleBinding: { schemaVersion: 1, bindingId: queryJobId, bindingVersion: 1, templateId: 'query-reader', templateRevision: '1', policyRevision: 'read-only-v1' } } } } }));
-            if (result.status === 'committed' && !result.replayed) {
-                const work = h.driveQuery({ reason: 'human-semantic-query' }).then(() => project());
-                background.add(work);
-                void work.finally(() => background.delete(work)).catch(() => { });
-            }
-            return { queryJobId, runId, receipt: result };
-        }
-        if (path === '/api/real/queries/runs')
-            return { runs: realQueries?.all().filter(run => run.runRef.projectId === scope.projectId && run.runRef.workspaceId === scope.workspaceId && run.goalId === goalId) ?? [] };
         if (path === '/api/real/history/view')
             return history.view({ ...scope, goalId });
         if (path === '/api/real/history/grant')
@@ -789,7 +826,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
             if (!scopes.some(item => item.projectId === scope.projectId && item.workspaceId === scope.workspaceId))
                 scopes.push({ projectId: scope.projectId, workspaceId: scope.workspaceId });
             await project();
-        }), state: (input: Record<string, unknown>) => serial(() => state(input)),
+        }), state: (input: Record<string, unknown>) => serial(() => state(input)), memoryRead: memory.read,memorySourceCurrent:memory.sourceCurrent,
         action: (path: string, input: Record<string, unknown>) => {
             if (closing)
                 return Promise.reject(Error('服务正在关闭'));
@@ -828,8 +865,13 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
 // WorkspaceBootstrap is intentionally an only-if-empty command, not a registry API.
 export async function createGuiService(dir: string, initialScopes: Scope[] = [], real?: RealOptions) {
     const scopes: Scope[] = ['acceptance-alpha', 'acceptance-beta'].map(projectId => ({ projectId, workspaceId: 'workspace-main' }));
-    const primary = await createScopedGuiService(dir, [...scopes], true, real);
-    const services = new Map<string, Awaited<ReturnType<typeof createScopedGuiService>>>(scopes.map(scope => [scope.projectId, primary]));
+    const services = new Map<string, Awaited<ReturnType<typeof createScopedGuiService>>>();
+    const profileMemory = await createProfileMemory(dir,async projectId=>services.get(projectId)?.memoryRead({kind:'project',projectId})??{status:'unavailable',reason:'Unknown source project'},real?.clock??(()=>new Date().toISOString()),
+      async(projectId,entry,chain)=>services.get(projectId)?.memorySourceCurrent(projectId,entry,chain)??'unavailable');
+    let primary: Awaited<ReturnType<typeof createScopedGuiService>>;
+    try { primary=await createScopedGuiService(dir,[...scopes],true,real,profileMemory); }
+    catch(error){await profileMemory.close();throw error;}
+    for(const scope of scopes)services.set(scope.projectId,primary);
     let queue: Promise<unknown> = Promise.resolve();
     async function addProject(scope: Scope & { bindingDigest?: string }) {
         if (scopes.some(item => item.projectId === scope.projectId && item.workspaceId === scope.workspaceId))
@@ -842,7 +884,7 @@ export async function createGuiService(dir: string, initialScopes: Scope[] = [],
             scopes.push({ projectId: scope.projectId, workspaceId: scope.workspaceId });
             return;
         }
-        const service = await createScopedGuiService(resolve(dir, 'projects', encodeURIComponent(scope.projectId)), [scope], false, real);
+        const service = await createScopedGuiService(resolve(dir, 'projects', encodeURIComponent(scope.projectId)), [scope], false, real,profileMemory);
         services.set(scope.projectId, service);
         scopes.push({ ...scope });
     }
@@ -858,6 +900,7 @@ export async function createGuiService(dir: string, initialScopes: Scope[] = [],
     catch (error) {
         for (const service of new Set(services.values()))
             await service.close();
+        await profileMemory.close();
         throw error;
     }
     return { scopes, addProject: (scope: Scope & { bindingDigest?: string }) => { const result = queue.then(() => addProject(scope)); queue = result.catch(() => { }); return result; },
@@ -867,10 +910,12 @@ export async function createGuiService(dir: string, initialScopes: Scope[] = [],
             ? { executor: 'coding-agent', source: 'configured-runtime', fixtureEnabled: real.fixtureExecution === true }
             : { executor: 'fixture', source: 'explicit-fixture-service', fixtureEnabled: true },
         state: (input: Record<string, unknown>) => serviceFor(input).state(input),
-        action: (path: string, input: Record<string, unknown>) => serviceFor(input).action(path, input),
+        action: (path: string, input: Record<string, unknown>) => path.startsWith('/api/real/memory/profile/')?profileMemory.action(path,input):serviceFor(input).action(path, input),
         close: async () => {
             await queue;
             for (const service of new Set(services.values()))
                 await service.close();
+            await profileMemory.close();
         } };
 }
+

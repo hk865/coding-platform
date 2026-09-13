@@ -1,0 +1,15 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/contracts/module-ownership.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 5107[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps the workspace path-boundary policy in exactly one WorkspaceReader file [33m 4435[2mms[22m[39m
+ [32m✓[39m tests/coordination/control.test.ts [2m([22m[2m28 tests[22m[2m)[22m[32m 75[2mms[22m[39m
+ [32m✓[39m tests/coordination/route-continuity.test.ts [2m([22m[2m14 tests[22m[2m)[22m[33m 391[2mms[22m[39m
+ [32m✓[39m tests/coordination/material-isolation.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 1429[2mms[22m[39m
+   [33m[2m✓[22m[39m three real Works share one formally routed body: two authorized readers, third denied even after identical-body put and SQLite reopen [33m 1428[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m4 passed[39m[22m[90m (4)[39m
+[2m      Tests [22m [1m[32m52 passed[39m[22m[90m (52)[39m
+[2m   Start at [22m 15:54:01
+[2m   Duration [22m 12.27s[2m (transform 24.55s, setup 0ms, import 27.02s, tests 7.00s, environment 0ms)[22m
+

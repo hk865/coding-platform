@@ -1,0 +1,14 @@
+
+Algorithm Hash                                                             Path
+--------- ----                                                             ----
+SHA256    9B324730348EE413B8CB6E0B46745C09599360175C321BA0932DFDC62142F1DD D:\1.project\Software\agent_platform\src\data\state-ledger\ledger-validation.ts
+SHA256    6B3AE002F373D41B182EDAD8CA61F814CCF7E551B0DD650001B23113CB4C7B18 D:\1.project\Software\agent_platform\src\data\state-ledger\in-memory-ledger.ts
+SHA256    CF7D4D8775A53AEA48CB0E517E4DEDC8165D26E2A054D6AF8A4F55A183FE7B91 D:\1.project\Software\agent_platform\src\data\state-ledger\sqlite-ledger.ts
+SHA256    4A3507C01E9F0C85E2882BD60B2ADD09C3073DED911CD1ACCEF0F85FFEBA18C8 D:\1.project\Software\agent_platform\src\data\read-model-index\communication-view.ts
+SHA256    3E5BC14862ABFE0EDD4F95014BCCB4093AE54ACE8725B0094075990BF567BC39 D:\1.project\Software\agent_platform\tests\coordination\route-drive.test.ts
+SHA256    651FFBB3576FBDB8E0580382C474FC88A8CAA4F0930C4F973C8F6D17A5B9B426 D:\1.project\Software\agent_platform\tests\coordination\route-continuity.test.ts
+SHA256    497A6AD57149E07B92B62FEE02E899C2A6829778B28D687E8055F720B817F335 D:\1.project\Software\agent_platform\tests\coordination\coordination-process.mjs
+SHA256    DF06EDD3D6117C7924FF7B8F769BA492DCF341F2B1BB6073DD64F356757D3BF7 D:\1.project\Software\agent_platform\tests\coordination\alternative-report-hosts.test.ts
+SHA256    99AAA236745699FF3550C4A536F6C054F2C6A25DD4A41A6AD0DE9165F9C79D8F D:\1.project\Software\agent_platform\tests\coordination\communication-view.test.ts
+
+

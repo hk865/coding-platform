@@ -1,0 +1,249 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/coordination/runtime-concurrency.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 6490[2mms[22m[39m
+   [33m[2m✓[22m[39m ordinary drive overlaps two actual read-only Runtime/provider calls [33m 3189[2mms[22m[39m
+   [33m[2m✓[22m[39m overlapping writers share the existing exclusive lease and only one reaches the provider [33m 3300[2mms[22m[39m
+ [32m✓[39m tests/coordination/coordination-capability.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 15835[2mms[22m[39m
+     [33m[2m✓[22m[39m 未授予的 Run：判定给出可读原因、不提供协调工具、调用被拒且平台状态零改动 [33m 2690[2mms[22m[39m
+     [33m[2m✓[22m[39m 授予的 Run：能力依据来自账本事实、工具可用、调用被受理，并随运行记录持久化 [33m 2739[2mms[22m[39m
+     [33m[2m✓[22m[39m 同一个 Run 在两个 Work 上都满足授予条件时：拒绝授予（可读原因），不替它挑一个身份 [33m 2100[2mms[22m[39m
+     [33m[2m✓[22m[39m 不存在第二条拿到协调工具的路径：唯一注入点是运行入口，且它只在 granted 时发生 [33m 2456[2mms[22m[39m
+     [33m[2m✓[22m[39m 换手之后：旧 Run 不再被授予，新参与段的 Run 被授予（显式规则可直接核对） [33m 3644[2mms[22m[39m
+     [33m[2m✓[22m[39m 内核策略层：工具被注入但未获宿主授权时，内核按未授权的未知操作拒绝，handler 不执行 [33m 333[2mms[22m[39m
+     [33m[2m✓[22m[39m 每个写操作在动 Vault/Control 之前校验能力：授予失效后拒绝，且零平台状态变更 [33m 1873[2mms[22m[39m
+ [32m✓[39m tests/coordination/model-request-evidence-bypass.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 17958[2mms[22m[39m
+   [33m[2m✓[22m[39m each actual provider request has already consumed its own exact permit (clock=2026-09-05T12:00:00.000Z) [33m 2818[2mms[22m[39m
+   [33m[2m✓[22m[39m each actual provider request has already consumed its own exact permit (clock=2030-01-01T00:00:00.000Z) [33m 2785[2mms[22m[39m
+   [33m[2m✓[22m[39m refuses refuse before any provider side effect and records a known failure [33m 2577[2mms[22m[39m
+   [33m[2m✓[22m[39m refuses tamper_context before any provider side effect and records a known failure [33m 2248[2mms[22m[39m
+   [33m[2m✓[22m[39m refuses tamper_request before any provider side effect and records a known failure [33m 2466[2mms[22m[39m
+   [33m[2m✓[22m[39m canonical cancellation between requests prevents the second provider request [33m 2662[2mms[22m[39m
+   [33m[2m✓[22m[39m direct ledger writes cannot forge a second consumed permit or a mismatched input digest [33m 2401[2mms[22m[39m
+ [31m❯[39m tests/coordination/delivery-into-input.test.ts [2m([22m[2m6 tests[22m[2m | [22m[31m5 failed[39m[2m)[22m[33m 18650[2mms[22m[39m
+[31m     [31m×[31m Delivery 正文、精确版本与选入理由都进入捕获的 ModelRequest 与 manifest.selected[39m[33m 3249[2mms[22m[39m
+[31m     [31m×[31m 调用证据（D06）：model_request_evidence 落账，requestDigest = 捕获请求重算的 sha256，contextInputDigest = manifest.inputDigest，同一许可的第二次尝试被拒[39m[33m 3624[2mms[22m[39m
+     [33m[2m✓[22m[39m 撤权之后：该 Delivery 不允许进入新的输入（材料组装在模型调用之前失败） [33m 2827[2mms[22m[39m
+[31m     [31m×[31m 来源在本次运行期间被更新：basis 不一致 → 精确授权失效 → 拒绝进入新输入[39m[33m 3020[2mms[22m[39m
+[31m   [31m×[31m grant revocation racing the attempted commit prevents the actual provider even after authorization[39m[33m 3068[2mms[22m[39m
+[31m   [31m×[31m source permission revoked after the first real request prevents a second request in the same Run[39m[33m 2860[2mms[22m[39m
+ [31m❯[39m tests/coordination/host-tool-chain.test.ts [2m([22m[2m1 test[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 3487[2mms[22m[39m
+[31m     [31m×[31m 模型经真实工具发起请求与报告；重启后唯一后继被受理、准备并带着精确报告版本跑起来[39m[33m 3486[2mms[22m[39m
+ [31m❯[39m tests/coordination/route-drive.test.ts [2m([22m[2m16 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 2637[2mms[22m[39m
+     [32m✓[39m 把正文投给订阅的 owner Work，并严格推进订阅 checkpoint[32m 44[2mms[22m[39m
+     [32m✓[39m rejects a canonical page with forged target without partial writes[32m 24[2mms[22m[39m
+     [32m✓[39m rejects a canonical page with forged body without partial writes[32m 11[2mms[22m[39m
+     [32m✓[39m rejects a canonical page with forged hasMore without partial writes[32m 15[2mms[22m[39m
+     [32m✓[39m communication-route-page 专用校验拒绝：越权目标 / 页内重复投递 / 事件位置回退（既有反例保留）[32m 2[2mms[22m[39m
+     [32m✓[39m communication-route-page 两个 intent 角色分别核对：续页的版本 / 确定性 id / 来源位置 / 分页边界 / 范围固定[32m 9[2mms[22m[39m
+     [32m✓[39m startCursor=null 在 SubscriptionCreated 同事务固定起点，且不补投订阅之前的事件[32m 15[2mms[22m[39m
+     [32m✓[39m 3 个订阅命中同一事件位置 → 必须翻 3 页：全部拿到 Delivery、页顺序确定、每页一次 CAS、重复 drive 不重复投递[32m 31[2mms[22m[39m
+     [32m✓[39m 两个消费者竞争同一 intent：一个 claimed，另一个 owned_elsewhere；过期 generation 不能 settle[32m 8[2mms[22m[39m
+     [32m✓[39m sideEffectStarted 且租约过期的 intent 不被重领（requires_reconcile），只作为可见 backlog 报告[32m 7[2mms[22m[39m
+     [32m✓[39m wait 先注册、事件后到：页满足条件 → 前驱 active 不重叠启动 → 前驱结束后恰好一次后继[32m 36[2mms[22m[39m
+     [32m✓[39m 事件先发生、wait 后注册：条件事实已在账本里，仍然只产生一次后继[32m 24[2mms[22m[39m
+[31m     [31m×[31m 同一 intent 连续硬失败到上界：收敛为可见 quarantine，而不是无限重试[39m[32m 43[2mms[22m[39m
+     [32m✓[39m deadline 到点：收敛为 timed_out，而不是接续[32m 9[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite close + reopen 后仍能领取既有 wait_admission intent 并完成唯一后继 [33m 2346[2mms[22m[39m
+     [32m✓[39m 同一个 intent 重复 drive 不会重复推进（页只提交一次）[32m 11[2mms[22m[39m
+ [32m✓[39m tests/coordination/participation-uniqueness.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 416[2mms[22m[39m
+     [33m[2m✓[22m[39m 两条独立 SQLite 连接：第二段 active 参与被账本拒绝（零写入），旧段结束后换手成立 [33m 414[2mms[22m[39m
+ [32m✓[39m tests/coordination/control.sqlite.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 1544[2mms[22m[39m
+ [31m❯[39m tests/coordination/route-continuity.test.ts [2m([22m[2m13 tests[22m[2m | [22m[31m3 failed[39m[2m)[22m[33m 330[2mms[22m[39m
+     [32m✓[39m DirectedRequestSent 的提交回执同时含源事件与同位置的 CommunicationIntentRecorded，且 sourceCursor 逐字节等于源事件游标[32m 61[2mms[22m[39m
+     [32m✓[39m 整轮候选集合而不是本页切片：3 个订阅 + 页大小 1 → 首轮就把 3 个都固定进范围，翻满 3 页并全部投递[32m 21[2mms[22m[39m
+     [32m✓[39m 本页引入本轮范围外的订阅 → Control 整页拒绝（零写入）[32m 12[2mms[22m[39m
+     [32m✓[39m 同一 topic 上更靠后的事件位置，在前一条未收敛的 route intent 完成前不被推进[32m 17[2mms[22m[39m
+     [32m✓[39m 已证实无副作用的失败进入 retry_scheduled（availableAt = settledAt + 退避）；已开始的副作用一律拒绝退避[32m 12[2mms[22m[39m
+     [32m✓[39m 租约到期不构成重跑依据：sideEffectStarted 的 intent 不被重领，只作为 requires_reconcile 可见[32m 9[2mms[22m[39m
+[31m     [31m×[31m 未产生副作用：取消等待后 intent **先**落成 cancel_requested，drive 之后收敛为 cancelled[39m[32m 26[2mms[22m[39m
+[31m     [31m×[31m 副作用已经开始：同一个取消请求只能收敛为 outcome_unknown，绝不声称 cancelled[39m[32m 21[2mms[22m[39m
+   [32m✓[39m a burst of source events during pagination creates every round and delivers each subscription once in order[32m 79[2mms[22m[39m
+   [32m✓[39m one historical subscription preserves multiple topics and hands over to live sources at its fixed creation horizon[32m 33[2mms[22m[39m
+   [32m✓[39m a subscription committed while a source is awaiting commit joins that source atomically[32m 10[2mms[22m[39m
+   [32m✓[39m cancelling the final subscription during a fixed three-page round advances the page without delivering to it[32m 15[2mms[22m[39m
+[31m   [31m×[31m restart-style recovery finishes derived cancellation after the Wait commit succeeded and the caller disappeared[39m[32m 13[2mms[22m[39m
+ [32m✓[39m tests/coordination/control.test.ts [2m([22m[2m28 tests[22m[2m)[22m[32m 76[2mms[22m[39m
+ [32m✓[39m tests/coordination/handoff-successor.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 219[2mms[22m[39m
+ [32m✓[39m tests/control/dispatch-drive.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 67[2mms[22m[39m
+ [32m✓[39m tests/control/dispatch-start.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 32[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 10 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/delivery-into-input.test.ts[2m > [22m目标 Delivery 进入实际模型输入（A06）[2m > [22mDelivery 正文、精确版本与选入理由都进入捕获的 ModelRequest 与 manifest.selected
+[31m[1mAssertionError[22m: [{"runId":"run-pred","status":"completed","error":null,"trace":[{"type":"run.started","sequence":1,"at":"2026-09-13T07:08:45.813Z","data":{}},{"type":"model.request_started","sequence":2,"at":"2026-09-13T07:08:45.857Z","data":{"requestId":"303b14a1-71df-4256-9bb8-3f00f0668381","retryOfRequestId":null}},{"type":"assistant.message_completed","sequence":3,"at":"2026-09-13T07:08:45.965Z","data":{"requestId":"303b14a1-71df-4256-9bb8-3f00f0668381","message":{"schemaVersion":1,"messageId":"777493a7-171f-42bd-a2c3-5c1c39aeb876","role":"assistant","content":"已读到本次材料，未修改任何文件。"},"toolCalls":[]}},{"type":"run.completed","sequence":4,"at":"2026-09-13T07:08:45.995Z","data":{"finalMessageId":"777493a7-171f-42bd-a2c3-5c1c39aeb876"}}]},{"runId":"run-9d55311db0167eb6096ca8a1","status":"failed","error":"执行前材料校验失败：projection stalled: unsupported_event_type","trace":[]}]: expected [ { schemaVersion: 1, …(6) } ] to have a length of 2 but got 1[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 2[39m
+[31m+ 1[39m
+
+[36m [2m❯[22m tests/coordination/delivery-into-input.test.ts:[2m398:165[22m[39m
+    [90m396|[39m
+    [90m397|[39m     [90m// 本次唯一后继真的跑了模型：捕获到第二个请求（第一个是前驱的输入）。[39m
+    [90m398|[39m     expect(w.requests, JSON.stringify(w.runtime.all().map((row) => ({ …
+    [90m   |[39m                                                                                                                                                                     [31m^[39m
+    [90m399|[39m     const successor = w.requests.filter((request) => JSON.stringify(re…
+    [90m400|[39m     expect(successor, "目标 Delivery 的正文必须进入捕获的实际 ModelRequest").toHaveL…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/delivery-into-input.test.ts[2m > [22m目标 Delivery 进入实际模型输入（A06）[2m > [22m调用证据（D06）：model_request_evidence 落账，requestDigest = 捕获请求重算的 sha256，contextInputDigest = manifest.inputDigest，同一许可的第二次尝试被拒
+[31m[1mAssertionError[22m: 后继 Run 必须留下恰好一条调用尝试证据: expected [] to have a length of 1 but got +0[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 1[39m
+[31m+ 0[39m
+
+[36m [2m❯[22m tests/coordination/delivery-into-input.test.ts:[2m463:53[22m[39m
+    [90m461|[39m     [90m// 每个 Run 的**首次**模型调用各留下一条证据（前驱 + 后继）；本用例关心后继那一条。[39m
+    [90m462|[39m     const successorFacts = facts.filter((fact) => permits.get(fact.per…
+    [90m463|[39m     [34mexpect[39m(successorFacts[33m,[39m [32m"后继 Run 必须留下恰好一条调用尝试证据"[39m)[33m.[39m[34mtoHaveLength[39m([34m1[39m)[33m;[39m
+    [90m   |[39m                                                     [31m^[39m
+    [90m464|[39m     [35mconst[39m evidence [33m=[39m successorFacts[[34m0[39m][33m![39m[33m;[39m
+    [90m465|[39m     [90m// 一次许可一条尝试：全库范围内每条证据都必须对应一个不同的许可。[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/delivery-into-input.test.ts[2m > [22m目标 Delivery 进入实际模型输入（A06）[2m > [22m来源在本次运行期间被更新：basis 不一致 → 精确授权失效 → 拒绝进入新输入
+[31m[1mAssertionError[22m: 必须是 basis/stale 复核拒绝，而不是别的原因: expected '执行前材料校验失败：projection stalled: unsuppo…' to match /rejected:stale/[39m
+
+[32m- Expected:[39m
+/rejected:stale/
+
+[31m+ Received:[39m
+"执行前材料校验失败：projection stalled: unsupported_event_type"
+
+[36m [2m❯[22m tests/coordination/delivery-into-input.test.ts:[2m563:73[22m[39m
+    [90m561|[39m     [34mexpect[39m(record[33m?.[39mstatus)[33m.[39mnot[33m.[39m[34mtoBe[39m([32m"completed"[39m)[33m;[39m
+    [90m562|[39m     [90m// 机制必须真的是"精确授权的当前性复核"：vault 以 stale 拒绝（basis 里的来源 pin 不再当前）。[39m
+    [90m563|[39m     expect(String(record?.error ?? ""), "必须是 basis/stale 复核拒绝，而不是别的原因"…
+    [90m   |[39m                                                                         [31m^[39m
+    [90m564|[39m   })[33m;[39m
+    [90m565|[39m })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/delivery-into-input.test.ts[2m > [22mgrant revocation racing the attempted commit prevents the actual provider even after authorization
+[31m[1mAssertionError[22m: expected false to be true // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- true[39m
+[31m+ false[39m
+
+[36m [2m❯[22m tests/coordination/delivery-into-input.test.ts:[2m588:19[22m[39m
+    [90m586|[39m   }[33m;[39m
+    [90m587|[39m   [35mawait[39m w[33m.[39mh[33m.[39m[34mdrive[39m({ reason[33m:[39m [32m'grant-race'[39m[33m,[39m maxIntents[33m:[39m [34m6[39m })[33m;[39m
+    [90m588|[39m   [34mexpect[39m(revoked)[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+    [90m   |[39m                   [31m^[39m
+    [90m589|[39m   [34mexpect[39m(w[33m.[39mrequests)[33m.[39m[34mtoHaveLength[39m(before)[33m;[39m
+    [90m590|[39m   [35mconst[39m runId [33m=[39m [34msuccessorRunIdOf[39m(w)[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/delivery-into-input.test.ts[2m > [22msource permission revoked after the first real request prevents a second request in the same Run
+[31m[1mAssertionError[22m: expected +0 to be 1 // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 1[39m
+[31m+ 0[39m
+
+[36m [2m❯[22m tests/coordination/delivery-into-input.test.ts:[2m601:38[22m[39m
+    [90m599|[39m   [35mconst[39m before [33m=[39m w[33m.[39mrequests[33m.[39mlength[33m;[39m
+    [90m600|[39m   await w.h.drive({ reason: 'source-revoked-between-rounds', maxIntent…
+    [90m601|[39m   [34mexpect[39m(w[33m.[39mrequests[33m.[39mlength [33m-[39m before)[33m.[39m[34mtoBe[39m([34m1[39m)[33m;[39m
+    [90m   |[39m                                      [31m^[39m
+    [90m602|[39m   expect(w.runtime.all().find(row => row.spec.runId === successorRunId…
+    [90m603|[39m })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/host-tool-chain.test.ts[2m > [22mHost 工具链（A02/A05/A06/A09）：请求 → 报告 → 订阅 → all-wait → 唯一后继 → 实际输入[2m > [22m模型经真实工具发起请求与报告；重启后唯一后继被受理、准备并带着精确报告版本跑起来
+[31m[1mAssertionError[22m: 后继必须真的调用了模型: expected 0 to be greater than 0[39m
+[36m [2m❯[22m tests/coordination/host-tool-chain.test.ts:[2m556:53[22m[39m
+    [90m554|[39m     // ── A06：后继 Run 的**实际 ModelRequest** 含目标 Delivery 的正文与精确版本 ──────…
+    [90m555|[39m     const successorRequests = w.captured.requests.get(successorRunId) …
+    [90m556|[39m     [34mexpect[39m(successorRequests[33m.[39mlength[33m,[39m [32m"后继必须真的调用了模型"[39m)[33m.[39m[34mtoBeGreaterThan[39m([34m0[39m)[33m;[39m
+    [90m   |[39m                                                     [31m^[39m
+    [90m557|[39m     const withNonce = successorRequests.filter((request) => userInputO…
+    [90m558|[39m     expect(withNonce, "目标 Delivery 的正文必须进入捕获的实际 ModelRequest").toHaveL…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-continuity.test.ts[2m > [22m先持久化取消意图（A07）：等待被取消 → 派生 intent 先被标记、再被收敛[2m > [22m未产生副作用：取消等待后 intent **先**落成 cancel_requested，drive 之后收敛为 cancelled
+[31m[1mAssertionError[22m: expected [ 'pending', 'leased' ] to include 'retry_scheduled'[39m
+[36m [2m❯[22m tests/coordination/route-continuity.test.ts:[2m612:35[22m[39m
+    [90m610|[39m     [35mconst[39m { s[33m,[39m waitId } [33m=[39m [35mawait[39m [34mscenarioWithSatisfiedWait[39m([32m"cancel-ok"[39m)[33m;[39m
+    [90m611|[39m     [35mconst[39m before [33m=[39m [35mawait[39m [34madmissionIntentOf[39m(s[33m,[39m waitId)[33m;[39m
+    [90m612|[39m     [34mexpect[39m([[32m"pending"[39m[33m,[39m [32m"leased"[39m])[33m.[39m[34mtoContain[39m(before[33m.[39mintent[33m.[39mstatus)[33m;[39m
+    [90m   |[39m                                   [31m^[39m
+    [90m613|[39m
+    [90m614|[39m     [35mawait[39m [34mcancelWait[39m(s[33m,[39m waitId)[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-continuity.test.ts[2m > [22m先持久化取消意图（A07）：等待被取消 → 派生 intent 先被标记、再被收敛[2m > [22m副作用已经开始：同一个取消请求只能收敛为 outcome_unknown，绝不声称 cancelled
+[31m[1mAssertionError[22m: {"status":"rejected","commandId":"cmd-rc-claim-wadmit-888adffaa8aeadabe7bcfadd-2026-09-05T12:00:00.000Z","code":"invalid","issues":["not_claimable：intent 当前不可领取（status=retry_scheduled，leaseGeneration=1，sideEffectStarted=false）"]}: expected 'rejected' to be 'claimed' // Object.is equality[39m
+
+Expected: [32m"[7mclaim[27med"[39m
+Received: [31m"[7mreject[27med"[39m
+
+[36m [2m❯[22m claimIntent tests/coordination/route-continuity.test.ts:[2m461:51[22m[39m
+    [90m459|[39m     payload: { workspaceId: WORKSPACE, consumerId, leaseDurationMs, no…
+    [90m460|[39m   })[33m;[39m
+    [90m461|[39m   [34mexpect[39m(claimed[33m.[39mstatus[33m,[39m [33mJSON[39m[33m.[39m[34mstringify[39m(claimed))[33m.[39m[34mtoBe[39m([32m"claimed"[39m)[33m;[39m
+    [90m   |[39m                                                   [31m^[39m
+    [90m462|[39m   [35mif[39m (claimed[33m.[39mstatus [33m!==[39m [32m"claimed"[39m) [35mthrow[39m [35mnew[39m [33mError[39m([32m"claim failed"[39m)[33m;[39m
+    [90m463|[39m   [35mreturn[39m claimed[33m;[39m
+[90m [2m❯[22m tests/coordination/route-continuity.test.ts:[2m632:21[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-continuity.test.ts[2m > [22mrestart-style recovery finishes derived cancellation after the Wait commit succeeded and the caller disappeared
+[31m[1mAssertionError[22m: expected 'retry_scheduled' to be 'leased' // Object.is equality[39m
+
+Expected: [32m"[7mleas[27med"[39m
+Received: [31m"[7mretry_schedul[27med"[39m
+
+[36m [2m❯[22m tests/coordination/route-continuity.test.ts:[2m762:71[22m[39m
+    [90m760|[39m   await expect(cancelWait(s, waitId)).rejects.toThrow('simulated loss'…
+    [90m761|[39m   s[33m.[39mh[33m.[39mledger[33m.[39mcommit [33m=[39m original[33m;[39m
+    [90m762|[39m   expect((await loadIntent(s, intent.intent.intentId)).intent.status).…
+    [90m   |[39m                                                                       [31m^[39m
+    [90m763|[39m   const recovered = await s.h.drive({ reason: 'rebuild-after-cancel-cr…
+    [90m764|[39m   [34mexpect[39m(recovered[33m.[39mcoordination[33m?.[39mfailures)[33m.[39m[34mtoEqual[39m([])[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-drive.test.ts[2m > [22mall-wait（A05）：两种时序都只产生一次后继 admission[2m > [22m同一 intent 连续硬失败到上界：收敛为可见 quarantine，而不是无限重试
+[31m[1mAssertionError[22m: 连续失败必须收敛为可见 quarantine: expected false to be true // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- true[39m
+[31m+ false[39m
+
+[36m [2m❯[22m tests/coordination/route-drive.test.ts:[2m1182:51[22m[39m
+    [90m1180|[39m       quarantined = (intent.snapshot as CommunicationIntentSnapshot).i…
+    [90m1181|[39m     }
+    [90m1182|[39m     [34mexpect[39m(quarantined[33m,[39m [32m"连续失败必须收敛为可见 quarantine"[39m)[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+    [90m   |[39m                                                   [31m^[39m
+    [90m1183|[39m     [90m// 终态之后不再被领取：backlog 如实给出 quarantine 数，且不再产生失败。[39m
+    [90m1184|[39m     const after = await s.h.drive({ reason: "rd-q-final", maxIntents: …
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/10]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m4 failed[39m[22m[2m | [22m[1m[32m9 passed[39m[22m[90m (13)[39m
+[2m      Tests [22m [1m[31m10 failed[39m[22m[2m | [22m[1m[32m94 passed[39m[22m[90m (104)[39m
+[2m   Start at [22m 15:08:25
+[2m   Duration [22m 46.61s[2m (transform 63.26s, setup 0ms, import 88.83s, tests 67.74s, environment 1ms)[22m
+

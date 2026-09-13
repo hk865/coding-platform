@@ -1,0 +1,276 @@
+{
+  "source": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\baseline",
+  "head": "0eb02717d16412298c786166a75ca1a9d3e05ac7",
+  "recordedFingerprint": "sha256:1055474c3cabe50d6c5a2630eba4dc2983c306b6f67ca713ef16c62a03afb7a6",
+  "computedFingerprint": "1055474c3cabe50d6c5a2630eba4dc2983c306b6f67ca713ef16c62a03afb7a6",
+  "fileCount": 1200,
+  "verifiedPayloads": [
+    {
+      "path": "IMPLEMENTATION-HANDOFF.md",
+      "sha256": "1fdcb4537aef521ff28c05c8f00d0a3eb1f7fbf447d33cb340de26e0bb1679d5"
+    },
+    {
+      "path": "src/app/governance.ts",
+      "sha256": "b7d1d9bb154a0e0d9e4dbb640c4b8931927f2c41eee0b6063bc9b82a505f0592"
+    },
+    {
+      "path": "src/contracts/commands/governance.ts",
+      "sha256": "7f046491865fff50531711d891061fb1b34c6ab073a8130607e95ca4fedf45f7"
+    },
+    {
+      "path": "src/contracts/completed-work-context.ts",
+      "sha256": "81af1c1e2118f2f5d764772d5c4691632d9f3d91de070ca2e974a1c0d2a229da"
+    },
+    {
+      "path": "src/contracts/context-continuity.ts",
+      "sha256": "5c9b211d84d1996f7cb71b85a279d82e8da098a5bad8696f6de80c7554573f86"
+    },
+    {
+      "path": "src/contracts/execution-feedback.ts",
+      "sha256": "006450bcc6a7c284e5f7d2b381ee52419e01350fe3e8c1abd790e84259245824"
+    },
+    {
+      "path": "src/contracts/initial-planning.ts",
+      "sha256": "5b92be3d2a20e0af074e7a48a6405033438ff1f22b6bd6e6de91e04d8ac1ece7"
+    },
+    {
+      "path": "src/contracts/role-spec.ts",
+      "sha256": "f9e1e37679cb4d9dfbb373d208013486b40a0858bf8137e5fe3533303cd1928e"
+    },
+    {
+      "path": "src/contracts/validation/context.ts",
+      "sha256": "f2225afaa8c7d7a3fefe5504cd429dfa467cf94f92c36fe3e6d081d51d0274b2"
+    },
+    {
+      "path": "src/contracts/validation/role.ts",
+      "sha256": "c46db162a069e7b48ea047d77bc3b62d0b839820110df20f82a5baf86b2ef787"
+    },
+    {
+      "path": "src/control/control-engine/records/role-spec.ts",
+      "sha256": "a9f13246a81680937cc4cca32c9b48262483dc50ffa4c291d0069715a00346b5"
+    },
+    {
+      "path": "src/control/control-engine/role-spec.ts",
+      "sha256": "7177b902c7530c926d986059c4843f97b122680dda5178c3d980db41732abfd8"
+    },
+    {
+      "path": "src/control/control-engine/work-record.ts",
+      "sha256": "7ffb3528eabfc127427c76624a20f1490a73ec6fe1070dd92156fb56e8406539"
+    },
+    {
+      "path": "src/control/dispatch-engine/planned-task-dispatch.ts",
+      "sha256": "65131f9ad75b03d97c54a9a5d58f0bfe03d362b9441ccb94be71ae953ba9f79f"
+    },
+    {
+      "path": "src/control/dispatch-engine/role-spec-read.ts",
+      "sha256": "5c5352b33aeeaf52bd1be74190a38b677fc45055b4b52ca5b4fd331cc7e2edae"
+    },
+    {
+      "path": "src/data/context-compiler/completed-work-context-compiler.ts",
+      "sha256": "3fed6f4beec156e79727e2158ddbce2d469e0f911e377a3cba6f132f8e21d05f"
+    },
+    {
+      "path": "src/data/context-compiler/query-context-compiler.ts",
+      "sha256": "7b277316348d24ce9aecd16faf6c0b68c69d274c294fa9a70d57bcd537e99d82"
+    },
+    {
+      "path": "src/data/context-compiler/work-run-materials.ts",
+      "sha256": "74592397015b80154e0c8863f87a34e89570708fb0029901e996df5e14d6884c"
+    },
+    {
+      "path": "src/data/read-model-index/governance-view.ts",
+      "sha256": "a7fbc2ccfc1a551fd782e13bd188b28999044032b176c462945c4f72fcf99c25"
+    },
+    {
+      "path": "src/execution/worker-runtime/coding-agent-runtime.ts",
+      "sha256": "4e5c4243c3b54579c1119ca0c347cd6877873ef3e44e4af6849b233e36f6f9b3"
+    },
+    {
+      "path": "src/execution/worker-runtime/observed-model-run.ts",
+      "sha256": "c1e79fd4e2a72e270b71085454e91714f333ce3ac84ae307682a38c8025dc4c5"
+    },
+    {
+      "path": "src/ui/src/features/governance.tsx",
+      "sha256": "e9040491baacd23b24e843bb97d1bb7a75105b3be444856c06dc2806944f8216"
+    },
+    {
+      "path": "tests/app/initial-planning.test.ts",
+      "sha256": "2855fc5d753a54e1d62c9b8ec4febd766b06d0ed12c1addef3c515cc0fa55a62"
+    },
+    {
+      "path": "tests/app/role-spec-governance.test.ts",
+      "sha256": "978ba44e745a7590d578cd5a240a04111b824a0d29d0f8b755691f13306d842d"
+    },
+    {
+      "path": "tests/context/completed-work-regression.test.ts",
+      "sha256": "43097f944c5e3f52ace45f5ce06c197d29bb35ff426ff48fcbd83a1e08fd62b6"
+    },
+    {
+      "path": "tests/control/work-record.test.ts",
+      "sha256": "6534d6fd29068bdafefc5d9b8f322caed2a2bb6c11ba4e2d87e00317a2902179"
+    },
+    {
+      "path": "src/ui/tests/agent-templates.spec.ts",
+      "sha256": "caea4667f783536c0341806fc34be10c7c71ba6c55dfbd3d8fdbc8a568d86628"
+    }
+  ],
+  "checkoutRestorations": [
+    {
+      "path": "src/control/control-engine/policies/integration.ts",
+      "headBlob": "d0e4fee93db51135406a734d918f3861614307a4",
+      "rawSha256": "66003c9a3d065ba69a186748b81208f0f9d84420f583f02c2904ee2cca11c558",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "src/ui/UI-REPAIR-PROMPT.md",
+      "headBlob": "b04ccb167324908f37be50d65df14d44d9f39ed4",
+      "rawSha256": "29c48f08eca5d7adcda19e2c3b1c55e13befe38241a889cd9489665e2cbf5efa",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/app/semantic-collaboration-fixture.ts",
+      "headBlob": "571fd615e3b6c54ecb905ded5a8c95522cb251c2",
+      "rawSha256": "aec26524e3c19a861b6d330b5cfe5e8391a28e1ba610e5fbe31bc74d91bcd05a",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-02-restart-fixtures.ts",
+      "headBlob": "9f267d85127c4f7987da835abb877b0798c0fa8e",
+      "rawSha256": "4f325f82d4270d5cef5b2d07c483b4119ed7885491974798ef63047359b3125f",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-03-restart-fixtures.ts",
+      "headBlob": "909035cc088add2342c85be39c447dcd67eb88ea",
+      "rawSha256": "bb349f0c7c41514fb643e72f689dcdde8ea34878381a3b5b39339332d5480608",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-04-restart-fixtures.ts",
+      "headBlob": "ec9055bb28b4ac5903cbc4ffd215e1b88f00aa87",
+      "rawSha256": "0634768d3111a10405d07f8a46ff35c7f78fa6d67b2f55d72299f9b19faacd3d",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-05-restart-fixtures.ts",
+      "headBlob": "e282b309193a11b8c335d2c016e174497a01a0d1",
+      "rawSha256": "76d128baf70dd6eb5d996315e5944089a3d9221425bd242e7f3ebc9057ad5551",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-06-restart-fixtures.ts",
+      "headBlob": "5e44e8632b092a776bb1a21f5af0e5b3427e2e42",
+      "rawSha256": "56962da05aa759ad096505f9f8278c4665f805172f7fa971645e0be0d18d1b39",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-07-restart-fixtures.ts",
+      "headBlob": "cd4b6c845f186e2693eb4ee0675d12585a1e0a79",
+      "rawSha256": "25334bcbc1eba330dd37404419a34130195a7eec2d682f026af704cc2b4e7be4",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-08-restart-fixtures.ts",
+      "headBlob": "ecf1fd9415bcf9ecb65d60873c6b47b48471bc8f",
+      "rawSha256": "e80527edb34c3378f7821afa9e7d7a3054eb4f4c19616fd1a89de1d651e224de",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-09-restart-fixtures.ts",
+      "headBlob": "ef1d4dcc9f6d5fed8dfc6c004edde186fe9c68a0",
+      "rawSha256": "8b7faf27b664449109b10d1f84dac50b485e00320b95628f8f9e0cb7c25f00df",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-10-restart-fixtures.ts",
+      "headBlob": "8884abd17262703ac62eef44be8c84522ce8a6a2",
+      "rawSha256": "c102dcba703f046ddef78e437d4ec2c29231197c4a10aecbece80186313a7e77",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-11-restart-fixtures.ts",
+      "headBlob": "ae1e815604280729051164fcfed65b3f42dd48e8",
+      "rawSha256": "84891c7e9ebbaa337a2844766abab8f4ad52a0d927a34fdb795a52c72f7604dd",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-12-restart-fixtures.ts",
+      "headBlob": "96a64973b1a0c198388e337457fee1335a6411e8",
+      "rawSha256": "6c56f6face9ae0a3912e8dcf51cd70eb9819c9b92cb4b478184714f0dc6408e4",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-13-restart-fixtures.ts",
+      "headBlob": "fc6b59fd124c4aed709ef0c3f5fc24aa94efcc35",
+      "rawSha256": "82b915f0cf4ac18407225723cca1d46a9cb0c3e823ae48ffb9bcf61714be666a",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-14-restart-fixtures.ts",
+      "headBlob": "9e267a0dbea52124bdadeeb390e239e583d11b6c",
+      "rawSha256": "4ad21b7e85e1138c2dbc30c5a302c2e8a8c108116cb3c49feb0d0768c1bdc9ef",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-15-restart-fixtures.ts",
+      "headBlob": "986d5158566fcebfc241ecc245d27da9e952c8f7",
+      "rawSha256": "0c15112ab42b3c740e03115476c91b915eecdd6ddaffd645c0da11989e119c19",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-16-restart-fixtures.ts",
+      "headBlob": "963da44e8f852d997b58bd343eb17049d6eefadf",
+      "rawSha256": "317ed7a88563006594ac8459812046cfbce8d995d79574ea51ed83caea00550f",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/restart/p1-17-restart-fixtures.ts",
+      "headBlob": "81066ec0f77dd84582cdd7f6362488eab36a0a42",
+      "rawSha256": "d16e4f8bdf7d0e43c9d4c086b201435420480fed2f8837bde1dd413a3008b387",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/verification/feedback-decision-recovery.test.ts",
+      "headBlob": "780869179bb025a0d7911002e54f1d1563da90a5",
+      "rawSha256": "faec6a8ea7153f0ecc40a993e4fcf6d66fb5b399bf2ec9b2fa05feadc5b1a376",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/verification/feedback-investigation-authority.test.ts",
+      "headBlob": "1a61c337ece601a7fc3b4f2c926bf060b6d0aa82",
+      "rawSha256": "4db06cc68e6a921fa149e34af83014abd846bdae2bfa20127ac57d0744db09a2",
+      "verifiedInSnap03": true
+    },
+    {
+      "path": "tests/verification/feedback-renewal.test.ts",
+      "headBlob": "dba57fbc55acdce8962e1349a9779e2d5b369af1",
+      "rawSha256": "02fb76bf30a74bdd18da9115dbd043032d794d1500a17ae284514505088f618c",
+      "verifiedInSnap03": true
+    }
+  ],
+  "mixedEndingRestorations": [
+    {
+      "path": "tests/contracts/module-ownership.test.ts",
+      "split": 228,
+      "reverse": true,
+      "sha256": "cd1fdc01a8b591cf62c620e4ffaa80446a68b71608fa0cc72fba2773ec2f2077"
+    },
+    {
+      "path": "vendor/coding-agent/INTEGRATION.md",
+      "split": 55,
+      "reverse": true,
+      "sha256": "57bc0d8e3932c38decba7d1b0ff0e9e56bd19845e1431832e63fc87f946b43b7"
+    },
+    {
+      "path": "vendor/coding-agent/src/app/composition/composition-root.ts",
+      "split": 328,
+      "reverse": true,
+      "sha256": "53c83852499488ab3f6f1c923f120f40951952c915b3ab38709063c1dab858d6"
+    }
+  ],
+  "historicalIndex": {
+    "path": "evidence/2026-09-12-agent-templates-memory/source-fingerprint.json",
+    "sha256": "890a9cb91307ce3613d09351a02af371950a9ea21e3845edcbd8030c624310f5"
+  },
+  "scratch": "D:\\1.project\\Software\\agent_platform\\.local\\cm1a-preparation-rqU6mr"
+}

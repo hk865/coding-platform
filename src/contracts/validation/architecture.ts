@@ -173,7 +173,7 @@ export function validateArchitectureDecisionBrief(value: unknown): ValidationIss
 
 const PROPOSAL_KEYS = [
   "schemaVersion", "proposalId", "projectId", "workspaceId", "planRef",
-  "sourceBaselinePin", "selectedDeltaRef", "selectedOptionId", "normalizedContent",
+  "sourceBaselinePin", "selectedDeltaRef", "selectedBriefRef", "selectedOptionId", "normalizedContent",
   "proposalDigest", "expectedCandidateDigest", "bodyRef", "generatedAt",
 ] as const;
 
@@ -191,7 +191,17 @@ export function validateArchitectureCandidateProposal(value: unknown): Validatio
   stringField(value, "projectId", issues);
   stringField(value, "workspaceId", issues);
   validateArchitectureBaselinePin(value["sourceBaselinePin"], "sourceBaselinePin", issues);
-  validateArtifactRefRef(value["selectedDeltaRef"], "selectedDeltaRef", issues);
+  if(value['selectedBriefRef']!==undefined){
+    const brief=value['selectedBriefRef'];
+    if(value['selectedDeltaRef']!==null)issues.push({path:'selectedDeltaRef',code:'bad_type',message:'Brief-based proposals must not invent a raw delta'});
+    if(!isRecord(brief))issues.push({path:'selectedBriefRef',code:'bad_type',message:'Expected a canonical decision brief reference'});
+    else{
+      rejectUnknownFields(brief,['aggregateType','projectId','workspaceId','briefId'],'selectedBriefRef',issues);
+      for(const field of ['projectId','workspaceId','briefId'])stringField(brief,field,issues);
+      if(brief['aggregateType']!=='ArchitectureDecisionBrief'||brief['projectId']!==value['projectId']||brief['workspaceId']!==value['workspaceId'])
+        issues.push({path:'selectedBriefRef',code:'bad_type',message:'Decision brief must belong to the proposal workspace'});
+    }
+  }else validateArtifactRefRef(value["selectedDeltaRef"], "selectedDeltaRef", issues);
   stringField(value, "selectedOptionId", issues);
   const content = value["normalizedContent"];
   if (!isRecord(content)) {

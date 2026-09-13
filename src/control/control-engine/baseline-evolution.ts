@@ -109,6 +109,15 @@ async function materializeCandidateImpl(
     return { status: "rejected", commandId: command.commandId, code: "invalid", issues: shapeIssues };
   }
 
+  const candidateRef = candidateRefFor(command.identity.projectId, command.payload.proposalRef.workspaceId, command.aggregateId);
+  const prior = await deps.ledger.load(candidateRef);
+  if (prior.status === "found" && prior.snapshot.ref.aggregateType === "CandidateArchitectureBaseline") {
+    const candidate = (prior.snapshot as { candidate: CandidateArchitectureBaselineV1 }).candidate;
+    const receipt = await deps.ledger.commit(buildP114CandidateFold(command, { eventId: deps.eventId(), occurredAt: deps.now(), candidate }));
+    if (receipt.status === "committed") return { status: "committed", commandId: command.commandId, replayed: receipt.replayed, candidateRef, eventIds: receipt.eventIds, commitCursor: receipt.commitCursor };
+    return mapMaterializeRejected(receipt, command.commandId);
+  }
+
   const proposalRef: ArchitectureCandidateProposalRef = {
     aggregateType: "ArchitectureCandidateProposal",
     projectId: command.identity.projectId,
@@ -125,8 +134,9 @@ async function materializeCandidateImpl(
 
   // Guard 3: current Project active baseline must equal the proposal source
   // (exact ref chain — a move at any stage makes the chain STALE; zero write).
+  const activeVersion = await loadProjectArchitectureBaselineActive(deps.ledger, command.identity.projectId);
   const active = await resolveProjectArchitectureBaseline(deps.ledger, command.identity.projectId);
-  if (active.status === "not_found") {
+  if (active.status === "not_found" || activeVersion.status !== "found") {
     return { status: "rejected", commandId: command.commandId, code: "source_stale", issues: ["project has no active architecture baseline"] };
   }
   if (canonicalJsonEqual(active.pin, proposal.sourceBaselinePin) === false) {
@@ -156,7 +166,9 @@ async function materializeCandidateImpl(
 
   const eventId = deps.eventId();
   const occurredAt = deps.now();
-  const batch = buildP114CandidateFold(command, { eventId, occurredAt, candidate });
+  const batch = buildP114CandidateFold(command, { eventId, occurredAt, candidate, activeVersion: {
+    ref: activeVersion.snapshot.ref, revision: activeVersion.snapshot.revision,
+  } });
   const receipt = await deps.ledger.commit(batch);
   if (receipt.status === "committed") {
     return {

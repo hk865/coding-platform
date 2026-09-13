@@ -1,0 +1,88 @@
+import { expect, it } from 'vitest';
+import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
+import { LedgerScopeCatalog } from '../../src/data/state-ledger/ledger-scope-catalog.js';
+import type { ScopeCatalogPort } from '../../src/contracts/scope-catalog.js';
+import type { StateLedger, EventQuery } from '../../src/contracts/ledger.js';
+import type { SubmitQueryJobCommand } from '../../src/contracts/query-job.js';
+import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
+import { buildBootstrapLedgerCommit } from '../contract-support/fixtures/bootstrap-fixture-v1.js';
+import { buildCreateGoalCommand, buildGoalCreateLedgerCommit } from '../contract-support/fixtures/goal-fixtures.js';
+import { buildQueryJobRecordCommit } from '../../src/control/control-engine/records/query-job.js';
+
+const AT = '2026-09-09T00:00:00.000Z';
+const scopes = [{ projectId: 'alpha', workspaceId: 'workspace', goalId: 'goal' }, { projectId: 'beta', workspaceId: 'workspace', goalId: 'goal' }, { projectId: 'alpha', workspaceId: 'second', goalId: 'second-goal' }];
+async function setup() {
+  const h = createInMemoryHarness();
+  const boot = buildBootstrapCommand({ schemaVersion: 1, entries: scopes }, { commandId: 'boot', correlationId: 'boot', submittedAt: AT });
+  expect(await h.ledger.commit(buildBootstrapLedgerCommit(boot, { eventIds: ['pa', 'wa', 'pb', 'wb', 'second'], occurredAt: AT }))).toMatchObject({ status: 'committed' });
+  const createGoal = async (scope: typeof scopes[number]) => {
+    const id = scope.projectId + '-' + scope.goalId;
+    const command = buildCreateGoalCommand({ ...scope, objective: 'Discover exact scope', actor: { kind: 'human', id: 'operator' } }, { commandId: id, correlationId: id, idempotencyKey: id, submittedAt: AT });
+    expect(await h.ledger.commit(buildGoalCreateLedgerCommit(command, { eventId: id, occurredAt: AT, projectRevision: 1, workspaceRevision: 1 }))).toMatchObject({ status: 'committed' });
+  };
+  const submit = async (scope: typeof scopes[number]) => {
+    const id = scope.projectId + '-' + scope.workspaceId;
+    const command: SubmitQueryJobCommand = { schemaVersion: 1, commandType: 'SubmitQueryJob', commandId: id, identity: { projectId: scope.projectId, actor: { kind: 'human', id: 'operator' }, idempotencyKey: id }, aggregateId: 'same-query', expectedRevision: 0, correlationId: id, submittedAt: AT,
+      payload: { runId: 'same-run', intent: { schemaVersion: 1, intentId: id, ...scope, question: 'Discover current records', focusTaskRefs: [], budget: { maxTokens: 1000, deadline: null }, multiTurn: { maxRounds: 1 }, correlationId: id } } };
+    expect(await h.ledger.commit(buildQueryJobRecordCommit(command, { eventId: 'query-' + id, occurredAt: AT }))).toMatchObject({ status: 'committed' });
+  };
+  for (const scope of scopes) { await createGoal(scope); await submit(scope); }
+  return { h, createGoal };
+}
+
+it('discovers canonical full scopes incrementally and rebuilds without any ReadModel projection', async () => {
+  const { h, createGoal } = await setup();
+  const queries: EventQuery[] = [];
+  const catalog: ScopeCatalogPort = new LedgerScopeCatalog({ load: ref => h.ledger.load(ref), events: async query => { queries.push(query); return h.ledger.events(query); } });
+  expect(await catalog.goals(scopes[0]!)).toEqual(['goal']);
+  expect(await catalog.goals(scopes[1]!)).toEqual(['goal']);
+  expect(await catalog.goals(scopes[2]!)).toEqual(['second-goal']);
+  expect(await catalog.jobs()).toHaveLength(3);
+  for (const scope of scopes) expect(await catalog.jobs(scope)).toMatchObject([{ job: { ...scope, queryJobId: 'same-query' } }]);
+  expect(await catalog.jobs({ ...scopes[0]!, goalId: 'missing' })).toEqual([]);
+  const checkpoint = queries.at(-1)!.afterCursor;
+  await createGoal({ ...scopes[0]!, goalId: 'later' });
+  expect(await catalog.goals(scopes[0]!)).toEqual(['goal', 'later']);
+  expect(queries.at(-1)!.afterCursor).toBe(checkpoint);
+  expect(queries.filter(query => query.afterCursor === null)).toHaveLength(1);
+  const rebuilt: ScopeCatalogPort = new LedgerScopeCatalog(h.ledger);
+  expect(await rebuilt.jobs()).toEqual(await catalog.jobs());
+  expect(await rebuilt.goals(scopes[0]!)).toEqual(['goal', 'later']);
+  expect(h.observedCursor()).toBeNull();
+});
+
+it('crosses page limits and serializes concurrent scans without losing identities', async () => {
+  const { h, createGoal } = await setup();
+  for (let i = 0; i < 260; i++) await createGoal({ ...scopes[0]!, goalId: 'page-' + i });
+  const queries: EventQuery[] = [];
+  const catalog: ScopeCatalogPort = new LedgerScopeCatalog({ load: ref => h.ledger.load(ref), events: async query => { queries.push(query); return h.ledger.events(query); } });
+  const [goals, jobs] = await Promise.all([catalog.goals(scopes[0]!), catalog.jobs(scopes[1]!)]);
+  expect(goals).toHaveLength(261);
+  expect(new Set(goals).size).toBe(261);
+  expect(jobs).toHaveLength(1);
+  expect(queries).toHaveLength(3); // two pages, followed by the concurrent tail scan
+  expect(queries[1]!.afterCursor).not.toBeNull();
+});
+
+it('rejects inconsistent pages and foreign snapshots, then allows a clean retry', async () => {
+  const { h } = await setup();
+  let fault: 'page' | 'snapshot' | 'unavailable' | null = 'page';
+  const ledger: Pick<StateLedger, 'load' | 'events'> = {
+    events: async query => {
+      if (fault === 'unavailable') throw Error('ledger unavailable');
+      const page = await h.ledger.events(query);
+      return fault === 'page' ? { ...page, throughCursor: null } : page;
+    },
+    load: async ref => {
+      const loaded = await h.ledger.load(ref);
+      if (fault === 'snapshot' && loaded.status === 'found') return { ...loaded, snapshot: { ...loaded.snapshot, ref: { ...loaded.snapshot.ref, projectId: 'foreign' } } } as typeof loaded;
+      return loaded;
+    }
+  };
+  const catalog: ScopeCatalogPort = new LedgerScopeCatalog(ledger);
+  await expect(catalog.jobs()).rejects.toThrow('through cursor');
+  fault = 'unavailable'; await expect(catalog.jobs()).rejects.toThrow('ledger unavailable');
+  fault = 'snapshot'; await expect(catalog.jobs()).rejects.toThrow('identity mismatch');
+  fault = null; expect(await catalog.jobs()).toHaveLength(3);
+  expect(await catalog.goals(scopes[0]!)).toEqual(['goal']);
+});

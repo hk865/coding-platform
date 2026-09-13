@@ -1,0 +1,39 @@
+Already up to date
+Done in 462ms using pnpm v11.21.0
+$ node scripts/verify-ui-build.mjs
+STEP wiring · vite outDir = server workbench root; copy-ui before ui:build
+STEP clean build · 6 assets in a fresh output directory
+STEP served clean build · 2 assets, bytes match
+STEP stale artifact · replaced by the new build, no stale asset served
+STEP full build · 2 assets + legacy page served
+STEP single build after change · index-CdX2Ww2F.js -> index-1AxpKI4_.js served
+
+RESULT {
+  "ok": true,
+  "steps": [
+    {
+      "name": "wiring",
+      "detail": "vite outDir = server workbench root; copy-ui before ui:build"
+    },
+    {
+      "name": "clean build",
+      "detail": "6 assets in a fresh output directory"
+    },
+    {
+      "name": "served clean build",
+      "detail": "2 assets, bytes match"
+    },
+    {
+      "name": "stale artifact",
+      "detail": "replaced by the new build, no stale asset served"
+    },
+    {
+      "name": "full build",
+      "detail": "2 assets + legacy page served"
+    },
+    {
+      "name": "single build after change",
+      "detail": "index-CdX2Ww2F.js -> index-1AxpKI4_.js served"
+    }
+  ]
+}

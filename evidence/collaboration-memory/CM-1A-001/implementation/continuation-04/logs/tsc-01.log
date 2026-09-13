@@ -1,0 +1,5 @@
+src/control/control-engine/run-facts.ts(367,9): error TS2367: This comparison appears to be unintentional because the types '"running" | "starting"' and '"ended"' have no overlap.
+src/control/control-engine/run-facts.ts(530,9): error TS2375: Type '{ schemaVersion: 1; permitId: string; runRef: { aggregateType: "Run"; projectId: string; goalId: string; runId: string; }; requestId: string; requestDigest: string | undefined; contextInputDigest: string; ... 5 more ...; consumedAt: null; }' is not assignable to type 'ModelRequestPermitV1' with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the types of the target's properties.
+  Types of property 'requestDigest' are incompatible.
+    Type 'string | undefined' is not assignable to type 'string'.
+      Type 'undefined' is not assignable to type 'string'.

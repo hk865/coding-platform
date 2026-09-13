@@ -1,0 +1,81 @@
+
+/** P1-13 shared fixtures: remediation patch/task builders + ledger folds. */
+import type { CommandIdentity } from "../../../src/contracts/command-event.js";
+import type { RemediationPlanPatchV1, RemediationTaskV1, RemediationDeduplicationKeyV1, SubmitRemediationPlanPatchCommand, CreateRemediationTaskCommand, AdvanceRemediationTaskCommand } from "../../../src/contracts/remediation.js";
+import { remediationDedupKeyOf, remediationPlanPatchRefFor, remediationTaskRefFor } from "../../../src/contracts/remediation.js";
+
+import { P113_SCHEMA, P113_PROJECT, p113PolicyPin } from "../../../src/fixtures/architecture-evolution-policy-fixtures.js";
+
+export const P113_WORKSPACE = "ws-shared";
+export const P113_GOAL = "goal-1";
+export const P113_FINDING = "finding-p113-1";
+export const P113_PATCH = "patch-p113-1";
+export const P113_TASK = "task-p113-1";
+
+export function p113FindingRef(projectId: string = P113_PROJECT) {
+  return { aggregateType: "ArchitectureFinding" as const, projectId, workspaceId: P113_WORKSPACE, findingId: P113_FINDING };
+}
+export function p113PatchRef(projectId: string = P113_PROJECT) {
+  return remediationPlanPatchRefFor(projectId, P113_WORKSPACE, P113_PATCH);
+}
+export function p113TaskRef(projectId: string = P113_PROJECT) {
+  return remediationTaskRefFor(projectId, P113_WORKSPACE, P113_TASK);
+}
+export function p113DedupKey(workspaceRevision = 2): RemediationDeduplicationKeyV1 {
+  return { schemaVersion: 1, projectId: P113_PROJECT, workspaceId: P113_WORKSPACE, findingId: P113_FINDING, policyRevision: 1, workspaceRevision };
+}
+
+export function buildP113PlanPatchV1(overrides: Partial<RemediationPlanPatchV1> = {}): RemediationPlanPatchV1 {
+  return {
+    schemaVersion: 1,
+    patchId: P113_PATCH,
+    projectId: P113_PROJECT,
+    workspaceId: P113_WORKSPACE,
+    findingRef: p113FindingRef(),
+    findingId: P113_FINDING,
+    workspaceRevision: 2,
+    policyPin: p113PolicyPin(),
+    planBaselinePin: { ref: { aggregateType: "ArchitectureBaselineRevision" as const, projectId: P113_PROJECT, baselineId: "architecture-baseline-1", revision: 1 }, digest: "baseline-digest-fixed" },
+    completionPolicyPin: { ref: { aggregateType: "CompletionPolicyRevision" as const, projectId: P113_PROJECT, policyId: "completion-policy-1", revision: 1 }, digest: "policy-digest-fixed" },
+    verdict: { allowed: true, reasons: [] },
+    proposedPatch: { changedPaths: ["src/control/widget.ts"], changeSummary: "局部修复：移除重复分支", bodyRef: null },
+    ...overrides,
+  };
+}
+
+export function buildP113TaskV1(status: RemediationTaskV1["status"] = "pending", overrides: Partial<RemediationTaskV1> = {}): RemediationTaskV1 {
+  return {
+    schemaVersion: 1,
+    taskId: P113_TASK,
+    projectId: P113_PROJECT,
+    workspaceId: P113_WORKSPACE,
+    dedupKey: p113DedupKey(),
+    findingRef: p113FindingRef(),
+    patchRef: p113PatchRef(),
+    status,
+    writerRunRef: null,
+    evidenceRefs: [],
+    planBaselinePin: { ref: { aggregateType: "ArchitectureBaselineRevision" as const, projectId: P113_PROJECT, baselineId: "architecture-baseline-1", revision: 1 }, digest: "baseline-digest-fixed" },
+    completionPolicyPin: { ref: { aggregateType: "CompletionPolicyRevision" as const, projectId: P113_PROJECT, policyId: "completion-policy-1", revision: 1 }, digest: "policy-digest-fixed" },
+    result: null,
+    createdAt: P113_SCHEMA,
+    updatedAt: P113_SCHEMA,
+    ...overrides,
+  };
+}
+
+export function buildP113SubmitPatchCommand(patch: RemediationPlanPatchV1, deps: { commandId: string; actor?: CommandIdentity["actor"] }): SubmitRemediationPlanPatchCommand {
+  return { commandId: deps.commandId, commandType: "SubmitRemediationPlanPatch", schemaVersion: 1, identity: { projectId: patch.projectId, actor: deps.actor ?? { kind: "system", id: "architecture-reconciler" }, idempotencyKey: deps.commandId + "-idem" }, aggregateId: patch.patchId, expectedRevision: 0, correlationId: deps.commandId + "-corr", submittedAt: P113_SCHEMA, payload: { patch } };
+}
+
+export function buildP113CreateTaskCommand(patchRef: ReturnType<typeof p113PatchRef>, deps: { commandId: string; taskId?: string }): CreateRemediationTaskCommand {
+  return { commandId: deps.commandId, commandType: "CreateRemediationTask", schemaVersion: 1, identity: { projectId: P113_PROJECT, actor: { kind: "system", id: "control-engine" }, idempotencyKey: deps.commandId + "-idem" }, aggregateId: deps.taskId ?? P113_TASK, expectedRevision: 0, correlationId: deps.commandId + "-corr", submittedAt: P113_SCHEMA, payload: { patchRef, taskId: deps.taskId ?? P113_TASK } };
+}
+
+export function buildP113AdvanceTaskCommand(taskId: string, expectedRevision: number, payload: { status: "writing" | "verifying" | "resolved" | "failed" | "blocked"; writerRunRef?: import("../../../src/contracts/dispatch.js").RunRef | null; evidenceRefs?: import("../../../src/contracts/evidence.js").EvidenceRef[]; result?: RemediationTaskV1["result"] }, deps: { commandId: string }): AdvanceRemediationTaskCommand {
+  return { commandId: deps.commandId, commandType: "AdvanceRemediationTask", schemaVersion: 1, identity: { projectId: P113_PROJECT, actor: { kind: "system", id: "control-engine" }, idempotencyKey: deps.commandId + "-idem" }, aggregateId: taskId, expectedRevision, correlationId: deps.commandId + "-corr", submittedAt: P113_SCHEMA, payload: { status: payload.status, writerRunRef: payload.writerRunRef ?? null, evidenceRefs: payload.evidenceRefs ?? [], result: payload.result ?? null } };
+}
+
+export function p113DedupKeyHex(workspaceRevision = 2): string {
+  return remediationDedupKeyOf(p113DedupKey(workspaceRevision));
+}

@@ -1,0 +1,3 @@
+src/control/dispatch-engine/coordination-tool-access.ts(177,39): error TS2304: Cannot find name 'WorkContextBindingSnapshot'.
+src/control/dispatch-engine/coordination-tool-access.ts(184,38): error TS7006: Parameter 'linked' implicitly has an 'any' type.
+tsc rc=2

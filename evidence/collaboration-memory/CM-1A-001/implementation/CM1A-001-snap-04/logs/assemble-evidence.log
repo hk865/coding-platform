@@ -1,0 +1,154 @@
+error: patch failed: IMPLEMENTATION-HANDOFF.md:1
+error: IMPLEMENTATION-HANDOFF.md: patch does not apply
+error: patch failed: src/app/governance.ts:400
+error: src/app/governance.ts: patch does not apply
+error: patch failed: src/contracts/commands/governance.ts:146
+error: src/contracts/commands/governance.ts: patch does not apply
+error: patch failed: src/contracts/completed-work-context.ts:110
+error: src/contracts/completed-work-context.ts: patch does not apply
+error: patch failed: src/contracts/context-continuity.ts:162
+error: src/contracts/context-continuity.ts: patch does not apply
+error: patch failed: src/contracts/execution-feedback.ts:42
+error: src/contracts/execution-feedback.ts: patch does not apply
+error: patch failed: src/contracts/initial-planning.ts:2
+error: src/contracts/initial-planning.ts: patch does not apply
+error: patch failed: src/contracts/role-spec.ts:16
+error: src/contracts/role-spec.ts: patch does not apply
+error: patch failed: src/contracts/validation/context.ts:57
+error: src/contracts/validation/context.ts: patch does not apply
+error: patch failed: src/contracts/validation/role.ts:206
+error: src/contracts/validation/role.ts: patch does not apply
+error: patch failed: src/control/control-engine/records/role-spec.ts:20
+error: src/control/control-engine/records/role-spec.ts: patch does not apply
+error: patch failed: src/control/control-engine/role-spec.ts:15
+error: src/control/control-engine/role-spec.ts: patch does not apply
+error: patch failed: src/control/control-engine/work-record.ts:216
+error: src/control/control-engine/work-record.ts: patch does not apply
+error: patch failed: src/control/dispatch-engine/planned-task-dispatch.ts:10
+error: src/control/dispatch-engine/planned-task-dispatch.ts: patch does not apply
+error: patch failed: src/control/dispatch-engine/role-spec-read.ts:21
+error: src/control/dispatch-engine/role-spec-read.ts: patch does not apply
+error: patch failed: src/data/context-compiler/completed-work-context-compiler.ts:94
+error: src/data/context-compiler/completed-work-context-compiler.ts: patch does not apply
+error: patch failed: src/data/context-compiler/query-context-compiler.ts:4
+error: src/data/context-compiler/query-context-compiler.ts: patch does not apply
+error: patch failed: src/data/context-compiler/work-run-materials.ts:1
+error: src/data/context-compiler/work-run-materials.ts: patch does not apply
+error: patch failed: src/data/read-model-index/governance-view.ts:108
+error: src/data/read-model-index/governance-view.ts: patch does not apply
+error: patch failed: src/execution/worker-runtime/coding-agent-runtime.ts:122
+error: src/execution/worker-runtime/coding-agent-runtime.ts: patch does not apply
+error: patch failed: src/execution/worker-runtime/observed-model-run.ts:10
+error: src/execution/worker-runtime/observed-model-run.ts: patch does not apply
+error: patch failed: src/ui/src/features/governance.tsx:9
+error: src/ui/src/features/governance.tsx: patch does not apply
+error: patch failed: tests/app/initial-planning.test.ts:2
+error: tests/app/initial-planning.test.ts: patch does not apply
+error: patch failed: tests/app/role-spec-governance.test.ts:357
+error: tests/app/role-spec-governance.test.ts: patch does not apply
+error: patch failed: tests/context/completed-work-regression.test.ts:26
+error: tests/context/completed-work-regression.test.ts: patch does not apply
+error: patch failed: tests/control/work-record.test.ts:479
+error: tests/control/work-record.test.ts: patch does not apply
+node:internal/errors:985
+  const err = new Error(message);
+              ^
+
+Error: Command failed: git apply --check D:\1.project\Software\agent_learn\agent_dev\agent_platform\dev_docs\planning\active\collaboration-memory\baseline\product-working-tree.patch
+error: patch failed: IMPLEMENTATION-HANDOFF.md:1
+error: IMPLEMENTATION-HANDOFF.md: patch does not apply
+error: patch failed: src/app/governance.ts:400
+error: src/app/governance.ts: patch does not apply
+error: patch failed: src/contracts/commands/governance.ts:146
+error: src/contracts/commands/governance.ts: patch does not apply
+error: patch failed: src/contracts/completed-work-context.ts:110
+error: src/contracts/completed-work-context.ts: patch does not apply
+error: patch failed: src/contracts/context-continuity.ts:162
+error: src/contracts/context-continuity.ts: patch does not apply
+error: patch failed: src/contracts/execution-feedback.ts:42
+error: src/contracts/execution-feedback.ts: patch does not apply
+error: patch failed: src/contracts/initial-planning.ts:2
+error: src/contracts/initial-planning.ts: patch does not apply
+error: patch failed: src/contracts/role-spec.ts:16
+error: src/contracts/role-spec.ts: patch does not apply
+error: patch failed: src/contracts/validation/context.ts:57
+error: src/contracts/validation/context.ts: patch does not apply
+error: patch failed: src/contracts/validation/role.ts:206
+error: src/contracts/validation/role.ts: patch does not apply
+error: patch failed: src/control/control-engine/records/role-spec.ts:20
+error: src/control/control-engine/records/role-spec.ts: patch does not apply
+error: patch failed: src/control/control-engine/role-spec.ts:15
+error: src/control/control-engine/role-spec.ts: patch does not apply
+error: patch failed: src/control/control-engine/work-record.ts:216
+error: src/control/control-engine/work-record.ts: patch does not apply
+error: patch failed: src/control/dispatch-engine/planned-task-dispatch.ts:10
+error: src/control/dispatch-engine/planned-task-dispatch.ts: patch does not apply
+error: patch failed: src/control/dispatch-engine/role-spec-read.ts:21
+error: src/control/dispatch-engine/role-spec-read.ts: patch does not apply
+error: patch failed: src/data/context-compiler/completed-work-context-compiler.ts:94
+error: src/data/context-compiler/completed-work-context-compiler.ts: patch does not apply
+error: patch failed: src/data/context-compiler/query-context-compiler.ts:4
+error: src/data/context-compiler/query-context-compiler.ts: patch does not apply
+error: patch failed: src/data/context-compiler/work-run-materials.ts:1
+error: src/data/context-compiler/work-run-materials.ts: patch does not apply
+error: patch failed: src/data/read-model-index/governance-view.ts:108
+error: src/data/read-model-index/governance-view.ts: patch does not apply
+error: patch failed: src/execution/worker-runtime/coding-agent-runtime.ts:122
+error: src/execution/worker-runtime/coding-agent-runtime.ts: patch does not apply
+error: patch failed: src/execution/worker-runtime/observed-model-run.ts:10
+error: src/execution/worker-runtime/observed-model-run.ts: patch does not apply
+error: patch failed: src/ui/src/features/governance.tsx:9
+error: src/ui/src/features/governance.tsx: patch does not apply
+error: patch failed: tests/app/initial-planning.test.ts:2
+error: tests/app/initial-planning.test.ts: patch does not apply
+error: patch failed: tests/app/role-spec-governance.test.ts:357
+error: tests/app/role-spec-governance.test.ts: patch does not apply
+error: patch failed: tests/context/completed-work-regression.test.ts:26
+error: tests/context/completed-work-regression.test.ts: patch does not apply
+error: patch failed: tests/control/work-record.test.ts:479
+error: tests/control/work-record.test.ts: patch does not apply
+
+    at genericNodeError (node:internal/errors:985:15)
+    at wrappedFn (node:internal/errors:539:14)
+    at checkExecSyncError (node:child_process:942:11)
+    at execFileSync (node:child_process:978:15)
+    at git (file:///D:/1.project/Software/agent_platform/evidence/collaboration-memory/CM-1A-001/implementation/CM1A-001-snap-04/assemble-evidence.mjs:14:23)
+    at file:///D:/1.project/Software/agent_platform/evidence/collaboration-memory/CM-1A-001/implementation/CM1A-001-snap-04/assemble-evidence.mjs:34:2
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  status: 1,
+  signal: null,
+  output: [
+    null,
+    Buffer(0) [Uint8Array] [],
+    Buffer(3496) [Uint8Array] [
+      101, 114, 114, 111, 114,  58,  32, 112,  97, 116,  99, 104,
+       32, 102,  97, 105, 108, 101, 100,  58,  32,  73,  77,  80,
+       76,  69,  77,  69,  78,  84,  65,  84,  73,  79,  78,  45,
+       72,  65,  78,  68,  79,  70,  70,  46, 109, 100,  58,  49,
+       10, 101, 114, 114, 111, 114,  58,  32,  73,  77,  80,  76,
+       69,  77,  69,  78,  84,  65,  84,  73,  79,  78,  45,  72,
+       65,  78,  68,  79,  70,  70,  46, 109, 100,  58,  32, 112,
+       97, 116,  99, 104,  32, 100, 111, 101, 115,  32, 110, 111,
+      116,  32,  97, 112,
+      ... 3396 more items
+    ]
+  ],
+  pid: 9308,
+  stdout: Buffer(0) [Uint8Array] [],
+  stderr: Buffer(3496) [Uint8Array] [
+    101, 114, 114, 111, 114,  58,  32, 112,  97, 116,  99, 104,
+     32, 102,  97, 105, 108, 101, 100,  58,  32,  73,  77,  80,
+     76,  69,  77,  69,  78,  84,  65,  84,  73,  79,  78,  45,
+     72,  65,  78,  68,  79,  70,  70,  46, 109, 100,  58,  49,
+     10, 101, 114, 114, 111, 114,  58,  32,  73,  77,  80,  76,
+     69,  77,  69,  78,  84,  65,  84,  73,  79,  78,  45,  72,
+     65,  78,  68,  79,  70,  70,  46, 109, 100,  58,  32, 112,
+     97, 116,  99, 104,  32, 100, 111, 101, 115,  32, 110, 111,
+    116,  32,  97, 112,
+    ... 3396 more items
+  ]
+}
+
+Node.js v24.19.0

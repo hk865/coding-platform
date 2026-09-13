@@ -21,6 +21,7 @@ import type {
   RecordCandidateBaselineProposalCommand,
   RecordCandidateBaselineProposalReceipt,
 } from "../../contracts/architecture-inspection.js";
+import {canonicalJson} from '../../contracts/fingerprint.js';
 import {
   architectureCandidateProposalRefFor,
   architectureDecisionBriefRefFor,
@@ -155,6 +156,15 @@ async function recordCandidateBaselineProposalImpl(
   }
 
   const proposal = command.payload.proposal;
+  if(proposal.selectedBriefRef){
+    const selected=await deps.ledger.load(proposal.selectedBriefRef);
+    if(selected.status!=='found'||selected.snapshot.ref.aggregateType!=='ArchitectureDecisionBrief')
+      return {status:'rejected',commandId:command.commandId,code:'not_found'};
+    const brief=(selected.snapshot as import('../../contracts/architecture-inspection.js').ArchitectureDecisionBriefSnapshot).brief;
+    if(canonicalJson(brief.baselinePin)!==canonicalJson(proposal.sourceBaselinePin)||canonicalJson(brief.planRef)!==canonicalJson(proposal.planRef)||
+      !brief.options.some(option=>option.optionId===proposal.selectedOptionId))
+      return {status:'rejected',commandId:command.commandId,code:'baseline_mismatch'};
+  }
   const baselinePin = proposal.sourceBaselinePin;
 
   const baseline = await resolveBaseline(deps, baselinePin);

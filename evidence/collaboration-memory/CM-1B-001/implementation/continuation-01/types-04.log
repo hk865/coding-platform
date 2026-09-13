@@ -1,0 +1,4 @@
+src/app/memory.ts(73,49): error TS2345: Argument of type '{ path: string; input: Record<string, unknown>; scope: { kind: "project"; projectId: string; }; }' is not assignable to parameter of type 'JsonValue'.
+  Types of property 'input' are incompatible.
+    Type 'Record<string, unknown>' is not assignable to type 'JsonValue | undefined'.
+      Type 'Record<string, unknown>' is missing the following properties from type 'JsonValue[]': length, pop, push, concat, and 35 more.

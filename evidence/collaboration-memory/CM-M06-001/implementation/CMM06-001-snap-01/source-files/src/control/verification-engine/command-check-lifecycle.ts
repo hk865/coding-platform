@@ -1,0 +1,491 @@
+import type { VerificationScope as Scope } from '../../contracts/verification-import.js';
+import type { CommandCheckRecord, VerificationReportMaterial } from '../../contracts/verification-service.js';
+import type { VerificationServiceDeps } from "./verification-deps.js";
+import { canonicalJson } from '../../contracts/fingerprint.js';
+import { digest, ensure, text, sha, vScope } from './verification-input.js';
+import { VerificationJournal } from './verification-journal.js';
+import { buildAcquireWriteLeaseCommand, buildReleaseLeaseCommand } from '../../contracts/commands/workspace.js';
+import { buildEvidenceV1, buildSubmitEvidenceCommand } from '../../contracts/commands/evidence.js';
+import type { CheckContextV1 } from '../../contracts/verification.js';
+import { verificationAnchor } from './evidence-admission.js';
+import { compileVerificationPlan } from './verification-plan-compiler.js';
+import { CommandCheckProvider } from './command-check-provider.js';
+import { VerificationEngineImpl, executePlannedCheck } from './verification-engine.js';
+import type { VerificationRoundCheckBinding } from '../../contracts/verification-round.js';
+const actor = { kind: 'human' as const, id: 'local-benchmark-import' };
+/** Explicit command execution, durable observations, evidence intake and effects reconciliation. */
+export class CommandCheckLifecycle {
+  private checkBusy = false;
+  constructor(private readonly deps: VerificationServiceDeps, private readonly journal: VerificationJournal) { }
+  checkReportMaterials(scope?: Scope): VerificationReportMaterial[] {
+    return this.journal.checks.flatMap(check => {
+      if (scope && canonicalJson(vScope(check)) !== canonicalJson(vScope(scope)))
+        return [];
+      // An executing intent is not a report. Interrupted reports remain readable
+      // history without becoming accepted check evidence.
+      if (check.progress?.phase !== 'report_stored')
+        return [];
+      const owner = {
+        aggregateType: 'Run' as const,
+        projectId: check.projectId,
+        goalId: check.goalId,
+        runId: check.runId
+      };
+      return [
+        structuredClone({
+          id: canonicalJson([owner, check.requestId]),
+          label: check.command ?? check.requestId,
+          workspaceId: check.workspaceId,
+          owner,
+          artifactRef: check.progress.artifactRef
+        })
+      ];
+    });
+  }
+  async runChecks(scope: Scope, input: Record<string, unknown>) {
+    scope = vScope(scope);
+    ensure(input['allowExecute'] === true, '需要明确授权执行检查命令');
+    const requestId = text(input['requestId'], 'requestId', 128),
+      command = text(input['command'], 'command', 4096);
+    const kind = input['kind'];
+    ensure(kind === 'static' || kind === 'dynamic', '需要指定 static 或 dynamic 检查');
+    const timeoutMs = input['timeoutMs'];
+    ensure(Number.isSafeInteger(timeoutMs) && Number(timeoutMs) >= 1 && Number(timeoutMs) <= 600000, '需要明确单次工具超时');
+    return this.execute(scope, requestId, { checkId: 'command-' + kind, command, kind, cwd: '.', timeoutMs: Number(timeoutMs) });
+  }
+  /** A round supplies a durable full plan; execution/lease/report storage stay shared. */
+  runPlannedCheck(scope: Scope, requestId: string, binding: VerificationRoundCheckBinding) {
+    return this.execute(scope, requestId, binding.definition, binding);
+  }
+  private async execute(scope: Scope, requestId: string, definition: { checkId: string; command: string; kind: 'static' | 'dynamic'; cwd: string; timeoutMs: number }, binding?: VerificationRoundCheckBinding) {
+    const { command, kind, timeoutMs } = definition;
+    const id = digest(canonicalJson([scope, requestId])),
+      fingerprint = digest(canonicalJson(binding ? { scope, definition, binding } : { scope, command, kind, timeoutMs }));
+    const prior = this.journal.checks.find(c => c.requestId === requestId && canonicalJson(vScope(c)) === canonicalJson(scope));
+    if (prior) {
+      ensure(prior.fingerprint === fingerprint || !binding && this.legacyFingerprintMatches(prior, command, kind, timeoutMs), '同一检查请求内容已改变');
+      return { check: structuredClone(prior), replayed: true };
+    }
+    ensure(!this.checkBusy, '已有检查正在执行');
+    this.checkBusy = true;
+    let release: (() => Promise<void>) | undefined;
+    let effectsUnknown = false;
+    let activeCheck: CommandCheckRecord | undefined;
+    const finishLease = async () => {
+      if (!effectsUnknown && release) {
+        const releaseOnce = release;
+        release = undefined;
+        await releaseOnce();
+      }
+      else if (effectsUnknown && activeCheck) {
+        activeCheck.lifecycle = 'reconciliation_required';
+        activeCheck.recovery = { reason: '工具副作用尚未确认；保留独占租约，需对账后释放。', commandReplayAllowed: false };
+        await this.journal.save('check', id, activeCheck);
+      }
+    };
+    try {
+      const roundMaterial = binding ? await this.requireRoundMaterial(binding) : null;
+      const target = roundMaterial ?? await this.deps.context.run(scope);
+      ensure(target.run.envelope!.permissions.tools.includes('write'), '只读探索运行不能启动命令检查');
+      const leaseId = 'command-check-' + id,
+        envelope = target.run.envelope!,
+        submittedAt = new Date().toISOString();
+      const check: CommandCheckRecord = {
+        ...scope,
+        requestId,
+        fingerprint,
+        status: 'running',
+        command,
+        kind,
+        timeoutMs: Number(timeoutMs),
+        startedAt: submittedAt,
+        finishedAt: null,
+        result: null,
+        lifecycle: 'intent_recorded',
+        leaseId,
+        ...(binding ? { roundBinding: structuredClone(binding) } : {})
+      };
+      activeCheck = check;
+      await this.journal.save('check', id, check);
+      this.journal.rememberCheck(check, id);
+      this.journal.checks.push(check);
+      const lease = await this.deps.workspaceLease.acquireWriteLease(buildAcquireWriteLeaseCommand({
+        commandId: leaseId,
+        leaseId,
+        idempotencyKey: "p107-acquire-write-" + leaseId,
+        correlationId: leaseId,
+        expiresAt: null,
+        projectId: scope.projectId,
+        workspaceId: scope.workspaceId,
+        scope: {
+          schemaVersion: 1,
+          projectId: scope.projectId,
+          workspaceId: scope.workspaceId,
+          kind: 'workspace',
+          id: scope.workspaceId,
+          revision: target.workspaceRevision
+        },
+        holder: { runRef: target.run.ref, attemptRef: envelope.attemptRef, roleBinding: envelope.roleBinding },
+        declaredWriteScope: envelope.permissions.writeScope,
+        submittedAt,
+        actor
+      }));
+      if (lease.status === 'rejected' && lease.code !== 'unavailable' && await this.deps.context.writeLease(scope.projectId, leaseId) === null) {
+        // A definitive rejected command plus absence of this lease proves no
+        // tool ran. Lost/unavailable responses retain the conservative intent.
+        check.acquisitionRejection = lease;
+        check.lifecycle = 'acquisition_rejected';
+        check.status = 'finished';
+        check.finishedAt = new Date().toISOString();
+        check.result = { status: 'incomplete', gaps: ['write lease acquisition rejected: ' + lease.code], issues: [] };
+        check.recovery = { reason: '正式租约申请明确拒绝且该租约不存在；命令未执行。原请求不重跑，可使用新的轮次请求。', commandReplayAllowed: false };
+        await this.journal.save('check', id, check);
+      }
+      ensure(lease.status === 'committed', '检查无法取得独占工作区租约：' + JSON.stringify(lease));
+      release = async () => {
+        const receipt = await this.deps.workspaceLease.releaseLease(buildReleaseLeaseCommand({
+          commandId: leaseId + '-release',
+          actor: { kind: 'system', id: 'integrator' },
+          idempotencyKey: 'p107-release-' + leaseId,
+          correlationId: leaseId + '-release',
+          projectId: scope.projectId,
+          workspaceId: scope.workspaceId,
+          leaseId,
+          kind: 'write',
+          holderRunRef: target.run.ref,
+          submittedAt: new Date().toISOString()
+        }));
+        ensure(receipt.status === 'committed', '检查结束但工作区租约释放被拒绝');
+        check.lifecycle = 'lease_released';
+        await this.journal.save('check', id, check);
+      };
+      check.lifecycle = 'lease_acquired';
+      await this.journal.save('check', id, check);
+      const sourceDigest = roundMaterial?.sourceDigest ?? await this.deps.context.workspaceDigest(scope);
+      const context: CheckContextV1 = {
+        projectId: scope.projectId,
+        goalId: scope.goalId,
+        taskId: target.run.envelope!.taskId,
+        planRef: target.plan.ref,
+        workspaceRevision: target.workspaceRevision,
+        changeScope: binding?.plan.changeScope ?? { diffClass: 'code-change', changedFiles: [], writeSummary: 'explicit independent command check' }
+      };
+      const providerDefinition = { checkId: definition.checkId, kind, command, cwd: definition.cwd, timeoutMs };
+      const provider = new CommandCheckProvider([providerDefinition], async (ctx) => {
+        ensure(canonicalJson(ctx) === canonicalJson(context), '检查上下文已改变');
+        return {
+          root: target.root,
+          workspaceId: scope.workspaceId,
+          owner: target.run.ref,
+          context,
+          sourceDigest,
+          currentDigest: async () => {
+            if (binding) return (await this.requireRoundMaterial(binding)).sourceDigest;
+            await this.deps.context.run(scope);
+            return this.deps.context.workspaceDigest(scope);
+          }
+        };
+      }, this.deps.vault, async (progress) => {
+        check.progress = progress;
+        check.lifecycle = progress.phase;
+        effectsUnknown = progress.phase === 'executing' || progress.effects === 'unknown';
+        await this.journal.save('check', id, check);
+      });
+      // Reviewer capability describes a required dispatch packet; it does not fake a review verdict.
+      const engine = new VerificationEngineImpl({ context: this.deps.context, now: () => new Date().toISOString() }, [provider], {
+        capabilities: async () => ({ mode: 'dispatch-run', maxPacketBytes: 65536, noFullTranscript: true })
+      });
+      try {
+        check.result = binding ? {
+          status: 'ready', plan: binding.plan,
+          verificationPlanRef: { planId: binding.plan.planId, planDigest: binding.plan.planDigest },
+          observations: [await executePlannedCheck(binding.plan, definition.checkId, context, provider)]
+        } : await engine.verify({
+          schemaVersion: 1,
+          requestId,
+          ...scope,
+          taskId: context.taskId,
+          planRef: context.planRef,
+          workspaceRevision: context.workspaceRevision,
+          changeScope: context.changeScope,
+          semanticChange: 'semantic',
+          risks: []
+        });
+        check.status = 'finished';
+        check.lifecycle = 'result_recorded';
+        check.finishedAt = new Date().toISOString();
+        await this.journal.save('check', id, check);
+      }
+      catch (error) {
+        check.status = 'interrupted';
+        check.finishedAt = new Date().toISOString();
+        await this.journal.save('check', id, check);
+        throw error;
+      }
+      await finishLease();
+      return { check: structuredClone(check), replayed: false };
+    }
+    catch (error) {
+      if (activeCheck && activeCheck.status === 'running') {
+        activeCheck.status = 'interrupted';
+        activeCheck.finishedAt = new Date().toISOString();
+        await this.journal.save('check', id, activeCheck);
+      }
+      throw error;
+    }
+    finally {
+      try {
+        await finishLease();
+      }
+      finally {
+        this.checkBusy = false;
+      }
+    }
+  }
+  private legacyFingerprintMatches(check: CommandCheckRecord, command: string, kind: 'static' | 'dynamic', timeoutMs: number) {
+    if (check.roundBinding || check.command !== command || check.kind !== kind || check.timeoutMs !== timeoutMs) return false;
+    // The old application spread MountedProject into scope. Only its declared
+    // historical fields are recognized, and the original fingerprint must verify.
+    const stored = check as CommandCheckRecord & { root?: unknown; name?: unknown; bindingDigest?: unknown };
+    if (typeof stored.root !== 'string' || typeof stored.name !== 'string') return false;
+    if (stored.bindingDigest !== undefined && typeof stored.bindingDigest !== 'string') return false;
+    const scope = { ...vScope(check), root: stored.root, name: stored.name, ...(stored.bindingDigest !== undefined ? { bindingDigest: stored.bindingDigest } : {}) };
+    return check.fingerprint === digest(canonicalJson({ scope, command, kind, timeoutMs }));
+  }
+  private async requireRoundMaterial(binding: VerificationRoundCheckBinding) {
+    const material = await this.deps.context.resolveRound(binding.identity.scope, binding.identity);
+    ensure(material.status === 'ready', '轮次来源材料已失效：' + JSON.stringify(material));
+    return material.material;
+  }
+  /**
+   * Formal receipt for one command check, or null when it never reached the server.
+   * The lookup is by goal scope (not runId) because the caller asking "did my check
+   * arrive?" cannot know which run record the server would have attached it to.
+   */
+  async checkReceipt(scope: {
+    projectId: string;
+    workspaceId: string;
+    goalId: string;
+  }, requestId: string) {
+    const check = this.journal.checks.find(c => c.requestId === requestId && c.projectId === scope.projectId && c.workspaceId === scope.workspaceId && c.goalId === scope.goalId);
+    if (!check)
+      return null;
+    return {
+      runId: check.runId,
+      status: check.status,
+      command: check.command,
+      kind: check.kind,
+      timeoutMs: check.timeoutMs,
+      startedAt: check.startedAt,
+      finishedAt: check.finishedAt
+    };
+  }
+  async checkReports(scope: Scope, requestId: string) {
+    scope = vScope(scope);
+    const check = this.journal.checks.find(c => c.requestId === requestId && canonicalJson(vScope(c)) === canonicalJson(scope));
+    ensure(check, '该作用域不存在检查记录');
+    const observations = check.result?.status === 'ready' ? check.result.observations : [];
+    const reports: unknown[] = [];
+    const reportRefs = observations.flatMap(observation => observation.artifactRef ? [observation.artifactRef] : []);
+    const progress = check.progress;
+    if (progress?.phase === 'report_stored' && !reportRefs.some(ref => ref.digest === progress.artifactRef.digest))
+      reportRefs.push(progress.artifactRef);
+    for (const ref of reportRefs) {
+      const opened = await this.deps.context.openReport(ref, { aggregateType: 'Run', projectId: scope.projectId, goalId: scope.goalId, runId: scope.runId });
+      ensure(opened.status === 'ready', '检查报告不可用或无权读取');
+      reports.push(JSON.parse(opened.record.body));
+    }
+    // The record lifecycle (running/finished/interrupted) is a different fact from
+    // the check verdict (PASS/FAIL/INCONCLUSIVE); both are returned separately.
+    return {
+      requestId,
+      status: check.status,
+      command: check.command,
+      kind: check.kind,
+      timeoutMs: check.timeoutMs,
+      startedAt: check.startedAt,
+      finishedAt: check.finishedAt,
+      lifecycle: check.lifecycle ?? null,
+      recovery: check.recovery ?? null,
+      evidenceAdmission: check.evidenceAdmission ?? null,
+      observations,
+      reports
+    };
+  }
+  /** Admit only this check's original, current-source observation. Goal/task reduction remains Control work. */
+  async admitCheckEvidence(scope: Scope, input: Record<string, unknown>) {
+    scope = vScope(scope);
+    const requestId = text(input['requestId'], 'requestId', 128),
+      reportDigest = sha(input['reportDigest'], 'reportDigest');
+    const check = this.journal.checks.find(c => c.requestId === requestId && canonicalJson(vScope(c)) === canonicalJson(scope));
+    ensure(check && check.result?.status === 'ready' && check.status === 'finished' && check.lifecycle === 'lease_released', '检查结果或租约未对账，不可登记证据');
+    ensure(!check.roundBinding, '轮次检查只能通过完整覆盖聚合接纳，不能单独登记证据');
+    if (check.evidenceAdmission) {
+      ensure(check.evidenceAdmission.reportDigest === reportDigest, '同一证据登记的报告摘要已改变');
+      if (check.evidenceAdmission.status === 'admitted')
+        return { admission: structuredClone(check.evidenceAdmission), replayed: true };
+    }
+    const ctx = await this.deps.context.run(scope),
+      result = check.result;
+    ensure(result.plan.workspaceRevision === ctx.workspaceRevision && canonicalJson(result.plan.planRef) === canonicalJson(ctx.plan.ref), '检查结果对应的计划或工作区已过期');
+    ensure(result.observations.length === 1 && result.observations[0]!.artifactRef?.digest === reportDigest, '需要确认原始检查报告的精确摘要');
+    const observation = result.observations[0]!;
+    const opened = await this.deps.context.openReport(observation.artifactRef!, ctx.run.ref);
+    ensure(opened.status === 'ready', '原检查报告不可读取');
+    const report = JSON.parse(opened.record.body);
+    ensure(
+      report.category === 'tool_check' && report.effects === 'known' && report.result === observation.result && report.sourceDigest === await this.deps.context.workspaceDigest(scope),
+      '报告来源已变化、工具副作用未知或没有有效工具结果'
+    );
+    ensure(
+      canonicalJson(report.owner) === canonicalJson(ctx.run.ref) && canonicalJson(report.context.planRef) === canonicalJson(ctx.plan.ref) && report.context.workspaceRevision === ctx.workspaceRevision && report.context.taskId === ctx.run.task.taskId,
+      '报告与正式任务作用域不一致'
+    );
+    const id = this.journal.checkId(check),
+      evidenceId = 'command-check-' + id;
+    check.evidenceAdmission = { status: 'pending', reportDigest, evidenceIds: [] };
+    await this.journal.save('check', id, check);
+    const evidence = buildEvidenceV1({
+      evidenceId,
+      kind: 'observation',
+      outcome: observation.result,
+      ...scope,
+      taskId: ctx.run.task.taskId,
+      runRef: ctx.run.ref,
+      coverage: observation.coverage,
+      anchor: verificationAnchor({ plan: ctx.plan, workspaceRevision: ctx.workspaceRevision }),
+      verificationPlanRef: result.verificationPlanRef,
+      checkId: observation.checkId,
+      actor: { kind: 'system', id: 'command-check-provider' },
+      summaryText: observation.summary,
+      artifactRef: observation.artifactRef!
+    });
+    const receipt = await this.deps.control.submitEvidence(buildSubmitEvidenceCommand({
+      commandId: evidenceId,
+      correlationId: requestId,
+      idempotencyKey: evidenceId,
+      submittedAt: check.finishedAt!,
+      actor: { kind: 'system', id: 'command-check-provider' },
+      evidence
+    }));
+    ensure(receipt.status === 'committed', '正式检查证据接纳失败：' + JSON.stringify(receipt));
+    check.evidenceAdmission = { status: 'admitted', reportDigest, evidenceIds: [evidenceId] };
+    await this.journal.save('check', id, check);
+    return { admission: structuredClone(check.evidenceAdmission), replayed: receipt.replayed };
+  }
+  /** Reconcile recorded observations and lease receipts only; never invoke CheckPort. */
+  async reconcileCheck(scope: Scope, requestId: string) {
+    scope = vScope(scope);
+    const check = this.journal.checks.find(c => c.requestId === requestId && canonicalJson(vScope(c)) === canonicalJson(scope));
+    ensure(check && check.leaseId, '检查没有可对账的租约身份');
+    if (check.lifecycle === 'acquisition_rejected' && check.acquisitionRejection) return { check: structuredClone(check), replayed: true };
+    if (check.lifecycle === 'lease_released' && check.result)
+      return { check: structuredClone(check), replayed: true };
+    ensure(check.progress?.phase === 'report_stored', '检查执行结果未知；需要工具副作用证据，不能盲目重放或释放租约');
+    const progress = check.progress,
+      runRef = {
+        aggregateType: 'Run' as const,
+        projectId: scope.projectId,
+        goalId: scope.goalId,
+        runId: scope.runId
+      };
+    const opened = await this.deps.context.openReport(progress.artifactRef, runRef);
+    ensure(opened.status === 'ready', '检查原报告不可读取');
+    const report = JSON.parse(opened.record.body);
+    if (check.roundBinding) ensure(report.schemaVersion === 1, '原始报告版本不受支持');
+    ensure(
+      ['known', 'not_started'].includes(report.effects) && report.observationId === progress.observationId && canonicalJson(report.owner) === canonicalJson(runRef) && canonicalJson(report.context) === canonicalJson(progress.context),
+      '报告不能证明工具副作用已确认'
+    );
+    const lease = await this.deps.context.writeLease(scope.projectId, check.leaseId);
+    ensure(lease, '检查租约缺失；不能推断已释放');
+    const storedLease = lease.lease;
+    ensure(canonicalJson(storedLease.holder.runRef) === canonicalJson(runRef) && storedLease.workspaceId === scope.workspaceId, '检查租约作用域不一致');
+    if (storedLease.status === 'active') {
+      const receipt = await this.deps.workspaceLease.releaseLease(buildReleaseLeaseCommand({
+        commandId: check.leaseId + '-release',
+        actor: { kind: 'system', id: 'integrator' },
+        idempotencyKey: 'p107-release-' + check.leaseId,
+        correlationId: check.leaseId + '-release',
+        projectId: scope.projectId,
+        workspaceId: scope.workspaceId,
+        leaseId: check.leaseId,
+        kind: 'write',
+        holderRunRef: runRef,
+        submittedAt: new Date().toISOString()
+      }));
+      ensure(receipt.status === 'committed', '租约释放对账失败：' + JSON.stringify(receipt));
+    }
+    else
+      ensure(storedLease.status === 'released', '租约尚未可释放');
+    const id = this.journal.checkId(check);
+    check.lifecycle = 'lease_released';
+    check.recovery = { reason: '已依据持久报告与正式租约回执对账；命令未重新执行。', commandReplayAllowed: false };
+    await this.journal.save('check', id, check);
+    if (!check.result) {
+      if (check.roundBinding) {
+        await this.requireRoundMaterial(check.roundBinding);
+        const binding = check.roundBinding;
+        ensure(canonicalJson(report.definition) === canonicalJson({ checkId: binding.definition.checkId, kind: binding.definition.kind, command: binding.definition.command, cwd: binding.definition.cwd, timeoutMs: binding.definition.timeoutMs }), '原报告检查定义与冻结配置不一致');
+        ensure(report.sourceDigest === binding.identity.sourceDigest && ['PASS', 'FAIL', 'INCONCLUSIVE'].includes(report.result), '原报告来源或结果无效');
+        const predicate = binding.plan.checks.find(p => p.checkId === binding.definition.checkId && p.satisfactionPath === 'predicate');
+        ensure(predicate, '原轮次缺少冻结检查映射');
+        check.result = {
+          status: 'ready', plan: binding.plan,
+          verificationPlanRef: { planId: binding.plan.planId, planDigest: binding.plan.planDigest },
+          observations: [{ checkId: predicate.checkId, kind: binding.definition.kind, result: report.result, coverage: predicate.coverage, summary: 'restored from persisted round report; command not replayed', artifactRef: progress.artifactRef }]
+        };
+        check.status = 'finished';
+        check.finishedAt = report.endedAt;
+        await this.journal.save('check', id, check);
+        return { check: structuredClone(check), replayed: false };
+      }
+      const ctx = await this.deps.context.run(scope);
+      ensure(
+        progress.context.workspaceRevision === ctx.workspaceRevision && canonicalJson(progress.context.planRef) === canonicalJson(ctx.plan.ref) && report.sourceDigest === await this.deps.context.workspaceDigest(scope),
+        '历史报告仅供解释；当前源码或计划变化，不能恢复为当前结果'
+      );
+      const policy = await this.deps.context.policy(ctx.plan);
+      ensure(policy.status === 'found' && check.kind, '原检查策略不可解析');
+      const compiled = compileVerificationPlan({
+        schemaVersion: 1,
+        taskRef: ctx.run.task,
+        planRef: ctx.plan.ref,
+        planSnapshot: ctx.plan,
+        workspaceRevision: ctx.workspaceRevision,
+        changeScope: progress.context.changeScope,
+        semanticChange: 'semantic',
+        risks: [],
+        checkCapabilities: [{
+          checkId: report.definition.checkId,
+          kind: check.kind,
+          coversKinds: [check.kind],
+          replayable: false
+        }],
+        policy: policy.snapshot.content
+      });
+      ensure(compiled.status === 'ready', '原检查结果无法按当前固定策略重建');
+      const predicate = compiled.plan.checks.find(p => p.checkId === report.definition.checkId && p.satisfactionPath === 'predicate');
+      ensure(predicate && ['PASS', 'FAIL', 'INCONCLUSIVE'].includes(report.result), '报告没有匹配的检查义务');
+      check.result = {
+        status: 'ready',
+        plan: compiled.plan,
+        verificationPlanRef: { planId: compiled.plan.planId, planDigest: compiled.plan.planDigest },
+        observations: [
+          {
+            checkId: predicate.checkId,
+            kind: check.kind,
+            result: report.result,
+            coverage: predicate.coverage,
+            summary: check.kind + ' ' + predicate.checkId + ': ' + report.category + ' (' + report.result + '); restored from persisted report, command not replayed',
+            artifactRef: progress.artifactRef
+          }
+        ]
+      };
+      check.status = 'finished';
+      check.finishedAt = report.endedAt;
+      await this.journal.save('check', id, check);
+    }
+    return { check: structuredClone(check), replayed: false };
+  }
+}

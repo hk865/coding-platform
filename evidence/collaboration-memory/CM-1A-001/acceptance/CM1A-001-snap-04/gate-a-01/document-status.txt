@@ -1,0 +1,20 @@
+ M PRODUCT.md
+ M dev_docs/interfaces/command-event.md
+ M dev_docs/interfaces/context-lifecycle.md
+ M dev_docs/interfaces/runtime-collaboration.md
+ M dev_docs/interfaces/state-ledger.md
+ M dev_docs/product/README.md
+ M dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/_entryscript.sh
+ M dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/_output.json
+ M dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/workspace/entryscript.sh
+ M dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/workspace/output.json
+ M dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/workspace/parser.py
+ M dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/workspace/patch.diff
+ M dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/workspace/run_script.sh
+ M dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/workspace/stderr.log
+ M dev_docs/verification/assets/2026-09-08-repair/assisted-repair/results/attempt-01/instance_NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516/workspace/stdout.log
+ M human/module-status.md
+?? "dev_docs/design/2026-09-12-agent\351\200\232\344\277\241\345\237\272\347\241\200\350\256\276\346\226\275\344\270\216\345\217\257\346\211\251\345\261\225\347\274\226\346\216\222-\350\256\250\350\256\272\346\225\264\347\220\206.md"
+?? dev_docs/planning/active/collaboration-memory/
+?? "dev_docs/product/conversations/2026-09-12-agent\351\200\232\344\277\241\347\274\226\346\216\222\344\270\216\350\256\260\345\277\206-\345\216\237\345\247\213\345\257\271\350\257\235.md"
+?? dev_docs/verification/2026-09-12-memory-knowledge-product-scope.md

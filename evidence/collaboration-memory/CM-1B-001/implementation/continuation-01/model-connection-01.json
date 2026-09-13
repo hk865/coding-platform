@@ -1,0 +1,40 @@
+{
+  "dataDirectory": "/mnt/d/1.project/Software/agent_platform/.local/gui",
+  "settingsDirectory": "/home/han001/.config/agent-platform/2925e9d16dbd6c81bc7fcb84",
+  "result": {
+    "ok": true,
+    "code": "connected",
+    "message": "模型响应与工具调用验证通过，未执行任何工具。",
+    "configuration": {
+      "revision": "d547ff74-f98a-43b6-b4ae-1c49c88c7a7c",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "baseUrl": "https://api.deepseek.com",
+      "protocol": "chat-completions",
+      "updatedAt": "2026-09-13T11:12:30.987Z"
+    },
+    "startedAt": "2026-09-13T11:12:30.994Z",
+    "finishedAt": "2026-09-13T11:12:33.041Z",
+    "calls": [
+      {
+        "kind": "text",
+        "usage": {
+          "inputTokens": 82,
+          "outputTokens": 36,
+          "cachedInputTokens": 0,
+          "costUsdMicros": null
+        }
+      },
+      {
+        "kind": "tool",
+        "usage": {
+          "inputTokens": 365,
+          "outputTokens": 107,
+          "cachedInputTokens": 0,
+          "costUsdMicros": null
+        }
+      }
+    ],
+    "toolsExecuted": 0
+  }
+}

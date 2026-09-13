@@ -1,0 +1,460 @@
+
+ RUN  v4.1.10 /mnt/d/1.project/Software/agent_platform
+
+ ✓ tests/contracts/module-ownership.test.ts (9 tests) 5679ms
+     ✓ keeps the workspace path-boundary policy in exactly one WorkspaceReader file  5145ms
+ ✓ tests/control/reviewer-work.test.ts (20 tests) 1356ms
+     ✓ rejects a grouped report exceeding the shared 512 evidence cap without a partial Result or index update  470ms
+     ✓ rejects a grouped report exceeding the shared 512 evidence cap without a partial Result or index update  593ms
+ ✓ tests/control/reviewer-work-persistence.test.ts (1 test) 2011ms
+   ✓ reopens SQLite Work/output/Result/evidence and read projections with the same accepted command identity  2009ms
+ ✓ tests/control/rework-drive.test.ts (22 tests) 1706ms
+     ✓ SQLite 重启后一致：多失败分组的处置事实与逐项交代都由持久／canonical 事实重建  893ms
+ ✓ tests/control/role-spec.test.ts (11 tests) 2784ms
+     ✓ SQLite 重开后角色规格与生效引用仍在，claim 守卫按同一份矩阵裁决  2738ms
+ ✓ tests/control/workspace-registration.test.ts (2 tests) 2134ms
+   ✓ sqlite: registers explicit workspaces without rewriting bootstrap, rejects stale/forged inputs and replays after reopen  2109ms
+ ✓ tests/coordination/control.sqlite.test.ts (4 tests) 2399ms
+ ✓ tests/coordination/route-drive.test.ts (15 tests) 3297ms
+     ✓ SQLite close + reopen 后仍能领取既有 wait_admission intent 并完成唯一后继  3012ms
+ ✓ tests/control/rework-task-dispatch.test.ts (2 tests) 3310ms
+     ✓ 受理新增任务的 revision 后，既有派发入口自己认领返工任务并跑出一个 Run；被取代任务不再被派发  3247ms
+ ✓ tests/control/autonomous-rework.test.ts (14 tests) 818ms
+     ✓ SQLite 重启后：预算计数与人工拒绝事实都从账本重建  667ms
+ ✓ tests/control/work-identity-harness.test.ts (2 tests) 4795ms
+   ✓ 同一派发场景在 InMemory 与 SQLite harness 上得到逐字段相同的 canonical 工作身份  2459ms
+   ✓ RW-13 先显式绑定再派发：两套 harness 都复用同一条身份，账本里不多出第二条  2336ms
+ ✓ tests/control/operator-entry-role.test.ts (20 tests) 6158ms
+     ✓ 矩阵启用后 develop 入口仍然能派发，落账 Run 的角色绑定就是那个已登记角色  571ms
+     ✓ 矩阵启用后探索入口仍然能派发，落账 Run 的角色绑定是只读角色（与写入入口不是同一份授权）  633ms
+     ✓ 矩阵没有登记入口角色时仍然拒绝且零写（守卫没有被放宽）  575ms
+     ✓ 没有角色矩阵的项目沿用既有语义：入口照样派发（既有产品行为不被静默改变）  491ms
+     ✓ RW-18 矩阵登记了角色：绑定由 pin 签发（revision 与摘要都能从绑定／落账 Run 复核）  605ms
+     ✓ RW-18 矩阵 pin 指向未激活规格：绑定照签，claim 由未改动的守卫拒绝且零写  494ms
+     ✓ RW-18 没有矩阵／矩阵未登记该角色：不签发，逐字沿用既有绑定（与改动前一致）  1010ms
+     ✓ 角色规格的 install／activate 与角色矩阵的 claim 校验在两套后端上给出同样的结论  684ms
+     ✓ 越权声明被拒且零写：矩阵 pin 的规格没有授权这个工具时，claim 不落账  531ms
+     ✓ SQLite 重开后同一条矩阵的签发结果逐字相同（签发不依赖任何进程内状态）  503ms
+ ✓ tests/control/work-identity-uniqueness.test.ts (9 tests) 540ms
+ ✓ tests/control/baseline-evolution.test.ts (31 tests) 282ms
+ ✓ tests/control/rework-drive-harness.test.ts (3 tests) 6710ms
+     ✓ 真实 FAIL → 自动触发 → 受理成新 revision → 返工任务走既有 claim/drive 被真正派发；重复触发幂等  2718ms
+     ✓ 人显式 reject 之后同一问题不再自动受理；两个后端给出同一份结论  2354ms
+     ✓ 没有注入问题出口时两个后端都返回显式不可用，不假装"没有问题"  1637ms
+ ✓ tests/control/evidence-intake.test.ts (10 tests) 268ms
+ ✓ tests/control/work-record.test.ts (15 tests) 571ms
+ ✓ tests/coordination/handoff-successor.test.ts (6 tests) 210ms
+ ✓ tests/coordination/participation-uniqueness.test.ts (1 test) 437ms
+     ✓ 两条独立 SQLite 连接：第二段 active 参与被账本拒绝（零写入），旧段结束后换手成立  436ms
+ ✓ tests/coordination/route-continuity.test.ts (8 tests) 151ms
+ ✓ tests/control/goal-reducer.test.ts (6 tests) 119ms
+ ✓ tests/control/goal-change.test.ts (29 tests) 130ms
+ ✓ tests/control/live-frontier-regression.test.ts (8 tests) 9786ms
+     ✓ source FAIL with independent frontier=false  2580ms
+     ✓ source FAIL with independent frontier=true  2433ms
+     ✓ replacement uses formally satisfied predecessor after restart; plan stays immutable  2428ms
+     ✓ replacement cannot reset its own formally failed task or erase FAIL history  2215ms
+ ✓ tests/coordination/control.test.ts (28 tests) 68ms
+ ✓ tests/control/workspace-lease.test.ts (13 tests) 112ms
+ ✓ tests/control/plan-acceptance.test.ts (22 tests) 52ms
+ ✓ tests/control/rework-disposition-authority.test.ts (3 tests) 107ms
+ ✓ tests/control/remediation.test.ts (28 tests) 149ms
+ ✓ tests/control/integration-join.test.ts (6 tests) 97ms
+ ✓ tests/control/reviewer-reduction-race.test.ts (4 tests) 131ms
+ ✓ tests/control/planning-interface.test.ts (7 tests) 61ms
+ ✓ tests/control/role-binding-admission.test.ts (12 tests) 70ms
+ ✓ tests/control/source-architecture.test.ts (1 test) 2925ms
+   ✓ binds real TS sources to an immutable baseline, records distinct deltas, reopens bodies, rejects stale and mismatched inputs  2924ms
+ ✓ tests/control/rework-plan-compiler.test.ts (21 tests) 84ms
+ ✓ tests/control/work-material-gate.test.ts (1 test) 1759ms
+   ✓ 装 executor 规格 + 含 roles 的矩阵之后，普通 develop 运行真正开始（模型被调用），四类材料各有来源  1758ms
+ ✓ tests/control/replacement-claim.test.ts (8 tests) 68ms
+ ✓ tests/control/task-reducer.test.ts (11 tests) 86ms
+ ✓ tests/control/reviewer-existing-drivers-isolation.test.ts (2 tests) 76ms
+ ✓ tests/control/reviewer-dispatch-isolation.test.ts (2 tests) 77ms
+ ✓ tests/control/human-role-collaboration.test.ts (20 tests) 69ms
+ ✓ tests/control/remediation-writer-chain.test.ts (2 tests) 62ms
+ ✓ tests/control/dispatch-drive.test.ts (7 tests) 57ms
+ ✓ tests/control/work-identity.test.ts (13 tests) 85ms
+ ✓ tests/control/handoff.test.ts (8 tests) 44ms
+ ✓ tests/control/p1-15-role-rework-loop.test.ts (1 test) 45ms
+ ✓ tests/control/handoff-drive.test.ts (4 tests) 51ms
+ ✓ tests/control/patch-record.test.ts (7 tests) 51ms
+ ✓ tests/control/workspace-drive.test.ts (3 tests) 52ms
+ ✓ tests/control/plan-compiler.test.ts (7 tests) 38ms
+ ✓ tests/coordination/host-tool-chain.test.ts (1 test) 6583ms
+     ✓ 模型经真实工具发起请求与报告；重启后唯一后继被受理、准备并带着精确报告版本跑起来  6582ms
+ ✓ tests/control/run-facts.test.ts (10 tests) 35ms
+ ✓ tests/control/dispatch-start.test.ts (6 tests) 36ms
+ ✓ tests/control/plan-impact-work-identity.test.ts (5 tests) 45ms
+ ✓ tests/control/architecture-inspection.test.ts (10 tests) 31ms
+ ✓ tests/control/dispatch-claim.test.ts (6 tests) 31ms
+ ✓ tests/control/initial-plan-source.test.ts (1 test) 30ms
+ ✓ tests/control/architecture-evolution-policy.test.ts (13 tests) 22ms
+ ✓ tests/control/material-access.test.ts (6 tests) 24ms
+ ✓ tests/control/dispatch-readiness.test.ts (6 tests) 23ms
+ ✓ tests/control/governance-activate.test.ts (10 tests) 22ms
+ ✓ tests/control/governance-install.test.ts (13 tests) 17ms
+ ✓ tests/contracts/fixtures.test.ts (7 tests) 9ms
+ ✓ tests/control/role-material-completion.test.ts (1 test) 2134ms
+   ✓ 装 executor 规格 + 矩阵：运行开始 → 登记实现结果 → 轮次 PASS → Task satisfied  2133ms
+ ✓ tests/control/control-engine.test.ts (22 tests) 23ms
+ ✓ tests/control/architecture-reconciler.test.ts (9 tests) 24ms
+ ✓ tests/control/role-spec-material-read.test.ts (3 tests) 19ms
+ ✓ tests/control/canonical-record-scope.test.ts (3 tests) 24ms
+ ✓ tests/contracts/goal-phase.test.ts (25 tests) 16ms
+ ✓ tests/control/workspace-lease-regression.test.ts (20 tests) 23383ms
+     ✓ configured support rejects a write lease with capability_unsupported and appends no events  2336ms
+     ✓ configured support rejects a write lease with capability_readonly and appends no events  2240ms
+     ✓ configured support rejects a write lease with scope_exceeds_capability and appends no events  2006ms
+     ✓ retries the same write command with the original committed receipt  1911ms
+     ✓ replays a concurrent duplicate even when its capability response arrives after the first commit  1780ms
+     ✓ does not accept a changed command or another identity as a replay  1939ms
+     ✓ replays a released lease without disturbing a newer active lease  2431ms
+     ✓ concurrent overlapping read and write requests cannot both acquire a lease (read first: true)  2300ms
+     ✓ concurrent overlapping read and write requests cannot both acquire a lease (read first: false)  2126ms
+   ✓ SQLite replay survives close and reopen with the same receipt and no appended events  1957ms
+   ✓ separate SQLite connections cannot grant overlapping read and write leases  2245ms
+ ✓ tests/contracts/fingerprint.test.ts (9 tests) 9ms
+ ✓ tests/contracts/material-access.test.ts (9 tests) 10ms
+ ✓ tests/control/workspace-capability-policy.test.ts (16 tests) 10ms
+ ✓ tests/control/runtime-dispatch.test.ts (7 tests) 12ms
+ ✓ tests/coordination/model-request-evidence-bypass.test.ts (4 tests) 13539ms
+   ✓ T-A1 许可签发晚于 Run 结束 ⇒ 证据被 after_terminal 拒绝：Run 仍 completed，旁路失败可见  2978ms
+   ✓ T-A5 许可签发早于 Run 结束 ⇒ 证据允许在 Run 结束后落账（after_terminal 例外的正分支）  3710ms
+   ✓ T-A6 账本层独立拒绝第二次尝试：绕过 Control 提交 permit@3 ⇒ invalid_commit 且快照仍 @2  3364ms
+   ✓ T-A7（**已记录的验证上限**，不是被忽略的缺陷）：篡改 contextInputDigest 的证据事实会被接受  3486ms
+stdout | tests/control/reviewer-lease-conflict-recovery.test.ts > ends a reviewer run as known failed when its read lease is refused before model/tool start
+{
+  "first": {
+    "status": "incomplete",
+    "workRef": {
+      "aggregateType": "ReviewWork",
+      "projectId": "proj-alpha",
+      "workspaceId": "ws-shared",
+      "goalId": "goal-p107-1",
+      "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+    },
+    "code": "review_execution_incomplete"
+  },
+  "second": {
+    "status": "incomplete",
+    "workRef": {
+      "aggregateType": "ReviewWork",
+      "projectId": "proj-alpha",
+      "workspaceId": "ws-shared",
+      "goalId": "goal-p107-1",
+      "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+    },
+    "code": "review_execution_incomplete"
+  },
+  "canonicalRun": {
+    "ref": {
+      "aggregateType": "Run",
+      "projectId": "proj-alpha",
+      "goalId": "goal-p107-1",
+      "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run"
+    },
+    "revision": 3,
+    "schemaVersion": 1,
+    "work": {
+      "kind": "review",
+      "reviewWorkRef": {
+        "aggregateType": "ReviewWork",
+        "projectId": "proj-alpha",
+        "workspaceId": "ws-shared",
+        "goalId": "goal-p107-1",
+        "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+      }
+    },
+    "task": {
+      "projectId": "proj-alpha",
+      "goalId": "goal-p107-1",
+      "taskId": "task-p107-writer-b"
+    },
+    "attemptId": "review-1a1454b787101235e47007adf396c875a4c0ae03-attempt",
+    "planRef": {
+      "aggregateType": "PlanRevision",
+      "projectId": "proj-alpha",
+      "planId": "plan-p107-parallel"
+    },
+    "roleBinding": {
+      "schemaVersion": 1,
+      "bindingId": "independent-reviewer-v1",
+      "templateId": "independent-reviewer",
+      "templateRevision": "1",
+      "bindingVersion": 1,
+      "policyRevision": "independent-review-v1"
+    },
+    "budget": {
+      "tokenBudget": 80000,
+      "deadline": null
+    },
+    "workspaceSnapshot": {
+      "workspaceId": "ws-shared",
+      "revision": 1
+    },
+    "status": "ended",
+    "outcome": "crashed",
+    "exitCode": null,
+    "lastEventSeq": 1,
+    "lastRuntimeEventId": "8fbbcde3-9e5d-4698-8731-23efdbd1bc73-1",
+    "lastFactEventId": "evt-0028",
+    "envelope": {
+      "schemaVersion": 1,
+      "envelopeId": "review-env-review-1a1454b787101235e47007adf396c875a4c0ae03",
+      "projectId": "proj-alpha",
+      "workspaceId": "ws-shared",
+      "goalId": "goal-p107-1",
+      "taskId": "task-p107-writer-b",
+      "runRef": {
+        "aggregateType": "Run",
+        "projectId": "proj-alpha",
+        "goalId": "goal-p107-1",
+        "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run"
+      },
+      "attemptRef": {
+        "aggregateType": "TaskAttempt",
+        "projectId": "proj-alpha",
+        "goalId": "goal-p107-1",
+        "taskId": "task-p107-writer-b",
+        "attemptId": "review-1a1454b787101235e47007adf396c875a4c0ae03-attempt"
+      },
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "proj-alpha",
+        "planId": "plan-p107-parallel"
+      },
+      "roleBinding": {
+        "schemaVersion": 1,
+        "bindingId": "independent-reviewer-v1",
+        "templateId": "independent-reviewer",
+        "templateRevision": "1",
+        "bindingVersion": 1,
+        "policyRevision": "independent-review-v1"
+      },
+      "workspaceSnapshot": {
+        "workspaceId": "ws-shared",
+        "revision": 1
+      },
+      "permissions": {
+        "policyRevision": "independent-review-v1",
+        "tools": [
+          "read"
+        ],
+        "writeScope": []
+      },
+      "budget": {
+        "tokenBudget": 80000,
+        "deadline": null
+      },
+      "sourceRefs": [
+        {
+          "kind": "plan-revision",
+          "refId": "plan-p107-parallel",
+          "revision": "1"
+        },
+        {
+          "kind": "workspace",
+          "refId": "ws-shared",
+          "revision": "1",
+          "digest": "88f9a983bc7921b33239b2cc15186b90438115fde46a6b5c2d4aba4badcabd9c"
+        },
+        {
+          "kind": "artifact",
+          "refId": "78535c0f74c2b6898badb1b51b51efae058caebd845aa67a6b95794aa9619a51",
+          "revision": "1",
+          "digest": "78535c0f74c2b6898badb1b51b51efae058caebd845aa67a6b95794aa9619a51"
+        }
+      ],
+      "bundleRef": {
+        "kind": "artifact",
+        "contentType": "application/json",
+        "digest": "9ef7fffc65afdf1bb76acb6413574743ea67b9495c47695fe4417f58ff0cef86",
+        "sizeBytes": 7866,
+        "source": {
+          "kind": "plan-revision",
+          "refId": "plan-p107-parallel",
+          "revision": "1"
+        }
+      },
+      "work": {
+        "kind": "review",
+        "reviewWorkRef": {
+          "aggregateType": "ReviewWork",
+          "projectId": "proj-alpha",
+          "workspaceId": "ws-shared",
+          "goalId": "goal-p107-1",
+          "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+        }
+      },
+      "reviewInput": {
+        "packetRef": {
+          "kind": "artifact",
+          "contentType": "application/json",
+          "digest": "09c1483c35aae01ba0ed675ab35cb4bcf861827bd4b116c5b187d1d4533948f9",
+          "sizeBytes": 6083,
+          "source": {
+            "kind": "plan-revision",
+            "refId": "plan-p107-parallel",
+            "revision": "1"
+          }
+        },
+        "packetDigest": "09c1483c35aae01ba0ed675ab35cb4bcf861827bd4b116c5b187d1d4533948f9",
+        "inputDigest": "f2634291c1ad667be21438f53fde54dbe7432686e322c9de28ddc285f973f0de",
+        "descriptorDigest": "78535c0f74c2b6898badb1b51b51efae058caebd845aa67a6b95794aa9619a51",
+        "grantRefs": [
+          {
+            "aggregateType": "MaterialAccessGrant",
+            "projectId": "proj-alpha",
+            "workspaceId": "ws-shared",
+            "goalId": "goal-p107-1",
+            "grantId": "grant-a08d687c7165bd167d04762a9aaecf16"
+          }
+        ]
+      }
+    },
+    "startedAt": "2026-09-06T12:00:00.000Z",
+    "endedAt": "2026-09-13T05:58:55.130Z"
+  },
+  "runtime": [
+    {
+      "spec": {
+        "mode": "review",
+        "review": {
+          "workRef": {
+            "aggregateType": "ReviewWork",
+            "projectId": "proj-alpha",
+            "workspaceId": "ws-shared",
+            "goalId": "goal-p107-1",
+            "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+          },
+          "profile": {
+            "schemaVersion": 1,
+            "subjectScope": {
+              "projectId": "proj-alpha",
+              "workspaceId": "ws-shared",
+              "goalId": "goal-p107-1",
+              "taskId": "task-p107-writer-b",
+              "runId": "independent-review-producer"
+            },
+            "roleBinding": {
+              "schemaVersion": 1,
+              "bindingId": "independent-reviewer-v1",
+              "templateId": "independent-reviewer",
+              "templateRevision": "1",
+              "bindingVersion": 1,
+              "policyRevision": "independent-review-v1"
+            },
+            "mode": "review",
+            "permissions": {
+              "tools": [
+                "read"
+              ],
+              "writeScope": []
+            },
+            "model": {
+              "configurationRevision": "model-1",
+              "provider": "fixture",
+              "model": "reviewer",
+              "baseUrl": "http://localhost:1"
+            },
+            "budget": {
+              "contextWindowTokens": 80000,
+              "inputTokens": null,
+              "outputTokens": null,
+              "maxRequests": null,
+              "maxToolCalls": null,
+              "timeoutMs": null,
+              "perResponseTokens": 4096
+            },
+            "profileId": "reviewer-profile-daf16c07d1a827612d802e965f61ccb4ccbfbd141aa429ec47165d63e0b30b35",
+            "revision": 1,
+            "digest": "daf16c07d1a827612d802e965f61ccb4ccbfbd141aa429ec47165d63e0b30b35"
+          }
+        },
+        "projectId": "proj-alpha",
+        "workspaceId": "ws-shared",
+        "goalId": "goal-p107-1",
+        "taskId": "task-p107-writer-b",
+        "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run",
+        "root": "/tmp/independent-review-source-QT68ZO",
+        "instruction": "Independently review the pinned task, current source, and complete tool reports. Use the read-only source and material tools. Return exactly the independent-review-result JSON schema supplied in the packet. Report every required reviewer item with citations and concrete rationale; do not infer PASS from process completion.",
+        "budget": {
+          "contextWindowTokens": 80000,
+          "inputTokens": null,
+          "outputTokens": null,
+          "maxRequests": null,
+          "maxToolCalls": null,
+          "timeoutMs": null,
+          "perResponseTokens": 4096
+        }
+      },
+      "createdAt": "2026-09-13T05:58:55.035Z",
+      "status": "failed",
+      "sessionId": "8fbbcde3-9e5d-4698-8731-23efdbd1bc73",
+      "configuration": null,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "eventId": "8fbbcde3-9e5d-4698-8731-23efdbd1bc73-1",
+          "runRef": {
+            "aggregateType": "Run",
+            "projectId": "proj-alpha",
+            "goalId": "goal-p107-1",
+            "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run"
+          },
+          "sequence": 1,
+          "occurredAt": "2026-09-13T05:58:55.130Z",
+          "eventType": "run_crashed",
+          "payload": {
+            "kind": "crashed",
+            "error": "执行前材料校验失败：工作区读租约被拒绝：read_lease_conflict"
+          }
+        }
+      ],
+      "trace": [],
+      "usage": [],
+      "error": "执行前材料校验失败：工作区读租约被拒绝：read_lease_conflict",
+      "nodeSha256": null,
+      "workspaceRevision": null,
+      "cancelRequested": false
+    }
+  ]
+}
+
+ ✓ tests/control/reviewer-unknown-outcome-preservation.test.ts (1 test) 857ms
+   ✓ keeps an unprovable reviewer start as outcome_unknown and never reruns the model  856ms
+ ✓ tests/contracts/validation.test.ts (9 tests) 8ms
+ ✓ tests/control/baseline-evolution-port.test.ts (5 tests) 6ms
+ ✓ tests/control/governance-command-builders.test.ts (2 tests) 5ms
+ ✓ tests/control/reviewer-runtime-start-rejection.test.ts (2 tests) 1558ms
+   ✓ classifies the real runtime.start closing rejection as one canonical crash with no model execution  914ms
+   ✓ preserves unknown effects when the same runtime.start catch cannot prove that execution never started  643ms
+ ✓ tests/control/reviewer-lease-conflict-recovery.test.ts (2 tests) 1799ms
+   ✓ ends a reviewer run as known failed when its read lease is refused before model/tool start  1180ms
+   ✓ ends a reviewer run as known failed when execution.start rejects before any model or tool call  617ms
+ ✓ tests/control/architecture-delta-regression.test.ts (2 tests) 5ms
+ ✓ tests/control/rework-unknown-disposition-review.test.ts (1 test) 4ms
+ ✓ tests/contracts/cursor.test.ts (3 tests) 4ms
+ ✓ tests/contracts/state-ledger.double.test.ts (1 test) 2ms
+ ✓ tests/coordination/delivery-into-input.test.ts (4 tests) 15669ms
+     ✓ Delivery 正文、精确版本与选入理由都进入捕获的 ModelRequest 与 manifest.selected  4789ms
+     ✓ 调用证据（D06）：model_request_evidence 落账，requestDigest = 捕获请求重算的 sha256，contextInputDigest = manifest.inputDigest，同一许可的第二次尝试被拒  4507ms
+     ✓ 撤权之后：该 Delivery 不允许进入新的输入（材料组装在模型调用之前失败）  3693ms
+     ✓ 来源在本次运行期间被更新：basis 不一致 → 精确授权失效 → 拒绝进入新输入  2676ms
+ ✓ tests/coordination/coordination-capability.test.ts (7 tests) 18789ms
+     ✓ 未授予的 Run：判定给出可读原因、不提供协调工具、调用被拒且平台状态零改动  4027ms
+     ✓ 授予的 Run：能力依据来自账本事实、工具可用、调用被受理，并随运行记录持久化  3713ms
+     ✓ 同一个 Run 在两个 Work 上都满足授予条件时：拒绝授予（可读原因），不替它挑一个身份  2726ms
+     ✓ 不存在第二条拿到协调工具的路径：唯一注入点是运行入口，且它只在 granted 时发生  2945ms
+     ✓ 换手之后：旧 Run 不再被授予，新参与段的 Run 被授予（显式规则可直接核对）  3136ms
+     ✓ 内核策略层：工具被注入但未获宿主授权时，内核按未授权的未知操作拒绝，handler 不执行  424ms
+     ✓ 每个写操作在动 Vault/Control 之前校验能力：授予失效后拒绝，且零平台状态变更  1815ms
+
+ Test Files  86 passed (86)
+      Tests  750 passed (750)
+   Start at  13:58:14
+   Duration  50.60s (transform 551.36s, setup 0ms, import 655.64s, tests 146.94s, environment 9ms)
+
+coord rc=0

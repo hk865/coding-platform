@@ -1,0 +1,545 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/coordination/route-drive.test.ts [2m([22m[2m16 tests[22m[2m)[22m[33m 2689[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite close + reopen 后仍能领取既有 wait_admission intent 并完成唯一后继 [33m 2376[2mms[22m[39m
+ [32m✓[39m tests/control/live-frontier-regression.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 8326[2mms[22m[39m
+     [33m[2m✓[22m[39m source FAIL with independent frontier=false [33m 2059[2mms[22m[39m
+     [33m[2m✓[22m[39m source FAIL with independent frontier=true [33m 1893[2mms[22m[39m
+     [33m[2m✓[22m[39m replacement uses formally satisfied predecessor after restart; plan stays immutable [33m 2154[2mms[22m[39m
+     [33m[2m✓[22m[39m replacement cannot reset its own formally failed task or erase FAIL history [33m 2092[2mms[22m[39m
+ [32m✓[39m tests/control/workspace-lease-regression.test.ts [2m([22m[2m20 tests[22m[2m)[22m[33m 17135[2mms[22m[39m
+     [33m[2m✓[22m[39m configured support rejects a write lease with capability_unsupported and appends no events [33m 1862[2mms[22m[39m
+     [33m[2m✓[22m[39m configured support rejects a write lease with capability_readonly and appends no events [33m 1741[2mms[22m[39m
+     [33m[2m✓[22m[39m configured support rejects a write lease with scope_exceeds_capability and appends no events [33m 1734[2mms[22m[39m
+     [33m[2m✓[22m[39m retries the same write command with the original committed receipt [33m 1784[2mms[22m[39m
+     [33m[2m✓[22m[39m replays a concurrent duplicate even when its capability response arrives after the first commit [33m 1496[2mms[22m[39m
+     [33m[2m✓[22m[39m does not accept a changed command or another identity as a replay [33m 1011[2mms[22m[39m
+     [33m[2m✓[22m[39m replays a released lease without disturbing a newer active lease [33m 1026[2mms[22m[39m
+     [33m[2m✓[22m[39m concurrent overlapping read and write requests cannot both acquire a lease (read first: true) [33m 1027[2mms[22m[39m
+     [33m[2m✓[22m[39m concurrent overlapping read and write requests cannot both acquire a lease (read first: false) [33m 1769[2mms[22m[39m
+   [33m[2m✓[22m[39m SQLite replay survives close and reopen with the same receipt and no appended events [33m 1759[2mms[22m[39m
+   [33m[2m✓[22m[39m separate SQLite connections cannot grant overlapping read and write leases [33m 1803[2mms[22m[39m
+ [32m✓[39m tests/coordination/delivery-into-input.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 12522[2mms[22m[39m
+     [33m[2m✓[22m[39m Delivery 正文、精确版本与选入理由都进入捕获的 ModelRequest 与 manifest.selected [33m 3562[2mms[22m[39m
+     [33m[2m✓[22m[39m 调用证据（D06）：model_request_evidence 落账，requestDigest = 捕获请求重算的 sha256，contextInputDigest = manifest.inputDigest，同一许可的第二次尝试被拒 [33m 3291[2mms[22m[39m
+     [33m[2m✓[22m[39m 撤权之后：该 Delivery 不允许进入新的输入（材料组装在模型调用之前失败） [33m 2404[2mms[22m[39m
+     [33m[2m✓[22m[39m 来源在本次运行期间被更新：basis 不一致 → 精确授权失效 → 拒绝进入新输入 [33m 3264[2mms[22m[39m
+ [32m✓[39m tests/control/rework-drive-harness.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 5798[2mms[22m[39m
+     [33m[2m✓[22m[39m 真实 FAIL → 自动触发 → 受理成新 revision → 返工任务走既有 claim/drive 被真正派发；重复触发幂等 [33m 2205[2mms[22m[39m
+     [33m[2m✓[22m[39m 人显式 reject 之后同一问题不再自动受理；两个后端给出同一份结论 [33m 2068[2mms[22m[39m
+     [33m[2m✓[22m[39m 没有注入问题出口时两个后端都返回显式不可用，不假装"没有问题" [33m 1524[2mms[22m[39m
+ [32m✓[39m tests/coordination/coordination-capability.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 14949[2mms[22m[39m
+     [33m[2m✓[22m[39m 未授予的 Run：判定给出可读原因、不提供协调工具、调用被拒且平台状态零改动 [33m 2531[2mms[22m[39m
+     [33m[2m✓[22m[39m 授予的 Run：能力依据来自账本事实、工具可用、调用被受理，并随运行记录持久化 [33m 2543[2mms[22m[39m
+     [33m[2m✓[22m[39m 同一个 Run 在两个 Work 上都满足授予条件时：拒绝授予（可读原因），不替它挑一个身份 [33m 1613[2mms[22m[39m
+     [33m[2m✓[22m[39m 不存在第二条拿到协调工具的路径：唯一注入点是运行入口，且它只在 granted 时发生 [33m 2451[2mms[22m[39m
+     [33m[2m✓[22m[39m 换手之后：旧 Run 不再被授予，新参与段的 Run 被授予（显式规则可直接核对） [33m 3677[2mms[22m[39m
+     [33m[2m✓[22m[39m 内核策略层：工具被注入但未获宿主授权时，内核按未授权的未知操作拒绝，handler 不执行 [33m 353[2mms[22m[39m
+     [33m[2m✓[22m[39m 每个写操作在动 Vault/Control 之前校验能力：授予失效后拒绝，且零平台状态变更 [33m 1779[2mms[22m[39m
+ [32m✓[39m tests/control/operator-entry-role.test.ts [2m([22m[2m20 tests[22m[2m)[22m[33m 4810[2mms[22m[39m
+     [33m[2m✓[22m[39m 矩阵启用后 develop 入口仍然能派发，落账 Run 的角色绑定就是那个已登记角色 [33m 454[2mms[22m[39m
+     [33m[2m✓[22m[39m 矩阵启用后探索入口仍然能派发，落账 Run 的角色绑定是只读角色（与写入入口不是同一份授权） [33m 443[2mms[22m[39m
+     [33m[2m✓[22m[39m 矩阵没有登记入口角色时仍然拒绝且零写（守卫没有被放宽） [33m 430[2mms[22m[39m
+     [33m[2m✓[22m[39m 没有角色矩阵的项目沿用既有语义：入口照样派发（既有产品行为不被静默改变） [33m 374[2mms[22m[39m
+     [33m[2m✓[22m[39m RW-18 矩阵登记了角色：绑定由 pin 签发（revision 与摘要都能从绑定／落账 Run 复核） [33m 354[2mms[22m[39m
+     [33m[2m✓[22m[39m RW-18 矩阵 pin 指向未激活规格：绑定照签，claim 由未改动的守卫拒绝且零写 [33m 384[2mms[22m[39m
+     [33m[2m✓[22m[39m RW-18 没有矩阵／矩阵未登记该角色：不签发，逐字沿用既有绑定（与改动前一致） [33m 800[2mms[22m[39m
+     [33m[2m✓[22m[39m 角色规格的 install／activate 与角色矩阵的 claim 校验在两套后端上给出同样的结论 [33m 569[2mms[22m[39m
+     [33m[2m✓[22m[39m 越权声明被拒且零写：矩阵 pin 的规格没有授权这个工具时，claim 不落账 [33m 468[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite 重开后同一条矩阵的签发结果逐字相同（签发不依赖任何进程内状态） [33m 471[2mms[22m[39m
+ [32m✓[39m tests/control/work-identity-harness.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 3626[2mms[22m[39m
+   [33m[2m✓[22m[39m 同一派发场景在 InMemory 与 SQLite harness 上得到逐字段相同的 canonical 工作身份 [33m 1834[2mms[22m[39m
+   [33m[2m✓[22m[39m RW-13 先显式绑定再派发：两套 harness 都复用同一条身份，账本里不多出第二条 [33m 1791[2mms[22m[39m
+ [32m✓[39m tests/coordination/model-request-evidence-bypass.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 15927[2mms[22m[39m
+   [33m[2m✓[22m[39m each actual provider request has already consumed its own exact permit (clock=2026-09-05T12:00:00.000Z) [33m 2690[2mms[22m[39m
+   [33m[2m✓[22m[39m each actual provider request has already consumed its own exact permit (clock=2030-01-01T00:00:00.000Z) [33m 2835[2mms[22m[39m
+   [33m[2m✓[22m[39m refuses refuse before any provider side effect and records a known failure [33m 2330[2mms[22m[39m
+   [33m[2m✓[22m[39m refuses tamper_context before any provider side effect and records a known failure [33m 2325[2mms[22m[39m
+   [33m[2m✓[22m[39m refuses tamper_request before any provider side effect and records a known failure [33m 2396[2mms[22m[39m
+   [33m[2m✓[22m[39m canonical cancellation between requests prevents the second provider request [33m 1939[2mms[22m[39m
+   [33m[2m✓[22m[39m direct ledger writes cannot forge a second consumed permit or a mismatched input digest [33m 1411[2mms[22m[39m
+ [32m✓[39m tests/control/rework-task-dispatch.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 1607[2mms[22m[39m
+     [33m[2m✓[22m[39m 受理新增任务的 revision 后，既有派发入口自己认领返工任务并跑出一个 Run；被取代任务不再被派发 [33m 1553[2mms[22m[39m
+ [32m✓[39m tests/contracts/module-ownership.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 5876[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps the workspace path-boundary policy in exactly one WorkspaceReader file [33m 5155[2mms[22m[39m
+ [32m✓[39m tests/coordination/runtime-concurrency.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 3856[2mms[22m[39m
+   [33m[2m✓[22m[39m ordinary drive overlaps two actual read-only Runtime/provider calls [33m 2068[2mms[22m[39m
+   [33m[2m✓[22m[39m overlapping writers share the existing exclusive lease and only one reaches the provider [33m 1787[2mms[22m[39m
+ [32m✓[39m tests/coordination/host-tool-chain.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 3172[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具发起请求与报告；重启后唯一后继被受理、准备并带着精确报告版本跑起来 [33m 3170[2mms[22m[39m
+ [32m✓[39m tests/control/source-architecture.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2028[2mms[22m[39m
+   [33m[2m✓[22m[39m binds real TS sources to an immutable baseline, records distinct deltas, reopens bodies, rejects stale and mismatched inputs [33m 2027[2mms[22m[39m
+[90mstdout[2m | tests/control/reviewer-lease-conflict-recovery.test.ts[2m > [22m[2mends a reviewer run as known failed when its read lease is refused before model/tool start
+[22m[39m{
+  "first": {
+    "status": "incomplete",
+    "workRef": {
+      "aggregateType": "ReviewWork",
+      "projectId": "proj-alpha",
+      "workspaceId": "ws-shared",
+      "goalId": "goal-p107-1",
+      "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+    },
+    "code": "review_execution_incomplete"
+  },
+  "second": {
+    "status": "incomplete",
+    "workRef": {
+      "aggregateType": "ReviewWork",
+      "projectId": "proj-alpha",
+      "workspaceId": "ws-shared",
+      "goalId": "goal-p107-1",
+      "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+    },
+    "code": "review_execution_incomplete"
+  },
+  "canonicalRun": {
+    "ref": {
+      "aggregateType": "Run",
+      "projectId": "proj-alpha",
+      "goalId": "goal-p107-1",
+      "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run"
+    },
+    "revision": 3,
+    "schemaVersion": 1,
+    "work": {
+      "kind": "review",
+      "reviewWorkRef": {
+        "aggregateType": "ReviewWork",
+        "projectId": "proj-alpha",
+        "workspaceId": "ws-shared",
+        "goalId": "goal-p107-1",
+        "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+      }
+    },
+    "task": {
+      "projectId": "proj-alpha",
+      "goalId": "goal-p107-1",
+      "taskId": "task-p107-writer-b"
+    },
+    "attemptId": "review-1a1454b787101235e47007adf396c875a4c0ae03-attempt",
+    "planRef": {
+      "aggregateType": "PlanRevision",
+      "projectId": "proj-alpha",
+      "planId": "plan-p107-parallel"
+    },
+    "roleBinding": {
+      "schemaVersion": 1,
+      "bindingId": "independent-reviewer-v1",
+      "templateId": "independent-reviewer",
+      "templateRevision": "1",
+      "bindingVersion": 1,
+      "policyRevision": "independent-review-v1"
+    },
+    "budget": {
+      "tokenBudget": 80000,
+      "deadline": null
+    },
+    "workspaceSnapshot": {
+      "workspaceId": "ws-shared",
+      "revision": 1
+    },
+    "status": "ended",
+    "outcome": "crashed",
+    "exitCode": null,
+    "lastEventSeq": 1,
+    "lastRuntimeEventId": "89199bbc-c35a-4705-8cd5-bb35c3f21fbb-1",
+    "lastFactEventId": "evt-0027",
+    "envelope": {
+      "schemaVersion": 1,
+      "envelopeId": "review-env-review-1a1454b787101235e47007adf396c875a4c0ae03",
+      "projectId": "proj-alpha",
+      "workspaceId": "ws-shared",
+      "goalId": "goal-p107-1",
+      "taskId": "task-p107-writer-b",
+      "runRef": {
+        "aggregateType": "Run",
+        "projectId": "proj-alpha",
+        "goalId": "goal-p107-1",
+        "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run"
+      },
+      "attemptRef": {
+        "aggregateType": "TaskAttempt",
+        "projectId": "proj-alpha",
+        "goalId": "goal-p107-1",
+        "taskId": "task-p107-writer-b",
+        "attemptId": "review-1a1454b787101235e47007adf396c875a4c0ae03-attempt"
+      },
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "proj-alpha",
+        "planId": "plan-p107-parallel"
+      },
+      "roleBinding": {
+        "schemaVersion": 1,
+        "bindingId": "independent-reviewer-v1",
+        "templateId": "independent-reviewer",
+        "templateRevision": "1",
+        "bindingVersion": 1,
+        "policyRevision": "independent-review-v1"
+      },
+      "workspaceSnapshot": {
+        "workspaceId": "ws-shared",
+        "revision": 1
+      },
+      "permissions": {
+        "policyRevision": "independent-review-v1",
+        "tools": [
+          "read"
+        ],
+        "writeScope": []
+      },
+      "budget": {
+        "tokenBudget": 80000,
+        "deadline": null
+      },
+      "sourceRefs": [
+        {
+          "kind": "plan-revision",
+          "refId": "plan-p107-parallel",
+          "revision": "1"
+        },
+        {
+          "kind": "workspace",
+          "refId": "ws-shared",
+          "revision": "1",
+          "digest": "88f9a983bc7921b33239b2cc15186b90438115fde46a6b5c2d4aba4badcabd9c"
+        },
+        {
+          "kind": "artifact",
+          "refId": "82201e782cc0706943a84e0bf0f78f09aa5856aceac71d5d7894fdeea382ea9f",
+          "revision": "1",
+          "digest": "82201e782cc0706943a84e0bf0f78f09aa5856aceac71d5d7894fdeea382ea9f"
+        }
+      ],
+      "bundleRef": {
+        "kind": "artifact",
+        "contentType": "application/json",
+        "digest": "cd3ca2d69429d82ffdd3113647ca41215126dd33024cb54a98610e0472ddf419",
+        "sizeBytes": 7866,
+        "source": {
+          "kind": "plan-revision",
+          "refId": "plan-p107-parallel",
+          "revision": "1"
+        }
+      },
+      "work": {
+        "kind": "review",
+        "reviewWorkRef": {
+          "aggregateType": "ReviewWork",
+          "projectId": "proj-alpha",
+          "workspaceId": "ws-shared",
+          "goalId": "goal-p107-1",
+          "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+        }
+      },
+      "reviewInput": {
+        "packetRef": {
+          "kind": "artifact",
+          "contentType": "application/json",
+          "digest": "6b59ec44e5e5c9d2f53cb282354505b48c99065f8021bf9a4b4253a082f7de03",
+          "sizeBytes": 6083,
+          "source": {
+            "kind": "plan-revision",
+            "refId": "plan-p107-parallel",
+            "revision": "1"
+          }
+        },
+        "packetDigest": "6b59ec44e5e5c9d2f53cb282354505b48c99065f8021bf9a4b4253a082f7de03",
+        "inputDigest": "aff557748921fd33094290e88d8f90ea96fd1e8a816a852f852875eeb34f942f",
+        "descriptorDigest": "82201e782cc0706943a84e0bf0f78f09aa5856aceac71d5d7894fdeea382ea9f",
+        "grantRefs": [
+          {
+            "aggregateType": "MaterialAccessGrant",
+            "projectId": "proj-alpha",
+            "workspaceId": "ws-shared",
+            "goalId": "goal-p107-1",
+            "grantId": "grant-308975b5319b9088719f9f3fd90f7cee"
+          }
+        ]
+      }
+    },
+    "startedAt": "2026-09-06T12:00:00.000Z",
+    "endedAt": "2026-09-13T06:55:13.126Z"
+  },
+  "runtime": [
+    {
+      "spec": {
+        "mode": "review",
+        "review": {
+          "workRef": {
+            "aggregateType": "ReviewWork",
+            "projectId": "proj-alpha",
+            "workspaceId": "ws-shared",
+            "goalId": "goal-p107-1",
+            "reviewId": "review-1a1454b787101235e47007adf396c875a4c0ae03"
+          },
+          "profile": {
+            "schemaVersion": 1,
+            "subjectScope": {
+              "projectId": "proj-alpha",
+              "workspaceId": "ws-shared",
+              "goalId": "goal-p107-1",
+              "taskId": "task-p107-writer-b",
+              "runId": "independent-review-producer"
+            },
+            "roleBinding": {
+              "schemaVersion": 1,
+              "bindingId": "independent-reviewer-v1",
+              "templateId": "independent-reviewer",
+              "templateRevision": "1",
+              "bindingVersion": 1,
+              "policyRevision": "independent-review-v1"
+            },
+            "mode": "review",
+            "permissions": {
+              "tools": [
+                "read"
+              ],
+              "writeScope": []
+            },
+            "model": {
+              "configurationRevision": "model-1",
+              "provider": "fixture",
+              "model": "reviewer",
+              "baseUrl": "http://localhost:1"
+            },
+            "budget": {
+              "contextWindowTokens": 80000,
+              "inputTokens": null,
+              "outputTokens": null,
+              "maxRequests": null,
+              "maxToolCalls": null,
+              "timeoutMs": null,
+              "perResponseTokens": 4096
+            },
+            "profileId": "reviewer-profile-daf16c07d1a827612d802e965f61ccb4ccbfbd141aa429ec47165d63e0b30b35",
+            "revision": 1,
+            "digest": "daf16c07d1a827612d802e965f61ccb4ccbfbd141aa429ec47165d63e0b30b35"
+          }
+        },
+        "projectId": "proj-alpha",
+        "workspaceId": "ws-shared",
+        "goalId": "goal-p107-1",
+        "taskId": "task-p107-writer-b",
+        "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run",
+        "root": "/tmp/independent-review-source-h6N6D0",
+        "instruction": "Independently review the pinned task, current source, and complete tool reports. Use the read-only source and material tools. Return exactly the independent-review-result JSON schema supplied in the packet. Report every required reviewer item with citations and concrete rationale; do not infer PASS from process completion.",
+        "budget": {
+          "contextWindowTokens": 80000,
+          "inputTokens": null,
+          "outputTokens": null,
+          "maxRequests": null,
+          "maxToolCalls": null,
+          "timeoutMs": null,
+          "perResponseTokens": 4096
+        }
+      },
+      "createdAt": "2026-09-13T06:55:13.050Z",
+      "status": "failed",
+      "sessionId": "89199bbc-c35a-4705-8cd5-bb35c3f21fbb",
+      "configuration": null,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "eventId": "89199bbc-c35a-4705-8cd5-bb35c3f21fbb-1",
+          "runRef": {
+            "aggregateType": "Run",
+            "projectId": "proj-alpha",
+            "goalId": "goal-p107-1",
+            "runId": "review-1a1454b787101235e47007adf396c875a4c0ae03-run"
+          },
+          "sequence": 1,
+          "occurredAt": "2026-09-13T06:55:13.126Z",
+          "eventType": "run_crashed",
+          "payload": {
+            "kind": "crashed",
+            "error": "执行前材料校验失败：工作区读租约被拒绝：read_lease_conflict"
+          }
+        }
+      ],
+      "trace": [],
+      "usage": [],
+      "error": "执行前材料校验失败：工作区读租约被拒绝：read_lease_conflict",
+      "nodeSha256": null,
+      "workspaceRevision": null,
+      "cancelRequested": false
+    }
+  ]
+}
+
+ [32m✓[39m tests/control/reviewer-runtime-start-rejection.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 1374[2mms[22m[39m
+   [33m[2m✓[22m[39m classifies the real runtime.start closing rejection as one canonical crash with no model execution [33m 713[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves unknown effects when the same runtime.start catch cannot prove that execution never started [33m 659[2mms[22m[39m
+ [32m✓[39m tests/control/reviewer-lease-conflict-recovery.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 1555[2mms[22m[39m
+   [33m[2m✓[22m[39m ends a reviewer run as known failed when its read lease is refused before model/tool start [33m 944[2mms[22m[39m
+   [33m[2m✓[22m[39m ends a reviewer run as known failed when execution.start rejects before any model or tool call [33m 609[2mms[22m[39m
+ [32m✓[39m tests/control/reviewer-work-persistence.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 1737[2mms[22m[39m
+   [33m[2m✓[22m[39m reopens SQLite Work/output/Result/evidence and read projections with the same accepted command identity [33m 1735[2mms[22m[39m
+ [32m✓[39m tests/control/role-spec.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 1506[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite 重开后角色规格与生效引用仍在，claim 守卫按同一份矩阵裁决 [33m 1453[2mms[22m[39m
+ [32m✓[39m tests/control/reviewer-work.test.ts [2m([22m[2m20 tests[22m[2m)[22m[33m 1347[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a grouped report exceeding the shared 512 evidence cap without a partial Result or index update [33m 498[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a grouped report exceeding the shared 512 evidence cap without a partial Result or index update [33m 544[2mms[22m[39m
+ [32m✓[39m tests/control/workspace-registration.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 1260[2mms[22m[39m
+   [33m[2m✓[22m[39m sqlite: registers explicit workspaces without rewriting bootstrap, rejects stale/forged inputs and replays after reopen [33m 1239[2mms[22m[39m
+ [32m✓[39m tests/control/rework-drive.test.ts [2m([22m[2m22 tests[22m[2m)[22m[33m 1244[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite 重启后一致：多失败分组的处置事实与逐项交代都由持久／canonical 事实重建 [33m 604[2mms[22m[39m
+ [32m✓[39m tests/coordination/control.sqlite.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 1018[2mms[22m[39m
+ [32m✓[39m tests/control/role-material-completion.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 1394[2mms[22m[39m
+   [33m[2m✓[22m[39m 装 executor 规格 + 矩阵：运行开始 → 登记实现结果 → 轮次 PASS → Task satisfied [33m 1393[2mms[22m[39m
+ [32m✓[39m tests/control/work-material-gate.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 832[2mms[22m[39m
+   [33m[2m✓[22m[39m 装 executor 规格 + 含 roles 的矩阵之后，普通 develop 运行真正开始（模型被调用），四类材料各有来源 [33m 830[2mms[22m[39m
+ [32m✓[39m tests/control/autonomous-rework.test.ts [2m([22m[2m14 tests[22m[2m)[22m[33m 613[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite 重启后：预算计数与人工拒绝事实都从账本重建 [33m 437[2mms[22m[39m
+ [32m✓[39m tests/control/work-record.test.ts [2m([22m[2m15 tests[22m[2m)[22m[33m 467[2mms[22m[39m
+ [32m✓[39m tests/coordination/participation-uniqueness.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 363[2mms[22m[39m
+     [33m[2m✓[22m[39m 两条独立 SQLite 连接：第二段 active 参与被账本拒绝（零写入），旧段结束后换手成立 [33m 362[2mms[22m[39m
+ [32m✓[39m tests/control/work-identity-uniqueness.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 504[2mms[22m[39m
+ [32m✓[39m tests/control/reviewer-unknown-outcome-preservation.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 668[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps an unprovable reviewer start as outcome_unknown and never reruns the model [33m 666[2mms[22m[39m
+ [32m✓[39m tests/control/baseline-evolution.test.ts [2m([22m[2m31 tests[22m[2m)[22m[32m 270[2mms[22m[39m
+ [32m✓[39m tests/control/goal-change.test.ts [2m([22m[2m29 tests[22m[2m)[22m[32m 163[2mms[22m[39m
+ [32m✓[39m tests/control/evidence-intake.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 272[2mms[22m[39m
+ [32m✓[39m tests/coordination/handoff-successor.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 203[2mms[22m[39m
+ [32m✓[39m tests/control/goal-reducer.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 131[2mms[22m[39m
+ [32m✓[39m tests/control/remediation.test.ts [2m([22m[2m28 tests[22m[2m)[22m[32m 152[2mms[22m[39m
+ [31m❯[39m tests/coordination/route-continuity.test.ts [2m([22m[2m13 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 323[2mms[22m[39m
+     [32m✓[39m DirectedRequestSent 的提交回执同时含源事件与同位置的 CommunicationIntentRecorded，且 sourceCursor 逐字节等于源事件游标[32m 61[2mms[22m[39m
+     [32m✓[39m 整轮候选集合而不是本页切片：3 个订阅 + 页大小 1 → 首轮就把 3 个都固定进范围，翻满 3 页并全部投递[32m 22[2mms[22m[39m
+     [32m✓[39m 本页引入本轮范围外的订阅 → Control 整页拒绝（零写入）[32m 12[2mms[22m[39m
+     [32m✓[39m 同一 topic 上更靠后的事件位置，在前一条未收敛的 route intent 完成前不被推进[32m 20[2mms[22m[39m
+     [32m✓[39m 已证实无副作用的失败进入 retry_scheduled（availableAt = settledAt + 退避）；已开始的副作用一律拒绝退避[32m 11[2mms[22m[39m
+     [32m✓[39m 租约到期不构成重跑依据：sideEffectStarted 的 intent 不被重领，只作为 requires_reconcile 可见[32m 9[2mms[22m[39m
+     [32m✓[39m 未产生副作用：取消等待后 intent **先**落成 cancel_requested，drive 之后收敛为 cancelled[32m 23[2mms[22m[39m
+     [32m✓[39m 副作用已经开始：同一个取消请求只能收敛为 outcome_unknown，绝不声称 cancelled[32m 18[2mms[22m[39m
+   [32m✓[39m a burst of source events during pagination creates every round and delivers each subscription once in order[32m 70[2mms[22m[39m
+   [32m✓[39m one historical subscription preserves multiple topics and hands over to live sources at its fixed creation horizon[32m 31[2mms[22m[39m
+   [32m✓[39m a subscription committed while a source is awaiting commit joins that source atomically[32m 10[2mms[22m[39m
+   [32m✓[39m cancelling the final subscription during a fixed three-page round advances the page without delivering to it[32m 15[2mms[22m[39m
+[31m   [31m×[31m restart-style recovery finishes derived cancellation after the Wait commit succeeded and the caller disappeared[39m[32m 20[2mms[22m[39m
+ [32m✓[39m tests/control/reviewer-reduction-race.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 110[2mms[22m[39m
+ [32m✓[39m tests/control/workspace-lease.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 105[2mms[22m[39m
+ [32m✓[39m tests/control/rework-disposition-authority.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 251[2mms[22m[39m
+ [32m✓[39m tests/control/task-reducer.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 67[2mms[22m[39m
+ [31m❯[39m tests/control/reviewer-dispatch-isolation.test.ts [2m([22m[2m2 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[32m 77[2mms[22m[39m
+[31m     [31m×[31m filters ReviewWork before limiting ordinary dispatch and preserves the default query[39m[32m 51[2mms[22m[39m
+[31m     [31m×[31m filters ReviewWork before limiting ordinary dispatch and preserves the default query[39m[32m 25[2mms[22m[39m
+ [32m✓[39m tests/control/role-binding-admission.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 66[2mms[22m[39m
+ [32m✓[39m tests/control/integration-join.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 85[2mms[22m[39m
+ [32m✓[39m tests/control/planning-interface.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 56[2mms[22m[39m
+ [32m✓[39m tests/control/plan-acceptance.test.ts [2m([22m[2m22 tests[22m[2m)[22m[32m 47[2mms[22m[39m
+ [32m✓[39m tests/control/rework-plan-compiler.test.ts [2m([22m[2m21 tests[22m[2m)[22m[32m 71[2mms[22m[39m
+ [32m✓[39m tests/control/remediation-writer-chain.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 52[2mms[22m[39m
+ [32m✓[39m tests/control/work-identity.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 56[2mms[22m[39m
+ [32m✓[39m tests/control/replacement-claim.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 59[2mms[22m[39m
+ [32m✓[39m tests/control/reviewer-existing-drivers-isolation.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 65[2mms[22m[39m
+ [32m✓[39m tests/control/p1-15-role-rework-loop.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 45[2mms[22m[39m
+ [32m✓[39m tests/control/human-role-collaboration.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 50[2mms[22m[39m
+ [32m✓[39m tests/control/dispatch-drive.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 52[2mms[22m[39m
+ [32m✓[39m tests/control/handoff.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 51[2mms[22m[39m
+ [32m✓[39m tests/control/plan-impact-work-identity.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 37[2mms[22m[39m
+ [32m✓[39m tests/coordination/control.test.ts [2m([22m[2m28 tests[22m[2m)[22m[32m 64[2mms[22m[39m
+ [32m✓[39m tests/control/workspace-drive.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 47[2mms[22m[39m
+ [32m✓[39m tests/control/handoff-drive.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 50[2mms[22m[39m
+ [32m✓[39m tests/control/patch-record.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 45[2mms[22m[39m
+ [32m✓[39m tests/control/dispatch-start.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 33[2mms[22m[39m
+ [32m✓[39m tests/control/plan-compiler.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 33[2mms[22m[39m
+ [32m✓[39m tests/control/run-facts.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 31[2mms[22m[39m
+ [32m✓[39m tests/control/architecture-inspection.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m tests/control/initial-plan-source.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m tests/control/dispatch-claim.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m tests/control/architecture-evolution-policy.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 21[2mms[22m[39m
+ [32m✓[39m tests/control/control-engine.test.ts [2m([22m[2m22 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m tests/control/governance-install.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m tests/control/dispatch-readiness.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 23[2mms[22m[39m
+ [32m✓[39m tests/control/material-access.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 23[2mms[22m[39m
+ [32m✓[39m tests/control/governance-activate.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m tests/control/architecture-reconciler.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m tests/control/role-spec-material-read.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m tests/control/canonical-record-scope.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m tests/control/workspace-capability-policy.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m tests/contracts/goal-phase.test.ts [2m([22m[2m25 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/control/governance-command-builders.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/control/runtime-dispatch.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/contracts/material-access.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/control/baseline-evolution-port.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/contracts/fixtures.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m tests/contracts/validation.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m tests/control/rework-unknown-disposition-review.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m tests/contracts/fingerprint.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m tests/control/architecture-delta-regression.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m tests/contracts/state-ledger.double.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 3[2mms[22m[39m
+ [32m✓[39m tests/contracts/cursor.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 3 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-continuity.test.ts[2m > [22mrestart-style recovery finishes derived cancellation after the Wait commit succeeded and the caller disappeared
+[31m[1mAssertionError[22m: expected [ { …(3) } ] to deeply equal [][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- [][39m
+[31m+ [[39m
+[31m+   {[39m
+[31m+     "code": "unavailable",[39m
+[31m+     "intentId": "coordination-drive",[39m
+[31m+     "message": "Canonical cancellation recovery is not connected",[39m
+[31m+   },[39m
+[31m+ ][39m
+
+[36m [2m❯[22m tests/coordination/route-continuity.test.ts:[2m764:44[22m[39m
+    [90m762|[39m   expect((await loadIntent(s, intent.intent.intentId)).intent.status).…
+    [90m763|[39m   const recovered = await s.h.drive({ reason: 'rebuild-after-cancel-cr…
+    [90m764|[39m   [34mexpect[39m(recovered[33m.[39mcoordination[33m?.[39mfailures)[33m.[39m[34mtoEqual[39m([])[33m;[39m
+    [90m   |[39m                                            [31m^[39m
+    [90m765|[39m   expect((await loadIntent(s, intent.intent.intentId)).intent.status).…
+    [90m766|[39m   expect((await scanEvents(s.h)).filter(e => e.eventType === 'Communic…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/control/reviewer-dispatch-isolation.test.ts[2m > [22mreview dispatch isolation memory[2m > [22mfilters ReviewWork before limiting ordinary dispatch and preserves the default query
+[41m[1m FAIL [22m[49m tests/control/reviewer-dispatch-isolation.test.ts[2m > [22mreview dispatch isolation sqlite[2m > [22mfilters ReviewWork before limiting ordinary dispatch and preserves the default query
+[31m[1mAssertionError[22m: expected [ { ref: { …(5) }, …(7) }, …(1) ] to deeply equal [ { ref: { …(5) }, …(7) }, …(1) ][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[33m@@ -132,11 +132,17 @@[39m
+[2m        "attemptId": "zz-ordinary",[22m
+[2m        "goalId": "goal-1",[22m
+[2m        "projectId": "review-project",[22m
+[2m        "taskId": "task-verify-view",[22m
+[2m      },[22m
+[32m-     "revision": 1,[39m
+[31m+     "revision": 4,[39m
+[31m+     "schedule": {[39m
+[31m+       "attemptCount": 3,[39m
+[31m+       "availableAt": "2026-09-09T08:00:04.000Z",[39m
+[31m+       "lastFailure": "needs_material: ",[39m
+[31m+       "quarantined": false,[39m
+[31m+     },[39m
+[2m      "schemaVersion": 1,[22m
+[2m      "startedAt": null,[22m
+[2m      "status": "pending",[22m
+[2m    },[22m
+[2m  ][22m
+
+[36m [2m❯[22m tests/control/reviewer-dispatch-isolation.test.ts:[2m47:53[22m[39m
+    [90m 45|[39m     }
+    [90m 46|[39m     [34mexpect[39m(selected)[33m.[39m[34mtoEqual[39m([33mArray[39m([34m3[39m)[33m.[39m[34mfill[39m([32m'ordinary-other-task'[39m))[33m;[39m
+    [90m 47|[39m     [34mexpect[39m([35mawait[39m ledger[33m.[39m[34mpendingDispatchIntents[39m([34m10[39m))[33m.[39m[34mtoEqual[39m(all)[33m;[39m
+    [90m   |[39m                                                     [31m^[39m
+    [90m 48|[39m     [35mif[39m ([32m'close'[39m [35min[39m ledger) [35mawait[39m ledger[33m.[39m[34mclose[39m()[33m;[39m
+    [90m 49|[39m   })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m85 passed[39m[22m[90m (87)[39m
+[2m      Tests [22m [1m[31m3 failed[39m[22m[2m | [22m[1m[32m758 passed[39m[22m[90m (761)[39m
+[2m   Start at [22m 14:54:14
+[2m   Duration [22m 110.21s[2m (transform 64.79s, setup 0ms, import 155.46s, tests 121.77s, environment 7ms)[22m
+

@@ -1,0 +1,118 @@
+
+ RUN  v4.1.10 /mnt/d/1.project/Software/agent_platform
+
+ ✓ tests/sqlite-ledger/sqlite-ledger.restart.test.ts (1 test) 223ms
+ ✓ tests/ledger/identity-upgrade.test.ts (3 tests) 650ms
+ ✓ tests/sqlite-read-model/p1-07-projection.test.ts (6 tests) 1492ms
+     ✓ projection persists across close()/reopen and rebuild == incremental  1469ms
+ ✓ tests/sqlite-read-model/material-access-projection.test.ts (2 tests) 1516ms
+     ✓ keeps grant rows across a close/open cycle on the same file  1508ms
+ ✓ tests/sqlite-read-model/p1-06-handoff-projection.test.ts (7 tests) 1614ms
+     ✓ projection persists across close()/reopen and the reopen replays to the same view  1586ms
+ ✓ tests/sqlite-read-model/p1-04-verification-projection.test.ts (9 tests) 38ms
+ ✓ tests/contracts/module-ownership.test.ts (9 tests) 5762ms
+     ✓ keeps the workspace path-boundary policy in exactly one WorkspaceReader file  5220ms
+ ✓ tests/read-model/material-access-lookup.test.ts (2 tests) 34ms
+ ✓ tests/sqlite-read-model/sqlite-read-model-index.contract.test.ts (11 tests) 30ms
+ ✓ tests/read-model/p1-03-run-projection.test.ts (7 tests) 14ms
+ ✓ tests/sqlite-read-model/p1-11-plan-change.test.ts (5 tests) 5751ms
+     ✓ projects proposals/decisions/revisions and computes task dispositions  1509ms
+     ✓ isolates the same local goal id across projects (hard scope key)  1335ms
+     ✓ a never-advanced index returns not_found (no cursor claim)  1425ms
+     ✓ rebuild equivalence: close/reopen against the SAME db file reproduces the view  1470ms
+ ✓ tests/sqlite-read-model/p1-15-unified-status.test.ts (4 tests) 5738ms
+     ✓ projects the 4 rows and returns a ready facts-first view  1515ms
+     ✓ a never-advanced index returns not_found (no cursor claim)  1313ms
+     ✓ isolates the same local ids across projects (hard scope key)  1450ms
+     ✓ rebuild equivalence: close/reopen against the SAME db file reproduces the view  1458ms
+ ✓ tests/sqlite-read-model/p1-14-baseline-change-view.test.ts (4 tests) 5762ms
+     ✓ projects candidate/decision/gate/activation rows and a ready post-activation view  1492ms
+     ✓ isolates the same local ids across projects (hard scope key)  1364ms
+     ✓ a never-advanced index returns not_found (no cursor claim)  1456ms
+     ✓ rebuild equivalence: close/reopen against the SAME db file reproduces the view  1449ms
+ ✓ tests/read-model/p1-06-handoff-projection.test.ts (7 tests) 11ms
+ ✓ tests/sqlite-ledger/sqlite-ledger.contract.test.ts (16 tests) 22ms
+ ✓ tests/sqlite-read-model/plan-view.test.ts (6 tests) 7131ms
+     ✓ fresh rebuild from the same EventPages equals the incremental projection  2933ms
+     ✓ reopening the same file and continuing equals a one-shot full replay  2979ms
+     ✓ persisted dedupe: re-advancing an applied page after reopen is idempotent  1204ms
+ ✓ tests/read-model/plan-view.test.ts (8 tests) 10ms
+ ✓ tests/read-model/p1-05-goal-phase-projection.test.ts (5 tests) 57ms
+ ✓ tests/sqlite-read-model/p1-16-continuation-projection.test.ts (4 tests) 13ms
+ ✓ tests/read-model/p1-08-portfolio-summary.test.ts (5 tests) 161ms
+ ✓ tests/read-model/p1-08-matrix-agents-evidence-timeline.test.ts (5 tests) 172ms
+ ✓ tests/read-model/p1-12-brief-proposal-projection.test.ts (3 tests) 104ms
+ ✓ tests/read-model/p1-07-projection.test.ts (6 tests) 15ms
+ ✓ tests/read-model/p1-16-work-context.test.ts (4 tests) 164ms
+ ✓ tests/ledger/in-memory-ledger.boundary.test.ts (11 tests) 10ms
+ ✓ tests/read-model/read-model-index.contract.test.ts (11 tests) 9ms
+ ✓ tests/read-model/p1-04-verification-projection.test.ts (9 tests) 17ms
+ ✓ tests/read-model/p1-14-baseline-change-view.test.ts (4 tests) 9ms
+ ✓ tests/read-model/plan-change-timeline.test.ts (3 tests) 18ms
+ ✓ tests/contracts/goal-phase.test.ts (25 tests) 11ms
+ ✓ tests/ledger/in-memory-ledger.contract.test.ts (16 tests) 15ms
+ ✓ tests/read-model/p1-15-unified-status.test.ts (4 tests) 9ms
+ ✓ tests/ledger/snapshot-isolation.test.ts (3 tests) 8ms
+ ✓ tests/contracts/material-access.test.ts (9 tests) 6ms
+ ✓ tests/read-model/p1-16-continuation-projection.test.ts (4 tests) 7ms
+ ✓ tests/read-model/p1-11-plan-change.test.ts (6 tests) 11ms
+ ✓ tests/sqlite-read-model/p1-03-run-projection.test.ts (7 tests) 11247ms
+     ✓ claim -> start -> facts: ActiveAgent + TaskDetail.run fold field-for-field  1465ms
+     ✓ crash and outcome_unknown project to DIFFERENT outcomes (unknown never guessed from crash)  1401ms
+     ✓ fresh file rebuilt from the same pages reproduces the projection field-for-field  2957ms
+     ✓ full-scope isolation: same goalId/taskId under different Projects never collide  1203ms
+     ✓ freshness: not_ready != not_found for the active agent view  1046ms
+     ✓ dedupe: re-advancing the same page is idempotent (no re-apply, no base advance)  1528ms
+     ✓ late/stale runtime event (sequence <= lastEventSeq) does not regress the fold  1646ms
+ ✓ tests/read-model/governance-view.test.ts (5 tests) 6ms
+ ✓ tests/read-model/material-access-projection.test.ts (3 tests) 7ms
+ ✓ tests/read-model/read-model-index.test.ts (9 tests) 8ms
+ ✓ tests/read-model/plan-view.rebuild.test.ts (2 tests) 7ms
+ ✓ tests/contracts/fixtures.test.ts (7 tests) 6ms
+ ✓ tests/contracts/validation.test.ts (9 tests) 5ms
+ ✓ tests/sqlite-read-model/sqlite-read-model-index.restart.test.ts (5 tests) 12755ms
+     ✓ fresh rebuild from the same EventPages equals the incremental projection  2932ms
+     ✓ reopening the same file and continuing equals a one-shot full replay  3008ms
+     ✓ partial rebuild of a prefix equals the incremental prefix  2393ms
+     ✓ persisted dedupe: re-advancing an applied page after reopen is idempotent  1297ms
+     ✓ rebuilt view reflects a same-key update identically (upsert == rebuild)  3124ms
+ ✓ tests/contracts/fingerprint.test.ts (9 tests) 4ms
+ ✓ tests/contracts/cursor.test.ts (3 tests) 3ms
+ ✓ tests/contracts/state-ledger.double.test.ts (1 test) 2ms
+ ✓ tests/read-model/completed-work-filter.test.ts (2 tests) 3871ms
+   ✓ completed-work view excludes uncompleted coordination bindings (sqlite)  3799ms
+ ✓ tests/read-model/completed-work-merge-visibility.test.ts (2 tests) 3779ms
+   ✓ completed-work view exposes a merged duplicate identity instead of dropping it silently (sqlite)  3705ms
+ ✓ tests/sqlite-read-model/p1-05-goal-phase-projection.test.ts (4 tests) 10554ms
+     ✓ GoalPhaseUpdated projects goalStatus + timeline (RUNNING -> COMPLETED, ordered)  2615ms
+     ✓ rebuild equivalence: same ledger + FRESH read-model file -> field-for-field views  3978ms
+     ✓ full-key isolation + not_found only after coverage + read-only  2439ms
+     ✓ full-scope isolation: two Projects share the same goalId without colliding  1521ms
+ ✓ tests/sqlite-read-model/p1-12-brief-proposal-projection.test.ts (3 tests) 11952ms
+     ✓ surfaces lane-B briefs/proposals per full scope key with cross-project isolation  3624ms
+     ✓ freshness: a never-advanced index returns not_ready (not not_found)  3365ms
+     ✓ rebuild equivalence: close/reopen with a fresh read-model file reproduces the view  4961ms
+ ✓ tests/sqlite-read-model/p1-16-work-context.test.ts (4 tests) 13599ms
+     ✓ projects the binding + notes rows and survives close/reopen (restart equivalence)  3646ms
+     ✓ scope isolation: the SAME local workId in project B has its OWN rows (no cross-project read)  3397ms
+     ✓ notes append in order and the multi-run link path is projected  3469ms
+     ✓ freshness: a never-bound work is not_found (distinct from not_ready)  3086ms
+ ✓ tests/sqlite-read-model/p1-08-portfolio-summary.test.ts (5 tests) 15914ms
+     ✓ consolePortfolio lists both isolated bootstrapped scopes in scope-key order  3382ms
+     ✓ consoleSummary aggregates counters per project; local ids never cross-read  3345ms
+     ✓ phaseCounts track the LATEST reduction phase per task and the latest goal phase  3370ms
+     ✓ freshness: covered+no row -> not_found; uncovered -> not_ready; no cursor+no row -> not_ready  3118ms
+     ✓ portfolio freshness mirrors summary (covered ready; uncovered not_ready)  2698ms
+ ✓ tests/sqlite-read-model/p1-08-matrix-agents-evidence-timeline.test.ts (5 tests) 16627ms
+     ✓ consolePlanMatrix: 3 rows, planned vs live phase separation, project isolation  3426ms
+     ✓ consoleActiveAgents: sourcing, outcome_unknown, replacement handoff, isolation, goalId filter  3340ms
+     ✓ consoleTaskEvidence: admission order, markers, effective set, ref_only  3403ms
+     ✓ consoleTimeline: arrival seq, kinds, ref chain, bounded window, goalId filter  3126ms
+     ✓ rebuild equivalence: close/reopen with a fresh read-model file reproduces the views  3332ms
+
+ Test Files  54 passed (54)
+      Tests  329 passed (329)
+   Start at  00:35:13
+   Duration  31.43s (transform 193.31s, setup 0ms, import 215.16s, tests 136.96s, environment 4ms)
+
+targeted rc=0

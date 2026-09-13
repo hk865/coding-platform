@@ -1,0 +1,20 @@
+import { describe, expect, it } from "vitest";
+import { ScriptedStateLedger } from "../contract-support/testing/state-ledger.double.js";
+import type { DispatchOutboxEntrySnapshot } from "../../src/contracts/dispatch.js";
+
+describe("ScriptedStateLedger pending dispatch selection", () => {
+  it("filters before applying limit, matching both production ledgers", async () => {
+    const entry = (id: string, kind: "review" | "ordinary"): DispatchOutboxEntrySnapshot => ({
+      ref: { aggregateType: "DispatchOutboxEntry", projectId: "p", taskId: id },
+      revision: 1,
+      status: "pending",
+      intent: { work: kind === "review" ? { kind: "review" } : undefined },
+    } as DispatchOutboxEntrySnapshot);
+    const ordinary = entry("a-ordinary", "ordinary");
+    const review = entry("z-review", "review");
+    const ledger = new ScriptedStateLedger({ pendingIntents: () => [ordinary, review] });
+    const selection = { workKind: "review" as const };
+    expect(await ledger.pendingDispatchIntents(1, selection)).toEqual([review]);
+    expect(ledger.pendingIntentsCalls).toEqual([{ limit: 1, selection }]);
+  });
+});

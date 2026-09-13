@@ -1,0 +1,55 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/control/dispatch-drive.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 68[2mms[22m[39m
+ [31m❯[39m tests/coordination/route-continuity.test.ts [2m([22m[2m9 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[32m 232[2mms[22m[39m
+     [32m✓[39m DirectedRequestSent 的提交回执同时含源事件与同位置的 CommunicationIntentRecorded，且 sourceCursor 逐字节等于源事件游标[32m 47[2mms[22m[39m
+     [32m✓[39m 整轮候选集合而不是本页切片：3 个订阅 + 页大小 1 → 首轮就把 3 个都固定进范围，翻满 3 页并全部投递[32m 17[2mms[22m[39m
+     [32m✓[39m 本页引入本轮范围外的订阅 → Control 整页拒绝（零写入）[32m 11[2mms[22m[39m
+     [32m✓[39m 同一 topic 上更靠后的事件位置，在前一条未收敛的 route intent 完成前不被推进[32m 19[2mms[22m[39m
+[31m     [31m×[31m 已证实无副作用的失败进入 retry_scheduled（availableAt = settledAt + 退避）；已开始的副作用一律拒绝退避[39m[32m 17[2mms[22m[39m
+     [32m✓[39m 租约到期不构成重跑依据：sideEffectStarted 的 intent 不被重领，只作为 requires_reconcile 可见[32m 10[2mms[22m[39m
+     [32m✓[39m 未产生副作用：取消等待后 intent **先**落成 cancel_requested，drive 之后收敛为 cancelled[32m 23[2mms[22m[39m
+[31m     [31m×[31m 副作用已经开始：同一个取消请求只能收敛为 outcome_unknown，绝不声称 cancelled[39m[32m 16[2mms[22m[39m
+   [32m✓[39m a burst of source events during pagination creates every round and delivers each subscription once in order[32m 70[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-continuity.test.ts[2m > [22m取消与 unknown（A07/A08）：非终态退避与已开始的副作用[2m > [22m已证实无副作用的失败进入 retry_scheduled（availableAt = settledAt + 退避）；已开始的副作用一律拒绝退避
+[31m[1mAssertionError[22m: {"status":"rejected","commandId":"cmd-rc-settle-route-0e5dc71243f2eafb2512988d-started","code":"forbidden","issues":["Only the current lease owner may settle this generation"]}: expected 'rejected' to be 'committed' // Object.is equality[39m
+
+Expected: [32m"[7mcommit[27mted"[39m
+Received: [31m"[7mrejec[27mted"[39m
+
+[36m [2m❯[22m tests/coordination/route-continuity.test.ts:[2m502:53[22m[39m
+    [90m500|[39m       reason[33m:[39m [32m"即将调用执行能力"[39m[33m,[39m settledAt[33m:[39m [33mAT[39m[33m,[39m
+    [90m501|[39m     }[33m,[39m [32m"started"[39m))[33m;[39m
+    [90m502|[39m     [34mexpect[39m(started[33m.[39mstatus[33m,[39m [33mJSON[39m[33m.[39m[34mstringify[39m(started))[33m.[39m[34mtoBe[39m([32m"committed"[39m)[33m;[39m
+    [90m   |[39m                                                     [31m^[39m
+    [90m503|[39m     [35mconst[39m startedIntent [33m=[39m [35mawait[39m [34mloadIntent[39m(s[33m,[39m intentId)[33m;[39m
+    [90m504|[39m     [34mexpect[39m(startedIntent[33m.[39mintent[33m.[39msideEffectStarted)[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-continuity.test.ts[2m > [22m先持久化取消意图（A07）：等待被取消 → 派生 intent 先被标记、再被收敛[2m > [22m副作用已经开始：同一个取消请求只能收敛为 outcome_unknown，绝不声称 cancelled
+[31m[1mAssertionError[22m: {"status":"rejected","commandId":"cmd-rc-settle-wadmit-888adffaa8aeadabe7bcfadd-unknown-start","code":"forbidden","issues":["Only the current lease owner may settle this generation"]}: expected 'rejected' to be 'committed' // Object.is equality[39m
+
+Expected: [32m"[7mcommit[27mted"[39m
+Received: [31m"[7mrejec[27mted"[39m
+
+[36m [2m❯[22m tests/coordination/route-continuity.test.ts:[2m636:53[22m[39m
+    [90m634|[39m       reason[33m:[39m [32m"即将调用执行能力"[39m[33m,[39m settledAt[33m:[39m [33mAT[39m[33m,[39m
+    [90m635|[39m     }[33m,[39m [32m"unknown-start"[39m))[33m;[39m
+    [90m636|[39m     [34mexpect[39m(started[33m.[39mstatus[33m,[39m [33mJSON[39m[33m.[39m[34mstringify[39m(started))[33m.[39m[34mtoBe[39m([32m"committed"[39m)[33m;[39m
+    [90m   |[39m                                                     [31m^[39m
+    [90m637|[39m
+    [90m638|[39m     [35mawait[39m [34mcancelWait[39m(s[33m,[39m waitId)[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m1 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m14 passed[39m[22m[90m (16)[39m
+[2m   Start at [22m 14:34:17
+[2m   Duration [22m 9.72s[2m (transform 14.50s, setup 0ms, import 15.49s, tests 300ms, environment 0ms)[22m
+

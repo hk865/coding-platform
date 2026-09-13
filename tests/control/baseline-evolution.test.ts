@@ -58,7 +58,13 @@ class RecordingLedger extends InMemoryLedger {
   override events(query: Parameters<StateLedger["events"]>[0]) { return this.backing ? this.backing.events(query) : super.events(query); }
   commits: LedgerCommit[] = [];
   eventCount = 0;
+  beforeCandidateCommit?: () => Promise<void>;
   override async commit(batch: LedgerCommit): Promise<LedgerCommitReceipt> {
+    if (batch.commitKind === "candidate-baseline-materialize" && this.beforeCandidateCommit) {
+      const hook = this.beforeCandidateCommit;
+      delete this.beforeCandidateCommit;
+      await hook();
+    }
     this.commits.push(batch);
     this.eventCount += batch.events.length;
     return this.backing ? this.backing.commit(batch) : super.commit(batch);
@@ -220,7 +226,7 @@ describe("P1-14 BaselineEvolutionEngineImpl", () => {
         contentDigest: candidateContentDigest(proposal.normalizedContent),
         materializedAt: FIXED,
       };
-      const expectedFold = buildP114CandidateFold(materializeCmd, { eventId: mBatch.events[0]!.eventId, occurredAt: mBatch.events[0]!.occurredAt, candidate: expectedCandidate });
+      const expectedFold = buildP114CandidateFold(materializeCmd, { eventId: mBatch.events[0]!.eventId, occurredAt: mBatch.events[0]!.occurredAt, candidate: expectedCandidate, activeVersion: { ref: { aggregateType: "ProjectArchitectureBaselineActive", projectId: P114_PROJECT }, revision: 1 } });
       expect(canonicalJson(mBatch)).toBe(canonicalJson(expectedFold));
 
       // decision
@@ -727,4 +733,22 @@ it("rejects a previously passing migration gate after a real Writer patch advanc
   const result = await engine.recordBaselineActivation(pending[0]!);
   expect(result).toMatchObject({ status: "rejected", code: "source_stale" });
   expect((await h.ledger.load(p114ActivationRef())).status).toBe("not_found");
+});
+
+it.each(["memory", "sqlite"] as const)("refuses materialization when the baseline moves after inspection but before commit (%s)", async adapter => {
+  const { harness, materializeCmd } = await runHappyPath(adapter);
+  harness.ledger.beforeCandidateCommit = () => activateNewBaseline(harness.ledger, P114_PROJECT, 2);
+  const receipt = await harness.engine.materializeCandidateBaseline(materializeCmd);
+  expect(receipt).toMatchObject({ status: "rejected", code: "revision_conflict" });
+  expect((await harness.ledger.load(p114CandidateRef(P114_PROJECT))).status).toBe("not_found");
+});
+
+it.each(["memory", "sqlite"] as const)("replays materialization after the baseline moves without creating another candidate (%s)", async adapter => {
+  const { harness, materializeCmd } = await runHappyPath(adapter);
+  const original = await harness.engine.materializeCandidateBaseline(materializeCmd);
+  expect(original.status).toBe("committed");
+  await activateNewBaseline(harness.ledger, P114_PROJECT, 2);
+  expect(await harness.engine.materializeCandidateBaseline(materializeCmd)).toEqual({ ...original, replayed: true });
+  const changed = { ...materializeCmd, payload: { proposalRef: { ...materializeCmd.payload.proposalRef, proposalId: "another-proposal" } } };
+  expect(await harness.engine.materializeCandidateBaseline(changed)).toMatchObject({ status: "rejected", code: "idempotency_conflict" });
 });

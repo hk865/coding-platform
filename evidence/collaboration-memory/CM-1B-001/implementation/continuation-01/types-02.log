@@ -1,0 +1,4 @@
+src/app/service.ts(548,41): error TS2345: Argument of type '{ aggregateType: "Task"; projectId: string; goalId: string; taskId: string; }' is not assignable to parameter of type 'AggregateRef'.
+  Type '{ aggregateType: "Task"; projectId: string; goalId: string; taskId: string; }' is not assignable to type 'IntegrationResultRef'.
+    Types of property 'aggregateType' are incompatible.
+      Type '"Task"' is not assignable to type '"IntegrationResult"'.

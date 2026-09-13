@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "project-conventions",
+  "title": "Project conventions",
+  "kind": "reference",
+  "priority": 50,
+  "contentFile": "content.md"
+}

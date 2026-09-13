@@ -1,0 +1,20 @@
+
+ RUN  v4.1.10 /mnt/d/1.project/Software/agent_platform
+
+ ✓ tests/contracts/module-ownership.test.ts (9 tests) 3683ms
+     ✓ keeps the workspace path-boundary policy in exactly one WorkspaceReader file  3044ms
+ ✓ tests/coordination/control.test.ts (27 tests) 39ms
+ ✓ tests/coordination/control.sqlite.test.ts (4 tests) 1536ms
+ ✓ tests/coordination/route-drive.test.ts (12 tests) 1851ms
+     ✓ SQLite close + reopen 后仍能领取既有 wait_admission intent 并完成唯一后继  1735ms
+ ✓ tests/coordination/delivery-into-input.test.ts (3 tests) 5992ms
+     ✓ Delivery 正文、精确版本与选入理由都进入捕获的 ModelRequest 与 manifest.selected  2448ms
+     ✓ 撤权之后：该 Delivery 不允许进入新的输入（材料组装在模型调用之前失败）  1759ms
+     ✓ 来源在本次运行期间被更新：basis 不一致 → 精确授权失效 → 拒绝进入新输入  1783ms
+
+ Test Files  5 passed (5)
+      Tests  55 passed (55)
+   Start at  02:39:08
+   Duration  28.03s (transform 34.92s, setup 0ms, import 42.85s, tests 13.10s, environment 0ms)
+
+coord rc=0

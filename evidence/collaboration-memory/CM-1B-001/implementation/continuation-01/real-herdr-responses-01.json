@@ -1,0 +1,1453 @@
+{
+  "kind": "real-provider-through-product-query-runtime",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "sourceProjectsModified": false,
+  "sourceProject": "/mnt/d/1.project/Software/herdr-master/herdr-master",
+  "startedAt": "2026-09-13T11:21:26.058Z",
+  "saves": [
+    {
+      "status": "committed",
+      "replayed": false,
+      "revision": 1,
+      "entryIds": [
+        "brief"
+      ],
+      "changed": true
+    },
+    {
+      "status": "committed",
+      "replayed": false,
+      "revision": 2,
+      "entryIds": [
+        "architecture",
+        "progress"
+      ],
+      "changed": true
+    }
+  ],
+  "runs": [
+    {
+      "stage": "before",
+      "purpose": "reply",
+      "status": "completed",
+      "input": {
+        "kind": "semantic_query",
+        "maintainedPreferences": {
+          "authority": "preference_only",
+          "entries": [
+            {
+              "entry": {
+                "conditions": {
+                  "expiresAt": null,
+                  "purposes": [
+                    "reply",
+                    "architecture",
+                    "progress",
+                    "planning",
+                    "handoff",
+                    "execution"
+                  ]
+                },
+                "content": "所有回应使用中文，简洁说明，通常不超过三句话。",
+                "createdAt": "2026-09-13T11:21:27.272Z",
+                "digest": "a7f962d6975c71aab1d1fc667cf9a3444e4c4fbe12dea257d3c1be8a11eec926",
+                "entryId": "brief",
+                "origin": "explicit",
+                "revision": 1,
+                "source": {
+                  "kind": "human",
+                  "statementId": "brief:0"
+                },
+                "state": "active",
+                "updatedAt": "2026-09-13T11:21:27.272Z"
+              },
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              }
+            }
+          ],
+          "excluded": [],
+          "kind": "maintained_preferences",
+          "profileRevision": 1,
+          "profileScope": {
+            "kind": "profile",
+            "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+          },
+          "projectRevision": 0,
+          "projectScope": {
+            "kind": "project",
+            "projectId": "acceptance-alpha"
+          },
+          "rules": [
+            "Current explicit instructions and formal rules take priority. Preferences grant no permissions and satisfy no verification obligations.",
+            "Within compatible preferences, the more specific applicable purpose takes priority over a general preference.",
+            "Do not treat prior conversation quotations or removed/candidate entries as current preferences."
+          ],
+          "status": "ready"
+        },
+        "material": {
+          "acceptedPlan": null,
+          "agentTemplates": [],
+          "collaborationWork": [],
+          "collaborationWorkOmitted": 0,
+          "execution": {
+            "kind": "semantic_query",
+            "responsePurpose": "reply",
+            "roleBinding": {
+              "bindingId": "real-query-real-memory-before-reply",
+              "bindingVersion": 1,
+              "policyRevision": "read-only-v1",
+              "schemaVersion": 1,
+              "templateId": "query-reader",
+              "templateRevision": "1"
+            },
+            "runtimeBudget": {
+              "contextWindowTokens": 128000,
+              "inputTokens": null,
+              "maxRequests": null,
+              "maxToolCalls": null,
+              "outputTokens": null,
+              "perResponseTokens": 4096,
+              "timeoutMs": null
+            }
+          },
+          "executionFeedback": null,
+          "focus": [],
+          "goalContext": {
+            "activePlanRevision": null,
+            "objective": "验收核心流程：计划、运行、查询与持久化",
+            "ref": {
+              "aggregateType": "Goal",
+              "goalId": "acceptance-demo",
+              "projectId": "acceptance-alpha"
+            },
+            "revision": 1,
+            "workspaceRevision": 1
+          },
+          "noTranscript": true,
+          "previousAnswers": [],
+          "queryJobRef": {
+            "aggregateType": "QueryJob",
+            "projectId": "acceptance-alpha",
+            "queryJobId": "real-query-real-memory-before-reply",
+            "workspaceId": "workspace-main"
+          },
+          "question": "请仅查看根目录 README.md，介绍这个项目的用途和你可以提供的帮助。不要运行命令或修改文件。",
+          "schemaVersion": 1,
+          "selectedSources": [
+            {
+              "kind": "goal",
+              "refKey": "{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"}",
+              "version": "{\"activePlanRevision\":null,\"objective\":\"验收核心流程：计划、运行、查询与持久化\",\"ref\":{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"},\"revision\":1,\"workspaceRevision\":1}"
+            }
+          ]
+        },
+        "permissions": {
+          "tools": [
+            "read"
+          ],
+          "writeScope": []
+        },
+        "question": "请仅查看根目录 README.md，介绍这个项目的用途和你可以提供的帮助。不要运行命令或修改文件。",
+        "responsePurpose": "reply",
+        "responsibilities": [
+          "answer_question_from_public_facts_and_source",
+          "cite_versions_and_unknowns"
+        ],
+        "roleBinding": {
+          "bindingId": "real-query-real-memory-before-reply",
+          "bindingVersion": 1,
+          "policyRevision": "read-only-v1",
+          "schemaVersion": 1,
+          "templateId": "query-reader",
+          "templateRevision": "1"
+        },
+        "rules": [
+          "Read-only analysis. Use source tools when needed; do not run commands or edit files.",
+          "Return public evidence, source versions and unknowns. Do not claim Task or Goal completion.",
+          "Stored history is explanatory unless current applicability is separately verified."
+        ],
+        "sourceBundle": {
+          "contentType": "application/json",
+          "digest": "0eba3d2555248b685522b411d84cc86c5e6c48fc8a9bf794d6f9927af9772fe9",
+          "kind": "artifact",
+          "sizeBytes": 1542,
+          "source": {
+            "digest": "",
+            "kind": "artifact",
+            "refId": "{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"}",
+            "revision": "{\"activePlanRevision\":null,\"objective\":\"验收核心流程：计划、运行、查询与持久化\",\"ref\":{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"},\"revision\":1,\"workspaceRevision\":1}"
+          }
+        }
+      },
+      "result": {
+        "schemaVersion": 1,
+        "runRef": {
+          "aggregateType": "QueryRun",
+          "projectId": "acceptance-alpha",
+          "workspaceId": "workspace-main",
+          "queryJobId": "real-query-real-memory-before-reply",
+          "runId": "real-query-real-memory-before-reply"
+        },
+        "outcome": "answered",
+        "answer": "README.md（86 行，revision 3cadb81）显示 herdr 是「编码智能体所运行的运行时」：单个 Rust 二进制、无 Electron 的终端复用/编排工具，让 agent 终端在客户端断开或 SSH 掉线后继续在后台服务运行，可跨本机与已保存的 SSH 机器管理，并标注每个面板为 working/blocked/idle；agent 可通过 CLI 与 socket API 驱动 herdr，支持 Claude Code、Codex、Cursor 等现有工具及插件扩展。\n\n基于这一点，我可以帮你（只读范围内）：梳理仓库结构与文档（README、AGENTS.md、CONTRIBUTING.md、docs 对应关系）、解释安装与日常操作（`herdr`、`ctrl+b q` 分离/重连、`cargo build --release`、`just test`/`just check`）、以及定位某个功能（session state、远程机器、插件、socket API）对应的代码或文档位置。\n\n未验证的部分：我这次只读了根目录 README.md，未查看文档站内容、源码或运行任何命令，因此上述能力描述均来自 README 自述，未经实际代码验证；另外 README 引用的 herdr.dev 文档与视频链接也无法在当前离线环境确认。",
+        "sources": [
+          {
+            "kind": "artifact",
+            "refKey": "0eba3d2555248b685522b411d84cc86c5e6c48fc8a9bf794d6f9927af9772fe9",
+            "version": "0eba3d2555248b685522b411d84cc86c5e6c48fc8a9bf794d6f9927af9772fe9"
+          },
+          {
+            "kind": "workspace_source",
+            "refKey": "{\"projectId\":\"acceptance-alpha\",\"workspaceId\":\"workspace-main\"}",
+            "version": "581caa553e0ca532fe06cc66bb6d35808db29cfe998697d356f0678abe0489eb"
+          },
+          {
+            "kind": "workspace_read",
+            "refKey": "README.md",
+            "version": "3cadb8128fd41fa3f3722ee4be9b0e6b11094ed9cce3980870ef66a62729c1eb"
+          }
+        ],
+        "message": null,
+        "endedAt": "2026-09-13T11:21:42.372Z"
+      },
+      "configuration": {
+        "revision": "d547ff74-f98a-43b6-b4ae-1c49c88c7a7c",
+        "provider": "deepseek",
+        "model": "deepseek-flash",
+        "baseUrl": "https://api.deepseek.com",
+        "protocol": "chat-completions",
+        "updatedAt": "2026-09-13T11:12:30.987Z"
+      }
+    },
+    {
+      "stage": "before",
+      "purpose": "architecture",
+      "status": "completed",
+      "input": {
+        "kind": "semantic_query",
+        "maintainedPreferences": {
+          "authority": "preference_only",
+          "entries": [
+            {
+              "entry": {
+                "conditions": {
+                  "expiresAt": null,
+                  "purposes": [
+                    "reply",
+                    "architecture",
+                    "progress",
+                    "planning",
+                    "handoff",
+                    "execution"
+                  ]
+                },
+                "content": "所有回应使用中文，简洁说明，通常不超过三句话。",
+                "createdAt": "2026-09-13T11:21:27.272Z",
+                "digest": "a7f962d6975c71aab1d1fc667cf9a3444e4c4fbe12dea257d3c1be8a11eec926",
+                "entryId": "brief",
+                "origin": "explicit",
+                "revision": 1,
+                "source": {
+                  "kind": "human",
+                  "statementId": "brief:0"
+                },
+                "state": "active",
+                "updatedAt": "2026-09-13T11:21:27.272Z"
+              },
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              }
+            }
+          ],
+          "excluded": [],
+          "kind": "maintained_preferences",
+          "profileRevision": 1,
+          "profileScope": {
+            "kind": "profile",
+            "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+          },
+          "projectRevision": 0,
+          "projectScope": {
+            "kind": "project",
+            "projectId": "acceptance-alpha"
+          },
+          "rules": [
+            "Current explicit instructions and formal rules take priority. Preferences grant no permissions and satisfy no verification obligations.",
+            "Within compatible preferences, the more specific applicable purpose takes priority over a general preference.",
+            "Do not treat prior conversation quotations or removed/candidate entries as current preferences."
+          ],
+          "status": "ready"
+        },
+        "material": {
+          "acceptedPlan": null,
+          "agentTemplates": [],
+          "collaborationWork": [],
+          "collaborationWorkOmitted": 0,
+          "execution": {
+            "kind": "semantic_query",
+            "responsePurpose": "architecture",
+            "roleBinding": {
+              "bindingId": "real-query-real-memory-before-architecture",
+              "bindingVersion": 1,
+              "policyRevision": "read-only-v1",
+              "schemaVersion": 1,
+              "templateId": "query-reader",
+              "templateRevision": "1"
+            },
+            "runtimeBudget": {
+              "contextWindowTokens": 128000,
+              "inputTokens": null,
+              "maxRequests": null,
+              "maxToolCalls": null,
+              "outputTokens": null,
+              "perResponseTokens": 4096,
+              "timeoutMs": null
+            }
+          },
+          "executionFeedback": null,
+          "focus": [],
+          "goalContext": {
+            "activePlanRevision": null,
+            "objective": "验收核心流程：计划、运行、查询与持久化",
+            "ref": {
+              "aggregateType": "Goal",
+              "goalId": "acceptance-demo",
+              "projectId": "acceptance-alpha"
+            },
+            "revision": 1,
+            "workspaceRevision": 1
+          },
+          "noTranscript": true,
+          "previousAnswers": [],
+          "queryJobRef": {
+            "aggregateType": "QueryJob",
+            "projectId": "acceptance-alpha",
+            "queryJobId": "real-query-real-memory-before-architecture",
+            "workspaceId": "workspace-main"
+          },
+          "question": "请仅查看 README.md、AGENTS.md、Cargo.toml 和 src/main.rs，解释项目架构、职责与接口边界。不要运行命令或修改文件，未知信息明确说明。",
+          "schemaVersion": 1,
+          "selectedSources": [
+            {
+              "kind": "goal",
+              "refKey": "{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"}",
+              "version": "{\"activePlanRevision\":null,\"objective\":\"验收核心流程：计划、运行、查询与持久化\",\"ref\":{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"},\"revision\":1,\"workspaceRevision\":1}"
+            }
+          ]
+        },
+        "permissions": {
+          "tools": [
+            "read"
+          ],
+          "writeScope": []
+        },
+        "question": "请仅查看 README.md、AGENTS.md、Cargo.toml 和 src/main.rs，解释项目架构、职责与接口边界。不要运行命令或修改文件，未知信息明确说明。",
+        "responsePurpose": "architecture",
+        "responsibilities": [
+          "answer_question_from_public_facts_and_source",
+          "cite_versions_and_unknowns"
+        ],
+        "roleBinding": {
+          "bindingId": "real-query-real-memory-before-architecture",
+          "bindingVersion": 1,
+          "policyRevision": "read-only-v1",
+          "schemaVersion": 1,
+          "templateId": "query-reader",
+          "templateRevision": "1"
+        },
+        "rules": [
+          "Read-only analysis. Use source tools when needed; do not run commands or edit files.",
+          "Return public evidence, source versions and unknowns. Do not claim Task or Goal completion.",
+          "Stored history is explanatory unless current applicability is separately verified."
+        ],
+        "sourceBundle": {
+          "contentType": "application/json",
+          "digest": "49804510db2981de6335706668790ae47590a3a138270178f326d79500deb5e9",
+          "kind": "artifact",
+          "sizeBytes": 1610,
+          "source": {
+            "digest": "",
+            "kind": "artifact",
+            "refId": "{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"}",
+            "revision": "{\"activePlanRevision\":null,\"objective\":\"验收核心流程：计划、运行、查询与持久化\",\"ref\":{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"},\"revision\":1,\"workspaceRevision\":1}"
+          }
+        }
+      },
+      "result": {
+        "schemaVersion": 1,
+        "runRef": {
+          "aggregateType": "QueryRun",
+          "projectId": "acceptance-alpha",
+          "workspaceId": "workspace-main",
+          "queryJobId": "real-query-real-memory-before-architecture",
+          "runId": "real-query-real-memory-before-architecture"
+        },
+        "outcome": "answered",
+        "answer": "已读取四个文件，下面是基于这些文件（未读其他源码）的架构说明：\n\n**架构与职责**\n- `Cargo.toml`：herdr 0.9.0，单一 Rust 二进制，ratatui/crossterm 做 TUI，portable-pty（打补丁指向 `vendor/portable-pty`）做终端，tokio 做异步，Windows 专属依赖单独放在 `cfg(windows)` 下。\n- `src/main.rs`：唯一入口与进程分发器——声明约 50 个模块；先做嵌套检测（`HERDR_ENV=1` 且未开 `experimental.allow_nested` 就退出）、参数 UTF-8 校验、再按子命令分派到 `server`（headless 服务端）、`client`（连接已有服务端的 TUI 客户端）、`remote*` 桥接、`update`、`cli::maybe_run`（各 CLI 子命令走 socket API），默认路径交给 `server::autodetect::auto_detect_launch`。还内置 `DEFAULT_CONFIG` 与 `--skill` 文本。\n- `AGENTS.md`：给出关键设计约束——`AppState`（纯数据）与 `PaneState`/`PaneRuntime` 分离、`compute_view()` 与 `render(&AppState)` 纯净不可变、检测器只看屏幕快照、平台代码隔离在 `src/platform/<os>.rs`、渲染/PTY/检测路径视为性能敏感，以及\"服务端拥有运行时、TUI 只是一个客户端\"的迁移方向。\n- `README.md`：产品定位为 coding agent 的终端运行时（后台服务保持会话、多机、agent 状态标记、CLI/socket API、插件）。\n\n**接口边界**\n- 对外：CLI 子命令（`workspace/tab/pane/agent/session/machine/api/...`）+ socket API（`herdr api`）+ 私有 TUI 客户端 socket；稳定端点契约与协议版本由 AGENTS.md 规定（不可变 codec、可选字段、`src/protocol/wire.rs::PROTOCOL_VERSION`）。\n- 内部分层：main.rs 只做分派，实际逻辑在 server/client/app/detect/pty/terminal/persist 等模块；状态与渲染分离。\n\n**未知（未验证）**\n- 各模块的具体实现、socket API 方法与协议细节、持久化与恢复机制，均未查看源码，无法确认；也无法确认 `assets/logo.png`、`docs/`、`skills/herdr/SKILL.md` 等引用文件是否存在。",
+        "sources": [
+          {
+            "kind": "artifact",
+            "refKey": "49804510db2981de6335706668790ae47590a3a138270178f326d79500deb5e9",
+            "version": "49804510db2981de6335706668790ae47590a3a138270178f326d79500deb5e9"
+          },
+          {
+            "kind": "workspace_source",
+            "refKey": "{\"projectId\":\"acceptance-alpha\",\"workspaceId\":\"workspace-main\"}",
+            "version": "581caa553e0ca532fe06cc66bb6d35808db29cfe998697d356f0678abe0489eb"
+          },
+          {
+            "kind": "workspace_read",
+            "refKey": "README.md",
+            "version": "3cadb8128fd41fa3f3722ee4be9b0e6b11094ed9cce3980870ef66a62729c1eb"
+          },
+          {
+            "kind": "workspace_read",
+            "refKey": "AGENTS.md",
+            "version": "c2eca9d5147a5baf1008a5842e31e7c88c2cfbed4c6fbb957d1f9814b83dbfa9"
+          },
+          {
+            "kind": "workspace_read",
+            "refKey": "Cargo.toml",
+            "version": "83d5a56beea8a6006862391f20d70fc1de1c4132c208b954d3e3d3e8d500eb43"
+          },
+          {
+            "kind": "workspace_read",
+            "refKey": "src/main.rs",
+            "version": "30e3794802081d2289df8f94e8bfd99ce5854ffa9725b1f2cfcd6e848cfdb169"
+          }
+        ],
+        "message": null,
+        "endedAt": "2026-09-13T11:21:58.081Z"
+      },
+      "configuration": {
+        "revision": "d547ff74-f98a-43b6-b4ae-1c49c88c7a7c",
+        "provider": "deepseek",
+        "model": "deepseek-flash",
+        "baseUrl": "https://api.deepseek.com",
+        "protocol": "chat-completions",
+        "updatedAt": "2026-09-13T11:12:30.987Z"
+      }
+    },
+    {
+      "stage": "before",
+      "purpose": "progress",
+      "status": "completed",
+      "input": {
+        "kind": "semantic_query",
+        "maintainedPreferences": {
+          "authority": "preference_only",
+          "entries": [
+            {
+              "entry": {
+                "conditions": {
+                  "expiresAt": null,
+                  "purposes": [
+                    "reply",
+                    "architecture",
+                    "progress",
+                    "planning",
+                    "handoff",
+                    "execution"
+                  ]
+                },
+                "content": "所有回应使用中文，简洁说明，通常不超过三句话。",
+                "createdAt": "2026-09-13T11:21:27.272Z",
+                "digest": "a7f962d6975c71aab1d1fc667cf9a3444e4c4fbe12dea257d3c1be8a11eec926",
+                "entryId": "brief",
+                "origin": "explicit",
+                "revision": 1,
+                "source": {
+                  "kind": "human",
+                  "statementId": "brief:0"
+                },
+                "state": "active",
+                "updatedAt": "2026-09-13T11:21:27.272Z"
+              },
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              }
+            }
+          ],
+          "excluded": [],
+          "kind": "maintained_preferences",
+          "profileRevision": 1,
+          "profileScope": {
+            "kind": "profile",
+            "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+          },
+          "projectRevision": 0,
+          "projectScope": {
+            "kind": "project",
+            "projectId": "acceptance-alpha"
+          },
+          "rules": [
+            "Current explicit instructions and formal rules take priority. Preferences grant no permissions and satisfy no verification obligations.",
+            "Within compatible preferences, the more specific applicable purpose takes priority over a general preference.",
+            "Do not treat prior conversation quotations or removed/candidate entries as current preferences."
+          ],
+          "status": "ready"
+        },
+        "material": {
+          "acceptedPlan": null,
+          "agentTemplates": [],
+          "collaborationWork": [],
+          "collaborationWorkOmitted": 0,
+          "execution": {
+            "kind": "semantic_query",
+            "responsePurpose": "progress",
+            "roleBinding": {
+              "bindingId": "real-query-real-memory-before-progress",
+              "bindingVersion": 1,
+              "policyRevision": "read-only-v1",
+              "schemaVersion": 1,
+              "templateId": "query-reader",
+              "templateRevision": "1"
+            },
+            "runtimeBudget": {
+              "contextWindowTokens": 128000,
+              "inputTokens": null,
+              "maxRequests": null,
+              "maxToolCalls": null,
+              "outputTokens": null,
+              "perResponseTokens": 4096,
+              "timeoutMs": null
+            }
+          },
+          "executionFeedback": null,
+          "focus": [],
+          "goalContext": {
+            "activePlanRevision": null,
+            "objective": "验收核心流程：计划、运行、查询与持久化",
+            "ref": {
+              "aggregateType": "Goal",
+              "goalId": "acceptance-demo",
+              "projectId": "acceptance-alpha"
+            },
+            "revision": 1,
+            "workspaceRevision": 1
+          },
+          "noTranscript": true,
+          "previousAnswers": [],
+          "queryJobRef": {
+            "aggregateType": "QueryJob",
+            "projectId": "acceptance-alpha",
+            "queryJobId": "real-query-real-memory-before-progress",
+            "workspaceId": "workspace-main"
+          },
+          "question": "请仅根据根目录 README.md 和已提供的目标事实汇报目前可确认的状态、未知项和下一步；没有运行或验证证据时不得说已完成。不要运行命令或修改文件。",
+          "schemaVersion": 1,
+          "selectedSources": [
+            {
+              "kind": "goal",
+              "refKey": "{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"}",
+              "version": "{\"activePlanRevision\":null,\"objective\":\"验收核心流程：计划、运行、查询与持久化\",\"ref\":{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"},\"revision\":1,\"workspaceRevision\":1}"
+            }
+          ]
+        },
+        "permissions": {
+          "tools": [
+            "read"
+          ],
+          "writeScope": []
+        },
+        "question": "请仅根据根目录 README.md 和已提供的目标事实汇报目前可确认的状态、未知项和下一步；没有运行或验证证据时不得说已完成。不要运行命令或修改文件。",
+        "responsePurpose": "progress",
+        "responsibilities": [
+          "answer_question_from_public_facts_and_source",
+          "cite_versions_and_unknowns"
+        ],
+        "roleBinding": {
+          "bindingId": "real-query-real-memory-before-progress",
+          "bindingVersion": 1,
+          "policyRevision": "read-only-v1",
+          "schemaVersion": 1,
+          "templateId": "query-reader",
+          "templateRevision": "1"
+        },
+        "rules": [
+          "Read-only analysis. Use source tools when needed; do not run commands or edit files.",
+          "Return public evidence, source versions and unknowns. Do not claim Task or Goal completion.",
+          "Stored history is explanatory unless current applicability is separately verified."
+        ],
+        "sourceBundle": {
+          "contentType": "application/json",
+          "digest": "9cf3dc55399eda3a6038a21bef9ef58651794acd85a49505ac08818493d4f3b6",
+          "kind": "artifact",
+          "sizeBytes": 1627,
+          "source": {
+            "digest": "",
+            "kind": "artifact",
+            "refId": "{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"}",
+            "revision": "{\"activePlanRevision\":null,\"objective\":\"验收核心流程：计划、运行、查询与持久化\",\"ref\":{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"},\"revision\":1,\"workspaceRevision\":1}"
+          }
+        }
+      },
+      "result": {
+        "schemaVersion": 1,
+        "runRef": {
+          "aggregateType": "QueryRun",
+          "projectId": "acceptance-alpha",
+          "workspaceId": "workspace-main",
+          "queryJobId": "real-query-real-memory-before-progress",
+          "runId": "real-query-real-memory-before-progress"
+        },
+        "outcome": "answered",
+        "answer": "**已确认（仅来自 README.md，revision `3cadb812`，86 行）**：该项目为 herdr——面向编码智能体的 Rust 运行时单二进制，安装方式为 `curl … install.sh | sh`、`brew install herdr`、`mise use -g herdr` 或 Windows PowerShell 脚本；开发流程为 `cargo build --release`、`just test`（单元测试）、`just check`（格式、测试与维护检查），文档入口 herdr.dev/docs，许可证 Apache-2.0。\n\n**已知事实**：目标 `acceptance-demo` 目标为「验收核心流程：计划、运行、查询与持久化」，Goal revision 1、workspaceRevision 1，且 `activePlanRevision` 为 null（无已接受计划）；本次未运行任何命令或测试，故除 README 文本本身外无任何验证证据，不能说任何流程「已完成」。\n\n**未知项**：README 未涉及计划/运行/查询/持久化的验收细节；核心流程是否可运行、`just test`/`just check` 是否通过、持久化是否生效，均未验证。\n\n**下一步（未执行，仅建议）**：先创建并接受一份针对该目标的计划（当前 Plan 为空），再运行 `cargo build --release` 与 `just test`/`just check` 采集证据，最后按计划逐项记录验证结果——需在你授权后由我执行。",
+        "sources": [
+          {
+            "kind": "artifact",
+            "refKey": "9cf3dc55399eda3a6038a21bef9ef58651794acd85a49505ac08818493d4f3b6",
+            "version": "9cf3dc55399eda3a6038a21bef9ef58651794acd85a49505ac08818493d4f3b6"
+          },
+          {
+            "kind": "workspace_source",
+            "refKey": "{\"projectId\":\"acceptance-alpha\",\"workspaceId\":\"workspace-main\"}",
+            "version": "581caa553e0ca532fe06cc66bb6d35808db29cfe998697d356f0678abe0489eb"
+          },
+          {
+            "kind": "workspace_read",
+            "refKey": "README.md",
+            "version": "3cadb8128fd41fa3f3722ee4be9b0e6b11094ed9cce3980870ef66a62729c1eb"
+          }
+        ],
+        "message": null,
+        "endedAt": "2026-09-13T11:22:15.617Z"
+      },
+      "configuration": {
+        "revision": "d547ff74-f98a-43b6-b4ae-1c49c88c7a7c",
+        "provider": "deepseek",
+        "model": "deepseek-flash",
+        "baseUrl": "https://api.deepseek.com",
+        "protocol": "chat-completions",
+        "updatedAt": "2026-09-13T11:12:30.987Z"
+      }
+    },
+    {
+      "stage": "after",
+      "purpose": "reply",
+      "status": "completed",
+      "input": {
+        "kind": "semantic_query",
+        "maintainedPreferences": {
+          "authority": "preference_only",
+          "entries": [
+            {
+              "entry": {
+                "conditions": {
+                  "expiresAt": null,
+                  "purposes": [
+                    "reply",
+                    "architecture",
+                    "progress",
+                    "planning",
+                    "handoff",
+                    "execution"
+                  ]
+                },
+                "content": "所有回应使用中文，简洁说明，通常不超过三句话。",
+                "createdAt": "2026-09-13T11:21:27.272Z",
+                "digest": "a7f962d6975c71aab1d1fc667cf9a3444e4c4fbe12dea257d3c1be8a11eec926",
+                "entryId": "brief",
+                "origin": "explicit",
+                "revision": 1,
+                "source": {
+                  "kind": "human",
+                  "statementId": "brief:0"
+                },
+                "state": "active",
+                "updatedAt": "2026-09-13T11:21:27.272Z"
+              },
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              }
+            }
+          ],
+          "excluded": [
+            {
+              "entryId": "architecture",
+              "reason": "different_purpose"
+            },
+            {
+              "entryId": "progress",
+              "reason": "different_purpose"
+            }
+          ],
+          "kind": "maintained_preferences",
+          "profileRevision": 2,
+          "profileScope": {
+            "kind": "profile",
+            "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+          },
+          "projectRevision": 0,
+          "projectScope": {
+            "kind": "project",
+            "projectId": "acceptance-alpha"
+          },
+          "rules": [
+            "Current explicit instructions and formal rules take priority. Preferences grant no permissions and satisfy no verification obligations.",
+            "Within compatible preferences, the more specific applicable purpose takes priority over a general preference.",
+            "Do not treat prior conversation quotations or removed/candidate entries as current preferences."
+          ],
+          "status": "ready"
+        },
+        "material": {
+          "acceptedPlan": null,
+          "agentTemplates": [],
+          "collaborationWork": [],
+          "collaborationWorkOmitted": 0,
+          "execution": {
+            "kind": "semantic_query",
+            "responsePurpose": "reply",
+            "roleBinding": {
+              "bindingId": "real-query-real-memory-after-reply",
+              "bindingVersion": 1,
+              "policyRevision": "read-only-v1",
+              "schemaVersion": 1,
+              "templateId": "query-reader",
+              "templateRevision": "1"
+            },
+            "runtimeBudget": {
+              "contextWindowTokens": 128000,
+              "inputTokens": null,
+              "maxRequests": null,
+              "maxToolCalls": null,
+              "outputTokens": null,
+              "perResponseTokens": 4096,
+              "timeoutMs": null
+            }
+          },
+          "executionFeedback": null,
+          "focus": [],
+          "goalContext": {
+            "activePlanRevision": null,
+            "objective": "验收核心流程：计划、运行、查询与持久化",
+            "ref": {
+              "aggregateType": "Goal",
+              "goalId": "acceptance-demo",
+              "projectId": "acceptance-alpha"
+            },
+            "revision": 1,
+            "workspaceRevision": 1
+          },
+          "noTranscript": true,
+          "previousAnswers": [],
+          "queryJobRef": {
+            "aggregateType": "QueryJob",
+            "projectId": "acceptance-alpha",
+            "queryJobId": "real-query-real-memory-after-reply",
+            "workspaceId": "workspace-main"
+          },
+          "question": "请仅查看根目录 README.md，介绍这个项目的用途和你可以提供的帮助。不要运行命令或修改文件。",
+          "schemaVersion": 1,
+          "selectedSources": [
+            {
+              "kind": "goal",
+              "refKey": "{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"}",
+              "version": "{\"activePlanRevision\":null,\"objective\":\"验收核心流程：计划、运行、查询与持久化\",\"ref\":{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"},\"revision\":1,\"workspaceRevision\":1}"
+            }
+          ]
+        },
+        "permissions": {
+          "tools": [
+            "read"
+          ],
+          "writeScope": []
+        },
+        "question": "请仅查看根目录 README.md，介绍这个项目的用途和你可以提供的帮助。不要运行命令或修改文件。",
+        "responsePurpose": "reply",
+        "responsibilities": [
+          "answer_question_from_public_facts_and_source",
+          "cite_versions_and_unknowns"
+        ],
+        "roleBinding": {
+          "bindingId": "real-query-real-memory-after-reply",
+          "bindingVersion": 1,
+          "policyRevision": "read-only-v1",
+          "schemaVersion": 1,
+          "templateId": "query-reader",
+          "templateRevision": "1"
+        },
+        "rules": [
+          "Read-only analysis. Use source tools when needed; do not run commands or edit files.",
+          "Return public evidence, source versions and unknowns. Do not claim Task or Goal completion.",
+          "Stored history is explanatory unless current applicability is separately verified."
+        ],
+        "sourceBundle": {
+          "contentType": "application/json",
+          "digest": "6ccecfafb5b2d75d7ac31784ac810e6c1d6a52afde9eabfbf82fc5d0416efcfc",
+          "kind": "artifact",
+          "sizeBytes": 1540,
+          "source": {
+            "digest": "",
+            "kind": "artifact",
+            "refId": "{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"}",
+            "revision": "{\"activePlanRevision\":null,\"objective\":\"验收核心流程：计划、运行、查询与持久化\",\"ref\":{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"},\"revision\":1,\"workspaceRevision\":1}"
+          }
+        }
+      },
+      "result": {
+        "schemaVersion": 1,
+        "runRef": {
+          "aggregateType": "QueryRun",
+          "projectId": "acceptance-alpha",
+          "workspaceId": "workspace-main",
+          "queryJobId": "real-query-real-memory-after-reply",
+          "runId": "real-query-real-memory-after-reply"
+        },
+        "outcome": "answered",
+        "answer": "根目录 `README.md`（86 行，revision `3cadb8128fd41fa3f3722ee4be9b0e6b11094ed9cce3980870ef66a62729c1eb`）显示，herdr 是一个用单个 Rust 二进制实现的编码代理运行时/终端复用器：它把终端托管在后台服务器中，支持断开后继续运行、跨机器统一窗口、pane 状态（working/blocked/idle）标记、CLI 与 socket API 供代理互相驱动，并自带插件市场；安装方式为 `install.sh`、Homebrew 或 mise，开发用 `cargo build --release` 与 `just test/check`。\n\n我可以在此只读权限下帮忙：读取并解释 README 或（经你允许时）其他源码文件、定位实现与文档位置、梳理架构与配置说明；我不能运行命令、修改文件，也不会声称已完成 Task 或 Goal。\n\n注意：本次仅依据 README 内容作答，仓库其余文件（如 `AGENTS.md`、`CONTRIBUTING.md`、`docs/`）尚未查看，其细节仍属未知。",
+        "sources": [
+          {
+            "kind": "artifact",
+            "refKey": "6ccecfafb5b2d75d7ac31784ac810e6c1d6a52afde9eabfbf82fc5d0416efcfc",
+            "version": "6ccecfafb5b2d75d7ac31784ac810e6c1d6a52afde9eabfbf82fc5d0416efcfc"
+          },
+          {
+            "kind": "workspace_source",
+            "refKey": "{\"projectId\":\"acceptance-alpha\",\"workspaceId\":\"workspace-main\"}",
+            "version": "581caa553e0ca532fe06cc66bb6d35808db29cfe998697d356f0678abe0489eb"
+          },
+          {
+            "kind": "workspace_read",
+            "refKey": "README.md",
+            "version": "3cadb8128fd41fa3f3722ee4be9b0e6b11094ed9cce3980870ef66a62729c1eb"
+          }
+        ],
+        "message": null,
+        "endedAt": "2026-09-13T11:22:31.452Z"
+      },
+      "configuration": {
+        "revision": "d547ff74-f98a-43b6-b4ae-1c49c88c7a7c",
+        "provider": "deepseek",
+        "model": "deepseek-flash",
+        "baseUrl": "https://api.deepseek.com",
+        "protocol": "chat-completions",
+        "updatedAt": "2026-09-13T11:12:30.987Z"
+      }
+    },
+    {
+      "stage": "after",
+      "purpose": "architecture",
+      "status": "completed",
+      "input": {
+        "kind": "semantic_query",
+        "maintainedPreferences": {
+          "authority": "preference_only",
+          "entries": [
+            {
+              "entry": {
+                "conditions": {
+                  "expiresAt": null,
+                  "purposes": [
+                    "architecture"
+                  ]
+                },
+                "content": "架构解释请详细说明职责、接口边界、方案取舍和未确定信息；这一用途不受通常三句话限制。",
+                "createdAt": "2026-09-13T11:22:15.683Z",
+                "digest": "9461ffa1c002f808cb9f457bc3a98987f726427b511b98bee4a2cb2992423b03",
+                "entryId": "architecture",
+                "origin": "explicit",
+                "revision": 1,
+                "source": {
+                  "kind": "human",
+                  "statementId": "specific:0"
+                },
+                "state": "active",
+                "updatedAt": "2026-09-13T11:22:15.683Z"
+              },
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              }
+            },
+            {
+              "entry": {
+                "conditions": {
+                  "expiresAt": null,
+                  "purposes": [
+                    "reply",
+                    "architecture",
+                    "progress",
+                    "planning",
+                    "handoff",
+                    "execution"
+                  ]
+                },
+                "content": "所有回应使用中文，简洁说明，通常不超过三句话。",
+                "createdAt": "2026-09-13T11:21:27.272Z",
+                "digest": "a7f962d6975c71aab1d1fc667cf9a3444e4c4fbe12dea257d3c1be8a11eec926",
+                "entryId": "brief",
+                "origin": "explicit",
+                "revision": 1,
+                "source": {
+                  "kind": "human",
+                  "statementId": "brief:0"
+                },
+                "state": "active",
+                "updatedAt": "2026-09-13T11:21:27.272Z"
+              },
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              }
+            }
+          ],
+          "excluded": [
+            {
+              "entryId": "progress",
+              "reason": "different_purpose"
+            }
+          ],
+          "kind": "maintained_preferences",
+          "profileRevision": 2,
+          "profileScope": {
+            "kind": "profile",
+            "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+          },
+          "projectRevision": 0,
+          "projectScope": {
+            "kind": "project",
+            "projectId": "acceptance-alpha"
+          },
+          "rules": [
+            "Current explicit instructions and formal rules take priority. Preferences grant no permissions and satisfy no verification obligations.",
+            "Within compatible preferences, the more specific applicable purpose takes priority over a general preference.",
+            "Do not treat prior conversation quotations or removed/candidate entries as current preferences."
+          ],
+          "status": "ready"
+        },
+        "material": {
+          "acceptedPlan": null,
+          "agentTemplates": [],
+          "collaborationWork": [],
+          "collaborationWorkOmitted": 0,
+          "execution": {
+            "kind": "semantic_query",
+            "responsePurpose": "architecture",
+            "roleBinding": {
+              "bindingId": "real-query-real-memory-after-architecture",
+              "bindingVersion": 1,
+              "policyRevision": "read-only-v1",
+              "schemaVersion": 1,
+              "templateId": "query-reader",
+              "templateRevision": "1"
+            },
+            "runtimeBudget": {
+              "contextWindowTokens": 128000,
+              "inputTokens": null,
+              "maxRequests": null,
+              "maxToolCalls": null,
+              "outputTokens": null,
+              "perResponseTokens": 4096,
+              "timeoutMs": null
+            }
+          },
+          "executionFeedback": null,
+          "focus": [],
+          "goalContext": {
+            "activePlanRevision": null,
+            "objective": "验收核心流程：计划、运行、查询与持久化",
+            "ref": {
+              "aggregateType": "Goal",
+              "goalId": "acceptance-demo",
+              "projectId": "acceptance-alpha"
+            },
+            "revision": 1,
+            "workspaceRevision": 1
+          },
+          "noTranscript": true,
+          "previousAnswers": [],
+          "queryJobRef": {
+            "aggregateType": "QueryJob",
+            "projectId": "acceptance-alpha",
+            "queryJobId": "real-query-real-memory-after-architecture",
+            "workspaceId": "workspace-main"
+          },
+          "question": "请仅查看 README.md、AGENTS.md、Cargo.toml 和 src/main.rs，解释项目架构、职责与接口边界。不要运行命令或修改文件，未知信息明确说明。",
+          "schemaVersion": 1,
+          "selectedSources": [
+            {
+              "kind": "goal",
+              "refKey": "{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"}",
+              "version": "{\"activePlanRevision\":null,\"objective\":\"验收核心流程：计划、运行、查询与持久化\",\"ref\":{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"},\"revision\":1,\"workspaceRevision\":1}"
+            }
+          ]
+        },
+        "permissions": {
+          "tools": [
+            "read"
+          ],
+          "writeScope": []
+        },
+        "question": "请仅查看 README.md、AGENTS.md、Cargo.toml 和 src/main.rs，解释项目架构、职责与接口边界。不要运行命令或修改文件，未知信息明确说明。",
+        "responsePurpose": "architecture",
+        "responsibilities": [
+          "answer_question_from_public_facts_and_source",
+          "cite_versions_and_unknowns"
+        ],
+        "roleBinding": {
+          "bindingId": "real-query-real-memory-after-architecture",
+          "bindingVersion": 1,
+          "policyRevision": "read-only-v1",
+          "schemaVersion": 1,
+          "templateId": "query-reader",
+          "templateRevision": "1"
+        },
+        "rules": [
+          "Read-only analysis. Use source tools when needed; do not run commands or edit files.",
+          "Return public evidence, source versions and unknowns. Do not claim Task or Goal completion.",
+          "Stored history is explanatory unless current applicability is separately verified."
+        ],
+        "sourceBundle": {
+          "contentType": "application/json",
+          "digest": "0da8dbc5dcbfefc60545cb9cdfd67f3c94d0d7778ad5e188a0f46ff0ae73c798",
+          "kind": "artifact",
+          "sizeBytes": 1608,
+          "source": {
+            "digest": "",
+            "kind": "artifact",
+            "refId": "{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"}",
+            "revision": "{\"activePlanRevision\":null,\"objective\":\"验收核心流程：计划、运行、查询与持久化\",\"ref\":{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"},\"revision\":1,\"workspaceRevision\":1}"
+          }
+        }
+      },
+      "result": {
+        "schemaVersion": 1,
+        "runRef": {
+          "aggregateType": "QueryRun",
+          "projectId": "acceptance-alpha",
+          "workspaceId": "workspace-main",
+          "queryJobId": "real-query-real-memory-after-architecture",
+          "runId": "real-query-real-memory-after-architecture"
+        },
+        "outcome": "answered",
+        "answer": "已读取四个文件（均无命令执行、无文件修改）。以下为基于这四份文件证据的架构说明；未读到的模块内部实现属于未知信息。\n\n## 证据来源\n\n| 文件 | 行数 | revision (sha256) |\n|---|---|---|\n| README.md | 86 | `3cadb812…c1eb` |\n| AGENTS.md | 318 | `c2eca9d5…bfa9` |\n| Cargo.toml | 78 | `83d5a56b…eb43` |\n| src/main.rs | 866 | `30e37948…b169` |\n\n## 1. 项目定位与整体架构\n\n- herdr 是 \"the runtime your coding agents live on\"（README）：单 Rust 二进制、非 Electron 的**终端工作区管理器 / 多路复用器**，托管 Claude Code、codex、cursor 等既有 agent 的终端，而非包装或替换它们。Cargo.toml 的 `description` 同样为 \"terminal workspace manager for AI coding agents\"，版本 `0.9.0`，edition 2021，Apache-2.0。\n- 核心运行形态是**持久化后台 server + 可脱离/重连的客户端**：`ctrl+b q` detach，重开后恢复布局并尽量恢复支持的 agent 会话（但原进程不存活，README 明确说明）。\n- 进程角色划分直接体现在 `src/main.rs` 的分派链：`server`（`server::headless::run_server`）、`client`（`client::run_client`，隐藏的客户端模式，连已有 server 的 client socket）、`remote-api-bridge`、`remote-client-bridge`，以及默认路径（无子命令）走到 `server::autodetect::auto_detect_launch`，即“启动或附着持久会话”。\n\n## 2. 职责边界（AGENTS.md 明确规定的分层原则）\n\n- **状态与运行时分离**：`AppState` 是纯数据、无 PTY/async 即可测试；`PaneState` 与 `PaneRuntime` 分离；workspace 逻辑不依赖真实终端。\n- **渲染是纯函数**：`compute_view()` 负责几何与变更，`render()` 只接收 `&AppState` 并绘制，渲染期禁止改状态。\n- **反 god object**：`app/` 已拆为 state / actions / input，要求保持。\n- **平台代码隔离**：OS 相关行为只放在 `src/platform/<os>.rs`，`src/platform/mod.rs` 只留共享 trait / 类型 / wrapper / 可测契约；核心模块不得出现 `#[cfg(target_os)]`。Cargo.toml 中 `[target.'cfg(windows)'.dependencies]`（windows-sys、wmi、widestring）与之对应。\n- **检测解耦**：detector 只读屏幕快照，不触碰 parser 或 viewport 状态；agent 检测规则以清单文件形式在 `src/detect/manifests/<agent>.toml` 热重载。\n- **性能边界**：view 计算、渲染、后台 pane resize、PTY 解析、detection、客户端帧广播被定义为“乘性路径”，即代价按 字节/事件/渲染 × pane/tab/workspace × 已连接客户端 放大。\n\n## 3. 接口边界\n\n- **入口与 CLI 边界**（main.rs）：`args_as_utf8` 拒绝非 UTF-8 参数（exit 2）；`cli::maybe_run_machine`、`session::configure_from_args`、`remote::extract_remote_args`、`cli::maybe_run` 依次做前置解析；`finish_cli` 统一把 `Handled(code)`、协议不匹配、server 未运行翻译为进程退出码与 JSON 错误输出。`--help/-V/--default-config/--skill` 在 main 内就地处理（`--skill` 由 `include_str!(\"../skills/herdr/SKILL.md\")` 编译期内嵌，保证与二进制版本一致）；未知 flag/命令走白名单校验后 exit 2。\n- **server/client 协议边界**：AGENTS.md 要求“共享运行时/会话事实”放 server 状态并经 JSON API/事件路径暴露，“TUI 呈现状态”只留 TUI 层；明确禁止只对私有 TUI client socket 生效的新共享行为，且命名要用中性 server/API 名称（不得用 sidebar/row/card/widget）。私有同安装协议与面向客户端的 TUI endpoint 生成是两套：endpoint generation 1 是 Local/SSH/Cloud 的兼容底线，命名 codec 不可变，新增字段必须可选、新增枚举需有 `Unknown` 回退；`src/protocol/wire.rs::PROTOCOL_VERSION` 仅在已发布通道存在不兼容变更时上调。\n- **对外集成边界**：CLI + socket API 是 agent 的一等接口（`herdr api/workspace/pane/agent/tab/notification/session/integration/machine` 等子命令）；会话隔离用 `HERDR_SOCKET_PATH`、`HERDR_CLIENT_SOCKET_PATH` 环境变量切换；`distribution/agent-detection/` 是已发布客户端的远端检测清单目录。\n- **嵌套边界**：`HERDR_ENV=1` 时默认拒绝在 herdr pane 内再启动 herdr，除非 `experimental.allow_nested = true`（`should_block_nested_for_env`，仅 `client` 与默认 TUI 路径检查，`server` 不检查）。\n- **构建边界**：存在 `build.rs`；`[patch.crates-io] portable-pty` 指向 `vendor/portable-pty`；AGENTS.md 另述 vendored `libghostty-vt`（`vendor/libghostty-vt.vendor.json` + `vendor/patches/`），但该 vendoring 在 Cargo.toml 中没有直接依赖条目，属 Cargo.toml 未体现的构建期细节。\n\n## 4. 当前迁移方向（取舍）\n\n项目正从“server 与 TUI 耦合”迁向 **server 拥有运行时协议、TUI 只是其中一个 client**；新工作不得加深耦合。这解释了 `main.rs` 中 client/server/bridge 多入口并存，以及 endpoint generation 兼容层存在的原因——代价是协议层需要长期维护双轨兼容（旧 codec 作 fallback、可选字段、`Unknown` 枚举回退）。\n\n## 5. 未知/未确定信息（仅凭这四份文件无法确认）\n\n- 49 个 `mod` 的内部接口与依赖方向：main.rs 只做声明，模块间调用关系（如 ui ↔ app ↔ server ↔ protocol）未验证。\n- server/TUI 迁移的实际完成度、当前 `PROTOCOL_VERSION` 数值、存在的 endpoint generation 数量。\n- `build.rs` 内容、`vendor/portable-pty` 与 libghostty-vt 的实际改造范围。\n- README 与 AGENTS.md 中提到但未在此四文件内出现的文件（CONTRIBUTING.md、.github/MAINTAINERS、docs/next、distribution/*.json 等）均未读取。\n- 未运行任何命令、未运行测试，因此无构建或测试结果可报告；按只读约束，我也没有声明任何 Task/Goal 完成状态。",
+        "sources": [
+          {
+            "kind": "artifact",
+            "refKey": "0da8dbc5dcbfefc60545cb9cdfd67f3c94d0d7778ad5e188a0f46ff0ae73c798",
+            "version": "0da8dbc5dcbfefc60545cb9cdfd67f3c94d0d7778ad5e188a0f46ff0ae73c798"
+          },
+          {
+            "kind": "workspace_source",
+            "refKey": "{\"projectId\":\"acceptance-alpha\",\"workspaceId\":\"workspace-main\"}",
+            "version": "581caa553e0ca532fe06cc66bb6d35808db29cfe998697d356f0678abe0489eb"
+          },
+          {
+            "kind": "workspace_read",
+            "refKey": "README.md",
+            "version": "3cadb8128fd41fa3f3722ee4be9b0e6b11094ed9cce3980870ef66a62729c1eb"
+          },
+          {
+            "kind": "workspace_read",
+            "refKey": "AGENTS.md",
+            "version": "c2eca9d5147a5baf1008a5842e31e7c88c2cfbed4c6fbb957d1f9814b83dbfa9"
+          },
+          {
+            "kind": "workspace_read",
+            "refKey": "Cargo.toml",
+            "version": "83d5a56beea8a6006862391f20d70fc1de1c4132c208b954d3e3d3e8d500eb43"
+          },
+          {
+            "kind": "workspace_read",
+            "refKey": "src/main.rs",
+            "version": "30e3794802081d2289df8f94e8bfd99ce5854ffa9725b1f2cfcd6e848cfdb169"
+          }
+        ],
+        "message": null,
+        "endedAt": "2026-09-13T11:22:58.022Z"
+      },
+      "configuration": {
+        "revision": "d547ff74-f98a-43b6-b4ae-1c49c88c7a7c",
+        "provider": "deepseek",
+        "model": "deepseek-flash",
+        "baseUrl": "https://api.deepseek.com",
+        "protocol": "chat-completions",
+        "updatedAt": "2026-09-13T11:12:30.987Z"
+      }
+    },
+    {
+      "stage": "after",
+      "purpose": "progress",
+      "status": "completed",
+      "input": {
+        "kind": "semantic_query",
+        "maintainedPreferences": {
+          "authority": "preference_only",
+          "entries": [
+            {
+              "entry": {
+                "conditions": {
+                  "expiresAt": null,
+                  "purposes": [
+                    "progress"
+                  ]
+                },
+                "content": "进度汇报保持简洁，说明事实、阻塞、下一步，不编造完成情况。",
+                "createdAt": "2026-09-13T11:22:15.683Z",
+                "digest": "ffc7de078c49d8056fcf72672abf59a540293a175f876b8a65a038993111fcd7",
+                "entryId": "progress",
+                "origin": "explicit",
+                "revision": 1,
+                "source": {
+                  "kind": "human",
+                  "statementId": "specific:1"
+                },
+                "state": "active",
+                "updatedAt": "2026-09-13T11:22:15.683Z"
+              },
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              }
+            },
+            {
+              "entry": {
+                "conditions": {
+                  "expiresAt": null,
+                  "purposes": [
+                    "reply",
+                    "architecture",
+                    "progress",
+                    "planning",
+                    "handoff",
+                    "execution"
+                  ]
+                },
+                "content": "所有回应使用中文，简洁说明，通常不超过三句话。",
+                "createdAt": "2026-09-13T11:21:27.272Z",
+                "digest": "a7f962d6975c71aab1d1fc667cf9a3444e4c4fbe12dea257d3c1be8a11eec926",
+                "entryId": "brief",
+                "origin": "explicit",
+                "revision": 1,
+                "source": {
+                  "kind": "human",
+                  "statementId": "brief:0"
+                },
+                "state": "active",
+                "updatedAt": "2026-09-13T11:21:27.272Z"
+              },
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              }
+            }
+          ],
+          "excluded": [
+            {
+              "entryId": "architecture",
+              "reason": "different_purpose"
+            }
+          ],
+          "kind": "maintained_preferences",
+          "profileRevision": 2,
+          "profileScope": {
+            "kind": "profile",
+            "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+          },
+          "projectRevision": 0,
+          "projectScope": {
+            "kind": "project",
+            "projectId": "acceptance-alpha"
+          },
+          "rules": [
+            "Current explicit instructions and formal rules take priority. Preferences grant no permissions and satisfy no verification obligations.",
+            "Within compatible preferences, the more specific applicable purpose takes priority over a general preference.",
+            "Do not treat prior conversation quotations or removed/candidate entries as current preferences."
+          ],
+          "status": "ready"
+        },
+        "material": {
+          "acceptedPlan": null,
+          "agentTemplates": [],
+          "collaborationWork": [],
+          "collaborationWorkOmitted": 0,
+          "execution": {
+            "kind": "semantic_query",
+            "responsePurpose": "progress",
+            "roleBinding": {
+              "bindingId": "real-query-real-memory-after-progress",
+              "bindingVersion": 1,
+              "policyRevision": "read-only-v1",
+              "schemaVersion": 1,
+              "templateId": "query-reader",
+              "templateRevision": "1"
+            },
+            "runtimeBudget": {
+              "contextWindowTokens": 128000,
+              "inputTokens": null,
+              "maxRequests": null,
+              "maxToolCalls": null,
+              "outputTokens": null,
+              "perResponseTokens": 4096,
+              "timeoutMs": null
+            }
+          },
+          "executionFeedback": null,
+          "focus": [],
+          "goalContext": {
+            "activePlanRevision": null,
+            "objective": "验收核心流程：计划、运行、查询与持久化",
+            "ref": {
+              "aggregateType": "Goal",
+              "goalId": "acceptance-demo",
+              "projectId": "acceptance-alpha"
+            },
+            "revision": 1,
+            "workspaceRevision": 1
+          },
+          "noTranscript": true,
+          "previousAnswers": [],
+          "queryJobRef": {
+            "aggregateType": "QueryJob",
+            "projectId": "acceptance-alpha",
+            "queryJobId": "real-query-real-memory-after-progress",
+            "workspaceId": "workspace-main"
+          },
+          "question": "请仅根据根目录 README.md 和已提供的目标事实汇报目前可确认的状态、未知项和下一步；没有运行或验证证据时不得说已完成。不要运行命令或修改文件。",
+          "schemaVersion": 1,
+          "selectedSources": [
+            {
+              "kind": "goal",
+              "refKey": "{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"}",
+              "version": "{\"activePlanRevision\":null,\"objective\":\"验收核心流程：计划、运行、查询与持久化\",\"ref\":{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"},\"revision\":1,\"workspaceRevision\":1}"
+            }
+          ]
+        },
+        "permissions": {
+          "tools": [
+            "read"
+          ],
+          "writeScope": []
+        },
+        "question": "请仅根据根目录 README.md 和已提供的目标事实汇报目前可确认的状态、未知项和下一步；没有运行或验证证据时不得说已完成。不要运行命令或修改文件。",
+        "responsePurpose": "progress",
+        "responsibilities": [
+          "answer_question_from_public_facts_and_source",
+          "cite_versions_and_unknowns"
+        ],
+        "roleBinding": {
+          "bindingId": "real-query-real-memory-after-progress",
+          "bindingVersion": 1,
+          "policyRevision": "read-only-v1",
+          "schemaVersion": 1,
+          "templateId": "query-reader",
+          "templateRevision": "1"
+        },
+        "rules": [
+          "Read-only analysis. Use source tools when needed; do not run commands or edit files.",
+          "Return public evidence, source versions and unknowns. Do not claim Task or Goal completion.",
+          "Stored history is explanatory unless current applicability is separately verified."
+        ],
+        "sourceBundle": {
+          "contentType": "application/json",
+          "digest": "9e9914a872e63af7c029175aa72930a9a55a849f9086fb471bd20a113df9ca7e",
+          "kind": "artifact",
+          "sizeBytes": 1625,
+          "source": {
+            "digest": "",
+            "kind": "artifact",
+            "refId": "{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"}",
+            "revision": "{\"activePlanRevision\":null,\"objective\":\"验收核心流程：计划、运行、查询与持久化\",\"ref\":{\"aggregateType\":\"Goal\",\"goalId\":\"acceptance-demo\",\"projectId\":\"acceptance-alpha\"},\"revision\":1,\"workspaceRevision\":1}"
+          }
+        }
+      },
+      "result": {
+        "schemaVersion": 1,
+        "runRef": {
+          "aggregateType": "QueryRun",
+          "projectId": "acceptance-alpha",
+          "workspaceId": "workspace-main",
+          "queryJobId": "real-query-real-memory-after-progress",
+          "runId": "real-query-real-memory-after-progress"
+        },
+        "outcome": "answered",
+        "answer": "可确认：README.md（revision 3cadb812…）只描述 herdr 项目本身——Rust 单二进制、安装脚本、文档入口，以及开发验证命令 `cargo build --release`、`just test`、`just check` 和 Apache-2.0 许可；目标 acceptance-demo（revision 1，objective「验收核心流程：计划、运行、查询与持久化」）当前 activePlanRevision 为 null，workspaceRevision 为 1。\n\n未知：没有任何计划、运行、查询或持久化环节的证据，README 也完全未涉及该验收目标，因此不能声称任何步骤已完成或测试通过。\n\n下一步：需要先产出计划并实际运行 `just test`/`just check` 等验收命令以取得证据；本次为只读、未运行命令也未修改文件，故验收状态仍为未验证。",
+        "sources": [
+          {
+            "kind": "artifact",
+            "refKey": "9e9914a872e63af7c029175aa72930a9a55a849f9086fb471bd20a113df9ca7e",
+            "version": "9e9914a872e63af7c029175aa72930a9a55a849f9086fb471bd20a113df9ca7e"
+          },
+          {
+            "kind": "workspace_source",
+            "refKey": "{\"projectId\":\"acceptance-alpha\",\"workspaceId\":\"workspace-main\"}",
+            "version": "581caa553e0ca532fe06cc66bb6d35808db29cfe998697d356f0678abe0489eb"
+          },
+          {
+            "kind": "workspace_read",
+            "refKey": "README.md",
+            "version": "3cadb8128fd41fa3f3722ee4be9b0e6b11094ed9cce3980870ef66a62729c1eb"
+          }
+        ],
+        "message": null,
+        "endedAt": "2026-09-13T11:23:17.353Z"
+      },
+      "configuration": {
+        "revision": "d547ff74-f98a-43b6-b4ae-1c49c88c7a7c",
+        "provider": "deepseek",
+        "model": "deepseek-flash",
+        "baseUrl": "https://api.deepseek.com",
+        "protocol": "chat-completions",
+        "updatedAt": "2026-09-13T11:12:30.987Z"
+      }
+    }
+  ],
+  "restartedBeforeAfter": true,
+  "adoption": {
+    "runs": [
+      {
+        "runId": "real-query-real-memory-before-architecture",
+        "status": "completed",
+        "inputDigest": "fbaf8bd6bfb58f9d4008af1e6589c30a2217ee6dd97444af0fa38a88c568a047",
+        "purpose": "architecture",
+        "memory": {
+          "profileRevision": 1,
+          "projectRevision": 0,
+          "entries": [
+            {
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              },
+              "entryId": "brief",
+              "revision": 1,
+              "digest": "a7f962d6975c71aab1d1fc667cf9a3444e4c4fbe12dea257d3c1be8a11eec926"
+            }
+          ]
+        }
+      },
+      {
+        "runId": "real-query-real-memory-before-reply",
+        "status": "completed",
+        "inputDigest": "63d64745639c439d2f8df9ce24ac28e0eb29e8ccd5b7e3aafc656ad59a497565",
+        "purpose": "reply",
+        "memory": {
+          "profileRevision": 1,
+          "projectRevision": 0,
+          "entries": [
+            {
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              },
+              "entryId": "brief",
+              "revision": 1,
+              "digest": "a7f962d6975c71aab1d1fc667cf9a3444e4c4fbe12dea257d3c1be8a11eec926"
+            }
+          ]
+        }
+      },
+      {
+        "runId": "real-query-real-memory-before-progress",
+        "status": "completed",
+        "inputDigest": "a41aefc3770752e68f964ea2f63949aa2106d46c266d599305c0a120ef9e4a7d",
+        "purpose": "progress",
+        "memory": {
+          "profileRevision": 1,
+          "projectRevision": 0,
+          "entries": [
+            {
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              },
+              "entryId": "brief",
+              "revision": 1,
+              "digest": "a7f962d6975c71aab1d1fc667cf9a3444e4c4fbe12dea257d3c1be8a11eec926"
+            }
+          ]
+        }
+      },
+      {
+        "runId": "real-query-real-memory-after-reply",
+        "status": "completed",
+        "inputDigest": "cb8a7f130f2e4d3cb4fc432343b12f67509d4d33408301463b7719248e8a191d",
+        "purpose": "reply",
+        "memory": {
+          "profileRevision": 2,
+          "projectRevision": 0,
+          "entries": [
+            {
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              },
+              "entryId": "brief",
+              "revision": 1,
+              "digest": "a7f962d6975c71aab1d1fc667cf9a3444e4c4fbe12dea257d3c1be8a11eec926"
+            }
+          ]
+        }
+      },
+      {
+        "runId": "real-query-real-memory-after-architecture",
+        "status": "completed",
+        "inputDigest": "9b9be12facf93d89a3e451ff55992339e8e90ba8139f767546a50cab5bffc293",
+        "purpose": "architecture",
+        "memory": {
+          "profileRevision": 2,
+          "projectRevision": 0,
+          "entries": [
+            {
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              },
+              "entryId": "architecture",
+              "revision": 1,
+              "digest": "9461ffa1c002f808cb9f457bc3a98987f726427b511b98bee4a2cb2992423b03"
+            },
+            {
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              },
+              "entryId": "brief",
+              "revision": 1,
+              "digest": "a7f962d6975c71aab1d1fc667cf9a3444e4c4fbe12dea257d3c1be8a11eec926"
+            }
+          ]
+        }
+      },
+      {
+        "runId": "real-query-real-memory-after-progress",
+        "status": "completed",
+        "inputDigest": "3f76972d38bcb811e7370a7914a615c5e371fa78338f2ba30a3279b7be188948",
+        "purpose": "progress",
+        "memory": {
+          "profileRevision": 2,
+          "projectRevision": 0,
+          "entries": [
+            {
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              },
+              "entryId": "progress",
+              "revision": 1,
+              "digest": "ffc7de078c49d8056fcf72672abf59a540293a175f876b8a65a038993111fcd7"
+            },
+            {
+              "scope": {
+                "kind": "profile",
+                "profileId": "bb97c7e5-208f-4f6c-9889-893f5cd8f470"
+              },
+              "entryId": "brief",
+              "revision": 1,
+              "digest": "a7f962d6975c71aab1d1fc667cf9a3444e4c4fbe12dea257d3c1be8a11eec926"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "status": "completed",
+  "finishedAt": "2026-09-13T11:23:17.507Z"
+}

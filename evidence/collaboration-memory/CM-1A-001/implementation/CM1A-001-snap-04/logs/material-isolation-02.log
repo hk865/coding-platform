@@ -1,0 +1,11 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m evidence/collaboration-memory/CM-1A-001/implementation/CM1A-001-snap-04/material-isolation.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2312[2mms[22m[39m
+   [33m[2m✓[22m[39m three real Works share one formally routed body: two authorized readers, third denied even after identical-body put and SQLite reopen [33m 2311[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m   Start at [22m 15:50:11
+[2m   Duration [22m 16.91s[2m (transform 12.04s, setup 0ms, import 12.56s, tests 2.31s, environment 0ms)[22m
+

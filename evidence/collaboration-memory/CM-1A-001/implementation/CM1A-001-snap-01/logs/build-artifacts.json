@@ -1,0 +1,206 @@
+{
+  "recordedAt": "2026-09-12T16:40:31.013Z",
+  "snapshotId": "CM1A-001-snap-01",
+  "ticketId": "CM-1A-001",
+  "buildCommand": "pnpm build",
+  "buildExitCodeWithToolchainOnPath": 0,
+  "buildExitCodeWithLiteralEnvironment": 1,
+  "buildFailureWithLiteralEnvironment": "sh: 1: npm: not found (npm 未安装到 ~/.local/bin；工具链 bin 中存在 npm)",
+  "artifactsProducedByThisRun": true,
+  "dist": {
+    "path": "dist",
+    "exists": true,
+    "entryCount": 10,
+    "entries": [
+      {
+        "name": "app",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-11T11:51:22.890Z"
+      },
+      {
+        "name": "contracts",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-12T16:40:02.962Z"
+      },
+      {
+        "name": "control",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-10T06:10:07.307Z"
+      },
+      {
+        "name": "data",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-10T06:10:05.907Z"
+      },
+      {
+        "name": "execution",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-10T06:10:05.536Z"
+      },
+      {
+        "name": "fixtures",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-11T08:46:17.899Z"
+      },
+      {
+        "name": "harness",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-11T08:46:17.496Z"
+      },
+      {
+        "name": "interaction",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-10T06:10:06.120Z"
+      },
+      {
+        "name": "storage",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-10T06:10:05.419Z"
+      },
+      {
+        "name": "testing",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-11T08:46:17.860Z"
+      }
+    ]
+  },
+  "vendorCodingAgentDist": {
+    "path": "vendor/coding-agent/dist",
+    "exists": true,
+    "entryCount": 18,
+    "entries": [
+      {
+        "name": "app",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-08T06:27:53.114Z"
+      },
+      {
+        "name": "core",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-08T06:27:52.934Z"
+      },
+      {
+        "name": "m5-public-api.d.ts",
+        "type": "file",
+        "sizeBytes": 1800,
+        "mtime": "2026-09-12T16:39:41.809Z"
+      },
+      {
+        "name": "m5-public-api.d.ts.map",
+        "type": "file",
+        "sizeBytes": 1058,
+        "mtime": "2026-09-12T16:39:41.803Z"
+      },
+      {
+        "name": "m5-public-api.js",
+        "type": "file",
+        "sizeBytes": 1240,
+        "mtime": "2026-09-12T16:39:41.794Z"
+      },
+      {
+        "name": "m5-public-api.js.map",
+        "type": "file",
+        "sizeBytes": 751,
+        "mtime": "2026-09-12T16:39:41.786Z"
+      },
+      {
+        "name": "memory",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-08T06:27:52.987Z"
+      },
+      {
+        "name": "model",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-08T06:27:52.870Z"
+      },
+      {
+        "name": "observability",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-08T06:27:53.143Z"
+      },
+      {
+        "name": "policy",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-08T06:27:52.893Z"
+      },
+      {
+        "name": "public-api.d.ts",
+        "type": "file",
+        "sizeBytes": 6205,
+        "mtime": "2026-09-12T16:39:41.911Z"
+      },
+      {
+        "name": "public-api.d.ts.map",
+        "type": "file",
+        "sizeBytes": 3291,
+        "mtime": "2026-09-12T16:39:41.904Z"
+      },
+      {
+        "name": "public-api.js",
+        "type": "file",
+        "sizeBytes": 4517,
+        "mtime": "2026-09-12T16:39:41.897Z"
+      },
+      {
+        "name": "public-api.js.map",
+        "type": "file",
+        "sizeBytes": 2421,
+        "mtime": "2026-09-12T16:39:41.890Z"
+      },
+      {
+        "name": "sandbox",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-08T06:27:53.018Z"
+      },
+      {
+        "name": "skills",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-08T06:27:53.033Z"
+      },
+      {
+        "name": "storage",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-08T06:27:53.047Z"
+      },
+      {
+        "name": "tools",
+        "type": "dir",
+        "sizeBytes": 4096,
+        "mtime": "2026-09-08T06:27:53.069Z"
+      }
+    ]
+  },
+  "serverEntry": {
+    "path": "dist/app/server.js",
+    "exists": true,
+    "type": "file",
+    "sizeBytes": 13338,
+    "mtime": "2026-09-12T16:40:02.955Z"
+  },
+  "uiBundleIndexHtml": {
+    "path": "dist/app/public/workbench/index.html",
+    "exists": true,
+    "type": "file",
+    "sizeBytes": 484,
+    "mtime": "2026-09-12T16:40:19.694Z"
+  }
+}

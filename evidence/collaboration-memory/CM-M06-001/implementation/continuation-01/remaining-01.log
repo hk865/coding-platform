@@ -1,0 +1,21 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/coordination/alternative-report-hosts.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 6344[2mms[22m[39m
+   [33m[2m✓[22m[39m three distinct Works use real Host tools: first report resumes the coordinator, late reporter continues, restart does not repeat [33m 6343[2mms[22m[39m
+ [32m✓[39m tests/coordination/route-drive.test.ts [2m([22m[2m32 tests[22m[2m)[22m[33m 48351[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'any' missing-first=false revoke-before=false report-first=undefined cancel-before=true preserves actual conditions and retains late reports [33m 1395[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'any' missing-first=false revoke-before=false report-first=undefined cancel-before=undefined preserves actual conditions and retains late reports [33m 6293[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'all' missing-first=false revoke-before=false report-first=undefined cancel-before=undefined preserves actual conditions and retains late reports [33m 1230[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'any' missing-first=true revoke-before=false report-first=undefined cancel-before=undefined preserves actual conditions and retains late reports [33m 1531[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'any' missing-first=false revoke-before=true report-first=undefined cancel-before=undefined preserves actual conditions and retains late reports [33m 2202[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite close + reopen 后仍能领取既有 wait_admission intent 并完成唯一后继 [33m 2336[2mms[22m[39m
+   [33m[2m✓[22m[39m independent process exit before_page recovers fixed subscription pages exactly once [33m 11327[2mms[22m[39m
+   [33m[2m✓[22m[39m independent process exit after_page recovers fixed subscription pages exactly once [33m 10136[2mms[22m[39m
+   [33m[2m✓[22m[39m independent consumers preserve the new generation result when the old process settles late [33m 11405[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m2 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[32m33 passed[39m[22m[90m (33)[39m
+[2m   Start at [22m 17:39:38
+[2m   Duration [22m 60.65s[2m (transform 27.39s, setup 0ms, import 33.74s, tests 54.70s, environment 0ms)[22m
+

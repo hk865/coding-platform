@@ -1,0 +1,60 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/coordination/handoff-successor.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 371[2mms[22m[39m
+ [31m❯[39m tests/coordination/route-continuity.test.ts [2m([22m[2m14 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[33m 505[2mms[22m[39m
+     [32m✓[39m DirectedRequestSent 的提交回执同时含源事件与同位置的 CommunicationIntentRecorded，且 sourceCursor 逐字节等于源事件游标[32m 68[2mms[22m[39m
+     [32m✓[39m 整轮候选集合而不是本页切片：3 个订阅 + 页大小 1 → 首轮就把 3 个都固定进范围，翻满 3 页并全部投递[32m 34[2mms[22m[39m
+     [32m✓[39m 本页引入本轮范围外的订阅 → Control 整页拒绝（零写入）[32m 20[2mms[22m[39m
+     [32m✓[39m 同一 topic 上更靠后的事件位置，在前一条未收敛的 route intent 完成前不被推进[32m 28[2mms[22m[39m
+[31m     [31m×[31m 已证实无副作用的失败进入 retry_scheduled（availableAt = settledAt + 退避）；已开始的副作用一律拒绝退避[39m[32m 33[2mms[22m[39m
+[31m     [31m×[31m 租约到期不构成重跑依据：sideEffectStarted 的 intent 经正式对账进入可见 quarantine[39m[32m 19[2mms[22m[39m
+     [32m✓[39m 未产生副作用：取消等待后 intent **先**落成 cancel_requested，drive 之后收敛为 cancelled[32m 35[2mms[22m[39m
+     [32m✓[39m 副作用已经开始：同一个取消请求只能收敛为 outcome_unknown，绝不声称 cancelled[32m 29[2mms[22m[39m
+   [32m✓[39m a burst of source events during pagination creates every round and delivers each subscription once in order[32m 121[2mms[22m[39m
+   [32m✓[39m one historical subscription preserves multiple topics and hands over to live sources at its fixed creation horizon[32m 34[2mms[22m[39m
+   [32m✓[39m a subscription committed while a source is awaiting commit joins that source atomically[32m 13[2mms[22m[39m
+   [32m✓[39m cancelling the final subscription during a fixed three-page round advances the page without delivering to it[32m 19[2mms[22m[39m
+   [32m✓[39m restart-style recovery finishes derived cancellation after the Wait commit succeeded and the caller disappeared[32m 24[2mms[22m[39m
+   [32m✓[39m a one-intent budget rotates historical subscriptions by durable progress even when wall time is fixed[32m 26[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-continuity.test.ts[2m > [22m取消与 unknown（A07/A08）：非终态退避与已开始的副作用[2m > [22m已证实无副作用的失败进入 retry_scheduled（availableAt = settledAt + 退避）；已开始的副作用一律拒绝退避
+[31m[1mAssertionError[22m: expected 'leased' to be 'quarantined' // Object.is equality[39m
+
+Expected: [32m"[7mquarantin[27med"[39m
+Received: [31m"[7mleas[27med"[39m
+
+[36m [2m❯[22m tests/coordination/route-continuity.test.ts:[2m514:33[22m[39m
+    [90m512|[39m     [34mexpect[39m(denied[33m.[39mstatus)[33m.[39m[34mtoBe[39m([32m"rejected"[39m)[33m;[39m
+    [90m513|[39m     [35mconst[39m after [33m=[39m [35mawait[39m [34mloadIntent[39m(s[33m,[39m intentId)[33m;[39m
+    [90m514|[39m     [34mexpect[39m(after[33m.[39mintent[33m.[39mstatus)[33m.[39m[34mtoBe[39m([32m"quarantined"[39m)[33m;[39m
+    [90m   |[39m                                 [31m^[39m
+    [90m515|[39m     [34mexpect[39m(after[33m.[39mintent[33m.[39msideEffectStarted)[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+    [90m516|[39m     [34mexpect[39m(after[33m.[39mrevision)[33m.[39m[34mtoBe[39m(startedIntent[33m.[39mrevision)[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-continuity.test.ts[2m > [22m取消与 unknown（A07/A08）：非终态退避与已开始的副作用[2m > [22m租约到期不构成重跑依据：sideEffectStarted 的 intent 经正式对账进入可见 quarantine
+[31m[1mAssertionError[22m: expected 'quarantined' to be 'leased' // Object.is equality[39m
+
+Expected: [32m"[7mleas[27med"[39m
+Received: [31m"[7mquarantin[27med"[39m
+
+[36m [2m❯[22m tests/coordination/route-continuity.test.ts:[2m540:33[22m[39m
+    [90m538|[39m     [34mexpect[39m(after[33m.[39mintent[33m.[39mleaseGeneration)[33m.[39m[34mtoBe[39m(claimed[33m.[39mleaseGeneration)[33m;[39m
+    [90m539|[39m     [34mexpect[39m(after[33m.[39mrevision)[33m.[39m[34mtoBe[39m(beforeExpiry[33m.[39mrevision [33m+[39m [34m1[39m)[33m;[39m
+    [90m540|[39m     [34mexpect[39m(after[33m.[39mintent[33m.[39mstatus)[33m.[39m[34mtoBe[39m([32m"leased"[39m)[33m;[39m
+    [90m   |[39m                                 [31m^[39m
+    [90m541|[39m     [34mexpect[39m(after[33m.[39mintent[33m.[39msideEffectStarted)[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+    [90m542|[39m     expect(drive.coordination?.backlog?.quarantined).toBeGreaterThanOr…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m1 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m19 passed[39m[22m[90m (21)[39m
+[2m   Start at [22m 15:27:24
+[2m   Duration [22m 11.66s[2m (transform 18.74s, setup 0ms, import 19.78s, tests 876ms, environment 0ms)[22m
+

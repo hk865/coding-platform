@@ -1,0 +1,15 @@
+
+Algorithm Hash                                                             Path
+--------- ----                                                             ----
+SHA256    D78C741ACB8E4AD96920A7B7B0BAF637D367478360EA457B9E1AF1A05B3FB2EC D:\1.project\Software\agent_platform\src\contracts\alternative-report.ts
+SHA256    A259ECC6D95AF93CF33ED4F63A301DA58E993F705478CAD35425391F54E11BD2 D:\1.project\Software\agent_platform\src\contracts\coordination.ts
+SHA256    A9250306DEDE29A371DC4041F7754EEF64BAF64556BCB52858057C6440B59B00 D:\1.project\Software\agent_platform\src\data\context-compiler\alternative-report-materials.ts
+SHA256    35027269D092E042B4F6C1CEF4BA09732F309C730F06FED62680F325F59DB9EB D:\1.project\Software\agent_platform\src\control\dispatch-engine\alternative-report-preparation.ts
+SHA256    186968EE7829D6ED246785C5836E561B0292A0E71F5DBF0C396AD66DD9BACC1D D:\1.project\Software\agent_platform\src\control\dispatch-engine\coordination-drive.ts
+SHA256    43F967243A35FC09069C0BA44CA72F26EC1BFE1C1F2A096596A58C645AFA7A0A D:\1.project\Software\agent_platform\src\control\control-engine\coordination.ts
+SHA256    BD1535C9BE946D0B9B1984FCA679BC08FC49669378E261B12D639CE200B3EA2B D:\1.project\Software\agent_platform\src\data\state-ledger\ledger-validation.ts
+SHA256    975A558C98EB5C03042BE30113DD5CCA3FCE47810FEC00B190EFB2FC50E95A25 D:\1.project\Software\agent_platform\src\harness\in-memory-harness.ts
+SHA256    2CB93103EA630935F2DD818F07E9ED105D9B1DB0206E10BEDCA661CE91F3AFA9 D:\1.project\Software\agent_platform\src\harness\persistent-harness.ts
+SHA256    48E7D509BAFB3256811E02A236B402296309DD47204DC90ADDBE28BE74AF34EA D:\1.project\Software\agent_platform\src\harness\alternative-report-observation.ts
+
+

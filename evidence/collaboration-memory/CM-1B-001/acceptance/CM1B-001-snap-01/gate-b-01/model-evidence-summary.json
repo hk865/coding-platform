@@ -1,0 +1,146 @@
+[
+  {
+    "file": "real-model-responses-01.json",
+    "sha256": "afcd568ac20ba4f066ac4cb71bb953b021ebc08ea660bda32880d6e87c46eb0a",
+    "status": "completed",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "restarted": true,
+    "rows": [
+      {
+        "stage": "before",
+        "purpose": "reply",
+        "status": "completed",
+        "profileRevision": 1,
+        "entryIds": [
+          "brief"
+        ],
+        "answerChars": 403
+      },
+      {
+        "stage": "before",
+        "purpose": "architecture",
+        "status": "completed",
+        "profileRevision": 1,
+        "entryIds": [
+          "brief"
+        ],
+        "answerChars": 407
+      },
+      {
+        "stage": "before",
+        "purpose": "progress",
+        "status": "completed",
+        "profileRevision": 1,
+        "entryIds": [
+          "brief"
+        ],
+        "answerChars": 395
+      },
+      {
+        "stage": "after",
+        "purpose": "reply",
+        "status": "completed",
+        "profileRevision": 2,
+        "entryIds": [
+          "brief"
+        ],
+        "answerChars": 302
+      },
+      {
+        "stage": "after",
+        "purpose": "architecture",
+        "status": "completed",
+        "profileRevision": 2,
+        "entryIds": [
+          "architecture",
+          "brief"
+        ],
+        "answerChars": 1481
+      },
+      {
+        "stage": "after",
+        "purpose": "progress",
+        "status": "completed",
+        "profileRevision": 2,
+        "entryIds": [
+          "progress",
+          "brief"
+        ],
+        "answerChars": 283
+      }
+    ]
+  },
+  {
+    "file": "real-herdr-responses-01.json",
+    "sha256": "4cc1f632a89befa19915b797e29611f6c93bce669a7cb21c524ba083bbaa52ba",
+    "status": "completed",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "restarted": true,
+    "rows": [
+      {
+        "stage": "before",
+        "purpose": "reply",
+        "status": "completed",
+        "profileRevision": 1,
+        "entryIds": [
+          "brief"
+        ],
+        "answerChars": 586
+      },
+      {
+        "stage": "before",
+        "purpose": "architecture",
+        "status": "completed",
+        "profileRevision": 1,
+        "entryIds": [
+          "brief"
+        ],
+        "answerChars": 1217
+      },
+      {
+        "stage": "before",
+        "purpose": "progress",
+        "status": "completed",
+        "profileRevision": 1,
+        "entryIds": [
+          "brief"
+        ],
+        "answerChars": 691
+      },
+      {
+        "stage": "after",
+        "purpose": "reply",
+        "status": "completed",
+        "profileRevision": 2,
+        "entryIds": [
+          "brief"
+        ],
+        "answerChars": 498
+      },
+      {
+        "stage": "after",
+        "purpose": "architecture",
+        "status": "completed",
+        "profileRevision": 2,
+        "entryIds": [
+          "architecture",
+          "brief"
+        ],
+        "answerChars": 3688
+      },
+      {
+        "stage": "after",
+        "purpose": "progress",
+        "status": "completed",
+        "profileRevision": 2,
+        "entryIds": [
+          "progress",
+          "brief"
+        ],
+        "answerChars": 404
+      }
+    ]
+  }
+]

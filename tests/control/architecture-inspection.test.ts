@@ -24,7 +24,7 @@ import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/boo
 import { ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
 import { P112_PROJECT, P112_WORKSPACE, P112_INSPECTION, P112_INSPECTION_REPORT, P112_FINDING_DELTA, P112_FINDING_REPORT, P112_BRIEF, P112_PROPOSAL, p112BaselinePin, buildP112InspectionIntent, buildP112InspectionSnapshot, buildP112DeltaFinding, buildP112ReportFinding, buildP112Brief, buildP112Proposal, buildRecordArchitectureInspectionCommand, buildRecordArchitectureFindingCommand, buildRecordArchitectureDecisionBriefCommand, buildRecordCandidateBaselineProposalCommand } from "../../src/fixtures/architecture-fixtures.js";
 import { buildArchitectureInspectionRecordLedgerCommit, buildArchitectureFindingRecordLedgerCommit, buildArchitectureBriefRecordLedgerCommit, buildArchitectureProposalRecordLedgerCommit } from "../../src/control/control-engine/records/architecture.js";
-import { architectureInspectionRefFor, architectureFindingRefFor, architectureDecisionBriefRefFor, architectureCandidateProposalRefFor } from "../../src/contracts/architecture-inspection.js";
+import { architectureInspectionRefFor, architectureFindingRefFor, architectureDecisionBriefRefFor, architectureCandidateProposalRefFor,candidateProposalDigest } from "../../src/contracts/architecture-inspection.js";
 import type { ArchitectureBaselinePin } from "../../src/contracts/governance.js";
 
 const FIXED = FIXED_ISO_2026_09_05;
@@ -73,6 +73,27 @@ async function eventCount(ledger: StateLedger): Promise<number> {
 }
 
 describe("P1-12 record commands: happy path (atomic commit + fold-equality)", () => {
+  it('records a selected decision brief without a fabricated delta and preserves the old mechanical fingerprint',async()=>{
+    const {ledger,engine}=await setupBaseline();
+    // Captured from the independently accepted CM1B snapshot's built fixture.
+    expect(buildP112Proposal().proposalDigest).toBe('e9a112f23da7f3a338d5a60d8952275c4576d18f638a87560abf29b3034cd28e');
+    const brief=buildP112Brief();
+    expect(await engine.recordArchitectureDecisionBrief(buildRecordArchitectureDecisionBriefCommand(brief,{commandId:'c-brief'}))).toMatchObject({status:'committed'});
+    const proposal={...buildP112Proposal(),proposalId:'c-brief-proposal',selectedDeltaRef:null,
+      selectedBriefRef:architectureDecisionBriefRefFor(brief.projectId,brief.workspaceId,brief.briefId),selectedOptionId:brief.options[0]!.optionId};
+    proposal.proposalDigest=candidateProposalDigest(proposal);
+    const command=buildRecordCandidateBaselineProposalCommand(proposal,{commandId:'c-brief-proposal'});
+    expect(await engine.recordCandidateBaselineProposal(command)).toMatchObject({status:'committed',replayed:false});
+    expect(await engine.recordCandidateBaselineProposal(command)).toMatchObject({status:'committed',replayed:true});
+    const bad={...proposal,proposalId:'c-bad-option',selectedOptionId:'not-an-option'};bad.proposalDigest=candidateProposalDigest(bad);
+    const before=await eventCount(ledger);
+    expect(await engine.recordCandidateBaselineProposal(buildRecordCandidateBaselineProposalCommand(bad,{commandId:'c-bad-option'}))).toMatchObject({status:'rejected',code:'baseline_mismatch'});
+    const mixed={...proposal,selectedDeltaRef:buildP112Proposal().selectedDeltaRef};mixed.proposalDigest=candidateProposalDigest(mixed);
+    expect(await engine.recordCandidateBaselineProposal(buildRecordCandidateBaselineProposalCommand(mixed,{commandId:'c-mixed'}))).toMatchObject({status:'rejected',code:'invalid'});
+    const batch=buildArchitectureProposalRecordLedgerCommit(buildRecordCandidateBaselineProposalCommand({...proposal,proposalId:'c-unguarded'},{commandId:'c-unguarded'}),{eventId:'c-unguarded',occurredAt:FIXED});
+    expect(await ledger.commit({...batch,expectedVersions:batch.expectedVersions.slice(0,1)})).toMatchObject({status:'rejected',code:'invalid_commit'});
+    expect(await eventCount(ledger)).toBe(before);
+  });
   it("inspection commits the exact fold and persists the snapshot (then idempotent replay)", async () => {
     const { ledger, engine } = await setupBaseline();
     const before = await eventCount(ledger);

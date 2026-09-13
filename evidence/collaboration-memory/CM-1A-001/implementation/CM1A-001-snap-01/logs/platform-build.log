@@ -1,0 +1,46 @@
+$ pnpm build
+cwd=/mnt/d/1.project/Software/agent_platform
+PATH 中的 npm: (not found)
+2026-09-13T00:39:23+08:00
+Already up to date
+Done in 346ms using pnpm v11.21.0
+$ npm run kernel:build && tsc -p tsconfig.app.json && node scripts/copy-ui.mjs && pnpm run ui:build
+sh: 1: npm: not found
+[ELIFECYCLE] Command failed.
+
+EXIT_CODE=1
+2026-09-13T00:39:26+08:00
+
+=== RUN 2: 同一命令 pnpm build；仅把 node 工具链 bin 加入 PATH ===
+npm=/home/han001/projects/agents/coding-agent/.tooling/node-v24.18.0-linux-x64/bin/npm  npm-version=11.16.0
+2026-09-13T00:39:26+08:00
+Already up to date
+Done in 314ms using pnpm v11.21.0
+$ npm run kernel:build && tsc -p tsconfig.app.json && node scripts/copy-ui.mjs && pnpm run ui:build
+
+> agent-platform@0.1.0 kernel:build
+> npm --prefix vendor/coding-agent run build
+
+
+> coding-agent-learning@0.0.0 build
+> tsc -p tsconfig.build.json
+
+$ pnpm --dir src/ui run build
+$ vite build
+vite v8.2.2 building client environment for production...
+transforming...
+✓ 1055 modules transformed.
+rendering chunks...
+computing gzip size...
+../../dist/app/public/workbench/index.html                        0.48 kB │ gzip:   0.31 kB
+../../dist/app/public/workbench/assets/terminal-B1njb2Cr.css      3.96 kB │ gzip:   1.02 kB
+../../dist/app/public/workbench/assets/task-graph-DLioOiRN.css   15.41 kB │ gzip:   2.56 kB
+../../dist/app/public/workbench/assets/index-BDq-QD5v.css       240.07 kB │ gzip:  35.63 kB
+../../dist/app/public/workbench/assets/task-graph-BsgaLiBz.js   179.79 kB │ gzip:  58.34 kB
+../../dist/app/public/workbench/assets/terminal-CeHrvr0H.js     337.12 kB │ gzip:  85.51 kB
+../../dist/app/public/workbench/assets/index-CdX2Ww2F.js        714.91 kB │ gzip: 215.82 kB
+
+✓ built in 10.79s
+
+EXIT_CODE=0
+2026-09-13T00:40:19+08:00

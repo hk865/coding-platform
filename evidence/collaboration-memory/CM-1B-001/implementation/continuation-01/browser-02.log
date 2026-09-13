@@ -1,0 +1,39 @@
+[WebServer] $ npm run kernel:build && tsc -p tsconfig.app.json && node scripts/copy-ui.mjs && pnpm run ui:build
+[WebServer] $ pnpm --dir src/ui run build
+[WebServer] $ vite build
+
+Running 2 tests using 1 worker
+
+  ✓  1 tests/memory.spec.ts:4:1 › maintains profile memory through UI, persists across projects and exposes conflicts without claiming adoption (1.8s)
+  ✘  2 tests/memory.spec.ts:32:1 › three purposes show different real responses and historical adoption versions after explicit UI saves (866ms)
+
+
+  1) tests/memory.spec.ts:32:1 › three purposes show different real responses and historical adoption versions after explicit UI saves 
+
+    Error: locator.click: Error: strict mode violation: getByLabel('响应用途') resolved to 2 elements:
+        1) <input readonly value="日常回复" role="combobox" autocomplete="off" aria-expanded="false" data-variant="default" id="mantine-3al7lf0zw" aria-haspopup="listbox" class="m_8fb7ebe7 mantine-Input-input mantine-Select-input"/> aka getByRole('combobox', { name: '响应用途' })
+        2) <div role="listbox" id="mantine-gnu0fskt7" class="m_b2821a6e mantine-Select-options" aria-labelledby="mantine-3al7lf0zw-label">…</div> aka locator('#mantine-gnu0fskt7')
+
+    Call log:
+      - waiting for getByLabel('响应用途')
+
+
+      40 |   let count=0;
+      41 |   const ask=async(label:string)=>{
+    > 42 |     await page.getByLabel('响应用途').click();await page.getByRole('option',{name:label,exact:true}).click();
+         |                                   ^
+      43 |     await page.getByTestId('semantic-question').fill('请说明当前公开情况。');await page.getByTestId('semantic-ask').click();count++;
+      44 |     await expect.poll(async()=>{
+      45 |       const result=await api(page,'/api/real/queries/runs',scope) as {body:{runs:{status:string}[]}};
+        at ask (/mnt/d/1.project/Software/agent_platform/src/ui/tests/memory.spec.ts:42:35)
+        at /mnt/d/1.project/Software/agent_platform/src/ui/tests/memory.spec.ts:49:51
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/memory-three-purposes-show-81c4e-ons-after-explicit-UI-saves/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/memory-three-purposes-show-81c4e-ons-after-explicit-UI-saves/error-context.md
+
+  1 failed
+    tests/memory.spec.ts:32:1 › three purposes show different real responses and historical adoption versions after explicit UI saves 
+  1 passed (1.2m)

@@ -1,0 +1,319 @@
+{
+  "capturedAt": "2026-09-13T08:10:38.134Z",
+  "productHead": "0eb02717d16412298c786166a75ca1a9d3e05ac7",
+  "documentationHead": "e99484fb2bd3296a32d8442e74b47d8ed569b3d5",
+  "documents": [
+    {
+      "kind": "documentation",
+      "path": "AGENTS.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\AGENTS.md",
+      "bytes": 2799,
+      "sha256": "1c761ec886c6cdd65a3073b7cae3d6b69a7b28cb9b962f9d084d92ce4c9f8fca",
+      "archivedPath": "documents/documentation/AGENTS.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "PRODUCT.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\PRODUCT.md",
+      "bytes": 17157,
+      "sha256": "93cbd9d41ad72f6394512f952b97f3b8784133d691ee00b4b0f53c124c072c52",
+      "archivedPath": "documents/documentation/PRODUCT.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "ARCHITECTURE.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\ARCHITECTURE.md",
+      "bytes": 30373,
+      "sha256": "ddf41aeb00a12ef8745d72984e5d19fa6fae7bac323175ddce8ff7e258734518",
+      "archivedPath": "documents/documentation/ARCHITECTURE.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "CONTEXT.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\CONTEXT.md",
+      "bytes": 6017,
+      "sha256": "724c47d89bf65cf9440bffed82a1d01f7c2853f2779df198d83e0abfae4b456a",
+      "archivedPath": "documents/documentation/CONTEXT.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "human/module-status.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\human\\module-status.md",
+      "bytes": 22160,
+      "sha256": "feae8541eadcb937d1db05b8a89c0a4bbc1258f59b32b0cd511099e4e987e7a1",
+      "archivedPath": "documents/documentation/human/module-status.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/document-ownership.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\document-ownership.md",
+      "bytes": 3998,
+      "sha256": "39afe3a13f0958271712534c1395e4f10da53355b61deef1949b195a7636788c",
+      "archivedPath": "documents/documentation/dev_docs/document-ownership.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/agent/README.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\agent\\README.md",
+      "bytes": 3988,
+      "sha256": "c1edb2d3e61d4c0dba482afab4f9dffd3b2812364db46f12840bd953eaca1ada",
+      "archivedPath": "documents/documentation/dev_docs/agent/README.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/interfaces/runtime-collaboration.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\interfaces\\runtime-collaboration.md",
+      "bytes": 29910,
+      "sha256": "464335a86925a814b5cf0ab247ad1d60bd73d3bb62dfefe40ac0463007693207",
+      "archivedPath": "documents/documentation/dev_docs/interfaces/runtime-collaboration.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/interfaces/context-lifecycle.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\interfaces\\context-lifecycle.md",
+      "bytes": 14347,
+      "sha256": "569acf86d6db26f9f090e2bec322747b4fa31cb4eeec2e81e942c64dd79dc5a7",
+      "archivedPath": "documents/documentation/dev_docs/interfaces/context-lifecycle.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/interfaces/state-ledger.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\interfaces\\state-ledger.md",
+      "bytes": 19058,
+      "sha256": "760273a7a06742d35a04b2639f8f2f48dabacfc5f755921d4fad3d73016bf990",
+      "archivedPath": "documents/documentation/dev_docs/interfaces/state-ledger.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/interfaces/command-event.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\interfaces\\command-event.md",
+      "bytes": 15343,
+      "sha256": "e0ec88ebe28b7538b3667528e89fc992b8aad3cffedf18f9d87f41a99996e8a9",
+      "archivedPath": "documents/documentation/dev_docs/interfaces/command-event.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/interfaces/module-boundaries.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\interfaces\\module-boundaries.md",
+      "bytes": 28359,
+      "sha256": "1a4bba6205560fa8beb62cb1e2beb7b28d4dc21ef80c3e2dfc1ed6f70f93fe6c",
+      "archivedPath": "documents/documentation/dev_docs/interfaces/module-boundaries.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/modules/control/control-engine.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\modules\\control\\control-engine.md",
+      "bytes": 12127,
+      "sha256": "5a374f2ba316625e05abb4a12f0a17d73d76efdb5f943747e651799eb359bf6d",
+      "archivedPath": "documents/documentation/dev_docs/modules/control/control-engine.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/modules/control/dispatch-engine.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\modules\\control\\dispatch-engine.md",
+      "bytes": 5408,
+      "sha256": "072de6c1d62470f17b028b80b65c7af00048f281324c03ff985e91116284be8c",
+      "archivedPath": "documents/documentation/dev_docs/modules/control/dispatch-engine.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/modules/data/state-ledger.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\modules\\data\\state-ledger.md",
+      "bytes": 8183,
+      "sha256": "9c2d181499e3c73a7d2ea05350ddcd31237b64425ea73ec16d46c8f996e7ae9c",
+      "archivedPath": "documents/documentation/dev_docs/modules/data/state-ledger.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/modules/data/context-compiler.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\modules\\data\\context-compiler.md",
+      "bytes": 7602,
+      "sha256": "7c9e67ebde91f403e8e1be673809f1ff34792acaf6d1ebf7af10792b9ead932f",
+      "archivedPath": "documents/documentation/dev_docs/modules/data/context-compiler.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/modules/data/artifact-vault.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\modules\\data\\artifact-vault.md",
+      "bytes": 8016,
+      "sha256": "259d44d58056f1ed69bbf20fb98a088fced1ed93f6ff9b4cc132d51418a62e21",
+      "archivedPath": "documents/documentation/dev_docs/modules/data/artifact-vault.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/modules/execution/worker-runtime.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\modules\\execution\\worker-runtime.md",
+      "bytes": 5902,
+      "sha256": "87e282b5fea37250e124c7ec389aaaae2ff294214e18f09b2342997f939e58e2",
+      "archivedPath": "documents/documentation/dev_docs/modules/execution/worker-runtime.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/CM-1A-001.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\CM-1A-001.md",
+      "bytes": 19844,
+      "sha256": "54ef7a2c4f72be4734a107d52eb1e1f055594333e8e57ffb9f7db5d475efaf50",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/CM-1A-001.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/CM-1A-001-FOLLOWUP-PLAN.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\CM-1A-001-FOLLOWUP-PLAN.md",
+      "bytes": 7520,
+      "sha256": "58d1a3acc869c6a4b3e4a1fe97604288e0326c446038846740497883dadfdc4b",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/CM-1A-001-FOLLOWUP-PLAN.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/CM-1A-001-PROTOCOL-CONSTRAINTS.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\CM-1A-001-PROTOCOL-CONSTRAINTS.md",
+      "bytes": 36324,
+      "sha256": "834e2f01fa227478240986ec3a4e0f35ab47a66197bcfb5ee2717e874e19e12b",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/CM-1A-001-PROTOCOL-CONSTRAINTS.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/PLAN.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\PLAN.md",
+      "bytes": 97990,
+      "sha256": "3316e6e5dc26088304f1858139b155d0a94ce91673cb4d81115d70d76f3bbc0d",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/PLAN.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/READINESS.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\READINESS.md",
+      "bytes": 15583,
+      "sha256": "dafd5181e4fc1ae9b51721dc06bf3af119e46889c835b55dea13a26b2e578fd0",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/READINESS.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/CURRENT-CALLCHAIN-EVIDENCE.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\CURRENT-CALLCHAIN-EVIDENCE.md",
+      "bytes": 43296,
+      "sha256": "969188f7d1f95fb31f211ca81f29b820b9e0fdd3264195e2831f086f56ddf78a",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/CURRENT-CALLCHAIN-EVIDENCE.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/BASELINE.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\BASELINE.md",
+      "bytes": 11432,
+      "sha256": "b2d5828a05aa6abb2688ba2cf79c8e2f4f480712ef845a28f99805037a18f0fd",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/BASELINE.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/HANDOFF.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\HANDOFF.md",
+      "bytes": 10943,
+      "sha256": "81e7ec6935508d1ffa3a1bc527bb437cac1bd57947e55a003e5d31e005c25fca",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/HANDOFF.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/MAIN-AGENT-PROMPT.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\MAIN-AGENT-PROMPT.md",
+      "bytes": 9075,
+      "sha256": "8f65f9440bec9bd2a2a89966dbfd7713f4d6c86ed071225269f7f162ae71613e",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/MAIN-AGENT-PROMPT.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/ACCEPTANCE-PROMPT.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\ACCEPTANCE-PROMPT.md",
+      "bytes": 7157,
+      "sha256": "637f08d265fb7089b012b60edb935c3b9f843c079ca98862455493c3e87dbe55",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/ACCEPTANCE-PROMPT.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/IMPLEMENTATION-PROMPT.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\IMPLEMENTATION-PROMPT.md",
+      "bytes": 5695,
+      "sha256": "78bd7eb21b7f92e1f039dc1847976c8c26243d93dc4680c02fc2cbfb24818ff9",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/IMPLEMENTATION-PROMPT.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/CM-M06-DRAFT.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\CM-M06-DRAFT.md",
+      "bytes": 5238,
+      "sha256": "56b1046c6905e982b124983eceb834f3656e67b5bfe1516a9c6355e2bfadb0a6",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/CM-M06-DRAFT.md"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/baseline/preparation-baseline.json",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\baseline\\preparation-baseline.json",
+      "bytes": 13545,
+      "sha256": "18ac4821695f8afc9e33b738af739cda9545950c54acc7c7edbbb9a12c519024",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/baseline/preparation-baseline.json"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/baseline/upstream-documents.json",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\baseline\\upstream-documents.json",
+      "bytes": 11043,
+      "sha256": "c12ea312a2516f272844e6cda543fb416046a5ebc0b3abaec46137e79a71c537",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/baseline/upstream-documents.json"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/baseline/product-working-tree.patch",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\baseline\\product-working-tree.patch",
+      "bytes": 77572,
+      "sha256": "e81abc4503ddebfe964d9b10e9f35b351b023001a5e3f1d925924b587eb13148",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/baseline/product-working-tree.patch"
+    },
+    {
+      "kind": "documentation",
+      "path": "dev_docs/planning/active/collaboration-memory/baseline/product-untracked-source.patch",
+      "absolutePath": "D:\\1.project\\Software\\agent_learn\\agent_dev\\agent_platform\\dev_docs\\planning\\active\\collaboration-memory\\baseline\\product-untracked-source.patch",
+      "bytes": 2082,
+      "sha256": "5a3ac31f22506b56c825bc626fddc580860c2ae2c4fede37fd0452cd790d3d4b",
+      "archivedPath": "documents/documentation/dev_docs/planning/active/collaboration-memory/baseline/product-untracked-source.patch"
+    },
+    {
+      "kind": "product",
+      "path": "AGENTS.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_platform\\AGENTS.md",
+      "bytes": 1283,
+      "sha256": "80f5ab9221fa7c98d081fe7c1f2e7af0003ac24b30751371cf05ad17e487ce1c",
+      "archivedPath": "documents/product/AGENTS.md"
+    },
+    {
+      "kind": "product",
+      "path": "IMPLEMENTATION-HANDOFF.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_platform\\IMPLEMENTATION-HANDOFF.md",
+      "bytes": 4407,
+      "sha256": "91bd4a4b3130610c4e1132fddb9c80f764a18e149a5e8b53ec4572db115c7cdd",
+      "archivedPath": "documents/product/IMPLEMENTATION-HANDOFF.md"
+    },
+    {
+      "kind": "product",
+      "path": "vendor/coding-agent/AGENTS.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_platform\\vendor\\coding-agent\\AGENTS.md",
+      "bytes": 5200,
+      "sha256": "702e6abb88f070cebfee31403f12d6f1e3cbcd5184b9cffe1411aae48c4da557",
+      "archivedPath": "documents/product/vendor/coding-agent/AGENTS.md"
+    },
+    {
+      "kind": "product",
+      "path": "vendor/coding-agent/INTEGRATION.md",
+      "absolutePath": "D:\\1.project\\Software\\agent_platform\\vendor\\coding-agent\\INTEGRATION.md",
+      "bytes": 9429,
+      "sha256": "70c5d7dbc7c1f8dd8679f4bcb85a5ca3d69115e79230be0d7fca6c890040582f",
+      "archivedPath": "documents/product/vendor/coding-agent/INTEGRATION.md"
+    },
+    {
+      "kind": "product",
+      "path": "vendor/coding-agent/UPSTREAM.json",
+      "absolutePath": "D:\\1.project\\Software\\agent_platform\\vendor\\coding-agent\\UPSTREAM.json",
+      "bytes": 59535,
+      "sha256": "fd4b05f51bfa21785bdce07a1a534dbead7da6bcea7f489dca3c82a53c14c034",
+      "archivedPath": "documents/product/vendor/coding-agent/UPSTREAM.json"
+    }
+  ]
+}

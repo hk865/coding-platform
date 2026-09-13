@@ -1,0 +1,32 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import { expect, test } from '@playwright/test';
+import { api, openApp, selectProject } from './helpers';
+
+test('shows persisted communication and cancellation through the real HTTP state endpoint', async ({ page }) => {
+  await openApp(page);
+  const scope = { projectId: 'acceptance-alpha', workspaceId: 'workspace-main', goalId: 'acceptance-demo' };
+  expect((await api(page, '/api/plans/sample', scope) as { status: number }).status).toBe(200);
+  const seed = fileURLToPath(new URL('./communication-fixture.mjs', import.meta.url));
+  const data = process.env['FIXTURE_DATA'];
+  if (!data) throw Error('fixture store not configured');
+  await promisify(execFile)(process.execPath, [seed, data]);
+  await page.reload();
+  await page.getByTestId('goal-acceptance-demo').click();
+  const panel = page.getByTestId('communication-view');
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText('任一可替代报告');
+  await expect(panel).toContainText('等待报告');
+  await expect(panel).toContainText('报告已投递 0/1');
+  await panel.locator('summary').click();
+  await expect(panel).toContainText('已发送请求');
+  const state = await api(page, '/api/state?' + new URLSearchParams(scope)) as { body: { communication: { status: string; sourceCursor: string } } };
+  expect(state.body.communication.status).toBe('ready');
+  expect(state.body.communication.sourceCursor).toMatch(/^c\d+$/);
+  await promisify(execFile)(process.execPath, [seed, data, 'cancel']);
+  await page.reload();
+  await expect(panel).toContainText('已取消等待');
+  await selectProject(page, 'acceptance-beta');
+  await expect(page.getByTestId('communication-wait')).toHaveCount(0);
+});

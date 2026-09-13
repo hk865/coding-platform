@@ -1,0 +1,9 @@
+[WebServer] $ npm run kernel:build && tsc -p tsconfig.app.json && node scripts/copy-ui.mjs && pnpm run ui:build
+[WebServer] $ pnpm --dir src/ui run build
+[WebServer] $ vite build
+
+Running 1 test using 1 worker
+
+  ✓  1 tests/communication.spec.ts:7:1 › shows persisted communication and cancellation through the real HTTP state endpoint (9.8s)
+
+  1 passed (1.4m)

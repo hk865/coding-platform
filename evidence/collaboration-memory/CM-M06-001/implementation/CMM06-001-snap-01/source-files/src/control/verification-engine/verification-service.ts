@@ -1,0 +1,86 @@
+import type { VerificationServicePort } from '../../contracts/verification-service.js';
+import type { VerificationServiceDeps } from "./verification-deps.js";
+import type { VerificationScope } from '../../contracts/verification-import.js';
+import { VerificationJournal } from './verification-journal.js';
+import { VerificationReports } from './verification-reports.js';
+import { CommandCheckLifecycle } from './command-check-lifecycle.js';
+import { BenchmarkVerification } from './benchmark-verification.js';
+import { RecordedVerification } from './recorded-verification.js';
+import { VerificationRounds } from './verification-rounds.js';
+import type { VerificationRoundScope } from '../../contracts/verification-context.js';
+import type { VerificationRoundStartInput, VerificationRoundResumeInput } from '../../contracts/verification-round.js';
+import type { VerificationRequestV1 } from '../../contracts/verification.js';
+import { ReviewerVerification } from './reviewer-verification.js';
+import { VerificationOpenIssues } from './verification-open-issues.js';
+import { ReworkVerification } from './rework-verification.js';
+import type { OpenIssuesRequestV1, OpenIssuesViewV1 } from '../../contracts/rework/issues.js';
+import type { ReviewResumeInput, ReviewStartInput, ReviewRecoverInput } from '../../contracts/reviewer-verification.js';
+/** Public lifecycle facade. The application does not orchestrate protocol storage or Control sequencing. */
+export class VerificationService implements VerificationServicePort {
+  readonly recorded: RecordedVerification;
+  private readonly journal: VerificationJournal;
+  private readonly checks: CommandCheckLifecycle;
+  private readonly benchmarks: BenchmarkVerification;
+  private readonly rounds: VerificationRounds;
+  private readonly reviews: ReviewerVerification;
+  private readonly issues: VerificationOpenIssues;
+  private readonly rework: ReworkVerification;
+  constructor(deps: VerificationServiceDeps) {
+    this.journal = new VerificationJournal(deps.directory);
+    this.recorded = new RecordedVerification(deps);
+    this.checks = new CommandCheckLifecycle(deps, this.journal);
+    this.rounds = new VerificationRounds(deps, this.journal, this.checks);
+    this.reviews = new ReviewerVerification(deps, this.journal, this.rounds);
+    this.rework = new ReworkVerification(deps, this.journal, this.rounds, this.reviews);
+    this.benchmarks = new BenchmarkVerification(deps, this.journal, new VerificationReports(deps.vault), this.recorded);
+    // 失败事实的 exitCode／timedOut／stderr 摘要只存在于原始检查报告正文里；
+    // 这里注入本模块既有的报告读取端口（同一 owner 授权校验），不复制正文。
+    this.issues = new VerificationOpenIssues({ journal: this.journal, disposition: deps.disposition,
+      reports: (ref, owner) => deps.context.openReport(ref, owner) });
+  }
+  async init() {
+    await this.journal.init();
+    await this.benchmarks.restoreArtifacts();
+  }
+  forRun(scope: VerificationScope) {
+    return this.journal.forRun(scope);
+  }
+  startRound(scope: VerificationRoundScope, input: VerificationRoundStartInput) { return this.rounds.startRound(scope, input); }
+  reverifyRework(scope: VerificationRoundScope) { return this.rework.verify(scope); }
+  prepareReworkReview(scope: VerificationRoundScope, roundRequestId: string) { return this.rework.prepareReview(scope, roundRequestId); }
+  round(scope: VerificationRoundScope, requestId: string) { return this.rounds.round(scope, requestId); }
+  roundReceipt(scope: Omit<VerificationScope, 'runId'>, requestId: string) { return this.rounds.roundReceipt(scope, requestId); }
+  resumeRound(scope: VerificationRoundScope, input: VerificationRoundResumeInput) { return this.rounds.resumeRound(scope, input); }
+  verify(request: VerificationRequestV1) { return this.rounds.verify(request); }
+  openIssues(request: OpenIssuesRequestV1): Promise<OpenIssuesViewV1> { return this.issues.openIssues(request); }
+  reviewMaterial(scope: VerificationRoundScope, roundRequestId: string) { return this.reviews.reviewMaterial(scope, roundRequestId); }
+  startReview(scope: VerificationRoundScope, input: ReviewStartInput) { return this.reviews.startReview(scope, input); }
+  recoverReview(scope: VerificationRoundScope, input: ReviewRecoverInput) { return this.reviews.recoverReview(scope, input); }
+  review(scope: VerificationRoundScope, requestId: string) { return this.reviews.review(scope, requestId); }
+  reviewReceipt(scope: Pick<VerificationRoundScope, 'projectId' | 'workspaceId' | 'goalId'>, requestId: string) { return this.reviews.reviewReceipt(scope, requestId); }
+  resumeReview(scope: VerificationRoundScope, input: ReviewResumeInput) { return this.reviews.resumeReview(scope, input); }
+  checkReportMaterials(scope?: VerificationScope) {
+    return this.checks.checkReportMaterials(scope);
+  }
+  runChecks(scope: VerificationScope, input: Record<string, unknown>) {
+    return this.checks.runChecks(scope, input);
+  }
+  checkReceipt(scope: Omit<VerificationScope, 'runId'>, requestId: string) {
+    return this.checks.checkReceipt(scope, requestId);
+  }
+  checkReports(scope: VerificationScope, requestId: string) {
+    return this.checks.checkReports(scope, requestId);
+  }
+  admitCheckEvidence(scope: VerificationScope, input: Record<string, unknown>) {
+    return this.checks.admitCheckEvidence(scope, input);
+  }
+  reconcileCheck(scope: VerificationScope, requestId: string) {
+    return this.checks.reconcileCheck(scope, requestId);
+  }
+  register(scope: VerificationScope, input: Record<string, unknown>) {
+    return this.benchmarks.register(scope, input);
+  }
+  import(scope: VerificationScope, input: Record<string, unknown>) {
+    return this.benchmarks.import(scope, input);
+  }
+}

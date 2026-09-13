@@ -1,0 +1,104 @@
+ M IMPLEMENTATION-HANDOFF.md
+ M src/app/governance.ts
+ M src/app/service.ts
+ M src/contracts/command-event.ts
+ M src/contracts/commands/dispatch.ts
+ M src/contracts/commands/governance.ts
+ M src/contracts/completed-work-context.ts
+ M src/contracts/context-continuity.ts
+ M src/contracts/dispatch.ts
+ M src/contracts/events.ts
+ M src/contracts/execution-feedback.ts
+ M src/contracts/initial-planning.ts
+ M src/contracts/ledger.ts
+ M src/contracts/modules.ts
+ M src/contracts/ports.ts
+ M src/contracts/role-spec.ts
+ M src/contracts/runtime-context-materials.ts
+ M src/contracts/runtime-dispatch.ts
+ M src/contracts/runtime-preparation.ts
+ M src/contracts/validation/context.ts
+ M src/contracts/validation/dispatch.ts
+ M src/contracts/validation/event.ts
+ M src/contracts/validation/identity.ts
+ M src/contracts/validation/role.ts
+ M src/control/control-engine/control-engine.ts
+ M src/control/control-engine/control-intent.ts
+ M src/control/control-engine/records/dispatch.ts
+ M src/control/control-engine/records/role-spec.ts
+ M src/control/control-engine/role-spec.ts
+ M src/control/control-engine/run-facts.ts
+ M src/control/control-engine/start-run.ts
+ M src/control/control-engine/work-record.ts
+ M src/control/dispatch-engine/dispatch-engine.ts
+ M src/control/dispatch-engine/handoff-drive.ts
+ M src/control/dispatch-engine/leased-worker-runtime.ts
+ M src/control/dispatch-engine/operator-task-dispatch.ts
+ M src/control/dispatch-engine/planned-task-dispatch.ts
+ M src/control/dispatch-engine/reviewer-dispatch.ts
+ M src/control/dispatch-engine/role-spec-read.ts
+ M src/control/dispatch-engine/runtime-dispatch.ts
+ M src/control/dispatch-engine/work-identity.ts
+ M src/control/dispatch-engine/work-material-drive.ts
+ M src/control/dispatch-engine/workspace-drive.ts
+ M src/data/context-compiler/completed-work-context-compiler.ts
+ M src/data/context-compiler/query-context-compiler.ts
+ M src/data/context-compiler/runtime-context.ts
+ M src/data/context-compiler/work-run-materials.ts
+ M src/data/read-model-index/governance-view.ts
+ M src/data/read-model-index/read-model-index.ts
+ M src/data/read-model-index/sqlite-read-model-index.ts
+ M src/data/state-ledger/in-memory-ledger.ts
+ M src/data/state-ledger/ledger-validation.ts
+ M src/data/state-ledger/sqlite-ledger.ts
+ M src/execution/worker-runtime/coding-agent-runtime.ts
+ M src/execution/worker-runtime/fake-runtime-adapter.ts
+ M src/execution/worker-runtime/observed-model-run.ts
+ M src/harness/in-memory-harness.ts
+ M src/harness/persistent-harness.ts
+ M src/ui/src/features/governance.tsx
+ M tests/app/initial-planning.test.ts
+ M tests/app/role-spec-governance.test.ts
+ M tests/context/completed-work-regression.test.ts
+ M tests/contract-suite/console.contract.suite.ts
+ M tests/contract-suite/p1-07-harness.ts
+ M tests/contract-support/testing/control.double.ts
+ M tests/contracts/module-ownership.test.ts
+ M tests/control/dispatch-drive.test.ts
+ M tests/control/reviewer-dispatch-isolation.test.ts
+ M tests/control/runtime-dispatch.test.ts
+ M tests/control/work-record.test.ts
+ M tests/control/workspace-drive.test.ts
+ M vendor/coding-agent/INTEGRATION.md
+ M vendor/coding-agent/src/app/composition/composition-root.ts
+ M vendor/coding-agent/src/app/composition/resume-composition.ts
+ M vendor/coding-agent/src/policy/permissions/permission-policy.ts
+ M vendor/coding-agent/tests/integration/m3-tools.test.ts
+?? evidence/2026-09-12-agent-templates-memory/
+?? evidence/collaboration-memory/
+?? scripts/source-snapshot.mjs
+?? src/contracts/communication-reconciliation.ts
+?? src/contracts/coordination-events.ts
+?? src/contracts/coordination-tools.ts
+?? src/contracts/coordination.ts
+?? src/contracts/execution-authorization.ts
+?? src/contracts/run-lifecycle-fold.ts
+?? src/contracts/run-reconciliation.ts
+?? src/contracts/runtime-input-authorization.ts
+?? src/control/control-engine/communication-reconciliation.ts
+?? src/control/control-engine/coordination.ts
+?? src/control/control-engine/policies/coordination-rules.ts
+?? src/control/control-engine/policies/runtime-call-admission.ts
+?? src/control/control-engine/records/coordination.ts
+?? src/control/control-engine/run-reconciliation.ts
+?? src/control/dispatch-engine/coordination-admission-deliveries.ts
+?? src/control/dispatch-engine/coordination-admission-read.ts
+?? src/control/dispatch-engine/coordination-capability.ts
+?? src/control/dispatch-engine/coordination-drive.ts
+?? src/control/dispatch-engine/coordination-tool-access.ts
+?? src/control/dispatch-engine/model-call-access.ts
+?? src/control/dispatch-engine/successor-run-preparation.ts
+?? src/data/context-compiler/delivery-materials.ts
+?? src/execution/worker-runtime/coordination-tools.ts
+?? src/ui/tests/agent-templates.spec.ts
+?? tests/coordination/

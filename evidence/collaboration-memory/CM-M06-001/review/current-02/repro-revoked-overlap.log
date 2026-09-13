@@ -1,0 +1,97 @@
+{
+  "observed": {
+    "status": "observed",
+    "qualification": {
+      "basis": {
+        "planRef": null,
+        "workspaceRevision": 1,
+        "sourceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sourcePin": {
+          "schemaVersion": 1,
+          "projectId": "p",
+          "workspaceId": "w",
+          "sourceSet": {
+            "kind": "workspace_paths",
+            "paths": [
+              "."
+            ]
+          },
+          "identity": {
+            "workspace": "fixture",
+            "commit": null
+          },
+          "manifestDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "observations": [
+        {
+          "selection": {
+            "conditionIndex": 0,
+            "deliveryRef": {
+              "aggregateType": "Delivery",
+              "projectId": "p",
+              "workspaceId": "w",
+              "deliveryId": "0"
+            },
+            "sourceCursor": "1"
+          },
+          "grantRef": {
+            "aggregateType": "MaterialAccessGrant",
+            "projectId": "p",
+            "workspaceId": "w",
+            "goalId": "g",
+            "grantId": "grant-1efeffd6af3b397c8f3ca3b38c0e7d6a"
+          },
+          "grantRevision": 2,
+          "outcome": "refused",
+          "reason": "Exact report inspection grant was revoked"
+        },
+        {
+          "selection": {
+            "conditionIndex": 1,
+            "deliveryRef": {
+              "aggregateType": "Delivery",
+              "projectId": "p",
+              "workspaceId": "w",
+              "deliveryId": "1"
+            },
+            "sourceCursor": "2"
+          },
+          "grantRef": {
+            "aggregateType": "MaterialAccessGrant",
+            "projectId": "p",
+            "workspaceId": "w",
+            "goalId": "g",
+            "grantId": "grant-b95eb272ed07ae3a51b14b4464e91a82"
+          },
+          "grantRevision": 1,
+          "outcome": "readable",
+          "reason": "readable"
+        }
+      ]
+    }
+  },
+  "winner": {
+    "conditionIndex": 1,
+    "deliveryRef": {
+      "aggregateType": "Delivery",
+      "projectId": "p",
+      "workspaceId": "w",
+      "deliveryId": "1"
+    },
+    "sourceCursor": "2"
+  },
+  "laterActuallyReadable": "ready"
+}
+PASS revoked exact grant with overlapping authority
+{
+  "case": "transient source failure",
+  "captures": 3,
+  "transient": {
+    "status": "unavailable",
+    "reason": "Report source/current authority could not be verified: a recorded grant covers this material but its current basis/source cannot be verified or it only authorizes history; re-source and authorize the exact current material"
+  },
+  "transientWinner": null
+}
+PASS transient source failure leaves no winner
+PASS R04 disposal, concurrent isolation, missing token, one-use, version mismatch, restart

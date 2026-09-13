@@ -1,0 +1,1 @@
+import {fileURLToPath} from 'node:url'; export default {root:fileURLToPath(new URL('../../../../../',import.meta.url)),test:{environment:'node',include:['evidence/collaboration-memory/CM-1A-001/implementation/CM1A-001-snap-04/material-isolation.test.ts'],testTimeout:30000,clearMocks:true,restoreMocks:true}};

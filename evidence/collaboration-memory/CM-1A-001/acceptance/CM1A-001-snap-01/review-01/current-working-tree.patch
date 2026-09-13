@@ -1,0 +1,2321 @@
+diff --git a/IMPLEMENTATION-HANDOFF.md b/IMPLEMENTATION-HANDOFF.md
+index d701535..e565d85 100644
+--- a/IMPLEMENTATION-HANDOFF.md
++++ b/IMPLEMENTATION-HANDOFF.md
+@@ -1,6 +1,10 @@
+ # Agent Platform 当前交接
+ 
+-更新：2026-09-11。产品根 D:/1.project/Software/agent_platform；权威根 D:/1.project/Software/agent_learn/agent_dev/agent_platform。
++更新：2026-09-12。产品根 D:/1.project/Software/agent_platform；权威根 D:/1.project/Software/agent_learn/agent_dev/agent_platform。
++
++当前开发批次：可扩展 RoleSpec 多版本模板、创建/展示/激活、规划可见目录及 Runtime 按实际授权组装工具；跨工作协调事实选材；带来源工作记忆的更新/废止和 Context 版本过滤。详见[本批实现与验证](evidence/2026-09-12-agent-templates-memory/verification.md)。持续联合协商、自动记忆提炼与产品维护入口尚未完成，不能称完整多 Agent/长期记忆产品已验收。本批尚未提交或推送。
++
++以下为已提交的上一批语义闭环基线事实。
+ 
+ 用户确认清理完成后继续最小语义协作实现。清理基线经源码摘要核对复用了1953项/299文件、26项浏览器及类型/边界/构建验证，已按用户追加授权提交并推送 b7fa329178a1474933c9dd1a4a812285cec04cf3 到 origin/main。该提交不包含下述后续功能；历史记录和真实失败日志保留。清理细节见[协议收敛证据](evidence/2026-09-11-source-cleanup/protocol-convergence/verification.md)。
+ 
+@@ -8,8 +12,18 @@
+ 
+ 组合根从持久决定及终态运行恢复后续动作，不新增状态系统。真实HTTP/SQLite/内核的五条样例已验证正常链、Reviewer FAIL保留阻塞、人的选择、决定已记录未应用、计划已应用未投递。替身模型只证明流程与真实工具/材料调用，不证明真实模型语义质量；样例Task达到satisfied，Goal保留原正式归约结果，不能把Task完成冒充Goal完成。
+ 
+-本次最小闭环验收完成：302文件/1994项行为测试、27项真实浏览器、前后端类型、12 Module边界和文档13/13全部通过；构建产物与HTTP返回字节一致。首轮及后续真实失败日志保留，独立复核发现的来源、替代、隔离和UI问题已修。完整范围、身份、原始数据和限制见[本次验收](evidence/2026-09-11-semantic-completion/verification.md)。功能增量和验收材料已纳入本次用户授权的本地Git检查点；语义功能检查点83000c9已按用户授权推送至origin/main。下一步Agent模板讨论保持候选记录，不代表已实现。
++本次最小闭环验收完成：302文件/1994项行为测试、27项真实浏览器、前后端类型、12 Module边界和文档13/13全部通过；构建产物与HTTP返回字节一致。首轮及后续真实失败日志保留，独立复核发现的来源、替代、隔离和UI问题已修。完整范围、身份、原始数据和限制见[本次验收](evidence/2026-09-11-semantic-completion/verification.md)。功能增量和验收材料已纳入本次用户授权的本地Git检查点；语义功能检查点83000c9已按用户授权推送至origin/main。当时的 Agent 模板讨论为候选；当前增量及未完成项以上述 2026-09-12 记录为准。
+ 
+ 保持12 Module及原DAG：Verification问题经组合根输入；Dispatch→PlanCompiler→Context核对实际来源，Control只核对持久事实及原权限/义务，不反调Context或WorkspaceReader。文件来源核对不是外部文件系统原子事务。此入口只处理不改变验收义务的目标澄清，验收/架构基线变更仍走各自正式入口。
+ 
+-[唯一模块状态](../agent_learn/agent_dev/agent_platform/human/module-status.md)保留范围外有效义务：持续跨工作角色协作、更多角色路由、一般强杀/未知副作用恢复、暂停/换手、长期记忆、一般来源失效和完整架构演进等。不因本次有界样例取消这些工作。
+\ No newline at end of file
++[唯一模块状态](../agent_learn/agent_dev/agent_platform/human/module-status.md)保留范围外有效义务：持续跨工作角色协作、更多角色路由、一般强杀/未知副作用恢复、暂停/换手、长期记忆、一般来源失效和完整架构演进等。不因本次有界样例取消这些工作。
++
++## CM-1A-001 第 1 工作段当前事实（2026-09-13）
++
++CM-1A-001 第 1 工作段完成的是**契约与账本层**：新增 `src/contracts/coordination.ts`、`src/contracts/coordination-events.ts`、`src/control/control-engine/records/coordination.ts`、`src/control/control-engine/policies/coordination-rules.ts` 4 个文件，并在 10 个既有文件上做追加式改动，登记 10 个协作聚合、14 个 commit kind（`COMMUNICATION_COMMIT_KINDS`）与 20 个事件；两个账本适配器共用同一份 `validateCommunicationCommit`。既有 commit kind 的语义、守卫与用例未改，未替代任何旧入口。
++
++**未实现**：Control handler、Dispatch 路由 handler、Context 侧 Delivery 材料接入三段消费者；新契约没有生产调用者，D01–D05 只在契约面落地。**A01–A12 无一项验证通过，Gate A 未成立，本票未可交验。** 证据目录：`evidence/collaboration-memory/CM-1A-001/implementation/CM1A-001-snap-01/`（verification.md、handoff.md、decision-log.md、logs/）。
++
++本快照上的构建与回归全部通过（`pnpm kernel:build`、`pnpm build`、`pnpm ui:typecheck`、全量 `bash scripts/test-wsl.sh` 303 文件 / 1998 用例，退出码均为 0），只证明既有行为未退化，不构成协作通信可用或本票通过的证据。
++
++**测试入口必须为 `bash scripts/test-wsl.sh <路径...>`**；不要用 `npx vitest run`（缺 bwrap 路径与 sandbox preflight，会产生大量假失败）。本环境 `~/.local/bin` 只链接了 node / npx / pnpm，**没有 npm**：`pnpm kernel:build` 与 `pnpm build` 需把 node 工具链 bin（`/home/han001/projects/agents/coding-agent/.tooling/node-v24.18.0-linux-x64/bin`，其中含 npm）加入 PATH，否则以 `sh: 1: npm: not found` 退出 1。
+diff --git a/src/app/governance.ts b/src/app/governance.ts
+index 85d1775..1fbb7c3 100644
+--- a/src/app/governance.ts
++++ b/src/app/governance.ts
+@@ -400,26 +400,29 @@ export class GovernanceEntry {
+       }
+       case 'RoleSpecRevision': {
+         // 与 CoordinationPolicy 同理：调用方给的是 { roleId, content }，正文不在应用层拼装。
+-        const candidate = source as { roleId?: unknown; content?: unknown };
++        const candidate = source as { roleId?: unknown; revision?: unknown; content?: unknown };
+         if (typeof candidate?.roleId !== 'string' || candidate.roleId.length === 0 || !isRecord(candidate.content)) {
+           return { status: 'rejected', message: '版本化 source 形状不合法：RoleSpecRevision 需要 { roleId, content: { schemaVersion, label, purpose, responsibility, requiredMaterials, optionalMaterials, permissions, budget, requiredOutputs, exit } }' };
+         }
++        const revision = candidate.revision ?? ROLE_SPEC_REVISION;
++        if (!Number.isSafeInteger(revision) || (revision as number) < 1) return { status: 'rejected', message: '模板版本必须是正整数' };
++        const contentRevision = revision as number;
+         const roleId = candidate.roleId;
+         const content = candidate.content as unknown as RoleSpecContentV1;
+         let digest: string;
+         try {
+           // 摘要口径只有一处（contracts/role-spec.ts），与 install 守卫逐字同值；这里同时用它作幂等键与视图身份。
+-          digest = roleSpecContentDigest(content, roleId, ROLE_SPEC_REVISION);
++          digest = roleSpecContentDigest(content, roleId, contentRevision);
+         } catch {
+           return { status: 'rejected', message: 'RoleSpecRevision 的 content 不是可规范化为 JSON 的对象：既不能算摘要，也不能安装' };
+         }
+-        const identityRef: GovernanceRevisionRefV1 = roleSpecRevisionRefFor(projectId, roleId, ROLE_SPEC_REVISION);
++        const identityRef: GovernanceRevisionRefV1 = roleSpecRevisionRefFor(projectId, roleId, contentRevision);
+         return {
+           status: 'prepared', digest, identityRef, sourceOrigin: origin(callerProvided),
+           submit: async (deps, idempotencyKey) => {
+             // 字段级构造在契约命令层（buildRoleSpecInstallCommand），应用层只给 identity／时间／幂等键。
+             const command = buildRoleSpecInstallCommand(
+-              { roleId, content },
++              { roleId, revision: contentRevision, content },
+               { commandId: deps.commandId, correlationId: deps.correlationId, submittedAt: deps.submittedAt, projectId, actor, idempotencyKey },
+             );
+             const receipt = await this.deps.installRoleSpec(command);
+diff --git a/src/contracts/command-event.ts b/src/contracts/command-event.ts
+index 89519fb..9f054fd 100644
+--- a/src/contracts/command-event.ts
++++ b/src/contracts/command-event.ts
+@@ -9,15 +9,27 @@ import { canonicalJson, sha256Hex } from "./fingerprint.js";
+ export type CommitCursor = Opaque<string, "CommitCursor">;
+ export type CommandFingerprint = Opaque<string, "CommandFingerprint">;
+ 
+-export type ActorRef = {
+-  kind: "human" | "system";
+-  id: string;
+-};
++/**
++ * ActorRef — 命令的**归因**，不是授权来源。
++ *
++ * CM-1A-001 D03 版本化扩展：新增 `kind: 'agent'`。agent 行为必须用 agent 身份表达，
++ * **禁止**继续使用固定的 human:user-1 冒充 Agent（A01）。既有 human/system 的语义与
++ * 各领域守卫完全不变；`runRef` 只在 agent 上出现，作为 causation 的可核对依据。
++ */
++export type ActorRef =
++  | { kind: "human" | "system"; id: string }
++  | { kind: "agent"; id: string; runRef: import("./dispatch.js").RunRef };
+ 
+ export type CommandIdentity = {
+   projectId: string;
+   actor: ActorRef;
+   idempotencyKey: string;
++  /**
++   * CM-1A-001 D03：agent 发起命令时必须携带的精确 principal（AgentInstance +
++   * exact Work/participation/RoleBinding + 发起 Run）。human/system 命令不设置它，
++   * 语义与指纹都与扩展前逐字节相同。
++   */
++  agentPrincipal?: import("./coordination.js").AgentPrincipalRefV1;
+ };
+ 
+ export type CreateGoalCommand = {
+@@ -124,6 +136,9 @@ export function commandIdentityKey(identity: CommandIdentity): string {
+     projectId: identity.projectId,
+     actor: identity.actor,
+     idempotencyKey: identity.idempotencyKey,
++    // CM-1A-001：agent principal 折叠进身份 key，否则两个不同 Agent 用同一
++    // idempotencyKey 会互相 replay 到对方的命令（跨 Agent 的假幂等）。
++    ...(identity.agentPrincipal === undefined ? {} : { agentPrincipal: identity.agentPrincipal }),
+   });
+ }
+ 
+diff --git a/src/contracts/commands/governance.ts b/src/contracts/commands/governance.ts
+index 92f3895..fb81a6e 100644
+--- a/src/contracts/commands/governance.ts
++++ b/src/contracts/commands/governance.ts
+@@ -146,7 +146,7 @@ export function buildCoordinationPolicyActivateCommand(
+  * 不留给每个调用方各自再算一遍（否则会出现第二份口径）。
+  */
+ export function buildRoleSpecInstallCommand(
+-  input: { roleId: string; content: RoleSpecContentV1 },
++  input: { roleId: string; revision?: number; content: RoleSpecContentV1 },
+   deps: BuildGovernanceCommandDeps,
+ ): InstallRoleSpecRevisionCommand {
+   return {
+@@ -158,8 +158,9 @@ export function buildRoleSpecInstallCommand(
+     submittedAt: deps.submittedAt,
+     payload: {
+       roleId: input.roleId,
++      ...(input.revision === undefined || input.revision === ROLE_SPEC_REVISION ? {} : { revision: input.revision }),
+       content: input.content,
+-      contentDigest: roleSpecContentDigest(input.content, input.roleId, ROLE_SPEC_REVISION),
++      contentDigest: roleSpecContentDigest(input.content, input.roleId, input.revision ?? ROLE_SPEC_REVISION),
+     },
+   };
+ }
+diff --git a/src/contracts/completed-work-context.ts b/src/contracts/completed-work-context.ts
+index 830cc22..be3e7be 100644
+--- a/src/contracts/completed-work-context.ts
++++ b/src/contracts/completed-work-context.ts
+@@ -110,6 +110,7 @@ export type CompletedWorkSelectionItemV1 = {
+   runRefs: RunRef[];
+   notes: {
+     noteRef: ExecutionNoteRef;
++    memory?: import("./context-continuity.js").WorkMemoryV1;
+     kind: string;
+     summary: string;
+     createdAt: string;
+diff --git a/src/contracts/context-continuity.ts b/src/contracts/context-continuity.ts
+index c34131f..3d1e8ae 100644
+--- a/src/contracts/context-continuity.ts
++++ b/src/contracts/context-continuity.ts
+@@ -162,7 +162,21 @@ type ExecutionNoteVerificationV1 = {
+   evidenceRefs: EvidenceRef[];
+ };
+ 
++/** Curated reusable knowledge remains a sourced immutable work record. Revisions
++ * form one linear history per work/key; retirement preserves earlier bodies.
++ * It never grants access or supplies business completion evidence. */
++export type WorkMemoryV1 = {
++  key: string;
++  revision: number;
++  state: 'active' | 'retired';
++  topics: string[];
++};
++export function workMemoryNoteId(key: string, revision: number): string {
++  return 'memory-' + sha256Hex(key).slice(0, 32) + '-v' + revision;
++}
++
+ export type ExecutionNoteV1 = {
++  memory?: WorkMemoryV1;
+   schemaVersion: 1;
+   noteId: string;
+   workId: string;
+diff --git a/src/contracts/events.ts b/src/contracts/events.ts
+index 600f58a..80194f2 100644
+--- a/src/contracts/events.ts
++++ b/src/contracts/events.ts
+@@ -57,6 +57,7 @@ import type { ArchitectureChangeDecisionRecordedEvent, BaselineActivationRecorde
+ import type { CoordinationPolicyActivatedEvent, CoordinationPolicyInstalledEvent, InitialDesignDecisionRecordedEvent, InitialDesignProposalRecordedEvent } from "./human-role-collaboration.js";
+ import type { MaterialAccessGrantedEvent } from "./material-access.js";
+ import type { RoleSpecActivatedEvent, RoleSpecInstalledEvent } from "./role-spec.js";
++import type { CommunicationDomainEvent } from "./coordination.js";
+ 
+ export type DomainEventV1 =
+   | import('./reviewer-work.js').ReviewDomainEvent
+@@ -118,7 +119,10 @@ export type DomainEventV1 =
+   | RoleSpecInstalledEvent
+   | RoleSpecActivatedEvent
+   | MaterialAccessGrantedEvent
+-  | import("./material-access.js").MaterialAccessRevokedEvent;
++  | import("./material-access.js").MaterialAccessRevokedEvent
++  // CM-1A-001：协作通信（AgentInstance / participation / request / subscription /
++  // delivery / wait / 机械 intent / 后继 admission）。
++  | CommunicationDomainEvent;
+ 
+ export type DomainEvent = DomainEventV1;
+ 
+@@ -184,6 +188,27 @@ export const KNOWN_EVENT_TYPES = [
+   "RoleSpecActivated",
+   "MaterialAccessGranted",
+   "MaterialAccessRevoked",
++  "AgentInstanceRegistered",
++  "WorkParticipationStarted",
++  "WorkParticipationEnded",
++  "DirectedRequestSent",
++  "DirectedRequestResponded",
++  "DirectedRequestCancelled",
++  "SubscriptionCreated",
++  "SubscriptionCancelled",
++  "SubscriptionCatchupPlanned",
++  "DeliveryRecorded",
++  "WaitConditionRegistered",
++  "WaitConditionObserved",
++  "WaitConditionSatisfied",
++  "WaitConditionTimedOut",
++  "WaitConditionCancelled",
++  "CommunicationIntentRecorded",
++  "CommunicationIntentClaimed",
++  "CommunicationIntentSettled",
++  "CommunicationAdmissionRecorded",
++  "CoordinationRegistryUpdated",
++  "WorkMailboxUpdated",
+ ] as const;
+ 
+ export function isKnownEventType(eventType: string): eventType is (typeof KNOWN_EVENT_TYPES)[number] {
+diff --git a/src/contracts/execution-feedback.ts b/src/contracts/execution-feedback.ts
+index 2042393..55498e7 100644
+--- a/src/contracts/execution-feedback.ts
++++ b/src/contracts/execution-feedback.ts
+@@ -42,7 +42,8 @@ type FeedbackResolution = {
+   };
+ };
+ export const EXECUTION_FEEDBACK_GUIDE = `If missing material, uncertain source, a conflict with the task, or an unexecutable acceptance check prevents sound progress, report the concrete gap to the coordinator. End with one public JSON object {"kind":"execution_feedback","category":"missing_material"|"source_conflict"|"verification_failure","summary":"public facts (at most 1024 UTF-8 bytes)","question":"specific investigation needed (at most 2048 UTF-8 bytes)"}. Do not guess the missing rule, claim completion, or change acceptance criteria. The platform binds this response to the actual Run, Task, plan and workspace; do not invent those identities. Subsequent sourced material remains a reference, does not grant permissions and does not satisfy verification obligations.`;
+-export const FEEDBACK_RESPONSE_GUIDE = `Consume the attached execution feedback and current goal, plan and source. Investigate the concrete question using read-only source tools. Return JSON {kind:"feedback_resolution",action:"continue"|"supplement"|"adjust_plan"|"needs_decision"|"blocked",availability:"available"|"proven_empty"|"unavailable"|"forbidden"|"stale"|"investigating",summary,material,sourcePaths:[workspace-relative paths actually read]}. Distinguish proven absence from unavailable, forbidden, stale or incomplete investigation. Provide the sourced rule and its applicable scope in material. Do not invent a source, authorization or acceptance. If a product decision is necessary, use needs_decision and explain it in material. For an objective clarification that retains all acceptance requirements, include decision:{options:[{id,label,objective,impact}],recommended,reason,independentWork} with 2-4 concrete options. Acceptance or baseline changes require their existing dedicated proposal path and must remain blocked here. For verification_failure, return adjust_plan with a concrete repair instruction in material only when existing acceptance and scope remain unchanged; otherwise use needs_decision or blocked. The platform submits this instruction through formal plan acceptance. A response does not itself change the plan or satisfy evidence requirements.`;
++export const FEEDBACK_RESPONSE_GUIDE = `Use collaborationWork to consider other assignments, dependencies, and sourced reductions before proposing a repair. Missing reductions and reductions from older plans do not prove completion. Preserve other work and its acceptance obligations.
++Consume the attached execution feedback and current goal, plan and source. Investigate the concrete question using read-only source tools. Return JSON {kind:"feedback_resolution",action:"continue"|"supplement"|"adjust_plan"|"needs_decision"|"blocked",availability:"available"|"proven_empty"|"unavailable"|"forbidden"|"stale"|"investigating",summary,material,sourcePaths:[workspace-relative paths actually read]}. Distinguish proven absence from unavailable, forbidden, stale or incomplete investigation. Provide the sourced rule and its applicable scope in material. Do not invent a source, authorization or acceptance. If a product decision is necessary, use needs_decision and explain it in material. For an objective clarification that retains all acceptance requirements, include decision:{options:[{id,label,objective,impact}],recommended,reason,independentWork} with 2-4 concrete options. Acceptance or baseline changes require their existing dedicated proposal path and must remain blocked here. For verification_failure, return adjust_plan with a concrete repair instruction in material only when existing acceptance and scope remain unchanged; otherwise use needs_decision or blocked. The platform submits this instruction through formal plan acceptance. A response does not itself change the plan or satisfy evidence requirements.`;
+ const bounded = (v: unknown, max: number): v is string => typeof v === 'string' && !!v.trim() && Buffer.byteLength(v) <= max;
+ export function parseExecutionFeedback(body: string): ExecutionFeedback | null {
+   let v; try { v = JSON.parse(body); } catch { return null; }
+diff --git a/src/contracts/initial-planning.ts b/src/contracts/initial-planning.ts
+index 5df4b4a..cf6b6ab 100644
+--- a/src/contracts/initial-planning.ts
++++ b/src/contracts/initial-planning.ts
+@@ -2,7 +2,7 @@ import type { PlanRevisionDraft, PlanRevisionSnapshot } from './plan.js';
+ import type { QueryJobIntentV1, QueryJobSnapshot } from './query-job.js';
+ import { canonicalJson, sha256Hex } from './fingerprint.js';
+ 
+-export type InitialPlanAssignment = { taskId: string; role: 'executor' | 'integrator'; instruction: string };
++export type InitialPlanAssignment = { taskId: string; role: string; instruction: string };
+ export type AcceptedInitialPlan = { snapshot: QueryJobSnapshot; plan: PlanRevisionSnapshot };
+ export type InitialPlanOrigin = {
+   kind: 'model_coordination'; answerRef: import('./query-job.js').QueryJobAnswerRef; answerDigest: string;
+@@ -17,7 +17,7 @@ Each stage has stageId,title. Each task has taskId,title,requirementLevel:"requi
+ Each obligation has obligationId,title,requirementLevel:"required",taskIds and verificationRequirements:[{requirementId,requirementLevel:"required",kind:"dynamic" or "static",description}].
+ Every work task and the required goal gate must map to required obligations. Required goal gates have scope.kind="goal". Each hard dependency has taskId,dependsOnId,requires:{kind:"artifact" or "output-contract" or "gate-result",label}.
+ Task hierarchy groups work; execution dependencies express actual required inputs. Do not synthesize independence or dependencies from stage order. Keep task count between 2 and 16; if a faithful plan cannot fit, return needs_decision with the concrete gap.
+-Each work task has exactly one assignment {taskId,role:"executor" or "integrator",instruction}; instructions must state its acceptance obligations, inputs, expected outputs and checks. Gates have no implementation assignment.
++Each work task has exactly one assignment {taskId,role: a registered Agent template identifier (legacy executor/integrator when no catalog exists),instruction}; instructions must state its acceptance obligations, inputs, expected outputs and checks. Gates have no implementation assignment.
+ Choose tasks and obligations from the actual user request and sources. Do not change requirements, completion policy, architecture baseline, permissions or already completed work. All tasks start pending. Roles may combine tightly related duties; explain division and integration risks in summary. Return no markdown fences.`;
+ 
+ type InitialPlanningResponse = { status: 'plan'; summary: string; assignments: InitialPlanAssignment[]; plan: PlanRevisionDraft } | { status: 'needs_decision'; summary: string; questions: string[] };
+@@ -45,7 +45,7 @@ export function parseInitialPlanningResponse(body: string): InitialPlanningRespo
+   const assignments = response['assignments'];
+   if (!Array.isArray(assignments)) throw Error('initial plan lacks work assignments');
+   const parsed: InitialPlanAssignment[] = assignments.map(item => {
+-    if (!item || typeof item !== 'object' || !['executor', 'integrator'].includes(item.role)) throw Error('invalid assignment role');
++    if (!item || typeof item !== 'object' || typeof item.role !== 'string' || !item.role.trim() || Buffer.byteLength(item.role) > 256) throw Error('invalid assignment role');
+     return { taskId: text(item.taskId, 'taskId'), role: item.role as InitialPlanAssignment['role'], instruction: text(item.instruction, 'instruction') };
+   });
+   const work = raw.tasks.filter(task => task.taskKind === 'work');
+diff --git a/src/contracts/ledger.ts b/src/contracts/ledger.ts
+index 0f3ad8b..704ccef 100644
+--- a/src/contracts/ledger.ts
++++ b/src/contracts/ledger.ts
+@@ -140,6 +140,31 @@ import type {
+   MaterialAccessGrantSnapshot,
+   MaterialAccessGrantedEvent,
+ } from "./material-access.js";
++// CM-1A-001：协作通信聚合（AgentInstance / participation / request / subscription /
++// delivery / wait / 机械 intent / 后继 admission）与它们的 commit kind。
++import type {
++  AgentInstanceRef,
++  AgentInstanceSnapshot,
++  CommunicationAdmissionRef,
++  CommunicationAdmissionSnapshot,
++  CoordinationRegistryRef,
++  CoordinationRegistrySnapshot,
++  WorkMailboxRef,
++  WorkMailboxSnapshot,
++  CommunicationIntentRef,
++  CommunicationIntentSnapshot,
++  CommunicationLedgerCommit,
++  DeliveryRef,
++  DeliverySnapshot,
++  DirectedRequestRef,
++  DirectedRequestSnapshot,
++  SubscriptionRef,
++  SubscriptionSnapshot,
++  WaitConditionRef,
++  WaitConditionSnapshot,
++  WorkParticipationRef,
++  WorkParticipationSnapshot,
++} from "./coordination.js";
+ 
+ export type ProjectRef = {
+   aggregateType: "Project";
+@@ -215,7 +240,17 @@ export type AggregateRef =
+   | ProjectCoordinationPolicyActiveRef
+   | RoleSpecRevisionRef
+   | ProjectRoleSpecActiveRef
+-  | MaterialAccessGrantRef;
++  | MaterialAccessGrantRef
++  | AgentInstanceRef
++  | WorkParticipationRef
++  | DirectedRequestRef
++  | SubscriptionRef
++  | DeliveryRef
++  | WaitConditionRef
++  | CommunicationIntentRef
++  | CommunicationAdmissionRef
++  | CoordinationRegistryRef
++  | WorkMailboxRef;
+ 
+ export type ProjectSnapshot = {
+   ref: ProjectRef;
+@@ -295,7 +330,17 @@ export type AggregateSnapshot =
+   | ProjectCoordinationPolicyActiveSnapshot
+   | RoleSpecRevisionSnapshot
+   | ProjectRoleSpecActiveSnapshot
+-  | MaterialAccessGrantSnapshot;
++  | MaterialAccessGrantSnapshot
++  | AgentInstanceSnapshot
++  | WorkParticipationSnapshot
++  | DirectedRequestSnapshot
++  | SubscriptionSnapshot
++  | DeliverySnapshot
++  | WaitConditionSnapshot
++  | CommunicationIntentSnapshot
++  | CommunicationAdmissionSnapshot
++  | CoordinationRegistrySnapshot
++  | WorkMailboxSnapshot;
+ 
+ export type SnapshotResult =
+   | { status: "found"; snapshot: AggregateSnapshot }
+@@ -886,7 +931,8 @@ export type LedgerCommit =
+   | RoleSpecInstallRecordLedgerCommitV1
+   | RoleSpecActivateRecordLedgerCommitV1
+   | MaterialAccessGrantLedgerCommitV1
+-  | MaterialAccessRevokeLedgerCommitV1;
++  | MaterialAccessRevokeLedgerCommitV1
++  | CommunicationLedgerCommit;
+ 
+ export type LedgerCommitReceipt =
+   | {
+diff --git a/src/contracts/modules.ts b/src/contracts/modules.ts
+index 3bb3cec..f9ec289 100644
+--- a/src/contracts/modules.ts
++++ b/src/contracts/modules.ts
+@@ -73,6 +73,41 @@ import type {
+ import type { RecordSafePointAckCommand, RecordSafePointAckReceipt, SubmitControlCommand, SubmitControlReceipt } from "./control-intent.js";
+ import type { CloseQueryJobCommand, CloseQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, SubmitQueryJobCommand, SubmitQueryJobReceipt } from "./query-job.js";
+ import type { ApplyPlanChangeCommand, ApplyPlanChangeReceipt, RecordPlanChangeProposalCommand, RecordPlanChangeProposalReceipt, RecordUserDecisionCommand, RecordUserDecisionReceipt } from "./goal-change.js";
++import type {
++  AdmitWaitSuccessorCommand,
++  AdmitWaitSuccessorReceipt,
++  CancelCommunicationCommand,
++  CommunicationClaimCommand,
++  CommunicationClaimReceipt,
++  CommunicationSettleCommand,
++  CommunicationSettleReceipt,
++  CommunicationWriteReceipt,
++  EnsureWaitAdmissionCommand,
++  EnsureWaitAdmissionReceipt,
++  EndWorkParticipationCommand,
++  RegisterAgentInstanceCommand,
++  RegisterWaitCommand,
++  RespondDirectedRequestCommand,
++  SendDirectedRequestCommand,
++  StartWorkParticipationCommand,
++  SubscribeCommand,
++} from "./coordination.js";
++
++
++/**
++ * CM-1A-001 只读邮箱查询：Work 的持久责任地址。
++ * 类型声明留在 Interface 文件里（Contracts 不反向依赖实现），实现见
++ * src/control/control-engine/coordination.ts 的 mailboxView。
++ */
++export type MailboxViewQuery = import("./context-continuity.js").WorkContextRef;
++
++/**
++ * 只读邮箱结果：读不完整（事件扫描超过上限/页游标不推进/账本不可读）返回 unavailable，
++ * 绝不把截断的集合当成完整答案——与 RW-13 resolveTaskWorkIdentity 同一条判据。
++ */
++export type MailboxViewResult =
++  | { status: "ready"; view: import("./coordination.js").MailboxViewV1 }
++  | { status: "unavailable"; reason: string };
+ 
+ export type CreateGoalRequest = {
+   projectId: string;
+@@ -223,6 +258,43 @@ export interface ControlEngine {
+   /** register ONE immutable cross-principal material read grant (version-bound). */
+   grantMaterialAccess(command: import("./material-access.js").GrantMaterialAccessCommand): Promise<import("./material-access.js").GrantMaterialAccessReceipt>;
+   revokeMaterialAccess(command: import("./material-access.js").RevokeMaterialAccessCommand): Promise<import("./material-access.js").RevokeMaterialAccessReceipt>;
++  /**
++   * CM-1A-001 协作通信受理面。十一条写命令 + 一条只读面，全部经 Control 的
++   * canonical 写入口（StateLedger.commit）；正文 body-first，Control 只登记
++   * ArtifactRef（见 src/control/control-engine/coordination.ts 的文件头纪律）。
++   * 语义、守卫顺序与已知边界都写在那个文件里，这里只声明对外形状。
++   */
++  registerAgentInstance(command: RegisterAgentInstanceCommand): Promise<CommunicationWriteReceipt>;
++  /** 参与关系 @1（CAS@0）+ **同一事务**把发起 Run link 进该 Work。 */
++  startWorkParticipation(command: StartWorkParticipationCommand): Promise<CommunicationWriteReceipt>;
++  /**
++   * 结束一段参与关系（CAS@N；A01「同一 Work 换参与者后等待仍归 Work」）。
++   * 历史参与不改名不删除；重复结束要么幂等 replay 要么 revision_conflict，绝不产生第二条 ended 事实。
++   */
++  endWorkParticipation(command: EndWorkParticipationCommand): Promise<CommunicationWriteReceipt>;
++  /** 发起定向请求（正文已 body-first；目标 Work 必须 active；不匹配 expected 一律 stale）。 */
++  sendDirectedRequest(command: SendDirectedRequestCommand): Promise<CommunicationWriteReceipt>;
++  /** 登记定向请求的回应（CAS@N；只有目标 Work 的 active 参与可以回应）。 */
++  respondDirectedRequest(command: RespondDirectedRequestCommand): Promise<CommunicationWriteReceipt>;
++  /** 建立有界 topic 订阅（CAS@0；起始位置非空时同事务建立首个 route intent）。 */
++  createSubscription(command: SubscribeCommand): Promise<CommunicationWriteReceipt>;
++  /** 注册 all-wait（CAS@0；deadline 非空时同事务建立 wait_deadline intent）。 */
++  registerWait(command: RegisterWaitCommand): Promise<CommunicationWriteReceipt>;
++  /** desired-state-first 取消（request / subscription / wait 共用一条命令形状）。 */
++  cancelCommunication(command: CancelCommunicationCommand): Promise<CommunicationWriteReceipt>;
++  /** 机械领取一个 CommunicationIntent（generation 单调；别人持有则 owned_elsewhere）。 */
++  claimCommunicationIntent(command: CommunicationClaimCommand): Promise<CommunicationClaimReceipt>;
++  /** settle 一个已领取的 intent（过期 generation 一律 stale_generation）。 */
++  settleCommunicationIntent(command: CommunicationSettleCommand): Promise<CommunicationSettleReceipt>;
++  /** 唯一后继受理（条件满足 ∧ 前驱公开结束；否则零写入 not_ready）。 */
++  admitWaitSuccessor(command: AdmitWaitSuccessorCommand): Promise<AdmitWaitSuccessorReceipt>;
++  /**
++   * 「条件已满足但前驱仍在执行」时**幂等地**建立 wait_admission intent（CM-1A-001 第 3 工作段）。
++   * 判定（条件是否已满足、前驱是否仍 active）只在 Control 做；Dispatch 与宿主只调用本命令。
++   */
++  ensureWaitAdmission(command: EnsureWaitAdmissionCommand): Promise<EnsureWaitAdmissionReceipt>;
++  /** 只读邮箱：从 canonical 事件重建该 Work 的参与/请求/订阅/等待/投递关系（读不完整返回 unavailable）。 */
++  mailboxView(query: MailboxViewQuery): Promise<MailboxViewResult>;
+ }
+ 
+ export interface HumanCollaboration {
+diff --git a/src/contracts/ports.ts b/src/contracts/ports.ts
+index f468e28..9caf44d 100644
+--- a/src/contracts/ports.ts
++++ b/src/contracts/ports.ts
+@@ -43,12 +43,75 @@ export type DispatchDriveFailure = {
+   message: string;
+ };
+ 
++/**
++ * 协作通信（CommunicationIntent）的 drive 结果（CM-1A-001 第 3 工作段）。
++ *
++ * 契约归属：形状声明在 Contracts，实现（src/control/dispatch-engine/coordination-drive.ts）
++ * 只是消费者——Contracts 不反向依赖实现 Module（Module 边界检查会拒绝那样做）。
++ * 所有计数与年龄都来自**持久事实**（账本事件 + 聚合快照），不是内存队列长度。
++ */
++export type CoordinationDriveFailure = {
++  intentId: string;
++  code:
++    | "not_found"
++    | "rejected"
++    | "stale_generation"
++    | "owned_elsewhere"
++    | "requires_reconcile"
++    | "unavailable";
++  message: string;
++};
++
++/** 协作 intent 的 backlog 快照（持久状态，可重启后重建；越界一律如实给出，不静默裁剪）。 */
++export type CoordinationBacklog = {
++  /** 可领取但本次 drive 预算之外（或 availableAt 未到）的数量。 */
++  pending: number;
++  leased: number;
++  retryScheduled: number;
++  cancelRequested: number;
++  quarantined: number;
++  outcomeUnknown: number;
++  done: number;
++  /** lease 已过期且 sideEffectStarted 的 intent：**不得**重领，必须对账后才可能收敛。 */
++  requiresReconcile: number;
++  /** 最老的未收敛 intent 已经存在多久（毫秒）；没有未收敛项时为 null。 */
++  oldestPendingAgeMs: number | null;
++  /** 扫描窗口内看到的 intent 总数（读不完整时如实给出已完成页数的下界）。 */
++  observed: number;
++};
++
++export type CoordinationDriveResult = {
++  /** 本次 drive 实际领取并处理的 intent 数。 */
++  claimed: number;
++  /** 提交成功的路由页数（含同一 intent 的后续子页）。 */
++  pagesRouted: number;
++  /** 本页提交产生的 Delivery 总数。 */
++  deliveries: number;
++  /** 收敛为 timed_out 的 wait deadline intent 数。 */
++  deadlinesSettled: number;
++  /** 成功创建的唯一后继（TaskAttempt/Run/outbox）数。 */
++  admissions: number;
++  /** 幂等建立/命中的 wait_admission intent 数。 */
++  waitAdmissionsEnsured: number;
++  /** 已领取但 Control 判定 not_ready（零写入）的 intent 数：保持 leased，稍后重试。 */
++  deferred: number;
++  /** cancel_requested 由本 drive 以同一 generation 收敛的数量。 */
++  cancelConverged: number;
++  failures: CoordinationDriveFailure[];
++  backlog: CoordinationBacklog;
++};
++
+ export type DispatchDriveResult = {
+   scanned: number;
+   started: number;
+   completed: number;
+   pendingRemaining: number;
+   failures: DispatchDriveFailure[];
++  /**
++   * 协作通信（route page / wait deadline / wait admission）在同一 drive 收口内推进的结果。
++   * 缺省表示本次 drive 没有协作事实可推进；它不改变 ordinary outbox 的语义。
++   */
++  coordination?: CoordinationDriveResult;
+ };
+ 
+ /**
+diff --git a/src/contracts/role-spec.ts b/src/contracts/role-spec.ts
+index 7c1bd24..34a6838 100644
+--- a/src/contracts/role-spec.ts
++++ b/src/contracts/role-spec.ts
+@@ -16,8 +16,8 @@ import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from
+ import { canonicalJson, sha256Hex } from "./fingerprint.js";
+ 
+ /**
+- * 一个 roleId 只有一份不可改写的安装 revision（安装入口是 CAS@0，摘要口径固定用 revision 1）。
+- * 与 P15_COORDINATION_POLICY_REVISION 同理：「安装一份内容不同的规格」在身份上就是换一个 roleId。
++ * 旧调用方省略 revision 时安装版本 1。每个 (roleId, revision) 独立 CAS@0；
++ * 新内容使用新 revision，激活单独移动引用，旧绑定和旧正文保留。
+  */
+ export const ROLE_SPEC_REVISION = 1;
+ 
+@@ -170,7 +170,7 @@ export type InstallRoleSpecRevisionCommand = {
+   identity: CommandIdentity;
+   correlationId: string;
+   submittedAt: string;
+-  payload: { roleId: string; content: RoleSpecContentV1; contentDigest: string };
++  payload: { roleId: string; revision?: number; content: RoleSpecContentV1; contentDigest: string };
+ };
+ export type ActivateRoleSpecRevisionCommand = {
+   commandId: string;
+@@ -197,7 +197,8 @@ export function installRoleSpecRevisionFingerprint(command: InstallRoleSpecRevis
+       schemaVersion: command.schemaVersion,
+       commandType: command.commandType,
+       projectId: command.identity.projectId,
+-      payload: { roleId: command.payload.roleId, contentDigest: command.payload.contentDigest },
++      payload: { roleId: command.payload.roleId, contentDigest: command.payload.contentDigest,
++        ...((command.payload.revision ?? 1) === 1 ? {} : { revision: command.payload.revision }) },
+     }),
+   ) as CommandFingerprint;
+ }
+diff --git a/src/contracts/runtime-context-materials.ts b/src/contracts/runtime-context-materials.ts
+index 6cb083e..f35f37f 100644
+--- a/src/contracts/runtime-context-materials.ts
++++ b/src/contracts/runtime-context-materials.ts
+@@ -110,6 +110,24 @@ export type RuntimeRoleMaterialsV1 = {
+   entries: RuntimeRoleMaterialEntryV1[];
+ };
+ 
++/**
++ * 本 Run 所属 Work 的既有 Delivery 只读来源（CM-1A-001 第 3 工作段，A06 的输入面）。
++ *
++ * 为什么是一个窄端口而不是让 ContextCompiler 依赖 ControlEngine：Context 侧只被允许依赖
++ * StateLedger／ArtifactVault／ReadModelIndex／WorkspaceReader（ModuleDependencyDAG）。
++ * "哪些 Delivery 属于这个 Work"是 Control 的只读事实（canonical：Delivery.targetWorkContextRef），
++ * 因此由组合根注入一个窄的只读能力（产品里就是 ControlEngine.mailboxView），
++ * 与 WorkRunMaterialCompiler 的 RoleSpecReadPort 同一手法。
++ */
++export type WorkDeliveryReadResult =
++  | { status: 'ready'; deliveries: import('./coordination.js').DeliverySnapshot[] }
++  /** 读不完整（越界/不可读）时必须失败：**不允许**把它当成"这个 Work 没有 Delivery"。 */
++  | { status: 'unavailable'; reason: string };
++
++export interface WorkDeliveryReadPort {
++  deliveriesForWork(query: { projectId: string; workspaceId: string; workId: string }): Promise<WorkDeliveryReadResult>;
++}
++
+ export type RuntimeContextMaterials = {
+   schemaVersion: 1;
+   scope: RuntimeContextScope;
+diff --git a/src/contracts/validation/context.ts b/src/contracts/validation/context.ts
+index a2313bc..8d33c0b 100644
+--- a/src/contracts/validation/context.ts
++++ b/src/contracts/validation/context.ts
+@@ -57,7 +57,7 @@ function validateWorkContextBindingValue(value: unknown, path: string, issues: V
+ const EXECUTION_NOTE_KEYS = [
+   "schemaVersion", "noteId", "workId", "projectId", "workspaceId", "runRef", "attemptRef",
+   "roleBindingRef", "kind", "summary", "reason", "alternatives", "sourceRefs",
+-  "applicableVersions", "verification", "bodyRef", "noFullTranscript", "createdAt",
++  "applicableVersions", "verification", "bodyRef", "noFullTranscript", "createdAt", "memory",
+ ] as const;
+ 
+ /**
+@@ -103,6 +103,20 @@ export function validateExecutionNote(value: unknown): ValidationIssue[] {
+       }
+     });
+   }
++  const memory = value['memory'];
++  if (memory !== undefined) {
++    if (!isRecord(memory)) issues.push({ path: 'memory', code: 'bad_type', message: 'memory must be an object' });
++    else {
++      rejectUnknownFields(memory, ['key', 'revision', 'state', 'topics'], 'memory', issues);
++      const key = stringField(memory, 'key', issues, 'memory.key');
++      if (key !== null && Buffer.byteLength(key) > 256) issues.push({ path: 'memory.key', code: 'size_exceeded', message: 'memory key exceeds 256 bytes' });
++      numberField(memory, 'revision', issues, 'memory.revision', 1);
++      validateEnum(memory['state'], ['active', 'retired'], 'memory.state', issues);
++      const topics = memory['topics'];
++      if (!Array.isArray(topics) || topics.length < 1 || topics.length > 16 || topics.some(t => typeof t !== 'string' || !t.trim() || Buffer.byteLength(t) > 256)) issues.push({ path: 'memory.topics', code: 'bad_type', message: 'memory requires 1..16 bounded topics' });
++      if (!Array.isArray(value['sourceRefs']) || value['sourceRefs'].length === 0) issues.push({ path: 'sourceRefs', code: 'missing_field', message: 'memory requires public sources' });
++    }
++  }
+   const sourceRefs = value["sourceRefs"];
+   if (!Array.isArray(sourceRefs) || sourceRefs.length > EXECUTION_NOTE_MAX_SOURCE_REFS) {
+     issues.push({ path: "sourceRefs", code: "size_exceeded", message: "sourceRefs must be an array <= " + EXECUTION_NOTE_MAX_SOURCE_REFS });
+diff --git a/src/contracts/validation/event.ts b/src/contracts/validation/event.ts
+index 54eef04..2585613 100644
+--- a/src/contracts/validation/event.ts
++++ b/src/contracts/validation/event.ts
+@@ -35,7 +35,20 @@ export function validateDomainEvent(value: unknown): ValidationIssue[] {
+     eventType === "GoalPhaseUpdated" ||
+     eventType === "WorkspaceReadLeaseReleased" ||
+     eventType === "WorkspaceWriteLeaseReleased" ||
+-    eventType === "IntegrationJoined";
++    eventType === "IntegrationJoined" ||
++    // CM-1A-001：协作通信里这些事件是**既有聚合的推进**（revision >= 2），不是创建事件。
++    eventType === "WorkParticipationEnded" ||
++    eventType === "DirectedRequestResponded" ||
++    eventType === "DirectedRequestCancelled" ||
++    eventType === "SubscriptionCancelled" ||
++    eventType === "WaitConditionObserved" ||
++    eventType === "WaitConditionSatisfied" ||
++    eventType === "WaitConditionTimedOut" ||
++    eventType === "WaitConditionCancelled" ||
++    eventType === "CommunicationIntentClaimed" ||
++    eventType === "CommunicationIntentSettled" ||
++    eventType === "CoordinationRegistryUpdated" ||
++    eventType === "WorkMailboxUpdated";
+   // Creation events are always revision 1; activation aggregates advance (>= 1).
+   if (!isActivationEvent && value["aggregateRevision"] !== 1) {
+     issues.push({
+diff --git a/src/contracts/validation/identity.ts b/src/contracts/validation/identity.ts
+index 24b1d8f..a64c9e1 100644
+--- a/src/contracts/validation/identity.ts
++++ b/src/contracts/validation/identity.ts
+@@ -8,10 +8,19 @@ export function validateActor(value: unknown, path: string, issues: ValidationIs
+     return;
+   }
+   const kind = value["kind"];
+-  if (kind !== "human" && kind !== "system") {
+-    issues.push({ path: `${path}.kind`, code: "bad_type", message: "kind must be human|system" });
++  // CM-1A-001 D03：agent 是第三种**归因**（不是授权）。
++  if (kind !== "human" && kind !== "system" && kind !== "agent") {
++    issues.push({ path: `${path}.kind`, code: "bad_type", message: "kind must be human|system|agent" });
+   }
+   stringField(value, "id", issues, `${path}.id`);
++  if (kind === "agent") {
++    const runRef = value["runRef"];
++    if (!isRecord(runRef) || typeof runRef["runId"] !== "string" || runRef["runId"].length === 0 ||
++        typeof runRef["goalId"] !== "string" || runRef["goalId"].length === 0 ||
++        typeof runRef["projectId"] !== "string" || runRef["projectId"].length === 0) {
++      issues.push({ path: `${path}.runRef`, code: "bad_type", message: "agent actor requires an exact runRef" });
++    }
++  }
+ }
+ 
+ export function validateCommandIdentity(
+diff --git a/src/contracts/validation/role.ts b/src/contracts/validation/role.ts
+index e31709a..0fcad12 100644
+--- a/src/contracts/validation/role.ts
++++ b/src/contracts/validation/role.ts
+@@ -206,6 +206,9 @@ export function validateInstallRoleSpecRevisionCommand(value: unknown): Validati
+     return issues;
+   }
+   stringField(payload, "roleId", issues, "payload.roleId");
++  if (payload["revision"] !== undefined && (!Number.isSafeInteger(payload["revision"]) || (payload["revision"] as number) < 1)) {
++    issues.push({ path: "payload.revision", code: "bad_revision", message: "revision must be a positive integer" });
++  }
+   stringField(payload, "contentDigest", issues, "payload.contentDigest");
+   validateRoleSpecContent(payload["content"], "payload.content", issues);
+   return issues;
+diff --git a/src/control/control-engine/control-engine.ts b/src/control/control-engine/control-engine.ts
+index 372c0d3..fd0b75f 100644
+--- a/src/control/control-engine/control-engine.ts
++++ b/src/control/control-engine/control-engine.ts
+@@ -116,6 +116,26 @@ import type {
+ } from "../../contracts/workspace-lease.js";
+ import type { RecordIntegrationResultCommand, RecordIntegrationResultReceipt } from "../../contracts/integration.js";
+ import type { RecordPatchCommand, RecordPatchReceipt } from "../../contracts/patch.js";
++import type {
++  AdmitWaitSuccessorCommand,
++  AdmitWaitSuccessorReceipt,
++  CancelCommunicationCommand,
++  EndWorkParticipationCommand,
++  CommunicationClaimCommand,
++  CommunicationClaimReceipt,
++  CommunicationSettleCommand,
++  CommunicationSettleReceipt,
++  CommunicationWriteReceipt,
++  EnsureWaitAdmissionCommand,
++  EnsureWaitAdmissionReceipt,
++  RegisterAgentInstanceCommand,
++  RegisterWaitCommand,
++  RespondDirectedRequestCommand,
++  SendDirectedRequestCommand,
++  StartWorkParticipationCommand,
++  SubscribeCommand,
++} from "../../contracts/coordination.js";
++import { CoordinationEngineImpl } from "./coordination.js";
+ import type {
+   BindWorkContextCommand,
+   BindWorkContextReceipt,
+@@ -153,6 +173,8 @@ export class ControlEngineImpl implements ControlEngine {
+   private readonly humanRole: HumanRoleCollaborationEngineImpl;
+   private readonly roleSpec: RoleSpecEngineImpl;
+   private readonly materialAccess: MaterialAccessEngineImpl;
++  /** CM-1A-001：协作通信受理面（同一个 deps，同一条 ledger.commit 写入路径）。 */
++  private readonly coordination: CoordinationEngineImpl;
+ 
+   constructor(deps: ControlEngineDeps) {
+     this.deps = deps;
+@@ -170,6 +192,7 @@ export class ControlEngineImpl implements ControlEngine {
+     this.humanRole = new HumanRoleCollaborationEngineImpl(deps);
+     this.roleSpec = new RoleSpecEngineImpl(deps);
+     this.materialAccess = new MaterialAccessEngineImpl(deps);
++    this.coordination = new CoordinationEngineImpl(deps);
+   }
+ 
+   registerWorkspace(command: import("../../contracts/workspace-registration.js").RegisterWorkspaceCommand): Promise<import("../../contracts/ledger.js").LedgerCommitReceipt> {
+@@ -519,6 +542,62 @@ export class ControlEngineImpl implements ControlEngine {
+     return revokeMaterialAccess(this.deps, command);
+   }
+ 
++  // --------------------------------------------------------------------- //
++  // CM-1A-001 协作通信（委托 ./coordination.ts；守卫、CAS 与边界见该文件）      //
++  // --------------------------------------------------------------------- //
++
++  registerAgentInstance(command: RegisterAgentInstanceCommand): Promise<CommunicationWriteReceipt> {
++    return this.coordination.registerAgentInstance(command);
++  }
++
++  startWorkParticipation(command: StartWorkParticipationCommand): Promise<CommunicationWriteReceipt> {
++    return this.coordination.startWorkParticipation(command);
++  }
++
++  endWorkParticipation(command: EndWorkParticipationCommand): Promise<CommunicationWriteReceipt> {
++    return this.coordination.endWorkParticipation(command);
++  }
++
++  sendDirectedRequest(command: SendDirectedRequestCommand): Promise<CommunicationWriteReceipt> {
++    return this.coordination.sendDirectedRequest(command);
++  }
++
++  respondDirectedRequest(command: RespondDirectedRequestCommand): Promise<CommunicationWriteReceipt> {
++    return this.coordination.respondDirectedRequest(command);
++  }
++
++  createSubscription(command: SubscribeCommand): Promise<CommunicationWriteReceipt> {
++    return this.coordination.createSubscription(command);
++  }
++
++  registerWait(command: RegisterWaitCommand): Promise<CommunicationWriteReceipt> {
++    return this.coordination.registerWait(command);
++  }
++
++  cancelCommunication(command: CancelCommunicationCommand): Promise<CommunicationWriteReceipt> {
++    return this.coordination.cancelCommunication(command);
++  }
++
++  claimCommunicationIntent(command: CommunicationClaimCommand): Promise<CommunicationClaimReceipt> {
++    return this.coordination.claimCommunicationIntent(command);
++  }
++
++  settleCommunicationIntent(command: CommunicationSettleCommand): Promise<CommunicationSettleReceipt> {
++    return this.coordination.settleCommunicationIntent(command);
++  }
++
++  admitWaitSuccessor(command: AdmitWaitSuccessorCommand): Promise<AdmitWaitSuccessorReceipt> {
++    return this.coordination.admitWaitSuccessor(command);
++  }
++
++  ensureWaitAdmission(command: EnsureWaitAdmissionCommand): Promise<EnsureWaitAdmissionReceipt> {
++    return this.coordination.ensureWaitAdmission(command);
++  }
++
++  mailboxView(query: import("../../contracts/modules.js").MailboxViewQuery): Promise<import("../../contracts/modules.js").MailboxViewResult> {
++    return this.coordination.mailboxView(query);
++  }
++
+   // --------------------------------------------------------------------- //
+   // Mapping helper: CreateGoal receipt                                        //
+   // --------------------------------------------------------------------- //
+diff --git a/src/control/control-engine/records/role-spec.ts b/src/control/control-engine/records/role-spec.ts
+index be70896..fe2ce9f 100644
+--- a/src/control/control-engine/records/role-spec.ts
++++ b/src/control/control-engine/records/role-spec.ts
+@@ -20,11 +20,11 @@ export function buildRoleSpecInstallFold(
+   deps: { eventId: string; occurredAt: string },
+ ): import("../../../contracts/ledger.js").RoleSpecInstallRecordLedgerCommitV1 {
+   const snap: RoleSpecRevisionSnapshot = {
+-    ref: roleSpecRevisionRefFor(command.identity.projectId, command.payload.roleId),
++    ref: roleSpecRevisionRefFor(command.identity.projectId, command.payload.roleId, command.payload.revision ?? ROLE_SPEC_REVISION),
+     revision: 1,
+     schemaVersion: 1,
+     roleId: command.payload.roleId,
+-    contentRevision: ROLE_SPEC_REVISION,
++    contentRevision: command.payload.revision ?? ROLE_SPEC_REVISION,
+     content: command.payload.content,
+     contentDigest: command.payload.contentDigest,
+     installedAt: deps.occurredAt,
+diff --git a/src/control/control-engine/role-spec.ts b/src/control/control-engine/role-spec.ts
+index a5a4d00..89fd9a4 100644
+--- a/src/control/control-engine/role-spec.ts
++++ b/src/control/control-engine/role-spec.ts
+@@ -15,8 +15,8 @@
+  *   3. activate 额外要求目标 revision 已安装且三元组（projectId／roleId／revision）与摘要
+  *      与落账快照逐字一致 -> not_found / digest_mismatch。
+  *
+- * 为什么摘要口径固定用 ROLE_SPEC_REVISION：与 P1-15 同理，一个 roleId 只有一份安装 revision；
+- * 「安装一份内容不同的规格」在身份上就是换一个 roleId，而不是偷偷覆盖旧内容。
++ * 摘要绑定调用方显式提供的版本；省略版本兼容 revision 1。每一版本不可覆盖，
++ * 安装新版本不会移动生效引用，也不会改写现有角色矩阵 pin。
+  */
+ import type {
+   ActivateRoleSpecRevisionCommand,
+@@ -57,7 +57,7 @@ async function installRoleSpecImpl(
+   // Guard 2: 内容摘要必须与命令声明的摘要一致（零写入）。
+   let expectedDigest: string;
+   try {
+-    expectedDigest = roleSpecContentDigest(command.payload.content, command.payload.roleId, ROLE_SPEC_REVISION);
++    expectedDigest = roleSpecContentDigest(command.payload.content, command.payload.roleId, command.payload.revision ?? ROLE_SPEC_REVISION);
+   } catch {
+     // 正文里出现非 JSON 值（undefined／非有限数）时 canonicalJson 会抛错；
+     // 这是输入不合法，不是摘要不符，按 invalid 处理并保持零写入。
+diff --git a/src/control/control-engine/work-record.ts b/src/control/control-engine/work-record.ts
+index 2ca0f09..ada89a6 100644
+--- a/src/control/control-engine/work-record.ts
++++ b/src/control/control-engine/work-record.ts
+@@ -216,6 +216,20 @@ export class WorkRecordEngineImpl implements WorkRecordPort {
+       return { status: "rejected", commandId: command.commandId, code: "run_not_in_work" };
+     }
+ 
++    if (note.memory) {
++      const { workMemoryNoteId, executionNoteRefFor } = await import('../../contracts/context-continuity.js');
++      const memory = note.memory;
++      if (note.noteId !== workMemoryNoteId(memory.key, memory.revision) || !Number.isSafeInteger(memory.revision) || memory.revision > 10000)
++        return { status: 'rejected', commandId: command.commandId, code: 'invalid' };
++      if (memory.revision === 1 && memory.state !== 'active') return { status: 'rejected', commandId: command.commandId, code: 'invalid' };
++      if (memory.revision > 1) {
++        const previous = await this.deps.ledger.load(executionNoteRefFor(note.projectId, note.workspaceId, note.workId, workMemoryNoteId(memory.key, memory.revision - 1)));
++        if (previous.status !== 'found' || previous.snapshot.ref.aggregateType !== 'ExecutionNote') return { status: 'rejected', commandId: command.commandId, code: 'not_found' };
++        const prior = (previous.snapshot as import('../../contracts/context-continuity.js').ExecutionNoteSnapshot).note.memory;
++        if (!prior || prior.key !== memory.key || prior.revision !== memory.revision - 1) return { status: 'rejected', commandId: command.commandId, code: 'invalid' };
++      }
++    }
++
+     // Guard 5: deterministic fold (body-first: the note body was already put
+     // into the ArtifactVault by the author) -> atomic commit -> mapping.
+     const batch = buildExecutionNoteRecordLedgerCommit(command, {
+diff --git a/src/control/dispatch-engine/dispatch-engine.ts b/src/control/dispatch-engine/dispatch-engine.ts
+index e19863b..1a8a8ca 100644
+--- a/src/control/dispatch-engine/dispatch-engine.ts
++++ b/src/control/dispatch-engine/dispatch-engine.ts
+@@ -20,19 +20,44 @@ import type { DispatchIntentV1 } from "../../contracts/dispatch.js";
+ import { buildDispatchStartCommand, buildRunFactCommand } from "../../contracts/commands/dispatch.js";
+ import { replacementAttemptRefFor } from "../../contracts/handoff.js";
+ import { ensureWorkIdentity } from "./work-identity.js";
++import { CoordinationDrive } from "./coordination-drive.js";
+ 
+ export type DispatchEngineDeps = {
+   ledger: StateLedger;
+   control: ControlEngine;
+   contextCompiler: TaskContextPort;
+   runtime: RunPort;
++  /**
++   * 协作通信推进使用的调用方时钟（默认系统时钟）。它是**注入**的：claim 的 now、settle 的
++   * settledAt 与租约到期都按它计算，测试与宿主因此可以给确定性的时间。
++   */
++  now?: () => string;
++  /** 协作 intent 的消费者 id（确定性；默认 COORDINATION_DRIVE_CONSUMER_ID）。 */
++  coordinationConsumerId?: string;
++  /** 协作 intent 的领取租约时长（默认 60s）。 */
++  coordinationLeaseMs?: number;
+ };
+ 
+ export class DispatchEngineImpl implements DispatchPort {
+-  constructor(private readonly deps: DispatchEngineDeps) {}
++  private readonly coordination: CoordinationDrive;
++
++  constructor(private readonly deps: DispatchEngineDeps) {
++    this.coordination = new CoordinationDrive({
++      ledger: deps.ledger,
++      control: deps.control,
++      now: deps.now ?? (() => new Date().toISOString()),
++      ...(deps.coordinationConsumerId === undefined ? {} : { consumerId: deps.coordinationConsumerId }),
++      ...(deps.coordinationLeaseMs === undefined ? {} : { leaseDurationMs: deps.coordinationLeaseMs }),
++    });
++  }
+ 
+   async drive(trigger: DispatchDriveTrigger): Promise<DispatchDriveResult> {
+     const maxIntents = trigger.maxIntents ?? 8;
++    // CM-1A-001 第 3 工作段：协作通信（route page / wait deadline / wait admission）**在同一收口内**
++    // 推进（D05：不新增第二生产入口、不新开后台循环）。先跑协作面：本 drive 内由接续产生的唯一后继
++    // outbox 因此可以在同一次 drive 的 ordinary 段被派发；预算与 ordinary 共用 maxIntents，
++    // 协作面的异常被它自己收进 failures（绝不让 ordinary outbox 停摆）。
++    const coordination = await this.coordination.drive(maxIntents);
+     const pending = await this.deps.ledger.pendingDispatchIntents(maxIntents, { workKind: 'ordinary' });
+ 
+     let scanned = 0;
+@@ -155,7 +180,15 @@ export class DispatchEngineImpl implements DispatchPort {
+     }
+ 
+     const remaining = await this.deps.ledger.pendingDispatchIntents(maxIntents, { workKind: 'ordinary' });
+-    return { scanned, started, completed, pendingRemaining: remaining.length, failures };
++    // 本次 drive 完全没有协作事实可推进时**不**带上 coordination 字段：ordinary-only 的调用方
++    // （以及它们对结果的逐字段比对）看到的形状与之前逐字节相同。有协作事实（含只有 backlog 的）
++    // 时如实给出。
++    const coordinationReported =
++      coordination.backlog.observed > 0 || coordination.claimed > 0 || coordination.failures.length > 0;
++    return {
++      scanned, started, completed, pendingRemaining: remaining.length, failures,
++      ...(coordinationReported ? { coordination } : {}),
++    };
+   }
+ 
+   private buildContextRequest(intent: DispatchIntentV1): TaskContextRequestV1 {
+diff --git a/src/control/dispatch-engine/planned-task-dispatch.ts b/src/control/dispatch-engine/planned-task-dispatch.ts
+index ed553be..c45301e 100644
+--- a/src/control/dispatch-engine/planned-task-dispatch.ts
++++ b/src/control/dispatch-engine/planned-task-dispatch.ts
+@@ -10,7 +10,7 @@ import { revisionAssignments } from '../../contracts/plan.js';
+ import type { PlanRevisionSnapshot, PlanTaskAssignment, RuntimeTask } from '../../contracts/plan.js';
+ import { canonicalJson } from '../../contracts/fingerprint.js';
+ import { buildDispatchClaimCommand } from '../../contracts/commands/dispatch.js';
+-import { issueMatrixRoleBinding } from './role-spec-read.js';
++import { issueMatrixRoleBinding, LedgerRoleSpecRead } from './role-spec-read.js';
+ type Scope = {
+     projectId: string;
+     workspaceId: string;
+@@ -143,14 +143,25 @@ export class PlannedTaskDispatch {
+                     schemaVersion: 1, bindingId: runId, templateId: assignment.role, templateRevision: '1', bindingVersion: 1, policyRevision: 'human-implementation-v1'
+                 },
+             });
++            let declaredPermissions: { tools: string[]; writeScope: string[] } = { tools: ['read', 'write', 'shell'], writeScope: authorization.writeScope };
++            if (issued.source === 'matrix') {
++                const pin = issued.matrixPin!;
++                const loadedSpec = await this.h.ledger.load(pin.ref);
++                if (loadedSpec.status !== 'found' || loadedSpec.snapshot.ref.aggregateType !== 'RoleSpecRevision') return '角色模板不存在';
++                const content = (loadedSpec.snapshot as import('../../contracts/role-spec.js').RoleSpecRevisionSnapshot).content;
++                declaredPermissions = { tools: declaredPermissions.tools.filter(tool => content.permissions.tools.includes(tool)),
++                    writeScope: content.permissions.writeScope === 'none' ? [] : authorization.writeScope };
++                const resolved = await new LedgerRoleSpecRead({ ledger: this.h.ledger }).resolve({ projectId: scope.projectId, roleBinding: issued.roleBinding, declaredPermissions });
++                if (resolved.status !== 'resolved') return '角色模板当前不可用于派发：' + canonicalJson(resolved);
++            } else if (!['executor', 'integrator'].includes(assignment.role)) {
++                return '自定义 Agent 模板必须在当前角色矩阵中登记并激活';
++            }
+             const claim = await this.h.claimTask(buildDispatchClaimCommand({
+                 projectId: scope.projectId, goalId: scope.goalId, taskId: assignment.taskId, runId, attemptId: 'attempt-' + runId,
+                 commandId: 'claim-' + runId, correlationId: job.intent.correlationId, idempotencyKey: 'claim-' + runId, actor: {
+                     kind: 'system', id: 'initial-planning'
+                 }, submittedAt: job.submittedAt, roleBinding: issued.roleBinding,
+-                declaredPermissions: {
+-                    tools: ['read', 'write', 'shell'], writeScope: authorization.writeScope
+-                }, budget: {
++                declaredPermissions, budget: {
+                     tokenBudget: budget.contextWindowTokens, deadline: null
+                 }
+             }));
+diff --git a/src/control/dispatch-engine/role-spec-read.ts b/src/control/dispatch-engine/role-spec-read.ts
+index 8e56190..e1bea30 100644
+--- a/src/control/dispatch-engine/role-spec-read.ts
++++ b/src/control/dispatch-engine/role-spec-read.ts
+@@ -21,7 +21,7 @@ import {
+ } from '../control-engine/policies/role-binding-admission.js';
+ 
+ export class LedgerRoleSpecRead implements RoleSpecReadPort {
+-  constructor(private readonly deps: { ledger: StateLedger }) {}
++  constructor(private readonly deps: { ledger: Pick<StateLedger, 'load'> }) {}
+ 
+   async resolve(request: {
+     projectId: string;
+diff --git a/src/control/dispatch-engine/work-material-drive.ts b/src/control/dispatch-engine/work-material-drive.ts
+index 2d8eaff..320fef1 100644
+--- a/src/control/dispatch-engine/work-material-drive.ts
++++ b/src/control/dispatch-engine/work-material-drive.ts
+@@ -27,15 +27,25 @@ import type { RuntimeContextMaterials } from '../../contracts/runtime-context-ma
+ import type { WorkRunMaterialCompiler, WorkRunMaterialRequest } from '../../data/context-compiler/work-run-materials.js';
+ import { resolveOriginTaskId } from './work-identity.js';
+ import type { FeedbackMaterialCompiler } from '../../data/context-compiler/feedback-materials.js';
++import type { DeliveryMaterialCompiler } from '../../data/context-compiler/delivery-materials.js';
+ import { materialAccessGrantIdFor } from '../../contracts/material-access.js';
+ import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from '../../contracts/commands/material-access.js';
+ 
++
+ export class WorkMaterialDrive {
+   constructor(private readonly deps: {
+     ledger: Pick<StateLedger, 'load'>;
+     /** 身份答案来自 ControlEngine 的权威解析面，不在派发面重算第二份。 */
+     control: Pick<ControlEngine, 'resolveTaskWorkIdentity'> & Partial<Pick<ControlEngine,'grantMaterialAccess'>>;
+     feedback?: FeedbackMaterialCompiler;
++    /**
++     * 目标 Delivery → 实际模型输入的材料端口（CM-1A-001 第 3 工作段，A06 的输入面）。
++     * **未注入时本驱动逐字节与之前相同**（不读 Delivery、不签 grant、不追加任何 rule）。
++     * 注入时顺序固定：先读 Work 的既有 Delivery 并 capture 来源 basis → 逐条签**精确**
++     * MaterialAccessGrant（非 committed 即抛错，运行尚未启动）→ vault.open(current) →
++     * 来源复核 → 最后组装 rule。见 data/context-compiler/delivery-materials.ts。
++     */
++    deliveries?: DeliveryMaterialCompiler;
+     compiler: Pick<WorkRunMaterialCompiler, 'compile'>;
+   }) {}
+ 
+@@ -95,6 +105,37 @@ export class WorkMaterialDrive {
+       }
+       result.materials.rules.push(...await this.deps.feedback.assemble(selection));
+     }
++    if (this.deps.deliveries) {
++      // 目标 Delivery 的精确版本进入本次输入。顺序与 feedback 通道一致：
++      //   select（读 Work 的既有 Delivery + capture 来源 basis）→ 签**精确** grant →
++      //   vault.open(currentBasis) → 来源复核 → 组装 rule。
++      // 任何一步失败都抛错：LeasedWorkerRuntime 会把它登记成"可证明未启动"的已知失败，
++      // 因此**撤权/来源更新/缺料**只会阻止这次运行，不会静默复用旧正文。
++      const selection = await this.deps.deliveries.select(envelope, resolution.binding.workId);
++      const materials = this.deps.deliveries.materialsOf(selection);
++      if (materials.length > 0) {
++        // grantedAt 取**已落账的**投递时间（entries 已按 deliveryId 稳定排序），
++        // 而不是新读的时钟：同一 (reader, materials, basis) 的重放因此逐字节一致（ledger 幂等要求）。
++        const grantedAt = selection.entries[0]!.delivery.createdAt;
++        const id = materialAccessGrantIdFor(envelope.runRef, materials, selection.basis);
++        const grant = buildMaterialAccessGrantV1({
++          grantId: id,
++          scope: { projectId: envelope.projectId, workspaceId: envelope.workspaceId, goalId: envelope.goalId },
++          materials,
++          reader: envelope.runRef,
++          issuedBy: { aggregateType: 'Control', projectId: envelope.projectId, goalId: envelope.goalId },
++          purpose: 'Formally delivered material for this Work; the successor Run consumes the exact delivered version',
++          basis: selection.basis,
++          grantedAt,
++        });
++        const receipt = await this.deps.control.grantMaterialAccess?.(buildGrantMaterialAccessCommand(grant, {
++          commandId: id, projectId: envelope.projectId, actorKind: 'system', actorId: 'delivery-material-sharing',
++          idempotencyKey: id, correlationId: id, submittedAt: grantedAt,
++        }));
++        if (receipt?.status !== 'committed') throw Error('Delivery material permission unavailable');
++      }
++      result.materials.rules.push(...await this.deps.deliveries.assemble(selection));
++    }
+     return result.materials;
+   }
+ }
+diff --git a/src/data/context-compiler/completed-work-context-compiler.ts b/src/data/context-compiler/completed-work-context-compiler.ts
+index 4224b0c..2768532 100644
+--- a/src/data/context-compiler/completed-work-context-compiler.ts
++++ b/src/data/context-compiler/completed-work-context-compiler.ts
+@@ -94,7 +94,12 @@ export class CompletedWorkContextCompilerImpl implements CompletedWorkContextPor
+             canonicalJson(loaded.snapshot.ref) !== canonicalJson(n.noteRef)) {
+           return { status: 'needs_material', gaps: [{ code: 'missing_body', message: 'recorded execution note unavailable' }], selectedRefs: [] };
+         }
+-        recorded.push(loaded.snapshot as ExecutionNoteSnapshot);
++        const record = loaded.snapshot as ExecutionNoteSnapshot;
++        const memory = record.note.memory;
++        if (memory) {
++          if (!(await isCurrentWorkMemory(this.deps.ledger, record.note)) || !request.relatedRefs.some(ref => memory.topics.includes(ref.refKey))) continue;
++        }
++        recorded.push(record);
+       }
+       const matched = request.relatedRefs.some((ref) =>
+         row.workKind.includes(ref.refKey) || row.taskId?.includes(ref.refKey) || recorded.some((n) => n.note.summary.includes(ref.refKey)),
+@@ -121,9 +126,11 @@ export class CompletedWorkContextCompilerImpl implements CompletedWorkContextPor
+         goalId: row.goalId,
+         taskId: row.taskId,
+         runRefs: (wc.status === "ready" ? wc.binding.binding.linkedRunRefs : []).map((r) => ({ ...r })),
+-        notes: notes.map((n, i) => ({ noteRef: n.noteRef, kind: recorded[i]!.note.kind, summary: recorded[i]!.note.summary, createdAt: recorded[i]!.note.createdAt, sourceCursor: n.sourceCursor,
+-          reason: recorded[i]!.note.reason, alternatives: recorded[i]!.note.alternatives,
+-          sourceRefs: recorded[i]!.note.sourceRefs, applicableVersions: recorded[i]!.note.applicableVersions })),
++        notes: recorded.map(({ ref, note }) => ({ noteRef: ref, kind: note.kind, summary: note.summary, createdAt: note.createdAt,
++          sourceCursor: notes.find(n => canonicalJson(n.noteRef) === canonicalJson(ref))?.sourceCursor ?? null,
++          reason: note.reason, alternatives: note.alternatives,
++          sourceRefs: note.sourceRefs, applicableVersions: note.applicableVersions,
++          ...(note.memory ? { memory: note.memory } : {}) })),
+         applicability,
+         sources: [{ kind: "binding", refKey: canonicalJson(row.workRef), version: String(wc.binding.revision), label: "work binding" },
+           ...recorded.map(n => ({ kind: 'execution-note', refKey: canonicalJson(n.ref), version: String(n.revision), label: n.note.noteId }))],
+@@ -172,3 +179,14 @@ export class CompletedWorkContextCompilerImpl implements CompletedWorkContextPor
+ }
+ 
+ export type { WorkContextBindingSnapshot };
++
++/** Recheck canonical successor existence at consumption time, including when a
++ * bounded projection omitted the successor. Access grants remain a separate check. */
++export async function isCurrentWorkMemory(ledger: Pick<StateLedger, 'load'>, note: ExecutionNoteSnapshot['note']): Promise<boolean> {
++  const memory = note.memory;
++  if (!memory) return true;
++  const { workMemoryNoteId, executionNoteRefFor } = await import('../../contracts/context-continuity.js');
++  if (memory.state !== 'active' || note.noteId !== workMemoryNoteId(memory.key, memory.revision)) return false;
++  const successor = await ledger.load(executionNoteRefFor(note.projectId, note.workspaceId, note.workId, workMemoryNoteId(memory.key, memory.revision + 1)));
++  return successor.status === 'not_found';
++}
+diff --git a/src/data/context-compiler/query-context-compiler.ts b/src/data/context-compiler/query-context-compiler.ts
+index 15ccc3b..c91d07d 100644
+--- a/src/data/context-compiler/query-context-compiler.ts
++++ b/src/data/context-compiler/query-context-compiler.ts
+@@ -4,6 +4,7 @@ import { QUERY_JOB_CONTEXT_BUNDLE_MAX_BYTES, QUERY_JOB_MAX_FOCUS_REFS, QUERY_JOB
+ import { canonicalJson } from "../../contracts/fingerprint.js";
+ import type { ArtifactPort } from "../../contracts/artifact.js";
+ import type { StateLedger, GoalSnapshot } from "../../contracts/ledger.js";
++import { revisionAssignments } from '../../contracts/plan.js';
+ import type { PlanRevisionSnapshot } from "../../contracts/plan.js";
+ 
+ export type QueryContextCompilerDeps = { vault: ArtifactPort; ledger: StateLedger; now: () => string };
+@@ -84,7 +85,41 @@ export class QueryContextCompilerImpl implements QueryContextPort {
+         if (!prior.stale) previousAnswers.push({ ref, answer: prior.answer, sources: prior.sources });
+       }
+     }
+-    const bundle = { schemaVersion: 1, previousAnswers, queryJobRef: request.queryJobRef, question: request.question, focus, ...(execution ? { execution, goalContext, acceptedPlan, executionFeedback } : {}), selectedSources, noTranscript: true as const };
++    const collaborationWork: Array<{ taskId: string; assignment: import('../../contracts/plan.js').PlanTaskAssignment | null;
++      dependencies: string[]; reduction: import('../../contracts/reduction.js').TaskReductionSnapshot | null; reductionMatchesPlan: boolean }> = [];
++    if (execution && acceptedPlan) {
++      const assignments = revisionAssignments(acceptedPlan);
++      for (const task of acceptedPlan.tasks.slice(0, 64)) {
++        const ref = { aggregateType: 'TaskReduction' as const, projectId, goalId: request.goalId!, taskId: task.taskId };
++        const loaded = await this.deps.ledger.load(ref);
++        const reduction = loaded.status === 'found' && loaded.snapshot.ref.aggregateType === 'TaskReduction'
++          ? loaded.snapshot as import('../../contracts/reduction.js').TaskReductionSnapshot : null;
++        collaborationWork.push({ taskId: task.taskId, assignment: assignments.find(a => a.taskId === task.taskId) ?? null,
++          dependencies: acceptedPlan.executionDag.dependsOn.filter(edge => edge.taskId === task.taskId).map(edge => edge.dependsOnId),
++          reduction, reductionMatchesPlan: reduction !== null && canonicalJson(reduction.planRef) === canonicalJson(acceptedPlan.ref) && reduction.planRevision === acceptedPlan.planRevision });
++        if (reduction) selectedSources.push({ kind: 'task-reduction', refKey: canonicalJson(ref), version: String(reduction.revision) });
++      }
++    }
++    const agentTemplates: Array<{ pin: import('../../contracts/role-spec.js').RoleSpecPinV1; content: import('../../contracts/role-spec.js').RoleSpecContentV1 }> = [];
++    if (execution?.kind === 'initial_coordination') {
++      const active = await this.deps.ledger.load({ aggregateType: 'ProjectCoordinationPolicyActive', projectId });
++      if (active.status === 'found' && active.snapshot.ref.aggregateType === 'ProjectCoordinationPolicyActive') {
++        const policy = await this.deps.ledger.load((active.snapshot as import('../../contracts/human-role-collaboration.js').ProjectCoordinationPolicyActiveSnapshot).activeRevision);
++        if (policy.status !== 'found' || policy.snapshot.ref.aggregateType !== 'CoordinationPolicyRevision') return { status: 'needs_material', gaps: [{ code: 'stale_versions', message: 'Role catalog policy missing' }] };
++        const roles = (policy.snapshot as import('../../contracts/human-role-collaboration.js').CoordinationPolicyRevisionSnapshot).content.roles;
++        for (const [roleId, pin] of Object.entries(roles?.catalog ?? {})) {
++          const spec = await this.deps.ledger.load(pin.ref);
++          const activated = await this.deps.ledger.load({ aggregateType: 'ProjectRoleSpecActive', projectId, roleId });
++          if (spec.status !== 'found' || spec.snapshot.ref.aggregateType !== 'RoleSpecRevision' || activated.status !== 'found' || activated.snapshot.ref.aggregateType !== 'ProjectRoleSpecActive') continue;
++          const value = spec.snapshot as import('../../contracts/role-spec.js').RoleSpecRevisionSnapshot;
++          if (value.contentDigest !== pin.digest || canonicalJson((activated.snapshot as import('../../contracts/role-spec.js').ProjectRoleSpecActiveSnapshot).activeRevision) !== canonicalJson(pin.ref)) continue;
++          agentTemplates.push({ pin, content: value.content });
++          selectedSources.push({ kind: 'role-template', refKey: canonicalJson(pin.ref), version: pin.digest });
++        }
++        selectedSources.push({ kind: 'role-catalog', refKey: canonicalJson(policy.snapshot.ref), version: String(policy.snapshot.revision) });
++      }
++    }
++    const bundle = { schemaVersion: 1, agentTemplates, collaborationWork, collaborationWorkOmitted: Math.max(0, (acceptedPlan?.tasks.length ?? 0) - collaborationWork.length), previousAnswers, queryJobRef: request.queryJobRef, question: request.question, focus, ...(execution ? { execution, goalContext, acceptedPlan, executionFeedback } : {}), selectedSources, noTranscript: true as const };
+     const body = canonicalJson(bundle);
+     const totalBytes = Buffer.byteLength(body);
+     if (totalBytes > request.budget.maxBundleBytes) return { status: "needs_material", gaps: [{ code: "budget_exhausted", message: `query material requires ${totalBytes} bytes` }] };
+diff --git a/src/data/context-compiler/work-run-materials.ts b/src/data/context-compiler/work-run-materials.ts
+index 7572777..1425a5d 100644
+--- a/src/data/context-compiler/work-run-materials.ts
++++ b/src/data/context-compiler/work-run-materials.ts
+@@ -1,3 +1,4 @@
++import { isCurrentWorkMemory } from './completed-work-context-compiler.js';
+ /**
+  * Compile work identity, role materials and authorized history before dispatch.
+  * The result enters the existing bundle and manifest; it grants no permissions
+@@ -468,6 +469,7 @@ export class WorkRunMaterialCompiler {
+         continue;
+       }
+       const note = (loadedNote.snapshot as ExecutionNoteSnapshot).note;
++      if (!(await isCurrentWorkMemory(this.deps.ledger, note))) continue;
+       const historical = row['historical'] === true;
+       const content = canonicalJson({
+         workId: request.workId,
+@@ -479,6 +481,7 @@ export class WorkRunMaterialCompiler {
+         runRef: note.runRef,
+         createdAt: note.createdAt,
+         applicableVersions: note.applicableVersions,
++        ...(note.memory ? { memory: note.memory } : {}),
+         authoredByLinkedRun: !historical,
+         qualification: '历史解释材料：不是当前事实，不授予权限，不满足当前验收',
+       } as JsonValue);
+@@ -716,7 +719,9 @@ export class WorkRunMaterialCompiler {
+       workspaceId: request.scope.workspaceId,
+       newWorkGoalId: request.scope.goalId,
+       newWorkKind: 'task',
+-      relatedRefs: [{ kind: 'spec', refKey: request.planRef.planId, version: String(bindingPlanRevision ?? '') || null }],
++      relatedRefs: [{ kind: 'spec', refKey: request.planRef.planId, version: String(bindingPlanRevision ?? '') || null },
++        { kind: 'spec', refKey: request.roleBinding.templateId, version: null },
++        { kind: 'spec', refKey: request.scope.taskId, version: null }],
+       applicableVersions: {
+         planRef: { ...request.planRef },
+       planRevision: bindingPlanRevision,
+@@ -769,7 +774,8 @@ export class WorkRunMaterialCompiler {
+     const authorized: Array<{ noteId: string; note: ExecutionNoteSnapshot['note']; bodyRef: ArtifactRef }> = [];
+     let unauthorized = 0;
+     for (const entry of kept) {
+-      const noteId = typeof entry['noteId'] === 'string' ? entry['noteId'] : null;
++      const selectedNoteRef = entry['noteRef'] as { noteId?: unknown } | undefined;
++      const noteId = typeof entry['noteId'] === 'string' ? entry['noteId'] : typeof selectedNoteRef?.noteId === 'string' ? selectedNoteRef.noteId : null;
+       if (noteId === null) {
+         gaps.push({ kind: 'completed-work', message: '已完成工作 ' + workId + ' 的留痕条目缺少 noteId，未作为材料选入。' });
+         continue;
+@@ -782,6 +788,7 @@ export class WorkRunMaterialCompiler {
+         continue;
+       }
+       const note = (loaded.snapshot as ExecutionNoteSnapshot).note;
++      if (!(await isCurrentWorkMemory(this.deps.ledger, note))) continue;
+       if (note.projectId !== request.scope.projectId || note.workspaceId !== request.scope.workspaceId || note.workId !== workId) {
+         unauthorized += 1;
+         gaps.push({ kind: 'completed-work', message: '留痕 ' + noteId + ' 的 canonical 记录不属于所选的这段工作（' + note.projectId + '/' + note.workspaceId + '/' + note.workId + '）：不选入。' });
+@@ -830,6 +837,9 @@ export class WorkRunMaterialCompiler {
+         summary: entry.note.summary,
+         reason: entry.note.reason,
+         createdAt: entry.note.createdAt,
++        sourceRefs: entry.note.sourceRefs,
++        verification: entry.note.verification,
++        ...(entry.note.memory ? { memory: entry.note.memory } : {}),
+       })),
+       notices: allNotes.length > kept.length ? ['留痕按上限截断，截断数量见 manifest gaps'] : [],
+       qualification: '历史解释材料：不继承旧授权、旧完成状态或旧验收结论',
+diff --git a/src/data/read-model-index/governance-view.ts b/src/data/read-model-index/governance-view.ts
+index d8cfe05..bbf010b 100644
+--- a/src/data/read-model-index/governance-view.ts
++++ b/src/data/read-model-index/governance-view.ts
+@@ -108,7 +108,12 @@ export class GovernanceReadModel implements GovernanceViewPort {
+ 
+     const entries: RoleSpecEntryViewV1[] = [];
+     for (const roleId of [...roleIds].sort()) {
+-      const ref = roleSpecRevisionRefFor(projectId, roleId, ROLE_SPEC_REVISION);
++      const activeLoaded = await ledger.load(projectRoleSpecActiveRefFor(projectId, roleId));
++      const activeRef = activeLoaded.status === 'found' && activeLoaded.snapshot.ref.aggregateType === 'ProjectRoleSpecActive'
++        ? (activeLoaded.snapshot as ProjectRoleSpecActiveSnapshot).activeRevision : null;
++      const revisions = scan.installs.filter(entry => entry.kind === 'RoleSpecRevision' && entry.ref.aggregateType === 'RoleSpecRevision' && entry.ref.roleId === roleId);
++      const newest = revisions.reduce((n, entry) => Math.max(n, entry.ref.revision), ROLE_SPEC_REVISION);
++      const ref = activeRef ?? roleSpecRevisionRefFor(projectId, roleId, newest);
+       const loaded = await ledger.load(ref);
+       const snapshot = loaded.status === 'found' && loaded.snapshot.ref.aggregateType === 'RoleSpecRevision'
+         ? (loaded.snapshot as RoleSpecRevisionSnapshot)
+@@ -130,7 +135,14 @@ export class GovernanceReadModel implements GovernanceViewPort {
+       const digest = snapshot?.contentDigest ?? installFact?.contentDigest ?? builtInDigest ?? null;
+       const pin: RoleSpecPinV1 | null = digest === null ? null : { ref, digest };
+ 
+-      const activeLoaded = await ledger.load(projectRoleSpecActiveRefFor(projectId, roleId));
++      for (const fact of revisions) {
++        if (installed.some(entry => sameRef(entry.ref, fact.ref))) continue;
++        const version = await ledger.load(fact.ref);
++        if (version.status !== 'found' || version.snapshot.ref.aggregateType !== 'RoleSpecRevision') continue;
++        const value = version.snapshot as RoleSpecRevisionSnapshot;
++        installed.push({ ref: value.ref, contentRevision: value.contentRevision, contentDigest: value.contentDigest, content: value.content, installedAt: value.installedAt, installedBy: fact.actor });
++      }
++      installed.sort((a, b) => b.contentRevision - a.contentRevision);
+       let activeRevisionRef: RoleSpecRevisionRef | null = null;
+       let active: RoleSpecEntryViewV1['active'] = null;
+       if (activeLoaded.status === 'found' && activeLoaded.snapshot.ref.aggregateType === 'ProjectRoleSpecActive') {
+diff --git a/src/data/read-model-index/read-model-index.ts b/src/data/read-model-index/read-model-index.ts
+index 4d8f048..a8411df 100644
+--- a/src/data/read-model-index/read-model-index.ts
++++ b/src/data/read-model-index/read-model-index.ts
+@@ -3570,7 +3570,49 @@ export class ReadModelIndexImpl implements ReadModelIndex {
+       eventType === "PlanProposalRecorded" ||
+       eventType === "UserDecisionRecorded" ||
+       eventType === "GoalRevisionRecorded" ||
+-      eventType === "PlanRevisionSuperseded"
++      eventType === "PlanRevisionSuperseded" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "AgentInstanceRegistered" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "WorkParticipationStarted" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "WorkParticipationEnded" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "DirectedRequestSent" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "DirectedRequestResponded" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "DirectedRequestCancelled" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "SubscriptionCreated" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "SubscriptionCancelled" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "SubscriptionCatchupPlanned" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "DeliveryRecorded" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "WaitConditionRegistered" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "WaitConditionObserved" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "WaitConditionSatisfied" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "WaitConditionTimedOut" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "WaitConditionCancelled" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "CommunicationIntentRecorded" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "CommunicationIntentClaimed" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "CommunicationIntentSettled" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "CommunicationAdmissionRecorded" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "CoordinationRegistryUpdated" ||
++      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
++      eventType === "WorkMailboxUpdated"
+     );
+   }
+ }
+diff --git a/src/data/read-model-index/sqlite-read-model-index.ts b/src/data/read-model-index/sqlite-read-model-index.ts
+index a93b87f..6bd84ba 100644
+--- a/src/data/read-model-index/sqlite-read-model-index.ts
++++ b/src/data/read-model-index/sqlite-read-model-index.ts
+@@ -2079,7 +2079,49 @@ export class SqliteReadModelIndex implements ReadModelIndex {
+       eventType === "CoordinationPolicyActivated" ||
+       // RW-11 role-spec governance events（登记以免 advance 停摆；消费点在 claim 守卫）。
+       eventType === "RoleSpecInstalled" ||
+-      eventType === "RoleSpecActivated"
++      eventType === "RoleSpecActivated" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "AgentInstanceRegistered" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "WorkParticipationStarted" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "WorkParticipationEnded" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "DirectedRequestSent" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "DirectedRequestResponded" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "DirectedRequestCancelled" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "SubscriptionCreated" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "SubscriptionCancelled" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "SubscriptionCatchupPlanned" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "DeliveryRecorded" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "WaitConditionRegistered" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "WaitConditionObserved" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "WaitConditionSatisfied" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "WaitConditionTimedOut" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "WaitConditionCancelled" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "CommunicationIntentRecorded" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "CommunicationIntentClaimed" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "CommunicationIntentSettled" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "CommunicationAdmissionRecorded" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "CoordinationRegistryUpdated" ||
++      // CM-1A-001 协作通信事件：与内存投影同一份登记。
++      eventType === "WorkMailboxUpdated"
+     );
+   }
+ 
+diff --git a/src/data/state-ledger/in-memory-ledger.ts b/src/data/state-ledger/in-memory-ledger.ts
+index d2b5940..8696c0c 100644
+--- a/src/data/state-ledger/in-memory-ledger.ts
++++ b/src/data/state-ledger/in-memory-ledger.ts
+@@ -83,6 +83,10 @@ import {
+   validateRoleSpecActivateCommit,
+   workContextIdentityClaim,
+   identityClaimConflicts,
++  validateCommunicationCommit,
++  validateCommunicationRoutePageCommit,
++  validateCommunicationSuccessorClaimCommit,
++  validateParticipationStartCommit,
+   type WorkIdentityClaim,
+ } from "./ledger-validation.js";
+ import { canonicalJson } from "../../contracts/fingerprint.js";
+@@ -263,6 +267,30 @@ export class InMemoryLedger implements StateLedger {
+         return this.commitRoleSpecInstall(batch);
+       case "role-spec-activate":
+         return this.commitRoleSpecActivate(batch);
++      // CM-1A-001：协作通信 commit kinds（校验规则与 SQLite 适配器共用一份）。
++      case "agent-instance-register":
++      // CM-1A-001 D06：participation-start 有专用形状校验（见下方 case），不走通用组。
++      case "participation-end":
++      case "directed-request-send":
++      case "directed-request-respond":
++      case "directed-request-cancel":
++      case "subscription-create":
++      case "subscription-cancel":
++      // CM-1A-001 第 3 工作段：frontier 补齐与单独 intent 登记走通用形状校验（事件/快照/expected 对齐）。
++      case "subscription-catchup":
++      case "communication-intent-record":
++      case "wait-register":
++      case "wait-cancel":
++      case "communication-intent-claim":
++      case "communication-intent-settle":
++        return validateCommunicationCommit(batch) ? this.commitGeneric(batch) : { status: "rejected", code: "invalid_commit" };
++      // CM-1A-001 第 3 工作段：路由页有专用形状校验（目标 Work / 页内去重 / checkpoint 严格推进）。
++      case "communication-route-page":
++        return validateCommunicationRoutePageCommit(batch) ? this.commitGeneric(batch) : { status: "rejected", code: "invalid_commit" };
++      case "participation-start":
++        return validateParticipationStartCommit(batch) ? this.commitGeneric(batch) : { status: "rejected", code: "invalid_commit" };
++      case "communication-successor-claim":
++        return validateCommunicationSuccessorClaimCommit(batch) ? this.commitGeneric(batch) : { status: "rejected", code: "invalid_commit" };
+     }
+   }
+ 
+diff --git a/src/data/state-ledger/ledger-validation.ts b/src/data/state-ledger/ledger-validation.ts
+index f694dbf..4afeec3 100644
+--- a/src/data/state-ledger/ledger-validation.ts
++++ b/src/data/state-ledger/ledger-validation.ts
+@@ -65,6 +65,7 @@ import { workspaceReadLeaseIndexRefFor, workspaceReadLeaseRefFor, workspaceWrite
+ import { integrationResultRefFor } from "../../contracts/integration.js";
+ import { patchRecordRefFor } from "../../contracts/patch.js";
+ import { WORK_CONTEXT_MAX_RUN_LINKS } from "../../contracts/context-continuity.js";
++import { communicationAdmissionRefFor, deliveryDedupeKey, deliveryRefFor } from "../../contracts/coordination.js";
+ import { candidateProposalDigest } from "../../contracts/architecture-inspection.js";
+ import { CONTROL_INTENT_MAX_ACKS } from "../../contracts/control-intent.js";
+ import { QUERY_JOB_MAX_ROUNDS, validQueryExecution } from "../../contracts/query-job.js";
+@@ -2089,6 +2090,352 @@ export function validateQueryJobStartCommit(batch: import("../../contracts/ledge
+ 
+ /** Deterministic idempotency identity for a commit batch. The commit-kind
+  * prefix keeps identity namespaces disjoint per command family. */
++// ------------------------------------------------------------------------ //
++// CM-1A-001 协作通信 commit 校验（两个适配器共用这一份规则）                    //
++// ------------------------------------------------------------------------ //
++
++const COMMUNICATION_EVENT_TYPES: readonly string[] = [
++  "AgentInstanceRegistered",
++  "WorkParticipationStarted",
++  /**
++   * CM-1A-001 owner 裁决（D06）：WorkRunLinked 只作为「允许出现在协作通信提交里」的登记。
++   * 它**不是**靠这条白名单被放行的：`participation-start` 走下面的专用校验
++   * （validateParticipationStartCommit），白名单在这里只声明该事件类型属于协作通信提交的
++   * 合法组成，避免通用形状校验把合法的 participation-start 误判为非法事件。
++   */
++  "WorkRunLinked",
++  "WorkParticipationEnded",
++  "DirectedRequestSent",
++  "DirectedRequestResponded",
++  "DirectedRequestCancelled",
++  "SubscriptionCreated",
++  "SubscriptionCancelled",
++  "SubscriptionCatchupPlanned",
++  "DeliveryRecorded",
++  "WaitConditionRegistered",
++  "WaitConditionObserved",
++  "WaitConditionSatisfied",
++  "WaitConditionTimedOut",
++  "WaitConditionCancelled",
++  "CommunicationIntentRecorded",
++  "CommunicationIntentClaimed",
++  "CommunicationIntentSettled",
++  "CommunicationAdmissionRecorded",
++  "CoordinationRegistryUpdated",
++  "WorkMailboxUpdated",
++];
++
++function isCommunicationEvent(event: { eventType: string; schemaVersion: number; eventId: string }): boolean {
++  return event.schemaVersion === 1 && event.eventId.length > 0 && COMMUNICATION_EVENT_TYPES.includes(event.eventType);
++}
++
++/**
++ * 协作通信提交的**事务形状**规则（业务准入仍在 Control）：
++ *   - 至少一个事件与一个快照；事件全部是已知的通信事件类型；
++ *   - 每个事件的 projectId/idempotencyKey/actor 与提交身份一致；
++ *   - 每个快照都能对上一条 expected version：`revision === expected + 1`（既有聚合推进）
++ *     或 `revision === 1 且无 expected`（本次新建）。**expected 存在时不允许 revision 停在原值**
++ *     （拒绝"写了快照但没推进版本"这种伪提交）。
++ */
++export function validateCommunicationCommit(batch: import("../../contracts/coordination.js").CommunicationLedgerCommit): boolean {
++  try {
++    if (batch.schemaVersion !== 1) return false;
++    if (!batch.identity.projectId || !batch.identity.idempotencyKey || !batch.identity.actor.id) return false;
++    if (batch.events.length === 0 || batch.snapshots.length === 0) return false;
++    if (!batch.events.every(isCommunicationEvent)) return false;
++    if (!batch.events.every((event) =>
++      identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity))) return false;
++    const expectedKeys = new Set<string>();
++    for (const expected of batch.expectedVersions) {
++      const key = canonicalJson(expected.ref);
++      if (expectedKeys.has(key)) return false;
++      expectedKeys.add(key);
++    }
++    const snapshotKeys = new Set<string>();
++    for (const snapshot of batch.snapshots) {
++      const key = canonicalJson(snapshot.ref);
++      if (snapshotKeys.has(key)) return false;
++      snapshotKeys.add(key);
++      if (!Number.isInteger(snapshot.revision) || snapshot.revision < 1) return false;
++      const expected = batch.expectedVersions.find((v) => canonicalJson(v.ref) === key);
++      if (expected === undefined) {
++        // 新建聚合：必须是 @1（没有 expected，就没有"原地推进"这一说）。
++        if (snapshot.revision !== 1) return false;
++      } else if (snapshot.revision !== expected.revision + 1) {
++        // 推进既有聚合：必须恰好 +1（拒绝"写了快照但没推进版本"的伪提交）。
++        return false;
++      }
++      if (!("projectId" in snapshot.ref) || snapshot.ref.projectId !== batch.identity.projectId) return false;
++    }
++    return true;
++  } catch {
++    return false;
++  }
++}
++
++/**
++ * `participation-start` 的**专用**形状校验（CM-1A-001 owner 裁决 D06）。
++ *
++ * ── 为什么不能只靠通用形状校验 + 白名单 ────────────────────────────────────────
++ * 通用规则只说「事件都在白名单里、快照 revision 与 expected 对齐」，于是
++ * `[WorkParticipationStarted]`、`[WorkRunLinked]`、乃至两条顺序颠倒或快照与事件不
++ * 对应的组合都会被放行——那等于把「参与关系与发起 Run 在同一事务里成立」这条语义
++ * 交给调用方自觉。这里照 validateQueryJobStartCommit 的复合样板，把**同一个事务里必须
++ * 同时成立的两件事**逐一钉住：
++ *
++ *   1. 恰好两条事件，且顺序为 `[WorkParticipationStarted, WorkRunLinked]`；
++ *   2. 恰好两个快照，且顺序为 `[WorkParticipationSnapshot@1, WorkContextBindingSnapshot@(expected+1)]`；
++ *   3. expectedVersions 恰好是这两个 ref（participation@0、binding@priorRevision）；
++ *   4. 事件与快照逐字段一致：aggregateId/aggregateRevision、payload 与快照值逐字节相同；
++ *   5. **link 的 Run 必须真的落在该 Work 上**：`WorkRunLinked.payload.runRef` 必须出现在
++ *      binding 快照的 `linkedRunRefs` 里，且事件里的 `linkedRunRefs` 与快照逐字节一致；
++ *   6. participation 的 `workContextRef` 与 binding 快照的 ref 逐字段一致（同一个 Work），
++ *      且三条记录的 projectId/workspaceId 一致；
++ *   7. 两条事件的 command 身份与提交身份一致（identityMatchesActor）。
++ *
++ * 边界（如实）：校验只看**这次提交**的内容，因此它能证明「这条 participation-start 把
++ * 某个 Run link 到了它自己的 Work 上」，但**不能**证明「该 AgentInstance 在别处没有别的
++ * active participation」——那需要持久身份槽，见 contracts/coordination.ts 的边界说明。
++ */
++export function validateParticipationStartCommit(
++  batch: import("../../contracts/coordination.js").ParticipationStartCommitV1,
++): boolean {
++  try {
++    if (batch.schemaVersion !== 1) return false;
++    if (batch.outboxIntents.length !== 0) return false;
++    if (batch.events.length !== 2 || batch.snapshots.length !== 2 || batch.expectedVersions.length !== 2) return false;
++
++    const startedEvent = batch.events[0]!;
++    const linkedEvent = batch.events[1]!;
++    if (startedEvent.eventType !== "WorkParticipationStarted" || linkedEvent.eventType !== "WorkRunLinked") return false;
++    if (!isKnownEventType(startedEvent.eventType) || !isKnownEventType(linkedEvent.eventType)) return false;
++    const participationSnapshotRaw = batch.snapshots[0]!;
++    const bindingSnapshotRaw = batch.snapshots[1]!;
++    if (participationSnapshotRaw.ref.aggregateType !== "WorkParticipation") return false;
++    if (bindingSnapshotRaw.ref.aggregateType !== "WorkContextBinding") return false;
++
++    // 顺序已在上面钉死，这里按已声明的联合类型收窄（类型系统看不到数组下标与事件类型的关联）。
++    const started = startedEvent as import("../../contracts/coordination.js").WorkParticipationStartedEvent;
++    const linked = linkedEvent as import("../../contracts/context-continuity.js").WorkRunLinkedEvent;
++    const participationSnapshot = participationSnapshotRaw as import("../../contracts/coordination.js").WorkParticipationSnapshot;
++    const bindingSnapshot = bindingSnapshotRaw as import("../../contracts/context-continuity.js").WorkContextBindingSnapshot;
++
++    const participation = started.payload.participation;
++    const binding = bindingSnapshot.binding;
++    const linkPayload = linked.payload;
++
++    // (1)(2) 版本与形状
++    if (participationSnapshot.revision !== 1 || participationSnapshot.schemaVersion !== 1) return false;
++    if (bindingSnapshot.revision < 2 || bindingSnapshot.schemaVersion !== 1) return false;
++    if (participation.schemaVersion !== 1) return false;
++    if (participation.status !== "active" || participation.endedAt !== null) return false;
++
++    // (3) expectedVersions 恰好对应这两个 ref
++    const expectedFor = (ref: unknown) =>
++      batch.expectedVersions.filter((v) => canonicalJson(v.ref as never) === canonicalJson(ref as never));
++    const participationExpected = expectedFor(participationSnapshot.ref);
++    const bindingExpected = expectedFor(bindingSnapshot.ref);
++    if (participationExpected.length !== 1 || participationExpected[0]!.revision !== 0) return false;
++    if (bindingExpected.length !== 1 || bindingExpected[0]!.revision !== bindingSnapshot.revision - 1) return false;
++
++    // (4) 事件/快照逐字段一致
++    if (started.aggregateType !== "WorkParticipation") return false;
++    if (started.aggregateId !== participation.participationId) return false;
++    if (started.aggregateRevision !== 1) return false;
++    if (participationSnapshot.ref.participationId !== participation.participationId) return false;
++    if (participationSnapshot.ref.workId !== participation.workContextRef.workId) return false;
++    if (canonicalJson(participationSnapshot.participation as never) !== canonicalJson(participation as never)) return false;
++    if (linked.aggregateType !== "WorkContextBinding") return false;
++    if (linked.aggregateId !== binding.workId) return false;
++    if (linked.aggregateRevision !== bindingSnapshot.revision) return false;
++
++    // (5) link 的 Run 必须真的落在该 Work 上
++    if (binding.linkedRunRefs.length === 0) return false;
++    if (binding.linkedRunRefs.length > WORK_CONTEXT_MAX_RUN_LINKS) return false;
++    if (canonicalJson(linkPayload.linkedRunRefs as never) !== canonicalJson(binding.linkedRunRefs as never)) return false;
++    const linkedRunKey = canonicalJson(linkPayload.runRef as never);
++    if (!binding.linkedRunRefs.some((run) => canonicalJson(run as never) === linkedRunKey)) return false;
++
++    // (6) 同一个 Work、同一个范围
++    if (canonicalJson(participation.workContextRef as never) !== canonicalJson(bindingSnapshot.ref as never)) return false;
++    if (binding.workId !== bindingSnapshot.ref.workId) return false;
++    if (binding.projectId !== started.projectId || binding.workspaceId !== started.workspaceId) return false;
++    if (participationSnapshot.ref.projectId !== started.projectId || bindingSnapshot.ref.projectId !== started.projectId) return false;
++    if (participationSnapshot.ref.workspaceId !== started.workspaceId || bindingSnapshot.ref.workspaceId !== started.workspaceId) return false;
++
++    // (7) 身份一致
++    if (!identityMatchesActor(started.projectId, started.idempotencyKey, started.actor.kind, started.actor.id, batch.identity)) return false;
++    if (!identityMatchesActor(linked.projectId, linked.idempotencyKey, linked.actor.kind, linked.actor.id, batch.identity)) return false;
++    return true;
++  } catch {
++    return false;
++  }
++}
++
++/**
++ * `communication-route-page` 的**专用**形状校验（CM-1A-001 第 3 工作段裁决的契约加法）。
++ *
++ * ── 为什么不能只靠通用形状校验 + 白名单 ────────────────────────────────────────
++ * 通用规则只说"事件都在白名单里、快照 revision 与 expected 对齐"。于是：
++ *   · 一条把正文投给**别的 Work**的 Delivery（越权投递）；
++ *   · 同一页里对同一 (源事件, 订阅, 目标 Work) 重复登记两条 Delivery（重复投递）；
++ *   · checkpoint **回退或原地**（同一 topic 的同一事件位置被再路由一次）；
++ *   · 页里塞进"没有任何订阅快照支撑"的 Delivery
++ * 都会被放行——那等于把 A03 的三条断言（目标 Work、去重、checkpoint 单事务推进）交给调用方自觉。
++ * 这里按 validateCommunicationSuccessorClaimCommit 的手法把它们逐条钉在**已提交的结果**上，
++ * 而不是钉在 Control 收到的那份 proposal 上。
++ *
++ * 检查项：
++ *   1. 事件只允许 DeliveryRecorded / WaitConditionObserved / CommunicationIntentSettled；
++ *   2. 恰好一个 CommunicationIntent 快照，@(expected+1)，status=done，domain.kind=route_page；
++ *   3. 每条 DeliveryRecorded 的 origin 必须是 subscription；
++ *   4. 页内 Delivery 去重键唯一；
++ *   5. 每条 Delivery 的 targetWorkContextRef 必须等于它所属订阅的 ownerWorkContextRef；
++ *   6. 每条 Delivery 的订阅必须出现在**本页推进的订阅快照**里（不投给本页没处理的订阅）；
++ *   7. 页位置唯一：本页所有 Delivery 的 sourceCursor 与所有被推进订阅的 routedThroughCursor
++ *      必须等于同一个位置 P；
++ *   8. checkpoint 严格推进：P ≥ intent.domain.sourceCursor（不得回退到 frontier 之前），
++ *      且 intent.domain.routedThroughCursor 非空时 P > routedThroughCursor（不得原地）。
++ */
++export function validateCommunicationRoutePageCommit(
++  batch: import("../../contracts/coordination.js").CommunicationRoutePageCommitV1,
++): boolean {
++  try {
++    if (!validateCommunicationCommit(batch)) return false;
++    if (batch.outboxIntents.length !== 0) return false;
++    for (const event of batch.events) {
++      if (event.eventType !== "DeliveryRecorded" && event.eventType !== "WaitConditionObserved" &&
++          event.eventType !== "CommunicationIntentSettled") return false;
++    }
++    const intents = batch.snapshots.filter((s) => s.ref.aggregateType === "CommunicationIntent") as
++      import("../../contracts/coordination.js").CommunicationIntentSnapshot[];
++    if (intents.length !== 1) return false;
++    const settled = intents[0]!;
++    if (settled.intent.status !== "done") return false;
++    if (settled.intent.domain.kind !== "route_page") return false;
++    const expectedForSettled = batch.expectedVersions.filter((v) => canonicalJson(v.ref as never) === canonicalJson(settled.ref as never));
++    if (expectedForSettled.length !== 1) return false;
++    if (settled.revision !== expectedForSettled[0]!.revision + 1) return false;
++    const domainCheckpoint = settled.intent.domain.routedThroughCursor;
++    const domainFrontier = settled.intent.domain.sourceCursor;
++    if (!cursorSeq(domainFrontier).ok) return false;
++
++    const subscriptions = batch.snapshots.filter((s) => s.ref.aggregateType === "Subscription") as
++      import("../../contracts/coordination.js").SubscriptionSnapshot[];
++    const subscriptionByKey = new Map(subscriptions.map((s) => [canonicalJson(s.ref as never), s]));
++    const deliveries = batch.events
++      .filter((e) => e.eventType === "DeliveryRecorded")
++      .map((e) => (e as import("../../contracts/coordination.js").DeliveryRecordedEvent).payload.delivery);
++
++    // (3)(4)(5)(6)(7)
++    const dedupe = new Set<string>();
++    const pageCursors = new Set<string>();
++    for (const delivery of deliveries) {
++      if (delivery.origin.kind !== "subscription") return false;
++      const key = deliveryDedupeKey(delivery);
++      if (dedupe.has(key)) return false;
++      dedupe.add(key);
++      const owner = subscriptionByKey.get(canonicalJson(delivery.origin.subscriptionRef as never));
++      if (owner === undefined) return false;
++      if (canonicalJson(delivery.targetWorkContextRef as never) !== canonicalJson(owner.subscription.ownerWorkContextRef as never)) return false;
++      if (canonicalJson(owner.subscription.routedThroughCursor as never) !== canonicalJson(delivery.origin.sourceCursor as never)) return false;
++      pageCursors.add(String(delivery.origin.sourceCursor));
++      // 快照与事件必须逐字节一致（防止"事件一条、快照另一条"的伪提交）。
++      const snapshot = batch.snapshots.find((s) => s.ref.aggregateType === "Delivery" && canonicalJson(s.ref as never) === canonicalJson(deliveryRefFor(delivery.projectId, delivery.workspaceId, delivery.deliveryId) as never));
++      if (snapshot === undefined) return false;
++      if (canonicalJson((snapshot as import("../../contracts/coordination.js").DeliverySnapshot).delivery as never) !== canonicalJson(delivery as never)) return false;
++    }
++    for (const subscription of subscriptions) {
++      const advanced = subscription.subscription.routedThroughCursor;
++      if (advanced === null) return false;
++      pageCursors.add(String(advanced));
++    }
++    if (pageCursors.size > 1) return false;
++
++    // (8) checkpoint 严格推进（只在页真的路由了某个位置时成立）。
++    if (pageCursors.size === 1) {
++      const page = cursorSeq([...pageCursors][0]!);
++      if (!page.ok) return false;
++      if (page.seq < cursorSeq(domainFrontier).seq) return false;
++      if (domainCheckpoint !== null) {
++        const prior = cursorSeq(domainCheckpoint);
++        if (!prior.ok || page.seq <= prior.seq) return false;
++      }
++    }
++    return true;
++  } catch {
++    return false;
++  }
++}
++
++function cursorSeq(cursor: string): { ok: true; seq: number } | { ok: false; seq: -1 } {
++  const match = /^c(\d{10})$/.exec(String(cursor));
++  if (!match?.[1]) return { ok: false, seq: -1 };
++  const seq = Number.parseInt(match[1], 10);
++  return Number.isSafeInteger(seq) ? { ok: true, seq } : { ok: false, seq: -1 };
++}
++
++/**
++ * communication-successor-claim 的形状规则：
++ *   - 恰好 TaskClaimed / WaitConditionSatisfied / CommunicationAdmissionRecorded 三个事件
++ *     （外加 0..N 个 CommunicationIntentSettled，用于同事务 settle 触发它的 intent）；
++ *   - 快照含 TaskLease/TaskAttempt/Run/DispatchOutboxEntry 与 WaitCondition/CommunicationAdmission；
++ *   - **outboxIntents 恰好一条**，且与 DispatchOutboxEntry 快照里的 intent 逐字节相同
++ *     （后继 Run 的唯一调度记录就是它，没有第二份 pending）；
++ *   - TaskLease 由 expected@N 推进到 N+1（承担者从被等待的 Work 转到后继 Run）。
++ */
++export function validateCommunicationSuccessorClaimCommit(
++  batch: import("../../contracts/coordination.js").CommunicationSuccessorClaimCommitV1,
++): boolean {
++  try {
++    if (batch.schemaVersion !== 1) return false;
++    if (batch.outboxIntents.length !== 1) return false;
++    const eventTypes = batch.events.map((e) => e.eventType);
++    if (eventTypes[0] !== "TaskClaimed") return false;
++    if (!eventTypes.includes("WaitConditionSatisfied")) return false;
++    if (!eventTypes.includes("CommunicationAdmissionRecorded")) return false;
++    if (eventTypes.some((t) => t !== "TaskClaimed" && t !== "WaitConditionSatisfied" &&
++      t !== "CommunicationAdmissionRecorded" && t !== "CommunicationIntentSettled")) return false;
++    if (!batch.events.every((event) =>
++      identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity))) return false;
++    const byType = (type: string) => batch.snapshots.filter((s) => s.ref.aggregateType === type);
++    const outboxes = byType("DispatchOutboxEntry") as DispatchOutboxEntrySnapshot[];
++    const waits = byType("WaitCondition") as import("../../contracts/coordination.js").WaitConditionSnapshot[];
++    const admissions = byType("CommunicationAdmission") as import("../../contracts/coordination.js").CommunicationAdmissionSnapshot[];
++    if (byType("TaskLease").length !== 1 || byType("TaskAttempt").length !== 1 || byType("Run").length !== 1) return false;
++    if (outboxes.length !== 1 || waits.length !== 1 || admissions.length !== 1) return false;
++    const outbox = outboxes[0]!;
++    if (canonicalJson(outbox.intent as never) !== canonicalJson(batch.outboxIntents[0]! as never)) return false;
++    if (outbox.status !== "pending" || outbox.revision !== 1) return false;
++    const attempt = byType("TaskAttempt")[0]! as TaskAttemptSnapshot;
++    const run = byType("Run")[0]! as RunSnapshot;
++    const lease = byType("TaskLease")[0]! as TaskLeaseSnapshot;
++    if (attempt.status !== "claimed" || attempt.revision !== 1) return false;
++    if (run.status !== "starting" || run.revision !== 1 || run.envelope !== null) return false;
++    if (lease.holderRunId !== run.ref.runId || lease.attemptId !== attempt.ref.attemptId) return false;
++    if (canonicalJson(attempt.ref) !== canonicalJson(outbox.intent.attemptRef)) return false;
++    if (canonicalJson(run.ref) !== canonicalJson(outbox.intent.runRef)) return false;
++    if (canonicalJson(run.roleBinding as never) !== canonicalJson(outbox.intent.roleBinding as never)) return false;
++    const wait = waits[0]!;
++    const admission = admissions[0]!;
++    if (wait.wait.status !== "satisfied") return false;
++    if (wait.wait.satisfiedRevision === null) return false;
++    if (admission.revision !== 1) return false;
++    if (canonicalJson(admission.ref) !== canonicalJson(communicationAdmissionRefFor(
++      wait.ref.projectId, wait.ref.workspaceId, wait.ref.waitId))) return false;
++    if (canonicalJson(admission.admission.waitRef as never) !== canonicalJson(wait.ref as never)) return false;
++    if (canonicalJson(admission.admission.runRef as never) !== canonicalJson(run.ref as never)) return false;
++    if (canonicalJson(admission.admission.attemptRef as never) !== canonicalJson(attempt.ref as never)) return false;
++    if (admission.admission.satisfiedRevision !== wait.wait.satisfiedRevision) return false;
++    // 上界：快照总数 = 6 个固定 + 0..N 个 intent
++    const extras = batch.snapshots.length - 6;
++    if (extras < 0 || byType("CommunicationIntent").length !== extras) return false;
++    return true;
++  } catch {
++    return false;
++  }
++}
++
+ export function ledgerIdentityKeyFor(batch: import("../../contracts/ledger.js").LedgerCommit): string {
+   if (batch.commitKind === "bootstrap") {
+     return "bootstrap:" + bootstrapIdentityKey(batch.identity);
+diff --git a/src/data/state-ledger/sqlite-ledger.ts b/src/data/state-ledger/sqlite-ledger.ts
+index 5e7061b..bb9a62b 100644
+--- a/src/data/state-ledger/sqlite-ledger.ts
++++ b/src/data/state-ledger/sqlite-ledger.ts
+@@ -101,6 +101,10 @@ import {
+   validateCoordinationPolicyActivateCommit,
+   validateRoleSpecInstallCommit,
+   validateRoleSpecActivateCommit,
++  validateCommunicationCommit,
++  validateCommunicationRoutePageCommit,
++  validateCommunicationSuccessorClaimCommit,
++  validateParticipationStartCommit,
+   workContextIdentityClaim,
+   taskWorkIdentityClaimKey,
+   identityClaimConflicts,
+@@ -572,6 +576,30 @@ export class SqliteStateLedger implements StateLedger {
+         return this.commitRoleSpecInstall(batch);
+       case "role-spec-activate":
+         return this.commitRoleSpecActivate(batch);
++      // CM-1A-001：协作通信 commit kinds（校验规则与内存适配器共用一份）。
++      case "agent-instance-register":
++      // CM-1A-001 D06：participation-start 有专用形状校验（见下方 case），不走通用组。
++      case "participation-end":
++      case "directed-request-send":
++      case "directed-request-respond":
++      case "directed-request-cancel":
++      case "subscription-create":
++      case "subscription-cancel":
++      // CM-1A-001 第 3 工作段：frontier 补齐与单独 intent 登记走通用形状校验（事件/快照/expected 对齐）。
++      case "subscription-catchup":
++      case "communication-intent-record":
++      case "wait-register":
++      case "wait-cancel":
++      case "communication-intent-claim":
++      case "communication-intent-settle":
++        return validateCommunicationCommit(batch) ? this.commitGeneric(batch) : { status: "rejected", code: "invalid_commit" };
++      // CM-1A-001 第 3 工作段：路由页有专用形状校验（目标 Work / 页内去重 / checkpoint 严格推进）。
++      case "communication-route-page":
++        return validateCommunicationRoutePageCommit(batch) ? this.commitGeneric(batch) : { status: "rejected", code: "invalid_commit" };
++      case "participation-start":
++        return validateParticipationStartCommit(batch) ? this.commitGeneric(batch) : { status: "rejected", code: "invalid_commit" };
++      case "communication-successor-claim":
++        return validateCommunicationSuccessorClaimCommit(batch) ? this.commitGeneric(batch) : { status: "rejected", code: "invalid_commit" };
+     }
+   }
+ 
+diff --git a/src/execution/worker-runtime/coding-agent-runtime.ts b/src/execution/worker-runtime/coding-agent-runtime.ts
+index 93346e7..f8a38db 100644
+--- a/src/execution/worker-runtime/coding-agent-runtime.ts
++++ b/src/execution/worker-runtime/coding-agent-runtime.ts
+@@ -122,8 +122,10 @@ export class CodingAgentRuntime implements RunPort {
+     const key = keyFor(envelope.runRef), r = this.records.get(key);
+     if (!r || r.spec.taskId !== envelope.taskId || r.spec.workspaceId !== envelope.workspaceId) throw Error('真实运行缺少已登记的任务');
+     validateReviewSpec(r.spec);
+-    const readOnly = r.spec.mode === 'explore' || r.spec.mode === 'review';
+-    if (readOnly ? (envelope.permissions.tools.length !== 1 || envelope.permissions.tools[0] !== 'read' || envelope.permissions.writeScope.length !== 0) : (!envelope.permissions.tools.includes('write') || !envelope.permissions.writeScope.includes('*'))) throw Error('真实运行权限与任务模式不符');
++    const readOnly = !envelope.permissions.tools.some(tool => tool === 'write' || tool === 'shell');
++    if (envelope.permissions.tools.some(tool => !['read', 'write', 'shell'].includes(tool)) ||
++        (readOnly ? envelope.permissions.writeScope.length !== 0 : !envelope.permissions.writeScope.includes('*')) ||
++        ((r.spec.mode === 'explore' || r.spec.mode === 'review') && (!readOnly || envelope.permissions.tools.length !== 1 || envelope.permissions.tools[0] !== 'read'))) throw Error('真实运行权限与任务模式不符');
+     if (r.spec.mode === 'review') {
+       if (!same(envelope.work, { kind: 'review', reviewWorkRef: r.spec.review!.workRef }) || !envelope.reviewInput
+           || !same(envelope.roleBinding, r.spec.review!.profile.roleBinding)) throw Error('审阅信封与已登记工作不匹配');
+@@ -169,7 +171,7 @@ export class CodingAgentRuntime implements RunPort {
+     await this.save(r); this.active.get(keyFor(r.spec))?.wake?.();
+   }
+   private async execute(r: RuntimeRecord, envelope: TaskEnvelopeV1, controller: AbortController, context?: RuntimeContextAccess) {
+-    const readOnly = r.spec.mode === 'explore' || r.spec.mode === 'review';
++    const readOnly = !envelope.permissions.tools.some(tool => tool === 'write' || tool === 'shell');
+     const reviewer = r.spec.mode === 'review' ? context?.reviewer : undefined;
+     const assertReviewCurrent = async () => {
+       if (r.spec.mode !== 'review') return;
+@@ -224,7 +226,7 @@ export class CodingAgentRuntime implements RunPort {
+       if (Number.isFinite(remainingMs)) timer = setTimeout(() => controller.abort('deadline'), remainingMs);
+       const result = await runObservedModel({
+         kernel: this.kernel, bound, meter, root: r.spec.root, databasePath: join(this.directory, keyFor(r.spec) + '.sqlite'),
+-        sessionId: r.sessionId, input: r.context!.input, budget: r.spec.budget, readOnly,
++        sessionId: r.sessionId, input: r.context!.input, budget: r.spec.budget, readOnly, allowedTools: envelope.permissions.tools,
+         signal: controller.signal, deniedPrefixes, processSandboxOptions,
+         ...(reviewer ? {
+           sourceTools: { includeReadSource: true, allowedPath: reviewerSourcePathAllowed, assertCurrent: assertReviewCurrent },
+diff --git a/src/execution/worker-runtime/observed-model-run.ts b/src/execution/worker-runtime/observed-model-run.ts
+index 4fa9b9b..cac2baa 100644
+--- a/src/execution/worker-runtime/observed-model-run.ts
++++ b/src/execution/worker-runtime/observed-model-run.ts
+@@ -10,6 +10,7 @@ export type ObservedModelRunOptions = {
+   kernel: typeof import('../../../vendor/coding-agent/dist/public-api.js'); bound: BoundModel; meter: ModelBudget;
+   root: string; databasePath: string; sessionId: string; input: string; budget: RuntimeBudget; readOnly: boolean;
+   signal: AbortSignal; deniedPrefixes: string[];
++  allowedTools?: string[];
+   sourceTools?: SourceToolOptions;
+   materialTools?: (workspace: WorkspaceSandbox) => ToolDefinition[];
+   processSandboxOptions: { readOnlyPaths?: string[]; executablePath?: string };
+@@ -32,10 +33,15 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
+   const base = await o.kernel.loadAppConfig({ cwd: o.root, environment: {} });
+   const reviewSource = o.sourceTools?.includeReadSource === true;
+   if (reviewSource && !o.readOnly) throw Error('Pinned source tools require a read-only runtime');
++  const allowed = o.allowedTools ?? (o.readOnly ? ['read'] : ['read', 'write', 'shell']);
++  if (o.readOnly && allowed.some(tool => tool !== 'read')) throw Error('Read-only runtime cannot expose mutation tools');
++  const readTools = allowed.includes('read') ? ['list_files', 'search', 'symbols', 'code_index', 'project_index', 'python_index', 'cpp_index', 'source_excerpt'] : [];
++  const enabledNames = reviewSource ? ['read_source', ...(o.materialTools ? ['read_material'] : []), ...readTools]
++    : [...allowed.map(tool => tool === 'write' ? 'edit' : tool), ...readTools];
+   return o.kernel.runCodingAgent({
+     config: { ...base, model: { ...base.model, provider: definition.id, model: o.bound.configuration.model, baseUrl: o.bound.configuration.baseUrl, maxOutputTokens: o.budget.perResponseTokens },
+       runtime: { tokenBudget: o.budget.contextWindowTokens, maxModelRequests: o.budget.maxRequests ?? base.runtime.maxModelRequests, maxToolCalls: o.budget.maxToolCalls ?? base.runtime.maxToolCalls },
+-      tools: { enabledNames: [...(reviewSource ? ['read_source', ...(o.materialTools ? ['read_material'] : [])] : o.readOnly ? ['read'] : ['read', 'edit', 'shell']), 'list_files', 'search', 'symbols', 'code_index', 'project_index', 'python_index', 'cpp_index', 'source_excerpt'] },
++      tools: { enabledNames },
+       storage: { databasePath: o.databasePath }, skills: { resourceRoot: resolve(import.meta.dirname, '../../../vendor/coding-agent/resources/skills'), enabledIds: ['coding-safety'] } },
+     additionalTools: workspace => [
+       ...createExplorationTools(workspace, { sourceIdentity: () => readSourceIdentity(o.root, workspace.identity), ...o.sourceTools }),
+diff --git a/src/harness/in-memory-harness.ts b/src/harness/in-memory-harness.ts
+index af65848..6b9f704 100644
+--- a/src/harness/in-memory-harness.ts
++++ b/src/harness/in-memory-harness.ts
+@@ -423,6 +423,8 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
+     control,
+     contextCompiler,
+     runtime,
++    // 协作通信推进用同一个确定性时钟：claim/settle 的时间与租约到期因此可复现。
++    now: d.clock,
+   });
+   const verification: VerificationPort =
+     options.verification ??
+diff --git a/src/harness/persistent-harness.ts b/src/harness/persistent-harness.ts
+index 6d0d132..d67cf20 100644
+--- a/src/harness/persistent-harness.ts
++++ b/src/harness/persistent-harness.ts
+@@ -490,6 +490,8 @@ function buildHarness(
+     control,
+     contextCompiler,
+     runtime,
++    // 协作通信推进用同一个确定性时钟（与内存 harness 一致）。
++    now: d.clock,
+   });
+   const verification: VerificationPort =
+     verificationOverride ?? new VerificationEngineImpl(
+diff --git a/src/ui/src/features/governance.tsx b/src/ui/src/features/governance.tsx
+index 8a74312..32c66b4 100644
+--- a/src/ui/src/features/governance.tsx
++++ b/src/ui/src/features/governance.tsx
+@@ -9,7 +9,7 @@
+  * budget.maxAutonomousReworks 是自动返工的运行时上限，scope.changesRequireHumanDecision
+  * 决定哪些变更必须问人，upgrade.path 说明怎么升格。人需要先看到这三件事再决定装不装。
+  */
+-import { Alert, Badge, Box, Button, Checkbox, Group, NumberInput, Paper, Select, Stack, Table, Text, TextInput } from '@mantine/core';
++import { Alert, Badge, Box, Button, Checkbox, Group, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Textarea, MultiSelect } from '@mantine/core';
+ import { useQuery } from '@tanstack/react-query';
+ import { useEffect, useState } from 'react';
+ import type {
+@@ -37,7 +37,7 @@ const KIND_MEANING: Record<GovernanceKindV1, string> = {
+   ArchitectureBaseline: '规定应当满足的架构约束；计划在接受时钉住当时的生效 revision。',
+   CoordinationPolicy: '规定自动返工的额度、哪些变更必须问人、策略升级路径，以及可选的**角色矩阵**（哪些角色存在、各自被授权到哪一份角色规格）。没有生效的策略时，平台不会自动受理返工，也不做角色校验。',
+   ArchitectureEvolutionPolicy: '规定哪些架构漂移可以在白名单内自动修复、每个周期的修复预算与升级路径。',
+-  RoleSpecRevision: '一个角色的版本化职责：能拿哪些工具、必须读哪些材料、必须产出什么、什么条件下退出。角色矩阵只能 pin 已经安装并激活的规格；一个 roleId 只有一份不可改写的规格。',
++  RoleSpecRevision: '一个角色的版本化职责：能拿哪些工具、必须读哪些材料、必须产出什么、什么条件下退出。角色矩阵只能 pin 已经安装并激活的规格；同一角色可安装多个不可改写版本，激活和矩阵 pin 均指定精确版本。',
+ };
+ 
+ /** 矩阵 pin 就绪状态的中文说法（状态本身由服务端判定，界面只标注，不重新判断）。 */
+@@ -317,12 +317,15 @@ export function GovernanceSection({ api, scope, store }: { api: Api; scope: { pr
+               {kindView.gaps.map((gap, index) => <Text key={index} size="xs" c="yellow.8">{gap}</Text>)}
+ 
+               {kindView.kind === 'RoleSpecRevision' ? (
++                <Stack>
++                <AgentTemplateEditor api={api} scope={scope} afterWrite={afterWrite} busy={busy} />
+                 <RoleSpecTable
+                   roles={kindView.roleSpecs ?? []}
+                   busy={busy}
+                   onInstall={installRoleSpec}
+                   onActivate={pin => activateInstalled('RoleSpecRevision', pin)}
+                 />
++                </Stack>
+               ) : kindView.kind === 'CoordinationPolicy' ? (
+                 <Stack gap={4} mt={6}>
+                   <Text size="xs" fw={500}>安装一份新的协调策略</Text>
+@@ -498,7 +501,15 @@ function RoleSpecTable({
+         <Table.Tbody>
+           {roles.map(role => (
+             <Table.Tr key={role.roleId} data-testid={'role-spec-' + role.roleId}>
+-              <Table.Td><Text size="xs">{role.roleId} · {role.label}</Text></Table.Td>
++              <Table.Td><Text size="sm" fw={600}>{role.label}</Text><Text size="xs" c="dimmed">{role.roleId}</Text>
++                {role.installed.map(version => <Paper key={version.contentRevision} withBorder p="xs" mt="xs">
++                  <Text size="xs">版本 {version.contentRevision}{role.active?.ref.revision === version.contentRevision ? ' · 当前生效' : ''}</Text>
++                  <Text size="sm">{(version.content as import('../../../contracts/role-spec.js').RoleSpecContentV1).purpose}</Text>
++                  <Text size="xs">工具申请上界：{(version.content as import('../../../contracts/role-spec.js').RoleSpecContentV1).permissions.tools.join(' · ')}</Text>
++                  <RawDetails value={version.content} label="职责、材料与交付要求" />
++                  {role.active?.ref.revision !== version.contentRevision ? <Button size="compact-xs" disabled={busy !== null} onClick={() => void onActivate({ ref: version.ref, digest: version.contentDigest })}>激活版本 {version.contentRevision}</Button> : null}
++                </Paper>)}
++              </Table.Td>
+               <Table.Td><Text size="xs" style={{ fontFamily: 'var(--mantine-font-family-monospace)' }}>{role.contentRevision ?? '—'} / {shortDigest(role.contentDigest ?? '')}</Text></Table.Td>
+               <Table.Td>
+                 <Text size="xs">
+@@ -556,3 +567,55 @@ function pinForDigest(view: GovernanceViewV1 | undefined, kind: GovernanceKindV1
+   const match = kindView?.installed.find(entry => entry.contentDigest === digest);
+   return match === undefined ? null : { ref: match.ref, digest: match.contentDigest };
+ }
++
++/** Human-created templates use the same immutable RoleSpec command path as built-ins. */
++function AgentTemplateEditor({ api, scope, afterWrite, busy }: {
++  api: Api; scope: { projectId: string; workspaceId: string } | null;
++  afterWrite: (tone: 'success' | 'warning', text: string) => Promise<void>; busy: string | null;
++}) {
++  const [roleId, setRoleId] = useState('');
++  const [revision, setRevision] = useState<number | string>(1);
++  const [label, setLabel] = useState('');
++  const [purpose, setPurpose] = useState('');
++  const [responsibility, setResponsibility] = useState<string[]>(['investigation']);
++  const [selectedTools, setSelectedTools] = useState<string[]>(['read']);
++  const [saving, setSaving] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++  const save = async () => {
++    if (!scope) return;
++    setSaving(true); setError(null);
++    try {
++      const result = await api.governanceInstall(scope, { kind: 'RoleSpecRevision', source: {
++        roleId, revision: Number(revision), content: {
++          schemaVersion: 1, label, purpose, responsibility,
++          requiredMaterials: [{ kind: 'contract', reason: '读取任务目标、范围和交付约定' }],
++          optionalMaterials: [{ kind: 'history', reason: '按本任务授权复用历史材料' }],
++          permissions: { tools: selectedTools, writeScope: selectedTools.some(tool => tool === 'write' || tool === 'shell') ? 'workspace' : 'none' },
++          budget: { source: 'task-budget', scope: 'assigned-task' },
++          requiredOutputs: [{ kind: 'answer-with-sources', reason: '提交产物及来源，保留未解决事项' }],
++          exit: { success: '提交任务约定的产物，验收由任务协议决定', stop: '缺少材料、授权或无法继续时报告原因', handoff: '记录公开事实、来源、产物及下一步' },
++        },
++      } });
++      await afterWrite(result.status === 'committed' ? 'success' : 'warning', result.message);
++    } catch (cause) { setError(errorMessage(cause)); }
++    finally { setSaving(false); }
++  };
++  return <Paper withBorder p="sm"><Stack gap="xs">
++    <Text fw={600}>创建 Agent 模板</Text>
++    <Text size="xs" c="dimmed">安装保存一个版本；激活后可在角色矩阵中选择。实际工具和材料范围仍由任务授权决定。</Text>
++    {error ? <Alert color="red">{error}</Alert> : null}
++    <Group grow><TextInput label="模板标识" value={roleId} onChange={e => setRoleId(e.currentTarget.value)} />
++      <NumberInput label="模板版本" min={1} allowDecimal={false} value={revision} onChange={setRevision} />
++      <TextInput label="Agent 名称" value={label} onChange={e => setLabel(e.currentTarget.value)} /></Group>
++    <Textarea label="简介与职责" value={purpose} onChange={e => setPurpose(e.currentTarget.value)} autosize minRows={2} />
++    <MultiSelect label="职责视角" value={responsibility} onChange={setResponsibility} data={[
++      { value: 'human_decision_support', label: '决策支持' }, { value: 'fact_consolidation', label: '事实整理' },
++      { value: 'planning', label: '规划' }, { value: 'integration', label: '集成' }, { value: 'execution', label: '执行' },
++      { value: 'verification', label: '验证' }, { value: 'investigation', label: '调查' },
++    ]} />
++    <MultiSelect label="工具集合" value={selectedTools} onChange={setSelectedTools} data={[
++      { value: 'read', label: '读取材料' }, { value: 'write', label: '工作区写入' }, { value: 'shell', label: '运行命令' },
++    ]} />
++    <Button onClick={() => void save()} loading={saving} disabled={busy !== null || !scope || !roleId.trim() || !label.trim() || !purpose.trim() || responsibility.length === 0}>保存模板版本</Button>
++  </Stack></Paper>;
++}
+diff --git a/tests/app/initial-planning.test.ts b/tests/app/initial-planning.test.ts
+index bf1ddee..b01c3f6 100644
+--- a/tests/app/initial-planning.test.ts
++++ b/tests/app/initial-planning.test.ts
+@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+ import { join } from 'node:path';
+ import { tmpdir } from 'node:os';
+ import { expect, it } from 'vitest';
++import { roleSpecSourceFor, buildCoordinationPolicyContentWithoutRolesV1 } from '../../src/fixtures/role-spec-fixtures.js';
+ import { createGuiServer } from '../../src/app/server.js';
+ import { createBuiltinProviderRegistry, type ModelClientPort, type ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
+ 
+@@ -19,9 +20,9 @@ it('drives initial readonly model proposals through Control and durable dispatch
+   const requests: ModelRequest[] = [], builtin = createBuiltinProviderRegistry();
+   const client: ModelClientPort = { async *stream(request) {
+     requests.push(structuredClone(request)); const common = { schemaVersion: 1 as const, requestId: request.requestId };
+-    const planning = !request.tools.some(tool => tool.name === 'edit');
+-    const name = JSON.stringify(request.messages).includes('beta') ? 'beta' : 'alpha';
+-    yield { ...common, sequence: 1, type: 'text_delta', delta: planning ? JSON.stringify(proposal(name)) : name + ' public worker report; independent verification remains outstanding.' };
++    const planning = JSON.stringify(request.messages).includes('Return one JSON object with kind');
++    const name = JSON.stringify(request.messages).includes('documents') ? 'documents' : JSON.stringify(request.messages).includes('beta') ? 'beta' : 'alpha';
++    yield { ...common, sequence: 1, type: 'text_delta', delta: planning ? JSON.stringify({ ...proposal(name), assignments: proposal(name).assignments.map(a => ({ ...a, role: name === 'documents' ? 'document-advisor' : a.role })) }) : name + ' public worker report; independent verification remains outstanding.' };
+     yield { ...common, sequence: 2, type: 'usage_snapshot', usage: { inputTokens: 100, outputTokens: 70, cachedInputTokens: 0, costUsdMicros: null } };
+     yield { ...common, sequence: 3, type: 'completed', reason: 'final_answer' };
+   } };
+@@ -33,15 +34,40 @@ it('drives initial readonly model proposals through Control and durable dispatch
+   const until = async (scope: Record<string, string>) => { const deadline = Date.now() + 20000; for (;;) { const value = await state(scope); if (value.liveRuns?.[0]?.status === 'completed') return value; if (Date.now() > deadline) throw Error('timeout ' + JSON.stringify(await post('/api/real/planning', scope))); await new Promise(done => setTimeout(done, 25)); } };
+   try {
+     await listen(); await post('/api/model-settings', { provider: 'deepseek', model: 'labelled-planning-stub', baseUrl: 'http://127.0.0.1', apiKey: 'LOCAL_TEST_KEY' });
+-    for (const name of ['alpha', 'beta']) {
++    for (const name of ['alpha', 'beta', 'documents']) {
+       const scope = { projectId: 'acceptance-alpha', workspaceId: 'workspace-main', goalId: name + '-goal' }, request = { ...scope, requestId: name + '-work', instruction: 'Implement the ' + name + ' contract from the source.', allowWrite: true };
+       await post('/api/goals', { ...scope, requestId: scope.goalId, objective: request.instruction });
++      if (name === 'documents') {
++        const catalog: Record<string, any> = {};
++        for (const roleId of ['planner', 'document-advisor']) {
++          const content = roleSpecSourceFor(roleId === 'planner' ? 'planner' : 'investigator').content;
++          const installed = await post('/api/real/governance/install', { ...scope, kind: 'RoleSpecRevision', source: { roleId, revision: 3, content: { ...content, label: roleId, purpose: roleId === 'planner' ? content.purpose : 'Review documents and report sourced conclusions' } } });
++          expect(installed.body.status, JSON.stringify(installed.body)).toBe('committed');
++          const view = await post('/api/real/governance/view', scope);
++          catalog[roleId] = view.body.kinds.find((k: any) => k.kind === 'RoleSpecRevision').roleSpecs.find((r: any) => r.roleId === roleId).pin;
++          expect((await post('/api/real/governance/activate', { ...scope, kind: 'RoleSpecRevision', pin: catalog[roleId] })).body.status).toBe('committed');
++        }
++        const content = { ...buildCoordinationPolicyContentWithoutRolesV1(), roles: { catalog, coordinator: { roleId: 'planner', note: 'Coordinate document work' } } };
++        const installed = await post('/api/real/governance/install', { ...scope, kind: 'CoordinationPolicy', source: { policyId: 'documents-policy', content } });
++        expect(installed.body.status, JSON.stringify(installed.body)).toBe('committed');
++        const view = await post('/api/real/governance/view', scope);
++        const policy = view.body.kinds.find((k: any) => k.kind === 'CoordinationPolicy').installed.find((v: any) => v.ref.policyId === 'documents-policy');
++        expect((await post('/api/real/governance/activate', { ...scope, kind: 'CoordinationPolicy', pin: { ref: policy.ref, digest: policy.contentDigest } })).body.status).toBe('committed');
++      }
+       expect(await post('/api/real/work', { ...request, allowWrite: false })).toMatchObject({ status: 400 });
+       expect(await post('/api/real/work', request)).toMatchObject({ status: 200, body: { status: 'planning', runId: 'real-' + name + '-work' } });
+       const complete = await until(scope);
+       expect(complete.graph.graph.tasks.map((task: any) => task.taskId)).toEqual([name, name + '-gate']);
+       expect(complete.liveRuns[0].spec.instruction).toContain('Implement ' + name);
+-      expect(complete.liveRuns[0].context.manifest.permissions.tools).toContain('write');
++      if (name === 'documents') {
++        expect(complete.liveRuns[0].context.manifest.permissions.tools).toEqual(['read']);
++        expect(complete.liveRuns[0].context.manifest.permissions.writeScope).toEqual([]);
++        const worker = requests.at(-1)!;
++        expect(worker.tools.some(t => ['edit', 'write', 'bash', 'shell'].includes(t.name))).toBe(false);
++        expect(JSON.stringify(worker.messages)).toContain('Review documents and report sourced conclusions');
++        expect(JSON.stringify(worker.messages)).toContain('document-advisor');
++        expect(JSON.stringify(requests.at(-2)!.messages)).toContain('agentTemplates');
++      } else expect(complete.liveRuns[0].context.manifest.permissions.tools).toContain('write');
+       expect(complete.matrix.matrix.rows.every((task: any) => task.livePhase !== 'satisfied')).toBe(true);
+       const planning = await post('/api/real/planning', scope);
+       expect(planning.body.rows[0]).toMatchObject({ status: 'plan_accepted', proposal: { status: 'plan', plan: { origin: { kind: 'model_coordination', summary: proposal(name).summary } } }, runs: [{ status: 'completed', kind: 'initial_coordination' }] });
+diff --git a/tests/app/role-spec-governance.test.ts b/tests/app/role-spec-governance.test.ts
+index c4ce772..dd58efe 100644
+--- a/tests/app/role-spec-governance.test.ts
++++ b/tests/app/role-spec-governance.test.ts
+@@ -357,3 +357,35 @@ describe('RW-14 第五个治理种类：角色规格', () => {
+     expect(run.body).toMatchObject({ status: 'accepted' });
+   }, 120000);
+ });
++
++
++describe('custom versioned agent templates', () => {
++  it('persists multiple immutable versions, preserves the active pin until activation, and survives restart', async () => {
++    const app = await start();
++    const scope = await app.addProject('template-library');
++    const roleId = 'document-advisor';
++    const content = { ...roleSpecSourceFor(ROLE_SOURCE_INVESTIGATOR).content, label: '文档参谋', purpose: '分析文档来源与结论，提交有来源的建议' };
++    const first = await app.install(scope, { kind: 'RoleSpecRevision', source: { roleId, revision: 1, content } });
++    expect(first.body.status, JSON.stringify(first.body)).toBe('committed');
++    const one = (await app.view(scope)).kinds.find(k => k.kind === 'RoleSpecRevision')!.roleSpecs!.find(r => r.roleId === roleId)!;
++    expect(one.pin!.ref.revision).toBe(1);
++    expect((await app.activate(scope, { kind: 'RoleSpecRevision', pin: one.pin })).body.status).toBe('committed');
++    const next = { ...content, purpose: '核对多个文档间的冲突并提出解决选项' };
++    const second = await app.install(scope, { kind: 'RoleSpecRevision', source: { roleId, revision: 2, content: next } });
++    expect(second.body.status, JSON.stringify(second.body)).toBe('committed');
++    const view = (await app.view(scope)).kinds.find(k => k.kind === 'RoleSpecRevision')!.roleSpecs!.find(r => r.roleId === roleId)!;
++    expect(view.installed.map(v => v.contentRevision)).toEqual([2, 1]);
++    expect(view.pin!.ref.revision).toBe(1);
++    expect(view.active!.ref.revision).toBe(1);
++    const two = view.installed[0]!;
++    expect((await app.activate(scope, { kind: 'RoleSpecRevision', pin: { ref: two.ref, digest: two.contentDigest } })).body.status).toBe('committed');
++    const conflict = await app.install(scope, { kind: 'RoleSpecRevision', source: { roleId, revision: 2, content } });
++    expect(conflict.body.status).toBe('rejected');
++    const replay = await app.install(scope, { kind: 'RoleSpecRevision', source: { roleId, revision: 2, content: next } });
++    expect(replay.body.status).toBe('committed');
++    await app.restart();
++    const active = (await app.view(scope)).kinds.find(k => k.kind === 'RoleSpecRevision')!.roleSpecs!.find(r => r.roleId === roleId)!;
++    expect(active.pin!.ref.revision).toBe(2);
++    expect(active.installed.find(v => v.contentRevision === 1)!.content).toEqual(content);
++  });
++});
+diff --git a/tests/context/completed-work-regression.test.ts b/tests/context/completed-work-regression.test.ts
+index 6b24a43..635b7b3 100644
+--- a/tests/context/completed-work-regression.test.ts
++++ b/tests/context/completed-work-regression.test.ts
+@@ -26,7 +26,7 @@ function fixture() {
+     workContext: async () => ({ status: 'ready', binding, notes: [{ noteRef, kind: note.kind, summary: note.summary,
+       runRef: run, createdAt: note.createdAt, sourceCursor: cursor }], continuations: [], sourceCursor: cursor }),
+   } as unknown as ReadModelIndex;
+-  const ledger = { load: async () => ({ status: 'found', snapshot: { ref: noteRef, revision: 1, schemaVersion: 1, note, recordedAt: note.createdAt } }) } as unknown as StateLedger;
++  const ledger = { load: async (requested: unknown) => JSON.stringify(requested) !== JSON.stringify(noteRef) ? { status: 'not_found' } : ({ status: 'found', snapshot: { ref: noteRef, revision: 1, schemaVersion: 1, note, recordedAt: note.createdAt } }) } as unknown as StateLedger;
+   const vault = new ArtifactVault();
+   const compiler = new CompletedWorkContextCompilerImpl({ ledger, vault, readModel: index, now: () => '2026-09-08T00:00:00.000Z' });
+   async function assemble() {
+@@ -36,7 +36,7 @@ function fixture() {
+     if (opened.status !== 'ready') throw Error('body not ready');
+     return { result, body: JSON.parse(opened.record.body), bytes: Buffer.byteLength(opened.record.body) };
+   }
+-  return { request, note, compiler, assemble };
++  return { request, note, noteRef, ledger, compiler, assemble };
+ }
+ 
+ it('does not invent a changed premise for identical nonzero versions; keeps recorded reasons and exact bytes', async () => {
+@@ -66,3 +66,23 @@ it('does not claim applicability for an unverified explicit related-source versi
+   expect(body.selected[0].applicability.status).toBe('historical_explanation');
+   expect(body.selected[0].applicability.because).toContain('unverified');
+ });
++
++
++it('selects only relevant active memory and never revives an old revision when a newer one is outside the projection', async () => {
++  const { workMemoryNoteId } = await import('../../src/contracts/context-continuity.js');
++  const f = fixture();
++  f.note.memory = { key: 'source-policy', revision: 1, state: 'active', topics: [f.request.relatedRefs[0]!.refKey] };
++  f.note.noteId = workMemoryNoteId('source-policy', 1); f.noteRef.noteId = f.note.noteId;
++  expect((await f.assemble()).body.selected[0].notes[0].memory.revision).toBe(1);
++  f.note.memory.state = 'retired';
++  expect((await f.assemble()).body.selected[0].notes).toEqual([]);
++  f.note.memory.state = 'active'; f.note.memory.topics = ['unrelated'];
++  expect((await f.assemble()).body.selected[0].notes).toEqual([]);
++  f.note.memory.topics = [f.request.relatedRefs[0]!.refKey];
++  const load = f.ledger.load.bind(f.ledger);
++  f.ledger.load = async ref => 'noteId' in ref && ref.noteId === workMemoryNoteId('source-policy', 2)
++    ? { status: 'found', snapshot: { ref: { ...f.noteRef, noteId: ref.noteId }, schemaVersion: 1, revision: 1, recordedAt: f.note.createdAt,
++      note: { ...f.note, noteId: ref.noteId, memory: { ...f.note.memory!, revision: 2, state: 'retired' } } } }
++    : load(ref);
++  expect((await f.assemble()).body.selected[0].notes).toEqual([]);
++});
+diff --git a/tests/contract-suite/console.contract.suite.ts b/tests/contract-suite/console.contract.suite.ts
+index 2601cef..1f07479 100644
+--- a/tests/contract-suite/console.contract.suite.ts
++++ b/tests/contract-suite/console.contract.suite.ts
+@@ -158,6 +158,20 @@ export class TrapControlEngine implements ControlEngine {
+   activateRoleSpec(): never { return this.trap("activateRoleSpec"); }
+   grantMaterialAccess(): never { return this.trap("grantMaterialAccess"); }
+   revokeMaterialAccess(): never { return this.trap("revokeMaterialAccess"); }
++  // CM-1A-001 协作通信受理面：控制台路径同样绝不允许任何通信写入或只读回读。
++  registerAgentInstance(): never { return this.trap("registerAgentInstance"); }
++  startWorkParticipation(): never { return this.trap("startWorkParticipation"); }
++  endWorkParticipation(): never { return this.trap("endWorkParticipation"); }
++  sendDirectedRequest(): never { return this.trap("sendDirectedRequest"); }
++  respondDirectedRequest(): never { return this.trap("respondDirectedRequest"); }
++  createSubscription(): never { return this.trap("createSubscription"); }
++  registerWait(): never { return this.trap("registerWait"); }
++  cancelCommunication(): never { return this.trap("cancelCommunication"); }
++  claimCommunicationIntent(): never { return this.trap("claimCommunicationIntent"); }
++  settleCommunicationIntent(): never { return this.trap("settleCommunicationIntent"); }
++  admitWaitSuccessor(): never { return this.trap("admitWaitSuccessor"); }
++  ensureWaitAdmission(): never { return this.trap("ensureWaitAdmission"); }
++  mailboxView(): never { return this.trap("mailboxView"); }
+ }
+ 
+ export function defineConsoleContractSuite(
+diff --git a/tests/contract-support/testing/control.double.ts b/tests/contract-support/testing/control.double.ts
+index 32db3bf..ad1671f 100644
+--- a/tests/contract-support/testing/control.double.ts
++++ b/tests/contract-support/testing/control.double.ts
+@@ -606,4 +606,47 @@ export class ScriptedControlEngine implements ControlEngine {
+     if (this.options.grantMaterialAccess) return this.options.grantMaterialAccess(command);
+     throw new Error("ScriptedControlEngine: no grantMaterialAccess behavior configured");
+   }
++
++  // CM-1A-001 协作通信受理面：本替身不实现这些行为，调用即显式失败（绝不静默成功）。
++  readonly registerAgentInstanceCalls: import("../../../src/contracts/coordination.js").RegisterAgentInstanceCommand[] = [];
++  async registerAgentInstance(command: import("../../../src/contracts/coordination.js").RegisterAgentInstanceCommand): Promise<import("../../../src/contracts/coordination.js").CommunicationWriteReceipt> {
++    this.registerAgentInstanceCalls.push(command);
++    throw new Error("ScriptedControlEngine: no registerAgentInstance behavior configured");
++  }
++  async startWorkParticipation(_command: import("../../../src/contracts/coordination.js").StartWorkParticipationCommand): Promise<import("../../../src/contracts/coordination.js").CommunicationWriteReceipt> {
++    throw new Error("ScriptedControlEngine: no startWorkParticipation behavior configured");
++  }
++  async endWorkParticipation(_command: import("../../../src/contracts/coordination.js").EndWorkParticipationCommand): Promise<import("../../../src/contracts/coordination.js").CommunicationWriteReceipt> {
++    throw new Error("ScriptedControlEngine: no endWorkParticipation behavior configured");
++  }
++  async sendDirectedRequest(_command: import("../../../src/contracts/coordination.js").SendDirectedRequestCommand): Promise<import("../../../src/contracts/coordination.js").CommunicationWriteReceipt> {
++    throw new Error("ScriptedControlEngine: no sendDirectedRequest behavior configured");
++  }
++  async respondDirectedRequest(_command: import("../../../src/contracts/coordination.js").RespondDirectedRequestCommand): Promise<import("../../../src/contracts/coordination.js").CommunicationWriteReceipt> {
++    throw new Error("ScriptedControlEngine: no respondDirectedRequest behavior configured");
++  }
++  async createSubscription(_command: import("../../../src/contracts/coordination.js").SubscribeCommand): Promise<import("../../../src/contracts/coordination.js").CommunicationWriteReceipt> {
++    throw new Error("ScriptedControlEngine: no createSubscription behavior configured");
++  }
++  async registerWait(_command: import("../../../src/contracts/coordination.js").RegisterWaitCommand): Promise<import("../../../src/contracts/coordination.js").CommunicationWriteReceipt> {
++    throw new Error("ScriptedControlEngine: no registerWait behavior configured");
++  }
++  async cancelCommunication(_command: import("../../../src/contracts/coordination.js").CancelCommunicationCommand): Promise<import("../../../src/contracts/coordination.js").CommunicationWriteReceipt> {
++    throw new Error("ScriptedControlEngine: no cancelCommunication behavior configured");
++  }
++  async claimCommunicationIntent(_command: import("../../../src/contracts/coordination.js").CommunicationClaimCommand): Promise<import("../../../src/contracts/coordination.js").CommunicationClaimReceipt> {
++    throw new Error("ScriptedControlEngine: no claimCommunicationIntent behavior configured");
++  }
++  async settleCommunicationIntent(_command: import("../../../src/contracts/coordination.js").CommunicationSettleCommand): Promise<import("../../../src/contracts/coordination.js").CommunicationSettleReceipt> {
++    throw new Error("ScriptedControlEngine: no settleCommunicationIntent behavior configured");
++  }
++  async admitWaitSuccessor(_command: import("../../../src/contracts/coordination.js").AdmitWaitSuccessorCommand): Promise<import("../../../src/contracts/coordination.js").AdmitWaitSuccessorReceipt> {
++    throw new Error("ScriptedControlEngine: no admitWaitSuccessor behavior configured");
++  }
++  async ensureWaitAdmission(_command: import("../../../src/contracts/coordination.js").EnsureWaitAdmissionCommand): Promise<import("../../../src/contracts/coordination.js").EnsureWaitAdmissionReceipt> {
++    throw new Error("ScriptedControlEngine: no ensureWaitAdmission behavior configured");
++  }
++  async mailboxView(_query: import("../../../src/contracts/modules.js").MailboxViewQuery): Promise<import("../../../src/contracts/modules.js").MailboxViewResult> {
++    throw new Error("ScriptedControlEngine: no mailboxView behavior configured");
++  }
+ }
+diff --git a/tests/contracts/module-ownership.test.ts b/tests/contracts/module-ownership.test.ts
+index a2a1864..1f4e5f5 100644
+--- a/tests/contracts/module-ownership.test.ts
++++ b/tests/contracts/module-ownership.test.ts
+@@ -68,9 +68,9 @@ function sourceFiles(): string[] {
+  * owner() would happily mislabel it by path.
+  */
+ const MODULE_FILE_INVENTORY: Readonly<Record<string, readonly string[]>> = {
+-  "ControlEngine": ["rework-disposition.ts", "README.md", "architecture-evolution-policy.ts", "architecture-inspection.ts", "autonomous-rework.ts", "baseline-evolution.ts", "claim.ts", "control-engine.ts", "control-intent.ts", "dispatch-facts.ts", "evidence-intake.ts", "exploration-startup-reconciliation.ts", "goal-change.ts", "goal-reducer.ts", "governance-activate.ts", "governance-install.ts", "handoff.ts", "human-role-collaboration.ts", "initial-plan-source.ts", "integration-join.ts", "material-access-revocation.ts", "material-access.ts", "patch-record.ts", "plan-acceptance.ts", "policies/architecture-evolution-policy.ts", "policies/architecture-remediation.ts", "policies/autonomous-rework.ts", "policies/coordination-policy.ts", "policies/evidence.ts", "policies/goal-change-consistency.ts", "policies/goal-change.ts", "policies/goal-phase.ts", "policies/initial-plan-admission.ts", "policies/integration.ts", "policies/remediation.ts", "policies/replacement-eligibility.ts", "policies/reviewer-evidence.ts", "policies/role-binding-admission.ts", "policies/task-eligibility.ts", "policies/task-reduction.ts", "policies/workspace-capability.ts", "policies/workspace-lease.ts", "policies/workspace-operation.ts", "policy-explanation.ts", "query-job.ts", "readiness.ts", "records/architecture.ts", "records/baseline-evolution.ts", "records/context.ts", "records/control.ts", "records/dispatch.ts", "records/evidence.ts", "records/goal-change.ts", "records/goal-phase.ts", "records/handoff.ts", "records/human-role-collaboration.ts", "records/material-access.ts", "records/plan.ts", "records/query-job.ts", "records/remediation.ts", "records/role-spec.ts", "records/workspace.ts", "remediation.ts", "replacement-claim.ts", "reviewer-work.ts", "role-spec.ts", "run-facts.ts", "start-run.ts", "task-reducer.ts", "work-identity-resolution.ts", "work-record.ts", "workspace-lease.ts", "workspace-registration.ts"],
++  "ControlEngine": ["rework-disposition.ts", "README.md", "architecture-evolution-policy.ts", "architecture-inspection.ts", "autonomous-rework.ts", "baseline-evolution.ts", "claim.ts", "control-engine.ts", "control-intent.ts", "coordination.ts", "dispatch-facts.ts", "evidence-intake.ts", "exploration-startup-reconciliation.ts", "goal-change.ts", "goal-reducer.ts", "governance-activate.ts", "governance-install.ts", "handoff.ts", "human-role-collaboration.ts", "initial-plan-source.ts", "integration-join.ts", "material-access-revocation.ts", "material-access.ts", "patch-record.ts", "plan-acceptance.ts", "records/coordination.ts", "policies/architecture-evolution-policy.ts", "policies/architecture-remediation.ts", "policies/autonomous-rework.ts", "policies/coordination-policy.ts", "policies/coordination-rules.ts", "policies/evidence.ts", "policies/goal-change-consistency.ts", "policies/goal-change.ts", "policies/goal-phase.ts", "policies/initial-plan-admission.ts", "policies/integration.ts", "policies/remediation.ts", "policies/replacement-eligibility.ts", "policies/reviewer-evidence.ts", "policies/role-binding-admission.ts", "policies/task-eligibility.ts", "policies/task-reduction.ts", "policies/workspace-capability.ts", "policies/workspace-lease.ts", "policies/workspace-operation.ts", "policy-explanation.ts", "query-job.ts", "readiness.ts", "records/architecture.ts", "records/baseline-evolution.ts", "records/context.ts", "records/control.ts", "records/dispatch.ts", "records/evidence.ts", "records/goal-change.ts", "records/goal-phase.ts", "records/handoff.ts", "records/human-role-collaboration.ts", "records/material-access.ts", "records/plan.ts", "records/query-job.ts", "records/remediation.ts", "records/role-spec.ts", "records/workspace.ts", "remediation.ts", "replacement-claim.ts", "reviewer-work.ts", "role-spec.ts", "run-facts.ts", "start-run.ts", "task-reducer.ts", "work-identity-resolution.ts", "work-record.ts", "workspace-lease.ts", "workspace-registration.ts"],
+   "PlanCompiler": ["feedback-decision-compiler.ts", "rework-proposal.ts", "execution-feedback-compiler.ts", "planning-work-materials.ts", "README.md", "initial-plan-compiler.ts", "operator-plan-compiler.ts", "plan-compiler.ts", "rework-plan-compiler.ts"],
+-  "DispatchEngine": ["README.md", "dispatch-engine.ts", "exploration-context-drive.ts", "handoff-drive.ts", "leased-worker-runtime.ts", "operator-task-dispatch.ts", "planned-task-dispatch.ts", "query-drive.ts", "rework-drive.ts", "reviewer-dispatch.ts", "role-spec-read.ts", "runtime-dispatch.ts", "work-identity.ts", "work-material-drive.ts", "workspace-drive.ts"],
++  "DispatchEngine": ["README.md", "coordination-drive.ts", "dispatch-engine.ts", "exploration-context-drive.ts", "handoff-drive.ts", "leased-worker-runtime.ts", "operator-task-dispatch.ts", "planned-task-dispatch.ts", "query-drive.ts", "rework-drive.ts", "reviewer-dispatch.ts", "role-spec-read.ts", "runtime-dispatch.ts", "work-identity.ts", "work-material-drive.ts", "workspace-drive.ts"],
+   "VerificationEngine": ["verification-deps.ts", "rework-verification.ts", "README.md", "benchmark-verification.ts", "candidate-patch-check.ts", "code-graph-port.ts", "command-check-lifecycle.ts", "command-check-provider.ts", "evidence-admission.ts", "exploration-report-verifier.ts", "migration-gate-port.ts", "recorded-verification.ts", "reviewer-record.ts", "reviewer-report.ts", "reviewer-verification.ts", "role-output-completeness.ts", "verification-engine.ts", "verification-input.ts", "verification-journal.ts", "verification-open-issues.ts", "verification-plan-compiler.ts", "verification-reports.ts", "verification-rounds.ts", "verification-service.ts"],
+   "ArchitectureReconciler": ["README.md", "architecture-delta.ts", "architecture-reconciler.ts", "baseline-evolution-port.ts"],
+   "HumanCollaboration": ["README.md", "exploration-session.ts", "history-materials.ts", "human-collaboration.ts"],
+@@ -78,7 +78,7 @@ const MODULE_FILE_INVENTORY: Readonly<Record<string, readonly string[]>> = {
+   "StateLedger": ["ledger-validation.ts", "README.in-memory.md", "README.md", "README.sqlite.md", "governance-records.ts", "in-memory-ledger.ts", "ledger-scope-catalog.ts", "sqlite-ledger.ts"],
+   "ArtifactVault": ["README.md", "artifact-vault.ts", "exploration-material-reader.ts", "material-access-policy.ts", "runtime-observation-journal.ts", "sqlite-artifact-vault.ts"],
+   "ReadModelIndex": ["governance-view.ts", "README.in-memory.md", "README.md", "README.sqlite.md", "baseline-change-projection.ts", "completed-work-eligibility.ts", "completed-work-merge.ts", "initial-planning-view.ts", "read-model-index.ts", "reviewer-projection.ts", "sqlite-read-model-index.ts"],
+-  "ContextCompiler": ["feedback-decision-context.ts", "execution-feedback-context.ts", "feedback-materials.ts", "run-output-materials.ts", "README.md", "architecture-context-compiler.ts", "baseline-evolution-context.ts", "completed-work-context-compiler.ts", "context-compiler.ts", "coordination-context-compiler.ts", "exploration-context-compiler.ts", "exploration-session-context.ts", "handoff-context-compiler.ts", "history-materials-context.ts", "material-selection.ts", "operator-planning-context.ts", "planning-context-compiler.ts", "query-context-compiler.ts", "query-execution-context.ts", "review-context-compiler.ts", "reviewer-context.ts", "reviewer-profile.ts", "reviewer-runtime-context.ts", "role-material-sources.ts", "role-source-index.ts", "runtime-context.ts", "source-graph-context.ts", "verification-context.ts", "verification-migration-context.ts", "work-context-compiler.ts", "work-run-materials.ts"],
++  "ContextCompiler": ["feedback-decision-context.ts", "delivery-materials.ts", "execution-feedback-context.ts", "feedback-materials.ts", "run-output-materials.ts", "README.md", "architecture-context-compiler.ts", "baseline-evolution-context.ts", "completed-work-context-compiler.ts", "context-compiler.ts", "coordination-context-compiler.ts", "exploration-context-compiler.ts", "exploration-session-context.ts", "handoff-context-compiler.ts", "history-materials-context.ts", "material-selection.ts", "operator-planning-context.ts", "planning-context-compiler.ts", "query-context-compiler.ts", "query-execution-context.ts", "review-context-compiler.ts", "reviewer-context.ts", "reviewer-profile.ts", "reviewer-runtime-context.ts", "role-material-sources.ts", "role-source-index.ts", "runtime-context.ts", "source-graph-context.ts", "verification-context.ts", "verification-migration-context.ts", "work-context-compiler.ts", "work-run-materials.ts"],
+   "WorkspaceReader": ["README.md", "architecture-source.ts", "candidate-workspace-reader.ts", "cpp-source-index.ts", "denied-prefixes.ts", "exploration-source.ts", "project-source-index.ts", "python-source-index.ts", "query-workspace-source-reader.ts", "reviewer-source-reader.ts", "role-source-reader.ts", "source-applicability.ts", "source-identity.ts", "source-index.ts", "source-workspace-reader.ts", "verification-source-applicability.ts", "verification-workspace-reader.ts", "workspace-reader-adapter.ts"],
+ };
+ 
+diff --git a/tests/control/work-record.test.ts b/tests/control/work-record.test.ts
+index 9734c90..a880cf0 100644
+--- a/tests/control/work-record.test.ts
++++ b/tests/control/work-record.test.ts
+@@ -479,3 +479,25 @@ describe("P1-16 lane A: WorkRecordEngineImpl note + continuation", () => {
+     if (res.status === "rejected") expect(res.code).toBe("not_found");
+   });
+ });
++
++
++it('stores sourced memory revisions without overwriting history; rejects skipped revisions and competing updates', async () => {
++  const ctx = await makeWorld();
++  await bindCoordWork(ctx, 'memory-work', ctx.world.projectA.workRun);
++  const { workMemoryNoteId, executionNoteRefFor } = await import('../../src/contracts/context-continuity.js');
++  const make = (revision: number, state: 'active' | 'retired', summary: string) => ({
++    ...buildExecutionNoteV1({ noteId: workMemoryNoteId('document-source-policy', revision), workId: 'work-p116-coord', projectId: A, runRef: ctx.world.projectA.workRun, kind: 'result', summary }),
++    memory: { key: 'document-source-policy', revision, state, topics: ['document-review'] },
++  });
++  const submit = (id: string, note: ReturnType<typeof make>) => ctx.h.recordExecutionNote(buildRecordExecutionNoteCommand({ commandId: id, projectId: A, note }));
++  expect((await submit('skip', make(2, 'active', 'skip'))).status).toBe('rejected');
++  const first = make(1, 'active', 'Always preserve original source references');
++  const installed = await submit('memory-v1', first);
++  expect(installed.status).toBe('committed');
++  expect(await submit('memory-v1', first)).toMatchObject({ status: 'committed', replayed: true });
++  expect((await submit('memory-v2', make(2, 'active', 'Preserve original sources and versions'))).status).toBe('committed');
++  expect((await submit('memory-conflict', make(2, 'active', 'competing text'))).status).toBe('rejected');
++  expect((await submit('memory-retire', make(3, 'retired', 'Superseded by the current document policy'))).status).toBe('committed');
++  const old = await ctx.harness.ledger.load(executionNoteRefFor(A, WSPACE, 'work-p116-coord', first.noteId));
++  expect(old.status === 'found' && (old.snapshot as { note: unknown }).note).toEqual(first);
++});

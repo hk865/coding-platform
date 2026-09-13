@@ -1,0 +1,25 @@
+[WebServer] $ npm run kernel:build && tsc -p tsconfig.app.json && node scripts/copy-ui.mjs && pnpm run ui:build
+[WebServer] $ pnpm --dir src/ui run build
+[WebServer] $ vite build
+
+Running 1 test using 1 worker
+
+  ✘  1 tests/communication.spec.ts:7:1 › shows persisted communication and cancellation through the real HTTP state endpoint (1ms)
+
+
+  1) tests/communication.spec.ts:7:1 › shows persisted communication and cancellation through the real HTTP state endpoint 
+
+    Error: browserType.launch: Executable doesn't exist at /home/han001/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell
+    ╔════════════════════════════════════════════════════════════╗
+    ║ Looks like Playwright was just installed or updated.       ║
+    ║ Please run the following command to download new browsers: ║
+    ║                                                            ║
+    ║     pnpm exec playwright install                           ║
+    ║                                                            ║
+    ║ <3 Playwright Team                                         ║
+    ╚════════════════════════════════════════════════════════════╝
+
+    Error Context: test-results/communication-shows-persis-583ad-he-real-HTTP-state-endpoint/error-context.md
+
+  1 failed
+    tests/communication.spec.ts:7:1 › shows persisted communication and cancellation through the real HTTP state endpoint 

@@ -1,0 +1,21 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/coordination/route-continuity.test.ts [2m([22m[2m14 tests[22m[2m)[22m[33m 327[2mms[22m[39m
+ [32m✓[39m tests/coordination/host-tool-chain.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 9063[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='task'/'all' [33m 3607[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'all' [33m 2789[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'any' [33m 2665[2mms[22m[39m
+ [32m✓[39m tests/coordination/route-drive.test.ts [2m([22m[2m23 tests[22m[2m)[22m[33m 40023[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'any' preserves actual conditions, waits for the predecessor, and retains late reports [33m 1448[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'all' preserves actual conditions, waits for the predecessor, and retains late reports [33m 1289[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite close + reopen 后仍能领取既有 wait_admission intent 并完成唯一后继 [33m 1350[2mms[22m[39m
+   [33m[2m✓[22m[39m independent process exit before_page recovers fixed subscription pages exactly once [33m 11763[2mms[22m[39m
+   [33m[2m✓[22m[39m independent process exit after_page recovers fixed subscription pages exactly once [33m 12350[2mms[22m[39m
+   [33m[2m✓[22m[39m independent consumers preserve the new generation result when the old process settles late [33m 11538[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m3 passed[39m[22m[90m (3)[39m
+[2m      Tests [22m [1m[32m40 passed[39m[22m[90m (40)[39m
+[2m   Start at [22m 16:42:50
+[2m   Duration [22m 51.87s[2m (transform 36.42s, setup 0ms, import 46.21s, tests 49.41s, environment 0ms)[22m
+

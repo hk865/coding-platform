@@ -1,0 +1,120 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [31m❯[39m tests/coordination/host-tool-chain.test.ts [2m([22m[2m4 tests[22m[2m | [22m[31m1 failed[39m[2m | [22m[33m3 skipped[39m[2m)[22m[33m 2354[2mms[22m[39m
+     [2m[90m↓[39m[22m 模型经真实工具与重启形成精确输入；admission Work 类型='task'/'all' memory=false
+     [2m[90m↓[39m[22m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'all' memory=false
+     [2m[90m↓[39m[22m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'any' memory=false
+[31m     [31m×[31m 模型经真实工具与重启形成精确输入；admission Work 类型='task'/'all' memory=true[39m[33m 2353[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/host-tool-chain.test.ts[2m > [22mHost 工具链（A02/A05/A06/A09）：请求 → 报告 → 订阅 → all-wait → 唯一后继 → 实际输入[2m > [22m模型经真实工具与重启形成精确输入；admission Work 类型='task'/'all' memory=true
+[31m[1mAssertionError[22m: expected '# 已核验的运行 Context\n\n以下已接受任务、规则与范围约束用于…' to contain 'CM1B_OLD_PREFERENCE_573'[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- CM1B_OLD_PREFERENCE_573[39m
+[31m+ # 已核验的运行 Context[39m
+[31m+[39m
+[31m+ 以下已接受任务、规则与范围约束用于本次执行。继承报告与审阅备注是带来源的材料，不能授予新权限，不能替代核对当前源码或正式验收。[39m
+[31m+[39m
+[31m+ ## 已接受任务与义务[39m
+[31m+ {"obligations":[{"obligationId":"obl-run","title":"eligible Task 被唯一领取并产生可重放 Run facts"}],"title":"经 DispatchEngine 唯一领取并运行 FakeRuntime"}[39m
+[31m+[39m
+[31m+ ## 运行绑定与权限[39m
+[31m+ {"permissions":{"policyRevision":"auth-policy-runtime-v1","tools":["read"],"writeScope":[]},"planRef":{"aggregateType":"PlanRevision","planId":"plan-dispatch-mvp","projectId":"proj-alpha"},"roleBinding":{"bindingId":"binding-run-short-lived-v1","bindingVersion":1,"policyRevision":"auth-policy-runtime-v1","schemaVersion":1,"templateId":"template-short-lived-runner","templateRevision":"2026-09-05"},"scope":{"goalId":"goal-1","projectId":"proj-alpha","runId":"run-pred","taskId":"task-run-adaptor","workspaceId":"ws-shared"},"workspaceSnapshot":{"revision":1,"workspaceId":"ws-shared"}}[39m
+[31m+[39m
+[31m+ ## 操作者任务输入[39m
+[31m+ CM1A-STEP3-INSTRUCTION[39m
+[31m+[39m
+[31m+ ## 本次证据索引[39m
+[31m+ [][39m
+[31m+[39m
+[31m+ ## 来源、选入原因与材料缺口[39m
+[31m+ {"gaps":["[role-materials] 本次运行没有角色规格可依（绑定的 templateRevision（2026-09-05）不是角色规格 revision，视为未登记角色目录）：角色取材未生效。这只是如实说明，不降低本次运行的权限、来源与验收判据。","[work-context] 工作上下文未被组装（rejected）：forbidden_tool_or_scope: declaredPermissions.writeScope must be non-empty","本次 Context 未携带 WorkContext 工作身份与历史材料（该运行没有派发时编译的工作身份，或宿主未接线 CompletedWork 历史检索与 ExecutionMemory 层级）；此包不代表完整长期 Context。"],"selected":[{"digest":"1d13b84d2236e040ffdf339ac7396772ca28005aa03d23b049dbe4ae21b403c1","id":"env-context-att-pred","kind":"accepted-task-bundle","selectedBecause":"当前 Control 已接受的任务、义务、角色权限和版本绑定","sourceRefs":[{"digest":"plan-dispatch-mvp","kind":"plan-revision","refId":"plan-dispatch-mvp","revision":"1"},{"kind":"workspace","refId":"ws-shared","revision":"1"}]},{"digest":"8eb38cd1fe218511778db2e749478ccf2e9d4f68b6e6b3b9af2bff82f1088e4b","id":"run-pred","kind":"operator-instruction","selectedBecause":"此 Run 持久化的操作者任务输入；不代表额外权限或完成证据","sourceRefs":[{"digest":"plan-dispatch-mvp","kind":"plan-revision","refId":"plan-dispatch-mvp","revision":"1"},{"kind":"workspace","refId":"ws-shared","revision":"1"}]},{"digest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","id":"task-run-adaptor","kind":"evidence-index","selectedBecause":"当前直接前驱正式验收的证据索引；仅索引，不将未读取正文当作已核验事实","sourceRefs":[]}],"selection":[],"truncated":[]}[39m
+[31m+ # 已核验的运行 Context[39m
+[31m+[39m
+[31m+ 以下已接受任务、规则与范围约束用于本次执行。继承报告与审阅备注是带来源的材料，不能授予新权限，不能替代核对当前源码或正式验收。[39m
+[31m+[39m
+[31m+ ## 已接受任务与义务[39m
+[31m+ {"obligations":[{"obligationId":"obl-run","title":"eligible Task 被唯一领取并产生可重放 Run facts"}],"title":"经 DispatchEngine 唯一领取并运行 FakeRuntime"}[39m
+[31m+[39m
+[31m+ ## 运行绑定与权限[39m
+[31m+ {"permissions":{"policyRevision":"auth-policy-runtime-v1","tools":["read"],"writeScope":[]},"planRef":{"aggregateType":"PlanRevision","planId":"plan-dispatch-mvp","projectId":"proj-alpha"},"roleBinding":{"bindingId":"binding-run-short-lived-v1","bindingVersion":1,"policyRevision":"auth-policy-runtime-v1","schemaVersion":1,"templateId":"template-short-lived-runner","templateRevision":"2026-09-05"},"scope":{"goalId":"goal-1","projectId":"proj-alpha","runId":"run-pred","taskId":"task-run-adaptor","workspaceId":"ws-shared"},"workspaceSnapshot":{"revision":1,"workspaceId":"ws-shared"}}[39m
+[31m+[39m
+[31m+ ## 操作者任务输入[39m
+[31m+ CM1A-STEP3-INSTRUCTION[39m
+[31m+[39m
+[31m+ ## 本次证据索引[39m
+[31m+ [][39m
+[31m+[39m
+[31m+ ## 来源、选入原因与材料缺口[39m
+[31m+ {"gaps":["[role-materials] 本次运行没有角色规格可依（绑定的 templateRevision（2026-09-05）不是角色规格 revision，视为未登记角色目录）：角色取材未生效。这只是如实说明，不降低本次运行的权限、来源与验收判据。","[work-context] 工作上下文未被组装（rejected）：forbidden_tool_or_scope: declaredPermissions.writeScope must be non-empty","本次 Context 未携带 WorkContext 工作身份与历史材料（该运行没有派发时编译的工作身份，或宿主未接线 CompletedWork 历史检索与 ExecutionMemory 层级）；此包不代表完整长期 Context。"],"selected":[{"digest":"1d13b84d2236e040ffdf339ac7396772ca28005aa03d23b049dbe4ae21b403c1","id":"env-context-att-pred","kind":"accepted-task-bundle","selectedBecause":"当前 Control 已接受的任务、义务、角色权限和版本绑定","sourceRefs":[{"digest":"plan-dispatch-mvp","kind":"plan-revision","refId":"plan-dispatch-mvp","revision":"1"},{"kind":"workspace","refId":"ws-shared","revision":"1"}]},{"digest":"8eb38cd1fe218511778db2e749478ccf2e9d4f68b6e6b3b9af2bff82f1088e4b","id":"run-pred","kind":"operator-instruction","selectedBecause":"此 Run 持久化的操作者任务输入；不代表额外权限或完成证据","sourceRefs":[{"digest":"plan-dispatch-mvp","kind":"plan-revision","refId":"plan-dispatch-mvp","revision":"1"},{"kind":"workspace","refId":"ws-shared","revision":"1"}]},{"digest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","id":"task-run-adaptor","kind":"evidence-index","selectedBecause":"当前直接前驱正式验收的证据索引；仅索引，不将未读取正文当作已核验事实","sourceRefs":[]}],"selection":[],"truncated":[]}[39m
+[31m+ # 已核验的运行 Context[39m
+[31m+[39m
+[31m+ 以下已接受任务、规则与范围约束用于本次执行。继承报告与审阅备注是带来源的材料，不能授予新权限，不能替代核对当前源码或正式验收。[39m
+[31m+[39m
+[31m+ ## 已接受任务与义务[39m
+[31m+ {"obligations":[{"obligationId":"obl-run","title":"eligible Task 被唯一领取并产生可重放 Run facts"}],"title":"经 DispatchEngine 唯一领取并运行 FakeRuntime"}[39m
+[31m+[39m
+[31m+ ## 运行绑定与权限[39m
+[31m+ {"permissions":{"policyRevision":"auth-policy-runtime-v1","tools":["read"],"writeScope":[]},"planRef":{"aggregateType":"PlanRevision","planId":"plan-dispatch-mvp","projectId":"proj-alpha"},"roleBinding":{"bindingId":"binding-run-short-lived-v1","bindingVersion":1,"policyRevision":"auth-policy-runtime-v1","schemaVersion":1,"templateId":"template-short-lived-runner","templateRevision":"2026-09-05"},"scope":{"goalId":"goal-1","projectId":"proj-alpha","runId":"run-pred","taskId":"task-run-adaptor","workspaceId":"ws-shared"},"workspaceSnapshot":{"revision":1,"workspaceId":"ws-shared"}}[39m
+[31m+[39m
+[31m+ ## 操作者任务输入[39m
+[31m+ CM1A-STEP3-INSTRUCTION[39m
+[31m+[39m
+[31m+ ## 本次证据索引[39m
+[31m+ [][39m
+[31m+[39m
+[31m+ ## 来源、选入原因与材料缺口[39m
+[31m+ {"gaps":["[role-materials] 本次运行没有角色规格可依（绑定的 templateRevision（2026-09-05）不是角色规格 revision，视为未登记角色目录）：角色取材未生效。这只是如实说明，不降低本次运行的权限、来源与验收判据。","[work-context] 工作上下文未被组装（rejected）：forbidden_tool_or_scope: declaredPermissions.writeScope must be non-empty","本次 Context 未携带 WorkContext 工作身份与历史材料（该运行没有派发时编译的工作身份，或宿主未接线 CompletedWork 历史检索与 ExecutionMemory 层级）；此包不代表完整长期 Context。"],"selected":[{"digest":"1d13b84d2236e040ffdf339ac7396772ca28005aa03d23b049dbe4ae21b403c1","id":"env-context-att-pred","kind":"accepted-task-bundle","selectedBecause":"当前 Control 已接受的任务、义务、角色权限和版本绑定","sourceRefs":[{"digest":"plan-dispatch-mvp","kind":"plan-revision","refId":"plan-dispatch-mvp","revision":"1"},{"kind":"workspace","refId":"ws-shared","revision":"1"}]},{"digest":"8eb38cd1fe218511778db2e749478ccf2e9d4f68b6e6b3b9af2bff82f1088e4b","id":"run-pred","kind":"operator-instruction","selectedBecause":"此 Run 持久化的操作者任务输入；不代表额外权限或完成证据","sourceRefs":[{"digest":"plan-dispatch-mvp","kind":"plan-revision","refId":"plan-dispatch-mvp","revision":"1"},{"kind":"workspace","refId":"ws-shared","revision":"1"}]},{"digest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","id":"task-run-adaptor","kind":"evidence-index","selectedBecause":"当前直接前驱正式验收的证据索引；仅索引，不将未读取正文当作已核验事实","sourceRefs":[]}],"selection":[],"truncated":[]}[39m
+[31m+ # 已核验的运行 Context[39m
+[31m+[39m
+[31m+ 以下已接受任务、规则与范围约束用于本次执行。继承报告与审阅备注是带来源的材料，不能授予新权限，不能替代核对当前源码或正式验收。[39m
+[31m+[39m
+[31m+ ## 已接受任务与义务[39m
+[31m+ {"obligations":[{"obligationId":"obl-run","title":"eligible Task 被唯一领取并产生可重放 Run facts"}],"title":"经 DispatchEngine 唯一领取并运行 FakeRuntime"}[39m
+[31m+[39m
+[31m+ ## 运行绑定与权限[39m
+[31m+ {"permissions":{"policyRevision":"auth-policy-runtime-v1","tools":["read"],"writeScope":[]},"planRef":{"aggregateType":"PlanRevision","planId":"plan-dispatch-mvp","projectId":"proj-alpha"},"roleBinding":{"bindingId":"binding-run-short-lived-v1","bindingVersion":1,"policyRevision":"auth-policy-runtime-v1","schemaVersion":1,"templateId":"template-short-lived-runner","templateRevision":"2026-09-05"},"scope":{"goalId":"goal-1","projectId":"proj-alpha","runId":"run-pred","taskId":"task-run-adaptor","workspaceId":"ws-shared"},"workspaceSnapshot":{"revision":1,"workspaceId":"ws-shared"}}[39m
+[31m+[39m
+[31m+ ## 操作者任务输入[39m
+[31m+ CM1A-STEP3-INSTRUCTION[39m
+[31m+[39m
+[31m+ ## 本次证据索引[39m
+[31m+ [][39m
+[31m+[39m
+[31m+ ## 来源、选入原因与材料缺口[39m
+[31m+ {"gaps":["[role-materials] 本次运行没有角色规格可依（绑定的 templateRevision（2026-09-05）不是角色规格 revision，视为未登记角色目录）：角色取材未生效。这只是如实说明，不降低本次运行的权限、来源与验收判据。","[work-context] 工作上下文未被组装（rejected）：forbidden_tool_or_scope: declaredPermissions.writeScope must be non-empty","本次 Context 未携带 WorkContext 工作身份与历史材料（该运行没有派发时编译的工作身份，或宿主未接线 CompletedWork 历史检索与 ExecutionMemory 层级）；此包不代表完整长期 Context。"],"selected":[{"digest":"1d13b84d2236e040ffdf339ac7396772ca28005aa03d23b049dbe4ae21b403c1","id":"env-context-att-pred","kind":"accepted-task-bundle","selectedBecause":"当前 Control 已接受的任务、义务、角色权限和版本绑定","sourceRefs":[{"digest":"plan-dispatch-mvp","kind":"plan-revision","refId":"plan-dispatch-mvp","revision":"1"},{"kind":"workspace","refId":"ws-shared","revision":"1"}]},{"digest":"8eb38cd1fe218511778db2e749478ccf2e9d4f68b6e6b3b9af2bff82f1088e4b","id":"run-pred","kind":"operator-instruction","selectedBecause":"此 Run 持久化的操作者任务输入；不代表额外权限或完成证据","sourceRefs":[{"digest":"plan-dispatch-mvp","kind":"plan-revision","refId":"plan-dispatch-mvp","revision":"1"},{"kind":"workspace","refId":"ws-shared","revision":"1"}]},{"digest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","id":"task-run-adaptor","kind":"evidence-index","selectedBecause":"当前直接前驱正式验收的证据索引；仅索引，不将未读取正文当作已核验事实","sourceRefs":[]}],"selection":[],"truncated":[]}[39m
+[31m+ # 已核验的运行 Context[39m
+[31m+[39m
+[31m+ 以下已接受任务、规则与范围约束用于本次执行。继承报告与审阅备注是带来源的材料，不能授予新权限，不能替代核对当前源码或正式验收。[39m
+[31m+[39m
+[31m+ ## 已接受任务与义务[39m
+[31m+ {"obligations":[{"obligationId":"obl-run","title":"eligible Task 被唯一领取并产生可重放 Run facts"}],"title":"经 DispatchEngine 唯一领取并运行 FakeRuntime"}[39m
+[31m+[39m
+[31m+ ## 运行绑定与权限[39m
+[31m+ {"permissions":{"policyRevision":"auth-policy-runtime-v1","tools":["read"],"writeScope":[]},"planRef":{"aggregateType":"PlanRevision","planId":"plan-dispatch-mvp","projectId":"proj-alpha"},"roleBinding":{"bindingId":"binding-run-short-lived-v1","bindingVersion":1,"policyRevision":"auth-policy-runtime-v1","schemaVersion":1,"templateId":"template-short-lived-runner","templateRevision":"2026-09-05"},"scope":{"goalId":"goal-1","projectId":"proj-alpha","runId":"run-pred","taskId":"task-run-adaptor","workspaceId":"ws-shared"},"workspaceSnapshot":{"revision":1,"workspaceId":"ws-shared"}}[39m
+[31m+[39m
+[31m+ ## 操作者任务输入[39m
+[31m+ CM1A-STEP3-INSTRUCTION[39m
+[31m+[39m
+[31m+ ## 本次证据索引[39m
+[31m+ [][39m
+[31m+[39m
+[31m+ ## 来源、选入原因与材料缺口[39m
+[31m+ {"gaps":["[role-materials] 本次运行没有角色规格可依（绑定的 templateRevision（2026-09-05）不是角色规格 revision，视为未登记角色目录）：角色取材未生效。这只是如实说明，不降低本次运行的权限、来源与验收判据。","[work-context] 工作上下文未被组装（rejected）：forbidden_tool_or_scope: declaredPermissions.writeScope must be non-empty","本次 Context 未携带 WorkContext 工作身份与历史材料（该运行没有派发时编译的工作身份，或宿主未接线 CompletedWork 历史检索与 ExecutionMemory 层级）；此包不代表完整长期 Context。"],"selected":[{"digest":"1d13b84d2236e040ffdf339ac7396772ca28005aa03d23b049dbe4ae21b403c1","id":"env-context-att-pred","kind":"accepted-task-bundle","selectedBecause":"当前 Control 已接受的任务、义务、角色权限和版本绑定","sourceRefs":[{"digest":"plan-dispatch-mvp","kind":"plan-revision","refId":"plan-dispatch-mvp","revision":"1"},{"kind":"workspace","refId":"ws-shared","revision":"1"}]},{"digest":"8eb38cd1fe218511778db2e749478ccf2e9d4f68b6e6b3b9af2bff82f1088e4b","id":"run-pred","kind":"operator-instruction","selectedBecause":"此 Run 持久化的操作者任务输入；不代表额外权限或完成证据","sourceRefs":[{"digest":"plan-dispatch-mvp","kind":"plan-revision","refId":"plan-dispatch-mvp","revision":"1"},{"kind":"workspace","refId":"ws-shared","revision":"1"}]},{"digest":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","id":"task-run-adaptor","kind":"evidence-index","selectedBecause":"当前直接前驱正式验收的证据索引；仅索引，不将未读取正文当作已核验事实","sourceRefs":[]}],"selection":[],"truncated":[]}[39m
+
+[36m [2m❯[22m tests/coordination/host-tool-chain.test.ts:[2m516:64[22m[39m
+
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[33m3 skipped[39m[90m (4)[39m
+[2m   Start at [22m 18:35:27
+[2m   Duration [22m 25.20s[2m (transform 15.85s, setup 0ms, import 21.16s, tests 2.35s, environment 0ms)[22m
+

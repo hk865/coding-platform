@@ -1,0 +1,31 @@
+import { buildMaterialAccessGrantV1 as formalbuildMaterialAccessGrantV1, buildGrantMaterialAccessCommand as formalbuildGrantMaterialAccessCommand } from "../../../src/contracts/commands/material-access.js";
+
+/**
+ * P1-18 shared fixtures: deterministic MaterialAccessGrant builders + the
+ * ledger-fold builder the Control handler must reproduce byte-for-byte
+ * (fold-equality: the handler and the tests share this one builder).
+ */
+import type { GrantMaterialAccessCommand, MaterialAccessGrantV1, MaterialBasisV1, MaterialGrantIssuer, MaterialAccessScopeV1 } from "../../../src/contracts/material-access.js";
+
+
+import type { ArtifactOwnerRunRef, ArtifactRef } from "../../../src/contracts/artifact.js";
+
+export function buildMaterialAccessGrantV1(opts: {
+  grantId: string;
+  scope: MaterialAccessScopeV1;
+  materials: ArtifactRef[];
+  reader: ArtifactOwnerRunRef;
+  issuedBy: MaterialGrantIssuer;
+  purpose: string;
+  basis: MaterialBasisV1;
+  grantedAt: string;
+}): MaterialAccessGrantV1 {
+  return formalbuildMaterialAccessGrantV1(opts);
+}
+
+export function buildGrantMaterialAccessCommand(
+  grant: MaterialAccessGrantV1,
+  deps: { commandId: string; projectId: string; actorKind: "human" | "system"; actorId: string; idempotencyKey: string; correlationId: string; submittedAt: string },
+): GrantMaterialAccessCommand {
+  return formalbuildGrantMaterialAccessCommand(grant, deps);
+}

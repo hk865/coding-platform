@@ -1,0 +1,570 @@
+{
+  "baselineFingerprint": "1055474c3cabe50d6c5a2630eba4dc2983c306b6f67ca713ef16c62a03afb7a6",
+  "sourceFingerprint": "f930c3efb08d9d665117ddbc974f406a09e7d98efc2f24563ef3a78f709e4a81",
+  "changes": [
+    {
+      "path": "scripts/source-snapshot.mjs",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "cc18c1b3a06501b1035e2a0ab5bd02eb3649ab7d2a33081feb4b9738a13dbdb8"
+    },
+    {
+      "path": "src/app/service.ts",
+      "change": "modified",
+      "beforeSha256": "19e3d2ecea3de4a23c66c8f9ba4f67fe59d44f667f489e48573d1f57134bdebd",
+      "afterSha256": "c6eac631ea82b3c8e8efc620a18ef3d4199a28c0b090acee52ba27c792e0de27"
+    },
+    {
+      "path": "src/contracts/command-event.ts",
+      "change": "modified",
+      "beforeSha256": "f5fe7f346bd3cf723196107f6d8b2d767a42064b82699696eb01b6d49d1bf1ad",
+      "afterSha256": "8fbccb22cac3cf74c22550b1f352c222690ba93069828300ef97c16c4f440f39"
+    },
+    {
+      "path": "src/contracts/commands/dispatch.ts",
+      "change": "modified",
+      "beforeSha256": "692a8bc185d0c4552639213e81beba669a87d2590a90a3858a7b097ea99e2b08",
+      "afterSha256": "46f68342b4e3a116ece8038ca5d7081e14777717f67e41507fcdcbf650196ba4"
+    },
+    {
+      "path": "src/contracts/communication-reconciliation.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "c52e2de428122201d852c934949f63227e7d98e270603724b62669a41f072554"
+    },
+    {
+      "path": "src/contracts/context-continuity.ts",
+      "change": "modified",
+      "beforeSha256": "5c9b211d84d1996f7cb71b85a279d82e8da098a5bad8696f6de80c7554573f86",
+      "afterSha256": "0c15a4d785debdd685e4b9195e4c2602d7bf8fd79277fe37338a9065bc214672"
+    },
+    {
+      "path": "src/contracts/coordination-events.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "5c1a6baa7b48470b619521c628132d3dbf8db499c9224f83bd2f4b11e65a7047"
+    },
+    {
+      "path": "src/contracts/coordination-tools.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "a5dc9b7eab163ca072ea8772f9ed59bce03a4dbb0256661b388f8cdf44931110"
+    },
+    {
+      "path": "src/contracts/coordination.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "d528f214cdc4e7ce8b04de3a99fc415d91d0e2093650937c8beff4484c636ff7"
+    },
+    {
+      "path": "src/contracts/dispatch.ts",
+      "change": "modified",
+      "beforeSha256": "2edd65956327f545f9c890cc106cb54857970fdb45405a9bf8552ed2fb5e8452",
+      "afterSha256": "c4fcf9b354bba000d4bcffd58eda629b6207e5e12d254cebd7806ccbdf4af357"
+    },
+    {
+      "path": "src/contracts/events.ts",
+      "change": "modified",
+      "beforeSha256": "c05648c79a1b36791e24fb2c4808bd7cca24551c767a7ac98236694268fc827a",
+      "afterSha256": "eb1be1acabfbbdb729660dc8fa7b205b2166ee30c4aedfa613f2541fc1e2197d"
+    },
+    {
+      "path": "src/contracts/execution-authorization.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "15144484597bedf900dcb1c8ba3e30cbff97bb243c5a4e421c53af4181266c0f"
+    },
+    {
+      "path": "src/contracts/ledger.ts",
+      "change": "modified",
+      "beforeSha256": "fc09e7d9cf9e8d58789491a013131f9d1e6fa434cfd236947690912f52863272",
+      "afterSha256": "002e0259ce44d94bb4134e994df8eebd8241b8adab694a2b92d752fd19ae4b71"
+    },
+    {
+      "path": "src/contracts/modules.ts",
+      "change": "modified",
+      "beforeSha256": "91052d7498be6323e228fabc5cf2821fbe69e1c54052df444a39b7e4057529c2",
+      "afterSha256": "22d65f4d55693bff4b269b7231344527b4cef978334bbf2a51d13184a31fe90e"
+    },
+    {
+      "path": "src/contracts/ports.ts",
+      "change": "modified",
+      "beforeSha256": "3dea8334c334dfc79ad22d48d6704494ae5f32ea93a66857a60f6a3591b4fa0d",
+      "afterSha256": "73e53095f38c8f0c3b5c23a40fc790ae5f070ea633f2d7e73760725d1bbc0f04"
+    },
+    {
+      "path": "src/contracts/run-lifecycle-fold.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "ffbe17f2305934a2a96312366d824e87ee3facb81a55a2702ab82161414167e1"
+    },
+    {
+      "path": "src/contracts/run-reconciliation.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "afa3c7604e30bdb5e0c45b74b0812204fce0facd6429e2591bf0ebb81677929d"
+    },
+    {
+      "path": "src/contracts/runtime-context-materials.ts",
+      "change": "modified",
+      "beforeSha256": "e999a5502ee4e82477428ddb01a5aadc191ea3f9cb9f96d8bdc9bdb782b7c8ce",
+      "afterSha256": "cea81b9c3ef92127ee7829a423f0376c8fecb8130d532589be16a0f14260b228"
+    },
+    {
+      "path": "src/contracts/runtime-dispatch.ts",
+      "change": "modified",
+      "beforeSha256": "5814eb79adaf350af0b79cfc0649e9dd4f1584107afde4062590a503f155d66b",
+      "afterSha256": "d48348dc50a1738e5092c6b1327d7fb5891a7f8f1a023b1ab367f447e129c42d"
+    },
+    {
+      "path": "src/contracts/runtime-input-authorization.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "3ebad00f0b5062d649dba06513f8b22cc0f70ff25e2e4138ec457e7d755522ae"
+    },
+    {
+      "path": "src/contracts/runtime-preparation.ts",
+      "change": "modified",
+      "beforeSha256": "905b8daf5d64871a859f7b8d642ec1c5c216f67608e4e880b42aba935be95df7",
+      "afterSha256": "1f5caaf6e379d4888abbe6badc93ec4284b4ff8602cec404faa4101f12c8d388"
+    },
+    {
+      "path": "src/contracts/validation/dispatch.ts",
+      "change": "modified",
+      "beforeSha256": "4346d6297716ac79ea4dfac79675b5e38d3ce137bbaa49a5c82bfd35e8d9f872",
+      "afterSha256": "9c773f6cc92a6e7e64e284519da91fc30a71f954d9fe96abfcf89fe62dd4450e"
+    },
+    {
+      "path": "src/contracts/validation/event.ts",
+      "change": "modified",
+      "beforeSha256": "373e8efe83b0d333899e67791330204cf6c0ee0e6d5f59f9518b9468b8baeebe",
+      "afterSha256": "12437581654946262d4767b219c5298a9d246962136a6312f497ec62dc5aad78"
+    },
+    {
+      "path": "src/contracts/validation/identity.ts",
+      "change": "modified",
+      "beforeSha256": "bd692666478542e09685516b26919476b0765cf18b850a0dcc3ac665107b3e6f",
+      "afterSha256": "44bf274488570d671480c7333e87daccfce40f8c17d84a7beadd0fa5c3ade813"
+    },
+    {
+      "path": "src/control/control-engine/communication-reconciliation.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "874d2ce9a0a10de2d25ecb051e4cd0b2f64686409987cdb92c26dd95fe599631"
+    },
+    {
+      "path": "src/control/control-engine/control-engine.ts",
+      "change": "modified",
+      "beforeSha256": "71904ef7540fd6834530fd867d0ee59d8a9de06e74f9d9b74eaaf77d2fd7f168",
+      "afterSha256": "28744fa0f2134ce2194c4cabfd9652f8d78ab4b6220af4307e5497eaab13553b"
+    },
+    {
+      "path": "src/control/control-engine/control-intent.ts",
+      "change": "modified",
+      "beforeSha256": "0e3848258eaa9dd9bb15dcf93db38fa4450f58f6aabdfded3b4eef243575c504",
+      "afterSha256": "67f91b5dccfdcaf8390eeb09d65c2b942065ab228a807ebe7e860f82a8d17d7e"
+    },
+    {
+      "path": "src/control/control-engine/coordination.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "1d6afca9031b5eb32baffcbb1dc2d50258e1534e966e301ccca44f363a2d1f7c"
+    },
+    {
+      "path": "src/control/control-engine/policies/coordination-rules.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "3cf4d493cf4be6beb7a7415472ea059e2d3bd5663a50e238b618fbabfbaa1618"
+    },
+    {
+      "path": "src/control/control-engine/policies/runtime-call-admission.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "6b1aeee1c8d975d56e9b64071f0ef88b0e4b45c74368ef18b343ffb9d3c692f7"
+    },
+    {
+      "path": "src/control/control-engine/records/coordination.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "61911dc2d83e8d40b5499355e5c8024d8561583c124210f9a4fec0cda6bcdad5"
+    },
+    {
+      "path": "src/control/control-engine/records/dispatch.ts",
+      "change": "modified",
+      "beforeSha256": "f2fa7b387e6fa248c76661258c3e729f1f004a67677744ae19b7d23a6fec2124",
+      "afterSha256": "caf29746f9b2e785c38f8f163c7b5d4e9463eeec085edbd56bf755f54e4aec36"
+    },
+    {
+      "path": "src/control/control-engine/run-facts.ts",
+      "change": "modified",
+      "beforeSha256": "8d7d7f1b0821adced7efe06e6546f61bb9dffb4b26dbab7e454650a138b878b3",
+      "afterSha256": "908b9e4fb9ed80ff06ddfedea45608633a0e3cf0e6e3f32fe2fd28c4afd3a06f"
+    },
+    {
+      "path": "src/control/control-engine/run-reconciliation.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "cdad20099b36392545405d47483e80f11a16bb23c290184d751be781c0a787e7"
+    },
+    {
+      "path": "src/control/control-engine/start-run.ts",
+      "change": "modified",
+      "beforeSha256": "ea87ae0d995c23d0bfde0b72ca9f5bd7a1014077bae27231e8a116a40b8ded67",
+      "afterSha256": "65d42cf27890bdb9d97864e7d0a55ac249d2de26ba9354400c7cefa6af518d89"
+    },
+    {
+      "path": "src/control/dispatch-engine/coordination-admission-deliveries.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "dd43efc9b34822051f8b5f1a53995b6aaec5a9ee5bf0825b44b0472e277c41b4"
+    },
+    {
+      "path": "src/control/dispatch-engine/coordination-admission-read.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "c38387ba3983867c91b9dbbc0402fa49cfec0c991b09d2c3e9d155ccc2f1be12"
+    },
+    {
+      "path": "src/control/dispatch-engine/coordination-capability.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "89b7ff5e2f861bc743d82935ee5da2740c17b36101dc39f68c4123b6bb5cc1a0"
+    },
+    {
+      "path": "src/control/dispatch-engine/coordination-drive.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "fab2b8c18fcdae726da2ad208106268bfe997828558f96e98453a7ca8fed9fa5"
+    },
+    {
+      "path": "src/control/dispatch-engine/coordination-tool-access.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "3a1769456d49e1c570e78eaa0ad33b10be78ce0a2dd79809f6b9ee3da0fdb230"
+    },
+    {
+      "path": "src/control/dispatch-engine/dispatch-engine.ts",
+      "change": "modified",
+      "beforeSha256": "fe376c820d7bff167a3cb5a7a532547e89da442ca15a5f7984882930bbbdbb6e",
+      "afterSha256": "c2440000f82dafeda4af9a90518fc1b9fe2998e71ddd68f480a7b3fef073360d"
+    },
+    {
+      "path": "src/control/dispatch-engine/handoff-drive.ts",
+      "change": "modified",
+      "beforeSha256": "c28d350b97328466448b702150a3b4fb456cd51dd4f673368a6089bf0913f719",
+      "afterSha256": "112a47c8b4ea8472cbc3ada7f91adf4960a64a9dc69c8d2ad5928eda7edfcfbe"
+    },
+    {
+      "path": "src/control/dispatch-engine/leased-worker-runtime.ts",
+      "change": "modified",
+      "beforeSha256": "f2851f77576c0e9c896e15bab060801756b72a18d1d79d3baf6d24486067aadd",
+      "afterSha256": "81f30f36746d24555b4fd80324722a08edd538b79c0a9f8bb96b42007d14cb2f"
+    },
+    {
+      "path": "src/control/dispatch-engine/model-call-access.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "325281acb009a9c581beec5fe836102d5bdd1a851aeb146e4bf2f2fa990392e6"
+    },
+    {
+      "path": "src/control/dispatch-engine/operator-task-dispatch.ts",
+      "change": "modified",
+      "beforeSha256": "45470fd2705e23add91c402b776195170227109315f0ad07b29fc81ef9d741c7",
+      "afterSha256": "02762f394c2ce8b35fb8eff68b0a7998791bd7b6965c927c77b18720d1b63687"
+    },
+    {
+      "path": "src/control/dispatch-engine/reviewer-dispatch.ts",
+      "change": "modified",
+      "beforeSha256": "7d1a4288f6c93473f046d0e3baad800ee188ff33868c4aff92df65b33852b130",
+      "afterSha256": "efda33334bdc953f0fdcd520314ddb28845ae92442ac223dd6955d6e893477ef"
+    },
+    {
+      "path": "src/control/dispatch-engine/runtime-dispatch.ts",
+      "change": "modified",
+      "beforeSha256": "32f933b2bd068cb9873e1d325e5f75f452559ba81647b054127e076961320e7f",
+      "afterSha256": "7810ad5fea01bdc9068fa21f8104c5776e88dea36496097a8103b0762ccd2333"
+    },
+    {
+      "path": "src/control/dispatch-engine/successor-run-preparation.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "5fc995b1a0b67f8da5b1f7df6889d7228e3a9d2055666c3d1c8ccd6996363928"
+    },
+    {
+      "path": "src/control/dispatch-engine/work-identity.ts",
+      "change": "modified",
+      "beforeSha256": "ad02a5e0605b491436046c1c5865522b5b9078dcda6a47a23e97272ad3e447cc",
+      "afterSha256": "7c0175fada82ad3dcb8bc2b01d6894d422e5c9ddc6e383d2d664725b840a142a"
+    },
+    {
+      "path": "src/control/dispatch-engine/work-material-drive.ts",
+      "change": "modified",
+      "beforeSha256": "b3664474087585e7e47e3e790578edbae2cc6e4e0fc47ee10c566101838cf034",
+      "afterSha256": "fd8cbed40d84cf2ebaa1d79d498ddf220853cbff256c0bfc331559e6254acf9c"
+    },
+    {
+      "path": "src/control/dispatch-engine/workspace-drive.ts",
+      "change": "modified",
+      "beforeSha256": "566fd666898f0f0d5dba9ebf53f9d3fc28c4ce03581dd5c57f686d3c97cdecec",
+      "afterSha256": "352163d8502fbf523a68f25bf4a182124a2f2a4b6240afcca8d809ff88635129"
+    },
+    {
+      "path": "src/data/context-compiler/delivery-materials.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "82f8d53b10ce1066030f932809317ef708fc1bb87b6aacca08679739940984a7"
+    },
+    {
+      "path": "src/data/context-compiler/runtime-context.ts",
+      "change": "modified",
+      "beforeSha256": "b0b9142fa4cfb67ae9cad2227c4e116f4bb6b0c8608603e8f1f74a1af8a2121a",
+      "afterSha256": "18e494b7ead9a9ff6bd9bc63c5e80419b259d13999b7b1a529aa944691cf88fd"
+    },
+    {
+      "path": "src/data/read-model-index/read-model-index.ts",
+      "change": "modified",
+      "beforeSha256": "9972e339492f2eca7c27739a891138fa4245b43e434c207e2ded47bb110bdf96",
+      "afterSha256": "0f88c8476e5b6e25a9ab3cef7d9abb4ea8f6c5007cd6bd2b5d80a25d72e0fe81"
+    },
+    {
+      "path": "src/data/read-model-index/sqlite-read-model-index.ts",
+      "change": "modified",
+      "beforeSha256": "f0a5ecfa55b0e2ec72c122ece60fe5a32d2bc335cc4ffbfdb9d43eeaaca3fe9a",
+      "afterSha256": "59908993a96608c6d0d30e68b764d4176237c50a9999a113a213ec5f2190a2be"
+    },
+    {
+      "path": "src/data/state-ledger/in-memory-ledger.ts",
+      "change": "modified",
+      "beforeSha256": "d94bc8aaeeef3a1dc614554db08062ff16f01cc97300b77d35655ef37968f621",
+      "afterSha256": "2dfb7683afc7179a1a95b5932af0672d1d373220ed0f7e874f4618439bdb2d5a"
+    },
+    {
+      "path": "src/data/state-ledger/ledger-validation.ts",
+      "change": "modified",
+      "beforeSha256": "b5c9e0e406e564760c958ad685c319baef11a884889161c3a96c522da4c55c11",
+      "afterSha256": "647736dfe8c899244349333b5059c660fe318a1a260ba9b5c565d7eac9631cd7"
+    },
+    {
+      "path": "src/data/state-ledger/sqlite-ledger.ts",
+      "change": "modified",
+      "beforeSha256": "b10fc7b58c61f7c948fdae49b1d7bde572ca76057b12de4ba62d88aa86be0862",
+      "afterSha256": "0082774870afa1a317611660673b88ea87a135cb34ffb065d8a35973cf7b08f6"
+    },
+    {
+      "path": "src/execution/worker-runtime/coding-agent-runtime.ts",
+      "change": "modified",
+      "beforeSha256": "4e5c4243c3b54579c1119ca0c347cd6877873ef3e44e4af6849b233e36f6f9b3",
+      "afterSha256": "54fdbfa11b258e078d0d83e8af5b6888c4cb9ce3a60f21f3e6816ec654ed5cc6"
+    },
+    {
+      "path": "src/execution/worker-runtime/coordination-tools.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "6a0046222db84c0ecfd45409e3771aa77f6eeb3413aac262a2ee3a45f47d7c19"
+    },
+    {
+      "path": "src/execution/worker-runtime/fake-runtime-adapter.ts",
+      "change": "modified",
+      "beforeSha256": "a9b1b43c63b24fe904140b555760f802b5d920576d743db2bb28566186b903fc",
+      "afterSha256": "c69307729e3f204c9c5f98364b73fc12e456f658f19c1e2c438cd5f32a012d5e"
+    },
+    {
+      "path": "src/execution/worker-runtime/observed-model-run.ts",
+      "change": "modified",
+      "beforeSha256": "c1e79fd4e2a72e270b71085454e91714f333ce3ac84ae307682a38c8025dc4c5",
+      "afterSha256": "84d0a432d589b4791530577cabd39fc4f6fc8bafd849f0577e3c759a51473948"
+    },
+    {
+      "path": "src/harness/in-memory-harness.ts",
+      "change": "modified",
+      "beforeSha256": "ba92f4dac31c6ac5fe14d39d96a10e8d656a93976bc65b20cd5588137167f5c6",
+      "afterSha256": "09be02402b09209258d88fda09f42501c006b38c28ac75a05af4b2dcf6e8e2e5"
+    },
+    {
+      "path": "src/harness/persistent-harness.ts",
+      "change": "modified",
+      "beforeSha256": "b8ba81421fa2fddca5968f0a5cdb73c6033e4786d7415ed7313c8893e5e4f25f",
+      "afterSha256": "90c21c678dc2f9f4f9a36017c82ae993358decc6c03b42c9544f706dcf61e5e9"
+    },
+    {
+      "path": "tests/contract-suite/console.contract.suite.ts",
+      "change": "modified",
+      "beforeSha256": "45888ae555130a9a4934df1e36dbc3163e8b8722637e3cf343063eb546577f92",
+      "afterSha256": "38ffd7e1b97c4a237c77060a1c5e2bf6d7f2735091b76dd6a7ee1005eea25188"
+    },
+    {
+      "path": "tests/contract-suite/p1-07-harness.ts",
+      "change": "modified",
+      "beforeSha256": "98ddfb8656a01f28fdd41b34e5d69e3ab05b97a6ddcb3fb8cdba1027f8367257",
+      "afterSha256": "7f911b8612f9cce1388d34c8bf4b5a3ab266a6b46564b82e6d7cb351e55db39d"
+    },
+    {
+      "path": "tests/contract-support/testing/control.double.ts",
+      "change": "modified",
+      "beforeSha256": "b91e5297f2e01cc8a2edba681180664163d81afa05dc530b15bafbe4652dab09",
+      "afterSha256": "f45f440f85653af05831275ef1ca7560f5085d663c7bc3245ab7bf0bd668abdf"
+    },
+    {
+      "path": "tests/contracts/module-ownership.test.ts",
+      "change": "modified",
+      "beforeSha256": "cd1fdc01a8b591cf62c620e4ffaa80446a68b71608fa0cc72fba2773ec2f2077",
+      "afterSha256": "503d0774f91dbb3301bcc05b59d404e513e1fb39d06d54dd4714a6272969f922"
+    },
+    {
+      "path": "tests/control/dispatch-drive.test.ts",
+      "change": "modified",
+      "beforeSha256": "a1318fd6383eaba09bea0162451d30740e7e55d37ad5efab425242da7238c700",
+      "afterSha256": "89a9241e853234e4af5d3e4efc701551512ae12f8e43ac21cc74a27fc78e49b0"
+    },
+    {
+      "path": "tests/control/reviewer-dispatch-isolation.test.ts",
+      "change": "modified",
+      "beforeSha256": "aa2a5e6bd0f4d3afaa13c3c2eab013ae379ffc9a6e38ad46c6c8182f4a429872",
+      "afterSha256": "74cb7ee10e382b45a25a85e0eb27ca82ebbe83b995d77668138894df2e235573"
+    },
+    {
+      "path": "tests/control/runtime-dispatch.test.ts",
+      "change": "modified",
+      "beforeSha256": "1ad73af98e70f22996ecd96beeec12a703231a34d4fa0378b97d38659125004b",
+      "afterSha256": "dadf8a3635041b37e397fcd93e3407ff80ffb263a61ff093bfe64bd4ac24c42a"
+    },
+    {
+      "path": "tests/control/workspace-drive.test.ts",
+      "change": "modified",
+      "beforeSha256": "2d30897dc9adab1093b93b2c05fff7f4010d793054f1af1e4e53f60b7454eb19",
+      "afterSha256": "6e23dcb489a1dfbf03b1d01c50e2de106d49bab1144528f3b0add05795ecc51a"
+    },
+    {
+      "path": "tests/coordination/control.sqlite.test.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "c5aad8d603ebd7b34ab9affa8cf0eb6b67605b6136546cec1b3e34b6aa68de3b"
+    },
+    {
+      "path": "tests/coordination/control.test.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "427008e02ab58870ee6e87c85905ad7503cf65a5ff09ee1c78f2f31093c287b9"
+    },
+    {
+      "path": "tests/coordination/coordination-capability.test.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "42d34230a838feea430f30c09ae06b6e27713b3d7cc2281112ad02c3e39a607f"
+    },
+    {
+      "path": "tests/coordination/coordination-process.mjs",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "4798fa5ef612a7c783979612b348a1c61121b97226bc62b99c283d16cc6d7b2d"
+    },
+    {
+      "path": "tests/coordination/delivery-into-input.test.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "5dd10b57a229e9bb667042c23c2f6ab8cbb1a6191df2b170e1f716fed129ebc3"
+    },
+    {
+      "path": "tests/coordination/handoff-successor.test.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "3a94141995b5316854335e0116f12c1b069387de6d78c3f33b430e124755cea4"
+    },
+    {
+      "path": "tests/coordination/host-tool-chain.test.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "b180a9d9d83c9d31eee2f18f79d3a770cc050aba215a1c84543919ebf35aa639"
+    },
+    {
+      "path": "tests/coordination/material-isolation.test.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "b9b686a4e2565d79902150962b3cc326cadb3a3e028b864e22858a7c2d88b5f3"
+    },
+    {
+      "path": "tests/coordination/model-request-evidence-bypass.test.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "3e5f6d1f235ac24e61f1ee35adcc41d560105626580a4655a5cf0663f080a257"
+    },
+    {
+      "path": "tests/coordination/participation-uniqueness.test.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "9688193ca7815382e215a50748b9983f2f02e6c6fa5a970e1119d691a9e3f25c"
+    },
+    {
+      "path": "tests/coordination/process-loader.mjs",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "af5df3af8d03d52bbeb219a0f492a67aab326e1fa3df2cebc8d10e67664b0ddf"
+    },
+    {
+      "path": "tests/coordination/process-recovery.test.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "4af55b6aeb6c7f94b4d5fb31c32f22de9a905e81781274dcb3a10686385e1162"
+    },
+    {
+      "path": "tests/coordination/route-continuity.test.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "0787c1398a3eb44e4ddb887ab9931cb4b17e472c79d5008fbf08fadfd2aa043e"
+    },
+    {
+      "path": "tests/coordination/route-drive.test.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "ff5bb35443c4bc19df42d89f9fb95faae04efa049465cc73d08d626f9aabe0a3"
+    },
+    {
+      "path": "tests/coordination/runtime-concurrency-fixture.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "f857485e833fdc0f73b15297196ed7ed80fdec8de861e91e74b437038d7252f9"
+    },
+    {
+      "path": "tests/coordination/runtime-concurrency.test.ts",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "dc9ad41dd886480bc32d2c3666219d0a5b10aea60f6c7ed0a687ed2b9b490b5d"
+    },
+    {
+      "path": "tests/coordination/runtime-process.mjs",
+      "change": "added",
+      "beforeSha256": null,
+      "afterSha256": "0343635795ccc1ad807f110c1475032cd49ba99c563a14b4b95ad82e1584020f"
+    },
+    {
+      "path": "vendor/coding-agent/INTEGRATION.md",
+      "change": "modified",
+      "beforeSha256": "57bc0d8e3932c38decba7d1b0ff0e9e56bd19845e1431832e63fc87f946b43b7",
+      "afterSha256": "70c5d7dbc7c1f8dd8679f4bcb85a5ca3d69115e79230be0d7fca6c890040582f"
+    },
+    {
+      "path": "vendor/coding-agent/src/app/composition/composition-root.ts",
+      "change": "modified",
+      "beforeSha256": "53c83852499488ab3f6f1c923f120f40951952c915b3ab38709063c1dab858d6",
+      "afterSha256": "5190090fe4b90dc798c6cef1c141841a6930fa1559e4cdee1c62937f7c12b1b3"
+    },
+    {
+      "path": "vendor/coding-agent/src/app/composition/resume-composition.ts",
+      "change": "modified",
+      "beforeSha256": "afde839137d43410fb7b143d34e06f9bedc496c64f256e77c05e7aff91b5f888",
+      "afterSha256": "07736c2055e1855103b9e8030901cc07a1d16e8cbaceb95c4cf8b2a8ec9a5a9e"
+    },
+    {
+      "path": "vendor/coding-agent/src/policy/permissions/permission-policy.ts",
+      "change": "modified",
+      "beforeSha256": "ed10110db8208f5920ed91ff474da02a0aadca7f398e4dc80136b02832c6c107",
+      "afterSha256": "c14c3b93030c737fce91dcac49572a59816a4d9213e1371fbf3cfbe13697bd51"
+    },
+    {
+      "path": "vendor/coding-agent/tests/integration/m3-tools.test.ts",
+      "change": "modified",
+      "beforeSha256": "0e8ccb3494808ce695dd326b78ad8c09a88c6df5834c7f714bf064ad9f10b442",
+      "afterSha256": "2a70c6a52e38e5fc5eb511743fadf3506c986c4a506768b9a6deae76ba2b6f27"
+    }
+  ]
+}

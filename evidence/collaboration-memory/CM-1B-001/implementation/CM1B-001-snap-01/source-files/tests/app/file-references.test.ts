@@ -1,0 +1,31 @@
+import { afterEach, expect, it } from 'vitest';
+import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { createWorkspaceTools } from '../../src/app/workspace-tools.js';
+import { resolveFileReferences } from '../../src/app/file-references.js';
+const cleanup: Array<() => Promise<unknown> | void> = [];
+afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
+const scope = {projectId:'acceptance-alpha',workspaceId:'workspace-main'};
+it('binds readable references to the exact current bytes and rejects stale files, alternate scope, private paths and symlinks', async () => {
+  const dir=await mkdtemp('/tmp/reference-boundary-');cleanup.push(()=>rm(dir,{recursive:true,force:true}));
+  const alpha=dir+'/alpha', beta=dir+'/beta';await mkdir(alpha);await mkdir(beta);await mkdir(alpha+'/private');
+  await writeFile(alpha+'/main.ts','export const value = 1;');await writeFile(beta+'/secret','beta');await writeFile(alpha+'/private/key','private');
+  await symlink(beta,alpha+'/outside');
+  const api=await createWorkspaceTools(dir+'/data',{workspaceRoots:{'acceptance-alpha':alpha,'acceptance-beta':beta},privatePaths:[alpha+'/private']});cleanup.push(api.close);
+  const read=(input:Record<string,string>)=>api.read('/api/files/preview',input);
+  const preview=await read({...scope,path:'main.ts'}) as {sha256:string};
+  expect(preview.sha256).toBe(createHash('sha256').update('export const value = 1;').digest('hex'));
+  const ref={path:'main.ts',sha256:preview.sha256};
+  const instruction=await resolveFileReferences(scope,[ref],read);
+  expect(instruction).toContain('"main.ts"');expect(instruction).toContain(preview.sha256);expect(instruction).toContain('内容尚未载入');
+  expect(instruction).not.toContain('export const value');
+  await writeFile(alpha+'/main.ts','export const value = 2;');
+  await expect(resolveFileReferences(scope,[ref],read)).rejects.toThrow('已变化');
+  for(const path of ['../beta/secret','outside/secret','private/key',beta+'/secret']) await expect(resolveFileReferences(scope,[{...ref,path}],read)).rejects.toThrow();
+  await expect(resolveFileReferences({...scope,workspaceId:'wrong'},[ref],read)).rejects.toThrow();
+});
+it('rejects malformed or excessive references before any file is read', async () => {
+  let calls=0;const read=async()=>{calls++;return {};};
+  for(const raw of [null,{},Array(9).fill({}),[{path:'a\nb',sha256:'a'.repeat(64)}],[{path:'a',sha256:'invalid'}]]) await expect(resolveFileReferences(scope,raw,read)).rejects.toThrow();
+  expect(calls).toBe(0);expect(await resolveFileReferences(scope,undefined,read)).toBe('');
+});

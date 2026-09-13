@@ -312,7 +312,10 @@ export type ArchitectureCandidateProposalV1 = {
   planRef: PlanRevisionRef;
   /** EXACT source baseline the proposal derives from (invariant #13). */
   sourceBaselinePin: ArchitectureBaselinePin;
-  selectedDeltaRef: ArtifactRef;
+  /** Mechanical source, or null when an explicit decision brief is selected. */
+  selectedDeltaRef: ArtifactRef | null;
+  /** Report/option source; mutually exclusive with selectedDeltaRef. */
+  selectedBriefRef?: ArchitectureDecisionBriefRef;
   selectedOptionId: string;
   /** Normalized content of the candidate baseline (content-addressed). */
   normalizedContent: Omit<import('./governance.js').ArchitectureBaselineContentV1, 'schemaVersion'>;
@@ -332,6 +335,7 @@ export function candidateProposalPayload(p: ArchitectureCandidateProposalV1): st
     planRef: p.planRef,
     sourceBaselinePin: p.sourceBaselinePin,
     selectedDeltaRef: p.selectedDeltaRef,
+    ...(p.selectedBriefRef ? { selectedBriefRef: p.selectedBriefRef } : {}),
     selectedOptionId: p.selectedOptionId,
     normalizedContent: p.normalizedContent,
   });

@@ -1,0 +1,6 @@
+bash scripts/test-wsl.sh --config <OUT>/spec-vitest.config.mjs <OUT>/no-successor-prepare.test.ts -t "Delivery 正文"
+no-successor-prepare exit=1
+bash <OUT>/spec-test-wsl.sh <OUT>/no-successor-prepare.test.ts -t "Delivery 正文" (isolated test-wsl.sh copy; unchanged sandbox preflight; evidence-only config/include)
+no-successor-prepare exit=1
+bash <OUT>/spec-test-wsl.sh <OUT>/handover-successor.test.ts -t "Delivery 正文"
+handover-successor exit=1

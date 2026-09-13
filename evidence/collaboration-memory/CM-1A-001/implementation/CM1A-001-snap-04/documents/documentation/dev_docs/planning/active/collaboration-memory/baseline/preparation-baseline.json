@@ -1,0 +1,304 @@
+{
+  "captured_at": "2026-09-12T15:00:46.376Z",
+  "product": {
+    "root": "D:/1.project/Software/agent_platform",
+    "head": "0eb02717d16412298c786166a75ca1a9d3e05ac7",
+    "branch": "main",
+    "status": " M IMPLEMENTATION-HANDOFF.md\n M src/app/governance.ts\n M src/contracts/commands/governance.ts\n M src/contracts/completed-work-context.ts\n M src/contracts/context-continuity.ts\n M src/contracts/execution-feedback.ts\n M src/contracts/initial-planning.ts\n M src/contracts/role-spec.ts\n M src/contracts/validation/context.ts\n M src/contracts/validation/role.ts\n M src/control/control-engine/records/role-spec.ts\n M src/control/control-engine/role-spec.ts\n M src/control/control-engine/work-record.ts\n M src/control/dispatch-engine/planned-task-dispatch.ts\n M src/control/dispatch-engine/role-spec-read.ts\n M src/data/context-compiler/completed-work-context-compiler.ts\n M src/data/context-compiler/query-context-compiler.ts\n M src/data/context-compiler/work-run-materials.ts\n M src/data/read-model-index/governance-view.ts\n M src/execution/worker-runtime/coding-agent-runtime.ts\n M src/execution/worker-runtime/observed-model-run.ts\n M src/ui/src/features/governance.tsx\n M tests/app/initial-planning.test.ts\n M tests/app/role-spec-governance.test.ts\n M tests/context/completed-work-regression.test.ts\n M tests/control/work-record.test.ts\n?? evidence/2026-09-12-agent-templates-memory/served-artifacts.json\n?? evidence/2026-09-12-agent-templates-memory/source-fingerprint.json\n?? evidence/2026-09-12-agent-templates-memory/verification.md\n?? evidence/2026-09-12-agent-templates-memory/verify-served.mjs\n?? src/ui/tests/agent-templates.spec.ts",
+    "unmerged": [],
+    "tracked_changes": [
+      {
+        "path": "IMPLEMENTATION-HANDOFF.md",
+        "bytes": 3463,
+        "sha256": "1fdcb4537aef521ff28c05c8f00d0a3eb1f7fbf447d33cb340de26e0bb1679d5"
+      },
+      {
+        "path": "src/app/governance.ts",
+        "bytes": 37350,
+        "sha256": "b7d1d9bb154a0e0d9e4dbb640c4b8931927f2c41eee0b6063bc9b82a505f0592"
+      },
+      {
+        "path": "src/contracts/commands/governance.ts",
+        "bytes": 9215,
+        "sha256": "7f046491865fff50531711d891061fb1b34c6ab073a8130607e95ca4fedf45f7"
+      },
+      {
+        "path": "src/contracts/completed-work-context.ts",
+        "bytes": 10326,
+        "sha256": "81af1c1e2118f2f5d764772d5c4691632d9f3d91de070ca2e974a1c0d2a229da"
+      },
+      {
+        "path": "src/contracts/context-continuity.ts",
+        "bytes": 23407,
+        "sha256": "5c9b211d84d1996f7cb71b85a279d82e8da098a5bad8696f6de80c7554573f86"
+      },
+      {
+        "path": "src/contracts/execution-feedback.ts",
+        "bytes": 6237,
+        "sha256": "006450bcc6a7c284e5f7d2b381ee52419e01350fe3e8c1abd790e84259245824"
+      },
+      {
+        "path": "src/contracts/initial-planning.ts",
+        "bytes": 5689,
+        "sha256": "5b92be3d2a20e0af074e7a48a6405033438ff1f22b6bd6e6de91e04d8ac1ece7"
+      },
+      {
+        "path": "src/contracts/role-spec.ts",
+        "bytes": 11536,
+        "sha256": "f9e1e37679cb4d9dfbb373d208013486b40a0858bf8137e5fe3533303cd1928e"
+      },
+      {
+        "path": "src/contracts/validation/context.ts",
+        "bytes": 21781,
+        "sha256": "f2225afaa8c7d7a3fefe5504cd429dfa467cf94f92c36fe3e6d081d51d0274b2"
+      },
+      {
+        "path": "src/contracts/validation/role.ts",
+        "bytes": 12160,
+        "sha256": "c46db162a069e7b48ea047d77bc3b62d0b839820110df20f82a5baf86b2ef787"
+      },
+      {
+        "path": "src/control/control-engine/records/role-spec.ts",
+        "bytes": 4191,
+        "sha256": "a9f13246a81680937cc4cca32c9b48262483dc50ffa4c291d0069715a00346b5"
+      },
+      {
+        "path": "src/control/control-engine/role-spec.ts",
+        "bytes": 8054,
+        "sha256": "7177b902c7530c926d986059c4843f97b122680dda5178c3d980db41732abfd8"
+      },
+      {
+        "path": "src/control/control-engine/work-record.ts",
+        "bytes": 19852,
+        "sha256": "7ffb3528eabfc127427c76624a20f1490a73ec6fe1070dd92156fb56e8406539"
+      },
+      {
+        "path": "src/control/dispatch-engine/planned-task-dispatch.ts",
+        "bytes": 12326,
+        "sha256": "65131f9ad75b03d97c54a9a5d58f0bfe03d362b9441ccb94be71ae953ba9f79f"
+      },
+      {
+        "path": "src/control/dispatch-engine/role-spec-read.ts",
+        "bytes": 9163,
+        "sha256": "5c5352b33aeeaf52bd1be74190a38b677fc45055b4b52ca5b4fd331cc7e2edae"
+      },
+      {
+        "path": "src/data/context-compiler/completed-work-context-compiler.ts",
+        "bytes": 12804,
+        "sha256": "3fed6f4beec156e79727e2158ddbce2d469e0f911e377a3cba6f132f8e21d05f"
+      },
+      {
+        "path": "src/data/context-compiler/query-context-compiler.ts",
+        "bytes": 13443,
+        "sha256": "7b277316348d24ce9aecd16faf6c0b68c69d274c294fa9a70d57bcd537e99d82"
+      },
+      {
+        "path": "src/data/context-compiler/work-run-materials.ts",
+        "bytes": 52338,
+        "sha256": "74592397015b80154e0c8863f87a34e89570708fb0029901e996df5e14d6884c"
+      },
+      {
+        "path": "src/data/read-model-index/governance-view.ts",
+        "bytes": 32915,
+        "sha256": "a7fbc2ccfc1a551fd782e13bd188b28999044032b176c462945c4f72fcf99c25"
+      },
+      {
+        "path": "src/execution/worker-runtime/coding-agent-runtime.ts",
+        "bytes": 20547,
+        "sha256": "4e5c4243c3b54579c1119ca0c347cd6877873ef3e44e4af6849b233e36f6f9b3"
+      },
+      {
+        "path": "src/execution/worker-runtime/observed-model-run.ts",
+        "bytes": 4581,
+        "sha256": "c1e79fd4e2a72e270b71085454e91714f333ce3ac84ae307682a38c8025dc4c5"
+      },
+      {
+        "path": "src/ui/src/features/governance.tsx",
+        "bytes": 40904,
+        "sha256": "e9040491baacd23b24e843bb97d1bb7a75105b3be444856c06dc2806944f8216"
+      },
+      {
+        "path": "tests/app/initial-planning.test.ts",
+        "bytes": 9643,
+        "sha256": "2855fc5d753a54e1d62c9b8ec4febd766b06d0ed12c1addef3c515cc0fa55a62"
+      },
+      {
+        "path": "tests/app/role-spec-governance.test.ts",
+        "bytes": 27299,
+        "sha256": "978ba44e745a7590d578cd5a240a04111b824a0d29d0f8b755691f13306d842d"
+      },
+      {
+        "path": "tests/context/completed-work-regression.test.ts",
+        "bytes": 6033,
+        "sha256": "43097f944c5e3f52ace45f5ce06c197d29bb35ff426ff48fcbd83a1e08fd62b6"
+      },
+      {
+        "path": "tests/control/work-record.test.ts",
+        "bytes": 21234,
+        "sha256": "6534d6fd29068bdafefc5d9b8f322caed2a2bb6c11ba4e2d87e00317a2902179"
+      }
+    ],
+    "untracked": [
+      {
+        "path": "evidence/2026-09-12-agent-templates-memory/served-artifacts.json",
+        "bytes": 1122,
+        "sha256": "e6ac7af597db2a431dc9ed6cf1686258714cf68ccc664fcfe0fe8561b61b510e"
+      },
+      {
+        "path": "evidence/2026-09-12-agent-templates-memory/source-fingerprint.json",
+        "bytes": 235067,
+        "sha256": "890a9cb91307ce3613d09351a02af371950a9ea21e3845edcbd8030c624310f5"
+      },
+      {
+        "path": "evidence/2026-09-12-agent-templates-memory/verification.md",
+        "bytes": 2673,
+        "sha256": "bcb9dfd50af84ca86f5239ecb873df5945db50ab077f6f09846540487e6428dd"
+      },
+      {
+        "path": "evidence/2026-09-12-agent-templates-memory/verify-served.mjs",
+        "bytes": 1471,
+        "sha256": "7747e4706c778ffd31359b496a08cb9e6bb0b7ee26a4e5049900f4e4c9870995"
+      },
+      {
+        "path": "src/ui/tests/agent-templates.spec.ts",
+        "bytes": 1783,
+        "sha256": "caea4667f783536c0341806fc34be10c7c71ba6c55dfbd3d8fdbc8a568d86628"
+      }
+    ],
+    "payload_untracked": [
+      {
+        "path": "src/ui/tests/agent-templates.spec.ts",
+        "bytes": 1783,
+        "sha256": "caea4667f783536c0341806fc34be10c7c71ba6c55dfbd3d8fdbc8a568d86628"
+      }
+    ],
+    "patches": {
+      "tracked": {
+        "bytes": 77572,
+        "sha256": "e81abc4503ddebfe964d9b10e9f35b351b023001a5e3f1d925924b587eb13148"
+      },
+      "untracked": {
+        "bytes": 2082,
+        "sha256": "5a3ac31f22506b56c825bc626fddc580860c2ae2c4fede37fd0452cd790d3d4b"
+      }
+    },
+    "source_snapshot": {
+      "algorithm": "SHA256(sorted path + NUL + raw-file-SHA256 + LF); source scope documented in BASELINE.md",
+      "file_count": 1200,
+      "id": "sha256:1055474c3cabe50d6c5a2630eba4dc2983c306b6f67ca713ef16c62a03afb7a6"
+    }
+  },
+  "docs": {
+    "root": "D:/1.project/Software/agent_learn/agent_dev/agent_platform",
+    "head": "e99484fb2bd3296a32d8442e74b47d8ed569b3d5",
+    "branch": "main",
+    "status": " M PRODUCT.md\n M dev_docs/interfaces/context-lifecycle.md\n M dev_docs/interfaces/runtime-collaboration.md\n M dev_docs/product/README.md\n M human/module-status.md\n?? dev_docs/design/2026-09-12-agent通信基础设施与可扩展编排-讨论整理.md\n?? dev_docs/planning/active/collaboration-memory/ACCEPTANCE-PROMPT.md\n?? dev_docs/planning/active/collaboration-memory/CURRENT-CALLCHAIN-EVIDENCE.md\n?? dev_docs/planning/active/collaboration-memory/IMPLEMENTATION-PROMPT.md\n?? dev_docs/planning/active/collaboration-memory/MAIN-AGENT-PROMPT.md\n?? dev_docs/planning/active/collaboration-memory/MEMORY-REUSE-EVIDENCE.md\n?? dev_docs/planning/active/collaboration-memory/PLAN.md\n?? dev_docs/planning/active/collaboration-memory/READINESS.md\n?? dev_docs/product/conversations/2026-09-12-agent通信编排与记忆-原始对话.md\n?? dev_docs/verification/2026-09-12-memory-knowledge-product-scope.md",
+    "unmerged": [],
+    "tracked_changes": [
+      {
+        "path": "PRODUCT.md",
+        "bytes": 17157,
+        "sha256": "93cbd9d41ad72f6394512f952b97f3b8784133d691ee00b4b0f53c124c072c52"
+      },
+      {
+        "path": "dev_docs/interfaces/context-lifecycle.md",
+        "bytes": 12503,
+        "sha256": "0b61f7a4d06dede910a4eae0293005091785de35e2b7031c70db93db20f0f06c"
+      },
+      {
+        "path": "dev_docs/interfaces/runtime-collaboration.md",
+        "bytes": 27231,
+        "sha256": "dbbd1e6036d9838ceb3af7d393e340ffa294e6be159b931aa4f79753c01574a0"
+      },
+      {
+        "path": "dev_docs/product/README.md",
+        "bytes": 3849,
+        "sha256": "218972b21732a77dee1cba056e8f789c514c83308166fd815951cf0585779694"
+      },
+      {
+        "path": "human/module-status.md",
+        "bytes": 20695,
+        "sha256": "a7004a46adfd58602146c65eba39f31497e47942c790dabfc18bdf20b155eb2e"
+      }
+    ],
+    "untracked": [
+      {
+        "path": "dev_docs/design/2026-09-12-agent通信基础设施与可扩展编排-讨论整理.md",
+        "bytes": 13362,
+        "sha256": "0b160743d46476ba52bc6f6de9372855f1fa49d83783ac7cc78f11b0e1535834"
+      },
+      {
+        "path": "dev_docs/planning/active/collaboration-memory/ACCEPTANCE-PROMPT.md",
+        "bytes": 5358,
+        "sha256": "1e6d0e22603f8da386fd8965f4f1f88067a710826dcd2c2f6c8d0d5ed06e9790"
+      },
+      {
+        "path": "dev_docs/planning/active/collaboration-memory/CURRENT-CALLCHAIN-EVIDENCE.md",
+        "bytes": 43296,
+        "sha256": "969188f7d1f95fb31f211ca81f29b820b9e0fdd3264195e2831f086f56ddf78a"
+      },
+      {
+        "path": "dev_docs/planning/active/collaboration-memory/IMPLEMENTATION-PROMPT.md",
+        "bytes": 5376,
+        "sha256": "96301adf641be26ad8649c79c4f32e6bbbfe8d105bf0e13ca83efd4eba5ab01b"
+      },
+      {
+        "path": "dev_docs/planning/active/collaboration-memory/MAIN-AGENT-PROMPT.md",
+        "bytes": 6528,
+        "sha256": "c722ad645a89805db5fd7dfe30e77171d58d46525d9678e45b4bc43480412285"
+      },
+      {
+        "path": "dev_docs/planning/active/collaboration-memory/MEMORY-REUSE-EVIDENCE.md",
+        "bytes": 25114,
+        "sha256": "5eb277be9332813cb485c97d4cedd123e5808fc738cbe65327e2e60247f90274"
+      },
+      {
+        "path": "dev_docs/planning/active/collaboration-memory/PLAN.md",
+        "bytes": 82917,
+        "sha256": "6843b82295b7b74dc3b8583f4ba3a29f3afeb9c0a9413cf389b0977b8c669c5a"
+      },
+      {
+        "path": "dev_docs/planning/active/collaboration-memory/READINESS.md",
+        "bytes": 12967,
+        "sha256": "675adf3a7994798bbac2606716effc5cd2e275c0b25f3a0737e51a1faed5fbbb"
+      },
+      {
+        "path": "dev_docs/product/conversations/2026-09-12-agent通信编排与记忆-原始对话.md",
+        "bytes": 55167,
+        "sha256": "b3579c574f9f8c657de36bbac44a5d52a43cd93898b189674aa19323a7504842"
+      },
+      {
+        "path": "dev_docs/verification/2026-09-12-memory-knowledge-product-scope.md",
+        "bytes": 1334,
+        "sha256": "8878da6b072e63b566989e218c706ae9bec009515923567be377a31e4e261932"
+      }
+    ],
+    "payload_untracked": [
+      {
+        "path": "dev_docs/design/2026-09-12-agent通信基础设施与可扩展编排-讨论整理.md",
+        "bytes": 13362,
+        "sha256": "0b160743d46476ba52bc6f6de9372855f1fa49d83783ac7cc78f11b0e1535834"
+      },
+      {
+        "path": "dev_docs/product/conversations/2026-09-12-agent通信编排与记忆-原始对话.md",
+        "bytes": 55167,
+        "sha256": "b3579c574f9f8c657de36bbac44a5d52a43cd93898b189674aa19323a7504842"
+      },
+      {
+        "path": "dev_docs/verification/2026-09-12-memory-knowledge-product-scope.md",
+        "bytes": 1334,
+        "sha256": "8878da6b072e63b566989e218c706ae9bec009515923567be377a31e4e261932"
+      }
+    ],
+    "patches": {
+      "tracked": {
+        "bytes": 16337,
+        "sha256": "e24c06e86f0bf1acf053dbc82fb89b903d207b04580527d145b7ed3cf1ebd124"
+      },
+      "untracked": {
+        "bytes": 71267,
+        "sha256": "4b5c4350de89285cf89477effb03bcab5eede95fe68c408b45b517f93fd88b6d"
+      }
+    }
+  }
+}

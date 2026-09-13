@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "coding-safety",
+  "title": "Coding safety",
+  "kind": "instruction",
+  "priority": 100,
+  "contentFile": "content.md"
+}

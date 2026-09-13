@@ -1,0 +1,36 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [31m❯[39m tests/coordination/host-tool-chain.test.ts [2m([22m[2m3 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 8732[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='task'/'all' [33m 3340[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'all' [33m 3060[2mms[22m[39m
+[31m     [31m×[31m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'any'[39m[33m 2331[2mms[22m[39m
+ [32m✓[39m tests/coordination/route-drive.test.ts [2m([22m[2m25 tests[22m[2m)[22m[33m 39469[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'any' missing-first=false preserves actual conditions and retains late reports [33m 1423[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'all' missing-first=false preserves actual conditions and retains late reports [33m 1326[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'any' missing-first=true preserves actual conditions and retains late reports [33m 1490[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite close + reopen 后仍能领取既有 wait_admission intent 并完成唯一后继 [33m 1281[2mms[22m[39m
+   [33m[2m✓[22m[39m independent process exit before_page recovers fixed subscription pages exactly once [33m 11606[2mms[22m[39m
+   [33m[2m✓[22m[39m independent process exit after_page recovers fixed subscription pages exactly once [33m 11731[2mms[22m[39m
+   [33m[2m✓[22m[39m independent consumers preserve the new generation result when the old process settles late [33m 10308[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/host-tool-chain.test.ts[2m > [22mHost 工具链（A02/A05/A06/A09）：请求 → 报告 → 订阅 → all-wait → 唯一后继 → 实际输入[2m > [22m模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'any'
+[31m[1mAssertionError[22m: 后继必须真的调用了模型: expected 0 to be greater than 0[39m
+[36m [2m❯[22m tests/coordination/host-tool-chain.test.ts:[2m576:53[22m[39m
+    [90m574|[39m     // ── A06：后继 Run 的**实际 ModelRequest** 含目标 Delivery 的正文与精确版本 ──────…
+    [90m575|[39m     const successorRequests = w.captured.requests.get(successorRunId) …
+    [90m576|[39m     [34mexpect[39m(successorRequests[33m.[39mlength[33m,[39m [32m"后继必须真的调用了模型"[39m)[33m.[39m[34mtoBeGreaterThan[39m([34m0[39m)[33m;[39m
+    [90m   |[39m                                                     [31m^[39m
+    [90m577|[39m     const withNonce = successorRequests.filter((request) => userInputO…
+    [90m578|[39m     expect(withNonce, "目标 Delivery 的正文必须进入捕获的实际 ModelRequest").toHaveL…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m1 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m27 passed[39m[22m[90m (28)[39m
+[2m   Start at [22m 16:59:14
+[2m   Duration [22m 48.09s[2m (transform 22.54s, setup 0ms, import 30.97s, tests 48.20s, environment 0ms)[22m
+

@@ -1,0 +1,18 @@
+[
+  {
+    "file": "hermes-LICENSE",
+    "sha256": "821556e6336796450ab852d375117b48a4887e71d255794fd6318d99982a5ab6"
+  },
+  {
+    "file": "hermes-memory-tool-store.py",
+    "sha256": "5d25c0604de0c4bf4b4f07402b0582b20c33377330a0c7354e059a7e7cf52293"
+  },
+  {
+    "file": "openclaw-bootstrap-cache.ts",
+    "sha256": "ab991430b556dce62f07bb39f47c75a1965365b8e2b220e53a6574a4b89c540e"
+  },
+  {
+    "file": "openclaw-LICENSE",
+    "sha256": "73571b25326281d369087f469842c02444fe39faaecebda4d82ed21ff3a1c29d"
+  }
+]

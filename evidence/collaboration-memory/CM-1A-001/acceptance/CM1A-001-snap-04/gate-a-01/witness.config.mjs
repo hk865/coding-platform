@@ -1,0 +1,1 @@
+export default {"root":"/mnt/d/1.project/Software/agent_platform","test":{"environment":"node","include":["evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-04/gate-a-01/host-witness.test.ts"],"clearMocks":true,"restoreMocks":true,"testTimeout":30000}}

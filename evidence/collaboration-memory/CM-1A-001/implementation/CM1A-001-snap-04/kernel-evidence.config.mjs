@@ -1,0 +1,1 @@
+import {fileURLToPath} from 'node:url'; export default {root:fileURLToPath(new URL('../../../../../vendor/coding-agent/',import.meta.url)),test:{environment:'node',include:['tests/integration/m3-tools.test.ts','tests/integration/m5-composition-smoke.test.ts'],testTimeout:30000,clearMocks:true,restoreMocks:true}};

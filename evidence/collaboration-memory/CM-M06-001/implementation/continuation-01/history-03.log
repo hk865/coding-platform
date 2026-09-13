@@ -1,0 +1,45 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [31m❯[39m tests/coordination/route-continuity.test.ts [2m([22m[2m15 tests[22m[2m | [22m[31m1 failed[39m[2m | [22m[33m14 skipped[39m[2m)[22m[33m 398[2mms[22m[39m
+     [2m[90m↓[39m[22m DirectedRequestSent 的提交回执同时含源事件与同位置的 CommunicationIntentRecorded，且 sourceCursor 逐字节等于源事件游标
+     [2m[90m↓[39m[22m 整轮候选集合而不是本页切片：3 个订阅 + 页大小 1 → 首轮就把 3 个都固定进范围，翻满 3 页并全部投递
+     [2m[90m↓[39m[22m 本页引入本轮范围外的订阅 → Control 整页拒绝（零写入）
+     [2m[90m↓[39m[22m 同一 topic 上更靠后的事件位置，在前一条未收敛的 route intent 完成前不被推进
+     [2m[90m↓[39m[22m 已证实无副作用的失败进入 retry_scheduled（availableAt = settledAt + 退避）；已开始的副作用一律拒绝退避
+     [2m[90m↓[39m[22m 租约到期不构成重跑依据：sideEffectStarted 的 intent 经正式对账进入可见 quarantine
+     [2m[90m↓[39m[22m 未产生副作用：取消等待后 intent **先**落成 cancel_requested，drive 之后收敛为 cancelled
+     [2m[90m↓[39m[22m 副作用已经开始：同一个取消请求只能收敛为 outcome_unknown，绝不声称 cancelled
+   [2m[90m↓[39m[22m a burst of source events during pagination creates every round and delivers each subscription once in order
+   [2m[90m↓[39m[22m one historical subscription preserves multiple topics and hands over to live sources at its fixed creation horizon
+[31m   [31m×[31m Host historical start advances a 512-event page and continues to its fixed horizon without silently truncating[39m[33m 397[2mms[22m[39m
+   [2m[90m↓[39m[22m a subscription committed while a source is awaiting commit joins that source atomically
+   [2m[90m↓[39m[22m cancelling the final subscription during a fixed three-page round advances the page without delivering to it
+   [2m[90m↓[39m[22m restart-style recovery finishes derived cancellation after the Wait commit succeeded and the caller disappeared
+   [2m[90m↓[39m[22m a one-intent budget rotates historical subscriptions by durable progress even when wall time is fixed
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-continuity.test.ts[2m > [22mHost historical start advances a 512-event page and continues to its fixed horizon without silently truncating
+[31m[1mReferenceError[22m: seqOfCommitCursor is not defined[39m
+[36m [2m❯[22m materializeRouteIntentPlans src/data/state-ledger/ledger-validation.ts:[2m2314:27[22m[39m
+    [90m2312|[39m   if ((batch as { commitKind?: string }).commitKind === 'subscription-…
+    [90m2313|[39m     const sub = batch.snapshots.find(s => s.ref.aggregateType === 'Sub…
+    [90m2314|[39m     if (sub?.subscription.startCursor != null && seqOfCommitCursor(sub…
+    [90m   |[39m                           [31m^[39m
+    [90m2315|[39m   }
+    [90m2316|[39m   batch = materializeSubscriptionStart(batch, firstSeq);
+[90m [2m❯[22m InMemoryLedger.commitOwned src/data/state-ledger/in-memory-ledger.ts:[2m171:26[22m[39m
+[90m [2m❯[22m InMemoryLedger.commit src/data/state-ledger/in-memory-ledger.ts:[2m157:32[22m[39m
+[90m [2m❯[22m CoordinationEngineImpl.createSubscription src/control/control-engine/coordination.ts:[2m1054:44[22m[39m
+[90m [2m❯[22m CoordinationToolAccess.subscribe src/control/dispatch-engine/coordination-tool-access.ts:[2m512:21[22m[39m
+[90m [2m❯[22m tests/coordination/route-continuity.test.ts:[2m725:10[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[33m14 skipped[39m[90m (15)[39m
+[2m   Start at [22m 17:34:00
+[2m   Duration [22m 12.90s[2m (transform 10.03s, setup 0ms, import 10.39s, tests 398ms, environment 0ms)[22m
+

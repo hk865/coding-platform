@@ -1,0 +1,5 @@
+{"case":"real file changed between compiler capture and Vault validation","before":"cdf3023e6db146ff359f4301409d186e2350a607dccf9fb725355506e9e7aab1","after":"37230bf8dd838187bf90cd0b12f00836725676dc68481b91620fc30c83cb0dba","opens":1,"result":{"status":"unavailable","reason":"Report source changed during inspection"},"winner":null}
+{"case":"new-source exact grants retry","status":"observed","winner":{"conditionIndex":0,"deliveryRef":{"aggregateType":"Delivery","projectId":"p","workspaceId":"w","deliveryId":"0"},"sourceCursor":"1"}}
+{"case":"real ENOENT during Vault source capture, restored before post-capture","readFailures":1,"result":{"status":"unavailable","reason":"Report source/current authority could not be verified: a recorded grant covers this material but its current basis/source cannot be verified or it only authorizes history; re-source and authorize the exact current material"},"winner":null}
+{"case":"retry after source restored","status":"observed","winner":{"conditionIndex":0,"deliveryRef":{"aggregateType":"Delivery","projectId":"p","workspaceId":"w","deliveryId":"0"},"sourceCursor":"1"}}
+PASS real source change + transient ENOENT + fresh retry

@@ -1,0 +1,213 @@
+/**
+ * RW-10（P4）：应用层不再有字段级命令构造。
+ *
+ * 应用层（组合根 src/app/governance.ts）此前自己逐字段拼 P1-15／P1-13 的安装与激活命令，
+ * 与 fixtures 里的 fixture builder 构成第二、第三份复制。构造提升到契约命令层之后，
+ * 应用层只剩两件事：给 identity／时间／幂等键，以及把回执翻成 HTTP 结果。
+ *
+ * 本文件用**记录型依赖**（不是真账本）把应用层实际提交出去的四个命令抓下来，与契约 builder 的
+ * 输出逐字段比对：只要应用层重新开始拼字段（哪怕只改一个默认值），这里就会失败。
+ */
+import { describe, expect, it } from 'vitest';
+import { GovernanceEntry, type GovernanceEntryDeps, type GovernanceScopeV1 } from '../../src/app/governance.js';
+import { architectureEvolutionPolicyContentDigest } from '../../src/contracts/architecture-evolution-policy.js';
+import {
+  buildArchitectureEvolutionPolicyActivateCommand,
+  buildArchitectureEvolutionPolicyInstallCommand,
+  buildCoordinationPolicyActivateCommand,
+  buildCoordinationPolicyInstallCommand,
+} from '../../src/contracts/commands/governance.js';
+import {
+  P15_COORDINATION_POLICY_REVISION,
+  coordinationPolicyContentDigest,
+  type ActivateCoordinationPolicyCommand,
+  type CoordinationPolicyContentV1,
+  type InstallCoordinationPolicyCommand,
+} from '../../src/contracts/human-role-collaboration.js';
+import {
+  ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1,
+  p113PolicyPin,
+} from '../../src/fixtures/architecture-evolution-policy-fixtures.js';
+import { InMemoryLedger } from '../../src/data/state-ledger/in-memory-ledger.js';
+import type { ActivateProjectArchitectureEvolutionPolicyCommand, InstallArchitectureEvolutionPolicyRevisionCommand } from '../../src/contracts/architecture-evolution-policy.js';
+import {
+  buildRoleSpecActivateCommand,
+  buildRoleSpecInstallCommand,
+} from '../../src/contracts/commands/governance.js';
+import { ROLE_SPEC_REVISION, roleSpecContentDigest, type ActivateRoleSpecRevisionCommand, type InstallRoleSpecRevisionCommand } from '../../src/contracts/role-spec.js';
+import { ROLE_SOURCE_EXECUTOR, roleSpecPinFor, roleSpecSourceFor } from '../../src/fixtures/role-spec-fixtures.js';
+
+const NOW = '2026-09-10T00:00:00.000Z';
+const ACTOR = { kind: 'human' as const, id: 'user-1' };
+const SCOPE: GovernanceScopeV1 = { projectId: 'proj-governance-commands', workspaceId: 'ws-governance-commands' };
+
+const CONTENT: CoordinationPolicyContentV1 = {
+  schemaVersion: 1,
+  budget: { maxAutonomousReworks: 2, maxClarifications: 3 },
+  allowed: { inScopeRework: false, inScopeTesting: true },
+  scope: { changesRequireHumanDecision: ['requirement', 'acceptance', 'baseline'] },
+  upgrade: { path: 'manual-decision', note: '策略升级需人工决定' },
+};
+
+type Recorded = {
+  install: unknown[];
+  activate: unknown[];
+  coordinationInstall: InstallCoordinationPolicyCommand[];
+  coordinationActivate: ActivateCoordinationPolicyCommand[];
+  evolutionInstall: InstallArchitectureEvolutionPolicyRevisionCommand[];
+  evolutionActivate: ActivateProjectArchitectureEvolutionPolicyCommand[];
+  roleSpecInstall: InstallRoleSpecRevisionCommand[];
+  roleSpecActivate: ActivateRoleSpecRevisionCommand[];
+};
+
+/** 记录型组合根：ControlEngine 写入面全部换成记录桩，回执一律 rejected（本文件只看命令）。 */
+function entryWithRecorder(): { entry: GovernanceEntry; recorded: Recorded } {
+  const recorded: Recorded = { install: [], activate: [], coordinationInstall: [], coordinationActivate: [], evolutionInstall: [], evolutionActivate: [], roleSpecInstall: [], roleSpecActivate: [] };
+  let counter = 0;
+  const deps: GovernanceEntryDeps = {
+    views: { view: async () => { throw Error('Command construction tests do not query governance views'); } },
+    ledger: () => new InMemoryLedger(),
+    install: async (command) => { recorded.install.push(command); return { status: 'rejected', commandId: command.commandId, code: 'unavailable' }; },
+    activate: async (command) => { recorded.activate.push(command); return { status: 'rejected', commandId: command.commandId, code: 'unavailable' }; },
+    installCoordinationPolicy: async (command) => { recorded.coordinationInstall.push(command); return { status: 'rejected', commandId: command.commandId, code: 'unavailable' }; },
+    activateCoordinationPolicy: async (command) => { recorded.coordinationActivate.push(command); return { status: 'rejected', commandId: command.commandId, code: 'unavailable' }; },
+    installArchitectureEvolutionPolicy: async (command) => { recorded.evolutionInstall.push(command); return { status: 'rejected', commandId: command.commandId, code: 'unavailable' }; },
+    activateArchitectureEvolutionPolicy: async (command) => { recorded.evolutionActivate.push(command); return { status: 'rejected', commandId: command.commandId, code: 'unavailable' }; },
+    installRoleSpec: async (command) => { recorded.roleSpecInstall.push(command); return { status: 'rejected', commandId: command.commandId, code: 'unavailable' }; },
+    activateRoleSpec: async (command) => { recorded.roleSpecActivate.push(command); return { status: 'rejected', commandId: command.commandId, code: 'unavailable' }; },
+    // RW-14：内置角色规格 source 由组合根注入；本文件用 fixture 里的同一份 source 充当它。
+    defaults: { RoleSpecs: [{ roleId: ROLE_SOURCE_EXECUTOR, content: roleSpecSourceFor(ROLE_SOURCE_EXECUTOR).content }] },
+    entryRoles: [{ roleId: ROLE_SOURCE_EXECUTOR, purpose: '测试用入口' }],
+    actor: ACTOR,
+    now: () => NOW,
+    commandId: () => 'cmd-' + String(++counter),
+  };
+  return { entry: new GovernanceEntry(deps), recorded };
+}
+
+describe('RW-10 应用层治理命令构造（P4）', () => {
+  it('CoordinationPolicy 安装／激活：应用层提交的命令等于契约 builder 的输出', async () => {
+    const { entry, recorded } = entryWithRecorder();
+    await entry.install(SCOPE, { kind: 'CoordinationPolicy', source: { policyId: 'coordination-policy-app', content: CONTENT } });
+    const install = recorded.coordinationInstall[0];
+    expect(install, JSON.stringify(recorded)).toBeDefined();
+    if (install === undefined) return;
+    // 逐字段相同：契约 builder 用**同一个 identity／时间／幂等键**重算一遍必须得到同一个命令。
+    expect(install).toEqual(buildCoordinationPolicyInstallCommand(
+      { policyId: 'coordination-policy-app', content: CONTENT },
+      {
+        commandId: install.commandId,
+        correlationId: install.correlationId,
+        submittedAt: install.submittedAt,
+        projectId: install.identity.projectId,
+        actor: install.identity.actor,
+        idempotencyKey: install.identity.idempotencyKey,
+      },
+    ));
+    // 摘要口径与 P1-15 安装守卫一致（content + policyId + revision 1），不是应用层自己定的。
+    expect(install.payload.contentDigest).toBe(coordinationPolicyContentDigest(CONTENT, 'coordination-policy-app', P15_COORDINATION_POLICY_REVISION));
+    expect(install.identity).toEqual({ projectId: SCOPE.projectId, actor: ACTOR, idempotencyKey: install.identity.idempotencyKey });
+    expect(install.submittedAt).toBe(NOW);
+
+    const pin = { ref: { aggregateType: 'CoordinationPolicyRevision' as const, projectId: SCOPE.projectId, policyId: 'coordination-policy-app', revision: P15_COORDINATION_POLICY_REVISION }, digest: install.payload.contentDigest };
+    await entry.activate(SCOPE, { kind: 'CoordinationPolicy', pin, expectedRevision: 4 });
+    const activate = recorded.coordinationActivate[0];
+    expect(activate).toBeDefined();
+    if (activate === undefined) return;
+    expect(activate).toEqual(buildCoordinationPolicyActivateCommand(pin, {
+      commandId: activate.commandId,
+      correlationId: activate.correlationId,
+      submittedAt: activate.submittedAt,
+      projectId: activate.identity.projectId,
+      actor: activate.identity.actor,
+      idempotencyKey: activate.identity.idempotencyKey,
+      expectedRevision: 4,
+    }));
+    // CAS 窗口原样透传（应用层的默认窗口逻辑在 activate() 里，不在命令构造里）。
+    expect(activate.expectedRevision).toBe(4);
+    expect(activate.aggregateId).toBe(SCOPE.projectId);
+  });
+
+  it('RoleSpecRevision 安装／激活：应用层只给 roleId 与 identity，字段级构造仍由契约 builder 完成', async () => {
+    const { entry, recorded } = entryWithRecorder();
+    // 不给出 source：由组合根注入的内置角色规格 source 提供内容（与 CompletionPolicy 同一定位）。
+    const installResult = await entry.install(SCOPE, { kind: 'RoleSpecRevision', roleId: ROLE_SOURCE_EXECUTOR });
+    expect(installResult.kind).toBe('RoleSpecRevision');
+    expect(installResult.sourceOrigin).toBe('built-in-local-fixture');
+    const install = recorded.roleSpecInstall[0];
+    expect(install, JSON.stringify(recorded)).toBeDefined();
+    if (install === undefined) return;
+    const source = roleSpecSourceFor(ROLE_SOURCE_EXECUTOR);
+    expect(install).toEqual(buildRoleSpecInstallCommand({ roleId: source.roleId, content: source.content }, {
+      commandId: install.commandId,
+      correlationId: install.correlationId,
+      submittedAt: install.submittedAt,
+      projectId: install.identity.projectId,
+      actor: install.identity.actor,
+      idempotencyKey: install.identity.idempotencyKey,
+    }));
+    // 摘要口径只有一处（contracts/role-spec.ts），应用层不自己算一套。
+    expect(install.payload.contentDigest).toBe(roleSpecContentDigest(source.content, source.roleId, ROLE_SPEC_REVISION));
+
+    const pin = roleSpecPinFor(SCOPE.projectId, ROLE_SOURCE_EXECUTOR);
+    await entry.activate(SCOPE, { kind: 'RoleSpecRevision', pin, expectedRevision: 2 });
+    const activate = recorded.roleSpecActivate[0];
+    expect(activate).toBeDefined();
+    if (activate === undefined) return;
+    expect(activate).toEqual(buildRoleSpecActivateCommand(pin, {
+      commandId: activate.commandId,
+      correlationId: activate.correlationId,
+      submittedAt: activate.submittedAt,
+      projectId: activate.identity.projectId,
+      actor: activate.identity.actor,
+      idempotencyKey: activate.identity.idempotencyKey,
+      expectedRevision: 2,
+    }));
+    // 角色规格的生效聚合是**逐角色**的：aggregateId 必须是 roleId，不是 projectId。
+    expect(activate.aggregateId).toBe(ROLE_SOURCE_EXECUTOR);
+  });
+
+  it('RoleSpecRevision 缺少 roleId 且没有内置来源时：明确拒绝，且不提交任何命令', async () => {
+    const { entry, recorded } = entryWithRecorder();
+    const result = await entry.install(SCOPE, { kind: 'RoleSpecRevision' });
+    expect(result).toMatchObject({ status: 'rejected', code: 'invalid_source', kind: 'RoleSpecRevision' });
+    expect(result.message).toContain('roleId');
+    const unknown = await entry.install(SCOPE, { kind: 'RoleSpecRevision', roleId: 'no-such-role' });
+    expect(unknown).toMatchObject({ status: 'rejected', code: 'invalid_source' });
+    expect(unknown.message).toContain('没有角色');
+    expect(recorded.roleSpecInstall).toEqual([]);
+  });
+
+  it('ArchitectureEvolutionPolicy 安装／激活：同样只由契约 builder 构造', async () => {
+    const { entry, recorded } = entryWithRecorder();
+    await entry.install(SCOPE, { kind: 'ArchitectureEvolutionPolicy', source: ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1 });
+    const install = recorded.evolutionInstall[0];
+    expect(install).toBeDefined();
+    if (install === undefined) return;
+    expect(install).toEqual(buildArchitectureEvolutionPolicyInstallCommand(ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1, {
+      commandId: install.commandId,
+      correlationId: install.correlationId,
+      submittedAt: install.submittedAt,
+      projectId: install.identity.projectId,
+      actor: install.identity.actor,
+      idempotencyKey: install.identity.idempotencyKey,
+    }));
+    expect(install.payload.contentDigest).toBe(architectureEvolutionPolicyContentDigest(ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1));
+
+    const pin = p113PolicyPin(SCOPE.projectId);
+    await entry.activate(SCOPE, { kind: 'ArchitectureEvolutionPolicy', pin, expectedRevision: 1 });
+    const activate = recorded.evolutionActivate[0];
+    expect(activate).toBeDefined();
+    if (activate === undefined) return;
+    expect(activate).toEqual(buildArchitectureEvolutionPolicyActivateCommand(pin, {
+      commandId: activate.commandId,
+      correlationId: activate.correlationId,
+      submittedAt: activate.submittedAt,
+      projectId: activate.identity.projectId,
+      actor: activate.identity.actor,
+      idempotencyKey: activate.identity.idempotencyKey,
+      expectedRevision: 1,
+    }));
+    expect(activate.payload.target).toEqual(pin);
+  });
+});

@@ -1,0 +1,41 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [31m❯[39m evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/handover-successor.test.ts [2m([22m[2m3 tests[22m[2m | [22m[31m1 failed[39m[2m | [22m[33m2 skipped[39m[2m)[22m[33m 4461[2mms[22m[39m
+[31m     [31m×[31m Delivery 正文、精确版本与选入理由都进入捕获的 ModelRequest 与 manifest.selected[39m[33m 4458[2mms[22m[39m
+     [2m[90m↓[39m[22m 撤权之后：该 Delivery 不允许进入新的输入（材料组装在模型调用之前失败）
+     [2m[90m↓[39m[22m 来源在本次运行期间被更新：basis 不一致 → 精确授权失效 → 拒绝进入新输入
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/handover-successor.test.ts[2m > [22m目标 Delivery 进入实际模型输入（A06）[2m > [22mDelivery 正文、精确版本与选入理由都进入捕获的 ModelRequest 与 manifest.selected
+[31m[1mAssertionError[22m: [{"intentId":"direct","code":"rejected","message":"后继受理被拒绝（invalid）：参与关系不是 active：ended"}]: expected [ { intentId: 'direct', …(2) } ] to deeply equal [][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- [][39m
+[31m+ [[39m
+[31m+   {[39m
+[31m+     "code": "rejected",[39m
+[31m+     "intentId": "direct",[39m
+[31m+     "message": "后继受理被拒绝（invalid）：参与关系不是 active：ended",[39m
+[31m+   },[39m
+[31m+ ][39m
+
+[36m [2m❯[22m evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/handover-successor.test.ts:[2m393:88[22m[39m
+    [90m391|[39m     [35mawait[39m [34mpredecessorEnded[39m(w[33m.[39mh[33m,[39m w[33m.[39mrunRef)[33m;[39m
+    [90m392|[39m     const drive = await w.h.drive({ reason: "dl-successor", maxIntents…
+    [90m393|[39m     expect(drive.coordination?.failures, JSON.stringify(drive.coordina…
+    [90m   |[39m                                                                                        [31m^[39m
+    [90m394|[39m     [34mexpect[39m(drive[33m.[39mcoordination[33m?.[39madmissions)[33m.[39m[34mtoBe[39m([34m1[39m)[33m;[39m
+    [90m395|[39m     [34mexpect[39m(drive[33m.[39mfailures[33m,[39m [33mJSON[39m[33m.[39m[34mstringify[39m(drive[33m.[39mfailures))[33m.[39m[34mtoEqual[39m([])[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[33m2 skipped[39m[90m (3)[39m
+[2m   Start at [22m 09:39:22
+[2m   Duration [22m 39.97s[2m (transform 22.08s, setup 0ms, import 32.13s, tests 4.46s, environment 0ms)[22m
+

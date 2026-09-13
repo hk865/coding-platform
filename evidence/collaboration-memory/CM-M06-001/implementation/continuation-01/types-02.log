@@ -1,0 +1,2 @@
+src/ui/src/api/types.ts(339,26): error TS2835: Relative import paths need explicit file extensions in ECMAScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Did you mean '../../../contracts/communication-view.js'?
+tests/coordination/route-drive.test.ts(250,42): error TS18046: 'h.close' is of type 'unknown'.

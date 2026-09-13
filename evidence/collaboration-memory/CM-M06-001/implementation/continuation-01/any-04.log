@@ -1,0 +1,12 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/coordination/route-drive.test.ts [2m([22m[2m23 tests[22m[2m | [22m[33m19 skipped[39m[2m)[22m[33m 2761[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'any' preserves actual conditions, waits for the predecessor, and retains late reports [33m 1357[2mms[22m[39m
+     [33m[2m✓[22m[39m 'sqlite'/'all' preserves actual conditions, waits for the predecessor, and retains late reports [33m 1297[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m4 passed[39m[22m[2m | [22m[33m19 skipped[39m[90m (23)[39m
+[2m   Start at [22m 16:40:19
+[2m   Duration [22m 13.56s[2m (transform 8.79s, setup 0ms, import 9.21s, tests 2.76s, environment 0ms)[22m
+

@@ -1,0 +1,340 @@
+/** handoff protocol schema validation. Structural checks do not grant authority. */
+import { canonicalJson } from '../fingerprint.js';
+import { HANDOFF_MAX_ARTIFACT_REFS, HANDOFF_MAX_COMPLETED, HANDOFF_MAX_CONSTRAINTS, HANDOFF_MAX_EVIDENCE_REFS, HANDOFF_MAX_UNRESOLVED, HANDOFF_PACKET_MAX_BYTES, HANDOFF_SUMMARY_MAX_BYTES, REPLACEMENT_REASONS } from '../handoff.js';
+import type { ValidationIssue } from './common.js';
+import { isRecord, stringField, safePositiveIntField, validateEnum, numberField, rejectUnknownFields } from './common.js';
+import { validateCommandIdentity } from './identity.js';
+import { validateRoleBindingRef, validateTaskBudget, validateDeclaredPermissions, validateRunRef } from './dispatch.js';
+import { validateArtifactRefRef } from './evidence.js';
+
+const HANDOFF_PACKET_KEYS = [
+  "schemaVersion",
+  "packetId",
+  "projectId",
+  "workspaceId",
+  "goalId",
+  "taskId",
+  "planRef",
+  "taskRevision",
+  "objective",
+  "constraints",
+  "completed",
+  "unresolved",
+  "evidenceRefs",
+  "artifactRefs",
+  "workspaceSnapshot",
+  "source",
+  "bodyRef",
+  "noFullTranscript",
+  "predecessorPacketRef",
+  "generatedAt",
+] as const;
+
+function validateHandoffSource(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: path + ".schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  validateRunRef(value["runRef"], path + ".runRef", issues);
+  const attemptRef = value["attemptRef"];
+  if (isRecord(attemptRef)) {
+    stringField(attemptRef, "aggregateType", issues, path + ".attemptRef.aggregateType");
+    stringField(attemptRef, "attemptId", issues, path + ".attemptRef.attemptId");
+  } else {
+    issues.push({ path: path + ".attemptRef", code: "bad_type", message: "attemptRef must be an object" });
+  }
+  validateRoleBindingRef(value["binding"], path + ".binding", issues);
+  const context = value["context"];
+  if (isRecord(context)) {
+    const bundle = context["contextBundleRef"];
+    if (bundle !== null) validateArtifactRefRef(bundle, path + ".context.contextBundleRef", issues);
+    const manifest = context["contextManifestRef"];
+    if (manifest !== null) validateArtifactRefRef(manifest, path + ".context.contextManifestRef", issues);
+  } else {
+    issues.push({ path: path + ".context", code: "bad_type", message: "context must be an object" });
+  }
+  const runtime = value["runtime"];
+  if (!isRecord(runtime)) {
+    issues.push({ path: path + ".runtime", code: "bad_type", message: "runtime must be an object" });
+  } else {
+    numberField(runtime, "lastEventSeq", issues, path + ".runtime.lastEventSeq", 0);
+  }
+}
+
+function validateHandoffCompletedItem(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  const summary = stringField(value, "summary", issues, path + ".summary");
+  if (summary !== null && Buffer.byteLength(summary, "utf8") > HANDOFF_SUMMARY_MAX_BYTES) {
+    issues.push({ path: path + ".summary", code: "size_exceeded", message: "summary exceeds " + HANDOFF_SUMMARY_MAX_BYTES + " bytes" });
+  }
+  const artifactRef = value["artifactRef"];
+  if (artifactRef !== null) validateArtifactRefRef(artifactRef, path + ".artifactRef", issues);
+  if (!Array.isArray(value["evidenceRefs"])) {
+    issues.push({ path: path + ".evidenceRefs", code: "bad_type", message: "evidenceRefs must be an array" });
+  }
+}
+
+const HANDOFF_UNRESOLVED_KINDS = ["missing_material", "outcome_unknown", "risk", "blocked", "cancelled", "other"];
+
+function validateHandoffUnresolvedItem(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  validateEnum(value["kind"], HANDOFF_UNRESOLVED_KINDS, path + ".kind", issues);
+  const summary = stringField(value, "summary", issues, path + ".summary");
+  if (summary !== null && Buffer.byteLength(summary, "utf8") > HANDOFF_SUMMARY_MAX_BYTES) {
+    issues.push({ path: path + ".summary", code: "size_exceeded", message: "summary exceeds " + HANDOFF_SUMMARY_MAX_BYTES + " bytes" });
+  }
+  const artifactRef = value["artifactRef"];
+  if (artifactRef !== null) validateArtifactRefRef(artifactRef, path + ".artifactRef", issues);
+}
+
+function validateHandoffPacketRef(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: "bad_type", message: path + " must be an object" });
+    return;
+  }
+  if (value["aggregateType"] !== "HandoffPacket") {
+    issues.push({ path: path + ".aggregateType", code: "bad_ref", message: "aggregateType must be HandoffPacket" });
+  }
+  stringField(value, "projectId", issues, path + ".projectId");
+  stringField(value, "goalId", issues, path + ".goalId");
+  stringField(value, "taskId", issues, path + ".taskId");
+  stringField(value, "packetId", issues, path + ".packetId");
+}
+
+/**
+ * STRICT packet validator: known fields only (an unknown field — e.g. a hidden
+ * "transcript" — is rejected), required bounded shape, explicit
+ * noFullTranscript === true, and the HARD canonical-JSON size cap.
+ */
+export function validateHandoffPacket(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "HandoffPacket must be an object" });
+    return issues;
+  }
+  rejectUnknownFields(value, HANDOFF_PACKET_KEYS, "$", issues);
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "packetId", issues);
+  stringField(value, "projectId", issues);
+  stringField(value, "workspaceId", issues);
+  stringField(value, "goalId", issues);
+  stringField(value, "taskId", issues);
+  const planRef = value["planRef"];
+  if (isRecord(planRef)) {
+    stringField(planRef, "aggregateType", issues, "planRef.aggregateType");
+    stringField(planRef, "planId", issues, "planRef.planId");
+  } else {
+    issues.push({ path: "planRef", code: "bad_type", message: "planRef must be an object" });
+  }
+  safePositiveIntField(value["taskRevision"], "taskRevision", issues);
+  stringField(value, "objective", issues);
+  const constraints = value["constraints"];
+  if (!Array.isArray(constraints) || constraints.length > HANDOFF_MAX_CONSTRAINTS) {
+    issues.push({ path: "constraints", code: "bad_type", message: "constraints must be an array with <= " + HANDOFF_MAX_CONSTRAINTS + " items" });
+  } else {
+    for (const c of constraints) {
+      if (typeof c !== "string") issues.push({ path: "constraints", code: "bad_type", message: "constraint must be a string" });
+    }
+  }
+  const completed = value["completed"];
+  if (!Array.isArray(completed) || completed.length > HANDOFF_MAX_COMPLETED) {
+    issues.push({ path: "completed", code: "bad_type", message: "completed must be an array with <= " + HANDOFF_MAX_COMPLETED + " items" });
+  } else {
+    completed.forEach((item, i) => validateHandoffCompletedItem(item, "completed[" + i + "]", issues));
+  }
+  const unresolved = value["unresolved"];
+  if (!Array.isArray(unresolved) || unresolved.length > HANDOFF_MAX_UNRESOLVED) {
+    issues.push({ path: "unresolved", code: "bad_type", message: "unresolved must be an array with <= " + HANDOFF_MAX_UNRESOLVED + " items" });
+  } else {
+    unresolved.forEach((item, i) => validateHandoffUnresolvedItem(item, "unresolved[" + i + "]", issues));
+  }
+  const evidenceRefs = value["evidenceRefs"];
+  if (!Array.isArray(evidenceRefs) || evidenceRefs.length > HANDOFF_MAX_EVIDENCE_REFS) {
+    issues.push({ path: "evidenceRefs", code: "bad_type", message: "evidenceRefs must be an array with <= " + HANDOFF_MAX_EVIDENCE_REFS + " items" });
+  }
+  const artifactRefs = value["artifactRefs"];
+  if (!Array.isArray(artifactRefs) || artifactRefs.length > HANDOFF_MAX_ARTIFACT_REFS) {
+    issues.push({ path: "artifactRefs", code: "bad_type", message: "artifactRefs must be an array with <= " + HANDOFF_MAX_ARTIFACT_REFS + " items" });
+  }
+  const ws = value["workspaceSnapshot"];
+  if (isRecord(ws)) {
+    stringField(ws, "workspaceId", issues, "workspaceSnapshot.workspaceId");
+    numberField(ws, "revision", issues, "workspaceSnapshot.revision", 1);
+  } else {
+    issues.push({ path: "workspaceSnapshot", code: "bad_type", message: "workspaceSnapshot must be an object" });
+  }
+  validateHandoffSource(value["source"], "source", issues);
+  validateArtifactRefRef(value["bodyRef"], "bodyRef", issues);
+  if (value["noFullTranscript"] !== true) {
+    issues.push({ path: "noFullTranscript", code: "bad_type", message: "noFullTranscript must be true (no transcript in a packet, ever)" });
+  }
+  const predecessor = value["predecessorPacketRef"];
+  if (predecessor !== null) validateHandoffPacketRef(predecessor, "predecessorPacketRef", issues);
+  stringField(value, "generatedAt", issues);
+  if (issues.length === 0) {
+    const size = Buffer.byteLength(canonicalJson(value as never), "utf8");
+    if (size > HANDOFF_PACKET_MAX_BYTES) {
+      issues.push({
+        path: "$",
+        code: "size_exceeded",
+        message: "HandoffPacket serialized size " + size + " exceeds " + HANDOFF_PACKET_MAX_BYTES,
+      });
+    }
+  }
+  return issues;
+}
+
+export function validateRecordHandoffCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "RecordHandoff") {
+    issues.push({ path: "commandType", code: "invalid_command_type", message: 'commandType must be "RecordHandoff"' });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "commandId", issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (value["expectedRevision"] !== 0) {
+    issues.push({ path: "expectedRevision", code: "bad_expected_revision", message: "expectedRevision must be 0" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  for (const issue of validateHandoffPacket(payload["packet"])) {
+    issues.push({ path: "payload.packet." + issue.path, code: issue.code, message: issue.message });
+  }
+  return issues;
+}
+
+export function validateClaimReplacementCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  if (value["commandType"] !== "ClaimReplacement") {
+    issues.push({ path: "commandType", code: "invalid_command_type", message: 'commandType must be "ClaimReplacement"' });
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "commandId", issues);
+  validateCommandIdentity(value["identity"], "identity", issues);
+  stringField(value, "aggregateId", issues);
+  if (!Number.isSafeInteger(value["expectedRevision"]) || (value["expectedRevision"] as number) < 1) {
+    issues.push({ path: "expectedRevision", code: "bad_expected_revision", message: "expectedRevision must be a positive integer (existing lease)" });
+  }
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
+    return issues;
+  }
+  if (value['work'] !== undefined || payload['work'] !== undefined || isRecord(payload['roleBinding']) && payload['roleBinding']['templateId'] === 'independent-reviewer') issues.push({ path: 'payload.work', code: 'bad_type', message: 'Independent review requires the restricted review lifecycle capability' });
+  stringField(payload, "goalId", issues, "payload.goalId");
+  stringField(payload, "attemptId", issues, "payload.attemptId");
+  stringField(payload, "runId", issues, "payload.runId");
+  validateRoleBindingRef(payload["roleBinding"], "payload.roleBinding", issues);
+  validateDeclaredPermissions(payload["declaredPermissions"], "payload.declaredPermissions", issues);
+  validateTaskBudget(payload["budget"], "payload.budget", issues);
+  validateHandoffPacketRef(payload["handoffPacketRef"], "payload.handoffPacketRef", issues);
+  validateEnum(payload["reason"], REPLACEMENT_REASONS, "payload.reason", issues);
+  return issues;
+}
+
+export function validateHandoffContextRequest(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "request must be an object" });
+    return issues;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  stringField(value, "requestId", issues);
+  stringField(value, "projectId", issues);
+  stringField(value, "workspaceId", issues);
+  stringField(value, "goalId", issues);
+  stringField(value, "taskId", issues);
+  const planRef = value["planRef"];
+  if (isRecord(planRef)) {
+    stringField(planRef, "aggregateType", issues, "planRef.aggregateType");
+    stringField(planRef, "planId", issues, "planRef.planId");
+  } else {
+    issues.push({ path: "planRef", code: "bad_type", message: "planRef must be an object" });
+  }
+  validateRunRef(value["runRef"], "runRef", issues);
+  const attemptRef = value["attemptRef"];
+  if (isRecord(attemptRef)) {
+    stringField(attemptRef, "aggregateType", issues, "attemptRef.aggregateType");
+    stringField(attemptRef, "attemptId", issues, "attemptRef.attemptId");
+  } else {
+    issues.push({ path: "attemptRef", code: "bad_type", message: "attemptRef must be an object" });
+  }
+  validateRoleBindingRef(value["roleBinding"], "roleBinding", issues);
+  validateDeclaredPermissions(value["declaredPermissions"], "declaredPermissions", issues);
+  validateDeclaredPermissions(value["scope"], "scope", issues);
+  const ws = value["workspaceSnapshot"];
+  if (isRecord(ws)) {
+    stringField(ws, "workspaceId", issues, "workspaceSnapshot.workspaceId");
+    numberField(ws, "revision", issues, "workspaceSnapshot.revision", 1);
+  } else {
+    issues.push({ path: "workspaceSnapshot", code: "bad_type", message: "workspaceSnapshot must be an object" });
+  }
+  validateHandoffPacketRef(value["handoffPacketRef"], "handoffPacketRef", issues);
+  validateTaskBudget(value["budget"], "budget", issues);
+  stringField(value, "submittedAt", issues);
+  return issues;
+}
+
+const HANDOFF_CONTROL_KINDS = ["pause", "stop"];
+
+export function validateHandoffControlCommand(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
+    return issues;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  validateEnum(value["kind"], HANDOFF_CONTROL_KINDS, "kind", issues);
+  stringField(value, "reason", issues);
+  stringField(value, "correlationId", issues);
+  stringField(value, "submittedAt", issues);
+  return issues;
+}
+
+export function validateHandoffSnapshotQuery(value: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isRecord(value)) {
+    issues.push({ path: "$", code: "bad_type", message: "query must be an object" });
+    return issues;
+  }
+  if (value["schemaVersion"] !== 1) {
+    issues.push({ path: "schemaVersion", code: "unknown_schema_version", message: "only schemaVersion 1 is supported" });
+  }
+  validateRunRef(value["runRef"], "runRef", issues);
+  return issues;
+}

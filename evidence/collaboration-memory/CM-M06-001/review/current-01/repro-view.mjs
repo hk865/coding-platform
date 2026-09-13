@@ -1,0 +1,17 @@
+import '/mnt/d/1.project/Software/agent_platform/tests/coordination/process-loader.mjs';
+const { CommunicationViewIndex } = await import('/mnt/d/1.project/Software/agent_platform/src/data/read-model-index/communication-view.ts');
+const { makeCommitCursor } = await import('/mnt/d/1.project/Software/agent_platform/src/contracts/ledger.ts');
+const { isTerminalRuntimeEvent } = await import('/mnt/d/1.project/Software/agent_platform/src/contracts/dispatch.ts');
+const { selectAlternativeReport } = await import('/mnt/d/1.project/Software/agent_platform/src/contracts/alternative-report.ts');
+const p='p',w='ws', work={aggregateType:'WorkContextBinding',projectId:p,workspaceId:w,workId:'coord'};
+const requestRef={aggregateType:'DirectedRequest',projectId:p,workspaceId:w,requestId:'r'};
+const wait={waitId:'wait',ownerWorkContextRef:work,mode:'any',status:'active',predecessorRunRef:{aggregateType:'Run',projectId:p,goalId:'g',runId:'pred'},conditions:[{kind:'request_responded',requestRef}],satisfiedIndexes:[],observations:[],selectedReport:null};
+const body={digest:'a'.repeat(64),sizeBytes:1,contentType:'text/plain'};
+const response={bodyRef:body,sourceRefs:[]};
+const request={projectId:p,workspaceId:w,requestId:'r',fromWorkContextRef:work,response,status:'responded'};
+const envelope=(eventType,aggregateId,payload)=>({schemaVersion:1,eventType,aggregateId,projectId:p,workspaceId:w,occurredAt:'2026-09-13T00:00:00Z',payload});
+const terminal={schemaVersion:1,eventType:'run_budget_exhausted',runRef:wait.predecessorRunRef,payload:{kind:'budget_exhausted'}};
+const events=[envelope('WorkContextBound','coord',{binding:{workId:'coord',goalId:'g'}}),envelope('WaitConditionRegistered','wait',{wait}),envelope('DirectedRequestResponded','r',{request}),envelope('RunEventRecorded','pred',{runtimeEvent:terminal})].map((event,i)=>({cursor:makeCommitCursor(i+1),event}));
+const view=await new CommunicationViewIndex({events:async()=>({events,throughCursor:events.at(-1).cursor,hasMore:false})}).view({projectId:p,workspaceId:w,goalId:'g'});
+const selection=selectAlternativeReport({wait},events,()=>undefined);
+console.log(JSON.stringify({canonicalTerminal:isTerminalRuntimeEvent(terminal),actualReason:view.waits[0].reason,actualMatched:view.waits[0].matched,actualAnySelection:selection,expectedAfterTerminal:'must not be waiting_for_predecessor'},null,2));

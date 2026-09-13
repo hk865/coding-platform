@@ -1,0 +1,2 @@
+tests/memory/host.test.ts(16,47): error TS2345: Argument of type 'object' is not assignable to parameter of type 'Record<string, unknown>'.
+  Index signature for type 'string' is missing in type '{}'.

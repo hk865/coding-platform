@@ -1,0 +1,14 @@
+[
+  {
+    "path": "src/contracts/alternative-report.ts",
+    "sha256": "b416e54df52a2f0faa04693e6de9852bc38b72e469a8ff28b846be3d72586a48"
+  },
+  {
+    "path": "src/data/read-model-index/communication-view.ts",
+    "sha256": "70eeca1ea2c3018aced36acd53745e87f8487e340c1f23aab01def280c4abb56"
+  },
+  {
+    "path": "src/data/state-ledger/ledger-validation.ts",
+    "sha256": "38e18f3271ac3c0973c737af83bf4f79ef8daf240f2b6a7187f83d24ccdbb7c8"
+  }
+]

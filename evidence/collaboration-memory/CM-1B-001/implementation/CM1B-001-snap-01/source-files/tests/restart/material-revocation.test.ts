@@ -1,0 +1,124 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { expect, it } from 'vitest';
+import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
+import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
+import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from '../contract-support/fixtures/bootstrap-fixture-v1.js';
+import { buildCreateGoalCommand, buildGoalCreateLedgerCommit } from '../contract-support/fixtures/goal-fixtures.js';
+import { buildDispatchClaimCommand } from "../../src/fixtures/dispatch-fixtures.js";
+import { buildDispatchClaimLedgerCommit } from "../../src/control/control-engine/records/dispatch.js";
+import { buildGrantMaterialAccessCommand } from "../contract-support/fixtures/material-access-fixtures.js";
+import { buildMaterialAccessGrantLedgerCommit } from "../../src/control/control-engine/records/material-access.js";
+import type { MaterialAccessGrantV1, RevokeMaterialAccessCommand } from '../../src/contracts/material-access.js';
+import { HistoryMaterials } from '../../src/interaction/human-collaboration/history-materials.js';
+import { HistoryMaterialsContext } from '../../src/data/context-compiler/history-materials-context.js';
+import type { HistoryMaterialPort } from '../../src/contracts/history-materials.js';
+
+const AT = '2026-09-09T00:00:00.000Z';
+const scope = { projectId: 'proj-alpha', workspaceId: 'ws-shared', goalId: 'goal-revoke' };
+const basis = { planRef: null, workspaceRevision: null, sourceDigest: null };
+const run = (runId: string) => ({ aggregateType: 'Run' as const, projectId: scope.projectId, goalId: scope.goalId, runId });
+
+it.each(['memory', 'sqlite'] as const)('revokes immediately despite projection lag, preserves provenance, replays and rebuilds (%s)', async adapter => {
+  const dir = await mkdtemp(join(tmpdir(), 'material-revocation-'));
+  let persistent = adapter === 'sqlite' ? await createPersistentSqliteHarness({ dir }) : null;
+  let host = persistent ?? createInMemoryHarness();
+  try {
+    const boot = buildBootstrapCommand({ ...WORKSPACE_BOOTSTRAP_FIXTURE_V1, entries: [...WORKSPACE_BOOTSTRAP_FIXTURE_V1.entries, { projectId: scope.projectId, workspaceId: 'ws-history' }] }, { commandId: 'boot', correlationId: 'boot', submittedAt: AT });
+    expect(await host.ledger.commit(buildBootstrapLedgerCommit(boot, { eventIds: ['b1', 'b2', 'b3', 'b4', 'b5'], occurredAt: AT }))).toMatchObject({ status: 'committed' });
+    const goal = buildCreateGoalCommand({ ...scope, objective: 'revocation', actor: { kind: 'human', id: 'test' } }, { commandId: 'goal', correlationId: 'goal', idempotencyKey: 'goal', submittedAt: AT });
+    expect(await host.ledger.commit(buildGoalCreateLedgerCommit(goal, { eventId: 'goal', occurredAt: AT, projectRevision: 1, workspaceRevision: 1 }))).toMatchObject({ status: 'committed' });
+    for (const runId of ['producer', 'consumer']) {
+      const claim = buildDispatchClaimCommand({ commandId: runId, ...scope, taskId: 'task-' + runId, runId, attemptId: 'attempt-' + runId, idempotencyKey: runId, correlationId: runId, submittedAt: AT });
+      expect(await host.ledger.commit(buildDispatchClaimLedgerCommit(claim, { eventId: runId, occurredAt: AT, workspaceId: scope.workspaceId, planRef: { aggregateType: 'PlanRevision', projectId: scope.projectId, planId: 'plan' }, workspaceRevision: 1 }))).toMatchObject({ status: 'committed' });
+    }
+    const stored = await host.vault.put({ contentType: 'text/plain', body: 'Original producer material', sourceRefs: [{ kind: 'workspace', refId: scope.workspaceId, revision: '1' }], ownerRef: run('producer'), requestedAt: AT });
+    if (stored.status !== 'stored') throw Error('put failed');
+    const grant: MaterialAccessGrantV1 = { schemaVersion: 1, grantId: 'grant', scope, materials: [stored.ref], reader: run('consumer'), issuedBy: { aggregateType: 'Control', projectId: scope.projectId, goalId: scope.goalId }, purpose: 'review', basis, grantedAt: AT };
+    const grantCommand = buildGrantMaterialAccessCommand(grant, { commandId: 'grant', projectId: scope.projectId, actorKind: 'system', actorId: 'host', idempotencyKey: 'grant', correlationId: 'grant', submittedAt: AT });
+    expect(await host.grantMaterialAccess(grantCommand)).toMatchObject({ status: 'committed' });
+    expect(await host.vault.open(stored.ref, { requesterRunRef: run('consumer') })).toMatchObject({ status: 'ready' });
+    // Matching a caller-declared version cannot override canonical Workspace.
+    const staleBody = await host.vault.put({ contentType: 'text/plain', body: 'Version-bound material', sourceRefs: [{ kind: 'workspace', refId: scope.workspaceId, revision: '99' }], ownerRef: run('producer'), requestedAt: AT });
+    if (staleBody.status !== 'stored') throw Error('put failed');
+    const staleGrant = { ...grant, grantId: 'stale-basis', materials: [staleBody.ref], basis: { ...basis, workspaceRevision: 99 } };
+    expect(await host.grantMaterialAccess(buildGrantMaterialAccessCommand(staleGrant, { commandId: 'stale-basis', projectId: scope.projectId, actorKind: 'system', actorId: 'host', idempotencyKey: 'stale-basis', correlationId: 'stale-basis', submittedAt: AT }))).toMatchObject({ status: 'committed' });
+    expect(await host.vault.open(staleBody.ref, { requesterRunRef: run('consumer'), currentBasis: staleGrant.basis })).toMatchObject({ status: 'rejected', code: 'stale' });
+    const oldGoal = buildCreateGoalCommand({ ...scope, goalId: 'old-goal', objective: 'historical source', actor: { kind: 'human', id: 'test' } }, { commandId: 'old-goal', correlationId: 'old-goal', idempotencyKey: 'old-goal', submittedAt: AT });
+    expect(await host.ledger.commit(buildGoalCreateLedgerCommit(oldGoal, { eventId: 'old-goal', occurredAt: AT, projectRevision: 1, workspaceRevision: 1 }))).toMatchObject({ status: 'committed' });
+    const oldOwner = { ...run('old-producer'), goalId: 'old-goal' };
+    const oldRun = buildDispatchClaimCommand({ commandId: 'old-run', ...scope, goalId: oldOwner.goalId, taskId: 'old-task', runId: oldOwner.runId, attemptId: 'old-attempt', idempotencyKey: 'old-run', correlationId: 'old-run', submittedAt: AT });
+    expect(await host.ledger.commit(buildDispatchClaimLedgerCommit(oldRun, { eventId: 'old-run', occurredAt: AT, workspaceId: scope.workspaceId, planRef: { aggregateType: 'PlanRevision', projectId: scope.projectId, planId: 'old-plan' }, workspaceRevision: 1 }))).toMatchObject({ status: 'committed' });
+    const oldBody = await host.vault.put({ contentType: 'text/plain', body: 'Old goal rationale, not new completion', sourceRefs: [{ kind: 'workspace', refId: scope.workspaceId, revision: '1' }], ownerRef: oldOwner, requestedAt: AT });
+    if (oldBody.status !== 'stored') throw Error('put failed');
+    expect(await host.vault.open(oldBody.ref, { requesterRunRef: run('consumer') })).toMatchObject({ status: 'rejected', code: 'forbidden' });
+    const historyGrant = { ...grant, grantId: 'history', materials: [oldBody.ref], history: { owner: oldOwner, usage: 'historical_explanation' as const } };
+    expect(await host.grantMaterialAccess(buildGrantMaterialAccessCommand(historyGrant, { commandId: 'history', projectId: scope.projectId, actorKind: 'system', actorId: 'host', idempotencyKey: 'history', correlationId: 'history', submittedAt: AT }))).toMatchObject({ status: 'committed' });
+    expect(await host.vault.open(oldBody.ref, { requesterRunRef: run('consumer') })).toMatchObject({ status: 'ready', record: { ref: oldBody.ref, body: 'Old goal rationale, not new completion' } });
+    const crossOwner = { ...run('cross-producer'), goalId: 'cross-goal' };
+    const crossGoal = buildCreateGoalCommand({ ...scope, workspaceId: 'ws-history', goalId: crossOwner.goalId, objective: 'Explicit cross-workspace historical source', actor: { kind: 'human', id: 'test' } }, { commandId: 'cross-goal', correlationId: 'cross-goal', idempotencyKey: 'cross-goal', submittedAt: AT });
+    expect(await host.ledger.commit(buildGoalCreateLedgerCommit(crossGoal, { eventId: 'cross-goal', occurredAt: AT, projectRevision: 1, workspaceRevision: 1 }))).toMatchObject({ status: 'committed' });
+    const crossRun = buildDispatchClaimCommand({ commandId: 'cross-run', ...scope, goalId: crossOwner.goalId, taskId: 'cross-task', runId: crossOwner.runId, attemptId: 'cross-attempt', idempotencyKey: 'cross-run', correlationId: 'cross-run', submittedAt: AT });
+    expect(await host.ledger.commit(buildDispatchClaimLedgerCommit(crossRun, { eventId: 'cross-run', occurredAt: AT, workspaceId: 'ws-history', planRef: { aggregateType: 'PlanRevision', projectId: scope.projectId, planId: 'cross-plan' }, workspaceRevision: 1 }))).toMatchObject({ status: 'committed' });
+    const crossBody = await host.vault.put({ contentType: 'text/plain', body: 'Other workspace history retains original owner', sourceRefs: [{ kind: 'workspace', refId: 'ws-history', revision: '1' }], ownerRef: crossOwner, requestedAt: AT });
+    if (crossBody.status !== 'stored') throw Error('put failed');
+    const crossGrant: MaterialAccessGrantV1 = { ...grant, grantId: 'cross-history', materials: [crossBody.ref], history: { owner: crossOwner, usage: 'historical_explanation', crossWorkspace: { sourceWorkspaceId: 'ws-history', authorizedBy: { kind: 'human', id: 'operator' } } } };
+    const makeCrossCommand = (g: MaterialAccessGrantV1, actorKind: 'human' | 'system' = 'human', actorId = 'operator') => buildGrantMaterialAccessCommand(g, { commandId: g.grantId, projectId: scope.projectId, actorKind, actorId, idempotencyKey: g.grantId, correlationId: g.grantId, submittedAt: AT });
+    expect(await host.vault.open(crossBody.ref, { requesterRunRef: run('consumer') })).toMatchObject({ status: 'rejected', code: 'forbidden' });
+    expect(await host.grantMaterialAccess(makeCrossCommand({ ...crossGrant, history: { owner: crossOwner, usage: 'historical_explanation' } }))).toMatchObject({ status: 'rejected', code: 'scope_mismatch' });
+    expect(await host.grantMaterialAccess(makeCrossCommand(crossGrant, 'system'))).toMatchObject({ status: 'rejected', code: 'invalid' });
+    expect(await host.grantMaterialAccess(makeCrossCommand(crossGrant, 'human', 'different-human'))).toMatchObject({ status: 'rejected', code: 'invalid' });
+    expect(await host.grantMaterialAccess(makeCrossCommand({ ...crossGrant, history: { ...crossGrant.history!, crossWorkspace: { ...crossGrant.history!.crossWorkspace!, sourceWorkspaceId: 'wrong-workspace' } } }))).toMatchObject({ status: 'rejected', code: 'scope_mismatch' });
+    const forged = buildMaterialAccessGrantLedgerCommit(makeCrossCommand(crossGrant, 'system'), { eventId: 'forged-cross', occurredAt: AT });
+    expect(await host.ledger.commit(forged)).toMatchObject({ status: 'rejected', code: 'invalid_commit' });
+    expect(await host.grantMaterialAccess(makeCrossCommand(crossGrant))).toMatchObject({ status: 'committed', replayed: false });
+    expect(await host.vault.open(crossBody.ref, { requesterRunRef: run('consumer') })).toMatchObject({ status: 'ready', record: { ref: crossBody.ref, sourceRefs: [{ refId: 'ws-history' }] } });
+    expect(await host.vault.open(crossBody.ref, { requesterRunRef: run('producer') })).toMatchObject({ status: 'rejected', code: 'forbidden' });
+    let historyTime = AT;
+    const historyApp = (): HistoryMaterialPort => new HistoryMaterials({ control: host, grants: host, now: () => historyTime,
+      materials: new HistoryMaterialsContext({ ledger: host.ledger, vault: host.vault }),
+      catalog: () => [{ id: 'report-one', label: 'Source report', workspaceId: 'ws-history', owner: crossOwner, artifactRef: crossBody.ref }] });
+    expect(await historyApp().view(scope)).toMatchObject({ materials: [{ owner: crossOwner, artifactRef: crossBody.ref }] });
+    const historyInput = { materialId: 'report-one', runId: 'producer', purpose: 'Review earlier reasoning', requestId: 'human-history-read', allowHistoricalRead: true };
+    await expect(historyApp().grant(scope, { ...historyInput, allowHistoricalRead: false })).rejects.toThrow('明确授权');
+    await expect(historyApp().grant(scope, { ...historyInput, runId: 'not-a-real-run' })).rejects.toThrow('目标运行');
+    const humanGrant = await historyApp().grant(scope, historyInput);
+    expect(humanGrant.grant.history).toMatchObject({ owner: crossOwner, crossWorkspace: { sourceWorkspaceId: 'ws-history', authorizedBy: { kind: 'human', id: 'local-gui' } } });
+    expect(await historyApp().read(scope, { grantId: humanGrant.grant.grantId })).toMatchObject({ applicability: 'historical_explanation', result: { status: 'ready', record: { ownerRunRef: crossOwner, sourceRefs: [{ refId: 'ws-history' }] } } });
+    await expect(historyApp().grant(scope, { ...historyInput, purpose: 'Changed selection' })).rejects.toThrow('idempotency_conflict');
+    const command: RevokeMaterialAccessCommand = { commandId: 'revoke', commandType: 'RevokeMaterialAccess', schemaVersion: 1, identity: { projectId: scope.projectId, actor: { kind: 'human', id: 'operator' }, idempotencyKey: 'revoke' }, aggregateId: 'grant', expectedRevision: 1, correlationId: 'revoke', submittedAt: AT, payload: { grantRef: { aggregateType: 'MaterialAccessGrant', ...scope, grantId: 'grant' }, reason: 'Reader no longer assigned' } };
+    expect(await host.control.revokeMaterialAccess({ ...command, identity: { ...command.identity, projectId: 'other' } })).toMatchObject({ status: 'rejected', code: 'scope_mismatch' });
+    expect(await host.control.revokeMaterialAccess({ ...command, payload: { ...command.payload, reason: '' } })).toMatchObject({ status: 'rejected', code: 'invalid' });
+    // Control directly deliberately leaves the index behind its commit.
+    expect(await host.control.revokeMaterialAccess(command)).toMatchObject({ status: 'committed', replayed: false });
+    expect(await host.materialAccessGrants({ projectId: scope.projectId, materialDigest: stored.ref.digest })).toMatchObject({ status: 'ready', grants: [{ revision: 1 }] });
+    expect(await host.vault.open(stored.ref, { requesterRunRef: run('consumer') })).toMatchObject({ status: 'rejected', code: 'forbidden' });
+    expect(await host.vault.open(stored.ref, { requesterRunRef: run('producer') })).toMatchObject({ status: 'ready', record: { body: 'Original producer material' } });
+    expect(await host.revokeMaterialAccess(command)).toMatchObject({ status: 'committed', replayed: true });
+    expect(await host.revokeMaterialAccess({ ...command, payload: { ...command.payload, reason: 'different reason' } })).toMatchObject({ status: 'rejected', code: 'idempotency_conflict' });
+    expect(await host.revokeMaterialAccess({ ...command, commandId: 'other', identity: { ...command.identity, idempotencyKey: 'other' } })).toMatchObject({ status: 'rejected', code: 'revision_conflict' });
+    expect(await host.materialAccessGrants({ projectId: scope.projectId, materialDigest: stored.ref.digest })).toMatchObject({ status: 'ready', grants: [{ revision: 2, grant, revocation: { reason: command.payload.reason } }] });
+    if (persistent) { await persistent.close(); persistent = await persistent.reopen(); host = persistent; }
+    expect(await host.revokeMaterialAccess(command)).toMatchObject({ status: 'committed', replayed: true });
+    expect(await host.vault.open(stored.ref, { requesterRunRef: run('consumer') })).toMatchObject({ status: 'rejected', code: 'forbidden' });
+    expect(await host.ledger.load(command.payload.grantRef)).toMatchObject({ status: 'found', snapshot: { revision: 2, grant, revocation: { reason: command.payload.reason } } });
+    expect(await host.vault.open(oldBody.ref, { requesterRunRef: run('consumer') })).toMatchObject({ status: 'ready', record: { ref: oldBody.ref } });
+    expect(await host.vault.open(oldBody.ref, { requesterRunRef: oldOwner })).toMatchObject({ status: 'ready' });
+    expect(await host.grantMaterialAccess(makeCrossCommand(crossGrant))).toMatchObject({ status: 'committed', replayed: true });
+    historyTime = '2026-09-10T12:00:00.000Z';
+    expect(await historyApp().grant(scope, historyInput)).toMatchObject({ receipt: { status: 'committed', replayed: true }, grant: humanGrant.grant });
+    expect(await historyApp().revoke(scope, { grantId: humanGrant.grant.grantId, reason: 'History no longer needed', requestId: 'human-history-revoke' })).toMatchObject({ status: 'committed' });
+    await expect(historyApp().read(scope, { grantId: humanGrant.grant.grantId })).rejects.toThrow('已撤销');
+    expect(await host.vault.open(crossBody.ref, { requesterRunRef: run('consumer') })).toMatchObject({ status: 'ready', record: { ref: crossBody.ref } });
+    const crossRevoke: RevokeMaterialAccessCommand = { ...command, commandId: 'cross-revoke', aggregateId: crossGrant.grantId, identity: { ...command.identity, idempotencyKey: 'cross-revoke' }, payload: { grantRef: { aggregateType: 'MaterialAccessGrant', ...scope, grantId: crossGrant.grantId }, reason: 'Human ended cross-workspace sharing' } };
+    expect(await host.control.revokeMaterialAccess(crossRevoke)).toMatchObject({ status: 'committed' });
+    expect(await host.vault.open(crossBody.ref, { requesterRunRef: run('consumer') })).toMatchObject({ status: 'rejected', code: 'forbidden' });
+    expect(await host.vault.open(crossBody.ref, { requesterRunRef: crossOwner })).toMatchObject({ status: 'ready' });
+    expect(await host.vault.open(staleBody.ref, { requesterRunRef: run('consumer'), currentBasis: staleGrant.basis })).toMatchObject({ status: 'rejected', code: 'stale' });
+    // Replaying the original grant must not resurrect it after revocation.
+    expect(await host.grantMaterialAccess(grantCommand)).toMatchObject({ status: 'committed', replayed: true });
+    expect(await host.vault.open(stored.ref, { requesterRunRef: run('consumer') })).toMatchObject({ status: 'rejected', code: 'forbidden' });
+  } finally { if (persistent) await persistent.close(); await rm(dir, { recursive: true, force: true }); }
+}, 60000);

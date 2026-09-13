@@ -1,0 +1,28 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/contracts/module-ownership.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 5681[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps the workspace path-boundary policy in exactly one WorkspaceReader file [33m 4972[2mms[22m[39m
+ [32m✓[39m tests/memory/host.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4356[2mms[22m[39m
+   [33m[2m✓[22m[39m host maintains a stable profile, isolates projects and requires selected-version copying across reopen [33m 4355[2mms[22m[39m
+ [32m✓[39m tests/app/semantic-query.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 6283[2mms[22m[39m
+   [33m[2m✓[22m[39m runs sourced semantic queries without a plan and alongside a live writer, persists real kernel inputs and denies writes [33m 6282[2mms[22m[39m
+ [32m✓[39m tests/memory/maintenance.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 988[2mms[22m[39m
+   [33m[2m✓[22m[39m valid JSON with corrupt snapshot or receipt shape is unavailable and never silently replaced [33m 574[2mms[22m[39m
+   [33m[2m✓[22m[39m two SQLite connections preserve one profile and reject stale concurrent edits across reopen [33m 388[2mms[22m[39m
+ [32m✓[39m tests/memory/query-input.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 8541[2mms[22m[39m
+   [33m[2m✓[22m[39m three response purposes adopt current persisted versions in real kernel requests and retain separate save/adoption facts [33m 8540[2mms[22m[39m
+ [32m✓[39m tests/memory/context.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 443[2mms[22m[39m
+   [33m[2m✓[22m[39m refreshes applicable revisions and recursively invalidates copied sources without using stale cache [33m 442[2mms[22m[39m
+ [32m✓[39m tests/context/work-run-materials.test.ts [2m([22m[2m22 tests[22m[2m)[22m[32m 32[2mms[22m[39m
+ [32m✓[39m tests/coordination/host-tool-chain.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 15025[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='task'/'all' memory=false [33m 4352[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'all' memory=false [33m 3060[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'any' memory=false [33m 3078[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='task'/'all' memory=true [33m 4532[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m8 passed[39m[22m[90m (8)[39m
+[2m      Tests [22m [1m[32m45 passed[39m[22m[90m (45)[39m
+[2m   Start at [22m 18:54:46
+[2m   Duration [22m 40.56s[2m (transform 42.81s, setup 0ms, import 70.27s, tests 41.35s, environment 1ms)[22m
+

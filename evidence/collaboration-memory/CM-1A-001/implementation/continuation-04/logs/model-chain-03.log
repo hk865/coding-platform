@@ -1,0 +1,33 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [31m❯[39m tests/coordination/delivery-into-input.test.ts [2m([22m[2m4 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 7430[2mms[22m[39m
+     [33m[2m✓[22m[39m Delivery 正文、精确版本与选入理由都进入捕获的 ModelRequest 与 manifest.selected [33m 2033[2mms[22m[39m
+[31m     [31m×[31m 调用证据（D06）：model_request_evidence 落账，requestDigest = 捕获请求重算的 sha256，contextInputDigest = manifest.inputDigest，同一许可的第二次尝试被拒[39m[33m 2048[2mms[22m[39m
+     [33m[2m✓[22m[39m 撤权之后：该 Delivery 不允许进入新的输入（材料组装在模型调用之前失败） [33m 1692[2mms[22m[39m
+     [33m[2m✓[22m[39m 来源在本次运行期间被更新：basis 不一致 → 精确授权失效 → 拒绝进入新输入 [33m 1655[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/delivery-into-input.test.ts[2m > [22m目标 Delivery 进入实际模型输入（A06）[2m > [22m调用证据（D06）：model_request_evidence 落账，requestDigest = 捕获请求重算的 sha256，contextInputDigest = manifest.inputDigest，同一许可的第二次尝试被拒
+[31m[1mAssertionError[22m: expected 'invalid' to be 'conflict_event' // Object.is equality[39m
+
+Expected: [32m"conflict_event"[39m
+Received: [31m"invalid"[39m
+
+[36m [2m❯[22m tests/coordination/delivery-into-input.test.ts:[2m520:25[22m[39m
+    [90m518|[39m     [34mexpect[39m(second[33m.[39mstatus)[33m.[39m[34mtoBe[39m([32m"rejected"[39m)[33m;[39m
+    [90m519|[39m     [35mif[39m (second[33m.[39mstatus [33m!==[39m [32m"rejected"[39m) [35mreturn[39m[33m;[39m
+    [90m520|[39m     [34mexpect[39m(second[33m.[39mcode)[33m.[39m[34mtoBe[39m([32m"conflict_event"[39m)[33m;[39m
+    [90m   |[39m                         [31m^[39m
+    [90m521|[39m     [90m// 零写入：许可停在 @2，仍然只被第一次尝试消费；也没有第二条证据。[39m
+    [90m522|[39m     const after = await w.h.ledger.load({ aggregateType: "ModelRequest…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m3 passed[39m[22m[90m (4)[39m
+[2m   Start at [22m 14:27:13
+[2m   Duration [22m 36.60s[2m (transform 18.11s, setup 0ms, import 26.72s, tests 7.43s, environment 0ms)[22m
+

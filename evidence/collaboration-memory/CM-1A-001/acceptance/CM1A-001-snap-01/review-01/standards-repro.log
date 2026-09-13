@@ -1,0 +1,11 @@
+participation baseline: accepted
+empty eventId: accepted=true, generic=false
+empty eventId: actual Ledger.commit=committed
+event schemaVersion=2: accepted=true, generic=false
+event schemaVersion=2: actual Ledger.commit=committed
+link event workspace differs: accepted=true, generic=true
+link event workspace differs: actual Ledger.commit=committed
+route final-page validator=true; continuation validator=false
+continuation actual Ledger.commit={"status":"rejected","code":"invalid_commit"}
+same ledger final-page commit=committed
+All defect-reproduction assertions passed. These are negative boundary probes, not A03 end-to-end coverage.

@@ -1,0 +1,21 @@
+{
+  "buildFiles": 658,
+  "buildFingerprint": "b97065a4437494a649b80cddfc5368e91de1ecf8fb049fd76eebf69bdbccc278",
+  "expected": "b97065a4437494a649b80cddfc5368e91de1ecf8fb049fd76eebf69bdbccc278",
+  "sourceFingerprint": "ba2841a9f018b2c3a22cd2d87eb40ae71a06e7eb0ba27e37121b9b24116d1eea",
+  "fullExit": "0",
+  "logHashes": {
+    "boundaries.json": "65abb7c1915d653ea7104deaabeefbcd997e9449a16457cf4e650b1737f22b56",
+    "build.log": "0d281342fc3fa12243b3a67679c72c425cb2d2ed4d958e43ffc3aec027ef8413",
+    "checks.exit-codes": "0d7cbf17046b030dd2b49c7c11c75b58bce60b86cf3d781895bba6e9a00dd072",
+    "documents.log": "17d741a7c14529eb566de8f33e1bcc4bf1afe0dedb1ae3c3c91a8189193d50f5",
+    "final-checks-started-at.txt": "469005cd877c3d4e9674d39006d9691d95c8f6e5d984d206817a30b2ef422886",
+    "full-regression.exit-code": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "full-regression.log": "e8a67c08792f7551bfdfaa22d208d75de9e9a3d0dfc418ba4039edc467924d90",
+    "source-after-output.log": "58428dd8be62f8296ba3c966e61a90625f5edb19a40898d1f2757f602fd3cd60",
+    "source-after.json": "71d0d3228cc21222df1d20e64d976660b09824ecaffa9177b4e8bf70d918d97c",
+    "types.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "ui-types.log": "38ac890c60e7f38d59ddfb410325cdfb5fca83c9411765c5481754e01c021630"
+  },
+  "errors": []
+}

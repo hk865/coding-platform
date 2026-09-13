@@ -1,0 +1,4 @@
+src/contracts/coordination.ts(1810,91): error TS2339: Property 'workspaceId' does not exist on type 'DomainEventV1'.
+  Property 'workspaceId' does not exist on type 'ProjectBootstrappedEventV1'.
+src/control/control-engine/coordination.ts(1660,46): error TS2345: Argument of type '{ projectId: string; workspaceId: string; workId: string; }' is not assignable to parameter of type 'WorkContextRef'.
+  Property 'aggregateType' is missing in type '{ projectId: string; workspaceId: string; workId: string; }' but required in type 'WorkContextRef'.

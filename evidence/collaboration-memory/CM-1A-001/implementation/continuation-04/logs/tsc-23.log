@@ -1,0 +1,31 @@
+src/app/service.ts(193,132): error TS2722: Cannot invoke an object which is possibly 'undefined'.
+src/data/read-model-index/read-model-index.ts(539,76): error TS2345: Argument of type '{ eventType: "RunEventRecorded"; payload: { taskId: string; runtimeEvent: RuntimeEventV1; }; schemaVersion: 1; projectId: string; workspaceId: string; actor: { kind: "human" | "agent" | "system"; id: string; runRef?: RunRef; }; ... 7 more ...; occurredAt: string; }' is not assignable to parameter of type 'RunEventRecordedEvent'.
+  Types of property 'actor' are incompatible.
+    Type '{ kind: "human" | "system" | "agent"; id: string; runRef?: RunRef; }' is not assignable to type 'ActorRef'.
+      Type '{ kind: "human" | "system" | "agent"; id: string; runRef?: RunRef; }' is not assignable to type '{ kind: "agent"; id: string; runRef: RunRef; }'.
+        Types of property 'kind' are incompatible.
+          Type '"human" | "system" | "agent"' is not assignable to type '"agent"'.
+            Type '"human"' is not assignable to type '"agent"'.
+src/data/read-model-index/read-model-index.ts(2115,80): error TS2345: Argument of type '{ eventType: "RunEventRecorded"; payload: { taskId: string; runtimeEvent: RuntimeEventV1; }; schemaVersion: 1; projectId: string; workspaceId: string; actor: { kind: "human" | "agent" | "system"; id: string; runRef?: RunRef; }; ... 7 more ...; occurredAt: string; }' is not assignable to parameter of type 'RunEventRecordedEvent'.
+  Types of property 'actor' are incompatible.
+    Type '{ kind: "human" | "system" | "agent"; id: string; runRef?: RunRef; }' is not assignable to type 'ActorRef'.
+      Type '{ kind: "human" | "system" | "agent"; id: string; runRef?: RunRef; }' is not assignable to type '{ kind: "agent"; id: string; runRef: RunRef; }'.
+        Types of property 'kind' are incompatible.
+          Type '"human" | "system" | "agent"' is not assignable to type '"agent"'.
+            Type '"human"' is not assignable to type '"agent"'.
+src/data/read-model-index/sqlite-read-model-index.ts(2214,76): error TS2345: Argument of type '{ eventType: "RunEventRecorded"; payload: { taskId: string; runtimeEvent: RuntimeEventV1; }; schemaVersion: 1; projectId: string; workspaceId: string; actor: { kind: "human" | "agent" | "system"; id: string; runRef?: RunRef; }; ... 7 more ...; occurredAt: string; }' is not assignable to parameter of type 'RunEventRecordedEvent'.
+  Types of property 'actor' are incompatible.
+    Type '{ kind: "human" | "system" | "agent"; id: string; runRef?: RunRef; }' is not assignable to type 'ActorRef'.
+      Type '{ kind: "human" | "system" | "agent"; id: string; runRef?: RunRef; }' is not assignable to type '{ kind: "agent"; id: string; runRef: RunRef; }'.
+        Types of property 'kind' are incompatible.
+          Type '"human" | "system" | "agent"' is not assignable to type '"agent"'.
+            Type '"human"' is not assignable to type '"agent"'.
+src/data/read-model-index/sqlite-read-model-index.ts(4079,80): error TS2345: Argument of type '{ eventType: "RunEventRecorded"; payload: { taskId: string; runtimeEvent: RuntimeEventV1; }; schemaVersion: 1; projectId: string; workspaceId: string; actor: { kind: "human" | "agent" | "system"; id: string; runRef?: RunRef; }; ... 7 more ...; occurredAt: string; }' is not assignable to parameter of type 'RunEventRecordedEvent'.
+  Types of property 'actor' are incompatible.
+    Type '{ kind: "human" | "system" | "agent"; id: string; runRef?: RunRef; }' is not assignable to type 'ActorRef'.
+      Type '{ kind: "human" | "system" | "agent"; id: string; runRef?: RunRef; }' is not assignable to type '{ kind: "agent"; id: string; runRef: RunRef; }'.
+        Types of property 'kind' are incompatible.
+          Type '"human" | "system" | "agent"' is not assignable to type '"agent"'.
+            Type '"human"' is not assignable to type '"agent"'.
+src/data/state-ledger/ledger-validation.ts(652,23): error TS2345: Argument of type 'RunSnapshot | TaskAttemptSnapshot | DispatchOutboxEntrySnapshot | ModelRequestPermitSnapshot | undefined' is not assignable to parameter of type 'JsonValue'.
+  Type 'undefined' is not assignable to type 'JsonValue'.

@@ -1,0 +1,35 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [32m✓[39m tests/memory/context.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 231[2mms[22m[39m
+ [32m✓[39m tests/memory/maintenance.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 929[2mms[22m[39m
+   [33m[2m✓[22m[39m valid JSON with corrupt snapshot or receipt shape is unavailable and never silently replaced [33m 509[2mms[22m[39m
+   [33m[2m✓[22m[39m two SQLite connections preserve one profile and reject stale concurrent edits across reopen [33m 406[2mms[22m[39m
+ [32m✓[39m tests/memory/host.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4374[2mms[22m[39m
+   [33m[2m✓[22m[39m host maintains a stable profile, isolates projects and requires selected-version copying across reopen [33m 4373[2mms[22m[39m
+ [32m✓[39m tests/app/semantic-query.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 5592[2mms[22m[39m
+   [33m[2m✓[22m[39m runs sourced semantic queries without a plan and alongside a live writer, persists real kernel inputs and denies writes [33m 5592[2mms[22m[39m
+ [31m❯[39m tests/memory/query-input.test.ts [2m([22m[2m1 test[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 25359[2mms[22m[39m
+[31m   [31m×[31m three response purposes adopt current persisted versions in real kernel requests and retain separate save/adoption facts[39m[33m 25359[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/memory/query-input.test.ts[2m > [22mthree response purposes adopt current persisted versions in real kernel requests and retain separate save/adoption facts
+[31m[1mError[22m: query did not finish[39m
+[36m [2m❯[22m query tests/memory/query-input.test.ts:[2m34:40[22m[39m
+    [90m 32|[39m       const run=((await post('/api/real/queries/runs',scope)) as {runs…
+    [90m 33|[39m       if(run&&run.status!=='running'){expect(run.status,JSON.stringify…
+    [90m 34|[39m       if(Date.now()-start>20_000)throw Error('query did not finish');a…
+    [90m   |[39m                                        [31m^[39m
+    [90m 35|[39m     }
+    [90m 36|[39m   }[33m;[39m
+[90m [2m❯[22m tests/memory/query-input.test.ts:[2m41:22[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m4 passed[39m[22m[90m (5)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m9 passed[39m[22m[90m (10)[39m
+[2m   Start at [22m 18:38:51
+[2m   Duration [22m 44.21s[2m (transform 51.68s, setup 0ms, import 64.84s, tests 36.49s, environment 0ms)[22m
+

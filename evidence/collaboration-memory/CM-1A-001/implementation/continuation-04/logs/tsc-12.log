@@ -1,0 +1,2 @@
+src/control/dispatch-engine/coordination-drive.ts(277,29): error TS2532: Object is possibly 'undefined'.
+src/control/dispatch-engine/coordination-drive.ts(277,29): error TS2722: Cannot invoke an object which is possibly 'undefined'.

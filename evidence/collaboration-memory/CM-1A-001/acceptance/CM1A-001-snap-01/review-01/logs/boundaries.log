@@ -1,0 +1,58 @@
+Already up to date
+Done in 357ms using pnpm v11.21.0
+$ node scripts/check-module-boundaries.mjs
+{
+  "sourceFiles": 418,
+  "inventoryFiles": 419,
+  "coverage": {
+    "parsedExtensions": [
+      ".ts",
+      ".tsx",
+      ".js"
+    ],
+    "ownerOnlyExtensions": [
+      ".py"
+    ],
+    "excluded": [
+      "dependencies",
+      "generated dist",
+      ".vite"
+    ],
+    "notASandboxVerification": true
+  },
+  "owners": {
+    "ArchitectureReconciler": 3,
+    "ArtifactVault": 5,
+    "ContextCompiler": 31,
+    "Contracts": 117,
+    "ControlEngine": 75,
+    "DispatchEngine": 15,
+    "Fixtures": 6,
+    "Host": 14,
+    "HumanCollaboration": 3,
+    "PlanCompiler": 8,
+    "ReadModelIndex": 8,
+    "StateLedger": 5,
+    "Storage": 1,
+    "TestDoubles": 2,
+    "UI": 72,
+    "VerificationEngine": 23,
+    "WorkerRuntime": 14,
+    "WorkspaceReader": 17
+  },
+  "moduleEdges": {
+    "ControlEngine -> StateLedger": 3,
+    "DispatchEngine -> ControlEngine": 3,
+    "DispatchEngine -> ContextCompiler": 1,
+    "DispatchEngine -> PlanCompiler": 2,
+    "PlanCompiler -> ControlEngine": 2,
+    "ArtifactVault -> WorkspaceReader": 1,
+    "ContextCompiler -> StateLedger": 3,
+    "ContextCompiler -> WorkspaceReader": 3,
+    "ReadModelIndex -> ControlEngine": 2,
+    "WorkerRuntime -> ArtifactVault": 2,
+    "WorkerRuntime -> ContextCompiler": 1,
+    "WorkerRuntime -> WorkspaceReader": 6
+  },
+  "issues": []
+}

@@ -1,0 +1,15 @@
+[WebServer] $ npm run kernel:build && tsc -p tsconfig.app.json && node scripts/copy-ui.mjs && pnpm run ui:build
+[WebServer] $ pnpm --dir src/ui run build
+[WebServer] $ vite build
+[WebServer] file:///mnt/d/1.project/Software/agent_platform/dist/app/model-settings.js:37
+[WebServer]         throw Error('模型配置目录需要由当前用户独占（权限 0700）');
+[WebServer]               ^
+[WebServer] 
+[WebServer] Error: 模型配置目录需要由当前用户独占（权限 0700）
+[WebServer]     at createModelSettings (file:///mnt/d/1.project/Software/agent_platform/dist/app/model-settings.js:37:15)
+[WebServer]     at async createGuiServer (file:///mnt/d/1.project/Software/agent_platform/dist/app/server.js:12:27)
+[WebServer]     at async file:///mnt/d/1.project/Software/agent_platform/src/ui/tests/fixture-server.mjs:38:13
+[WebServer] 
+[WebServer] Node.js v24.18.0
+Error: Process from config.webServer was not able to start. Exit code: 1
+

@@ -1,0 +1,187 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [31m❯[39m tests/coordination/route-continuity.test.ts [2m([22m[2m9 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[32m 246[2mms[22m[39m
+     [32m✓[39m DirectedRequestSent 的提交回执同时含源事件与同位置的 CommunicationIntentRecorded，且 sourceCursor 逐字节等于源事件游标[32m 47[2mms[22m[39m
+     [32m✓[39m 整轮候选集合而不是本页切片：3 个订阅 + 页大小 1 → 首轮就把 3 个都固定进范围，翻满 3 页并全部投递[32m 20[2mms[22m[39m
+     [32m✓[39m 本页引入本轮范围外的订阅 → Control 整页拒绝（零写入）[32m 13[2mms[22m[39m
+     [32m✓[39m 同一 topic 上更靠后的事件位置，在前一条未收敛的 route intent 完成前不被推进[32m 19[2mms[22m[39m
+[31m     [31m×[31m 已证实无副作用的失败进入 retry_scheduled（availableAt = settledAt + 退避）；已开始的副作用一律拒绝退避[39m[32m 15[2mms[22m[39m
+[31m     [31m×[31m 租约到期不构成重跑依据：sideEffectStarted 的 intent 不被重领，只作为 requires_reconcile 可见[39m[32m 8[2mms[22m[39m
+     [32m✓[39m 未产生副作用：取消等待后 intent **先**落成 cancel_requested，drive 之后收敛为 cancelled[32m 25[2mms[22m[39m
+     [32m✓[39m 副作用已经开始：同一个取消请求只能收敛为 outcome_unknown，绝不声称 cancelled[32m 19[2mms[22m[39m
+   [32m✓[39m a burst of source events during pagination creates every round and delivers each subscription once in order[32m 76[2mms[22m[39m
+ [31m❯[39m tests/coordination/route-drive.test.ts [2m([22m[2m15 tests[22m[2m | [22m[31m8 failed[39m[2m)[22m[33m 1572[2mms[22m[39m
+[31m     [31m×[31m 把正文投给订阅的 owner Work，并严格推进订阅 checkpoint[39m[32m 40[2mms[22m[39m
+[31m     [31m×[31m 页被拒时零部分写入：不产生 Delivery / checkpoint / intent 推进[39m[32m 7[2mms[22m[39m
+[31m     [31m×[31m hasMore=true 但本页没有处理任何订阅 → 整页拒绝（零写入，不再静默收敛）[39m[32m 8[2mms[22m[39m
+     [32m✓[39m communication-route-page 专用校验拒绝：越权目标 / 页内重复投递 / 事件位置回退（既有反例保留）[32m 3[2mms[22m[39m
+     [32m✓[39m communication-route-page 两个 intent 角色分别核对：续页的版本 / 确定性 id / 来源位置 / 分页边界 / 范围固定[32m 17[2mms[22m[39m
+[31m     [31m×[31m startCursor=null 的订阅在订阅提交之后补齐：锚定 frontier + 每个 topic 一个 route intent，且不补投订阅之前的事件[39m[32m 13[2mms[22m[39m
+[31m     [31m×[31m 3 个订阅命中同一事件位置 → 必须翻 3 页：全部拿到 Delivery、页顺序确定、每页一次 CAS、重复 drive 不重复投递[39m[32m 17[2mms[22m[39m
+[31m     [31m×[31m 两个消费者竞争同一 intent：一个 claimed，另一个 owned_elsewhere；过期 generation 不能 settle[39m[32m 10[2mms[22m[39m
+[31m     [31m×[31m sideEffectStarted 且租约过期的 intent 不被重领（requires_reconcile），只作为可见 backlog 报告[39m[32m 10[2mms[22m[39m
+     [32m✓[39m wait 先注册、事件后到：页满足条件 → 前驱 active 不重叠启动 → 前驱结束后恰好一次后继[32m 34[2mms[22m[39m
+     [32m✓[39m 事件先发生、wait 后注册：条件事实已在账本里，仍然只产生一次后继[32m 25[2mms[22m[39m
+     [32m✓[39m 同一 intent 连续硬失败到上界：收敛为可见 quarantine，而不是无限重试[32m 40[2mms[22m[39m
+     [32m✓[39m deadline 到点：收敛为 timed_out，而不是接续[32m 11[2mms[22m[39m
+     [33m[2m✓[22m[39m SQLite close + reopen 后仍能领取既有 wait_admission intent 并完成唯一后继 [33m 1324[2mms[22m[39m
+[31m     [31m×[31m 同一个 intent 重复 drive 不会重复推进（页只提交一次）[39m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/coordination/host-tool-chain.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4263[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具发起请求与报告；重启后唯一后继被受理、准备并带着精确报告版本跑起来 [33m 4261[2mms[22m[39m
+ [32m✓[39m tests/coordination/runtime-concurrency.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 5327[2mms[22m[39m
+   [33m[2m✓[22m[39m ordinary drive overlaps two actual read-only Runtime/provider calls [33m 2856[2mms[22m[39m
+   [33m[2m✓[22m[39m overlapping writers share the existing exclusive lease and only one reaches the provider [33m 2470[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 10 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-continuity.test.ts[2m > [22m取消与 unknown（A07/A08）：非终态退避与已开始的副作用[2m > [22m已证实无副作用的失败进入 retry_scheduled（availableAt = settledAt + 退避）；已开始的副作用一律拒绝退避
+[31m[1mError[22m: intent missing: route-0e5dc71243f2eafb2512988d[39m
+[36m [2m❯[22m claimIntent tests/coordination/route-continuity.test.ts:[2m453:40[22m[39m
+    [90m451|[39m async function claimIntent(s: Scenario, intentId: string, now: string,…
+    [90m452|[39m   const loaded = await s.h.ledger.load(communicationIntentRefFor(PROJE…
+    [90m453|[39m   if (loaded.status !== "found") throw new Error("intent missing: " + …
+    [90m   |[39m                                        [31m^[39m
+    [90m454|[39m   [35mconst[39m claimed [33m=[39m [35mawait[39m s[33m.[39mh[33m.[39mcontrol[33m.[39m[34mclaimCommunicationIntent[39m({
+    [90m455|[39m     commandId: "cmd-rc-claim-" + intentId + "-" + now, commandType: "C…
+[90m [2m❯[22m tests/coordination/route-continuity.test.ts:[2m484:19[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-continuity.test.ts[2m > [22m取消与 unknown（A07/A08）：非终态退避与已开始的副作用[2m > [22m租约到期不构成重跑依据：sideEffectStarted 的 intent 不被重领，只作为 requires_reconcile 可见
+[31m[1mError[22m: intent missing: route-0e5dc71243f2eafb2512988d[39m
+[36m [2m❯[22m claimIntent tests/coordination/route-continuity.test.ts:[2m453:40[22m[39m
+    [90m451|[39m async function claimIntent(s: Scenario, intentId: string, now: string,…
+    [90m452|[39m   const loaded = await s.h.ledger.load(communicationIntentRefFor(PROJE…
+    [90m453|[39m   if (loaded.status !== "found") throw new Error("intent missing: " + …
+    [90m   |[39m                                        [31m^[39m
+    [90m454|[39m   [35mconst[39m claimed [33m=[39m [35mawait[39m s[33m.[39mh[33m.[39mcontrol[33m.[39m[34mclaimCommunicationIntent[39m({
+    [90m455|[39m     commandId: "cmd-rc-claim-" + intentId + "-" + now, commandType: "C…
+[90m [2m❯[22m tests/coordination/route-continuity.test.ts:[2m525:21[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-drive.test.ts[2m > [22mroute page（A03）：真实订阅 → 固定事件位置 → 订阅 owner Work 的精确投递[2m > [22m把正文投给订阅的 owner Work，并严格推进订阅 checkpoint
+[31m[1mAssertionError[22m: expected 'not_found' to be 'found' // Object.is equality[39m
+
+Expected: [32m"found"[39m
+Received: [31m"[7mnot_[27mfound"[39m
+
+[36m [2m❯[22m tests/coordination/route-drive.test.ts:[2m497:27[22m[39m
+    [90m495|[39m     const intentRef = communicationIntentRefFor(PROJECT, WORKSPACE, ro…
+    [90m496|[39m     [35mconst[39m intent [33m=[39m [35mawait[39m s[33m.[39mh[33m.[39mledger[33m.[39m[34mload[39m(intentRef)[33m;[39m
+    [90m497|[39m     [34mexpect[39m(intent[33m.[39mstatus)[33m.[39m[34mtoBe[39m([32m"found"[39m)[33m;[39m
+    [90m   |[39m                           [31m^[39m
+    [90m498|[39m     [35mif[39m (intent[33m.[39mstatus [33m!==[39m [32m"found"[39m) [35mreturn[39m[33m;[39m
+    [90m499|[39m     expect((intent.snapshot as CommunicationIntentSnapshot).intent.sta…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-drive.test.ts[2m > [22mroute page（A03）：真实订阅 → 固定事件位置 → 订阅 owner Work 的精确投递[2m > [22m页被拒时零部分写入：不产生 Delivery / checkpoint / intent 推进
+[31m[1mError[22m: intent missing[39m
+[36m [2m❯[22m tests/coordination/route-drive.test.ts:[2m509:42[22m[39m
+    [90m507|[39m     const intentRef = communicationIntentRefFor(PROJECT, WORKSPACE, in…
+    [90m508|[39m     [35mconst[39m before [33m=[39m [35mawait[39m s[33m.[39mh[33m.[39mledger[33m.[39m[34mload[39m(intentRef)[33m;[39m
+    [90m509|[39m     [35mif[39m (before[33m.[39mstatus [33m!==[39m [32m"found"[39m) [35mthrow[39m [35mnew[39m [33mError[39m([32m"intent missing"[39m)[33m;[39m
+    [90m   |[39m                                          [31m^[39m
+    [90m510|[39m     [35mconst[39m revision [33m=[39m before[33m.[39msnapshot[33m.[39mrevision[33m;[39m
+    [90m511|[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-drive.test.ts[2m > [22mroute page（A03）：真实订阅 → 固定事件位置 → 订阅 owner Work 的精确投递[2m > [22mhasMore=true 但本页没有处理任何订阅 → 整页拒绝（零写入，不再静默收敛）
+[31m[1mError[22m: intent missing[39m
+[36m [2m❯[22m tests/coordination/route-drive.test.ts:[2m571:42[22m[39m
+    [90m569|[39m     const intentRef = communicationIntentRefFor(PROJECT, WORKSPACE, in…
+    [90m570|[39m     [35mconst[39m before [33m=[39m [35mawait[39m s[33m.[39mh[33m.[39mledger[33m.[39m[34mload[39m(intentRef)[33m;[39m
+    [90m571|[39m     [35mif[39m (before[33m.[39mstatus [33m!==[39m [32m"found"[39m) [35mthrow[39m [35mnew[39m [33mError[39m([32m"intent missing"[39m)[33m;[39m
+    [90m   |[39m                                          [31m^[39m
+    [90m572|[39m     [35mconst[39m revision [33m=[39m before[33m.[39msnapshot[33m.[39mrevision[33m;[39m
+    [90m573|[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-drive.test.ts[2m > [22msubscription-catchup：「从现在起」的订阅拿到持久路由起点（A03 的 start position）[2m > [22mstartCursor=null 的订阅在订阅提交之后补齐：锚定 frontier + 每个 topic 一个 route intent，且不补投订阅之前的事件
+[31m[1mAssertionError[22m: expected [] to have a length of 1 but got +0[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 1[39m
+[31m+ 0[39m
+
+[36m [2m❯[22m tests/coordination/route-drive.test.ts:[2m897:21[22m[39m
+    [90m895|[39m     const events = await s.h.ledger.events({ afterCursor: null, limit:…
+    [90m896|[39m     const planned = events.events.filter((p) => p.event.eventType === …
+    [90m897|[39m     [34mexpect[39m(planned)[33m.[39m[34mtoHaveLength[39m([34m1[39m)[33m;[39m
+    [90m   |[39m                     [31m^[39m
+    [90m898|[39m     const payload = (planned[0]!.event as { payload: { frontierCursor:…
+    [90m899|[39m     [34mexpect[39m(payload[33m.[39mfrontierCursor)[33m.[39mnot[33m.[39m[34mtoBeNull[39m()[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-drive.test.ts[2m > [22m多页路由（A03）：同一事件位置的订阅超过一页时连续完成，末页之后没有多余 intent[2m > [22m3 个订阅命中同一事件位置 → 必须翻 3 页：全部拿到 Delivery、页顺序确定、每页一次 CAS、重复 drive 不重复投递
+[31m[1mAssertionError[22m: 本轮必须从 c0 上的 pending route intent 出发: expected 'not_found' to be 'found' // Object.is equality[39m
+
+Expected: [32m"found"[39m
+Received: [31m"[7mnot_[27mfound"[39m
+
+[36m [2m❯[22m tests/coordination/route-drive.test.ts:[2m1040:66[22m[39m
+    [90m1038|[39m     const intentRef = communicationIntentRefFor(PROJECT, WORKSPACE, in…
+    [90m1039|[39m     [35mconst[39m seeded [33m=[39m [35mawait[39m h[33m.[39mledger[33m.[39m[34mload[39m(intentRef)[33m;[39m
+    [90m1040|[39m     expect(seeded.status, "本轮必须从 c0 上的 pending route intent 出发").toBe(…
+    [90m   |[39m                                                                  [31m^[39m
+    [90m1041|[39m
+    [90m1042|[39m     [35mconst[39m drive [33m=[39m [35mawait[39m h[33m.[39m[34mdrive[39m({ reason[33m:[39m [32m"rd-paged"[39m[33m,[39m maxIntents[33m:[39m [34m8[39m })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-drive.test.ts[2m > [22mclaim 竞争（A04）：只有一个消费者拿到 generation[2m > [22m两个消费者竞争同一 intent：一个 claimed，另一个 owned_elsewhere；过期 generation 不能 settle
+[31m[1mError[22m: intent missing[39m
+[36m [2m❯[22m tests/coordination/route-drive.test.ts:[2m1128:42[22m[39m
+    [90m1126|[39m     const intentRef = communicationIntentRefFor(PROJECT, WORKSPACE, in…
+    [90m1127|[39m     [35mconst[39m loaded [33m=[39m [35mawait[39m s[33m.[39mh[33m.[39mledger[33m.[39m[34mload[39m(intentRef)[33m;[39m
+    [90m1128|[39m     [35mif[39m (loaded[33m.[39mstatus [33m!==[39m [32m"found"[39m) [35mthrow[39m [35mnew[39m [33mError[39m([32m"intent missing"[39m)[33m;[39m
+    [90m   |[39m                                          [31m^[39m
+    [90m1129|[39m
+    [90m1130|[39m     const claimFor = (consumerId: string): CommunicationClaimCommand =…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-drive.test.ts[2m > [22mclaim 竞争（A04）：只有一个消费者拿到 generation[2m > [22msideEffectStarted 且租约过期的 intent 不被重领（requires_reconcile），只作为可见 backlog 报告
+[31m[1mError[22m: intent missing[39m
+[36m [2m❯[22m tests/coordination/route-drive.test.ts:[2m1165:42[22m[39m
+    [90m1163|[39m     const intentRef = communicationIntentRefFor(PROJECT, WORKSPACE, in…
+    [90m1164|[39m     [35mconst[39m loaded [33m=[39m [35mawait[39m s[33m.[39mh[33m.[39mledger[33m.[39m[34mload[39m(intentRef)[33m;[39m
+    [90m1165|[39m     [35mif[39m (loaded[33m.[39mstatus [33m!==[39m [32m"found"[39m) [35mthrow[39m [35mnew[39m [33mError[39m([32m"intent missing"[39m)[33m;[39m
+    [90m   |[39m                                          [31m^[39m
+    [90m1166|[39m
+    [90m1167|[39m     [90m// 先领取，再把租约推到过去（模拟"过期领取者"），并标记该 intent 已产生外部副作用。[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/route-drive.test.ts[2m > [22m重启与 backlog（A09/A10）：从持久事实继续，不依赖内存队列[2m > [22m同一个 intent 重复 drive 不会重复推进（页只提交一次）
+[31m[1mAssertionError[22m: expected 1 to be +0 // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 0[39m
+[31m+ 1[39m
+
+[36m [2m❯[22m tests/coordination/route-drive.test.ts:[2m1374:46[22m[39m
+    [90m1372|[39m     [34mexpect[39m(deliveriesAfterFirst)[33m.[39m[34mtoBe[39m([34m2[39m)[33m;[39m
+    [90m1373|[39m     const second = await s.h.drive({ reason: "rd-idem-2", maxIntents: …
+    [90m1374|[39m     [34mexpect[39m(second[33m.[39mcoordination[33m?.[39mpagesRouted)[33m.[39m[34mtoBe[39m([34m0[39m)[33m;[39m
+    [90m   |[39m                                              [31m^[39m
+    [90m1375|[39m     [34mexpect[39m(second[33m.[39mcoordination[33m?.[39mdeliveries)[33m.[39m[34mtoBe[39m([34m0[39m)[33m;[39m
+    [90m1376|[39m     [90m// 同一个 intent 不会第二次提交页：没有新 Delivery，也没有第二次 settle。[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/10]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m2 passed[39m[22m[90m (4)[39m
+[2m      Tests [22m [1m[31m10 failed[39m[22m[2m | [22m[1m[32m17 passed[39m[22m[90m (27)[39m
+[2m   Start at [22m 14:50:02
+[2m   Duration [22m 26.85s[2m (transform 54.67s, setup 0ms, import 61.32s, tests 11.41s, environment 0ms)[22m
+

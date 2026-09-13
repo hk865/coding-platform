@@ -1,0 +1,36 @@
+Already up to date
+Done in 458ms using pnpm v11.21.0
+
+   ╭──────────────────────────────────────────────╮
+   │                                              │
+   │     Update available! 11.21.0 → 12.4.1.      │
+   │     Changelog: https://pnpm.io/v/12.4.1      │
+   │   To update, run: corepack use pnpm@12.4.1   │
+   │                                              │
+   ╰──────────────────────────────────────────────╯
+
+$ npm run kernel:build && tsc -p tsconfig.app.json && node scripts/copy-ui.mjs && pnpm run ui:build
+
+> agent-platform@0.1.0 kernel:build
+> npm --prefix vendor/coding-agent run build
+
+
+> coding-agent-learning@0.0.0 build
+> tsc -p tsconfig.build.json
+
+$ pnpm --dir src/ui run build
+$ vite build
+vite v8.2.2 building client environment for production...
+transforming...
+✓ 1055 modules transformed.
+rendering chunks...
+computing gzip size...
+../../dist/app/public/workbench/index.html                        0.48 kB │ gzip:   0.31 kB
+../../dist/app/public/workbench/assets/terminal-B1njb2Cr.css      3.96 kB │ gzip:   1.02 kB
+../../dist/app/public/workbench/assets/task-graph-DLioOiRN.css   15.41 kB │ gzip:   2.56 kB
+../../dist/app/public/workbench/assets/index-BDq-QD5v.css       240.07 kB │ gzip:  35.63 kB
+../../dist/app/public/workbench/assets/task-graph-BsgaLiBz.js   179.79 kB │ gzip:  58.34 kB
+../../dist/app/public/workbench/assets/terminal-CeHrvr0H.js     337.12 kB │ gzip:  85.51 kB
+../../dist/app/public/workbench/assets/index-CdX2Ww2F.js        714.91 kB │ gzip: 215.82 kB
+
+✓ built in 9.62s

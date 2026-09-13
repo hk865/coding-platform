@@ -1,0 +1,28 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/mnt/d/1.project/Software/agent_platform[39m
+
+ [31m❯[39m tests/coordination/host-tool-chain.test.ts [2m([22m[2m3 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 8304[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='task'/'all' [33m 3366[2mms[22m[39m
+     [33m[2m✓[22m[39m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'all' [33m 2649[2mms[22m[39m
+[31m     [31m×[31m 模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'any'[39m[33m 2288[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/coordination/host-tool-chain.test.ts[2m > [22mHost 工具链（A02/A05/A06/A09）：请求 → 报告 → 订阅 → all-wait → 唯一后继 → 实际输入[2m > [22m模型经真实工具与重启形成精确输入；admission Work 类型='coordination'/'any'
+[31m[1mAssertionError[22m: 后继必须真的调用了模型: {"spec":{"projectId":"proj-alpha","workspaceId":"ws-shared","goalId":"goal-1","runId":"run-9f9e9ea8579c81a1da8c0ab6","taskId":"task-run-adaptor","root":"/tmp/cm1a-host-tool-r91xGH/source","instruction":"CM1A-STEP3-INSTRUCTION","budget":{"contextWindowTokens":1000000,"inputTokens":null,"outputTokens":null,"maxRequests":null,"maxToolCalls":null,"timeoutMs":null,"perResponseTokens":32768}},"createdAt":"2026-09-13T09:01:28.905Z","status":"failed","sessionId":"2dc8bd36-63f1-4a1f-98b0-afe71dc1a173","configuration":null,"events":[{"schemaVersion":1,"eventId":"2dc8bd36-63f1-4a1f-98b0-afe71dc1a173-1","runRef":{"aggregateType":"Run","projectId":"proj-alpha","goalId":"goal-1","runId":"run-9f9e9ea8579c81a1da8c0ab6"},"sequence":1,"occurredAt":"2026-09-13T09:01:29.001Z","eventType":"run_crashed","payload":{"kind":"crashed","error":"执行前材料校验失败：Delivery 材料不可读或被拒绝：deliv-260e48e8ffeadce7ff62c7ba（rejected:forbidden requester is neither the recorded owner run nor authorized by a recorded grant）"}}],"trace":[],"usage":[],"error":"执行前材料校验失败：Delivery 材料不可读或被拒绝：deliv-260e48e8ffeadce7ff62c7ba（rejected:forbidden requester is neither the recorded owner run nor authorized by a recorded grant）","nodeSha256":null,"workspaceRevision":null,"cancelRequested":false}: expected 0 to be greater than 0[39m
+[36m [2m❯[22m tests/coordination/host-tool-chain.test.ts:[2m576:131[22m[39m
+    [90m574|[39m     // ── A06：后继 Run 的**实际 ModelRequest** 含目标 Delivery 的正文与精确版本 ──────…
+    [90m575|[39m     const successorRequests = w.captured.requests.get(successorRunId) …
+    [90m576|[39m     expect(successorRequests.length, '后继必须真的调用了模型: ' + JSON.stringify(…
+    [90m   |[39m                                                                                                                                   [31m^[39m
+    [90m577|[39m     const withNonce = successorRequests.filter((request) => userInputO…
+    [90m578|[39m     expect(withNonce, "目标 Delivery 的正文必须进入捕获的实际 ModelRequest").toHaveL…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m2 passed[39m[22m[90m (3)[39m
+[2m   Start at [22m 17:01:03
+[2m   Duration [22m 28.59s[2m (transform 14.14s, setup 0ms, import 18.90s, tests 8.30s, environment 0ms)[22m
+

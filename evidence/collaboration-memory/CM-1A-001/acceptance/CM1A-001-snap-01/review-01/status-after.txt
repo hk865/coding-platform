@@ -1,0 +1,264 @@
+ M IMPLEMENTATION-HANDOFF.md
+ M evidence/2026-09-09-architecture-rebuild/final-product-status.txt
+ M evidence/2026-09-09-architecture-rebuild/initial-product-status.txt
+ M evidence/2026-09-09-architecture-rebuild/initial-source-sha256.json
+ M evidence/2026-09-09-architecture-rebuild/migration-scripts/README.md
+ M evidence/2026-09-09-architecture-rebuild/paused-docs-sha256.json
+ M evidence/2026-09-09-architecture-rebuild/paused-docs-status.txt
+ M evidence/2026-09-09-architecture-rebuild/paused-product-status.txt
+ M evidence/2026-09-09-architecture-rebuild/paused-source-sha256.json
+ M evidence/2026-09-09-architecture-repair/final-docs-sha256.json
+ M evidence/2026-09-09-architecture-repair/final-docs-status.txt
+ M evidence/2026-09-09-architecture-repair/final-product-status.txt
+ M evidence/2026-09-09-architecture-repair/final-source-sha256.json
+ M evidence/2026-09-09-architecture-repair/initial-docs-status.txt
+ M evidence/2026-09-09-architecture-repair/initial-product-status.txt
+ M evidence/2026-09-09-architecture-repair/initial-source-sha256.json
+ M evidence/2026-09-09-architecture-repair/source-changes.json
+ M evidence/2026-09-09-architecture-repair/tested-source-sha256.json
+ M evidence/2026-09-09-core-verification/pause-docs-git-status.txt
+ M evidence/2026-09-09-core-verification/pause-product-git-status.txt
+ M evidence/2026-09-09-core-verification/verification-final-source-sha256.json
+ M evidence/2026-09-09-independent-review/control-source-snapshot-02.json
+ M evidence/2026-09-09-independent-review/control-source-snapshot-03.json
+ M evidence/2026-09-09-independent-review/control-source-snapshot.json
+ M evidence/2026-09-09-independent-review/verification-source-sha256.json
+ M evidence/2026-09-09-module-completion/a1-closeout-sha256.json
+ M evidence/2026-09-09-module-completion/a3-python-final-sha256.json
+ M evidence/2026-09-09-module-completion/closeout-docs-status.txt
+ M evidence/2026-09-09-module-completion/closeout-product-status.txt
+ M evidence/2026-09-09-module-completion/closeout-results.json
+ M evidence/2026-09-09-module-completion/closeout-source-sha256.json
+ M evidence/2026-09-09-module-completion/initial-head.txt
+ M evidence/2026-09-09-module-completion/initial-source-sha256.json
+ M evidence/2026-09-09-module-completion/initial-status.txt
+ M evidence/2026-09-10-external-review-repair/before/docs-git-status.txt
+ M evidence/2026-09-10-external-review-repair/before/product-git-status.txt
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-02-restart-fixtures.ts.diff
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-03-restart-fixtures.ts.diff
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-04-restart-fixtures.ts.diff
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-05-restart-fixtures.ts.diff
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-06-restart-fixtures.ts.diff
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-07-restart-fixtures.ts.diff
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-08-restart-fixtures.ts.diff
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-09-restart-fixtures.ts.diff
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-10-restart-fixtures.ts.diff
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-11-restart-fixtures.ts.diff
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-12-restart-fixtures.ts.diff
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-13-restart-fixtures.ts.diff
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-14-restart-fixtures.ts.diff
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-15-restart-fixtures.ts.diff
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-16-restart-fixtures.ts.diff
+ M evidence/2026-09-10-external-review-repair/test-snapshots/diff/tests_restart_p1-17-restart-fixtures.ts.diff
+ M evidence/2026-09-11-architecture-convergence/baseline-docs-status.txt
+ M evidence/2026-09-11-architecture-convergence/baseline-product-status.txt
+ M evidence/2026-09-11-architecture-convergence/check-artifacts.mjs
+ M evidence/2026-09-11-architecture-convergence/closeout.mjs
+ M evidence/2026-09-11-architecture-convergence/data-state-preservation.json
+ M evidence/2026-09-11-architecture-convergence/dispatch-materials.mjs
+ M evidence/2026-09-11-architecture-convergence/doc-review-fixes.mjs
+ M evidence/2026-09-11-architecture-convergence/final-fixes.mjs
+ M evidence/2026-09-11-architecture-convergence/final-review-docs.md
+ M evidence/2026-09-11-architecture-convergence/prune-documents.mjs
+ M evidence/2026-09-11-architecture-convergence/readability.mjs
+ M evidence/2026-09-11-architecture-convergence/regression-fixes.mjs
+ M evidence/2026-09-11-architecture-convergence/type-fixes.mjs
+ M evidence/2026-09-11-architecture-convergence/update-main-docs.mjs
+ M evidence/2026-09-11-architecture-convergence/write-handoff.mjs
+ M evidence/2026-09-11-architecture-convergence/write-summary.mjs
+ M evidence/2026-09-11-architecture-convergence/write-verification.mjs
+ M evidence/2026-09-11-module-status-diagram/before-flow-overlay.md.txt
+ M evidence/2026-09-11-module-status-diagram/before.md.txt
+ M evidence/2026-09-11-semantic-completion/checkpoint-commit.log
+ M evidence/2026-09-11-semantic-completion/commit-inventory.mjs
+ M evidence/2026-09-11-semantic-completion/docs-final-attempt-1.log
+ M evidence/2026-09-11-semantic-completion/docs-final-windows.log
+ M evidence/2026-09-11-semantic-completion/post-validation-changes.json
+ M evidence/2026-09-11-semantic-completion/semantic-targeted-6-interruption.txt
+ M evidence/2026-09-11-semantic-completion/served-artifacts.log
+ M evidence/2026-09-11-semantic-completion/snapshot.mjs
+ M evidence/2026-09-11-semantic-completion/validated-scenarios.json
+ M evidence/2026-09-11-semantic-loop/changes.json
+ M evidence/2026-09-11-semantic-loop/check-artifacts.mjs
+ M evidence/2026-09-11-semantic-loop/docs-status.txt
+ M evidence/2026-09-11-semantic-loop/intermediate-module-status.md.txt
+ M evidence/2026-09-11-semantic-loop/processes.json
+ M evidence/2026-09-11-semantic-loop/product-status.txt
+ M evidence/2026-09-11-semantic-loop/snapshot.mjs
+ M evidence/2026-09-11-semantic-loop/verification.md
+ M evidence/2026-09-11-source-cleanup/check-artifacts.mjs
+ M evidence/2026-09-11-source-cleanup/check-source-docs.mjs
+ M evidence/2026-09-11-source-cleanup/contracts-followup/artifacts-before.exit
+ M evidence/2026-09-11-source-cleanup/contracts-followup/full-wrapper-failure.txt
+ M evidence/2026-09-11-source-cleanup/contracts-followup/history/docs/dev_docs/interfaces/runtime-collaboration.md.txt
+ M evidence/2026-09-11-source-cleanup/contracts-followup/history/docs/human/module-status.md.txt
+ M evidence/2026-09-11-source-cleanup/contracts-followup/process-observation.json
+ M evidence/2026-09-11-source-cleanup/contracts-followup/types-initial.exit
+ M evidence/2026-09-11-source-cleanup/current-state.mjs
+ M evidence/2026-09-11-source-cleanup/docs-final.exit
+ M evidence/2026-09-11-source-cleanup/docs-status-before.txt
+ M evidence/2026-09-11-source-cleanup/docs-status-final.txt
+ M evidence/2026-09-11-source-cleanup/docs.exit
+ M evidence/2026-09-11-source-cleanup/environment-failures.txt
+ M evidence/2026-09-11-source-cleanup/export-pruning/artifacts-before.exit
+ M evidence/2026-09-11-source-cleanup/export-pruning/history/docs/human/module-status.md.txt
+ M evidence/2026-09-11-source-cleanup/export-pruning/patch-tool-note.txt
+ M evidence/2026-09-11-source-cleanup/export-pruning/process-observation.json
+ M evidence/2026-09-11-source-cleanup/final-reference-fixes.mjs
+ M evidence/2026-09-11-source-cleanup/finalize-report.mjs
+ M evidence/2026-09-11-source-cleanup/finish-comments.mjs
+ M evidence/2026-09-11-source-cleanup/fix-historical-link.mjs
+ M evidence/2026-09-11-source-cleanup/history/IMPLEMENTATION-HANDOFF.md.txt
+ M evidence/2026-09-11-source-cleanup/history/docs/human/module-status.md.txt
+ M evidence/2026-09-11-source-cleanup/history/tests/app/semantic-collaboration-fixture.ts.txt
+ M evidence/2026-09-11-source-cleanup/history/tests/contracts/module-ownership.test.ts.txt
+ M evidence/2026-09-11-source-cleanup/history/tests/restart/p1-02-restart-fixtures.ts.txt
+ M evidence/2026-09-11-source-cleanup/history/tests/restart/p1-03-restart-fixtures.ts.txt
+ M evidence/2026-09-11-source-cleanup/history/tests/restart/p1-06-restart-fixtures.ts.txt
+ M evidence/2026-09-11-source-cleanup/history/tests/restart/p1-09-restart-fixtures.ts.txt
+ M evidence/2026-09-11-source-cleanup/history/tests/restart/p1-10-restart-fixtures.ts.txt
+ M evidence/2026-09-11-source-cleanup/history/tests/restart/p1-12-restart-fixtures.ts.txt
+ M evidence/2026-09-11-source-cleanup/history/tests/restart/p1-14-restart-fixtures.ts.txt
+ M evidence/2026-09-11-source-cleanup/history/tests/restart/p1-16-restart-fixtures.ts.txt
+ M evidence/2026-09-11-source-cleanup/history/tests/restart/p1-17-restart-fixtures.ts.txt
+ M evidence/2026-09-11-source-cleanup/independent-review.md
+ M evidence/2026-09-11-source-cleanup/inventory-before-summary.json
+ M evidence/2026-09-11-source-cleanup/inventory.mjs
+ M evidence/2026-09-11-source-cleanup/isolate-test-evidence.mjs
+ M evidence/2026-09-11-source-cleanup/prepare-removals.mjs
+ M evidence/2026-09-11-source-cleanup/preserve-audit.mjs
+ M evidence/2026-09-11-source-cleanup/processes-before.json
+ M evidence/2026-09-11-source-cleanup/processes-final.json
+ M evidence/2026-09-11-source-cleanup/product-status-before.txt
+ M evidence/2026-09-11-source-cleanup/product-status-final.txt
+ M evidence/2026-09-11-source-cleanup/protocol-convergence/artifacts-after.exit
+ M evidence/2026-09-11-source-cleanup/protocol-convergence/artifacts-before.exit
+ M evidence/2026-09-11-source-cleanup/protocol-convergence/history/docs/dev_docs/interfaces/runtime-collaboration.md.txt
+ M evidence/2026-09-11-source-cleanup/protocol-convergence/history/docs/human/module-status.md.txt
+ M evidence/2026-09-11-source-cleanup/protocol-convergence/neighbor-consumers.exit
+ M evidence/2026-09-11-source-cleanup/protocol-convergence/process-observation.json
+ M evidence/2026-09-11-source-cleanup/protocol-convergence/source-changes.patch
+ M evidence/2026-09-11-source-cleanup/review-comment-fixes.mjs
+ M evidence/2026-09-11-source-cleanup/snapshot.mjs
+ M evidence/2026-09-11-source-cleanup/tool-failure-excerpts.txt
+ M evidence/2026-09-11-source-cleanup/ui-probe-restoration.json
+ M evidence/2026-09-11-source-cleanup/update-docs.mjs
+ M src/app/governance.ts
+ M src/contracts/command-event.ts
+ M src/contracts/commands/governance.ts
+ M src/contracts/completed-work-context.ts
+ M src/contracts/context-continuity.ts
+ M src/contracts/events.ts
+ M src/contracts/execution-feedback.ts
+ M src/contracts/initial-planning.ts
+ M src/contracts/ledger.ts
+ M src/contracts/modules.ts
+ M src/contracts/ports.ts
+ M src/contracts/role-spec.ts
+ M src/contracts/runtime-context-materials.ts
+ M src/contracts/validation/context.ts
+ M src/contracts/validation/event.ts
+ M src/contracts/validation/identity.ts
+ M src/contracts/validation/role.ts
+ M src/control/control-engine/control-engine.ts
+ M src/control/control-engine/policies/integration.ts
+ M src/control/control-engine/records/role-spec.ts
+ M src/control/control-engine/role-spec.ts
+ M src/control/control-engine/work-record.ts
+ M src/control/dispatch-engine/dispatch-engine.ts
+ M src/control/dispatch-engine/planned-task-dispatch.ts
+ M src/control/dispatch-engine/role-spec-read.ts
+ M src/control/dispatch-engine/work-material-drive.ts
+ M src/data/context-compiler/completed-work-context-compiler.ts
+ M src/data/context-compiler/query-context-compiler.ts
+ M src/data/context-compiler/work-run-materials.ts
+ M src/data/read-model-index/governance-view.ts
+ M src/data/read-model-index/read-model-index.ts
+ M src/data/read-model-index/sqlite-read-model-index.ts
+ M src/data/state-ledger/in-memory-ledger.ts
+ M src/data/state-ledger/ledger-validation.ts
+ M src/data/state-ledger/sqlite-ledger.ts
+ M src/execution/worker-runtime/coding-agent-runtime.ts
+ M src/execution/worker-runtime/observed-model-run.ts
+ M src/harness/in-memory-harness.ts
+ M src/harness/persistent-harness.ts
+ M src/ui/UI-REPAIR-PROMPT.md
+ M src/ui/src/features/governance.tsx
+ M tests/app/initial-planning.test.ts
+ M tests/app/role-spec-governance.test.ts
+ M tests/app/semantic-collaboration-fixture.ts
+ M tests/context/completed-work-regression.test.ts
+ M tests/contract-suite/console.contract.suite.ts
+ M tests/contract-support/testing/control.double.ts
+ M tests/contracts/module-ownership.test.ts
+ M tests/control/work-record.test.ts
+ M tests/restart/p1-02-restart-fixtures.ts
+ M tests/restart/p1-03-restart-fixtures.ts
+ M tests/restart/p1-04-restart-fixtures.ts
+ M tests/restart/p1-05-restart-fixtures.ts
+ M tests/restart/p1-06-restart-fixtures.ts
+ M tests/restart/p1-07-restart-fixtures.ts
+ M tests/restart/p1-08-restart-fixtures.ts
+ M tests/restart/p1-09-restart-fixtures.ts
+ M tests/restart/p1-10-restart-fixtures.ts
+ M tests/restart/p1-11-restart-fixtures.ts
+ M tests/restart/p1-12-restart-fixtures.ts
+ M tests/restart/p1-13-restart-fixtures.ts
+ M tests/restart/p1-14-restart-fixtures.ts
+ M tests/restart/p1-15-restart-fixtures.ts
+ M tests/restart/p1-16-restart-fixtures.ts
+ M tests/restart/p1-17-restart-fixtures.ts
+ M tests/verification/feedback-decision-recovery.test.ts
+ M tests/verification/feedback-investigation-authority.test.ts
+ M tests/verification/feedback-renewal.test.ts
+ M vendor/coding-agent/INTEGRATION.md
+ M vendor/coding-agent/src/app/composition/composition-root.ts
+?? evidence/2026-09-12-agent-templates-memory/served-artifacts.json
+?? evidence/2026-09-12-agent-templates-memory/source-fingerprint.json
+?? evidence/2026-09-12-agent-templates-memory/verification.md
+?? evidence/2026-09-12-agent-templates-memory/verify-served.mjs
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/acceptance.md
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/capture.py
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/coverage.md
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/current-working-tree.patch
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/defects.md
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/handover-run.sh
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/handover-successor.test.ts
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/no-successor-prepare.test.ts
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/run.sh
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/snapshot-after.json
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/snapshot-before.json
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/spec-generated.config.mjs
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/spec-run.sh
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/spec-test-wsl.sh
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/spec-vitest.config.mjs
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/spec.md
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/standards-repro.mjs
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/standards.md
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/status-before.txt
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/upstream-current.json
+?? evidence/collaboration-memory/CM-1A-001/acceptance/CM1A-001-snap-01/review-01/upstream.py
+?? evidence/collaboration-memory/CM-1A-001/implementation/CM1A-001-snap-01/ACCEPTANCE-HANDOFF.md
+?? evidence/collaboration-memory/CM-1A-001/implementation/CM1A-001-snap-01/build-verification.md
+?? evidence/collaboration-memory/CM-1A-001/implementation/CM1A-001-snap-01/decision-log.md
+?? evidence/collaboration-memory/CM-1A-001/implementation/CM1A-001-snap-01/handoff.md
+?? evidence/collaboration-memory/CM-1A-001/implementation/CM1A-001-snap-01/logs/build-artifacts.json
+?? evidence/collaboration-memory/CM-1A-001/implementation/CM1A-001-snap-01/source-snapshot.json
+?? evidence/collaboration-memory/CM-1A-001/implementation/CM1A-001-snap-01/verification.md
+?? evidence/collaboration-memory/batch/coverage.md
+?? evidence/collaboration-memory/batch/entry-migration-inventory.md
+?? evidence/collaboration-memory/batch/next-work.md
+?? evidence/collaboration-memory/batch/release-log.md
+?? evidence/collaboration-memory/batch/test-scaffolding-inventory.md
+?? src/contracts/coordination-events.ts
+?? src/contracts/coordination.ts
+?? src/control/control-engine/coordination.ts
+?? src/control/control-engine/policies/coordination-rules.ts
+?? src/control/control-engine/records/coordination.ts
+?? src/control/dispatch-engine/coordination-drive.ts
+?? src/data/context-compiler/delivery-materials.ts
+?? src/ui/tests/agent-templates.spec.ts
+?? tests/coordination/control.sqlite.test.ts
+?? tests/coordination/control.test.ts
+?? tests/coordination/delivery-into-input.test.ts
+?? tests/coordination/route-drive.test.ts
