@@ -13,8 +13,8 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  createPersistentSqliteHarness,
-} from "../../src/harness/persistent-harness.js";
+  createPersistentPlatform,
+} from "../../src/composition/persistent-platform.js";
 import {
   isP102Ready,
   runP102Path,
@@ -27,7 +27,7 @@ describe.skipIf(!READY)("P1-02 persistent restart path", () => {
   it(
     "restart: canonical refs + pins + Plan Graph/Task Detail/active revision identical",
     async () => {
-      const h = await createPersistentSqliteHarness({ deps: {} });
+      const h = await createPersistentPlatform({ deps: {} });
       try {
         const before = await runP102Path(h);
         const cursorBefore = h.observedCursor();

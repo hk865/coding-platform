@@ -1,0 +1,21 @@
+{
+  "AGENTS.md": "1c761ec886c6cdd65a3073b7cae3d6b69a7b28cb9b962f9d084d92ce4c9f8fca",
+  "ARCHITECTURE.md": "ddf41aeb00a12ef8745d72984e5d19fa6fae7bac323175ddce8ff7e258734518",
+  "human/module-status.md": "fd2553a3ed35c97faaeb6558a0380862019665937ff75d7294593a56a20361c8",
+  "dev_docs/interfaces/runtime-collaboration.md": "a34487b4175b83e2d5201db29e6c6922fdcdb6624c57d9db6708f3dbdcf94f5d",
+  "dev_docs/interfaces/context-lifecycle.md": "41b82c52d201111a2601a2586ffb4ada22966fd79e94a7a4c08e24715ce9df9b",
+  "dev_docs/interfaces/state-ledger.md": "8e5213e025b30bdced2debb08eb1a3abfa781fc545095b913a1dc8a41adc024a",
+  "dev_docs/interfaces/memory-maintenance.md": "e652bc4edfce497ce0d4cadd1c06cd8bb7dc23a756553225dbf9199606787c84",
+  "dev_docs/interfaces/human-design-status.md": "37d98b5b610f32ee190ddfd111a7598363ac5965ebd1573fd49e06ca91cca523",
+  "dev_docs/modules/control/dispatch-engine.md": "62b17650a43ad6989ecd58ec79efbfb54a11f1185d3561503a89b842cdf640f7",
+  "dev_docs/modules/control/control-engine.md": "3b9fb1d0323c1e4342f8f3dd6a796aa739d6ccee9aecad68a65c5b7ba95217fd",
+  "dev_docs/modules/data/state-ledger.md": "a5a9149395f0541b3e769dda40c5f1c5d3e33c4e4a6c8b747879cceb631b1326",
+  "dev_docs/modules/data/read-model-index.md": "3aec9b140d1eda38acecd13f354935fc75fdc8304e411cf13da0a40124f729a7",
+  "dev_docs/modules/data/context-compiler.md": "fc2afe5dd7af7e617b02e976dd3f6f9057b5939d1614c729dbaa2e6d5d332bf1",
+  "dev_docs/modules/execution/worker-runtime.md": "6e3f7459f5bae8ab91e1eea92604e514cd377919e77447186aedb5f655d8f3c6",
+  "dev_docs/modules/interaction/human-collaboration.md": "15dcecc4ef477828f7d3ec75803536b814bc189897ba77032ef23a92b8facc78",
+  "dev_docs/planning/active/collaboration-memory/CM-1C-001.md": "f78131da0868a3b518f87eee8d55e193006d1e9c99b6a5e5d2820ecdee872e90",
+  "dev_docs/planning/active/collaboration-memory/PLAN.md": "3316e6e5dc26088304f1858139b155d0a94ce91673cb4d81115d70d76f3bbc0d",
+  "dev_docs/planning/active/collaboration-memory/MAIN-AGENT-PROMPT.md": "8f65f9440bec9bd2a2a89966dbfd7713f4d6c86ed071225269f7f162ae71613e",
+  "dev_docs/planning/active/collaboration-memory/ACCEPTANCE-PROMPT.md": "637f08d265fb7089b012b60edb935c3b9f843c079ca98862455493c3e87dbe55"
+}

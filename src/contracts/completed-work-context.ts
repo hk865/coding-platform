@@ -1,20 +1,17 @@
 /**
- * P1-17 Completed-work context contracts — CompletedWorkContextRequest /
- * ExecutionMemorySelection (first consumer freeze of
+ * Completed-work context contracts — CompletedWorkContextRequest /
+ * ExecutionMemorySelection (the versioned contract for
  * ContextCompiler.CompletedWorkContextPort).
  *
  * Authority:
- *   - dev_docs/planning/proposed/P1-foundation/tickets/17-completed-work-context.md
- *     (6 Acceptance items; restart / old-premise / scope-isolation / missing
- *      records / no-automatic-validity)
- *   - dev_docs/interfaces/context-lifecycle.md (复用 P1-16 记录与 Context 编译；
- *      文本/精确引用；不等待 P1-12 图索引；作者身份不限制合法接手；旧授权/旧
+ *   - dev_docs/interfaces/context-lifecycle.md (复用 context continuity 记录与 Context 编译；
+ *      文本/精确引用；不等待 architecture inspection 图索引；作者身份不限制合法接手；旧授权/旧
  *      Task phase/旧 Evidence 自动有效性不得继承)
  *   - ARCHITECTURE.md invariant #14 (archive is never the current source)
  *
  * Semantics:
- *   - SELECTION ONLY: this ticket reads persisted facts (P1-16 WorkContext
- *     bindings + ExecutionNotes + continuations; P1-05 GoalPhase completion
+ *   - SELECTION ONLY: this contract reads persisted facts (context continuity WorkContext
+ *     bindings + ExecutionNotes + continuations; context assembly GoalPhase completion
  *     facts) and composes an applicability-annotated selection of COMPLETED
  *     work for a related NEW task. NO new aggregate, NO new event, NO write
  *     to Work/Note/Task/Goal state; no MemoryStore (works on the durable
@@ -29,7 +26,7 @@
  *     EXPLICIT gaps; original sources are preserved (completed work never
  *     deletes references).
  *
- * RW-18 修订（跨工作历史的准入判据）：
+ *  修订（跨工作历史的准入判据）：
  *   - 这个端口**不**判定"这次运行能不能读别的工作的历史"。它只在 scope 内选材，
  *     `declaredPermissions` 是调用方如实的**审计回显**（这条运行实际持有的工具与写入范围），
  *     **不是**准入条件。曾经它被当成准入条件（"只有只读运行才能取已完成工作选材"），那是把两件事
@@ -40,7 +37,7 @@
  *     判据不在这两个文件里重写一遍 —— 授权规则只有既有 Vault／Control 那一份。
  *   - 边界：本条约束针对**其它工作的运行历史**。记忆与开发记忆是平台的长期记忆，允许被检索；
  *     同一段工作自己的留痕（work-notes）也走既有通道，不受此限。
- *   - P1-05 rules stay untouched: required sets and Evidence completion rules
+ *   - context assembly rules stay untouched: required sets and Evidence completion rules
  *     are authoritative — history retrieval never writes completion state.
  *   - The response is bound to the requesting run + the requested versions
  *     (current spec/code snapshot via normal versioned sources is a READ
@@ -136,7 +133,7 @@ export type CompletedWorkGap =
 
 /** The durable-composition contract: an applicability-annotated selection of
  * COMPLETED work for a related new task. READ-ONLY composition of persisted
- * P1-16/P1-05 facts. */
+ * context continuity/context assembly facts. */
 export type ExecutionMemorySelectionV1 = {
   schemaVersion: 1;
   selectionId: string;
@@ -189,8 +186,8 @@ export type CompletedWorkViewRow = {
   continuationCount: number;
   sourceCursor: CommitCursor;
   /**
-   * RW-15（M1）：本行代表的那个 (goal, task) 在账本里**还有几条落选身份被归并掉了**。
-   * 0 = 没有发生归并。归并本身沿用 RW-13 的**唯一**选择规则（显式声明的身份优先于推导兜底身份，
+   * （工作身份归并）：本行代表的那个 (goal, task) 在账本里**还有几条落选身份被归并掉了**。
+   * 0 = 没有发生归并。归并本身沿用任务工作身份解析的**唯一**选择规则（显式声明的身份优先于推导兜底身份，
    * 同为显式取账本顺序最早），这里只是把"发生过归并、落选者是谁"变成可见事实 —— 此前它被静默丢弃，
    * 落选身份的留痕既不出现在本视图，也不会进入历史选材，读的人无从知道。
    */
@@ -207,7 +204,7 @@ export type CompletedWorkViewResult =
   | { status: "not_ready"; observedCursor: CommitCursor | null }
   | { status: "not_found"; projectId: string; workspaceId: string };
 
-/** ContextCompiler.CompletedWorkContextPort (interfaces_to_freeze — first consumer). */
+/** ContextCompiler.CompletedWorkContextPort — public completed-work material interface. */
 export interface CompletedWorkContextPort {
   assembleCompletedWorkContext(request: CompletedWorkContextRequestV1): Promise<CompletedWorkContextResultV1>;
 }

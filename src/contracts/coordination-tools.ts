@@ -1,5 +1,5 @@
 /**
- * 协调 Host 工具的**窄端口**（CM-1A-001 第 3 工作段，D03）。
+ * 协调 Host 工具的**窄端口**（协作通信，Agent 归因与工具边界）。
  *
  * 权威边界（这是本文件存在的理由）：
  *   1. **身份由宿主绑定**。工具 Adapter 从**当前 Run 的 exact principal**（canonical 派生：
@@ -99,11 +99,11 @@ export type CoordinationRuntimeGrantV1 =
   | { status: 'not_granted'; capability: CoordinationCapabilityId; reason: string };
 
 /** 五类模型可见的协调操作。 */
-export type CoordinationToolOperationV1 = 'request' | 'respond' | 'subscribe' | 'wait' | 'cancel';
+export type CoordinationToolOperationV1 = 'request' | 'respond' | 'subscribe' | 'wait' | 'cancel' | 'architecture_report';
 
 /** 一次工具调用产生的**精确引用**（模型据此在后续调用里引用同一对象）。 */
 export type CoordinationToolReferenceV1 = {
-  kind: 'DirectedRequest' | 'Delivery' | 'Subscription' | 'WaitCondition';
+  kind: 'DirectedRequest' | 'Delivery' | 'Subscription' | 'WaitCondition' | 'ArchitectureReview';
   id: string;
   /** 该引用的版本（没有版本维度时为 null；不编造）。 */
   revision: number | null;
@@ -150,7 +150,10 @@ export type CoordinationMailboxResultV1 =
  * `(principal.runRef, key)` 机械派生，因此重复的同一次调用是账本幂等 replay，
  * 而不是第二条事实。
  */
+export type ArchitectureReportInput = { key:string; description:string; proposedDescription:string; affectedWorkIds:string[]; affectedRefs:{moduleRefs:string[];interfaceRefs:string[];pathRefs:string[]} };
+
 export interface CoordinationToolAccessPort {
+  reportArchitecture?(input:ArchitectureReportInput):Promise<CoordinationToolOutcomeV1>;
   /** 宿主绑定的精确身份（canonical 事实派生；模型不可见其输入面）。 */
   readonly principal: AgentPrincipalRefV1;
   mailbox(): Promise<CoordinationMailboxResultV1>;

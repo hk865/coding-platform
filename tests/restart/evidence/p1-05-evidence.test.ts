@@ -6,14 +6,14 @@
  * P1-05 handlers/projections are implemented (no fake).
  */
 import { describe, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../../src/composition/persistent-platform.js";
 import { isP105Ready, runP105Path, verifyP105AfterRestart } from "../p1-05-restart-fixtures.js";
 
 const READY = await isP105Ready();
 
 describe.skipIf(!READY)("P1-05 restart-path evidence", () => {
   it("collects the P1-05 evidence block", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       const before = await runP105Path(h);
       await h.close();

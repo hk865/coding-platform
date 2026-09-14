@@ -1,33 +1,39 @@
+import { buildPlanMatrixView, buildPortfolioView, runDisplayStateForEvent, toTaskEvidenceEntry } from './console-projection.js';
+import { buildTaskVerificationView, type ProjectedEvidence, type VerificationProjection } from './verification-projection.js';
+import { buildSyntheticArchitectureInspection } from './architecture-inspection-projection.js';
+import { readModelHandlesEvent } from './handled-event-types.js';
+import { projectWorkContext } from './work-context-projection.js';
+import { projectCollaborationEvent } from './collaboration-projection.js';
+import { projectMaterialAccessEvent } from './material-access-projection.js';
+import { projectQueryEvent } from './query-projection.js';
+import { projectControlIntentEvent, type ControlIntentProjectionRow } from './control-intent-projection.js';
+import { projectPlanChangeDispositions } from './plan-change-projection.js';
 import { reviewProjectionChanges, reviewProjectionEventTypes, reviewProjectionFacts } from './reviewer-projection.js';
 import { projectBaselineChangeView } from './baseline-change-projection.js';
 import type { ReviewProjectionSnapshot } from '../../contracts/read-model.js';
 import { completedWorkCursor } from './completed-work-eligibility.js';
 import { droppedWorkRefsByTask, sortWorkRefs, taskWorkKey } from './completed-work-merge.js';
-// RW-13：一个任务只有一个持久工作身份。归并规则是 ControlEngine 的权威规则（唯一正文在
+// 一个任务只有一个持久工作身份。归并规则是 ControlEngine 的权威规则（唯一正文在
 // control/control-engine/work-identity-resolution.ts），这里只消费，不在投影里复制第二份判断。
 // ModuleDependencyDAG 允许 ReadModelIndex → ControlEngine（策略解释端口同向）。
 import { dedupeTaskWorks } from '../../control/control-engine/work-identity-resolution.js';
 import { matchesMaterialAccessLookup, type MaterialAccessGrantLookup, type MaterialAccessGrantViewResult } from '../../contracts/material-access.js';
 /**
- * ReadModelIndexImpl — event projection (Goal create slice + P1-02 plan view).
- * Authority: dev_docs/interfaces/goal-view.md + modules/data/read-model-index.md
- * + P1-02 IMPLEMENTATION-HANDOFF.md "契约与存储语义（冻结）".
+ * ReadModelIndexImpl — in-memory projections for the platform's read-only views.
+ * Authority: dev_docs/interfaces/goal-view.md + modules/data/read-model-index.md.
  *
- * Hidden implementation: cursor checkpoint, event dedupe, the GoalCreated
- * projection into an in-memory (projectId, workspaceId, goalId)-keyed view
- * store, the P1-02 Plan Graph / Task Detail projections, and the
- * read-after-write freshness rules enforced by goal() / planGraph() /
- * taskDetail(). Catch-up/rebuild is exercised by advancing sequential
- * EventPage(s) from the StateLedger.
+ * Hidden implementation: cursor checkpoints, event dedupe, view-specific
+ * in-memory stores, and read-after-write freshness checks. Catch-up and rebuild
+ * advance sequential EventPages from the StateLedger.
  *
- * Invariants upheld (goal-view.md / read-model-index.md / P1-02):
+ * Invariants upheld by goal-view.md and read-model-index.md:
  *  - Views are rebuildable projections; fields come only from Events.
  *  - Repeated events are idempotent (dedupe by eventId) and never re-reported.
  *  - Cursor gap / out-of-order / unknown schema version stall the whole page
  *    (no partial application) via a typed ProjectionStallError.
  *  - A KNOWN v1 event with no projection handler still stalls the WHOLE page
  *    via ProjectionStallError(unsupported_event_type) — never silently skip
- *    (P1-02 handlers added here, so this stays as a future defence).
+ *    (all current handlers are registered; this remains a future defence).
  *  - View keys are FULL scope keys: (projectId, workspaceId, goalId) for the
  *    Goal view, (projectId, goalId) for the Plan Graph and (projectId, goalId,
  *    taskId) for Task Detail — local ids shared across Projects never collide.
@@ -74,7 +80,6 @@ import type {
   UserDecisionSnapshot,
   UserDecisionRecordedEvent,
   PlanRevisionSupersededEvent,
-  TaskDispositionRow,
 } from "../../contracts/goal-change.js";
 import { planChangeScopeKey } from "../../contracts/goal-change.js";
 import type {
@@ -101,20 +106,12 @@ import {
 } from "../../contracts/baseline-evolution.js";
 import type { ArchitectureBaselinePin } from "../../contracts/governance.js";
 import type {
-  CoordinationPolicyActivatedEvent,
-  CoordinationPolicyInstalledEvent,
   CoordinationPolicyRevisionSnapshot,
-  InitialDesignDecisionRecordedEvent,
   InitialDesignDecisionSnapshot,
-  InitialDesignProposalRecordedEvent,
   InitialDesignProposalSnapshot,
   ProjectCoordinationPolicyActiveSnapshot,
   UnifiedStatusViewQuery,
   UnifiedStatusViewResult,
-} from "../../contracts/human-role-collaboration.js";
-import {
-  initialDesignDecisionRefFor,
-  initialDesignProposalRefFor,
 } from "../../contracts/human-role-collaboration.js";
 import type {
   RunEventRecordedEvent,
@@ -222,27 +219,27 @@ function taskDetailKey(projectId: string, goalId: string, taskId: string): strin
   return projectId + "\u0000" + goalId + "\u0000" + taskId;
 }
 
-/** Full-scope Goal phase key: (projectId, goalId) — the P1-05 projection scope. */
+/** Full-scope Goal phase key: (projectId, goalId) — the context assembly projection scope. */
 function goalPhaseKey(projectId: string, goalId: string): string {
   return projectId + "\u0000" + goalId;
 }
 
-/** P1-16 full-scope work-context key: canonicalJson of the COMPLETE ref. */
+/** Full-scope work-context key: canonicalJson of the complete ref. */
 function workContextScopeKey(projectId: string, workspaceId: string, workId: string): string {
   return canonicalJson(workContextRefFor(projectId, workspaceId, workId));
 }
 
-/** Full-scope P1-07 workspace lease view key: (projectId, workspaceId). */
+/** Full-scope workspace lease view key: (projectId, workspaceId). */
 function workspaceLeaseKey(projectId: string, workspaceId: string): string {
   return projectId + "\u0000" + workspaceId;
 }
 
-/** Full-scope P1-07 integration conflict view key: (projectId, goalId, taskId). */
+/** Full-scope workspace concurrency integration conflict view key: (projectId, goalId, taskId). */
 function integrationConflictKey(projectId: string, goalId: string, taskId: string): string {
   return projectId + "\u0000" + goalId + "\u0000" + taskId;
 }
 
-/** Full-scope P1-07 workspace patch view key: (projectId, workspaceId). */
+/** Full-scope workspace patch view key: (projectId, workspaceId). */
 function workspacePatchKey(projectId: string, workspaceId: string): string {
   return projectId + "\u0000" + workspaceId;
 }
@@ -277,25 +274,6 @@ function taskRunStateFrom(agent: ActiveAgentView): TaskRunState {
   };
 }
 
-/** Projected evidence entry (from an EvidenceAdmitted event) carrying admission metadata. */
-type ProjectedEvidence = {
-  evidence: EvidenceV1;
-  admittedAt: string;
-  evidenceIndex: number;
-};
-
-/** Per-task verification projection — rebuilt ONLY from EvidenceAdmitted /
- * TaskReductionUpdated events (P1-04). */
-type VerificationProjection = {
-  projectId: string;
-  goalId: string;
-  taskId: string;
-  evidence: ProjectedEvidence[];
-  reduction: TaskReductionSnapshot | null;
-  reductionCursor: CommitCursor | null;
-  sourceCursor: CommitCursor;
-};
-
 export class ReadModelIndexImpl implements ReadModelIndex {
   constructor(private readonly policyExplanation: PolicyExplanationPort) {}
   /** Last contiguous cursor successfully projected (null until any advance). */
@@ -313,65 +291,65 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   /** (projectId, goalId, taskId) -> latest projected TaskDetailView. */
   private readonly taskDetailRows = new Map<string, TaskDetailView>();
 
-  /** (projectId, goalId, taskId) -> latest projected ActiveAgentView (P1-03). */
+  /** (projectId, goalId, taskId) -> latest projected ActiveAgentView (dispatch). */
   private readonly activeAgentRows = new Map<string, ActiveAgentView>();
 
   /** (projectId \0 runId) -> taskDetailKey: locates the run row from RunStarted /
    * RunEventRecorded / RunOutcomeUnknown events, which carry only the runId (not the goalId). */
   private readonly runKeyIndex = new Map<string, string>();
 
-  /** (projectId, goalId) -> accepted PlanRevisionSnapshot (P1-04: the plan the
+  /** (projectId, goalId) -> accepted PlanRevisionSnapshot (verification: the plan the
    * verification view derives applicability under — rebuilt from events). */
   private readonly planSnapshots = new Map<string, PlanRevisionSnapshot>();
 
   /** (projectId, goalId, taskId) -> latest projected verification view row. */
   private readonly verificationRows = new Map<string, VerificationProjection>();
 
-  /** (projectId, goalId) -> latest projected GoalStatusView (P1-05). */
+  /** (projectId, goalId) -> latest projected GoalStatusView (context assembly). */
   private readonly goalStatusRows = new Map<string, GoalStatusView>();
 
-  /** (projectId, goalId) -> goal timeline entries in arrival order (P1-05). */
+  /** (projectId, goalId) -> goal timeline entries in arrival order (context assembly). */
   private readonly goalTimelineRows = new Map<string, GoalTimelineEntry[]>();
 
-  /** (projectId, goalId, taskId) -> latest projected HandoffProvenanceView (P1-06). */
+  /** (projectId, goalId, taskId) -> latest projected HandoffProvenanceView (handoff). */
   private readonly handoffProvenanceRows = new Map<string, HandoffProvenanceView>();
 
-  /** (projectId, workspaceId) -> latest projected WorkspaceLeaseView (P1-07). */
+  /** (projectId, workspaceId) -> latest projected WorkspaceLeaseView (workspace concurrency). */
   private readonly workspaceLeaseRows = new Map<string, WorkspaceLeaseView>();
 
-  /** (projectId, goalId, taskId) -> latest projected IntegrationConflictView (P1-07). */
+  /** (projectId, goalId, taskId) -> latest projected IntegrationConflictView (workspace concurrency). */
   private readonly integrationConflictRows = new Map<string, IntegrationConflictView>();
 
-  /** (projectId, workspaceId) -> latest projected WorkspacePatchView (P1-07). */
+  /** (projectId, workspaceId) -> latest projected WorkspacePatchView (workspace concurrency). */
   private readonly workspacePatchRows = new Map<string, WorkspacePatchView>();
 
   // ------------------------------------------------------------------ //
-  // P1-08 console projection rows (consumes ONLY existing v1 events).  //
-  // Row stores are shared structure; the lane implementations fill the //
+  // Console projection rows (consumes ONLY existing v1 events).  //
+  // Row stores hold shared view structure; the projection handlers fill the //
   // per-view apply/query logic in their delimited regions below.       //
   // ------------------------------------------------------------------ //
 
-  /** LANE-A: (projectId, workspaceId) -> PortfolioEntry (WorkspaceBootstrapped projection). */
-  private readonly p108PortfolioEntries = new Map<string, PortfolioEntry>();
-  /** LANE-A: (projectId, workspaceId) -> WorkspaceSummaryView. */
-  private readonly p108SummaryRows = new Map<string, import("../../contracts/console-views.js").WorkspaceSummaryView>();
-  /** LANE-A: (projectId, workspaceId, goalId, taskId) -> latest TaskReduction phase
+  /** overview projection: (projectId, workspaceId) -> PortfolioEntry (WorkspaceBootstrapped projection). */
+  private readonly consolePortfolioEntries = new Map<string, PortfolioEntry>();
+  /** overview projection: (projectId, workspaceId) -> WorkspaceSummaryView. */
+  private readonly consoleSummaryRows = new Map<string, import("../../contracts/console-views.js").WorkspaceSummaryView>();
+  /** overview projection: (projectId, workspaceId, goalId, taskId) -> latest TaskReduction phase
    * (feeds phaseCounts.taskReduction "每任务最新相位计数" — decrement old, increment new). */
-  private readonly p108TaskReductionPhase = new Map<string, import("../../contracts/reduction.js").TaskReductionPhase>();
-  /** LANE-A: (projectId, workspaceId, goalId) -> latest GoalPhase
+  private readonly consoleTaskReductionPhase = new Map<string, import("../../contracts/reduction.js").TaskReductionPhase>();
+  /** overview projection: (projectId, workspaceId, goalId) -> latest GoalPhase
    * (feeds phaseCounts.goalPhase "每 Goal 最新相位计数"). */
-  private readonly p108GoalPhase = new Map<string, import("../../contracts/goal-phase.js").GoalPhase>();
-  /** P1-16 LANE-A: full-scope key -> WorkContextBinding snapshot (binding rows). */
-  private readonly p116Bindings = new Map<string, import("../../contracts/context-continuity.js").WorkContextBindingSnapshot>();
-  private readonly p109Jobs = new Map<string, import("../../contracts/query-job.js").QueryJobV1>();
-  private readonly p109Runs = new Map<string, import("../../contracts/query-job.js").QueryRunV1>();
-  private readonly p109Answers = new Map<string, import("../../contracts/query-job.js").QueryJobAnswerV1[]>();
-  private readonly p110IntentRows = new Map<string, { ref: import("../../contracts/control-intent.js").ControlIntentRef; scope: { goalId: string | null; taskId: string | null }; kind: import("../../contracts/control-intent.js").ControlKind; desiredState: string; status: import("../../contracts/control-intent.js").ControlIntentStatus; ackCount: number; cursor: CommitCursor }[]>();
-  /** P1-18: material-access grants in commit order (immutable rows). */
-  private readonly p118Grants: import("../../contracts/material-access.js").MaterialAccessGrantRow[] = [];
+  private readonly consoleGoalPhase = new Map<string, import("../../contracts/goal-phase.js").GoalPhase>();
+  /** Work-context overview projection: full-scope key -> WorkContextBinding snapshot (binding rows). */
+  private readonly workContextBindings = new Map<string, import("../../contracts/context-continuity.js").WorkContextBindingSnapshot>();
+  private readonly queryJobs = new Map<string, import("../../contracts/query-job.js").QueryJobV1>();
+  private readonly queryRuns = new Map<string, import("../../contracts/query-job.js").QueryRunV1>();
+  private readonly queryAnswers = new Map<string, import("../../contracts/query-job.js").QueryJobAnswerV1[]>();
+  private readonly controlIntentIntentRows = new Map<string, ControlIntentProjectionRow[]>();
+  /** Material-access: material-access grants in commit order (immutable rows). */
+  private readonly materialAccessGrantRows: import("../../contracts/material-access.js").MaterialAccessGrantRow[] = [];
 
   // ------------------------------------------------------------------ //
-  // P1-11 plan-change projection rows (LANE-C: proposal/decision +     //
+  // Plan-change projection rows (proposal/decision +     //
   // revision + accepted-plan snapshots). Row keys are FULL scope keys: //
   // the planChangeScopeKey prefix (projectId, workspaceId, goalId) for //
   // the proposal/decision/revision rows, canonicalJson(plan ref) for   //
@@ -379,23 +357,23 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   // across Projects / goals NEVER collide (hard isolation).            //
   // ------------------------------------------------------------------ //
   /** scopeKey + "\u0000" + proposalId -> PlanProposalSnapshot. */
-  private readonly p111Proposals = new Map<string, PlanProposalSnapshot>();
+  private readonly planChangeProposals = new Map<string, PlanProposalSnapshot>();
   /** scopeKey + "\u0000" + decisionId -> UserDecisionSnapshot. */
-  private readonly p111Decisions = new Map<string, UserDecisionSnapshot>();
+  private readonly planChangeDecisions = new Map<string, UserDecisionSnapshot>();
   /** scopeKey -> GoalRevisionSnapshot[] appended in revision-ascending order. */
-  private readonly p111GoalRevisions = new Map<string, GoalRevisionSnapshot[]>();
+  private readonly planChangeGoalRevisions = new Map<string, GoalRevisionSnapshot[]>();
   /** canonicalJson(PlanRevision ref) -> accepted PlanRevisionSnapshot (every accept stored; idempotent overwrite). */
-  private readonly p111PlanSnapshots = new Map<string, PlanRevisionSnapshot>();
-  /** P1-16 LANE-A: full-scope key -> ordered ExecutionNote rows (notes part). */
-  private readonly p116Notes = new Map<string, import("../../contracts/context-continuity.js").WorkContextNoteRow[]>();
-  /** LANE-B: (projectId, workspaceId, goalId) -> PlanMatrixView. */
-  private readonly p108MatrixRows = new Map<string, import("../../contracts/console-views.js").PlanMatrixView>();
-  /** LANE-B: (projectId, workspaceId, goalId, taskId) -> ActiveAgentRunRow. */
-  private readonly p108AgentRows = new Map<string, import("../../contracts/console-views.js").ActiveAgentRunRow>();
-  /** LANE-B: (projectId, workspaceId, goalId, taskId) -> latest handoff marker. */
-  private readonly p108HandoffMarkers = new Map<string, import("../../contracts/console-views.js").ActiveAgentRunRow["handoff"]>();
-  /** LANE-B: (projectId, workspaceId, goalId, taskId) -> task evidence projection. */
-  private readonly p108EvidenceProjections = new Map<string, {
+  private readonly planChangePlanSnapshots = new Map<string, PlanRevisionSnapshot>();
+  /** Work-context overview projection: full-scope key -> ordered ExecutionNote rows (notes part). */
+  private readonly workContextNotes = new Map<string, import("../../contracts/context-continuity.js").WorkContextNoteRow[]>();
+  /** detail-view projection: (projectId, workspaceId, goalId) -> PlanMatrixView. */
+  private readonly consoleMatrixRows = new Map<string, import("../../contracts/console-views.js").PlanMatrixView>();
+  /** detail-view projection: (projectId, workspaceId, goalId, taskId) -> ActiveAgentRunRow. */
+  private readonly consoleAgentRows = new Map<string, import("../../contracts/console-views.js").ActiveAgentRunRow>();
+  /** detail-view projection: (projectId, workspaceId, goalId, taskId) -> latest handoff marker. */
+  private readonly consoleHandoffMarkers = new Map<string, import("../../contracts/console-views.js").ActiveAgentRunRow["handoff"]>();
+  /** detail-view projection: (projectId, workspaceId, goalId, taskId) -> task evidence projection. */
+  private readonly consoleEvidenceProjections = new Map<string, {
     projectId: string;
     workspaceId: string;
     goalId: string;
@@ -408,38 +386,38 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     sourceCursor: import("../../contracts/command-event.js").CommitCursor;
     updatedAt: string | null;
   }>();
-  /** LANE-B: (projectId, workspaceId) -> timeline entries in arrival order. */
-  private readonly p108TimelineRows = new Map<string, import("../../contracts/console-views.js").TimelineEntry[]>();
-  /** LANE-B: per-workspace timeline seq counter. */
-  private readonly p108TimelineSeq = new Map<string, number>();
+  /** detail-view projection: (projectId, workspaceId) -> timeline entries in arrival order. */
+  private readonly consoleTimelineRows = new Map<string, import("../../contracts/console-views.js").TimelineEntry[]>();
+  /** detail-view projection: per-workspace timeline seq counter. */
+  private readonly consoleTimelineSeq = new Map<string, number>();
   // ------------------------------------------------------------------ //
-  // P1-12 architecture-inspection projection rows (brief/proposal are  //
-  // LANE-B; inspection/finding are LANE-A and feed the SAME view).     //
+  // Architecture-inspection projection rows (brief/proposal are  //
+  // detail-view projection; inspection/finding are overview projection and feed the SAME view).     //
   // ------------------------------------------------------------------ //
 
-  /** LANE-A: scopeKey -> inspection snapshots (fed by applyP112InspectionLaneA). */
-  private readonly p112InspectionRows = new Map<string, import("../../contracts/architecture-inspection.js").ArchitectureInspectionSnapshot[]>();
-  /** LANE-A: scopeKey -> finding snapshots (fed by applyP112InspectionLaneA). */
-  private readonly p112FindingRows = new Map<string, import("../../contracts/architecture-inspection.js").ArchitectureFindingSnapshot[]>();
-  /** LANE-B: scopeKey -> decision brief snapshots (fed by applyP112InspectionLaneB). */
-  private readonly p112BriefRows = new Map<string, import("../../contracts/architecture-inspection.js").ArchitectureDecisionBriefSnapshot[]>();
-  /** LANE-B: scopeKey -> candidate proposal snapshots (fed by applyP112InspectionLaneB). */
-  private readonly p112ProposalRows = new Map<string, import("../../contracts/architecture-inspection.js").ArchitectureCandidateProposalSnapshot[]>();
+  /** overview projection: scopeKey -> inspection snapshots (fed by applyArchitectureInspectionFacts). */
+  private readonly architectureInspectionInspectionRows = new Map<string, import("../../contracts/architecture-inspection.js").ArchitectureInspectionSnapshot[]>();
+  /** overview projection: scopeKey -> finding snapshots (fed by applyArchitectureInspectionFacts). */
+  private readonly architectureInspectionFindingRows = new Map<string, import("../../contracts/architecture-inspection.js").ArchitectureFindingSnapshot[]>();
+  /** detail-view projection: scopeKey -> decision brief snapshots (fed by applyArchitectureDecisionArtifacts). */
+  private readonly architectureInspectionBriefRows = new Map<string, import("../../contracts/architecture-inspection.js").ArchitectureDecisionBriefSnapshot[]>();
+  /** detail-view projection: scopeKey -> candidate proposal snapshots (fed by applyArchitectureDecisionArtifacts). */
+  private readonly architectureInspectionProposalRows = new Map<string, import("../../contracts/architecture-inspection.js").ArchitectureCandidateProposalSnapshot[]>();
 
   // ------------------------------------------------------------------ //
-  // P1-16 work-context view storage (co-owned by LANE-A + LANE-B).      //
-  // LANE-A is authoritative for the binding + notes rows; LANE-B owns   //
+  // Work-context view storage (co-owned by overview projection + detail-view projection).      //
+  // overview projection is authoritative for the binding + notes rows; detail-view projection owns   //
   // the continuation rows + frontier aggregation. The combined          //
   // workContext() view composes all three. Rows are keyed by the        //
   // FULL-scope key (canonicalJson of the complete work-context ref),    //
   // so two projects / workspaces reusing the same local workId NEVER    //
   // collide (hard isolation).                                           //
   // ------------------------------------------------------------------ //
-  /** LANE-B: full-scope key -> ContinuationRecordSnapshot[] (arrival order). */
-  private readonly p116ContinuationRows = new Map<string, import("../../contracts/context-continuity.js").ContinuationRecordSnapshot[]>();
+  /** detail-view projection: full-scope key -> ContinuationRecordSnapshot[] (arrival order). */
+  private readonly workContextContinuationRows = new Map<string, import("../../contracts/context-continuity.js").ContinuationRecordSnapshot[]>();
 
   // ------------------------------------------------------------------ //
-  // P1-14 baseline-evolution projection rows (LANE-C: candidate /      //
+  // Baseline-evolution projection rows (candidate /      //
   // decision / gate / activation). Row keys are FULL workspace scope   //
   // keys: consoleWorkspaceKey(projectId, workspaceId) + "\u0000" + id  //
   // — so identical local ids reused across Projects / workspaces NEVER //
@@ -447,30 +425,30 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   // markers + notRebasedPlans from these rows at query time.          //
   // ------------------------------------------------------------------ //
   /** scopeKey + "\u0000" + candidateId -> CandidateArchitectureBaselineSnapshot. */
-  private readonly p114Candidates = new Map<string, CandidateArchitectureBaselineSnapshot>();
+  private readonly baselineEvolutionCandidates = new Map<string, CandidateArchitectureBaselineSnapshot>();
   /** scopeKey + "\u0000" + decisionId -> { ref, decision: ArchitectureChangeDecisionV1 }. */
-  private readonly p114Decisions = new Map<string, { ref: ArchitectureChangeDecisionRef; decision: ArchitectureChangeDecisionV1 }>();
+  private readonly baselineEvolutionDecisions = new Map<string, { ref: ArchitectureChangeDecisionRef; decision: ArchitectureChangeDecisionV1 }>();
   /** scopeKey + "\u0000" + gateId -> { ref, gate: MigrationGateTaskV1 }. */
-  private readonly p114Gates = new Map<string, { ref: MigrationGateTaskRef; gate: MigrationGateTaskV1 }>();
+  private readonly baselineEvolutionGates = new Map<string, { ref: MigrationGateTaskRef; gate: MigrationGateTaskV1 }>();
   /** scopeKey + "\u0000" + activationId -> { ref, activation: BaselineActivationV1 }. */
-  private readonly p114Activations = new Map<string, { ref: BaselineActivationRef; activation: BaselineActivationV1 }>();
+  private readonly baselineEvolutionActivations = new Map<string, { ref: BaselineActivationRef; activation: BaselineActivationV1 }>();
 
   // ------------------------------------------------------------------ //
-  // P1-15 unified-status projection rows (LANE-B: proposal / decision / //
+  // Collaboration unified-status projection rows (detail-view projection: proposal / decision / //
   // policy / activation). Proposal + decision rows are workspace-scoped;//
   // policy + activation rows are PROJECT-scoped (their events carry     //
   // workspaceId ""), so the view gathers them by projectId. Each row    //
   // wraps the snapshot with the sourceCursor that produced it, so the  //
-  // facts-first facts[] can carry per-fact lineage.                     //
+  // facts-first entries can carry per-fact lineage.                     //
   // ------------------------------------------------------------------ //
   /** scopeKey + "\u0000" + designId -> { snapshot, sourceCursor }. */
-  private readonly p115ProposalRows = new Map<string, { snapshot: InitialDesignProposalSnapshot; sourceCursor: CommitCursor }>();
+  private readonly collaborationProposalRows = new Map<string, { snapshot: InitialDesignProposalSnapshot; sourceCursor: CommitCursor }>();
   /** scopeKey + "\u0000" + decisionId -> { snapshot, sourceCursor }. */
-  private readonly p115DecisionRows = new Map<string, { snapshot: InitialDesignDecisionSnapshot; sourceCursor: CommitCursor }>();
+  private readonly collaborationDecisionRows = new Map<string, { snapshot: InitialDesignDecisionSnapshot; sourceCursor: CommitCursor }>();
   /** consoleWorkspaceKey(projectId, "") + "\u0000" + policyId -> { snapshot, sourceCursor }. */
-  private readonly p115PolicyRows = new Map<string, { snapshot: CoordinationPolicyRevisionSnapshot; sourceCursor: CommitCursor }>();
+  private readonly collaborationPolicyRows = new Map<string, { snapshot: CoordinationPolicyRevisionSnapshot; sourceCursor: CommitCursor }>();
   /** consoleWorkspaceKey(projectId, "") + "\u0000" + projectId -> { snapshot, sourceCursor }. */
-  private readonly p115ActivationRows = new Map<string, { snapshot: ProjectCoordinationPolicyActiveSnapshot; sourceCursor: CommitCursor }>();
+  private readonly collaborationActivationRows = new Map<string, { snapshot: ProjectCoordinationPolicyActiveSnapshot; sourceCursor: CommitCursor }>();
 
   async advance(page: EventPage): Promise<ProjectionReceipt> {
     const toApply: PositionedEvent[] = [];
@@ -563,40 +541,40 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       } else if (event.eventType === "PatchRecorded") {
         this.applyPatchRecorded(event, positioned.cursor);
       }
-      // P1-08 console projections consume the SAME committed events (no new
-      // DomainEvent is introduced); the two lane hooks feed the console read
-      // views. Both are no-ops until their lane implementations land.
-      this.applyP108Console(event, positioned.cursor);
+      // Console projections consume the SAME committed events (no new
+      // DomainEvent is introduced); the overview and detail handlers feed the console read
+      // views. Each handler below owns one current projection concern.
+      this.applyConsoleEvent(event, positioned.cursor);
 
-      // P1-18 material-access grants (one immutable row per grant).
-      this.applyP118(event, positioned.cursor);
+      // Material-access grants (one immutable row per grant).
+      this.applyMaterialAccessEvent(event, positioned.cursor);
 
-      // P1-16 work-context projections (WorkContextBound / WorkRunLinked /
+      // Work-context projections (WorkContextBound / WorkRunLinked /
       // ExecutionNoteRecorded / ContinuationRecorded). Handler + isHandledEventType
-      // land in the SAME lane commit; until then advance() rejects the event.
-      this.applyP116Context(event, positioned.cursor);
+      // are updated with the handled-event set; unknown events stop advance().
+      this.applyWorkContext(event, positioned.cursor);
 
-      // P1-12 architecture-inspection projections (4 new events; handler +
-      // isHandledEventType land in the SAME lane commit).
-      this.applyP112Inspection(event, positioned.cursor);
+      // Architecture-inspection projections (4 new events; handler +
+      // isHandledEventType are maintained together).
+      this.applyArchitectureInspectionEvent(event, positioned.cursor);
 
-      // P1-10 control projections (desired state + safe-point acks).
-      this.applyP110(event, positioned.cursor);
-      this.applyP109(event, positioned.cursor);
+      // Control-intent projections (desired state + safe-point acks).
+      this.applyControlIntentEvent(event, positioned.cursor);
+      this.applyQueryEvent(event, positioned.cursor);
 
-      // P1-11 plan-change projections (PlanProposalRecorded / UserDecisionRecorded /
+      // Plan-change projections (PlanProposalRecorded / UserDecisionRecorded /
       // GoalRevisionRecorded / PlanRevisionSuperseded; handler + isHandledEventType
-      // land in the SAME lane commits — LANE-A proposal/decision, LANE-B revision/plan).
-      this.applyP111(event, positioned.cursor);
+      // share one dispatcher while preserving fact and detail-view projection responsibilities).
+      this.applyPlanChangeEvent(event, positioned.cursor);
 
-      // P1-13 governance-third-kind + remediation events: no display projection in
-      // this ticket (no view acceptance); registered handled to never stall advance.
-      this.applyP113(event, positioned.cursor);
+      // Architecture-evolution governance and remediation events have no display projection.
+      // Registering them prevents projection advance from stalling.
+      this.applyArchitectureEvolutionEvent(event, positioned.cursor);
 
-      // P1-14 baseline-evolution events (candidate/decision/gate/activation -> baselineChangeView).
-      this.applyP114(event, positioned.cursor);
-    // P1-15 initial-design/coordination-policy events.
-    this.applyP115(event, positioned.cursor);
+      // Baseline-evolution events (candidate/decision/gate/activation -> baselineChangeView).
+      this.applyBaselineEvolutionEvent(event, positioned.cursor);
+    // Collaboration initial-design/coordination-policy events.
+    this.applyCollaborationEvent(event, positioned.cursor);
 
       // Known non-goal / non-plan / non-dispatch events
       // (ProjectBootstrapped, WorkspaceBootstrapped, CompletionPolicyInstalled,
@@ -744,7 +722,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     const goalId = event.payload.goalId;
     const workspaceId = event.workspaceId;
 
-    // P1-04: retain the accepted plan snapshot (tasks + obligations) so the
+    // verification: retain the accepted plan snapshot (tasks + obligations) so the
     // verification view can recompute evidence applicability at query time.
     this.planSnapshots.set(planGraphKey(projectId, goalId), snapshot);
 
@@ -799,7 +777,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
         phase: task.phase,
         scope: task.scope,
         obligations,
-        // P1-03: run-state projection is D (null until a TaskClaimed event).
+        // dispatch: run-state projection is D (null until a TaskClaimed event).
         run: null,
         sourceCursor: cursor,
       };
@@ -807,8 +785,8 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     }
   }
 
-  /** P1-03: active agent view — same opaque-cursor freshness as planGraph / taskDetail. */
-  /** P1-06: display-only handoff provenance timeline (keyed by full-scope
+  /** dispatch: active agent view — same opaque-cursor freshness as planGraph / taskDetail. */
+  /** handoff: display-only handoff provenance timeline (keyed by full-scope
    * (projectId, goalId, taskId); NEVER judges completion). Freshness mirrors
    * goalStatus(): not_found only when atLeastCursor is provided AND already
    * covered AND there is no row; otherwise the freshness-safe not_ready. */
@@ -841,7 +819,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   }
 
   // --------------------------------------------------------------------- //
-  // P1-07 views (display-only; rebuildable from the EventPage)             //
+  // workspace concurrency views (display-only; rebuildable from the EventPage)             //
   // --------------------------------------------------------------------- //
 
   async workspaceLeaseView(query: WorkspaceLeaseViewQuery): Promise<WorkspaceLeaseViewResult> {
@@ -946,7 +924,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
   }
 
-  /** P1-05: goal phase status projection (per (projectId, goalId)). */
+  /** context assembly: goal phase status projection (per (projectId, goalId)). */
   async goalStatus(query: GoalStatusQuery): Promise<GoalStatusViewResult> {
     const observedCursor = this.observedCursor;
     const row = this.goalStatusRows.get(goalPhaseKey(query.projectId, query.goalId));
@@ -974,7 +952,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
   }
 
-  /** P1-05: goal phase timeline projection (per (projectId, goalId)). */
+  /** context assembly: goal phase timeline projection (per (projectId, goalId)). */
   async goalTimeline(query: GoalTimelineQuery): Promise<GoalTimelineViewResult> {
     const observedCursor = this.observedCursor;
     const row = this.goalTimelineRows.get(goalPhaseKey(query.projectId, query.goalId));
@@ -1002,7 +980,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   }
 
   // ------------------------------------------------------------------ //
-  // P1-03 run projection handlers                                        //
+  // dispatch run projection handlers                                        //
   // ------------------------------------------------------------------ //
 
   /** TaskClaimed@1 -> create/refresh the (projectId, goalId, taskId) ActiveAgent row
@@ -1083,7 +1061,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   /** RunEventRecorded@1 -> fold on payload.runtimeEvent, idempotent against the row's
    * lastEventSeq (sequence <= lastEventSeq changes nothing). Terminal runtime events end
    * the Run AND the Attempt; crash/completed/cancelled/budget_exhausted map to the
-   * terminal outcome. NEVER touches TaskDetail.phase (satisfaction is P1-04). */
+   * terminal outcome. NEVER touches TaskDetail.phase (satisfaction is verification). */
   private applyRunEventRecorded(event: RunEventRecordedEvent, cursor: CommitCursor): void {
     const key = this.runKeyIndex.get(event.projectId + "\u0000" + event.aggregateId);
     if (!key) return;
@@ -1185,7 +1163,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   }
 
   // ------------------------------------------------------------------ //
-  // P1-04 verification projection handlers                               //
+  // Verification projection handlers                               //
   // ------------------------------------------------------------------ //
 
   /** EvidenceAdmitted@1 -> append the immutable Evidence + admission metadata to
@@ -1205,7 +1183,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     row.sourceCursor = cursor;
     this.verificationRows.set(key, row);
 
-    // P1-06: the SAME EvidenceAdmitted event also feeds the display-only
+    // handoff: the SAME EvidenceAdmitted event also feeds the display-only
     // provenance timeline (evidence_admitted entry). The verification projection
     // above is unchanged; this only appends to the handoff provenance row.
     const provRow = this.ensureHandoffProvenanceRow(projectId, goalId, taskId, cursor);
@@ -1266,7 +1244,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return row;
   }
 
-  /** P1-04: task-detail verification view (frozen entry; lane D implements).
+  /** verification: task-detail verification view (versioned query entry).
    * The view is rebuilt ONLY from events: applicability is recomputed at query
    * time through Control's read-only policy explanation against the projected
    * current anchor; the reduction is the projected reduction fact. */
@@ -1298,108 +1276,17 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** Build the TaskVerificationView from the projected row (query-time derived
-   * parts use Control's explanation port; they never write back to history). */
+  /** Combine storage-specific reads with the shared verification interpretation. */
   private buildVerificationView(row: VerificationProjection): TaskVerificationView {
-    const projectId = row.projectId;
-    const goalId = row.goalId;
-    const taskId = row.taskId;
-    const planSnapshot = this.planSnapshots.get(planGraphKey(projectId, goalId)) ?? null;
-    const currentAnchor = row.reduction ? row.reduction.currentAnchor : null;
-
-    // Admission order = the per-task evidence index order (deterministic).
-    const sorted = [...row.evidence].sort((a, b) => a.evidenceIndex - b.evidenceIndex);
-    const explanation = this.policyExplanation.explainEvidence({ evidence: sorted.map(pe => pe.evidence), plan: planSnapshot, currentAnchor, review: reviewProjectionFacts(this.reviewRecords()) });
-    const evidence: EvidenceBindingView[] = sorted.map((pe, index) =>
-      this.toEvidenceBindingView(pe, explanation.bindings[index]!.applicability),
-    );
-    const { effectiveEvidenceIds, blockingEvidenceIds } = explanation;
-
-    const reduction = row.reduction === null
-      ? null
-      : {
-          phase: row.reduction.phase,
-          causes: row.reduction.causes,
-          effectiveEvidenceIds: row.reduction.effectiveEvidenceIds,
-          blockingEvidenceIds: row.reduction.blockingEvidenceIds,
-          staleEvidenceIds: row.reduction.staleEvidenceIds,
-          outOfScopeEvidenceIds: row.reduction.outOfScopeEvidenceIds,
-          satisfiedObligationIds: row.reduction.satisfiedObligationIds,
-          planRef: row.reduction.planRef,
-          reducedAt: row.reduction.reducedAt,
-          sourceCursor: row.reductionCursor!,
-        };
-
-    return {
-      projectId,
-      goalId,
-      taskId,
-      currentAnchor,
-      planRef: this.viewPlanRef(row, planSnapshot, currentAnchor),
-      planRevision: this.viewPlanRevision(row, planSnapshot, currentAnchor),
-      evidence,
-      effectiveEvidenceIds,
-      blockingEvidenceIds,
-      reduction,
-      sourceCursor: row.sourceCursor,
-    };
+    return buildTaskVerificationView({
+      row,
+      planSnapshot: this.planSnapshots.get(planGraphKey(row.projectId, row.goalId)) ?? null,
+      policyExplanation: this.policyExplanation,
+      review: reviewProjectionFacts(this.reviewRecords()),
+    });
   }
 
-  /** Map a projected evidence entry to its display binding (applicability is
-   * provided by Control; null when no authoritative current anchor). */
-  private toEvidenceBindingView(
-    pe: ProjectedEvidence,
-    applicability: EvidenceApplicability | null,
-  ): EvidenceBindingView {
-    const e = pe.evidence;
-    return {
-      evidenceId: e.evidenceId,
-      kind: e.kind,
-      outcome: e.outcome,
-      coverage: e.coverage.map((c) => ({ ...c })),
-      applicability,
-      anchor: { ...e.anchor },
-      verificationPlanId: e.verificationPlanRef.planId,
-      verificationPlanDigest: e.verificationPlanRef.planDigest,
-      sourceRunRef: e.source.runRef,
-      checkId: e.source.checkId,
-      summary: e.summary.text,
-      artifactRef: e.summary.artifactRef,
-      admittedAt: pe.admittedAt,
-      evidenceIndex: pe.evidenceIndex,
-    };
-  }
-
-  /** planRef for the view: the accepted plan's ref, else the reduction anchor,
-   * else the first evidence's anchor (the row only exists after such an event). */
-  private viewPlanRef(
-    row: VerificationProjection,
-    planSnapshot: PlanRevisionSnapshot | null,
-    currentAnchor: EffectivityAnchorV1 | null,
-  ): PlanRevisionRef {
-    return (
-      planSnapshot?.ref ??
-      currentAnchor?.planRef ??
-      row.evidence[0]?.evidence.anchor.planRef ??
-      { aggregateType: "PlanRevision", projectId: row.projectId, planId: "" }
-    );
-  }
-
-  private viewPlanRevision(
-    row: VerificationProjection,
-    planSnapshot: PlanRevisionSnapshot | null,
-    currentAnchor: EffectivityAnchorV1 | null,
-  ): number {
-    return (
-      planSnapshot?.planRevision ??
-      currentAnchor?.planRevision ??
-      row.evidence[0]?.evidence.anchor.planRevision ??
-      0
-    );
-  }
-
-  // ------------------------------------------------------------------ //
-  // P1-05 goal phase projection handler                                //
+  // context assembly goal phase projection handler                                //
   // ------------------------------------------------------------------ //
 
   /** GoalPhaseUpdated@1 -> upsert the (projectId, goalId) GoalStatusView row AND
@@ -1442,7 +1329,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   }
 
   // ------------------------------------------------------------------ //
-  // P1-06 handoff provenance projection handlers                        //
+  // Handoff provenance projection handlers                        //
   // ------------------------------------------------------------------ //
 
   /** Get or create the per-task handoff provenance row (full-scope key). */
@@ -1527,7 +1414,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   }
 
   // ------------------------------------------------------------------ //
-  // P1-07 lease / integration / patch projection handlers              //
+  // workspace concurrency lease / integration / patch projection handlers              //
   // ------------------------------------------------------------------ //
 
   private ensureWorkspaceLeaseRow(
@@ -1636,7 +1523,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     row.updatedAt = event.occurredAt;
     this.workspaceLeaseRows.set(key, row);
 
-    // P1-07 patch-view fallback: a write release that carries a post-write
+    // workspace concurrency patch-view fallback: a write release that carries a post-write
     // revision (patch-record) is the canonical revision source when no
     // PatchRecorded is present. The explicit-release path (postWrite null)
     // never creates a phantom patch row.
@@ -1759,123 +1646,54 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     this.integrationConflictRows.set(key, row);
     return row;
   }
-
-
-  // ------------------------------------------------------------------ //
-  // P1-08 console query surface + projection hooks (SHARED BASELINE).   //
-  // The six console queries are FROZEN in src/contracts/console-views   //
-  // (first consumer); this baseline carries the fresh helper + the two  //
-  // lane hooks as no-ops. Lane A fills consolePortfolio/consoleSummary //
-  // + applyP108ConsoleLaneA; Lane B fills consolePlanMatrix/           //
-  // consoleActiveAgents/consoleTaskEvidence/consoleTimeline +           //
-  // applyP108ConsoleLaneB. iSHANDLED: all event types are already       //
-  // handled (no new DomainEvent) — the list is unchanged.               //
-  // ------------------------------------------------------------------ //
-
-  /** P1-08 console projection dispatcher: forwards every committed event to
-   * the per-lane console projections. NO new event is created here. */
-  private applyP108Console(event: DomainEvent, cursor: CommitCursor): void {
-    this.applyP108ConsoleLaneA(event, cursor);
-    this.applyP108ConsoleLaneB(event, cursor);
+  /** Update console views from committed events; projection never creates domain events. */
+  private applyConsoleEvent(event: DomainEvent, cursor: CommitCursor): void {
+    this.applyConsoleOverview(event, cursor);
+    this.applyConsoleDetails(event, cursor);
   }
-
-  // P1-16 work-context projections (binding, notes, continuation rows).
-  private applyP116Context(event: DomainEvent, cursor: CommitCursor): void {
-    this.applyP116ContextLaneA(event, cursor);
-    this.applyP116ContextLaneB(event, cursor);
-  }
-
-  // LANE-A: WorkContextBinding rows + ExecutionNote rows (binding/notes view part).
-  private applyP116ContextLaneA(event: DomainEvent, cursor: CommitCursor): void {
-    if (event.eventType === "WorkContextBound") {
-      const ev = event as import("../../contracts/context-continuity.js").WorkContextBoundEvent;
-      const ref = workContextRefFor(ev.projectId, ev.workspaceId, ev.aggregateId);
-      this.p116Bindings.set(canonicalJson(ref), {
-        ref,
-        revision: ev.aggregateRevision,
-        schemaVersion: 1,
-        binding: ev.payload.binding,
-      });
-    } else if (event.eventType === "WorkRunLinked") {
-      // A link appends a run to the SAME binding (durable work identity). The
-      // event carries the complete linkedRunRefs; preserve every other binding
-      // field and advance only the linkage + revision.
-      const ev = event as import("../../contracts/context-continuity.js").WorkRunLinkedEvent;
-      const ref = workContextRefFor(ev.projectId, ev.workspaceId, ev.aggregateId);
-      const key = canonicalJson(ref);
-      const prev = this.p116Bindings.get(key);
-      if (prev) {
-        this.p116Bindings.set(key, {
-          ref,
-          revision: ev.aggregateRevision,
-          schemaVersion: 1,
-          binding: { ...prev.binding, linkedRunRefs: ev.payload.linkedRunRefs.map((r) => ({ ...r })) },
-        });
-      }
-    } else if (event.eventType === "ExecutionNoteRecorded") {
-      const ev = event as import("../../contracts/context-continuity.js").ExecutionNoteRecordedEvent;
-      const note = ev.payload.note;
-      const ref = workContextRefFor(ev.projectId, ev.workspaceId, note.workId);
-      const key = canonicalJson(ref);
-      const rows = this.p116Notes.get(key) ?? [];
-      rows.push({
-        noteRef: { aggregateType: "ExecutionNote", projectId: ev.projectId, workspaceId: ev.workspaceId, workId: note.workId, noteId: note.noteId },
-        kind: note.kind,
-        summary: note.summary,
-        runRef: { ...note.runRef },
-        createdAt: note.createdAt,
-        sourceCursor: cursor,
-      });
-      this.p116Notes.set(key, rows);
+  private applyWorkContext(event: DomainEvent, cursor: CommitCursor): void {
+    const change = projectWorkContext(event, cursor, key => this.workContextBindings.get(key));
+    if (!change) return;
+    if (change.kind === 'binding') this.workContextBindings.set(change.key, change.snapshot);
+    else if (change.kind === 'note') {
+      const rows = this.workContextNotes.get(change.key) ?? [];
+      rows.push(change.row);
+      this.workContextNotes.set(change.key, rows);
+    } else {
+      const rows = this.workContextContinuationRows.get(change.key) ?? [];
+      rows.push(change.snapshot);
+      this.workContextContinuationRows.set(change.key, rows);
     }
   }
 
-  // LANE-B: ContinuationRecord rows + frontier aggregation.
-  private applyP116ContextLaneB(event: DomainEvent, cursor: CommitCursor): void {
-    void cursor;
-    if (event.eventType !== "ContinuationRecorded") return;
-    const ev = event as import("../../contracts/context-continuity.js").ContinuationRecordedEvent;
-    const workId = ev.payload.result.workId;
-    const scopeKey = workContextScopeKey(ev.projectId, ev.workspaceId, workId);
-    const snapshot: import("../../contracts/context-continuity.js").ContinuationRecordSnapshot = {
-      ref: continuationRecordRefFor(ev.projectId, ev.workspaceId, workId, ev.payload.result.reportId),
-      revision: 1,
-      schemaVersion: 1,
-      result: ev.payload.result,
-    };
-    const rows = this.p116ContinuationRows.get(scopeKey) ?? [];
-    rows.push(snapshot);
-    this.p116ContinuationRows.set(scopeKey, rows);
+
+  // Architecture-inspection projections (inspection, finding, brief, proposal).
+  private applyArchitectureInspectionEvent(event: DomainEvent, cursor: CommitCursor): void {
+    this.applyArchitectureInspectionFacts(event, cursor);
+    this.applyArchitectureDecisionArtifacts(event, cursor);
   }
 
-  // P1-12 architecture-inspection projections (inspection, finding, brief, proposal).
-  private applyP112Inspection(event: DomainEvent, cursor: CommitCursor): void {
-    this.applyP112InspectionLaneA(event, cursor);
-    this.applyP112InspectionLaneB(event, cursor);
-  }
-
-  // LANE-A: inspection + finding rows (filled by the integrator after the
-  // lanes merged — lane B declared p112InspectionRows/p112FindingRows as the
-  // combination contract; this is the LANE-A writer with the SAME keys).
-  private applyP112InspectionLaneA(event: DomainEvent, cursor: CommitCursor): void {
+  // Overview projection: inspection and finding rows use the same scope keys as the
+  // detail-view architecture artifacts, so the query can compose them into one view.
+  private applyArchitectureInspectionFacts(event: DomainEvent, cursor: CommitCursor): void {
     if (event.eventType === "ArchitectureInspectionRecorded") {
       const ev = event as import("../../contracts/architecture-inspection.js").ArchitectureInspectionRecordedEvent;
       const scopeKey = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
-      const rows = this.p112InspectionRows.get(scopeKey) ?? [];
+      const rows = this.architectureInspectionInspectionRows.get(scopeKey) ?? [];
       rows.push(ev.payload.inspection);
-      this.p112InspectionRows.set(scopeKey, rows);
+      this.architectureInspectionInspectionRows.set(scopeKey, rows);
     } else if (event.eventType === "ArchitectureFindingRecorded") {
       const ev = event as import("../../contracts/architecture-inspection.js").ArchitectureFindingRecordedEvent;
       const scopeKey = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
-      const rows = this.p112FindingRows.get(scopeKey) ?? [];
+      const rows = this.architectureInspectionFindingRows.get(scopeKey) ?? [];
       rows.push({ ref: { aggregateType: "ArchitectureFinding", projectId: ev.projectId, workspaceId: ev.workspaceId, findingId: ev.payload.finding.findingId }, revision: 1, schemaVersion: 1, finding: ev.payload.finding, recordedAt: ev.payload.recordedAt });
-      this.p112FindingRows.set(scopeKey, rows);
+      this.architectureInspectionFindingRows.set(scopeKey, rows);
     }
     void cursor;
   }
 
-  // LANE-B: decision brief + candidate proposal rows.
-  private applyP112InspectionLaneB(event: DomainEvent, cursor: CommitCursor): void {
+  // detail-view projection: decision brief + candidate proposal rows.
+  private applyArchitectureDecisionArtifacts(event: DomainEvent, cursor: CommitCursor): void {
     if (event.eventType === "ArchitectureDecisionBriefRecorded") {
       const ev = event as import("../../contracts/architecture-inspection.js").ArchitectureDecisionBriefRecordedEvent;
       const brief = ev.payload.brief;
@@ -1887,9 +1705,9 @@ export class ReadModelIndexImpl implements ReadModelIndex {
         recordedAt: ev.payload.recordedAt,
       };
       const key = consoleWorkspaceKey(brief.projectId, brief.workspaceId);
-      const rows = this.p112BriefRows.get(key) ?? [];
+      const rows = this.architectureInspectionBriefRows.get(key) ?? [];
       rows.push(snapshot);
-      this.p112BriefRows.set(key, rows);
+      this.architectureInspectionBriefRows.set(key, rows);
     } else if (event.eventType === "ArchitectureCandidateProposalRecorded") {
       const ev = event as import("../../contracts/architecture-inspection.js").ArchitectureCandidateProposalRecordedEvent;
       const proposal = ev.payload.proposal;
@@ -1901,83 +1719,83 @@ export class ReadModelIndexImpl implements ReadModelIndex {
         recordedAt: ev.payload.recordedAt,
       };
       const key = consoleWorkspaceKey(proposal.projectId, proposal.workspaceId);
-      const rows = this.p112ProposalRows.get(key) ?? [];
+      const rows = this.architectureInspectionProposalRows.get(key) ?? [];
       rows.push(snapshot);
-      this.p112ProposalRows.set(key, rows);
+      this.architectureInspectionProposalRows.set(key, rows);
     }
   }
 
-  /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — rebuilt ONLY from the
+  /** Console overview projection hook (Portfolio + WorkspaceSummary) — rebuilt ONLY from the
    * committed v1 events. Portfolio rows come from WorkspaceBootstrapped; summary
    * rows are touched by every workspace-scoped counter event. Phase COUNT maps
    * track the LATEST phase per task/goal (display-only projection facts). */
-  private applyP108ConsoleLaneA(event: DomainEvent, cursor: CommitCursor): void {
+  private applyConsoleOverview(event: DomainEvent, cursor: CommitCursor): void {
     if (event.eventType === "WorkspaceBootstrapped" || event.eventType === "WorkspaceRegistered") {
       const ev = event as import("../../contracts/bootstrap.js").WorkspaceBootstrappedEventV1 | import("../../contracts/workspace-registration.js").WorkspaceRegisteredEvent;
-      this.p108ApplyBootstrap(ev, cursor);
+      this.consoleApplyBootstrap(ev, cursor);
     } else if (event.eventType === "GoalCreated") {
       const ev = event as import("../../contracts/command-event.js").GoalCreatedEvent;
-      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+      this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
         row.goalCount += 1;
       });
     } else if (event.eventType === "PlanRevisionAccepted") {
       const ev = event as import("../../contracts/plan.js").PlanRevisionAcceptedEvent;
-      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+      this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
         row.taskCount += ev.payload.planRevision.tasks.length;
         row.planRevisionCount += 1;
       });
     } else if (event.eventType === "TaskClaimed") {
       const ev = event as import("../../contracts/dispatch.js").TaskClaimedEvent;
-      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+      this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
         row.agentRunCount += 1;
       });
     } else if (event.eventType === "ReplacementClaimed") {
-      // integrator ruling: a replacement claim creates another Agent Run —
+      // projection contract: a replacement claim creates another Agent Run —
       // agentRunCount = claims + replacements (matches the ActiveAgents rows).
       const ev = event as import("../../contracts/handoff.js").ReplacementClaimedEvent;
-      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+      this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
         row.agentRunCount += 1;
       });
     } else if (event.eventType === "EvidenceAdmitted") {
       const ev = event as import("../../contracts/evidence.js").EvidenceAdmittedEvent;
-      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+      this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
         row.evidenceCount += 1;
       });
     } else if (event.eventType === "TaskReductionUpdated") {
       const ev = event as import("../../contracts/reduction.js").TaskReductionUpdatedEvent;
-      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+      this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
         row.taskReductionCount += 1;
         const phase = ev.payload.reduction.phase;
         const key = consoleTaskKey(ev.projectId, ev.workspaceId, ev.payload.goalId, ev.payload.taskId);
-        const prev = this.p108TaskReductionPhase.get(key);
-        if (prev !== undefined) this.p108DecrementTaskReduction(row, prev);
-        this.p108TaskReductionPhase.set(key, phase);
-        this.p108IncrementTaskReduction(row, phase);
+        const prev = this.consoleTaskReductionPhase.get(key);
+        if (prev !== undefined) this.consoleDecrementTaskReduction(row, prev);
+        this.consoleTaskReductionPhase.set(key, phase);
+        this.consoleIncrementTaskReduction(row, phase);
       });
     } else if (event.eventType === "GoalPhaseUpdated") {
       const ev = event as import("../../contracts/goal-phase.js").GoalPhaseUpdatedEvent;
-      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+      this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
         row.goalPhaseCount += 1;
         const phase = ev.payload.phase;
         const key = consoleGoalKey(ev.projectId, ev.workspaceId, ev.payload.goalId);
-        const prev = this.p108GoalPhase.get(key);
-        if (prev !== undefined) this.p108DecrementGoalPhase(row, prev);
-        this.p108GoalPhase.set(key, phase);
-        this.p108IncrementGoalPhase(row, phase);
+        const prev = this.consoleGoalPhase.get(key);
+        if (prev !== undefined) this.consoleDecrementGoalPhase(row, prev);
+        this.consoleGoalPhase.set(key, phase);
+        this.consoleIncrementGoalPhase(row, phase);
       });
     }
     // Every other event type leaves the workspace summary/portfolio rows
-    // unchanged (they are not counter rows per the frozen contract).
+    // unchanged (they are not counter rows in the versioned contract).
   }
 
   /** WorkspaceBootstrapped -> create/refresh the (projectId, workspaceId)
    * PortfolioEntry AND initialize the WorkspaceSummary row. */
-  private p108ApplyBootstrap(
+  private consoleApplyBootstrap(
     ev: import("../../contracts/bootstrap.js").WorkspaceBootstrappedEventV1 | import("../../contracts/workspace-registration.js").WorkspaceRegisteredEvent,
     cursor: CommitCursor,
   ): void {
     const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
-    const existing = this.p108PortfolioEntries.get(key);
+    const existing = this.consolePortfolioEntries.get(key);
     const sourceDigest = ev.payload.sourceDigest;
     const bootstrappedAt = ev.occurredAt;
     if (existing === undefined) {
@@ -1991,7 +1809,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
         sourceCursor: cursor,
         scopeKey: key,
       };
-      this.p108PortfolioEntries.set(key, entry);
+      this.consolePortfolioEntries.set(key, entry);
     } else {
       // Idempotent replay: re-running the same event set reproduces the same row;
       // a genuinely new bootstrap refresh carries updated provenance.
@@ -1999,7 +1817,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       existing.bootstrappedAt = bootstrappedAt;
       existing.sourceCursor = cursor;
     }
-    this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, bootstrappedAt, (row) => {
+    this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, bootstrappedAt, (row) => {
       row.sourceDigest = sourceDigest;
       row.bootstrappedAt = bootstrappedAt;
     });
@@ -2008,7 +1826,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   /** Get (or lazily create) the WorkspaceSummary row for the full scope key and
    * apply one counter mutation; every counter event refreshes sourceCursor +
    * updatedAt. */
-  private p108TouchSummary(
+  private consoleTouchSummary(
     projectId: string,
     workspaceId: string,
     cursor: CommitCursor,
@@ -2016,7 +1834,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     update: (row: import("../../contracts/console-views.js").WorkspaceSummaryView) => void,
   ): import("../../contracts/console-views.js").WorkspaceSummaryView {
     const key = consoleWorkspaceKey(projectId, workspaceId);
-    let row = this.p108SummaryRows.get(key);
+    let row = this.consoleSummaryRows.get(key);
     if (row === undefined) {
       row = {
         projectId,
@@ -2034,7 +1852,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
         sourceCursor: cursor,
         updatedAt: occurredAt,
       };
-      this.p108SummaryRows.set(key, row);
+      this.consoleSummaryRows.set(key, row);
     } else {
       row.sourceCursor = cursor;
       row.updatedAt = occurredAt;
@@ -2043,28 +1861,28 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return row;
   }
 
-  private p108IncrementTaskReduction(
+  private consoleIncrementTaskReduction(
     row: import("../../contracts/console-views.js").WorkspaceSummaryView,
     phase: import("../../contracts/reduction.js").TaskReductionPhase,
   ): void {
     row.phaseCounts.taskReduction[phase] = (row.phaseCounts.taskReduction[phase] ?? 0) + 1;
   }
 
-  private p108DecrementTaskReduction(
+  private consoleDecrementTaskReduction(
     row: import("../../contracts/console-views.js").WorkspaceSummaryView,
     phase: import("../../contracts/reduction.js").TaskReductionPhase,
   ): void {
     row.phaseCounts.taskReduction[phase] = (row.phaseCounts.taskReduction[phase] ?? 0) - 1;
   }
 
-  private p108IncrementGoalPhase(
+  private consoleIncrementGoalPhase(
     row: import("../../contracts/console-views.js").WorkspaceSummaryView,
     phase: import("../../contracts/goal-phase.js").GoalPhase,
   ): void {
     row.phaseCounts.goalPhase[phase] = (row.phaseCounts.goalPhase[phase] ?? 0) + 1;
   }
 
-  private p108DecrementGoalPhase(
+  private consoleDecrementGoalPhase(
     row: import("../../contracts/console-views.js").WorkspaceSummaryView,
     phase: import("../../contracts/goal-phase.js").GoalPhase,
   ): void {
@@ -2072,70 +1890,70 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   }
 
   // ------------------------------------------------------------------ //
-  // P1-08 LANE-B projection fields (per-workspace order/seq + index).   //
+  // Console detail-view projection fields (per-workspace order/seq + index).   //
   // ------------------------------------------------------------------ //
 
-  /** LANE-B: agent storageKey (consoleTaskKey + "\u0000" + runId) -> workspace arrival seq. */
-  private readonly p108AgentRowSeq = new Map<string, number>();
-  /** LANE-B: consoleWorkspaceKey -> per-workspace agent arrival seq counter. */
-  private readonly p108AgentArrivalSeq = new Map<string, number>();
-  /** LANE-B: (projectId \0 runId) -> agent storageKey (RunStarted / RunEventRecorded /
+  /** detail-view projection: agent storageKey (consoleTaskKey + "\u0000" + runId) -> workspace arrival seq. */
+  private readonly consoleAgentRowSeq = new Map<string, number>();
+  /** detail-view projection: consoleWorkspaceKey -> per-workspace agent arrival seq counter. */
+  private readonly consoleAgentArrivalSeq = new Map<string, number>();
+  /** detail-view projection: (projectId \0 runId) -> agent storageKey (RunStarted / RunEventRecorded /
    * RunOutcomeUnknown carry only the runId). */
-  private readonly p108AgentRunIndex = new Map<string, string>();
-  /** LANE-B: consoleWorkspaceKey -> total timeline arrivals (before the bounded window). */
-  private readonly p108TimelineTotal = new Map<string, number>();
+  private readonly consoleAgentRunIndex = new Map<string, string>();
+  /** detail-view projection: consoleWorkspaceKey -> total timeline arrivals (before the bounded window). */
+  private readonly consoleTimelineTotal = new Map<string, number>();
 
-  /** P1-08 LANE-B hook (PlanMatrix + ActiveAgents + TaskEvidence + Timeline). */
-  private applyP108ConsoleLaneB(event: DomainEvent, cursor: CommitCursor): void {
+  /** Console detail-view projection hook (PlanMatrix + ActiveAgents + TaskEvidence + Timeline). */
+  private applyConsoleDetails(event: DomainEvent, cursor: CommitCursor): void {
     switch (event.eventType) {
       case 'ReviewWorkCreated':
       case 'FailedReviewWorkReplaced':
-        this.p108ApplyReviewWorkCreated(event, cursor);
+        this.consoleApplyReviewWorkCreated(event, cursor);
         break;
       case "GoalCreated":
-        this.p108Timeline(event, cursor, "goal_created", { goalId: event.aggregateId }, "goal " + event.aggregateId + " created");
+        this.appendConsoleTimeline(event, cursor, "goal_created", { goalId: event.aggregateId }, "goal " + event.aggregateId + " created");
         break;
       case "PlanRevisionAccepted":
-        this.p108ApplyPlanRevisionAccepted(event, cursor);
+        this.consoleApplyPlanRevisionAccepted(event, cursor);
         break;
       case "TaskClaimed":
-        this.p108ApplyTaskClaimed(event, cursor);
+        this.consoleApplyTaskClaimed(event, cursor);
         break;
       case "RunStarted":
-        this.p108ApplyRunStarted(event, cursor);
+        this.consoleApplyRunStarted(event, cursor);
         break;
       case "RunEventRecorded":
-        this.p108ApplyRunEventRecorded(event, cursor);
+        this.consoleApplyRunEventRecorded(event, cursor);
         break;
       case 'ExecutionRetryScheduled':
-        this.p108ApplyExecutionRetry(event, cursor);
+        this.consoleApplyExecutionRetry(event, cursor);
         break;
       case 'RunReconciled': {
         const proof = event.payload.run.reconciliation?.observation;
-        if (proof?.kind === 'runtime_terminal') this.p108ApplyRunEventRecorded({ ...event, eventType: 'RunEventRecorded',
+        if (proof?.kind === 'runtime_terminal') this.consoleApplyRunEventRecorded({ ...event, eventType: 'RunEventRecorded',
           payload: { taskId: event.payload.run.task.taskId, runtimeEvent: proof.event } }, cursor);
         break;
       }
       case "RunOutcomeUnknown":
-        this.p108ApplyRunOutcomeUnknown(event, cursor);
+        this.consoleApplyRunOutcomeUnknown(event, cursor);
         break;
       case "EvidenceAdmitted":
-        this.p108ApplyEvidenceAdmitted(event, cursor);
+        this.consoleApplyEvidenceAdmitted(event, cursor);
         break;
       case "TaskReductionUpdated":
-        this.p108ApplyTaskReductionUpdated(event, cursor);
+        this.consoleApplyTaskReductionUpdated(event, cursor);
         break;
       case "GoalPhaseUpdated":
-        this.p108Timeline(event, cursor, "goal_phase", { goalId: event.payload.goalId },
+        this.appendConsoleTimeline(event, cursor, "goal_phase", { goalId: event.payload.goalId },
           "goal " + event.payload.goalId + " phase " + event.payload.phase);
         break;
       case "HandoffRecorded":
-        this.p108Timeline(event, cursor, "handoff_recorded",
+        this.appendConsoleTimeline(event, cursor, "handoff_recorded",
           { goalId: event.payload.goalId, taskId: event.payload.taskId, packetId: event.payload.packet.packetId },
           "handoff packet " + event.payload.packet.packetId + " recorded");
         break;
       case "ReplacementClaimed":
-        this.p108ApplyReplacementClaimed(event, cursor);
+        this.consoleApplyReplacementClaimed(event, cursor);
         break;
       default:
         break;
@@ -2143,19 +1961,19 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   }
 
   /** Helper: active-agent storage key (full-scope task key + runId). */
-  private p108AgentStorageKey(projectId: string, workspaceId: string, goalId: string, taskId: string, runId: string): string {
+  private consoleAgentStorageKey(projectId: string, workspaceId: string, goalId: string, taskId: string, runId: string): string {
     return consoleTaskKey(projectId, workspaceId, goalId, taskId) + "\u0000" + runId;
   }
 
   /** Helper: workspace-level agent arrival seq (1-based, deterministic). */
-  private p108NextAgentSeq(workspaceKey: string): number {
-    const next = (this.p108AgentArrivalSeq.get(workspaceKey) ?? 0) + 1;
-    this.p108AgentArrivalSeq.set(workspaceKey, next);
+  private consoleNextAgentSeq(workspaceKey: string): number {
+    const next = (this.consoleAgentArrivalSeq.get(workspaceKey) ?? 0) + 1;
+    this.consoleAgentArrivalSeq.set(workspaceKey, next);
     return next;
   }
 
   /** Helper: append one bounded workspace timeline entry (drop oldest beyond the bound). */
-  private p108Timeline(
+  private appendConsoleTimeline(
     event: { eventId: string; occurredAt: string; projectId: string; workspaceId: string },
     cursor: CommitCursor,
     kind: import("../../contracts/console-views.js").TimelineEntryKind,
@@ -2163,10 +1981,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     summary: string,
   ): void {
     const workspaceKey = consoleWorkspaceKey(event.projectId, event.workspaceId);
-    const seq = (this.p108TimelineSeq.get(workspaceKey) ?? 0) + 1;
-    this.p108TimelineSeq.set(workspaceKey, seq);
-    const total = (this.p108TimelineTotal.get(workspaceKey) ?? 0) + 1;
-    this.p108TimelineTotal.set(workspaceKey, total);
+    const seq = (this.consoleTimelineSeq.get(workspaceKey) ?? 0) + 1;
+    this.consoleTimelineSeq.set(workspaceKey, seq);
+    const total = (this.consoleTimelineTotal.get(workspaceKey) ?? 0) + 1;
+    this.consoleTimelineTotal.set(workspaceKey, total);
     const entry: import("../../contracts/console-views.js").TimelineEntry = {
       seq,
       kind,
@@ -2176,99 +1994,42 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       refs: { projectId: event.projectId, workspaceId: event.workspaceId, ...refs },
       summary,
     };
-    const list = this.p108TimelineRows.get(workspaceKey) ?? [];
+    const list = this.consoleTimelineRows.get(workspaceKey) ?? [];
     list.push(entry);
     if (list.length > CONSOLE_TIMELINE_MAX_ENTRIES) {
       list.splice(0, list.length - CONSOLE_TIMELINE_MAX_ENTRIES);
     }
-    this.p108TimelineRows.set(workspaceKey, list);
+    this.consoleTimelineRows.set(workspaceKey, list);
   }
 
-  /** Helper: display state of a terminal runtime event type (never inferred). */
-  private p108TerminalDisplayState(eventType: string): import("../../contracts/console-views.js").RunDisplayState {
-    switch (eventType) {
-      case "run_completed": return "completed_run";
-      case "run_crashed": return "crashed";
-      case "run_cancelled": return "cancelled";
-      case "run_budget_exhausted": return "budget_exhausted";
-      default: return "ongoing";
-    }
-  }
-
-  /** Helper: build a PlanMatrixView from an accepted plan snapshot (shared by the
-   * accepted-plan handler and the defensive TaskReductionUpdated rebuild path). */
-  private p108BuildMatrix(
-    projectId: string,
-    workspaceId: string,
-    goalId: string,
-    snapshot: PlanRevisionSnapshot,
-    cursor: CommitCursor,
-    updatedAt: string,
-  ): import("../../contracts/console-views.js").PlanMatrixView {
-    const stages = snapshot.stages;
-    const stageTitleOf = (stageId: string | undefined): string | null =>
-      stageId === undefined ? null : (stages.find((s) => s.stageId === stageId)?.title ?? null);
-    const rows: import("../../contracts/console-views.js").PlanMatrixRow[] =
-      snapshot.tasks.slice(0, CONSOLE_MATRIX_MAX_TASKS).map((task) => ({
-        taskId: task.taskId,
-        title: task.title,
-        stageId: task.stageId ?? null,
-        stageTitle: stageTitleOf(task.stageId),
-        requirementLevel: task.requirementLevel,
-        taskKind: task.taskKind,
-        disposition: task.disposition,
-        taskScope: task.scope,
-        plannedPhase: task.phase,
-        livePhase: null,
-        phaseSources: {
-          planned: { planRef: snapshot.ref, planRevision: snapshot.planRevision, sourceCursor: cursor },
-          live: { reductionRevision: null, sourceCursor: null },
-        },
-        phaseMismatch: false,
-        sourceCursor: cursor,
-      }));
-    return {
-      projectId,
-      workspaceId,
-      goalId,
-      planRef: snapshot.ref,
-      planRevision: snapshot.planRevision,
-      stages,
-      rows,
-      taskCount: snapshot.tasks.length,
-      sourceCursor: cursor,
-      updatedAt,
-    };
-  }
-
-  /** LANE-B: PlanRevisionAccepted -> matrix row + timeline plan_accepted. */
-  private p108ApplyPlanRevisionAccepted(event: PlanRevisionAcceptedEvent, cursor: CommitCursor): void {
+  /** detail-view projection: PlanRevisionAccepted -> matrix row + timeline plan_accepted. */
+  private consoleApplyPlanRevisionAccepted(event: PlanRevisionAcceptedEvent, cursor: CommitCursor): void {
     const snapshot = event.payload.planRevision;
     const projectId = event.projectId;
     const workspaceId = event.workspaceId;
     const goalId = event.payload.goalId;
-    const view = this.p108BuildMatrix(projectId, workspaceId, goalId, snapshot, cursor, event.occurredAt);
-    this.p108MatrixRows.set(consoleGoalKey(projectId, workspaceId, goalId), view);
-    // RW-09：refs.planId 是条目自己的事实（这条说accepted的是哪一份计划），后面的
+    const view = buildPlanMatrixView(projectId, workspaceId, goalId, snapshot, cursor, event.occurredAt);
+    this.consoleMatrixRows.set(consoleGoalKey(projectId, workspaceId, goalId), view);
+    // refs.planId 是条目自己的事实（这条说accepted的是哪一份计划），后面的
     // GoalRevisionRecorded 用它作为匹配键补变更原因，不靠"最后一条"这类顺序假设。
-    this.p108Timeline(event, cursor, "plan_accepted", { goalId, planId: snapshot.ref.planId },
+    this.appendConsoleTimeline(event, cursor, "plan_accepted", { goalId, planId: snapshot.ref.planId },
       "plan " + snapshot.ref.planId + " revision " + snapshot.planRevision + " accepted");
   }
 
   /**
-   * RW-09：把「这次 revision 为什么发生」补到本次受理的 plan_accepted 时间线条目上。
+   * 计划变更原因：补到本次受理的 plan_accepted 时间线条目上。
    *
    * 为什么在这里补而不是落条目时直接写：PlanRevisionAccepted 事件本身不带变更原因，原因在
-   * **同一个提交批次**的 GoalRevisionRecorded 事件里（RW-05 起逐字落账命令的 changeReason：
+   * **同一个提交批次**的 GoalRevisionRecorded 事件里（该事件逐字落账命令的 changeReason：
    * 人的决定受理是 user-decision-accepted，ControlEngine 的自动受理是
    * autonomous-rework:<proposalId>）。投影按到达顺序折叠，plan_accepted 先到，因此只能事后按
    * 同一条 canonical 事实（目标 + 生效计划 id）回头写入——不新造条目、不改写 summary、不解析
    * id 形状、不推断。初始计划受理没有 GoalRevisionRecorded，它的条目永远不带 change，
    * 含义是"这不是一次计划变更受理"，而不是"原因未知"。
    */
-  private p111AnnotateTimelineChangeReason(projectId: string, workspaceId: string, ev: GoalRevisionRecordedEvent): void {
+  private planChangeAnnotateTimelineChangeReason(projectId: string, workspaceId: string, ev: GoalRevisionRecordedEvent): void {
     const workspaceKey = consoleWorkspaceKey(projectId, workspaceId);
-    const list = this.p108TimelineRows.get(workspaceKey);
+    const list = this.consoleTimelineRows.get(workspaceKey);
     if (list === undefined) return;
     const change = ev.payload.change;
     for (let index = list.length - 1; index >= 0; index -= 1) {
@@ -2295,29 +2056,29 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     }
   }
 
-  /** LANE-B: TaskClaimed -> create/refresh the active-agent run row (starting). */
-  private p108ApplyReviewWorkCreated(event: import('../../contracts/reviewer-work.js').ReviewWorkCreatedEvent | import('../../contracts/reviewer-work.js').FailedReviewWorkReplacedEvent, cursor: CommitCursor): void {
+  /** detail-view projection: TaskClaimed -> create/refresh the active-agent run row (starting). */
+  private consoleApplyReviewWorkCreated(event: import('../../contracts/reviewer-work.js').ReviewWorkCreatedEvent | import('../../contracts/reviewer-work.js').FailedReviewWorkReplacedEvent, cursor: CommitCursor): void {
     const { work, run, attempt } = event.payload;
     const projectId = event.projectId, workspaceId = event.workspaceId, goalId = work.subject.goalId, taskId = work.subject.taskId;
-    const storageKey = this.p108AgentStorageKey(projectId, workspaceId, goalId, taskId, run.ref.runId);
-    const producer = this.p108AgentRows.get(this.p108AgentStorageKey(projectId, workspaceId, goalId, taskId, work.producerRunRef.runId));
-    if (!this.p108AgentRows.has(storageKey)) this.p108AgentRowSeq.set(storageKey, this.p108NextAgentSeq(consoleWorkspaceKey(projectId, workspaceId)));
+    const storageKey = this.consoleAgentStorageKey(projectId, workspaceId, goalId, taskId, run.ref.runId);
+    const producer = this.consoleAgentRows.get(this.consoleAgentStorageKey(projectId, workspaceId, goalId, taskId, work.producerRunRef.runId));
+    if (!this.consoleAgentRows.has(storageKey)) this.consoleAgentRowSeq.set(storageKey, this.consoleNextAgentSeq(consoleWorkspaceKey(projectId, workspaceId)));
     if (!producer) throw new ProjectionStallError('unsupported_event_type', { observedCursor: cursor });
     const row: import('../../contracts/console-views.js').ActiveAgentRunRow = { projectId, workspaceId, goalId, taskId, work: { kind: 'review', reviewWorkRef: work.ref }, runRef: run.ref, attemptRef: attempt.ref, binding: work.roleBinding, runStatus: 'starting', runOutcome: null, exitCode: null, lastEventSeq: 0, attemptStatus: 'claimed', attemptEndOutcome: null, lease: { ...producer.lease }, startedAt: null, endedAt: null, displayState: 'starting', handoff: null, sourceCursor: cursor };
-    this.p108AgentRows.set(storageKey, row);
-    this.p108AgentRunIndex.set(projectId + '\u0000' + run.ref.runId, storageKey);
+    this.consoleAgentRows.set(storageKey, row);
+    this.consoleAgentRunIndex.set(projectId + '\u0000' + run.ref.runId, storageKey);
   }
-  private p108ApplyTaskClaimed(event: TaskClaimedEvent, cursor: CommitCursor): void {
+  private consoleApplyTaskClaimed(event: TaskClaimedEvent, cursor: CommitCursor): void {
     const projectId = event.projectId;
     const workspaceId = event.workspaceId;
     const { goalId, taskId, runRef, attemptRef, roleBinding, claimedAt } = event.payload;
     const workspaceKey = consoleWorkspaceKey(projectId, workspaceId);
     const taskKey = consoleTaskKey(projectId, workspaceId, goalId, taskId);
-    const storageKey = this.p108AgentStorageKey(projectId, workspaceId, goalId, taskId, runRef.runId);
-    if (!this.p108AgentRows.has(storageKey)) {
-      this.p108AgentRowSeq.set(storageKey, this.p108NextAgentSeq(workspaceKey));
+    const storageKey = this.consoleAgentStorageKey(projectId, workspaceId, goalId, taskId, runRef.runId);
+    if (!this.consoleAgentRows.has(storageKey)) {
+      this.consoleAgentRowSeq.set(storageKey, this.consoleNextAgentSeq(workspaceKey));
     }
-    const marker = this.p108HandoffMarkers.get(taskKey) ?? null;
+    const marker = this.consoleHandoffMarkers.get(taskKey) ?? null;
     const row: import("../../contracts/console-views.js").ActiveAgentRunRow = {
       projectId,
       workspaceId,
@@ -2339,19 +2100,19 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       handoff: marker,
       sourceCursor: cursor,
     };
-    this.p108AgentRows.set(storageKey, row);
-    this.p108AgentRunIndex.set(projectId + "\u0000" + runRef.runId, storageKey);
-    this.p108Timeline(event, cursor, "task_claimed", { goalId, taskId, runId: runRef.runId },
+    this.consoleAgentRows.set(storageKey, row);
+    this.consoleAgentRunIndex.set(projectId + "\u0000" + runRef.runId, storageKey);
+    this.appendConsoleTimeline(event, cursor, "task_claimed", { goalId, taskId, runId: runRef.runId },
       "work " + taskId + " claimed (run " + runRef.runId + ")");
   }
 
-  /** LANE-B: RunStarted -> the run row becomes running/ongoing. */
-  private p108ApplyRunStarted(event: RunStartedEvent, cursor: CommitCursor): void {
-    const storageKey = this.p108AgentRunIndex.get(event.projectId + "\u0000" + event.aggregateId);
+  /** detail-view projection: RunStarted -> the run row becomes running/ongoing. */
+  private consoleApplyRunStarted(event: RunStartedEvent, cursor: CommitCursor): void {
+    const storageKey = this.consoleAgentRunIndex.get(event.projectId + "\u0000" + event.aggregateId);
     if (!storageKey) return;
-    const row = this.p108AgentRows.get(storageKey);
+    const row = this.consoleAgentRows.get(storageKey);
     if (!row) return;
-    this.p108AgentRows.set(storageKey, {
+    this.consoleAgentRows.set(storageKey, {
       ...row,
       runStatus: "running",
       startedAt: event.payload.startedAt,
@@ -2359,15 +2120,15 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       displayState: "ongoing",
       sourceCursor: cursor,
     });
-    this.p108Timeline(event, cursor, "run_started", { goalId: row.goalId, taskId: row.taskId, runId: row.runRef.runId },
+    this.appendConsoleTimeline(event, cursor, "run_started", { goalId: row.goalId, taskId: row.taskId, runId: row.runRef.runId },
       "run " + row.runRef.runId + " started");
   }
 
-  /** LANE-B: RunEventRecorded -> fold the runtime event into the run row (idempotent on seq). */
-  private p108ApplyRunEventRecorded(event: RunEventRecordedEvent, cursor: CommitCursor): void {
-    const storageKey = this.p108AgentRunIndex.get(event.projectId + "\u0000" + event.aggregateId);
+  /** detail-view projection: RunEventRecorded -> fold the runtime event into the run row (idempotent on seq). */
+  private consoleApplyRunEventRecorded(event: RunEventRecordedEvent, cursor: CommitCursor): void {
+    const storageKey = this.consoleAgentRunIndex.get(event.projectId + "\u0000" + event.aggregateId);
     if (!storageKey) return;
-    const row = this.p108AgentRows.get(storageKey);
+    const row = this.consoleAgentRows.get(storageKey);
     if (!row) return;
     const rt = event.payload.runtimeEvent;
     if (rt.sequence > row.lastEventSeq) {
@@ -2375,7 +2136,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       const outcome = terminal ? runtimeEventTerminalOutcome(rt) : row.runOutcome;
       const exitCode = rt.payload.kind === "completed" ? rt.payload.exitCode : row.exitCode;
       const endedAt = terminal ? rt.occurredAt : row.endedAt;
-      this.p108AgentRows.set(storageKey, {
+      this.consoleAgentRows.set(storageKey, {
         ...row,
         runStatus: terminal ? "ended" : "running",
         runOutcome: outcome,
@@ -2384,31 +2145,31 @@ export class ReadModelIndexImpl implements ReadModelIndex {
         endedAt,
         attemptStatus: terminal ? "ended" : row.attemptStatus,
         attemptEndOutcome: terminal ? outcome : row.attemptEndOutcome,
-        displayState: terminal ? this.p108TerminalDisplayState(rt.eventType) : "ongoing",
+        displayState: terminal ? runDisplayStateForEvent(rt.eventType) : "ongoing",
         sourceCursor: cursor,
       });
     }
-    this.p108Timeline(event, cursor, "run_event", { goalId: row.goalId, taskId: row.taskId, runId: row.runRef.runId },
+    this.appendConsoleTimeline(event, cursor, "run_event", { goalId: row.goalId, taskId: row.taskId, runId: row.runRef.runId },
       "run " + row.runRef.runId + " " + rt.eventType);
   }
 
-  /** LANE-B: RunOutcomeUnknown -> explicit ended/outcome_unknown fact (never inferred). */
-  private p108ApplyExecutionRetry(event: import('../../contracts/dispatch.js').ExecutionRetryScheduledEvent, cursor: CommitCursor): void {
-    const storageKey = this.p108AgentRunIndex.get(event.projectId + '\u0000' + event.aggregateId);
+  /** detail-view projection: RunOutcomeUnknown -> explicit ended/outcome_unknown fact (never inferred). */
+  private consoleApplyExecutionRetry(event: import('../../contracts/dispatch.js').ExecutionRetryScheduledEvent, cursor: CommitCursor): void {
+    const storageKey = this.consoleAgentRunIndex.get(event.projectId + '\u0000' + event.aggregateId);
     if (!storageKey) return;
-    const row = this.p108AgentRows.get(storageKey);
+    const row = this.consoleAgentRows.get(storageKey);
     if (!row) return;
     const updated: import('../../contracts/console-views.js').ActiveAgentRunRow = { ...row, runStatus: 'starting', runOutcome: null,
       startedAt: null, endedAt: null, attemptStatus: 'claimed', attemptEndOutcome: null, displayState: 'starting', sourceCursor: cursor };
-    this.p108AgentRows.set(storageKey, updated);
+    this.consoleAgentRows.set(storageKey, updated);
   }
 
-  private p108ApplyRunOutcomeUnknown(event: RunOutcomeUnknownEvent, cursor: CommitCursor): void {
-    const storageKey = this.p108AgentRunIndex.get(event.projectId + "\u0000" + event.aggregateId);
+  private consoleApplyRunOutcomeUnknown(event: RunOutcomeUnknownEvent, cursor: CommitCursor): void {
+    const storageKey = this.consoleAgentRunIndex.get(event.projectId + "\u0000" + event.aggregateId);
     if (!storageKey) return;
-    const row = this.p108AgentRows.get(storageKey);
+    const row = this.consoleAgentRows.get(storageKey);
     if (!row) return;
-    this.p108AgentRows.set(storageKey, {
+    this.consoleAgentRows.set(storageKey, {
       ...row,
       runStatus: "ended",
       runOutcome: "outcome_unknown",
@@ -2418,12 +2179,12 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       displayState: "outcome_unknown",
       sourceCursor: cursor,
     });
-    this.p108Timeline(event, cursor, "run_outcome_unknown", { goalId: row.goalId, taskId: row.taskId, runId: row.runRef.runId },
+    this.appendConsoleTimeline(event, cursor, "run_outcome_unknown", { goalId: row.goalId, taskId: row.taskId, runId: row.runRef.runId },
       "run " + row.runRef.runId + " outcome unknown");
   }
 
-  /** LANE-B: ReplacementClaimed -> task handoff marker + (absent) replacement run row. */
-  private p108ApplyReplacementClaimed(event: ReplacementClaimedEvent, cursor: CommitCursor): void {
+  /** detail-view projection: ReplacementClaimed -> task handoff marker + (absent) replacement run row. */
+  private consoleApplyReplacementClaimed(event: ReplacementClaimedEvent, cursor: CommitCursor): void {
     const projectId = event.projectId;
     const workspaceId = event.workspaceId;
     const { goalId, taskId, packetRef, priorRunRef, replacementRef, attemptRef, runRef, reason, claimedAt } = event.payload;
@@ -2436,11 +2197,11 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       claimedAt,
       sourceCursor: cursor,
     };
-    this.p108HandoffMarkers.set(taskKey, handoff);
+    this.consoleHandoffMarkers.set(taskKey, handoff);
     const runKey = projectId + "\u0000" + runRef.runId;
-    const storageKey = this.p108AgentStorageKey(projectId, workspaceId, goalId, taskId, runRef.runId);
-    if (!this.p108AgentRows.has(storageKey)) {
-      this.p108AgentRowSeq.set(storageKey, this.p108NextAgentSeq(consoleWorkspaceKey(projectId, workspaceId)));
+    const storageKey = this.consoleAgentStorageKey(projectId, workspaceId, goalId, taskId, runRef.runId);
+    if (!this.consoleAgentRows.has(storageKey)) {
+      this.consoleAgentRowSeq.set(storageKey, this.consoleNextAgentSeq(consoleWorkspaceKey(projectId, workspaceId)));
       const row: import("../../contracts/console-views.js").ActiveAgentRunRow = {
         projectId,
         workspaceId,
@@ -2462,23 +2223,23 @@ export class ReadModelIndexImpl implements ReadModelIndex {
         handoff,
         sourceCursor: cursor,
       };
-      this.p108AgentRows.set(storageKey, row);
+      this.consoleAgentRows.set(storageKey, row);
     } else {
-      const existing = this.p108AgentRows.get(storageKey)!;
-      this.p108AgentRows.set(storageKey, { ...existing, handoff, sourceCursor: cursor });
+      const existing = this.consoleAgentRows.get(storageKey)!;
+      this.consoleAgentRows.set(storageKey, { ...existing, handoff, sourceCursor: cursor });
     }
-    this.p108AgentRunIndex.set(runKey, storageKey);
-    this.p108Timeline(event, cursor, "replacement_claimed", { goalId, taskId, runId: runRef.runId, packetId: packetRef.packetId },
+    this.consoleAgentRunIndex.set(runKey, storageKey);
+    this.appendConsoleTimeline(event, cursor, "replacement_claimed", { goalId, taskId, runId: runRef.runId, packetId: packetRef.packetId },
       "replacement claimed (run " + runRef.runId + ")");
   }
 
-  /** LANE-B: EvidenceAdmitted -> append the entry + timeline evidence_admitted. */
-  private p108ApplyEvidenceAdmitted(event: EvidenceAdmittedEvent, cursor: CommitCursor): void {
+  /** detail-view projection: EvidenceAdmitted -> append the entry + timeline evidence_admitted. */
+  private consoleApplyEvidenceAdmitted(event: EvidenceAdmittedEvent, cursor: CommitCursor): void {
     const projectId = event.projectId;
     const workspaceId = event.workspaceId;
     const { goalId, taskId, evidence, admittedAt, evidenceIndex } = event.payload;
     const taskKey = consoleTaskKey(projectId, workspaceId, goalId, taskId);
-    let proj = this.p108EvidenceProjections.get(taskKey);
+    let proj = this.consoleEvidenceProjections.get(taskKey);
     if (!proj) {
       const snapshot = this.planSnapshots.get(planGraphKey(projectId, goalId)) ?? null;
       proj = {
@@ -2498,13 +2259,13 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     proj.evidence.push({ evidence, admittedAt, evidenceIndex, sourceCursor: cursor });
     proj.sourceCursor = cursor;
     proj.updatedAt = event.occurredAt;
-    this.p108EvidenceProjections.set(taskKey, proj);
-    this.p108Timeline(event, cursor, "evidence_admitted", { goalId, taskId, evidenceId: evidence.evidenceId },
+    this.consoleEvidenceProjections.set(taskKey, proj);
+    this.appendConsoleTimeline(event, cursor, "evidence_admitted", { goalId, taskId, evidenceId: evidence.evidenceId },
       "evidence " + evidence.evidenceId + " admitted " + evidence.outcome);
   }
 
-  /** LANE-B: TaskReductionUpdated -> matrix live-phase + evidence reduction + timeline. */
-  private p108ApplyTaskReductionUpdated(event: TaskReductionUpdatedEvent, cursor: CommitCursor): void {
+  /** detail-view projection: TaskReductionUpdated -> matrix live-phase + evidence reduction + timeline. */
+  private consoleApplyTaskReductionUpdated(event: TaskReductionUpdatedEvent, cursor: CommitCursor): void {
     const projectId = event.projectId;
     const workspaceId = event.workspaceId;
     const { goalId, taskId, reduction } = event.payload;
@@ -2512,10 +2273,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     // Plan matrix: update the task's live phase (defensive rebuild if the matrix
     // row is missing — only a TaskReductionUpdated was seen).
     const matrixKey = consoleGoalKey(projectId, workspaceId, goalId);
-    let view = this.p108MatrixRows.get(matrixKey);
+    let view = this.consoleMatrixRows.get(matrixKey);
     if (!view) {
       const snapshot = this.planSnapshots.get(planGraphKey(projectId, goalId));
-      if (snapshot) view = this.p108BuildMatrix(projectId, workspaceId, goalId, snapshot, cursor, event.occurredAt);
+      if (snapshot) view = buildPlanMatrixView(projectId, workspaceId, goalId, snapshot, cursor, event.occurredAt);
     }
     if (view) {
       const rows = view.rows.map((row) => {
@@ -2529,12 +2290,12 @@ export class ReadModelIndexImpl implements ReadModelIndex {
           sourceCursor: cursor,
         };
       });
-      this.p108MatrixRows.set(matrixKey, { ...view, rows, sourceCursor: cursor, updatedAt: event.occurredAt });
+      this.consoleMatrixRows.set(matrixKey, { ...view, rows, sourceCursor: cursor, updatedAt: event.occurredAt });
     }
 
     // Task evidence projection: refresh the reduction + plan ref.
     const taskKey = consoleTaskKey(projectId, workspaceId, goalId, taskId);
-    let proj = this.p108EvidenceProjections.get(taskKey);
+    let proj = this.consoleEvidenceProjections.get(taskKey);
     if (!proj) {
       const snapshot = this.planSnapshots.get(planGraphKey(projectId, goalId)) ?? null;
       proj = {
@@ -2557,40 +2318,14 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     proj.planRevision = reduction.planRevision;
     proj.sourceCursor = cursor;
     proj.updatedAt = event.occurredAt;
-    this.p108EvidenceProjections.set(taskKey, proj);
+    this.consoleEvidenceProjections.set(taskKey, proj);
 
-    this.p108Timeline(event, cursor, "task_reduction", { goalId, taskId },
+    this.appendConsoleTimeline(event, cursor, "task_reduction", { goalId, taskId },
       "task " + taskId + " reduced to " + reduction.phase);
   }
 
-  /** Map a projected evidence entry to its task-evidence display entry. */
-  private p108ToTaskEvidenceEntry(
-    pe: { evidence: EvidenceV1; admittedAt: string; evidenceIndex: number; sourceCursor: CommitCursor },
-    applicability: EvidenceApplicability | null,
-  ): import("../../contracts/console-views.js").TaskEvidenceEntry {
-    const e = pe.evidence;
-    const marker: import("../../contracts/console-views.js").EvidenceFormalMarker =
-      e.kind === "claim" || e.kind === "verdict" ? "unverified_report" : "observed_fact";
-    return {
-      evidenceId: e.evidenceId,
-      kind: e.kind,
-      marker,
-      outcome: e.outcome,
-      coverage: e.coverage.map((c) => ({ ...c })),
-      applicability,
-      anchor: { ...e.anchor },
-      sourceRunRef: e.source.runRef,
-      checkId: e.source.checkId,
-      artifactRef: e.summary.artifactRef,
-      summary: e.summary.text,
-      admittedAt: pe.admittedAt,
-      evidenceIndex: pe.evidenceIndex,
-      sourceCursor: pe.sourceCursor,
-    };
-  }
-
   /** Build the TaskEvidenceView from the projected row (query-time pure derivation). */
-  private p108BuildEvidenceView(proj: {
+  private consoleBuildEvidenceView(proj: {
     projectId: string;
     workspaceId: string;
     goalId: string;
@@ -2610,7 +2345,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     const currentAnchor = proj.reduction ? proj.reduction.currentAnchor : null;
     const sorted = [...proj.evidence].sort((a, b) => a.evidenceIndex - b.evidenceIndex);
     const explanation = this.policyExplanation.explainEvidence({ evidence: sorted.map(pe => pe.evidence), plan: planSnapshot, currentAnchor, review: reviewProjectionFacts(this.reviewRecords()) });
-    const evidence = sorted.map((pe, index) => this.p108ToTaskEvidenceEntry(pe, explanation.bindings[index]!.applicability));
+    const evidence = sorted.map((pe, index) => toTaskEvidenceEntry(pe, explanation.bindings[index]!.applicability));
     const { effectiveEvidenceIds, blockingEvidenceIds } = explanation;
     const reduction = proj.reduction === null
       ? null
@@ -2650,11 +2385,11 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
   }
 
-  /** P1-08 LANE-A: portfolio of bootstrapped Project/Workspace scopes. */
+  /** Console overview projection: portfolio of bootstrapped Project/Workspace scopes. */
   async consolePortfolio(query: PortfolioViewQuery): Promise<PortfolioViewResult> {
     const observedCursor = this.observedCursor;
     const maxProjects = CONSOLE_PORTFOLIO_MAX_PROJECTS;
-    const entries = [...this.p108PortfolioEntries.values()]
+    const entries = [...this.consolePortfolioEntries.values()]
       .sort((a, b) => (a.scopeKey < b.scopeKey ? -1 : a.scopeKey > b.scopeKey ? 1 : 0))
       .slice(0, maxProjects);
 
@@ -2663,7 +2398,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
         if (entries.length > 0) {
           return {
             status: "ready",
-            portfolio: this.p108BuildPortfolio(entries, observedCursor!),
+            portfolio: buildPortfolioView(entries, observedCursor!),
             observedCursor: observedCursor!,
           };
         }
@@ -2677,17 +2412,17 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     if (entries.length > 0) {
       return {
         status: "ready",
-        portfolio: this.p108BuildPortfolio(entries, observedCursor!),
+        portfolio: buildPortfolioView(entries, observedCursor!),
         observedCursor: observedCursor!,
       };
     }
     return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** P1-08 LANE-A: workspace-level summary per full-scope key. */
+  /** Console overview projection: workspace-level summary per full-scope key. */
   async consoleSummary(query: WorkspaceSummaryViewQuery): Promise<WorkspaceSummaryViewResult> {
     const observedCursor = this.observedCursor;
-    const row = this.p108SummaryRows.get(consoleWorkspaceKey(query.projectId, query.workspaceId));
+    const row = this.consoleSummaryRows.get(consoleWorkspaceKey(query.projectId, query.workspaceId));
 
     if (query.atLeastCursor !== undefined) {
       if (this.isCovered(query.atLeastCursor)) {
@@ -2703,27 +2438,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** Build the bounded PortfolioView (entries in scope-key deterministic order;
-   * sourceCursor = the global observed anchor; updatedAt = latest bootstrap). */
-  private p108BuildPortfolio(
-    entries: import("../../contracts/console-views.js").PortfolioEntry[],
-    sourceCursor: CommitCursor,
-  ): import("../../contracts/console-views.js").PortfolioView {
-    let updatedAt: string | null = null;
-    for (const e of entries) {
-      if (updatedAt === null || e.bootstrappedAt > updatedAt) updatedAt = e.bootstrappedAt;
-    }
-    return {
-      entries: entries.map((e) => ({ ...e })),
-      sourceCursor,
-      updatedAt,
-    };
-  }
-
-  /** P1-08 LANE-B: plan matrix (key = consoleGoalKey; freshness mirrors goal()). */
+  /** Console detail-view projection: plan matrix (key = consoleGoalKey; freshness mirrors goal()). */
   async consolePlanMatrix(query: PlanMatrixViewQuery): Promise<PlanMatrixViewResult> {
     const observedCursor = this.observedCursor;
-    const row = this.p108MatrixRows.get(consoleGoalKey(query.projectId, query.workspaceId, query.goalId));
+    const row = this.consoleMatrixRows.get(consoleGoalKey(query.projectId, query.workspaceId, query.goalId));
     if (query.atLeastCursor !== undefined) {
       if (this.isCovered(query.atLeastCursor)) {
         if (row) return { status: "ready", matrix: row, observedCursor: observedCursor! };
@@ -2735,14 +2453,14 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** P1-08 LANE-B: active agents (per workspace; optional goalId filter; bounded). */
+  /** Console detail-view projection: active agents (per workspace; optional goalId filter; bounded). */
   async consoleActiveAgents(query: ActiveAgentsViewQuery): Promise<ActiveAgentsViewResult> {
     const observedCursor = this.observedCursor;
     const workspaceKey = consoleWorkspaceKey(query.projectId, query.workspaceId);
     const entries: [import("../../contracts/console-views.js").ActiveAgentRunRow, number][] = [];
-    for (const [storageKey, row] of this.p108AgentRows) {
+    for (const [storageKey, row] of this.consoleAgentRows) {
       if (row.projectId !== query.projectId || row.workspaceId !== query.workspaceId) continue;
-      entries.push([row, this.p108AgentRowSeq.get(storageKey) ?? 0]);
+      entries.push([row, this.consoleAgentRowSeq.get(storageKey) ?? 0]);
     }
     entries.sort((a, b) => a[1] - b[1]);
     const hasRows = entries.length > 0;
@@ -2751,7 +2469,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     const taskCount = filtered.length;
     const bounded = filtered.slice(-CONSOLE_ACTIVE_AGENTS_MAX_ROWS);
     const rows = bounded.map((row) => {
-      const marker = this.p108HandoffMarkers.get(consoleTaskKey(row.projectId, row.workspaceId, row.goalId, row.taskId)) ?? null;
+      const marker = this.consoleHandoffMarkers.get(consoleTaskKey(row.projectId, row.workspaceId, row.goalId, row.taskId)) ?? null;
       return marker ? { ...row, handoff: marker } : row;
     });
     const last = bounded.length > 0 ? bounded[bounded.length - 1] : null;
@@ -2774,29 +2492,29 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** P1-08 LANE-B: task evidence (key = consoleTaskKey; freshness mirrors goal()). */
+  /** Console detail-view projection: task evidence (key = consoleTaskKey; freshness mirrors goal()). */
   async consoleTaskEvidence(query: TaskEvidenceViewQuery): Promise<TaskEvidenceViewResult> {
     const observedCursor = this.observedCursor;
-    const proj = this.p108EvidenceProjections.get(
+    const proj = this.consoleEvidenceProjections.get(
       consoleTaskKey(query.projectId, query.workspaceId, query.goalId, query.taskId),
     );
     if (query.atLeastCursor !== undefined) {
       if (this.isCovered(query.atLeastCursor)) {
-        if (proj) return { status: "ready", evidence: this.p108BuildEvidenceView(proj), observedCursor: observedCursor! };
+        if (proj) return { status: "ready", evidence: this.consoleBuildEvidenceView(proj), observedCursor: observedCursor! };
         return { status: "not_found", observedCursor };
       }
       return { status: "not_ready", requiredCursor: query.atLeastCursor, observedCursor };
     }
-    if (proj) return { status: "ready", evidence: this.p108BuildEvidenceView(proj), observedCursor: observedCursor! };
+    if (proj) return { status: "ready", evidence: this.consoleBuildEvidenceView(proj), observedCursor: observedCursor! };
     return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** P1-08 LANE-B: workspace timeline (per workspace; optional goalId filter; bounded). */
+  /** Console detail-view projection: workspace timeline (per workspace; optional goalId filter; bounded). */
   async consoleTimeline(query: TimelineViewQuery): Promise<TimelineViewResult> {
     const observedCursor = this.observedCursor;
     const workspaceKey = consoleWorkspaceKey(query.projectId, query.workspaceId);
-    const entries = this.p108TimelineRows.get(workspaceKey) ?? [];
-    const hasRow = entries.length > 0 || (this.p108TimelineTotal.get(workspaceKey) ?? 0) > 0;
+    const entries = this.consoleTimelineRows.get(workspaceKey) ?? [];
+    const hasRow = entries.length > 0 || (this.consoleTimelineTotal.get(workspaceKey) ?? 0) > 0;
     const filtered = query.goalId === undefined ? entries : entries.filter((e) => e.refs.goalId === query.goalId);
     const maxEntries = query.maxEntries === undefined || query.maxEntries < 1
       ? CONSOLE_TIMELINE_MAX_ENTRIES
@@ -2821,34 +2539,21 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** P1-16 work context view — binding + notes + continuations (display only).
-   * LANE-A owns the binding + notes rows; LANE-B owns the continuation rows.
+  /** Work-context view — binding + notes + continuations (display only).
+   * overview projection owns the binding + notes rows; detail-view projection owns the continuation rows.
    * The method composes the COMPLETE result: binding absent -> not_found;
    * otherwise ready with the bounded (recent-first) continuation window.
    * Freshness is judged by the opaque observedCursor. */
   // ------------------------------------------------------------------ //
-  // P1-18 material-access grants                                       //
+  // Material-access grants                                       //
   // ------------------------------------------------------------------ //
 
-  private applyP118(event: DomainEvent, cursor: CommitCursor): void {
-    if (event.eventType !== "MaterialAccessGranted" && event.eventType !== "MaterialAccessRevoked") return;
-    const ev = event;
-    const grant = ev.payload.grant;
-    const prior = this.p118Grants.findIndex(row => row.ref.projectId === ev.projectId && row.ref.workspaceId === ev.workspaceId && row.ref.goalId === grant.scope.goalId && row.ref.grantId === grant.grantId);
-    if (prior >= 0) this.p118Grants.splice(prior, 1);
-    this.p118Grants.push({
-      ...(ev.eventType === "MaterialAccessRevoked" ? { revocation: ev.payload.revocation } : {}),
-      ref: {
-        aggregateType: "MaterialAccessGrant",
-        projectId: ev.projectId,
-        workspaceId: ev.workspaceId,
-        goalId: grant.scope.goalId,
-        grantId: grant.grantId,
-      },
-      revision: ev.aggregateRevision,
-      grant,
-      sourceCursor: cursor,
-    });
+  private applyMaterialAccessEvent(event: DomainEvent, cursor: CommitCursor): void {
+    const change = projectMaterialAccessEvent(event, cursor);
+    if (!change) return;
+    const prior = this.materialAccessGrantRows.findIndex(row => row.ref.projectId === change.row.ref.projectId && row.ref.workspaceId === change.row.ref.workspaceId && row.ref.goalId === change.row.ref.goalId && row.ref.grantId === change.row.ref.grantId);
+    if (prior >= 0) this.materialAccessGrantRows.splice(prior, 1);
+    this.materialAccessGrantRows.push(change.row);
   }
 
   /**
@@ -2860,7 +2565,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     const observedCursor = this.observedCursor;
     if (observedCursor === null) return { status: "not_ready", observedCursor: null };
     const limit = Math.min(query.limit ?? MATERIAL_ACCESS_VIEW_MAX_ROWS, MATERIAL_ACCESS_VIEW_MAX_ROWS);
-    const grants = this.p118Grants.filter((row) =>
+    const grants = this.materialAccessGrantRows.filter((row) =>
       row.ref.projectId === query.projectId &&
       (query.workspaceId === undefined || row.ref.workspaceId === query.workspaceId) &&
       (query.goalId === undefined || row.ref.goalId === query.goalId) &&
@@ -2871,13 +2576,13 @@ export class ReadModelIndexImpl implements ReadModelIndex {
 
   async materialAccessCandidates(query: MaterialAccessGrantLookup): Promise<MaterialAccessGrantViewResult> {
     if (this.observedCursor === null) return { status: "not_ready", observedCursor: null };
-    return { status: "ready", grants: this.p118Grants.filter(row => !row.revocation && matchesMaterialAccessLookup(row.grant, query)), sourceCursor: this.observedCursor };
+    return { status: "ready", grants: this.materialAccessGrantRows.filter(row => !row.revocation && matchesMaterialAccessLookup(row.grant, query)), sourceCursor: this.observedCursor };
   }
 
   async workContext(query: import("../../contracts/context-continuity.js").WorkContextViewQuery): Promise<import("../../contracts/context-continuity.js").WorkContextViewResult> {
     const observedCursor = this.observedCursor;
     const key = workContextScopeKey(query.projectId, query.workspaceId, query.workId);
-    const binding = this.p116Bindings.get(key);
+    const binding = this.workContextBindings.get(key);
 
     // Freshness: before ANY event is applied we cannot judge the work exists —
     // this is "not_ready" (distinct from a definitive "not_found").
@@ -2888,8 +2593,8 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId, workId: query.workId };
     }
 
-    const notes = this.p116Notes.get(key) ?? [];
-    const raw = this.p116ContinuationRows.get(key) ?? [];
+    const notes = this.workContextNotes.get(key) ?? [];
+    const raw = this.workContextContinuationRows.get(key) ?? [];
     const continuations = raw.slice(-WORK_CONTEXT_VIEW_MAX_CONTINUATIONS).reverse();
     return {
       status: "ready",
@@ -2900,12 +2605,12 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
   }
 
-  /** P1-10: control timeline view (display only; desired vs current separated). */
+  /** Control-intent: control timeline view (display only; desired vs current separated). */
   async controlTimelineView(query: import("../../contracts/control-intent.js").ControlTimelineViewQuery): Promise<import("../../contracts/control-intent.js").ControlTimelineViewResult> {
     const observedCursor = this.observedCursor;
     if (observedCursor === null) return { status: "not_ready", observedCursor: null };
     const key = consoleWorkspaceKey(query.projectId, query.workspaceId);
-    const rows = this.p110IntentRows.get(key) ?? [];
+    const rows = this.controlIntentIntentRows.get(key) ?? [];
     const filtered = rows.filter((r2) => (query.goalId === undefined || r2.scope.goalId === query.goalId) && (query.taskId === undefined || r2.scope.taskId === query.taskId));
     if (filtered.length === 0) return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId };
     return {
@@ -2915,62 +2620,38 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
   }
 
-  // P1-09 LANE-A/LANE-B hook: fold QueryJob events.
-  private applyP109(event: DomainEvent, cursor: CommitCursor): void {
-    if (event.eventType === "QueryJobSubmitted") {
-      const ev = event as import("../../contracts/query-job.js").QueryJobSubmittedEvent;
-      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
-      this.p109Jobs.set(key + "\u0000" + ev.payload.job.queryJobId, ev.payload.job);
-    } else if (event.eventType === "QueryRunStarted") {
-      const ev = event as import("../../contracts/query-job.js").QueryRunStartedEvent;
-      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
-      if (ev.payload.job) this.p109Jobs.set(key + "\u0000" + ev.payload.job.queryJobId, ev.payload.job);
-      this.p109Runs.set(key + "\u0000" + ev.payload.run.runId, ev.payload.run);
-    } else if (event.eventType === "QueryJobAnswerRecorded") {
-      const ev = event as import("../../contracts/query-job.js").QueryJobAnswerRecordedEvent;
-      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
-      this.p109Jobs.set(key + "\u0000" + ev.payload.job.queryJobId, ev.payload.job);
-      this.p109Runs.set(key + "\u0000" + ev.payload.run.runId, ev.payload.run);
-      const answers = this.p109Answers.get(key + "\u0000" + ev.payload.job.queryJobId) ?? [];
-      answers.push(ev.payload.answer);
-      this.p109Answers.set(key + "\u0000" + ev.payload.job.queryJobId, answers);
-    } else if (event.eventType === "QueryJobClosed") {
-      const ev = event as import("../../contracts/query-job.js").QueryJobClosedEvent;
-      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
-      this.p109Jobs.set(key + "\u0000" + ev.payload.job.queryJobId, ev.payload.job);
-      this.p109Runs.set(key + "\u0000" + ev.payload.run.runId, ev.payload.run);
+  // Query combined hook: fold QueryJob events.
+  private applyQueryEvent(event: DomainEvent, cursor: CommitCursor): void {
+    for (const change of projectQueryEvent(event)) {
+      if (change.kind === 'job') this.queryJobs.set(change.key, change.job);
+      else if (change.kind === 'run') this.queryRuns.set(change.key, change.run);
+      else {
+        const answers = this.queryAnswers.get(change.key) ?? [];
+        answers.push(change.answer);
+        this.queryAnswers.set(change.key, answers);
+      }
     }
     void cursor;
   }
 
-  // P1-10 LANE-A/LANE-B hook: fold ControlIntentRecorded/SafePointAcknowledged.
-  private applyP110(event: DomainEvent, cursor: CommitCursor): void {
-    if (event.eventType === "ControlIntentRecorded") {
-      const ev = event as import("../../contracts/control-intent.js").ControlIntentRecordedEvent;
-      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
-      const rows = this.p110IntentRows.get(key) ?? [];
-      rows.push({ ref: { aggregateType: "ControlIntent", projectId: ev.projectId, workspaceId: ev.workspaceId, intentId: ev.payload.intent.intentId } as import("../../contracts/control-intent.js").ControlIntentRef, scope: { goalId: ev.payload.intent.scope.goalId, taskId: ev.payload.intent.scope.taskId }, kind: ev.payload.intent.kind, desiredState: ev.payload.intent.desiredState, status: ev.payload.intent.status, ackCount: 0, cursor });
-      this.p110IntentRows.set(key, rows);
-    } else if (event.eventType === "SafePointAcknowledged") {
-      const ev = event as import("../../contracts/control-intent.js").SafePointAcknowledgedEvent;
-      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
-      const rows = this.p110IntentRows.get(key) ?? [];
-      const hit = rows.find((r2) => r2.ref.intentId === ev.payload.ack.intentRef.intentId);
-      if (hit) { hit.status = ev.payload.status; hit.ackCount += 1; hit.cursor = cursor; }
-      this.p110IntentRows.set(key, rows);
-    }
+  // Control-intent combined hook: fold ControlIntentRecorded/SafePointAcknowledged.
+  private applyControlIntentEvent(event: DomainEvent, cursor: CommitCursor): void {
+    if (event.eventType !== 'ControlIntentRecorded' && event.eventType !== 'SafePointAcknowledged') return;
+    const key = consoleWorkspaceKey(event.projectId, event.workspaceId);
+    const change = projectControlIntentEvent(event, cursor, this.controlIntentIntentRows.get(key) ?? []);
+    if (change) this.controlIntentIntentRows.set(change.key, change.rows);
   }
 
-  /** P1-09 LANE-A/LANE-B: query job view (display only). */
+  /** Query combined: query job view (display only). */
   async queryJobView(query: import("../../contracts/query-job.js").QueryJobViewQuery): Promise<import("../../contracts/query-job.js").QueryJobViewResult> {
     const observedCursor = this.observedCursor;
     if (observedCursor === null) return { status: "not_ready", observedCursor: null };
     const key = consoleWorkspaceKey(query.projectId, query.workspaceId);
-    const job = this.p109Jobs.get(key + "\u0000" + query.queryJobId);
+    const job = this.queryJobs.get(key + "\u0000" + query.queryJobId);
     if (job === undefined) return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId, queryJobId: query.queryJobId };
     const runRef = job.runRef !== null ? job.runRef : null;
-    const run = runRef === null ? null : (this.p109Runs.get(key + "\u0000" + runRef.runId) ?? null);
-    const answers = this.p109Answers.get(key + "\u0000" + query.queryJobId) ?? [];
+    const run = runRef === null ? null : (this.queryRuns.get(key + "\u0000" + runRef.runId) ?? null);
+    const answers = this.queryAnswers.get(key + "\u0000" + query.queryJobId) ?? [];
     const currentAnswer = answers.length > 0 ? answers[answers.length - 1]! : null;
     return {
       status: "ready", job, run, answers,
@@ -2980,7 +2661,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
   }
 
-  /** P1-11 LANE-B: plan change view (display only; rebuildable from events).
+  /** Plan-change detail-view projection: plan change view (display only; rebuildable from events).
    * Assembles proposals / decisions / revisions for the (projectId, workspaceId,
    * goalId) scope plus the purely-computed task dispositions (never judged). */
   async planChangeView(query: PlanChangeViewQuery): Promise<PlanChangeViewResult> {
@@ -2990,19 +2671,23 @@ export class ReadModelIndexImpl implements ReadModelIndex {
 
     const key = planChangeScopeKey(query);
     const proposals: PlanProposalSnapshot[] = [];
-    for (const [rowKey, value] of this.p111Proposals) {
+    for (const [rowKey, value] of this.planChangeProposals) {
       if (rowKey.startsWith(key + "\u0000")) proposals.push(value);
     }
     const decisions: UserDecisionSnapshot[] = [];
-    for (const [rowKey, value] of this.p111Decisions) {
+    for (const [rowKey, value] of this.planChangeDecisions) {
       if (rowKey.startsWith(key + "\u0000")) decisions.push(value);
     }
-    const revisions = this.p111GoalRevisions.get(key) ?? [];
+    const revisions = this.planChangeGoalRevisions.get(key) ?? [];
     if (proposals.length === 0 && decisions.length === 0 && revisions.length === 0) {
       return { status: "not_found" };
     }
 
-    const dispositions = this.computePlanChangeDispositions(revisions);
+    const dispositions = projectPlanChangeDispositions(
+      revisions,
+      ref => this.planChangePlanSnapshots.get(canonicalJson(ref)),
+      input => this.policyExplanation.explainPlanChange(input),
+    );
     return {
       status: "ready",
       proposals,
@@ -3013,70 +2698,32 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
   }
 
-  /** P1-11: compute the displayed task dispositions from the latest goal revision
-   * (pure; empty when either plan snapshot is not (yet) projected). */
-  private computePlanChangeDispositions(revisions: GoalRevisionSnapshot[]): TaskDispositionRow[] {
-    if (revisions.length === 0) return [];
-    const latest = revisions[revisions.length - 1]!;
-    const change = latest.change;
-    if (change.supersededPlanRefs.length === 0) return [];
-    const sourceRef = change.supersededPlanRefs[change.supersededPlanRefs.length - 1]!;
-    const source = this.p111PlanSnapshots.get(canonicalJson(sourceRef));
-    const target = this.p111PlanSnapshots.get(canonicalJson(change.activePlanRef));
-    if (source === undefined || target === undefined) return [];
-    return this.policyExplanation.explainPlanChange({ source, target, pausedTaskIds: [] });
-  }
-
-  /** P1-13: no-op handled registration (no display view in this ticket). */
-  private applyP113(event: DomainEvent, cursor: CommitCursor): void {
+  /** Architecture-evolution events are intentionally handled without a display row. */
+  private applyArchitectureEvolutionEvent(event: DomainEvent, cursor: CommitCursor): void {
     void event;
     void cursor;
   }
 
-  /** P1-15 LANE-B: fold the 4 initial-design / coordination-policy events into
+  /** Collaboration detail-view projection: fold the 4 initial-design / coordination-policy events into
    * proposal / decision / policy / activation rows. Proposal + decision are
    * workspace-scoped; policy + activation are project-scoped (their events
-   * carry workspaceId ""). Row keys follow the frozen integrator ruling:
+   * carry workspaceId ""). Row keys follow the versioned projection contract:
    * consoleWorkspaceKey(projectId, workspaceId) + "\u0000" + id. */
-  private applyP115(event: DomainEvent, cursor: CommitCursor): void {
-    if (event.eventType === "InitialDesignProposalRecorded") {
-      const ev = event as InitialDesignProposalRecordedEvent;
-      const proposal = ev.payload.proposal;
-      const ref = initialDesignProposalRefFor(proposal.projectId, proposal.workspaceId, proposal.designId);
-      const snapshot: InitialDesignProposalSnapshot = { ref, revision: 1, schemaVersion: 1, proposal, recordedAt: ev.payload.recordedAt };
-      const key = consoleWorkspaceKey(proposal.projectId, proposal.workspaceId) + "\u0000" + proposal.designId;
-      this.p115ProposalRows.set(key, { snapshot, sourceCursor: cursor });
-    } else if (event.eventType === "InitialDesignDecisionRecorded") {
-      const ev = event as InitialDesignDecisionRecordedEvent;
-      const decision = ev.payload.decision;
-      const ref = initialDesignDecisionRefFor(decision.projectId, decision.workspaceId, decision.decisionId);
-      const snapshot: InitialDesignDecisionSnapshot = { ref, revision: 1, schemaVersion: 1, decision, recordedAt: ev.payload.recordedAt };
-      const key = consoleWorkspaceKey(decision.projectId, decision.workspaceId) + "\u0000" + decision.decisionId;
-      this.p115DecisionRows.set(key, { snapshot, sourceCursor: cursor });
-    } else if (event.eventType === "CoordinationPolicyInstalled") {
-      const ev = event as CoordinationPolicyInstalledEvent;
-      const snapshot = ev.payload.revision;
-      const key = consoleWorkspaceKey(snapshot.ref.projectId, "") + "\u0000" + snapshot.ref.policyId;
-      this.p115PolicyRows.set(key, { snapshot, sourceCursor: cursor });
-    } else if (event.eventType === "CoordinationPolicyActivated") {
-      const ev = event as CoordinationPolicyActivatedEvent;
-      const snapshot: ProjectCoordinationPolicyActiveSnapshot = {
-        ref: ev.payload.activeRef,
-        projectId: ev.payload.activeRef.projectId,
-        activeRevision: ev.payload.activeRevision,
-        revision: ev.aggregateRevision,
-      };
-      const key = consoleWorkspaceKey(snapshot.projectId, "") + "\u0000" + snapshot.ref.projectId;
-      this.p115ActivationRows.set(key, { snapshot, sourceCursor: cursor });
-    }
+  private applyCollaborationEvent(event: DomainEvent, cursor: CommitCursor): void {
+    const change = projectCollaborationEvent(event, cursor);
+    if (!change) return;
+    if (change.kind === 'proposal') this.collaborationProposalRows.set(change.key, { snapshot: change.snapshot, sourceCursor: change.sourceCursor });
+    else if (change.kind === 'decision') this.collaborationDecisionRows.set(change.key, { snapshot: change.snapshot, sourceCursor: change.sourceCursor });
+    else if (change.kind === 'policy') this.collaborationPolicyRows.set(change.key, { snapshot: change.snapshot, sourceCursor: change.sourceCursor });
+    else this.collaborationActivationRows.set(change.key, { snapshot: change.snapshot, sourceCursor: change.sourceCursor });
   }
 
-  /** P1-15 LANE-B: unified status view (facts-first display; rebuildable from
+  /** Collaboration detail-view projection: unified status view (facts-first display; rebuildable from
    * events). Rows are the latest proposal / decision / policy / activation rows
    * for the (projectId, workspaceId) scope (policy + activation are gathered by
    * projectId because their events carry workspaceId ""). Every fact carries
-   * sourceCursor lineage; the P1-15 view has no multi-version comparison
-   * surface, so every fact is marked stale=false per the integrator ruling. */
+   * sourceCursor lineage; the Collaboration view has no multi-version comparison
+   * surface, so every fact is marked stale=false per the projection contract. */
   async unifiedStatusView(query: UnifiedStatusViewQuery): Promise<UnifiedStatusViewResult> {
     const observedCursor = this.observedCursor;
     // No projection ever advanced -> we cannot claim freshness for any scope.
@@ -3084,10 +2731,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
 
     const scopeKey = consoleWorkspaceKey(query.projectId, query.workspaceId);
     const prefix = scopeKey + "\u0000";
-    const proposalRows = this.p115ScopeProposalRows(prefix);
-    const decisionRows = this.p115ScopeDecisionRows(prefix);
-    const policyRows = this.p115ProjectPolicyRows(query.projectId);
-    const activationRows = this.p115ProjectActivationRows(query.projectId);
+    const proposalRows = this.collaborationScopeProposalRows(prefix);
+    const decisionRows = this.collaborationScopeDecisionRows(prefix);
+    const policyRows = this.collaborationProjectPolicyRows(query.projectId);
+    const activationRows = this.collaborationProjectActivationRows(query.projectId);
     if (
       proposalRows.length === 0 &&
       decisionRows.length === 0 &&
@@ -3099,9 +2746,9 @@ export class ReadModelIndexImpl implements ReadModelIndex {
 
     // Deterministic fact order: rank by row type (proposal -> decision -> policy
     // -> activation), then by refKey. Policy + activation share kind "baseline"
-    // (the frozen contract has no dedicated policy/activation fact kind), so the
+    // (the versioned contract has no dedicated policy/activation fact kind), so the
     // rank keeps them apart and stable for rebuild equivalence.
-    type P115RankedFact = {
+    type CollaborationRankedFact = {
       rank: number;
       kind: "proposal" | "decision" | "baseline";
       refKey: string;
@@ -3110,7 +2757,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       stale: boolean;
       sourceCursor: CommitCursor;
     };
-    const ranked: P115RankedFact[] = [];
+    const ranked: CollaborationRankedFact[] = [];
     for (const row of proposalRows) {
       ranked.push({ rank: 0, kind: "proposal", refKey: canonicalJson(row.snapshot.ref), display: "InitialDesignProposal(" + row.snapshot.proposal.designId + ")", revision: row.snapshot.revision, stale: false, sourceCursor: row.sourceCursor });
     }
@@ -3137,10 +2784,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     };
   }
 
-  /** P1-15: workspace-scope proposal rows, ascending by recordedAt then designId. */
-  private p115ScopeProposalRows(prefix: string): { snapshot: InitialDesignProposalSnapshot; sourceCursor: CommitCursor }[] {
+  /** Collaboration: workspace-scope proposal rows, ascending by recordedAt then designId. */
+  private collaborationScopeProposalRows(prefix: string): { snapshot: InitialDesignProposalSnapshot; sourceCursor: CommitCursor }[] {
     const out: { snapshot: InitialDesignProposalSnapshot; sourceCursor: CommitCursor }[] = [];
-    for (const [rowKey, value] of this.p115ProposalRows) {
+    for (const [rowKey, value] of this.collaborationProposalRows) {
       if (rowKey.startsWith(prefix)) out.push(value);
     }
     out.sort((a, b) => {
@@ -3150,10 +2797,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return out;
   }
 
-  /** P1-15: workspace-scope decision rows, ascending by decidedAt then decisionId. */
-  private p115ScopeDecisionRows(prefix: string): { snapshot: InitialDesignDecisionSnapshot; sourceCursor: CommitCursor }[] {
+  /** Collaboration: workspace-scope decision rows, ascending by decidedAt then decisionId. */
+  private collaborationScopeDecisionRows(prefix: string): { snapshot: InitialDesignDecisionSnapshot; sourceCursor: CommitCursor }[] {
     const out: { snapshot: InitialDesignDecisionSnapshot; sourceCursor: CommitCursor }[] = [];
-    for (const [rowKey, value] of this.p115DecisionRows) {
+    for (const [rowKey, value] of this.collaborationDecisionRows) {
       if (rowKey.startsWith(prefix)) out.push(value);
     }
     out.sort((a, b) => {
@@ -3163,11 +2810,11 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return out;
   }
 
-  /** P1-15: project-scope policy rows (event workspaceId is ""), ascending by
+  /** Collaboration: project-scope policy rows (event workspaceId is ""), ascending by
    * installedAt then policyId. */
-  private p115ProjectPolicyRows(projectId: string): { snapshot: CoordinationPolicyRevisionSnapshot; sourceCursor: CommitCursor }[] {
+  private collaborationProjectPolicyRows(projectId: string): { snapshot: CoordinationPolicyRevisionSnapshot; sourceCursor: CommitCursor }[] {
     const out: { snapshot: CoordinationPolicyRevisionSnapshot; sourceCursor: CommitCursor }[] = [];
-    for (const value of this.p115PolicyRows.values()) {
+    for (const value of this.collaborationPolicyRows.values()) {
       if (value.snapshot.ref.projectId !== projectId) continue;
       out.push(value);
     }
@@ -3178,11 +2825,11 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return out;
   }
 
-  /** P1-15: project-scope activation rows (event workspaceId is ""), ascending
+  /** Collaboration: project-scope activation rows (event workspaceId is ""), ascending
    * by aggregate revision then refKey. */
-  private p115ProjectActivationRows(projectId: string): { snapshot: ProjectCoordinationPolicyActiveSnapshot; sourceCursor: CommitCursor }[] {
+  private collaborationProjectActivationRows(projectId: string): { snapshot: ProjectCoordinationPolicyActiveSnapshot; sourceCursor: CommitCursor }[] {
     const out: { snapshot: ProjectCoordinationPolicyActiveSnapshot; sourceCursor: CommitCursor }[] = [];
-    for (const value of this.p115ActivationRows.values()) {
+    for (const value of this.collaborationActivationRows.values()) {
       if (value.snapshot.projectId !== projectId) continue;
       out.push(value);
     }
@@ -3193,39 +2840,39 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return out;
   }
 
-  /** P1-14 LANE-C: baseline-evolution hook — fold the 4 events into
+  /** Baseline-evolution hook — fold the 4 events into
    * candidate / decision / gate / activation rows (workspace-scope keys). */
-  private applyP114(event: DomainEvent, cursor: CommitCursor): void {
+  private applyBaselineEvolutionEvent(event: DomainEvent, cursor: CommitCursor): void {
     if (event.eventType === "CandidateBaselineMaterialized") {
       const ev = event as CandidateBaselineMaterializedEvent;
       const candidate = ev.payload.candidate;
       const ref = candidateRefFor(candidate.projectId, candidate.workspaceId, candidate.candidateId);
       const key = consoleWorkspaceKey(candidate.projectId, candidate.workspaceId) + "\u0000" + candidate.candidateId;
       const snapshot: CandidateArchitectureBaselineSnapshot = { ref, revision: 1, schemaVersion: 1, candidate, materializedAt: ev.payload.materializedAt };
-      this.p114Candidates.set(key, snapshot);
+      this.baselineEvolutionCandidates.set(key, snapshot);
     } else if (event.eventType === "ArchitectureChangeDecisionRecorded") {
       const ev = event as ArchitectureChangeDecisionRecordedEvent;
       const decision = ev.payload.decision;
       const ref = architectureChangeDecisionRefFor(decision.projectId, decision.workspaceId, decision.decisionId);
       const key = consoleWorkspaceKey(decision.projectId, decision.workspaceId) + "\u0000" + decision.decisionId;
-      this.p114Decisions.set(key, { ref, decision });
+      this.baselineEvolutionDecisions.set(key, { ref, decision });
     } else if (event.eventType === "MigrationGateRecorded") {
       const ev = event as MigrationGateRecordedEvent;
       const gate = ev.payload.gate;
       const ref = migrationGateRefFor(gate.projectId, gate.workspaceId, gate.gateId);
       const key = consoleWorkspaceKey(gate.projectId, gate.workspaceId) + "\u0000" + gate.gateId;
-      this.p114Gates.set(key, { ref, gate });
+      this.baselineEvolutionGates.set(key, { ref, gate });
     } else if (event.eventType === "BaselineActivationRecorded") {
       const ev = event as BaselineActivationRecordedEvent;
       const activation = ev.payload.activation;
       const ref = baselineActivationRefFor(activation.projectId, activation.workspaceId, activation.activationId);
       const key = consoleWorkspaceKey(activation.projectId, activation.workspaceId) + "\u0000" + activation.activationId;
-      this.p114Activations.set(key, { ref, activation });
+      this.baselineEvolutionActivations.set(key, { ref, activation });
     }
     void cursor;
   }
 
-  /** P1-14 LANE-C: baseline change view (display only; rebuildable from events).
+  /** Baseline change view (display only; rebuildable from events).
    * Assembles the candidate / decision / gate / activation rows for the
    * (projectId, workspaceId) workspace scope plus the purely-computed defaultPin,
    * stale markers and notRebasedPlans. Deterministic: rows are picked by the
@@ -3237,10 +2884,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     if (observedCursor === null) return { status: "not_found" };
 
     const scopeKey = consoleWorkspaceKey(query.projectId, query.workspaceId);
-    const candidateRows = this.p114ScopeCandidates(scopeKey);
-    const decisionRows = this.p114ScopeDecisions(scopeKey);
-    const gateRows = this.p114ScopeGates(scopeKey);
-    const activationRows = this.p114ScopeActivations(scopeKey);
+    const candidateRows = this.baselineEvolutionScopeCandidates(scopeKey);
+    const decisionRows = this.baselineEvolutionScopeDecisions(scopeKey);
+    const gateRows = this.baselineEvolutionScopeGates(scopeKey);
+    const activationRows = this.baselineEvolutionScopeActivations(scopeKey);
     if (
       candidateRows.length === 0 &&
       decisionRows.length === 0 &&
@@ -3250,17 +2897,17 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       return { status: "not_found" };
     }
 
-    // R-1/ReadModel convergence: the explanation derivation is the single shared
+    // ReadModel convergence: the explanation derivation is the single shared
     // pure implementation; each adapter still owns its own row fetch, ordering and
     // cursor freshness.
     return projectBaselineChangeView({ candidateRows, decisionRows, gateRows, activationRows, observedCursor });
   }
 
-  /** P1-14: rows under a workspace-scope key prefix, sorted ascending by the row's
+  /** Baseline-evolution: rows under a workspace-scope key prefix, sorted ascending by the row's
    * timestamp (then id) so the LAST element is the latest. */
-  private p114ScopeCandidates(scopeKey: string): CandidateArchitectureBaselineSnapshot[] {
+  private baselineEvolutionScopeCandidates(scopeKey: string): CandidateArchitectureBaselineSnapshot[] {
     const out: CandidateArchitectureBaselineSnapshot[] = [];
-    for (const [rowKey, value] of this.p114Candidates) {
+    for (const [rowKey, value] of this.baselineEvolutionCandidates) {
       if (rowKey.startsWith(scopeKey + "\u0000")) out.push(value);
     }
     out.sort((a, b) => {
@@ -3270,10 +2917,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return out;
   }
 
-  /** P1-14: workspace-scope decision rows, ascending by decidedAt then id. */
-  private p114ScopeDecisions(scopeKey: string): { ref: ArchitectureChangeDecisionRef; decision: ArchitectureChangeDecisionV1 }[] {
+  /** Baseline-evolution: workspace-scope decision rows, ascending by decidedAt then id. */
+  private baselineEvolutionScopeDecisions(scopeKey: string): { ref: ArchitectureChangeDecisionRef; decision: ArchitectureChangeDecisionV1 }[] {
     const out: { ref: ArchitectureChangeDecisionRef; decision: ArchitectureChangeDecisionV1 }[] = [];
-    for (const [rowKey, value] of this.p114Decisions) {
+    for (const [rowKey, value] of this.baselineEvolutionDecisions) {
       if (rowKey.startsWith(scopeKey + "\u0000")) out.push(value);
     }
     out.sort((a, b) => {
@@ -3283,10 +2930,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return out;
   }
 
-  /** P1-14: workspace-scope gate rows, ascending by updatedAt then id. */
-  private p114ScopeGates(scopeKey: string): { ref: MigrationGateTaskRef; gate: MigrationGateTaskV1 }[] {
+  /** Baseline-evolution: workspace-scope gate rows, ascending by updatedAt then id. */
+  private baselineEvolutionScopeGates(scopeKey: string): { ref: MigrationGateTaskRef; gate: MigrationGateTaskV1 }[] {
     const out: { ref: MigrationGateTaskRef; gate: MigrationGateTaskV1 }[] = [];
-    for (const [rowKey, value] of this.p114Gates) {
+    for (const [rowKey, value] of this.baselineEvolutionGates) {
       if (rowKey.startsWith(scopeKey + "\u0000")) out.push(value);
     }
     out.sort((a, b) => {
@@ -3296,10 +2943,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return out;
   }
 
-  /** P1-14: workspace-scope activation rows, ascending by activatedAt then id. */
-  private p114ScopeActivations(scopeKey: string): { ref: BaselineActivationRef; activation: BaselineActivationV1 }[] {
+  /** Baseline-evolution: workspace-scope activation rows, ascending by activatedAt then id. */
+  private baselineEvolutionScopeActivations(scopeKey: string): { ref: BaselineActivationRef; activation: BaselineActivationV1 }[] {
     const out: { ref: BaselineActivationRef; activation: BaselineActivationV1 }[] = [];
-    for (const [rowKey, value] of this.p114Activations) {
+    for (const [rowKey, value] of this.baselineEvolutionActivations) {
       if (rowKey.startsWith(scopeKey + "\u0000")) out.push(value);
     }
     out.sort((a, b) => {
@@ -3309,10 +2956,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return out;
   }
 
-  /** P1-11 LANE-A/LANE-B hook: fold plan-change events (proposal/decision +
-   * LANE-B revision/plan; empty until the lane lands — handler + isHandledEventType
-   * land in the SAME lane commit). */
-  private applyP111(event: DomainEvent, cursor: CommitCursor): void {
+  /** Plan-change combined hook: fold plan-change events (proposal/decision +
+   * detail-view projection revision/plan; the handler and handled-event membership
+   * are maintained together). */
+  private applyPlanChangeEvent(event: DomainEvent, cursor: CommitCursor): void {
     if (event.eventType === "PlanProposalRecorded") {
       const ev = event as PlanProposalRecordedEvent;
       const proposal = ev.payload.proposal;
@@ -3328,7 +2975,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
         goalId: proposal.sourceGoalRef.goalId,
       }) + "\u0000" + proposal.proposalId;
       const snapshot: PlanProposalSnapshot = { ref, revision: 1, schemaVersion: 1, proposal, recordedAt: ev.payload.recordedAt };
-      this.p111Proposals.set(key, snapshot);
+      this.planChangeProposals.set(key, snapshot);
     } else if (event.eventType === "UserDecisionRecorded") {
       const ev = event as UserDecisionRecordedEvent;
       const decision = ev.payload.decision;
@@ -3344,7 +2991,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
         goalId: decision.subject.goalRef.goalId,
       }) + "\u0000" + decision.decisionId;
       const snapshot: UserDecisionSnapshot = { ref, revision: 1, schemaVersion: 1, decision, recordedAt: ev.payload.recordedAt };
-      this.p111Decisions.set(key, snapshot);
+      this.planChangeDecisions.set(key, snapshot);
     } else if (event.eventType === "GoalRevisionRecorded") {
       const ev = event as GoalRevisionRecordedEvent;
       const change = ev.payload.change;
@@ -3357,17 +3004,17 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       };
       const key = planChangeScopeKey({ projectId: ev.projectId, workspaceId: ev.workspaceId, goalId: change.goalRef.goalId });
       const snapshot: GoalRevisionSnapshot = { ref, revision: 1, schemaVersion: 1, change, recordedAt: ev.payload.recordedAt };
-      const rows = this.p111GoalRevisions.get(key) ?? [];
+      const rows = this.planChangeGoalRevisions.get(key) ?? [];
       rows.push(snapshot);
       rows.sort((a, b) => a.ref.revision - b.ref.revision);
-      this.p111GoalRevisions.set(key, rows);
-      // RW-09：同一条已提交事实同时决定时间线条目的变更原因（见该方法的注释）。
-      this.p111AnnotateTimelineChangeReason(ev.projectId, ev.workspaceId, ev);
+      this.planChangeGoalRevisions.set(key, rows);
+      // 同一条已提交事实同时决定时间线条目的变更原因（见该方法的注释）。
+      this.planChangeAnnotateTimelineChangeReason(ev.projectId, ev.workspaceId, ev);
     } else if (event.eventType === "PlanRevisionAccepted") {
       const ev = event as PlanRevisionAcceptedEvent;
       const planRevision = ev.payload.planRevision;
       // Idempotent: the same ref always projects the same immutable snapshot.
-      this.p111PlanSnapshots.set(canonicalJson(planRevision.ref), planRevision);
+      this.planChangePlanSnapshots.set(canonicalJson(planRevision.ref), planRevision);
     } else if (event.eventType === "PlanRevisionSuperseded") {
       // The same fact is already carried by the GoalRevisionRecorded change;
       // the supersession event itself needs no dedicated row.
@@ -3376,29 +3023,29 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     void cursor;
   }
 
-  /** P1-17: completed-work selection source view (display only; composed from the P1-16 work-context stores). */
+  /** completed-work context: completed-work selection source view (display only; composed from the Work-context stores). */
   async completedWorkView(query: import("../../contracts/completed-work-context.js").CompletedWorkViewQuery): Promise<import("../../contracts/completed-work-context.js").CompletedWorkViewResult> {
     const observedCursor = this.observedCursor;
     if (observedCursor === null) {
       return { status: "not_ready", observedCursor: null };
     }
     const rows: import("../../contracts/completed-work-context.js").CompletedWorkViewRow[] = [];
-    // RW-13：先按「一个任务一个身份」归并，再判正式完成资格。同一 (goal, task) 在账本里存在
-    // 多条身份（RW-13 之前留下的历史不一致）时，只显示权威那一条（显式声明的身份优先于推导
+    // 先按「一个任务一个身份」归并，再判正式完成资格。同一 (goal, task) 在账本里存在
+    // 多条身份（唯一性规则生效前留下的历史不一致）时，只显示权威那一条（显式声明的身份优先于推导
     // 兜底身份）；落选的身份仍是不可变历史事实，可按 workId 用 workContextView 直接读取。
-    const candidates = [...this.p116Bindings.values()].filter(
+    const candidates = [...this.workContextBindings.values()].filter(
       (binding) => binding.ref.projectId === query.projectId && binding.ref.workspaceId === query.workspaceId
         && (query.goalId === undefined || binding.binding.goalId === query.goalId),
     );
-    // RW-15（M1）：先按 RW-13 的**唯一**规则归并（不重算、不复制选择规则），再把落选者算出来，
+    // （工作身份归并）：先按工作身份的**唯一**规则归并（不重算、不复制选择规则），再把落选者算出来，
     // 使「这里发生过归并、落选者是谁」成为可见事实（此前是静默丢弃）。
     const retained = dedupeTaskWorks(candidates);
     const dropped = droppedWorkRefsByTask(candidates, retained);
     for (const binding of retained) {
       if (await completedWorkCursor(binding.binding, this) === null) continue;
       const refKey = canonicalJson(binding.ref);
-      const notes = this.p116Notes.get(refKey) ?? [];
-      const continuations = this.p116ContinuationRows.get(refKey) ?? [];
+      const notes = this.workContextNotes.get(refKey) ?? [];
+      const continuations = this.workContextContinuationRows.get(refKey) ?? [];
       const latestCursor = observedCursor;
       const droppedHere = sortWorkRefs(dropped.get(taskWorkKey(binding.binding.goalId, binding.binding.taskId)) ?? []);
       rows.push({
@@ -3420,21 +3067,21 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return { status: "ready", rows, sourceCursor: observedCursor };
   }
 
-  /** P1-12 LANE-A/LANE-B: architecture inspection view (inspections + findings (LANE-A) + briefs + proposals (LANE-B) per (projectId, workspaceId); display only). */
+  /** Architecture-inspection combined: architecture inspection view (inspections + findings (overview projection) + briefs + proposals (detail-view projection) per (projectId, workspaceId); display only). */
   async architectureInspectionView(query: import("../../contracts/architecture-inspection.js").ArchitectureInspectionViewQuery): Promise<import("../../contracts/architecture-inspection.js").ArchitectureInspectionViewResult> {
     const observed = this.observedCursor;
     if (observed === null) {
       return { status: "not_ready", observedCursor: null };
     }
     const scopeKey = consoleWorkspaceKey(query.projectId, query.workspaceId);
-    const entries = this.p112BuildInspectionEntries(scopeKey, query.planId);
+    const entries = this.architectureInspectionBuildInspectionEntries(scopeKey, query.planId);
     if (entries.length === 0) {
       return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId };
     }
     return { status: "ready", inspections: entries, sourceCursor: observed };
   }
 
-  private p112BuildInspectionEntries(
+  private architectureInspectionBuildInspectionEntries(
     scopeKey: string,
     planId: string | undefined,
   ): {
@@ -3450,10 +3097,10 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       proposals: import("../../contracts/architecture-inspection.js").ArchitectureCandidateProposalSnapshot[];
     }[] = [];
 
-    const inspectionRows = this.p112InspectionRows.get(scopeKey) ?? [];
-    const findingRows = this.p112FindingRows.get(scopeKey) ?? [];
-    const briefRows = this.p112BriefRows.get(scopeKey) ?? [];
-    const proposalRows = this.p112ProposalRows.get(scopeKey) ?? [];
+    const inspectionRows = this.architectureInspectionInspectionRows.get(scopeKey) ?? [];
+    const findingRows = this.architectureInspectionFindingRows.get(scopeKey) ?? [];
+    const briefRows = this.architectureInspectionBriefRows.get(scopeKey) ?? [];
+    const proposalRows = this.architectureInspectionProposalRows.get(scopeKey) ?? [];
 
     const claimedBriefs = new Set<string>();
     const claimedProposals = new Set<string>();
@@ -3471,12 +3118,12 @@ export class ReadModelIndexImpl implements ReadModelIndex {
         entries.push({ inspection, findings, briefs, proposals });
       }
     }
-    // Surface lane-B facts not referenced by any real (LANE-A) inspection row.
+    // Surface detail-view projection facts not referenced by any real (overview projection) inspection row.
     for (const brief of briefRows) {
       if (claimedBriefs.has(brief.ref.briefId)) continue;
       if (planId !== undefined && brief.brief.planRef.planId !== planId) continue;
       entries.push({
-        inspection: this.p112SyntheticInspection(brief.ref.projectId, brief.ref.workspaceId, brief.ref.briefId, brief.brief.baselinePin, brief.brief.planRef, brief.recordedAt, "brief"),
+        inspection: buildSyntheticArchitectureInspection(brief.ref.projectId, brief.ref.workspaceId, brief.ref.briefId, brief.brief.baselinePin, brief.brief.planRef, brief.recordedAt, "brief"),
         findings: [],
         briefs: [brief],
         proposals: [],
@@ -3486,7 +3133,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       if (claimedProposals.has(proposal.ref.proposalId)) continue;
       if (planId !== undefined && proposal.proposal.planRef.planId !== planId) continue;
       entries.push({
-        inspection: this.p112SyntheticInspection(proposal.ref.projectId, proposal.ref.workspaceId, proposal.ref.proposalId, proposal.proposal.sourceBaselinePin, proposal.proposal.planRef, proposal.recordedAt, "proposal"),
+        inspection: buildSyntheticArchitectureInspection(proposal.ref.projectId, proposal.ref.workspaceId, proposal.ref.proposalId, proposal.proposal.sourceBaselinePin, proposal.proposal.planRef, proposal.recordedAt, "proposal"),
         findings: [],
         briefs: [],
         proposals: [proposal],
@@ -3495,171 +3142,15 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     return entries;
   }
 
-  /** Synthetic display inspection used to surface a brief/proposal that is not
-   * referenced by any real (LANE-A) inspection row (LANE-B-only projection). */
-  private p112SyntheticInspection(
-    projectId: string,
-    workspaceId: string,
-    labelId: string,
-    baselinePin: import("../../contracts/governance.js").ArchitectureBaselinePin,
-    planRef: import("../../contracts/plan.js").PlanRevisionRef,
-    recordedAt: string,
-    label: string,
-  ): import("../../contracts/architecture-inspection.js").ArchitectureInspectionSnapshot {
-    const inspectionId = "synthetic-" + label + "-" + labelId;
-    return {
-      ref: { aggregateType: "ArchitectureInspection", projectId, workspaceId, inspectionId },
-      revision: 1,
-      schemaVersion: 1,
-      intent: {
-        schemaVersion: 1,
-        inspectionId,
-        projectId,
-        workspaceId,
-        workspaceRevision: 0,
-        planRef,
-        baselinePin,
-        source: "report",
-        requestedByRunRef: null,
-        reportInput: null,
-        budget: { maxTokens: 0, deadline: null },
-      },
-      snapshotRef: null,
-      deltaRef: null,
-      findingRefs: [],
-      briefRef: null,
-      proposalRef: null,
-      recordedAt,
-    };
-  }
-
-  /** Event types this projection currently has handlers for (P1-02 + P1-03, v1). */
+  /** Event types currently handled by this projection. */
   private readonly reviewSnapshots = new Map<string, ReviewProjectionSnapshot>();
-  private reviewRecords(): ReviewProjectionSnapshot[] { return [...this.reviewSnapshots.values()]; }  async reviewWork(ref: import('../../contracts/reviewer-work.js').ReviewWorkRef) {
+  private reviewRecords(): ReviewProjectionSnapshot[] { return [...this.reviewSnapshots.values()]; }
+  async reviewWork(ref: import('../../contracts/reviewer-work.js').ReviewWorkRef) {
     const facts = reviewProjectionFacts(this.reviewRecords()), work = facts.works.find(w => canonicalJson(w.ref) === canonicalJson(ref));
     return work ? { work, result: facts.results.find(r => canonicalJson(r.workRef) === canonicalJson(ref)) ?? null, run: facts.runs.find(r => canonicalJson(r.ref) === canonicalJson(work.reviewerRunRef)) ?? null } : null;
   }
   private isHandledEventType(eventType: string): boolean {
-    if (reviewProjectionEventTypes.includes(eventType)) return true;
-    return (
-      eventType === "GoalCreated" ||
-      eventType === "ProjectBootstrapped" ||
-      eventType === "WorkspaceBootstrapped" || eventType === "WorkspaceRegistered" ||
-      eventType === "CompletionPolicyInstalled" ||
-      eventType === "ArchitectureBaselineInstalled" ||
-      eventType === "CompletionPolicyActivated" ||
-      eventType === "ArchitectureBaselineActivated" ||
-      eventType === "PlanRevisionAccepted" ||
-      eventType === "TaskClaimed" ||
-      eventType === "RunStarted" ||
-      eventType === "RunEventRecorded" ||
-      eventType === "RunOutcomeUnknown" ||
-      eventType === "EvidenceAdmitted" ||
-      eventType === "TaskReductionUpdated" ||
-      eventType === "GoalPhaseUpdated" ||
-      eventType === "HandoffRecorded" ||
-      eventType === "ReplacementClaimed" ||
-      eventType === "WorkspaceReadLeaseGranted" ||
-      eventType === "WorkspaceReadLeaseReleased" ||
-      eventType === "WorkspaceWriteLeaseGranted" ||
-      eventType === "WorkspaceWriteLeaseReleased" ||
-      eventType === "IntegrationJoined" ||
-      eventType === "PatchRecorded" ||
-      // P1-16 events (handler + isHandledEventType in the SAME commit per lane; union at merge).
-      eventType === "MaterialAccessGranted" ||
-      eventType === "MaterialAccessRevoked" ||
-      eventType === "WorkContextBound" ||
-      eventType === "WorkRunLinked" ||
-      eventType === "ExecutionNoteRecorded" ||
-      eventType === "ContinuationRecorded" ||
-      // P1-12 events (LANE-A inspection/finding + LANE-B brief/proposal; union).
-      eventType === "ArchitectureInspectionRecorded" ||
-      eventType === "ArchitectureFindingRecorded" ||
-      eventType === "ArchitectureDecisionBriefRecorded" ||
-      eventType === "ArchitectureCandidateProposalRecorded" ||
-      eventType === "ControlIntentRecorded" ||
-      eventType === "SafePointAcknowledged" ||
-      eventType === "QueryJobSubmitted" ||
-      eventType === "QueryRunStarted" ||
-      eventType === "QueryJobAnswerRecorded" ||
-      eventType === "QueryJobClosed" ||
-      // P1-13 (no view; registered to keep advance stall-free).
-      eventType === "ArchitectureEvolutionPolicyInstalled" ||
-      eventType === "ArchitectureEvolutionPolicyActivated" ||
-      eventType === "RemediationPlanPatchRecorded" ||
-      eventType === "RemediationTaskCreated" ||
-      eventType === "RemediationTaskAdvanced" ||
-      // P1-14 baseline-evolution events (consumed by baselineChangeView).
-      eventType === "CandidateBaselineMaterialized" ||
-      eventType === "ArchitectureChangeDecisionRecorded" ||
-      eventType === "MigrationGateRecorded" ||
-      eventType === "BaselineActivationRecorded" ||
-      // P1-15 initial-design/coordination-policy events.
-      eventType === "InitialDesignProposalRecorded" ||
-      eventType === "InitialDesignDecisionRecorded" ||
-      eventType === "CoordinationPolicyInstalled" ||
-      eventType === "CoordinationPolicyActivated" ||
-      // RW-11 role-spec governance events（与 P1-13 治理事件同一处置：登记以免 advance 停摆；
-      // 角色矩阵的消费点是 ControlEngine 的 claim 守卫，不是视图）。
-      eventType === "RoleSpecInstalled" ||
-      eventType === "RoleSpecActivated" ||
-      // P1-11 plan-change events (handler + isHandledEventType in the SAME lane commit).
-      eventType === "PlanProposalRecorded" ||
-      eventType === "UserDecisionRecorded" ||
-      eventType === "GoalRevisionRecorded" ||
-      eventType === "PlanRevisionSuperseded" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "AgentInstanceRegistered" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "WorkParticipationStarted" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "WorkParticipationEnded" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "DirectedRequestSent" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "DirectedRequestResponded" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "DirectedRequestCancelled" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "SubscriptionCreated" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "SubscriptionCancelled" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "SubscriptionCatchupPlanned" ||
-      eventType === "SubscriptionCatchupAdvanced" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "DeliveryRecorded" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "WaitConditionRegistered" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "WaitConditionObserved" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "WaitConditionSatisfied" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "WaitConditionTimedOut" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "WaitConditionCancelled" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      // CM-1A-001 第 4 步：调用证据事件（许可签发 / 一次调用尝试）。与协作通信事件同一处置：
-      // 登记以免 advance 整页停摆；本票的消费点是 Control 的 canonical 查询面与账本本身。
-      eventType === "ModelRequestAuthorized" ||
-      eventType === "RunReconciled" ||
-      eventType === "ExecutionEntered" || eventType === "ExecutionRetryScheduled" ||
-      eventType === "RuntimeInputBound" ||
-      eventType === "DispatchDeferred" ||
-      eventType === "ModelRequestEvidenceRecorded" ||
-      eventType === "CommunicationIntentRecorded" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "CommunicationIntentClaimed" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "CommunicationIntentSettled" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "CommunicationAdmissionRecorded" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "CoordinationRegistryUpdated" ||
-      // CM-1A-001 协作通信事件：登记以免 advance 整页停摆；本票消费点是 Control 的 canonical 查询面。
-      eventType === "WorkMailboxUpdated"
-    );
+    return readModelHandlesEvent(eventType);
   }
 }
 

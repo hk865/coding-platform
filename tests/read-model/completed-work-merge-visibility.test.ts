@@ -9,7 +9,7 @@
  * 两套后端（内存投影 / SQLite 投影）必须逐字段一致：同一段事件、同一个结果。
  */
 import { expect, it } from 'vitest';
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
 import { createP108ScenarioRuntime, P108_PROJECT_A, P108_SCHEMA, P108_TASK_WORK } from '../contract-suite/p1-08-harness.js';
 import { runP116ContinuityScenario, type P1_16HarnessLike } from '../contract-suite/p1-16-harness.js';
@@ -23,7 +23,7 @@ const DECLARED_WORK_ID = 'work-rw15-declared';
 
 it.each(['memory', 'sqlite'])('completed-work view exposes a merged duplicate identity instead of dropping it silently (%s)', async mode => {
   const options = { runtime: createP108ScenarioRuntime() };
-  const persistent = mode === 'sqlite' ? await createPersistentSqliteHarness(options) : null;
+  const persistent = mode === 'sqlite' ? await createPersistentPlatform(options) : null;
   const h = persistent ?? createInMemoryHarness(options);
   try {
     const world = await runP116ContinuityScenario(h as unknown as P1_16HarnessLike);

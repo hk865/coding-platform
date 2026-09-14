@@ -1,0 +1,1 @@
+export default {root:"/mnt/d/1.project/Software/agent_platform",test:{environment:"node",include:["evidence/collaboration-memory/batch/M01-M05-implementation/CMM01-M05-snap-01/acceptance/*.test.ts"],restoreMocks:true,testTimeout:60000}};

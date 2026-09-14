@@ -31,13 +31,13 @@ type VerificationRoundGap = {
 };
 
 /**
- * 角色规格「产出期望（requiredOutputs）」在本次轮次里的**见证报告**（RW-15 建立，RW-18 改为审计）。
+ * 角色规格「产出期望（requiredOutputs）」在本次轮次里的**见证报告**（当前只作审计）。
  *
  * 这只是**本次轮次的事实记录**，既不是完成状态，也不是完成判据：它说明「哪一个产出期望被哪条既有
  * 事实见证过、哪一些没有见证到」。归约仍然只由 ControlEngine 依据正式 Evidence 决定。
  *
  * `requiredOutputs` 是角色规格的**声明性产出期望**（用户的判断：逐次核对"必须产出什么"
- * 会给 Agent 不必要的认知负担，而且它本质属于记忆／交互历史）。因此从 RW-18 起本记录**不产生
+ * 会给 Agent 不必要的认知负担，而且它本质属于记忆／交互历史）。因此本记录**不产生
  * 任何门禁后果**：`incomplete` 不降级轮次结论、不扣留归约、也不写进轮次 gaps。它不是
  * 「已满足」的假声明 —— 没有见证事实的种类仍在 `missing` 里如实列出、逐类的原因仍在
  * `required[].detail` 里。取舍与退出条件见 control/verification-engine/role-output-completeness.ts。
@@ -98,7 +98,7 @@ export type VerificationRoundRecord = {
   outcome: 'PASS' | 'FAIL' | 'INCONCLUSIVE' | null;
   gaps: VerificationRoundGap[];
   /**
-   * 本次轮次冻结时的角色产出期望见证报告（RW-15 建立，RW-18 起仅为审计信息）。
+   * 本次轮次冻结时的角色产出期望见证报告（仅为审计信息）。
    * 早于本字段落盘的轮次为 null —— 那时没有这条检查，因此不补算、也不据此阻断
    * （历史轮次按原判据保留，不批量重写）。
    */
@@ -116,11 +116,11 @@ export type VerificationRoundRecord = {
     goal: { key: string; revision: number; phase: string | null } | null;
     rejected?: Array<{ target: 'task' | 'goal'; key: string; revision: number; code: 'revision_conflict'; rejectedAt: string }>;
     /**
-     * RW-15 历史字段：当时"没有发起归约请求"的原因（必产出缺项）。
+     * 历史字段：当时"没有发起归约请求"的原因（必产出缺项）。
      *
-     * RW-18 起**不再写入**：requiredOutputs 已改为声明性产出期望，缺项不再扣留归约
-     * （见 verification-rounds.ts 的 reduce()）。字段保留是为了不让 RW-15／RW-16 期间
-     * 落盘的历史轮次失去它已有的记录 —— 历史事实按原样保留，不批量重写。
+     * 当前**不再写入**：requiredOutputs 已改为声明性产出期望，缺项不再扣留归约
+     * （见 verification-rounds.ts 的 reduce()）。字段保留是为了让门禁语义调整前
+     * 落盘的历史轮次不失去已有记录；历史事实按原样保留，不批量重写。
      */
     withheld?: { code: 'role_required_output_missing'; missing: string[]; message: string; at: string };
   };
@@ -139,4 +139,3 @@ export type VerificationRoundCheckBinding = {
   identity: VerificationRoundMaterialIdentity;
   plan: VerificationPlanV1;
 };
-

@@ -1,16 +1,16 @@
 /**
- * CM-1A-001 第 3 工作段 — 目标 Delivery 精确版本进入**实际模型输入**的材料通道（A06 的输入面）。
+ * 协作通信 — 目标 Delivery 精确版本进入**实际模型输入**的材料通道（Delivery 内容的输入面）。
  *
  * ── 走的是哪条既有通道（不新增第二选材器）────────────────────────────────────────
  * 本编译器只产出 `RuntimeContextText`（`RuntimeContextMaterials.rules`）：正文进
  * `assembleRuntimeContext` 的 `input`，摘要/来源/理由进 `manifest.selected`，
  * 两者由 `manifest.inputDigest` 合并。**不给 TaskEnvelopeV1 加字段、不扩 SourceRefV1.kind**
- * （它是封闭四值，扩它有回归风险）——这正是 decision-log D06 选定的载体。
+ * （它是封闭四值，扩展会影响现有取材和回归语义）。
  *
  * ── 授权顺序（与既有 feedback 通道逐条一致）───────────────────────────────────
  *   1. `select`：读该 Run 所属 Work 的既有 Delivery（canonical，只读面），并 capture 本次的
  *      来源 pin（`SourceApplicabilityPort`）作为 basis；读不到、来源不可用一律抛错；
- *   2. Dispatch 侧 `WorkMaterialDrive` 用`materialAccessGrantIdFor(runRef, materials, basis)`
+ *   2. Dispatch 侧 `WorkMaterialDrive` 用 `materialAccessGrantIdFor(runRef, materials, basis)`
  *      给**本次 Run** 逐条签发精确 `MaterialAccessGrant`（非 committed 即抛错：运行尚未启动）；
  *   3. `assemble`：`vault.open(bodyRef, {requesterRunRef, currentBasis: basis, usage:'current'})`
  *      —— grant 一致、basis 一致、来源 pin 仍当前才读得到；
@@ -23,7 +23,7 @@
  * LeasedWorkerRuntime 登记"可证明未启动"的已知失败 → 本次运行不调用模型），
  * 绝不"静默跳过这条 Delivery 继续跑"，也绝不复用上一次已读到的正文。
  *
- * ── 选材范围：**只按 admission 固定的集合**（第 3 工作段收窄）────────────────────
+ * ── 选材范围：**只按 admission 固定的集合**（固定材料集合规则收窄）────────────────────
  *   · 本 Run 是接续产生的（CommunicationAdmission）时，必需材料**恰好**是那次受理固定下来的
  *     deliveryRefs（见 coordination-admission-read.ts）。读不到其中任何一条即整次组装失败，
  *     而不是"少一条也照跑"。
@@ -218,6 +218,7 @@ export class DeliveryMaterialCompiler {
 
 /** 一条 Delivery 的精确版本标识（directed_request 用请求 id，订阅用 topic@位置）。 */
 export function deliveryVersionOf(delivery: DeliveryV1): string {
+  if(delivery.origin.kind === "architecture_decision") return "architecture_decision@"+delivery.origin.reviewRef.reviewId+"@"+delivery.origin.reviewRevision;
   return delivery.origin.kind === 'subscription'
     ? delivery.origin.sourceTopic + '@' + String(delivery.origin.sourceCursor)
     : 'directed_request@' + delivery.origin.requestRef.requestId;

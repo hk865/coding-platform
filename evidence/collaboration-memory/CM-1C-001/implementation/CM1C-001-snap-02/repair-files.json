@@ -1,0 +1,18 @@
+{
+  "oldHead": "ce043a650ecfabd72c55f02695204d58dd9c8b64",
+  "newHead": "ce043a650ecfabd72c55f02695204d58dd9c8b64",
+  "fingerprintChanged": true,
+  "added": [
+    "tests/contract-support/testing/injected-coordination-grant.ts"
+  ],
+  "removed": [],
+  "changed": [
+    "src/control/dispatch-engine/dispatch-engine.ts",
+    "src/control/dispatch-engine/leased-worker-runtime.ts",
+    "src/execution/worker-runtime/coding-agent-runtime.ts",
+    "src/harness/persistent-harness.ts",
+    "tests/app/exploration-runtime.test.ts",
+    "tests/control/reviewer-runtime-start-rejection.test.ts",
+    "tests/coordination/coordination-capability.test.ts"
+  ]
+}

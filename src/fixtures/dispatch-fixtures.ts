@@ -1,16 +1,16 @@
-import { buildDispatchClaimCommand as formalbuildDispatchClaimCommand, buildDispatchStartCommand as formalbuildDispatchStartCommand, buildRunFactCommand as formalbuildRunFactCommand } from "../contracts/commands/dispatch.js";
+import { buildDispatchClaimCommand as canonicalBuildDispatchClaimCommand, buildDispatchStartCommand as canonicalBuildDispatchStartCommand, buildRunFactCommand as canonicalBuildRunFactCommand } from "../contracts/commands/dispatch.js";
 import { nextRunSnapshotForRuntimeEvent, nextRunSnapshotForOutcomeUnknown, nextAttemptSnapshotForTerminal, nextOutboxSnapshotForTerminal } from "../control/control-engine/records/dispatch.js";
 /**
- * P1-03 shared fixtures: eligible-plan, role binding ref, dispatch claim/start/
+ * Shared dispatch fixtures: eligible-plan, role binding ref, dispatch claim/start/
  * run-fact command builders + deterministic fold targets (contract shape the
  * Control handlers must reproduce EXACTLY, given the same ids — same pattern
- * as P1-00/02 fixture builders).
+ * as the governance and plan fixture builders).
  *
- * Frozen identity choices:
+ * Stable identity choices:
  *   - intentId === attemptId (one intent per attempt);
  *   - claimedAt === requestedAt === occurredAt of the claim event;
- *   - P1-03 at most ONE claim per task (TaskLease CAS @0; expectedRevision 0);
- *   - eligibility fixture: the plan satisfies every P1-02 applyPlan guard.
+ *   - at most one claim per task (TaskLease CAS @0; expectedRevision 0);
+ *   - eligibility fixture: the plan satisfies every applyPlan guard.
  */
 import type { CommandIdentity } from "../contracts/command-event.js";
 import { commandIdentityKey } from "../contracts/command-event.js";
@@ -22,7 +22,7 @@ import type { ArtifactRef } from "../contracts/artifact.js";
 import type { ExpectedVersion, RunFactLedgerCommitV1 } from "../contracts/ledger.js";
 
 // ------------------------------------------------------------------------ //
-// Eligible-plan fixture (satisfies P1-02 applyPlan guards)                   //
+// Eligible-plan fixture (satisfies applyPlan guards)                         //
 // ------------------------------------------------------------------------ //
 
 export const DISPATCH_ELIGIBLE_TASK_ID = "task-run-adaptor";
@@ -80,7 +80,7 @@ export const DISPATCH_PLAN_REVISION_FIXTURE_V1: PlanRevisionDraft = {
     },
     {
       taskId: DISPATCH_GATE_TASK_ID,
-      title: "DispatchGate：P1-03 验收路径全部通过",
+      title: "DispatchGate：派发验收路径全部通过",
       requirementLevel: "required",
       taskKind: "gate",
       disposition: "active",
@@ -119,7 +119,7 @@ export const DISPATCH_PLAN_REVISION_FIXTURE_V1: PlanRevisionDraft = {
     },
     {
       obligationId: "obl-gate",
-      title: "P1-03 验收在任务满足判定之前达成",
+      title: "派发验收在任务满足判定之前达成",
       requirementLevel: "required",
       taskIds: [DISPATCH_GATE_TASK_ID],
       verificationRequirements: [
@@ -132,7 +132,7 @@ export const DISPATCH_PLAN_REVISION_FIXTURE_V1: PlanRevisionDraft = {
       ],
     },
     {
-      // task-blocked is required+work+active, so P1-02's "every required
+      // task-blocked is required+work+active, so the "every required
       // executable task maps a required obligation" guard demands a mapping.
       obligationId: "obl-blocked",
       title: "阻塞任务不可领取（readiness 表用例）",
@@ -218,7 +218,7 @@ export type BuildDispatchClaimDeps = {
 export function buildDispatchClaimCommand(
   deps: BuildDispatchClaimDeps,
 ): DispatchClaimCommand {
-  return formalbuildDispatchClaimCommand({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-03-claim", taskId: deps.taskId ?? DISPATCH_ELIGIBLE_TASK_ID, goalId: deps.goalId ?? "goal-1", attemptId: deps.attemptId ?? "att-run-0001", runId: deps.runId ?? "run-0001", roleBinding: deps.roleBinding ?? ROLE_BINDING_FIXTURE_V1, declaredPermissions: deps.declaredPermissions ?? DECLARED_PERMISSIONS_FIXTURE_V1, budget: deps.budget ?? BUDGET_FIXTURE_V1 });
+  return canonicalBuildDispatchClaimCommand({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-03-claim", taskId: deps.taskId ?? DISPATCH_ELIGIBLE_TASK_ID, goalId: deps.goalId ?? "goal-1", attemptId: deps.attemptId ?? "att-run-0001", runId: deps.runId ?? "run-0001", roleBinding: deps.roleBinding ?? ROLE_BINDING_FIXTURE_V1, declaredPermissions: deps.declaredPermissions ?? DECLARED_PERMISSIONS_FIXTURE_V1, budget: deps.budget ?? BUDGET_FIXTURE_V1 });
 }
 
 export function dispatchClaimIdentityKey(command: DispatchClaimCommand): string {
@@ -243,7 +243,7 @@ export function buildDispatchStartCommand(
     manifest: ContextManifestV1;
   },
 ): DispatchStartCommand {
-  return formalbuildDispatchStartCommand({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-03-start", expectedRevision: deps.expectedRevision ?? 1 });
+  return canonicalBuildDispatchStartCommand({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-03-start", expectedRevision: deps.expectedRevision ?? 1 });
 }
 
 // ------------------------------------------------------------------------ //
@@ -329,7 +329,7 @@ export type BuildRunFactDeps = {
 };
 
 export function buildRunFactCommand(deps: BuildRunFactDeps): RunFactCommand {
-  return formalbuildRunFactCommand({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-03-runfact" });
+  return canonicalBuildRunFactCommand({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-03-runfact" });
 }
 
 export function buildRunEventRecordedCommit(

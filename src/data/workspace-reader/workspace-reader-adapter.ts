@@ -1,14 +1,13 @@
 /**
- * P1-12 WorkspaceReader adapter — deterministic fixture-backed read port.
+ * WorkspaceReader adapter — deterministic fixture-backed read port.
  *
- * ENTRY FILE (shared baseline — exported signature FROZEN; lane A fills the
- * implementation). The adapter answers CodeGraphReadQueryV1 with the graph of
+ * Public entry. The adapter answers CodeGraphReadQueryV1 with the graph of
  * ONE workspace revision from its registry (fixtures in the contract suite /
  * a deterministic in-memory registry); unsupported (no graph capability) and
  * stale (workspace revision moved since the produced snapshot) are explicit —
  * never a fabricated graph. READ ONLY.
  *
- * Registry convention (frozen, mirror of the fixtures): sourceRevision 0 is
+ * Registry convention (versioned, mirror of the fixtures): sourceRevision 0 is
  * the PINNED BASELINE state; sourceRevision 2 is the current workspace state
  * (currentRevision = 2). Asking for any revision NOT in the registry is
  * stale (expectedRevision = currentRevision); asking for a revision whose

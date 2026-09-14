@@ -20,7 +20,7 @@
  *     declaration comes from the runtime adapter (capabilitySource) and is
  *     never fabricated by Control.
  *   - No CompletionPolicy change; no Goal/Task phase write; old lease / late
- *     runtime feedback keeps the P1-03 guard semantics; P1-04 review
+ *     runtime feedback keeps the dispatch guard semantics; verification review
  *     isolation is not overridden by continuation context.
  */
 import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
@@ -123,7 +123,7 @@ export type WorkContextBindingV1 = {
   /** Bounded list of runs that participated in this work (deterministic order). */
   linkedRunRefs: RunRef[];
   /**
-   * 该 Work 的**当前参与关系**（CM-1A-001 owner 裁决，第 2 步）。
+   * 该 Work 的**当前参与关系**（协作通信参与身份裁决，参与身份规则）。
    *
    * ── 为什么放在 Work 的权威状态里（而不是新造第二份 Work 状态）───────────────────
    * 等待（WaitCondition）保留它**注册时**的参与关系作为历史事实；接续资格必须由 Control
@@ -148,7 +148,7 @@ export type WorkContextBindingV1 = {
    *   2. 它不表达权限：授权版本仍在 WorkParticipation 与 RoleBinding 上，这里只回答"当前是谁"。
    */
   currentParticipationRef?: WorkParticipationRef | null;
-  /** P1-16 bind-once: a binding is created active and has no end command. */
+  /** context continuity bind-once: a binding is created active and has no end command. */
   status: "active";
   createdAt: string;
 };
@@ -314,12 +314,12 @@ export type BindWorkContextCommand = {
 };
 
 /**
- * RC-03 扩展：新增 `already_bound`。
+ * 任务工作身份唯一性规则扩展：新增 `already_bound`。
  *
  * ── 为什么需要这个拒绝码（而不是复用 revision_conflict）────────────────────────
  * bindWorkContext 的 CAS@0 只能挡住「同一个 workId 被重复创建」，挡不住「同一段工作被
  * 换一个 workId 又建一条身份」——两条绑定的聚合 ref 不同，CAS 各自成立，账本里于是留下两条
- * 描述同一 (项目, 工作区, 目标, 任务) 的 WorkContextBound。这正是 RW-13 只堵住派发面之后
+ * 描述同一 (项目, 工作区, 目标, 任务) 的 WorkContextBound。这正是只堵住派发面之后
  * 仍然存在的命令面漏洞。
  *
  * 语义（与既有零写拒绝路径一致）：命令被拒绝、**一个字都不写**，并且回执里带上已存在的那条
@@ -456,7 +456,7 @@ export type RecordContinuationReceipt =
   | { status: "rejected"; commandId: string; code: RecordContinuationRejectionCode; issues?: string[] };
 
 // ------------------------------------------------------------------------ //
-// Domain events (P1-16 v1)                                                  //
+// Domain events (context continuity v1)                                                  //
 // ------------------------------------------------------------------------ //
 
 export type WorkContextBoundEvent = {
@@ -545,7 +545,7 @@ export type ContinuationRecordedEvent = {
 };
 
 // ------------------------------------------------------------------------ //
-// Fingerprints (JCS + SHA-256; volatile ids excluded — P1-00 convention)    //
+// Fingerprints (JCS + SHA-256; volatile ids excluded — goal/bootstrap convention)    //
 // ------------------------------------------------------------------------ //
 
 export function bindWorkContextFingerprint(command: BindWorkContextCommand): CommandFingerprint {
@@ -606,7 +606,7 @@ export function recordContinuationFingerprint(command: RecordContinuationCommand
 }
 
 // ------------------------------------------------------------------------ //
-// ControlEngine.WorkRecordPort (interfaces_to_freeze — first consumer)      //
+// ControlEngine.WorkRecordPort — public work-record command interface       //
 // ------------------------------------------------------------------------ //
 
 /**
@@ -619,10 +619,10 @@ export function recordContinuationFingerprint(command: RecordContinuationCommand
  *      run_not_in_work;
  *   4. links bounded (WORK_CONTEXT_MAX_RUN_LINKS) -> links_exceeded;
  *   5. ONE atomic commit per command with FULL ledger idempotency.
- * RC-03 追加（bindWorkContext 专属）：
+ * 追加的任务工作身份唯一性规则（仅用于 bindWorkContext）：
  *   2b. 同一 (projectId, workspaceId, goalId, taskId) 的 task 工作只能有一条身份。已有身份的
  *       workId 与本次 aggregateId 不同 -> already_bound（零写，回执带 existingWorkContextRef）；
- *       唯一性由 ControlEngine 的这条守卫**和** StateLedger 提交语义的身份槽同时保证
+ *       唯一性由 ControlEngine 的这条守卫与 StateLedger 提交语义的身份槽共同保证
  *       （见 data/state-ledger/ledger-validation.ts 的 workContextIdentityClaim）。
  * The note body must ALREADY be body-first'd into the ArtifactVault by the
  * author; Control only registers the reference. NO Goal/Task phase write,

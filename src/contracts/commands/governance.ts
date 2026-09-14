@@ -3,7 +3,7 @@ import type { ActorRef, CommandIdentity } from "../command-event.js";
 import type { VersionedCompletionPolicyFixture, InstallCompletionPolicyRevisionCommand, VersionedArchitectureBaselineFixture, InstallArchitectureBaselineRevisionCommand, ActivateProjectCompletionPolicyCommand, ActivateProjectArchitectureBaselineCommand, GovernanceInstallCommand, GovernanceActivateCommand, CompletionPolicyPin, ArchitectureBaselinePin } from "../governance.js";
 import { governanceContentDigest } from "../governance.js";
 import type { ActivateCoordinationPolicyCommand, CoordinationPolicyContentV1, CoordinationPolicyPin, InstallCoordinationPolicyCommand } from "../human-role-collaboration.js";
-import { P15_COORDINATION_POLICY_REVISION, coordinationPolicyContentDigest } from "../human-role-collaboration.js";
+import { COORDINATION_POLICY_REVISION_V1, coordinationPolicyContentDigest } from "../human-role-collaboration.js";
 import type { ActivateProjectArchitectureEvolutionPolicyCommand, ArchitectureEvolutionPolicyPin, InstallArchitectureEvolutionPolicyRevisionCommand, VersionedArchitectureEvolutionPolicyFixture } from "../architecture-evolution-policy.js";
 import { architectureEvolutionPolicyContentDigest } from "../architecture-evolution-policy.js";
 import type { ActivateRoleSpecRevisionCommand, InstallRoleSpecRevisionCommand, RoleSpecContentV1, RoleSpecPinV1 } from "../role-spec.js";
@@ -94,7 +94,7 @@ export function buildActivateCommand(
 }
 
 // ------------------------------------------------------------------------ //
-// P1-15 CoordinationPolicy 与 P1-13 ArchitectureEvolutionPolicy             //
+// CoordinationPolicy and ArchitectureEvolutionPolicy                         //
 // ------------------------------------------------------------------------ //
 /** 治理命令的唯一字段构造入口。应用提供身份、时间与幂等键；
  * src/fixtures 中的包装只提供样例默认值。内容摘要复用
@@ -114,7 +114,7 @@ export function buildCoordinationPolicyInstallCommand(
     payload: {
       policyId: input.policyId,
       content: input.content,
-      contentDigest: coordinationPolicyContentDigest(input.content, input.policyId, P15_COORDINATION_POLICY_REVISION),
+      contentDigest: coordinationPolicyContentDigest(input.content, input.policyId, COORDINATION_POLICY_REVISION_V1),
     },
   };
 }
@@ -137,7 +137,7 @@ export function buildCoordinationPolicyActivateCommand(
 }
 
 // ------------------------------------------------------------------------ //
-// RW-11 RoleSpecRevision                                                    //
+//  RoleSpecRevision                                                    //
 // ------------------------------------------------------------------------ //
 /**
  * 与 CoordinationPolicy 同理，这两种命令的**字段级构造**只在这里出现一次：

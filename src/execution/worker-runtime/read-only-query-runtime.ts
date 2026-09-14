@@ -41,6 +41,9 @@ function readWitnesses(record: QueryRuntimeRecord) {
 /** Runs on a separate kernel session and readonly tool set. It neither polls nor
  * modifies an implementation Run, and does not take its workspace write lease. */
 export class ReadOnlyQueryRuntime implements ReadOnlyQueryPort {
+  private closing = false;
+  private readonly cancelled = new Set<string>();
+  private readonly starting = new Map<string, { fingerprint: string; done: Promise<ReadOnlyQueryResultV1> }>();
   private readonly records = new Map<string, QueryRuntimeRecord>();
   private readonly active = new Map<string, { controller: AbortController; done: Promise<ReadOnlyQueryResultV1> }>();
   private readonly journal: RuntimeObservationJournal<QueryRuntimeRecord>;
@@ -60,17 +63,48 @@ export class ReadOnlyQueryRuntime implements ReadOnlyQueryPort {
   }
   all() { return structuredClone([...this.records.values()]); }
   capabilities() { return { supported: true, readOnly: true as const, maxQuestionBytes: 4096, maxAnswerBytes: 16384 }; }
-  async close() { for (const run of this.active.values()) run.controller.abort('host_shutdown'); await Promise.allSettled([...this.active.values()].map(run => run.done)); }
+  async close() { this.closing = true; for (const run of this.active.values()) run.controller.abort('host_shutdown'); await Promise.allSettled([...this.starting.values()].map(run => run.done)); }
   private save(record: QueryRuntimeRecord) {
     return this.journal.save(record);
   }
+  async cancelQuery(runRef: QueryRunRef): Promise<void> {
+    this.cancelled.add(canonicalJson(runRef));
+    const work: Promise<ReadOnlyQueryResultV1>[] = [];
+    for (const [id, active] of this.active) {
+      if (canonicalJson(this.records.get(id)?.runRef ?? null) !== canonicalJson(runRef)) continue;
+      active.controller.abort('cancelled'); work.push(active.done);
+    }
+    await Promise.allSettled(work);
+  }
+  async inspectQuery(request: Request): Promise<Awaited<ReturnType<NonNullable<ReadOnlyQueryPort['inspectQuery']>>>> {
+    const id = sha(canonicalJson([request.runRef, request.bundleRef.digest]));
+    const starting = this.starting.get(id);
+    if (starting?.fingerprint === sha(canonicalJson(request))) return { status: 'active' };
+    const record = this.journal.read(id);
+    if (!record || record.fingerprint !== sha(canonicalJson(request))) return { status: 'unavailable', message: 'No durable result matches the exact query request.' };
+    if (this.active.has(id)) return { status: 'active' };
+    if (record.result) return { status: 'result', result: structuredClone(record.result) };
+    return { status: 'unavailable', message: 'Prior query ended without a durable result; external outcome is unknown.' };
+  }
   async startQuery(request: Request): Promise<ReadOnlyQueryResultV1> {
+    const id = sha(canonicalJson([request.runRef, request.bundleRef.digest]));
+    const fingerprint = sha(canonicalJson(request)), prior = this.starting.get(id);
+    if (prior) {
+      if (prior.fingerprint !== fingerprint) throw Error('query runtime idempotency conflict');
+      return prior.done;
+    }
+    const done = this.startPreparedQuery(request).finally(() => this.starting.delete(id));
+    this.starting.set(id, { fingerprint, done });
+    return done;
+  }
+  private async startPreparedQuery(request: Request): Promise<ReadOnlyQueryResultV1> {
     const fingerprint = sha(canonicalJson(request)), id = sha(canonicalJson([request.runRef, request.bundleRef.digest]));
     const existing = this.records.get(id);
     if (existing) {
       if (existing.fingerprint !== fingerprint) throw Error('query runtime idempotency conflict');
       if (this.active.has(id)) return this.active.get(id)!.done;
-      if (existing.result) return structuredClone(existing.result);
+      const persisted = this.journal.read(id);
+      if (persisted?.result) return structuredClone(persisted.result);
       return this.failure(request, 'failed', 'Prior query process ended without a durable result; no implicit restart.');
     }
     const material = await this.deps.materials.assemble(request);
@@ -78,11 +112,13 @@ export class ReadOnlyQueryRuntime implements ReadOnlyQueryPort {
       if (material.code === 'unavailable') return this.failure(request, 'gap', material.message);
       throw Error(material.message);
     }
+    if (this.closing || this.cancelled.has(canonicalJson(request.runRef))) return this.failure(request, 'failed', 'Query cancellation was already requested.');
     const { input, budget, kind, goalId, roleBinding, deadline } = material;
     const record: QueryRuntimeRecord = { id, runRef: request.runRef, fingerprint, sessionId: randomUUID(), status: 'running', kind, goalId, roleBinding,
       input, inputDigest: sha(input), budget, deadline, configuration: null, usage: [], trace: [], sourceBefore: null, sourceAfter: null, result: null };
     this.records.set(id, record); await this.save(record);
     const controller = new AbortController();
+    if (this.closing || this.cancelled.has(canonicalJson(request.runRef))) controller.abort('cancelled');
     const done = this.execute(request, record, controller).finally(() => this.active.delete(id)); this.active.set(id, { controller, done }); return done;
   }
   private failure(request: Request, outcome: 'failed' | 'gap' | 'timeout', message: string): ReadOnlyQueryResultV1 {
@@ -91,6 +127,7 @@ export class ReadOnlyQueryRuntime implements ReadOnlyQueryPort {
   private async execute(request: Request, record: QueryRuntimeRecord, controller: AbortController): Promise<ReadOnlyQueryResultV1> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      if (controller.signal.aborted) throw Error('Query cancellation was already requested.');
       const root = this.deps.rootFor(request.runRef.projectId, request.runRef.workspaceId);
       const deniedPrefixes = ['.evaluator', '.oracle', 'hidden-tests', '.git', '.env', '.env.local', '.platform-runtime'];
       const workspace = await kernel.WorkspaceSandbox.create(root, { deniedPrefixes });

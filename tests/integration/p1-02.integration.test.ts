@@ -24,14 +24,14 @@ import {
   buildApplyPlanCommand,
 } from "../../src/fixtures/plan-fixtures.js";
 import { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand } from "../contract-support/fixtures/goal-fixtures.js";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { runP102Path, verifyP102AfterRestart } from "../restart/p1-02-restart-fixtures.js";
 
 const SCHEMA = "2026-09-05T12:00:00.000Z";
 
 describe("P1-02 integration (real SQLite adapters)", () => {
   it("A1-A4: fixture digest/schema; install persists immutable revision; same identity/revision never overwritten", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       await h.bootstrap(buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, {
         commandId: "cmd-int-boot", correlationId: "corr", submittedAt: SCHEMA,
@@ -89,7 +89,7 @@ describe("P1-02 integration (real SQLite adapters)", () => {
   });
 
   it("A3: activation accepts only installed exact target; CAS failure leaves active ref unmoved", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       await h.bootstrap(buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, {
         commandId: "cmd-int-boot2", correlationId: "corr", submittedAt: SCHEMA,
@@ -157,7 +157,7 @@ describe("P1-02 integration (real SQLite adapters)", () => {
   });
 
   it("A4/A5/A6/A7/A12/A13: full path with restart; pins survive default-ref movement; idempotency", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       const before = await runP102Path(h);
       // plan revision bound to the goal
@@ -217,7 +217,7 @@ describe("P1-02 integration (real SQLite adapters)", () => {
   });
 
   it("A14: no dispatch outbox / TaskAttempt / AgentRun on the whole path", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       const before = await runP102Path(h);
       // evidence record dedupes by first occurrence (8 event classes)

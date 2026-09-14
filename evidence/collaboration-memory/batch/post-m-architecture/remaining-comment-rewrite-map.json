@@ -1,0 +1,31 @@
+{
+  "changed": [
+    "src/contracts/active-agent.ts",
+    "src/contracts/task-envelope.ts",
+    "src/contracts/workspace-drive.ts",
+    "src/control/control-engine/architecture-inspection.ts",
+    "src/control/control-engine/baseline-evolution.ts",
+    "src/control/control-engine/claim.ts",
+    "src/control/control-engine/evidence-intake.ts",
+    "src/control/control-engine/goal-reducer.ts",
+    "src/control/control-engine/governance-activate.ts",
+    "src/control/control-engine/handoff.ts",
+    "src/control/control-engine/human-role-collaboration.ts",
+    "src/control/control-engine/integration-join.ts",
+    "src/control/control-engine/plan-acceptance.ts",
+    "src/control/control-engine/policies/autonomous-rework.ts",
+    "src/control/control-engine/remediation.ts",
+    "src/control/control-engine/replacement-claim.ts",
+    "src/control/control-engine/start-run.ts",
+    "src/control/control-engine/task-reducer.ts",
+    "src/control/control-engine/work-record.ts",
+    "src/control/control-engine/workspace-lease.ts",
+    "src/data/context-compiler/handoff-context-compiler.ts",
+    "src/data/read-model-index/sqlite-read-model-index.ts",
+    "src/data/state-ledger/sqlite-ledger.ts",
+    "src/data/workspace-reader/workspace-reader-adapter.ts",
+    "src/execution/worker-runtime/context-continuation-adapter.ts",
+    "src/execution/worker-runtime/handoff-control-adapter.ts",
+    "src/interaction/human-collaboration/human-collaboration.ts"
+  ]
+}

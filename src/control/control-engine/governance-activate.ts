@@ -1,9 +1,7 @@
 /**
- * P1-02 Control entry: governance activation (typed Project active refs).
+ * Control entry for governance activation with typed Project active references.
  *
- * ENTRY FILE (shared baseline — exported signature FROZEN). Lane A fills the
- * implementation; semantics recorded in IMPLEMENTATION-HANDOFF.md
- * "P1-02 契约与存储语义" and the ticket Acceptance:
+ * Public entry. The versioned contract defines this guard and commit sequence:
  *   schema -> resolve installed target (identity/revision/digest triple) ->
  *   "not_found"/"digest_mismatch" zero-write -> load per-kind active aggregate
  *   -> fold activation commit with CAS: Project@expected (command

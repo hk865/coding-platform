@@ -27,8 +27,8 @@ import type {
 import { resolveProjectCompletionPolicy, resolveProjectArchitectureBaseline } from "../../src/data/state-ledger/governance-records.js";
 import type { PlanRevisionRef } from "../../src/contracts/plan.js";
 import type { GoalSnapshot } from "../../src/contracts/ledger.js";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import type { PlanGraphView } from "../../src/contracts/plan-view.js";
 import type { TaskDetailView } from "../../src/contracts/plan-view.js";
 import type { GoalView } from "../../src/contracts/goal-view.js";
@@ -85,7 +85,7 @@ export interface P102PreRestartEvidence {
  * report false — the restart tests then SKIP instead of failing. No fake.
  */
 export async function isP102Ready(): Promise<boolean> {
-  const h = await createPersistentSqliteHarness({ deps: {} });
+  const h = await createPersistentPlatform({ deps: {} });
   try {
     await runP102Path(h);
     return true;
@@ -101,7 +101,7 @@ export async function isP102Ready(): Promise<boolean> {
  * modules (ControlEngineImpl + SqliteStateLedger + SqliteReadModelIndex +
  * HumanCollaboration). Deterministic ids make the whole block reproducible.
  */
-export async function runP102Path(h: PersistentSqliteHarness): Promise<P102PreRestartEvidence> {
+export async function runP102Path(h: PersistentPlatform): Promise<P102PreRestartEvidence> {
   const projectId = "proj-alpha";
   const workspaceId = "ws-shared";
   const goalId = "goal-1";
@@ -245,7 +245,7 @@ export async function runP102Path(h: PersistentSqliteHarness): Promise<P102PreRe
  * Throws on ANY mismatch (the restart test fails if the path is broken).
  */
 export function verifyP102AfterRestart(
-  h: PersistentSqliteHarness,
+  h: PersistentPlatform,
   before: P102PreRestartEvidence,
 ): Promise<void> {
   const projectId = before.projectId;

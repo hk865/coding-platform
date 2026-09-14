@@ -56,7 +56,7 @@ import {
   p115PolicyRef,
 } from "../contract-support/fixtures/human-role-collaboration-fixtures.js";
 import {
-  buildBindWorkContextCommand, buildLinkWorkRunCommand,
+  buildBindWorkContextCommand,
   buildExecutionNoteV1, buildRecordExecutionNoteCommand,
   buildContextContinuationResultV1, buildRecordContinuationCommand,
 } from "../contract-support/fixtures/context-fixtures.js";
@@ -196,6 +196,13 @@ describe("P1-15 lane C — bounded rework loop (InMemory harness)", () => {
     const { planRef } = await setupWorld(h);
     await commitStartDesignAndPolicy(h, planRef);
     const coderRunRef = await runCoderTask(h, planRef);
+    // This fixture starts its source Run directly through Control. Establish
+    // its explicit work identity before the real Handoff consumer resolves it.
+    const bind = await h.bindWorkContext(buildBindWorkContextCommand({
+      commandId: "cmd-lc-bind", projectId, workId, workspaceId: wsId, workKind: "task",
+      goalId, taskId: coderTaskId, initialRunRef: coderRunRef,
+    }));
+    expect(bind.status, JSON.stringify(bind)).toBe("committed");
     const { reworkRunRef, budget } = await arrangeBoundedRework(h, planRef, coderRunRef, runtime);
 
     await h.advanceProjection();
@@ -205,17 +212,11 @@ describe("P1-15 lane C — bounded rework loop (InMemory harness)", () => {
     expect(budget.autonomousReworksUsed).toBe(budget.maxAutonomousReworks);
     expect(budget.autonomousReworksUsed).toBe(1);
 
-    // --- rollover (P1-16): bind work context -> link the rework run -> continuation took_over ---
-    const bind = await h.bindWorkContext(buildBindWorkContextCommand({
-      commandId: "cmd-lc-bind", projectId, workId, workspaceId: wsId, workKind: "task",
-      goalId, taskId: coderTaskId, initialRunRef: coderRunRef,
-    }));
-    expect(bind.status).toBe("committed");
-
-    const link = await h.linkWorkRun(buildLinkWorkRunCommand({
-      commandId: "cmd-lc-link", projectId, workId, workspaceId: wsId, runRef: reworkRunRef, expectedRevision: 1,
-    }));
-    expect(link.status).toBe("committed");
+    // The production Handoff consumer must have reused the pre-existing Work
+    // and linked its replacement; do not manufacture that link in the test.
+    const linked = await h.workContextView({ projectId, workspaceId: wsId, workId });
+    expect(linked.status).toBe("ready");
+    if (linked.status === "ready") expect(linked.binding.binding.linkedRunRefs).toContainEqual(reworkRunRef);
 
     const tookOver = buildContextContinuationResultV1({
       reportId: "cont-lc-1", workId, projectId, requestedByRunRef: reworkRunRef,

@@ -1,13 +1,12 @@
 /**
- * P1-15 Control entry: initial-design + coordination-policy handlers (LANE A).
+ * Human/role collaboration Control entry: initial-design and coordination-policy handlers.
  *
- * ENTRY FILE (shared baseline — exported signatures FROZEN). Fills the lane-A
- * implementation of the four P1-15 command handlers behind the frozen guard
- * chain recorded in the integrator rulings:
+ * Public entry. Implements four human-collaboration and coordination-policy commands behind the versioned guard
+ * chain recorded in the current contracts:
  *
  *   1. recordInitialDesignProposal: shape -> invalid (schemaVersion / options
  *      2..16 with non-empty summary / requirement.ambiguity non-empty);
- *      ledger.load(proposal.goalRef) -> not_found; commit buildP115ProposalFold
+ *      ledger.load(proposal.goalRef) -> not_found; commit buildInitialDesignProposalRecordCommit
  *      (CAS @0). Receipt mapping: committed/proposalRef + replayed/eventIds/
  *      commitCursor; invalid_commit -> invalid; revision/idempotency/unavailable
  *      pass through.
@@ -15,29 +14,23 @@
  *      === 1 / outcome enum / authority shape); ledger.load(decision.proposalRef)
  *      -> proposal_not_found; authorizedTarget.designId == loaded proposal.designId
  *      AND authorizedTarget.proposalDigest == initialDesignProposalDigest(loaded)
- *      -> else target_mismatch (ZERO write); commit buildP115DecisionFold.
+ *      -> else target_mismatch (ZERO write); commit buildInitialDesignDecisionRecordCommit.
  *   3. installCoordinationPolicy: payload.contentDigest ==
  *      coordinationPolicyContentDigest(content, policyId, 1) -> else
  *      digest_mismatch; shape (budget.maxAutonomousReworks 1..4 /
  *      budget.maxClarifications 1..8 / upgrade.path === manual-decision) ->
- *      invalid; commit buildP115PolicyInstallFold. NEVER auto-activates.
+ *      invalid; commit buildCoordinationPolicyInstallRecordCommit. NEVER auto-activates.
  *   4. activateCoordinationPolicy: ledger.load(target.ref) -> not_found; digest
- *      mismatch (P1-02口径) -> digest_mismatch; commit buildP115PolicyActivateFold
+ *      mismatch -> digest_mismatch; commit buildCoordinationPolicyActivateRecordCommit
  *      (Project CAS@command.expectedRevision + active aggregate @k).
  *
  * Receipt mapping mirrors control-engine / governance-activate: invalid_commit
  * -> invalid; revision_conflict / idempotency_conflict / unavailable pass
  * through. All pre-commit guard failures are ZERO write.
  *
- * GAP (reported, out of lane-A write_scope): the shared validator
- * validateCoordinationPolicyActivateCommit couples pE.revision === snap.revision-1
- * AND aE.revision === snap.revision-1, which — combined with the buildP115Policy
- * ActivateFold builder and a bootstrapped Project (revision 1) + fresh active
- * aggregate (revision 0) — makes a FIRST activation structurally impossible
- * (every deps choice fails either the validator or the CAS). The handler builds
- * the fold exactly per the frozen ruling; the ledger rejects it at validation
- * time. The P1-15 probe-group skip stems from this (isP115Ready -> false). A
- * validator/ fold-builder alignment pass is required (different lane).
+ * Activation uses two distinct guards: Project@command.expectedRevision protects
+ * project-level ordering, while the active-policy aggregate advances from its own
+ * current revision. StateLedger rechecks both at commit time.
  */
 import type {
   ActivateCoordinationPolicyCommand,
@@ -60,18 +53,18 @@ import {
   initialDesignDecisionRefFor,
   initialDesignProposalDigest,
   coordinationPolicyContentDigest,
-  P15_MAX_OPTIONS,
-  P15_OPTION_SUMMARY_MAX_BYTES,
-  P15_COORDINATION_BUDGET_MAX,
-  P15_COORDINATION_POLICY_REVISION,
+  INITIAL_DESIGN_MAX_OPTIONS,
+  INITIAL_DESIGN_OPTION_SUMMARY_MAX_BYTES,
+  COORDINATION_AUTONOMOUS_REWORK_BUDGET_MAX,
+  COORDINATION_POLICY_REVISION_V1,
 } from "../../contracts/human-role-collaboration.js";
-import { buildP115ProposalFold, buildP115DecisionFold, buildP115PolicyInstallFold, buildP115PolicyActivateFold } from "./records/human-role-collaboration.js";
-// RW-11：角色矩阵是协调策略正文的一部分，安装期形状校验与 RoleSpecRevision 的校验器共用同一份实现。
+import { buildInitialDesignProposalRecordCommit, buildInitialDesignDecisionRecordCommit, buildCoordinationPolicyInstallRecordCommit, buildCoordinationPolicyActivateRecordCommit } from "./records/human-role-collaboration.js";
+// 角色矩阵是协调策略正文的一部分，安装期形状校验与 RoleSpecRevision 的校验器共用同一份实现。
 import { validateCoordinationRoleMatrix } from '../../contracts/validation/role.js';
 import type { LedgerCommitReceipt, SnapshotResult } from "../../contracts/ledger.js";
 import type { ControlEngineDeps } from "./control-engine.js";
 
-/** LANE-A implementation of the four frozen P1-15 command handlers. */
+/** Implementation of the four versioned human-collaboration and coordination-policy handlers. */
 export class HumanRoleCollaborationEngineImpl {
   constructor(private readonly deps: ControlEngineDeps) {}
 
@@ -116,7 +109,7 @@ async function recordProposalImpl(
 
   const eventId = deps.eventId();
   const occurredAt = deps.now();
-  const batch = buildP115ProposalFold(command, { eventId, occurredAt });
+  const batch = buildInitialDesignProposalRecordCommit(command, { eventId, occurredAt });
   const receipt = await deps.ledger.commit(batch);
   if (receipt.status === "committed") {
     return {
@@ -160,7 +153,7 @@ async function recordDecisionImpl(
 
   const eventId = deps.eventId();
   const occurredAt = deps.now();
-  const batch = buildP115DecisionFold(command, { eventId, occurredAt });
+  const batch = buildInitialDesignDecisionRecordCommit(command, { eventId, occurredAt });
   const receipt = await deps.ledger.commit(batch);
   if (receipt.status === "committed") {
     return {
@@ -187,8 +180,8 @@ async function installPolicyImpl(
   }
 
   // Guard 2: content digest must match the command-provided digest (zero write).
-  // 摘要口径固定用 P15_COORDINATION_POLICY_REVISION（=1）：一个 policyId 只有一份安装 revision。
-  const expectedDigest = coordinationPolicyContentDigest(payload.content, payload.policyId, P15_COORDINATION_POLICY_REVISION);
+  // 摘要口径固定用 COORDINATION_POLICY_REVISION_V1（=1）：一个 policyId 只有一份安装 revision。
+  const expectedDigest = coordinationPolicyContentDigest(payload.content, payload.policyId, COORDINATION_POLICY_REVISION_V1);
   if (payload.contentDigest !== expectedDigest) {
     return { status: "rejected", commandId: command.commandId, code: "digest_mismatch" };
   }
@@ -200,7 +193,7 @@ async function installPolicyImpl(
 
   const eventId = deps.eventId();
   const occurredAt = deps.now();
-  const batch = buildP115PolicyInstallFold(command, { eventId, occurredAt });
+  const batch = buildCoordinationPolicyInstallRecordCommit(command, { eventId, occurredAt });
   const receipt = await deps.ledger.commit(batch);
   if (receipt.status === "committed") {
     return {
@@ -229,7 +222,7 @@ async function activatePolicyImpl(
   }
   const revision = (targetResult.snapshot as CoordinationPolicyRevisionSnapshot);
 
-  // Guard 2: digest must match the installed revision (P1-02口径; zero write).
+  // Guard 2: digest must match the installed revision (zero write).
   if (
     revision.ref.projectId !== target.ref.projectId ||
     revision.policyId !== target.ref.policyId ||
@@ -247,7 +240,7 @@ async function activatePolicyImpl(
 
   const eventId = deps.eventId();
   const occurredAt = deps.now();
-  const batch = buildP115PolicyActivateFold(command, {
+  const batch = buildCoordinationPolicyActivateRecordCommit(command, {
     eventId,
     occurredAt,
     activeAggregateRevision: newActiveRevision,
@@ -309,8 +302,8 @@ function mapActivateRejected(receipt: LedgerRejected, commandId: string): Activa
 }
 
 // ------------------------------------------------------------------------ //
-// Inline shape validators (P1-15 commands have no contract validators yet;   //
-// these are the lane-A inline guards — all ZERO write on failure).          //
+// Inline shape validators (these commands have no contract validators yet).     //
+// these inline guards all produce ZERO writes on failure).                           //
 // ------------------------------------------------------------------------ //
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -369,7 +362,7 @@ function validateProposalShape(command: unknown): string[] {
     issues.push("proposal.options");
   } else {
     if (options.length < 2) issues.push("proposal.options.min2");
-    if (options.length > P15_MAX_OPTIONS) issues.push("proposal.options.max16");
+    if (options.length > INITIAL_DESIGN_MAX_OPTIONS) issues.push("proposal.options.max16");
     options.forEach((opt, idx) => {
       if (!isRecord(opt)) {
         issues.push("proposal.options[" + idx + "]");
@@ -378,7 +371,7 @@ function validateProposalShape(command: unknown): string[] {
       if (!isNonEmptyString(opt["optionId"])) issues.push("proposal.options[" + idx + "].optionId");
       if (!isNonEmptyString(opt["summary"])) issues.push("proposal.options[" + idx + "].summary");
       if (!isString(opt["impactDelta"])) issues.push("proposal.options[" + idx + "].impactDelta");
-      if (isString(opt["summary"]) && opt["summary"].length > P15_OPTION_SUMMARY_MAX_BYTES) issues.push("proposal.options[" + idx + "].summary.maxBytes");
+      if (isString(opt["summary"]) && opt["summary"].length > INITIAL_DESIGN_OPTION_SUMMARY_MAX_BYTES) issues.push("proposal.options[" + idx + "].summary.maxBytes");
     });
   }
   if (!isRecord(p["requestedBy"]) || !isString(p["requestedBy"]["kind"]) || !isString(p["requestedBy"]["id"])) issues.push("proposal.requestedBy");
@@ -467,7 +460,7 @@ function validateInstallShape(command: unknown): string[] {
   if (!isRecord(budget)) {
     issues.push("payload.content.budget");
   } else {
-    if (!isNumber(budget["maxAutonomousReworks"]) || budget["maxAutonomousReworks"] < 1 || budget["maxAutonomousReworks"] > P15_COORDINATION_BUDGET_MAX) {
+    if (!isNumber(budget["maxAutonomousReworks"]) || budget["maxAutonomousReworks"] < 1 || budget["maxAutonomousReworks"] > COORDINATION_AUTONOMOUS_REWORK_BUDGET_MAX) {
       issues.push("payload.content.budget.maxAutonomousReworks");
     }
     if (!isNumber(budget["maxClarifications"]) || budget["maxClarifications"] < 1 || budget["maxClarifications"] > 8) {
@@ -475,7 +468,7 @@ function validateInstallShape(command: unknown): string[] {
     }
   }
   const allowed = content["allowed"];
-  // RW-10 人的暂停开关：allowed.inScopeRework 是运行时可读的授权位，因此取值必须是布尔
+  // 人的暂停开关：allowed.inScopeRework 是运行时可读的授权位，因此取值必须是布尔
   // （true=允许范围内的自动返工，false=人已停用，自动受理转人工且零写入）。
   // 这里只放宽这一个位；inScopeTesting 没有运行时消费者，继续要求 true——放宽它等于在没有
   // 判据的地方先降低安装期判据。
@@ -484,7 +477,7 @@ function validateInstallShape(command: unknown): string[] {
   if (!isRecord(scope) || !Array.isArray(scope["changesRequireHumanDecision"])) issues.push("payload.content.scope");
   const upgrade = content["upgrade"];
   if (!isRecord(upgrade) || upgrade["path"] !== "manual-decision") issues.push("payload.content.upgrade.path");
-  // RW-11：角色矩阵**可选**（既有正式来源没有这个字段，收紧会让它们失效），但一旦出现就必须完整：
+  // 角色矩阵**可选**（既有正式来源没有这个字段，收紧会让它们失效），但一旦出现就必须完整：
   // catalog 里每个 pin 都要有角色、正数 revision 与摘要，coordinator 必须指向已登记角色。
   // 「可选」不等于「角色已校验」——没有矩阵的项目沿用既有绑定语义，Control 不补默认目录。
   if (content["roles"] !== undefined) {

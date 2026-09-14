@@ -6,14 +6,14 @@ import type { ControlIntentRecordLedgerCommitV1, ControlAckRecordLedgerCommitV1 
 
 
 
-export function buildP110IntentSnapshot(intent: ControlIntentV1): ControlIntentSnapshot {
+export function buildControlIntentSnapshot(intent: ControlIntentV1): ControlIntentSnapshot {
   return { ref: controlIntentRefFor(intent.projectId, intent.workspaceId, intent.intentId), revision: 1, schemaVersion: 1, intent };
 }
 
 
 export function buildControlIntentRecordLedgerCommit(command: SubmitControlCommand, deps: { eventId: string; occurredAt: string }): ControlIntentRecordLedgerCommitV1 {
   const intent = command.payload.intent;
-  const snapshot = buildP110IntentSnapshot(intent);
+  const snapshot = buildControlIntentSnapshot(intent);
   return {
     commitKind: "control-intent-record",
     schemaVersion: 1,

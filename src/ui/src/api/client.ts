@@ -77,6 +77,8 @@ export function createApi(token: string) {
 
   return {
     token,
+    handoff: (scope: import('./types').GoalScope, input: { requestId: string; sourceRunId: string; reason: string }) => send('/api/real/handoff', { ...scope, ...input }),
+    cancelQuery: (scope: import('./types').GoalScope, queryJobId: string) => send('/api/real/queries/cancel', { ...scope, queryJobId }),
     semanticQuery: (scope: import('./types').GoalScope, payload: { requestId: string; question: string; responsePurpose?: 'reply'|'architecture'|'progress'; focusTaskId?:string }) => send('/api/real/queries', { ...scope, ...payload }),
     memoryView: (kind:'profile'|'project',scope:import('./types').Scope|null,options?:RequestOptions) => send(`/api/real/memory/${kind}/view`,scope??{},options) as Promise<import('../../../contracts/memory').MemoryReadResult>,
     memoryMaintain: (kind:'profile'|'project',scope:import('./types').Scope|null,payload:{requestId:string;expectedRevision:number;edits:unknown[]}) => send(`/api/real/memory/${kind}/maintain`,{...scope,...payload}) as Promise<import('../../../contracts/memory').MemoryReceipt>,
@@ -101,6 +103,8 @@ export function createApi(token: string) {
     terminals: (scope: import('./types').Scope, options?: RequestOptions) => query('/api/terminals', scope, options) as Promise<{ sessions: import('./types').TerminalSession[] }>,
     terminalOutput: (scope: import('./types').Scope, sessionId: string, after: number, options?: RequestOptions) =>
       query('/api/terminals/output', { ...scope, sessionId, after }, options) as Promise<import('./types').TerminalOutput>,
+    architectureReviews: (scope:import('./types').Scope,options?:RequestOptions)=>send('/api/real/architecture-reviews/view',scope,options) as Promise<import('../../../contracts/architecture-review').ArchitectureReviewView>,
+    decideArchitecture: (scope:import('./types').Scope,input:Record<string,unknown>,options?:RequestOptions)=>send('/api/real/architecture-reviews/decide',{...scope,...input},options) as Promise<import('../../../contracts/architecture-review').ArchitectureReviewReceipt>,
     modelSettings: (options?: RequestOptions) => request<import('./types').ModelSettingsView>('/api/model-settings', options),
     modelSettingsSave: (body: { provider: string; model: string; baseUrl: string; apiKey: string }, options?: RequestOptions) =>
       send('/api/model-settings', body, options) as Promise<import('./types').ModelSettingsView>,
@@ -171,7 +175,7 @@ export function createApi(token: string) {
       send('/api/real/rework/status', scope, options) as Promise<{ view: import('../../../contracts/rework/drive.js').ReworkDriveViewV1; lastDrive: import('../../../contracts/rework/drive.js').ReworkDriveResultV1 | null }>,
     /** Ask the server what it recorded for a request whose response we lost. */
     /**
-     * 计划变更只读视图（RW-09）：提案／受理决定／Goal revision／任务处置行。
+     * 计划变更只读视图：提案／受理决定／Goal revision／任务处置行。
      *
      * 后端直接转发既有投影 ReadModelIndex.planChangeView，因此界面拿到的是与账本事件同源的事实，
      * 不是第二份重算结果；`empty` 与 `unavailable` 是后端给出的两种"读不到"的原因，界面照实显示。

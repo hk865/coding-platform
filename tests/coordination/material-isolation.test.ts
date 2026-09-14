@@ -1,6 +1,6 @@
 /** A02: real Control/SQLite/Vault routing and exact-principal shared-body isolation. */
 import { expect, it } from 'vitest';
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { setupP107Scenario } from '../../tests/coordination/runtime-concurrency-fixture.js';
 import { P107_PROJECT as P, P107_WORKSPACE as W, P107_SCHEMA as AT } from '../../tests/contract-support/fixtures/workspace-fixtures.js';
 import { P107_GOAL as G, P107_TASK_READER_A, P107_TASK_READER_B, P107_TASK_WRITER_B, P107_ROLE_BINDING_READER_V1 as ROLE, p107PlanRef } from '../../tests/contract-suite/p1-07-harness.js';
@@ -13,7 +13,7 @@ import { sha256Hex } from '../../src/contracts/fingerprint.js';
 
 it('three real Works share one formally routed body: two authorized readers, third denied even after identical-body put and SQLite reopen', async () => {
   const source = { async capture(q: any) { return {status:'sourced' as const,pin:{schemaVersion:1 as const,projectId:q.projectId,workspaceId:q.workspaceId,sourceSet:q.sourceSet,identity:{workspace:'cm1a-a02-isolated',commit:null},manifestDigest:sha256Hex('source-a02')}}; } };
-  let h = await createPersistentSqliteHarness({deps:{clock:()=>AT},sourceApplicability:source});
+  let h = await createPersistentPlatform({deps:{clock:()=>AT},sourceApplicability:source});
   try {
     await setupP107Scenario(h);
     const actors:any[]=[];

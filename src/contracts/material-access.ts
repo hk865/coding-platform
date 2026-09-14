@@ -16,7 +16,7 @@
  *     the vault never judges business truth).
  *
  * WHY THIS EXISTS (the gap it closes):
- *   P1-03 froze open() as OWNER-ONLY (the recorded owner RunRef, or a P1-09
+ *   dispatch froze open() as OWNER-ONLY (the recorded owner RunRef, or a query
  *   QueryRunRef). That is deny-by-default and stays the default. But every
  *   later product loop needs a run to read material ANOTHER run produced:
  *   a reviewer reading the executed run's bundle, a successor reading a
@@ -26,7 +26,7 @@
  *   copied ("laundered") into a new artifact owned by the consumer, which loses
  *   the original provenance and the original authorization history.
  *
- * FROZEN SEMANTICS (v1):
+ * VERSIONED SEMANTICS (v1):
  *   - A grant is immutable (created exactly once per grantId) and is registered
  *     through ControlEngine.grantMaterialAccess. The vault reads grants through
  *     an injected resolver; the vault never depends on ControlEngine.

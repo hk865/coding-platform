@@ -14,7 +14,7 @@
 import type { GoalScope, Scope } from '../api/types';
 
 export const PENDING_KEY_PREFIX = 'agent-platform.workbench.pending.v1';
-export type PendingKind = 'goal' | 'real-task' | 'command-check' | 'verification-round' | 'independent-review' | 'fixture-query' | 'semantic-query' | 'history-grant' | 'history-revoke' | 'exploration-plan' | 'exploration-run' | 'exploration-review';
+export type PendingKind = 'handoff' | 'goal' | 'real-task' | 'command-check' | 'verification-round' | 'independent-review' | 'fixture-query' | 'semantic-query' | 'history-grant' | 'history-revoke' | 'exploration-plan' | 'exploration-run' | 'exploration-review';
 export type PendingRecord = { requestId: string; fingerprint: string; kind: PendingKind; scopeKey: string; createdAt: string };
 export type PendingMap = Record<string, Record<string, PendingRecord>>;
 

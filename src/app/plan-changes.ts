@@ -1,5 +1,5 @@
 /**
- * RW-09 计划变更只读入口（应用层）。
+ *  计划变更只读入口（应用层）。
  *
  * 职责边界（为什么这样拆）：
  *   - **唯一数据来源是既有投影** `ReadModelIndex.planChangeView`（返回提案／人的决定／
@@ -10,7 +10,7 @@
  *     界面不能把后者说成前者（否则等于凭空宣布"没有变更"）。
  *
  * Authority:
- *   - dev_docs/decisions/0003-rework-role-spec-architecture-reconciliation.md D1-5
+ *   - dev_docs/decisions/0003-rework-role-spec-architecture-reconciliation.md
  *     （受理后的提案与决定要在界面与时间线可见）；
  *   - ARCHITECTURE.md「投影、校验与语义判断」与全局不变量 #4（UI 只是 ReadModel 的消费者，
  *     不接受直接状态写入）。

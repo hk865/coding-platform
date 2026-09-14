@@ -10,7 +10,7 @@ import { ControlReworkDisposition } from '../../src/control/control-engine/rewor
  */
 import type { StateLedger } from '../../src/contracts/ledger.js';
 import type { PlanRevisionSnapshot } from '../../src/contracts/plan.js';
-import type { ReworkIssueReadPort } from '../../src/harness/rework-composition.js';
+import type { ReworkIssueReadPort } from '../../src/composition/rework-composition.js';
 import type { CommandCheckRecord } from '../../src/contracts/verification-service.js';
 import type { VerificationRoundCoverage, VerificationRoundRecord } from '../../src/contracts/verification-round.js';
 import type { VerificationRoundScope } from '../../src/contracts/verification-context.js';

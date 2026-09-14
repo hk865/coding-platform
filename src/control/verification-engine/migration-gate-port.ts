@@ -1,7 +1,7 @@
 /**
  * VerificationEngine.MigrationGatePort — source guards for migration checking.
  *
- * FROZEN surface (lane-b field extension): run(input) returns
+ * Versioned migration-gate surface: run(input) returns
  *   unsupported -> source guards passed, but no actual migration check/evidence
  *                  provider has been configured;
  *   fail  -> { status, gate, reasons } on workspace revision mismatch or a
@@ -10,7 +10,7 @@
  *            source baseline moved (must re-propose from the new active ref);
  *
  * The port is READ-ONLY: never writes the ledger. The recorded gate (and any
- * evidence chain) belongs to Control / the P1-14 integrator.
+ * evidence chain) belongs to Control / the baseline evolution integrator.
  *
  * Matching source versions proves applicability only. It must never fabricate
  * PASS or an Evidence reference. Historical identity helpers remain compatible.

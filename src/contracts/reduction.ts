@@ -92,7 +92,7 @@ export type TaskReductionInput = {
   evidence: EvidenceV1[];
   /** The task's latest run facts (none if never claimed). */
   runSignals: RunSignal[];
-  /** Findings block satisfaction per the policy; P1-04 has no Findings
+  /** Findings block satisfaction per the policy; verification has no Findings
    * mechanism yet, so the caller always passes []. */
   unresolvedFindings: { findingId: string; severity: string; status: string }[];
   /** outcome_unknown / high-risk side effects (from run facts) block satisfaction. */
@@ -188,7 +188,7 @@ export function reduceTaskFingerprint(command: ReduceTaskCommand): CommandFinger
 }
 
 // ------------------------------------------------------------------------ //
-// Event (P1-04 v1)                                                           //
+// Event (verification v1)                                                           //
 // ------------------------------------------------------------------------ //
 
 export type TaskReductionUpdatedEvent = {

@@ -5,7 +5,7 @@ import { ProjectSourceIndex } from './project-source-index.js';
 import { readSourceIdentity } from './source-identity.js';
 import { captureArchitectureSource } from './architecture-source.js';
 export async function workspaceProjectIndex(root:string) {
-  // RC-02：拒绝前缀只从本 Module 的 denied-prefixes.ts 取（唯一权威），不再自带字面量。
+  // 路径边界归位：拒绝前缀只从本 Module 的 denied-prefixes.ts 取（唯一权威），不再自带字面量。
   const ws=await WorkspaceSandbox.create(root,{deniedPrefixes:[...WORKSPACE_DENIED_PREFIXES]});
   const policy=new DefaultPermissionPolicy({hiddenPrefixes:ws.deniedPrefixes});
   const allowed=(path:string)=>policy.evaluate({runId:'source-inspection',callId:'source-read',tool:'read',effectClass:'read_only',arguments:{path},paths:[path],cwd:null,commandPreview:null,

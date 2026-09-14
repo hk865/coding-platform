@@ -1,8 +1,8 @@
 /**
- * P1-14 ArchitectureReconciler.BaselineEvolutionPort — deterministic candidate
- * materialization (lane B implementation).
+ * ArchitectureReconciler.BaselineEvolutionPort — deterministic candidate
+ * materialization.
  *
- * FROZEN surface: materialize(proposalRef) returns
+ * VERSIONED surface: materialize(proposalRef) returns
  *   materialized -> { status, candidate } (candidate deterministically derived
  *     from the proposal + its EXACT source baseline; digest recomputed);
  *   needs_material -> { status, gaps } (reserved: materialization may require
@@ -11,10 +11,10 @@
  *     invalid_request.
  *
  * The port is READ-ONLY: it NEVER writes the ledger. The candidate record and
- * its immutable revision are committed by Control (lane A / the P1-14
+ * its immutable revision are committed by Control (the baseline evolution
  * integrator); this port only computes the candidate fact.
  *
- * Judgment mirrors lane A: load the proposal, verify the project's CURRENT
+ * Judgment mirrors Control admission: load the proposal, verify the project's CURRENT
  * active baseline still equals the proposal source (else source_stale — the
  * source moved and the candidate must be re-proposed), and recompute the
  * candidate digest and check it equals the proposal's expectedCandidateDigest.

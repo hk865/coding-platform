@@ -1,3 +1,4 @@
+import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
 import { randomUUID } from 'node:crypto';
 import type { StateLedger, GoalSnapshot } from '../../contracts/ledger.js';
 import type { ControlEngine } from '../../contracts/modules.js';
@@ -10,32 +11,8 @@ import { buildDispatchClaimCommand } from '../../contracts/commands/dispatch.js'
 import { ROLE_SPEC_REVISION } from '../../contracts/role-spec.js';
 import { issueMatrixRoleBinding } from './role-spec-read.js';
 
-/**
- * RW-14（M3）：产品自带的人工派发入口绑定的**已登记角色**。
- *
- * 为什么必须换掉原来的 `template-short-lived-runner`：那个 templateId 从来不在任何角色矩阵的
- * catalog 里，templateRevision（'2026-09-05'）也不是角色规格 revision 的十进制写法。于是
- * **只要**项目装上一份含 roles 的协调策略，这条入口的每条 claim 都必然被拒（role_not_registered／
- * role_spec_stale），返回 `ineligible` 且零写入——一个人装上角色矩阵就会把人工真实运行与探索
- * 入口一起打断。这不是守卫的问题（守卫按 D4-2 正确执行），而是这条入口的工作身份没有落在
- * 角色目录里。
- *
- * 为什么选「升级为已登记角色」而不是「新登记一份等价的短生命周期规格」：
- *   - 角色矩阵是**项目授权的角色目录**，人工派发入口做的是真实工作，它的身份本来就该是目录里的
- *     一个角色，而不是目录必须额外知道的一个派发实现细节；
- *   - operator 入口有两种模式，声明权限完全不同（写入运行 read/write/shell + 写范围；探索运行
- *     read-only）。合成一份短生命周期规格就必须把权限上界放宽到「可写」，只读探索运行的规格上界
- *     会因此变成比它实际需要更宽的一份授权；分开绑定之后，只读入口的上界就是只读。
- *
- * 语义没有改变的部分：仍是一次性的、绑定到单个 Task/Run 的运行；没有新增常驻角色、没有新增
- * 授权来源。绑定只是从「自由字符串」升级为「可被矩阵 pin 校验的、版本化的角色规格引用」。
- *
- * 下面的常量与本文件导出的 operatorEntryBinding 现在表达的是**入口的角色意图**，以及
- * **没有矩阵时的既有绑定**（fallback）。真正提交给 claim 的绑定由当前生效矩阵签发
- * （见 role-spec-read.ts 的 issueMatrixRoleBinding，dispatch() 里调用）：矩阵登记了这个角色时，
- * templateId 与 templateRevision 直接取自矩阵 pin；没有矩阵（或矩阵没登记该角色）时逐字使用
- * 下面这份既有绑定 —— 既不编造角色目录，也不放松 claim 守卫。
- */
+/** Production operator entries use registered roles. Ordinary execution and
+ * readonly exploration retain separate permission ceilings and matrix bindings. */
 export const OPERATOR_ENTRY_ROLES = { develop: 'executor', explore: 'investigator' } as const;
 
 /**
@@ -45,7 +22,7 @@ export const OPERATOR_ENTRY_ROLES = { develop: 'executor', explore: 'investigato
  * templateRevision 写成角色规格 revision 的十进制形式：这是 role-spec.ts 的既有编码约定
  * （claim 声明的 revision 必须正好等于矩阵 pin 的 revision）。templateId 一定是矩阵可见的角色 id，
  * 因此这份绑定在「有矩阵」与「没有矩阵」两种项目上都能被受理——没有矩阵时守卫沿用既有语义，
- * 有矩阵时它退化为 fallback，真正提交的绑定由矩阵 pin 签发（RW-18，见角色规格只读解析里的
+ * 有矩阵时它退化为 fallback，真正提交的绑定由矩阵 pin 签发（见角色规格只读解析里的
  * issueMatrixRoleBinding）。
  */
 export function operatorEntryBinding(mode: RunSpec['mode']): {
@@ -76,7 +53,7 @@ export class OperatorTaskDispatch implements OperatorDispatchPort {
   constructor(private readonly deps: {
     ledger: Pick<StateLedger, 'load'>;
     control: Pick<ControlEngine, 'claimTask' | 'submitControl' | 'runFact'>;
-    runtime: RuntimePreparationPort & { cancel(ref: RunRef): Promise<{ status: string; events?: import('../../contracts/dispatch.js').RuntimeEventV1[] }> };
+    runtime: RuntimePreparationPort & { cancel?(ref: RunRef): Promise<{ status: string; events?: import('../../contracts/dispatch.js').RuntimeEventV1[] }> };
     planning: Pick<OperatorPlanningPort, 'ensureTaskPlan'>;
     launch(scope: ExplorationScope, runId: string): void;
     now(): string;
@@ -117,7 +94,7 @@ export class OperatorTaskDispatch implements OperatorDispatchPort {
     await this.assertScope(scope);
     const ref = this.ref(scope, runId), found = await this.deps.ledger.load(ref);
     if (found.status !== 'found') throw Error('当前目标不存在此运行');
-    const id = 'cancel-' + runId;
+    const id = 'cancel-' + sha256Hex(canonicalJson(ref)).slice(0, 32);
     const at = this.deps.now();
     if ((found.snapshot as RunSnapshot).controlState?.desiredState !== 'cancelled') {
     const result = await this.deps.control.submitControl({ commandId: id, commandType: 'SubmitControl', schemaVersion: 1,
@@ -129,6 +106,7 @@ export class OperatorTaskDispatch implements OperatorDispatchPort {
         acks: [], resumeFromIntentRef: null, submittedAt: at, updatedAt: at } } });
     if (result.status !== 'committed') throw Error('Cancellation was not recorded: ' + result.code);
     }
+    if (!this.deps.runtime.cancel) return { status: 'unsupported', message: '取消意图已持久记录；此 Runtime 未提供取消能力，执行结果尚未确认。' };
     const cancelled = await this.deps.runtime.cancel(ref);
     for (const event of cancelled.events ?? []) {
       const current = await this.deps.ledger.load(ref);

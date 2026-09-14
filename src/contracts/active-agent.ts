@@ -1,6 +1,6 @@
 /**
- * ActiveAgentView + TaskDetail run-state contracts (P1-03 ReadModel surface).
- * Authority: modules/data/read-model-index.md + ticket acceptance — views are
+ * ActiveAgentView + TaskDetail run-state contracts (dispatch ReadModel surface).
+ * Authority: modules/data/read-model-index.md + versioned contract — views are
  * rebuildable event projections; freshness uses the opaque CommitCursor
  * (not_ready != not_found); the run state NEVER originates from a command.
  */

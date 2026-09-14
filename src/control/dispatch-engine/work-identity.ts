@@ -1,24 +1,24 @@
 /**
- * RW-12／RW-13 DispatchEngine — 真实 Run 的持久工作身份（ADR 0003 D4 后半）。
+ * DispatchEngine — 真实 Run 的持久工作身份。
  *
  * 职责：在**派发准备阶段**为真实 Run 解析／建立／接续 durable work identity。写入只经既有
  * ControlEngine 命令面（WorkRecordPort.bindWorkContext / linkWorkRun），DispatchEngine
  * 自己不提交账本、不新增聚合、不新增事件种类。
  *
- * ── 已受理的协作后继：**不解析**，直接用 admission 固定的 Work（R7）────────────────
+ * ── 已受理的协作后继：**不解析**，直接用 admission 固定的 Work（工作身份规则）────────────────
  *
  * 普通任务的工作身份可以按 (goal, task) 解析（下面 1-3）。但**已经受理的协作后继**不行：
  * `communication-successor-claim` 已经在同一个事务里定死了这次执行属于哪个 Work
  * （CommunicationAdmission.workContextRef，随唯一调度记录写进 DispatchIntentV1.admittedWorkRef）。
  * 再按 (goal, task) 解析一次是**错的**：解析用的是返工替换链的起源任务，链上换过承担者时
  * 起源任务与「等待所属的 Work 的 task」不是同一个，于是后继会被 link 到另一个 Work ——
- * 等待、请求、订阅、投递都留在原来的 Work 上，后继却看不见它们（R7）。
+ * 等待、请求、订阅、投递都留在原来的 Work 上，后继却看不见它们（工作身份规则）。
  * 因此带 admittedWorkRef 的 intent 走 `ensureAdmittedWorkIdentity`：只读、只复核、只 link。
  *
  * ── 先解析、后建立（一段工作只有一个持久身份）────────────────────────────
  *
  * 顺序（不可颠倒）：
- *   1. 把本次派发任务在**返工替换链**上回溯到起源承担者 originTaskId（既有 RW-12 规则，见下）；
+ *   1. 把本次派发任务在**返工替换链**上回溯到起源承担者 originTaskId（既有工作身份起源规则，见下）；
  *   2. 向 ControlEngine 的权威解析面 resolveTaskWorkIdentity(project, workspace, goal, originTaskId)
  *      询问「这个任务在账本里已经有工作身份了吗」：
  *        resolved    → **复用**那条身份（它可能就是别的主体建立的，workId 与推导 id 不同也照样复用），
@@ -29,17 +29,17 @@
  *   3. 无论哪条路径，最终都会核对「写进去／复用到的身份确实描述同一段工作」，不一致即拒绝派发。
  *
  * ── 唯一性的权威在 Control／账本，派发面只是消费者 ─────────────────────────
- * 上面 1-3 是**调用方约定**，它挡不住别的调用方，也不构成并发保证。RC-03 把唯一性放到权威处：
+ * 上面 1-3 是**调用方约定**，它挡不住别的调用方，也不构成并发保证。任务工作身份唯一性规则把唯一性放到权威处：
  *   - ControlEngine.bindWorkContext 的守卫：同一 (项目, 工作区, 目标, 任务) 已有身份且 workId
  *     不同 → already_bound（零写，回执带既有身份）；
  *   - StateLedger 的提交语义：work-context-bind 在同一个事务里占用该任务的身份槽，跨连接、
  *     跨进程、跨重启都成立。
  * 派发面对这个新拒绝码的处置是**重新解析并复用**既有身份（绝不另建），见下 4。
  *
- * 为什么必须这样：身份是**不可变的持久事实**。RW-12 只在派发收口按推导规则建立身份，
+ * 为什么必须这样：身份是**不可变的持久事实**。派发面只在派发收口按推导规则建立身份，
  * 于是同一段工作可以有两个身份——人／场景显式 bindWorkContext 建立的那条，和派发面按规则
  * 新建的那条（同一 (goal, task) 两条 WorkContextBinding）。那会让「接续谁」「继承谁」没有唯一
- * 答案，也会让同一段工作的历史理由分裂在两处。RW-13 把「哪个 workId 代表这个任务」交给
+ * 答案，也会让同一段工作的历史理由分裂在两处。ControlEngine 把「哪个 workId 代表这个任务」交给
  * ControlEngine 的权威解析面（唯一权威，见 src/control/control-engine/work-identity-resolution.ts），
  * 派发面只负责「解析不到时才建立」和「复用后只做 link」。
  *
@@ -48,7 +48,7 @@
  *   originTaskId = 本次派发任务在**返工替换链**上的起源承担者：
  *       从 intent.taskId 出发，在本次 Run 被认领时的那份 PlanRevision（intent.planRef）里
  *       反复寻找「replacedByTaskId === 当前任务」的任务向上回溯，直到没有前驱为止
- *       （ADR 0003 D1 规定：被取代的任务保留 disposition=superseded 并记录 replacedByTaskId，
+ *       （被取代的任务保留 disposition=superseded 并记录 replacedByTaskId，
  *        同一义务、同一验收语义，只换承担者）。
  *   workId = "work-" + sha256(canonicalJson([projectId, workspaceId, goalId, originTaskId]))[0..32]
  *
@@ -60,14 +60,14 @@
  *
  * 为什么这样定义：
  *   1. **一段连贯工作只能有一个身份**。human/context-management.md 明确「调查、实现、测试及相关
- *      返工可以属于同一工作」；ADR D1 又把返工表达成「只换承担者的新任务」，所以替换链必须收敛到
+ *      返工可以属于同一工作」；计划变更把返工表达成「只换承担者的新任务」，所以替换链必须收敛到
  *      同一个 workId，否则每次返工都会丢掉前面已经花掉的推理解释。
  *   2. **纯函数于 canonical 计划事实**：不掺随机 id、不掺 runId、不掺时间。同一任务在任何时刻、
  *      任何进程、重启之后都算出同一个 workId。重复派发时先解析到既存身份，因此**不可能**产生
  *      第二个工作身份（解析面对同一任务永远给同一个答案）。
  *   3. **与运行标识分离**：一个工作可以有多个 Run（换手、接续、重新派发）。新 Run 只是被
  *      linkWorkRun 追加进 linkedRunRefs，而不是新建身份。WorkContextBinding 本身没有结束命令
- *      （P1-16 bind-once），所以「接续」就是 link，不需要新状态。
+ *      （context continuity bind-once），所以「接续」就是 link，不需要新状态。
  *   4. 计划读不到时回退到「任务自身即起源」（chainResolved=false）。计划不可读时
  *      ContextCompiler 组装本来就返回 needs_material、Run 不会启动，所以这个回退不会把一个
  *      错误的身份写进账本；它只是让失败路径保持零写入（身份建立在组装成功之后，见下）。
@@ -148,7 +148,7 @@ export async function ensureWorkIdentity(
   deps: WorkIdentityDeps,
   intent: DispatchIntentV1,
 ): Promise<WorkIdentityOutcome> {
-  // 0. 已受理的协作后继：身份由 admission 固定，**不得**重新解析（R7）。
+  // 0. 已受理的协作后继：身份由 admission 固定，**不得**重新解析（工作身份规则）。
   if (intent.admittedWorkRef !== undefined) {
     return ensureAdmittedWorkIdentity(deps, intent, intent.admittedWorkRef);
   }
@@ -160,7 +160,7 @@ export async function ensureWorkIdentity(
   //    派发都会命中同一个身份（这正是「一段工作只有一个身份」的判据）。
   //    已知边界：解析面按 binding.taskId 精确匹配。若有人把身份显式声明在**返工后继任务**上
   //    （而不是链的起源任务），本次派发仍按起源任务解析／建立，两条身份都按各自 workId 保留可读；
-  //    这不改写任何事实，但那段工作会暂时分裂在两个身份里——属于历史不一致，本票不猜、不合并。
+  //    这不改写任何事实，但那段工作会暂时分裂在两个身份里——属于历史不一致，当前实现不猜、不合并。
   const resolution = await deps.control.resolveTaskWorkIdentity({
     projectId: scope.projectId,
     workspaceId: scope.workspaceId,
@@ -180,7 +180,7 @@ export async function ensureWorkIdentity(
   // 只有 absent 路径才允许使用推导规则，且推导 id 只是兜底，不是身份的唯一来源。
   let workId = resolution.status === 'resolved' ? resolution.binding.workId : workIdFor(scope, origin.originTaskId);
 
-  // 三次尝试（RC-03 起由两次放宽到三次）：这三条都是**并发**路径，不是重试循环——
+  // 为收敛 already_bound 竞争，最多执行三次即时尝试；这三条都是**并发**路径，不是定时重试循环——
   //   1) link 的 CAS 先被另一条路径推进 → revision_conflict，重读一次即可；
   //   2) bind 的 CAS 冲突 → 重读一次；
   //   3) bind 被权威唯一性守卫拒绝（already_bound）→ 重新解析并复用既有身份，再用剩下一次机会 link。
@@ -294,7 +294,7 @@ export async function ensureWorkIdentity(
 /**
  * 已受理的协作后继：**只**消费 admission 固定的 Work。
  *
- * 与普通任务路径的区别（这是 R7 的修法）：
+ * 与普通任务路径的区别（这是工作身份规则的修法）：
  *   - **不**调用 resolveTaskWorkIdentity（不按 (goal, task) 解析、不推导 workId）；
  *   - **不**建新身份 —— 身份已经由 `communication-successor-claim` 与 admission 在同一事务里固定；
  *   - 只做「读 + 复核 + link 本 Run」，复核失败即拒绝派发（零写入，Run 不启动）。

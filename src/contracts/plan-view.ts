@@ -1,5 +1,5 @@
 /**
- * Plan/Task View contracts — P1-02 ReadModel projection surface.
+ * Plan and Task View contracts for the ReadModel projection surface.
  * Authority: dev_docs/interfaces/goal-view.md freshness semantics extended to
  * Plan Graph / Task Detail (opaque CommitCursor; not_ready != not_found),
  * modules/data/read-model-index.md (views are rebuildable event projections).

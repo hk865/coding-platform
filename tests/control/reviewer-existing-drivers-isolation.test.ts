@@ -1,7 +1,8 @@
+import { DispatchEngineImpl } from '../../src/control/dispatch-engine/dispatch-engine.js';
 import { describe, expect, it } from 'vitest';
 import { InMemoryLedger } from '../../src/data/state-ledger/in-memory-ledger.js';
 import { SqliteStateLedger } from '../../src/data/state-ledger/sqlite-ledger.js';
-import { HandoffDriveEngineImpl } from '../../src/control/dispatch-engine/handoff-drive.js';
+import { HandoffDriveEngineImpl } from '../../src/control/dispatch-engine/handoff/handoff-drive.js';
 import { WorkspaceDriveEngineImpl } from '../../src/control/dispatch-engine/workspace-drive.js';
 import { buildDispatchClaimCommand } from '../../src/contracts/commands/dispatch.js';
 import { ROLE_BINDING_FIXTURE_V1 } from '../../src/fixtures/dispatch-fixtures.js';
@@ -27,7 +28,7 @@ for (const storage of ['memory', 'sqlite'] as const) describe('review isolation 
         },
       },
     });
-    const parallel = new WorkspaceDriveEngineImpl({
+    const parallel = new WorkspaceDriveEngineImpl(new DispatchEngineImpl({
       ledger, control: h.control, runtime, now: () => at,
       contextCompiler: {
         assemble: async request => {
@@ -35,7 +36,7 @@ for (const storage of ['memory', 'sqlite'] as const) describe('review isolation 
           return { status: 'needs_material', gaps: [], selectedRefs: [] };
         },
       },
-    });
+    }));
     const trigger = { schemaVersion: 1 as const, projectId: scope.projectId, goalId: scope.goalId, reason: 'review-isolation', maxIntents: 1 };
     const empty = { scanned: 0, started: 0, completed: 0, pendingRemaining: 0, failures: [] };
     expect(await handoff.driveHandoff(trigger)).toEqual(empty);
@@ -54,14 +55,20 @@ for (const storage of ['memory', 'sqlite'] as const) describe('review isolation 
     const ordinary = all[1]!;
     for (let i = 0; i < 3; i++) {
       const handed = await handoff.driveHandoff(trigger);
-      expect(handed).toMatchObject({ scanned: 0, started: 0, pendingRemaining: 1 });
-      expect(handed.failures).toHaveLength(1);
-      expect(handed.failures[0]).toMatchObject({ code: 'not_a_replacement', outboxRef: ordinary.ref });
-      expect(await parallel.driveParallel(trigger)).toMatchObject({ scanned: 1, started: 0, pendingRemaining: 1 });
+      // Replacement eligibility is selected before limit; an ordinary intent
+      // does not occupy this consumer's window or become a handoff failure.
+      expect(handed).toEqual(empty);
+      expect(await parallel.driveParallel(trigger)).toMatchObject({ scanned: i === 0 ? 1 : 0, started: 0, pendingRemaining: 1 });
     }
     expect(handoffSelections).toEqual([]);
-    expect(parallelSelections).toEqual(Array(3).fill('ordinary-other-task'));
-    expect(await ledger.pendingDispatchIntents(10)).toEqual(all);
+    expect(parallelSelections).toEqual(['ordinary-other-task']);
+    const after = await ledger.pendingDispatchIntents(10);
+    // The legacy adapter now observes ordinary durable backoff. Review isolation
+    // is unchanged: no review Context is assembled and its exact record is intact.
+    expect(after.find(entry => entry.intent.work?.kind === 'review')).toEqual(all[0]);
+    const delayed = after.find(entry => entry.intent.runRef.runId === 'ordinary-other-task')!;
+    expect(delayed.intent).toEqual(ordinary.intent);
+    expect(delayed.schedule).toMatchObject({ attemptCount: 1, quarantined: false });
     if ('close' in ledger) await ledger.close();
   });
 });

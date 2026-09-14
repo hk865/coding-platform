@@ -1,7 +1,7 @@
 
 /** P1-15 shared fixtures: initial-design + coordination-policy builders + folds. */
 
-import { initialDesignProposalDigest, coordinationPolicyContentDigest, P15_COORDINATION_POLICY_REVISION, type InitialDesignProposalV1, type InitialDesignDecisionV1, type CoordinationPolicyContentV1, type RecordInitialDesignProposalCommand, type RecordInitialDesignDecisionCommand, type InstallCoordinationPolicyCommand, type ActivateCoordinationPolicyCommand } from "../../../src/contracts/human-role-collaboration.js";
+import { initialDesignProposalDigest, coordinationPolicyContentDigest, COORDINATION_POLICY_REVISION_V1, type InitialDesignProposalV1, type InitialDesignDecisionV1, type CoordinationPolicyContentV1, type RecordInitialDesignProposalCommand, type RecordInitialDesignDecisionCommand, type InstallCoordinationPolicyCommand, type ActivateCoordinationPolicyCommand } from "../../../src/contracts/human-role-collaboration.js";
 import { buildCoordinationPolicyActivateCommand, buildCoordinationPolicyInstallCommand } from "../../../src/contracts/commands/governance.js";
 
 export const P115_PROJECT = "proj-alpha";
@@ -70,7 +70,7 @@ export function buildP115InstallCommand(projectId: string = P115_PROJECT, deps: 
 }
 export function buildP115ActivateCommand(projectId: string = P115_PROJECT, deps: { commandId: string; expectedRevision: number } = { commandId: "p115-cmd-activate-policy", expectedRevision: 1 }): ActivateCoordinationPolicyCommand {
   return buildCoordinationPolicyActivateCommand(
-    { ref: p115PolicyRef(projectId), digest: coordinationPolicyContentDigest(P115_COORDINATION_POLICY_CONTENT, P115_POLICY, P15_COORDINATION_POLICY_REVISION) },
+    { ref: p115PolicyRef(projectId), digest: coordinationPolicyContentDigest(P115_COORDINATION_POLICY_CONTENT, P115_POLICY, COORDINATION_POLICY_REVISION_V1) },
     { commandId: deps.commandId, correlationId: deps.commandId + "-corr", submittedAt: P115_SCHEMA, projectId, actor: { kind: "human", id: "user-owner-1" }, idempotencyKey: deps.commandId + "-idem", expectedRevision: deps.expectedRevision },
   );
 }

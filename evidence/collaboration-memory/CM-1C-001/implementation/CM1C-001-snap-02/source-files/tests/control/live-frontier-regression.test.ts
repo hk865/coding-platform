@@ -1,0 +1,193 @@
+/**
+ * FIX-02: real ControlEngine regressions for current dependency facts.
+ * Both adapters execute Claim -> Fake RunPort -> Evidence -> Reduction;
+ * no direct writes to TaskReduction, PlanRevision or GoalPhase.
+ */
+import { afterEach, describe, expect, it } from "vitest";
+import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
+import { createPersistentSqliteHarness, type PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import {
+  prepareP105Scenario, toP1_05Harness, p105Evidence,
+  submitP105Evidence, p105ReduceTaskCommand, reduceGoalCommand,
+} from "../contract-suite/p1-05-harness.js";
+import { P105_PLAN_REVISION_FIXTURE_V1 as BASE } from "../contract-support/fixtures/goal-phase-fixtures.js";
+import { buildDispatchClaimCommand } from "../../src/fixtures/dispatch-fixtures.js";
+import { buildHandoffPacketV1, buildRecordHandoffCommand, buildClaimReplacementCommand } from "../contract-support/fixtures/handoff-fixtures.js";
+import { canonicalJson } from "../../src/contracts/fingerprint.js";
+import { goalPhaseRefFor } from "../../src/contracts/goal-phase.js";
+import { taskReductionRefFor } from "../../src/contracts/reduction.js";
+import { taskLeaseRefFor, type RunSnapshot } from "../../src/contracts/dispatch.js";
+import type { PlanRevisionSnapshot } from "../../src/contracts/plan.js";
+
+const SOURCE = "task-work-105", TARGET = "gate-module-105", GATE = "gate-goal-105";
+const AT = "2026-09-05T12:00:00.000Z";
+type Storage = "memory" | "sqlite";
+const cleanup: Array<() => Promise<void>> = [];
+afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
+
+async function setup(storage: Storage, independent = false) {
+  let event = 0;
+  const deps = { eventId: () => "fix02-event-" + ++event };
+  const raw = storage === "sqlite"
+    ? await createPersistentSqliteHarness({ deps })
+    : createInMemoryHarness({ deps });
+  if (isPersistent(raw)) cleanup.push(() => raw.cleanup());
+  const h = toP1_05Harness(raw);
+  const draft = structuredClone(BASE);
+  const keep = [SOURCE, TARGET, GATE, ...(independent ? ["task-optional-105"] : [])];
+  draft.tasks = draft.tasks.filter(t => keep.includes(t.taskId));
+  draft.obligations = draft.obligations.filter(o => o.taskIds.every(t => keep.includes(t)));
+  draft.taskHierarchy.parentOf = draft.taskHierarchy.parentOf.filter(e => keep.includes(e.childTaskId));
+  for (const task of draft.tasks) {
+    if (task.taskId === TARGET || task.taskId === "task-optional-105") task.taskKind = "work";
+    task.phase = "pending";
+    task.requirementLevel = "required";
+  }
+  for (const obligation of draft.obligations) obligation.requirementLevel = "required";
+  draft.executionDag.dependsOn = [
+    { taskId: TARGET, dependsOnId: SOURCE, requires: { kind: "output-contract", label: "verified upstream report" } },
+    { taskId: GATE, dependsOnId: TARGET, requires: { kind: "output-contract", label: "verified downstream report" } },
+  ];
+  // Change the submitted fixture only; the actual ApplyPlan command owns persistence.
+  const apply = h.applyPlan;
+  h.applyPlan = command => apply({ ...command, payload: { plan: draft } });
+  const sc = await prepareP105Scenario(h);
+  const loaded = await raw.ledger.load(sc.planRef);
+  if (loaded.status !== "found") throw Error("accepted plan missing");
+  return { raw, h, sc, plan: loaded.snapshot as PlanRevisionSnapshot };
+}
+type Scenario = Awaited<ReturnType<typeof setup>>;
+function isPersistent(raw: Scenario["raw"]): raw is PersistentSqliteHarness { return "reopen" in raw; }
+
+async function restart(s: Scenario): Promise<Scenario> {
+  if (!isPersistent(s.raw)) return s;
+  await s.raw.close();
+  const raw = await s.raw.reopen();
+  cleanup.push(() => raw.close());
+  return { ...s, raw, h: toP1_05Harness(raw) };
+}
+
+async function execute(s: Scenario, taskId: string) {
+  const receipt = await s.raw.claimTask(buildDispatchClaimCommand({
+    ...s.sc, commandId: "claim-" + taskId, correlationId: "claim-" + taskId,
+    idempotencyKey: "claim-" + taskId, submittedAt: AT, taskId,
+    runId: "run-" + taskId, attemptId: "attempt-" + taskId,
+    declaredPermissions: { tools: ["read"], writeScope: [] },
+  }));
+  expect(receipt.status).toBe("committed");
+  if (receipt.status !== "committed") throw Error(JSON.stringify(receipt));
+  const driven = await s.raw.drive({ reason: "fix02-regression" });
+  expect(driven.failures).toEqual([]);
+  expect(driven.completed).toBe(1);
+  const loaded = await s.raw.ledger.load(receipt.runRef);
+  if (loaded.status !== "found") throw Error("run missing");
+  const run = loaded.snapshot as RunSnapshot;
+  expect(run.status).toBe("ended");
+  expect(run.outcome).toBe("completed");
+  return run;
+}
+
+async function observe(s: Scenario, taskId: string, outcome: "PASS" | "FAIL", run: RunSnapshot) {
+  const obligation = s.plan.obligations.find(o => o.taskIds.includes(taskId))!;
+  await submitP105Evidence(s.h, s.sc, {
+    commandId: "evidence-" + taskId + outcome,
+    evidence: p105Evidence(s.sc, {
+      evidenceId: "evidence-" + taskId + outcome, kind: "observation", outcome,
+      taskId, runRef: run.ref, checkId: "fix02-static",
+      coverage: obligation.verificationRequirements.map(v => ({ obligationId: obligation.obligationId, requirementId: v.requirementId })),
+    }),
+  });
+  const receipt = await s.raw.reduceTask(p105ReduceTaskCommand(s.sc, {
+    commandId: "reduce-" + taskId + outcome, taskId, expectedRevision: 0,
+  }));
+  expect(receipt).toMatchObject({ status: "committed", phase: outcome === "PASS" ? "satisfied" : "failed" });
+  return receipt;
+}
+
+async function replacementCommand(s: Scenario, run: RunSnapshot) {
+  const envelope = run.envelope;
+  if (!envelope || !run.outcome) throw Error("ended run must retain envelope and outcome");
+  const packet = buildHandoffPacketV1({
+    ...s.sc, packetId: "fix02-packet", taskId: TARGET, planRef: s.plan.ref,
+    taskRevision: 1, workspaceRevision: 1, runRef: run.ref,
+    attemptRef: envelope.attemptRef, roleBinding: envelope.roleBinding,
+    completed: [], unresolved: [{ kind: "other", summary: "synthetic bounded continuation", artifactRef: null }],
+    evidenceRefs: [], artifactRefs: [], contextBundleRef: envelope.bundleRef,
+    contextManifestRef: envelope.bundleRef, lastEventSeq: run.lastEventSeq,
+    terminalOutcome: run.outcome, terminalEventId: "fix02-terminal", generatedAt: AT,
+  });
+  const stored = await s.raw.vault.put({
+    body: canonicalJson(packet), contentType: "application/json", ownerRef: run.ref,
+    sourceRefs: [{ kind: "artifact", refId: packet.packetId, revision: "1" }], requestedAt: AT,
+  });
+  if (stored.status !== "stored") throw Error("packet body unavailable");
+  packet.bodyRef = stored.ref;
+  const recorded = await s.raw.recordHandoff(buildRecordHandoffCommand({
+    ...s.sc, commandId: "record-packet", correlationId: "record-packet", submittedAt: AT, packet,
+  }));
+  if (recorded.status !== "committed") throw Error(JSON.stringify(recorded));
+  const lease = await s.raw.ledger.load(taskLeaseRefFor(s.sc.projectId, s.sc.goalId, TARGET));
+  if (lease.status !== "found") throw Error("prior lease missing");
+  return buildClaimReplacementCommand({
+    ...s.sc, commandId: "replacement", correlationId: "replacement", submittedAt: AT,
+    taskId: TARGET, expectedRevision: lease.snapshot.revision,
+    runId: "replacement-run", attemptId: "replacement-attempt",
+    handoffPacketRef: recorded.packetRef, roleBinding: envelope.roleBinding,
+    declaredPermissions: envelope.permissions, budget: envelope.budget, reason: "run_ended",
+  });
+}
+
+for (const storage of ["memory", "sqlite"] as const) describe("FIX-02 current frontier / " + storage, () => {
+  for (const independent of [false, true]) it("source FAIL with independent frontier=" + independent, async () => {
+    let s = await setup(storage, independent);
+    expect(await s.raw.reduceGoal(reduceGoalCommand(s.sc, { commandId: "before", expectedRevision: 0 })))
+      .toMatchObject({ status: "committed", phase: "RUNNING" });
+    await observe(s, SOURCE, "FAIL", await execute(s, SOURCE));
+    const readiness = await Promise.all(s.plan.tasks.map(t => s.raw.dispatchReadiness({ ...s.sc, taskId: t.taskId })));
+    expect(readiness.filter(r => r.status === "ready" && r.eligibility.eligible)).toHaveLength(independent ? 1 : 0);
+    const command = reduceGoalCommand(s.sc, { commandId: "after", expectedRevision: 1 });
+    const after = await s.raw.reduceGoal(command);
+    expect(after).toMatchObject({ status: "committed", phase: independent ? "RUNNING" : "FAILED" });
+    const canonical = await s.raw.ledger.load(goalPhaseRefFor(s.sc.projectId, s.sc.goalId));
+    s = await restart(s);
+    expect(await s.raw.ledger.load(goalPhaseRefFor(s.sc.projectId, s.sc.goalId))).toEqual(canonical);
+    expect(await s.raw.reduceGoal(command)).toMatchObject({ status: "committed", replayed: true });
+    expect(await s.raw.reduceGoal(reduceGoalCommand(s.sc, { commandId: "again", expectedRevision: 2 })))
+      .toMatchObject({ status: "committed", phase: independent ? "RUNNING" : "FAILED" });
+  });
+
+  it("replacement uses formally satisfied predecessor after restart; plan stays immutable", async () => {
+    let s = await setup(storage);
+    await observe(s, SOURCE, "PASS", await execute(s, SOURCE));
+    const run = await execute(s, TARGET);
+    const command = await replacementCommand(s, run);
+    s = await restart(s);
+    const receipt = await s.raw.claimReplacement(command);
+    expect(receipt.status).toBe("committed");
+    if (receipt.status !== "committed") throw Error(JSON.stringify(receipt));
+    expect(await s.raw.claimReplacement(command)).toMatchObject({ status: "committed", replayed: true });
+    const drive = await s.raw.handoffDrive.driveHandoff({ reason: "fix02-regression" });
+    expect(drive.failures).toEqual([]);
+    expect(drive.completed).toBe(1);
+    expect(await s.raw.ledger.load(s.plan.ref)).toMatchObject({ status: "found", snapshot: s.plan });
+    expect(await s.raw.ledger.load(run.ref)).toMatchObject({ status: "found", snapshot: run });
+  });
+
+  it("replacement cannot reset its own formally failed task or erase FAIL history", async () => {
+    let s = await setup(storage);
+    await observe(s, SOURCE, "PASS", await execute(s, SOURCE));
+    const run = await execute(s, TARGET);
+    const command = await replacementCommand(s, run);
+    await observe(s, TARGET, "FAIL", run);
+    const failedRef = taskReductionRefFor(s.sc.projectId, s.sc.goalId, TARGET);
+    const failed = await s.raw.ledger.load(failedRef);
+    s = await restart(s);
+    const before = await s.raw.ledger.events({ afterCursor: null, limit: 1000 });
+    expect(await s.raw.claimReplacement(command)).toMatchObject({
+      status: "rejected", code: "ineligible",
+      issues: expect.arrayContaining([expect.objectContaining({ code: "task_phase_not_dispatchable", phase: "failed" })]),
+    });
+    expect(await s.raw.ledger.load(failedRef)).toEqual(failed);
+    expect(await s.raw.ledger.events({ afterCursor: null, limit: 1000 })).toEqual(before);
+  });
+});

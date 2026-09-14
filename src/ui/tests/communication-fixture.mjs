@@ -1,12 +1,12 @@
 /** Browser-only setup through real Control commands in the server's SQLite store. */
 import { randomUUID } from 'node:crypto';
-import { createPersistentSqliteHarness } from '../../../dist/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../../dist/composition/persistent-platform.js';
 import { buildDispatchClaimCommand } from '../../../dist/fixtures/dispatch-fixtures.js';
 import { workContextRefFor } from '../../../dist/contracts/context-continuity.js';
 import { workParticipationRefFor, directedRequestRefFor, waitConditionRefFor } from '../../../dist/contracts/coordination.js';
 const projectId = 'acceptance-alpha', workspaceId = 'workspace-main', goalId = 'acceptance-demo';
 const at = new Date().toISOString();
-const h = await createPersistentSqliteHarness({ dir: process.argv[2], deps: { eventId: randomUUID, commandId: randomUUID, correlationId: randomUUID, clock: () => at } });
+const h = await createPersistentPlatform({ dir: process.argv[2], deps: { eventId: randomUUID, commandId: randomUUID, correlationId: randomUUID, clock: () => at } });
 const checked = receipt => { if (receipt.status !== 'committed') throw Error(JSON.stringify(receipt)); return receipt; };
 const work = workContextRefFor(projectId, workspaceId, 'browser-communication');
 const part = workParticipationRefFor(projectId, workspaceId, work.workId, 'browser-part');

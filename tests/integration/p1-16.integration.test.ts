@@ -5,7 +5,7 @@
  * AUTO-SKIPS the contract-suite parts until the lanes land (probe, no fake).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createPersistentSqliteHarness, type PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform, type PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 import { toP1_16Harness, type P1_16HarnessLike } from "../contract-suite/p1-16-harness.js";
@@ -17,10 +17,10 @@ const READY = await isP116Ready();
 
 describe.skipIf(!READY)("P1-16 real SQLite integration", () => {
   let evidence: P116RestartEvidence;
-  let closed: PersistentSqliteHarness;
+  let closed: PersistentPlatform;
 
   beforeAll(async () => {
-    closed = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    closed = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     evidence = await runP116RestartScenario(closed);
     await closed.close();
   });
@@ -38,7 +38,7 @@ describe.skipIf(!READY)("P1-16 real SQLite integration", () => {
     const mem = createInMemoryHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
     const th = toP1_16Harness(mem as unknown as P1_16HarnessLike);
     await createP108ScenarioRuntime; // keep import live
-    const sql = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const sql = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     try {
       const thSql = toP1_16Harness(sql as unknown as P1_16HarnessLike);
       const [memScen, sqlScen] = await Promise.all([

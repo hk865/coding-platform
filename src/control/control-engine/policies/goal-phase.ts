@@ -150,7 +150,7 @@ function pushCode(
 
 
 /**
- * PURE table-driven priority (frozen order; exactly ONE primary phase):
+ * PURE table-driven priority (versioned order; exactly ONE primary phase):
  * 1 CANCELLED, 2 CHANGE_PENDING, 3 PAUSED, 4 COMPLETED (guard),
  * 5 ACCEPTED_PARTIAL, 6 PLANNING, 7 RUNNING, 8 NEEDS_DECISION,
  * 9 BLOCKED, 10 FAILED. Attention flags never decide the phase.

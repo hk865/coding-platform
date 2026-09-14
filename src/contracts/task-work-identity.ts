@@ -1,9 +1,9 @@
 /**
- * RW-13 契约：任务工作身份（task work identity）的**权威解析形状** + 身份推导规则。
+ * 任务工作身份契约：task work identity 的**权威解析形状**与身份推导规则。
  *
  * ── 为什么这里只有「形状 + 纯推导函数」，没有业务分派 ─────────────────────────────
  * 本文件是共享契约面（Contracts），只放两样东西：
- *   1. 推导规则 `workIdFor`：workId 是 canonical 计划事实的纯函数（RW-12 起未变）；
+ *   1. 推导规则 `workIdFor`：workId 是 canonical 计划事实的纯函数（ 起未变）；
  *   2. 解析查询／结果形状：ControlEngine 的权威只读解析面（见
  *      src/control/control-engine/work-identity-resolution.ts）与它的消费者用它交换结果。
  *
@@ -105,7 +105,7 @@ export type TaskWorkIdentityResolution =
       /** 解析当时的 canonical 绑定快照（不是建立时的事件副本）。 */
       binding: WorkContextBindingV1;
       authority: TaskWorkIdentityAuthority;
-      /** 同一 (goal, task) 的候选条数；>1 表示 RW-13 之前留下的历史不一致（不再新增）。 */
+      /** 同一 (goal, task) 的候选条数；>1 表示唯一身份守卫生效前留下的历史不一致（不再新增）。 */
       candidateCount: number;
     }
   | { status: "absent" }

@@ -1,0 +1,1 @@
+stopped_environment_failure: CODING_AGENT_BWRAP_PATH missing in standalone UI runner; no isolation bypass. Rerun with existing installed bubblewrap.

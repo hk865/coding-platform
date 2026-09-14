@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { AlternativeReportObservation } from '../../src/harness/alternative-report-observation.js';
+import { AlternativeReportObservation } from '../../src/composition/alternative-report-observation.js';
 import type { WaitConditionSnapshot } from '../../src/contracts/coordination.js';
 import type { RunSnapshot } from '../../src/contracts/dispatch.js';
 

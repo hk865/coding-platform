@@ -55,7 +55,7 @@ export const VIEW_DEFS: Record<ViewId, { title: string; placement: Placement; sc
   memory: { title: '记忆与规则', placement: 'right', scope: 'goal', singleton: true },
   continuation: { title: '任务续跑', placement: 'right', scope: 'goal', singleton: true },
   rework: { title: '返工与问题', placement: 'right', scope: 'goal', singleton: true },
-  // RW-09：受理结果的可见性。它是独立可读的区块（谁受理了什么），不并入返工面板。
+  // 计划变更受理结果是独立可读的区块（谁受理了什么），不并入返工面板。
   'plan-changes': { title: '计划变更', placement: 'right', scope: 'goal', singleton: true },
   terminal: { title: '终端', placement: 'bottom', scope: 'workspace', singleton: true },
   logs: { title: '运行日志', placement: 'bottom', scope: 'goal', singleton: true },

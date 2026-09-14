@@ -10,8 +10,8 @@ import { classifyRestartProbeError } from "./readiness-probe.js";
  * NEVER fakes; the probe runs the full pre-restart path and any remaining
  * "P1-03: ... not implemented yet" stub throw makes it false (auto-skip).
  */
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
 import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import {
@@ -47,7 +47,7 @@ const PLAN_REF = { aggregateType: "PlanRevision" as const, projectId: "proj-alph
 
 export async function isP103Ready(): Promise<boolean> {
   try {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       await runP103Path(h);
       return true;
@@ -59,7 +59,7 @@ export async function isP103Ready(): Promise<boolean> {
   }
 }
 
-export async function runP103Path(h: PersistentSqliteHarness) {
+export async function runP103Path(h: PersistentPlatform) {
   const receipt = await h.bootstrap(
     buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, {
       commandId: "cmd-p103-boot", correlationId: "corr-p103-boot", submittedAt: SCHEMA,
@@ -213,7 +213,7 @@ export async function runP103Path(h: PersistentSqliteHarness) {
 }
 
 export async function verifyP103AfterRestart(
-  h: PersistentSqliteHarness,
+  h: PersistentPlatform,
   before: Awaited<ReturnType<typeof runP103Path>>,
 ): Promise<void> {
   const outbox = await h.ledger.load(dispatchOutboxRefFor("proj-alpha", GOAL_ID, TASK_ID, ATTEMPT_ID));

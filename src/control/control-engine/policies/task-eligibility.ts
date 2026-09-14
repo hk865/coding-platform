@@ -5,10 +5,10 @@ import type { DispatchReadinessFacts, TaskIneligibilityReason, TaskEligibility }
 
 
 /**
- * Frozen eligibility rule (Acceptance 1):
+ * Task eligibility rule:
  *   - goal desiredState active;
  *   - an accepted PlanRevision exists;
- *   - task is in the plan, taskKind = work (gates are reduced by evidence, P1-04);
+ *   - task is in the plan, taskKind = work (gates are reduced by evidence, verification);
  *   - disposition = active (desired state);
  *   - no Blocker: phase !== blocked, and phase is dispatchable (pending|ready);
  *   - EVERY explicit DAG hard dependency (dependsOn) target phase === "satisfied";
@@ -46,7 +46,7 @@ export function evaluateTaskEligibility(
           code: "task_kind_not_work",
           taskId,
           taskKind: task.taskKind,
-          message: "only work tasks are dispatched; gate evidence reduction is P1-04",
+          message: "only work tasks are dispatched; gate tasks are completed by evidence reduction",
         });
       }
       if (task.disposition !== "active") {

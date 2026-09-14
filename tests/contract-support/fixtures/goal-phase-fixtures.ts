@@ -1,4 +1,4 @@
-import { buildReduceGoalCommand as formalbuildReduceGoalCommand } from "../../../src/contracts/commands/goal-phase.js";
+import { buildReduceGoalCommand as canonicalBuildReduceGoalCommand } from "../../../src/contracts/commands/goal-phase.js";
 
 
 /**
@@ -170,5 +170,5 @@ export type BuildReduceGoalDeps = {
 };
 
 export function buildReduceGoalCommand(deps: BuildReduceGoalDeps) {
-  return formalbuildReduceGoalCommand({ ...deps, actor: deps.actor ?? ({ kind: "system" as const, id: "control-engine" }), idempotencyKey: deps.idempotencyKey ?? "p1-05-reduce-goal" });
+  return canonicalBuildReduceGoalCommand({ ...deps, actor: deps.actor ?? ({ kind: "system" as const, id: "control-engine" }), idempotencyKey: deps.idempotencyKey ?? "p1-05-reduce-goal" });
 }

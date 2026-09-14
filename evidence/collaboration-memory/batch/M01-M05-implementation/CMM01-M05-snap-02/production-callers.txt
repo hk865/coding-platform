@@ -1,0 +1,27 @@
+src/app/service.ts:1:import { TerminalContinuation } from './scheduling/terminal-continuation.js';
+src/app/service.ts:207:    const handoffRequest = real ? new HandoffRequest({ ledger: h.ledger, control: h, runtime: real.runtime, vault: h.vault, now }) : undefined;
+src/app/service.ts:208:    const runtimeDispatch = real ? new RuntimeDispatch({ ledger: h.ledger, control: { runFact: h.runFact, reconcileRun: command => h.control.reconcileRun!(command) }, outbox: { drive: h.drive }, handoff: h.handoffDrive, runtime: real.runtime, now }) : undefined;
+src/app/service.ts:209:    const dispatchWake = new DispatchWake({ drive: trigger => (runtimeDispatch ?? { drive: h.drive }).drive(trigger),
+src/app/service.ts:220:    const reviewerDispatch = real ? new ReviewerDispatch({ executionSlots: h.executionSlots, ledger: h.ledger,
+src/app/service.ts:290:    const planningWake = new DurableWake();
+src/app/service.ts:291:    const reworkWake = new DurableWake();
+src/app/service.ts:292:    const reviewRecoveryWake = new DurableWake();
+src/app/service.ts:294:    const terminalContinuation = new TerminalContinuation({ ledger: h.ledger, records: () => real?.runtime.all() ?? [], scopes: () => scopes,
+src/app/service.ts:800:    function resumePendingReviews() {
+src/app/service.ts:821:    resumePendingReviews();
+src/app/service.ts:850:        void dispatchWake.request('durable-periodic-scan').catch(() => {});
+src/app/service.ts:851:        resumePendingReviews();
+src/composition\persistent-platform.ts:541:  const executionSlots = new ExecutionSlots();
+src/composition\persistent-platform.ts:542:  const dispatchEngine = new DispatchEngineImpl({
+src/composition\persistent-platform.ts:575:    handoffContextOverride ?? new HandoffContextCompilerImpl({ ledger, vault, now: d.clock });
+src/composition\persistent-platform.ts:578:  const handoffDrive: HandoffPort = new HandoffDriveEngineImpl({
+src/composition\persistent-platform.ts:587:    workspaceDriveOverride ?? new WorkspaceDriveEngineImpl(dispatchEngine);
+src/control/dispatch-engine\coordination-drive.ts:6: * 不新开后台循环、不与 planningQueue／semanticReworkQueue／RuntimeDispatch.queue 竞争推进同一工作。
+src/control/dispatch-engine\dispatch-engine.ts:73:    this.slots = deps.executionSlots ?? new ExecutionSlots(deps.maxConcurrentRuns);
+src/control/dispatch-engine\dispatch-engine.ts:113:      // to the HandoffPort (driveHandoff) — the normal drive NEVER assembles a
+src/control/dispatch-engine\dispatch-engine.ts:282:  return new DispatchEngineImpl(deps);
+src/control/dispatch-engine\handoff\handoff-drive.ts:44:  constructor(private readonly deps: HandoffDriveDeps) { this.slots = deps.executionSlots ?? new ExecutionSlots(); }
+src/control/dispatch-engine\handoff\handoff-drive.ts:46:  async driveHandoff(trigger: HandoffDriveTrigger): Promise<HandoffDriveResult> {
+src/control/dispatch-engine\handoff\handoff-drive.ts:214:  return new HandoffDriveEngineImpl(deps);
+src/control/dispatch-engine\README.md:8:- [handoff/handoff-drive.ts](handoff/handoff-drive.ts)：换手面 driveHandoff
+src/control/dispatch-engine\runtime-dispatch.ts:28:    const [ordinary, replacement] = await Promise.all([this.deps.outbox.drive(trigger), this.deps.handoff?.driveHandoff(trigger)]);

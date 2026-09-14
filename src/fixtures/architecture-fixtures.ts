@@ -1,7 +1,7 @@
-import { buildRecordArchitectureInspectionCommand as formalbuildRecordArchitectureInspectionCommand, buildRecordArchitectureFindingCommand as formalbuildRecordArchitectureFindingCommand, buildRecordArchitectureDecisionBriefCommand as formalbuildRecordArchitectureDecisionBriefCommand, buildRecordCandidateBaselineProposalCommand as formalbuildRecordCandidateBaselineProposalCommand } from "../contracts/commands/architecture.js";
+import { buildRecordArchitectureInspectionCommand as canonicalBuildRecordArchitectureInspectionCommand, buildRecordArchitectureFindingCommand as canonicalBuildRecordArchitectureFindingCommand, buildRecordArchitectureDecisionBriefCommand as canonicalBuildRecordArchitectureDecisionBriefCommand, buildRecordCandidateBaselineProposalCommand as canonicalBuildRecordCandidateBaselineProposalCommand } from "../contracts/commands/architecture.js";
 
 /**
- * P1-12 shared fixtures: deterministic code-graph scenario + inspection /
+ * Shared architecture-inspection fixtures: deterministic code-graph scenario + inspection /
  * finding / brief / proposal / ledger-fold builders used by BOTH adapter
  * suites (InMemory + SQLite, same fixtures) and by the restart path.
  *
@@ -167,7 +167,7 @@ export function buildP112ReportFinding(): ArchitectureFindingV1 {
     title: "执行者/包工头带来源上报的接口/架构冲突（无代码变更）",
     summary: "上报的接口职责冲突已经存在——无需伪造 raw Delta 也可形成 Finding；禁止伪造 Delta 是本票不变量",
     sources: [{ kind: "event", refKey: "run:run-p112-report", version: "1", label: "work report" }],
-    recommendation: "组织有限协商并给出选项；人工协商归 P1-14/15 消费",
+    recommendation: "组织有限协商并给出选项；由基线演进和人工协作流程消费",
     affectedRefs: { moduleRefs: ["src/data"], interfaceRefs: ["src/data/maps"], pathRefs: [] },
     material: true,
     ambiguous: true,
@@ -266,17 +266,17 @@ export type BuildP112CommandDeps = {
 };
 
 export function buildRecordArchitectureInspectionCommand(inspection: ArchitectureInspectionSnapshot, deps: BuildP112CommandDeps): RecordArchitectureInspectionCommand {
-  return formalbuildRecordArchitectureInspectionCommand(inspection, { ...deps, actor: deps.actor ?? { kind: "system", id: "architecture-reconciler" }, idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem", correlationId: deps.correlationId ?? deps.commandId + "-corr", submittedAt: deps.submittedAt ?? P112_SCHEMA });
+  return canonicalBuildRecordArchitectureInspectionCommand(inspection, { ...deps, actor: deps.actor ?? { kind: "system", id: "architecture-reconciler" }, idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem", correlationId: deps.correlationId ?? deps.commandId + "-corr", submittedAt: deps.submittedAt ?? P112_SCHEMA });
 }
 
 export function buildRecordArchitectureFindingCommand(finding: ArchitectureFindingV1, deps: BuildP112CommandDeps): RecordArchitectureFindingCommand {
-  return formalbuildRecordArchitectureFindingCommand(finding, { ...deps, actor: deps.actor ?? { kind: "system", id: "architecture-reconciler" }, idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem", correlationId: deps.correlationId ?? deps.commandId + "-corr", submittedAt: deps.submittedAt ?? P112_SCHEMA });
+  return canonicalBuildRecordArchitectureFindingCommand(finding, { ...deps, actor: deps.actor ?? { kind: "system", id: "architecture-reconciler" }, idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem", correlationId: deps.correlationId ?? deps.commandId + "-corr", submittedAt: deps.submittedAt ?? P112_SCHEMA });
 }
 
 export function buildRecordArchitectureDecisionBriefCommand(brief: ArchitectureDecisionBriefV1, deps: BuildP112CommandDeps): RecordArchitectureDecisionBriefCommand {
-  return formalbuildRecordArchitectureDecisionBriefCommand(brief, { ...deps, actor: deps.actor ?? { kind: "system", id: "architecture-reconciler" }, idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem", correlationId: deps.correlationId ?? deps.commandId + "-corr", submittedAt: deps.submittedAt ?? P112_SCHEMA });
+  return canonicalBuildRecordArchitectureDecisionBriefCommand(brief, { ...deps, actor: deps.actor ?? { kind: "system", id: "architecture-reconciler" }, idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem", correlationId: deps.correlationId ?? deps.commandId + "-corr", submittedAt: deps.submittedAt ?? P112_SCHEMA });
 }
 
 export function buildRecordCandidateBaselineProposalCommand(proposal: ArchitectureCandidateProposalV1, deps: BuildP112CommandDeps): RecordCandidateBaselineProposalCommand {
-  return formalbuildRecordCandidateBaselineProposalCommand(proposal, { ...deps, actor: deps.actor ?? { kind: "system", id: "architecture-reconciler" }, idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem", correlationId: deps.correlationId ?? deps.commandId + "-corr", submittedAt: deps.submittedAt ?? P112_SCHEMA });
+  return canonicalBuildRecordCandidateBaselineProposalCommand(proposal, { ...deps, actor: deps.actor ?? { kind: "system", id: "architecture-reconciler" }, idempotencyKey: deps.idempotencyKey ?? deps.commandId + "-idem", correlationId: deps.correlationId ?? deps.commandId + "-corr", submittedAt: deps.submittedAt ?? P112_SCHEMA });
 }

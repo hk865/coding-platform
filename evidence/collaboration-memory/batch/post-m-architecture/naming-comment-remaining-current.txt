@@ -1,0 +1,38 @@
+src\fixtures\architecture-evolution-policy-fixtures.ts:1:/** P1-13 shared fixtures: ArchitectureEvolutionPolicy local fixture + install/activate folds. */
+src\fixtures\architecture-evolution-policy-fixtures.ts:18:  identity: { kind: "local", fixtureId: P113_POLICY, source: "p1-13-local-fixture-v1" },
+src\fixtures\architecture-evolution-policy-fixtures.ts:43: * P1-13 的测试默认值（固定时间 P113_SCHEMA、user-1、commandId 派生键）。生产入口（应用层）
+src\fixtures\architecture-fixtures.ts:4: * P1-12 shared fixtures: deterministic code-graph scenario + inspection /
+src\fixtures\architecture-fixtures.ts:8: * Graph-registry convention (frozen): the WorkspaceReader registry exposes
+src\fixtures\architecture-fixtures.ts:168:    summary: "上报的接口职责冲突已经存在——无需伪造 raw Delta 也可形成 Finding；禁止伪造 Delta 是本票不变量",
+src\fixtures\architecture-fixtures.ts:170:    recommendation: "组织有限协商并给出选项；人工协商归 P1-14/15 消费",
+src\fixtures\dispatch-fixtures.ts:4: * P1-03 shared fixtures: eligible-plan, role binding ref, dispatch claim/start/
+src\fixtures\dispatch-fixtures.ts:7: * as P1-00/02 fixture builders).
+src\fixtures\dispatch-fixtures.ts:9: * Frozen identity choices:
+src\fixtures\dispatch-fixtures.ts:12: *   - P1-03 at most ONE claim per task (TaskLease CAS @0; expectedRevision 0);
+src\fixtures\dispatch-fixtures.ts:13: *   - eligibility fixture: the plan satisfies every P1-02 applyPlan guard.
+src\fixtures\dispatch-fixtures.ts:25:// Eligible-plan fixture (satisfies P1-02 applyPlan guards)                   //
+src\fixtures\dispatch-fixtures.ts:83:      title: "DispatchGate：P1-03 验收路径全部通过",
+src\fixtures\dispatch-fixtures.ts:122:      title: "P1-03 验收在任务满足判定之前达成",
+src\fixtures\dispatch-fixtures.ts:135:      // task-blocked is required+work+active, so P1-02's "every required
+src\fixtures\dispatch-fixtures.ts:221:  return formalbuildDispatchClaimCommand({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-03-claim", taskId: deps.taskId ?? DISPATCH_ELIGIBLE_TASK_ID, goalId: deps.goalId ?? "goal-1", attemptId: deps.attemptId ?? "att-run-0001", runId: deps.runId ?? "run-0001", roleBinding: deps.roleBinding ?? ROLE_BINDING_FIXTURE_V1, declaredPermissions: deps.declaredPermissions ?? DECLARED_PERMISSIONS_FIXTURE_V1, budget: deps.budget ?? BUDGET_FIXTURE_V1 });
+src\fixtures\dispatch-fixtures.ts:246:  return formalbuildDispatchStartCommand({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-03-start", expectedRevision: deps.expectedRevision ?? 1 });
+src\fixtures\dispatch-fixtures.ts:332:  return formalbuildRunFactCommand({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-03-runfact" });
+src\fixtures\governance-fixtures.ts:5: * P1-02 shared fixtures: versioned governance (CompletionPolicy /
+src\fixtures\governance-fixtures.ts:8: * Frozen semantics (see IMPLEMENTATION-HANDOFF.md "P1-02 契约与存储语义"):
+src\fixtures\governance-fixtures.ts:26: * obligation (the P1-02 non-empty compilation guard). */
+src\fixtures\governance-fixtures.ts:66:  return formalbuildInstallCommand(fixture, { ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-02-governance-install" });
+src\fixtures\governance-fixtures.ts:73:  return formalbuildActivateCommand(target, { ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-02-governance-activate" });
+src\fixtures\plan-fixtures.ts:70:      title: "GoalGate：P1-02 验收路径全部通过",
+src\fixtures\plan-fixtures.ts:109:      title: "P1-02 验收在不产生 Run/dispatch 的前提下满足",
+src\fixtures\plan-fixtures.ts:166:  return formalbuildApplyPlanCommand(draft, { ...deps, goalId: deps.goalId ?? draft.goalId, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-02-apply-plan" });
+src\fixtures\role-spec-fixtures.ts:300:export const RW11_ROLE_MATRIX_COORDINATOR = ROLE_SOURCE_PLANNER;
+src\fixtures\role-spec-fixtures.ts:307:export function buildRoleMatrixFixture(projectId: string, roleIds: readonly string[] = ROLE_SPEC_SOURCES_V1.map((source) => source.roleId), coordinator: string = RW11_ROLE_MATRIX_COORDINATOR): CoordinationRoleMatrixV1 {
+src\fixtures\role-spec-fixtures.ts:316: * 带角色矩阵的协调策略正文 source：额度等其他字段与 P1-15 的既有正文同值，
+src\fixtures\role-spec-fixtures.ts:341:/** 该正文装进策略时的摘要口径（与 P1-15 完全同一个函数，不另立一份）。 */
+src\control\dispatch-engine\work-identity.ts:204:          idempotencyKey: 'rw12-work-bind-' + workId,
+src\control\dispatch-engine\work-identity.ts:272:        idempotencyKey: 'rw12-work-link-' + workId + '-' + intent.runRef.runId,
+src\control\dispatch-engine\dispatch-engine.ts:207:          idempotencyKey: 'p1-03-start-' + intent.runRef.runId + '-r' + revision }),
+src\control\dispatch-engine\dispatch-engine.ts:304:          idempotencyKey: "p1-03-runfact",
+src\contracts\notices\README.md:1:# CM-1B-001 source adaptations
+src\contracts\notices\README.md:7:Pinned source files, origin URLs and digests are retained under `evidence/collaboration-memory/CM-1B-001/preparation/upstream-files.json` and `preparation/upstream/`. These adaptations provide neither a second memory store nor automatic inference or tool permissions.
+src\control\dispatch-engine\handoff\handoff-drive.ts:133:          idempotencyKey: 'p1-06-start-' + intent.intentId + (revision === 1 ? '' : '-r' + revision) }),

@@ -1,0 +1,15 @@
+{
+  "oldHead": "ce043a650ecfabd72c55f02695204d58dd9c8b64",
+  "newHead": "ce043a650ecfabd72c55f02695204d58dd9c8b64",
+  "fingerprintChanged": true,
+  "added": [
+    "src/app/scheduling/terminal-continuation.ts",
+    "tests/app/handoff-recovery.test.ts",
+    "tests/control/dispatch-same-local-identity.test.ts"
+  ],
+  "removed": [],
+  "changed": [
+    "src/app/service.ts",
+    "src/control/dispatch-engine/dispatch-engine.ts"
+  ]
+}

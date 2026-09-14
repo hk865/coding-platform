@@ -1,0 +1,5 @@
+{
+  "checkedDeclarations": 32,
+  "issues": [],
+  "limitation": "Checks declaration preservation only; typecheck and directed coordination tests remain required."
+}

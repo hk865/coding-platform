@@ -1,4 +1,4 @@
-import { buildCreateGoalCommand as formalbuildCreateGoalCommand } from "../../../src/contracts/commands/goal.js";
+import { buildCreateGoalCommand as canonicalBuildCreateGoalCommand } from "../../../src/contracts/commands/goal.js";
 /**
  * P1-00 shared fixtures: multi-scope CreateGoal.
  * Both scopes deliberately reuse the same local goalId AND the same
@@ -56,7 +56,7 @@ export function buildCreateGoalCommand(
   scope: GoalFixtureScope,
   deps: BuildCreateGoalDeps,
 ): CreateGoalCommand {
-  return formalbuildCreateGoalCommand(scope, { ...deps, idempotencyKey: deps.idempotencyKey ?? MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.sharedIdempotencyKey });
+  return canonicalBuildCreateGoalCommand(scope, { ...deps, idempotencyKey: deps.idempotencyKey ?? MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.sharedIdempotencyKey });
 }
 
 /** Deterministic GoalCreated event per Command/Event Interface. */

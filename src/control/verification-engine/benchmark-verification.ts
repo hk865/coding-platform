@@ -39,7 +39,7 @@ export function evaluateBenchmark(b: Benchmark, reportBody: string) {
     }
   };
 }
-/** Frozen candidate and original/diagnostic/repair scores retain separate durable identities. */
+/** Versioned candidate and original/diagnostic/repair scores retain separate durable identities. */
 export class BenchmarkVerification {
   constructor(private readonly deps: VerificationServiceDeps, private readonly journal: VerificationJournal, private readonly reports: VerificationReports, private readonly recorded: RecordedVerificationPort) { }
   async restoreArtifacts() {

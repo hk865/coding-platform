@@ -18,37 +18,16 @@ type Scope = {
 };
 const sha = (value: unknown) => createHash('sha256').update(canonicalJson(value as never)).digest('hex').slice(0, 32);
 
-/**
- * 计划任务派发（DispatchEngine）：把**当前生效 revision** 里可执行的任务认领成真实 Run。
+/** Claims active required work from the Goal's current accepted PlanRevision.
+ * Control owns dependency eligibility; the shared ordinary consumer owns execution
+ * capacity, and workspace leases remain the durable concurrency authority.
  *
- * RW-07 之前：候选只来自初始协调 origin.assignments。返工受理会生成新的 PlanRevision，新
- * revision 里新增的任务在旧 origin 里根本不存在，因此它们进了计划、readiness 也说 ready，
- * 却没有任何路径会认领——返工闭环缺的正是这一跳。现在改为按当前 active revision 驱动。
+ * A scan admits every eligible assignment. Gate tasks and superseded/deferred work
+ * are excluded. Role permissions are resolved from the active matrix and bounded
+ * by the original human implementation authorization.
  *
- * 候选来源（唯一）：Goal 当前 active PlanRevision 里
- *   requirementLevel = required && taskKind = work && disposition = active
- * 的任务，按该 revision 的指派列表顺序。指派一律经 contracts/plan.ts 的 revisionAssignments
- * 读取（任务与指派同属一个 revision），因此：
- *   - 被取代（superseded）／取消／延后（deferred）的任务不在候选里 —— 派发只放行 disposition=active；
- *   - gate 任务不在候选里 —— 它的结论由证据归约产生，不派发实现运行（task-eligibility 同样拒绝）；
- *   - 是否现在可派发仍由 ControlEngine 的 canonical dispatchReadiness 判定，本类不自己解释依赖。
- *
- * Run 身份（确定性，沿用既有命名规则）：runId = 'real-' + <初始实现授权 requestId>
- *   + (position === 0 ? '' : '-' + sha256(canonicalJson(taskId)).slice(0, 12))，
- * 其中 position 是该任务在**当前 revision 指派列表中的位置**。指派列表 = 源 revision 的指派
- * （顺序保留）+ 新 revision 新增任务的指派（追加），因此同一任务在不同 revision 里的位置不变：
- * 已经开始的 Run 不会被换成另一个身份重复派发，重启后也重建出同一个身份。
- *
- * 授权来源：候选任务属于同一个 Goal 的既定实现范围（返工是按 ADR 0003 D1 的「同义务、同验收
- * 语义、只换承担者」受理的），因此沿用该 Goal 那次已提交的初始协调请求的
- * implementationAuthorization（writeScope／referenceContext）与 runtimeBudget，不新造授权、
- * 也不放宽权限。
- *
- * 角色绑定（RW-18）：不再由本文件写死 `templateId: assignment.role` + `templateRevision: '1'`，
- * 而是按**当前生效的角色矩阵**签发（见 role-spec-read.ts 的 issueMatrixRoleBinding）：
- * 矩阵登记了该角色时，templateId／templateRevision 取自矩阵 pin，policyRevision 记录签发的
- * policy 与 pin 摘要；**没有矩阵的项目逐字沿用原来那份绑定**（既有语义不变）。
- * 指派里的 `assignment.role` 仍是"这条任务要哪个角色"的唯一声明，本文件不另造角色目录。
+ * Existing deterministic Run IDs are preserved for replay compatibility. Started
+ * Runs require reconciliation; only an unstarted outbox may be prepared again.
  */
 export class PlannedTaskDispatch {
     constructor(private readonly h: Pick<ControlEngine, 'claimTask' | 'dispatchReadiness' | 'closeQueryJob'> & {
@@ -113,9 +92,9 @@ export class PlannedTaskDispatch {
             // A persisted runtime side effect or started envelope requires recovery.
             if (prior && (prior.status !== 'starting' || prior.envelope !== null))
                 continue;
-            if (this.runtime.all().some(run => run.spec.projectId === scope.projectId && run.spec.workspaceId === scope.workspaceId &&
-                (['running', 'outcome_unknown'].includes(run.status) || (run.status === 'prepared' && (run.spec.goalId !== scope.goalId || run.spec.runId !== runId)))))
-                break;
+            // Readiness determines task dependencies; the shared dispatch consumer and
+            // durable workspace leases determine execution capacity and write conflicts.
+            // A local active-run list must not serialize independent planned tasks.
             const readiness = await this.h.dispatchReadiness({
                 projectId: scope.projectId, goalId: scope.goalId, taskId: assignment.taskId
             });
@@ -134,7 +113,7 @@ export class PlannedTaskDispatch {
             if (prior) {
                 await this.runtime.prepare(spec);
                 this.launch(scope, runId);
-                break;
+                continue;
             }
             // 角色绑定由当前生效矩阵的 pin 签发；没有矩阵时逐字使用既有绑定。
             const issued = await issueMatrixRoleBinding({ ledger: this.h.ledger }, {
@@ -171,7 +150,6 @@ export class PlannedTaskDispatch {
             }
             else
                 return 'Control 拒绝派发：' + canonicalJson(claim);
-            break;
         }
         return null;
     }

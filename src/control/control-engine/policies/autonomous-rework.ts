@@ -1,13 +1,13 @@
 /** Control-owned deterministic domain policy. */
 /**
- * ADR 0003 D1-4 自动受理策略：四条边界的**纯**判定 + 确定性身份推导。
+ * 自动返工受理策略：四条边界的纯判定和确定性身份推导。
  *
  * 为什么是纯函数：ControlEngine 的入口只负责读账本、落账与应用；边界判定本身
  * 不读状态、不写状态，才能被逐条单独测试，也才能保证“四条都满足才受理”。
  *
  * 复用而不是重写（同一份业务规则只留一个权威实现）：
- *   - 任务集增量的形状与语义合法性复用 RW-02 的 checkTaskSetDelta；
- *   - 草稿与「源 revision + 增量」的一致性复用 RW-02 的 draftConsistencyIssues（由引擎在
+ *   - 任务集增量的形状与语义合法性复用 goal-change-consistency 的 checkTaskSetDelta；
+ *   - 草稿与「源 revision + 增量」的一致性复用同一模块的 draftConsistencyIssues（由引擎在
  *     落账**之前**预跑一次，落账时 applyPlanChange 的守卫 f2 再原样复跑一次）；
  *   - 提案／新计划的身份复用 contracts/rework/proposal.ts 的 reworkProposalIdFor／reworkPlanIdFor；
  *   - 返工任务 id 复用 contracts/rework/proposal.ts 的 reworkTaskIdFor。
@@ -62,7 +62,7 @@ function sameSet(a: string[], b: string[]): boolean {
  *
  * 允许的形状（逐条，按问题分组核对）：
  *   1. patchDraft.obligationDeltas 为空（义务正文与验收语义只能由人的决定改变）；
- *   2. taskSetDelta 非空，且通过 checkTaskSetDelta（形状、引用、链式取代复用 RW-02 判定）；
+ *   2. taskSetDelta 非空，且通过 checkTaskSetDelta（形状、引用、链式取代复用任务集合判定）；
  *   3. 没有 cancelTask：取消承担者不产生新的证明者，不是返工；
  *   4. 每条 replaceTask 的取代者必须是**本增量新增**的返工任务（不是把义务并给既有任务）；
  *   5. 每个新增任务都必须由提案的 rework.tasks 声明，并且恰好取代一个源任务；
@@ -182,7 +182,7 @@ export function inScopeReworkIssues(input: { proposal: ReworkProposalV1; sourceP
 }
 
 /**
- * RW-10（P2）人的暂停开关：CoordinationPolicyContentV1.allowed.inScopeRework 的运行时判定。
+ * 人的暂停开关：CoordinationPolicyContentV1.allowed.inScopeRework 的运行时判定。
  *
  * 为什么放在策略面而不是内联在引擎里：这个位是**授权**判据，与四条边界同层，必须能单独测试。
  * 为什么由受理入口在每次受理时调用它：判据是「当前生效策略」的内容，不是进程内缓存的开关——
@@ -205,7 +205,7 @@ export function autonomousReworkPauseIssues(policy: {
 }
 
 /**
- * RW-10（P7）：返工提案**扩展部分**的 canonical 摘要，用于重放／重复触发前的比对。
+ * 返工提案扩展部分的 canonical 摘要，用于重放和重复触发前的比对。
  *
  * 为什么需要单独一份口径：planProposalDigest 覆盖的是 patch + impact，而 ReworkProposalV1 多出的
  * rework（来源问题与返工任务分组）与 planDraft（提交给 applyPlanChange 的新计划草稿）不在其中。
@@ -305,8 +305,8 @@ export function reworkBudgetFacts(input: {
 /**
  * 预算边界：还有剩余额度才允许自动受理。
  *
- * RW-10（P11）：这里只判 used < limit。原先还写了 limit > 0，那是**不可达**的防御——安装期
- * 已要求 budget.maxAutonomousReworks ∈ 1..4（P15_COORDINATION_BUDGET_MAX，见 ControlEngine
+ * 这里只判 used < limit。原先还写了 limit > 0，那是**不可达**的防御——安装期
+ * 已要求 budget.maxAutonomousReworks ∈ 1..4（COORDINATION_AUTONOMOUS_REWORK_BUDGET_MAX，见 ControlEngine
  * 的 validateInstallShape），且它本来就是冗余的：limit 为 0 时 used >= 0 必然不满足 used < limit。
  * 保留一个永远为真的条件只会让人以为「上限为 0」是一种可能的状态。
  */

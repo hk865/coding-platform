@@ -240,14 +240,14 @@ export function p111RevisionRef(revision: number, projectId: string = P111_PROJE
   return { aggregateType: "GoalRevision", projectId, workspaceId: P111_WORKSPACE, goalId: P111_GOAL, revision };
 }
 
-import { planProposalSnapshotFor as formalplanProposalSnapshotFor } from "../../../src/control/control-engine/records/goal-change.js";
-export function planProposalSnapshotFor(proposal: PlanProposalV1, recordedAt: string = P111_SCHEMA): PlanProposalSnapshot { return formalplanProposalSnapshotFor(proposal, recordedAt); }
+import { planProposalSnapshotFor as canonicalPlanProposalSnapshotFor } from "../../../src/control/control-engine/records/goal-change.js";
+export function planProposalSnapshotFor(proposal: PlanProposalV1, recordedAt: string = P111_SCHEMA): PlanProposalSnapshot { return canonicalPlanProposalSnapshotFor(proposal, recordedAt); }
 
-import { userDecisionSnapshotFor as formaluserDecisionSnapshotFor } from "../../../src/control/control-engine/records/goal-change.js";
-export function userDecisionSnapshotFor(decision: UserDecisionV1, recordedAt: string = P111_SCHEMA): UserDecisionSnapshot { return formaluserDecisionSnapshotFor(decision, recordedAt); }
+import { userDecisionSnapshotFor as canonicalUserDecisionSnapshotFor } from "../../../src/control/control-engine/records/goal-change.js";
+export function userDecisionSnapshotFor(decision: UserDecisionV1, recordedAt: string = P111_SCHEMA): UserDecisionSnapshot { return canonicalUserDecisionSnapshotFor(decision, recordedAt); }
 
-import { goalRevisionSnapshotFor as formalgoalRevisionSnapshotFor } from "../../../src/control/control-engine/records/goal-change.js";
-export function goalRevisionSnapshotFor(change: GoalRevisionV1, recordedAt: string = P111_SCHEMA): GoalRevisionSnapshot { return formalgoalRevisionSnapshotFor(change, recordedAt, P111_WORKSPACE); }
+import { goalRevisionSnapshotFor as canonicalGoalRevisionSnapshotFor } from "../../../src/control/control-engine/records/goal-change.js";
+export function goalRevisionSnapshotFor(change: GoalRevisionV1, recordedAt: string = P111_SCHEMA): GoalRevisionSnapshot { return canonicalGoalRevisionSnapshotFor(change, recordedAt, P111_WORKSPACE); }
 
-import { buildGoalRevisionV1 as formalbuildGoalRevisionV1 } from "../../../src/control/control-engine/records/goal-change.js";
-export function buildGoalRevisionV1(opts: { goalRef: GoalRef; revision: number; activePlanRef: PlanRevisionRef; supersededPlanRefs: PlanRevisionRef[]; changedAt?: string; reason?: string }): GoalRevisionV1 { return formalbuildGoalRevisionV1({ ...opts, changedAt: opts.changedAt ?? P111_SCHEMA, reason: opts.reason ?? "用户接受计划变更提案" }); }
+import { buildGoalRevisionV1 as canonicalBuildGoalRevisionV1 } from "../../../src/control/control-engine/records/goal-change.js";
+export function buildGoalRevisionV1(opts: { goalRef: GoalRef; revision: number; activePlanRef: PlanRevisionRef; supersededPlanRefs: PlanRevisionRef[]; changedAt?: string; reason?: string }): GoalRevisionV1 { return canonicalBuildGoalRevisionV1({ ...opts, changedAt: opts.changedAt ?? P111_SCHEMA, reason: opts.reason ?? "用户接受计划变更提案" }); }

@@ -6,7 +6,7 @@
  * Readiness probe: auto-skips until the P1-05 handler/projections land.
  */
 import { describe, expect, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { isP105Ready, runP105Path, verifyP105AfterRestart } from "../restart/p1-05-restart-fixtures.js";
 import { toP1_05Harness, type P1_05TestHarness } from "../contract-suite/p1-05-harness.js";
 
@@ -14,7 +14,7 @@ const READY = await isP105Ready();
 
 describe.skipIf(!READY)("P1-05 integration (real SQLite + real modules)", () => {
   it("T1: full vertical -> Goal phase COMPLETED -> restart identical; phase surface & side-effect compare", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       const th: P1_05TestHarness = toP1_05Harness(h);
       const before = await runP105Path(h);

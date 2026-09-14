@@ -75,7 +75,7 @@ export interface VerificationRoundSourcePort {
   capture(root: string): Promise<VerificationRoundSourceResult>;
 }
 
-/** Frozen canonical and filesystem identities, rechecked before every use. */
+/** Versioned canonical and filesystem identities, rechecked before every use. */
 export type VerificationRoundMaterialIdentity = {
   schemaVersion: 1;
   scope: VerificationRoundScope;

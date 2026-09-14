@@ -1,0 +1,17 @@
+{
+  "buildFiles": 666,
+  "buildFingerprint": "26434d808904f4286ce422106612011a5b09f79bde6cacd61659ea1d9a47a080",
+  "sourceFingerprint": "d0dadb34031309df103d7e9ad293be4d8210850d93a2895d56d245cfe3b45f05",
+  "results": "types=0 ui=0 boundaries=0 build=0 tests=1",
+  "logHashes": {
+    "boundaries.json": "6661b51634c3874876e242aeeac7a97fda3ccbc5ee93cba2ab1e5f403602ffd8",
+    "build.log": "28d3d7f0e031185dc0dfa84643d8265eed62fd1580b47258ee5e3ff972c0c2cb",
+    "exploration-repro.log": "8c74045d094e59bfec57f979ac0ede98d813635d189634edfa0b737b76b25abb",
+    "full-regression.log": "7c36c78ac091c23bd52b816da0c911c62702031eb9c142184e47570d93bc5104",
+    "real-model.log": "71bc6cf989ec10188cfd4fdd0ce936db08c902deaf1c94f23113ab075a9d4824",
+    "results.txt": "35efa00c33820e3a2ddbe712cdb5e194da9f220b0f47bc12ea724e19e74ad761",
+    "types.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "ui-types.log": "38ac890c60e7f38d59ddfb410325cdfb5fca83c9411765c5481754e01c021630"
+  },
+  "errors": []
+}

@@ -27,6 +27,7 @@ export function validateDomainEvent(value: unknown): ValidationIssue[] {
   stringField(value, "aggregateType", issues);
   stringField(value, "aggregateId", issues);
   const isActivationEvent =
+    eventType === "ArchitectureReviewRecorded" ||
     eventType === "CompletionPolicyActivated" ||
     eventType === "ArchitectureBaselineActivated" ||
     eventType === "RunEventRecorded" ||
@@ -39,7 +40,7 @@ export function validateDomainEvent(value: unknown): ValidationIssue[] {
     eventType === "WorkspaceReadLeaseReleased" ||
     eventType === "WorkspaceWriteLeaseReleased" ||
     eventType === "IntegrationJoined" ||
-    // CM-1A-001：协作通信里这些事件是**既有聚合的推进**（revision >= 2），不是创建事件。
+    // 协作通信：协作通信里这些事件是**既有聚合的推进**（revision >= 2），不是创建事件。
     eventType === "WorkParticipationEnded" ||
     eventType === "DirectedRequestResponded" ||
     eventType === "DirectedRequestCancelled" ||

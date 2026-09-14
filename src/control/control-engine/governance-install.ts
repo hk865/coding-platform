@@ -65,7 +65,7 @@ async function installCompletionPolicyRevision(
   const fixtureIssues = validateCompletionPolicyFixture(command.payload.fixture);
   const structural = issues.concat(fixtureIssues).filter((i) => i.code !== "digest_mismatch");
   // Semantic validity: a CompletionPolicy that recognizes NO requirement kind is
-  // degenerate ("fixture 无效 -> invalid" per the frozen semantics).
+  // degenerate ("fixture 无效 -> invalid" per the versioned semantics).
   const emptyRequirementKinds = command.payload.fixture.content.requirementKinds.length === 0;
   if (structural.length > 0 || emptyRequirementKinds) {
     return { status: "rejected", commandId: command.commandId, code: "invalid" };

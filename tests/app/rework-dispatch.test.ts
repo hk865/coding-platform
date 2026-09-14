@@ -13,7 +13,8 @@
  * RW-07 之前，第二步只会遍历初始 origin 的 assignments，返工任务没有任何入口认领它——
  * 本用例断言的正是这一跳现在接通了。
  */
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { PlannedTaskDispatch } from '../../src/control/dispatch-engine/planned-task-dispatch.js';
 import type { VerificationRegisteredCheck, VerificationRoundResult } from '../../src/contracts/verification-round.js';
 import type { ReworkDriveResultV1, ReworkDriveViewV1 } from '../../src/contracts/rework/drive.js';
 import type { GovernanceActivateResultV1, GovernanceInstallResultV1 } from '../../src/contracts/governance-view.js';
@@ -69,10 +70,19 @@ const coordinationSource = (policyId: string, maxAutonomousReworks: number) => (
 });
 const FAILING_COMMAND = 'exit 1';
 
-it('真实 FAIL 自动受理成新 revision 之后，产品自己的派发入口把返工任务认领并跑出一个 Run', async () => {
+it.each([false, true])('真实 FAIL 受理后由产品唯一派发消费（受理后丢失唤醒=%s）', async loseWake => {
   const fixture = await fixtureFor();
   // 前置：初始计划已经由产品派发并跑完（fixture 自己等到 run completed）。
   expect(fixture.runId).not.toBe('');
+  let pausedOwner: PlannedTaskDispatch | undefined, restartedAfterAcceptance = false;
+  const original = PlannedTaskDispatch.prototype.drivePending;
+  const paused = loseWake ? vi.spyOn(PlannedTaskDispatch.prototype, 'drivePending').mockImplementation(function (this: PlannedTaskDispatch) {
+    pausedOwner ??= this;
+    // Lose every wake in the old process, not the new instance's durable scan.
+    return this === pausedOwner ? Promise.resolve({ issues: [] }) : original.call(this);
+  }) : undefined;
+  cleanup.push(async () => { paused?.mockRestore(); });
+
 
   // 1) 人经正式治理入口安装并激活协调策略（预算 1 次自动返工）；没有它自动受理会 governance_unavailable。
   const source = coordinationSource('rw07-coordination-policy', 1);
@@ -104,12 +114,20 @@ it('真实 FAIL 自动受理成新 revision 之后，产品自己的派发入口
     const candidate = driven[0] ?? viewed[0];
     if (candidate) reworkTaskId = candidate.reworkTaskId;
     const run = state.liveRuns.find((entry) => entry.spec.taskId === reworkTaskId) ?? null;
+    if (loseWake && !restartedAfterAcceptance && status.body.view.acceptance.applied && reworkTaskId) {
+      expect(run).toBeNull();
+      restartedAfterAcceptance = true;
+      await fixture.restart();
+      continue;
+    }
+
     if (status.body.view.acceptance.applied && reworkTaskId !== '' && run !== null) {
       view = status.body.view; lastDrive = status.body.lastDrive; reworkRun = run; break;
     }
     if (Date.now() >= deadline) throw Error('返工任务没有被产品派发出去：' + JSON.stringify({ applied: status.body.view.acceptance, reworkTaskId, runs: state.liveRuns.map((entry) => entry.spec.taskId), lastDrive: status.body.lastDrive }));
     await new Promise((done) => setTimeout(done, 50));
   }
+  if (loseWake) expect(restartedAfterAcceptance).toBe(true);
   if (view === null || lastDrive === null || reworkRun === null) throw Error('unreachable');
 
   // 受理是真的自动受理：四条边界都满足，active revision 前进到新计划。

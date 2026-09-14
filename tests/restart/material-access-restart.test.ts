@@ -18,7 +18,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
 import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from '../contract-support/fixtures/bootstrap-fixture-v1.js';
 import { buildGoalCreateLedgerCommit } from '../contract-support/fixtures/goal-fixtures.js';
@@ -42,7 +42,7 @@ const BASIS: MaterialBasisV1 = { planRef: PLAN_REF, workspaceRevision: 1, source
 const BODY = '执行运行的任务包正文：义务、权限与来源版本';
 const runRef = (runId: string): RunRef => ({ aggregateType: 'Run', projectId: PROJECT, goalId: GOAL, runId });
 
-async function seedRun(host: Awaited<ReturnType<typeof createPersistentSqliteHarness>>, runId: string, taskId: string) {
+async function seedRun(host: Awaited<ReturnType<typeof createPersistentPlatform>>, runId: string, taskId: string) {
   const command = buildDispatchClaimCommand({
     commandId: 'cmd-claim-' + runId, projectId: PROJECT, goalId: GOAL, taskId, runId,
     attemptId: 'attempt-' + runId, idempotencyKey: 'claim-' + runId, correlationId: 'corr-' + runId, submittedAt: AT,
@@ -55,7 +55,7 @@ async function seedRun(host: Awaited<ReturnType<typeof createPersistentSqliteHar
 
 it.each([false, true])('keeps valid grants across SQLite restart even behind more than 256 newer candidates (crowded=%s)', async crowded => {
   const dir = await mkdtemp(join(tmpdir(), 'material-grant-restart-'));
-  let host = await createPersistentSqliteHarness({ dir });
+  let host = await createPersistentPlatform({ dir });
   const producer = runRef('run-producer');
   const consumer = runRef('run-consumer');
   let ref: import('../../src/contracts/artifact.js').ArtifactRef;
@@ -132,7 +132,7 @@ it.each([false, true])('keeps valid grants across SQLite restart even behind mor
 
 it('rejects wrong-workspace grants at submission and denies legacy bad grants after reopening', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'material-grant-scope-'));
-  let host = await createPersistentSqliteHarness({ dir });
+  let host = await createPersistentPlatform({ dir });
   const consumer = runRef('reader');
   try {
     const boot = buildBootstrapCommand({ schemaVersion: 1, entries: [

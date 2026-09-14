@@ -1,9 +1,9 @@
 /**
- * CM-1A-001 第 3 工作段 — Dispatch 侧的协作通信驱动（A03／A04／A05 的运行面）。
+ * Dispatch 侧协作通信驱动：请求、投递与等待受理。
  *
- * ── 位置与收口（owner 裁决 D05）───────────────────────────────────────────────
+ * ── 位置与收口───────────────────────────────────────────────
  * 本驱动**挂在唯一公开入口 `DispatchEngineImpl.drive(trigger)` 之内**：不新增第二生产入口、
- * 不新开后台循环、不与 planningQueue／semanticReworkQueue／RuntimeDispatch.queue 竞争推进同一工作。
+ * 不新开后台循环；宿主只唤醒此持久扫描，不另持有同一工作的启动权。
  * 一次 drive 的协作与 ordinary 两段各以 `trigger.maxIntents`（默认 8）为上界，因此"继续分页"
  * 也始终是有界的。
  *
@@ -28,7 +28,7 @@
  *
  * ── 如实记录的边界（不假装已满足）─────────────────────────────────────────────
  *   (1) 路由 topic 词表是**封闭的账本域事件名**（见 communicationTopicOf）：只有列在表里的
- *       协作通信事件可被订阅命中。这不是通用事件总线，也不打算在本票变成一条。
+ *       协作通信事件可被订阅命中。这不是通用事件总线，也不打算在当前实现变成一条。
  *   (2) 源事件生产者在 canonical 提交内固定 active subscription scope 并登记 route intent。
  *       历史 catchup 使用订阅创建时的固定 horizon；完成后再推进 live intent。
  *   (3) not_ready 不伪造 done/cancelled；已证实无副作用的 intent 可按 availableAt 退避，
@@ -39,7 +39,7 @@
 import type { CommitCursor } from "../../contracts/command-event.js";
 import type { DomainEvent } from "../../contracts/events.js";
 import type { StateLedger } from "../../contracts/ledger.js";
-import type { ControlEngine } from "../../contracts/modules.js";
+import type { CoordinationControl } from "../../contracts/modules.js";
 import type { RunSnapshot } from "../../contracts/dispatch.js";
 import type { WorkContextBindingSnapshot } from "../../contracts/context-continuity.js";
 import type {
@@ -88,7 +88,7 @@ export const COORDINATION_DRIVE_CONSUMER_ID = "coordination-drive";
 export type CoordinationDriveDeps = {
   ledger: Pick<StateLedger, "load" | "events" | "alternativeReport">;
   control: Pick<
-    ControlEngine,
+    CoordinationControl,
     "claimCommunicationIntent" | "settleCommunicationIntent" | "admitWaitSuccessor" | "ensureWaitAdmission" | "requestCommunicationIntentCancellation" | "reconcileCommunicationIntent"
   >;
   /** 调用方时钟（claim 的 now / settle 的 settledAt 都由它给出）。 */
@@ -97,7 +97,7 @@ export type CoordinationDriveDeps = {
   leaseDurationMs?: number;
   /**
    * 一页最多处理多少个订阅。默认 `COMMUNICATION_PAGE_MAX_DELIVERIES`（与 Control 的页内投递
-   * 上界同一个常量），因此**生产路径的行为不因这个注入点改变**。它是 CM-1A-001 §3 明列
+    * 上界同一个常量），因此**生产路径的行为不因这个注入点改变**。它是协作通信规范明列
    * 「可在实现中收敛」的分页大小：宿主/测试可以用更小的页驱动"同一事件位置必须翻多页"的真实链路，
    * 而不必为了触发分页去造 64 个以上订阅。
    */
@@ -224,6 +224,8 @@ export class CoordinationDrive {
         if (d.kind === 'route_page') {
           const reserved = Math.min(budget - 1, work.length - index - 1);
           budget -= Math.max(1, await this.routePages(intent, scan, result, failures, budget - reserved));
+        } else if (d.kind === 'architecture_decision_delivery') {
+          budget--; await this.architectureDelivery(intent, result, failures);
         } else if (d.kind === 'subscription_catchup') {
           budget--; await this.catchupPage(intent, result, failures);
         } else if (d.kind === 'wait_deadline') {
@@ -234,15 +236,17 @@ export class CoordinationDrive {
       }
       // (e) 条件已满足但前驱仍 active：请 Control 判定并幂等建立 wait_admission intent。
       //     放在 (d) 之前，并重新扫描一次 intent 列表，使本 drive 内刚建立的 intent
-      //     能在同一次 drive 里被领取（否则要等下一次 drive，A05 的"事件先到"时序仍然成立，
+      //     能在同一次 drive 里被领取（否则要等下一次 drive，等待后继的"事件先到"时序仍然成立，
       //     但会多消耗一次 drive 预算）。
-      for (const waitRef of scan.waitRefs) {
+      // Decision delivery can register a Wait in this same drive. Include those durable facts now.
+      const waitRefs = result.deliveries>0 && work.some(i=>i.intent.domain.kind==='architecture_decision_delivery') ? (await this.scan()).waitRefs : scan.waitRefs;
+      for (const waitRef of waitRefs) {
         if (budget <= 0) break;
         const ensured = await this.ensureAdmission(waitRef, failures);
         if (ensured.receipt === "ensured") result.waitAdmissionsEnsured += 1;
         if (ensured.receipt !== "skipped" && ensured.code !== "predecessor_ended") budget -= 1;
         if (ensured.code === "predecessor_ended" && budget > 0) {
-          // D02 的第二个触发点：条件已满足、前驱**已经**公开结束。这时不需要"前驱结束时复查"的
+          // 后继触发规则的第二个触发点：条件已满足、前驱**已经**公开结束。这时不需要"前驱结束时复查"的
           // intent——直接请 Control 受理唯一后继（Control 在同一事务里复查资格并创建
           // TaskAttempt/Run/唯一 outbox；不满足则零写入 not_ready）。判定仍在 Control。
           await this.admitWait(waitRef, result, failures);
@@ -303,6 +307,14 @@ export class CoordinationDrive {
     }
     return used;
   }
+  private async architectureDelivery(intent:CommunicationIntentSnapshot,result:{claimed:number;deliveries:number},failures:CoordinationDriveFailure[]) {
+    const claim=await this.claim(intent,failures);if(!claim)return;result.claimed++;
+    const id='architecture-delivery-'+intent.ref.intentId+'-'+claim.revision;
+    const receipt=await this.deps.control.settleCommunicationIntent({schemaVersion:1,commandType:'CommunicationSettleIntent',commandId:id,aggregateId:intent.ref.intentId,expectedRevision:claim.revision,identity:{projectId:intent.ref.projectId,actor:{kind:'system',id:this.consumerId},idempotencyKey:id},correlationId:id,submittedAt:this.deps.now(),payload:{outcome:'architecture_delivery',workspaceId:intent.ref.workspaceId,consumerId:this.consumerId,leaseGeneration:claim.generation,settledAt:this.deps.now()}});
+    if(receipt.status==='committed')result.deliveries+=receipt.deliveries.length;
+    else failures.push({intentId:intent.ref.intentId,code:'rejected',message:'Architecture decision delivery rejected: '+JSON.stringify(receipt)});
+  }
+
   private async catchupPage(intent: CommunicationIntentSnapshot, result: { claimed: number; pagesRouted: number; deliveries: number }, failures: CoordinationDriveFailure[]) {
     const claimed = await this.claim(intent, failures); if (!claimed) return;
     result.claimed++;
@@ -786,7 +798,7 @@ export class CoordinationDrive {
       message,
     });
     /**
-     * **只有已证实无副作用的失败才能进入退避重试**（CM-1A-001 第 4 步 / A08 / 协议约束 2.4）。
+     * **只有已证实无副作用的失败才能进入退避重试**（协作通信可靠投递规则 / 外部副作用恢复 / 协议约束 2.4）。
      *
      * unavailable 表示执行能力（Control/账本）当时不可用，提交**根本没有发生**；而
      * sideEffectStarted === false 又证明这条 intent 至今没有产生过任何外部副作用。两个条件同时
@@ -924,7 +936,7 @@ export class CoordinationDrive {
     const receipt = await this.deps.control.settleCommunicationIntent(command);
     if (receipt.status === "committed") {
       result.deadlinesSettled += 1;
-      // owner 裁决：Dispatch 在 wait deadline **之后**也要请 Control 复查接续资格
+      // 参与身份裁决：Dispatch 在 wait deadline **之后**也要请 Control 复查接续资格
       // （deadline 到点但条件已满足、前驱仍 active 时，等待需要的是 wait_admission intent）。
       await this.ensureAdmission(waitRef, failures);
       return;
@@ -1044,7 +1056,7 @@ export class CoordinationDrive {
     // 是同一命令（账本幂等 replay），wait 前进之后是新命令（不会把旧结果 replay 成新事实）。
     // waitId 刻意写进 id/correlationId：调度触发的命令必须自带**来源关联**（Control 会复核）。
     const commandId = "coord-admit-" + waitRef.waitId + "-" + trigger + "-r" + String(wait.revision);
-    // 归因（第 2 步裁决）：后继受理是**调度触发**命令，必须用 {kind:'system'} + 来源关联。
+    // 归因（参与身份规则）：后继受理是**调度触发**命令，必须用 {kind:'system'} + 来源关联。
     // 它**不**是某一段参与里的模型调用：此刻唯一存在的 agent 身份属于前驱那一段（后继 Run 还
     // 不存在），用 agent principal 归因就是把**新参与者**与**旧 Run** 拼成一个身份（精确 principal
     // 由 Agent 工具命令使用，见 Control 的 checkSchedulerAttribution）。
@@ -1117,7 +1129,7 @@ export class CoordinationDrive {
    * Work 绑定（goal/task/plan）、前驱 Run 信封（权限与预算）。任一缺失即**明确失败**
    * （前驱 Run 尚未 startRun 时没有信封，这时不能用「猜的权限」启动后继）。
    *
-   * 参与关系取 Work 权威状态里的 currentParticipationRef（第 2 步裁决）：等待登记时的那一段只是
+   * 参与关系取 Work 权威状态里的 currentParticipationRef（参与身份规则）：等待登记时的那一段只是
    * 历史事实。它缺省/已 ended 时仍然把它当作**提议**送交 Control，由 Control 给出权威的
    * no_active_participation 拒绝（资格判定不在 Drive）。
    */
@@ -1151,7 +1163,7 @@ export class CoordinationDrive {
       goalId: binding.goalId ?? run.ref.goalId,
       taskId: binding.taskId ?? run.task.taskId,
       planRef: binding.planRef ?? run.planRef,
-      // 授权版本取**参与关系**固定的那一份（A01）：同一 Work 的下一段执行沿用同一绑定，
+      // 授权版本取**参与关系**固定的那一份（参与关系与换手）：同一 Work 的下一段执行沿用同一绑定，
       // 且必须与 command.identity.agentPrincipal.roleBinding 逐字段一致（Control 会复核）。
       roleBinding: participationValue.roleBinding,
       declaredPermissions: {
@@ -1170,7 +1182,7 @@ export class CoordinationDrive {
   /**
    * 收敛一条 cancel_requested 的 intent（**同一 generation**，不发放新 generation）。
    *
-   * 两个结果必须分开（CM-1A-001 第 4 步 / A07·A08）：
+   * 两个结果必须分开（协作通信可靠投递规则 / 先记取消意图·外部副作用恢复）：
    *   · 未产生过外部副作用（sideEffectStarted = false）→ 可以**确认取消**（cancel_confirmed）；
    *   · 已经产生过（sideEffectStarted = true）→ 外部动作是否真的发生**无法从本地账本证明**，
    *     因此只能收敛为 outcome_unknown，并保留在同一 generation 上等对账。

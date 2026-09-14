@@ -1,7 +1,7 @@
-import { startQueryJobFingerprint } from "../../contracts/query-job.js";
+import { validQueryExecutionBinding, startQueryJobFingerprint } from "../../contracts/query-job.js";
 import { canonicalJson } from "../../contracts/fingerprint.js";
 import { validQueryExecution } from '../../contracts/query-job.js';
-/** P1-09 Control entry: QueryJobEngineImpl. */
+/** query Control entry: QueryJobEngineImpl. */
 import type { CloseQueryJobCommand, CloseQueryJobReceipt, QueryJobV1, QueryJobSnapshot, QueryRunSnapshot, QueryRunV1, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, SubmitQueryJobCommand, SubmitQueryJobReceipt } from "../../contracts/query-job.js";
 import { queryJobRefFor, queryJobAnswerRefFor } from "../../contracts/query-job.js";
 import { buildQueryJobRecordCommit, buildQueryAnswerRecordCommit, buildQueryCloseRecordCommit } from "./records/query-job.js";
@@ -84,7 +84,7 @@ export class QueryJobEngineImpl {
       for (const { event, cursor } of page.events) {
         if (!("projectId" in event) || event.projectId !== command.identity.projectId || !("idempotencyKey" in event) || event.idempotencyKey !== command.identity.idempotencyKey || canonicalJson(event.actor) !== canonicalJson(command.identity.actor)) continue;
         let match = false;
-        if (command.commandType === "StartQueryJob" && event.eventType === "QueryRunStarted" && event.payload.job?.status === "running") match = canonicalJson(command.payload.jobRef) === canonicalJson(event.payload.run.queryJobRef) && command.payload.runRef.runId === event.payload.run.runId;
+        if (command.commandType === "StartQueryJob" && event.eventType === "QueryRunStarted" && event.payload.job?.status === "running") match = canonicalJson(command.payload.jobRef) === canonicalJson(event.payload.run.queryJobRef) && command.payload.runRef.runId === event.payload.run.runId && canonicalJson(command.payload.execution ?? null) === canonicalJson(event.payload.run.execution ?? null);
         if (command.commandType === "RecordQueryAnswer" && event.eventType === "QueryJobAnswerRecorded") match = canonicalJson(command.payload.answer) === canonicalJson(event.payload.answer);
         if (command.commandType === "CloseQueryJob" && event.eventType === "QueryJobClosed") match = canonicalJson(command.payload.reason) === canonicalJson(event.payload.reason) && canonicalJson(command.payload.jobRef) === canonicalJson(event.payload.run.queryJobRef) && command.payload.runRef.runId === event.payload.run.runId;
         if (event.eventType === "QueryRunStarted" || event.eventType === "QueryJobAnswerRecorded" || event.eventType === "QueryJobClosed") return { match: match && command.expectedRevision === event.aggregateRevision - 1 && command.aggregateId === (event.eventType === "QueryRunStarted" ? event.payload.run.queryJobRef.queryJobId : event.aggregateId), eventIds: [event.eventId], revision: event.aggregateRevision, commitCursor: cursor };
@@ -108,9 +108,12 @@ export class QueryJobEngineImpl {
     if (!((before.job.status === "pending" && previousRun.run.status === "pending") || (before.job.status === "answered" && previousRun.run.status === "running" && before.job.answerRefs.length < before.job.intent.multiTurn.maxRounds))) return reject("already_started");
     if (before.revision !== command.expectedRevision || previousRun.revision !== before.revision) return reject("revision_conflict");
     if (before.job.runRef !== null && canonicalJson(before.job.runRef) !== canonicalJson(runRef)) return reject("invalid");
+    if (command.payload.execution && !validQueryExecutionBinding(command.payload.execution, { ...before.job, runRef })) return reject('invalid');
     const now = this.deps.now();
     const job: QueryJobV1 = { ...before.job, runRef, status: "running", updatedAt: now };
-    const run: QueryRunV1 = { ...previousRun.run, status: "running", startedAt: now };
+    const run: QueryRunV1 = { ...previousRun.run, status: 'running', startedAt: now };
+    delete run.execution;
+    if (command.payload.execution) run.execution = command.payload.execution;
     const revision = before.revision + 1;
     const receipt = await this.deps.ledger.commit({ commitKind: "query-job-start", schemaVersion: 1, identity: command.identity, fingerprint: startQueryJobFingerprint(command),
       expectedVersions: [{ ref: jobRef, revision: before.revision }, { ref: runRef, revision: previousRun.revision }],
@@ -164,7 +167,7 @@ export class QueryJobEngineImpl {
     if (runLoad.status === "not_found") return { status: "rejected", commandId: command.commandId, code: "not_found" };
     const runSnap = runLoad.snapshot as QueryRunSnapshot;
     const nextJob: QueryJobV1 = { ...jobSnap.job, status: "closed", closeReason: command.payload.reason, updatedAt: this.deps.now() };
-    const nextRun: QueryRunV1 = { ...runSnap.run, status: "closed", endedAt: this.deps.now(), outcome: command.payload.reason.code === "timeout" ? "timeout" : command.payload.reason.code === "gap" ? "gap" : command.payload.reason.code === "failed" ? "failed" : "answered" };
+    const nextRun: QueryRunV1 = { ...runSnap.run, status: "closed", endedAt: this.deps.now(), outcome: command.payload.reason.code === "timeout" ? "timeout" : command.payload.reason.code === "gap" ? "gap" : command.payload.reason.code === "failed" ? "failed" : command.payload.reason.code === "cancelled" ? "cancelled" : "answered" };
     const batch = buildQueryCloseRecordCommit(command, { eventId: this.deps.eventId(), occurredAt: this.deps.now(), nextRevision: jobSnap.revision + 1, job: nextJob, run: nextRun });
     const receipt = await this.deps.ledger.commit(batch);
     if (receipt.status === "committed") return { status: "committed", commandId: command.commandId, replayed: receipt.replayed, revision: jobSnap.revision + 1, eventIds: receipt.eventIds, commitCursor: receipt.commitCursor };

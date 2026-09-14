@@ -8,13 +8,13 @@ import { classifyRestartProbeError } from "./readiness-probe.js";
  * not implemented yet" stub throw makes it false (auto-skip).
  */
 import { expect } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { toP1_08Harness, runP108TwoProjectScenario, createP108ScenarioRuntime, type P1_08HarnessLike, type P1_08TestHarness, P108_PROJECT_A, P108_WORKSPACE, P108_GOAL, P108_TASK_WORK } from "../contract-suite/p1-08-harness.js";
 
 export async function isP108Ready(): Promise<boolean> {
   try {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     try {
       await runP108RestartScenario(h);
       return true;
@@ -39,7 +39,7 @@ export type P108RestartEvidence = {
   ledgerEventIds: string[];
 };
 
-export async function runP108RestartScenario(h: PersistentSqliteHarness): Promise<P108RestartEvidence> {
+export async function runP108RestartScenario(h: PersistentPlatform): Promise<P108RestartEvidence> {
   const th: P1_08TestHarness = toP1_08Harness(h as unknown as P1_08HarnessLike);
   const before = await runP108TwoProjectScenario(th);
   const cursorBefore = String(h.observedCursor());
@@ -59,7 +59,7 @@ export async function runP108RestartScenario(h: PersistentSqliteHarness): Promis
 }
 
 /** Field-for-field restart equivalence for ALL SIX console views + cursor. */
-export async function verifyP108AfterRestart(restarted: PersistentSqliteHarness, evidence: P108RestartEvidence): Promise<void> {
+export async function verifyP108AfterRestart(restarted: PersistentPlatform, evidence: P108RestartEvidence): Promise<void> {
   const th: P1_08TestHarness = toP1_08Harness(restarted as unknown as P1_08HarnessLike);
   await restarted.advanceProjection();
   expect(String(restarted.observedCursor())).toBe(evidence.cursorBefore);

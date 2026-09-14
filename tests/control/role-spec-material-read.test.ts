@@ -18,7 +18,7 @@ import {
 } from '../../src/fixtures/role-spec-fixtures.js';
 import { buildCoordinationPolicyInstallCommand, buildCoordinationPolicyActivateCommand } from '../../src/contracts/commands/governance.js';
 import { LedgerRoleSpecRead } from '../../src/control/dispatch-engine/role-spec-read.js';
-import { P15_COORDINATION_POLICY_REVISION } from '../../src/contracts/human-role-collaboration.js';
+import { COORDINATION_POLICY_REVISION_V1 } from '../../src/contracts/human-role-collaboration.js';
 import type { RoleBindingRefV1 } from '../../src/contracts/dispatch.js';
 
 const FIXED = FIXED_ISO_2026_09_05;
@@ -52,7 +52,7 @@ async function harness() {
   const content = buildCoordinationPolicyContentWithRolesV1(PROJECT, [ROLE_SOURCE_EXECUTOR, ROLE_SOURCE_PLANNER]);
   expect((await control.installCoordinationPolicy(buildCoordinationPolicyInstallCommand({ policyId: POLICY_ID, content }, identity('inst-policy')))).status).toBe('committed');
   const pin = {
-    ref: { aggregateType: 'CoordinationPolicyRevision' as const, projectId: PROJECT, policyId: POLICY_ID, revision: P15_COORDINATION_POLICY_REVISION },
+    ref: { aggregateType: 'CoordinationPolicyRevision' as const, projectId: PROJECT, policyId: POLICY_ID, revision: COORDINATION_POLICY_REVISION_V1 },
     digest: roleMatrixPolicyDigest(content, POLICY_ID),
   };
   expect((await control.activateCoordinationPolicy(buildCoordinationPolicyActivateCommand(pin, { ...identity('act-policy'), expectedRevision: await projectRevision() }))).status).toBe('committed');

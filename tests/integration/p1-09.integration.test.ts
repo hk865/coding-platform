@@ -1,6 +1,6 @@
 /** P1-09 integration: real SQLite + restart + adapter parity (probe-gated). */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createPersistentSqliteHarness, type PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform, type PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 import { toP1_09Harness, runP109QueryScenario, type P1_09HarnessLike } from "../contract-suite/p1-09-harness.js";
@@ -10,11 +10,11 @@ import { P109_PROJECT, P109_WORKSPACE, P109_QUERY } from "../contract-support/fi
 const READY = await isP109Ready();
 
 describe.skipIf(!READY)("P1-09 real SQLite integration", () => {
-  let closed: PersistentSqliteHarness;
+  let closed: PersistentPlatform;
   let evidence: P109RestartEvidence;
 
   beforeAll(async () => {
-    closed = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    closed = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     evidence = await runP109RestartScenario(closed);
     await closed.close();
   });
@@ -31,7 +31,7 @@ describe.skipIf(!READY)("P1-09 real SQLite integration", () => {
   it("InMemory and SQLite query-job views agree", async () => {
     const mem = createInMemoryHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
     const th = toP1_09Harness(mem as unknown as P1_09HarnessLike);
-    const sql = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const sql = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     try {
       const thSql = toP1_09Harness(sql as unknown as P1_09HarnessLike);
       await runP109QueryScenario(th);

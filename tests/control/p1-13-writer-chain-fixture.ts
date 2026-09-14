@@ -10,8 +10,8 @@
  *     (lane A) are currently STUBS that throw "P1-13 lane: ... not implemented
  *     yet". A call throwing that exact message is silently replaced by the
  *     SHARED fixture ledger fold (buildP113InstallLedgerCommit /
- *     buildP113PlanPatchRecordCommit / buildP113TaskRecordCommit /
- *     buildP113TaskAdvanceCommit), so the chain stays compilable AND runnable on
+ *     buildRemediationPlanPatchRecordCommit / buildRemediationTaskRecordCommit /
+ *     buildRemediationTaskAdvanceCommit), so the chain stays compilable AND runnable on
  *     the current baseline. Every OTHER step (bootstrap / applyPlan /
  *     recordArchitectureFinding / acquireWorkspaceWriteLease / recordPatch /
  *     submitEvidence / dispatch run) is a REAL path.
@@ -51,7 +51,7 @@ import { runRefFor, taskAttemptRefFor } from "../../src/contracts/dispatch.js";
 
 import { p111BootstrapGoalGovernance } from "../contract-suite/p1-11-harness.js";
 import { P113_WORKSPACE, P113_FINDING, P113_TASK, P113_PATCH, buildP113PlanPatchV1, buildP113TaskV1, buildP113SubmitPatchCommand, buildP113CreateTaskCommand, buildP113AdvanceTaskCommand, p113PatchRef } from "../contract-support/fixtures/remediation-fixtures.js";
-import { buildP113PlanPatchRecordCommit, buildP113TaskRecordCommit, buildP113TaskAdvanceCommit } from "../../src/control/control-engine/records/remediation.js";
+import { buildRemediationPlanPatchRecordCommit, buildRemediationTaskRecordCommit, buildRemediationTaskAdvanceCommit } from "../../src/control/control-engine/records/remediation.js";
 import {
   P113_PROJECT,
   ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1,
@@ -145,7 +145,7 @@ export async function submitRemediationPlanPatchRealOrFallback(h: P113WriterHarn
     return { path: "real", receipt: r };
   } catch (e) {
     if (!isLaneStub(e)) throw e;
-    const receipt = (await h.ledger.commit(buildP113PlanPatchRecordCommit(cmd, { eventId: "evt-p113-wc-patch", occurredAt: P113_SCHEMA }))) as unknown as SubmitRemediationPlanPatchReceipt;
+    const receipt = (await h.ledger.commit(buildRemediationPlanPatchRecordCommit(cmd, { eventId: "evt-p113-wc-patch", occurredAt: P113_SCHEMA }))) as unknown as SubmitRemediationPlanPatchReceipt;
     return { path: "fixture", receipt };
   }
 }
@@ -158,7 +158,7 @@ export async function createRemediationTaskRealOrFallback(h: P113WriterHarness, 
     return { path: "real", receipt: r, task };
   } catch (e) {
     if (!isLaneStub(e)) throw e;
-    const receipt = (await h.ledger.commit(buildP113TaskRecordCommit(cmd, { eventId: "evt-p113-wc-task", occurredAt: P113_SCHEMA, task }))) as unknown as CreateRemediationTaskReceipt;
+    const receipt = (await h.ledger.commit(buildRemediationTaskRecordCommit(cmd, { eventId: "evt-p113-wc-task", occurredAt: P113_SCHEMA, task }))) as unknown as CreateRemediationTaskReceipt;
     return { path: "fixture", receipt, task };
   }
 }
@@ -191,7 +191,7 @@ export async function advanceRemediationStep(
     return { path: "real", receipt: r };
   } catch (e) {
     if (!isLaneStub(e)) throw e;
-    const receipt = (await h.ledger.commit(buildP113TaskAdvanceCommit(cmd, { eventId: "evt-p113-wc-adv-" + state.revision, occurredAt: P113_SCHEMA, nextRevision: state.revision + 1, task: nextTask }))) as unknown as AdvanceRemediationTaskReceipt;
+    const receipt = (await h.ledger.commit(buildRemediationTaskAdvanceCommit(cmd, { eventId: "evt-p113-wc-adv-" + state.revision, occurredAt: P113_SCHEMA, nextRevision: state.revision + 1, task: nextTask }))) as unknown as AdvanceRemediationTaskReceipt;
     state.task = nextTask;
     state.revision = state.revision + 1;
     return { path: "fixture", receipt };

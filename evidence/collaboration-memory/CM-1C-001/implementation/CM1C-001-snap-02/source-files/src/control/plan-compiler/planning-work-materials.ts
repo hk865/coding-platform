@@ -1,0 +1,77 @@
+import type { PlanningTaskWorkMaterial } from '../../contracts/planning.js';
+import type { WorkContextRef } from '../../contracts/context-continuity.js';
+import type { PlanRevisionSnapshot } from '../../contracts/plan.js';
+import type { ControlEngine } from '../../contracts/modules.js';
+import { taskWorkOrigin, type TaskWorkIdentityResolution, type WorkIdentityScope } from '../../contracts/task-work-identity.js';
+
+/** Uses Control's existing read authority. No new binding or derived id is made. */
+export async function resolvePlanningWorkIdentities(
+  scope: WorkIdentityScope,
+  plan: PlanRevisionSnapshot,
+  authority?: Pick<ControlEngine, 'resolveTaskWorkIdentity'>,
+): Promise<PlanningTaskWorkMaterial[]> {
+  const cache = new Map<string, TaskWorkIdentityResolution>();
+  const materials: PlanningTaskWorkMaterial[] = [];
+  for (const task of plan.tasks) {
+    const { originTaskId } = taskWorkOrigin(plan, task.taskId);
+    let result = cache.get(originTaskId);
+    if (!result) {
+      try {
+        result = authority ? await authority.resolveTaskWorkIdentity({ ...scope, taskId: originTaskId })
+          : { status: 'unavailable', reason: '未配置权威工作身份查询' };
+      } catch (error) {
+        result = { status: 'unavailable', reason: '权威工作身份查询失败：' + String(error) };
+      }
+      cache.set(originTaskId, result);
+    }
+    const identity = { taskId: task.taskId, originTaskId };
+    if (result.status !== 'resolved') {
+      materials.push({ ...identity, ...result });
+      continue;
+    }
+    const binding = result.binding;
+    if (binding.projectId !== scope.projectId || binding.workspaceId !== scope.workspaceId || binding.goalId !== scope.goalId
+      || binding.taskId !== originTaskId || binding.workKind !== 'task'
+      || result.workContextRef.projectId !== scope.projectId || result.workContextRef.workspaceId !== scope.workspaceId
+      || result.workContextRef.workId !== binding.workId) {
+      materials.push({ ...identity, status: 'unavailable', reason: '工作身份解析结果与目标、起源任务或工作区不一致' });
+    } else materials.push({ ...identity, status: 'resolved', workRef: { ...result.workContextRef } });
+  }
+  return materials;
+}
+
+/** A report can name only bindings that were actually read. This does not grant
+ * authority or decide whether a plan may be accepted. */
+export function planningWorkRef(
+  materials: readonly PlanningTaskWorkMaterial[] | undefined,
+  taskId: string,
+  scope: { projectId: string; workspaceId: string },
+): WorkContextRef | null {
+  const matches = materials?.filter(row => row.taskId === taskId) ?? [];
+  if (matches.length !== 1) return null;
+  const row = matches[0]!;
+  if (row.status !== 'resolved' || row.workRef.projectId !== scope.projectId || row.workRef.workspaceId !== scope.workspaceId)
+    return null;
+  return { ...row.workRef };
+}
+
+export function planningWorkGaps(
+  materials: readonly PlanningTaskWorkMaterial[] | undefined,
+  taskIds: readonly string[],
+  scope: { projectId: string; workspaceId: string },
+): { assumption: string; reason: string }[] {
+  const gaps: { assumption: string; reason: string }[] = [];
+  for (const taskId of new Set(taskIds)) {
+    const matches = materials?.filter(row => row.taskId === taskId) ?? [];
+    const row = matches.length === 1 ? matches[0] : undefined;
+    const reason = row === undefined ? '未提供唯一的工作身份材料'
+      : row.status === 'unavailable' ? row.reason
+      : row.status === 'resolved' && planningWorkRef(materials, taskId, scope) === null ? '工作身份与当前作用域不一致'
+      : null;
+    if (reason !== null) gaps.push({
+      assumption: '工作影响清单完整：' + taskId,
+      reason: reason + '；未列出的绑定不能视为不存在，需重新读取权威工作身份',
+    });
+  }
+  return gaps;
+}

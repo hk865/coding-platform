@@ -1,6 +1,6 @@
 /**
- * P1-12 ArchitectureReconciler.InspectionPort + VerificationEngine.CodeGraphPort
- * (first consumer freeze — P1-13/14 only consume these versions).
+ * ArchitectureReconciler.InspectionPort and VerificationEngine.CodeGraphPort.
+ * These versioned contracts are consumed by architecture inspection and evolution.
  *
  * Authority: dev_docs/modules/control/architecture-reconciler.md (唯一 baseline
  * 输入 = PlanRevision pin；不读 Project active ref、不内置 baseline) +
@@ -12,12 +12,12 @@
  *     plan pin missing / dangling / digest mismatch -> fail_closed with
  *     diagnostics, NO pseudo Delta/Finding. It never mutates the baseline,
  *     never moves active refs, never creates remediation/gate/activation
- *     side effects (P1-13/14).
+ *     side effects (architecture evolution).
  *   - The raw Delta is produced by the deterministic
  *     computeArchitectureDelta pure function (same inputs -> same Delta).
  *   - A REPORT-source inspection (no code change / no test failure) records
  *     finding candidates without fabricating a raw Delta; the reconciler
- *     records findings through ControlEngine (this ticket's commands).
+ *     records findings through the versioned ControlEngine commands.
  *   - codeGraph(query) exposes the graph capability view of a workspace
  *     revision: sourced / unsupported / stale / rejected — the reconciler
  *     fails closed on unsupported/stale.
@@ -60,10 +60,9 @@ export type CodeGraphResultV1 =
   | { status: "rejected"; code: "invalid_request" | "scope_forbidden" | "unavailable"; issues: string[] };
 
 export interface CodeGraphPort {
-  /** Graph capability seam of VerificationEngine: the platform asks the
-   * engine about a workspace revision's graph; the engine answers from its
-   * fixture/registry adapter (real graph index integration stays behind this
-   * seam — P1-12 uses deterministic fixtures). */
+  /** Graph capability seam of VerificationEngine. Persistent test hosts may
+   * use a deterministic registry adapter; product composition injects a
+   * source-backed implementation for the requested workspace revision. */
   codeGraph(query: CodeGraphQueryV1): Promise<CodeGraphResultV1>;
 }
 

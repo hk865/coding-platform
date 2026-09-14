@@ -6,14 +6,14 @@
  * documented deterministic check providers and the SQLite storage adapter).
  */
 import { describe } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { defineEvidenceContractSuite } from "../contract-suite/evidence.contract.suite.js";
 import { defineVerificationContractSuite } from "../contract-suite/verification.contract.suite.js";
 import { defineReviewContextSuite } from "../contract-suite/verification.contract.suite.js";
 import { toP1_04Harness, type P1_04HarnessFactory } from "../contract-suite/p1-04-harness.js";
 
 const factory: P1_04HarnessFactory = async () => {
-  const h = await createPersistentSqliteHarness({ deps: {} });
+  const h = await createPersistentPlatform({ deps: {} });
   return toP1_04Harness(h);
 };
 

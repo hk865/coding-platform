@@ -65,6 +65,13 @@ export class RuntimeObservationJournal<T> {
     return work;
   }
 
+  /** Exact persisted observation, without cloning unrelated runtime histories. */
+  read(key: string): T | undefined {
+    if (this.loadIssues.has(key)) return undefined;
+    const record = this.committed.get(key);
+    return record === undefined ? undefined : structuredClone(record);
+  }
+
   async flush(): Promise<void> { await Promise.all(this.writes.values()); }
 
   private readCommitted(): T[] {

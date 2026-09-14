@@ -6,10 +6,13 @@
 
 - [artifact-vault.ts](artifact-vault.ts)
 - [sqlite-artifact-vault.ts](sqlite-artifact-vault.ts)
+- [runtime-observation-journal.ts](runtime-observation-journal.ts)：保存运行时外部观察并按 Run 串行写入；正式运行状态仍由 StateLedger 对账决定。
 
 ## 边界与接线
 
-真实宿主使用 SQLite 版本；跨主体读取经账本登记的 `MaterialAccessGrant` 授权，声明基线不符返回 `rejected/stale`。宿主按完整身份查询全部候选并重核实际 Goal/工作区归属；Vault 限制 owner 与签发者作用域。通用版本自动作废仍未实现。未注入解析器时保持 P1-03 owner-only。
+真实宿主使用 SQLite 版本；跨主体读取经账本登记的 `MaterialAccessGrant` 授权，声明基线不符返回 `rejected/stale`。宿主按完整身份查询全部候选并重核实际 Goal/工作区归属；Vault 限制 owner 与签发者作用域。通用版本自动作废仍未实现。未注入解析器时保持 owner-only。
+
+Runtime observation journal 的文件更新按单一产品 Host 写入设计；它不是跨进程队列，也不能单独证明外部动作已完成。重启恢复必须把 journal 观察与 Ledger 中的 Run、授权和结果事实一并对账。
 
 ## 修改与验证入口
 

@@ -8,8 +8,8 @@ import { classifyRestartProbeError } from "./readiness-probe.js";
  * not implemented yet" stub throw makes it false (auto-skip).
  */
 import { expect } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { toP1_16Harness, runP116ContinuityScenario, type P1_16HarnessLike, type P1_16TestHarness, type P116ContinuityScenarioResult } from "../contract-suite/p1-16-harness.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 import { P116_PROJECT_B, P116_WORKSPACE, P116_WORK } from "../contract-support/fixtures/context-fixtures.js";
@@ -17,7 +17,7 @@ import { P108_PROJECT_A } from "../contract-suite/p1-08-harness.js";
 
 export async function isP116Ready(): Promise<boolean> {
   try {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     try {
       await runP116RestartScenario(h);
       return true;
@@ -39,7 +39,7 @@ export type P116RestartEvidence = {
   bindingSnapshot: string;
 };
 
-export async function runP116RestartScenario(h: PersistentSqliteHarness): Promise<P116RestartEvidence> {
+export async function runP116RestartScenario(h: PersistentPlatform): Promise<P116RestartEvidence> {
   const th: P1_16TestHarness = toP1_16Harness(h as unknown as P1_16HarnessLike);
   const before = await runP116ContinuityScenario(th);
   await th.advanceProjection();
@@ -60,7 +60,7 @@ export async function runP116RestartScenario(h: PersistentSqliteHarness): Promis
 }
 
 /** Field-for-field restart equivalence for ALL work-context views + cursor. */
-export async function verifyP116AfterRestart(restarted: PersistentSqliteHarness, evidence: P116RestartEvidence): Promise<void> {
+export async function verifyP116AfterRestart(restarted: PersistentPlatform, evidence: P116RestartEvidence): Promise<void> {
   const th: P1_16TestHarness = toP1_16Harness(restarted as unknown as P1_16HarnessLike);
   await restarted.advanceProjection();
   expect(String(restarted.observedCursor())).toBe(evidence.cursorBefore);

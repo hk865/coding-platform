@@ -1,0 +1,789 @@
+/**
+ * RW-04 自动受理与预算（ADR 0003 D1-4）。
+ *
+ * 覆盖：四条边界各自单独触发（满足 → 自动受理；任一不满足 → needs_human_decision + 明确原因 + 零写入）、
+ * 预算耗尽后转人工、人显式拒绝/延后后不再自动、重复触发幂等、重启后计数与拒绝事实一致、
+ * 越界提案（改义务正文）不得被自动受理、读侧（planChangeView）可见 system 决定。
+ *
+ * 全部通过真实入口：RW-03 的真实编译器产出提案，ControlEngine.acceptReworkProposal 受理，
+ * 账本是真实的 InMemory／SQLite StateLedger。没有测试自造的平行写入路径。
+ * 「零写入」断言一律在**提案准备完成之后**取事件数（准备阶段自己会写证据），避免把夹具的写入算进去。
+ */
+import { describe, expect, it } from 'vitest';
+import type { GoalSnapshot } from '../../src/contracts/ledger.js';
+import type { PlanRevisionSnapshot, RuntimeTask } from '../../src/contracts/plan.js';
+import type { ReworkProposalV1 } from '../../src/contracts/rework/proposal.js';
+import type { ReworkIssueViewV1 } from '../../src/contracts/rework/issues.js';
+import { reworkTaskIdFor } from '../../src/contracts/rework/proposal.js';
+import type { CoordinationPolicyContentV1 } from '../../src/contracts/human-role-collaboration.js';
+import { decisionTargetFor } from '../../src/contracts/goal-change.js';
+import { ReadModelIndexImpl } from '../../src/data/read-model-index/read-model-index.js';
+import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
+import {
+  FIXED,
+  RW04_GOAL,
+  RW04_OBLIGATION,
+  RW04_PROJECT,
+  RW04_REQUIREMENT,
+  RW04_VERIFY_TASK,
+  RW04_WORKSPACE,
+  activateCoordinationPolicy,
+  admitConclusion,
+  buildIssue,
+  compileProposal,
+  engineFor,
+  loadActivePlan,
+  loadGoal,
+  loadPlan,
+  memoryLedger,
+  prepareScope,
+  sqliteLedger,
+  type Ledger,
+} from './autonomous-rework-fixture.js';
+import { P115_COORDINATION_POLICY_CONTENT } from '../contract-support/fixtures/human-role-collaboration-fixtures.js';
+import { buildRecordUserDecisionCommand } from '../contract-support/fixtures/goal-change-fixtures.js';
+import { canonicalJson } from '../../src/contracts/fingerprint.js';
+
+type Engine = ReturnType<typeof engineFor>;
+type Receipt = Awaited<ReturnType<Engine['acceptReworkProposal']>>;
+
+function policyContent(budget: number): CoordinationPolicyContentV1 {
+  return { ...P115_COORDINATION_POLICY_CONTENT, budget: { ...P115_COORDINATION_POLICY_CONTENT.budget, maxAutonomousReworks: budget } };
+}
+
+async function eventCount(ledger: Ledger): Promise<number> {
+  const page = await ledger.events({ afterCursor: null, limit: 10000 });
+  return page.events.length;
+}
+
+type Scope = { ledger: Ledger; engine: Engine; goal: GoalSnapshot; plan: PlanRevisionSnapshot };
+type RoundInput = {
+  taskId: string;
+  obligationId: string;
+  requirementId: string;
+  roundId: string;
+  evidenceId: string;
+  outcome?: 'FAIL' | 'INCONCLUSIVE' | 'PASS';
+  withoutEvidence?: boolean;
+  projectId?: string;
+};
+type Prepared = { goal: GoalSnapshot; plan: PlanRevisionSnapshot; issue: ReworkIssueViewV1; proposal: ReworkProposalV1 };
+
+async function setup(options: { ledger?: Ledger; budget?: number; activatePolicy?: boolean; projectId?: string } = {}): Promise<Scope> {
+  const projectId = options.projectId ?? RW04_PROJECT;
+  const ledger = options.ledger ?? memoryLedger();
+  const engine = engineFor(ledger);
+  await prepareScope(ledger, projectId);
+  if (options.activatePolicy !== false) await activateCoordinationPolicy(engine, projectId, policyContent(options.budget ?? 1));
+  const goal = await loadGoal(ledger, projectId);
+  return { ledger, engine, goal, plan: await loadActivePlan(ledger, goal, projectId) };
+}
+
+/** 准备一轮：真接一条结论（可选）→ 真编译提案。不含任何受理写入。 */
+async function prepare(scope: Scope, input: RoundInput): Promise<Prepared> {
+  const projectId = input.projectId ?? RW04_PROJECT;
+  const goal = await loadGoal(scope.ledger, projectId);
+  const plan = await loadActivePlan(scope.ledger, goal, projectId);
+  if (input.withoutEvidence !== true) {
+    await admitConclusion(scope.engine, scope.ledger, {
+      plan,
+      taskId: input.taskId,
+      obligationId: input.obligationId,
+      requirementId: input.requirementId,
+      outcome: input.outcome ?? 'FAIL',
+      evidenceId: input.evidenceId,
+      projectId,
+    });
+  }
+  const issue = buildIssue({
+    taskId: input.taskId,
+    plan,
+    roundId: input.roundId,
+    projectId,
+    failedRequirements: [{ obligationId: input.obligationId, requirementId: input.requirementId }],
+  });
+  return { goal, plan, issue, proposal: compileProposal(goal, plan, [issue], projectId) };
+}
+
+/** 一轮返工：准备 + 受理。 */
+async function round(scope: Scope, input: RoundInput): Promise<Prepared & { receipt: Receipt }> {
+  const prepared = await prepare(scope, input);
+  return { ...prepared, receipt: await scope.engine.acceptReworkProposal({ schemaVersion: 1, proposal: prepared.proposal }) };
+}
+
+async function planChangeView(ledger: Ledger) {
+  const readModel = new ReadModelIndexImpl(new ControlPolicyExplanation());
+  let cursor: import('../../src/contracts/command-event.js').CommitCursor | null = null;
+  for (;;) {
+    const page = await ledger.events({ afterCursor: cursor, limit: 64 });
+    if (page.events.length === 0) break;
+    await readModel.advance(page);
+    cursor = page.throughCursor;
+    if (!page.hasMore) break;
+  }
+  return readModel.planChangeView({ projectId: RW04_PROJECT, workspaceId: RW04_WORKSPACE, goalId: RW04_GOAL });
+}
+
+function boundary(receipt: Receipt, code: string) {
+  if (receipt.status !== 'needs_human_decision' && receipt.status !== 'accepted') throw new Error('no boundaries on ' + receipt.status);
+  const found = receipt.boundaries.find((entry) => entry.code === code);
+  if (found === undefined) throw new Error('boundary missing: ' + code);
+  return found;
+}
+
+/** 人走既有决定路径对一份提案表态（reject／defer）。 */
+async function humanDecide(scope: Scope, prepared: Prepared, outcome: 'reject' | 'defer', decisionId: string): Promise<void> {
+  const recorded = await scope.engine.recordPlanChangeProposal({
+    commandId: 'cmd-human-proposal-' + decisionId,
+    commandType: 'RecordPlanChangeProposal',
+    schemaVersion: 1,
+    identity: { projectId: RW04_PROJECT, actor: { kind: 'human', id: 'user-owner-1' }, idempotencyKey: 'cmd-human-proposal-' + decisionId + '-idem' },
+    aggregateId: prepared.proposal.proposalId,
+    expectedRevision: 0,
+    correlationId: 'cmd-human-proposal-' + decisionId + '-corr',
+    submittedAt: FIXED,
+    payload: { proposal: prepared.proposal },
+  });
+  expect(recorded.status).toBe('committed');
+  const decided = await scope.engine.recordUserDecision(
+    buildRecordUserDecisionCommand(
+      {
+        schemaVersion: 1,
+        decisionId,
+        projectId: RW04_PROJECT,
+        workspaceId: RW04_WORKSPACE,
+        proposalRef: { aggregateType: 'PlanProposal', projectId: RW04_PROJECT, workspaceId: RW04_WORKSPACE, proposalId: prepared.proposal.proposalId },
+        subject: { goalRef: prepared.goal.ref, sourcePlanRef: prepared.plan.ref, sourcePlanRevision: prepared.plan.planRevision },
+        outcome,
+        actor: { kind: 'human', id: 'user-owner-1' },
+        authority: { strategy: 'user', delegator: null, policyVersion: 'user-decision-policy@1' },
+        authorizedTarget: decisionTargetFor(prepared.proposal),
+        summary: outcome === 'reject' ? '人不接受这条返工' : '人要求延后决定',
+        decidedAt: FIXED,
+      },
+      { commandId: 'cmd-human-decision-' + decisionId },
+    ),
+  );
+  expect(decided.status).toBe('committed');
+}
+
+describe('RW-04 返工提案的自动受理（ADR 0003 D1-4）', () => {
+  it('四条边界同时满足 → 自动受理：新 revision 生效、旧任务 superseded、旧 revision 保留、system 决定落账', async () => {
+    const scope = await setup({ budget: 1 });
+    const { proposal, issue, receipt } = await round(scope, {
+      taskId: RW04_VERIFY_TASK,
+      obligationId: RW04_OBLIGATION,
+      requirementId: RW04_REQUIREMENT,
+      roundId: 'round-a',
+      evidenceId: 'ev-round-a',
+    });
+
+    expect(receipt.status).toBe('accepted');
+    if (receipt.status !== 'accepted') throw new Error(JSON.stringify(receipt));
+    expect(receipt.replayed).toBe(false);
+    expect(receipt.budget).toMatchObject({ limit: 1, used: 0, remaining: 1, policyId: 'coordination-policy-1' });
+    // 四条边界逐条都满足，并且每条都给出判定依据。
+    for (const entry of receipt.boundaries) {
+      expect(entry.satisfied, entry.code + ': ' + entry.reasons.join(' / ')).toBe(true);
+      expect(entry.reasons.length).toBeGreaterThan(0);
+    }
+
+    // 新 revision 生效，Goal CAS +1。
+    const goal = await loadGoal(scope.ledger);
+    expect(goal.revision).toBe(scope.goal.revision + 1);
+    expect(goal.activePlanRevision?.planId).toBe(proposal.planDraft.planId);
+
+    const newPlan = await loadPlan(scope.ledger, proposal.planDraft.planId);
+    const reworkTaskId = reworkTaskIdFor(issue.issueId);
+    const superseded = newPlan.tasks.find((task: RuntimeTask) => task.taskId === RW04_VERIFY_TASK)!;
+    expect(superseded.disposition).toBe('superseded');
+    expect(superseded.replacedByTaskId).toBe(reworkTaskId);
+    const replacement = newPlan.tasks.find((task: RuntimeTask) => task.taskId === reworkTaskId)!;
+    expect(replacement.disposition).toBe('active');
+    expect(replacement.phase).toBe('pending');
+
+    // 同义务、同验收语义：正文、等级与 VR 逐字不变，只是换了承担者。
+    const sourceObligation = scope.plan.obligations.find((o) => o.obligationId === RW04_OBLIGATION)!;
+    const newObligation = newPlan.obligations.find((o) => o.obligationId === RW04_OBLIGATION)!;
+    expect(newObligation.title).toBe(sourceObligation.title);
+    expect(newObligation.requirementLevel).toBe(sourceObligation.requirementLevel);
+    expect(canonicalJson(newObligation.verificationRequirements)).toBe(canonicalJson(sourceObligation.verificationRequirements));
+    expect(newObligation.taskIds).toEqual([reworkTaskId]);
+
+    // 旧 revision 原样保留（不可改写）。
+    const oldPlan = await loadPlan(scope.ledger, scope.plan.planId);
+    expect(canonicalJson(oldPlan)).toBe(canonicalJson(scope.plan));
+
+    // 提案与决定都落账，actor 是 system，授权写的是版本化协调策略。
+    const events = (await scope.ledger.events({ afterCursor: null, limit: 10000 })).events;
+    expect(events.some((p) => p.event.eventType === 'PlanProposalRecorded')).toBe(true);
+    const decisionEvent = events.find((p) => p.event.eventType === 'UserDecisionRecorded');
+    expect(decisionEvent).toBeDefined();
+    if (decisionEvent === undefined) return;
+    expect(decisionEvent.event.actor).toEqual({ kind: 'system', id: 'autonomous-rework' });
+    const decisionSnapshot = await scope.ledger.load(receipt.decisionRef);
+    expect(decisionSnapshot.status).toBe('found');
+    if (decisionSnapshot.status !== 'found') return;
+    const decision = (decisionSnapshot.snapshot as { decision: { outcome: string; actor: unknown; authority: { strategy: string; delegator: string | null; policyVersion: string }; authorizedTarget: unknown } }).decision;
+    expect(decision.outcome).toBe('accept');
+    expect(decision.actor).toEqual({ kind: 'system', id: 'autonomous-rework' });
+    expect(decision.authority.strategy).toBe('delegated');
+    expect(decision.authority.delegator).toBe('coordination-policy:coordination-policy-1@1');
+    expect(decision.authority.policyVersion.length).toBeGreaterThan(0);
+    // 决定绑定的是提案的精确摘要（人可据此复核，也保证事后篡改会被 decision_target_mismatch 拦下）。
+    expect(canonicalJson(decision.authorizedTarget as never)).toBe(canonicalJson(decisionTargetFor(proposal)));
+  });
+
+  it('边界 (a)：没有已提交的验证结论（或结论是 PASS）→ needs_human_decision 且零写入', async () => {
+    // (1) 完全没有已接纳结论
+    const noEvidence = await setup({ budget: 1 });
+    const first = await prepare(noEvidence, {
+      taskId: RW04_VERIFY_TASK,
+      obligationId: RW04_OBLIGATION,
+      requirementId: RW04_REQUIREMENT,
+      roundId: 'round-a1',
+      evidenceId: 'ev-a1',
+      withoutEvidence: true,
+    });
+    const beforeA = await eventCount(noEvidence.ledger);
+    const receiptA = await noEvidence.engine.acceptReworkProposal({ schemaVersion: 1, proposal: first.proposal });
+    expect(receiptA.status).toBe('needs_human_decision');
+    if (receiptA.status !== 'needs_human_decision') return;
+    expect(receiptA.code).toBe('trigger_source_committed');
+    expect(boundary(receiptA, 'trigger_source_committed').satisfied).toBe(false);
+    expect(receiptA.reasons.join(' ')).toContain('已提交');
+    expect(await eventCount(noEvidence.ledger)).toBe(beforeA);
+
+    // (2) 账本里的结论是 PASS，而问题声称 FAIL：同样不是“已提交的失败结论”
+    const passEvidence = await setup({ budget: 1 });
+    const second = await prepare(passEvidence, {
+      taskId: RW04_VERIFY_TASK,
+      obligationId: RW04_OBLIGATION,
+      requirementId: RW04_REQUIREMENT,
+      roundId: 'round-a2',
+      evidenceId: 'ev-a2',
+      outcome: 'PASS',
+    });
+    const beforeB = await eventCount(passEvidence.ledger);
+    const receiptB = await passEvidence.engine.acceptReworkProposal({ schemaVersion: 1, proposal: second.proposal });
+    expect(receiptB.status).toBe('needs_human_decision');
+    if (receiptB.status !== 'needs_human_decision') return;
+    expect(receiptB.code).toBe('trigger_source_committed');
+    expect(await eventCount(passEvidence.ledger)).toBe(beforeB);
+  });
+
+  it('边界 (b)：合法提案被受理；越界提案（改义务正文／发明义务／取消承担者）一律转人工且零写入', async () => {
+    // 控制组：同一构造方式下未被篡改的提案确实被自动受理（证明 (b) 的判定不是“一律拒绝”）。
+    const control = await setup({ budget: 1 });
+    const accepted = await round(control, {
+      taskId: RW04_VERIFY_TASK,
+      obligationId: RW04_OBLIGATION,
+      requirementId: RW04_REQUIREMENT,
+      roundId: 'round-b-control',
+      evidenceId: 'ev-b-control',
+    });
+    expect(accepted.receipt.status).toBe('accepted');
+
+    const tamper: { name: string; mutate: (proposal: ReworkProposalV1) => ReworkProposalV1 }[] = [
+      {
+        // 用义务增量改写义务正文：属于必须由人决定的范围。
+        name: 'obligation-delta',
+        mutate: (proposal) => ({
+          ...proposal,
+          patch: {
+            ...proposal.patch,
+            patchDraft: {
+              ...proposal.patch.patchDraft,
+              obligationDeltas: [{ obligationId: RW04_OBLIGATION, action: 'change', newText: '被自动受理偷偷改写的义务正文', justification: '测试越界' }],
+            },
+          },
+        }),
+      },
+      {
+        // 让返工任务承担一个源 revision 里不存在的义务（凭空发明义务）。
+        name: 'invented-obligation',
+        mutate: (proposal) => ({
+          ...proposal,
+          patch: {
+            ...proposal.patch,
+            patchDraft: {
+              ...proposal.patch.patchDraft,
+              taskSetDelta: (proposal.patch.patchDraft.taskSetDelta ?? []).map((op) => (op.action === 'addTask' ? { ...op, obligationIds: ['obl-does-not-exist'] } : op)),
+            },
+          },
+        }),
+      },
+      {
+        // 取消一个承担者：不产生新的证明者，不是返工。
+        name: 'cancel-carrier',
+        mutate: (proposal) => ({
+          ...proposal,
+          patch: {
+            ...proposal.patch,
+            patchDraft: {
+              ...proposal.patch.patchDraft,
+              taskSetDelta: [...(proposal.patch.patchDraft.taskSetDelta ?? []), { action: 'cancelTask' as const, taskId: 'gate-goal', reason: '测试越界' }],
+            },
+          },
+        }),
+      },
+    ];
+
+    for (const testCase of tamper) {
+      const scope = await setup({ budget: 1 });
+      const prepared = await prepare(scope, {
+        taskId: RW04_VERIFY_TASK,
+        obligationId: RW04_OBLIGATION,
+        requirementId: RW04_REQUIREMENT,
+        roundId: 'round-b-' + testCase.name,
+        evidenceId: 'ev-b-' + testCase.name,
+      });
+      const before = await eventCount(scope.ledger);
+      const receipt = await scope.engine.acceptReworkProposal({ schemaVersion: 1, proposal: testCase.mutate(prepared.proposal) });
+      expect(receipt.status, testCase.name).toBe('needs_human_decision');
+      if (receipt.status !== 'needs_human_decision') continue;
+      expect(receipt.code, testCase.name).toBe('in_scope_rework');
+      expect(receipt.reasons.join(' ').length, testCase.name).toBeGreaterThan(0);
+      expect(await eventCount(scope.ledger), testCase.name).toBe(before);
+    }
+  });
+
+  it('边界 (c)：预算耗尽后转人工，计数按 Goal 累计、上限来自生效策略', async () => {
+    const scope = await setup({ budget: 1 });
+    const first = await round(scope, {
+      taskId: RW04_VERIFY_TASK,
+      obligationId: RW04_OBLIGATION,
+      requirementId: RW04_REQUIREMENT,
+      roundId: 'round-c1',
+      evidenceId: 'ev-c1',
+    });
+    expect(first.receipt.status).toBe('accepted');
+
+    // 第二轮：新 revision 上再次失败 → 预算已用 1/1。
+    const reworkTaskId = reworkTaskIdFor(first.issue.issueId);
+    const second = await prepare(scope, {
+      taskId: reworkTaskId,
+      obligationId: RW04_OBLIGATION,
+      requirementId: RW04_REQUIREMENT,
+      roundId: 'round-c2',
+      evidenceId: 'ev-c2',
+    });
+    const before = await eventCount(scope.ledger);
+    const receipt = await scope.engine.acceptReworkProposal({ schemaVersion: 1, proposal: second.proposal });
+    expect(receipt.status).toBe('needs_human_decision');
+    if (receipt.status !== 'needs_human_decision') return;
+    expect(receipt.code).toBe('autonomous_budget_available');
+    expect(receipt.budget).toMatchObject({ limit: 1, used: 1, remaining: 0 });
+    expect(receipt.reasons.join(' ')).toContain('预算已耗尽');
+    // 其余三条边界仍然成立：转人工只因为预算。
+    expect(boundary(receipt, 'trigger_source_committed').satisfied).toBe(true);
+    expect(boundary(receipt, 'in_scope_rework').satisfied).toBe(true);
+    expect(boundary(receipt, 'no_human_rejection').satisfied).toBe(true);
+    expect(await eventCount(scope.ledger)).toBe(before);
+    // 事件流里仍只有源计划 + 第一轮返工两个 PlanRevisionAccepted：被拒绝的一轮没有产生 revision。
+    const accepted = (await scope.ledger.events({ afterCursor: null, limit: 10000 })).events.filter((p) => p.event.eventType === 'PlanRevisionAccepted');
+    expect(accepted.length).toBe(2);
+  });
+
+  it('边界 (d)：人显式拒绝／延后后，同一问题不再自动受理', async () => {
+    for (const outcome of ['reject', 'defer'] as const) {
+      const scope = await setup({ budget: 1 });
+      const prepared = await prepare(scope, {
+        taskId: RW04_VERIFY_TASK,
+        obligationId: RW04_OBLIGATION,
+        requirementId: RW04_REQUIREMENT,
+        roundId: 'round-d-' + outcome,
+        evidenceId: 'ev-d-' + outcome,
+        withoutEvidence: true,
+      });
+      // 人先对这条问题表态（走既有提案/决定路径，actor 是人）。
+      await humanDecide(scope, prepared, outcome, 'human-decision-' + outcome);
+      // 现在补齐验证结论：其余三条边界都成立，只有 (d) 不成立。
+      await admitConclusion(scope.engine, scope.ledger, {
+        plan: prepared.plan,
+        taskId: RW04_VERIFY_TASK,
+        obligationId: RW04_OBLIGATION,
+        requirementId: RW04_REQUIREMENT,
+        outcome: 'FAIL',
+        evidenceId: 'ev-d2-' + outcome,
+      });
+      const before = await eventCount(scope.ledger);
+      const receipt = await scope.engine.acceptReworkProposal({ schemaVersion: 1, proposal: prepared.proposal });
+      expect(receipt.status, outcome).toBe('needs_human_decision');
+      if (receipt.status !== 'needs_human_decision') continue;
+      expect(receipt.code, outcome).toBe('no_human_rejection');
+      expect(boundary(receipt, 'trigger_source_committed').satisfied, outcome).toBe(true);
+      expect(boundary(receipt, 'in_scope_rework').satisfied, outcome).toBe(true);
+      expect(boundary(receipt, 'autonomous_budget_available').satisfied, outcome).toBe(true);
+      expect(receipt.reasons.join(' '), outcome).toContain('human-decision-' + outcome);
+      expect(await eventCount(scope.ledger), outcome).toBe(before);
+      // 决定记录本身保留在账本里（人可复核、可撤销的是未来受理，不是历史事实）。
+      const decisionLoad = await scope.ledger.load({
+        aggregateType: 'UserDecision',
+        projectId: RW04_PROJECT,
+        workspaceId: RW04_WORKSPACE,
+        decisionId: 'human-decision-' + outcome,
+      });
+      expect(decisionLoad.status).toBe('found');
+    }
+  });
+
+  it('幂等：同一提案重复触发不产生第二份提案或第二个 revision', async () => {
+    const scope = await setup({ budget: 1 });
+    const first = await round(scope, {
+      taskId: RW04_VERIFY_TASK,
+      obligationId: RW04_OBLIGATION,
+      requirementId: RW04_REQUIREMENT,
+      roundId: 'round-idem',
+      evidenceId: 'ev-idem',
+    });
+    expect(first.receipt.status).toBe('accepted');
+    if (first.receipt.status !== 'accepted') return;
+
+    const replay = await scope.engine.acceptReworkProposal({ schemaVersion: 1, proposal: first.proposal });
+    expect(replay.status).toBe('accepted');
+    if (replay.status !== 'accepted') return;
+    expect(replay.replayed).toBe(true);
+    expect(replay.activePlanRef).toEqual(first.receipt.activePlanRef);
+    expect(replay.proposalRef).toEqual(first.receipt.proposalRef);
+    expect(replay.decisionRef).toEqual(first.receipt.decisionRef);
+
+    const view = await planChangeView(scope.ledger);
+    expect(view.status).toBe('ready');
+    if (view.status !== 'ready') return;
+    expect(view.proposals.length).toBe(1);
+    expect(view.decisions.length).toBe(1);
+    const accepted = (await scope.ledger.events({ afterCursor: null, limit: 10000 })).events.filter((p) => p.event.eventType === 'PlanRevisionAccepted');
+    expect(accepted.length).toBe(2);
+    const goal = await loadGoal(scope.ledger);
+    expect(goal.revision).toBe(first.goal.revision + 1);
+  });
+
+  it('读侧可见：planChangeView 展示 system 提案与 delegated 决定，处置视图标出取代关系', async () => {
+    const scope = await setup({ budget: 1 });
+    const compiled = await round(scope, {
+      taskId: RW04_VERIFY_TASK,
+      obligationId: RW04_OBLIGATION,
+      requirementId: RW04_REQUIREMENT,
+      roundId: 'round-view',
+      evidenceId: 'ev-view',
+    });
+    expect(compiled.receipt.status).toBe('accepted');
+
+    const view = await planChangeView(scope.ledger);
+    expect(view.status).toBe('ready');
+    if (view.status !== 'ready') return;
+    expect(view.proposals.map((p) => p.proposal.proposalId)).toEqual([compiled.proposal.proposalId]);
+    const decision = view.decisions[0]!.decision;
+    expect(decision.actor).toEqual({ kind: 'system', id: 'autonomous-rework' });
+    expect(decision.authority.strategy).toBe('delegated');
+    expect(decision.summary ?? '').toContain('自动受理');
+    const row = view.dispositions.find((d) => d.taskId === RW04_VERIFY_TASK);
+    expect(row?.disposition).toBe('replace');
+    expect(row?.replacedByTaskId).toBe(reworkTaskIdFor(compiled.issue.issueId));
+  });
+
+  it('草稿被篡改时，受理入口预跑既有守卫 f2 并零写入拒绝（不代替提案方推导草稿）', async () => {
+    const scope = await setup({ budget: 1 });
+    const prepared = await prepare(scope, {
+      taskId: RW04_VERIFY_TASK,
+      obligationId: RW04_OBLIGATION,
+      requirementId: RW04_REQUIREMENT,
+      roundId: 'round-draft',
+      evidenceId: 'ev-draft',
+    });
+    // 草稿里偷偷把 rework 任务从义务承担者上摘掉：增量本身合法，但草稿不再是它的确定性推导结果。
+    const reworkTaskId = prepared.proposal.rework.tasks[0]!.taskId;
+    const tampered: ReworkProposalV1 = {
+      ...prepared.proposal,
+      planDraft: {
+        ...prepared.proposal.planDraft,
+        obligations: prepared.proposal.planDraft.obligations.map((obligation) =>
+          obligation.obligationId === RW04_OBLIGATION ? { ...obligation, taskIds: obligation.taskIds.filter((id) => id !== reworkTaskId) } : obligation,
+        ),
+      },
+    };
+    const before = await eventCount(scope.ledger);
+    const receipt = await scope.engine.acceptReworkProposal({ schemaVersion: 1, proposal: tampered });
+    expect(receipt.status).toBe('rejected');
+    if (receipt.status !== 'rejected') return;
+    // RW-10（P8）：草稿不一致不再被压成 invalid，回执给出既有守卫的归因码（这里不是
+    // “改写义务正文/验收语义”那一类，因此是 draft_mismatch）。
+    expect(receipt.code).toBe('draft_mismatch');
+    expect(receipt.reasons.join(' ')).toContain('确定性推导');
+    expect(await eventCount(scope.ledger)).toBe(before);
+    // 对照：未被篡改的同一份提案会被自动受理（拒绝来自草稿一致性守卫，而不是边界判定）。
+    const control = await round(scope, {
+      taskId: RW04_VERIFY_TASK,
+      obligationId: RW04_OBLIGATION,
+      requirementId: RW04_REQUIREMENT,
+      roundId: 'round-draft-control',
+      evidenceId: 'ev-draft-control',
+    });
+    expect(control.receipt.status).toBe('accepted');
+  });
+
+  it('RW-10（P2）人的暂停开关：生效策略 allowed.inScopeRework=false → 自动受理转人工且零写入；换成 true 的 revision 后恢复', async () => {
+    const ledger = memoryLedger();
+    const engine = engineFor(ledger);
+    await prepareScope(ledger, RW04_PROJECT);
+    // 人先安装并激活一份「停用范围内自动返工」的协调策略：内容与既有夹具一致，只改这一个授权位。
+    // 这就是暂停开关的全部动作——没有暂停命令、没有暂停聚合、没有暂停状态。
+    await activateCoordinationPolicy(
+      engine,
+      RW04_PROJECT,
+      { ...P115_COORDINATION_POLICY_CONTENT, allowed: { inScopeRework: false, inScopeTesting: true } },
+      'coordination-policy-paused',
+    );
+    const goal = await loadGoal(ledger);
+    const scope: Scope = { ledger, engine, goal, plan: await loadActivePlan(ledger, goal, RW04_PROJECT) };
+
+    const prepared = await prepare(scope, {
+      taskId: RW04_VERIFY_TASK,
+      obligationId: RW04_OBLIGATION,
+      requirementId: RW04_REQUIREMENT,
+      roundId: 'round-pause',
+      evidenceId: 'ev-pause',
+    });
+
+    const before = await eventCount(ledger);
+    const paused = await engine.acceptReworkProposal({ schemaVersion: 1, proposal: prepared.proposal });
+    expect(paused.status, JSON.stringify(paused)).toBe('needs_human_decision');
+    if (paused.status !== 'needs_human_decision') return;
+    // 只有边界 (b) 因为人关掉了这个位而不成立，其余三条仍然成立（不是“一律拒绝”）。
+    expect(paused.code).toBe('in_scope_rework');
+    expect(boundary(paused, 'trigger_source_committed').satisfied).toBe(true);
+    expect(boundary(paused, 'autonomous_budget_available').satisfied).toBe(true);
+    expect(boundary(paused, 'no_human_rejection').satisfied).toBe(true);
+    const reasons = paused.reasons.join(' ');
+    expect(reasons).toContain('人已停用范围内的自动返工');
+    expect(reasons).toContain('由人决定');
+    expect(reasons).toContain('coordination-policy-paused');
+
+    // 零写入：没有提案、没有决定、没有新 revision，Goal 的 active revision 一动没动。
+    expect(await eventCount(ledger)).toBe(before);
+    const proposalLoad = await ledger.load({
+      aggregateType: 'PlanProposal', projectId: RW04_PROJECT, workspaceId: RW04_WORKSPACE, proposalId: prepared.proposal.proposalId,
+    });
+    expect(proposalLoad.status).toBe('not_found');
+    expect((await loadGoal(ledger)).activePlanRevision?.planId).toBe(scope.plan.planId);
+
+    // 人重新启用：安装并激活一份 inScopeRework=true 的策略 revision。
+    // （策略 revision 不可改写，因此内容不同就是另一个 policyId；这也是界面里的操作方式。）
+    await activateCoordinationPolicy(
+      engine,
+      RW04_PROJECT,
+      { ...P115_COORDINATION_POLICY_CONTENT, allowed: { inScopeRework: true, inScopeTesting: true } },
+      'coordination-policy-resumed',
+    );
+    const resumed = await engine.acceptReworkProposal({ schemaVersion: 1, proposal: prepared.proposal });
+    expect(resumed.status, JSON.stringify(resumed)).toBe('accepted');
+    if (resumed.status !== 'accepted') return;
+    expect(resumed.budget?.policyId).toBe('coordination-policy-resumed');
+    expect(resumed.boundaries.every((entry) => entry.satisfied)).toBe(true);
+    expect((await loadGoal(ledger)).activePlanRevision?.planId).toBe(prepared.proposal.planDraft.planId);
+  });
+
+  it('RW-10（P7）重放不是免检路径：已落账提案的 rework／planDraft 被篡改 → 提案冲突码且零写入', async () => {
+    const scope = await setup({ budget: 1 });
+    const first = await round(scope, {
+      taskId: RW04_VERIFY_TASK,
+      obligationId: RW04_OBLIGATION,
+      requirementId: RW04_REQUIREMENT,
+      roundId: 'round-replay-tamper',
+      evidenceId: 'ev-replay-tamper',
+    });
+    expect(first.receipt.status).toBe('accepted');
+
+    // rework 与 planDraft 不在 planProposalDigest（patch + impact）里，因此只比对决定与
+    // authorizedTarget 时，这两种篡改会被当成“重放成功”。
+    const tampers: { name: string; mutate: (proposal: ReworkProposalV1) => ReworkProposalV1 }[] = [
+      {
+        name: 'planDraft',
+        mutate: (proposal) => ({ ...proposal, planDraft: { ...proposal.planDraft, objective: proposal.planDraft.objective + '（被篡改）' } }),
+      },
+      {
+        name: 'rework',
+        mutate: (proposal) => ({
+          ...proposal,
+          rework: { ...proposal.rework, tasks: proposal.rework.tasks.map((group) => ({ ...group, title: group.title + '（被篡改）' })) },
+        }),
+      },
+    ];
+    for (const testCase of tampers) {
+      const before = await eventCount(scope.ledger);
+      const receipt = await scope.engine.acceptReworkProposal({ schemaVersion: 1, proposal: testCase.mutate(first.proposal) });
+      expect(receipt.status, testCase.name).toBe('rejected');
+      if (receipt.status !== 'rejected') continue;
+      expect(receipt.code, testCase.name).toBe('proposal_conflict');
+      expect(receipt.reasons.join(' '), testCase.name).toContain('planDraft');
+      expect(await eventCount(scope.ledger), testCase.name).toBe(before);
+    }
+    // 对照：逐字未改的同一份提案仍然是幂等重放（拒绝来自比对，不是“一律拒绝重放”）。
+    const replay = await scope.engine.acceptReworkProposal({ schemaVersion: 1, proposal: first.proposal });
+    expect(replay.status).toBe('accepted');
+    if (replay.status !== 'accepted') return;
+    expect(replay.replayed).toBe(true);
+  });
+
+  it('RW-10（P8）草稿改写义务正文（越过人的决定边界）→ 专用码 obligation_semantics_forbidden，零写入', async () => {
+    const scope = await setup({ budget: 1 });
+    const prepared = await prepare(scope, {
+      taskId: RW04_VERIFY_TASK,
+      obligationId: RW04_OBLIGATION,
+      requirementId: RW04_REQUIREMENT,
+      roundId: 'round-semantics',
+      evidenceId: 'ev-semantics',
+    });
+    const tampered: ReworkProposalV1 = {
+      ...prepared.proposal,
+      planDraft: {
+        ...prepared.proposal.planDraft,
+        obligations: prepared.proposal.planDraft.obligations.map((obligation) =>
+          obligation.obligationId === RW04_OBLIGATION ? { ...obligation, title: obligation.title + '（被自动受理偷偷改写）' } : obligation,
+        ),
+      },
+    };
+    const before = await eventCount(scope.ledger);
+    const receipt = await scope.engine.acceptReworkProposal({ schemaVersion: 1, proposal: tampered });
+    expect(receipt.status).toBe('rejected');
+    if (receipt.status !== 'rejected') return;
+    // 与 applyPlanChange 守卫 f2 用的是同一个归因函数，因此这里看到的就是守卫会给的码。
+    expect(receipt.code).toBe('obligation_semantics_forbidden');
+    expect(receipt.reasons.join(' ')).toContain('obligation_semantics_forbidden');
+    expect(await eventCount(scope.ledger)).toBe(before);
+
+    // 对照：同一份未篡改提案（同一个 issue、同一个源 revision）仍然被自动受理。
+    const control = await scope.engine.acceptReworkProposal({ schemaVersion: 1, proposal: prepared.proposal });
+    expect(control.status, JSON.stringify(control)).toBe('accepted');
+  });
+
+  it('治理缺失：没有生效的 CoordinationPolicy 时不套默认预算，直接拒绝自动受理', async () => {
+    const scope = await setup({ activatePolicy: false });
+    const prepared = await prepare(scope, {
+      taskId: RW04_VERIFY_TASK,
+      obligationId: RW04_OBLIGATION,
+      requirementId: RW04_REQUIREMENT,
+      roundId: 'round-gov',
+      evidenceId: 'ev-gov',
+    });
+    const before = await eventCount(scope.ledger);
+    const receipt = await scope.engine.acceptReworkProposal({ schemaVersion: 1, proposal: prepared.proposal });
+    expect(receipt.status).toBe('rejected');
+    if (receipt.status !== 'rejected') return;
+    expect(receipt.code).toBe('governance_unavailable');
+    expect(await eventCount(scope.ledger)).toBe(before);
+  });
+
+  it('提案身份必须由问题与源 revision 推导：身份不符即拒绝，零写入', async () => {
+    const scope = await setup({ budget: 1 });
+    const prepared = await prepare(scope, {
+      taskId: RW04_VERIFY_TASK,
+      obligationId: RW04_OBLIGATION,
+      requirementId: RW04_REQUIREMENT,
+      roundId: 'round-id',
+      evidenceId: 'ev-id',
+    });
+    const before = await eventCount(scope.ledger);
+    const forged: ReworkProposalV1 = { ...prepared.proposal, proposalId: 'rework-proposal-forged' };
+    const receipt = await scope.engine.acceptReworkProposal({ schemaVersion: 1, proposal: forged });
+    expect(receipt.status).toBe('rejected');
+    if (receipt.status !== 'rejected') return;
+    expect(receipt.code).toBe('invalid');
+    expect(receipt.reasons.join(' ')).toContain('身份');
+    expect(await eventCount(scope.ledger)).toBe(before);
+  });
+
+  it('SQLite 重启后：预算计数与人工拒绝事实都从账本重建', async () => {
+    const { ledger, directory, path } = await sqliteLedger();
+    const { SqliteStateLedger } = await import('../../src/data/state-ledger/sqlite-ledger.js');
+    const { rm } = await import('node:fs/promises');
+    try {
+      const scope = await setup({ ledger, budget: 1 });
+      const first = await round(scope, {
+        taskId: RW04_VERIFY_TASK,
+        obligationId: RW04_OBLIGATION,
+        requirementId: RW04_REQUIREMENT,
+        roundId: 'round-r1',
+        evidenceId: 'ev-r1',
+      });
+      expect(first.receipt.status).toBe('accepted');
+
+      // 第二轮问题与提案（新 revision 上再次失败）。
+      const reworkTaskId = reworkTaskIdFor(first.issue.issueId);
+      const second = await prepare(scope, {
+        taskId: reworkTaskId,
+        obligationId: RW04_OBLIGATION,
+        requirementId: RW04_REQUIREMENT,
+        roundId: 'round-r2',
+        evidenceId: 'ev-r2',
+      });
+
+      await ledger.close();
+      const reopened = new SqliteStateLedger({ path });
+      try {
+        const engine2 = engineFor(reopened);
+        const afterRestart = await engine2.acceptReworkProposal({ schemaVersion: 1, proposal: second.proposal });
+        expect(afterRestart.status).toBe('needs_human_decision');
+        if (afterRestart.status !== 'needs_human_decision') return;
+        // 计数从账本事件重建：已应用 1 次，预算 1/1 用尽。
+        expect(afterRestart.budget).toMatchObject({ limit: 1, used: 1, remaining: 0 });
+        expect(afterRestart.code).toBe('autonomous_budget_available');
+
+        // 人拒绝这条问题（重启后由新引擎登记），再次重启后仍然拦住自动受理。
+        const recorded = await engine2.recordPlanChangeProposal({
+          commandId: 'cmd-human-proposal-restart',
+          commandType: 'RecordPlanChangeProposal',
+          schemaVersion: 1,
+          identity: { projectId: RW04_PROJECT, actor: { kind: 'human', id: 'user-owner-1' }, idempotencyKey: 'cmd-human-proposal-restart-idem' },
+          aggregateId: second.proposal.proposalId,
+          expectedRevision: 0,
+          correlationId: 'cmd-human-proposal-restart-corr',
+          submittedAt: FIXED,
+          payload: { proposal: second.proposal },
+        });
+        expect(recorded.status).toBe('committed');
+        const decided = await engine2.recordUserDecision(
+          buildRecordUserDecisionCommand(
+            {
+              schemaVersion: 1,
+              decisionId: 'human-decision-restart',
+              projectId: RW04_PROJECT,
+              workspaceId: RW04_WORKSPACE,
+              proposalRef: { aggregateType: 'PlanProposal', projectId: RW04_PROJECT, workspaceId: RW04_WORKSPACE, proposalId: second.proposal.proposalId },
+              subject: { goalRef: second.goal.ref, sourcePlanRef: second.plan.ref, sourcePlanRevision: second.plan.planRevision },
+              outcome: 'reject',
+              actor: { kind: 'human', id: 'user-owner-1' },
+              authority: { strategy: 'user', delegator: null, policyVersion: 'user-decision-policy@1' },
+              authorizedTarget: decisionTargetFor(second.proposal),
+              summary: '人拒绝这条返工（重启测试）',
+              decidedAt: FIXED,
+            },
+            { commandId: 'cmd-human-decision-restart' },
+          ),
+        );
+        expect(decided.status).toBe('committed');
+
+        await reopened.close();
+        const third = new SqliteStateLedger({ path });
+        try {
+          const engine3 = engineFor(third);
+          const receipt = await engine3.acceptReworkProposal({ schemaVersion: 1, proposal: second.proposal });
+          expect(receipt.status).toBe('needs_human_decision');
+          if (receipt.status !== 'needs_human_decision') return;
+          // 预算与拒绝两条边界都仍然不成立：两者都是从账本重建的，不是进程内缓存。
+          expect(boundary(receipt, 'autonomous_budget_available').satisfied).toBe(false);
+          expect(boundary(receipt, 'no_human_rejection').satisfied).toBe(false);
+          expect(receipt.reasons.join(' ')).toContain('human-decision-restart');
+        } finally {
+          await third.close();
+        }
+      } finally {
+        await reopened.close().catch(() => undefined);
+      }
+    } finally {
+      await ledger.close().catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});

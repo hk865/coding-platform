@@ -10,7 +10,7 @@ export class QueryWorkspaceSourceReader implements QuerySourceRevisionPort {
   async sourceRevision(projectId: string, workspaceId: string): Promise<string | null> {
     try {
       const workspace = await WorkspaceSandbox.create(this.rootFor(projectId, workspaceId), {
-        // RC-02：同上，路径边界只有 denied-prefixes.ts 一个来源。
+        // 路径边界归位：同上，路径边界只有 denied-prefixes.ts 一个来源。
         deniedPrefixes: [...WORKSPACE_DENIED_PREFIXES],
       });
       return (await workspace.captureBaseline()).revision;

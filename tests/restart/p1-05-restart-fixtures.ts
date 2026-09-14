@@ -9,8 +9,8 @@ import { classifyRestartProbeError } from "./readiness-probe.js";
  * handlers/projections land ("not implemented yet" throws -> false).
  */
 import { expect } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import {
   prepareP105Scenario,
   satisfyEverythingP105,
@@ -23,7 +23,7 @@ import type { GoalStatusView, GoalTimelineEntry } from "../../src/contracts/goal
 
 export async function isP105Ready(): Promise<boolean> {
   try {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       await runP105Path(h);
       return true;
@@ -35,7 +35,7 @@ export async function isP105Ready(): Promise<boolean> {
   }
 }
 
-export async function runP105Path(h: PersistentSqliteHarness) {
+export async function runP105Path(h: PersistentPlatform) {
   const th: P1_05TestHarness = toP1_05Harness(h);
   const sc = await prepareP105Scenario(th);
   await satisfyEverythingP105(th, sc);
@@ -78,7 +78,7 @@ export async function runP105Path(h: PersistentSqliteHarness) {
 }
 
 export async function verifyP105AfterRestart(
-  h: PersistentSqliteHarness,
+  h: PersistentPlatform,
   before: Awaited<ReturnType<typeof runP105Path>>,
 ): Promise<void> {
   const th: P1_05TestHarness = toP1_05Harness(h);

@@ -2,7 +2,7 @@ import './process-loader.mjs';
 import { readFileSync, existsSync } from 'node:fs';
 const { appendFileSync, writeFileSync } = await import('node:fs');
 const { join } = await import('node:path');
-const { createPersistentSqliteHarness } = await import('../../src/harness/persistent-harness.ts');
+const { createPersistentPlatform } = await import('../../src/composition/persistent-platform.ts');
 const { CodingAgentRuntime } = await import('../../src/execution/worker-runtime/coding-agent-runtime.ts');
 const { LeasedWorkerRuntime } = await import('../../src/control/dispatch-engine/leased-worker-runtime.ts');
 const { RuntimeDispatch } = await import('../../src/control/dispatch-engine/runtime-dispatch.ts');
@@ -32,7 +32,7 @@ const runtime = new CodingAgentRuntime(request.runsDir, async () => ({
 }));
 await runtime.init();
 let h;
-h = await createPersistentSqliteHarness({ dir: request.stateDir, deps: { clock: () => request.at },
+h = await createPersistentPlatform({ dir: request.stateDir, deps: { clock: () => request.at },
   runtimePreparation: runtime, workspaceRootFor: () => request.sourceRoot,
   runtime: { capabilities: () => runtime.capabilities(), start: (envelope, access) => {
     die('before_start');

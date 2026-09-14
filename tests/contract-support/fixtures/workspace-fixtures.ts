@@ -1,4 +1,4 @@
-import { buildAcquireReadLeaseCommand as formalbuildP107AcquireReadLeaseCommand, buildAcquireWriteLeaseCommand as formalbuildP107AcquireWriteLeaseCommand, buildReleaseLeaseCommand as formalbuildP107ReleaseLeaseCommand, buildRecordPatchCommand as formalbuildP107RecordPatchCommand } from "../../../src/contracts/commands/workspace.js";
+import { buildAcquireReadLeaseCommand as canonicalBuildP107AcquireReadLeaseCommand, buildAcquireWriteLeaseCommand as canonicalBuildP107AcquireWriteLeaseCommand, buildReleaseLeaseCommand as canonicalBuildP107ReleaseLeaseCommand, buildRecordPatchCommand as canonicalBuildP107RecordPatchCommand } from "../../../src/contracts/commands/workspace.js";
 
 
 /**
@@ -322,7 +322,7 @@ export type BuildP107AcquireReadDeps = {
 };
 
 export function buildP107AcquireReadLeaseCommand(deps: BuildP107AcquireReadDeps): AcquireWorkspaceReadLeaseCommand {
-  return formalbuildP107AcquireReadLeaseCommand({ ...deps, actor: deps.actor ?? { kind: "system", id: "integrator" }, idempotencyKey: deps.idempotencyKey ?? "p107-acquire-read-" + deps.leaseId, correlationId: deps.correlationId ?? deps.commandId, submittedAt: deps.submittedAt ?? P107_SCHEMA, workspaceId: deps.workspaceId ?? P107_WORKSPACE, scope: deps.scope ?? P107_SCOPE_READER_A, expiresAt: deps.expiresAt ?? null });
+  return canonicalBuildP107AcquireReadLeaseCommand({ ...deps, actor: deps.actor ?? { kind: "system", id: "integrator" }, idempotencyKey: deps.idempotencyKey ?? "p107-acquire-read-" + deps.leaseId, correlationId: deps.correlationId ?? deps.commandId, submittedAt: deps.submittedAt ?? P107_SCHEMA, workspaceId: deps.workspaceId ?? P107_WORKSPACE, scope: deps.scope ?? P107_SCOPE_READER_A, expiresAt: deps.expiresAt ?? null });
 }
 
 export type BuildP107AcquireWriteDeps = {
@@ -341,7 +341,7 @@ export type BuildP107AcquireWriteDeps = {
 };
 
 export function buildP107AcquireWriteLeaseCommand(deps: BuildP107AcquireWriteDeps): AcquireWorkspaceWriteLeaseCommand {
-  return formalbuildP107AcquireWriteLeaseCommand({ ...deps, actor: deps.actor ?? { kind: "system", id: "integrator" }, idempotencyKey: deps.idempotencyKey ?? "p107-acquire-write-" + deps.leaseId, correlationId: deps.correlationId ?? deps.commandId, submittedAt: deps.submittedAt ?? P107_SCHEMA, workspaceId: deps.workspaceId ?? P107_WORKSPACE, scope: deps.scope ?? P107_SCOPE_WRITER, expiresAt: deps.expiresAt ?? null, declaredWriteScope: deps.declaredWriteScope ?? P107_DECLARED_WRITE_PERMISSIONS_V1.writeScope });
+  return canonicalBuildP107AcquireWriteLeaseCommand({ ...deps, actor: deps.actor ?? { kind: "system", id: "integrator" }, idempotencyKey: deps.idempotencyKey ?? "p107-acquire-write-" + deps.leaseId, correlationId: deps.correlationId ?? deps.commandId, submittedAt: deps.submittedAt ?? P107_SCHEMA, workspaceId: deps.workspaceId ?? P107_WORKSPACE, scope: deps.scope ?? P107_SCOPE_WRITER, expiresAt: deps.expiresAt ?? null, declaredWriteScope: deps.declaredWriteScope ?? P107_DECLARED_WRITE_PERMISSIONS_V1.writeScope });
 }
 
 export type BuildP107ReleaseDeps = {
@@ -358,7 +358,7 @@ export type BuildP107ReleaseDeps = {
 };
 
 export function buildP107ReleaseLeaseCommand(deps: BuildP107ReleaseDeps): ReleaseWorkspaceLeaseCommand {
-  return formalbuildP107ReleaseLeaseCommand({ ...deps, actor: deps.actor ?? { kind: "system", id: "integrator" }, idempotencyKey: deps.idempotencyKey ?? "p107-release-" + deps.leaseId, correlationId: deps.correlationId ?? deps.commandId, submittedAt: deps.submittedAt ?? P107_SCHEMA, workspaceId: deps.workspaceId ?? P107_WORKSPACE });
+  return canonicalBuildP107ReleaseLeaseCommand({ ...deps, actor: deps.actor ?? { kind: "system", id: "integrator" }, idempotencyKey: deps.idempotencyKey ?? "p107-release-" + deps.leaseId, correlationId: deps.correlationId ?? deps.commandId, submittedAt: deps.submittedAt ?? P107_SCHEMA, workspaceId: deps.workspaceId ?? P107_WORKSPACE });
 }
 
 export type BuildP107RecordIntegrationDeps = {
@@ -402,7 +402,7 @@ export type BuildP107RecordPatchDeps = {
 };
 
 export function buildP107RecordPatchCommand(deps: BuildP107RecordPatchDeps): RecordPatchCommand {
-  return formalbuildP107RecordPatchCommand({ ...deps, actor: deps.actor ?? { kind: "system", id: "integrator" }, idempotencyKey: deps.idempotencyKey ?? "p107-patch-" + deps.patch.patchId, correlationId: deps.correlationId ?? deps.commandId, submittedAt: deps.submittedAt ?? P107_SCHEMA });
+  return canonicalBuildP107RecordPatchCommand({ ...deps, actor: deps.actor ?? { kind: "system", id: "integrator" }, idempotencyKey: deps.idempotencyKey ?? "p107-patch-" + deps.patch.patchId, correlationId: deps.correlationId ?? deps.commandId, submittedAt: deps.submittedAt ?? P107_SCHEMA });
 }
 
 // ------------------------------------------------------------------------ //

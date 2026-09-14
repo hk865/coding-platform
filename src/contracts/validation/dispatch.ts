@@ -73,7 +73,7 @@ export function validateDispatchClaimCommand(value: unknown): ValidationIssue[] 
   validateCommandIdentity(value["identity"], "identity", issues);
   stringField(value, "aggregateId", issues);
   if (value["expectedRevision"] !== 0) {
-    issues.push({ path: "expectedRevision", code: "bad_expected_revision", message: "P1-03 claim expectedRevision must be 0 (single lease)" });
+    issues.push({ path: "expectedRevision", code: "bad_expected_revision", message: "A new dispatch claim must expect revision 0 for its single lease" });
   }
   stringField(value, "correlationId", issues);
   stringField(value, "submittedAt", issues);
@@ -176,7 +176,7 @@ export function validateRunFactCommand(value: unknown): ValidationIssue[] {
       issues.push({ path: "payload.fact.binding", code: "bad_type", message: "exact runtime input binding required" });
     }
   } else if (fact["kind"] === "model_request_authorized") {
-    // 许可签发：Control 侧事实（D06）。形状校验只保证它是可核对的许可值，业务准入在 Control。
+    // 许可签发：Control 侧事实（调用证据与参与语义规则）。形状校验只保证它是可核对的许可值，业务准入在 Control。
     validateRunRef(fact["runRef"], "payload.fact.runRef", issues);
     const permit = fact["permit"];
     if (!isRecord(permit)) {

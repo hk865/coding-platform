@@ -1,6 +1,8 @@
 import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
@@ -9,16 +11,24 @@ import type { RuntimeRecord } from '../../src/execution/worker-runtime/coding-ag
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
-type State = { executor: string; liveRuns: RuntimeRecord[]; exploration: { reports: Array<{ taskId: string; runId: string; report: string; sourceReads: Array<{ path: string }> }>; reviews: Array<{ taskId: string; verdict: string; control: { status: string; taskPhase: string; goalPhase: string } }>; reportErrors: unknown[] }; matrix: { matrix?: { rows: Array<{ taskId: string; livePhase: string }> } }; goalStatus: unknown };
+type State = { dispatch?: import('../../src/contracts/dispatch-backlog.js').DispatchBacklogView; executor: string; liveRuns: RuntimeRecord[]; exploration: { reports: Array<{ taskId: string; runId: string; report: string; sourceReads: Array<{ path: string }> }>; reviews: Array<{ taskId: string; verdict: string; control: { status: string; taskPhase: string; goalPhase: string } }>; reportErrors: unknown[] }; matrix: { matrix?: { rows: Array<{ taskId: string; livePhase: string }> } }; goalStatus: unknown };
 async function start(model = 'read-report', contextOnly = true) {
+  const serverFactory: typeof createGuiServer = process.env['M01_SERVICE_BROWSER']
+    ? (await import(pathToFileURL(resolve('dist/app/server.js')).href)).createGuiServer
+    : createGuiServer;
   const dir = await mkdtemp(join(tmpdir(), 'exploration-api-')); cleanup.push(() => rm(dir, { recursive: true, force: true }));
   const root = join(dir, 'source'); await mkdir(root); await writeFile(join(root, 'README.md'), '# Demo\nThe actual entry point is src/main.ts.\n'); await writeFile(join(root, 'FILE_INDEX.txt'), 'README.md\n'); await writeFile(join(root, 'SOURCE_MANIFEST.json'), '{"testFixture":true}\n');
+  const waiting: Array<() => void> = [];
+  let released = false;
+  const releaseAll = () => { released = true; for (const release of waiting.splice(0)) release(); };
+  let active = 0, maximum = 0;
   let requests = 0; const payloads: Array<Record<string, unknown>> = [];
   const provider = createServer(async (req, res) => {
     let body = ''; for await (const c of req) body += c; const input = JSON.parse(body); payloads.push(input); requests++;
     if (input.model === 'hang') return;
     res.writeHead(200, { 'content-type': 'text/event-stream' }); const emit = (value: unknown) => res.write('data: ' + JSON.stringify(value) + '\n\n');
     const readCount = input.messages.filter((m: { role: string }) => m.role === 'tool').length;
+    if (input.model === 'parallel' && !released && readCount === 0) { active++; maximum = Math.max(maximum, active); await new Promise<void>(resolve => waiting.push(resolve)); active--; }
     const call = readCount === 0 && input.model !== 'no-read' ? { name: 'read', arguments: JSON.stringify({ path: input.model === 'read-dist' ? 'dist/observed.txt' : 'README.md', startLine: 1, endLine: 2 }) } : null;
     emit({ choices: [{ index: 0, delta: call ? { tool_calls: [{ index: 0, id: 'call-' + requests, type: 'function', function: call }] } : { content: '## Project exploration\nREADME.md:1-2 identifies src/main.ts as the entry point. This is a static observation; no build or runtime test was executed.' }, finish_reason: null }] });
     emit({ choices: [{ index: 0, delta: {}, finish_reason: call ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 200, completion_tokens: 50, prompt_cache_hit_tokens: 20 } }); res.end('data: [DONE]\n\n');
@@ -26,9 +36,9 @@ async function start(model = 'read-report', contextOnly = true) {
   await new Promise<void>(r => provider.listen(0, '127.0.0.1', r)); cleanup.push(async () => { provider.closeAllConnections(); await new Promise<void>(r => provider.close(() => r())); });
   const a = provider.address(); if (!a || typeof a === 'string') throw Error();
   const data = join(dir, 'data'), options = { modelSettings: { directory: join(dir, 'credentials') }, explorationContextOnlyRoots: contextOnly ? [root] : [] };
-  let app = await createGuiServer(data, options), base = '', token = '';
+  let app = await serverFactory(data, options), base = '', token = '';
   async function listen() { await new Promise<void>(r => app.server.listen(0, '127.0.0.1', r)); const a = app.server.address(); if (!a || typeof a === 'string') throw Error(); base = 'http://127.0.0.1:' + a.port; token = ((await (await fetch(base + '/api/meta')).json()) as {workspaceToken:string}).workspaceToken; }
-  await listen(); cleanup.push(() => app.close());
+  await listen(); cleanup.push(async () => { releaseAll(); await app.close(); });
   async function post(path: string, input: unknown) { const r = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-platform-token': token }, body: JSON.stringify(input) }); return { status: r.status, body: await r.json() }; }
   await post('/api/model-settings', { provider: 'deepseek', model, baseUrl: 'http://127.0.0.1:' + a.port, apiKey: 'synthetic-exploration-key' });
   const project = (await post('/api/projects/add', { path: root })).body as {projectId:string;workspaceId:string}; const scope = { projectId: project.projectId as string, workspaceId: project.workspaceId as string, goalId: 'explore-test' };
@@ -40,7 +50,7 @@ async function start(model = 'read-report', contextOnly = true) {
   const reviewInput = (taskId: string) => ({ ...scope, requestId: 'review-' + taskId, taskId, ...(taskId === 'gate-goal' ? {} : { runId: 'real-explore-run-' + taskId }), reviewVerdict: 'PASS', reviewOrigin: 'operator', reviewText: 'Independently checked README.md lines 1-2 against the report; uncertainty and no-runtime-test limits are accurate.' });
   const review = (taskId: string) => post('/api/real/explorations/review', reviewInput(taskId));
   const state = async (goalId = scope.goalId) => await (await fetch(base + '/api/state?' + new URLSearchParams({ ...scope, goalId }))).json() as State;
-  return { root, dir, data, scope, plan, install, run, review, reviewInput, state, post, payloads, requests: () => requests, restart: async () => { await app.close(); app = await createGuiServer(data, options); await listen(); } };
+  return { url: () => base, root, dir, data, scope, plan, install, run, review, reviewInput, state, post, payloads, releaseAll, releaseOne: () => waiting.shift()?.(), concurrency: () => ({ active, maximum }), requests: () => requests, restart: async () => { await app.close(); app = await serverFactory(data, options); await listen(); } };
 }
 async function until<T>(fn: () => Promise<T>, check: (value: T) => boolean) { const deadline = Date.now() + 20000; for (;;) { const value = await fn(); if (check(value)) return value; if (Date.now() > deadline) throw Error('timed out: ' + JSON.stringify(value)); await new Promise(r => setTimeout(r, 30)); } }
 it('executes a real read-only dependency chain, requires operator review and preserves reports across restart', async () => {
@@ -167,4 +177,53 @@ it('inherits only directly required applied PASS review notes, keeping reports a
   expect(instruction).not.toContain(ancestorNote); expect(instruction).not.toContain(failedNote);
   expect(state.exploration.reports.every(r => !r.report.includes(directNote) && !r.report.includes(ancestorNote))).toBe(true);
   expect((await t.state(failedGoal)).exploration.reviews[0]?.verdict).toBe('FAIL');
+}, 60000);
+
+it('production wakes admit two readers concurrently, expose queued work and never duplicate repeated requests', async () => {
+  const t = await start('parallel');
+  t.plan.tasks[1]!.dependsOn = [];
+  t.plan.tasks.push({ taskId: 'third', title: 'Third reader', instruction: 'Read README independently', dependsOn: [] });
+  expect((await t.install()).status).toBe(200);
+  try {
+    expect((await t.run('inventory')).status).toBe(200);
+    await until(async () => t.concurrency(), c => c.active === 1);
+    expect((await t.run('synthesis')).status).toBe(200);
+    await until(async () => t.concurrency(), c => c.active === 2);
+    expect((await t.run('third')).status).toBe(200);
+    expect((await t.run('inventory')).status).toBe(200);
+    const pending = await until(t.state, s => s.dispatch?.status === 'ready' && s.dispatch.backlog.pending === 1);
+    expect(pending.dispatch).toMatchObject({ status: 'ready', backlog: { pending: 1, due: 1, delayed: 0 } });
+    expect(t.concurrency()).toEqual({ active: 2, maximum: 2 });
+    if (process.env['M01_SERVICE_BROWSER']) {
+      const requireUi = createRequire(resolve('src/ui/package.json'));
+      const { chromium } = await import(pathToFileURL(requireUi.resolve('playwright-core')).href);
+      const browser = await chromium.launch({ executablePath: process.env['CHROME_PATH'], headless: true, args: ['--no-sandbox'] });
+      try {
+        const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
+        await page.goto(t.url());
+        const meta = await (await fetch(t.url() + '/api/meta')).json() as { scopes: Array<{ projectId: string; name?: string }> };
+        const project = meta.scopes.find(row => row.projectId === t.scope.projectId)!;
+        await page.getByTestId('project-select').click();
+        await page.getByRole('option', { name: project.name ?? project.projectId, exact: true }).click();
+        await page.getByTestId('goal-' + t.scope.goalId).click();
+        const backlog = page.getByTestId('dispatch-backlog');
+        await backlog.waitFor();
+        expect(await backlog.innerText()).toContain('可调度 1');
+        const output = resolve('evidence/collaboration-memory/CM-M01-001/implementation/continuation-01/browser');
+        await mkdir(output, { recursive: true });
+        await page.screenshot({ path: join(output, 'pending-reader.png'), fullPage: true });
+      } finally { await browser.close(); }
+    }
+
+    t.releaseOne();
+    await until(async () => t.payloads.filter(p => (p['messages'] as Array<{ role: string }>).every(m => m.role !== 'tool')).length, n => n === 3);
+    expect(t.concurrency().maximum).toBe(2);
+    t.releaseAll();
+    await until(t.state, s => s.liveRuns.length === 3 && s.liveRuns.every(r => r.status === 'completed'));
+    const before = t.requests();
+    await t.restart();
+    expect((await t.run('inventory')).status).toBe(200);
+    expect((await t.state()).dispatch).toMatchObject({ status: 'ready', backlog: { pending: 0 } });
+    expect(t.requests()).toBe(before);
+  } finally { t.releaseAll(); }
 }, 60000);

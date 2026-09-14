@@ -1,4 +1,4 @@
-import { buildApplyPlanCommand as formalbuildApplyPlanCommand } from "../contracts/commands/plan.js";
+import { buildApplyPlanCommand as canonicalBuildApplyPlanCommand } from "../contracts/commands/plan.js";
 
 /**
  * Shared fixture: hand-authored PlanRevision.
@@ -67,7 +67,7 @@ export const HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1: PlanRevisionDraft = {
     },
     {
       taskId: "gate-goal",
-      title: "GoalGate：P1-02 验收路径全部通过",
+      title: "GoalGate：计划验收路径全部通过",
       requirementLevel: "required",
       taskKind: "gate",
       disposition: "active",
@@ -106,7 +106,7 @@ export const HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1: PlanRevisionDraft = {
     },
     {
       obligationId: "obl-3",
-      title: "P1-02 验收在不产生 Run/dispatch 的前提下满足",
+      title: "计划验收在不产生 Run/dispatch 的前提下满足",
       requirementLevel: "required",
       taskIds: ["gate-goal"],
       verificationRequirements: [
@@ -163,7 +163,7 @@ export function buildApplyPlanCommand(
   draft: PlanRevisionDraft,
   deps: BuildApplyPlanDeps,
 ): ApplyPlanRevisionCommand {
-  return formalbuildApplyPlanCommand(draft, { ...deps, goalId: deps.goalId ?? draft.goalId, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-02-apply-plan" });
+  return canonicalBuildApplyPlanCommand(draft, { ...deps, goalId: deps.goalId ?? draft.goalId, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-02-apply-plan" });
 }
 
 export function planIdentityKey(command: ApplyPlanRevisionCommand): string {

@@ -1,16 +1,16 @@
 /**
- * RW-11（ADR 0003 D4 前半）— 角色规格实体化契约。
+ * 角色规格实体化契约。
  *
  * 把「角色」从 `RoleBindingRefV1.templateId` 的字符串升级为**版本化规格**：
  *   - `RoleSpecRevision` 与既有 CompletionPolicy／ArchitectureBaseline／CoordinationPolicy／
  *     ArchitectureEvolutionPolicy 同构：不可改写的 revision + 内容摘要 + Project 生效引用，
  *     install 是 CAS@0、activate 是 CAS，事件与快照走同一个账本。
- *     这不是第五套治理机制，而是同一条治理路径上的第五个治理种类（ARCHITECTURE 不变量 #11）。
+ *     它复用同一条版本化治理路径（ARCHITECTURE 不变量 #11）。
  *   - 规格正文决定这个角色能拿哪些工具、必须读哪些材料、必须产出什么、什么条件下退出，
  *     形状与 dev_docs/agent/templates/short-lived-agent.md 的配置模板对齐。
  *
  * 角色能做什么由规格决定，而规格从哪来由人经 install/activate 显式提交（没有内置默认值）：
- * 没有安装过规格的项目，其 claim 语义与 RW-11 之前完全一致（ControlEngine 不编造角色目录）。
+ * 没有安装过规格的项目，其 claim 语义与引入角色矩阵前完全一致（ControlEngine 不编造角色目录）。
  */
 import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
 import { canonicalJson, sha256Hex } from "./fingerprint.js";
@@ -43,11 +43,11 @@ export const ROLE_RESPONSIBILITIES = [
 ] as const;
 export type RoleResponsibilityV1 = (typeof ROLE_RESPONSIBILITIES)[number];
 
-/** 必读／可选材料的种类。材料本身仍由 ContextCompiler 按规格取材（D4-3）。 */
+/** 必读和可选材料的种类。材料本身仍由 ContextCompiler 按规格取材。 */
 export const ROLE_MATERIAL_KINDS = ["contract", "code", "evidence", "history", "decision"] as const;
 export type RoleMaterialKindV1 = (typeof ROLE_MATERIAL_KINDS)[number];
 
-/** 必产出种类。VerificationEngine 按规格校验必产出完备性（D4-3）。 */
+/** 必产出种类。VerificationEngine 按规格校验必产出完备性。 */
 export const ROLE_OUTPUT_KINDS = [
   "answer-with-sources",
   "proposal",
@@ -248,7 +248,7 @@ export type RoleSpecActivatedEvent = {
 };
 
 // ------------------------------------------------------------------------ //
-// 冻结接口：角色规格治理入口                                                 //
+// 角色规格治理接口。                                                         //
 // ------------------------------------------------------------------------ //
 
 /** ControlEngine 的角色规格入口（与 CoordinationPolicyPort 同形；不新增 Module）。 */

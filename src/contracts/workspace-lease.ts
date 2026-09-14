@@ -1,8 +1,7 @@
 /**
- * P1-07 frozen contract: Workspace leases + ConflictScope +
- * DispatchEngine.WorkspaceLeasePort (interfaces_to_freeze #1 — first consumer
- * P1-07). Authority: IMPLEMENTATION-HANDOFF.md "P1-07 契约与存储语义" (items
- * 1, 2, 3, 5, 6, 7, 8) + tickets/07-parallel-readers-single-writer.md +
+ * Workspace-concurrency contract: Workspace leases + ConflictScope +
+ * DispatchEngine.WorkspaceLeasePort (public workspace-concurrency interface).
+ * Authority: the workspace-concurrency interface specification and
  * ARCHITECTURE.md invariant #7.
  *
  * Semantics:
@@ -20,7 +19,7 @@
  *     WorkspaceWriteLeaseIndex aggregate per (project, workspace) — the
  *     workspace-level exclusivity is the MVP reading of invariant #7 (ONE
  *     writer per workspace; stronger than per-scope exclusivity).
- *   - Expiry semantics (MVP: no background recycle — P1-10): an expired
+ *   - Expiry semantics (MVP: no background recycle — control intent): an expired
  *     (expiresAt <= now) lease is not admissible and does NOT block a
  *     requestor. Acquiring a new write lease over an expired active lease
  *     atomically vacates it (snapshot @2, releasedBy = null) — recorded, no
@@ -77,7 +76,7 @@ export function isPathLikeScopeKind(kind: ConflictScopeKind): boolean {
 }
 
 /**
- * FROZEN syntactic overlap (pure): same project+workspace AND
+ * VERSIONED syntactic overlap (pure): same project+workspace AND
  *   (a) either side is "workspace" -> true;
  *   (b) same kind + id -> true;
  *   (c) both path-like (module|path) and one id is a prefix of the other
@@ -112,7 +111,7 @@ export function conflictScopeKeyFor(scope: ConflictScopeV1): string {
 }
 
 /**
- * FROZEN declared-write-scope check (pure): entries are plain path prefixes
+ * VERSIONED declared-write-scope check (pure): entries are plain path prefixes
  * (module/path id or an ancestor directory), the workspaceId or "*" for a
  * workspace scope, and "<kind>:<id>" for label scopes (exact match only).
  */
@@ -132,7 +131,7 @@ export function scopeCoveredByWriteScope(scope: ConflictScopeV1, declaredWriteSc
 }
 
 /**
- * FROZEN pure path-coverage check (used by recordPatch scope_mismatch):
+ * VERSIONED pure path-coverage check (used by recordPatch scope_mismatch):
  * workspace scope covers every path; a path-like (module|path) scope covers
  * itself and every descendants path (path-segment boundary); label scopes
  * NEVER cover paths (no semantic inference).
@@ -332,7 +331,7 @@ export type ReleaseWorkspaceLeaseCommand = {
     workspaceId: string;
     kind: "read" | "write";
     leaseId: string;
-    /** Only the holder may release (releasedBy is frozen to "holder"). */
+    /** Only the holder may release (releasedBy is versioned to "holder"). */
     holderRunRef: RunRef;
   };
 };
@@ -541,7 +540,7 @@ export function releaseLeaseFingerprint(command: ReleaseWorkspaceLeaseCommand): 
 }
 
 // ------------------------------------------------------------------------ //
-// DispatchEngine.WorkspaceLeasePort (interfaces_to_freeze #1)               //
+// DispatchEngine.WorkspaceLeasePort — public workspace-concurrency port     //
 // ------------------------------------------------------------------------ //
 
 export interface WorkspaceLeasePort {
@@ -549,6 +548,6 @@ export interface WorkspaceLeasePort {
   acquireReadLease(command: AcquireWorkspaceReadLeaseCommand): Promise<AcquireReadLeaseReceipt>;
   /** Exclusive write lease (index CAS; workspace-level exclusivity = invariant #7). */
   acquireWriteLease(command: AcquireWorkspaceWriteLeaseCommand): Promise<AcquireWriteLeaseReceipt>;
-  /** Explicit holder release (no cancel/preempt/force-release — P1-10). */
+  /** Explicit holder release (no cancel/preempt/force-release — control intent). */
   releaseLease(command: ReleaseWorkspaceLeaseCommand): Promise<ReleaseLeaseReceipt>;
 }

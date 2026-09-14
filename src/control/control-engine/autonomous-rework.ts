@@ -1,5 +1,5 @@
 /**
- * RW-04 ControlEngine 入口：返工提案的**自动受理**（ADR 0003 D1 第 4、5 条）。
+ * ControlEngine 入口：返工提案的自动受理。
  *
  * 职责边界（为什么在本 Module、为什么不再造一套东西）：
  *   - 本文件只做四件事：读问题与提案 → 判定四条边界 → 复用既有入口落账 → 复用既有
@@ -7,20 +7,20 @@
  *     也不复制 plan-change 的业务分派（提案/决定/应用三段全部调用 GoalChangeEngineImpl）。
  *   - 提案内容与派生草稿都来自 PlanCompiler 的机械推导（contracts/rework/proposal.ts 的
  *     ReworkProposalV1：rework.issues + patch.taskSetDelta + planDraft），本入口只**复核**，
- *     不重新推导第二份草稿；草稿与增量的逐项一致由 RW-02 的 draftConsistencyIssues 在
+ *     不重新推导第二份草稿；草稿与增量的逐项一致由 draftConsistencyIssues 在
  *     落账前预跑一次、applyPlanChange 的守卫 f2 在应用时再原样复跑一次。
  *
- * 四条边界（ADR 0003 D1-4）逐条判定；任一条不满足即返回 needs_human_decision 且零写入：
+ * 四条边界逐条判定；任一条不满足即返回 needs_human_decision 且零写入：
  *   (a) 触发源是已提交的验证结论（工具轮次聚合 Evidence 或独立审阅 ReviewResult）；
  *   (b) 改动落在 inScopeRework（同义务、同验收语义，只换承担者），且**当前生效策略**的
- *       allowed.inScopeRework 为 true —— 这是 RW-10 的人可暂停开关：每次受理都重新读取生效
+ *       allowed.inScopeRework 为 true —— 这是人的暂停开关：每次受理都重新读取生效
  *       revision 的该字段，人把它装成 false 就让全部自动返工转人工（不需要新命令、新聚合或新状态）；
  *   (c) 自动化预算未耗尽（按 Goal 累计已应用的自动返工次数）；
  *   (d) 人没有对这些问题显式拒绝或延后过。
  *
- * 幂等与重放：身份全部确定性（提案与 planId 复用 RW-03 的推导函数，决定/命令 id 由提案 id
+ * 幂等与重放：身份全部确定性（提案与 planId 复用 PlanCompiler 的推导结果，决定/命令 id 由提案 id
  * 推导），已受理过的再次触发直接返回 replayed；计数与拒绝事实都从账本事件重建，重启后一致。
- * 重放**不是**免检路径（RW-10 P7）：重放前把本次输入与已落账提案的 rework／planDraft 逐字比对
+ * 重放不是免检路径：重放前把本次输入与已落账提案的 rework／planDraft 逐字比对
  * （这两部分不在 planProposalDigest 里），不一致即返回提案冲突码且零写入。
  *
  * 边界 (a) 为什么能在 ControlEngine 内部判定：已提交的验证结论在账本里有两类 canonical 形态——
@@ -52,7 +52,7 @@ import type { ReworkAcceptanceReceiptV1, ReworkAcceptanceRejectionCode, ReworkAc
 import { canonicalJson } from '../../contracts/fingerprint.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
 import { parseFeedbackResolution } from '../../contracts/execution-feedback.js';
-// RW-11：生效策略的解析只有一份实现，自动受理与 claim 角色守卫共用（避免两处默认行为分叉）。
+// 生效策略解析只有一份实现，自动受理与 claim 角色守卫共用，避免两处默认行为分叉。
 import { resolveActiveCoordinationPolicy } from './policies/coordination-policy.js';
 import { draftAdmissionRejectionCode, draftConsistencyIssues } from './policies/goal-change-consistency.js';
 import {
@@ -153,7 +153,7 @@ export class AutonomousReworkEngineImpl {
           '同一提案身份 ' + proposalIdEarly + ' 已经记录过一条内容不同的决定（' + decisionRefEarly.decisionId + '）：决定记录不可变，不覆盖也不合并，转人工',
         ]);
       }
-      // RW-10（P7）：重放之前先比对**已落账提案**的 rework 与 planDraft。
+      // 重放之前先比对已落账提案的 rework 与 planDraft。
       // 这两部分不在 planProposalDigest 里（那份摘要覆盖 patch + impact），而 planDraft 正是要落进
       // 新 revision 的内容；只比对决定与 authorizedTarget 会把「同一提案身份、但草稿已被篡改」的
       // 输入当成重放成功返回。不一致即提案冲突码、零写入；读不到已落账提案时同样保守转人工
@@ -282,7 +282,7 @@ export class AutonomousReworkEngineImpl {
         sourceIssues.length > 0
           ? sourceIssues
           : [
-              // RC-01：触发源的判据是"在**问题自己的** anchor revision 上有已提交结论"（见
+              // 返工处置规则：触发源的判据是"在**问题自己的** anchor revision 上有已提交结论"（见
               // triggerSourceIssues）。计划推进之后，同一批里尚未处置的问题可以带着更早的
               // anchor 被接手（carried_by_task），此时提案的源 revision 已经不是它们成立时的
               // revision，因此这里必须按问题各自的 anchor 逐项说明，不能笼统写成提案的源 revision。
@@ -300,7 +300,7 @@ export class AutonomousReworkEngineImpl {
     };
 
     const scopeIssues = inScopeReworkIssues({ proposal, sourcePlan });
-    // RW-10（P2）人的暂停开关：每次受理都读**当前生效策略**的 allowed.inScopeRework。
+    // 人的暂停开关：每次受理都读当前生效策略的 allowed.inScopeRework。
     // 人安装并激活一份 inScopeRework=false 的协调策略即停用自动返工：这里转 needs_human_decision
     // （边界 in_scope_rework）且零写入，之后每条失败都必须由人决定。没有新命令、新聚合、新状态。
     scopeIssues.push(...autonomousReworkPauseIssues(policy));
@@ -359,7 +359,7 @@ export class AutonomousReworkEngineImpl {
 
     const decision = this.buildDecision({ proposal, goal, activePlanRef, sourcePlan, decisionRef, workspaceId, budget, policy });
     const preflight = draftConsistencyIssues(proposal, decision, proposal.planDraft, sourcePlan);
-    // RW-10（P8）：预检拒绝沿用既有守卫的归因码，不再把所有草稿不一致压成 invalid。
+    // 预检拒绝沿用既有守卫的归因码，不把所有草稿不一致压成 invalid。
     // 归因函数与 applyPlanChange 守卫 f2 是同一个（policies/goal-change-consistency.ts），
     // 因此这里报出的码与「先落账再被守卫打回」时会看到的码完全一致，调用方不必再猜第二次。
     const preflightCode = draftAdmissionRejectionCode(preflight);
@@ -434,7 +434,7 @@ export class AutonomousReworkEngineImpl {
       },
     };
     // 守卫链在这里原样复跑：applyPlanChange 的 a–i（形状、提案/决定存在、仅 accept 可应用、
-    // 目标精确匹配、守卫 f1/f2 的增量与草稿一致性、source_stale、治理解析与 P1-02 非空守卫、
+    // 目标精确匹配、守卫 f1/f2 的增量与草稿一致性、source_stale、治理解析与计划非空守卫、
     // CAS 折叠）一条都没有被跳过。本入口只负责把“四条边界都满足”这件事证明给它们。
     const applied = await this.goalChange.applyPlanChange(applyCommand);
     if (applied.status === 'rejected') {
@@ -606,7 +606,7 @@ export class AutonomousReworkEngineImpl {
   /**
    * 边界 (d)：人是否已经对这条问题表过态。
    *
-   * 事实存在既有决定记录里（UserDecisionV1，P1-11 的决定路径），不新造聚合：
+   * 事实存在既有决定记录里（UserDecisionV1，plan change 的决定路径），不新造聚合：
    * 一条 reject／defer 决定，只要它决定的提案就是给这条问题做的返工（提案自己列了这条问题，
    * 或取代了同一条失败任务，或新增了本问题的规范返工任务 id），就表示人对这条问题已经给过结论。
    * 按 PRODUCT「拒绝、延后与过期决定不会偷偷推进变更」，reject 与 defer 都阻止自动受理。
@@ -643,7 +643,7 @@ export class AutonomousReworkEngineImpl {
   }
 
   // --------------------------------------------------------------------- //
-  // 落账内容构造（身份由提案确定性推导，与 RW-03 的推导函数同源）            //
+  // 落账内容构造（身份由提案确定性推导，与 work-identity 的推导函数同源） //
   // --------------------------------------------------------------------- //
 
   private proposalCommand(proposal: ReworkProposalV1, commandId: string): RecordPlanChangeProposalCommand {

@@ -443,12 +443,12 @@ describe("RW-11 重启后从账本重建", () => {
   it("SQLite 重开后角色规格与生效引用仍在，claim 守卫按同一份矩阵裁决", async () => {
     const dir = await mkdtemp(join(tmpdir(), "rw11-role-spec-"));
     try {
-      const { createPersistentSqliteHarness } = await import("../../src/harness/persistent-harness.js");
+      const { createPersistentPlatform } = await import("../../src/composition/persistent-platform.js");
       const { buildBootstrapCommand } = await import("../../src/contracts/bootstrap.js");
       const { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } = await import("../contract-support/fixtures/bootstrap-fixture-v1.js");
       const { MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1, buildCreateGoalCommand, buildGoalCreateLedgerCommit } = await import("../contract-support/fixtures/goal-fixtures.js");
 
-      let host = await createPersistentSqliteHarness({ dir });
+      let host = await createPersistentPlatform({ dir });
       const bootstrap = buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, { commandId: "cmd-bootstrap", correlationId: "corr-bootstrap", submittedAt: AT });
       expect((await host.ledger.commit(buildBootstrapLedgerCommit(bootstrap, { eventIds: ["evt-b1", "evt-b2", "evt-b3", "evt-b4"], occurredAt: AT }))).status).toBe("committed");
       const scope = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1.scopes.find((s) => s.projectId === PROJECT)!;
@@ -462,7 +462,7 @@ describe("RW-11 重启后从账本重建", () => {
       await host.close();
 
       // 重开：新的账本实例，同一批文件。
-      host = await createPersistentSqliteHarness({ dir });
+      host = await createPersistentPlatform({ dir });
       const loaded = await host.ledger.load(roleSpecRevisionRefFor(PROJECT, ROLE_SOURCE_EXECUTOR, ROLE_SPEC_REVISION));
       expect(loaded.status).toBe("found");
       if (loaded.status === "found") expect((loaded.snapshot as RoleSpecRevisionSnapshot).contentDigest).toBe(roleSpecPinFor(PROJECT, ROLE_SOURCE_EXECUTOR).digest);

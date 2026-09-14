@@ -20,7 +20,7 @@ export function ActivityView({ data, loading, error }: ViewProps) {
               <Group key={index} gap="xs" wrap="nowrap" align="flex-start">
                 <Text size="xs" c="dimmed" w={70}>{time(entry.occurredAt)}</Text>
                 <Text size="xs">{eventLabels[entry.kind] ?? entry.summary}</Text>
-                {/* RW-09：计划变更类条目要把变更原因与受理方标出来，否则"计划已接受"这一行
+                {/* 计划变更类条目要把变更原因与受理方标出来，否则“计划已接受”这一行
                     无法区分系统自动受理与人的决定。取值来自投影（entry.change），界面只显示。 */}
                 {entry.change ? (
                   <>

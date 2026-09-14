@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
-import { createPersistentSqliteHarness, type PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform, type PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import {
   prepareP107Scenario, runP107Task, toP1_07Harness,
   P107_PROJECT, P107_WORKSPACE, P107_GOAL, P107_SCHEMA, P107_TASK_WRITER_B,
@@ -36,8 +36,8 @@ async function setup(adapter: "memory" | "sqlite", workspaceCapability?: Workspa
   const options = { deps: { clock: () => P107_SCHEMA }, ...(workspaceCapability ? { workspaceCapability } : {}) };
   const raw = adapter === "memory"
     ? createInMemoryHarness(options)
-    : await createPersistentSqliteHarness(options);
-  if (adapter === "sqlite") cleanup.push(() => (raw as PersistentSqliteHarness).cleanup());
+    : await createPersistentPlatform(options);
+  if (adapter === "sqlite") cleanup.push(() => (raw as PersistentPlatform).cleanup());
   const h = toP1_07Harness(raw as unknown as P1_07HarnessLike);
   await prepareP107Scenario(h);
   const runRef = await runP107Task(h, {
@@ -162,7 +162,7 @@ it("SQLite replay survives close and reopen with the same receipt and no appende
   const first = await h.acquireWorkspaceWriteLease(write);
   expect(first.status).toBe("committed");
   const before = await h.ledger.events({ afterCursor: null, limit: 1000 });
-  const persistent = raw as PersistentSqliteHarness;
+  const persistent = raw as PersistentPlatform;
   await persistent.close();
   const reopened = await persistent.reopen();
   cleanup.push(() => reopened.close());
@@ -174,8 +174,8 @@ it("separate SQLite connections cannot grant overlapping read and write leases",
   const workspaceCapability = simultaneousCapabilities();
   const { h, raw, read, write } = await setup("sqlite", workspaceCapability);
   let sequence = 0;
-  const second = await createPersistentSqliteHarness({
-    dir: (raw as PersistentSqliteHarness).dir,
+  const second = await createPersistentPlatform({
+    dir: (raw as PersistentPlatform).dir,
     deps: { clock: () => P107_SCHEMA, eventId: () => `second-client-${++sequence}` }, workspaceCapability,
   });
   cleanup.push(() => second.close());

@@ -21,7 +21,7 @@ export type { RunSpec } from '../../contracts/runtime-preparation.js';
 export type BoundModel = { configuration: { revision: string; provider: string; model: string; baseUrl: string }; client: ModelClientPort; inputCounter?: ModelInputCounter };
 export type RuntimeRecord = { context?: RuntimeContextAssembly; spec: RunSpec; createdAt?: string; status: 'prepared' | 'running' | 'completed' | 'failed' | 'cancelled' | 'budget_exhausted' | 'outcome_unknown'; sessionId: string; configuration: BoundModel['configuration'] | null; events: RuntimeEventV1[]; trace: Array<{ type: string; sequence: number; at: string; data: unknown }>; usage: MeterEntry[]; error: string | null; nodeSha256: string | null; workspaceRevision: string | null; cancelRequested: boolean;
   /**
-   * 本次运行被授予的**协调能力**及其账本依据（CM-1A-001 协议约束 2.3；可审计的持久记录）。
+   * 本次运行被授予的**协调能力**及其账本依据（协作通信协议约束 2.3；可审计的持久记录）。
    *
    * 旧记录没有这一项 → `undefined`：表示"没有这条授予记录"，**不回填、不推断**；
    * 是否可用协调工具永远以执行前的准入（canonical 事实）为准，不看本地记录。
@@ -130,6 +130,7 @@ export class CodingAgentRuntime implements RunPort {
     if (this.closing) throw Error('执行器正在关闭，不能开始运行');
     const key = keyFor(envelope.runRef), r = this.records.get(key);
     if (!r || r.spec.taskId !== envelope.taskId || r.spec.workspaceId !== envelope.workspaceId) throw Error('真实运行缺少已登记的任务');
+    if (r.spec.mode !== undefined && context?.coordination !== undefined) throw Error('只读探索或独立审阅不能接收协调写入口');
     validateReviewSpec(r.spec);
     const readOnly = !envelope.permissions.tools.some(tool => tool === 'write' || tool === 'shell');
     if (envelope.permissions.tools.some(tool => !['read', 'write', 'shell'].includes(tool)) ||
@@ -148,7 +149,7 @@ export class CodingAgentRuntime implements RunPort {
     }
     let cursor = 0;
     /**
-     * CM-1A-001 第 4 步 / D06：**调用证据**面。
+     * 协作通信可靠投递规则 / 调用证据与参与语义规则：**调用证据**面。
      *
      * 摘要在**实际 stream(request) 边界**算出（ModelBudget.wrap 对最终 outgoing 请求算的
      * inputDigest），这里只把它连同这次运行的 Context 摘要（RuntimeContextManifest.inputDigest）

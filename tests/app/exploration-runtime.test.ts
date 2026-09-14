@@ -1,3 +1,4 @@
+import {injectedCoordinationGrant} from '../contract-support/testing/injected-coordination-grant.js';
 import { storeRuntimeTestBundle } from './runtime-context-fixture.js';
 import type { RuntimeContextAccess } from '../../src/data/context-compiler/runtime-context.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -94,6 +95,13 @@ async function finish(runtime: CodingAgentRuntime, envelope: ReturnType<typeof b
 }
 
 describe('real kernel read-only exploration permissions', () => {
+  it('rejects injected coordination before any exploration model or host-tool call',async()=>{
+    const t=await fixture(()=>[]);await t.runtime.prepare(t.spec);let calls=0;
+    const coordination=injectedCoordinationGrant(t.envelope,()=>{calls++;throw Error('must not call injected host tools');});
+    await expect(t.runtime.start(t.envelope,{...t.access,coordination})).rejects.toThrow('只读探索或独立审阅不能接收协调写入口');
+    expect(t.model.requests).toHaveLength(0);expect(calls).toBe(0);expect(t.runtime.all()[0]!.status).toBe('prepared');
+  });
+
   it('exposes only read, denies paths and fabricated write tools, preserves source and persists an actual report without replay', async () => {
     const t = await fixture((root, outside) => [
       { name: 'read', arguments: { path: 'README.md' } },

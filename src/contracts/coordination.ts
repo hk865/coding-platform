@@ -1,7 +1,7 @@
 /**
- * 协作通信协议 v1（CM-1A-001）。
+ * 协作通信协议 v1（协作通信）。
  *
- * 权威语义（设计裁决见 CM-1A-001 decision-log D01–D05）：
+ * 权威语义：
  *   - **Work 是持久责任地址**：DirectedRequest / Subscription / WaitCondition 的 owner 都是
  *     WorkContextBinding，而不是 Run 或 AgentInstance。AgentInstance 只承担归因；
  *     RoleBinding 固定授权版本。同一 Work 换参与者后等待仍归 Work。
@@ -159,14 +159,14 @@ export function communicationAdmissionRefFor(projectId: string, workspaceId: str
 }
 
 // ------------------------------------------------------------------------ //
-// Agent principal（A01）                                                     //
+// Agent principal（参与关系与换手）                                                     //
 // ------------------------------------------------------------------------ //
 
 /**
  * Agent 发起命令时的精确归因。**禁止**用 human/system 身份冒充 Agent 行为。
  *
  * 为什么 actor 与 principal 分开：`ActorRef.kind` 的下游消费者（117 处）与
- * UI 类型都把 human/system 当作既成事实；本票只**增加** `'agent'` 这一种 kind 并在
+ * UI 类型都把 human/system 当作既成事实；当前实现只**增加** `'agent'` 这一种 kind 并在
  * agent 命令上强制携带 principal，不改动既有 human/system 断言的语义。
  */
 export type AgentPrincipalRefV1 = {
@@ -222,7 +222,7 @@ export type AgentInstanceSnapshot = {
 /**
  * Work、AgentInstance 与 RoleBinding 在一段时间/版本上的关联。
  *
- * ── 纵向范围约束：实际保证与边界（CM-1A-001 owner 裁决 D06 → 第 2 步补齐）─────────
+ * ── 纵向范围约束：实际保证与边界（协作通信参与身份裁决／调用证据与参与语义规则）─────────
  * 不变式：「一个 AgentInstance 在同一 (project, workspace) 至多有一个 active participation」。
  * 它由**两条独立机制**共同保证，缺一不可：
  *
@@ -368,12 +368,14 @@ export type SubscriptionSnapshot = {
  * 生成或核对精确 grant。撤权因此能阻止旧 Delivery 进入新输入。
  */
 export type DeliveryV1 = {
+  continuation?: {status:'not_required'|'registered'|'unavailable';reason:string;waitRef:WaitConditionRef|null};
   schemaVersion: 1;
   deliveryId: string;
   projectId: string;
   workspaceId: string;
   /** 唯一键的一半：来自定向请求还是订阅。 */
   origin:
+    | { kind: "architecture_decision"; reviewRef: import("./architecture-review.js").ArchitectureReviewRef; reviewRevision: number; targetIndex: number }
     | { kind: "directed_request"; requestRef: DirectedRequestRef }
     | { kind: "subscription"; subscriptionRef: SubscriptionRef; sourceTopic: string; sourceCursor: CommitCursor };
   targetWorkContextRef: WorkContextRef;
@@ -403,6 +405,7 @@ export type WaitConditionTermV1 =
   | { kind: "request_closed"; requestRef: DirectedRequestRef };
 
 export type WaitConditionV1 = {
+  architectureReview?: {ref:import('./architecture-review.js').ArchitectureReviewRef;revision:number};
   schemaVersion: 1;
   waitId: string;
   projectId: string;
@@ -444,14 +447,14 @@ export type SettledIntentWaitRefs = { ref: WaitConditionRef; revision: number };
 /**
  * 等待满足时创建的**唯一**后继执行锚点。唯一键 = (workContextRef, waitRef, satisfiedRevision)。
  *
- * ── 这张记录**原子固定**了什么（CM-1A-001 owner 裁决，第 2 步）────────────────────
+ * ── 这张记录**原子固定**了什么（协作通信参与身份裁决，参与身份规则）────────────────────
  * 后继受理那一次提交同时定死三件事，且它们**只**由这次提交决定，之后不再重新解析：
  *   1. 这一段的参与关系（participationRef / agentInstanceId）= Control 当时从 Work 权威状态
  *      读到的**当前有效参与关系**（不是等待注册时那一段；那一段是历史事实，见 WaitCondition）；
  *   2. 本次采用的**授权版本**（roleBinding）= 该参与关系上固定的 RoleBinding；后继 Run 的
  *      roleBinding 必须与它逐字段相同；
  *   3. 本次必须消费的**目标 Delivery 集合**（deliveryRefs）= 后继 Context 选材的边界
- *      （第 3 步消费；不是「把整个邮箱当输入」）；
+ *      （按 admission 固定的材料集合消费；不是「把整个邮箱当输入」）；
  *   4. 本次**实际采用的权限集**（declaredPermissions）= 前驱 Run 信封声明的权限 ∩ 当前参与关系
  *      RoleBinding 规格的授权上界（协议约束 2.2：只许收窄、不许放宽；交集为空即拒绝受理）。
  *
@@ -570,7 +573,7 @@ export type CommunicationIntentStatus =
 /**
  * 路由页 intent 的 domain。
  *
- * **两个位置必须分开**（CM-1A-001 协议约束 1.4）：
+ * **两个位置必须分开**（协作通信协议约束 1.4）：
  *   - `sourceTopic` + `sourceCursor` 是**源事件位置**：本轮要投递的那个账本事件位置。
  *     一个 intent 只负责**一个事件位置**，因此它在同一 intent 的多次翻页之间**允许不变**。
  *   - `subscriptionPosition` 是**该事件内的订阅分页位置**：上一页处理到的最后一个订阅的
@@ -589,6 +592,7 @@ export type RoutePageSubscriptionScopeEntry = {
 };
 
 export type CommunicationIntentDomain =
+  | { kind: "architecture_decision_delivery"; reviewRef: import("./architecture-review.js").ArchitectureReviewRef; reviewRevision: number; targetIndex: number }
   | { kind: "subscription_catchup"; subscriptionRef: SubscriptionRef; startCursor: CommitCursor; scanCursor: CommitCursor; horizonCursor: CommitCursor }
   | {
       kind: "route_page";
@@ -663,6 +667,7 @@ export type StartWorkParticipationCommand = AgentCommandIdentityBase & {
   aggregateId: string;
   expectedRevision: 0;
   payload: {
+    initialDispatchRef?: import('./dispatch.js').DispatchOutboxRef;
     workspaceId: string;
     workContextRef: WorkContextRef;
     agentInstanceId: string;
@@ -673,7 +678,7 @@ export type StartWorkParticipationCommand = AgentCommandIdentityBase & {
 };
 
 /**
- * 结束一段参与关系（A01：「同一 Work 换参与者后等待仍归 Work」）。
+ * 结束一段参与关系（参与关系与换手：「同一 Work 换参与者后等待仍归 Work」）。
  *
  * 为什么必须有这条命令：WorkParticipation 是**一段时间**上的参与，不是 Work 本身。
  * 换手（前一段参与结束、同一 Work 上开始新一段参与）必须能被表达，否则
@@ -843,7 +848,7 @@ export type RoutePageProposalV1 = {
    * 为什么必须由生产者在提案里给出：协议约束 1.4 要求「本轮范围开始时确定、翻页期间不得改变」，
    * 而账本侧的范围规则（本页不得引入范围外订阅 / 续页范围逐字节相同 / hasMore 与下一页 intent
    * 一致）只有在范围**真的被固定**之后才有可依据的事实。只给本页切片是不够的：把切片当范围
-   * 会把下一页的合法订阅判成范围外，所以第 1 步刻意没有替生产者猜。
+   * 会把下一页的合法订阅判成范围外，所以准入规则刻意没有替生产者猜。
    *
    * 语义：
    *   - 首页（intent 的 subscriptionScope 还是空）→ 本字段就是**要固定的整轮范围**；
@@ -858,7 +863,7 @@ export type RoutePageProposalV1 = {
 };
 
 /**
- * **先持久化取消意图**的正式入口（desired-state-first，A07/协议约束 2.4）。
+ * **先持久化取消意图**的正式入口（desired-state-first，先记取消意图/协议约束 2.4）。
  *
  * 语义：把一条尚未终态的 intent 标记为「被要求取消」。它不发放新 generation，也不执行任何
  * 外部能力——执行能力的调用发生在**这之后**，且必须读到这条已落账的意图。
@@ -884,6 +889,7 @@ export type CommunicationSettleCommand = AgentCommandIdentityBase & {
   aggregateId: string;
   expectedRevision: number;
   payload:
+    | { outcome: "architecture_delivery"; workspaceId:string; consumerId:string; leaseGeneration:number; settledAt:string }
     | {
         outcome: "catchup_page";
         workspaceId: string; consumerId: string; leaseGeneration: number; settledAt: string;
@@ -939,7 +945,7 @@ export type CommunicationSettleCommand = AgentCommandIdentityBase & {
      *
      * 硬约束（Control 侧判定，违反即整批拒绝、零写入）：**只有 sideEffectStarted === false
      * 的 intent 才能进入它**。一旦这次尝试已经可能产生了外部副作用，结果不明就必须对账或隔离，
-     * **不能**自动再调用一次（协议约束 2.4 / A08）。
+     * **不能**自动再调用一次（协议约束 2.4 / 外部副作用恢复）。
      */
     | {
         outcome: "no_effect_failure";
@@ -972,7 +978,7 @@ export type CommunicationSettleCommand = AgentCommandIdentityBase & {
  * 后继受理：等待满足 ∧ 前驱公开结束 ∧ 该 Work 有**当前有效参与关系**，在同一事务里创建
  * **恰好一个** TaskAttempt / Run / TaskOutbox 组合并登记 CommunicationAdmission。
  *
- * ── 归因：这是**调度触发**命令（CM-1A-001 owner 裁决，第 2 步）─────────────────────
+ * ── 归因：这是**调度触发**命令（协作通信参与身份裁决，参与身份规则）─────────────────────
  * 触发它的是协作驱动（Dispatch 侧机械推进），不是某一段参与里的模型调用。因此它必须用
  * `{kind: "system"}` 身份 + **来源关联**（correlationId/命令 id 派生自被触发的 wait 或
  * intent，payload 里同时给出 waitRef 与 predecessorRunRef）提交；用 agent principal 提交
@@ -1024,7 +1030,7 @@ export type AdmitWaitSuccessorCommand = AgentCommandIdentityBase & {
 
 /**
  * 「条件已满足但前驱仍在执行」时**幂等地**建立 wait_admission intent
- * （CM-1A-001 第 3 工作段裁决的 Control 命令）。
+ * （协作通信规则的 Control 命令）。
  *
  * 为什么这条判定必须在 Control 而不能在 Dispatch：判定需要两件 Dispatch 拿不到的 canonical
  * 事实——① wait 的每个条件是否已被 canonical Delivery/DirectedRequest 满足；
@@ -1130,9 +1136,9 @@ export type AdmitWaitSuccessorReceipt =
   /**
    * 拒绝变体带可选 issues（与同族 CommunicationWriteReceipt / CommunicationSettleReceipt 一致）：
    * 后继受理有十来个拒绝分支，只给一个 code 会让调用方无法诊断「为什么没接续」。
-   * 这是加法：既有 code 语义与既有分支形状不变（D06）。
+   * 这是加法：既有 code 语义与既有分支形状不变（调用证据与参与语义规则）。
    *
-   * 第 2 步裁决再追加三个 code（同样是加法，零写入语义不变）：
+   * 参与身份规则再追加三个 code（同样是加法，零写入语义不变）：
    *   - `no_active_participation`：该 Work 当前**没有有效参与关系**（从未受理过参与，或最近那一段
    *     已 ended）。等待保持 active、不被改写，但**不**产生后继：接续资格按**当前**参与关系判定，
    *     而不是按等待注册时那一段。换手（旧段结束 + 新段建立）之后同一等待仍可接续。
@@ -1158,7 +1164,7 @@ export type CommunicationClaimReceipt =
     }
   | { status: "owned_elsewhere"; commandId: string; intentRef: CommunicationIntentRef; leaseOwner: string | null; leaseExpiresAt: string | null }
   | { status: "not_found"; commandId: string; intentRef: CommunicationIntentRef }
-  /** 同 AdmitWaitSuccessorReceipt：拒绝原因随 issues 一起返回（加法，D06）。 */
+  /** 同 AdmitWaitSuccessorReceipt：拒绝原因随 issues 一起返回（加法，调用证据与参与语义规则）。 */
   | { status: "rejected"; commandId: string; code: "invalid" | "revision_conflict" | "idempotency_conflict" | "unavailable"; issues?: string[]; currentRevision?: number };
 
 export type CommunicationSettleReceipt =
@@ -1252,7 +1258,7 @@ export type SubscriptionCancelledEvent = CommunicationEventBase & {
 };
 
 /**
- * 订阅的"从当前 frontier 开始"补齐（CM-1A-001 第 3 工作段裁决的契约加法）。
+ * 订阅的"从当前 frontier 开始"补齐（协作通信规则的契约加法）。
  *
  * 为什么需要它：`subscription-create` 只带**一个** route intent，而且只在 startCursor 非空时
  * 才有——startCursor 为 null（=「从现在起」）的订阅因此拿不到任何持久路由起点，Dispatch 也就
@@ -1331,7 +1337,7 @@ export type CommunicationIntentRecordedEvent = CommunicationEventBase & {
 };
 
 /**
- * **先持久化取消意图**（协议约束 2.4 / A07 的 desired-state-first）。
+ * **先持久化取消意图**（协议约束 2.4 / 先记取消意图的 desired-state-first）。
  *
  * 它**不是**终态：intent 只是被标记为「被要求取消」，真正的取消确认（或「无法确认」）由消费者
  * 在拿到当前 generation 之后按规定收敛。这样「取消意图」与「执行能力」之间有明确的先后：
@@ -1460,9 +1466,11 @@ export type AgentInstanceRegisterCommitV1 = CommunicationCommitBase & {
 /**
  * participation-start：参与关系 @1（CAS@0）+ **同一事务**把发起 Run link 到该 Work。
  *
- * 为什么必须同事务：参与关系一旦成立，A01 要求"该 Agent 的这次 Run 确实属于这个
+ * 为什么必须同事务：参与关系一旦成立，参与关系与换手要求"该 Agent 的这次 Run 确实属于这个
  * Work"可重建；分成两次提交会留下"参与已生效但 Run 未 link"的中间态，重启后无法判定。
  */
+export type InitialParticipationStartCommitV1 = Omit<ParticipationStartCommitV1,'commitKind'> & {commitKind:'initial-participation-start';command:StartWorkParticipationCommand};
+
 export type ParticipationStartCommitV1 = CommunicationCommitBase & {
   commitKind: "participation-start";
   events: (WorkParticipationStartedEvent | import("./context-continuity.js").WorkRunLinkedEvent)[];
@@ -1472,7 +1480,7 @@ export type ParticipationStartCommitV1 = CommunicationCommitBase & {
 /**
  * participation-end：参与关系结束（CAS@N）；历史保留，不改名不删除。
  *
- * CM-1A-001 第 4 步：WorkParticipationEnded 是**可路由源事件**（communicationTopicOf），
+ * 协作通信可靠投递规则：WorkParticipationEnded 是**可路由源事件**（communicationTopicOf），
  * 因此这次提交可以同事务带上源事件触发的待路由 intent（routeIntentPlans → 账本补写
  * CommunicationIntentRecorded + CommunicationIntentSnapshot@1）。
  */
@@ -1492,7 +1500,7 @@ export type DirectedRequestSendCommitV1 = CommunicationCommitBase & {
 /**
  * directed-request-respond：回应正文登记（CAS@N）。
  *
- * CM-1A-001 第 4 步：DirectedRequestResponded 同样是**可路由源事件**，因此回应登记可以与
+ * 协作通信可靠投递规则：DirectedRequestResponded 同样是**可路由源事件**，因此回应登记可以与
  * 它触发的待路由 intent 同事务（见 RouteIntentPlanV1）。
  */
 export type DirectedRequestRespondCommitV1 = CommunicationCommitBase & {
@@ -1639,7 +1647,7 @@ export type CommunicationSuccessorClaimCommitV1 = {
   ];
   outboxIntents: [import("./dispatch.js").DispatchIntentV1];
   /**
-   * CM-1A-001 第 4 步：WaitConditionSatisfied 是可路由源事件，这次提交可以同事务带上它触发的
+   * 协作通信可靠投递规则：WaitConditionSatisfied 是可路由源事件，这次提交可以同事务带上它触发的
    * 待路由 intent（见 RouteIntentPlanV1）。带上计划时账本会补写 CommunicationIntentRecorded +
    * CommunicationIntentSnapshot@1，并相应放宽本提交的形状校验（只放行这一条事件与这一个快照）。
    */
@@ -1648,6 +1656,7 @@ export type CommunicationSuccessorClaimCommitV1 = {
 
 export type CommunicationLedgerCommit =
   | AgentInstanceRegisterCommitV1
+  | InitialParticipationStartCommitV1
   | ParticipationStartCommitV1
   | ParticipationEndCommitV1
   | DirectedRequestSendCommitV1
@@ -1669,6 +1678,7 @@ export type CommunicationLedgerCommit =
 
 export const COMMUNICATION_COMMIT_KINDS = [
   "agent-instance-register",
+  "initial-participation-start",
   "participation-start",
   "participation-end",
   "directed-request-send",
@@ -1693,7 +1703,7 @@ export const COMMUNICATION_COMMIT_KINDS = [
 // Pure helpers                                                              //
 // ------------------------------------------------------------------------ //
 
-/** 邮箱快照：A01 的可重建关系（纯读，不写状态）。 */
+/** 邮箱快照：参与关系与换手的可重建关系（纯读，不写状态）。 */
 export type MailboxViewV1 = {
   workContextRef: WorkContextRef;
   participations: WorkParticipationSnapshot[];
@@ -1705,6 +1715,7 @@ export type MailboxViewV1 = {
 
 /** Delivery 的唯一键（页内幂等的权威依据）。 */
 export function deliveryDedupeKey(delivery: DeliveryV1): string {
+  if(delivery.origin.kind === "architecture_decision") return canonicalJson(["architecture-decision-delivery-v1",delivery.origin.reviewRef,delivery.origin.reviewRevision,delivery.targetWorkContextRef]);
   if (delivery.origin.kind === "directed_request") {
     return canonicalJson(["delivery-v1", canonicalJson(delivery.origin.requestRef), canonicalJson(delivery.targetWorkContextRef)]);
   }

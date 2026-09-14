@@ -1,26 +1,26 @@
 /**
- * P1-11 Control entry: goal-change engine (records + CAS apply).
+ * plan change Control entry: goal-change engine (records + CAS apply).
  *
- * Frozen semantics (IMPLEMENTATION-HANDOFF.md "P1-11 契约与存储语义（冻结）"):
+ * Versioned semantics defined by the goal-change contracts and module specification:
  *   - recordPlanChangeProposal / recordUserDecision register immutable
  *     proposal/decision aggregates (CAS@0) with FULL ledger idempotency;
- *   - applyPlanChange re-runs the frozen guard chain (all zero-write until
+ *   - applyPlanChange re-runs the versioned guard chain (all zero-write until
  *     pass), then applies the accepted decision atomically: new PlanRevision +
  *     GoalRevision + Goal CAS in ONE commit (plan-change-apply fold), creating
  *     ONLY the goal-change-apply commit (no outbox / TaskAttempt / Run).
  *
- * Replay semantics: the frozen guard chain includes source_stale, which a
+ * Replay semantics: the versioned guard chain includes source_stale, which a
  * re-submitted ALREADY-COMMITTED command no longer satisfies; idempotent
  * replay is therefore recognised up front by correlating the command's
  * causationId against the committed event log (a read; zero write) and
  * returning the ORIGINAL receipt (replayed=true).
  *
- * ADR 0003 D1（2026-09-10）: 计划变更允许**任务集增量**——返工任务落在新的
+ * 计划变更允许任务集增量：返工任务落在新的
  * PlanRevision 内，而不是计划外的新聚合。任务集因此不再硬绑 sourcePlan.tasks：
  *   1. 增量只允许新增／取代／取消，且只能改「谁承担义务」；
  *   2. 守卫 f 的一致性检查把新任务集与义务承担者扩展为「源 revision + 增量」的
  *      确定性推导结果逐项比对（任一不匹配 -> draft_mismatch）；
- *   3. 守卫 h 的 P1-02 守卫在组装后的**新任务集**上原样复跑，增量不是绕过它的旁路；
+ *   3. 守卫 h 的治理与计划守卫在组装后的新任务集上原样复跑，增量不是绕过它的旁路；
  *   4. 原子提交写新 PlanRevision（含新任务集）并保留旧 revision 与旧证据。
  */
 import type {
@@ -69,7 +69,7 @@ type CompletedNewPlanDraft = NewPlanDraft & {
   stages: PlanStage[];
   /** The DRAFT's new task set (source revision + accepted increment). */
   tasks: RuntimeTask[];
-  /** RW-07: the DRAFT's assignment set (source revision + accepted increment). */
+  /** The draft's assignment set (source revision + accepted increment). */
   assignments: PlanTaskAssignment[];
   taskHierarchy: TaskHierarchy;
   executionDag: RuntimeExecutionDAG;
@@ -184,7 +184,7 @@ export class GoalChangeEngineImpl {
     }
     const sourcePlan = sourcePlanResult.snapshot as PlanRevisionSnapshot;
 
-    // Guard f1 (ADR 0003 D1): the task set delta itself must be well-formed and
+    // Guard f1: the task set delta itself must be well-formed and
     // referentially valid against the SOURCE revision (a task that exists, is
     // active and is not chained). A malformed delta is rejected here with its
     // own code so "the increment is wrong" stays distinguishable from "the
@@ -224,7 +224,7 @@ export class GoalChangeEngineImpl {
       return { status: "rejected", commandId: command.commandId, code: "source_stale" };
     }
 
-    // Guard h: governance resolution (no default/fallback) + P1-02 guard re-run.
+    // Guard h: governance resolution (no default/fallback) plus governance and plan guard re-run.
     const policyResolution = await resolveProjectCompletionPolicy(this.deps.ledger, proposalRef.projectId);
     if (policyResolution.status === "not_found") {
       return { status: "rejected", commandId: command.commandId, code: "unavailable" };
@@ -235,7 +235,7 @@ export class GoalChangeEngineImpl {
     }
     // The NEW task set is derived from the source revision + the accepted
     // increment (guard f2 just proved the draft carries exactly this set), and
-    // the P1-02 guards below run on THAT set — the increment is not a bypass.
+    // the governance and plan guards below run on that set; the increment is not a bypass.
     const completedDraft: CompletedNewPlanDraft = this.inheritFromSource(sourcePlan, draft, taskSetDelta);
     const assembled: PlanRevisionDraft = {
       schemaVersion: 1,
@@ -245,7 +245,7 @@ export class GoalChangeEngineImpl {
       goalId: goalRef.goalId,
       stages: completedDraft.stages,
       tasks: completedDraft.tasks,
-      // RW-07：指派随新 revision 一起提交。草稿自带时用它（守卫 f2 已证明它等于
+      // 指派随新 revision 一起提交。草稿自带时用它（守卫 f2 已证明它等于
       // 「源指派 + 增量的 assignment」），否则沿用源 revision 的指派。
       assignments: completedDraft.assignments,
       obligations: completedDraft.obligations,
@@ -374,9 +374,9 @@ export class GoalChangeEngineImpl {
   // --------------------------------------------------------------------- //
 
   /** Inherit null stages/taskHierarchy/executionDag from the source snapshot and
-   * resolve the new task set: the draft's own tasks when present (the ADR 0003 D1
+   * resolve the new task set: the draft's own tasks when present (the task-set-delta
    * path, already proven equal to source+delta), otherwise the source task set.
-   * RW-07: the assignment set follows the same rule (draft's own, else source+delta). */
+   * The assignment set follows the same rule (draft's own, else source+delta). */
   private inheritFromSource(
     source: PlanRevisionSnapshot,
     draft: NewPlanDraft,
@@ -534,7 +534,7 @@ export class GoalChangeEngineImpl {
       case "invalid_commit":
         // A stale CAS window (command.expectedRevision != loaded revision) folds
         // an internally-valid batch the shared validator maps to invalid_commit;
-        // surface that as revision_conflict (P1-02 pattern).
+        // surface that as revision_conflict, following the versioned-governance pattern.
         if (loadedGoal.revision !== command.expectedRevision) {
           return { status: "rejected", commandId: command.commandId, code: "revision_conflict" };
         }

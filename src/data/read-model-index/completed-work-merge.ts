@@ -1,7 +1,7 @@
 /**
- * RW-15（M1）ReadModelIndex — 完成工作视图的**归并可见性**。
+ * （工作身份归并）ReadModelIndex — 完成工作视图的**归并可见性**。
  *
- * 背景：RW-13 规定「一个任务只有一个持久工作身份」，视图按 `dedupeTaskWorks` 把同一 (goal, task)
+ * 背景： 规定「一个任务只有一个持久工作身份」，视图按 `dedupeTaskWorks` 把同一 (goal, task)
  * 的多条身份归并成一行。归并本身是对的（落选身份仍是不可变历史事实），但它此前是**静默**的：
  * 读者看不到「这里发生过归并、落选者是谁」，落选身份的留痕也就永远没有机会进入历史选材。
  *
@@ -31,7 +31,7 @@ export function sortWorkRefs(refs: readonly WorkContextRef[]): WorkContextRef[] 
 }
 
 /**
- * 落选身份清单：候选里存在、但不在 RW-13 归并结果里的那些，按 (goal, task) 分组。
+ * 落选身份清单：候选中未被 `retained` 归并结果保留的身份，按 (goal, task) 分组。
  * `retained` 必须是 `dedupeTaskWorks(candidates)` 的返回值。
  */
 export function droppedWorkRefsByTask<T extends TaskWorkCandidateLike>(

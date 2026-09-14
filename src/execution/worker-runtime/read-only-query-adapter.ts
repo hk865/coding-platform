@@ -1,4 +1,4 @@
-/** P1-09 WorkerRuntime.ReadOnlyQueryPort — fake read-only query run. */
+/** query WorkerRuntime.ReadOnlyQueryPort — fake read-only query run. */
 import type { QueryRunRef, ReadOnlyQueryPort, ReadOnlyQueryResultV1 } from "../../contracts/query-job.js";
 
 export class FakeReadOnlyQueryAdapter implements ReadOnlyQueryPort {

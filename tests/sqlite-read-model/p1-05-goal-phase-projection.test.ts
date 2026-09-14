@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { createSqliteReadModelIndex } from "../../src/data/read-model-index/sqlite-read-model-index.js";
 import { makeCommitCursor } from "../../src/contracts/ledger.js";
 import {
@@ -24,7 +24,7 @@ function json(v: unknown): string {
 }
 
 async function freshSqlite() {
-  const hp = await createPersistentSqliteHarness({ deps: {} });
+  const hp = await createPersistentPlatform({ deps: {} });
   return { hp, h: toP1_05Harness(hp) };
 }
 
@@ -82,7 +82,7 @@ describe("P1-05 SQLite goal-phase projection", () => {
       expect(beforeTimeline.status).toBe("ready");
 
       // NEW read model file on the SAME ledger — EventPages replay from scratch.
-      const rebuilt = await createPersistentSqliteHarness({
+      const rebuilt = await createPersistentPlatform({
         dir: hp.dir, ledgerFile: "ledger.sqlite", readModelFile: "readmodel-rebuilt-p105.sqlite", deps: {},
       });
       try {

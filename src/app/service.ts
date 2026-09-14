@@ -1,4 +1,13 @@
-import { composeReworkDrive } from '../harness/rework-composition.js';
+import { TerminalContinuation } from './scheduling/terminal-continuation.js';
+import { DurableWake } from './scheduling/durable-wake.js';
+import { continueRework } from './scheduling/rework-continuation.js';
+import { HandoffRequest } from '../control/dispatch-engine/handoff/handoff-request.js';
+import { queryRecoveryView } from './scheduling/query-recovery-view.js';
+import { DispatchWake } from './scheduling/dispatch-wake.js';
+import { readDispatchBacklog } from '../data/read-model-index/dispatch-backlog-view.js';
+import { ArchitectureReviewEntry } from '../interaction/human-collaboration/architecture-review.js';
+import { architectureReviewView } from '../data/read-model-index/architecture-review-view.js';
+import { composeReworkDrive } from '../composition/rework-composition.js';
 import {createProfileMemory,projectMemory,type ProfileMemoryHost} from './memory.js';
 import { CommunicationViewIndex } from '../data/read-model-index/communication-view.js';
 import { ExecutionFeedbackContext } from '../data/context-compiler/execution-feedback-context.js';
@@ -83,7 +92,7 @@ import { ProjectArchitectureSourceReader } from '../data/workspace-reader/source
 import { SourceGraphContextCompiler } from '../data/context-compiler/source-graph-context.js';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { createPersistentSqliteHarness } from '../harness/persistent-harness.js';
+import { createPersistentPlatform, createProductPlatform } from '../composition/persistent-platform.js';
 import { buildBootstrapCommand } from '../contracts/bootstrap.js';
 import { buildInstallCommand, buildActivateCommand } from '../contracts/commands/governance.js';
 import { completionPolicyPinFor, architectureBaselinePinFor } from '../contracts/governance.js';
@@ -111,7 +120,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         ? { executor: 'coding-agent', source: 'configured-runtime', fixtureEnabled: real.fixtureExecution === true }
         : { executor: 'fixture', source: 'explicit-fixture-service', fixtureEnabled: true };
     const fakeRuntime = new FakeRuntimeAdapter(FAKE_RUNTIME_SCRIPT_COMPLETED_V1, { scriptFor: () => ({ schemaVersion: 1, items: FAKE_RUNTIME_SCRIPT_COMPLETED_V1.items.map(item => ({ ...item, occurredAt: now() })) }) });
-    let h: Awaited<ReturnType<typeof createPersistentSqliteHarness>>;
+    let h: Awaited<ReturnType<typeof createPersistentPlatform>>;
     let verifications: VerificationService | undefined;
     const background = new Set<Promise<unknown>>();
     let projectionQueue: Promise<unknown> = Promise.resolve();
@@ -120,11 +129,11 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
     //   - 探索运行走既有 ExplorationContextDrive；
     //   - 普通开发运行走 WorkMaterialDrive（取材在 ContextCompiler，身份规则在 DispatchEngine）。
     // 二者都只在 runtime.start 之前调用一次，不新增运行期读取路径。
-    // 注意：这两个驱动都必须在 harness 建好之后才能构造，因此只在回调里解引用（闭包延迟求值）。
+    // 注意：这两个驱动都必须在 test host 建好之后才能构造，因此只在回调里解引用（闭包延迟求值）。
     let workMaterialDrive: WorkMaterialDrive | undefined;
     const leasedRuntime = real ? new LeasedWorkerRuntime({ runtime: real.runtime, lease: () => h.workspaceLease, vault: () => h.vault,
         materials: (spec, envelope) => spec.mode === 'explore' ? explorationDrive!.assembleRun(spec, envelope) : workMaterialDrive!.assembleRun(spec, envelope),
-        // 协调 Host 工具（CM-1A-001 第 3 工作段）：按本次 Run 从 canonical 事实派生 exact principal
+        // 协调 Host 工具（协作通信）：按本次 Run 从 canonical 事实派生 exact principal
         // 后装配 narrow port。模型拿不到身份字段，只能提供内容参数；正文 body-first，受理才算成功。
         coordination: (spec) => h.coordinationGrant({ aggregateType: 'Run', projectId: spec.projectId, goalId: spec.goalId, runId: spec.runId }),
         reviewerMaterials: (spec, envelope) => {
@@ -133,7 +142,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         }, now }) : undefined;
     const runtime: RunPort = leasedRuntime ? {
         capabilities: () => leasedRuntime.capabilities(),
-        start: (envelope, access) => envelope.roleBinding.templateId === 'gui-fixture' && envelope.roleBinding.policyRevision === 'fixture-only-v1'
+        start: (envelope, access) => real?.fixtureExecution === true && envelope.roleBinding.templateId === 'gui-fixture' && envelope.roleBinding.policyRevision === 'fixture-only-v1'
             ? fakeRuntime.start(envelope) : leasedRuntime.start(envelope, access),
     } : fakeRuntime;
     const workspaceCapability = new ConfiguredWorkspaceCapabilityPolicy({ workspaceRead: true, workspaceWrite: true, maxWriteScope: null });
@@ -143,7 +152,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
       memory: {select:request=>memory.context.select(request)},now }), rootFor: real.rootFor, bind: runId => real.runtime.bindModel(runId) }) : undefined;
     const querySources = realQueries && real ? new QuerySourceContextCompiler({ ledger: () => h.ledger, observations: realQueries.observations, source: new QueryWorkspaceSourceReader(real.rootFor) }) : undefined;
     await realQueries?.init();
-    const readOnlyQuery = { capabilities: (request: Parameters<FakeReadOnlyQueryAdapter['capabilities']>[0]) => realQueries?.capabilities() ?? queryFixture.capabilities(request),
+    const readOnlyQuery = { inspectQuery: async (request: Parameters<ReadOnlyQueryRuntime['inspectQuery']>[0]) => realQueries ? realQueries.inspectQuery(request) : { status: 'unavailable' as const, message: 'No durable query runtime is configured.' }, capabilities: (request: Parameters<FakeReadOnlyQueryAdapter['capabilities']>[0]) => realQueries?.capabilities() ?? queryFixture.capabilities(request),
         startQuery: async (request: Parameters<FakeReadOnlyQueryAdapter['startQuery']>[0]) => {
             const job = await h.ledger.load({ aggregateType: 'QueryJob', projectId: request.runRef.projectId, workspaceId: request.runRef.workspaceId, queryJobId: request.runRef.queryJobId });
             if (job.status !== 'found')
@@ -163,21 +172,24 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         capture: (query, signal) => query.sourceSet.kind === 'verification_workspace'
             ? verificationSource!.capture(query, signal) : explorationSource!.capture(query, signal),
     } : undefined;
-    h = await createPersistentSqliteHarness({ dir, runtime, readOnlyQuery, workspaceCapability, ...(sourceApplicability ? { sourceApplicability } : {}),
+    const platformOptions = { dir, runtime, readOnlyQuery, workspaceCapability, ...(sourceApplicability ? { sourceApplicability } : {}),
         // 后继 Run 的准备面与工作区根：接续受理产生的后继在启动前由 Dispatch 从持久事实重建
         // RunSpec 并 preflight/prepare（真实 Runtime 必须先有已登记的 exact runId spec）。
-        ...(real ? { runtimePreparation: real.runtime, workspaceRootFor: (projectId: string, workspaceId: string) => real.rootFor(projectId, workspaceId) } : {}),
+        ...(real ? { initialWorkAssignments:true, runtimePreparation: real.runtime, workspaceRootFor: (projectId: string, workspaceId: string) => real.rootFor(projectId, workspaceId) } : {}),
         ...(real ? { checkPorts: [], ...unconfiguredRuntimeCapabilities(now),
-            verification: { verify: async request => {
+            verification: { verify: async (request: Parameters<import('../contracts/verification.js').VerificationPort['verify']>[0]) => {
                 if (!verifications) throw Error('验证服务尚未完成初始化');
                 return verifications.verify(request);
             } },
             workspaceReader: sourceReader!,
-            codeGraph: { codeGraph: async (query) => {
+            codeGraph: { codeGraph: async (query: Parameters<import('../contracts/architecture-reconciler.js').CodeGraphPort['codeGraph']>[0]) => {
                     const result = await sourceReader!.read({ ...query, requestedKinds: ['module', 'interface'], maxNodes: 512, maxEdges: 1024 });
                     return result.status === 'sourced' ? { status: 'supported' as const, snapshotRef: result.snapshot.bodyRef, capabilityNote: 'TS/JS semantic imports with explicit source mapping' } : result.status === 'rejected' ? { status: 'rejected' as const, code: 'unavailable' as const, issues: result.issues } : result;
                 } } } : {}),
-        deps: { clock: now, commandId: randomUUID, correlationId: randomUUID, eventId: randomUUID } });
+        deps: { clock: now, commandId: randomUUID, correlationId: randomUUID, eventId: randomUUID } };
+    h = real
+        ? await createProductPlatform({ ...platformOptions, ...unconfiguredRuntimeCapabilities(now), verification: platformOptions.verification!, workspaceReader: platformOptions.workspaceReader! })
+        : await createPersistentPlatform(platformOptions);
     const deps = (projectId: string, idempotencyKey: string = randomUUID()) => ({ projectId, actor: { kind: 'human' as const, id: 'user-1' }, idempotencyKey, commandId: randomUUID(), correlationId: randomUUID(), submittedAt: now() });
     const check = <T extends {
         status: string;
@@ -195,7 +207,10 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         if (seedGoals)
             check(await h.collaboration.createGoal({ ...scope, goalId: 'acceptance-demo', objective: scope.projectId.endsWith('alpha') ? '验收核心流程：计划、运行、查询与持久化' : '隔离对照项目：相同本地标识，独立数据', actor: { kind: 'human', id: 'local-gui' }, idempotencyKey: 'gui-demo-goal' }));
     }
-    const runtimeDispatch = real ? new RuntimeDispatch({ ledger: h.ledger, control: { runFact: h.runFact, reconcileRun: command => h.control.reconcileRun!(command) }, outbox: { drive: h.drive }, runtime: real.runtime, now }) : undefined;
+    const handoffRequest = real ? new HandoffRequest({ ledger: h.ledger, control: h, runtime: real.runtime, vault: h.vault, now }) : undefined;
+    const runtimeDispatch = real ? new RuntimeDispatch({ ledger: h.ledger, control: { runFact: h.runFact, reconcileRun: command => h.control.reconcileRun!(command) }, outbox: { drive: h.drive }, handoff: h.handoffDrive, runtime: real.runtime, now }) : undefined;
+    const dispatchWake = new DispatchWake({ drive: trigger => (runtimeDispatch ?? { drive: h.drive }).drive(trigger),
+      afterDrive: async () => { await terminalContinuation.scan(); await project(); }, now, onError: error => console.error('派发推进待处理：' + String(error)) });
     const recovery = await runtimeDispatch?.recover(scopes);
     if (recovery?.rejected.length)
         throw Error('运行恢复事实尚未被接纳：' + JSON.stringify(recovery.rejected));
@@ -205,7 +220,11 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
     const reviewerContext = real ? new ReviewerContextCompiler({ ledger: h.ledger, vault: h.vault, roundContext: verificationContext,
         profiles: reviewerProfiles!, source: verificationSource!, observations: real.runtime.observations }) : undefined;
     const reviewControl = real ? createReviewControlPorts({ ledger: h.ledger, now, eventId: randomUUID }) : undefined;
-    const reviewerDispatch = real ? new ReviewerDispatch({ ledger: h.ledger, control: h, reviewControl: reviewControl!.dispatch,
+    const reviewerDispatch = real ? new ReviewerDispatch({ executionSlots: h.executionSlots, ledger: h.ledger,
+        // Material grants must be projected before Context opens them. Model permits
+        // are canonical Run facts and use Control directly.
+        control: { startRun: h.startRun, runFact: h.runFact, grantMaterialAccess: h.grantMaterialAccess,
+            authorizeModelRequest: command => h.control.authorizeModelRequest!(command) }, reviewControl: reviewControl!.dispatch,
         context: reviewerContext!, runtime: real.runtime, execution: leasedRuntime!, observations: real.runtime.observations,
         vault: h.vault, now }) : undefined;
     verifications = real ? new VerificationService({ directory: resolve(dir, 'verifications'), disposition: new ControlReworkDisposition(h.ledger as never), context: verificationContext, control: h, vault: h.vault,
@@ -240,7 +259,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         feedback: new FeedbackMaterialCompiler({ledger:h.ledger,vault:h.vault,catalog,source:new QueryWorkspaceSourceReader(real.rootFor),applicability:sourceApplicability!}),
         // 这次运行的工作身份由 ControlEngine 的权威解析面给出（派发面不重算第二份）。
         control: {resolveTaskWorkIdentity:query=>h.control.resolveTaskWorkIdentity(query),grantMaterialAccess:command=>h.grantMaterialAccess(command)},
-        // 后继 Run 的必需材料**只按 admission 固定的集合**取材（第 3 工作段收窄）：
+        // 后继 Run 的必需材料**只按 admission 固定的集合**取材（固定材料集合规则收窄）：
         // 正常任务运行读到 none（本次不消费任何 Delivery），不是"读不到邮箱"。
         deliveries: new DeliveryMaterialCompiler({ admitted: h.admittedDeliveryRead, vault: h.vault, source: sourceApplicability! }),
         compiler: new WorkRunMaterialCompiler({
@@ -271,13 +290,17 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
     const feedbackDecisionMaterials=new FeedbackDecisionContext(h.ledger,real?new QueryWorkspaceSourceReader(real.rootFor):undefined,catalog);
     const feedbackDecisions=new FeedbackDecisionCompiler({materials:feedbackDecisionMaterials,planning:h.planProposal,control:h.control,now});
     const initialPlanning = real && realQueries ? new InitialPlanning(new PlanCompilerImpl({ workIdentity: h.control, materials: planningMaterials, control: h, now }), new PlannedTaskDispatch(h, real.runtime, real.rootFor, (scope, runId) => launchRealDrive(scope, scope.goalId, runId), planningMaterials, now), new InitialPlanningView(h, catalog, realQueries), () => h.driveQuery({ reason: 'initial-coordination' })) : undefined;
-    let planningQueue: Promise<unknown> = Promise.resolve();
+    const planningWake = new DurableWake();
+    const reworkWake = new DurableWake();
+    const reviewRecoveryWake = new DurableWake();
     let closing = false;
+    const terminalContinuation = new TerminalContinuation({ ledger: h.ledger, records: () => real?.runtime.all() ?? [], scopes: () => scopes,
+        continue: record => continueEndedRun(record.spec, record.spec.goalId, record.spec.runId, record) });
     function advancePlanning() {
         if (!initialPlanning || closing)
             return;
-        const work = planningQueue.then(() => initialPlanning.advance()).then(() => project());
-        planningQueue = work.catch(() => { });
+        const work = planningWake.request('accepted-plans', async () => { await initialPlanning.advance(); await project(); });
+        void work.catch(error => console.error('规划推进待重试：' + String(error)));
         background.add(work);
         void work.finally(() => background.delete(work)).catch(() => { });
     }
@@ -314,7 +337,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         installArchitectureEvolutionPolicy: command => h.installArchitectureEvolutionPolicy(command),
         activateArchitectureEvolutionPolicy: command => h.activateArchitectureEvolutionPolicy(command),
         // 第五个种类复用 ControlEngine **既有**的角色规格入口（RoleSpecPort），不新增写入路径。
-        // harness 面没有单列这两个方法，因此经 h.control 直接取同一实现（组合根只做注入）。
+        // test host 面没有单列这两个方法，因此经 h.control 直接取同一实现（组合根只做注入）。
         installRoleSpec: command => h.control.installRoleSpec(command),
         activateRoleSpec: command => h.control.activateRoleSpec(command),
         defaults: {
@@ -372,7 +395,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         const query = { ...scope, goalId };
         const [summary, matrix, agents, timeline, graph, queries, goalStatus] = await Promise.all([
             h.consoleSummary(scope), h.consolePlanMatrix(query), h.consoleActiveAgents(query), h.consoleTimeline({ ...query, maxEntries: 80 }), h.planGraph({ projectId: scope.projectId, goalId }),
-            Promise.all([...queryIds].map(queryJobId => h.queryJobView({ ...scope, queryJobId }))), h.goalStatus({ projectId: scope.projectId, goalId })
+            Promise.all([...queryIds].map(queryJobId => h.queryJobView({ ...scope, queryJobId }).then(view => queryRecoveryView(view, readOnlyQuery)))), h.goalStatus({ projectId: scope.projectId, goalId })
         ]);
         const evidence = matrix.status === 'ready' ? await Promise.all(matrix.matrix.rows.map(row => h.consoleTaskEvidence({ ...query, taskId: row.taskId }))) : [];
         const queryCurrentness = await querySources?.currentness(scope.projectId, scope.workspaceId);
@@ -381,21 +404,21 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
                 view.stale = true;
                 view.currentAnswer = { ...view.currentAnswer, stale: true, staleReason: 'current_goal_workspace_or_source_changed' };
             }
-        return { scope, goalId, goals, communication, summary, matrix, agents, timeline, graph, evidence, queries, goalStatus, exploration: await explorations?.view({ ...scope, goalId }) ?? null, planning: await initialPlanning?.view({ ...scope, goalId }) ?? [], liveRuns: real?.runtime.all().filter(r => r.spec.projectId === scope.projectId && r.spec.goalId === goalId && agents.status === 'ready' && agents.agents.rows.some(row => row.runRef.runId === r.spec.runId)).map(r => ({ ...r, ...verifications?.forRun({ projectId: r.spec.projectId, workspaceId: r.spec.workspaceId, goalId: r.spec.goalId, runId: r.spec.runId }) })) ?? [], observedCursor: h.observedCursor(), executor: executionCapability.executor, executionCapability, storage: 'SQLite' };
+        return { scope, goalId, goals, dispatch: await readDispatchBacklog(h.ledger, { projectId: scope.projectId, goalId }, now()), communication, summary, matrix, agents, timeline, graph, evidence, queries, goalStatus, exploration: await explorations?.view({ ...scope, goalId }) ?? null, planning: await initialPlanning?.view({ ...scope, goalId }) ?? [], liveRuns: real?.runtime.all().filter(r => r.spec.projectId === scope.projectId && r.spec.goalId === goalId && agents.status === 'ready' && agents.agents.rows.some(row => row.runRef.runId === r.spec.runId)).map(r => ({ ...r, canonicalStatus: agents.status === 'ready' ? agents.agents.rows.find(row => row.runRef.runId === r.spec.runId)?.runStatus ?? null : null, ...verifications?.forRun({ projectId: r.spec.projectId, workspaceId: r.spec.workspaceId, goalId: r.spec.goalId, runId: r.spec.runId }) })) ?? [], observedCursor: h.observedCursor(), executor: executionCapability.executor, executionCapability, storage: 'SQLite' };
     }
     function launchRealDrive(scope: Scope, goalId: string, runId: string) {
         if (!runtimeDispatch)
             throw Error('真实执行未配置');
         const drive = runtimeDispatch.drive({ reason: 'gui-real-task', runRef: { aggregateType: 'Run', projectId: scope.projectId, goalId, runId } }).then(async () => {
-            await continueEndedRun(scope,goalId,runId);
+            try{await terminalContinuation.scan();}
+            finally{void dispatchWake.request('architecture-predecessor-ended');}
             await project();
             advancePlanning();
         });
         background.add(drive);
         void drive.finally(() => background.delete(drive)).catch(() => { });
     }
-    async function continueEndedRun(scope:Scope,goalId:string,runId:string) {
-        const record=real?.runtime.all().find(r=>r.spec.projectId===scope.projectId && r.spec.workspaceId===scope.workspaceId && r.spec.goalId===goalId && r.spec.runId===runId);
+    async function continueEndedRun(scope:Scope,goalId:string,runId:string, record: import('../contracts/runtime-preparation.js').PreparedRunFact) {
         if(!record || record.spec.mode || ['prepared','running','outcome_unknown'].includes(record.status)) return;
         await feedbackCompiler?.request({aggregateType:'Run',projectId:scope.projectId,goalId,runId});
         await h.driveQuery({reason:'execution-feedback'});
@@ -412,56 +435,25 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
      */
     const lastReworkDrives = new Map<string, ReworkDriveResultV1>();
     const reworkKey = (scope: Scope, goalId: string) => scope.projectId + '|' + scope.workspaceId + '|' + goalId;
-    /**
-     * RW-06 触发点：验证结论被接纳并归约**之后**由组合根调用返工驱动。
-     *
-     * 为什么在这里而不是 VerificationEngine 内部：让 VerificationEngine 反向调用 DispatchEngine
-     * 会在 ModuleDependencyDAG 上形成环（scripts/module-map.mjs 会直接判为违规）。验证的职责是
-     * 产出并提交结论，"接下来谁去做返工"属于派发面。
-     *
-     * 失败隔离：驱动自身的异常只记录在结果/日志里，不改变原有动作的返回值；驱动幂等，
-     * 重复触发不会产生第二份提案或第二个 revision。
-     */
-    let semanticReworkQueue:Promise<unknown> = Promise.resolve();
+    // Verification supplies facts; only the planning scan schedules accepted plans.
     function triggerRework(scope: Scope, goalId: string): Promise<void> {
-        const request: ReworkDriveRequestV1 = { schemaVersion: 1, projectId: scope.projectId, workspaceId: scope.workspaceId, goalId };
-        const work = semanticReworkQueue.then(async () => {
-          const accepted:ReworkDriveResultV1['acceptedPlanRefs'] = [];
-          for (;;) {
-            if (feedbackCompiler && verifications) {
-                request.issueMaterials = await verifications.openIssues({...request,taskIds:[]});
-                const refs = await feedbackCompiler.requestFailures(request.issueMaterials);
-                if(refs.length) await feedbackCompiler.renew({...scope,goalId});
-                await h.driveQuery({reason:'verification-feedback'});
-                request.coordination = [];
-                for (const ref of refs) {
-                    const result = await feedbackCompiler.failureResolution(ref.queryJobId);
-                    if (result) request.coordination.push(result);
-                }
-            }
-            const result=await reworkDrive.driveRework(request);
-            accepted.push(...result.acceptedPlanRefs);
-            // Each successful acceptance changes canonical plan identity. Re-capture
-            // remaining failures before dispatching workers against that new plan.
-            if(!feedbackCompiler || !result.acceptedPlanRefs.length) return {...result,acceptedPlanRefs:accepted};
-          }
-        }).then(async result => {
-            lastReworkDrives.set(reworkKey(scope, goalId), result);
-            // 受理会推进 plan revision；新 revision 的任务继续走既有派发收口。
-            if (result.acceptedPlanRefs.length > 0)
+        if (closing) return Promise.resolve();
+        const work = reworkWake.request(reworkKey(scope, goalId), async () => {
+            try {
+                const result = await continueRework({ drive: reworkDrive,
+                    ...(feedbackCompiler ? { feedback: feedbackCompiler } : {}),
+                    issues: request => verifications ? verifications.openIssues(request) : Promise.resolve({ status: 'unavailable', code: 'unavailable', message: '真实验收未配置' }),
+                    driveQueries: () => h.driveQuery({ reason: 'verification-feedback' }),
+                }, { ...scope, goalId });
+                lastReworkDrives.set(reworkKey(scope, goalId), result);
+                await serial(project);
+            } finally {
+                // A commit can succeed even when its reply is lost. Rescan the ledger.
                 advancePlanning();
-            await serial(project);
-        }).catch(error => {
-            // 自动返工是原有动作之后的收尾步骤：它失败不能让验证动作看起来失败。
-            console.error('自动返工触发失败：' + String(error));
-        }).finally(() => {
-            // A committed acceptance may have lost its reply or be followed by
-            // another group's failure. Dispatch reconciles canonical pending work.
-            advancePlanning();
-        });
-        semanticReworkQueue=work;
+            }
+        }).catch(error => { console.error('自动返工触发待重试：' + String(error)); });
         background.add(work);
-        void work.finally(() => background.delete(work)).catch(() => { });
+        void work.finally(() => background.delete(work)).catch(() => {});
         return work;
     }
     const reviewDrives = new Map<string, Promise<unknown>>();
@@ -471,6 +463,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         if (reviewDrives.has(key)) return;
         const workRef = view.work.ref;
         const work = reviewerDispatch.drive(workRef)
+            .then(result => { if (result.status === 'rejected' || result.status === 'incomplete') console.error('Reviewer dispatch requires attention: ' + JSON.stringify(result)); })
             .then(() => verifications!.resumeReview(view.scope, { requestId: view.requestId }))
             // 独立审阅交付正式结论（并已归约）之后，才轮到组合根触发自动返工。
             .then(async () => { await triggerRework(view.scope, view.scope.goalId); })
@@ -541,12 +534,41 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
             }catch{return {runId:run.runRef.runId,status:run.status,inputDigest:run.inputDigest,purpose:null,memory:null};}
           })};
         if (path.startsWith('/api/real/memory/project/')) return memory.action(path,input,scope.projectId);
+        if(path==='/api/real/architecture-reviews/view')return architectureReviewView(h.ledger,scope);
+        if(path==='/api/real/architecture-reviews/decide') {
+            const receipt=await new ArchitectureReviewEntry({ledger:h.ledger,control:h.control,vault:h.vault,inspection:h.inspection,now}).decide(scope,input);
+            if(receipt.status==='committed') {
+                void dispatchWake.request('architecture-human-decision');
+            }
+            return receipt;
+        }
         if (path === '/api/real/governance/view')
             return governance.view(scope);
         if (path === '/api/real/governance/install')
             return governance.install(scope, input);
         if (path === '/api/real/governance/activate')
             return governance.activate(scope, input);
+        if (path === '/api/real/queries/cancel') {
+            const queryJobId = required(input, 'queryJobId'), goalId = required(input, 'goalId');
+            const jobRef = { aggregateType: 'QueryJob' as const, ...scope, queryJobId };
+            const loaded = await h.ledger.load(jobRef);
+            if (loaded.status !== 'found') throw Error('查询不存在');
+            const snapshot = loaded.snapshot as import('../contracts/query-job.js').QueryJobSnapshot;
+            const job = snapshot.job;
+            if (job.goalId !== goalId || !job.runRef) throw Error('查询不属于该目标');
+            if (job.status === 'answered' || (job.status === 'closed' && job.closeReason?.code !== 'cancelled')) throw Error('查询已结束');
+            if (job.status !== 'closed') {
+                const id = 'query-cancel-' + queryJobId;
+                check(await h.closeQueryJob({ schemaVersion: 1, commandType: 'CloseQueryJob', commandId: id,
+                    identity: { projectId: scope.projectId, actor: { kind: 'human', id: 'local-gui' }, idempotencyKey: id },
+                    aggregateId: queryJobId, expectedRevision: snapshot.revision, correlationId: id, submittedAt: now(),
+                    payload: { jobRef, runRef: job.runRef, reason: { code: 'cancelled', message: '用户已取消查询。' } } }));
+            }
+            // Desired state is committed before signalling the exact readonly run.
+            await realQueries?.cancelQuery(job.runRef);
+            await project();
+            return { status: 'cancelled', queryJobId };
+        }
         if (path === '/api/real/queries' || path === '/api/real/queries/runs') {
             const goalId=required(input,'goalId');
             if((await h.collaboration.goalView({...scope,goalId})).status!=='ready')throw Error('目标不存在');
@@ -580,6 +602,13 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         const view = await h.collaboration.goalView({ ...scope, goalId });
         if (view.status !== 'ready')
             throw new Error('目标不存在');
+        if (path === '/api/real/handoff') {
+            if (!handoffRequest) throw Error('真实换手尚未配置');
+            const result = await handoffRequest.submit({ ...scope, goalId, sourceRunId: required(input, 'sourceRunId'),
+                requestId: required(input, 'requestId'), reason: required(input, 'reason') });
+            launchRealDrive(scope, goalId, result.runId);
+            return result;
+        }
         if (path === '/api/real/work') {
             if (!real || !initialPlanning)
                 throw Error('真实协调尚未配置');
@@ -753,11 +782,11 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
                 throw Error('真实任务请使用真实执行入口');
             const taskId = required(input, 'taskId');
             const claim = check(await h.claimTask(buildDispatchClaimCommand({ ...deps(scope.projectId, `gui-claim-${goalId}-${taskId}`), goalId, taskId, attemptId: `gui-attempt-${taskId}`, runId: `gui-run-${taskId}`, roleBinding: { schemaVersion: 1, bindingId: `gui-fixture-${taskId}`, templateId: 'gui-fixture', templateRevision: '1', bindingVersion: 1, policyRevision: 'fixture-only-v1' }, declaredPermissions: { tools: ['read'], writeScope: [] }, budget: { tokenBudget: 10000, deadline: '2099-01-01T00:00:00.000Z' } })));
-            return { claim, drive: await h.drive({ reason: 'local-gui' }) };
+            return { claim, drive: await (runtimeDispatch ?? { drive: h.drive }).drive({ reason: 'local-gui' }) };
         }
         if (path === '/api/queries') {
             if (!executionCapability.fixtureEnabled)
-                throw Error('此真实任务请查看运行记录；带来源的交互查询将在后续探索阶段接入，不返回测试回答');
+                throw Error('此真实任务请查看运行记录；带来源的查询请使用新版工作台的真实只读查询入口，不返回测试回答');
             const id = required(input, 'requestId');
             const graph = await h.planGraph({ projectId: scope.projectId, goalId });
             if (graph.status !== 'ready')
@@ -771,7 +800,8 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         }
         throw new Error('未知操作');
     }
-    if (real && verifications) {
+    function resumePendingReviews() {
+        if (!real || !verifications || closing) return;
         const restored = new Set<string>();
         for (const record of real.runtime.observations.all()) {
             if (!scopes.some(scope => scope.projectId === record.spec.projectId && scope.workspaceId === record.spec.workspaceId))
@@ -781,20 +811,22 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
                 if (restored.has(key) || ['settled', 'assessment_rejected', 'work_rejected'].includes(review.phase))
                     continue;
                 restored.add(key);
-                const work = verifications.resumeReview(review.scope, { requestId: review.requestId })
+                const work = reviewRecoveryWake.request(key, async () => { await verifications!.resumeReview(review.scope, { requestId: review.requestId })
                     .then(result => launchReview(result.review))
                     // 恢复路径同样是"审阅结论已归约"的收口，触发条件与在线路径一致。
                     .then(async () => { await triggerRework(review.scope, review.scope.goalId); })
-                    .finally(project);
+                    .finally(project); });
                 background.add(work);
                 void work.finally(() => background.delete(work)).catch(() => { });
             }
         }
     }
+    resumePendingReviews();
     // Reconstruct post-Run work from durable observations. Existing Query/round
     // identities replay; uncertain runtime/tool outcomes are never restarted.
     if(real) {
       const recovery=(async()=>{
+        void dispatchWake.request('architecture-restart');
         for(const choice of await feedbackDecisionMaterials.recordedChoices()) {
           try {
             const applied=await feedbackDecisions.choose(choice.scope,choice.answerRef,choice.optionId);
@@ -803,18 +835,32 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
           catch(error) {console.error('人的决定投递待处理：'+choice.decisionRef.decisionId+': '+String(error));}
         }
         const recoveredGoals=new Map<string,{scope:Scope;goalId:string}>();
-        for(const record of real.runtime.observations.all()) {
-          if(record.spec.mode || ['prepared','running','outcome_unknown'].includes(record.status)) continue;
-          recoveredGoals.set(canonicalJson([record.spec.projectId,record.spec.workspaceId,record.spec.goalId]),{scope:record.spec,goalId:record.spec.goalId});
-          try {await continueEndedRun(record.spec,record.spec.goalId,record.spec.runId);}
-          catch(error) {console.error('运行后续对账待处理：'+record.spec.runId+': '+String(error));}
-        }
-        for(const item of recoveredGoals.values()) await triggerRework(item.scope,item.goalId);
+        try { await terminalContinuation.scan(); }
+        catch (error) { console.error('运行后续对账待处理：' + String(error)); }
+        // Goals with an accepted revision need no surviving runtime observation.
+        for (const scope of scopes) for (const goalId of await catalog.goals(scope))
+          recoveredGoals.set(canonicalJson([scope.projectId, scope.workspaceId, goalId]), { scope, goalId });
+        await Promise.all([...recoveredGoals.values()].map(item => triggerRework(item.scope, item.goalId)));
         await project();
         advancePlanning();
       })();
       background.add(recovery);void recovery.finally(()=>background.delete(recovery)).catch(()=>{});
     } else advancePlanning();
+    // Periodic wake is only a liveness aid: catalog, QueryJobs and accepted plans
+    // are durable. One lost HTTP/event wake must not require a process restart.
+    const recoveryTimer = real ? setInterval(() => {
+        if (closing) return;
+        void dispatchWake.request('durable-periodic-scan').catch(() => {});
+        resumePendingReviews();
+        advancePlanning();
+        const scan = Promise.all(scopes.map(async scope => {
+            for (const goalId of await catalog.goals(scope)) await triggerRework(scope, goalId);
+        })).then(() => {});
+        background.add(scan);
+        void scan.catch(error => console.error('持久扫描待重试：' + String(error)))
+            .finally(() => background.delete(scan));
+    }, 30_000) : undefined;
+    recoveryTimer?.unref();
     return { scopes, registerScope: (scope: Scope & { bindingDigest?: string }) => serial(async () => {
             if (!scopes.some(item => item.projectId === scope.projectId))
                 throw Error('项目尚未登记');
@@ -852,10 +898,13 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         },
         close: async () => {
             closing = true;
+            if (recoveryTimer) clearInterval(recoveryTimer);
             // Accepted queued actions can still register work. Drain them first,
             // then await derived work without holding the projection queue.
             await serial(async () => { });
             await realQueries?.close();
+            await Promise.all([planningWake.close(), reworkWake.close(), reviewRecoveryWake.close(), terminalContinuation.close()]);
+            await dispatchWake.close();
             while (background.size)
                 await Promise.allSettled([...background]);
             await serial(() => h.close());
@@ -918,4 +967,3 @@ export async function createGuiService(dir: string, initialScopes: Scope[] = [],
             await profileMemory.close();
         } };
 }
-

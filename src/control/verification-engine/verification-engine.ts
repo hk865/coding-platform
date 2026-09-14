@@ -160,9 +160,8 @@ export class VerificationEngineImpl implements VerificationPort {
 export async function executePlannedCheck(plan: VerificationPlanV1, checkId: string, context: CheckContextV1, port: CheckPort): Promise<ObservationDraftV1> {
   const entries = plan.checks.filter(c => c.checkId === checkId && c.satisfactionPath === 'predicate');
   const check = entries[0];
-  if (!check || check.kind === 'reviewer') throw Error('unknown predicate in frozen verification plan: ' + checkId);
+  if (!check || check.kind === 'reviewer') throw Error('unknown predicate in the recorded verification plan: ' + checkId);
   const coverage = [...new Map(entries.flatMap(c => c.coverage).map(c => [c.obligationId + '\0' + c.requirementId, c])).values()];
   const outcome = await port.runCheck(context, checkId);
   return { checkId, kind: check.kind, coverage, result: outcome.result, summary: outcome.summary, artifactRef: outcome.artifactRef };
 }
-

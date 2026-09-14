@@ -1,22 +1,22 @@
 /**
- * P1-15 contracts — InitialDesignProposal / InitialDesignDecision /
- * CoordinationPolicy / UnifiedStatusPresentation + three frozen minimal
+ * Human collaboration and coordination-policy contracts — InitialDesignProposal / InitialDesignDecision /
+ * CoordinationPolicy / UnifiedStatusPresentation + three versioned minimal
  * interfaces (HumanCollaboration.InitialDesignPort,
  * HumanCollaboration.UnifiedStatusPort, ControlEngine.CoordinationPolicyPort).
  *
- * Authority: ticket 15-human-role-collaboration.md Acceptance:
+ * Authority: the human collaboration module and interface specifications:
  *   - the human sees the requirement ambiguity, >=2 substantively different
  *     options with impacts, and a decision bound to an EXACT proposal revision;
  *     reject/defer/old decisions never activate a policy or plan;
- *   - the initial baseline has NO source baseline (no fake migration); P1-02
- *     install/activation path reused; existing-baseline changes go P1-14;
+ *   - the initial baseline has NO source baseline (no fake migration); the versioned-governance
+ *     install/activation path reused; existing-baseline changes go baseline evolution;
  *   - an explicit BUDGETED coordination policy: in-scope rework/test can
  *     proceed autonomously; scope changes (requirements/acceptance/baseline)
  *     must escalate; hints/experience must not widen the policy;
  *   - coordinator rollover resumes from facts + Handoff; the unified status
  *     view references compatible revisions, explanatory staleness is marked,
  *     facts can display first; queries may bypass the staff;
- *   - G3 requires this traceable closed loop (P1-07 parallel/writer evidence
+ *   - G3 requires this traceable closed loop (workspace concurrency parallel/writer evidence
  *     alone is not sufficient).
  */
 import type { CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
@@ -25,16 +25,16 @@ import type { GoalRef } from "./ledger.js";
 import type { PlanRevisionRef } from "./plan.js";
 import type { RoleSpecPinV1 } from "./role-spec.js";
 
-export const P15_MAX_OPTIONS = 16;
-export const P15_OPTION_SUMMARY_MAX_BYTES = 2048;
-export const P15_COORDINATION_BUDGET_MAX = 4;
+export const INITIAL_DESIGN_MAX_OPTIONS = 16;
+export const INITIAL_DESIGN_OPTION_SUMMARY_MAX_BYTES = 2048;
+export const COORDINATION_AUTONOMOUS_REWORK_BUDGET_MAX = 4;
 /**
  * 一个 policyId 只有一份不可改写的安装 revision（安装入口是 CAS@0，摘要口径固定用 revision 1）。
  * 因此「安装一份内容不同的策略」在身份上就是换一个 policyId。把这条事实写成契约常量，
  * 是为了让应用层的命令构造与 ControlEngine 的摘要守卫读同一个值，而不是各自写一个字面量 1；
  * 它不改变任何既有语义（两处本来就是 1）。
  */
-export const P15_COORDINATION_POLICY_REVISION = 1;
+export const COORDINATION_POLICY_REVISION_V1 = 1;
 
 // ------------------------------------------------------------------------ //
 // Initial design proposal / decision                                        //
@@ -93,15 +93,15 @@ export function initialDesignProposalDigest(proposal: InitialDesignProposalV1): 
 // ------------------------------------------------------------------------ //
 
 /**
- * RW-11（ADR 0003 D4）：项目的**角色矩阵**——哪些角色存在、各自被授权到哪一份 RoleSpecRevision，
+ * 项目的角色矩阵：哪些角色存在、各自被授权到哪一份 RoleSpecRevision，
  * 以及跨工作包议题由谁负责收敛。
  *
  * 为什么放在协调策略正文里而不是新聚合：ARCHITECTURE「角色、记忆与 Context 的责任归属」把
  * 「接受角色规格版本、绑定 Agent／Task、校验权限」归 Control 的既有治理面；角色矩阵就是
- * 这份治理事实的一部分，另开一个「角色管理器」会变成第二套治理机制（D4-4 明确不新增 Module）。
+ * 这份治理事实的一部分；另开一个「角色管理器」会变成第二套治理机制，违反当前模块责任分配。
  *
  * 为什么可选：既有已安装的策略正文没有这个字段，收紧安装期形状会让既有正式来源失效。
- * 可选**不等于**「角色已校验」：没有矩阵的项目沿用 RW-11 之前的绑定语义，Control 不编造默认目录；
+ * 可选**不等于**「角色已校验」：没有矩阵的项目沿用引入角色矩阵前的绑定语义，Control 不编造默认目录；
  * 只有存在矩阵时 claim 守卫才校验角色存在、revision／digest 未过期与权限相符。
  */
 export type CoordinationRoleMatrixV1 = {
@@ -115,7 +115,7 @@ export type CoordinationPolicyContentV1 = {
   schemaVersion: 1;
   budget: { maxAutonomousReworks: number; maxClarifications: number };
   /**
-   * RW-10 人的暂停开关：`inScopeRework` 是**运行时**被读的授权位，不是只做形状校验的声明。
+   * 人的暂停开关：`inScopeRework` 是**运行时**被读的授权位，不是只做形状校验的声明。
    *   - true：范围内的返工（同义务、同验收语义、只换承担者）可以由平台按预算自动受理；
    *   - false：人已停用范围内的自动返工——自动受理入口在**每次受理时**读取当前生效策略的
    *     这一字段，返回 needs_human_decision 且零写入，之后每条失败都必须由人决定。
@@ -190,7 +190,7 @@ export type UnifiedStatusViewResult =
   | { status: "not_found" };
 
 // ------------------------------------------------------------------------ //
-// Frozen minimal interfaces                                                 //
+// Versioned minimal interfaces                                                 //
 // ------------------------------------------------------------------------ //
 
 export interface InitialDesignPort {

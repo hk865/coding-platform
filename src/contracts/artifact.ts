@@ -18,7 +18,7 @@ export type ArtifactRef = {
   source: SourceRefV1;
 };
 
-/** P1-09 additive read principal: query runs retain their own full identity. */
+/** query additive read principal: query runs retain their own full identity. */
 export type ArtifactOwnerRunRef = RunRef | QueryRunRef;
 
 export type ArtifactPutRecord = {
@@ -35,15 +35,15 @@ export type ArtifactPutResult =
   | { status: "rejected"; code: "invalid" | "size_exceeded" | "missing_source"; issues: string[] };
 
 /**
- * P1-03 frozen shape plus one versioned additive field.
+ * dispatch versioned shape plus one versioned additive field.
  *
- * P1-18 additive extension (recorded in modules/data/artifact-vault.md):
+ * material access additive extension (recorded in modules/data/artifact-vault.md):
  *   `currentBasis` is the version basis the REQUESTER is reading under. When a
  *   non-owner requester relies on a recorded MaterialAccessGrant, the grant's
  *   basis must equal it; otherwise the material is refused with
  *   rejected/stale. Omitting it can only ever satisfy an UNCONDITIONAL grant —
  *   a conditional grant is never applied to a requester that declares no basis.
- *   Old callers that pass only requesterRunRef keep the exact P1-03 behavior.
+ *   Old callers that pass only requesterRunRef keep the exact dispatch behavior.
  */
 export type ArtifactOpenQuery = {
   /** Only the recorded worker or query run may open, with its complete scope. */
@@ -70,7 +70,7 @@ export type ArtifactOpenResult =
   | { status: "ready"; record: ArtifactRecord }
   | { status: "unavailable"; ref: ArtifactRef }
   /**
-   * P1-18 additive rejection code "stale": a recorded grant exists for this
+   * Material-access rejection code "stale": a recorded grant exists for this
    * reader and material, but the grant's basis is not the requester's current
    * basis — the inherited material must be re-sourced, not silently reused.
    */

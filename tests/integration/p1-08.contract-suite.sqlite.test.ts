@@ -3,7 +3,7 @@
  * the P1-08 console projections are implemented (probe, no fake).
  */
 import { describe, it, expect } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { defineConsoleContractSuite, type P1_08FactoryOptions } from "../contract-suite/console.contract.suite.js";
 import { toP1_08Harness, type P1_08HarnessLike } from "../contract-suite/p1-08-harness.js";
 import { isP108Ready } from "../restart/p1-08-restart-fixtures.js";
@@ -13,7 +13,7 @@ import { P108_PROJECT_A, P108_WORKSPACE, P108_GOAL, P108_TASK_WORK } from "../co
 const READY = await isP108Ready();
 
 const factory = async (options?: P1_08FactoryOptions) => {
-  const h = await createPersistentSqliteHarness({
+  const h = await createPersistentPlatform({
     deps: {},
     runtime: options?.runtime ?? createP108ScenarioRuntime(),
   });

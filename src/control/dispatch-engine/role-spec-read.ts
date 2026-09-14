@@ -1,5 +1,5 @@
 /**
- * RW-12 DispatchEngine — 角色规格只读解析（RoleSpecReadPort 的实现）。
+ * DispatchEngine — 角色规格只读解析（RoleSpecReadPort 的实现）。
  *
  * 这里**不复制**角色规则：矩阵 pin、revision 过期、摘要一致、权限越界的判据全部来自
  * ControlEngine 自己的 `evaluateRoleBindingAdmission`（同一份纯策略）与
@@ -31,14 +31,14 @@ export class LedgerRoleSpecRead implements RoleSpecReadPort {
     const roleId = request.roleBinding.templateId;
     const declaredRevision = roleSpecRevisionFromBinding(request.roleBinding.templateRevision);
     if (declaredRevision === null) {
-      // 绑定不是在角色规格下签发的（templateRevision 不是十进制 revision）。RW-11 明确：
-      // 没有登记角色的项目，claim 语义与之前完全一致——这里同样不编造一个规格出来。
+      // 绑定不是在角色规格下签发的（templateRevision 不是十进制 revision）。兼容规则明确：
+      // 没有登记角色的项目沿用既有 claim 语义——这里同样不编造一个规格出来。
       return { status: 'absent', roleId, reason: '绑定的 templateRevision（' + request.roleBinding.templateRevision + '）不是角色规格 revision，视为未登记角色目录' };
     }
     const policy = await resolveActiveCoordinationPolicy(this.deps.ledger, request.projectId);
     const matrix = policy?.content.roles ?? null;
     if (matrix === null) {
-      return { status: 'absent', roleId, reason: '项目当前生效的 CoordinationPolicy 没有角色矩阵，按 RW-11 沿用既有绑定语义' };
+      return { status: 'absent', roleId, reason: '项目当前生效的 CoordinationPolicy 没有角色矩阵，按无矩阵兼容规则沿用既有绑定语义' };
     }
     const pin = Object.prototype.hasOwnProperty.call(matrix.catalog, roleId) ? matrix.catalog[roleId]! : undefined;
     if (pin === undefined) {
@@ -81,7 +81,7 @@ export class LedgerRoleSpecRead implements RoleSpecReadPort {
 /**
  * 一次角色绑定的**签发来源**。
  *
- * 为什么要有这个类型：RW-14 之前，产品入口把角色名字符串（`executor`／`assignment.role`）与
+ * 为什么要有这个类型：角色矩阵签发接通前，产品入口把角色名字符串（`executor`／`assignment.role`）与
  * revision（`'1'`）写死在派发代码里；矩阵只是"claim 时用来校验"的另一份事实。用户对上一轮报告的
  * 明确指示是：**派发/claim 的角色绑定要由矩阵签发**，绑定内容取自当前生效矩阵 pin 与对应规格，
  * 而不是调用方写死字符串。因此签发结果必须自带来源，读者（与测试）能看出这条绑定到底是
@@ -126,7 +126,7 @@ export async function issueMatrixRoleBinding(
       source: 'static-fallback',
       roleBinding: { ...input.fallback },
       matrixPin: null,
-      note: '项目当前生效的协调策略没有角色矩阵：按 RW-11 沿用既有绑定语义（Control 不编造默认目录）。',
+      note: '项目当前生效的协调策略没有角色矩阵：按无矩阵兼容规则沿用既有绑定语义（Control 不编造默认目录）。',
     };
   }
   const pin = Object.prototype.hasOwnProperty.call(matrix.catalog, input.roleId) ? matrix.catalog[input.roleId]! : undefined;
@@ -153,4 +153,3 @@ export async function issueMatrixRoleBinding(
       ' revision ' + String(pin.ref.revision) + '，摘要 ' + pin.digest.slice(0, 16) + '…）签发；是否已安装/已激活由 claim 守卫判定。',
   };
 }
-

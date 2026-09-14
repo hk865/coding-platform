@@ -34,7 +34,7 @@ import {
   roleMatrixPolicyDigest,
 } from '../../src/fixtures/role-spec-fixtures.js';
 import { buildCoordinationPolicyActivateCommand, buildCoordinationPolicyInstallCommand } from '../../src/contracts/commands/governance.js';
-import { P15_COORDINATION_POLICY_REVISION } from '../../src/contracts/human-role-collaboration.js';
+import { COORDINATION_POLICY_REVISION_V1 } from '../../src/contracts/human-role-collaboration.js';
 import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
 import { buildCreateGoalCommand } from '../contract-support/fixtures/goal-fixtures.js';
 import { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildActivateCommand } from '../../src/fixtures/governance-fixtures.js';
@@ -106,7 +106,7 @@ it('装 executor 规格 + 含 roles 的矩阵之后，普通 develop 运行真�
   const contentDigest = roleMatrixPolicyDigest(policyContent, policyDeps.policyId);
   expect((await h.installCoordinationPolicy(buildCoordinationPolicyInstallCommand(policyDeps, deps('policy-install')))).status).toBe('committed');
   expect((await h.activateCoordinationPolicy(buildCoordinationPolicyActivateCommand(
-    { ref: { aggregateType: 'CoordinationPolicyRevision', projectId: scope.projectId, policyId: policyDeps.policyId, revision: P15_COORDINATION_POLICY_REVISION }, digest: contentDigest },
+    { ref: { aggregateType: 'CoordinationPolicyRevision', projectId: scope.projectId, policyId: policyDeps.policyId, revision: COORDINATION_POLICY_REVISION_V1 }, digest: contentDigest },
     { ...deps('policy-activate'), expectedRevision: 1 },
   ))).status).toBe('committed');
 

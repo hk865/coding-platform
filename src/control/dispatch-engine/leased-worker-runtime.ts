@@ -19,7 +19,7 @@ export class LeasedWorkerRuntime implements RunPort {
     materials: (spec: RunSpec, envelope: TaskEnvelopeV1) => Promise<RuntimeContextMaterials | undefined>;
     reviewerMaterials?: (spec: RunSpec, envelope: TaskEnvelopeV1) => Promise<ReviewerRuntimeAccess>;
     /**
-     * 协调能力的**执行前准入 + 装配**（CM-1A-001 协议约束 2.3）。
+     * 协调能力的**执行前准入 + 装配**（协作通信协议约束 2.3）。
      *
      * 宿主在这里回答"这个 Run 被授予协调能力了吗、依据是账本里的哪条事实"，并只在 `granted`
      * 时给出访问面；`not_granted` 带可读原因。运行入口据此决定是否注入工具——
@@ -74,7 +74,7 @@ export class LeasedWorkerRuntime implements RunPort {
       } else materials = await this.deps.materials(spec, envelope);
       // 协调能力与材料同处"运行启动之前的准备阶段"：准入只读 canonical 事实，不产生任何写。
       // 未授予 → 本次运行没有协调工具（也不向内核声明该能力），内核侧对这类调用会给出可读拒绝。
-      if (this.deps.coordination) {
+      if (spec.mode === undefined && this.deps.coordination) {
         const decision = await this.deps.coordination(spec, envelope);
         coordination = decision.status === "granted" ? decision : null;
       }
@@ -116,7 +116,7 @@ export class LeasedWorkerRuntime implements RunPort {
         if (events.some(e => e.eventType !== 'run_started')) await release();
         return events;
       },
-      // CM-1A-001 第 4 步：调用证据面**无条件**原样透传（本适配器只负责租约顺序，不解释证据）。
+      // 协作通信可靠投递规则：调用证据面**无条件**原样透传（本适配器只负责租约顺序，不解释证据）。
       // 证据面是必选方法，因此"忘了转发"会在编译期暴露——不会让证据在内层被静默吞掉。
       pollModelRequestEvidence: () => handle.pollModelRequestEvidence(),
     };

@@ -109,10 +109,10 @@ export type WorkRunMaterialCompilerDeps = {
   ledger: Pick<StateLedger, 'load' | 'events'>;
   vault: ArtifactPort;
   workContext: WorkContextPort;
-  /** 相关已完成工作的选材端口（P1-17）。缺省表示宿主没有接线，必须报缺口而不是假装没有历史。 */
+  /** 相关已完成工作的选材端口（completed-work context）。缺省表示宿主没有接线，必须报缺口而不是假装没有历史。 */
   completedWork?: CompletedWorkContextPort;
   /**
-   * 角色规格只读端口（RW-11）。缺省表示宿主没有接线：此时无法按规格取材，必须显式报缺口
+   * 角色规格只读端口。缺省表示宿主没有接线：此时无法按规格取材，必须显式报缺口
    * （不是"跳过角色校验"）。实现由组合根注入 ControlEngine 自己的受理判据，见
    * contracts/role-spec-materials.ts 与 control/dispatch-engine/role-spec-read.ts。
    */
@@ -209,7 +209,7 @@ export class WorkRunMaterialCompiler {
         : { status: 'ready', materials: emptyMaterials(request, gaps, roleRecord, collected) };
     }
     const { binding, bindingRevision, bundleRefDigest, notes } = work;
-    // 步骤 6／7：相关已完成工作（history）—— 只经既有 P1-17 端口选材，适用性判定原样保留在材料里。
+    // 步骤 6／7：相关已完成工作（history）—— 只经既有 completed-work context 端口选材，适用性判定原样保留在材料里。
     const history = await this.selectHistory(request, runRef, binding.planRevision, limits, gaps);
     if (required.includes('history') && history.length === 0) {
       // 规格把它列为必读而本次一条都没有：显式失败，绝不静默通过。
@@ -594,8 +594,8 @@ export class WorkRunMaterialCompiler {
           reason: requirement.reason,
           /** true = 本入口在该通道上给出了带来源的答案（`selection` 说明是选入了条目还是读到了
            *  "确定为空"）；false = 本入口拥有该通道但这次没有供应（可选材料）；null = 本入口不拥有它。
-           *  注：桥表全键接通之后 null 分支不可达 —— 不拥有的类别在 compile() 里直接 fail-closed；
-           *  这里保留它，是为了让本记录与桥表逐键同构：将来新增一行通道时不必再改记录形状。 */
+           *  注：当前桥表已覆盖全部已知类别；null 分支仍保留为新增类别的显式缺口路径，
+           *  与桥表逐键同构，新增通道时无需改记录形状。 */
           supplied: mapped === null ? null : true,
           detail: mapped === null
             ? '本运行入口不拥有该通道：本次运行 fail-closed，不把它当成已满足；应由 ' + owned[requirement.kind].suppliedBy + ' 供应'
@@ -684,7 +684,7 @@ export class WorkRunMaterialCompiler {
   }
 
   /**
-   * P1-17 选材 + RW-18 跨工作历史的**访问准入**（取代原来的"只读运行才给历史"）。
+   * completed-work context 选材 + 跨工作历史的**访问准入**（取代原来的"只读运行才给历史"）。
    *
    * 准入判据按用户对上一轮报告的指示拆开来看，只有三件事：
    *   1. **谁申请**：就是本 Run（`runRef`），不是"某一类运行"；
@@ -699,7 +699,7 @@ export class WorkRunMaterialCompiler {
    * 自动获得别人历史的访问权；只读也**不会**自动获得（未授权的只读运行同样记缺口）—— 这正是原来那条
    * "只读才给历史"判据的问题（它把"本运行是否只读"当成了"能不能读那段历史"）。
    *
-   * 边界（RW-18 d）：本约束只针对**其它工作的运行历史**。同一段工作自己的留痕走 work-notes 通道，
+   * 边界（如实）：本约束只针对**其它工作的运行历史**。同一段工作自己的留痕走 work-notes 通道，
    * 不受此限；记忆／开发记忆是平台的长期记忆，允许被检索，也不受此限。
    *
    * 记录口径：被授权读到的正文引用（含摘要与长度）随材料进入 sourceRefs；授权本身是可审计的账本事实
@@ -839,7 +839,7 @@ export class WorkRunMaterialCompiler {
       workId,
       workKind: item['workKind'] ?? null,
       taskId: item['taskId'] ?? null,
-      /** P1-17 自己的工程适用性判定原样保留，不被本节改写。 */
+      /** completed-work context 自己的工程适用性判定原样保留，不被本节改写。 */
       completedWorkApplicability: applicability,
       notes: authorized.map((entry) => ({
         noteId: entry.noteId,

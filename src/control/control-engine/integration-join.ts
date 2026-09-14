@@ -1,12 +1,11 @@
 /**
- * P1-07 Control entry: recordIntegrationResult (evidence join).
+ * workspace concurrency Control entry: recordIntegrationResult (evidence join).
  *
- * ENTRY FILE (shared baseline — exported signature FROZEN; lane B fills the
- * implementation). Frozen semantics: IMPLEMENTATION-HANDOFF.md "P1-07 契约与
- * 存储语义" item 6: guard sequence (shape -> run ended -> canonical workspace/
+ * Public entry. The integration contract defines this guard sequence
+ * (shape -> run ended -> canonical workspace/
  * plan -> input presence/run-match -> detectEvidenceConflicts -> unresolved ->
  * duplicate -> accumulator CAS), conflicts NEVER overwritten, integrate facts
- * only (P1-04/05 formulas untouched).
+ * only; verification reduction formulas remain unchanged.
  */
 import type {
   RecordIntegrationResultCommand,
@@ -121,15 +120,15 @@ async function recordIntegrationResultImpl(
     return { status: "rejected", commandId: command.commandId, code: "plan_not_found" };
   }
   const plan = planResult.snapshot;
-  // NOTE: the frozen validator (validateRecordIntegrationResultCommand) uses
+  // NOTE: the versioned validator (validateRecordIntegrationResultCommand) uses
   // stringField for result.taskRevision, so the join carries it as a STRING;
-  // the plan revision is numeric. The frozen stale_source rule compares them,
+  // the plan revision is numeric. The versioned stale_source rule compares them,
   // so compare on the normalized string form (baseline gap reported).
   if (String(result.taskRevision) !== String(plan.planRevision)) {
     return { status: "rejected", commandId: command.commandId, code: "stale_source" };
   }
 
-  // Construct the CURRENT effectivity tuple used for applicability (frozen
+  // Construct the CURRENT effectivity tuple used for applicability (versioned
   // formula: plan + revision tuple + pinned policy/baseline).
   const currentAnchor = buildEffectivityAnchorV1({
     planRef: result.planRef,
@@ -178,15 +177,15 @@ async function recordIntegrationResultImpl(
         return { status: "rejected", commandId: command.commandId, code: "input_not_found" };
       }
     } else {
-      // artifact: frozen rule is reference-shape only; the caller is responsible
-      // for the vault body (same precedent as P1-03/04/06 vault references).
+      // artifact: versioned rule is reference-shape only; the caller is responsible
+      // for the vault body (same precedent as dispatch and handoff vault references).
       if (input.artifactRef === null) {
         return { status: "rejected", commandId: command.commandId, code: "input_not_found" };
       }
     }
   }
 
-  // Guard 7: pure mechanical conflict detection (frozen; no semantic inference).
+  // Guard 7: pure mechanical conflict detection (versioned; no semantic inference).
   const detectedConflicts = detectEvidenceConflicts(
     result.inputs,
     (evidenceId) => factsMap.get(evidenceId) ?? null,
@@ -220,11 +219,11 @@ async function recordIntegrationResultImpl(
   }
 
   // Guard 9: deterministic fold (fold-equality with the shared fixture builder)
-  // — the recorded conflicts are the AUTHORITATIVE frozen detection (so the
+  // — the recorded conflicts are the AUTHORITATIVE versioned detection (so the
   // join fact/conflict surface reflects detectEvidenceConflicts, not a
   // caller-supplied array). -> single atomic commit.
-  // NOTE: the frozen commit validator requires event.occurredAt === last.generatedAt,
-  // so the event timestamp is the result's own generatedAt (the harness clock
+  // NOTE: the versioned commit validator requires event.occurredAt === last.generatedAt,
+  // so the event timestamp is the result's own generatedAt (the test host clock
   // differs from a caller-supplied generatedAt — baseline gap reported).
   const eventId = deps.eventId();
   const occurredAt = result.generatedAt;

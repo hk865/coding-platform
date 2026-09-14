@@ -1,0 +1,18 @@
+{
+  "buildFiles": 666,
+  "buildFingerprint": "887630e349fd31007919731856537c9f45c2f164001e2efb6ff22f2a39e88144",
+  "sourceFingerprint": "cf2c775c1cebdc296a4deefc42d495f2102c2eaea14a2464c7e605d39febcc95",
+  "results": "types=0 ui=0 boundaries=0 build=0 tests=0 docs=0",
+  "logHashes": {
+    "affected-regression.log": "94bba8e22a6201bafd26d072ee287745e53949c8f7966038e50f6a172bae0d05",
+    "boundaries.json": "6661b51634c3874876e242aeeac7a97fda3ccbc5ee93cba2ab1e5f403602ffd8",
+    "browser-results.txt": "6dd56e3822eb8e79b85203b70de04212247b71f407da05523fe9488100de9596",
+    "browser-service.log": "c5da1d22a7ad7b4e5a15bee9d607c45f816c22ab44104d472102e4acf7f34650",
+    "build.log": "191d8c44d8f7125dc61a437d0510828fa15c46da95411fafb5f1fe8de42eeb24",
+    "docs.log": "17d741a7c14529eb566de8f33e1bcc4bf1afe0dedb1ae3c3c91a8189193d50f5",
+    "results.txt": "4fc01dc632025f5d388f3a46bb1b0d9dffd16f58bf317fb89f5e5cecf2b06586",
+    "types.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "ui-types.log": "38ac890c60e7f38d59ddfb410325cdfb5fca83c9411765c5481754e01c021630"
+  },
+  "errors": []
+}

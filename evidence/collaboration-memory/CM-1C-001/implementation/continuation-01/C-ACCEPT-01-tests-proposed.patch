@@ -1,0 +1,105 @@
+--- /dev/null
++++ b/tests/contract-support/testing/injected-coordination-grant.ts
+@@ -0,0 +1,10 @@
++import type {TaskEnvelopeV1} from '../../../src/contracts/task-envelope.js';
++import type {CoordinationRuntimeGrantV1} from '../../../src/contracts/coordination-tools.js';
++/** Deliberately injected host capability with valid shape; not a claim of canonical authorization. */
++export function injectedCoordinationGrant(envelope:TaskEnvelopeV1,onCall:()=>never):Extract<CoordinationRuntimeGrantV1,{status:'granted'}>{
++  const workContextRef={aggregateType:'WorkContextBinding' as const,projectId:envelope.projectId,workspaceId:envelope.workspaceId,workId:'injected-test-work'};
++  const participationRef={aggregateType:'WorkParticipation' as const,projectId:envelope.projectId,workspaceId:envelope.workspaceId,workId:workContextRef.workId,participationId:'injected-test-part'};
++  const principal={schemaVersion:1 as const,agentInstanceId:'injected-test-agent',workContextRef,participationRef,roleBinding:envelope.roleBinding,runRef:envelope.runRef};
++  const denied=async()=>onCall();
++  return {status:'granted',capability:'coordination',grant:{schemaVersion:1,capability:'coordination',runRef:envelope.runRef,workContextRef,participationRef,agentInstanceId:principal.agentInstanceId,roleBinding:envelope.roleBinding,basis:{kind:'work_current_participation',workContextRef,participationRef}},access:{principal,mailbox:denied,request:denied,respond:denied,subscribe:denied,wait:denied,cancel:denied,reportArchitecture:denied}};
++}
+--- a/tests/app/exploration-runtime.test.ts
++++ b/tests/app/exploration-runtime.test.ts
+@@ -1,3 +1,4 @@
++import {injectedCoordinationGrant} from '../contract-support/testing/injected-coordination-grant.js';
+ import { storeRuntimeTestBundle } from './runtime-context-fixture.js';
+ import type { RuntimeContextAccess } from '../../src/data/context-compiler/runtime-context.js';
+ import { afterEach, describe, expect, it, vi } from 'vitest';
+@@ -94,6 +95,13 @@
+ }
+ 
+ describe('real kernel read-only exploration permissions', () => {
++  it('rejects injected coordination before any exploration model or host-tool call',async()=>{
++    const t=await fixture(()=>[]);await t.runtime.prepare(t.spec);let calls=0;
++    const coordination=injectedCoordinationGrant(t.envelope,()=>{calls++;throw Error('must not call injected host tools');});
++    await expect(t.runtime.start(t.envelope,{...t.access,coordination})).rejects.toThrow('只读探索或独立审阅不能接收协调写入口');
++    expect(t.model.requests).toHaveLength(0);expect(calls).toBe(0);expect(t.runtime.all()[0]!.status).toBe('prepared');
++  });
++
+   it('exposes only read, denies paths and fabricated write tools, preserves source and persists an actual report without replay', async () => {
+     const t = await fixture((root, outside) => [
+       { name: 'read', arguments: { path: 'README.md' } },
+--- a/tests/control/reviewer-runtime-start-rejection.test.ts
++++ b/tests/control/reviewer-runtime-start-rejection.test.ts
+@@ -1,3 +1,4 @@
++import {injectedCoordinationGrant} from '../contract-support/testing/injected-coordination-grant.js';
+ import { afterEach, expect, it } from 'vitest';
+ import { rm } from 'node:fs/promises';
+ import { ReviewerDispatch } from '../../src/control/dispatch-engine/reviewer-dispatch.js';
+@@ -9,7 +10,7 @@
+ const roots: string[] = [];
+ afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+ 
+-async function scenario(failure: 'closed' | 'unknown') {
++async function scenario(failure: 'closed' | 'unknown' | 'coordination') {
+   const f = await reviewerFixture(roots);
+   const started = await f.service.startReview(scope, f.input);
+   expect(started.review.work, JSON.stringify(started.review)).not.toBeNull();
+@@ -32,7 +33,8 @@
+         expect(envelope.permissions).toMatchObject({ tools: ['read'], writeScope: [] });
+         expect(context?.reviewer).toBeDefined();
+         if (failure === 'closed') await runtime.close();
+-        else await runtime.markUnknown(envelope.runRef);
++        else if(failure==='unknown')await runtime.markUnknown(envelope.runRef);
++        else return runtime.start(envelope,{...context,coordination:injectedCoordinationGrant(envelope,()=>{calls.model++;throw Error('must not call injected host tools');})});
+         return runtime.start(envelope, context);
+       },
+       rejectBeforeStart: (envelope, reason) => {
+@@ -98,3 +100,13 @@
+     expect(s.runtime.observations.all()[0]).toEqual(s.runtime.all()[0]);
+   } finally { await s.runtime.close(); }
+ });
++
++it('rejects injected coordination at actual Reviewer Runtime entry, with no model execution or retry',async()=>{
++  const s=await scenario('coordination');try{
++    expect(await s.dispatch.drive(s.work.ref)).toMatchObject({status:'incomplete',code:'review_execution_incomplete'});
++    const first=await s.run();expect(first).toMatchObject({status:'ended',outcome:'crashed'});
++    expect(s.runtime.all()[0]!.error).toContain('只读探索或独立审阅不能接收协调写入口');
++    await s.dispatch.drive(s.work.ref);expect(await s.run()).toEqual(first);
++    expect(s.calls).toEqual({materials:1,start:1,rejection:1,model:0});
++  }finally{await s.runtime.close();}
++});
+--- a/tests/coordination/coordination-capability.test.ts
++++ b/tests/coordination/coordination-capability.test.ts
+@@ -113,7 +113,7 @@
+  * 组装一个世界。`withParticipation` 决定执行前该 Run 是否**已经**被授予协调能力：
+  * true = 先经正式入口建立参与关系（账本依据存在）；false = 不建立（判定必须给出可读原因）。
+  */
+-async function buildWorld(withParticipation: boolean): Promise<{ dir: string; root: string; h: PersistentSqliteHarness; runtime: CodingAgentRuntime; runRef: RunRef }> {
++async function buildWorld(withParticipation: boolean,mode?:'explore'): Promise<{ dir: string; root: string; h: PersistentSqliteHarness; runtime: CodingAgentRuntime; runRef: RunRef }> {
+   const log: ModelRequest[] = [];
+   const dir = await mkdtemp(join(tmpdir(), "cm1a-capability-"));
+   cleanup.push(async () => { await rm(dir, { recursive: true, force: true }); });
+@@ -219,7 +219,7 @@
+     };
+     expect((await h.control.startWorkParticipation(participation)).status, "参与关系必须被受理").toBe("committed");
+   }
+-  await runtime.prepare(specFor(root, "run-pred"));
++  await runtime.prepare({...specFor(root, "run-pred"),...(mode?{mode}:{})});
+   return { dir, root, h, runtime, runRef };
+ }
+ 
+@@ -584,3 +584,10 @@
+     expect((await w.h.ledger.load(requestRef)).status).toBe("not_found");
+   });
+ });
++
++it('exploration with existing participation still receives no coordination write tools',async()=>{
++  toolsOffered.length=0;toolResultsByCall.clear();const w=await buildWorld(true,'explore');
++  expect((await w.h.coordinationGrant(w.runRef)).status).toBe('granted');
++  await runOnce(w.h);expect(toolsOffered[0]).toEqual([]);expect(w.runtime.all()[0]!.coordinationCapability).toBeUndefined();
++  expect([...toolResultsByCall.values()].some(r=>r.error?.code==='unknown_tool')).toBe(true);
++});

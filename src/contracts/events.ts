@@ -1,11 +1,8 @@
 /**
  * Versioned DomainEvent union.
- * v1 events: GoalCreated (Goal create slice) + ProjectBootstrapped /
- * WorkspaceBootstrapped (P1-00 bootstrap extension) + governance / plan events
- * (P1-02 versioned extension) + dispatch/run events (P1-03 versioned
- * extension) + evidence/reduction events (P1-04 versioned extension) +
- * goal-phase events (P1-05 versioned extension) + handoff/replacement events
- * (P1-06 versioned extension). Unknown eventType or schemaVersion must stop
+ * The v1 union covers goals, workspace bootstrap, versioned governance and
+ * plans, dispatch and run facts, evidence and reduction, goal phases, and
+ * handoff and replacement. Unknown eventType or schemaVersion must stop
  * consumers, never skip.
  */
 import type { GoalCreatedEvent } from "./command-event.js";
@@ -60,6 +57,7 @@ import type { RoleSpecActivatedEvent, RoleSpecInstalledEvent } from "./role-spec
 import type { CommunicationDomainEvent } from "./coordination.js";
 
 export type DomainEventV1 =
+  | import("./architecture-review.js").ArchitectureReviewRecordedEvent
   | import('./reviewer-work.js').ReviewDomainEvent
   | GoalCreatedEvent
   | ProjectBootstrappedEventV1
@@ -125,7 +123,7 @@ export type DomainEventV1 =
   | RoleSpecActivatedEvent
   | MaterialAccessGrantedEvent
   | import("./material-access.js").MaterialAccessRevokedEvent
-  // CM-1A-001：协作通信（AgentInstance / participation / request / subscription /
+  // 协作通信（AgentInstance / participation / request / subscription /
   // delivery / wait / 机械 intent / 后继 admission）。
   | CommunicationDomainEvent;
 
@@ -133,6 +131,7 @@ export type DomainEvent = DomainEventV1;
 
 /** All known v1 event types. Anything else is unknown-version input. */
 export const KNOWN_EVENT_TYPES = [
+  "ArchitectureReviewRecorded",
   'TaskReviewProtocolAdopted', 'ReviewWorkCreated', 'FailedReviewWorkReplaced', 'ReviewInputBound', 'ReviewOutputBound', 'ReviewResultRecorded',
   "GoalCreated",
   "ProjectBootstrapped",

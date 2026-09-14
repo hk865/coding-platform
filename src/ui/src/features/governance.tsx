@@ -1,5 +1,5 @@
 /**
- * 治理设置区块（RW-08 / RW-14）：五个治理种类的 install / activate 与「当前生效的是哪一份」。
+ * 治理设置区块：五个治理种类的 install / activate 与「当前生效的是哪一份」。
  *
  * 界面只做三件事：把服务端视图原样呈现、把人的输入变成既有 install/activate 的 source／pin、
  * 把服务端的明确 code 显示出来。它不判断策略含义、不缓存治理状态、也不在本地推断“应该生效
@@ -86,13 +86,13 @@ export function GovernanceSection({ api, scope, store }: { api: Api; scope: { pr
   const [maxReworks, setMaxReworks] = useState(1);
   const [maxClarifications, setMaxClarifications] = useState(3);
   const [note, setNote] = useState('策略升级需要人的决定');
-  // RW-10 人的暂停开关：这一位直接决定自动受理的边界 (b)。界面不自己解释规则——
+  // 人的暂停开关：这一位直接决定自动受理的边界 (b)。界面不自己解释规则——
   // 开关的后果由服务端视图的 automationSwitch.note 给成文字，这里只负责把它作为输入交出去。
   // 初值在读到服务端开关状态后同步（见下方 effect）：用 true 硬编码会让「已停用」时
   // 打开设置页再提交一次就**悄悄重新授权**。null 表示尚未读到，表单此时不允许提交。
   const [inScopeRework, setInScopeRework] = useState<boolean | null>(null);
   const [switchTouched, setSwitchTouched] = useState(false);
-  // RW-14：这份协调策略是否登记角色矩阵。含矩阵 ⇒ claim 会按角色校验；不含 ⇒ 不做角色校验。
+  // 这份协调策略是否登记角色矩阵。含矩阵 ⇒ claim 会按角色校验；不含 ⇒ 不做角色校验。
   // 界面不替人做这个决定，只把选定之后的后果（哪些 pin 还没有可用的已激活规格）摆出来。
   const [withMatrix, setWithMatrix] = useState(false);
   const [matrixRoles, setMatrixRoles] = useState<string[] | null>(null);
@@ -120,7 +120,7 @@ export function GovernanceSection({ api, scope, store }: { api: Api; scope: { pr
   };
 
   /**
-   * RW-14：安装并激活一个角色的规格。
+   * RoleSpec 操作：安装并激活一个角色的规格。
    *
    * 不给出 source ⇒ 用服务端注入的内置 source（与 CompletionPolicy 同一定位：它是 source 内容，
    * 不产生授权，必须经 install + activate 才生效）。激活用的是**视图给出的那个 pin**（安装后
@@ -158,7 +158,7 @@ export function GovernanceSection({ api, scope, store }: { api: Api; scope: { pr
     if (!scope || inScopeRework === null) return;
     setBusy('install-CoordinationPolicy'); setMessage(null);
     try {
-      // RW-14：选了矩阵就把视图给出的 pin 原样装进策略正文（界面不自己算 revision／摘要）。
+      // 选了矩阵就把视图给出的 pin 原样装进策略正文（界面不自己算 revision／摘要）。
       const catalog = withMatrix ? Object.fromEntries(selectedRoles.map(roleId => [roleId, rolePinOf(view, roleId)!])) : null;
       if (withMatrix && (catalog === null || Object.values(catalog).some(pin => pin === null) || selectedRoles.length === 0)) {
         setMessage({ tone: 'warning', text: '选中的角色里还有没有可用 pin 的：请先安装并激活这些角色的规格，或把它们从矩阵里去掉。' });
@@ -219,7 +219,7 @@ export function GovernanceSection({ api, scope, store }: { api: Api; scope: { pr
   };
 
   const view: GovernanceViewV1 | undefined = query.data;
-  // RW-14：角色目录来自服务端视图（内置 source ∪ 已安装/已激活 ∪ 当前矩阵 pin），
+  // 角色目录来自服务端视图（内置 source ∪ 已安装／已激活 ∪ 当前矩阵 pin），
   // pin 也由服务端给出——界面不自己算 revision 与摘要。
   const roleSpecEntries = view?.kinds.find(entry => entry.kind === 'RoleSpecRevision')?.roleSpecs ?? [];
   const readyRoleIds = roleSpecEntries.filter(entry => entry.pin !== null).map(entry => entry.roleId);
@@ -254,7 +254,7 @@ export function GovernanceSection({ api, scope, store }: { api: Api; scope: { pr
 
       {view ? (
         <Stack gap="sm">
-          {/* RW-10：状态、后果与“怎么停用/重新启用”都取自服务端视图，界面不自己解释规则。 */}
+          {/* 状态、后果与“怎么停用／重新启用”都取自服务端视图，界面不自己解释规则。 */}
           <Alert
             color={automation === null ? 'yellow' : automationSwitch?.inScopeRework === true ? 'green' : 'orange'}
             variant="light"
@@ -275,7 +275,7 @@ export function GovernanceSection({ api, scope, store }: { api: Api; scope: { pr
           </Alert>
 
           {/*
-            RW-14：这条 Alert 回答的是一个**否命题**——「这份策略到底有没有角色矩阵、没有矩阵时 claim
+            ：这条 Alert 回答的是一个**否命题**——「这份策略到底有没有角色矩阵、没有矩阵时 claim
             会不会做角色校验」。没有它，人会把“策略装上了”读成“角色已经被校验过”（静默放行）。
             文字与 pin 就绪状态都由服务端给出（判据与 claim 守卫同一份实现），界面原样显示。
           */}
@@ -355,7 +355,7 @@ export function GovernanceSection({ api, scope, store }: { api: Api; scope: { pr
                     {inScopeRework ? null : '注意：同一策略标识只能安装一份不可改写的 revision，停用（或重新启用）请换一个策略标识再安装并激活。'}
                   </Alert>
                   {/*
-                    RW-14：矩阵是可选的，但选它之前人必须能看出**哪些 pin 还没有对应的已激活规格**，
+                    ：矩阵是可选的，但选它之前人必须能看出**哪些 pin 还没有对应的已激活规格**，
                     否则无法判断这次安装会不会把派发打断。就绪状态逐项来自服务端（与 claim 守卫同一判据）。
                   */}
                   <Checkbox
@@ -474,7 +474,7 @@ function RevisionTable({
 const refCount = (roles: { active: unknown }[]) => roles.filter(role => role.active !== null).length;
 
 /**
- * RW-14 角色规格清单：一行一个角色，逐项给出内容 revision、digest、生效引用、安装者与时间，
+ *  角色规格清单：一行一个角色，逐项给出内容 revision、digest、生效引用、安装者与时间，
  * 以及「这个 pin 现在装上去会怎样」（服务端判定的就绪状态）。没有规格的角色可以一键安装并激活
  * 内置 source——安装仍然是 CAS@0、激活仍然要落账，界面不产生任何授权。
  */

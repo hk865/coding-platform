@@ -1,3 +1,7 @@
+import { replacementAttemptRefFor } from '../../contracts/handoff.js';
+import { matchesDispatchSelection, comparePendingDispatch } from './dispatch-selection.js';
+import {validateInitialParticipationCommit,validateInitialParticipationState} from './ledger-validation.js';
+import { validArchitectureDeliveryEnvelope, architectureDeliveryStateRejection, validArchitectureReviewEnvelope, architectureReviewStateRejection, selectArchitectureWorkDirectory } from "./architecture-review-ledger.js";
 import { validateCommunicationReconcileState, validateSuccessorClaimState } from './ledger-validation.js';
 import { selectAlternativeReport, ALTERNATIVE_REPORT_SCAN_LIMIT } from '../../contracts/alternative-report.js';
 import { validateSubscriptionCatchupPage, validateRoutePageState } from "./ledger-validation.js";
@@ -5,21 +9,21 @@ import { ledgerIdentityKeyFor, materializeRouteIntentPlans, validateBootstrapCom
 import { validateQueryJobStartCommit } from "./ledger-validation.js";
 
 /**
- * SQLite StateLedger adapter - P1-01 "Goal persisted and visible".
+ * SQLite StateLedger adapter — persistent atomic command and event ledger.
  *
- * ENTRY FILE (shared baseline, integrator, 2026-09-05). The exported surface
- * below is FROZEN for P1-01 lane A: lane A fills in the implementation inside
+ * Public entry. The exported surface
+ * below is versioned for the persistent platform; the adapter supplies the implementation inside
  * this directory and must NOT change the exported signatures/options. Any
  * change to the surface requires integrator coordination.
  *
  * Driver decision: Node 24 built-in node:sqlite (DatabaseSync) - zero runtime
  * dependencies (the project already pins engines node >=24.15.0 <25).
- * Contract, restart, transaction and fault-injection semantics fixed in
- * IMPLEMENTATION-HANDOFF.md - "P1-01 contract and storage semantics (frozen)".
- * Acceptance gate: tests/contract-suite/state-ledger.contract.suite.ts,
+ * Contract, restart, transaction and fault-injection semantics come from
+ * dev_docs/interfaces/state-ledger.md and the StateLedger module specification.
+ * Contract checks: tests/contract-suite/state-ledger.contract.suite.ts,
  * wired via tests/sqlite-ledger/sqlite-ledger.contract.test.ts.
  *
- * Storage model (chosen by lane A, consistent with the frozen semantics):
+ * Storage model (consistent with the versioned semantics):
  *  - one SQLite file (or ":memory:"); tables:
  *      events(id INTEGER PRIMARY KEY AUTOINCREMENT, event_json TEXT)
  *        - id is the persistent monotonic global cursor (never reuses a
@@ -197,6 +201,8 @@ export class SqliteStateLedger implements StateLedger {
     return this.selectReport(loaded.snapshot as import('../../contracts/coordination.js').WaitConditionSnapshot);
   }
 
+  async workDirectory(projectId: string, workspaceId: string) { return structuredClone(selectArchitectureWorkDirectory((this.db.prepare("SELECT snapshot_json FROM snapshots").all() as {snapshot_json:string}[]).map(r=>JSON.parse(r.snapshot_json)),projectId,workspaceId)); }
+
   async load(ref: AggregateRef): Promise<SnapshotResult> {
     this.assertOpen();
     const key = this.refKey(ref);
@@ -275,9 +281,9 @@ export class SqliteStateLedger implements StateLedger {
       "CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_json TEXT NOT NULL);" +
         "CREATE TABLE IF NOT EXISTS snapshots (ref_key TEXT PRIMARY KEY, snapshot_json TEXT NOT NULL);" +
         "CREATE TABLE IF NOT EXISTS idempotency (identity_key TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, event_ids_json TEXT NOT NULL, aggregate_revisions_json TEXT NOT NULL, commit_cursor TEXT NOT NULL);" +
-        // RC-03：任务工作身份的唯一性槽（claim_key PRIMARY KEY 就是那条**跨连接、跨进程、
+        // 任务工作身份唯一性：身份槽（claim_key PRIMARY KEY 就是那条**跨连接、跨进程、
         // 跨重启**都成立的唯一约束；与 idempotency 一样只是提交约束索引，不是状态对象）。
-        // 表在旧数据库上是按需新建的：RC-03 之前形成的重复身份不会被改写或删除，
+        // 表在旧数据库上按需新建：在该唯一性约束生效之前形成的重复身份不会被改写或删除，
         // 只是不再允许新增（解析面照旧给唯一答案）。
         "CREATE TABLE IF NOT EXISTS identity_claims (claim_key TEXT PRIMARY KEY, owner_key TEXT NOT NULL);",
     );
@@ -287,7 +293,7 @@ export class SqliteStateLedger implements StateLedger {
     return canonicalJson(ref);
   }
 
-  // R-1: single shared implementation (src/data/state-ledger/ledger-validation.ts).
+  // Shared implementation: src/data/state-ledger/ledger-validation.ts.
   private identityKeyFor(batch: LedgerCommit): string {
     return ledgerIdentityKeyFor(batch);
   }
@@ -332,7 +338,7 @@ export class SqliteStateLedger implements StateLedger {
     return conflicts;
   }
 
-  /** RC-03: 该身份槽的占用者（canonical 聚合 ref）；未占用返回 undefined。 */
+  /** 任务工作身份唯一性：该身份槽的占用者（canonical 聚合 ref）；未占用返回 undefined。 */
   private claimOwner(claimKey: string): string | undefined {
     const row = this.db
       .prepare("SELECT owner_key FROM identity_claims WHERE claim_key = ?")
@@ -501,7 +507,7 @@ export class SqliteStateLedger implements StateLedger {
     };
   }
 
-  // R-1: single shared implementation (src/data/state-ledger/ledger-validation.ts).
+  // Shared implementation: src/data/state-ledger/ledger-validation.ts.
   private validateGoalCreate(batch: GoalCreateLedgerCommitV1): boolean {
     return validateGoalCreateCommit(batch);
   }
@@ -512,17 +518,19 @@ export class SqliteStateLedger implements StateLedger {
 
   private commitDispatch(batch: LedgerCommit): LedgerCommitReceipt {
     /**
-     * CM-1A-001 第 4 步：**源事件提交时同事务登记待路由 intent**（协议约束 1.4）。
+     * 协作通信的可靠投递规则：**源事件提交时同事务登记待路由 intent**（协议约束 1.4）。
      *
      * 与内存适配器同一份材料化逻辑（ledger-validation.materializeRouteIntentPlans）。执行位置
      * 在 BEGIN IMMEDIATE 事务**之内**：本连接的追加序号在事务内不会被其他写者改变，而下面的
-     * switch 对本票四个可路由提交是同步的（校验 → CAS → appendEvents 之间没有 await），
+     * switch 对当前实现四个可路由提交是同步的（校验 → CAS → appendEvents 之间没有 await），
      * 因此这里算出的 cursor 就是源事件真正落账的那个位置。
      */
     const materialized = materializeRouteIntentPlans(batch as unknown as RouteIntentPlannableCommit, this.nextEventSeq(), () => (this.db.prepare("SELECT snapshot_json FROM snapshots").all() as {snapshot_json: string}[]).map(r => JSON.parse(r.snapshot_json)).filter((s): s is import("../../contracts/coordination.js").SubscriptionSnapshot => s.ref.aggregateType === "Subscription"));
     if (materialized.status === "invalid") return { status: "rejected", code: "invalid_commit" };
     batch = materialized.batch as unknown as LedgerCommit;
     switch (batch.commitKind) {
+      case 'architecture-review-delivery': return validArchitectureDeliveryEnvelope(batch) ? this.commitGeneric(batch) : {status:'rejected',code:'invalid_commit'};
+      case 'architecture-review': return validArchitectureReviewEnvelope(batch) ? this.commitGeneric(batch) : {status:'rejected',code:'invalid_commit'};
       case 'review-work-create': case 'review-work-replace': case 'review-start': case 'review-output-bind': case 'review-result-admission':
         return validateReviewCommit(batch) ? this.commitGeneric(batch) : { status: 'rejected', code: 'invalid_commit' };
       case 'workspace-register':
@@ -634,7 +642,7 @@ export class SqliteStateLedger implements StateLedger {
         return this.commitRoleSpecInstall(batch);
       case "role-spec-activate":
         return this.commitRoleSpecActivate(batch);
-      // CM-1A-001：协作通信 commit kinds（校验规则与内存适配器共用一份）。
+      // 协作通信：协作通信 commit kinds（校验规则与内存适配器共用一份）。
       case 'subscription-catchup-page':
         return validateSubscriptionCatchupPage(batch, ref => {
           const row = this.db.prepare('SELECT snapshot_json FROM snapshots WHERE ref_key = ?').get(this.refKey(ref)) as {snapshot_json: string} | undefined;
@@ -643,24 +651,24 @@ export class SqliteStateLedger implements StateLedger {
           .map(row => ({ cursor: makeCommitCursor(Number(row.id)), event: JSON.parse(row.event_json) })))
           ? this.commitGeneric(batch) : { status: 'rejected', code: 'invalid_commit' };
       case "agent-instance-register":
-      // CM-1A-001 第 2 步：participation-end 与 participation-start 各自要在同一事务里
+      // 协作通信的参与身份规则：participation-end 与 participation-start 各自要在同一事务里
       // 释放／占用 AgentInstance 的参与身份槽（见下方两个 case 与 participationIdentityClaim）。
       case "directed-request-send":
       case "directed-request-respond":
       case "directed-request-cancel":
       case "subscription-create":
       case "subscription-cancel":
-      // CM-1A-001 第 3 工作段：frontier 补齐与单独 intent 登记走通用形状校验（事件/快照/expected 对齐）。
+      // 协作通信：frontier 补齐与单独 intent 登记走通用形状校验（事件/快照/expected 对齐）。
       case "subscription-catchup":
       case "communication-intent-record":
-      // CM-1A-001 第 4 步：先持久化取消意图（非终态）走同一份通用形状校验。
+      // 协作通信的可靠投递规则：先持久化取消意图（非终态）走同一份通用形状校验。
       case "communication-intent-cancel-request":
       case "wait-register":
       case "wait-cancel":
       case "communication-intent-claim":
       case "communication-intent-settle":
         return validateCommunicationCommit(batch) ? this.commitGeneric(batch) : { status: "rejected", code: "invalid_commit" };
-      // CM-1A-001 第 3 工作段：路由页有专用形状校验（目标 Work / 页内去重 / checkpoint 严格推进）。
+      // 协作通信：路由页有专用形状校验（目标 Work / 页内去重 / checkpoint 严格推进）。
       case "communication-route-page":
         return validateCommunicationRoutePageCommit(batch) && validateRoutePageState(batch, ref => {
           const row = this.db.prepare('SELECT snapshot_json FROM snapshots WHERE ref_key = ?').get(this.refKey(ref)) as {snapshot_json: string} | undefined;
@@ -669,11 +677,13 @@ export class SqliteStateLedger implements StateLedger {
           const row = this.db.prepare('SELECT event_json FROM events WHERE id = ?').get(seqOfCommitCursor(cursor)) as {event_json: string} | undefined;
           return row ? JSON.parse(row.event_json) : undefined;
         }) ? this.commitGeneric(batch) : { status: "rejected", code: "invalid_commit" };
+      case 'initial-participation-start':
+        return validateInitialParticipationCommit(batch)?this.commitGeneric(batch,participationIdentityClaim({...batch,commitKind:'participation-start'})):{status:'rejected',code:'invalid_commit'};
       case "participation-start":
         return validateParticipationStartCommit(batch)
           ? this.commitGeneric(batch, participationIdentityClaim(batch))
           : { status: "rejected", code: "invalid_commit" };
-      // CM-1A-001 第 2 步：一段参与结束必须在**同一个事务**里释放 AgentInstance 的参与槽。
+      // 协作通信的参与身份规则：一段参与结束必须在**同一个事务**里释放 AgentInstance 的参与槽。
       case "participation-end":
         return validateCommunicationCommit(batch)
           ? this.commitGeneric(batch, participationIdentityClaim(batch))
@@ -686,7 +696,7 @@ export class SqliteStateLedger implements StateLedger {
   }
 
   // ---------------------------------------------------------------------------
-  // P1-02 commit kinds (validators shared with InMemoryLedger)
+  // Versioned-governance and plan commit kinds (validators shared with InMemoryLedger).
   // ---------------------------------------------------------------------------
 
   private commitGovernanceInstall(batch: GovernanceInstallLedgerCommitV1): LedgerCommitReceipt {
@@ -711,7 +721,7 @@ export class SqliteStateLedger implements StateLedger {
   }
 
   // ---------------------------------------------------------------------------
-  // P1-03 dispatch / run commits
+// Dispatch and run commits.
   // ---------------------------------------------------------------------------
 
   private commitDispatchClaim(batch: DispatchClaimLedgerCommitV1): LedgerCommitReceipt {
@@ -746,7 +756,7 @@ export class SqliteStateLedger implements StateLedger {
     return this.commitGeneric(batch);
   }
 
-  /** P1-05: goal-reduction — full idempotency + CAS via the shared machinery. */
+  /** context assembly: goal-reduction — full idempotency + CAS via the shared machinery. */
   private commitGoalReduction(batch: import("../../contracts/ledger.js").GoalReductionLedgerCommitV1): import("../../contracts/ledger.js").LedgerCommitReceipt {
     if (!validateGoalReductionCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -754,7 +764,7 @@ export class SqliteStateLedger implements StateLedger {
     return this.commitGeneric(batch);
   }
 
-  /** P1-06: handoff-record — one immutable HandoffPacket (full idempotency + CAS). */
+  /** handoff: handoff-record — one immutable HandoffPacket (full idempotency + CAS). */
   private commitHandoffRecord(batch: import("../../contracts/ledger.js").HandoffRecordLedgerCommitV1): import("../../contracts/ledger.js").LedgerCommitReceipt {
     if (!validateHandoffRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -762,7 +772,7 @@ export class SqliteStateLedger implements StateLedger {
     return this.commitGeneric(batch);
   }
 
-  /** P1-06: replacement-claim — lease CAS@N + new attempt/run/outbox/replacement (full idempotency). */
+  /** handoff: replacement-claim — lease CAS@N + new attempt/run/outbox/replacement (full idempotency). */
   private commitReplacementClaim(batch: import("../../contracts/ledger.js").ReplacementClaimLedgerCommitV1): import("../../contracts/ledger.js").LedgerCommitReceipt {
     if (!validateReplacementClaimCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -771,7 +781,7 @@ export class SqliteStateLedger implements StateLedger {
   }
 
   // ---------------------------------------------------------------------------
-  // P1-07 commit kinds (validators shared with InMemoryLedger)
+  // workspace concurrency commit kinds (validators shared with InMemoryLedger)
   // ---------------------------------------------------------------------------
 
   private commitWorkspaceReadLeaseAcquire(batch: import("../../contracts/ledger.js").WorkspaceReadLeaseAcquireLedgerCommitV1): import("../../contracts/ledger.js").LedgerCommitReceipt {
@@ -817,7 +827,7 @@ export class SqliteStateLedger implements StateLedger {
   }
 
   /**
-   * RC-03: task 工作同时在同一个事务里占用它自己的身份槽（见 workContextIdentityClaim）。
+   * 任务工作身份唯一性：task 工作同时在同一个事务里占用它自己的身份槽（见 workContextIdentityClaim）。
    * BEGIN IMMEDIATE 已经把写事务拿在手上，槽的读取、判定、写入都在同一个事务内完成，
    * 因此这也是**两个宿主进程各持一条连接**时唯一成立的判定点。
    */
@@ -849,7 +859,7 @@ export class SqliteStateLedger implements StateLedger {
     return this.commitGeneric(batch);
   }
 
-  /** P1-18: material-access-grant — one immutable cross-principal read grant (CAS@0). */
+  /** material access: material-access-grant — one immutable cross-principal read grant (CAS@0). */
   private commitMaterialAccessGrant(batch: import("../../contracts/ledger.js").MaterialAccessGrantLedgerCommitV1): import("../../contracts/ledger.js").LedgerCommitReceipt {
     if (!validateMaterialAccessGrantCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -983,13 +993,13 @@ export class SqliteStateLedger implements StateLedger {
     return this.commitGeneric(batch);
   }
 
-  /** RW-11: role-spec-install（与 P1-15 同一条 generic 提交路径）。 */
+  /** role-spec-install：复用版本化治理的通用提交路径。 */
   private commitRoleSpecInstall(batch: import("../../contracts/ledger.js").RoleSpecInstallRecordLedgerCommitV1): import("../../contracts/ledger.js").LedgerCommitReceipt {
     if (!validateRoleSpecInstallCommit(batch)) return { status: "rejected", code: "invalid_commit" };
     return this.commitGeneric(batch);
   }
 
-  /** RW-11: role-spec-activate（Project CAS + 每角色生效聚合 CAS）。 */
+  /** role-spec-activate：Project CAS + 每角色生效聚合 CAS。 */
   private commitRoleSpecActivate(batch: import("../../contracts/ledger.js").RoleSpecActivateRecordLedgerCommitV1): import("../../contracts/ledger.js").LedgerCommitReceipt {
     if (!validateRoleSpecActivateCommit(batch)) return { status: "rejected", code: "invalid_commit" };
     return this.commitGeneric(batch);
@@ -1004,8 +1014,8 @@ export class SqliteStateLedger implements StateLedger {
 
   /**
    * run-fact: NO ledger-level idempotency record — de-duplication is decided
-   * by the Control handler against the committed per-run sequence (frozen
-   * P1-03 semantics; same pattern as InMemoryLedger).
+   * by the Control handler against the committed per-run sequence (versioned
+   * dispatch semantics; same pattern as InMemoryLedger).
    */
   private commitRunFact(batch: RunFactLedgerCommitV1): LedgerCommitReceipt {
     if (!validateRunFactCommit(batch)) {
@@ -1035,27 +1045,27 @@ export class SqliteStateLedger implements StateLedger {
   }
 
   async pendingDispatchIntents(limit: number, selection?: import('../../contracts/ledger.js').PendingDispatchSelection): Promise<DispatchOutboxEntrySnapshot[]> {
-    const rows = this.db
-      .prepare("SELECT snapshot_json FROM snapshots")
-      .all() as { snapshot_json: string }[];
+    const query = "SELECT snapshot_json FROM snapshots WHERE json_extract(snapshot_json, '$.ref.aggregateType') = 'DispatchOutboxEntry' AND json_extract(snapshot_json, '$.status') = 'pending'";
+    const rows = (selection?.scope
+      ? this.db.prepare(query + " AND json_extract(snapshot_json, '$.intent.projectId') = ? AND json_extract(snapshot_json, '$.intent.goalId') = ?").all(selection.scope.projectId, selection.scope.goalId)
+      : this.db.prepare(query).all()) as { snapshot_json: string }[];
     const pending: DispatchOutboxEntrySnapshot[] = [];
+    const replacementLookup = selection?.workKind === 'ordinary' || selection?.workKind === 'replacement' ? this.db.prepare('SELECT 1 FROM snapshots WHERE ref_key = ?') : undefined;
     for (const row of rows) {
       const snapshot = JSON.parse(row.snapshot_json) as { ref?: { aggregateType?: string }; status?: string };
       if (snapshot.ref?.aggregateType !== "DispatchOutboxEntry") continue;
       const entry = snapshot as unknown as DispatchOutboxEntrySnapshot;
-      if (entry.status !== "pending") continue;
-      if (!selection?.includeQuarantined && entry.schedule?.quarantined) continue;
-      if (selection?.dueAt && entry.schedule && entry.schedule.availableAt > selection.dueAt) continue;
-      if (selection && (entry.intent.work?.kind === 'review' ? 'review' : 'ordinary') !== selection.workKind) continue;
+      const replacement = replacementLookup ? replacementLookup.get(this.refKey(
+          replacementAttemptRefFor(entry.intent.projectId, entry.intent.goalId, entry.intent.taskId, entry.intent.attemptRef.attemptId))) !== undefined : false;
+      if (!matchesDispatchSelection(entry, selection, replacement)) continue;
       pending.push(entry);
     }
-    pending.sort((a, b) => (a.schedule?.availableAt ?? a.pendingAt).localeCompare(b.schedule?.availableAt ?? b.pendingAt) ||
-      a.pendingAt.localeCompare(b.pendingAt) || this.refKey(a.ref).localeCompare(this.refKey(b.ref)));
+    pending.sort(comparePendingDispatch);
     return pending.slice(0, Math.max(0, limit));
   }
 
   /**
-   * Generic P1-02 commit path: idempotency (replay-or-conflict) FIRST, then
+   * Generic versioned-governance and plan commit path: idempotency (replay-or-conflict) first, then
    * CAS, then one atomic write; the kind validator already ran.
    */
   private commitGeneric(batch: LedgerCommit, claim: WorkIdentityClaim | null = null): LedgerCommitReceipt {
@@ -1068,12 +1078,16 @@ export class SqliteStateLedger implements StateLedger {
       return this.replayReceipt(batch, existing);
     }
 
+    if(batch.commitKind==='initial-participation-start'&&!validateInitialParticipationState(batch,ref=>{const row=this.db.prepare('SELECT snapshot_json FROM snapshots WHERE ref_key = ?').get(this.refKey(ref)) as {snapshot_json:string}|undefined;return row?JSON.parse(row.snapshot_json):undefined;}))return {status:'rejected',code:'revision_conflict'};
+    if(batch.commitKind === 'architecture-review-delivery') {const rejection=architectureDeliveryStateRejection(batch,ref=>{const r=this.db.prepare("SELECT snapshot_json FROM snapshots WHERE ref_key = ?").get(this.refKey(ref)) as {snapshot_json:string}|undefined;return r?JSON.parse(r.snapshot_json):undefined;});if(rejection)return rejection;}
+    if(batch.commitKind === 'architecture-review') { const rejection=architectureReviewStateRejection(batch,ref=>{const r=this.db.prepare("SELECT snapshot_json FROM snapshots WHERE ref_key = ?").get(this.refKey(ref)) as {snapshot_json:string}|undefined;return r?JSON.parse(r.snapshot_json):undefined;},(this.db.prepare("SELECT snapshot_json FROM snapshots").all() as {snapshot_json:string}[]).map(r=>JSON.parse(r.snapshot_json))); if(rejection)return rejection; }
+
     const currentVersions = this.casConflicts(batch.expectedVersions);
     if (currentVersions.length > 0) {
       return { status: "rejected", code: "revision_conflict", currentVersions };
     }
 
-    // RC-03: 身份槽的读取与判定发生在同一个 BEGIN IMMEDIATE 事务内（与写入同一时刻）：
+    // 任务工作身份唯一性：身份槽的读取与判定发生在同一个 BEGIN IMMEDIATE 事务内（与写入同一时刻）：
     // 槽已被另一条身份占用即拒绝且零写入。命令面的守卫只能先查后写，跨进程时挡不住。
     const owner = claim === null ? undefined : this.claimOwner(claim.key);
     if (identityClaimConflicts(claim, owner) ||
@@ -1087,8 +1101,8 @@ export class SqliteStateLedger implements StateLedger {
     for (const snapshot of batch.snapshots) {
       this.upsertSnapshot(snapshot);
     }
-    // RC-03: 身份槽与事件/快照在同一次事务里提交（任何异常都 ROLLBACK 整个事务）。
-    // CM-1A-001 第 2 步：释放型声明只删「自己占的那个槽」（owner 精确匹配）——
+    // 任务工作身份唯一性：身份槽与事件/快照在同一次事务里提交（任何异常都 ROLLBACK 整个事务）。
+    // 协作通信的参与身份规则：释放型声明只删「自己占的那个槽」（owner 精确匹配）——
     // 别人占的槽不受影响，因此重复结束或乱序结束都不会误伤当前参与者。
     if (claim !== null && claim.release === true) {
       this.db
@@ -1170,7 +1184,7 @@ export class SqliteStateLedger implements StateLedger {
     };
   }
 
-  // R-1: single shared implementation (src/data/state-ledger/ledger-validation.ts).
+  // Shared implementation: src/data/state-ledger/ledger-validation.ts.
   private validateBootstrap(batch: BootstrapLedgerCommitV1): boolean {
     return validateBootstrapCommit(batch);
   }

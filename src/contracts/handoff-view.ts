@@ -1,5 +1,5 @@
 /**
- * P1-06 Handoff provenance view (ReadModel) — display-only timeline of
+ * Handoff provenance view (ReadModel) — display-only timeline of
  * handoff / replacement / evidence references for ONE Task. NEVER judges
  * completion: facts come only from committed events; the timeline shows the
  * A -> packet -> B (and evidence source runs) reference chain so a subsequent

@@ -1,10 +1,8 @@
 /**
- * P1-07 Control entry: workspace lease engine (acquireReadLease /
+ * workspace concurrency Control entry: workspace lease engine (acquireReadLease /
  * acquireWriteLease / releaseLease) + read-only-capability enforcement.
  *
- * ENTRY FILE (shared baseline — exported signatures FROZEN; lane A fills the
- * implementation). Frozen semantics: IMPLEMENTATION-HANDOFF.md "P1-07 契约与
- * 存储语义" items 1/2/3/4. Every acquisition resolves the WorkspaceCapabilityPort
+ * Public entry. The workspace-lease contracts require every acquisition to resolve the WorkspaceCapabilityPort
  * FIRST (unsupported -> capability_unsupported, NEVER a silent degrade); a
  * reader run can never obtain a write lease; write scopes must be ⊆
  * declaredWriteScope (scope_not_declared) and ⊆ the capability cap.
@@ -34,7 +32,7 @@ import { evaluateWorkspaceOperation } from "./policies/workspace-operation.js";
 import type { WorkspaceOperationVerdict, WorkspaceCapabilitiesV1 } from "../../contracts/workspace-capability.js";
 import type { TaskEnvelopeV1 } from "../../contracts/task-envelope.js";
 import { canonicalJson } from "../../contracts/fingerprint.js";
-import { buildWorkspaceReadLeaseAcquireLedgerCommit, buildWorkspaceWriteLeaseAcquireLedgerCommit, buildWorkspaceReadLeaseReleaseLedgerCommit, buildWorkspaceWriteLeaseReleaseLedgerCommit, type BuildP107WriteAcquireCommitDeps } from "./records/workspace.js";
+import { buildWorkspaceReadLeaseAcquireLedgerCommit, buildWorkspaceWriteLeaseAcquireLedgerCommit, buildWorkspaceReadLeaseReleaseLedgerCommit, buildWorkspaceWriteLeaseReleaseLedgerCommit, type BuildWorkspaceWriteLeaseAcquireCommitDeps } from "./records/workspace.js";
 import type { ConflictScopeV1 } from "../../contracts/workspace-lease.js";
 import type { ControlEngineDeps } from "./control-engine.js";
 
@@ -279,7 +277,7 @@ export class WorkspaceLeaseEngineImpl implements WorkspaceLeaseEngine {
     if (leaseLoad.status === "not_found") return this.rejectRelease(commandId, "lease_not_found");
     if (leaseLoad.snapshot.ref.aggregateType !== expectedType) return this.rejectRelease(commandId, "kind_mismatch");
 
-    // 2) Only the holder may release (frozen releasedBy === "holder").
+    // 2) Only the holder may release (versioned releasedBy === "holder").
     const lease =
       payload.kind === "read"
         ? (leaseLoad.snapshot as WorkspaceReadLeaseSnapshot).lease
@@ -352,7 +350,7 @@ export class WorkspaceLeaseEngineImpl implements WorkspaceLeaseEngine {
 
   private async commitWriteAcquisition(
     command: AcquireWorkspaceWriteLeaseCommand,
-    deps: Omit<BuildP107WriteAcquireCommitDeps, "eventId" | "occurredAt">,
+    deps: Omit<BuildWorkspaceWriteLeaseAcquireCommitDeps, "eventId" | "occurredAt">,
   ): Promise<AcquireWriteLeaseReceipt> {
     const batch = buildWorkspaceWriteLeaseAcquireLedgerCommit(command, {
       ...deps, eventId: this.deps.eventId(), occurredAt: this.deps.now(),

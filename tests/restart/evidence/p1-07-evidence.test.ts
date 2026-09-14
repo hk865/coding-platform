@@ -4,14 +4,14 @@
  * the P1-07 handlers/projections are implemented (no fake).
  */
 import { describe, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../../src/composition/persistent-platform.js";
 import { isP107Ready, runP107RestartScenario, verifyP107AfterRestart } from "../p1-07-restart-fixtures.js";
 
 const READY = await isP107Ready();
 
 describe.skipIf(!READY)("P1-07 restart-path evidence", () => {
   it("collects the P1-07 evidence block", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       const ev = await runP107RestartScenario(h);
       await h.close();

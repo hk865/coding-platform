@@ -1,0 +1,201 @@
+{
+  "modules": {
+    "src/control/architecture-reconciler": {
+      "files": 3,
+      "directFiles": 3,
+      "subdirectories": []
+    },
+    "src/control/control-engine": {
+      "files": 80,
+      "directFiles": 42,
+      "subdirectories": [
+        "policies",
+        "records"
+      ]
+    },
+    "src/control/dispatch-engine": {
+      "files": 23,
+      "directFiles": 23,
+      "subdirectories": []
+    },
+    "src/control/plan-compiler": {
+      "files": 8,
+      "directFiles": 8,
+      "subdirectories": []
+    },
+    "src/control/verification-engine": {
+      "files": 23,
+      "directFiles": 23,
+      "subdirectories": []
+    },
+    "src/data/artifact-vault": {
+      "files": 5,
+      "directFiles": 5,
+      "subdirectories": []
+    },
+    "src/data/context-compiler": {
+      "files": 33,
+      "directFiles": 33,
+      "subdirectories": []
+    },
+    "src/data/read-model-index": {
+      "files": 11,
+      "directFiles": 11,
+      "subdirectories": []
+    },
+    "src/data/state-ledger": {
+      "files": 7,
+      "directFiles": 7,
+      "subdirectories": []
+    },
+    "src/data/workspace-reader": {
+      "files": 17,
+      "directFiles": 17,
+      "subdirectories": []
+    },
+    "src/execution/worker-runtime": {
+      "files": 14,
+      "directFiles": 14,
+      "subdirectories": []
+    },
+    "src/interaction/human-collaboration": {
+      "files": 5,
+      "directFiles": 5,
+      "subdirectories": []
+    }
+  },
+  "largest": [
+    {
+      "file": "src/data/read-model-index/sqlite-read-model-index.ts",
+      "lines": 4713,
+      "imports": 48
+    },
+    {
+      "file": "src/data/read-model-index/read-model-index.ts",
+      "lines": 3671,
+      "imports": 49
+    },
+    {
+      "file": "src/data/state-ledger/ledger-validation.ts",
+      "lines": 3515,
+      "imports": 39
+    },
+    {
+      "file": "src/control/control-engine/coordination.ts",
+      "lines": 3099,
+      "imports": 31
+    },
+    {
+      "file": "src/contracts/coordination.ts",
+      "lines": 1869,
+      "imports": 8
+    },
+    {
+      "file": "src/control/control-engine/records/coordination.ts",
+      "lines": 1250,
+      "imports": 13
+    },
+    {
+      "file": "src/control/dispatch-engine/coordination-drive.ts",
+      "lines": 1241,
+      "imports": 13
+    },
+    {
+      "file": "src/data/state-ledger/sqlite-ledger.ts",
+      "lines": 1195,
+      "imports": 22
+    },
+    {
+      "file": "src/contracts/ledger.ts",
+      "lines": 1055,
+      "imports": 26
+    },
+    {
+      "file": "src/data/state-ledger/in-memory-ledger.ts",
+      "lines": 1034,
+      "imports": 22
+    },
+    {
+      "file": "src/app/service.ts",
+      "lines": 947,
+      "imports": 86
+    },
+    {
+      "file": "src/data/context-compiler/work-run-materials.ts",
+      "lines": 929,
+      "imports": 21
+    },
+    {
+      "file": "src/control/control-engine/control-engine.ts",
+      "lines": 916,
+      "imports": 57
+    },
+    {
+      "file": "src/contracts/dispatch.ts",
+      "lines": 903,
+      "imports": 5
+    },
+    {
+      "file": "src/harness/persistent-harness.ts",
+      "lines": 851,
+      "imports": 90
+    },
+    {
+      "file": "src/control/control-engine/run-facts.ts",
+      "lines": 723,
+      "imports": 11
+    },
+    {
+      "file": "src/control/control-engine/autonomous-rework.ts",
+      "lines": 719,
+      "imports": 20
+    },
+    {
+      "file": "src/control/control-engine/policies/goal-change-consistency.ts",
+      "lines": 719,
+      "imports": 5
+    }
+  ],
+  "mostImports": [
+    {
+      "file": "src/harness/persistent-harness.ts",
+      "lines": 851,
+      "imports": 90
+    },
+    {
+      "file": "src/app/service.ts",
+      "lines": 947,
+      "imports": 86
+    },
+    {
+      "file": "src/harness/in-memory-harness.ts",
+      "lines": 647,
+      "imports": 85
+    },
+    {
+      "file": "src/control/control-engine/control-engine.ts",
+      "lines": 916,
+      "imports": 57
+    },
+    {
+      "file": "src/data/read-model-index/read-model-index.ts",
+      "lines": 3671,
+      "imports": 49
+    },
+    {
+      "file": "src/data/read-model-index/sqlite-read-model-index.ts",
+      "lines": 4713,
+      "imports": 48
+    },
+    {
+      "file": "src/data/state-ledger/ledger-validation.ts",
+      "lines": 3515,
+      "imports": 39
+    },
+    {
+      "file": "src/control/control-engine/coordination.ts",
+      "lines": 3099,
+      "imports": 31
+    }
+  ]
+}

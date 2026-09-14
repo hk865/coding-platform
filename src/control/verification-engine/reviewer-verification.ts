@@ -234,7 +234,7 @@ export class ReviewerVerification {
         await this.reject(record, 'recovery_evidence_changed', '已冻结恢复授权的资格发生变化；未替换证明或重开执行'); return;
       }
     }
-    // A prior failed atomic save may have left the frozen command only in this
+    // A prior failed atomic save may have left the versioned command only in this
     // process's object. Require durable bytes again before every submission.
     await this.save(record);
     const receipt = await ports.control.replaceFailedWork(recovery.command);

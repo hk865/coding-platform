@@ -1,3 +1,9 @@
+import { deferDispatch } from './execution/dispatch-retry.js';
+import { ExecutionSlots } from './execution/execution-slots.js';
+import { authorizeRuntimeEntry } from './execution/runtime-entry.js';
+import { canonicalJson } from '../../contracts/fingerprint.js';
+import { dispatchBacklog } from '../../contracts/dispatch-backlog.js';
+import {ensureInitialWorkAssignment} from './initial-work-assignment.js';
 import { randomUUID } from 'node:crypto';
 /**
  * Ordinary outbox dispatch: assemble bounded Context, bind/link durable work,
@@ -18,14 +24,15 @@ import type { StateLedger } from "../../contracts/ledger.js";
 import type { ControlEngine } from "../../contracts/modules.js";
 import type { TaskContextPort, TaskContextRequestV1 } from "../../contracts/task-envelope.js";
 import type { DispatchIntentV1, RunSnapshot } from "../../contracts/dispatch.js";
-import { buildDispatchStartCommand, buildRunFactCommand } from "../../contracts/commands/dispatch.js";
+import { buildRunFactCommand } from "../../contracts/commands/dispatch.js";
 import { replacementAttemptRefFor } from "../../contracts/handoff.js";
 import { ensureWorkIdentity } from "./work-identity.js";
-import { createModelCallAccess } from './model-call-access.js';
+import { createModelCallAccess } from './execution/model-call-access.js';
 import { CoordinationDrive } from "./coordination-drive.js";
 import type { SuccessorPreparationResult } from "./successor-run-preparation.js";
 
 export type DispatchEngineDeps = {
+  initialWorkAssignments?: (intent: DispatchIntentV1) => boolean;
   ledger: StateLedger;
   control: ControlEngine;
   contextCompiler: TaskContextPort;
@@ -36,6 +43,7 @@ export type DispatchEngineDeps = {
    */
   now?: () => string;
   maxConcurrentRuns?: number;
+  executionSlots?: ExecutionSlots;
   /** 协作 intent 的消费者 id（确定性；默认 COORDINATION_DRIVE_CONSUMER_ID）。 */
   coordinationConsumerId?: string;
   /** 协作 intent 的领取租约时长（默认 60s）。 */
@@ -44,7 +52,7 @@ export type DispatchEngineDeps = {
   coordinationPageSize?: number;
   prepareAlternativeReports?: (wait: import('../../contracts/coordination.js').WaitConditionSnapshot) => Promise<import('../../contracts/alternative-report.js').AlternativeReportInspection | null>;
   /**
-   * 后继 Run 的准备入口（CM-1A-001 第 3 工作段，缺陷回交 SPEC-01 的正解）。
+   * 后继 Run 的生产准备入口。
    *
    * 缺省表示宿主没有接线这条路径：普通 outbox 的语义与接线前逐字节相同。
    * 接线时**只有**由接续受理产生的 intent 会走到它——从持久事实重建 RunSpec，
@@ -58,20 +66,11 @@ export type DispatchEngineDeps = {
 export class DispatchEngineImpl implements DispatchPort {
   private readonly executionConsumerId = 'dispatch-' + randomUUID();
   private readonly coordination: CoordinationDrive;
-  private active = 0;
-  private readonly waiting: Array<() => void> = [];
-  private async inSlot(work: () => Promise<void>): Promise<void> {
-    const configured = this.deps.maxConcurrentRuns;
-    const limit = configured !== undefined && Number.isFinite(configured) ? Math.max(1, Math.min(32, Math.floor(configured))) : 2;
-    if (this.active >= limit) await new Promise<void>(resolve => this.waiting.push(resolve));
-    else this.active++;
-    try { await work(); } finally {
-      const next = this.waiting.shift();
-      if (next) next(); else this.active--;
-    }
-  }
+  private readonly inFlight = new Set<string>();
+  private readonly slots: ExecutionSlots;
 
   constructor(private readonly deps: DispatchEngineDeps) {
+    this.slots = deps.executionSlots ?? new ExecutionSlots(deps.maxConcurrentRuns);
     this.coordination = new CoordinationDrive({
       ledger: deps.ledger,
       control: deps.control,
@@ -84,24 +83,33 @@ export class DispatchEngineImpl implements DispatchPort {
   }
 
   async drive(trigger: DispatchDriveTrigger): Promise<DispatchDriveResult> {
+    const coordination = await this.coordination.drive(trigger.maxIntents ?? 8);
+    const ordinary = await this.driveOrdinary(trigger);
+    const reported = coordination.backlog.observed > 0 || coordination.claimed > 0 || coordination.failures.length > 0;
+    return { ...ordinary, ...(reported ? { coordination } : {}) };
+  }
+
+  /** Internal seam for the legacy scoped adapter; shares this instance's execution policy. */
+  async driveOrdinary(trigger: DispatchDriveTrigger, scope?: { projectId: string; goalId: string }): Promise<DispatchDriveResult> {
     const maxIntents = trigger.maxIntents ?? 8;
-    // CM-1A-001 第 3 工作段：协作通信（route page / wait deadline / wait admission）**在同一收口内**
-    // 推进（D05：不新增第二生产入口、不新开后台循环）。先跑协作面：本 drive 内由接续产生的唯一后继
-    // outbox 因此可以在同一次 drive 的 ordinary 段被派发；两段各受 maxIntents 上界约束，
-    // 协作面的异常被它自己收进 failures（绝不让 ordinary outbox 停摆）。
-    const coordination = await this.coordination.drive(maxIntents);
-    const pending = await this.deps.ledger.pendingDispatchIntents(maxIntents, { workKind: 'ordinary', dueAt: (this.deps.now ?? (() => new Date().toISOString()))() });
+    const pending = await this.deps.ledger.pendingDispatchIntents(maxIntents, {
+      workKind: 'ordinary', dueAt: (this.deps.now ?? (() => new Date().toISOString()))(), ...(scope ? { scope } : {}),
+    });
 
     let scanned = 0;
     let started = 0;
     let completed = 0;
     const failures: DispatchDriveFailure[] = [];
-    await Promise.all(pending.map(entry => this.inSlot(async () => {
+    await Promise.all(pending.map(async entry => {
+      const key = canonicalJson(entry.ref);
+      if (this.inFlight.has(key)) return;
+      this.inFlight.add(key);
+      try { await this.slots.run(entry.intent, async () => {
       const intent = entry.intent;
       if (intent.work?.kind === 'review') return;
       const outboxRef = entry.ref;
 
-      // P1-06 guard: an intent with a co-committed ReplacementAttempt belongs
+      // handoff guard: an intent with a co-committed ReplacementAttempt belongs
       // to the HandoffPort (driveHandoff) — the normal drive NEVER assembles a
       // non-handoff context for a replacement run (skipped BEFORE scanning;
       // not a failure, not counted).
@@ -166,6 +174,11 @@ export class DispatchEngineImpl implements DispatchPort {
         return;
       }
 
+      if(this.deps.initialWorkAssignments?.(intent)){
+        try{await ensureInitialWorkAssignment(this.deps,intent,workIdentity.workId);}
+        catch(error){failures.push({effect:'none',intentId:intent.intentId,outboxRef,code:'rejected',message:String(error)});return;}
+      }
+
       // 2c. 后继 RunSpec 的准备（只对**接续受理产生**的 intent 生效）。
       //     位置是刻意的：在上下文组装与工作身份之后（材料缺口/身份冲突路径保持零准备），
       //     在 startRun/runtime.start 之前——真实 Runtime 必须先有已登记的 exact runId spec。
@@ -185,48 +198,20 @@ export class DispatchEngineImpl implements DispatchPort {
         }
       }
 
-      // 3. startRun (dispatch-start commit) BEFORE runtime.start.
-      const freshRun = await this.deps.ledger.load(intent.runRef);
-      if (freshRun.status !== 'found') throw Error('Dispatch Run disappeared');
-      const startRevision = freshRun.snapshot.revision;
-      const startCommand = buildDispatchStartCommand({
-        // Preserve the identity used for this persisted command protocol.
-        actor: { kind: "human", id: "user-1" },
-        commandId: "start-" + intent.intentId + "-r" + startRevision,
-        correlationId: intent.correlationId,
-        submittedAt: intent.requestedAt,
-        projectId: intent.projectId,
-        runId: intent.runRef.runId,
-        /** P1-07 fix (P1-03 latent): a run-scoped idempotencyKey — a shared
-         * default would make every start of the same project collide. */
-        idempotencyKey: "p1-03-start-" + intent.runRef.runId + "-r" + startRevision,
-        expectedRevision: startRevision,
-        executionConsumerId: this.executionConsumerId,
-        envelope,
-        manifest,
+      const entryReceipt = await authorizeRuntimeEntry({ ledger: this.deps.ledger, control: this.deps.control,
+        now: this.deps.now ?? (() => new Date().toISOString()) }, {
+        intent, envelope, manifest, consumerId: this.executionConsumerId,
+        identity: revision => ({ actor: { kind: 'human', id: 'user-1' },
+          commandId: 'start-' + intent.intentId + '-r' + revision,
+          correlationId: intent.correlationId, submittedAt: intent.requestedAt,
+          idempotencyKey: 'p1-03-start-' + intent.runRef.runId + '-r' + revision }),
       });
-      const startReceipt = await this.deps.control.startRun(startCommand);
-      if (startReceipt.status !== "committed") {
-        const code = startReceipt.status === "rejected" && startReceipt.code === "not_found" ? "not_found" : "rejected";
-        failures.push({ effect: 'none',
-          intentId: intent.intentId,
-          outboxRef,
-          code,
-          message: "startRun rejected: " + startReceipt.code,
-        });
+      if (entryReceipt.status === 'rejected') {
+        failures.push({ effect: 'none', intentId: intent.intentId, outboxRef,
+          code: entryReceipt.code === 'not_found' ? 'not_found' : 'rejected', message: 'Runtime entry rejected: ' + entryReceipt.code });
         return;
       }
-      if (startReceipt.replayed) return;
-      const generation = ((freshRun.snapshot as RunSnapshot).executionAuthorization?.generation ?? 0) + 1;
-      const entered = await this.deps.control.runFact(buildRunFactCommand({ projectId: intent.projectId,
-        actor: { kind: 'system', id: this.executionConsumerId }, commandId: 'enter-' + intent.intentId + '-g' + generation,
-        idempotencyKey: 'enter-' + intent.intentId + '-g' + generation, correlationId: intent.correlationId,
-        submittedAt: (this.deps.now ?? (() => new Date().toISOString()))(), runId: intent.runRef.runId,
-        expectedRevision: startRevision + 1, fact: { kind: 'execution_entered', runRef: intent.runRef, generation, consumerId: this.executionConsumerId } }));
-      if (entered.status !== 'committed' || entered.replayed) {
-        failures.push({ effect: 'none', intentId: intent.intentId, outboxRef, code: 'rejected', message: 'Execution authorization was fenced before Runtime entry' });
-        return;
-      }
+      if (entryReceipt.status === 'replayed') return;
       started += 1;
 
       // 4. only NOW invoke the runtime (outbox-before-side-effect).
@@ -245,47 +230,23 @@ export class DispatchEngineImpl implements DispatchPort {
           message: String(err),
         });
       }
-    })));
+    }); } finally { this.inFlight.delete(key); }
+    }));
 
     // Known preparation failures may retry mechanically, without another TaskAttempt.
     for (const failure of failures) {
       if (failure.effect !== 'none') continue;
-      const entry = pending.find(row => row.intent.intentId === failure.intentId);
+      const entry = pending.find(row => canonicalJson(row.ref) === canonicalJson(failure.outboxRef));
       if (!entry) continue;
-      const loaded = await this.deps.ledger.load(entry.intent.runRef);
-      if (loaded.status !== 'found' || (loaded.snapshot as RunSnapshot).envelope) continue;
-      const deferred = await this.deps.control.runFact(buildRunFactCommand({
-        actor: { kind: 'system', id: 'dispatch' }, projectId: entry.intent.projectId,
-        runId: entry.intent.runRef.runId, expectedRevision: loaded.snapshot.revision,
-        commandId: 'defer-' + entry.intent.intentId + '-' + entry.revision,
-        idempotencyKey: 'defer-' + entry.intent.intentId + '-' + entry.revision,
-        correlationId: entry.intent.correlationId, submittedAt: (this.deps.now ?? (() => new Date().toISOString()))(),
-        fact: { kind: 'dispatch_deferred', runRef: entry.intent.runRef, reason: failure.message },
-      }));
-      if (deferred.status !== 'committed') failure.message += '; durable retry was not recorded: ' + deferred.code;
+      const rejection = await deferDispatch(this.deps, entry, failure.message);
+      if (rejection) failure.message += '; durable retry was not recorded: ' + rejection;
     }
-    const remaining = await this.deps.ledger.pendingDispatchIntents(Number.MAX_SAFE_INTEGER, { workKind: 'ordinary', includeQuarantined: true });
+    const remaining = await this.deps.ledger.pendingDispatchIntents(Number.MAX_SAFE_INTEGER, { workKind: 'ordinary', includeQuarantined: true, ...(scope ? { scope } : {}) });
     const now = (this.deps.now ?? (() => new Date().toISOString()))();
-    const oldestPendingAt = remaining.map(e => e.pendingAt).sort()[0] ?? null;
-    const backlog = {
-      pending: remaining.length,
-      due: remaining.filter(e => !e.schedule?.quarantined && (!e.schedule || e.schedule.availableAt <= now)).length,
-      delayed: remaining.filter(e => !e.schedule?.quarantined && e.schedule && e.schedule.availableAt > now).length,
-      quarantined: remaining.filter(e => e.schedule?.quarantined).length,
-      oldestPendingAt, oldestPendingAgeMs: oldestPendingAt ? Math.max(0, Date.parse(now) - Date.parse(oldestPendingAt)) : null,
-      nextAvailableAt: remaining.filter(e => !e.schedule?.quarantined).map(e => e.schedule?.availableAt ?? e.pendingAt).sort()[0] ?? null,
-      blocked: remaining.filter(e => e.schedule).slice(0, 32).map(e => ({ intentId: e.intent.intentId,
-        reason: e.schedule!.lastFailure, availableAt: e.schedule!.availableAt, quarantined: e.schedule!.quarantined })),
-    };
-    // 本次 drive 完全没有协作事实可推进时**不**带上 coordination 字段：ordinary-only 的调用方
-    // （以及它们对结果的逐字段比对）看到的形状与之前逐字节相同。有协作事实（含只有 backlog 的）
-    // 时如实给出。
-    const coordinationReported =
-      coordination.backlog.observed > 0 || coordination.claimed > 0 || coordination.failures.length > 0;
+    const backlog = dispatchBacklog(remaining, now);
     return {
       scanned, started, completed, pendingRemaining: remaining.length, failures,
       ...(remaining.length ? { backlog } : {}),
-      ...(coordinationReported ? { coordination } : {}),
     };
   }
 
@@ -363,7 +324,7 @@ export async function consumeDispatchedRun(control: Pick<ControlEngine, 'runFact
         } else {
           // Rejected fact (duplicate/stale/conflict/after_terminal/revision
           // conflict): stop consuming; the outbox/run stay as committed. No
-          // retry in P1-03.
+          // retry in dispatch.
           if (ledger && receipt.code !== 'after_terminal' && receipt.code !== 'duplicate_event') throw Error('Runtime fact was not recorded: ' + receipt.code + ' event=' + event.eventType);
           return completed;
         }

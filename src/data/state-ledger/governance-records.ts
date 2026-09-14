@@ -117,7 +117,7 @@ export async function loadProjectArchitectureBaselineActive(
  * Resolve an installed CompletionPolicy revision for the effective pin of a
  * project. The ACTIVE aggregate stores only the ref; resolution loads the
  * revision snapshot and verifies the identity triple AND that the snapshot's
- * canonical contentDigest matches the installed digest (the pin). P1-02 has
+ * canonical contentDigest matches the installed digest (the pin). Versioned governance has
  * NO default and NO fallback — missing active ref or unresolvable revision is
  * a hard not_found (zero-write).
  */

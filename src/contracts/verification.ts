@@ -191,7 +191,7 @@ export interface VerificationPort {
 }
 
 // ------------------------------------------------------------------------ //
-// ReviewerPort (minimal frozen shape — review WORK is a dispatch Run)        //
+// ReviewerPort (minimal versioned shape — review WORK is a dispatch Run)        //
 // ------------------------------------------------------------------------ //
 
 export type ReviewerCapabilities = {

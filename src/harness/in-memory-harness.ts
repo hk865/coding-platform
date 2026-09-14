@@ -1,5 +1,6 @@
+import { ExecutionSlots } from '../control/dispatch-engine/execution/execution-slots.js';
 import type { PlanCompilerPort, PlanningContextPort } from '../contracts/planning.js';
-import { composeReworkDrive } from './rework-composition.js';
+import { composeReworkDrive } from '../composition/rework-composition.js';
 import { ArchitectureContextCompiler } from '../data/context-compiler/architecture-context-compiler.js';
 import { ControlPolicyExplanation } from '../control/control-engine/policy-explanation.js';
 import { CoordinationContextCompiler } from '../data/context-compiler/coordination-context-compiler.js';
@@ -7,12 +8,12 @@ import { VerificationContextCompiler } from '../data/context-compiler/verificati
 import { createMaterialAccessResolver } from '../data/artifact-vault/material-access-policy.js';
 import { AlternativeReportMaterialCompiler } from '../data/context-compiler/alternative-report-materials.js';
 import { AlternativeReportPreparation } from '../control/dispatch-engine/alternative-report-preparation.js';
-import { AlternativeReportObservation } from './alternative-report-observation.js';
-import { composeQueryDrive } from './query-composition.js';
+import { AlternativeReportObservation } from '../composition/alternative-report-observation.js';
+import { composeQueryDrive } from '../composition/query-composition.js';
 /**
  * Compose the real modules over an isolated in-memory ledger, vault and projection.
  * Runtime/check/reviewer defaults are explicit test capabilities; callers can inject
- * real adapters. The harness adapts protocols and projection timing, never business
+ * real adapters. The test host adapts protocols and projection timing, never business
  * admission rules. Each driveQuery call retains its original fresh engine lifetime.
  */
 import type { WorkspaceBootstrapCommand, WorkspaceBootstrapReceipt } from "../contracts/bootstrap.js";
@@ -70,7 +71,7 @@ import type { HandoffControlPort } from "../contracts/handoff-control.js";
 import type { HandoffProvenanceViewQuery, HandoffProvenanceViewResult } from "../contracts/handoff-view.js";
 import { HandoffContextCompilerImpl } from "../data/context-compiler/handoff-context-compiler.js";
 import { FakeHandoffControlRuntimeAdapter } from "../execution/worker-runtime/handoff-control-adapter.js";
-import { HandoffDriveEngineImpl } from "../control/dispatch-engine/handoff-drive.js";
+import { HandoffDriveEngineImpl } from "../control/dispatch-engine/handoff/handoff-drive.js";
 import { WorkspaceDriveEngineImpl } from "../control/dispatch-engine/workspace-drive.js";
 import { ConfiguredWorkspaceCapabilityPolicy } from "../control/control-engine/policies/workspace-capability.js";
 import type { WorkspaceCapabilityPort } from "../contracts/workspace-capability.js";
@@ -118,7 +119,7 @@ import { PlanningContextCompilerImpl } from "../data/context-compiler/planning-c
 
 
 import type { ReworkDrivePort, ReworkDriveRequestV1, ReworkDriveResultV1, ReworkDriveViewV1 } from '../contracts/rework/drive.js';
-import type { ReworkIssueReadPort } from './rework-composition.js';
+import type { ReworkIssueReadPort } from '../composition/rework-composition.js';
 
 export interface InMemoryHarnessOptions {
   /** Optional trusted source identity; absence cannot establish sourced-current grants. */
@@ -173,12 +174,12 @@ export interface InMemoryHarnessOptions {
   planningContext?: PlanningContextPort;
   /**
    * 路由页一页最多处理多少个订阅（默认与 Control 的页内投递上界一致）。
-   * 它是 CM-1A-001 §3「可在实现中收敛」的分页大小：注入更小的页可以让"同一事件位置必须翻多页"
+   * 它是协作通信「可在实现中收敛」的分页大小：注入更小的页可以让"同一事件位置必须翻多页"
    * 的真实链路在少量订阅下被验证，而不必造 64 个以上订阅。
    */
   coordinationPageSize?: number;
   /**
-   * 未处置问题的只读出口。语义与持久 harness 完全一致（内存与 SQLite 只差存储）；
+   * 未处置问题的只读出口。语义与持久 test host 完全一致（内存与 SQLite 只差存储）；
    * 没有注入时驱动返回**显式不可用**，不假装"没有问题"。
    */
   reworkIssues?: ReworkIssueReadPort;
@@ -194,6 +195,7 @@ export interface InMemoryHarness {
   vault: ArtifactPort;
   contextCompiler: TaskContextPort;
   runtime: RunPort;
+  executionSlots: ExecutionSlots;
   dispatchEngine: DispatchPort;
   /** default VerificationEngine (deterministic check providers). */
   verification: VerificationPort;
@@ -235,7 +237,7 @@ export interface InMemoryHarness {
   planProposal: Pick<PlanCompilerPort, 'request'>;
   /** bounded planning-context port (default implementation). */
   planningContext: PlanningContextPort;
-  /** 返工触发驱动（读未处置问题 → RW-03 编译 → RW-04 四条边界受理）。 */
+  /** 返工触发驱动（读取未处置问题 → PlanCompiler 编译 → Control 按自动返工边界受理）。 */
   reworkDrive: ReworkDrivePort;
   bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
   /** governance install (immutable revision; never auto-activates). */
@@ -373,7 +375,7 @@ export interface InMemoryHarness {
   activateCoordinationPolicy(command: import("../contracts/human-role-collaboration.js").ActivateCoordinationPolicyCommand): Promise<import("../contracts/human-role-collaboration.js").ActivateCoordinationPolicyReceipt>;
   unifiedStatusView(query: import("../contracts/human-role-collaboration.js").UnifiedStatusViewQuery): Promise<import("../contracts/human-role-collaboration.js").UnifiedStatusViewResult>;
 
-  /** install/activate ArchitectureEvolutionPolicy (third governance kind) + remediation entries. */
+  /** ArchitectureEvolutionPolicy install/activation and remediation entries. */
   installArchitectureEvolutionPolicy(command: import("../contracts/architecture-evolution-policy.js").InstallArchitectureEvolutionPolicyRevisionCommand): Promise<import("../contracts/architecture-evolution-policy.js").ArchitectureEvolutionPolicyInstallReceipt>;
   activateArchitectureEvolutionPolicy(command: import("../contracts/architecture-evolution-policy.js").ActivateProjectArchitectureEvolutionPolicyCommand): Promise<import("../contracts/architecture-evolution-policy.js").ArchitectureEvolutionPolicyActivateReceipt>;
   submitRemediationPlanPatch(command: import("../contracts/remediation.js").SubmitRemediationPlanPatchCommand): Promise<import("../contracts/remediation.js").SubmitRemediationPlanPatchReceipt>;
@@ -388,7 +390,7 @@ export interface InMemoryHarness {
   drive(trigger: DispatchDriveTrigger): Promise<DispatchDriveResult>;
   /** 触发一次返工受理（组合根在验证收口后调用；重复触发不产生第二份提案或 revision）。 */
   driveRework(request: ReworkDriveRequestV1): Promise<ReworkDriveResultV1>;
-  /** 未处置问题 + 提案 + 受理结果的只读视图（语义与持久 harness 一致）。 */
+  /** 未处置问题 + 提案 + 受理结果的只读视图（语义与持久 test host 一致）。 */
   reworkView(request: ReworkDriveRequestV1): Promise<ReworkDriveViewV1>;
   /** pull new events from the ledger and push them into the ReadModelIndex */
   advanceProjection(): Promise<ProjectionReceipt>;
@@ -432,7 +434,9 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     synchronizeGrants: () => advanceProjection(), observations: alternativeObservations });
   const runtime: RunPort =
     options.runtime ?? new FakeRuntimeAdapter(options.runtimeScript ?? FAKE_RUNTIME_SCRIPT_COMPLETED_V1);
-  const dispatchEngine: DispatchPort = new DispatchEngineImpl({
+  const executionSlots = new ExecutionSlots();
+  const dispatchEngine = new DispatchEngineImpl({
+    executionSlots,
     ledger,
     control,
     contextCompiler,
@@ -456,6 +460,7 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
   const handoffControl: HandoffControlPort =
     options.handoffControl ?? new FakeHandoffControlRuntimeAdapter(runtime);
   const handoffDrive: HandoffPort = new HandoffDriveEngineImpl({
+    executionSlots,
     ledger,
     control,
     handoffContext,
@@ -463,13 +468,7 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
   });
   const workspaceDrive: WorkspaceDrivePort =
     options.workspaceDrive ??
-    new WorkspaceDriveEngineImpl({
-      ledger,
-      control,
-      contextCompiler,
-      runtime,
-      now: d.clock,
-    });
+    new WorkspaceDriveEngineImpl(dispatchEngine);
   const planningContext: PlanningContextPort = options.planningContext ?? new PlanningContextCompilerImpl({ ledger, vault, contextCompiler, readModel, now: d.clock });
   const workContext: WorkContextPort =
     options.workContext ?? new WorkContextCompilerImpl({ ledger, vault, now: d.clock, readModel });
@@ -484,9 +483,9 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
   const queryContext: QueryContextPort =
     options.queryContext ?? new QueryContextCompilerImpl({ ledger, vault, now: d.clock });
   const snapshot: SnapshotPort = {
-    snapshot: (q) => Promise.resolve({ status: "unsupported", message: "P1-09 lane: public snapshot not wired yet" }),
+    snapshot: (q) => Promise.resolve({ status: "unsupported", message: "Public runtime snapshot capability is not configured" }),
   };
-  // 与持久 harness 同一实现、同一语义；未处置问题只经注入端口取得，
+  // 与持久 test host 同一实现、同一语义；未处置问题只经注入端口取得，
   // 因此 DispatchEngine 不依赖 VerificationEngine 的实现（ModuleDependencyDAG 保持无环）。
   const reworkDrive: ReworkDrivePort = composeReworkDrive({
     ledger,
@@ -496,7 +495,7 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
       (async () => ({
         status: "unavailable" as const,
         code: "unavailable" as const,
-        message: "harness 没有注入未处置问题出口：返工驱动无法读取验证结论，不猜任何问题。",
+        message: "内存测试宿主没有注入未处置问题出口：返工驱动无法读取验证结论，不猜任何问题。",
       })),
   });
   const workspaceReader: WorkspaceReadPort =
@@ -528,6 +527,7 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
     vault,
     contextCompiler,
     runtime,
+    executionSlots,
     dispatchEngine,
     verification,
     reviewContext,

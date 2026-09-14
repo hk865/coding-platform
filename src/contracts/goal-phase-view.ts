@@ -1,8 +1,7 @@
 /**
- * P1-05 ReadModel surface — goal phase / status view + timeline.
+ * context assembly ReadModel surface — goal phase / status view + timeline.
  * Authority: dev_docs/interfaces/goal-view.md (freshness semantics reused),
- * modules/data/read-model-index.md, ticket 05 output artifact
- * deterministic-goal-phase + goal-completion-explanation + goal-timeline-events.
+ * modules/data/read-model-index.md and the goal-phase contracts.
  *
  * Semantics:
  *   - goalStatus and goalTimeline rebuild ONLY from committed GoalPhaseUpdated
@@ -12,7 +11,7 @@
  *     not_found; not_found only after observedCursor covered atLeastCursor.
  *   - Full-scope key: (projectId, goalId). Local goalIds shared across
  *     Projects never collide.
- *   - ModuleProgress/StageProgress are projections of OTHER tickets; they are
+ *   - ModuleProgress/StageProgress are derived projections; they are
  *     NEVER reducer inputs and NEVER fed back into this view (no projection
  *     loop — the goal phase is reduced from canonical facts only).
  */

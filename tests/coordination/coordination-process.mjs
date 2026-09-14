@@ -1,10 +1,10 @@
 import './process-loader.mjs';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { randomUUID, createHash } from 'node:crypto';
-const { createPersistentSqliteHarness } = await import('../../src/harness/persistent-harness.ts');
+const { createPersistentPlatform } = await import('../../src/composition/persistent-platform.ts');
 const { communicationIntentRefFor } = await import('../../src/contracts/coordination.ts');
 const request = JSON.parse(readFileSync(process.argv[2], 'utf8'));
-const h = await createPersistentSqliteHarness({ dir: request.stateDir, deps: { clock: () => request.at, eventId: randomUUID }, coordinationPageSize: 1,
+const h = await createPersistentPlatform({ dir: request.stateDir, deps: { clock: () => request.at, eventId: randomUUID }, coordinationPageSize: 1,
   ...(request.driveConsumer ? { coordinationConsumerId: request.driveConsumer } : {}),
   ...(request.sourceTag ? { sourceApplicability: { capture: async query => ({ status: 'sourced', pin: { schemaVersion: 1,
     projectId: query.projectId, workspaceId: query.workspaceId, sourceSet: query.sourceSet, identity: { workspace: request.workspaceId, commit: null },

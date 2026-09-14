@@ -10,7 +10,7 @@
  * implemented yet" stub throw -> false). No fake.
  */
 import { describe, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../../src/composition/persistent-platform.js";
 import type { GoalSnapshot } from "../../../src/contracts/ledger.js";
 import { resolveProjectCompletionPolicy, resolveProjectArchitectureBaseline } from "../../../src/data/state-ledger/governance-records.js";
 import { isP102Ready, runP102Path, verifyP102AfterRestart } from "../p1-02-restart-fixtures.js";
@@ -19,7 +19,7 @@ const READY = await isP102Ready();
 
 describe.skipIf(!READY)("P1-02 restart-path evidence", () => {
   it("collects the P1-02 restart evidence block", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       const before = await runP102Path(h);
       const observedBefore = h.observedCursor();

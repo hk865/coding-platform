@@ -4,7 +4,7 @@
  * projections are implemented (probe).
  */
 import { describe, it, expect } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { isP108Ready, runP108RestartScenario, verifyP108AfterRestart } from "../restart/p1-08-restart-fixtures.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 
@@ -12,7 +12,7 @@ const READY = await isP108Ready();
 
 describe.skipIf(!READY)("P1-08 real SQLite integration", () => {
   it("full two-project console path + restart equivalence", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     try {
       const evidence = await runP108RestartScenario(h);
       expect(evidence.before.projectA.goalPhase).toBe("COMPLETED");

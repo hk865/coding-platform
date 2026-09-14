@@ -1,7 +1,7 @@
 /**
- * RC-02 WorkspaceReader — 角色必读材料「code」通道的**宿主侧有界源码索引**读取。
+ * 路径边界归位 WorkspaceReader — 角色必读材料「code」通道的**宿主侧有界源码索引**读取。
  *
- * 本文件是从 `data/context-compiler/role-source-index.ts` **归位**过来的实现（RC-02）：
+ * 本文件承接 `data/context-compiler/role-source-index.ts` 的工作区读取实现：
  * 它做的是工作区列举、读取与路径边界适配，而 module-boundaries 把「路径边界、来源 pin、
  * 索引/工具适配」划给 WorkspaceReader。ContextCompiler 侧现在只消费窄端口
  * （`contracts/role-material-channels.ts` 的 `RoleSourceIndexPort`），不再持有实现。
@@ -14,8 +14,8 @@
  * 包成一个宿主注入的窄端口，供 ContextCompiler 在派发准备阶段读取**有界的索引与更小的有界正文**。
  *
  * ── 为什么不用 WorkspaceReadPort 的图读取（保留的设计取舍）───────────────────
- * `WorkspaceReadPort`（P1-12 冻结端口，产品实现是 SourceGraphContextCompiler）把读取钉在
- * **计划固定的架构基线 sourceBinding** 上；产品安装的基线今天不含 sourceBinding（ADR 0003 D2 未开始），
+ * `WorkspaceReadPort`（产品实现是 SourceGraphContextCompiler）把读取钉在
+ * **计划固定的架构基线 sourceBinding** 上；当前产品安装的基线不含 sourceBinding，
  * 该端口对普通运行恒返回 `unsupported`。用它做「code」通道会让要修的场景原样存在
  * （装了 executor 规格的普通运行仍然起不来），因此这里用的是**同一批既有实现**里不依赖基线的
  * 那一份能力（内核工作区读取）。

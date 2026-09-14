@@ -1,14 +1,13 @@
 /**
- * P1-05 Goal phase reduction contracts — "required set -> deterministic Goal phase".
+ * context assembly Goal phase reduction contracts — "required set -> deterministic Goal phase".
  *
  * Authority:
  *   - dev_docs/interfaces/completion-policy.md (§3 non-empty guards, §7
  *     ModuleProgress/StageProgress are projections only, §8 GoalCompletionGuard,
  *     §9 complete 10-level priority, §10 permission boundary, §11 conformance seam)
- *   - dev_docs/planning/proposed/P1-foundation/tickets/05-goal-phase-reduction.md
- *   - IMPLEMENTATION-HANDOFF.md "P1-05 契约与存储语义（冻结）"
+ *   - dev_docs/modules/control/control-engine.md
  *
- * FROZEN semantics (integrator rulings, recorded in the handoff):
+ * Versioned semantics:
  *   - reduceGoalPhase is a PURE function (same canonical inputs -> same phase
  *     and explanation). The Control handler computes it from canonical state
  *     and commits the GoalPhase aggregate via a goal-reduction commit
@@ -37,10 +36,10 @@
  *   - Decision (phase/reasonCodes) and explanation are SEPARATE: the reduction
  *     yields (phase, reasonCodes, refsByCode); GoalCompletionExplanation is
  *     rendered by a DETERMINISTIC template per reason code. Free narrative is
- *     T15, NOT this ticket.
- *   - Side effects are only IDENTIFIED / BLOCKING / RECORDED here — P1-05 has
- *     no disposal / authorization mechanism (P1-10 / P1-11 / P1-14).
- *   - Inputs are replaceable: this ticket uses plan enumeration + point reads;
+ *     outside this reducer's contract.
+ *   - Side effects are only IDENTIFIED / BLOCKING / RECORDED here — context assembly has
+ *     no disposal / authorization mechanism (control intent / plan change / baseline evolution).
+ *   - Inputs are replaceable: the current implementation uses plan enumeration + point reads;
  *     a future summarizer provider can replace them behind the same shape.
  */
 import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
@@ -131,11 +130,11 @@ export const GOAL_PHASE_REASON_CODES: readonly GoalPhaseReasonCode[] = [
 // Goal reduction input (fact snapshot — replaceable producer seam)          //
 // ------------------------------------------------------------------------ //
 
-/** Latest run fact of the task (null = never claimed). P1-05 has no retry /
+/** Latest run fact of the task (null = never claimed). context assembly has no retry /
  * redispatch, so an ENDED run means the task's own frontier cannot advance
  * without new work/authorization (side-effect decision). */
 export type GoalTaskRunFact = {
-  /** mirrors RunSnapshot.status (P1-03): starting | running | ended. */
+  /** mirrors RunSnapshot.status (dispatch): starting | running | ended. */
   status: "starting" | "running" | "ended";
   outcome: import("./dispatch.js").RunOutcome | null;
   exitCode: number | null;
@@ -169,8 +168,7 @@ export type GoalSideEffectFact = {
   kind: "outcome_unknown" | "high_risk";
   runRef: RunRef;
   note: string | null;
-  /** reconciliation only — there is NO disposal path, so this is
-   * always false until a later ticket authorizes disposal. */
+  /** Reconciliation is recorded explicitly; it is never inferred from disposal. */
   reconciled: boolean;
 };
 
@@ -178,9 +176,9 @@ export type GoalDecisionFact = {
   kind: "cancel" | "partial_accept";
   decisionId: string;
   decidedAt: string;
-  /** effective = current + Goal-scoped + Control-authorized. P1-05 has no
+  /** effective = current + Goal-scoped + Control-authorized. context assembly has no
    * decision path, so every producer passes false; the priority table is
-   * frozen for P1-11/P1-14. */
+   * versioned for plan change/baseline evolution. */
   effective: boolean;
   note: string | null;
   partialAcceptTargets?: string[];
@@ -366,7 +364,7 @@ export function reduceGoalFingerprint(command: ReduceGoalCommand): CommandFinger
 }
 
 // ------------------------------------------------------------------------ //
-// Event (P1-05 v1)                                                           //
+// Event (context assembly v1)                                                           //
 // ------------------------------------------------------------------------ //
 
 export type GoalPhaseUpdatedEvent = {

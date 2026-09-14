@@ -5,7 +5,7 @@ import type { WorkspaceCapabilitiesV1, WorkspaceOperationV1, WorkspaceOperationV
 
 
 /**
- * FROZEN pure capability check (read-only-capability-enforcement):
+ * VERSIONED pure capability check (read-only-capability-enforcement):
  *   - no capability (present=false) -> capability_unsupported (never silent);
  *   - write operation requires workspaceWrite (capability_readonly — a reader
  *     run can NEVER upgrade to a write);

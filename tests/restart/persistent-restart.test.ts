@@ -17,7 +17,7 @@ import {
 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import { makeCommitCursor } from "../../src/contracts/ledger.js";
 import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import {
   RESTART_ALPHA,
   RESTART_BETA,
@@ -68,7 +68,7 @@ describe.skipIf(!READY)("P1-01 restart paths — real SQLite adapters", () => {
   it(
     "bootstrap -> CreateGoal -> commit -> close -> reopen -> snapshot load + event rebuild -> same GoalView",
     async () => {
-      const harness = await createPersistentSqliteHarness();
+      const harness = await createPersistentPlatform();
       try {
         const runs = await runBootstrapAndCreateGoals(harness);
         expect(runs.alpha.status).toBe("persisted");

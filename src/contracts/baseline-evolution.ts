@@ -1,17 +1,17 @@
 /**
- * P1-14 BaselineActivation contracts — CandidateArchitectureBaseline /
+ * Baseline evolution contracts — CandidateArchitectureBaseline /
  * ArchitectureChangeDecision / MigrationPlan / MigrationGateTask /
- * BaselineActivation + three frozen minimal interfaces
+ * BaselineActivation and the domain ports used by the application
  * (HumanCollaboration.ArchitectureDecisionPort,
  * ArchitectureReconciler.BaselineEvolutionPort,
  * VerificationEngine.MigrationGatePort).
  *
- * Authority: ticket 14-baseline-activation.md Acceptance:
+ * Authority: the baseline evolution module and interface specifications:
  *   - candidate materializes DETERMINISTICALLY from the proposal + its EXACT
  *     source baseline; materialization requires current active == proposal
  *     source, and candidate digest == proposal.expectedCandidateDigest, else
  *     no Decision may be requested and no migration may run;
- *   - the Decision (via the P1-11 authority path as EXISTENCE evidence, NOT a
+ *   - the Decision (via the plan change authority path as EXISTENCE evidence, NOT a
  *     pre-authorization) records subject/outcome/actor/authority/authorized
  *     target/from ref/exact candidate ref; reject/defer/unauthorized or
  *     target mismatch -> NO activation;
@@ -72,7 +72,7 @@ export function candidateIdFromDigest(digest: string): string {
 }
 
 // ------------------------------------------------------------------------ //
-// ArchitectureChangeDecision (independent decision aggregate; P1-11 authority path is EXISTENCE evidence only) //
+// ArchitectureChangeDecision (independent decision aggregate; plan change authority path is EXISTENCE evidence only) //
 // ------------------------------------------------------------------------ //
 
 export type ArchitectureChangeDecisionRef = { aggregateType: "ArchitectureChangeDecision"; projectId: string; workspaceId: string; decisionId: string };
@@ -139,7 +139,7 @@ export function migrationGateRefFor(projectId: string, workspaceId: string, gate
 }
 
 // ------------------------------------------------------------------------ //
-// BaselineActivation record (the recorded orchestration artifact; the move itself reuses P1-02 activate) //
+// BaselineActivation record; the reference move reuses versioned-governance activation. //
 // ------------------------------------------------------------------------ //
 
 export type BaselineActivationRef = { aggregateType: "BaselineActivation"; projectId: string; workspaceId: string; activationId: string };
@@ -281,7 +281,7 @@ export type BaselineChangeViewResult =
   | { status: "not_found" };
 
 // ------------------------------------------------------------------------ //
-// Frozen minimal interfaces (first consumers only consume these versions)   //
+// Domain ports for architecture decisions, reconciliation and migration gates //
 // ------------------------------------------------------------------------ //
 
 export interface ArchitectureDecisionPort {
@@ -289,7 +289,7 @@ export interface ArchitectureDecisionPort {
   decide(command: RecordArchitectureChangeDecisionCommand): Promise<RecordArchitectureChangeDecisionReceipt>;
   /** Record ONE migration gate result. */
   recordGate(command: RecordMigrationGateCommand): Promise<RecordMigrationGateReceipt>;
-  /** Record ONE baseline activation (CAS guarded; the ref move itself reuses P1-02 activate). */
+  /** Record one baseline activation; its CAS-guarded reference move reuses versioned-governance activation. */
   recordActivation(command: RecordBaselineActivationCommand): Promise<RecordBaselineActivationReceipt>;
 }
 
@@ -303,11 +303,11 @@ export type RecordMaterializeResult =
   | { status: "needs_material"; gaps: string[] }
   | { status: "rejected"; code: "proposal_not_found" | "source_stale" | "digest_mismatch" | "invalid_request"; message: string };
 
-// --- P1-14 LANE-B zone -------------------------------------------------- //
-// Minimal field extension to the FROZEN MigrationGatePort: planRef is now a
+// --- Migration gate plan binding --------------------------------------------------------------- //
+// Minimal field extension to the VERSIONED MigrationGatePort: planRef is now a
 // REQUIRED input. The gate record associates the change view with the existing
 // plan; a missing/empty planRef yields { status: "fail", reasons:["plan_ref_missing"] }.
-// Only this interface changes in lane B; every other contract stays frozen.
+// This additive field preserves every other versioned contract shape.
 export interface MigrationGatePort {
   /** Run (or re-run) the migration gate against candidate + current workspace revision. */
   run(input: { candidateRef: CandidateArchitectureBaselineRef; workspaceRevision: number; planRef: string }): Promise<{ status: "pass"; gate: MigrationGateTaskV1 } | { status: "fail"; gate: MigrationGateTaskV1; reasons: string[] } | { status: "stale"; message: string } | { status: "unsupported"; message: string }>;

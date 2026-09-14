@@ -1,10 +1,10 @@
 /**
- * Module interfaces for P1-00 participants.
+ * Module interfaces for goal, workspace-bootstrap, governance and plan participants.
  * Authority: modules/control/control-engine.md, modules/interaction/human-collaboration.md.
- * P1-00 extension: ControlEngine.bootstrap (versioned addition; submit shape unchanged).
- * P1-02 extension: ControlEngine.install / activate / applyPlan (versioned
- * additions; submit & bootstrap shapes unchanged). Governance and Plan
- * command types come from ./governance.js and ./plan.js.
+ * ControlEngine.bootstrap adds workspace bootstrap without changing submit.
+ * ControlEngine.install, activate and applyPlan add versioned governance and
+ * plan operations without changing submit or bootstrap. Their command types
+ * come from ./governance.js and ./plan.js.
  */
 import type {
   ActorRef,
@@ -96,7 +96,7 @@ import type {
 
 
 /**
- * CM-1A-001 只读邮箱查询：Work 的持久责任地址。
+   * 协作通信只读邮箱查询：Work 的持久责任地址。
  * 类型声明留在 Interface 文件里（Contracts 不反向依赖实现），实现见
  * src/control/control-engine/coordination.ts 的 mailboxView。
  */
@@ -104,7 +104,7 @@ export type MailboxViewQuery = import("./context-continuity.js").WorkContextRef;
 
 /**
  * 只读邮箱结果：读不完整（事件扫描超过上限/页游标不推进/账本不可读）返回 unavailable，
- * 绝不把截断的集合当成完整答案——与 RW-13 resolveTaskWorkIdentity 同一条判据。
+ * 绝不把截断的集合当成完整答案——与 resolveTaskWorkIdentity 使用同一条判据。
  */
 export type MailboxViewResult =
   | { status: "ready"; view: import("./coordination.js").MailboxViewV1 }
@@ -129,10 +129,30 @@ export type CreateGoalResult =
   | { status: "persisted"; goalId: string; commitCursor: CommitCursor }
   | { status: "rejected"; code: UserFacingRejectionCode };
 
-export interface ControlEngine {
+/** Collaboration admission Interface used without the full ControlEngine surface. */
+export interface CoordinationControl {
+  registerAgentInstance(command: RegisterAgentInstanceCommand): Promise<CommunicationWriteReceipt>;
+  startWorkParticipation(command: StartWorkParticipationCommand): Promise<CommunicationWriteReceipt>;
+  endWorkParticipation(command: EndWorkParticipationCommand): Promise<CommunicationWriteReceipt>;
+  sendDirectedRequest(command: SendDirectedRequestCommand): Promise<CommunicationWriteReceipt>;
+  respondDirectedRequest(command: RespondDirectedRequestCommand): Promise<CommunicationWriteReceipt>;
+  createSubscription(command: SubscribeCommand): Promise<CommunicationWriteReceipt>;
+  registerWait(command: RegisterWaitCommand): Promise<CommunicationWriteReceipt>;
+  cancelCommunication(command: CancelCommunicationCommand): Promise<CommunicationWriteReceipt>;
+  claimCommunicationIntent(command: CommunicationClaimCommand): Promise<CommunicationClaimReceipt>;
+  reconcileCommunicationIntent?(command: import('./coordination.js').ReconcileCommunicationIntentCommand): Promise<CommunicationWriteReceipt>;
+  settleCommunicationIntent(command: CommunicationSettleCommand): Promise<CommunicationSettleReceipt>;
+  requestCommunicationIntentCancellation?(command: RequestIntentCancellationCommand): Promise<CommunicationWriteReceipt>;
+  admitWaitSuccessor(command: AdmitWaitSuccessorCommand): Promise<AdmitWaitSuccessorReceipt>;
+  ensureWaitAdmission(command: EnsureWaitAdmissionCommand): Promise<EnsureWaitAdmissionReceipt>;
+  mailboxView(query: MailboxViewQuery): Promise<MailboxViewResult>;
+}
+
+export interface ControlEngine extends CoordinationControl {
+  recordArchitectureReview(command: import("./architecture-review.js").ArchitectureReviewCommand): Promise<import("./architecture-review.js").ArchitectureReviewReceipt>;
   /** Goal create slice: unchanged shape. */
   submit(command: CreateGoalCommand): Promise<CommandReceipt>;
-  /** P1-00 bootstrap extension: versioned addition to the interface. */
+  /** Versioned workspace-bootstrap addition to the interface. */
   bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
   /** Register one explicitly mounted workspace through Control's canonical write face. */
   registerWorkspace(command: import("./workspace-registration.js").RegisterWorkspaceCommand): Promise<import("./ledger.js").LedgerCommitReceipt>;
@@ -154,10 +174,10 @@ export interface ControlEngine {
   /** admit ONE immutable evidence record + binding anchor (atomic; full idempotency). */
   submitEvidence(command: SubmitEvidenceCommand): Promise<SubmitEvidenceReceipt>;
   /** deterministic Task/Gate reduction — the ONLY writer of the canonical
-   * TaskReduction phase (never Goal phase — P1-05). */
+   * TaskReduction phase (never Goal phase — context assembly). */
   reduceTask(command: ReduceTaskCommand): Promise<ReduceTaskReceipt>;
   /** deterministic Goal phase reduction — the ONLY writer of the canonical
-   * GoalPhase (never a Task phase; P1-06+ mechanisms are NOT implemented here). */
+   * GoalPhase (never a Task phase; handoff mechanics remain separate). */
   reduceGoal(command: ReduceGoalCommand): Promise<ReduceGoalReceipt>;
   /** register a bounded HandoffPacket (body-first; immutable aggregate). */
   recordHandoff(command: RecordHandoffCommand): Promise<RecordHandoffReceipt>;
@@ -168,7 +188,7 @@ export interface ControlEngine {
   acquireWorkspaceReadLease(command: AcquireWorkspaceReadLeaseCommand): Promise<AcquireReadLeaseReceipt>;
   /** exclusive write lease (index CAS — invariant #7, one writer per workspace). */
   acquireWorkspaceWriteLease(command: AcquireWorkspaceWriteLeaseCommand): Promise<AcquireWriteLeaseReceipt>;
-  /** holder-only lease release (no cancel/preempt — P1-10). */
+  /** holder-only lease release (no cancel/preempt — control intent). */
   releaseWorkspaceLease(command: ReleaseWorkspaceLeaseCommand): Promise<ReleaseLeaseReceipt>;
   /** evidence join record (explicit conflict preservation; never overwrite). */
   recordIntegrationResult(command: RecordIntegrationResultCommand): Promise<RecordIntegrationResultReceipt>;
@@ -185,7 +205,7 @@ export interface ControlEngine {
   /**
    * 任务工作身份的**权威只读解析**（零写入、无新聚合、无第二份事实）。
    * 按 (projectId, workspaceId, goalId, taskId) 找该任务已存在的 task 工作身份；
-   * 同一任务在账本里存在多条身份时（RW-13 之前留下的历史不一致）给出确定性唯一答案：
+   * 同一任务在账本里存在多条身份时（唯一身份守卫生效前留下的历史不一致）给出确定性唯一答案：
    * 显式声明的身份优先于推导兜底身份，同为显式时取账本顺序最早的一条（不改名、不删除）。
    * 读不完整（超过扫描上限）返回 unavailable——调用方必须失败，不得凭推导 id 硬写新身份。
    */
@@ -196,7 +216,7 @@ export interface ControlEngine {
   recordArchitectureFinding(command: RecordArchitectureFindingCommand): Promise<RecordArchitectureFindingReceipt>;
   /** record one immutable architecture decision brief (material/ambiguous findings). */
   recordArchitectureDecisionBrief(command: RecordArchitectureDecisionBriefCommand): Promise<RecordArchitectureDecisionBriefReceipt>;
-  /** record one immutable candidate baseline proposal (deterministic digest; P1-14 consumes). */
+  /** record one immutable candidate baseline proposal (deterministic digest; baseline evolution consumes). */
   recordCandidateBaselineProposal(command: RecordCandidateBaselineProposalCommand): Promise<RecordCandidateBaselineProposalReceipt>;
   /** submit one durable control intent (desired state FIRST — no side effect until runtime ack). */
   submitControl(command: SubmitControlCommand): Promise<SubmitControlReceipt>;
@@ -217,7 +237,7 @@ export interface ControlEngine {
   /** apply an ACCEPTED decision -> new PlanRevision + GoalRevision + Goal CAS (atomic). */
   applyPlanChange(command: ApplyPlanChangeCommand): Promise<ApplyPlanChangeReceipt>;
   /**
-   * RW-04（ADR 0003 D1-4/D1-5）：返工提案的自动受理——触发源是已提交的验证结论、
+   * 返工提案的自动受理：触发源是已提交的验证结论、
    * 改动落在 inScopeRework、自动化预算未耗尽、人没有拒绝过这条问题，四条同时满足才
    * 以 system 身份落账（提案 + 决定）并复用 applyPlanChange 做 CAS 应用；
    * 任一不满足返回 needs_human_decision 且零写入。
@@ -233,7 +253,7 @@ export interface ControlEngine {
   createRemediationTask(command: import("./remediation.js").CreateRemediationTaskCommand): Promise<import("./remediation.js").CreateRemediationTaskReceipt>;
   /** advance a RemediationTask (writing/verifying/resolved/failed/blocked; CAS@N). */
   advanceRemediationTask(command: import("./remediation.js").AdvanceRemediationTaskCommand): Promise<import("./remediation.js").AdvanceRemediationTaskReceipt>;
-  /** deterministically materialize the candidate baseline from a P1-12 proposal + exact source. */
+  /** Deterministically materialize a candidate baseline from an inspection proposal and its exact source. */
   materializeCandidateBaseline(command: import("./baseline-evolution.js").MaterializeCandidateBaselineCommand): Promise<import("./baseline-evolution.js").MaterializeCandidateBaselineReceipt>;
   /** record one immutable architecture-change decision (exact candidate target). */
   recordArchitectureChangeDecision(command: import("./baseline-evolution.js").RecordArchitectureChangeDecisionCommand): Promise<import("./baseline-evolution.js").RecordArchitectureChangeDecisionReceipt>;
@@ -250,9 +270,9 @@ export interface ControlEngine {
   /** CAS-activate the project coordination policy active ref. */
   activateCoordinationPolicy(command: import("./human-role-collaboration.js").ActivateCoordinationPolicyCommand): Promise<import("./human-role-collaboration.js").ActivateCoordinationPolicyReceipt>;
   /**
-   * RW-11（ADR 0003 D4-1）：安装一份不可改写的角色规格 revision（CAS@0，绝不自动生效）。
+   * 安装一份不可改写的角色规格 revision（CAS@0，绝不自动生效）。
    * 角色规格决定这个角色能拿哪些工具、必须读哪些材料、必须产出什么、何时退出；
-   * 它是第五个治理种类，走与 P1-02／P1-15 相同的 install/activate/CAS 路径，不新增 Module。
+   * 它复用现有版本化治理的 install、activate 和 CAS 路径，不新增 Module。
    */
   installRoleSpec(command: import("./role-spec.js").InstallRoleSpecRevisionCommand): Promise<import("./role-spec.js").InstallRoleSpecRevisionReceipt>;
   /** CAS 激活某个角色在本项目上的生效规格引用（每个角色一份，互相独立）。 */
@@ -261,65 +281,18 @@ export interface ControlEngine {
   grantMaterialAccess(command: import("./material-access.js").GrantMaterialAccessCommand): Promise<import("./material-access.js").GrantMaterialAccessReceipt>;
   revokeMaterialAccess(command: import("./material-access.js").RevokeMaterialAccessCommand): Promise<import("./material-access.js").RevokeMaterialAccessReceipt>;
   /**
-   * CM-1A-001 协作通信受理面。十一条写命令 + 一条只读面，全部经 Control 的
-   * canonical 写入口（StateLedger.commit）；正文 body-first，Control 只登记
-   * ArtifactRef（见 src/control/control-engine/coordination.ts 的文件头纪律）。
-   * 语义、守卫顺序与已知边界都写在那个文件里，这里只声明对外形状。
-   */
-  registerAgentInstance(command: RegisterAgentInstanceCommand): Promise<CommunicationWriteReceipt>;
-  /** 参与关系 @1（CAS@0）+ **同一事务**把发起 Run link 进该 Work。 */
-  startWorkParticipation(command: StartWorkParticipationCommand): Promise<CommunicationWriteReceipt>;
-  /**
-   * 结束一段参与关系（CAS@N；A01「同一 Work 换参与者后等待仍归 Work」）。
-   * 历史参与不改名不删除；重复结束要么幂等 replay 要么 revision_conflict，绝不产生第二条 ended 事实。
-   */
-  endWorkParticipation(command: EndWorkParticipationCommand): Promise<CommunicationWriteReceipt>;
-  /** 发起定向请求（正文已 body-first；目标 Work 必须 active；不匹配 expected 一律 stale）。 */
-  sendDirectedRequest(command: SendDirectedRequestCommand): Promise<CommunicationWriteReceipt>;
-  /** 登记定向请求的回应（CAS@N；只有目标 Work 的 active 参与可以回应）。 */
-  respondDirectedRequest(command: RespondDirectedRequestCommand): Promise<CommunicationWriteReceipt>;
-  /** 建立有界 topic 订阅（CAS@0；起始位置非空时同事务建立首个 route intent）。 */
-  createSubscription(command: SubscribeCommand): Promise<CommunicationWriteReceipt>;
-  /** 注册 all-wait（CAS@0；deadline 非空时同事务建立 wait_deadline intent）。 */
-  registerWait(command: RegisterWaitCommand): Promise<CommunicationWriteReceipt>;
-  /** desired-state-first 取消（request / subscription / wait 共用一条命令形状）。 */
-  cancelCommunication(command: CancelCommunicationCommand): Promise<CommunicationWriteReceipt>;
-  /** 机械领取一个 CommunicationIntent（generation 单调；别人持有则 owned_elsewhere）。 */
-  claimCommunicationIntent(command: CommunicationClaimCommand): Promise<CommunicationClaimReceipt>;
-  /**
-   * CM-1A-001 第 4 步 / D06：Control 复核「exact Run + 材料版本 + 授权」后签发**一次性**模型调用
+   * 协作通信可靠投递规则 / 调用证据与参与语义规则：Control 复核「exact Run + 材料版本 + 授权」后签发**一次性**模型调用
    * 许可（`authorized` 与 `attempted` 是两件不同的事实，不能互相代替）。
    * **可选**：它不是新的调度写入通道，声明为可选避免强迫既有替身实现用不到的入口。
    */
   authorizeModelRequest?(command: import("./dispatch.js").AuthorizeModelRequestCommand): Promise<import("./dispatch.js").AuthorizeModelRequestReceipt>;
-  /** settle 一个已领取的 intent（过期 generation 一律 stale_generation）。 */
-  reconcileCommunicationIntent?(command: import('./coordination.js').ReconcileCommunicationIntentCommand): Promise<CommunicationWriteReceipt>;
-  settleCommunicationIntent(command: CommunicationSettleCommand): Promise<CommunicationSettleReceipt>;
-  /**
-   * **先持久化取消意图**（CM-1A-001 第 4 步 / A07 的 desired-state-first）。
-   * 只把尚未终态的 intent 标记为 cancel_requested；不发放新 generation、不执行任何外部能力。
-   * 执行能力的调用在其后发生，并且必须读到这条已落账的意图。
-   *
-   * **可选**：它不是新的调度写入通道，Control 自己在 desired-state 取消里就会调用它；把它声明成
-   * 可选是为了不去强迫所有既有替身（测试双、Trap）实现一条它们根本用不到的写入口。
-   */
-  requestCommunicationIntentCancellation?(command: RequestIntentCancellationCommand): Promise<CommunicationWriteReceipt>;
-  /** 唯一后继受理（条件满足 ∧ 前驱公开结束；否则零写入 not_ready）。 */
-  admitWaitSuccessor(command: AdmitWaitSuccessorCommand): Promise<AdmitWaitSuccessorReceipt>;
-  /**
-   * 「条件已满足但前驱仍在执行」时**幂等地**建立 wait_admission intent（CM-1A-001 第 3 工作段）。
-   * 判定（条件是否已满足、前驱是否仍 active）只在 Control 做；Dispatch 与宿主只调用本命令。
-   */
-  ensureWaitAdmission(command: EnsureWaitAdmissionCommand): Promise<EnsureWaitAdmissionReceipt>;
-  /** 只读邮箱：从 canonical 事件重建该 Work 的参与/请求/订阅/等待/投递关系（读不完整返回 unavailable）。 */
-  mailboxView(query: MailboxViewQuery): Promise<MailboxViewResult>;
 }
 
 export interface HumanCollaboration {
   createGoal(request: CreateGoalRequest): Promise<CreateGoalResult>;
   goalView(query: GoalViewQuery): Promise<GoalViewResult>;
   /**
-   * P1-08 versioned console query group (READ-ONLY face — only the
+   * Read-only console query group. Only the
    * ReadModelIndex is consumed; control/runtime write faces are never
    * reachable from these methods; no model call, no lease refresh).
    */

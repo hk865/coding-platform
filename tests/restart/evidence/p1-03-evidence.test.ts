@@ -7,14 +7,14 @@
  * AUTO-SKIPS until the P1-03 handlers/projections are implemented (no fake).
  */
 import { describe, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../../src/composition/persistent-platform.js";
 import { isP103Ready, runP103Path, verifyP103AfterRestart } from "../p1-03-restart-fixtures.js";
 
 const READY = await isP103Ready();
 
 describe.skipIf(!READY)("P1-03 restart-path evidence", () => {
   it("collects the P1-03 restart evidence block", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       const before = await runP103Path(h);
       await h.close();

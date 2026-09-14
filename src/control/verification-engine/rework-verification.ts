@@ -22,7 +22,7 @@ export class ReworkVerification {
     const prior = this.journal.reviews.find(review => review.requestId === requestId && same(review.scope, scope));
     if (prior) {
       ensure(this.reviews && prior.roundRequestId === roundRequestId, '返工审阅回执来源不匹配');
-      // Resume the frozen profile; changing the host's current profile must not
+      // Resume the versioned profile; changing the host's current profile must not
       // authorize a new draw or replace a previously failed reviewer.
       return this.reviews.resumeReview(scope, { requestId });
     }

@@ -1,8 +1,8 @@
 /**
- * RW-17 ContextCompiler — 角色必读材料 contract／evidence／decision 的**取材**。
+ *  ContextCompiler — 角色必读材料 contract／evidence／decision 的**取材**。
  *
- * 权威：ADR 0003 D4-3（ContextCompiler 按规格取材，必读材料缺失返回 needs_material）、
- * ARCHITECTURE「Context 生命周期与编排」、module-boundaries「角色规格与真实 Context（D4）」。
+ * 权威：ContextCompiler 按规格取材，必读材料缺失返回 needs_material；参见
+ * ARCHITECTURE「Context 生命周期与编排」与模块边界文档中的角色规格、真实 Context 约束。
  *
  * 本文件只做一件事：**把已经存在的 canonical 事实读出来、按本 Run 的范围筛一遍、连同来源与版本
  * 一起交给调用方**。它不授权、不写状态、不判定完成，也不复制任何模块的业务规则：
@@ -17,7 +17,7 @@
  *                  事件给出候选，随后按精确 ref `load` canonical 聚合逐字段复核（事件只是索引，
  *                  聚合才是事实）。没有这条事实时如实说"本 Goal 还没有已接受的变更决定"。
  *
- * ── 「确定为空」与「材料缺失」不是一回事（本票不放松判据）────────────────────────
+ * ── 「确定为空」与「材料缺失」不是一回事（当前实现不放松判据）────────────────────────
  *   - **材料缺失**（通道不存在／读不到／越权／版本不符／索引与聚合不一致）→ 返回 `unavailable`，
  *     调用方据此 fail-closed（needs_material，模型调用之前终止这次运行）。
  *   - **确定为空**（例如该任务首次运行、`TaskEvidenceIndex` 从未被创建）→ 返回 `empty`：

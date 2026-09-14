@@ -1,17 +1,15 @@
 /**
- * P1-06 Handoff Context contracts — ContextCompiler.HandoffContextPort (this
- * ticket is its first consumer; a versioned extension — the frozen
- * assemble(TaskContextRequestV1) signature is NOT touched).
+ * Handoff Context contracts — ContextCompiler.HandoffContextPort.
+ * The existing assemble(TaskContextRequestV1) signature remains unchanged.
  *
  * Authority:
- *   - dev_docs/modules/data/context-compiler.md (versioned extension)
+ *   - dev_docs/modules/data/context-compiler.md
  *   - dev_docs/interfaces/runtime-collaboration.md (bounded Context; body-first
  *     in ArtifactVault; stale/outdated material never silently reused)
- *   - dev_docs/planning/proposed/P1-foundation/tickets/06-handoff-a-to-b.md
- *   - IMPLEMENTATION-HANDOFF.md "P1-06 契约与存储语义（冻结）"
+ *   - dev_docs/modules/control/dispatch-engine.md
  *
  * Semantics:
- *   - assemble(request) yields B's bounded TaskEnvelope (SAME frozen
+ *   - assemble(request) yields B's bounded TaskEnvelope (SAME versioned
  *     TaskEnvelopeV1 shape — the dispatch/startRun/runtime path is unchanged)
  *     whose bundle is derived from the registered HandoffPacketSnapshot
  *     (objective/constraints/completed/unresolved/refs — NEVER a transcript)
@@ -20,8 +18,8 @@
  *     silently reuses the old packet); the caller re-projects (records a fresh
  *     packet) and retries.
  *   - missing material -> needs_material (honest gaps); old binding /
- *     overreach / budget / size caps use the P1-03 rules (stale_binding is
- *     decided by Control.startRun against the durable intent, as in P1-03).
+ *     overreach / budget / size caps use the dispatch rules (stale_binding is
+ *     decided by Control.startRun against the durable intent, as in dispatch).
  *   - The bundle is body-first in the ArtifactVault; the packet body in the
  *     vault is the ARCHIVAL copy owned by A's run — B never opens it.
  */
@@ -84,7 +82,7 @@ export type HandoffContextManifestV1 = {
 export type HandoffContextResultV1 =
   | {
       status: "ready";
-      /** B's envelope — SAME frozen TaskEnvelope shape (dispatch path unchanged). */
+      /** B's envelope — SAME versioned TaskEnvelope shape (dispatch path unchanged). */
       envelope: TaskEnvelopeV1;
       /** Vault ref of the fresh bounded bundle (body-first; owner = B's run). */
       bundleRef: ArtifactRef;
@@ -93,7 +91,7 @@ export type HandoffContextResultV1 =
   | { status: "needs_material"; gaps: MaterialGapV1[]; selectedRefs: SourceRefV1[] }
   | { status: "rejected"; code: HandoffContextRejectionCode; issues: string[] };
 
-/** HandoffContextPort — FROZEN (interfaces_to_freeze: ContextCompiler extension). */
+/** HandoffContextPort — versioned ContextCompiler material interface. */
 export interface HandoffContextPort {
   assemble(request: HandoffContextRequestV1): Promise<HandoffContextResultV1>;
 }

@@ -1,9 +1,8 @@
 /**
- * P1-16 WorkerRuntime.ContextContinuationPort — explicit continuation
+ * context continuity WorkerRuntime.ContextContinuationPort — explicit continuation
  * capability declaration (FakeRuntime companion for the contract suite).
  *
- * ENTRY FILE (shared baseline — signatures FROZEN; lane B fills the
- * checkContinuation implementation). The Fake adapter HONESTLY declares the
+ * Public entry. The Fake adapter HONESTLY declares the
  * FAKE capability set (sessionRestore=false, contextResume=true,
  * takeoverRun=true) — the fake kernel can resume with a bounded context and
  * continue in a new run, but cannot restore an original session. The REAL
@@ -36,7 +35,7 @@ export class FakeContextContinuationRuntimeAdapter implements ContextContinuatio
     },
   ): Promise<ContextContinuationCapabilityResult> {
     // The fake runtime cannot inspect the ledger; it answers from its own
-    // honest (frozen) capability matrix.
+    // honest (versioned) capability matrix.
     void request;
     return {
       status: "supported",
@@ -56,7 +55,7 @@ export class FakeContextContinuationRuntimeAdapter implements ContextContinuatio
     return observeContinuation(this.runtime, request, observedAt);
   }
 
-  /** P1-16 lane B: the fake runtime has no wall-clock; deterministic marker. */
+  /** The fake runtime has no wall clock, so continuation uses a deterministic marker. */
   private observeTime(): string {
     return "2026-09-06T00:00:00.000Z";
   }

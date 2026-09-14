@@ -1,5 +1,5 @@
 /**
- * P1-10 WorkerRuntime.LifecycleControlPort — fake runtime adapter with
+ * control intent WorkerRuntime.LifecycleControlPort — fake runtime adapter with
  * declared safe points (honest capability).
  */
 import type { ControlIntentV1, LifecycleControlPort, SafePointAcknowledgementV1 } from "../../contracts/control-intent.js";

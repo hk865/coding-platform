@@ -38,7 +38,7 @@ import {
   P113_PROJECT,
 } from "../../src/fixtures/architecture-evolution-policy-fixtures.js";
 import { P113_WORKSPACE, P113_GOAL, P113_FINDING, P113_TASK, buildP113PlanPatchV1, buildP113TaskV1, buildP113SubmitPatchCommand, buildP113CreateTaskCommand, buildP113AdvanceTaskCommand, p113PatchRef, p113FindingRef } from "../contract-support/fixtures/remediation-fixtures.js";
-import { buildP113PlanPatchRecordCommit, buildP113TaskRecordCommit, buildP113TaskAdvanceCommit } from "../../src/control/control-engine/records/remediation.js";
+import { buildRemediationPlanPatchRecordCommit, buildRemediationTaskRecordCommit, buildRemediationTaskAdvanceCommit } from "../../src/control/control-engine/records/remediation.js";
 import { buildP112DeltaFinding, buildP112ReportFinding, buildRecordArchitectureFindingCommand } from "../../src/fixtures/architecture-fixtures.js";
 import { architectureFindingRefFor } from "../../src/contracts/architecture-inspection.js";
 import type { ArchitectureFindingV1 } from "../../src/contracts/architecture-inspection.js";
@@ -261,7 +261,7 @@ describe("remediation: happy path", () => {
     // Engine authority: verdict replaced by the recompute (== default allowed verdict).
     const expectedPatch: RemediationPlanPatchV1 = { ...patch, verdict: { allowed: true, reasons: [] } };
     const expectedPatchCmd = buildP113SubmitPatchCommand(expectedPatch, { commandId: "p113-cmd-patch" });
-    const expectedPatchBatch = buildP113PlanPatchRecordCommit(expectedPatchCmd, { eventId: evtPatch, occurredAt: FIXED, recordedAt: FIXED });
+    const expectedPatchBatch = buildRemediationPlanPatchRecordCommit(expectedPatchCmd, { eventId: evtPatch, occurredAt: FIXED, recordedAt: FIXED });
     expect(ledger.commits[ledger.commits.length - 1]!).toEqual(expectedPatchBatch);
     const patchLoad = await ledger.load(remediationPlanPatchRefFor(PROJECT, WS, patch.patchId));
     expect(patchLoad.status).toBe("found");
@@ -274,7 +274,7 @@ describe("remediation: happy path", () => {
     expect(taskReceipt.deduplicated).toBe(false);
     expect(taskReceipt.existingTaskRef).toBeNull();
     const expectedTask: RemediationTaskV1 = buildP113TaskV1("pending", { createdAt: FIXED, updatedAt: FIXED });
-    const expectedTaskBatch = buildP113TaskRecordCommit(taskCmd, { eventId: "evt-0003", occurredAt: FIXED, task: expectedTask });
+    const expectedTaskBatch = buildRemediationTaskRecordCommit(taskCmd, { eventId: "evt-0003", occurredAt: FIXED, task: expectedTask });
     expect(ledger.commits[ledger.commits.length - 1]!).toEqual(expectedTaskBatch);
 
     // ---- advance writing / verifying / resolved ----
@@ -284,7 +284,7 @@ describe("remediation: happy path", () => {
     expect(adv1.status).toBe("committed");
     const writingTask: RemediationTaskV1 = { ...expectedTask, status: "writing", updatedAt: FIXED };
     expect(ledger.commits[ledger.commits.length - 1]!).toEqual(
-      buildP113TaskAdvanceCommit(
+      buildRemediationTaskAdvanceCommit(
         buildP113AdvanceTaskCommand(P113_TASK, 1, { status: "writing" }, { commandId: "p113-cmd-adv-1" }),
         { eventId: "evt-0004", occurredAt: FIXED, nextRevision: 2, task: writingTask },
       ),
@@ -296,7 +296,7 @@ describe("remediation: happy path", () => {
     expect(adv2.status).toBe("committed");
     const verifyingTask: RemediationTaskV1 = { ...writingTask, status: "verifying" };
     expect(ledger.commits[ledger.commits.length - 1]!).toEqual(
-      buildP113TaskAdvanceCommit(
+      buildRemediationTaskAdvanceCommit(
         buildP113AdvanceTaskCommand(P113_TASK, 2, { status: "verifying" }, { commandId: "p113-cmd-adv-2" }),
         { eventId: "evt-0005", occurredAt: FIXED, nextRevision: 3, task: verifyingTask },
       ),
@@ -315,7 +315,7 @@ describe("remediation: happy path", () => {
     expect(adv3.status).toBe("committed");
     const resolvedTask: RemediationTaskV1 = { ...verifyingTask, status: "resolved", evidenceRefs: [evidenceRef], result: { workspaceRevisionAfter: 2, verified: true, outcome: "PASS" } };
     expect(ledger.commits[ledger.commits.length - 1]!).toEqual(
-      buildP113TaskAdvanceCommit(
+      buildRemediationTaskAdvanceCommit(
         buildP113AdvanceTaskCommand(
           P113_TASK,
           3,

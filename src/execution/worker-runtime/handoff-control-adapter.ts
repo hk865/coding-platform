@@ -1,15 +1,14 @@
 /**
- * P1-06 WorkerRuntime.HandoffControlPort adapter (replayable fake runtime).
+ * handoff WorkerRuntime.HandoffControlPort adapter (replayable fake runtime).
  *
- * ENTRY FILE (shared baseline - exported signature FROZEN; lane B fills the
- * implementation). See IMPLEMENTATION-HANDOFF "P1-06 契约与存储语义" item 4:
+ * Public entry. The runtime-collaboration contract requires:
  *   - MINIMAL control face over the fake runtime: pause/stop per safe point
- *     (NO cancel — P1-10), public snapshot/report ONLY (never hidden context,
+ *     (NO cancel — control intent), public snapshot/report ONLY (never hidden context,
  *     noHiddenContextRead: true);
  *   - review/verification semantic runs still go through the formal dispatch
- *     path (P1-03 RunPort); this adapter is the control/snapshot face.
+ *     path (dispatch RunPort); this adapter is the control/snapshot face.
  *
- * FROZEN semantics:
+ * VERSIONED semantics:
  *   - control({kind:"pause"|"stop", reason, ...}) — the command carries NO
  *     runRef, so it acts on the run referenced "most recently" (the single known
  *     run if exactly one exists, otherwise the most recently started/noted run);
@@ -24,9 +23,9 @@
  *     body. When the real runtime sequence cannot be observed through RunPort,
  *     lastEventSeq is the injected/observed event count (never the bundle body).
  *
- * The adapter composes a RunPort (constructor arg, per the frozen wiring
+ * The adapter composes a RunPort (constructor arg, per the versioned wiring
  * `new FakeHandoffControlRuntimeAdapter(runtime)`) and maintains per-runRef
- * control state. Progress is fed to it via noteRun() (the "轻量同步" the frozen
+ * control state. Progress is fed to it via noteRun() (the "轻量同步" the versioned
  * wiring allows — the RunPort surface has no snapshot/registry accessor). The
  * adapter NEVER opens or exposes a product bundle / transcript.
  */

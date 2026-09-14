@@ -1,12 +1,11 @@
 /**
- * P1-07 frozen contract: PatchArtifact (contract #5 of ticket 07) — the
- * single-writer output. Authority: IMPLEMENTATION-HANDOFF.md "P1-07 契约与
- * 存储语义" item 5 + invariant #7.
+ * workspace concurrency versioned contract: PatchArtifact, the single-writer
+ * output. Authority: the workspace concurrency interface and invariant #7.
  *
  * Semantics:
  *   - body-first: the patch/commit body lives in the ArtifactVault; the
  *     PatchRecord carries ONLY the ArtifactRef (+ bounded metadata) — same
- *     rule as P1-03/04/06.
+ *     rule as dispatch and handoff.
  *   - recordPatch guards (all zero-write except the single atomic commit):
  *     shape -> writer Run exists & ended -> active WriteLease held by this
  *     run -> every changedPath ⊆ lease.scope -> beforeWorkspaceRevision ===

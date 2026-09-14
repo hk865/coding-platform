@@ -1,9 +1,9 @@
 import { executionRetryState } from '../../contracts/execution-authorization.js';
 /**
- * P1-03 Control entry: runtime fact ingestion (run-fact).
+ * dispatch Control entry: runtime fact ingestion (run-fact).
  *
- * Lane B fills the implementation behind the shared-baseline signature.
- * Frozen semantics (Acceptance 5/6/8) implemented here:
+ * Implements the versioned runtime-fact entry behind the shared signature.
+ * Versioned runtime-fact semantics:
  *   - per-run monotonic sequence: a fact with sequence < run.lastEventSeq ->
  *     stale_event; sequence == lastEventSeq and a different runtime event id
  *     -> conflict_event; same sequence+id -> a rejected duplicate (committed
@@ -12,7 +12,7 @@ import { executionRetryState } from '../../contracts/execution-authorization.js'
  *     outcome (completed/cancelled/budget_exhausted/crashed); outcome_unknown
  *     is an EXPLICIT fact (RunOutcomeUnknown), NEVER inferred from a crash or
  *     an exit code;
- *   - exit=0 on run_completed NEVER writes Task.phase (P1-03 has no Task
+ *   - exit=0 on run_completed NEVER writes Task.phase (dispatch has no Task
  *     aggregate writes at all);
  *   - one atomic run-fact commit: RunEventRecorded/RunOutcomeUnknown + Run
  *     snapshot (+ optional TaskAttempt ended / DispatchOutboxEntry done on
@@ -83,8 +83,8 @@ function rejected(
 }
 
 /**
- * Resolve the target Run aggregate ref for a fact command (integrator ruling on
- * lane-B gap 1): BOTH fact kinds carry their full Run identity — runtime_event
+ * Resolve the target Run aggregate ref for a fact command (current contract on
+ * runtime-fact identity rule): BOTH fact kinds carry their full Run identity — runtime_event
  * inside the event, outcome_unknown on the fact — so NO event-log scan is ever
  * needed. Alignment with the command (projectId/aggregateId) is enforced by
  * validateRunFactCommand; this guard is the runtime safety net.
@@ -187,7 +187,7 @@ async function runFactImpl(
   // The Run snapshot advances by one from the CAS window: the shared validator
   // requires expectedVersions[run] === run.revision - 1 AND the CAS requires it
   // === the loaded revision. Folding `revision` from command.expectedRevision
-  // (+1), exactly like the P1-02 plan-acceptance handler folds the goal revision
+  // (+1), exactly like the plan-acceptance handler folds the goal revision
   // from its command, keeps the batch internally consistent and CAS-decidable.
   const baseRun: RunSnapshot = { ...loadedRun, revision: command.expectedRevision + 1 };
 
@@ -534,7 +534,7 @@ async function runFactImpl(
 
 
 // ------------------------------------------------------------------------ //
-// authorizeModelRequest：一次性模型调用许可的**签发**（D06）                     //
+// authorizeModelRequest：一次性模型调用许可的**签发**（调用证据与参与语义规则）                     //
 // ------------------------------------------------------------------------ //
 
 /**
@@ -545,7 +545,7 @@ async function runFactImpl(
  *      信封（没有信封的运行没有可核对的授权）；
  *   2. **材料版本**：从该 Run 的 CommunicationAdmission（若有）取**受理时固定的** Delivery 引用，
  *      逐条复核该 Delivery 存在、且 targetWorkContextRef 就是这次运行所属的 Work。**不采信调用方
- *      提交的引用**——材料版本不是调用方说了算（这正是 A06 要的可核对性）；
+ *      提交的引用**——材料版本不是调用方说了算（这正是 Delivery 输入要求的可核对性）；
  *   3. **授权**：把信封里的 permissions 逐字节固定进许可，模型调用不得超出它。
  *
  * 落账**复用既有 run-fact 通道**（同一 CAS、同一去重语义），不新增写通道：这里只负责复核与

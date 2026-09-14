@@ -5,8 +5,8 @@
  * close/reopen (fresh read-model file) against the SAME ledger event stream.
  */
 import { describe, expect, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import {
   createP108ScenarioRuntime,
   runP108TwoProjectScenario,
@@ -26,11 +26,11 @@ function json(v: unknown): string {
   return JSON.stringify(v);
 }
 
-async function makeHarness(): Promise<PersistentSqliteHarness> {
-  return createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+async function makeHarness(): Promise<PersistentPlatform> {
+  return createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
 }
 
-async function makeTest(h: PersistentSqliteHarness): Promise<P1_08TestHarness> {
+async function makeTest(h: PersistentPlatform): Promise<P1_08TestHarness> {
   const th = toP1_08Harness(h as unknown as P1_08HarnessLike);
   await runP108TwoProjectScenario(th);
   return th;

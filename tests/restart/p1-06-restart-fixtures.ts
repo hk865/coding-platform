@@ -13,8 +13,8 @@ import { classifyRestartProbeError } from "./readiness-probe.js";
  * "P1-06: ... not implemented yet" stub throw makes it false (auto-skip).
  */
 import { expect } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { toP1_06Harness, type P1_06TestHarness } from "../contract-suite/p1-06-harness.js";
 import { prepareP106Scenario, endP106RunA } from "../contract-suite/p1-06-harness.js";
 import {
@@ -30,7 +30,7 @@ import { artifactBodyDigest } from "../../src/contracts/artifact.js";
 
 export async function isP106Ready(): Promise<boolean> {
   try {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       await runP106Path(h);
       return true;
@@ -42,7 +42,7 @@ export async function isP106Ready(): Promise<boolean> {
   }
 }
 
-export async function runP106Path(h: PersistentSqliteHarness) {
+export async function runP106Path(h: PersistentPlatform) {
   const th: P1_06TestHarness = toP1_06Harness(h);
   const sc = await prepareP106Scenario(th);
   const projectId = sc.projectId;
@@ -128,7 +128,7 @@ export async function runP106Path(h: PersistentSqliteHarness) {
 }
 
 export async function verifyP106AfterRestart(
-  h: PersistentSqliteHarness,
+  h: PersistentPlatform,
   before: Awaited<ReturnType<typeof runP106Path>>,
 ): Promise<void> {
   const json = (v: unknown) => JSON.stringify(v);

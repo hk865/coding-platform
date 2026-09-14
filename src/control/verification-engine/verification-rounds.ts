@@ -63,8 +63,8 @@ function configuration(value: unknown): VerificationRoundConfiguration {
  *
  * 角色规格「必产出」的核对所在的编排处（见 ./role-output-completeness.ts）。
  *
- * RW-15 曾把必产出做成**门禁**（缺项 → gaps + outcome 降级 + reduction.withheld 扣留归约）；
- * RW-18 按用户指示改为**声明性提示**：轮次冻结材料时仍逐类核对并如实写进 `roleOutputs`（审计），
+ * 早期实现曾把必产出做成**门禁**（缺项 → gaps + outcome 降级 + reduction.withheld 扣留归约）；
+ * 当前规则按用户裁决改为**声明性提示**：轮次固定材料时仍逐类核对并如实写进 `roleOutputs`（审计），
  * 但缺项**不再**降级结论、**不再**扣留归约、**不再**往 gaps 写门禁条目。理由与退出条件见
  * role-output-completeness.ts 的文件头。完成判定始终只由 ControlEngine 依正式 Evidence 归约。
  */
@@ -253,12 +253,12 @@ export class VerificationRounds {
     round.materialIdentity = material.identity;
     round.sourceProof = material.sourceProof;
     round.gaps = material.gaps.map(message => ({ code: 'source_comparison', message }));
-    // 按角色规格核对本 Run 的**产出期望**有没有见证事实（RW-15 建立，RW-18 改为审计信息）。
+    // 按角色规格核对本 Run 的**产出期望**有没有见证事实；结果只作为审计信息。
     // 它属于轮次冻结的这一份事实（只算一次、随轮次持久化），不随恢复重算：只读规格与账本
     // （含把产出按 runRef 归因到本 Run 的落账事件，见 role-output-completeness.ts），结果写进本轮次记录。
     //
     // 核对结果**不进 gaps、不影响 outcome、不扣留归约**。gaps 在既有语义里读作"本轮次的缺口
-    // ／待修问题"，而 requiredOutputs 现在是角色的**声明性产出期望**（属于记忆／交互历史，不属于
+    // 缺口／待修问题"，而 requiredOutputs 现在是角色的**声明性产出期望**（属于记忆／交互历史，不属于
     // 角色规格的门禁）；把它写进 gaps 会让读者继续把它当成完成判据。如实记录没有消失：它逐类写在
     // round.roleOutputs 上（status／missing／required[].witness／detail），并随轮次持久化、随只读视图返回。
     round.roleOutputs = await evaluateRoleOutputCompleteness({
@@ -373,7 +373,7 @@ export class VerificationRounds {
       return check?.result?.status === 'ready' ? check.result.observations[0]?.result ?? null : null;
     });
     round.outcome = verdict([...round.coverage.map(c => c.result), ...tools]);
-    // RW-18：轮次结论只由**已注册检查的覆盖结果**决定。角色规格的产出期望（requiredOutputs）是
+    // 轮次归约边界：结论只由**已注册检查的覆盖结果**决定。角色规格的产出期望（requiredOutputs）是
     // 声明性提示，它的缺项不再把 PASS 降为 INCONCLUSIVE —— 那些期望逐类记在 round.roleOutputs 上，
     // 是审计信息，不是完成判据（理由与退出条件见 role-output-completeness.ts 文件头）。
   }
@@ -447,7 +447,7 @@ export class VerificationRounds {
   }
 
   private async reduce(round: VerificationRoundRecord) {
-    // 归约**不因**角色规格产出期望的缺项被扣留。RW-15 曾在这里写 reduction.withheld 并
+    // 归约**不因**角色规格产出期望的缺项被扣留。早期门禁语义曾在这里写 reduction.withheld 并
     // 直接返回（"没有见证到必产出就不请求归约"）；用户已明确 requiredOutputs 属于记忆／交互历史、
     // 不属于角色规格的门禁，因此该判据取消。字段 reduction.withheld 保留在契约里：**历史轮次**
     // 落盘的 withheld 是既有事实，按原样保留（不批量重写），新轮次不再写它。

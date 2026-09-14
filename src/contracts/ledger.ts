@@ -1,14 +1,14 @@
 /**
  * StateLedger Interface — snapshot / atomic commit / ordered Event read.
- * Authority: dev_docs/interfaces/state-ledger.md (slice v1).
- * P1-00 versioned extensions: kind-tagged LedgerCommit union with
- * "goal-create" (slice v1) and "bootstrap"; bootstrap commits only succeed on
- * an empty ledger unless replayed; AggregateRef adds BootstrapManifestRef;
+ * Authority: dev_docs/interfaces/state-ledger.md.
+ * The kind-tagged LedgerCommit union includes "goal-create" and "bootstrap";
+ * bootstrap commits only succeed on an empty ledger unless replayed;
+ * AggregateRef includes BootstrapManifestRef;
  * LedgerCommitReceipt rejection code adds "not_empty".
- * P1-02 versioned extensions: "governance-install" / "governance-activate" /
+ * Versioned governance and plan commits use "governance-install", "governance-activate" and
  * "plan-revision" commit kinds; immutable governance revision aggregates,
  * per-kind active refs, accepted PlanRevision + Goal active plan.
- * P1-03 versioned extensions (recorded in the interface doc):
+ * Dispatch commits recorded in the interface document:
  *  - "dispatch-claim" / "dispatch-start" / "run-fact" commit kinds
  *    (TaskLease / TaskAttempt / Run / DispatchOutboxEntry aggregates);
  *  - LedgerCommit.outboxIntents is FIRST non-empty on dispatch-claim
@@ -140,7 +140,7 @@ import type {
   MaterialAccessGrantSnapshot,
   MaterialAccessGrantedEvent,
 } from "./material-access.js";
-// CM-1A-001：协作通信聚合（AgentInstance / participation / request / subscription /
+// 协作通信：协作通信聚合（AgentInstance / participation / request / subscription /
 // delivery / wait / 机械 intent / 后继 admission）与它们的 commit kind。
 import type {
   AgentInstanceRef,
@@ -184,6 +184,7 @@ export type GoalRef = {
 };
 
 export type AggregateRef =
+  | import("./architecture-review.js").ArchitectureReviewRef
   | import('./reviewer-work.js').TaskReviewProtocolRef
   | import('./reviewer-work.js').ReviewWorkRef
   | import('./reviewer-work.js').ReviewResultRef
@@ -275,6 +276,7 @@ export type GoalSnapshot = {
 };
 
 export type AggregateSnapshot =
+  | import("./architecture-review.js").ArchitectureReviewSnapshot
   | import('./reviewer-work.js').TaskReviewProtocolSnapshot
   | import('./reviewer-work.js').ReviewWorkSnapshot
   | import('./reviewer-work.js').ReviewResultSnapshot
@@ -446,7 +448,7 @@ export type RunFactLedgerCommitV1 = {
   /** Non-terminal: [Run@k]. Terminal: [Run@k, TaskAttempt@k', DispatchOutboxEntry@k'']. */
   expectedVersions: ExpectedVersion[];
   /**
-   * 调用证据（CM-1A-001 第 4 步 / D06）：许可签发与调用尝试**各自**是本提交的一条事实。
+   * 调用证据（协作通信可靠投递规则 / 调用证据与参与语义规则）：许可签发与调用尝试**各自**是本提交的一条事实。
    *
    * 两条事实都是**非终态**：不结束 Run、不写 TaskAttempt/outbox、**也不推进 Run 的 revision**。
    * Run 的 revision 是多个消费者（ordinary drive / handoff drive / workspace drive / reviewer）
@@ -892,11 +894,13 @@ export type InitialDesignDecisionRecordLedgerCommitV1 = { commitKind: "initial-d
 export type CoordinationPolicyInstallRecordLedgerCommitV1 = { commitKind: "coordination-policy-install"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [CoordinationPolicyInstalledEvent]; snapshots: [CoordinationPolicyRevisionSnapshot]; outboxIntents: [] };
 export type CoordinationPolicyActivateRecordLedgerCommitV1 = { commitKind: "coordination-policy-activate"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [CoordinationPolicyActivatedEvent]; snapshots: [ProjectCoordinationPolicyActiveSnapshot]; outboxIntents: [] };
 
-/** role-spec governance commit kinds（与 P1-15 coordination-policy 同构）。 */
+/** Role-spec governance commit kinds, structurally aligned with coordination-policy commits. */
 export type RoleSpecInstallRecordLedgerCommitV1 = { commitKind: "role-spec-install"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [RoleSpecInstalledEvent]; snapshots: [RoleSpecRevisionSnapshot]; outboxIntents: [] };
 export type RoleSpecActivateRecordLedgerCommitV1 = { commitKind: "role-spec-activate"; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint; expectedVersions: ExpectedVersion[]; events: [RoleSpecActivatedEvent]; snapshots: [ProjectRoleSpecActiveSnapshot]; outboxIntents: [] };
 
 export type LedgerCommit =
+  | import("./architecture-review.js").ArchitectureReviewCommit
+  | import("./architecture-review.js").ArchitectureDeliveryCommit
   | ReviewLedgerCommitV1
   | import('./workspace-registration.js').WorkspaceRegisterLedgerCommitV1
   | GoalCreateLedgerCommitV1
@@ -989,9 +993,10 @@ export type EventPage = {
   hasMore: boolean;
 };
 
-export type PendingDispatchSelection = { workKind: 'ordinary' | 'review'; dueAt?: string; includeQuarantined?: boolean };
+export type PendingDispatchSelection = { workKind?: 'ordinary' | 'review' | 'replacement'; dueAt?: string; includeQuarantined?: boolean; scope?: { projectId: string; goalId: string } };
 
 export interface StateLedger {
+  workDirectory?(projectId: string, workspaceId: string): Promise<import("./architecture-review.js").WorkDirectoryResult>;
   /** Legacy adapters may omit this capability; consumers must report unavailable. */
   readonly memory?: import('./memory.js').MemoryLedgerPort;
   load(ref: AggregateRef): Promise<SnapshotResult>;

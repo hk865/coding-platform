@@ -1,8 +1,7 @@
 /**
- * ArtifactVault — P1-03 ArtifactPort implementation (first consumer freeze).
+ * ArtifactVault — ArtifactPort implementation used by Dispatch and material readers.
  *
- * ENTRY FILE (shared baseline - exported signature FROZEN). Lane C fills the
- * implementation. Frozen semantics:
+ * Versioned semantics:
  *   - content-addressed immutable bodies (digest = SHA-256 of the UTF-8 body);
  *     identical content replays the SAME ref;
  *   - size cap ARTIFACT_MAX_SIZE_BYTES; missing/empty sourceRefs rejected;
@@ -11,12 +10,12 @@
  *     afterwards fails (never fakes a cross-storage transaction); the
  *     reference only becomes queryable after the run start commit.
  *
- * P1-18 versioned extension (see contracts/material-access.ts): a host may
+ * Material-access support (see contracts/material-access.ts): a host may
  * inject a MaterialAccessResolver, and then a non-owner reader is authorized
  * only by a RECORDED grant that names it, covers the exact material, matches
  * the reader's declared basis, and was issued by the material owner or Control.
  * A mismatched basis is refused as "stale" so inherited material never advances
- * a new version. With no resolver the P1-03 owner-only rule is unchanged.
+ * a new version. With no resolver the dispatch owner-only rule is unchanged.
  *
  * Storage defaults to an internal Map for isolated tests; persistent hosts
  * inject SQLite storage through SqliteArtifactVault. The vault does NOT
@@ -56,7 +55,7 @@ export type StoredRecord = {
   ownerRunRef: ArtifactOwnerRunRef | null;
 };
 
-/** Storage seam + the optional P1-18 grant resolver (host-injected). */
+/** Storage seam + the optional material access grant resolver (host-injected). */
 export type ArtifactVaultOptions = {
   /**
    * Returns the grants RECORDED for this reader that include the requested
@@ -148,7 +147,7 @@ export class ArtifactVault implements ArtifactPort {
   }
 
   /**
-   * P1-18 non-owner read path. All four conditions must hold:
+   * material access non-owner read path. All four conditions must hold:
    *   1. a recorded grant includes this EXACT material and names this reader;
    *   2. the grant is either unconditional or bound to the requester's declared
    *      current basis — otherwise the material is `stale` (inherited material
@@ -156,7 +155,7 @@ export class ArtifactVault implements ArtifactPort {
    *   3. the grant was issued by the material's recorded owner or by Control;
    *   4. (implicitly) the body already passed the integrity check in open().
    * Returns null when no recorded grant exists at all (the caller maps that to
-   * the unchanged P1-03 `forbidden`).
+   * the unchanged dispatch `forbidden`).
    */
   private async authorizeByGrant(
     ref: ArtifactRef,

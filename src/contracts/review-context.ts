@@ -11,7 +11,7 @@
  *     structured rejection, zero write (except the body-first vault.put, whose
  *     failure leaves only an un-adopted artifact).
  *   - This port NEVER starts a Reviewer/Agent; review WORK is a formal
- *     dispatch Run  whose verdict arrives as a
+ *     dispatch Run whose verdict arrives as a
  *     kind=verdict evidence through Control.
  */
 import type { PlanRevisionRef } from "./plan.js";
@@ -115,7 +115,7 @@ export type ReviewContextResultV1 =
   | { status: "needs_material"; gaps: MaterialGapV1[]; selectedRefs: SourceRefV1[] }
   | { status: "rejected"; code: ReviewContextRejectionCode; issues: string[] };
 
-/** ReviewContextPort — FROZEN (interfaces_to_freeze: ContextCompiler extension). */
+/** ReviewContextPort — versioned ContextCompiler review-material interface. */
 export interface ReviewContextPort {
   assemble(request: ReviewContextRequestV1): Promise<ReviewContextResultV1>;
 }

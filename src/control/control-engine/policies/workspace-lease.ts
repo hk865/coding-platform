@@ -4,7 +4,7 @@ import type { LeaseAdmissibility } from "../../../contracts/workspace-lease.js";
 
 
 /**
- * FROZEN pure admissibility: a lease is effective ONLY while
+ * VERSIONED pure admissibility: a lease is effective ONLY while
  * status === "active" AND (expiresAt === null OR expiresAt > now). An expired
  * lease is not admissible but remains a recorded fact the holder may release
  * (already_expired — zero write).

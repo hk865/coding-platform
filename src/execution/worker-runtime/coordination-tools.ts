@@ -1,5 +1,5 @@
 /**
- * 协调 Host 工具（CM-1A-001 第 3 工作段，D03）：模型**唯一**能发起协作通信的入口。
+ * 协调 Host 工具（协作通信，Agent 归因与工具边界）：模型**唯一**能发起协作通信的入口。
  *
  * ── 身份为什么不在模型手里 ────────────────────────────────────────────────────
  * 每个工具的 inputSchema 都是 `.strict()`，字段里**没有** agentInstanceId / participationRef /
@@ -27,7 +27,7 @@
  *     `platformEffect: 'coordination_state'` 标记补足语义。把它们标成 read_only 来换取放行，
  *     正是协议约束 2.3 明令禁止的"伪装成只读工具绕过现有检查"，本实现不做这件事。
  *
- *     **裁决结论（owner 2026-09-13）：不新增 effectClass。** 内核的放行判据只有宿主
+ *     **不新增 effectClass。** 内核的放行判据只有宿主
  *     `hostAuthorizedTools` 一条（`permission-policy.ts` 的 `effectClass !== 'read_only' &&
  *     hostAuthorizedTools.has(tool)`），新增一个名为 `platform_state_write` 的取值**不改变任何
  *     准入强度**，却要再动三个内核文件并重建 dist；因此现状（`workspace_write` +
@@ -61,7 +61,7 @@ type ToolOutcome = Awaited<ReturnType<ToolDefinition['handler']['execute']>>;
  * 平台自己的**效果标记**：这个工具改的是**平台状态**（协调请求/报告/订阅/等待），不是工作区。
  *
  * 为什么单独一个字段：内核 `ToolEffectClass` 是封闭三值（read_only / workspace_write / process），
- * 没有"平台状态写入"这一档（加一档要改内核公共类型，本工作段不擅自改）。因此本平台在工具定义上
+ * 没有"平台状态写入"这一档（加一档要改内核公共类型，此规则不擅自改）。因此本平台在工具定义上
  * 增加这个**自有的、机器可读**的标记：宿主授权名单与用例都读它，声明与能力因此对得上，
  * 而不是靠把工具标成只读蒙过检查。
  */
@@ -141,6 +141,14 @@ export function createCoordinationTools(access: CoordinationToolAccessPort, asse
   const principalNote = 'The caller identity (agent instance, work, participation, role binding and run) is bound by the host; it is not an argument.';
 
   return [
+    {
+      name:'report_architecture_conflict',
+      description:'Report an interface conflict between at least two existing work packages before tests fail. Supply precise affected modules/interfaces/paths, the conflict and recommended candidate description. The host fixes source Run, Plan, baseline and full Work set. New architectural choices must wait for human decision; independent work may continue under current authority. This tool never activates a baseline. '+principalNote+PLATFORM_EFFECT_NOTE,
+      inputSchema:z.object({key:keySchema,description:z.string().min(1).max(4096),proposedDescription:z.string().min(1).max(4096),affectedWorkIds:z.array(z.string().min(1).max(200)).min(2).max(64),affectedRefs:z.object({moduleRefs:z.array(z.string().min(1).max(256)).max(64),interfaceRefs:z.array(z.string().min(1).max(256)).max(64),pathRefs:z.array(z.string().min(1).max(512)).max(64)}).strict()}).strict(),
+      effectClass:'workspace_write',requiredCapabilities:[],platformEffect:'coordination_state',defaultTimeoutMs:20000,outputLimitBytes:16*1024,independentReadOnly:false,
+      summarize:()=>EMPTY_SUMMARY,
+      handler:{execute:(call,options)=>run(call,options,'architecture_report',async()=>access.reportArchitecture?access.reportArchitecture(call.arguments as import('../../contracts/coordination-tools.js').ArchitectureReportInput):{status:'rejected',operation:'architecture_report',code:'unavailable',issues:['当前宿主未配置架构报告入口']})},
+    },
     {
       name: 'coordination_request',
       description: 'Send a formally admitted directed request from this run\'s work to another work in the same workspace. The request body is stored first and the request is only reported as accepted once Control has committed it. Returns the exact requestId and the deliveryId that carries the statement body to the target work. ' + principalNote + PLATFORM_EFFECT_NOTE,
@@ -254,5 +262,5 @@ export function createCoordinationTools(access: CoordinationToolAccessPort, asse
 /** 工具名清单（运行入口据此把它们加入本 Run 启用的工具集）。 */
 export const COORDINATION_TOOL_NAMES = [
   'coordination_request', 'coordination_respond', 'coordination_subscribe',
-  'coordination_wait', 'coordination_cancel', 'coordination_mailbox',
+  'coordination_wait', 'coordination_cancel', 'coordination_mailbox', 'report_architecture_conflict',
 ] as const;

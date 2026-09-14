@@ -1,0 +1,225 @@
+/** Unified planning entry: proposal construction and durable initial coordination.
+ * Context supplies scoped material; Control owns state admission; Dispatch starts runs. */
+import type {
+  AmendGoalRequestV1,
+  ChangeImpactAnalysisV1,
+  PlanPatchV1,
+  PlanProposalV1,
+} from "../../contracts/goal-change.js";
+import { PLAN_CHANGE_MAX_OBLIGATION_DELTAS } from "../../contracts/goal-change.js";
+import type { GoalSnapshot } from "../../contracts/ledger.js";
+import type { PlanCompilerPort, PlanProposalResult, PlanningMaterialPort, InitialPlanningRequest, InitialPlanningRequestResult, PlanningAcceptanceTrigger, PlanningAcceptanceReport } from '../../contracts/planning.js';
+import { InitialPlanCompiler, type InitialPlanningControl } from './initial-plan-compiler.js';
+import type { PlanRevisionSnapshot } from "../../contracts/plan.js";
+import type { WorkContextRef } from "../../contracts/context-continuity.js";
+import type { ControlEngine } from '../../contracts/modules.js';
+import type { PlanningTaskWorkMaterial } from '../../contracts/planning.js';
+import { planningWorkRef, planningWorkGaps, resolvePlanningWorkIdentities } from './planning-work-materials.js';
+
+export type PlanCompilerDeps = {
+  materials: PlanningMaterialPort;
+  control?: InitialPlanningControl;
+  workIdentity?: Pick<ControlEngine, 'resolveTaskWorkIdentity'>;
+  now: () => string;
+};
+
+/** Module entry: bounded amendment proposals and durable initial coordination. */
+export class PlanCompilerImpl implements PlanCompilerPort {
+  private readonly deps: PlanCompilerDeps;
+  private readonly initial: InitialPlanCompiler | undefined;
+  constructor(deps: PlanCompilerDeps) {
+    this.deps = deps;
+    this.initial = deps.control ? new InitialPlanCompiler(deps.control, deps.materials, deps.now) : undefined;
+  }
+
+  async requestInitial(intent: InitialPlanningRequest): Promise<InitialPlanningRequestResult> {
+    if (!intent || typeof intent !== 'object') return { status: 'rejected', code: 'invalid_request', message: 'planning intent is required' };
+    if (intent.kind !== 'initial') return { status: 'rejected', code: 'invalid_request', message: 'initial planning kind is required' };
+    return this.initial?.request(intent) ?? { status: 'rejected', code: 'unavailable', message: 'initial coordination is not configured' };
+  }
+
+  async request(amendment: AmendGoalRequestV1): Promise<PlanProposalResult> {
+    if (!amendment || typeof amendment !== 'object') return { status: 'rejected', code: 'invalid_request', message: 'planning intent is required' };
+    // 1) Bounded intent validation (zero-write).
+    const invalid = validateAmendIntent(amendment);
+    if (invalid !== null) {
+      return { status: "rejected", code: "invalid_request", message: invalid };
+    }
+
+    const material = await this.deps.materials.amendment(amendment);
+    if (material.status !== 'ready') return material;
+    const workIdentities = await resolvePlanningWorkIdentities(
+      { projectId: amendment.projectId, workspaceId: amendment.workspaceId, goalId: amendment.goalRef.goalId },
+      material.plan, this.deps.workIdentity,
+    );
+    const proposal = buildProposal(this.deps.now(), amendment, material.goal, material.plan, workIdentities);
+    return { status: "proposal", proposal };
+  }
+
+  async accept(trigger: PlanningAcceptanceTrigger): Promise<PlanningAcceptanceReport> {
+    if (!trigger || typeof trigger.reason !== 'string' || !trigger.reason.trim()) return { status: 'rejected', code: 'invalid_request', message: 'accept reason is required' };
+    return this.initial?.accept(trigger) ?? { status: 'rejected', code: 'unavailable', message: 'initial coordination is not configured' };
+  }
+}
+
+function validateAmendIntent(intent: AmendGoalRequestV1): string | null {
+  if (intent.schemaVersion !== 1) return "schemaVersion must be 1";
+  if (typeof intent.requestId !== "string" || intent.requestId.length === 0) {
+    return "requestId is required";
+  }
+  if (typeof intent.projectId !== "string" || intent.projectId.length === 0) {
+    return "projectId is required";
+  }
+  if (typeof intent.workspaceId !== "string" || intent.workspaceId.length === 0) {
+    return "workspaceId is required";
+  }
+  if (
+    !intent.goalRef ||
+    intent.goalRef.aggregateType !== "Goal" ||
+    typeof intent.goalRef.projectId !== "string" ||
+    typeof intent.goalRef.goalId !== "string"
+  ) {
+    return "goalRef must reference a Goal";
+  }
+  if (!intent.requestedBy || typeof intent.requestedBy !== "object") {
+    return "requestedBy is required";
+  }
+  if (typeof intent.submittedAt !== "string") return "submittedAt is required";
+
+  if (intent.objectiveDelta !== null) {
+    if (typeof intent.objectiveDelta !== "object") return "objectiveDelta is invalid";
+    if (!["change", "clarify", "restore"].includes(intent.objectiveDelta.kind)) {
+      return "objectiveDelta.kind must be change | clarify | restore";
+    }
+  }
+  if (!Array.isArray(intent.obligationDeltas)) {
+    return "obligationDeltas must be an array";
+  }
+  if (intent.obligationDeltas.length > PLAN_CHANGE_MAX_OBLIGATION_DELTAS) {
+    return `obligationDeltas must not exceed ${PLAN_CHANGE_MAX_OBLIGATION_DELTAS}`;
+  }
+  for (const d of intent.obligationDeltas) {
+    if (typeof d.obligationId !== "string" || d.obligationId.length === 0) {
+      return "each obligation delta requires a non-empty obligationId";
+    }
+    if (!["add", "change", "remove"].includes(d.action)) {
+      return `obligation delta ${d.obligationId} action must be add | change | remove`;
+    }
+    if (typeof d.justification !== "string" || d.justification.length === 0) {
+      return `obligation delta ${d.obligationId} requires a non-empty justification`;
+    }
+  }
+  return null;
+}
+
+function buildProposal(
+  now: string,
+  intent: AmendGoalRequestV1,
+  goal: GoalSnapshot,
+  sourcePlan: PlanRevisionSnapshot,
+  workIdentities: PlanningTaskWorkMaterial[],
+): PlanProposalV1 {
+  const proposalId = "proposal-" + intent.requestId;
+  const patchId = "patch-" + proposalId;
+
+  // The objective comes from the intent delta when present, otherwise it keeps
+  // the CURRENT goal objective (PlanRevisionSnapshot carries no objective).
+  const objective = intent.objectiveDelta?.newObjective ?? goal.objective;
+
+  const patch: PlanPatchV1 = {
+    schemaVersion: 1,
+    patchId,
+    projectId: intent.projectId,
+    workspaceId: intent.workspaceId,
+    goalRef: intent.goalRef,
+    sourcePlanRef: sourcePlan.ref,
+    sourcePlanRevision: sourcePlan.planRevision,
+    patchDraft: {
+      objective,
+      obligationDeltas: intent.obligationDeltas,
+      taskHierarchy: null,
+    },
+    inScope: deriveInScope(intent),
+    outOfScope: ["task set changes", "new domain modules", "dispatch semantics"],
+    generatedAt: now,
+  };
+
+  const impact: ChangeImpactAnalysisV1 = {
+    schemaVersion: 1,
+    analysisId: "impact-" + proposalId,
+    patchRef: sourcePlan.ref,
+    affectedWorks: deriveAffectedWorks(intent, sourcePlan, workIdentities),
+    staleAssumptions: [
+      ...planningWorkGaps(workIdentities, sourcePlan.tasks.map(task => task.taskId), intent),
+      {
+        assumption: "active plan revision 将被替换",
+        reason: "本次变更会创建新的 plan revision 并替换当前 active revision（旧 revision 保留）",
+      },
+      {
+        assumption: "affected obligations 的 evidence 适用性需重算",
+        reason: "obligation 变化后，相关 evidence 在新 binding 锚点下的适用性需重算",
+      },
+    ],
+    materialsToRefresh: ["planContext", "evidenceBindings"],
+    independentWork: [],
+    generatedAt: now,
+  };
+
+  return {
+    schemaVersion: 1,
+    proposalId,
+    projectId: intent.projectId,
+    workspaceId: intent.workspaceId,
+    sourceGoalRef: intent.goalRef,
+    sourcePlanRef: sourcePlan.ref,
+    sourcePlanRevision: sourcePlan.planRevision,
+    patch,
+    impact,
+    alternatives: [],
+    generatedAt: now,
+  };
+}
+
+function deriveInScope(intent: AmendGoalRequestV1): string[] {
+  const inScope: string[] = [];
+  if (intent.objectiveDelta !== null) inScope.push("goal objective");
+  for (const d of intent.obligationDeltas) {
+    inScope.push(`acceptance obligation ${d.obligationId} (${d.action})`);
+  }
+  // Always present so the bounded proposal carries a concrete in-scope set.
+  inScope.push("affected task dispositions");
+  return inScope;
+}
+
+function deriveAffectedWorks(
+  intent: AmendGoalRequestV1,
+  sourcePlan: PlanRevisionSnapshot,
+  workIdentities: PlanningTaskWorkMaterial[],
+): { workRef: WorkContextRef; refreshRequired: boolean; reason: string }[] {
+  const rows: { workRef: WorkContextRef; refreshRequired: boolean; reason: string }[] = [];
+  const seen = new Set<string>();
+  for (const delta of intent.obligationDeltas) {
+    // The affected tasks are the source obligation's taskIds. An "add" delta
+    // has no source obligation yet — mirror the P1-11 fixture clone default
+    // (a new required obligation reuses the first source obligation's tasks).
+    let taskIds: string[] = [];
+    if (delta.action === "add") {
+      const first = sourcePlan.obligations[0];
+      taskIds = first ? first.taskIds : [];
+    } else {
+      const ob = sourcePlan.obligations.find((o) => o.obligationId === delta.obligationId);
+      taskIds = ob ? ob.taskIds : [];
+    }
+    for (const taskId of taskIds) {
+      const workRef = planningWorkRef(workIdentities, taskId, intent);
+      if (workRef === null || seen.has(workRef.workId)) continue;
+      seen.add(workRef.workId);
+      rows.push({
+        workRef,
+        refreshRequired: delta.action !== "remove",
+        reason: `obligation ${delta.obligationId} ${delta.action} 影响 task ${taskId}`,
+      });
+    }
+  }
+  return rows;
+}

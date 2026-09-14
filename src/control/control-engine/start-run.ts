@@ -1,7 +1,7 @@
 /**
- * P1-03 Control entry: run start (record envelope + mark outbox started).
+ * dispatch Control entry: run start (record envelope + mark outbox started).
  *
- * ENTRY FILE (shared baseline - exported signature FROZEN). Guard order (all
+ * Public entry. Guard order (all
  * zero-write except the single atomic dispatch-start commit):
  *   1. schema validation (validateDispatchStartCommand) -> invalid;
  *   2. Run (aggregateId) + TaskAttempt (envelope.attemptRef) +

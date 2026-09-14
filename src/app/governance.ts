@@ -36,7 +36,7 @@ import type {
   InstallCoordinationPolicyReceipt
 } from '../contracts/human-role-collaboration.js';
 import {
-  P15_COORDINATION_POLICY_REVISION,
+  COORDINATION_POLICY_REVISION_V1,
   coordinationPolicyContentDigest
 } from '../contracts/human-role-collaboration.js';
 import type {
@@ -100,7 +100,7 @@ export type GovernanceEntryDeps = {
   activateArchitectureEvolutionPolicy: (
     command: ActivateProjectArchitectureEvolutionPolicyCommand,
   ) => Promise<ArchitectureEvolutionPolicyActivateReceipt>;
-  /** RW-14：第五个种类的写入入口（ControlEngine 既有的 RoleSpecPort，不新增写入路径）。 */
+  /** RoleSpec 写入入口（复用 ControlEngine 的既有 RoleSpecPort）。 */
   installRoleSpec: (command: InstallRoleSpecRevisionCommand) => Promise<InstallRoleSpecRevisionReceipt>;
   activateRoleSpec: (command: ActivateRoleSpecRevisionCommand) => Promise<ActivateRoleSpecRevisionReceipt>;
   /**
@@ -112,14 +112,14 @@ export type GovernanceEntryDeps = {
     ArchitectureBaseline?: VersionedArchitectureBaselineFixture;
     ArchitectureEvolutionPolicy?: VersionedArchitectureEvolutionPolicyFixture;
     /**
-     * RW-14：本产品内置的版本化角色规格 source（按 roleId）。与上面三条同一定位——
+     * 内置 RoleSpec source：按 roleId 提供版本化内容。与上面三条同一定位——
      * 它是 source 内容，本身不产生任何授权，必须经 install（CAS@0）+ activate 才生效；
      * 只有组合根（唯一允许引用 fixtures 的位置）能提供它。
      */
     RoleSpecs?: readonly { roleId: string; content: RoleSpecContentV1 }[];
   };
   /**
-   * RW-14：产品自带的人工派发入口绑定并会被矩阵校验的角色（组合根从各派发面注入，见
+   * 入口角色：产品自带的人工派发入口所绑定、并由矩阵校验的角色（组合根从各派发面注入，见
    * src/app/service.ts）。视图据此回答「装这份矩阵会不会把某个入口一起打断」。
    */
   entryRoles: readonly { roleId: string; purpose: string }[];
@@ -150,7 +150,7 @@ export class GovernanceEntry {
       return installRejected('invalid', null, 'caller-provided', '未知治理种类：kind 必须是 ' + GOVERNANCE_KINDS.join(' / '));
     }
     const callerProvided = input['source'] !== undefined && input['source'] !== null;
-    // RW-14：角色规格的身份是 roleId。同时给出 roleId 与 source 时两处必须说同一个角色，
+    // 角色规格身份一致性：角色规格的身份是 roleId。同时给出 roleId 与 source 时两处必须说同一个角色，
     // 否则“装的是谁”就有两个答案——直接拒绝，而不是挑一个用。
     if (kind === 'RoleSpecRevision' && callerProvided && typeof input['roleId'] === 'string' && input['roleId'].length > 0) {
       const sourceRoleId = isRecord(input['source']) ? input['source']['roleId'] : undefined;
@@ -310,7 +310,7 @@ export class GovernanceEntry {
       case 'CompletionPolicy': return this.deps.defaults.CompletionPolicy;
       case 'ArchitectureBaseline': return this.deps.defaults.ArchitectureBaseline;
       case 'ArchitectureEvolutionPolicy': return this.deps.defaults.ArchitectureEvolutionPolicy;
-      // RW-14：角色规格按 roleId 取内置 source（一份规格一个角色，没有“默认角色”这种东西）。
+      // 内置角色规格来源：按 roleId 取 source（一份规格一个角色，没有“默认角色”这种东西）。
       case 'RoleSpecRevision':
         return typeof roleId === 'string' ? this.deps.defaults.RoleSpecs?.find(source => source.roleId === roleId) : undefined;
       // CoordinationPolicy：没有内置来源，调用方必须显式提交（自动化预算=人的授权）。
@@ -359,7 +359,7 @@ export class GovernanceEntry {
         return {
           status: 'prepared', digest, identityRef, sourceOrigin: origin(callerProvided),
           submit: async (deps, idempotencyKey) => {
-            // 既有 P1-02 写入入口：组合根提供的 install → ControlEngine；identity/时间由这里给出。
+            // 既有版本化治理写入入口：组合根提供的 install → ControlEngine；identity/时间由这里给出。
             const command = buildInstallCommand(fixture, {
               commandId: deps.commandId, correlationId: deps.correlationId, submittedAt: deps.submittedAt,
               projectId, actor, idempotencyKey,
@@ -378,15 +378,15 @@ export class GovernanceEntry {
         }
         const policyId = candidate.policyId;
         const content = candidate.content as unknown as CoordinationPolicyContentV1;
-        // digest 口径与 P1-15 安装入口完全一致（content + policyId + P15_COORDINATION_POLICY_REVISION）。
+        // 摘要口径与 CoordinationPolicy 安装入口一致（content + policyId + COORDINATION_POLICY_REVISION_V1）。
         // 这里仍然自己算一次，是因为它同时是**幂等键**与**视图身份**的输入（落账命令里那份由契约
         // builder 用同一个函数算出来）；规则只有一处，不在这里重新定义。
-        const digest = coordinationPolicyContentDigest(content, policyId, P15_COORDINATION_POLICY_REVISION);
-        const identityRef: GovernanceRevisionRefV1 = { aggregateType: 'CoordinationPolicyRevision', projectId, policyId, revision: P15_COORDINATION_POLICY_REVISION };
+        const digest = coordinationPolicyContentDigest(content, policyId, COORDINATION_POLICY_REVISION_V1);
+        const identityRef: GovernanceRevisionRefV1 = { aggregateType: 'CoordinationPolicyRevision', projectId, policyId, revision: COORDINATION_POLICY_REVISION_V1 };
         return {
           status: 'prepared', digest, identityRef, sourceOrigin: origin(callerProvided),
           submit: async (deps, idempotencyKey) => {
-            // RW-10（P4）：字段级构造在契约命令层，应用层只给 identity／时间／幂等键。
+            // 字段级构造在契约命令层，应用层只给 identity、时间和幂等键。
             const command = buildCoordinationPolicyInstallCommand(
               { policyId, content },
               { commandId: deps.commandId, correlationId: deps.correlationId, submittedAt: deps.submittedAt, projectId, actor, idempotencyKey },
@@ -445,7 +445,7 @@ export class GovernanceEntry {
         return {
           status: 'prepared', digest, identityRef, sourceOrigin: origin(callerProvided),
           submit: async (deps, idempotencyKey) => {
-            // RW-10（P4）：同 CoordinationPolicy，字段级构造在契约命令层。
+            // 与 CoordinationPolicy 相同，字段级构造在契约命令层。
             const command = buildArchitectureEvolutionPolicyInstallCommand(
               fixture,
               { commandId: deps.commandId, correlationId: deps.correlationId, submittedAt: deps.submittedAt, projectId, actor, idempotencyKey },

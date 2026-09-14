@@ -1,8 +1,7 @@
 /**
- * P1-02 Control entry: ApplyPlanRevision (accept a hand-authored plan).
+ * Control entry for ApplyPlanRevision (accept a hand-authored plan).
  *
- * ENTRY FILE (shared baseline). Implements the frozen guard order from
- * IMPLEMENTATION-HANDOFF.md "P1-02 契约与存储语义" and the ticket Acceptance:
+ * Public entry. Implements the versioned contract's guard order:
  *   1. schema validation (validation.validateApplyPlanRevisionCommand) +
  *      aggregateId === payload.plan.goalId scoping invariant;
  *   2. ref resolution: Goal exists (else "not_found"); effective

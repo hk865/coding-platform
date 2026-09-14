@@ -1,9 +1,9 @@
 /**
- * P1-05 Control entry: Goal phase reduction — the ONLY writer of the canonical
+ * context assembly Control entry: Goal phase reduction — the ONLY writer of the canonical
  * GoalPhase aggregate (Worker/Reviewer/ReadModel never write a Goal phase;
  * ModuleProgress/StageProgress are projections and are NEVER reducer inputs).
  *
- * ENTRY FILE (shared baseline — exported signature FROZEN). Frozen flow (all
+ * Public entry. Versioned flow (all
  * zero-write except the single atomic goal-reduction commit):
  *   1. schema validation (validateReduceGoalCommand) -> invalid;
  *   2. Goal exists (else not_found); goal.activePlanRevision may be null
@@ -11,16 +11,16 @@
  *      (else not_found);
  *   3. load the CURRENT plan snapshot (tasks/obligations) + per-task
  *      TaskReduction snapshots (point reads; future: summarizer provider);
- *   4. per required obligation build the coverage summary from the P1-04
+ *   4. per required obligation build the coverage summary from the verification
  *      pure functions (selectEffectiveEvidenceSet per task, then fold an
  *      obligation-level summary: required VRs / covered VRs / blocking /
  *      historical FAIL audit flag / stale / out-of-scope) — current-ANCHOR
  *      applicability ONLY (historical FAIL preserved, never in the guard);
  *   5. identify side effects from Run snapshots (ended + outcome_unknown ->
- *      unreconciled; P1-05 has NO disposal path — reconcileGoalSideEffects
+ *      unreconciled; context assembly has NO disposal path — reconcileGoalSideEffects
  *      identifies and blocks only);
  *   6. decisions/changePending/decisionNeeds/planning come from the seam
- *      (P1-05: decisions = [], changePending = null, decisionNeeds = [],
+ *      (context assembly: decisions = [], changePending = null, decisionNeeds = [],
  *      planning = { possible: !activePlan, failed: false, blockedReason: null });
  *   7. run the PURE reduceGoalPhase (10-level priority table + §3/§8 guard)
  *      and the DETERMINISTIC renderGoalCompletionExplanation — no model calls;
@@ -28,7 +28,7 @@
  *      -> mapReduceGoalReceipt.
  * Re-reduction with the same state yields the same phase/reason codes; a fresh
  * command identity/expectedRevision is required after facts changed
- * (idempotency keys are per command — P1-00 discipline).
+ * (idempotency keys are per command — goal/bootstrap discipline).
  */
 import type { StateLedger, AggregateSnapshot, GoalSnapshot, LedgerCommitReceipt } from "../../contracts/ledger.js";
 import type { PlanRevisionSnapshot } from "../../contracts/plan.js";
@@ -95,7 +95,7 @@ async function reduceGoalImpl(
     plan = planResult.snapshot as PlanRevisionSnapshot;
   }
 
-  // Guard 3-6: facts -> pure input (see header flow). Implemented by lane A.
+  // Guard 3-6: facts -> pure input (see header flow).
   const input = await buildGoalReductionInput(deps, {
     projectId,
     goalId,
@@ -175,7 +175,7 @@ export async function buildGoalReductionInput(
   const workspaceRevision = workspaceResult.status === "found" ? workspaceResult.snapshot.revision : 1;
   const currentAnchor = buildCurrentEffectivityAnchor({ plan, workspaceRevision });
 
-  // Per-task facts: canonical reduction + evidence set + run fact (P1-04 floor).
+  // Per-task facts: canonical reduction + evidence set + run fact (verification floor).
   const taskEffective = new Map<string, EffectiveEvidenceSet>();
   for (const task of plan.tasks) {
     const reductionResult = await deps.ledger.load(taskReductionRefFor(projectId, goalId, task.taskId));
@@ -207,7 +207,7 @@ export async function buildGoalReductionInput(
       if (runResult.status === "found" && runResult.snapshot.ref.aggregateType === "Run") {
         const run = runResult.snapshot as RunSnapshot;
         runFact = { status: run.status, outcome: run.outcome ?? null, exitCode: run.exitCode ?? null };
-        // P1-05: unreconciled unknown side effect — identified & recorded only.
+        // context assembly: unreconciled unknown side effect — identified & recorded only.
         if (run.status === "ended" && run.outcome === "outcome_unknown") {
           sideEffects.push({ kind: "outcome_unknown", runRef: run.ref, note: null, reconciled: false });
         }
@@ -227,7 +227,7 @@ export async function buildGoalReductionInput(
     });
   }
 
-  // Per-obligation evidence summary (P1-04 effective-set folding; values are
+  // Per-obligation evidence summary (verification effective-set folding; values are
   // pure derivations — never written back to history).
   for (const obligation of plan.obligations) {
     const requiredVRs = obligation.verificationRequirements.filter(

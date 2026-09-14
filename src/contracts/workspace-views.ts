@@ -1,13 +1,13 @@
 /**
- * P1-07 ReadModel surface — workspace lease / integration conflict / patch
- * views (display only, NEVER judgement). Authority: IMPLEMENTATION-HANDOFF.md
- * "P1-07 契约与存储语义" item 7 + modules/data/read-model-index.md.
+ * Workspace-concurrency ReadModel surface — workspace lease, integration conflict and patch
+ * views (display only, never judgement). Authority: modules/data/read-model-index.md
+ * and the workspace-concurrency interface specification.
  *
  * Semantics: freshness reuses the opaque CommitCursor contract
  * (not_ready != not_found; not_found only after observedCursor covered
  * atLeastCursor). IntegrationConflict view trusts the FIRST record per
  * conflictKey (authority — no judgement, no merge) and marks late duplicates;
- * escalation is a bare fact marker (semantic routing = P1-15).
+ * escalation is a bare fact marker; semantic routing belongs to HumanCollaboration.
  */
 import type { CommitCursor } from "./command-event.js";
 import type { ConflictScopeV1, WorkspaceLeaseHolderV1 } from "./workspace-lease.js";

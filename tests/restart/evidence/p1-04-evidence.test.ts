@@ -6,14 +6,14 @@
  * P1-04 handlers/projections are implemented (no fake).
  */
 import { describe, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../../src/composition/persistent-platform.js";
 import { isP104Ready, runP104Path, verifyP104AfterRestart } from "../p1-04-restart-fixtures.js";
 
 const READY = await isP104Ready();
 
 describe.skipIf(!READY)("P1-04 restart-path evidence", () => {
   it("collects the P1-04 evidence block", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       const before = await runP104Path(h);
       await h.close();

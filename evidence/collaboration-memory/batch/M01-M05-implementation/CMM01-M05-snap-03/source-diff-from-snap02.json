@@ -1,0 +1,17 @@
+{
+  "oldHead": "ce043a650ecfabd72c55f02695204d58dd9c8b64",
+  "newHead": "ce043a650ecfabd72c55f02695204d58dd9c8b64",
+  "fingerprintChanged": true,
+  "added": [
+    "tests/app/server-shutdown.test.ts"
+  ],
+  "removed": [],
+  "changed": [
+    "src/app/server.ts",
+    "src/contracts/README.md",
+    "src/control/dispatch-engine/coordination-drive.ts",
+    "src/harness/README.md",
+    "tests/control/p1-15-role-rework-loop.test.ts",
+    "tests/control/reviewer-existing-drivers-isolation.test.ts"
+  ]
+}

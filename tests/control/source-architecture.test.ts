@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { prepareDispatchScenario, buildPreparedClaim, buildPreparedEnvelope } from '../contract-suite/p1-03-harness.js';
 import { buildInstallCommand, buildActivateCommand } from "../../src/fixtures/governance-fixtures.js";
 import { architectureBaselinePinFor } from "../../src/contracts/governance.js";
@@ -33,7 +33,7 @@ it('binds real TS sources to an immutable baseline, records distinct deltas, reo
  const index=await workspaceProjectIndex(root);cleanup.push(async()=>index.dispose());
  const source=await captureArchitectureSource(index,{...scope,workspaceRevision:1},mappings);
  await mkdir(join(directory,'state'));
- let h=await createPersistentSqliteHarness({dir:join(directory,'state')});cleanup.push(()=>h.close());
+ let h=await createPersistentPlatform({dir:join(directory,'state')});cleanup.push(()=>h.close());
  // The source baseline is explicit initial governance, installed before the plan.
  // Do not bypass the formal plan-revision protocol by replacing an already active plan.
  await prepareDispatchScenario({...h,submit:command=>h.control.submit(command),install:command=>{

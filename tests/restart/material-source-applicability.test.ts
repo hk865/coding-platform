@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
 import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
 import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from '../contract-support/fixtures/bootstrap-fixture-v1.js';
@@ -39,7 +39,7 @@ it.each(['memory', 'sqlite'] as const)('source applicability checks real files w
   const deps = { eventId: () => 'source-applicability-event-' + ++eventSequence };
   let duringCapture: { entered: () => void; resume: Promise<void> } | null = null;
   const sourcePort: SourceApplicabilityPort = { capture: async (query, signal) => { const result = await sourceApplicability.capture(query, signal); const paused = duringCapture; if (paused) { duringCapture = null; paused.entered(); await paused.resume; } return result; } };
-  let persistent = adapter === 'sqlite' ? await createPersistentSqliteHarness({ dir: join(dir, 'state'), sourceApplicability: sourcePort, deps }) : null;
+  let persistent = adapter === 'sqlite' ? await createPersistentPlatform({ dir: join(dir, 'state'), sourceApplicability: sourcePort, deps }) : null;
   let host = persistent ?? createInMemoryHarness({ sourceApplicability: sourcePort, deps });
   try {
     const boot = buildBootstrapCommand(WORKSPACE_BOOTSTRAP_FIXTURE_V1, { commandId: 'boot', correlationId: 'boot', submittedAt: AT });

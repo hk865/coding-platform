@@ -8,13 +8,13 @@ import { classifyRestartProbeError } from "./readiness-probe.js";
  * "P1-07 lane ... not implemented yet" stub throw makes it false (auto-skip).
  */
 import { expect } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { toP1_07Harness, runP107FullScenario, P107_WORKSPACE, type P1_07HarnessLike, type P1_07TestHarness } from "../contract-suite/p1-07-harness.js";
 
 export async function isP107Ready(): Promise<boolean> {
   try {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       await runP107RestartScenario(h);
       return true;
@@ -34,7 +34,7 @@ export type P107RestartEvidence = {
   integrationViewBefore: string;
 };
 
-export async function runP107RestartScenario(h: PersistentSqliteHarness): Promise<P107RestartEvidence> {
+export async function runP107RestartScenario(h: PersistentPlatform): Promise<P107RestartEvidence> {
   const th: P1_07TestHarness = toP1_07Harness(h as unknown as P1_07HarnessLike);
   const before = await runP107FullScenario(th);
   const cursorBefore = String(h.observedCursor());
@@ -51,7 +51,7 @@ export async function runP107RestartScenario(h: PersistentSqliteHarness): Promis
 }
 
 /** Field-for-field restart equivalence (snapshots + rebuilt views + cursor). */
-export async function verifyP107AfterRestart(restarted: PersistentSqliteHarness, evidence: P107RestartEvidence): Promise<void> {
+export async function verifyP107AfterRestart(restarted: PersistentPlatform, evidence: P107RestartEvidence): Promise<void> {
   const th: P1_07TestHarness = toP1_07Harness(restarted as unknown as P1_07HarnessLike);
   // Rebuild the projection from the persisted EventPages (the restart semantics:
   // views are event projections, never load-bearing state).

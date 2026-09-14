@@ -1,10 +1,10 @@
-# 组合根与测试宿主
+# 测试宿主
 
 装配 Ledger、Vault、Control、读模型和 Adapter，提供运行入口。
 
 ## 源码入口
 
-- [persistent-harness.ts](persistent-harness.ts)
+- [生产持久装配](../composition/persistent-platform.ts)
 - [in-memory-harness.ts](in-memory-harness.ts)
 - [index.ts](index.ts)
 

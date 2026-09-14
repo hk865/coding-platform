@@ -1,4 +1,4 @@
-/** P1-13 shared fixtures: ArchitectureEvolutionPolicy local fixture + install/activate folds. */
+/** Shared ArchitectureEvolutionPolicy fixture and install/activate folds. */
 import type { CommandIdentity } from "../contracts/command-event.js";
 import type { VersionedArchitectureEvolutionPolicyFixture, ArchitectureEvolutionPolicyRevisionSnapshot, ProjectArchitectureEvolutionPolicyActiveSnapshot, InstallArchitectureEvolutionPolicyRevisionCommand, ActivateProjectArchitectureEvolutionPolicyCommand } from "../contracts/architecture-evolution-policy.js";
 import { architectureEvolutionPolicyContentDigest, architectureEvolutionPolicyInstallFingerprint, architectureEvolutionPolicyActivateFingerprint } from "../contracts/architecture-evolution-policy.js";
@@ -39,8 +39,8 @@ export function p113PolicyPin(projectId: string = P113_PROJECT) {
 }
 
 /**
- * RW-10 薄包装：字段级构造交给契约命令层（contracts/commands/governance.ts），本文件只填
- * P1-13 的测试默认值（固定时间 P113_SCHEMA、user-1、commandId 派生键）。生产入口（应用层）
+ * 薄包装：字段级构造交给契约命令层（contracts/commands/governance.ts），本文件只填
+ * 测试默认值（固定时间常量、user-1、commandId 派生键）。生产入口（应用层）
  * 与夹具因此走同一条构造路径，不会再各自拼一份 payload。
  */
 export function buildP113InstallCommand(fixture: VersionedArchitectureEvolutionPolicyFixture, deps: { commandId: string; projectId: string; idempotencyKey?: string; actor?: CommandIdentity["actor"] }): InstallArchitectureEvolutionPolicyRevisionCommand {
@@ -92,7 +92,7 @@ export function buildP113InstallLedgerCommit(command: InstallArchitectureEvoluti
   };
 }
 
-/** RW-10 薄包装（同上）：只填测试默认值，字段级构造在契约命令层。 */
+/** 薄包装（同上）：只填测试默认值，字段级构造在契约命令层。 */
 export function buildP113ActivateCommand(targetPin: ReturnType<typeof p113PolicyPin>, deps: { commandId: string; projectId: string; expectedRevision: number; idempotencyKey?: string }): ActivateProjectArchitectureEvolutionPolicyCommand {
   return buildArchitectureEvolutionPolicyActivateCommand(
     { ...targetPin },

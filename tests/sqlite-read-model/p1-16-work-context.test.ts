@@ -11,7 +11,7 @@
  * Restart equivalence is verified by closing/reopening the same DB file.
  */
 import { describe, expect, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import {
   createP108ScenarioRuntime,
   runP108TwoProjectScenario,
@@ -64,7 +64,7 @@ async function seedWorld(h: P1_16TestHarness) {
 
 describe("P1-16 LANE-A SQLite work-context projection", () => {
   it("projects the binding + notes rows and survives close/reopen (restart equivalence)", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     const h16 = toP1_16Harness(h as never);
     try {
       const { world } = await seedWorld(h16);
@@ -100,7 +100,7 @@ describe("P1-16 LANE-A SQLite work-context projection", () => {
   });
 
   it("scope isolation: the SAME local workId in project B has its OWN rows (no cross-project read)", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     const h16 = toP1_16Harness(h as never);
     try {
       const { world } = await seedWorld(h16);
@@ -124,7 +124,7 @@ describe("P1-16 LANE-A SQLite work-context projection", () => {
   });
 
   it("notes append in order and the multi-run link path is projected", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     const h16 = toP1_16Harness(h as never);
     try {
       const { world } = await seedWorld(h16);
@@ -157,7 +157,7 @@ describe("P1-16 LANE-A SQLite work-context projection", () => {
   });
 
   it("freshness: a never-bound work is not_found (distinct from not_ready)", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     const h16 = toP1_16Harness(h as never);
     try {
       await seedWorld(h16);

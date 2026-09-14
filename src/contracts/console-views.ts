@@ -1,11 +1,10 @@
 /**
- * P1-08 Read-only status & Evidence console — read-model query contracts.
- * Authority: dev_docs/planning/proposed/P1-foundation/tickets/08-status-evidence-console.md
- * (7 contracts) + dev_docs/interfaces/{goal-view,runtime-collaboration,human-design-status}.md
- * + IMPLEMENTATION-HANDOFF.md "P1-08 只读控制台契约与查询语义" (integrator rulings).
+ * Read-only status and Evidence console contracts for read-model queries.
+ * Authority: dev_docs/interfaces/{goal-view,runtime-collaboration,human-design-status}.md
+ * and dev_docs/modules/data/read-model-index.md.
  *
  * Semantics:
- *   - The console is a VERSIONED extension of HumanCollaboration (no new
+ *   - The console is a versioned HumanCollaboration surface (no new
  *     Module; ARCHITECTURE §Plane — query tools are a candidate access
  *     capability of HumanCollaboration). It is a READ-ONLY face: every
  *     query goes through the ReadModelIndex interface only; the console path
@@ -20,7 +19,7 @@
  *   - Displayed phases pair source revision/cursor: every row carries
  *     sourceCursor; the plan matrix SEPARATES the plan-declared phase
  *     (accepted PlanRevision snapshot) from the formal TaskReduction phase;
- *     completion conclusions link effectiveEvidenceIds (P1-04 recomputation).
+ *     completion conclusions link effectiveEvidenceIds (verification recomputation).
  *   - Reports are reports: CompletionClaim/verdict/ReviewPacket kinds are
  *     displayed AS REPORT kinds; they never substitute the formal phase.
  *   - Freshness reuses the opaque CommitCursor contract: not_ready !=
@@ -72,9 +71,9 @@ import { canonicalJson } from "./fingerprint.js";
  * Four-state marker for SEMANTIC EXPLANATIONS (human-design-status.md):
  * pending = explanation not produced yet; ready = produced against the
  * current facts; stale = produced against an older cursor than the facts
- * shown; unavailable = no such explanation exists. P1-08 console is a
- * PASSIVE deterministic face: model semantic explanations are NOT produced
- * (they belong to P1-09/15), so the marker is always "unavailable" while
+ * shown; unavailable = no such explanation exists. The read-only console is a
+ * passive deterministic view: model semantic explanations are produced through
+ * the semantic QueryJob path, so the marker is always "unavailable" while
  * deterministic reason codes are shown separately with their sourceCursor.
  */
 export type ConsoleExplanationStatus = "pending" | "ready" | "stale" | "unavailable";
@@ -152,7 +151,7 @@ export type PortfolioViewQuery = {
 export type PortfolioEntry = {
   projectId: string;
   workspaceId: string;
-  /** Bootstrap manifest entry projection (P1-00): the bootstrapped revision. */
+  /** Bootstrap manifest entry projection (goal/bootstrap): the bootstrapped revision. */
   projectRevision: number;
   workspaceRevision: 1;
   /** Source digest of the versioned bootstrap manifest (source provenance). */
@@ -388,7 +387,7 @@ export type TaskEvidenceView = {
   planRevision: number;
   /** Evidence in admission order (reports with their own kind/source). */
   evidence: TaskEvidenceEntry[];
-  /** Completion conclusion: the effective evidence ids (P1-04 pure recomputation). */
+  /** Completion conclusion: the effective evidence ids (verification pure recomputation). */
   effectiveEvidenceIds: string[];
   blockingEvidenceIds: string[];
   staleEvidenceIds: string[];
@@ -406,7 +405,7 @@ export type TaskEvidenceView = {
   } | null;
   /** Display note: vault bodies are NEVER opened by this view. */
   bodyPolicy: "ref_only";
-  /** Semantic (model) explanation marker — P1-08 produces none (unavailable);
+  /** Semantic (model) explanation marker — console projection produces none (unavailable);
    * deterministic reason codes live in reduction.causes with the sourceCursor. */
   modelExplanation: { status: ConsoleExplanationStatus; sourceCursor: CommitCursor | null };
   sourceCursor: CommitCursor;

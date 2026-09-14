@@ -7,8 +7,8 @@
  * stream (field-for-field parity).
  */
 import { describe, expect, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import {
   createP108ScenarioRuntime,
   runP108TwoProjectScenario,
@@ -49,8 +49,8 @@ function proposalForProject(projectId: string): ReturnType<typeof buildP112Propo
   return proposal;
 }
 
-async function makeHarness(): Promise<PersistentSqliteHarness> {
-  return createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+async function makeHarness(): Promise<PersistentPlatform> {
+  return createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
 }
 
 async function recordBriefProposal(h: P1_12HarnessLike): Promise<void> {

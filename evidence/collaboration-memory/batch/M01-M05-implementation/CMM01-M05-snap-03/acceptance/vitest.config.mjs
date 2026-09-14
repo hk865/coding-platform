@@ -1,0 +1,1 @@
+export default {root:"/mnt/d/1.project/Software/agent_platform",test:{environment:"node",include:["evidence/collaboration-memory/batch/M01-M05-implementation/CMM01-M05-snap-03/acceptance/*.test.ts","tests/app/server-shutdown.test.ts","tests/control/reviewer-existing-drivers-isolation.test.ts","tests/control/p1-15-role-rework-loop.test.ts"],restoreMocks:true,testTimeout:90000}};

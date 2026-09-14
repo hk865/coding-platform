@@ -1,7 +1,7 @@
 /**
- * Command/Event Interface — Goal create slice, frozen baseline for P1-00.
+ * Command/Event Interface — Goal create slice, versioned baseline for goal/bootstrap.
  * Authority: dev_docs/interfaces/command-event.md (slice types, v1).
- * P1-00 extensions (bootstrap) live in ./bootstrap.ts and ./events.ts.
+ * goal/bootstrap extensions (bootstrap) live in ./bootstrap.ts and ./events.ts.
  */
 import type { Opaque } from "./opaque.js";
 import { canonicalJson, sha256Hex } from "./fingerprint.js";
@@ -12,8 +12,8 @@ export type CommandFingerprint = Opaque<string, "CommandFingerprint">;
 /**
  * ActorRef — 命令的**归因**，不是授权来源。
  *
- * CM-1A-001 D03 版本化扩展：新增 `kind: 'agent'`。agent 行为必须用 agent 身份表达，
- * **禁止**继续使用固定的 human:user-1 冒充 Agent（A01）。既有 human/system 的语义与
+ * 协作通信 Agent 归因与工具边界 版本化扩展：新增 `kind: 'agent'`。agent 行为必须用 agent 身份表达，
+ * **禁止**继续使用固定的 human:user-1 冒充 Agent（参与关系与换手）。既有 human/system 的语义与
  * 各领域守卫完全不变；`runRef` 只在 agent 上出现，作为 causation 的可核对依据。
  */
 export type ActorRef =
@@ -25,7 +25,7 @@ export type CommandIdentity = {
   actor: ActorRef;
   idempotencyKey: string;
   /**
-   * CM-1A-001 D03：agent 发起命令时必须携带的精确 principal（AgentInstance +
+   * 协作通信 Agent 归因与工具边界：agent 发起命令时必须携带的精确 principal（AgentInstance +
    * exact Work/participation/RoleBinding + 发起 Run）。human/system 命令不设置它，
    * 语义与指纹都与扩展前逐字节相同。
    */
@@ -136,7 +136,7 @@ export function commandIdentityKey(identity: CommandIdentity): string {
     projectId: identity.projectId,
     actor: identity.actor,
     idempotencyKey: identity.idempotencyKey,
-    // CM-1A-001：agent principal 折叠进身份 key，否则两个不同 Agent 用同一
+    // 协作通信：agent principal 折叠进身份 key，否则两个不同 Agent 用同一
     // idempotencyKey 会互相 replay 到对方的命令（跨 Agent 的假幂等）。
     ...(identity.agentPrincipal === undefined ? {} : { agentPrincipal: identity.agentPrincipal }),
   });

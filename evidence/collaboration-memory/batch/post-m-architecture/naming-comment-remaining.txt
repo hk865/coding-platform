@@ -1,0 +1,62 @@
+src\README.md:23:- [组合根与测试宿主](harness/README.md)
+src\testing\check-providers.double.ts:3: * Explicit harness defaults; production command checks use their own provider.
+src\harness\README.md:8:- [in-memory-harness.ts](in-memory-harness.ts)
+src\harness\index.ts:1:export * from "./in-memory-harness.js";
+src\harness\in-memory-harness.ts:124:export interface InMemoryHarnessOptions {
+src\harness\in-memory-harness.ts:189:export interface InMemoryHarness {
+src\harness\in-memory-harness.ts:401:export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InMemoryHarness {
+src\composition\persistent-platform.ts:698:  const dir = options.dir ?? (await mkdtemp(join(tmpdir(), "agent-platform-p1-01-")));
+src\composition\README.md:5:历史 `createPersistentSqliteHarness` 已迁为 `createPersistentPlatform`，仓内调用同步迁移。磁盘目录、数据库表、事件名、引用和摘要没有随源码命名修改。
+src\fixtures\role-spec-fixtures.ts:2: * RW-11 角色规格的**版本化 source**（八个角色各一份），以及把它们装进策略正文的角色矩阵构造器。
+src\fixtures\role-spec-fixtures.ts:316: * 带角色矩阵的协调策略正文 source：额度等其他字段与 P1-15 的既有正文同值，
+src\fixtures\role-spec-fixtures.ts:341:/** 该正文装进策略时的摘要口径（与 P1-15 完全同一个函数，不另立一份）。 */
+src\fixtures\plan-fixtures.ts:70:      title: "GoalGate：P1-02 验收路径全部通过",
+src\fixtures\plan-fixtures.ts:109:      title: "P1-02 验收在不产生 Run/dispatch 的前提下满足",
+src\fixtures\plan-fixtures.ts:166:  return formalbuildApplyPlanCommand(draft, { ...deps, goalId: deps.goalId ?? draft.goalId, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-02-apply-plan" });
+src\fixtures\governance-fixtures.ts:5: * P1-02 shared fixtures: versioned governance (CompletionPolicy /
+src\fixtures\governance-fixtures.ts:8: * Frozen semantics (see IMPLEMENTATION-HANDOFF.md "P1-02 契约与存储语义"):
+src\fixtures\governance-fixtures.ts:26: * obligation (the P1-02 non-empty compilation guard). */
+src\fixtures\governance-fixtures.ts:66:  return formalbuildInstallCommand(fixture, { ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-02-governance-install" });
+src\fixtures\governance-fixtures.ts:73:  return formalbuildActivateCommand(target, { ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-02-governance-activate" });
+src\fixtures\dispatch-fixtures.ts:4: * P1-03 shared fixtures: eligible-plan, role binding ref, dispatch claim/start/
+src\fixtures\dispatch-fixtures.ts:7: * as P1-00/02 fixture builders).
+src\fixtures\dispatch-fixtures.ts:9: * Frozen identity choices:
+src\fixtures\dispatch-fixtures.ts:12: *   - P1-03 at most ONE claim per task (TaskLease CAS @0; expectedRevision 0);
+src\fixtures\dispatch-fixtures.ts:13: *   - eligibility fixture: the plan satisfies every P1-02 applyPlan guard.
+src\fixtures\dispatch-fixtures.ts:25:// Eligible-plan fixture (satisfies P1-02 applyPlan guards)                   //
+src\fixtures\dispatch-fixtures.ts:83:      title: "DispatchGate：P1-03 验收路径全部通过",
+src\fixtures\dispatch-fixtures.ts:122:      title: "P1-03 验收在任务满足判定之前达成",
+src\fixtures\dispatch-fixtures.ts:135:      // task-blocked is required+work+active, so P1-02's "every required
+src\fixtures\dispatch-fixtures.ts:221:  return formalbuildDispatchClaimCommand({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-03-claim", taskId: deps.taskId ?? DISPATCH_ELIGIBLE_TASK_ID, goalId: deps.goalId ?? "goal-1", attemptId: deps.attemptId ?? "att-run-0001", runId: deps.runId ?? "run-0001", roleBinding: deps.roleBinding ?? ROLE_BINDING_FIXTURE_V1, declaredPermissions: deps.declaredPermissions ?? DECLARED_PERMISSIONS_FIXTURE_V1, budget: deps.budget ?? BUDGET_FIXTURE_V1 });
+src\fixtures\dispatch-fixtures.ts:246:  return formalbuildDispatchStartCommand({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-03-start", expectedRevision: deps.expectedRevision ?? 1 });
+src\fixtures\dispatch-fixtures.ts:332:  return formalbuildRunFactCommand({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-03-runfact" });
+src\contracts\artifact.ts:73:   * P1-18 additive rejection code "stale": a recorded grant exists for this
+src\fixtures\architecture-fixtures.ts:4: * P1-12 shared fixtures: deterministic code-graph scenario + inspection /
+src\fixtures\architecture-fixtures.ts:8: * Graph-registry convention (frozen): the WorkspaceReader registry exposes
+src\fixtures\architecture-fixtures.ts:170:    recommendation: "组织有限协商并给出选项；人工协商归 P1-14/15 消费",
+src\fixtures\architecture-evolution-policy-fixtures.ts:1:/** P1-13 shared fixtures: ArchitectureEvolutionPolicy local fixture + install/activate folds. */
+src\fixtures\architecture-evolution-policy-fixtures.ts:18:  identity: { kind: "local", fixtureId: P113_POLICY, source: "p1-13-local-fixture-v1" },
+src\fixtures\architecture-evolution-policy-fixtures.ts:42: * RW-10 薄包装：字段级构造交给契约命令层（contracts/commands/governance.ts），本文件只填
+src\fixtures\architecture-evolution-policy-fixtures.ts:43: * P1-13 的测试默认值（固定时间 P113_SCHEMA、user-1、commandId 派生键）。生产入口（应用层）
+src\fixtures\architecture-evolution-policy-fixtures.ts:95:/** RW-10 薄包装（同上）：只填测试默认值，字段级构造在契约命令层。 */
+src\contracts\coordination.ts:828:    /** 该订阅在本页应当获得的 deliveries（空表示该页对它是 no-op）。 */
+src\control\dispatch-engine\dispatch-engine.ts:207:          idempotencyKey: 'p1-03-start-' + intent.runRef.runId + '-r' + revision }),
+src\control\dispatch-engine\dispatch-engine.ts:304:          idempotencyKey: "p1-03-runfact",
+src\data\workspace-reader\verification-workspace-reader.ts:16:    const result = await execute('git', ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '-C', root, ...args], {
+src\control\verification-engine\verification-engine.ts:163:  if (!check || check.kind === 'reviewer') throw Error('unknown predicate in frozen verification plan: ' + checkId);
+src\control\dispatch-engine\handoff\handoff-drive.ts:133:          idempotencyKey: 'p1-06-start-' + intent.intentId + (revision === 1 ? '' : '-r' + revision) }),
+src\control\verification-engine\README.md:64:- `answer-with-sources`：平台今天没有把「带来源答案」归因到某个 dispatch Run 的事实。QueryJobAnswer 绑的是 QueryRun（P1-09 的独立运行身份，不是本 Run 的聚合），探索报告只落在探索会话 journal 与 Vault，审阅原报告则是审阅 Run 的逐条结论事实（已用于 `verification-verdict`）。**如实记录**：只读探索入口绑定的 `investigator`（其规格产出期望正是该种类）以及任何要求该种类的角色，`roleOutputs` 仍会把它列进 `missing`。** 起它不再扣留归约**；要让这条期望真的可见，需要一条「答案正文 + 来源清单 + 作者运行」一起落账、且 runRef 就是本 Run 的正式答案记录。
+src\control\verification-engine\README.md:67:- `implementation-result` 的可得性取决于运行是否**登记**了实现结果：见证只消费既有事实，不替运行补造。**普通运行今天不会自动登记 `PatchRecord`**（既有运行时写入路径不产出 P1-07 补丁记录），因此这条期望在普通任务上通常仍会出现在 `missing` 里 —— 它是如实陈述，既不是「已满足」，也（自  起）不是完成判据。要让「运行产出自动成为实现结果」成立，仍需在运行收口接一次既有 `recordPatch`（属 WorkerRuntime 侧的后续义务）。
+src\control\verification-engine\role-output-completeness.ts:41:    because: '今天没有把「带来源答案」归因到某个 Run 的事实通道：QueryJobAnswer 绑的是 QueryRun（P1-09 的独立运行身份），探索报告只落在探索会话 journal 与 Vault，审阅原报告则是审阅 Run 的逐条结论事实（已用于 verification-verdict）。'
+src\control\verification-engine\migration-gate-port.ts:4: * VERSIONED surface (lane-b field extension): run(input) returns
+src\control\control-engine\coordination.ts:1719:   *   - 每个订阅必须存在；已取消的订阅本页对它 no-op（与纯策略 selectPageSubscriptions 一致）；
+src\contracts\modules.ts:180:   * GoalPhase (never a Task phase; handoff+ mechanisms are NOT implemented here). */
+src\contracts\notices\README.md:1:# CM-1B-001 source adaptations
+src\contracts\notices\README.md:7:Pinned source files, origin URLs and digests are retained under `evidence/collaboration-memory/CM-1B-001/preparation/upstream-files.json` and `preparation/upstream/`. These adaptations provide neither a second memory store nor automatic inference or tool permissions.
+src\data\artifact-vault\README.md:12:真实宿主使用 SQLite 版本；跨主体读取经账本登记的 `MaterialAccessGrant` 授权，声明基线不符返回 `rejected/stale`。宿主按完整身份查询全部候选并重核实际 Goal/工作区归属；Vault 限制 owner 与签发者作用域。通用版本自动作废仍未实现。未注入解析器时保持 P1-03 owner-only。
+src\data\read-model-index\read-model-index.ts:1906:    // unchanged (they are not counter rows per the frozen contract).
+src\data\read-model-index\sqlite-read-model-index.ts:3440:    // unchanged (they are not counter rows per the frozen contract).
+src\data\context-compiler\runtime-context.ts:115:      'Reviewer actual input does not match the canonical frozen input');
+src\data\context-compiler\verification-context.ts:122:        roundEnsure(same(before.identity, canonicalExpected), 'stale_material', 'identity', 'Canonical verification material changed from the frozen round.');
+src\data\context-compiler\verification-context.ts:136:      roundEnsure(!expected || same(identity, expected), 'stale_material', 'identity', 'Workspace source or comparison base changed from the frozen round.');
+src\data\context-compiler\verification-context.ts:199:    'scope_mismatch', 'envelope', 'Run, task, attempt, workspace and frozen envelope identities must agree.');

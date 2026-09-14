@@ -4,7 +4,7 @@
  * the P1-08 console projections are implemented (no fake).
  */
 import { describe, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../../src/composition/persistent-platform.js";
 import { isP108Ready, runP108RestartScenario, verifyP108AfterRestart } from "../p1-08-restart-fixtures.js";
 import { P108_WORKSPACE, P108_GOAL, createP108ScenarioRuntime } from "../../contract-suite/p1-08-harness.js";
 
@@ -12,7 +12,7 @@ const READY = await isP108Ready();
 
 describe.skipIf(!READY)("P1-08 restart-path evidence", () => {
   it("collects the P1-08 evidence block", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     try {
       const ev = await runP108RestartScenario(h);
       await h.close();

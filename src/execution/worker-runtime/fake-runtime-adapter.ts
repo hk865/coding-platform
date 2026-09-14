@@ -1,5 +1,5 @@
 /**
- * FakeRuntimeAdapter — P1-03 WorkerRuntime RunPort implementation (Lane B).
+ * FakeRuntimeAdapter — deterministic WorkerRuntime RunPort implementation for tests and samples.
  *
  * A REAL, replayable adapter (not a scripted test stub):
  *   - it rebases a deterministic FakeRuntimeScriptV1 onto a run
@@ -17,7 +17,7 @@
  *     maxEnvelopeBytes = TASK_ENVELOPE_MAX_SIZE_BYTES;
  *   - the adapter ONLY emits events: it NEVER assesses truth, never marks tasks
  *     satisfied, and never fabricates an outcome_unknown (that is an explicit
- *     Control fact). No snapshot capability and no control/cancel in P1-03.
+ *     Control fact). No snapshot capability and no control/cancel in dispatch.
  */
 import type { RunCapabilities, RunHandle, RunPort } from "../../contracts/ports.js";
 import { isTerminalRuntimeEvent } from "../../contracts/dispatch.js";
@@ -44,7 +44,7 @@ class FakeRunHandle implements RunHandle {
   /**
    * 脚本适配器**不产生**调用证据：它按脚本回放生命周期事件，没有真实模型调用，也就没有
    * 可在 `stream(request)` 边界算出的请求摘要。空数组表示"这个适配器不产生调用证据"，
-   * 不是"这次调用没有证据"（CM-1A-001 第 4 步 / D06）。
+   * 不是"这次调用没有证据"（协作通信可靠投递规则 / 调用证据与参与语义规则）。
    */
   async pollModelRequestEvidence(): Promise<never[]> {
     return [];
@@ -81,10 +81,10 @@ function rebaseScript(script: FakeRuntimeScriptV1, runRef: TaskEnvelopeV1["runRe
 }
 
 /**
- * P1-07 versioned extension (optional): a per-envelope script selector lets
+ * Optional workspace-concurrency support: a per-envelope script selector lets
  * ONE adapter serve different runs with different deterministic scripts (a
  * reader run vs. a writer run, or two readers with distinct evidence scripts).
- * The DEFAULT selector returns the single constructor script — the P1-03
+ * The DEFAULT selector returns the single constructor script — the dispatch
  * behavior is byte-identical (zero regression; scripts are per-run rebased).
  */
 export type FakeRuntimeScriptSelector = (envelope: TaskEnvelopeV1) => FakeRuntimeScriptV1;

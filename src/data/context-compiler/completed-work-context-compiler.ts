@@ -1,5 +1,5 @@
 /**
- * P1-17 ContextCompiler.CompletedWorkContextPort — applicability-annotated
+ * ContextCompiler.CompletedWorkContextPort — completed-work selection with applicability annotations
  * selection of COMPLETED work for a related new task (selection ONLY; zero
  * ledger writes; no MemoryStore).
  *

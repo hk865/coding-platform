@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { CodingAgentRuntime, type RunSpec } from '../../src/execution/worker-runtime/coding-agent-runtime.js';
 import { LeasedWorkerRuntime } from '../../src/control/dispatch-engine/leased-worker-runtime.js';
 import { buildDispatchClaimCommand } from '../../src/fixtures/dispatch-fixtures.js';
@@ -40,8 +40,8 @@ async function world(write: boolean) {
   }));
   await runtime.init();
   cleanup.push(async () => { finish.release(); await runtime.close(); });
-  let h: Awaited<ReturnType<typeof createPersistentSqliteHarness>>;
-  h = await createPersistentSqliteHarness({ dir: join(dir, 'state'), deps: { clock: () => P107_SCHEMA },
+  let h: Awaited<ReturnType<typeof createPersistentPlatform>>;
+  h = await createPersistentPlatform({ dir: join(dir, 'state'), deps: { clock: () => P107_SCHEMA },
     runtimePreparation: runtime, workspaceRootFor: () => root,
     runtime: { capabilities: () => runtime.capabilities(), start: (envelope, access) => new LeasedWorkerRuntime({
       runtime, lease: () => h.workspaceLease, vault: () => h.vault, now: () => P107_SCHEMA, materials: async () => undefined,
@@ -77,15 +77,18 @@ it('ordinary drive overlaps two actual read-only Runtime/provider calls', async 
   expect(result.completed).toBe(2);
 });
 
-it('overlapping writers share the existing exclusive lease and only one reaches the provider', async () => {
+it('conflicting writers remain pending and execute sequentially through the shared owner', async () => {
   const w = await world(true);
   const drive = w.h.drive({ reason: 'ordinary-write-conflict' });
   try {
-    await until(() => w.runtime.all().some(r => r.status === 'failed') && w.counts().calls === 1);
+    await until(() => w.counts().calls === 1);
+    expect(await w.h.ledger.pendingDispatchIntents(10)).toHaveLength(1);
     expect(w.counts()).toMatchObject({ active: 1, maximum: 1, calls: 1 });
-    expect(w.runtime.all().find(r => r.status === 'failed')!.error).toContain('租约');
+    expect(w.runtime.all().some(r => r.status === 'failed')).toBe(false);
   } finally { w.finish.release(); await drive; }
   const result = await drive;
   expect(result.failures).toEqual([]);
-  expect(result.completed).toBe(2); // both actual outcomes, including the known pre-start refusal
+  expect(result.completed).toBe(2);
+  expect(w.counts()).toMatchObject({ calls: 2, maximum: 1 });
+  expect(w.runtime.all().every(r => r.status === 'completed')).toBe(true);
 });

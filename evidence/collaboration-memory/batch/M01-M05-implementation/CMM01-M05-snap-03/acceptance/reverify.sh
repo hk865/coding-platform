@@ -1,0 +1,7 @@
+#!/bin/bash
+set -e
+cd /mnt/d/1.project/Software/agent_platform
+export PATH=/home/han001/projects/agents/coding-agent/.tooling/node-v24.18.0-linux-x64/bin:$PATH
+export CODING_AGENT_BWRAP_PATH=/mnt/d/1.project/Software/agent_platform/.local/toolchains/bwrap/usr/bin/bwrap
+node evidence/collaboration-memory/batch/M01-M05-implementation/CMM01-M05-snap-02/acceptance/preconnect-repro.mjs > evidence/collaboration-memory/batch/M01-M05-implementation/CMM01-M05-snap-03/acceptance/preconnect.log 2>&1
+node .local/linux-test-tools/node_modules/vitest/vitest.mjs run --config evidence/collaboration-memory/batch/M01-M05-implementation/CMM01-M05-snap-03/acceptance/vitest.config.mjs --maxWorkers=1 > evidence/collaboration-memory/batch/M01-M05-implementation/CMM01-M05-snap-03/acceptance/reverify.log 2>&1

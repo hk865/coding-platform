@@ -216,7 +216,7 @@ export function validateArchitectureCandidateProposal(value: unknown): Validatio
   return issues;
 }
 
-function validateP112CommandShape(value: unknown, commandType: string, issues: ValidationIssue[]): void {
+function validateArchitectureCommandShape(value: unknown, commandType: string, issues: ValidationIssue[]): void {
   if (!isRecord(value)) {
     issues.push({ path: "$", code: "bad_type", message: "command must be an object" });
     return;
@@ -239,7 +239,7 @@ function validateP112CommandShape(value: unknown, commandType: string, issues: V
 
 export function validateRecordArchitectureInspectionCommand(value: unknown): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  validateP112CommandShape(value, "RecordArchitectureInspection", issues);
+  validateArchitectureCommandShape(value, "RecordArchitectureInspection", issues);
   const payload = isRecord(value) ? value["payload"] : undefined;
   if (!isRecord(payload)) {
     issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
@@ -264,7 +264,7 @@ export function validateRecordArchitectureInspectionCommand(value: unknown): Val
 
 export function validateRecordArchitectureFindingCommand(value: unknown): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  validateP112CommandShape(value, "RecordArchitectureFinding", issues);
+  validateArchitectureCommandShape(value, "RecordArchitectureFinding", issues);
   const payload = isRecord(value) ? value["payload"] : undefined;
   if (!isRecord(payload)) {
     issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
@@ -278,7 +278,7 @@ export function validateRecordArchitectureFindingCommand(value: unknown): Valida
 
 export function validateRecordArchitectureDecisionBriefCommand(value: unknown): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  validateP112CommandShape(value, "RecordArchitectureDecisionBrief", issues);
+  validateArchitectureCommandShape(value, "RecordArchitectureDecisionBrief", issues);
   const payload = isRecord(value) ? value["payload"] : undefined;
   if (!isRecord(payload)) {
     issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });
@@ -292,7 +292,7 @@ export function validateRecordArchitectureDecisionBriefCommand(value: unknown): 
 
 export function validateRecordCandidateBaselineProposalCommand(value: unknown): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  validateP112CommandShape(value, "RecordCandidateBaselineProposal", issues);
+  validateArchitectureCommandShape(value, "RecordCandidateBaselineProposal", issues);
   const payload = isRecord(value) ? value["payload"] : undefined;
   if (!isRecord(payload)) {
     issues.push({ path: "payload", code: "bad_type", message: "payload must be an object" });

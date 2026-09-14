@@ -1,10 +1,8 @@
 /**
- * P1-16 Control entry: WorkRecordEngineImpl — durable work identity + reason
+ * context continuity Control entry: WorkRecordEngineImpl — durable work identity + reason
  * trail (WorkRecordPort implementor).
  *
- * ENTRY FILE (shared baseline — exported signatures FROZEN; lane A fills the
- * implementations). Frozen semantics (IMPLEMENTATION-HANDOFF "P1-16 契约与
- * 存储语义" items 1-6):
+ * Public entry. The context-continuity contracts define this guard sequence:
  *   1. shape validation (validateBindWorkContextCommand / ...) -> invalid;
  *   2. referential guards (Project/Workspace/Binding/run existence; workKind-
  *      goal/task consistency) -> not_found; binding already exists -> CAS;
@@ -75,13 +73,13 @@ export class WorkRecordEngineImpl implements WorkRecordPort {
       return { status: "rejected", commandId: command.commandId, code: "not_found" };
     }
 
-    // Guard 4（RC-03）: 一个任务只有一个工作身份。
+    // Guard 4（任务工作身份唯一性规则）: 一个任务只有一个工作身份。
     //
-    // 为什么这条守卫属于 ControlEngine 而不是调用方：RW-13 让**派发面**先解析、后建立，但那是
+    // 为什么这条守卫属于 ControlEngine 而不是调用方：派发面会先解析、后建立，但那是
     // 调用方约定——任何别的调用方直接调 bindWorkContext，仍能为同一 (项目, 工作区, 目标, 任务)
     // 换一个 workId 造出第二条 WorkContextBound（两条绑定的聚合 ref 不同，CAS@0 各自成立）。
-    // 身份是 Control 的持久事实，唯一性就必须由持有这个事实的 Module 判定：这里复用 RW-13 已经
-    // 建立的**唯一权威读面**（同一个 resolveTaskWorkIdentity，规则不复制第二份），命令面因此与
+    // 身份是 Control 的持久事实，唯一性就必须由持有这个事实的 Module 判定：这里复用既有的
+    // 任务工作身份规则建立的**唯一权威读面**（同一个 resolveTaskWorkIdentity，规则不复制第二份），命令面因此与
     // 派发面得到同一个答案，而不是"谁问谁自算"。
     //
     // 三种结果各有明确处置（全部零写入）：
@@ -281,7 +279,7 @@ export class WorkRecordEngineImpl implements WorkRecordPort {
 }
 
 // --------------------------------------------------------------------- //
-// Receipt mapping helpers (ledger.commit receipt -> P1-16 receipts)       //
+// Receipt mapping helpers (ledger.commit receipt -> context continuity receipts)       //
 // --------------------------------------------------------------------- //
 
 function mapBindReceipt(receipt: LedgerCommitReceipt, command: BindWorkContextCommand): BindWorkContextReceipt {

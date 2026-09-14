@@ -36,4 +36,4 @@ pnpm ui:test        # 先 pnpm build，再启动独立服务跑 Playwright 浏�
 
 未决请求结果未知时，修改内容会被阻止，原 requestId 保留；可恢复原内容重试或查询服务器回执，确认后再提交新内容。损坏的响应正文和 HTTP 5xx 不视为明确拒绝，不清除未决标识。该策略沿用现有存储格式，不丢弃升级前的未决记录。
 
-[独立修复 Agent Prompt](UI-REPAIR-PROMPT.md) 是委托原文。构建产物身份、累计预算、检查报告展示、请求幂等与恢复及验收补足已实施：`pnpm verify:ui-build` 核对构建与服务的字节一致；累计限额默认不设置；检查报告在普通展示区呈现命令、结论、退出码与输出；未决请求按作用域持久化并可用 `POST /api/receipts` 查询正式回执。验收结果见 [交付缺陷修复与验收](../../../agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-09-ui-repair-acceptance.md)。未接通能力（架构图、Reviewer 返工、长期记忆、任务续跑、语义查询）未改变。
+[独立修复 Agent Prompt](UI-REPAIR-PROMPT.md) 是委托原文。构建产物身份、累计预算、检查报告展示、请求幂等与恢复及验收补足已实施：`pnpm verify:ui-build` 核对构建与服务的字节一致；累计限额默认不设置；检查报告在普通展示区呈现命令、结论、退出码与输出；未决请求按作用域持久化并可用 `POST /api/receipts` 查询正式回执。验收结果见 [交付缺陷修复与验收](../../../agent_learn/agent_dev/agent_platform/dev_docs/verification/2026-09-09-ui-repair-acceptance.md)。此后增加的架构、独立审阅、返工、记忆、续跑和语义查询能力以当前模块状态与固定快照验收记录为准。

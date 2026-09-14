@@ -119,7 +119,7 @@ export class VerificationContextCompiler implements VerificationContextPort {
       const before = await this.roundBasis(roundScope(scope), reviewWorkRef);
       if (expected) {
         const { sourceDigest: _source, sourceProofDigest: _proof, ...canonicalExpected } = expected;
-        roundEnsure(same(before.identity, canonicalExpected), 'stale_material', 'identity', 'Canonical verification material changed from the frozen round.');
+        roundEnsure(same(before.identity, canonicalExpected), 'stale_material', 'identity', 'Canonical verification material changed from the recorded round.');
       }
       const source = await this.deps.roundSource.capture(before.root);
       if (source.status !== 'ready') return source;
@@ -133,7 +133,7 @@ export class VerificationContextCompiler implements VerificationContextPort {
         sourceDigest: source.sourceDigest,
         sourceProofDigest: fingerprint(source.sourceProof),
       };
-      roundEnsure(!expected || same(identity, expected), 'stale_material', 'identity', 'Workspace source or comparison base changed from the frozen round.');
+      roundEnsure(!expected || same(identity, expected), 'stale_material', 'identity', 'Workspace source or comparison base changed from the recorded round.');
       return { status: 'ready', material: structuredClone({
         run: after.run, plan: after.plan, task: after.task, root: after.root,
         workspaceRevision: after.identity.workspaceRevision,
@@ -196,7 +196,7 @@ export class VerificationContextCompiler implements VerificationContextPort {
       same(envelope.runRef, runRef) && envelope.projectId === scope.projectId && envelope.workspaceId === scope.workspaceId && envelope.goalId === scope.goalId && envelope.taskId === scope.taskId &&
       envelope.attemptRef.projectId === scope.projectId && envelope.attemptRef.goalId === scope.goalId && envelope.attemptRef.taskId === scope.taskId && envelope.attemptRef.attemptId === run.attemptId &&
       run.workspaceSnapshot.workspaceId === scope.workspaceId && same(run.workspaceSnapshot, envelope.workspaceSnapshot) && same(run.planRef, envelope.planRef) && same(run.roleBinding, envelope.roleBinding),
-    'scope_mismatch', 'envelope', 'Run, task, attempt, workspace and frozen envelope identities must agree.');
+    'scope_mismatch', 'envelope', 'Run, task, attempt, workspace and recorded envelope identities must agree.');
 
     const goalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: scope.goalId };
     const loadedGoal = await this.deps.ledger.load(goalRef);
@@ -299,7 +299,7 @@ export class VerificationContextCompiler implements VerificationContextPort {
       };
     }
     const planSnapshot = planResult.snapshot as PlanRevisionSnapshot;
-    // -- 3. Resolve the pinned policy + baseline by the plan snapshot's frozen
+    // -- 3. Resolve the pinned policy + baseline by the plan snapshot's versioned
     //        pins (triple match via the read-only governance helpers).
     const policyPin = planSnapshot.effectiveCompletionPolicy;
     const policyResolution = await resolveCompletionPolicyRevision(this.deps.ledger, policyPin.ref, policyPin.digest);
@@ -325,7 +325,7 @@ export class VerificationContextCompiler implements VerificationContextPort {
     }
     const policyContent = policyResolution.snapshot.content;
     // Caller-declared pins, when present, must be exactly the plan snapshot's
-    // frozen pins — a stale declaration is rejected (no fallback).
+    // versioned pins — a stale declaration is rejected (no fallback).
     if (request.pinnedCompletionPolicy !== undefined &&
       canonicalJson(request.pinnedCompletionPolicy) !== canonicalJson(policyPin)) {
       return {

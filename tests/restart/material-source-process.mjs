@@ -19,13 +19,13 @@ registerHooks({
     return nextLoad(url, context);
   },
 });
-const { createPersistentSqliteHarness } = await import('../../src/harness/persistent-harness.ts');
+const { createPersistentPlatform } = await import('../../src/composition/persistent-platform.ts');
 const { WorkspaceSourceApplicability } = await import('../../src/data/workspace-reader/source-applicability.ts');
 const { filesystemSourceAccess } = await import('../data/source-applicability-fixture.ts');
 const request = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const access = filesystemSourceAccess(request.sourceRoot);
 const sourceApplicability = new WorkspaceSourceApplicability(scope => scope.projectId === request.scope.projectId && scope.workspaceId === request.scope.workspaceId ? access : null);
-const host = await createPersistentSqliteHarness({ dir: request.stateDir, sourceApplicability });
+const host = await createPersistentPlatform({ dir: request.stateDir, sourceApplicability });
 try {
   await host.advanceProjection();
   const result = await host.vault.open(request.ref, { requesterRunRef: request.reader, currentBasis: request.basis, usage: 'current', includeOwner: true });

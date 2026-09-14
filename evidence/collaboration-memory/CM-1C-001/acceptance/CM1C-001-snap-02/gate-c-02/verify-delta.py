@@ -1,0 +1,5 @@
+import pathlib,json,hashlib
+root=pathlib.Path('/mnt/d/1.project/Software/agent_platform');base=root/'evidence/collaboration-memory/CM-1C-001/implementation';old=json.loads((base/'CM1C-001-snap-01/source-snapshot.json').read_text('utf-8-sig'));new=json.loads((base/'CM1C-001-snap-02/source-snapshot.json').read_text('utf-8-sig'));a=old['fileHashes'];b=new['fileHashes'];delta={'added':sorted(set(b)-set(a)),'removed':sorted(set(a)-set(b)),'changed':sorted(p for p in set(a)&set(b) if a[p]!=b[p])};expected=json.loads((base/'CM1C-001-snap-02/repair-files.json').read_text('utf-8-sig'))
+assert all(delta[k]==sorted(expected[k]) for k in delta)
+assert len(delta['added'])==1 and len(delta['changed'])==7 and not delta['removed']
+print(json.dumps({'old':old['sourceFingerprintSha256'],'new':new['sourceFingerprintSha256'],'delta':delta,'metadataMatched':True},indent=2))

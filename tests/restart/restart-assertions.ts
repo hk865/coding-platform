@@ -19,14 +19,14 @@ import type { GoalSnapshot } from "../../src/contracts/ledger.js";
 import type { GoalViewResult } from "../../src/contracts/goal-view.js";
 import type { CommitCursor } from "../../src/contracts/command-event.js";
 import type { GoalFixtureScope } from "../contract-support/fixtures/goal-fixtures.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import type { RestartRuns } from "./restart-fixtures.js";
 
 /** A project that was never bootstrapped — must stay absent after restart. */
 const ABSENT_PROJECT_ID = "proj-absent-000";
 
 export async function loadGoal(
-  harness: PersistentSqliteHarness,
+  harness: PersistentPlatform,
   projectId: string,
   goalId: string,
 ): Promise<GoalSnapshot | null> {
@@ -53,7 +53,7 @@ export interface RestartCapture {
 }
 
 export async function capturePreRestart(
-  harness: PersistentSqliteHarness,
+  harness: PersistentPlatform,
   runs: RestartRuns,
   alpha: GoalFixtureScope,
   beta: GoalFixtureScope,
@@ -103,7 +103,7 @@ export async function capturePreRestart(
  * scopes stay absent.
  */
 export async function verifySnapshotLoadPath(
-  after: PersistentSqliteHarness,
+  after: PersistentPlatform,
   capture: RestartCapture,
   alpha: GoalFixtureScope,
   beta: GoalFixtureScope,
@@ -143,7 +143,7 @@ export async function verifySnapshotLoadPath(
  * EventPage(s); the rebuilt GoalView equals the pre-restart incremental view.
  */
 export async function verifyRebuildViews(
-  rebuilt: PersistentSqliteHarness,
+  rebuilt: PersistentPlatform,
   capture: RestartCapture,
   alpha: GoalFixtureScope,
   beta: GoalFixtureScope,

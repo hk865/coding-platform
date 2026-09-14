@@ -1,9 +1,8 @@
 /**
- * P1-14 Control entry: baseline-evolution orchestration engine (LANE A).
+ * Baseline evolution Control entry: candidate, decision, migration-gate and activation orchestration.
  *
- * ENTRY FILE (shared baseline — exported signatures FROZEN). Fills the lane-A
- * implementation of the four P1-14 command handlers behind the frozen guard
- * chain recorded in the integrator rulings:
+ * Public entry. Implements the four baseline evolution command handlers behind the versioned guard
+ * chain recorded in the current contracts:
  *
  *   1. materializeCandidateBaseline: shape -> invalid; ledger.load(proposalRef)
  *      -> proposal_not_found; resolveProjectArchitectureBaseline(current active)
@@ -12,35 +11,31 @@
  *      materialize the candidate (content-addressed digest, parentSourcePin =
  *      proposal.sourceBaselinePin, candidateId = command.aggregateId — the
  *      aggregate identity IS the candidate id) and commit via
- *      buildP114CandidateFold; all pre-commit guard failures are ZERO write.
+ *      buildCandidateBaselineMaterializeCommit; all pre-commit guard failures are ZERO write.
  *   2. recordArchitectureChangeDecision: shape -> invalid; ledger.load(subject
  *      .candidateRef) -> candidate_not_found; subject.candidateRef == loaded
  *      candidate ref AND authorizedTarget.candidateDigest == candidate.contentDigest
  *      AND authorizedTarget.fromPin == candidate.parentSourcePin (canonicalJson)
  *      — any inequality -> target_mismatch (zero write); commit
- *      buildP114DecisionFold.
+ *      buildArchitectureChangeDecisionRecordCommit.
  *   3. recordMigrationGate: shape -> invalid; ledger.load(candidateRef) ->
  *      candidate_not_found; ledger.load(Workspace ref) missing -> invalid (no
  *      workspace_not_found code); gate.workspaceRevision != workspace.revision ->
- *      workspace_revision_mismatch (zero write); commit buildP114GateFold.
+ *      workspace_revision_mismatch (zero write); commit buildMigrationGateRecordCommit.
  *   4. recordBaselineActivation: shape -> invalid; ledger.load(decisionRef) ->
  *      decision_not_found; ledger.load(gateRef) -> gate_not_found; decision
  *      .outcome != accept -> decision_not_accepted; authorizedTarget digest/from
  *      != activation to/from -> target_mismatch; gate.status != pass ->
  *      gate_not_pass; chain check (proposal source == activation.fromPin AND
  *      resolveProjectArchitectureBaseline current active == activation.fromPin)
- *      -> source_stale (zero write); commit buildP114ActivationFold.
+ *      -> source_stale (zero write); commit buildBaselineActivationRecordCommit.
  *
  * Receipt mapping: invalid_commit -> invalid; revision_conflict /
  * idempotency_conflict / unavailable pass through; committed fields per contract.
  *
- * NOTE (integrator ruling nuance): the "aggregateId 即 candidateId" ruling is
- * realised by assigning candidate.candidateId = command.aggregateId (the frozen
- * fold builder registers the aggregate under p114CandidateRef(projectId) whose
- * local candidateId IS the command aggregateId). The content-addressed
- * candidateIdFromDigest(digest) remains the on-record content address, but the
- * aggregate storage identity is the command's aggregateId as required by the
- * ruling — reported back as a gap for the P1-14 acceptance oracle.
+ * Candidate aggregate identity is command.aggregateId. The content digest remains
+ * a separate address recorded on the candidate, so storage identity and content
+ * identity cannot be substituted for one another.
  */
 import type {
   ArchitectureChangeDecisionV1,
@@ -71,10 +66,10 @@ import { resolveProjectArchitectureBaseline, loadProjectArchitectureBaselineActi
 import { type ArchitectureBaselinePin } from "../../contracts/governance.js";
 import type { LedgerCommitReceipt, WorkspaceRef } from "../../contracts/ledger.js";
 import { canonicalJson, type JsonValue } from "../../contracts/fingerprint.js";
-import { buildP114ActivationFold, buildP114CandidateFold, buildP114DecisionFold, buildP114GateFold } from "./records/baseline-evolution.js";
+import { buildBaselineActivationRecordCommit, buildCandidateBaselineMaterializeCommit, buildArchitectureChangeDecisionRecordCommit, buildMigrationGateRecordCommit } from "./records/baseline-evolution.js";
 import type { ControlEngineDeps } from "./control-engine.js";
 
-/** LANE-A implementation of the four frozen P1-14 command handlers. */
+/** Implementation of the four versioned baseline evolution command handlers. */
 export class BaselineEvolutionEngineImpl {
   constructor(private readonly deps: ControlEngineDeps) {}
 
@@ -113,7 +108,7 @@ async function materializeCandidateImpl(
   const prior = await deps.ledger.load(candidateRef);
   if (prior.status === "found" && prior.snapshot.ref.aggregateType === "CandidateArchitectureBaseline") {
     const candidate = (prior.snapshot as { candidate: CandidateArchitectureBaselineV1 }).candidate;
-    const receipt = await deps.ledger.commit(buildP114CandidateFold(command, { eventId: deps.eventId(), occurredAt: deps.now(), candidate }));
+    const receipt = await deps.ledger.commit(buildCandidateBaselineMaterializeCommit(command, { eventId: deps.eventId(), occurredAt: deps.now(), candidate }));
     if (receipt.status === "committed") return { status: "committed", commandId: command.commandId, replayed: receipt.replayed, candidateRef, eventIds: receipt.eventIds, commitCursor: receipt.commitCursor };
     return mapMaterializeRejected(receipt, command.commandId);
   }
@@ -166,7 +161,7 @@ async function materializeCandidateImpl(
 
   const eventId = deps.eventId();
   const occurredAt = deps.now();
-  const batch = buildP114CandidateFold(command, { eventId, occurredAt, candidate, activeVersion: {
+  const batch = buildCandidateBaselineMaterializeCommit(command, { eventId, occurredAt, candidate, activeVersion: {
     ref: activeVersion.snapshot.ref, revision: activeVersion.snapshot.revision,
   } });
   const receipt = await deps.ledger.commit(batch);
@@ -216,7 +211,7 @@ async function recordDecisionImpl(
 
   const eventId = deps.eventId();
   const occurredAt = deps.now();
-  const batch = buildP114DecisionFold(command, { eventId, occurredAt });
+  const batch = buildArchitectureChangeDecisionRecordCommit(command, { eventId, occurredAt });
   const receipt = await deps.ledger.commit(batch);
   if (receipt.status === "committed") {
     return {
@@ -271,7 +266,7 @@ async function recordGateImpl(
 
   const eventId = deps.eventId();
   const occurredAt = deps.now();
-  const batch = buildP114GateFold(command, { eventId, occurredAt });
+  const batch = buildMigrationGateRecordCommit(command, { eventId, occurredAt });
   const receipt = await deps.ledger.commit(batch);
   if (receipt.status === "committed") {
     return {
@@ -301,7 +296,7 @@ async function recordActivationImpl(
   // Immutable records cannot be overwritten. Let the ledger's durable command
   // identity/fingerprint decide replay before rechecking mutable current state.
   if ((await deps.ledger.load(activationRef)).status === "found") {
-    const receipt = await deps.ledger.commit(buildP114ActivationFold(command, { eventId: deps.eventId(), occurredAt: deps.now() }));
+    const receipt = await deps.ledger.commit(buildBaselineActivationRecordCommit(command, { eventId: deps.eventId(), occurredAt: deps.now() }));
     if (receipt.status === "committed") {
       return { status: "committed", commandId: command.commandId, replayed: receipt.replayed, activationRef, eventIds: receipt.eventIds, commitCursor: receipt.commitCursor };
     }
@@ -385,7 +380,7 @@ async function recordActivationImpl(
   if (workspace.status !== "found" || workspace.snapshot.revision !== gate.workspaceRevision) {
     return { status: "rejected", commandId: command.commandId, code: "source_stale", issues: ["migration gate workspace revision is stale"] };
   }
-  const batch = buildP114ActivationFold(command, { eventId, occurredAt, guardVersions: [
+  const batch = buildBaselineActivationRecordCommit(command, { eventId, occurredAt, guardVersions: [
     { ref: workspace.snapshot.ref, revision: gate.workspaceRevision },
     { ref: activeVersion.snapshot.ref, revision: activeVersion.snapshot.revision },
   ] });
@@ -443,8 +438,8 @@ function mapActivationRejected(receipt: LedgerRejected, commandId: string): Reco
 }
 
 // ------------------------------------------------------------------------ //
-// Shape validators (P1-14 commands have no contract validators yet; these are
-// the lane-A inline guards — all zero write on failure)                    //
+// Shape validators (baseline evolution commands have no contract validators yet; these are
+// inline guards — all zero write on failure)                                        //
 // ------------------------------------------------------------------------ //
 
 function isRecord(v: unknown): v is Record<string, unknown> {

@@ -1,5 +1,5 @@
 /**
- * 协调 Host 工具的**产品实现**（CM-1A-001 第 3 工作段，D03）：把窄端口接到真实的
+ * 协调 Host 工具的**产品实现**（协作通信，Agent 归因与工具边界）：把窄端口接到真实的
  * ArtifactVault 与 ControlEngine 正式写入口。
  *
  * ── 它是谁（以及不是什么）─────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ import {
 } from "../../contracts/coordination.js";
 import { directDeliveryIdFor } from "../../contracts/coordination-events.js";
 import type { StateLedger } from "../../contracts/ledger.js";
-import type { ControlEngine } from "../../contracts/modules.js";
+import type { CoordinationControl } from "../../contracts/modules.js";
 import type { RunRef } from "../../contracts/dispatch.js";
 import type { WorkContextBindingSnapshot } from "../../contracts/context-continuity.js";
 import {
@@ -60,13 +60,14 @@ const SCAN_MAX_PAGES = 200;
 export type CoordinationAccessDeps = {
   ledger: Pick<StateLedger, "load" | "events">;
   control: Pick<
-    ControlEngine,
+    CoordinationControl,
     | "sendDirectedRequest"
     | "respondDirectedRequest"
     | "createSubscription"
     | "registerWait"
     | "cancelCommunication"
   >;
+  reportArchitecture?: (principal:AgentPrincipalRefV1,input:import("../../contracts/coordination-tools.js").ArchitectureReportInput)=>Promise<CoordinationToolOutcomeV1>;
   vault: ArtifactPort;
   now: () => string;
 };
@@ -236,7 +237,7 @@ export class CoordinationToolAccess implements CoordinationToolAccessPort {
    *
    * 返回 null = 通过；返回非 null = 已经可以交回给模型的拒绝结果。
    */
-  private async capabilityDenial(operation: "request" | "respond" | "subscribe" | "wait" | "cancel"): Promise<CoordinationToolOutcomeV1 | null> {
+  private async capabilityDenial(operation: "request" | "respond" | "subscribe" | "wait" | "cancel" | "architecture_report"): Promise<CoordinationToolOutcomeV1 | null> {
     if (this.capability.capability !== COORDINATION_CAPABILITY_ID ||
         canonicalJson(this.capability.runRef as never) !== canonicalJson(this.principal.runRef as never) ||
         canonicalJson(this.capability.participationRef as never) !== canonicalJson(this.principal.participationRef as never)) {
@@ -265,6 +266,14 @@ export class CoordinationToolAccess implements CoordinationToolAccessPort {
     return null;
   }
 
+  async reportArchitecture(input:import('../../contracts/coordination-tools.js').ArchitectureReportInput):Promise<CoordinationToolOutcomeV1> {
+    const denied=await this.capabilityDenial('architecture_report');
+    if(denied)return denied;
+    const current=await resolveRunPrincipal(this.deps,this.principal.runRef);
+    if(current.status!=='resolved'||canonicalJson(current.principal)!==canonicalJson(this.principal))return this.rejected('architecture_report','not_granted',['当前工作参与身份已变化']);
+    if(!this.deps.reportArchitecture)return this.rejected('architecture_report','unavailable',['当前宿主未配置架构报告入口']);
+    return this.deps.reportArchitecture(this.principal,input);
+  }
   private identity(operation: string, target: string) {
     return {
       projectId: this.principal.workContextRef.projectId,
@@ -281,7 +290,7 @@ export class CoordinationToolAccess implements CoordinationToolAccessPort {
     };
   }
 
-  private rejected(operation: "request" | "respond" | "subscribe" | "wait" | "cancel", code: string, issues: string[]): CoordinationToolOutcomeV1 {
+  private rejected(operation: "request" | "respond" | "subscribe" | "wait" | "cancel" | "architecture_report", code: string, issues: string[]): CoordinationToolOutcomeV1 {
     return { status: "rejected", operation, code, issues };
   }
 

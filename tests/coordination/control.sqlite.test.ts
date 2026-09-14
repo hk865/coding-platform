@@ -8,7 +8,7 @@
  * 「重启（close + reopen）后参与/等待/intent 仍在账本里，且可以继续机械推进」。
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
 import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import { buildPreparedClaim, prepareP103Project, type P1_03TestHarness } from "../contract-suite/p1-03-harness.js";
@@ -40,7 +40,7 @@ const GOAL = "goal-1";
 const AGENT = "agent-sqlite";
 const WORK = "work-sqlite";
 
-type Harness = Awaited<ReturnType<typeof createPersistentSqliteHarness>>;
+type Harness = Awaited<ReturnType<typeof createPersistentPlatform>>;
 
 let h: Harness;
 let runRef: RunRef;
@@ -65,7 +65,7 @@ function principal(): AgentPrincipalRefV1 {
 }
 
 beforeAll(async () => {
-  h = await createPersistentSqliteHarness({ deps: {} });
+  h = await createPersistentPlatform({ deps: {} });
   const adapter: P1_03TestHarness = {
     ledger: h.ledger,
     readModel: h.readModel,

@@ -3,7 +3,7 @@ import { CodingAgentRuntime } from '../execution/worker-runtime/coding-agent-run
 import { createModelSettings, type ModelSettingsOptions } from './model-settings.js';
 import { randomUUID } from 'node:crypto';
 import { createWorkspaceTools, type WorkspaceToolsOptions } from './workspace-tools.js';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
@@ -30,7 +30,16 @@ export async function createGuiServer(dir: string, options: WorkspaceToolsOption
   for (const name of ['live-runs.js','markdown.js','file-references.js','dock-views.js','verification-ui.js','exploration-ui.js','context-view.js']) assets.set('/'+name,[name,'text/javascript; charset=utf-8']);
   for (const name of ['live-runs.css','dock-views.css','exploration-ui.css']) assets.set('/'+name,[name,'text/css; charset=utf-8']);
   const vendor = new Map([['/vendor/xterm.js', '@xterm/xterm/lib/xterm.js'], ['/vendor/xterm.css', '@xterm/xterm/css/xterm.css'], ['/vendor/addon-fit.js', '@xterm/addon-fit/lib/addon-fit.js']]);
-  const server = createServer(async (req, res) => {
+  const requests = new Set<Promise<void>>();
+  let stopping = false;
+  const server = createServer((req, res) => {
+    if (stopping) { res.writeHead(503, { connection: 'close', 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ error: '服务正在关闭' })); return; }
+    const finished = new Promise<void>(done => { res.once('finish', done); res.once('close', done); });
+    const work = handleRequest(req, res).then(() => finished);
+    requests.add(work);
+    void work.finally(() => requests.delete(work)).catch(() => {});
+  });
+  async function handleRequest(req: IncomingMessage, res: ServerResponse) {
     const send = (status: number, body: unknown) => { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
     try {
       const host = req.headers.host ?? '';
@@ -89,24 +98,34 @@ export async function createGuiServer(dir: string, options: WorkspaceToolsOption
       if (toolRoute(url.pathname)) return send(200, await workspace.write(url.pathname, input as Record<string, unknown>));
       send(200, await service.action(url.pathname, input as Record<string, unknown>));
     } catch (error) { send(400, { error: error instanceof Error ? error.message : String(error) }); }
-  });
-  return { server, close: async () => {
+  }
+  let closing: Promise<void> | undefined;
+  return { server, close: () => closing ??= (async () => {
+    // Stop admission before any resource closes. Drain complete HTTP handlers,
+    // including workspace/settings routes outside the service's action queue.
+    stopping = true;
+    let httpError: Error | undefined;
+    const stopped = new Promise<void>(done => server.close(error => {
+      if (error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') httpError = error;
+      done();
+    }));
     modelSettings.close();
-    const draining = service.close();
-    await realRuntime.close();
-    await new Promise<void>((done, reject) => server.close(error => error ? reject(error) : done()));
+    const results = await Promise.allSettled([realRuntime.close(), ...requests]);
+    results.push(...await Promise.allSettled([service.close()]));
     workspace.close();
-    await draining;
-  } };
+    // Browsers may hold preconnected sockets that never emitted a request.
+    // They have no accepted operation to drain, but keep server.close pending.
+    server.closeAllConnections();
+    await stopped;
+    const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+    if (httpError) errors.push(httpError);
+    if (errors.length) throw new AggregateError(errors, 'Host shutdown failed');
+  })() };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  // B-1: the bundled host enables the sample/fixture executor explicitly. This
-  // restores the historical default behavior (the previous guard let a
-  // `gui-plan-*` sample plan reach the fixture executor) WITHOUT inferring it
-  // from an identifier shape. Real task plans never run on the fixture: the
-  // fixture branches require this flag, and a real plan is refused by
-  // `OperatorPlanCompiler.isRealTaskPlan` when it reuses a sample plan.
-  const app = await createGuiServer(resolve(process.env['PLATFORM_GUI_DATA'] ?? '.local/gui'), { fixtureExecution: true });
+  // The installed host starts with production execution only. Tests and demos
+  // opt into fixture execution through createGuiServer({ fixtureExecution: true }).
+  const app = await createGuiServer(resolve(process.env['PLATFORM_GUI_DATA'] ?? '.local/gui'));
   const port = Number(process.env['PORT'] ?? 4317);
   app.server.listen(port, '127.0.0.1', () => console.log(`Agent Platform GUI: http://localhost:${port}`));
   for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => { void app.close().then(() => process.exit(0)); });

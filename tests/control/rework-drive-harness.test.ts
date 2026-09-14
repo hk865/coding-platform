@@ -28,7 +28,7 @@ import { architectureBaselinePinFor, completionPolicyPinFor } from '../../src/co
 import { buildP115ActivateCommand, buildP115InstallCommand } from '../contract-support/fixtures/human-role-collaboration-fixtures.js';
 import { decisionTargetFor } from '../../src/contracts/goal-change.js';
 import { buildRecordUserDecisionCommand } from '../contract-support/fixtures/goal-change-fixtures.js';
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
 import { admitConclusion, compileProposal, FIXED, type Ledger } from './autonomous-rework-fixture.js';
 import { appendFailRound, openJournalPort, type JournalPort } from './rework-drive-fixture.js';
@@ -114,7 +114,7 @@ async function scenario(backend: Backend): Promise<Scenario> {
   const firstPort = await openJournalPort({ directory: journalDirectory, current: () => holder.current as Ledger });
   let currentPort = firstPort;
   if (backend === 'persistent') {
-    let h = await createPersistentSqliteHarness({ dir: directory, reworkIssues: firstPort.port });
+    let h = await createPersistentPlatform({ dir: directory, reworkIssues: firstPort.port });
     holder.current = h.ledger;
     return await wire(h);
   }
@@ -237,7 +237,7 @@ async function scenario(backend: Backend): Promise<Scenario> {
         // 重启语义 = 关闭连接后在同一文件上重建实例（只有 SQLite 后端有连接）。
         await (harness as { close: () => Promise<void> }).close();
         const reopenedPort = await openJournalPort({ directory: journalDirectory, current: () => holder.current as Ledger });
-        const reopened = await createPersistentSqliteHarness({ dir: directory, reworkIssues: reopenedPort.port });
+        const reopened = await createPersistentPlatform({ dir: directory, reworkIssues: reopenedPort.port });
         harness = reopened;
         currentPort = reopenedPort;
         holder.current = reopened.ledger;
@@ -250,7 +250,7 @@ async function scenario(backend: Backend): Promise<Scenario> {
   }
 }
 
-type Harness = Awaited<ReturnType<typeof createPersistentSqliteHarness>> | ReturnType<typeof createInMemoryHarness>;
+type Harness = Awaited<ReturnType<typeof createPersistentPlatform>> | ReturnType<typeof createInMemoryHarness>;
 
 /** 只比较业务语义，不比较存储身份：两个后端必须给出同一份结论。 */
 const summarize = (result: ReworkDriveResultV1) => ({
@@ -351,7 +351,7 @@ describe('RW-06 harness 接线（两个后端语义一致）', () => {
   }, 60000);
 
   it('没有注入问题出口时两个后端都返回显式不可用，不假装"没有问题"', async () => {
-    const persistent = await createPersistentSqliteHarness({});
+    const persistent = await createPersistentPlatform({});
     const memory = createInMemoryHarness({});
     try {
       for (const harness of [persistent, memory]) {

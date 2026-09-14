@@ -30,7 +30,7 @@ export function planRevisionSnapshotFor(
     effectiveArchitectureBaseline: pins.architectureBaseline,
     stages: plan.stages.map((s) => ({ ...s })),
     tasks: plan.tasks.map((t) => ({ ...t, scope: { ...t.scope } })),
-    // RW-07：指派随 revision 一起被接受。接受后的快照是派发与返工编译的唯一来源，因此
+    // 指派随 revision 一起被接受。接受后的快照是派发与返工编译的唯一来源，因此
     // 草稿带了 assignments 就逐条复制（草稿没带时不写入该字段，读取侧回落到同一快照的
     // origin.assignments，见 contracts/plan.ts 的 revisionAssignments）。
     ...(Array.isArray(plan.assignments)

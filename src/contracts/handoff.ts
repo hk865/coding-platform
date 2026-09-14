@@ -1,15 +1,13 @@
 /**
- * P1-06 Handoff contracts — HandoffPacket / ReplacementAttempt / events
- * (first consumer freeze of DispatchEngine.HandoffPort).
+ * Handoff contracts — HandoffPacket / ReplacementAttempt / events
+ * (versioned contract for DispatchEngine.HandoffPort).
  *
  * Authority:
- *   - dev_docs/planning/proposed/P1-foundation/tickets/06-handoff-a-to-b.md
- *     (4 verification groups, 6 Acceptance items)
  *   - dev_docs/interfaces/runtime-collaboration.md (bounded handoff; body-first
  *     in ArtifactVault; old binding / overreach rejected; duplicate / late
  *     results never re-dispatch or mutate an un-accepted state; outcome_unknown
  *     preserved)
- *   - IMPLEMENTATION-HANDOFF.md "P1-06 契约与存储语义（冻结）"
+ *   - dev_docs/modules/control/dispatch-engine.md
  *
  * Semantics:
  *   - HandoffPacket is BOUNDED (HANDOFF_PACKET_MAX_BYTES, same order as the
@@ -26,15 +24,15 @@
  *   - ReplacementAttempt: the SAME Task gets a new Attempt with a NEW lease /
  *     outbox / run lifecycle. A replacement is admissible ONLY when A's prior
  *     attempt ENDED or A's lease is EXPIRED; A's late runtime facts target A's
- *     own ended Run and are rejected by the P1-03 per-run sequence semantics
+ *     own ended Run and are rejected by the dispatch per-run sequence semantics
  *     (after_terminal / stale_event / duplicate_event), never rolling B's new
- *     attempt back. Retry/cancel stays P1-10.
+ *     attempt back. Retry/cancel stays control intent.
  *   - outcome_unknown is preserved end-to-end (packet unresolved item +
  *     provenance view); the platform never auto-retries an irreversible action.
- *   - TaskReduction / Goal phase is NOT touched (P1-05 owns the Goal reducer).
+ *   - TaskReduction / Goal phase is NOT touched (context assembly owns the Goal reducer).
  *
  * The RuntimeEvent / TaskLease / TaskAttempt / Run / DispatchOutboxEntry
- * shapes are reused UNCHANGED from P1-03; the only new aggregates are
+ * shapes are reused UNCHANGED from dispatch; the only new aggregates are
  * HandoffPacket and ReplacementAttempt.
  */
 import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
@@ -371,7 +369,7 @@ export type ClaimReplacementReceipt =
     };
 
 // ------------------------------------------------------------------------ //
-// Domain events (P1-06 v1)                                                   //
+// Domain events (handoff v1)                                                   //
 // ------------------------------------------------------------------------ //
 
 export type HandoffRecordedEvent = {
@@ -426,7 +424,7 @@ export type ReplacementClaimedEvent = {
 };
 
 // ------------------------------------------------------------------------ //
-// Fingerprints (JCS + SHA-256; volatile ids excluded — P1-00 convention)      //
+// Fingerprints (JCS + SHA-256; volatile ids excluded — goal/bootstrap convention)      //
 // ------------------------------------------------------------------------ //
 
 export function recordHandoffFingerprint(command: RecordHandoffCommand): CommandFingerprint {
@@ -463,7 +461,7 @@ export function claimReplacementFingerprint(command: ClaimReplacementCommand): C
 }
 
 // ------------------------------------------------------------------------ //
-// DispatchEngine.HandoffPort (interfaces_to_freeze — first consumer)          //
+// DispatchEngine.HandoffPort — public handoff orchestration interface         //
 // ------------------------------------------------------------------------ //
 
 export type HandoffDriveTrigger = {
@@ -480,6 +478,7 @@ export type HandoffDriveFailure = {
 };
 
 export type HandoffDriveResult = {
+  backlog?: import('./dispatch.js').DispatchBacklog;
   scanned: number;
   started: number;
   completed: number;

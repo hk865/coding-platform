@@ -1,0 +1,57 @@
+{
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "scope": "Two actual provider successor calls; report producer uses a labelled deterministic protocol stub; isolated empty workspace; no image or project quality assertion",
+  "artifactSha256": "3d10421c8412aa4f78e820cae157b607d3bae18ee164bac254443e97cd0e403c",
+  "outcome": "accept",
+  "targets": [
+    {
+      "workId": "c1-work-a",
+      "mode": "resume",
+      "stage": "attempted",
+      "reason": "实际模型调用已尝试采用该输入",
+      "runId": "run-4c94b4e371ca49ee7b13d068",
+      "requestDigest": "3f45ef3fd3b03bf9bd56b745a09af96ec59e35a24c587b03ee28a90f37b799cd"
+    },
+    {
+      "workId": "c1-work-b",
+      "mode": "resume",
+      "stage": "attempted",
+      "reason": "实际模型调用已尝试采用该输入",
+      "runId": "run-52bc1247796f75e45b86060f",
+      "requestDigest": "d81c1c86ee72cdf863b06fa2f687aea7ba84cfd2d4fe27ec312d340f3d1b2a4a"
+    },
+    {
+      "workId": "c1-work-c",
+      "mode": "notify",
+      "stage": "delivered",
+      "reason": "已通知",
+      "runId": null,
+      "requestDigest": null
+    },
+    {
+      "workId": "work-7e3070648e5db4fd0ac3a5347f97c2c0",
+      "mode": "notify",
+      "stage": "delivered",
+      "reason": "已通知",
+      "runId": null,
+      "requestDigest": null
+    }
+  ],
+  "responses": [
+    {
+      "runId": "run-4c94b4e371ca49ee7b13d068",
+      "chars": 2210,
+      "mentionsProposal": true,
+      "mentionsArchitectureReview": true,
+      "body": "## 审查结果（已投递的正式架构审查）\n\n本次 Context 中确实投递了一份正式架构审查决定（`architecture_decision@architecture-review-e412383b43145cb979e4d0dd@2`，即该审查的 revision 2，`deliveryId: architecture-delivery-629d8825fb7056d80383171c`，投递资质为 `reference`，`targetIndex: 0`）。\n\n- 审查对象：`ArchitectureReview architecture-review-e412383b43145cb979e4d0dd`（proj-alpha / ws-shared）\n- 候选基线：`CandidateArchitectureBaseline candidate-architecture-review-e412383b43145cb979e4d0dd`\n- 状态：`accepted`，操作者 `local-gui`（human），摘要 “Human selected accept”\n- 含义：这只是**人工审查结论的记录**，不是基线激活，也不是实现授权。\n\n## 提案的确切内容\n\n`ArchitectureCandidateProposal architecture-review-e412383b43145cb979e4d0dd`\n提案摘要 `96363ffe6821424b3667288e6628166d7b0901255e93edd483e8f32bb3d91490`：\n\n- 描述（逐字）：**“Use string IDs in both read packages.”** —— 两个读包统一使用字符串 ID。\n- 约束三条：\n  1. `unique-writer`，范围 `ControlEngine`\n  2. `event-projection-only`，范围 `ReadModelIndex`\n  3. `no-direct-fixture-write`，范围 governance install/activation contracts\n\n目标绑定（`WorkContextBinding`，均为 revision 2，除末项 revision 1）：\n\n| 目标 work | 模式 | 理由 |\n|---|---|---|\n| `c1-work-a` | resume | Reader A 期望 string ID、Reader B 期望 numeric ID；实现共享接口前须先定 |\n| `c1-work-b` | resume | 同上 |\n| `c1-work-c` | notify | 未列入冲突；现行工作可继续 |\n| `work-7e3070648e5db4fd0ac3a5347f97c2c0` | notify | 未列入冲突；现行工作可继续 |\n\n即：该审查已接受“两边都用 string ID”的方向，并把 c1-work-a / c1-work-b 标记为 resume（共享接口定案后才可继续），c1-work-c 与另一 work 仅通知、不受影响。本次投递的 `targetIndex: 0` 指向 `c1-work-a` 这一条。\n\n## 仍然生效的激活与权限守卫\n\n1. **基线激活守卫**：投递正文自述 “Baseline activation and execution still require current formal migration, permission and admission guards.” 审查接受的是 Candidate，激活需另行走正式迁移/准入，本次投递不激活任何基线。\n2. **本 Run 权限守卫**：策略 `auth-policy-runtime-v1`，工具仅 `[\"read\"]`，`writeScope: []` —— 只读，不能改文件、不能写提案、不能实现接口。\n3. **WorkContext 守卫被拒**：本 Run 的工作上下文组装被 `forbidden_tool_or_scope: declaredPermissions.writeScope must be non-empty` 拒绝，故未携带工作身份与历史材料；resume/notify 的落地需由对应 WorkContextBinding/后继 Run 的准入来完成，本 Run 无法自行激活。\n4. **角色材料缺口**：绑定的 `templateRevision`（2026-09-06）未被登记为角色规格目录，角色取材未生效（仅如实说明，不降低本 Run 的权限与验收判据）。\n5. **共享接口前置条件**：string 与 numeric ID 的分歧须在实现共享接口前定案；该定案与实现都不在本 Run 的只读权限内。\n\n## 本次回应边界\n\n按你的指示，本次**未调用任何工具、未读取工作区文件、未做任何修改**。因此上述内容仅是对已投递材料的转述与解读，不构成对源码或当前工作区状态的核验；本 Run 的证据索引为空（`[]`），材料亦有截断标记，尚无 Reader A 侧可比对证据可供提交。"
+    },
+    {
+      "runId": "run-52bc1247796f75e45b86060f",
+      "chars": 1956,
+      "mentionsProposal": true,
+      "mentionsArchitectureReview": true,
+      "body": "## 交付结论（已消费的精确版本）\n\n- 评审对象：`ArchitectureReview` `architecture-review-e412383b43145cb979e4d0dd`（`proj-alpha` / `ws-shared`）**revision 2**，`status = accepted`，`summary = \"Human selected accept\"`（人工选择接受）。\n- 投递：`deliveryId = architecture-delivery-9834ff8601f6fb2761e363d0`，`deliveryVersion = architecture_decision@architecture-review-e412383b43145cb979e4d0dd@2`，`qualification = reference`，本次投递对应 `targetIndex = 1`。\n- 性质：这是**人工评审结果的记录**，指向候选 `CandidateArchitectureBaseline` `candidate-architecture-review-e412383b43145cb979e4d0dd`，**不是一个已激活的基线**。\n\n## 提案原样要点\n\n- `proposalDigest = 96363ffe6821424b3667288e6628166d7b0901255e93edd483e8f32bb3d91490`\n- 描述（原文）：**\"Use string IDs in both read packages.\"** —— 两个读包统一使用字符串 ID。\n- 约束（原文）：\n  - `unique-writer`，作用域 `ControlEngine`（写入者唯一）；\n  - `event-projection-only`，作用域 `ReadModelIndex`（只做事件投影）；\n  - `no-direct-fixture-write`，作用域 governance install/activation 契约（禁止直接写 fixture）。\n\n## 对各工作包的处置\n\n- `c1-work-a`：`resume`，理由——Reader A 期望 string ID、Reader B 期望 numeric ID，**实现共享接口前必须先定论**。\n- `c1-work-b`（本 Reader B 所属）：`resume`，同一理由。\n- `c1-work-c`：`notify`，未列入冲突，现行工作可继续。\n- `work-7e3070648e5db4fd0ac3a5347f97c2c0`：`notify`，同上。\n\n## 仍然生效的激活 / 权限守卫\n\n1. **写权限仍为零**：本 Run 的权限仅为 `tools=[\"read\"]`、`writeScope=[]`。提案中\"用字符串 ID\"涉及共享接口与读包实现，本次**无法实现、无法改动文件**，只能作只读陈述。\n2. **评审 ≠ 激活**：交付自身声明的权威边界是\"记录人工评审结论；基线激活与执行仍需现行正式 migration、permission 与 admission 守卫\"。因此该候选基线在完成这些守卫前不得作为实现依据或验收基线使用。\n3. **准入守卫**：`resume` 只是恢复意图，不等于立即执行；共享接口的 ID 类型必须先决出，并在具备写权限/准入的实现型运行中落地。\n4. **WorkContext 组装仍被拒**：`work-context` 因 `forbidden_tool_or_scope: declaredPermissions.writeScope must be non-empty` 被拒，本 Run 没有派发时编译的工作身份与历史材料；该评审交付不放宽这一条件。\n5. **角色取材未生效**：绑定的 `templateRevision`（2026-09-06）不是角色规格 revision，角色目录未登记——如实说明，不降低权限，但角色取材确实未生效。\n6. **证据状态为空**：本次证据索引为空数组，我没有读取任何源码正文；提案内容与约束均**不是**对当前源码的核验事实。\n\n## 本次执行的边界\n\n按操作者指令，本次为只读工作 B：**未调用任何工具、未读取或修改任何文件**。因此上述内容全部来自已投递的评审材料本身；\"两个读包实际使用何种 ID 类型\"在我这边仍属**未核验**，且与 Reader A 的期望存在明确冲突，需由人工决定的 string ID 方案在获准实现后才能真正统一。"
+    }
+  ]
+}

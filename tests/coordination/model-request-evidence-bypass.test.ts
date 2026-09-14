@@ -4,7 +4,7 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { CodingAgentRuntime, type RunSpec } from '../../src/execution/worker-runtime/coding-agent-runtime.js';
 import { LeasedWorkerRuntime } from '../../src/control/dispatch-engine/leased-worker-runtime.js';
 import { RuntimeDispatch } from '../../src/control/dispatch-engine/runtime-dispatch.js';
@@ -41,7 +41,7 @@ function specFor(root: string, runId: string): RunSpec {
 async function buildWorld(controlClock: string, options: { rounds?: number; evidence?: 'refuse' | 'tamper_context' | 'tamper_request'; cancelAfterFirst?: boolean } = {}) {
   const requests: ModelRequest[] = [];
   const permitsAtCall: ModelRequestPermitSnapshot[] = [];
-  let h: Awaited<ReturnType<typeof createPersistentSqliteHarness>>;
+  let h: Awaited<ReturnType<typeof createPersistentPlatform>>;
   const client: ModelClientPort = {
     async *stream(request): AsyncIterable<ModelEvent> {
       requests.push(structuredClone(request));
@@ -86,7 +86,7 @@ async function buildWorld(controlClock: string, options: { rounds?: number; evid
   cleanup.push(() => runtime.close());
 
 
-  h = await createPersistentSqliteHarness({
+  h = await createPersistentPlatform({
     deps: { clock: () => controlClock },
     runtimePreparation: runtime,
     workspaceRootFor: () => root,

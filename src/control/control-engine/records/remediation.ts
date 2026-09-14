@@ -9,7 +9,7 @@ import type { RemediationPlanPatchRecordLedgerCommitV1, RemediationTaskRecordLed
 // Ledger folds                                                              //
 // ------------------------------------------------------------------------ //
 
-export function buildP113PlanPatchRecordCommit(command: SubmitRemediationPlanPatchCommand, deps: { eventId: string; occurredAt: string; recordedAt?: string }): RemediationPlanPatchRecordLedgerCommitV1 {
+export function buildRemediationPlanPatchRecordCommit(command: SubmitRemediationPlanPatchCommand, deps: { eventId: string; occurredAt: string; recordedAt?: string }): RemediationPlanPatchRecordLedgerCommitV1 {
   const patch = command.payload.patch;
   const snap: RemediationPlanPatchSnapshot = { ref: remediationPlanPatchRefFor(patch.projectId, patch.workspaceId, patch.patchId), revision: 1, schemaVersion: 1, patch, recordedAt: deps.recordedAt ?? deps.occurredAt };
   return {
@@ -40,7 +40,7 @@ export function buildP113PlanPatchRecordCommit(command: SubmitRemediationPlanPat
 }
 
 
-export function buildP113TaskRecordCommit(command: CreateRemediationTaskCommand, deps: { eventId: string; occurredAt: string; task: RemediationTaskV1 }): RemediationTaskRecordLedgerCommitV1 {
+export function buildRemediationTaskRecordCommit(command: CreateRemediationTaskCommand, deps: { eventId: string; occurredAt: string; task: RemediationTaskV1 }): RemediationTaskRecordLedgerCommitV1 {
   const snap: RemediationTaskSnapshot = { ref: remediationTaskRefFor(taskProject(deps.task), deps.task.workspaceId, deps.task.taskId), revision: 1, schemaVersion: 1, task: deps.task };
   return {
     commitKind: "remediation-task-record",
@@ -75,7 +75,7 @@ function taskProject(task: RemediationTaskV1): string {
 }
 
 
-export function buildP113TaskAdvanceCommit(command: AdvanceRemediationTaskCommand, deps: { eventId: string; occurredAt: string; nextRevision: number; task: RemediationTaskV1 }): RemediationTaskAdvanceLedgerCommitV1 {
+export function buildRemediationTaskAdvanceCommit(command: AdvanceRemediationTaskCommand, deps: { eventId: string; occurredAt: string; nextRevision: number; task: RemediationTaskV1 }): RemediationTaskAdvanceLedgerCommitV1 {
   const snap: RemediationTaskSnapshot = { ref: remediationTaskRefFor(deps.task.projectId, deps.task.workspaceId, deps.task.taskId), revision: deps.nextRevision, schemaVersion: 1, task: deps.task };
   return {
     commitKind: "remediation-task-advance",

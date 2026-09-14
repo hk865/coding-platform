@@ -10,7 +10,7 @@ import { validateCommandIdentity } from './identity.js';
  *
  * 为什么这些字段是**必填**而不是可选：规格存在的意义就是「框架按规格校验绑定」，
  * 允许缺项等于允许一个没有权限上界、没有必产出、没有退出条件的角色被登记进来——
- * 那比不登记更危险（看起来已校验）。因此这里要求的字段与 ADR 0003 D4-1 列举的一致：
+ * 那比不登记更危险（看起来已校验）。因此这里要求完整的角色规格字段：
  * 职责、必读材料、可选材料、权限与工具、必产出、退出条件。
  */
 export function validateRoleSpecContent(value: unknown, path: string, issues: ValidationIssue[]): void {

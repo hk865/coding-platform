@@ -1,11 +1,11 @@
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { buildApplyPlanCommand } from '../../src/contracts/commands/plan.js';
 import type { GoalSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 
 /** Historical accepted contract for import/reopen compatibility, not a production plan default. */
 export async function installLegacyCommandOnlyPlan(directory: string, scope: { projectId: string; goalId: string }) {
-  const harness = await createPersistentSqliteHarness({ dir: directory });
+  const harness = await createPersistentPlatform({ dir: directory });
   try {
     const loaded = await harness.ledger.load({ aggregateType: 'Goal', projectId: scope.projectId, goalId: scope.goalId });
     if (loaded.status !== 'found') throw Error('Legacy fixture requires an existing formal Goal');

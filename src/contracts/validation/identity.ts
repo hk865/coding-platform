@@ -8,7 +8,7 @@ export function validateActor(value: unknown, path: string, issues: ValidationIs
     return;
   }
   const kind = value["kind"];
-  // CM-1A-001 D03：agent 是第三种**归因**（不是授权）。
+  // 协作通信 Agent 归因与工具边界：agent 是第三种**归因**（不是授权）。
   if (kind !== "human" && kind !== "system" && kind !== "agent") {
     issues.push({ path: `${path}.kind`, code: "bad_type", message: "kind must be human|system|agent" });
   }

@@ -14,7 +14,7 @@ import { classifyRestartProbeError } from '../readiness-probe.js';
  * adapters are not yet implemented (integration skeleton). Owner: P1-01 lane C.
  */
 import { describe, expect, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../../src/composition/persistent-platform.js";
 import { RESTART_ALPHA, RESTART_BETA, runBootstrapAndCreateGoals } from "../restart-fixtures.js";
 import {
   capturePreRestart,
@@ -76,7 +76,7 @@ function persistedCursor(result: CreateGoalResult): string | null {
 
 describe.skipIf(!READY)("P1-01 restart-path evidence", () => {
   it("collects the restart evidence block", async () => {
-    const harness = await createPersistentSqliteHarness();
+    const harness = await createPersistentPlatform();
     try {
       const runs = await runBootstrapAndCreateGoals(harness);
       expect(runs.alpha.status).toBe("persisted");

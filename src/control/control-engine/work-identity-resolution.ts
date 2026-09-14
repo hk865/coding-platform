@@ -1,5 +1,5 @@
 /**
- * RW-13 ControlEngine 入口：任务工作身份的**权威只读解析**（零写入，无新聚合、无新事件种类）。
+ * ControlEngine 入口：任务工作身份的**权威只读解析**（零写入，无新聚合、无新事件种类）。
  *
  * ── 为什么解析面在 ControlEngine（唯一权威）─────────────────────────────────────
  *   1. 身份是 Control 的持久事实（WorkContextBinding 由 ControlEngine.WorkRecordPort 建立，
@@ -15,7 +15,7 @@
  *     纯选择规则 dedupeTaskWorks，见 src/data/read-model-index/read-model-index.ts。）
  *
  * ── 一个任务一个身份：多条候选时的确定性唯一答案 ─────────────────────────────────
- * 正常账本里 (goalId, taskId) 恰好一条 task 身份。RW-13 之前可能留下两条（派发面按推导规则
+ * 正常账本里 (goalId, taskId) 恰好一条 task 身份。规则生效之前可能留下两条（派发面按推导规则
  * 又建了一条），这是历史不一致，不是新事实：
  *   1. **显式声明的身份优先于推导兜底身份**。推导 id 只是「没有既存身份时」的兜底规则，
  *      不是身份的唯一来源；workId 不等于推导 id 的绑定只可能来自别的主体对同一任务的显式声明，
@@ -27,7 +27,7 @@
  *
  * ── 解析上限（明确边界）─────────────────────────────────────────────────────────
  * 单次解析最多扫描 TASK_WORK_IDENTITY_MAX_SCAN_PAGES × TASK_WORK_IDENTITY_SCAN_PAGE_SIZE
- * = 200 × 1000 = 200000 条账本事件（与同仓 RW-04 的事件扫描上限同量级）。超过上限即返回
+ * = 200 × 1000 = 200000 条账本事件（与 autonomous-rework 的事件扫描上限同量级）。超过上限即返回
  * unavailable：**读不完整就不能证明「这个任务没有既存身份」**，调用方必须失败，不得凭推导 id
  * 硬写，也不得把不完整的候选集当成完整答案。
  */
@@ -45,7 +45,7 @@ import {
   type WorkIdentityScope,
 } from '../../contracts/task-work-identity.js';
 
-/** 事件扫描分页大小（与 RW-04 一致）。 */
+/** 事件扫描分页大小（与 autonomous-rework 的扫描页大小一致）。 */
 export const TASK_WORK_IDENTITY_SCAN_PAGE_SIZE = 1000;
 /** 事件扫描页数上限：200 × 1000 = 200000 条；超过即视为读不完整（unavailable）。 */
 export const TASK_WORK_IDENTITY_MAX_SCAN_PAGES = 200;
@@ -110,7 +110,7 @@ export async function resolveTaskWorkIdentity(
 }
 
 /**
- * RW-13 唯一权威的身份选择规则（纯函数，无 IO）：从同一任务的候选里选出代表这条工作的身份。
+ * 任务工作身份的唯一权威选择规则（纯函数，无 IO）：从同一任务的候选里选出代表这条工作的身份。
  * 候选顺序 = 账本提交顺序（调用方保证：事件扫描天然按 cursor 递增；投影按折叠顺序）。
  *   - 0 条 → null（该任务还没有身份，调用方可以按推导规则建立）；
  *   - 有显式声明的身份 → 取其中账本顺序最早的一条；

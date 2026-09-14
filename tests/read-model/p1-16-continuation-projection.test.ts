@@ -1,6 +1,6 @@
 import { ControlPolicyExplanation } from '../../src/control/control-engine/policy-explanation.js';
 /**
- * P1-16 LANE-B InMemory continuation projection tests — the ContinuationRecorded
+ * In-memory continuation projection tests — the ContinuationRecorded
  * event folds into a full-scope-keyed ContinuationRecordSnapshot list, recent
  * first, bounded. Covers:
  *   - continuation rows (status / takeoverRunRef / unsupportedCapabilities);
@@ -75,10 +75,10 @@ function scopeKey(projectId: string, workspaceId: string, workId: string): strin
 }
 
 function rows(rm: ReadModelIndexImpl, key: string): import("../../src/contracts/context-continuity.js").ContinuationRecordSnapshot[] {
-  return ((rm as unknown as { p116ContinuationRows: Map<string, unknown[]> }).p116ContinuationRows.get(key) ?? []) as unknown as import("../../src/contracts/context-continuity.js").ContinuationRecordSnapshot[];
+  return ((rm as unknown as { workContextContinuationRows: Map<string, unknown[]> }).workContextContinuationRows.get(key) ?? []) as unknown as import("../../src/contracts/context-continuity.js").ContinuationRecordSnapshot[];
 }
 
-describe("P1-16 LANE-B InMemory continuation projection", () => {
+describe("in-memory continuation projection", () => {
   it("projects ContinuationRecorded rows (status / takeoverRunRef / unsupportedCapabilities), recent-first", async () => {
     const rm = new ReadModelIndexImpl(new ControlPolicyExplanation());
     const proj = P116_PROJECT_A;

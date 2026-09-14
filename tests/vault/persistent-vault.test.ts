@@ -3,12 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, it } from 'vitest';
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { runRefFor } from '../../src/contracts/dispatch.js';
 
 it('preserves artifact bodies, source revisions and owner authorization across host restart', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'vault-restart-'));
-  let host = await createPersistentSqliteHarness({ dir });
+  let host = await createPersistentPlatform({ dir });
   try {
     const owner = runRefFor('project', 'goal', 'writer');
     const record = { contentType: 'text/plain', body: '调查材料：符号位置、理由与未解问题',

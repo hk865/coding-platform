@@ -1,0 +1,120 @@
+{
+  "scope": "Isolated SQLite query/JSON parsing microbenchmark, not full product latency or production-scale evidence; includes one indexed replacement classification probe per selected dispatch row; no index/schema change",
+  "node": "v24.19.0",
+  "results": [
+    {
+      "size": 1000,
+      "before": [
+        {
+          "milliseconds": 6.3277,
+          "parsedRows": 1000,
+          "selected": 10
+        },
+        {
+          "milliseconds": 2.6765999999999934,
+          "parsedRows": 1000,
+          "selected": 10
+        },
+        {
+          "milliseconds": 4.171499999999995,
+          "parsedRows": 1000,
+          "selected": 10
+        },
+        {
+          "milliseconds": 3.3145999999999987,
+          "parsedRows": 1000,
+          "selected": 10
+        },
+        {
+          "milliseconds": 3.1466999999999956,
+          "parsedRows": 1000,
+          "selected": 10
+        }
+      ],
+      "after": [
+        {
+          "milliseconds": 0.6677999999999997,
+          "parsedRows": 10,
+          "selected": 10
+        },
+        {
+          "milliseconds": 0.5328999999999979,
+          "parsedRows": 10,
+          "selected": 10
+        },
+        {
+          "milliseconds": 0.5886999999999958,
+          "parsedRows": 10,
+          "selected": 10
+        },
+        {
+          "milliseconds": 0.4994999999999976,
+          "parsedRows": 10,
+          "selected": 10
+        },
+        {
+          "milliseconds": 0.4971000000000032,
+          "parsedRows": 10,
+          "selected": 10
+        }
+      ]
+    },
+    {
+      "size": 10000,
+      "before": [
+        {
+          "milliseconds": 37.144800000000004,
+          "parsedRows": 10000,
+          "selected": 100
+        },
+        {
+          "milliseconds": 31.704099999999983,
+          "parsedRows": 10000,
+          "selected": 100
+        },
+        {
+          "milliseconds": 39.348599999999976,
+          "parsedRows": 10000,
+          "selected": 100
+        },
+        {
+          "milliseconds": 33.15289999999999,
+          "parsedRows": 10000,
+          "selected": 100
+        },
+        {
+          "milliseconds": 32.53129999999999,
+          "parsedRows": 10000,
+          "selected": 100
+        }
+      ],
+      "after": [
+        {
+          "milliseconds": 6.066499999999991,
+          "parsedRows": 100,
+          "selected": 100
+        },
+        {
+          "milliseconds": 6.00739999999999,
+          "parsedRows": 100,
+          "selected": 100
+        },
+        {
+          "milliseconds": 5.906399999999962,
+          "parsedRows": 100,
+          "selected": 100
+        },
+        {
+          "milliseconds": 5.749400000000037,
+          "parsedRows": 100,
+          "selected": 100
+        },
+        {
+          "milliseconds": 5.887900000000002,
+          "parsedRows": 100,
+          "selected": 100
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+src\composition\README.md:5:历史 `createPersistentSqliteHarness` 已迁为 `createPersistentPlatform`，仓内调用同步迁移。磁盘目录、数据库表、事件名、引用和摘要没有随源码命名修改。
+src\harness\README.md:7:- [persistent-harness.ts](persistent-harness.ts)
+src\contracts\README.md:23:协议结构校验按入口在 [validation](validation/README.md) 中组织，消费者直接引用对应协议，无总转导出。公共问题结果与通用结构原语在 common.ts；原语只服务字段校验，不取代 Control 的正式准入政策。返工问题来源、当前处置与 ReworkDispositionPort 在同一问题协议；提案继续复用 PlanProposal。只有组合根消费的 ReworkIssueReadPort 位于 [harness/rework-composition.ts](../harness/rework-composition.ts)。

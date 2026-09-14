@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, writeFile, access, rm } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { CodingAgentRuntime, type RunSpec } from '../../src/execution/worker-runtime/coding-agent-runtime.js';
 import { buildDispatchClaimCommand } from '../../src/fixtures/dispatch-fixtures.js';
 import { setupP107Scenario } from './runtime-concurrency-fixture.js';
@@ -28,7 +28,7 @@ async function seed() {
   const runtime = new CodingAgentRuntime(runsDir, async () => ({ configuration: { revision: 'test', provider: 'deepseek', model: 'capture', baseUrl: 'http://127.0.0.1' },
     client: { async *stream() { throw Error('seed may not call a provider'); } } }));
   await runtime.init(); await runtime.prepare(spec); await runtime.close();
-  const h = await createPersistentSqliteHarness({ dir: stateDir, deps: { clock: () => P107_SCHEMA } });
+  const h = await createPersistentPlatform({ dir: stateDir, deps: { clock: () => P107_SCHEMA } });
   try {
     await setupP107Scenario(h);
     const claim = await h.claimTask(buildDispatchClaimCommand({ projectId: P107_PROJECT, goalId: P107_GOAL, taskId: P107_TASK_READER_A,
@@ -138,7 +138,7 @@ it('a process exit after start authorization but before begin produces a durable
 }, 90_000);
 
 it('cancel intent persisted before a caller crash is applied after restart without any Runtime execution', async () => {
-  const w = await seed(); const h = await createPersistentSqliteHarness({ dir: w.stateDir, deps: { clock: () => w.at } });
+  const w = await seed(); const h = await createPersistentPlatform({ dir: w.stateDir, deps: { clock: () => w.at } });
   try {
     expect(await h.control.submitControl({ schemaVersion: 1, commandType: 'SubmitControl', commandId: 'pending-cancel',
       identity: { projectId: w.scope.projectId, actor: { kind: 'human', id: 'user-1' }, idempotencyKey: 'pending-cancel' },

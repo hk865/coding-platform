@@ -200,7 +200,7 @@ function deriveAffectedWorks(
   const seen = new Set<string>();
   for (const delta of intent.obligationDeltas) {
     // The affected tasks are the source obligation's taskIds. An "add" delta
-    // has no source obligation yet — mirror the P1-11 fixture clone default
+    // has no source obligation yet — mirror the plan change fixture clone default
     // (a new required obligation reuses the first source obligation's tasks).
     let taskIds: string[] = [];
     if (delta.action === "add") {

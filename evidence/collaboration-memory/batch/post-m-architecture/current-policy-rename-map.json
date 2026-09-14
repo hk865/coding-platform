@@ -1,0 +1,70 @@
+{
+  "names": {
+    "P15_COORDINATION_BUDGET_MAX": "COORDINATION_AUTONOMOUS_REWORK_BUDGET_MAX",
+    "P15_COORDINATION_POLICY_REVISION": "COORDINATION_POLICY_REVISION_V1",
+    "P15_MAX_OPTIONS": "INITIAL_DESIGN_MAX_OPTIONS",
+    "P15_OPTION_SUMMARY_MAX_BYTES": "INITIAL_DESIGN_OPTION_SUMMARY_MAX_BYTES"
+  },
+  "files": [
+    {
+      "file": "src/app/governance.ts",
+      "identifiers": 3
+    },
+    {
+      "file": "src/contracts/commands/governance.ts",
+      "identifiers": 2
+    },
+    {
+      "file": "src/contracts/human-role-collaboration.ts",
+      "identifiers": 4
+    },
+    {
+      "file": "src/control/control-engine/human-role-collaboration.ts",
+      "identifiers": 8
+    },
+    {
+      "file": "src/data/read-model-index/governance-view.ts",
+      "identifiers": 2
+    },
+    {
+      "file": "src/fixtures/role-spec-fixtures.ts",
+      "identifiers": 5
+    },
+    {
+      "file": "tests/app/governance-commands.test.ts",
+      "identifiers": 3
+    },
+    {
+      "file": "tests/contract-support/fixtures/human-role-collaboration-fixtures.ts",
+      "identifiers": 2
+    },
+    {
+      "file": "tests/control/governance-command-builders.test.ts",
+      "identifiers": 2
+    },
+    {
+      "file": "tests/control/operator-entry-role.test.ts",
+      "identifiers": 2
+    },
+    {
+      "file": "tests/control/role-material-completion.test.ts",
+      "identifiers": 2
+    },
+    {
+      "file": "tests/control/role-spec-material-read.test.ts",
+      "identifiers": 2
+    },
+    {
+      "file": "tests/control/work-material-gate.test.ts",
+      "identifiers": 2
+    },
+    {
+      "file": "tests/verification/role-output-completeness.test.ts",
+      "identifiers": 3
+    },
+    {
+      "file": "tests/verification/verification-rounds.test.ts",
+      "identifiers": 2
+    }
+  ]
+}

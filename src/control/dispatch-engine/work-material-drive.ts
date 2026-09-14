@@ -1,5 +1,5 @@
 /**
- * RW-12 DispatchEngine — 派发时的材料投递驱动。
+ * DispatchEngine — 派发时的材料投递驱动。
  *
  * 位置与理由：与 ExplorationContextDrive 同构——**谁在什么时机去取材料**属于派发面，
  * **怎么选材**属于 ContextCompiler（data/context-compiler/work-run-materials.ts）。
@@ -13,7 +13,7 @@
  * 解析不到（absent／unavailable）即显式失败：运行尚未启动，属于「可证明未启动」的已知失败，
  * 绝不静默退回「没有材料」。
  *
- * 为什么不是"运行期按需拉取"（ADR 0003 D4 方案 B 被否决）：
+ * 为什么不在运行期按需拉取：
  *   - 本方法只被 DispatchEngine 自己的运行时适配器（LeasedWorkerRuntime）在
  *     runtime.start 之前调用一次；WorkerRuntime 在运行中不会回调 ContextCompiler，
  *     因此不存在第二次选材、第二次权限复核或"边跑边扩权"的路径；
@@ -42,8 +42,8 @@ export class WorkMaterialDrive {
     control: Pick<ControlEngine, 'resolveTaskWorkIdentity'> & Partial<Pick<ControlEngine,'grantMaterialAccess'>>;
     feedback?: FeedbackMaterialCompiler;
     /**
-     * 目标 Delivery → 实际模型输入的材料端口（CM-1A-001 第 3 工作段，A06 的输入面）。
-     * **未注入时本驱动逐字节与之前相同**（不读 Delivery、不签 grant、不追加任何 rule）。
+     * 目标 Delivery → 实际模型输入的材料端口（协作通信输入面）。
+     * **未注入该端口时，本驱动保持原有行为**（不读 Delivery、不签 grant、不追加任何 rule）。
      * 注入时顺序固定：先读 Work 的既有 Delivery 并 capture 来源 basis → 逐条签**精确**
      * MaterialAccessGrant（非 committed 即抛错，运行尚未启动）→ vault.open(current) →
      * 来源复核 → 最后组装 rule。见 data/context-compiler/delivery-materials.ts。

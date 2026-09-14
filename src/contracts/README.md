@@ -16,11 +16,13 @@
 
 按真实跨 Module 消费者保留协议。调用者直接导入所属协议文件，不再通过无消费者的根 barrel；不为目录整理新增业务层级。
 
+`modules.ts` 中的 `CoordinationControl` 是协调运行的具名公开能力面；`ControlEngine` 组合该能力。协调驱动只依赖前者，避免因一个协调调用而获得全部控制能力。该拆分不改变命令、回执、权限或账本复核。
+
 - 反馈与补料：[execution-feedback.ts](execution-feedback.ts)、[query-job.ts](query-job.ts)、[runtime-context-materials.ts](runtime-context-materials.ts)。
 - 协调与返工：[planning.ts](planning.ts)（含影响报告工作身份材料）、[问题材料](rework/issues.ts)、[提案](rework/proposal.ts)、[驱动](rework/drive.ts)、[Control受理](rework/acceptance.ts)。
 - 验证与正式资格：[verification-service.ts](verification-service.ts)、[verification-round.ts](verification-round.ts)、[evidence.ts](evidence.ts)、[reduction.ts](reduction.ts)。
 
-协议结构校验按入口在 [validation](validation/README.md) 中组织，消费者直接引用对应协议，无总转导出。公共问题结果与通用结构原语在 common.ts；原语只服务字段校验，不取代 Control 的正式准入政策。返工问题来源、当前处置与 ReworkDispositionPort 在同一问题协议；提案继续复用 PlanProposal。只有组合根消费的 ReworkIssueReadPort 位于 [harness/rework-composition.ts](../harness/rework-composition.ts)。
+协议结构校验按入口在 [validation](validation/README.md) 中组织，消费者直接引用对应协议，无总转导出。公共问题结果与通用结构原语在 common.ts；原语只服务字段校验，不取代 Control 的正式准入政策。返工问题来源、当前处置与 ReworkDispositionPort 在同一问题协议；提案继续复用 PlanProposal。只有组合根消费的 ReworkIssueReadPort 位于 [composition/rework-composition.ts](../composition/rework-composition.ts)。
 
 仅供测试的构造器和替身在 [tests/contract-support](../../tests/contract-support)；宿主实际消费的启动样例在 [src/fixtures](../fixtures)，确定性依赖与检查替身在 [src/testing](../testing)。它们保留明确消费者与原默认值，不作为公共业务协议导出。StateLedger 的提交结构校验位于 [ledger-validation.ts](../data/state-ledger/ledger-validation.ts)，Verification 的构造依赖位于 [verification-deps.ts](../control/verification-engine/verification-deps.ts)。
 

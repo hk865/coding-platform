@@ -71,7 +71,7 @@ export type RuntimeTask = {
   phase: Phase;
   scope: TaskScope;
   /**
-   * ADR 0003 D1: 只在 disposition="superseded" 时有意义——该任务在**后一个**
+   * 只在 disposition="superseded" 时有意义：该任务在后一个
    * PlanRevision 里由哪个任务接手（同一义务、同一验收语义，只换承担者）。
    * null 表示本次取消没有取代者。旧 revision 的任务不带本字段（未定义即无取代）。
    * 这是历史/处置视图的事实来源：任务本身不删除，只是退出默认视图。
@@ -139,7 +139,7 @@ export type PlanRevisionDraft = {
   tasks: RuntimeTask[];
   /**
    * 本 revision 的指派集合。它**随 revision 一起被接受**，「谁按什么指令承担这项
-   * 任务」因此不会属于另一个版本。可选：RW-07 之前接受的 revision 没有这个字段，其任务的
+   * 任务」因此不会属于另一个版本。可选： 之前接受的 revision 没有这个字段，其任务的
    * 指派只可能来自同一个快照的 origin.assignments——读取一律经 revisionAssignments，
    * 调用方不自己挑字段。
    */
@@ -232,7 +232,7 @@ export type PlanRevisionRef = {
  * Accepted plan revision — the immutable snapshot. The two effective
  * governance refs are FIXED PINS: later movement of the Project default
  * active refs never changes them; changing a pin requires a NEW
- * PlanRevision/PlanRebase (later tickets).
+ * PlanRevision or PlanRebase.
  */
 export type PlanRevisionSnapshot = {
   reviewAdmissionProtocol?: 'independent-review-v1';

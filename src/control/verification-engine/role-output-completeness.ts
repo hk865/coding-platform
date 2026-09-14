@@ -3,7 +3,7 @@
  * ContextCompiler owns canonical reads; this table owns category-to-witness mapping.
  * Missing outputs remain visible in roleOutputs and never gate completion.
  * Control alone reduces formal Plan obligations using admitted Evidence.
- * Decision provenance: ADR 0003, 2026-09-11 scoped user acceptance.
+ * The completion decision uses the run's pinned role specification and recorded output witnesses.
  */
 import type { RunSnapshot } from '../../contracts/dispatch.js';
 import type { RoleOutputKindV1 } from '../../contracts/role-spec.js';
@@ -28,7 +28,7 @@ export type RoleOutputWitnessRuleV1 = {
  *
  * 今天仍为 null 的两类（读的时候不要把它们当成「已满足」）：
  *   - 'answer-with-sources'：平台今天**没有**把「带来源答案」归因到某个 dispatch Run 的事实通道。
- *     两条候选都不成立：QueryJobAnswer 绑的是 QueryRun（P1-09 的独立运行身份，不是本 Run）；
+ *     两条候选都不成立：QueryJobAnswer 绑的是 QueryRun（query 的独立运行身份，不是本 Run）；
  *     探索报告落在探索会话 journal 与 Vault，且其证据由**人**的审阅产生。审阅原报告确实绑到审阅 Run，
  *     但它是该 Run 的逐条结论事实（已用于 verification-verdict），不是 investigator／secretary 的答案。
  *     后果：只读探索入口（/api/real/explore 侧绑 investigator）与任何要求该种类的角色，其轮次仍会记录未见证的产出期望；不扣留归约。
@@ -38,7 +38,7 @@ export type RoleOutputWitnessRuleV1 = {
 export const ROLE_OUTPUT_WITNESS_V1: Record<RoleOutputKindV1, RoleOutputWitnessRuleV1> = {
   'answer-with-sources': {
     channel: null,
-    because: '今天没有把「带来源答案」归因到某个 Run 的事实通道：QueryJobAnswer 绑的是 QueryRun（P1-09 的独立运行身份），探索报告只落在探索会话 journal 与 Vault，审阅原报告则是审阅 Run 的逐条结论事实（已用于 verification-verdict）。'
+    because: '今天没有把「带来源答案」归因到某个 Run 的事实通道：QueryJobAnswer 绑的是独立 QueryRun，探索报告只落在探索会话 journal 与 Vault，审阅原报告则是审阅 Run 的逐条结论事实（已用于 verification-verdict）。'
       + '需要的通道：一条把「答案正文 + 来源清单 + 作者运行」一起落账、且 runRef 就是本 Run 的正式答案记录。'
       + '产品后果：在通道接通前，要求该种类的角色（investigator／secretary）的轮次仅记录未见证的产出期望，不扣留归约 —— 这是如实陈述，不是把判据放松。',
   },
@@ -166,7 +166,7 @@ export async function evaluateRoleOutputCompleteness(
       ? '角色规格 ' + resolution.roleId + ' revision ' + String(resolution.revision.revision) + ' 的产出期望全部被既有事实见证。'
       : '角色规格 ' + resolution.roleId + ' revision ' + String(resolution.revision.revision) + ' 有 ' + String(missing.length) +
         ' 项产出期望没有见证事实（' + missing.join('、') + '）：如实记为「没有见证到」。' +
-        '按 RW-18，requiredOutputs 是角色规格的**声明性产出期望**，不是完成判据 —— ' +
+        '按当前规则，requiredOutputs 是角色规格的**声明性产出期望**，不是完成判据 —— ' +
         '该缺项不降级本次轮次结论，也不扣留归约；它只是审计信息。',
   };
 }

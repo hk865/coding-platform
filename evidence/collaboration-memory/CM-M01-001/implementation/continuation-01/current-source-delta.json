@@ -1,0 +1,22 @@
+{
+  "oldHead": "ce043a650ecfabd72c55f02695204d58dd9c8b64",
+  "newHead": "ce043a650ecfabd72c55f02695204d58dd9c8b64",
+  "fingerprintChanged": true,
+  "added": [
+    "src/data/state-ledger/dispatch-selection.ts",
+    "tests/control/scoped-dispatch.test.ts"
+  ],
+  "removed": [],
+  "changed": [
+    "src/contracts/ledger.ts",
+    "src/control/dispatch-engine/README.md",
+    "src/control/dispatch-engine/dispatch-engine.ts",
+    "src/control/dispatch-engine/workspace-drive.ts",
+    "src/data/state-ledger/README.md",
+    "src/data/state-ledger/in-memory-ledger.ts",
+    "src/data/state-ledger/sqlite-ledger.ts",
+    "src/harness/in-memory-harness.ts",
+    "src/harness/persistent-harness.ts",
+    "tests/control/reviewer-existing-drivers-isolation.test.ts"
+  ]
+}

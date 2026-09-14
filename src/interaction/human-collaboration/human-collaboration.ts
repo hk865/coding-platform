@@ -1,6 +1,6 @@
 import type { PlanCompilerPort } from '../../contracts/planning.js';
 /**
- * HumanCollaborationImpl — Goal create slice (Lane C, P1-00).
+ * HumanCollaborationImpl — Goal creation and bootstrap interaction boundary.
  * Authority: dev_docs/modules/interaction/human-collaboration.md +
  * dev_docs/interfaces/command-event.md + goal-view.md.
  *
@@ -35,7 +35,7 @@ import type {
 export interface HumanCollaborationDeps {
   control: ControlEngine;
   readModel: ReadModelIndex;
-  /** P1-11: bounded PlanCompiler proposal port (never mutates; CompilerImpl is a lane stub until it lands). */
+  /** plan change: bounded PlanCompiler proposal port (never mutates; the compiler does not mutate state). */
   planProposal?: Pick<PlanCompilerPort, 'request'>;
   commandId: () => string;
   correlationId: () => string;
@@ -77,13 +77,9 @@ export class HumanCollaborationImpl implements HumanCollaboration {
     return this.deps.readModel.goal(query);
   }
 
-  // ------------------------------------------------------------------ //
-  // P1-08 console query group (READ-ONLY face).                         //
-  // Each method delegates exclusively to the ReadModelIndex — the       //
-  // HumanCollaboration console path has NO access to the runtime/       //
-  // control write face, never starts a model, never refreshes a lease   //
-  // and never writes canonical state (ticket acceptance 6/8/9/12).      //
-  // ------------------------------------------------------------------ //
+  // Read-only console query group. Each method delegates exclusively to
+  // ReadModelIndex. This path cannot invoke runtime or control writes,
+  // start a model, refresh a lease, or write canonical state.
 
   async consolePortfolio(query: import("../../contracts/console-views.js").PortfolioViewQuery): Promise<import("../../contracts/console-views.js").PortfolioViewResult> {
     return this.deps.readModel.consolePortfolio(query);
@@ -109,11 +105,9 @@ export class HumanCollaborationImpl implements HumanCollaboration {
     return this.deps.readModel.consoleTimeline(query);
   }
 
-  // ------------------------------------------------------------------ //
-  // HumanCollaboration goal change: amend -> compiler -> Control         //
-  // record; decide/applyChange delegate to Control (only Control creates //
-  // or activates a revision). No direct revision writes here.             //
-  // ------------------------------------------------------------------ //
+  // Goal change flow: amend -> compiler -> Control record. decide and
+  // applyChange delegate to Control; only Control creates or activates a
+  // revision, so this interaction boundary performs no direct revision write.
 
   async amend(request: import("../../contracts/goal-change.js").AmendGoalRequestV1): Promise<{ status: "accepted"; proposalRef: import("../../contracts/goal-change.js").PlanProposalSnapshot["ref"] } | { status: "needs_material"; gaps: string[] } | { status: "rejected"; code: string; message: string }> {
     if (this.deps.planProposal === undefined) {
@@ -171,7 +165,7 @@ export class HumanCollaborationImpl implements HumanCollaboration {
   }
 }
 
-/** Factory matching the fixed lane-C entry point. */
+/** Factory for the HumanCollaboration implementation. */
 export function createHumanCollaboration(
   deps: HumanCollaborationDeps,
 ): HumanCollaboration {

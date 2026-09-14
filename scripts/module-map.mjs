@@ -51,6 +51,7 @@ const surfaceDirs = [
  ['src/contracts/', 'Contracts'],
  ['src/app/', 'Host'],
  ['src/harness/', 'Host'],
+ ['src/composition/', 'Host'],
  ['src/storage/', 'Storage'],
  ['src/ui/', 'UI'],
 ];

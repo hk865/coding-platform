@@ -1,6 +1,6 @@
 /**
- * P1-12 WorkspaceReader.ReadPort — versioned workspace/source reading
- * (first consumer freeze).
+ * WorkspaceReader.ReadPort — versioned workspace/source reading
+ * (versioned workspace-read contract).
  *
  * Authority: dev_docs/modules/data/workspace-reader.md (read(query) →
  * sourced / unsupported / stale / rejected; explicit Workspace version; READ
@@ -8,7 +8,7 @@
  * snapshots from dirty workspaces; missing graph capability degrades to
  * explicit allowed source/text search with coverage marked).
  *
- * FROZEN: the reader returns the graph for the given workspaceRevision along
+ * VERSIONED: the reader returns the graph for the given workspaceRevision along
  * with provenance (snapshot revision, git ref when available, index
  * capabilities). The caller (ArchitectureReconciler) checks freshness:
  * a workspaceRevision changed since the snapshot -> stale (re-read before

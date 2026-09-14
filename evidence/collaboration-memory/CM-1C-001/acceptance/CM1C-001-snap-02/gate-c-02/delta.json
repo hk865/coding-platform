@@ -1,0 +1,20 @@
+{
+  "old": "d0dadb34031309df103d7e9ad293be4d8210850d93a2895d56d245cfe3b45f05",
+  "new": "cf2c775c1cebdc296a4deefc42d495f2102c2eaea14a2464c7e605d39febcc95",
+  "delta": {
+    "added": [
+      "tests/contract-support/testing/injected-coordination-grant.ts"
+    ],
+    "removed": [],
+    "changed": [
+      "src/control/dispatch-engine/dispatch-engine.ts",
+      "src/control/dispatch-engine/leased-worker-runtime.ts",
+      "src/execution/worker-runtime/coding-agent-runtime.ts",
+      "src/harness/persistent-harness.ts",
+      "tests/app/exploration-runtime.test.ts",
+      "tests/control/reviewer-runtime-start-rejection.test.ts",
+      "tests/coordination/coordination-capability.test.ts"
+    ]
+  },
+  "metadataMatched": true
+}

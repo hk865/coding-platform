@@ -1,0 +1,22 @@
+{
+  "fixture": {
+    "handledEventTypes": 89,
+    "lookups": 1000000,
+    "misses": 200000
+  },
+  "beforeEquivalent": {
+    "name": "linear comparison chain / includes",
+    "elapsedMs": 55.6828,
+    "accepted": 800000,
+    "operationsPerSecond": 17958867,
+    "heapDeltaBytes": 2310136
+  },
+  "afterEquivalent": {
+    "name": "shared Set.has",
+    "elapsedMs": 13.108099999999993,
+    "accepted": 800000,
+    "operationsPerSecond": 76288707,
+    "heapDeltaBytes": -1886408
+  },
+  "limitation": "Isolates the handled-event membership rule. Adapter projection and query costs are measured separately by targeted suites and shared-projection.test.ts."
+}

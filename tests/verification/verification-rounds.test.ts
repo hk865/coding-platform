@@ -28,7 +28,7 @@ import {
   buildCoordinationPolicyContentWithRolesV1, buildRoleSpecActivateCommandFor, buildRoleSpecInstallCommandFor, roleMatrixPolicyDigest,
 } from '../../src/fixtures/role-spec-fixtures.js';
 import { buildCoordinationPolicyActivateCommand, buildCoordinationPolicyInstallCommand } from '../../src/contracts/commands/governance.js';
-import { P15_COORDINATION_POLICY_REVISION } from '../../src/contracts/human-role-collaboration.js';
+import { COORDINATION_POLICY_REVISION_V1 } from '../../src/contracts/human-role-collaboration.js';
 import type { RoleBindingRefV1, RunSnapshot } from '../../src/contracts/dispatch.js';
 import { taskAttemptRefFor } from '../../src/contracts/dispatch.js';
 import type { PatchArtifactV1 } from '../../src/contracts/patch.js';
@@ -98,7 +98,7 @@ async function installRole(s: Awaited<ReturnType<typeof fixture>>, roleId: strin
   const content = buildCoordinationPolicyContentWithRolesV1(P107_PROJECT, [roleId]);
   expect((await h.control.installCoordinationPolicy(buildCoordinationPolicyInstallCommand({ policyId, content }, identity('inst-policy-' + roleId)))).status).toBe('committed');
   const pin = {
-    ref: { aggregateType: 'CoordinationPolicyRevision' as const, projectId: P107_PROJECT, policyId, revision: P15_COORDINATION_POLICY_REVISION },
+    ref: { aggregateType: 'CoordinationPolicyRevision' as const, projectId: P107_PROJECT, policyId, revision: COORDINATION_POLICY_REVISION_V1 },
     digest: roleMatrixPolicyDigest(content, policyId),
   };
   expect((await h.control.activateCoordinationPolicy(buildCoordinationPolicyActivateCommand(pin, { ...identity('act-policy-' + roleId), expectedRevision: await projectRevision() }))).status).toBe('committed');

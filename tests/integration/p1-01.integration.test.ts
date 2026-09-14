@@ -19,7 +19,7 @@ import {
   goalSnapshotFor,
 } from "../contract-support/fixtures/goal-fixtures.js";
 import { FIXED_ISO_2026_09_05, createDeterministicDeps } from "../../src/testing/sequences.js";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { createSqliteStateLedger } from "../../src/data/state-ledger/sqlite-ledger.js";
 import { ControlEngineImpl } from "../../src/control/control-engine/control-engine.js";
 import { verifyBootstrapManifest } from "./p1-00-assertions.js";
@@ -34,7 +34,7 @@ import {
   verifyRebuildViews,
   verifySnapshotLoadPath,
 } from "../restart/restart-assertions.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 
 const FIXTURE = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1;
 const ALPHA = FIXTURE.scopes[0]!;
@@ -42,7 +42,7 @@ const BETA = FIXTURE.scopes[1]!;
 
 describe("P1-01 integration: real SQLite Ledger/View adapters, full path", () => {
   it("bootstrap on an empty SQLite file via the supported contract; replay idempotent; other identity rejected not_empty", async () => {
-    const harness = await createPersistentSqliteHarness();
+    const harness = await createPersistentPlatform();
     try {
       const first = await harness.bootstrap(bootCommandFor("boot-1"));
       expect(first.status).toBe("committed");
@@ -87,7 +87,7 @@ describe("P1-01 integration: real SQLite Ledger/View adapters, full path", () =>
   });
 
   it("CreateGoal persists two isolated scopes; replay idempotent; same-key conflict; rejections zero-write", async () => {
-    const harness = await createPersistentSqliteHarness();
+    const harness = await createPersistentPlatform();
     try {
       await harness.bootstrap(bootCommandFor("boot-3"));
       const alpha = await harness.collaboration.createGoal({
@@ -182,7 +182,7 @@ describe("P1-01 integration: real SQLite Ledger/View adapters, full path", () =>
   });
 
   it("freshness: not_ready until the persisted EventPage(s) are advanced, then ready", async () => {
-    const harness = await createPersistentSqliteHarness();
+    const harness = await createPersistentPlatform();
     try {
       await harness.bootstrap(bootCommandFor("boot-4"));
       const result = await harness.collaboration.createGoal({
@@ -279,7 +279,7 @@ describe("P1-01 integration: real SQLite Ledger/View adapters, full path", () =>
   });
 
   it("restart: canonical GoalSnapshot loads from SQLite; GoalView rebuilt from persisted EventPage — same as before", async () => {
-    const harness = await createPersistentSqliteHarness();
+    const harness = await createPersistentPlatform();
     try {
       const runs = await runBootstrapAndCreateGoals(harness);
       expect(runs.alpha.status).toBe("persisted");
@@ -349,7 +349,7 @@ describe("P1-01 integration: real SQLite Ledger/View adapters, full path", () =>
   });
 
   it("no implicit Plan/Task/Run side effects: only bootstrap + GoalCreated events exist", async () => {
-    const harness = await createPersistentSqliteHarness();
+    const harness = await createPersistentPlatform();
     try {
       await harness.bootstrap(bootCommandFor("boot-5"));
       await runBootstrapAndCreateGoals(harness);

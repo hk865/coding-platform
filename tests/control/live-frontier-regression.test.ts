@@ -5,7 +5,7 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
-import { createPersistentSqliteHarness, type PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform, type PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import {
   prepareP105Scenario, toP1_05Harness, p105Evidence,
   submitP105Evidence, p105ReduceTaskCommand, reduceGoalCommand,
@@ -29,7 +29,7 @@ async function setup(storage: Storage, independent = false) {
   let event = 0;
   const deps = { eventId: () => "fix02-event-" + ++event };
   const raw = storage === "sqlite"
-    ? await createPersistentSqliteHarness({ deps })
+    ? await createPersistentPlatform({ deps })
     : createInMemoryHarness({ deps });
   if (isPersistent(raw)) cleanup.push(() => raw.cleanup());
   const h = toP1_05Harness(raw);
@@ -57,7 +57,7 @@ async function setup(storage: Storage, independent = false) {
   return { raw, h, sc, plan: loaded.snapshot as PlanRevisionSnapshot };
 }
 type Scenario = Awaited<ReturnType<typeof setup>>;
-function isPersistent(raw: Scenario["raw"]): raw is PersistentSqliteHarness { return "reopen" in raw; }
+function isPersistent(raw: Scenario["raw"]): raw is PersistentPlatform { return "reopen" in raw; }
 
 async function restart(s: Scenario): Promise<Scenario> {
   if (!isPersistent(s.raw)) return s;

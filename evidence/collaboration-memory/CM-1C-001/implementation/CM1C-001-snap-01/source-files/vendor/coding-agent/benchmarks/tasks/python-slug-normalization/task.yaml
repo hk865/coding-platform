@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "taskId": "python-slug-normalization",
+  "dataset": "internal-mvp",
+  "datasetVersion": "0.1.0",
+  "language": "python",
+  "domain": "backend",
+  "taskType": "bugfix",
+  "difficulty": "medium",
+  "baseRevision": "synthetic:python-slug-normalization-v1",
+  "environmentDigest": "python3.12:host-fixture-v1",
+  "timeoutSeconds": 30,
+  "maxModelRequests": 10,
+  "maxToolCalls": 30,
+  "network": "disabled",
+  "requireBubblewrap": true,
+  "allowedChangedPaths": ["slug.py"],
+  "evaluator": {
+    "command": "python3",
+    "args": ["{taskRoot}/hidden_tests/evaluate.py", "{workspace}"]
+  },
+  "variants": {
+    "base": "workspace/base",
+    "oracle": "workspace/oracle",
+    "nearMiss": "workspace/near-miss"
+  }
+}

@@ -1,17 +1,18 @@
+import { recordArchitectureReview } from "./architecture-review.js";
 import { reconcileCommunicationIntent } from './communication-reconciliation.js';
 import { reconcileRun } from './run-reconciliation.js';
 /**
- * ControlEngine (Lane B, P1-00) — Goal-create slice + Workspace bootstrap.
+ * ControlEngine — Goal creation, Workspace bootstrap and versioned control capabilities.
  *
  * Authority:
  *   - dev_docs/modules/control/control-engine.md   (transition authority, guard order)
  *   - dev_docs/interfaces/command-event.md          (command/receipt/event & fingerprint)
  *   - dev_docs/interfaces/state-ledger.md           (snapshot/atomic-commit/event page)
- *   - IMPLEMENTATION-HANDOFF.md bootstrap semantics:
+ *   - dev_docs/interfaces/state-ledger.md bootstrap semantics:
  *       bootstrap is only-if-empty; idempotency is decided INSIDE ledger.commit,
  *       this engine never check-then-commits emptiness.
  *
- * Design notes (see handoff report):
+ * Design notes:
  *   - submit runs engine-level guards only where a distinct rejection code is
  *     required (validation -> invalid, Project/Workspace load -> not_found).
  *     Goal existence, idempotent replay and commit-time revision conflicts are
@@ -165,6 +166,7 @@ type BootstrapSnapshotUnion = ProjectSnapshot | WorkspaceSnapshot | BootstrapMan
 type BootstrapEventUnion = ProjectBootstrappedEventV1 | WorkspaceBootstrappedEventV1;
 
 export class ControlEngineImpl implements ControlEngine {
+  recordArchitectureReview(command: import("../../contracts/architecture-review.js").ArchitectureReviewCommand) { return recordArchitectureReview(this.deps,command); }
   private readonly deps: ControlEngineDeps;
   private readonly workspaceLease: WorkspaceLeaseEngineImpl;
   private readonly workRecord: WorkRecordEngineImpl;
@@ -179,7 +181,7 @@ export class ControlEngineImpl implements ControlEngine {
   private readonly humanRole: HumanRoleCollaborationEngineImpl;
   private readonly roleSpec: RoleSpecEngineImpl;
   private readonly materialAccess: MaterialAccessEngineImpl;
-  /** CM-1A-001：协作通信受理面（同一个 deps，同一条 ledger.commit 写入路径）。 */
+  /** 协作通信：协作通信受理面（同一个 deps，同一条 ledger.commit 写入路径）。 */
   private readonly coordination: CoordinationEngineImpl;
 
   constructor(deps: ControlEngineDeps) {
@@ -190,7 +192,7 @@ export class ControlEngineImpl implements ControlEngine {
     this.controlIntent = new ControlIntentEngineImpl(deps);
     this.queryJob = new QueryJobEngineImpl(deps);
     this.goalChange = new GoalChangeEngineImpl(deps);
-    // RW-04：自动受理复用同一个 goal-change 引擎实例（同一 deps），不新开写入路径。
+    // 自动受理复用同一个 goal-change 引擎实例（同一 deps），不新开写入路径。
     this.autonomousRework = new AutonomousReworkEngineImpl(deps, this.goalChange);
     this.evolutionPolicy = new ArchitectureEvolutionPolicyEngineImpl(deps);
     this.remediation = new RemediationEngineImpl(deps);
@@ -314,7 +316,7 @@ export class ControlEngineImpl implements ControlEngine {
   }
 
   // --------------------------------------------------------------------- //
-  // P1-02 governance + plan (delegating handlers; semantics see handoff)     //
+  // Versioned-governance and plan handlers.                                                //
   // --------------------------------------------------------------------- //
 
   install(command: GovernanceInstallCommand): Promise<GovernanceInstallReceipt> {
@@ -330,7 +332,7 @@ export class ControlEngineImpl implements ControlEngine {
   }
 
   // --------------------------------------------------------------------- //
-  // P1-03 dispatch / run entries (delegating handlers)                     //
+// Dispatch and run entries (delegating handlers).                            //
   // --------------------------------------------------------------------- //
 
   dispatchReadiness(query: DispatchReadinessQuery): Promise<DispatchReadinessResult> {
@@ -350,7 +352,7 @@ export class ControlEngineImpl implements ControlEngine {
   }
 
   /**
-   * CM-1A-001 第 4 步 / D06：Control 复核「exact Run + 材料版本 + 授权」后**签发一次性**模型调用
+   * 协作通信可靠投递规则 / 调用证据与参与语义规则：Control 复核「exact Run + 材料版本 + 授权」后**签发一次性**模型调用
    * 许可。落账复用既有 run-fact 通道（同一 CAS 与去重语义），不新增写通道。
    */
   authorizeModelRequest(command: AuthorizeModelRequestCommand): Promise<AuthorizeModelRequestReceipt> {
@@ -373,13 +375,13 @@ export class ControlEngineImpl implements ControlEngine {
     return claimReplacement(this.deps, command);
   }
 
-  /** P1-05: deterministic Goal phase reduction (never Task phase). */
+  /** context assembly: deterministic Goal phase reduction (never Task phase). */
   reduceGoal(command: import("../../contracts/goal-phase.js").ReduceGoalCommand): Promise<import("../../contracts/goal-phase.js").ReduceGoalReceipt> {
     return reduceGoal(this.deps, command);
   }
 
   // --------------------------------------------------------------------- //
-  // P1-07 workspace lease / integration / patch (delegating handlers)      //
+  // Workspace lease, integration, and patch handlers.                       //
   // --------------------------------------------------------------------- //
 
   acquireWorkspaceReadLease(command: AcquireWorkspaceReadLeaseCommand): Promise<AcquireReadLeaseReceipt> {
@@ -407,7 +409,7 @@ export class ControlEngineImpl implements ControlEngine {
   }
 
   /**
-   * RW-13：任务工作身份的权威只读解析（零写入）。实现只在 ./work-identity-resolution.ts，
+   * 任务工作身份解析：权威只读、零写入。实现只在 ./work-identity-resolution.ts，
    * 这里只把它挂到 ControlEngine 的公开读面上——派发面与已完成工作视图都消费这一份答案，
    * 不各自再算一次「哪个 workId 代表这个任务」。
    */
@@ -479,7 +481,7 @@ export class ControlEngineImpl implements ControlEngine {
     return this.goalChange.applyPlanChange(command);
   }
 
-  // RW-04（ADR 0003 D1-4）：返工提案的自动受理。四条第边界都满足才自动落账并应用；
+  // 返工提案的自动受理。四条边界都满足才自动落账并应用；
   // 任一条不满足返回 needs_human_decision 且零写入。落账与应用仍然只走上面三个入口。
   acceptReworkProposal(request: import('../../contracts/rework/acceptance.js').ReworkAcceptanceRequestV1): Promise<import('../../contracts/rework/acceptance.js').ReworkAcceptanceReceiptV1> {
     return this.autonomousRework.acceptReworkProposal(request);
@@ -537,7 +539,7 @@ export class ControlEngineImpl implements ControlEngine {
     return this.humanRole.activatePolicy(command);
   }
 
-  // RW-11（ADR 0003 D4-1）：角色规格实体化。install 是 CAS@0 且绝不自动生效，
+  // 角色规格实体化。install 是 CAS@0 且绝不自动生效，
   // activate 把「该角色在这个项目上的生效引用」CAS 到已安装 revision；
   // 两条命令都不新增写入路径——落账仍只经 StateLedger.commit。
   installRoleSpec(command: import("../../contracts/role-spec.js").InstallRoleSpecRevisionCommand): Promise<import("../../contracts/role-spec.js").InstallRoleSpecRevisionReceipt> {
@@ -557,7 +559,7 @@ export class ControlEngineImpl implements ControlEngine {
   }
 
   // --------------------------------------------------------------------- //
-  // CM-1A-001 协作通信（委托 ./coordination.ts；守卫、CAS 与边界见该文件）      //
+  // 协作通信（委托 ./coordination.ts；守卫、CAS 与边界见该文件）               //
   // --------------------------------------------------------------------- //
 
   reconcileRun(command: import('../../contracts/dispatch.js').ReconcileRunCommand): Promise<import('../../contracts/dispatch.js').RunFactReceipt> {

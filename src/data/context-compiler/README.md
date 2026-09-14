@@ -13,7 +13,7 @@
 - [work-context-compiler.ts](work-context-compiler.ts)
 - [completed-work-context-compiler.ts](completed-work-context-compiler.ts)
 - [handoff-context-compiler.ts](handoff-context-compiler.ts)
-- [work-run-materials.ts](work-run-materials.ts)：派发时把工作身份与历史材料编译进既有 ContextBundle（RW-12），并按角色规格对**必读材料 fail-closed**（RW-15）
+- [work-run-materials.ts](work-run-materials.ts)：派发时把工作身份与历史材料编译进既有 ContextBundle，并按角色规格对**必读材料 fail-closed**
 
 ## 边界与接线
 
@@ -27,7 +27,7 @@
 
 [material-selection.ts](material-selection.ts) 实现职责/主题排序、当前/历史区分、必需材料缺口、冲突与容量清单。RuntimeContext 已消费显式规则选择；其他角色完整接线仍待完成。最终模型输入计量由 runtime/model-budget 执行。
 
-## RW-15／RW-17 角色必读材料的 gate 与真实通道（B2）
+## 角色必读材料的 gate 与真实通道
 
 [work-run-materials.ts](work-run-materials.ts) 的桥表 `ROLE_MATERIAL_CHANNEL_V1` 是 **`Record<RoleMaterialKindV1, ...>` 全键穷尽**的：它逐键声明「角色要求的类别」由本派发入口的哪条通道供应。`ROLE_MATERIAL_KINDS` 新增一类而桥表缺键时，`npx tsc --noEmit -p tsconfig.json` 直接失败。
 
@@ -45,8 +45,8 @@
 
 证据：[tests/context/work-run-materials.test.ts](../../../tests/context/work-run-materials.test.ts)（逐类取材与 fail-closed）、[tests/context/role-code-channel.test.ts](../../../tests/context/role-code-channel.test.ts)（code 通道只消费窄端口：权限／版本／缺失判据都在消费面）、[tests/data/workspace-path-boundary.test.ts](../../../tests/data/workspace-path-boundary.test.ts)（拒绝前缀的唯一来源与真实工作区上的边界）、[tests/control/work-material-gate.test.ts](../../../tests/control/work-material-gate.test.ts)（装规格+矩阵后普通运行真的开始）、[tests/control/role-material-completion.test.ts](../../../tests/control/role-material-completion.test.ts)（运行开始 → 实现结果 → 轮次 PASS → Task satisfied）、[tests/app/role-material-run.test.ts](../../../tests/app/role-material-run.test.ts)（真实 HTTP 产品链）。
 
-### 为什么「code」不再自己读工作区（施工历史，RC-02 归位）
+### 为什么「code」不再自己读工作区
 
-RW-15（独立验收阻断项 B2）把「规格必读材料」做成如实 fail-closed：桥表里值为 `null` 的类别表示本入口**没有**这条通道，于是解析到规格后立刻返回 `needs_material`，在模型调用之前终止该次运行。这暴露了一个跨票缺陷：规格里真正会被派发的角色（executor／integrator）要求的必读材料**全部**落在这四类上，装上 executor 规格之后每一次普通运行都起不来 —— ADR 0003 D4-3 的「按规格取材」实际上没有兑现。
+「规格必读材料」采用如实 fail-closed：桥表里值为 `null` 的类别表示本入口**没有**这条通道，于是解析到规格后立刻返回 `needs_material`，在模型调用之前终止该次运行。实际消费覆盖 executor／integrator 后确认，它们要求的必读材料全部落在这些通道上；缺少通道会让合法普通运行无法开始，也就没有兑现「按规格取材」。
 
-RW-17 为 contract／code／evidence／decision 四类接上真实、带来源与版本的通道。其中 `code` 的实现当时落在本目录（`role-source-index.ts`），而它做的是工作区列举、读取与路径边界适配——按 module-boundaries，那是 WorkspaceReader 应隐藏的实现（「路径边界、完整来源 pin、索引/工具适配、语言能力差异、来源更新判断」）。**RC-02** 因此把实现归位到 `data/workspace-reader/role-source-reader.ts`，让拒绝前缀收敛到 `data/workspace-reader/denied-prefixes.ts` 一处，本 Module 只留窄端口消费（权限与工作区版本的判据仍在消费面，见上表）。`role-source-index.ts` 里保留的一行再导出只是给写入范围之外的两个既有调用方用的兼容路径，退出条件写在文件头。
+ 为 contract／code／evidence／decision 四类接上真实、带来源与版本的通道。其中 `code` 的实现当时落在本目录（`role-source-index.ts`），而它做的是工作区列举、读取与路径边界适配——按 module-boundaries，那是 WorkspaceReader 应隐藏的实现（「路径边界、完整来源 pin、索引/工具适配、语言能力差异、来源更新判断」）。**路径边界归位** 因此把实现归位到 `data/workspace-reader/role-source-reader.ts`，让拒绝前缀收敛到 `data/workspace-reader/denied-prefixes.ts` 一处，本 Module 只留窄端口消费（权限与工作区版本的判据仍在消费面，见上表）。`role-source-index.ts` 里保留的一行再导出只是给写入范围之外的两个既有调用方用的兼容路径，退出条件写在文件头。

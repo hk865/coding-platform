@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
 import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
 import { WORKSPACE_BOOTSTRAP_FIXTURE_V1, buildBootstrapLedgerCommit } from '../contract-support/fixtures/bootstrap-fixture-v1.js';
@@ -23,7 +23,7 @@ const run = (runId: string) => ({ aggregateType: 'Run' as const, projectId: scop
 
 it.each(['memory', 'sqlite'] as const)('revokes immediately despite projection lag, preserves provenance, replays and rebuilds (%s)', async adapter => {
   const dir = await mkdtemp(join(tmpdir(), 'material-revocation-'));
-  let persistent = adapter === 'sqlite' ? await createPersistentSqliteHarness({ dir }) : null;
+  let persistent = adapter === 'sqlite' ? await createPersistentPlatform({ dir }) : null;
   let host = persistent ?? createInMemoryHarness();
   try {
     const boot = buildBootstrapCommand({ ...WORKSPACE_BOOTSTRAP_FIXTURE_V1, entries: [...WORKSPACE_BOOTSTRAP_FIXTURE_V1.entries, { projectId: scope.projectId, workspaceId: 'ws-history' }] }, { commandId: 'boot', correlationId: 'boot', submittedAt: AT });

@@ -120,7 +120,27 @@ export type QueryJobV1 = {
 
 export type QueryJobSnapshot = { ref: QueryJobRef; revision: number; schemaVersion: 1; job: QueryJobV1 };
 
+export type QueryExecutionBindingV1 = {
+  schemaVersion: 1;
+  roundIndex: number;
+  request: { runRef: QueryRunRef; bundleRef: ArtifactRef; question: string; budget: { maxTokens: number } };
+  selectedSources: { kind: string; refKey: string; version: string | null }[];
+};
+
+/** Shared structural/business check, executed at both admission and commit. */
+export function validQueryExecutionBinding(binding: QueryExecutionBindingV1, job: QueryJobV1): boolean {
+  if (!binding || binding.schemaVersion !== 1 || binding.roundIndex !== job.answerRefs.length + 1 || binding.roundIndex > job.intent.multiTurn.maxRounds) return false;
+  const request = binding.request, ref = request?.bundleRef;
+  const round = binding.roundIndex;
+  const maxTokens = job.intent.execution?.runtimeBudget.contextWindowTokens ?? (Math.floor(job.intent.budget.maxTokens / job.intent.multiTurn.maxRounds) + (round <= job.intent.budget.maxTokens % job.intent.multiTurn.maxRounds ? 1 : 0));
+  if (!request || !request.runRef || canonicalJson(request.runRef) !== canonicalJson(job.runRef) || request.question !== job.intent.question || request.budget?.maxTokens !== maxTokens || maxTokens < 1) return false;
+  if (!ref || ref.kind !== 'artifact' || typeof ref.digest !== 'string' || !/^[a-f0-9]{64}$/.test(ref.digest) || !Number.isSafeInteger(ref.sizeBytes) || ref.sizeBytes < 0 || ref.sizeBytes > QUERY_JOB_CONTEXT_BUNDLE_MAX_BYTES || typeof ref.contentType !== 'string' || !ref.contentType || !ref.source || !['plan-revision','workspace','governance','artifact','memory'].includes(ref.source.kind) || typeof ref.source.refId !== 'string' || !ref.source.refId || typeof ref.source.revision !== 'string') return false;
+  return Array.isArray(binding.selectedSources) && binding.selectedSources.length <= QUERY_JOB_MAX_SOURCES && binding.selectedSources.every(source => source && typeof source.kind === 'string' && !!source.kind && typeof source.refKey === 'string' && !!source.refKey && (source.version === null || typeof source.version === 'string')) && Buffer.byteLength(canonicalJson(binding.selectedSources)) <= 65536;
+}
+
 export type QueryRunV1 = {
+  /** Absent on historical claims: absence never authorizes replaying execution. */
+  execution?: QueryExecutionBindingV1;
   schemaVersion: 1;
   queryJobRef: QueryJobRef;
   /** The QueryRun identity runId (same as QueryRunRef.runId). */
@@ -128,7 +148,7 @@ export type QueryRunV1 = {
   status: QueryRunStatus;
   startedAt: string | null;
   endedAt: string | null;
-  outcome: "answered" | "timeout" | "gap" | "failed" | null;
+  outcome: "answered" | "timeout" | "gap" | "failed" | "cancelled" | null;
 };
 
 export type QueryRunSnapshot = { ref: QueryRunRef; revision: number; schemaVersion: 1; run: QueryRunV1 };
@@ -207,7 +227,7 @@ export type CloseQueryJobReceipt =
   | { status: "rejected"; commandId: string; code: CloseQueryJobRejectionCode; issues?: string[] };
 
 // ------------------------------------------------------------------------ //
-// Events (P1-09 v1)                                                         //
+// Events (query v1)                                                         //
 // ------------------------------------------------------------------------ //
 
 export type QueryJobSubmittedEvent = {
@@ -296,6 +316,13 @@ export type ReadOnlyQueryResultV1 = {
 export interface ReadOnlyQueryPort {
   /** Honest capability declaration (fake: read-only scripted run; no writes). */
   capabilities(request: { runRef: QueryRunRef }): { supported: boolean; maxQuestionBytes: number; maxAnswerBytes: number; readOnly: true };
+  /** Apply an already persisted cancellation to this exact QueryRun. */
+  cancelQuery?(runRef: QueryRunRef): Promise<void>;
+  /** Read an exact persisted request; this method must never execute a model. */
+  inspectQuery?(request: QueryExecutionBindingV1['request']): Promise<
+    | { status: 'result'; result: ReadOnlyQueryResultV1 }
+    | { status: 'active' }
+    | { status: 'unavailable'; message: string }>;
   /** Start one bounded read-only query run (never touches source run/lease). */
   startQuery(request: { runRef: QueryRunRef; bundleRef: ArtifactRef; question: string; budget: { maxTokens: number } }): Promise<ReadOnlyQueryResultV1>;
 }
@@ -333,16 +360,16 @@ export interface QueryJobDrivePort {
 
 export type QueryJobViewQuery = { projectId: string; workspaceId: string; queryJobId: string };
 export type QueryJobViewResult =
-  | { status: "ready"; job: QueryJobV1; run: QueryRunV1 | null; answers: QueryJobAnswerV1[]; currentAnswer: QueryJobAnswerV1 | null; stale: boolean; sourceCursor: CommitCursor }
+  | { status: "ready"; recovery?: { status: 'active' | 'result_available' | 'requires_reconciliation'; message: string }; job: QueryJobV1; run: QueryRunV1 | null; answers: QueryJobAnswerV1[]; currentAnswer: QueryJobAnswerV1 | null; stale: boolean; sourceCursor: CommitCursor }
   | { status: "not_ready"; observedCursor: CommitCursor | null }
   | { status: "not_found"; projectId: string; workspaceId: string; queryJobId: string };
 
-/** P1-09 recovery extension: durable claim before invoking the query runtime. */
+/** query recovery extension: durable claim before invoking the query runtime. */
 export type StartQueryJobCommand = {
   schemaVersion: 1; commandType: "StartQueryJob"; commandId: string;
   identity: CommandIdentity; aggregateId: string; expectedRevision: number;
   correlationId: string; submittedAt: string;
-  payload: { jobRef: QueryJobRef; runRef: QueryRunRef };
+  payload: { jobRef: QueryJobRef; runRef: QueryRunRef; execution?: QueryExecutionBindingV1 };
 };
 export type StartQueryJobReceipt =
   | { status: "committed"; commandId: string; replayed: boolean; revision: number; eventIds: string[]; commitCursor: CommitCursor }

@@ -1,0 +1,1 @@
+export default { testDir: '.', testMatch: 'memory-repro.spec.ts', timeout:45000, workers:1, reporter:'list', use:{ viewport:{width:1440,height:900}, launchOptions:{executablePath:'/home/han001/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome',args:['--no-sandbox']}, screenshot:'only-on-failure' }, outputDir:'./memory-results' };

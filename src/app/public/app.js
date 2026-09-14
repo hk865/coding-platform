@@ -121,7 +121,7 @@ function renderMessages() {
   const hasPlan = tasks().length > 0;
   let html = '';
   if (!queries.length) {
-    html = `<div class="welcome"><h2>在这里推进你的项目</h2><p>${hasPlan ? '计划已就绪。你可以询问当前进展，或选中右侧的 Agent，查看它负责的任务与执行记录。' : (goalId ? '目标已保存。先安装样例计划，就能运行任务、查看 Agent 状态，并围绕项目提问。' : '项目文件夹已打开。先新建一个目标；也可以从右侧打开 Explorer 或终端。')}</p><p>当前模型尚未连接，对话会保存，回答使用本地测试适配器。</p><div class="prompt-list">${hasPlan ? '<button data-prompt="当前项目进展如何？">查看项目进展</button><button data-prompt="哪些任务仍然需要验证？">查看待验证任务</button>' : (goalId ? '<button data-install>安装样例计划</button>' : '<button data-new-goal>新建目标</button>')}</div></div>`;
+    html = `<div class="welcome"><h2>在这里推进你的项目</h2><p>${hasPlan ? '计划已就绪。你可以询问当前进展，或选中右侧的 Agent，查看它负责的任务与执行记录。' : (goalId ? '目标已保存。先安装样例计划，就能运行任务、查看 Agent 状态，并围绕项目提问。' : '项目文件夹已打开。先新建一个目标；也可以从右侧打开 Explorer 或终端。')}</p><p>这是停止扩展的兼容界面；这里的项目对话固定使用本地测试适配器。已保存的模型配置仍供真实任务与只读探索使用，新产品能力请打开新版工作台。</p><div class="prompt-list">${hasPlan ? '<button data-prompt="当前项目进展如何？">查看项目进展</button><button data-prompt="哪些任务仍然需要验证？">查看待验证任务</button>' : (goalId ? '<button data-install>安装样例计划</button>' : '<button data-new-goal>新建目标</button>')}</div></div>`;
   } else {
     const date = queries[0].job.submittedAt;
     html = `<div class="thread-start">${esc(dateFormat.format(new Date(date)))} · 项目对话</div>`;

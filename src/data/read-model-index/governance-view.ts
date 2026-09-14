@@ -15,7 +15,7 @@ import type {
   ProjectArchitectureBaselineActiveSnapshot
 } from '../../contracts/governance.js';
 import {
-  P15_COORDINATION_BUDGET_MAX,
+  COORDINATION_AUTONOMOUS_REWORK_BUDGET_MAX,
   type CoordinationRoleMatrixV1,
   type ProjectCoordinationPolicyActiveSnapshot,
   type CoordinationPolicyRevisionSnapshot
@@ -70,7 +70,7 @@ export class GovernanceReadModel implements GovernanceViewPort {
     const ledger = this.deps.ledger();
     const project = await ledger.load({ aggregateType: 'Project', projectId: scope.projectId });
     const scan = await this.scan(scope.projectId);
-    // RW-14：角色规格事实先算一次（第五个种类的逐角色视图与矩阵就绪预检读的是同一份）。
+    // 角色规格事实只算一次；逐角色视图与矩阵就绪预检读取同一份结果。
     const roleSpecs = await this.roleSpecViews(scope.projectId, scan);
     const kinds: GovernanceKindViewV1[] = [];
     for (const kind of GOVERNANCE_KINDS) kinds.push(await this.kindView(kind, scope.projectId, scan, roleSpecs));
@@ -82,13 +82,13 @@ export class GovernanceReadModel implements GovernanceViewPort {
       projectRevision: project.status === 'found' ? project.snapshot.revision : null,
       kinds, automation, automationSwitch: automationSwitchOf(automation),
       roleMatrix: await this.roleMatrixView(scope.projectId, activeCoordination),
-      coordinationLimits: { maxAutonomousReworksMax: P15_COORDINATION_BUDGET_MAX },
+      coordinationLimits: { maxAutonomousReworksMax: COORDINATION_AUTONOMOUS_REWORK_BUDGET_MAX },
       gaps: scan.complete ? [] : ['治理事件超过扫描上限（' + MAX_SCAN_PAGES * SCAN_PAGE_SIZE + ' 条）：安装者与安装时间可能缺失，本视图不猜。'],
     };
   }
 
   // --------------------------------------------------------------------- //
-  // RW-14：角色规格（逐角色）与角色矩阵（当前生效策略到底含不含）              //
+  // 角色规格（逐角色）与角色矩阵（当前生效策略是否包含矩阵）              //
   // --------------------------------------------------------------------- //
 
   /**
@@ -206,7 +206,7 @@ export class GovernanceReadModel implements GovernanceViewPort {
   }
 
   /**
-   * 「当前生效的协调策略含不含角色矩阵」的显式回答（RW-14）。
+   * 「当前生效的协调策略含不含角色矩阵」的显式回答。
    * 这里不判断任何业务规则：present／pins／missingEntryRoles 全部来自 canonical 事实与
    * Control 的就绪策略；文字只把**会发生什么**写清楚，供人原样阅读。
    */
@@ -414,7 +414,7 @@ function installFactOf(
     };
   }
   if (eventType === 'CoordinationPolicyInstalled' || eventType === 'ArchitectureEvolutionPolicyInstalled' || eventType === 'RoleSpecInstalled') {
-    // P1-13／P1-15／RW-14 的安装事件直接携带完整 revision 快照（RoleSpecRevision 逐角色各一条）。
+    // ArchitectureEvolutionPolicy、CoordinationPolicy 与 RoleSpec 的安装事件直接携带完整 revision 快照。
     const raw = payload['revision'];
     if (!isRecord(raw)) return null;
     const ref = raw['ref'];
@@ -499,7 +499,7 @@ function coordinationGrant(revision: GovernanceRevisionViewV1): CoordinationPoli
 }
 
 /**
- * RW-10：自动返工开关的权威说明（唯一文本出处）。三条互斥状态的文字都在这里，界面原样显示。
+ * 自动返工开关：权威说明的唯一文本出处。三条互斥状态的文字都在这里，界面原样显示。
  * 停用与启用都是同一条机械规则：生效策略的 allowed.inScopeRework 决定自动受理入口的边界 (b)，
  * 因此「怎么停用」「停用后会发生什么」「怎么重新启用」都必须写清楚，且不新增命令或状态。
  */

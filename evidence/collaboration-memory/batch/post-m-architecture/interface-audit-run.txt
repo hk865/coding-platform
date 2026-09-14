@@ -1,0 +1,135 @@
+{
+  "files": 505,
+  "crossOwnerImports": 2085,
+  "implementationCrossingFiles": 118,
+  "top": [
+    {
+      "file": "src/data/state-ledger/governance-records.ts",
+      "owner": "StateLedger",
+      "consumers": 6,
+      "symbols": [
+        "loadProjectArchitectureBaselineActive",
+        "resolveArchitectureBaselineRevision",
+        "resolveCompletionPolicyRevision",
+        "resolveProjectArchitectureBaseline",
+        "resolveProjectCompletionPolicy"
+      ]
+    },
+    {
+      "file": "src/control/control-engine/policies/workspace-capability.ts",
+      "owner": "ControlEngine",
+      "consumers": 3,
+      "symbols": [
+        "ConfiguredWorkspaceCapabilityPolicy"
+      ]
+    },
+    {
+      "file": "src/control/plan-compiler/plan-compiler.ts",
+      "owner": "PlanCompiler",
+      "consumers": 3,
+      "symbols": [
+        "PlanCompilerImpl"
+      ]
+    },
+    {
+      "file": "src/data/context-compiler/alternative-report-materials.ts",
+      "owner": "ContextCompiler",
+      "consumers": 3,
+      "symbols": [
+        "AlternativeReportMaterialCompiler"
+      ]
+    },
+    {
+      "file": "src/data/context-compiler/coordination-context-compiler.ts",
+      "owner": "ContextCompiler",
+      "consumers": 3,
+      "symbols": [
+        "CoordinationContextCompiler"
+      ]
+    },
+    {
+      "file": "src/data/context-compiler/verification-context.ts",
+      "owner": "ContextCompiler",
+      "consumers": 3,
+      "symbols": [
+        "VerificationContextCompiler"
+      ]
+    },
+    {
+      "file": "src/data/workspace-reader/exploration-source.ts",
+      "owner": "WorkspaceReader",
+      "consumers": 3,
+      "symbols": [
+        "ExplorationSourceApplicability",
+        "explorationSourceDigest"
+      ]
+    },
+    {
+      "file": "src/execution/worker-runtime/coding-agent-runtime.ts",
+      "owner": "WorkerRuntime",
+      "consumers": 3,
+      "symbols": [
+        "CodingAgentRuntime",
+        "RunSpec"
+      ]
+    },
+    {
+      "file": "src/execution/worker-runtime/fake-runtime-adapter.ts",
+      "owner": "WorkerRuntime",
+      "consumers": 3,
+      "symbols": [
+        "FakeRuntimeAdapter"
+      ]
+    },
+    {
+      "file": "src/execution/worker-runtime/read-only-query-adapter.ts",
+      "owner": "WorkerRuntime",
+      "consumers": 3,
+      "symbols": [
+        "FakeReadOnlyQueryAdapter"
+      ]
+    },
+    {
+      "file": "src/control/architecture-reconciler/architecture-reconciler.ts",
+      "owner": "ArchitectureReconciler",
+      "consumers": 2,
+      "symbols": [
+        "ArchitectureReconcilerImpl"
+      ]
+    },
+    {
+      "file": "src/control/control-engine/control-engine.ts",
+      "owner": "ControlEngine",
+      "consumers": 2,
+      "symbols": [
+        "ControlEngineImpl"
+      ]
+    },
+    {
+      "file": "src/control/control-engine/policies/role-binding-admission.ts",
+      "owner": "ControlEngine",
+      "consumers": 2,
+      "symbols": [
+        "RoleBindingAdmissionFactsV1",
+        "evaluateRoleBindingAdmission",
+        "evaluateRoleSpecPinReadiness"
+      ]
+    },
+    {
+      "file": "src/control/control-engine/policy-explanation.ts",
+      "owner": "ControlEngine",
+      "consumers": 2,
+      "symbols": [
+        "ControlPolicyExplanation"
+      ]
+    },
+    {
+      "file": "src/control/control-engine/rework-disposition.ts",
+      "owner": "ControlEngine",
+      "consumers": 2,
+      "symbols": [
+        "ControlReworkDisposition"
+      ]
+    }
+  ]
+}

@@ -252,7 +252,7 @@ export function submitEvidenceFingerprint(command: SubmitEvidenceCommand): Comma
 }
 
 // ------------------------------------------------------------------------ //
-// Event (P1-04 v1)                                                           //
+// Event (verification v1)                                                           //
 // ------------------------------------------------------------------------ //
 
 export type EvidenceAdmittedEvent = {

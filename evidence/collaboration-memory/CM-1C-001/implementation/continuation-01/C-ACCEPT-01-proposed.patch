@@ -1,0 +1,56 @@
+--- a/src/control/dispatch-engine/dispatch-engine.ts
++++ b/src/control/dispatch-engine/dispatch-engine.ts
+@@ -27,7 +27,7 @@
+ import type { SuccessorPreparationResult } from "./successor-run-preparation.js";
+ 
+ export type DispatchEngineDeps = {
+-  initialWorkAssignments?: boolean;
++  initialWorkAssignments?: (intent: DispatchIntentV1) => boolean;
+   ledger: StateLedger;
+   control: ControlEngine;
+   contextCompiler: TaskContextPort;
+@@ -168,7 +168,7 @@
+         return;
+       }
+ 
+-      if(this.deps.initialWorkAssignments){
++      if(this.deps.initialWorkAssignments?.(intent)){
+         try{await ensureInitialWorkAssignment(this.deps,intent,workIdentity.workId);}
+         catch(error){failures.push({effect:'none',intentId:intent.intentId,outboxRef,code:'rejected',message:String(error)});return;}
+       }
+--- a/src/harness/persistent-harness.ts
++++ b/src/harness/persistent-harness.ts
+@@ -535,7 +535,11 @@
+     synchronizeGrants: () => advanceProjection(), observations: alternativeObservations });
+   const runtime: RunPort = runtimeOverride ?? new FakeRuntimeAdapter(runtimeScript);
+   const dispatchEngine: DispatchPort = new DispatchEngineImpl({
+-    initialWorkAssignments: options.initialWorkAssignments ?? false,
++    // Only an exact prepared ordinary Run gets automatic first participation.
++    // Explore/review retain their separate read-only entry contracts.
++    initialWorkAssignments: intent => options.initialWorkAssignments === true && (runtimePreparation?.all() ?? []).some(({spec,status}) =>
++      status === 'prepared' && spec.mode === undefined && spec.projectId === intent.projectId && spec.workspaceId === intent.workspaceId &&
++      spec.goalId === intent.goalId && spec.taskId === intent.taskId && spec.runId === intent.runRef.runId),
+     ledger,
+     ...(options.coordinationConsumerId ? { coordinationConsumerId: options.coordinationConsumerId } : {}),
+     prepareAlternativeReports: wait => alternativePreparation.prepare(wait),
+--- a/src/control/dispatch-engine/leased-worker-runtime.ts
++++ b/src/control/dispatch-engine/leased-worker-runtime.ts
+@@ -74,7 +74,7 @@
+       } else materials = await this.deps.materials(spec, envelope);
+       // 协调能力与材料同处"运行启动之前的准备阶段"：准入只读 canonical 事实，不产生任何写。
+       // 未授予 → 本次运行没有协调工具（也不向内核声明该能力），内核侧对这类调用会给出可读拒绝。
+-      if (this.deps.coordination) {
++      if (spec.mode === undefined && this.deps.coordination) {
+         const decision = await this.deps.coordination(spec, envelope);
+         coordination = decision.status === "granted" ? decision : null;
+       }
+--- a/src/execution/worker-runtime/coding-agent-runtime.ts
++++ b/src/execution/worker-runtime/coding-agent-runtime.ts
+@@ -130,6 +130,7 @@
+     if (this.closing) throw Error('执行器正在关闭，不能开始运行');
+     const key = keyFor(envelope.runRef), r = this.records.get(key);
+     if (!r || r.spec.taskId !== envelope.taskId || r.spec.workspaceId !== envelope.workspaceId) throw Error('真实运行缺少已登记的任务');
++    if (r.spec.mode !== undefined && context?.coordination !== undefined) throw Error('只读探索或独立审阅不能接收协调写入口');
+     validateReviewSpec(r.spec);
+     const readOnly = !envelope.permissions.tools.some(tool => tool === 'write' || tool === 'shell');
+     if (envelope.permissions.tools.some(tool => !['read', 'write', 'shell'].includes(tool)) ||

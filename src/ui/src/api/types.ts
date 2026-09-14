@@ -159,7 +159,7 @@ export type GoalStatusResult =
   | { status: 'not_found'; observedCursor: string | null };
 
 /**
- * RW-09：计划变更类条目带的事实补充，逐字来自投影（界面不拼接、不推断）。
+ * 计划变更事实：逐字来自投影，界面不拼接、不推断。
  * reason 为 `autonomous-rework:<proposalId>` 或 `user-decision-accepted`；
  * actor 来自同一条已提交事件，因此界面可以据此如实标注「系统自动受理／人的决定」。
  */
@@ -198,6 +198,7 @@ export type PlanGraphResult =
   | { status: 'not_found'; observedCursor: string | null };
 
 export type QueryJob = {
+  status?: 'pending' | 'running' | 'answered' | 'closed';
   queryJobId: string;
   goalId: string;
   submittedAt: string;
@@ -206,6 +207,7 @@ export type QueryJob = {
 };
 
 export type QueryJobView = {
+  recovery?: { status: 'active' | 'result_available' | 'requires_reconciliation'; message: string };
   status: 'ready' | 'not_found' | 'not_ready';
   job: QueryJob;
   currentAnswer: import('../../../contracts/query-job.js').QueryJobAnswerV1 | null;
@@ -294,6 +296,7 @@ export type VerificationEntry = {
 };
 
 export type LiveRun = {
+  canonicalStatus?: string | null;
   spec: {
     projectId: string; workspaceId: string; goalId: string; runId: string; taskId: string;
     instruction: string; mode?: string; root?: string;
@@ -336,6 +339,7 @@ export type ExplorationView = {
 };
 
 export type GuiState = {
+  dispatch?: import('../../../contracts/dispatch-backlog.js').DispatchBacklogView;
   communication?: import('../../../contracts/communication-view.js').CommunicationViewResult;
   scope: Scope;
   goalId: string;

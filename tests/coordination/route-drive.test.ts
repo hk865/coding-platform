@@ -24,7 +24,7 @@ import { subscriptionCatchupIdFor } from "../../src/contracts/coordination.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { CommunicationViewIndex } from '../../src/data/read-model-index/communication-view.js';
 import { createInMemoryHarness, type InMemoryHarness } from "../../src/harness/in-memory-harness.js";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
 import { WORKSPACE_BOOTSTRAP_FIXTURE_V1 } from "../contract-support/fixtures/bootstrap-fixture-v1.js";
 import { buildPreparedClaim, prepareP103Project, type P1_03TestHarness } from "../contract-suite/p1-03-harness.js";
@@ -92,7 +92,7 @@ const STARTED_ONLY: FakeRuntimeScriptV1 = {
   items: [{ sequence: 1, eventType: "run_started", payload: { kind: "started", startedAt: "2026-09-05T12:00:01.000Z" }, occurredAt: "2026-09-05T12:00:01.000Z" }],
 };
 
-type AnyHarness = InMemoryHarness | Awaited<ReturnType<typeof createPersistentSqliteHarness>>;
+type AnyHarness = InMemoryHarness | Awaited<ReturnType<typeof createPersistentPlatform>>;
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -262,7 +262,7 @@ describe('M06 optional report selection', () => {
   ])('$storage/$mode missing-first=$firstMissing revoke-before=$revokeBefore report-first=$reportFirst cancel-before=$cancelBefore timeout-before=$timeoutBefore preserves actual conditions and retains late reports', async ({ mode, storage, firstMissing, revokeBefore, reportFirst, cancelBefore, timeoutBefore }) => {
     let clockOffset = 0;
     const clock = () => new Date(Date.parse(AT) + clockOffset).toISOString();
-    const persistent = storage === 'sqlite' ? await createPersistentSqliteHarness({ deps: { clock }, runtimeScript: STARTED_ONLY, sourceApplicability }) : null;
+    const persistent = storage === 'sqlite' ? await createPersistentPlatform({ deps: { clock }, runtimeScript: STARTED_ONLY, sourceApplicability }) : null;
     const h = persistent ?? createInMemoryHarness({ deps: { clock }, runtimeScript: STARTED_ONLY, sourceApplicability });
     if (persistent) cleanup.push(() => persistent.cleanup());
     const s = await bootstrapScenario(h, storage + mode);
@@ -1437,7 +1437,7 @@ function waitRefOf(waitId: string) {
 
 describe("重启与 backlog（A09/A10）：从持久事实继续，不依赖内存队列", () => {
   it("SQLite close + reopen 后仍能领取既有 wait_admission intent 并完成唯一后继", async () => {
-    let h = await createPersistentSqliteHarness({ deps: { clock: () => AT }, runtimeScript: STARTED_ONLY });
+    let h = await createPersistentPlatform({ deps: { clock: () => AT }, runtimeScript: STARTED_ONLY });
     cleanup.push(async () => { await h.cleanup(); });
     let s = await bootstrapScenario(h, "sqlite");
     await sendRequest(s, "REQUEST-NONCE-7");
@@ -1508,7 +1508,7 @@ async function successorAttemptId(h: AnyHarness): Promise<string> {
 async function persistentRoutingWorld() {
   const dir = await mkdtemp(join(tmpdir(), 'cm1a-route-process-'));
   cleanup.push(() => rm(dir, { recursive: true, force: true }));
-  const h = await createPersistentSqliteHarness({ dir, deps: { clock: () => AT }, runtimeScript: STARTED_ONLY, coordinationPageSize: 1 });
+  const h = await createPersistentPlatform({ dir, deps: { clock: () => AT }, runtimeScript: STARTED_ONLY, coordinationPageSize: 1 });
   try {
     const s = await bootstrapScenario(h, 'process');
     for (let i = 0; i < 3; i++) {
@@ -1540,7 +1540,7 @@ it.each(['before_page', 'after_page'])('independent process exit %s recovers fix
   const at = new Date(Date.parse(AT) + 120000).toISOString();
   const resumed = await routeChild(w.dir, 'restart', { at });
   expect(resumed.value.results.flatMap((r: any) => r.coordination.failures)).toEqual([]);
-  const h = await createPersistentSqliteHarness({ dir: w.dir, deps: { clock: () => at } });
+  const h = await createPersistentPlatform({ dir: w.dir, deps: { clock: () => at } });
   try {
     const page = await h.ledger.events({ afterCursor: w.requestCursor, limit: 1000 });
     const deliveries = page.events.filter(p => p.event.eventType === 'DeliveryRecorded' && p.event.payload.delivery.origin.kind === 'subscription');

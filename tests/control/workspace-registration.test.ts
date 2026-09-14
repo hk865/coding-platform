@@ -3,13 +3,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
 import type { RegisterWorkspaceCommand } from '../../src/contracts/workspace-registration.js';
 
 for (const adapter of ['memory', 'sqlite']) it(adapter + ': registers explicit workspaces without rewriting bootstrap, rejects stale/forged inputs and replays after reopen', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'workspace-register-'));
-  const persistent = adapter === 'sqlite' ? await createPersistentSqliteHarness({ dir }) : null;
+  const persistent = adapter === 'sqlite' ? await createPersistentPlatform({ dir }) : null;
   const h = persistent ?? createInMemoryHarness();
   const at = '2026-09-09T00:00:00.000Z', projectId = 'project', scope = { projectId, workspaceId: 'additional' };
   const command: RegisterWorkspaceCommand = { schemaVersion: 1, commandType: 'RegisterWorkspace', commandId: 'register-one', identity: { projectId, actor: { kind: 'human', id: 'operator' }, idempotencyKey: 'register-one' }, workspaceId: scope.workspaceId, bindingDigest: 'a'.repeat(64), expectedProjectRevision: 1, correlationId: 'register-one', submittedAt: at };

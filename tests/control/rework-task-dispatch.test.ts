@@ -31,7 +31,7 @@ import {
 } from '../../src/fixtures/governance-fixtures.js';
 import { architectureBaselinePinFor, completionPolicyPinFor } from '../../src/contracts/governance.js';
 import { buildP115ActivateCommand, buildP115InstallCommand } from '../contract-support/fixtures/human-role-collaboration-fixtures.js';
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
 import { PlanCompilerImpl } from '../../src/control/plan-compiler/plan-compiler.js';
 import { CoordinationContextCompiler } from '../../src/data/context-compiler/coordination-context-compiler.js';
@@ -103,7 +103,7 @@ afterEach(async () => {
   for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
 });
 
-type Harness = Awaited<ReturnType<typeof createPersistentSqliteHarness>> | ReturnType<typeof createInMemoryHarness>;
+type Harness = Awaited<ReturnType<typeof createPersistentPlatform>> | ReturnType<typeof createInMemoryHarness>;
 type Backend = 'memory' | 'persistent';
 
 /**
@@ -146,7 +146,7 @@ async function scenario(backend: Backend) {
   let currentPort = firstPort;
   const query = readOnlyQueryStub();
   let harness: Harness = backend === 'persistent'
-    ? await createPersistentSqliteHarness({ dir: directory, reworkIssues: firstPort.port, readOnlyQuery: query })
+    ? await createPersistentPlatform({ dir: directory, reworkIssues: firstPort.port, readOnlyQuery: query })
     : createInMemoryHarness({ reworkIssues: firstPort.port, readOnlyQuery: query });
   holder.current = harness.ledger;
 
@@ -230,7 +230,7 @@ async function scenario(backend: Backend) {
       if (backend !== 'persistent') return;
       await (harness as { close: () => Promise<void> }).close();
       const reopenedPort = await openJournalPort({ directory: journalDirectory, current: () => holder.current as Ledger });
-      harness = await createPersistentSqliteHarness({ dir: directory, reworkIssues: reopenedPort.port, readOnlyQuery: query });
+      harness = await createPersistentPlatform({ dir: directory, reworkIssues: reopenedPort.port, readOnlyQuery: query });
       currentPort = reopenedPort;
       holder.current = harness.ledger;
       // 重启后重建材料端口（与产品一致：端口绑定当前账本连接）。
@@ -248,17 +248,16 @@ describe('RW-07 返工任务的派发（按当前生效 revision 驱动）', () 
     try {
       const d = s.dispatcher();
       expect((await d.dispatch.drivePending()).issues).toEqual([]);
-      // 原有行为：第一个任务沿用既有确定性命名（real-<requestId>）。
-      expect(d.launches).toEqual(['real-rw07-work']);
-      expect(await s.pendingTaskIds()).toEqual([TASK_A]);
+      // All independent assignments are claimed in one scan; execution capacity
+      // belongs to the shared consumer, while deterministic identities stay stable.
+      expect(d.launches).toHaveLength(2);
+      expect(d.launches[0]).toBe('real-rw07-work');
+      expect(d.launches[1]!.startsWith('real-rw07-work-')).toBe(true);
       await d.settle();
-      expect(d.driveResults[0]).toMatchObject({ started: 1, completed: 1, failures: [] });
-
-      // 第二个任务：同一个入口的下一次调用（既有行为是一次推进认领一个任务）。
+      expect(d.driveResults.reduce((sum, result) => sum + result.started, 0)).toBe(2);
+      expect(d.driveResults.flatMap(result => result.failures)).toEqual([]);
       expect((await d.dispatch.drivePending()).issues).toEqual([]);
       expect(d.launches).toHaveLength(2);
-      expect(d.launches[1]!.startsWith('real-rw07-work-')).toBe(true);
-      expect(await s.pendingTaskIds()).toEqual([TASK_B]);
       await d.settle();
 
       // gate 是 required + active 的任务，但它是 gate：候选规则不含它，也没有任何 intent。

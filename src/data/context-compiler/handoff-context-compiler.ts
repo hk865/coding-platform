@@ -1,24 +1,23 @@
 /**
- * P1-06 ContextCompiler.HandoffContextPort implementation.
+ * handoff ContextCompiler.HandoffContextPort implementation.
  *
- * ENTRY FILE (shared baseline - exported signature FROZEN; lane B fills the
- * implementation). See IMPLEMENTATION-HANDOFF "P1-06 契约与存储语义" item 3:
+ * Public entry. The runtime-collaboration contract requires:
  *   - assemble validates the request, resolves the registered HandoffPacket,
  *     enforces CANONICAL source revision (mismatch -> explicit stale_packet /
  *     stale_workspace_snapshot, never silently reusing the old packet), material
  *     presence (needs_material), scope/binding subset rules, budget + size caps
- *     (P1-03 rules), then assembles B's bounded TaskEnvelope whose fresh bundle
+ *     (dispatch rules), then assembles B's bounded TaskEnvelope whose fresh bundle
  *     is derived from the packet fields (objective/constraints/completed/
  *     unresolved/refs — NEVER a transcript) plus fresh plan/workspace material,
  *     stored body-first in the vault.
  *
- * FROZEN guard order (all zero-write except the body-first vault.put):
+ * VERSIONED guard order (all zero-write except the body-first vault.put):
  *   1) validateHandoffContextRequest -> invalid_request;
  *   2) ledger.load(handoffPacketRef) -> not registered -> packet_not_found;
  *      packet projectId/goalId/taskId vs request, or packet.planRef (exact ref),
  *      mismatch -> packet_mismatch;
  *   3) Workspace + Plan resolution -> missing -> needs_material{gaps,
- *      selectedRefs} (same source-ref format as P1-03);
+ *      selectedRefs} (same source-ref format as dispatch);
  *   4) packet.taskRevision != plan.planRevision -> packet_mismatch;
  *      request.workspaceSnapshot.revision != canonical ->
  *      stale_workspace_snapshot; packet.workspaceSnapshot.revision != canonical
@@ -30,14 +29,14 @@
  *   7) bounded Bundle body (JSON; <= HANDOFF_CONTEXT_BUNDLE_MAX_BYTES ->
  *      exceeds_size_cap) body-first vault.put (ownerRef = request.runRef, B's
  *      run); put rejected -> material_unavailable / exceeds_size_cap;
- *   8) B's TaskEnvelopeV1 (shape FROZEN from P1-03) validated
+ *   8) B's TaskEnvelopeV1 (shape VERSIONED from dispatch) validated
  *      (validateTaskEnvelope -> exceeds_size_cap);
  *   9) manifest {schemaVersion, selectedRefs, gaps: [], packetRef,
  *      packetTaskRevision, noFullTranscript: true, freshness}.
  * assemble NEVER starts an Agent.
  *
  * stale_binding is NOT decided here (delegated to Control.startRun, as in
- * P1-03). assemble does only the minimal ref shape / subset consistency.
+ * dispatch). assemble does only the minimal ref shape / subset consistency.
  */
 import type { StateLedger, AggregateSnapshot, WorkspaceSnapshot } from "../../contracts/ledger.js";
 import type { ArtifactPort, ArtifactRef } from "../../contracts/artifact.js";
@@ -110,7 +109,7 @@ export class HandoffContextCompilerImpl implements HandoffContextPort {
       };
     }
 
-    // 3) Workspace + Plan resolution (material presence; P1-03 source-ref format).
+    // 3) Workspace + Plan resolution (material presence; dispatch source-ref format).
     const workspaceRef = {
       aggregateType: "Workspace" as const,
       projectId: request.projectId,
@@ -247,8 +246,13 @@ export class HandoffContextCompilerImpl implements HandoffContextPort {
     const bundle = {
       schemaVersion: 1,
       projectId: request.projectId,
+      workspaceId: request.workspaceId,
       goalId: request.goalId,
       taskId: request.taskId,
+      runRef: { ...request.runRef },
+      attemptRef: { ...request.attemptRef },
+      sources: bundleSelected,
+      dependencies: plan.executionDag.dependsOn.filter(edge => edge.taskId === request.taskId).map(edge => edge.dependsOnId),
       planRef: { ...request.planRef },
       workspaceSnapshot: { ...request.workspaceSnapshot },
       handoff: {
@@ -304,7 +308,7 @@ export class HandoffContextCompilerImpl implements HandoffContextPort {
     }
     const bundleRef: ArtifactRef = putResult.ref;
 
-    // 8) Build B's bounded TaskEnvelopeV1 (shape FROZEN from P1-03) and enforce
+    // 8) Build B's bounded TaskEnvelopeV1 (shape VERSIONED from dispatch) and enforce
     //    the HARD size cap.
     const envelope: TaskEnvelopeV1 = {
       schemaVersion: 1,

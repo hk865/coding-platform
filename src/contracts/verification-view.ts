@@ -1,8 +1,7 @@
 /**
- * P1-04 ReadModel surface — task-detail verification view.
+ * verification ReadModel surface — task-detail verification view.
  * Authority: modules/data/read-model-index.md + runtime-collaboration.md
- * ("ReadModelIndex 扩展：验证详情；不把报告文字投影为正式完成状态") +
- * ticket 04 output artifact task-detail-verification-view.
+ * ("ReadModelIndex 扩展：验证详情；不把报告文字投影为正式完成状态").
  *
  * Semantics:
  *   - Verdict/claim/observation evidence set rebuilds ONLY from committed

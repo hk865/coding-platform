@@ -118,7 +118,7 @@ export class ControlReworkDisposition implements ReworkDispositionPort {
       };
     }
     // 义务在当前 revision 里连一个 active 承担者都没有：说不出"谁接手了"，因此不报已处置。
-    // 这一条是 RC-01 的反面保险——把"没人承担"写成"已被处置"正是本票要修的缺陷形态。
+    // 这一条是返工处置规则的反面保险——把"没人承担"写成"已被处置"正是当前实现要避免的缺陷形态。
     if (carriers.taskIds.length === 0) {
       return {
         ...issue,

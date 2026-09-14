@@ -1,9 +1,9 @@
 /**
- * P1-04 Control entry: Task/Gate reduction — the ONLY writer of the canonical
+ * verification Control entry: Task/Gate reduction — the ONLY writer of the canonical
  * TaskReduction phase (Worker/Reviewer never touch Task.phase; Goal phase is
- * P1-05).
+ * context assembly).
  *
- * ENTRY FILE (shared baseline — exported signature FROZEN). Frozen flow (all
+ * Public entry. Versioned flow (all
  * zero-write except the single atomic verification-result commit):
  *   1. schema validation (validateReduceTaskCommand) -> invalid;
  *   2. Goal exists (else not_found); goal.activePlanRevision === null ->
@@ -18,7 +18,7 @@
  *      snapshot) -> ledger.commit -> mapReduceTaskReceipt.
  * Re-reduction with the same state yields the same phase; a fresh command
  * identity/expectedRevision is required after new evidence (idempotency keys
- * are per command — P1-00 discipline).
+ * are per command — goal/bootstrap discipline).
  */
 import type { StateLedger, AggregateSnapshot, GoalSnapshot } from "../../contracts/ledger.js";
 import type { LedgerCommitReceipt } from "../../contracts/ledger.js";
@@ -107,7 +107,7 @@ async function reduceTaskImpl(
     if (runResult.status === "found" && isRunSnapshot(runResult.snapshot)) {
       const run = runResult.snapshot as RunSnapshot;
       runSignals = collectRunSignals(run);
-      // integrator ruling (frozen sem #9 mapping): an outcome_unknown ENDED
+      // current contract (versioned sem #9 mapping): an outcome_unknown ENDED
       // run is an EXPLICIT terminal fact (never inferred); as a side effect it
       // blocks satisfaction. It is NEVER a run-failed signal; crashed / a
       // completed+exit!==0 run are run-failed; completed+exit===0 and

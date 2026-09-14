@@ -17,7 +17,7 @@ export type ObservedModelRunOptions = {
   sourceTools?: SourceToolOptions;
   materialTools?: (workspace: WorkspaceSandbox) => ToolDefinition[];
   /**
-   * 协调 Host 工具（CM-1A-001 第 3 工作段）。它们是**平台级**入口：身份由宿主绑定，
+   * 协调 Host 工具（协作通信）。它们是**平台级**入口：身份由宿主绑定，
    * 副作用经 Host Adapter 的正式受理路径落在平台的 canonical 状态上，不改动模型的工作区。
    * `names` 必须与 `create()` 实际返回的工具名一致（本次请求的启用清单在 workspace 存在之前
    * 就要定下来，因此由调用方显式给出，而不是在这里猜）。

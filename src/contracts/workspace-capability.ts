@@ -1,12 +1,12 @@
 /**
- * P1-07 frozen wire: ControlEngine.WorkspaceCapabilityPort (interfaces_to_freeze
- * #2 — first consumer P1-07). Control admission intersects configured execution
+ * ControlEngine.WorkspaceCapabilityPort, the public
+ * capability interface consumed by workspace concurrency. Control admission intersects configured execution
  * support with declared task permissions. The resulting run capability declares
  * workspaceRead / workspaceWrite + a max scope CAP. No capability ->
  * unsupported, NEVER a silent degrade (a lease guard receiving unsupported
  * rejects capability_unsupported, zero write).
  *
- * Authority: IMPLEMENTATION-HANDOFF.md "P1-07 契约与存储语义" item 4.
+ * Authority: the workspace-concurrency contracts and ControlEngine module specification.
  */
 import type { TaskEnvelopeV1 } from "./task-envelope.js";
 import type { ConflictScopeV1 } from "./workspace-lease.js";
@@ -33,7 +33,7 @@ export type WorkspaceCapabilityResultV1 =
   | { status: "unsupported" }
   | { status: "rejected"; reason: string };
 
-/** Control admission contract — async frozen v1 wire, without live Runtime calls.
+/** Control admission contract — async versioned v1 wire, without live Runtime calls.
  * `source` describes the support facts' provenance, not this policy's owner. */
 export interface WorkspaceCapabilityPort {
   capabilitiesFor(envelope: TaskEnvelopeV1): Promise<WorkspaceCapabilityResultV1>;

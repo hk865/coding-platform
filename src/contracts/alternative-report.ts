@@ -1,4 +1,4 @@
-/** CM-M06: deterministic selection of an optional report, never Evidence admission. */
+/** Alternative report: deterministic selection of an optional report, never Evidence admission. */
 import type { AggregateRef, AggregateSnapshot, PositionedEvent } from './ledger.js';
 import type { DeliverySnapshot, DirectedRequestSnapshot, WaitConditionSnapshot } from './coordination.js';
 import { deliveryRefFor, directedRequestRefFor } from './coordination.js';

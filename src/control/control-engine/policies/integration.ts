@@ -3,7 +3,7 @@ import type { EvidenceCoverageV1 } from "../../../contracts/evidence.js";
 import { evidenceConflictKeyFor, type IntegrationInputRefV1, type EvidenceConflictFactV1, type EvidenceConflictRecordV1 } from "../../../contracts/integration.js";
 
 /**
- * FROZEN pure detection: for every PAIR of input evidence with the same
+ * VERSIONED pure detection: for every PAIR of input evidence with the same
  * coverage (obligationId, requirementId) and the same (planRevision,
  * workspaceRevision) tuple where both are APPLICABLE, outcomes differ, and
  * source runs differ -> one conflict record (deterministic order by

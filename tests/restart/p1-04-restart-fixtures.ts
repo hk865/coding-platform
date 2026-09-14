@@ -12,8 +12,8 @@ import { classifyRestartProbeError } from "./readiness-probe.js";
  * "P1-04: ... not implemented yet" stub throw makes it false (auto-skip).
  */
 import { expect } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import {
   prepareP104Scenario,
   runP104ClaimedRun,
@@ -36,7 +36,7 @@ const GATE = P104_TASKS.gate;
 
 export async function isP104Ready(): Promise<boolean> {
   try {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       await runP104Path(h);
       return true;
@@ -48,7 +48,7 @@ export async function isP104Ready(): Promise<boolean> {
   }
 }
 
-export async function runP104Path(h: PersistentSqliteHarness) {
+export async function runP104Path(h: PersistentPlatform) {
   const th: P1_04TestHarness = toP1_04Harness(h);
   const sc = await prepareP104Scenario(th);
   const projectId = sc.alpha.projectId;
@@ -154,7 +154,7 @@ export async function runP104Path(h: PersistentSqliteHarness) {
 }
 
 export async function verifyP104AfterRestart(
-  h: PersistentSqliteHarness,
+  h: PersistentPlatform,
   before: Awaited<ReturnType<typeof runP104Path>>,
 ): Promise<void> {
   const th: P1_04TestHarness = toP1_04Harness(h);

@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.lane/
+*.log
+.DS_Store
+
+.local/
+src/app/public/workbench/
+.pnpm-store/
+/D.pnpm-storev11/
+/test-results/
+/src/ui/test-results/
+
+# Local package caches with platform-encoded directory names.
+/*pnpm-store*/

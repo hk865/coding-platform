@@ -25,7 +25,7 @@ import { buildP112Proposal } from "../../src/fixtures/architecture-fixtures.js";
 import { ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand } from "../../src/fixtures/governance-fixtures.js";
 import { architectureBaselinePinFor } from "../../src/contracts/governance.js";
 import { P114_PROJECT, P114_WORKSPACE, P114_SCHEMA, P114_PROPOSAL, P114_CANDIDATE, P114_DECISION, P114_GATE, P114_ACTIVATION, p114CandidateRef, p114DecisionRef, p114GateRef, p114ProposalRef, p114ActivationRef, buildP114Candidate, buildP114Decision, buildP114Gate, buildP114Activation, buildP114MaterializeCommand, buildP114DecisionCommand, buildP114GateCommand, buildP114ActivationCommand } from "../contract-support/fixtures/baseline-evolution-fixtures.js";
-import { buildP114CandidateFold, buildP114DecisionFold, buildP114GateFold, buildP114ActivationFold } from "../../src/control/control-engine/records/baseline-evolution.js";
+import { buildCandidateBaselineMaterializeCommit, buildArchitectureChangeDecisionRecordCommit, buildMigrationGateRecordCommit, buildBaselineActivationRecordCommit } from "../../src/control/control-engine/records/baseline-evolution.js";
 import type { ArchitectureCandidateProposalV1 } from "../../src/contracts/architecture-inspection.js";
 import type { ArchitectureBaselinePin } from "../../src/contracts/governance.js";
 import type { InstallArchitectureBaselineRevisionCommand } from "../../src/contracts/governance.js";
@@ -90,13 +90,13 @@ function buildP114Page(projectId: string = P114_PROJECT): {
   const activation = buildP114Activation(candidate, decision, gate, toPin);
 
   const materializeCmd = buildP114MaterializeCommand(p114ProposalRef(projectId), { commandId: "p114-cmd-materialize" });
-  const candFold = buildP114CandidateFold(materializeCmd, { eventId: "evt-p114-candidate", occurredAt: FIXED, candidate });
+  const candFold = buildCandidateBaselineMaterializeCommit(materializeCmd, { eventId: "evt-p114-candidate", occurredAt: FIXED, candidate });
   const decisionCmd = buildP114DecisionCommand(decision, { commandId: "p114-cmd-decision" });
-  const decFold = buildP114DecisionFold(decisionCmd, { eventId: "evt-p114-decision", occurredAt: FIXED });
+  const decFold = buildArchitectureChangeDecisionRecordCommit(decisionCmd, { eventId: "evt-p114-decision", occurredAt: FIXED });
   const gateCmd = buildP114GateCommand(gate, { commandId: "p114-cmd-gate" });
-  const gateFold = buildP114GateFold(gateCmd, { eventId: "evt-p114-gate", occurredAt: FIXED });
+  const gateFold = buildMigrationGateRecordCommit(gateCmd, { eventId: "evt-p114-gate", occurredAt: FIXED });
   const actCmd = buildP114ActivationCommand(activation, { commandId: "p114-cmd-activation" });
-  const actFold = buildP114ActivationFold(actCmd, { eventId: "evt-p114-activation", occurredAt: FIXED });
+  const actFold = buildBaselineActivationRecordCommit(actCmd, { eventId: "evt-p114-activation", occurredAt: FIXED });
 
   const events: PositionedEvent[] = [
     { cursor: makeCommitCursor(1), event: candFold.events[0]! },

@@ -1,0 +1,5 @@
+{
+  "checkedDeclarations": 89,
+  "issues": [],
+  "limitation": "Checks declaration preservation, not import wiring or runtime behavior; typecheck and directed adapter tests remain required."
+}

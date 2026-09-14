@@ -1,6 +1,6 @@
 /**
- * Control entry: ArchitectureEvolutionPolicy install/activate (third governance
- * kind).
+ * Control entry for ArchitectureEvolutionPolicy installation and activation
+ * with immutable revisions and an independent Project active reference.
  *
  * Admission semantics follow governance-install.ts / governance-activate.ts:
  *
@@ -82,7 +82,7 @@ function targetMatchesEvolutionPolicySnapshot(
 // Deterministic folds (replicate the shared fixture-fold builders exactly)   //
 // ------------------------------------------------------------------------ //
 
-function buildP113InstallCommit(
+function buildArchitectureEvolutionPolicyInstallCommit(
   command: InstallArchitectureEvolutionPolicyRevisionCommand,
   deps: ControlEngineDeps,
 ): GovernanceInstallLedgerCommitV1 {
@@ -133,7 +133,7 @@ function buildP113InstallCommit(
   };
 }
 
-function buildP113ActivateCommit(
+function buildArchitectureEvolutionPolicyActivateCommit(
   command: ActivateProjectArchitectureEvolutionPolicyCommand,
   deps: ControlEngineDeps,
   activeAggregateRevision: number,
@@ -262,7 +262,7 @@ export class ArchitectureEvolutionPolicyEngineImpl {
     }
 
     // 3) deterministic fold (exactly the shared fixture-fold builder).
-    const batch = buildP113InstallCommit(command, this.deps);
+    const batch = buildArchitectureEvolutionPolicyInstallCommit(command, this.deps);
     const revisionRef = batch.snapshots[0]!.ref as ArchitectureEvolutionPolicyRevisionRef;
 
     // 4) atomic commit (idempotency / immutability CAS decided by the ledger).
@@ -299,7 +299,7 @@ export class ArchitectureEvolutionPolicyEngineImpl {
     const newActiveRevision = activeExpected + 1;
 
     // 4) deterministic fold (project CAS deps use command.expectedRevision).
-    const batch = buildP113ActivateCommit(command, this.deps, newActiveRevision);
+    const batch = buildArchitectureEvolutionPolicyActivateCommit(command, this.deps, newActiveRevision);
 
     // 5) atomic commit (Project CAS + active-aggregate CAS; idempotency by ledger).
     const receipt = await this.deps.ledger.commit(batch);

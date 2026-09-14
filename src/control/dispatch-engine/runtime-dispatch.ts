@@ -1,3 +1,5 @@
+import type { HandoffPort } from '../../contracts/handoff.js';
+import { canonicalJson } from '../../contracts/fingerprint.js';
 import { randomUUID } from 'node:crypto';
 import type { StateLedger } from '../../contracts/ledger.js';
 import type { ControlEngine } from '../../contracts/modules.js';
@@ -8,42 +10,56 @@ import type { DispatchScope, RuntimeDispatchPort, RuntimeDriveRequest, RecoveryR
 import { buildRunFactCommand } from '../../contracts/commands/dispatch.js';
 
 export class RuntimeDispatch implements RuntimeDispatchPort {
-  private queue: Promise<unknown> = Promise.resolve();
+  private readonly reconciliations = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: {
     ledger: Pick<StateLedger, 'load'>;
     control: Pick<ControlEngine, 'runFact'> & Partial<Pick<ControlEngine, 'reconcileRun'>>;
     outbox: DispatchPort;
+    handoff?: HandoffPort;
     runtime: RuntimeReconciliationPort;
     now: () => string;
   }) {}
 
-  drive(request: RuntimeDriveRequest) {
-    const work = this.queue.then(async () => {
-      const result = await this.deps.outbox.drive({ reason: request.reason });
-      let failed = false;
-      for (const failure of result.failures) {
-        if (failure.effect === 'none') continue;
-        const entry = await this.deps.ledger.load(failure.outboxRef);
-        if (entry.status === 'found' && sameRun((entry.snapshot as DispatchOutboxEntrySnapshot).intent.runRef, request.runRef)) failed = true;
-      }
-      /**
-       * CM-1A-001 第 4 步 B 缺陷修复：**已经结束的 Run 不允许被派发/旁路失败改写终态**。
-       *
-       * 两类失败都在这里被挡住：
-       *   · 旁路事实失败（模型调用许可/证据）根本不进 `result.failures`（见 DispatchSideFactFailure），
-       *     因此不会产生 `failed`；
-       *   · 即便 `failed` 为真（或本地观测记录是 outcome_unknown），只要 canonical Run **已经 ended**，
-       *     就既不改写本地观测记录、也不写 outcome_unknown 事实——Run 的终态是权威事实，
-       *     不能因为一次旁路事实没落账而被降级成"未知"。
-       * 未结束的 Run 仍按既有语义对账（markUnknown + outcome_unknown）：这条既有反例没有放宽。
-       */
-      const canonicalRun = await this.deps.ledger.load(request.runRef);
+  async drive(request: RuntimeDriveRequest) {
+    // Execution concurrency belongs to the one outbox consumer. A slow Run must
+    // not serialize unrelated requests at this application-facing adapter.
+    const trigger = { reason: request.reason, ...(request.maxIntents === undefined ? {} : { maxIntents: request.maxIntents }) };
+    const [ordinary, replacement] = await Promise.all([this.deps.outbox.drive(trigger), this.deps.handoff?.driveHandoff(trigger)]);
+    const result = replacement ? { ...ordinary,
+      scanned: ordinary.scanned + replacement.scanned, started: ordinary.started + replacement.started,
+      completed: ordinary.completed + replacement.completed, pendingRemaining: ordinary.pendingRemaining + replacement.pendingRemaining,
+      ...(replacement.backlog ? { backlog: mergeBacklog(ordinary.backlog, replacement.backlog) } : {}),
+      failures: [...ordinary.failures, ...replacement.failures.filter(failure => failure.code !== 'not_a_replacement').map(failure => ({
+        ...failure, code: failure.code === 'not_a_replacement' ? 'rejected' as const : failure.code,
+        effect: failure.code === 'runtime_error' ? 'unknown' as const : 'none' as const,
+      }))],
+    } : ordinary;
+    const affected = new Map<string, { ref: RunRef; failed: boolean }>();
+    if (request.runRef) affected.set(canonicalJson(request.runRef), { ref: request.runRef, failed: false });
+    for (const failure of result.failures) {
+      if (failure.effect === 'none') continue;
+      const entry = await this.deps.ledger.load(failure.outboxRef);
+      if (entry.status !== 'found' || entry.snapshot.ref.aggregateType !== 'DispatchOutboxEntry') continue;
+      const ref = (entry.snapshot as DispatchOutboxEntrySnapshot).intent.runRef;
+      affected.set(canonicalJson(ref), { ref, failed: true });
+    }
+    await Promise.all([...affected.values()].map(({ ref, failed }) => this.reconcileDriveRun(ref, failed)));
+    return result;
+  }
+
+  private reconcileDriveRun(ref: RunRef, failed: boolean): Promise<void> {
+    const key = canonicalJson(ref);
+    const previous = this.reconciliations.get(key) ?? Promise.resolve();
+    const work = previous.catch(() => {}).then(async () => {
+      // Canonical terminal facts win over local observation or side-fact errors.
+      // Serialize only reconciliation for this exact Run, never its execution.
+      const canonicalRun = await this.deps.ledger.load(ref);
       const runEnded = canonicalRun.status === 'found' && (canonicalRun.snapshot as RunSnapshot).status === 'ended';
-      const runtime = this.deps.runtime.all().find(record => sameRun(record.spec, request.runRef));
+      const runtime = this.deps.runtime.all().find(record => sameRun(record.spec, ref));
       if (!runEnded && (failed || runtime?.status === 'outcome_unknown')) {
-        await this.deps.runtime.markUnknown(request.runRef);
-        const loaded = await this.deps.ledger.load(request.runRef);
+        await this.deps.runtime.markUnknown(ref);
+        const loaded = await this.deps.ledger.load(ref);
         if (loaded.status === 'found') {
           const run = loaded.snapshot as RunSnapshot;
           if (run.status !== 'ended' && run.envelope) {
@@ -53,9 +69,9 @@ export class RuntimeDispatch implements RuntimeDispatchPort {
           }
         }
       }
-      return result;
     });
-    this.queue = work.catch(() => {});
+    this.reconciliations.set(key, work);
+    void work.finally(() => { if (this.reconciliations.get(key) === work) this.reconciliations.delete(key); }).catch(() => {});
     return work;
   }
 
@@ -142,4 +158,12 @@ export class RuntimeDispatch implements RuntimeDispatchPort {
 
 function sameRun(a: { projectId: string; goalId: string; runId: string }, b: RunRef) {
   return a.projectId === b.projectId && a.goalId === b.goalId && a.runId === b.runId;
+}
+
+function mergeBacklog(a: import('../../contracts/dispatch.js').DispatchBacklog | undefined, b: import('../../contracts/dispatch.js').DispatchBacklog) {
+  if (!a) return b;
+  const earliest = (x: string | null, y: string | null) => [x, y].filter((v): v is string => v !== null).sort()[0] ?? null;
+  return { pending: a.pending + b.pending, due: a.due + b.due, delayed: a.delayed + b.delayed, quarantined: a.quarantined + b.quarantined,
+    oldestPendingAt: earliest(a.oldestPendingAt, b.oldestPendingAt), oldestPendingAgeMs: Math.max(a.oldestPendingAgeMs ?? 0, b.oldestPendingAgeMs ?? 0),
+    nextAvailableAt: earliest(a.nextAvailableAt, b.nextAvailableAt), blocked: [...a.blocked, ...b.blocked].slice(0, 32) };
 }

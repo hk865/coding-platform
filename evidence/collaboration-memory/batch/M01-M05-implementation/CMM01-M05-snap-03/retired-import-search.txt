@@ -1,0 +1,1 @@
+src\composition\README.md:5:历史 `createPersistentSqliteHarness` 已迁为 `createPersistentPlatform`，仓内调用同步迁移。磁盘目录、数据库表、事件名、引用和摘要没有随源码命名修改。

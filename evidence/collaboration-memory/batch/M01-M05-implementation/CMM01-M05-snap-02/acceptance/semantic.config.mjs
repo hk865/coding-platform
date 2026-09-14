@@ -1,0 +1,1 @@
+export default {root:"/mnt/d/1.project/Software/agent_platform",test:{environment:"node",include:["tests/app/semantic-collaboration.test.ts"],setupFiles:["./evidence/collaboration-memory/batch/M01-M05-implementation/CMM01-M05-snap-02/acceptance/trace-terminal.ts"],restoreMocks:true,testTimeout:90000}};

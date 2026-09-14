@@ -1,8 +1,8 @@
 /**
- * RW-12 契约：角色规格的**只读取用**端口，以及随 ContextBundle 投递的角色规格记录。
+ * 角色规格材料契约：角色规格的**只读取用**端口，以及随 ContextBundle 投递的角色规格记录。
  *
- * 为什么需要这个端口：ADR 0003 D4-2/D4-3 要求「ControlEngine 维护角色矩阵与绑定校验」而
- * 「ContextCompiler 按规格取材」。ContextCompiler 不允许依赖 ControlEngine（ModuleDependencyDAG），
+ * 为什么需要这个端口：ControlEngine 维护角色矩阵与绑定校验，ContextCompiler 按规格取材。
+ * ContextCompiler 不允许依赖 ControlEngine（ModuleDependencyDAG），
  * 而角色规格的**解析规则**（矩阵 pin、revision 是否过期、摘要是否一致、权限是否越界）是
  * ControlEngine 的策略，不能复制第二份。因此这里只定义端口的形状：
  * 组合根注入 ControlEngine 自己的那份判据，ContextCompiler 只消费"解析出来的规格正文"。
@@ -15,7 +15,7 @@ import type { RoleSpecContentV1, RoleSpecRevisionRef } from './role-spec.js';
 
 export type RoleSpecResolutionV1 =
   | { status: 'resolved'; roleId: string; revision: RoleSpecRevisionRef; spec: RoleSpecContentV1 }
-  /** 该绑定没有对应的已安装角色规格：沿用 RW-11 之前的绑定语义（不编造角色目录）。 */
+  /** 该绑定没有对应的已安装角色规格：沿用引入角色矩阵前的绑定语义（不编造角色目录）。 */
   | { status: 'absent'; roleId: string; reason: string }
   /** 角色不存在／revision 过期／权限越界：必须拒绝，零写入。 */
   | { status: 'inadmissible'; roleId: string; reasons: TaskIneligibilityReason[] };

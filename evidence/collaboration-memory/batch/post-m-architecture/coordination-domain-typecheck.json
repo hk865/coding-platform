@@ -1,0 +1,6 @@
+{
+  "command": "./node_modules/.bin/tsc --noEmit",
+  "exitCode": 0,
+  "diagnostics": 0,
+  "output": []
+}

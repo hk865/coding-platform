@@ -23,7 +23,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { CodingAgentRuntime, type RunSpec } from "../../src/execution/worker-runtime/coding-agent-runtime.js";
 import { LeasedWorkerRuntime } from "../../src/control/dispatch-engine/leased-worker-runtime.js";
 import { WorkMaterialDrive } from "../../src/control/dispatch-engine/work-material-drive.js";
@@ -81,7 +81,7 @@ type World = {
   mode: { current: Mode };
   captures: { count: number };
   flipAt: { count: number };
-  h: Awaited<ReturnType<typeof createPersistentSqliteHarness>>;
+  h: Awaited<ReturnType<typeof createPersistentPlatform>>;
   runRef: RunRef;
   workC: WorkContextRef;
   workA: WorkContextRef;
@@ -166,8 +166,8 @@ async function buildWorld(requestedMode: Mode, invalidateBetweenRounds = false):
   await runtime.init();
   cleanup.push(() => runtime.close());
 
-  let h: Awaited<ReturnType<typeof createPersistentSqliteHarness>>;
-  h = await createPersistentSqliteHarness({
+  let h: Awaited<ReturnType<typeof createPersistentPlatform>>;
+  h = await createPersistentPlatform({
     deps: { clock: () => AT },
     sourceApplicability: sourcePort,
     // 后继 Run 的准备由**产品路径**完成（Dispatch 消费后继 outbox 时从持久事实重建 RunSpec
@@ -356,7 +356,7 @@ function specFor(root: string, runId: string): RunSpec {
 }
 
 /** 前驱 Run 已经结束：等待的接续资格因此只剩"条件满足"，drive 会请 Control 直接受理唯一后继。 */
-async function predecessorEnded(h: Awaited<ReturnType<typeof createPersistentSqliteHarness>>, runRef: RunRef): Promise<void> {
+async function predecessorEnded(h: Awaited<ReturnType<typeof createPersistentPlatform>>, runRef: RunRef): Promise<void> {
   const loaded = await h.ledger.load(runRef);
   if (loaded.status !== "found") throw new Error("predecessor run missing");
   const run = loaded.snapshot as { status?: string };

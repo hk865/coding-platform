@@ -1,10 +1,10 @@
 /**
- * P1-13 Control entry (Lane B): RemediationEngineImpl — authoritative allowlist
+ * Architecture evolution Control entry: RemediationEngineImpl — authoritative allowlist
  * verdict recompute + RemediationPlanPatch record + RemediationTask dedup/create
  * + status advance.
  *
- * ENTRY FILE (shared baseline — exported signatures FROZEN). Implements the
- * frozen guard order from the ticket acceptance + integrator pre-ruling:
+ * Public entry. Implements the
+ * versioned guard order from the versioned contract + recorded contract:
  *   1. submitPlanPatch:
  *        schema shape -> invalid; finding load -> not_found;
  *        resolveProjectArchitectureEvolutionPolicy -> policy_unresolved;
@@ -19,16 +19,16 @@
  *          - recompute disallows -> allowlist_rejected (zero write);
  *          - recompute allows  -> record with verdict REPLACED by the recompute
  *            (patch.verdict.allowed/reasons are never trusted), fold
- *            buildP113PlanPatchRecordCommit (CAS@0).
+ *            buildRemediationPlanPatchRecordCommit (CAS@0).
  *   2. createTask:
  *        patch load -> patch_not_found; recompute verdict (policy / allowlist
  *        same as submit -> not_found / policy_unresolved / stale_finding /
  *        allowlist_rejected, all zero write); dedup scan over the committed
  *        event stream (ledger.events is the ONLY deterministic read permitted
- *        in this lane): if the dedup key is occupied by a task whose status is
+ *        in this implementation): if the dedup key is occupied by a task whose status is
  *        in remediationTaskOccupiesDedupKey -> deduplicated receipt
  *        (existingTaskRef, zero write); otherwise fold
- *        buildP113TaskRecordCommit (CAS@0).
+ *        buildRemediationTaskRecordCommit (CAS@0).
  *   3. advanceTask:
  *        task load (event-scan resolution) -> not_found; current status
  *        terminal (resolved|failed|blocked) -> terminal_status; illegal
@@ -42,14 +42,14 @@
  *        is not older than the patch revision and whose outcome is PASS —
  *        otherwise evidence_mismatch (zero write). A caller can therefore no
  *        longer self-report a return-to-work task into "resolved"; fold
- *        buildP113TaskAdvanceCommit (CAS@N, nextRevision = current + 1).
+ *        buildRemediationTaskAdvanceCommit (CAS@N, nextRevision = current + 1).
  *   4. receipt mapping: invalid_commit -> invalid; revision_conflict /
  *        idempotency_conflict / unavailable pass through.
  *
  * Design note on event-scan resolution: the AdvanceRemediationTaskCommand
  * carries only (projectId, aggregateId=taskId) — no workspaceId — so the task
- * ref is resolved by scanning the committed event log (deterministic, small P1
- * scale) rather than a partial-ref load. The same scan builds the dedup map.
+ * ref is resolved by scanning the committed event log (deterministic and bounded
+ * by the event-scan limit) rather than a partial-ref load. The same scan builds the dedup map.
  */
 import type {
   SubmitRemediationPlanPatchCommand,
@@ -82,7 +82,7 @@ import { resolveProjectArchitectureEvolutionPolicy } from "./policies/architectu
 import type { EvolutionPolicyDecision } from "../../contracts/architecture-evolution-policy.js";
 import { evolutionPolicyDecision } from "./policies/architecture-remediation.js";
 import type { LedgerCommitReceipt, StateLedger } from "../../contracts/ledger.js";
-import { buildP113PlanPatchRecordCommit, buildP113TaskRecordCommit, buildP113TaskAdvanceCommit } from "./records/remediation.js";
+import { buildRemediationPlanPatchRecordCommit, buildRemediationTaskRecordCommit, buildRemediationTaskAdvanceCommit } from "./records/remediation.js";
 import type { ControlEngineDeps } from "./control-engine.js";
 
 type ScanEntry = { task: RemediationTaskV1; ref: RemediationTaskRef; revision: number };
@@ -326,7 +326,7 @@ export class RemediationEngineImpl {
     const command2: SubmitRemediationPlanPatchCommand = { ...command, payload: { patch: recordedPatch } };
     const eventId = this.deps.eventId();
     const occurredAt = this.deps.now();
-    const batch = buildP113PlanPatchRecordCommit(command2, { eventId, occurredAt, recordedAt: occurredAt });
+    const batch = buildRemediationPlanPatchRecordCommit(command2, { eventId, occurredAt, recordedAt: occurredAt });
     const receipt = await this.deps.ledger.commit(batch);
     return mapSubmitReceipt(receipt, command2);
   }
@@ -386,7 +386,7 @@ export class RemediationEngineImpl {
     };
     const eventId = this.deps.eventId();
     const occurredAt = this.deps.now();
-    const batch = buildP113TaskRecordCommit(command, { eventId, occurredAt, task });
+    const batch = buildRemediationTaskRecordCommit(command, { eventId, occurredAt, task });
     const receipt = await this.deps.ledger.commit(batch);
     return mapCreateReceipt(receipt, command, taskRef, false, null);
   }
@@ -443,7 +443,7 @@ export class RemediationEngineImpl {
     const nextRevision = current.revision + 1;
     const eventId = this.deps.eventId();
     const occurredAt = this.deps.now();
-    const batch = buildP113TaskAdvanceCommit(command, { eventId, occurredAt, nextRevision, task: nextTask });
+    const batch = buildRemediationTaskAdvanceCommit(command, { eventId, occurredAt, nextRevision, task: nextTask });
     const receipt = await this.deps.ledger.commit(batch);
     return mapAdvanceReceipt(receipt, command, current.ref);
   }

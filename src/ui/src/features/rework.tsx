@@ -3,7 +3,7 @@
  *
  * 这里不做验收判断，也不推断返工是否已受理：问题来自已提交的验证轮次与独立审阅
  * 结论，当前时效由后端给出（open/superseded/unknown）；受理结论来自 canonical 重建的
- * 视图与本进程最近一次触发的结构化结果（RW-06 驱动）。界面只负责把问题、负责任务、
+ * 视图与本进程最近一次触发的结构化结果（ 驱动）。界面只负责把问题、负责任务、
  * 失败要求、来源与"为什么没有自动受理"呈现给人。
  */
 import { Alert, Badge, Box, Group, Stack, Table, Text } from '@mantine/core';
@@ -86,7 +86,7 @@ export function ReworkView({ api, goalScope, store }: { api: Api; goalScope: Goa
     queryFn: () => api.reworkStatus(goalScope!),
   });
   /**
-   * RW-10：自动返工是否被人停用（allowed.inScopeRework）。这里读的是治理视图的**同一份**事实
+   * 自动返工开关：是否被人停用由 allowed.inScopeRework 表达。这里读的是治理视图的**同一份**事实
    * （服务端 automationSwitch），不自己推断、也不缓存成界面状态；有额度展示的地方就一并显示它，
    * 因为「还有额度」与「自动返工被停用」是两件必须同时看到的事。
    */

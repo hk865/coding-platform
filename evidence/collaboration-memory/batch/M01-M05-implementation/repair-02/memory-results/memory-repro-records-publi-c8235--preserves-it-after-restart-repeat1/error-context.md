@@ -1,0 +1,229 @@
+# Instructions
+
+- Following Playwright test failed.
+- Explain why, be concise, respect Playwright best practices.
+- Provide a snippet of code with the fix, if possible.
+
+# Test info
+
+- Name: memory-repro.spec.ts >> records public experience from an actual run through the browser and preserves it after restart
+- Location: ../../evidence/collaboration-memory/batch/M01-M05-implementation/repair-02/memory-repro.spec.ts:5:1
+
+# Error details
+
+```
+Test timeout of 45000ms exceeded.
+```
+
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - paragraph [ref=e5]: Agent Platform 工作台
+    - paragraph [ref=e6]: /tmp/verification-round-http-L2e7q0/project
+    - paragraph [ref=e7]: 已连接 · 本地服务
+    - button "切换明暗主题" [ref=e8] [cursor=pointer]:
+      - generic [ref=e9]: ☾
+    - button "刷新项目状态" [ref=e11] [cursor=pointer]:
+      - generic [ref=e12]: 刷新
+  - generic [ref=e14]:
+    - navigation "项目与目标" [ref=e15]:
+      - generic [ref=e16]:
+        - combobox "切换项目" [ref=e19] [cursor=pointer]: project
+        - button "添加项目文件夹" [ref=e20] [cursor=pointer]:
+          - generic [ref=e21]: ＋
+      - button "＋ 新建目标" [ref=e24] [cursor=pointer]
+      - paragraph [ref=e27]: 项目会话
+      - list [ref=e29]:
+        - listitem [ref=e30] [cursor=pointer]:
+          - paragraph [ref=e33]: Verify subject.txt through registered checks and independent review
+      - separator [ref=e34]
+      - generic [ref=e35]:
+        - generic [ref=e36]:
+          - paragraph [ref=e37]: 活跃 Agent
+          - paragraph [ref=e38]: "0"
+        - paragraph [ref=e39]: 当前没有运行中的 Agent
+      - separator [ref=e40]
+      - generic [ref=e41]:
+        - button "设置" [ref=e42] [cursor=pointer]
+        - button "动态" [ref=e45] [cursor=pointer]
+    - separator "调整左侧项目栏宽度" [ref=e48]
+    - generic [ref=e50]:
+      - generic "项目对话记录" [ref=e51]:
+        - generic [ref=e52]:
+          - generic [ref=e53]:
+            - paragraph [ref=e54]: Verify subject.txt through registered checks and independent review
+            - generic [ref=e55]:
+              - generic [ref=e56]: 目标尚无正式完成判定
+              - paragraph [ref=e58]: 已验证任务 0 / 2
+              - paragraph [ref=e59]: 存储 SQLite · 执行 coding-agent
+          - generic [ref=e61]:
+            - generic [ref=e62]:
+              - paragraph [ref=e63]: 协调与规划
+              - generic [ref=e64]: 计划已接纳
+            - paragraph [ref=e66]: Check the actual file with tools, then independently review its semantics.
+            - paragraph [ref=e68]: coding-task · executor：Inspect subject.txt and report its public result; independent tools and Reviewer must verify it.
+            - paragraph [ref=e69]: 任务按依赖派发；执行报告仍需独立验收。
+            - paragraph [ref=e70]: 只读协调 · completed · deepseek / verification-protocol-stub · 1 次模型请求
+          - alert [ref=e72]:
+            - generic [ref=e73]: 架构决定状态不可读：服务正在关闭
+          - alert "读取失败" [ref=e76]:
+            - generic [ref=e78]:
+              - generic [ref=e79]: 读取失败
+              - generic [ref=e82]:
+                - paragraph [ref=e83]: "SqliteStateLedger: ledger is closed"
+                - button "重试" [ref=e84] [cursor=pointer]
+          - generic [ref=e87]:
+            - article [ref=e88]:
+              - generic [ref=e89]:
+                - strong [ref=e90]: 你
+                - paragraph [ref=e91]: 开发任务
+              - paragraph [ref=e94]: Inspect subject.txt and report its public result; independent tools and Reviewer must verify it.
+            - article [ref=e95]:
+              - generic [ref=e96]:
+                - strong [ref=e97]: 执行 Agent
+                - generic [ref=e98]: completed
+                - paragraph [ref=e100]: real-round-task
+              - generic [ref=e101]:
+                - paragraph [ref=e103]: verification-protocol-stub · 配置版本 8187a739 · 单次上下文 128,000 tokens
+                - paragraph [ref=e106]: Ready for independent verification.
+                - group [ref=e107]:
+                  - generic "本次运行用量 · 1 次模型调用" [ref=e108] [cursor=pointer]
+                - generic [ref=e109]:
+                  - button "检查与验证" [ref=e110] [cursor=pointer]
+                  - button "运行日志" [ref=e113] [cursor=pointer]
+                  - button "交接继续" [ref=e116] [cursor=pointer]
+      - generic [ref=e119]:
+        - generic [ref=e120]:
+          - generic [ref=e121]: 响应用途
+          - combobox "响应用途" [ref=e123] [cursor=pointer]: 日常回复
+        - generic [ref=e124]:
+          - generic [ref=e125]:
+            - generic [ref=e126]: 独立只读提问
+            - textbox "独立只读提问" [ref=e128]
+          - button "提问" [disabled] [ref=e129]
+        - paragraph [ref=e132]: 使用当前模型设置读取公开事实与源码，不中断开发运行。
+      - generic [ref=e133]:
+        - textbox "开发任务要求" [ref=e136]:
+          - /placeholder: 描述要实现或修复的内容，以及验收条件（Ctrl/Cmd + Enter 提交）
+        - generic [ref=e137]:
+          - generic [ref=e138]:
+            - generic [ref=e140]:
+              - checkbox "允许在当前项目内修改文件（工具网络关闭）" [ref=e142]
+              - generic [ref=e143]: 允许在当前项目内修改文件（工具网络关闭）
+            - button "本次运行限额" [ref=e145] [cursor=pointer]
+          - button "执行开发任务" [disabled] [ref=e149]
+    - separator "调整右侧工作台宽度" [ref=e152]
+    - generic [ref=e153]:
+      - tablist "工作台视图" [ref=e154]:
+        - generic [ref=e155]:
+          - generic [ref=e156]:
+            - tab "任务" [ref=e157] [cursor=pointer]
+            - button "固定 任务" [ref=e160] [cursor=pointer]:
+              - generic [ref=e161]: ☆
+            - button "关闭 任务" [ref=e162] [cursor=pointer]:
+              - generic [ref=e163]: ×
+          - generic [ref=e164]:
+            - tab "文件" [ref=e165] [cursor=pointer]
+            - button "固定 文件" [ref=e168] [cursor=pointer]:
+              - generic [ref=e169]: ☆
+            - button "关闭 文件" [ref=e170] [cursor=pointer]:
+              - generic [ref=e171]: ×
+          - generic [ref=e172]:
+            - tab "Agent" [ref=e173] [cursor=pointer]
+            - button "固定 Agent" [ref=e176] [cursor=pointer]:
+              - generic [ref=e177]: ☆
+            - button "关闭 Agent" [ref=e178] [cursor=pointer]:
+              - generic [ref=e179]: ×
+          - generic [ref=e180]:
+            - tab "检查与验证" [ref=e181] [cursor=pointer]
+            - button "固定 检查与验证" [ref=e184] [cursor=pointer]:
+              - generic [ref=e185]: ☆
+            - button "关闭 检查与验证" [ref=e186] [cursor=pointer]:
+              - generic [ref=e187]: ×
+          - generic [ref=e188]:
+            - tab "记忆与规则" [selected] [ref=e189] [cursor=pointer]
+            - button "固定 记忆与规则" [ref=e192] [cursor=pointer]:
+              - generic [ref=e193]: ☆
+            - button "关闭 记忆与规则" [ref=e194] [cursor=pointer]:
+              - generic [ref=e195]: ×
+        - button "打开视图" [ref=e196] [cursor=pointer]:
+          - generic [ref=e197]: ＋ 视图
+        - button "收起工作台" [ref=e199] [cursor=pointer]:
+          - generic [ref=e200]: ⟩
+      - generic [ref=e202]:
+        - paragraph [ref=e204]: 记忆与规则
+        - generic [ref=e205]:
+          - generic [ref=e206]:
+            - generic [ref=e207]:
+              - generic [ref=e208]: 记忆范围
+              - combobox "记忆范围" [ref=e210] [cursor=pointer]: 当前项目经验
+            - generic [ref=e211]:
+              - paragraph [ref=e212]: 偏好不授予权限，也不替代正式规则或当前明确指示。保存回执与某次运行实际采用的版本分别记录。
+              - generic [ref=e213]:
+                - generic [ref=e214]: 记住一条偏好或经验
+                - textbox "记住一条偏好或经验" [ref=e216]
+              - generic [ref=e217]:
+                - generic [ref=e218]: 适用响应
+                - combobox "适用响应" [ref=e220] [cursor=pointer]: 所有响应
+              - generic [ref=e221]:
+                - button "记住" [disabled] [ref=e222]
+                - button "刷新" [ref=e225] [cursor=pointer]
+              - paragraph [ref=e228]: 当前保存版本 1
+              - generic [ref=e229]:
+                - paragraph [ref=e230]: "BROWSER_PUBLIC_EXPERIENCE: Verify current file versions before continuing."
+                - paragraph [ref=e231]: note-c8c9597a-1579-45be-8ef4-3a263de5bae2 · v1 · active · planning, progress, handoff, execution · 来源 work_note
+                - generic [ref=e232]:
+                  - button "纠正" [ref=e233] [cursor=pointer]
+                  - button "删除" [ref=e236] [cursor=pointer]
+            - generic [ref=e239]:
+              - paragraph [ref=e240]: 记录本次工作的公开经验
+              - paragraph [ref=e241]: 填写可公开复用的结论和依据。经验会关联所选运行及记录时的规范；来源失效后停止采用。
+              - generic [ref=e242]:
+                - generic [ref=e243]: 经验来源运行
+                - combobox "经验来源运行" [ref=e245] [cursor=pointer]: coding-task · real-round-task
+              - generic [ref=e246]:
+                - generic [ref=e247]: 经验结论
+                - textbox "经验结论" [ref=e249]
+              - generic [ref=e250]:
+                - generic [ref=e251]: 经验依据
+                - textbox "经验依据" [ref=e253]
+              - button "保存公开经验" [disabled] [ref=e254]
+              - alert [ref=e257]:
+                - generic [ref=e258]: 经验已保存，项目版本 1。后续输入会核对来源和适用条件。
+            - generic [ref=e261]:
+              - generic [ref=e262]:
+                - paragraph [ref=e263]: 实际回应的输入版本
+                - button "刷新采用记录" [ref=e264] [cursor=pointer]
+              - paragraph [ref=e267]: 这里读取每次回应已留存的输入，不会因偏好更新改写旧记录。运行未完成时，仅证明输入已组装。
+              - generic [ref=e268]:
+                - paragraph [ref=e269]: real-query-initial-round-task · planning · completed
+                - paragraph [ref=e270]: 输入采用：用户 v0 / 项目 v0；无适用条目
+                - paragraph [ref=e271]: 输入摘要 02950c8724e7feabc41d5e64edbf2233fd1ed0b815caed2baf66306b64071780
+          - generic [ref=e272]:
+            - paragraph [ref=e273]: 当前可确认的事实
+            - generic [ref=e274]:
+              - paragraph [ref=e275]: 完成策略
+              - paragraph [ref=e276]: policy-completion-mvp@1
+            - paragraph [ref=e277]: 这些版本由计划固定，可在“架构”视图查看来源。
+            - generic [ref=e279]:
+              - paragraph [ref=e280]: 历史材料精确授权
+              - paragraph [ref=e281]: 当前已保存的命令检查报告；来源选择不会自动授权。授权列表最多显示 256 条。 历史解释不继承旧完成或旧权限。
+              - generic [ref=e282]:
+                - generic [ref=e283]: 来源报告
+                - combobox "来源报告" [ref=e285]
+              - generic [ref=e286]:
+                - generic [ref=e287]: 目标运行
+                - combobox "目标运行" [ref=e289] [cursor=pointer]
+              - generic [ref=e290]:
+                - generic [ref=e291]: 授权或撤销原因
+                - textbox "授权或撤销原因" [ref=e293]: 读取相关历史解释
+              - button "授权所选原报告供目标运行读取" [disabled] [ref=e294]
+  - generic [ref=e298]:
+    - tablist "底部工具" [ref=e299]:
+      - tab "终端" [selected] [ref=e300] [cursor=pointer]
+      - tab "运行日志" [ref=e303] [cursor=pointer]
+    - paragraph [ref=e306]: 已折叠 · 后台会话继续运行
+    - button "展开" [ref=e307] [cursor=pointer]
+```

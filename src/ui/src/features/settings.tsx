@@ -107,8 +107,7 @@ export function SettingsView({ api, data, store, scope }: ViewProps) {
 
           <Paper withBorder p="xs" radius="sm">
             <Text size="xs" fw={600} mb={6}>语义角色与协作</Text>
-            {/* RW-14：这句原先写“角色职责解析、按角色供材与真实协调运行尚未接通”，在治理入口加进
-                第五个种类（角色规格）与角色矩阵校验之后已经不成立，按当前事实改写。 */}
+            {/* 能力说明取当前正式入口：角色规格与按角色供材已接通；持续的多角色协商仍无产品入口。 */}
             <Text size="xs" c="dimmed">
               角色现在有版本化规格：在上一节「治理与策略」里可以安装并激活每个角色的规格，协调策略正文
               可以登记角色矩阵。矩阵生效后，每条 claim 都按矩阵校验角色——角色不在目录里、绑定的 revision
@@ -127,4 +126,3 @@ export function SettingsView({ api, data, store, scope }: ViewProps) {
     </Stack>
   );
 }
-

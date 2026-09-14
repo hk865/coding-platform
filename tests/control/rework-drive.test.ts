@@ -1,5 +1,5 @@
 import { resolvePlanningWorkIdentities } from '../../src/control/plan-compiler/planning-work-materials.js';
-import { composeReworkDrive } from '../../src/harness/rework-composition.js';
+import { composeReworkDrive } from '../../src/composition/rework-composition.js';
 /**
  * RW-06 返工触发驱动：确定性、幂等、可解释。
  *

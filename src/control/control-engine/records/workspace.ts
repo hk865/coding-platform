@@ -9,10 +9,10 @@ import { patchRecordRefFor, recordPatchFingerprint } from "../../../contracts/pa
 
 
 // ------------------------------------------------------------------------ //
-// Ledger commit builders (fold targets — fold equality is a frozen rule)    //
+// Ledger commit builders (fold targets — fold equality is a versioned rule)    //
 // ------------------------------------------------------------------------ //
 
-export type BuildP107ReadAcquireCommitDeps = {
+export type BuildWorkspaceReadLeaseAcquireCommitDeps = {
   eventId: string;
   occurredAt: string;
   indexSnapshot: WorkspaceReadLeaseIndexSnapshot;
@@ -23,7 +23,7 @@ export type BuildP107ReadAcquireCommitDeps = {
 
 export function buildWorkspaceReadLeaseAcquireLedgerCommit(
   command: AcquireWorkspaceReadLeaseCommand,
-  deps: BuildP107ReadAcquireCommitDeps,
+  deps: BuildWorkspaceReadLeaseAcquireCommitDeps,
 ): import("../../../contracts/ledger.js").WorkspaceReadLeaseAcquireLedgerCommitV1 {
   const leaseId = command.aggregateId;
   const leaseSnapshot: WorkspaceReadLeaseSnapshot = {
@@ -71,7 +71,7 @@ export function buildWorkspaceReadLeaseAcquireLedgerCommit(
 }
 
 
-export type BuildP107ReadReleaseCommitDeps = {
+export type BuildWorkspaceReadLeaseReleaseCommitDeps = {
   eventId: string;
   occurredAt: string;
   indexSnapshot: WorkspaceReadLeaseIndexSnapshot;
@@ -81,7 +81,7 @@ export type BuildP107ReadReleaseCommitDeps = {
 export function buildWorkspaceReadLeaseReleaseLedgerCommit(
   command: ReleaseWorkspaceLeaseCommand,
   activeSnapshot: WorkspaceReadLeaseSnapshot,
-  deps: BuildP107ReadReleaseCommitDeps,
+  deps: BuildWorkspaceReadLeaseReleaseCommitDeps,
 ): import("../../../contracts/ledger.js").WorkspaceReadLeaseReleaseLedgerCommitV1 {
   const leaseSnapshot: WorkspaceReadLeaseSnapshot = {
     ref: activeSnapshot.ref,
@@ -112,7 +112,7 @@ export function buildWorkspaceReadLeaseReleaseLedgerCommit(
 }
 
 
-export type BuildP107WriteAcquireCommitDeps = {
+export type BuildWorkspaceWriteLeaseAcquireCommitDeps = {
   eventId: string;
   occurredAt: string;
   indexSnapshot: WorkspaceWriteLeaseIndexSnapshot;
@@ -125,7 +125,7 @@ export type BuildP107WriteAcquireCommitDeps = {
 
 export function buildWorkspaceWriteLeaseAcquireLedgerCommit(
   command: AcquireWorkspaceWriteLeaseCommand,
-  deps: BuildP107WriteAcquireCommitDeps,
+  deps: BuildWorkspaceWriteLeaseAcquireCommitDeps,
 ): import("../../../contracts/ledger.js").WorkspaceWriteLeaseAcquireLedgerCommitV1 {
   const leaseId = command.aggregateId;
   const leaseSnapshot: WorkspaceWriteLeaseSnapshot = {
@@ -196,7 +196,7 @@ export function buildWorkspaceWriteLeaseAcquireLedgerCommit(
 }
 
 
-export type BuildP107WriteReleaseCommitDeps = {
+export type BuildWorkspaceWriteLeaseReleaseCommitDeps = {
   eventId: string;
   occurredAt: string;
   indexSnapshot: WorkspaceWriteLeaseIndexSnapshot;
@@ -206,7 +206,7 @@ export type BuildP107WriteReleaseCommitDeps = {
 export function buildWorkspaceWriteLeaseReleaseLedgerCommit(
   command: ReleaseWorkspaceLeaseCommand,
   activeSnapshot: WorkspaceWriteLeaseSnapshot,
-  deps: BuildP107WriteReleaseCommitDeps,
+  deps: BuildWorkspaceWriteLeaseReleaseCommitDeps,
 ): import("../../../contracts/ledger.js").WorkspaceWriteLeaseReleaseLedgerCommitV1 {
   const leaseSnapshot: WorkspaceWriteLeaseSnapshot = {
     ref: activeSnapshot.ref,
@@ -239,7 +239,7 @@ export function buildWorkspaceWriteLeaseReleaseLedgerCommit(
 }
 
 
-export type BuildP107IntegrationCommitDeps = {
+export type BuildWorkspaceIntegrationCommitDeps = {
   eventId: string;
   occurredAt: string;
   priorRecords: IntegrationTaskResultV1[];
@@ -248,7 +248,7 @@ export type BuildP107IntegrationCommitDeps = {
 
 export function buildIntegrationRecordLedgerCommit(
   command: RecordIntegrationResultCommand,
-  deps: BuildP107IntegrationCommitDeps,
+  deps: BuildWorkspaceIntegrationCommitDeps,
 ): import("../../../contracts/ledger.js").IntegrationRecordLedgerCommitV1 {
   const result = command.payload.result;
   const snapshot: IntegrationResultSnapshot = {
@@ -272,7 +272,7 @@ export function buildIntegrationRecordLedgerCommit(
 }
 
 
-export type BuildP107PatchCommitDeps = {
+export type BuildWorkspacePatchCommitDeps = {
   eventId: string;
   occurredAt: string;
   workspaceRevisionBefore: number;
@@ -283,7 +283,7 @@ export type BuildP107PatchCommitDeps = {
 
 export function buildPatchRecordLedgerCommit(
   command: RecordPatchCommand,
-  deps: BuildP107PatchCommitDeps,
+  deps: BuildWorkspacePatchCommitDeps,
 ): import("../../../contracts/ledger.js").PatchRecordLedgerCommitV1 {
   const patch = command.payload.patch;
   const patchSnapshot: import("../../../contracts/patch.js").PatchRecordSnapshot = {

@@ -1,0 +1,9 @@
+{
+  "changed": [],
+  "exclusions": [
+    "vendor provenance",
+    "fixtures",
+    "testing"
+  ],
+  "note": "Comment text only; identifiers and persisted values were not changed."
+}

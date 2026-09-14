@@ -1,15 +1,12 @@
 /**
- * Governance contracts — P1-02 first consumption of CompletionPolicy and
- * ArchitectureBaseline.
+ * Governance contracts for CompletionPolicy and ArchitectureBaseline.
  *
  * Authority:
  *   - dev_docs/interfaces/completion-policy.md (versions resolve via Project
  *     active refs; immutable digest/revision matching; no built-in defaults)
- *   - dev_docs/planning/proposed/P1-foundation/tickets/02-plan-revision-visible.md
- *   - IMPLEMENTATION-HANDOFF.md "P1-02 契约与存储语义（冻结）"
+ *   - dev_docs/modules/control/control-engine.md
  *
- * Frozen semantics (recorded in the handoff; versioned additions — the
- * Goal-create slice v1 semantics are unchanged):
+ * Versioned semantics:
  *   - Governance revisions are PROJECT-SCOPED immutable artifacts: identity =
  *     (projectId, policyId|baselineId, revision); install is a project-scoped
  *     command (CommandIdentity). contentDigest = JCS + SHA-256 over
@@ -22,7 +19,7 @@
  *     ONLY by the activation contract with CAS on the expected Project
  *     revision AND the active-aggregate revision.
  *   - Install NEVER auto-activates. There is NO default policy/baseline and
- *     NO ArchitectureEvolutionPolicy active ref in P1-02.
+ *     NO ArchitectureEvolutionPolicy active ref in this contract.
  *   - A ref resolves only when identity/revision/digest match EXACTLY the
  *     installed snapshot; otherwise the consumer must fail (zero-write).
  */
@@ -73,15 +70,15 @@ export type CompletionPolicyContentV1 = {
   requirementKinds: string[];
   /** Minimum number of REQUIRED VerificationRequirements per required obligation. */
   minimumRequiredRequirementsPerObligation: number;
-  /** P1-04 (optional, additive): diff classes a mechanical no-change proof may
+  /** verification (optional, additive): diff classes a mechanical no-change proof may
    * fast-path for reviewer-layer requirements. Absent => NO fast path (the
-   * frozen P1-02 fixture keeps this field absent, digest unchanged). */
+   * the original fixture keeps this field absent so its digest remains unchanged). */
   fastPathDiffClasses?: string[];
 };
 
 /**
  * Versioned CompletionPolicy local fixture. Content semantics consumed in
- * P1-02 are exactly: requirementKinds + minimumRequiredRequirementsPerObligation
+ * The plan-facing CompletionPolicy fields are exactly requirementKinds and minimumRequiredRequirementsPerObligation
  * (the non-empty obligation-compilation guard). The policy body is authored
  * once per revision and never rewritten.
  */
@@ -219,7 +216,7 @@ export function governanceActivateFingerprint(
 }
 
 // ------------------------------------------------------------------------ //
-// Commands (P1-02)                                                          //
+// Versioned-governance commands.                                                          //
 // ------------------------------------------------------------------------ //
 
 export type InstallCompletionPolicyRevisionCommand = {
@@ -335,7 +332,7 @@ export type GovernanceActivateReceipt =
     };
 
 // ------------------------------------------------------------------------ //
-// Events (P1-02, v1)                                                        //
+// Versioned-governance events (v1).                                                       //
 // ------------------------------------------------------------------------ //
 
 export type CompletionPolicyInstalledEvent = {

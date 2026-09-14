@@ -14,7 +14,7 @@ export type RuntimeContextAccess = {
   materials?: RuntimeContextMaterials;
   reviewer?: ReviewerRuntimeAccess;
   /**
-   * 本次 Run 的**协调能力声明**（CM-1A-001 协议约束 2.3）：宿主在执行前解析出的授予 +
+   * 本次 Run 的**协调能力声明**（协作通信协议约束 2.3）：宿主在执行前解析出的授予 +
    * 该授予下的正式受理面。访问面只能作为 `granted` 的一部分出现，因此"未授予却注入工具"
    * 在类型上不可表达。Context 不解释它，只把它交给运行入口变成模型能调用的工具；
    * 它不授予任何新的工作区权限（协调能力 ≠ 文件写入或 shell 权限）。
@@ -112,7 +112,7 @@ export async function assembleRuntimeContext(
     await review.assertCurrent();
     const input = reviewerRuntimeInput(review.packet);
     ensure(artifactBodyDigest(canonicalJson(review.packet as JsonValue)) === review.input.packetDigest && artifactBodyDigest(input) === review.input.inputDigest,
-      'Reviewer actual input does not match the canonical frozen input');
+      'Reviewer actual input does not match the recorded canonical input');
     manifest.selected = [{ kind: 'independent-review-packet', id: review.packet.workRef.reviewId, digest: review.input.packetDigest, sourceRefs: envelope.sourceRefs, selectedBecause: '独立 Reviewer 的完整义务、当前来源及精确授权原报告索引' }];
     manifest.gaps = [...review.packet.gaps];
     manifest.inputDigest = review.input.inputDigest;
@@ -127,6 +127,11 @@ export async function assembleRuntimeContext(
     '## 运行绑定与权限\n' + canonicalJson({ scope, planRef: envelope.planRef, workspaceSnapshot: envelope.workspaceSnapshot, permissions: envelope.permissions, roleBinding: envelope.roleBinding } as JsonValue),
     '## 操作者任务输入\n' + spec.instruction,
   ];
+  if (body['handoff'] !== undefined) {
+    const handoff = object(body['handoff']);
+    sections.push('## 已登记的有界换手材料（历史声明，不授予权限）\n' + canonicalJson(handoff as JsonValue));
+    manifest.selected.push({ kind: 'handoff-packet', id: String(handoff['packetId']), digest: artifactBodyDigest(canonicalJson(handoff as JsonValue)), sourceRefs: envelope.sourceRefs, selectedBecause: '当前已接受上下文包绑定的换手目标、约束、未决项和来源；未继承完整对话' });
+  }
   const materials = access.materials;
   let workContextDelivered = false;
   if (materials) {
@@ -172,8 +177,8 @@ export async function assembleRuntimeContext(
     // 角色必读材料的**取材结果**（contract／code／evidence／decision）。每一条都带
     // selectedBecause 与 sourceRefs（含版本），并进入 manifest.selected 供逐条核对。
     appendRoleMaterials(materials.roleMaterials, manifest, sections);
-    // RW-11/角色规格只作为"这次工作的要求"被记录（必读材料供给了哪些、必产出是什么）。
-    // 它不产生完成状态：必产出的完备性判定属于 VerificationEngine 的既有归约（ADR 0003 D4-3）。
+    // /角色规格只作为"这次工作的要求"被记录（必读材料供给了哪些、必产出是什么）。
+    // 它不产生完成状态：必产出的完备性判定属于 VerificationEngine 的既有归约。
     appendRoleSpecMaterials(materials.roleSpec, manifest, sections);
   } else {
     ensure(dependencies.length === 0, 'Context 缺少已验收的直接前驱材料');
@@ -206,11 +211,11 @@ export async function assembleRuntimeContext(
  * 把解析出来的角色规格写进 manifest 与正文。
  *
  * 只读审计：这里既不判定必产出是否完成，也不产生任何完成状态——运行结束时的完备性判定属于
- * VerificationEngine 的既有归约路径（ADR 0003 D4-3），本文件不新造完成语义。
- * 必读材料的供给状态（RW-17）：`supplied: true` + `selection: 'selected'` 表示本次选入了具体条目；
+ * VerificationEngine 的既有归约路径，本文件不新造完成语义。
+ * 必读材料的供给状态：`supplied: true` + `selection: 'selected'` 表示本次选入了具体条目；
  * `supplied: true` + `selection: 'empty'` 表示通道读到了"本次范围内确定没有"这一事实；
  * `supplied: false` 表示本入口拥有该通道但这次没有供应（可选材料）；
- * `supplied: null` 只能表示"本运行入口不拥有该通道"——RW-17 之后桥表全键接通，它不可达，
+ * `supplied: null` 只能表示"本运行入口不拥有该通道"—— 之后桥表全键接通，它不可达，
  * 但形状保留，将来新增类别时按同一口径表态。任何情况下都不得把"未核对"写成已满足。
  */
 function appendRoleSpecMaterials(

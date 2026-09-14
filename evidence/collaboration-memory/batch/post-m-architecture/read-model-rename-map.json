@@ -1,0 +1,37 @@
+{
+  "changed": [
+    {
+      "file": "src/data/read-model-index/read-model-index.ts",
+      "identifiers": 20,
+      "names": [
+        "applyP109 -> applyQueryEvent",
+        "applyP110 -> applyControlIntentEvent",
+        "applyP111 -> applyPlanChangeEvent",
+        "applyP112Inspection -> applyArchitectureInspectionEvent",
+        "applyP112InspectionLaneA -> applyArchitectureInspectionFacts",
+        "applyP112InspectionLaneB -> applyArchitectureDecisionArtifacts",
+        "applyP113 -> applyArchitectureEvolutionEvent",
+        "applyP114 -> applyBaselineEvolutionEvent",
+        "applyP115 -> applyCollaborationEvent",
+        "applyP118 -> applyMaterialAccessEvent"
+      ]
+    },
+    {
+      "file": "src/data/read-model-index/sqlite-read-model-index.ts",
+      "identifiers": 20,
+      "names": [
+        "applyP109 -> applyQueryEvent",
+        "applyP110 -> applyControlIntentEvent",
+        "applyP111 -> applyPlanChangeEvent",
+        "applyP112Inspection -> applyArchitectureInspectionEvent",
+        "applyP112InspectionLaneA -> applyArchitectureInspectionFacts",
+        "applyP112InspectionLaneB -> applyArchitectureDecisionArtifacts",
+        "applyP113 -> applyArchitectureEvolutionEvent",
+        "applyP114 -> applyBaselineEvolutionEvent",
+        "applyP115 -> applyCollaborationEvent",
+        "applyP118 -> applyMaterialAccessEvent"
+      ]
+    }
+  ],
+  "limitation": "Identifier tokens only; comments and persisted string/table names are unchanged."
+}

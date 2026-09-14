@@ -1,18 +1,27 @@
+import { buildPlanMatrixView, buildPortfolioView, runDisplayStateForEvent, toTaskEvidenceEntry } from './console-projection.js';
+import { buildTaskVerificationView, type ProjectedEvidence, type VerificationProjection } from './verification-projection.js';
+import { buildSyntheticArchitectureInspection } from './architecture-inspection-projection.js';
+import { readModelHandlesEvent } from './handled-event-types.js';
+import { projectWorkContext } from './work-context-projection.js';
+import { projectCollaborationEvent } from './collaboration-projection.js';
+import { projectMaterialAccessEvent } from './material-access-projection.js';
+import { projectQueryEvent } from './query-projection.js';
+import { projectControlIntentEvent, type ControlIntentProjectionRow } from './control-intent-projection.js';
+import { projectPlanChangeDispositions } from './plan-change-projection.js';
 import { reviewProjectionChanges, reviewProjectionEventTypes, reviewProjectionFacts } from './reviewer-projection.js';
 import { projectBaselineChangeView } from './baseline-change-projection.js';
 import type { ReviewProjectionSnapshot } from '../../contracts/read-model.js';
 import { completedWorkCursor } from './completed-work-eligibility.js';
 import { droppedWorkRefsByTask, sortWorkRefs, taskWorkKey } from './completed-work-merge.js';
-// RW-13：一个任务只有一个持久工作身份。归并规则是 ControlEngine 的权威规则（唯一正文在
+// 一个任务只有一个持久工作身份。归并规则是 ControlEngine 的权威规则（唯一正文在
 // control/control-engine/work-identity-resolution.ts），这里只消费，不在投影里复制第二份判断。
 import { dedupeTaskWorks } from '../../control/control-engine/work-identity-resolution.js';
 import { matchesMaterialAccessLookup, type MaterialAccessGrantLookup, type MaterialAccessGrantViewResult, type MaterialAccessGrantRow } from '../../contracts/material-access.js';
 /**
- * SQLite ReadModelIndex adapter — P1-01 "Goal persisted and visible" +
- * P1-02 Plan Graph / Task Detail projection.
+ * SQLite ReadModelIndex adapter — persistent projections for the platform's read-only views.
  *
- * ENTRY FILE (shared baseline, integrator, 2026-09-05). The exported surface
- * below is FROZEN: the lane C implementation fills in the body and MUST NOT
+ * Public entry. The exported surface
+ * below is versioned; implementations must not
  * change the exported signatures/options.
  *
  * Driver decision: Node 24 built-in node:sqlite (DatabaseSync) — zero runtime
@@ -21,16 +30,17 @@ import { matchesMaterialAccessLookup, type MaterialAccessGrantLookup, type Mater
  * PROJECTION (canonical Goal state comes from the StateLedger snapshots,
  * never from here).
  *
- * P1-01 lane B / P1-02 lane C depend only on interfaces/contracts — NOT on
- * the control/ledger lane code.
+ * Projection readers primarily consume interfaces and contracts. The adapter
+ * also reuses ControlEngine's public pure task-identity selection rule, as
+ * permitted by the Module dependency graph, instead of copying that rule.
  *
  * In-process semantics are a field-for-field mirror of the InMemory reference
- * (src/read-model/read-model-index.ts):
+ * (src/data/read-model-index/read-model-index.ts):
  *  - the WHOLE page is validated before anything is applied: cursor gap /
  *    out-of-order / unknown-version stall the entire page via ProjectionStallError
  *    (never partial, never skipped);
  *  - a KNOWN v1 event with no projection handler stalls the whole page via
- *    ProjectionStallError(unsupported_event_type) (P1-02 handlers added here;
+ *    ProjectionStallError(unsupported_event_type) (all current handlers are registered;
  *    the stall branch stays as a future defence);
  *  - dedupe by eventId (replay never re-reports, never advances the base);
  *  - GoalCreated@1 projects one (projectId, workspaceId, goalId) full-key
@@ -111,7 +121,6 @@ import type {
   UserDecisionSnapshot,
   UserDecisionRecordedEvent,
   PlanRevisionSupersededEvent,
-  TaskDispositionRow,
 } from "../../contracts/goal-change.js";
 import { planChangeScopeKey } from "../../contracts/goal-change.js";
 import type {
@@ -208,20 +217,12 @@ import {
   CONSOLE_MATRIX_MAX_TASKS,
 } from "../../contracts/console-views.js";
 import type {
-  CoordinationPolicyActivatedEvent,
-  CoordinationPolicyInstalledEvent,
   CoordinationPolicyRevisionSnapshot,
-  InitialDesignDecisionRecordedEvent,
   InitialDesignDecisionSnapshot,
-  InitialDesignProposalRecordedEvent,
   InitialDesignProposalSnapshot,
   ProjectCoordinationPolicyActiveSnapshot,
   UnifiedStatusViewQuery,
   UnifiedStatusViewResult,
-} from "../../contracts/human-role-collaboration.js";
-import {
-  initialDesignDecisionRefFor,
-  initialDesignProposalRefFor,
 } from "../../contracts/human-role-collaboration.js";
 
 /**
@@ -230,7 +231,7 @@ import {
  * the display view carries a stable placeholder binding — display-only, never
  * judged, never replayed as authority.
  */
-const LEASE_P1_07_PLACEHOLDER_BINDING: RoleBindingRefV1 = {
+const LEASE_VIEW_PLACEHOLDER_BINDING: RoleBindingRefV1 = {
   schemaVersion: 1,
   bindingId: "",
   templateId: "",
@@ -252,7 +253,7 @@ export interface SqliteReadModelIndexOptions {
  * never collide.
  *
  * active_plan_revision is TEXT (JSON-encoded PlanRevisionRef or NULL), not an
- * INTEGER, because it carries a PlanRevisionRef object after P1-02 acceptance.
+ * INTEGER, because it carries a PlanRevisionRef object after plan acceptance.
  */
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS read_model_checkpoint (
@@ -655,7 +656,7 @@ type ActiveAgentRow = {
   source_cursor: string;
 };
 
-/** P1-16 full-scope work-context key: canonicalJson of the COMPLETE ref. */
+/** Full-scope work-context key: canonicalJson of the complete ref. */
 function workContextScopeKey(projectId: string, workspaceId: string, workId: string): string {
   return canonicalJson(workContextRefFor(projectId, workspaceId, workId));
 }
@@ -676,25 +677,6 @@ function taskRunStateFrom(agent: ActiveAgentView): TaskRunState {
     sourceCursor: agent.run.sourceCursor,
   };
 }
-
-/** Projected evidence entry (from an EvidenceAdmitted event) carrying admission metadata. */
-type ProjectedEvidence = {
-  evidence: EvidenceV1;
-  admittedAt: string;
-  evidenceIndex: number;
-};
-
-/** Per-task verification projection — rebuilt ONLY from EvidenceAdmitted /
- * TaskReductionUpdated events (P1-04). */
-type VerificationProjection = {
-  projectId: string;
-  goalId: string;
-  taskId: string;
-  evidence: ProjectedEvidence[];
-  reduction: TaskReductionSnapshot | null;
-  reductionCursor: CommitCursor | null;
-  sourceCursor: CommitCursor;
-};
 
 /** Row shape we read back for a goal status projection (complex fields are JSON TEXT). */
 type GoalStatusRow = {
@@ -776,7 +758,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   private readonly stmtUpsertIntegrationConflict: StatementSync;
   private readonly stmtSelectWorkspacePatch: StatementSync;
   private readonly stmtUpsertWorkspacePatch: StatementSync;
-  /** P1-16 LANE-B: continuation table (write) + combined view selects (read). */
+  /** Work-context detail-view projection: continuation table (write) + combined view selects (read). */
   private readonly stmtSelectWorkContextBinding: StatementSync;
   private readonly stmtSelectWorkContextNotes: StatementSync;
   private readonly stmtSelectWorkContextContinuations: StatementSync;
@@ -999,9 +981,8 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     this.stmtUpsertWorkspacePatch = this.db.prepare(
       "INSERT INTO workspace_patch_view (project_id, workspace_id, patch_json) VALUES (?, ?, ?) ON CONFLICT(project_id, workspace_id) DO UPDATE SET patch_json = excluded.patch_json",
     );
-    // P1-16 LANE-B work-context continuation projection (writes the continuations
-    // table) + read-only select statements for the combined-view binding/notes
-    // tables (populated by LANE-A).
+    // Work-context statements: the continuation projection writes its table;
+    // read-only statements select binding and notes populated by the overview projection.
     this.stmtSelectWorkContextBinding = this.db.prepare(
       "SELECT entry_json FROM work_context_binding WHERE scope_key = ?",
     );
@@ -1172,7 +1153,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     };
   }
 
-  /** P1-03: active agent view — same opaque-cursor freshness as goal()/planGraph()/taskDetail(). */
+  /** dispatch: active agent view — same opaque-cursor freshness as goal()/planGraph()/taskDetail(). */
   async activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult> {
     this.assertOpen();
     const observedCursor = this.readCheckpoint();
@@ -1200,7 +1181,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     };
   }
 
-  /** P1-06: display-only handoff provenance timeline (keyed by full-scope
+  /** handoff: display-only handoff provenance timeline (keyed by full-scope
    * (projectId, goalId, taskId); NEVER judges completion). Freshness mirrors
    * goalStatus(): not_found only when atLeastCursor is provided AND already
    * covered AND there is no row; otherwise the freshness-safe not_ready. */
@@ -1232,7 +1213,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   }
 
   // --------------------------------------------------------------------- //
-  // P1-07 views (display-only; persisted across close()/reopen)            //
+  // workspace concurrency views (display-only; persisted across close()/reopen)            //
   // --------------------------------------------------------------------- //
 
   async workspaceLeaseView(query: WorkspaceLeaseViewQuery): Promise<WorkspaceLeaseViewResult> {
@@ -1367,7 +1348,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     );
   }
 
-  /** P1-05: goal phase status projection (per (projectId, goalId)). */
+  /** context assembly: goal phase status projection (per (projectId, goalId)). */
   async goalStatus(query: import("../../contracts/goal-phase-view.js").GoalStatusQuery): Promise<import("../../contracts/goal-phase-view.js").GoalStatusViewResult> {
     this.assertOpen();
     const observedCursor = this.readCheckpoint();
@@ -1391,7 +1372,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     };
   }
 
-  /** P1-05: goal phase timeline projection (per (projectId, goalId)). */
+  /** context assembly: goal phase timeline projection (per (projectId, goalId)). */
   async goalTimeline(query: import("../../contracts/goal-phase-view.js").GoalTimelineQuery): Promise<import("../../contracts/goal-phase-view.js").GoalTimelineViewResult> {
     this.assertOpen();
     const observedCursor = this.readCheckpoint();
@@ -1488,7 +1469,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   }
 
   // ------------------------------------------------------------------ //
-  // P1-03 run projection handlers (mirror of the InMemory fold)          //
+  // dispatch run projection handlers (mirror of the InMemory fold)          //
   // ------------------------------------------------------------------ //
 
   /** TaskClaimed@1 -> create/refresh the (projectId, goalId, taskId) ActiveAgent row
@@ -1562,7 +1543,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
 
   /** RunEventRecorded@1 -> fold on payload.runtimeEvent, idempotent against the row's
    * lastEventSeq (sequence <= lastEventSeq changes nothing). Terminal runtime events end
-   * the Run AND the Attempt. NEVER touches TaskDetail.phase (satisfaction is P1-04). */
+   * the Run AND the Attempt. NEVER touches TaskDetail.phase (satisfaction is verification). */
   private applyRunEventRecorded(event: RunEventRecordedEvent, cursor: CommitCursor): void {
     const row = this.readActiveAgentByRun(event.projectId, event.aggregateId);
     if (!row) return;
@@ -1639,7 +1620,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
 
   /** Push the run-state part of an ActiveAgentView onto the matching TaskDetail row.
    * Only touches a TaskDetail row already created by PlanRevisionAccepted; phase and
-   * plan fields are NEVER modified here (satisfaction is P1-04). */
+   * plan fields are NEVER modified here (satisfaction is verification). */
   private syncTaskDetailRun(
     projectId: string,
     goalId: string,
@@ -1782,7 +1763,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   }
 
   // ------------------------------------------------------------------ //
-  // P1-07 lease / integration / patch projection handlers (SQLite)       //
+  // workspace concurrency lease / integration / patch projection handlers (SQLite)       //
   // ------------------------------------------------------------------ //
 
   private ensureWorkspaceLeaseRow(
@@ -1812,7 +1793,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return {
       runRef: { ...holder.runRef },
       attemptRef: { ...holder.attemptRef },
-      roleBinding: { ...LEASE_P1_07_PLACEHOLDER_BINDING },
+      roleBinding: { ...LEASE_VIEW_PLACEHOLDER_BINDING },
     };
   }
 
@@ -2016,131 +1997,16 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return row;
   }
 
-  /** Event types this projection currently has handlers for (P1-02 + P1-03, v1). */
+  /** Event types currently handled by this projection. */
   private reviewRecords(): ReviewProjectionSnapshot[] {
     return (this.db.prepare('SELECT snapshot_json FROM independent_review_projection').all() as Array<{snapshot_json:string}>).map(r => JSON.parse(r.snapshot_json) as ReviewProjectionSnapshot);
-  }  async reviewWork(ref: import('../../contracts/reviewer-work.js').ReviewWorkRef) {
+  }
+  async reviewWork(ref: import('../../contracts/reviewer-work.js').ReviewWorkRef) {
     const facts = reviewProjectionFacts(this.reviewRecords()), work = facts.works.find(w => canonicalJson(w.ref) === canonicalJson(ref));
     return work ? { work, result: facts.results.find(r => canonicalJson(r.workRef) === canonicalJson(ref)) ?? null, run: facts.runs.find(r => canonicalJson(r.ref) === canonicalJson(work.reviewerRunRef)) ?? null } : null;
   }
   private isHandledEventType(eventType: string): boolean {
-    if (reviewProjectionEventTypes.includes(eventType)) return true;
-    return (
-      eventType === "GoalCreated" ||
-      eventType === "ProjectBootstrapped" ||
-      eventType === "WorkspaceBootstrapped" || eventType === "WorkspaceRegistered" ||
-      eventType === "CompletionPolicyInstalled" ||
-      eventType === "ArchitectureBaselineInstalled" ||
-      eventType === "CompletionPolicyActivated" ||
-      eventType === "ArchitectureBaselineActivated" ||
-      eventType === "PlanRevisionAccepted" ||
-      eventType === "TaskClaimed" ||
-      eventType === "RunStarted" ||
-      eventType === "RunEventRecorded" ||
-      eventType === "RunOutcomeUnknown" ||
-      eventType === "EvidenceAdmitted" ||
-      eventType === "TaskReductionUpdated" ||
-      eventType === "GoalPhaseUpdated" ||
-      eventType === "HandoffRecorded" ||
-      eventType === "ReplacementClaimed" ||
-      eventType === "WorkspaceReadLeaseGranted" ||
-      eventType === "WorkspaceReadLeaseReleased" ||
-      eventType === "WorkspaceWriteLeaseGranted" ||
-      eventType === "WorkspaceWriteLeaseReleased" ||
-      eventType === "IntegrationJoined" ||
-      eventType === "PatchRecorded" ||
-      // P1-16 + P1-12 events (union at merge; handler + isHandledEventType per lane commit).
-      eventType === "MaterialAccessGranted" ||
-      eventType === "MaterialAccessRevoked" ||
-    eventType === "WorkContextBound" ||
-      eventType === "WorkRunLinked" ||
-      eventType === "ExecutionNoteRecorded" ||
-      eventType === "ContinuationRecorded" ||
-      eventType === "ArchitectureInspectionRecorded" ||
-      eventType === "ArchitectureFindingRecorded" ||
-      eventType === "ArchitectureDecisionBriefRecorded" ||
-      eventType === "ArchitectureCandidateProposalRecorded" ||
-      eventType === "ControlIntentRecorded" ||
-      eventType === "SafePointAcknowledged" ||
-      eventType === "QueryJobSubmitted" ||
-      eventType === "QueryRunStarted" ||
-      eventType === "QueryJobAnswerRecorded" ||
-      eventType === "QueryJobClosed" ||
-      // P1-11 plan-change events (handler + isHandledEventType in the SAME lane commit).
-      eventType === "PlanProposalRecorded" ||
-      eventType === "UserDecisionRecorded" ||
-      eventType === "GoalRevisionRecorded" ||
-      eventType === "PlanRevisionSuperseded" ||
-      // P1-13 governance-third-kind + remediation (no display view; registered to keep advance stall-free).
-      eventType === "ArchitectureEvolutionPolicyInstalled" ||
-      eventType === "ArchitectureEvolutionPolicyActivated" ||
-      eventType === "RemediationPlanPatchRecorded" ||
-      eventType === "RemediationTaskCreated" ||
-      eventType === "RemediationTaskAdvanced" ||
-      // P1-14 baseline-evolution events.
-      eventType === "CandidateBaselineMaterialized" ||
-      eventType === "ArchitectureChangeDecisionRecorded" ||
-      eventType === "MigrationGateRecorded" ||
-      eventType === "BaselineActivationRecorded" ||
-      // P1-15 initial-design/coordination-policy events.
-      eventType === "InitialDesignProposalRecorded" ||
-      eventType === "InitialDesignDecisionRecorded" ||
-      eventType === "CoordinationPolicyInstalled" ||
-      eventType === "CoordinationPolicyActivated" ||
-      // RW-11 role-spec governance events（登记以免 advance 停摆；消费点在 claim 守卫）。
-      eventType === "RoleSpecInstalled" ||
-      eventType === "RoleSpecActivated" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "AgentInstanceRegistered" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "WorkParticipationStarted" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "WorkParticipationEnded" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "DirectedRequestSent" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "DirectedRequestResponded" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "DirectedRequestCancelled" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "SubscriptionCreated" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "SubscriptionCancelled" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "SubscriptionCatchupPlanned" ||
-      eventType === "SubscriptionCatchupAdvanced" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "DeliveryRecorded" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "WaitConditionRegistered" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "WaitConditionObserved" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "WaitConditionSatisfied" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "WaitConditionTimedOut" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "WaitConditionCancelled" ||
-      // CM-1A-001 第 4 步：调用证据事件（许可签发 / 一次调用尝试）；与内存投影同一份登记。
-      eventType === "ModelRequestAuthorized" ||
-      eventType === "RunReconciled" ||
-      eventType === "ExecutionEntered" || eventType === "ExecutionRetryScheduled" ||
-      eventType === "RuntimeInputBound" ||
-      eventType === "DispatchDeferred" ||
-      eventType === "ModelRequestEvidenceRecorded" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "CommunicationIntentRecorded" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "CommunicationIntentClaimed" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "CommunicationIntentSettled" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "CommunicationAdmissionRecorded" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "CoordinationRegistryUpdated" ||
-      // CM-1A-001 协作通信事件：与内存投影同一份登记。
-      eventType === "WorkMailboxUpdated"
-    );
+    return readModelHandlesEvent(eventType);
   }
 
   /**
@@ -2194,7 +2060,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     }
   }
 
-  /** Dispatch a validated event to its projection handler (P1-02 + P1-03 v1). */
+  /** Dispatch a validated event to its projection handler. */
   private applyEvent(event: DomainEvent, cursor: CommitCursor): void {
     for (const snapshot of reviewProjectionChanges(event, this.reviewRecords())) this.db.prepare('INSERT INTO independent_review_projection(ref_key,snapshot_json) VALUES(?,?) ON CONFLICT(ref_key) DO UPDATE SET snapshot_json=excluded.snapshot_json').run(canonicalJson(snapshot.ref), JSON.stringify(snapshot));
     if (event.eventType === "GoalCreated") {
@@ -2238,27 +2104,27 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     } else if (event.eventType === "PatchRecorded") {
       this.applyPatchRecorded(event, cursor);
     }
-    // P1-08 console projections consume the SAME committed events (no new
-    // DomainEvent). The two lane hooks are no-ops until their lanes land.
-    this.applyP108Console(event, cursor);
-    // P1-16 work-context projections. Handler + isHandledEventType land in the
-    // SAME lane commit; until then advance() rejects the event.
-    // P1-18 material-access grants (one immutable row per grant).
-    this.applyP118(event, cursor);
-    this.applyP116Context(event, cursor);
-    // P1-12 architecture-inspection projections.
-    this.applyP112Inspection(event, cursor);
-    this.applyP110(event, cursor);
-    this.applyP109(event, cursor);
+    // Console projections consume the SAME committed events (no new
+    // DomainEvent). Each handler below owns one current projection concern.
+    this.applyConsoleEvent(event, cursor);
+    // Work-context projections. Handler + isHandledEventType land in the
+    // same projection change; unknown events stop advance().
+    // Material-access grants (one immutable row per grant).
+    this.applyMaterialAccessEvent(event, cursor);
+    this.applyWorkContext(event, cursor);
+    // Architecture-inspection projections.
+    this.applyArchitectureInspectionEvent(event, cursor);
+    this.applyControlIntentEvent(event, cursor);
+    this.applyQueryEvent(event, cursor);
 
-    // P1-11 plan-change projections (LANE-A proposal/decision; LANE-B revision/plan).
-    this.applyP111(event, cursor);
+    // Plan-change projections (overview projection proposal/decision; detail-view projection revision/plan).
+    this.applyPlanChangeEvent(event, cursor);
 
-    // P1-13 + P1-14 events (no/limited display projection; registered handled).
-    this.applyP113(event, cursor);
-    this.applyP114(event, cursor);
-    // P1-15 initial-design/coordination-policy events.
-    this.applyP115(event, cursor);
+    // Architecture-evolution + Baseline-evolution events (no/limited display projection; registered handled).
+    this.applyArchitectureEvolutionEvent(event, cursor);
+    this.applyBaselineEvolutionEvent(event, cursor);
+    // Collaboration initial-design/coordination-policy events.
+    this.applyCollaborationEvent(event, cursor);
     // Known non-goal / non-plan / non-dispatch events (ProjectBootstrapped,
     // WorkspaceBootstrapped, CompletionPolicyInstalled,
     // ArchitectureBaselineInstalled, CompletionPolicyActivated,
@@ -2331,7 +2197,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       phase: row.phase as TaskDetailView["phase"],
       scope: JSON.parse(row.scope),
       obligations: JSON.parse(row.obligations),
-      // P1-03: run-state projection (null until a TaskClaimed event for this task).
+      // dispatch: run-state projection (null until a TaskClaimed event for this task).
       run: row.run_json === null ? null : (JSON.parse(row.run_json) as TaskRunState),
       sourceCursor: row.source_cursor as CommitCursor,
     };
@@ -2365,7 +2231,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     const goalId = event.payload.goalId;
     const workspaceId = event.workspaceId;
 
-    // P1-04: retain the accepted plan snapshot (tasks + obligations) so the
+    // verification: retain the accepted plan snapshot (tasks + obligations) so the
     // verification view can recompute evidence applicability at query time.
     this.stmtUpsertPlanSnapshot.run(projectId, goalId, JSON.stringify(snapshot), cursor);
 
@@ -2424,7 +2290,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   }
 
   // ------------------------------------------------------------------ //
-  // P1-04 verification projection handlers                               //
+  // Verification projection handlers                               //
   // ------------------------------------------------------------------ //
 
   /** EvidenceAdmitted@1 -> append the immutable Evidence + admission metadata to
@@ -2450,7 +2316,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     row.sourceCursor = cursor;
     this.writeVerificationRow(row);
 
-    // P1-06: the SAME EvidenceAdmitted event also feeds the display-only
+    // handoff: the SAME EvidenceAdmitted event also feeds the display-only
     // provenance timeline (evidence_admitted entry). The verification projection
     // above is unchanged; this only appends to the handoff provenance row.
     const provRow = this.ensureHandoffProvenanceRow(projectId, goalId, taskId, cursor);
@@ -2534,7 +2400,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return row ? (JSON.parse(row.snapshot_json) as PlanRevisionSnapshot) : null;
   }
 
-  /** P1-04: task-detail verification view (frozen entry; lane D implements).
+  /** verification: task-detail verification view (versioned query entry).
    * The view is rebuilt ONLY from events: applicability is recomputed at query
    * time through Control's read-only policy explanation against the projected
    * current anchor; the reduction is the projected reduction fact. */
@@ -2565,114 +2431,22 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** Build the TaskVerificationView from the projected row (query-time derived
-   * parts use Control's explanation port; they never write back to history). */
+  /** Combine storage-specific reads with the shared verification interpretation. */
   private buildVerificationView(row: VerificationProjection): TaskVerificationView {
-    const planSnapshot = this.readPlanSnapshot(row.projectId, row.goalId);
-    const currentAnchor = row.reduction ? row.reduction.currentAnchor : null;
-
-    // Admission order = the per-task evidence index order (deterministic).
-    const sorted = [...row.evidence].sort((a, b) => a.evidenceIndex - b.evidenceIndex);
-    const explanation = this.policyExplanation.explainEvidence({ evidence: sorted.map(pe => pe.evidence), plan: planSnapshot, currentAnchor, review: reviewProjectionFacts(this.reviewRecords()) });
-    const evidence: EvidenceBindingView[] = sorted.map((pe, index) =>
-      this.toEvidenceBindingView(pe, explanation.bindings[index]!.applicability),
-    );
-    const { effectiveEvidenceIds, blockingEvidenceIds } = explanation;
-
-    const reduction = row.reduction === null
-      ? null
-      : {
-          phase: row.reduction.phase,
-          causes: row.reduction.causes,
-          effectiveEvidenceIds: row.reduction.effectiveEvidenceIds,
-          blockingEvidenceIds: row.reduction.blockingEvidenceIds,
-          staleEvidenceIds: row.reduction.staleEvidenceIds,
-          outOfScopeEvidenceIds: row.reduction.outOfScopeEvidenceIds,
-          satisfiedObligationIds: row.reduction.satisfiedObligationIds,
-          planRef: row.reduction.planRef,
-          reducedAt: row.reduction.reducedAt,
-          sourceCursor: row.reductionCursor!,
-        };
-
-    return {
-      projectId: row.projectId,
-      goalId: row.goalId,
-      taskId: row.taskId,
-      currentAnchor,
-      planRef: this.viewPlanRef(row, planSnapshot, currentAnchor),
-      planRevision: this.viewPlanRevision(row, planSnapshot, currentAnchor),
-      evidence,
-      effectiveEvidenceIds,
-      blockingEvidenceIds,
-      reduction,
-      sourceCursor: row.sourceCursor,
-    };
+    return buildTaskVerificationView({
+      row,
+      planSnapshot: this.readPlanSnapshot(row.projectId, row.goalId),
+      policyExplanation: this.policyExplanation,
+      review: reviewProjectionFacts(this.reviewRecords()),
+    });
   }
 
-  /** Map a projected evidence entry to its display binding (applicability is
-   * provided by Control; null when no authoritative current anchor). */
-  private toEvidenceBindingView(
-    pe: ProjectedEvidence,
-    applicability: EvidenceApplicability | null,
-  ): EvidenceBindingView {
-    const e = pe.evidence;
-    return {
-      evidenceId: e.evidenceId,
-      kind: e.kind,
-      outcome: e.outcome,
-      coverage: e.coverage.map((c) => ({ ...c })),
-      applicability,
-      anchor: { ...e.anchor },
-      verificationPlanId: e.verificationPlanRef.planId,
-      verificationPlanDigest: e.verificationPlanRef.planDigest,
-      sourceRunRef: e.source.runRef,
-      checkId: e.source.checkId,
-      summary: e.summary.text,
-      artifactRef: e.summary.artifactRef,
-      admittedAt: pe.admittedAt,
-      evidenceIndex: pe.evidenceIndex,
-    };
-  }
-
-  /** planRef for the view: the accepted plan's ref, else the reduction anchor,
-   * else the first evidence's anchor (the row only exists after such an event). */
-  private viewPlanRef(
-    row: VerificationProjection,
-    planSnapshot: PlanRevisionSnapshot | null,
-    currentAnchor: EffectivityAnchorV1 | null,
-  ): PlanRevisionRef {
-    return (
-      planSnapshot?.ref ??
-      currentAnchor?.planRef ??
-      row.evidence[0]?.evidence.anchor.planRef ??
-      { aggregateType: "PlanRevision", projectId: row.projectId, planId: "" }
-    );
-  }
-
-  private viewPlanRevision(
-    row: VerificationProjection,
-    planSnapshot: PlanRevisionSnapshot | null,
-    currentAnchor: EffectivityAnchorV1 | null,
-  ): number {
-    return (
-      planSnapshot?.planRevision ??
-      currentAnchor?.planRevision ??
-      row.evidence[0]?.evidence.anchor.planRevision ??
-      0
-    );
-  }
-
-  // ------------------------------------------------------------------ //
-  // P1-08 console query surface + projection hooks (SHARED BASELINE).   //
-  // The six console queries are FROZEN in src/contracts/console-views   //
-  // (first consumer); this baseline carries the JSON row helpers + the  //
-  // two lane hooks as no-ops. Lane A fills consolePortfolio/            //
-  // consoleSummary; Lane B fills consolePlanMatrix/consoleActiveAgents/ //
-  // consoleTaskEvidence/consoleTimeline. isHandledEventType stays       //
-  // unchanged — no new DomainEvent, all types already handled.          //
+  // Console query surface and SQLite projection storage. Pure view
+  // calculations live in console-projection.ts; row reads, writes and indexes
+  // remain here so SQLite does not need to materialize the full read model.
   // ------------------------------------------------------------------ //
 
-  private static readonly P108_TABLES = {
+  private static readonly CONSOLE_TABLES = {
     portfolio: "console_portfolio",
     summary: "console_summary",
     matrix: "console_matrix",
@@ -2681,89 +2455,74 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     timeline: "console_timeline",
   } as const;
 
-  private readonly p108SelectCache = new Map<string, StatementSync>();
-  private readonly p108UpsertCache = new Map<string, StatementSync>();
+  private readonly consoleSelectCache = new Map<string, StatementSync>();
+  private readonly consoleUpsertCache = new Map<string, StatementSync>();
 
-  // ---- LANE-A private state (Portfolio + WorkspaceSummary; display only) ----
+  // ---- overview projection private state (Portfolio + WorkspaceSummary; display only) ----
   /** Lazily-prepared summary (view_json) select/upsert statements. */
-  private p108SummarySelectStmt: StatementSync | null = null;
-  private p108SummaryUpsertStmt: StatementSync | null = null;
+  private consoleSummarySelectStmt: StatementSync | null = null;
+  private consoleSummaryUpsertStmt: StatementSync | null = null;
   /** Lazily-prepared per-task / per-goal phase tracking statements. */
-  private readonly p108PhaseSelectCache = new Map<string, StatementSync>();
-  private readonly p108PhaseUpsertCache = new Map<string, StatementSync>();
+  private readonly consolePhaseSelectCache = new Map<string, StatementSync>();
+  private readonly consolePhaseUpsertCache = new Map<string, StatementSync>();
   /** Lazily-prepared portfolio full-scan statement. */
-  private readonly p108SelectAllCache = new Map<string, StatementSync>();
+  private readonly consoleSelectAllCache = new Map<string, StatementSync>();
   /** Idempotent guard: internal phase tables created once per open connection. */
-  private p108InternalTablesReady = false;
+  private consoleInternalTablesReady = false;
 
-  private p108Select(table: string): StatementSync {
-    let stmt = this.p108SelectCache.get(table);
+  private consoleSelect(table: string): StatementSync {
+    let stmt = this.consoleSelectCache.get(table);
     if (stmt === undefined) {
       stmt = this.db.prepare(`SELECT entry_json FROM ${table} WHERE scope_key = ?`);
-      this.p108SelectCache.set(table, stmt);
+      this.consoleSelectCache.set(table, stmt);
     }
     return stmt;
   }
 
-  private p108Upsert(table: string): StatementSync {
-    let stmt = this.p108UpsertCache.get(table);
+  private consoleUpsert(table: string): StatementSync {
+    let stmt = this.consoleUpsertCache.get(table);
     if (stmt === undefined) {
       stmt = this.db.prepare(`INSERT INTO ${table} (scope_key, entry_json, source_cursor) VALUES (?, ?, ?)
         ON CONFLICT(scope_key) DO UPDATE SET entry_json = excluded.entry_json, source_cursor = excluded.source_cursor`);
-      this.p108UpsertCache.set(table, stmt);
+      this.consoleUpsertCache.set(table, stmt);
     }
     return stmt;
   }
 
-  private readP108JsonRow(table: string, scopeKey: string): { json: string; cursor: CommitCursor } | null {
-    const row = this.p108Select(table).get(scopeKey) as unknown as
+  private readJsonProjectionRow(table: string, scopeKey: string): { json: string; cursor: CommitCursor } | null {
+    const row = this.consoleSelect(table).get(scopeKey) as unknown as
       | { entry_json: string; source_cursor: string }
       | undefined;
     return row ? { json: row.entry_json, cursor: row.source_cursor as CommitCursor } : null;
   }
 
-  private writeP108JsonRow(table: string, scopeKey: string, json: string, cursor: CommitCursor): void {
-    this.p108Upsert(table).run(scopeKey, json, cursor);
+  private writeJsonProjectionRow(table: string, scopeKey: string, json: string, cursor: CommitCursor): void {
+    this.consoleUpsert(table).run(scopeKey, json, cursor);
   }
 
-  /** P1-08 console projection dispatcher: forwards every committed event to
-   * the per-lane console projections. NO new event is created here. */
-  private applyP108Console(event: DomainEvent, cursor: CommitCursor): void {
-    this.applyP108ConsoleLaneA(event, cursor);
-    this.applyP108ConsoleLaneB(event, cursor);
+  /** Console projection dispatcher: forwards every committed event to
+   * the console overview and detail-view projections. NO new event is created here. */
+  private applyConsoleEvent(event: DomainEvent, cursor: CommitCursor): void {
+    this.applyConsoleOverview(event, cursor);
+    this.applyConsoleDetails(event, cursor);
   }
 
   // ------------------------------------------------------------------ //
-  // P1-18 material-access grants                                       //
+  // Material-access grants                                       //
   // ------------------------------------------------------------------ //
 
-  private applyP118(event: DomainEvent, cursor: CommitCursor): void {
-    if (event.eventType !== "MaterialAccessGranted" && event.eventType !== "MaterialAccessRevoked") return;
-    const ev = event;
-    const grant = ev.payload.grant;
-    const ref: import("../../contracts/material-access.js").MaterialAccessGrantRef = {
-      aggregateType: "MaterialAccessGrant",
-      projectId: ev.projectId,
-      workspaceId: ev.workspaceId,
-      goalId: grant.scope.goalId,
-      grantId: grant.grantId,
-    };
-    const row: import("../../contracts/material-access.js").MaterialAccessGrantRow = {
-      ...(ev.eventType === "MaterialAccessRevoked" ? { revocation: ev.payload.revocation } : {}),
-      ref,
-      revision: ev.aggregateRevision,
-      grant,
-      sourceCursor: cursor,
-    };
-    this.writeP108JsonRow("material_access_grant_rows", canonicalJson(ref), JSON.stringify(row), cursor);
+  private applyMaterialAccessEvent(event: DomainEvent, cursor: CommitCursor): void {
+    const change = projectMaterialAccessEvent(event, cursor);
+    if (!change) return;
+    this.writeJsonProjectionRow("material_access_grant_rows", change.key, JSON.stringify(change.row), cursor);
   }
 
-  /** P1-18 grant view — same shape/semantics as the InMemory index. */
+  /** Material-access grant view — same shape/semantics as the InMemory index. */
   async materialAccessGrants(query: import("../../contracts/material-access.js").MaterialAccessGrantViewQuery): Promise<import("../../contracts/material-access.js").MaterialAccessGrantViewResult> {
     const observedCursor = this.readCheckpoint();
     if (observedCursor === null) return { status: "not_ready", observedCursor: null };
     const limit = Math.min(query.limit ?? MATERIAL_ACCESS_VIEW_MAX_ROWS, MATERIAL_ACCESS_VIEW_MAX_ROWS);
-    const stmt = this.db.prepare("SELECT entry_json FROM material_access_grant_rows");
+    const stmt = this.db.prepare("SELECT entry_json FROM material_access_grant_rows ORDER BY source_cursor");
     const rows = (stmt.all() as { entry_json: string }[]).map((r) => JSON.parse(r.entry_json) as import("../../contracts/material-access.js").MaterialAccessGrantRow);
     const grants = rows.filter((row) =>
       row.ref.projectId === query.projectId &&
@@ -2780,132 +2539,62 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     const grants: MaterialAccessGrantRow[] = [];
     // Stream candidates, retaining only exact matches. No pagination limit may
     // discard an older valid grant before Vault checks authority and basis.
-    const rows = this.db.prepare("SELECT entry_json FROM material_access_grant_rows WHERE json_extract(entry_json, '$.grant.reader.projectId') = ? AND json_extract(entry_json, '$.grant.reader.runId') = ?").iterate(query.reader.projectId, query.reader.runId);
+    const rows = this.db.prepare("SELECT entry_json FROM material_access_grant_rows WHERE json_extract(entry_json, '$.grant.reader.projectId') = ? AND json_extract(entry_json, '$.grant.reader.runId') = ? ORDER BY source_cursor").iterate(query.reader.projectId, query.reader.runId);
     for (const raw of rows) {
       const row = JSON.parse(raw['entry_json'] as string) as MaterialAccessGrantRow;
       if (!row.revocation && matchesMaterialAccessLookup(row.grant, query)) grants.push(row);
     }
     return { status: "ready", grants, sourceCursor };
   }
-
-  /** P1-16 work-context projections (binding, notes, continuation rows). */
-  private applyP116Context(event: DomainEvent, cursor: CommitCursor): void {
-    this.applyP116ContextLaneA(event, cursor);
-    this.applyP116ContextLaneB(event, cursor);
-  }
-
-  // LANE-A: WorkContextBinding + ExecutionNote rows (binding/notes view part).
-  private applyP116ContextLaneA(event: DomainEvent, cursor: CommitCursor): void {
-    if (event.eventType === "WorkContextBound") {
-      const ev = event as import("../../contracts/context-continuity.js").WorkContextBoundEvent;
-      const ref = workContextRefFor(ev.projectId, ev.workspaceId, ev.aggregateId);
-      const snapshot = { ref, revision: ev.aggregateRevision, schemaVersion: 1, binding: ev.payload.binding };
-      this.writeP108JsonRow("work_context_binding", canonicalJson(ref), JSON.stringify(snapshot), cursor);
-    } else if (event.eventType === "WorkRunLinked") {
-      const ev = event as import("../../contracts/context-continuity.js").WorkRunLinkedEvent;
-      const ref = workContextRefFor(ev.projectId, ev.workspaceId, ev.aggregateId);
-      const key = canonicalJson(ref);
-      const current = this.readP108JsonRow("work_context_binding", key);
-      if (current !== null) {
-        const prev = JSON.parse(current.json) as import("../../contracts/context-continuity.js").WorkContextBindingSnapshot;
-        const next: import("../../contracts/context-continuity.js").WorkContextBindingSnapshot = {
-          ref,
-          revision: ev.aggregateRevision,
-          schemaVersion: 1,
-          binding: { ...prev.binding, linkedRunRefs: ev.payload.linkedRunRefs.map((r) => ({ ...r })) },
-        };
-        this.writeP108JsonRow("work_context_binding", key, JSON.stringify(next), cursor);
-      }
-    } else if (event.eventType === "ExecutionNoteRecorded") {
-      const ev = event as import("../../contracts/context-continuity.js").ExecutionNoteRecordedEvent;
-      const note = ev.payload.note;
-      const ref = workContextRefFor(ev.projectId, ev.workspaceId, note.workId);
-      const key = canonicalJson(ref);
-      const current = this.readP108JsonRow("work_context_notes", key);
-      const rows = current === null ? [] : (JSON.parse(current.json) as import("../../contracts/context-continuity.js").WorkContextNoteRow[]);
-      rows.push({
-        noteRef: { aggregateType: "ExecutionNote", projectId: ev.projectId, workspaceId: ev.workspaceId, workId: note.workId, noteId: note.noteId },
-        kind: note.kind,
-        summary: note.summary,
-        runRef: { ...note.runRef },
-        createdAt: note.createdAt,
-        sourceCursor: cursor,
-      });
-      this.writeP108JsonRow("work_context_notes", key, JSON.stringify(rows), cursor);
+  private applyWorkContext(event: DomainEvent, cursor: CommitCursor): void {
+    const change = projectWorkContext(event, cursor, key => {
+      const row = this.readJsonProjectionRow('work_context_binding', key);
+      return row === null ? undefined : JSON.parse(row.json) as import('../../contracts/context-continuity.js').WorkContextBindingSnapshot;
+    });
+    if (!change) return;
+    if (change.kind === 'binding') {
+      this.writeJsonProjectionRow('work_context_binding', change.key, JSON.stringify(change.snapshot), cursor);
+    } else if (change.kind === 'note') {
+      const current = this.readJsonProjectionRow('work_context_notes', change.key);
+      const rows = current === null ? [] : JSON.parse(current.json) as import('../../contracts/context-continuity.js').WorkContextNoteRow[];
+      rows.push(change.row);
+      this.writeJsonProjectionRow('work_context_notes', change.key, JSON.stringify(rows), cursor);
+    } else {
+      const current = this.stmtSelectWorkContextContinuations.get(change.key) as { entry_json: string } | undefined;
+      const rows = current ? JSON.parse(current.entry_json) as import('../../contracts/context-continuity.js').ContinuationRecordSnapshot[] : [];
+      rows.push(change.snapshot);
+      this.stmtUpsertWorkContextContinuations.run(change.key, JSON.stringify(rows), String(cursor));
     }
   }
 
-  // LANE-B: ContinuationRecord rows + frontier aggregation.
-  private applyP116ContextLaneB(event: DomainEvent, cursor: CommitCursor): void {
-    void cursor;
-    if (event.eventType !== "ContinuationRecorded") return;
-    const ev = event as import("../../contracts/context-continuity.js").ContinuationRecordedEvent;
-    const workId = ev.payload.result.workId;
-    const scopeKey = workContextScopeKey(ev.projectId, ev.workspaceId, workId);
-    const snapshot: import("../../contracts/context-continuity.js").ContinuationRecordSnapshot = {
-      ref: continuationRecordRefFor(ev.projectId, ev.workspaceId, workId, ev.payload.result.reportId),
-      revision: 1,
-      schemaVersion: 1,
-      result: ev.payload.result,
-    };
-    const existing = this.stmtSelectWorkContextContinuations.get(scopeKey) as { entry_json: string } | undefined;
-    const rows: import("../../contracts/context-continuity.js").ContinuationRecordSnapshot[] = existing
-      ? (JSON.parse(existing.entry_json) as import("../../contracts/context-continuity.js").ContinuationRecordSnapshot[])
-      : [];
-    rows.push(snapshot);
-    this.stmtUpsertWorkContextContinuations.run(scopeKey, JSON.stringify(rows), String(cursor));
-  }
 
-  /** P1-13: no-op handled registration (no display view in P1-13). */
-  private applyP113(event: DomainEvent, cursor: CommitCursor): void {
+  /** Architecture-evolution events are intentionally handled without a display row. */
+  private applyArchitectureEvolutionEvent(event: DomainEvent, cursor: CommitCursor): void {
     void event;
     void cursor;
   }
 
-  /** P1-15 LANE-B: fold the 4 initial-design / coordination-policy events into
+  /** Collaboration detail-view projection: fold the 4 initial-design / coordination-policy events into
    * proposal / decision / policy / activation rows. Proposal + decision are
    * workspace-scoped; policy + activation are project-scoped (their events
-   * carry workspaceId ""). Row keys follow the frozen integrator ruling:
+   * carry workspaceId ""). Row keys follow the versioned projection contract:
    * consoleWorkspaceKey(projectId, workspaceId) + "\u0000" + id. */
-  private applyP115(event: DomainEvent, cursor: CommitCursor): void {
-    if (event.eventType === "InitialDesignProposalRecorded") {
-      const ev = event as InitialDesignProposalRecordedEvent;
-      const proposal = ev.payload.proposal;
-      const ref = initialDesignProposalRefFor(proposal.projectId, proposal.workspaceId, proposal.designId);
-      const snapshot: InitialDesignProposalSnapshot = { ref, revision: 1, schemaVersion: 1, proposal, recordedAt: ev.payload.recordedAt };
-      const key = consoleWorkspaceKey(proposal.projectId, proposal.workspaceId) + "\u0000" + proposal.designId;
-      this.p109UpsertOne("p115_proposal_rows", key, snapshot, cursor);
-    } else if (event.eventType === "InitialDesignDecisionRecorded") {
-      const ev = event as InitialDesignDecisionRecordedEvent;
-      const decision = ev.payload.decision;
-      const ref = initialDesignDecisionRefFor(decision.projectId, decision.workspaceId, decision.decisionId);
-      const snapshot: InitialDesignDecisionSnapshot = { ref, revision: 1, schemaVersion: 1, decision, recordedAt: ev.payload.recordedAt };
-      const key = consoleWorkspaceKey(decision.projectId, decision.workspaceId) + "\u0000" + decision.decisionId;
-      this.p109UpsertOne("p115_decision_rows", key, snapshot, cursor);
-    } else if (event.eventType === "CoordinationPolicyInstalled") {
-      const ev = event as CoordinationPolicyInstalledEvent;
-      const snapshot = ev.payload.revision;
-      const key = consoleWorkspaceKey(snapshot.ref.projectId, "") + "\u0000" + snapshot.ref.policyId;
-      this.p109UpsertOne("p115_policy_rows", key, snapshot, cursor);
-    } else if (event.eventType === "CoordinationPolicyActivated") {
-      const ev = event as CoordinationPolicyActivatedEvent;
-      const snapshot: ProjectCoordinationPolicyActiveSnapshot = {
-        ref: ev.payload.activeRef,
-        projectId: ev.payload.activeRef.projectId,
-        activeRevision: ev.payload.activeRevision,
-        revision: ev.aggregateRevision,
-      };
-      const key = consoleWorkspaceKey(snapshot.projectId, "") + "\u0000" + snapshot.ref.projectId;
-      this.p109UpsertOne("p115_activation_rows", key, snapshot, cursor);
-    }
+  private applyCollaborationEvent(event: DomainEvent, cursor: CommitCursor): void {
+    const change = projectCollaborationEvent(event, cursor);
+    if (!change) return;
+    const table = change.kind === 'proposal' ? 'p115_proposal_rows'
+      : change.kind === 'decision' ? 'p115_decision_rows'
+      : change.kind === 'policy' ? 'p115_policy_rows'
+      : 'p115_activation_rows';
+    this.queryUpsertOne(table, change.key, change.snapshot, change.sourceCursor);
   }
 
-  /** P1-15 LANE-B: unified status view (SQLite; facts-first display; rebuildable
+  /** Collaboration detail-view projection: unified status view (SQLite; facts-first display; rebuildable
    * from events). Rows are the latest proposal / decision / policy / activation
    * rows for the (projectId, workspaceId) scope (policy + activation gathered by
    * projectId because their events carry workspaceId ""). Every fact carries
-   * sourceCursor lineage; the P1-15 view has no multi-version comparison
-   * surface, so every fact is marked stale=false per the integrator ruling. */
+   * sourceCursor lineage; the Collaboration view has no multi-version comparison
+   * surface, so every fact is marked stale=false per the projection contract. */
   async unifiedStatusView(query: UnifiedStatusViewQuery): Promise<UnifiedStatusViewResult> {
     this.assertOpen();
     const observedCursor = this.readCheckpoint();
@@ -2913,19 +2602,19 @@ export class SqliteReadModelIndex implements ReadModelIndex {
 
     const scopeKey = consoleWorkspaceKey(query.projectId, query.workspaceId);
     const prefix = scopeKey + "\u0000";
-    const proposalRows = this.p115ReadRows("p115_proposal_rows", { prefix }).map((r) => ({ snapshot: r.value as InitialDesignProposalSnapshot, sourceCursor: r.sourceCursor })).sort((a, b) => {
+    const proposalRows = this.collaborationReadRows("p115_proposal_rows", { prefix }).map((r) => ({ snapshot: r.value as InitialDesignProposalSnapshot, sourceCursor: r.sourceCursor })).sort((a, b) => {
       const t = a.snapshot.recordedAt.localeCompare(b.snapshot.recordedAt);
       return t !== 0 ? t : a.snapshot.ref.designId.localeCompare(b.snapshot.ref.designId);
     });
-    const decisionRows = this.p115ReadRows("p115_decision_rows", { prefix }).map((r) => ({ snapshot: r.value as InitialDesignDecisionSnapshot, sourceCursor: r.sourceCursor })).sort((a, b) => {
+    const decisionRows = this.collaborationReadRows("p115_decision_rows", { prefix }).map((r) => ({ snapshot: r.value as InitialDesignDecisionSnapshot, sourceCursor: r.sourceCursor })).sort((a, b) => {
       const t = a.snapshot.decision.decidedAt.localeCompare(b.snapshot.decision.decidedAt);
       return t !== 0 ? t : a.snapshot.ref.decisionId.localeCompare(b.snapshot.ref.decisionId);
     });
-    const policyRows = this.p115ReadRows("p115_policy_rows", { projectId: query.projectId }).map((r) => ({ snapshot: r.value as CoordinationPolicyRevisionSnapshot, sourceCursor: r.sourceCursor })).sort((a, b) => {
+    const policyRows = this.collaborationReadRows("p115_policy_rows", { projectId: query.projectId }).map((r) => ({ snapshot: r.value as CoordinationPolicyRevisionSnapshot, sourceCursor: r.sourceCursor })).sort((a, b) => {
       const t = a.snapshot.installedAt.localeCompare(b.snapshot.installedAt);
       return t !== 0 ? t : a.snapshot.ref.policyId.localeCompare(b.snapshot.ref.policyId);
     });
-    const activationRows = this.p115ReadRows("p115_activation_rows", { projectId: query.projectId }).map((r) => ({ snapshot: r.value as ProjectCoordinationPolicyActiveSnapshot, sourceCursor: r.sourceCursor })).sort((a, b) => {
+    const activationRows = this.collaborationReadRows("p115_activation_rows", { projectId: query.projectId }).map((r) => ({ snapshot: r.value as ProjectCoordinationPolicyActiveSnapshot, sourceCursor: r.sourceCursor })).sort((a, b) => {
       const t = a.snapshot.revision - b.snapshot.revision;
       return t !== 0 ? t : canonicalJson(a.snapshot.ref).localeCompare(canonicalJson(b.snapshot.ref));
     });
@@ -2941,9 +2630,9 @@ export class SqliteReadModelIndex implements ReadModelIndex {
 
     // Deterministic fact order: rank by row type (proposal -> decision -> policy
     // -> activation), then by refKey. Policy + activation share kind "baseline"
-    // (the frozen contract has no dedicated policy/activation fact kind), so the
+    // (the versioned contract has no dedicated policy/activation fact kind), so the
     // rank keeps them apart and stable for rebuild equivalence.
-    type P115RankedFact = {
+    type CollaborationRankedFact = {
       rank: number;
       kind: "proposal" | "decision" | "baseline";
       refKey: string;
@@ -2952,7 +2641,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       stale: boolean;
       sourceCursor: CommitCursor;
     };
-    const ranked: P115RankedFact[] = [];
+    const ranked: CollaborationRankedFact[] = [];
     for (const row of proposalRows) {
       ranked.push({ rank: 0, kind: "proposal", refKey: canonicalJson(row.snapshot.ref), display: "InitialDesignProposal(" + row.snapshot.proposal.designId + ")", revision: row.snapshot.revision, stale: false, sourceCursor: row.sourceCursor });
     }
@@ -2979,10 +2668,10 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     };
   }
 
-  /** P1-15: read rows from a p115_* table, optionally filtered by scope_key
+  /** Collaboration: read rows from a p115_* table, optionally filtered by scope_key
    * prefix (workspace-scoped rows) or by the parsed value's projectId
    * (project-scoped policy/activation rows whose event workspaceId is ""). */
-  private p115ReadRows(table: string, opts: { prefix?: string; projectId?: string }): { value: unknown; sourceCursor: CommitCursor }[] {
+  private collaborationReadRows(table: string, opts: { prefix?: string; projectId?: string }): { value: unknown; sourceCursor: CommitCursor }[] {
     const out: { value: unknown; sourceCursor: CommitCursor }[] = [];
     const stmt = this.db.prepare("SELECT scope_key, entry_json, source_cursor FROM " + table);
     for (const row of stmt.all() as { scope_key: string; entry_json: string; source_cursor: string }[]) {
@@ -2997,38 +2686,38 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return out;
   }
 
-  /** P1-14 LANE-C: baseline-evolution hook — fold the 4 events into
+  /** Baseline-evolution hook — fold the 4 events into
    * candidate / decision / gate / activation rows (workspace-scope keys). */
-  private applyP114(event: DomainEvent, cursor: CommitCursor): void {
+  private applyBaselineEvolutionEvent(event: DomainEvent, cursor: CommitCursor): void {
     if (event.eventType === "CandidateBaselineMaterialized") {
       const ev = event as CandidateBaselineMaterializedEvent;
       const candidate = ev.payload.candidate;
       const ref = candidateRefFor(candidate.projectId, candidate.workspaceId, candidate.candidateId);
       const key = consoleWorkspaceKey(candidate.projectId, candidate.workspaceId) + "\u0000" + candidate.candidateId;
       const snapshot: CandidateArchitectureBaselineSnapshot = { ref, revision: 1, schemaVersion: 1, candidate, materializedAt: ev.payload.materializedAt };
-      this.p109UpsertOne("p114_candidate_rows", key, snapshot, cursor);
+      this.queryUpsertOne("p114_candidate_rows", key, snapshot, cursor);
     } else if (event.eventType === "ArchitectureChangeDecisionRecorded") {
       const ev = event as ArchitectureChangeDecisionRecordedEvent;
       const decision = ev.payload.decision;
       const ref = architectureChangeDecisionRefFor(decision.projectId, decision.workspaceId, decision.decisionId);
       const key = consoleWorkspaceKey(decision.projectId, decision.workspaceId) + "\u0000" + decision.decisionId;
-      this.p109UpsertOne("p114_decision_rows", key, { ref, decision }, cursor);
+      this.queryUpsertOne("p114_decision_rows", key, { ref, decision }, cursor);
     } else if (event.eventType === "MigrationGateRecorded") {
       const ev = event as MigrationGateRecordedEvent;
       const gate = ev.payload.gate;
       const ref = migrationGateRefFor(gate.projectId, gate.workspaceId, gate.gateId);
       const key = consoleWorkspaceKey(gate.projectId, gate.workspaceId) + "\u0000" + gate.gateId;
-      this.p109UpsertOne("p114_gate_rows", key, { ref, gate }, cursor);
+      this.queryUpsertOne("p114_gate_rows", key, { ref, gate }, cursor);
     } else if (event.eventType === "BaselineActivationRecorded") {
       const ev = event as BaselineActivationRecordedEvent;
       const activation = ev.payload.activation;
       const ref = baselineActivationRefFor(activation.projectId, activation.workspaceId, activation.activationId);
       const key = consoleWorkspaceKey(activation.projectId, activation.workspaceId) + "\u0000" + activation.activationId;
-      this.p109UpsertOne("p114_activation_rows", key, { ref, activation }, cursor);
+      this.queryUpsertOne("p114_activation_rows", key, { ref, activation }, cursor);
     }
   }
 
-  /** P1-14 LANE-C: baseline change view (display only; rebuildable from events).
+  /** Baseline change view (display only; rebuildable from events).
    * Assembles the candidate / decision / gate / activation rows for the
    * (projectId, workspaceId) workspace scope plus the purely-computed defaultPin,
    * stale markers and notRebasedPlans. Deterministic: rows are picked by the
@@ -3041,25 +2730,25 @@ export class SqliteReadModelIndex implements ReadModelIndex {
 
     const scopeKey = consoleWorkspaceKey(query.projectId, query.workspaceId);
     const prefix = scopeKey + "\u0000";
-    const candidateRows = (this.p111ReadScope("p114_candidate_rows", prefix) as CandidateArchitectureBaselineSnapshot[]).sort(
+    const candidateRows = (this.planChangeReadScope("p114_candidate_rows", prefix) as CandidateArchitectureBaselineSnapshot[]).sort(
       (a, b) => {
         const t = a.materializedAt.localeCompare(b.materializedAt);
         return t !== 0 ? t : a.ref.candidateId.localeCompare(b.ref.candidateId);
       },
     );
-    const decisionRows = (this.p111ReadScope("p114_decision_rows", prefix) as { ref: ArchitectureChangeDecisionRef; decision: ArchitectureChangeDecisionV1 }[]).sort(
+    const decisionRows = (this.planChangeReadScope("p114_decision_rows", prefix) as { ref: ArchitectureChangeDecisionRef; decision: ArchitectureChangeDecisionV1 }[]).sort(
       (a, b) => {
         const t = a.decision.decidedAt.localeCompare(b.decision.decidedAt);
         return t !== 0 ? t : a.ref.decisionId.localeCompare(b.ref.decisionId);
       },
     );
-    const gateRows = (this.p111ReadScope("p114_gate_rows", prefix) as { ref: MigrationGateTaskRef; gate: MigrationGateTaskV1 }[]).sort(
+    const gateRows = (this.planChangeReadScope("p114_gate_rows", prefix) as { ref: MigrationGateTaskRef; gate: MigrationGateTaskV1 }[]).sort(
       (a, b) => {
         const t = a.gate.updatedAt.localeCompare(b.gate.updatedAt);
         return t !== 0 ? t : a.ref.gateId.localeCompare(b.ref.gateId);
       },
     );
-    const activationRows = (this.p111ReadScope("p114_activation_rows", prefix) as { ref: BaselineActivationRef; activation: BaselineActivationV1 }[]).sort(
+    const activationRows = (this.planChangeReadScope("p114_activation_rows", prefix) as { ref: BaselineActivationRef; activation: BaselineActivationV1 }[]).sort(
       (a, b) => {
         const t = a.activation.activatedAt.localeCompare(b.activation.activatedAt);
         return t !== 0 ? t : a.ref.activationId.localeCompare(b.ref.activationId);
@@ -3074,35 +2763,35 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       return { status: "not_found" };
     }
 
-    // R-1/ReadModel convergence: the explanation derivation is the single shared
+    // ReadModel convergence: the explanation derivation is the single shared
     // pure implementation; each adapter still owns its own row fetch, ordering and
     // cursor freshness.
     return projectBaselineChangeView({ candidateRows, decisionRows, gateRows, activationRows, observedCursor });
   }
 
-  /** P1-12 architecture-inspection projections (inspection, finding, brief, proposal). */
-  private applyP112Inspection(event: DomainEvent, cursor: CommitCursor): void {
-    this.applyP112InspectionLaneA(event, cursor);
-    this.applyP112InspectionLaneB(event, cursor);
+  /** Architecture-inspection projections (inspection, finding, brief, proposal). */
+  private applyArchitectureInspectionEvent(event: DomainEvent, cursor: CommitCursor): void {
+    this.applyArchitectureInspectionFacts(event, cursor);
+    this.applyArchitectureDecisionArtifacts(event, cursor);
   }
 
-  // LANE-A: inspection + finding rows (integrator fill after merge — same
+  // overview projection: inspection + finding rows (shared projection contract — same
   // tables the view reads: architecture_inspection_rows / architecture_finding_rows).
-  private applyP112InspectionLaneA(event: DomainEvent, cursor: CommitCursor): void {
+  private applyArchitectureInspectionFacts(event: DomainEvent, cursor: CommitCursor): void {
     if (event.eventType === "ArchitectureInspectionRecorded") {
       const ev = event as import("../../contracts/architecture-inspection.js").ArchitectureInspectionRecordedEvent;
       const scopeKey = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
-      this.p112AppendRow("architecture_inspection_rows", scopeKey, ev.payload.inspection, cursor);
+      this.architectureInspectionAppendRow("architecture_inspection_rows", scopeKey, ev.payload.inspection, cursor);
     } else if (event.eventType === "ArchitectureFindingRecorded") {
       const ev = event as import("../../contracts/architecture-inspection.js").ArchitectureFindingRecordedEvent;
       const scopeKey = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
       const snapshot = { ref: { aggregateType: "ArchitectureFinding", projectId: ev.projectId, workspaceId: ev.workspaceId, findingId: ev.payload.finding.findingId }, revision: 1, schemaVersion: 1, finding: ev.payload.finding, recordedAt: ev.payload.recordedAt };
-      this.p112AppendRow("architecture_finding_rows", scopeKey, snapshot, cursor);
+      this.architectureInspectionAppendRow("architecture_finding_rows", scopeKey, snapshot, cursor);
     }
   }
 
-  // LANE-B: decision brief + candidate proposal rows.
-  private applyP112InspectionLaneB(event: DomainEvent, cursor: CommitCursor): void {
+  // detail-view projection: decision brief + candidate proposal rows.
+  private applyArchitectureDecisionArtifacts(event: DomainEvent, cursor: CommitCursor): void {
     if (event.eventType === "ArchitectureDecisionBriefRecorded") {
       const ev = event as import("../../contracts/architecture-inspection.js").ArchitectureDecisionBriefRecordedEvent;
       const brief = ev.payload.brief;
@@ -3114,7 +2803,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
         recordedAt: ev.payload.recordedAt,
       };
       const key = consoleWorkspaceKey(brief.projectId, brief.workspaceId);
-      this.p112AppendRow("architecture_brief_rows", key, snapshot, cursor);
+      this.architectureInspectionAppendRow("architecture_brief_rows", key, snapshot, cursor);
     } else if (event.eventType === "ArchitectureCandidateProposalRecorded") {
       const ev = event as import("../../contracts/architecture-inspection.js").ArchitectureCandidateProposalRecordedEvent;
       const proposal = ev.payload.proposal;
@@ -3126,31 +2815,31 @@ export class SqliteReadModelIndex implements ReadModelIndex {
         recordedAt: ev.payload.recordedAt,
       };
       const key = consoleWorkspaceKey(proposal.projectId, proposal.workspaceId);
-      this.p112AppendRow("architecture_proposal_rows", key, snapshot, cursor);
+      this.architectureInspectionAppendRow("architecture_proposal_rows", key, snapshot, cursor);
     }
   }
 
-  /** LANE-B: append a snapshot to the scope_key JSON-array row (upsert). */
-  private p112AppendRow(table: "architecture_inspection_rows" | "architecture_finding_rows" | "architecture_brief_rows" | "architecture_proposal_rows", key: string, entry: unknown, cursor: CommitCursor): void {
-    const read = this.p108LaneBPrepare("SELECT entry_json FROM " + table + " WHERE scope_key = ?").get(key) as { entry_json: string } | undefined;
+  /** detail-view projection: append a snapshot to the scope_key JSON-array row (upsert). */
+  private architectureInspectionAppendRow(table: "architecture_inspection_rows" | "architecture_finding_rows" | "architecture_brief_rows" | "architecture_proposal_rows", key: string, entry: unknown, cursor: CommitCursor): void {
+    const read = this.consoleDetailPrepare("SELECT entry_json FROM " + table + " WHERE scope_key = ?").get(key) as { entry_json: string } | undefined;
     const rows: unknown[] = read ? (JSON.parse(read.entry_json) as unknown[]) : [];
     rows.push(entry);
-    this.p108LaneBPrepare(
+    this.consoleDetailPrepare(
       "INSERT INTO " + table + " (scope_key, entry_json, source_cursor) VALUES (?, ?, ?) " +
         "ON CONFLICT(scope_key) DO UPDATE SET entry_json = excluded.entry_json, source_cursor = excluded.source_cursor",
     ).run(key, JSON.stringify(rows), cursor);
   }
 
-  /** LANE-B: read the scope_key JSON-array row for a P1-12 table
-   * (brief/proposal are LANE-B-written; inspection/finding are LANE-A-written
+  /** detail-view projection: read the scope_key JSON-array row for a Architecture-inspection table
+   * (brief/proposal are detail-view projection-written; inspection/finding are overview projection-written
    * and feed the SAME view). */
-  private p112ReadRows(table: "architecture_inspection_rows" | "architecture_finding_rows" | "architecture_brief_rows" | "architecture_proposal_rows", key: string): unknown[] {
-    const read = this.p108LaneBPrepare("SELECT entry_json FROM " + table + " WHERE scope_key = ?").get(key) as { entry_json: string } | undefined;
+  private architectureInspectionReadRows(table: "architecture_inspection_rows" | "architecture_finding_rows" | "architecture_brief_rows" | "architecture_proposal_rows", key: string): unknown[] {
+    const read = this.consoleDetailPrepare("SELECT entry_json FROM " + table + " WHERE scope_key = ?").get(key) as { entry_json: string } | undefined;
     return read ? (JSON.parse(read.entry_json) as unknown[]) : [];
   }
 
-  /** P1-16 work context view — field-for-field mirror of the InMemory index.
-   * LANE-A populates the binding/notes tables; LANE-B populates the
+  /** Work-context view — field-for-field mirror of the InMemory index.
+   * overview projection populates the binding/notes tables; detail-view projection populates the
    * continuations table. The composed view is recent-first and bounded by
    * WORK_CONTEXT_VIEW_MAX_CONTINUATIONS; a missing binding -> not_found. */
   async workContext(query: import("../../contracts/context-continuity.js").WorkContextViewQuery): Promise<import("../../contracts/context-continuity.js").WorkContextViewResult> {
@@ -3173,60 +2862,50 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return { status: "ready", binding, notes, continuations, sourceCursor: observedCursor! };
   }
 
-  /** P1-10 control timeline view — desired state vs safe-point acks. */
+  /** Control-intent timeline view — desired state vs safe-point acks. */
   async controlTimelineView(query: import("../../contracts/control-intent.js").ControlTimelineViewQuery): Promise<import("../../contracts/control-intent.js").ControlTimelineViewResult> {
     const observedCursor = this.readCheckpoint();
     if (observedCursor === null) return { status: "not_ready", observedCursor: null };
     const key = consoleWorkspaceKey(query.projectId, query.workspaceId);
-    const rows = this.p110ReadRows(key);
+    const rows = this.controlIntentReadRows(key);
     if (rows.length === 0) return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId };
     const filtered = rows.filter((r2) => (query.goalId === undefined || r2.scope.goalId === query.goalId) && (query.taskId === undefined || r2.scope.taskId === query.taskId));
     if (filtered.length === 0) return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId };
     return { status: "ready", entries: filtered.map((r2) => ({ intentRef: r2.ref, kind: r2.kind, desiredState: r2.desiredState, status: r2.status, ackCount: r2.ackCount, sourceCursor: r2.cursor })), sourceCursor: filtered[filtered.length - 1]!.cursor };
   }
 
-  private p110ReadRows(key: string): { ref: import("../../contracts/control-intent.js").ControlIntentRef; scope: { goalId: string | null; taskId: string | null }; kind: import("../../contracts/control-intent.js").ControlKind; desiredState: string; status: import("../../contracts/control-intent.js").ControlIntentStatus; ackCount: number; cursor: import("../../contracts/command-event.js").CommitCursor }[] {
+  private controlIntentReadRows(key: string): ControlIntentProjectionRow[] {
     const stmt = this.db.prepare("SELECT entry_json FROM control_intent_rows WHERE scope_key = ?");
     const row = stmt.get(key) as { entry_json: string } | undefined;
-    return row ? (JSON.parse(row.entry_json) as { ref: import("../../contracts/control-intent.js").ControlIntentRef; scope: { goalId: string | null; taskId: string | null }; kind: import("../../contracts/control-intent.js").ControlKind; desiredState: string; status: import("../../contracts/control-intent.js").ControlIntentStatus; ackCount: number; cursor: import("../../contracts/command-event.js").CommitCursor }[]) : [];
+    return row ? (JSON.parse(row.entry_json) as ControlIntentProjectionRow[]) : [];
   }
 
-  private p110WriteRows(key: string, rows: unknown[], cursor: import("../../contracts/command-event.js").CommitCursor): void {
+  private controlIntentWriteRows(key: string, rows: unknown[], cursor: import("../../contracts/command-event.js").CommitCursor): void {
     const stmt = this.db.prepare("INSERT OR REPLACE INTO control_intent_rows (scope_key, entry_json, source_cursor) VALUES (?, ?, ?)");
     stmt.run(key, JSON.stringify(rows), String(cursor));
   }
 
-  private applyP110(event: DomainEvent, cursor: import("../../contracts/command-event.js").CommitCursor): void {
-    if (event.eventType === "ControlIntentRecorded") {
-      const ev = event as import("../../contracts/control-intent.js").ControlIntentRecordedEvent;
-      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
-      const rows = this.p110ReadRows(key);
-      rows.push({ ref: { aggregateType: "ControlIntent", projectId: ev.projectId, workspaceId: ev.workspaceId, intentId: ev.payload.intent.intentId } as import("../../contracts/control-intent.js").ControlIntentRef, scope: { goalId: ev.payload.intent.scope.goalId, taskId: ev.payload.intent.scope.taskId }, kind: ev.payload.intent.kind, desiredState: ev.payload.intent.desiredState, status: ev.payload.intent.status, ackCount: 0, cursor });
-      this.p110WriteRows(key, rows, cursor);
-    } else if (event.eventType === "SafePointAcknowledged") {
-      const ev = event as import("../../contracts/control-intent.js").SafePointAcknowledgedEvent;
-      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId);
-      const rows = this.p110ReadRows(key);
-      const hit = rows.find((r2) => r2.ref.intentId === ev.payload.ack.intentRef.intentId);
-      if (hit) { hit.status = ev.payload.status; hit.ackCount += 1; hit.cursor = cursor; }
-      this.p110WriteRows(key, rows, cursor);
-    }
+  private applyControlIntentEvent(event: DomainEvent, cursor: import("../../contracts/command-event.js").CommitCursor): void {
+    if (event.eventType !== 'ControlIntentRecorded' && event.eventType !== 'SafePointAcknowledged') return;
+    const key = consoleWorkspaceKey(event.projectId, event.workspaceId);
+    const change = projectControlIntentEvent(event, cursor, this.controlIntentReadRows(key));
+    if (change) this.controlIntentWriteRows(change.key, change.rows, change.sourceCursor);
   }
 
-  /** P1-09 LANE-A/LANE-B: query job view (display only). */
+  /** Query combined: query job view (display only). */
   async queryJobView(query: import("../../contracts/query-job.js").QueryJobViewQuery): Promise<import("../../contracts/query-job.js").QueryJobViewResult> {
     const observedCursor = this.readCheckpoint();
     if (observedCursor === null) return { status: "not_ready", observedCursor: null };
     const jobKey = consoleWorkspaceKey(query.projectId, query.workspaceId) + "\u0000" + query.queryJobId;
-    const job = this.p109ReadOne("query_job_rows", jobKey) as import("../../contracts/query-job.js").QueryJobV1 | null;
+    const job = this.queryReadOne("query_job_rows", jobKey) as import("../../contracts/query-job.js").QueryJobV1 | null;
     if (job === null) return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId, queryJobId: query.queryJobId };
-    const run = job.runRef === null ? null : (this.p109ReadOne("query_run_rows", consoleWorkspaceKey(query.projectId, query.workspaceId) + "\u0000" + job.runRef.runId) as import("../../contracts/query-job.js").QueryRunV1 | null);
-    const answers = this.p109ReadList("query_answer_rows", jobKey) as import("../../contracts/query-job.js").QueryJobAnswerV1[];
+    const run = job.runRef === null ? null : (this.queryReadOne("query_run_rows", consoleWorkspaceKey(query.projectId, query.workspaceId) + "\u0000" + job.runRef.runId) as import("../../contracts/query-job.js").QueryRunV1 | null);
+    const answers = this.queryReadList("query_answer_rows", jobKey) as import("../../contracts/query-job.js").QueryJobAnswerV1[];
     const currentAnswer = answers.length > 0 ? answers[answers.length - 1]! : null;
     return { status: "ready", job, run, answers, currentAnswer, stale: currentAnswer?.stale ?? false, sourceCursor: observedCursor };
   }
 
-  /** P1-11 LANE-B: plan change view (display only; rebuildable from events).
+  /** Plan-change detail-view projection: plan change view (display only; rebuildable from events).
    * Assembles proposals / decisions / revisions for the (projectId, workspaceId,
    * goalId) scope plus the purely-computed task dispositions (never judged). */
   async planChangeView(query: PlanChangeViewQuery): Promise<PlanChangeViewResult> {
@@ -3235,14 +2914,18 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     if (observedCursor === null) return { status: "not_found" };
 
     const key = planChangeScopeKey(query);
-    const proposals = this.p111ReadScope("p111_proposal_rows", key + "\u0000") as PlanProposalSnapshot[];
-    const decisions = this.p111ReadScope("p111_decision_rows", key + "\u0000") as UserDecisionSnapshot[];
-    const revisions = this.p109ReadList("p111_revision_rows", key) as GoalRevisionSnapshot[];
+    const proposals = this.planChangeReadScope("p111_proposal_rows", key + "\u0000") as PlanProposalSnapshot[];
+    const decisions = this.planChangeReadScope("p111_decision_rows", key + "\u0000") as UserDecisionSnapshot[];
+    const revisions = this.queryReadList("p111_revision_rows", key) as GoalRevisionSnapshot[];
     if (proposals.length === 0 && decisions.length === 0 && revisions.length === 0) {
       return { status: "not_found" };
     }
 
-    const dispositions = this.computePlanChangeDispositions(revisions);
+    const dispositions = projectPlanChangeDispositions(
+      revisions,
+      ref => this.queryReadOne("p111_plan_rows", canonicalJson(ref)) as PlanRevisionSnapshot | null,
+      input => this.policyExplanation.explainPlanChange(input),
+    );
     return {
       status: "ready",
       proposals,
@@ -3253,22 +2936,8 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     };
   }
 
-  /** P1-11: compute the displayed task dispositions from the latest goal revision
-   * (pure; empty when either plan snapshot is not (yet) projected). */
-  private computePlanChangeDispositions(revisions: GoalRevisionSnapshot[]): TaskDispositionRow[] {
-    if (revisions.length === 0) return [];
-    const latest = revisions[revisions.length - 1]!;
-    const change = latest.change;
-    if (change.supersededPlanRefs.length === 0) return [];
-    const sourceRef = change.supersededPlanRefs[change.supersededPlanRefs.length - 1]!;
-    const source = this.p109ReadOne("p111_plan_rows", canonicalJson(sourceRef)) as PlanRevisionSnapshot | null;
-    const target = this.p109ReadOne("p111_plan_rows", canonicalJson(change.activePlanRef)) as PlanRevisionSnapshot | null;
-    if (source === null || target === null) return [];
-    return this.policyExplanation.explainPlanChange({ source, target, pausedTaskIds: [] });
-  }
-
-  /** P1-11: read every row in a table whose full-scope key is under a prefix. */
-  private p111ReadScope(table: string, prefix: string): unknown[] {
+  /** Plan-change: read every row in a table whose full-scope key is under a prefix. */
+  private planChangeReadScope(table: string, prefix: string): unknown[] {
     const out: unknown[] = [];
     const stmt = this.db.prepare("SELECT scope_key, entry_json FROM " + table);
     for (const row of stmt.all() as { scope_key: string; entry_json: string }[]) {
@@ -3277,10 +2946,10 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return out;
   }
 
-  /** P1-11 LANE-A/LANE-B hook: fold plan-change events (proposal/decision +
-   * LANE-B revision/plan; empty until the lane lands — handler + isHandledEventType
-   * land in the SAME lane commit). */
-  private applyP111(event: DomainEvent, cursor: import("../../contracts/command-event.js").CommitCursor): void {
+  /** Plan-change combined hook: fold plan-change events (proposal/decision +
+   * detail-view projection revision/plan; the handler and handled-event membership
+   * are maintained together). */
+  private applyPlanChangeEvent(event: DomainEvent, cursor: import("../../contracts/command-event.js").CommitCursor): void {
     if (event.eventType === "PlanProposalRecorded") {
       const ev = event as PlanProposalRecordedEvent;
       const proposal = ev.payload.proposal;
@@ -3296,7 +2965,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
         goalId: proposal.sourceGoalRef.goalId,
       }) + "\u0000" + proposal.proposalId;
       const snapshot: PlanProposalSnapshot = { ref, revision: 1, schemaVersion: 1, proposal, recordedAt: ev.payload.recordedAt };
-      this.p109UpsertOne("p111_proposal_rows", key, snapshot, cursor);
+      this.queryUpsertOne("p111_proposal_rows", key, snapshot, cursor);
     } else if (event.eventType === "UserDecisionRecorded") {
       const ev = event as UserDecisionRecordedEvent;
       const decision = ev.payload.decision;
@@ -3312,7 +2981,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
         goalId: decision.subject.goalRef.goalId,
       }) + "\u0000" + decision.decisionId;
       const snapshot: UserDecisionSnapshot = { ref, revision: 1, schemaVersion: 1, decision, recordedAt: ev.payload.recordedAt };
-      this.p109UpsertOne("p111_decision_rows", key, snapshot, cursor);
+      this.queryUpsertOne("p111_decision_rows", key, snapshot, cursor);
     } else if (event.eventType === "GoalRevisionRecorded") {
       const ev = event as GoalRevisionRecordedEvent;
       const change = ev.payload.change;
@@ -3325,17 +2994,17 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       };
       const key = planChangeScopeKey({ projectId: ev.projectId, workspaceId: ev.workspaceId, goalId: change.goalRef.goalId });
       const snapshot: GoalRevisionSnapshot = { ref, revision: 1, schemaVersion: 1, change, recordedAt: ev.payload.recordedAt };
-      const rows = this.p109ReadList("p111_revision_rows", key) as GoalRevisionSnapshot[];
+      const rows = this.queryReadList("p111_revision_rows", key) as GoalRevisionSnapshot[];
       rows.push(snapshot);
       rows.sort((a, b) => a.ref.revision - b.ref.revision);
-      this.p109UpsertList("p111_revision_rows", key, rows, cursor);
-      // RW-09：同一条已提交事实同时决定时间线条目的变更原因（见该方法的注释）。
-      this.p111AnnotateTimelineChangeReason(ev.projectId, ev.workspaceId, ev, cursor);
+      this.queryUpsertList("p111_revision_rows", key, rows, cursor);
+      // 同一条已提交事实同时决定时间线条目的变更原因（见该方法的注释）。
+      this.planChangeAnnotateTimelineChangeReason(ev.projectId, ev.workspaceId, ev, cursor);
     } else if (event.eventType === "PlanRevisionAccepted") {
       const ev = event as PlanRevisionAcceptedEvent;
       const planRevision = ev.payload.planRevision;
       // Idempotent: the same ref always projects the same immutable snapshot.
-      this.p109UpsertOne("p111_plan_rows", canonicalJson(planRevision.ref), planRevision, cursor);
+      this.queryUpsertOne("p111_plan_rows", canonicalJson(planRevision.ref), planRevision, cursor);
     } else if (event.eventType === "PlanRevisionSuperseded") {
       // The same fact is already carried by the GoalRevisionRecorded change;
       // the supersession event itself needs no dedicated row.
@@ -3343,52 +3012,41 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     }
   }
 
-  private p109ReadOne(table: string, key: string): unknown | null {
+  private queryReadOne(table: string, key: string): unknown | null {
     const stmt = this.db.prepare("SELECT entry_json FROM " + table + " WHERE scope_key = ?");
     const row = stmt.get(key) as { entry_json: string } | undefined;
     return row ? JSON.parse(row.entry_json) : null;
   }
 
-  private p109ReadList(table: string, key: string): unknown[] {
+  private queryReadList(table: string, key: string): unknown[] {
     const stmt = this.db.prepare("SELECT entry_json FROM " + table + " WHERE scope_key = ?");
     const row = stmt.get(key) as { entry_json: string } | undefined;
     return row ? (JSON.parse(row.entry_json) as unknown[]) : [];
   }
 
-  private p109UpsertOne(table: string, key: string, value: unknown, cursor: import("../../contracts/command-event.js").CommitCursor): void {
+  private queryUpsertOne(table: string, key: string, value: unknown, cursor: import("../../contracts/command-event.js").CommitCursor): void {
     const stmt = this.db.prepare("INSERT OR REPLACE INTO " + table + " (scope_key, entry_json, source_cursor) VALUES (?, ?, ?)");
     stmt.run(key, JSON.stringify(value), String(cursor));
   }
 
-  private p109UpsertList(table: string, key: string, values: unknown[], cursor: import("../../contracts/command-event.js").CommitCursor): void {
+  private queryUpsertList(table: string, key: string, values: unknown[], cursor: import("../../contracts/command-event.js").CommitCursor): void {
     const stmt = this.db.prepare("INSERT OR REPLACE INTO " + table + " (scope_key, entry_json, source_cursor) VALUES (?, ?, ?)");
     stmt.run(key, JSON.stringify(values), String(cursor));
   }
 
-  private applyP109(event: DomainEvent, cursor: import("../../contracts/command-event.js").CommitCursor): void {
-    if (event.eventType === "QueryJobSubmitted") {
-      const ev = event as import("../../contracts/query-job.js").QueryJobSubmittedEvent;
-      this.p109UpsertOne("query_job_rows", consoleWorkspaceKey(ev.projectId, ev.workspaceId) + "\u0000" + ev.payload.job.queryJobId, ev.payload.job, cursor);
-    } else if (event.eventType === "QueryRunStarted") {
-      const ev = event as import("../../contracts/query-job.js").QueryRunStartedEvent;
-      if (ev.payload.job) this.p109UpsertOne("query_job_rows", consoleWorkspaceKey(ev.projectId, ev.workspaceId) + "\u0000" + ev.payload.job.queryJobId, ev.payload.job, cursor);
-      this.p109UpsertOne("query_run_rows", consoleWorkspaceKey(ev.projectId, ev.workspaceId) + "\u0000" + ev.payload.run.runId, ev.payload.run, cursor);
-    } else if (event.eventType === "QueryJobAnswerRecorded") {
-      const ev = event as import("../../contracts/query-job.js").QueryJobAnswerRecordedEvent;
-      const key = consoleWorkspaceKey(ev.projectId, ev.workspaceId) + "\u0000" + ev.payload.job.queryJobId;
-      this.p109UpsertOne("query_job_rows", key, ev.payload.job, cursor);
-      this.p109UpsertOne("query_run_rows", consoleWorkspaceKey(ev.projectId, ev.workspaceId) + "\u0000" + ev.payload.run.runId, ev.payload.run, cursor);
-      const answers = this.p109ReadList("query_answer_rows", key) as import("../../contracts/query-job.js").QueryJobAnswerV1[];
-      answers.push(ev.payload.answer);
-      this.p109UpsertList("query_answer_rows", key, answers, cursor);
-    } else if (event.eventType === "QueryJobClosed") {
-      const ev = event as import("../../contracts/query-job.js").QueryJobClosedEvent;
-      this.p109UpsertOne("query_job_rows", consoleWorkspaceKey(ev.projectId, ev.workspaceId) + "\u0000" + ev.payload.job.queryJobId, ev.payload.job, cursor);
-      this.p109UpsertOne("query_run_rows", consoleWorkspaceKey(ev.projectId, ev.workspaceId) + "\u0000" + ev.payload.run.runId, ev.payload.run, cursor);
+  private applyQueryEvent(event: DomainEvent, cursor: import("../../contracts/command-event.js").CommitCursor): void {
+    for (const change of projectQueryEvent(event)) {
+      if (change.kind === 'job') this.queryUpsertOne('query_job_rows', change.key, change.job, cursor);
+      else if (change.kind === 'run') this.queryUpsertOne('query_run_rows', change.key, change.run, cursor);
+      else {
+        const answers = this.queryReadList('query_answer_rows', change.key) as import("../../contracts/query-job.js").QueryJobAnswerV1[];
+        answers.push(change.answer);
+        this.queryUpsertList('query_answer_rows', change.key, answers, cursor);
+      }
     }
   }
 
-  /** P1-17: completed-work selection source view (display only; composed from the P1-16 work-context stores). */
+  /** completed-work context: completed-work selection source view (display only; composed from the Work-context stores). */
   async completedWorkView(query: import("../../contracts/completed-work-context.js").CompletedWorkViewQuery): Promise<import("../../contracts/completed-work-context.js").CompletedWorkViewResult> {
     const observedCursor = this.readCheckpoint();
     if (observedCursor === null) {
@@ -3396,19 +3054,19 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     }
     const scopeKey = consoleWorkspaceKey(query.projectId, query.workspaceId);
     const rows: import("../../contracts/completed-work-context.js").CompletedWorkViewRow[] = [];
-    // RW-13：先按「一个任务一个身份」归并，再判正式完成资格（与 InMemory 投影同一份权威规则）。
-    const candidates = this.scanP116Bindings(scopeKey)
+    // 先按「一个任务一个身份」归并，再判正式完成资格（与 InMemory 投影同一份权威规则）。
+    const candidates = this.scanWorkContextBindings(scopeKey)
       .map(([key, entry]) => ({ key, snapshot: entry as import("../../contracts/context-continuity.js").WorkContextBindingSnapshot }))
       .filter((row) => query.goalId === undefined || row.snapshot.binding.goalId === query.goalId);
     const all = candidates.map((candidate) => ({ key: candidate.key, ref: candidate.snapshot.ref, binding: candidate.snapshot.binding }));
     const authoritative = dedupeTaskWorks(all);
-    // RW-15（M1）：归并可见性。落选者同样由共享纯函数算出（内存与 SQLite 必须逐字段一致），
-    // 不重算 RW-13 的选择规则，也不改写任何一条历史身份。
+    // （工作身份归并）：归并可见性。落选者同样由共享纯函数算出（内存与 SQLite 必须逐字段一致），
+    // 不重算任务身份归并的选择规则，也不改写任何一条历史身份。
     const dropped = droppedWorkRefsByTask(all, authoritative);
     for (const { key, ref: workRef, binding } of authoritative) {
       if (await completedWorkCursor(binding, this) === null) continue;
-      const notes = this.readP116Notes(key);
-      const continuations = this.readP116Continuations(key);
+      const notes = this.readWorkContextNotes(key);
+      const continuations = this.readWorkContextContinuations(key);
       const latestCursor = observedCursor;
       const droppedHere = sortWorkRefs(dropped.get(taskWorkKey(binding.goalId, binding.taskId)) ?? []);
       rows.push({
@@ -3430,10 +3088,10 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return { status: "ready", rows, sourceCursor: observedCursor };
   }
 
-  /** P1-17 helpers: scan the work_context tables for a workspace scope. */
-  private scanP116Bindings(scopeKey: string): [string, unknown][] {
+  /** completed-work context helpers: scan the work_context tables for a workspace scope. */
+  private scanWorkContextBindings(scopeKey: string): [string, unknown][] {
     // Full-scope keys are canonicalJson refs (not workspace-prefix-sortable), so
-    // scan the whole table + JS filter (same tactic as the P1-08 agent scanner).
+    // scan the whole table + JS filter (same tactic as the Console agent scanner).
     const out: [string, unknown][] = [];
     const stmt = this.db.prepare("SELECT scope_key, entry_json FROM work_context_binding");
     for (const row of stmt.all() as { scope_key: string; entry_json: string }[]) {
@@ -3445,36 +3103,35 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return out;
   }
 
-  private readP116Notes(key: string): import("../../contracts/context-continuity.js").WorkContextNoteRow[] {
+  private readWorkContextNotes(key: string): import("../../contracts/context-continuity.js").WorkContextNoteRow[] {
     const stmt = this.db.prepare("SELECT entry_json FROM work_context_notes WHERE scope_key = ?");
     const row = stmt.get(key) as { entry_json: string } | undefined;
     return row ? (JSON.parse(row.entry_json) as import("../../contracts/context-continuity.js").WorkContextNoteRow[]) : [];
   }
 
-  private readP116Continuations(key: string): import("../../contracts/context-continuity.js").ContinuationRecordSnapshot[] {
+  private readWorkContextContinuations(key: string): import("../../contracts/context-continuity.js").ContinuationRecordSnapshot[] {
     const stmt = this.db.prepare("SELECT entry_json FROM work_context_continuations WHERE scope_key = ?");
     const row = stmt.get(key) as { entry_json: string } | undefined;
     return row ? (JSON.parse(row.entry_json) as import("../../contracts/context-continuity.js").ContinuationRecordSnapshot[]) : [];
   }
 
-  /** P1-12 LANE-A/LANE-B: architecture inspection view (display only) —
-   * field-for-field parity with the InMemory reference. The lane-B parts are
-   * always surfaced; the lane-A parts are empty until lane A lands (the view
-   * still works — ready with a possibly-empty list). */
+  /** Architecture-inspection combined view (display only), kept field-for-field
+   * equivalent to the InMemory reference. Overview and detail rows are composed
+   * from their respective projections; an empty result remains not_found. */
   async architectureInspectionView(query: import("../../contracts/architecture-inspection.js").ArchitectureInspectionViewQuery): Promise<import("../../contracts/architecture-inspection.js").ArchitectureInspectionViewResult> {
     const observed = this.readCheckpoint();
     if (observed === null) {
       return { status: "not_ready", observedCursor: null };
     }
     const key = consoleWorkspaceKey(query.projectId, query.workspaceId);
-    const entries = this.p112BuildInspectionEntries(key, query.planId);
+    const entries = this.architectureInspectionBuildInspectionEntries(key, query.planId);
     if (entries.length === 0) {
       return { status: "not_found", projectId: query.projectId, workspaceId: query.workspaceId };
     }
     return { status: "ready", inspections: entries, sourceCursor: observed };
   }
 
-  private p112BuildInspectionEntries(
+  private architectureInspectionBuildInspectionEntries(
     scopeKey: string,
     planId: string | undefined,
   ): {
@@ -3490,10 +3147,10 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       proposals: import("../../contracts/architecture-inspection.js").ArchitectureCandidateProposalSnapshot[];
     }[] = [];
 
-    const inspectionRows = this.p112ReadRows("architecture_inspection_rows", scopeKey) as import("../../contracts/architecture-inspection.js").ArchitectureInspectionSnapshot[];
-    const findingRows = this.p112ReadRows("architecture_finding_rows", scopeKey) as import("../../contracts/architecture-inspection.js").ArchitectureFindingSnapshot[];
-    const briefRows = this.p112ReadRows("architecture_brief_rows", scopeKey) as import("../../contracts/architecture-inspection.js").ArchitectureDecisionBriefSnapshot[];
-    const proposalRows = this.p112ReadRows("architecture_proposal_rows", scopeKey) as import("../../contracts/architecture-inspection.js").ArchitectureCandidateProposalSnapshot[];
+    const inspectionRows = this.architectureInspectionReadRows("architecture_inspection_rows", scopeKey) as import("../../contracts/architecture-inspection.js").ArchitectureInspectionSnapshot[];
+    const findingRows = this.architectureInspectionReadRows("architecture_finding_rows", scopeKey) as import("../../contracts/architecture-inspection.js").ArchitectureFindingSnapshot[];
+    const briefRows = this.architectureInspectionReadRows("architecture_brief_rows", scopeKey) as import("../../contracts/architecture-inspection.js").ArchitectureDecisionBriefSnapshot[];
+    const proposalRows = this.architectureInspectionReadRows("architecture_proposal_rows", scopeKey) as import("../../contracts/architecture-inspection.js").ArchitectureCandidateProposalSnapshot[];
 
     const claimedBriefs = new Set<string>();
     const claimedProposals = new Set<string>();
@@ -3515,7 +3172,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       if (claimedBriefs.has(brief.ref.briefId)) continue;
       if (planId !== undefined && brief.brief.planRef.planId !== planId) continue;
       entries.push({
-        inspection: this.p112SyntheticInspection(brief.ref.projectId, brief.ref.workspaceId, brief.ref.briefId, brief.brief.baselinePin, brief.brief.planRef, brief.recordedAt, "brief"),
+        inspection: buildSyntheticArchitectureInspection(brief.ref.projectId, brief.ref.workspaceId, brief.ref.briefId, brief.brief.baselinePin, brief.brief.planRef, brief.recordedAt, "brief"),
         findings: [],
         briefs: [brief],
         proposals: [],
@@ -3525,7 +3182,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       if (claimedProposals.has(proposal.ref.proposalId)) continue;
       if (planId !== undefined && proposal.proposal.planRef.planId !== planId) continue;
       entries.push({
-        inspection: this.p112SyntheticInspection(proposal.ref.projectId, proposal.ref.workspaceId, proposal.ref.proposalId, proposal.proposal.sourceBaselinePin, proposal.proposal.planRef, proposal.recordedAt, "proposal"),
+        inspection: buildSyntheticArchitectureInspection(proposal.ref.projectId, proposal.ref.workspaceId, proposal.ref.proposalId, proposal.proposal.sourceBaselinePin, proposal.proposal.planRef, proposal.recordedAt, "proposal"),
         findings: [],
         briefs: [],
         proposals: [proposal],
@@ -3534,177 +3191,139 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return entries;
   }
 
-  /** Synthetic display inspection used to surface a brief/proposal that is not
-   * referenced by any real (LANE-A) inspection row (LANE-B-only projection). */
-  private p112SyntheticInspection(
-    projectId: string,
-    workspaceId: string,
-    labelId: string,
-    baselinePin: import("../../contracts/governance.js").ArchitectureBaselinePin,
-    planRef: import("../../contracts/plan.js").PlanRevisionRef,
-    recordedAt: string,
-    label: string,
-  ): import("../../contracts/architecture-inspection.js").ArchitectureInspectionSnapshot {
-    const inspectionId = "synthetic-" + label + "-" + labelId;
-    return {
-      ref: { aggregateType: "ArchitectureInspection", projectId, workspaceId, inspectionId },
-      revision: 1,
-      schemaVersion: 1,
-      intent: {
-        schemaVersion: 1,
-        inspectionId,
-        projectId,
-        workspaceId,
-        workspaceRevision: 0,
-        planRef,
-        baselinePin,
-        source: "report",
-        requestedByRunRef: null,
-        reportInput: null,
-        budget: { maxTokens: 0, deadline: null },
-      },
-      snapshotRef: null,
-      deltaRef: null,
-      findingRefs: [],
-      briefRef: null,
-      proposalRef: null,
-      recordedAt,
-    };
-  }
-
-  /** P1-08 LANE-A hook (Portfolio + WorkspaceSummary) — rebuilt ONLY from the
+  /** Console overview projection hook (Portfolio + WorkspaceSummary) — rebuilt ONLY from the
    * committed v1 events, in field-for-field parity with the InMemory reference.
    * Portfolio rows come from WorkspaceBootstrapped; summary rows are touched by
    * every workspace-scoped counter event. Per-task / per-goal phase counts are
    * persisted in internal tables so restart replay is exact (upsert rebuild). */
-  private applyP108ConsoleLaneA(event: DomainEvent, cursor: CommitCursor): void {
-    this.p108EnsureInternalTables();
+  private applyConsoleOverview(event: DomainEvent, cursor: CommitCursor): void {
+    this.consoleEnsureInternalTables();
     if (event.eventType === "WorkspaceBootstrapped" || event.eventType === "WorkspaceRegistered") {
       const ev = event as import("../../contracts/bootstrap.js").WorkspaceBootstrappedEventV1 | import("../../contracts/workspace-registration.js").WorkspaceRegisteredEvent;
-      this.p108ApplyBootstrap(ev, cursor);
+      this.consoleApplyBootstrap(ev, cursor);
     } else if (event.eventType === "GoalCreated") {
       const ev = event as import("../../contracts/command-event.js").GoalCreatedEvent;
-      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+      this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
         row.goalCount += 1;
       });
     } else if (event.eventType === "PlanRevisionAccepted") {
       const ev = event as import("../../contracts/plan.js").PlanRevisionAcceptedEvent;
-      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+      this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
         row.taskCount += ev.payload.planRevision.tasks.length;
         row.planRevisionCount += 1;
       });
     } else if (event.eventType === "TaskClaimed") {
       const ev = event as import("../../contracts/dispatch.js").TaskClaimedEvent;
-      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+      this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
         row.agentRunCount += 1;
       });
     } else if (event.eventType === "ReplacementClaimed") {
-      // integrator ruling: a replacement claim creates another Agent Run —
+      // projection contract: a replacement claim creates another Agent Run —
       // agentRunCount = claims + replacements (matches the ActiveAgents rows).
       const ev = event as import("../../contracts/handoff.js").ReplacementClaimedEvent;
-      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+      this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
         row.agentRunCount += 1;
       });
     } else if (event.eventType === "EvidenceAdmitted") {
       const ev = event as import("../../contracts/evidence.js").EvidenceAdmittedEvent;
-      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+      this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
         row.evidenceCount += 1;
       });
     } else if (event.eventType === "TaskReductionUpdated") {
       const ev = event as import("../../contracts/reduction.js").TaskReductionUpdatedEvent;
-      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+      this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
         row.taskReductionCount += 1;
         const phase = ev.payload.reduction.phase;
         const key = consoleTaskKey(ev.projectId, ev.workspaceId, ev.payload.goalId, ev.payload.taskId);
-        const prev = this.p108ReadPhase("console_task_phase", key);
-        if (prev !== null) this.p108DecrementTaskReduction(row, prev);
-        this.p108WritePhase("console_task_phase", key, phase);
-        this.p108IncrementTaskReduction(row, phase);
+        const prev = this.consoleReadPhase("console_task_phase", key);
+        if (prev !== null) this.consoleDecrementTaskReduction(row, prev);
+        this.consoleWritePhase("console_task_phase", key, phase);
+        this.consoleIncrementTaskReduction(row, phase);
       });
     } else if (event.eventType === "GoalPhaseUpdated") {
       const ev = event as import("../../contracts/goal-phase.js").GoalPhaseUpdatedEvent;
-      this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
+      this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, ev.occurredAt, (row) => {
         row.goalPhaseCount += 1;
         const phase = ev.payload.phase;
         const key = consoleGoalKey(ev.projectId, ev.workspaceId, ev.payload.goalId);
-        const prev = this.p108ReadPhase("console_goal_phase", key);
-        if (prev !== null) this.p108DecrementGoalPhase(row, prev);
-        this.p108WritePhase("console_goal_phase", key, phase);
-        this.p108IncrementGoalPhase(row, phase);
+        const prev = this.consoleReadPhase("console_goal_phase", key);
+        if (prev !== null) this.consoleDecrementGoalPhase(row, prev);
+        this.consoleWritePhase("console_goal_phase", key, phase);
+        this.consoleIncrementGoalPhase(row, phase);
       });
     }
     // Every other event type leaves the workspace summary/portfolio rows
-    // unchanged (they are not counter rows per the frozen contract).
+    // unchanged (they are not counter rows in the versioned contract).
   }
 
   /** Create the internal per-task / per-goal phase tracking tables on first use
    * (IF NOT EXISTS — idempotent; persisted in the same read-model file so
    * restart replay reproduces the same phase counts). */
-  private p108EnsureInternalTables(): void {
-    if (this.p108InternalTablesReady) return;
+  private consoleEnsureInternalTables(): void {
+    if (this.consoleInternalTablesReady) return;
     this.db.exec(
       "CREATE TABLE IF NOT EXISTS console_task_phase (" +
         "scope_key TEXT PRIMARY KEY, phase TEXT NOT NULL) WITHOUT ROWID;" +
         "CREATE TABLE IF NOT EXISTS console_goal_phase (" +
         "scope_key TEXT PRIMARY KEY, phase TEXT NOT NULL) WITHOUT ROWID;",
     );
-    this.p108InternalTablesReady = true;
+    this.consoleInternalTablesReady = true;
   }
 
-  private p108PhaseSelect(table: string): StatementSync {
-    let stmt = this.p108PhaseSelectCache.get(table);
+  private consolePhaseSelect(table: string): StatementSync {
+    let stmt = this.consolePhaseSelectCache.get(table);
     if (stmt === undefined) {
       stmt = this.db.prepare("SELECT phase FROM " + table + " WHERE scope_key = ?");
-      this.p108PhaseSelectCache.set(table, stmt);
+      this.consolePhaseSelectCache.set(table, stmt);
     }
     return stmt;
   }
 
-  private p108PhaseUpsert(table: string): StatementSync {
-    let stmt = this.p108PhaseUpsertCache.get(table);
+  private consolePhaseUpsert(table: string): StatementSync {
+    let stmt = this.consolePhaseUpsertCache.get(table);
     if (stmt === undefined) {
       stmt = this.db.prepare(
         "INSERT INTO " + table + " (scope_key, phase) VALUES (?, ?) " +
           "ON CONFLICT(scope_key) DO UPDATE SET phase = excluded.phase",
       );
-      this.p108PhaseUpsertCache.set(table, stmt);
+      this.consolePhaseUpsertCache.set(table, stmt);
     }
     return stmt;
   }
 
-  private p108ReadPhase(table: string, scopeKey: string): string | null {
-    const row = this.p108PhaseSelect(table).get(scopeKey) as unknown as { phase: string } | undefined;
+  private consoleReadPhase(table: string, scopeKey: string): string | null {
+    const row = this.consolePhaseSelect(table).get(scopeKey) as unknown as { phase: string } | undefined;
     return row ? row.phase : null;
   }
 
-  private p108WritePhase(table: string, scopeKey: string, phase: string): void {
-    this.p108PhaseUpsert(table).run(scopeKey, phase);
+  private consoleWritePhase(table: string, scopeKey: string, phase: string): void {
+    this.consolePhaseUpsert(table).run(scopeKey, phase);
   }
 
   /** Read the persisted WorkspaceSummaryView (view_json) for a full scope key. */
-  private p108ReadSummaryRow(scopeKey: string): import("../../contracts/console-views.js").WorkspaceSummaryView | null {
-    if (this.p108SummarySelectStmt === null) {
-      this.p108SummarySelectStmt = this.db.prepare("SELECT view_json FROM console_summary WHERE scope_key = ?");
+  private consoleReadSummaryRow(scopeKey: string): import("../../contracts/console-views.js").WorkspaceSummaryView | null {
+    if (this.consoleSummarySelectStmt === null) {
+      this.consoleSummarySelectStmt = this.db.prepare("SELECT view_json FROM console_summary WHERE scope_key = ?");
     }
-    const row = this.p108SummarySelectStmt.get(scopeKey) as unknown as { view_json: string } | undefined;
+    const row = this.consoleSummarySelectStmt.get(scopeKey) as unknown as { view_json: string } | undefined;
     return row ? (JSON.parse(row.view_json) as import("../../contracts/console-views.js").WorkspaceSummaryView) : null;
   }
 
   /** Upsert the persisted WorkspaceSummaryView (view_json column of console_summary). */
-  private p108WriteSummaryRow(scopeKey: string, json: string, cursor: CommitCursor): void {
-    if (this.p108SummaryUpsertStmt === null) {
-      this.p108SummaryUpsertStmt = this.db.prepare(
+  private consoleWriteSummaryRow(scopeKey: string, json: string, cursor: CommitCursor): void {
+    if (this.consoleSummaryUpsertStmt === null) {
+      this.consoleSummaryUpsertStmt = this.db.prepare(
         "INSERT INTO console_summary (scope_key, view_json, source_cursor) VALUES (?, ?, ?) " +
           "ON CONFLICT(scope_key) DO UPDATE SET view_json = excluded.view_json, source_cursor = excluded.source_cursor",
       );
     }
-    this.p108SummaryUpsertStmt.run(scopeKey, json, cursor);
+    this.consoleSummaryUpsertStmt.run(scopeKey, json, cursor);
   }
 
   /** WorkspaceBootstrapped -> create/refresh the (projectId, workspaceId)
    * PortfolioEntry (entry_json of console_portfolio) AND initialize the
    * WorkspaceSummary row (view_json of console_summary). */
-  private p108ApplyBootstrap(
+  private consoleApplyBootstrap(
     ev: import("../../contracts/bootstrap.js").WorkspaceBootstrappedEventV1 | import("../../contracts/workspace-registration.js").WorkspaceRegisteredEvent,
     cursor: CommitCursor,
   ): void {
@@ -3724,8 +3343,8 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     // Upsert: replaying the same event set reproduces the same row; a genuinely
     // new bootstrap refresh carries updated provenance. The baseline helper
     // writes the portfolio table's entry_json column.
-    this.writeP108JsonRow(SqliteReadModelIndex.P108_TABLES.portfolio, key, JSON.stringify(entry), cursor);
-    this.p108TouchSummary(ev.projectId, ev.workspaceId, cursor, bootstrappedAt, (row) => {
+    this.writeJsonProjectionRow(SqliteReadModelIndex.CONSOLE_TABLES.portfolio, key, JSON.stringify(entry), cursor);
+    this.consoleTouchSummary(ev.projectId, ev.workspaceId, cursor, bootstrappedAt, (row) => {
       row.sourceDigest = sourceDigest;
       row.bootstrappedAt = bootstrappedAt;
     });
@@ -3734,7 +3353,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   /** Get (or lazily create) the WorkspaceSummary row for the full scope key and
    * apply one counter mutation, then persist the (view_json) row; every counter
    * event refreshes sourceCursor + updatedAt. */
-  private p108TouchSummary(
+  private consoleTouchSummary(
     projectId: string,
     workspaceId: string,
     cursor: CommitCursor,
@@ -3742,7 +3361,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     update: (row: import("../../contracts/console-views.js").WorkspaceSummaryView) => void,
   ): void {
     const key = consoleWorkspaceKey(projectId, workspaceId);
-    let row = this.p108ReadSummaryRow(key);
+    let row = this.consoleReadSummaryRow(key);
     if (row === null) {
       row = {
         projectId,
@@ -3765,10 +3384,10 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       row.updatedAt = occurredAt;
     }
     update(row);
-    this.p108WriteSummaryRow(key, JSON.stringify(row), cursor);
+    this.consoleWriteSummaryRow(key, JSON.stringify(row), cursor);
   }
 
-  private p108IncrementTaskReduction(
+  private consoleIncrementTaskReduction(
     row: import("../../contracts/console-views.js").WorkspaceSummaryView,
     phase: string,
   ): void {
@@ -3776,7 +3395,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     map[phase] = (map[phase] ?? 0) + 1;
   }
 
-  private p108DecrementTaskReduction(
+  private consoleDecrementTaskReduction(
     row: import("../../contracts/console-views.js").WorkspaceSummaryView,
     phase: string,
   ): void {
@@ -3784,7 +3403,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     map[phase] = (map[phase] ?? 0) - 1;
   }
 
-  private p108IncrementGoalPhase(
+  private consoleIncrementGoalPhase(
     row: import("../../contracts/console-views.js").WorkspaceSummaryView,
     phase: string,
   ): void {
@@ -3792,7 +3411,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     map[phase] = (map[phase] ?? 0) + 1;
   }
 
-  private p108DecrementGoalPhase(
+  private consoleDecrementGoalPhase(
     row: import("../../contracts/console-views.js").WorkspaceSummaryView,
     phase: string,
   ): void {
@@ -3801,40 +3420,40 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   }
 
   /** Full-scope scan of the portfolio table, ordered by scope_key (deterministic). */
-  private p108SelectAll(table: string): { scope_key: string; entry_json: string; source_cursor: string }[] {
-    let stmt = this.p108SelectAllCache.get(table);
+  private consoleSelectAll(table: string): { scope_key: string; entry_json: string; source_cursor: string }[] {
+    let stmt = this.consoleSelectAllCache.get(table);
     if (stmt === undefined) {
       stmt = this.db.prepare("SELECT scope_key, entry_json, source_cursor FROM " + table + " ORDER BY scope_key ASC");
-      this.p108SelectAllCache.set(table, stmt);
+      this.consoleSelectAllCache.set(table, stmt);
     }
     return stmt.all() as unknown as { scope_key: string; entry_json: string; source_cursor: string }[];
   }
 
   // ------------------------------------------------------------------ //
-  // P1-08 LANE-B projection helpers (JSON rows in the console tables).  //
+  // Console detail-view projection helpers (JSON rows in the console tables).  //
   // ------------------------------------------------------------------ //
 
-  /** LANE-B prepared-statement cache (per distinct SQL). */
-  private readonly p108LaneBStmtCache = new Map<string, StatementSync>();
+  /** detail-view projection prepared-statement cache (per distinct SQL). */
+  private readonly consoleDetailStmtCache = new Map<string, StatementSync>();
 
-  private p108LaneBPrepare(sql: string): StatementSync {
-    let stmt = this.p108LaneBStmtCache.get(sql);
+  private consoleDetailPrepare(sql: string): StatementSync {
+    let stmt = this.consoleDetailStmtCache.get(sql);
     if (stmt === undefined) {
       stmt = this.db.prepare(sql);
-      this.p108LaneBStmtCache.set(sql, stmt);
+      this.consoleDetailStmtCache.set(sql, stmt);
     }
     return stmt;
   }
 
-  private readP108Matrix(goalKey: string): import("../../contracts/console-views.js").PlanMatrixView | null {
-    const row = this.p108LaneBPrepare("SELECT view_json FROM console_matrix WHERE goal_key = ?").get(goalKey) as
+  private readConsolePlanMatrix(goalKey: string): import("../../contracts/console-views.js").PlanMatrixView | null {
+    const row = this.consoleDetailPrepare("SELECT view_json FROM console_matrix WHERE goal_key = ?").get(goalKey) as
       | { view_json: string }
       | undefined;
     return row ? (JSON.parse(row.view_json) as import("../../contracts/console-views.js").PlanMatrixView) : null;
   }
 
-  private writeP108Matrix(goalKey: string, view: import("../../contracts/console-views.js").PlanMatrixView, cursor: CommitCursor): void {
-    this.p108LaneBPrepare(
+  private writeConsolePlanMatrix(goalKey: string, view: import("../../contracts/console-views.js").PlanMatrixView, cursor: CommitCursor): void {
+    this.consoleDetailPrepare(
       "INSERT INTO console_matrix (goal_key, view_json, source_cursor) VALUES (?, ?, ?) " +
         "ON CONFLICT(goal_key) DO UPDATE SET view_json = excluded.view_json, source_cursor = excluded.source_cursor",
     ).run(goalKey, JSON.stringify(view), cursor);
@@ -3844,28 +3463,28 @@ export class SqliteReadModelIndex implements ReadModelIndex {
    *  { __marker } for a task handoff marker). Workspace filtering happens in JS —
    *  consoleTaskKey sorts the JSON keys alphabetically, so a task key can never be
    *  prefixed by the workspace key. */
-  private scanP108Agent(): { key: string; value: unknown }[] {
-    const rows = this.p108LaneBPrepare("SELECT task_key, view_json FROM console_agent").all() as
+  private scanConsoleAgentRows(): { key: string; value: unknown }[] {
+    const rows = this.consoleDetailPrepare("SELECT task_key, view_json FROM console_agent").all() as
       | { task_key: string; view_json: string }[]
       | undefined;
     return (rows ?? []).map((r) => ({ key: r.task_key, value: JSON.parse(r.view_json) as unknown }));
   }
 
-  private readP108AgentRow(taskKey: string): { value: unknown } | null {
-    const row = this.p108LaneBPrepare("SELECT view_json FROM console_agent WHERE task_key = ?").get(taskKey) as
+  private readConsoleAgentRow(taskKey: string): { value: unknown } | null {
+    const row = this.consoleDetailPrepare("SELECT view_json FROM console_agent WHERE task_key = ?").get(taskKey) as
       | { view_json: string }
       | undefined;
     return row ? { value: JSON.parse(row.view_json) as unknown } : null;
   }
 
-  private writeP108AgentRow(taskKey: string, value: unknown, cursor: CommitCursor): void {
-    this.p108LaneBPrepare(
+  private writeConsoleAgentRow(taskKey: string, value: unknown, cursor: CommitCursor): void {
+    this.consoleDetailPrepare(
       "INSERT INTO console_agent (task_key, view_json, source_cursor) VALUES (?, ?, ?) " +
         "ON CONFLICT(task_key) DO UPDATE SET view_json = excluded.view_json, source_cursor = excluded.source_cursor",
     ).run(taskKey, JSON.stringify(value), cursor);
   }
 
-  private readP108Evidence(taskKey: string): {
+  private readConsoleEvidence(taskKey: string): {
     projectId: string;
     workspaceId: string;
     goalId: string;
@@ -3878,46 +3497,46 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     sourceCursor: CommitCursor;
     updatedAt: string | null;
   } | null {
-    const row = this.p108LaneBPrepare("SELECT view_json FROM console_evidence WHERE task_key = ?").get(taskKey) as
+    const row = this.consoleDetailPrepare("SELECT view_json FROM console_evidence WHERE task_key = ?").get(taskKey) as
       | { view_json: string }
       | undefined;
     return row ? (JSON.parse(row.view_json) as never) : null;
   }
 
-  private writeP108Evidence(taskKey: string, value: unknown, cursor: CommitCursor): void {
-    this.p108LaneBPrepare(
+  private writeConsoleEvidence(taskKey: string, value: unknown, cursor: CommitCursor): void {
+    this.consoleDetailPrepare(
       "INSERT INTO console_evidence (task_key, view_json, source_cursor) VALUES (?, ?, ?) " +
         "ON CONFLICT(task_key) DO UPDATE SET view_json = excluded.view_json, source_cursor = excluded.source_cursor",
     ).run(taskKey, JSON.stringify(value), cursor);
   }
 
-  private readP108Timeline(workspaceKey: string): {
+  private readConsoleTimeline(workspaceKey: string): {
     entries: import("../../contracts/console-views.js").TimelineEntry[];
     total: number;
     updatedAt: string | null;
   } | null {
-    const row = this.p108LaneBPrepare("SELECT view_json FROM console_timeline WHERE scope_key = ?").get(workspaceKey) as
+    const row = this.consoleDetailPrepare("SELECT view_json FROM console_timeline WHERE scope_key = ?").get(workspaceKey) as
       | { view_json: string }
       | undefined;
     return row ? (JSON.parse(row.view_json) as never) : null;
   }
 
-  private writeP108Timeline(workspaceKey: string, value: unknown, cursor: CommitCursor): void {
-    this.p108LaneBPrepare(
+  private writeConsoleTimeline(workspaceKey: string, value: unknown, cursor: CommitCursor): void {
+    this.consoleDetailPrepare(
       "INSERT INTO console_timeline (scope_key, view_json, source_cursor) VALUES (?, ?, ?) " +
         "ON CONFLICT(scope_key) DO UPDATE SET view_json = excluded.view_json, source_cursor = excluded.source_cursor",
     ).run(workspaceKey, JSON.stringify(value), cursor);
   }
 
   /** Helper: active-agent storage key (full-scope task key + runId). */
-  private p108AgentStorageKey(projectId: string, workspaceId: string, goalId: string, taskId: string, runId: string): string {
+  private consoleAgentStorageKey(projectId: string, workspaceId: string, goalId: string, taskId: string, runId: string): string {
     return consoleTaskKey(projectId, workspaceId, goalId, taskId) + "\u0000" + runId;
   }
 
   /** Helper: next workspace agent arrival seq = max existing run-row seq + 1 (persisted). */
-  private p108NextAgentSeq(projectId: string, workspaceId: string): number {
+  private consoleNextAgentSeq(projectId: string, workspaceId: string): number {
     let max = 0;
-    for (const r of this.scanP108Agent()) {
+    for (const r of this.scanConsoleAgentRows()) {
       const v = r.value as { seq?: number; row?: import("../../contracts/console-views.js").ActiveAgentRunRow };
       if (v.row !== undefined && v.row.projectId === projectId && v.row.workspaceId === workspaceId && typeof v.seq === "number" && v.seq > max) {
         max = v.seq;
@@ -3927,30 +3546,30 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   }
 
   /** Helper: write a run row, preserving its stored arrival seq when it already exists. */
-  private p108WriteAgentRun(
+  private consoleWriteAgentRun(
     storageKey: string,
     projectId: string,
     workspaceId: string,
     row: import("../../contracts/console-views.js").ActiveAgentRunRow,
     cursor: CommitCursor,
   ): void {
-    const existing = this.readP108AgentRow(storageKey);
-    const seq = existing ? ((existing.value as { seq?: number }).seq ?? 0) : this.p108NextAgentSeq(projectId, workspaceId);
-    this.writeP108AgentRow(storageKey, { seq, row }, cursor);
+    const existing = this.readConsoleAgentRow(storageKey);
+    const seq = existing ? ((existing.value as { seq?: number }).seq ?? 0) : this.consoleNextAgentSeq(projectId, workspaceId);
+    this.writeConsoleAgentRow(storageKey, { seq, row }, cursor);
   }
 
   /** Helper: write a task handoff marker row. */
-  private p108WriteAgentMarker(
+  private consoleWriteAgentMarker(
     taskKey: string,
     handoff: import("../../contracts/console-views.js").ActiveAgentRunRow["handoff"],
     cursor: CommitCursor,
   ): void {
-    this.writeP108AgentRow(taskKey + "\u0000@marker", { __marker: handoff }, cursor);
+    this.writeConsoleAgentRow(taskKey + "\u0000@marker", { __marker: handoff }, cursor);
   }
 
   /** Helper: locate a run row by (projectId, workspaceId, runId) — events carry only runId. */
-  private p108ReadAgentRowForRun(event: { projectId: string; workspaceId: string; aggregateId: string }): import("../../contracts/console-views.js").ActiveAgentRunRow | null {
-    for (const r of this.scanP108Agent()) {
+  private consoleReadAgentRowForRun(event: { projectId: string; workspaceId: string; aggregateId: string }): import("../../contracts/console-views.js").ActiveAgentRunRow | null {
+    for (const r of this.scanConsoleAgentRows()) {
       const v = r.value as { row?: import("../../contracts/console-views.js").ActiveAgentRunRow };
       if (
         v.row !== undefined &&
@@ -3965,7 +3584,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   }
 
   /** Helper: append one bounded workspace timeline entry (drop oldest beyond the bound). */
-  private p108AppendTimeline(
+  private consoleAppendTimeline(
     event: { eventId: string; occurredAt: string; projectId: string; workspaceId: string },
     cursor: CommitCursor,
     kind: import("../../contracts/console-views.js").TimelineEntryKind,
@@ -3973,7 +3592,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     summary: string,
   ): void {
     const workspaceKey = consoleWorkspaceKey(event.projectId, event.workspaceId);
-    const stored = this.readP108Timeline(workspaceKey);
+    const stored = this.readConsoleTimeline(workspaceKey);
     const entries = stored ? stored.entries : [];
     const total = stored ? stored.total : 0;
     const seq = total + 1;
@@ -3990,148 +3609,92 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     if (entries.length > CONSOLE_TIMELINE_MAX_ENTRIES) {
       entries.splice(0, entries.length - CONSOLE_TIMELINE_MAX_ENTRIES);
     }
-    this.writeP108Timeline(workspaceKey, { entries, total: total + 1, updatedAt: event.occurredAt }, cursor);
+    this.writeConsoleTimeline(workspaceKey, { entries, total: total + 1, updatedAt: event.occurredAt }, cursor);
   }
 
-  /** Helper: display state of a terminal runtime event type (never inferred). */
-  private p108TerminalDisplayState(eventType: string): import("../../contracts/console-views.js").RunDisplayState {
-    switch (eventType) {
-      case "run_completed": return "completed_run";
-      case "run_crashed": return "crashed";
-      case "run_cancelled": return "cancelled";
-      case "run_budget_exhausted": return "budget_exhausted";
-      default: return "ongoing";
-    }
-  }
-
-  /** Helper: build a PlanMatrixView from an accepted plan snapshot. */
-  private p108BuildMatrix(
-    projectId: string,
-    workspaceId: string,
-    goalId: string,
-    snapshot: PlanRevisionSnapshot,
-    cursor: CommitCursor,
-    updatedAt: string,
-  ): import("../../contracts/console-views.js").PlanMatrixView {
-    const stages = snapshot.stages;
-    const stageTitleOf = (stageId: string | undefined): string | null =>
-      stageId === undefined ? null : (stages.find((s) => s.stageId === stageId)?.title ?? null);
-    const rows: import("../../contracts/console-views.js").PlanMatrixRow[] =
-      snapshot.tasks.slice(0, CONSOLE_MATRIX_MAX_TASKS).map((task) => ({
-        taskId: task.taskId,
-        title: task.title,
-        stageId: task.stageId ?? null,
-        stageTitle: stageTitleOf(task.stageId),
-        requirementLevel: task.requirementLevel,
-        taskKind: task.taskKind,
-        disposition: task.disposition,
-        taskScope: task.scope,
-        plannedPhase: task.phase,
-        livePhase: null,
-        phaseSources: {
-          planned: { planRef: snapshot.ref, planRevision: snapshot.planRevision, sourceCursor: cursor },
-          live: { reductionRevision: null, sourceCursor: null },
-        },
-        phaseMismatch: false,
-        sourceCursor: cursor,
-      }));
-    return {
-      projectId,
-      workspaceId,
-      goalId,
-      planRef: snapshot.ref,
-      planRevision: snapshot.planRevision,
-      stages,
-      rows,
-      taskCount: snapshot.tasks.length,
-      sourceCursor: cursor,
-      updatedAt,
-    };
-  }
-
-  /** P1-08 LANE-B hook (PlanMatrix + ActiveAgents + TaskEvidence + Timeline). */
-  private applyP108ConsoleLaneB(event: DomainEvent, cursor: CommitCursor): void {
+  /** Console detail-view projection hook (PlanMatrix + ActiveAgents + TaskEvidence + Timeline). */
+  private applyConsoleDetails(event: DomainEvent, cursor: CommitCursor): void {
     switch (event.eventType) {
       case 'ReviewWorkCreated':
       case 'FailedReviewWorkReplaced':
-        this.p108ApplyReviewWorkCreated(event, cursor);
+        this.consoleApplyReviewWorkCreated(event, cursor);
         break;
       case "GoalCreated":
-        this.p108AppendTimeline(event, cursor, "goal_created", { goalId: event.aggregateId }, "goal " + event.aggregateId + " created");
+        this.consoleAppendTimeline(event, cursor, "goal_created", { goalId: event.aggregateId }, "goal " + event.aggregateId + " created");
         break;
       case "PlanRevisionAccepted":
-        this.p108ApplyPlanRevisionAccepted(event, cursor);
+        this.consoleApplyPlanRevisionAccepted(event, cursor);
         break;
       case "TaskClaimed":
-        this.p108ApplyTaskClaimed(event, cursor);
+        this.consoleApplyTaskClaimed(event, cursor);
         break;
       case "RunStarted":
-        this.p108ApplyRunStarted(event, cursor);
+        this.consoleApplyRunStarted(event, cursor);
         break;
       case "RunEventRecorded":
-        this.p108ApplyRunEventRecorded(event, cursor);
+        this.consoleApplyRunEventRecorded(event, cursor);
         break;
       case 'ExecutionRetryScheduled':
-        this.p108ApplyExecutionRetry(event, cursor);
+        this.consoleApplyExecutionRetry(event, cursor);
         break;
       case 'RunReconciled': {
         const proof = event.payload.run.reconciliation?.observation;
-        if (proof?.kind === 'runtime_terminal') this.p108ApplyRunEventRecorded({ ...event, eventType: 'RunEventRecorded',
+        if (proof?.kind === 'runtime_terminal') this.consoleApplyRunEventRecorded({ ...event, eventType: 'RunEventRecorded',
           payload: { taskId: event.payload.run.task.taskId, runtimeEvent: proof.event } }, cursor);
         break;
       }
       case "RunOutcomeUnknown":
-        this.p108ApplyRunOutcomeUnknown(event, cursor);
+        this.consoleApplyRunOutcomeUnknown(event, cursor);
         break;
       case "EvidenceAdmitted":
-        this.p108ApplyEvidenceAdmitted(event, cursor);
+        this.consoleApplyEvidenceAdmitted(event, cursor);
         break;
       case "TaskReductionUpdated":
-        this.p108ApplyTaskReductionUpdated(event, cursor);
+        this.consoleApplyTaskReductionUpdated(event, cursor);
         break;
       case "GoalPhaseUpdated":
-        this.p108AppendTimeline(event, cursor, "goal_phase", { goalId: event.payload.goalId },
+        this.consoleAppendTimeline(event, cursor, "goal_phase", { goalId: event.payload.goalId },
           "goal " + event.payload.goalId + " phase " + event.payload.phase);
         break;
       case "HandoffRecorded":
-        this.p108AppendTimeline(event, cursor, "handoff_recorded",
+        this.consoleAppendTimeline(event, cursor, "handoff_recorded",
           { goalId: event.payload.goalId, taskId: event.payload.taskId, packetId: event.payload.packet.packetId },
           "handoff packet " + event.payload.packet.packetId + " recorded");
         break;
       case "ReplacementClaimed":
-        this.p108ApplyReplacementClaimed(event, cursor);
+        this.consoleApplyReplacementClaimed(event, cursor);
         break;
       default:
         break;
     }
   }
 
-  /** LANE-B: PlanRevisionAccepted -> matrix row + timeline plan_accepted. */
-  private p108ApplyPlanRevisionAccepted(event: PlanRevisionAcceptedEvent, cursor: CommitCursor): void {
+  /** detail-view projection: PlanRevisionAccepted -> matrix row + timeline plan_accepted. */
+  private consoleApplyPlanRevisionAccepted(event: PlanRevisionAcceptedEvent, cursor: CommitCursor): void {
     const snapshot = event.payload.planRevision;
     const projectId = event.projectId;
     const workspaceId = event.workspaceId;
     const goalId = event.payload.goalId;
-    const view = this.p108BuildMatrix(projectId, workspaceId, goalId, snapshot, cursor, event.occurredAt);
-    this.writeP108Matrix(consoleGoalKey(projectId, workspaceId, goalId), view, cursor);
-    // RW-09：refs.planId 是条目自己的事实（这条说 accepted 的是哪一份计划），后面的
+    const view = buildPlanMatrixView(projectId, workspaceId, goalId, snapshot, cursor, event.occurredAt);
+    this.writeConsolePlanMatrix(consoleGoalKey(projectId, workspaceId, goalId), view, cursor);
+    // refs.planId 是条目自己的事实（这条说 accepted 的是哪一份计划），后面的
     // GoalRevisionRecorded 用它作为匹配键补变更原因，不靠"最后一条"这类顺序假设。
-    this.p108AppendTimeline(event, cursor, "plan_accepted", { goalId, planId: snapshot.ref.planId },
+    this.consoleAppendTimeline(event, cursor, "plan_accepted", { goalId, planId: snapshot.ref.planId },
       "plan " + snapshot.ref.planId + " revision " + snapshot.planRevision + " accepted");
   }
 
   /**
-   * RW-09：把「这次 revision 为什么发生」补到本次受理的 plan_accepted 时间线条目上。
+   * 计划变更原因：补到本次受理的 plan_accepted 时间线条目上。
    *
    * 与内存实现同一语义（两套读模型必须逐字段一致）：PlanRevisionAccepted 事件本身不带变更原因，
-   * 原因在同一个提交批次的 GoalRevisionRecorded 事件里（RW-05 起逐字落账命令的 changeReason）。
+   * 原因在同一个提交批次的 GoalRevisionRecorded 事件里（该事件逐字落账命令的 changeReason）。
    * 投影按到达顺序折叠，plan_accepted 先到，因此只能事后按同一条 canonical 事实
    * （目标 + 生效计划 id）回头写入——不新造条目、不改写 summary、不解析 id 形状、不推断。
    * 初始计划受理没有 GoalRevisionRecorded，它的条目永远不带 change。
    */
-  private p111AnnotateTimelineChangeReason(projectId: string, workspaceId: string, ev: GoalRevisionRecordedEvent, cursor: import("../../contracts/command-event.js").CommitCursor): void {
+  private planChangeAnnotateTimelineChangeReason(projectId: string, workspaceId: string, ev: GoalRevisionRecordedEvent, cursor: import("../../contracts/command-event.js").CommitCursor): void {
     const workspaceKey = consoleWorkspaceKey(projectId, workspaceId);
-    const stored = this.readP108Timeline(workspaceKey);
+    const stored = this.readConsoleTimeline(workspaceKey);
     if (stored === null) return;
     const change = ev.payload.change;
     // 倒序取最后一条匹配：唯一性由账本 CAS 保证，投影不依赖它。找不到匹配条目时下面的
@@ -4157,26 +3720,26 @@ export class SqliteReadModelIndex implements ReadModelIndex {
         supersededPlanIds: change.supersededPlanRefs.map((ref) => ref.planId),
       },
     };
-    this.writeP108Timeline(workspaceKey, stored, cursor);
+    this.writeConsoleTimeline(workspaceKey, stored, cursor);
   }
 
-  /** LANE-B: TaskClaimed -> create/refresh the active-agent run row (starting). */
-  private p108ApplyReviewWorkCreated(event: import('../../contracts/reviewer-work.js').ReviewWorkCreatedEvent | import('../../contracts/reviewer-work.js').FailedReviewWorkReplacedEvent, cursor: CommitCursor): void {
+  /** detail-view projection: TaskClaimed -> create/refresh the active-agent run row (starting). */
+  private consoleApplyReviewWorkCreated(event: import('../../contracts/reviewer-work.js').ReviewWorkCreatedEvent | import('../../contracts/reviewer-work.js').FailedReviewWorkReplacedEvent, cursor: CommitCursor): void {
     const { work, run, attempt } = event.payload;
     const projectId = event.projectId, workspaceId = event.workspaceId, goalId = work.subject.goalId, taskId = work.subject.taskId;
-    const storageKey = this.p108AgentStorageKey(projectId, workspaceId, goalId, taskId, run.ref.runId);
-    const producer = this.p108ReadAgentRowForRun({ projectId, workspaceId, aggregateId: work.producerRunRef.runId });
+    const storageKey = this.consoleAgentStorageKey(projectId, workspaceId, goalId, taskId, run.ref.runId);
+    const producer = this.consoleReadAgentRowForRun({ projectId, workspaceId, aggregateId: work.producerRunRef.runId });
     if (!producer) throw new ProjectionStallError('unsupported_event_type', { observedCursor: cursor });
     const row: import('../../contracts/console-views.js').ActiveAgentRunRow = { projectId, workspaceId, goalId, taskId, work: { kind: 'review', reviewWorkRef: work.ref }, runRef: run.ref, attemptRef: attempt.ref, binding: work.roleBinding, runStatus: 'starting', runOutcome: null, exitCode: null, lastEventSeq: 0, attemptStatus: 'claimed', attemptEndOutcome: null, lease: { ...producer.lease }, startedAt: null, endedAt: null, displayState: 'starting', handoff: null, sourceCursor: cursor };
-    this.p108WriteAgentRun(storageKey, projectId, workspaceId, row, cursor);
+    this.consoleWriteAgentRun(storageKey, projectId, workspaceId, row, cursor);
   }
-  private p108ApplyTaskClaimed(event: TaskClaimedEvent, cursor: CommitCursor): void {
+  private consoleApplyTaskClaimed(event: TaskClaimedEvent, cursor: CommitCursor): void {
     const projectId = event.projectId;
     const workspaceId = event.workspaceId;
     const { goalId, taskId, runRef, attemptRef, roleBinding, claimedAt } = event.payload;
-    const storageKey = this.p108AgentStorageKey(projectId, workspaceId, goalId, taskId, runRef.runId);
+    const storageKey = this.consoleAgentStorageKey(projectId, workspaceId, goalId, taskId, runRef.runId);
     const taskKey = consoleTaskKey(projectId, workspaceId, goalId, taskId);
-    const markerRow = this.readP108AgentRow(taskKey + "\u0000@marker");
+    const markerRow = this.readConsoleAgentRow(taskKey + "\u0000@marker");
     const marker = markerRow ? ((markerRow.value as { __marker: import("../../contracts/console-views.js").ActiveAgentRunRow["handoff"] }).__marker ?? null) : null;
     const row: import("../../contracts/console-views.js").ActiveAgentRunRow = {
       projectId,
@@ -4199,14 +3762,14 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       handoff: marker,
       sourceCursor: cursor,
     };
-    this.p108WriteAgentRun(storageKey, projectId, workspaceId, row, cursor);
-    this.p108AppendTimeline(event, cursor, "task_claimed", { goalId, taskId, runId: runRef.runId },
+    this.consoleWriteAgentRun(storageKey, projectId, workspaceId, row, cursor);
+    this.consoleAppendTimeline(event, cursor, "task_claimed", { goalId, taskId, runId: runRef.runId },
       "work " + taskId + " claimed (run " + runRef.runId + ")");
   }
 
-  /** LANE-B: RunStarted -> the run row becomes running/ongoing. */
-  private p108ApplyRunStarted(event: RunStartedEvent, cursor: CommitCursor): void {
-    const row = this.p108ReadAgentRowForRun(event);
+  /** detail-view projection: RunStarted -> the run row becomes running/ongoing. */
+  private consoleApplyRunStarted(event: RunStartedEvent, cursor: CommitCursor): void {
+    const row = this.consoleReadAgentRowForRun(event);
     if (!row) return;
     const updated: import("../../contracts/console-views.js").ActiveAgentRunRow = {
       ...row,
@@ -4216,20 +3779,20 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       displayState: "ongoing",
       sourceCursor: cursor,
     };
-    this.p108WriteAgentRun(
-      this.p108AgentStorageKey(row.projectId, row.workspaceId, row.goalId, row.taskId, row.runRef.runId),
+    this.consoleWriteAgentRun(
+      this.consoleAgentStorageKey(row.projectId, row.workspaceId, row.goalId, row.taskId, row.runRef.runId),
       row.projectId,
       row.workspaceId,
       updated,
       cursor,
     );
-    this.p108AppendTimeline(event, cursor, "run_started", { goalId: row.goalId, taskId: row.taskId, runId: row.runRef.runId },
+    this.consoleAppendTimeline(event, cursor, "run_started", { goalId: row.goalId, taskId: row.taskId, runId: row.runRef.runId },
       "run " + row.runRef.runId + " started");
   }
 
-  /** LANE-B: RunEventRecorded -> fold the runtime event into the run row (idempotent on seq). */
-  private p108ApplyRunEventRecorded(event: RunEventRecordedEvent, cursor: CommitCursor): void {
-    const row = this.p108ReadAgentRowForRun(event);
+  /** detail-view projection: RunEventRecorded -> fold the runtime event into the run row (idempotent on seq). */
+  private consoleApplyRunEventRecorded(event: RunEventRecordedEvent, cursor: CommitCursor): void {
+    const row = this.consoleReadAgentRowForRun(event);
     if (!row) return;
     const rt = event.payload.runtimeEvent;
     if (rt.sequence > row.lastEventSeq) {
@@ -4246,28 +3809,28 @@ export class SqliteReadModelIndex implements ReadModelIndex {
         endedAt,
         attemptStatus: terminal ? "ended" : row.attemptStatus,
         attemptEndOutcome: terminal ? outcome : row.attemptEndOutcome,
-        displayState: terminal ? this.p108TerminalDisplayState(rt.eventType) : "ongoing",
+        displayState: terminal ? runDisplayStateForEvent(rt.eventType) : "ongoing",
         sourceCursor: cursor,
       };
-      const storageKey = this.p108AgentStorageKey(row.projectId, row.workspaceId, row.goalId, row.taskId, row.runRef.runId);
-      this.p108WriteAgentRun(storageKey, row.projectId, row.workspaceId, updated, cursor);
+      const storageKey = this.consoleAgentStorageKey(row.projectId, row.workspaceId, row.goalId, row.taskId, row.runRef.runId);
+      this.consoleWriteAgentRun(storageKey, row.projectId, row.workspaceId, updated, cursor);
     }
-    this.p108AppendTimeline(event, cursor, "run_event", { goalId: row.goalId, taskId: row.taskId, runId: row.runRef.runId },
+    this.consoleAppendTimeline(event, cursor, "run_event", { goalId: row.goalId, taskId: row.taskId, runId: row.runRef.runId },
       "run " + row.runRef.runId + " " + rt.eventType);
   }
 
-  /** LANE-B: RunOutcomeUnknown -> explicit ended/outcome_unknown fact (never inferred). */
-  private p108ApplyExecutionRetry(event: import('../../contracts/dispatch.js').ExecutionRetryScheduledEvent, cursor: CommitCursor): void {
-    const row = this.p108ReadAgentRowForRun(event);
+  /** detail-view projection: RunOutcomeUnknown -> explicit ended/outcome_unknown fact (never inferred). */
+  private consoleApplyExecutionRetry(event: import('../../contracts/dispatch.js').ExecutionRetryScheduledEvent, cursor: CommitCursor): void {
+    const row = this.consoleReadAgentRowForRun(event);
     if (!row) return;
     const updated: import('../../contracts/console-views.js').ActiveAgentRunRow = { ...row, runStatus: 'starting', runOutcome: null,
       startedAt: null, endedAt: null, attemptStatus: 'claimed', attemptEndOutcome: null, displayState: 'starting', sourceCursor: cursor };
-    const storageKey = this.p108AgentStorageKey(row.projectId, row.workspaceId, row.goalId, row.taskId, row.runRef.runId);
-    this.p108WriteAgentRun(storageKey, row.projectId, row.workspaceId, updated, cursor);
+    const storageKey = this.consoleAgentStorageKey(row.projectId, row.workspaceId, row.goalId, row.taskId, row.runRef.runId);
+    this.consoleWriteAgentRun(storageKey, row.projectId, row.workspaceId, updated, cursor);
   }
 
-  private p108ApplyRunOutcomeUnknown(event: RunOutcomeUnknownEvent, cursor: CommitCursor): void {
-    const row = this.p108ReadAgentRowForRun(event);
+  private consoleApplyRunOutcomeUnknown(event: RunOutcomeUnknownEvent, cursor: CommitCursor): void {
+    const row = this.consoleReadAgentRowForRun(event);
     if (!row) return;
     const updated: import("../../contracts/console-views.js").ActiveAgentRunRow = {
       ...row,
@@ -4279,14 +3842,14 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       displayState: "outcome_unknown",
       sourceCursor: cursor,
     };
-    const storageKey = this.p108AgentStorageKey(row.projectId, row.workspaceId, row.goalId, row.taskId, row.runRef.runId);
-    this.p108WriteAgentRun(storageKey, row.projectId, row.workspaceId, updated, cursor);
-    this.p108AppendTimeline(event, cursor, "run_outcome_unknown", { goalId: row.goalId, taskId: row.taskId, runId: row.runRef.runId },
+    const storageKey = this.consoleAgentStorageKey(row.projectId, row.workspaceId, row.goalId, row.taskId, row.runRef.runId);
+    this.consoleWriteAgentRun(storageKey, row.projectId, row.workspaceId, updated, cursor);
+    this.consoleAppendTimeline(event, cursor, "run_outcome_unknown", { goalId: row.goalId, taskId: row.taskId, runId: row.runRef.runId },
       "run " + row.runRef.runId + " outcome unknown");
   }
 
-  /** LANE-B: ReplacementClaimed -> task handoff marker + (absent) replacement run row. */
-  private p108ApplyReplacementClaimed(event: ReplacementClaimedEvent, cursor: CommitCursor): void {
+  /** detail-view projection: ReplacementClaimed -> task handoff marker + (absent) replacement run row. */
+  private consoleApplyReplacementClaimed(event: ReplacementClaimedEvent, cursor: CommitCursor): void {
     const projectId = event.projectId;
     const workspaceId = event.workspaceId;
     const { goalId, taskId, packetRef, priorRunRef, replacementRef, attemptRef, runRef, reason, claimedAt } = event.payload;
@@ -4299,9 +3862,9 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       claimedAt,
       sourceCursor: cursor,
     };
-    this.p108WriteAgentMarker(taskKey, handoff, cursor);
-    const storageKey = this.p108AgentStorageKey(projectId, workspaceId, goalId, taskId, runRef.runId);
-    const existing = this.readP108AgentRow(storageKey);
+    this.consoleWriteAgentMarker(taskKey, handoff, cursor);
+    const storageKey = this.consoleAgentStorageKey(projectId, workspaceId, goalId, taskId, runRef.runId);
+    const existing = this.readConsoleAgentRow(storageKey);
     const row: import("../../contracts/console-views.js").ActiveAgentRunRow = {
       projectId,
       workspaceId,
@@ -4309,7 +3872,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
       taskId,
       runRef,
       attemptRef,
-      binding: LEASE_P1_07_PLACEHOLDER_BINDING,
+      binding: LEASE_VIEW_PLACEHOLDER_BINDING,
       runStatus: "running",
       runOutcome: null,
       exitCode: null,
@@ -4326,21 +3889,21 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     // Reuse the existing arrival seq (idempotent replay); refresh the handoff.
     if (existing) {
       const prev = (existing.value as { row: import("../../contracts/console-views.js").ActiveAgentRunRow }).row;
-      this.p108WriteAgentRun(storageKey, projectId, workspaceId, { ...prev, handoff, sourceCursor: cursor }, cursor);
+      this.consoleWriteAgentRun(storageKey, projectId, workspaceId, { ...prev, handoff, sourceCursor: cursor }, cursor);
     } else {
-      this.p108WriteAgentRun(storageKey, projectId, workspaceId, row, cursor);
+      this.consoleWriteAgentRun(storageKey, projectId, workspaceId, row, cursor);
     }
-    this.p108AppendTimeline(event, cursor, "replacement_claimed", { goalId, taskId, runId: runRef.runId, packetId: packetRef.packetId },
+    this.consoleAppendTimeline(event, cursor, "replacement_claimed", { goalId, taskId, runId: runRef.runId, packetId: packetRef.packetId },
       "replacement claimed (run " + runRef.runId + ")");
   }
 
-  /** LANE-B: EvidenceAdmitted -> append the entry + timeline evidence_admitted. */
-  private p108ApplyEvidenceAdmitted(event: EvidenceAdmittedEvent, cursor: CommitCursor): void {
+  /** detail-view projection: EvidenceAdmitted -> append the entry + timeline evidence_admitted. */
+  private consoleApplyEvidenceAdmitted(event: EvidenceAdmittedEvent, cursor: CommitCursor): void {
     const projectId = event.projectId;
     const workspaceId = event.workspaceId;
     const { goalId, taskId, evidence, admittedAt, evidenceIndex } = event.payload;
     const taskKey = consoleTaskKey(projectId, workspaceId, goalId, taskId);
-    let proj = this.readP108Evidence(taskKey);
+    let proj = this.readConsoleEvidence(taskKey);
     if (!proj) {
       const snapshot = this.readPlanSnapshot(projectId, goalId);
       proj = {
@@ -4360,22 +3923,22 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     proj.evidence.push({ evidence, admittedAt, evidenceIndex, sourceCursor: cursor });
     proj.sourceCursor = cursor;
     proj.updatedAt = event.occurredAt;
-    this.writeP108Evidence(taskKey, proj, cursor);
-    this.p108AppendTimeline(event, cursor, "evidence_admitted", { goalId, taskId, evidenceId: evidence.evidenceId },
+    this.writeConsoleEvidence(taskKey, proj, cursor);
+    this.consoleAppendTimeline(event, cursor, "evidence_admitted", { goalId, taskId, evidenceId: evidence.evidenceId },
       "evidence " + evidence.evidenceId + " admitted " + evidence.outcome);
   }
 
-  /** LANE-B: TaskReductionUpdated -> matrix live-phase + evidence reduction + timeline. */
-  private p108ApplyTaskReductionUpdated(event: TaskReductionUpdatedEvent, cursor: CommitCursor): void {
+  /** detail-view projection: TaskReductionUpdated -> matrix live-phase + evidence reduction + timeline. */
+  private consoleApplyTaskReductionUpdated(event: TaskReductionUpdatedEvent, cursor: CommitCursor): void {
     const projectId = event.projectId;
     const workspaceId = event.workspaceId;
     const { goalId, taskId, reduction } = event.payload;
 
     const matrixKey = consoleGoalKey(projectId, workspaceId, goalId);
-    let view = this.readP108Matrix(matrixKey);
+    let view = this.readConsolePlanMatrix(matrixKey);
     if (!view) {
       const snapshot = this.readPlanSnapshot(projectId, goalId);
-      if (snapshot) view = this.p108BuildMatrix(projectId, workspaceId, goalId, snapshot, cursor, event.occurredAt);
+      if (snapshot) view = buildPlanMatrixView(projectId, workspaceId, goalId, snapshot, cursor, event.occurredAt);
     }
     if (view) {
       const rows = view.rows.map((row) => {
@@ -4389,11 +3952,11 @@ export class SqliteReadModelIndex implements ReadModelIndex {
           sourceCursor: cursor,
         };
       });
-      this.writeP108Matrix(matrixKey, { ...view, rows, sourceCursor: cursor, updatedAt: event.occurredAt }, cursor);
+      this.writeConsolePlanMatrix(matrixKey, { ...view, rows, sourceCursor: cursor, updatedAt: event.occurredAt }, cursor);
     }
 
     const taskKey = consoleTaskKey(projectId, workspaceId, goalId, taskId);
-    let proj = this.readP108Evidence(taskKey);
+    let proj = this.readConsoleEvidence(taskKey);
     if (!proj) {
       const snapshot = this.readPlanSnapshot(projectId, goalId);
       proj = {
@@ -4416,19 +3979,19 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     proj.planRevision = reduction.planRevision;
     proj.sourceCursor = cursor;
     proj.updatedAt = event.occurredAt;
-    this.writeP108Evidence(taskKey, proj, cursor);
+    this.writeConsoleEvidence(taskKey, proj, cursor);
 
-    this.p108AppendTimeline(event, cursor, "task_reduction", { goalId, taskId },
+    this.consoleAppendTimeline(event, cursor, "task_reduction", { goalId, taskId },
       "task " + taskId + " reduced to " + reduction.phase);
   }
 
-  /** P1-08 LANE-A: portfolio of bootstrapped Project/Workspace scopes
+  /** Console overview projection: portfolio of bootstrapped Project/Workspace scopes
    * (all rows read from console_portfolio, ordered by scope_key). */
   async consolePortfolio(query: PortfolioViewQuery): Promise<PortfolioViewResult> {
     this.assertOpen();
     const observedCursor = this.readCheckpoint();
     const maxProjects = CONSOLE_PORTFOLIO_MAX_PROJECTS;
-    const rows = this.p108SelectAll(SqliteReadModelIndex.P108_TABLES.portfolio);
+    const rows = this.consoleSelectAll(SqliteReadModelIndex.CONSOLE_TABLES.portfolio);
     const entries = rows
       .map((row) => JSON.parse(row.entry_json) as import("../../contracts/console-views.js").PortfolioEntry)
       .slice(0, maxProjects);
@@ -4438,7 +4001,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
         if (entries.length > 0) {
           return {
             status: "ready",
-            portfolio: this.p108BuildPortfolio(entries, observedCursor!),
+            portfolio: buildPortfolioView(entries, observedCursor!),
             observedCursor: observedCursor!,
           };
         }
@@ -4452,18 +4015,18 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     if (entries.length > 0) {
       return {
         status: "ready",
-        portfolio: this.p108BuildPortfolio(entries, observedCursor!),
+        portfolio: buildPortfolioView(entries, observedCursor!),
         observedCursor: observedCursor!,
       };
     }
     return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** P1-08 LANE-A: workspace-level summary per full-scope key. */
+  /** Console overview projection: workspace-level summary per full-scope key. */
   async consoleSummary(query: WorkspaceSummaryViewQuery): Promise<WorkspaceSummaryViewResult> {
     this.assertOpen();
     const observedCursor = this.readCheckpoint();
-    const row = this.p108ReadSummaryRow(consoleWorkspaceKey(query.projectId, query.workspaceId));
+    const row = this.consoleReadSummaryRow(consoleWorkspaceKey(query.projectId, query.workspaceId));
 
     if (query.atLeastCursor !== undefined) {
       if (this.isCovered(observedCursor, query.atLeastCursor)) {
@@ -4479,51 +4042,8 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** Build the bounded PortfolioView (entries in scope-key deterministic order;
-   * sourceCursor = the global observed anchor; updatedAt = latest bootstrap). */
-  private p108BuildPortfolio(
-    entries: import("../../contracts/console-views.js").PortfolioEntry[],
-    sourceCursor: CommitCursor,
-  ): import("../../contracts/console-views.js").PortfolioView {
-    let updatedAt: string | null = null;
-    for (const e of entries) {
-      if (updatedAt === null || e.bootstrappedAt > updatedAt) updatedAt = e.bootstrappedAt;
-    }
-    return {
-      entries: entries.map((e) => ({ ...e })),
-      sourceCursor,
-      updatedAt,
-    };
-  }
-
-  /** Map a projected evidence entry to its task-evidence display entry. */
-  private p108ToTaskEvidenceEntry(
-    pe: { evidence: EvidenceV1; admittedAt: string; evidenceIndex: number; sourceCursor: CommitCursor },
-    applicability: EvidenceApplicability | null,
-  ): import("../../contracts/console-views.js").TaskEvidenceEntry {
-    const e = pe.evidence;
-    const marker: import("../../contracts/console-views.js").EvidenceFormalMarker =
-      e.kind === "claim" || e.kind === "verdict" ? "unverified_report" : "observed_fact";
-    return {
-      evidenceId: e.evidenceId,
-      kind: e.kind,
-      marker,
-      outcome: e.outcome,
-      coverage: e.coverage.map((c) => ({ ...c })),
-      applicability,
-      anchor: { ...e.anchor },
-      sourceRunRef: e.source.runRef,
-      checkId: e.source.checkId,
-      artifactRef: e.summary.artifactRef,
-      summary: e.summary.text,
-      admittedAt: pe.admittedAt,
-      evidenceIndex: pe.evidenceIndex,
-      sourceCursor: pe.sourceCursor,
-    };
-  }
-
   /** Build the TaskEvidenceView from the projected row (query-time pure derivation). */
-  private p108BuildEvidenceView(proj: {
+  private consoleBuildEvidenceView(proj: {
     projectId: string;
     workspaceId: string;
     goalId: string;
@@ -4543,7 +4063,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     const currentAnchor = proj.reduction ? proj.reduction.currentAnchor : null;
     const sorted = [...proj.evidence].sort((a, b) => a.evidenceIndex - b.evidenceIndex);
     const explanation = this.policyExplanation.explainEvidence({ evidence: sorted.map(pe => pe.evidence), plan: planSnapshot, currentAnchor, review: reviewProjectionFacts(this.reviewRecords()) });
-    const evidence = sorted.map((pe, index) => this.p108ToTaskEvidenceEntry(pe, explanation.bindings[index]!.applicability));
+    const evidence = sorted.map((pe, index) => toTaskEvidenceEntry(pe, explanation.bindings[index]!.applicability));
     const { effectiveEvidenceIds, blockingEvidenceIds } = explanation;
     const reduction = proj.reduction === null
       ? null
@@ -4583,11 +4103,11 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     };
   }
 
-  /** P1-08 LANE-B: plan matrix (key = consoleGoalKey; freshness mirrors goal()). */
+  /** Console detail-view projection: plan matrix (key = consoleGoalKey; freshness mirrors goal()). */
   async consolePlanMatrix(query: PlanMatrixViewQuery): Promise<PlanMatrixViewResult> {
     this.assertOpen();
     const observedCursor = this.readCheckpoint();
-    const row = this.readP108Matrix(consoleGoalKey(query.projectId, query.workspaceId, query.goalId));
+    const row = this.readConsolePlanMatrix(consoleGoalKey(query.projectId, query.workspaceId, query.goalId));
     if (query.atLeastCursor !== undefined) {
       if (this.isCovered(observedCursor, query.atLeastCursor)) {
         if (row) return { status: "ready", matrix: row, observedCursor: observedCursor! };
@@ -4599,11 +4119,11 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** P1-08 LANE-B: active agents (per workspace; optional goalId filter; bounded). */
+  /** Console detail-view projection: active agents (per workspace; optional goalId filter; bounded). */
   async consoleActiveAgents(query: ActiveAgentsViewQuery): Promise<ActiveAgentsViewResult> {
     this.assertOpen();
     const observedCursor = this.readCheckpoint();
-    const scanned = this.scanP108Agent();
+    const scanned = this.scanConsoleAgentRows();
     const runEntries: [import("../../contracts/console-views.js").ActiveAgentRunRow, number][] = [];
     const markersByTask = new Map<string, import("../../contracts/console-views.js").ActiveAgentRunRow["handoff"]>();
     for (const r of scanned) {
@@ -4652,30 +4172,30 @@ export class SqliteReadModelIndex implements ReadModelIndex {
     return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** P1-08 LANE-B: task evidence (key = consoleTaskKey; freshness mirrors goal()). */
+  /** Console detail-view projection: task evidence (key = consoleTaskKey; freshness mirrors goal()). */
   async consoleTaskEvidence(query: TaskEvidenceViewQuery): Promise<TaskEvidenceViewResult> {
     this.assertOpen();
     const observedCursor = this.readCheckpoint();
-    const proj = this.readP108Evidence(
+    const proj = this.readConsoleEvidence(
       consoleTaskKey(query.projectId, query.workspaceId, query.goalId, query.taskId),
     );
     if (query.atLeastCursor !== undefined) {
       if (this.isCovered(observedCursor, query.atLeastCursor)) {
-        if (proj) return { status: "ready", evidence: this.p108BuildEvidenceView(proj), observedCursor: observedCursor! };
+        if (proj) return { status: "ready", evidence: this.consoleBuildEvidenceView(proj), observedCursor: observedCursor! };
         return { status: "not_found", observedCursor };
       }
       return { status: "not_ready", requiredCursor: query.atLeastCursor, observedCursor };
     }
-    if (proj) return { status: "ready", evidence: this.p108BuildEvidenceView(proj), observedCursor: observedCursor! };
+    if (proj) return { status: "ready", evidence: this.consoleBuildEvidenceView(proj), observedCursor: observedCursor! };
     return { status: "not_ready", requiredCursor: observedCursor ?? makeCommitCursor(1), observedCursor };
   }
 
-  /** P1-08 LANE-B: workspace timeline (per workspace; optional goalId filter; bounded). */
+  /** Console detail-view projection: workspace timeline (per workspace; optional goalId filter; bounded). */
   async consoleTimeline(query: TimelineViewQuery): Promise<TimelineViewResult> {
     this.assertOpen();
     const observedCursor = this.readCheckpoint();
     const workspaceKey = consoleWorkspaceKey(query.projectId, query.workspaceId);
-    const stored = this.readP108Timeline(workspaceKey);
+    const stored = this.readConsoleTimeline(workspaceKey);
     const entries = stored ? stored.entries : [];
     const hasRow = stored !== null && (stored.total > 0 || entries.length > 0);
     const filtered = query.goalId === undefined ? entries : entries.filter((e) => e.refs.goalId === query.goalId);

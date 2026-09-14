@@ -6,11 +6,11 @@
 | --- | --- | --- | --- |
 | 1A A01–A12 | CM-1A-001；实施 /root，独立验收 gate_a_independent | snap-04独立验收PASS | 1241文件，f930c3efb08d9d665117ddbc974f406a09e7d98efc2f24563ef3a78f709e4a81；最终315文件/2113例通过；逐项边界见 ../CM-1A-001/implementation/CM1A-001-snap-04/coverage.md |
 | 1B B01–B05 | CM-1B-001；/root | snap-01已独立通过 Gate B，R-17 | 1270文件，ba2841a9f018b2c3a22cd2d87eb40ae71a06e7eb0ba27e37121b9b24116d1eea；61定向例、3浏览器例、真实DeepSeek六次及Herdr六次回应；全量322文件2156例通过，独立B01–B05 PASS |
-| 1C C01–C04 | CM-1C-001；/root | 实施中，未冻结、未验收 | 四种决定、全部受影响Work回流、采用/失败展示 |
-| M01–M06 | CM-M06-001 snap-01 独立PASS，其余按依赖制票；/root | M06已验收，M01–M05待推进 | app生产并行、Query、Reviewer/Handoff、规划/Rework、队列退出/恢复、any-wait/有限重放/可观察性 |
+| 1C C01–C04 | CM-1C-001；/root | snap-02 独立 C01–C04 PASS，R-21 | 1289 文件/cf2c775c…bcc95；78 定向＋30 独立＋4 浏览器通过；旧全量唯一权限失败修复，新冻结差异复验；精确决定、完整 Work 回流、采用/失败展示 |
+| M01–M06 | CM-M06-001 snap-01 独立PASS，M01–M05 snap-03 独立PASS；/root | M06已验收，M01–M05 snap-03独立逐项PASS（R-26） | app生产并行、Query、Reviewer/Handoff、规划/Rework、队列退出/恢复、any-wait/有限重放/可观察性 |
 | I01–I04 | 后续集成票；/root | 未实施 | 同一场景、跨入口/旧库、稳定快照全量/浏览器/实模型、整批独立验收 |
 
-1A已补齐实施侧A08/A10、provider请求许可、持续路由等先前缺口；独立A01–A12 PASS已返回并按release-log R-15接纳。Gate A成立，M06 snap-01 独立PASS已按R-16接纳，1B继续实施；旧PASS不延伸到当前修改。
+1A已补齐实施侧A08/A10、provider请求许可、持续路由等先前缺口；独立A01–A12 PASS已返回并按release-log R-15接纳。Gate A成立，M06 snap-01 独立PASS已按R-16接纳，Gate B/C亦已分别独立接纳；旧PASS不延伸到新修改。
 
 ## 全部要求的责任去向
 
@@ -32,4 +32,4 @@
 | V21 | B02/I01跨项目用户偏好、项目隔离/授权复制 |
 | V22 | B01/B05/I04固定版本、许可、实际适配/失败用例 |
 
-snap-04冻结验收已结束；M06当前集中实施与定向验证，尚未冻结。缺陷由唯一owner集中修复，新快照按影响重验。后续未生成票不等于延期或N/A。
+A/M06/B/C冻结验收均已结束，M01–M05亦已接纳，整批尚余I01–I04。缺陷由唯一owner集中修复，新快照按影响重验。后续未生成票不等于延期或N/A。

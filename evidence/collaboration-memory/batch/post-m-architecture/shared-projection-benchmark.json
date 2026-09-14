@@ -1,0 +1,18 @@
+{
+  "fixture": {
+    "iterations": 2000,
+    "tasksPerPlan": 512
+  },
+  "beforeDuplicatedCalculation": {
+    "elapsedMs": 37.510315999999875,
+    "operationsPerSecond": 53319,
+    "heapDeltaBytes": 3481824
+  },
+  "afterSharedCalculation": {
+    "elapsedMs": 39.42693300000019,
+    "operationsPerSecond": 50727,
+    "heapDeltaBytes": 1817056
+  },
+  "storageReadsInsideSharedRules": 0,
+  "note": "Heap deltas include runtime GC noise. SQLite selection, indexes and transactions remain in SqliteReadModelIndex; this measures only deterministic calculation."
+}

@@ -1,8 +1,8 @@
 /**
- * RW-12 契约扩展：派发时编译进 ContextBundle 的**工作身份与历史材料**节。
+ * Runtime Context 材料契约：派发时编译进 ContextBundle 的**工作身份与历史材料**节。
  *
- * 权威：ADR 0003 D4（真实 Run 的工作身份由 DispatchEngine 在 claim 时建立；历史材料在派发时
- * 编译进既有 ContextBundle，选材理由与缺口写入 manifest）、ARCHITECTURE「Context 生命周期与编排」、
+ * 权威：真实 Run 的工作身份由 DispatchEngine 在 claim 时建立；历史材料在派发时
+ * 编译进既有 ContextBundle，选材理由与缺口写入 manifest。参见 ARCHITECTURE「Context 生命周期与编排」、
  * human/context-management.md「材料由谁管理」。
  *
  * 边界（结构性约束，不只是注释）：
@@ -111,7 +111,7 @@ export type RuntimeRoleMaterialsV1 = {
 };
 
 /**
- * 本 Run **被受理固定的** Delivery 只读来源（CM-1A-001 第 3 工作段，A06 的输入面）。
+ * 本 Run **被受理固定的** Delivery 只读来源（协作通信输入面）。
  *
  * 为什么必须按 **Run**（而不是按 Work）读：后继 Run 的必需输入是**这次接续固定下来的那几条**
  * Delivery（CommunicationAdmission.deliveryRefs），不是"该 Work 当前邮箱里全部带正文的投递"。
@@ -138,10 +138,10 @@ export interface AdmittedDeliveryReadPort {
 }
 
 export type RuntimeContextMaterials = {
-  /** Ephemeral verifier over the frozen selection. Never persisted in a manifest
+  /** Ephemeral verifier over the versioned selection. Never persisted in a manifest
    * or used to select replacement material during a Run. */
   assertCurrent?: () => Promise<void>;
-  /** Grants issued by the Host for this frozen Delivery selection. */
+  /** Grants issued by the Host for this versioned Delivery selection. */
   deliveryGrantRefs?: import("./material-access.js").MaterialAccessGrantRef[];
   schemaVersion: 1;
   scope: RuntimeContextScope;
@@ -163,7 +163,7 @@ export type RuntimeContextMaterials = {
   /** 按角色规格的必读材料类别选出的材料（contract／code／evidence／history／decision）。
    *  history 走既有 workContext.history 通道；本节的条目同样只有"参考"资格。缺项一律进 gaps。 */
   roleMaterials?: RuntimeRoleMaterialsV1;
-  /** RW-12/本 Run 绑定到的角色规格（必读材料与必产出的审计记录）。
+  /** /本 Run 绑定到的角色规格（必读材料与必产出的审计记录）。
    *  必读材料里本入口不拥有的类别不会走到这里（那时派发入口已经 fail-closed），
    *  必产出是否完备则由 VerificationEngine 的轮次核对，本记录不表示任何已完成状态。 */
   roleSpec?: RuntimeRoleSpecMaterials;

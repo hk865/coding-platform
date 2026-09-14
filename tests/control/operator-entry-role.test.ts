@@ -35,7 +35,7 @@ import { buildPlanLedgerCommit } from '../../src/control/control-engine/records/
 import { buildApplyPlanCommand } from '../../src/fixtures/plan-fixtures.js';
 import { runRefFor, type RunSnapshot } from '../../src/contracts/dispatch.js';
 import { ROLE_SPEC_REVISION } from '../../src/contracts/role-spec.js';
-import { P15_COORDINATION_POLICY_REVISION } from '../../src/contracts/human-role-collaboration.js';
+import { COORDINATION_POLICY_REVISION_V1 } from '../../src/contracts/human-role-collaboration.js';
 import {
   ROLE_SOURCE_EXECUTOR,
   ROLE_SOURCE_INVESTIGATOR,
@@ -335,7 +335,7 @@ for (const backend of backends) {
       // 来源与 pin 被签发方原样交出：revision 用 pin 的十进制 revision，摘要可从绑定本身复核。
       expect(issued.source).toBe('matrix');
       expect(issued.matrixPin).toEqual({
-        policyId: 'rw18-issue-matrix', contentRevision: P15_COORDINATION_POLICY_REVISION, ref: pin.ref, digest: pin.digest,
+        policyId: 'rw18-issue-matrix', contentRevision: COORDINATION_POLICY_REVISION_V1, ref: pin.ref, digest: pin.digest,
       });
       expect(issued.roleBinding).toMatchObject({ templateId: pin.ref.roleId, templateRevision: String(pin.ref.revision), bindingVersion: 1 });
       expect(issued.roleBinding.policyRevision).toContain(pin.digest.slice(0, 16));

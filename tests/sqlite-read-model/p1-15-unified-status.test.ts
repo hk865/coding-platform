@@ -15,7 +15,7 @@ import { makeCommitCursor, type EventPage, type PositionedEvent } from "../../sr
 import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import { canonicalJson } from "../../src/contracts/fingerprint.js";
 import { P115_PROJECT, P115_WORKSPACE, P115_DESIGN, P115_DECISION, P115_POLICY, p115DesignRef, p115DecisionRef, p115PolicyRef, p115PolicyActiveRef, buildP115Proposal, buildP115Decision, buildP115ProposalCommand, buildP115DecisionCommand, buildP115InstallCommand, buildP115ActivateCommand } from "../contract-support/fixtures/human-role-collaboration-fixtures.js";
-import { buildP115ProposalFold, buildP115DecisionFold, buildP115PolicyInstallFold, buildP115PolicyActivateFold } from "../../src/control/control-engine/records/human-role-collaboration.js";
+import { buildInitialDesignProposalRecordCommit, buildInitialDesignDecisionRecordCommit, buildCoordinationPolicyInstallRecordCommit, buildCoordinationPolicyActivateRecordCommit } from "../../src/control/control-engine/records/human-role-collaboration.js";
 import type { UnifiedStatusViewResult } from "../../src/contracts/human-role-collaboration.js";
 
 const FIXED = FIXED_ISO_2026_09_05;
@@ -29,13 +29,13 @@ function buildP115Page(projectId: string = P115_PROJECT): { page: EventPage } {
   const decision = buildP115Decision(proposal);
 
   const proposalCmd = buildP115ProposalCommand(proposal, { commandId: "p115-cmd-proposal" });
-  const proposalFold = buildP115ProposalFold(proposalCmd, { eventId: "evt-p115-proposal", occurredAt: FIXED });
+  const proposalFold = buildInitialDesignProposalRecordCommit(proposalCmd, { eventId: "evt-p115-proposal", occurredAt: FIXED });
   const decisionCmd = buildP115DecisionCommand(decision, { commandId: "p115-cmd-decision" });
-  const decisionFold = buildP115DecisionFold(decisionCmd, { eventId: "evt-p115-decision", occurredAt: FIXED });
+  const decisionFold = buildInitialDesignDecisionRecordCommit(decisionCmd, { eventId: "evt-p115-decision", occurredAt: FIXED });
   const installCmd = buildP115InstallCommand(projectId, { commandId: "p115-cmd-install-policy" });
-  const installFold = buildP115PolicyInstallFold(installCmd, { eventId: "evt-p115-install", occurredAt: FIXED });
+  const installFold = buildCoordinationPolicyInstallRecordCommit(installCmd, { eventId: "evt-p115-install", occurredAt: FIXED });
   const activateCmd = buildP115ActivateCommand(projectId, { commandId: "p115-cmd-activate-policy", expectedRevision: 1 });
-  const activateFold = buildP115PolicyActivateFold(activateCmd, { eventId: "evt-p115-activate", occurredAt: FIXED, activeAggregateRevision: 1, projectRevision: 1 });
+  const activateFold = buildCoordinationPolicyActivateRecordCommit(activateCmd, { eventId: "evt-p115-activate", occurredAt: FIXED, activeAggregateRevision: 1, projectRevision: 1 });
 
   const events: PositionedEvent[] = [
     { cursor: makeCommitCursor(1), event: proposalFold.events[0]! },

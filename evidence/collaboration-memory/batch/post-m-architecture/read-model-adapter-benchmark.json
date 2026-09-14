@@ -1,0 +1,78 @@
+{
+  "fixture": {
+    "sizes": [
+      64,
+      256,
+      1024
+    ],
+    "query": "material access exact scope and candidate lookup",
+    "sqliteStorage": "temporary file",
+    "ruleIterations": 100000
+  },
+  "adapterMeasurements": [
+    {
+      "events": 64,
+      "memory": {
+        "advanceMs": 3.0527409999995143,
+        "listQueryMs": 0.1460690000003524,
+        "candidateQueryMs": 0.20423399999890535
+      },
+      "sqlite": {
+        "advanceMs": 19.334505000000718,
+        "listQueryMs": 0.7750780000005761,
+        "candidateQueryMs": 0.36527600000044913,
+        "prepareCalls": {
+          "advance": 65,
+          "listQuery": 1,
+          "candidateQuery": 1
+        }
+      }
+    },
+    {
+      "events": 256,
+      "memory": {
+        "advanceMs": 2.004737000001114,
+        "listQueryMs": 0.03154999999969732,
+        "candidateQueryMs": 0.06350500000007742
+      },
+      "sqlite": {
+        "advanceMs": 26.218095999998695,
+        "listQueryMs": 1.6128680000001623,
+        "candidateQueryMs": 0.8231309999991936,
+        "prepareCalls": {
+          "advance": 257,
+          "listQuery": 1,
+          "candidateQuery": 1
+        }
+      }
+    },
+    {
+      "events": 1024,
+      "memory": {
+        "advanceMs": 11.740281999998842,
+        "listQueryMs": 0.25136900000143214,
+        "candidateQueryMs": 0.43362399999932677
+      },
+      "sqlite": {
+        "advanceMs": 58.954728000000614,
+        "listQueryMs": 6.871191000000181,
+        "candidateQueryMs": 2.836884000000282,
+        "prepareCalls": {
+          "advance": 1025,
+          "listQuery": 1,
+          "candidateQuery": 1
+        }
+      }
+    }
+  ],
+  "equivalentRuleBaseline": {
+    "inlineBeforeExtractionMs": 144.6824310000011,
+    "sharedProjectionMs": 153.6324050000003
+  },
+  "measurementLimits": [
+    "Wall-clock values include host filesystem and runtime scheduling noise; compare scale trends, not isolated sub-millisecond differences.",
+    "SQLite prepareCalls counts prepare invocations made after construction. Constructor schema/index setup and already-prepared checkpoint statements are excluded.",
+    "Database page reads are not exposed by node:sqlite, so this report does not claim physical read counts."
+  ],
+  "cacheDecision": "No Redis or other cache introduced; projection authority, revocation visibility and restart behavior remain local to the committed event/read-model stores."
+}

@@ -1,10 +1,8 @@
 /**
- * P1-06 Control entry: replacement claim — B's NEW Attempt/lifecycle for the
+ * handoff Control entry: replacement claim — B's NEW Attempt/lifecycle for the
  * SAME Task after A ended (or A's lease expired).
  *
- * ENTRY FILE (shared baseline - exported signature FROZEN; lane A fills the
- * implementation). Frozen semantics (IMPLEMENTATION-HANDOFF "P1-06 契约与存储
- * 语义" items 2/5/6/7):
+ * Public entry. The handoff contracts define this guard and commit sequence:
  *   1. schema validation (validateClaimReplacementCommand) -> invalid;
  *   2. Goal/Workspace/Plan resolution -> not_found (zero write);
  *   3. load TaskLease (aggregateId) + prior TaskAttempt (lease.attemptId) +
@@ -19,7 +17,7 @@
  *   4. one atomic replacement-claim commit (ReplacementClaimedEvent + lease CAS
  *      @N + TaskAttempt/Run/DispatchOutboxEntry/ReplacementAttempt@0) with FULL
  *      ledger idempotency; A's late facts still target A's own ended Run and are
- *      rejected by the P1-03 per-run sequence semantics (never roll back B).
+ *      rejected by the dispatch per-run sequence semantics (never roll back B).
  * A competing replacement (wrong CAS window) loses as revision_conflict at the
  * atomic commit — the singleWriter guarantee.
  */

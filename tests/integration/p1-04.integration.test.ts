@@ -11,7 +11,7 @@
  *   T2: single exit=0 / claim-only / verdict-only never satisfy (real SQLite).
  */
 import { describe, expect, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import {
   prepareP104Scenario,
   runP104ClaimedRun,
@@ -33,7 +33,7 @@ const GATE = P104_TASKS.gate;
 
 describe("P1-04 integration (real SQLite + real modules)", () => {
   it("T1: full evidence path -> satisfies -> views -> close/reopen identical; acceptance checks 1-8", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       const th: P1_04TestHarness = toP1_04Harness(h);
       const before = await runP104Path(h);
@@ -97,7 +97,7 @@ describe("P1-04 integration (real SQLite + real modules)", () => {
   }, 90_000);
 
   it("T2: exit=0 / claim-only / verdict-only never satisfy (real SQLite)", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       const th: P1_04TestHarness = toP1_04Harness(h);
       const sc = await prepareP104Scenario(th);

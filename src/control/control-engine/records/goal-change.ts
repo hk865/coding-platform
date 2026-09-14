@@ -38,15 +38,15 @@ export function goalRevisionSnapshotFor(change: GoalRevisionV1, recordedAt: stri
 /**
  * Deterministic new-revision snapshot (fold-equality target for Control).
  *
- * ADR 0003 D1: 新 revision 的任务集来自草稿自身（= 源 revision + 被接受的任务集增量，
+ * 新 revision 的任务集来自草稿自身（= 源 revision + 被接受的任务集增量，
  * 已由 applyPlanChange 的守卫 f 逐项证明）。`sourcePlan` 仅为兼容旧调用方保留：
  * 草稿未携带任务集时（例如只读投影测试直接折叠记录）沿用源任务集，与旧行为一致。
  *
- * RW-07：指派与任务同属一个 revision，因此用同一条规则处理——草稿带了 assignments 就逐条
- * 复制，没带就沿用源 revision 的指派（revisionAssignments，含 RW-07 之前只写在 origin 里的
+ * Revision 指派：指派与任务同属一个 revision，因此用同一条规则处理——草稿带了 assignments 就逐条
+ * 复制，没带就沿用源 revision 的指派（revisionAssignments，含指派字段成为正式记录前只写在 origin 里的
  * 初始指派）。快照因此始终能被 revisionAssignments 读出该 revision 的完整指派集合。
  */
-export function buildP111PlanRevisionSnapshot(
+export function buildGoalChangePlanRevisionSnapshot(
   draft: NonNullable<ApplyPlanChangeCommand["payload"]["newPlanDraft"]>,
   pins: { completionPolicy: CompletionPolicyPin; architectureBaseline: ArchitectureBaselinePin },
   acceptedAt: string,
@@ -162,7 +162,7 @@ export function buildGoalChangeApplyCommit(
 ): GoalChangeApplyLedgerCommitV1 {
   const proposalRef = command.payload.proposalRef;
   const decisionRef = command.payload.decisionRef;
-  const newPlan = buildP111PlanRevisionSnapshot(
+  const newPlan = buildGoalChangePlanRevisionSnapshot(
     deps.newPlanDraft,
     deps.pins,
     deps.changedAt,
@@ -181,7 +181,7 @@ export function buildGoalChangeApplyCommit(
     activePlanRef: newPlan.ref,
     supersededPlanRefs: [deps.sourcePlan.ref],
     changedAt: deps.changedAt,
-    // 时间线要如实说明这次 revision 是**为什么**发生的（RW-05）：
+    // 时间线要如实说明这次 revision 是**为什么**发生的：
     // 受理命令本来就带 changeReason（人的决定受理用 "user-decision-accepted"，
     // ControlEngine 的自动受理用 "autonomous-rework:<proposalId>"），此前硬编码成
     // "user-decision-accepted" 会把系统自动受理冒充成人的决定。逐字落账命令里的取值，

@@ -1,8 +1,8 @@
 /**
- * RW-11（ADR 0003 D4 前半）Control 入口：RoleSpecRevision 的 install / activate。
+ * Control 入口：RoleSpecRevision 的 install 与 activate。
  *
- * 这是**既有治理三段式**（P1-02 CompletionPolicy／ArchitectureBaseline、P1-15 CoordinationPolicy、
- * P1-13 ArchitectureEvolutionPolicy）的第 5 个治理种类，不是第二套治理机制：
+ * RoleSpecRevision 复用 CompletionPolicy、ArchitectureBaseline、CoordinationPolicy
+ * 与 ArchitectureEvolutionPolicy 的版本化治理机制：
  *   - 唯一写入路径仍是 StateLedger.commit；身份、幂等、CAS 全部由账本裁决；
  *   - install 固定 CAS@0 且**绝不自动生效**；activate 用 CAS 移动 Project 上「该角色」的生效引用；
  *   - receipt 取值沿用 CoordinationPolicy 的同一组码，没有新造 reject 码。
@@ -31,7 +31,7 @@ import { buildRoleSpecActivateFold, buildRoleSpecInstallFold } from "./records/r
 import type { LedgerCommitReceipt } from "../../contracts/ledger.js";
 import type { ControlEngineDeps } from "./control-engine.js";
 
-/** RW-11 Control 角色规格入口（与 HumanRoleCollaborationEngineImpl 的 policy 部分同形）。 */
+/** Control 角色规格入口。 */
 export class RoleSpecEngineImpl {
   constructor(private readonly deps: ControlEngineDeps) {}
 
@@ -145,7 +145,7 @@ async function activateRoleSpecImpl(
 }
 
 // ------------------------------------------------------------------------ //
-// Receipt mapping（与 P1-15 coordination-policy 同一组码）                    //
+// Receipt mapping uses the coordination-policy result codes.                                  //
 // ------------------------------------------------------------------------ //
 
 type LedgerRejected = Extract<LedgerCommitReceipt, { status: "rejected" }>;

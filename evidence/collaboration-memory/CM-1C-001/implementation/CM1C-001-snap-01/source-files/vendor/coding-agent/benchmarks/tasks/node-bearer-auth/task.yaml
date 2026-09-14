@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "taskId": "node-bearer-auth",
+  "dataset": "internal-mvp",
+  "datasetVersion": "0.1.0",
+  "language": "javascript",
+  "domain": "backend",
+  "taskType": "security-fix",
+  "difficulty": "medium",
+  "baseRevision": "synthetic:node-bearer-auth-v1",
+  "environmentDigest": "node24:host-fixture-v1",
+  "timeoutSeconds": 30,
+  "maxModelRequests": 10,
+  "maxToolCalls": 30,
+  "network": "disabled",
+  "requireBubblewrap": true,
+  "allowedChangedPaths": ["src/auth.mjs"],
+  "evaluator": {
+    "command": "{node}",
+    "args": ["{taskRoot}/hidden_tests/evaluate.mjs", "{workspace}"]
+  },
+  "variants": {
+    "base": "workspace/base",
+    "oracle": "workspace/oracle",
+    "nearMiss": "workspace/near-miss"
+  }
+}

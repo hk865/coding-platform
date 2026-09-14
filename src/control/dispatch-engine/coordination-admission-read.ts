@@ -1,9 +1,9 @@
 /**
- * 接续受理的**只读入口**（CM-1A-001 第 3 工作段）。
+ * 接续受理的**只读入口**（协作通信）。
  *
  * 它回答一个窄问题："这个 Run 是不是某个 CommunicationAdmission 受理的后继？如果是，那次
  * 受理固定了什么？"——具体是：
- *   · 固定的 Work 与参与关系/授权版本（第 2 步裁决写进 admission）；
+ *   · 固定的 Work 与参与关系/授权版本（参与身份规则写进 admission）；
  *   · 固定的**目标 Delivery 集合**（admission.deliveryRefs）。后继 Run 的 Context 只按这个
  *     集合取材，不再把"该 Work 当前全部带正文的 Delivery"当成本次必需输入；
  *   · 前驱 Run（指令来源的锚点）。

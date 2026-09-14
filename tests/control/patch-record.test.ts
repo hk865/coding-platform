@@ -47,7 +47,7 @@ import {
 import { runRefFor, taskAttemptRefFor } from "../../src/contracts/dispatch.js";
 import { evidenceRefFor } from "../../src/contracts/evidence.js";
 import { patchRecordRefFor, type PatchArtifactV1, type RecordPatchCommand } from "../../src/contracts/patch.js";
-import { buildPatchRecordLedgerCommit, type BuildP107PatchCommitDeps } from "../../src/control/control-engine/records/workspace.js";
+import { buildPatchRecordLedgerCommit, type BuildWorkspacePatchCommitDeps } from "../../src/control/control-engine/records/workspace.js";
 
 const FIXED = "2026-09-06T12:00:00.000Z";
 

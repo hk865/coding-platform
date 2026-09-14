@@ -1,7 +1,7 @@
 /**
- * P1-03 Control entry: unique claim (dispatch intent + lease + attempt + run).
+ * dispatch Control entry: unique claim (dispatch intent + lease + attempt + run).
  *
- * ENTRY FILE (shared baseline - exported signature FROZEN). Guard order (all
+ * Public entry. Guard order (all
  * zero-write except the single atomic dispatch-claim commit):
  *   1. schema validation (validateDispatchClaimCommand) -> invalid;
  *   2. Goal exists (else not_found) and its Workspace exists (else not_found);
@@ -20,15 +20,15 @@
  *      ledger.commit and map the receipt (committed/replayed vs rejected:
  *      invalid/revision_conflict/idempotency_conflict/unavailable).
  *
- * RW-11 追加守卫（ADR 0003 D4-2，插在第 4 步之后、提交之前）：
+ * 角色绑定守卫（插在可靠投递规则之后、提交之前）：
  *   项目当前生效的 CoordinationPolicy 如果登记了角色矩阵（roles.catalog），那么
  *   claim 的角色绑定必须与矩阵和已安装的角色规格相符——角色不存在、绑定的 revision
  *   不是矩阵 pin 的 revision、pin 指向的规格未安装／摘要不符、该角色的生效引用与 pin
  *   不一致、或声明的权限超出规格授权上界，任一条不成立即拒绝（顶层码仍用既有的
  *   `ineligible`，细节写在 issues 的 role_binding_not_admissible 里）且零写入。
- *   没有矩阵的项目沿用 RW-11 之前的绑定语义；Control 不编造默认角色目录。
+ *   没有矩阵的项目沿用引入角色矩阵前的绑定语义；Control 不编造默认角色目录。
  *
- *   为什么「同一 run 的既有 lease」跳过这条守卫：P1-03 的冻结语义是「重放优先于 CAS」——
+ *   为什么「同一 run 的既有 lease」跳过这条守卫：dispatch 的既定语义是「重放优先于 CAS」——
  *   已经落账的 claim 再提交一次必须返回 committed/replayed，不能被事后变动的矩阵
  *   变成一个拒绝（它没有产生新的授权，也没有新的写入）。这条跳过只覆盖
  *   `isLeaseOnly` 且 lease 属于同一个 run 的分支，新 claim 一律要过守卫。
@@ -125,8 +125,8 @@ async function claimTaskImpl(
   };
   const eligibility: TaskEligibility = evaluateTaskEligibility(facts, taskId);
 
-  // 同 run 的既有 lease：这是重放/重复提交，交给账本的幂等与 CAS 裁决（P1-03 冻结语义），
-  // RW-11 的角色守卫不拦截它（见文件头说明）。
+  // 同 run 的既有 lease：这是重放/重复提交，交给账本的幂等与 CAS 裁决，
+  // claim 的角色绑定守卫不拦截它（见文件头说明）。
   let selfLeaseFallThrough = false;
   if (!eligibility.eligible) {
     if (isLeaseOnly(eligibility)) {
@@ -159,7 +159,7 @@ async function claimTaskImpl(
     return { status: "rejected", commandId: command.commandId, code: "ineligible", issues: eligibility.reasons };
   }
 
-  // Guard 4.5（RW-11）：角色绑定必须与项目的角色矩阵和角色规格相符，否则零写入。
+  // 角色矩阵 Guard：角色绑定必须与项目的角色矩阵和角色规格相符，否则零写入。
   if (!selfLeaseFallThrough) {
     const admission = await evaluateRoleBindingAdmissionForClaim(deps, projectId, command);
     if (!admission.admissible) {
@@ -184,7 +184,7 @@ async function claimTaskImpl(
 }
 
 /**
- * RW-11：把账本事实读成纯策略的输入（读取顺序固定，全部只读）。
+ * 角色准入事实：把账本事实读成纯策略的输入（读取顺序固定，全部只读）。
  *   - 项目当前生效策略的角色矩阵（没有生效策略／正文没有 roles → null，沿用既有语义）；
  *   - 矩阵 pin 指向的规格 revision（未安装即 null，策略会据此拒绝）；
  *   - 该角色在项目上的生效引用（缺失即 null，策略会据此拒绝）。

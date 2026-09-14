@@ -4,7 +4,7 @@
  * until the P1-16 paths are implemented).
  */
 import { describe, it, expect, beforeAll } from "vitest";
-import { createPersistentSqliteHarness } from "../../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../../src/composition/persistent-platform.js";
 import { isP116Ready, runP116RestartScenario, type P116RestartEvidence } from "../p1-16-restart-fixtures.js";
 import { createP108ScenarioRuntime } from "../../contract-suite/p1-08-harness.js";
 
@@ -14,7 +14,7 @@ describe.skipIf(!READY)("P1-16-EVIDENCE", () => {
   let evidence: P116RestartEvidence;
 
   beforeAll(async () => {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     try {
       evidence = await runP116RestartScenario(h);
       console.log("P1-16-EVIDENCE-BLOCK");

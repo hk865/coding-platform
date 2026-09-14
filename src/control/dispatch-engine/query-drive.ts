@@ -57,12 +57,34 @@ export class QueryJobDriveEngineImpl implements QueryJobDrivePort {
         if (receipt.status === "committed") result.closed++; else fail(receipt.code, "query close rejected");
       };
       const deadline = job.intent.budget.deadline;
-      if (deadline !== null && Date.parse(deadline) <= Date.parse(this.deps.now())) { await close("timeout", "query deadline elapsed"); continue; }
-      if (job.status === "running") { fail("outcome_unknown", "query was already claimed; no implicit runtime restart"); continue; }
+      const deadlineElapsed = deadline !== null && Date.parse(deadline) <= Date.parse(this.deps.now());
+      let recovered: ReadOnlyQueryResultV1 | undefined;
+      let binding: import('../../contracts/query-job.js').QueryExecutionBindingV1 | undefined;
+      if (job.status === 'running') {
+        const run = await this.deps.ledger.load(runRef);
+        binding = run.status === 'found' ? (run.snapshot as import('../../contracts/query-job.js').QueryRunSnapshot).run.execution : undefined;
+        if (!binding || !this.deps.runtime.inspectQuery) {
+          if (deadlineElapsed) { await close('timeout', 'query deadline elapsed'); continue; }
+          fail('outcome_unknown', '需对账：历史查询缺少可核对的执行绑定或恢复端口；未重跑模型。');
+          result.scanned--;
+          continue;
+        }
+        const inspected = await this.deps.runtime.inspectQuery(binding.request);
+        if (deadlineElapsed && inspected.status !== 'result') { await close('timeout', 'query deadline elapsed'); continue; }
+        if (inspected.status === 'active') { result.scanned--; continue; }
+        if (inspected.status === 'unavailable') {
+          fail('outcome_unknown', '需对账：' + inspected.message + ' 未重跑模型。');
+          result.scanned--;
+          continue;
+        }
+        recovered = inspected.result;
+      }
+      if (deadlineElapsed && (!recovered || !Number.isFinite(Date.parse(recovered.endedAt)) || Date.parse(recovered.endedAt) > Date.parse(deadline!))) { await close('timeout', 'query deadline elapsed'); continue; }
       const round = job.answerRefs.length + 1;
       const roundBudget = job.intent.execution?.runtimeBudget.contextWindowTokens ?? (Math.floor(job.intent.budget.maxTokens / job.intent.multiTurn.maxRounds) + (round <= job.intent.budget.maxTokens % job.intent.multiTurn.maxRounds ? 1 : 0));
       if (roundBudget === 0) { await close("failed", "query token budget exhausted"); continue; }
       const request: QueryContextRequestV1 = { schemaVersion: 1, requestId: `query-context-${key}-${round}`, queryJobRef: jobRef, runRef, goalId: job.goalId, question: job.intent.question, focusTaskRefs: job.intent.focusTaskRefs, requestedByRunRef: null, roleBindingRef: job.intent.execution?.roleBinding ?? { schemaVersion: 1, bindingId: "query-reader", templateId: "query-reader", templateRevision: "1", bindingVersion: 1, policyRevision: "read-only-v1" }, declaredPermissions: { tools: ["read"], writeScope: [] }, budget: { maxBundleBytes: QUERY_JOB_CONTEXT_BUNDLE_MAX_BYTES } };
+      let attempted = job.status === 'running';
       try {
         const caps = this.deps.runtime.capabilities({ runRef });
         if (!caps.supported || !caps.readOnly || Buffer.byteLength(request.question) > caps.maxQuestionBytes) { await close("failed", "query runtime capability unavailable"); continue; }
@@ -79,29 +101,33 @@ export class QueryJobDriveEngineImpl implements QueryJobDrivePort {
         }
         const assembled = await this.deps.context.assembleQueryContext(request);
         if (assembled.status !== "ready") { await close("gap", assembled.status === "needs_material" ? assembled.gaps.map((g) => g.message).join("; ") : assembled.message); continue; }
-        const start = await this.deps.control.startQueryJob({ schemaVersion: 1, commandType: "StartQueryJob", commandId: `query-start-${key}-${round}`, identity: { projectId: job.projectId, actor: { kind: "system", id: "query-dispatch" }, idempotencyKey: `query-start-${key}-${round}` }, aggregateId: job.queryJobId, expectedRevision: snapshot.revision, correlationId: job.intent.correlationId, submittedAt: this.deps.now(), payload: { jobRef, runRef } });
+        binding ??= { schemaVersion: 1, roundIndex: round, request: { runRef, bundleRef: assembled.bundleRef, question: request.question, budget: { maxTokens: roundBudget } }, selectedSources: assembled.manifest.selectedSources };
+        if (job.status !== 'running') {
+        const start = await this.deps.control.startQueryJob({ schemaVersion: 1, commandType: "StartQueryJob", commandId: `query-start-${key}-${round}`, identity: { projectId: job.projectId, actor: { kind: "system", id: "query-dispatch" }, idempotencyKey: `query-start-${key}-${round}` }, aggregateId: job.queryJobId, expectedRevision: snapshot.revision, correlationId: job.intent.correlationId, submittedAt: this.deps.now(), payload: { jobRef, runRef, execution: binding } });
         if (start.status !== "committed" || start.replayed) continue;
         result.started++;
         snapshot = { ...snapshot, revision: start.revision };
+        }
         let timer: ReturnType<typeof setTimeout> | undefined;
         let answer: ReadOnlyQueryResultV1;
         try {
-          const work = this.deps.runtime.startQuery({ runRef, bundleRef: assembled.bundleRef, question: request.question, budget: { maxTokens: roundBudget } });
-          answer = deadline === null ? await work : await Promise.race([work, new Promise<ReadOnlyQueryResultV1>((resolve) => { timer = setTimeout(() => resolve({ schemaVersion: 1, runRef, outcome: "timeout", answer: null, sources: [], message: "query deadline elapsed", endedAt: this.deps.now() }), Math.max(0, Date.parse(deadline) - Date.parse(this.deps.now()))); })]);
+          attempted = true;
+          const work = recovered ? Promise.resolve(recovered) : this.deps.runtime.startQuery(binding.request);
+          answer = recovered || deadline === null ? await work : await Promise.race([work, new Promise<ReadOnlyQueryResultV1>((resolve) => { timer = setTimeout(() => resolve({ schemaVersion: 1, runRef, outcome: "timeout", answer: null, sources: [], message: "query deadline elapsed", endedAt: this.deps.now() }), Math.max(0, Date.parse(deadline) - Date.parse(this.deps.now()))); })]);
         } finally { if (timer !== undefined) clearTimeout(timer); }
         if (answer.outcome !== "answered" || answer.answer === null) { await close(answer.outcome === "timeout" ? "timeout" : answer.outcome === "gap" ? "gap" : "failed", answer.message ?? "query failed"); continue; }
-        if (canonicalJson(answer.runRef) !== canonicalJson(runRef) || Buffer.byteLength(answer.answer) > Math.min(caps.maxAnswerBytes, QUERY_JOB_ANSWER_MAX_BYTES)) { await close("failed", "runtime returned invalid identity or oversized answer"); continue; }
+        if (!Number.isFinite(Date.parse(answer.endedAt)) || canonicalJson(answer.runRef) !== canonicalJson(runRef) || Buffer.byteLength(answer.answer) > Math.min(caps.maxAnswerBytes, QUERY_JOB_ANSWER_MAX_BYTES)) { await close("failed", "runtime returned invalid identity or oversized answer"); continue; }
         const refreshed = await this.deps.context.assembleQueryContext(request);
-        const stale = refreshed.status !== "ready" || canonicalJson(refreshed.manifest.selectedSources) !== canonicalJson(assembled.manifest.selectedSources);
+        const stale = refreshed.status !== "ready" || canonicalJson(refreshed.manifest.selectedSources) !== canonicalJson(binding.selectedSources);
         if (answer.sources.length > 64 || answer.sources.some(s => !s.kind || !s.refKey || (s.version !== null && typeof s.version !== "string"))) { await close("failed", "runtime source manifest invalid"); continue; }
-        const sources = [...new Map([...assembled.manifest.selectedSources, ...answer.sources].map(source => [canonicalJson(source), source])).values()];
+        const sources = [...new Map([...binding.selectedSources, ...answer.sources].map(source => [canonicalJson(source), source])).values()];
         if (sources.length > 64) { await close('gap', 'combined source manifest exceeds the report bound'); continue; }
-        const body = await this.deps.vault.put({ contentType: "application/json", body: canonicalJson({ answer: answer.answer, sources }), ownerRef: runRef, sourceRefs: [{ kind: "artifact", refId: assembled.bundleRef.digest, revision: "1", digest: assembled.bundleRef.digest }], requestedAt: answer.endedAt });
+        const body = await this.deps.vault.put({ contentType: "application/json", body: canonicalJson({ answer: answer.answer, sources }), ownerRef: runRef, sourceRefs: [{ kind: "artifact", refId: binding.request.bundleRef.digest, revision: "1", digest: binding.request.bundleRef.digest }], requestedAt: answer.endedAt });
         if (body.status !== "stored") { await close("failed", "query answer body could not be stored"); continue; }
         const recorded: QueryJobAnswerV1 = { schemaVersion: 1, answerId: `query-answer-${key}-${round}`, queryJobRef: jobRef, runRef, roundIndex: round, answer: answer.answer, sources: sources.map((s) => ({ ...s, label: null })), followsAnswerRef: job.answerRefs.at(-1) ?? null, stale, staleReason: stale ? "source_changed" : null, answeredAt: answer.endedAt, bodyRef: body.ref };
         const receipt = await this.deps.control.recordQueryAnswer({ schemaVersion: 1, commandType: "RecordQueryAnswer", commandId: recorded.answerId, identity: { projectId: job.projectId, actor: { kind: "system", id: "query-dispatch" }, idempotencyKey: recorded.answerId }, aggregateId: job.queryJobId, expectedRevision: snapshot.revision, correlationId: job.intent.correlationId, submittedAt: answer.endedAt, payload: { answer: recorded } });
         if (receipt.status === "committed") result.answered++; else fail(receipt.code, "query answer rejected");
-      } catch (error) { await close("failed", String(error)); }
+      } catch (error) { if (attempted) fail("outcome_unknown", String(error)); else await close("failed", String(error)); }
     }
     return result;
   }

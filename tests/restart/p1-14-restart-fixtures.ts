@@ -1,8 +1,8 @@
 import { classifyRestartProbeError } from "./readiness-probe.js";
 /** P1-14 restart-path fixtures + readiness probe. */
 import { expect } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 import { runP114Scenario, p114ActiveBaselinePin, type P114HarnessLike, type P114ScenarioResult } from "../contract-suite/p1-14-harness.js";
 import { P114_PROJECT } from "../contract-suite/p1-14-harness.js";
@@ -10,7 +10,7 @@ import { p114CandidateRef, p114DecisionRef, p114GateRef, p114ActivationRef } fro
 
 export async function isP114Ready(): Promise<boolean> {
   try {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     try {
       await runP114RestartScenario(h);
       return true;
@@ -29,7 +29,7 @@ export type P114RestartEvidence = {
   activationFrom: string;
 };
 
-export async function runP114RestartScenario(h: PersistentSqliteHarness): Promise<P114RestartEvidence> {
+export async function runP114RestartScenario(h: PersistentPlatform): Promise<P114RestartEvidence> {
   const scen: P114ScenarioResult = await runP114Scenario(h as unknown as P114HarnessLike);
   const cand = await h.ledger.load(p114CandidateRef(P114_PROJECT));
   expect(cand.status).toBe("found");
@@ -47,7 +47,7 @@ export async function runP114RestartScenario(h: PersistentSqliteHarness): Promis
   };
 }
 
-export async function verifyP114AfterRestart(restarted: PersistentSqliteHarness, evidence: P114RestartEvidence): Promise<void> {
+export async function verifyP114AfterRestart(restarted: PersistentPlatform, evidence: P114RestartEvidence): Promise<void> {
   const cand = await restarted.ledger.load(p114CandidateRef(P114_PROJECT));
   expect(cand.status).toBe("found");
   if (cand.status === "found") expect((cand.snapshot as { candidate: { contentDigest: string } }).candidate.contentDigest).toBe(evidence.candidateDigest);

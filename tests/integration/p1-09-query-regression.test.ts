@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { buildBootstrapCommand } from "../../src/contracts/bootstrap.js";
 import type { SubmitQueryJobCommand } from "../../src/contracts/query-job.js";
 
@@ -11,8 +11,8 @@ function submit(projectId: string, workspaceId: string, queryId: string): Submit
 for (const adapter of ["memory", "sqlite"] as const) {
   describe(`query public regressions (${adapter})`, () => {
     it("preserves arbitrary query and scope identities, including after restart", async () => {
-      const original = adapter === "memory" ? createInMemoryHarness() : await createPersistentSqliteHarness();
-      let h: typeof original | import("../../src/harness/persistent-harness.js").PersistentSqliteHarness = original;
+      const original = adapter === "memory" ? createInMemoryHarness() : await createPersistentPlatform();
+      let h: typeof original | import("../../src/composition/persistent-platform.js").PersistentPlatform = original;
       try {
         await h.bootstrap(buildBootstrapCommand({ schemaVersion: 1, entries: [{ projectId: "custom-alpha", workspaceId: "custom-workspace" }, { projectId: "custom-beta", workspaceId: "custom-workspace" }] }, { commandId: "boot", correlationId: "boot", submittedAt: "2026-09-07T00:00:00.000Z" }));
         for (const project of ["custom-alpha", "custom-beta"]) {
@@ -20,7 +20,7 @@ for (const adapter of ["memory", "sqlite"] as const) {
             expect((await h.submitQueryJob(submit(project, "custom-workspace", id))).status).toBe("committed");
           }
         }
-        if (adapter === "sqlite") { const persistent = h as import("../../src/harness/persistent-harness.js").PersistentSqliteHarness; await persistent.close(); h = await persistent.reopen(); }
+        if (adapter === "sqlite") { const persistent = h as import("../../src/composition/persistent-platform.js").PersistentPlatform; await persistent.close(); h = await persistent.reopen(); }
         await h.advanceProjection();
         for (const project of ["custom-alpha", "custom-beta"]) {
           for (const id of ["query-one", "query-two"]) {
@@ -97,7 +97,7 @@ it("drives a persisted query through the read-only runtime once under competing 
 import { claimP108Task } from "../contract-suite/p1-08-harness.js";
 import type { StartQueryJobCommand, CloseQueryJobCommand } from "../../src/contracts/query-job.js";
 it("resumes pending SQLite queries without modifying their source Worker, and does not replay claimed runs", async () => {
-  let h = await createPersistentSqliteHarness();
+  let h = await createPersistentPlatform();
   try {
     await prepareP108Scenario(h);
     const source = await claimP108Task(h, P108_PROJECT_A, P108_TASK_WORK, "uninterrupted-source");
@@ -119,6 +119,11 @@ it("resumes pending SQLite queries without modifying their source Worker, and do
     await h.close(); h = await h.reopen();
     expect(await h.control.startQueryJob({ ...start, commandId: "retry", correlationId: "retry", submittedAt: "2026-09-07T00:01:00.000Z" })).toMatchObject({ status: "committed", replayed: true, revision: 2 });
     expect(await h.driveQuery({ reason: "recovery" })).toMatchObject({ started: 0, failures: [{ code: "outcome_unknown" }] });
+    const later = submit(P108_PROJECT_A, P108_WORKSPACE, 'later-pending-query');
+    later.payload.intent.focusTaskRefs = contextRequest().focusTaskRefs;
+    expect(await h.submitQueryJob(later)).toMatchObject({ status: 'committed' });
+    expect(await h.driveQuery({ reason: 'pending-fairness', maxIntents: 1 })).toMatchObject({ started: 1, answered: 1, failures: [{ code: 'outcome_unknown' }] });
+
     const close: CloseQueryJobCommand = { schemaVersion: 1, commandType: "CloseQueryJob", commandId: "close-stranded", identity: { projectId: P108_PROJECT_A, actor: { kind: "system", id: "query-dispatch" }, idempotencyKey: "close-stranded" }, aggregateId: "stranded-query", expectedRevision: 1, correlationId: "stranded", submittedAt: "2026-09-07T00:02:00.000Z", payload: { jobRef, runRef, reason: { code: "timeout", message: "deadline elapsed" } } };
     expect(await h.closeQueryJob(close)).toMatchObject({ status: "rejected", code: "revision_conflict" });
     close.expectedRevision = 2;

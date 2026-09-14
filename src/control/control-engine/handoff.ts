@@ -1,9 +1,7 @@
 /**
- * P1-06 Control entry: register a bounded HandoffPacket (body-first).
+ * handoff Control entry: register a bounded HandoffPacket (body-first).
  *
- * ENTRY FILE (shared baseline - exported signature FROZEN; lane A fills the
- * implementation). Frozen semantics (IMPLEMENTATION-HANDOFF "P1-06 契约与存储
- * 语义" items 1/5/6/7):
+ * Public entry. The handoff contracts define this guard and commit sequence:
  *   1. schema validation (validateRecordHandoffCommand) -> invalid;
  *   2. source Run (packet.source.runRef) resolution: not_found; run NOT ended ->
  *      run_not_ended (zero write);

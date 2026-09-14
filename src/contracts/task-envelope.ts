@@ -1,11 +1,11 @@
 /**
- * TaskEnvelope + TaskContextPort contracts (P1-03 first consumer freeze).
+ * TaskEnvelope + TaskContextPort contracts (versioned dispatch contract).
  * Authority: modules/data/context-compiler.md + runtime-collaboration.md +
- * agent/templates/short-lived-agent.md + ticket acceptance:
+ * agent/templates/short-lived-agent.md + versioned contract:
  *   - bounded envelope: binds WorkspaceSnapshot revision, permissions, budget,
  *     source refs; HARD size cap; contains NO full transcript;
  *   - the envelope references the accepted role template/binding versions via
- *     the minimal RoleBindingRefV1 (no full RoleBinding contract in P1-03);
+ *     the minimal RoleBindingRefV1 (no full RoleBinding contract in dispatch);
  *   - body (bundle) is stored FIRST in the ArtifactVault; only after Control
  *     registers the envelope (run start) does the reference become queryable.
  */

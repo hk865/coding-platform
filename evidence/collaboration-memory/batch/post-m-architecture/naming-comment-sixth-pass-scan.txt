@@ -1,0 +1,30 @@
+S04/S05 第六轮命名与注释语义检查（snap-07）
+日期：2026-09-14
+
+权威范围：原始架构对话要求；src 下 12 Module、contracts、Host/composition/app、UI、storage、fixtures/testing 和本地 vendor 边界。历史证据、持久 idempotency key、SQLite schema、稳定 fixture API 与 notices provenance 继续按 naming-comment-audit.md 的既有理由保留。
+
+方法：
+1. 以 AC-S06-01 的重复词、缺失主体、空标题和机械空格为种子，扩大搜索到同类“规则/职责/投影/身份 + 空连接词”、重复中英文业务词、孤立施工编号及旧 handoff 权威。
+2. 两个分域检查者分别复读 Control/contracts/运行装配，以及 data/fixtures/harness/UI；命中后按对应实现手工补全句子，不做无上下文批量替换。
+3. 第三个只读检查者跨全部 src 复核文件头、公开接口说明、依赖说明、生产消费者和内部命名；它不接收前两路的“已通过”结论作为输入。
+4. 每项修改后再运行精确缺陷扫描、扩大连接词扫描和重复词扫描；自然语言扫描仅用于发现候选，最终按文件中的实际职责判断。
+
+AC-S06-01：九类精确反例全部为 0 命中。
+
+扩大检查处理：
+- ReadModel 两个 adapter 的文件头改为平台只读视图职责；SQLite adapter 明确说明它复用 ControlEngine 公开的纯 dedupe 规则，符合既有依赖 DAG，不再错误声称没有 Control 实现依赖。
+- SQLite StateLedger 文件头改为持久原子命令/事件账本职责，不再只描述早期 Goal 范围。
+- CodeGraphPort 说明区分持久测试宿主 registry 与产品 SourceGraphContextCompiler 的源码图注入，不再把真实产品消费者遗漏成“仅 fixture/registry”。
+- SQLite ReadModel 内部 LEASE_P1_07_PLACEHOLDER_BINDING 改为与内存 adapter 一致的 LEASE_VIEW_PLACEHOLDER_BINDING；只改私有实现名和值引用，不改持久 schema、协议值或外部接口。
+- 修复协调、派发、账本、上下文和运行时说明里的机械空格、缺失连接词、重复标题和缺失主体；补齐一处方法声明间换行。
+
+扫描结论：
+- AC-S06-01 精确模式：0 命中。
+- “与  的”“不重算  的”“不在  归并结果”“。 之前”“规则 把/的”等机械连接模式：0 命中。
+- 当前生产源码中的 contract #N、first consumer、旧 IMPLEMENTATION-HANDOFF/Acceptance/ADR/small P/query/N/third governance/R-1：0 命中。
+- 重复英文词扫描剩余项逐条核为正常语言或标识符上下文，没有可执行缺陷。
+- P112/P113 fixture API、持久 key、SQLite 表名、协议序号与 notices provenance 仍有意保留，没有为得到零命中而改名。
+
+验证：根与 UI TypeScript 均 0 诊断；模块边界 523/524、issues 为空；ReadModel 受影响集 4 文件/7 测试通过；完整构建成功；构建后源码相对 snap-07 零漂移。
+
+本记录说明检查方法和实施侧结果，不代替独立验收。

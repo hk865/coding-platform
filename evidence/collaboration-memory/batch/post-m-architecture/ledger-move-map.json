@@ -1,0 +1,625 @@
+[
+  {
+    "names": [
+      "validateReviewCommit"
+    ],
+    "destination": "validation/review.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateReviewWorkCreateCommit"
+    ],
+    "destination": "validation/review.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateReviewWorkReplaceCommit"
+    ],
+    "destination": "validation/review.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateReviewStartCommit"
+    ],
+    "destination": "validation/review.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateReviewOutputBindCommit"
+    ],
+    "destination": "validation/review.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateReviewResultAdmissionCommit"
+    ],
+    "destination": "validation/review.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "identityMatchesActor"
+    ],
+    "destination": "validation/batch-identity.ts",
+    "originallyExported": false
+  },
+  {
+    "names": [
+      "expectedVersionOf"
+    ],
+    "destination": "validation/batch-identity.ts",
+    "originallyExported": false
+  },
+  {
+    "names": [
+      "ledgerIdentityKeyFor"
+    ],
+    "destination": "validation/batch-identity.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateGovernanceInstallCommit"
+    ],
+    "destination": "validation/governance.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateGovernanceActivateCommit"
+    ],
+    "destination": "validation/governance.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateCoordinationPolicyInstallCommit"
+    ],
+    "destination": "validation/governance.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateCoordinationPolicyActivateCommit"
+    ],
+    "destination": "validation/governance.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateRoleSpecInstallCommit"
+    ],
+    "destination": "validation/governance.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateRoleSpecActivateCommit"
+    ],
+    "destination": "validation/governance.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validatePlanRevisionCommit"
+    ],
+    "destination": "validation/planning.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validatePlanChangeProposalRecordCommit"
+    ],
+    "destination": "validation/planning.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateUserDecisionRecordCommit"
+    ],
+    "destination": "validation/planning.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateGoalChangeApplyCommit"
+    ],
+    "destination": "validation/planning.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateDispatchClaimCommit"
+    ],
+    "destination": "validation/dispatch.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateDispatchStartCommit"
+    ],
+    "destination": "validation/dispatch.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateDispatchStartState"
+    ],
+    "destination": "validation/dispatch.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateRunFactCommit"
+    ],
+    "destination": "validation/run-facts.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateRunFactState"
+    ],
+    "destination": "validation/run-facts.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateEvidenceIntakeCommit"
+    ],
+    "destination": "validation/evidence-reduction.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "evidenceSchemaVersionInvalid"
+    ],
+    "destination": "validation/evidence-reduction.ts",
+    "originallyExported": false
+  },
+  {
+    "names": [
+      "validateTaskReductionCommit"
+    ],
+    "destination": "validation/evidence-reduction.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateGoalReductionCommit"
+    ],
+    "destination": "validation/evidence-reduction.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateHandoffRecordCommit"
+    ],
+    "destination": "validation/handoff.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateReplacementClaimCommit"
+    ],
+    "destination": "validation/handoff.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateWorkspaceReadLeaseAcquireCommit"
+    ],
+    "destination": "validation/workspace-leases.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateWorkspaceReadLeaseReleaseCommit"
+    ],
+    "destination": "validation/workspace-leases.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateWriteLeaseIndexSnapshot"
+    ],
+    "destination": "validation/workspace-leases.ts",
+    "originallyExported": false
+  },
+  {
+    "names": [
+      "validateWorkspaceWriteLeaseAcquireCommit"
+    ],
+    "destination": "validation/workspace-leases.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateWorkspaceWriteLeaseReleaseCommit"
+    ],
+    "destination": "validation/workspace-leases.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateIntegrationRecordCommit"
+    ],
+    "destination": "validation/integration.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validatePatchRecordCommit"
+    ],
+    "destination": "validation/integration.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateControlIntentRecordCommit"
+    ],
+    "destination": "validation/control-intents.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateControlAckRecordCommit"
+    ],
+    "destination": "validation/control-intents.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateQueryJobRecordCommit"
+    ],
+    "destination": "validation/query.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateQueryAnswerRecordCommit"
+    ],
+    "destination": "validation/query.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateQueryCloseRecordCommit"
+    ],
+    "destination": "validation/query.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateQueryJobStartCommit"
+    ],
+    "destination": "validation/query.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateRemediationPlanPatchRecordCommit"
+    ],
+    "destination": "validation/architecture-evolution.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateRemediationTaskRecordCommit"
+    ],
+    "destination": "validation/architecture-evolution.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateRemediationTaskAdvanceCommit"
+    ],
+    "destination": "validation/architecture-evolution.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateCandidateBaselineMaterializeCommit"
+    ],
+    "destination": "validation/architecture-evolution.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateArchitectureChangeDecisionRecordCommit"
+    ],
+    "destination": "validation/architecture-evolution.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateMigrationGateRecordCommit"
+    ],
+    "destination": "validation/architecture-evolution.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateBaselineActivationRecordCommit"
+    ],
+    "destination": "validation/architecture-evolution.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateInitialDesignCommon"
+    ],
+    "destination": "validation/architecture-evolution.ts",
+    "originallyExported": false
+  },
+  {
+    "names": [
+      "validateInitialDesignProposalRecordCommit"
+    ],
+    "destination": "validation/architecture-evolution.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateInitialDesignDecisionRecordCommit"
+    ],
+    "destination": "validation/architecture-evolution.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateMaterialAccessGrantCommit"
+    ],
+    "destination": "validation/material-access.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateMaterialAccessRevokeCommit"
+    ],
+    "destination": "validation/material-access.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateWorkContextBindCommit"
+    ],
+    "destination": "validation/work-context.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateWorkContextLinkCommit"
+    ],
+    "destination": "validation/work-context.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateExecutionNoteRecordCommit"
+    ],
+    "destination": "validation/work-context.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateContinuationRecordCommit"
+    ],
+    "destination": "validation/work-context.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateArchitectureInspectionRecordCommit"
+    ],
+    "destination": "validation/architecture-inspection.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateArchitectureFindingRecordCommit"
+    ],
+    "destination": "validation/architecture-inspection.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateArchitectureBriefRecordCommit"
+    ],
+    "destination": "validation/architecture-inspection.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateArchitectureProposalRecordCommit"
+    ],
+    "destination": "validation/architecture-inspection.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "COMMUNICATION_EVENT_TYPES"
+    ],
+    "destination": "validation/communication-routing.ts",
+    "originallyExported": false
+  },
+  {
+    "names": [
+      "isCommunicationEvent"
+    ],
+    "destination": "validation/communication-routing.ts",
+    "originallyExported": false
+  },
+  {
+    "names": [
+      "validateCommunicationCommit"
+    ],
+    "destination": "validation/communication-routing.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "materializeRouteIntentPlans"
+    ],
+    "destination": "validation/communication-routing.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "RouteIntentPlannableCommit"
+    ],
+    "destination": "validation/communication-routing.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateCommunicationRoutePageCommit"
+    ],
+    "destination": "validation/communication-routing.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "continuationRoutePageIntentId"
+    ],
+    "destination": "validation/communication-routing.ts",
+    "originallyExported": false
+  },
+  {
+    "names": [
+      "isRoutePageDomainWellFormed"
+    ],
+    "destination": "validation/communication-routing.ts",
+    "originallyExported": false
+  },
+  {
+    "names": [
+      "cursorSeq"
+    ],
+    "destination": "validation/communication-routing.ts",
+    "originallyExported": false
+  },
+  {
+    "names": [
+      "materializeSubscriptionStart"
+    ],
+    "destination": "validation/communication-routing.ts",
+    "originallyExported": false
+  },
+  {
+    "names": [
+      "validateSubscriptionCatchupPage"
+    ],
+    "destination": "validation/communication-routing.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateRoutePageState"
+    ],
+    "destination": "validation/communication-routing.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateCommunicationReconcileState"
+    ],
+    "destination": "validation/communication-routing.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateParticipationStartCommit"
+    ],
+    "destination": "validation/participation.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateInitialParticipationState"
+    ],
+    "destination": "validation/participation.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateInitialParticipationCommit"
+    ],
+    "destination": "validation/participation.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateCommunicationSuccessorClaimCommit"
+    ],
+    "destination": "validation/successor-claim.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateSuccessorClaimState"
+    ],
+    "destination": "validation/successor-claim.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateGoalCreateCommit"
+    ],
+    "destination": "validation/bootstrap.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "validateBootstrapCommit"
+    ],
+    "destination": "validation/bootstrap.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "WorkIdentityClaim"
+    ],
+    "destination": "validation/work-identity.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "taskWorkIdentityClaimKey"
+    ],
+    "destination": "validation/work-identity.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "workContextIdentityClaim"
+    ],
+    "destination": "validation/work-identity.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "participationIdentityClaimKey"
+    ],
+    "destination": "validation/work-identity.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "participationIdentityClaim"
+    ],
+    "destination": "validation/work-identity.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "identityClaimConflicts"
+    ],
+    "destination": "validation/work-identity.ts",
+    "originallyExported": true
+  }
+]

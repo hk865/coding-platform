@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Deterministic quality gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run deterministic gates and canary preflight
+        run: npm run check
+
+  sandbox-e2e:
+    name: M3 real bubblewrap gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install bubblewrap and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          npm ci
+
+      - name: Confirm user namespace support
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --version
+          unshare --user --map-root-user true
+
+      - name: Run real namespace, timeout and cancellation E2E
+        run: npm run test:e2e:bwrap
+
+  replay-baseline:
+    name: M6 replay baseline artifacts
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run fixed replay baseline
+        run: npm run benchmark:baseline:replay -- --run-id ci-replay-${{ github.sha }}
+
+      - name: Upload baseline metadata, trace, diff and evaluator logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: m6-replay-${{ github.sha }}
+          path: benchmarks/results/ci-replay-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14

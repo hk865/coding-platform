@@ -1,11 +1,11 @@
 import { completionPolicyRevisionRefFor, architectureBaselineRevisionRefFor, completionPolicyPinFor, architectureBaselinePinFor } from "../contracts/governance.js";
 export { completionPolicyRevisionRefFor, architectureBaselineRevisionRefFor, completionPolicyPinFor, architectureBaselinePinFor } from "../contracts/governance.js";
-import { buildInstallCommand as formalbuildInstallCommand, buildActivateCommand as formalbuildActivateCommand } from "../contracts/commands/governance.js";
+import { buildInstallCommand as canonicalBuildInstallCommand, buildActivateCommand as canonicalBuildActivateCommand } from "../contracts/commands/governance.js";
 /**
- * P1-02 shared fixtures: versioned governance (CompletionPolicy /
+ * Shared fixtures for versioned governance (CompletionPolicy /
  * ArchitectureBaseline) + install/activate builders.
  *
- * Frozen semantics (see IMPLEMENTATION-HANDOFF.md "P1-02 契约与存储语义"):
+ * Governance fixture semantics:
  *  - fixtures have explicit schemaVersion/identity/revision/content and a
  *    canonical content digest (JCS + SHA-256 over the whole fixture);
  *  - a missing/invalid fixture is rejected at install; NO built-in content;
@@ -23,7 +23,7 @@ import type { GovernanceActivateLedgerCommitV1, GovernanceInstallLedgerCommitV1 
 
 /** MVP CompletionPolicy content: policy recognizes static/dynamic/reviewer
  * requirement kinds and requires at least one required VR per required
- * obligation (the P1-02 non-empty compilation guard). */
+ * obligation (the non-empty compilation guard). */
 export const COMPLETION_POLICY_FIXTURE_V1: VersionedCompletionPolicyFixture = {
   schemaVersion: 1,
   identity: { policyId: "policy-completion-mvp" },
@@ -63,14 +63,14 @@ export function buildInstallCommand(
   fixture: VersionedCompletionPolicyFixture | VersionedArchitectureBaselineFixture,
   deps: BuildGovernanceCommandDeps,
 ): GovernanceInstallCommand {
-  return formalbuildInstallCommand(fixture, { ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-02-governance-install" });
+  return canonicalBuildInstallCommand(fixture, { ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-02-governance-install" });
 }
 
 export function buildActivateCommand(
   target: CompletionPolicyPin | ArchitectureBaselinePin,
   deps: BuildGovernanceCommandDeps & { expectedRevision: number },
 ): GovernanceActivateCommand {
-  return formalbuildActivateCommand(target, { ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-02-governance-activate" });
+  return canonicalBuildActivateCommand(target, { ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-02-governance-activate" });
 }
 
 export function completionPolicyRevisionSnapshotFor(
@@ -291,4 +291,3 @@ export function architectureBaselineActivatedEventFor(
 export function governanceInstallIdentityKey(command: GovernanceInstallCommand): string {
   return commandIdentityKey(command.identity);
 }
-

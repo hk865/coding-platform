@@ -1,8 +1,8 @@
 /**
- * P1-03 Control entry: dispatch readiness (read-only eligibility evaluation).
+ * dispatch Control entry: dispatch readiness (read-only eligibility evaluation).
  *
  * ZERO-WRITE: this entry only loads canonical aggregates and evaluates the
- * frozen eligibility rule (evaluateTaskEligibility). It never commits.
+ * versioned eligibility rule (evaluateTaskEligibility). It never commits.
  *
  * Guard order (all zero-write):
  *   1. Goal exists (else not_found/goal);

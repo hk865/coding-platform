@@ -1,8 +1,8 @@
 /**
- * P1-18 Control entry: MaterialAccessEngineImpl — registers ONE immutable
+ * material access Control entry: MaterialAccessEngineImpl — registers ONE immutable
  * cross-principal material read grant.
  *
- * Authority: src/contracts/material-access.ts (frozen v1 semantics) +
+ * Authority: src/contracts/material-access.ts (versioned v1 semantics) +
  * dev_docs/interfaces/runtime-collaboration.md (共享引用与角色绑定: identity,
  * scope, correlation and version on every request; timestamps never replace
  * versions).

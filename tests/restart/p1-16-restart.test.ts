@@ -4,18 +4,18 @@
  * AUTO-SKIPS until the P1-16 paths are implemented (probe, no fake).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createPersistentSqliteHarness, type PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform, type PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { isP116Ready, runP116RestartScenario, verifyP116AfterRestart, type P116RestartEvidence } from "./p1-16-restart-fixtures.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 
 const READY = await isP116Ready();
 
 describe.skipIf(!READY)("P1-16 restart equivalence (SQLite)", () => {
-  let h: PersistentSqliteHarness;
+  let h: PersistentPlatform;
   let evidence: P116RestartEvidence;
 
   beforeAll(async () => {
-    h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    h = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     evidence = await runP116RestartScenario(h);
     await h.close(); // process-restart emulation: SAME instance reopens fresh modules
   });

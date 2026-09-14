@@ -3,7 +3,7 @@
  * parity between adapters. AUTO-SKIPS until the P1-12 paths exist (probe).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createPersistentSqliteHarness, type PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform, type PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { createInMemoryHarness } from "../../src/harness/in-memory-harness.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 import { toP1_12Harness, runP112InspectionScenario, type P1_12HarnessLike } from "../contract-suite/p1-12-harness.js";
@@ -14,10 +14,10 @@ const READY = await isP112Ready();
 
 describe.skipIf(!READY)("P1-12 real SQLite integration", () => {
   let evidence: P112RestartEvidence;
-  let closed: PersistentSqliteHarness;
+  let closed: PersistentPlatform;
 
   beforeAll(async () => {
-    closed = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    closed = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     evidence = await runP112RestartScenario(closed);
     await closed.close();
   });
@@ -34,7 +34,7 @@ describe.skipIf(!READY)("P1-12 real SQLite integration", () => {
   it("InMemory and SQLite inspection views agree (same deterministic scenario)", async () => {
     const mem = createInMemoryHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
     const th = toP1_12Harness(mem as unknown as P1_12HarnessLike);
-    const sql = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const sql = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     try {
       const thSql = toP1_12Harness(sql as unknown as P1_12HarnessLike);
       const [memScen, sqlScen] = await Promise.all([

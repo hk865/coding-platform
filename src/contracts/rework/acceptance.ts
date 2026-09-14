@@ -5,7 +5,7 @@ import type { CommitCursor } from '../command-event.js';
 import type { ReworkProposalV1 } from './proposal.js';
 
 /**
- * 四条自动受理边界（ADR 0003 D1-4）。任一条不满足都必须转人去决定，
+ * 四条自动受理边界。任一条不满足都必须转人去决定，
  * 不做“满足三条就先受理”的部分受理——部分受理等于偷偷降低来源或完成判据。
  */
 const REWORK_BOUNDARY_CODES = [

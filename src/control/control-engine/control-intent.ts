@@ -1,5 +1,5 @@
 /**
- * P1-10 Control entry: ControlIntentEngineImpl — durable desired-state
+ * ControlIntentEngineImpl — durable desired-state
  * intents + safe-point acks.
  */
 import type { RecordSafePointAckCommand, RecordSafePointAckReceipt, SubmitControlCommand, SubmitControlReceipt } from "../../contracts/control-intent.js";

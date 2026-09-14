@@ -1,3 +1,5 @@
+import { canonicalJson } from '../../src/contracts/fingerprint.js';
+import type { QueryExecutionBindingV1 } from '../../src/contracts/query-job.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -47,9 +49,11 @@ describe('persisted runtime observation journal', () => {
     const second = journal.save(record);
     record.payload.revision = 99;
     expect(journal.observations.all()).toEqual([]);
+    expect(journal.read(record.id)).toBeUndefined();
     await Promise.all([first, second]);
     const expected = { ...record, payload: { revision: 2 } };
     expect(await readFile(join(dir, record.id + '.json'), 'utf8')).toBe(JSON.stringify(expected) + '\n');
+    expect(journal.read(record.id)).toEqual(expected);
     expect(journal.observations.all()).toEqual([expected]);
     journal.observations.all()[0]!.payload.revision = 100;
     expect(journal.observations.all()).toEqual([expected]);
@@ -103,4 +107,36 @@ describe('persisted runtime observation journal', () => {
     expect(runtime.all()).toHaveLength(1);
     expect(runtime.observations.all()).toEqual([]);
   });
+});
+
+function queryRequest(): QueryExecutionBindingV1['request'] {
+  return { runRef: { aggregateType: 'QueryRun', projectId: 'p', workspaceId: 'w', queryJobId: 'q', runId: 'r' },
+    bundleRef: { kind: 'artifact', contentType: 'application/json', digest: 'a'.repeat(64), sizeBytes: 2, source: { kind: 'artifact', refId: 'source', revision: '1' } },
+    question: 'Read sources', budget: { maxTokens: 1000 } };
+}
+it('query inspection recovers only an exact committed result without compiling or executing', async () => {
+  const dir = await directory(), request = queryRequest();
+  const id = sha(canonicalJson([request.runRef, request.bundleRef.digest]));
+  const record: QueryRuntimeRecord = { id, runRef: request.runRef, fingerprint: sha(canonicalJson(request)), sessionId: 's', status: 'completed', kind: 'semantic_query', roleBinding: null, input: '{}', inputDigest: sha('{}'), budget: DEFAULT_RUNTIME_BUDGET, configuration: null, usage: [], trace: [], sourceBefore: 's', sourceAfter: 's', result: { schemaVersion: 1, runRef: request.runRef, outcome: 'answered', answer: 'Saved answer', sources: [], message: null, endedAt: '2026-09-14T00:00:00Z' } };
+  await writeFile(join(dir, id + '.json'), JSON.stringify(record));
+  const runtime = new ReadOnlyQueryRuntime(dir, { materials: { assemble: async () => { throw Error('must not assemble'); } }, rootFor: () => dir, bind: noModel });
+  await runtime.init(); cleanup.push(() => runtime.close());
+  expect(await runtime.inspectQuery(request)).toEqual({ status: 'result', result: record.result });
+  expect(await runtime.inspectQuery({ ...request, question: 'Different input' })).toMatchObject({ status: 'unavailable' });
+  expect(await runtime.inspectQuery({ ...request, runRef: { ...request.runRef, projectId: 'other' } })).toMatchObject({ status: 'unavailable' });
+  expect(await readFile(join(dir, id + '.json'), 'utf8')).toBe(JSON.stringify(record));
+});
+it('duplicate query preparation is shared and persisted cancellation prevents a later model start', async () => {
+  const dir = await directory(), request = queryRequest();
+  let release!: () => void, assemblies = 0;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const runtime = new ReadOnlyQueryRuntime(dir, { materials: { assemble: async () => {
+    assemblies++; await waiting;
+    return { status: 'ready', input: '{}', kind: 'semantic_query', goalId: null, roleBinding: null, budget: DEFAULT_RUNTIME_BUDGET, deadline: null };
+  } }, rootFor: () => dir, bind: noModel });
+  await runtime.init(); cleanup.push(() => runtime.close());
+  const first = runtime.startQuery(request), second = runtime.startQuery(request);
+  await runtime.cancelQuery(request.runRef); release();
+  expect((await first).outcome).toBe('failed'); expect(await second).toEqual(await first);
+  expect(assemblies).toBe(1); expect(runtime.observations.all()).toEqual([]);
 });

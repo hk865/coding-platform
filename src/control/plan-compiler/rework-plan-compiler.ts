@@ -125,7 +125,7 @@ export class ReworkPlanCompiler {
     }
     if (conflicts.length > 0) return rejected('issue_identity_conflict', conflicts);
 
-    // 源 revision 的指派（RW-07）：一律经契约的唯一读取入口取，不自己挑字段。
+    // 源 revision 的指派：一律经契约的唯一读取入口取，不自己挑字段。
     const assignmentByTask = new Map(revisionAssignments(activePlan).map((entry) => [entry.taskId, entry]));
 
     // 逐条核对。全部问题检查完再决定结论：结论只由问题集合决定，不由遍历顺序决定。
@@ -231,7 +231,7 @@ export class ReworkPlanCompiler {
       if (existing === undefined) {
         // 接手的是该任务在源 revision 里承担的**全部**义务，而不只是失败的那几条：
         // 被取代任务退出执行后它的每一项义务都必须有人继续承担，否则新 revision 会失去
-        // 义务承担者（P1-02 非空守卫），那就不是"只换承担者"了。
+        // 义务承担者（计划非空守卫），那就不是“只换承担者”了。
         pending.set(issue.taskId, {
           sourceTask,
           sourceAssignment,
@@ -376,16 +376,16 @@ function checkScope(request: ReworkCompileRequestV1, issue: ReworkIssueViewV1): 
 /**
  * 问题必须**尚未处置**，并且能够落到这份 active revision 上。三条判据都用问题自身的机械身份，
  * 不依赖视图推断：
- *   1. 处置事实（RC-01）必须是"尚未处置"——contracts/rework/issues.ts 的 reworkIssueUnaddressed 是唯一
+ *   1. 处置事实（返工处置规则）必须是"尚未处置"——contracts/rework/issues.ts 的 reworkIssueUnaddressed 是唯一
  *      判据（unaddressed／carried_by_task）。superseded（承担者已换人或已重验通过）与 unknown
  *      都不能用来授权一次自动受理。disposition 缺失的手写视图回落到 currentness=open。
  *   2. anchor 与当前 active revision 同一身份时：问题带的 revision 号非 0 就必须一致
  *      （独立审阅来源的问题不带 revision 号，记为 0——这是明确记录"该字段没有信息"）。
  *   3. anchor 已失效但处置事实是 carried_by_task（计划推进让 anchor 失效，而失败义务仍由原任务
- *      承担、也没有在当前 revision 上重验通过）时**允许**：这正是 RC-01 要修的形态——分组 A 的
+ *      承担、也没有在当前 revision 上重验通过）时**允许**：这正是返工处置规则要保留的语义——分组 A 的
  *      受理推进 revision 之后，同一批里尚未处置的分组 B 必须仍能被接手。这里不放松任何来源判据：
  *      边界 (a) 仍然要求每一条失败要求在它自己的 anchor revision 上有已提交的非 PASS 结论
- *      （RW-04 的 triggerSourceIssues），下面逐条核对还会再确认任务仍在、仍是 active、仍承担这些义务。
+ *      （返工触发来源的 triggerSourceIssues），下面逐条核对还会再确认任务仍在、仍是 active、仍承担这些义务。
  */
 function checkCurrent(activePlan: PlanRevisionSnapshot, issue: ReworkIssueViewV1): Diagnostic | null {
   if (!reworkIssueUnaddressed(issue)) {

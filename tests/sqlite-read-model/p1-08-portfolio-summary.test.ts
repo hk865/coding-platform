@@ -10,7 +10,7 @@
  * the projection before reading.
  */
 import { describe, expect, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import {
   createP108ScenarioRuntime,
   runP108TwoProjectScenario,
@@ -26,7 +26,7 @@ import { makeCommitCursor } from "../../src/contracts/ledger.js";
 /** Create a fresh persistent SQLite harness, run the scenario, advance, then hand
  * the view harness to fn and always clean up (close + remove temp files). */
 async function withHarness(fn: (th: P1_08TestHarness) => Promise<void>): Promise<void> {
-  const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+  const h = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
   const th = toP1_08Harness(h as never);
   try {
     await runP108TwoProjectScenario(th);

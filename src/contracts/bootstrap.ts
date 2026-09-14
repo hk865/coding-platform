@@ -1,10 +1,10 @@
 /**
- * Workspace bootstrap contracts — created by P1-00.
- * These are versioned extensions of the Goal-create slice:
+ * Workspace bootstrap contracts — created by goal/bootstrap.
+ * These contracts add project and workspace bootstrap to goal creation:
  *  - project/workspace-scoped, ledger-wide initialization command;
  *  - request identity is project-SCOPED for CreateGoal but bootstrap spans
  *    multiple projects, so bootstrap uses its own BootstrapCommandIdentity;
- *  - fingerprint per ticket rules; manifest is deterministic from the
+ *  - fingerprint follows the command contract; manifest is deterministic from the
  *    normalized source digest.
  */
 import type { ActorRef, CommitCursor, CommandFingerprint } from "./command-event.js";

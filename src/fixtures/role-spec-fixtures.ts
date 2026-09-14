@@ -1,5 +1,5 @@
 /**
- * RW-11 角色规格的**版本化 source**（八个角色各一份），以及把它们装进策略正文的角色矩阵构造器。
+ * 八个角色各自的版本化 source，以及把它们装进策略正文的角色矩阵构造器。
  *
  * 为什么放在 fixtures：与 governance-fixtures.ts 里的 ARCHITECTURE_BASELINE_FIXTURE_V1 同一定位——
  * 这是「source 内容」，不是内置默认值：它本身不产生任何授权，必须经
@@ -20,7 +20,7 @@
  *   - secretary／advisor／recorder／investigator：只读，没有任何写入授权。
  */
 import type { CoordinationPolicyContentV1 } from "../contracts/human-role-collaboration.js";
-import { P15_COORDINATION_BUDGET_MAX, P15_COORDINATION_POLICY_REVISION, coordinationPolicyContentDigest } from "../contracts/human-role-collaboration.js";
+import { COORDINATION_AUTONOMOUS_REWORK_BUDGET_MAX, COORDINATION_POLICY_REVISION_V1, coordinationPolicyContentDigest } from "../contracts/human-role-collaboration.js";
 import type { CoordinationRoleMatrixV1 } from "../contracts/human-role-collaboration.js";
 import type { RoleSpecContentV1, RoleSpecPinV1 } from "../contracts/role-spec.js";
 import { ROLE_SPEC_REVISION, roleSpecContentDigest, roleSpecRevisionRefFor } from "../contracts/role-spec.js";
@@ -313,13 +313,13 @@ export function buildRoleMatrixFixture(projectId: string, roleIds: readonly stri
 }
 
 /**
- * 带角色矩阵的协调策略正文 source：额度等其他字段与 P1-15 的既有正文同值，
+ * 带角色矩阵的协调策略正文 source：额度等其他字段与基础协调策略正文同值，
  * 额外的只有 roles——安装期仍走同一条 InstallCoordinationPolicy 路径。
  */
 export function buildCoordinationPolicyContentWithRolesV1(projectId: string, roleIds?: readonly string[]): CoordinationPolicyContentV1 {
   return {
     schemaVersion: 1,
-    budget: { maxAutonomousReworks: P15_COORDINATION_BUDGET_MAX, maxClarifications: 8 },
+    budget: { maxAutonomousReworks: COORDINATION_AUTONOMOUS_REWORK_BUDGET_MAX, maxClarifications: 8 },
     allowed: { inScopeRework: true, inScopeTesting: true },
     scope: { changesRequireHumanDecision: ["requirement", "acceptance", "baseline"] },
     upgrade: { path: "manual-decision", note: "策略变化必须由人经 install + activate 提交新 revision" },
@@ -331,14 +331,14 @@ export function buildCoordinationPolicyContentWithRolesV1(projectId: string, rol
 export function buildCoordinationPolicyContentWithoutRolesV1(): CoordinationPolicyContentV1 {
   return {
     schemaVersion: 1,
-    budget: { maxAutonomousReworks: P15_COORDINATION_BUDGET_MAX, maxClarifications: 8 },
+    budget: { maxAutonomousReworks: COORDINATION_AUTONOMOUS_REWORK_BUDGET_MAX, maxClarifications: 8 },
     allowed: { inScopeRework: true, inScopeTesting: true },
     scope: { changesRequireHumanDecision: ["requirement", "acceptance", "baseline"] },
     upgrade: { path: "manual-decision", note: "策略变化必须由人经 install + activate 提交新 revision" },
   };
 }
 
-/** 该正文装进策略时的摘要口径（与 P1-15 完全同一个函数，不另立一份）。 */
+/** 该正文装进策略时复用协调策略的摘要函数，不另立一份。 */
 export function roleMatrixPolicyDigest(content: CoordinationPolicyContentV1, policyId: string): string {
-  return coordinationPolicyContentDigest(content, policyId, P15_COORDINATION_POLICY_REVISION);
+  return coordinationPolicyContentDigest(content, policyId, COORDINATION_POLICY_REVISION_V1);
 }

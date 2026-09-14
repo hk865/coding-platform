@@ -9,7 +9,7 @@
  * (JSON.stringify), proving the writer chain state survives a process restart.
  */
 import { describe, it, expect, afterAll } from "vitest";
-import { createPersistentSqliteHarness, type PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform, type PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { runP113WriterChain, type P113WriterHarness } from "../control/p1-13-writer-chain-fixture.js";
 import { P113_PROJECT } from "../../src/fixtures/architecture-evolution-policy-fixtures.js";
 import { P113_WORKSPACE, P113_PATCH } from "../contract-support/fixtures/remediation-fixtures.js";
@@ -20,7 +20,7 @@ import { workspaceWriteLeaseRefFor } from "../../src/contracts/workspace-lease.j
 import { canonicalJson } from "../../src/contracts/fingerprint.js";
 
 describe("P1-13 writer chain — real SQLite (close/reopen field consistency)", () => {
-  let h: PersistentSqliteHarness;
+  let h: PersistentPlatform;
   let snapshots: {
     task: string;
     patch: string;
@@ -35,7 +35,7 @@ describe("P1-13 writer chain — real SQLite (close/reopen field consistency)", 
   });
 
   it("task / patch / evidence survive close+reopen byte-identically", async () => {
-    h = await createPersistentSqliteHarness({ deps: {} });
+    h = await createPersistentPlatform({ deps: {} });
     const r = await runP113WriterChain(h as unknown as P113WriterHarness);
 
     const taskRef = remediationTaskRefFor(P113_PROJECT, P113_WORKSPACE, "task-p113-1");

@@ -1,15 +1,11 @@
 /**
- * P1-10 Lifecycle controls contracts — PauseCommand / ResumeCommand /
+ * control intent Lifecycle controls contracts — PauseCommand / ResumeCommand /
  * CancelCommand / SteerCommand / RuntimeControlIntent /
- * SafePointAcknowledgement (first consumer freeze of
+ * SafePointAcknowledgement (versioned contract for
  * HumanCollaboration.ControlCommandPort, DispatchEngine.ControlIntentPort,
  * WorkerRuntime.LifecycleControlPort).
  *
  * Authority:
- *   - dev_docs/planning/proposed/P1-foundation/tickets/10-lifecycle-controls-safe-steer.md
- *     (8 Acceptance items; verification: resume-original-or-replacement /
- *      lifecycle-transition-table / idempotent-control-command /
- *      safe-point-delivery / late-ack-and-outcome-unknown)
  *   - dev_docs/interfaces/context-lifecycle.md (等待/暂停/恢复；框架保留转交、
  *     暂停与当前运行状态的区别；能力不足显式)
  *   - dev_docs/interfaces/runtime-collaboration.md (执行指令在声明的安全点加载)
@@ -23,7 +19,7 @@
  *   - Safe-point delivery: life/steer intents are applied by the runtime ONLY
  *     at declared safe points; a steer carries payload digest + delivery
  *     cursor + acknowledgement. Steer NEVER changes Goal objective /
- *     AcceptanceObligation (that path is P1-11).
+ *     AcceptanceObligation (that path is plan change).
  *   - Repeat commands: idempotency key + expected revision on EVERY command;
  *     repeated commands never repeat side effects; a LATE acknowledgement
  *     never overwrites a newer run/intent (stale ack -> rejected/ignored).
@@ -208,7 +204,7 @@ export type RecordSafePointAckReceipt =
   | { status: "rejected"; commandId: string; code: RecordSafePointAckRejectionCode; issues?: string[] };
 
 // ------------------------------------------------------------------------ //
-// Domain events (P1-10 v1)                                                  //
+// Domain events (control intent v1)                                                  //
 // ------------------------------------------------------------------------ //
 
 export type ControlIntentRecordedEvent = {
@@ -264,7 +260,7 @@ export function recordSafePointAckFingerprint(command: RecordSafePointAckCommand
 }
 
 // ------------------------------------------------------------------------ //
-// Ports (interfaces_to_freeze)                                              //
+// Public lifecycle-control ports                                            //
 // ------------------------------------------------------------------------ //
 
 export interface LifecycleControlPort {

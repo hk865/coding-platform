@@ -6,10 +6,10 @@
 import { defineGovernanceContractSuite } from "../contract-suite/governance.contract.suite.js";
 import { definePlanContractSuite } from "../contract-suite/plan.contract.suite.js";
 import type { P1_02TestHarness, P1_02HarnessFactory } from "../contract-suite/p1-02-harness.js";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 
 const createHarness: P1_02HarnessFactory = async (): Promise<P1_02TestHarness> => {
-  const h = await createPersistentSqliteHarness({ deps: {} });
+  const h = await createPersistentPlatform({ deps: {} });
   return {
     ledger: h.ledger,
     readModel: h.readModel,

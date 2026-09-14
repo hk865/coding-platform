@@ -18,7 +18,7 @@ import {
   buildCoordinationPolicyInstallCommand,
 } from '../../src/contracts/commands/governance.js';
 import {
-  P15_COORDINATION_POLICY_REVISION,
+  COORDINATION_POLICY_REVISION_V1,
   coordinationPolicyContentDigest,
   type ActivateCoordinationPolicyCommand,
   type CoordinationPolicyContentV1,
@@ -105,11 +105,11 @@ describe('RW-10 应用层治理命令构造（P4）', () => {
       },
     ));
     // 摘要口径与 P1-15 安装守卫一致（content + policyId + revision 1），不是应用层自己定的。
-    expect(install.payload.contentDigest).toBe(coordinationPolicyContentDigest(CONTENT, 'coordination-policy-app', P15_COORDINATION_POLICY_REVISION));
+    expect(install.payload.contentDigest).toBe(coordinationPolicyContentDigest(CONTENT, 'coordination-policy-app', COORDINATION_POLICY_REVISION_V1));
     expect(install.identity).toEqual({ projectId: SCOPE.projectId, actor: ACTOR, idempotencyKey: install.identity.idempotencyKey });
     expect(install.submittedAt).toBe(NOW);
 
-    const pin = { ref: { aggregateType: 'CoordinationPolicyRevision' as const, projectId: SCOPE.projectId, policyId: 'coordination-policy-app', revision: P15_COORDINATION_POLICY_REVISION }, digest: install.payload.contentDigest };
+    const pin = { ref: { aggregateType: 'CoordinationPolicyRevision' as const, projectId: SCOPE.projectId, policyId: 'coordination-policy-app', revision: COORDINATION_POLICY_REVISION_V1 }, digest: install.payload.contentDigest };
     await entry.activate(SCOPE, { kind: 'CoordinationPolicy', pin, expectedRevision: 4 });
     const activate = recorded.coordinationActivate[0];
     expect(activate).toBeDefined();

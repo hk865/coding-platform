@@ -1,0 +1,35 @@
+S04 fifth-pass semantic scan for snap-06
+Date: 2026-09-14
+
+Scope
+- All current src contracts, modules, host/composition, adapters, UI, fixtures and test-support source.
+- Historical evidence is not rewritten.
+- Fixture scenario identifiers, persisted idempotency prefixes, SQLite schema names, protocol version/guard numbers and contracts/notices provenance remain allowed where they identify stable data or reproducible scenarios.
+
+AC-S05-01 and same-category production scan
+Patterns: console projection console; query/15; versioned contract 6/8/9/12; Acceptance 5/6/8; Acceptance 1; ADR D1; small P1; work-context work context; completed-work context Completed-work context; context continuity context-continuity; third governance kind; IMPLEMENTATION-HANDOFF; R-1:
+Result: 0 matches under src.
+
+Non-fixture construction-label scan
+Patterns on comment lines: D<n>[-<n>], P1-<n>, RW-<n>, M01-M05, S01-S05, Acceptance <n>.
+Exclusions: src/fixtures and src/contracts/notices, whose retained names are covered by naming-comment-audit.md.
+Result: 0 matches.
+
+Broken-connection scan
+Patterns: empty rule titles, Chinese fragments such as `（ 的`, `按，`, `沿用 之前`, empty JSDoc title, and the repeated domain phrases listed above.
+Result: 0 actionable matches. Ordinary section headings such as `Authority:` and `Semantics:` are not empty rule titles.
+
+Additional semantic cleanup beyond the six reported files
+- Removed old decision/acceptance labels from current production comments.
+- Reworded duplicate work-context, workspace lease/patch, control-intent and goal-change validator headings.
+- Removed R-1 construction labels from the shared StateLedger validation explanations.
+- Corrected the SQLite ReadModel reference path.
+- Reworded fixture comments and user-visible fixture titles that did not need a historical ticket number; stable P112/P113 exported fixture identifiers remain for test compatibility.
+
+Validation
+- Root TypeScript: 0 diagnostics.
+- UI TypeScript: 0 diagnostics.
+- Module boundaries: 523 parsed source files, 524 inventory files, issues [].
+- Affected fixture/control tests: 8 files, 93 tests passed.
+- Complete build: passed; 475 output files.
+- Build-after-source check: zero source drift.

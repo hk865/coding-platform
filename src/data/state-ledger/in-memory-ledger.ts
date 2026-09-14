@@ -1,3 +1,7 @@
+import { replacementAttemptRefFor } from '../../contracts/handoff.js';
+import { matchesDispatchSelection, comparePendingDispatch } from './dispatch-selection.js';
+import {validateInitialParticipationCommit,validateInitialParticipationState} from './ledger-validation.js';
+import { validArchitectureDeliveryEnvelope, architectureDeliveryStateRejection, validArchitectureReviewEnvelope, architectureReviewStateRejection, selectArchitectureWorkDirectory } from "./architecture-review-ledger.js";
 import { validateCommunicationReconcileState, validateSuccessorClaimState } from './ledger-validation.js';
 import { selectAlternativeReport } from '../../contracts/alternative-report.js';
 import { validateSubscriptionCatchupPage, validateRoutePageState } from "./ledger-validation.js";
@@ -117,8 +121,7 @@ interface IdempotencyRecord {
   commitCursor: CommitCursor;
 }
 
-// R-1: `identityKeyFor` previously lived here as one of two private copies.
-// The single implementation is shared with the SQLite adapter in
+// `identityKeyFor` is shared with the SQLite adapter in
 // src/data/state-ledger/ledger-validation.ts.
 const identityKeyFor = ledgerIdentityKeyFor;
 
@@ -134,7 +137,7 @@ export class InMemoryLedger implements StateLedger {
   private readonly snapshots = new Map<string, AggregateSnapshot>();
   private readonly idempotency = new Map<string, IdempotencyRecord>();
   /**
-   * RC-03 任务身份槽：claim key -> 占用者（canonical 聚合 ref）。
+   * 身份槽索引落实任务工作身份唯一性：claim key -> 占用者（canonical 聚合 ref）。
    * 与 idempotency 同一手法——只作为**提交约束**的持久索引，随那次原子写一起生效；
    * 没有事件、没有 revision、不参与任何状态投影（规则正文见 data/state-ledger/ledger-validation.ts）。
    */
@@ -147,6 +150,8 @@ export class InMemoryLedger implements StateLedger {
     this.memory = new InMemoryMemoryLedger({ get: ref => this.snapshots.get(this.refKey(ref)),
       ...(options.beforeWrite ? { beforeWrite: options.beforeWrite } : {}), ...(options.memoryLimits ? { limits: options.memoryLimits } : {}) });
   }
+
+  async workDirectory(projectId: string, workspaceId: string) { return structuredClone(selectArchitectureWorkDirectory([...this.snapshots.values()],projectId,workspaceId)); }
 
   async load(ref: AggregateRef): Promise<SnapshotResult> {
     const snapshot = this.snapshots.get(this.refKey(ref));
@@ -165,10 +170,10 @@ export class InMemoryLedger implements StateLedger {
 
   private async commitOwned(batch: LedgerCommit): Promise<LedgerCommitReceipt> {
     /**
-     * CM-1A-001 第 4 步：**源事件提交时同事务登记待路由 intent**（协议约束 1.4）。
+     * 协作通信的可靠投递规则：**源事件提交时同事务登记待路由 intent**（协议约束 1.4）。
      *
      * 这里是唯一能同时知道"本批事件将落在哪些 cursor 上"与"这次提交是否真的写入"的位置：
-     * cursorSeq + 1 是本次追加的**第一个**事件的序号，而下面的 switch 对本票的四个可路由提交
+     * cursorSeq + 1 是本次追加的**第一个**事件的序号，而下面的 switch 对当前实现的四个可路由提交
      * 是同步执行的（校验 → CAS → appendEvents 之间没有 await），因此材料化用到的序号与真正写入
      * 的序号一定相同。重放（幂等命中）或 CAS 失败时整个 batch 被丢弃，材料化出来的 intent 也就
      * 不会被写入——这正是"原子"的含义：提交被拒 ⇒ 源事件与 intent 都不落账。
@@ -177,6 +182,8 @@ export class InMemoryLedger implements StateLedger {
     if (materialized.status === "invalid") return { status: "rejected", code: "invalid_commit" };
     batch = materialized.batch as unknown as LedgerCommit;
     switch (batch.commitKind) {
+      case 'architecture-review-delivery': return validArchitectureDeliveryEnvelope(batch) ? this.commitGenericWithIdempotency(batch) : {status:'rejected',code:'invalid_commit'};
+      case 'architecture-review': return validArchitectureReviewEnvelope(batch) ? this.commitGenericWithIdempotency(batch) : {status:'rejected',code:'invalid_commit'};
       case 'review-work-create': case 'review-work-replace': case 'review-start': case 'review-output-bind': case 'review-result-admission':
         return validateReviewCommit(batch) ? this.commitGenericWithIdempotency(batch) : { status: 'rejected', code: 'invalid_commit' };
       case 'workspace-register':
@@ -288,36 +295,38 @@ export class InMemoryLedger implements StateLedger {
         return this.commitRoleSpecInstall(batch);
       case "role-spec-activate":
         return this.commitRoleSpecActivate(batch);
-      // CM-1A-001：协作通信 commit kinds（校验规则与 SQLite 适配器共用一份）。
+      // 协作通信提交种类（校验规则与 SQLite 适配器共用一份）。
       case 'subscription-catchup-page':
         return validateSubscriptionCatchupPage(batch, ref => this.snapshots.get(this.refKey(ref)), cursor => this.eventLog.filter(e => String(e.cursor) > String(cursor)).slice(0, 512))
           ? this.commitGeneric(batch) : { status: 'rejected', code: 'invalid_commit' };
       case "agent-instance-register":
-      // CM-1A-001 第 2 步：participation-start/end 各自占用／释放 AgentInstance 的参与身份槽
+      // 协作通信的参与身份规则：participation-start/end 各自占用／释放 AgentInstance 的参与身份槽
       // （见下方两个 case 与 participationIdentityClaim）。
       case "directed-request-send":
       case "directed-request-respond":
       case "directed-request-cancel":
       case "subscription-create":
       case "subscription-cancel":
-      // CM-1A-001 第 3 工作段：frontier 补齐与单独 intent 登记走通用形状校验（事件/快照/expected 对齐）。
+      // 协作通信：frontier 补齐与单独 intent 登记走通用形状校验（事件/快照/expected 对齐）。
       case "subscription-catchup":
       case "communication-intent-record":
-      // CM-1A-001 第 4 步：先持久化取消意图（非终态）走同一份通用形状校验。
+      // 协作通信的可靠投递规则：先持久化取消意图（非终态）走同一份通用形状校验。
       case "communication-intent-cancel-request":
       case "wait-register":
       case "wait-cancel":
       case "communication-intent-claim":
       case "communication-intent-settle":
         return validateCommunicationCommit(batch) ? this.commitGeneric(batch) : { status: "rejected", code: "invalid_commit" };
-      // CM-1A-001 第 3 工作段：路由页有专用形状校验（目标 Work / 页内去重 / checkpoint 严格推进）。
+      // 协作通信：路由页有专用形状校验（目标 Work / 页内去重 / checkpoint 严格推进）。
       case "communication-route-page":
         return validateCommunicationRoutePageCommit(batch) && validateRoutePageState(batch, ref => this.snapshots.get(this.refKey(ref)), cursor => this.eventLog.find(row => row.cursor === cursor)?.event) ? this.commitGeneric(batch) : { status: "rejected", code: "invalid_commit" };
+      case 'initial-participation-start':
+        return validateInitialParticipationCommit(batch)?this.commitGenericWithIdempotency(batch,participationIdentityClaim({...batch,commitKind:'participation-start'})):{status:'rejected',code:'invalid_commit'};
       case "participation-start":
         return validateParticipationStartCommit(batch)
           ? this.commitGenericWithIdempotency(batch, participationIdentityClaim(batch))
           : { status: "rejected", code: "invalid_commit" };
-      // CM-1A-001 第 2 步：一段参与结束必须在同一次写入里释放 AgentInstance 的参与槽。
+      // 协作通信的参与身份规则：一段参与结束必须在同一次写入里释放 AgentInstance 的参与槽。
       case "participation-end":
         return validateCommunicationCommit(batch)
           ? this.commitGenericWithIdempotency(batch, participationIdentityClaim(batch))
@@ -430,7 +439,7 @@ export class InMemoryLedger implements StateLedger {
     };
   }
 
-  // R-1: single shared implementation (src/data/state-ledger/ledger-validation.ts).
+  // Shared implementation: src/data/state-ledger/ledger-validation.ts.
   private validateGoalCreate(batch: GoalCreateLedgerCommitV1): boolean {
     return validateGoalCreateCommit(batch);
   }
@@ -496,17 +505,17 @@ export class InMemoryLedger implements StateLedger {
     };
   }
 
-  // R-1: single shared implementation (src/data/state-ledger/ledger-validation.ts).
+  // Shared implementation: src/data/state-ledger/ledger-validation.ts.
   private validateBootstrap(batch: BootstrapLedgerCommitV1): boolean {
     return validateBootstrapCommit(batch);
   }
 
   // ---------------------------------------------------------------------------
-  // governance-install / governance-activate / plan-revision (P1-02)
+  // Governance installation, activation and plan-revision commits.
   // ---------------------------------------------------------------------------
 
   /**
-   * P1-02 install: immutable revision persistence. Control folds the exact
+   * Versioned-governance install: immutable revision persistence. Control folds the exact
    * commit; the ledger enforces immutability via idempotency + CAS at
    * expected revision 0 (validated by the shared kind validator).
    */
@@ -520,7 +529,7 @@ export class InMemoryLedger implements StateLedger {
   }
 
   /**
-   * P1-02 activate: typed Project active ref movement under CAS (Project
+   * Versioned-governance activate: typed Project active reference movement under CAS (Project
    * revision + per-kind active-aggregate revision). Rejections never move the
    * active ref (zero-write).
    */
@@ -534,7 +543,7 @@ export class InMemoryLedger implements StateLedger {
   }
 
   /**
-   * P1-02 plan acceptance: goal snapshot advance + immutable PlanRevision in
+   * Plan acceptance: goal snapshot advance + immutable PlanRevision in
    * ONE atomic commit (validated for exact event/snapshot/expected alignment).
    */
   private async commitPlanRevision(
@@ -547,9 +556,9 @@ export class InMemoryLedger implements StateLedger {
   }
 
   /**
-   * Generic P1-02 commit path: idempotency (replay-or-conflict by identity +
+   * Generic versioned-governance and plan commit path: idempotency (replay-or-conflict by identity +
    * stored fingerprint, decided FIRST) -> CAS -> write. Shared by the three
-   * P1-02 kinds; the kind validator already ran.
+   * governance and plan kinds; the corresponding validator has already run.
    */
   private async commitGeneric(
     batch: LedgerCommit,
@@ -558,7 +567,7 @@ export class InMemoryLedger implements StateLedger {
   }
 
   // ---------------------------------------------------------------------------
-  // P1-03 dispatch / run commits
+// Dispatch and run commits.
   // ---------------------------------------------------------------------------
 
   private async commitDispatchClaim(
@@ -582,8 +591,8 @@ export class InMemoryLedger implements StateLedger {
 
   /**
    * run-fact: NO ledger-level idempotency record — de-duplication is decided
-   * by the Control handler against the committed per-run sequence (frozen
-   * P1-03 semantics). Same command identity retried after the fact committed
+   * by the Control handler against the committed per-run sequence (versioned
+   * dispatch semantics). Same command identity retried after the fact committed
    * surfaces as a CAS revision_conflict (caller re-reads and sees
    * duplicate/stale).
    */
@@ -601,7 +610,7 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** P1-05: goal-reduction — full idempotency + CAS via the shared machinery. */
+  /** context assembly: goal-reduction — full idempotency + CAS via the shared machinery. */
   private async commitGoalReduction(batch: import("../../contracts/ledger.js").GoalReductionLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateGoalReductionCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -609,7 +618,7 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** P1-06: handoff-record — one immutable HandoffPacket (full idempotency + CAS). */
+  /** handoff: handoff-record — one immutable HandoffPacket (full idempotency + CAS). */
   private async commitHandoffRecord(batch: import("../../contracts/ledger.js").HandoffRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateHandoffRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -617,7 +626,7 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** P1-06: replacement-claim — lease CAS@N + new attempt/run/outbox/replacement (full idempotency). */
+  /** handoff: replacement-claim — lease CAS@N + new attempt/run/outbox/replacement (full idempotency). */
   private async commitReplacementClaim(batch: import("../../contracts/ledger.js").ReplacementClaimLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateReplacementClaimCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -626,7 +635,7 @@ export class InMemoryLedger implements StateLedger {
   }
 
   // ---------------------------------------------------------------------------
-  // P1-07 commit kinds (validators shared with SqliteStateLedger)
+  // workspace concurrency commit kinds (validators shared with SqliteStateLedger)
   // ---------------------------------------------------------------------------
 
   private async commitWorkspaceReadLeaseAcquire(batch: import("../../contracts/ledger.js").WorkspaceReadLeaseAcquireLedgerCommitV1): Promise<LedgerCommitReceipt> {
@@ -672,8 +681,8 @@ export class InMemoryLedger implements StateLedger {
   }
 
   /**
-   * P1-16: work-context-bind — one durable WorkContextBinding (CAS@0).
-   * RC-03: task 工作同时在同一个提交里占用它自己的身份槽（见 workContextIdentityClaim）。
+   * context continuity: work-context-bind — one durable WorkContextBinding (CAS@0).
+   * 任务工作身份唯一性：task 工作同时在同一个提交里占用它自己的身份槽（见 workContextIdentityClaim）。
    */
   private async commitWorkContextBind(batch: import("../../contracts/ledger.js").WorkContextBindLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateWorkContextBindCommit(batch)) {
@@ -682,7 +691,7 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch, workContextIdentityClaim(batch));
   }
 
-  /** P1-16: work-context-link — append a run link (CAS@N). */
+  /** context continuity: work-context-link — append a run link (CAS@N). */
   private async commitWorkContextLink(batch: import("../../contracts/ledger.js").WorkContextLinkLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateWorkContextLinkCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -690,7 +699,7 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** P1-16: execution-note-record — one immutable note (body-first; CAS@0). */
+  /** context continuity: execution-note-record — one immutable note (body-first; CAS@0). */
   private async commitExecutionNoteRecord(batch: import("../../contracts/ledger.js").ExecutionNoteRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateExecutionNoteRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -698,7 +707,7 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** P1-18: material-access-grant — one immutable cross-principal read grant (CAS@0). */
+  /** material access: material-access-grant — one immutable cross-principal read grant (CAS@0). */
   private async commitMaterialAccessGrant(batch: import("../../contracts/ledger.js").MaterialAccessGrantLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateMaterialAccessGrantCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -706,7 +715,7 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** P1-16: continuation-record — one immutable continuation report (CAS@0). */
+  /** context continuity: continuation-record — one immutable continuation report (CAS@0). */
   private async commitContinuationRecord(batch: import("../../contracts/ledger.js").ContinuationRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateContinuationRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -714,7 +723,7 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** P1-12: architecture-inspection-record — one immutable inspection (CAS@0). */
+  /** architecture inspection: architecture-inspection-record — one immutable inspection (CAS@0). */
   private async commitArchitectureInspectionRecord(batch: import("../../contracts/ledger.js").ArchitectureInspectionRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateArchitectureInspectionRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -722,7 +731,7 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** P1-12: architecture-finding-record — one immutable finding (CAS@0). */
+  /** architecture inspection: architecture-finding-record — one immutable finding (CAS@0). */
   private async commitArchitectureFindingRecord(batch: import("../../contracts/ledger.js").ArchitectureFindingRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateArchitectureFindingRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -730,7 +739,7 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** P1-12: architecture-brief-record — one immutable decision brief (CAS@0). */
+  /** architecture inspection: architecture-brief-record — one immutable decision brief (CAS@0). */
   private async commitArchitectureBriefRecord(batch: import("../../contracts/ledger.js").ArchitectureBriefRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateArchitectureBriefRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -738,7 +747,7 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** P1-10: control-intent-record — one durable desired-state intent (CAS@0). */
+  /** control intent: control-intent-record — one durable desired-state intent (CAS@0). */
   private async commitControlIntentRecord(batch: import("../../contracts/ledger.js").ControlIntentRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateControlIntentRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -746,7 +755,7 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** P1-10: control-ack — append one safe-point acknowledgement (CAS@N). */
+  /** control intent: control-ack — append one safe-point acknowledgement (CAS@N). */
   private async commitControlAckRecord(batch: import("../../contracts/ledger.js").ControlAckRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateControlAckRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -754,7 +763,7 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** P1-09: query-job-record — QueryJob + QueryRun @1 (atomic). */
+  /** query: query-job-record — QueryJob + QueryRun @1 (atomic). */
   private async commitQueryJobRecord(batch: import("../../contracts/ledger.js").QueryJobRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateQueryJobRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -762,7 +771,7 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** P1-09: query-answer-record — answer + advanced job/run (atomic). */
+  /** query: query-answer-record — answer + advanced job/run (atomic). */
   private async commitQueryAnswerRecord(batch: import("../../contracts/ledger.js").QueryAnswerRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateQueryAnswerRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -840,19 +849,19 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** RW-11: role-spec-install — one immutable RoleSpecRevision (CAS@0 + idempotency). */
+  /** role-spec-install — one immutable RoleSpecRevision (CAS@0 + idempotency). */
   private async commitRoleSpecInstall(batch: import("../../contracts/ledger.js").RoleSpecInstallRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateRoleSpecInstallCommit(batch)) return { status: "rejected", code: "invalid_commit" };
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** RW-11: role-spec-activate — per-(project, role) active ref under CAS. */
+  /** role-spec-activate — per-(project, role) active ref under CAS. */
   private async commitRoleSpecActivate(batch: import("../../contracts/ledger.js").RoleSpecActivateRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateRoleSpecActivateCommit(batch)) return { status: "rejected", code: "invalid_commit" };
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** P1-09: query-close-record — closed job/run (atomic). */
+  /** query: query-close-record — closed job/run (atomic). */
   private async commitQueryCloseRecord(batch: import("../../contracts/ledger.js").QueryCloseRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateQueryCloseRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -860,7 +869,7 @@ export class InMemoryLedger implements StateLedger {
     return this.commitGenericWithIdempotency(batch);
   }
 
-  /** P1-12: architecture-proposal-record — one immutable candidate proposal (CAS@0). */
+  /** architecture inspection: architecture-proposal-record — one immutable candidate proposal (CAS@0). */
   private async commitArchitectureProposalRecord(batch: import("../../contracts/ledger.js").ArchitectureProposalRecordLedgerCommitV1): Promise<LedgerCommitReceipt> {
     if (!validateArchitectureProposalRecordCommit(batch)) {
       return { status: "rejected", code: "invalid_commit" };
@@ -897,14 +906,10 @@ export class InMemoryLedger implements StateLedger {
     for (const snapshot of this.snapshots.values()) {
       if (snapshot.ref.aggregateType !== "DispatchOutboxEntry") continue;
       const entry = snapshot as DispatchOutboxEntrySnapshot;
-      if (entry.status !== "pending") continue;
-      if (!selection?.includeQuarantined && entry.schedule?.quarantined) continue;
-      if (selection?.dueAt && entry.schedule && entry.schedule.availableAt > selection.dueAt) continue;
-      if (selection && (entry.intent.work?.kind === 'review' ? 'review' : 'ordinary') !== selection.workKind) continue;
+      if (!matchesDispatchSelection(entry, selection, this.snapshots.has(this.refKey(replacementAttemptRefFor(entry.intent.projectId, entry.intent.goalId, entry.intent.taskId, entry.intent.attemptRef.attemptId))))) continue;
       pending.push(entry);
     }
-    pending.sort((a, b) => (a.schedule?.availableAt ?? a.pendingAt).localeCompare(b.schedule?.availableAt ?? b.pendingAt) ||
-      a.pendingAt.localeCompare(b.pendingAt) || this.refKey(a.ref).localeCompare(this.refKey(b.ref)));
+    pending.sort(comparePendingDispatch);
     return structuredClone(pending.slice(0, Math.max(0, limit)));
   }
 
@@ -928,12 +933,16 @@ export class InMemoryLedger implements StateLedger {
       };
     }
 
+    if(batch.commitKind==='initial-participation-start'&&!validateInitialParticipationState(batch,ref=>this.snapshots.get(this.refKey(ref))))return {status:'rejected',code:'revision_conflict'};
+    if(batch.commitKind === 'architecture-review-delivery') {const rejection=architectureDeliveryStateRejection(batch,ref=>this.snapshots.get(this.refKey(ref)));if(rejection)return rejection;}
+    if(batch.commitKind === 'architecture-review') { const rejection=architectureReviewStateRejection(batch,ref=>this.snapshots.get(this.refKey(ref)),[...this.snapshots.values()]); if(rejection)return rejection; }
+
     const currentVersions = this.casConflicts(batch.expectedVersions);
     if (currentVersions.length > 0) {
       return { status: "rejected", code: "revision_conflict", currentVersions };
     }
 
-    // RC-03: 身份槽的占用判定与这次提交在同一个"事务"里（beforeWrite 之前、任何状态变更之前）：
+    // 任务工作身份唯一性：身份槽的占用判定与这次提交在同一个"事务"里（beforeWrite 之前、任何状态变更之前）：
     // 槽已被另一条身份占用即拒绝且零写入。这里是**并发/跨进程**的兜底——命令面的守卫只能
     // 先查后写，而这里是与写入同一时刻的唯一判定点。
     const claimOwner = claim === null ? undefined : this.identityClaims.get(claim.key);
@@ -947,8 +956,8 @@ export class InMemoryLedger implements StateLedger {
     for (const snapshot of batch.snapshots) {
       this.snapshots.set(this.refKey(snapshot.ref), snapshot);
     }
-    // RC-03: 身份槽与事件/快照在同一次写入里生效（回滚由调用方的事务边界保证）。
-    // CM-1A-001 第 2 步：释放型声明只清「自己占的那个槽」（owner 精确匹配），
+    // 任务工作身份唯一性：身份槽与事件/快照在同一次写入里生效（回滚由调用方的事务边界保证）。
+    // 协作通信的参与身份规则：释放型声明只清「自己占的那个槽」（owner 精确匹配），
     // 因此重复结束或乱序结束都不会误伤当前参与者。
     if (claim !== null && claim.release === true) {
       if (claimOwner === claim.owner) this.identityClaims.delete(claim.key);

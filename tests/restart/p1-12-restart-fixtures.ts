@@ -6,15 +6,15 @@ import { classifyRestartProbeError } from "./readiness-probe.js";
  * the probe false (auto-skip).
  */
 import { expect } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { toP1_12Harness, runP112InspectionScenario, type P1_12HarnessLike, type P1_12TestHarness, type P112InspectionScenarioResult } from "../contract-suite/p1-12-harness.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 import { P112_PROJECT, P112_WORKSPACE } from "../../src/fixtures/architecture-fixtures.js";
 
 export async function isP112Ready(): Promise<boolean> {
   try {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     try {
       await runP112RestartScenario(h);
       return true;
@@ -33,7 +33,7 @@ export type P112RestartEvidence = {
   ledgerEventIds: string[];
 };
 
-export async function runP112RestartScenario(h: PersistentSqliteHarness): Promise<P112RestartEvidence> {
+export async function runP112RestartScenario(h: PersistentPlatform): Promise<P112RestartEvidence> {
   const th: P1_12TestHarness = toP1_12Harness(h as unknown as P1_12HarnessLike);
   const before = await runP112InspectionScenario(th);
   await th.advanceProjection();
@@ -43,7 +43,7 @@ export async function runP112RestartScenario(h: PersistentSqliteHarness): Promis
   return { before, cursorBefore, viewBefore: JSON.stringify(view), ledgerEventIds: page.events.map((p) => p.event.eventId) };
 }
 
-export async function verifyP112AfterRestart(restarted: PersistentSqliteHarness, evidence: P112RestartEvidence): Promise<void> {
+export async function verifyP112AfterRestart(restarted: PersistentPlatform, evidence: P112RestartEvidence): Promise<void> {
   const th: P1_12TestHarness = toP1_12Harness(restarted as unknown as P1_12HarnessLike);
   await restarted.advanceProjection();
   expect(String(restarted.observedCursor())).toBe(evidence.cursorBefore);

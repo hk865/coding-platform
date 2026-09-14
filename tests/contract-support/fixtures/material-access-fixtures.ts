@@ -1,4 +1,4 @@
-import { buildMaterialAccessGrantV1 as formalbuildMaterialAccessGrantV1, buildGrantMaterialAccessCommand as formalbuildGrantMaterialAccessCommand } from "../../../src/contracts/commands/material-access.js";
+import { buildMaterialAccessGrantV1 as canonicalBuildMaterialAccessGrantV1, buildGrantMaterialAccessCommand as canonicalBuildGrantMaterialAccessCommand } from "../../../src/contracts/commands/material-access.js";
 
 /**
  * P1-18 shared fixtures: deterministic MaterialAccessGrant builders + the
@@ -20,12 +20,12 @@ export function buildMaterialAccessGrantV1(opts: {
   basis: MaterialBasisV1;
   grantedAt: string;
 }): MaterialAccessGrantV1 {
-  return formalbuildMaterialAccessGrantV1(opts);
+  return canonicalBuildMaterialAccessGrantV1(opts);
 }
 
 export function buildGrantMaterialAccessCommand(
   grant: MaterialAccessGrantV1,
   deps: { commandId: string; projectId: string; actorKind: "human" | "system"; actorId: string; idempotencyKey: string; correlationId: string; submittedAt: string },
 ): GrantMaterialAccessCommand {
-  return formalbuildGrantMaterialAccessCommand(grant, deps);
+  return canonicalBuildGrantMaterialAccessCommand(grant, deps);
 }

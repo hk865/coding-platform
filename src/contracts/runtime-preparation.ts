@@ -21,7 +21,7 @@ export type PreparedRunStatus = 'prepared' | 'running' | 'completed' | 'failed' 
 export type PreparedRunFact = { spec: RunSpec; status: PreparedRunStatus; events: RuntimeEventV1[] };
 
 /**
- * 后继 Run 的 RunSpec **可重建来源**（CM-1A-001 第 3 工作段）。
+ * 后继 Run 的 RunSpec **可重建来源**（协作通信）。
  *
  * 为什么必须落成持久事实：唯一后继 Run 由 Control 在接续事务里创建，它的 RunSpec
  * （指令、授权、运行配置、计划/指派版本）**不允许**只存在于测试代码或进程内存里。

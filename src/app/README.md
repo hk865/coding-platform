@@ -21,7 +21,7 @@
 浏览器端有两个入口，由 `server.ts` 提供：
 
 - `/`（默认）与 `/workbench`：React 工作台，源码在 `../../ui/`，构建产物在 `dist/app/public/workbench/`（生成目录，已 gitignore）。Vite 直接写入该目录（`src/ui/vite.config.ts`），`scripts/copy-ui.mjs` 只复制 `/legacy` 资源并清理旧工作台目录，所以单次 `pnpm build` 产出的就是服务读取的产物。
-- `/legacy`：改版前的前端，源码在 `public/`，作为回退路径保留；待迁移视图完成一轮回退验证后再清理。
+- `/legacy`：改版前的兼容界面，源码在 `public/`。它只保留已有的样例查询、真实任务／探索、文件与模型设置操作，不再承接新增产品能力；治理、记忆、计划变更、架构审阅、独立审阅和协调视图以 `/` 工作台为准。
 
 真实模式与样例模式必须区分：工作台把“执行开发任务”（真实内核）与“安装样例计划／查询（测试适配器）”分成不同控件与文案。布局保留摘要非 sticky、用量滚动且默认折叠、中栏最小 280 px 的修复。探索路径的前驱报告经授权从 Vault 读取并与 reportDigest 核对，不再使用应用层副本。
 
@@ -42,10 +42,10 @@
 
 检查持久日志区分执行、报告落盘、结果登记和租约状态；check-evidence 精确登记原报告证据，reconcile-check 仅对账报告与租约，不重跑命令。这些恢复/登记入口及历史授权 UI 已通过有界浏览器验收（真实内核/SQLite，模型替身、检查点注入），独立进程故障验收仍待补齐。
 
-治理入口 `/api/real/governance/view|install|activate`（`governance.ts`）把五个治理种类的安装与激活暴露给界面：install 永远 CAS@0（同一份 source 重放、不同内容返回 `revision_conflict` 且零写入、不覆盖），activate 用 CAS（调用方不给 `expectedRevision` 时用当前 Project revision），读侧回答“当前生效的是哪一份、谁在什么时候装的、内容是什么”。CoordinationPolicy 没有内置来源：自动化返工额度必须由人显式提交；没有生效策略时自动返工停在 `governance_unavailable`，平台不套用默认预算。第五个种类 RoleSpecRevision（RW-14）的**生效引用是逐角色的**（`ProjectRoleSpecActive` 按 roleId 一份），因此它的 `kindView.active` 恒为 null，逐角色事实在 `kindView.roleSpecs`；同一次 view 还给出 `roleMatrix`：当前生效的协调策略含不含角色矩阵、矩阵 pin 各自有没有可用的已激活规格（判据复用 ControlEngine 的 claim 角色守卫，见 `dev_docs/interfaces/module-boundaries.md`）。
+治理入口 `/api/real/governance/view|install|activate`（`governance.ts`）把五个治理种类的安装与激活暴露给界面：install 永远 CAS@0（同一份 source 重放、不同内容返回 `revision_conflict` 且零写入、不覆盖），activate 用 CAS（调用方不给 `expectedRevision` 时用当前 Project revision），读侧回答“当前生效的是哪一份、谁在什么时候装的、内容是什么”。CoordinationPolicy 没有内置来源：自动化返工额度必须由人显式提交；没有生效策略时自动返工停在 `governance_unavailable`，平台不套用默认预算。第五个种类 RoleSpecRevision 的**生效引用是逐角色的**（`ProjectRoleSpecActive` 按 roleId 一份），因此它的 `kindView.active` 恒为 null，逐角色事实在 `kindView.roleSpecs`；同一次 view 还给出 `roleMatrix`：当前生效的协调策略含不含角色矩阵、矩阵 pin 各自有没有可用的已激活规格（判据复用 ControlEngine 的 claim 角色守卫，见 `dev_docs/interfaces/module-boundaries.md`）。
 
 历史材料 `/api/real/history/view|grant|read|revoke` 由本机会话认证的人类入口调用；当前目录只列持久检查报告，精确材料/目标 Run/原因和来源可见，旧请求复用，撤销不转移 owner。跨 Workspace 协议已支持人工精确授权；应用多 Workspace 注册与全部材料消费者仍待扩展。
 
 计划变更的只读入口是 `/api/real/plan-changes/view`（`plan-changes.ts`）：它只转发既有的 `ReadModelIndex.planChangeView` 投影，一次取回提案／受理决定／Goal revision／任务处置行，供工作台「计划变更」视图回答「谁受理了什么、为什么」。受理方与变更原因都读 canonical 字段（`decision.actor`／`decision.authority`、`GoalRevisionRecorded.change.reason`），应用层与界面都不解析 id 形状；确无变更事实与投影尚未推进是两种不同的答案。
 
-`/api/real/queries` 新增真实独立只读 QueryJob（模型按当前配置绑定），不领取 Coder 写租约；`/queries/runs` 返回公开输入、RoleBinding、工具事件与用量。旧 `/api/queries` 样例入口仍明确标为测试回答。源码/Goal/Workspace 改变时，查询展示保留历史标识。初始规划的 response contract/source origin 与 Control 守卫正在接线；默认开发入口尚未替换完成。
+`/api/real/queries` 提供真实独立只读 QueryJob（模型按当前配置绑定），不领取 Coder 写租约；`/queries/runs` 返回公开输入、RoleBinding、工具事件与用量。旧 `/api/queries` 样例入口仍明确标为测试回答。源码／Goal／Workspace 改变时，查询展示保留历史标识。新版工作台使用真实只读查询入口；`/legacy` 的项目对话继续固定使用样例入口。

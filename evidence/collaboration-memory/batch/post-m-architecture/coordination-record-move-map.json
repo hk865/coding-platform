@@ -1,0 +1,231 @@
+[
+  {
+    "names": [
+      "CoordinationFoldDeps"
+    ],
+    "destination": "records/coordination/shared.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "FoldContext"
+    ],
+    "destination": "records/coordination/shared.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "ctxOf"
+    ],
+    "destination": "records/coordination/shared.ts",
+    "originallyExported": false
+  },
+  {
+    "names": [
+      "buildAgentInstanceRegisterCommit"
+    ],
+    "destination": "records/coordination/participation.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildParticipationStartCommit"
+    ],
+    "destination": "records/coordination/participation.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildParticipationEndCommit"
+    ],
+    "destination": "records/coordination/participation.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "directedRequestRefForOf"
+    ],
+    "destination": "records/coordination/directed-request.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "deliveryRefForOf"
+    ],
+    "destination": "records/coordination/directed-request.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildDirectedRequestSendCommit"
+    ],
+    "destination": "records/coordination/directed-request.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildDirectedRequestRespondCommit"
+    ],
+    "destination": "records/coordination/directed-request.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildDirectedRequestCancelCommit"
+    ],
+    "destination": "records/coordination/directed-request.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildSubscriptionCreateCommit"
+    ],
+    "destination": "records/coordination/subscription.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildSubscriptionCancelCommit"
+    ],
+    "destination": "records/coordination/subscription.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildSubscriptionCatchupCommit"
+    ],
+    "destination": "records/coordination/subscription.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "waitConditionRefForOf"
+    ],
+    "destination": "records/coordination/waiting.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "communicationIntentRefForOf"
+    ],
+    "destination": "records/coordination/waiting.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "intentSnapshotFor"
+    ],
+    "destination": "records/coordination/waiting.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildIntentRecordCommit"
+    ],
+    "destination": "records/coordination/waiting.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "withRouteIntentPlan"
+    ],
+    "destination": "records/coordination/waiting.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "waitAdmissionIntentFor"
+    ],
+    "destination": "records/coordination/waiting.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "waitDeadlineIntentFor"
+    ],
+    "destination": "records/coordination/waiting.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "subscriptionRouteIntentFor"
+    ],
+    "destination": "records/coordination/waiting.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "routePageIntentFor"
+    ],
+    "destination": "records/coordination/waiting.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildWaitRegisterCommit"
+    ],
+    "destination": "records/coordination/waiting.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildWaitCancelCommit"
+    ],
+    "destination": "records/coordination/waiting.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildCommunicationIntentClaimCommit"
+    ],
+    "destination": "records/coordination/intent-lifecycle.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildRoutePageCommit"
+    ],
+    "destination": "records/coordination/intent-lifecycle.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildIntentCancelRequestCommit"
+    ],
+    "destination": "records/coordination/intent-lifecycle.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildIntentSettleCommit"
+    ],
+    "destination": "records/coordination/intent-lifecycle.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildWaitObservationCommit"
+    ],
+    "destination": "records/coordination/intent-lifecycle.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "successorIdsFor"
+    ],
+    "destination": "records/coordination/successor.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [
+      "buildSuccessorCommit"
+    ],
+    "destination": "records/coordination/successor.ts",
+    "originallyExported": true
+  },
+  {
+    "names": [],
+    "destination": "records/coordination/successor.ts",
+    "originallyExported": false
+  }
+]

@@ -16,7 +16,7 @@ import {
 } from "../contract-support/fixtures/goal-fixtures.js";
 import { FIXED_ISO_2026_09_05 } from "../../src/testing/sequences.js";
 import type { CreateGoalResult } from "../../src/contracts/modules.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 
 /** Shared fixture: two projects REUSE the same local workspaceId/goalId. */
 export const RESTART_FIXTURE = MULTI_SCOPE_CREATE_GOAL_FIXTURE_V1;
@@ -39,7 +39,7 @@ export interface RestartRuns {
 
 /** bootstrap -> CreateGoal(alpha) -> CreateGoal(beta), same idempotency key per scope. */
 export async function runBootstrapAndCreateGoals(
-  harness: PersistentSqliteHarness,
+  harness: PersistentPlatform,
 ): Promise<RestartRuns> {
   const bootstrap = await harness.bootstrap(bootCommandFor("r-boot-1"));
   const alpha = await harness.collaboration.createGoal({

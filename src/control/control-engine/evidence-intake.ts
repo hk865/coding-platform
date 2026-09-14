@@ -1,8 +1,8 @@
 /**
- * P1-04 Control entry: evidence intake — ONE immutable Evidence + the task
+ * verification Control entry: evidence intake — ONE immutable Evidence + the task
  * evidence index update, atomically.
  *
- * ENTRY FILE (shared baseline — exported signature FROZEN). Guard order (all
+ * Public entry. Guard order (all
  * zero-write except the single atomic evidence-intake commit):
  *   1. schema validation (validateSubmitEvidenceCommand) -> invalid;
  *   2. Goal exists (else not_found) and its Workspace exists (else not_found);
@@ -16,7 +16,7 @@
  *   6. deterministic fold (buildEvidenceIntakeLedgerCommit — fold-equality with
  *      the shared fixture builder, given the same ids) -> ledger.commit ->
  *      mapEvidenceIntakeReceipt (committed/replayed vs invalid/...).
- * Frozen semantics: claim/observation/verdict; a claim is forced INCONCLUSIVE
+ * Versioned semantics: claim/observation/verdict; a claim is forced INCONCLUSIVE
  * (a self-report is NEVER evidence PASS); Worker/Reviewer never touch a Task
  * phase; the effectivity anchor is recorded immutably (historical/old-revision
  * evidence is admitted and its applicability is derived, never written back);
@@ -85,8 +85,8 @@ async function submitEvidenceImpl(
   // Guard 4: every coverage entry must reference a VerificationRequirement of
   // an obligation that EXISTS IN THE ANCHOR PLAN (dangling_ref — a reference to
   // a non-existent obligation/VR is a hard failure). Coverage whose obligation
-  // exists but is NOT mapped to the subject task is NOT a rejection: the frozen
-  // applicability rule (evidenceApplicability rule ① / frozen sem #6) marks it
+  // exists but is NOT mapped to the subject task is NOT a rejection: the versioned
+  // applicability rule (evidenceApplicability rule ① / versioned sem #6) marks it
   // OUT_OF_SCOPE, so historical/other-task evidence is admitted and derived.
   for (const coverage of evidence.coverage) {
     const obligation = plan.obligations.find((o) => o.obligationId === coverage.obligationId);

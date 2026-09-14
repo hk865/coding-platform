@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { tmpdir } from "node:os";
-import { createPersistentSqliteHarness, type PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform, type PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { CodingAgentRuntime, type RunSpec } from "../../src/execution/worker-runtime/coding-agent-runtime.js";
 import { LeasedWorkerRuntime } from "../../src/control/dispatch-engine/leased-worker-runtime.js";
 import { WorkMaterialDrive } from "../../src/control/dispatch-engine/work-material-drive.js";
@@ -113,7 +113,7 @@ function specFor(root: string, runId: string): RunSpec {
  * 组装一个世界。`withParticipation` 决定执行前该 Run 是否**已经**被授予协调能力：
  * true = 先经正式入口建立参与关系（账本依据存在）；false = 不建立（判定必须给出可读原因）。
  */
-async function buildWorld(withParticipation: boolean): Promise<{ dir: string; root: string; h: PersistentSqliteHarness; runtime: CodingAgentRuntime; runRef: RunRef }> {
+async function buildWorld(withParticipation: boolean,mode?:'explore'): Promise<{ dir: string; root: string; h: PersistentPlatform; runtime: CodingAgentRuntime; runRef: RunRef }> {
   const log: ModelRequest[] = [];
   const dir = await mkdtemp(join(tmpdir(), "cm1a-capability-"));
   cleanup.push(async () => { await rm(dir, { recursive: true, force: true }); });
@@ -136,9 +136,9 @@ async function buildWorld(withParticipation: boolean): Promise<{ dir: string; ro
       },
     }),
   };
-  let h: PersistentSqliteHarness;
-  const holder = { h: undefined as unknown as PersistentSqliteHarness };
-  h = await createPersistentSqliteHarness({
+  let h: PersistentPlatform;
+  const holder = { h: undefined as unknown as PersistentPlatform };
+  h = await createPersistentPlatform({
     dir,
     deps: { clock: () => AT },
     sourceApplicability: sourcePort,
@@ -148,7 +148,8 @@ async function buildWorld(withParticipation: boolean): Promise<{ dir: string; ro
       capabilities: () => runtime.capabilities(),
       start: async (envelope) => new LeasedWorkerRuntime({
         runtime, lease: () => holder.h.workspaceLease, vault: () => holder.h.vault,
-        materials: (spec, current) => new WorkMaterialDrive({
+        // This fixture isolates the lease mode barrier; production exploration material flow is covered in explorations.test.ts.
+        materials: (spec, current) => spec.mode === "explore" ? Promise.resolve(undefined) : new WorkMaterialDrive({
           ledger: holder.h.ledger,
           control: {
             resolveTaskWorkIdentity: (query) => holder.h.control.resolveTaskWorkIdentity(query),
@@ -219,12 +220,12 @@ async function buildWorld(withParticipation: boolean): Promise<{ dir: string; ro
     };
     expect((await h.control.startWorkParticipation(participation)).status, "参与关系必须被受理").toBe("committed");
   }
-  await runtime.prepare(specFor(root, "run-pred"));
+  await runtime.prepare({...specFor(root, "run-pred"),...(mode?{mode}:{})});
   return { dir, root, h, runtime, runRef };
 }
 
 /** 跑一次前驱 Run（模型会试图调用协调工具）。 */
-async function runOnce(h: PersistentSqliteHarness): Promise<void> {
+async function runOnce(h: PersistentPlatform): Promise<void> {
   const drive = await h.drive({ reason: "cap-run", maxIntents: 2 });
   expect(drive.failures, JSON.stringify(drive.failures)).toEqual([]);
   expect(drive.started).toBe(1);
@@ -236,7 +237,7 @@ async function runOnce(h: PersistentSqliteHarness): Promise<void> {
  * 用途：验证"一个 Run 精确对应多段参与关系时**拒绝而不是挑一段**"这条边界。
  * 账本的参与身份槽是 (project, workspace, agentInstanceId)，因此第二段必须换一个 AgentInstance。
  */
-async function addSecondParticipation(h: PersistentSqliteHarness, runRef: RunRef): Promise<void> {
+async function addSecondParticipation(h: PersistentPlatform, runRef: RunRef): Promise<void> {
   const workD = workContextRefFor(PROJECT, WORKSPACE, "work-d");
   expect((await h.bindWorkContext({
     commandId: "cmd-cap-bind-d", commandType: "BindWorkContext", schemaVersion: 1, aggregateId: "work-d",
@@ -583,4 +584,11 @@ describe("协议约束 2.3：协调能力必须由宿主显式授予", () => {
     const requestRef = directedRequestRefFor(PROJECT, WORKSPACE, "creq-" + sha256Hex(JSON.stringify(["coordination-tool-v1", "req", "run-pred", "cap-after-end"])).slice(0, 24));
     expect((await w.h.ledger.load(requestRef)).status).toBe("not_found");
   });
+});
+
+it('exploration with existing participation still receives no coordination write tools',async()=>{
+  toolsOffered.length=0;toolResultsByCall.clear();const w=await buildWorld(true,'explore');
+  expect((await w.h.coordinationGrant(w.runRef)).status).toBe('granted');
+  await runOnce(w.h);expect(toolsOffered[0],JSON.stringify(w.runtime.all().map(r=>({status:r.status,error:r.error})))).toEqual([]);expect(w.runtime.all()[0]!.coordinationCapability).toBeUndefined();
+  expect([...toolResultsByCall.values()].some(r=>r.error?.code==='unknown_tool')).toBe(true);
 });

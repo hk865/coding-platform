@@ -1,12 +1,12 @@
 import { expect, it } from 'vitest';
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
 import { createP108ScenarioRuntime } from '../contract-suite/p1-08-harness.js';
 import { runP116ContinuityScenario, type P1_16HarnessLike } from '../contract-suite/p1-16-harness.js';
 
 it.each(['memory', 'sqlite'])('completed-work view excludes uncompleted coordination bindings (%s)', async mode => {
   const options = { runtime: createP108ScenarioRuntime() };
-  const persistent = mode === 'sqlite' ? await createPersistentSqliteHarness(options) : null;
+  const persistent = mode === 'sqlite' ? await createPersistentPlatform(options) : null;
   const h = persistent ?? createInMemoryHarness(options);
   try {
     await runP116ContinuityScenario(h as unknown as P1_16HarnessLike);

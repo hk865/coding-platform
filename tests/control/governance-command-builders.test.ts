@@ -19,7 +19,7 @@ import {
 } from '../../src/contracts/commands/governance.js';
 import { architectureEvolutionPolicyContentDigest } from '../../src/contracts/architecture-evolution-policy.js';
 import {
-  P15_COORDINATION_POLICY_REVISION,
+  COORDINATION_POLICY_REVISION_V1,
   coordinationPolicyContentDigest,
 } from '../../src/contracts/human-role-collaboration.js';
 import {
@@ -57,7 +57,7 @@ describe('RW-10 治理命令 builder 提升到契约层（P4）', () => {
     expect(buildP115InstallCommand(P115_PROJECT, { commandId: 'p115-probe-install' })).toEqual(formalInstall);
     // 摘要不是第二份规则：就是契约里的 coordinationPolicyContentDigest(content, policyId, revision=1)。
     expect(formalInstall.payload.contentDigest).toBe(
-      coordinationPolicyContentDigest(P115_COORDINATION_POLICY_CONTENT, P115_POLICY, P15_COORDINATION_POLICY_REVISION),
+      coordinationPolicyContentDigest(P115_COORDINATION_POLICY_CONTENT, P115_POLICY, COORDINATION_POLICY_REVISION_V1),
     );
     expect(formalInstall.identity).toEqual({ projectId: P115_PROJECT, actor: installDeps.actor, idempotencyKey: installDeps.idempotencyKey });
 

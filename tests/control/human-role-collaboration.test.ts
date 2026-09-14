@@ -16,15 +16,8 @@
  *     or 17, empty ambiguity; decision proposalRevision != 1 / bad outcome /
  *     bad authority; install budget out of range / non-manual upgrade path) /
  *     digest_mismatch (install) / activate not_found / activate digest_mismatch;
- *   - activateCoordinationPolicy: guards reject with ZERO write; the shared
- *     frozen ledger validator (validateCoordinationPolicyActivateCommit) couples
- *     pE.revision == snap.revision-1 AND aE.revision == snap.revision-1, which
- *     makes a FIRST activation structurally impossible for a bootstrapped
- *     Project (revision 1) + fresh active aggregate (revision 0). The handler
- *     builds the fold exactly per the frozen ruling (Project CAS@expected +
- *     active@k); the ledger rejects it at validation time (invalid_commit ->
- *     invalid). Test asserts the fold-equality of the attempted batch and the
- *     rejection so the frozen-validator blocker is pinned;
+ *   - activateCoordinationPolicy: Project and active-policy revisions are checked
+ *     independently; first activation commits and stale guards remain zero-write;
  *   - idempotent replay of proposal/install -> committed/replayed with the
  *     SAME eventIds + commitCursor;
  *   - cross-project isolation (proj-beta's world never touches proj-alpha's
@@ -38,7 +31,7 @@ import { canonicalJson } from "../../src/contracts/fingerprint.js";
 import { createDeterministicDeps } from "../../src/testing/sequences.js";
 import { initialDesignProposalDigest, coordinationPolicyContentDigest, type InitialDesignProposalV1 } from "../../src/contracts/human-role-collaboration.js";
 import { P115_PROJECT, P115_WORKSPACE, P115_DESIGN, P115_POLICY, P115_COORDINATION_POLICY_CONTENT, buildP115Proposal, buildP115Decision, buildP115ProposalCommand, buildP115DecisionCommand, buildP115InstallCommand, buildP115ActivateCommand, p115DesignRef, p115DecisionRef, p115PolicyRef, p115PolicyActiveRef } from "../contract-support/fixtures/human-role-collaboration-fixtures.js";
-import { buildP115ProposalFold, buildP115DecisionFold, buildP115PolicyInstallFold, buildP115PolicyActivateFold } from "../../src/control/control-engine/records/human-role-collaboration.js";
+import { buildInitialDesignProposalRecordCommit, buildInitialDesignDecisionRecordCommit, buildCoordinationPolicyInstallRecordCommit, buildCoordinationPolicyActivateRecordCommit } from "../../src/control/control-engine/records/human-role-collaboration.js";
 import { p111BootstrapGoalGovernance } from "../contract-suite/p1-11-harness.js";
 
 /** Thin recorder over the real InMemoryLedger (captures the submitted batch and
@@ -104,7 +97,7 @@ describe("P1-15 HumanRoleCollaborationEngineImpl", () => {
       const pReceipt = await engine.recordInitialDesignProposal(proposalCmd);
       expect(pReceipt.status).toBe("committed");
       const pBatch = ledger.commits[pBefore]!;
-      expect(canonicalJson(pBatch)).toBe(canonicalJson(buildP115ProposalFold(proposalCmd, { eventId: pBatch.events[0]!.eventId, occurredAt: pBatch.events[0]!.occurredAt })));
+      expect(canonicalJson(pBatch)).toBe(canonicalJson(buildInitialDesignProposalRecordCommit(proposalCmd, { eventId: pBatch.events[0]!.eventId, occurredAt: pBatch.events[0]!.occurredAt })));
       if (pReceipt.status === "committed") {
         expect(pReceipt.proposalRef).toEqual(p115DesignRef(P115_PROJECT));
         expect(pReceipt.replayed).toBe(false);
@@ -117,7 +110,7 @@ describe("P1-15 HumanRoleCollaborationEngineImpl", () => {
       const dReceipt = await engine.recordInitialDesignDecision(decisionCmd);
       expect(dReceipt.status).toBe("committed");
       const dBatch = ledger.commits[dBefore]!;
-      expect(canonicalJson(dBatch)).toBe(canonicalJson(buildP115DecisionFold(decisionCmd, { eventId: dBatch.events[0]!.eventId, occurredAt: dBatch.events[0]!.occurredAt })));
+      expect(canonicalJson(dBatch)).toBe(canonicalJson(buildInitialDesignDecisionRecordCommit(decisionCmd, { eventId: dBatch.events[0]!.eventId, occurredAt: dBatch.events[0]!.occurredAt })));
       if (dReceipt.status === "committed") {
         expect(dReceipt.decisionRef).toEqual(p115DecisionRef(P115_PROJECT));
         expect(dReceipt.replayed).toBe(false);
@@ -129,7 +122,7 @@ describe("P1-15 HumanRoleCollaborationEngineImpl", () => {
       const iReceipt = await engine.installCoordinationPolicy(installCmd);
       expect(iReceipt.status).toBe("committed");
       const iBatch = ledger.commits[iBefore]!;
-      expect(canonicalJson(iBatch)).toBe(canonicalJson(buildP115PolicyInstallFold(installCmd, { eventId: iBatch.events[0]!.eventId, occurredAt: iBatch.events[0]!.occurredAt })));
+      expect(canonicalJson(iBatch)).toBe(canonicalJson(buildCoordinationPolicyInstallRecordCommit(installCmd, { eventId: iBatch.events[0]!.eventId, occurredAt: iBatch.events[0]!.occurredAt })));
       if (iReceipt.status === "committed") {
         expect(iReceipt.revisionRef).toEqual(p115PolicyRef(P115_PROJECT));
         expect(iReceipt.contentDigest).toBe(coordinationPolicyContentDigest(P115_COORDINATION_POLICY_CONTENT, P115_POLICY, 1));
@@ -333,7 +326,7 @@ describe("P1-15 HumanRoleCollaborationEngineImpl", () => {
       expect(harness.ledger.eventCount).toBe(before);
     });
 
-    it("first activation commits (validator aligned with P1-02 semantics: Project CAS shape-only, active@snap-1) — integrator 2026-09-07 fix", async () => {
+    it("first activation commits with independent Project and active-policy CAS guards", async () => {
       const harness = makeHarness();
       await setupWorld(harness.ledger, P115_PROJECT);
       await harness.engine.recordInitialDesignProposal(buildP115ProposalCommand(buildP115Proposal({ projectId: P115_PROJECT, workspaceId: P115_WORKSPACE }), { commandId: "p115-cmd-proposal" }));
@@ -342,18 +335,15 @@ describe("P1-15 HumanRoleCollaborationEngineImpl", () => {
       const before = harness.ledger.commits.length;
       const receipt = await harness.engine.activateCoordinationPolicy(cmd);
       const batch = harness.ledger.commits[before]!;
-      // fold-equality: the handler used projectRevision = command.expectedRevision
-      // and activeAggregateRevision = (active@k) + 1, exactly as the frozen ruling.
-      const expected = buildP115PolicyActivateFold(cmd, {
+      // The handler uses the command's project revision and advances the active
+      // policy aggregate from its own current revision.
+      const expected = buildCoordinationPolicyActivateRecordCommit(cmd, {
         eventId: batch.events[0]!.eventId,
         occurredAt: batch.events[0]!.occurredAt,
         activeAggregateRevision: batch.snapshots[0]!.revision,
         projectRevision: batch.expectedVersions[0]!.revision,
       });
       expect(canonicalJson(batch)).toBe(canonicalJson(expected));
-      // The frozen validator couples Project@(snap.revision-1) AND active@(snap.revision-1),
-      // so a first activation (Project@1, active@0) cannot commit. Handler maps
-      // invalid_commit -> invalid. (Pinned so the gap is traceable.)
       expect(receipt.status).toBe("committed");
       if (receipt.status === "committed") expect(receipt.replayed).toBe(false);
       // snapshot landed with the first activation

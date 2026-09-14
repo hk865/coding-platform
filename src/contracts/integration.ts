@@ -1,10 +1,10 @@
 /**
- * P1-07 frozen contract: IntegrationTaskResult (Evidence join) — contract #4
- * of ticket 07. Authority: IMPLEMENTATION-HANDOFF.md "P1-07 契约与存储语义"
- * item 6 + interfaces/completion-policy.md §5.
+ * Workspace-concurrency contract: IntegrationTaskResult (Evidence join).
+ * Authority: the workspace-concurrency interface specification and
+ * interfaces/completion-policy.md §5.
  *
  * Semantics:
- *   - the IntegrationTask is a FORMAL dispatched Run (P1-03 path); its result
+ *   - the IntegrationTask is a FORMAL dispatched Run (dispatch path); its result
  *     joins ACCEPTED Reader outputs while PRESERVING provenance (source
  *     task/run refs, coverage, applicability).
  *   - detectEvidenceConflicts is PURE and mechanical (no semantic inference):
@@ -14,12 +14,12 @@
  *   - A conflict is NEVER overwritten by a later result: the first record
  *     with a given conflictKey is authoritative; a later record re-using that
  *     key is rejected (conflict_duplicate, zero write).
- *   - conflicts present without explanation (non-null, <= cap) AND without
+ *   - conflicts present without explanation (non-null, <= cap) and without
  *     escalate -> conflict_unresolved (zero write). escalate=true requires at
- *     least one conflict. P1-07 only RECORDS the escalate marker; semantic
- *     routing / human decision = P1-15.
- *   - join NEVER changes Evidence applicability/reduction semantics (P1-04/05
- *     formulas) — it only provides join facts and the conflict surface.
+ *     least one conflict. Workspace concurrency only records the escalate marker; semantic
+ *     routing and human decisions belong to HumanCollaboration.
+ *   - join never changes Evidence applicability or verification-reduction formulas;
+ *     it only provides join facts and the conflict surface.
  */
 import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
 import { canonicalJson, sha256Hex } from "./fingerprint.js";
@@ -97,7 +97,7 @@ export type IntegrationTaskResultV1 = {
   gaps: IntegrationGapV1[];
   /** Required non-null when conflicts exist and escalate=false (<= cap). */
   explanation: string | null;
-  /** "needs escalation" marker (P1-15 semantic routing — NOT this ticket). */
+  /** Marks that human-collaboration routing is required; the join does not perform it. */
   escalate: boolean;
   generatedAt: string;
 };

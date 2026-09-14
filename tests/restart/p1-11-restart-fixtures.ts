@@ -1,15 +1,15 @@
 import { classifyRestartProbeError } from "./readiness-probe.js";
 /** P1-11 restart-path fixtures + readiness probe. */
 import { expect } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
-import type { PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
+import type { PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { createP108ScenarioRuntime } from "../contract-suite/p1-08-harness.js";
 import { toP1_11Harness, runP111ChangeScenario, planChangeViewQueryFor, type P1_11HarnessLike, type P1_11TestHarness, type P111ChangeScenarioResult } from "../contract-suite/p1-11-harness.js";
 import { P111_PROJECT, P111_GOAL } from "../contract-suite/p1-11-harness.js";
 
 export async function isP111Ready(): Promise<boolean> {
   try {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    const h = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     try {
       await runP111RestartScenario(h);
       return true;
@@ -29,7 +29,7 @@ export type P111RestartEvidence = {
   decisionCountBefore: number;
 };
 
-export async function runP111RestartScenario(h: PersistentSqliteHarness): Promise<P111RestartEvidence> {
+export async function runP111RestartScenario(h: PersistentPlatform): Promise<P111RestartEvidence> {
   const th: P1_11TestHarness = toP1_11Harness(h as unknown as P1_11HarnessLike);
   const scen: P111ChangeScenarioResult = await runP111ChangeScenario(th);
   await th.advanceProjection();
@@ -47,7 +47,7 @@ export async function runP111RestartScenario(h: PersistentSqliteHarness): Promis
   };
 }
 
-export async function verifyP111AfterRestart(restarted: PersistentSqliteHarness, evidence: P111RestartEvidence): Promise<void> {
+export async function verifyP111AfterRestart(restarted: PersistentPlatform, evidence: P111RestartEvidence): Promise<void> {
   const th: P1_11TestHarness = toP1_11Harness(restarted as unknown as P1_11HarnessLike);
   await restarted.advanceProjection();
   expect(String(restarted.observedCursor())).toBe(evidence.cursorBefore);

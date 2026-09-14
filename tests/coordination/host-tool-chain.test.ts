@@ -39,7 +39,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createPersistentSqliteHarness, type PersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform, type PersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { CodingAgentRuntime, type RunSpec } from "../../src/execution/worker-runtime/coding-agent-runtime.js";
 import { LeasedWorkerRuntime } from "../../src/control/dispatch-engine/leased-worker-runtime.js";
 import { WorkMaterialDrive } from "../../src/control/dispatch-engine/work-material-drive.js";
@@ -50,7 +50,7 @@ import {createProfileMemory,projectMemory,type ProfileMemoryHost} from '../../sr
 import {ReadOnlyQueryRuntime} from '../../src/execution/worker-runtime/read-only-query-runtime.js';
 import {QueryExecutionContextCompiler} from '../../src/data/context-compiler/query-execution-context.js';
 import {QueryContextCompilerImpl} from '../../src/data/context-compiler/query-context-compiler.js';
-import {composeQueryDrive} from '../../src/harness/query-composition.js';
+import {composeQueryDrive} from '../../src/composition/query-composition.js';
 import {DEFAULT_RUNTIME_BUDGET} from '../../src/contracts/runtime-budget.js';
 import {buildInstallCommand,buildActivateCommand} from '../../src/contracts/commands/governance.js';
 import {COMPLETION_POLICY_FIXTURE_V1,completionPolicyPinFor} from '../../src/fixtures/governance-fixtures.js';
@@ -122,7 +122,7 @@ type World = {
   root: string;
   captured: Captured;
   runtime: { current: CodingAgentRuntime };
-  h: PersistentSqliteHarness;
+  h: PersistentPlatform;
   runRef: RunRef;
   workC: WorkContextRef;
   partC: WorkParticipationRef;
@@ -279,9 +279,9 @@ async function buildWorld(workKind: "task" | "coordination" = "task", mode: 'all
     prepare: (spec) => runtime.current.prepare(spec),
   };
 
-  let h: PersistentSqliteHarness;
+  let h: PersistentPlatform;
   const world: World = { dir, root, captured, runtime, h: undefined as never, runRef: undefined as never, workC: workContextRefFor(PROJECT, WORKSPACE, WORK_C), partC: undefined as never };
-  h = await createPersistentSqliteHarness({
+  h = await createPersistentPlatform({
     dir,
     deps: { clock: () => AT },
     sourceApplicability: sourcePort,
@@ -419,7 +419,7 @@ const SCAN_MAX_PAGES = 500;
  *   · 页游标不推进却声称还有更多 → **抛错**（读不完整必须可见）；
  *   · 页数超过显式上界 → **抛错**（不用截断的窗口做断言）。
  */
-async function readAllEvents(h: PersistentSqliteHarness): Promise<PositionedEvent[]> {
+async function readAllEvents(h: PersistentPlatform): Promise<PositionedEvent[]> {
   const out: PositionedEvent[] = [];
   let cursor: string | null = null;
   for (let pages = 0; ; pages += 1) {
@@ -447,7 +447,7 @@ async function readAllEvents(h: PersistentSqliteHarness): Promise<PositionedEven
  *  (b) 事件侧：**完整读完**账本后，最后一个 TaskClaimed 之后紧邻的两个事件恰好是
  *      WaitConditionSatisfied 与 CommunicationAdmissionRecorded（同批事件在游标序里连续）。
  */
-async function successorClaimSequence(h: PersistentSqliteHarness): Promise<string[]> {
+async function successorClaimSequence(h: PersistentPlatform): Promise<string[]> {
   const events = await readAllEvents(h);
   let window: string[] = [];
   let lastClaimWindow: string[] = [];
@@ -464,7 +464,7 @@ async function successorClaimSequence(h: PersistentSqliteHarness): Promise<strin
 }
 
 /** (a) 按 ref 读回后继接续的全部 canonical 记录。 */
-async function successorBundle(h: PersistentSqliteHarness, attemptId: string, waitId: string) {
+async function successorBundle(h: PersistentPlatform, attemptId: string, waitId: string) {
   const attempt = await h.ledger.load(taskAttemptRefFor(PROJECT, GOAL, TASK, attemptId));
   const run = await h.ledger.load(runRefFor(PROJECT, GOAL, successorRunIdFor(attemptId)));
   const outbox = await h.ledger.load(dispatchOutboxRefFor(PROJECT, GOAL, TASK, attemptId));
@@ -485,7 +485,7 @@ async function successorBundle(h: PersistentSqliteHarness, attemptId: string, wa
 }
 
 /** 账本里全部 WaitCondition 快照（用例只读复核，不参与判定）。 */
-async function loadWaits(h: PersistentSqliteHarness): Promise<WaitConditionSnapshot[]> {
+async function loadWaits(h: PersistentPlatform): Promise<WaitConditionSnapshot[]> {
   const refs = new Map<string, ReturnType<typeof waitConditionRefFor>>();
   for (const positioned of await readAllEvents(h)) {
     const event = positioned.event as { eventType?: string; workspaceId?: string; payload?: { wait?: { waitId: string } } };
@@ -501,7 +501,7 @@ async function loadWaits(h: PersistentSqliteHarness): Promise<WaitConditionSnaps
   return out;
 }
 
-async function countEvents(h: PersistentSqliteHarness, eventType: string): Promise<number> {
+async function countEvents(h: PersistentPlatform, eventType: string): Promise<number> {
   // 同样是"读到头才算数"：不做静默截断（见 readAllEvents 的说明）。
   return (await readAllEvents(h)).filter((positioned) => positioned.event.eventType === eventType).length;
 }

@@ -1,3 +1,7 @@
+import type { ExecutionSlots } from './execution/execution-slots.js';
+import { randomUUID } from 'node:crypto';
+import { authorizeRuntimeEntry } from './execution/runtime-entry.js';
+import { createModelCallAccess } from './execution/model-call-access.js';
 import type { StateLedger } from '../../contracts/ledger.js';
 import type { ArtifactPort } from '../../contracts/artifact.js';
 import type { ControlEngine } from '../../contracts/modules.js';
@@ -7,7 +11,7 @@ import type { ReviewerContextPort } from '../../contracts/reviewer-context.js';
 import type { RuntimePreparationPort, RuntimeReconciliationPort, RunSpec } from '../../contracts/runtime-preparation.js';
 import type { RuntimeObservationSource } from '../../contracts/runtime-observations.js';
 import type { RunPort } from '../../contracts/ports.js';
-import { buildDispatchStartCommand, buildRunFactCommand } from '../../contracts/commands/dispatch.js';
+import { buildRunFactCommand } from '../../contracts/commands/dispatch.js';
 import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from '../../contracts/commands/material-access.js';
 import { materialAccessGrantIdFor, type MaterialAccessGrantRef } from '../../contracts/material-access.js';
 import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
@@ -16,7 +20,8 @@ import { consumeDispatchedRun } from './dispatch-engine.js';
 const same = (a: unknown, b: unknown) => a === undefined || b === undefined ? a === b : canonicalJson(a as never) === canonicalJson(b as never);
 const object = (value: unknown) => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 export type ReviewerDispatchDeps = {
-  ledger: StateLedger; control: Pick<ControlEngine, 'startRun' | 'runFact' | 'grantMaterialAccess'>;
+  executionSlots?: ExecutionSlots;
+  ledger: StateLedger; control: Pick<ControlEngine, 'startRun' | 'runFact' | 'grantMaterialAccess' | 'authorizeModelRequest'>;
   reviewControl: ReviewDispatchControlPort; context: ReviewerContextPort;
   runtime: RuntimePreparationPort & RuntimeReconciliationPort; execution: RunPort;
   observations: RuntimeObservationSource<ReviewExecutionObservation>; vault: ArtifactPort; now: () => string;
@@ -24,12 +29,21 @@ export type ReviewerDispatchDeps = {
 /** Owns review dispatch sequencing and recovery. All model/tool execution stays
  * in the existing Runtime/RunPort, and run facts reuse the ordinary consumer. */
 export class ReviewerDispatch {
+  private readonly consumerId = 'review-' + randomUUID();
   private readonly active = new Map<string, Promise<ReviewDriveResult>>();
   constructor(private readonly deps: ReviewerDispatchDeps) {}
   drive(workRef: ReviewWorkRef): Promise<ReviewDriveResult> {
     const key = canonicalJson(workRef), running = this.active.get(key);
     if (running) return running;
-    const promise = this.driveOne(workRef).finally(() => this.active.delete(key));
+    const promise = (async () => {
+      const loaded = await this.deps.ledger.load(workRef);
+      if (this.deps.executionSlots && loaded.status === 'found' && loaded.snapshot.ref.aggregateType === 'ReviewWork') {
+        const outbox = await this.deps.ledger.load((loaded.snapshot as ReviewWorkSnapshot).outboxRef);
+        if (outbox.status === 'found' && outbox.snapshot.ref.aggregateType === 'DispatchOutboxEntry')
+          return this.deps.executionSlots.run((outbox.snapshot as DispatchOutboxEntrySnapshot).intent, () => this.driveOne(workRef));
+      }
+      return this.driveOne(workRef);
+    })().finally(() => this.active.delete(key));
     this.active.set(key, promise); return promise;
   }
   async recover(workRefs: readonly ReviewWorkRef[]) { const results: ReviewDriveResult[] = []; for (const ref of workRefs) results.push(await this.drive(ref)); return results; }
@@ -64,10 +78,16 @@ export class ReviewerDispatch {
         const assembled = await this.deps.context.assemble(workRef, grantRefs);
         if (assembled.status !== 'ready') return fail(assembled.status === 'incomplete' ? 'incomplete' : 'rejected', assembled.code, assembled.status === 'incomplete' ? assembled.missing : assembled.issues);
         const envelope = { ...assembled.envelope, work: expectedBinding, reviewInput: assembled.input };
-        const start = await this.deps.control.startRun(buildDispatchStartCommand({ projectId: work.ref.projectId, actor: { kind: 'system', id: 'review-dispatch' }, commandId: 'review-start-' + work.ref.reviewId, correlationId: work.requestId, submittedAt: outbox.intent.requestedAt, idempotencyKey: 'review-start-' + work.ref.reviewId, runId: run.ref.runId, expectedRevision: 1, envelope, manifest: assembled.manifest }));
-        if (start.status !== 'committed') return fail('rejected', start.code);
-        if (!start.replayed) {
-          const handle = await this.deps.execution.start(envelope);
+        const start = await authorizeRuntimeEntry({ ledger: this.deps.ledger, control: this.deps.control, now: this.deps.now }, {
+          intent: outbox.intent, envelope, manifest: assembled.manifest, consumerId: this.consumerId,
+          identity: () => ({ actor: { kind: 'system', id: 'review-dispatch' }, commandId: 'review-start-' + work.ref.reviewId,
+            correlationId: work.requestId, submittedAt: outbox.intent.requestedAt, idempotencyKey: 'review-start-' + work.ref.reviewId }),
+        });
+        if (start.status === 'rejected') return fail('rejected', start.code);
+        if (start.status === 'entered') {
+          const handle = await this.deps.execution.start(envelope, { modelCalls: createModelCallAccess({
+            ledger: this.deps.ledger, control: this.deps.control, envelope, now: this.deps.now,
+          }) });
           await consumeDispatchedRun(this.deps.control, handle, outbox.intent, undefined, this.deps.ledger);
         }
       }

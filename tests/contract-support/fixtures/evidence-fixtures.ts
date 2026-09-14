@@ -1,4 +1,4 @@
-import { buildEvidenceV1 as formalbuildEvidenceV1, buildEffectivityAnchorV1 as formalbuildEffectivityAnchorV1, buildSubmitEvidenceCommand as formalbuildSubmitEvidenceCommand, buildReduceTaskCommand as formalbuildReduceTaskCommand } from "../../../src/contracts/commands/evidence.js";
+import { buildEvidenceV1 as canonicalBuildEvidenceV1, buildEffectivityAnchorV1 as canonicalBuildEffectivityAnchorV1, buildSubmitEvidenceCommand as canonicalBuildSubmitEvidenceCommand, buildReduceTaskCommand as canonicalBuildReduceTaskCommand } from "../../../src/contracts/commands/evidence.js";
 
 /**
  * P1-04 shared fixtures — plan/evidence/reduction builders + the deterministic
@@ -213,7 +213,7 @@ export type BuildEvidenceDeps = {
 };
 
 export function buildEvidenceV1(deps: BuildEvidenceDeps): EvidenceV1 {
-  return formalbuildEvidenceV1({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, runRef: deps.runRef ?? null, checkId: deps.checkId ?? null, summaryText: deps.summaryText ?? "p1-04 evidence summary", artifactRef: deps.artifactRef ?? null });
+  return canonicalBuildEvidenceV1({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, runRef: deps.runRef ?? null, checkId: deps.checkId ?? null, summaryText: deps.summaryText ?? "p1-04 evidence summary", artifactRef: deps.artifactRef ?? null });
 }
 
 export function buildEffectivityAnchorV1(deps: {
@@ -223,7 +223,7 @@ export function buildEffectivityAnchorV1(deps: {
   pinnedCompletionPolicy: CompletionPolicyPin;
   pinnedArchitectureBaseline: ArchitectureBaselinePin;
 }): EffectivityAnchorV1 {
-  return formalbuildEffectivityAnchorV1(deps);
+  return canonicalBuildEffectivityAnchorV1(deps);
 }
 
 export type BuildSubmitEvidenceDeps = {
@@ -236,7 +236,7 @@ export type BuildSubmitEvidenceDeps = {
 };
 
 export function buildSubmitEvidenceCommand(deps: BuildSubmitEvidenceDeps): SubmitEvidenceCommand {
-  return formalbuildSubmitEvidenceCommand({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-04-evidence-" + deps.evidence.evidenceId });
+  return canonicalBuildSubmitEvidenceCommand({ ...deps, actor: deps.actor ?? { kind: "human", id: "user-1" }, idempotencyKey: deps.idempotencyKey ?? "p1-04-evidence-" + deps.evidence.evidenceId });
 }
 
 export function evidenceIdentityKey(command: SubmitEvidenceCommand): string {
@@ -260,7 +260,7 @@ export type BuildReduceTaskDeps = {
 };
 
 export function buildReduceTaskCommand(deps: BuildReduceTaskDeps): ReduceTaskCommand {
-  return formalbuildReduceTaskCommand({ ...deps, actor: deps.actor ?? { kind: "system", id: "control-engine" }, idempotencyKey: deps.idempotencyKey ?? "p1-04-reduce" });
+  return canonicalBuildReduceTaskCommand({ ...deps, actor: deps.actor ?? { kind: "system", id: "control-engine" }, idempotencyKey: deps.idempotencyKey ?? "p1-04-reduce" });
 }
 
 // ------------------------------------------------------------------------ //

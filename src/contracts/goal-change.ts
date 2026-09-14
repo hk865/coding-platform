@@ -55,12 +55,12 @@ export type AmendGoalRequestV1 = {
 };
 
 /**
- * ADR 0003 D1 任务集增量。这是计划变更里**唯一**能改动任务集的通道：
+ * 任务集增量是计划变更里唯一能改动任务集的通道：
  * 任务集从来不是整体重写，而是“源 revision 的任务集 + 本增量”确定性推导的结果。
  * 每个操作都只能改“谁承担义务”，不能改义务正文与验收语义：
  *   - addTask：新增完整 RuntimeTask 定义 + 它的指派（assignment）+ 它承担的义务（obligationIds）；
- *     任务与指派必须同属一个 revision：只给任务定义而不给「谁按什么指令承担」，新任务就会进了
- *     计划却永远没有派发入口（RW-07 修的就是这个缺口），因此在守卫 f1 就被拒绝；
+ *     任务与指派必须同属一个 revision：只给任务定义而不给「谁按什么指令承担」，新任务会进入
+ *     计划却永远没有派发入口，因此在守卫 f1 就被拒绝；
  *   - replaceTask：加入一条“被取代 → 取代者”记录，替换者必须是同一 revision 中已存在且 active 的任务；
  *   - cancelTask：取消并必须给出理由，无取代者。
  *
@@ -111,7 +111,7 @@ export type PlanPatchV1 = {
     obligationDeltas: AmendGoalRequestV1["obligationDeltas"];
     taskHierarchy: TaskHierarchy | null;
     /**
-     * ADR 0003 任务集增量。null 表示本次变更不改动任务集（兼容旧提案）；
+     * 任务集增量。null 表示本次变更不改动任务集（兼容旧提案）；
      * 只要求包含上限内的操作，不接受整体任务集重写。
      * 它同时进入 planProposalDigest，因此人的决定的 authorizedTarget 自动绑定这份增量，事后篡改会被 decision_target_mismatch 拦下。
      * 缺省（undefined）等价于 null。
@@ -320,7 +320,7 @@ export type ApplyPlanChangeCommand = {
   payload: {
     decisionRef: { aggregateType: "UserDecision"; projectId: string; workspaceId: string; decisionId: string };
     proposalRef: { aggregateType: "PlanProposal"; projectId: string; workspaceId: string; proposalId: string };
-    /** The NEW PlanRevision draft (P1-02 guards re-run on it). */
+    /** The new PlanRevision draft; governance and plan guards run again on it. */
     newPlanDraft: (Pick<PlanRevisionDraft, 'planId' | 'planRevision' | 'obligations'> & {
       objective: string;
       stages: PlanRevisionDraft['stages'] | null;
@@ -348,9 +348,9 @@ export type RecordUserDecisionReceipt =
 type ApplyPlanChangeRejectionCode =
   | "invalid" | "not_found" | "proposal_not_found" | "decision_not_found" | "decision_not_accepted"
   | "decision_target_mismatch" | "draft_mismatch" | "source_stale" | "guards_failed"
-  /** ADR 0003 D1-2：任务集增量本身不合法（缺字段、无理由、指向不存在/非 active 的任务、链式取代）。 */
+  /** 任务集增量本身不合法（缺字段、无理由、指向不存在/非 active 的任务、链式取代）。 */
   | "task_set_delta_invalid"
-  /** ADR 0003 D1-2：尝试用增量改义务正文或验收语义（属于人的决定，不在 inScopeRework 内）。 */
+  /** 尝试用增量改义务正文或验收语义（属于人的决定，不在 inScopeRework 内）。 */
   | "obligation_semantics_forbidden"
   | "revision_conflict" | "idempotency_conflict" | "unavailable";
 export type ApplyPlanChangeReceipt =

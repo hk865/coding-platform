@@ -24,7 +24,7 @@ function knownRequirementKeysForTask(
 
 /**
  * PURE applicability of ONE evidence against the current plan + tuple
- * (frozen rule):
+ * (versioned rule):
  *   1. subject task not in the current plan, or NO coverage entry references a
  *      VR of an obligation mapped to that subject task in the current plan ->
  *      OUT_OF_SCOPE (never covered the current requirement);

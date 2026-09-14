@@ -1,5 +1,5 @@
 /**
- * P1-12 VerificationEngine.CodeGraphPort — deterministic registry-backed graph
+ * VerificationEngine.CodeGraphPort — deterministic registry-backed graph
  * capability seam.
  *
  * The engine answers graph availability for a workspace revision from the
@@ -7,8 +7,7 @@
  * itself is the pure computeArchitectureDelta function in the contracts —
  * always reproducible.
  *
- * A4/A-3 (2026-09-10 review): this seam has **no
- * production consumer**. The real graph path is
+ * This registry-backed seam has no production consumer. The real graph path is
  * `context/source-graph-context.ts` (SourceGraphContextCompiler) fed by
  * `data/source-workspace-reader.ts`; `service.ts` injects that, not this port.
  * When no registry is configured this port returns `unsupported` — it must

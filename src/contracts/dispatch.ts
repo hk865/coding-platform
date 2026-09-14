@@ -82,7 +82,7 @@ export function dispatchOutboxRefFor(
 // Shared value types                                                         //
 // ------------------------------------------------------------------------ //
 
-/** Minimal versioned RoleBinding reference (no full RoleBinding contract yet — P1-15). */
+/** Minimal versioned RoleBinding reference used by dispatch. */
 export type RoleBindingRefV1 = {
   schemaVersion: 1;
   bindingId: string;
@@ -91,12 +91,12 @@ export type RoleBindingRefV1 = {
   templateRevision: string;
   /** Binding instance version; the Run references the exact version used. */
   bindingVersion: number;
-  /** Authorization policy version the binding was resolved under (opaque; no registry in P1-03). */
+  /** Authorization policy version the binding was resolved under (opaque; no registry in dispatch). */
   policyRevision: string;
 };
 
 /**
- * Versioned source reference. P1-03 kinds are the sources a bounded envelope
+ * Versioned source reference. dispatch kinds are the sources a bounded envelope
  * can declare; further kinds extend with a versioned schema upgrade.
  */
 export type SourceRefV1 = {
@@ -112,7 +112,7 @@ export type TaskBudgetV1 = {
 };
 
 // ------------------------------------------------------------------------ //
-// RuntimeEvent (contract #5)                                                //
+// Runtime event protocol                                                    //
 // ------------------------------------------------------------------------ //
 
 type RuntimeEventType =
@@ -143,7 +143,7 @@ export function isTerminalRuntimeEvent(event: RuntimeEventV1): boolean {
 
 /**
  * The outcome a terminal RuntimeEvent contributes. NEVER maps to Task.phase —
- * satisfaction is P1-04 evidence reduction.
+ * satisfaction is verification evidence reduction.
  */
 export function runtimeEventTerminalOutcome(event: RuntimeEventV1): RunOutcome | null {
   switch (event.eventType) {
@@ -193,19 +193,19 @@ export type TaskAttemptStatus = "claimed" | "started" | "ended";
 type DispatchOutboxStatus = "pending" | "started" | "done";
 
 // ------------------------------------------------------------------------ //
-// DispatchIntent (contract #1 — durable outbox intent)                      //
+// Durable dispatch intent                                                    //
 // ------------------------------------------------------------------------ //
 
 export type DispatchIntentV1 = {
   work?: import('./reviewer-work.js').ReviewWorkBinding;
   /**
-   * 本次 Run 的**工作身份已由协作受理固定**（CM-1A-001 owner 裁决，第 2 步 / R7）。
+   * 本次 Run 的**工作身份已由协作受理固定**（协作通信参与身份裁决，参与身份规则 / 工作身份规则）。
    *
    * 只有 `communication-successor-claim` 产生的后继 intent 会带它，值就是那次
    * CommunicationAdmission 记录的 workContextRef。派发收口（ensureWorkIdentity）见到它必须
    * **直接使用**这个 Work（link 本 Run 即可），**不得**再按 (goal, task) 解析：
    * 解析是普通任务的兜底规则，而返工替换链会让「按任务解析出的起源任务」与「等待所属的 Work」
-   * 不是同一个 —— 那正是 R7：后继会被送进另一个 Work，丢掉等待与它已经积累的上下文。
+   * 不是同一个。再次解析会造成工作身份错配：后继会被送进另一个 Work，丢掉等待与它已经积累的上下文。
    * 缺省（普通任务）语义不变：按 (project, workspace, goal, 起源任务) 解析既有身份。
    */
   admittedWorkRef?: WorkContextRef;
@@ -220,7 +220,7 @@ export type DispatchIntentV1 = {
   attemptRef: TaskAttemptRef;
   runRef: RunRef;
   roleBinding: RoleBindingRefV1;
-  /** Canonical Workspace revision bound at claim (no worktree digest machinery in P1-03). */
+  /** Canonical Workspace revision bound at claim (no worktree digest machinery in dispatch). */
   workspaceSnapshot: { workspaceId: string; revision: number };
   declaredPermissions: { tools: string[]; writeScope: string[] };
   budget: TaskBudgetV1;
@@ -313,7 +313,7 @@ export type DispatchOutboxEntrySnapshot = {
 };
 
 // ------------------------------------------------------------------------ //
-// Domain events (P1-03 v1)                                                  //
+// Domain events (dispatch v1)                                                  //
 // ------------------------------------------------------------------------ //
 
 export type TaskClaimedEvent = {
@@ -424,7 +424,7 @@ export type DispatchReadinessFacts = {
   resource: { tokenBudget: number; deadline: string | null; now: string };
 };
 
-/** 角色绑定不可受理的具体原因（RW-11；沿用既有 receipt 码，只细化 reason）。 */
+/** 角色矩阵准入失败的具体原因；沿用既有 receipt 码，只细化 reason。 */
 export type RoleBindingInadmissibleDetail =
   | "role_not_registered"
   | "role_spec_not_installed"
@@ -457,7 +457,7 @@ export type TaskIneligibilityReason =
       message: string;
     }
   /**
-   * RW-11：角色绑定与项目角色矩阵/角色规格不符。claim 的**顶层**拒绝码仍然是既有的
+   * 角色绑定与项目角色矩阵／角色规格不符。claim 的**顶层**拒绝码仍然是既有的
    * `ineligible`（不新造 receipt 码）；这条 reason 只负责说明是哪一项不符，与
    * ReplacementIneligibilityReason 的 stale_packet／packet_mismatch 是同一处置方式。
    * 命中即零写入，不会留下 lease／attempt／run／outbox。
@@ -636,7 +636,7 @@ export type RunFactV1 =
   /** Explicit "no terminal signal" fact — carries its Run identity (mirrors runtime_event). */
   | { kind: "outcome_unknown"; runRef: RunRef; reason: string }
   /**
-   * Control 复核「exact Run + 材料版本 + 授权」之后**签发**一次性许可（D06 的
+   * Control 复核「exact Run + 材料版本 + 授权」之后**签发**一次性许可（调用证据与参与语义规则中的
    * provider_call_authorized，由 Control 侧事实给出，不由 Runtime 事件冒充）。
    */
   | { kind: "model_request_authorized"; runRef: RunRef; permit: ModelRequestPermitV1 }
@@ -656,7 +656,7 @@ export type RunFactV1 =
     };
 
 /**
- * **一次性模型调用许可**（CM-1A-001 第 4 步 / D06「调用证据」）。
+ * **一次性模型调用许可**（协作通信可靠投递规则中的“调用证据”）。
  *
  * 为什么需要它：`authorized` / `attempted` 必须是**两件不同的事实**，不能互相代替。Control 在
  * 复核「exact Run + 材料版本 + 授权」之后签发它；Runtime 侧的一次**调用尝试**消费它。
@@ -664,7 +664,7 @@ export type RunFactV1 =
  * **一次许可只能对应一次调用尝试**：许可聚合只有 @1（已签发）与 @2（已尝试）两个版本，
  * 第二次尝试用同一许可会因为 CAS@1 失败而被**账本**拒绝（不是靠调用方自觉）。
  *
- * 边界（如实）：本票**不写**任何 ack。今天唯一可得的 provider 信号是 Runtime 计量里的
+ * 边界（如实）：当前实现**不写**任何 ack。今天唯一可得的 provider 信号是 Runtime 计量里的
  * `MeterEntry.status = 'reported'`，而它只说明「用量被报出来了」，**不等于** provider 对这次
  * 调用的可验证回执。因此这里没有 `acknowledgedAt` 之类的字段——一个永远为 null 的字段不是证据。
  */
@@ -852,7 +852,7 @@ export type RunFactReceipt =
     };
 
 // ------------------------------------------------------------------------ //
-// Fingerprints (JCS + SHA-256; volatile ids excluded — P1-00/02 convention)  //
+// Fingerprints (JCS + SHA-256; volatile ids excluded — shared command convention)     //
 // ------------------------------------------------------------------------ //
 
 export function dispatchClaimFingerprint(command: DispatchClaimCommand): CommandFingerprint {

@@ -1,17 +1,13 @@
 /**
- * P1-12 Architecture inspection contracts — ArchitectureInspectionIntent /
+ * Architecture inspection contracts — ArchitectureInspectionIntent /
  * CodeGraphSnapshot / ArchitectureDelta / ArchitectureFinding /
- * ArchitectureDecisionBrief / CandidateBaselineProposal (first consumer
- * freeze of WorkspaceReader.ReadPort, ArchitectureReconciler.InspectionPort,
- * VerificationEngine.CodeGraphPort).
+ * ArchitectureDecisionBrief / CandidateBaselineProposal. These are the shared,
+ * versioned interfaces for WorkspaceReader.ReadPort,
+ * ArchitectureReconciler.InspectionPort and VerificationEngine.CodeGraphPort.
  *
  * Authority:
- *   - dev_docs/planning/proposed/P1-foundation/tickets/12-codegraph-finding-decision-brief.md
- *     (7 verification groups, 10 Acceptance items incl. the 2026-09-06
- *     extension: report-source findings WITHOUT a raw delta are allowed; raw
- *     Delta must never be fabricated)
  *   - dev_docs/modules/data/workspace-reader.md + control/architecture-reconciler.md
- *     + control/verification-engine.md (extension records)
+ *     + control/verification-engine.md
  *   - ARCHITECTURE.md global invariants #11/#12/#13 (baseline revision
  *     immutability; plan pins; candidate source-ref discipline)
  *
@@ -31,11 +27,12 @@
  *   - CandidateBaselineProposal derives DETERMINISTICALLY from the exact
  *     source baseline + selected delta/option + normalized content; it
  *     records source ref, proposal digest and the expected candidate digest
- *     for P1-14 materialization.
+ *     for baseline evolution materialization.
  *   - Determinism: the same snapshot/baseline input produces the same raw
  *     Delta (canonicalJson equality).
- *   - P1-12 NEVER creates RemediationTask / migration Gate / BaselineActivation
- *     side effects; Inspections/Finding/Brief/Candidate are facts for P1-13/14.
+ *   - Architecture inspection never creates RemediationTask, migration-gate or
+ *     BaselineActivation side effects. Its inspection, finding, brief and
+ *     candidate records are facts consumed by architecture evolution.
  */
 import type { ActorRef, CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
 import { canonicalJson, sha256Hex } from "./fingerprint.js";
@@ -321,7 +318,7 @@ export type ArchitectureCandidateProposalV1 = {
   normalizedContent: Omit<import('./governance.js').ArchitectureBaselineContentV1, 'schemaVersion'>;
   /** Deterministic proposal digest = sha256(canonicalJson(payload)). */
   proposalDigest: string;
-  /** Expected candidate baseline digest once materialized by P1-14. */
+  /** Expected candidate baseline digest once materialized by baseline evolution. */
   expectedCandidateDigest: string;
   bodyRef: ArtifactRef;
   generatedAt: string;
@@ -492,7 +489,7 @@ export type ArchitectureInspectionOutcome =
   | { status: "fail_closed"; code: "baseline_unresolved" | "baseline_digest_mismatch" | "plan_pin_missing" | "workspace_unavailable"; diagnostics: string[] };
 
 // ------------------------------------------------------------------------ //
-// Domain events (P1-12 v1)                                                  //
+// Domain events (architecture inspection v1)                                                  //
 // ------------------------------------------------------------------------ //
 
 export type ArchitectureInspectionRecordedEvent = {

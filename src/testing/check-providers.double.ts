@@ -1,6 +1,6 @@
 /**
  * Deterministic check-provider doubles and the Reviewer capability double.
- * Explicit harness defaults; production command checks use their own provider.
+ * Explicit test-host defaults; production command checks use their own provider.
  * Determinism: the same ctx/checkId always
  * yields the same outcome (results keyed on diffClass — table-testable).
  */

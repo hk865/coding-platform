@@ -1,7 +1,7 @@
 /**
  * Goal View Interface + ReadModelIndex Interface.
  * Authority: dev_docs/interfaces/goal-view.md + modules/data/read-model-index.md.
- * P1-02 versioned extension (recorded in the interface doc):
+ * Versioned governance and plan additions recorded in the interface document:
  *  - GoalView.activePlanRevision becomes PlanRevisionRef | null (GoalCreated@1
  *    still projects null; PlanRevisionAccepted refreshes the row);
  *  - ProjectionStallReason adds "unsupported_event_type" (a known v1 event
@@ -61,7 +61,7 @@ export type ProjectionReceipt = {
 /**
  * Projection stall reasons — ReadModelIndex must stop and report (throw a
  * typed ProjectionStallError) instead of silently skipping.
- * P1-02 adds "unsupported_event_type": a KNOWN v1 event type that this
+ * The versioned projection adds "unsupported_event_type": a known v1 event type that this
  * projection has no handler for yet is still a hard stall (never skip).
  */
 export type ProjectionStallReason =
@@ -106,7 +106,7 @@ export interface ReadModelIndex {
   integrationConflicts(query: import("./workspace-views.js").IntegrationConflictViewQuery): Promise<import("./workspace-views.js").IntegrationConflictViewResult>;
   /** workspace patch view per (projectId, workspaceId) — display only. */
   workspacePatches(query: import("./workspace-views.js").WorkspacePatchViewQuery): Promise<import("./workspace-views.js").WorkspacePatchViewResult>;
-  /** portfolio of bootstrapped Project/Workspace scopes (P1-00 manifest projection). */
+  /** portfolio of bootstrapped Project/Workspace scopes (goal/bootstrap manifest projection). */
   consolePortfolio(query: import("./console-views.js").PortfolioViewQuery): Promise<import("./console-views.js").PortfolioViewResult>;
   /** workspace-level summary per full-scope key (projectId, workspaceId). */
   consoleSummary(query: import("./console-views.js").WorkspaceSummaryViewQuery): Promise<import("./console-views.js").WorkspaceSummaryViewResult>;
@@ -122,7 +122,7 @@ export interface ReadModelIndex {
   workContext(query: import("./context-continuity.js").WorkContextViewQuery): Promise<import("./context-continuity.js").WorkContextViewResult>;
   /** architecture inspection view per (projectId, workspaceId) — inspections + findings + briefs + proposals (display only; no baseline writes). */
   architectureInspectionView(query: import("./architecture-inspection.js").ArchitectureInspectionViewQuery): Promise<import("./architecture-inspection.js").ArchitectureInspectionViewResult>;
-  /** completed-work selection source view per (projectId, workspaceId) — display only, composed from the P1-16 work-context stores. */
+  /** completed-work selection source view per (projectId, workspaceId) — display only, composed from the context continuity work-context stores. */
   completedWorkView(query: import("./completed-work-context.js").CompletedWorkViewQuery): Promise<import("./completed-work-context.js").CompletedWorkViewResult>;
   /** control timeline view per (projectId, workspaceId) — desired vs current separated (display only). */
   controlTimelineView(query: import("./control-intent.js").ControlTimelineViewQuery): Promise<import("./control-intent.js").ControlTimelineViewResult>;

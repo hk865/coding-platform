@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 源码快照指纹（可复算）——CM-1A-001 第 5 步要求的「统一脚本」。
+ * 源码快照指纹（可复算）——本仓统一的固定源码证据入口。
  *
  * 算法正文在文档根 dev_docs/planning/active/collaboration-memory/BASELINE.md 第 5 节，
  * 这里只实现它，不再各自复制一份：

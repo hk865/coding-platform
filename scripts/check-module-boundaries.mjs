@@ -53,7 +53,7 @@ if(issues.length)process.exitCode=1;
 // Explicit test adapters and composition defaults. These preserve separate fake
 // capabilities; any additional production consumer requires review here.
 function fixtureConsumersInit(){return new Set([
- 'src/harness/in-memory-harness.ts','src/harness/persistent-harness.ts','src/app/service.ts',
+ 'src/harness/in-memory-harness.ts','src/composition/persistent-platform.ts','src/app/service.ts',
  'src/execution/worker-runtime/fake-runtime-adapter.ts','src/data/workspace-reader/workspace-reader-adapter.ts',
  'src/control/verification-engine/code-graph-port.ts',
 ]);}

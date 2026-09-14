@@ -173,7 +173,7 @@ export function evaluateWaitConditions(
  * 三个分支故意分开返回，因为它们的处置不同：
  *   - `conditions_unsatisfied`：等条件；
  *   - `predecessor_active`：条件已满足但前驱仍执行——只保存观察，
- *     **不**重叠启动同一 Work 的后继（PLAN §5.1）；
+ *     **不**重叠启动同一 Work 的后继；
  *   - `deadline_passed`：收敛为 timed_out，而不是接续。
  */
 export type SuccessorEligibility =

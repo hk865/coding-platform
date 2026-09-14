@@ -1,0 +1,9 @@
+{
+  "src/control/dispatch-engine/execution-slots.ts": "src/control/dispatch-engine/execution/execution-slots.ts",
+  "src/control/dispatch-engine/runtime-entry.ts": "src/control/dispatch-engine/execution/runtime-entry.ts",
+  "src/control/dispatch-engine/dispatch-retry.ts": "src/control/dispatch-engine/execution/dispatch-retry.ts",
+  "src/control/dispatch-engine/model-call-access.ts": "src/control/dispatch-engine/execution/model-call-access.ts",
+  "src/control/dispatch-engine/handoff-drive.ts": "src/control/dispatch-engine/handoff/handoff-drive.ts",
+  "src/control/dispatch-engine/handoff-preparation.ts": "src/control/dispatch-engine/handoff/handoff-preparation.ts",
+  "src/control/dispatch-engine/handoff-request.ts": "src/control/dispatch-engine/handoff/handoff-request.ts"
+}

@@ -1,17 +1,17 @@
 /**
- * P1-13 ArchitectureEvolutionPolicy contracts — the THIRD governance kind.
+ * ArchitectureEvolutionPolicy contracts — a versioned project-governance policy.
  *
- * Authority: ticket 13-allowlisted-remediation.md (Acceptance; 09-06 extension)
- * + ARCHITECTURE.md (immutable revisions; activation never auto-; resolution
+ * Authority: the architecture evolution module specification and ARCHITECTURE.md
+ * (immutable revisions; activation is never automatic; resolution
  * only through the canonical Project active ref; allowlist/drift/reversibility
- * gating; ArchitectureBaseline active ref NEVER moves in this ticket).
+ * gating; ArchitectureBaseline active ref never moves through this policy).
  *
- * Freeze: install persists digest/revision-exact immutable revisions (never
+ * Versioning rule: install persists digest/revision-exact immutable revisions (never
  * auto-activates; no built-in allowlist fallback); activation CAS = Project@N
  * + per-kind active aggregate@k; only local/deterministic/reversible findings
  * hitting the allowlist AND the drift budget enter remediation; all gates zero
- * write; the same commitKind union extension as P1-02 (one install/activate
- * commitKind carries third kind now).
+ * write. Installation and activation reuse the canonical versioned-governance
+ * commit kinds and compare-and-swap rules.
  */
 import type { CommandFingerprint, CommandIdentity, CommitCursor } from "./command-event.js";
 import { canonicalJson, sha256Hex } from "./fingerprint.js";
@@ -60,7 +60,7 @@ export type ArchitectureEvolutionPolicyRevisionRef = {
 
 export type ArchitectureEvolutionPolicyPin = {
   ref: ArchitectureEvolutionPolicyRevisionRef;
-  /** identity/revision/digest triple — matches the P1-02 pin shape. */
+  /** Identity/revision/digest triple shared by versioned-governance pins. */
   digest: string;
 };
 
@@ -175,7 +175,7 @@ export type ArchitectureEvolutionPolicyInstalledEvent = {
   eventType: "ArchitectureEvolutionPolicyInstalled";
   schemaVersion: 1;
   projectId: string;
-  workspaceId: string; // "" (project-scoped) — mirrors P1-02 install events
+  workspaceId: string; // "" for project-scoped versioned-governance installation events
   aggregateType: "ArchitectureEvolutionPolicyRevision";
   aggregateId: string;
   aggregateRevision: 1;

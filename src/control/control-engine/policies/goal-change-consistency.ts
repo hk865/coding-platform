@@ -38,7 +38,7 @@ function cloneTask(task: RuntimeTask): RuntimeTask {
 }
 
 /**
- * ADR 0003 D1 第 2 条：任务集增量只能改「谁承担义务」，不能改义务正文与验收语义。
+ * 任务集增量只能改「谁承担义务」，不能改义务正文与验收语义。
  * 本函数检查增量自身的形状与引用合法性（纯函数、零状态、零写入）：
  *  - addTask 必须给出完整 RuntimeTask 定义 + 它的指派（work 任务必带、gate 任务必须为 null）
  *    + 它承担的义务，且义务必须是源 revision 里已有的义务；
@@ -112,7 +112,7 @@ export function checkTaskSetDelta(delta: PlanTaskSetDeltaV1[] | null | undefined
           issues.push(`addTask ${task.taskId}: scope references unknown stage ${stageId}`);
         }
       }
-      // RW-07：任务与它的指派必须同属一个 revision。新增任务若只有任务定义而没有
+      // 指派完整性：任务与它的指派必须同属一个 revision。新增任务若只有任务定义而没有
       // 「谁按什么指令承担」，它会进入计划、通过 readiness，却没有任何派发入口认领它
       // （DispatchEngine 按 revision 的指派派发）。因此这里把「必须带指派」并入既有推导：
       // work 任务必带，gate 任务不得带（gate 的结论由证据归约产生，不派发实现运行）。
@@ -203,7 +203,7 @@ export function checkTaskSetDelta(delta: PlanTaskSetDeltaV1[] | null | undefined
 }
 
 /**
- * 指派的形状判据（RW-07）。与初始规划对同一形状的约定一致（role 取值、instruction 非空且
+ * 指派的形状判据。与初始规划对同一形状的约定一致（role 取值、instruction 非空且
  * 有界），但**不重复它的解析职责**：那里是模型响应的公开边界解析，这里是 canonical 提交的
  * 守卫；两者判的是同一个形状，因此界取自同一常数。
  */
@@ -224,12 +224,12 @@ function assignmentShapeIssues(assignment: PlanTaskAssignment, taskId: string, l
 }
 
 /**
- * RW-07：新 revision 的指派集合 = 「源 revision 的指派（顺序不变）+ 增量里新增任务的
+ * Revision 指派推导：新 revision 的指派集合 = 「源 revision 的指派（顺序不变）+ 增量里新增任务的
  * assignment（按增量书写顺序追加）」。与 deriveTaskSet 同处，因为它俩是同一次推导的两半：
  * 任务集决定"有哪些任务"，指派决定"谁按什么指令做"。
  *
  * 为什么退出执行的任务（superseded／cancelled）仍保留指派：
- *   1. 任务本身不删除，只改 disposition（ADR 0003 D1-3），它的指派是同一个 revision 内的事实；
+ *   1. 任务本身不删除，只改 disposition；它的指派是同一个 revision 内的事实；
  *   2. 派发用的 Run 身份由指派在列表中的位置推导（见 DispatchEngine 的注释），若在这里删条目，
  *      其余任务的 Run 身份会随每次返工变化，已开始的 Run 会被当成另一个身份重新派发；
  *   3. 派发候选按 disposition 过滤，因此保留不会让被取代任务被执行。
@@ -252,7 +252,7 @@ export function deriveTaskAssignments(
 }
 
 /**
- * 指派集合的草稿一致性（RW-07，纯）：草稿的 assignments 必须逐项等于推导结果，并且每条
+ * 指派集合的草稿一致性（纯函数）：草稿的 assignments 必须逐项等于推导结果，并且每条
  * 指派都要指向**这个 revision 里存在的 work 任务**、同一任务不得出现两条。
  * 顺序不承载语义（指派按 taskId 归属），因此比较按 taskId 索引；这与任务集比较按 id 索引一致。
  */
@@ -298,7 +298,7 @@ function assignmentConsistencyIssues(
 }
 
 /**
- * ADR 0003 D1：任务集增量落到任务定义、义务承担者、执行 DAG 上的确定性推导。
+ * 任务集增量落到任务定义、义务承担者和执行 DAG 上的确定性推导。
  * applyPlanChange 的守卫与草稿一致性检查必须共用本函数，避免出现第二份业务规则。
  *  - 任务定义不可改：源任务只可能保持原样，或被标为 superseded 并记录 replacedByTaskId；
  *  - 义务承担者换人：被取代任务从 taskIds 移除，取代者补入新任务声明的义务；
@@ -335,8 +335,8 @@ export function deriveTaskSet(source: PlanRevisionSnapshot, delta: PlanTaskSetDe
  * 义务集合的确定性推导（新 revision 的目标义务集）：
  *  1. 任务集增量只改承担者集合（taskIds）——被取代/取消的任务退出，新增任务按声明补入；
  *  2. 提案的 obligationDeltas 再作用一次：remove 删除、change 只允许改标题、add 新增
- *     （新增义务沿用源里第一条义务的承担者与验收要求，与 P1-11 提案侧的默认一致）。
- * 正文、等级与 verificationRequirements 的语义在第 1 步逐字复制，绝不由任务集增量改写。
+ *     （新增义务沿用源里第一条义务的承担者与验收要求，与 plan change 提案侧的默认一致）。
+ * 正文、等级与 verificationRequirements 的语义在准入规则逐字复制，绝不由任务集增量改写。
  */
 export function deriveObligationSet(
   source: PlanRevisionSnapshot,
@@ -490,13 +490,13 @@ export function deriveExpectedTaskGraph(source: PlanRevisionSnapshot, replacedBy
 
 /**
  * 草稿一致性守卫（纯）：被接受的决定的 authorizedTarget 所界定的新计划草稿，
- * 必须逐项反映提案/补丁——包括 ADR 0003 D1 的任务集增量。
+ * 必须逐项反映提案和补丁，包括任务集增量。
  *
  * 顺序：先校验增量本身（形状与引用 -> task_set_delta_invalid），再逐项比对推导结果
  * （任务集、义务承担者、验收语义、执行 DAG 与层级 -> draft_mismatch）。任何不匹配都返回
  * issue，调用方零写入。参数顺序沿用既有调用点：(proposal, decision, draft, source)。
  *
- * 检查面（RW-07 起）：目标正文、任务集（源 + 增量）、**指派集合（源 + 增量的 assignment）**、
+ * 检查面（ 起）：目标正文、任务集（源 + 增量）、**指派集合（源 + 增量的 assignment）**、
  * 义务承担者与验收语义、执行 DAG 与层级。
  *
  * 边界（写清，因为这里只检查、不代替调用方处置）：
@@ -509,14 +509,14 @@ export function deriveExpectedTaskGraph(source: PlanRevisionSnapshot, replacedBy
  *   3. 无任务集增量的草稿必须与源 revision 逐字相同（沿用旧行为，见本函数末段）。
  */
 /**
- * RW-10（P8）：一致性 issue 里「越过了人的决定边界」那一类的**唯一前缀**。
+ * 一致性 issue 里「越过了人的决定边界」这一类的唯一前缀。
  * 生产者（本文件的三条 obligation_semantics_forbidden issue）与消费者（守卫与自动受理入口的
  * 拒绝码归因）读同一个常量，避免一处改文字、另一处漏判。
  */
 export const OBLIGATION_SEMANTICS_FORBIDDEN_PREFIX = "obligation_semantics_forbidden";
 
 /**
- * RW-10（P8）：草稿一致性 issue → 既有守卫拒绝码的**唯一归因实现**。
+ * 草稿一致性 issue 到既有守卫拒绝码的唯一归因实现。
  *
  * 为什么需要它：applyPlanChange 的守卫 f2 与返工自动受理入口的落账前预检跑的是同一个
  * draftConsistencyIssues，但两者此前各自决定拒绝码——守卫区分 obligation_semantics_forbidden 与
@@ -556,7 +556,7 @@ export function draftConsistencyIssues(
   const derived = deriveTaskSet(source, taskDelta);
   const expectedObligations = deriveObligationSet(source, taskDelta, derived.replacedBy, proposal.patch.patchDraft.obligationDeltas);
 
-  // ADR 0003 D1 第 2 条：新任务集必须等于「源 revision 任务集 + 增量」的确定性推导结果。
+  // 新任务集必须等于「源 revision 任务集 + 增量」的确定性推导结果。
   // 草稿自带 tasks 时逐项比对；旧调用方不带 tasks 时按「任务集继承自源 revision」比对。
   const draftTasks: RuntimeTask[] = Array.isArray(draft.tasks)
     ? (draft.tasks as RuntimeTask[])
@@ -580,7 +580,7 @@ export function draftConsistencyIssues(
     }
   }
 
-  // RW-07：指派与新任务同属一个 revision。草稿的 assignments 必须逐项等于「源指派 + 增量的
+  // 指派版本一致性：指派与新任务同属一个 revision。草稿的 assignments 必须逐项等于「源指派 + 增量的
   // assignment」（顺序不承载语义，按 taskId 索引比较），且不得指向不存在或非 work 的任务、
   // 不得给同一任务两条指派。缺省（null／未提供）沿用源指派，与 tasks 的既有约定一致。
   const derivedAssignments = deriveTaskAssignments(source, taskDelta);

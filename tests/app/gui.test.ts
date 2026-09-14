@@ -20,6 +20,32 @@ async function start(dir?: string) {
   const scope = { projectId: 'acceptance-alpha', workspaceId: 'workspace-main', goalId: 'acceptance-demo' };
   return { dir, base, close, scope, post: async (path: string, body = {}) => { const res = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...scope, ...body }) }); return { status: res.status, body: await res.json() as ActionBody }; }, state: async (extra = {}) => (await fetch(base + '/api/state?' + new URLSearchParams({ ...scope, ...extra }))).json() as Promise<GuiState> };
 }
+
+it('keeps fixture execution disabled unless a test or demo opts in', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'platform-gui-production-default-'));
+  cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  const app = await createGuiServer(dir);
+  await new Promise<void>(resolve => app.server.listen(0, '127.0.0.1', resolve));
+  const address = app.server.address();
+  if (!address || typeof address === 'string') throw Error('missing port');
+  let closed = false;
+  cleanup.push(async () => { if (!closed) { closed = true; await app.close(); } });
+  const meta = await (await fetch(`http://127.0.0.1:${address.port}/api/meta`)).json() as {
+    executionCapability: { executor: string; source: string; fixtureEnabled: boolean };
+  };
+  expect(meta.executionCapability).toEqual({
+    executor: 'coding-agent',
+    source: 'configured-runtime',
+    fixtureEnabled: false,
+  });
+  const fixtureRun = await fetch(`http://127.0.0.1:${address.port}/api/tasks/run`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ projectId: 'acceptance-alpha', workspaceId: 'workspace-main', goalId: 'acceptance-demo', taskId: 'task-install-contract' }),
+  });
+  expect(fixtureRun.status).toBe(400);
+});
+
 it('serves the GUI and persists scoped goals, plans, runs and sourced queries across restart', async () => {
   const app = await start();
   expect((await fetch(app.base)).status).toBe(200);

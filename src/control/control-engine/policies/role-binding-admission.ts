@@ -1,5 +1,5 @@
 import type { RoleSpecPinReadinessV1 } from '../../../contracts/governance-view.js';
-/** Control-owned deterministic domain policy（RW-11 角色绑定受理判据）。 */
+/** Control-owned deterministic domain policy（ 角色绑定受理判据）。 */
 import { canonicalJson } from "../../../contracts/fingerprint.js";
 import type { RoleBindingRefV1, RoleBindingInadmissibleDetail, TaskIneligibilityReason } from "../../../contracts/dispatch.js";
 import type { CoordinationRoleMatrixV1 } from "../../../contracts/human-role-collaboration.js";
@@ -9,7 +9,7 @@ import { roleSpecRevisionFromBinding, type RoleSpecPinV1, type RoleSpecRevisionR
  * claim 守卫读到的全部事实（纯函数输入；本策略不读账本、不写账本）。
  *
  * matrix 为 null 表示这个项目**没有登记角色矩阵**（没装协调策略，或装的那份正文没有 roles）。
- * 这不是「校验通过」：它只是沿用 RW-11 之前的绑定语义（RoleBindingRefV1 自证 + 命令形状校验）。
+ * 这不是「校验通过」：它只是沿用引入角色矩阵前的绑定语义（RoleBindingRefV1 自证 + 命令形状校验）。
  * 有矩阵时，下面每一项都必须成立，否则零写入拒绝。
  */
 export type RoleBindingAdmissionFactsV1 = {
@@ -31,9 +31,9 @@ function reject(roleId: string, detail: RoleBindingInadmissibleDetail, message: 
 }
 
 /**
- * RW-11：claim 的角色绑定受理判据（纯函数，确定性）。
+ * Claim 角色绑定准入：纯函数、确定性。
  *
- * 判据逐条来自 ADR 0003 D4-2「角色不存在、revision 过期、权限不符即拒绝，零写」：
+ * 判据：角色不存在、revision 过期或权限不符即拒绝，零写入。
  *   1. 角色存在：roleId（= RoleBindingRefV1.templateId）必须在当前生效策略的角色矩阵 catalog 里；
  *   2. revision 未过期：绑定的 templateRevision 必须**正好等于**矩阵 pin 的 revision
  *      （绑定是「按 pin 解析出来的」，不是「随便报一个版本」）；
@@ -92,7 +92,7 @@ export function evaluateRoleBindingAdmission(facts: RoleBindingAdmissionFactsV1)
 }
 
 // ------------------------------------------------------------------------ //
-// RW-14：矩阵 pin 就绪预检（给治理视图用；判据仍是上面同一个纯函数）           //
+// 矩阵 pin 就绪预检（给治理视图用；判据仍是上面同一个纯函数）            //
 // ------------------------------------------------------------------------ //
 
 /**
@@ -155,4 +155,3 @@ export function evaluateRoleSpecPinReadiness(facts: {
         : "stale";
   return { status, roleId: facts.roleId, message: reason.message };
 }
-

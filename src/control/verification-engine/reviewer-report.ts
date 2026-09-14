@@ -111,7 +111,7 @@ async function validateCitation(citation: ReviewerCitationV1, work: ReviewWorkSn
   if (citation.location['kind'] === 'source-lines') {
     const location = citation.location;
     let page;
-    // Context proves the frozen source before/after reading. Compare the report's
+    // Context proves the versioned source before/after reading. Compare the report's
     // claimed digest here so a fabricated digest is invalid, not transient stale.
     try { page = await context.readSource(work.ref, { path: location['path'], startLine: location['startLine'], endLine: location['endLine'] }); }
     catch (error) {

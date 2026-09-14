@@ -57,7 +57,7 @@ it('leaves canonical ended runs intact and stops after an accepted terminal even
   expect(s.runFact).toHaveBeenCalledTimes(1);
 });
 
-it('serializes outbox drives and still allows the next request after a failure', async () => {
+it('lets an independent drive proceed while another is slow or fails', async () => {
   const s = scenario();
   let release!: () => void;
   s.drive.mockImplementationOnce(() => new Promise((_, reject) => { release = () => reject(Error('offline')); }));
@@ -65,8 +65,9 @@ it('serializes outbox drives and still allows the next request after a failure',
   const observed = expect(first).rejects.toThrow('offline');
   const second = s.dispatch.drive({ reason: 'second', runRef: ref });
   await Promise.resolve();
-  expect(s.drive).toHaveBeenCalledTimes(1);
-  release(); await observed; await second;
+  expect(s.drive).toHaveBeenCalledTimes(2);
+  await second;
+  release(); await observed;
   expect(s.drive).toHaveBeenCalledTimes(2);
 });
 // ------------------------------------------------------------------------ //

@@ -79,7 +79,7 @@ export type GovernanceRevisionViewV1 = {
 
 export type GovernanceActiveViewV1 = {
   ref: GovernanceRevisionRefV1;
-  /** 激活时钉住的 digest（P1-02 事件显式携带；P1-15/P1-13 由 revision 快照确定）。 */
+  /** 激活时钉住的 digest；基础治理事件显式携带，CoordinationPolicy、RoleSpec 与 ArchitectureEvolutionPolicy 由 revision 快照确定。 */
   digest: string;
   /** Project*Active 聚合自身的 revision（第 k 次激活）。 */
   activeAggregateRevision: number;
@@ -105,7 +105,7 @@ export type GovernanceKindViewV1 = {
 };
 
 /**
- * 一个角色的规格事实（RW-14）。roleId 是身份；内容 revision 与 digest 逐字来自**已安装快照**
+ * 一个角色的规格事实。roleId 是身份；内容 revision 与 digest 逐字来自**已安装快照**
  * （未安装时取自本产品的内置 source），生效引用来自 canonical 的 ProjectRoleSpecActive。
  */
 export type RoleSpecEntryViewV1 = {
@@ -138,7 +138,7 @@ export type RoleSpecEntryViewV1 = {
 };
 
 /**
- * 「当前生效的协调策略到底有没有角色矩阵」的权威回答（RW-14）。
+ * 「当前生效的协调策略到底有没有角色矩阵」的权威回答。
  *
  * 为什么必须显式给出：没有矩阵时 claim **不做**角色校验（沿用矩阵之前的绑定语义）。这件事不写
  * 出来，人就会把「策略装上了」读成「角色已经被校验过」，从而以为越权绑定会被拦住——静默放行。
@@ -180,7 +180,7 @@ export type CoordinationPolicyGrantV1 = {
 };
 
 /**
- * RW-10 人的暂停开关：自动返工现在是被授权还是被人停用。
+ * 人的暂停开关：自动返工现在是被授权还是被人停用。
  *
  * 为什么由后端给出这段文字而不是让界面自己解释：规则只有一处（allowed.inScopeRework 与自动受理
  * 四条边界的关系），界面原样显示即可；否则同一条规则会在 UI 里长成第二份、并可能随改动漂移。
@@ -205,7 +205,7 @@ export type GovernanceViewV1 = {
   kinds: GovernanceKindViewV1[];
   /** 只有存在生效 CoordinationPolicy 时才非空：界面据此说明“授予了多少自动返工额度”。 */
   automation: CoordinationPolicyGrantV1 | null;
-  /** 自动返工是否被人停用（RW-10）；与 automation 同一个来源，逐字取自生效策略正文。 */
+  /** 自动返工是否被人停用；与 automation 同一个来源，逐字取自生效策略正文。 */
   automationSwitch: AutomationSwitchViewV1;
   /** 当前生效的协调策略是否含角色矩阵，以及矩阵 pin 各自的就绪情况。 */
   roleMatrix: RoleMatrixViewV1;

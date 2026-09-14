@@ -6,9 +6,9 @@ import type { ReplacementEligibilityFacts, ReplacementIneligibilityReason, Repla
 
 
 /**
- * FROZEN replacement eligibility (Acceptance "A 过期 lease 与迟到结果不能覆盖
- * B 的新 Attempt"):
- *   - same structural rules as P1-03 eligibility (active goal, accepted plan,
+ * Versioned replacement eligibility: an expired lease or late result from one
+ * attempt cannot overwrite the replacement attempt.
+ *   - same structural rules as dispatch eligibility (active goal, accepted plan,
  *     work task, active disposition, dispatchable phase, DAG deps satisfied);
  *   - a PRIOR attempt must exist (a replacement of nothing is ineligible);
  *   - the prior attempt must be ENDED or the prior lease EXPIRED (deadline

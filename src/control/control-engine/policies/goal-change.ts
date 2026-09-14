@@ -44,7 +44,7 @@ export function computeTaskDispositions(
   };
   const rows: TaskDispositionRow[] = [];
   for (const task of source.tasks) {
-    // ADR 0003 D1：被取代/取消的任务**仍然留在**新 revision 里（disposition=superseded），
+    // 被取代/取消的任务仍然留在新 revision 里（disposition=superseded），
     // 因此不能靠“任务消失”推断处置。这里以记录在任务上的取代关系为准，让处置视图
     // 直接看出“哪个任务被哪个取代、为什么”，而不是从相似度猜一个候选者。
     const targetTask = targetById.get(task.taskId);

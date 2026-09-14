@@ -20,11 +20,11 @@
  *   - superseded：Goal 已经切到别的 revision（例如已受理的返工计划）；
  *   - unknown：无法解析 Goal 或 active revision 时不猜测，明确标注。
  *
- * RC-01 起，每条问题另外带一份**处置事实**（disposition），与 currentness 正交：
+ * 当前返工处置规则为每条问题增加一份**处置事实**（disposition），与 currentness 正交：
  * currentness 判的是「证据 anchor 是否仍生效」，disposition 判的是「这些失败义务有没有被处置」。
  * 为什么必须分开：一次触发受理分组 A 之后，分组 B 的问题 anchor 也会失效，但它既没有被任何
  * 返工任务接手、也没有在当前 revision 上重验通过——那是**未处置**，不是已被处置。旧实现只有
- * currentness 一条轴，于是这种情况只能被标成 superseded，失败义务随之凭空消失（RC-01）。
+ * currentness 一条轴，于是这种情况只能被标成 superseded，失败义务随之凭空消失（返工处置规则）。
  * disposition 的判据全部来自 canonical 事实（当前 revision 的任务 disposition 与义务承担者、
  * 本模块 journal 里**锚定当前 revision** 的 PASS 结论），不猜、不从文本反推：
  *   - unaddressed：anchor 就是当前 revision，尚未处置；

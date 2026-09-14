@@ -15,11 +15,11 @@ export type RunCapabilities = {
 };
 
 /**
- * 一次模型调用尝试的**证据草稿**（CM-1A-001 第 4 步 / D06）。
+ * 一次模型调用尝试的**证据草稿**（协作通信可靠投递规则、调用证据与参与语义规则）。
  *
  * 它由 Runtime 在**实际 ModelClient.stream(request) 边界**产生（请求摘要在那里算），由消费者经
  * 正式事实通道（control.runFact + model_request_evidence）落账。它**不是** RuntimeEvent：
- * 调用证据不是生命周期事件，不能塞进 RuntimeEventType（D06 的裁决）。
+ * 调用证据不是生命周期事件，不能塞进 RuntimeEventType；参与语义规则由 Control 在事实提交时裁决。
  */
 export type ModelRequestEvidenceDraftV1 = {
   /** 该次请求的 id（与计量、provider 侧请求对得上）。 */
@@ -42,7 +42,7 @@ export type RunHandle = {
   /** Returns events not yet polled (empty after the script is drained). */
   pollFreshEvents(): Promise<RuntimeEventV1[]>;
   /**
-   * 尚未被消费者取走的**调用证据草稿**（CM-1A-001 第 4 步 / D06；**必选**方法）。
+   * 尚未被消费者取走的**调用证据草稿**（协作通信可靠投递规则、调用证据与参与语义规则；**必选**方法）。
    *
    * 必选而不是可选：消费链上每一层包装都要**显式**表态，漏转发的包装因此在**编译期**就暴露，
    * 而不是让证据在内层被静默吞掉。不产生调用证据的 Runtime/替身返回空数组——空数组表示
@@ -75,7 +75,7 @@ export type DispatchDriveFailure = {
 };
 
 /**
- * **旁路事实**（模型调用许可 / 调用证据）的失败（CM-1A-001 第 4 步 / D06）。
+ * **旁路事实**（模型调用许可 / 调用证据）的失败（协作通信可靠投递规则 / 调用证据与参与语义规则）。
  *
  * 它们**不是**这个 intent 的派发失败：一个已经跑完、甚至已经在账本里落成终态的 Run，
  * 完全可能只是因为证据没能落账而有这一项。因此这条记录：
@@ -99,7 +99,7 @@ export type DispatchSideFactFailure = {
 };
 
 /**
- * 协作通信（CommunicationIntent）的 drive 结果（CM-1A-001 第 3 工作段）。
+ * 协作通信（CommunicationIntent）的 drive 结果（协作通信）。
  *
  * 契约归属：形状声明在 Contracts，实现（src/control/dispatch-engine/coordination-drive.ts）
  * 只是消费者——Contracts 不反向依赖实现 Module（Module 边界检查会拒绝那样做）。

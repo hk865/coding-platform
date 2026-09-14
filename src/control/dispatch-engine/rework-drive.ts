@@ -30,13 +30,13 @@ const ACCEPTANCE_NOTE =
   '一次触发可能受理多个分组（各自一份提案与一个新 revision），因此 appliedBasis 逐项说明' +
   '「已生效」是按提案身份核对的（proposal_identity），还是按「这条问题的返工任务正在承担它的义务」' +
   '核对的（rework_carrier）；两者都不是"没有生效"的反面证据。' +
-  '被拒绝或转人工的判定按 RW-04 的设计零写入（不消耗预算、不落提案），因此不会在这里留下记录；' +
+  '被拒绝或转人工的判定按自动返工准入规则零写入（不消耗预算、不落提案），因此不会在这里留下记录；' +
   '那份结论由 driveRework 的结果逐条回报。';
 
 export class ReworkDriveEngine implements ReworkDrivePort {
   /** 同一进程内的触发串行队列；并发的两次触发不会各自读到同一批 open 问题。 */
   private queue: Promise<unknown> = Promise.resolve();
-  /** RW-03 的编译器是纯函数、零依赖，因此这里直接持有实例，不需要注入。 */
+  /** 返工计划编译器是纯函数、零依赖，因此这里直接持有实例，不需要注入。 */
   private readonly compiler = new ReworkPlanCompiler();
 
   constructor(private readonly deps: ReworkDriveDeps) {}
@@ -337,7 +337,7 @@ export class ReworkDriveEngine implements ReworkDrivePort {
           status = 'unresolved';
           reasons.push(
             '本次触发结束时这条失败义务既没有承担者变更、也没有在当前 revision 上重验通过，也没有停在明确的阻塞上：' +
-              '这是缺陷信号（RC-01），必须由人接手核对。',
+              '这是缺陷信号（返工处置规则），必须由人接手核对。',
           );
         }
       }
@@ -373,7 +373,7 @@ export class ReworkDriveEngine implements ReworkDrivePort {
       };
     }
 
-    // 与 driveRework 同一判据（RC-01）：未处置 = unaddressed（anchor 当前）或 carried_by_task
+    // 与 driveRework 同一判据（返工处置规则）：未处置 = unaddressed（anchor 当前）或 carried_by_task
     // （anchor 已失效但失败义务仍由原任务承担且没有重验通过）。视图因此也能回答"还剩什么没处置"。
     const open = viewIssues(issues).filter((issue) => reworkIssueUnaddressed(issue));
     let compiledProposal: ReworkProposalV1 | null = null;
@@ -418,7 +418,7 @@ export class ReworkDriveEngine implements ReworkDrivePort {
     }
 
     // 受理事实只用 canonical 来源重建：Goal 的当前 active revision + 账本里的提案聚合。
-    // 提案身份不在这里发明，而是与 RW-03 编译器、RW-04 受理入口共用 contracts/rework/proposal.ts 的
+    // 提案身份不在这里发明，而是与返工计划编译器、自动受理入口共用 contracts/rework/proposal.ts 的
     // 同一个确定性函数；即使问题已经因为一次已生效的受理变成 superseded，也能凭问题自己的
     // 来源 revision 找回当时那份提案的身份（历史 PlanRevision 不可改写，读回来仍是同一份）。
     const candidates = await this.candidateProposalIds(request, canonical, issues, gaps);

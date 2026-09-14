@@ -10,7 +10,7 @@
  *       (concurrent, at most one lease/Attempt succeeds).
  */
 import { describe, expect, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { ControlEngineImpl } from "../../src/control/control-engine/control-engine.js";
 import type {
   DispatchOutboxEntrySnapshot,
@@ -33,7 +33,7 @@ const TASK = "task-run-adaptor";
 
 describe("P1-03 integration (real SQLite + real dispatch/run modules)", () => {
   it("T1: claim -> drive (ContextCompiler+Vault+start+facts, outbox first) -> views -> close/reopen identical", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {}, runtimeScript: FAKE_RUNTIME_SCRIPT_COMPLETED_V1 });
+    const h = await createPersistentPlatform({ deps: {}, runtimeScript: FAKE_RUNTIME_SCRIPT_COMPLETED_V1 });
     try {
       const th: P1_03TestHarness = {
         ...h,
@@ -150,7 +150,7 @@ describe("P1-03 integration (real SQLite + real dispatch/run modules)", () => {
   }, 40_000);
 
   it("T2: two Dispatchers race the SAME task on real SQLite -> at most one lease/Attempt succeeds", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       const th: P1_03TestHarness = {
         ...h,

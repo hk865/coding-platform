@@ -1,18 +1,13 @@
 /**
- * 后继 Run 的准备入口（CM-1A-001 第 3 工作段，缺陷回交 SPEC-01 的正解）。
+ * 后继 Run 的生产准备入口。
  *
  * ── 它解决什么 ────────────────────────────────────────────────────────────────
- * Control 在接续事务里创建了唯一后继 TaskAttempt/Run/outbox，但**没有任何生产者**为这个新
- * Run 登记真实 Runtime 的 RunSpec：LeasedWorkerRuntime 只从 `runtime.all()` 找已登记的
- * exact runId spec，找不到就抛"真实运行缺少已登记输入"。此前只有测试用
- * `await runtime.prepare(specFor(root, successorRunId))` 手工补线，因此"后继能跑"从未被生产
- * 路径证明。
- *
- * 本模块就是那个生产者：Dispatch 消费后继 outbox 时，从**持久事实**重建 RunSpec，
+ * Control 在接续事务里创建唯一后继 TaskAttempt、Run 和 outbox。本模块由生产装配
+ * `composition/persistent-platform.ts` 接入，在 Dispatch 消费后继 outbox 时从持久事实重建 RunSpec，
  * 经既有 RuntimePreparationPort 先 `preflight` 再 `prepare`（两步都可重放/幂等），
  * 然后才走既有的 `control.startRun` → `runtime.start`。
  *
- * ── RunSpec 从哪些持久事实重建（没有一条来自测试或进程内存）─────────────────────
+ * ── RunSpec 从哪些持久事实重建 ────────────────────────────────────────────────
  *   · 计划与指派版本、授权（roleBinding/declaredPermissions）、运行配置的 tokenBudget：
  *     后继 intent 本身（DispatchOutboxEntry 快照，与 TaskClaimed 同事务落账）；
  *   · **指令来源与完整运行配置**：前驱 Run 在 Runtime 里**已登记的持久 RunSpec**

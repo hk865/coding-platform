@@ -1,4 +1,4 @@
-/** Control-owned canonical record construction (RW-11 role-spec governance). */
+/** Control-owned canonical record construction ( role-spec governance). */
 import {
   ROLE_SPEC_REVISION,
   activateRoleSpecRevisionFingerprint,
@@ -13,7 +13,7 @@ import {
 
 /**
  * role-spec-install：一个不可改写的 RoleSpecRevision（CAS@0）+ 一条安装事件。
- * 与 P1-15 的 policy install fold 同构，区别只在聚合身份（roleId）与内容类型。
+ * 与 CoordinationPolicy 的 install fold 同构，区别只在聚合身份（roleId）与内容类型。
  */
 export function buildRoleSpecInstallFold(
   command: InstallRoleSpecRevisionCommand,
@@ -61,7 +61,7 @@ export function buildRoleSpecInstallFold(
 /**
  * role-spec-activate：把一个角色在项目上的生效引用 CAS 到已安装的规格 revision。
  * CAS 是 [Project@expected（形状；运行时由账本判定）] + [该角色生效聚合 @(revision-1)]，
- * 与 P1-02／P1-15 同口径；被拒绝的提交绝不移动生效引用（零写入）。
+ * 与其他版本化治理同口径；被拒绝的提交绝不移动生效引用（零写入）。
  */
 export function buildRoleSpecActivateFold(
   command: ActivateRoleSpecRevisionCommand,

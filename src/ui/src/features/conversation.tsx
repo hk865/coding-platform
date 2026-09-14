@@ -1,3 +1,6 @@
+import { HandoffAction } from './handoff-action';
+import { DispatchBacklog } from './dispatch-backlog';
+import { ArchitectureReviews } from './architecture-reviews';
 import { ActionIcon, Alert, Badge, Box, Button, Checkbox, Collapse, Group, NumberInput, Paper, Select, Stack, Text, Textarea, Tooltip } from '@mantine/core';
 import { CommunicationView } from './communication';
 import { useQueryClient } from '@tanstack/react-query';
@@ -126,6 +129,7 @@ function RunThread({ api, run, store, goalScope }: { api: ViewProps['api']; run:
             {active ? <Button color="red" variant="light" loading={cancelling} onClick={() => void cancel()}>停止执行</Button> : null}
             <Button variant="subtle" onClick={() => store.openView('verification')}>检查与验证</Button>
             <Button variant="subtle" onClick={() => store.openView('logs', { runId: run.spec.runId })}>运行日志</Button>
+            {!run.spec.mode && run.canonicalStatus === 'ended' && ['completed', 'failed', 'cancelled', 'budget_exhausted'].includes(run.status) ? <HandoffAction api={api} store={store} goalScope={goalScope} sourceRunId={run.spec.runId} /> : null}
           </Group>
         </div>
       </article>
@@ -152,7 +156,19 @@ function SemanticQuery({ api, goalScope, store, refresh }: ViewProps) {
   return <Box px="sm" py={6}><Select size="xs" label="响应用途" value={responsePurpose} disabled={busy} onChange={value=>setResponsePurpose(value === 'architecture' || value === 'progress' ? value : 'reply')} data={[{value:'reply',label:'日常回复'},{value:'architecture',label:'架构解释'},{value:'progress',label:'进度汇报'}]} /><Group align="flex-end"><Textarea size="xs" style={{ flex: 1 }} label="独立只读提问" value={question} onChange={event => setQuestion(event.currentTarget.value)} maxLength={4096} autosize minRows={1} maxRows={3} data-testid="semantic-question" /><Button size="xs" loading={busy} disabled={!question.trim()} onClick={() => void submit()} data-testid="semantic-ask">提问</Button></Group><Text size="xs" c="dimmed">使用当前模型设置读取公开事实与源码，不中断开发运行。{message}</Text></Box>;
 }
 
-function FixtureAnswers({ data,api,goalScope,refresh }: Pick<ViewProps,'api'|'goalScope'|'refresh'> & { data: NonNullable<ViewProps['data']> }) {
+function CancelQuery({ api, goalScope, refresh, queryJobId }: Pick<ViewProps, 'api' | 'goalScope' | 'refresh'> & { queryJobId: string }) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const cancel = async () => {
+    if (!goalScope || busy) return;
+    setBusy(true); setError('');
+    try { await api.cancelQuery(goalScope, queryJobId); refresh(); }
+    catch (error) { setError(mutationError(error).message); }
+    finally { setBusy(false); }
+  };
+  return <Group gap="xs"><Button size="compact-xs" variant="subtle" loading={busy} onClick={() => void cancel()}>取消查询</Button>{error ? <Text size="xs" c="red">{error}</Text> : null}</Group>;
+}
+
+function QueryAnswers({ data,api,goalScope,refresh }: Pick<ViewProps,'api'|'goalScope'|'refresh'> & { data: NonNullable<ViewProps['data']> }) {
   const queries = data.queries.filter(query => query.status === 'ready' && query.job.goalId === data.goalId && query.job.intent.execution?.kind !== 'initial_coordination');
   if (!queries.length) return null;
   return (
@@ -166,6 +182,8 @@ function FixtureAnswers({ data,api,goalScope,refresh }: Pick<ViewProps,'api'|'go
             <div className="message-meta"><strong>项目助手</strong><Badge color="gray" variant="light">{query.job.intent.execution?.kind === 'execution_coordination' ? '协调角色调查' : query.job.intent.execution ? '独立只读模型查询' : '测试适配器回答'}</Badge></div>
             <div className="message-body">
               <Text size="sm">{query.currentAnswer?.answer ?? query.job.closeReason?.message ?? '查询已记录，等待回答…'}</Text>
+              {query.job.status === 'pending' || query.job.status === 'running' ? <CancelQuery api={api} goalScope={goalScope} refresh={refresh} queryJobId={query.job.queryJobId} /> : null}
+              {query.recovery ? <Text size="sm" c={query.recovery.status === 'requires_reconciliation' ? 'orange' : 'dimmed'}>{query.recovery.message}</Text> : null}
               {queries.some(next=>next.job.intent.execution?.feedback?.supersedesQueryJobId===query.job.queryJobId)
                 ? <Text size="xs" c="dimmed">已有后续调查，本回答保留为历史材料。</Text>
                 : query.currentAnswer?<FeedbackChoice answer={query.currentAnswer} api={api} goalScope={goalScope} refresh={refresh}/>:null}
@@ -443,7 +461,9 @@ export function ConversationView(props: ViewProps) {
             </Group>
           </div>
           {data ? <InitialPlanningView data={data} /> : null}
+          {data ? <DispatchBacklog view={data.dispatch} /> : null}
           {data ? <CommunicationView data={data} /> : null}
+          {props.goalScope?<ArchitectureReviews key={props.goalScope.projectId+props.goalScope.workspaceId} api={props.api} scope={props.goalScope} />:null}
           {loading && !data ? <LoadingState label="正在读取项目状态…" /> : null}
           {error ? <ErrorState message={error} action={<Button size="xs" variant="light" onClick={refresh}>重试</Button>} /> : null}
           {data && !runs.length && !data.queries.length ? (
@@ -452,7 +472,7 @@ export function ConversationView(props: ViewProps) {
               description={data.goalId ? '在下方描述要实现的内容并允许写入，提交后这里会显示真实的模型与工具活动。' : '左侧可以新建目标；目标保存后即可提交开发任务。'}
             />
           ) : null}
-          {data ? <FixtureAnswers data={data} api={props.api} goalScope={props.goalScope} refresh={refresh} /> : null}
+          {data ? <QueryAnswers data={data} api={props.api} goalScope={props.goalScope} refresh={refresh} /> : null}
           {runs.map(run => <RunThread key={run.spec.runId} api={props.api} run={run} store={store} goalScope={props.goalScope} />)}
           {data?.exploration ? (
             <Paper withBorder p="sm" radius="sm">

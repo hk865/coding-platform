@@ -1,8 +1,8 @@
 /**
- * RC-02 ContextCompiler — 角色必读材料「code」的**窄端口消费**（本文件不含工作区访问实现）。
+ * ContextCompiler — 角色必读材料「code」的**窄端口消费**（本文件不含工作区访问实现）。
  *
  * ── 归属：读工作区是 WorkspaceReader 的事，取材是 ContextCompiler 的事 ─────────
- * 本文件曾经同时装着两件事：工作区列举/读取/路径边界适配（实现）与取材（消费）。RC-02 之后：
+ * 本文件曾经同时装着两件事：工作区列举/读取/路径边界适配（实现）与取材（消费）。拆分后：
  *   - **实现**归位 WorkspaceReader：`data/workspace-reader/role-source-reader.ts`
  *     （复用本 Module 与内核既有的工作区读取能力与路径边界，见该 Module 的 README）；
  *   - **拒绝前缀**只有一个来源：`data/workspace-reader/denied-prefixes.ts`，本文件一个字面量都不写；
@@ -21,12 +21,11 @@
  * 不授予权限、不改变 manifest.permissions、不构成完成判据；逐文件全文仍由运行时的既有 `read`
  * 工具按当前源码读取。上限造成的未取全一律经 `notes` 交调用方写进 gaps，绝不静默裁剪。
  *
- * ── 兼容再导出（有明确退出条件）────────────────────────────────────────────
- * 实现只有一份，位于 WorkspaceReader；这里只是让既有调用方从旧路径仍能拿到它：
- * 组合根已改为直接引用新路径（`src/app/service.ts`），仍从旧路径引用的是
+ * ── 兼容入口 ────────────────────────────────────────────────────────────────
+ * 实现只有一份，位于 WorkspaceReader；这里的再导出只让既有调用方从旧路径拿到它：
+ * 组合根直接引用新路径（`src/app/service.ts`），仍从旧路径引用的是
  * `tests/control/work-material-gate.test.ts` 与 `tests/control/role-material-completion.test.ts`
- * —— 它们不在本票的写入范围内。**退出条件**：那两处 import 改指
- * `src/data/workspace-reader/role-source-reader.js` 之后，删掉这一行。
+ * 这两个测试调用方仍使用旧路径，因此兼容入口暂时保留。
  */
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../contracts/plan.js';

@@ -1,11 +1,9 @@
 /**
- * P1-12 Control entry: ArchitectureInspectionEngineImpl — durable recording
+ * Architecture inspection Control entry: ArchitectureInspectionEngineImpl — durable recording
  * of inspections / findings / decision briefs / candidate proposals
  * (ControlEngine versioned additions, immutability CAS@0 each).
  *
- * ENTRY FILE (shared baseline — exported signatures FROZEN; lane B fills the
- * implementations). Frozen semantics (IMPLEMENTATION-HANDOFF "P1-12 契约与
- * 存储语义" items 1-7): shape validation -> invalid; pinned baseline resolved
+ * Public entry. Versioned semantics: shape validation -> invalid; pinned baseline resolved
  * from the intent/plan (ledger.load) -> not_found; pin digest mismatch ->
  * baseline_mismatch (zero write); PROPOSAL digest recompute mismatch ->
  * digest_mismatch (zero write); ONE atomic commit per command with FULL

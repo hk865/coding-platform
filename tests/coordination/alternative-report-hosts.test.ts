@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { ModelClientPort, ModelEvent, ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
-import { createPersistentSqliteHarness, type PersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform, type PersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { CodingAgentRuntime } from '../../src/execution/worker-runtime/coding-agent-runtime.js';
 import { LeasedWorkerRuntime } from '../../src/control/dispatch-engine/leased-worker-runtime.js';
 import { WorkMaterialDrive } from '../../src/control/dispatch-engine/work-material-drive.js';
@@ -85,11 +85,11 @@ it('three distinct Works use real Host tools: first report resumes the coordinat
   let runtime = await createRuntime();
   const source: SourceApplicabilityPort = { capture: async query => ({ status: 'sourced', pin: { schemaVersion: 1, projectId: query.projectId, workspaceId: query.workspaceId,
     sourceSet: query.sourceSet, identity: { workspace: root, commit: null }, manifestDigest: sha256Hex('m06-three-readers-source') } }) };
-  let h!: PersistentSqliteHarness;
+  let h!: PersistentPlatform;
   let currentTime = AT;
   let ongoing: Promise<unknown> | undefined;
   try {
-    h = await createPersistentSqliteHarness({ dir, deps: { clock: () => currentTime, eventId: randomUUID }, sourceApplicability: source,
+    h = await createPersistentPlatform({ dir, deps: { clock: () => currentTime, eventId: randomUUID }, sourceApplicability: source,
       runtimePreparation: { all: () => runtime.all(), prepare: spec => runtime.prepare(spec), preflight: spec => runtime.preflight(spec) }, workspaceRootFor: () => root,
       runtime: { capabilities: () => runtime.capabilities(), start: (envelope, access) => new LeasedWorkerRuntime({ runtime,
         lease: () => h.workspaceLease, vault: () => h.vault, now: () => AT,

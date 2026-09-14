@@ -43,8 +43,8 @@ import { artifactBodyDigest, type ArtifactRef } from "../../src/contracts/artifa
 import type { HandoffContextPort, HandoffContextRequestV1, HandoffContextResultV1 } from "../../src/contracts/handoff-context.js";
 import type { RunPort, RunCapabilities, RunHandle } from "../../src/contracts/ports.js";
 import type { TaskEnvelopeV1 } from "../../src/contracts/task-envelope.js";
-import type { HandoffDriveDeps } from "../../src/control/dispatch-engine/handoff-drive.js";
-import { createHandoffDriveEngine } from "../../src/control/dispatch-engine/handoff-drive.js";
+import type { HandoffDriveDeps } from "../../src/control/dispatch-engine/handoff/handoff-drive.js";
+import { createHandoffDriveEngine } from "../../src/control/dispatch-engine/handoff/handoff-drive.js";
 
 const FIXED = "2026-09-05T12:00:00.000Z";
 const BUNDLE: ArtifactRef = {
@@ -227,9 +227,9 @@ describe("HandoffDriveEngineImpl.driveHandoff", () => {
     const result = await th.handoffDrive.driveHandoff({ reason: "p1-06 handoff drive" });
     expect(result.scanned).toBe(0);
     expect(result.started).toBe(0);
-    expect(result.failures).toHaveLength(1);
-    expect(result.failures[0]!.code).toBe("not_a_replacement");
-    expect(result.failures[0]!.intentId).toBe("att-nr");
+    // Ownership is selected before the limit; ordinary work is not an error in this consumer.
+    expect(result.failures).toEqual([]);
+    expect((await h.ledger.pendingDispatchIntents(10, { workKind: 'ordinary' })).map(entry => entry.intent.attemptRef.attemptId)).toContain('att-nr');
   });
 
   it("reports context_rejected when assemble rejects; runtime never invoked", async () => {

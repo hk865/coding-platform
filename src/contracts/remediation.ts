@@ -1,8 +1,8 @@
 /**
- * P1-13 Remediation contracts — RemediationPlanPatch / RemediationTask /
+ * Remediation contracts — RemediationPlanPatch / RemediationTask /
  * RemediationDeduplicationKey.
  *
- * Authority: ticket 13-allowlisted-remediation.md Acceptance:
+ * Authority: the architecture evolution module and remediation interface:
  *   - only local/deterministic/reversible findings hitting the allowlist AND
  *     drift budget generate a RemediationPlanPatch (verdict recorded; no
  *     RemediationTask for missing/dangling/digest-mismatch policy);
@@ -12,7 +12,7 @@
  *   - the SAME finding/policy/workspace revision yields at most ONE effective
  *     RemediationTask (dedup key), created through ordinary Control guards
  *     (ArchitectureReconciler never writes Task state directly);
- *   - Writer uses the P1-07 conflict-scope lease; Verification uses the
+ *   - Writer uses the workspace concurrency conflict-scope lease; Verification uses the
  *     post-fix workspace revision + plan-pinned CompletionPolicy; FAIL/BLOCKED/
  *     outcome_unknown preserve the Finding + all historical Evidence; on verify
  *     the Finding is marked resolved via NEW Evidence (original delta kept);
@@ -280,4 +280,3 @@ export function advanceRemediationTaskFingerprint(command: AdvanceRemediationTas
     payload: { status: command.payload.status, writerRunRef: command.payload.writerRunRef, evidenceRefs: command.payload.evidenceRefs, result: command.payload.result },
   })) as CommandFingerprint;
 }
-

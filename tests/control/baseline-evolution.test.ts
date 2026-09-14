@@ -39,7 +39,7 @@ import {
   buildRecordCandidateBaselineProposalCommand,
 } from "../../src/fixtures/architecture-fixtures.js";
 import { P114_PROJECT, P114_WORKSPACE, P114_PROPOSAL, buildP114Candidate, buildP114Decision, buildP114Gate, buildP114Activation, buildP114MaterializeCommand, buildP114DecisionCommand, buildP114GateCommand, buildP114ActivationCommand, p114ProposalRef, p114CandidateRef, p114DecisionRef, p114GateRef, p114ActivationRef } from "../contract-support/fixtures/baseline-evolution-fixtures.js";
-import { buildP114CandidateFold, buildP114DecisionFold, buildP114GateFold, buildP114ActivationFold } from "../../src/control/control-engine/records/baseline-evolution.js";
+import { buildCandidateBaselineMaterializeCommit, buildArchitectureChangeDecisionRecordCommit, buildMigrationGateRecordCommit, buildBaselineActivationRecordCommit } from "../../src/control/control-engine/records/baseline-evolution.js";
 import { ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildInstallLedgerCommit, buildActivateCommand, buildActivateLedgerCommit } from "../../src/fixtures/governance-fixtures.js";
 import { architectureBaselinePinFor } from "../../src/contracts/governance.js";
 import type { InstallArchitectureBaselineRevisionCommand } from "../../src/contracts/governance.js";
@@ -226,7 +226,7 @@ describe("P1-14 BaselineEvolutionEngineImpl", () => {
         contentDigest: candidateContentDigest(proposal.normalizedContent),
         materializedAt: FIXED,
       };
-      const expectedFold = buildP114CandidateFold(materializeCmd, { eventId: mBatch.events[0]!.eventId, occurredAt: mBatch.events[0]!.occurredAt, candidate: expectedCandidate, activeVersion: { ref: { aggregateType: "ProjectArchitectureBaselineActive", projectId: P114_PROJECT }, revision: 1 } });
+      const expectedFold = buildCandidateBaselineMaterializeCommit(materializeCmd, { eventId: mBatch.events[0]!.eventId, occurredAt: mBatch.events[0]!.occurredAt, candidate: expectedCandidate, activeVersion: { ref: { aggregateType: "ProjectArchitectureBaselineActive", projectId: P114_PROJECT }, revision: 1 } });
       expect(canonicalJson(mBatch)).toBe(canonicalJson(expectedFold));
 
       // decision
@@ -234,21 +234,21 @@ describe("P1-14 BaselineEvolutionEngineImpl", () => {
       const dReceipt = await engine.recordArchitectureChangeDecision(decisionCmd);
       expect(dReceipt.status).toBe("committed");
       const dBatch = ledger.commits[dBefore]!;
-      expect(canonicalJson(dBatch)).toBe(canonicalJson(buildP114DecisionFold(decisionCmd, { eventId: dBatch.events[0]!.eventId, occurredAt: dBatch.events[0]!.occurredAt })));
+      expect(canonicalJson(dBatch)).toBe(canonicalJson(buildArchitectureChangeDecisionRecordCommit(decisionCmd, { eventId: dBatch.events[0]!.eventId, occurredAt: dBatch.events[0]!.occurredAt })));
 
       // gate
       const gBefore = ledger.commits.length;
       const gReceipt = await engine.recordMigrationGate(gateCmd);
       expect(gReceipt.status).toBe("committed");
       const gBatch = ledger.commits[gBefore]!;
-      expect(canonicalJson(gBatch)).toBe(canonicalJson(buildP114GateFold(gateCmd, { eventId: gBatch.events[0]!.eventId, occurredAt: gBatch.events[0]!.occurredAt })));
+      expect(canonicalJson(gBatch)).toBe(canonicalJson(buildMigrationGateRecordCommit(gateCmd, { eventId: gBatch.events[0]!.eventId, occurredAt: gBatch.events[0]!.occurredAt })));
 
       // activation
       const aBefore = ledger.commits.length;
       const aReceipt = await engine.recordBaselineActivation(activationCmd);
       expect(aReceipt.status).toBe("committed");
       const aBatch = ledger.commits[aBefore]!;
-      expect(canonicalJson(aBatch)).toBe(canonicalJson(buildP114ActivationFold(activationCmd, { eventId: aBatch.events[0]!.eventId, occurredAt: aBatch.events[0]!.occurredAt, guardVersions: [{ ref: { aggregateType: "Workspace", projectId: P114_PROJECT, workspaceId: P114_WORKSPACE }, revision: workspaceRevision }, { ref: { aggregateType: "ProjectArchitectureBaselineActive", projectId: P114_PROJECT }, revision: 1 }] })));
+      expect(canonicalJson(aBatch)).toBe(canonicalJson(buildBaselineActivationRecordCommit(activationCmd, { eventId: aBatch.events[0]!.eventId, occurredAt: aBatch.events[0]!.occurredAt, guardVersions: [{ ref: { aggregateType: "Workspace", projectId: P114_PROJECT, workspaceId: P114_WORKSPACE }, revision: workspaceRevision }, { ref: { aggregateType: "ProjectArchitectureBaselineActive", projectId: P114_PROJECT }, revision: 1 }] })));
 
       // committed recipe fields
       if (mReceipt.status === "committed") {

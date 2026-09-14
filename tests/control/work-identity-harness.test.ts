@@ -12,7 +12,7 @@
  */
 import { expect, it } from 'vitest';
 import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
-import { createPersistentSqliteHarness } from '../../src/harness/persistent-harness.js';
+import { createPersistentPlatform } from '../../src/composition/persistent-platform.js';
 import { buildBootstrapCommand } from '../../src/contracts/bootstrap.js';
 import { buildCreateGoalCommand } from '../contract-support/fixtures/goal-fixtures.js';
 import { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1, buildInstallCommand, buildActivateCommand } from '../../src/fixtures/governance-fixtures.js';
@@ -120,7 +120,7 @@ async function runReuseScenario(h: Harness): Promise<string> {
 it('同一派发场景在 InMemory 与 SQLite harness 上得到逐字段相同的 canonical 工作身份', async () => {
   const memory = createInMemoryHarness({});
   const dir = await mkdtemp(join(tmpdir(), 'rw12-consistency-'));
-  const sqlite = await createPersistentSqliteHarness({ dir });
+  const sqlite = await createPersistentPlatform({ dir });
   try {
     const inMemory = await runScenario(memory as unknown as Harness);
     const persistent = await runScenario(sqlite as unknown as Harness);
@@ -134,7 +134,7 @@ it('同一派发场景在 InMemory 与 SQLite harness 上得到逐字段相同�
 it('RW-13 先显式绑定再派发：两套 harness 都复用同一条身份，账本里不多出第二条', async () => {
   const memory = createInMemoryHarness({});
   const dir = await mkdtemp(join(tmpdir(), 'rw13-consistency-'));
-  const sqlite = await createPersistentSqliteHarness({ dir });
+  const sqlite = await createPersistentPlatform({ dir });
   try {
     const inMemory = await runReuseScenario(memory as unknown as Harness);
     const persistent = await runReuseScenario(sqlite as unknown as Harness);

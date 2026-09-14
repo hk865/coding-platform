@@ -45,7 +45,7 @@ import {
   roleMatrixPolicyDigest,
 } from '../../src/fixtures/role-spec-fixtures.js';
 import { buildCoordinationPolicyActivateCommand, buildCoordinationPolicyInstallCommand } from '../../src/contracts/commands/governance.js';
-import { P15_COORDINATION_POLICY_REVISION } from '../../src/contracts/human-role-collaboration.js';
+import { COORDINATION_POLICY_REVISION_V1 } from '../../src/contracts/human-role-collaboration.js';
 import {
   P107_BUDGET_WRITER_V1, P107_DECLARED_WRITE_PERMISSIONS_V1, P107_GOAL, P107_PLAN_REVISION_FIXTURE_V1, P107_PROJECT,
   P107_SCHEMA, P107_SCOPE_WRITER, P107_TASK_INTEGRATION, P107_TASK_READER_A, P107_TASK_WRITER, P107_WORKSPACE,
@@ -251,7 +251,7 @@ it('真实治理安装的 executor 规格在真实 reader 下解析出来：没�
   const content = buildCoordinationPolicyContentWithRolesV1(projectId, [ROLE_SOURCE_EXECUTOR]);
   expect((await control.installCoordinationPolicy(buildCoordinationPolicyInstallCommand({ policyId, content }, identity('inst-policy')))).status).toBe('committed');
   const pin = {
-    ref: { aggregateType: 'CoordinationPolicyRevision' as const, projectId, policyId, revision: P15_COORDINATION_POLICY_REVISION },
+    ref: { aggregateType: 'CoordinationPolicyRevision' as const, projectId, policyId, revision: COORDINATION_POLICY_REVISION_V1 },
     digest: roleMatrixPolicyDigest(content, policyId),
   };
   expect((await control.activateCoordinationPolicy(buildCoordinationPolicyActivateCommand(pin, { ...identity('act-policy'), expectedRevision: await projectRevision() }))).status).toBe('committed');
@@ -292,7 +292,7 @@ async function installRole(world: RoleWorld, roleId: string): Promise<void> {
   const policyId = 'coordination-' + roleId;
   const content = buildCoordinationPolicyContentWithRolesV1(P107_PROJECT, [roleId]);
   expect((await control.installCoordinationPolicy(buildCoordinationPolicyInstallCommand({ policyId, content }, identity('inst-policy-' + roleId)))).status).toBe('committed');
-  const pin = { ref: { aggregateType: 'CoordinationPolicyRevision' as const, projectId: P107_PROJECT, policyId, revision: P15_COORDINATION_POLICY_REVISION }, digest: roleMatrixPolicyDigest(content, policyId) };
+  const pin = { ref: { aggregateType: 'CoordinationPolicyRevision' as const, projectId: P107_PROJECT, policyId, revision: COORDINATION_POLICY_REVISION_V1 }, digest: roleMatrixPolicyDigest(content, policyId) };
   expect((await control.activateCoordinationPolicy(buildCoordinationPolicyActivateCommand(pin, { ...identity('act-policy-' + roleId), expectedRevision: await projectRevision() }))).status).toBe('committed');
 }
 

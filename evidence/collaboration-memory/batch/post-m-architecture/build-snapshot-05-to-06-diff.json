@@ -1,0 +1,25 @@
+{
+  "oldFingerprint": "0ab997acc254eccb8fad016a8e4fda9de35b7e73bd9dfc5bce606421ca0cb0ba",
+  "newFingerprint": "0d79b3d982cab78747efe0f0043de326262e032acaccd6e42edeaf2fa6614128",
+  "added": [],
+  "removed": [],
+  "changed": [
+    "control/control-engine/control-engine.js",
+    "control/control-engine/policies/replacement-eligibility.js",
+    "control/control-engine/policies/task-eligibility.js",
+    "data/read-model-index/read-model-index.js",
+    "data/read-model-index/sqlite-read-model-index.js",
+    "data/state-ledger/in-memory-ledger.js",
+    "data/state-ledger/sqlite-ledger.js",
+    "data/state-ledger/validation/control-intents.js",
+    "data/state-ledger/validation/governance.js",
+    "data/state-ledger/validation/planning.js",
+    "fixtures/architecture-evolution-policy-fixtures.js",
+    "fixtures/architecture-fixtures.js",
+    "fixtures/dispatch-fixtures.js",
+    "fixtures/governance-fixtures.js",
+    "fixtures/plan-fixtures.js",
+    "fixtures/role-spec-fixtures.js",
+    "interaction/human-collaboration/human-collaboration.js"
+  ]
+}

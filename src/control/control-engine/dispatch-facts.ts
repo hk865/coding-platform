@@ -1,12 +1,12 @@
 /**
- * P1-07 control-plane addition (signatures unchanged; P1-03 frozen shapes
+ * Workspace-concurrency control addition (signatures unchanged; dispatch versioned shapes
  * untouched): the DAG eligibility check reads the ACCEPTED PLAN SNAPSHOT,
  * whose task phases are plan-declarations and never move. This helper derives
  * the LIVE phase view — task phases overlaid from the canonical
- * TaskReduction snapshots (the ONLY writer of satisfaction is P1-04's
+ * TaskReduction snapshots (the ONLY writer of satisfaction is verification's
  * reduceTask; the plan snapshot stays immutable).
  *
- * Mapping (frozen): reduction verifying->verifying, blocked->blocked,
+ * Mapping (versioned): reduction verifying->verifying, blocked->blocked,
  * failed->failed, satisfied->satisfied. No reduction -> plan phase verbatim.
  * ZERO-WRITE, READ-ONLY: readiness and claim may use the derived view; the
  * canonical plan/reduction aggregates are never touched.

@@ -11,7 +11,7 @@ const REWORK_SUMMARY_MAX_REQUIREMENTS_PER_ISSUE = 8;
 export type ReworkGroup = {
   sourceTask: RuntimeTask;
   /**
-   * 被取代任务在源 revision 里的指派（RW-07）。返工任务的 role 只能取自它：同一义务、
+   * 被取代任务在源 revision 里的指派。返工任务的 role 只能取自它：同一义务、
    * 同一验收语义，只换承担者，因此承担者角色也沿用，不从别处推断，也不新造授权。
    * gate 类任务没有实现指派（初始规划与守卫 f1 是同一约定），因此这里是 null；work 类任务
    * 在源 revision 里没有指派时 compile 直接拒绝（replaceable_task_without_assignment）。

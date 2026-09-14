@@ -8,14 +8,14 @@
  * (any remaining "P1-03: ... not implemented yet" stub throw -> SKIP).
  */
 import { describe, expect, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { isP103Ready, runP103Path, verifyP103AfterRestart } from "./p1-03-restart-fixtures.js";
 
 const READY = await isP103Ready();
 
 describe.skipIf(!READY)("P1-03 persistent restart path", () => {
   it("restart: outbox/lease/Attempt/Run snapshots + ActiveAgents/TaskDetail identical", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       const before = await runP103Path(h);
       expect(before.agent?.run.outcome).toBe("completed");

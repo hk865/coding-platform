@@ -3,14 +3,14 @@
  * from the persisted ledger after close/reopen (no fakes).
  */
 import { describe, expect, it } from "vitest";
-import { createPersistentSqliteHarness } from "../../src/harness/persistent-harness.js";
+import { createPersistentPlatform } from "../../src/composition/persistent-platform.js";
 import { isP105Ready, runP105Path, verifyP105AfterRestart } from "./p1-05-restart-fixtures.js";
 
 const READY = await isP105Ready();
 
 describe.skipIf(!READY)("P1-05 persistent restart path", () => {
   it("restart: GoalPhase snapshot + goalStatus/goalTimeline field-identical", async () => {
-    const h = await createPersistentSqliteHarness({ deps: {} });
+    const h = await createPersistentPlatform({ deps: {} });
     try {
       const before = await runP105Path(h);
       expect(before.goalPhase.phase).toBe("COMPLETED");

@@ -207,7 +207,7 @@ export type ReworkDriveViewV1 = {
 };
 
 /**
- * DispatchEngine 暴露给组合根与 harness 的返工面。
+ * DispatchEngine 暴露给组合根与 test host 的返工面。
  * driveRework 是唯一会调用 ControlEngine 写入面的入口；reworkView 是纯只读。
  */
 export interface ReworkDrivePort {

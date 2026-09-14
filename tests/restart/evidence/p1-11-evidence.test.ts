@@ -1,7 +1,7 @@
 /** P1-11 evidence block (probe-gated, reproducible JSON). */
 import { describe, it, expect, afterAll } from "vitest";
 import { writeFileSync, mkdirSync } from "node:fs";
-import { createPersistentSqliteHarness, type PersistentSqliteHarness } from "../../../src/harness/persistent-harness.js";
+import { createPersistentPlatform, type PersistentPlatform } from "../../../src/composition/persistent-platform.js";
 import { createP108ScenarioRuntime } from "../../contract-suite/p1-08-harness.js";
 import { isP111Ready, runP111RestartScenario, type P111RestartEvidence } from "../p1-11-restart-fixtures.js";
 import { P111_PROJECT } from "../../contract-suite/p1-11-harness.js";
@@ -9,7 +9,7 @@ import { P111_PROJECT } from "../../contract-suite/p1-11-harness.js";
 const READY = await isP111Ready();
 
 describe.skipIf(!READY)("P1-11-EVIDENCE", () => {
-  let h: PersistentSqliteHarness;
+  let h: PersistentPlatform;
   let evidence: P111RestartEvidence;
 
   afterAll(async () => {
@@ -17,7 +17,7 @@ describe.skipIf(!READY)("P1-11-EVIDENCE", () => {
   });
 
   it("produces the P1-11-EVIDENCE JSON block", async () => {
-    h = await createPersistentSqliteHarness({ deps: {}, runtime: createP108ScenarioRuntime() });
+    h = await createPersistentPlatform({ deps: {}, runtime: createP108ScenarioRuntime() });
     evidence = await runP111RestartScenario(h);
     expect(evidence.cursorBefore.length).toBeGreaterThan(0);
     expect(evidence.proposalCountBefore).toBe(1);
