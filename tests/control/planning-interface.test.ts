@@ -3,7 +3,7 @@ import type { PlanCompilerPort } from '../../src/contracts/planning.js';
 import { PlanCompilerImpl } from '../../src/control/plan-compiler/plan-compiler.js';
 import { CoordinationContextCompiler } from '../../src/data/context-compiler/coordination-context-compiler.js';
 import { LedgerScopeCatalog } from '../../src/data/state-ledger/ledger-scope-catalog.js';
-import { planningAt, planningScenario, planningScope } from './planning-fixture.js';
+import { planningAt, planningScenario, planningScope, planningResponse } from './planning-fixture.js';
 
 describe('PlanCompiler amendment and initial-coordination interfaces', () => {
   it.each([undefined, 'amendment'])('rejects initial requests with kind %s before writing or running', async kind => {
@@ -46,6 +46,9 @@ describe('PlanCompiler amendment and initial-coordination interfaces', () => {
   it.each([
     ['decision', JSON.stringify({ kind: 'needs_decision', summary: 'Product choice is missing.', questions: ['Choose the required public behavior.'] }), false],
     ['invalid', 'This is not a JSON proposal', false],
+    ['preamble', '已读完全部三个文件。\n' + planningResponse(), false],
+    ['fenced', '```json\n' + planningResponse() + '\n```', false],
+    ['truncated', planningResponse().slice(0, -1), false],
     ['stale', undefined, true]
   ] as const)('preserves %s results without admitting a plan', async (kind, body, stale) => {
     const s = await planningScenario(body);
@@ -66,5 +69,23 @@ describe('PlanCompiler amendment and initial-coordination interfaces', () => {
     expect(await s.compiler.requestInitial({ ...s.request, scope: { ...planningScope, workspaceId: 'other' } })).toMatchObject({ status: 'rejected', code: 'not_found' });
     expect(await s.compiler.accept({ reason: 'unknown', resultRef: { aggregateType: 'QueryJobAnswer', projectId: planningScope.projectId, workspaceId: planningScope.workspaceId, queryJobId: 'unknown', answerId: 'unknown' } })).toMatchObject({ status: 'rejected', code: 'not_found' });
     expect(s.calls()).toBe(0);
+  });
+
+  it('retains actionable field errors for a model hierarchy using stage/parentId aliases without accepting it', async () => {
+    const response = JSON.parse(planningResponse());
+    response.plan.taskHierarchy.parentOf = [{ parentId: response.plan.stages[0].stageId, childId: response.plan.tasks[0].taskId }];
+    const s = await planningScenario(JSON.stringify(response));
+    await s.compiler.requestInitial(s.request);
+    await s.h.driveQuery({ reason: 'invalid-model-hierarchy' });
+    const result = await s.compiler.accept({ reason: 'model-answer' });
+    expect(result.status).toBe('processed');
+    if (result.status !== 'processed') throw Error('unexpected result');
+    expect(result.accepted).toEqual([]);
+    expect(result.issues[0]!.message).toContain('taskHierarchy.parentOf[0].parentTaskId');
+    expect(result.issues[0]!.message).toContain('taskHierarchy.parentOf[0].childTaskId');
+    expect((await s.catalog.jobs())[0]!.job.status).toBe('closed');
+    expect(await s.materials.acceptedInitialPlans()).toEqual([]);
+    expect(await s.h.ledger.load({ aggregateType: 'Goal', projectId: planningScope.projectId, goalId: planningScope.goalId }))
+      .toMatchObject({ status: 'found', snapshot: { activePlanRevision: null } });
   });
 });

@@ -17,6 +17,7 @@ import { buildEvidenceV1, buildSubmitEvidenceCommand, buildReduceTaskCommand } f
 import { buildReduceGoalCommand } from '../../contracts/commands/goal-phase.js';
 import { CommandCheckLifecycle } from './command-check-lifecycle.js';
 import { VerificationJournal } from './verification-journal.js';
+import { ReadonlyReportCheck, readonlyReportIssues, settledCheck } from './readonly-report-check.js';
 import { compileVerificationPlan } from './verification-plan-compiler.js';
 import { verificationAnchor } from './evidence-admission.js';
 import { evaluateRoleOutputCompleteness } from './role-output-completeness.js';
@@ -40,16 +41,25 @@ function configuration(value: unknown): VerificationRoundConfiguration {
     ensure(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(checkId) && !['reviewer-semantic-check', 'no-change-fast-path'].includes(checkId), '检查身份无效或使用了保留身份');
     const kind = check['kind'];
     ensure(kind === 'static' || kind === 'dynamic', '检查 kind 必须是 static 或 dynamic');
-    const command = text(check['command'], 'command', 4096), cwd = text(check['cwd'], 'cwd', 1024);
-    ensure(!command.includes('\0'), '检查命令包含 NUL');
-    ensure(!cwd.includes('\0') && !cwd.includes('\\') && !cwd.startsWith('/') && !/^[A-Za-z]:/.test(cwd) && !cwd.split('/').includes('..'), '检查 cwd 必须是工作区内相对路径');
-    const timeoutMs = check['timeoutMs'];
-    ensure(Number.isSafeInteger(timeoutMs) && Number(timeoutMs) >= 1 && Number(timeoutMs) <= 600000, '需要明确单次工具超时');
     const workspaceId = text(applies['workspaceId'], 'appliesTo.workspaceId', 128);
     const taskIds = applies['taskIds'];
     ensure(taskIds === 'all' || Array.isArray(taskIds) && taskIds.length > 0 && taskIds.length <= 256, '需要明确 appliesTo.taskIds');
     const tasks: 'all' | string[] = taskIds === 'all' ? 'all' : (taskIds as unknown[]).map(t => text(t, 'appliesTo.taskIds', 128)).sort();
     ensure(tasks === 'all' || new Set(tasks).size === tasks.length, '适用 Task 身份重复');
+    if (check['mode'] === 'readonly-report') {
+      ensure(kind === 'static' && check['command'] === undefined && check['cwd'] === undefined && check['timeoutMs'] === undefined, 'readonly-report 只允许 static，不能携命令字段');
+      const paths = check['requiredReadPaths'];
+      ensure(Array.isArray(paths) && paths.length > 0 && paths.length <= 64, '需要 1 至 64 个显式 requiredReadPaths');
+      const requiredReadPaths = paths.map(p => text(p, 'requiredReadPaths', 1024)).sort();
+      ensure(requiredReadPaths.every(p => !p.includes('\\') && !p.includes('\0') && !p.startsWith('/') && !/^[A-Za-z]:/.test(p) && !p.split('/').some(x => !x || x === '.' || x === '..')) && new Set(requiredReadPaths).size === requiredReadPaths.length, 'requiredReadPaths 必须是唯一工作区相对文件路径');
+      return { checkId, mode: 'readonly-report', kind: 'static', requiredReadPaths, appliesTo: { workspaceId, taskIds: tasks } };
+    }
+    ensure(check['mode'] === undefined || check['mode'] === 'command', '未知检查模式');
+    const command = text(check['command'], 'command', 4096), cwd = text(check['cwd'], 'cwd', 1024);
+    ensure(!command.includes('\0'), '检查命令包含 NUL');
+    ensure(!cwd.includes('\0') && !cwd.includes('\\') && !cwd.startsWith('/') && !/^[A-Za-z]:/.test(cwd) && !cwd.split('/').includes('..'), '检查 cwd 必须是工作区内相对路径');
+    const timeoutMs = check['timeoutMs'];
+    ensure(Number.isSafeInteger(timeoutMs) && Number(timeoutMs) >= 1 && Number(timeoutMs) <= 600000, '需要明确单次工具超时');
     return { checkId, kind, command, cwd, timeoutMs: Number(timeoutMs), appliesTo: { workspaceId, taskIds: tasks } };
   }).sort((a, b) => a.checkId < b.checkId ? -1 : a.checkId > b.checkId ? 1 : 0);
   ensure(new Set(checks.map(c => c.checkId)).size === checks.length, '检查身份重复');
@@ -74,7 +84,7 @@ export class VerificationRounds {
   constructor(private readonly deps: VerificationServiceDeps, private readonly journal: VerificationJournal, private readonly checks: CommandCheckLifecycle) { }
 
   async startRound(scope: VerificationRoundScope, input: VerificationRoundStartInput): Promise<VerificationRoundResult> {
-    scope = { ...vScope(scope), taskId: scope.taskId };
+    scope = { ...vScope(scope), taskId: scope.taskId, ...(scope.gateSubject ? { gateSubject: scope.gateSubject } : {}) };
     const key = canonicalJson([{ projectId: scope.projectId, workspaceId: scope.workspaceId, goalId: scope.goalId }, input.requestId]);
     const active = this.starting.get(key);
     if (active) { await active; return this.startRound(scope, input); }
@@ -107,7 +117,22 @@ export class VerificationRounds {
       try { round.configuration = configuration(input.configuration); }
       catch (error) { round.status = 'rejected'; round.gaps.push({ code: 'invalid_configuration', message: String(error) }); }
     }
-    if (round.configuration) await this.prepare(round);
+    if (round.configuration && scope.gateSubject) {
+      try {
+        ensure(this.deps.context.goalGatePrerequisites, 'GoalGate prerequisite context is unavailable');
+        const before = await this.deps.context.goalGatePrerequisites(scope);
+        for (const taskId of before.taskIds) {
+          const revision = await this.deps.context.taskReductionRevision({ ...scope, taskId });
+          const commandId = 'gate-prerequisite-' + digest(canonicalJson([round.roundId, taskId, revision]));
+          const reduced = await this.deps.control.reduceTask(buildReduceTaskCommand({ ...scope, taskId, commandId, idempotencyKey: commandId,
+            correlationId: requestId, submittedAt: round.createdAt, expectedRevision: revision, actor: { kind: 'system', id: 'control-engine' } }));
+          ensure(reduced.status === 'committed' && reduced.phase === 'satisfied', 'GoalGate prerequisite is not currently satisfied: ' + taskId);
+        }
+        await this.prepare(round);
+        const after = await this.deps.context.goalGatePrerequisites(scope);
+        ensure(before.digest === after.digest && (!round.materialIdentity || round.materialIdentity.prerequisiteDigest === after.digest), 'GoalGate prerequisites changed during refresh');
+      } catch (error) { round.status = 'incomplete'; round.gaps.push({ code: 'prerequisite_unsettled', message: String(error) }); }
+    } else if (round.configuration) await this.prepare(round);
     // Fixed identity/configuration/coverage and every child key precede execution.
     await this.save(round);
     this.journal.rounds.push(round);
@@ -115,17 +140,18 @@ export class VerificationRounds {
     return { round: await this.view(round), replayed: false };
   }
 
-  async round(scope: VerificationRoundScope, requestId: string): Promise<VerificationRoundView> {
+  async round(scope: VerificationRoundScope, requestId: string, signal?: AbortSignal): Promise<VerificationRoundView> {
     const round = this.find(scope, text(requestId, 'requestId', 128));
     ensure(round, '该作用域不存在验证轮次');
-    return this.view(round);
+    signal?.throwIfAborted();
+    return this.view(round, signal);
   }
 
   async roundReceipt(scope: Omit<VerificationScope, 'runId'>, requestId: string) {
     const matches = this.journal.rounds.filter(r => r.requestId === requestId && r.scope.projectId === scope.projectId && r.scope.workspaceId === scope.workspaceId && r.scope.goalId === scope.goalId);
     ensure(matches.length <= 1, '验证轮次回执身份存在歧义');
     const r = matches[0];
-    return r ? { roundId: r.roundId, requestId: r.requestId, status: r.status, runId: r.scope.runId, taskId: r.scope.taskId } : null;
+    return r ? { roundId: r.roundId, requestId: r.requestId, status: r.status, runId: r.scope.runId, taskId: r.scope.taskId, ...(r.scope.gateSubject ? { gateSubject: r.scope.gateSubject } : {}) } : null;
   }
 
   async reviewMaterial(scope: VerificationRoundScope, requestId: string): Promise<ReviewMaterialResult> {
@@ -160,7 +186,7 @@ export class VerificationRounds {
     const tools: ReviewMaterialDescriptorV1['tools'] = [];
     for (const item of round.checks) {
       const child = this.child(round, item.requestId);
-      ensure(child?.status === 'finished' && child.lifecycle === 'lease_released', '仍存在未对账的工具检查');
+      ensure(child && settledCheck(child), '仍存在未对账的工具检查');
       const report = await this.originalReport(round, item.definition, child, read);
       ensure(report.result === 'PASS', '完整适用工具集合包含未通过项：' + item.definition.checkId);
       tools.push({ checkId: item.definition.checkId, kind: item.definition.kind,
@@ -181,7 +207,7 @@ export class VerificationRounds {
     const body: Omit<ReviewMaterialDescriptorV1, 'descriptorId'> = {
       schemaVersion: 1, kind: 'independent-review-material',
       subject: { scope: structuredClone(round.scope), producerRunRef: material.run.ref,
-        producerAttemptRef: { aggregateType: 'TaskAttempt', projectId: scope.projectId, goalId: scope.goalId, taskId: scope.taskId, attemptId: material.run.attemptId } },
+        producerAttemptRef: { aggregateType: 'TaskAttempt', projectId: scope.projectId, goalId: scope.goalId, taskId: material.run.task.taskId, attemptId: material.run.attemptId } },
       toolRound: { roundId: round.roundId, requestId: round.requestId, aggregateRef: round.aggregate.artifactRef,
         configurationDigest: round.configuration.digest, verificationPlanRef: { planId: round.plan.planId, planDigest: round.plan.planDigest } },
       materialIdentity: round.materialIdentity, sourceProof: round.sourceProof,
@@ -232,7 +258,7 @@ export class VerificationRounds {
     for (const key of ['projectId', 'workspaceId', 'goalId', 'runId', 'taskId'] as const) text(scope[key], key, 128);
   }
   private find(scope: VerificationRoundScope, requestId: string) {
-    return this.journal.rounds.find(r => r.requestId === requestId && same(r.scope, { ...vScope(scope), taskId: scope.taskId }));
+    return this.journal.rounds.find(r => r.requestId === requestId && same(r.scope, { ...vScope(scope), taskId: scope.taskId, ...(scope.gateSubject ? { gateSubject: scope.gateSubject } : {}) }));
   }
   private child(round: VerificationRoundRecord, requestId: string) {
     return this.journal.checks.find(c => c.requestId === requestId && same(vScope(c), vScope(round.scope)));
@@ -273,7 +299,7 @@ export class VerificationRounds {
       return;
     }
     const compiled = compileVerificationPlan({
-      schemaVersion: 1, taskRef: material.run.task, planRef: material.plan.ref, planSnapshot: material.plan,
+      schemaVersion: 1, taskRef: { ...material.run.task, taskId: round.scope.taskId }, planRef: material.plan.ref, planSnapshot: material.plan,
       workspaceRevision: material.workspaceRevision, changeScope: material.changeScope,
       semanticChange: material.semanticChange, risks: material.risks, policy: material.policyContent,
       checkCapabilities: applicable.map(c => ({ checkId: c.checkId, kind: c.kind, coversKinds: [c.kind], replayable: false })),
@@ -302,9 +328,11 @@ export class VerificationRounds {
     round.status = 'running';
   }
 
-  private async requireCurrent(round: VerificationRoundRecord): Promise<VerificationRoundMaterial> {
+  private async requireCurrent(round: VerificationRoundRecord, signal?: AbortSignal): Promise<VerificationRoundMaterial> {
+    signal?.throwIfAborted();
     ensure(round.materialIdentity, '轮次没有可用的冻结材料身份');
     const current = await this.deps.context.resolveRound(round.scope, round.materialIdentity);
+    signal?.throwIfAborted();
     ensure(current.status === 'ready', '轮次来源失效：' + JSON.stringify(current));
     return current.material;
   }
@@ -321,22 +349,25 @@ export class VerificationRounds {
       for (const item of round.checks) {
         await this.requireCurrent(round);
         let check = this.child(round, item.requestId);
-        if (check && (check.status !== 'finished' || check.lifecycle !== 'lease_released')) {
+        if (check && !settledCheck(check)) {
           ensure(resume, '检查尚未完成，需显式恢复对账');
           // Reconciliation never executes a command. Unknown reports refuse here.
-          await this.checks.reconcileCheck(vScope(round.scope), item.requestId);
+          if (item.definition.mode === 'readonly-report') await new ReadonlyReportCheck(this.deps, this.journal).run(round.scope, item.requestId, check.roundBinding!, check);
+          else await this.checks.reconcileCheck(vScope(round.scope), item.requestId);
           check = this.child(round, item.requestId);
         }
         if (!check) {
           // Any unresolved command in this workspace blocks starting new work.
           ensure(!this.journal.checks.some(c => c.projectId === round.scope.projectId && c.workspaceId === round.scope.workspaceId && c.leaseId && c.lifecycle !== 'lease_released' && !(c.lifecycle === 'acquisition_rejected' && c.acquisitionRejection)), '工作区存在未对账的检查副作用或租约');
-          await this.checks.runPlannedCheck(vScope(round.scope), item.requestId, {
+          const binding = {
             roundId: round.roundId, configurationDigest: round.configuration.digest,
             definition: item.definition, identity: round.materialIdentity, plan: round.plan,
-          });
+          };
+          if (item.definition.mode === 'readonly-report') await new ReadonlyReportCheck(this.deps, this.journal).run(round.scope, item.requestId, binding);
+          else await this.checks.runPlannedCheck(vScope(round.scope), item.requestId, binding);
           check = this.child(round, item.requestId);
         }
-        ensure(check && check.status === 'finished' && check.lifecycle === 'lease_released', '检查副作用或租约尚未对账');
+        ensure(check && settledCheck(check), '检查副作用或租约尚未对账');
         await this.originalReport(round, item.definition, check);
         this.refreshCoverage(round);
         await this.save(round);
@@ -389,13 +420,18 @@ export class VerificationRounds {
     ensure(artifactBodyDigest(opened.record.body) === progress.artifactRef.digest && artifactBodySize(opened.record.body) === progress.artifactRef.sizeBytes, '原始检查报告正文摘要或大小不一致');
     const report = JSON.parse(opened.record.body);
     ensure(report.schemaVersion === 1, '原始报告版本不受支持');
-    const expectedDefinition = { checkId: definition.checkId, kind: definition.kind, command: definition.command, cwd: definition.cwd, timeoutMs: definition.timeoutMs };
+    const expectedDefinition = definition.mode === 'readonly-report' ? definition : { checkId: definition.checkId, kind: definition.kind, command: definition.command, cwd: definition.cwd, timeoutMs: definition.timeoutMs };
     const expectedContext = { projectId: round.scope.projectId, goalId: round.scope.goalId, taskId: round.scope.taskId, planRef: round.materialIdentity!.planRef, workspaceRevision: round.materialIdentity!.workspaceRevision, changeScope: round.plan!.changeScope };
     ensure(same(report.definition, expectedDefinition) && same(report.owner, round.materialIdentity!.runRef) && same(report.context, expectedContext) && same(progress.context, expectedContext), '报告定义、所有者或任务上下文不一致');
     ensure(report.sourceDigest === round.materialIdentity!.sourceDigest && report.observationId === progress.observationId && report.result === observation.result && report.result === progress.result, '报告来源、观察身份或结果不一致');
     ensure(['known', 'not_started'].includes(report.effects) && report.effects === progress.effects && report.category === progress.category && report.category !== 'stale_source', '报告来源已过期或工具副作用未知');
     ensure(['PASS', 'FAIL', 'INCONCLUSIVE'].includes(report.result), '报告结果无效');
-    ensure(report.result === 'INCONCLUSIVE' || report.category === 'tool_check' && report.effects === 'known', '报告不包含有效工具结论');
+    if (definition.mode === 'readonly-report') {
+      ensure(report.category === 'readonly_report_check' && report.effects === 'not_started' && check.readonlyObservation && same(report.readonlyReport, check.readonlyObservation), '非命令报告观察身份不一致');
+      const issues = readonlyReportIssues(check.readonlyObservation, definition.requiredReadPaths);
+      const expected = check.readonlyObservation.workspaceEffects === 'unknown' ? 'INCONCLUSIVE' : issues.length ? 'FAIL' : 'PASS';
+      ensure(report.result === expected && same(report.issues, issues), '非命令报告机械结论不一致');
+    } else ensure(report.result === 'INCONCLUSIVE' || report.category === 'tool_check' && report.effects === 'known', '报告不包含有效工具结论');
     return { artifactRef: progress.artifactRef, result: report.result, observationId: report.observationId };
   }
 
@@ -403,7 +439,7 @@ export class VerificationRounds {
     const reports = [];
     for (const item of round.checks) {
       const check = this.child(round, item.requestId);
-      ensure(check && check.status === 'finished' && check.lifecycle === 'lease_released', '轮次仍有未完成检查');
+      ensure(check && settledCheck(check), '轮次仍有未完成检查');
       reports.push({ checkId: item.definition.checkId, requestId: item.requestId, coverage: item.coverage, ...await this.originalReport(round, item.definition, check, read) });
     }
     return canonicalJson({ schemaVersion: 1, category: 'verification_round', roundId: round.roundId, scope: round.scope, configuration: round.configuration, identity: round.materialIdentity, sourceProof: round.sourceProof, plan: round.plan, coverage: round.coverage, reports });
@@ -494,23 +530,27 @@ export class VerificationRounds {
     await this.save(round);
   }
 
-  private async view(round: VerificationRoundRecord): Promise<VerificationRoundView> {
+  private async view(round: VerificationRoundRecord, signal?: AbortSignal): Promise<VerificationRoundView> {
+    signal?.throwIfAborted();
     const copy = structuredClone(round);
     let current: VerificationRoundView['current'] = { status: 'unavailable', issues: ['轮次尚无冻结材料身份'] };
     if (round.materialIdentity) {
       try {
-        await this.requireCurrent(round);
+        await this.requireCurrent(round, signal);
         for (const item of round.checks) {
+          signal?.throwIfAborted();
           const check = this.child(round, item.requestId);
           if (check?.result?.status === 'ready' && check.progress?.phase === 'report_stored') await this.originalReport(round, item.definition, check);
         }
+        signal?.throwIfAborted();
         if (round.aggregate) {
           const opened = await this.deps.context.openReport(round.aggregate.artifactRef, round.materialIdentity.runRef);
+          signal?.throwIfAborted();
           ensure(opened.status === 'ready' && opened.record.body === await this.aggregateBody(round), '聚合报告当前不可用');
         }
-        await this.requireCurrent(round);
+        await this.requireCurrent(round, signal);
         current = { status: 'current', issues: [] };
-      } catch (error) { current = { status: 'stale', issues: [String(error)] }; }
+      } catch (error) { signal?.throwIfAborted(); current = { status: 'stale', issues: [String(error)] }; }
     }
     return { ...copy, current, checks: round.checks.map(item => ({ ...structuredClone(item), record: structuredClone(this.child(round, item.requestId) ?? null) })) };
   }

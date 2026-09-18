@@ -96,7 +96,7 @@ export interface ReviewerVerificationPort {
   reviewMaterial(scope: VerificationRoundScope, roundRequestId: string): Promise<ReviewMaterialResult>;
   startReview(scope: VerificationRoundScope, input: ReviewStartInput): Promise<ReviewRequestResult>;
   recoverReview(scope: VerificationRoundScope, input: ReviewRecoverInput): Promise<ReviewRequestResult>;
-  review(scope: VerificationRoundScope, requestId: string): Promise<ReviewRequestView>;
+  review(scope: VerificationRoundScope, requestId: string, signal?: AbortSignal): Promise<ReviewRequestView>;
   reviewReceipt(scope: Pick<VerificationRoundScope, 'projectId' | 'workspaceId' | 'goalId'>, requestId: string): Promise<ReviewReceipt | null>;
   resumeReview(scope: VerificationRoundScope, input: ReviewResumeInput): Promise<ReviewRequestResult>;
   /**

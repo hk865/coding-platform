@@ -64,6 +64,8 @@ export const modelRequestSchema = z
     messages: z.array(modelMessageSchema).min(1).readonly(),
     tools: z.array(modelToolSpecSchema).readonly(),
     maxOutputTokens: z.number().int().positive().nullable(),
+    // 显式宿主请求；缺席时保持原厂商默认格式，不自动推断任务用途。
+    responseFormat: z.object({ type: z.literal("json_object") }).strict().optional(),
   })
   .strict();
 

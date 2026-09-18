@@ -12,6 +12,20 @@ const roots: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 
 describe('independent Reviewer Verification lifecycle', () => {
+  it.each(['', '{"schemaVersion":', 'Before the JSON\n{"schemaVersion":1}', '{}'])('does not repair or accept empty, truncated, prefixed or malformed reports: %j', async raw => {
+    const s = await reviewerFixture(roots), first = await s.service.startReview(scope, s.input), ref = first.review.work!.ref;
+    await s.begin(ref);
+    const rawRef = await s.complete(ref, raw);
+    const result = await s.service.resumeReview(scope, { requestId: s.input.requestId });
+    expect(result.review.phase).toBe('assessment_rejected');
+    expect(result.review.assessment!.body.decision.status).toBe('rejected');
+    expect(result.review.formal.evidenceRefs).toEqual([]);
+    expect(result.review.rawReportRef).toEqual(rawRef);
+    const opened = await s.reviewContext.openReport(ref);
+    expect(opened.status).toBe('ready');
+    if (opened.status === 'ready') expect(opened.record.body).toBe(raw);
+  });
+
   it('creates one canonical independent Work, admits precise per-VR outcomes and replays after reopen without rerunning tools', async () => {
     const s = await reviewerFixture(roots);
     const material = await s.service.reviewMaterial(scope, 'tools');
@@ -73,6 +87,7 @@ describe('independent Reviewer Verification lifecycle', () => {
     ['missing source lines', (report: ReviewerSemanticReportV1) => ({ ...report, citations: report.citations.map((c, i) => i === 0 ? { ...c, location: { kind: 'source-lines', path: 'source.txt', startLine: 100, endLine: 100 } } : c) })],
     ['pin excluded path', (report: ReviewerSemanticReportV1) => ({ ...report, citations: report.citations.map((c, i) => i === 0 ? { ...c, materialId: 'source:.cache/tool-count', location: { kind: 'source-lines', path: '.cache/tool-count', startLine: 1, endLine: 1 } } : c) })],
     ['missing artifact pointer', (report: ReviewerSemanticReportV1) => ({ ...report, citations: report.citations.map((c, i) => i === 1 ? { ...c, location: { kind: 'artifact-section', pointer: '/reports/999/result' } } : c) })],
+    ['array metadata is not original JSON material', (report: ReviewerSemanticReportV1) => ({ ...report, citations: report.citations.map((c, i) => i === 1 ? { ...c, location: { kind: 'artifact-section', pointer: '/reports/length' } } : c) })],
     ['PASS with unresolved unknown', (report: ReviewerSemanticReportV1) => ({ ...report, requirements: report.requirements.map((r, i) => i === 0 ? { ...r, unknowns: ['unresolved behavior'] } : r) })],
   ] as const)('permanently rejects %s and preserves the original raw report across reopen', async (_name, alter) => {
     const s = await reviewerFixture(roots);

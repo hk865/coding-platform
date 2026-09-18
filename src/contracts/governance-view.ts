@@ -64,6 +64,16 @@ export type GovernanceRevisionRefV1 =
 
 export type GovernanceScopeV1 = { projectId: string; workspaceId: string };
 
+/** Project activation observation, independent of a Goal's review collection. */
+export type ArchitectureActivationObservation = {
+  schemaVersion: 1; object: 'ArchitectureBaselineActivation'; relation: 'activatedBy';
+  scope: { projectId: string }; observedAt: string; version: string;
+  status: 'ready' | 'not_found' | 'unavailable' | 'stale' | 'failed';
+  active: { ref: ArchitectureBaselineRevisionRef; digest: string; activeAggregateRevision: number;
+    activatedAt: string; activatedBy: ActorRef } | null;
+};
+export type ArchitectureActivationReader = (scope: GovernanceScopeV1) => Promise<ArchitectureActivationObservation>;
+
 /** 一条已安装的治理 revision：投影/快照事实 + 安装事件里的操作者与时间。 */
 export type GovernanceRevisionViewV1 = {
   ref: GovernanceRevisionRefV1;

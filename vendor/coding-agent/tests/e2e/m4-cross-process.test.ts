@@ -251,7 +251,14 @@ if (childMode) {
             },
           );
 
-        await expect(runChild("create")).rejects.toMatchObject({ signal: "SIGKILL" });
+        const started = Date.now();
+        const crash = await runChild("create").then(
+          () => null,
+          (error: { signal?: string; code?: unknown; killed?: boolean; stdout?: string; stderr?: string }) => error,
+        );
+        expect(crash?.signal, JSON.stringify({ stage: "create", elapsedMs: Date.now() - started,
+          code: crash?.code, signal: crash?.signal, killed: crash?.killed,
+          stdout: crash?.stdout, stderr: crash?.stderr })).toBe("SIGKILL");
         await runChild("recover");
 
         // marker.txt 来自真实 EditToolHandler；若恢复重放同一 create，测试会因 already_exists 失败。

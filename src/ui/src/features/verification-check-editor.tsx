@@ -1,9 +1,11 @@
-import { Button, Group, Paper, Select, Stack, Text, TextInput } from '@mantine/core';
+import { Button, Group, Paper, Select, Stack, Text, TextInput, Textarea } from '@mantine/core';
 
 /** Editable strings are UI drafts; the Verification service validates/fixes configuration identity. */
 export type CheckDraft = {
   key: string;
   checkId: string;
+  mode: 'command' | 'readonly-report';
+  requiredReadPaths: string;
   kind: 'static' | 'dynamic';
   command: string;
   cwd: string;
@@ -11,7 +13,7 @@ export type CheckDraft = {
 };
 
 export function newCheckDraft(index: number): CheckDraft {
-  return { key: crypto.randomUUID(), checkId: `check-${index}`, kind: 'dynamic', command: '', cwd: '.', seconds: '120' };
+  return { key: crypto.randomUUID(), checkId: `check-${index}`, mode: 'command', requiredReadPaths: '', kind: 'dynamic', command: '', cwd: '.', seconds: '120' };
 }
 
 export function VerificationCheckEditor({ checks, onChange, disabled }: {
@@ -29,13 +31,19 @@ export function VerificationCheckEditor({ checks, onChange, disabled }: {
         </Group>
         <Group gap="xs" grow>
           <TextInput size="xs" label="检查标识" value={check.checkId} disabled={disabled} onChange={event => update(check.key, { checkId: event.currentTarget.value })} data-testid={`round-check-id-${index}`} />
-          <Select size="xs" label="类型" value={check.kind} disabled={disabled} data={[{ value: 'dynamic', label: '行为测试' }, { value: 'static', label: '静态检查' }]} onChange={value => { if (value === 'static' || value === 'dynamic') update(check.key, { kind: value }); }} data-testid={`round-check-kind-${index}`} />
+          <Select size="xs" label="类型" value={check.kind} disabled={disabled || check.mode === 'readonly-report'} data={[{ value: 'dynamic', label: '行为测试' }, { value: 'static', label: '静态检查' }]} onChange={value => { if (value === 'static' || value === 'dynamic') update(check.key, { kind: value }); }} data-testid={`round-check-kind-${index}`} />
         </Group>
+        <Select size="xs" label="检查方式" value={check.mode} disabled={disabled} data={[{ value: 'command', label: '运行检查命令' }, { value: 'readonly-report', label: '核对只读任务报告及来源' }]} onChange={value => { if (value === 'command' || value === 'readonly-report') update(check.key, { mode: value, ...(value === 'readonly-report' ? { kind: 'static' } : {}) }); }} data-testid={`round-check-mode-${index}`} />
+        {check.mode === 'readonly-report' ? <>
+          <Textarea size="xs" label="必须读取的项目内文件（每行一个）" value={check.requiredReadPaths} disabled={disabled} onChange={event => update(check.key, { requiredReadPaths: event.currentTarget.value })} data-testid={`round-check-read-paths-${index}`} />
+          <Text size="xs" c="dimmed">核对本次运行的原始报告、读取记录和当前来源版本。报告内容是否正确，仍须独立审阅。</Text>
+        </> : <>
         <TextInput size="xs" label="检查命令" placeholder="填写此项目实际使用的检查命令" value={check.command} disabled={disabled} onChange={event => update(check.key, { command: event.currentTarget.value })} data-testid={`round-check-command-${index}`} />
         <Group gap="xs" grow>
           <TextInput size="xs" label="项目内执行目录" value={check.cwd} disabled={disabled} onChange={event => update(check.key, { cwd: event.currentTarget.value })} data-testid={`round-check-cwd-${index}`} />
           <TextInput size="xs" label="单次超时（秒）" type="number" min={1} max={600} value={check.seconds} disabled={disabled} onChange={event => update(check.key, { seconds: event.currentTarget.value })} data-testid={`round-check-timeout-${index}`} />
         </Group>
+        </>}
       </Stack>
     </Paper>)}
     <Button size="xs" variant="light" disabled={disabled} onClick={() => {
@@ -43,6 +51,6 @@ export function VerificationCheckEditor({ checks, onChange, disabled }: {
       while (checks.some(check => check.checkId === `check-${index}`)) index++;
       onChange([...checks, newCheckDraft(index)]);
     }} data-testid="round-add-check">添加检查</Button>
-    {!checks.length ? <Text size="xs" c="dimmed">尚未配置检查。添加此任务实际需要的检查命令。</Text> : null}
+    {!checks.length ? <Text size="xs" c="dimmed">尚未配置检查。添加此任务实际需要的检查。</Text> : null}
   </Stack>;
 }

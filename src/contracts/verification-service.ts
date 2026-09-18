@@ -37,7 +37,8 @@ export type CommandCheckRecord = VerificationScope & {
   finishedAt: string | null;
   result: VerificationResultV1 | null;
   roundBinding?: VerificationRoundCheckBinding;
-  lifecycle?: 'intent_recorded' | 'acquisition_rejected' | 'lease_acquired' | 'executing' | 'report_stored' | 'result_recorded' | 'lease_released' | 'reconciliation_required';
+  readonlyObservation?: import('./verification-context.js').VerificationReadonlyReportObservation;
+  lifecycle?: 'intent_recorded' | 'acquisition_rejected' | 'lease_acquired' | 'executing' | 'report_stored' | 'result_recorded' | 'lease_released' | 'observation_complete' | 'reconciliation_required';
   acquisitionRejection?: Extract<AcquireWriteLeaseReceipt, { status: 'rejected' }>;
   leaseId?: string;
   progress?: CommandCheckProgress;
@@ -84,13 +85,15 @@ export interface RecordedVerificationPort {
 }
 /** Verification lifecycle API. Commands and benchmark records keep independent identities. */
 export interface VerificationServicePort extends VerificationPort, ReviewerVerificationPort {
+  /** Optional on legacy hosts; omission means unavailable, never empty. */
+  queryFacts?: import('./query-quality-facts.js').QueryVerificationFactsPort['queryFacts'];
   reverifyRework(scope: VerificationRoundScope): Promise<VerificationRoundResult | { status: 'not_rework' }>;
   prepareReworkReview(scope: VerificationRoundScope, roundRequestId: string): Promise<import('./reviewer-verification.js').ReviewRequestResult | null>;
   readonly recorded: RecordedVerificationPort;
   init(): Promise<void>;
   forRun(scope: VerificationScope): VerificationRunView;
   startRound(scope: VerificationRoundScope, input: VerificationRoundStartInput): Promise<VerificationRoundResult>;
-  round(scope: VerificationRoundScope, requestId: string): Promise<VerificationRoundView>;
+  round(scope: VerificationRoundScope, requestId: string, signal?: AbortSignal): Promise<VerificationRoundView>;
   roundReceipt(scope: Omit<VerificationScope, 'runId'>, requestId: string): Promise<Pick<VerificationRoundRecord, 'roundId' | 'requestId' | 'status'> & { runId: string; taskId: string } | null>;
   resumeRound(scope: VerificationRoundScope, input: VerificationRoundResumeInput): Promise<VerificationRoundResult>;
   checkReportMaterials(scope?: VerificationScope): VerificationReportMaterial[];

@@ -9,7 +9,7 @@ import type { ViewProps } from '../workbench/view-props';
 
 export function SettingsView({ api, data, store, scope }: ViewProps) {
   const query = useModelSettings(api, true);
-  const [form, setForm] = useState({ provider: '', model: '', baseUrl: '', apiKey: '' });
+  const [form, setForm] = useState({ provider: '', model: '', baseUrl: '', apiKey: '', reasoningEffort: '' });
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: 'info' | 'error' | 'warning' | 'success'; text: string } | null>(null);
 
@@ -18,8 +18,8 @@ export function SettingsView({ api, data, store, scope }: ViewProps) {
     if (!data) return;
     setForm(current => {
       if (data.configuration) {
-        if (current.provider === data.configuration.provider && current.model === data.configuration.model && current.baseUrl === data.configuration.baseUrl) return current;
-        return { ...current, provider: data.configuration.provider, model: data.configuration.model, baseUrl: data.configuration.baseUrl };
+        if (current.provider === data.configuration.provider && current.model === data.configuration.model && current.baseUrl === data.configuration.baseUrl && current.reasoningEffort === (data.configuration.reasoningEffort ?? '')) return current;
+        return { ...current, provider: data.configuration.provider, model: data.configuration.model, baseUrl: data.configuration.baseUrl, reasoningEffort: data.configuration.reasoningEffort ?? '' };
       }
       const first = data.providers[0];
       if (!first || current.provider) return current;
@@ -33,7 +33,7 @@ export function SettingsView({ api, data, store, scope }: ViewProps) {
   const save = async () => {
     setBusy('save'); setMessage(null);
     try {
-      const result = await api.modelSettingsSave(form);
+      const result = await api.modelSettingsSave({ ...form, reasoningEffort: form.provider === 'deepseek' ? form.reasoningEffort || null : null });
       setForm(current => ({ ...current, apiKey: '' }));
       setMessage({ tone: 'success', text: '配置已保存，版本 ' + (result.configuration?.revision ?? '—') });
       void query.refetch();
@@ -67,9 +67,10 @@ export function SettingsView({ api, data, store, scope }: ViewProps) {
             {query.error ? <ErrorState message={(query.error as Error).message} /> : null}
             {query.data ? (
               <Stack gap={6}>
-                <Select size="xs" label="提供方与协议" value={form.provider || (query.data.providers[0]?.id ?? '')} onChange={value => { const provider = value ?? ''; setForm(current => ({ ...current, provider, baseUrl: query.data?.providers.find(item => item.id === provider)?.defaultBaseUrl ?? current.baseUrl, apiKey: '' })); }} data={query.data.providers.map(item => ({ value: item.id, label: item.id }))} data-testid="model-provider" />
+                <Select size="xs" label="提供方与协议" value={form.provider || (query.data.providers[0]?.id ?? '')} onChange={value => { const provider = value ?? ''; setForm(current => ({ ...current, provider, reasoningEffort: '', baseUrl: query.data?.providers.find(item => item.id === provider)?.defaultBaseUrl ?? current.baseUrl, apiKey: '' })); }} data={query.data.providers.map(item => ({ value: item.id, label: item.id }))} data-testid="model-provider" />
                 <TextInput size="xs" label="模型名称" value={form.model} onChange={event => setForm({ ...form, model: event.currentTarget.value })} data-testid="model-name" />
                 <TextInput size="xs" label="接口地址" value={form.baseUrl} onChange={event => setForm({ ...form, baseUrl: event.currentTarget.value })} data-testid="model-base-url" />
+                {form.provider === 'deepseek' ? <Select size="xs" label="思考强度" value={form.reasoningEffort} onChange={value => setForm({ ...form, reasoningEffort: value ?? '' })} data={[{ value: '', label: '服务商默认' }, { value: 'low', label: '低（low）' }, { value: 'high', label: '强（high）' }, { value: 'max', label: '最高（max）' }]} data-testid="model-reasoning-effort" /> : null}
                 <PasswordInput size="xs" label="API Key" value={form.apiKey} onChange={event => setForm({ ...form, apiKey: event.currentTarget.value })} placeholder={query.data.keyConfigured ? '已保存；留空保留，输入新值更新' : '尚未设置'} data-testid="model-key" />
                 <Text size="xs" c="dimmed">{query.data.keyConfigured ? '密钥保存在本机配置目录，不会进入项目或浏览器持久化。' : '尚未设置密钥。'}</Text>
                 <Group gap={4}>

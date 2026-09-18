@@ -7,6 +7,28 @@ const { CodingAgentRuntime } = await import('../../src/execution/worker-runtime/
 const { LeasedWorkerRuntime } = await import('../../src/control/dispatch-engine/leased-worker-runtime.ts');
 const { RuntimeDispatch } = await import('../../src/control/dispatch-engine/runtime-dispatch.ts');
 const request = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+const { DatabaseSync } = await import('node:sqlite');
+const originalPrepare = DatabaseSync.prototype.prepare;
+let firstMiss = true;
+DatabaseSync.prototype.prepare = function(sql) {
+  const statement = originalPrepare.call(this, sql);
+  if (sql === 'SELECT record FROM artifacts WHERE key = ?' && request.vaultReadReady) {
+    const get = statement.get.bind(statement);
+    statement.get = (...args) => {
+      const row = get(...args);
+      if (!row && firstMiss) {
+        firstMiss = false; writeFileSync(request.vaultReadReady, String(process.pid));
+        const deadline = Date.now() + 45000;
+        while (!existsSync(request.vaultReadGo)) {
+          if (Date.now() >= deadline) throw Error('vault read-miss barrier timeout');
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        }
+      }
+      return row;
+    };
+  }
+  return statement;
+};
 const die = boundary => { if (request.fault === boundary) process.exit(86); };
 const runtime = new CodingAgentRuntime(request.runsDir, async () => ({
   configuration: { revision: 'test', provider: 'deepseek', model: 'capture', baseUrl: 'http://127.0.0.1' },
@@ -42,6 +64,11 @@ h = await createPersistentPlatform({ dir: request.stateDir, deps: { clock: () =>
 });
 const originalStart = h.control.startRun.bind(h.control);
 h.control.startRun = async command => {
+  if (request.startReady) {
+    writeFileSync(request.startReady, JSON.stringify(command));
+    const deadline = Date.now() + 45000;
+    while (!existsSync(request.startGo)) { if (Date.now() >= deadline) throw Error('start barrier timeout'); await new Promise(r => setTimeout(r, 10)); }
+  }
   const receipt = await originalStart(command);
   if (receipt.status === 'committed' && !receipt.replayed) die('after_start_authorization');
   return receipt;
@@ -76,6 +103,23 @@ h.control.authorizeModelRequest = async command => {
   return result;
 };
 try {
+  const facts = async () => {
+    const counts = {};
+    let afterCursor = null;
+    for (;;) {
+      const page = await h.ledger.events({ afterCursor, limit: 1000 });
+      for (const { event } of page.events) counts[event.eventType] = (counts[event.eventType] ?? 0) + 1;
+      if (!page.hasMore || page.throughCursor === null || page.throughCursor === afterCursor) return counts;
+      afterCursor = page.throughCursor;
+    }
+  };
+  if (request.claimCommandFile) {
+    const receipt = await h.claimTask(JSON.parse(readFileSync(request.claimCommandFile, 'utf8')));
+    if (receipt.status !== 'committed' || receipt.replayed) throw Error('fresh claim did not commit');
+    writeFileSync(request.marker, JSON.stringify({ pid: process.pid, receipt, facts: await facts() }), { flush: true });
+    process.kill(process.pid, 'SIGKILL');
+    await new Promise(() => {});
+  }
   if (request.ready) {
     writeFileSync(request.ready, String(process.pid));
     const deadline = Date.now() + 20_000;
@@ -85,5 +129,5 @@ try {
   const recovery = request.recover ? await reconciler.recover([request.scope]) : null;
   const result = await h.drive({ reason: 'independent-process', maxIntents: 1 });
   const loaded = await h.ledger.load(request.runRef);
-  process.stdout.write(JSON.stringify({ pid: process.pid, recovery, result, run: loaded, runtime: runtime.all().map(r => ({ status: r.status, error: r.error })) }));
+  process.stdout.write(JSON.stringify({ pid: process.pid, recovery, result, run: loaded, facts: await facts(), runtime: runtime.all().map(r => ({ status: r.status, error: r.error })) }));
 } finally { await runtime.close(); await h.close(); }

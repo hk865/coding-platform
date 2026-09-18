@@ -17,7 +17,7 @@ import { digest, ensure, sha, text, vScope } from './verification-input.js';
 
 const same = (a: unknown, b: unknown) => canonicalJson(a as JsonValue) === canonicalJson(b as JsonValue);
 const actor = { kind: 'system' as const, id: 'independent-review-verification' };
-const normalize = (scope: VerificationRoundScope): VerificationRoundScope => ({ ...vScope(scope), taskId: scope.taskId });
+const normalize = (scope: VerificationRoundScope): VerificationRoundScope => ({ ...vScope(scope), taskId: scope.taskId, ...(scope.gateSubject ? { gateSubject: scope.gateSubject } : {}) });
 const goalKey = (scope: VerificationRoundScope, requestId: string) => canonicalJson([scope.projectId, scope.workspaceId, scope.goalId, requestId]);
 const journalId = (r: ReviewJournalRecord) => digest(goalKey(r.scope, r.requestId));
 
@@ -73,10 +73,11 @@ export class ReviewerVerification {
     return { review: await this.view(record), replayed: false };
   }
 
-  async review(scope: VerificationRoundScope, requestId: string): Promise<ReviewRequestView> {
+  async review(scope: VerificationRoundScope, requestId: string, signal?: AbortSignal): Promise<ReviewRequestView> {
     const record = this.find(scope, text(requestId, 'requestId', 128));
     ensure(record, '该作用域不存在 Reviewer 请求');
-    return this.view(record);
+    signal?.throwIfAborted();
+    return this.view(record, signal);
   }
 
   async recoverReview(scope: VerificationRoundScope, input: ReviewRecoverInput): Promise<ReviewRequestResult> {
@@ -441,7 +442,8 @@ export class ReviewerVerification {
     return true;
   }
 
-  private async view(record: ReviewJournalRecord): Promise<ReviewRequestView> {
+  private async view(record: ReviewJournalRecord, signal?: AbortSignal): Promise<ReviewRequestView> {
+    signal?.throwIfAborted();
     const ports = this.deps.review;
     let canonical: Awaited<ReturnType<NonNullable<VerificationServiceDeps['review']>['context']['inspect']>> = null;
     let current: ReviewRequestView['current'] = { status: 'unavailable', issues: ['Reviewer Work 尚未建立'] };
@@ -449,16 +451,19 @@ export class ReviewerVerification {
     if (ports && record.workRef) {
       try {
         canonical = await ports.context.inspect(record.workRef);
+        signal?.throwIfAborted();
         if (canonical) {
           this.bindWork(record, canonical.work);
-          const state = await ports.context.current(record.workRef);
+          const state = await ports.context.current(record.workRef, signal);
+          signal?.throwIfAborted();
           current = state.status === 'ready' ? { status: 'current', issues: [] }
             : state.status === 'incomplete' ? { status: 'unavailable', issues: state.missing }
               : { status: 'stale', issues: state.issues };
-          const eligibility = await ports.context.recovery(record.workRef);
+          const eligibility = await ports.context.recovery(record.workRef, signal);
+          signal?.throwIfAborted();
           recovery = { allowed: eligibility.allowed, code: eligibility.code, failureReason: eligibility.failureReason, issues: eligibility.issues };
         }
-      } catch (error) { current = { status: 'unavailable', issues: [String(error)] }; }
+      } catch (error) { signal?.throwIfAborted(); current = { status: 'unavailable', issues: [String(error)] }; }
     }
     if (record.terminalRejection) {
       current = { status: 'stale', issues: [record.terminalRejection.message] };

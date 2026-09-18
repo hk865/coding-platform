@@ -38,6 +38,7 @@ export type ReworkIssueSourceV1 =
  */
 export const COMMAND_CHECK_CATEGORIES = [
   'tool_check',
+  'readonly_report_check',
   'timeout',
   'cancelled',
   'runtime_error',
@@ -84,6 +85,8 @@ export type ReworkFailureFactV1 = {
   durationMs: number | null;
   /** 有界 stderr 摘要（不超过 REWORK_FAILURE_STDERR_MAX_BYTES 字节）；空字符串表示命令没有 stderr 输出。 */
   stderrExcerpt: string | null;
+  /** Non-command report predicate failures; absent on historical/command records. */
+  reportIssues?: string[];
   /** 该失败成立时的源码摘要；与轮次 materialIdentity.sourceDigest 同一身份。 */
   sourceDigest: string | null;
   /** 原始报告引用：工具检查指向命令检查报告，独立审阅指向审阅报告；正文保留在 Vault，不复制。 */

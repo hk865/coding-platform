@@ -33,6 +33,7 @@ export function createModelCallAccess(deps: {
         workspaceId: envelope.workspaceId, runId: envelope.runRef.runId });
       if (admitted.status === 'unavailable') throw Error(admitted.reason);
       const binding: RuntimeInputBindingV1 = { schemaVersion: 1, ...input,
+        ...(input.additionalMaterialRefs ? { additionalMaterialRefs: [...input.additionalMaterialRefs].sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b))) } : {}),
         materialAccessRefs: [...(input.materialAccessRefs ?? [])].sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b))),
         deliveryRefs: (admitted.status === 'found' ? admitted.facts.admission.admission.deliveryRefs : [])
           .map(ref => ({ ...ref })).sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b))),

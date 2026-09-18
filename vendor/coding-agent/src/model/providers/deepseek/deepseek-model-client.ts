@@ -135,6 +135,9 @@ export class DeepSeekModelClient implements ModelClientPort {
     };
     if (request.tools.length > 0) body["tools"] = mapTools(request);
     if (request.maxOutputTokens !== null) body["max_tokens"] = request.maxOutputTokens;
+    if (request.responseFormat) {
+      body["response_format"] = request.responseFormat satisfies NonNullable<ChatCompletionCreateParamsStreaming["response_format"]>;
+    }
     if (this.#options.thinking) body["thinking"] = { type: this.#options.thinking };
     if (this.#options.reasoningEffort) body["reasoning_effort"] = this.#options.reasoningEffort;
 
@@ -219,6 +222,10 @@ export class DeepSeekModelClient implements ModelClientPort {
           reason: "provider_limit",
           message: "DeepSeek 系统资源暂时不足",
         });
+      } else if (options.signal.aborted) {
+        // SDK abort may end iteration normally instead of throwing. Preserve
+        // an already observed provider terminal above; otherwise report cancel.
+        yield event({ type: "cancelled", reason: "调用方取消了模型请求" });
       } else {
         yield event({
           type: "error",

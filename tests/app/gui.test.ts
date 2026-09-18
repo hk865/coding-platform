@@ -2,11 +2,32 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { createGuiService } from '../../src/app/service.js';
+import { createGuiService } from '../../src/app/service.js';
 type GuiState = Awaited<ReturnType<Awaited<ReturnType<typeof createGuiService>>['state']>>;
 type ActionBody = { drive?: { started: number; completed?: number; answered?: number; failures: unknown[] } };
 import { createGuiServer } from '../../src/app/server.js';
 const cleanup: Array<() => Promise<void>> = [];
+
+it('cancels accepted direct applicability reads before closing their store and rejects new reads', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'applicability-close-'));
+  cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  const service = await createGuiService(dir);
+  cleanup.push(() => service.close());
+  const input = { projectId: 'acceptance-alpha', workspaceId: 'workspace-main', goalId: 'acceptance-demo', queryJobId: 'missing', answerId: 'missing' };
+  const reading = service.queryApplicability(input);
+  const rejected = expect(reading).rejects.toThrow('服务正在关闭');
+  await service.close(); await rejected;
+  await expect(service.queryApplicability(input)).rejects.toThrow('服务正在关闭');
+});
+
+it('separates recorded project progress from unchecked source applicability', async () => {
+  const app = await start();
+  const overview = await app.state({ view: 'overview' });
+  expect(overview).toMatchObject({ applicability: { status: 'not_checked' } });
+  expect(overview.goals.length).toBeGreaterThan(0);
+  const response = await fetch(app.base + '/api/query-applicability?' + new URLSearchParams({ ...app.scope, queryJobId: 'missing', answerId: 'missing' }));
+  expect(await response.json()).toMatchObject({ status: 'unavailable', queryJobId: 'missing', answerId: 'missing' });
+});
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
 async function start(dir?: string) {
   if (!dir) { dir = await mkdtemp(join(tmpdir(), 'platform-gui-test-')); const path = dir; cleanup.push(() => rm(path, { recursive: true, force: true })); }

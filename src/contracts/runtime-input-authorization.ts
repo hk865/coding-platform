@@ -4,6 +4,7 @@ import type { DeliverySnapshot } from './coordination.js';
 import type { MaterialAccessGrantSnapshot } from './material-access.js';
 import { validMaterialSourcePin } from './material-access.js';
 import { canonicalJson } from './fingerprint.js';
+import { validateArtifactRefRef } from './validation/evidence.js';
 
 /** Pure authority check used by Control and by the ledger under its transaction.
  * The provider attempt CAS must cover the exact mutable grants selected by Host.
@@ -17,6 +18,14 @@ export function runtimeInputMaterialGuards(run: RunSnapshot, binding: RuntimeInp
   const bodies = new Set<string>();
   const grantBodies = new Set<string>();
   const seen = new Set<string>();
+  const additional = binding.additionalMaterialRefs === undefined ? [] : binding.additionalMaterialRefs;
+  if (!Array.isArray(additional) || additional.length > 64) return null;
+  for (const body of additional) {
+    const issues: import('./validation/common.js').ValidationIssue[] = [];
+    validateArtifactRefRef(body, 'additionalMaterialRefs', issues);
+    if (!body || issues.length || bodies.has(canonicalJson(body))) return null;
+    bodies.add(canonicalJson(body));
+  }
   for (const ref of binding.deliveryRefs) {
     if (ref.aggregateType !== 'Delivery' || ref.projectId !== run.ref.projectId || ref.workspaceId !== envelope.workspaceId || seen.has(canonicalJson(ref))) return null;
     seen.add(canonicalJson(ref));

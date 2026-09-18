@@ -5,6 +5,7 @@ import {expect,it} from 'vitest';
 import {createGuiServer} from '../../src/app/server.js';
 import {createBuiltinProviderRegistry,type ModelClientPort,type ModelRequest} from '../../vendor/coding-agent/dist/public-api.js';
 import type {QueryRuntimeRecord} from '../../src/execution/worker-runtime/read-only-query-runtime.js';
+import {semanticQueryGuideFor} from '../../src/contracts/query-execution-context.js';
 
 it('three response purposes adopt current persisted versions in real kernel requests and retain separate save/adoption facts',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'cm1b-response-')),root=join(dir,'source');await mkdir(root);
@@ -14,7 +15,7 @@ it('three response purposes adopt current persisted versions in real kernel requ
     const input=request.messages.filter(message=>message.role==='user').map(message=>message.content).join('\n');
     // Deterministic behavior witness, explicitly not a commercial-model quality eval.
     const answer=input.includes('CM1B_TEMP_DETAIL')?'Temporary detailed explanation, for this request only.':input.includes('CM1B_ARCH_DETAIL')?'Architecture: boundaries, interfaces and tradeoffs. Detailed explanation from the selected preference.':'Brief status.';
-    yield {schemaVersion:1,requestId:request.requestId,sequence:1,type:'text_delta',delta:answer};
+    yield {schemaVersion:1,requestId:request.requestId,sequence:1,type:'text_delta',delta:JSON.stringify({schemaVersion:1,language:'en',blocks:[{kind:'explanation',text:answer,basis:[]}]})};
     yield {schemaVersion:1,requestId:request.requestId,sequence:2,type:'usage_snapshot',usage:{inputTokens:100,outputTokens:20,cachedInputTokens:0,costUsdMicros:null}};
     yield {schemaVersion:1,requestId:request.requestId,sequence:3,type:'completed',reason:'final_answer'};
   }};
@@ -40,8 +41,12 @@ it('three response purposes adopt current persisted versions in real kernel requ
     for(const purpose of ['reply','architecture','progress']){
       const observed=await query('before-'+purpose,purpose);
       expect(observed.requests).toHaveLength(1);expect(JSON.stringify(observed.requests[0]!.messages)).toContain('CM1B_ALL_BRIEF');
+      expect(observed.requests[0]!.systemPrompt).toContain(semanticQueryGuideFor(purpose).instruction);
+      expect(observed.requests[0]!.systemPrompt).not.toContain('CM1B_ALL_BRIEF');
+      expect(observed.run.responseGuide).toBe(semanticQueryGuideFor(purpose).id);
+      expect(JSON.parse(observed.run.input).responseGuide).toBe(semanticQueryGuideFor(purpose).id);
       expect(JSON.parse(observed.run.input)).toMatchObject({responsePurpose:purpose,maintainedPreferences:{profileRevision:1}});
-      expect(observed.run.result).toMatchObject({outcome:'answered',answer:'Brief status.'});
+      expect(observed.run.result).toMatchObject({outcome:'answered',answer:'Explanation：Brief status.'});
     }
     expect(await post('/api/real/memory/profile/maintain',{requestId:'specific',expectedRevision:1,edits:[
       {operation:'remember',entryId:'architecture',content:'CM1B_ARCH_DETAIL: Explain architecture in detail.',conditions:{purposes:['architecture'],expiresAt:null}},
@@ -54,14 +59,14 @@ it('three response purposes adopt current persisted versions in real kernel requ
       const actual=JSON.stringify(observed.requests[0]!.messages);
       expect(actual.includes('CM1B_ARCH_DETAIL')).toBe(purpose==='architecture');
       if(purpose==='architecture')expect(JSON.stringify(observed.run.result)).toContain('Detailed explanation');
-      else expect(observed.run.result).toMatchObject({outcome:'answered',answer:'Brief status.'});
+      else expect(observed.run.result).toMatchObject({outcome:'answered',answer:'Explanation：Brief status.'});
     }
     const adoption=await post('/api/real/memory/project/adoption',scope) as {runs:{memory:{profileRevision:number}}[]};
     expect(adoption.runs.map(run=>run.memory.profileRevision).sort()).toEqual([1,1,1,2,2,2]);
     const temporary=await query('temporary','reply','CM1B_TEMP_DETAIL: explain this one reply in detail without saving a preference.');
-    expect(temporary.run.result).toMatchObject({outcome:'answered',answer:'Temporary detailed explanation, for this request only.'});
+    expect(temporary.run.result).toMatchObject({outcome:'answered',answer:'Explanation：Temporary detailed explanation, for this request only.'});
     expect(await post('/api/real/memory/profile/view',{})).toMatchObject({status:'ready',snapshot:{revision:2}});
-    const nextReply=await query('after-temporary','reply');expect(nextReply.run.result).toMatchObject({outcome:'answered',answer:'Brief status.'});
+    const nextReply=await query('after-temporary','reply');expect(nextReply.run.result).toMatchObject({outcome:'answered',answer:'Explanation：Brief status.'});
     expect(JSON.stringify(nextReply.requests[0]!.messages)).not.toContain('CM1B_TEMP_DETAIL');
     expect(await post('/api/real/memory/profile/maintain',{requestId:'delete-general',expectedRevision:2,edits:[{operation:'remove',entryId:'general',expectedEntryRevision:1}]})).toMatchObject({status:'committed',revision:3});
     const afterDeletion=await query('after-deletion','reply');expect(JSON.stringify(afterDeletion.requests[0]!.messages)).not.toContain('CM1B_ALL_BRIEF');

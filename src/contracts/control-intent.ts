@@ -139,7 +139,38 @@ export type ControlIntentV1 = {
   resumeFromIntentRef: ControlIntentRef | null;
   submittedAt: string;
   updatedAt: string;
+  /** Canonical Run reconciliation, distinct from a runtime-declared safe point. */
+  reconciliation?: { runRef: RunRef; runRevision: number; outcome: string | null; reason: 'cancelled' | 'terminal_without_cancel' | 'unresolved' | 'superseded'; recordedAt: string };
 };
+
+export type ReconcileControlIntentCommand = {
+  schemaVersion: 1; commandType: 'ReconcileControlIntent'; commandId: string;
+  identity: CommandIdentity; expectedRevision: number; submittedAt: string;
+  payload: { intentRef: ControlIntentRef };
+};
+export type ReconcileControlIntentReceipt = RecordSafePointAckReceipt | { status: 'unchanged'; intentRef: ControlIntentRef };
+export type ControlIntentReconciledEvent = Omit<SafePointAcknowledgedEvent, 'eventType' | 'payload'> & {
+  eventType: 'ControlIntentReconciled'; payload: { snapshot: ControlIntentSnapshot };
+};
+
+/** Only the implemented cancellation path is folded here. No safe-point,
+ * deadline, pause or resume behavior is inferred from a Run's terminal state. */
+export function foldCancelIntent(prior: ControlIntentSnapshot, run: import('./dispatch.js').RunSnapshot, at: string): ControlIntentSnapshot | null {
+  const intent = prior.intent;
+  if (intent.kind !== 'cancel' || intent.desiredState !== 'cancelled' || !intent.scope.runRef ||
+      canonicalJson(intent.scope.runRef) !== canonicalJson(run.ref) || run.workspaceSnapshot.workspaceId !== intent.workspaceId ||
+      run.ref.projectId !== intent.projectId || intent.scope.goalId !== run.ref.goalId || intent.scope.taskId !== run.task.taskId ||
+      !['queued', 'outcome_unknown'].includes(intent.status)) return null;
+  let status: ControlIntentStatus, reason: NonNullable<ControlIntentV1['reconciliation']>['reason'];
+  if (canonicalJson(run.controlState?.intentRef ?? null) !== canonicalJson(prior.ref)) { status = 'rejected'; reason = 'superseded'; }
+  else if (run.status !== 'ended') return null;
+  else if (run.outcome === 'cancelled') { status = 'applied'; reason = 'cancelled'; }
+  else if (run.outcome === 'outcome_unknown') { status = 'outcome_unknown'; reason = 'unresolved'; }
+  else { status = 'rejected'; reason = 'terminal_without_cancel'; }
+  const reconciliation = { runRef: run.ref, runRevision: run.revision, outcome: run.outcome, reason, recordedAt: at };
+  if (intent.status === status && intent.reconciliation?.runRevision === run.revision && intent.reconciliation.reason === reason) return null;
+  return { ...prior, revision: prior.revision + 1, intent: { ...intent, status, updatedAt: at, reconciliation } };
+}
 
 export type ControlIntentSnapshot = {
   ref: ControlIntentRef;

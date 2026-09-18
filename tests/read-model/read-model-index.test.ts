@@ -8,7 +8,7 @@ import { ControlPolicyExplanation } from '../../src/control/control-engine/polic
  * is the query key).
  */
 import { describe, expect, it } from "vitest";
-import { createReadModelIndex } from "../../src/data/read-model-index/read-model-index.js";
+import { createReadModelIndex, ReadModelIndexImpl } from "../../src/data/read-model-index/read-model-index.js";
 import type { CommitCursor } from "../../src/contracts/command-event.js";
 import type { DomainEvent } from "../../src/contracts/events.js";
 import type { EventPage } from "../../src/contracts/ledger.js";
@@ -82,6 +82,30 @@ function betaQuery(atLeastCursor?: CommitCursor) {
 }
 
 describe("ReadModelIndexImpl (lane C), supplemental", () => {
+  it('rolls back nested counters and preserves a previously returned row when a late handler fails', async () => {
+    const index = new ReadModelIndexImpl(new ControlPolicyExplanation());
+    const goal = goalEventAt(2, 0, 1).positioned;
+    const bootstrap: Positioned = { cursor: makeCommitCursor(1), event: { ...goal.event,
+      eventId: 'bootstrap-rollback', eventType: 'WorkspaceBootstrapped', aggregateType: 'Workspace', aggregateId: ALPHA.workspaceId,
+      payload: { sourceDigest: 'fixed-source' } } as DomainEvent };
+    await index.advance(pageOf([bootstrap, goal]));
+    const query = { projectId: ALPHA.projectId, workspaceId: ALPHA.workspaceId };
+    const held = await index.consoleSummary(query), prior = structuredClone(held);
+    const added = goalEventAt(3, 0, 2).positioned;
+    added.event = { ...added.event, aggregateId: 'second-goal', payload: { ...(added.event as any).payload, goalId: 'second-goal' } } as DomainEvent;
+    const target = index as any, apply = target.applyCollaborationEvent;
+    target.applyCollaborationEvent = () => { throw Error('after all console writes'); };
+    await expect(index.advance(pageOf([added], goal.cursor))).rejects.toThrow('after all console writes');
+    expect(held).toEqual(prior);
+    expect(await index.consoleSummary(query)).toEqual(prior);
+    target.applyCollaborationEvent = apply;
+    expect((await index.advance(pageOf([added], goal.cursor))).appliedEventIds).toEqual([added.event.eventId]);
+    const rebuilt = new ReadModelIndexImpl(new ControlPolicyExplanation());
+    await rebuilt.advance(pageOf([bootstrap, goal, added]));
+    expect(await index.consoleSummary(query)).toEqual(await rebuilt.consoleSummary(query));
+    expect(await index.consoleTimeline(query)).toEqual(await rebuilt.consoleTimeline(query));
+  });
+
   it("normalizes objective from the Event (NFC + whitespace trim)", async () => {
     const index = createReadModelIndex(new ControlPolicyExplanation());
     const a = goalEventAt(1, 0, 1);

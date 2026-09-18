@@ -11,26 +11,31 @@ const sameIdentity = (a: { dev: number; ino: number }, b: { dev: number; ino: nu
 function ensure(condition: unknown, message: string): asserts condition { if (!condition) throw Error(message); }
 
 /** Unlike code-change fingerprints, exploration covers all regular files without ignored directories. */
-export async function explorationSourceDigest(root: string, limits: Limits = defaults): Promise<string> {
+export async function explorationSourceDigest(root: string, limits: Limits = defaults, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   ensure(Object.values(limits).every(n => Number.isSafeInteger(n) && n > 0), '探索来源摘要资源上限无效');
   const hash = createHash('sha256').update('exploration-source-v1\n');
   let entries = 0, totalBytes = 0;
   async function walk(directory: FileHandle, prefix: string, depth: number): Promise<void> {
+    signal?.throwIfAborted();
     ensure(depth <= limits.maxDepth, '探索来源目录深度超出摘要上限');
     const beforeDirectory = await directory.stat(), capability = '/proc/self/fd/' + directory.fd;
     ensure(beforeDirectory.isDirectory(), '探索来源必须是普通目录');
     for (const name of (await readdir(capability)).sort()) {
+      signal?.throwIfAborted();
       ensure(++entries <= limits.maxEntries, '探索来源文件条目超出摘要上限');
       const relative = prefix ? prefix + '/' + name : name, child = capability + '/' + name, before = await lstat(child);
       if (before.isSymbolicLink()) {
         // The read tool rejects symlinks. Bind the link entry without following its target.
         const target = await readlink(child), after = await lstat(child);
+        signal?.throwIfAborted();
         ensure(sameIdentity(before, after) && before.mtimeMs === after.mtimeMs && before.size === after.size, '探索来源链接在读取期间改变：' + relative);
         hash.update(canonicalJson([relative, 'symlink-unreadable', target])); continue;
       }
       ensure(before.isDirectory() || before.isFile(), '探索来源包含不支持的特殊文件：' + relative);
       const handle = await open(child, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | (before.isDirectory() ? constants.O_DIRECTORY : 0));
       try {
+        signal?.throwIfAborted();
         const opened = await handle.stat(); ensure(sameIdentity(before, opened) && before.isDirectory() === opened.isDirectory(), '探索来源条目在打开期间改变：' + relative);
         if (opened.isDirectory()) {
           hash.update(canonicalJson([relative, 'directory', opened.mode & 511]));
@@ -38,9 +43,14 @@ export async function explorationSourceDigest(root: string, limits: Limits = def
         } else {
           ensure(opened.isFile(), '探索来源条目不是普通文件：' + relative);
           ensure(totalBytes + opened.size <= limits.maxBytes, '探索来源内容超出摘要字节上限');
-          const content = createHash('sha256'), buffer = Buffer.alloc(65536); let size = 0;
+          // Bound memory independently of file size; larger reads avoid thousands
+          // of asynchronous filesystem calls for binaries in the full source set.
+          const content = createHash('sha256'), buffer = Buffer.alloc(Math.min(1024 * 1024, Math.max(1, opened.size))); let size = 0;
           for (;;) {
-            const read = await handle.read(buffer, 0, buffer.length, null); if (!read.bytesRead) break;
+            signal?.throwIfAborted();
+            const read = await handle.read(buffer, 0, buffer.length, null);
+            signal?.throwIfAborted();
+            if (!read.bytesRead) break;
             totalBytes += read.bytesRead; size += read.bytesRead;
             ensure(totalBytes <= limits.maxBytes, '探索来源内容超出摘要字节上限'); content.update(buffer.subarray(0, read.bytesRead));
           }
@@ -52,12 +62,14 @@ export async function explorationSourceDigest(root: string, limits: Limits = def
       } finally { await handle.close(); }
     }
     const afterDirectory = await directory.stat();
+    signal?.throwIfAborted();
     ensure(beforeDirectory.mtimeMs === afterDirectory.mtimeMs && beforeDirectory.ctimeMs === afterDirectory.ctimeMs, '探索来源目录在读取期间改变：' + (prefix || '.'));
   }
   const directory = await open(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try {
     const original = await directory.stat(); await walk(directory, '', 0);
     const current = await lstat(root); ensure(current.isDirectory() && sameIdentity(original, current), '探索来源根目录在读取期间改变');
+    signal?.throwIfAborted();
     return hash.digest('hex');
   } finally { await directory.close(); }
 }
@@ -72,13 +84,16 @@ export class ExplorationSourceApplicability implements SourceApplicabilityPort {
     try {
       signal?.throwIfAborted();
       const root = this.rootFor(query.projectId, query.workspaceId);
-      const first = await explorationSourceDigest(root);
+      const first = await explorationSourceDigest(root, defaults, signal);
       signal?.throwIfAborted();
-      const second = await explorationSourceDigest(root);
+      const second = await explorationSourceDigest(root, defaults, signal);
       signal?.throwIfAborted();
       if (first !== second) return { status: 'stale', issues: ['exploration source changed during capture'] };
       return { status: 'sourced', pin: { schemaVersion: 1, projectId: query.projectId, workspaceId: query.workspaceId,
         sourceSet: { kind: 'workspace_paths', paths: ['.'] }, identity: { workspace: 'exploration-source-v1:' + root, commit: null }, manifestDigest: first } };
-    } catch { return { status: 'unavailable', issues: ['exploration source could not be read completely'] }; }
+    } catch {
+      signal?.throwIfAborted();
+      return { status: 'unavailable', issues: ['exploration source could not be read completely'] };
+    }
   }
 }

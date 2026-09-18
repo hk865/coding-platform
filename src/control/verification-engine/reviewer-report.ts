@@ -5,6 +5,7 @@ import type { ReviewerContextPort, ReviewerPacketV1 } from '../../contracts/revi
 import type { ReviewAssessmentV1, ReviewerCitationV1, ReviewerSemanticReportV1 } from '../../contracts/reviewer-verification.js';
 import type { ReviewWorkSnapshot } from '../../contracts/reviewer-work.js';
 import { ensure } from './verification-input.js';
+import { artifactPointerExists } from '../../contracts/validation/artifact-pointer.js';
 
 const same = (a: unknown, b: unknown) => canonicalJson(a as JsonValue) === canonicalJson(b as JsonValue);
 const edge = (c: { obligationId: string; requirementId: string }) => c['obligationId'] + '\0' + c['requirementId'];
@@ -94,19 +95,6 @@ function parse(body: string, work: ReviewWorkSnapshot, packet: ReviewerPacketV1)
   return report;
 }
 
-function pointerExists(body: string, pointer: string) {
-  if (pointer === '') return true;
-  let value: unknown;
-  try { value = JSON.parse(body); } catch { return false; }
-  for (const encoded of pointer.slice(1).split('/')) {
-    if (/~(?![01])/.test(encoded)) return false;
-    const key = encoded.replace(/~1/g, '/').replace(/~0/g, '~');
-    if (!value || typeof value !== 'object' || !Object.prototype.hasOwnProperty.call(value, key)) return false;
-    value = (value as Record<string, unknown>)[key];
-  }
-  return true;
-}
-
 async function validateCitation(citation: ReviewerCitationV1, work: ReviewWorkSnapshot, packet: ReviewerPacketV1, context: ReviewerContextPort, cache: Map<string, string>) {
   if (citation.location['kind'] === 'source-lines') {
     const location = citation.location;
@@ -125,7 +113,7 @@ async function validateCitation(citation: ReviewerCitationV1, work: ReviewWorkSn
   check(material && material.ref.digest === citation.digest, 'material_citation: 引用不在正式输入包的完整材料索引中');
   let body = cache.get(material.ref.digest);
   if (body === undefined) { body = await readReviewArtifact(context, work, material.ref); cache.set(material.ref.digest, body); }
-  check(pointerExists(body, citation.location['pointer']), 'artifact_citation: 引用的材料位置不存在');
+  check(artifactPointerExists(body, citation.location['pointer']), 'artifact_citation: 引用的材料位置不存在');
 }
 
 /** Syntax/meaning failures are durable rejected assessments. Permission/source

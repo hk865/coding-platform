@@ -220,6 +220,8 @@ export interface ControlEngine extends CoordinationControl {
   recordCandidateBaselineProposal(command: RecordCandidateBaselineProposalCommand): Promise<RecordCandidateBaselineProposalReceipt>;
   /** submit one durable control intent (desired state FIRST — no side effect until runtime ack). */
   submitControl(command: SubmitControlCommand): Promise<SubmitControlReceipt>;
+  /** Reconcile implemented cancellation from canonical Run facts; no safe-point ack is invented. */
+  reconcileControlIntent?(command: import('./control-intent.js').ReconcileControlIntentCommand): Promise<import('./control-intent.js').ReconcileControlIntentReceipt>;
   /** record one safe-point acknowledgement (append to the intent; CAS@N). */
   recordSafePointAck(command: RecordSafePointAckCommand): Promise<RecordSafePointAckReceipt>;
   /** claim a pending query with CAS before invoking its runtime. */

@@ -7,13 +7,16 @@ import { WORKSPACE_DENIED_PREFIXES } from './denied-prefixes.js';
  * it is not interchangeable with an exploration's complete source pin. */
 export class QueryWorkspaceSourceReader implements QuerySourceRevisionPort {
   constructor(private readonly rootFor: (projectId: string, workspaceId: string) => string) {}
-  async sourceRevision(projectId: string, workspaceId: string): Promise<string | null> {
+  async sourceRevision(projectId: string, workspaceId: string, signal?: AbortSignal): Promise<string | null> {
+    signal?.throwIfAborted();
     try {
       const workspace = await WorkspaceSandbox.create(this.rootFor(projectId, workspaceId), {
         // 路径边界归位：同上，路径边界只有 denied-prefixes.ts 一个来源。
         deniedPrefixes: [...WORKSPACE_DENIED_PREFIXES],
       });
-      return (await workspace.captureBaseline()).revision;
-    } catch { return null; }
+      const snapshot = await workspace.captureBaseline();
+      signal?.throwIfAborted();
+      return snapshot.revision;
+    } catch { signal?.throwIfAborted(); return null; }
   }
 }

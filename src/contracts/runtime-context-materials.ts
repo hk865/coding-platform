@@ -143,17 +143,28 @@ export type RuntimeContextMaterials = {
   assertCurrent?: () => Promise<void>;
   /** Grants issued by the Host for this versioned Delivery selection. */
   deliveryGrantRefs?: import("./material-access.js").MaterialAccessGrantRef[];
+  /** Full bodies opened for this Run outside the Delivery channel. */
+  additionalMaterialRefs?: import("./artifact.js").ArtifactRef[];
   schemaVersion: 1;
   scope: RuntimeContextScope;
   planRef: TaskEnvelopeV1['planRef'];
   workspaceSnapshot: TaskEnvelopeV1['workspaceSnapshot'];
   rules: RuntimeContextText[];
   predecessors: Array<{
+    kind?: 'operator-exploration';
     taskId: string;
     runRef: RunRef;
     report: RuntimeContextText;
     review: { reviewId: string; verdict: 'PASS'; status: 'applied'; text: RuntimeContextText };
     evidenceRefs?: SourceRefV1[];
+  } | {
+    kind: 'canonical-verification';
+    taskId: string;
+    reductionRef: import('./reduction.js').TaskReductionRef;
+    reductionRevision: number;
+    /** Full authorized bodies, explicitly typed by their actual provenance. */
+    documents: Array<{ kind: 'evidence-body' | 'independent-review' | 'tool-report'; id: string; text: RuntimeContextText }>;
+    evidenceRefs: SourceRefV1[];
   }>;
   evidenceRefs: SourceRefV1[];
   gaps: string[];

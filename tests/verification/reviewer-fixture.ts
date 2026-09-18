@@ -31,21 +31,30 @@ import {
 
 export const scope: VerificationRoundScope = { projectId: P107_PROJECT, workspaceId: P107_WORKSPACE,
   goalId: P107_GOAL, taskId: P107_TASK_WRITER_B, runId: 'independent-review-producer' };
-export async function reviewerFixture(roots: string[], opts: { extraToolFailure?: boolean; reviewerKinds?: number } = {}) {
+export async function reviewerFixture(roots: string[], opts: { extraToolFailure?: boolean; reviewerKinds?: number; goalGate?: boolean; successorTaskId?: string } = {}) {
+  const producerScope: VerificationRoundScope = { projectId: P107_PROJECT, workspaceId: P107_WORKSPACE, goalId: P107_GOAL, taskId: P107_TASK_WRITER_B, runId: 'independent-review-producer' };
+  const scope: VerificationRoundScope = opts.goalGate ? { ...producerScope, taskId: 'gate-p107-goal', gateSubject: 'goal' } : producerScope;
   const root = await mkdtemp(join(tmpdir(), 'independent-review-source-')); roots.push(root);
   const directory = await mkdtemp(join(tmpdir(), 'independent-review-journal-')); roots.push(directory);
   await writeFile(join(root, 'source.txt'), 'first source line\nsecond source line\n');
   const source = new VerificationSourceApplicability(() => root);
   const h = createInMemoryHarness({ sourceApplicability: source, deps: { clock: () => P107_SCHEMA } });
   const p107 = toP1_07Harness(h), draft = structuredClone(P107_PLAN_REVISION_FIXTURE_V1);
+  if (opts.successorTaskId) draft.executionDag.dependsOn.push({ taskId: opts.successorTaskId, dependsOnId: producerScope.taskId, requires: { kind: 'artifact', label: 'Current verified ordinary predecessor reports' } });
+  if (opts.goalGate) {
+    draft.tasks = draft.tasks.filter(t => [scope.taskId, producerScope.taskId].includes(t.taskId)).map(t => ({ ...t, requirementLevel: 'required' }));
+    draft.obligations = [{ obligationId: 'producer-tool', title: 'Producer command passes', requirementLevel: 'required', taskIds: [producerScope.taskId], verificationRequirements: [{ requirementId: 'producer-dynamic', kind: 'dynamic', requirementLevel: 'required', description: 'Run producer command' }] }];
+    draft.taskHierarchy = { parentOf: [] };
+    draft.executionDag = { dependsOn: [{ taskId: scope.taskId, dependsOnId: producerScope.taskId, requires: { kind: 'gate-result', label: 'Current producer verification' } }] };
+  }
   draft.obligations.push({ obligationId: 'independent-review', title: 'Independent exact review', requirementLevel: 'required', taskIds: [scope.taskId],
     verificationRequirements: [{ requirementId: 'tool', kind: 'dynamic', requirementLevel: 'required', description: 'Execute configured check' },
       ...Array.from({ length: opts.reviewerKinds ?? 2 }, (_, index) => ({ requirementId: 'review-' + index,
         kind: 'reviewer', requirementLevel: 'required' as const, description: 'Review source requirement ' + index }))] });
   await prepareP107Scenario(p107, draft);
-  await runP107Task(p107, { taskId: scope.taskId, runId: scope.runId, attemptId: 'producer-attempt',
+  await runP107Task(p107, { taskId: producerScope.taskId, runId: scope.runId, attemptId: 'producer-attempt',
     roleBinding: P107_ROLE_BINDING_WRITER_V1, declaredPermissions: { tools: ['read', 'write'], writeScope: ['*'] }, budget: P107_BUDGET_WRITER_V1 });
-  const observations: ReturnType<ReviewerRuntimeObservations['all']> = [{ spec: { ...scope,
+  const observations: ReturnType<ReviewerRuntimeObservations['all']> = [{ spec: { ...producerScope,
     budget: { ...DEFAULT_RUNTIME_BUDGET, contextWindowTokens: P107_BUDGET_WRITER_V1.tokenBudget } },
     status: 'completed', sessionId: 'producer-session' }];
   const observationPort = { all: () => structuredClone(observations) };
@@ -62,6 +71,10 @@ export async function reviewerFixture(roots: string[], opts: { extraToolFailure?
     review: { context: reviewContext, profiles, control: control.lifecycle } };
   const reopen = async () => { const service = new VerificationService(deps); await service.init(); return service; };
   const service = await reopen();
+  if (opts.goalGate) {
+    const producer = await service.startRound(producerScope, { requestId: 'producer-tools', allowExecute: true, configuration: { checks: [{ checkId: 'producer-dynamic', kind: 'dynamic', command: 'printf producer', cwd: '.', timeoutMs: 3000, appliesTo: { workspaceId: scope.workspaceId, taskIds: [producerScope.taskId] } }] } });
+    expect(producer.round.control.taskPhase, JSON.stringify(producer.round.gaps)).toBe('satisfied');
+  }
   const round = await service.startRound(scope, { requestId: 'tools', allowExecute: true, configuration: { checks: [
     { checkId: 'dynamic', kind: 'dynamic', command: 'mkdir -p .cache; printf x >> .cache/tool-count', cwd: '.', timeoutMs: 3000,
       appliesTo: { workspaceId: scope.workspaceId, taskIds: [scope.taskId] } },
@@ -145,6 +158,6 @@ export async function reviewerFixture(roots: string[], opts: { extraToolFailure?
     expect(bound.status, JSON.stringify(bound)).toBe('accepted');
     return stored.ref;
   };
-  return { root, directory, h, deps, service, reopen, source, context, reviewContext, profiles, observations,
+  return { scope, producerScope, root, directory, h, deps, service, reopen, source, context, reviewContext, profiles, observations,
     control, input, round: round.round, begin, report, complete, work, changeModel: () => { modelRevision = 'model-2'; } };
 }

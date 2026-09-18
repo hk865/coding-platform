@@ -12,12 +12,14 @@ import type { CheckReportsResponse, CommandCheckReportBody } from '../api/types'
 export const categoryLabels: Record<string, string> = {
   tool_check: '工具检查', timeout: '执行超时', environment_error: '环境异常', stale_source: '来源已变化',
   runtime_error: '运行异常', cancelled: '已取消', unknown_effects: '副作用未知',
+  readonly_report_check: '只读报告及来源检查',
 };
 export const resultLabels: Record<string, string> = { PASS: 'PASS（通过）', FAIL: 'FAIL（失败）', INCONCLUSIVE: 'INCONCLUSIVE（不确定）' };
 export const lifecycleLabels: Record<string, string> = { running: '检查中', finished: '检查结束', interrupted: '检查中断（结果未知）' };
-export const checkpointLabels: Record<string, string> = { intent_recorded: '请求已记录', acquisition_rejected: '未执行：工作区租约未获准', lease_acquired: '已取得工作区租约', executing: '执行已开始', report_stored: '报告正文已保存', result_recorded: '结果已记录', lease_released: '工作区租约已释放', reconciliation_required: '检查需要对账' };
+export const checkpointLabels: Record<string, string> = { intent_recorded: '请求已记录', acquisition_rejected: '未执行：工作区租约未获准', lease_acquired: '已取得工作区租约', executing: '执行已开始', report_stored: '报告正文已保存', result_recorded: '结果已记录', lease_released: '工作区租约已释放', observation_complete: '只读报告观察已完成', reconciliation_required: '检查需要对账' };
 
 export type ReportView = {
+  readonlyReport: CommandCheckReportBody['readonlyReport'] | null;
   observationId: string;
   checkId: string;
   kind: string;
@@ -67,8 +69,11 @@ function adaptReport(body: CommandCheckReportBody): ReportView {
   const execution = body.execution;
   if (!body.definition) missing.push('检查定义');
   if (!body.context) missing.push('上下文');
-  if (execution === null || execution === undefined) missing.push('沙箱执行结果');
+  const readonlyReport = definition.mode === 'readonly-report' ? body.readonlyReport ?? null : null;
+  if (definition.mode === 'readonly-report') { if (!readonlyReport) missing.push('只读报告观察'); }
+  else if (execution === null || execution === undefined) missing.push('沙箱执行结果');
   return {
+    readonlyReport,
     observationId: text(body.observationId) || '—',
     checkId: text(definition.checkId) || '—',
     kind: text(definition.kind) || '—',

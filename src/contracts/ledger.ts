@@ -738,6 +738,13 @@ export type ControlIntentRecordLedgerCommitV1 = {
   outboxIntents: [];
 };
 
+/** Reconcile a cancel intent from a CAS-pinned canonical Run, without a fake ack. */
+export type ControlIntentReconcileLedgerCommitV1 = {
+  commitKind: 'control-intent-reconcile'; schemaVersion: 1; identity: CommandIdentity; fingerprint: CommandFingerprint;
+  expectedVersions: ExpectedVersion[]; events: [import('./control-intent.js').ControlIntentReconciledEvent];
+  snapshots: [ControlIntentSnapshot]; outboxIntents: [];
+};
+
 /** control-ack — append one safe-point acknowledgement (intent CAS@N). */
 export type ControlAckRecordLedgerCommitV1 = {
   commitKind: "control-ack";
@@ -932,6 +939,7 @@ export type LedgerCommit =
   | ArchitectureProposalRecordLedgerCommitV1
   | ControlIntentRecordLedgerCommitV1
   | ControlAckRecordLedgerCommitV1
+  | ControlIntentReconcileLedgerCommitV1
   | QueryJobStartLedgerCommitV1
   | QueryJobRecordLedgerCommitV1
   | QueryAnswerRecordLedgerCommitV1

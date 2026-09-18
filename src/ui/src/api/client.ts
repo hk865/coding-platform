@@ -79,7 +79,11 @@ export function createApi(token: string) {
     token,
     handoff: (scope: import('./types').GoalScope, input: { requestId: string; sourceRunId: string; reason: string }) => send('/api/real/handoff', { ...scope, ...input }),
     cancelQuery: (scope: import('./types').GoalScope, queryJobId: string) => send('/api/real/queries/cancel', { ...scope, queryJobId }),
-    semanticQuery: (scope: import('./types').GoalScope, payload: { requestId: string; question: string; responsePurpose?: 'reply'|'architecture'|'progress'; focusTaskId?:string }) => send('/api/real/queries', { ...scope, ...payload }),
+    semanticQuery: (scope: import('./types').GoalScope, payload: { requestId: string; question: string; responsePurpose?: 'reply'|'architecture'|'progress'|'handoff'; focusTaskId?:string }) => send('/api/real/queries', { ...scope, ...payload }),
+    answerReviewView: (scope: import('./types').GoalScope & { queryJobId: string; answerId: string }, options?: RequestOptions) => send('/api/real/queries/review/view', scope, options) as Promise<{ available: boolean; message: string | null; blocks: Array<{ index: number; text: string }>; reviews: import('../../../contracts/query-answer-audit.js').QueryAnswerAuditView[] }>,
+    answerReviewStart: (input: import('./types').GoalScope & { queryJobId: string; answerId: string; requestId: string; blocks: number[] | null }) => send('/api/real/queries/review/start', input) as Promise<import('../../../contracts/query-answer-audit.js').QueryAnswerAuditView>,
+    answerReviewCancel: (input: import('./types').GoalScope & { queryJobId: string; answerId: string; requestId: string; blocks: number[] | null }) => send('/api/real/queries/review/cancel', input) as Promise<import('../../../contracts/query-answer-audit.js').QueryAnswerAuditView>,
+    queryRuns: (scope: import('./types').GoalScope, options?: RequestOptions) => send('/api/real/queries/runs', scope, options) as Promise<{ runs: Array<{ runRef: import('../../../contracts/query-job.js').QueryRunRef; input: string; inputDigest: string }> }>,
     memoryView: (kind:'profile'|'project',scope:import('./types').Scope|null,options?:RequestOptions) => send(`/api/real/memory/${kind}/view`,scope??{},options) as Promise<import('../../../contracts/memory').MemoryReadResult>,
     memoryMaintain: (kind:'profile'|'project',scope:import('./types').Scope|null,payload:{requestId:string;expectedRevision:number;edits:unknown[]}) => send(`/api/real/memory/${kind}/maintain`,{...scope,...payload}) as Promise<import('../../../contracts/memory').MemoryReceipt>,
     memoryCopy: (scope:import('./types').Scope,payload:unknown) => send('/api/real/memory/project/copy',{...scope,...payload as object}) as Promise<import('../../../contracts/memory').MemoryReceipt>,
@@ -93,8 +97,10 @@ export function createApi(token: string) {
     /** True once the host rejected our session token; the UI must ask for a reload. */
     get sessionExpired() { return sessionExpired; },
     meta: (options?: RequestOptions) => request<import('./types').Meta>('/api/meta', { timeoutMs: 8000, ...options }),
-    state: (scope: import('./types').Scope & { goalId?: string }, options?: RequestOptions) =>
-      query('/api/state', { projectId: scope.projectId, workspaceId: scope.workspaceId, goalId: scope.goalId }, options) as Promise<import('./types').GuiState>,
+    state: (scope: import('./types').Scope & { goalId?: string; view?: 'overview' }, options?: RequestOptions) =>
+      query('/api/state', { projectId: scope.projectId, workspaceId: scope.workspaceId, goalId: scope.goalId, view: scope.view }, options) as Promise<import('./types').GuiState>,
+    queryApplicability: (scope: import('./types').GoalScope, queryJobId: string, answerId: string, options?: RequestOptions) =>
+      query('/api/query-applicability', { ...scope, queryJobId, answerId }, options) as Promise<import('./types').QueryApplicability>,
     files: (scope: import('./types').Scope, path: string, options?: RequestOptions) =>
       query('/api/files', { ...scope, path }, options) as Promise<import('./types').DirectoryListing>,
     preview: (scope: import('./types').Scope, path: string, options?: RequestOptions) =>
@@ -106,7 +112,7 @@ export function createApi(token: string) {
     architectureReviews: (scope:import('./types').Scope,options?:RequestOptions)=>send('/api/real/architecture-reviews/view',scope,options) as Promise<import('../../../contracts/architecture-review').ArchitectureReviewView>,
     decideArchitecture: (scope:import('./types').Scope,input:Record<string,unknown>,options?:RequestOptions)=>send('/api/real/architecture-reviews/decide',{...scope,...input},options) as Promise<import('../../../contracts/architecture-review').ArchitectureReviewReceipt>,
     modelSettings: (options?: RequestOptions) => request<import('./types').ModelSettingsView>('/api/model-settings', options),
-    modelSettingsSave: (body: { provider: string; model: string; baseUrl: string; apiKey: string }, options?: RequestOptions) =>
+    modelSettingsSave: (body: { provider: string; model: string; baseUrl: string; apiKey: string; reasoningEffort?: string | null }, options?: RequestOptions) =>
       send('/api/model-settings', body, options) as Promise<import('./types').ModelSettingsView>,
     modelSettingsClear: (options?: RequestOptions) => send('/api/model-settings/clear', {}, options) as Promise<import('./types').ModelSettingsView>,
     modelSettingsTest: (options?: RequestOptions) => send('/api/model-settings/test', {}, { timeoutMs: 45000, ...options }) as Promise<import('./types').ModelTestResult>,
@@ -185,6 +191,8 @@ export function createApi(token: string) {
     /** 未处置的验收问题：来自已提交的验证轮次与独立审阅结论，只读。 */
     reworkIssues: (scope: import('./types').GoalScope, taskIds: string[] = [], options?: RequestOptions) =>
       send('/api/real/rework/issues', { ...scope, taskIds }, options) as Promise<import('../../../contracts/rework/issues.js').OpenIssuesViewV1>,
+    feedbackOptions: (scope: import('./types').GoalScope, answerRef: import('../../../contracts/query-job.js').QueryJobAnswerRef, options?: RequestOptions) =>
+      send('/api/real/feedback/options',{...scope,answerRef},options) as Promise<import('../../../contracts/execution-feedback.js').FeedbackChoiceView>,
     chooseFeedback: (scope: import('./types').GoalScope, answerRef: import('../../../contracts/query-job.js').QueryJobAnswerRef, optionId:string) =>
       send('/api/real/feedback/choose',{...scope,answerRef,optionId},{timeoutMs:120000}) as Promise<{status:string;decisionRef:{decisionId:string}}>,
     receipt: (scope: import('./types').GoalScope, input: { requestId: string; kind: 'goal' | 'real-task' | 'command-check' | 'verification-round' | 'independent-review'; runId?: string }, options?: RequestOptions) =>

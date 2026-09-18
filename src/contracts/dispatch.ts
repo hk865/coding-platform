@@ -603,12 +603,14 @@ export type RuntimeInputBindingV1 = {
   manifestDigest: string;
   /** Exact delivery grants pinned at assembly; absence in historical bindings denies new calls. */
   materialAccessRefs: import("./material-access.js").MaterialAccessGrantRef[];
+  /** Exact additional bodies actually assembled outside Delivery; all require the pinned grants. */
+  additionalMaterialRefs?: import("./artifact.js").ArtifactRef[];
   deliveryRefs: ModelRequestMaterialPinV1[];
 };
 
 /** Host callback; Runtime never imports Control or owns canonical authorization. */
 export interface ModelCallAccess {
-  bind(input: { inputDigest: string; manifestDigest: string; materialAccessRefs?: import("./material-access.js").MaterialAccessGrantRef[] }): Promise<void>;
+  bind(input: { inputDigest: string; manifestDigest: string; materialAccessRefs?: import("./material-access.js").MaterialAccessGrantRef[]; additionalMaterialRefs?: import("./artifact.js").ArtifactRef[] }): Promise<void>;
   beforeCall(input: { requestId: string; requestDigest: string; contextInputDigest: string; manifestDigest: string }): Promise<void>;
 }
 

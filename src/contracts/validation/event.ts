@@ -28,6 +28,7 @@ export function validateDomainEvent(value: unknown): ValidationIssue[] {
   stringField(value, "aggregateId", issues);
   const isActivationEvent =
     eventType === "ArchitectureReviewRecorded" ||
+    eventType === "ControlIntentReconciled" ||
     eventType === "CompletionPolicyActivated" ||
     eventType === "ArchitectureBaselineActivated" ||
     eventType === "RunEventRecorded" ||

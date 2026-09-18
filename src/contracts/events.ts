@@ -98,6 +98,7 @@ export type DomainEventV1 =
   | ArchitectureCandidateProposalRecordedEvent
   | ControlIntentRecordedEvent
   | SafePointAcknowledgedEvent
+  | import("./control-intent.js").ControlIntentReconciledEvent
   | QueryJobSubmittedEvent
   | QueryRunStartedEvent
   | QueryJobAnswerRecordedEvent
@@ -172,6 +173,7 @@ export const KNOWN_EVENT_TYPES = [
   "ArchitectureCandidateProposalRecorded",
   "ControlIntentRecorded",
   "SafePointAcknowledged",
+  "ControlIntentReconciled",
   "QueryJobSubmitted",
   "QueryRunStarted",
   "QueryJobAnswerRecorded",

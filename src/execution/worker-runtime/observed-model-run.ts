@@ -14,6 +14,10 @@ export type ObservedModelRunOptions = {
   signal: AbortSignal; deniedPrefixes: string[];
   modelCalls?: ModelCallAccess; manifestDigest?: string; assertMaterialsCurrent?: () => Promise<void>;
   allowedTools?: string[];
+  /** 显式结构化报告请求；必须在容量计量和模型调用授权前进入真实请求。 */
+  responseFormat?: { type: 'json_object' };
+  /** Static host-owned role guidance only; never interpolate source or memory content. */
+  systemInstruction?: string;
   sourceTools?: SourceToolOptions;
   materialTools?: (workspace: WorkspaceSandbox) => ToolDefinition[];
   /**
@@ -45,13 +49,16 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
   } : o.bound.client;
   // The meter applies the final output limit before authorization hashes the request.
   const metered = o.meter.wrap(provider);
-  const client: ModelClientPort = o.sourceTools?.assertCurrent ? {
+  const client: ModelClientPort = {
     async *stream(request, options) {
-      await o.sourceTools!.assertCurrent!();
-      yield* metered.stream(request, options);
-      await o.sourceTools!.assertCurrent!();
+      await o.sourceTools?.assertCurrent?.();
+      const outgoing = { ...request,
+        ...(o.responseFormat ? { responseFormat: { ...o.responseFormat } } : {}),
+        ...(o.systemInstruction ? { systemPrompt: request.systemPrompt + '\n\n' + o.systemInstruction } : {}) };
+      yield* metered.stream(outgoing, options);
+      await o.sourceTools?.assertCurrent?.();
     },
-  } : metered;
+  };
   const providerRegistry = new o.kernel.ProviderRegistry().register({ ...definition, create: () => client });
   const base = await o.kernel.loadAppConfig({ cwd: o.root, environment: {} });
   const reviewSource = o.sourceTools?.includeReadSource === true;

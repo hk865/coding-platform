@@ -3,7 +3,8 @@
  * intents + safe-point acks.
  */
 import type { RecordSafePointAckCommand, RecordSafePointAckReceipt, SubmitControlCommand, SubmitControlReceipt } from "../../contracts/control-intent.js";
-import { CONTROL_INTENT_MAX_ACKS, controlIntentRefFor } from "../../contracts/control-intent.js";
+import { CONTROL_INTENT_MAX_ACKS, controlIntentRefFor, foldCancelIntent } from "../../contracts/control-intent.js";
+import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
 import { buildControlIntentRecordLedgerCommit, buildControlAckRecordLedgerCommit } from "./records/control.js";
 import type { LedgerCommitReceipt, WorkspaceRef } from "../../contracts/ledger.js";
 import type { RunRef } from "../../contracts/dispatch.js";
@@ -14,6 +15,33 @@ export class ControlIntentEngineImpl {
 
   constructor(deps: ControlEngineDeps) {
     this.deps = deps;
+  }
+
+  async reconcile(command: import('../../contracts/control-intent.js').ReconcileControlIntentCommand): Promise<import('../../contracts/control-intent.js').ReconcileControlIntentReceipt> {
+    const ref = command.payload.intentRef;
+    const reject = (code: import('../../contracts/control-intent.js').RecordSafePointAckRejectionCode): import('../../contracts/control-intent.js').RecordSafePointAckReceipt => ({ status: 'rejected', commandId: command.commandId, code });
+    if (command.schemaVersion !== 1 || command.commandType !== 'ReconcileControlIntent' || command.identity.actor.kind !== 'system' || ref.projectId !== command.identity.projectId) return reject('invalid');
+    const loaded = await this.deps.ledger.load(ref);
+    if (loaded.status !== 'found' || loaded.snapshot.ref.aggregateType !== 'ControlIntent') return reject('not_found');
+    const prior = loaded.snapshot as import('../../contracts/control-intent.js').ControlIntentSnapshot;
+    if (!prior.intent.scope.runRef) return { status: 'unchanged', intentRef: ref };
+    const found = await this.deps.ledger.load(prior.intent.scope.runRef);
+    if (found.status !== 'found' || found.snapshot.ref.aggregateType !== 'Run') return reject('not_found');
+    const run = found.snapshot as import('../../contracts/dispatch.js').RunSnapshot;
+    const at = this.deps.now(), next = foldCancelIntent(prior, run, at);
+    if (!next) return { status: 'unchanged', intentRef: ref };
+    if (prior.revision !== command.expectedRevision) return reject('revision_conflict');
+    const batch: import('../../contracts/ledger.js').ControlIntentReconcileLedgerCommitV1 = {
+      schemaVersion: 1, commitKind: 'control-intent-reconcile', identity: command.identity,
+      fingerprint: sha256Hex(canonicalJson(command)) as import('../../contracts/ledger.js').ControlIntentReconcileLedgerCommitV1['fingerprint'],
+      expectedVersions: [{ ref, revision: prior.revision }, { ref: run.ref, revision: run.revision }],
+      snapshots: [next], outboxIntents: [], events: [{ schemaVersion: 1, eventId: this.deps.eventId(), eventType: 'ControlIntentReconciled',
+        projectId: ref.projectId, workspaceId: ref.workspaceId, aggregateType: 'ControlIntent', aggregateId: ref.intentId, aggregateRevision: next.revision,
+        actor: command.identity.actor, idempotencyKey: command.identity.idempotencyKey, causationId: command.commandId, correlationId: command.commandId, occurredAt: at, payload: { snapshot: next } }],
+    };
+    const receipt = await this.deps.ledger.commit(batch);
+    return receipt.status === 'committed' ? { status: 'committed', commandId: command.commandId, replayed: receipt.replayed, intentRef: ref, revision: next.revision, eventIds: receipt.eventIds, commitCursor: receipt.commitCursor }
+      : reject(receipt.code === 'revision_conflict' ? 'revision_conflict' : 'unavailable');
   }
 
   async submit(command: SubmitControlCommand): Promise<SubmitControlReceipt> {

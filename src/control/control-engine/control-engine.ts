@@ -451,6 +451,8 @@ export class ControlEngineImpl implements ControlEngine {
     return this.controlIntent.submit(command);
   }
 
+  reconcileControlIntent(command: import('../../contracts/control-intent.js').ReconcileControlIntentCommand) { return this.controlIntent.reconcile(command); }
+
   recordSafePointAck(command: RecordSafePointAckCommand): Promise<RecordSafePointAckReceipt> {
     return this.controlIntent.recordSafePointAck(command);
   }

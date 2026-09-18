@@ -5,13 +5,15 @@ import type { VerificationCheckPlan, VerificationPlanV1 } from './verification.j
 
 export type VerificationRegisteredCheck = {
   checkId: string;
+  /** Scope registration is explicit; unknown changes never skip a scoped check. */
+  appliesTo: { workspaceId: string; taskIds: 'all' | string[] };
+} & ({
+  mode?: 'command';
   kind: 'static' | 'dynamic';
   command: string;
   cwd: string;
   timeoutMs: number;
-  /** Scope registration is explicit; unknown changes never skip a scoped check. */
-  appliesTo: { workspaceId: string; taskIds: 'all' | string[] };
-};
+} | { mode: 'readonly-report'; kind: 'static'; requiredReadPaths: string[]; command?: never; cwd?: never; timeoutMs?: never });
 export type VerificationRoundConfigurationInput = { checks: VerificationRegisteredCheck[] };
 export type VerificationRoundConfiguration = VerificationRoundConfigurationInput & {
   schemaVersion: 1;

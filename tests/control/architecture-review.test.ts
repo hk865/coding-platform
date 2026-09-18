@@ -1,10 +1,15 @@
 import { afterEach, expect, it } from 'vitest';
 import { createCoordinationDrive } from '../../src/control/dispatch-engine/coordination-drive.js';
+import { architectureReviewView } from '../../src/data/read-model-index/architecture-review-view.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { InMemoryLedger } from '../../src/data/state-ledger/in-memory-ledger.js';
 import { SqliteStateLedger } from '../../src/data/state-ledger/sqlite-ledger.js';
 import { createControlEngine } from '../../src/control/control-engine/control-engine.js';
 import type { StateLedger, LedgerCommit } from '../../src/contracts/ledger.js';
+import { makeCommitCursor, seqOfCommitCursor } from '../../src/contracts/ledger.js';
+import type { BaselineActivationV1 } from '../../src/contracts/baseline-evolution.js';
+import { queryFactAssertionMatches } from '../../src/contracts/query-quality-facts.js';
+import type { JsonValue } from '../../src/contracts/fingerprint.js';
 import { architectureReviewRef, architectureReviewBody, type ArchitectureReviewCommand, type ArchitectureReviewSnapshot, type ArchitectureReviewCommit } from '../../src/contracts/architecture-review.js';
 import { workContextRefFor } from '../../src/contracts/context-continuity.js';
 import { runRefFor } from '../../src/contracts/dispatch.js';
@@ -67,6 +72,34 @@ async function world(adapter: 'memory' | 'sqlite') {
     return { ledger, control, open, decide, bind, propose, withBody };
 }
 for (const adapter of ['memory', 'sqlite'] as const) {
+    it(`observes only exact proposal-and-decision activations without changing selection authority (${adapter})`, async () => {
+        const { ledger, control, open, decide } = await world(adapter);
+        expect(await control.recordArchitectureReview(open)).toMatchObject({ status: 'committed' });
+        expect(await control.recordArchitectureReview(decide('accept'))).toMatchObject({ status: 'committed' });
+        const before = (await architectureReviewView(ledger, { projectId: P, workspaceId: W })).rows[0]!;
+        const decision = before.decisionFacts!.acceptedProposal.record!;
+        const activation: BaselineActivationV1 = { schemaVersion: 1, activationId: 'matching', projectId: P, workspaceId: W,
+            proposalRef: before.review.proposalRef, decisionRef: before.review.decisionRef!,
+            gateRef: { aggregateType: 'MigrationGateTask', projectId: P, workspaceId: W, gateId: 'gate' },
+            fromPin: decision.authorizedTarget.fromPin,
+            toPin: { ref: { ...decision.authorizedTarget.fromPin.ref, revision: decision.authorizedTarget.fromPin.ref.revision + 1 }, digest: before.proposal.expectedCandidateDigest }, activatedAt: AT };
+        // Declared ledger event-read fixture: isolates exact filtering, not activation authorization.
+        const source = await ledger.events({ afterCursor: null, limit: 1000 });
+        expect(source.hasMore).toBe(false);
+        const base = seqOfCommitCursor(source.events.at(-1)!.cursor);
+        const variants = [activation, { ...activation, activationId: 'wrong-decision', decisionRef: { ...activation.decisionRef, decisionId: 'other' } },
+            { ...activation, activationId: 'wrong-proposal', proposalRef: { ...activation.proposalRef, proposalId: 'other' } }];
+        const page = { ...source, throughCursor: makeCommitCursor(base + variants.length), events: [...source.events, ...variants.map((a, i) => ({ cursor: makeCommitCursor(base + i + 1),
+            event: { ...source.events[0]!.event, eventType: 'BaselineActivationRecorded' as const, projectId: P, workspaceId: W, payload: { activation: a, recordedAt: AT } } }))] };
+        const readPort = { load: ledger.load.bind(ledger), events: async (q: Parameters<StateLedger['events']>[0]) => q.afterCursor === null ? page : { ...page, afterCursor: q.afterCursor, events: [] } } as Pick<StateLedger, 'load' | 'events'>;
+        const after = (await architectureReviewView(readPort, { projectId: P, workspaceId: W })).rows[0]!.decisionFacts!;
+        expect(after.activatedBaseline).toMatchObject({ status: 'ready', records: [activation] });
+        expect(after.activatedBaseline.records).toHaveLength(1);
+        expect(after.selectedCandidate.status).toBe('not_found');
+        expect(after.version).not.toBe(before.decisionFacts!.version);
+        expect(queryFactAssertionMatches(JSON.parse(JSON.stringify(activation)) as JsonValue, { kind: 'baseline_activation', expected: activation.toPin.digest })).toBe(true);
+        expect(queryFactAssertionMatches(JSON.parse(JSON.stringify(activation)) as JsonValue, { kind: 'baseline_activation', expected: 'different-source' })).toBe(false);
+    });
     it.each(['accept', 'reject', 'defer'] as const)(`records %s and every Work intent in one durable transition (${adapter})`, async (outcome) => {
         const { ledger, control, open, decide } = await world(adapter);
         expect(await control.recordArchitectureReview(open)).toMatchObject({ status: 'committed' });
@@ -80,6 +113,18 @@ for (const adapter of ['memory', 'sqlite'] as const) {
         const review = result.snapshot as ArchitectureReviewSnapshot;
         expect(review.targets.map(t => t.ref.workId)).toEqual(['a', 'b']);
         expect(review.status).toBe(outcome === 'accept' ? 'accepted' : outcome === 'reject' ? 'rejected' : 'deferred');
+        const observed = await architectureReviewView(ledger, { projectId: P, workspaceId: W });
+        const facts = observed.rows[0]!.decisionFacts;
+        if (!facts) throw Error('decision facts missing');
+        expect(facts).toMatchObject({
+            object: 'architecture-review-decision', scope: { projectId: P, workspaceId: W, goalId: G },
+            acceptedProposal: { status: 'ready', outcome, accepted: outcome === 'accept' },
+            selectedCandidate: { status: 'not_found', coverage: 'explicit-human-option-choice-in-this-decision' },
+            activatedBaseline: { status: 'not_found', records: [] },
+        });
+        expect(facts.acceptedProposal.decisionRef).toEqual(review.decisionRef);
+        expect(facts.selectedCandidate.proposalSelection.optionId).toBe(observed.rows[0]!.proposal.selectedOptionId);
+        expect(facts.version).toMatch(/^[a-f0-9]{64}$/);
         expect(await ledger.load(activeRef)).toEqual(before);
         const events = await ledger.events({ afterCursor: null, limit: 500 });
         const intents = events.events.filter(e => e.event.eventType === 'CommunicationIntentRecorded' && e.event.payload.intent.domain.kind === 'architecture_decision_delivery');

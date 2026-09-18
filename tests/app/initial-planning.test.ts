@@ -22,7 +22,12 @@ it('drives initial readonly model proposals through Control and durable dispatch
     requests.push(structuredClone(request)); const common = { schemaVersion: 1 as const, requestId: request.requestId };
     const planning = JSON.stringify(request.messages).includes('Return one JSON object with kind');
     const name = JSON.stringify(request.messages).includes('documents') ? 'documents' : JSON.stringify(request.messages).includes('beta') ? 'beta' : 'alpha';
-    yield { ...common, sequence: 1, type: 'text_delta', delta: planning ? JSON.stringify({ ...proposal(name), assignments: proposal(name).assignments.map(a => ({ ...a, role: name === 'documents' ? 'document-advisor' : a.role })) }) : name + ' public worker report; independent verification remains outstanding.' };
+    const plan = proposal(name);
+    // This substitute follows the response contract actually supplied to the
+    // planner. It cannot silently add a Reviewer kind absent from that contract.
+    if (JSON.stringify(request.messages).includes('Reviewer runs are created by the verification workflow')) plan.plan.obligations[0]!.verificationRequirements.push({
+      requirementId: name + '-review', requirementLevel: 'required', kind: 'reviewer', description: 'Independently review current source and the original tool report.' });
+    yield { ...common, sequence: 1, type: 'text_delta', delta: planning ? JSON.stringify({ ...plan, assignments: plan.assignments.map(a => ({ ...a, role: name === 'documents' ? 'document-advisor' : a.role })) }) : name + ' public worker report; independent verification remains outstanding.' };
     yield { ...common, sequence: 2, type: 'usage_snapshot', usage: { inputTokens: 100, outputTokens: 70, cachedInputTokens: 0, costUsdMicros: null } };
     yield { ...common, sequence: 3, type: 'completed', reason: 'final_answer' };
   } };
@@ -33,7 +38,7 @@ it('drives initial readonly model proposals through Control and durable dispatch
   const state = async (scope: Record<string, string>) => (await (await fetch(base + '/api/state?' + new URLSearchParams(scope))).json()) as any;
   const until = async (scope: Record<string, string>) => { const deadline = Date.now() + 20000; for (;;) { const value = await state(scope); if (value.liveRuns?.[0]?.status === 'completed') return value; if (Date.now() > deadline) throw Error('timeout ' + JSON.stringify(await post('/api/real/planning', scope))); await new Promise(done => setTimeout(done, 25)); } };
   try {
-    await listen(); await post('/api/model-settings', { provider: 'deepseek', model: 'labelled-planning-stub', baseUrl: 'http://127.0.0.1', apiKey: 'LOCAL_TEST_KEY' });
+    await listen(); await post('/api/model-settings', { provider: 'deepseek', model: 'deepseek-flash', reasoningEffort: 'max', baseUrl: 'http://127.0.0.1', apiKey: 'LOCAL_TEST_KEY' });
     for (const name of ['alpha', 'beta', 'documents']) {
       const scope = { projectId: 'acceptance-alpha', workspaceId: 'workspace-main', goalId: name + '-goal' }, request = { ...scope, requestId: name + '-work', instruction: 'Implement the ' + name + ' contract from the source.', allowWrite: true };
       await post('/api/goals', { ...scope, requestId: scope.goalId, objective: request.instruction });
@@ -71,8 +76,26 @@ it('drives initial readonly model proposals through Control and durable dispatch
       expect(complete.matrix.matrix.rows.every((task: any) => task.livePhase !== 'satisfied')).toBe(true);
       const planning = await post('/api/real/planning', scope);
       expect(planning.body.rows[0]).toMatchObject({ status: 'plan_accepted', proposal: { status: 'plan', plan: { origin: { kind: 'model_coordination', summary: proposal(name).summary } } }, runs: [{ status: 'completed', kind: 'initial_coordination' }] });
+      if (name === 'alpha') {
+        const subject = { ...scope, taskId: name, runId: 'real-' + name + '-work' };
+        const round = await post('/api/real/verifications/rounds/start', { ...subject, requestId: 'initial-plan-tools', allowExecute: true,
+          configuration: { checks: [{ checkId: 'source-contract', kind: 'dynamic', command: 'test -s README.md', cwd: '.', timeoutMs: 3000,
+            appliesTo: { workspaceId: scope.workspaceId, taskIds: [name] } }] } });
+        expect(round.status, JSON.stringify(round.body)).toBe(200);
+        expect(round.body.round.coverage).toContainEqual(expect.objectContaining({ requirementId: name + '-review', kind: 'reviewer' }));
+        expect(round.body.round.control.taskPhase).not.toBe('satisfied');
+        const material = await post('/api/real/verifications/reviews/material', { ...subject, roundRequestId: 'initial-plan-tools' });
+        expect(material.body.status, JSON.stringify(material.body)).toBe('ready');
+      }
+      await post('/api/model-settings', { provider: 'deepseek', model: 'deepseek-flash', reasoningEffort: 'high', baseUrl: 'http://127.0.0.1', apiKey: '' });
       const count = requests.length; expect((await post('/api/real/work', request)).status).toBe(200); expect(requests).toHaveLength(count);
       expect((await post('/api/real/work', { ...request, instruction: 'Changed instruction' })).status).toBe(400);
+      await post('/api/model-settings', { provider: 'deepseek', model: 'deepseek-flash', reasoningEffort: 'max', baseUrl: 'http://127.0.0.1', apiKey: '' });
+    }
+    for (const request of requests) {
+      expect(request.maxOutputTokens).toBe(131072);
+      const planning = JSON.stringify(request.messages).includes('Return one JSON object with kind');
+      expect(request.responseFormat).toEqual(planning ? { type: 'json_object' } : undefined);
     }
     const count = requests.length; await app.close(); app = await createGuiServer(data, options); await listen();
     const scope = { projectId: 'acceptance-alpha', workspaceId: 'workspace-main', goalId: 'alpha-goal' };

@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Api } from './client';
 import { ApiError } from './client';
-import type { CheckReportsResponse, DirectoryListing, FilePreview, GoalScope, GuiState, Meta, ModelSettingsView, ProjectEntry, Scope, TerminalOutput, TerminalSession } from './types';
+import type { CheckReportsResponse, DirectoryListing, FilePreview, GoalScope, GuiState, Meta, ModelSettingsView, ProjectEntry, QueryApplicability, Scope, TerminalOutput, TerminalSession } from './types';
 
 export const queryKeys = {
   meta: () => ['meta'] as const,
@@ -28,12 +28,38 @@ export function useGuiState(api: Api, scope: Scope | null, goalId: string) {
   return useQuery<GuiState>({
     queryKey: queryKeys.state(scope ?? { projectId: '', workspaceId: '' }, goalId),
     enabled: !!scope,
-    queryFn: ({ signal }) => api.state({ ...scope!, ...(goalId ? { goalId } : {}) }, { signal, timeoutMs: 20000 }),
+    queryFn: ({ signal }) => api.state({ ...scope!, ...(goalId ? { goalId } : {}), view: 'overview' }, { signal, timeoutMs: 20000 }),
     refetchInterval: 2500,
     refetchIntervalInBackground: false,
     staleTime: 0,
     retry: false,
   });
+}
+
+/** User-triggered only: polling the overview must not start source scans. */
+export function useQueryApplicability(api: Api, scope: GoalScope, queryJobId: string, answerId: string) {
+  const identity = JSON.stringify([scope.projectId, scope.workspaceId, scope.goalId, queryJobId, answerId]);
+  const currentIdentity = useRef(identity); currentIdentity.current = identity;
+  const controller = useRef<AbortController | null>(null);
+  const [state, setState] = useState<{ identity: string; checking: boolean; result?: QueryApplicability; error?: string } | null>(null);
+  useEffect(() => () => { controller.current?.abort(); controller.current = null; }, [identity, api]);
+  const check = async () => {
+    controller.current?.abort();
+    const request = new AbortController(); controller.current = request;
+    setState({ identity, checking: true });
+    try {
+      const result = await api.queryApplicability(scope, queryJobId, answerId, { signal: request.signal, timeoutMs: 20000 });
+      if (request.signal.aborted || currentIdentity.current !== identity) return;
+      if (result.answerId !== answerId || result.queryJobId !== queryJobId ||
+          !['current', 'not_current', 'stale', 'unavailable'].includes(result.status) ||
+          !Number.isFinite(Date.parse(result.observedAt)) || typeof result.observedCursor !== 'string') throw Error('适用性检查返回的对象或观察信息不匹配');
+      setState({ identity, checking: false, result });
+    } catch (error) {
+      if (!request.signal.aborted && currentIdentity.current === identity) setState({ identity, checking: false, error: mutationError(error).message });
+    }
+  };
+  const visible = state?.identity === identity ? state : null;
+  return { checking: visible?.checking ?? false, result: visible?.result, error: visible?.error, check };
 }
 
 export function useDirectory(api: Api, scope: Scope | null, path: string, enabled: boolean) {

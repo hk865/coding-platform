@@ -45,6 +45,21 @@ export class FeedbackDecisionContext {
     }
     return rows;
   }
+  async options(scope:PlanningScope,answerRef:QueryJobAnswerRef):Promise<import('../../contracts/execution-feedback.js').FeedbackChoiceView> {
+    const view:import('../../contracts/execution-feedback.js').FeedbackChoiceView={scope,answerRef,observedAt:new Date().toISOString(),availableOptionIds:[],reason:null};
+    try {
+      if(answerRef.aggregateType!=='QueryJobAnswer' || answerRef.projectId!==scope.projectId || answerRef.workspaceId!==scope.workspaceId) throw Error('Decision answer scope mismatch');
+      const loaded=await this.ledger.load(answerRef);
+      if(loaded.status!=='found' || loaded.snapshot.ref.aggregateType!=='QueryJobAnswer') throw Error('Decision question unavailable');
+      const resolution=parseFeedbackResolution((loaded.snapshot as QueryJobAnswerSnapshot).answer.answer);
+      if(resolution.action!=='needs_decision' || !resolution.decision) throw Error('No published clarification options');
+      for(const option of resolution.decision.options) {
+        try { await this.select(scope,answerRef,option.id); view.availableOptionIds.push(option.id); }
+        catch(error) { view.reason=error instanceof Error?error.message:'Decision applicability unavailable'; }
+      }
+    } catch(error) { view.reason=error instanceof Error?error.message:'Decision applicability unavailable'; }
+    return view;
+  }
   async select(scope:PlanningScope,answerRef:QueryJobAnswerRef,optionId:string) {
     if(answerRef.aggregateType!=='QueryJobAnswer' || answerRef.projectId!==scope.projectId || answerRef.workspaceId!==scope.workspaceId) throw Error('Decision answer scope mismatch');
     const a=await this.ledger.load(answerRef);

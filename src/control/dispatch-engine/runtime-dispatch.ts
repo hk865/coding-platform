@@ -1,5 +1,5 @@
 import type { HandoffPort } from '../../contracts/handoff.js';
-import { canonicalJson } from '../../contracts/fingerprint.js';
+import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
 import { randomUUID } from 'node:crypto';
 import type { StateLedger } from '../../contracts/ledger.js';
 import type { ControlEngine } from '../../contracts/modules.js';
@@ -13,8 +13,8 @@ export class RuntimeDispatch implements RuntimeDispatchPort {
   private readonly reconciliations = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: {
-    ledger: Pick<StateLedger, 'load'>;
-    control: Pick<ControlEngine, 'runFact'> & Partial<Pick<ControlEngine, 'reconcileRun'>>;
+    ledger: Pick<StateLedger, 'load'> & Partial<Pick<StateLedger, 'events'>>;
+    control: Pick<ControlEngine, 'runFact'> & Partial<Pick<ControlEngine, 'reconcileRun' | 'reconcileControlIntent'>>;
     outbox: DispatchPort;
     handoff?: HandoffPort;
     runtime: RuntimeReconciliationPort;
@@ -66,6 +66,22 @@ export class RuntimeDispatch implements RuntimeDispatchPort {
             const receipt = await this.unknown(run, '派发或事件提交失败；未重跑外部执行');
             if (receipt.status !== 'committed') throw Error('派发失败对账未确认：' + JSON.stringify(receipt));
             await this.reconcileRecordedUnknown(run.ref);
+          }
+        }
+      }
+      // Cancellation may have returned cancel_requested while this drive was
+      // still consuming Runtime events. Reconcile only after those facts land.
+      if (this.deps.control.reconcileControlIntent) {
+        const current = await this.deps.ledger.load(ref);
+        const intentRef = current.status === 'found' ? (current.snapshot as RunSnapshot).controlState?.intentRef : undefined;
+        if (intentRef) {
+          const intent = await this.deps.ledger.load(intentRef);
+          if (intent.status === 'found') {
+            const id = 'control-drive-' + sha256Hex(canonicalJson(intentRef)) + '-' + intent.snapshot.revision;
+            const receipt = await this.deps.control.reconcileControlIntent({ schemaVersion: 1, commandType: 'ReconcileControlIntent', commandId: id,
+              identity: { projectId: ref.projectId, actor: { kind: 'system', id: 'runtime-reconciliation' }, idempotencyKey: id },
+              expectedRevision: intent.snapshot.revision, submittedAt: this.deps.now(), payload: { intentRef } });
+            if (receipt.status === 'rejected') throw Error('Control intent reconciliation was not recorded: ' + receipt.code);
           }
         }
       }
@@ -122,7 +138,43 @@ export class RuntimeDispatch implements RuntimeDispatchPort {
         if (receipt.terminal) break;
       }
     }
+    await this.reconcileControlIntents(scopes, result);
     return result;
+  }
+
+  /** Rebuild the cancel-intent work list from durable records, including old
+   * databases whose Run was already terminal before intent reconciliation existed. */
+  private async reconcileControlIntents(scopes: readonly DispatchScope[], result: RecoveryResult): Promise<void> {
+    if (!this.deps.ledger.events || !this.deps.control.reconcileControlIntent) return;
+    const refs = new Map<string, import('../../contracts/control-intent.js').ControlIntentRef>();
+    let cursor: import('../../contracts/command-event.js').CommitCursor | null = null;
+    let complete = false;
+    for (let pageIndex = 0; pageIndex < 200; pageIndex++) {
+      const page = await this.deps.ledger.events({ afterCursor: cursor, limit: 1000 });
+      for (const positioned of page.events) {
+        cursor = positioned.cursor;
+        const event = positioned.event;
+        if (event.eventType !== 'ControlIntentRecorded' || event.payload.intent.kind !== 'cancel' ||
+            !scopes.some(s => s.projectId === event.projectId && s.workspaceId === event.workspaceId)) continue;
+        const ref = { aggregateType: 'ControlIntent' as const, projectId: event.projectId, workspaceId: event.workspaceId, intentId: event.aggregateId };
+        refs.set(canonicalJson(ref), ref);
+      }
+      if (!page.hasMore) { complete = true; break; }
+      if (!page.events.length) throw Error('Control intent recovery page made no progress');
+    }
+    if (!complete) throw Error('Control intent recovery exceeds complete scan capacity');
+    for (const ref of refs.values()) {
+      const loaded = await this.deps.ledger.load(ref);
+      if (loaded.status !== 'found') throw Error('Recorded ControlIntent is missing');
+      const snapshot = loaded.snapshot as import('../../contracts/control-intent.js').ControlIntentSnapshot;
+      if (!snapshot.intent.scope.runRef || !['queued', 'outcome_unknown'].includes(snapshot.intent.status)) continue;
+      const id = 'control-reconcile-' + sha256Hex(canonicalJson(ref)) + '-' + snapshot.revision;
+      const receipt = await this.deps.control.reconcileControlIntent({ schemaVersion: 1, commandType: 'ReconcileControlIntent', commandId: id,
+        identity: { projectId: ref.projectId, actor: { kind: 'system', id: 'runtime-reconciliation' }, idempotencyKey: id },
+        expectedRevision: snapshot.revision, submittedAt: this.deps.now(), payload: { intentRef: ref } });
+      if (receipt.status === 'committed') result.recorded++;
+      else if (receipt.status === 'rejected') result.rejected.push({ runRef: snapshot.intent.scope.runRef, receipt });
+    }
   }
 
   private async reconcileRecordedUnknown(ref: RunRef, result?: RecoveryResult): Promise<void> {

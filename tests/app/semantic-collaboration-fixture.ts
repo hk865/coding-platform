@@ -60,7 +60,7 @@ const plan={kind:'plan',summary:'Normalize a label using the repository rule; as
 type Registry = ReturnType<typeof createBuiltinProviderRegistry>;
 type ApplicationFactory = (directory:string,options:{workspaceRoots:Record<string,string>;modelSettings:{directory:string;registry:Pick<Registry,'list'|'get'> & {create:()=>ModelClientPort}}})=>Promise<{server:Server;close():Promise<void>}>;
 type HumanChoiceInput={projectId:string;workspaceId:string;goalId:string;answerRef:ReturnType<typeof queryJobAnswerRefFor>;optionId:string};
-export async function semanticCollaborationFixture(createApplication:ApplicationFactory, onCompleted?: (result:{base:string;scope:{projectId:string;workspaceId:string;goalId:string};final:any;originalRunId:string;review:ReviewRequestView})=>Promise<void>, fixtureOptions:{reviewResult?:'PASS'|'FAIL';humanChoice?:boolean;chooseHumanOption?:(base:string,input:HumanChoiceInput)=>Promise<{status:number;body:any}>;humanChoiceInterruption?:{stage:'before_apply'|'before_query';install:()=>()=>void}}={}) {
+export async function semanticCollaborationFixture(createApplication:ApplicationFactory, onCompleted?: (result:{base:string;scope:{projectId:string;workspaceId:string;goalId:string};final:any;originalRunId:string;review:ReviewRequestView})=>Promise<void>, fixtureOptions:{reviewResult?:'PASS'|'FAIL';humanChoice?:boolean;chooseHumanOption?:(base:string,input:HumanChoiceInput,fixture:{root:string})=>Promise<{status:number;body:any}>;humanChoiceInterruption?:{stage:'before_apply'|'before_query';install:()=>()=>void}}={}) {
   const dir=await mkdtemp(join(tmpdir(),'semantic-collaboration-')),root=join(dir,'source');await mkdir(root);
   await writeFile(join(root,'RULES.md'),'Label rule v1: trim both ends, lowercase ASCII letters, preserve internal spaces; empty input stays empty.');
   if(fixtureOptions.humanChoice)await writeFile(join(root,'USE-CASE.md'),'Product scope is UNDECIDED and neither application is authorized yet. The normalize helper and its RULES.md acceptance are fixed. Choose one intended consumer: catalog import identifiers (machine-facing ingestion keys; display labels are outside this goal), or user-facing display labels (presentation text; catalog import keys are outside this goal). This task implements and verifies only the shared helper for the selected consumer; downstream adapters and UI changes are not included. Recommend catalog import identifiers because the next integration milestone is ingestion. A human must choose the product application; the coordinator may not assume either option or change the helper rules.');
@@ -148,7 +148,7 @@ export async function semanticCollaborationFixture(createApplication:Application
       const beforeChoice=choiceRecords();
       const restore=interruption?.install();
       let response;
-      try{response=fixtureOptions.chooseHumanOption?await fixtureOptions.chooseHumanOption(base,input):await post('/api/real/feedback/choose',input);}finally{restore?.();}
+      try{response=fixtureOptions.chooseHumanOption?await fixtureOptions.chooseHumanOption(base,input,{root}):await post('/api/real/feedback/choose',input);}finally{restore?.();}
       if(interruption){
         assert.equal(response.status,400,JSON.stringify(response));
         assert.match(response.body.error,/semantic fixture interruption/);

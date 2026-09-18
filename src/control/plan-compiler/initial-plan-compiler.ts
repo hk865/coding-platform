@@ -5,6 +5,7 @@ import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
 import { normalizeInitialPlanProposal } from '../control-engine/policies/initial-plan-admission.js';
 import { buildApplyPlanCommand } from '../../contracts/commands/plan.js';
 import { validateRuntimeBudget } from '../../contracts/runtime-budget.js';
+import { validateApplyPlanRevisionCommand } from '../../contracts/validation/plan.js';
 
 export type InitialPlanningControl = Pick<ControlEngine, 'submitQueryJob' | 'closeQueryJob' | 'applyPlan'>;
 const sha = (value: unknown) => sha256Hex(canonicalJson(value as never)).slice(0, 32);
@@ -71,10 +72,15 @@ export class InitialPlanCompiler {
       }
       if (!await this.materials.initialCurrentness(snapshot)) { await close('协调来源已改变，需要重新形成提案'); continue; }
       const id = 'accept-' + sha(proposed.plan.origin);
-      const receipt = await this.control.applyPlan(buildApplyPlanCommand(proposed.plan, {
+      const command = buildApplyPlanCommand(proposed.plan, {
         projectId: job.projectId, goalId: proposed.plan.goalId, actor: { kind: 'human', id: 'user-1' }, commandId: id, correlationId: job.intent.correlationId, idempotencyKey: id,
         expectedRevision: proposed.plan.origin!.goalRevision, submittedAt: job.submittedAt
-      }));
+      });
+      // Compiler diagnostics reuse the public schema; Control still performs
+      // its own admission checks at the mutation boundary.
+      const issues = validateApplyPlanRevisionCommand(command);
+      if (issues.length) { await close('规划提案结构无效：' + canonicalJson(issues)); continue; }
+      const receipt = await this.control.applyPlan(command);
       if (receipt.status !== 'committed') { await close('Control 拒绝规划：' + canonicalJson(receipt)); continue; }
       report.accepted.push(ref);
     }

@@ -208,7 +208,7 @@ export class VerificationOpenIssues {
     if (recorded === 'PASS')
       gaps.push('检查 ' + checkId + ' 的记录结论是 PASS，与该要求未通过的覆盖结论不一致；本事实不采用该结论，请按原始报告核对');
     else if (fact.result === null) gaps.push('检查 ' + checkId + ' 没有产生结论；该要求仍未通过，不是通过');
-    if (fact.command === null) gaps.push('检查 ' + checkId + ' 没有登记命令原文');
+    if (fact.command === null && fact.category !== 'readonly_report_check') gaps.push('检查 ' + checkId + ' 没有登记命令原文');
     if (fact.reportRef === null) gaps.push('检查 ' + checkId + ' 没有原始报告引用；执行细节（exitCode／timedOut／stderrExcerpt）没有来源');
     else await this.readExecution(fact, round.materialIdentity?.runRef ?? null, {
       observationId: progress?.observationId ?? null, result: fact.result, category: fact.category,
@@ -251,6 +251,16 @@ export class VerificationOpenIssues {
     }
     if (report['result'] !== expected.result || report['category'] !== expected.category) {
       fact.gaps.push('原始报告的结果或分类与检查记录不一致；执行细节按不可用处理');
+      return;
+    }
+    if (expected.category === 'readonly_report_check') {
+      const definition = report['definition'] as { mode?: string; kind?: string } | undefined;
+      if (definition?.mode !== 'readonly-report' || definition.kind !== 'static' || report['effects'] !== 'not_started' || !Array.isArray(report['issues']) || !report['issues'].every(i => typeof i === 'string')) {
+        fact.gaps.push('非命令只读报告的类型或机械检查失败材料不完整'); return;
+      }
+      fact.reportIssues = report['issues'].slice(0, 128) as string[];
+      // No shell was invoked: null command/exit/timeout/stderr are applicable
+      // absence, not missing evidence and not authorization for a command.
       return;
     }
     const execution = report['execution'];
@@ -316,6 +326,7 @@ export class VerificationOpenIssues {
     if (failure.timedOut === true) parts.push('超时预算 ' + (failure.timeoutMs ?? '未记录') + 'ms ' + (failure.durationMs !== null ? '（实际耗时 ' + failure.durationMs + 'ms）' : ''));
     else if (failure.durationMs !== null) parts.push('耗时 ' + failure.durationMs + 'ms');
     if (failure.stderrExcerpt) parts.push('stderr：' + firstLine(failure.stderrExcerpt, 120));
+    if (failure.reportIssues?.length) parts.push('只读报告检查：' + failure.reportIssues.join('; '));
     const others = failure.failedCheckIds.filter((checkId) => checkId !== failure.checkId);
     if (others.length) parts.push('同一要求下未通过的检查还有 ' + others.join('、'));
     const reason = parts.join('；').replace(/；\s*$/, '');

@@ -55,6 +55,7 @@ export class CommandCheckLifecycle {
   }
   /** A round supplies a durable full plan; execution/lease/report storage stay shared. */
   runPlannedCheck(scope: Scope, requestId: string, binding: VerificationRoundCheckBinding) {
+    ensure(binding.definition.mode !== 'readonly-report', '非命令报告检查不能进入命令执行器');
     return this.execute(scope, requestId, binding.definition, binding);
   }
   private async execute(scope: Scope, requestId: string, definition: { checkId: string; command: string; kind: 'static' | 'dynamic'; cwd: string; timeoutMs: number }, binding?: VerificationRoundCheckBinding) {
@@ -165,7 +166,7 @@ export class CommandCheckLifecycle {
       const context: CheckContextV1 = {
         projectId: scope.projectId,
         goalId: scope.goalId,
-        taskId: target.run.envelope!.taskId,
+        taskId: binding?.identity.scope.taskId ?? target.run.envelope!.taskId,
         planRef: target.plan.ref,
         workspaceRevision: target.workspaceRevision,
         changeScope: binding?.plan.changeScope ?? { diffClass: 'code-change', changedFiles: [], writeSummary: 'explicit independent command check' }
@@ -426,6 +427,7 @@ export class CommandCheckLifecycle {
       if (check.roundBinding) {
         await this.requireRoundMaterial(check.roundBinding);
         const binding = check.roundBinding;
+        ensure(binding.definition.mode !== 'readonly-report', '非命令报告不能进入命令对账');
         ensure(canonicalJson(report.definition) === canonicalJson({ checkId: binding.definition.checkId, kind: binding.definition.kind, command: binding.definition.command, cwd: binding.definition.cwd, timeoutMs: binding.definition.timeoutMs }), '原报告检查定义与冻结配置不一致');
         ensure(report.sourceDigest === binding.identity.sourceDigest && ['PASS', 'FAIL', 'INCONCLUSIVE'].includes(report.result), '原报告来源或结果无效');
         const predicate = binding.plan.checks.find(p => p.checkId === binding.definition.checkId && p.satisfactionPath === 'predicate');

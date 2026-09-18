@@ -1,4 +1,5 @@
 import { ExecutionSlots } from '../control/dispatch-engine/execution/execution-slots.js';
+import { architectureReviewView } from '../data/read-model-index/architecture-review-view.js';
 import type { PlanCompilerPort, PlanningContextPort } from '../contracts/planning.js';
 import { composeReworkDrive } from '../composition/rework-composition.js';
 import { ArchitectureContextCompiler } from '../data/context-compiler/architecture-context-compiler.js';
@@ -160,6 +161,9 @@ export interface InMemoryHarnessOptions {
   readOnlyQuery?: ReadOnlyQueryPort;
   /** explicit QueryContextPort (default QueryContextCompilerImpl). */
   queryContext?: QueryContextPort;
+  architectureActivation?: import('../contracts/governance-view.js').ArchitectureActivationReader;
+  verificationFacts?: import('../contracts/query-quality-facts.js').QueryVerificationFactsPort['queryFacts'];
+  humanActions?: import('../contracts/query-quality-facts.js').QueryHumanActionsPort['queryHumanActions'];
   /** explicit SnapshotPort (default stub). */
   snapshot?: SnapshotPort;
   /** explicit WorkspaceReader (default FakeWorkspaceReaderAdapter). */
@@ -481,7 +485,7 @@ export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InM
   const readOnlyQuery: ReadOnlyQueryPort =
     options.readOnlyQuery ?? new FakeReadOnlyQueryAdapter();
   const queryContext: QueryContextPort =
-    options.queryContext ?? new QueryContextCompilerImpl({ ledger, vault, now: d.clock });
+    options.queryContext ?? new QueryContextCompilerImpl({ ledger, vault, now: d.clock, ...(options.architectureActivation ? { architectureActivation: options.architectureActivation } : {}), ...(options.humanActions ? { humanActions: options.humanActions } : {}), ...(options.verificationFacts ? { verificationFacts: options.verificationFacts } : {}), architectureReviews: scope => architectureReviewView(ledger, scope) });
   const snapshot: SnapshotPort = {
     snapshot: (q) => Promise.resolve({ status: "unsupported", message: "Public runtime snapshot capability is not configured" }),
   };

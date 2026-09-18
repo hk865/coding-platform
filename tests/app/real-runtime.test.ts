@@ -135,15 +135,17 @@ it('keeps an unknown tool outcome locked even when the kernel ends cancelled', a
   await expect(runtime.prepare({ ...runtime.all()[0]!.spec, runId: 'next' })).rejects.toThrow('未对账');
 }, 30000);
 
-it('keeps explicit null cumulative limits and only widens the single-response capacity for a scoped task', async () => {
+it('preserves explicit large response capacity for ordinary work across real execution and restart without cumulative caps', async () => {
   const { DEFAULT_RUNTIME_BUDGET } = await import('../../src/execution/worker-runtime/model-budget.js');
-  const t = await start('normal', true);
-  const budget = { contextWindowTokens: DEFAULT_RUNTIME_BUDGET.contextWindowTokens, inputTokens: null, outputTokens: null, maxRequests: null, maxToolCalls: null, timeoutMs: null, perResponseTokens: 8192 };
-  // A larger single response is only allowed for the explicitly scoped task.
-  expect((await t.post('/api/real/tasks', { ...t.request, requestId: 'not-scoped', budget: { ...budget, perResponseTokens: 32768 } })).status).toBe(400);
+  const t = await start('normal');
+  const budget = { contextWindowTokens: DEFAULT_RUNTIME_BUDGET.contextWindowTokens, inputTokens: null, outputTokens: null, maxRequests: null, maxToolCalls: null, timeoutMs: null, perResponseTokens: 32768 };
+  expect((await t.post('/api/real/tasks', { ...t.request, requestId: 'over-capacity', budget: { ...budget, perResponseTokens: 393217 } })).status).toBe(400);
+  expect(t.requests()).toBe(0);
+  expect((await t.state()).liveRuns).toEqual([]);
   expect((await t.post('/api/real/tasks', { ...t.request, budget })).status).toBe(200);
   const s = await until(t.state, s => s.liveRuns[0]?.status === 'completed');
   expect(s.liveRuns[0]?.spec.budget).toEqual(budget);
+  expect(t.payloads.every(payload => payload['max_tokens'] === 32768)).toBe(true);
   expect(s.liveRuns[0]?.usage).toHaveLength(3);
   expect(await readFile(join(t.root, 'answer.txt'), 'utf8')).toBe('real kernel output\n');
   await t.restart();

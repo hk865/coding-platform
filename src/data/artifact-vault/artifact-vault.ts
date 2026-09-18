@@ -70,6 +70,8 @@ export class ArtifactVault implements ArtifactPort {
     private readonly byKey: {
       get(key: string): StoredRecord | undefined;
       set(key: string, value: StoredRecord): unknown;
+      /** Persistent adapters return the committed winner without replacing its provenance. */
+      putIfAbsent?(key: string, value: StoredRecord): { record: StoredRecord; inserted: boolean };
     } = new Map<string, StoredRecord>(),
     private readonly options: ArtifactVaultOptions = {},
   ) {}
@@ -114,7 +116,12 @@ export class ArtifactVault implements ArtifactPort {
     };
     const ownerRunRef = record.ownerRef.aggregateType === "Run" || record.ownerRef.aggregateType === "QueryRun"
       ? { ...record.ownerRef } : null;
-    this.byKey.set(key, { ref, body: record.body, sourceRefs: [...record.sourceRefs], ownerRunRef });
+    const candidate = { ref, body: record.body, sourceRefs: [...record.sourceRefs], ownerRunRef };
+    if (this.byKey.putIfAbsent) {
+      const stored = this.byKey.putIfAbsent(key, candidate);
+      return { status: "stored", ref: stored.record.ref, replayed: !stored.inserted };
+    }
+    this.byKey.set(key, candidate);
     return { status: "stored", ref, replayed: false };
   }
 

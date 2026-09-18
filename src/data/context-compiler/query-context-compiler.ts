@@ -1,13 +1,17 @@
 /** Bounded query material compiled from canonical, scope-checked facts. */
 import type { QueryContextPort, QueryContextRequestV1, QueryContextResultV1 } from "../../contracts/query-job.js";
 import { QUERY_JOB_CONTEXT_BUNDLE_MAX_BYTES, QUERY_JOB_MAX_FOCUS_REFS, QUERY_JOB_QUESTION_MAX_BYTES } from "../../contracts/query-job.js";
-import { canonicalJson } from "../../contracts/fingerprint.js";
+import { canonicalJson, sha256Hex } from "../../contracts/fingerprint.js";
 import type { ArtifactPort } from "../../contracts/artifact.js";
 import type { StateLedger, GoalSnapshot } from "../../contracts/ledger.js";
-import { revisionAssignments } from '../../contracts/plan.js';
+import { selectQueryCollaborationFacts } from './query-collaboration-facts.js';
 import type { PlanRevisionSnapshot } from "../../contracts/plan.js";
 
-export type QueryContextCompilerDeps = { vault: ArtifactPort; ledger: StateLedger; now: () => string };
+export type QueryContextCompilerDeps = { vault: ArtifactPort; ledger: StateLedger; now: () => string;
+  humanActions?: import('../../contracts/query-quality-facts.js').QueryHumanActionsPort['queryHumanActions'];
+  architectureActivation?: import('../../contracts/governance-view.js').ArchitectureActivationReader;
+  verificationFacts?: import('../../contracts/query-quality-facts.js').QueryVerificationFactsPort['queryFacts'];
+  architectureReviews?: (scope: { projectId: string; workspaceId: string }) => Promise<import('../../contracts/architecture-review.js').ArchitectureReviewView> };
 export class QueryContextCompilerImpl implements QueryContextPort {
   constructor(private readonly deps: QueryContextCompilerDeps) {}
 
@@ -85,21 +89,11 @@ export class QueryContextCompilerImpl implements QueryContextPort {
         if (!prior.stale) previousAnswers.push({ ref, answer: prior.answer, sources: prior.sources });
       }
     }
-    const collaborationWork: Array<{ taskId: string; assignment: import('../../contracts/plan.js').PlanTaskAssignment | null;
-      dependencies: string[]; reduction: import('../../contracts/reduction.js').TaskReductionSnapshot | null; reductionMatchesPlan: boolean }> = [];
-    if (execution && acceptedPlan) {
-      const assignments = revisionAssignments(acceptedPlan);
-      for (const task of acceptedPlan.tasks.slice(0, 64)) {
-        const ref = { aggregateType: 'TaskReduction' as const, projectId, goalId: request.goalId!, taskId: task.taskId };
-        const loaded = await this.deps.ledger.load(ref);
-        const reduction = loaded.status === 'found' && loaded.snapshot.ref.aggregateType === 'TaskReduction'
-          ? loaded.snapshot as import('../../contracts/reduction.js').TaskReductionSnapshot : null;
-        collaborationWork.push({ taskId: task.taskId, assignment: assignments.find(a => a.taskId === task.taskId) ?? null,
-          dependencies: acceptedPlan.executionDag.dependsOn.filter(edge => edge.taskId === task.taskId).map(edge => edge.dependsOnId),
-          reduction, reductionMatchesPlan: reduction !== null && canonicalJson(reduction.planRef) === canonicalJson(acceptedPlan.ref) && reduction.planRevision === acceptedPlan.planRevision });
-        if (reduction) selectedSources.push({ kind: 'task-reduction', refKey: canonicalJson(ref), version: String(reduction.revision) });
-      }
-    }
+    let facts: Awaited<ReturnType<typeof selectQueryCollaborationFacts>>;
+    try { facts = await selectQueryCollaborationFacts(this.deps, { projectId, workspaceId, goalId: request.goalId ?? '' }, execution ? acceptedPlan : null); }
+    catch { return { status: 'needs_material', gaps: [{ code: 'stale_versions', message: 'Current collaboration facts unavailable or inconsistent; retry.' }] }; }
+    const { goalPhase, collaborationWork, prerequisiteAcceptance, architectureReviews, architectureActivation, verificationStages, humanActions, dynamicFactVersions, dynamicFactSet } = facts;
+    if (execution) selectedSources.push(...facts.selectedSources);
     const agentTemplates: Array<{ pin: import('../../contracts/role-spec.js').RoleSpecPinV1; content: import('../../contracts/role-spec.js').RoleSpecContentV1 }> = [];
     if (execution?.kind === 'initial_coordination') {
       const active = await this.deps.ledger.load({ aggregateType: 'ProjectCoordinationPolicyActive', projectId });
@@ -119,7 +113,9 @@ export class QueryContextCompilerImpl implements QueryContextPort {
         selectedSources.push({ kind: 'role-catalog', refKey: canonicalJson(policy.snapshot.ref), version: String(policy.snapshot.revision) });
       }
     }
-    const bundle = { schemaVersion: 1, agentTemplates, collaborationWork, collaborationWorkOmitted: Math.max(0, (acceptedPlan?.tasks.length ?? 0) - collaborationWork.length), previousAnswers, queryJobRef: request.queryJobRef, question: request.question, focus, ...(execution ? { execution, goalContext, acceptedPlan, executionFeedback } : {}), selectedSources, noTranscript: true as const };
+    const bundle = { schemaVersion: 1, queryVocabularyVersion: 1, queryPresentationVersion: 3, capturedAt: this.deps.now(), ...(architectureActivation ? { architectureActivation } : {}), observationScope: { projectId, workspaceId, goalId: request.goalId }, agentTemplates, goalPhase, collaborationWork, prerequisiteAcceptance, ...(verificationStages ? { verificationStages } : {}), ...(humanActions ? { humanActions } : {}), collaborationWorkOmitted: Math.max(0, (acceptedPlan?.tasks.length ?? 0) - collaborationWork.length), architectureReviews, dynamicFactVersions, ...(execution ? { dynamicFactSet } : {}),
+      factSemantics: 'acceptedPlan.tasks.phase is the accepted plan declaration, not a live execution status. latestRun selects the ordinary TaskLease-held Run only; it is not an inventory of verification executions. A GoalGate can have its own checks, independent Reviewer and formal Evidence against a referenced producer without an ordinary Worker Run. Null latestRun or assignment does not prove that verification never ran. ended/completed does not prove Task satisfaction or Goal completion. Missing reduction means formal acceptance is unknown, not that execution never happened. Report content is unknown unless explicitly supplied.',
+      previousAnswers, queryJobRef: request.queryJobRef, question: request.question, focus, ...(execution ? { execution, goalContext, acceptedPlan, executionFeedback } : {}), selectedSources, noTranscript: true as const };
     const body = canonicalJson(bundle);
     const totalBytes = Buffer.byteLength(body);
     if (totalBytes > request.budget.maxBundleBytes) return { status: "needs_material", gaps: [{ code: "budget_exhausted", message: `query material requires ${totalBytes} bytes` }] };

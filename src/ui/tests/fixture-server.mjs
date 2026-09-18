@@ -33,7 +33,7 @@ const modelDirectory=process.env['MEMORY_MODEL_STUB']==='1'?await mkdtemp(resolv
 const memoryClient={async *stream(request){
   const input=request.messages.filter(message=>message.role==='user').map(message=>message.content).join('\n');
   const common={schemaVersion:1,requestId:request.requestId};
-  yield {...common,sequence:1,type:'text_delta',delta:input.includes('MEMORY_ARCH_DETAIL_browser')?'架构详细：说明模块职责、接口边界和方案取舍。此处是确定性模型见证。':'简洁回复。'};
+  yield {...common,sequence:1,type:'text_delta',delta:JSON.stringify({schemaVersion:1,language:'zh',blocks:[{kind:'explanation',text:input.includes('MEMORY_ARCH_DETAIL_browser')?'架构详细：说明模块职责、接口边界和方案取舍。此处是确定性模型见证。':'简洁回复。',basis:[]}]})};
   yield {...common,sequence:2,type:'usage_snapshot',usage:{inputTokens:100,outputTokens:20,cachedInputTokens:0,costUsdMicros:null}};
   yield {...common,sequence:3,type:'completed',reason:'final_answer'};
 }};

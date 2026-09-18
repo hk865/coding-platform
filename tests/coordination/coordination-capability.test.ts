@@ -371,9 +371,20 @@ describe("协议约束 2.3：协调能力必须由宿主显式授予", () => {
       "src/execution/worker-runtime/coding-agent-runtime.ts",
       "src/execution/worker-runtime/coordination-tools.ts",
     ]);
-    // (2) 只有运行入口会把它们作为本次 run 的工具集交出去，而且只在 context.coordination 存在时。
+    // (2) The kernel extension slot retains its historical coordinationTools name.
+    // Query also uses that slot, but may supply only its captured read-only fact
+    // tool. Actual exposed tool sets and missing-capability cases are exercised
+    // in runtime/query-fact-tool.test.ts; constructors/access remain unique here.
     const optionSites = [...bodies].filter(([, body]) => /coordinationTools:\s*\{/.test(body)).map(([file]) => file).sort();
-    expect(optionSites).toEqual(["src/execution/worker-runtime/coding-agent-runtime.ts"]);
+    expect(optionSites).toEqual(["src/execution/worker-runtime/coding-agent-runtime.ts", "src/execution/worker-runtime/read-only-query-runtime.ts"]);
+    const queryInjection = bodies.get("src/execution/worker-runtime/read-only-query-runtime.ts")!;
+    // Version-specific admission is exercised through the public Runtime in
+    // query-fact-tool and the three-role semantic-query consumers. A literal
+    // v1-only source regex incorrectly rejects supported v2/v3 protocols.
+    expect(queryInjection).toMatch(/coordinationTools:\s*\{ names: \['read_query_fact'\], create: \(\) => \[factTool\.tool\] \}/);
+    expect(queryInjection).not.toContain('createCoordinationTools');
+    expect(queryInjection).not.toContain('CoordinationToolAccess');
+    expect(bodies.get("src/execution/worker-runtime/query-fact-tool.ts")).toContain("effectClass: 'read_only'");
     const injection = bodies.get("src/execution/worker-runtime/coding-agent-runtime.ts")!;
     expect(injection).toContain("context?.coordination");
     expect(injection).toMatch(/coordination === undefined \? \{\} : \{/);

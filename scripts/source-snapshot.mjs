@@ -27,7 +27,7 @@ import path from "node:path";
 const ALGORITHM = "BASELINE.md §5：path + NUL + sha256(file bytes) + LF；排除 node_modules/dist/coverage/.local/.git";
 
 function git(root, args) {
-  return execFileSync("git", args, { cwd: root, encoding: "buffer" }).toString("utf8");
+  return execFileSync("git", args, { cwd: root, encoding: "buffer", maxBuffer: 64 * 1024 * 1024 }).toString("utf8");
 }
 
 function collectFiles(root) {

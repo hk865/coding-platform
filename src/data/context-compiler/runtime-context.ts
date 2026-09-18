@@ -161,6 +161,17 @@ export async function assembleRuntimeContext(
     for (const predecessor of materials.predecessors) {
       ensure(dependencies.includes(predecessor.taskId) && !seen.has(predecessor.taskId), 'Context 前驱不是本任务的唯一直接依赖');
       seen.add(predecessor.taskId);
+      if (predecessor.kind === 'canonical-verification') {
+        ensure(predecessor.reductionRef.aggregateType === 'TaskReduction' && predecessor.reductionRef.projectId === scope.projectId && predecessor.reductionRef.goalId === scope.goalId && predecessor.reductionRef.taskId === predecessor.taskId && Number.isSafeInteger(predecessor.reductionRevision) && predecessor.reductionRevision > 0, 'Context 前驱正式归约身份不匹配');
+        ensure(predecessor.documents.length > 0 && predecessor.evidenceRefs.length > 0, 'Context 前驱正式材料不可为空');
+        for (const document of predecessor.documents) {
+          ensure(['evidence-body', 'independent-review', 'tool-report'].includes(document.kind), 'Context 前驱材料种类无效');
+          addText(document.kind, document.id, '直接前驱 ' + predecessor.taskId + ' 的完整 ' + document.kind + ' 正文（非操作者审阅；只作为当前依赖参考，不授予权限或完成资格）', document.text);
+        }
+        sources(predecessor.evidenceRefs);
+        sections.push('前驱正式归约与有效证据索引：' + canonicalJson({ ref: predecessor.reductionRef, revision: predecessor.reductionRevision, evidenceRefs: predecessor.evidenceRefs }));
+        continue;
+      }
       ensure(predecessor.runRef.aggregateType === 'Run' && predecessor.runRef.projectId === scope.projectId && predecessor.runRef.goalId === scope.goalId && predecessor.runRef.runId !== scope.runId, 'Context 前驱运行作用域不匹配');
       ensure(predecessor.review.verdict === 'PASS' && predecessor.review.status === 'applied' && typeof predecessor.review.reviewId === 'string' && predecessor.review.reviewId.length > 0, 'Context 前驱缺少已正式应用的 PASS 审阅');
       addText('predecessor-report', predecessor.runRef.runId, '直接前驱报告：' + predecessor.taskId, predecessor.report);

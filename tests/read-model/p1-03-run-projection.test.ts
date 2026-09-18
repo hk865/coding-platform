@@ -618,3 +618,24 @@ describe("ReadModelIndexImpl active agent + task-run projection (P1-03, InMemory
     }
   });
 });
+
+import { createSqliteReadModelIndex } from "../../src/data/read-model-index/sqlite-read-model-index.js";
+
+for (const backend of ['memory','sqlite'] as const) {
+ it(`B1 ${backend}: old run unknown must not modify run2`,async()=>{
+ const adapter=backend==='memory'?createReadModelIndex(new ControlPolicyExplanation()):createSqliteReadModelIndex({path:':memory:',policyExplanation:new ControlPolicyExplanation()});
+ try {
+ const one=scenarioEvents({scope:0,runId:'run1',attemptId:'a1',prefix:'one',facts:[],outcomeUnknown:{reason:'late',observedAt:OCCURRED}});
+ const two=scenarioEvents({scope:0,runId:'run2',attemptId:'a2',prefix:'two',facts:[]});
+ await adapter.advance(pageOf(positioned([one[0]!,one[1]!,one[2]!,two[2]!],1)));
+ const q={projectId:ALPHA.projectId,goalId:ALPHA.goalId,taskId:DISPATCH_ELIGIBLE_TASK_ID};
+ const before=await adapter.activeAgent(q);
+ const detailBefore=await adapter.taskDetail(q);
+ await adapter.advance({afterCursor:makeCommitCursor(4),throughCursor:makeCommitCursor(5),events:positioned([one.at(-1)!],5),hasMore:false});
+ const after=await adapter.activeAgent(q); const detailAfter=await adapter.taskDetail(q);
+ expect(after.status).toBe('ready');
+ if(after.status==='ready'&&before.status==='ready') {expect(after.agent.runRef.runId).toBe('run2');expect(after.agent).toEqual(before.agent);}
+ if(detailBefore.status==='ready'&&detailAfter.status==='ready')expect(detailAfter.task.run).toEqual(detailBefore.task.run);
+ }finally{if('close' in adapter)await (adapter as ReturnType<typeof createSqliteReadModelIndex>).close();}
+ });
+}

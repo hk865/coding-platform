@@ -31,6 +31,7 @@ import { canonicalJson } from '../../contracts/fingerprint.js';
 import { resolveOriginTaskId } from './work-identity.js';
 import type { FeedbackMaterialCompiler } from '../../data/context-compiler/feedback-materials.js';
 import type { DeliveryMaterialCompiler } from '../../data/context-compiler/delivery-materials.js';
+import type { OrdinaryPredecessorMaterialCompiler } from '../../data/context-compiler/ordinary-predecessor-materials.js';
 import { materialAccessGrantIdFor, materialAccessGrantRefFor } from '../../contracts/material-access.js';
 import { buildGrantMaterialAccessCommand, buildMaterialAccessGrantV1 } from '../../contracts/commands/material-access.js';
 
@@ -49,6 +50,7 @@ export class WorkMaterialDrive {
      * 来源复核 → 最后组装 rule。见 data/context-compiler/delivery-materials.ts。
      */
     deliveries?: DeliveryMaterialCompiler;
+    predecessors?: OrdinaryPredecessorMaterialCompiler;
     compiler: Pick<WorkRunMaterialCompiler, 'compile'>;
   }) {}
 
@@ -100,6 +102,23 @@ export class WorkMaterialDrive {
       throw Error('needs_material: ' + result.gaps.map((g) => '[' + g.kind + '] ' + g.message).join(' | '));
     }
     if (result.status === 'rejected') throw Error('工作材料被拒绝：' + result.code + ': ' + result.message);
+    if (this.deps.predecessors) {
+      const compiler = this.deps.predecessors;
+      const selection = await compiler.select(envelope), materials = compiler.materialsOf(selection);
+      if (materials.length) {
+        const basis = selection.basis!;
+        const id = materialAccessGrantIdFor(envelope.runRef, materials, basis);
+        const grant = buildMaterialAccessGrantV1({ grantId: id, scope: { projectId: envelope.projectId, workspaceId: envelope.workspaceId, goalId: envelope.goalId }, materials, reader: envelope.runRef,
+          issuedBy: { aggregateType: 'Control', projectId: envelope.projectId, goalId: envelope.goalId }, purpose: 'Current hard-DAG predecessor verification material', basis, grantedAt: selection.grantedAt });
+        const receipt = await this.deps.control.grantMaterialAccess?.(buildGrantMaterialAccessCommand(grant, { commandId: id, projectId: envelope.projectId, actorKind: 'system', actorId: 'predecessor-material-sharing', idempotencyKey: id, correlationId: id, submittedAt: selection.grantedAt }));
+        if (receipt?.status !== 'committed') throw Error('Predecessor material permission unavailable');
+        result.materials.deliveryGrantRefs = [...(result.materials.deliveryGrantRefs ?? []), materialAccessGrantRefFor(envelope.projectId, envelope.workspaceId, envelope.goalId, id)];
+      }
+      result.materials.predecessors.push(...await compiler.assemble(selection));
+      if (materials.length) result.materials.additionalMaterialRefs = [...(result.materials.additionalMaterialRefs ?? []), ...materials];
+      const previous = result.materials.assertCurrent;
+      result.materials.assertCurrent = async () => { await previous?.(); await compiler.assertCurrent(selection); };
+    }
     if(this.deps.feedback) {
       const selection=await this.deps.feedback.select(envelope,workId);
       for(const row of selection.selected) {
@@ -142,7 +161,7 @@ export class WorkMaterialDrive {
           idempotencyKey: id, correlationId: id, submittedAt: grantedAt,
         }));
         if (receipt?.status !== 'committed') throw Error('Delivery material permission unavailable');
-        result.materials.deliveryGrantRefs = [materialAccessGrantRefFor(envelope.projectId, envelope.workspaceId, envelope.goalId, id)];
+        result.materials.deliveryGrantRefs = [...(result.materials.deliveryGrantRefs ?? []), materialAccessGrantRefFor(envelope.projectId, envelope.workspaceId, envelope.goalId, id)];
       }
       result.materials.rules.push(...await this.deps.deliveries.assemble(selection));
       const previous = result.materials.assertCurrent;

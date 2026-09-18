@@ -16,6 +16,8 @@ import { buildApplyPlanCommand } from '../../src/fixtures/plan-fixtures.js';
 import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
 import type { RuntimeContextAccess } from '../../src/data/context-compiler/runtime-context.js';
 import { LeasedWorkerRuntime } from '../../src/control/dispatch-engine/leased-worker-runtime.js';
+import { RuntimeObservationJournal } from '../../src/data/artifact-vault/runtime-observation-journal.js';
+import type { RuntimeRecord } from '../../src/execution/worker-runtime/coding-agent-runtime.js';
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -85,6 +87,59 @@ it('records material refusal before model start as a known failure, including ca
   const reopened = new CodingAgentRuntime(join(t.dir, 'runs'), async () => { throw Error('reopening must not bind a model'); });
   await reopened.init(); cleanup.push(() => reopened.close());
   expect(reopened.all()[0]).toMatchObject({ status: 'failed', error: t.runtime.all()[0]!.error });
+});
+
+it.each([false, true])('publishes only durably saved actual-runtime terminal observations (save fails=%s)', async fail => {
+  const t = await fixture(); await t.claim();
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const reached = new Promise<void>(resolve => { entered = resolve; });
+  const save = RuntimeObservationJournal.prototype.save;
+  const spy = vi.spyOn(RuntimeObservationJournal.prototype, 'save').mockImplementation(async function (this: RuntimeObservationJournal<RuntimeRecord>, record: unknown) {
+    const value = record as RuntimeRecord;
+    if (value.spec?.runId === t.spec.runId && value.status === 'completed') {
+      entered(); await gate;
+      if (fail) throw Error('IG11 injected terminal journal failure');
+    }
+    return save.call(this, record);
+  });
+  const drive = t.drive();
+  try {
+    await reached;
+    expect(t.runtime.observations.all()[0]!.status).toBe('running');
+    expect.soft(t.runtime.all()[0]!.status).toBe('running');
+    // A fresh observer attaches at the exact blocked save boundary; no timer.
+    const observer = await t.runtime.start(t.envelope());
+    expect.soft((await observer.pollFreshEvents()).some(event => event.eventType === 'run_completed')).toBe(false);
+    release(); await drive;
+    const published = t.runtime.all()[0]!;
+    expect(published).toEqual(t.runtime.observations.all()[0]);
+    expect(published.status).toBe(fail ? 'outcome_unknown' : 'completed');
+    expect(published.events.some(event => event.eventType === 'run_completed')).toBe(!fail);
+  } finally { release(); await drive; spy.mockRestore(); }
+});
+
+it('does not publish model request evidence before its usage record is durable', async () => {
+  const t = await fixture(); await t.claim();
+  let release!: () => void, entered!: () => void, blocked = false;
+  const gate = new Promise<void>(resolve => { release = resolve; }), reached = new Promise<void>(resolve => { entered = resolve; });
+  const save = RuntimeObservationJournal.prototype.save;
+  const spy = vi.spyOn(RuntimeObservationJournal.prototype, 'save').mockImplementation(async function (this: RuntimeObservationJournal<RuntimeRecord>, record: unknown) {
+    const value = record as RuntimeRecord;
+    if (!blocked && value.spec?.runId === t.spec.runId && value.usage.length > 0) { blocked = true; entered(); await gate; }
+    return save.call(this, record);
+  });
+  const drive = t.drive();
+  try {
+    await reached;
+    const observer = await t.runtime.start(t.envelope());
+    expect(await observer.pollModelRequestEvidence!()).toEqual([]);
+    expect(t.runtime.all()[0]!.usage).toEqual([]);
+    expect(t.requests).toHaveLength(0);
+    release(); await drive;
+    expect(await observer.pollModelRequestEvidence!()).toHaveLength(1);
+    expect(await observer.pollModelRequestEvidence!()).toEqual([]);
+  } finally { release(); await drive; spy.mockRestore(); }
 });
 
 it('persists an actionable sandbox preflight failure without exposing raw probe details or calling a model', async () => {

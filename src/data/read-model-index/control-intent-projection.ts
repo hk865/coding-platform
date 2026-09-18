@@ -26,7 +26,7 @@ export function projectControlIntentEvent(
   sourceCursor: CommitCursor,
   priorRows: readonly ControlIntentProjectionRow[],
 ): ControlIntentProjectionChange | null {
-  if (event.eventType !== 'ControlIntentRecorded' && event.eventType !== 'SafePointAcknowledged') return null;
+  if (event.eventType !== 'ControlIntentRecorded' && event.eventType !== 'SafePointAcknowledged' && event.eventType !== 'ControlIntentReconciled') return null;
   const key = consoleWorkspaceKey(event.projectId, event.workspaceId);
   if (event.eventType === 'ControlIntentRecorded') {
     const intent = event.payload.intent;
@@ -44,6 +44,11 @@ export function projectControlIntentEvent(
       }],
       sourceCursor,
     };
+  }
+  if (event.eventType === 'ControlIntentReconciled') {
+    const intent = event.payload.snapshot.intent;
+    return { kind: 'timeline', key, rows: priorRows.map(row => row.ref.intentId === intent.intentId
+      ? { ...row, status: intent.status, cursor: sourceCursor } : row), sourceCursor };
   }
   const intentId = event.payload.ack.intentRef.intentId;
   return {

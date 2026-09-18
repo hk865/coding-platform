@@ -24,7 +24,9 @@ export function initializeRealTasks({ token, current, refresh }) {
   $('real-task-form').onsubmit = async event => {
     event.preventDefault(); const button = $('real-task-submit'); button.disabled = true;
     const c = current();
-    const body = { projectId: c.projectId, workspaceId: c.workspaceId, goalId: c.goalId, instruction: $('real-task-instruction').value, references: referencesFor(c), allowWrite: $('real-task-write').checked, budget: { contextWindowTokens: Number($('real-context').value), inputTokens: Number($('real-input-limit').value), outputTokens: Number($('real-output-limit').value), maxRequests: Number($('real-request-limit').value), maxToolCalls: Number($('real-tool-limit').value), timeoutMs: Number($('real-time-limit').value) * 1000 } };
+    const optionalLimit = id => $(id).value === '' ? null : Number($(id).value);
+    const contextWindowTokens = optionalLimit('real-context'), seconds = optionalLimit('real-time-limit');
+    const body = { projectId: c.projectId, workspaceId: c.workspaceId, goalId: c.goalId, instruction: $('real-task-instruction').value, references: referencesFor(c), allowWrite: $('real-task-write').checked, budget: { ...(contextWindowTokens === null ? {} : { contextWindowTokens }), inputTokens: optionalLimit('real-input-limit'), outputTokens: optionalLimit('real-output-limit'), maxRequests: optionalLimit('real-request-limit'), maxToolCalls: optionalLimit('real-tool-limit'), timeoutMs: seconds === null ? null : seconds * 1000 } };
     const identity = JSON.stringify(body);
     if (retry?.identity !== identity) retry = { identity, requestId: crypto.randomUUID() };
     try { await post('/api/real/tasks', { ...body, requestId: retry.requestId }); drafts.delete(keyOf(c)); draftScope = null; $('real-task-dialog').close(); clearReferences(c); await refresh(); }

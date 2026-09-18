@@ -1,4 +1,6 @@
 // Reads committed governance facts on demand. No stored authority, writes or admission decisions.
+import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
+import type { ArchitectureActivationObservation } from '../../contracts/governance-view.js';
 import type {
   ActorRef,
   CommitCursor
@@ -66,6 +68,30 @@ const SCAN_PAGE_SIZE = 1000;
 
 export class GovernanceReadModel implements GovernanceViewPort {
   constructor(private readonly deps: GovernanceReadModelDeps) {}
+  /** Narrow Query read: no role matrix, content dump or invented authorship. */
+  async architectureActivation(scope: GovernanceScopeV1): Promise<ArchitectureActivationObservation> {
+    const ledger = this.deps.ledger();
+    const ref = activeRefFor('ArchitectureBaseline', scope.projectId);
+    const wrap = (status: ArchitectureActivationObservation['status'], active: ArchitectureActivationObservation['active'] = null): ArchitectureActivationObservation => {
+      const stable = { schemaVersion: 1 as const, object: 'ArchitectureBaselineActivation' as const, relation: 'activatedBy' as const, scope: { projectId: scope.projectId }, status, active };
+      return { ...stable, observedAt: new Date().toISOString(), version: sha256Hex(canonicalJson(stable)) };
+    };
+    try {
+      const before = await ledger.load(ref);
+      if (before.status !== 'found') return wrap('not_found');
+      const snapshot = before.snapshot as ProjectArchitectureBaselineActiveSnapshot;
+      const scan = await this.scan(scope.projectId);
+      if (!scan.complete) return wrap('unavailable');
+      // The latest activation of this revision owns the actor relation.
+      const activation = [...scan.activations].reverse().find(entry => sameRef(entry.ref, snapshot.activeRevision));
+      const after = await ledger.load(ref);
+      if (after.status !== 'found' || canonicalJson(after.snapshot) !== canonicalJson(before.snapshot)) return wrap('stale');
+      if (!activation || activation.ref.aggregateType !== 'ArchitectureBaselineRevision' || !activation.digest) return wrap('unavailable');
+      const revision = await ledger.load(activation.ref);
+      if (revision.status !== 'found' || (revision.snapshot as { contentDigest?: string }).contentDigest !== activation.digest) return wrap('unavailable');
+      return wrap('ready', { ref: activation.ref, digest: activation.digest, activeAggregateRevision: snapshot.revision, activatedAt: activation.occurredAt, activatedBy: activation.actor });
+    } catch { return wrap('failed'); }
+  }
   async view(scope: GovernanceScopeV1): Promise<GovernanceViewV1> {
     const ledger = this.deps.ledger();
     const project = await ledger.load({ aggregateType: 'Project', projectId: scope.projectId });

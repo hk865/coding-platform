@@ -20,12 +20,12 @@ export function planningResponse() {
     assignments: plan.tasks.filter(task => task.taskKind === 'work').map(task => ({ taskId: task.taskId, role: 'executor', instruction: 'Implement ' + task.title + ' and provide independently checkable outputs.' })) });
 }
 
-export async function planningScenario(body = planningResponse()) {
+export async function planningScenario(body = planningResponse(), facts: Pick<NonNullable<Parameters<typeof createInMemoryHarness>[0]>, 'verificationFacts' | 'humanActions' | 'architectureActivation'> = {}) {
   let calls = 0, current = true;
   let inspectRequest: ((request: Parameters<ReadOnlyQueryPort['startQuery']>[0]) => Promise<void>) | undefined;
   const runtime: ReadOnlyQueryPort = { capabilities: () => ({ supported: true, readOnly: true, maxQuestionBytes: 4096, maxAnswerBytes: 16384 }),
     startQuery: async request => { calls++; await inspectRequest?.(request); return { schemaVersion: 1, runRef: request.runRef, outcome: 'answered', answer: body, sources: [], message: null, endedAt: planningAt }; } };
-  const h = createInMemoryHarness({ readOnlyQuery: runtime });
+  const h = createInMemoryHarness({ readOnlyQuery: runtime, ...facts });
   expect(await h.bootstrap(buildBootstrapCommand({ schemaVersion: 1, entries: [planningScope] }, { commandId: 'boot', correlationId: 'boot', submittedAt: planningAt }))).toMatchObject({ status: 'committed' });
   expect(await h.collaboration.createGoal({ ...planningScope, objective: 'Build the requested change', actor: { kind: 'human', id: 'operator' }, idempotencyKey: 'goal' })).toMatchObject({ status: 'persisted' });
   for (const [i, fixture] of [COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1].entries()) {

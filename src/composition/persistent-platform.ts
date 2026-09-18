@@ -1,4 +1,5 @@
 import { ExecutionSlots } from '../control/dispatch-engine/execution/execution-slots.js';
+import { architectureReviewView } from '../data/read-model-index/architecture-review-view.js';
 import { prepareHandoffRun } from '../control/dispatch-engine/handoff/handoff-preparation.js';
 import { ArchitectureReviewEntry } from '../interaction/human-collaboration/architecture-review.js';
 import type { PlanCompilerPort, PlanningContextPort } from '../contracts/planning.js';
@@ -193,6 +194,9 @@ export interface PersistentPlatformOptions {
   readOnlyQuery?: ReadOnlyQueryPort;
   /** explicit QueryContextPort (default QueryContextCompilerImpl). */
   queryContext?: QueryContextPort;
+  architectureActivation?: import('../contracts/governance-view.js').ArchitectureActivationReader;
+  verificationFacts?: import('../contracts/query-quality-facts.js').QueryVerificationFactsPort['queryFacts'];
+  humanActions?: import('../contracts/query-quality-facts.js').QueryHumanActionsPort['queryHumanActions'];
   /** explicit SnapshotPort (default stub). */
   snapshot?: SnapshotPort;
   /** explicit WorkspaceReader (default FakeWorkspaceReaderAdapter). */
@@ -621,7 +625,7 @@ function buildPersistentPlatform(
   const readOnlyQuery: ReadOnlyQueryPort =
     readOnlyQueryOverride ?? new FakeReadOnlyQueryAdapter();
   const queryContext: QueryContextPort =
-    queryContextOverride ?? new QueryContextCompilerImpl({ ledger, vault, now: d.clock });
+    queryContextOverride ?? new QueryContextCompilerImpl({ ledger, vault, now: d.clock, ...(options.architectureActivation ? { architectureActivation: options.architectureActivation } : {}), ...(options.humanActions ? { humanActions: options.humanActions } : {}), ...(options.verificationFacts ? { verificationFacts: options.verificationFacts } : {}), architectureReviews: scope => architectureReviewView(ledger, scope) });
   const snapshot: SnapshotPort = snapshotOverride ?? { snapshot: (q) => Promise.resolve({ status: "unsupported", message: "Public snapshot capability is not configured" }) };
   // 返工触发驱动复用真实的 ControlEngine 与真实账本；未处置问题只经注入端口取得，
   // 因此 DispatchEngine 不依赖 VerificationEngine 的实现（ModuleDependencyDAG 保持无环）。

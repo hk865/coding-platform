@@ -86,3 +86,16 @@ it('rejects a new choice on a changed active plan after a proposal-only crash',a
   await expect(f.compiler.choose(f.scope,f.answerRef,'a')).rejects.toThrow('basis changed');
   expect(f.decision()).toBeNull(); expect(f.counts().applies).toBe(0);
 });
+
+// A whole-answer history label is not this exact command's applicability.
+it('reads exact option applicability without recording a choice, then rejects changed source and plan', async()=>{
+  const f=fixture();
+  const view=await f.materials.options(f.scope,f.answerRef);
+  expect(view).toMatchObject({answerRef:f.answerRef,availableOptionIds:['a','b']});
+  expect(f.counts()).toEqual({planningCalls:0,applies:0}); expect(f.decision()).toBeNull();
+  f.changeSource();
+  expect(await f.materials.options(f.scope,f.answerRef)).toMatchObject({availableOptionIds:[],reason:expect.stringContaining('source changed')});
+  const g=fixture();g.goal.activePlanRevision={...g.goal.activePlanRevision,planId:'new'};
+  expect(await g.materials.options(g.scope,g.answerRef)).toMatchObject({availableOptionIds:[],reason:expect.stringContaining('basis changed')});
+  expect(await g.materials.options({...g.scope,workspaceId:'elsewhere'},g.answerRef)).toMatchObject({availableOptionIds:[]});
+});

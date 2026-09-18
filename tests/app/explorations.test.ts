@@ -50,7 +50,7 @@ async function start(model = 'read-report', contextOnly = true) {
   const reviewInput = (taskId: string) => ({ ...scope, requestId: 'review-' + taskId, taskId, ...(taskId === 'gate-goal' ? {} : { runId: 'real-explore-run-' + taskId }), reviewVerdict: 'PASS', reviewOrigin: 'operator', reviewText: 'Independently checked README.md lines 1-2 against the report; uncertainty and no-runtime-test limits are accurate.' });
   const review = (taskId: string) => post('/api/real/explorations/review', reviewInput(taskId));
   const state = async (goalId = scope.goalId) => await (await fetch(base + '/api/state?' + new URLSearchParams({ ...scope, goalId }))).json() as State;
-  return { url: () => base, root, dir, data, scope, plan, install, run, review, reviewInput, state, post, payloads, releaseAll, releaseOne: () => waiting.shift()?.(), concurrency: () => ({ active, maximum }), requests: () => requests, restart: async () => { await app.close(); app = await serverFactory(data, options); await listen(); } };
+  return { configureEffort: (reasoningEffort: string) => post('/api/model-settings', { provider: 'deepseek', model, reasoningEffort, baseUrl: 'http://127.0.0.1:' + a.port, apiKey: '' }), url: () => base, root, dir, data, scope, plan, install, run, review, reviewInput, state, post, payloads, releaseAll, releaseOne: () => waiting.shift()?.(), concurrency: () => ({ active, maximum }), requests: () => requests, restart: async () => { await app.close(); app = await serverFactory(data, options); await listen(); } };
 }
 async function until<T>(fn: () => Promise<T>, check: (value: T) => boolean) { const deadline = Date.now() + 20000; for (;;) { const value = await fn(); if (check(value)) return value; if (Date.now() > deadline) throw Error('timed out: ' + JSON.stringify(value)); await new Promise(r => setTimeout(r, 30)); } }
 it('executes a real read-only dependency chain, requires operator review and preserves reports across restart', async () => {
@@ -227,3 +227,21 @@ it('production wakes admit two readers concurrently, expose queued work and neve
     expect(t.requests()).toBe(before);
   } finally { t.releaseAll(); }
 }, 60000);
+
+
+it('keeps a DeepSeek exploration budget across settings changes and restart', async () => {
+  const t = await start('deepseek-flash', false);
+  // Existing fixture returns the synthetic provider URL explicitly.
+  expect((await t.configureEffort('max')).status).toBe(200);
+  expect((await t.install()).status).toBe(200);
+  expect((await t.run('inventory')).status).toBe(200);
+  const before = await until(t.state, s => s.exploration.reports.some(r => r.taskId === 'inventory'));
+  expect(before.liveRuns[0]?.spec.budget).toMatchObject({ perResponseTokens: 131072, contextWindowTokens: 1000000, outputTokens: null });
+  expect(t.payloads.every(p => p['max_tokens'] === 131072 && p['reasoning_effort'] === 'max')).toBe(true);
+  expect((await t.configureEffort('high')).status).toBe(200);
+  const calls = t.requests();
+  expect((await t.run('inventory')).status).toBe(200);
+  await t.restart(); expect((await t.run('inventory')).status).toBe(200);
+  expect(t.requests()).toBe(calls);
+  expect((await t.state()).liveRuns[0]?.spec.budget).toEqual(before.liveRuns[0]?.spec.budget);
+});

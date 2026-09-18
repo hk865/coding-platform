@@ -16,6 +16,7 @@ export type QueryJobDriveDeps = { ledger: StateLedger; control: Pick<ControlEngi
 export class QueryJobDriveEngineImpl implements QueryJobDrivePort {
   private readonly refs = new Map<string, { jobRef: QueryJobRef; runRef: QueryRunRef | null }>();
   private cursor: CommitCursor | null = null;
+  private readonly driving = new Set<string>();
   constructor(private readonly deps: QueryJobDriveDeps) {}
 
   async driveQuery(trigger: QueryJobDriveTrigger): Promise<QueryJobDriveResult> {
@@ -41,6 +42,13 @@ export class QueryJobDriveEngineImpl implements QueryJobDrivePort {
     const max = trigger.maxIntents ?? 8;
     if (!Number.isSafeInteger(max) || max < 1) return result;
     for (const { jobRef, runRef: recoveredRunRef } of refs.values()) {
+      // Coalesce overlapping wakes before costly Context preparation. This is
+      // only an in-process work guard: persisted CAS and recovery still own
+      // authorization and uniqueness across processes. Other Jobs keep moving.
+      const driveKey = canonicalJson(jobRef);
+      if (this.driving.has(driveKey)) continue;
+      this.driving.add(driveKey);
+      try {
       const loaded = await this.deps.ledger.load(jobRef);
       if (loaded.status !== "found") continue;
       let snapshot = loaded.snapshot as QueryJobSnapshot;
@@ -122,12 +130,13 @@ export class QueryJobDriveEngineImpl implements QueryJobDrivePort {
         if (answer.sources.length > 64 || answer.sources.some(s => !s.kind || !s.refKey || (s.version !== null && typeof s.version !== "string"))) { await close("failed", "runtime source manifest invalid"); continue; }
         const sources = [...new Map([...binding.selectedSources, ...answer.sources].map(source => [canonicalJson(source), source])).values()];
         if (sources.length > 64) { await close('gap', 'combined source manifest exceeds the report bound'); continue; }
-        const body = await this.deps.vault.put({ contentType: "application/json", body: canonicalJson({ answer: answer.answer, sources }), ownerRef: runRef, sourceRefs: [{ kind: "artifact", refId: binding.request.bundleRef.digest, revision: "1", digest: binding.request.bundleRef.digest }], requestedAt: answer.endedAt });
+        const body = await this.deps.vault.put({ contentType: "application/json", body: canonicalJson({ answer: answer.answer, sources, ...(answer.presentation ? { presentation: answer.presentation } : {}) }), ownerRef: runRef, sourceRefs: [{ kind: "artifact", refId: binding.request.bundleRef.digest, revision: "1", digest: binding.request.bundleRef.digest }], requestedAt: answer.endedAt });
         if (body.status !== "stored") { await close("failed", "query answer body could not be stored"); continue; }
         const recorded: QueryJobAnswerV1 = { schemaVersion: 1, answerId: `query-answer-${key}-${round}`, queryJobRef: jobRef, runRef, roundIndex: round, answer: answer.answer, sources: sources.map((s) => ({ ...s, label: null })), followsAnswerRef: job.answerRefs.at(-1) ?? null, stale, staleReason: stale ? "source_changed" : null, answeredAt: answer.endedAt, bodyRef: body.ref };
         const receipt = await this.deps.control.recordQueryAnswer({ schemaVersion: 1, commandType: "RecordQueryAnswer", commandId: recorded.answerId, identity: { projectId: job.projectId, actor: { kind: "system", id: "query-dispatch" }, idempotencyKey: recorded.answerId }, aggregateId: job.queryJobId, expectedRevision: snapshot.revision, correlationId: job.intent.correlationId, submittedAt: answer.endedAt, payload: { answer: recorded } });
         if (receipt.status === "committed") result.answered++; else fail(receipt.code, "query answer rejected");
       } catch (error) { if (attempted) fail("outcome_unknown", String(error)); else await close("failed", String(error)); }
+      } finally { this.driving.delete(driveKey); }
     }
     return result;
   }

@@ -308,6 +308,8 @@ export type ReadOnlyQueryResultV1 = {
   runRef: QueryRunRef;
   outcome: "answered" | "timeout" | "gap" | "failed";
   answer: string | null;
+  /** New mixed answers retain their transport structure beside rendered text. */
+  presentation?: import('./query-answer-presentation.js').QueryAnswerPresentation;
   sources: { kind: string; refKey: string; version: string | null }[];
   message: string | null;
   endedAt: string;

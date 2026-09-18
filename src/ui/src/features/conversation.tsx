@@ -1,11 +1,12 @@
 import { HandoffAction } from './handoff-action';
+import { MAX_RESPONSE_TOKENS } from '../../../contracts/runtime-budget.js';
 import { DispatchBacklog } from './dispatch-backlog';
 import { ArchitectureReviews } from './architecture-reviews';
 import { ActionIcon, Alert, Badge, Box, Button, Checkbox, Collapse, Group, NumberInput, Paper, Select, Stack, Text, Textarea, Tooltip } from '@mantine/core';
 import { CommunicationView } from './communication';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { invalidateScope, mutationError } from '../api/hooks';
+import { invalidateScope, mutationError, useQueryApplicability } from '../api/hooks';
 import type { CommandCheck, LiveRun, ReceiptView, RunEvent } from '../api/types';
 import { EmptyState, ErrorState, FieldRow, LoadingState } from '../components/states';
 import { fileLineLabel, isActiveRun, number, runLabels, statusTone, summarizeUsage, time, toolCommand, toolNames } from '../format';
@@ -15,6 +16,8 @@ import { useAppState } from '../state/app-store';
 import type { ViewProps } from '../workbench/view-props';
 import { InitialPlanningView } from './initial-planning';
 import { FeedbackChoice } from './feedback-choice';
+import { QueryAnswerReview } from './query-answer-review';
+import { QueryFactSources } from './query-fact-sources';
 
 function StatusBadge({ status, label }: { status: string; label?: string }) {
   return <Badge color={statusTone(status)} variant="light" size="sm">{label ?? status}</Badge>;
@@ -137,23 +140,33 @@ function RunThread({ api, run, store, goalScope }: { api: ViewProps['api']; run:
   );
 }
 
-function SemanticQuery({ api, goalScope, store, refresh }: ViewProps) {
+type RevisionDraft = { id: string; scopeKey: string; purpose: 'architecture' | 'handoff'; text: string };
+function SemanticQuery({ api, goalScope, store, refresh, revisionDraft }: ViewProps & { revisionDraft: RevisionDraft | null }) {
   const [question, setQuestion] = useState(''), [busy, setBusy] = useState(false), [message, setMessage] = useState('');
-  const [responsePurpose,setResponsePurpose]=useState<'reply'|'architecture'|'progress'>('reply');
+  const [responsePurpose,setResponsePurpose]=useState<'reply'|'architecture'|'progress'|'handoff'>('reply');
   const scopeKey = JSON.stringify(goalScope), current = useRef(scopeKey); current.current = scopeKey;
   useEffect(() => { setQuestion(''); setMessage(''); }, [scopeKey]);
+  const questionInput = useRef<HTMLTextAreaElement>(null), appliedDraft = useRef<string | null>(null);
+  useEffect(() => {
+    if (!revisionDraft || revisionDraft.scopeKey !== scopeKey || revisionDraft.id === appliedDraft.current || busy) return;
+    appliedDraft.current = revisionDraft.id;
+    setQuestion(previous => previous.trim() ? previous + '\n\n' + revisionDraft.text : revisionDraft.text);
+    setResponsePurpose(revisionDraft.purpose); setMessage('复核意见已填入，请编辑后点击提问；尚未调用模型。');
+    questionInput.current?.focus();
+  }, [revisionDraft, scopeKey, busy]);
   const submit = async () => {
-    if (!goalScope || !question.trim() || busy) return;
+    if (!goalScope || !question.trim() || question.length > 4096 || busy) return;
+    const submittedQuestion = question;
     setBusy(true); setMessage('');
     try {
       const claim = await store.beginRequest(goalScope, 'semantic-query', [goalScope, question.trim(),responsePurpose]);
       try { await api.semanticQuery(goalScope, { requestId: claim.requestId, question: question.trim(),responsePurpose }); store.settleRequest(goalScope, 'semantic-query', claim.requestId); }
       catch (error) { if (!mutationError(error).unknown) store.settleRequest(goalScope, 'semantic-query', claim.requestId); throw error; }
-      if (current.current === scopeKey) { setMessage('只读查询已登记，将在独立运行中回答。'); setQuestion(''); refresh(); }
+      if (current.current === scopeKey) { setMessage('只读查询已登记，将在独立运行中回答。'); setQuestion(currentQuestion => currentQuestion === submittedQuestion ? '' : currentQuestion); refresh(); }
     } catch (error) { if (current.current === scopeKey) setMessage(mutationError(error).message); }
     finally { setBusy(false); }
   };
-  return <Box px="sm" py={6}><Select size="xs" label="响应用途" value={responsePurpose} disabled={busy} onChange={value=>setResponsePurpose(value === 'architecture' || value === 'progress' ? value : 'reply')} data={[{value:'reply',label:'日常回复'},{value:'architecture',label:'架构解释'},{value:'progress',label:'进度汇报'}]} /><Group align="flex-end"><Textarea size="xs" style={{ flex: 1 }} label="独立只读提问" value={question} onChange={event => setQuestion(event.currentTarget.value)} maxLength={4096} autosize minRows={1} maxRows={3} data-testid="semantic-question" /><Button size="xs" loading={busy} disabled={!question.trim()} onClick={() => void submit()} data-testid="semantic-ask">提问</Button></Group><Text size="xs" c="dimmed">使用当前模型设置读取公开事实与源码，不中断开发运行。{message}</Text></Box>;
+  return <Box px="sm" py={6}><Select size="xs" label="响应用途" value={responsePurpose} disabled={busy} onChange={value=>setResponsePurpose(value === 'architecture' || value === 'progress' || value === 'handoff' ? value : 'reply')} data={[{value:'reply',label:'日常回复'},{value:'architecture',label:'架构解释'},{value:'progress',label:'进度汇报'},{value:'handoff',label:'记录整理'}]} /><Group align="flex-end"><Textarea size="xs" style={{ flex: 1 }} ref={questionInput} label="独立只读提问" value={question} onChange={event => setQuestion(event.currentTarget.value)} error={question.length > 4096 ? `当前 ${question.length} 字符，请编辑至 4096 字符以内；内容未截断。` : undefined} autosize minRows={1} maxRows={3} data-testid="semantic-question" /><Button size="xs" loading={busy} disabled={!question.trim() || question.length > 4096} onClick={() => void submit()} data-testid="semantic-ask">提问</Button></Group><Text size="xs" c="dimmed">使用当前模型设置读取公开事实与源码，不中断开发运行。{message}</Text></Box>;
 }
 
 function CancelQuery({ api, goalScope, refresh, queryJobId }: Pick<ViewProps, 'api' | 'goalScope' | 'refresh'> & { queryJobId: string }) {
@@ -168,7 +181,26 @@ function CancelQuery({ api, goalScope, refresh, queryJobId }: Pick<ViewProps, 'a
   return <Group gap="xs"><Button size="compact-xs" variant="subtle" loading={busy} onClick={() => void cancel()}>取消查询</Button>{error ? <Text size="xs" c="red">{error}</Text> : null}</Group>;
 }
 
-function QueryAnswers({ data,api,goalScope,refresh }: Pick<ViewProps,'api'|'goalScope'|'refresh'> & { data: NonNullable<ViewProps['data']> }) {
+function AnswerApplicability({ api, scope, queryJobId, answerId }: { api: ViewProps['api']; scope: NonNullable<ViewProps['goalScope']>; queryJobId: string; answerId: string }) {
+  const check = useQueryApplicability(api, scope, queryJobId, answerId);
+  const labels = {
+    current: '本次检查确认来源与版本适用；不证明自然语言解释正确，也不代表之后仍然有效。',
+    not_current: '本次检查未能确认来源与版本适用；不能据此断言某个来源已经变化。',
+    stale: '检查期间回答或依赖已变化，本次结果不能用于当前回答。',
+    unavailable: '当前无法检查适用性。',
+  };
+  return <Stack gap={4} data-testid="answer-applicability" data-answer-id={answerId}>
+    <Text size="xs" c="dimmed">历史回答；{check.result ? '下方是指定时点的适用性观察。' : '尚未检查对当前来源与版本的适用性。'}</Text>
+    <Group gap="xs"><Button size="compact-xs" variant="subtle" loading={check.checking} onClick={() => void check.check()}>检查当前适用性</Button>
+      {check.checking ? <Text size="xs">正在检查来源与版本…</Text> : null}</Group>
+    {check.error ? <Text size="xs" c="red" role="alert">适用性检查失败：{check.error}</Text> : null}
+    {check.result ? <Text size="xs" c={check.result.status === 'current' ? 'dimmed' : 'orange'} data-testid="answer-applicability-result">
+      {labels[check.result.status]} 检查时间：{time(check.result.observedAt)} · 观察版本：{check.result.observedCursor}
+    </Text> : null}
+  </Stack>;
+}
+
+function QueryAnswers({ data,api,goalScope,refresh,onRevision }: Pick<ViewProps,'api'|'goalScope'|'refresh'> & { data: NonNullable<ViewProps['data']>; onRevision: (draft: RevisionDraft) => void }) {
   const queries = data.queries.filter(query => query.status === 'ready' && query.job.goalId === data.goalId && query.job.intent.execution?.kind !== 'initial_coordination');
   if (!queries.length) return null;
   return (
@@ -181,7 +213,9 @@ function QueryAnswers({ data,api,goalScope,refresh }: Pick<ViewProps,'api'|'goal
           <article className="message assistant">
             <div className="message-meta"><strong>项目助手</strong><Badge color="gray" variant="light">{query.job.intent.execution?.kind === 'execution_coordination' ? '协调角色调查' : query.job.intent.execution ? '独立只读模型查询' : '测试适配器回答'}</Badge></div>
             <div className="message-body">
-              <Text size="sm">{query.currentAnswer?.answer ?? query.job.closeReason?.message ?? '查询已记录，等待回答…'}</Text>
+              {query.currentAnswer && goalScope ? <AnswerApplicability key={JSON.stringify([goalScope.projectId, goalScope.workspaceId, goalScope.goalId, query.job.queryJobId, query.currentAnswer.answerId])} api={api} scope={goalScope} queryJobId={query.job.queryJobId} answerId={query.currentAnswer.answerId} /> : null}
+              {query.currentAnswer && goalScope ? <QueryFactSources api={api} scope={goalScope} answer={query.currentAnswer} summary={query.job.intent.execution?.kind === 'semantic_query' && !['architecture', 'handoff'].includes(query.job.intent.execution.responsePurpose ?? 'reply')} /> : <Text size="sm">{query.job.closeReason?.message ?? '查询已记录，等待回答…'}</Text>}
+              {query.currentAnswer && goalScope && ['architecture', 'handoff'].includes(query.job.intent.execution?.responsePurpose ?? '') ? <QueryAnswerReview api={api} scope={goalScope} answer={query.currentAnswer} onRevision={text => onRevision({ id: crypto.randomUUID(), scopeKey: JSON.stringify(goalScope), purpose: query.job.intent.execution?.responsePurpose === 'handoff' ? 'handoff' : 'architecture', text: `原问题：${query.job.intent.question}\n\n${text}` })} /> : null}
               {query.job.status === 'pending' || query.job.status === 'running' ? <CancelQuery api={api} goalScope={goalScope} refresh={refresh} queryJobId={query.job.queryJobId} /> : null}
               {query.recovery ? <Text size="sm" c={query.recovery.status === 'requires_reconciliation' ? 'orange' : 'dimmed'}>{query.recovery.message}</Text> : null}
               {queries.some(next=>next.job.intent.execution?.feedback?.supersedesQueryJobId===query.job.queryJobId)
@@ -208,7 +242,9 @@ function QueryAnswers({ data,api,goalScope,refresh }: Pick<ViewProps,'api'|'goal
  * them explicitly, and an unset value is never replaced by a hidden default in
  * the UI, the HTTP layer, the RunSpec or the kernel limit guard.
  */
-const DEFAULT_BUDGET = { contextWindowTokens: 128000, inputTokens: null as number | null, outputTokens: null as number | null, maxRequests: null as number | null, maxToolCalls: null as number | null, timeoutMs: null as number | null, perResponseTokens: 4096 };
+// Empty capacities defer to the configured model at admission. They are omitted
+// from the request, while empty cumulative limits remain explicit nulls.
+const DEFAULT_BUDGET = { contextWindowTokens: null as number | null, inputTokens: null as number | null, outputTokens: null as number | null, maxRequests: null as number | null, maxToolCalls: null as number | null, timeoutMs: null as number | null, perResponseTokens: null as number | null };
 type BudgetDraft = typeof DEFAULT_BUDGET;
 /** Empty cumulative field = "not limited"; never coerced to a default number. */
 const optionalNumber = (value: string | number | bigint): number | null => {
@@ -281,15 +317,18 @@ function Composer(props: ViewProps) {
     if (!goalScope || !canSubmit) return;
     const instruction = draft.instruction.trim();
     const references = draft.references;
+    // Preserve key order for pending v1 identities created with explicit old
+    // defaults. Clearing capacities must not send null or invent an override.
+    const requestedBudget = Object.fromEntries(Object.entries(budget).filter(([key, value]) => value !== null || !['contextWindowTokens', 'perResponseTokens'].includes(key)));
     setSubmitting(true); setError(null); setReceipt(null);
     try {
       // The identity covers everything that changes the request: scope, instruction,
       // referenced material, write permission and the whole budget object. An
       // unconfigured cumulative limit is null here and stays null end to end.
-      const claim = await store.beginRequest(goalScope, 'real-task', [goalScope.projectId, goalScope.workspaceId, goalScope.goalId, instruction, references, draft.allowWrite, budget]);
+      const claim = await store.beginRequest(goalScope, 'real-task', [goalScope.projectId, goalScope.workspaceId, goalScope.goalId, instruction, references, draft.allowWrite, requestedBudget]);
       if (claim.replaced) store.notify('warning', '提交内容或预算已改变，将作为新请求提交。', '原未决标识 ' + claim.replaced + ' 不会被复用，也不会被静默覆盖。');
       try {
-        const result = await api.runRealTask(goalScope, { requestId: claim.requestId, instruction, allowWrite: true, references, budget });
+        const result = await api.runRealTask(goalScope, { requestId: claim.requestId, instruction, allowWrite: true, references, budget: requestedBudget });
         store.settleRequest(goalScope, 'real-task', claim.requestId);
         store.clearDraft(goalScope);
         store.notify('success', '服务器已受理开发任务：' + result.runId, '受理不等于完成，运行结果以服务器事实为准。');
@@ -369,15 +408,15 @@ function Composer(props: ViewProps) {
       </Group>
       <Collapse expanded={showBudget}>
         <Stack gap={4} mt="xs" className="budget-grid">
-          <Text size="xs" c="dimmed">上下文容量与单次响应输出是一次调用的声明容量（不是对模型能力的探测）；累计项留空表示不限制，只有你填写后服务器才会执行累计约束。</Text>
+          <Text size="xs" c="dimmed">容量留空使用已保存模型的默认值；累计限额留空表示不限制。填写的限额适用于本次任务。</Text>
           <Group gap="sm" wrap="wrap">
-            <NumberInput size="xs" label="上下文容量（声明值）" value={budget.contextWindowTokens} min={1} max={1000000} onChange={value => setBudget({ ...budget, contextWindowTokens: Number(value) || 1 })} w={150} />
+            <NumberInput size="xs" label="上下文容量（声明值）" value={budget.contextWindowTokens ?? ''} min={1} max={1000000} placeholder="模型默认" onChange={value => setBudget({ ...budget, contextWindowTokens: optionalNumber(value) })} w={150} />
             <NumberInput size="xs" label="累计输入" value={budget.inputTokens ?? ''} min={1} max={25000000} placeholder="不限制" onChange={value => setBudget({ ...budget, inputTokens: optionalNumber(value) })} w={120} data-testid="budget-input-tokens" />
             <NumberInput size="xs" label="累计输出" value={budget.outputTokens ?? ''} min={1} max={128000} placeholder="不限制" onChange={value => setBudget({ ...budget, outputTokens: optionalNumber(value) })} w={120} />
             <NumberInput size="xs" label="模型调用" value={budget.maxRequests ?? ''} min={1} max={128} placeholder="不限制" onChange={value => setBudget({ ...budget, maxRequests: optionalNumber(value) })} w={100} />
             <NumberInput size="xs" label="工具调用" value={budget.maxToolCalls ?? ''} min={1} max={256} placeholder="不限制" onChange={value => setBudget({ ...budget, maxToolCalls: optionalNumber(value) })} w={100} />
             <NumberInput size="xs" label="运行最长秒数" value={budget.timeoutMs === null ? '' : budget.timeoutMs / 1000} min={1} max={900} placeholder="不限制" onChange={value => setBudget({ ...budget, timeoutMs: optionalNumber(value) === null ? null : optionalNumber(value)! * 1000 })} w={110} />
-            <NumberInput size="xs" label="单次响应输出" value={budget.perResponseTokens} min={256} max={8192} onChange={value => setBudget({ ...budget, perResponseTokens: Number(value) || 4096 })} w={120} />
+            <NumberInput size="xs" label="单次响应输出" value={budget.perResponseTokens ?? ''} min={256} max={MAX_RESPONSE_TOKENS} placeholder="模型默认" onChange={value => setBudget({ ...budget, perResponseTokens: optionalNumber(value) })} w={120} />
           </Group>
           <Text size="xs" c="dimmed">命令检查的单次超时在“检查与验证”中单独设置，不受这里影响。</Text>
         </Stack>
@@ -415,6 +454,8 @@ export function ConversationView(props: ViewProps) {
   const { data, loading, error, store, refresh } = props;
   const appState = useAppState();
   const scroller = useRef<HTMLDivElement | null>(null);
+  const [revisionDraft, setRevisionDraft] = useState<RevisionDraft | null>(null);
+  useEffect(() => { setRevisionDraft(null); }, [JSON.stringify(props.goalScope)]);
   const [atBottom, setAtBottom] = useState(true);
   const [unread, setUnread] = useState(0);
   const lastCount = useRef(0);
@@ -457,8 +498,9 @@ export function ConversationView(props: ViewProps) {
             <Group gap="xs" mt={4} wrap="wrap">
               {status ? <StatusBadge status={status.phase} label={'目标：' + status.phase} /> : <Badge color="gray" variant="light">目标尚无正式完成判定</Badge>}
               <Text size="xs" c="dimmed">已验证任务 {verified} / {rows.length}</Text>
-              <Text size="xs" c="dimmed">存储 {data?.storage ?? '—'} · 执行 {realMode ? 'coding-agent' : 'fixture'}</Text>
+              <Text size="xs" c="dimmed">存储 {data?.storage ?? '—'} · 执行 {data ? (realMode ? 'coding-agent' : data.executionCapability?.fixtureEnabled ? 'fixture' : '不可用') : '正在读取'}</Text>
             </Group>
+            {data?.applicability?.status === 'not_checked' ? <Text size="xs" c="dimmed">目标与验收状态来自持久记录；概览未检查对当前源码的适用性。观察时间：{time(data.applicability.observedAt)}</Text> : null}
           </div>
           {data ? <InitialPlanningView data={data} /> : null}
           {data ? <DispatchBacklog view={data.dispatch} /> : null}
@@ -472,7 +514,7 @@ export function ConversationView(props: ViewProps) {
               description={data.goalId ? '在下方描述要实现的内容并允许写入，提交后这里会显示真实的模型与工具活动。' : '左侧可以新建目标；目标保存后即可提交开发任务。'}
             />
           ) : null}
-          {data ? <QueryAnswers data={data} api={props.api} goalScope={props.goalScope} refresh={refresh} /> : null}
+          {data ? <QueryAnswers data={data} api={props.api} goalScope={props.goalScope} refresh={refresh} onRevision={setRevisionDraft} /> : null}
           {runs.map(run => <RunThread key={run.spec.runId} api={props.api} run={run} store={store} goalScope={props.goalScope} />)}
           {data?.exploration ? (
             <Paper withBorder p="sm" radius="sm">
@@ -488,7 +530,7 @@ export function ConversationView(props: ViewProps) {
         </Button>
       ) : null}
       {data?.executionCapability?.fixtureEnabled === true && data.matrix.status === 'ready' ? <FixtureQuery {...props} /> : null}
-      {props.goalScope ? <SemanticQuery {...props} /> : null}
+      {props.goalScope ? <SemanticQuery {...props} revisionDraft={revisionDraft} /> : null}
       <Composer {...props} />
     </Stack>
   );

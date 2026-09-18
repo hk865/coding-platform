@@ -8,7 +8,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { createGuiService } from './service.js';
-export async function createGuiServer(dir: string, options: WorkspaceToolsOptions & { modelSettings?: ModelSettingsOptions; explorationContextOnlyRoots?: string[]; contextOnlyTask?: { root: string; requestId: string }; fixtureExecution?: boolean } = {}) {
+export async function createGuiServer(dir: string, options: WorkspaceToolsOptions & { modelSettings?: ModelSettingsOptions; queryAnswerReviewPolicy?: 'high-risk-v1'; explorationContextOnlyRoots?: string[]; contextOnlyTask?: { root: string; requestId: string }; fixtureExecution?: boolean } = {}) {
   const modelSettings = await createModelSettings(dir, options.modelSettings);
   const workspace = await createWorkspaceTools(dir, { ...options, privatePaths: [...(options.privatePaths ?? []), modelSettings.directory] });
   const realRuntime = new CodingAgentRuntime(resolve(dir, 'real-runs'), modelSettings.bindRun, [resolve(import.meta.dirname, '../..'), modelSettings.directory, '/mnt/d/1.project/Software/agent_learn']);
@@ -19,7 +19,7 @@ export async function createGuiServer(dir: string, options: WorkspaceToolsOption
       configurationRevision: configuration.revision, provider: configuration.provider, model: configuration.model, baseUrl: configuration.baseUrl,
     } : null;
   } };
-  const service = await createGuiService(dir, workspace.projects(), { ...(options.contextOnlyTask ? { contextOnlyTask: options.contextOnlyTask } : {}), explorationContextOnlyRoots: options.explorationContextOnlyRoots ?? [], runtime: realRuntime, ...(options.fixtureExecution ? { fixtureExecution: true } : {}), reviewerModelMetadata, resolveReferences: (scope, refs) => resolveFileReferences(scope, refs, input => workspace.read('/api/files/preview',input)), rootFor: (projectId, workspaceId) => { const p = workspace.projects().find(p => p.projectId === projectId && p.workspaceId === workspaceId); if (!p) throw Error('项目未登记'); return p.root; } });
+  const service = await createGuiService(dir, workspace.projects(), { ...(options.contextOnlyTask ? { contextOnlyTask: options.contextOnlyTask } : {}), ...(options.queryAnswerReviewPolicy ? { queryAnswerReviewPolicy: options.queryAnswerReviewPolicy } : {}), explorationContextOnlyRoots: options.explorationContextOnlyRoots ?? [], runtime: realRuntime, runtimeBudget: modelSettings.runtimeBudget, ...(options.fixtureExecution ? { fixtureExecution: true } : {}), reviewerModelMetadata, resolveReferences: (scope, refs) => resolveFileReferences(scope, refs, input => workspace.read('/api/files/preview',input)), rootFor: (projectId, workspaceId) => { const p = workspace.projects().find(p => p.projectId === projectId && p.workspaceId === workspaceId); if (!p) throw Error('项目未登记'); return p.root; } });
   const workspaceToken = randomUUID();
   const styleNonce = randomUUID();
   const toolRoute = (path: string) => path === '/api/workspace' || path === '/api/projects/add' || path === '/api/workspaces/add' || path === '/api/files' || path.startsWith('/api/files/') || path === '/api/terminals' || path.startsWith('/api/terminals/');
@@ -31,6 +31,7 @@ export async function createGuiServer(dir: string, options: WorkspaceToolsOption
   for (const name of ['live-runs.css','dock-views.css','exploration-ui.css']) assets.set('/'+name,[name,'text/css; charset=utf-8']);
   const vendor = new Map([['/vendor/xterm.js', '@xterm/xterm/lib/xterm.js'], ['/vendor/xterm.css', '@xterm/xterm/css/xterm.css'], ['/vendor/addon-fit.js', '@xterm/addon-fit/lib/addon-fit.js']]);
   const requests = new Set<Promise<void>>();
+  const stateReads = new Set<AbortController>();
   let stopping = false;
   const server = createServer((req, res) => {
     if (stopping) { res.writeHead(503, { connection: 'close', 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ error: '服务正在关闭' })); return; }
@@ -40,7 +41,7 @@ export async function createGuiServer(dir: string, options: WorkspaceToolsOption
     void work.finally(() => requests.delete(work)).catch(() => {});
   });
   async function handleRequest(req: IncomingMessage, res: ServerResponse) {
-    const send = (status: number, body: unknown) => { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
+    const send = (status: number, body: unknown) => { if (res.destroyed) return; res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
     try {
       const host = req.headers.host ?? '';
       if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) return send(403, { error: '仅限本机访问' });
@@ -52,7 +53,17 @@ export async function createGuiServer(dir: string, options: WorkspaceToolsOption
         if (url.pathname === '/api/meta') return send(200, { scopes: workspace.projects(), ...service.capability(), executionCapability: service.capability(), exploration: { available: true, contextOnlyProjectIds: workspace.projects().filter(p => options.explorationContextOnlyRoots?.includes(p.root)).map(p => p.projectId) }, workspaceToken });
         if (toolRoute(url.pathname)) return send(200, await workspace.read(url.pathname, Object.fromEntries(url.searchParams)));
         if (url.pathname === '/api/model-settings') return send(200, await modelSettings.read());
-        if (url.pathname === '/api/state') return send(200, await service.state(Object.fromEntries(url.searchParams)));
+        if (url.pathname === '/api/state' || url.pathname === '/api/query-applicability') {
+          const controller = new AbortController(); stateReads.add(controller);
+          const abort = () => controller.abort(new Error('State reader disconnected'));
+          req.once('aborted', abort); res.once('close', abort);
+          try {
+            const input = Object.fromEntries(url.searchParams);
+            const value = url.pathname === '/api/state' ? await service.state(input, controller.signal) : await service.queryApplicability(input, controller.signal);
+            controller.signal.throwIfAborted(); send(200, value);
+          } finally { req.off('aborted', abort); res.off('close', abort); stateReads.delete(controller); }
+          return;
+        }
         // The React workbench is the default entry; the previous frontend stays reachable at /legacy
         // until the migrated views have a full rollback cycle.
         if (url.pathname === '/' || url.pathname === '/workbench' || url.pathname === '/workbench/') {
@@ -104,6 +115,7 @@ export async function createGuiServer(dir: string, options: WorkspaceToolsOption
     // Stop admission before any resource closes. Drain complete HTTP handlers,
     // including workspace/settings routes outside the service's action queue.
     stopping = true;
+    for (const read of stateReads) read.abort(new Error('Host shutting down'));
     let httpError: Error | undefined;
     const stopped = new Promise<void>(done => server.close(error => {
       if (error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') httpError = error;

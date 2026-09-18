@@ -1,6 +1,7 @@
 /** P1-14 evidence block (probe-gated, reproducible JSON). */
 import { describe, it, expect, afterAll } from "vitest";
 import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { createPersistentPlatform, type PersistentPlatform } from "../../../src/composition/persistent-platform.js";
 import { createP108ScenarioRuntime } from "../../contract-suite/p1-08-harness.js";
 import { isP114Ready, runP114RestartScenario, type P114RestartEvidence } from "../p1-14-restart-fixtures.js";
@@ -19,8 +20,9 @@ describe.skipIf(!READY)("P1-14-EVIDENCE", () => {
     expect(evidence.candidateDigest.length).toBe(64);
     expect(evidence.gateStatus).toBe("pass");
     const block = { ticket: "P1-14", candidateDigest: evidence.candidateDigest, decisionOutcome: evidence.decisionOutcome, gateStatus: evidence.gateStatus, activationFrom: evidence.activationFrom };
-    mkdirSync("evidence", { recursive: true });
-    writeFileSync("evidence/p1-14-evidence.json", JSON.stringify(block, null, 2));
+    const output = process.env["EVIDENCE_OUTPUT_DIR"] ?? "evidence"; mkdirSync(output, { recursive: true });
+    writeFileSync(join(output, "p1-14-evidence.json"), JSON.stringify(block, null, 2));
     expect(() => JSON.parse(JSON.stringify(block))).not.toThrow();
   });
 });
+

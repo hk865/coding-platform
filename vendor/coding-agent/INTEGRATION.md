@@ -2,6 +2,8 @@
 
 用户于 2026-09-07 决定将 coding-agent 直接复制纳入平台目录。本目录保存执行内核源码，与平台一起由外层 Git 仓库管理。平台继续负责跨 Run 的规划、调度与事实归约；内核通过既有公共 API/CLI 处理单次 Run。
 
+本地纳入依据是上述用户明确委托及 UPSTREAM 固定的本地工程来源，不是某个外部项目的开源许可证授权。导入清单没有内核整体的 LICENSE/NOTICE，当前也没有整体 license 声明；不据此推断所有权或补造 MIT 授权。本轮只验证已授权的本地集成，未进行外部分发。单独借鉴或移植的第三方单位保留各自精确来源和许可，例如平台记忆规则的 `src/contracts/notices/`；依赖包许可由各自锁定的包声明提供。
+
 ## 来源与更新
 
 导入来源、commit、源工作区未提交改动、逐文件 SHA-256 和本地适配记录见 [UPSTREAM.json](UPSTREAM.json)。本次使用源工作区实际内容，包含三份未提交的开发文档；该清单描述导入时快照，后续修改通过平台 Git diff 追踪。
@@ -19,7 +21,7 @@ pnpm kernel:install
 pnpm kernel:build
 ```
 
-这两个入口分别在本目录按 package-lock.json 安装依赖和构建 dist/app/cli/main.js。平台保留 pnpm 锁文件，内核保留自己的 npm 锁文件；本次未合并两套依赖或改动内核业务代码。平台原有 build 仍只构建平台。
+这两个入口分别在本目录按 package-lock.json 安装依赖和构建 dist/app/cli/main.js。平台保留 pnpm 锁文件，内核保留自己的 npm 锁文件；导入时未合并两套依赖或改动内核业务代码。当前平台 `build` 已按根 package.json 顺序执行内核构建、平台 TypeScript、UI 资源复制和 UI 构建，最终验证必须使用这一完整产物链。
 
 Node/npm、bubblewrap 等是运行环境工具，不作为源码副本复制。需要 Shell 隔离的实测须在环境阶段核对可用性并显式配置 CODING_AGENT_BWRAP_PATH（如未正常安装）；源码纳入和本地模型夹具通过不代表隔离或真实模型验收完成。
 
@@ -93,3 +95,13 @@ workspace_write / process，没有"平台状态写入"这一档；本工具以�
 因此**不新增 effectClass**——新增一个取值既不改变准入强度，又需再动三个内核文件并重建 dist。
 现状（`workspace_write` + `requiredCapabilities: []` + `independentReadOnly: false` +
 `platformEffect`）为最终方案。
+
+## 结构化最终报告的系统提示适配（2026-09-14）
+
+真实独立 Reviewer 在显式32768容量下完成生成，但最终JSON前的说明文字导致正式report_json拒绝。版本化基础提示从coding-agent-v3升级v4：工具前中间进度保留，用户请求结构化最终格式时将总结、证据与限制放在该格式字段内，禁止在最终消息外附加散文。普通Coding默认表达方式不变；权限、报告校验和来源清单不变。原来源仓库未修改。失败及复验见平台evidence/collaboration-memory/batch/integration/coding-goal-real-05.log及后续记录。
+
+同轮v4真实复验仍被工具后固定开场要求影响，v5进一步把该进度句限定为确有下一工具批次的消息；JSON最终报告不附加进度句。v4失败保留于coding-goal-real-06.log，不以v4构建通过替代真实报告通过。
+
+## 独立 Reviewer 的显式 JSON 传输（2026-09-14）
+
+v5真实报告仍有JSON外散文，CM-I01-REVIEWER-JSON-001在平台副本 ModelRequest 增加可选 responseFormat=json_object 请求，DeepSeek 映射 response_format，OpenAI Responses 映射 text.format。宿主只对独立 Reviewer 显式开启，在 ModelBudget 与 ModelCallPermit 的请求摘要之前加入实际字段；普通 Coding/Query、thinking、调用数和累计预算不变。报告原文不截取、不修复，空报告、截断与非法报告仍拒绝。来源仓库及 UPSTREAM.json 导入指纹不改，真实失败05/06/07保留；定向证据见平台 evidence/collaboration-memory/batch/integration/reviewer-json/，真实复验由根 Agent记录。

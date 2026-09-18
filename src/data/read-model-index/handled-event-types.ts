@@ -15,7 +15,7 @@ const handledEventTypes = new Set<string>([
   'IntegrationJoined', 'PatchRecorded', 'MaterialAccessGranted', 'MaterialAccessRevoked',
   'WorkContextBound', 'WorkRunLinked', 'ExecutionNoteRecorded', 'ContinuationRecorded',
   'ArchitectureInspectionRecorded', 'ArchitectureFindingRecorded', 'ArchitectureDecisionBriefRecorded', 'ArchitectureCandidateProposalRecorded',
-  'ControlIntentRecorded', 'SafePointAcknowledged', 'QueryJobSubmitted', 'QueryRunStarted', 'QueryJobAnswerRecorded', 'QueryJobClosed',
+  'ControlIntentRecorded', 'SafePointAcknowledged', 'ControlIntentReconciled', 'QueryJobSubmitted', 'QueryRunStarted', 'QueryJobAnswerRecorded', 'QueryJobClosed',
   'ArchitectureEvolutionPolicyInstalled', 'ArchitectureEvolutionPolicyActivated', 'RemediationPlanPatchRecorded',
   'RemediationTaskCreated', 'RemediationTaskAdvanced', 'CandidateBaselineMaterialized', 'ArchitectureChangeDecisionRecorded',
   'MigrationGateRecorded', 'BaselineActivationRecorded', 'InitialDesignProposalRecorded', 'InitialDesignDecisionRecorded',

@@ -1,3 +1,4 @@
+import { validateControlIntentReconcile } from './validation/control-intents.js';
 import { replacementAttemptRefFor } from '../../contracts/handoff.js';
 import { matchesDispatchSelection, comparePendingDispatch } from './dispatch-selection.js';
 import {validateInitialParticipationCommit,validateInitialParticipationState} from './ledger-validation.js';
@@ -599,6 +600,7 @@ export class SqliteStateLedger implements StateLedger {
         return this.commitArchitectureProposalRecord(batch);
       case "control-intent-record":
         return this.commitControlIntentRecord(batch);
+      case 'control-intent-reconcile': return this.commitGeneric(batch);
       case "control-ack":
         return this.commitControlAckRecord(batch);
       case "query-job-start":
@@ -1082,6 +1084,7 @@ export class SqliteStateLedger implements StateLedger {
     if(batch.commitKind === 'architecture-review-delivery') {const rejection=architectureDeliveryStateRejection(batch,ref=>{const r=this.db.prepare("SELECT snapshot_json FROM snapshots WHERE ref_key = ?").get(this.refKey(ref)) as {snapshot_json:string}|undefined;return r?JSON.parse(r.snapshot_json):undefined;});if(rejection)return rejection;}
     if(batch.commitKind === 'architecture-review') { const rejection=architectureReviewStateRejection(batch,ref=>{const r=this.db.prepare("SELECT snapshot_json FROM snapshots WHERE ref_key = ?").get(this.refKey(ref)) as {snapshot_json:string}|undefined;return r?JSON.parse(r.snapshot_json):undefined;},(this.db.prepare("SELECT snapshot_json FROM snapshots").all() as {snapshot_json:string}[]).map(r=>JSON.parse(r.snapshot_json))); if(rejection)return rejection; }
 
+    if (batch.commitKind === 'control-intent-reconcile' && !validateControlIntentReconcile(batch, ref => { const row = this.db.prepare('SELECT snapshot_json FROM snapshots WHERE ref_key = ?').get(this.refKey(ref)) as { snapshot_json: string } | undefined; return row ? JSON.parse(row.snapshot_json) : undefined; })) return { status: 'rejected', code: 'revision_conflict' };
     const currentVersions = this.casConflicts(batch.expectedVersions);
     if (currentVersions.length > 0) {
       return { status: "rejected", code: "revision_conflict", currentVersions };

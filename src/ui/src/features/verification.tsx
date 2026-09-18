@@ -2,7 +2,7 @@ import { Alert, Badge, Box, Button, Group, Paper, Select, Stack, Table, Text, Te
 import { useEffect, useRef, useState } from 'react';
 import { mutationError } from '../api/hooks';
 import type { CheckReportsResponse, ReceiptView } from '../api/types';
-import { EmptyState, ErrorState, FieldRow, LoadingState, RawDetails, UnavailableState } from '../components/states';
+import { EmptyState, ErrorState, FieldRow, LoadingState, RawDetails } from '../components/states';
 import { statusTone, time } from '../format';
 import type { ViewProps } from '../workbench/view-props';
 import { adaptCheckReport, checkVerdict, lifecycleLabels, checkpointLabels } from './check-report';
@@ -120,7 +120,7 @@ export function VerificationView({ api, data, loading, error, goalScope, store, 
       <Box className="panel-body" style={{ minHeight: 0, overflow: 'auto' }}>
         <Stack gap="sm" p="sm">
           {!candidates.length ? <EmptyState title="还没有真实运行" description="命令检查需要一个已完成或正在运行的真实任务。" /> : null}
-          {goalScope && candidates.length ? <VerificationRounds key={scopeKey} api={api} scope={goalScope} runs={candidates} store={store} refresh={refresh} openReport={(targetRun, requestId) => void open(targetRun, requestId)} /> : null}
+          {goalScope && candidates.length ? <VerificationRounds key={scopeKey} api={api} scope={goalScope} runs={candidates} gates={data.graph.status === 'ready' ? data.graph.graph.tasks.filter(task => task.taskKind === 'gate' && task.scope.kind === 'goal' && task.disposition === 'active') : []} store={store} refresh={refresh} openReport={(targetRun, requestId) => void open(targetRun, requestId)} /> : null}
           {goalScope && candidates.length ? <IndependentReviews key={'review-' + scopeKey} api={api} scope={goalScope} runs={candidates} store={store} refresh={refresh} /> : null}
           {candidates.length ? (
             <Paper withBorder p="xs" radius="sm">
@@ -182,15 +182,15 @@ export function VerificationView({ api, data, loading, error, goalScope, store, 
               <FieldRow label="记录状态">{shown.lifecycle}</FieldRow>
               <FieldRow label="持久处理进度">{report?.response.lifecycle ? checkpointLabels[report.response.lifecycle] ?? report.response.lifecycle : '未记录'}</FieldRow>
               {report?.response.recovery ? <Alert color="yellow" variant="light" mt={6} data-testid="check-recovery">{report.response.recovery.reason}</Alert> : null}
-              <FieldRow label="正式检查证据">{report?.response.evidenceAdmission?.status === 'admitted' ? '已登记' : report?.response.evidenceAdmission?.status === 'pending' ? '等待登记回执' : '尚未登记'}</FieldRow>
+              <FieldRow label="单项证据回执">{report?.response.evidenceAdmission?.status === 'admitted' ? '已登记' : report?.response.evidenceAdmission?.status === 'pending' ? '等待登记回执' : '尚无单项回执'}</FieldRow>
               <Group gap="xs" my={6}>
                 {report?.response.lifecycle === 'reconciliation_required' || report?.response.status === 'interrupted' ? <Button size="xs" variant="light" loading={busy} onClick={() => void reconcileOrAdmit('reconcile')} data-testid="reconcile-check">依据原报告对账</Button> : null}
                 {report?.response.lifecycle === 'lease_released' && report.response.observations.length === 1 && report.response.reports[0]?.category === 'tool_check' && report.response.reports[0]?.effects === 'known' && report.response.evidenceAdmission?.status !== 'admitted'
                   ? <Button size="xs" variant="light" loading={busy} onClick={() => void reconcileOrAdmit('admit')} data-testid="admit-check-evidence">将原报告登记为检查证据</Button> : null}
               </Group>
-              <FieldRow label="命令" mono>{shown.command ?? '未记录'}</FieldRow>
+              {shown.reports.some(entry => entry.readonlyReport) ? <FieldRow label="检查方式">只读报告及来源检查</FieldRow> : <FieldRow label="命令" mono>{shown.command ?? '未记录'}</FieldRow>}
               <FieldRow label="检查类型">{shown.kind === 'static' ? '静态检查' : shown.kind === 'dynamic' ? '行为测试' : '未记录'}</FieldRow>
-              <FieldRow label="单次超时">{shown.timeoutMs === null ? '未记录' : shown.timeoutMs + ' ms'}</FieldRow>
+              {!shown.reports.some(entry => entry.readonlyReport) ? <FieldRow label="单次超时">{shown.timeoutMs === null ? '未记录' : shown.timeoutMs + ' ms'}</FieldRow> : null}
               <FieldRow label="开始 / 结束">{time(shown.startedAt)} → {time(shown.finishedAt)}</FieldRow>
               <FieldRow label="记录来源">{report?.runId ?? '—'}</FieldRow>
 
@@ -206,20 +206,28 @@ export function VerificationView({ api, data, loading, error, goalScope, store, 
               {shown.reports.map((entry, index) => (
                 <Stack key={entry.observationId + index} gap={2} mt={8} data-testid={'report-body-' + index}>
                   <Text size="xs" fw={600}>报告正文 · {entry.observationId}</Text>
-                  <FieldRow label="命令" mono>{entry.command}</FieldRow>
+                  {!entry.readonlyReport ? <FieldRow label="命令" mono>{entry.command}</FieldRow> : <FieldRow label="检查方式">核对只读报告及来源</FieldRow>}
                   <FieldRow label="分类">{entry.category}</FieldRow>
                   <FieldRow label="结果">{entry.result}</FieldRow>
-                  <FieldRow label="退出码 / 超时">{entry.exitCode === null ? '未报告退出码' : String(entry.exitCode)}{entry.timedOut ? ' · 超时' : ''}{entry.cancelled ? ' · 已取消' : ''}{entry.signal ? ' · 信号 ' + entry.signal : ''}</FieldRow>
-                  <FieldRow label="来源摘要" mono>{entry.sourceDigest.slice(0, 24)}</FieldRow>
+                  {!entry.readonlyReport ? <FieldRow label="退出码 / 超时">{entry.exitCode === null ? '未报告退出码' : String(entry.exitCode)}{entry.timedOut ? ' · 超时' : ''}{entry.cancelled ? ' · 已取消' : ''}{entry.signal ? ' · 信号 ' + entry.signal : ''}</FieldRow> : null}
+                  <FieldRow label="来源摘要" mono>{entry.sourceDigest}</FieldRow>
                   <FieldRow label="工作区版本">{entry.workspaceRevision === null ? '未记录' : String(entry.workspaceRevision)}</FieldRow>
                   <FieldRow label="计划版本">{entry.planRef ?? '未记录'}</FieldRow>
-                  <FieldRow label="沙箱">{entry.sandboxProfileVersion ?? '未记录'}</FieldRow>
+                  {!entry.readonlyReport ? <FieldRow label="沙箱">{entry.sandboxProfileVersion ?? '未记录'}</FieldRow> : null}
                   <FieldRow label="时间">{time(entry.startedAt)} → {time(entry.endedAt)}</FieldRow>
                   {entry.missing.length ? <Text size="xs" c="yellow">报告缺少字段：{entry.missing.join('、')}（旧记录可能没有该投影）</Text> : null}
+                  {entry.readonlyReport ? <>
+                    <Text size="xs" fw={500}>本次运行的原始报告</Text>
+                    <pre className="report-output" data-testid={'readonly-report-' + index}>{entry.readonlyReport.report ?? '未取得最终报告'}</pre>
+                    <FieldRow label="工作区副作用">{entry.readonlyReport.workspaceEffects}</FieldRow>
+                    {entry.readonlyReport.sourceReads.map((read, i) => <Text size="xs" key={i}>{read.path} · {read.revision} · 行 {read.startLine}–{read.endLine}</Text>)}
+                    <Text size="xs" c="dimmed">这些记录证明报告及来源的检查情况。内容正确性以独立审阅结果为准。</Text>
+                  </> : <>
                   <Text size="xs" fw={500} mt={2}>标准输出{entry.stdoutTruncated ? '（已截断）' : ''}</Text>
                   {entry.stdout ? <pre className="report-output" data-testid={'report-stdout-' + index}>{entry.stdout}</pre> : <Text size="xs" c="dimmed" data-testid={'report-stdout-' + index}>（空）</Text>}
                   <Text size="xs" fw={500} mt={2}>标准错误{entry.stderrTruncated ? '（已截断）' : ''}</Text>
                   {entry.stderr ? <pre className="report-output" data-testid={'report-stderr-' + index}>{entry.stderr}</pre> : <Text size="xs" c="dimmed" data-testid={'report-stderr-' + index}>（空）</Text>}
+                  </>}
                 </Stack>
               ))}
               <RawDetails value={report?.response ?? {}} label="查看原始报告 JSON" />
@@ -236,11 +244,10 @@ export function VerificationView({ api, data, loading, error, goalScope, store, 
             </Paper>
           )) : <Text size="xs" c="dimmed">尚无独立验收记录。模型完成声明不会自动变成通过。</Text>}
 
-          <UnavailableState
-            title="授权返工与重验"
-            reason="独立审阅的阻断问题会保留。范围内的自动返工已接通：验证留下问题 → 生成返工提案 → 在协调策略授权内自动受理成新的计划修订 → 按新修订派发返工任务；这些事实在「返工与问题」与「计划变更」两个视图中查看，本视图不重复。尚缺的是：需要人决定的越界返工没有提交入口；返工后的最新版本还没有自动重新验证与再次归约。"
-            dependencies={['需人决定的返工提交入口', '返工后最新版本的重新验证与再次归约']}
-          />
+          <Paper withBorder p="xs" radius="sm">
+            <Text size="xs" fw={600}>授权返工与重验</Text>
+            <Text size="xs" c="dimmed">阻断问题、返工提案与待处理决定在「返工与问题」和「计划变更」中查看。返工后的检查与审阅须针对最新版本；是否已启动、接纳或完成，以对应轮次、审阅记录和正式归约结果为准。</Text>
+          </Paper>
         </Stack>
       </Box>
     </Stack>

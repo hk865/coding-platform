@@ -1,4 +1,6 @@
+import { createQueryAnswerAuditEntry } from './query-answer-audit-entry.js';
 import { TerminalContinuation } from './scheduling/terminal-continuation.js';
+import { queryJobRefFor } from '../contracts/query-job.js';
 import { DurableWake } from './scheduling/durable-wake.js';
 import { continueRework } from './scheduling/rework-continuation.js';
 import { HandoffRequest } from '../control/dispatch-engine/handoff/handoff-request.js';
@@ -7,6 +9,7 @@ import { DispatchWake } from './scheduling/dispatch-wake.js';
 import { readDispatchBacklog } from '../data/read-model-index/dispatch-backlog-view.js';
 import { ArchitectureReviewEntry } from '../interaction/human-collaboration/architecture-review.js';
 import { architectureReviewView } from '../data/read-model-index/architecture-review-view.js';
+import { OrdinaryPredecessorMaterialCompiler } from '../data/context-compiler/ordinary-predecessor-materials.js';
 import { composeReworkDrive } from '../composition/rework-composition.js';
 import {createProfileMemory,projectMemory,type ProfileMemoryHost} from './memory.js';
 import { CommunicationViewIndex } from '../data/read-model-index/communication-view.js';
@@ -28,6 +31,7 @@ import { OPERATOR_ENTRY_ROLES, OperatorTaskDispatch } from '../control/dispatch-
 import { OperatorPlanningContext } from '../data/context-compiler/operator-planning-context.js';
 import { LedgerScopeCatalog } from '../data/state-ledger/ledger-scope-catalog.js';
 import { InitialPlanningView } from '../data/read-model-index/initial-planning-view.js';
+import { humanActionCaptureCursor, queryHumanActions } from '../data/read-model-index/query-human-actions.js';
 import { PlanCompilerImpl } from '../control/plan-compiler/plan-compiler.js';
 import { CoordinationContextCompiler } from '../data/context-compiler/coordination-context-compiler.js';
 import { QueryExecutionContextCompiler, QuerySourceContextCompiler } from '../data/context-compiler/query-execution-context.js';
@@ -42,6 +46,7 @@ import { QueryWorkspaceSourceReader } from '../data/workspace-reader/query-works
 import { ExplorationSession } from '../interaction/human-collaboration/exploration-session.js';
 import { ExplorationSessionContextCompiler } from '../data/context-compiler/exploration-session-context.js';
 import { ExplorationReportVerifier } from '../control/verification-engine/exploration-report-verifier.js';
+import { ReadonlyReadWitnessReader } from '../data/workspace-reader/readonly-read-witness-reader.js';
 import { ExplorationStartupReconciler } from '../control/control-engine/exploration-startup-reconciliation.js';
 import { VerificationService } from '../control/verification-engine/verification-service.js';
 import { ReworkDriveEngine } from '../control/dispatch-engine/rework-drive.js';
@@ -70,6 +75,8 @@ import type { RunPort } from '../contracts/ports.js';
 import type { RunSnapshot } from '../contracts/dispatch.js';
 import { ConfiguredWorkspaceCapabilityPolicy } from '../control/control-engine/policies/workspace-capability.js';
 type RealOptions = {
+    queryAnswerReviewPolicy?: 'high-risk-v1';
+    runtimeBudget?: (value: unknown, previous?: import('../contracts/runtime-budget.js').RuntimeBudget, fallback?: import('../contracts/runtime-budget.js').RuntimeBudget) => Promise<import('../contracts/runtime-budget.js').RuntimeBudget>;
     reviewerModelMetadata?: import('../contracts/reviewer-context.js').ReviewerModelMetadataPort;
     explorationContextOnlyRoots?: string[];
     clock?: () => string;
@@ -93,7 +100,7 @@ import { SourceGraphContextCompiler } from '../data/context-compiler/source-grap
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createPersistentPlatform, createProductPlatform } from '../composition/persistent-platform.js';
-import { buildBootstrapCommand } from '../contracts/bootstrap.js';
+import { ensureHostBootstrap } from './host-bootstrap.js';
 import { buildInstallCommand, buildActivateCommand } from '../contracts/commands/governance.js';
 import { completionPolicyPinFor, architectureBaselinePinFor } from '../contracts/governance.js';
 import { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1 } from '../fixtures/governance-fixtures.js';
@@ -123,6 +130,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
     let h: Awaited<ReturnType<typeof createPersistentPlatform>>;
     let verifications: VerificationService | undefined;
     const background = new Set<Promise<unknown>>();
+    const applicabilityReads = new Map<AbortController, Promise<void>>();
     let projectionQueue: Promise<unknown> = Promise.resolve();
     const project = () => { const next = projectionQueue.then(() => h.advanceProjection()); projectionQueue = next.catch(() => { }); return next; };
     // 普通真实运行的工作身份与历史材料。两条材料通道各自独立、都在派发准备阶段运行：
@@ -148,10 +156,26 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
     const workspaceCapability = new ConfiguredWorkspaceCapabilityPolicy({ workspaceRead: true, workspaceWrite: true, maxWriteScope: null });
     const queryFixture = new FakeReadOnlyQueryAdapter();
     let memory: ReturnType<typeof projectMemory>;
-    const realQueries = real ? new ReadOnlyQueryRuntime(resolve(dir, 'query-runs'), { materials: new QueryExecutionContextCompiler({ ledger: () => h.ledger, vault: () => h.vault,
-      memory: {select:request=>memory.context.select(request)},now }), rootFor: real.rootFor, bind: runId => real.runtime.bindModel(runId) }) : undefined;
-    const querySources = realQueries && real ? new QuerySourceContextCompiler({ ledger: () => h.ledger, observations: realQueries.observations, source: new QueryWorkspaceSourceReader(real.rootFor) }) : undefined;
+    const queryMaterials = new QueryExecutionContextCompiler({ ledger: () => h.ledger, vault: () => h.vault, memory: {select:request=>memory.context.select(request)},now });
+    const realQueries = real ? new ReadOnlyQueryRuntime(resolve(dir, 'query-runs'), { materials: queryMaterials, rootFor: real.rootFor, bind: runId => real.runtime.bindModel(runId), ...(real.queryAnswerReviewPolicy ? { answerReviewPolicy: real.queryAnswerReviewPolicy } : {}) }) : undefined;
+    const humanActionFacts = async (scope: import('../contracts/query-quality-facts.js').QueryFactScope, signal?: AbortSignal) => {
+      signal?.throwIfAborted();
+      if (!real || !verifications) return queryHumanActions({ ledger: h.ledger }, scope);
+      const cursor = await humanActionCaptureCursor(h.ledger);
+      const before = await verifications.queryFacts(scope, signal);
+      const rework = await reworkDrive.reworkView({ schemaVersion: 1, ...scope });
+      const after = await verifications.queryFacts(scope, signal);
+      return queryHumanActions({ ledger: h.ledger, source: new QueryWorkspaceSourceReader(real.rootFor), rework,
+        reworkWitness: { cursor, verificationStable: ['ready', 'ready-empty'].includes(before.status) && before.version === after.version } }, scope);
+    };
+    const architectureActivation = (scope: import('../contracts/governance-view.js').GovernanceScopeV1) => governanceViews.architectureActivation(scope);
+    const querySources = realQueries && real ? new QuerySourceContextCompiler({ ledger: () => h.ledger, observations: realQueries.observations, architectureActivation, source: new QueryWorkspaceSourceReader(real.rootFor), humanActions: humanActionFacts, verificationFacts: (scope, signal) => { if (!verifications) throw Error('Verification observation unavailable'); return verifications.queryFacts(scope, signal); }, architectureReviews: scope => architectureReviewView(h.ledger, scope) }) : undefined;
     await realQueries?.init();
+    const answerAudits = realQueries && real && querySources ? createQueryAnswerAuditEntry(resolve(dir, 'query-answer-audits'), {
+      job: scope => h.queryJobView(scope), runs: () => realQueries.all(), currentness: (projectId, workspaceId) => querySources.currentness(projectId, workspaceId),
+      materials: queryMaterials, bind: id => real.runtime.bindModel(id),
+    }) : undefined;
+    await answerAudits?.init();
     const readOnlyQuery = { inspectQuery: async (request: Parameters<ReadOnlyQueryRuntime['inspectQuery']>[0]) => realQueries ? realQueries.inspectQuery(request) : { status: 'unavailable' as const, message: 'No durable query runtime is configured.' }, capabilities: (request: Parameters<FakeReadOnlyQueryAdapter['capabilities']>[0]) => realQueries?.capabilities() ?? queryFixture.capabilities(request),
         startQuery: async (request: Parameters<FakeReadOnlyQueryAdapter['startQuery']>[0]) => {
             const job = await h.ledger.load({ aggregateType: 'QueryJob', projectId: request.runRef.projectId, workspaceId: request.runRef.workspaceId, queryJobId: request.runRef.queryJobId });
@@ -172,7 +196,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         capture: (query, signal) => query.sourceSet.kind === 'verification_workspace'
             ? verificationSource!.capture(query, signal) : explorationSource!.capture(query, signal),
     } : undefined;
-    const platformOptions = { dir, runtime, readOnlyQuery, workspaceCapability, ...(sourceApplicability ? { sourceApplicability } : {}),
+    const platformOptions = { dir, runtime, readOnlyQuery, workspaceCapability, ...(real ? { architectureActivation, humanActions: humanActionFacts, verificationFacts: (scope: import('../contracts/query-quality-facts.js').QueryFactScope) => { if (!verifications) throw Error('Verification observation unavailable'); return verifications.queryFacts(scope); } } : {}), ...(sourceApplicability ? { sourceApplicability } : {}),
         // 后继 Run 的准备面与工作区根：接续受理产生的后继在启动前由 Dispatch 从持久事实重建
         // RunSpec 并 preflight/prepare（真实 Runtime 必须先有已登记的 exact runId spec）。
         ...(real ? { initialWorkAssignments:true, runtimePreparation: real.runtime, workspaceRootFor: (projectId: string, workspaceId: string) => real.rootFor(projectId, workspaceId) } : {}),
@@ -199,8 +223,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         return receipt;
     };
     // Seed via public commands, with stable payloads and keys so restart is a replay.
-    const boot = buildBootstrapCommand({ schemaVersion: 1, entries: scopes }, { commandId: 'gui-bootstrap-v1', correlationId: 'gui-bootstrap-v1', submittedAt: '2026-09-07T00:00:00.000Z' });
-    check(await h.bootstrap(boot));
+    await ensureHostBootstrap(h.ledger, command => h.bootstrap(command), scopes);
     memory = projectMemory(h.ledger,profileMemory,now,{vault:h.vault,control:h.control});
     for (const scope of scopes) {
         await installGovernance(scope.projectId);
@@ -214,11 +237,11 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
     const recovery = await runtimeDispatch?.recover(scopes);
     if (recovery?.rejected.length)
         throw Error('运行恢复事实尚未被接纳：' + JSON.stringify(recovery.rejected));
-    const verificationContext = new VerificationContextCompiler({ ledger: h.ledger, vault: h.vault, ...(real ? { runtime: real.runtime.observations, rootFor: real.rootFor, workspaceSource: new CandidateWorkspaceReader(), roundSource: new VerificationWorkspaceReader() } : {}) });
+    const verificationContext = new VerificationContextCompiler({ ledger: h.ledger, vault: h.vault, ...(real ? { runtime: real.runtime.observations, rootFor: real.rootFor, workspaceSource: new CandidateWorkspaceReader(), roundSource: new VerificationWorkspaceReader(), readonlyReads: new ReadonlyReadWitnessReader(real.rootFor), collaborationSource: sourceApplicability! } : {}) });
     const reviewerProfiles = real ? new ReviewerProfileCompiler({ ledger: h.ledger, observations: real.runtime.observations,
         modelMetadata: real.reviewerModelMetadata ?? { current: async () => null } }) : undefined;
     const reviewerContext = real ? new ReviewerContextCompiler({ ledger: h.ledger, vault: h.vault, roundContext: verificationContext,
-        profiles: reviewerProfiles!, source: verificationSource!, observations: real.runtime.observations }) : undefined;
+        profiles: reviewerProfiles!, source: sourceApplicability!, observations: real.runtime.observations }) : undefined;
     const reviewControl = real ? createReviewControlPorts({ ledger: h.ledger, now, eventId: randomUUID }) : undefined;
     const reviewerDispatch = real ? new ReviewerDispatch({ executionSlots: h.executionSlots, ledger: h.ledger,
         // Material grants must be projected before Context opens them. Model permits
@@ -262,6 +285,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         // 后继 Run 的必需材料**只按 admission 固定的集合**取材（固定材料集合规则收窄）：
         // 正常任务运行读到 none（本次不消费任何 Delivery），不是"读不到邮箱"。
         deliveries: new DeliveryMaterialCompiler({ admitted: h.admittedDeliveryRead, vault: h.vault, source: sourceApplicability! }),
+        predecessors: new OrdinaryPredecessorMaterialCompiler({ ledger: h.ledger, vault: h.vault, source: sourceApplicability! }),
         compiler: new WorkRunMaterialCompiler({
             memory: memory.context, now,
             ledger: h.ledger, vault: h.vault, workContext: h.workContext, completedWork: h.completedWork,
@@ -326,9 +350,10 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
       { roleId: OPERATOR_ENTRY_ROLES.develop, purpose: '人工授权的真实运行（/api/real/tasks）' },
       { roleId: OPERATOR_ENTRY_ROLES.explore, purpose: '只读探索运行（/api/real/explorations/run）' },
     ];
+    const governanceViews = new GovernanceReadModel({ ledger: () => h.ledger, defaults: { RoleSpecs: governanceRoleSources }, entryRoles: governanceEntryRoles,
+      policyExplanation: { roleSpecPinReadiness: evaluateRoleSpecPinReadiness } });
     const governance = new GovernanceEntry({
-        views: new GovernanceReadModel({ ledger: () => h.ledger, defaults: { RoleSpecs: governanceRoleSources }, entryRoles: governanceEntryRoles,
-          policyExplanation: { roleSpecPinReadiness: evaluateRoleSpecPinReadiness } }),
+        views: governanceViews,
         ledger: () => h.ledger,
         install: command => h.install(command),
         activate: command => h.activate(command),
@@ -378,7 +403,8 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
             throw new Error(`无效字段：${key}`);
         return value.trim();
     }
-    async function state(input: Record<string, unknown>) {
+    async function state(input: Record<string, unknown>, signal?: AbortSignal) {
+        signal?.throwIfAborted();
         const scope = scopeOf(input);
         await project();
         const goalIds = new Set(await catalog.goals(scope));
@@ -388,7 +414,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         const communication = await new CommunicationViewIndex(h.ledger).view({ ...scope, ...(goalId ? { goalId } : {}) });
         if (!goalId) {
             const empty = { status: 'not_found' as const, observedCursor: h.observedCursor() };
-            return { scope, goalId, goals, communication, summary: await h.consoleSummary(scope), matrix: empty, agents: empty, timeline: await h.consoleTimeline(scope), graph: empty, evidence: [], queries: [], goalStatus: empty, observedCursor: h.observedCursor(), executor: executionCapability.executor, executionCapability, storage: 'SQLite' };
+            return { scope, goalId, goals, applicability: { status: 'not_checked' as const, observedAt: now() }, communication, summary: await h.consoleSummary(scope), matrix: empty, agents: empty, timeline: await h.consoleTimeline(scope), graph: empty, evidence: [], queries: [], goalStatus: empty, observedCursor: h.observedCursor(), executor: executionCapability.executor, executionCapability, storage: 'SQLite' };
         }
         if (!goalIds.has(goalId))
             throw new Error('该工作区中不存在此目标');
@@ -398,13 +424,16 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
             Promise.all([...queryIds].map(queryJobId => h.queryJobView({ ...scope, queryJobId }).then(view => queryRecoveryView(view, readOnlyQuery)))), h.goalStatus({ projectId: scope.projectId, goalId })
         ]);
         const evidence = matrix.status === 'ready' ? await Promise.all(matrix.matrix.rows.map(row => h.consoleTaskEvidence({ ...query, taskId: row.taskId }))) : [];
-        const queryCurrentness = await querySources?.currentness(scope.projectId, scope.workspaceId);
+        signal?.throwIfAborted();
+        const overview = input['view'] === 'overview';
+        const queryCurrentness = overview ? undefined : await querySources?.currentness(scope.projectId, scope.workspaceId, { ...(signal ? { signal } : {}) });
+        signal?.throwIfAborted();
         for (const view of queries)
             if (view.status === 'ready' && view.currentAnswer && queryCurrentness?.get(view.job.queryJobId) === false) {
                 view.stale = true;
                 view.currentAnswer = { ...view.currentAnswer, stale: true, staleReason: 'current_goal_workspace_or_source_changed' };
             }
-        return { scope, goalId, goals, dispatch: await readDispatchBacklog(h.ledger, { projectId: scope.projectId, goalId }, now()), communication, summary, matrix, agents, timeline, graph, evidence, queries, goalStatus, exploration: await explorations?.view({ ...scope, goalId }) ?? null, planning: await initialPlanning?.view({ ...scope, goalId }) ?? [], liveRuns: real?.runtime.all().filter(r => r.spec.projectId === scope.projectId && r.spec.goalId === goalId && agents.status === 'ready' && agents.agents.rows.some(row => row.runRef.runId === r.spec.runId)).map(r => ({ ...r, canonicalStatus: agents.status === 'ready' ? agents.agents.rows.find(row => row.runRef.runId === r.spec.runId)?.runStatus ?? null : null, ...verifications?.forRun({ projectId: r.spec.projectId, workspaceId: r.spec.workspaceId, goalId: r.spec.goalId, runId: r.spec.runId }) })) ?? [], observedCursor: h.observedCursor(), executor: executionCapability.executor, executionCapability, storage: 'SQLite' };
+        return { scope, goalId, goals, applicability: { status: overview ? 'not_checked' as const : 'checked' as const, observedAt: now() }, dispatch: await readDispatchBacklog(h.ledger, { projectId: scope.projectId, goalId }, now()), communication, summary, matrix, agents, timeline, graph, evidence, queries, goalStatus, exploration: await explorations?.view({ ...scope, goalId }) ?? null, planning: await initialPlanning?.view({ ...scope, goalId }) ?? [], liveRuns: real?.runtime.all().filter(r => r.spec.projectId === scope.projectId && r.spec.goalId === goalId && agents.status === 'ready' && agents.agents.rows.some(row => row.runRef.runId === r.spec.runId)).map(r => ({ ...r, canonicalStatus: agents.status === 'ready' ? agents.agents.rows.find(row => row.runRef.runId === r.spec.runId)?.runStatus ?? null : null, ...verifications?.forRun({ projectId: r.spec.projectId, workspaceId: r.spec.workspaceId, goalId: r.spec.goalId, runId: r.spec.runId }) })) ?? [], observedCursor: h.observedCursor(), executor: executionCapability.executor, executionCapability, storage: 'SQLite' };
     }
     function launchRealDrive(scope: Scope, goalId: string, runId: string) {
         if (!runtimeDispatch)
@@ -548,9 +577,13 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
             return governance.install(scope, input);
         if (path === '/api/real/governance/activate')
             return governance.activate(scope, input);
+        if (path.startsWith('/api/real/queries/review/')) {
+            if (!answerAudits) throw Error('回答复核未配置');
+            return answerAudits.action(path, input);
+        }
         if (path === '/api/real/queries/cancel') {
             const queryJobId = required(input, 'queryJobId'), goalId = required(input, 'goalId');
-            const jobRef = { aggregateType: 'QueryJob' as const, ...scope, queryJobId };
+            const jobRef = queryJobRefFor(scope.projectId, scope.workspaceId, queryJobId);
             const loaded = await h.ledger.load(jobRef);
             if (loaded.status !== 'found') throw Error('查询不存在');
             const snapshot = loaded.snapshot as import('../contracts/query-job.js').QueryJobSnapshot;
@@ -583,9 +616,11 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
             }
             if (!real || !realQueries)
                 throw Error('真实查询未配置');
-            const id = required(input, 'requestId'), budget = validateRuntimeBudget(input['budget']);
+            const id = required(input, 'requestId');
             const queryJobId = 'real-query-' + id, runId = queryJobId;
-            const original = await h.ledger.load({ aggregateType: 'QueryJob', ...scope, queryJobId });
+            const original = await h.ledger.load(queryJobRefFor(scope.projectId, scope.workspaceId, queryJobId));
+            const previousBudget = original.status === 'found' ? (original.snapshot as import('../contracts/query-job.js').QueryJobSnapshot).job.intent.execution?.runtimeBudget : undefined;
+            const budget = real.runtimeBudget ? await real.runtimeBudget(input['budget'], previousBudget) : validateRuntimeBudget(input['budget']);
             const submittedAt = original.status === 'found' ? (original.snapshot as import('../contracts/query-job.js').QueryJobSnapshot).job.submittedAt : now();
             const result = check(await h.submitQueryJob({ schemaVersion: 1, commandType: 'SubmitQueryJob', commandId: queryJobId, identity: { projectId: scope.projectId, actor: { kind: 'human', id: 'local-gui' }, idempotencyKey: queryJobId }, aggregateId: queryJobId, expectedRevision: 0, correlationId: queryJobId, submittedAt,
                 payload: { runId, intent: { schemaVersion: 1, intentId: queryJobId, ...scope, goalId, question: required(input, 'question'), focusTaskRefs,
@@ -615,7 +650,10 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
             if (input['references'] !== undefined && !real.resolveReferences)
                 throw Error('文件引用读取未配置');
             const referenceContext = real.resolveReferences ? await real.resolveReferences(scope, input['references']) : '';
-            const result = await initialPlanning.submit({ ...scope, goalId }, input, referenceContext);
+            const prior = await h.ledger.load(queryJobRefFor(scope.projectId, scope.workspaceId, 'real-query-initial-' + required(input, 'requestId')));
+            const previousBudget = prior.status === 'found' ? (prior.snapshot as import('../contracts/query-job.js').QueryJobSnapshot).job.intent.execution?.runtimeBudget : undefined;
+            const budget = real.runtimeBudget ? await real.runtimeBudget(input['budget'], previousBudget) : validateRuntimeBudget(input['budget']);
+            const result = await initialPlanning.submit({ ...scope, goalId }, { ...input, budget }, referenceContext);
             advancePlanning();
             return result;
         }
@@ -635,6 +673,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
             // "谁受理了什么、为什么"。这里没有任何重算，也不存在第二条读取路径。
             return planChanges.view({ projectId: scope.projectId, workspaceId: scope.workspaceId, goalId });
         }
+        if(path==='/api/real/feedback/options') return feedbackDecisionMaterials.options({...scope,goalId},input['answerRef'] as import('../contracts/query-job.js').QueryJobAnswerRef);
         if(path==='/api/real/feedback/choose') {
             if(!feedbackCompiler) throw Error('真实协调未配置');
             const result=await feedbackDecisions.choose({...scope,goalId},input['answerRef'] as import('../contracts/query-job.js').QueryJobAnswerRef,required(input,'optionId'));
@@ -666,7 +705,8 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         }
         if (path.startsWith('/api/real/verifications/reviews/')) {
             if (!verifications || !reviewerProfiles || !reviewerContext) throw Error('独立审阅未配置');
-            const reviewScope = { projectId: scope.projectId, workspaceId: scope.workspaceId, goalId, runId: required(input, 'runId'), taskId: required(input, 'taskId') };
+            if (input['gateSubject'] !== undefined && input['gateSubject'] !== 'goal') throw Error('未知验证对象');
+            const reviewScope = { projectId: scope.projectId, workspaceId: scope.workspaceId, goalId, runId: required(input, 'runId'), taskId: required(input, 'taskId'), ...(input['gateSubject'] === 'goal' ? { gateSubject: 'goal' as const } : {}) };
             if (path.endsWith('/profile')) return reviewerProfiles.current(reviewScope);
             if (path.endsWith('/material')) return verifications.reviewMaterial(reviewScope, required(input, 'roundRequestId'));
             if (path.endsWith('/read')) return verifications.review(reviewScope, required(input, 'requestId'));
@@ -679,7 +719,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
             }
             if (path.endsWith('/recover')) {
                 if (input['allowExecute'] !== true) throw Error('需要明确授权重新受理 Reviewer');
-                const allowed = new Set(['projectId', 'workspaceId', 'goalId', 'runId', 'taskId', 'requestId', 'previousRequestId', 'allowExecute', 'reason']);
+                const allowed = new Set(['projectId', 'workspaceId', 'goalId', 'runId', 'taskId', 'gateSubject', 'requestId', 'previousRequestId', 'allowExecute', 'reason']);
                 if (Object.keys(input).some(key => !allowed.has(key))) throw Error('恢复请求仅接受作用域、原请求、授权标识及原因');
             }
             const result = path.endsWith('/recover')
@@ -696,7 +736,8 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         }
         if (path.startsWith('/api/real/verifications/rounds/')) {
             if (!verifications) throw Error('真实验收未配置');
-            const roundScope = { projectId: scope.projectId, workspaceId: scope.workspaceId, goalId, runId: required(input, 'runId'), taskId: required(input, 'taskId') };
+            if (input['gateSubject'] !== undefined && input['gateSubject'] !== 'goal') throw Error('未知验证对象');
+            const roundScope = { projectId: scope.projectId, workspaceId: scope.workspaceId, goalId, runId: required(input, 'runId'), taskId: required(input, 'taskId'), ...(input['gateSubject'] === 'goal' ? { gateSubject: 'goal' as const } : {}) };
             if (path.endsWith('/read')) return verifications.round(roundScope, required(input, 'requestId'));
             const result = path.endsWith('/start')
                 ? await verifications.startRound(roundScope, input as import('../contracts/verification-round.js').VerificationRoundStartInput)
@@ -742,7 +783,9 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
                 return explorations.review(explorationScope, input);
             if (path === '/api/real/explorations/run') {
                 const contextOnly = real.explorationContextOnlyRoots?.includes(real.rootFor(scope.projectId, scope.workspaceId)) ?? false;
-                const selectedBudget = input['budget'] ?? (contextOnly ? { contextWindowTokens: 1000000, inputTokens: null, outputTokens: null, maxRequests: null, maxToolCalls: null, timeoutMs: null, perResponseTokens: 32768 } : undefined);
+                const prior = real.runtime.all().find(row => row.spec.projectId === scope.projectId && row.spec.workspaceId === scope.workspaceId && row.spec.goalId === goalId && row.spec.runId === 'real-explore-' + input['requestId']);
+                const fallback = contextOnly ? validateRuntimeBudget({ contextWindowTokens: 1000000, perResponseTokens: 32768 }) : undefined;
+                const selectedBudget = real.runtimeBudget ? await real.runtimeBudget(input['budget'], prior?.spec.budget, fallback) : input['budget'] ?? fallback;
                 const prepared = await explorations.prepareRun(explorationScope, input, validateRuntimeBudget(selectedBudget, contextOnly));
                 return operatorDispatch!.dispatch({ spec: prepared.spec, requestId: prepared.requestId });
             }
@@ -760,7 +803,9 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
             if (input['references'] !== undefined && !real.resolveReferences)
                 throw Error('当前服务未配置文件引用解析');
             const instruction = originalInstruction + (real.resolveReferences ? await real.resolveReferences(scope, input['references']) : '');
-            const spec = { ...scope, goalId, runId, taskId, root: real.rootFor(scope.projectId, scope.workspaceId), instruction, budget: validateRuntimeBudget(input['budget'], real.contextOnlyTask?.requestId === id && real.contextOnlyTask.root === real.rootFor(scope.projectId, scope.workspaceId)) };
+            const prior = real.runtime.all().find(row => row.spec.projectId === scope.projectId && row.spec.workspaceId === scope.workspaceId && row.spec.goalId === goalId && row.spec.runId === runId);
+            const budget = real.runtimeBudget ? await real.runtimeBudget(input['budget'], prior?.spec.budget) : validateRuntimeBudget(input['budget']);
+            const spec = { ...scope, goalId, runId, taskId, root: real.rootFor(scope.projectId, scope.workspaceId), instruction, budget };
             return operatorDispatch!.dispatch({ spec, requestId: id });
         }
         if (path === '/api/real/cancel') {
@@ -872,7 +917,31 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
             if (!scopes.some(item => item.projectId === scope.projectId && item.workspaceId === scope.workspaceId))
                 scopes.push({ projectId: scope.projectId, workspaceId: scope.workspaceId });
             await project();
-        }), state: (input: Record<string, unknown>) => serial(() => state(input)), memoryRead: memory.read,memorySourceCurrent:memory.sourceCurrent,
+        }), state: (input: Record<string, unknown>, signal?: AbortSignal) => serial(() => state(input, signal)),
+        queryApplicability: async (input: Record<string, unknown>, signal?: AbortSignal) => {
+            if (closing) throw Error('服务正在关闭');
+            const controller = new AbortController();
+            signal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+            let finish!: () => void;
+            applicabilityReads.set(controller, new Promise<void>(resolve => { finish = resolve; }));
+            try {
+            signal?.throwIfAborted();
+            const scope = scopeOf(input), queryJobId = String(input['queryJobId'] ?? ''), answerId = String(input['answerId'] ?? '');
+            const result = (status: 'current' | 'not_current' | 'stale' | 'unavailable', reason?: string) => ({ status, queryJobId, answerId, observedAt: now(), observedCursor: h.observedCursor(), ...(reason ? { reason } : {}) });
+            const before = await h.queryJobView({ ...scope, queryJobId });
+            signal.throwIfAborted();
+            if (before.status !== 'ready' || before.job.goalId !== input['goalId'] || before.currentAnswer?.answerId !== answerId || !querySources)
+                return result('unavailable', 'The selected answer is not available in this scope.');
+            // This observation does not occupy the state/command serial queue and
+            // never grants permission to publish, execute or accept material.
+            const checked = await querySources.currentness(scope.projectId, scope.workspaceId, { queryJobId, runId: before.currentAnswer.runRef.runId, ...(signal ? { signal } : {}) });
+            signal?.throwIfAborted();
+            const after = await h.queryJobView({ ...scope, queryJobId });
+            signal.throwIfAborted();
+            if (after.status !== 'ready' || canonicalJson(after) !== canonicalJson(before)) return result('stale', 'Answer changed during applicability observation.');
+            return result(checked.get(queryJobId) === true && !after.stale ? 'current' : 'not_current');
+            } finally { applicabilityReads.delete(controller); finish(); }
+        }, memoryRead: memory.read,memorySourceCurrent:memory.sourceCurrent,
         action: (path: string, input: Record<string, unknown>) => {
             if (closing)
                 return Promise.reject(Error('服务正在关闭'));
@@ -898,10 +967,13 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
         },
         close: async () => {
             closing = true;
+            for (const controller of applicabilityReads.keys()) controller.abort(new Error('服务正在关闭'));
+            await Promise.all(applicabilityReads.values());
             if (recoveryTimer) clearInterval(recoveryTimer);
             // Accepted queued actions can still register work. Drain them first,
             // then await derived work without holding the projection queue.
             await serial(async () => { });
+            await answerAudits?.close();
             await realQueries?.close();
             await Promise.all([planningWake.close(), reworkWake.close(), reviewRecoveryWake.close(), terminalContinuation.close()]);
             await dispatchWake.close();
@@ -913,6 +985,7 @@ async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: b
 // Preserve the original two-project ledger. Each added project gets its own store:
 // WorkspaceBootstrap is intentionally an only-if-empty command, not a registry API.
 export async function createGuiService(dir: string, initialScopes: Scope[] = [], real?: RealOptions) {
+    const applicabilityStop = new AbortController();
     const scopes: Scope[] = ['acceptance-alpha', 'acceptance-beta'].map(projectId => ({ projectId, workspaceId: 'workspace-main' }));
     const services = new Map<string, Awaited<ReturnType<typeof createScopedGuiService>>>();
     const profileMemory = await createProfileMemory(dir,async projectId=>services.get(projectId)?.memoryRead({kind:'project',projectId})??{status:'unavailable',reason:'Unknown source project'},real?.clock??(()=>new Date().toISOString()),
@@ -958,9 +1031,14 @@ export async function createGuiService(dir: string, initialScopes: Scope[] = [],
         capability: () => real
             ? { executor: 'coding-agent', source: 'configured-runtime', fixtureEnabled: real.fixtureExecution === true }
             : { executor: 'fixture', source: 'explicit-fixture-service', fixtureEnabled: true },
-        state: (input: Record<string, unknown>) => serviceFor(input).state(input),
+        state: (input: Record<string, unknown>, signal?: AbortSignal) => serviceFor(input).state(input, signal),
+        queryApplicability: async (input: Record<string, unknown>, signal?: AbortSignal) => {
+            applicabilityStop.signal.throwIfAborted();
+            return serviceFor(input).queryApplicability(input, signal ? AbortSignal.any([signal, applicabilityStop.signal]) : applicabilityStop.signal);
+        },
         action: (path: string, input: Record<string, unknown>) => path.startsWith('/api/real/memory/profile/')?profileMemory.action(path,input):serviceFor(input).action(path, input),
         close: async () => {
+            applicabilityStop.abort(new Error('服务正在关闭'));
             await queue;
             for (const service of new Set(services.values()))
                 await service.close();

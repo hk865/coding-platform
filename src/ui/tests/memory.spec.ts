@@ -73,7 +73,7 @@ test('three purposes show different real responses and historical adoption versi
   await page.getByRole('combobox',{name:'适用响应',exact:true}).click();await page.getByRole('option',{name:'架构解释',exact:true}).click();
   await page.getByRole('button',{name:'记住',exact:true}).click();await expect(page.getByText('MEMORY_ARCH_DETAIL_browser: 架构解释详细，其他用途保留原偏好。',{exact:true})).toBeVisible();
   for(const label of ['日常回复','架构解释','进度汇报'])await ask(label);
-  await expect(page.getByText('架构详细：说明模块职责、接口边界和方案取舍。此处是确定性模型见证。',{exact:true})).toBeVisible();
+  await expect(page.getByText('解释：架构详细：说明模块职责、接口边界和方案取舍。此处是确定性模型见证。',{exact:true})).toBeVisible();
   await page.getByRole('button',{name:'刷新采用记录'}).click();
   await expect(page.getByText(/输入采用：用户/)).toHaveCount(6);
   const records=await api(page,'/api/real/queries/runs',scope) as {body:{runs:{input:string}[]}};

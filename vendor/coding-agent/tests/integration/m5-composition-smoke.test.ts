@@ -125,7 +125,7 @@ describe("M5 Composition smoke", () => {
     expect(textRequestId).not.toBe("");
     expect(reasoningRequestId).toBe(textRequestId);
     expect(runtimeConfiguration).toMatchObject({
-      systemPromptVersion: "coding-agent-v3",
+      systemPromptVersion: "coding-agent-v5",
       tools: expect.arrayContaining([
         expect.objectContaining({
           name: "read",

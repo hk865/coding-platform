@@ -126,3 +126,46 @@ it('reports an unreachable Base URL without falling back to another provider', a
   await s.save(input('http://127.0.0.1:1'));
   expect(await s.testConnection()).toMatchObject({ ok: false, code: 'provider_request_failed', configuration: { baseUrl: 'http://127.0.0.1:1' } });
 });
+
+it('persists explicit DeepSeek max through restart and sends it in text and tool HTTP requests', async () => {
+  const dir = await temp(), f = await fixture(), directory = join(dir, 'secret');
+  const s = await createModelSettings(dir, { directory });
+  await s.save({ ...input(f.baseUrl), reasoningEffort: 'max' });
+  const reopened = await createModelSettings(dir, { directory });
+  expect((await reopened.bindRun('max-run')).configuration).toMatchObject({ reasoningEffort: 'max' });
+  expect(await reopened.testConnection()).toMatchObject({ ok: true });
+  expect(f.requests).toHaveLength(2);
+  for (const request of f.requests) expect(request.body).toMatchObject({ thinking: { type: 'enabled' }, reasoning_effort: 'max' });
+  await reopened.save({ ...input(f.baseUrl), apiKey: '' });
+  expect((await reopened.read()).configuration).toMatchObject({ reasoningEffort: 'max' });
+  await expect(reopened.save({ ...input(f.baseUrl), reasoningEffort: 'ultra' })).rejects.toThrow();
+  await expect(reopened.save({ ...input(f.baseUrl), provider: 'openai', reasoningEffort: 'max' })).rejects.toThrow();
+  await reopened.save({ ...input(f.baseUrl), reasoningEffort: null });
+  f.requests.length = 0;
+  expect(await reopened.testConnection()).toMatchObject({ ok: true });
+  expect(f.requests.every(r => !('reasoning_effort' in r.body))).toBe(true);
+});
+
+
+it('uses DeepSeek documented output defaults while preserving explicit and previously admitted capacities', async () => {
+  const dir = await temp(), f = await fixture(), directory = join(dir, 'secret');
+  const s = await createModelSettings(dir, { directory });
+  await s.save({ ...input(f.baseUrl), model: 'deepseek-flash', reasoningEffort: 'max' });
+  const reopened = await createModelSettings(dir, { directory });
+  const max = await reopened.runtimeBudget(undefined);
+  expect(max).toEqual({ contextWindowTokens: 1000000, perResponseTokens: 131072, inputTokens: null, outputTokens: null, maxRequests: null, maxToolCalls: null, timeoutMs: null });
+  expect((await reopened.runtimeBudget({ perResponseTokens: 32768 })).perResponseTokens).toBe(32768);
+  expect((await reopened.runtimeBudget(undefined, { ...max, perResponseTokens: 4096 })).perResponseTokens).toBe(4096);
+  await expect(reopened.runtimeBudget(null)).rejects.toThrow();
+  await expect(reopened.runtimeBudget({ perResponseTokens: null })).rejects.toThrow();
+  const binding = await reopened.bindRun('capacity-wire');
+  for await (const _ of binding.client.stream({ schemaVersion: 1, requestId: 'capacity-wire', runId: 'capacity-wire', systemPrompt: 'test', messages: [{ role: 'user', messageId: 'm', content: 'Reply with 00000000-0000-4000-8000-000000000000' }], tools: [], maxOutputTokens: max.perResponseTokens }, { signal: new AbortController().signal })) { /* consume actual SDK transport */ }
+  expect(f.requests.at(-1)?.body).toMatchObject({ max_tokens: 131072, reasoning_effort: 'max' });
+  await reopened.save({ ...input(f.baseUrl), model: 'deepseek-flash', reasoningEffort: 'high' });
+  expect((await reopened.runtimeBudget(undefined)).perResponseTokens).toBe(65536);
+  await reopened.save({ ...input(f.baseUrl), model: 'deepseek-flash', reasoningEffort: null });
+  expect((await reopened.runtimeBudget(undefined)).perResponseTokens).toBe(65536);
+  await reopened.save({ ...input(f.baseUrl), provider: 'openai', reasoningEffort: null });
+  expect((await reopened.runtimeBudget(undefined)).perResponseTokens).toBe(4096);
+  expect((await reopened.runtimeBudget(undefined, undefined, { ...max, perResponseTokens: 32768 })).perResponseTokens).toBe(32768);
+});

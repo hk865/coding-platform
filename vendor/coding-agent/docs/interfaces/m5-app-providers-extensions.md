@@ -14,6 +14,18 @@ M5 已加入显式多 Provider App 边界：静态 `ProviderRegistry` 首批注�
 - 两家 Adapter 都实现既有 `ModelClientPort`，Provider SDK 类型不会进入 Core；
 - API key 只从当前选择 Provider 的秘密来源取得，不进入 argv、JSON 配置、Session 或 trace。
 
+`ModelRequest.responseFormat` 可选 `{ type: "json_object" }`，缺席时保持原请求格式；
+DeepSeek 映射为 `response_format`，OpenAI Responses 映射为 `text.format`（已安装 SDK 类型约束）。
+该字段可与工具调用同用，不改变 thinking、请求 ID、调用次数、错误或截断语义。
+宿主若选择此格式，应在预算计量和请求授权摘要之前加入；Provider 只映射已声明字段，
+不自行推断 Reviewer 或偷偷启用 JSON。模型仍可能返回空内容或不完整结果，业务报告校验不得放宽。
+
+平台只在独立 Reviewer 的运行装配显式请求 JSON；普通 Coding 和 Query 未启用。
+Reviewer 提示材料仍须包含 JSON 示例，中间工具消息的文本也受当前输出格式约束。
+官方契约：[DeepSeek JSON Output](https://api-docs.deepseek.com/guides/json_mode/)、
+[Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)；
+OpenAI 本地 SDK `ResponseCreateParamsStreaming.text` → `ResponseTextConfig.format` 支持 `ResponseFormatJSONObject`。
+
 ## ToolList
 
 生产 Composition 明确注册并冻结 `read`、`edit`、`shell`。`read` 只读允许；`edit` 和 `shell`

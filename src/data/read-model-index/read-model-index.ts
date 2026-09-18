@@ -346,7 +346,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   private readonly queryAnswers = new Map<string, import("../../contracts/query-job.js").QueryJobAnswerV1[]>();
   private readonly controlIntentIntentRows = new Map<string, ControlIntentProjectionRow[]>();
   /** Material-access: material-access grants in commit order (immutable rows). */
-  private readonly materialAccessGrantRows: import("../../contracts/material-access.js").MaterialAccessGrantRow[] = [];
+  private materialAccessGrantRows: import("../../contracts/material-access.js").MaterialAccessGrantRow[] = [];
 
   // ------------------------------------------------------------------ //
   // Plan-change projection rows (proposal/decision +     //
@@ -450,6 +450,104 @@ export class ReadModelIndexImpl implements ReadModelIndex {
   /** consoleWorkspaceKey(projectId, "") + "\u0000" + projectId -> { snapshot, sourceCursor }. */
   private readonly collaborationActivationRows = new Map<string, { snapshot: ProjectCoordinationPolicyActiveSnapshot; sourceCursor: CommitCursor }>();
 
+  /** Stage one synchronous page without mutating previously returned rows.
+   * All projection containers are explicit; no policy/provider state is copied.
+   * A failed handler restores cursor, dedupe and every projection together. */
+  private stagePage(events: readonly PositionedEvent[]): (failed: boolean) => void {
+    const maps: Map<unknown, unknown>[] = [
+      this.rows,
+      this.planGraphRows,
+      this.taskDetailRows,
+      this.activeAgentRows,
+      this.runKeyIndex,
+      this.planSnapshots,
+      this.verificationRows,
+      this.goalStatusRows,
+      this.goalTimelineRows,
+      this.handoffProvenanceRows,
+      this.workspaceLeaseRows,
+      this.integrationConflictRows,
+      this.workspacePatchRows,
+      this.consolePortfolioEntries,
+      this.consoleSummaryRows,
+      this.consoleTaskReductionPhase,
+      this.consoleGoalPhase,
+      this.workContextBindings,
+      this.queryJobs,
+      this.queryRuns,
+      this.queryAnswers,
+      this.controlIntentIntentRows,
+      this.planChangeProposals,
+      this.planChangeDecisions,
+      this.planChangeGoalRevisions,
+      this.planChangePlanSnapshots,
+      this.workContextNotes,
+      this.consoleMatrixRows,
+      this.consoleAgentRows,
+      this.consoleHandoffMarkers,
+      this.consoleEvidenceProjections,
+      this.consoleTimelineRows,
+      this.consoleTimelineSeq,
+      this.architectureInspectionInspectionRows,
+      this.architectureInspectionFindingRows,
+      this.architectureInspectionBriefRows,
+      this.architectureInspectionProposalRows,
+      this.workContextContinuationRows,
+      this.baselineEvolutionCandidates,
+      this.baselineEvolutionDecisions,
+      this.baselineEvolutionGates,
+      this.baselineEvolutionActivations,
+      this.collaborationProposalRows,
+      this.collaborationDecisionRows,
+      this.collaborationPolicyRows,
+      this.collaborationActivationRows,
+      this.consoleAgentRowSeq,
+      this.consoleAgentArrivalSeq,
+      this.consoleAgentRunIndex,
+      this.consoleTimelineTotal,
+      this.reviewSnapshots,
+    ];
+    // Copy on first access protects both rollback and rows already returned
+    // to callers, without copying unrelated historical projections per page.
+    const cleanups: Array<(failed: boolean) => void> = [];
+    for (const map of maps) {
+      const original = { get: map.get, set: map.set, delete: map.delete, clear: map.clear,
+        values: map.values, entries: map.entries, iterator: map[Symbol.iterator], forEach: map.forEach };
+      const undo = new Map<unknown, { present: boolean; value: unknown }>();
+      const capture = (key: unknown) => { if (!undo.has(key)) undo.set(key, { present: map.has(key), value: original.get.call(map, key) }); };
+      map.get = (key: unknown) => {
+        if (map.has(key) && !undo.has(key)) {
+          const value = structuredClone(original.get.call(map, key));
+          capture(key); original.set.call(map, key, value);
+        }
+        return original.get.call(map, key);
+      };
+      map.set = (key: unknown, value: unknown) => { capture(key); original.set.call(map, key, value); return map; };
+      map.delete = (key: unknown) => { capture(key); return original.delete.call(map, key); };
+      map.clear = () => { for (const key of map.keys()) capture(key); original.clear.call(map); };
+      map.entries = function* () { for (const key of map.keys()) yield [key, map.get(key)] as [unknown, unknown]; return undefined; };
+      map[Symbol.iterator] = map.entries;
+      map.values = function* () { for (const key of map.keys()) yield map.get(key); return undefined; };
+      map.forEach = (callback, thisArg) => { for (const [key, value] of map.entries()) callback.call(thisArg, value, key, map); };
+      cleanups.push(failed => {
+        map.get = original.get; map.set = original.set; map.delete = original.delete; map.clear = original.clear;
+        map.values = original.values; map.entries = original.entries; map[Symbol.iterator] = original.iterator; map.forEach = original.forEach;
+        if (failed) for (const [key, prior] of undo) { if (prior.present) map.set(key, prior.value); else map.delete(key); }
+      });
+    }
+    const grants = this.materialAccessGrantRows, cursor = this.observedCursor;
+    if (events.some(({ event }) => event.eventType === 'MaterialAccessGranted' || event.eventType === 'MaterialAccessRevoked'))
+      this.materialAccessGrantRows = structuredClone(grants);
+    return failed => {
+      for (const cleanup of cleanups) cleanup(failed);
+      if (failed) {
+        this.materialAccessGrantRows = grants;
+        this.observedCursor = cursor;
+        for (const { event } of events) this.appliedEventIds.delete(event.eventId);
+      }
+    };
+  }
+
   async advance(page: EventPage): Promise<ProjectionReceipt> {
     const toApply: PositionedEvent[] = [];
     const appliedEventIds: string[] = [];
@@ -497,6 +595,8 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     }
 
     // Phase 2 — apply validated events, advancing the cursor.
+    const rollback = toApply.length ? this.stagePage(toApply) : undefined;
+    try {
     for (const positioned of toApply) {
       const event = positioned.event;
       for (const snapshot of reviewProjectionChanges(event, this.reviewRecords())) this.reviewSnapshots.set(canonicalJson(snapshot.ref), structuredClone(snapshot));
@@ -584,6 +684,8 @@ export class ReadModelIndexImpl implements ReadModelIndex {
       this.appliedEventIds.add(event.eventId);
       this.observedCursor = positioned.cursor;
     }
+    } catch (error) { rollback?.(true); throw error; }
+    rollback?.(false);
 
     return {
       throughCursor: page.throughCursor,
@@ -1036,7 +1138,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     const key = this.runKeyIndex.get(event.projectId + "\u0000" + event.aggregateId);
     if (!key) return;
     const row = this.activeAgentRows.get(key);
-    if (!row) return;
+    if (!row || row.runRef.runId !== event.aggregateId || row.runRef.projectId !== event.projectId) return;
 
     const updated: ActiveAgentView = {
       ...row,
@@ -1066,7 +1168,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     const key = this.runKeyIndex.get(event.projectId + "\u0000" + event.aggregateId);
     if (!key) return;
     const row = this.activeAgentRows.get(key);
-    if (!row) return;
+    if (!row || row.runRef.runId !== event.aggregateId || row.runRef.projectId !== event.projectId) return;
 
     const rt = event.payload.runtimeEvent;
     // Projection idempotency: never let a replayed/stale runtime event regress the row.
@@ -1109,7 +1211,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     const key = this.runKeyIndex.get(event.projectId + '\u0000' + event.aggregateId);
     if (!key) return;
     const row = this.activeAgentRows.get(key);
-    if (!row) return;
+    if (!row || row.runRef.runId !== event.aggregateId || row.runRef.projectId !== event.projectId) return;
     const updated: ActiveAgentView = { ...row, sourceCursor: cursor,
       run: { ...row.run, status: 'starting', outcome: null, startedAt: null, endedAt: null, sourceCursor: cursor },
       attempt: { ...row.attempt, status: 'claimed', endOutcome: null, startedAt: null, endedAt: null, sourceCursor: cursor } };
@@ -1121,7 +1223,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     const key = this.runKeyIndex.get(event.projectId + "\u0000" + event.aggregateId);
     if (!key) return;
     const row = this.activeAgentRows.get(key);
-    if (!row) return;
+    if (!row || row.runRef.runId !== event.aggregateId || row.runRef.projectId !== event.projectId) return;
 
     const updated: ActiveAgentView = {
       ...row,
@@ -2061,7 +2163,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
     const { work, run, attempt } = event.payload;
     const projectId = event.projectId, workspaceId = event.workspaceId, goalId = work.subject.goalId, taskId = work.subject.taskId;
     const storageKey = this.consoleAgentStorageKey(projectId, workspaceId, goalId, taskId, run.ref.runId);
-    const producer = this.consoleAgentRows.get(this.consoleAgentStorageKey(projectId, workspaceId, goalId, taskId, work.producerRunRef.runId));
+    const producer = this.consoleAgentRows.get(this.consoleAgentStorageKey(projectId, workspaceId, goalId, work.producerAttemptRef.taskId, work.producerRunRef.runId));
     if (!this.consoleAgentRows.has(storageKey)) this.consoleAgentRowSeq.set(storageKey, this.consoleNextAgentSeq(consoleWorkspaceKey(projectId, workspaceId)));
     if (!producer) throw new ProjectionStallError('unsupported_event_type', { observedCursor: cursor });
     const row: import('../../contracts/console-views.js').ActiveAgentRunRow = { projectId, workspaceId, goalId, taskId, work: { kind: 'review', reviewWorkRef: work.ref }, runRef: run.ref, attemptRef: attempt.ref, binding: work.roleBinding, runStatus: 'starting', runOutcome: null, exitCode: null, lastEventSeq: 0, attemptStatus: 'claimed', attemptEndOutcome: null, lease: { ...producer.lease }, startedAt: null, endedAt: null, displayState: 'starting', handoff: null, sourceCursor: cursor };
@@ -2636,7 +2738,7 @@ export class ReadModelIndexImpl implements ReadModelIndex {
 
   // Control-intent combined hook: fold ControlIntentRecorded/SafePointAcknowledged.
   private applyControlIntentEvent(event: DomainEvent, cursor: CommitCursor): void {
-    if (event.eventType !== 'ControlIntentRecorded' && event.eventType !== 'SafePointAcknowledged') return;
+    if (event.eventType !== 'ControlIntentRecorded' && event.eventType !== 'SafePointAcknowledged' && event.eventType !== 'ControlIntentReconciled') return;
     const key = consoleWorkspaceKey(event.projectId, event.workspaceId);
     const change = projectControlIntentEvent(event, cursor, this.controlIntentIntentRows.get(key) ?? []);
     if (change) this.controlIntentIntentRows.set(change.key, change.rows);

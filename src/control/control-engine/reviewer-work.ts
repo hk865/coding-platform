@@ -11,6 +11,7 @@ import type { PlanRevisionSnapshot } from '../../contracts/plan.js';
 import type { BindReviewOutputCommand, ReplaceFailedReviewWorkCommand, ReviewCommandReceipt, ReviewDispatchControlPort, ReviewLifecycleControlPort, ReviewOutputBinding, ReviewResultSnapshot, ReviewWorkSnapshot, TaskReviewProtocolRef, TaskReviewProtocolSnapshot, ValidatedReviewMaterialCommand, ValidatedReviewResultCommand } from '../../contracts/reviewer-work.js';
 import { reviewCommandFingerprint, reviewWorkRefFor } from '../../contracts/reviewer-work.js';
 import type { ReviewMaterialDescriptorV1 } from '../../contracts/reviewer-verification.js';
+import type { TaskReductionSnapshot } from '../../contracts/reduction.js';
 import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
 import { buildCurrentEffectivityAnchor } from './task-reducer.js';
 import { evidenceApplicability, selectEffectiveEvidenceSet } from './policies/evidence.js';
@@ -65,11 +66,33 @@ async function current(reads: Reads, descriptor: ReviewMaterialDescriptorV1) {
   const workspace = await reads.load({ aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId });
   const producer = await reads.load<RunSnapshot>(descriptor.subject.producerRunRef);
   const attempt = await reads.load<TaskAttemptSnapshot>(descriptor.subject.producerAttemptRef);
-  const lease = await reads.load<TaskLeaseSnapshot>(taskLeaseRefFor(scope.projectId, scope.goalId, scope.taskId));
+  const producerTaskId = scope.gateSubject === 'goal' ? descriptor.subject.producerAttemptRef.taskId : scope.taskId;
+  const lease = await reads.load<TaskLeaseSnapshot>(taskLeaseRefFor(scope.projectId, scope.goalId, producerTaskId));
   if (!goal || !plan || !workspace || !producer || !attempt || !lease) throw Error('not_found');
   const task = plan.tasks.find(t => t.taskId === scope.taskId);
-  if (!task || task.taskKind !== 'work' || task.disposition !== 'active' || !same(goal.workspaceRef, workspace.ref) || !same(goal.activePlanRevision, plan.ref) || !same(plan.goalRef, goal.ref) || goal.desiredState !== 'active') throw Error('stale_material');
-  if (!same(identity.scope, scope) || !same(identity.runRef, producer.ref) || !same(producer.task, { projectId: scope.projectId, goalId: scope.goalId, taskId: scope.taskId }) || !same(producer.planRef, plan.ref) || producer.ref.runId !== scope.runId || producer.work || producer.status !== 'ended' || producer.outcome !== 'completed' || producer.exitCode !== 0 || !producer.envelope) throw Error('producer_ineligible');
+  if (!task || (scope.gateSubject === 'goal' ? task.taskKind !== 'gate' || task.scope.kind !== 'goal' : scope.gateSubject !== undefined || task.taskKind !== 'work') || task.disposition !== 'active' || !same(goal.workspaceRef, workspace.ref) || !same(goal.activePlanRevision, plan.ref) || !same(plan.goalRef, goal.ref) || goal.desiredState !== 'active') throw Error('stale_material');
+  if (!same(identity.scope, scope) || !same(identity.runRef, producer.ref) || !same(producer.task, { projectId: scope.projectId, goalId: scope.goalId, taskId: producerTaskId }) || !same(producer.planRef, plan.ref) || producer.ref.runId !== scope.runId || producer.work || producer.status !== 'ended' || producer.outcome !== 'completed' || producer.exitCode !== 0 || !producer.envelope) throw Error('producer_ineligible');
+  if (scope.gateSubject === 'goal') {
+    if (!plan.tasks.some(t => t.taskId === producerTaskId && t.taskKind === 'work' && t.disposition === 'active')) throw Error('producer_ineligible');
+    const predecessors = new Set(plan.tasks.filter(t => t.taskKind === 'work' && t.requirementLevel === 'required' && t.disposition === 'active').map(t => t.taskId));
+    for (const edge of plan.executionDag.dependsOn) if (edge.taskId === task.taskId) predecessors.add(edge.dependsOnId);
+    const anchor = buildCurrentEffectivityAnchor({ plan, workspaceRevision: workspace.revision });
+    for (const taskId of predecessors) {
+      const reduction = await reads.load<TaskReductionSnapshot>({ aggregateType: 'TaskReduction', projectId: scope.projectId, goalId: scope.goalId, taskId });
+      if (reduction?.phase !== 'satisfied' || !same(reduction.currentAnchor, anchor)) throw Error('prerequisite_unsettled');
+      const index = await reads.load<TaskEvidenceIndexSnapshot>(taskEvidenceIndexRefFor(scope.projectId, scope.goalId, taskId));
+      if (!index) throw Error('prerequisite_unsettled');
+      const evidence: EvidenceV1[] = [];
+      for (const id of index.evidenceIds) {
+        const record = await reads.load<EvidenceSnapshot>(evidenceRefFor(scope.projectId, id));
+        if (!record) throw Error('prerequisite_unsettled');
+        evidence.push(record.evidence);
+      }
+      const qualified = await qualifyReviewEvidence(withReviewReadVersions(reads.ledger, reads.versions), plan, { projectId: scope.projectId, goalId: scope.goalId, taskId }, evidence);
+      const current = selectEffectiveEvidenceSet(qualified, plan, anchor);
+      if (Object.keys(current.blockingByRequirement).length || !same(current.effectiveEvidenceIds, reduction.effectiveEvidenceIds)) throw Error('prerequisite_unsettled');
+    }
+  }
   if (lease.holderRunId !== producer.ref.runId || lease.attemptId !== producer.attemptId || attempt.ref.attemptId !== producer.attemptId || attempt.runId !== producer.ref.runId || attempt.status !== 'ended' || !same(attempt.ref, producer.envelope.attemptRef)) throw Error('producer_ineligible');
   if (identity.runRevision !== producer.revision || identity.runDigest !== digest(producer) || identity.goalRevision !== goal.revision || identity.goalDigest !== digest(goal) || identity.planRevision !== plan.planRevision || identity.planDigest !== digest(plan) || identity.taskDigest !== digest(task) || identity.workspaceRevision !== workspace.revision || identity.workspaceDigest !== digest(workspace) || !same(identity.policyPin, plan.effectiveCompletionPolicy) || !same(identity.baselinePin, plan.effectiveArchitectureBaseline)) throw Error('stale_material');
   const index = await reads.load<TaskEvidenceIndexSnapshot>(taskEvidenceIndexRefFor(scope.projectId, scope.goalId, scope.taskId));

@@ -1,6 +1,6 @@
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
 import type { QueryExecutionBindingV1 } from '../../src/contracts/query-job.js';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -9,6 +9,7 @@ import { RuntimeObservationJournal } from '../../src/data/artifact-vault/runtime
 import { CodingAgentRuntime, type RuntimeRecord, type RunSpec, type BoundModel } from '../../src/execution/worker-runtime/coding-agent-runtime.js';
 import { ReadOnlyQueryRuntime, type QueryRuntimeRecord } from '../../src/execution/worker-runtime/read-only-query-runtime.js';
 import { DEFAULT_RUNTIME_BUDGET } from '../../src/contracts/runtime-budget.js';
+import type { ModelClientPort, ModelEvent } from '../../vendor/coding-agent/dist/public-api.js';
 
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -104,7 +105,7 @@ describe('persisted runtime observation journal', () => {
     const spec: RunSpec = { projectId: 'project', workspaceId: 'workspace', goalId: 'goal', taskId: 'task', runId: 'run', root, instruction: 'never started', budget: DEFAULT_RUNTIME_BUDGET };
     await mkdir(join(runs, runtimeKey(spec) + '.json'));
     await expect(runtime.prepare(spec)).rejects.toThrow();
-    expect(runtime.all()).toHaveLength(1);
+    expect(runtime.all()).toHaveLength(0);
     expect(runtime.observations.all()).toEqual([]);
   });
 });
@@ -139,4 +140,43 @@ it('duplicate query preparation is shared and persisted cancellation prevents a 
   await runtime.cancelQuery(request.runRef); release();
   expect((await first).outcome).toBe('failed'); expect(await second).toEqual(await first);
   expect(assemblies).toBe(1); expect(runtime.observations.all()).toEqual([]);
+});
+
+it.each([false, true])('Query public all and inspection never expose an uncommitted final answer (save fails=%s)', async fail => {
+  const dir = await directory(), root = join(dir, 'source'); await mkdir(root);
+  const request = queryRequest();
+  const client: ModelClientPort = { async *stream(input): AsyncIterable<ModelEvent> {
+    yield { schemaVersion: 1, requestId: input.requestId, sequence: 1, type: 'text_delta', delta: 'A bounded observed answer.' };
+    yield { schemaVersion: 1, requestId: input.requestId, sequence: 2, type: 'usage_snapshot', usage: { inputTokens: 10, outputTokens: 5, cachedInputTokens: 0, costUsdMicros: null } };
+    yield { schemaVersion: 1, requestId: input.requestId, sequence: 3, type: 'completed', reason: 'final_answer' };
+  } };
+  const runtime = new ReadOnlyQueryRuntime(join(dir, 'queries'), { materials: { assemble: async () => ({ status: 'ready', input: '{}', kind: 'semantic_query', goalId: null, roleBinding: null,
+    budget: { ...DEFAULT_RUNTIME_BUDGET, contextWindowTokens: 1000000 }, deadline: null }) }, rootFor: () => root,
+    bind: async () => ({ configuration: { revision: 'test', provider: 'deepseek', model: 'test', baseUrl: 'http://unused.invalid' }, client }) });
+  await runtime.init(); cleanup.push(() => runtime.close());
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; }), reached = new Promise<void>(resolve => { entered = resolve; });
+  const save = RuntimeObservationJournal.prototype.save;
+  const spy = vi.spyOn(RuntimeObservationJournal.prototype, 'save').mockImplementation(async function (this: RuntimeObservationJournal<QueryRuntimeRecord>, record: unknown) {
+    const value = record as QueryRuntimeRecord;
+    if (value.runRef?.runId === request.runRef.runId && value.result !== null) { entered(); await gate; if (fail) throw Error('IG11 query final journal failure'); }
+    return save.call(this, record);
+  });
+  const run = runtime.startQuery(request);
+  const settled = run.then(value => ({ value }), error => ({ error }));
+  try {
+    await reached;
+    expect(runtime.all()[0]).toMatchObject({ status: 'running', result: null });
+    expect(await runtime.inspectQuery(request)).toEqual({ status: 'active' });
+    release(); const result = await settled;
+    if (fail) {
+      expect(result).toHaveProperty('error');
+      expect(await runtime.inspectQuery(request)).toMatchObject({ status: 'unavailable' });
+      expect(runtime.all()[0]).toMatchObject({ status: 'running', result: null });
+    } else {
+      expect(result, JSON.stringify(result)).toHaveProperty('value.outcome', 'answered');
+      expect(runtime.all()[0]).toMatchObject({ status: 'completed', result: { answer: 'A bounded observed answer.' } });
+      expect(await runtime.inspectQuery(request)).toMatchObject({ status: 'result' });
+    }
+  } finally { release(); await settled; spy.mockRestore(); }
 });

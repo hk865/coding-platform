@@ -2886,7 +2886,7 @@ export class SqliteReadModelIndex implements ReadModelIndex {
   }
 
   private applyControlIntentEvent(event: DomainEvent, cursor: import("../../contracts/command-event.js").CommitCursor): void {
-    if (event.eventType !== 'ControlIntentRecorded' && event.eventType !== 'SafePointAcknowledged') return;
+    if (event.eventType !== 'ControlIntentRecorded' && event.eventType !== 'SafePointAcknowledged' && event.eventType !== 'ControlIntentReconciled') return;
     const key = consoleWorkspaceKey(event.projectId, event.workspaceId);
     const change = projectControlIntentEvent(event, cursor, this.controlIntentReadRows(key));
     if (change) this.controlIntentWriteRows(change.key, change.rows, change.sourceCursor);

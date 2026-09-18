@@ -37,7 +37,8 @@ for (const backend of ['memory', 'sqlite'] as const) it(`${backend}: lost query 
     const runRef = queryRunRefFor(P108_PROJECT_A, P108_WORKSPACE, 'recover-result', 'recover-run');
     expect(await h.submitQueryJob({ schemaVersion: 1, commandType: 'SubmitQueryJob', commandId: 'recover', identity: { projectId: P108_PROJECT_A, actor: { kind: 'human', id: 'operator' }, idempotencyKey: 'recover' }, aggregateId: jobRef.queryJobId, expectedRevision: 0, correlationId: 'recover', submittedAt: at,
       payload: { runId: runRef.runId, intent: { schemaVersion: 1, intentId: 'recover', projectId: P108_PROJECT_A, workspaceId: P108_WORKSPACE, goalId: P108_GOAL, question: 'Inspect current work', focusTaskRefs: [{ aggregateType: 'Task', projectId: P108_PROJECT_A, goalId: P108_GOAL, taskId: P108_TASK_WORK }], budget: { maxTokens: 1000, deadline: '2026-09-07T00:00:01.000Z' }, multiTurn: { maxRounds: 1 }, correlationId: 'recover' } } })).toMatchObject({ status: 'committed' });
-    expect(await driver().driveQuery({ reason: 'first' })).toMatchObject({ started: 1, answered: 0, failures: [{ code: 'outcome_unknown' }] });
+    const originalDriver = driver();
+    expect(await originalDriver.driveQuery({ reason: 'first' })).toMatchObject({ started: 1, answered: 0, failures: [{ code: 'outcome_unknown' }] });
     const started = await h.ledger.load(runRef);
     expect(started.status).toBe('found');
     if (started.status !== 'found') throw Error('Run missing');
@@ -59,7 +60,9 @@ for (const backend of ['memory', 'sqlite'] as const) it(`${backend}: lost query 
 
     if (persistent) { await persistent.close(); persistent = await persistent.reopen(); h = persistent; }
     observedAt = '2026-09-07T00:00:02.000Z'; // The saved result arrived before the deadline; recovery occurs later.
-    expect(await driver().driveQuery({ reason: 'restart' })).toMatchObject({ started: 0, answered: 1, failures: [] });
+    // In-memory retry also proves an unsuccessful drive releases its local
+    // in-flight guard; the SQLite reopen still uses a new driver instance.
+    expect(await (persistent ? driver() : originalDriver).driveQuery({ reason: 'restart' })).toMatchObject({ started: 0, answered: 1, failures: [] });
     expect(await driver().driveQuery({ reason: 'repeat' })).toMatchObject({ started: 0, answered: 0 });
     expect(calls).toBe(1);
     await h.advanceProjection();

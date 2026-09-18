@@ -737,7 +737,7 @@ describe("Host 工具链（A02/A05/A06/A09）：请求 → 报告 → 订阅 →
         materials:new QueryExecutionContextCompiler({ledger:()=>w.h.ledger,vault:()=>w.h.vault,memory:maintained.context,now:()=>AT}),rootFor:()=>w.root,
         bind:async()=>({configuration:{revision:'local',provider:'deepseek',model:'memory-experience-capture',baseUrl:'http://127.0.0.1'},client:{async *stream(request){
           requests.push(structuredClone(request));
-          yield {schemaVersion:1 as const,requestId:request.requestId,sequence:1,type:'text_delta' as const,delta:'Public planning/progress/handoff explanation; no completion claim.'};
+          yield {schemaVersion:1 as const,requestId:request.requestId,sequence:1,type:'text_delta' as const,delta:JSON.stringify({schemaVersion:1,language:'en',blocks:[{kind:'explanation',text:'Public planning/progress/handoff explanation; no completion claim.',basis:[]}]})};
           yield {schemaVersion:1 as const,requestId:request.requestId,sequence:2,type:'completed' as const,reason:'final_answer' as const};
         }}})});
       await queryRuntime.init();cleanup.push(()=>queryRuntime.close());

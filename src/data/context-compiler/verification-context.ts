@@ -1,4 +1,7 @@
+import { producerCollaborationFacts } from './producer-collaboration-facts.js';
 import { RunOutputFacts } from './run-output-materials.js';
+import { readonlyReportObservation } from './readonly-report-materials.js';
+import type { ReadonlyReadWitnessPort, ReadonlyReportMaterialResult } from '../../contracts/verification-context.js';
 import { reworkPlanIdFor, type ReworkProposalV1 } from '../../contracts/rework/proposal.js';
 import type { VerificationReworkMaterialResult } from '../../contracts/verification-context.js';
 import type { RoleOutputWitnessChannelV1 } from '../../contracts/run-output-materials.js';
@@ -17,6 +20,7 @@ import { governanceContentDigest } from '../../contracts/governance.js';
 import type { CandidateWorkspaceSourcePort } from '../../contracts/verification-source.js';
 import type { ReviewWorkRef, ReviewWorkSnapshot } from '../../contracts/reviewer-work.js';
 import type { ReviewerRuntimeObservations } from '../../contracts/reviewer-context.js';
+import type { TaskReductionSnapshot } from '../../contracts/reduction.js';
 function ensure(value: unknown, message: string): asserts value {
   if (!value)
     throw Error(message);
@@ -47,7 +51,7 @@ function roundEnsure(value: unknown, code: RoundRejectionCode, path: string, mes
 }
 const same = (a: unknown, b: unknown) => canonicalJson(a as JsonValue) === canonicalJson(b as JsonValue);
 const fingerprint = (value: unknown) => sha256Hex(canonicalJson(value as JsonValue));
-const roundScope = (scope: VerificationRoundScope): VerificationRoundScope => ({ ...vScope(scope), taskId: scope.taskId });
+const roundScope = (scope: VerificationRoundScope): VerificationRoundScope => ({ ...vScope(scope), taskId: scope.taskId, ...(scope.gateSubject ? { gateSubject: scope.gateSubject } : {}) });
 export type VerificationContextDeps = {
   ledger: StateLedger;
   vault: Pick<ArtifactPort, 'open'>;
@@ -55,6 +59,8 @@ export type VerificationContextDeps = {
   rootFor?: (projectId: string, workspaceId: string) => string;
   workspaceSource?: CandidateWorkspaceSourcePort;
   roundSource?: VerificationRoundSourcePort;
+  readonlyReads?: ReadonlyReadWitnessPort;
+  collaborationSource?: import('../../contracts/material-access.js').SourceApplicabilityPort;
 };
 /** Select canonical verification facts and exact-source materials; never authorize state changes. */
 export class VerificationContextCompiler implements VerificationContextPort {
@@ -63,6 +69,67 @@ export class VerificationContextCompiler implements VerificationContextPort {
   }
 
   constructor(private readonly deps: VerificationContextDeps) { }
+  async readonlyReport(scope: VerificationRoundScope, expected: VerificationRoundMaterialIdentity): Promise<ReadonlyReportMaterialResult> {
+    const reject = (message: string): ReadonlyReportMaterialResult => ({ status: 'rejected', issues: [message] });
+    if (!this.deps.runtime || !this.deps.readonlyReads) return { status: 'incomplete', missing: ['Public runtime observations and read-revision source reader must be configured'] };
+    try {
+      if (scope.gateSubject) return reject('Readonly report must name its own ordinary Task');
+      if (this.deps.runtime.integrityIssues?.().length) return reject('Public observation identity conflicts require reconciliation');
+      const before = await this.resolveRound(scope, expected);
+      if (before.status !== 'ready') return before.status === 'incomplete' ? { status: 'incomplete', missing: before.missing } : { status: 'rejected', issues: before.issues.map(issue => issue.message) };
+      const current = async () => {
+        const lease = await this.deps.ledger.load({ aggregateType: 'TaskLease', projectId: scope.projectId, goalId: scope.goalId, taskId: scope.taskId });
+        ensure(lease.status === 'found' && lease.snapshot.ref.aggregateType === 'TaskLease' &&
+          (lease.snapshot as import('../../contracts/dispatch.js').TaskLeaseSnapshot).holderRunId === scope.runId, 'Readonly report is not the latest Task Run');
+        const records = this.deps.runtime!.all().filter(record => same(vScope(record.spec), vScope(scope)));
+        ensure(records.length === 1, 'Public observation identity is not unique');
+        const record = records[0]!, run = before.material.run;
+        ensure(record.spec.taskId === scope.taskId && record.spec.mode === undefined && !run.work, 'Readonly report requires an ordinary task observation');
+        ensure(run.workspaceSnapshot.revision === before.material.workspaceRevision, 'Readonly Run workspace version is no longer current');
+        const terminal = record.events?.at(-1);
+        ensure(terminal && same(terminal.runRef, run.ref) && terminal.eventId === run.lastRuntimeEventId && terminal.sequence === run.lastEventSeq,
+          'Public terminal observation does not match canonical Run');
+        return record;
+      };
+      const record = await current(), packet = readonlyReportObservation(record, before.material.sourceDigest);
+      if (packet.status !== 'ready') return packet;
+      // No read capability means no source I/O, independently of later check qualification.
+      if (packet.sourceReads.length && !before.material.run.envelope!.permissions.tools.includes('read')) return reject('Run did not authorize source reading');
+      packet.completeReadPaths = (await this.deps.readonlyReads.assertCurrent(scope, packet.sourceReads)).completeReadPaths;
+      const collaboration = await producerCollaborationFacts(this.deps.ledger, this.deps.collaborationSource, before.material.run);
+      if (collaboration !== undefined) packet.collaborationFacts = collaboration;
+      const after = await this.resolveRound(scope, expected);
+      if (after.status !== 'ready') return after.status === 'incomplete' ? { status: 'incomplete', missing: after.missing } : { status: 'rejected', issues: after.issues.map(issue => issue.message) };
+      if (!same(record, await current())) return reject('Public observation changed during readonly report capture');
+      return packet;
+    } catch (error) { return reject(error instanceof Error ? error.message : 'Readonly report material is unavailable'); }
+  }
+  async goalGatePrerequisites(scope: VerificationRoundScope): Promise<{ taskIds: string[]; digest: string }> {
+    ensure(scope.gateSubject === 'goal', 'Explicit GoalGate scope required');
+    const goalResult = await this.deps.ledger.load({ aggregateType: 'Goal', projectId: scope.projectId, goalId: scope.goalId });
+    ensure(goalResult.status === 'found' && isGoalSnapshot(goalResult.snapshot) && goalResult.snapshot.activePlanRevision, 'Current Goal/Plan unavailable');
+    const goal = goalResult.snapshot;
+    ensure(goal.desiredState === 'active' && goal.workspaceRef.workspaceId === scope.workspaceId, 'Goal is inactive or belongs to another workspace');
+    const planResult = await this.deps.ledger.load(goal.activePlanRevision!);
+    ensure(planResult.status === 'found' && isPlanSnapshot(planResult.snapshot), 'Current Plan unavailable');
+    const plan = planResult.snapshot, task = plan.tasks.find(t => t.taskId === scope.taskId);
+    ensure(task?.taskKind === 'gate' && task.scope.kind === 'goal' && task.disposition === 'active', 'Subject is not an active GoalGate');
+    const predecessors = new Set(plan.tasks.filter(t => t.taskKind === 'work' && t.requirementLevel === 'required' && t.disposition === 'active').map(t => t.taskId));
+    for (const edge of plan.executionDag.dependsOn) if (edge.taskId === scope.taskId) predecessors.add(edge.dependsOnId);
+    const taskIds = [...predecessors].sort(), facts = [];
+    for (const taskId of taskIds) {
+      const subject = { projectId: scope.projectId, goalId: scope.goalId, taskId };
+      facts.push(await this.deps.ledger.load({ aggregateType: 'TaskEvidenceIndex', ...subject }));
+      facts.push(await this.deps.ledger.load({ aggregateType: 'TaskReviewProtocol', ...subject, planId: plan.planId }));
+      const lease = await this.deps.ledger.load({ aggregateType: 'TaskLease', ...subject });
+      facts.push(lease);
+      if (lease.status === 'found' && lease.snapshot.ref.aggregateType === 'TaskLease') {
+        const holder = lease.snapshot as import('../../contracts/dispatch.js').TaskLeaseSnapshot;
+        facts.push(await this.deps.ledger.load({ aggregateType: 'Run', projectId: scope.projectId, goalId: scope.goalId, runId: holder.holderRunId }));
+      }
+    }
+    return { taskIds, digest: fingerprint({ goal, plan, facts }) };
+  }
   async resolveRework(scope: VerificationRoundScope): Promise<VerificationReworkMaterialResult> {
     const proposals: ReworkProposalV1[] = [];
     let cursor: import('../../contracts/command-event.js').CommitCursor | null = null;
@@ -149,6 +216,7 @@ export class VerificationContextCompiler implements VerificationContextPort {
   }
 
   private async roundBasis(scope: VerificationRoundScope, reviewWorkRef?: ReviewWorkRef) {
+    roundEnsure(scope.gateSubject === undefined || scope.gateSubject === 'goal', 'invalid_scope', 'gateSubject', 'Unsupported Gate subject.');
     const observations = this.deps.runtime!.all();
     const matching = observations.filter(record => same(vScope(record.spec), vScope(scope)));
     roundEnsure(matching.length === 1, 'not_found', 'runRef', 'Exactly one persisted runtime observation must match this scope.');
@@ -181,7 +249,7 @@ export class VerificationContextCompiler implements VerificationContextPort {
     }
     roundEnsure(!observations.some(other => other.spec.projectId === scope.projectId && other.spec.workspaceId === scope.workspaceId && ['prepared', 'running', 'outcome_unknown'].includes(other.status) &&
       !(other.spec.goalId === scope.goalId && other.spec.runId === ownReviewRunId && ['prepared', 'running'].includes(other.status))), 'run_unsettled', 'workspaceRef', 'Workspace has an active or unreconciled runtime observation.');
-    if ('taskId' in record.spec) roundEnsure(record.spec.taskId === scope.taskId, 'scope_mismatch', 'taskId', 'Runtime observation belongs to another task.');
+    if ('taskId' in record.spec && !scope.gateSubject) roundEnsure(record.spec.taskId === scope.taskId, 'scope_mismatch', 'taskId', 'Runtime observation belongs to another task.');
 
     const runRef: RunRef = { aggregateType: 'Run', projectId: scope.projectId, goalId: scope.goalId, runId: scope.runId };
     const loadedRun = await this.deps.ledger.load(runRef);
@@ -190,11 +258,13 @@ export class VerificationContextCompiler implements VerificationContextPort {
     const run = loadedRun.snapshot as RunSnapshot;
     roundEnsure(run.status === 'ended' && run.outcome !== null && run.outcome !== 'outcome_unknown' && run.envelope, 'run_unsettled', 'runRef', 'Canonical Run has not ended with a known outcome.');
     const envelope = run.envelope;
+    const producerTaskId = scope.gateSubject ? run.task.taskId : scope.taskId;
+    if (scope.gateSubject) roundEnsure('taskId' in record.spec && record.spec.taskId === producerTaskId && !run.work && run.outcome === 'completed' && run.exitCode === 0, 'scope_mismatch', 'producer', 'GoalGate requires a successful ordinary producer with its actual persisted identity.');
     const expectedOutcome = record.status === 'failed' ? ['failed', 'crashed'] : [record.status];
     roundEnsure(expectedOutcome.includes(run.outcome), 'run_unsettled', 'runRef', 'Persisted runtime and canonical Run outcomes disagree.');
-    roundEnsure(same(run.task, { projectId: scope.projectId, goalId: scope.goalId, taskId: scope.taskId }) &&
-      same(envelope.runRef, runRef) && envelope.projectId === scope.projectId && envelope.workspaceId === scope.workspaceId && envelope.goalId === scope.goalId && envelope.taskId === scope.taskId &&
-      envelope.attemptRef.projectId === scope.projectId && envelope.attemptRef.goalId === scope.goalId && envelope.attemptRef.taskId === scope.taskId && envelope.attemptRef.attemptId === run.attemptId &&
+    roundEnsure(same(run.task, { projectId: scope.projectId, goalId: scope.goalId, taskId: producerTaskId }) &&
+      same(envelope.runRef, runRef) && envelope.projectId === scope.projectId && envelope.workspaceId === scope.workspaceId && envelope.goalId === scope.goalId && envelope.taskId === producerTaskId &&
+      envelope.attemptRef.projectId === scope.projectId && envelope.attemptRef.goalId === scope.goalId && envelope.attemptRef.taskId === producerTaskId && envelope.attemptRef.attemptId === run.attemptId &&
       run.workspaceSnapshot.workspaceId === scope.workspaceId && same(run.workspaceSnapshot, envelope.workspaceSnapshot) && same(run.planRef, envelope.planRef) && same(run.roleBinding, envelope.roleBinding),
     'scope_mismatch', 'envelope', 'Run, task, attempt, workspace and recorded envelope identities must agree.');
 
@@ -219,6 +289,17 @@ export class VerificationContextCompiler implements VerificationContextPort {
     roundEnsure(loadedWorkspace.status === 'found', 'not_found', 'workspaceRef', 'Canonical Workspace was not found.');
     roundEnsure(isWorkspaceSnapshot(loadedWorkspace.snapshot) && same(loadedWorkspace.snapshot.ref, workspaceRef), 'scope_mismatch', 'workspaceRef', 'Canonical Workspace identity does not match.');
     const workspace = loadedWorkspace.snapshot;
+    if (scope.gateSubject) {
+      roundEnsure(task.taskKind === 'gate' && task.scope.kind === 'goal' && goal.desiredState === 'active', 'scope_mismatch', 'gateSubject', 'Explicit GoalGate scope must name an active goal gate.');
+      roundEnsure(plan.tasks.some(t => t.taskId === producerTaskId && t.taskKind === 'work' && t.disposition === 'active'), 'scope_mismatch', 'producer', 'Producer must be ordinary current-plan work.');
+      const predecessors = new Set(plan.tasks.filter(t => t.taskKind === 'work' && t.requirementLevel === 'required' && t.disposition === 'active').map(t => t.taskId));
+      for (const edge of plan.executionDag.dependsOn) if (edge.taskId === task.taskId) predecessors.add(edge.dependsOnId);
+      for (const taskId of predecessors) {
+        const loaded = await this.deps.ledger.load({ aggregateType: 'TaskReduction', projectId: scope.projectId, goalId: scope.goalId, taskId });
+        const reduction = loaded.status === 'found' && loaded.snapshot.ref.aggregateType === 'TaskReduction' ? loaded.snapshot as TaskReductionSnapshot : null;
+        roundEnsure(reduction?.phase === 'satisfied' && same(reduction.planRef, plan.ref) && reduction.currentAnchor.workspaceRevision === workspace.revision && same(reduction.currentAnchor.pinnedCompletionPolicy, plan.effectiveCompletionPolicy) && same(reduction.currentAnchor.pinnedArchitectureBaseline, plan.effectiveArchitectureBaseline), 'run_unsettled', 'predecessors', 'GoalGate prerequisite lacks current satisfied reduction: ' + taskId);
+      }
+    }
     roundEnsure(workspace.revision >= run.workspaceSnapshot.revision, 'stale_material', 'workspaceRevision', 'Workspace predates the canonical Run.');
 
     const policyPin = plan.effectiveCompletionPolicy, baselinePin = plan.effectiveArchitectureBaseline;
@@ -234,6 +315,7 @@ export class VerificationContextCompiler implements VerificationContextPort {
     return {
       run, plan, task, root, policyContent: policy.snapshot.content, baselineContent: baseline.snapshot.content,
       identity: {
+        ...(scope.gateSubject ? { prerequisiteDigest: (await this.goalGatePrerequisites(scope)).digest } : {}),
         schemaVersion: 1 as const, scope, runRef, runRevision: run.revision, runDigest: fingerprint(run),
         planRef: plan.ref, planRevision: plan.planRevision, planDigest: fingerprint(plan), taskDigest: fingerprint(task),
         goalRevision: goal.revision, goalDigest: fingerprint(goal), workspaceRevision: workspace.revision,

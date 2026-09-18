@@ -12,7 +12,7 @@ const verificationRoundFixture = (disposers: typeof cleanup, reviewerRequired = 
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 type Fixture = Awaited<ReturnType<typeof verificationRoundFixture>>;
 const scopeFor = (fixture: Fixture) => ({ ...fixture.scope, runId: fixture.runId, taskId: fixture.taskId });
-const check = (fixture: Fixture, checkId: string, command: string): VerificationRegisteredCheck => ({
+const check = (fixture: Fixture, checkId: string, command: string): Extract<VerificationRegisteredCheck, { command: string }> => ({
   checkId, kind: 'dynamic', command, cwd: '.', timeoutMs: 3000,
   appliesTo: { workspaceId: fixture.scope.workspaceId, taskIds: [fixture.taskId] },
 });

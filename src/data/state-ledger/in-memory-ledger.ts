@@ -1,3 +1,4 @@
+import { validateControlIntentReconcile } from './validation/control-intents.js';
 import { replacementAttemptRefFor } from '../../contracts/handoff.js';
 import { matchesDispatchSelection, comparePendingDispatch } from './dispatch-selection.js';
 import {validateInitialParticipationCommit,validateInitialParticipationState} from './ledger-validation.js';
@@ -252,6 +253,7 @@ export class InMemoryLedger implements StateLedger {
         return this.commitArchitectureProposalRecord(batch);
       case "control-intent-record":
         return this.commitControlIntentRecord(batch);
+      case 'control-intent-reconcile': return this.commitGenericWithIdempotency(batch);
       case "control-ack":
         return this.commitControlAckRecord(batch);
       case "query-job-start":
@@ -937,6 +939,7 @@ export class InMemoryLedger implements StateLedger {
     if(batch.commitKind === 'architecture-review-delivery') {const rejection=architectureDeliveryStateRejection(batch,ref=>this.snapshots.get(this.refKey(ref)));if(rejection)return rejection;}
     if(batch.commitKind === 'architecture-review') { const rejection=architectureReviewStateRejection(batch,ref=>this.snapshots.get(this.refKey(ref)),[...this.snapshots.values()]); if(rejection)return rejection; }
 
+    if (batch.commitKind === 'control-intent-reconcile' && !validateControlIntentReconcile(batch, ref => this.snapshots.get(this.refKey(ref)))) return { status: 'rejected', code: 'revision_conflict' };
     const currentVersions = this.casConflicts(batch.expectedVersions);
     if (currentVersions.length > 0) {
       return { status: "rejected", code: "revision_conflict", currentVersions };

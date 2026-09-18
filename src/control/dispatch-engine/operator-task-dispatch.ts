@@ -52,7 +52,7 @@ export function operatorEntryBinding(mode: RunSpec['mode']): {
 export class OperatorTaskDispatch implements OperatorDispatchPort {
   constructor(private readonly deps: {
     ledger: Pick<StateLedger, 'load'>;
-    control: Pick<ControlEngine, 'claimTask' | 'submitControl' | 'runFact'>;
+    control: Pick<ControlEngine, 'claimTask' | 'submitControl' | 'runFact'> & Partial<Pick<ControlEngine, 'reconcileControlIntent'>>;
     runtime: RuntimePreparationPort & { cancel?(ref: RunRef): Promise<{ status: string; events?: import('../../contracts/dispatch.js').RuntimeEventV1[] }> };
     planning: Pick<OperatorPlanningPort, 'ensureTaskPlan'>;
     launch(scope: ExplorationScope, runId: string): void;
@@ -116,6 +116,18 @@ export class OperatorTaskDispatch implements OperatorDispatchPort {
         aggregateId: runId, expectedRevision: current.snapshot.revision, correlationId: id, submittedAt: event.occurredAt,
         payload: { fact: { kind: 'runtime_event', event } } });
       if (recorded.status !== 'committed') throw Error('Cancellation occurred but its receipt needs reconciliation: ' + recorded.code);
+    }
+    const current = await this.deps.ledger.load(ref);
+    const intentRef = current.status === 'found' ? (current.snapshot as RunSnapshot).controlState?.intentRef : undefined;
+    if (intentRef && this.deps.control.reconcileControlIntent) {
+      const intent = await this.deps.ledger.load(intentRef);
+      if (intent.status === 'found') {
+        const key = 'cancel-reconcile-' + id + '-' + intent.snapshot.revision;
+        const receipt = await this.deps.control.reconcileControlIntent({ schemaVersion: 1, commandType: 'ReconcileControlIntent', commandId: key,
+          identity: { projectId: scope.projectId, actor: { kind: 'system', id: 'dispatch' }, idempotencyKey: key },
+          expectedRevision: intent.snapshot.revision, submittedAt: this.deps.now(), payload: { intentRef } });
+        if (receipt.status === 'rejected') throw Error('Cancellation intent needs reconciliation: ' + receipt.code);
+      }
     }
     return cancelled;
   }

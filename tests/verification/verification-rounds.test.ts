@@ -41,7 +41,7 @@ import {
 const roots: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 const scope: VerificationRoundScope = { projectId: P107_PROJECT, workspaceId: P107_WORKSPACE, goalId: P107_GOAL, taskId: P107_TASK_WRITER_B, runId: 'verification-round-run' };
-const definition = (checkId: string, kind: 'static' | 'dynamic' = 'dynamic', command = 'printf passed'): VerificationRegisteredCheck => ({ checkId, kind, command, cwd: '.', timeoutMs: 3000, appliesTo: { workspaceId: scope.workspaceId, taskIds: [scope.taskId] } });
+const definition = (checkId: string, kind: 'static' | 'dynamic' = 'dynamic', command = 'printf passed'): Extract<VerificationRegisteredCheck, { command: string }> => ({ checkId, kind, command, cwd: '.', timeoutMs: 3000, appliesTo: { workspaceId: scope.workspaceId, taskIds: [scope.taskId] } });
 const request = (...checks: VerificationRegisteredCheck[]): VerificationRoundStartInput => ({ requestId: 'round-request', allowExecute: true, configuration: { checks } });
 const countCommand = (id: string, exit = 0) => 'mkdir -p .cache; printf x >> .cache/' + id + '; exit ' + exit;
 

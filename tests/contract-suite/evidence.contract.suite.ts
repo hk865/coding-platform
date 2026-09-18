@@ -201,6 +201,25 @@ export function defineEvidenceContractSuite(createHarness: P1_04HarnessFactory):
       if (reduce2.status === "committed") expect(reduce2.phase).toBe("blocked");
     });
 
+    it("a full set of stale PASS evidence cannot satisfy the current task", async () => {
+      const { h, sc } = await setup();
+      await runP104ClaimedRun(h, { projectId: sc.alpha.projectId, taskId: IMPLEMENT, runId: 'stale-only-run', attemptId: 'stale-only-attempt' });
+      for (const [kind, coverage] of [['static', covStatic()], ['dynamic', covDynamic()]] as const) {
+        const evidence = evidenceFor(sc.alpha, { evidenceId: 'stale-only-' + kind, kind: 'observation', outcome: 'PASS',
+          taskId: IMPLEMENT, coverage, checkId: kind + '-check', workspaceRevision: 2 });
+        expect(await h.submitEvidence(evidenceCommandFor(sc.alpha, { commandId: 'admit-stale-only-' + kind, evidence }))).toMatchObject({ status: 'committed' });
+      }
+      expect(await h.reduceTask(reduceCommand(sc.alpha, { commandId: 'reduce-stale-only', taskId: IMPLEMENT, expectedRevision: 0 }))).toMatchObject({ status: 'committed', phase: 'verifying' });
+      expect(await h.ledger.load({ aggregateType: 'TaskReduction', projectId: sc.alpha.projectId, goalId: sc.alpha.goalId, taskId: IMPLEMENT }))
+        .toMatchObject({ status: 'found', snapshot: { phase: 'verifying', effectiveEvidenceIds: [], staleEvidenceIds: expect.arrayContaining(['stale-only-static', 'stale-only-dynamic']) } });
+      await h.advanceProjection();
+      const view = await h.taskVerification({ projectId: sc.alpha.projectId, goalId: sc.alpha.goalId, taskId: IMPLEMENT });
+      expect(view.status).toBe('ready');
+      if (view.status !== 'ready') throw Error('verification projection missing');
+      expect(view.verification.evidence).toHaveLength(2);
+      expect(view.verification.evidence.every(item => item.applicability === 'STALE')).toBe(true);
+    });
+
     it("FAIL -> failed (rework); newer PASS supersedes -> satisfied; old FAIL stays auditable", async () => {
       const { h, sc } = await setup();
       await runP104ClaimedRun(h, {

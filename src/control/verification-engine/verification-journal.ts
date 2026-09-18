@@ -51,7 +51,7 @@ export class VerificationJournal {
             check.status = 'interrupted';
           check.finishedAt = check.finishedAt ?? new Date().toISOString();
           check.recovery = {
-            reason: check.progress?.phase === 'report_stored' ? '报告正文已保存；验证结果登记未完成，需对账，未重新执行命令。' : '检查中断；工具副作用和租约状态需对账，未重新执行命令。',
+            reason: check.roundBinding?.definition.mode === 'readonly-report' ? '非命令报告检查中断；只恢复已保存观察，不重新选材或执行运行。' : check.progress?.phase === 'report_stored' ? '报告正文已保存；验证结果登记未完成，需对账，未重新执行命令。' : '检查中断；工具副作用和租约状态需对账，未重新执行命令。',
             commandReplayAllowed: false
           };
           if (check.result)

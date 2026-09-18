@@ -64,3 +64,13 @@ export function parseFeedbackResolution(body: string): FeedbackResolution {
     !v.decision.options.some((o:any)=>o.id===v.decision.recommended) || !bounded(v.decision.reason,2048) || !bounded(v.decision.independentWork,2048))) throw Error('Invalid bounded decision options');
   return v as FeedbackResolution;
 }
+
+/** Read-only command applicability; distinct from the whole answer's freshness.
+ * It grants nothing: submission repeats the exact decision checks. */
+export type FeedbackChoiceView = {
+  answerRef: import('./query-job.js').QueryJobAnswerRef;
+  scope: import('./planning.js').PlanningScope;
+  observedAt: string;
+  availableOptionIds: string[];
+  reason: string | null;
+};

@@ -164,6 +164,8 @@ export type ArchitectureReviewView = {
         reportSummary: string;
         brief: import('./architecture-inspection.js').ArchitectureDecisionBriefV1;
         proposal: import('./architecture-inspection.js').ArchitectureCandidateProposalV1;
+        /** Older readers may omit this observation; omission is not empty. */
+        decisionFacts?: import('./query-quality-facts.js').QueryArchitectureDecisionFacts;
         targets: {
             workId: string;
             mode: 'notify' | 'resume';

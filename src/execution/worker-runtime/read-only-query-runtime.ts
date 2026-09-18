@@ -8,7 +8,10 @@ import { ModelBudget, type MeterEntry, type RuntimeBudget } from './model-budget
 import { runObservedModel } from './observed-model-run.js';
 import type { ReadOnlyQueryPort, ReadOnlyQueryResultV1, QueryRunRef } from '../../contracts/query-job.js';
 import type { QueryExecutionMaterialPort } from '../../contracts/query-execution-context.js';
+import { SEMANTIC_QUERY_ROLE_SKILLS, COORDINATION_JSON_RESPONSE_GUIDE } from '../../contracts/query-execution-context.js';
 import { canonicalJson } from '../../contracts/fingerprint.js';
+import { createQueryFactTool, QueryFactPublicationError } from './query-fact-tool.js';
+import { reviewQueryAnswer, withQueryReviewDefinitions, type QueryReviewRecord } from './query-answer-review.js';
 
 type Request = Parameters<ReadOnlyQueryPort['startQuery']>[0];
 export type QueryRuntimeRecord = {
@@ -19,6 +22,10 @@ export type QueryRuntimeRecord = {
   sourceBefore: string | null; sourceAfter: string | null; result: ReadOnlyQueryResultV1 | null;
   /** Added for new records; old durable results are replayed without execution. */
   deadline?: string | null;
+  factReadVersion?: 1 | 2 | 3 | 4;
+  answerReviewPolicy?: 'high-risk-v1';
+  answerReview?: QueryReviewRecord;
+  responseGuide?: Extract<import('../../contracts/query-execution-context.js').QueryExecutionMaterial, { status: 'ready' }>['responseGuide'];
 };
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
 /** Source witnesses come from successful public tool results, not model text. */
@@ -51,17 +58,18 @@ export class ReadOnlyQueryRuntime implements ReadOnlyQueryPort {
   constructor(private readonly directory: string, private readonly deps: {
     materials: QueryExecutionMaterialPort; rootFor: (projectId: string, workspaceId: string) => string;
     bind: (runId: string) => Promise<BoundModel>;
+    answerReviewPolicy?: 'high-risk-v1';
   }) {
     this.journal = new RuntimeObservationJournal(directory, { keyFor: record => record.id, serialize: record => JSON.stringify(record), writeOrder: 'global' });
     this.observations = this.journal.observations;
   }
   async init() {
     for (const record of await this.journal.init()) {
-      if (record.status === 'running') { record.status = 'outcome_unknown'; await this.save(record); }
+      if (record.status === 'running') { record.status = 'outcome_unknown'; if (record.answerReview?.status === 'running') record.answerReview.status = 'outcome_unknown'; await this.save(record); }
       this.records.set(record.id, record);
     }
   }
-  all() { return structuredClone([...this.records.values()]); }
+  all() { return [...this.records.keys()].flatMap(id => { const record = this.journal.read(id); return record ? [record] : []; }); }
   capabilities() { return { supported: true, readOnly: true as const, maxQuestionBytes: 4096, maxAnswerBytes: 16384 }; }
   async close() { this.closing = true; for (const run of this.active.values()) run.controller.abort('host_shutdown'); await Promise.allSettled([...this.starting.values()].map(run => run.done)); }
   private save(record: QueryRuntimeRecord) {
@@ -115,7 +123,7 @@ export class ReadOnlyQueryRuntime implements ReadOnlyQueryPort {
     if (this.closing || this.cancelled.has(canonicalJson(request.runRef))) return this.failure(request, 'failed', 'Query cancellation was already requested.');
     const { input, budget, kind, goalId, roleBinding, deadline } = material;
     const record: QueryRuntimeRecord = { id, runRef: request.runRef, fingerprint, sessionId: randomUUID(), status: 'running', kind, goalId, roleBinding,
-      input, inputDigest: sha(input), budget, deadline, configuration: null, usage: [], trace: [], sourceBefore: null, sourceAfter: null, result: null };
+      input, inputDigest: sha(input), budget, deadline, ...(this.deps.answerReviewPolicy ? { answerReviewPolicy: this.deps.answerReviewPolicy } : {}), ...(material.responseGuide ? { responseGuide: material.responseGuide } : {}), ...(material.factReadVersion ? { factReadVersion: material.factReadVersion } : {}), configuration: null, usage: [], trace: [], sourceBefore: null, sourceAfter: null, result: null };
     this.records.set(id, record); await this.save(record);
     const controller = new AbortController();
     if (this.closing || this.cancelled.has(canonicalJson(request.runRef))) controller.abort('cancelled');
@@ -138,18 +146,51 @@ export class ReadOnlyQueryRuntime implements ReadOnlyQueryPort {
       const remaining = Math.min(record.budget.timeoutMs ?? Infinity, deadline ? Date.parse(deadline) - Date.now() : Infinity);
       if (remaining <= 0) { controller.abort('deadline'); throw Error('deadline'); }
       if (Number.isFinite(remaining)) timer = setTimeout(() => controller.abort('deadline'), remaining);
+      if ((record.factReadVersion === 2 || record.factReadVersion === 3 || record.factReadVersion === 4) && !this.deps.materials.readFact) throw Error('Required structured Query fact reader is unavailable');
+      const factTool = record.kind === 'semantic_query' && (record.factReadVersion === 1 || record.factReadVersion === 2 || record.factReadVersion === 3 || record.factReadVersion === 4) && this.deps.materials.readFact
+        ? createQueryFactTool(pointer => this.deps.materials.readFact!(request, { inputDigest: record.inputDigest, pointer }), { requireAssertions: record.factReadVersion === 2 || record.factReadVersion === 3, requirePresentation: record.factReadVersion === 3 || record.factReadVersion === 4, requireCitationsForMaterialReads: record.factReadVersion === 4 }) : null;
+      const currentGuide = Object.values(SEMANTIC_QUERY_ROLE_SKILLS).find(g => g.id === record.responseGuide);
+      const roleSkill = currentGuide ?? (record.responseGuide && record.responseGuide !== COORDINATION_JSON_RESPONSE_GUIDE.id
+        ? record.responseGuide === 'semantic-query-adviser-v10' || record.responseGuide === 'semantic-query-scribe-v10' ? (await import('../../contracts/history/query-role-skills-v10.js')).HISTORICAL_ROLE_SKILLS_V10[record.responseGuide === 'semantic-query-adviser-v10' ? 'adviser' : 'scribe'] : record.responseGuide === 'semantic-query-secretary-v10' ? (await import('../../contracts/history/query-secretary-v10.js')).HISTORICAL_SECRETARY_V10 : (await import('../../contracts/history/query-response-guides-v1-v9.js')).historicalQueryGuide(record.responseGuide) : undefined);
       const result = await runObservedModel({ kernel, bound, meter, root, databasePath: join(this.directory, record.id + '.sqlite'), sessionId: record.sessionId,
         input: record.input, budget: record.budget, readOnly: true, signal: controller.signal, deniedPrefixes, processSandboxOptions: {},
+        ...(factTool ? { coordinationTools: { names: ['read_query_fact'], create: () => [factTool.tool] } } : {}),
+        ...(roleSkill ? { systemInstruction: roleSkill.instruction } : {}),
+        ...((record.factReadVersion === 3 || record.factReadVersion === 4) ? { responseFormat: { type: 'json_object' as const } } : {}),
+        ...(record.responseGuide === COORDINATION_JSON_RESPONSE_GUIDE.id ? { systemInstruction: COORDINATION_JSON_RESPONSE_GUIDE.instruction, responseFormat: { type: 'json_object' as const } } : {}),
         publish: async event => { record.trace.push(event); try { await this.save(record); } catch { controller.abort('evidence_write_failed'); } } });
       record.sourceAfter = (await workspace.captureBaseline()).revision;
       if (controller.signal.aborted || result.state.status !== 'completed') throw Error(controller.signal.reason === 'deadline' ? 'deadline' : 'Read-only model run did not complete.');
       const last = record.trace.filter(event => event.type === 'assistant.message_completed').at(-1)?.data as { message?: { content?: string } } | undefined;
-      const answer = last?.message?.content;
+      let answer = last?.message?.content;
       if (!answer?.trim() || Buffer.byteLength(answer) > 16384) throw Error('Query final answer is missing or exceeds the report bound.');
+      let factSources: ReadOnlyQueryResultV1['sources'] = [];
+      let presentation: ReadOnlyQueryResultV1['presentation'];
+      try {
+        if (record.factReadVersion === 3 || record.factReadVersion === 4) {
+          if (!factTool) throw Error('Mixed answer fact reader unavailable');
+          const rendered = await factTool.present(answer);
+          answer = rendered.answer; presentation = rendered.presentation; factSources = rendered.sources;
+          if (Buffer.byteLength(answer) > 16384) throw Error('Rendered answer exceeds report bound');
+          const reviewInput = record.factReadVersion === 3 && record.answerReviewPolicy === 'high-risk-v1' ? factTool.reviewInput(presentation) : null;
+          if (reviewInput && record.sourceBefore === record.sourceAfter) {
+            const review = await reviewQueryAnswer({ input: withQueryReviewDefinitions(reviewInput, record.input), runId: record.id + '-answer-review',
+              client: meter.wrap(bound.client), perResponseTokens: record.budget.perResponseTokens, signal: controller.signal,
+              save: async value => { record.answerReview = structuredClone(value); await this.save(record); } });
+            if (review.status !== 'supported') record.result = this.failure(request, 'gap', `High-risk answer review ${review.status}; no answer was published.`);
+            else factSources = await factTool.sources(answer);
+            record.sourceAfter = (await workspace.captureBaseline()).revision;
+          }
+        } else factSources = factTool ? await factTool.sources(answer) : [];
+      }
+      catch (error) { record.result = this.failure(request, 'gap', error instanceof QueryFactPublicationError
+        ? `Query fact publication rejected (${error.code}${error.marker ? '; ' + error.marker : ''}).`
+        : record.factReadVersion === 3 ? 'Mixed query presentation is invalid or cannot be supported by checked facts.' : 'Cited query facts are missing, changed or no longer authorized.'); }
+      if (controller.signal.aborted) throw Error('Query cancelled before cited facts were published.');
       if (record.sourceBefore !== record.sourceAfter) record.result = this.failure(request, 'gap', 'Source changed during analysis; result is not current.');
-      else record.result = { schemaVersion: 1, runRef: request.runRef, outcome: 'answered', answer, sources: [
+      else if (!record.result) record.result = { schemaVersion: 1, runRef: request.runRef, outcome: 'answered', answer, ...(presentation ? { presentation } : {}), sources: [
         { kind: 'artifact', refKey: request.bundleRef.digest, version: request.bundleRef.digest },
-        { kind: 'workspace_source', refKey: canonicalJson({ projectId: request.runRef.projectId, workspaceId: request.runRef.workspaceId }), version: record.sourceAfter }, ...readWitnesses(record)], message: null, endedAt: new Date().toISOString() };
+        { kind: 'workspace_source', refKey: canonicalJson({ projectId: request.runRef.projectId, workspaceId: request.runRef.workspaceId }), version: record.sourceAfter }, ...readWitnesses(record), ...factSources], message: null, endedAt: new Date().toISOString() };
     } catch (error) { record.result = this.failure(request, controller.signal.reason === 'deadline' ? 'timeout' : 'failed', error instanceof Error ? error.message : 'Read-only run failed.'); }
     finally { if (timer) clearTimeout(timer); }
     record.status = record.result!.outcome === 'answered' ? 'completed' : 'failed'; await this.save(record); return structuredClone(record.result!);

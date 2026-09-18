@@ -7,6 +7,29 @@ import type { RunFactCommand, RunFactReceipt, RunRef, RunSnapshot, RuntimeEventV
 import type { StateLedger } from '../../src/contracts/ledger.js';
 import type { PreparedRunFact } from '../../src/contracts/runtime-preparation.js';
 import { makeCommitCursor } from '../../src/contracts/ledger.js';
+import type { ControlEngine } from '../../src/contracts/modules.js';
+
+it('reconciles the current cancel intent after an in-flight drive reaches its durable terminal fact without restart', async () => {
+  const intentRef = { aggregateType: 'ControlIntent' as const, projectId: ref.projectId, workspaceId: scope.workspaceId, intentId: 'live-cancel' };
+  let terminal = false;
+  let release!: () => void;
+  const barrier = new Promise<void>(resolve => { release = resolve; });
+  const load = vi.fn<StateLedger['load']>().mockImplementation(async target => target.aggregateType === 'Run'
+    ? { status: 'found', snapshot: { ref, revision: terminal ? 5 : 4, status: terminal ? 'ended' : 'running', outcome: terminal ? 'cancelled' : null, controlState: { intentRef } } as RunSnapshot }
+    : { status: 'found', snapshot: { ref: intentRef, revision: 1 } as never });
+  const reconcileControlIntent = vi.fn<NonNullable<ControlEngine['reconcileControlIntent']>>().mockImplementation(async () => {
+    expect(terminal).toBe(true);
+    return { status: 'unchanged', intentRef };
+  });
+  const dispatch = new RuntimeDispatch({ ledger: { load }, control: { runFact: vi.fn(), reconcileControlIntent },
+    outbox: { drive: async () => { await barrier; terminal = true; return { scanned: 1, started: 1, completed: 1, pendingRemaining: 0, failures: [] }; } },
+    runtime: { all: () => [], markUnknown: async () => {} }, now: () => at });
+  const pending = dispatch.drive({ reason: 'live-cancel', runRef: ref });
+  expect(reconcileControlIntent).not.toHaveBeenCalled();
+  release(); await pending;
+  expect(reconcileControlIntent).toHaveBeenCalledTimes(1);
+  expect(reconcileControlIntent.mock.calls[0]![0]).toMatchObject({ expectedRevision: 1, payload: { intentRef } });
+});
 
 const scope = { projectId: 'project', workspaceId: 'workspace' };
 const ref: RunRef = { aggregateType: 'Run', projectId: scope.projectId, goalId: 'goal', runId: 'run' };

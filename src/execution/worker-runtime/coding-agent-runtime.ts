@@ -101,7 +101,7 @@ export class CodingAgentRuntime implements RunPort {
     return this.journal.save(r);
   }
   all() {
-    return [...this.records.values()].sort(compareRecords).map(r => structuredClone(r));
+    return [...this.records.keys()].flatMap(key => { const record = this.journal.read(key); return record ? [record] : []; }).sort(compareRecords);
   }
   async preflight(spec: RunSpec) {
     if (this.closing) throw Error('执行器正在关闭，不能接受新的运行');
@@ -160,12 +160,14 @@ export class CodingAgentRuntime implements RunPort {
     return {
       runRef: envelope.runRef,
       pollFreshEvents: async () => {
-        while (cursor >= r.events.length && this.active.has(key)) await new Promise<void>(resolve => { const active = this.active.get(key); if (active) active.wake = resolve; else resolve(); });
-        const events = r.events.slice(cursor); cursor = r.events.length; return events;
+        while (cursor >= (this.journal.read(key)?.events.length ?? 0) && this.active.has(key)) await new Promise<void>(resolve => { const active = this.active.get(key); if (active) active.wake = resolve; else resolve(); });
+        const committed = this.journal.read(key)?.events ?? [];
+        const events = committed.slice(cursor); cursor = committed.length; return events;
       },
       pollModelRequestEvidence: async () => {
-        const contextInputDigest = r.context?.manifest.inputDigest ?? "";
-        const drafts = r.usage
+        const committed = this.journal.read(key);
+        const contextInputDigest = committed?.context?.manifest.inputDigest ?? "";
+        const drafts = (committed?.usage ?? [])
           .filter(entry => typeof entry.inputDigest === "string" && entry.inputDigest.length === 64)
           .map(entry => ({ requestId: entry.requestId, requestDigest: entry.inputDigest!, contextInputDigest }));
         const fresh = drafts.slice(evidenceCursor);
@@ -188,14 +190,14 @@ export class CodingAgentRuntime implements RunPort {
     return { runRef: envelope.runRef, pollFreshEvents: async () => {
       if (delivered) return [];
       delivered = true;
-      return structuredClone(record.events);
+      return this.journal.read(key)?.events ?? [];
     },
     // 这个句柄只投递"可证明未启动"的失败：没有模型调用，因此没有调用证据可交（空数组）。
     pollModelRequestEvidence: async () => [] };
   }
   async cancel(ref: RunRef) {
     const r = this.records.get(keyFor(ref)); if (!r) throw Error('运行不存在');
-    if (r.status !== 'running' && r.status !== 'prepared') return { status: r.status };
+    if (r.status !== 'running' && r.status !== 'prepared') return { status: this.journal.read(keyFor(ref))?.status ?? 'outcome_unknown' };
     r.cancelRequested = true; await this.save(r);
     if (r.status === 'prepared' && !this.active.has(keyFor(ref)) && r.events.length === 0 && r.trace.length === 0) {
       r.status = 'cancelled'; r.error = '运行在执行前被取消，未调用模型或工具。';
@@ -206,8 +208,13 @@ export class CodingAgentRuntime implements RunPort {
   }
   async close() { this.closing = true; for (const a of this.active.values()) a.controller.abort('server_shutdown'); await Promise.all([...this.active.values()].map(a => a.done)); await this.journal.flush(); }
   private async event(r: RuntimeRecord, envelope: Pick<TaskEnvelopeV1, 'runRef'>, eventType: RuntimeEventV1['eventType'], payload: RuntimeEventV1['payload']) {
-    const sequence = r.events.length + 1; r.events.push({ schemaVersion: 1, eventId: `${r.sessionId}-${sequence}`, runRef: envelope.runRef, sequence, occurredAt: new Date().toISOString(), eventType, payload });
-    await this.save(r); this.active.get(keyFor(r.spec))?.wake?.();
+    const sequence = r.events.length + 1;
+    const event: RuntimeEventV1 = { schemaVersion: 1, eventId: `${r.sessionId}-${sequence}`, runRef: envelope.runRef, sequence, occurredAt: new Date().toISOString(), eventType, payload };
+    // A failed save must not leave an unpublished terminal event in the mutable
+    // record for a subsequent failure/unknown save to accidentally publish.
+    try { await this.save({ ...r, events: [...r.events, event] }); }
+    catch (error) { this.active.get(keyFor(r.spec))?.controller.abort('evidence_write_failed'); throw error; }
+    r.events.push(event); this.active.get(keyFor(r.spec))?.wake?.();
   }
   private async execute(r: RuntimeRecord, envelope: TaskEnvelopeV1, controller: AbortController, context?: RuntimeContextAccess) {
     const readOnly = !envelope.permissions.tools.some(tool => tool === 'write' || tool === 'shell');
@@ -233,7 +240,8 @@ export class CodingAgentRuntime implements RunPort {
       r.context = await assembleRuntimeContext(r.spec, envelope, context); await this.save(r);
       if (context?.modelCalls) await context.modelCalls.bind({ inputDigest: r.context.manifest.inputDigest,
         manifestDigest: createHash('sha256').update(canonicalJson(r.context.manifest as never)).digest('hex'),
-        materialAccessRefs: context.materials?.deliveryGrantRefs ?? [] });
+        materialAccessRefs: context.materials?.deliveryGrantRefs ?? [],
+        ...(context.materials?.additionalMaterialRefs ? { additionalMaterialRefs: context.materials.additionalMaterialRefs } : {}) });
       await assertReviewCurrent();
       if (!readOnly) await mkdir(runtimeDir, { mode: 0o700 });
     } catch (error) {
@@ -292,6 +300,7 @@ export class CodingAgentRuntime implements RunPort {
           },
         }),
         ...(reviewer ? {
+          responseFormat: { type: 'json_object' as const },
           sourceTools: { includeReadSource: true, allowedPath: reviewerSourcePathAllowed, assertCurrent: assertReviewCurrent },
           materialTools: () => createReviewerMaterialTools(reviewer, assertReviewCurrent),
         } : {}),

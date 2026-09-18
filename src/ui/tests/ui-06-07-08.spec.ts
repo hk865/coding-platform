@@ -21,7 +21,9 @@ test.describe('UI-06 检查与报告', () => {
     await expect(page.getByTestId('right-workbench')).toContainText('尚无命令检查记录');
     await expect(page.getByTestId('right-workbench')).toContainText('尚无独立验收记录');
     await expect(page.getByTestId('right-workbench')).toContainText('授权返工与重验');
-    await expect(page.getByTestId('right-workbench')).toContainText('后端未支持');
+    // The help text must not invent a capability outage; absent execution facts above
+    // still prevent checks and reports, while rework status comes from its own records.
+    await expect(page.getByTestId('right-workbench')).not.toContainText('返工后的最新版本还没有自动重新验证');
   });
 });
 
@@ -76,6 +78,11 @@ test.describe('UI-08 模型设置', () => {
     await waitForSynced(page);
     await page.getByTestId('open-settings').click();
     await expect(page.getByTestId('model-name')).toBeVisible();
+    // The shared isolated fixture may contain the memory suite's synthetic key.
+    // Establish this case's no-key premise through the real UI before changing URL.
+    await page.getByRole('button', { name: '清除密钥', exact: true }).click();
+    await expect(page.getByTestId('right-workbench')).toContainText('密钥已清除，后续新连接不能使用旧密钥。');
+    await expect(page.getByTestId('right-workbench')).toContainText('尚未设置密钥');
     await page.getByTestId('model-name').fill('deepseek-chat');
     await page.getByTestId('model-base-url').fill('https://api.deepseek.com');
     await page.getByTestId('save-settings').click();

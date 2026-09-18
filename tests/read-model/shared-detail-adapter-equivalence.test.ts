@@ -60,6 +60,21 @@ describe('shared detail projection adapter equivalence', () => {
       await sqlite.advance(page(events));
       const query = { projectId: P115_PROJECT, workspaceId: P115_WORKSPACE };
       const expected = await memory.unifiedStatusView(query);
+      // Contract oracle is independent of either adapter's projection algorithm.
+      for (const adapter of [memory, sqlite]) {
+        const view = await adapter.unifiedStatusView(query);
+        expect(view.status).toBe('ready');
+        if (view.status !== 'ready') throw new Error('missing committed collaboration facts');
+        expect(view.freshness).toBe(makeCommitCursor(4));
+        expect(view.facts.map(({ kind, revision, stale, sourceCursor }) => ({ kind, revision, stale, sourceCursor }))).toEqual([
+          { kind: 'proposal', revision: 1, stale: false, sourceCursor: makeCommitCursor(1) },
+          { kind: 'decision', revision: 1, stale: false, sourceCursor: makeCommitCursor(2) },
+          { kind: 'baseline', revision: 1, stale: false, sourceCursor: makeCommitCursor(3) },
+          { kind: 'baseline', revision: 1, stale: false, sourceCursor: makeCommitCursor(4) },
+        ]);
+        expect(view.decisions).toEqual([{ decisionId: 'decision-p115-1', outcome: 'accept', summary: '接受包含查询入口的初始设计', stale: false }]);
+        expect(await adapter.unifiedStatusView({ ...query, projectId: 'unauthorized-project' })).toEqual({ status: 'not_found' });
+      }
       expect(await sqlite.unifiedStatusView(query)).toEqual(expected);
       await sqlite.close();
 
@@ -85,8 +100,39 @@ describe('shared detail projection adapter equivalence', () => {
       await expect(sqlite.advance(page(events))).rejects.toThrow('forced projection failure');
       expect(await sqlite.unifiedStatusView({ projectId: P115_PROJECT, workspaceId: P115_WORKSPACE })).toEqual({ status: 'not_found' });
       expect((db.prepare('SELECT COUNT(*) AS count FROM p115_proposal_rows').get() as { count: number }).count).toBe(0);
+      const query = { projectId: P115_PROJECT, workspaceId: P115_WORKSPACE, goalId: 'absent-goal', atLeastCursor: makeCommitCursor(2) };
+      expect(await sqlite.goal(query)).toMatchObject({ status: 'not_ready', observedCursor: null });
+      db.exec('DROP TRIGGER fail_decision_projection');
+      expect((await sqlite.advance(page(events))).appliedEventIds).toEqual(['shared-proposal', 'shared-decision']);
+      expect(await sqlite.goal(query)).toMatchObject({ status: 'not_found', observedCursor: makeCommitCursor(2) });
+      expect(await sqlite.unifiedStatusView({ projectId: P115_PROJECT, workspaceId: P115_WORKSPACE })).toMatchObject({ status: 'ready', freshness: makeCommitCursor(2), decisions: [{ decisionId: 'decision-p115-1', outcome: 'accept' }] });
+      expect((await sqlite.advance(page(events))).appliedEventIds).toEqual([]);
     } finally {
       await sqlite.close();
     }
   });
 });
+
+for(const backend of ['memory','sqlite'] as const){
+ it(`B2 ${backend}: page failure leaves zero partial projection`,async()=>{
+ const adapter=backend==='memory'?new ReadModelIndexImpl(new ControlPolicyExplanation()):createSqliteReadModelIndex({path:':memory:',policyExplanation:new ControlPolicyExplanation()});
+ const events=collaborationEvents().slice(0,2); let clear:()=>void;
+ if(backend==='sqlite'){
+ const db=(adapter as any).db; db.exec("CREATE TRIGGER fail_decision_projection BEFORE INSERT ON p115_decision_rows BEGIN SELECT RAISE(ABORT, 'forced projection failure'); END");
+ clear=()=>db.exec('DROP TRIGGER fail_decision_projection');
+ }else{
+ const original=(adapter as any).applyCollaborationEvent.bind(adapter);
+ (adapter as any).applyCollaborationEvent=(event:any,cursor:any)=>{if(event.eventId==='shared-decision')throw Error('forced projection failure');return original(event,cursor);};
+ clear=()=>{(adapter as any).applyCollaborationEvent=original;};
+ }
+ try{
+ await expect(adapter.advance(page(events))).rejects.toThrow('forced projection failure');
+ const view=await adapter.unifiedStatusView({projectId:P115_PROJECT,workspaceId:P115_WORKSPACE});
+ const freshness=await adapter.goal({projectId:P115_PROJECT,workspaceId:P115_WORKSPACE,goalId:'absent-goal',atLeastCursor:makeCommitCursor(2)});
+ clear();const retry=await adapter.advance(page(events));
+ expect(view).toEqual({status:'not_found'});
+ expect(freshness).toMatchObject({status:'not_ready',observedCursor:null});
+ expect(retry.appliedEventIds).toEqual(['shared-proposal','shared-decision']);
+ }finally{if('close' in adapter)await adapter.close();}
+ });
+}

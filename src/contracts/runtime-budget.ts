@@ -17,6 +17,8 @@ export type RuntimeBudget = { contextWindowTokens: number; inputTokens: number |
  * run-wide budget: a smaller value truncates normal file-writing tool calls.
  */
 export const DEFAULT_RUNTIME_BUDGET: RuntimeBudget = { contextWindowTokens: 128000, inputTokens: null, outputTokens: null, maxRequests: null, maxToolCalls: null, timeoutMs: null, perResponseTokens: 4096 };
+/** Explicit single-call capacity; applies equally to ordinary and read-only work. */
+export const MAX_RESPONSE_TOKENS = 393216;
 /**
  * Normalize an untrusted budget value from the HTTP layer.
  *   - a missing value means "no cumulative limit" (declared capacities only);
@@ -24,11 +26,11 @@ export const DEFAULT_RUNTIME_BUDGET: RuntimeBudget = { contextWindowTokens: 1280
  *     substitutes a hidden default cap;
  *   - declared capacities must be positive and stay within the transport bounds.
  */
-export function validateRuntimeBudget(value: unknown, contextOnlyTask = false): RuntimeBudget {
+export function validateRuntimeBudget(value: unknown, _legacyContextOnlyTask = false): RuntimeBudget {
   if (value === undefined) return { ...DEFAULT_RUNTIME_BUDGET };
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('预算格式错误');
   const b = { ...DEFAULT_RUNTIME_BUDGET, ...value };
-  const max: Record<keyof RuntimeBudget, number> = { contextWindowTokens: 1000000, inputTokens: 25000000, outputTokens: 128000, maxRequests: 128, maxToolCalls: 256, timeoutMs: 900000, perResponseTokens: contextOnlyTask ? 384000 : 8192 };
+  const max: Record<keyof RuntimeBudget, number> = { contextWindowTokens: 1000000, inputTokens: 25000000, outputTokens: 128000, maxRequests: 128, maxToolCalls: 256, timeoutMs: 900000, perResponseTokens: MAX_RESPONSE_TOKENS };
   const optional = new Set<keyof RuntimeBudget>(['inputTokens', 'outputTokens', 'maxRequests', 'maxToolCalls', 'timeoutMs']);
   for (const k of Object.keys(b) as (keyof RuntimeBudget)[]) {
     const v = b[k];

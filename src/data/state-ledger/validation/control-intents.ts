@@ -1,8 +1,31 @@
 /** Internal StateLedger control-intents rules. Both adapters invoke these inside their commit protocol. */
 import { canonicalJson } from "../../../contracts/fingerprint.js";
 import { isKnownEventType } from "../../../contracts/events.js";
-import { CONTROL_INTENT_MAX_ACKS } from "../../../contracts/control-intent.js";
+import { CONTROL_INTENT_MAX_ACKS, foldCancelIntent } from "../../../contracts/control-intent.js";
 import { identityMatchesActor } from './batch-identity.js';
+
+/** Recheck the exact canonical Run and old intent at the storage boundary. */
+export function validateControlIntentReconcile(batch: import('../../../contracts/ledger.js').ControlIntentReconcileLedgerCommitV1,
+  load: (ref: import('../../../contracts/ledger.js').AggregateRef) => import('../../../contracts/ledger.js').AggregateSnapshot | undefined): boolean {
+  if (batch.schemaVersion !== 1 || batch.events.length !== 1 || batch.snapshots.length !== 1 || batch.outboxIntents.length || batch.expectedVersions.length !== 2) return false;
+  const event = batch.events[0], next = batch.snapshots[0];
+  if (event.eventType !== 'ControlIntentReconciled' || event.schemaVersion !== 1 || event.aggregateType !== 'ControlIntent' ||
+      event.actor.kind !== 'system' || batch.identity.actor.kind !== 'system' || next.ref.aggregateType !== 'ControlIntent' ||
+      event.projectId !== next.ref.projectId || event.workspaceId !== next.ref.workspaceId || event.aggregateId !== next.ref.intentId ||
+      event.aggregateRevision !== next.revision || canonicalJson(event.payload.snapshot) !== canonicalJson(next) ||
+      !identityMatchesActor(event.projectId, event.idempotencyKey, event.actor.kind, event.actor.id, batch.identity)) return false;
+  const old = load(next.ref);
+  if (!old || old.ref.aggregateType !== 'ControlIntent') return false;
+  const prior = old as import('../../../contracts/control-intent.js').ControlIntentSnapshot;
+  if (!prior.intent.scope.runRef) return false;
+  const found = load(prior.intent.scope.runRef);
+  if (!found || found.ref.aggregateType !== 'Run') return false;
+  const run = found as import('../../../contracts/dispatch.js').RunSnapshot;
+  const folded = foldCancelIntent(prior, run, event.occurredAt);
+  return !!folded && canonicalJson(folded) === canonicalJson(next) &&
+    batch.expectedVersions.filter(v => canonicalJson(v.ref) === canonicalJson(prior.ref) && v.revision === prior.revision).length === 1 &&
+    batch.expectedVersions.filter(v => canonicalJson(v.ref) === canonicalJson(run.ref) && v.revision === run.revision).length === 1;
+}
 
 // ------------------------------------------------------------------------ //
 // Control-intent commit validators shared by both adapters.              //

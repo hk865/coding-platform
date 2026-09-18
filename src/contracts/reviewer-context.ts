@@ -55,6 +55,8 @@ export interface ReviewerRuntimeObservations {
 }
 export type ReviewerPacketV1 = {
   schemaVersion: 1; kind: 'independent-review-packet';
+  guidanceVersion?: 'collaboration-corroboration-v1';
+  citationCheckVersion?: 'original-pointers-v1';
   workRef: ReviewWorkRef; reviewerRunRef: ReviewWorkSnapshot['reviewerRunRef'];
   descriptorDigest: string; profile: ReviewerProfileV1;
   materialIdentity: VerificationRoundMaterial['identity'];
@@ -92,9 +94,9 @@ export type ReviewerRuntimeAccess = {
   readMaterial(request: ReviewerMaterialPageRequest): Promise<ReviewerMaterialPage>;
 };
 export interface ReviewerContextPort {
-  recovery(workRef: ReviewWorkRef): Promise<ReviewerRecoveryResult>;
+  recovery(workRef: ReviewWorkRef, signal?: AbortSignal): Promise<ReviewerRecoveryResult>;
   inspect(workRef: ReviewWorkRef): Promise<{ work: ReviewWorkSnapshot; run: RunSnapshot; result: ReviewResultSnapshot | null; producerSessionId: string | null; reviewerSessionId: string | null } | null>;
-  current(workRef: ReviewWorkRef): Promise<ReviewerCurrentResult>;
+  current(workRef: ReviewWorkRef, signal?: AbortSignal): Promise<ReviewerCurrentResult>;
   select(workRef: ReviewWorkRef): Promise<ReviewerContextFailure | {
     status: 'ready'; work: ReviewWorkSnapshot; basis: MaterialBasisV1; materials: ArtifactRef[];
   }>;

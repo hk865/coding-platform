@@ -186,7 +186,7 @@ export type PlanGraph = {
   pinnedCompletionPolicy: { ref: { policyId: string; revision: number } };
   pinnedArchitectureBaseline: { ref: { baselineId: string; revision: number } };
   stages: Array<{ stageId: string; title: string }>;
-  tasks: Array<{ taskId: string; title: string; taskKind: string; stageId: string | null; requirementLevel: string }>;
+  tasks: Array<{ taskId: string; title: string; taskKind: string; stageId: string | null; requirementLevel: string; scope: { kind: string }; disposition: string }>;
   taskHierarchy: { parentOf: Array<{ parentTaskId: string; childTaskId: string }> };
   executionDag: { dependsOn: Array<{ taskId: string; dependsOnId: string; requires: { kind: string; label: string } }> };
   sourceCursor: string;
@@ -203,7 +203,7 @@ export type QueryJob = {
   goalId: string;
   submittedAt: string;
   closeReason: { code?: string; message?: string } | null;
-  intent: { question: string; focusTaskRefs: Array<{ taskId: string }>; execution?: { kind: string; feedback?: import('../../../contracts/execution-feedback.js').FeedbackSource } };
+  intent: { question: string; focusTaskRefs: Array<{ taskId: string }>; execution?: { kind: string; responsePurpose?: import('../../../contracts/memory.js').MemoryPurpose; feedback?: import('../../../contracts/execution-feedback.js').FeedbackSource } };
 };
 
 export type QueryJobView = {
@@ -339,6 +339,7 @@ export type ExplorationView = {
 };
 
 export type GuiState = {
+  applicability?: { status: 'not_checked'; observedAt: string };
   dispatch?: import('../../../contracts/dispatch-backlog.js').DispatchBacklogView;
   communication?: import('../../../contracts/communication-view.js').CommunicationViewResult;
   scope: Scope;
@@ -363,6 +364,16 @@ export type GuiState = {
   storage: string;
 };
 
+/** An observation for one exact answer, never an authorization to act. */
+export type QueryApplicability = {
+  status: 'current' | 'not_current' | 'stale' | 'unavailable';
+  observedAt: string;
+  answerId: string;
+  queryJobId: string;
+  observedCursor: string;
+  reason?: string;
+};
+
 export type FileEntry = { name: string; path: string; kind: 'directory' | 'file' | 'link' };
 export type DirectoryListing = { root: string; path: string; entries: FileEntry[]; truncated: boolean };
 export type FilePreview =
@@ -371,7 +382,7 @@ export type FilePreview =
 export type TerminalSession = { id: string; cwd: string; createdAt: string; status: 'running' | 'exited'; exitCode: number | null; cols: number; rows: number };
 export type TerminalOutput = TerminalSession & { chunks: Array<{ seq: number; data: string; cols: number; rows: number }>; through: number; truncated: boolean };
 
-export type ModelConfiguration = { revision: string; provider: string; model: string; baseUrl: string; protocol: string; updatedAt: string };
+export type ModelConfiguration = { reasoningEffort?: 'low' | 'high' | 'max'; revision: string; provider: string; model: string; baseUrl: string; protocol: string; updatedAt: string };
 export type ModelSettingsView = {
   configuration: ModelConfiguration | null;
   keyConfigured: boolean;
@@ -408,13 +419,14 @@ export type CommandCheckReportBody = {
     changeScope: { diffClass: string; changedFiles: string[]; writeSummary: string };
   };
   sourceDigest: string;
-  definition: { checkId: string; kind: 'static' | 'dynamic' | string; command: string; cwd: string; timeoutMs: number };
+  definition: { checkId: string; kind: 'static' | 'dynamic' | string; mode?: 'command' | 'readonly-report'; command?: string; cwd?: string; timeoutMs?: number; requiredReadPaths?: string[] };
   startedAt: string;
   endedAt: string;
   category: string;
   result: 'PASS' | 'FAIL' | 'INCONCLUSIVE' | string;
-  execution: CommandExecution | null;
+  execution?: CommandExecution | null;
   effects?: 'known' | 'unknown' | 'not_started';
+  readonlyReport?: import('../../../contracts/verification-context.js').VerificationReadonlyReportObservation;
 };
 
 /** POST /api/real/verifications/check-report — record projection + persisted reports. */
@@ -443,7 +455,7 @@ export type ReceiptView = {
   runStatus: string | null;
   runtimeStatus: string | null;
   check: { runId: string; status: string; command: string | null; kind: string | null; timeoutMs: number | null; startedAt: string | null; finishedAt: string | null } | null;
-  round?: { runId: string; taskId: string; status: string; roundId: string; requestId: string } | null;
+  round?: { runId: string; taskId: string; gateSubject?: 'goal'; status: string; roundId: string; requestId: string } | null;
   review?: import('../../../contracts/reviewer-verification.js').ReviewReceipt | null;
   observedAt: string;
 };

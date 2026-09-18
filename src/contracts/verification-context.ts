@@ -1,6 +1,6 @@
 import type { RunOutputMaterialPort } from './run-output-materials.js';
 import type { ArtifactOpenResult, ArtifactRef } from './artifact.js';
-import type { RunRef, RunSnapshot } from './dispatch.js';
+import type { RunRef, RunSnapshot, RuntimeEventV1 } from './dispatch.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from './plan.js';
 import type { CompletionPolicyContentV1, CompletionPolicyResolution, ArchitectureBaselineResolution, ArchitectureBaselineContentV1, CompletionPolicyPin } from './governance.js';
 import type { PatchRecordSnapshot } from './patch.js';
@@ -26,10 +26,25 @@ type VerificationRunMaterial = {
 /** Public runtime facts only; Context does not inspect a concrete runtime record. */
 export interface VerificationRuntimeFacts {
   all(): Array<{
-    spec: VerificationScope;
+    spec: VerificationScope & { taskId?: string; mode?: string };
     status: string;
+    events?: RuntimeEventV1[];
+    trace?: unknown[];
   }>;
+  integrityIssues?(): string[];
 }
+export type ReadonlySourceRead = { path: string; revision: string; startLine: number; endLine: number; callId: string };
+export interface ReadonlyReadWitnessPort {
+  assertCurrent(scope: VerificationScope, reads: readonly ReadonlySourceRead[]): Promise<{ completeReadPaths: string[] }>;
+}
+/** Source-bound observations only. A ready packet is not a check verdict. */
+export type ReadonlyReportMaterialResult =
+  | { status: 'ready'; report: string | null; sourceReads: ReadonlySourceRead[]; completeReadPaths: string[]; observedTools: string[];
+      workspaceEffects: 'none' | 'changed' | 'unknown'; sourceDigest: string; observationDigest: string; collaborationFacts?: import('./fingerprint.js').JsonValue }
+  | { status: 'incomplete'; missing: string[] }
+  | { status: 'rejected'; issues: string[] };
+export type VerificationReadonlyReportResult = ReadonlyReportMaterialResult;
+export type VerificationReadonlyReportObservation = Extract<ReadonlyReportMaterialResult, { status: 'ready' }>;
 export interface VerificationContextPort extends RunOutputMaterialPort {
   resolveVerification(request: VerificationRequestV1): Promise<VerificationMaterialResult>;
   run(scope: VerificationScope): Promise<VerificationRunMaterial>;
@@ -50,6 +65,8 @@ export interface VerificationContextPort extends RunOutputMaterialPort {
   workspaceDigest(scope: VerificationScope): Promise<string>;
   resolveRound(scope: VerificationRoundScope, expected?: VerificationRoundMaterialIdentity): Promise<VerificationRoundMaterialResult>;
   resolveRework?(scope: VerificationRoundScope): Promise<VerificationReworkMaterialResult>;
+  goalGatePrerequisites?(scope: VerificationRoundScope): Promise<{ taskIds: string[]; digest: string }>;
+  readonlyReport?(scope: VerificationRoundScope, expected: VerificationRoundMaterialIdentity): Promise<ReadonlyReportMaterialResult>;
 }
 
 export type VerificationReworkMaterialResult = Exclude<VerificationRoundMaterialResult, { status: 'ready' }> | { status: 'not_rework' } | {
@@ -59,7 +76,7 @@ export type VerificationReworkMaterialResult = Exclude<VerificationRoundMaterial
   issues: import('./rework/issues.js').ReworkIssueV1[];
 };
 
-export type VerificationRoundScope = VerificationScope & { taskId: string };
+export type VerificationRoundScope = VerificationScope & { taskId: string; gateSubject?: 'goal' };
 /** The comparison is explicit. Neither variant proves the Run's before-state. */
 export type VerificationRoundSourceProof =
   | { kind: 'git-head-worktree'; baseCommit: string; changedFiles: string[]; comparison: 'current-head-to-worktree'; runBaselineKnown: false }
@@ -77,6 +94,7 @@ export interface VerificationRoundSourcePort {
 
 /** Versioned canonical and filesystem identities, rechecked before every use. */
 export type VerificationRoundMaterialIdentity = {
+  prerequisiteDigest?: string;
   schemaVersion: 1;
   scope: VerificationRoundScope;
   runRef: RunRef;

@@ -42,8 +42,11 @@ it('leaves every cumulative limit unset unless the operator configures it', () =
   expect(validateRuntimeBudget(limits, true)).toMatchObject(limits);
   // Declared capacities stay bounded and unknown keys are still rejected.
   for (const value of [{ contextWindowTokens: null }, { inputTokens: -1 }, { unknown: null }, { perResponseTokens: 999999 }, { timeoutMs: 0 }]) expect(() => validateRuntimeBudget(value)).toThrow();
-  // The explicitly scoped task only widens the single-response capacity, never a cumulative one.
-  expect(() => validateRuntimeBudget({ perResponseTokens: 32768 })).toThrow();
+  // Explicit capacity no longer depends on a special task/root exemption.
+  expect(validateRuntimeBudget({ perResponseTokens: 32768 })).toEqual({ ...DEFAULT_RUNTIME_BUDGET, perResponseTokens: 32768 });
+  expect(validateRuntimeBudget({ perResponseTokens: 384000 }).perResponseTokens).toBe(384000);
+  expect(validateRuntimeBudget({ perResponseTokens: 393216 }).perResponseTokens).toBe(393216);
+  expect(() => validateRuntimeBudget({ perResponseTokens: 393217 })).toThrow();
   expect(validateRuntimeBudget({ perResponseTokens: 32768 }, true).perResponseTokens).toBe(32768);
 });
 

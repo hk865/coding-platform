@@ -1,3 +1,4 @@
+import { validateRuntimeBudget, type RuntimeBudget } from '../contracts/runtime-budget.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { mkdir, open, rename, rm, lstat, realpath } from 'node:fs/promises';
@@ -6,7 +7,7 @@ import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import type { ModelClientPort, ModelEvent, ModelRequest, ProviderRegistry } from '../../vendor/coding-agent/dist/public-api.js';
 
-type Config = { revision: string; provider: string; model: string; baseUrl: string; apiKey: string; updatedAt: string };
+type Config = { reasoningEffort?: 'low' | 'high' | 'max'; revision: string; provider: string; model: string; baseUrl: string; apiKey: string; updatedAt: string };
 type Registry = Pick<ProviderRegistry, 'create' | 'list' | 'get'>;
 export type ModelSettingsOptions = { directory?: string; timeoutMs?: number; registry?: Registry };
 export function defaultSettingsDirectory(dataDir: string) {
@@ -43,16 +44,19 @@ export async function createModelSettings(dataDir: string, options: ModelSetting
   let active: AbortController | undefined;
   const serial = <T>(fn: () => Promise<T>) => { const next = queue.then(fn); queue = next.catch(() => {}); return next; };
   function validate(input: Record<string, unknown>, previous?: Config): Config {
-    if (Object.keys(input).some(k => !['provider', 'model', 'baseUrl', 'apiKey', 'revision', 'updatedAt'].includes(k))) throw Error('模型设置含不支持的字段');
+    if (Object.keys(input).some(k => !['provider', 'model', 'baseUrl', 'apiKey', 'revision', 'updatedAt', 'reasoningEffort'].includes(k))) throw Error('模型设置含不支持的字段');
     const provider = field(input, 'provider', 40); if (!registry.list().some(p => p.id === provider)) throw Error('不支持的提供方');
     const model = field(input, 'model', 160), baseUrl = field(input, 'baseUrl', 2048);
     let url: URL; try { url = new URL(baseUrl); } catch { throw Error('接口地址格式错误'); }
     if (url.username || url.password || url.search || url.hash || !(url.protocol === 'https:' || (url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)))) throw Error('接口地址须使用 HTTPS（本机测试可用 HTTP），且不能包含凭据、查询参数或片段');
     const keep = input['apiKey'] === undefined || input['apiKey'] === '';
     if (keep && previous?.apiKey && (provider !== previous.provider || url.href.replace(/\/$/, '') !== previous.baseUrl)) throw Error('更换提供方或接口地址时，请重新填写 API Key');
+    const effort = input['reasoningEffort'] === undefined && provider === previous?.provider ? previous.reasoningEffort : input['reasoningEffort'];
+    if (effort != null && (provider !== 'deepseek' || typeof effort !== 'string' || !['low', 'high', 'max'].includes(effort))) throw Error('DeepSeek 思考强度须为 low、high 或 max');
+    const reasoningEffort = effort as Config['reasoningEffort'] | null;
     const apiKey = keep ? previous?.apiKey ?? '' : field(input, 'apiKey', 4096);
     if (apiKey && [provider, model, baseUrl].some(v => v.includes(apiKey))) throw Error('密钥只能填写在 API Key 字段');
-    return { provider, model, baseUrl: url.href.replace(/\/$/, ''), apiKey, revision: randomUUID(), updatedAt: new Date().toISOString() };
+    return { ...(reasoningEffort ? { reasoningEffort } : {}), provider, model, baseUrl: url.href.replace(/\/$/, ''), apiKey, revision: randomUUID(), updatedAt: new Date().toISOString() };
   }
   async function load(): Promise<Config | undefined> {
     let handle;
@@ -67,7 +71,7 @@ export async function createModelSettings(dataDir: string, options: ModelSetting
     } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw Error('模型配置无法安全读取，请检查本机文件权限或恢复配置'); }
     finally { await handle?.close(); }
   }
-  function reference(c: Config) { return { revision: c.revision, provider: c.provider, model: c.model, baseUrl: c.baseUrl, protocol: c.provider === 'openai' ? 'responses' : 'chat-completions', updatedAt: c.updatedAt }; }
+  function reference(c: Config) { return { ...(c.reasoningEffort ? { reasoningEffort: c.reasoningEffort } : {}), revision: c.revision, provider: c.provider, model: c.model, baseUrl: c.baseUrl, protocol: c.provider === 'openai' ? 'responses' : 'chat-completions', updatedAt: c.updatedAt }; }
   function view(c?: Config) { return { configuration: c ? reference(c) : null, keyConfigured: !!c?.apiKey, providers: registry.list().map(p => ({ id: p.id, defaultBaseUrl: p.defaultBaseUrl, protocol: p.id === 'openai' ? 'responses' : 'chat-completions' })) }; }
   async function persist(c: Config) {
     const temp = join(directory, `.settings-${randomUUID()}`);
@@ -80,7 +84,7 @@ export async function createModelSettings(dataDir: string, options: ModelSetting
   const failure = (code: string, extra: Record<string, unknown> = {}) => ({ ok: false, code, message: messages[code] ?? messages['provider_request_failed'], ...extra });
   async function bindRun(runId: string) {
     await queue; const c = await load(); if (!c?.apiKey) throw Error(messages['not_configured']);
-    return { runId, configuration: reference(c), client: registry.create(c.provider, { apiKey: c.apiKey, model: c.model, baseUrl: c.baseUrl }) };
+    return { runId, configuration: reference(c), client: registry.create(c.provider, { apiKey: c.apiKey, model: c.model, baseUrl: c.baseUrl, ...(c.reasoningEffort ? { options: { thinking: 'enabled', reasoningEffort: c.reasoningEffort } } : {}) }) };
   }
   return {
     directory,
@@ -88,6 +92,15 @@ export async function createModelSettings(dataDir: string, options: ModelSetting
     save: (input: Record<string, unknown>) => serial(async () => { const c = validate(input, await load()); await persist(c); active?.abort('configuration_changed'); return view(c); }),
     clear: () => serial(async () => { const c = await load(); if (c) await persist({ ...c, apiKey: '', revision: randomUUID(), updatedAt: new Date().toISOString() }); active?.abort('configuration_changed'); return view(await load()); }),
     bindRun,
+    async runtimeBudget(value: unknown, previous?: RuntimeBudget, fallback?: RuntimeBudget): Promise<RuntimeBudget> {
+      // Validate before merging: null/arrays/unknown keys cannot become defaults.
+      validateRuntimeBudget(value);
+      await queue; const c = await load();
+      const documented = c?.provider === 'deepseek' && ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp', 'deepseek-v4-pro'].includes(c.model)
+        ? { contextWindowTokens: 1000000, perResponseTokens: c.reasoningEffort === 'max' ? 131072 : 65536 } : {};
+      // A retry reuses its admitted capacities even after model settings change.
+      return validateRuntimeBudget({ ...(previous ?? { ...fallback, ...documented }), ...(value as Record<string, unknown> | undefined) });
+    },
     close: () => active?.abort('configuration_changed'),
     async testConnection() {
       if (active) return failure('busy');

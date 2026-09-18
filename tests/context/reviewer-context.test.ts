@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { createInMemoryHarness } from '../../src/harness/in-memory-harness.js';
 import { VerificationContextCompiler } from '../../src/data/context-compiler/verification-context.js';
 import { ReviewerContextCompiler } from '../../src/data/context-compiler/reviewer-context.js';
+import { reviewerRuntimeInput } from '../../src/data/context-compiler/reviewer-runtime-context.js';
 import { ReviewerProfileCompiler } from '../../src/data/context-compiler/reviewer-profile.js';
 import { ControlEngineImpl } from '../../src/control/control-engine/control-engine.js';
 import { buildGrantMaterialAccessCommand } from '../../src/contracts/commands/material-access.js';
@@ -26,6 +27,19 @@ import { DEFAULT_RUNTIME_BUDGET } from '../../src/contracts/runtime-budget.js';
 import { prepareP107Scenario, runP107Task, toP1_07Harness, P107_PROJECT, P107_WORKSPACE, P107_GOAL, P107_SCHEMA, P107_TASK_WRITER_B, P107_ROLE_BINDING_WRITER_V1, P107_BUDGET_WRITER_V1, P107_DECLARED_WRITE_PERMISSIONS_V1 } from '../contract-suite/p1-07-harness.js';
 
 const roots: string[] = [];
+it('propagates read cancellation through Reviewer source inspection rather than reporting incomplete', async () => {
+  const f = await fixture(), controller = new AbortController(), reason = new Error('query disconnected');
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const original = f.source.capture.bind(f.source);
+  let received: AbortSignal | undefined;
+  vi.spyOn(f.source, 'capture').mockImplementationOnce(async (query, signal) => {
+    received = signal; entered.resolve(); await release.promise; signal?.throwIfAborted(); return original(query, signal);
+  });
+  const pending = f.context.current(f.work.ref, controller.signal);
+  await entered.promise; controller.abort(reason); release.resolve();
+  await expect(pending).rejects.toBe(reason);
+  expect(received).toBe(controller.signal);
+});
 const json = (v: unknown) => canonicalJson(v as JsonValue);
 afterEach(async () => { vi.restoreAllMocks(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 const value = <T extends { status: string }>(result: T): Extract<T, { status: 'ready' }> => { expect(result.status).toBe('ready'); if (result.status !== 'ready') throw Error(json(result)); return result as Extract<T, { status: 'ready' }>; };
@@ -33,7 +47,7 @@ const value = <T extends { status: string }>(result: T): Extract<T, { status: 'r
 /** Real accepted producer/Plan/governance plus explicit canonical read fixtures
  * for C-owned ReviewWork transitions. Real Vault authorization and filesystem I/O
  * remain active; this fixture does not claim to test Control's creation handler. */
-async function fixture() {
+async function fixture(collaborationFacts?: JsonValue) {
   const root = await mkdtemp(join(tmpdir(), 'reviewer-context-')); roots.push(root);
   await writeFile(join(root, 'source.txt'), 'reviewed source\nsecond line\n');
   const h = createInMemoryHarness({ deps: { clock: () => P107_SCHEMA } }), p = toP1_07Harness(h);
@@ -64,7 +78,7 @@ async function fixture() {
     if (stored.status !== 'stored') throw Error(json(stored));
     return stored.ref;
   };
-  const toolRef = await put(json({ report: 'original tool PASS 原文', result: 'PASS' }));
+  const toolRef = await put(json({ report: 'original tool PASS 原文', result: 'PASS', ...(collaborationFacts === undefined ? {} : { readonlyReport: { collaborationFacts } }) }));
   const aggregateRef = await put(json({ aggregate: 'full tool set', reports: [toolRef] }));
   const descriptorBody: Omit<ReviewMaterialDescriptorV1, 'descriptorId'> = { schemaVersion: 1, kind: 'independent-review-material', subject: { scope, producerRunRef: material.run.ref, producerAttemptRef: material.run.envelope!.attemptRef },
     toolRound: { roundId: 'round', requestId: 'round-request', aggregateRef, configurationDigest: 'a'.repeat(64), verificationPlanRef: { planId: 'vp', planDigest: 'b'.repeat(64) } },
@@ -103,6 +117,21 @@ async function fixture() {
 }
 
 describe('independent Reviewer material consumer', () => {
+  it('preserves the pre-corroboration input bytes for an unversioned historical packet', () => {
+    // Formatter-only fixture. Golden digest captured from real-08's unchanged
+    // built formatter (build 4875ad0b...519878), before this implementation.
+    const packet = { schemaVersion: 1, kind: 'independent-review-packet', workRef: { reviewId: 'legacy-review' },
+      descriptorDigest: 'a'.repeat(64), materialIdentity: { sourceDigest: 'b'.repeat(64) } } as unknown as import('../../src/contracts/reviewer-context.js').ReviewerPacketV1;
+    expect(sha256Hex(reviewerRuntimeInput(packet))).toBe('2467ee345d937b411ab8b0a625a40f6aa4b841600a191c8dff50ad3b1163c593');
+    const current = { ...packet, guidanceVersion: 'collaboration-corroboration-v1' as const };
+    expect(reviewerRuntimeInput(current)).toContain('readonlyReport.collaborationFacts');
+    expect(sha256Hex(reviewerRuntimeInput(packet))).toBe('2467ee345d937b411ab8b0a625a40f6aa4b841600a191c8dff50ad3b1163c593');
+  });
+  it('rejects copied decision claims without canonical producer input corroboration before granting Reviewer material', async () => {
+    const s = await fixture({ kind: 'producer-collaboration-facts', decisions: [{ status: 'accepted' }] });
+    expect(await s.context.select(s.work.ref)).toMatchObject({ status: 'incomplete', missing: [expect.stringContaining('corroboration is stale or revoked')] });
+    expect(s.grants).toHaveLength(0);
+  });
   it('builds a usable exact saved profile without inventing cumulative limits, and refuses stale configuration', async () => {
     const s = await fixture();
     expect(s.profile.profile.budget).toMatchObject({ inputTokens: null, outputTokens: null, maxRequests: null, maxToolCalls: null, timeoutMs: null });

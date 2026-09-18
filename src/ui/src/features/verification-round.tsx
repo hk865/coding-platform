@@ -1,6 +1,6 @@
 import { Alert, Badge, Button, Group, Paper, Select, Stack, Table, Text } from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
-import type { VerificationRoundView } from '../../../contracts/verification-round.js';
+import type { VerificationRoundConfigurationInput, VerificationRoundView } from '../../../contracts/verification-round.js';
 import type { Api } from '../api/client';
 import { mutationError } from '../api/hooks';
 import type { GoalScope, LiveRun } from '../api/types';
@@ -21,15 +21,17 @@ function checkStatus(record: VerificationRoundView['checks'][number]['record']) 
 }
 
 /** The service owns coverage, currentness, outcomes and recovery; this view renders its facts. */
-export function VerificationRounds({ api, scope, runs, store, refresh, openReport }: {
+export function VerificationRounds({ api, scope, runs, gates, store, refresh, openReport }: {
   api: Api;
   scope: GoalScope;
   runs: LiveRun[];
+  gates: Array<{ taskId: string; title: string }>;
   store: AppStore;
   refresh: () => void;
   openReport: (runId: string, requestId: string) => void;
 }) {
   const [runId, setRunId] = useState('');
+  const [gateId, setGateId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState(() => [newCheckDraft(1)]);
   const [busy, setBusy] = useState(false);
   const [reading, setReading] = useState(false);
@@ -54,13 +56,20 @@ export function VerificationRounds({ api, scope, runs, store, refresh, openRepor
 
   async function execute() {
     if (!selected || busy) return;
-    const target = { ...scope, runId: selected.spec.runId, taskId: selected.spec.taskId };
-    const configuration = { checks: drafts.map(check => ({
+    if (gateId && !gates.some(gate => gate.taskId === gateId)) return;
+    const target = { ...scope, runId: selected.spec.runId, taskId: gateId ?? selected.spec.taskId, ...(gateId ? { gateSubject: 'goal' as const } : {}) };
+    const configuration: VerificationRoundConfigurationInput = { checks: drafts.map(check => check.mode === 'readonly-report' ? {
+      checkId: check.checkId.trim(), mode: 'readonly-report', kind: 'static',
+      requiredReadPaths: check.requiredReadPaths.split(/\r?\n/).map(path => path.trim()).filter(Boolean),
+      appliesTo: { workspaceId: scope.workspaceId, taskIds: [target.taskId] },
+    } : ({
       checkId: check.checkId.trim(), kind: check.kind, command: check.command, cwd: check.cwd,
       timeoutMs: Number(check.seconds) * 1000, appliesTo: { workspaceId: scope.workspaceId, taskIds: [target.taskId] },
     })) };
-    if (!configuration.checks.length || configuration.checks.some(check => !check.checkId || !check.command.trim() || !check.cwd.trim() || !Number.isSafeInteger(check.timeoutMs) || check.timeoutMs < 1000 || check.timeoutMs > 600000)) {
-      setMessage({ error: true, text: '请填写每项检查的标识、命令、执行目录，以及 1–600 秒的单次超时。' });
+    if (!configuration.checks.length || configuration.checks.some(check => !check.checkId || (check.mode === 'readonly-report'
+      ? !check.requiredReadPaths.length
+      : !check.command.trim() || !check.cwd.trim() || !Number.isSafeInteger(check.timeoutMs) || check.timeoutMs < 1000 || check.timeoutMs > 600000))) {
+      setMessage({ error: true, text: '请填写检查标识。只读报告检查须指定必读文件；命令检查须填写命令、执行目录及 1–600 秒的单次超时。' });
       return;
     }
     setBusy(true); setMessage(null);
@@ -90,7 +99,7 @@ export function VerificationRounds({ api, scope, runs, store, refresh, openRepor
       const receipt = await api.receipt(scope, { requestId: pending.requestId, kind: 'verification-round' });
       if (receipt.found && receipt.round) {
         store.settleRequest(scope, 'verification-round', pending.requestId);
-        if (mounted.current) { await load({ ...scope, runId: receipt.round.runId, taskId: receipt.round.taskId }, receipt.requestId); refresh(); }
+        if (mounted.current) { await load({ ...scope, runId: receipt.round.runId, taskId: receipt.round.taskId, ...(receipt.round.gateSubject ? { gateSubject: receipt.round.gateSubject } : {}) }, receipt.requestId); refresh(); }
       } else if (mounted.current) setMessage({ error: false, text: '服务器未发现该轮次。原请求标识仍保留，恢复原配置后可用同一标识重试。' });
     } catch (error) { if (mounted.current) setMessage({ error: true, text: mutationError(error).message }); }
     finally { if (mounted.current) setReading(false); }
@@ -112,8 +121,10 @@ export function VerificationRounds({ api, scope, runs, store, refresh, openRepor
         <Text size="sm" fw={600}>任务验证轮次</Text>
         <Text size="xs" c="dimmed">配置此任务适用的全部工具检查。每轮固定计划、来源与检查配置；工具覆盖和独立审阅分别显示。</Text>
         <Select size="xs" label="针对任务运行" value={selected?.spec.runId ?? null} disabled={busy} onChange={value => setRunId(value ?? '')} data={runs.map(run => ({ value: run.spec.runId, label: (run.taskTitle ?? run.spec.taskId) + ' · ' + run.spec.runId }))} data-testid="round-run" />
+        <Select size="xs" label="目标级验证对象（留空验证所选任务）" clearable value={gateId} disabled={busy} onChange={setGateId} data={gates.map(gate => ({ value: gate.taskId, label: gate.title }))} data-testid="round-gate" />
+        {gateId ? <Text size="xs" c="dimmed">目标级验证会独立执行检查。所选运行用于追溯产出来源；服务端核对必需任务及其证据是否有效。</Text> : null}
         <VerificationCheckEditor checks={drafts} onChange={setDrafts} disabled={busy} />
-        <Text size="xs" c="dimmed">以上检查仅适用于所选任务。点击后将在该工作区执行命令，并保存配置、报告和正式接纳结果。</Text>
+        <Text size="xs" c="dimmed">以上检查适用于所选验证对象。点击后按配置运行命令或核对只读报告，并保存配置、报告和正式接纳结果。</Text>
         <Button size="xs" onClick={() => void execute()} loading={busy} disabled={!selected} data-testid="start-verification-round">执行本轮全部检查</Button>
         {pending ? <Alert color="yellow" data-testid="round-pending">
           <Text size="xs">轮次请求尚未确认：{pending.requestId}</Text>
@@ -149,8 +160,10 @@ export function VerificationRounds({ api, scope, runs, store, refresh, openRepor
         </Table>
         {view.checks.map(check => <Paper key={check.definition.checkId} withBorder p={6} data-testid={`round-result-${check.definition.checkId}`}>
           <Text size="xs" fw={600}>{check.definition.checkId} · {check.definition.kind}</Text>
-          <Text size="xs" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{check.definition.command}</Text>
-          <Text size="xs" c="dimmed">目录 {check.definition.cwd} · 单次超时 {check.definition.timeoutMs / 1000} 秒</Text>
+          {check.definition.mode === 'readonly-report' ? <Text size="xs" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>只读报告检查 · 必读文件：{check.definition.requiredReadPaths.join('、')}</Text> : <>
+            <Text size="xs" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{check.definition.command}</Text>
+            <Text size="xs" c="dimmed">目录 {check.definition.cwd} · 单次超时 {check.definition.timeoutMs / 1000} 秒</Text>
+          </>}
           <Text size="xs">{checkStatus(check.record)}</Text>
           {check.record?.progress?.phase === 'report_stored' ? <Button size="xs" variant="subtle" onClick={() => openReport(view.scope.runId, check.requestId)} data-testid={`round-report-${check.definition.checkId}`}>查看原始检查报告</Button> : null}
         </Paper>)}

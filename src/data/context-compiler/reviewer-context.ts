@@ -13,6 +13,7 @@ import type { ReviewerRecoveryResult } from '../../contracts/reviewer-context.js
 import type { TaskReviewProtocolSnapshot } from '../../contracts/reviewer-work.js';
 import { readReviewerSource } from '../workspace-reader/reviewer-source-reader.js';
 import { reviewerRuntimeInput } from './reviewer-runtime-context.js';
+import { producerCollaborationFacts } from './producer-collaboration-facts.js';
 
 const json = (value: unknown) => canonicalJson(value as JsonValue);
 const same = (a: unknown, b: unknown) => json(a) === json(b);
@@ -40,42 +41,70 @@ export class ReviewerContextCompiler implements ReviewerContextPort {
       if (stored.status === 'found' && stored.snapshot.ref.aggregateType === 'ReviewResult' && same(stored.snapshot.ref, work.resultRef)) result = stored.snapshot as ReviewResultSnapshot;
     }
     const session = (runId: string) => {
-      const rows = this.deps.observations.all().filter(r => r.spec.projectId === workRef.projectId && r.spec.workspaceId === workRef.workspaceId && r.spec.goalId === workRef.goalId && r.spec.runId === runId && r.spec.taskId === work.subject.taskId);
+      const rows = this.deps.observations.all().filter(r => r.spec.projectId === workRef.projectId && r.spec.workspaceId === workRef.workspaceId && r.spec.goalId === workRef.goalId && r.spec.runId === runId && r.spec.taskId === (runId === work.producerRunRef.runId ? work.producerAttemptRef.taskId : work.subject.taskId));
       return rows.length === 1 && typeof rows[0]!.sessionId === 'string' && rows[0]!.sessionId ? rows[0]!.sessionId : null;
     };
     return { work, run: loadedRun.snapshot as RunSnapshot, result, producerSessionId: session(work.producerRunRef.runId), reviewerSessionId: session(work.reviewerRunRef.runId) };
   }
 
-  async current(workRef: ReviewWorkRef): Promise<ReviewerCurrentResult> {
+  async current(workRef: ReviewWorkRef, signal?: AbortSignal): Promise<ReviewerCurrentResult> {
+    signal?.throwIfAborted();
     try {
       const before = await this.inspect(workRef);
+      signal?.throwIfAborted();
       ensure(before, 'Canonical Reviewer work or Run is unavailable');
       const { work } = before;
       const material = await this.deps.roundContext.resolveReviewRound(workRef);
+      signal?.throwIfAborted();
       if (material.status !== 'ready') return material.status === 'incomplete' ? { status: 'incomplete', code: material.code, missing: material.missing } : { status: 'rejected', code: material.code, issues: material.issues.map(i => i.message) };
       const profile = await this.deps.profiles.resolve(work.descriptor.subject.scope, work.reviewerConfigRef);
+      signal?.throwIfAborted();
       if (profile.status !== 'ready') return profile.status === 'incomplete' ? { status: 'incomplete', code: 'profile_unavailable', missing: profile.missing } : profile;
       ensure(same(profile.profile, work.reviewerProfile) && same(work.roleBinding, profile.profile.roleBinding), 'Reviewer profile no longer matches canonical work');
-      const source = await this.deps.source.capture({ projectId: workRef.projectId, workspaceId: workRef.workspaceId, sourceSet: { kind: 'verification_workspace', paths: ['.'] } });
+      const source = await this.deps.source.capture({ projectId: workRef.projectId, workspaceId: workRef.workspaceId, sourceSet: { kind: 'verification_workspace', paths: ['.'] } }, signal);
+      signal?.throwIfAborted();
       ensure(source.status === 'sourced' && source.pin.identity.workspace === 'verification-source-v1:' + material.material.root &&
         source.pin.manifestDigest === sha256Hex(json({ sourceDigest: material.material.sourceDigest, sourceProof: material.material.sourceProof })), 'Reviewer source pin is unavailable or stale');
       const basis: MaterialBasisV1 = { planRef: work.planRef, workspaceRevision: material.material.workspaceRevision, sourceDigest: material.material.sourceDigest, sourcePin: source.pin };
       if (work.input) await this.validateGrants(work, basis, work.input.grantRefs);
+      signal?.throwIfAborted();
       const afterMaterial = await this.deps.roundContext.resolveReviewRound(workRef);
+      signal?.throwIfAborted();
       ensure(afterMaterial.status === 'ready' && same(afterMaterial.material.identity, material.material.identity), 'Canonical or source material changed during Reviewer currentness check');
       const after = await this.inspect(workRef);
+      signal?.throwIfAborted();
       ensure(after && same(after.work, work), 'Review binding changed during material capture');
       if (work.input) await this.validateGrants(work, basis, work.input.grantRefs);
+      await this.assertProducerCollaboration(work, afterMaterial.material.run, signal);
       return { status: 'ready', work, material: material.material, profile: profile.profile, basis, producerSessionId: after.producerSessionId, reviewerSessionId: after.reviewerSessionId };
-    } catch (error) { return failure(error); }
+    } catch (error) { signal?.throwIfAborted(); return failure(error); }
   }
-  async recovery(workRef: ReviewWorkRef): Promise<ReviewerRecoveryResult> {
+  private async assertProducerCollaboration(work: ReviewWorkSnapshot, run: RunSnapshot, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    for (const tool of work.descriptor.tools) {
+      signal?.throwIfAborted();
+      // Internal selection uses the existing producer-owned report. The model
+      // still needs its own exact Reviewer grant before any material is exposed.
+      const opened = await this.deps.vault.open(tool.reportRef, { requesterRunRef: work.producerRunRef, includeOwner: true });
+      signal?.throwIfAborted();
+      ensure(opened.status === 'ready' && same(opened.record.ref, tool.reportRef) &&
+        same(opened.record.ownerRunRef, work.producerRunRef) && artifactBodyDigest(opened.record.body) === tool.reportRef.digest, 'Original report for collaboration corroboration is unavailable');
+      let body: { readonlyReport?: { collaborationFacts?: JsonValue } };
+      try { body = JSON.parse(opened.record.body); } catch { continue; }
+      if (body?.readonlyReport?.collaborationFacts === undefined) continue; // Do not upgrade historical packets.
+      const current = await producerCollaborationFacts(this.deps.ledger, this.deps.source, run, signal);
+      ensure(current !== undefined && same(current, body.readonlyReport.collaborationFacts), 'Producer collaboration corroboration is stale or revoked');
+    }
+  }
+  async recovery(workRef: ReviewWorkRef, signal?: AbortSignal): Promise<ReviewerRecoveryResult> {
     let failureReason: string | null = null;
     const deny = (code: string, message: string): ReviewerRecoveryResult => ({ allowed: false, code, failureReason, issues: [message] });
+    signal?.throwIfAborted();
     try {
       const integrity = this.deps.observations.integrityIssues?.() ?? [];
       if (integrity.length) return deny('recovery_observation_integrity', '持久运行观察身份冲突，无法证明尚未启动：' + integrity.join('; '));
       const before = await this.inspect(workRef);
+      signal?.throwIfAborted();
       if (!before) return deny('recovery_evidence_insufficient', 'Canonical Reviewer Work 或 Run 缺失');
       const { work, run } = before;
       // Match the Run identity first. A conflicting scope/profile row must not
@@ -88,7 +117,7 @@ export class ReviewerContextCompiler implements ReviewerContextPort {
       if (run.status !== 'ended' || run.outcome !== 'crashed' || run.exitCode !== null) return deny('recovery_not_prestart_failure', '仅已知启动前失败可授权恢复');
       if (rows.length !== 1 || !row || row.status !== 'failed' || typeof row.sessionId !== 'string' || !row.sessionId.trim()
           || !before.producerSessionId || row.sessionId === before.producerSessionId
-          || !same(row.spec, { ...row.spec, ...work.descriptor.subject.scope, runId: run.ref.runId, mode: 'review', review: { workRef, profile: work.reviewerProfile }, budget: work.reviewerProfile.budget })
+          || !same(row.spec, { ...row.spec, projectId: work.subject.projectId, workspaceId: work.ref.workspaceId, goalId: work.subject.goalId, taskId: work.subject.taskId, runId: run.ref.runId, mode: 'review', review: { workRef, profile: work.reviewerProfile }, budget: work.reviewerProfile.budget })
           || !Array.isArray(row.events) || !Array.isArray(row.trace) || !Array.isArray(row.usage)
           || row.events.length !== 1 || row.trace.length !== 0 || row.usage.length !== 0) return deny('recovery_evidence_insufficient', '持久观察缺失、重复、身份不符或无法证明模型/工具未启动');
       const event = row.events[0]!;
@@ -103,20 +132,23 @@ export class ReviewerContextCompiler implements ReviewerContextPort {
           || run.envelope?.permissions.writeScope.length !== 0) return deny('recovery_evidence_insufficient', '持久终止事件与 canonical Run/只读输入绑定不一致');
       failureReason = event.payload.error;
       const loaded = await this.deps.ledger.load(work.protocolRef);
+      signal?.throwIfAborted();
       if (loaded.status !== 'found' || loaded.snapshot.ref.aggregateType !== 'TaskReviewProtocol') return deny('recovery_evidence_insufficient', '审阅协议缺失');
       const protocol = loaded.snapshot as TaskReviewProtocolSnapshot;
       if (!same(protocol.ref, work.protocolRef) || !same(protocol.planRef, work.planRef)
           || !same((protocol.workRefs ?? [protocol.firstWorkRef]).at(-1), workRef)) return deny('recovery_not_current', '该 Reviewer 已被替代，不再是协议当前工作');
-      const current = await this.current(workRef);
+      const current = await this.current(workRef, signal);
+      signal?.throwIfAborted();
       if (current.status !== 'ready') return { allowed: false, code: current.code, failureReason, issues: current.status === 'incomplete' ? current.missing : current.issues };
       const after = await this.inspect(workRef), finalProtocol = await this.deps.ledger.load(work.protocolRef);
+      signal?.throwIfAborted();
       if (!after || !same(after.work, work) || !same(after.run, run) || !same(candidates(), rows)
           || finalProtocol.status !== 'found' || !same(finalProtocol.snapshot, protocol)) return deny('recovery_evidence_changed', '恢复资格读取期间持久事实发生变化');
       return { allowed: true, code: 'prestart_failure_proven', failureReason, issues: [], expectedWorkRevision: work.revision,
         expectedProtocolRevision: protocol.revision, proof: { schemaVersion: 1, workRef, runRef: run.ref, runtimeStatus: 'failed',
           terminalEventId: event.eventId, terminalEventSeq: 1, observationId: row.sessionId + ':' + event.eventId,
           eventTypes: ['run_crashed'], traceCount: 0, usageCount: 0, modelStarted: false, toolStarted: false } };
-    } catch (error) { return deny('recovery_evidence_unavailable', String(error)); }
+    } catch (error) { signal?.throwIfAborted(); return deny('recovery_evidence_unavailable', String(error)); }
   }
   private async requireCurrent(workRef: ReviewWorkRef): Promise<Current> {
     const result = await this.current(workRef);
@@ -172,7 +204,7 @@ export class ReviewerContextCompiler implements ReviewerContextPort {
       ensure(outbox.status === 'found' && outbox.snapshot.ref.aggregateType === 'DispatchOutboxEntry', 'Canonical Reviewer dispatch intent is unavailable');
       const intent = (outbox.snapshot as DispatchOutboxEntrySnapshot).intent;
       ensure(same(intent.work, { kind: 'review', reviewWorkRef: work.ref }) && same(intent.runRef, work.reviewerRunRef) && same(intent.attemptRef, work.reviewerAttemptRef) && same(intent.planRef, work.planRef) && same(intent.roleBinding, profile.roleBinding) && same(intent.declaredPermissions, profile.permissions), 'Reviewer intent binding or readonly permissions differ');
-      const packet: ReviewerPacketV1 = { schemaVersion: 1, kind: 'independent-review-packet', workRef, reviewerRunRef: work.reviewerRunRef,
+      const packet: ReviewerPacketV1 = { schemaVersion: 1, kind: 'independent-review-packet', guidanceVersion: 'collaboration-corroboration-v1', citationCheckVersion: 'original-pointers-v1', workRef, reviewerRunRef: work.reviewerRunRef,
         descriptorDigest: work.descriptorRef.digest, profile, materialIdentity: material.identity, sourceProof: material.sourceProof, changeScope: material.changeScope,
         task: material.task, policy: material.policyContent, baseline: material.baselineContent, coverage: work.descriptor.requirements,
         materials: this.index(work), basis, gaps: material.gaps };

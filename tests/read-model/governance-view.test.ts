@@ -53,6 +53,23 @@ it('preserves event scan incompleteness instead of claiming complete installatio
   expect(result.gaps).toEqual([expect.stringContaining('20000')]);
 });
 
+it('keeps absent, incomplete, failed and concurrently changed activation observations distinct', async () => {
+  const missing = fixture();
+  expect(await missing.view.architectureActivation(scope)).toMatchObject({ status: 'not_found', active: null });
+  const incomplete = fixture({ incomplete: true });
+  const active = { ref: { aggregateType: 'ProjectArchitectureBaselineActive', projectId: scope.projectId }, revision: 1,
+    activeRevision: { aggregateType: 'ArchitectureBaselineRevision', projectId: scope.projectId, baselineId: 'baseline', revision: 1 } };
+  incomplete.snapshots.set('ProjectArchitectureBaselineActive:', active);
+  expect(await incomplete.view.architectureActivation(scope)).toMatchObject({ status: 'unavailable', active: null });
+  const failed = fixture();
+  failed.load.mockRejectedValueOnce(Error('read failed'));
+  expect(await failed.view.architectureActivation(scope)).toMatchObject({ status: 'failed', active: null });
+  const changed = fixture();
+  changed.load.mockResolvedValueOnce({ status: 'found', snapshot: active } as never);
+  changed.load.mockResolvedValueOnce({ status: 'found', snapshot: { ...active, revision: 2 } } as never);
+  expect(await changed.view.architectureActivation(scope)).toMatchObject({ status: 'stale', active: null });
+});
+
 it('uses the injected Control explanation for pin readiness without inventing a second admission rule', async () => {
   const { load, events } = fixture();
   const source = ROLE_SPEC_SOURCES_V1[0]!;

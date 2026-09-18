@@ -105,4 +105,20 @@ describe('command-check report adaptation', () => {
     expect(view.reportsMissing).toBe(true);
     expect(view.observations[0]?.reportSaved).toBe(false);
   });
+
+  it('preserves the original readonly report and source witnesses without inventing command execution', () => {
+    const observation = { status: 'ready' as const, report: 'Current source puts undated items in today.',
+      sourceReads: [{ path: 'src/grouping.ts', revision: 'current-file-revision', startLine: 1, endLine: 20, callId: 'read-1' }],
+      completeReadPaths: ['src/grouping.ts'], observedTools: ['read', 'coordination_respond'], workspaceEffects: 'none' as const,
+      sourceDigest: 'b'.repeat(64), observationDigest: 'c'.repeat(64) };
+    const readonly: CheckReportsResponse = { ...response, command: null, kind: 'static', timeoutMs: null,
+      reports: [{ ...response.reports[0]!, definition: { checkId: 'report', mode: 'readonly-report', kind: 'static', requiredReadPaths: ['src/grouping.ts'] },
+        category: 'readonly_report_check', execution: null, readonlyReport: observation }] };
+    const view = adaptCheckReport(readonly);
+    expect(view.command).toBeNull();
+    expect(view.reports[0]).toMatchObject({ category: '只读报告及来源检查', readonlyReport: observation, missing: [], exitCode: null, sandboxProfileVersion: null });
+    const missingBody = { ...readonly.reports[0]! }; delete missingBody.readonlyReport;
+    const missing = adaptCheckReport({ ...readonly, reports: [missingBody] });
+    expect(missing.reports[0]?.missing).toEqual(['只读报告观察']);
+  });
 });

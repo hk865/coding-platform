@@ -136,6 +136,9 @@ export class OpenAIModelClient implements ModelClientPort {
     };
     if (request.tools.length > 0) body["tools"] = mapTools(request);
     if (request.maxOutputTokens !== null) body["max_output_tokens"] = request.maxOutputTokens;
+    if (request.responseFormat) {
+      body["text"] = { format: request.responseFormat } satisfies NonNullable<ResponseCreateParamsStreaming["text"]>;
+    }
 
     try {
       const stream = await this.#transport.create(body, options.signal);
@@ -193,6 +196,11 @@ export class OpenAIModelClient implements ModelClientPort {
           });
           return;
         }
+      }
+      // SDK abort can return normally from the stream's async iterator.
+      if (options.signal.aborted) {
+        yield event({ type: "cancelled", reason: "调用方取消了模型请求" });
+        return;
       }
       yield event({
         type: "error",
