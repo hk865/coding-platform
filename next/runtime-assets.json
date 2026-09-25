@@ -1,0 +1,50 @@
+[
+  {
+    "path": ".local/source-analyzers/analyzers.sha256",
+    "sha256": "ea08be5256a002898ec1dcfbf0588ed5d662f2c61c41e5bb3e778e3e8957a10d"
+  },
+  {
+    "path": ".local/source-analyzers/analyzers.zip",
+    "sha256": "d0cc3510f5fd53c80164c4c1a1bde1169264e054dfe39158a1c15496b405338b"
+  },
+  {
+    "path": ".local/source-analyzers/manifest.json",
+    "sha256": "c2526c71e433f69c38475c65e8f0996084f4ec577972f48970494edf69584716"
+  },
+  {
+    "path": "scripts/cpp-source-query.py",
+    "sha256": "0e5223dc58137d14986ad1ded39c57bc90a69aa9b5640b41453de9dbac925839"
+  },
+  {
+    "path": "scripts/python-source-query.py",
+    "sha256": "aff8108c82c3c99359e78187cfdbb90e54143491566d68144fab0b3413f0936b"
+  },
+  {
+    "path": "vendor/coding-agent/resources/README.md",
+    "sha256": "96785670d099025fc02cca99ef37951c465073e206c142146103da6e3c9702f2"
+  },
+  {
+    "path": "vendor/coding-agent/resources/mcp/README.md",
+    "sha256": "7704b354935ca616ceb3b6eb1e8b3c83f6b006ef490af44b8c9741501ff9a8e7"
+  },
+  {
+    "path": "vendor/coding-agent/resources/skills/README.md",
+    "sha256": "2fbdebebe5c17ae58089d0cf305e66e6d15cdc0358383bf92b14e46557f30d1d"
+  },
+  {
+    "path": "vendor/coding-agent/resources/skills/coding-safety/content.md",
+    "sha256": "d69286dc888e6efcce72676fc7eaa315b9cfe6f63809a666b4eb5ef528b1ed7d"
+  },
+  {
+    "path": "vendor/coding-agent/resources/skills/coding-safety/skill.json",
+    "sha256": "ba52b171a0e26031fea1ffe5408caa779934d02897a6af5ffa5c95c903e0090b"
+  },
+  {
+    "path": "vendor/coding-agent/resources/skills/project-conventions/content.md",
+    "sha256": "38a625b34d25e42c1c16c2f3fc443ac4bc7b83d84ca240bac50641378f2880a9"
+  },
+  {
+    "path": "vendor/coding-agent/resources/skills/project-conventions/skill.json",
+    "sha256": "bf7c1d7ca0f73eeda520bb702acd2e4dcd43f6966829afb584e05b43fb942c5a"
+  }
+]

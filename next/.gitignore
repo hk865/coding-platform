@@ -1,0 +1,15 @@
+/dist/
+/node_modules/
+/vendor/coding-agent/node_modules
+*.tsbuildinfo
+# This is a frozen source dependency, not next's generated application output.
+!/vendor/coding-agent/dist/
+!/vendor/coding-agent/dist/**
+# Frozen Python analyzer dependencies are required for an isolated checkout.
+!/.local/
+/.local/*
+!/.local/source-analyzers/
+/.local/source-analyzers/*
+!/.local/source-analyzers/analyzers.zip
+!/.local/source-analyzers/analyzers.sha256
+!/.local/source-analyzers/manifest.json

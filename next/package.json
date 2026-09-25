@@ -1,0 +1,20 @@
+{
+  "name": "coding-platform-next",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.15.0 <25" },
+  "scripts": {
+    "check:architecture": "node scripts/check-boundaries.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run --maxWorkers=1",
+    "verify:isolated": "node scripts/verify-isolated.mjs"
+  },
+  "dependencies": {
+    "typescript": "6.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "vitest": "4.1.10"
+  }
+}

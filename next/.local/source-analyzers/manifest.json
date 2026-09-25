@@ -1,0 +1,14 @@
+[
+  {
+    "name": "jedi",
+    "version": "0.19.2",
+    "filename": "jedi-0.19.2-py2.py3-none-any.whl",
+    "sha256": "a8ef22bde8490f57fe5c7681a3c83cb58874daf72b4784de3cce5b6ef6edb5b9"
+  },
+  {
+    "name": "parso",
+    "version": "0.8.4",
+    "filename": "parso-0.8.4-py2.py3-none-any.whl",
+    "sha256": "a418670a20291dacd2dddc80c377c5c3791378ee1e8d12bffc35420643d43f18"
+  }
+]
