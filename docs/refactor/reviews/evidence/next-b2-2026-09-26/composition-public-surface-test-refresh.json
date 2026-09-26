@@ -1,0 +1,6 @@
+{
+  "path": "coding-platform/next/tests/composition/platform.test.ts",
+  "before": "04942494ad68e4641f68a6a5e221e7893432eb387a72347aae3ddd6e6a5423f7",
+  "after": "14ec5555d70c539cfcb7567fd63069bd78e47e3100e8069fc0cca29098909d54",
+  "reason": "Public platform.messages is explicit authorized scope; update old exact key assertion only."
+}

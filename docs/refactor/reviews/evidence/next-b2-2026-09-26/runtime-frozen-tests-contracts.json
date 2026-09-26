@@ -1,0 +1,7 @@
+{
+  "coding-platform/next/src/core/agent-runtime/ports.ts": "9ec9b84c993d5bea25009bae50ce2b4bdc00372771edb035f5cad3c0feaac42a",
+  "coding-platform/next/src/core/agent-runtime/execution-contracts.ts": "e7b25eebbda7c004e8197a598f958407b5e6d89f30bb63ea42b15397a4713763",
+  "coding-platform/next/tests/runtime/B2-runtime-execution.test.ts": "38a554066f6f3698a205bc06fe3cd1a13d82c7026731f0fdce464fab4b1feeb7",
+  "coding-platform/next/tests/composition/B2-runtime-platform.test.ts": "e4f692878e038de5f1c9e2cad2eabefd6dfaacf65fb2c3cd81d481bedd632421",
+  "coding-platform/next/tests/helpers/B2-runtime-fixture.ts": "62e29dc9f553d6d42b3075a32e3a7b2535ae763a94460f3170c0af18d2ff6f13"
+}

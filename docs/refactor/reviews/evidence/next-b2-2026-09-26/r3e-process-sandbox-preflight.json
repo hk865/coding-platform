@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-09-26T04:49:10.372Z",
+  "status": "passed",
+  "executionContext": "Approved host Node24 process; actual child isolation is the unchanged next Kernel ProcessSandbox/bubblewrap. This does not claim an additional DSH outer sandbox was tested.",
+  "nodeVersion": "v24.21.0",
+  "publicApi": "coding-platform/next/vendor/coding-agent/dist/public-api.js",
+  "calls": [
+    {
+      "method": "WorkspaceSandbox.create",
+      "status": "completed",
+      "identity": "66312:404152"
+    },
+    {
+      "method": "ProcessSandbox.probe",
+      "builtInCanaryExecutedByKernel": true,
+      "result": {
+        "available": true,
+        "version": "bwrap-m3-v4:bubblewrap 0.9.0",
+        "bwrapPath": "/usr/bin/bwrap",
+        "reason": null
+      }
+    },
+    {
+      "method": "ProcessSandbox.execute",
+      "request": {
+        "command": "test \"$PWD\" = /workspace && test \"$(cat input.txt)\" = 'R3e preflight input' && printf 'R3E_PROCESS_SANDBOX_OK\\n'",
+        "cwd": ".",
+        "timeoutMs": 5000,
+        "outputLimitBytes": 32768,
+        "captureWorkspaceEffects": "default true"
+      },
+      "result": {
+        "exitCode": 0,
+        "signal": null,
+        "timedOut": false,
+        "cancelled": false,
+        "stdout": {
+          "text": "R3E_PROCESS_SANDBOX_OK\n",
+          "totalBytes": 23,
+          "truncated": false
+        },
+        "stderr": {
+          "text": "",
+          "totalBytes": 0,
+          "truncated": false
+        },
+        "effects": {
+          "sideEffect": "possible",
+          "changedPaths": [],
+          "workspaceRevision": "8c7ad8e8b607e5c822d2cb198ac406df4c19f2faf582bc6c919810a422402d7c",
+          "artifactRefs": []
+        },
+        "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+        "timings": {
+          "snapshotBeforeMs": 2.7548069999999996,
+          "executionMs": 7.297618,
+          "snapshotAfterMs": 0.22944200000000592
+        }
+      }
+    }
+  ],
+  "cleanup": {
+    "temporaryWorkspaceRemoved": true,
+    "temporaryScriptRemoved": true,
+    "kernelOwnership": "WorkspaceSandbox/ProcessSandbox have no close API; ProcessSandbox owns and closes the inherited root handle in its finally."
+  },
+  "workspaceRoot": "/tmp/r3e-process-sandbox-preflight-2lEiNq/workspace",
+  "childCompletion": "ProcessSandbox.execute resolved after real child close and workspace effect capture",
+  "finishedAt": "2026-09-26T04:49:10.405Z",
+  "boundedCheckCommandExecuted": true,
+  "scope": "Kernel process-environment preflight only; no R3e registry, Round or Evidence producer is implemented or validated by this probe."
+}

@@ -1,0 +1,14 @@
+{
+  "changed": [
+    "coding-platform/vendor/coding-agent/INTEGRATION.md",
+    "coding-platform/vendor/coding-agent/src/app/composition/composition-root.ts",
+    "coding-platform/vendor/coding-agent/src/app/composition/recovery-contract.ts",
+    "coding-platform/vendor/coding-agent/src/app/composition/resume-composition.ts",
+    "coding-platform/vendor/coding-agent/src/core/ports/checkpoint_store/checkpoint-store-port.ts",
+    "coding-platform/vendor/coding-agent/src/core/ports/session_store/session-store-port.ts",
+    "coding-platform/vendor/coding-agent/src/core/runtime/checkpointing/checkpointing-event-sink.ts",
+    "coding-platform/vendor/coding-agent/src/core/runtime/recovery/recovery-coordinator.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

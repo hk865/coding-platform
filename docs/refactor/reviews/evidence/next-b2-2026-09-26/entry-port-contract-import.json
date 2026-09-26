@@ -1,0 +1,12 @@
+[
+  {
+    "path": "coding-platform/next/src/core/work-graph/tasks/execution-entry-contracts.ts",
+    "before": "af7c1cbb73ce483e44cf42b7912108a4a7f1b5680bfcd290b70f5dcdfa978d3f",
+    "after": "7596b2ad56abd279de5149c12fb1314930bdb9656ae5463f9260d8f80fa64891"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/tasks/model-call-contracts.ts",
+    "before": "af7c1cbb73ce483e44cf42b7912108a4a7f1b5680bfcd290b70f5dcdfa978d3f",
+    "after": "90fffacc937bad5e1acb15a858fcdccd459bce725c4a6113ca64b0eff27de718"
+  }
+]

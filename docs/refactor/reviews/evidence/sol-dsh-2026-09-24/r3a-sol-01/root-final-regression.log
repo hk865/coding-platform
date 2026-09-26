@@ -1,0 +1,9 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+
+ Test Files  9 passed (9)
+      Tests  108 passed (108)
+   Start at  00:43:57
+   Duration  3.33s (transform 1.66s, setup 0ms, import 2.43s, tests 208ms, environment 1ms)
+

@@ -1,0 +1,35 @@
+{
+  "newPlaceholders": [
+    "src/core/work-graph/evidence/contracts.ts",
+    "src/core/work-graph/evidence/evidence-service.ts",
+    "src/core/work-graph/evidence/evidence-record-codecs.ts",
+    "src/core/work-graph/evidence/verification-plan.ts",
+    "src/core/work-graph/evidence/coverage.ts",
+    "src/core/agent-runtime/check-execution.ts",
+    "tests/work-graph/R3e-evidence.test.ts",
+    "tests/work-graph/R3e-evidence-coverage.test.ts",
+    "tests/composition/R3e-command-check-platform.test.ts",
+    "tests/helpers/R3e-evidence-fixture.ts"
+  ],
+  "scope": [
+    "coding-platform/next/src/contracts/evidence.ts",
+    "coding-platform/next/src/contracts/verification.ts",
+    "coding-platform/next/src/contracts/ledger.ts",
+    "coding-platform/next/src/core/work-graph/evidence/contracts.ts",
+    "coding-platform/next/src/core/work-graph/evidence/evidence-service.ts",
+    "coding-platform/next/src/core/work-graph/evidence/evidence-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/evidence/verification-plan.ts",
+    "coding-platform/next/src/core/work-graph/evidence/coverage.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+    "coding-platform/next/src/core/agent-runtime/check-execution.ts",
+    "coding-platform/next/src/composition/create-platform.ts",
+    "coding-platform/next/tests/work-graph/R3e-evidence.test.ts",
+    "coding-platform/next/tests/work-graph/R3e-evidence-coverage.test.ts",
+    "coding-platform/next/tests/composition/R3e-command-check-platform.test.ts",
+    "coding-platform/next/tests/helpers/R3e-evidence-fixture.ts"
+  ],
+  "checkScriptSha256": "68df176ad8405f0bee55bdf582848c1a9fbaf62dd40230ff5a20bb58625687fe",
+  "compositionFrozenSha256": "ba03c244a7089b241a0193fea931b99be0f9ca5dd8b2dbea80665b298565d9cc",
+  "r4ControlImplementationWritesDisjoint": true,
+  "gitWritesDisjoint": true
+}

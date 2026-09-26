@@ -1,0 +1,18 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/workspace/ports.ts",
+    "coding-platform/next/src/core/workspace/access.ts",
+    "coding-platform/next/src/core/workspace/capture.ts",
+    "coding-platform/next/src/core/workspace/git-read.ts",
+    "coding-platform/next/src/core/agent-runtime/project-source-tool.ts",
+    "coding-platform/next/tests/runtime/R2e-git-source-loop.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

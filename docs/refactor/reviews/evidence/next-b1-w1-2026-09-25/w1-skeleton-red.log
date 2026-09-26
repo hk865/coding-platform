@@ -1,0 +1,426 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/W1-future-plan.test.ts (6 tests | 5 failed) 42ms
+   × scenario 1/2: future-only B edit + prompt edge keep A running and C satisfied after real adoption 13ms
+   × scenario 4: a stale proposal revision or an inactive source is rejected with zero writes 6ms
+   × scenario 5: same-identity replay returns the original adoption, including a lookup-miss peer window 7ms
+   × scenario 7: authorized split adopts from the source; coverage/role weakening is zero-write rejected 10ms
+   × scenario 6 (memory): explicit old Plan excludes later Run + global Lease; active reads stay authoritative 3ms
+ ❯ tests/composition/W1-future-plan-platform.test.ts (2 tests | 2 failed) 722ms
+   × scenario 6/restart + W1 success: real SQLite adopt -> replay -> later revision -> reopen replay 216ms
+   × scenario 3: with a commit barrier, a future edit of B and claim(B) are mutually exclusive 505ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/composition/W1-future-plan-platform.test.ts > scenario 6/restart + W1 success: real SQLite adopt -> replay -> later revision -> reopen replay
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/W1-future-plan-platform.test.ts:228:26
+    226|     const applied = await reopened.plans.applyPlanChange(ctx, { meta: …
+    227|       input: { proposalRef: change.value.ref, expectedProposalRevision…
+    228|     expect.soft(applied).toMatchObject({ status: 'committed' });
+       |                          ^
+    229|     if (applied.status === 'committed') {
+    230|       committedChange = { ref: change.value.ref, revision: change.valu…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/17]⎯
+
+ FAIL  tests/composition/W1-future-plan-platform.test.ts > scenario 3: with a commit barrier, a future edit of B and claim(B) are mutually exclusive
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ race tests/composition/W1-future-plan-platform.test.ts:320:32
+    318|       const claimPromise = f.makeService(wrapped).claimTask(f.ctx, req…
+    319|       const [editResult, claimResult] = await Promise.all([editPromise…
+    320|       expect.soft(editArrived).toBe(true);
+       |                                ^
+    321|       expect.soft(claimArrived).toBe(true);
+    322|
+ ❯ tests/composition/W1-future-plan-platform.test.ts:343:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/17]⎯
+
+ FAIL  tests/composition/W1-future-plan-platform.test.ts > scenario 3: with a commit barrier, a future edit of B and claim(B) are mutually exclusive
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ race tests/composition/W1-future-plan-platform.test.ts:327:33
+    325|       const newPlanRef: PlanRevisionRef = { aggregateType: 'PlanRevisi…
+    326|       if (order === 'edit-first') {
+    327|         expect.soft(editResult).toMatchObject({ status: 'committed' });
+       |                                 ^
+    328|         expect.soft(claimResult).toMatchObject({ status: 'rejected', c…
+    329|         const goal = await f.plans.queryGoal(f.ctx, f.goalRef);
+ ❯ tests/composition/W1-future-plan-platform.test.ts:343:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/17]⎯
+
+ FAIL  tests/composition/W1-future-plan-platform.test.ts > scenario 3: with a commit barrier, a future edit of B and claim(B) are mutually exclusive
+AssertionError: expected { status: 'committed', …(3) } to match object { status: 'rejected', …(1) }
+(13 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "revision_conflict",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ race tests/composition/W1-future-plan-platform.test.ts:328:34
+    326|       if (order === 'edit-first') {
+    327|         expect.soft(editResult).toMatchObject({ status: 'committed' });
+    328|         expect.soft(claimResult).toMatchObject({ status: 'rejected', c…
+       |                                  ^
+    329|         const goal = await f.plans.queryGoal(f.ctx, f.goalRef);
+    330|         expect.soft(goal).toMatchObject({ status: 'ready', value: { go…
+ ❯ tests/composition/W1-future-plan-platform.test.ts:343:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/17]⎯
+
+ FAIL  tests/composition/W1-future-plan-platform.test.ts > scenario 3: with a commit barrier, a future edit of B and claim(B) are mutually exclusive
+AssertionError: expected { status: 'ready', value: { …(2) } } to match object { status: 'ready', …(1) }
+(22 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -2,11 +2,11 @@
+    "status": "ready",
+    "value": {
+      "goal": {
+        "activePlanRevision": {
+          "aggregateType": "PlanRevision",
+-         "planId": "w1-race-plan-2",
++         "planId": "r4c-claim-plan",
+          "projectId": "r4c-claim-project",
+        },
+      },
+    },
+  }
+
+ ❯ race tests/composition/W1-future-plan-platform.test.ts:330:27
+    328|         expect.soft(claimResult).toMatchObject({ status: 'rejected', c…
+    329|         const goal = await f.plans.queryGoal(f.ctx, f.goalRef);
+    330|         expect.soft(goal).toMatchObject({ status: 'ready', value: { go…
+       |                           ^
+    331|         expect.soft(await f.records.readMany([leaseKey])).toMatchObjec…
+    332|       } else {
+ ❯ tests/composition/W1-future-plan-platform.test.ts:343:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/17]⎯
+
+ FAIL  tests/composition/W1-future-plan-platform.test.ts > scenario 3: with a commit barrier, a future edit of B and claim(B) are mutually exclusive
+AssertionError: expected { status: 'ready', value: { …(3) } } to match object { status: 'ready', value: { …(1) } }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "status": "ready",
+    "value": {
+-     "missing": [
+-       "{\"aggregateType\":\"TaskLease\",\"goalId\":\"r4c-claim-goal\",\"projectId\":\"r4c-claim-project\",\"taskId\":\"implement-b\"}",
+-     ],
++     "missing": [],
+    },
+  }
+
+ ❯ race tests/composition/W1-future-plan-platform.test.ts:331:59
+    329|         const goal = await f.plans.queryGoal(f.ctx, f.goalRef);
+    330|         expect.soft(goal).toMatchObject({ status: 'ready', value: { go…
+    331|         expect.soft(await f.records.readMany([leaseKey])).toMatchObjec…
+       |                                                           ^
+    332|       } else {
+    333|         expect.soft(claimResult).toMatchObject({ status: 'committed' }…
+ ❯ tests/composition/W1-future-plan-platform.test.ts:343:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/17]⎯
+
+ FAIL  tests/composition/W1-future-plan-platform.test.ts > scenario 3: with a commit barrier, a future edit of B and claim(B) are mutually exclusive
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ race tests/composition/W1-future-plan-platform.test.ts:320:32
+    318|       const claimPromise = f.makeService(wrapped).claimTask(f.ctx, req…
+    319|       const [editResult, claimResult] = await Promise.all([editPromise…
+    320|       expect.soft(editArrived).toBe(true);
+       |                                ^
+    321|       expect.soft(claimArrived).toBe(true);
+    322|
+ ❯ tests/composition/W1-future-plan-platform.test.ts:344:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/17]⎯
+
+ FAIL  tests/composition/W1-future-plan-platform.test.ts > scenario 3: with a commit barrier, a future edit of B and claim(B) are mutually exclusive
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "revision_conflict",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ race tests/composition/W1-future-plan-platform.test.ts:334:33
+    332|       } else {
+    333|         expect.soft(claimResult).toMatchObject({ status: 'committed' }…
+    334|         expect.soft(editResult).toMatchObject({ status: 'rejected', co…
+       |                                 ^
+    335|         const goal = await f.plans.queryGoal(f.ctx, f.goalRef);
+    336|         expect.soft(goal).toMatchObject({ status: 'ready', value: { go…
+ ❯ tests/composition/W1-future-plan-platform.test.ts:344:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/17]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 1/2: future-only B edit + prompt edge keep A running and C satisfied after real adoption
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:379:20
+    377|   const applied = await wrappedPlans.applyPlanChange(ctx, { meta: { re…
+    378|     input: { proposalRef: proposed.value.ref, expectedProposalRevision…
+    379|   expect(injected).toBe(true);
+       |                    ^
+    380|   expect(injectedCommit).toMatchObject({ status: 'committed' });
+    381|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/17]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 4: a stale proposal revision or an inactive source is rejected with zero writes
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "revision_conflict",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:468:24
+    466|   // The failure MUST be the stale-source conflict; the stale candidat…
+    467|   // auto-rebased and adopted.
+    468|   expect.soft(applied).toMatchObject({ status: 'rejected', code: 'revi…
+       |                        ^
+    469|   const goal = await f.currentGoal();
+    470|   expect(goal.activePlanRevision).toEqual(later.ref);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/17]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 5: same-identity replay returns the original adoption, including a lookup-miss peer window
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ adoptedSnapshot tests/work-graph/W1-future-plan.test.ts:346:23
+    344|  * unsupported gap keeps the adoption red. */
+    345| function adoptedSnapshot(result: WriteResult<PlanRevisionSnapshot>): P…
+    346|   expect.soft(result).toMatchObject({ status: 'committed' });
+       |                       ^
+    347|   return result.status === 'committed' ? result.value : null;
+    348| }
+ ❯ tests/work-graph/W1-future-plan.test.ts:486:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/17]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 5: same-identity replay returns the original adoption, including a lookup-miss peer window
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed', replayed: true }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": true,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:488:23
+    486|   const snapshot = adoptedSnapshot(first);
+    487|   const replay = await f.applyChange(proposed.value.ref, proposed.valu…
+    488|   expect.soft(replay).toMatchObject({ status: 'committed', replayed: t…
+       |                       ^
+    489|   if (snapshot !== null) expect.soft(replay).toMatchObject({ value: sn…
+    490|   const conflict = await f.applyChange(proposed.value.ref, proposed.va…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/17]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 5: same-identity replay returns the original adoption, including a lookup-miss peer window
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "idempotency_conflict",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:492:25
+    490|   const conflict = await f.applyChange(proposed.value.ref, proposed.va…
+    491|     [{ ref: f.goalRef, revision: 1 }]);
+    492|   expect.soft(conflict).toMatchObject({ status: 'rejected', code: 'ide…
+       |                         ^
+    493|
+    494|   // Controlled window: the original apply's idempotency lookup misses…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/17]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 5: same-identity replay returns the original adoption, including a lookup-miss peer window
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:517:28
+    515|       input: { proposalRef: candidate.value.ref, expectedProposalRevis…
+    516|   expect(windowEntered).toBe(true);
+    517|   expect.soft(peer.result).toMatchObject({ status: 'committed' });
+       |                            ^
+    518|   expect.soft(original).toMatchObject({ status: 'committed', replayed:…
+    519|   if (peer.result !== null && peer.result.status === 'committed') {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/17]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 5: same-identity replay returns the original adoption, including a lookup-miss peer window
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed', replayed: true }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": true,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:518:25
+    516|   expect(windowEntered).toBe(true);
+    517|   expect.soft(peer.result).toMatchObject({ status: 'committed' });
+    518|   expect.soft(original).toMatchObject({ status: 'committed', replayed:…
+       |                         ^
+    519|   if (peer.result !== null && peer.result.status === 'committed') {
+    520|     expect.soft(original).toMatchObject({ value: peer.result.value });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/17]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 7: authorized split adopts from the source; coverage/role weakening is zero-write rejected
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ adoptedSnapshot tests/work-graph/W1-future-plan.test.ts:346:23
+    344|  * unsupported gap keeps the adoption red. */
+    345| function adoptedSnapshot(result: WriteResult<PlanRevisionSnapshot>): P…
+    346|   expect.soft(result).toMatchObject({ status: 'committed' });
+       |                       ^
+    347|   return result.status === 'committed' ? result.value : null;
+    348| }
+ ❯ tests/work-graph/W1-future-plan.test.ts:531:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/17]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 6 (memory): explicit old Plan excludes later Run + global Lease; active reads stay authoritative
+AssertionError: expected { ref: { …(3) }, …(10) } to match object { eligibility: { …(2) } }
+(20 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "eligibility": {
+-     "eligible": true,
+-     "reasons": [],
++     "eligible": false,
++     "reasons": [
++       {
++         "code": "resource_unavailable",
++         "detail": "leased",
++         "message": "task already has an active lease (holder run w1-run-B)",
++         "taskId": "B",
++       },
++     ],
+    },
+  }
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:605:23
+    603|     // The later Run's GLOBAL TaskLease must not leak as plan1's runId…
+    604|     // reason: a historical projection is not a current claim permissi…
+    605|     expect.soft(oldB).toMatchObject({ eligibility: { eligible: true, r…
+       |                       ^
+    606|   }
+    607|   const activeGraph = await f.plans.queryTaskGraph(ctx, { goalRef: f.g…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/17]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  7 failed | 1 passed (8)
+   Start at  19:27:28
+   Duration  1.85s (transform 592ms, setup 0ms, import 912ms, tests 764ms, environment 0ms)
+

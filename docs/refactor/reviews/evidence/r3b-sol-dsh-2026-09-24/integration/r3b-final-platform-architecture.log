@@ -1,0 +1,79 @@
+{
+  "dependencyStatus": {
+    "fullDependencyDagVerified": false,
+    "transitionalInjectedDependencies": [
+      {
+        "from": "WorkGraph",
+        "to": "StateLedger",
+        "capability": "canonical snapshot load",
+        "exitBatch": "R3c reader migration"
+      },
+      {
+        "from": "WorkGraph",
+        "to": "ReadModelIndex",
+        "capability": "materialAccessCandidates",
+        "exitBatch": "R3c index migration"
+      }
+    ]
+  },
+  "sourceFiles": 575,
+  "inventoryFiles": 576,
+  "coverage": {
+    "parsedExtensions": [
+      ".ts",
+      ".tsx",
+      ".js"
+    ],
+    "ownerOnlyExtensions": [
+      ".py"
+    ],
+    "excluded": [
+      "dependencies",
+      "generated dist",
+      ".vite"
+    ],
+    "notASandboxVerification": true
+  },
+  "owners": {
+    "ArchitectureReconciler": 3,
+    "ArtifactVault": 5,
+    "ContextCompiler": 37,
+    "Contracts": 143,
+    "ControlEngine": 95,
+    "DispatchEngine": 28,
+    "Fixtures": 6,
+    "Host": 24,
+    "HumanCollaboration": 5,
+    "PlanCompiler": 8,
+    "ReadModelIndex": 23,
+    "RecordStore": 10,
+    "StateLedger": 29,
+    "Storage": 1,
+    "TestDoubles": 2,
+    "UI": 78,
+    "VerificationEngine": 24,
+    "WorkGraph": 9,
+    "WorkerRuntime": 19,
+    "WorkspaceTools": 27
+  },
+  "moduleEdges": {
+    "ControlEngine -> StateLedger": 3,
+    "DispatchEngine -> ControlEngine": 3,
+    "DispatchEngine -> ContextCompiler": 1,
+    "DispatchEngine -> PlanCompiler": 2,
+    "PlanCompiler -> ControlEngine": 2,
+    "WorkGraph -> WorkspaceTools": 1,
+    "ArtifactVault -> WorkGraph": 2,
+    "ArtifactVault -> RecordStore": 2,
+    "ContextCompiler -> StateLedger": 3,
+    "ContextCompiler -> WorkspaceTools": 3,
+    "ContextCompiler -> WorkGraph": 1,
+    "ReadModelIndex -> ControlEngine": 2,
+    "StateLedger -> RecordStore": 2,
+    "StateLedger -> WorkGraph": 4,
+    "WorkerRuntime -> ArtifactVault": 3,
+    "WorkerRuntime -> ContextCompiler": 1,
+    "WorkerRuntime -> WorkspaceTools": 6
+  },
+  "issues": []
+}

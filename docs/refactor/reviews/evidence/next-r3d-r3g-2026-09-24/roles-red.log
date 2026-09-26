@@ -1,0 +1,177 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R3g-role-spec.test.ts (11 tests | 9 failed) 257ms
+   × memory: role install, active pin and matrix resolution use canonical Store facts 6ms
+   × sqlite: role install, active pin and matrix resolution use canonical Store facts 42ms
+   × memory: role commands reject stale identity and one CAS contender loses 1ms
+   × sqlite: role commands reject stale identity and one CAS contender loses 40ms
+   × memory: a matrix pin without an installed spec is inadmissible 2ms
+   × sqlite: a matrix pin without an installed spec is inadmissible 44ms
+   × sqlite: installed and activated role survives reopening the physical Store 40ms
+   × memory: verified absence differs from corrupt role governance 2ms
+   × sqlite: verified absence differs from corrupt role governance 40ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 9 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R3g-role-spec.test.ts > memory: role install, active pin and matrix resolution use canonical Store facts
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed', …(3) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "contentDigest": "fd17f3b322533411ee87cc68b7f329202fd66baf928fa7d8383582ab90e4c7af",
+-   "replayed": false,
+-   "revisionRef": {
+-     "aggregateType": "RoleSpecRevision",
+-     "projectId": "r3g-roles",
+-     "revision": 1,
+-     "roleId": "builder",
+-   },
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R3g-role-spec.test.ts:105:23
+    103|     const command = installCommand(1, 'install-builder-1');
+    104|     const installed = await roles.installRoleSpec(ctx, command);
+    105|     expect(installed).toMatchObject({ status: 'committed', replayed: f…
+       |                       ^
+    106|       revisionRef: { aggregateType: 'RoleSpecRevision', projectId, rol…
+    107|       contentDigest: command.payload.contentDigest });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/9]⎯
+
+ FAIL  tests/work-graph/R3g-role-spec.test.ts > sqlite: role install, active pin and matrix resolution use canonical Store facts
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed', …(3) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "contentDigest": "fd17f3b322533411ee87cc68b7f329202fd66baf928fa7d8383582ab90e4c7af",
+-   "replayed": false,
+-   "revisionRef": {
+-     "aggregateType": "RoleSpecRevision",
+-     "projectId": "r3g-roles",
+-     "revision": 1,
+-     "roleId": "builder",
+-   },
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R3g-role-spec.test.ts:105:23
+    103|     const command = installCommand(1, 'install-builder-1');
+    104|     const installed = await roles.installRoleSpec(ctx, command);
+    105|     expect(installed).toMatchObject({ status: 'committed', replayed: f…
+       |                       ^
+    106|       revisionRef: { aggregateType: 'RoleSpecRevision', projectId, rol…
+    107|       contentDigest: command.payload.contentDigest });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/9]⎯
+
+ FAIL  tests/work-graph/R3g-role-spec.test.ts > memory: role commands reject stale identity and one CAS contender loses
+ FAIL  tests/work-graph/R3g-role-spec.test.ts > sqlite: role commands reject stale identity and one CAS contender loses
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "digest_mismatch",
++   "code": "unavailable",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R3g-role-spec.test.ts:186:59
+    184|       identity: { ...first.identity, idempotencyKey: 'bad-digest' },
+    185|       payload: { ...first.payload, contentDigest: '0'.repeat(64) } };
+    186|     expect(await roles.installRoleSpec(ctx, wrongDigest)).toMatchObjec…
+       |                                                           ^
+    187|       code: 'digest_mismatch' });
+    188|     const malformed = { ...first, commandId: 'bad-content',
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/9]⎯
+
+ FAIL  tests/work-graph/R3g-role-spec.test.ts > memory: a matrix pin without an installed spec is inadmissible
+ FAIL  tests/work-graph/R3g-role-spec.test.ts > sqlite: a matrix pin without an installed spec is inadmissible
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R3g-role-spec.test.ts:249:52
+    247|     const proposedPin: RoleSpecPinV1 = { ref: { aggregateType: 'RoleSp…
+    248|       roleId: 'builder', revision: 1 }, digest: roleSpecContentDigest(…
+    249|     expect(await seedPolicy(backend, proposedPin)).toMatchObject({ sta…
+       |                                                    ^
+    250|     const roles = createRoleConfigurationService({ records: backend.re…
+    251|       eventId: () => 'r3g-uninstalled-event' });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/9]⎯
+
+ FAIL  tests/work-graph/R3g-role-spec.test.ts > sqlite: installed and activated role survives reopening the physical Store
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R3g-role-spec.test.ts:286:23
+    284|       eventId: () => 'r3g-reopen-first-event' });
+    285|     const installed = await roles.installRoleSpec(ctx, installCommand(…
+    286|     expect(installed).toMatchObject({ status: 'committed' });
+       |                       ^
+    287|     if (installed.status !== 'committed') throw Error('install before …
+    288|     pin = { ref: installed.revisionRef, digest: installed.contentDiges…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/9]⎯
+
+ FAIL  tests/work-graph/R3g-role-spec.test.ts > memory: verified absence differs from corrupt role governance
+ FAIL  tests/work-graph/R3g-role-spec.test.ts > sqlite: verified absence differs from corrupt role governance
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready', …(1) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "status": "absent",
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R3g-role-spec.test.ts:326:58
+    324|     const request = { roleBinding: binding(1, 'legacy-mark'),
+    325|       declaredPermissions: { tools: [] as string[], writeScope: [] as …
+    326|     expect(await roles.resolveRoleBinding(ctx, request)).toMatchObject…
+       |                                                          ^
+    327|       value: { status: 'absent' } });
+    328|     const missingPin: RoleSpecPinV1 = { ref: { aggregateType: 'RoleSpe…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/9]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  9 failed | 2 passed (11)
+   Start at  16:19:36
+   Duration  448ms (transform 81ms, setup 0ms, import 101ms, tests 257ms, environment 0ms)
+

@@ -1,0 +1,10 @@
+{
+  "coding-platform/next/tests/helpers/C1-mailbox-fixture.ts": {
+    "before": "a60713290823225bc9dd4c7f1115a7259ec9cd3ce8537be0dbc0fcc9ae340b30",
+    "after": "167338bae658a8d09e92556c3a928607b7bdbf5fef500c80e26a111b6f6ead34"
+  },
+  "coding-platform/next/tests/work-graph/C1-session-mailbox.test.ts": {
+    "before": "86d5887efb87136a8229e8647f4ac7145dab1f32ace3e9e241d0c9aa768d08e1",
+    "after": "106c7250996111fe2d586f7485b0b6b4e4f7dac28d8e1a5a67c2313b15a89dd0"
+  }
+}

@@ -1,0 +1,72 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R3g-role-spec.test.ts (15 tests | 4 failed) 40ms
+   × memory: verified absence differs from corrupt role governance 4ms
+   × sqlite: verified absence differs from corrupt role governance 1ms
+   × memory: review mutation after invocation cannot rewrite role commands 1ms
+   × sqlite: review mutation after invocation cannot rewrite role commands 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R3g-role-spec.test.ts > memory: verified absence differs from corrupt role governance
+ FAIL  tests/work-graph/R3g-role-spec.test.ts > sqlite: verified absence differs from corrupt role governance
+AssertionError: expected { status: 'ready', value: { …(3) } } to match object { status: 'rejected', code: 'invalid' }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "invalid",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/work-graph/R3g-role-spec.test.ts:368:10
+    366|     for (const malformed of malformedRequests) {
+    367|       expect(await roles.resolveRoleBinding(ctx, malformed as Paramete…
+    368|         .toMatchObject({ status: 'rejected', code: 'invalid' });
+       |          ^
+    369|     }
+    370|     expect(await roles.resolveRoleBinding(ctx, request)).toMatchObject…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/work-graph/R3g-role-spec.test.ts > memory: review mutation after invocation cannot rewrite role commands
+ FAIL  tests/work-graph/R3g-role-spec.test.ts > sqlite: review mutation after invocation cannot rewrite role commands
+AssertionError: expected { status: 'not_ready', …(2) } to match object { status: 'ready', …(1) }
+(6 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "ref": {
+-       "aggregateType": "RoleSpecRevision",
+-       "projectId": "r3g-roles",
+-       "revision": 1,
+-       "roleId": "builder",
+-     },
+-   },
++   "status": "not_ready",
+  }
+
+ ❯ tests/work-graph/R3g-role-spec.test.ts:487:31
+    485|     const pendingRead = roles.readRoleSpec(ctx, { pin }, readOptions);
+    486|     readOptions.atLeastCursor = makeCommitCursor(seqOfCommitCursor(ins…
+    487|     expect(await pendingRead).toMatchObject({ status: 'ready', value: …
+       |                               ^
+    488|     const commandToActivate = activateCommand(pin, 'input-activate');
+    489|     const pendingActivate = roles.activateRoleSpec(ctx, commandToActiv…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 11 passed (15)
+   Start at  16:33:40
+   Duration  251ms (transform 100ms, setup 0ms, import 124ms, tests 40ms, environment 0ms)
+

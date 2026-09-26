@@ -1,0 +1,12 @@
+{
+  "decision": "approved_for_implementation",
+  "tests": 32,
+  "red": 14,
+  "green": 18,
+  "typecheck": "PASS",
+  "red_causes": "11 Graph stub;3 real RT1 range defects;writer available",
+  "sha256": {
+    "coding-platform/next/tests/runtime/R4c-graph-history.test.ts": "d8a3a1fbb574528b0d82301708dbd595cb24646fd907bd0df2e5dea00473ba9b",
+    "coding-platform/next/src/core/agent-runtime/execution-history-contracts.ts": "4f6170a730d479c27191722d18291d056b97df3550d2ba50cbcc9f404f06a01f"
+  }
+}

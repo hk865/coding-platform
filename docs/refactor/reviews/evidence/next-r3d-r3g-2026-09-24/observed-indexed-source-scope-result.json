@@ -1,0 +1,10 @@
+{
+  "changed": [
+    "coding-platform/next/src/core/work-graph/architecture/architecture-delta.ts",
+    "coding-platform/next/src/core/work-graph/architecture/architecture-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/architecture/architecture-service.ts",
+    "coding-platform/next/src/core/work-graph/architecture/graph-index.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

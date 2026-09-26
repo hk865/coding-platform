@@ -1,0 +1,39 @@
+{
+  "status": "review_repair_required",
+  "independentChecks": {
+    "next-control-runtime": {
+      "exit": 0,
+      "files": 2,
+      "tests": 4
+    },
+    "next-types": {
+      "exit": 0
+    }
+  },
+  "audit": {
+    "changed": [
+      "coding-platform/next/src/core/agent-runtime/execution-control.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+      "coding-platform/next/src/core/agent-runtime/runtime.ts",
+      "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts",
+      "coding-platform/next/src/core/work-graph/tasks/control-service.ts",
+      "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "hashes": {
+    "coding-platform/next/src/core/work-graph/tasks/control-service.ts": "ac844de88c4f76b265c334ab19fddb57e9488322c3ee798e2765379fec3358a6",
+    "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts": "a10c1be024827b9f428afa36765aedfbc0af4153250a1ab5251139f6ce899f5e",
+    "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts": "1fdafb34ca337df23682bf5556f30ab2ebe1f7ab31b0c0e28d61c293e6368a09",
+    "coding-platform/next/src/core/agent-runtime/runtime.ts": "21d36cbdb32784dc0492175d3d5e745c9a2ca780c0cda7f84f8ef58e600ac995",
+    "coding-platform/next/src/core/agent-runtime/execution-driver.ts": "680e6eeee8d335d298ca74cb538036ba31399bf95d1b7b1a35f6811f85a550f8",
+    "coding-platform/next/src/core/agent-runtime/execution-observation.ts": "d36960d51b2e22b37cbaf4d7c8a3bc517207d04875ae67ca0f5ba7f71be71331",
+    "coding-platform/next/src/core/agent-runtime/observed-model-run.ts": "49718f02332d49a83f59d8af7880f4bc167f25f0b03f53dbaec8a7a3c3e2144e",
+    "coding-platform/next/src/core/agent-runtime/execution-control.ts": "e6372b984681bebdd5cfddcd17eab96e38dbd0daf49e51eaadb242c191ca44d5"
+  },
+  "findingsSection": "docs/refactor/tasks/R4-control-runtime-implementation.md#5",
+  "import": "withheld",
+  "frozenTestsUnchanged": true
+}

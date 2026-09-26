@@ -1,0 +1,2 @@
+继续原Session返修一个主审真实SQLite反例。当前只读tests/work-graph/R4c-execution-history-index.test.ts新增第66例：正常commit以后只把已提交event_json.recorded.runRevision改为999，实际replay返回成功。原65绿，新增1红；幂等回执与当前Run未变，故不是当前世界变化。
+请仅原scope最小修readReplay：核原Store receipt.versions恰好一个完整目标Run refKey/version，event recorded.runRef/runRevision必须与其一致；并核版本与该request的原expected revision+1一致（传必要pin，不读当前Run以免后续水位破坏原重放）。损坏/不一致返回unavailable，保持原locator/identity/fingerprint/actor/scope校验，不新增层或扫描。主审已导入上一实现，返修仅复制最终变化回去。不得改测试/契约/其他文件。next-history-index 66项、next-types、相关执行事实/claim检查，完成停止。

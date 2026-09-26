@@ -1,0 +1,24 @@
+{
+  "lane": "r6-ui-layout-skeleton-20260926",
+  "session": "session-750d2fd6-f2ff-4c2b-95ee-78ab4e7ea113",
+  "stage": "skeleton_and_two_display_tests_only",
+  "scope": [
+    "coding-platform/next/src/ui/main.ts",
+    "coding-platform/next/src/ui/views.ts",
+    "coding-platform/next/src/ui/styles.css",
+    "coding-platform/next/src/ui/index.html",
+    "coding-platform/next/tests/app/R6-workbench.test.ts"
+  ],
+  "baselineHashes": {
+    "coding-platform/next/src/ui/main.ts": "62224f5d776d4c6973876de713b78c4555a46285973ca492627cf4940d38a6f3",
+    "coding-platform/next/src/ui/views.ts": "0ff075b12eb01e239735ee9e3cd58a038193b3abfc1008b78ed326c66618e5a2",
+    "coding-platform/next/src/ui/styles.css": "d0971e3bffc1bcb6bb2ec86018f87f96d1dcffb744c163ac81d08abb939074b6",
+    "coding-platform/next/src/ui/index.html": "f6bdf6760270513e47e8680fdde53dc12cb75868a98b0d8814f8585b4dd4a3a7",
+    "coding-platform/next/tests/app/R6-workbench.test.ts": "fa5d54a04887a975f0fa8bf56be30e4b96f14e2cf0a520612b68b519032f955d"
+  },
+  "taskSha256": "6461258a66e1c179667e379acc4daf58021231c760825b6d708f21ba3420d713",
+  "scopeSha256": "50cef4626583cb57061a67211ae3f4620afcc5db185d1c28a427801727d8c037",
+  "dispatchSha256": "9f1461338ce8550a2b3133b423f810d1e8cd7ae94ad57d240865a335d2f94c11",
+  "implementationAuthorized": false,
+  "predecessorMainSha256": "62224f5d776d4c6973876de713b78c4555a46285973ca492627cf4940d38a6f3"
+}

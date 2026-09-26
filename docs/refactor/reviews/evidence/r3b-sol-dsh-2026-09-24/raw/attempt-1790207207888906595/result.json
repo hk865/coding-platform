@@ -1,0 +1,15 @@
+{
+  "exitCode": 0,
+  "session": "session-6519d62d-2ab8-4a27-bdba-5018b347a7d0",
+  "counts": {
+    "session": 1,
+    "status": 80,
+    "thinking": 39,
+    "tool_call": 47,
+    "tool_result": 47,
+    "text": 3,
+    "final": 1
+  },
+  "finished": 1790207473.1376338,
+  "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r3b-raw-sol-01/attempt-1790207207888906595"
+}

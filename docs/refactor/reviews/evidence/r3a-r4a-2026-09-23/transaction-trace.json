@@ -1,0 +1,476 @@
+{
+  "scope": "Four existing p1-02 integration tests; exec-only instrumentation, not complete profiler",
+  "connectionsObserved": 15,
+  "begin": {
+    "count": 30,
+    "totalMs": 0.45441300000243245,
+    "maxMs": 0.04227600000012899,
+    "p50Ms": 0.010146000000077038
+  },
+  "commit": {
+    "count": 30,
+    "totalMs": 168.8189850000008,
+    "maxMs": 8.28400099999999,
+    "p50Ms": 6.482234000000062
+  },
+  "rollback": {
+    "count": 0,
+    "totalMs": 0,
+    "maxMs": 0,
+    "p50Ms": 0
+  },
+  "nestedBegins": [],
+  "savepoints": [],
+  "spans": [
+    {
+      "connection": 1,
+      "operation": "BEGIN",
+      "durationMs": 0.02532300000007126,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 1,
+      "operation": "COMMIT",
+      "durationMs": 6.026190000000042,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 7.264531999999917
+    },
+    {
+      "connection": 1,
+      "operation": "BEGIN",
+      "durationMs": 0.015366000000085478,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 1,
+      "operation": "COMMIT",
+      "durationMs": 6.313717999999881,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 6.808538999999882
+    },
+    {
+      "connection": 1,
+      "operation": "BEGIN",
+      "durationMs": 0.008621999999832042,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 1,
+      "operation": "COMMIT",
+      "durationMs": 0.0047660000000178115,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 0.09139500000014777
+    },
+    {
+      "connection": 4,
+      "operation": "BEGIN",
+      "durationMs": 0.04227600000012899,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 4,
+      "operation": "COMMIT",
+      "durationMs": 7.021986000000197,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 7.886481000000003
+    },
+    {
+      "connection": 4,
+      "operation": "BEGIN",
+      "durationMs": 0.03613200000017969,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 4,
+      "operation": "COMMIT",
+      "durationMs": 7.957565000000159,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 8.491316999999981
+    },
+    {
+      "connection": 4,
+      "operation": "BEGIN",
+      "durationMs": 0.026604000000133965,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 4,
+      "operation": "COMMIT",
+      "durationMs": 7.225255000000288,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 8.203413000000182
+    },
+    {
+      "connection": 4,
+      "operation": "BEGIN",
+      "durationMs": 0.010013999999955558,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 4,
+      "operation": "COMMIT",
+      "durationMs": 0.007396999999855325,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 0.14364199999999983
+    },
+    {
+      "connection": 7,
+      "operation": "BEGIN",
+      "durationMs": 0.031555999999909545,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 7,
+      "operation": "COMMIT",
+      "durationMs": 6.252452000000176,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 6.7509140000001935
+    },
+    {
+      "connection": 7,
+      "operation": "BEGIN",
+      "durationMs": 0.01949400000012247,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 7,
+      "operation": "COMMIT",
+      "durationMs": 8.28400099999999,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 8.553390000000036
+    },
+    {
+      "connection": 7,
+      "operation": "BEGIN",
+      "durationMs": 0.012545999999929336,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 7,
+      "operation": "COMMIT",
+      "durationMs": 6.463940999999977,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 6.649439000000257
+    },
+    {
+      "connection": 7,
+      "operation": "BEGIN",
+      "durationMs": 0.00454200000012861,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 7,
+      "operation": "COMMIT",
+      "durationMs": 6.716284999999971,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 6.864771000000019
+    },
+    {
+      "connection": 7,
+      "operation": "BEGIN",
+      "durationMs": 0.004628000000138854,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 7,
+      "operation": "COMMIT",
+      "durationMs": 6.460989000000154,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 6.610012999999981
+    },
+    {
+      "connection": 7,
+      "operation": "BEGIN",
+      "durationMs": 0.0026710000001912704,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 7,
+      "operation": "COMMIT",
+      "durationMs": 0.014983000000029278,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 0.36212799999975687
+    },
+    {
+      "connection": 7,
+      "operation": "BEGIN",
+      "durationMs": 0.009763999999904627,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 7,
+      "operation": "COMMIT",
+      "durationMs": 6.023304999999709,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 6.244009999999889
+    },
+    {
+      "connection": 7,
+      "operation": "BEGIN",
+      "durationMs": 0.008479000000079395,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 7,
+      "operation": "COMMIT",
+      "durationMs": 6.653473999999733,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 7.031806999999844
+    },
+    {
+      "connection": 8,
+      "operation": "BEGIN",
+      "durationMs": 0.004618999999820517,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 8,
+      "operation": "COMMIT",
+      "durationMs": 6.5958049999999275,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 8.082151999999951
+    },
+    {
+      "connection": 11,
+      "operation": "BEGIN",
+      "durationMs": 0.005508000000190805,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 11,
+      "operation": "COMMIT",
+      "durationMs": 5.582858999999644,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 6.322065999999722
+    },
+    {
+      "connection": 10,
+      "operation": "BEGIN",
+      "durationMs": 0.009354000000257656,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 10,
+      "operation": "COMMIT",
+      "durationMs": 6.398207000000184,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 6.607274999999845
+    },
+    {
+      "connection": 10,
+      "operation": "BEGIN",
+      "durationMs": 0.006818000000293978,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 10,
+      "operation": "COMMIT",
+      "durationMs": 6.482234000000062,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 6.688738999999714
+    },
+    {
+      "connection": 11,
+      "operation": "BEGIN",
+      "durationMs": 0.00742900000022928,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 11,
+      "operation": "COMMIT",
+      "durationMs": 7.776838999999654,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 7.887116999999762
+    },
+    {
+      "connection": 10,
+      "operation": "BEGIN",
+      "durationMs": 0.008257999999841559,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 10,
+      "operation": "COMMIT",
+      "durationMs": 0.005693000000064785,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 0.2766230000001997
+    },
+    {
+      "connection": 13,
+      "operation": "BEGIN",
+      "durationMs": 0.02827500000012151,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 13,
+      "operation": "COMMIT",
+      "durationMs": 6.666406000000279,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 7.093401999999969
+    },
+    {
+      "connection": 13,
+      "operation": "BEGIN",
+      "durationMs": 0.022589000000152737,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 13,
+      "operation": "COMMIT",
+      "durationMs": 6.292840999999953,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 6.608962999999676
+    },
+    {
+      "connection": 13,
+      "operation": "BEGIN",
+      "durationMs": 0.009219000000030064,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 13,
+      "operation": "COMMIT",
+      "durationMs": 5.724606000000222,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 5.895304000000124
+    },
+    {
+      "connection": 13,
+      "operation": "BEGIN",
+      "durationMs": 0.012047000000166008,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 13,
+      "operation": "COMMIT",
+      "durationMs": 6.751893000000109,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 7.036642000000029
+    },
+    {
+      "connection": 13,
+      "operation": "BEGIN",
+      "durationMs": 0.015172000000347907,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 13,
+      "operation": "COMMIT",
+      "durationMs": 7.176879000000099,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 7.549283999999716
+    },
+    {
+      "connection": 13,
+      "operation": "BEGIN",
+      "durationMs": 0.008741999999983818,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 13,
+      "operation": "COMMIT",
+      "durationMs": 0.011618999999882362,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 0.5023209999999381
+    },
+    {
+      "connection": 13,
+      "operation": "BEGIN",
+      "durationMs": 0.028585999999904743,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 13,
+      "operation": "COMMIT",
+      "durationMs": 7.649419000000307,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 8.117231000000174
+    },
+    {
+      "connection": 13,
+      "operation": "BEGIN",
+      "durationMs": 0.01963400000022375,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 13,
+      "operation": "COMMIT",
+      "durationMs": 7.054387000000133,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 7.91079099999979
+    },
+    {
+      "connection": 14,
+      "operation": "BEGIN",
+      "durationMs": 0.010146000000077038,
+      "transactionBefore": false,
+      "transactionAfter": true
+    },
+    {
+      "connection": 14,
+      "operation": "COMMIT",
+      "durationMs": 7.222991000000093,
+      "transactionBefore": true,
+      "transactionAfter": false,
+      "heldMs": 8.514145000000099
+    }
+  ]
+}

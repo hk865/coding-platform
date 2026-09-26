@@ -1,0 +1,50 @@
+{
+  "lane": "w2-whiteboard-tools-skeleton-20260926",
+  "files": [
+    {
+      "path": "coding-platform/next/resources/skills/platform-adviser/content.md",
+      "before": "c22507719d196f73eefb5805aa7a0717367fe72245c4e5b42831c711c4b6c2cc",
+      "after": "1bf3a088fef87c146f08b77563d62451fec9c12ebb41ee3824507250d57474df"
+    },
+    {
+      "path": "coding-platform/next/resources/skills/platform-adviser/skill.json",
+      "before": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+      "after": "a6ce8b810d0e352b7cad25594a100f6c7f42d73a71195f5307cb1e909c396ccf"
+    },
+    {
+      "path": "coding-platform/next/resources/skills/platform-scribe/content.md",
+      "before": "c22507719d196f73eefb5805aa7a0717367fe72245c4e5b42831c711c4b6c2cc",
+      "after": "4fa5718ee73782c82fed12b9350db358f3ef6f7ddd93c078709cb6088e87bcf4"
+    },
+    {
+      "path": "coding-platform/next/resources/skills/platform-scribe/skill.json",
+      "before": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+      "after": "fbb29a651b9ee82403a6ddf4b7c62cdf25c846fb268b16d24aafddd03e484219"
+    },
+    {
+      "path": "coding-platform/next/resources/skills/platform-secretary/content.md",
+      "before": "c22507719d196f73eefb5805aa7a0717367fe72245c4e5b42831c711c4b6c2cc",
+      "after": "bf21f88c9647280711fc86e18f36a06920028831889744016bada1e5cf6f262d"
+    },
+    {
+      "path": "coding-platform/next/resources/skills/platform-secretary/skill.json",
+      "before": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+      "after": "c91022d85eb4c32781438de4a93885423eca9b50b7838951bc1f89ba3722fd60"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/whiteboard-tools.ts",
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "0cf20f6f4eb69cdec7626c84b1a65544e74852f0c02a18b02b80d77058128157"
+    },
+    {
+      "path": "coding-platform/next/tests/runtime/W2-role-skills.test.ts",
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "cdf1f45c3d224a8ad4c33ddd746908d50d6fba0f3e497521ef266120d4201393"
+    },
+    {
+      "path": "coding-platform/next/tests/runtime/W2-whiteboard-tools.test.ts",
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "67804c32b459f5cbc392b159dcb52d57d5bdbe3c72d425b6bba472716f9c4513"
+    }
+  ]
+}

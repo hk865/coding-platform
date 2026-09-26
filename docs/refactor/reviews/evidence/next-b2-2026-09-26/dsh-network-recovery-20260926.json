@@ -1,0 +1,159 @@
+{
+  "cause": "Sandbox tmpfs /run hid /etc/resolv.conf target /run/systemd/resolve/stub-resolv.conf; fetch reported EAI_AGAIN.",
+  "fix": "Bind only the existing resolver target read-only under the isolated /run. DNS lookup inside sandbox passed.",
+  "harnessSha256": "26d94947a662ad2e7037de3fbe9cec123cb1c9b472c75d2447c17fbb74edb273",
+  "userRequestedFreshSessions": true,
+  "lanes": [
+    {
+      "lane": "r5b-query-execution-skeleton-20260926",
+      "previousSession": "session-6ad315ed-81bb-4e06-b366-b7f57ef526da",
+      "retainedFiles": {
+        "coding-platform/next/src/contracts/query-job.ts": {
+          "sha256": "a809695334bc88048a410bf03a401307287c04bffee98988d4e1b7c12aa5c051",
+          "lines": 315,
+          "changed": true
+        },
+        "coding-platform/next/src/contracts/core/prepared-execution.ts": {
+          "sha256": "4ab83829148bd5e7cdb1250f41c075c7d67019f647011f4e551802132b981418",
+          "lines": 95,
+          "changed": true
+        },
+        "coding-platform/next/src/core/work-graph/queries/contracts.ts": {
+          "sha256": "2f3f99e5566bfad3ac0b2ebff5419a3a7d1888a3ee562da06de72be12f38afe9",
+          "lines": 223,
+          "changed": true
+        },
+        "coding-platform/next/src/core/work-graph/queries/query-job-service.ts": {
+          "sha256": "8619ff82a56a14ad9d5736380b83088173020f9f8328fe1f116815810a5f6869",
+          "lines": 873,
+          "changed": true
+        },
+        "coding-platform/next/src/core/work-graph/queries/query-record-codecs.ts": {
+          "sha256": "c9e763484c0bf5574f9d097bad8e92f365659b1816fc16203dd2e4d69235882b",
+          "lines": 752,
+          "changed": true
+        },
+        "coding-platform/next/src/core/work-graph/queries/query-execution.ts": {
+          "sha256": "900afb77d65f26ceb1d6609edc51d22db7495a0d34bfc8cef9ca7ce84633127d",
+          "lines": 39,
+          "changed": true
+        },
+        "coding-platform/next/src/core/work-graph/materials/record-readers.ts": {
+          "sha256": "3ff5fad74bd9831055bcc6d5d3b29f8147fbbd8476028c2ea2d6d8a278d57489",
+          "lines": 660,
+          "changed": true
+        },
+        "coding-platform/next/src/core/work-graph/source-authority-ports.ts": {
+          "sha256": "9cd39b3df1094887e6f777bc48a6ec938330644c062491692d3cc059e7ca2bea",
+          "lines": 62,
+          "changed": true
+        },
+        "coding-platform/next/src/core/work-graph/source-authority-reader.ts": {
+          "sha256": "117678d977d43ceeb3520ea293fad5c2e3867a4d5bdd0e154c45463ee1502334",
+          "lines": 136,
+          "changed": true
+        },
+        "coding-platform/next/src/core/agent-runtime/ports.ts": {
+          "sha256": "30804ad6c2484d0b89982f11561a3a28ff7e63ad7eab5c0c939db191362970f9",
+          "lines": 61,
+          "changed": true
+        },
+        "coding-platform/next/src/core/agent-runtime/execution-contracts.ts": {
+          "sha256": "1cb40b3242527f2aa895bcccf4c08e9e31d3be052e091a1ad49375960d20919f",
+          "lines": 195,
+          "changed": true
+        },
+        "coding-platform/next/src/core/agent-runtime/runtime.ts": {
+          "sha256": "afbef1dbf95f2c597853952d5c1d306eeccc11083b519fa6e22f742fe3fc8173",
+          "lines": 97,
+          "changed": true
+        },
+        "coding-platform/next/src/core/agent-runtime/query-preparation.ts": {
+          "sha256": "8f2935ba62d020988e554eabb43cc4825a3615c7221d1489a5b91350fad6c576",
+          "lines": 34,
+          "changed": true
+        },
+        "coding-platform/next/src/core/agent-runtime/query-execution.ts": {
+          "sha256": "e0f0b2fa6bf30901bca55b6dee97e174fd0f0dcaa12ba7d53660b94bdaa5ae84",
+          "lines": 35,
+          "changed": true
+        },
+        "coding-platform/next/src/core/agent-runtime/query-observation.ts": {
+          "sha256": "acf6228201de5dd1a994580b913cc69425c77ff8218f528ee112b5cc3b5346a2",
+          "lines": 31,
+          "changed": true
+        },
+        "coding-platform/next/src/core/agent-runtime/source-capture-access.ts": {
+          "sha256": "1926bf1fc9b3e9968230edde5fd4c53ea2aee7fafc0faeae40f81044716379fb",
+          "lines": 745,
+          "changed": true
+        },
+        "coding-platform/next/src/composition/create-platform.ts": {
+          "sha256": "ea88d549f4b0a2421f60565531d8135d0b56b2bf5f50bbd53d699feedcef4d44",
+          "lines": 613,
+          "changed": true
+        },
+        "coding-platform/next/tests/work-graph/R5b-query-execution.test.ts": {
+          "sha256": "7d58e0178e1af8b6a28bd1872efca221f218f5a7cd9a0c491056d3fa22d040c7",
+          "lines": 196,
+          "changed": true
+        },
+        "coding-platform/next/tests/runtime/R5b-query-session-loop.test.ts": {
+          "sha256": "8fc427f73dfed62d6efa7a756ccff0a835780429c69da87cfcbbc8361491b7ca",
+          "lines": 226,
+          "changed": true
+        }
+      },
+      "newSession": "session-e080cca8-b961-4432-8276-43862a939ca9"
+    },
+    {
+      "lane": "r5c-workflow-advancement-implementation-20260926",
+      "previousSession": "session-8972cbe7-b4c9-443c-9d2c-6973457a1bf4",
+      "retainedFiles": {
+        "coding-platform/next/src/business/workflow/workflow.ts": {
+          "sha256": "852019ade02613851f399c862ed216df03d119f92fdefaa895949c7c8e1bbb62",
+          "lines": 25,
+          "changed": false
+        }
+      },
+      "newSession": "session-e3afb465-48be-42a5-afe2-4ddbef3b8d97"
+    },
+    {
+      "lane": "r6-session-mailbox-skeleton-20260926",
+      "previousSession": "session-8d767972-fea0-4681-90f3-a5b12afddfa7",
+      "retainedFiles": {
+        "coding-platform/next/src/app/core-http-types.ts": {
+          "sha256": "748e83d09bf38c58155d3b1063c8f9d3c4fdc898ca021cd04abc752f9b36915c",
+          "lines": 228,
+          "changed": true
+        },
+        "coding-platform/next/src/app/core-routes.ts": {
+          "sha256": "88a1eb3696b8cc17e11a95c83e849ba44b1bfc61f72b7bdcf0664762481e0d40",
+          "lines": 264,
+          "changed": false
+        },
+        "coding-platform/next/src/ui/main.ts": {
+          "sha256": "2953b11bd17704f2d66ec3d0478426d20c56afee93eb3704dab7d4e88745c2b2",
+          "lines": 900,
+          "changed": false
+        },
+        "coding-platform/next/src/ui/views.ts": {
+          "sha256": "89cb7943308ee1f0934ce1546d3ef2f00b11caf686880212169fb24b935ebd60",
+          "lines": 268,
+          "changed": false
+        },
+        "coding-platform/next/tests/app/R6-host.test.ts": {
+          "sha256": "e2c193ba5d65679b96774fe1b616c2a71be3b837ccecfe8870853ebc96e20fb7",
+          "lines": 349,
+          "changed": false
+        },
+        "coding-platform/next/tests/app/R6-workbench.test.ts": {
+          "sha256": "81de05b5de556859bcd757cb9b7d281715db5d709b703fb3e439cd596b9c05e9",
+          "lines": 159,
+          "changed": false
+        }
+      },
+      "newSession": "session-1230d0c3-f0ed-47e1-b44b-5ad3b2597895"
+    }
+  ]
+}

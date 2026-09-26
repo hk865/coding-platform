@@ -1,0 +1,78 @@
+{
+  "lane": "r6-ui-layout-implementation-20260926",
+  "session": "session-cc32ca13-8b7b-443a-a8ca-3d86726c99d9",
+  "stage": "four_file_implementation_imported_browser_acceptance_pending",
+  "importedAt": "2026-09-26T14:32:38.500020+00:00",
+  "baselineHashes": {
+    "coding-platform/next/src/ui/main.ts": "82f7dcecb874d097b0943e03c2ff52dab94c54ff304f28ddda778f3503adfda2",
+    "coding-platform/next/src/ui/views.ts": "9e880f59370aa100aee58e3bdec20b58da40261ad83992889c3f35a972da4ea0",
+    "coding-platform/next/src/ui/styles.css": "d0971e3bffc1bcb6bb2ec86018f87f96d1dcffb744c163ac81d08abb939074b6",
+    "coding-platform/next/src/ui/index.html": "f6bdf6760270513e47e8680fdde53dc12cb75868a98b0d8814f8585b4dd4a3a7"
+  },
+  "importedHashes": {
+    "coding-platform/next/src/ui/main.ts": "9b6203a86936cac5feeffcd779b128d1a93a470c5d1da6f2f9abc43c8b217b3a",
+    "coding-platform/next/src/ui/views.ts": "8aa64511bd9fb8670f02e0767fa7f56dec096e17cdf18f22328a0a6a2b21c8fd",
+    "coding-platform/next/src/ui/styles.css": "4eb1035f7742d36f47f6d4954b4082612df52b89931f586af68c73f5182533bc",
+    "coding-platform/next/src/ui/index.html": "79c79b498a8d549d857ce97f8a9bd725ab3c4ff71d913a52af8e4b7c46e58f2a"
+  },
+  "scopeAuditBeforeImport": {
+    "changed": [
+      "coding-platform/next/src/ui/index.html",
+      "coding-platform/next/src/ui/main.ts",
+      "coding-platform/next/src/ui/styles.css",
+      "coding-platform/next/src/ui/views.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "frozenTestHash": "2960b61e492980bb9718eef81253cc430e4a7baafa6733fe55d3eab4fae25f78",
+  "testContractAmendment": "r6-ui-layout-history-raw-amendment.json; latest user-authorized change only in second new display normal chain; DSH kept amended test read-only",
+  "independentChecks": {
+    "next-r6-host": {
+      "exitCode": 0,
+      "log": "/home/hyh001/projects/coding-platform/docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-ui-layout-implementation-next-r6-host.log",
+      "logSha256": "61877d281d8e04cee52b5cf201cc2726a4e6f14eef0aa7ec0ea3f7b6570c8b65",
+      "testFilesPassed": 2,
+      "testsPassed": 19
+    },
+    "next-types": {
+      "exitCode": 0,
+      "log": "/home/hyh001/projects/coding-platform/docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-ui-layout-implementation-next-types.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "next-ui-types": {
+      "exitCode": 0,
+      "log": "/home/hyh001/projects/coding-platform/docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-ui-layout-implementation-next-ui-types.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "next-build": {
+      "exitCode": 0,
+      "log": "/home/hyh001/projects/coding-platform/docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-ui-layout-implementation-next-build.log",
+      "logSha256": "553b39cc260f02dd46a506c08c2d04c97c8d3c263401b153eefd9e131efb957c",
+      "physicalCopy": true
+    }
+  },
+  "acceptedReviewFixes": [
+    "Full saved original Session records available in default-collapsed explicit raw disclosures; summary and record source remain distinct",
+    "Same original scope/Session composer is cleared on committed send; post-await history uses captured scope; file opens into original conversation only on matching ready result",
+    "File pages distinguish versions and preserve local edit snapshots; historical/capture source remains read-only",
+    "Aux restore remains visible while maximized; each tab retains scroll/selection/details via its rendered identity",
+    "Task hierarchy/execution and adopted/observed architecture draw actual SVG nodes/lines from source DTOs; same-target related Sessions and actual details",
+    "Graph selection remains in current graph; per-tab pin full labels and explicit open-new-tab actions are separate display state"
+  ],
+  "remainingAcceptance": {
+    "owner": "root",
+    "kind": "actual production Host/SQLite browser",
+    "normalPath": "project/Session original history and raw disclosure -> Task/architecture SVG details -> directory/file selection to composer -> tabs/hide/maximize/splitters -> archive read-only",
+    "specificAttention": "Actual double-click recognition after selection re-render must be confirmed in browser; event handlers/reducer alone do not prove native gesture behavior."
+  },
+  "remainingBackendGaps": [
+    "architecture contains tree",
+    "Task full temporal/history trajectory and exact Task-Kernel mapping",
+    "diff HTTP",
+    "file save",
+    "terminal",
+    "model send/control recovery"
+  ],
+  "doesNotClaim": "This four-file layout import is not full R6/E2E completion or current full-suite green."
+}

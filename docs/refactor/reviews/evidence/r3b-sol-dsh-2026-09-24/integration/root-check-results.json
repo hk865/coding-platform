@@ -1,0 +1,14 @@
+{
+  "r3b": 0,
+  "r3b-raw-boundaries": 0,
+  "r3b-admission-boundaries": 0,
+  "r3b-await-boundaries": 0,
+  "r3b-body-first": 0,
+  "r3b-host": 0,
+  "r3b-gui": 0,
+  "r3b-host-boundaries": 0,
+  "r3b-query": 0,
+  "r3b-regression": 0,
+  "platform-types": 0,
+  "platform-architecture": 0
+}

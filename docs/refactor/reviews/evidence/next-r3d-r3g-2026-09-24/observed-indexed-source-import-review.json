@@ -1,0 +1,25 @@
+{
+  "at": 1790241356.0829322,
+  "files": [
+    {
+      "file": "coding-platform/next/src/core/work-graph/architecture/architecture-delta.ts",
+      "before": "b6084f5d4663a1419879131572ed4b65ec04d8ab510acb9733d95a3287040b63",
+      "after": "b6084f5d4663a1419879131572ed4b65ec04d8ab510acb9733d95a3287040b63"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/architecture/architecture-record-codecs.ts",
+      "before": "9ae84433bfa4b556c2b827bea72392db1914e312d75cb345d30d7d448c66efa8",
+      "after": "78815377e5ca6d0038a8aa6628e9d5f1d45abadcabe482d3dc42c3cf09befcb5"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/architecture/architecture-service.ts",
+      "before": "4138b4fc5c852922ea19cba88fa5f41a94ec5799e2f24e3653fa59a33a34dd84",
+      "after": "4138b4fc5c852922ea19cba88fa5f41a94ec5799e2f24e3653fa59a33a34dd84"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/architecture/graph-index.ts",
+      "before": "7057dc7f957f08b2ea3ae2154863b763c142f41558a0c76297293723eb54ed51",
+      "after": "7057dc7f957f08b2ea3ae2154863b763c142f41558a0c76297293723eb54ed51"
+    }
+  ]
+}

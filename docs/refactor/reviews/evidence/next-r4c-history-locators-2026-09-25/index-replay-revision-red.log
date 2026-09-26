@@ -1,0 +1,37 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts (66 tests | 1 failed) 8675ms
+     × rejects replay when the stored event Run revision disagrees with the committed receipt 258ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b SQLite durability > rejects replay when the stored event Run revision disagrees with the committed receipt
+AssertionError: expected { status: 'committed', …(3) } to match object { status: 'rejected', …(1) }
+(6 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:958:22
+    956|
+    957|       const replay = await h.service.recordExecutionHistory(h.fixture.…
+    958|       expect(replay).toMatchObject({ status: 'rejected', code: 'unavai…
+       |                      ^
+    959|     } finally { database.close(); }
+    960|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 65 passed (66)
+   Start at  12:01:29
+   Duration  9.27s (transform 380ms, setup 0ms, import 520ms, tests 8.68s, environment 0ms)
+

@@ -1,0 +1,7 @@
+{
+  "lane": "next-material-readers-01",
+  "acceptedAfter": "independent readers 11/11 + types + architecture",
+  "files": {
+    "coding-platform/next/src/core/work-graph/materials/record-readers.ts": "d4ba564a7e8fa1aec41b4e648232eef8cb571d5f0b2e98c78939025753439a03"
+  }
+}

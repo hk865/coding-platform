@@ -1,0 +1,9 @@
+{
+  "coding-platform/next/src/contracts/core/session-message.ts": "30c5dc0fec8c2141f1f385577e80264780665d5b40eebafcb6ad539f4f71b8ac",
+  "coding-platform/next/src/contracts/ledger.ts": "27dea168af62e90705e85da90897d4ab11f19adc406d2c95bcc81f5be9432dd7",
+  "coding-platform/next/src/core/work-graph/communication/contracts.ts": "4039a205c9498633c7c863fa497cdf3828b0ca15fbfca3a833f39659aa911c7c",
+  "coding-platform/next/tests/work-graph/C1-session-mailbox.test.ts": "86d5887efb87136a8229e8647f4ac7145dab1f32ace3e9e241d0c9aa768d08e1",
+  "coding-platform/next/tests/runtime/C1-communication-tools.test.ts": "27f5c21c58f9424ecf7ac7f33bb333f50fa18bfb45607f784f71b1c1efbd554b",
+  "coding-platform/next/tests/helpers/C1-mailbox-fixture.ts": "a60713290823225bc9dd4c7f1115a7259ec9cd3ce8537be0dbc0fcc9ae340b30",
+  "coding-platform/next/tests/helpers/task-claim-fixture.ts": "b7fc7af91031a99bef881e90f69da7034473295e921c3ead0b63347b4d50c02e"
+}

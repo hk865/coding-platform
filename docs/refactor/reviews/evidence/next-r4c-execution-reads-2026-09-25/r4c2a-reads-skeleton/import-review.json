@@ -1,0 +1,15 @@
+{
+  "at": 1790266629.6677744,
+  "files": [
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/run-state-service.ts",
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "bd2fa5376f2d4e308d82de14da709e37c0a1db440a8e58b4ddbaad1332b59f36"
+    },
+    {
+      "file": "coding-platform/next/tests/work-graph/R4c-execution-read.test.ts",
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "5b789489a776640517dd8c69eac78b12b941903c71e01842295a40869cba1e7d"
+    }
+  ]
+}

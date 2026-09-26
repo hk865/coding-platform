@@ -1,0 +1,197 @@
+{
+  "stage": "actual_browser_middle_review",
+  "recordedAt": "2026-09-26T14:50:13.793139+00:00",
+  "source": "physical copy of imported next; real Host/SQLite and native Chromium CDP input",
+  "scope": "existing layout/history/file-draft consumers; no real model invocation",
+  "sourceHashes": {
+    "src/ui/main.ts": "9b6203a86936cac5feeffcd779b128d1a93a470c5d1da6f2f9abc43c8b217b3a",
+    "src/ui/views.ts": "8aa64511bd9fb8670f02e0767fa7f56dec096e17cdf18f22328a0a6a2b21c8fd",
+    "src/ui/styles.css": "4eb1035f7742d36f47f6d4954b4082612df52b89931f586af68c73f5182533bc",
+    "src/ui/index.html": "79c79b498a8d549d857ce97f8a9bd725ab3c4ff71d913a52af8e4b7c46e58f2a"
+  },
+  "observations": {
+    "graph-probe.json": [
+      {
+        "nodes": [
+          {
+            "node": "implement",
+            "action": "select-node",
+            "text": "实现文件浏览与双图工作台（implement）\nphase: pending\ndisposition: active\nintent: 未标注执行意图实现文件浏览与双图工作台implement · pending · 未标注执行意图"
+          },
+          {
+            "node": "gate",
+            "action": "select-node",
+            "text": "验收目标结果（gate）\nphase: pending\ndisposition: active\nintent: 未标注执行意图验收目标结果gate · pending · 未标注执行意图"
+          },
+          {
+            "node": "implement",
+            "action": "select-node",
+            "text": "实现文件浏览与双图工作台（implement）\nphase: pending\ndisposition: active\nintent: 未标注执行意图实现文件浏览与双图工作台implement · pending · 未标注执行意图"
+          },
+          {
+            "node": "gate",
+            "action": "select-node",
+            "text": "验收目标结果（gate）\nphase: pending\ndisposition: active\nintent: 未标注执行意图验收目标结果gate · pending · 未标注执行意图"
+          }
+        ]
+      },
+      {
+        "singleClick": {
+          "active": "任务 deliver-workbench\n×",
+          "selected": "gate",
+          "graph": true
+        }
+      },
+      {
+        "doubleClick": {
+          "pinned": false,
+          "selected": "gate"
+        }
+      },
+      {
+        "rightClick": {
+          "pinned": false
+        }
+      },
+      {
+        "expanded": {
+          "centerWidth": 0,
+          "rightWidth": 1134,
+          "restore": false
+        }
+      },
+      {
+        "drag": {
+          "before": {
+            "left": 300,
+            "right": 420
+          },
+          "after": {
+            "left": 300,
+            "right": 600,
+            "height": 960
+          }
+        }
+      }
+    ],
+    "file-probe.json": [
+      {
+        "directory": {
+          "fileEditor": false,
+          "paths": [
+            "README.md",
+            "src/main.ts",
+            "src/unit-00.ts",
+            "src/unit-01.ts",
+            "src/unit-02.ts",
+            "src/unit-03.ts",
+            "src/unit-04.ts",
+            "src/unit-05.ts",
+            "src/unit-06.ts",
+            "src/unit-07.ts"
+          ]
+        }
+      },
+      {
+        "reference": {
+          "composer": "",
+          "editor": "import { value0 } from './unit-00.js';\nexport const answer = value0 + 42;\n\n// browser draft only\n"
+        }
+      },
+      {
+        "editorRestored": true
+      },
+      {
+        "hidden": {
+          "auxWidth": 0,
+          "restoreButtons": [
+            "显示辅助区"
+          ]
+        }
+      },
+      {
+        "restored": {
+          "editor": true,
+          "height": 960
+        }
+      }
+    ],
+    "history-probe.json": [
+      {
+        "defaults": {
+          "records": [
+            "kernel:session.created:session-review-a:session-operation-c7cad7b532a9b5193e0bbe60e2077e4b4fe2a259d1cbe502785db7737c76293f"
+          ],
+          "raw": [
+            {
+              "id": "kernel:session.created:session-review-a:session-operation-c7cad7b532a9b5193e0bbe60e2077e4b4fe2a259d1cbe502785db7737c76293f",
+              "open": false
+            }
+          ],
+          "height": 960
+        }
+      },
+      {
+        "opened": {
+          "open": false,
+          "text": "{\"recordId\":\"kernel:session.created:session-review-a:session-operation-c7cad7b532a9b5193e0bbe60e2077e4b4fe2a259d1cbe502785db7737c76293f\",\"sessionId\":\"session-c7cad7b532a9b5193e0bbe60e2077e4b4fe2a259d1cbe502785db7737c76293f\",\"position\":1,\"schemaVersion\":1,\"recordedAt\":\"2026-09-26T13:27:13.471Z\",\"checksum\":\"0c6723e744a7c05fa4f35151f9a2e94a0eead942a5f5aa7e9f0cc881fc68acf3\",\"recordType\":\"session.created\",\"payload\":{\"sessionId\":\"session-c7cad7b532a9b5193e0bbe60e2077e4b4fe2a259d1cbe502785db7737c76293f\",\"createdAt\":\"2026-09-26T13:27:13.471Z\"}}",
+          "height": 960
+        }
+      }
+    ],
+    "remaining.json": {
+      "files": {
+        "viewport": 1440,
+        "width": 1440,
+        "height": 960,
+        "references": [
+          {
+            "kind": "selection",
+            "path": "src/main.ts",
+            "text": "src/main.ts:L1-L2 · 草稿快照"
+          }
+        ],
+        "summaryRects": []
+      },
+      "history": {
+        "viewport": 1440,
+        "width": 4799,
+        "height": 960,
+        "references": [],
+        "summaryRects": [
+          {
+            "rect": {
+              "x": 0,
+              "y": 267.3125,
+              "width": 4007.453125,
+              "height": 21,
+              "top": 267.3125,
+              "right": 4007.453125,
+              "bottom": 288.3125,
+              "left": 0
+            },
+            "text": "原始记录（完整保存原文）"
+          }
+        ],
+        "after": {
+          "open": true,
+          "width": 4814,
+          "height": 960
+        }
+      }
+    }
+  },
+  "findings": [
+    "same-depth task nodes overlap; native click picks overlaid sibling",
+    "1440px Session history view expands outer scrollWidth to 4799px (4814px after raw disclosure) due long cursor",
+    "bottom two persistent result/replay panels occupy about 300px; scope and nav split left height needlessly"
+  ],
+  "clarifications": [
+    "raw history default closed and explicit click opens exact saved JSON; first failed center click was outside viewport because of overflow",
+    "maximize/restore worked; first restore probe used wrong label",
+    "file directory has no editor, file editor draft survives tabs and hide/show, selection enters composer references as draft snapshot without sending",
+    "pending capture requires waiting for original response before query; no product failure from early probe"
+  ],
+  "repair": "one fresh 3-production-file DSH lane, frozen existing tests; root repeats affected native browser flow after import",
+  "limit": "not a full UI or whole-platform E2E pass; task pin gestures need repeat after fixing overlap; fixture has session-created raw record, saved reasoning retention covered by amended existing display test"
+}

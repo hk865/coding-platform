@@ -1,0 +1,5 @@
+{
+  "file": "coding-platform/next/tests/composition/platform.test.ts",
+  "note": "platform.test.ts expected public keys now include checks and evidence",
+  "testHash": "d06de4a527ecde579a77fd93ad679df8862140bdb8d83d5e0cfb408a961b075e"
+}

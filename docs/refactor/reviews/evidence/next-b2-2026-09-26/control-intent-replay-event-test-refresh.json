@@ -1,0 +1,7 @@
+{
+  "readOnlyFile": "coding-platform/next/tests/work-graph/R4-control-intent.test.ts",
+  "before": "5222c47726fd2ceffb82feb0bae83b8f4a8ec733cb8008b7618a87cc53d37916",
+  "after": "857070132fda5e20da1f3a2ff80103880fc3aeaed6a6509261d7fd4c7c185f56",
+  "change": "existing lost-ack window B now fails real eventAt after found receipt; no extra case",
+  "originalAllowedHashesPreserved": true
+}

@@ -1,0 +1,46 @@
+{
+  "lane": "r5a-project-bootstrap-skeleton-20260926",
+  "stage": "reviewed skeleton; 17 expected target failures, 39 neighboring checks pass; typecheck pass",
+  "files": [
+    {
+      "file": "coding-platform/next/src/composition/create-platform.ts",
+      "before": "43f791cfeebda5e3eb0f21d50e5f284a3d6240bd64bb9bf478f65a40d4ac32c3",
+      "after": "875dc04cb8e264975b2ee2d7af34692a2ab251daa05ab3f99b124531b47c951c"
+    },
+    {
+      "file": "coding-platform/next/src/contracts/governance.ts",
+      "before": "fea4830e132f1b5d94ccfbe7cc900bccf63c1d1676f89f577033e5d31819350f",
+      "after": "6541b115d6a008647557b55b8df97e86385a9d639f371dd5f855188290367e16"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-contracts.ts",
+      "before": "759806bc2a35b67064bf7374478a51f904259783b3051a6c56d1b5115dd858cc",
+      "after": "5422abd7ee37b6cbf3e841ae56b39badd967937d05aad71d9b1d1869dab546c9"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-record-codecs.ts",
+      "before": "759806bc2a35b67064bf7374478a51f904259783b3051a6c56d1b5115dd858cc",
+      "after": "ce3c88b3c4cb6ce3f5b9131b8449c79db1bd2f02cbe290e3daf95e2fb3470a03"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-service.ts",
+      "before": "759806bc2a35b67064bf7374478a51f904259783b3051a6c56d1b5115dd858cc",
+      "after": "d7ca3bbd5dd8279e17fbb18950c61190ba1d3d82b8e22fd0d78f0894b56bc46e"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+      "before": "b2bddbef928e61d743c877c742f8a497fa12de2def9d007cd470250d20c10a5e",
+      "after": "79fb556c92e959726b0df51b1727262d4f5a429eedd4bda3d5cd4350bbb3d0ac"
+    },
+    {
+      "file": "coding-platform/next/tests/composition/R5a-project-bootstrap-platform.test.ts",
+      "before": "759806bc2a35b67064bf7374478a51f904259783b3051a6c56d1b5115dd858cc",
+      "after": "8d504e5490343926422c43ac285dfcdd124af2f52daec2e548405b27d5ad17bf"
+    },
+    {
+      "file": "coding-platform/next/tests/work-graph/R5a-project-bootstrap.test.ts",
+      "before": "759806bc2a35b67064bf7374478a51f904259783b3051a6c56d1b5115dd858cc",
+      "after": "e6eb5f1e386b9736b66c547b961e3a010f376573e75782e67d42979fe72b9481"
+    }
+  ]
+}

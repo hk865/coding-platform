@@ -1,0 +1,19 @@
+--- before-browser/coding-platform/next/src/ui/main.ts
++++ after-browser/coding-platform/next/src/ui/main.ts
+@@ -47,7 +47,6 @@
+   renderRouteResponse,
+   renderRuntimeCapabilities,
+   renderSessionDetail,
+-  renderSessionHistory,
+   renderSessionHistoryTimeline,
+   renderSessionOperation,
+   renderSessionOperationRead,
+@@ -2684,7 +2683,7 @@
+     + actionButton('next-history-tab', '下一页原历史', canNext, '没有更多原历史')
+     + `<button data-action="select-session" data-session="${escapeHtml(tab.session.sessionId)}">在中间查看</button></div>`
+     + (history === null ? renderGap('sessions/history', '尚未读取完整会话原历史')
+-      : renderSessionHistoryTimeline(history.result) + renderSessionHistory(history.result))
++      : renderSessionHistoryTimeline(history.result))
+     + `</section>`;
+ }
+ 

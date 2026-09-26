@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "platform-scribe",
+  "title": "Platform scribe",
+  "kind": "instruction",
+  "priority": 50,
+  "contentFile": "content.md"
+}

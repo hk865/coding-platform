@@ -1,0 +1,176 @@
+{
+  "mode": "check",
+  "sources": [
+    {
+      "path": "vendor/coding-agent/patches/storage/adapters/sqlite/sqlite-stores.ts",
+      "sha256": "4c552b0ecbaecdd5db514697fe39019c5899e51589a8caa8a950c9b4bebe16b6"
+    },
+    {
+      "path": "vendor/coding-agent/patches/public-api.ts",
+      "sha256": "f876ccda6afefe3645e20987fd8006375bfbaae6096ae12a0f5ce6791e711bea"
+    },
+    {
+      "path": "vendor/coding-agent/patches/app/composition/control-hooks.ts",
+      "sha256": "de8bbc1aa688a99718f02710458a80882acd920499aa86edbd7e35c984b6999b"
+    },
+    {
+      "path": "vendor/coding-agent/patches/core/runtime/loop/runtime-runner.ts",
+      "sha256": "e37887abf5409cc048e491997c022c305c6ae75d3266e074995c583e2741f077"
+    },
+    {
+      "path": "vendor/coding-agent/patches/app/composition/composition-root.ts",
+      "sha256": "698d49b40753d4e256dea9766bf47d3b1d99a3d82535d65c82a46ae896d07bd4"
+    },
+    {
+      "path": "vendor/coding-agent/patches/app/composition/resume-composition.ts",
+      "sha256": "677ac4aaca71e8782bfeb9d01f2fdfad4630c773914f47ff165f068a5cba0904"
+    }
+  ],
+  "typeScript": "6.0.3",
+  "artifacts": [
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.js",
+      "sha256": "a52fef11ca8d6b24c84034b5ef25bd895638d9c453f59cad90e909ffd573ef76",
+      "currentSha256": "a52fef11ca8d6b24c84034b5ef25bd895638d9c453f59cad90e909ffd573ef76",
+      "matches": true
+    },
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.js.map",
+      "sha256": "651abb806baca8a32a6f285fc6ced6fc2f1fc1460b80dc51e83efb2c84231111",
+      "currentSha256": "651abb806baca8a32a6f285fc6ced6fc2f1fc1460b80dc51e83efb2c84231111",
+      "matches": true
+    },
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.d.ts",
+      "sha256": "80be7f2b88f5578ed0a24d59014e49e5a124777f7926a0b46182d86f3ca9e8f3",
+      "currentSha256": "80be7f2b88f5578ed0a24d59014e49e5a124777f7926a0b46182d86f3ca9e8f3",
+      "matches": true
+    },
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.d.ts.map",
+      "sha256": "08e758e735d8d98b0a6b56f540bfbd7b7dd61bd585f21be5bf6cfa06b5e54102",
+      "currentSha256": "08e758e735d8d98b0a6b56f540bfbd7b7dd61bd585f21be5bf6cfa06b5e54102",
+      "matches": true
+    },
+    {
+      "path": "public-api.js",
+      "sha256": "a055c2080bd40f557f5e2aea403e2ddd4044db0955a986ca46d12243c561bdb4",
+      "currentSha256": "a055c2080bd40f557f5e2aea403e2ddd4044db0955a986ca46d12243c561bdb4",
+      "matches": true
+    },
+    {
+      "path": "public-api.js.map",
+      "sha256": "aefd5c0c582ebbbbfce062bcd1c399749c4d2f8f90568b863e32d327283b5778",
+      "currentSha256": "aefd5c0c582ebbbbfce062bcd1c399749c4d2f8f90568b863e32d327283b5778",
+      "matches": true
+    },
+    {
+      "path": "public-api.d.ts",
+      "sha256": "07e4d2563f8d33060d185351fffe52434e540d49c6ae319f4e14863642ffceef",
+      "currentSha256": "07e4d2563f8d33060d185351fffe52434e540d49c6ae319f4e14863642ffceef",
+      "matches": true
+    },
+    {
+      "path": "public-api.d.ts.map",
+      "sha256": "0035099e06950fdda3fef8719c314abe6a0293ac3270d39f8193f90f745dcf88",
+      "currentSha256": "0035099e06950fdda3fef8719c314abe6a0293ac3270d39f8193f90f745dcf88",
+      "matches": true
+    },
+    {
+      "path": "app/composition/control-hooks.js",
+      "sha256": "f4b3450871e2b9c8a1ee5ced6e4d63d11b7fb3200a483d4d68b95d703e290a1a",
+      "currentSha256": "f4b3450871e2b9c8a1ee5ced6e4d63d11b7fb3200a483d4d68b95d703e290a1a",
+      "matches": true
+    },
+    {
+      "path": "app/composition/control-hooks.js.map",
+      "sha256": "9e46efd8b51c31d11e4fc081a6ce4c54377e36ccf3ed84986acd2b35024458c5",
+      "currentSha256": "9e46efd8b51c31d11e4fc081a6ce4c54377e36ccf3ed84986acd2b35024458c5",
+      "matches": true
+    },
+    {
+      "path": "app/composition/control-hooks.d.ts",
+      "sha256": "112e0beecc2ab9002a5f83ccb5ffbc51b484cd1778e717e8f9047f0f804ef1e5",
+      "currentSha256": "112e0beecc2ab9002a5f83ccb5ffbc51b484cd1778e717e8f9047f0f804ef1e5",
+      "matches": true
+    },
+    {
+      "path": "app/composition/control-hooks.d.ts.map",
+      "sha256": "83ce956c4892d3780ca513502321b1b93b84475298d89d0b54905c11a5e2c285",
+      "currentSha256": "83ce956c4892d3780ca513502321b1b93b84475298d89d0b54905c11a5e2c285",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/loop/runtime-runner.js",
+      "sha256": "ef912a8661e5e30882a36580113ff4ef429afef471bf3e7be42f2358a8fcd3f7",
+      "currentSha256": "ef912a8661e5e30882a36580113ff4ef429afef471bf3e7be42f2358a8fcd3f7",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/loop/runtime-runner.js.map",
+      "sha256": "982505970b49fd5a4a60d49118250e6425f02742425c3acb7a168fbd3b5e39a8",
+      "currentSha256": "982505970b49fd5a4a60d49118250e6425f02742425c3acb7a168fbd3b5e39a8",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/loop/runtime-runner.d.ts",
+      "sha256": "8607f3fe49889b46b4ff4c267bf959366d4f0d288a9ddf69de93f6638d1ea0c0",
+      "currentSha256": "8607f3fe49889b46b4ff4c267bf959366d4f0d288a9ddf69de93f6638d1ea0c0",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/loop/runtime-runner.d.ts.map",
+      "sha256": "e3859d32742044b33f1422d32733ee220300f9afb16e30b1e785ad889f52bcb2",
+      "currentSha256": "e3859d32742044b33f1422d32733ee220300f9afb16e30b1e785ad889f52bcb2",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-root.js",
+      "sha256": "1613ca294c5376dcb881ce927cb4033607a1e1ee20e72343334fa9dd2d2a3a53",
+      "currentSha256": "1613ca294c5376dcb881ce927cb4033607a1e1ee20e72343334fa9dd2d2a3a53",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-root.js.map",
+      "sha256": "71ac238feeb448ded2427a59b34200547d593fc98c0910d78c8b3afcefedae09",
+      "currentSha256": "71ac238feeb448ded2427a59b34200547d593fc98c0910d78c8b3afcefedae09",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-root.d.ts",
+      "sha256": "a6a2744a16ab47a4c42e63dd96bcf58dc5939f4bc9a0dc960ee031131dad7a74",
+      "currentSha256": "a6a2744a16ab47a4c42e63dd96bcf58dc5939f4bc9a0dc960ee031131dad7a74",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-root.d.ts.map",
+      "sha256": "c5eb86e85ef12a80fee1deac4d9ef7381648a8abd5903f0f1b6565dfe1d339a8",
+      "currentSha256": "c5eb86e85ef12a80fee1deac4d9ef7381648a8abd5903f0f1b6565dfe1d339a8",
+      "matches": true
+    },
+    {
+      "path": "app/composition/resume-composition.js",
+      "sha256": "4d83b79362b3663bd1ccadf13e8d0819af9ca99e42865c38ce83361550988aef",
+      "currentSha256": "4d83b79362b3663bd1ccadf13e8d0819af9ca99e42865c38ce83361550988aef",
+      "matches": true
+    },
+    {
+      "path": "app/composition/resume-composition.js.map",
+      "sha256": "9f9479e19ccbee5745b311f756b01b140478674321f2e9a4191c25d21d42e6ec",
+      "currentSha256": "9f9479e19ccbee5745b311f756b01b140478674321f2e9a4191c25d21d42e6ec",
+      "matches": true
+    },
+    {
+      "path": "app/composition/resume-composition.d.ts",
+      "sha256": "26f3947ef530ce6780e8cfc5a2ba0866921219f72e3e78a18e69ba25a31f3d4e",
+      "currentSha256": "26f3947ef530ce6780e8cfc5a2ba0866921219f72e3e78a18e69ba25a31f3d4e",
+      "matches": true
+    },
+    {
+      "path": "app/composition/resume-composition.d.ts.map",
+      "sha256": "4397478edbad049c085237201a8fd7fbaa5173c95ee0beb4acbf8c5d36c94070",
+      "currentSha256": "4397478edbad049c085237201a8fd7fbaa5173c95ee0beb4acbf8c5d36c94070",
+      "matches": true
+    }
+  ]
+}

@@ -1,0 +1,193 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/W2-future-intent.test.ts (8 tests | 6 failed) 87ms
+   × initial required plan_only saves without assignment/acceptance/gate and survives a SQLite reopen 21ms
+   × an initial request_execution without its single assignment is diagnosed and not adopted 8ms
+   × future refinement preserves the real source and may add explicit intent and a new role 7ms
+   × a newly added obligation and gate use the source policy pin and preserve old commitments 8ms
+   × a future refinement without a new obligation reads no CompletionPolicy 8ms
+   × a future definition refinement and the first claim on an adopted request_execution node race at one local fact 4ms
+ ❯ tests/composition/W2-future-intent-platform.test.ts (2 tests | 2 failed) 42ms
+   × real composition: an initial plan_only Plan adopts and survives a SQLite reopen 25ms
+   × real whiteboard factory proposes, adopts and queries an executionIntent future draft (Host pass-through) 17ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/composition/W2-future-intent-platform.test.ts > real composition: an initial plan_only Plan adopts and survives a SQLite reopen
+AssertionError: {"status":"rejected","code":"unsupported","reason":"the initial plan is not admissible: tasks: the executionIntent planning branch is not implemented yet"}: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/W2-future-intent-platform.test.ts:155:46
+    153|       input: { proposalRef: proposed.value.ref, expectedProposalRevisi…
+    154|     // TARGET: the initial intent-only Plan is adopted.
+    155|     expect(applied, JSON.stringify(applied)).toMatchObject({ status: '…
+       |                                              ^
+    156|   } finally { await first.close(); }
+    157|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+ FAIL  tests/composition/W2-future-intent-platform.test.ts > real whiteboard factory proposes, adopts and queries an executionIntent future draft (Host pass-through)
+AssertionError: {"schemaVersion":1,"callId":"w2-factory-apply","status":"error","error":{"code":"execution_failed","message":"the future plan is not admissible: tasks: the executionIntent planning branch is not implemented yet","retryable":false},"output":[{"kind":"json","value":{"status":"rejected","code":"unsupported","reason":"the future plan is not admissible: tasks: the executionIntent planning branch is not implemented yet"}}],"effects":{"sideEffect":"none","changedPaths":[],"workspaceRevision":null,"artifactRefs":[]}}: expected 'error' to be 'success' // Object.is equality
+
+Expected: "success"
+Received: "error"
+
+ ❯ tests/composition/W2-future-intent-platform.test.ts:202:61
+    200|         proposalRef: proposed.value.ref, expectedProposalRevision: pro…
+    201|       }), { signal: new AbortController().signal });
+    202|     expect(applyResult.status, JSON.stringify(applyResult)).toBe('succ…
+       |                                                             ^
+    203|     const applied = toolJson(applyResult) as WriteResult<PlanRevisionS…
+    204|     // TARGET: the factory chain adopts the future intent.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
+
+ FAIL  tests/work-graph/W2-future-intent.test.ts > initial required plan_only saves without assignment/acceptance/gate and survives a SQLite reopen
+AssertionError: {"status":"rejected","code":"unsupported","reason":"the initial plan is not admissible: tasks: the executionIntent planning branch is not implemented yet"}: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/W2-future-intent.test.ts:181:46
+    179|       input: { proposalRef: proposed.value.ref, expectedProposalRevisi…
+    180|     // TARGET: an initial Plan whose only required node is plan_only i…
+    181|     expect(applied, JSON.stringify(applied)).toMatchObject({ status: '…
+       |                                              ^
+    182|     if (applied.status !== 'committed') throw new Error('initial inten…
+    183|     const planRef = applied.value.ref;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯
+
+ FAIL  tests/work-graph/W2-future-intent.test.ts > an initial request_execution without its single assignment is diagnosed and not adopted
+AssertionError: {"status":"rejected","code":"unsupported","reason":"the initial plan is not admissible: tasks: the executionIntent planning branch is not implemented yet; tasks[investigate]: task investigate requests execution without exactly one role/instruction assignment"}: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "incomplete",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/W2-future-intent.test.ts:292:46
+    290|     // TARGET: an explicit execution request missing its single legal …
+    291|     // is `incomplete`, not an illegal Task identity.
+    292|     expect(applied, JSON.stringify(applied)).toMatchObject({ status: '…
+       |                                              ^
+    293|   } finally { await f.close(); }
+    294| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯
+
+ FAIL  tests/work-graph/W2-future-intent.test.ts > future refinement preserves the real source and may add explicit intent and a new role
+AssertionError: {"status":"rejected","code":"unsupported","reason":"the future plan is not admissible: tasks: the executionIntent planning branch is not implemented yet"}: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/W2-future-intent.test.ts:317:46
+    315|     // TARGET: a future revision may add a plan_only node and a reques…
+    316|     // node whose first role the source never authorized.
+    317|     expect(applied, JSON.stringify(applied)).toMatchObject({ status: '…
+       |                                              ^
+    318|     if (applied.status !== 'committed') throw new Error('future refine…
+    319|     const graph = await f.plans.queryTaskGraph(f.ctx, { goalRef: f.goa…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/8]⎯
+
+ FAIL  tests/work-graph/W2-future-intent.test.ts > a newly added obligation and gate use the source policy pin and preserve old commitments
+AssertionError: {"status":"rejected","code":"invalid","reason":"the future plan is not admissible: tasks[gate-extra]: W1 does not introduce new gate tasks"}: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/W2-future-intent.test.ts:373:46
+    371|       { meta: { requestId: 'w2-obligation-apply', expected: [] },
+    372|         input: { proposalRef: proposed.value.ref, expectedProposalRevi…
+    373|     expect(applied, JSON.stringify(applied)).toMatchObject({ status: '…
+       |                                              ^
+    374|     if (applied.status !== 'committed') throw new Error('new obligatio…
+    375|     expect(applied.value.effectiveCompletionPolicy).toEqual(f.plan.eff…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/8]⎯
+
+ FAIL  tests/work-graph/W2-future-intent.test.ts > a future refinement without a new obligation reads no CompletionPolicy
+AssertionError: expected [ …(2) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "{\"aggregateType\":\"ProjectCompletionPolicyActive\",\"projectId\":\"r4c-claim-project\"}",
++   "{\"aggregateType\":\"CompletionPolicyRevision\",\"policyId\":\"r4c-claim-policy\",\"projectId\":\"r4c-claim-project\",\"revision\":1}",
++ ]
+
+ ❯ tests/work-graph/W2-future-intent.test.ts:425:68
+    423|     expect(applied, JSON.stringify(applied)).toMatchObject({ status: '…
+    424|     // TARGET: no obligation was added, so no CompletionPolicy record …
+    425|     expect(seen.filter((key) => key.includes('CompletionPolicy'))).toE…
+       |                                                                    ^
+    426|   } finally { await f.close(); }
+    427| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/8]⎯
+
+ FAIL  tests/work-graph/W2-future-intent.test.ts > a future definition refinement and the first claim on an adopted request_execution node race at one local fact
+AssertionError: {"status":"rejected","code":"unsupported","reason":"the future plan is not admissible: tasks: the executionIntent planning branch is not implemented yet"}: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/W2-future-intent.test.ts:442:46
+    440|     }));
+    441|     const adopted = await proposeAndApply(f, f.goalRef, f.planRef, ado…
+    442|     expect(adopted, JSON.stringify(adopted)).toMatchObject({ status: '…
+       |                                              ^
+    443|     if (adopted.status !== 'committed') throw new Error('race source a…
+    444|     const sourceRef = adopted.value.ref;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/8]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  8 failed | 2 passed (10)
+   Start at  11:14:23
+   Duration  1.58s (transform 769ms, setup 0ms, import 1.28s, tests 129ms, environment 0ms)
+

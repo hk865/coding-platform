@@ -1,0 +1,11 @@
+{
+  "addedScope": [
+    "coding-platform/next/vendor/coding-agent/patches/app/composition/control-hooks.ts",
+    "coding-platform/next/vendor/coding-agent/dist/app/composition/control-hooks.js",
+    "coding-platform/next/vendor/coding-agent/dist/app/composition/control-hooks.js.map",
+    "coding-platform/next/vendor/coding-agent/dist/app/composition/control-hooks.d.ts",
+    "coding-platform/next/vendor/coding-agent/dist/app/composition/control-hooks.d.ts.map"
+  ],
+  "readonlyBuildScript": "coding-platform/next/scripts/build-kernel-patch.mjs",
+  "reason": "actual builtin read denial must use existing runner block outcome"
+}

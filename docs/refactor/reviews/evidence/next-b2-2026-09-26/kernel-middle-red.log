@@ -1,0 +1,96 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/kernel/B2-history-public-export.test.ts (10 tests | 9 failed) 11ms
+     × accepts a text-only user/assistant transcript and leaves the input unmodified 4ms
+     × accepts two ToolCalls each paired with exactly one ToolResult and leaves the input unmodified 1ms
+     × accepts a paired outcome_unknown synthetic result: pairing alone is not a release judgment 0ms
+     × 'rejects a ToolResult that settles the…' 1ms
+     × 'rejects an orphan ToolResult without …' 0ms
+     × 'rejects a callId reused across assist…' 0ms
+     × 'rejects an unsettled ToolCall missing…' 0ms
+     × 'rejects a following assistant message…' 0ms
+     × 'rejects a following user message befo…' 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 9 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/kernel/B2-history-public-export.test.ts > B2 transcript exchange integrity public export > accepts a text-only user/assistant transcript and leaves the input unmodified
+AssertionError: expected [Function] to not throw an error but 'Error: unsupported: B2 transcript int…' was thrown
+
+- Expected:
+undefined
+
++ Received:
+"Error: unsupported: B2 transcript integrity public export is not implemented"
+
+ ❯ tests/kernel/B2-history-public-export.test.ts:136:81
+    134|     ];
+    135|     const snapshot = structuredClone(transcript);
+    136|     expect(() => assertTranscriptExchangeIntegrity(transcript, BASE_LA…
+       |                                                                                 ^
+    137|     expect(transcript).toEqual(snapshot);
+    138|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/9]⎯
+
+ FAIL  tests/kernel/B2-history-public-export.test.ts > B2 transcript exchange integrity public export > accepts two ToolCalls each paired with exactly one ToolResult and leaves the input unmodified
+AssertionError: expected [Function] to not throw an error but 'Error: unsupported: B2 transcript int…' was thrown
+
+- Expected:
+undefined
+
++ Received:
+"Error: unsupported: B2 transcript integrity public export is not implemented"
+
+ ❯ tests/kernel/B2-history-public-export.test.ts:148:81
+    146|     ];
+    147|     const snapshot = structuredClone(transcript);
+    148|     expect(() => assertTranscriptExchangeIntegrity(transcript, BASE_LA…
+       |                                                                                 ^
+    149|     expect(transcript).toEqual(snapshot);
+    150|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/9]⎯
+
+ FAIL  tests/kernel/B2-history-public-export.test.ts > B2 transcript exchange integrity public export > accepts a paired outcome_unknown synthetic result: pairing alone is not a release judgment
+AssertionError: expected [Function] to not throw an error but 'Error: unsupported: B2 transcript int…' was thrown
+
+- Expected:
+undefined
+
++ Received:
+"Error: unsupported: B2 transcript integrity public export is not implemented"
+
+ ❯ tests/kernel/B2-history-public-export.test.ts:158:81
+    156|       outcomeUnknownResult("c1"),
+    157|     ];
+    158|     expect(() => assertTranscriptExchangeIntegrity(transcript, BASE_LA…
+       |                                                                                 ^
+    159|   });
+    160|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/9]⎯
+
+ FAIL  tests/kernel/B2-history-public-export.test.ts > B2 transcript exchange integrity public export > 'rejects a ToolResult that settles the…'
+ FAIL  tests/kernel/B2-history-public-export.test.ts > B2 transcript exchange integrity public export > 'rejects an orphan ToolResult without …'
+ FAIL  tests/kernel/B2-history-public-export.test.ts > B2 transcript exchange integrity public export > 'rejects a callId reused across assist…'
+ FAIL  tests/kernel/B2-history-public-export.test.ts > B2 transcript exchange integrity public export > 'rejects an unsettled ToolCall missing…'
+ FAIL  tests/kernel/B2-history-public-export.test.ts > B2 transcript exchange integrity public export > 'rejects a following assistant message…'
+ FAIL  tests/kernel/B2-history-public-export.test.ts > B2 transcript exchange integrity public export > 'rejects a following user message befo…'
+AssertionError: expected Error: unsupported: B2 transcript integri… to be an instance of StoreError
+ ❯ tests/kernel/B2-history-public-export.test.ts:232:22
+    230|       captured = error;
+    231|     }
+    232|     expect(captured).toBeInstanceOf(StoreError);
+       |                      ^
+    233|     const storeError = captured as StoreError;
+    234|     expect(storeError.code).toBe("corrupt");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/9]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  9 failed | 1 passed (10)
+   Start at  01:53:46
+   Duration  422ms (transform 207ms, setup 0ms, import 316ms, tests 11ms, environment 0ms)
+

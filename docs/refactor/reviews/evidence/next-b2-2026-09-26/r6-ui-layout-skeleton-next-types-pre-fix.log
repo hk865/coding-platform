@@ -1,0 +1,2 @@
+tests/app/R6-workbench.test.ts(65,3): error TS2300: Duplicate identifier 'SessionCard'.
+tests/app/R6-workbench.test.ts(69,3): error TS2300: Duplicate identifier 'SessionCard'.

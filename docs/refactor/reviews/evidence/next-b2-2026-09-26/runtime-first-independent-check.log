@@ -1,0 +1,33 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/runtime/B2-runtime-execution.test.ts (21 tests | 1 failed) 738ms
+   × the actual builtin read checks the current Host path grant and never leaks forbidden bytes to the provider 42ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/runtime/B2-runtime-execution.test.ts > the actual builtin read checks the current Host path grant and never leaks forbidden bytes to the provider
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ tests/runtime/B2-runtime-execution.test.ts:440:31
+    438|   const started=await runtime.port.startRun(fx.ctx,{prepared:prepared.…
+    439|   expect(started.status).toBe('ready');
+    440|   expect(fx.scripted.calls()).toBe(2);
+       |                               ^
+    441|   expect(authorizedAfterModelCall).toBe(true);expect(checkedPaths).toC…
+    442|   const toolResult=fx.scripted.requests[1]!.messages.find(message=>mes…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 20 passed (21)
+   Start at  03:08:33
+   Duration  1.78s (transform 664ms, setup 0ms, import 969ms, tests 738ms, environment 0ms)
+

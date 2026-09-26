@@ -1,0 +1,667 @@
+import { ExecutionSlots } from '../control/dispatch-engine/execution/execution-slots.js';
+import { architectureReviewView } from '../data/read-model-index/architecture-review-view.js';
+import type { PlanCompilerPort, PlanningContextPort } from '../contracts/planning.js';
+import { composeReworkDrive } from '../composition/rework-composition.js';
+import { ArchitectureContextCompiler } from '../data/context-compiler/architecture-context-compiler.js';
+import { ControlPolicyExplanation } from '../control/control-engine/policy-explanation.js';
+import { CoordinationContextCompiler } from '../data/context-compiler/coordination-context-compiler.js';
+import { VerificationContextCompiler } from '../data/context-compiler/verification-context.js';
+import { createMaterialAccessResolver } from '../data/artifact-vault/material-access-policy.js';
+import { AlternativeReportMaterialCompiler } from '../data/context-compiler/alternative-report-materials.js';
+import { AlternativeReportPreparation } from '../control/dispatch-engine/alternative-report-preparation.js';
+import { AlternativeReportObservation } from '../composition/alternative-report-observation.js';
+import { composeQueryDrive } from '../composition/query-composition.js';
+/**
+ * Compose the real modules over an isolated in-memory ledger, vault and projection.
+ * Runtime/check/reviewer defaults are explicit test capabilities; callers can inject
+ * real adapters. The test host adapts protocols and projection timing, never business
+ * admission rules. Each driveQuery call retains its original fresh engine lifetime.
+ */
+import type { WorkspaceBootstrapCommand, WorkspaceBootstrapReceipt } from "../contracts/bootstrap.js";
+import type { CommitCursor } from "../contracts/command-event.js";
+import type { ProjectionReceipt } from "../contracts/goal-view.js";
+import type { StateLedger } from "../contracts/ledger.js";
+import type { ControlEngine, HumanCollaboration } from "../contracts/modules.js";
+import type { ReadModelIndex } from "../contracts/goal-view.js";
+import type {
+  GovernanceActivateCommand,
+  GovernanceActivateReceipt,
+  GovernanceInstallCommand,
+  GovernanceInstallReceipt,
+} from "../contracts/governance.js";
+import type { ApplyPlanRevisionCommand, PlanRevisionReceipt } from "../contracts/plan.js";
+import type {
+  PlanGraphViewQuery,
+  PlanGraphViewResult,
+  TaskDetailViewQuery,
+  TaskDetailViewResult,
+} from "../contracts/plan-view.js";
+import type {
+  DispatchClaimCommand,
+  DispatchClaimReceipt,
+  DispatchReadinessQuery,
+  DispatchReadinessResult,
+  DispatchStartCommand,
+  DispatchStartReceipt,
+  RunFactCommand,
+  RunFactReceipt,
+} from "../contracts/dispatch.js";
+import type { ActiveAgentQuery, ActiveAgentViewResult } from "../contracts/active-agent.js";
+import type { ArtifactPort } from "../contracts/artifact.js";
+import type { TaskContextPort } from "../contracts/task-envelope.js";
+import type { DispatchDriveResult, DispatchDriveTrigger, DispatchPort, RunPort } from "../contracts/ports.js";
+import type {
+  TaskVerificationViewQuery,
+  TaskVerificationViewResult,
+} from "../contracts/verification-view.js";
+import type { ReviewerPort, CheckPort, VerificationPort } from "../contracts/verification.js";
+import type { SubmitEvidenceCommand, SubmitEvidenceReceipt } from "../contracts/evidence.js";
+import type { ReduceTaskCommand, ReduceTaskReceipt } from "../contracts/reduction.js";
+import type { ReduceGoalCommand, ReduceGoalReceipt } from "../contracts/goal-phase.js";
+import type { GoalStatusQuery, GoalStatusViewResult, GoalTimelineQuery, GoalTimelineViewResult } from "../contracts/goal-phase-view.js";
+import type { ReviewContextPort, ReviewContextRequestV1, ReviewContextResultV1 } from "../contracts/review-context.js";
+import type {
+  ClaimReplacementCommand,
+  ClaimReplacementReceipt,
+  HandoffPort,
+  RecordHandoffCommand,
+  RecordHandoffReceipt,
+} from "../contracts/handoff.js";
+import type { HandoffContextPort, HandoffContextRequestV1, HandoffContextResultV1 } from "../contracts/handoff-context.js";
+import type { HandoffControlPort } from "../contracts/handoff-control.js";
+import type { HandoffProvenanceViewQuery, HandoffProvenanceViewResult } from "../contracts/handoff-view.js";
+import { HandoffContextCompilerImpl } from "../data/context-compiler/handoff-context-compiler.js";
+import { FakeHandoffControlRuntimeAdapter } from "../execution/worker-runtime/handoff-control-adapter.js";
+import { HandoffDriveEngineImpl } from "../control/dispatch-engine/handoff/handoff-drive.js";
+import { WorkspaceDriveEngineImpl } from "../control/dispatch-engine/workspace-drive.js";
+import { ConfiguredWorkspaceCapabilityPolicy } from "../control/control-engine/policies/workspace-capability.js";
+import type { WorkspaceCapabilityPort } from "../contracts/workspace-capability.js";
+import type { WorkspaceLeasePort } from "../contracts/workspace-lease.js";
+import type { WorkspaceDrivePort } from "../contracts/workspace-drive.js";
+import type { WorkspaceLeaseViewQuery, WorkspaceLeaseViewResult, IntegrationConflictViewQuery, IntegrationConflictViewResult, WorkspacePatchViewQuery, WorkspacePatchViewResult } from "../contracts/workspace-views.js";
+import type { PortfolioViewQuery, PortfolioViewResult, WorkspaceSummaryViewQuery, WorkspaceSummaryViewResult, PlanMatrixViewQuery, PlanMatrixViewResult, ActiveAgentsViewQuery, ActiveAgentsViewResult, TaskEvidenceViewQuery, TaskEvidenceViewResult, TimelineViewQuery, TimelineViewResult } from "../contracts/console-views.js";
+import type { AcquireWorkspaceReadLeaseCommand, AcquireReadLeaseReceipt, AcquireWorkspaceWriteLeaseCommand, AcquireWriteLeaseReceipt, ReleaseWorkspaceLeaseCommand, ReleaseLeaseReceipt } from "../contracts/workspace-lease.js";
+import type { RecordIntegrationResultCommand, RecordIntegrationResultReceipt } from "../contracts/integration.js";
+import type { RecordPatchCommand, RecordPatchReceipt } from "../contracts/patch.js";
+import type { FakeRuntimeScriptV1 } from "../fixtures/dispatch-fixtures.js";
+import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from "../fixtures/dispatch-fixtures.js";
+import { InMemoryLedger } from "../data/state-ledger/in-memory-ledger.js";
+import { createInMemoryRecordBackend } from "../core/record-store/in-memory-record-store.js";
+import { GOAL_RECORD_SCHEMAS } from "../core/work-graph/persistence/record-codecs.js";
+import { createGoalService } from "../core/work-graph/tasks/task-service.js";
+import { ControlEngineImpl } from "../control/control-engine/control-engine.js";
+import { ReadModelIndexImpl } from "../data/read-model-index/read-model-index.js";
+import { HumanCollaborationImpl } from "../interaction/human-collaboration/human-collaboration.js";
+import { ArtifactVault } from "../data/artifact-vault/artifact-vault.js";
+import { ContextCompilerImpl } from "../data/context-compiler/context-compiler.js";
+import { FakeRuntimeAdapter } from "../execution/worker-runtime/fake-runtime-adapter.js";
+import { DispatchEngineImpl } from "../control/dispatch-engine/dispatch-engine.js";
+import { createDeterministicDeps, type InjectableDeps } from "../testing/sequences.js";
+import { DETERMINISTIC_CHECK_PROVIDERS, FAKE_REVIEWER_PORT } from "../testing/check-providers.double.js";
+import { VerificationEngineImpl } from "../control/verification-engine/verification-engine.js";
+import { ReviewContextCompilerImpl } from "../data/context-compiler/review-context-compiler.js";
+import { WorkContextCompilerImpl } from "../data/context-compiler/work-context-compiler.js";
+import { CompletedWorkContextCompilerImpl } from "../data/context-compiler/completed-work-context-compiler.js";
+import { QueryContextCompilerImpl } from "../data/context-compiler/query-context-compiler.js";
+import { FakeLifecycleControlAdapter } from "../execution/worker-runtime/lifecycle-control-adapter.js";
+import { FakeReadOnlyQueryAdapter } from "../execution/worker-runtime/read-only-query-adapter.js";
+import type { ReadOnlyQueryPort, QueryJobViewQuery, QueryJobViewResult, SubmitQueryJobCommand, SubmitQueryJobReceipt, RecordQueryAnswerCommand, RecordQueryAnswerReceipt, CloseQueryJobCommand, CloseQueryJobReceipt, QueryContextPort, SnapshotPort, PublicSnapshotQueryV1, PublicSnapshotResultV1 } from "../contracts/query-job.js";
+import type { LifecycleControlPort, ControlTimelineViewQuery, ControlTimelineViewResult, SubmitControlCommand, SubmitControlReceipt, RecordSafePointAckCommand, RecordSafePointAckReceipt } from "../contracts/control-intent.js";
+import type { CompletedWorkContextPort } from "../contracts/completed-work-context.js";
+import { FakeContextContinuationRuntimeAdapter } from "../execution/worker-runtime/context-continuation-adapter.js";
+import { ArchitectureReconcilerImpl } from "../control/architecture-reconciler/architecture-reconciler.js";
+import { FakeWorkspaceReaderAdapter } from "../core/workspace/workspace-reader-adapter.js";
+import { CodeGraphPortImpl } from "../control/verification-engine/code-graph-port.js";
+import type { InspectionPort, InspectResultV1, CodeGraphPort } from "../contracts/architecture-reconciler.js";
+import type { WorkspaceReadPort, CodeGraphReadQueryV1, CodeGraphReadResultV1 } from "../contracts/workspace-read.js";
+import type { ArchitectureInspectionViewQuery, ArchitectureInspectionViewResult, RecordArchitectureInspectionCommand, RecordArchitectureInspectionReceipt, RecordArchitectureFindingCommand, RecordArchitectureFindingReceipt, RecordArchitectureDecisionBriefCommand, RecordArchitectureDecisionBriefReceipt, RecordCandidateBaselineProposalCommand, RecordCandidateBaselineProposalReceipt, ArchitectureInspectionIntentV1 } from "../contracts/architecture-inspection.js";
+import type { WorkContextPort } from "../contracts/work-context-port.js";
+import type { ContextContinuationPort } from "../contracts/context-continuation-port.js";
+import type { WorkContextViewQuery, WorkContextViewResult, BindWorkContextCommand, BindWorkContextReceipt, LinkWorkRunCommand, LinkWorkRunReceipt, RecordExecutionNoteCommand, RecordExecutionNoteReceipt, RecordContinuationCommand, RecordContinuationReceipt } from "../contracts/context-continuity.js";
+import { PlanCompilerImpl } from "../control/plan-compiler/plan-compiler.js";
+import { PlanningContextCompilerImpl } from "../data/context-compiler/planning-context-compiler.js";
+
+
+import type { ReworkDrivePort, ReworkDriveRequestV1, ReworkDriveResultV1, ReworkDriveViewV1 } from '../contracts/rework/drive.js';
+import type { ReworkIssueReadPort } from '../composition/rework-composition.js';
+
+export interface InMemoryHarnessOptions {
+  /** Optional trusted source identity; absence cannot establish sourced-current grants. */
+  sourceApplicability?: import('../contracts/material-access.js').SourceApplicabilityPort;
+  /** default FakeRuntimeAdapter script (FAKE_RUNTIME_SCRIPT_COMPLETED_V1). */
+  runtimeScript?: FakeRuntimeScriptV1;
+  /** explicit RunPort override (instrumented/probe ports for tests). */
+  runtime?: RunPort;
+  /** explicit TaskContextPort override (default ContextCompilerImpl). */
+  contextCompiler?: TaskContextPort;
+  /** explicit ArtifactPort override (default ArtifactVault). */
+  vault?: ArtifactPort;
+  /** explicit CheckPort registry for the default VerificationEngine. */
+  checkPorts?: CheckPort[];
+  /** explicit reviewer capability port (default FakeReviewerPort). */
+  reviewer?: ReviewerPort;
+  /** explicit VerificationEngine (default: deterministic providers). */
+  verification?: VerificationPort;
+  /** explicit ReviewContextPort (default ReviewContextCompilerImpl). */
+  reviewContext?: ReviewContextPort;
+  /** explicit HandoffContextPort (default HandoffContextCompilerImpl). */
+  handoffContext?: HandoffContextPort;
+  /** explicit HandoffControlPort (default FakeHandoffControlRuntimeAdapter). */
+  handoffControl?: HandoffControlPort;
+  /** explicit WorkspaceCapabilityPort (default explicit configured support policy). */
+  workspaceCapability?: WorkspaceCapabilityPort;
+  /** explicit WorkspaceDrivePort (default WorkspaceDriveEngineImpl). */
+  workspaceDrive?: WorkspaceDrivePort;
+  /** explicit WorkContextPort (default WorkContextCompilerImpl). */
+  workContext?: WorkContextPort;
+  /** explicit ContextContinuationPort (default FakeContextContinuationRuntimeAdapter). */
+  contextContinuation?: ContextContinuationPort;
+  /** explicit CompletedWorkContextPort (default CompletedWorkContextCompilerImpl). */
+  completedWork?: CompletedWorkContextPort;
+  /** explicit LifecycleControlPort (default FakeLifecycleControlAdapter). */
+  lifecycleControl?: LifecycleControlPort;
+  /** explicit ReadOnlyQueryPort (default FakeReadOnlyQueryAdapter). */
+  readOnlyQuery?: ReadOnlyQueryPort;
+  /** explicit QueryContextPort (default QueryContextCompilerImpl). */
+  queryContext?: QueryContextPort;
+  architectureActivation?: import('../contracts/governance-view.js').ArchitectureActivationReader;
+  verificationFacts?: import('../contracts/query-quality-facts.js').QueryVerificationFactsPort['queryFacts'];
+  humanActions?: import('../contracts/query-quality-facts.js').QueryHumanActionsPort['queryHumanActions'];
+  /** explicit SnapshotPort (default stub). */
+  snapshot?: SnapshotPort;
+  /** explicit WorkspaceReader (default FakeWorkspaceReaderAdapter). */
+  workspaceReader?: WorkspaceReadPort;
+  /** explicit CodeGraphPort (default CodeGraphPortImpl). */
+  codeGraph?: CodeGraphPort;
+  /** explicit InspectionPort (default ArchitectureReconcilerImpl). */
+  inspection?: InspectionPort;
+  /** amendment proposal entry (default PlanCompilerImpl). */
+  planProposal?: Pick<PlanCompilerPort, 'request'>;
+  /** explicit PlanningContextPort (default PlanningContextCompilerImpl). */
+  planningContext?: PlanningContextPort;
+  /**
+   * 路由页一页最多处理多少个订阅（默认与 Control 的页内投递上界一致）。
+   * 它是协作通信「可在实现中收敛」的分页大小：注入更小的页可以让"同一事件位置必须翻多页"
+   * 的真实链路在少量订阅下被验证，而不必造 64 个以上订阅。
+   */
+  coordinationPageSize?: number;
+  /**
+   * 未处置问题的只读出口。语义与持久 test host 完全一致（内存与 SQLite 只差存储）；
+   * 没有注入时驱动返回**显式不可用**，不假装"没有问题"。
+   */
+  reworkIssues?: ReworkIssueReadPort;
+  deps?: Partial<InjectableDeps>;
+}
+
+export interface InMemoryHarness {
+  ledger: StateLedger;
+  control: ControlEngine;
+  readModel: ReadModelIndex;
+  collaboration: HumanCollaboration;
+  /** real modules (default wiring; overridable per options). */
+  vault: ArtifactPort;
+  contextCompiler: TaskContextPort;
+  runtime: RunPort;
+  executionSlots: ExecutionSlots;
+  dispatchEngine: DispatchPort;
+  /** default VerificationEngine (deterministic check providers). */
+  verification: VerificationPort;
+  /** default ReviewContextPort (bounded ReviewPacket assembly). */
+  reviewContext: ReviewContextPort;
+  /** bounded handoff-context assembly (never a transcript). */
+  handoffContext: HandoffContextPort;
+  /** WorkerRuntime control face (pause/stop + public snapshot). */
+  handoffControl: HandoffControlPort;
+  /** DispatchEngine.HandoffPort (replacement outbox drive). */
+  handoffDrive: HandoffPort;
+  /** workspace capability port (default explicit configured support policy). */
+  workspaceCapability: WorkspaceCapabilityPort;
+  /** DispatchEngine.WorkspaceLeasePort (read/write leases + release). */
+  workspaceLease: WorkspaceLeasePort;
+  /** parallel drive port (real overlap, replacement intents skipped). */
+  workspaceDrive: WorkspaceDrivePort;
+  /** bounded work-context assembly (ContextCompiler.WorkContextPort). */
+  workContext: WorkContextPort;
+  /** WorkerRuntime continuation capability face. */
+  contextContinuation: ContextContinuationPort;
+  /** completed-work selection (read-only composition; no writes). */
+  completedWork: CompletedWorkContextPort;
+  /** WorkerRuntime lifecycle control face (safe points). */
+  lifecycleControl: LifecycleControlPort;
+  /** read-only query run face (never touches source run/lease). */
+  readOnlyQuery: ReadOnlyQueryPort;
+  /** bounded query-context assembly. */
+  queryContext: QueryContextPort;
+  /** public snapshot face (noHiddenContextRead). */
+  snapshot: SnapshotPort;
+  /** deterministic workspace reader (versioned source graphs). */
+  workspaceReader: WorkspaceReadPort;
+  /** VerificationEngine.CodeGraphPort seam. */
+  codeGraph: CodeGraphPort;
+  /** ArchitectureReconciler.InspectionPort seam. */
+  inspection: InspectionPort;
+  /** bounded PlanCompiler proposal port (default implementation). */
+  planProposal: Pick<PlanCompilerPort, 'request'>;
+  /** bounded planning-context port (default implementation). */
+  planningContext: PlanningContextPort;
+  /** 返工触发驱动（读取未处置问题 → PlanCompiler 编译 → Control 按自动返工边界受理）。 */
+  reworkDrive: ReworkDrivePort;
+  bootstrap(command: WorkspaceBootstrapCommand): Promise<WorkspaceBootstrapReceipt>;
+  /** governance install (immutable revision; never auto-activates). */
+  install(command: GovernanceInstallCommand): Promise<GovernanceInstallReceipt>;
+  /** governance activation (CAS; per-kind active refs). */
+  activate(command: GovernanceActivateCommand): Promise<GovernanceActivateReceipt>;
+  /** accept a hand-authored PlanRevision (fixed pins). */
+  applyPlan(command: ApplyPlanRevisionCommand): Promise<PlanRevisionReceipt>;
+  /** Plan Graph / Task Detail views (freshness by opaque cursor). */
+  planGraph(query: PlanGraphViewQuery): Promise<PlanGraphViewResult>;
+  taskDetail(query: TaskDetailViewQuery): Promise<TaskDetailViewResult>;
+  /** readiness / claim / start / run-fact control entries. */
+  dispatchReadiness(query: DispatchReadinessQuery): Promise<DispatchReadinessResult>;
+  claimTask(command: DispatchClaimCommand): Promise<DispatchClaimReceipt>;
+  startRun(command: DispatchStartCommand): Promise<DispatchStartReceipt>;
+  runFact(command: RunFactCommand): Promise<RunFactReceipt>;
+  /** admit evidence + binding anchor (atomic; full idempotency). */
+  submitEvidence(command: SubmitEvidenceCommand): Promise<SubmitEvidenceReceipt>;
+  /** deterministic Task/Gate reduction (never Goal phase). */
+  reduceTask(command: ReduceTaskCommand): Promise<ReduceTaskReceipt>;
+  /** deterministic Goal phase reduction (never Task phase). */
+  reduceGoal(command: ReduceGoalCommand): Promise<ReduceGoalReceipt>;
+  /** ActiveAgent view (freshness by opaque cursor). */
+  activeAgent(query: ActiveAgentQuery): Promise<ActiveAgentViewResult>;
+  /** task-detail verification view (freshness by opaque cursor). */
+  taskVerification(query: TaskVerificationViewQuery): Promise<TaskVerificationViewResult>;
+  /** goal phase status view (freshness by opaque cursor). */
+  goalStatus(query: GoalStatusQuery): Promise<GoalStatusViewResult>;
+  /** goal phase timeline view (freshness by opaque cursor). */
+  goalTimeline(query: GoalTimelineQuery): Promise<GoalTimelineViewResult>;
+  /** register a bounded HandoffPacket (body-first pass-through). */
+  recordHandoff(command: RecordHandoffCommand): Promise<RecordHandoffReceipt>;
+  /** replacement claim (B's new lifecycle; lease CAS). */
+  claimReplacement(command: ClaimReplacementCommand): Promise<ClaimReplacementReceipt>;
+  /** handoff provenance timeline (display only). */
+  handoffProvenance(query: HandoffProvenanceViewQuery): Promise<HandoffProvenanceViewResult>;
+  /** bounded handoff-context assembly. */
+  assembleHandoff(request: HandoffContextRequestV1): Promise<HandoffContextResultV1>;
+  /** acquire a shared read lease (read-read never conflicts). */
+  acquireWorkspaceReadLease(command: AcquireWorkspaceReadLeaseCommand): Promise<AcquireReadLeaseReceipt>;
+  /** acquire the exclusive write lease (index CAS, invariant #7). */
+  acquireWorkspaceWriteLease(command: AcquireWorkspaceWriteLeaseCommand): Promise<AcquireWriteLeaseReceipt>;
+  /** holder-only lease release. */
+  releaseWorkspaceLease(command: ReleaseWorkspaceLeaseCommand): Promise<ReleaseLeaseReceipt>;
+  /** evidence join record (conflict preservation; never overwrite). */
+  recordIntegrationResult(command: RecordIntegrationResultCommand): Promise<RecordIntegrationResultReceipt>;
+  /** record ONE patch artifact (atomic workspace revision advance + lease release). */
+  recordPatch(command: RecordPatchCommand): Promise<RecordPatchReceipt>;
+  /** workspace lease status view (display only). */
+  workspaceLeaseView(query: WorkspaceLeaseViewQuery): Promise<WorkspaceLeaseViewResult>;
+  /** integration join/conflict view (display only, no judgement). */
+  integrationConflicts(query: IntegrationConflictViewQuery): Promise<IntegrationConflictViewResult>;
+  /** workspace patch view (display only). */
+  workspacePatches(query: WorkspacePatchViewQuery): Promise<WorkspacePatchViewResult>;
+  /** console portfolio (read-only; readModel only). */
+  consolePortfolio(query: PortfolioViewQuery): Promise<PortfolioViewResult>;
+  /** workspace summary (read-only; readModel only). */
+  consoleSummary(query: WorkspaceSummaryViewQuery): Promise<WorkspaceSummaryViewResult>;
+  /** plan matrix (read-only; readModel only). */
+  consolePlanMatrix(query: PlanMatrixViewQuery): Promise<PlanMatrixViewResult>;
+  /** workspace active agents (read-only; readModel only). */
+  consoleActiveAgents(query: ActiveAgentsViewQuery): Promise<ActiveAgentsViewResult>;
+  /** task evidence detail (read-only; readModel only). */
+  consoleTaskEvidence(query: TaskEvidenceViewQuery): Promise<TaskEvidenceViewResult>;
+  /** workspace timeline (read-only; readModel only). */
+  consoleTimeline(query: TimelineViewQuery): Promise<TimelineViewResult>;
+  /** work context view (read-only; readModel only). */
+  workContextView(query: WorkContextViewQuery): Promise<WorkContextViewResult>;
+  /** register ONE immutable material read grant (projection advanced before return). */
+  grantMaterialAccess(command: import("../contracts/material-access.js").GrantMaterialAccessCommand): Promise<import("../contracts/material-access.js").GrantMaterialAccessReceipt>;
+  revokeMaterialAccess(command: import("../contracts/material-access.js").RevokeMaterialAccessCommand): Promise<import("../contracts/material-access.js").RevokeMaterialAccessReceipt>;
+  /** recorded grant rows (display + host lookup). */
+  materialAccessGrants(query: import("../contracts/material-access.js").MaterialAccessGrantViewQuery): Promise<import("../contracts/material-access.js").MaterialAccessGrantViewResult>;
+  /** bind the durable work identity. */
+  bindWorkContext(command: BindWorkContextCommand): Promise<BindWorkContextReceipt>;
+  /** link a run to the work. */
+  linkWorkRun(command: LinkWorkRunCommand): Promise<LinkWorkRunReceipt>;
+  /** register one immutable execution note (body-first). */
+  recordExecutionNote(command: RecordExecutionNoteCommand): Promise<RecordExecutionNoteReceipt>;
+  /** record the observed continuation path. */
+  recordContinuation(command: RecordContinuationCommand): Promise<RecordContinuationReceipt>;
+  /** record one immutable architecture inspection. */
+  recordArchitectureInspection(command: RecordArchitectureInspectionCommand): Promise<RecordArchitectureInspectionReceipt>;
+  /** record one immutable architecture finding. */
+  recordArchitectureFinding(command: RecordArchitectureFindingCommand): Promise<RecordArchitectureFindingReceipt>;
+  /** record one immutable architecture decision brief. */
+  recordArchitectureDecisionBrief(command: RecordArchitectureDecisionBriefCommand): Promise<RecordArchitectureDecisionBriefReceipt>;
+  /** record one immutable candidate baseline proposal. */
+  recordCandidateBaselineProposal(command: RecordCandidateBaselineProposalCommand): Promise<RecordCandidateBaselineProposalReceipt>;
+  /** architecture inspection view (read-only; readModel only). */
+  architectureInspectionView(query: ArchitectureInspectionViewQuery): Promise<ArchitectureInspectionViewResult>;
+  /** completed-work selection source view (read-only; readModel only). */
+  completedWorkView(query: import("../contracts/completed-work-context.js").CompletedWorkViewQuery): Promise<import("../contracts/completed-work-context.js").CompletedWorkViewResult>;
+  /** deterministic workspace graph read. */
+  workspaceRead(query: CodeGraphReadQueryV1): Promise<CodeGraphReadResultV1>;
+  /** code-graph capability seam. */
+  codeGraphQuery(query: import("../contracts/architecture-reconciler.js").CodeGraphQueryV1): Promise<import("../contracts/architecture-reconciler.js").CodeGraphResultV1>;
+  /** run one architecture inspection (pin-only baseline; fail closed). */
+  inspect(intent: ArchitectureInspectionIntentV1): Promise<InspectResultV1>;
+  /** submit one durable control intent (desired state first). */
+  submitControl(command: SubmitControlCommand): Promise<SubmitControlReceipt>;
+  /** record one safe-point acknowledgement. */
+  recordSafePointAck(command: RecordSafePointAckCommand): Promise<RecordSafePointAckReceipt>;
+  /** control timeline view (read-only; readModel only). */
+  controlTimelineView(query: ControlTimelineViewQuery): Promise<ControlTimelineViewResult>;
+  /** runtime lifecycle capabilities (honest declaration). */
+  lifecycleCapabilities(request: { runRef: import("../contracts/dispatch.js").RunRef | null }): { safePointDelivery: boolean; pause: boolean; cancel: boolean; steer: boolean; maxSteerPayloadBytes: number };
+  /** submit/answer/close a QueryJob + its view. */
+  driveQuery(trigger: import("../contracts/query-job.js").QueryJobDriveTrigger): Promise<import("../contracts/query-job.js").QueryJobDriveResult>;
+  submitQueryJob(command: SubmitQueryJobCommand): Promise<SubmitQueryJobReceipt>;
+  recordQueryAnswer(command: RecordQueryAnswerCommand): Promise<RecordQueryAnswerReceipt>;
+  closeQueryJob(command: CloseQueryJobCommand): Promise<CloseQueryJobReceipt>;
+  queryJobView(query: QueryJobViewQuery): Promise<QueryJobViewResult>;
+  /** read the runtime public snapshot (explicit unsupported/stale). */
+  publicSnapshot(query: PublicSnapshotQueryV1): Promise<PublicSnapshotResultV1>;
+  /** plan-change view (display only). */
+  planChangeView(query: import("../contracts/goal-change.js").PlanChangeViewQuery): Promise<import("../contracts/goal-change.js").PlanChangeViewResult>;
+  /** baseline evolution entries (candidate/decision/gate/activation) + view. */
+  materializeCandidateBaseline(command: import("../contracts/baseline-evolution.js").MaterializeCandidateBaselineCommand): Promise<import("../contracts/baseline-evolution.js").MaterializeCandidateBaselineReceipt>;
+  recordArchitectureChangeDecision(command: import("../contracts/baseline-evolution.js").RecordArchitectureChangeDecisionCommand): Promise<import("../contracts/baseline-evolution.js").RecordArchitectureChangeDecisionReceipt>;
+  recordMigrationGate(command: import("../contracts/baseline-evolution.js").RecordMigrationGateCommand): Promise<import("../contracts/baseline-evolution.js").RecordMigrationGateReceipt>;
+  recordBaselineActivation(command: import("../contracts/baseline-evolution.js").RecordBaselineActivationCommand): Promise<import("../contracts/baseline-evolution.js").RecordBaselineActivationReceipt>;
+  baselineChangeView(query: import("../contracts/baseline-evolution.js").BaselineChangeViewQuery): Promise<import("../contracts/baseline-evolution.js").BaselineChangeViewResult>;
+  /** initial-design/coordination entries + unified status view. */
+  recordInitialDesignProposal(command: import("../contracts/human-role-collaboration.js").RecordInitialDesignProposalCommand): Promise<import("../contracts/human-role-collaboration.js").RecordInitialDesignProposalReceipt>;
+  recordInitialDesignDecision(command: import("../contracts/human-role-collaboration.js").RecordInitialDesignDecisionCommand): Promise<import("../contracts/human-role-collaboration.js").RecordInitialDesignDecisionReceipt>;
+  installCoordinationPolicy(command: import("../contracts/human-role-collaboration.js").InstallCoordinationPolicyCommand): Promise<import("../contracts/human-role-collaboration.js").InstallCoordinationPolicyReceipt>;
+  activateCoordinationPolicy(command: import("../contracts/human-role-collaboration.js").ActivateCoordinationPolicyCommand): Promise<import("../contracts/human-role-collaboration.js").ActivateCoordinationPolicyReceipt>;
+  unifiedStatusView(query: import("../contracts/human-role-collaboration.js").UnifiedStatusViewQuery): Promise<import("../contracts/human-role-collaboration.js").UnifiedStatusViewResult>;
+
+  /** initial-design/coordination entries + unified status view. */
+  recordInitialDesignProposal(command: import("../contracts/human-role-collaboration.js").RecordInitialDesignProposalCommand): Promise<import("../contracts/human-role-collaboration.js").RecordInitialDesignProposalReceipt>;
+  recordInitialDesignDecision(command: import("../contracts/human-role-collaboration.js").RecordInitialDesignDecisionCommand): Promise<import("../contracts/human-role-collaboration.js").RecordInitialDesignDecisionReceipt>;
+  installCoordinationPolicy(command: import("../contracts/human-role-collaboration.js").InstallCoordinationPolicyCommand): Promise<import("../contracts/human-role-collaboration.js").InstallCoordinationPolicyReceipt>;
+  activateCoordinationPolicy(command: import("../contracts/human-role-collaboration.js").ActivateCoordinationPolicyCommand): Promise<import("../contracts/human-role-collaboration.js").ActivateCoordinationPolicyReceipt>;
+  unifiedStatusView(query: import("../contracts/human-role-collaboration.js").UnifiedStatusViewQuery): Promise<import("../contracts/human-role-collaboration.js").UnifiedStatusViewResult>;
+
+  /** ArchitectureEvolutionPolicy install/activation and remediation entries. */
+  installArchitectureEvolutionPolicy(command: import("../contracts/architecture-evolution-policy.js").InstallArchitectureEvolutionPolicyRevisionCommand): Promise<import("../contracts/architecture-evolution-policy.js").ArchitectureEvolutionPolicyInstallReceipt>;
+  activateArchitectureEvolutionPolicy(command: import("../contracts/architecture-evolution-policy.js").ActivateProjectArchitectureEvolutionPolicyCommand): Promise<import("../contracts/architecture-evolution-policy.js").ArchitectureEvolutionPolicyActivateReceipt>;
+  submitRemediationPlanPatch(command: import("../contracts/remediation.js").SubmitRemediationPlanPatchCommand): Promise<import("../contracts/remediation.js").SubmitRemediationPlanPatchReceipt>;
+  createRemediationTask(command: import("../contracts/remediation.js").CreateRemediationTaskCommand): Promise<import("../contracts/remediation.js").CreateRemediationTaskReceipt>;
+  advanceRemediationTask(command: import("../contracts/remediation.js").AdvanceRemediationTaskCommand): Promise<import("../contracts/remediation.js").AdvanceRemediationTaskReceipt>;
+
+  /** runtime continuation capabilities (honest declaration). */
+  continuationCapabilities(request: { workContextRef: import("../contracts/context-continuity.js").WorkContextRef; runRef: import("../contracts/dispatch.js").RunRef | null }): Promise<import("../contracts/context-continuation-port.js").ContextContinuationCapabilityResult>;
+  /** review-context assembly (bounded ReviewPacket). */
+  assembleReview(request: ReviewContextRequestV1): Promise<ReviewContextResultV1>;
+  /** outbox drive (claim -> assemble -> start -> events). */
+  drive(trigger: DispatchDriveTrigger): Promise<DispatchDriveResult>;
+  /** 触发一次返工受理（组合根在验证收口后调用；重复触发不产生第二份提案或 revision）。 */
+  driveRework(request: ReworkDriveRequestV1): Promise<ReworkDriveResultV1>;
+  /** 未处置问题 + 提案 + 受理结果的只读视图（语义与持久 test host 一致）。 */
+  reworkView(request: ReworkDriveRequestV1): Promise<ReworkDriveViewV1>;
+  /** pull new events from the ledger and push them into the ReadModelIndex */
+  advanceProjection(): Promise<ProjectionReceipt>;
+  /** last cursor pushed into the ReadModelIndex (null until first advance) */
+  observedCursor(): CommitCursor | null;
+}
+
+export function createInMemoryHarness(options: InMemoryHarnessOptions = {}): InMemoryHarness {
+  const d: InjectableDeps = { ...createDeterministicDeps(), ...(options.deps ?? {}) };
+  /**
+   * One physical in-memory RecordStore backend, exactly as the persistent root
+   * has one SQLite backend. The legacy ledger borrows the SAME event log, Maps
+   * and cursor; the WorkGraph Goal kernel commits through the same `records`
+   * port. There is no second set of Maps and no second counter.
+   */
+  const recordBackend = createInMemoryRecordBackend({ schemas: GOAL_RECORD_SCHEMAS });
+  const ledger: StateLedger = new InMemoryLedger({}, recordBackend);
+  const goals = createGoalService({ records: recordBackend.records, now: d.clock, eventId: d.eventId });
+  const workspaceCapability: WorkspaceCapabilityPort =
+    options.workspaceCapability ?? new ConfiguredWorkspaceCapabilityPolicy({ workspaceRead: true, workspaceWrite: true, maxWriteScope: null });
+  const alternativeObservations = new AlternativeReportObservation();
+  const control = new ControlEngineImpl({
+    ledger,
+    now: d.clock,
+    eventId: d.eventId,
+    goalCommands: goals.legacyCommands,
+    workspaceCapability,
+    alternativeReportObservation: alternativeObservations,
+  });
+  const readModel = new ReadModelIndexImpl(new ControlPolicyExplanation());
+  const planProposal: Pick<PlanCompilerPort, 'request'> = options.planProposal ?? new PlanCompilerImpl({ workIdentity: control, materials: new CoordinationContextCompiler({ ledger }), now: d.clock });
+  const collaboration = new HumanCollaborationImpl({
+    control,
+    readModel,
+    planProposal,
+    commandId: d.commandId,
+    correlationId: d.correlationId,
+    now: d.clock,
+  });
+  // cross-principal read grants resolve from the in-memory projection. The
+  // default Vault also carries the canonical ledger authority and clock for the
+  // shared material rules; a custom legacy ArtifactPort is used as-is.
+  const vault: ArtifactPort =
+    options.vault ??
+    new ArtifactVault(new Map(), {
+      authority: ledger,
+      grants: createMaterialAccessResolver(ledger, readModel, options.sourceApplicability),
+      now: d.clock,
+    });
+  const contextCompiler: TaskContextPort =
+    options.contextCompiler ?? new ContextCompilerImpl({ ledger, vault, now: d.clock });
+  const alternativeMaterials = new AlternativeReportMaterialCompiler({ ledger, vault, grantCandidates: readModel, ...(options.sourceApplicability ? { source: options.sourceApplicability } : {}) });
+  const alternativePreparation = new AlternativeReportPreparation({ ledger, control, materials: alternativeMaterials,
+    synchronizeGrants: () => advanceProjection(), observations: alternativeObservations });
+  const runtime: RunPort =
+    options.runtime ?? new FakeRuntimeAdapter(options.runtimeScript ?? FAKE_RUNTIME_SCRIPT_COMPLETED_V1);
+  const executionSlots = new ExecutionSlots();
+  const dispatchEngine = new DispatchEngineImpl({
+    executionSlots,
+    ledger,
+    control,
+    contextCompiler,
+    runtime,
+    // 协作通信推进用同一个确定性时钟：claim/settle 的时间与租约到期因此可复现。
+    now: d.clock,
+    prepareAlternativeReports: wait => alternativePreparation.prepare(wait),
+    ...(options.coordinationPageSize === undefined ? {} : { coordinationPageSize: options.coordinationPageSize }),
+  });
+  const verification: VerificationPort =
+    options.verification ??
+    new VerificationEngineImpl(
+      { context: new VerificationContextCompiler({ ledger, vault }), now: d.clock },
+      options.checkPorts ?? DETERMINISTIC_CHECK_PROVIDERS,
+      options.reviewer ?? FAKE_REVIEWER_PORT,
+    );
+  const reviewContext: ReviewContextPort =
+    options.reviewContext ?? new ReviewContextCompilerImpl({ ledger, vault, now: d.clock });
+  const handoffContext: HandoffContextPort =
+    options.handoffContext ?? new HandoffContextCompilerImpl({ ledger, vault, now: d.clock });
+  const handoffControl: HandoffControlPort =
+    options.handoffControl ?? new FakeHandoffControlRuntimeAdapter(runtime);
+  const handoffDrive: HandoffPort = new HandoffDriveEngineImpl({
+    executionSlots,
+    ledger,
+    control,
+    handoffContext,
+    runtime,
+  });
+  const workspaceDrive: WorkspaceDrivePort =
+    options.workspaceDrive ??
+    new WorkspaceDriveEngineImpl(dispatchEngine);
+  const planningContext: PlanningContextPort = options.planningContext ?? new PlanningContextCompilerImpl({ ledger, vault, contextCompiler, readModel, now: d.clock });
+  const workContext: WorkContextPort =
+    options.workContext ?? new WorkContextCompilerImpl({ ledger, vault, now: d.clock, readModel });
+  const contextContinuation: ContextContinuationPort =
+    options.contextContinuation ?? new FakeContextContinuationRuntimeAdapter(runtime);
+  const completedWork: CompletedWorkContextPort =
+    options.completedWork ?? new CompletedWorkContextCompilerImpl({ ledger, vault, readModel, now: d.clock });
+  const lifecycleControl: LifecycleControlPort =
+    options.lifecycleControl ?? new FakeLifecycleControlAdapter();
+  const readOnlyQuery: ReadOnlyQueryPort =
+    options.readOnlyQuery ?? new FakeReadOnlyQueryAdapter();
+  const queryContext: QueryContextPort =
+    options.queryContext ?? new QueryContextCompilerImpl({ ledger, vault, now: d.clock, ...(options.architectureActivation ? { architectureActivation: options.architectureActivation } : {}), ...(options.humanActions ? { humanActions: options.humanActions } : {}), ...(options.verificationFacts ? { verificationFacts: options.verificationFacts } : {}), architectureReviews: scope => architectureReviewView(ledger, scope) });
+  const snapshot: SnapshotPort = {
+    snapshot: (q) => Promise.resolve({ status: "unsupported", message: "Public runtime snapshot capability is not configured" }),
+  };
+  // 与持久 test host 同一实现、同一语义；未处置问题只经注入端口取得，
+  // 因此 DispatchEngine 不依赖 VerificationEngine 的实现（ModuleDependencyDAG 保持无环）。
+  const reworkDrive: ReworkDrivePort = composeReworkDrive({
+    ledger,
+    control,
+    issues:
+      options.reworkIssues ??
+      (async () => ({
+        status: "unavailable" as const,
+        code: "unavailable" as const,
+        message: "内存测试宿主没有注入未处置问题出口：返工驱动无法读取验证结论，不猜任何问题。",
+      })),
+  });
+  const workspaceReader: WorkspaceReadPort =
+    options.workspaceReader ?? new FakeWorkspaceReaderAdapter({ now: d.clock });
+  const codeGraph: CodeGraphPort = options.codeGraph ?? new CodeGraphPortImpl();
+  const inspection: InspectionPort =
+    options.inspection ?? new ArchitectureReconcilerImpl({ context: new ArchitectureContextCompiler({ ledger, workspaceReader }), vault, control, now: d.clock });
+  const workspaceLease: WorkspaceLeasePort = {
+    acquireReadLease: (command) => control.acquireWorkspaceReadLease(command),
+    acquireWriteLease: (command) => control.acquireWorkspaceWriteLease(command),
+    releaseLease: (command) => control.releaseWorkspaceLease(command),
+  };
+  let lastCursor: CommitCursor | null = null;
+  async function advanceProjection(): Promise<ProjectionReceipt> {
+    let receipt: ProjectionReceipt | null = null;
+    for (;;) {
+      const page = await ledger.events({ afterCursor: lastCursor, limit: 64 });
+      receipt = await readModel.advance(page);
+      lastCursor = page.throughCursor;
+      if (!page.hasMore) break;
+    }
+    return receipt!;
+  }
+  return {
+    ledger,
+    control,
+    readModel,
+    collaboration,
+    vault,
+    contextCompiler,
+    runtime,
+    executionSlots,
+    dispatchEngine,
+    verification,
+    reviewContext,
+    handoffContext,
+    handoffControl,
+    handoffDrive,
+    workspaceCapability,
+    workspaceLease,
+    workspaceDrive,
+    workContext,
+    contextContinuation,
+    completedWork,
+    lifecycleControl,
+    readOnlyQuery,
+    queryContext,
+    snapshot,
+    workspaceReader,
+    codeGraph,
+    inspection,
+    planProposal,
+    planningContext,
+    reworkDrive,
+    driveRework: (request) => reworkDrive.driveRework(request),
+    reworkView: (request) => reworkDrive.reworkView(request),
+    bootstrap: (command) => control.bootstrap(command),
+    install: (command) => control.install(command),
+    activate: (command) => control.activate(command),
+    applyPlan: (command) => control.applyPlan(command),
+    planGraph: (query) => readModel.planGraph(query),
+    taskDetail: (query) => readModel.taskDetail(query),
+    dispatchReadiness: (query) => control.dispatchReadiness(query),
+    claimTask: (command) => control.claimTask(command),
+    startRun: (command) => control.startRun(command),
+    runFact: (command) => control.runFact(command),
+    submitEvidence: (command) => control.submitEvidence(command),
+    reduceTask: (command) => control.reduceTask(command),
+    reduceGoal: (command) => control.reduceGoal(command),
+    activeAgent: (query) => readModel.activeAgent(query),
+    goalStatus: (query) => readModel.goalStatus(query),
+    goalTimeline: (query) => readModel.goalTimeline(query),
+    taskVerification: (query) => readModel.taskVerification(query),
+    recordHandoff: (command) => control.recordHandoff(command),
+    claimReplacement: (command) => control.claimReplacement(command),
+    handoffProvenance: (query) => readModel.handoffProvenance(query),
+    acquireWorkspaceReadLease: (command) => control.acquireWorkspaceReadLease(command),
+    acquireWorkspaceWriteLease: (command) => control.acquireWorkspaceWriteLease(command),
+    releaseWorkspaceLease: (command) => control.releaseWorkspaceLease(command),
+    recordIntegrationResult: (command) => control.recordIntegrationResult(command),
+    recordPatch: (command) => control.recordPatch(command),
+    workspaceLeaseView: (query) => readModel.workspaceLeaseView(query),
+    integrationConflicts: (query) => readModel.integrationConflicts(query),
+    workspacePatches: (query) => readModel.workspacePatches(query),
+    consolePortfolio: (query) => collaboration.consolePortfolio(query),
+    consoleSummary: (query) => collaboration.consoleSummary(query),
+    consolePlanMatrix: (query) => collaboration.consolePlanMatrix(query),
+    consoleActiveAgents: (query) => collaboration.consoleActiveAgents(query),
+    consoleTaskEvidence: (query) => collaboration.consoleTaskEvidence(query),
+    consoleTimeline: (query) => collaboration.consoleTimeline(query),
+    workContextView: (query) => readModel.workContext(query),
+    revokeMaterialAccess: async (command) => {
+      const receipt = await control.revokeMaterialAccess(command);
+      if (receipt.status === "committed") await advanceProjection();
+      return receipt;
+    },
+    grantMaterialAccess: async (command) => {
+      const receipt = await control.grantMaterialAccess(command);
+      if (receipt.status === "committed") await advanceProjection();
+      return receipt;
+    },
+    materialAccessGrants: (query) => readModel.materialAccessGrants(query),
+    architectureInspectionView: (query) => readModel.architectureInspectionView(query),
+    completedWorkView: (query) => readModel.completedWorkView(query),
+    recordArchitectureInspection: (command) => control.recordArchitectureInspection(command),
+    recordArchitectureFinding: (command) => control.recordArchitectureFinding(command),
+    recordArchitectureDecisionBrief: (command) => control.recordArchitectureDecisionBrief(command),
+    recordCandidateBaselineProposal: (command) => control.recordCandidateBaselineProposal(command),
+    workspaceRead: (query) => workspaceReader.read(query),
+    codeGraphQuery: (query) => codeGraph.codeGraph(query),
+    inspect: (intent) => inspection.inspect(intent),
+    bindWorkContext: (command) => control.bindWorkContext(command),
+    linkWorkRun: (command) => control.linkWorkRun(command),
+    recordExecutionNote: (command) => control.recordExecutionNote(command),
+    recordContinuation: (command) => control.recordContinuation(command),
+    submitControl: (command) => control.submitControl(command),
+    recordSafePointAck: (command) => control.recordSafePointAck(command),
+    controlTimelineView: (query) => readModel.controlTimelineView(query),
+    lifecycleCapabilities: (request) => lifecycleControl.capabilities(request),
+    driveQuery: (trigger) => composeQueryDrive({ ledger, control, vault, context: queryContext, runtime: readOnlyQuery, now: d.clock }, advanceProjection).driveQuery(trigger),
+    submitQueryJob: (command) => control.submitQueryJob(command),
+    recordQueryAnswer: (command) => control.recordQueryAnswer(command),
+    closeQueryJob: (command) => control.closeQueryJob(command),
+    queryJobView: (query) => readModel.queryJobView(query),
+    publicSnapshot: (query) => snapshot.snapshot(query),
+    planChangeView: (query) => readModel.planChangeView(query),
+    installArchitectureEvolutionPolicy: (command) => control.installArchitectureEvolutionPolicy(command),
+    activateArchitectureEvolutionPolicy: (command) => control.activateArchitectureEvolutionPolicy(command),
+    submitRemediationPlanPatch: (command) => control.submitRemediationPlanPatch(command),
+    createRemediationTask: (command) => control.createRemediationTask(command),
+    advanceRemediationTask: (command) => control.advanceRemediationTask(command),
+    materializeCandidateBaseline: (command) => control.materializeCandidateBaseline(command),
+    recordArchitectureChangeDecision: (command) => control.recordArchitectureChangeDecision(command),
+    recordMigrationGate: (command) => control.recordMigrationGate(command),
+    recordBaselineActivation: (command) => control.recordBaselineActivation(command),
+    recordInitialDesignProposal: (command) => control.recordInitialDesignProposal(command),
+    recordInitialDesignDecision: (command) => control.recordInitialDesignDecision(command),
+    installCoordinationPolicy: (command) => control.installCoordinationPolicy(command),
+    activateCoordinationPolicy: (command) => control.activateCoordinationPolicy(command),
+    unifiedStatusView: (query) => readModel.unifiedStatusView(query),
+    baselineChangeView: (query) => readModel.baselineChangeView(query),
+    continuationCapabilities: (request) => contextContinuation.capabilities(request),
+    assembleHandoff: (request) => handoffContext.assemble(request),
+    assembleReview: (request) => reviewContext.assemble(request),
+    drive: (trigger) => dispatchEngine.drive(trigger),
+    advanceProjection,
+    observedCursor: () => lastCursor,
+  };
+}

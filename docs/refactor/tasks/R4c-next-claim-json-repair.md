@@ -1,0 +1,2 @@
+上一轮4项返修独立复核通过，shared fold和RoleFacts均正确。最后有一个你新增的JSON validator局部漏洞：isCanonicalJsonValue在try外递归，structuredClone允许循环对象，循环ref会触发RangeError穿过claimTask/readTaskClaim。主审已补充并冻结一个测试到R4c-task-claim-concurrency.test.ts末尾并只读刷新。
+只需小修：使用每条递归路径的WeakSet判环（完成分支移除，避免把重复共享引用当环），并把必要的序列化边界检查放在受控catch里，循环/深度不受支持返回invalid；不要catch Store操作。无需新文件/新接口/通用框架，也不更改测试。保持同一write scope，完成next-types、next-task-claim后停止。主审接着做完整物理隔离测试。此轮不必重复跑全量旧检查，没有其他业务改动。

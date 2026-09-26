@@ -1,0 +1,9 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/vendor/coding-agent
+
+
+ Test Files  46 passed (46)
+      Tests  204 passed | 1 skipped (205)
+   Start at  00:57:44
+   Duration  14.12s (transform 698ms, setup 0ms, import 3.12s, tests 7.67s, environment 3ms)
+

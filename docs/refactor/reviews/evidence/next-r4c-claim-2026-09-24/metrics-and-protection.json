@@ -1,0 +1,100 @@
+{
+  "metrics": {
+    "production_ts": {
+      "files": 147,
+      "physicalLines": 24412
+    },
+    "shared_contracts_ts_subset": {
+      "files": 56,
+      "physicalLines": 3772
+    },
+    "test_ts_including_helpers": {
+      "files": 63,
+      "physicalLines": 12819
+    },
+    "test_mjs": {
+      "files": 1,
+      "physicalLines": 34
+    }
+  },
+  "oldProtected": {
+    "files": 1313,
+    "changed": []
+  },
+  "frozenTestsAndContracts": {
+    "files": 121,
+    "changed": []
+  },
+  "changedTargetFiles": [
+    {
+      "file": "coding-platform/next/src/composition/create-platform.ts",
+      "change": "modified",
+      "lines": 177
+    },
+    {
+      "file": "coding-platform/next/src/contracts/plan.ts",
+      "change": "modified",
+      "lines": 277
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/configuration/contracts.ts",
+      "change": "modified",
+      "lines": 39
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/configuration/role-memory-service.ts",
+      "change": "modified",
+      "lines": 808
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+      "change": "modified",
+      "lines": 780
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/claim-contracts.ts",
+      "change": "added",
+      "lines": 54
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/claim-record-codecs.ts",
+      "change": "added",
+      "lines": 299
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/claim-service.ts",
+      "change": "added",
+      "lines": 672
+    },
+    {
+      "file": "coding-platform/next/tests/composition/R3c-R4b-platform.test.ts",
+      "change": "modified",
+      "lines": 263
+    },
+    {
+      "file": "coding-platform/next/tests/composition/platform.test.ts",
+      "change": "modified",
+      "lines": 95
+    },
+    {
+      "file": "coding-platform/next/tests/helpers/task-claim-fixture.ts",
+      "change": "added",
+      "lines": 431
+    },
+    {
+      "file": "coding-platform/next/tests/work-graph/R4c-task-claim.test.ts",
+      "change": "added",
+      "lines": 403
+    },
+    {
+      "file": "coding-platform/next/tests/work-graph/R4c-task-claim-boundaries.test.ts",
+      "change": "added",
+      "lines": 156
+    },
+    {
+      "file": "coding-platform/next/tests/work-graph/R4c-task-claim-concurrency.test.ts",
+      "change": "added",
+      "lines": 135
+    }
+  ]
+}

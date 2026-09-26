@@ -1,0 +1,21 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/contracts/control-intent.ts",
+    "coding-platform/next/src/core/work-graph/tasks/control-contracts.ts",
+    "coding-platform/next/src/core/work-graph/tasks/control-service.ts",
+    "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/materials/record-readers.ts",
+    "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts",
+    "coding-platform/next/src/composition/create-platform.ts",
+    "coding-platform/next/tests/work-graph/R4-control-intent.test.ts",
+    "coding-platform/next/tests/composition/R4-control-platform.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

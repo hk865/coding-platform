@@ -1,0 +1,54 @@
+{
+  "createdAt": "2026-09-26T17:07:18.756536+00:00",
+  "sourceProject": "/home/hyh001/projects/coding-platform/coding-platform/next",
+  "sourceDocs": "/home/hyh001/projects/coding-platform/docs",
+  "destination": "/home/hyh001/projects/coding-platform/coding-platform-next",
+  "branch": "main",
+  "status": "implementation freeze; not full MVP completion",
+  "unchangedProductSourceFiles": 666,
+  "sourceManifest": "product-source-hashes.json",
+  "packagingEdits": [
+    "scripts/verify-isolated.mjs",
+    "scripts/build-kernel-patch.mjs",
+    "scripts/build-workbench.mjs",
+    "scripts/check-boundaries.mjs",
+    ".gitignore",
+    "package-lock.json",
+    "vendor/coding-agent/package-lock.json",
+    "README.md",
+    "AGENTS.md",
+    "CONTINUE.md"
+  ],
+  "currentDocumentationLinksUpdated": [
+    "README.md",
+    "refactor/module-dag.md",
+    "refactor/IMPLEMENTATION-PLAN.md",
+    "refactor/README.md",
+    "refactor/DSH-EXECUTION-HARNESS.md",
+    "refactor/refactor-plan.md",
+    "refactor/HANDOFF.md",
+    "refactor/DSH-WORKFLOW.md",
+    "refactor/IMPLEMENTED-CAPABILITIES.md",
+    "refactor/modules/core/agent-runtime.md",
+    "refactor/modules/core/work-graph.md"
+  ],
+  "preserved": [
+    "Full current docs, original intent and historical evidence",
+    "Frozen Kernel artifacts, managed patch source, skills and Python analyzer assets"
+  ],
+  "excluded": [
+    "node_modules",
+    "root dist",
+    ".git from source trees",
+    "DSH runtime state and credentials",
+    "temporary runtime databases",
+    "old product source"
+  ],
+  "verification": {
+    "path": "verification.json",
+    "sha256": "9260cc6839b7dc6313e29fc09d5edeff14195e168d93099edc8605ca8eef4e08",
+    "exitCode": 0
+  },
+  "newDevelopmentStopped": true,
+  "oldSourceUnchangedByExtraction": true
+}

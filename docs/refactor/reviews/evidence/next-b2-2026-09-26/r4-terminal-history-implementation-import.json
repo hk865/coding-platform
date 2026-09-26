@@ -1,0 +1,66 @@
+{
+  "status": "imported",
+  "importedAt": "2026-09-26T16:18:19.255108+00:00",
+  "lane": "r4-terminal-history-implementation-20260927",
+  "review": "r4-terminal-history-implementation-final-review.json",
+  "reviewSha256": "426747fcb568b03b27d7eeef1c8d156de319cebddc9bc05e66ce1cf3f090a216",
+  "sourceAndArtifactFiles": [
+    {
+      "path": "coding-platform/next/vendor/coding-agent/patches/core/ports/session_store/session-history.ts",
+      "originalSha256": "6284efab839fe6e2c2b1d8e24a9cb117811532721e02e8b8fbd5b4016449c04a",
+      "candidateSha256": "9026ec17dabc8348782aa910804b4dbd7f4cbebf0fa2828ad003ff18d71bd508"
+    },
+    {
+      "path": "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.js",
+      "originalSha256": "8e8330131f68508b1672bfa9968e20c5513fc758253e7c087e79c0b25ecf2785",
+      "candidateSha256": "425f329ae66bedc4ea6e54ca435b5591d64ffebc49351f57febc1d437fd8675b"
+    },
+    {
+      "path": "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.js.map",
+      "originalSha256": "7e95215f51fefc5ecb857ddd81433c35f07d7e94420082dce4d277f747ad16ef",
+      "candidateSha256": "c9e3bedf67ab45119a8bb1c59581009552edbeb308a8b891879a454c90a707d3"
+    },
+    {
+      "path": "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.d.ts",
+      "originalSha256": "49d890d64299a3466ca2f8b37ba1c34b2b5e14997a0edbccc7cf10a1cd1a105b",
+      "candidateSha256": "112cdc57a69fedd7296cf1c88c5868a96422d4ac14f1d6c3c6da07a61775d692"
+    },
+    {
+      "path": "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.d.ts.map",
+      "originalSha256": "d4c35bc805ed868c9c6e99b715613936d72dee10d02de60652407ac79c07aa65",
+      "candidateSha256": "613b6af24a92b028fead9f14733b403c05191281f8508dbb228bafd14b189760"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+      "originalSha256": "27cafdbc33e8c0908ef58b4ed71c915d150897d22438eed544993d7023be4945",
+      "candidateSha256": "779044403c37bb53777529cbcf36ae89bfad533f20f91d50a1b940de7b4abfdb"
+    }
+  ],
+  "scopeClean": true,
+  "originalAllowedHashesMatched": true,
+  "frozenTestsUnchanged": true,
+  "independentChecks": {
+    "next-terminal-history": {
+      "exit": 0,
+      "tests": 5,
+      "log": "r4-terminal-history-implementation-final-tests.log"
+    },
+    "next-kernel-history-public": {
+      "exit": 0,
+      "tests": 10,
+      "log": "r4-terminal-history-implementation-final-public-tests.log"
+    },
+    "next-types": {
+      "exit": 0,
+      "log": "r4-terminal-history-implementation-final-types.log"
+    },
+    "next-kernel-patch": {
+      "exit": 0,
+      "sources": 7,
+      "artifacts": 28,
+      "allMatch": true,
+      "evidence": "r4-terminal-history-implementation-final-repro.json"
+    }
+  },
+  "limits": "Kernel cancellation and same-Session successor verified; not full lifecycle recovery or end-to-end MVP completion."
+}

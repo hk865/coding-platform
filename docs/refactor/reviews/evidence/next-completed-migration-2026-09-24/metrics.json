@@ -1,0 +1,67 @@
+{
+  "production": {
+    "files": 117,
+    "physicalLines": 12415,
+    "nonBlankLines": 11774
+  },
+  "contracts": {
+    "files": 51,
+    "physicalLines": 2447,
+    "nonBlankLines": 2428
+  },
+  "tests": {
+    "files": 38,
+    "physicalLines": 7192,
+    "nonBlankLines": 6837
+  },
+  "testCases": 250,
+  "testFiles": 36,
+  "engineeringScripts": {
+    "files": 2,
+    "physicalLines": 278,
+    "nonBlankLines": 272
+  },
+  "analyzerHelpers": {
+    "files": 2,
+    "physicalLines": 617,
+    "nonBlankLines": 569
+  },
+  "frozenKernelJsAndDeclarations": {
+    "files": 138,
+    "physicalLines": 19762,
+    "nonBlankLines": 19752
+  },
+  "modules": {
+    "core/workspace": {
+      "files": 26,
+      "physicalLines": 2888,
+      "nonBlankLines": 2738
+    },
+    "core/work-graph": {
+      "files": 11,
+      "physicalLines": 2791,
+      "nonBlankLines": 2584
+    },
+    "core/record-store": {
+      "files": 12,
+      "physicalLines": 2727,
+      "nonBlankLines": 2518
+    },
+    "core/agent-runtime": {
+      "files": 12,
+      "physicalLines": 1461,
+      "nonBlankLines": 1411
+    },
+    "business/workflow": {
+      "files": 4,
+      "physicalLines": 36,
+      "nonBlankLines": 32
+    },
+    "composition": {
+      "files": 1,
+      "physicalLines": 65,
+      "nonBlankLines": 63
+    }
+  },
+  "note": "Physical lines include blank lines/comments. Partial target, not equal-function whole product comparison. Frozen Kernel, non-code assets and analyzer zip excluded from platform production count."
+}

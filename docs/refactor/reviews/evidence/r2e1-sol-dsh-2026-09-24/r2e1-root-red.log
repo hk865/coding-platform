@@ -1,0 +1,53 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+ ❯ tests/data/R2e-text-boundaries.test.ts (2 tests | 2 failed) 23ms
+   × rejects a text scope containing a readable regular path it cannot represent 22ms
+   × short-circuits guaranteed over-capacity when the before capture is empty 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/data/R2e-text-boundaries.test.ts > rejects a text scope containing a readable regular path it cannot represent
+AssertionError: expected { status: 'ready', value: { …(7) } } to match object { status: 'rejected', …(1) }
+(8 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unsupported",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/data/R2e-text-boundaries.test.ts:53:22
+     51|       workspace, workspaceRevision: 1, provider: 'text',
+     52|     });
+     53|     expect(captured).toMatchObject({ status: 'rejected', code: 'unsupp…
+       |                      ^
+     54|     // The failed attempt must not retain a partial handle or consume …
+     55|     await rm(join(root, 'foo:bar.txt'));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/data/R2e-text-boundaries.test.ts > short-circuits guaranteed over-capacity when the before capture is empty
+Error: empty-before comparison traversed past its provable capacity bound
+ ❯ Proxy.<anonymous> tests/data/R2e-text-boundaries.test.ts:76:36
+     74|       if (property === Symbol.iterator) return function* () {
+     75|         for (const item of target) {
+     76|           if (++visited > 4) throw new Error('empty-before comparison …
+       |                                    ^
+     77|           yield item;
+     78|         }
+ ❯ diffContent src/core/workspace/workspace-read.ts:105:20
+ ❯ compareCapturedFiles src/core/workspace/workspace-read.ts:149:37
+ ❯ tests/data/R2e-text-boundaries.test.ts:92:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  2 failed | 16 passed (18)
+   Start at  07:36:02
+   Duration  3.91s (transform 1.32s, setup 0ms, import 2.21s, tests 1.48s, environment 0ms)
+

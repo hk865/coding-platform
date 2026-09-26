@@ -1,0 +1,25 @@
+{
+  "session": "session-f1c99e97-db59-4a71-8e2c-f9944b0673c9",
+  "firstAttempt": "attempt-1790431523781607338",
+  "status": "bounded_repair_requested",
+  "stopHashes": {
+    "coding-platform/next/src/core/work-graph/tasks/initial-plan.ts": "bac18999f37026f1865231080a75c83d42f57f80de93dbd4b51c5b82b921e222",
+    "coding-platform/next/src/core/work-graph/tasks/plan-service.ts": "1ba696b1459a606547835366549f4792ae8df694ab4590c704229d9effa63ebc",
+    "coding-platform/next/src/business/workflow/workflow.ts": "66de01d850d473cde9356bcbfb27de5e0a87103d3226bf1522c25d65d9125b18",
+    "coding-platform/next/src/core/agent-runtime/query-preparation.ts": "b410de9bbb496dbd46546b74261c7acc3a4bc0bc95805ca719419f3a1be90c7f"
+  },
+  "fixture": {
+    "path": "coding-platform/next/tests/business/R5b-initial-planning-workflow.test.ts",
+    "beforeSha256": "37db4845476aa2d00812740b4370b2932c17dcba32bfeed7f5e3639b460eb985",
+    "afterSha256": "492ae0040d1a5ad6786a6d9f2ff68e0dac489f9fc394339896aebf18ee3c76e0",
+    "reason": "Separate workspace source root from SQLite/Kernel platform persistence exactly as existing real R5c workflow fixture; platform round commit must not mutate its own captured source",
+    "sameTestCase": true,
+    "readonlySnapshotRefreshed": true
+  },
+  "repair": [
+    "Restore original new-entry receipt before body/current reads using full original request+bound identity fingerprint",
+    "Add actual Answer/Job/Run revisions to existing candidate common commit guards",
+    "Bind complete Host scope before fact read and isolate apply context before first await"
+  ],
+  "originalAllowedHashesUnchanged": true
+}

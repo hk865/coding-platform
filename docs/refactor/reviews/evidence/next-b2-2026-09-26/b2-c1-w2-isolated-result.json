@@ -1,0 +1,26 @@
+{
+  "result": "passed",
+  "testFiles": 94,
+  "tests": 948,
+  "checks": [
+    "physical copy without old product source",
+    "Kernel patches reproduced: 12 artifacts",
+    "module boundaries: 6/8 allowed",
+    "typecheck",
+    "build",
+    "full tests",
+    "compiled createTargetPlatform open/close"
+  ],
+  "protectedFiles": 8827,
+  "protectedChanges": 0,
+  "nextSource": {
+    "typescriptFiles": 191,
+    "physicalLines": 40804
+  },
+  "scope": "B2 Runtime/execution, C1 mailbox, M1 grants, M2 facts, W2 delegated writes/tools components and B2/C1/M1 composition",
+  "remaining": [
+    "M2/delegatedWrites/communication tools composition and Runtime consumers (C2)",
+    "future intent nodes and first refinement",
+    "Query/controls/recovery, formal evidence/completion, bootstrap/Workflow/Host/UI"
+  ]
+}

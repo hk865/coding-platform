@@ -1,0 +1,15 @@
+{
+  "files": [
+    {
+      "file": "coding-platform/next/tests/kernel/R4-tool-group-barrier.test.ts",
+      "before": "746a787b433aaca3d4447c353f9ec623249823ac18aeb95e4e8ba2dcf74e1516",
+      "after": "973484cc25714dd53e9d0dd7fa6acee7dd1e42bfd3b2d1f1f27146089d324795"
+    },
+    {
+      "file": "docs/refactor/tasks/R4-tool-group-barrier-implementation.md",
+      "before": "71579a4bd347fff8819c21239003b2d34fb9fb805a4c1770f7a70fa195b51651",
+      "after": "67ac94e52b6cfeb4aee9cdcaa82650a3e2f3fec71a7654794edab7791998e8ac"
+    }
+  ],
+  "reason": "one real after-group callback I/O failure; duplicate malformed-decision row omitted"
+}

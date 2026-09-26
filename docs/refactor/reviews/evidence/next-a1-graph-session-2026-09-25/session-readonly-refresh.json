@@ -1,0 +1,29 @@
+{
+  "by": "Astra integration",
+  "files": [
+    {
+      "file": "coding-platform/next/src/composition/create-platform.ts",
+      "sha256": "b8b3905b72543187e72eaabc7b01d28a710c7228039d79c8626f7e0d7999a6b4"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/architecture/catalog-service.ts",
+      "sha256": "0bc1764bdfefae7574624244542a1625e9a93e1a3f04b6b27cc35accaad9a85a"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/architecture/catalog-record-codecs.ts",
+      "sha256": "3494c03718f37e7ca9540ed82a4b59acffb879ae6b6de6f3e59f02ccfcd5cfd8"
+    },
+    {
+      "file": "coding-platform/next/tests/work-graph/A1-session-independent.test.ts",
+      "sha256": "ed9cacd1cf06afccb905ca124ff2fdbf2fe4260483117ce3cd5797b1cbdd4707"
+    },
+    {
+      "file": "coding-platform/next/tests/work-graph/A1-independent-review.test.ts",
+      "sha256": "85725ab542a030b3fa91755c9158901a0d5300b51b27565768e22c95ddb6cbb9"
+    },
+    {
+      "file": "coding-platform/next/tests/work-graph/R4b-session-directory.test.ts",
+      "sha256": "43e121dc4cdcccc0a8cdfb64c176c30660dfd6dec6c68b1e04c4dd976f8cc311"
+    }
+  ]
+}

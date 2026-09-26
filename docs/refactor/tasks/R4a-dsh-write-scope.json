@@ -1,0 +1,21 @@
+{
+  "purpose": "R4a repair after GPT-6 Sol frozen interfaces and tests",
+  "writableFiles": [
+    "coding-platform/vendor/coding-agent/src/app/composition/recovery-contract.ts",
+    "coding-platform/vendor/coding-agent/src/app/composition/composition-root.ts",
+    "coding-platform/vendor/coding-agent/src/app/composition/resume-composition.ts",
+    "coding-platform/vendor/coding-agent/src/core/runtime/recovery/recovery-coordinator.ts",
+    "coding-platform/vendor/coding-agent/src/core/ports/session_store/session-store-port.ts",
+    "coding-platform/vendor/coding-agent/src/core/ports/checkpoint_store/checkpoint-store-port.ts",
+    "coding-platform/vendor/coding-agent/src/core/runtime/checkpointing/checkpointing-event-sink.ts",
+    "coding-platform/vendor/coding-agent/INTEGRATION.md"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

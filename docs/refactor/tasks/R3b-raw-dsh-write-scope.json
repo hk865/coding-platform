@@ -1,0 +1,16 @@
+{
+  "purpose": "R3b raw implementation after Sol skeleton and root review",
+  "writableFiles": [
+    "coding-platform/src/core/record-store/body-codec.ts",
+    "coding-platform/src/core/record-store/body-store.ts",
+    "coding-platform/src/core/record-store/sqlite-body-store.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

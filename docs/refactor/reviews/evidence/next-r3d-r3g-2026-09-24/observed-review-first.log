@@ -1,0 +1,89 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R3d-observed-boundaries.test.ts (14 tests | 4 failed) 352ms
+     × ignores an unrelated ledger event during capture when all exact scope guards still match 21ms
+     × checks revoked Host access before reading a previous persisted observation body 19ms
+     × ignores an unrelated ledger event during capture when all exact scope guards still match 19ms
+     × checks revoked Host access before reading a previous persisted observation body 19ms
+ ❯ tests/work-graph/R3d-record-integrity.test.ts (2 tests | 2 failed) 68ms
+   × rejects observed records whose persisted source identity disagrees with their full ref 48ms
+   × rejects a frozen body whose scope, engine, Git basis or permission file manifest differs from its real capture 20ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R3d-observed-boundaries.test.ts > R3d observed boundaries memory > ignores an unrelated ledger event during capture when all exact scope guards still match
+ FAIL  tests/work-graph/R3d-observed-boundaries.test.ts > R3d observed boundaries sqlite > ignores an unrelated ledger event during capture when all exact scope guards still match
+AssertionError: expected 'rejected' to be 'committed' // Object.is equality
+
+Expected: "committed"
+Received: "rejected"
+
+ ❯ tests/work-graph/R3d-observed-boundaries.test.ts:161:29
+    159|       const result = await createObservedArchitecture({ ...fx.deps(), …
+    160|         .captureSourceChanges(context, capture('unrelated-write-does-n…
+    161|       expect(result.status).toBe('committed');
+       |                             ^
+    162|       expect(inserted).toBe(true);
+    163|     } finally { await fx.close(); }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  tests/work-graph/R3d-observed-boundaries.test.ts > R3d observed boundaries memory > checks revoked Host access before reading a previous persisted observation body
+ FAIL  tests/work-graph/R3d-observed-boundaries.test.ts > R3d observed boundaries sqlite > checks revoked Host access before reading a previous persisted observation body
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ tests/work-graph/R3d-observed-boundaries.test.ts:184:25
+    182|           input: { ...capture('previous-after-revoke').input, previous…
+    183|       expect(second).toMatchObject({ status: 'rejected', code: 'forbid…
+    184|       expect(bodyReads).toBe(0);
+       |                         ^
+    185|     } finally { await fx.close(); }
+    186|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  tests/work-graph/R3d-record-integrity.test.ts > rejects observed records whose persisted source identity disagrees with their full ref
+AssertionError: expected 'decoded' to be 'invalid' // Object.is equality
+
+Expected: "invalid"
+Received: "decoded"
+
+ ❯ tests/work-graph/R3d-record-integrity.test.ts:47:55
+     45|       { ...source.capture, workspaceId: 'other-workspace' },
+     46|       { ...source.capture, captureId: 'other-capture' },
+     47|     ]) expect(codec.validate(record(changed)).status).toBe('invalid');
+       |                                                       ^
+     48|   } finally { await fx.close(); }
+     49| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  tests/work-graph/R3d-record-integrity.test.ts > rejects a frozen body whose scope, engine, Git basis or permission file manifest differs from its real capture
+AssertionError: expected 'decoded' to be 'invalid' // Object.is equality
+
+Expected: "invalid"
+Received: "decoded"
+
+ ❯ tests/work-graph/R3d-record-integrity.test.ts:79:78
+     77|     ];
+     78|     for (const changed of variants) {
+     79|       expect(decodeObservedArchitectureBody(JSON.stringify(changed)).s…
+       |                                                                              ^
+     80|     }
+     81|   } finally { await fx.close(); }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+
+ Test Files  2 failed | 1 passed (3)
+      Tests  6 failed | 20 passed (26)
+   Start at  16:34:53
+   Duration  2.02s (transform 368ms, setup 0ms, import 1.11s, tests 691ms, environment 0ms)
+

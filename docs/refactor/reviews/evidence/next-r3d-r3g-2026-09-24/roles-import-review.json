@@ -1,0 +1,15 @@
+{
+  "at": 1790239166.7616796,
+  "files": [
+    {
+      "file": "coding-platform/next/src/core/work-graph/configuration/role-memory-service.ts",
+      "before": "89d88a2390c33ffbb6f50a4acb5c47fd9834fe0c7080a251c3cb1110b32b75cc",
+      "after": "0b6ffcd65e82d95fefe092fccd8bd0b4b3860a806989c8ff178648232fe14863"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/configuration/role-record-codecs.ts",
+      "before": "a580747df594081b2911460172f288a0f0af37c03288b7c7095016a7fb030c25",
+      "after": "38dba030aca7d1a175a31baaed8399f698f6282f3707208ae7693094c2da4b00"
+    }
+  ]
+}

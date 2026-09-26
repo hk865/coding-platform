@@ -1,0 +1,18 @@
+{
+  "changed": [
+    "coding-platform/next/resources/skills/platform-adviser/content.md",
+    "coding-platform/next/src/business/workflow/contracts.ts",
+    "coding-platform/next/src/business/workflow/ports.ts",
+    "coding-platform/next/src/business/workflow/workflow.ts",
+    "coding-platform/next/src/composition/create-platform.ts",
+    "coding-platform/next/src/contracts/initial-planning.ts",
+    "coding-platform/next/src/core/agent-runtime/query-preparation.ts",
+    "coding-platform/next/src/core/work-graph/tasks/initial-plan.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-contracts.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-service.ts",
+    "coding-platform/next/tests/business/R5b-initial-planning-workflow.test.ts",
+    "coding-platform/next/tests/work-graph/R5b-initial-plan.test.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

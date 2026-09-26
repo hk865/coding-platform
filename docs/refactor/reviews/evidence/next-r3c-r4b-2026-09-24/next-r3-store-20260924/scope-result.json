@@ -1,0 +1,10 @@
+{
+  "changed": [
+    "coding-platform/next/src/core/record-store/commit-extensions.ts",
+    "coding-platform/next/src/core/record-store/in-memory-record-store.ts",
+    "coding-platform/next/src/core/record-store/record-codec.ts",
+    "coding-platform/next/src/core/record-store/sqlite-record-store.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

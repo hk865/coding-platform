@@ -1,0 +1,14 @@
+[
+  {
+    "file": "coding-platform/next/tests/work-graph/W2-future-intent.test.ts",
+    "before": "6f3fa870fa396a0d07deceb60810559272ba6798fa57bae01b135ea19185daa3",
+    "after": "a24176c9385eaabae9e3cee454c5cff7ebea9a3e3e2128453dd374c24d37fca8",
+    "readOnly": true
+  },
+  {
+    "file": "docs/refactor/tasks/W2-future-intent-implementation.md",
+    "before": "224f9482aca0dd7edd3ebde9d6ddd50c03e5d953a7fc77589f3ff2bc12981658",
+    "after": "68b781b0183307536dc1d6643bcca0d806f6fa1dce2a9625ffd6fca513ba5aea",
+    "readOnly": true
+  }
+]

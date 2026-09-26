@@ -1,0 +1,15 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/tasks/execution-history-service.ts",
+    "coding-platform/next/src/core/work-graph/persistence/execution-history-codecs.ts",
+    "coding-platform/next/tests/work-graph/R4c-execution-history-index.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

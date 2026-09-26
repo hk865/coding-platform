@@ -1,0 +1,35 @@
+{
+  "status": "running; final browser review pending",
+  "lane": "r6-ui-browser-repair-20260926",
+  "sessionId": "session-f29ed20e-9ece-44fc-83c8-89a14f6d52bb",
+  "task": {
+    "path": "/home/hyh001/projects/coding-platform/docs/refactor/tasks/R6-ui-browser-repair.md",
+    "sha256": "b0d39dd17c06ba89b011b1c445df621ce43d3397ecc940104dd931cda8a58baf"
+  },
+  "scope": {
+    "path": "/home/hyh001/projects/coding-platform/docs/refactor/tasks/R6-ui-browser-repair-scope.json",
+    "sha256": "7ab6a452c1f56304c85e7e250f97de22cc9be32ce815c03f3267be5cf9bab6d3"
+  },
+  "prompt": {
+    "path": "/tmp/r6-ui-browser-repair-dispatch.md",
+    "sha256": "03b8568e4cb328ea27850bfa5f73945d1b3bb5a8e9efbfbe361d4f572ffa897f"
+  },
+  "baseline": {
+    "coding-platform/next/src/ui/main.ts": "9b6203a86936cac5feeffcd779b128d1a93a470c5d1da6f2f9abc43c8b217b3a",
+    "coding-platform/next/src/ui/views.ts": "8aa64511bd9fb8670f02e0767fa7f56dec096e17cdf18f22328a0a6a2b21c8fd",
+    "coding-platform/next/src/ui/styles.css": "4eb1035f7742d36f47f6d4954b4082612df52b89931f586af68c73f5182533bc"
+  },
+  "frozenTest": {
+    "path": "coding-platform/next/tests/app/R6-workbench.test.ts",
+    "sha256": "2960b61e492980bb9718eef81253cc430e4a7baafa6733fe55d3eab4fae25f78"
+  },
+  "browserEvidence": "r6-layout-browser-middle.json",
+  "checks": [
+    "next-r6-host",
+    "next-types",
+    "next-ui-types",
+    "next-build"
+  ],
+  "noNewTestCases": true,
+  "importAuthorizedAfterIndependentReview": true
+}

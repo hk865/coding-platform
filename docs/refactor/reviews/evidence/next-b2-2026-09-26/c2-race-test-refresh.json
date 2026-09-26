@@ -1,0 +1,14 @@
+[
+  {
+    "file": "coding-platform/next/tests/work-graph/C2-mailbox-admission.test.ts",
+    "before": "585b9854623310dc3f681b940aedfc50af7f38622963592c00d09e7d4a34acf9",
+    "after": "56f0ebc10a9505c4d59e9ed2708c87e73744c1159d3e47e825828fc02648b8af",
+    "readOnly": true
+  },
+  {
+    "file": "docs/refactor/tasks/C2-runtime-platform-tools-implementation.md",
+    "before": "6c2e11bcf98b98f974d3215fd74b6b90d5a37dbe94e7527abafb6634d1d23f83",
+    "after": "f66dc9b376611cd1542f15b83008d29322c0685e9e28de95bd7ba0f830c5422a",
+    "readOnly": true
+  }
+]

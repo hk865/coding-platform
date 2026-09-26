@@ -1,0 +1,151 @@
+{
+  "status": "final display candidate STOP; awaiting parent CUA and exact import",
+  "reviewedAt": "2026-09-26T16:09:57.702224+00:00",
+  "lane": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r6-execution-entry-implementation-20260926",
+  "session": "session-fab943b7-ae20-4634-a1d4-5196e9ba026b",
+  "finalAttempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r6-execution-entry-implementation-20260926/attempt-1790438862708595832",
+  "priorIndependentEvidence": {
+    "path": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-execution-entry-implementation-final-review.json",
+    "sha256": "223ac48ef31ad14d664cfe560cdade3819c6dc75bd6c85f02068252d561cd132"
+  },
+  "changesSincePriorReview": {
+    "path": "coding-platform/next/src/ui/views.ts",
+    "before": "91583d386865cb64a3d88426a6e6d5204a0b06c59a7084cfe8d3c4879ef5bad1",
+    "after": "0cd8e0b5dbb800abfba886aa1122b20e7dab794d89720759511b7b10435fd8d5",
+    "added": 39,
+    "deleted": 9,
+    "net": 30,
+    "otherFiveProductionUnchanged": true,
+    "frozenTestsAndInterfacesUnchanged": true
+  },
+  "files": [
+    {
+      "path": "coding-platform/next/src/app/main.ts",
+      "before": "081b6d883a9059fb767024af2ef65d843b357fbc507f1abfde48c7da8f063cbb",
+      "after": "2f04b44324c1e844e3d341536c04dcf23365f16679a9605474046c69de953fc3",
+      "added": 41,
+      "deleted": 2,
+      "net": 39
+    },
+    {
+      "path": "coding-platform/next/src/app/host.ts",
+      "before": "6ae735ed1eb067dcc2a92787eddf1f5208dc7f3f33a9743197f611738335cdcf",
+      "after": "c1638768eb6a92ab4d29e37a270e09e176b269b1888d33d8f06e96d3a87dced0",
+      "added": 1,
+      "deleted": 1,
+      "net": 0
+    },
+    {
+      "path": "coding-platform/next/src/app/runtime-configuration.ts",
+      "before": "c3c6e78f3028e146f7c0b8995f2f5f8ec36eb53e6252efdadd9b5fb852bf32fe",
+      "after": "c0b500eb1c82d694023163fcd8e0bf32955bd75dc74de966f051db0ce9fbb384",
+      "added": 83,
+      "deleted": 28,
+      "net": 55
+    },
+    {
+      "path": "coding-platform/next/src/ui/main.ts",
+      "before": "ad6ecffc38c0e95b64404b587f518b5f9239fccf72c87ca902210e160f17a0f2",
+      "after": "65f227d05f435b515441601b573bfaf5d7e710b50a46f5ef53c6d00003a8d805",
+      "added": 679,
+      "deleted": 24,
+      "net": 655
+    },
+    {
+      "path": "coding-platform/next/src/ui/views.ts",
+      "before": "8dbc70a56de23ea73d99a6f4eacae01095b54c9bc66c47690626e618f054acbf",
+      "after": "0cd8e0b5dbb800abfba886aa1122b20e7dab794d89720759511b7b10435fd8d5",
+      "added": 64,
+      "deleted": 30,
+      "net": 34
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-service.ts",
+      "before": "89044e7599e6a515f5d5dfaeca3ef0f10dc3e56a1a6082461c09a93bea980d4f",
+      "after": "ce5d5863fce5ddb800df691dde9ee6b837800b683300452080f96cb64d46cb88",
+      "added": 54,
+      "deleted": 8,
+      "net": 46
+    }
+  ],
+  "totals": {
+    "added": 922,
+    "deleted": 93,
+    "net": 829
+  },
+  "frozenReadOnly": [
+    {
+      "path": "coding-platform/next/tests/app/R6-host.test.ts",
+      "sha256": "89a8e77dc52ddacefa9953ce15dee30ced9ebe27473bfd01e3acc804f7180a0c"
+    },
+    {
+      "path": "coding-platform/next/tests/app/R6-workbench.test.ts",
+      "sha256": "621d1bbe5846d5f2add89df157e559d25200adee4ad39fa83f22cee4caee1183"
+    },
+    {
+      "path": "coding-platform/next/src/app/core-http-types.ts",
+      "sha256": "619412e820d34e005bf37c012c34762703e8acb44bf654cde0f9da177ebe69a3"
+    },
+    {
+      "path": "coding-platform/next/src/app/core-routes.ts",
+      "sha256": "efe379a98e705fdc1980df5a87ce4edaf4f8faad1072bbec874955e4d22dc584"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-contracts.ts",
+      "sha256": "a7a7bfadcf2775db9935c6784986aca474a115e7760682b573263327bca0621a"
+    },
+    {
+      "path": "coding-platform/next/src/composition/create-platform.ts",
+      "sha256": "9d5be391be290d065be762f733acd44a91e7481ed3643b6cc61698db5c1297aa"
+    }
+  ],
+  "audit": {
+    "changed": [
+      "coding-platform/next/src/app/host.ts",
+      "coding-platform/next/src/app/main.ts",
+      "coding-platform/next/src/app/runtime-configuration.ts",
+      "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-service.ts",
+      "coding-platform/next/src/ui/main.ts",
+      "coding-platform/next/src/ui/views.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "independentChecks": [
+    {
+      "check": "next-r6-host",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-execution-entry-display-final-tests.log",
+      "sha256": "b6f774465acfb6664314a4e81cb5246d27fb7847752bb0c9369c1916765126b1",
+      "passed": 22,
+      "failed": 0,
+      "testFiles": 2
+    },
+    {
+      "check": "next-ui-types",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-execution-entry-display-final-ui-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "next-build-equivalent-retained-physical-copy",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-execution-entry-display-final-build.log",
+      "sha256": "d265a17df78337bfd6d31a164bbc4d1fe6e98232e80dd8adbce9af4d84f5b21c"
+    }
+  ],
+  "nodeTypes": "prior independent pass retained; only views changed and final UI types/build passed",
+  "retainedBuild": {
+    "nextRoot": "/tmp/r6-execution-review-knqxsl2h/next",
+    "sixSourceHashesMatchCandidate": true,
+    "host": "dist/app/host.js",
+    "workbench": "dist/app/public/workbench",
+    "preparation": "same physical copy and original build command as previous independent build; previous copies retained"
+  },
+  "review": [
+    "renderQueryAnswer now keeps answer, source list, bodyRef, body and full record in existing closed details; brief received/source-count/stale state remains visible; no field filtering or JSON plan parsing.",
+    "renderTaskGraph consumes existing optional GoalCompletionView directly; distinguishes absent projection/not_recorded/recorded and selectedPlanMatches; actual snapshot retained in closed details. Planning only displays diagnostic summary with full original planning in details.",
+    "renderGoalDetail labels desiredState as goal intent; no state or owner changes.",
+    "Parent reported actual prior browser plan-to-completion and future plan_only preservation; that E2E evidence remains separate. Parent owns final visible verification using this new physical build; this reviewer neither injects page state nor claims final CUA complete."
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "decision": "approved_for_implementation",
+  "changes": [
+    "unique event ids",
+    "two writers reach real commit barrier",
+    "unique identity binding competition",
+    "commit-time Lease update",
+    "SQLite receipt-write fault rollback",
+    "strict event envelope cases"
+  ],
+  "red": {
+    "tests": 65,
+    "failed": 60,
+    "passed": 5,
+    "typecheck": "PASS"
+  },
+  "sha256": {
+    "coding-platform/next/tests/work-graph/R4c-execution-history-index.test.ts": "9d390fdf4c600a592f9eb33e3c047c0d425d01d71a5d340694b760dc38647ccf",
+    "coding-platform/next/src/contracts/core/execution-history.ts": "bd74dc3406ed00f7c439d9c504f7785c3b68aaa8b0cef8fc7615cba321a68cb1",
+    "coding-platform/next/src/core/work-graph/tasks/execution-history-contracts.ts": "ca6e8a71d9dc38cb7e381c613a5dafecea393f37a8e4e980f18db2812ef3f76f"
+  }
+}

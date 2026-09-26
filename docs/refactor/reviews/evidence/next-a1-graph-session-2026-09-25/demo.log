@@ -1,0 +1,6 @@
+{"step":"演示启动数据","directory":"/tmp/next-graph-session-demo-yJgE1N","initializedOnly":["Project","Workspace"],"note":"未注入 Catalog、Session、关联或生命周期记录；角色为模板引用，未宣称装配 Skill。"}
+{"step":"正式架构前创建 Session","sessionRef":{"projectId":"graph-session-demo","sessionId":"session-1eb80457a1d368e5888a13920bb517a005fe70328f05fabe5a15daedbfdf067f"},"kernel":{"adapterId":"demo-kernel","kernelSessionId":"session-1eb80457a1d368e5888a13920bb517a005fe70328f05fabe5a15daedbfdf067f"},"historyRecords":1}
+{"step":"同一模块发现两个独立 Session","baseline":{"aggregateType":"ArchitectureBaselineRevision","projectId":"graph-session-demo","baselineId":"demo-baseline","revision":1},"sessions":[{"ref":{"aggregateType":"Session","projectId":"graph-session-demo","sessionId":"session-1eb80457a1d368e5888a13920bb517a005fe70328f05fabe5a15daedbfdf067f"},"availability":"idle"},{"ref":{"aggregateType":"Session","projectId":"graph-session-demo","sessionId":"session-8cd2873a09650ac6b8725bd84d61b525b2b3538584b28324811b5523ca31dbb2"},"availability":"idle"}]}
+{"step":"归档并重开数据库","activeSessions":1,"includingArchived":2,"originalHistoryPreserved":true,"moduleAndLinksPreserved":true}
+{"step":"重新启用完成","lifecycle":"active","sameKernelSession":true,"limitations":"装配演示不调用模型；真实执行、咨询、Skill 装配和暂停恢复尚未接通。"}
+{"step":"已清理自有临时目录","directory":"/tmp/next-graph-session-demo-yJgE1N"}

@@ -1,0 +1,7 @@
+{
+  "changed": [
+    "coding-platform/next/src/core/work-graph/tasks/run-state-service.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

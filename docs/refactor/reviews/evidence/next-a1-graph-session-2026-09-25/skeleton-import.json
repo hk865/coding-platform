@@ -1,0 +1,42 @@
+[
+  {
+    "path": "coding-platform/next/src/core/work-graph/architecture/catalog-contracts.ts",
+    "sha256": "b4e2e6e81bb1951c6dd4d615c7e025e80a5e1b87f894a0b3baa096c0c412a16d"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/architecture/catalog-record-codecs.ts",
+    "sha256": "66c4987b32b2f297edf4203826b87867248c5cf7078b71bcb6820f8118af4a1e"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/architecture/catalog-service.ts",
+    "sha256": "a788b2a73a0c6ef293e63fe1a72b5dea1209470921b70c58cc5ca7934b5f6761"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/sessions/lifecycle-contracts.ts",
+    "sha256": "292226e25b304eb28e295ad3eeb27d6d2e36f3eb45edb6306fdafc510c0790a0"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/sessions/lifecycle-record-codecs.ts",
+    "sha256": "249ada46b11fe6511422b74b63e00b36a2458da8ea7b38b7b29e97a8c6a3faa2"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/sessions/session-lifecycle.ts",
+    "sha256": "7b6f9dba0bee0ea9c73be0e5b61aec1207d136507af359f7fe5cd3aec818d993"
+  },
+  {
+    "path": "coding-platform/next/tests/work-graph/A1-architecture-catalog.test.ts",
+    "sha256": "0b02d5f471926dd369157a8588ba9084b10fca60a12381480ae7c1716736f26c"
+  },
+  {
+    "path": "coding-platform/next/tests/work-graph/A1-session-lifecycle.test.ts",
+    "sha256": "7719133e077878ef2d050abaf23eaee9ea8881934511883252a059c00e5f2075"
+  },
+  {
+    "path": "coding-platform/next/tests/work-graph/A1-session-discovery.test.ts",
+    "sha256": "c35a2f063a6148b4b36efee681bc90392b0c2b9ccf98a6c0f41732883bd4995e"
+  },
+  {
+    "path": "coding-platform/next/tests/helpers/graph-session-fixture.ts",
+    "sha256": "bcd8acec3b0f659cfaf60e0ea617f0fa9c4b25b4d60f51b572552e440c682b4f"
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "changed": [
+    "coding-platform/next/src/core/record-store/in-memory-record-store.ts",
+    "coding-platform/next/src/core/record-store/lookup-index.ts",
+    "coding-platform/next/src/core/record-store/sqlite-record-store.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

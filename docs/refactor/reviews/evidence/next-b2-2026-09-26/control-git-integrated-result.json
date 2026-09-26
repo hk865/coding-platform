@@ -1,0 +1,12 @@
+{
+  "scope": "main integrated control intent + Git read/compare and affected runtime/execution paths",
+  "testFiles": 17,
+  "testsPassed": 157,
+  "typesExitCode": 0,
+  "fullIsolated": false,
+  "remainingPlaceholders": [
+    "R3e evidence skeleton",
+    "R6 workbench skeleton",
+    "R4.3 control runtime skeleton"
+  ]
+}

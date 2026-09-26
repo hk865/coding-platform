@@ -1,0 +1,34 @@
+{
+  "result": "PASS",
+  "testFiles": 99,
+  "tests": 975,
+  "checks": [
+    "physical-copy kernel patch reproduction (12 artifacts)",
+    "module boundaries 6/8 allowed",
+    "typecheck",
+    "build",
+    "full tests",
+    "compiled createTargetPlatform open/close"
+  ],
+  "protectedFiles": 8827,
+  "protectedChanges": 0,
+  "nextSource": {
+    "files": 191,
+    "physicalLines": 41502
+  },
+  "scope": [
+    "W2 explicit future intent adoption, first assignment, explicit activation and deferral",
+    "C2 real Kernel communication/whiteboard tool consumers and fixed identity",
+    "C2 M2 material input admission/delegated Plan composition",
+    "reachable concurrent ack/respond receipt recovery"
+  ],
+  "remaining": [
+    "R5a bootstrap",
+    "R3e evidence/check/completion",
+    "R4 control/recovery/Query/maintenance",
+    "formal architecture evolution",
+    "generic material tool consumer",
+    "R2 Git/language consumers",
+    "Workflow and Host/UI product switch"
+  ]
+}

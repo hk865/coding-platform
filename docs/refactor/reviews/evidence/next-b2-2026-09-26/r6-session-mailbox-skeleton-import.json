@@ -1,0 +1,55 @@
+{
+  "lane": "r6-session-mailbox-skeleton-20260926",
+  "session": "session-1230d0c3-f0ed-47e1-b44b-5ad3b2597895",
+  "stage": "skeleton frozen, implementation still unsupported",
+  "files": [
+    {
+      "path": "coding-platform/next/src/app/core-http-types.ts",
+      "before": "fe9e45d07c551a2dd608f01fe91ff4c98adf58b2102a89a0da93d792d91216a9",
+      "after": "748e83d09bf38c58155d3b1063c8f9d3c4fdc898ca021cd04abc752f9b36915c"
+    },
+    {
+      "path": "coding-platform/next/src/app/core-routes.ts",
+      "before": "88a1eb3696b8cc17e11a95c83e849ba44b1bfc61f72b7bdcf0664762481e0d40",
+      "after": "a2ab61ab48d71a9973b0149c99a7ec539a403a6b12e1442cf2ac53cf083ad5cb"
+    },
+    {
+      "path": "coding-platform/next/src/ui/main.ts",
+      "before": "2953b11bd17704f2d66ec3d0478426d20c56afee93eb3704dab7d4e88745c2b2",
+      "after": "8060010f5634988593c30c00c2c1b54c96e0a69523997866a549325492ed620a"
+    },
+    {
+      "path": "coding-platform/next/src/ui/views.ts",
+      "before": "89cb7943308ee1f0934ce1546d3ef2f00b11caf686880212169fb24b935ebd60",
+      "after": "56f107e03206ce1b277bd620d27e3c5c0b04b65b6a73a23acce422c54234130c"
+    },
+    {
+      "path": "coding-platform/next/tests/app/R6-host.test.ts",
+      "before": "e2c193ba5d65679b96774fe1b616c2a71be3b837ccecfe8870853ebc96e20fb7",
+      "after": "4af36d60bb556bab93682cba40181b131f50aa226657d971bc3cd4ed4435e314"
+    },
+    {
+      "path": "coding-platform/next/tests/app/R6-workbench.test.ts",
+      "before": "81de05b5de556859bcd757cb9b7d281715db5d709b703fb3e439cd596b9c05e9",
+      "after": "fa5d54a04887a975f0fa8bf56be30e4b96f14e2cf0a520612b68b519032f955d"
+    }
+  ],
+  "scope": {
+    "changed": [
+      "coding-platform/next/src/app/core-http-types.ts",
+      "coding-platform/next/src/app/core-routes.ts",
+      "coding-platform/next/src/ui/main.ts",
+      "coding-platform/next/src/ui/views.ts",
+      "coding-platform/next/tests/app/R6-host.test.ts",
+      "coding-platform/next/tests/app/R6-workbench.test.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "independentChecks": {
+    "next-r6-host": "16 passed, new HTTP chain first red at unsupported createSession",
+    "next-types": "pass",
+    "next-ui-types": "pass"
+  },
+  "review": "six-file owner/HTTP/UI/normal-chain review passed; no new cases beyond two frozen"
+}

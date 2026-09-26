@@ -1,0 +1,90 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/app/R6-host.test.ts (9 tests | 1 failed) 1557ms
+     × loads a real startup JSON and consumes the trusted runtime through the public Query/Workflow owners 15ms
+ ❯ tests/app/R6-workbench.test.ts (13 tests | 1 failed) 1240ms
+     × keeps waiting, next and official completed distinct and preserves the full original request 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/R6-host.test.ts > R6 execution entry (expected red at the first stage-one unsupported) > loads a real startup JSON and consumes the trusted runtime through the public Query/Workflow owners
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready', value: { …(2) } }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "project": {
+-       "ref": {
+-         "aggregateType": "Project",
+-         "projectId": "r6-host-project",
+-       },
+-       "revision": 1,
+-     },
+-     "workspace": {
+-       "ref": {
+-         "aggregateType": "Workspace",
+-         "projectId": "r6-host-project",
+-         "workspaceId": "r6-host-workspace",
+-       },
+-       "revision": 1,
+-     },
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/app/R6-host.test.ts:710:32
+    708|       expect(registration.status).toBe(200);
+    709|       const registrationBody = await registration.json() as ReadResult…
+    710|       expect(registrationBody).toMatchObject({ status: 'ready', value:…
+       |                                ^
+    711|         project: { ref: projectRef, revision: 1 }, workspace: { ref: w…
+    712|       if (registrationBody.status !== 'ready') throw new Error(`regist…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/app/R6-workbench.test.ts > R6 execution-entry display and continuation seam > keeps waiting, next and official completed distinct and preserves the full original request
+AssertionError: expected { status: 'rejected', …(2) } to deeply equal { status: 'next', …(2) }
+
+- Expected
++ Received
+
+  {
+-   "input": {
+-     "flowId": "flow-1",
+-     "goalRef": {
+-       "aggregateType": "Goal",
+-       "goalId": "g",
+-       "projectId": "p",
+-     },
+-     "kind": "select_work",
+-     "schemaVersion": 1,
+-     "sessionHint": null,
+-   },
+-   "route": "workflow/advance",
+-   "status": "next",
++   "code": "unsupported",
++   "reason": "the R6 execution-entry Query/Workflow continuation is not implemented in the stage-one skeleton",
++   "status": "rejected",
+  }
+
+ ❯ tests/app/R6-workbench.test.ts:617:48
+    615|     // the production seam stays explicitly unsupported and is never r…
+    616|     if (advance.status !== 'ready') throw new Error('fixture advance m…
+    617|     expect(planExecutionContinuation(advance)).toEqual({
+       |                                                ^
+    618|       status: 'next', route: 'workflow/advance', input: advance.value.…
+    619|     if (planning.status !== 'ready' || planning.value.next === null ||…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 20 passed (22)
+   Start at  23:28:53
+   Duration  4.29s (transform 924ms, setup 0ms, import 1.34s, tests 2.80s, environment 0ms)
+

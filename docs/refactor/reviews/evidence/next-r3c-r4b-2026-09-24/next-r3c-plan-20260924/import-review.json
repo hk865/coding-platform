@@ -1,0 +1,40 @@
+{
+  "at": 1790235641.2858322,
+  "files": [
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/eligibility.ts",
+      "before": "156d2b8b144fd23908bebef1c37d65deb47c68618292f7e4ae0c1205f75ea504",
+      "after": "9ad338554d8a705c128bd8320962e05356a01c9338a74b97e4b83381b48e243c"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/plan-commit-compiler.ts",
+      "before": "7d65f07ce05650266847389f26e81c1357f8bb4a7cb8788f75ce0e42c5fcc45c",
+      "after": "e04439f3bca219f227017d6ee6495ac8815865a7ab6a955275809d11d5768d63"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+      "before": "b49a6e5a066e28f1ebd0774fcdb0b57c7b242f9661a126c49e352554c15196ae",
+      "after": "53682cd7c359d47853347a166152b72641c157cf28bb041fc5c0316bbbb54e6d"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/plan-record-codecs.ts",
+      "before": "cdb4cfa8925984064dcbf81de7cb885888dcf3b747407564297585e45ad8ff6c",
+      "after": "35ec9fa7f46daa560a0ee2765dd4e6dcf1c59d9b58940c4d79ddf7f9fc036ca6"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/plan-service.ts",
+      "before": "d52f78dbaf4202013a1307601969b3800f538e0ca6d338fee157f0760bd9fd17",
+      "after": "fca312fd466015c612fc412c5c0a90052c9345a6fa1653ab67bfaa62c127da17"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/plan-validation.ts",
+      "before": "a3bf41c60d4ca155538d661c40bb9256fd6e5c01a115f5b8cfea8b6b8d285cba",
+      "after": "b6d5bf4a0abd2e6a18b8e161ca453520fdb7125e32fc98ab52bf3e719e896a06"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/task-index.ts",
+      "before": "1fa42a3525a6bae002338081efe9bcd5c60101b7378fa6d7ce86b19a7acd10e5",
+      "after": "ef228358bb2930f3579a6c3bd14086c0ad2508b6db4be0d1dfc695edc176a33b"
+    }
+  ]
+}

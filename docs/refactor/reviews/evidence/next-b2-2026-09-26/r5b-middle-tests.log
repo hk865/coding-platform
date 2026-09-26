@@ -1,0 +1,262 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R5b-query-job.test.ts (8 tests | 8 failed) 19ms
+     × records QueryJob@1 + QueryRun@1 pending, locates the original actor, and replays the same receipt 10ms
+     × keeps each original actor for two distinct submit identities and conflicts on a changed input 1ms
+     × rejects untrusted principals, cross-scope ids, unsupported intent kinds and malformed intents without writing 2ms
+     × requires a Goal-owned focus and accepts the no-Plan/empty-focus case; readQueryJob reports not_found exactly 1ms
+     × lets only one of two fresh requests on the same Job/Run commit, and restores one receipt for concurrent same-identity calls 1ms
+     × does not tie a fresh submit to an unrelated Goal change after its last read (no whole-ledger horizon) 1ms
+     × cancels before commit with zero writes and preserves a real committed result after a late cancel 1ms
+     × restores the original receipt when a committed response is lost, and never fabricates committed 1ms
+ ❯ tests/composition/R5b-query-job-platform.test.ts (3 tests | 3 failed) 44ms
+   × submits and reads a no-Plan pending pair on an empty SQLite database and survives reopen without touching any source 22ms
+   × anchors a semantic query to an accepted Plan focus node and leaves Task/Run state unchanged 17ms
+   × rejects untrusted principals and cross-scope writes, keeps ordinary reads model-free, and rejects new calls after close 5ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 11 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/composition/R5b-query-job-platform.test.ts > submits and reads a no-Plan pending pair on an empty SQLite database and survives reopen without touching any source
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, replayed) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/R5b-query-job-platform.test.ts:138:23
+    136|
+    137|     const submitted = await platform.queries.submitQueryJob(hostCtx(),…
+    138|     expect(submitted).toMatchObject({ status: 'committed', replayed: f…
+       |                       ^
+    139|     if (submitted.status !== 'committed') throw new Error('public pend…
+    140|     expect(submitted.value.job).toMatchObject({ ref: queryJobRef, revi…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/11]⎯
+
+ FAIL  tests/composition/R5b-query-job-platform.test.ts > anchors a semantic query to an accepted Plan focus node and leaves Task/Run state unchanged
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/R5b-query-job-platform.test.ts:203:23
+    201|         intent: initialCoordinationIntent({ execution: { kind: 'semant…
+    202|           budget: { maxTokens: 4096, deadline: null } }) } });
+    203|     expect(submitted).toMatchObject({ status: 'committed' });
+       |                       ^
+    204|     if (submitted.status !== 'committed') throw new Error('focused sem…
+    205|     expect(submitted.value.job.job.intent.focusTaskRefs).toEqual(focus…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/11]⎯
+
+ FAIL  tests/composition/R5b-query-job-platform.test.ts > rejects untrusted principals and cross-scope writes, keeps ordinary reads model-free, and rejects new calls after close
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "forbidden",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/composition/R5b-query-job-platform.test.ts:224:8
+    222|
+    223|     expect(await platform.queries.submitQueryJob(workRunCtx, submitReq…
+    224|       .toMatchObject({ status: 'rejected', code: 'forbidden' });
+       |        ^
+    225|     expect(await platform.queries.submitQueryJob(queryRunCtx, submitRe…
+    226|       .toMatchObject({ status: 'rejected', code: 'forbidden' });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/11]⎯
+
+ FAIL  tests/work-graph/R5b-query-job.test.ts > R5b.1 pending QueryJob submission > records QueryJob@1 + QueryRun@1 pending, locates the original actor, and replays the same receipt
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, replayed) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R5b-query-job.test.ts:142:23
+    140|
+    141|     const submitted = await queries.submitQueryJob(ctx, request);
+    142|     expect(submitted).toMatchObject({ status: 'committed', replayed: f…
+       |                       ^
+    143|     if (submitted.status !== 'committed') throw new Error('public subm…
+    144|     const pair = submitted.value;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/11]⎯
+
+ FAIL  tests/work-graph/R5b-query-job.test.ts > R5b.1 pending QueryJob submission > keeps each original actor for two distinct submit identities and conflicts on a changed input
+Error: expected a committed write, got {"status":"rejected","code":"unsupported","reason":"R5b.1 stage-1 skeleton: the formal pending QueryJob/QueryRun submit and read are not implemented"}
+ ❯ committed tests/work-graph/R5b-query-job.test.ts:126:44
+    124| type Committed<T> = Extract<T, { status: 'committed' }>;
+    125| function committed<T extends { status: string }>(result: T): Committed…
+    126|   if (result.status !== 'committed') throw new Error('expected a commi…
+       |                                            ^
+    127|   return result as Committed<T>;
+    128| }
+ ❯ tests/work-graph/R5b-query-job.test.ts:181:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/11]⎯
+
+ FAIL  tests/work-graph/R5b-query-job.test.ts > R5b.1 pending QueryJob submission > rejects untrusted principals, cross-scope ids, unsupported intent kinds and malformed intents without writing
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "forbidden",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R5b-query-job.test.ts:199:8
+    197|
+    198|     expect(await submit(workRunCtx, submitRequest('r5b-bound-work-run'…
+    199|       .toMatchObject({ status: 'rejected', code: 'forbidden' });
+       |        ^
+    200|     expect(await submit(queryRunCtx, submitRequest('r5b-bound-query-ru…
+    201|       .toMatchObject({ status: 'rejected', code: 'forbidden' });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/11]⎯
+
+ FAIL  tests/work-graph/R5b-query-job.test.ts > R5b.1 pending QueryJob submission > requires a Goal-owned focus and accepts the no-Plan/empty-focus case; readQueryJob reports not_found exactly
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', code: 'invalid' }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "invalid",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R5b-query-job.test.ts:240:8
+    238|     expect(await queries.submitQueryJob(ctx, submitRequest('r5b-focus-…
+    239|       { aggregateType: 'Task', projectId, goalId: goalRef.goalId, task…
+    240|       .toMatchObject({ status: 'rejected', code: 'invalid' });
+       |        ^
+    241|     // A task ref for another project/Goal is a scope violation.
+    242|     expect(await queries.submitQueryJob(ctx, submitRequest('r5b-focus-…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/11]⎯
+
+ FAIL  tests/work-graph/R5b-query-job.test.ts > R5b.1 atomic acceptance and recovery > lets only one of two fresh requests on the same Job/Run commit, and restores one receipt for concurrent same-identity calls
+AssertionError: expected [] to have a length of 1 but got +0
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ tests/work-graph/R5b-query-job.test.ts:259:70
+    257|     const second = submitRequest('r5b-race-right', { question: 'The ot…
+    258|     const outcomes = await Promise.all([queries.submitQueryJob(ctx, fi…
+    259|     expect(outcomes.filter(result => result.status === 'committed')).t…
+       |                                                                      ^
+    260|     expect(outcomes.filter(result => result.status === 'rejected' && r…
+    261|     // The loser leaves no orphan Run.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/11]⎯
+
+ FAIL  tests/work-graph/R5b-query-job.test.ts > R5b.1 atomic acceptance and recovery > does not tie a fresh submit to an unrelated Goal change after its last read (no whole-ledger horizon)
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R5b-query-job.test.ts:302:8
+    300|     };
+    301|     expect(await newQueries(wrapped).submitQueryJob(ctx, submitRequest…
+    302|       .toMatchObject({ status: 'committed' });
+       |        ^
+    303|     expect(await backend.records.readMany([canonicalJson(otherGoalRef …
+    304|       .toMatchObject({ status: 'ready', value: { records: [expect.obje…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/11]⎯
+
+ FAIL  tests/work-graph/R5b-query-job.test.ts > R5b.1 atomic acceptance and recovery > cancels before commit with zero writes and preserves a real committed result after a late cancel
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "cancelled",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R5b-query-job.test.ts:322:8
+    320|     };
+    321|     expect(await newQueries(gated).submitQueryJob({ ...ctx, signal: co…
+    322|       .toMatchObject({ status: 'rejected', code: 'cancelled' });
+       |        ^
+    323|     expect(await before.records.readMany([canonicalJson(queryJobRef() …
+    324|       .toMatchObject({ status: 'ready', value: { missing: [canonicalJs…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/11]⎯
+
+ FAIL  tests/work-graph/R5b-query-job.test.ts > R5b.1 atomic acceptance and recovery > restores the original receipt when a committed response is lost, and never fabricates committed
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed', replayed: true }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": true,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R5b-query-job.test.ts:362:23
+    360|     loseNext = true;
+    361|     const recovered = await queries.submitQueryJob(ctx, submitRequest(…
+    362|     expect(recovered).toMatchObject({ status: 'committed', replayed: t…
+       |                       ^
+    363|     if (recovered.status !== 'committed') throw new Error('lost respon…
+    364|     expect(await eventBody(backend, recovered.cursor, 'QueryJobSubmitt…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/11]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  11 failed (11)
+   Start at  14:26:03
+   Duration  1.41s (transform 786ms, setup 0ms, import 1.19s, tests 63ms, environment 0ms)
+

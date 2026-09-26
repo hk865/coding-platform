@@ -1,0 +1,6 @@
+{
+  "coding-platform/next/tests/work-graph/B2-execution-entry.test.ts": {
+    "before": "c086b89be9cf140469671b541cde02794a696ba7fe60a9b2c39973017136a821",
+    "after": "518a42ca76fe02831edc4239d47d6c250e2ba3784c2e53b3abc7fdd38306d94c"
+  }
+}

@@ -1,0 +1,153 @@
+{
+  "stage": "skeleton",
+  "status": "reviewed_frozen_and_imported",
+  "importedAt": "2026-09-26T14:42:04.157572+00:00",
+  "lane": "r4-control-runtime-skeleton-20260926",
+  "sessionId": "session-7ffe634d-e8f9-41a4-a209-8692ac461333",
+  "attempt": "attempt-1790432937702764168",
+  "productionReview": {
+    "reviewer": "query_middle_review",
+    "verdict": "No blocking contract/owner wiring issue in 13 production files. Stage2 still must prove exit/cleanup/intent causality; private map close alone is not proof."
+  },
+  "middleAmendment": {
+    "authorizedBy": "root",
+    "editedOnly": [
+      "coding-platform/next/tests/runtime/R4-control-runtime.test.ts",
+      "coding-platform/next/tests/composition/R4-control-runtime-platform.test.ts"
+    ],
+    "changes": [
+      "Spy on same actual Host object captured by entry/model admission so fresh refusal reaches the actual dependency.",
+      "Owned 8s running/deadline race (Kernel drain default 5s), clear deadline and unconditionally release gate/drain original running in finally.",
+      "Cooperative quick cancel permits queued or real applied/cancelled after delivery; final original Run terminal/release/applied assertions retained."
+    ],
+    "newTests": 0,
+    "productionEdits": 0
+  },
+  "checks": {
+    "next-control-runtime": {
+      "exitCode": 1,
+      "failed": 4,
+      "files": 2,
+      "expectedFailure": "all four first fail at explicit unsupported delivery seam",
+      "durationSeconds": 2.13,
+      "log": "r4-control-runtime-middle-amendment-tests.log"
+    },
+    "next-types": {
+      "exitCode": 0,
+      "log": "r4-control-runtime-middle-amendment-types.log"
+    }
+  },
+  "audit": {
+    "changed": [
+      "coding-platform/next/src/composition/create-platform.ts",
+      "coding-platform/next/src/contracts/control-intent.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-contracts.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-control.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+      "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+      "coding-platform/next/src/core/agent-runtime/ports.ts",
+      "coding-platform/next/src/core/agent-runtime/runtime.ts",
+      "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts",
+      "coding-platform/next/src/core/work-graph/tasks/control-contracts.ts",
+      "coding-platform/next/src/core/work-graph/tasks/control-service.ts",
+      "coding-platform/next/tests/composition/R4-control-runtime-platform.test.ts",
+      "coding-platform/next/tests/runtime/R4-control-runtime.test.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "files": [
+    {
+      "path": "coding-platform/next/src/contracts/control-intent.ts",
+      "beforeSha256": "7ea205a7e534c94cac438290e0c0f5dece9fc137f7fa6294c921b576bd6891b3",
+      "afterSha256": "d5800e4048fa51598485fd57da0f1a844c6dc5268a94aa805a31f2eb57e5ada1",
+      "changed": true
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/control-contracts.ts",
+      "beforeSha256": "68d1ff353e83d495a9cbec99fa73fa2fd4f002819c67eb95ca9da58d9397da42",
+      "afterSha256": "299fd63f690f40958ffa0ef4aedaad0aa8b186b672329b5a7b1ca654204fe82f",
+      "changed": true
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/control-service.ts",
+      "beforeSha256": "33fc8025ad393ae475e789cb8fd3d99ce4912dee6f1002e3b25d2949c17b73bd",
+      "afterSha256": "302b0e924802d8b779e822226242ce0212bf18cba5ceee14f108f7471bc6fc95",
+      "changed": true
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts",
+      "beforeSha256": "4aae58fbb5f10435d7b0eb9cac73b5a3038546a2081ddbcdb533770f1966d9b6",
+      "afterSha256": "addd9f13340e3fb3d4e9b88fe3699a45c4ff5174939df7d77e6a6b09c6e2363f",
+      "changed": true
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts",
+      "beforeSha256": "5034ecaff918cc310a2551e64cac5e52378109a82951930f8940c1ec85539938",
+      "afterSha256": "5034ecaff918cc310a2551e64cac5e52378109a82951930f8940c1ec85539938",
+      "changed": false
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/execution-contracts.ts",
+      "beforeSha256": "1cb40b3242527f2aa895bcccf4c08e9e31d3be052e091a1ad49375960d20919f",
+      "afterSha256": "203441146e55448debcde6a75a80959898f31b381469c8b0f4d030cd1f8858bf",
+      "changed": true
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/ports.ts",
+      "beforeSha256": "30804ad6c2484d0b89982f11561a3a28ff7e63ad7eab5c0c939db191362970f9",
+      "afterSha256": "6ffe3c62cd85b7ae155712c97f134db458109a373d49b990565687f92d182fec",
+      "changed": true
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/runtime.ts",
+      "beforeSha256": "afbef1dbf95f2c597853952d5c1d306eeccc11083b519fa6e22f742fe3fc8173",
+      "afterSha256": "deb03c5dcfaa46f25a470235bdee14dc484834a562225d73456f4c2920999efc",
+      "changed": true
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+      "beforeSha256": "330f10e84f7f3910724acab18c0961a213e03d4ee714622e910936e07772c9f5",
+      "afterSha256": "bd5a186eca4aed52d020c8d77ac388a2b7f09ef7ee5bc2d04b0914a187915d09",
+      "changed": true
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+      "beforeSha256": "0143957029f5be71811f62d7071bb7da7bf9802a217f38dc374e5e756c2784a6",
+      "afterSha256": "88ec2d359f39baf213fa62d2cc6136dc3238aac7377f96849b4062cfe001e456",
+      "changed": true
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+      "beforeSha256": "04635db0a6129ce76ac25c08a41b964a4ece23ae49e2aa42e6486a29f06f997c",
+      "afterSha256": "49718f02332d49a83f59d8af7880f4bc167f25f0b03f53dbaec8a7a3c3e2144e",
+      "changed": true
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/execution-control.ts",
+      "beforeSha256": "f109a931252c6fd8c2f53c61d3877891cd01611b3c55542ff08ac6f6568f478d",
+      "afterSha256": "0815ec4cd9d3f56727692fee8ebe7c1540f6ae23d7e1201f51597a223bf793fb",
+      "changed": true
+    },
+    {
+      "path": "coding-platform/next/src/composition/create-platform.ts",
+      "beforeSha256": "038ebe65b84f330f3da304040e01288e75d4d556fb0e856cbe82ac17e0823425",
+      "afterSha256": "ac618284306b8b361104980d47a4c43e3c33f0564cb2e40442b00506b67e1853",
+      "changed": true
+    },
+    {
+      "path": "coding-platform/next/tests/runtime/R4-control-runtime.test.ts",
+      "beforeSha256": "f109a931252c6fd8c2f53c61d3877891cd01611b3c55542ff08ac6f6568f478d",
+      "afterSha256": "2c2e7de19376361c66e37c44fbc8c4c0e494f6013e70b438eb761524996a3ef5",
+      "changed": true
+    },
+    {
+      "path": "coding-platform/next/tests/composition/R4-control-runtime-platform.test.ts",
+      "beforeSha256": "f109a931252c6fd8c2f53c61d3877891cd01611b3c55542ff08ac6f6568f478d",
+      "afterSha256": "bdd0ae471ed54ac873a3a3556bff39956a5dfff9f12a72cfad33af5f52d8ca84",
+      "changed": true
+    }
+  ],
+  "limits": "Skeleton only. Paused/cancelled/release/unknown tail assertions remain unexecuted. Stage2 requires implementation and independent final checks."
+}

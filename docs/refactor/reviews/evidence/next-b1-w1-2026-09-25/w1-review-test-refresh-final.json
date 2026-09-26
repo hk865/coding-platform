@@ -1,0 +1,6 @@
+{
+  "path": "coding-platform/next/tests/work-graph/W1-future-plan.test.ts",
+  "before": "d0d25aed715818affd59056bd4a7e57b56aeb1387a8b619210c3d81ab9dbd1dd",
+  "after": "731eadac4ec37f1bc26233a1cbec2defb0f78f9078efef534e00a5a1e9ee1220",
+  "reason": "Existing scenario7 additionally covers new-task pending and unchanged review protocol; test count unchanged"
+}

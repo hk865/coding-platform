@@ -1,0 +1,20 @@
+{
+  "lane": "r5b-query-job-implementation-20260926",
+  "files": {
+    "coding-platform/next/src/core/work-graph/queries/query-job-service.ts": {
+      "before": "52bcf79729bdf4dbd0f025b29c29acdf44a76efda885383f0936ac9c17d23c8d",
+      "after": "2af59dc10eac55ed0fd69a0106e5756293b66facd2c5ceba4931576010083dc6"
+    },
+    "coding-platform/next/src/core/work-graph/queries/query-record-codecs.ts": {
+      "before": "921f25739304577276e031e9c6fb1ef2d1e5555318a82f16564f80943772fa5a",
+      "after": "c18beb4fc3419d1ae1b0fe7be60b6a7a4f6fbbec766374c82e7de3dc25e4b544"
+    }
+  },
+  "checks": [
+    "r5b-implementation-tests.log: 11 passed / 2 files",
+    "r5b-implementation-types.log: exit 0"
+  ],
+  "review": "Astra pending/receipt/owner/source-locator review passed",
+  "note": "Determinate Store rejection is returned directly; thrown/unknown commit is recovered with original identity. No extra failure matrix.",
+  "remaining": "Query Session/Kernel/answer and Plan adoption"
+}

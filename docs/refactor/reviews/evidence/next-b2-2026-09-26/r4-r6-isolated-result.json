@@ -1,0 +1,31 @@
+{
+  "status": "passed",
+  "recordedAt": "2026-09-26T16:27:58.536692+00:00",
+  "command": "node --run verify:isolated",
+  "source": "coding-platform/next main after R4.3b/R6 execution-entry final imports and one W2 fixture amendment, before R6 graph-history skeleton import",
+  "physicalCopy": "/tmp/coding-platform-next-DuWo0h/next (cleaned by existing script after completion)",
+  "exitCode": 0,
+  "checks": {
+    "testFiles": 124,
+    "tests": 1102,
+    "nodeAndUiTypes": "passed",
+    "build": "passed",
+    "architecture": "7 observed edges / 8 allowed; no violations",
+    "kernelPatch": "7 managed sources / 28 generated artifacts all match",
+    "compiledCompositionSmoke": "passed",
+    "tokenProtectedWorkbenchSmoke": "passed"
+  },
+  "log": "r4-r6-isolated-recheck.log",
+  "logSha256": "d203f501fe2990c33406cd595f918cd994c427455af2483e12231602816e919c",
+  "priorFailedLog": "r4-r6-isolated-final.log",
+  "resolvedCommonFailure": "r4-r6-w2-fixture-amendment.json",
+  "deliveredImports": [
+    "r4-terminal-history-implementation-import.json",
+    "r6-execution-entry-implementation-import.json"
+  ],
+  "limits": [
+    "Does not include later R6 graph-history skeleton/implementation.",
+    "Existing targeted HTTP uses controlled model input; this is not external real-model or complete MVP acceptance.",
+    "No assertion of a new full protected-old-file hash comparison; old 8827-file result belongs to earlier evidence."
+  ]
+}

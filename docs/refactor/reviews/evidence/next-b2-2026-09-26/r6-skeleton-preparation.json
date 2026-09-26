@@ -1,0 +1,69 @@
+{
+  "task": "R6.1a Host workbench skeleton",
+  "status": "prepared_only_not_implemented",
+  "lanePrepared": false,
+  "dshStarted": false,
+  "newPlaceholderCount": 14,
+  "writableFileCount": 19,
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ],
+  "placeholderHashes": {
+    "coding-platform/next/src/app/host.ts": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+    "coding-platform/next/src/app/server.ts": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+    "coding-platform/next/src/app/main.ts": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+    "coding-platform/next/src/app/core-call-context.ts": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+    "coding-platform/next/src/app/core-http-types.ts": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+    "coding-platform/next/src/app/core-routes.ts": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+    "coding-platform/next/src/ui/main.ts": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+    "coding-platform/next/src/ui/views.ts": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+    "coding-platform/next/src/ui/index.html": "941eeedad5be702b6a4bd513b043ebae7ebcd5b4c3ee4cba3d1245541fde7de9",
+    "coding-platform/next/src/ui/styles.css": "b697daeed6d06400c344c4458cf6598cfb19bed2bd965d2c998a6c8e4bfb1a1d",
+    "coding-platform/next/tsconfig.ui.json": "2f309f0892ae0abcfb2a12be9bb0bf5571be0d3f6cfa1abf96de1edfcfa4432c",
+    "coding-platform/next/scripts/build-workbench.mjs": "794ce58e326c723ea1f9205095118c2c24fa13fb763bc2bd615b5ca517047588",
+    "coding-platform/next/tests/app/R6-host.test.ts": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+    "coding-platform/next/tests/app/R6-workbench.test.ts": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02"
+  },
+  "existingProductHashesUnchanged": {
+    "coding-platform/next/package.json": "01d81d13defe3441a2d79f963d6ac44039c9e18cd42d4530dbb8a1797ad4d7f0",
+    "coding-platform/next/tsconfig.json": "2f65e4d3a69729ceeca0909fa52668f749eb968c30ca1fbadfc57d69a55956c5",
+    "coding-platform/next/tsconfig.build.json": "381d6ad4fe57e24cd4f433b208a2d4848f3125852978ed92e113b0b5c8e5916c",
+    "coding-platform/next/scripts/check-boundaries.mjs": "41984eb8ccb364b212ed48d2193584581c18998d705ef663921798b38bf01f4a",
+    "coding-platform/next/scripts/verify-isolated.mjs": "1ca7fc578451a2271b3b19eddc1937fb40e61d91b3a1bfd9e1f86543db00455a"
+  },
+  "scope": "docs/refactor/tasks/R6-host-workbench-skeleton-scope.json",
+  "scopeSha256": "5185e09d86e5744ebe7f2281b7874f0d1a1fb74db7204f6976870835487e9b78",
+  "taskSha256": "27b5bed97888ee96f93d63e8cfb0836611c40c2f7234789f461622f6de0b42dd",
+  "selectorFile": "tools/dsh-refactor/check.py",
+  "selectorBeforeSha256": "68df176ad8405f0bee55bdf582848c1a9fbaf62dd40230ff5a20bb58625687fe",
+  "selectorAfterSha256": "6fc90aca2d321d4614b2fec264a6e56e87c6e9ab6496d1b36eeef00fba6b7225",
+  "selectors": {
+    "next-r6-host": [
+      "../node_modules/vitest/vitest.mjs",
+      "run",
+      "tests/app/R6-host.test.ts",
+      "tests/app/R6-workbench.test.ts"
+    ],
+    "next-ui-types": [
+      "../node_modules/typescript/bin/tsc",
+      "--noEmit",
+      "-p",
+      "tsconfig.ui.json"
+    ],
+    "next-build": [
+      "--run",
+      "build"
+    ]
+  },
+  "verification": "file existence/count, unique selector AST, Python syntax and unchanged existing product hashes only; no tests, build, harness prepare or DSH run",
+  "limits": [
+    "new test files contain only export {}; no acceptance result",
+    "UI tsconfig is a valid noEmit placeholder; DSH must implement real emission",
+    "existing package build remains Node-only; build-workbench.mjs throws explicitly"
+  ]
+}

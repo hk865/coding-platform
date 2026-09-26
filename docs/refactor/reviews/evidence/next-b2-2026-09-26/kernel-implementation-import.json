@@ -1,0 +1,6 @@
+{
+  "path": "coding-platform/next/vendor/coding-agent/patches/public-api.ts",
+  "before": "3a30600839cda57d989d65926e74025848b18efb444adaa2d70d66aae7c6a2c7",
+  "after": "f876ccda6afefe3645e20987fd8006375bfbaae6096ae12a0f5ce6791e711bea",
+  "scopeAudit": "no outside scope changes"
+}

@@ -1,0 +1,9 @@
+{
+  "changed": [
+    "coding-platform/src/core/record-store/body-codec.ts",
+    "coding-platform/src/core/record-store/body-store.ts",
+    "coding-platform/src/core/record-store/sqlite-body-store.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

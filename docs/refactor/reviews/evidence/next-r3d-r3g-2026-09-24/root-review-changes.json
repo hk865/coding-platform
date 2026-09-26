@@ -1,0 +1,20 @@
+[
+  {
+    "file": "coding-platform/next/src/core/work-graph/configuration/role-memory-service.ts",
+    "change": "Move atLeastCursor barrier before missing-pin result; verified same real backend tests.",
+    "why": "A read below the requested horizon cannot establish absence."
+  },
+  {
+    "file": "coding-platform/next/src/core/work-graph/architecture/contracts.ts",
+    "change": "Document cycles as sorted cyclic SCC member groups rather than ordered paths; no runtime behavior changed.",
+    "why": "Prevent future UI and agent consumers from treating sorted group membership as an edge-by-edge cycle."
+  },
+  {
+    "files": [
+      "coding-platform/next/src/contracts/architecture-source.ts",
+      "coding-platform/next/src/core/workspace/architecture-source.ts"
+    ],
+    "change": "Sol adds optional exact indexedSources projection from the already captured analysis and validation; WorkGraph codec uses this evidence after DSH repair.",
+    "why": "File extension/kind cannot distinguish indexed JSON modules from configuration; no additional source scan or provider."
+  }
+]

@@ -1,0 +1,21 @@
+{
+  "by": "Astra integration",
+  "files": [
+    {
+      "file": "coding-platform/next/src/composition/create-platform.ts",
+      "sha256": "b8b3905b72543187e72eaabc7b01d28a710c7228039d79c8626f7e0d7999a6b4"
+    },
+    {
+      "file": "coding-platform/next/tests/work-graph/A1-catalog-independent.test.ts",
+      "sha256": "7ad7b596dd8b9e1249f6a0c531d57d027ee037700f244443f2aef4bb931b9bc9"
+    },
+    {
+      "file": "coding-platform/next/tests/work-graph/A1-independent-review.test.ts",
+      "sha256": "85725ab542a030b3fa91755c9158901a0d5300b51b27565768e22c95ddb6cbb9"
+    },
+    {
+      "file": "coding-platform/next/tests/work-graph/R4b-session-directory.test.ts",
+      "sha256": "0878d8af32b772b9a08bd1694e6d6078a6e227ebe9d5a33685eae15b2686a74a"
+    }
+  ]
+}

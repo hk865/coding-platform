@@ -1,0 +1,7 @@
+继续同一R3d Session，原4文件scope不变，主审未通过，不导入主干。最新next-observed已含3文件26项，主审复现6项失败。先读刷新后的R3d-record-integrity.test.ts以及observed-boundaries新增两项，然后修复：
+1. validateObservedArchitecture严格核source.capture.projectId/workspaceId/captureId等于record.ref。decodeBody严格核architecture.workspaceRevision/indexVersion/commitHash/configPath等于capture/summary对应事实。正文files须覆盖实际graph节点路径/配置（具体TS真实capture正例见新测试），不能靠省掉file绕过逐路径授权；也直接核nodes路径授权。不要盲目把files.length=sourceCount，TS配置不是sourceCount同类。拒绝损坏，并保留正例。
+2. capture提供previous时，先同当前历史loadObservation做Host access与origin/digest/ref/现行逐路径核验，再拿files算changes。禁止readPreviousObservation在任何Host access前读body；最好直接复用loader删掉重复核对实现。authorize拒绝应0bodyreads。
+3. 删掉capture末尾全局ledgerHorizon guard。现Project/Workspace/currentObserved/新Observation已有精确CAS，事实均来自这些可验证记录，不存在需要全局水位维护的范围/absence判断。无关写入不得迫使重新capture。同workspace并发仍受currentObserved CAS，不取消真正一致性。
+4. 边界补齐：expected pins按规范ref闭合校验（不能带多余字段绕过同一种重复），idempotency fingerprint包含会改变命令语义的expected pins；Host config route是配置不是模型输入，原回执不因后来配置变化被重新capture。capture最后读current和commit之间检查取消，尽量finally release临时捕获，确保失败不会累积registry容量。历史read不把当前Workspace revision强行要求等于历史revision。
+5. 保持算法有界及真实cycle/noVerdict。源码metadata重复读取如无必要应精简；不得为性能去掉发布前实际sourceverify或权限检查。不加Repository/另一个Store。
+执行next-observed（3文件26项）、next-types、next-architecture；只跑本lane相关必要检查，别反复跑有另一lane骨架的全套。tests只读。最后说明范围/结果/剩余限制，不自行称验收通过。

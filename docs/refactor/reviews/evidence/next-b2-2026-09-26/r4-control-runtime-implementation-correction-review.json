@@ -1,0 +1,74 @@
+{
+  "status": "two_requested_windows_closed_awaiting_root_final_review",
+  "reviewedAt": "2026-09-26T15:25:03.942181+00:00",
+  "lane": "r4-control-runtime-implementation-20260926",
+  "sessionId": "session-1e8f8993-91af-4e79-9d8d-0aa25cc41054",
+  "result": {
+    "exitCode": 0,
+    "session": "session-1e8f8993-91af-4e79-9d8d-0aa25cc41054",
+    "counts": {
+      "session": 1,
+      "status": 114,
+      "thinking": 56,
+      "text": 18,
+      "tool_call": 76,
+      "tool_result": 76,
+      "final": 1
+    },
+    "finished": 1790436132.401631,
+    "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4-control-runtime-implementation-20260926/attempt-1790435850736555046"
+  },
+  "independentChecks": {
+    "next-control-runtime": {
+      "exit": 0,
+      "files": 2,
+      "tests": 4,
+      "log": "r4-control-runtime-implementation-correction-tests.log"
+    },
+    "next-types": {
+      "exit": 0,
+      "log": "r4-control-runtime-implementation-correction-types.log"
+    }
+  },
+  "audit": {
+    "changed": [
+      "coding-platform/next/src/core/agent-runtime/execution-control.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+      "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+      "coding-platform/next/src/core/agent-runtime/runtime.ts",
+      "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts",
+      "coding-platform/next/src/core/work-graph/tasks/control-service.ts",
+      "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "frozenTestsUnchanged": true,
+  "actualCorrectionFiles": [
+    "execution-observation.ts",
+    "observed-model-run.ts",
+    "execution-driver.ts",
+    "execution-control.ts"
+  ],
+  "otherFourCandidateFilesUnchanged": true,
+  "candidateHashes": "r4-control-runtime-implementation-correction-candidate-hashes.json",
+  "diff": "r4-control-runtime-implementation-correction.diff",
+  "closedFindings": [
+    {
+      "id": "terminal_boundary_after_cleanup_gate",
+      "evidence": "execution-observation.ts:563-590 constructs/reuses original PendingTerminal (boundary, cursor, Kernel source, event/time, requestId) before cleanProof at 600. recordRunResult remains after gate at 605; next empty increment reuses prior submission."
+    },
+    {
+      "id": "cancel_consumption_still_not_causal",
+      "evidence": "observed-model-run.ts:244-299 wraps the original runCodingAgent call and notifies private onKernelExited before outer cleanup at 314/onResourcesClosed at 318. Driver sets kernelExited only in callback at 659. Coordinator deliver/decide cancel require live handle and non-aborted own controller; exited or caller-aborted execution cannot be claimed."
+    }
+  ],
+  "rootReviewNote": "Coordinator also requires intentRef===undefined before cancel; an already-consumed pause remains the prior stop cause and is not overwritten/aborted. This implementation choice was explicitly surfaced to root for final review. No new test matrix was added.",
+  "import": "withheld; originalAllowedHashes unchanged; no main production import",
+  "nextAction": "root final review and import decision; no automatic further mutation",
+  "resolution": {
+    "status": "root accepted; symmetric pause guard completed; exact import done",
+    "evidence": "r4-control-runtime-implementation-import.json"
+  }
+}

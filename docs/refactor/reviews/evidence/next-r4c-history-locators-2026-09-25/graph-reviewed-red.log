@@ -1,0 +1,288 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/runtime/R4c-graph-history.test.ts (14 tests | 14 failed) 4229ms
+     × reads a real second Run interval directly from its persisted start instead of the Session head 394ms
+     × keeps the frozen upper bound while the Session grows and never widens a continuation page 296ms
+     × returns unsupported without any history or Kernel read when the Run has no locator 227ms
+     × rejects a continuation cursor that is moved to another Run, Session, principal or source 353ms
+     × preserves the original evidence and advances on zero matches without padding to the limit 320ms
+     × rejects a terminal end that falls below the frozen upper bound as stale 343ms
+     × rejects malformed limits before any graph or history read 227ms
+     × rejects a call cancelled before delegation while preserving the original signal 218ms
+     × rejects cancellation after awaiting the real graph dependency 380ms
+     × rejects cancellation after awaiting the real history dependency 284ms
+     × owns the call context and request before the first await so caller mutation cannot retarget it 306ms
+     × reads one bounded Kernel page from startPosition - 1 up to the frozen throughPosition 332ms
+     × rejects an upper bound beyond the current tail and a range combined with throughCursor 265ms
+     × rejects continuation after the frozen Session tail is truncated instead of shrinking its range 283ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 14 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > reads a real second Run interval directly from its persisted start instead of the Session head
+AssertionError: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ tests/runtime/R4c-graph-history.test.ts:382:25
+    380|     const page = await h.reader.readTaskExecutionHistory(fx.ctx,
+    381|       { runRef: secondRun, afterCursor: null, limit: 200 });
+    382|     expect(page.status).toBe('ready');
+       |                         ^
+    383|     if (page.status !== 'ready') return;
+    384|     expect(page.value.executionIdentity).toEqual({ runId: secondIdenti…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > keeps the frozen upper bound while the Session grows and never widens a continuation page
+AssertionError: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ tests/runtime/R4c-graph-history.test.ts:419:26
+    417|     const first = await h.reader.readTaskExecutionHistory(fx.ctx,
+    418|       { runRef: run, afterCursor: null, limit: 1 });
+    419|     expect(first.status).toBe('ready');
+       |                          ^
+    420|     if (first.status !== 'ready') return;
+    421|     expect(first.value.items.map(item => item.source.position)).toEqua…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > returns unsupported without any history or Kernel read when the Run has no locator
+AssertionError: expected [] to have a length of 1 but got +0
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ tests/runtime/R4c-graph-history.test.ts:453:33
+    451|     expect(result).toMatchObject({ status: 'rejected', code: 'unsuppor…
+    452|     // WG11 is consulted to discover the missing locator, and there is…
+    453|     expect(h.executionRequests).toHaveLength(1);
+       |                                 ^
+    454|     expect(h.rt7Requests).toHaveLength(0);
+    455|     expect(h.historyRequests).toHaveLength(0);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > rejects a continuation cursor that is moved to another Run, Session, principal or source
+AssertionError: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ tests/runtime/R4c-graph-history.test.ts:489:27
+    487|     const opened = await h.reader.readTaskExecutionHistory(fx.ctx,
+    488|       { runRef: claim.runRef, afterCursor: null, limit: 1 });
+    489|     expect(opened.status).toBe('ready');
+       |                           ^
+    490|     if (opened.status !== 'ready') return;
+    491|     const cursor = opened.value.nextCursor;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > preserves the original evidence and advances on zero matches without padding to the limit
+AssertionError: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ tests/runtime/R4c-graph-history.test.ts:537:25
+    535|     const page = await h.reader.readTaskExecutionHistory(fx.ctx,
+    536|       { runRef: realRun, afterCursor: null, limit: 200 });
+    537|     expect(page.status).toBe('ready');
+       |                         ^
+    538|     if (page.status !== 'ready') return;
+    539|     expect(page.value.items.map(item => item.source.position)).toEqual…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > rejects a terminal end that falls below the frozen upper bound as stale
+AssertionError: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ tests/runtime/R4c-graph-history.test.ts:611:26
+    609|     const first = await h.reader.readTaskExecutionHistory(fx.ctx,
+    610|       { runRef: run, afterCursor: null, limit: 1 });
+    611|     expect(first.status).toBe('ready');
+       |                          ^
+    612|     if (first.status !== 'ready' || first.value.nextCursor === null) r…
+    613|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > rejects malformed limits before any graph or history read
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', code: 'invalid' }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "invalid",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/runtime/R4c-graph-history.test.ts:633:10
+    631|       expect(await h.reader.readTaskExecutionHistory(fx.ctx,
+    632|         { runRef: claim.runRef, afterCursor: null, limit }))
+    633|         .toMatchObject({ status: 'rejected', code: 'invalid' });
+       |          ^
+    634|     }
+    635|     expect(h.executionRequests).toHaveLength(0);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > rejects a call cancelled before delegation while preserving the original signal
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "cancelled",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/runtime/R4c-graph-history.test.ts:648:8
+    646|     expect(await h.reader.readTaskExecutionHistory({ ...fx.ctx, signal…
+    647|       { runRef: claim.runRef, afterCursor: null, limit: 200 }))
+    648|       .toMatchObject({ status: 'rejected', code: 'cancelled' });
+       |        ^
+    649|     expect(h.executionRequests).toHaveLength(0);
+    650|     expect(h.rt7Requests).toHaveLength(0);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > rejects cancellation after awaiting the real graph dependency
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > rejects cancellation after awaiting the real history dependency
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "cancelled",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/runtime/R4c-graph-history.test.ts:699:20
+    697|     const result = await reader.readTaskExecutionHistory({ ...fx.ctx, …
+    698|       { runRef: claim.runRef, afterCursor: null, limit: 200 });
+    699|     expect(result).toMatchObject({ status: 'rejected', code: 'cancelle…
+       |                    ^
+    700|     expect(graphCalls).toBe(1);
+    701|     expect(historyCalls).toBe(phase === 'graph' ? 0 : 1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > owns the call context and request before the first await so caller mutation cannot retarget it
+AssertionError: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ tests/runtime/R4c-graph-history.test.ts:753:27
+    751|     release();
+    752|     const result = await pending;
+    753|     expect(result.status).toBe('ready');
+       |                           ^
+    754|     if (result.status !== 'ready') return;
+    755|     expect(seen[0]?.runId).toBe(run.runId);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b RT1 bounded Session history range > reads one bounded Kernel page from startPosition - 1 up to the frozen throughPosition
+AssertionError: expected [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 ] to deeply equal [ 7, 8, 9, 10, 11 ]
+
+- Expected
++ Received
+
+@@ -1,6 +1,12 @@
+  [
++   1,
++   2,
++   3,
++   4,
++   5,
++   6,
+    7,
+    8,
+    9,
+    10,
+    11,
+
+ ❯ tests/runtime/R4c-graph-history.test.ts:790:66
+    788|     expect(result.status).toBe('ready');
+    789|     if (result.status !== 'ready') return;
+    790|     expect(result.value.items.map(item => item.source.position)).toEqu…
+       |                                                                  ^
+    791|     expect(h.kernelReads.some(read => read.afterPosition === start - 1…
+    792|     expect(h.kernelReads.every(read => read.limit !== Number.MAX_SAFE_…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b RT1 bounded Session history range > rejects an upper bound beyond the current tail and a range combined with throughCursor
+AssertionError: expected { status: 'ready', value: { …(3) } } to match object { status: 'rejected', …(1) }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/runtime/R4c-graph-history.test.ts:812:9
+    810|       range: { adapterId: mapping.adapterId, kernelSessionId: mapping.…
+    811|         startPosition: 1, throughPosition: tail + 5 },
+    812|     })).toMatchObject({ status: 'rejected', code: 'unavailable' });
+       |         ^
+    813|
+    814|     const opened = await h.owner.readSessionHistory(fx.ctx,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b RT1 bounded Session history range > rejects continuation after the frozen Session tail is truncated instead of shrinking its range
+AssertionError: expected { status: 'ready', value: { …(3) } } to match object { status: 'rejected', …(1) }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/runtime/R4c-graph-history.test.ts:856:8
+    854|     expect(await h.owner.readSessionHistory(fx.ctx,
+    855|       { sessionRef: claim.sessionRef, afterCursor: cursor, throughCurs…
+    856|       .toMatchObject({ status: 'rejected', code: 'unavailable' });
+       |        ^
+    857|   });
+    858| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/14]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  14 failed | 18 passed (32)
+   Start at  11:51:59
+   Duration  8.30s (transform 478ms, setup 0ms, import 1.10s, tests 6.98s, environment 0ms)
+

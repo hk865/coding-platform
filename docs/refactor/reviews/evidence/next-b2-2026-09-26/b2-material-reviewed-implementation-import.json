@@ -1,0 +1,15 @@
+{
+  "lane": "b2-material-facts-implementation-20260926",
+  "verification": {
+    "tests": 86,
+    "types": "pass",
+    "architecture": "pass"
+  },
+  "files": [
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts",
+      "before": "d5dc2e6b2c3b990c2db542a06da59e23b9309f68cc304f9b359460f4febb2038",
+      "after": "ee1675636106ac6e9de6b031bd1f86a25b75e4fe54b5eb9d0facebe20400120b"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/app/R6-workbench.test.ts (13 tests | 1 failed) 1274ms
+     × projects real original history in order and keeps task hierarchy separate from execution dependencies and real work links 6ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/R6-workbench.test.ts > pure DTO presentation > projects real original history in order and keeps task hierarchy separate from execution dependencies and real work links
+AssertionError: expected '<section class="task-execution-entry"…' to contain 'data-execution-entry="open"'
+
+Expected: "data-execution-entry="open""
+Received: "<section class="task-execution-entry" data-execution-entry="unsupported" data-aggregate-type="Run" data-project-id="p" data-goal-id="goal-1" data-run-id="run-work-2" data-task-id="t-child"><button class="link" data-action="open-execution-history" data-aggregate-type="Run" data-project-id="p" data-goal-id="goal-1" data-run-id="run-work-2" data-task-id="t-child" disabled>查看本次执行 / 原历史</button><p class="muted" data-execution-entry-unsupported="true">本次执行到原 Session/原历史的显示、点击与翻页尚未实现；此处只保留真实 RunRef 入口。</p></section>"
+
+ ❯ tests/app/R6-workbench.test.ts:549:23
+    547|     // window. Only the typed identity plus the explicit unsupported m…
+    548|     // rendered now, so this line is the intended first red of this ba…
+    549|     expect(entryHtml).toContain('data-execution-entry="open"');
+       |                       ^
+    550|   });
+    551| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 21 passed (22)
+   Start at  00:24:12
+   Duration  5.08s (transform 1.22s, setup 0ms, import 1.67s, tests 3.26s, environment 0ms)
+

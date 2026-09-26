@@ -1,0 +1,32 @@
+[
+  {
+    "path": "/home/hyh001/projects/coding-platform/coding-platform/src/core/record-store/in-memory-record-store.ts",
+    "expectedWritable": true,
+    "writable": true,
+    "errno": null
+  },
+  {
+    "path": "/home/hyh001/projects/coding-platform/coding-platform/tests/data/R3a-contract-invariants.test.ts",
+    "expectedWritable": false,
+    "writable": false,
+    "errno": 30
+  },
+  {
+    "path": "/home/hyh001/projects/coding-platform/coding-platform/src/core/record-store/guarded-revision.ts",
+    "expectedWritable": false,
+    "writable": false,
+    "errno": 30
+  },
+  {
+    "path": "/home/hyh001/projects/coding-platform/coding-platform/package.json",
+    "expectedWritable": false,
+    "writable": false,
+    "errno": 30
+  },
+  {
+    "path": "/home/hyh001/projects/coding-platform/coding-platform/src/core/workspace/project-source-snapshot.ts",
+    "expectedWritable": false,
+    "writable": false,
+    "errno": 30
+  }
+]

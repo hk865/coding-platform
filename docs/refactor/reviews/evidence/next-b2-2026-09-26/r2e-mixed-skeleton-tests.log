@@ -1,0 +1,31 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/runtime/R2e-git-source-loop.test.ts (2 tests | 1 failed) 308ms
+   × compares a fixed Git version with the modified working tree in both directions through a real B2 Kernel/model loop 90ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/runtime/R2e-git-source-loop.test.ts > compares a fixed Git version with the modified working tree in both directions through a real B2 Kernel/model loop
+AssertionError: {"status":"rejected","code":"unsupported","reason":"comparison of a fixed Git version and the current working tree is not implemented yet"}: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ toolResult tests/runtime/R2e-git-source-loop.test.ts:38:49
+     36|   if (!output || output.kind !== 'json') throw Error(`No JSON result f…
+     37|   const result = output.value as unknown as WorkspaceResult<T>;
+     38|   expect(result.status, JSON.stringify(result)).toBe('ready');
+       |                                                 ^
+     39|   if (result.status !== 'ready') throw Error(`${result.code}: ${result…
+     40|   return result.value;
+ ❯ tests/runtime/R2e-git-source-loop.test.ts:227:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 14 passed (15)
+   Start at  21:35:04
+   Duration  2.65s (transform 717ms, setup 0ms, import 1.29s, tests 1.22s, environment 0ms)
+

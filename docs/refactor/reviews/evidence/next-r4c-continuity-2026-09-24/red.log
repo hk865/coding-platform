@@ -1,0 +1,78 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/runtime/R4c-session-continuity.test.ts (4 tests | 4 failed) 356ms
+     × continues from a fixed completed boundary and replays one execution identity without another model call or Turn 98ms
+     × uses the selected earlier boundary and keeps omitted options in current-turn mode 117ms
+     × lets Kernel reject missing and unfinished history boundaries before a new model call 71ms
+     × snapshots caller-owned option objects before any asynchronous work 69ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/runtime/R4c-session-continuity.test.ts > R4c Runtime forwards frozen public Kernel Session options > continues from a fixed completed boundary and replays one execution identity without another model call or Turn
+Error: Kernel Session context and execution identity are not wired in this Runtime slice
+ ❯ runObservedModel src/core/agent-runtime/observed-model-run.ts:76:13
+     74|   try {
+     75|     if (sessionContext !== undefined || executionIdentity !== undefine…
+     76|       throw Error('Kernel Session context and execution identity are n…
+       |             ^
+     77|     }
+     78|     const definition = o.kernel.createBuiltinProviderRegistry().get(o.…
+ ❯ tests/runtime/R4c-session-continuity.test.ts:71:28
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/runtime/R4c-session-continuity.test.ts > R4c Runtime forwards frozen public Kernel Session options > uses the selected earlier boundary and keeps omitted options in current-turn mode
+Error: Kernel Session context and execution identity are not wired in this Runtime slice
+ ❯ runObservedModel src/core/agent-runtime/observed-model-run.ts:76:13
+     74|   try {
+     75|     if (sessionContext !== undefined || executionIdentity !== undefine…
+     76|       throw Error('Kernel Session context and execution identity are n…
+       |             ^
+     77|     }
+     78|     const definition = o.kernel.createBuiltinProviderRegistry().get(o.…
+ ❯ tests/runtime/R4c-session-continuity.test.ts:101:13
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/runtime/R4c-session-continuity.test.ts > R4c Runtime forwards frozen public Kernel Session options > lets Kernel reject missing and unfinished history boundaries before a new model call
+AssertionError: expected Error: Kernel Session context and executi… to match object { code: 'conflict' }
+
+- Expected
++ Received
+
+- {
+-   "code": "conflict",
++ Error {
++   "message": "Kernel Session context and execution identity are not wired in this Runtime slice",
+  }
+
+ ❯ tests/runtime/R4c-session-continuity.test.ts:124:12
+    122|           sessionContext: { version: 1, mode: 'session_history', throu…
+    123|           executionIdentity: { runId: `invalid-run-${position}`, turnI…
+    124|         })).rejects.toMatchObject({ code });
+       |            ^
+    125|       }
+    126|       expect(fx.requests).toHaveLength(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/runtime/R4c-session-continuity.test.ts > R4c Runtime forwards frozen public Kernel Session options > snapshots caller-owned option objects before any asynchronous work
+Error: Kernel Session context and execution identity are not wired in this Runtime slice
+ ❯ runObservedModel src/core/agent-runtime/observed-model-run.ts:76:13
+     74|   try {
+     75|     if (sessionContext !== undefined || executionIdentity !== undefine…
+     76|       throw Error('Kernel Session context and execution identity are n…
+       |             ^
+     77|     }
+     78|     const definition = o.kernel.createBuiltinProviderRegistry().get(o.…
+ ❯ tests/runtime/R4c-session-continuity.test.ts:138:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  4 failed | 14 passed (18)
+   Start at  19:16:48
+   Duration  1.90s (transform 312ms, setup 0ms, import 792ms, tests 971ms, environment 0ms)
+

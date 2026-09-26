@@ -1,0 +1,13 @@
+{
+  "changed": [
+    "coding-platform/src/app/service.ts",
+    "coding-platform/src/composition/persistent-platform.ts",
+    "coding-platform/src/data/artifact-vault/artifact-vault.ts",
+    "coding-platform/src/data/artifact-vault/material-access-policy.ts",
+    "coding-platform/src/data/artifact-vault/sqlite-artifact-vault.ts",
+    "coding-platform/src/data/context-compiler/history-materials-context.ts",
+    "coding-platform/src/harness/in-memory-harness.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

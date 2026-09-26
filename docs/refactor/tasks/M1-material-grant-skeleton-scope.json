@@ -1,0 +1,18 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/materials/grant-contracts.ts",
+    "coding-platform/next/src/core/work-graph/materials/grant-service.ts",
+    "coding-platform/next/src/core/work-graph/materials/grant-record-codecs.ts",
+    "coding-platform/next/src/core/workspace/material-source-provider.ts",
+    "coding-platform/next/tests/work-graph/M1-material-grants.test.ts",
+    "coding-platform/next/tests/data/M1-material-source-provider.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

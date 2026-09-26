@@ -1,0 +1,10 @@
+{
+  "decision": "approved_for_implementation",
+  "tests": 17,
+  "red": 7,
+  "green": 10,
+  "additional_review": "WAL concurrent append snapshot coherence; primary-key metadata MAX allowed",
+  "sha256": {
+    "coding-platform/next/tests/runtime/R4c-kernel-history-range.test.ts": "1185bfde2fce4b42d721de593c1c7078c93885d106a20a665560ad7354803e02"
+  }
+}

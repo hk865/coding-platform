@@ -1,0 +1,27 @@
+{
+  "scope": {
+    "writableFiles": [
+      "coding-platform/next/src/core/agent-runtime/observation-recovery.ts"
+    ],
+    "dshStateDirectories": [
+      "profiles",
+      "sessions",
+      "storages",
+      "cache",
+      "llm-deepseek",
+      "attachments"
+    ]
+  },
+  "readOnlyRefreshes": [
+    {
+      "at": 1790267147.1177046,
+      "files": [
+        {
+          "file": "coding-platform/next/tests/runtime/R4c-execution-history.test.ts",
+          "old": "4983e81506b2dd456d09afba158c18311bdf8686efc8f9e0412bf0f7bb4ca51a",
+          "new": "577554b72b8ee8df6ac6f19d5d5d20a89358684fc04d577afa828e0034d74113"
+        }
+      ]
+    }
+  ]
+}

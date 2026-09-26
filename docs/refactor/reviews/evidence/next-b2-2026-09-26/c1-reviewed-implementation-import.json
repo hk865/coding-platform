@@ -1,0 +1,17 @@
+[
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/communication-tools.ts",
+    "before": "6025baee9fe5a2d71c22a60737d040b6934da359293489cd294465fab0b2a38f",
+    "after": "a02e4d3897443115074c83c8817d69052fc5f1470e26454221239ceb0ca27988"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/communication/mailbox-service.ts",
+    "before": "8fe991b2d2324dc9759f6ea3c083f0b65d117ef424c22fa742a17b6dc76c6328",
+    "after": "7dc37aea8609e0c6d1990a90eca54fb3d6bfed3ea92dffe8087231a312c0c1f0"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/communication/message-record-codecs.ts",
+    "before": "54b5d497d8f944a2f91fe15bc403fcf6d357453cad06164cf72998347bdee2da",
+    "after": "d8a4d1b54192a7a5bdf1b1ba321e245d0b73fb73b3be4d77bf4692875e36a3de"
+  }
+]

@@ -1,0 +1,13 @@
+{
+  "lane": "r2e-mixed-comparison-implementation-20260926",
+  "session": "session-035bbade-0bc7-4c13-a533-705ff95a32b3",
+  "execSession": 2787,
+  "originalAllowedHashes": {
+    "coding-platform/next/src/core/workspace/git-read.ts": "808faf0a54492092c2690888964d03b1c866259c135c7b7a5c54abb74d183f9e"
+  },
+  "task": "docs/refactor/tasks/R2e-mixed-comparison-implementation.md",
+  "scope": "docs/refactor/tasks/R2e-mixed-comparison-implementation-scope.json",
+  "status": "completed; independently checked and exact single-file imported",
+  "dispatchedAt": "2026-09-26T13:38:06.334163+00:00",
+  "importEvidence": "r2e-mixed-comparison-implementation-import.json"
+}

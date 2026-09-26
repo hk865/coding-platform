@@ -1,0 +1,23 @@
+{
+  "lane": "r4-control-intent-implementation-20260926",
+  "imported": {
+    "coding-platform/next/src/core/work-graph/tasks/control-service.ts": "33fc8025ad393ae475e789cb8fd3d99ce4912dee6f1002e3b25d2949c17b73bd",
+    "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts": "4aae58fbb5f10435d7b0eb9cac73b5a3038546a2081ddbcdb533770f1966d9b6",
+    "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts": "5034ecaff918cc310a2551e64cac5e52378109a82951930f8940c1ec85539938"
+  },
+  "outsideScope": [],
+  "mainUnchangedBeforeImport": true,
+  "independentReview": "accepted after two reachable replay repairs",
+  "checks": {
+    "combinedBeforeFinalCatch": {
+      "files": 7,
+      "passed": 50
+    },
+    "finalTargets": {
+      "files": 2,
+      "passed": 20
+    },
+    "finalTypesExitCode": 0
+  },
+  "scopeLimitation": "Durable intent and fresh admission fences only; physical stop/resume not delivered."
+}

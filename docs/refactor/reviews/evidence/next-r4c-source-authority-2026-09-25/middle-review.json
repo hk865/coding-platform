@@ -1,0 +1,13 @@
+{
+  "decision": "approved_for_implementation",
+  "typecheck": "PASS",
+  "tests": 49,
+  "red": 36,
+  "green": 13,
+  "review": "actual readMany keys, IO denial and real SQLite consumer; no fake Query events",
+  "sha256": {
+    "coding-platform/next/tests/work-graph/R4c-source-authority-reader.test.ts": "fdeb7a0dcaf70a83a87c65347dc86d8630ca80bc70059b2289d337da6c2849f0",
+    "coding-platform/next/tests/runtime/R4c-source-authority-guards.test.ts": "eae6ad4f72cc039960ab20e8fc8e3f16de523926cde259bf12722e3387ef804d",
+    "coding-platform/next/src/core/work-graph/source-authority-ports.ts": "a1a02b7b57504bf416e61609bb3a265291f7001b891e6ebc9f414c7094434334"
+  }
+}

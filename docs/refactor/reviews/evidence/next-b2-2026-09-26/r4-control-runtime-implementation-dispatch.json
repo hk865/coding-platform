@@ -1,0 +1,121 @@
+{
+  "status": "imported",
+  "stage": "implementation",
+  "started": "2026-09-26T14:45:19.617921+00:00",
+  "lane": "r4-control-runtime-implementation-20260926",
+  "sessionId": "session-dffe2cd1-c18b-4dd1-bb03-01ad7280e2f7",
+  "execSession": 59679,
+  "task": "docs/refactor/tasks/R4-control-runtime-implementation.md",
+  "taskSha256": "960e70d2af10b568f0f2635a1e93ec328bc3954418e1ff4c3265bdfdfffaf49b",
+  "scope": "docs/refactor/tasks/R4-control-runtime-implementation-scope.json",
+  "scopeSha256": "c915090851bd665585567901c03009368674194c90438482f5df76aff929992d",
+  "fixedChecks": [
+    "next-control-runtime",
+    "next-types"
+  ],
+  "neighborChecksIfTouched": [
+    "next-control-intent next-runtime-execution next-b2-material-admission"
+  ],
+  "frozenTests": {
+    "coding-platform/next/tests/runtime/R4-control-runtime.test.ts": "2c2e7de19376361c66e37c44fbc8c4c0e494f6013e70b438eb761524996a3ef5",
+    "coding-platform/next/tests/composition/R4-control-runtime-platform.test.ts": "bdd0ae471ed54ac873a3a3556bff39956a5dfff9f12a72cfad33af5f52d8ca84"
+  },
+  "import": "r4-control-runtime-implementation-import.json",
+  "repairBudget": "At most one evidence-based narrow repair for a real implementation failure; no frozen-test edits.",
+  "firstAttemptResult": {
+    "exitCode": 0,
+    "session": "session-dffe2cd1-c18b-4dd1-bb03-01ad7280e2f7",
+    "counts": {
+      "session": 1,
+      "status": 292,
+      "thinking": 145,
+      "tool_call": 144,
+      "tool_result": 144,
+      "text": 6,
+      "final": 1
+    },
+    "finished": 1790434636.5498214,
+    "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4-control-runtime-implementation-20260926/attempt-1790433893591313458"
+  },
+  "repairTaskSha256": "ea157d799971af6d1c15dfd013de411aa6c94f19f39dbf2a087aff4d31716f62",
+  "repair": {
+    "started": "2026-09-26T15:01:15.016160+00:00",
+    "sessionId": "session-e3559b46-ef97-467b-bcef-ebf8fa99dff3",
+    "execSession": 1823,
+    "taskSection": 5,
+    "scope": "original eight files; contracts/tests frozen",
+    "import": "withheld pending root review",
+    "result": {
+      "exitCode": 0,
+      "session": "session-e3559b46-ef97-467b-bcef-ebf8fa99dff3",
+      "counts": {
+        "session": 1,
+        "status": 176,
+        "thinking": 87,
+        "text": 7,
+        "tool_call": 104,
+        "tool_result": 104,
+        "final": 1
+      },
+      "finished": 1790435363.7273428,
+      "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4-control-runtime-implementation-20260926/attempt-1790434858353537646"
+    },
+    "review": "r4-control-runtime-implementation-repair-review.json"
+  },
+  "secondCorrection": {
+    "authorizedBy": "root explicit followup",
+    "taskSection": 7,
+    "taskSha256": "f81507668f549fcf7bdc683417f984210d2c50d64ac71dce112132aac4f7cb2f",
+    "actualScope": [
+      "execution-observation.ts",
+      "observed-model-run.ts",
+      "execution-driver.ts",
+      "execution-control.ts"
+    ],
+    "preserve": "original eight-file baseline; all tests and public contracts frozen",
+    "import": "withheld pending root final review",
+    "started": "2026-09-26T15:17:45.183333+00:00",
+    "sessionId": "session-1e8f8993-91af-4e79-9d8d-0aa25cc41054",
+    "execSession": 64252,
+    "result": {
+      "exitCode": 0,
+      "session": "session-1e8f8993-91af-4e79-9d8d-0aa25cc41054",
+      "counts": {
+        "session": 1,
+        "status": 114,
+        "thinking": 56,
+        "text": 18,
+        "tool_call": 76,
+        "tool_result": 76,
+        "final": 1
+      },
+      "finished": 1790436132.401631,
+      "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4-control-runtime-implementation-20260926/attempt-1790435850736555046"
+    },
+    "review": "r4-control-runtime-implementation-correction-review.json"
+  },
+  "finalPauseGuard": {
+    "sameSessionId": "session-1e8f8993-91af-4e79-9d8d-0aa25cc41054",
+    "taskSection": 9,
+    "taskSha256": "0ce7c395fc6142a65f305b2f9ece72e7112e3845cbd4f587c4e0e4cde8a916ec",
+    "actualWritableFile": "coding-platform/next/src/core/agent-runtime/execution-control.ts",
+    "importAuthority": "root explicit: after this passes exact import using originalAllowedHashes",
+    "started": "2026-09-26T15:26:51.582223+00:00",
+    "execSession": 37275,
+    "result": {
+      "exitCode": 0,
+      "session": "session-1e8f8993-91af-4e79-9d8d-0aa25cc41054",
+      "counts": {
+        "session": 1,
+        "status": 16,
+        "thinking": 7,
+        "text": 3,
+        "tool_call": 7,
+        "tool_result": 7,
+        "final": 1
+      },
+      "finished": 1790436425.9222953,
+      "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4-control-runtime-implementation-20260926/attempt-1790436397578682421"
+    }
+  }
+}

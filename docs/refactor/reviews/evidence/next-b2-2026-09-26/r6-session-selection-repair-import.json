@@ -1,0 +1,15 @@
+{
+  "lane": "r6-session-ui-selection-repair-20260926",
+  "session": "session-af0df0a1-4c00-486b-af61-06ddf2daaff4",
+  "path": "coding-platform/next/src/ui/main.ts",
+  "before": "fd190659647940f5f572748db68a93b6017310b01558d7cf99fa6482dc390d25",
+  "after": "62224f5d776d4c6973876de713b78c4555a46285973ca492627cf4940d38a6f3",
+  "audit": {
+    "changed": [
+      "coding-platform/next/src/ui/main.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "independentReview": "Original Session/message tags filter selected data and cursors; switching clears message selection; pending scope/text behavior retained. UI types exit0. Final physical build exit0; browser same-SQLite reopen, delayed send/scope switch/new draft and second-Session empty inbox/body isolation passed (r6-session-browser.json)."
+}

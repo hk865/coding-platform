@@ -1,0 +1,8 @@
+[
+  "src/composition/create-platform.ts",
+  "src/contracts/plan.ts",
+  "src/core/work-graph/tasks/plan-contracts.ts",
+  "src/core/work-graph/tasks/plan-service.ts",
+  "tests/composition/R3c-R4b-platform.test.ts",
+  "tests/work-graph/R3c-task-graph.test.ts"
+]

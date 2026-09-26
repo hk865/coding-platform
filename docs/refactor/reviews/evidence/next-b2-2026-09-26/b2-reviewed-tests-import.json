@@ -1,0 +1,22 @@
+[
+  {
+    "path": "coding-platform/next/tests/work-graph/B2-execution-entry.test.ts",
+    "before": "af7c1cbb73ce483e44cf42b7912108a4a7f1b5680bfcd290b70f5dcdfa978d3f",
+    "after": "6a39962c34085ee8e8b6288dd8977459a0417728fee53631882c9f755c94bfe9"
+  },
+  {
+    "path": "coding-platform/next/tests/work-graph/B2-execution-result.test.ts",
+    "before": "af7c1cbb73ce483e44cf42b7912108a4a7f1b5680bfcd290b70f5dcdfa978d3f",
+    "after": "4a50bbffb3e6d8b68686a1898692e38017b708eaf1fcb4699502283423d368b7"
+  },
+  {
+    "path": "coding-platform/next/tests/work-graph/B2-model-request.test.ts",
+    "before": "af7c1cbb73ce483e44cf42b7912108a4a7f1b5680bfcd290b70f5dcdfa978d3f",
+    "after": "80f7e6219b856525a348d547a50185cd5f8c69a25f9fcf772614d7ee5cf0b819"
+  },
+  {
+    "path": "coding-platform/next/tests/helpers/B2-execution-fixture.ts",
+    "before": "af7c1cbb73ce483e44cf42b7912108a4a7f1b5680bfcd290b70f5dcdfa978d3f",
+    "after": "5940697b80c04586f5a95b07f88e1dde45fab0f666171aefafa04825b02e4177"
+  }
+]

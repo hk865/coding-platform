@@ -1,0 +1,53 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/app/R6-host.test.ts (7 tests | 2 failed) 686ms
+     × initializes an empty SQLite and reads the adopted/observed double graph and real files over HTTP 10ms
+     × replays the original write receipt and preserves a real version conflict after reopen 13ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/R6-host.test.ts > R6.1a domain routes (expected red until phase 2) > initializes an empty SQLite and reads the adopted/observed double graph and real files over HTTP
+AssertionError: expected 501 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 501
+
+ ❯ tests/app/R6-host.test.ts:229:30
+    227|       const project = await corePost(started.base, 'projects/create', …
+    228|         graphWrite({ projectId: scope.projectId }, 'r6-project-1', [{ …
+    229|       expect(project.status).toBe(200);
+       |                              ^
+    230|       expect(await project.json()).toMatchObject({ status: 'committed'…
+    231|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/app/R6-host.test.ts > R6.1a domain routes (expected red until phase 2) > replays the original write receipt and preserves a real version conflict after reopen
+AssertionError: expected 501 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 501
+
+ ❯ tests/app/R6-host.test.ts:320:32
+    318|     try {
+    319|       const committed = await corePost(started.base, 'projects/create'…
+    320|       expect(committed.status).toBe(200);
+       |                                ^
+    321|       const original = await committed.json() as { status: string; cur…
+    322|       expect(original).toMatchObject({ status: 'committed' });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  2 failed | 13 passed (15)
+   Start at  14:35:40
+   Duration  2.55s (transform 761ms, setup 0ms, import 1.14s, tests 1.25s, environment 0ms)
+

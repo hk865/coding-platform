@@ -1,0 +1,7 @@
+{
+  "changed": [
+    "coding-platform/next/src/core/agent-runtime/observation-recovery.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

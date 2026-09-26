@@ -1,0 +1,87 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+ ❯ tests/data/R3b-body-boundaries.test.ts (4 tests | 4 failed) 9ms
+   × hashes one newly stored body at most twice while returning its actual content address 4ms
+   × rejects a valid body row stored or returned under a different content key 3ms
+   × rejects a row that claims two conflicting owner authorities 1ms
+   × closes a newly opened SQLite connection when the existing artifacts schema cannot be prepared 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/data/R3b-body-boundaries.test.ts > hashes one newly stored body at most twice while returning its actual content address
+AssertionError: expected 3 to be less than or equal to 2
+ ❯ tests/data/R3b-body-boundaries.test.ts:41:22
+     39|   const bodyHashes = digestCalls.mock.calls.filter(([value]) => value …
+     40|   expect(bodyHashes).toBeGreaterThanOrEqual(1);
+     41|   expect(bodyHashes).toBeLessThanOrEqual(2);
+       |                      ^
+     42| });
+     43|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/data/R3b-body-boundaries.test.ts > rejects a valid body row stored or returned under a different content key
+AssertionError: expected { status: 'ready', value: { …(2) } } to match object { status: 'rejected', code: 'corrupt' }
+(3 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "corrupt",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/data/R3b-body-boundaries.test.ts:64:53
+     62|   const store = new RawArtifactBodyStore(rows);
+     63|   expect(await store.read(requested)).toMatchObject({ status: 'rejecte…
+     64|   expect(await store.put(put('requested content'))).toMatchObject({ st…
+       |                                                     ^
+     65| });
+     66|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/data/R3b-body-boundaries.test.ts > rejects a row that claims two conflicting owner authorities
+AssertionError: expected { status: 'ready', value: { …(4) } } to match object { status: 'rejected', code: 'corrupt' }
+(5 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "corrupt",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/data/R3b-body-boundaries.test.ts:76:33
+     74|   };
+     75|   const store = new RawArtifactBodyStore(rows);
+     76|   expect(await store.read(ref)).toMatchObject({ status: 'rejected', co…
+       |                                 ^
+     77| });
+     78|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/data/R3b-body-boundaries.test.ts > closes a newly opened SQLite connection when the existing artifacts schema cannot be prepared
+AssertionError: expected "close" to be called 1 times, but got 0 times
+ ❯ tests/data/R3b-body-boundaries.test.ts:88:17
+     86|   const close = vi.spyOn(DatabaseSync.prototype, 'close');
+     87|   expect(() => createSqliteRawArtifactStore(path)).toThrow();
+     88|   expect(close).toHaveBeenCalledTimes(1);
+       |                 ^
+     89|   close.mockRestore();
+     90|   // Initialization failure must not delete or rebuild the user's exis…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed (4)
+   Start at  07:54:27
+   Duration  151ms (transform 44ms, setup 0ms, import 59ms, tests 9ms, environment 0ms)
+

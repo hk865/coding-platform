@@ -1,0 +1,84 @@
+{
+  "reviewedAt": "2026-09-26T16:58:41.338722+00:00",
+  "status": "final STOP; browser-reported duplicate rendering repaired; original fixed checks passed; awaiting root narrow browser recheck/import",
+  "session": "session-a49e4c5d-eb9c-402e-8e43-1e1dd8a2d05b",
+  "lane": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r6-graph-history-consumer-implementation-20260927",
+  "finalAttempt": "attempt-1790441790714824798",
+  "files": [
+    {
+      "path": "coding-platform/next/src/ui/main.ts",
+      "baseline": "f236a568ef456553d4715a23b4ad737da0fe2f5486bfdfbe1ae4d3261a1f5f47",
+      "beforeBrowserRepair": "073d020b128998c89c156dd16e4065ad255b1987b318dd0857f9afe0efbfaccc",
+      "final": "cd9a5d3154a7896f7b9b6e9882dbad69ea9384cc5468565c8a2a41b8464aa874",
+      "added": 351,
+      "deleted": 66,
+      "net": 285
+    },
+    {
+      "path": "coding-platform/next/src/ui/views.ts",
+      "baseline": "ad27a58b243f949d3faf83d97ffd1b297a7ef1c41a0622ec90e41fd888005b20",
+      "beforeBrowserRepair": "2c846565e7aae6d61cc6bfc73495adb56c7ea4a18e22e09254a0c4f6d69fcbb8",
+      "final": "2c846565e7aae6d61cc6bfc73495adb56c7ea4a18e22e09254a0c4f6d69fcbb8",
+      "added": 47,
+      "deleted": 16,
+      "net": 31
+    }
+  ],
+  "totalNet": 316,
+  "checks": [
+    {
+      "check": "next-r6-host",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-browser-repair-tests.log",
+      "sha256": "046ee8ba3aef4910d6fcf2ad0764213abd8de08f974af7d150ec415d6088b662"
+    },
+    {
+      "check": "next-types",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-browser-repair-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "next-ui-types",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-browser-repair-ui-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "physical original build",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-browser-repair-build.log",
+      "sha256": "26a254e69dbc17ca3d6741980dba67159aa489d2b2746af21c7776ea18716c8d"
+    }
+  ],
+  "audit": {
+    "changed": [
+      "coding-platform/next/src/ui/main.ts",
+      "coding-platform/next/src/ui/views.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "auditPath": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-browser-repair-audit.json",
+  "auditSha256": "e6d67ec872ed0d5b5ce74bdd7b9947bceac9377c6edb1ac31bcc61ebc91b0d5d",
+  "frozenReadOnlyHashesMatched": {
+    "coding-platform/next/src/app/core-http-types.ts": "f17fb3c80077b99cabe3ea209ff16e0536abb09a81edf12aa1dcf335ec422264",
+    "coding-platform/next/src/app/core-routes.ts": "17c77d3525f76773be9794f60a98b8508fe2f223b6b57ca9dc12150d4c9070a9",
+    "coding-platform/next/tests/app/R6-host.test.ts": "922b8024351387450bd98f635a20610976b1e2d5b514a20f1e3bb389342d6032",
+    "coding-platform/next/tests/app/R6-workbench.test.ts": "0c9d3738b6d21aba5f40ebc45d656987a6defb2098c7eecfb14021f1084ecac5",
+    "coding-platform/next/src/app/host.ts": "c1638768eb6a92ab4d29e37a270e09e176b269b1888d33d8f06e96d3a87dced0",
+    "coding-platform/next/src/composition/create-platform.ts": "9d5be391be290d065be762f733acd44a91e7481ed3643b6cc61698db5c1297aa"
+  },
+  "diffPath": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-browser-repair.diff",
+  "diffSha256": "04c5a35979a3ab33cff45fb8d18a1033bf377200e18164b351d43f44dc7dca53",
+  "physicalNextRoot": "/tmp/r6-graph-history-review-gs95ezwq/next",
+  "physicalSourceHashesMatch": true,
+  "repair": "Only removed duplicate renderSessionHistory call and dead import from main.renderHistoryTab; existing timeline and full raw details retained. views unchanged.",
+  "priorReview": {
+    "path": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-consumer-implementation-review.json",
+    "sha256": "8c395f3c82c9b872b839ad6dc4c251df733ec990c2789a3dbd8987f39a04f99c"
+  },
+  "rootBrowserScope": "Root already passed Task→two Runs→original same Session and full Session 1–10 then 11 plus independent page persistence. Only duplicate display awaits narrow recheck.",
+  "noModelOrFixtureRun": true,
+  "noImportByReviewer": true
+}

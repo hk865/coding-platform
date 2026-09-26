@@ -1,0 +1,17 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/tasks/execution-entry-contracts.ts",
+    "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts",
+    "coding-platform/next/src/core/work-graph/tasks/model-call-service.ts",
+    "coding-platform/next/tests/helpers/B2-execution-fixture.ts",
+    "coding-platform/next/tests/work-graph/B2-material-admission.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

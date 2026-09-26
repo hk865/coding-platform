@@ -1,0 +1,527 @@
+[
+  {
+    "source": "src/contracts/active-agent.ts",
+    "target": "next/src/contracts/active-agent.ts",
+    "sha256": "d4b5a860f78d9349ee6fba1d80ad3fccf557c6163da423fc7c2204e1f7216d23"
+  },
+  {
+    "source": "src/contracts/alternative-report.ts",
+    "target": "next/src/contracts/alternative-report.ts",
+    "sha256": "b04afe99bd9a0b0044c7e1863e276033b0386e56f4e7bf29624a0d0c0e86d445"
+  },
+  {
+    "source": "src/contracts/architecture-evolution-policy.ts",
+    "target": "next/src/contracts/architecture-evolution-policy.ts",
+    "sha256": "b3521069069ab5c684887bf5cef517e5ea533e6ebc7fadbb2e2521233b3fed3f"
+  },
+  {
+    "source": "src/contracts/architecture-inspection.ts",
+    "target": "next/src/contracts/architecture-inspection.ts",
+    "sha256": "3c012e64af6056c831a4666ef118bc7a4c74daab7cc302cda5a889f9db88d377"
+  },
+  {
+    "source": "src/contracts/architecture-review.ts",
+    "target": "next/src/contracts/architecture-review.ts",
+    "sha256": "017e13f155262c6624b311bc338ff4d0e356112f203ed56d6672059d1166dc86"
+  },
+  {
+    "source": "src/contracts/architecture-source.ts",
+    "target": "next/src/contracts/architecture-source.ts",
+    "sha256": "832183a9d737ef07b2b71869fe85f138bef6ae59233330e09a0ae673207ab0e2"
+  },
+  {
+    "source": "src/contracts/artifact.ts",
+    "target": "next/src/contracts/artifact.ts",
+    "sha256": "5f2071b29d6e01dfc6f9696c237b1ffafb2bf8564fb3316ca7c55a9239d629d9"
+  },
+  {
+    "source": "src/contracts/baseline-evolution.ts",
+    "target": "next/src/contracts/baseline-evolution.ts",
+    "sha256": "451bc0bb2269e4973213371f3e6ea907d6891bc34aefb1375f7edd7ce37b0a8d"
+  },
+  {
+    "source": "src/contracts/bootstrap.ts",
+    "target": "next/src/contracts/bootstrap.ts",
+    "sha256": "84114db0f2f4140baff5342f1b0f5abfa3768d9ccf3122712b0a7f5f63e0f6c0"
+  },
+  {
+    "source": "src/contracts/command-event.ts",
+    "target": "next/src/contracts/command-event.ts",
+    "sha256": "4e92ed29a644e0eea20b0989fa4b75284e8a8cd4ab9c27349f9d3f317bf68f00"
+  },
+  {
+    "source": "src/contracts/completed-work-context.ts",
+    "target": "next/src/contracts/completed-work-context.ts",
+    "sha256": "23ff19b55c3c3d4f1e448eef233072918e98dd36a2719fd8c27bb2d863dc6715"
+  },
+  {
+    "source": "src/contracts/console-views.ts",
+    "target": "next/src/contracts/console-views.ts",
+    "sha256": "64db8bf14e9aa5491a2ff7130f72d648a4c33a382f8938524147c1bfc5d6fc87"
+  },
+  {
+    "source": "src/contracts/context-continuity.ts",
+    "target": "next/src/contracts/context-continuity.ts",
+    "sha256": "689e9e26c08072cdad2022dc373b767a517baeaf5a2278b7dccc1d76800123c6"
+  },
+  {
+    "source": "src/contracts/control-intent.ts",
+    "target": "next/src/contracts/control-intent.ts",
+    "sha256": "f018946b1ad7a4db4545e7e0a0a093af010333b372f07613e8da977f038f73de"
+  },
+  {
+    "source": "src/contracts/coordination.ts",
+    "target": "next/src/contracts/coordination.ts",
+    "sha256": "ca31ca5559ae38e81b156c9f8e3b45ee7d9c6cdb6765864cf34616dfcc4f32e3"
+  },
+  {
+    "source": "src/contracts/core/call-context.ts",
+    "target": "next/src/contracts/core/call-context.ts",
+    "sha256": "d18583faa322247f0390d982ddbb80537590dcd9fa58828ed2f8082c32231419"
+  },
+  {
+    "source": "src/contracts/core/identity.ts",
+    "target": "next/src/contracts/core/identity.ts",
+    "sha256": "7f6d4d2db416fd9a92bca76cc0adcc23d8be40d0e3069d939b38e9c50eec64d9"
+  },
+  {
+    "source": "src/contracts/core/results.ts",
+    "target": "next/src/contracts/core/results.ts",
+    "sha256": "33d87441ec08aaa63abd7d382be11b577f5ba730f80a61f5b734741b0e0ddf4e"
+  },
+  {
+    "source": "src/contracts/core/source.ts",
+    "target": "next/src/contracts/core/source.ts",
+    "sha256": "e46f206f85830ee6b9d603e26cdc3657a3f767b7f81be2ee051a7ffa8529f996"
+  },
+  {
+    "source": "src/contracts/dispatch.ts",
+    "target": "next/src/contracts/dispatch.ts",
+    "sha256": "f854d4e039b001e136bb394dccc23f62e68e458cbe5276776fc374f80482900e"
+  },
+  {
+    "source": "src/contracts/events.ts",
+    "target": "next/src/contracts/events.ts",
+    "sha256": "4aae23d3e47d7d25df7ec4e9e66fccdfd8c52182a36b07f86aacb473af7f2dea"
+  },
+  {
+    "source": "src/contracts/evidence.ts",
+    "target": "next/src/contracts/evidence.ts",
+    "sha256": "b8d3395bd3867f900d7e2e3765581a16ced31d40546478b5cb34dc93667c7883"
+  },
+  {
+    "source": "src/contracts/execution-feedback.ts",
+    "target": "next/src/contracts/execution-feedback.ts",
+    "sha256": "6a9019e3b1c8b18a66e6ffc925d4844ab39bf9abadcdf6a6a569bd2af2e59cc2"
+  },
+  {
+    "source": "src/contracts/exploration.ts",
+    "target": "next/src/contracts/exploration.ts",
+    "sha256": "4f0a1608617f29baed7c411106c03ed1d3ebd2f6f813592c82437f1d6a9e7a71"
+  },
+  {
+    "source": "src/contracts/fingerprint.ts",
+    "target": "next/src/contracts/fingerprint.ts",
+    "sha256": "1f4c7efc948e96fdc2b4cc02a39a11d43c3f2436916bd9f90a8d30c0bab3121e"
+  },
+  {
+    "source": "src/contracts/goal-change.ts",
+    "target": "next/src/contracts/goal-change.ts",
+    "sha256": "1ebfc1501cea2fa6098d5a78cf0547a166d097130b9122784de7dc1f6ee05958"
+  },
+  {
+    "source": "src/contracts/goal-phase-view.ts",
+    "target": "next/src/contracts/goal-phase-view.ts",
+    "sha256": "166b5edf87374702889e3d0e750072f01ccad057e09645d1cbda4a0f8eea60cf"
+  },
+  {
+    "source": "src/contracts/goal-phase.ts",
+    "target": "next/src/contracts/goal-phase.ts",
+    "sha256": "0e00d3cb9dc46074097a5315d2ee373db98c17e23dd5283e07da308f591105c5"
+  },
+  {
+    "source": "src/contracts/goal-view.ts",
+    "target": "next/src/contracts/goal-view.ts",
+    "sha256": "434b15dee265f6e9b2a87cf76d09bd3ea4bb1e0b9b951cff355fd833fe112e6e"
+  },
+  {
+    "source": "src/contracts/governance.ts",
+    "target": "next/src/contracts/governance.ts",
+    "sha256": "00560a0e614a306f98799ca01443aa47e04cd38f1c66277c5ec68e58d89dd521"
+  },
+  {
+    "source": "src/contracts/handoff-view.ts",
+    "target": "next/src/contracts/handoff-view.ts",
+    "sha256": "cc3e585862d24b63005b44f562963db823744e4d8e62a2dcf806890755cb4015"
+  },
+  {
+    "source": "src/contracts/handoff.ts",
+    "target": "next/src/contracts/handoff.ts",
+    "sha256": "ca12c082069f926905619eab2594f340fc8ae12058f1b96780f488e155c0dbbc"
+  },
+  {
+    "source": "src/contracts/history/query-response-guides-v1-v9.ts",
+    "target": "next/src/contracts/history/query-response-guides-v1-v9.ts",
+    "sha256": "6d8c1866d7e05cbb004cc94304b019f207c285dcb29f02b13fdda5e155d073c1"
+  },
+  {
+    "source": "src/contracts/human-role-collaboration.ts",
+    "target": "next/src/contracts/human-role-collaboration.ts",
+    "sha256": "5debbc1652201b4c7c48035a5bb2f6bcde19d596d08f8c14d72451d19baf7ecc"
+  },
+  {
+    "source": "src/contracts/initial-planning.ts",
+    "target": "next/src/contracts/initial-planning.ts",
+    "sha256": "107da04c728e84a9d95a91fd1f5eb44258b2ad97578140f85a7b75bd141d284c"
+  },
+  {
+    "source": "src/contracts/integration.ts",
+    "target": "next/src/contracts/integration.ts",
+    "sha256": "4b528fb8a6bc91120cdf19d78b5bad35b8711df716b83346e9f1561816de3219"
+  },
+  {
+    "source": "src/contracts/ledger.ts",
+    "target": "next/src/contracts/ledger.ts",
+    "sha256": "4ebc0ee280685dd7b274b05670e486a21d5cc5796a722cf7c34185b8dd4fcf8b"
+  },
+  {
+    "source": "src/contracts/material-access.ts",
+    "target": "next/src/contracts/material-access.ts",
+    "sha256": "277e5146b64931a17c482d7cb4bb5719378cb7ebf6c75dfb09212441e44f2817"
+  },
+  {
+    "source": "src/contracts/memory.ts",
+    "target": "next/src/contracts/memory.ts",
+    "sha256": "d4116102fe19ea6355851d0919ea77b2cab30c069aec3fa23688a30290bd4232"
+  },
+  {
+    "source": "src/contracts/opaque.ts",
+    "target": "next/src/contracts/opaque.ts",
+    "sha256": "2b598e7e0ac63bef98f8ea4d183716708673592b04608f4d550ed7256ddabd40"
+  },
+  {
+    "source": "src/contracts/patch.ts",
+    "target": "next/src/contracts/patch.ts",
+    "sha256": "fcfae1358c069262a989e62586c197f462d82e1895e61677103b2da9616cc674"
+  },
+  {
+    "source": "src/contracts/plan-view.ts",
+    "target": "next/src/contracts/plan-view.ts",
+    "sha256": "a1f485dcccdf393b75321367a2a2d5262ca566c8c001599f2626e7e6eb54bdfd"
+  },
+  {
+    "source": "src/contracts/plan.ts",
+    "target": "next/src/contracts/plan.ts",
+    "sha256": "7bce474ee01676c1bb81b50c6109cfe21e09689e5ef8e69b6bf8186b8f632b2a"
+  },
+  {
+    "source": "src/contracts/planning.ts",
+    "target": "next/src/contracts/planning.ts",
+    "sha256": "efd6520f7156f8ea6f0104abddeacc7d6b7476319a243f05da19d41ea3a1d6ec"
+  },
+  {
+    "source": "src/contracts/query-answer-presentation.ts",
+    "target": "next/src/contracts/query-answer-presentation.ts",
+    "sha256": "7a88d8e631705ae5e6cf76ebd42fa25eddb5185dd66dab355f4bdc89e512a5f9"
+  },
+  {
+    "source": "src/contracts/query-execution-context.ts",
+    "target": "next/src/contracts/query-execution-context.ts",
+    "sha256": "acf5f675a2bc5d10b412f29cd2c42e486c7212aab8b5e878b7b4146c52457d5b"
+  },
+  {
+    "source": "src/contracts/query-fact-vocabulary.ts",
+    "target": "next/src/contracts/query-fact-vocabulary.ts",
+    "sha256": "29820bcc0f19a1e28737179c0bfac7a22dc040672e4bba8e01f0ce5a8a076403"
+  },
+  {
+    "source": "src/contracts/query-job.ts",
+    "target": "next/src/contracts/query-job.ts",
+    "sha256": "efeaba61413de8652f9b4cda19cb85e5b6f44e328bcf2c368a2f0a742b04d59b"
+  },
+  {
+    "source": "src/contracts/query-quality-facts.ts",
+    "target": "next/src/contracts/query-quality-facts.ts",
+    "sha256": "7b171e6067dedcb7cfbe56faf6f94880bb61d0e73444f8049d5dee8f69af5763"
+  },
+  {
+    "source": "src/contracts/reduction.ts",
+    "target": "next/src/contracts/reduction.ts",
+    "sha256": "a86850bcce25083ea07ac521201032535cc737b9659f36daab3f413458a16b80"
+  },
+  {
+    "source": "src/contracts/remediation.ts",
+    "target": "next/src/contracts/remediation.ts",
+    "sha256": "b2de2d7261af64f75fcbd9dc64f1f614936ede9361d12699a62e205f7b722540"
+  },
+  {
+    "source": "src/contracts/reviewer-context.ts",
+    "target": "next/src/contracts/reviewer-context.ts",
+    "sha256": "c4ea1f2c70e018b6bb4125a2030067d9185bbf8ce94113bf19af0d7d50aa2dbe"
+  },
+  {
+    "source": "src/contracts/reviewer-verification.ts",
+    "target": "next/src/contracts/reviewer-verification.ts",
+    "sha256": "3f2d2d153365b383bc6f2761da45cd2bc1a0e0f7f9b96866cba14b5fae9b65b3"
+  },
+  {
+    "source": "src/contracts/reviewer-work.ts",
+    "target": "next/src/contracts/reviewer-work.ts",
+    "sha256": "3920cb3b5eeb0152bc84dce8d377dced5733d0a6246bae53a3b55801311c4977"
+  },
+  {
+    "source": "src/contracts/rework/issues.ts",
+    "target": "next/src/contracts/rework/issues.ts",
+    "sha256": "6fe46c707c426fc4fcb0cf64b579e4149f21874da7b2a2dc983ed50cee471ea8"
+  },
+  {
+    "source": "src/contracts/role-spec.ts",
+    "target": "next/src/contracts/role-spec.ts",
+    "sha256": "1378da13a5e5b7a6e61c4336061c53269aafa91afefffee4b3fc80f9c5f10640"
+  },
+  {
+    "source": "src/contracts/run-output-materials.ts",
+    "target": "next/src/contracts/run-output-materials.ts",
+    "sha256": "9c2a4717c6c7385a799533ca9a06dc8855058f1f0215de334c9425f311028987"
+  },
+  {
+    "source": "src/contracts/runtime-budget.ts",
+    "target": "next/src/contracts/runtime-budget.ts",
+    "sha256": "e1fc6e99bba9d50654a6be9a7cfd898e2eb660d09c483ca3f921075b86380cd3"
+  },
+  {
+    "source": "src/contracts/runtime-observations.ts",
+    "target": "next/src/contracts/runtime-observations.ts",
+    "sha256": "59fc6dab9a3492832868a80d920173c941c069c6e6562fa06eb1bd87b8a1acf6"
+  },
+  {
+    "source": "src/contracts/runtime-preparation.ts",
+    "target": "next/src/contracts/runtime-preparation.ts",
+    "sha256": "a2e64ed469e1cad9a2663246e08953686d4c4f2cd7c0b28a74c98ecb99824b6d"
+  },
+  {
+    "source": "src/contracts/task-envelope.ts",
+    "target": "next/src/contracts/task-envelope.ts",
+    "sha256": "8a974b4d699452745c9b4c1f08b623bacf986d0f0d4110c408f3f7f57da363bf"
+  },
+  {
+    "source": "src/contracts/validation/common.ts",
+    "target": "next/src/contracts/validation/common.ts",
+    "sha256": "3d91981359eb0b7109c6495d0e63479e0d0ac2a2d9b3db9e0dc062ae5d6843c1"
+  },
+  {
+    "source": "src/contracts/validation/goal.ts",
+    "target": "next/src/contracts/validation/goal.ts",
+    "sha256": "612a0138d55b7f809855b217aaaafec970e0a78b9985c7e65d35ee5a5abe7c52"
+  },
+  {
+    "source": "src/contracts/validation/identity.ts",
+    "target": "next/src/contracts/validation/identity.ts",
+    "sha256": "7b8ecfd262a3f4a5567d3be04f6875ae361a945391d685324be79192f36d61f5"
+  },
+  {
+    "source": "src/contracts/verification-context.ts",
+    "target": "next/src/contracts/verification-context.ts",
+    "sha256": "58085d8b8c2a7d31351a40fb110e3b6cd1d5936c2cfe5ced7ee97e85a265a61e"
+  },
+  {
+    "source": "src/contracts/verification-import.ts",
+    "target": "next/src/contracts/verification-import.ts",
+    "sha256": "b042bd711fbc918e23390c3b3ff76f1f6e2f892c6645fc98a85a0e5f27af5e11"
+  },
+  {
+    "source": "src/contracts/verification-round.ts",
+    "target": "next/src/contracts/verification-round.ts",
+    "sha256": "8b2d8fed3918cd60c97fb44d617f4944f46abd7a5eec4240d0455487e9cee13f"
+  },
+  {
+    "source": "src/contracts/verification-service.ts",
+    "target": "next/src/contracts/verification-service.ts",
+    "sha256": "fce981ebb7c7afbeae75f57c380286a3947d6365c8097508717989eb8c6b5314"
+  },
+  {
+    "source": "src/contracts/verification.ts",
+    "target": "next/src/contracts/verification.ts",
+    "sha256": "c97b5a6096df3f42513fdad9e645bf8c52a432f7d1e76f91972e1a641f8bb33e"
+  },
+  {
+    "source": "src/contracts/workspace-lease.ts",
+    "target": "next/src/contracts/workspace-lease.ts",
+    "sha256": "920d693114a8a2a3c07333372a497aa4b7da63e26eb39ef6a4d46007580be99a"
+  },
+  {
+    "source": "src/contracts/workspace-registration.ts",
+    "target": "next/src/contracts/workspace-registration.ts",
+    "sha256": "189e05244e9e7586b606ef91c050082f36a8b7c843b78184414f74f29d754129"
+  },
+  {
+    "source": "src/contracts/workspace-views.ts",
+    "target": "next/src/contracts/workspace-views.ts",
+    "sha256": "c1597620af5494241e4bce3fc854701fa0a616d894720f017f83b20037f64527"
+  },
+  {
+    "source": "src/core/record-store/body-codec.ts",
+    "target": "next/src/core/record-store/body-codec.ts",
+    "sha256": "f2460dc79a1bfe4a4559a46e798ca4b22e6e4f7f11e714c9adc80c69be902870"
+  },
+  {
+    "source": "src/core/record-store/body-ports.ts",
+    "target": "next/src/core/record-store/body-ports.ts",
+    "sha256": "024d80dab496e7347c7b65078980080a2f6d190107e886c7f9edc587814d9b0a"
+  },
+  {
+    "source": "src/core/record-store/body-store.ts",
+    "target": "next/src/core/record-store/body-store.ts",
+    "sha256": "8fb298ac994ab23925ceb781e55a291dcab8c17f2b380955f84f01cbcce4b1b8"
+  },
+  {
+    "source": "src/core/record-store/guarded-revision.ts",
+    "target": "next/src/core/record-store/guarded-revision.ts",
+    "sha256": "73d55dc2880e79597b465298cacb7b53b55ba58d38efc5efdbb1f24bc68d5864"
+  },
+  {
+    "source": "src/core/record-store/in-memory-record-store.ts",
+    "target": "next/src/core/record-store/in-memory-record-store.ts",
+    "sha256": "e30f9daf584b78908348ff48da42b4fad6534815a7fa9a9063aa9101962bdc1f"
+  },
+  {
+    "source": "src/core/record-store/migrations.ts",
+    "target": "next/src/core/record-store/migrations.ts",
+    "sha256": "1c4d10dc2c28e96c609d17fa4f20a3f9ec1209a127eb305c26978ef51d656e7d"
+  },
+  {
+    "source": "src/core/record-store/ports.ts",
+    "target": "next/src/core/record-store/ports.ts",
+    "sha256": "ae2611fcaf1928b79d24dca2a40c3c946da2201a1ddaf259f173e12f1a21d2a9"
+  },
+  {
+    "source": "src/core/record-store/record-codec.ts",
+    "target": "next/src/core/record-store/record-codec.ts",
+    "sha256": "849b9d0dc690b2373cb36802ecd23f69ac4bbf0ce935867a774182d345b7079e"
+  },
+  {
+    "source": "src/core/record-store/sqlite-body-store.ts",
+    "target": "next/src/core/record-store/sqlite-body-store.ts",
+    "sha256": "23f6a03449c057c01d1bfcbb9fb69fb00326a2dda2b7caeb92d8881a91ea62c7"
+  },
+  {
+    "source": "src/core/record-store/sqlite-record-store.ts",
+    "target": "next/src/core/record-store/sqlite-record-store.ts",
+    "sha256": "a81efed995eefe251b8ad89881331f6e0f4ed34c5712845554e8007ab58f62a6"
+  },
+  {
+    "source": "src/core/work-graph/materials/applicability.ts",
+    "target": "next/src/core/work-graph/materials/applicability.ts",
+    "sha256": "7b009d5178c93c29065b27b7781531b62fc1377cf8227da6f9274b29e770533b"
+  },
+  {
+    "source": "src/core/work-graph/materials/contracts.ts",
+    "target": "next/src/core/work-graph/materials/contracts.ts",
+    "sha256": "19afca26b697d657505982115465ace92a6312ca7c724dec1da204e3bcdbf619"
+  },
+  {
+    "source": "src/core/work-graph/materials/material-service.ts",
+    "target": "next/src/core/work-graph/materials/material-service.ts",
+    "sha256": "10e5ed77325eb25b80f86fcf9ccedacefa94d2a0b1dcf845497fad60fdef66d2"
+  },
+  {
+    "source": "src/core/work-graph/persistence/commit-compiler.ts",
+    "target": "next/src/core/work-graph/persistence/commit-compiler.ts",
+    "sha256": "9bb63fb8964df299461bf0c2c8a131d7673623d2dd2047f11aa1f6177bc36917"
+  },
+  {
+    "source": "src/core/work-graph/persistence/graph-repository.ts",
+    "target": "next/src/core/work-graph/persistence/graph-repository.ts",
+    "sha256": "81bae90108fa7d97983ba81aa5652f161f0cc6449a88f7d99d7ee48c620d2b13"
+  },
+  {
+    "source": "src/core/work-graph/persistence/record-codecs.ts",
+    "target": "next/src/core/work-graph/persistence/record-codecs.ts",
+    "sha256": "8b4547d051e046fb35f78704827d42cdceded1cbbb65eb8d3e9a51d538d9ba4e"
+  },
+  {
+    "source": "src/core/work-graph/tasks/contracts.ts",
+    "target": "next/src/core/work-graph/tasks/contracts.ts",
+    "sha256": "d9d1abd4f9379520d0f2bc0de7c5b415fbefe608e491cb0bb15aef78842ad1c8"
+  },
+  {
+    "source": "src/core/work-graph/tasks/task-service.ts",
+    "target": "next/src/core/work-graph/tasks/task-service.ts",
+    "sha256": "53cc0cd5953b55c93d93c72683411bf26cbb8813ffc3faa4babddc563d18887c"
+  },
+  {
+    "source": "src/core/workspace/access.ts",
+    "target": "next/src/core/workspace/access.ts",
+    "sha256": "aa2fcd2a81f8b2865ded272caca556c33342d1db0e7bfc4765105afbe3a842d2"
+  },
+  {
+    "source": "src/core/workspace/architecture-source.ts",
+    "target": "next/src/core/workspace/architecture-source.ts",
+    "sha256": "a593e2ddded1fc139389ecbaaa0ecfb3af366138168219ce2a5d1250b858ee19"
+  },
+  {
+    "source": "src/core/workspace/capture.ts",
+    "target": "next/src/core/workspace/capture.ts",
+    "sha256": "66b09dee4d9066431daa70f7be0b9146a8e0a4b2d8194a587698237c6b107be5"
+  },
+  {
+    "source": "src/core/workspace/denied-prefixes.ts",
+    "target": "next/src/core/workspace/denied-prefixes.ts",
+    "sha256": "b10cd7055fe7f75327e9a7cd139c491314a56ff5b786f52504a4cf5ecdd7abda"
+  },
+  {
+    "source": "src/core/workspace/ports.ts",
+    "target": "next/src/core/workspace/ports.ts",
+    "sha256": "c7565458e0a6eb9abc2980584d3f93a78f912d9beb34cd83bc88024655b7bf3c"
+  },
+  {
+    "source": "src/core/workspace/project-source-index.ts",
+    "target": "next/src/core/workspace/project-source-index.ts",
+    "sha256": "5a27d0c5176728e7e0dd5f1926b3370659c0d4870f7f90d468644a3e2968f2fb"
+  },
+  {
+    "source": "src/core/workspace/project-source-snapshot.ts",
+    "target": "next/src/core/workspace/project-source-snapshot.ts",
+    "sha256": "04d0000ea2c764371477e38834e01597f711f48c78a18f68baeeb4f61d9f04a0"
+  },
+  {
+    "source": "src/core/workspace/source-applicability.ts",
+    "target": "next/src/core/workspace/source-applicability.ts",
+    "sha256": "cabf9a6a28a636a196c803c125d2d1bc701c6868799cb07cb83aacce157ea5fe"
+  },
+  {
+    "source": "src/core/workspace/source-identity.ts",
+    "target": "next/src/core/workspace/source-identity.ts",
+    "sha256": "869790fa627c64643f509f7b7d9690beb2c6977d61436f5f64803087329a7d4d"
+  },
+  {
+    "source": "src/core/workspace/source-index.ts",
+    "target": "next/src/core/workspace/source-index.ts",
+    "sha256": "20c0d86941afce8e7d143197b34ddfc6f6f7ad78a95a3dc30ade9dc7be0aa635"
+  },
+  {
+    "source": "src/core/workspace/source-query.ts",
+    "target": "next/src/core/workspace/source-query.ts",
+    "sha256": "27522ad88c234e23b8fbadd3b5efa2a3c3ecb661be6effb1152f83a8b11b30c8"
+  },
+  {
+    "source": "src/core/workspace/text-source-snapshot.ts",
+    "target": "next/src/core/workspace/text-source-snapshot.ts",
+    "sha256": "e8c4797153038fcb09e385c9864963db0ec1829c4bd38309b39f60107a5918b9"
+  },
+  {
+    "source": "src/core/workspace/typescript-source-query.ts",
+    "target": "next/src/core/workspace/typescript-source-query.ts",
+    "sha256": "a2ba6fc3439622c0f47c092a0a4fa560f3e083cbcd7fce12c602d51db5d1daae"
+  },
+  {
+    "source": "src/core/workspace/workspace-read.ts",
+    "target": "next/src/core/workspace/workspace-read.ts",
+    "sha256": "6682248242298aa7542f3f17bcade617bf52b1b08a32022fca4f3aea0dc64a54"
+  },
+  {
+    "source": "src/core/workspace/workspace-tools.ts",
+    "target": "next/src/core/workspace/workspace-tools.ts",
+    "sha256": "4bf578fc932fb0cfc5c1998d500000aa4505b5dcf95d0ba4e269d19aca63cfcb"
+  }
+]

@@ -1,0 +1,28 @@
+
+ RUN  v4.1.10 /tmp/coding-platform-next-i4Hi6C/next
+
+ ❯ tests/work-graph/W2-agent-whiteboard.test.ts (26 tests | 1 failed | 25 skipped) 91ms
+     × Host future-plan propose/apply is unchanged when delegatedWrites is configured 91ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/W2-agent-whiteboard.test.ts > W2 Host compatibility > Host future-plan propose/apply is unchanged when delegatedWrites is configured
+AssertionError: formal B2 entry rechecked the W2 Host grant: expected 4 to be greater than or equal to 6
+ ❯ createW2WhiteboardFixture tests/helpers/W2-whiteboard-fixture.ts:384:69
+    382|   const roleFacts = await roles.resolveRoleBindingFacts(ctxHost, { rol…
+    383|   expect(roleFacts.result, 'real verified absent matrix uses the exact…
+    384|   expect(host.calls, 'formal B2 entry rechecked the W2 Host grant').to…
+       |                                                                     ^
+    385|
+    386|   return {
+ ❯ make tests/work-graph/W2-agent-whiteboard.test.ts:39:19
+ ❯ tests/work-graph/W2-agent-whiteboard.test.ts:123:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 25 skipped (26)
+   Start at  00:21:45
+   Duration  1.19s (transform 818ms, setup 0ms, import 1.01s, tests 91ms, environment 0ms)
+

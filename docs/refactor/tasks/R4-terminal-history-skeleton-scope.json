@@ -1,0 +1,26 @@
+{
+  "writableFiles": [
+    "coding-platform/next/vendor/coding-agent/patches/core/ports/session_store/session-history.ts",
+    "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.js",
+    "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.js.map",
+    "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.d.ts",
+    "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.d.ts.map",
+    "coding-platform/next/vendor/coding-agent/patches/public-api.ts",
+    "coding-platform/next/vendor/coding-agent/dist/public-api.js",
+    "coding-platform/next/vendor/coding-agent/dist/public-api.js.map",
+    "coding-platform/next/vendor/coding-agent/dist/public-api.d.ts",
+    "coding-platform/next/vendor/coding-agent/dist/public-api.d.ts.map",
+    "coding-platform/next/scripts/build-kernel-patch.mjs",
+    "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+    "coding-platform/next/tests/kernel/R4-terminal-history.test.ts",
+    "coding-platform/next/tests/runtime/R4-control-runtime.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

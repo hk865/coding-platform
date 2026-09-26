@@ -1,0 +1,15 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/tasks/execution-entry-contracts.ts",
+    "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts",
+    "coding-platform/next/src/core/work-graph/tasks/model-call-service.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

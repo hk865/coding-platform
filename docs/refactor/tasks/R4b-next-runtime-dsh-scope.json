@@ -1,0 +1,14 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/agent-runtime/kernel-store-locator.ts",
+    "coding-platform/next/src/core/agent-runtime/session-operations.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

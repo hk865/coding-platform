@@ -1,0 +1,23 @@
+{
+  "date": "2026-09-25",
+  "scope": "A1 catalog/session links/lifecycle/target discovery",
+  "isolated": {
+    "exitCode": 0,
+    "testFiles": 75,
+    "passed": 719,
+    "failed": 0,
+    "typecheck": "passed",
+    "build": "passed",
+    "boundaries": "passed",
+    "kernelPatchReproduction": "passed",
+    "compiledEntry": "passed"
+  },
+  "protectedFiles": 8827,
+  "protectedChanges": 0,
+  "demo": {
+    "exitCode": 0,
+    "log": "demo.log",
+    "realSQLiteAndKernel": true,
+    "modelInvoked": false
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "platform-secretary",
+  "title": "Platform secretary",
+  "kind": "instruction",
+  "priority": 70,
+  "contentFile": "content.md"
+}

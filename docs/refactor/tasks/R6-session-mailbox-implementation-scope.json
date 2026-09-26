@@ -1,0 +1,16 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/app/core-http-types.ts",
+    "coding-platform/next/src/app/core-routes.ts",
+    "coding-platform/next/src/ui/main.ts",
+    "coding-platform/next/src/ui/views.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

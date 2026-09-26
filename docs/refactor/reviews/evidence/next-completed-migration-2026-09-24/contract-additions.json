@@ -1,0 +1,65 @@
+[
+  {
+    "file": "architecture-source.ts",
+    "declarations": [
+      "ArchitectureSourceCapturePort",
+      "architectureSourceDigest"
+    ]
+  },
+  {
+    "file": "verification-source.ts",
+    "declarations": [
+      "CandidateWorkspaceSourcePort"
+    ]
+  },
+  {
+    "file": "verification.ts",
+    "declarations": [
+      "CHANGE_SCOPE_MAX_FILES",
+      "ChangeScopeV1",
+      "VerificationIssue"
+    ]
+  },
+  {
+    "file": "verification-context.ts",
+    "declarations": [
+      "VerificationRoundSourcePort",
+      "VerificationRoundSourceResult",
+      "ReadonlyReadWitnessPort",
+      "ReadonlySourceRead",
+      "VerificationRoundSourceProof"
+    ]
+  },
+  {
+    "file": "verification-import.ts",
+    "declarations": [
+      "VerificationScope"
+    ]
+  },
+  {
+    "file": "reviewer-context.ts",
+    "declarations": [
+      "REVIEWER_MATERIAL_PAGE_MAX_BYTES",
+      "REVIEWER_SOURCE_MAX_LINES",
+      "ReviewerMaterialError",
+      "ReviewerSourceRequest",
+      "ReviewerSourcePage"
+    ]
+  },
+  {
+    "file": "role-material-channels.ts",
+    "declarations": [
+      "RoleSourceIndexPort",
+      "RoleSourceIndexRequestV1",
+      "RoleSourceIndexResultV1",
+      "RoleSourceIndexEntryV1",
+      "RoleSourceIndexExcerptV1"
+    ]
+  },
+  {
+    "file": "query-execution-context.ts",
+    "declarations": [
+      "QuerySourceRevisionPort"
+    ]
+  }
+]

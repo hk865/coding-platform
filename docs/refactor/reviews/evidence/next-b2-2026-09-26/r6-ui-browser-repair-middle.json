@@ -1,0 +1,15 @@
+{
+  "status": "three bounded display seams returned to original session; not imported",
+  "lane": "r6-ui-browser-repair-20260926",
+  "sessionId": "session-f29ed20e-9ece-44fc-83c8-89a14f6d52bb",
+  "firstFinal": "attempt-1790434343936347869/final.md",
+  "selfChecksAreNotIndependentAcceptance": true,
+  "findings": [
+    "Delayed graph selection stores old DOM but resolves current scope/tab after 260ms; normal fast tab/scope switch can cross selection identity. Prefer synchronous in-place detail/class update preserving SVG native dblclick target.",
+    "Outer app/root/workbench/scroll flex min-width constraints explicitly required in task remain absent.",
+    "Real task caption may exceed node frame; constrain unpinned caption and include full caption width when pinned."
+  ],
+  "promptSha256": "5b6e07413702fcdf115c990d0dfded057e95c38b98287051a2efbc951083f2db",
+  "frozenTestUnchanged": true,
+  "newTestCases": 0
+}

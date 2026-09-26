@@ -1,0 +1,9 @@
+
+ RUN  v4.1.10 /tmp/r6-graph-history-review-_bedkxwv/next
+
+
+ Test Files  2 passed (2)
+      Tests  22 passed (22)
+   Start at  00:45:31
+   Duration  7.12s (transform 927ms, setup 0ms, import 1.33s, tests 5.64s, environment 0ms)
+

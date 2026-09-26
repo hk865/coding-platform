@@ -1,0 +1,8 @@
+{
+  "changed": [
+    "coding-platform/next/src/core/work-graph/sessions/session-directory.ts",
+    "coding-platform/next/src/core/work-graph/sessions/session-record-codecs.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

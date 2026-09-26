@@ -1,0 +1,34 @@
+{
+  "amendedAt": "2026-09-26T14:16:22.330791+00:00",
+  "reason": "Explicit latest user correction: persistent original Session records are product data; default summaries/collapsed, complete original text/record on explicit expansion. Supersedes permanent filtering of saved reasoning/tool fields.",
+  "beforeHashes": {
+    "docs/refactor/tasks/R6-ui-layout-skeleton.md": "08d56ceb628cb0d16dcacfa4cf76d0939d013214fef63a89c598269880e24b81",
+    "docs/refactor/tasks/R6-ui-layout-implementation.md": "310ab2cb0c489ddf3d547036ff4d95946ebca5510e54b2b5511612fafd40798a",
+    "coding-platform/next/tests/app/R6-workbench.test.ts": "c627e975afa3abfc21094cdb8f341c8c6bcaf23e71ff80dc5726cc4d839577e7"
+  },
+  "afterHashes": {
+    "docs/refactor/tasks/R6-ui-layout-skeleton.md": "ef2cc8db0ebb8e05ca5425c06a6436a52935a18d13abd33dd3c74c5e9d28b709",
+    "docs/refactor/tasks/R6-ui-layout-implementation.md": "b7abb68f5cc85350a52aefd3650dc0d52317f06c46cd19aa0521445127b3c21f",
+    "coding-platform/next/tests/app/R6-workbench.test.ts": "2960b61e492980bb9718eef81253cc430e4a7baafa6733fe55d3eab4fae25f78"
+  },
+  "readOnlyLaneSnapshotBefore": {
+    "docs/refactor/tasks/R6-ui-layout-skeleton.md": "08d56ceb628cb0d16dcacfa4cf76d0939d013214fef63a89c598269880e24b81",
+    "docs/refactor/tasks/R6-ui-layout-implementation.md": "28bac3e12a276e158ba77b877c1dc7b55fa6835e834cfb8b849e40e9ead77647",
+    "coding-platform/next/tests/app/R6-workbench.test.ts": "c627e975afa3abfc21094cdb8f341c8c6bcaf23e71ff80dc5726cc4d839577e7"
+  },
+  "readOnlyLaneSnapshotAfter": {
+    "docs/refactor/tasks/R6-ui-layout-skeleton.md": "ef2cc8db0ebb8e05ca5425c06a6436a52935a18d13abd33dd3c74c5e9d28b709",
+    "docs/refactor/tasks/R6-ui-layout-implementation.md": "b7abb68f5cc85350a52aefd3650dc0d52317f06c46cd19aa0521445127b3c21f",
+    "coding-platform/next/tests/app/R6-workbench.test.ts": "2960b61e492980bb9718eef81253cc430e4a7baafa6733fe55d3eab4fae25f78"
+  },
+  "unchangedDshWritableFiles": [
+    "coding-platform/next/src/ui/main.ts",
+    "coding-platform/next/src/ui/views.ts",
+    "coding-platform/next/src/ui/styles.css",
+    "coding-platform/next/src/ui/index.html"
+  ],
+  "caseCountUnchanged": true,
+  "existingNineTestsUnchanged": true,
+  "newCaseModified": "Only the second of the two new display normal chains; previous immutable-test claim is superseded by this authorized amendment.",
+  "continuation": "Current DSH run cannot receive live input; preserve its four-file output, then continue same session with narrow correction after STOP."
+}

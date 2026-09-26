@@ -1,0 +1,84 @@
+{
+  "lane": "r6-host-workbench-skeleton-20260926",
+  "stage": "reviewed skeleton; implementation pending",
+  "files": {
+    "coding-platform/next/src/app/host.ts": {
+      "before": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+      "after": "a8855c920f26e942611c4b8423f1175091e64520a1f01d7c43c2dfe18bd1968f"
+    },
+    "coding-platform/next/src/app/server.ts": {
+      "before": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+      "after": "42477d7df72c5d135592aedea3e346f90aa77042b9b9b03346ae942699d55b93"
+    },
+    "coding-platform/next/src/app/main.ts": {
+      "before": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+      "after": "eb60c67cde28ce4aa2f4220fd350abff78845a0b7139fa210344d9c646c3ee33"
+    },
+    "coding-platform/next/src/app/core-call-context.ts": {
+      "before": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+      "after": "221bae223bb634d6275a2f00f4e15a7e0bd027d0e67f7080f90d0af2fdb22236"
+    },
+    "coding-platform/next/src/app/core-http-types.ts": {
+      "before": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+      "after": "fe9e45d07c551a2dd608f01fe91ff4c98adf58b2102a89a0da93d792d91216a9"
+    },
+    "coding-platform/next/src/app/core-routes.ts": {
+      "before": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+      "after": "b9faf7ef555f85504c549c0ca236fa9523079e30ccb773d6958857659efad74c"
+    },
+    "coding-platform/next/src/ui/main.ts": {
+      "before": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+      "after": "f21206fbf7508324ccd2ab60dd20ea81f2dfcc0f3848a0d219424901e7e2fcdc"
+    },
+    "coding-platform/next/src/ui/views.ts": {
+      "before": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+      "after": "f301b58641b1961f8c63c6c1f1b43e7b8cffca8d9bdd7b0a8740e7b03f4e4215"
+    },
+    "coding-platform/next/src/ui/index.html": {
+      "before": "941eeedad5be702b6a4bd513b043ebae7ebcd5b4c3ee4cba3d1245541fde7de9",
+      "after": "7190aea4973acad19f35943eaf9800ebc30e8cce69cb5aee54ca07d485bd4a98"
+    },
+    "coding-platform/next/src/ui/styles.css": {
+      "before": "b697daeed6d06400c344c4458cf6598cfb19bed2bd965d2c998a6c8e4bfb1a1d",
+      "after": "f00a04926b229c56e351a126ef087d1b4daa33f4218306230f07974cc69e8b05"
+    },
+    "coding-platform/next/tsconfig.ui.json": {
+      "before": "2f309f0892ae0abcfb2a12be9bb0bf5571be0d3f6cfa1abf96de1edfcfa4432c",
+      "after": "27eabc862e18b50225d364cea697423c4336bc81482994c43a10408905926dad"
+    },
+    "coding-platform/next/scripts/build-workbench.mjs": {
+      "before": "794ce58e326c723ea1f9205095118c2c24fa13fb763bc2bd615b5ca517047588",
+      "after": "2f90b72d80555768e248ddd3d491653cc1b040d46c0cef7125cb2c553a6080ad"
+    },
+    "coding-platform/next/tests/app/R6-host.test.ts": {
+      "before": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+      "after": "e2c193ba5d65679b96774fe1b616c2a71be3b837ccecfe8870853ebc96e20fb7"
+    },
+    "coding-platform/next/tests/app/R6-workbench.test.ts": {
+      "before": "13050d53b4397e9911adef0afd969b903e8786a888500695eb6ac24428e0ac02",
+      "after": "81de05b5de556859bcd757cb9b7d281715db5d709b703fb3e439cd596b9c05e9"
+    },
+    "coding-platform/next/package.json": {
+      "before": "01d81d13defe3441a2d79f963d6ac44039c9e18cd42d4530dbb8a1797ad4d7f0",
+      "after": "91a25ee1373840880a5a121256cf184a66d9db6dbaf3f9465fc3c3743db29973"
+    },
+    "coding-platform/next/tsconfig.json": {
+      "before": "2f65e4d3a69729ceeca0909fa52668f749eb968c30ca1fbadfc57d69a55956c5",
+      "after": "1c29ddc1068c82ae58fa5cdd786ea8679157dff74c8d47f14cb19a8efd1a0e8c"
+    },
+    "coding-platform/next/tsconfig.build.json": {
+      "before": "381d6ad4fe57e24cd4f433b208a2d4848f3125852978ed92e113b0b5c8e5916c",
+      "after": "a26c4b6d75334884c0b86bf4710581d23cefa29dda01df7e6ed6fd07246b3bdf"
+    },
+    "coding-platform/next/scripts/check-boundaries.mjs": {
+      "before": "41984eb8ccb364b212ed48d2193584581c18998d705ef663921798b38bf01f4a",
+      "after": "6bb376d82f7520718a8ed1f17545d949985ee49dc087b6c0f6ac002b1f11e165"
+    },
+    "coding-platform/next/scripts/verify-isolated.mjs": {
+      "before": "1ca7fc578451a2271b3b19eddc1937fb40e61d91b3a1bfd9e1f86543db00455a",
+      "after": "be2a572891b7d9e36b9fb57159d6dbce76132e902f38b1a28cbb796975673e83"
+    }
+  },
+  "outsideScope": [],
+  "mainUnchangedBeforeImport": true
+}

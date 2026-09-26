@@ -1,0 +1,6 @@
+{
+  "path": "coding-platform/next/tests/architecture/boundaries.test.ts",
+  "before": "9cc2928f9ff2a8d374dd9e35757ae2b5c9a30361bd3cab5f60393ad590792f43",
+  "after": "efd964cba2dea6bfb6c7566757b98fe08cd2baf8bee63a95be477be2e1834ace",
+  "reason": "Boundary fixture must physically copy the six now-registered W2 runtime skill assets under resources; keep every boundary assertion."
+}

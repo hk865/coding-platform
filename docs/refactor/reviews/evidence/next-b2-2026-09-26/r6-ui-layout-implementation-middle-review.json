@@ -1,0 +1,58 @@
+{
+  "lane": "r6-ui-layout-implementation-20260926",
+  "session": "session-cc32ca13-8b7b-443a-a8ca-3d86726c99d9",
+  "reviewedAt": "2026-09-26T14:20:33.484914+00:00",
+  "scopeAudit": {
+    "changed": [
+      "coding-platform/next/src/ui/index.html",
+      "coding-platform/next/src/ui/main.ts",
+      "coding-platform/next/src/ui/styles.css",
+      "coding-platform/next/src/ui/views.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "reviewedCandidateHashes": {
+    "coding-platform/next/src/ui/main.ts": "fb0e5d5c659a2a737537ec483721dfe6ea78cb6eecef75bc1ab90e01682cb6e3",
+    "coding-platform/next/src/ui/views.ts": "f58db2242adf1c8b381be2ddce90e5d751f0fdd6a84614edcc5e13ed4d63ac22",
+    "coding-platform/next/src/ui/styles.css": "c5179cf1c866a80ba46925016d9430c67e22b930cf9edb54469af9f4edebd642",
+    "coding-platform/next/src/ui/index.html": "79c79b498a8d549d857ce97f8a9bd725ab3c4ff71d913a52af8e4b7c46e58f2a"
+  },
+  "dshSelfReport": "19 tests and Node/UI types/build passed; not independently rerun because actual UI normal-path issues require repair first.",
+  "rawHistoryAmendment": "DSH adopted revised read-only test and implemented default-collapsed full saved record disclosure; latest user amendment explicitly confirmed in continuation.",
+  "findings": [
+    "Post-send draft clearing reselects active layout after await, so same-scope Session switch may clear another Session draft; history follow-up builder rereads global scope after await.",
+    "Open-file success path may attach to a changed active conversation or reuse stale file after rejected read; file identity lacks version; captured historical versions currently editable.",
+    "auxExpanded hides center containing the only restore control.",
+    "Task/architecture remain old lists rather than real node-line diagrams; detail handlers have no actual node affordances and target result must stay matched.",
+    "Per-tab scroll/selection/expansion requires identity-bound display state rather than one shared region scroll position."
+  ],
+  "repairPromptSha256": "447d36f6a26c8f22a9ba2a374d3307e803f5a4cb7d36ef6aa70267a0dc21a50f",
+  "repairStage": "Same-session four-file narrow continuation running; no extra tests, backend owner, browser run or scope expansion.",
+  "firstRepairStop": {
+    "at": "2026-09-26T14:27:31.445295+00:00",
+    "candidateHashes": {
+      "coding-platform/next/src/ui/main.ts": "1ee46ec13279f8a559816723555cecbc7f7d4e13f04159f8521526aaadab0724",
+      "coding-platform/next/src/ui/views.ts": "94abd47726716df6b6231179d05f1051b7c32b4cecd5d5f009779ee0ab93bb4f",
+      "coding-platform/next/src/ui/styles.css": "9c2124243ad535ecf8a19cb2b4aebacb25df5f69f09cb77cedebf1549c5ace70",
+      "coding-platform/next/src/ui/index.html": "79c79b498a8d549d857ce97f8a9bd725ab3c4ff71d913a52af8e4b7c46e58f2a"
+    },
+    "selfReport": "19 tests, Node/UI types and build pass; independent checks deferred to final artifact.",
+    "acceptedNormalPathFixes": [
+      "Original conversation draft key and explicit scope passed through post-await history read",
+      "Open-file status/path ready match; original layout; version identity; captured historical files read-only",
+      "Visible aux toolbar restore with Escape; per-tab selection/scroll/details display retention",
+      "Real Task/adopted/observed SVG nodes and connectors; actual detail data and matching related target"
+    ],
+    "remainingProductIssue": "Node click/dblclick/contextmenu still all open detail tab. User requires same-graph selection; per-graph-tab pinned full labels; only explicit open-new-tab action navigates."
+  },
+  "pinOnlyContinuation": {
+    "session": "session-cc32ca13-8b7b-443a-a8ca-3d86726c99d9",
+    "approvedByRoot": true,
+    "promptSha256": "771f5e0b8a9bc59bb1d812df2804ca455478987fa720912ece73d3cf9f15a232",
+    "scopeUnchanged": true,
+    "testUnchanged": true,
+    "stage": "stopped_reviewed_imported_browser_pending"
+  },
+  "finalEvidence": "r6-ui-layout-implementation-import.json"
+}

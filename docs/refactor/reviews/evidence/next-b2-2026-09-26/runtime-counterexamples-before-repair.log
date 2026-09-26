@@ -1,0 +1,133 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/runtime/B2-runtime-execution.test.ts (26 tests | 4 failed) 4122ms
+   × the actual builtin read checks the current Host path grant and never leaks forbidden bytes to the provider 40ms
+   × projects a wider current Host grant through the real Role ceiling before entering the Run 7ms
+   × a start replay after Host revocation only reconciles already genuine terminal history 45ms
+   × the same observer retries a failed genuine terminal commit without needing new Kernel records 42ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/runtime/B2-runtime-execution.test.ts > the actual builtin read checks the current Host path grant and never leaks forbidden bytes to the provider
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ tests/runtime/B2-runtime-execution.test.ts:441:31
+    439|   const started=await runtime.port.startRun(fx.ctx,{prepared:prepared.…
+    440|   expect(started.status).toBe('ready');
+    441|   expect(fx.scripted.calls()).toBe(2);
+       |                               ^
+    442|   expect(authorizedAfterModelCall).toBe(true);expect(checkedPaths).toC…
+    443|   const toolResult=fx.scripted.requests[1]!.messages.find(message=>mes…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/runtime/B2-runtime-execution.test.ts > projects a wider current Host grant through the real Role ceiling before entering the Run
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready', …(1) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "run": {
+-       "status": "ended",
+-     },
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/runtime/B2-runtime-execution.test.ts:460:19
+    458|   expect(prepared.value.envelope.permissions.writeScope).toEqual([]);
+    459|   const started=await runtime.port.startRun(fx.ctx,{prepared:prepared.…
+    460|   expect(started).toMatchObject({status:'ready',value:{run:{status:'en…
+       |                   ^
+    461|   expect(fx.scripted.calls()).toBe(1);
+    462|   expect(fx.scripted.requests[0]!.tools.map(tool=>tool.name)).not.toCo…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/runtime/B2-runtime-execution.test.ts > a start replay after Host revocation only reconciles already genuine terminal history
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready', value: { …(2) } }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "run": {
+-       "status": "ended",
+-     },
+-     "session": {
+-       "occupancy": null,
+-     },
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/runtime/B2-runtime-execution.test.ts:483:54
+    481|     return {status:'rejected',code:'forbidden',reason:'current Host no…
+    482|   }}});
+    483|   expect(await replay.port.startRun(fx.ctx,request)).toMatchObject({st…
+       |                                                      ^
+    484|   expect(fx.scripted.calls()).toBe(1);
+    485| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/runtime/B2-runtime-execution.test.ts > the same observer retries a failed genuine terminal commit without needing new Kernel records
+AssertionError: expected { status: 'ready', value: { …(7) } } to match object { status: 'ready', value: { …(2) } }
+(139 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "status": "ready",
+    "value": {
+      "run": {
+-       "status": "ended",
++       "status": "running",
+      },
+      "session": {
+-       "occupancy": null,
++       "occupancy": {
++         "executionRef": {
++           "aggregateType": "Run",
++           "goalId": "r4c-claim-goal",
++           "projectId": "r4c-claim-project",
++           "runId": "r4c-claim-id-1",
++         },
++         "generation": 3,
++         "kind": "execution",
++       },
+      },
+    },
+  }
+
+ ❯ tests/runtime/B2-runtime-execution.test.ts:568:19
+    566|   expect(pending.value.session.occupancy).not.toBeNull();expect(pendin…
+    567|   const retried=await runtime.port.observeRun(fx.ctx,{runRef:fx.claim.…
+    568|   expect(retried).toMatchObject({status:'ready',value:{run:{status:'en…
+       |                   ^
+    569|   expect(attempts).toBe(2);expect(fx.scripted.calls()).toBe(1);
+    570| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 22 passed (26)
+   Start at  03:10:06
+   Duration  5.12s (transform 628ms, setup 0ms, import 925ms, tests 4.12s, environment 0ms)
+

@@ -1,0 +1,187 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/runtime/R4c-graph-history.test.ts (16 tests | 13 failed) 78676ms
+     × reads a real second Run interval directly from its persisted start instead of the Session head 5249ms
+     × rejects a continuation cursor that is moved to another Run, Session, principal or source 5074ms
+     × preserves the original evidence and advances on zero matches without padding to the limit 6126ms
+     × rejects a terminal end that falls below the frozen upper bound as stale 5345ms
+     × rejects malformed limits before any graph or history read 5480ms
+     × rejects a call cancelled before delegation while preserving the original signal 5492ms
+     × rejects cancellation after awaiting the real graph dependency 5299ms
+     × rejects cancellation after awaiting the real history dependency 6204ms
+     × owns the call context and request before the first await so caller mutation cannot retarget it 5664ms
+     × rejects a continuation position below the frozen range instead of reading from the Session head 6240ms
+     × reads one bounded Kernel page from startPosition - 1 up to the frozen throughPosition 5080ms
+     × rejects an upper bound beyond the current tail and a range combined with throughCursor 6028ms
+     × preserves an empty terminal page at the real upper cursor while still detecting a truncated source 5179ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 13 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > reads a real second Run interval directly from its persisted start instead of the Session head
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4c-graph-history.test.ts:356:3
+    354|
+    355| describe('R4c.2b graph execution history reader', () => {
+    356|   it('reads a real second Run interval directly from its persisted sta…
+       |   ^
+    357|     const fx = await open();
+    358|     const claim = await claimed(fx, 'graph-direct-claim');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > rejects a continuation cursor that is moved to another Run, Session, principal or source
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4c-graph-history.test.ts:460:3
+    458|   });
+    459|
+    460|   it('rejects a continuation cursor that is moved to another Run, Sess…
+       |   ^
+    461|     const fx = await open();
+    462|     const claim = await claimed(fx, 'graph-retarget-a');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > preserves the original evidence and advances on zero matches without padding to the limit
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4c-graph-history.test.ts:517:3
+    515|   });
+    516|
+    517|   it('preserves the original evidence and advances on zero matches wit…
+       |   ^
+    518|     const fx = await open();
+    519|     const claim = await claimed(fx, 'graph-evidence-claim');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > rejects a terminal end that falls below the frozen upper bound as stale
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4c-graph-history.test.ts:586:3
+    584|   });
+    585|
+    586|   it('rejects a terminal end that falls below the frozen upper bound a…
+       |   ^
+    587|     const fx = await open();
+    588|     const claim = await claimed(fx, 'graph-stale-claim');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > rejects malformed limits before any graph or history read
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4c-graph-history.test.ts:627:3
+    625|   });
+    626|
+    627|   it('rejects malformed limits before any graph or history read', asyn…
+       |   ^
+    628|     const fx = await open();
+    629|     const claim = await claimed(fx, 'graph-limit-claim');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > rejects a call cancelled before delegation while preserving the original signal
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4c-graph-history.test.ts:641:3
+    639|   });
+    640|
+    641|   it('rejects a call cancelled before delegation while preserving the …
+       |   ^
+    642|     const fx = await open();
+    643|     const claim = await claimed(fx, 'graph-cancel-claim');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > rejects cancellation after awaiting the real graph dependency
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > rejects cancellation after awaiting the real history dependency
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4c-graph-history.test.ts:654:41
+    652|   });
+    653|
+    654|   it.each(['graph', 'history'] as const)('rejects cancellation after a…
+       |                                         ^
+    655|     const fx = await open();
+    656|     const claim = await claimed(fx, `graph-await-cancel-${phase}`);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > owns the call context and request before the first await so caller mutation cannot retarget it
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4c-graph-history.test.ts:705:3
+    703|   });
+    704|
+    705|   it('owns the call context and request before the first await so call…
+       |   ^
+    706|     const fx = await open();
+    707|     const claim = await claimed(fx, 'graph-mutate-claim');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b graph execution history reader > owns the call context and request before the first await so caller mutation cannot retarget it
+Error: ENOTEMPTY: directory not empty, rmdir '/tmp/next-r4c-claim-sqlite-2acYPS'
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b RT1 bounded Session history range > rejects a continuation position below the frozen range instead of reading from the Session head
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4c-graph-history.test.ts:768:3
+    766|
+    767| describe('R4c.2b RT1 bounded Session history range', () => {
+    768|   it('rejects a continuation position below the frozen range instead o…
+       |   ^
+    769|     const fx = await open();
+    770|     const claim = await claimed(fx, 'rt1-lower-bound-claim');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b RT1 bounded Session history range > reads one bounded Kernel page from startPosition - 1 up to the frozen throughPosition
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4c-graph-history.test.ts:808:3
+    806|   });
+    807|
+    808|   it('reads one bounded Kernel page from startPosition - 1 up to the f…
+       |   ^
+    809|     const fx = await open();
+    810|     const claim = await claimed(fx, 'rt1-range-claim');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b RT1 bounded Session history range > rejects an upper bound beyond the current tail and a range combined with throughCursor
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4c-graph-history.test.ts:837:3
+    835|   });
+    836|
+    837|   it('rejects an upper bound beyond the current tail and a range combi…
+       |   ^
+    838|     const fx = await open();
+    839|     const claim = await claimed(fx, 'rt1-bound-claim');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/14]⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b RT1 bounded Session history range > preserves an empty terminal page at the real upper cursor while still detecting a truncated source
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4c-graph-history.test.ts:867:3
+    865|   });
+    866|
+    867|   it('preserves an empty terminal page at the real upper cursor while …
+       |   ^
+    868|     const fx = await open();
+    869|     const claim = await claimed(fx, 'rt1-terminal-page-claim');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/14]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  13 failed | 21 passed (34)
+   Start at  12:53:56
+   Duration  82.80s (transform 506ms, setup 0ms, import 1.15s, tests 81.42s, environment 0ms)
+

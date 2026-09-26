@@ -1,0 +1,20 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/contracts/governance.ts",
+    "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-contracts.ts",
+    "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-service.ts",
+    "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+    "coding-platform/next/src/composition/create-platform.ts",
+    "coding-platform/next/tests/work-graph/R5a-project-bootstrap.test.ts",
+    "coding-platform/next/tests/composition/R5a-project-bootstrap-platform.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

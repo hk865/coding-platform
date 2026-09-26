@@ -1,0 +1,7 @@
+{
+  "readOnlyFile": "coding-platform/next/tests/work-graph/R4-control-intent.test.ts",
+  "before": "4fd322ebf815cfa78b4a1b0aa5b00c668018dac90327fa7887b6001f0befadc3",
+  "after": "5222c47726fd2ceffb82feb0bae83b8f4a8ec733cb8008b7618a87cc53d37916",
+  "reason": "public same-identity concurrency after initial lookup miss",
+  "originalAllowedHashesPreserved": true
+}

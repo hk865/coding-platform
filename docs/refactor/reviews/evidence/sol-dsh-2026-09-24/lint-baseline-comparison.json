@@ -1,0 +1,17 @@
+{
+  "composition-root.ts": {
+    "preexistingImportTypeLines": [
+      ") => readonly import(\"../../tools/schemas/tool-schemas.js\").ToolDefinition[];",
+      "readonly limits?: import(\"../../core/runtime/limits/limit-guard.js\").RunLimits;",
+      "readonly processSandboxOptions?: import(\"../../sandbox/process/process-sandbox.js\").ProcessSandboxOptions;",
+      "readonly workspaceOptions?: import(\"../../sandbox/workspace/workspace-sandbox.js\").WorkspaceSandboxOptions;"
+    ],
+    "unchanged": true
+  },
+  "resume-composition.ts": {
+    "preexistingImportTypeLines": [
+      ") => readonly import(\"../../tools/schemas/tool-schemas.js\").ToolDefinition[];"
+    ],
+    "unchanged": true
+  }
+}

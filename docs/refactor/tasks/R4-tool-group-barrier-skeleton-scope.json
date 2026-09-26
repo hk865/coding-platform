@@ -1,0 +1,34 @@
+{
+  "writableFiles": [
+    "coding-platform/next/vendor/coding-agent/patches/core/runtime/loop/runtime-runner.ts",
+    "coding-platform/next/vendor/coding-agent/patches/app/composition/composition-root.ts",
+    "coding-platform/next/vendor/coding-agent/patches/app/composition/resume-composition.ts",
+    "coding-platform/next/vendor/coding-agent/patches/public-api.ts",
+    "coding-platform/next/scripts/build-kernel-patch.mjs",
+    "coding-platform/next/vendor/coding-agent/dist/core/runtime/loop/runtime-runner.js",
+    "coding-platform/next/vendor/coding-agent/dist/core/runtime/loop/runtime-runner.js.map",
+    "coding-platform/next/vendor/coding-agent/dist/core/runtime/loop/runtime-runner.d.ts",
+    "coding-platform/next/vendor/coding-agent/dist/core/runtime/loop/runtime-runner.d.ts.map",
+    "coding-platform/next/vendor/coding-agent/dist/app/composition/composition-root.js",
+    "coding-platform/next/vendor/coding-agent/dist/app/composition/composition-root.js.map",
+    "coding-platform/next/vendor/coding-agent/dist/app/composition/composition-root.d.ts",
+    "coding-platform/next/vendor/coding-agent/dist/app/composition/composition-root.d.ts.map",
+    "coding-platform/next/vendor/coding-agent/dist/app/composition/resume-composition.js",
+    "coding-platform/next/vendor/coding-agent/dist/app/composition/resume-composition.js.map",
+    "coding-platform/next/vendor/coding-agent/dist/app/composition/resume-composition.d.ts",
+    "coding-platform/next/vendor/coding-agent/dist/app/composition/resume-composition.d.ts.map",
+    "coding-platform/next/vendor/coding-agent/dist/public-api.js",
+    "coding-platform/next/vendor/coding-agent/dist/public-api.js.map",
+    "coding-platform/next/vendor/coding-agent/dist/public-api.d.ts",
+    "coding-platform/next/vendor/coding-agent/dist/public-api.d.ts.map",
+    "coding-platform/next/tests/kernel/R4-tool-group-barrier.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

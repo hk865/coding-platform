@@ -1,0 +1,685 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts (49 tests | 45 failed) 358ms
+     × Host delivers durable mail to a busy and an archived Session without changing either record 9ms
+     × Host cannot fabricate an acknowledgement or a reply 5ms
+     × rejects extra send pins and query_run senders 5ms
+     × a valid running Run sends, while forged/ended/missing-envelope/unauthorized facts are denied 5ms
+     × requires the exact B2 entered binding for a new work-run message 5ms
+     × replays an identical send and rejects the same identity with a different payload 4ms
+     × keeps pending -> read -> responded monotonic; reads never ack; the response slot is single 5ms
+     × bounds text at 16 KiB UTF-8 and returns capacity without truncation 5ms
+     × never shares a body across two independent messages with identical text 4ms
+     × limit-filtered inbox only returns the trusted recipient and validates the page 4ms
+     × does not leak a message or its body to another Session and returns not_found for a guessed message 4ms
+     × keeps platform message bodies unreadable to an ordinary Run while the Host historical read works 5ms
+     × returns the real readThrough and reports an unmet atLeastCursor as not_ready 4ms
+     × retains the exact send/ack/respond receipts after the bound Run ends but denies a new request 5ms
+     × rejects a formal lease successor even when the Run and Session still appear running 4ms
+     × joins the sender Session guard to the message commit rather than trusting an earlier ownership check 4ms
+     × two responses race on the same slot; the loser cannot replace the winner and replay keeps its original receipt 6ms
+     × keyset pages bind caller, recipient and filter and perform one mailbox lookup with no event scan 4ms
+     × stores the body before a failed message commit, but neither inbox nor body API publishes the orphan 3ms
+     × preserves committed success when cancellation arrives after the atomic write 3ms
+     × guards verified legacy absence against a current Role matrix that revokes the declared mailbox tools 5ms
+     × cancellation after body storage prevents metadata publication 3ms
+     × Host delivers durable mail to a busy and an archived Session without changing either record 10ms
+     × Host cannot fabricate an acknowledgement or a reply 9ms
+     × rejects extra send pins and query_run senders 10ms
+     × a valid running Run sends, while forged/ended/missing-envelope/unauthorized facts are denied 9ms
+     × requires the exact B2 entered binding for a new work-run message 10ms
+     × replays an identical send and rejects the same identity with a different payload 10ms
+     × keeps pending -> read -> responded monotonic; reads never ack; the response slot is single 9ms
+     × bounds text at 16 KiB UTF-8 and returns capacity without truncation 9ms
+     × never shares a body across two independent messages with identical text 10ms
+     × limit-filtered inbox only returns the trusted recipient and validates the page 9ms
+     × does not leak a message or its body to another Session and returns not_found for a guessed message 9ms
+     × keeps platform message bodies unreadable to an ordinary Run while the Host historical read works 10ms
+     × returns the real readThrough and reports an unmet atLeastCursor as not_ready 9ms
+     × retains the exact send/ack/respond receipts after the bound Run ends but denies a new request 9ms
+     × rejects a formal lease successor even when the Run and Session still appear running 9ms
+     × joins the sender Session guard to the message commit rather than trusting an earlier ownership check 9ms
+     × two responses race on the same slot; the loser cannot replace the winner and replay keeps its original receipt 9ms
+     × keyset pages bind caller, recipient and filter and perform one mailbox lookup with no event scan 9ms
+     × stores the body before a failed message commit, but neither inbox nor body API publishes the orphan 11ms
+     × preserves committed success when cancellation arrives after the atomic write 9ms
+     × guards verified legacy absence against a current Role matrix that revokes the declared mailbox tools 11ms
+     × cancellation after body storage prevents metadata publication 9ms
+   × SQLite closes both body and ledger connections, reopens the message, and rejects actual stored-body corruption 9ms
+ ❯ tests/runtime/C1-communication-tools.test.ts (12 tests | 6 failed) 79ms
+     × rejects every forbidden permission/source field instead of ignoring it 4ms
+     × derives one requestId from the trusted call id and freezes the accepted arguments 1ms
+     × builds exactly one message pin for ack/respond and never accepts a model expected 1ms
+     × never falls back to a Host or a silent success on cancel, rejection or a failed binding 1ms
+     × drives send -> inbox -> body -> ack -> response -> sender read and only reports committed writes 20ms
+     × drives send -> inbox -> body -> ack -> response -> sender read and only reports committed writes 14ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 51 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > Host delivers durable mail to a busy and an archived Session without changing either record
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > Host delivers durable mail to a busy and an archived Session without changing either record
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:63:22
+     61|
+     62|     const busySend = await h.mailbox.sendMessage(h.ctxHost, sendReques…
+     63|     expect(busySend).toMatchObject({ status: 'committed' });
+       |                      ^
+     64|     if (busySend.status !== 'committed') return;
+     65|     expect(busySend.value).toMatchObject({ recipient: h.busySession, s…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > Host cannot fabricate an acknowledgement or a reply
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > Host cannot fabricate an acknowledgement or a reply
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:95:18
+     93|     const h = await open(kind);
+     94|     const sent = await h.mailbox.sendMessage(h.ctxHost, sendRequest(h.…
+     95|     expect(sent).toMatchObject({ status: 'committed' });
+       |                  ^
+     96|     if (sent.status !== 'committed') return;
+     97|     const ack = await h.mailbox.ackMessage(h.ctxHost, {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > rejects extra send pins and query_run senders
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > rejects extra send pins and query_run senders
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', code: 'invalid' }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "invalid",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:115:21
+    113|       meta: { requestId: 'c1-extra-pin', expected: [{ ref: plainSessio…
+    114|     });
+    115|     expect(withPin).toMatchObject({ status: 'rejected', code: 'invalid…
+       |                     ^
+    116|
+    117|     const workspaceId = h.ctxWork.workspaceId as string;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > a valid running Run sends, while forged/ended/missing-envelope/unauthorized facts are denied
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > a valid running Run sends, while forged/ended/missing-envelope/unauthorized facts are denied
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:133:19
+    131|     const h = await open(kind);
+    132|     const valid = await h.mailbox.sendMessage(h.ctxWork, sendRequest(h…
+    133|     expect(valid).toMatchObject({ status: 'committed' });
+       |                   ^
+    134|
+    135|     // Ended Run.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > requires the exact B2 entered binding for a new work-run message
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > requires the exact B2 entered binding for a new work-run message
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "forbidden",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:166:10
+    164|         executionAuthorization: { ...entered, phase } });
+    165|       expect(await h.mailbox.sendMessage(h.ctxWork, sendRequest(h.busy…
+    166|         .toMatchObject({ status: 'rejected', code: 'forbidden' });
+       |          ^
+    167|     }
+    168|     await h.commitRun({ ...h.currentRun, revision: h.currentRun.revisi…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > replays an identical send and rejects the same identity with a different payload
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > replays an identical send and rejects the same identity with a different payload
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, replayed) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:177:19
+    175|     const h = await open(kind);
+    176|     const first = await h.mailbox.sendMessage(h.ctxHost, sendRequest(h…
+    177|     expect(first).toMatchObject({ status: 'committed', replayed: false…
+       |                   ^
+    178|     if (first.status !== 'committed') return;
+    179|     const replay = await h.mailbox.sendMessage(h.ctxHost, sendRequest(…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > keeps pending -> read -> responded monotonic; reads never ack; the response slot is single
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > keeps pending -> read -> responded monotonic; reads never ack; the response slot is single
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:193:18
+    191|     const h = await open(kind);
+    192|     const sent = await h.mailbox.sendMessage(h.ctxHost, sendRequest(h.…
+    193|     expect(sent).toMatchObject({ status: 'committed' });
+       |                  ^
+    194|     if (sent.status !== 'committed') return;
+    195|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > bounds text at 16 KiB UTF-8 and returns capacity without truncation
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > bounds text at 16 KiB UTF-8 and returns capacity without truncation
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:238:22
+    236|     const atLimit = 'a'.repeat(16 * 1024);
+    237|     const accepted = await h.mailbox.sendMessage(h.ctxHost, sendReques…
+    238|     expect(accepted).toMatchObject({ status: 'committed' });
+       |                      ^
+    239|     const over = 'a'.repeat(16 * 1024 + 1);
+    240|     const rejected = await h.mailbox.sendMessage(h.ctxHost, sendReques…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > never shares a body across two independent messages with identical text
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > never shares a body across two independent messages with identical text
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:248:19
+    246|     const first = await h.mailbox.sendMessage(h.ctxHost, sendRequest(h…
+    247|     const second = await h.mailbox.sendMessage(h.ctxHost, sendRequest(…
+    248|     expect(first).toMatchObject({ status: 'committed' });
+       |                   ^
+    249|     expect(second).toMatchObject({ status: 'committed' });
+    250|     if (first.status !== 'committed' || second.status !== 'committed')…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > limit-filtered inbox only returns the trusted recipient and validates the page
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > limit-filtered inbox only returns the trusted recipient and validates the page
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:260:18
+    258|     await h.mailbox.sendMessage(h.ctxHost, sendRequest(h.busySession, …
+    259|     const page = await h.mailbox.readInbox(h.ctxWork, { recipient: h.b…
+    260|     expect(page).toMatchObject({ status: 'ready' });
+       |                  ^
+    261|     if (page.status === 'ready') {
+    262|       expect(page.value.items.map(item => item.recipient)).toEqual([h.…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > does not leak a message or its body to another Session and returns not_found for a guessed message
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > does not leak a message or its body to another Session and returns not_found for a guessed message
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:272:18
+    270|     const h = await open(kind);
+    271|     const sent = await h.mailbox.sendMessage(h.ctxHost, sendRequest(h.…
+    272|     expect(sent).toMatchObject({ status: 'committed' });
+       |                  ^
+    273|     if (sent.status !== 'committed') return;
+    274|     const otherRead = await h.mailbox.readMessage(h.ctxWork, sent.valu…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > keeps platform message bodies unreadable to an ordinary Run while the Host historical read works
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > keeps platform message bodies unreadable to an ordinary Run while the Host historical read works
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:300:18
+    298|     expect(hostRead).toMatchObject({ status: 'ready' });
+    299|     const sent = await h.mailbox.sendMessage(h.ctxHost, sendRequest(h.…
+    300|     expect(sent).toMatchObject({ status: 'committed' });
+       |                  ^
+    301|     if (sent.status !== 'committed') return;
+    302|     expect(await h.materials.openArtifact(h.ctxWork,{ref:sent.value.bo…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > returns the real readThrough and reports an unmet atLeastCursor as not_ready
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > returns the real readThrough and reports an unmet atLeastCursor as not_ready
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:319:20
+    317|     const h = await open(kind);
+    318|     const before = await h.mailbox.readInbox(h.ctxWork, { recipient: h…
+    319|     expect(before).toMatchObject({ status: 'ready' });
+       |                    ^
+    320|     if (before.status !== 'ready') return;
+    321|     const sent = await h.mailbox.sendMessage(h.ctxHost, sendRequest(h.…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > retains the exact send/ack/respond receipts after the bound Run ends but denies a new request
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > retains the exact send/ack/respond receipts after the bound Run ends but denies a new request
+AssertionError: expected 'rejected' to be 'committed' // Object.is equality
+
+Expected: "committed"
+Received: "rejected"
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:335:25
+    333|     const send = sendRequest(h.busySession, 'receipt body', 'ended-sen…
+    334|     const sent = await h.mailbox.sendMessage(h.ctxWork, send);
+    335|     expect(sent.status).toBe('committed'); if (sent.status !== 'commit…
+       |                         ^
+    336|     const ack = {input:{messageRef:sent.value.ref},meta:{requestId:'en…
+    337|     const acked = await h.mailbox.ackMessage(h.ctxWork,ack);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > rejects a formal lease successor even when the Run and Session still appear running
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > rejects a formal lease successor even when the Run and Session still appear running
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "forbidden",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:358:109
+    356|     lease.revision++; lease.holderRunId='successor-run'; lease.attempt…
+    357|     expect(await h.fixture.commitRaw([{...row,revision:lease.revision,…
+    358|     expect(await h.mailbox.sendMessage(h.ctxWork,sendRequest(h.idleSes…
+       |                                                                                                             ^
+    359|     expect(await h.mailbox.readInbox(h.ctxHost,{recipient:h.idleSessio…
+    360|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > joins the sender Session guard to the message commit rather than trusting an earlier ownership check
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > joins the sender Session guard to the message commit rather than trusting an earlier ownership check
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "revision_conflict",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:369:109
+    367|       return h.fixture.records.commit(batch);
+    368|     }});
+    369|     expect(await mailbox.sendMessage(h.ctxWork,sendRequest(h.idleSessi…
+       |                                                                                                             ^
+    370|     expect(intercepted).toBe(true);
+    371|     expect(await h.mailbox.readInbox(h.ctxHost,{recipient:h.idleSessio…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > two responses race on the same slot; the loser cannot replace the winner and replay keeps its original receipt
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > two responses race on the same slot; the loser cannot replace the winner and replay keeps its original receipt
+AssertionError: expected 'rejected' to be 'committed' // Object.is equality
+
+Expected: "committed"
+Received: "rejected"
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:377:25
+    375|     const h = await open(kind);
+    376|     const sent = await h.mailbox.sendMessage(h.ctxHost,sendRequest(h.b…
+    377|     expect(sent.status).toBe('committed'); if(sent.status !== 'committ…
+       |                         ^
+    378|     let arrivals=0; let release!:()=>void;
+    379|     const barrier = new Promise<void>(resolve=>{release=resolve;});
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > keyset pages bind caller, recipient and filter and perform one mailbox lookup with no event scan
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > keyset pages bind caller, recipient and filter and perform one mailbox lookup with no event scan
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:397:124
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > stores the body before a failed message commit, but neither inbox nor body API publishes the orphan
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > stores the body before a failed message commit, but neither inbox nor body API publishes the orphan
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:422:100
+    420|       return {status:'rejected' as const,code:'unavailable' as const,r…
+    421|     }},{...h.materials,async storeArtifact(ctx,input){const result=awa…
+    422|     expect(await mailbox.sendMessage(h.ctxHost,sendRequest(h.idleSessi…
+       |                                                                                                    ^
+    423|     expect(stored).toBe(1);expect(attempted).toBeDefined();
+    424|     expect(await h.mailbox.readInbox(h.ctxHost,{recipient:h.idleSessio…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > preserves committed success when cancellation arrives after the atomic write
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > preserves committed success when cancellation arrives after the atomic write
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, replayed) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:433:20
+    431|     const request=sendRequest(h.idleSession,'late cancel','late-cancel…
+    432|     const result=await mailbox.sendMessage({...h.ctxHost,signal:contro…
+    433|     expect(result).toMatchObject({status:'committed',replayed:false});…
+       |                    ^
+    434|     if(result.status!=='committed')return;
+    435|     expect(await h.mailbox.sendMessage(h.ctxHost,request)).toEqual({..…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > guards verified legacy absence against a current Role matrix that revokes the declared mailbox tools
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > guards verified legacy absence against a current Role matrix that revokes the declared mailbox tools
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "revision_conflict",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:460:108
+    458|       return f.records.commit(batch);
+    459|     }});
+    460|     expect(await mailbox.sendMessage(h.ctxWork,sendRequest(h.idleSessi…
+       |                                                                                                            ^
+    461|     expect(intercepted).toBe(true);
+    462|     expect(await h.mailbox.sendMessage(h.ctxWork,sendRequest(h.idleSes…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real memory > cancellation after body storage prevents metadata publication
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > C1 SessionMailbox real sqlite > cancellation after body storage prevents metadata publication
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "cancelled",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:470:149
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/51]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > SQLite closes both body and ledger connections, reopens the message, and rejects actual stored-body corruption
+AssertionError: expected 'rejected' to be 'committed' // Object.is equality
+
+Expected: "committed"
+Received: "rejected"
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:481:23
+    479|   const h=await open('sqlite');
+    480|   const sent=await h.mailbox.sendMessage(h.ctxHost,sendRequest(h.busyS…
+    481|   expect(sent.status).toBe('committed');if(sent.status!=='committed')r…
+       |                       ^
+    482|   await h.reopen();
+    483|   expect(await h.mailbox.readMessageBody(h.ctxHost,{messageRef:sent.va…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/51]⎯
+
+ FAIL  tests/runtime/C1-communication-tools.test.ts > C1 SessionMailbox tool adapter > rejects every forbidden permission/source field instead of ignoring it
+AssertionError: expected { schemaVersion: 1, …(5) } to match object { status: 'error', …(1) }
+(10 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "error": {
+-     "code": "invalid_arguments",
++     "code": "execution_failed",
+    },
+    "status": "error",
+  }
+
+ ❯ tests/runtime/C1-communication-tools.test.ts:142:22
+    140|       const result = await definition.handler.execute(
+    141|         toolCall('send_session_message', 'call-forbidden', { ...base, …
+    142|       expect(result).toMatchObject({ status: 'error', error: { code: '…
+       |                      ^
+    143|     }
+    144|     expect(sends).toHaveLength(0);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/51]⎯
+
+ FAIL  tests/runtime/C1-communication-tools.test.ts > C1 SessionMailbox tool adapter > derives one requestId from the trusted call id and freezes the accepted arguments
+AssertionError: expected undefined to be 'c1:call-stable' // Object.is equality
+
+- Expected:
+"c1:call-stable"
+
++ Received:
+undefined
+
+ ❯ tests/runtime/C1-communication-tools.test.ts:158:46
+    156|     firstArgs['text'] = 'mutated';
+    157|     await pending;
+    158|     expect(sends[0]?.request.meta.requestId).toBe('c1:call-stable');
+       |                                              ^
+    159|     expect(sends[0]?.request.meta.expected).toEqual([]);
+    160|     expect(sends[0]?.request.input.recipient).toEqual(recipient);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/51]⎯
+
+ FAIL  tests/runtime/C1-communication-tools.test.ts > C1 SessionMailbox tool adapter > builds exactly one message pin for ack/respond and never accepts a model expected
+AssertionError: expected { schemaVersion: 1, …(5) } to match object { status: 'success' }
+(12 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "success",
++   "status": "error",
+  }
+
+ ❯ tests/runtime/C1-communication-tools.test.ts:174:17
+    172|     const ack = await byName('ack_session_message').handler.execute(
+    173|       toolCall('ack_session_message', 'call-ack', { messageRef, expect…
+    174|     expect(ack).toMatchObject({ status: 'success' });
+       |                 ^
+    175|     expect(acks[0]?.request.meta.expected).toEqual([{ ref: messageRef,…
+    176|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[26/51]⎯
+
+ FAIL  tests/runtime/C1-communication-tools.test.ts > C1 SessionMailbox tool adapter > never falls back to a Host or a silent success on cancel, rejection or a failed binding
+AssertionError: expected { schemaVersion: 1, …(5) } to match object { status: 'cancelled' }
+(12 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "cancelled",
++   "status": "error",
+  }
+
+ ❯ tests/runtime/C1-communication-tools.test.ts:205:23
+    203|     aborted.abort();
+    204|     const cancelled = await definition.handler.execute(toolCall('send_…
+    205|     expect(cancelled).toMatchObject({ status: 'cancelled' });
+       |                       ^
+    206|
+    207|     const rejecting: SessionMailboxPort = { ...port, async sendMessage…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[27/51]⎯
+
+ FAIL  tests/runtime/C1-communication-tools.test.ts > C1 SessionMailbox tools against the real memory mailbox > drives send -> inbox -> body -> ack -> response -> sender read and only reports committed writes
+ FAIL  tests/runtime/C1-communication-tools.test.ts > C1 SessionMailbox tools against the real sqlite mailbox > drives send -> inbox -> body -> ack -> response -> sender read and only reports committed writes
+AssertionError: expected { schemaVersion: 1, …(5) } to match object { status: 'success' }
+(12 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "success",
++   "status": "error",
+  }
+
+ ❯ tests/runtime/C1-communication-tools.test.ts:246:18
+    244|     const sent = await tools.byName('send_session_message').handler.ex…
+    245|       toolCall('send_session_message', 'call-send', { recipient: h.bus…
+    246|     expect(sent).toMatchObject({ status: 'success' });
+       |                  ^
+    247|     const receipt = outputValue(sent) as { value: SessionMessage; repl…
+    248|     expect(receipt).toMatchObject({replayed:false});
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[28/51]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  51 failed | 10 passed (61)
+   Start at  01:53:18
+   Duration  1.29s (transform 405ms, setup 0ms, import 691ms, tests 437ms, environment 0ms)
+

@@ -1,0 +1,60 @@
+{
+  "lane": "w2-future-intent-skeleton-20260926",
+  "stage": "reviewed skeleton; final-target tests frozen, implementation pending",
+  "changes": [
+    {
+      "path": "coding-platform/next/src/contracts/plan.ts",
+      "before": "fd757a6911791cd9b9f37c15ab3efc2bf7d4495a99b1eaa2daf6546c1a101e16",
+      "after": "9dce1d68e95109f3a27e38d2353f071262ac3015afdefcc9fb8fd2beef342b0a"
+    },
+    {
+      "path": "coding-platform/next/src/contracts/dispatch.ts",
+      "before": "ad9a5747f1087b02b564eafb59f1e51755fae88a8b31281966cc03eaa193e1e6",
+      "after": "dca2eb98f2b81caa14c098d483eb354d254361595c86138b7aeadca4658b11a5"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-contracts.ts",
+      "before": "9704000276fbafbd5fe7bca0b052bb9202d14dac4e6a1d362f033992feb8dbe5",
+      "after": "a2fc0d096fb1720950ff96fd8253fe5caf81d65cd086d340bc9d3d84c16baff0"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-record-codecs.ts",
+      "before": "ee31141d85acd2ca527cd29ac39db141374ddd8148b391f498c41f982f0b0982",
+      "after": "46bb1bf5ad41ffb0b91c00eadc4fb3df9d6d09f175b0a06d4940df277f4a6d25"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-validation.ts",
+      "before": "cd89ab500b7e4aec3b053ded69fb3df05b78a8ad7d915cb5836d977fdab244d6",
+      "after": "d0ba07cdfd27a14529a7a3bdcbd1eb2e9a7febcff5561faf1a44705521b82873"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-service.ts",
+      "before": "6cd3df37d7f3f350ecb899c50a61019c8e68d2b411e16aa80baead4fd8e8d262",
+      "after": "f525ada0384452b639b4568f476c5bf67c0d9c2b6af7010cc6bd1bc7bea97431"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+      "before": "d9d05246237b508dea7c9a6d4a28714e4f4952f9de67c579aa8bb484d900b458",
+      "after": "f650e827f3a5eb8f12c858195d9937470c8afb8b2a06ca9cc1009210e3428b5a"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/whiteboard-tools.ts",
+      "before": "c0bbfa98296cbde2ff6b50d880769ebb67d544f2df6bf73af63c0be248e06d25",
+      "after": "6c7535cc584e6553bc4a5ebe9a1f0431c2a1bb3eedb4f98d3149358a38dd82d2"
+    },
+    {
+      "path": "coding-platform/next/tests/work-graph/W2-future-intent.test.ts",
+      "before": "00c924016298601d43dc6e369694ebc0565758f362635f8b3237ffab987de920",
+      "after": "6f3fa870fa396a0d07deceb60810559272ba6798fa57bae01b135ea19185daa3"
+    },
+    {
+      "path": "coding-platform/next/tests/composition/W2-future-intent-platform.test.ts",
+      "before": "00c924016298601d43dc6e369694ebc0565758f362635f8b3237ffab987de920",
+      "after": "e6034946e8ce81cef76e4c0bed17ba2b781effea3aa9e0d009c25584a27a54c0"
+    }
+  ],
+  "frozenTests": {
+    "coding-platform/next/tests/work-graph/W2-future-intent.test.ts": "6f3fa870fa396a0d07deceb60810559272ba6798fa57bae01b135ea19185daa3",
+    "coding-platform/next/tests/composition/W2-future-intent-platform.test.ts": "e6034946e8ce81cef76e4c0bed17ba2b781effea3aa9e0d009c25584a27a54c0"
+  }
+}

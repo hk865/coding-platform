@@ -1,0 +1,10 @@
+{
+  "changed": [
+    "coding-platform/src/core/record-store/in-memory-record-store.ts",
+    "coding-platform/src/core/record-store/sqlite-record-store.ts",
+    "coding-platform/src/core/work-graph/persistence/legacy-adapter.ts",
+    "coding-platform/src/core/work-graph/tasks/task-service.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

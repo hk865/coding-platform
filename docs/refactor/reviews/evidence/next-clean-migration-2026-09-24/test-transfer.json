@@ -1,0 +1,46 @@
+[
+  {
+    "source": "tests/data/R3b-materials-contract.test.ts",
+    "sha256": "21bc03b24367b0b5947b2d666a35a79c57b06ae38a0cbd50e7ad8c6d7a0f2ba4"
+  },
+  {
+    "source": "tests/data/R3b-body-boundaries.test.ts",
+    "sha256": "ee1533057f7e8b7975d8373fbf0dcddd06c74b38d101494b71901bbcac950e31"
+  },
+  {
+    "source": "tests/data/R3b-material-admission-boundaries.test.ts",
+    "sha256": "32232f0a5401191f6e393beea1053b6a9260db02bb9634331e2b37fb48f9f297"
+  },
+  {
+    "source": "tests/data/R3b-material-await-boundaries.test.ts",
+    "sha256": "9cd9684c98597554c6695355423413bec3cdc4a163e429ef6e9b4a065bff12aa"
+  },
+  {
+    "source": "tests/data/workspace-capture.test.ts",
+    "sha256": "8b8681b0fbc24eebc12a4475e438e7f6c7c74a69aecc03172890a41103b85acf"
+  },
+  {
+    "source": "tests/data/workspace-capture-access.test.ts",
+    "sha256": "3de99e7d0ed435af24aa09cebdfdffbed954b3ab07c71b86d6e3d369a56ab46c"
+  },
+  {
+    "source": "tests/data/project-source-snapshot.test.ts",
+    "sha256": "dedd7f0af94c8af0a2434f6439a603ad02df106e47da8d62385402f564bec1b7"
+  },
+  {
+    "source": "tests/data/typescript-source-query.test.ts",
+    "sha256": "0cb172a9ac809b968270cf71fb9d6def8f646d2fcebd12566c1b32b8268c5425"
+  },
+  {
+    "source": "tests/data/typescript-source-reuse.test.ts",
+    "sha256": "16d1f6b2cc536e02d7647d82f5a9006d44ed3efd309195dc3abb21105944026f"
+  },
+  {
+    "source": "tests/data/workspace-text-operations.test.ts",
+    "sha256": "2bee644713c574b41c0f975184c1ca62322cc99f0544c7053284c2f780e976fd"
+  },
+  {
+    "source": "tests/data/R2e-text-boundaries.test.ts",
+    "sha256": "cf98c2d8eee1f120ae49a793df410354dedea95e0be195f93bf9fe76bfb7a51c"
+  }
+]

@@ -1,0 +1,9 @@
+Independent check after DSH STOP
+command: harness.py exec r5b-query-execution-implementation-20260926 python3 tools/dsh-refactor/check.py next-query-execution next-query-job
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+ Test Files  4 passed (4)
+      Tests  13 passed (13)
+   Start at  21:42:34
+   Duration  2.55s (transform 881ms, setup 0ms, import 1.94s, tests 313ms, environment 0ms)
+exitCode: 0

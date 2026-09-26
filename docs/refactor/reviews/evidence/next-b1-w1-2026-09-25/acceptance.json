@@ -1,0 +1,61 @@
+{
+  "date": "2026-09-25",
+  "scope": "B1 Kernel assembly seams and W1 Host future-only Plan revision",
+  "status": "accepted",
+  "isolated": {
+    "exitCode": 0,
+    "testFiles": 78,
+    "passed": 726,
+    "failed": 0,
+    "typecheck": "pass",
+    "build": "pass",
+    "boundaries": "pass",
+    "kernelPatchReproduction": "pass",
+    "compiledPlatformEntry": "pass",
+    "oldSourceCopied": false
+  },
+  "modules": {
+    "target": 5,
+    "allowedEdges": 8,
+    "actualEdges": 5
+  },
+  "tests": {
+    "priorPassed": 719,
+    "duplicateOrNoopCasesRemoved": 7,
+    "newB1Cases": 6,
+    "newW1Cases": 8,
+    "independentCounterexamplesAddedWithinExistingCases": true
+  },
+  "scopedIndependent": {
+    "B1": {
+      "files": 5,
+      "passed": 36
+    },
+    "W1": {
+      "files": 2,
+      "passed": 8
+    }
+  },
+  "protected": {
+    "files": 8827,
+    "changed": 0
+  },
+  "DSH": {
+    "B1": "session-d2b13565-1137-404a-a94f-80933cdc7587",
+    "W1": "session-ef78cbcc-2581-4486-a8f6-35506fef67d7",
+    "preImportScopeAudit": "both no outsideScope/no originalWorkspaceChanged",
+    "skeletonReviewedBeforeImplementation": true
+  },
+  "rootIntegrationEdits": [
+    "B1 share pending before invoking source factory",
+    "W1 remove two unused single-task wrappers and their unused input type; retain shared per-Plan indexes",
+    "Test header comments accurately distinguish read-side fixtures from formal runtime writers"
+  ],
+  "notCompleted": [
+    "formal Role pin to Skill/context assembly",
+    "prepare/start and entered observation/reduction/release",
+    "Agent whiteboard tools and automated Workflow",
+    "communication, control/recovery, Host/UI completion"
+  ],
+  "memoryKnowledgeBase": "not a gate for this batch"
+}

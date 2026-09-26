@@ -1,0 +1,39 @@
+{
+  "lane": "r2e-mixed-comparison-skeleton-20260926",
+  "session": "session-3eb1948a-f535-413b-adce-2b2466da1fe1",
+  "files": {
+    "coding-platform/next/src/core/workspace/ports.ts": {
+      "before": "51fd433e81481dda75729c0e0bec42e12bafa922475aaa2fe5bb13134e8f3d21",
+      "after": "fcc2a04958bd7a77bfda23651f9ab0fb789e361603bf5e89026b91855cd6b6f2"
+    },
+    "coding-platform/next/src/core/workspace/access.ts": {
+      "before": "82ca3d6875595c3c0d70b62552fd63970c4deacbd40ff1c0a99805d1817b1e82",
+      "after": "6e1e629823d15982333fc76232bdfb56ba38aa49ea777a1b194493ee8d027f27"
+    },
+    "coding-platform/next/src/core/workspace/capture.ts": {
+      "before": "5e971b25a3f48cf998ff39606e90a34798b6ec568584440b0cac423b0ecab4a0",
+      "after": "d45347b7a7471e46d7494b5f4617f51ab21546a804539f62370b718d40e9abdc"
+    },
+    "coding-platform/next/src/core/workspace/git-read.ts": {
+      "before": "0c43ef82c558dd9e2d6ae76cac7f2222068bf61d2e0add93c61dc3670c5ba909",
+      "after": "808faf0a54492092c2690888964d03b1c866259c135c7b7a5c54abb74d183f9e"
+    },
+    "coding-platform/next/src/core/agent-runtime/project-source-tool.ts": {
+      "before": "045d84f99b65688c86753abab8a5c8f0bdbec0771e6920a085a3cc5c24328c80",
+      "after": "c9cc081542daf9a85aefeddc54ab4093880932e1246fba41a6e78237bc782bd9"
+    },
+    "coding-platform/next/tests/runtime/R2e-git-source-loop.test.ts": {
+      "before": "74e32017f65d1f3626b17a1414616525e92ef97ac46da70f26dfad561bcd7278",
+      "after": "de2e89596d2913c34e2d3342ece5763caa4ab55d34bf3fdd1e6e1524a94e3d41"
+    }
+  },
+  "checks": [
+    "r2e-mixed-skeleton-tests.log: 14 passed, 1 expected unsupported first red / 2 files",
+    "r2e-mixed-skeleton-types.log: exit 0",
+    "r2e-mixed-skeleton-audit.json: outsideScope [], originalWorkspaceChanged []"
+  ],
+  "review": "Astra bounded middle review passed; current working tree is one bounded observation with currentness not_rechecked; no new owner, Kernel or producer loop. New real B2 normal chain test is frozen.",
+  "middleEdit": "Restored the existing git/git capability in project_source tool description and labelled the new mixed text-only observation; no comparison implementation changed.",
+  "remaining": "Only compareGitWorkingTree implementation; mixed binary, Git/capture and Host/UI consumers remain separate.",
+  "importedAt": "2026-09-26T13:36:06.720131+00:00"
+}

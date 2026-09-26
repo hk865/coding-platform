@@ -1,0 +1,35 @@
+{
+  "recordsInSession": 361,
+  "requestedAfter": 358,
+  "limit": 3,
+  "positions": [
+    359,
+    360,
+    361
+  ],
+  "lastPosition": 361,
+  "fetchedRows": 5,
+  "sql": [
+    "SELECT * FROM sessions WHERE session_id=?",
+    "SELECT position FROM session_records WHERE session_id=? ORDER BY position DESC LIMIT 1",
+    "SELECT position,record_json FROM session_records WHERE session_id=? AND position>? ORDER BY position LIMIT ?"
+  ],
+  "plans": {
+    "tail": [
+      {
+        "id": 4,
+        "parent": 0,
+        "notused": 54,
+        "detail": "SEARCH session_records USING COVERING INDEX sqlite_autoindex_session_records_2 (session_id=?)"
+      }
+    ],
+    "page": [
+      {
+        "id": 7,
+        "parent": 0,
+        "notused": 50,
+        "detail": "SEARCH session_records USING INDEX sqlite_autoindex_session_records_2 (session_id=? AND position>?)"
+      }
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "name": "coding-agent-learning",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A learning-oriented coding agent built milestone by milestone.",
+  "bin": {
+    "coding-agent": "./dist/app/cli/main.js"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=24.15.0 <25"
+  },
+  "scripts": {
+    "start": "node dist/app/cli/main.js",
+    "web": "npm run build && node dist/app/web/main.js",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "npm run build && vitest run tests/e2e",
+    "test:e2e:bwrap": "npm run build && CODING_AGENT_REQUIRE_BWRAP=1 vitest run tests/e2e/m3-bwrap-runtime.test.ts tests/e2e/m5-cli-child.test.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "check:architecture": "node scripts/check-architecture.mjs",
+    "check:scenarios": "node tests/scenarios/runner.mjs validate",
+    "benchmark:validate": "node benchmarks/harness/cli.mjs preflight",
+    "benchmark:baseline:replay": "node benchmarks/harness/cli.mjs baseline --mode oracle",
+    "benchmark:baseline:real": "node benchmarks/harness/cli.mjs baseline --mode agent",
+    "smoke:providers": "npm run build && node benchmarks/harness/provider-smoke.mjs",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run check:architecture && npm run benchmark:validate"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.13.3",
+    "eslint": "10.8.1",
+    "globals": "17.11.0",
+    "js-yaml": "^5.4.1",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.67.0",
+    "vitest": "4.1.10"
+  },
+  "dependencies": {
+    "openai": "^7.5.0",
+    "zod": "4.4.3"
+  }
+}

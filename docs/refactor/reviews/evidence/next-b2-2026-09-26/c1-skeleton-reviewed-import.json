@@ -1,0 +1,53 @@
+{
+  "outsideDshScopeReviewedTestRepairs": [
+    "coding-platform/next/tests/helpers/C1-mailbox-fixture.ts",
+    "coding-platform/next/tests/helpers/task-claim-fixture.ts"
+  ],
+  "files": [
+    {
+      "path": "coding-platform/next/src/contracts/core/session-message.ts",
+      "before": "bea94a23a8ddb3ad9d21fa1f464b3fb65b32358c17755a70cf2de9e55224e099",
+      "after": "30c5dc0fec8c2141f1f385577e80264780665d5b40eebafcb6ad539f4f71b8ac"
+    },
+    {
+      "path": "coding-platform/next/src/contracts/ledger.ts",
+      "before": "1a2de65f550264182674c2331c2093397308f8f6fc8d2456b5295c4f6eef83d0",
+      "after": "27dea168af62e90705e85da90897d4ab11f19adc406d2c95bcc81f5be9432dd7"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/communication/contracts.ts",
+      "before": "bea94a23a8ddb3ad9d21fa1f464b3fb65b32358c17755a70cf2de9e55224e099",
+      "after": "4039a205c9498633c7c863fa497cdf3828b0ca15fbfca3a833f39659aa911c7c"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/communication/mailbox-service.ts",
+      "before": "bea94a23a8ddb3ad9d21fa1f464b3fb65b32358c17755a70cf2de9e55224e099",
+      "after": "8fe991b2d2324dc9759f6ea3c083f0b65d117ef424c22fa742a17b6dc76c6328"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/communication/message-record-codecs.ts",
+      "before": "bea94a23a8ddb3ad9d21fa1f464b3fb65b32358c17755a70cf2de9e55224e099",
+      "after": "54b5d497d8f944a2f91fe15bc403fcf6d357453cad06164cf72998347bdee2da"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/communication-tools.ts",
+      "before": "bea94a23a8ddb3ad9d21fa1f464b3fb65b32358c17755a70cf2de9e55224e099",
+      "after": "6025baee9fe5a2d71c22a60737d040b6934da359293489cd294465fab0b2a38f"
+    },
+    {
+      "path": "coding-platform/next/tests/work-graph/C1-session-mailbox.test.ts",
+      "before": "bea94a23a8ddb3ad9d21fa1f464b3fb65b32358c17755a70cf2de9e55224e099",
+      "after": "86d5887efb87136a8229e8647f4ac7145dab1f32ace3e9e241d0c9aa768d08e1"
+    },
+    {
+      "path": "coding-platform/next/tests/runtime/C1-communication-tools.test.ts",
+      "before": "bea94a23a8ddb3ad9d21fa1f464b3fb65b32358c17755a70cf2de9e55224e099",
+      "after": "27f5c21c58f9424ecf7ac7f33bb333f50fa18bfb45607f784f71b1c1efbd554b"
+    },
+    {
+      "path": "coding-platform/next/tests/helpers/C1-mailbox-fixture.ts",
+      "before": null,
+      "after": "a60713290823225bc9dd4c7f1115a7259ec9cd3ce8537be0dbc0fcc9ae340b30"
+    }
+  ]
+}

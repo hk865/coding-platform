@@ -1,0 +1,49 @@
+[
+  {
+    "lane": "a1-catalog-implementation",
+    "status": "imported-for-independent-review-not-accepted",
+    "files": [
+      {
+        "file": "coding-platform/next/src/core/work-graph/architecture/catalog-service.ts",
+        "before": "541a0a75760c911b09bc945805b6c63e94ca9eb242ade64393bdb3e259348ff5",
+        "candidate": "0bc1764bdfefae7574624244542a1625e9a93e1a3f04b6b27cc35accaad9a85a"
+      },
+      {
+        "file": "coding-platform/next/src/core/work-graph/architecture/catalog-record-codecs.ts",
+        "before": "66c4987b32b2f297edf4203826b87867248c5cf7078b71bcb6820f8118af4a1e",
+        "candidate": "3494c03718f37e7ca9540ed82a4b59acffb879ae6b6de6f3e59f02ccfcd5cfd8"
+      }
+    ]
+  },
+  {
+    "lane": "a1-session-implementation",
+    "status": "imported-for-independent-review-not-accepted",
+    "files": [
+      {
+        "file": "coding-platform/next/src/core/work-graph/sessions/session-lifecycle.ts",
+        "before": "7b6f9dba0bee0ea9c73be0e5b61aec1207d136507af359f7fe5cd3aec818d993",
+        "candidate": "68ac328f391b1d7ecb5703a4ebfd3850956e2b0f2c896afa3aaec14bafac29b3"
+      },
+      {
+        "file": "coding-platform/next/src/core/work-graph/sessions/lifecycle-record-codecs.ts",
+        "before": "1cc718fec658a652280fe258a033ec007fb59a2d0145e9536334771ee69b5b28",
+        "candidate": "e36d4b037e27b7bf7ea3dc71234ecd30728390e8f963b55721dda4e75b57835f"
+      },
+      {
+        "file": "coding-platform/next/src/core/work-graph/sessions/session-directory.ts",
+        "before": "04268de01d4f3f2b2008740725951ad42e9ada81240309db68b43dbd8b87f49c",
+        "candidate": "724557971543b0b5f2ba5752e878f51223966a448775ff1a3ca819db523ea57f"
+      },
+      {
+        "file": "coding-platform/next/src/core/work-graph/sessions/session-record-codecs.ts",
+        "before": "2d0e932a3d12a66df0ceda54e999bedc5fba843dc8b80da2b217bbb383dc3444",
+        "candidate": "50806d18e8e910c52862df9ac00c56c8d2bec7b731c5cd82bfe33ca845cce76a"
+      },
+      {
+        "file": "coding-platform/next/src/core/work-graph/sessions/session-targets.ts",
+        "before": "bfbdef0853e8776a7b402fe0ab94dd69b63e8bb245d07ea9c97326f08e61933b",
+        "candidate": "333d493a64b82e63a3fcb29c3532853b893ffd82aefe728c985d4ca6a35b55f2"
+      }
+    ]
+  }
+]

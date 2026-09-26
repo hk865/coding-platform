@@ -1,0 +1,6 @@
+{
+  "test": "coding-platform/next/tests/runtime/R4c-graph-history.test.ts",
+  "old": "d8a3a1fbb574528b0d82301708dbd595cb24646fd907bd0df2e5dea00473ba9b",
+  "new": "ea153353af05ffadb61ea39c8ebd5be64aaa87667834676d3f3e011513b12552",
+  "reason": "Astra independent review: lower-bound i=0 regression PASS after candidate self-fix; terminal entry cursor compatibility RED, typecheck PASS"
+}

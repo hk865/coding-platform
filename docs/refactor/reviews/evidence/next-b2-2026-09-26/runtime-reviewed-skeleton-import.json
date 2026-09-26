@@ -1,0 +1,77 @@
+[
+  {
+    "path": "coding-platform/next/src/composition/create-platform.ts",
+    "before": "b8b3905b72543187e72eaabc7b01d28a710c7228039d79c8626f7e0d7999a6b4",
+    "after": "ba4dc69153fc97c01ef03496cfef2103e3f212da8571b9bb3e68cf6582544c32"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/execution-contracts.ts",
+    "before": "1c7a04129979ef9abd0f643bddb557dbd9039a868a5bd18360a0e5f469d0056b",
+    "after": "e7b25eebbda7c004e8197a598f958407b5e6d89f30bb63ea42b15397a4713763"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+    "before": "1c7a04129979ef9abd0f643bddb557dbd9039a868a5bd18360a0e5f469d0056b",
+    "after": "1a7cb8b16e592c05068b63b205835c9e9dc6175e82e50a05200f8a2e439b91da"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+    "before": "1c7a04129979ef9abd0f643bddb557dbd9039a868a5bd18360a0e5f469d0056b",
+    "after": "4446e2105aa791480c8070bf7f09938b34635c9db742e145b68bbc930223ab9f"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/execution-preparation.ts",
+    "before": "1c7a04129979ef9abd0f643bddb557dbd9039a868a5bd18360a0e5f469d0056b",
+    "after": "c52a1f4f98fa79143030a254db9998b8a9954d5e0755ecf93f0f0890f72359ac"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/model-budget.ts",
+    "before": "810b108333fd9b7e8aa247b8c21c661f6acb7c7c5723b8fd40d49d379a68ad86",
+    "after": "b4028263e34b7f59a80fdabc53c691af9ad5cdeb919615129bcedeadf835891c"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/model-call-access.ts",
+    "before": "1c7a04129979ef9abd0f643bddb557dbd9039a868a5bd18360a0e5f469d0056b",
+    "after": "91bcc9c0ef81f4734c380217a91996f50d9a0e7c93661f52d2ec2189aa3005fb"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+    "before": "41ffa6971e05475c04f0545ae07e0f05a0e954dd2c7339b7509ac35202902d0a",
+    "after": "cdf9cbb85c88399e47fe3caf5d45901e1ebc9b2d84591cd934971ab5f2fb4222"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/ports.ts",
+    "before": "45dd77d5532d3685e31e1e3ee4a0f6411b38978a7536fb72cfe0e808bbb7fb23",
+    "after": "9ec9b84c993d5bea25009bae50ce2b4bdc00372771edb035f5cad3c0feaac42a"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/run-limits.ts",
+    "before": "7c4388a5f246b8101fd83d3719fb38c2f162a9cb70d1289f5af1e4242ba1fd02",
+    "after": "63456464a39294e6b6a053f794b1e76388f2f84b5ed6d917db5c30d90ca04d15"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/runtime.ts",
+    "before": "639a0549776367550b218f0ebfb237d057f7dfb0ab4282917e39724235dd95ee",
+    "after": "467d22960e8953e343960081dcea682ee951095cb448c2f6223e84af189431b6"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/session-operations.ts",
+    "before": "a9291fb3fe06205df9a51e428b619d0d758d588ce0cdc32a8a78e5bbd09f0be9",
+    "after": "65f74ce6649a0519f4fde5d8e2dd4b42c9f0975fe21c425e5e42cbf2e93395a5"
+  },
+  {
+    "path": "coding-platform/next/tests/composition/B2-runtime-platform.test.ts",
+    "before": "1c7a04129979ef9abd0f643bddb557dbd9039a868a5bd18360a0e5f469d0056b",
+    "after": "e4f692878e038de5f1c9e2cad2eabefd6dfaacf65fb2c3cd81d481bedd632421"
+  },
+  {
+    "path": "coding-platform/next/tests/helpers/B2-runtime-fixture.ts",
+    "before": "1c7a04129979ef9abd0f643bddb557dbd9039a868a5bd18360a0e5f469d0056b",
+    "after": "62e29dc9f553d6d42b3075a32e3a7b2535ae763a94460f3170c0af18d2ff6f13"
+  },
+  {
+    "path": "coding-platform/next/tests/runtime/B2-runtime-execution.test.ts",
+    "before": "1c7a04129979ef9abd0f643bddb557dbd9039a868a5bd18360a0e5f469d0056b",
+    "after": "38a554066f6f3698a205bc06fe3cd1a13d82c7026731f0fdce464fab4b1feeb7"
+  }
+]

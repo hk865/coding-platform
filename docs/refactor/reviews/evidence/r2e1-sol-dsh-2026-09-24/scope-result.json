@@ -1,0 +1,8 @@
+{
+  "changed": [
+    "coding-platform/src/core/workspace/text-source-snapshot.ts",
+    "coding-platform/src/core/workspace/workspace-read.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

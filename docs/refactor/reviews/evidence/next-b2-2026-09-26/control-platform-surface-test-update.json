@@ -1,0 +1,6 @@
+{
+  "file": "coding-platform/next/tests/composition/platform.test.ts",
+  "before": "3c7a6c8050e9ca7ac33619826e2a890a6e805092f15803492cf195c55a101ac7",
+  "after": "801b3edab08e2ab5480aa860ccd8a736c34e6d5af14ba6160d45af3a0e6b9dff",
+  "change": "add public controls name to exact inventory; no production edit"
+}

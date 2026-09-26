@@ -1,0 +1,142 @@
+{
+  "status": "stage-one candidate STOP; independently reviewed; awaiting root freeze/import; no stage-two dispatch",
+  "reviewedAt": "2026-09-26T16:25:38.548823+00:00",
+  "lane": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r6-graph-history-consumer-skeleton-20260927",
+  "session": "session-4eeec79f-7ea9-4707-b8bb-3f094c04dfb1",
+  "finalAttempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r6-graph-history-consumer-skeleton-20260927/attempt-1790439760637744939",
+  "task": "docs/refactor/tasks/R6-graph-history-consumer-skeleton.md",
+  "files": [
+    {
+      "path": "coding-platform/next/src/app/core-http-types.ts",
+      "before": "619412e820d34e005bf37c012c34762703e8acb44bf654cde0f9da177ebe69a3",
+      "after": "f17fb3c80077b99cabe3ea209ff16e0536abb09a81edf12aa1dcf335ec422264",
+      "added": 22,
+      "deleted": 1,
+      "net": 21
+    },
+    {
+      "path": "coding-platform/next/src/app/core-routes.ts",
+      "before": "efe379a98e705fdc1980df5a87ce4edaf4f8faad1072bbec874955e4d22dc584",
+      "after": "17c77d3525f76773be9794f60a98b8508fe2f223b6b57ca9dc12150d4c9070a9",
+      "added": 13,
+      "deleted": 1,
+      "net": 12
+    },
+    {
+      "path": "coding-platform/next/src/ui/main.ts",
+      "before": "65f227d05f435b515441601b573bfaf5d7e710b50a46f5ef53c6d00003a8d805",
+      "after": "f236a568ef456553d4715a23b4ad737da0fe2f5486bfdfbe1ae4d3261a1f5f47",
+      "added": 33,
+      "deleted": 1,
+      "net": 32
+    },
+    {
+      "path": "coding-platform/next/src/ui/views.ts",
+      "before": "0cd8e0b5dbb800abfba886aa1122b20e7dab794d89720759511b7b10435fd8d5",
+      "after": "ad27a58b243f949d3faf83d97ffd1b297a7ef1c41a0622ec90e41fd888005b20",
+      "added": 62,
+      "deleted": 1,
+      "net": 61
+    },
+    {
+      "path": "coding-platform/next/tests/app/R6-host.test.ts",
+      "before": "89a8e77dc52ddacefa9953ce15dee30ced9ebe27473bfd01e3acc804f7180a0c",
+      "after": "922b8024351387450bd98f635a20610976b1e2d5b514a20f1e3bb389342d6032",
+      "added": 132,
+      "deleted": 1,
+      "net": 131
+    },
+    {
+      "path": "coding-platform/next/tests/app/R6-workbench.test.ts",
+      "before": "621d1bbe5846d5f2add89df157e559d25200adee4ad39fa83f22cee4caee1183",
+      "after": "0c9d3738b6d21aba5f40ebc45d656987a6defb2098c7eecfb14021f1084ecac5",
+      "added": 40,
+      "deleted": 0,
+      "net": 40
+    }
+  ],
+  "totals": {
+    "productionNet": 126,
+    "testNet": 171,
+    "added": 302,
+    "deleted": 5,
+    "net": 297
+  },
+  "frozenReadOnlyHashes": {
+    "coding-platform/next/src/app/host.ts": "c1638768eb6a92ab4d29e37a270e09e176b269b1888d33d8f06e96d3a87dced0",
+    "coding-platform/next/src/composition/create-platform.ts": "9d5be391be290d065be762f733acd44a91e7481ed3643b6cc61698db5c1297aa",
+    "coding-platform/next/src/core/work-graph/tasks/execution-read-contracts.ts": "27b85a4e32d19dd525f6ae3edb3b0b451bf0888eaa2377cc5be3226cf23a18aa",
+    "coding-platform/next/src/core/agent-runtime/execution-history-contracts.ts": "4f6170a730d479c27191722d18291d056b97df3550d2ba50cbcc9f404f06a01f"
+  },
+  "audit": {
+    "changed": [
+      "coding-platform/next/src/app/core-http-types.ts",
+      "coding-platform/next/src/app/core-routes.ts",
+      "coding-platform/next/src/ui/main.ts",
+      "coding-platform/next/src/ui/views.ts",
+      "coding-platform/next/tests/app/R6-host.test.ts",
+      "coding-platform/next/tests/app/R6-workbench.test.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "independentChecks": [
+    {
+      "check": "next-r6-host",
+      "exitCode": 1,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-skeleton-final-tests.log",
+      "sha256": "d47da542890c10771437d9aea721647f0b02cc51786c03ac85284c1203bdba4b",
+      "total": 22,
+      "passed": 21,
+      "failed": 1,
+      "expectedRed": {
+        "file": "tests/app/R6-workbench.test.ts",
+        "line": 549,
+        "expected": "data-execution-entry=\"open\"",
+        "actual": "data-execution-entry=\"unsupported\"",
+        "scope": "last assertion of existing original-history normal it; previous typed identity/reducer/future row assertions passed"
+      }
+    },
+    {
+      "check": "next-types",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-skeleton-final-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "next-ui-types",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-skeleton-final-ui-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "next-build",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-skeleton-final-build.log",
+      "sha256": "2b1edee55dfb8e18719b485a95c9376f2a9b5cd6af2e957df8ae2577abed4b0e"
+    },
+    {
+      "check": "next-architecture",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-skeleton-final-architecture.log",
+      "sha256": "5b54574630dd51dd3818192aae0beb67cd965e9a0d3cda936f8977cc9b164bee"
+    }
+  ],
+  "review": {
+    "routes": "two exact plain bodies and response types derive from original readExecution/readTaskExecutionHistory; exact bound methods and switch passthrough; no writer/reader/Store/model loop added",
+    "httpNormalChain": "same existing real JSON/Host/SQLite/Kernel/Query/Workflow-completed it now reads two actual work Runs; same claim Session, different Run; bounded second window returns actual second assistant output and excludes first output record; full original Session pages contain both in original position order; provider calls unchanged",
+    "uiContract": "TaskRow -> complete RunRef entry; execution_history tab holds RunRef and optional original TaskTriple; ScopeState result carries exact scope+RunRef and matching predicate; new opening/fetch/page display remain explicit unsupported; original Query/Workflow/default collapsed answer/TaskGraph formal completion unaffected",
+    "necessaryMiddleRepair": "removed extra fixture/assertions requiring permanently unsupported ready history rendering; added execution_history to WorkbenchTabKind. Existing it count unchanged, exact final entry assertion remains sole expected red.",
+    "scopeConclusion": "acceptable skeleton. No further blocker found. Root has separately reviewed full diff. No source import by this reviewer.",
+    "stageTwoScope": [
+      "coding-platform/next/src/ui/main.ts",
+      "coding-platform/next/src/ui/views.ts"
+    ],
+    "stageTwoConsumerNotes": [
+      "Implement original execution read -> outbox.claim.sessionRef -> original run history and full Session navigation; preserve exact captured scope/page/object identity and original cursor, including empty scans with nextCursor.",
+      "Use one existing Session-history request builder for both center and auxiliary page with captured original Session/cursor; merge duplicated buildSessionHistoryRequest/buildSessionHistoryRequestFor logic at this existing touchpoint, without new module or case.",
+      "Keep page results/cursors per exact object and original page; render new failures instead of stale successful body; target Session pagination preserves target/includeArchived/role/sourceCursor.",
+      "Use full TaskTriple tab identity; no endedWorkLink discovery, owner changes, or fixture database edits."
+    ]
+  }
+}

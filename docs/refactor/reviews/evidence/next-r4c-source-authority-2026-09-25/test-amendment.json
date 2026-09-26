@@ -1,0 +1,6 @@
+{
+  "test": "coding-platform/next/tests/runtime/R4c-source-authority-guards.test.ts",
+  "old": "eae6ad4f72cc039960ab20e8fc8e3f16de523926cde259bf12722e3387ef804d",
+  "new": "9723e5efdd1aae6dd52b786213b6d20477d3daba4c29a5a1859dcdc8cc851a69",
+  "reason": "Astra independent review: unknown principal and persisted envelope identity corruption; candidate 49 PASS / 2 FAIL, typecheck PASS"
+}

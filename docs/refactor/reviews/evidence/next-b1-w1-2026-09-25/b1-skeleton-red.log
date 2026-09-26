@@ -1,0 +1,103 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/runtime/B1-kernel-assembly.test.ts (6 tests | 6 failed) 11ms
+     × uses the trusted skill resource config verbatim, including an explicit empty list, and snapshots it before awaits 5ms
+     × awaits before_model, snapshots the hook list/metadata/execute before the first await, and sees run.started/turn.started 1ms
+     × pauses at before_model with zero model requests and no first_use source factory open 1ms
+     × shares one suspended first_use open across parallel calls and delivers the real captured payload to the model 1ms
+     × drains a suspended first_use open on cancellation and closes the resolved access exactly once 1ms
+     × reports a lazy open failure as a real tool result, reuses the one failed factory attempt in the next round, and keeps project_index out 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/runtime/B1-kernel-assembly.test.ts > B1 Kernel assembly seam > uses the trusted skill resource config verbatim, including an explicit empty list, and snapshots it before awaits
+Error: ObservedModelRunOptions.skills is unsupported by the current B1 skeleton: the frozen interface is declared but not wired
+ ❯ unsupportedSeam src/core/agent-runtime/observed-model-run.ts:66:3
+     64| /** Explicit skeleton rejection for a frozen B1 seam whose wiring is t…
+     65| const unsupportedSeam = (feature: string) => Object.assign(
+     66|   new Error(`${feature} is unsupported by the current B1 skeleton: the…
+       |   ^
+     67|   { code: 'unsupported' as const },
+     68| );
+ ❯ runObservedModel src/core/agent-runtime/observed-model-run.ts:93:37
+ ❯ tests/runtime/B1-kernel-assembly.test.ts:187:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  tests/runtime/B1-kernel-assembly.test.ts > B1 Kernel assembly seam > awaits before_model, snapshots the hook list/metadata/execute before the first await, and sees run.started/turn.started
+Error: ObservedModelRunOptions.controlHooks is unsupported by the current B1 skeleton: the frozen interface is declared but not wired
+ ❯ unsupportedSeam src/core/agent-runtime/observed-model-run.ts:66:3
+     64| /** Explicit skeleton rejection for a frozen B1 seam whose wiring is t…
+     65| const unsupportedSeam = (feature: string) => Object.assign(
+     66|   new Error(`${feature} is unsupported by the current B1 skeleton: the…
+       |   ^
+     67|   { code: 'unsupported' as const },
+     68| );
+ ❯ runObservedModel src/core/agent-runtime/observed-model-run.ts:92:43
+ ❯ tests/runtime/B1-kernel-assembly.test.ts:239:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  tests/runtime/B1-kernel-assembly.test.ts > B1 Kernel assembly seam > pauses at before_model with zero model requests and no first_use source factory open
+Error: ObservedModelRunOptions.controlHooks is unsupported by the current B1 skeleton: the frozen interface is declared but not wired
+ ❯ unsupportedSeam src/core/agent-runtime/observed-model-run.ts:66:3
+     64| /** Explicit skeleton rejection for a frozen B1 seam whose wiring is t…
+     65| const unsupportedSeam = (feature: string) => Object.assign(
+     66|   new Error(`${feature} is unsupported by the current B1 skeleton: the…
+       |   ^
+     67|   { code: 'unsupported' as const },
+     68| );
+ ❯ runObservedModel src/core/agent-runtime/observed-model-run.ts:92:43
+ ❯ tests/runtime/B1-kernel-assembly.test.ts:283:26
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  tests/runtime/B1-kernel-assembly.test.ts > B1 Kernel assembly seam > shares one suspended first_use open across parallel calls and delivers the real captured payload to the model
+Error: ObservedModelRunOptions.projectSource.openOn='first_use' is unsupported by the current B1 skeleton: the frozen interface is declared but not wired
+ ❯ unsupportedSeam src/core/agent-runtime/observed-model-run.ts:66:3
+     64| /** Explicit skeleton rejection for a frozen B1 seam whose wiring is t…
+     65| const unsupportedSeam = (feature: string) => Object.assign(
+     66|   new Error(`${feature} is unsupported by the current B1 skeleton: the…
+       |   ^
+     67|   { code: 'unsupported' as const },
+     68| );
+ ❯ runObservedModel src/core/agent-runtime/observed-model-run.ts:94:91
+ ❯ tests/runtime/B1-kernel-assembly.test.ts:311:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  tests/runtime/B1-kernel-assembly.test.ts > B1 Kernel assembly seam > drains a suspended first_use open on cancellation and closes the resolved access exactly once
+Error: ObservedModelRunOptions.projectSource.openOn='first_use' is unsupported by the current B1 skeleton: the frozen interface is declared but not wired
+ ❯ unsupportedSeam src/core/agent-runtime/observed-model-run.ts:66:3
+     64| /** Explicit skeleton rejection for a frozen B1 seam whose wiring is t…
+     65| const unsupportedSeam = (feature: string) => Object.assign(
+     66|   new Error(`${feature} is unsupported by the current B1 skeleton: the…
+       |   ^
+     67|   { code: 'unsupported' as const },
+     68| );
+ ❯ runObservedModel src/core/agent-runtime/observed-model-run.ts:94:91
+ ❯ tests/runtime/B1-kernel-assembly.test.ts:362:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ FAIL  tests/runtime/B1-kernel-assembly.test.ts > B1 Kernel assembly seam > reports a lazy open failure as a real tool result, reuses the one failed factory attempt in the next round, and keeps project_index out
+Error: ObservedModelRunOptions.projectSource.openOn='first_use' is unsupported by the current B1 skeleton: the frozen interface is declared but not wired
+ ❯ unsupportedSeam src/core/agent-runtime/observed-model-run.ts:66:3
+     64| /** Explicit skeleton rejection for a frozen B1 seam whose wiring is t…
+     65| const unsupportedSeam = (feature: string) => Object.assign(
+     66|   new Error(`${feature} is unsupported by the current B1 skeleton: the…
+       |   ^
+     67|   { code: 'unsupported' as const },
+     68| );
+ ❯ runObservedModel src/core/agent-runtime/observed-model-run.ts:94:91
+ ❯ tests/runtime/B1-kernel-assembly.test.ts:402:26
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed (6)
+   Start at  19:07:40
+   Duration  657ms (transform 301ms, setup 0ms, import 560ms, tests 11ms, environment 0ms)
+

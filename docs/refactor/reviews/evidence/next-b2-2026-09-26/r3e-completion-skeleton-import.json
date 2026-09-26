@@ -1,0 +1,59 @@
+{
+  "lane": "r3e-task-goal-completion-skeleton-20260926",
+  "files": {
+    "coding-platform/next/src/contracts/reduction.ts": {
+      "before": "a4f0d075002b1257e999cdef4eb91fd850c52166590667dbd202da66fa36fead",
+      "after": "31928e35366323ecd75bc5b9648d4ede45549359182fbfbc88a4dbd189878f26"
+    },
+    "coding-platform/next/src/contracts/goal-phase.ts": {
+      "before": "e8cc5634e2c2eb5979fd15a9158a6b11c404cf8dfd0a17c7ba81a978b2525eae",
+      "after": "98adb24be9217a0e1ecbfd2d59e659ba6f8e4afdd4a4f71879948bdf4c75a264"
+    },
+    "coding-platform/next/src/core/work-graph/tasks/contracts.ts": {
+      "before": "07c64595f545c438b16d4e996f97850d9e1cf42cf32fbab22eaa190c849cb7d2",
+      "after": "b065a093d7a4dcf3716a3c37e8cd8e8bd694ce549e8158e2c9f58654a59b8a01"
+    },
+    "coding-platform/next/src/core/work-graph/tasks/task-service.ts": {
+      "before": "11c0b52b24210a228f728ca228d375a3b894738cd77b5d82885a9b734c0e6958",
+      "after": "34024f115cf02bbfa3984449d46b4fc98a5f1a1494b2c376920297c4406434f3"
+    },
+    "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts": {
+      "before": "79fb556c92e959726b0df51b1727262d4f5a429eedd4bda3d5cd4350bbb3d0ac",
+      "after": "6c98b1656827af68b511c758813ca944fb986f768af66015c6ea892373073ebe"
+    },
+    "coding-platform/next/src/core/work-graph/tasks/plan-contracts.ts": {
+      "before": "a2fc0d096fb1720950ff96fd8253fe5caf81d65cd086d340bc9d3d84c16baff0",
+      "after": "e9b3180f8fc6a00cc3c7ffac5e0864eff39c76a7179604815f85a28fa220103b"
+    },
+    "coding-platform/next/src/core/work-graph/tasks/plan-service.ts": {
+      "before": "eb1ae972b646afb8f783c40f53e0b561a3b5300c8f75a64208618fecec44ca6e",
+      "after": "eb1ae972b646afb8f783c40f53e0b561a3b5300c8f75a64208618fecec44ca6e"
+    },
+    "coding-platform/next/src/core/work-graph/tasks/completion.ts": {
+      "before": "3d111e35871e7673ee4cbb3756c149c1011531fb12c0925fc1eb41a38a8ea866",
+      "after": "a7b3183564e9e86ad52b68f9c44a147b0317ab200df16f9822fb09f35e02e86d"
+    },
+    "coding-platform/next/src/core/work-graph/tasks/completion-policy.ts": {
+      "before": "3d111e35871e7673ee4cbb3756c149c1011531fb12c0925fc1eb41a38a8ea866",
+      "after": "c3685fbba392c9d83f9ba596de116082a8cb3c35706fe90a048353b1fce5d812"
+    },
+    "coding-platform/next/src/core/work-graph/tasks/completion-record-codecs.ts": {
+      "before": "3d111e35871e7673ee4cbb3756c149c1011531fb12c0925fc1eb41a38a8ea866",
+      "after": "fdda34b5e594c58ad989b9e433a72d11f81d102a3f6bea220b7afc21e834f7ac"
+    },
+    "coding-platform/next/src/composition/create-platform.ts": {
+      "before": "2ab8315e68afdfcdbe8647563c97174a037089bccd13551c20751d2ab9604564",
+      "after": "5236285020d74bc76b1c42b346b0fbdf55fab6d155d8dc37f69d7bc3cad80c7c"
+    },
+    "coding-platform/next/tests/work-graph/R3e-completion.test.ts": {
+      "before": "3d111e35871e7673ee4cbb3756c149c1011531fb12c0925fc1eb41a38a8ea866",
+      "after": "98692ba6ffe621e0ed03ee153b3314700f4e0818312c3a737a9d3a4bf0243fea"
+    },
+    "coding-platform/next/tests/composition/R3e-completion-platform.test.ts": {
+      "before": "3d111e35871e7673ee4cbb3756c149c1011531fb12c0925fc1eb41a38a8ea866",
+      "after": "0abf6e960fe112c7d5c4aa27b3c57c533769e81fcb8a0bd4f9516e13604c6c03"
+    }
+  },
+  "checks": "3 expected unsupported target red; 18 actual plan/evidence neighbors pass; types pass",
+  "review": "One schema-registration fixture precondition fixed, no new case; obsolete previous-stage public-surface absence assertion removed."
+}

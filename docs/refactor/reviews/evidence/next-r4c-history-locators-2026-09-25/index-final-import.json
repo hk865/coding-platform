@@ -1,0 +1,7 @@
+{
+  "review": "receipt version and original expected revision agree; no current-state read",
+  "sha256": {
+    "coding-platform/next/src/core/work-graph/tasks/execution-history-service.ts": "51fea2737e854bf46e8367a9ae72b2c98795d30c585f32b158cf80caaf2b9f6d",
+    "coding-platform/next/src/core/work-graph/persistence/execution-history-codecs.ts": "d1b0ffcbea3fcf0c73c9061131c20f6b0fc506206551971dfb93c2e82b56b8ea"
+  }
+}

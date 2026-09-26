@@ -1,0 +1,148 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+ ❯ tests/data/R3b-material-admission-boundaries.test.ts (6 tests | 5 failed) 9ms
+   × lets a Host read its own newly stored platform artifact but keeps project and workspace scope exact 5ms
+   × does not let a later caller mutation revoke a valid reader while the body read is waiting 1ms
+   × returns cancelled if a body read completes only after the caller aborts 1ms
+   × maps raw corruption to unavailable for Core and invalid for legacy without hiding the reason 1ms
+   × binds a Core work_run owner read to the canonical Run workspace as well as its full Run ref 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/data/R3b-material-admission-boundaries.test.ts > lets a Host read its own newly stored platform artifact but keeps project and workspace scope exact
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready', value: { …(2) } }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "body": "platform material",
+-     "ref": {
+-       "contentType": "text/plain",
+-       "digest": "39e7d936157d897bde733c8dbbab0beb78040c532bb9b63b530963ea8128867e",
+-       "kind": "artifact",
+-       "sizeBytes": 17,
+-       "source": {
+-         "kind": "workspace",
+-         "refId": "source-workspace",
+-         "revision": "1",
+-       },
+-     },
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/data/R3b-material-admission-boundaries.test.ts:49:6
+     47|   expect(stored?.origin).toEqual(origin);
+     48|   expect(await materials.openArtifact(ctx('owner-project', 'owner-work…
+     49|     .toMatchObject({ status: 'ready', value: { body, ref } });
+       |      ^
+     50|   expect(await materials.openArtifact(ctx('other-project', 'owner-work…
+     51|     .toMatchObject({ status: 'rejected', code: 'forbidden' });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  tests/data/R3b-material-admission-boundaries.test.ts > does not let a later caller mutation revoke a valid reader while the body read is waiting
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready', …(1) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "body": "platform material",
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/data/R3b-material-admission-boundaries.test.ts:77:25
+     75|   if (request.materialReader.kind === 'host') request.materialReader.p…
+     76|   gate.resolve({ status: 'ready', value: record });
+     77|   expect(await opening).toMatchObject({ status: 'ready', value: { body…
+       |                         ^
+     78| });
+     79|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  tests/data/R3b-material-admission-boundaries.test.ts > returns cancelled if a body read completes only after the caller aborts
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "cancelled",
++   "code": "forbidden",
+    "status": "rejected",
+  }
+
+ ❯ tests/data/R3b-material-admission-boundaries.test.ts:88:25
+     86|   controller.abort(new Error('caller left'));
+     87|   gate.resolve({ status: 'ready', value: record });
+     88|   expect(await opening).toMatchObject({ status: 'rejected', code: 'can…
+       |                         ^
+     89| });
+     90|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  tests/data/R3b-material-admission-boundaries.test.ts > maps raw corruption to unavailable for Core and invalid for legacy without hiding the reason
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(2) }
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
++   "code": "invalid",
+    "reason": "stored artifact digest mismatch at key",
+    "status": "rejected",
+  }
+
+ ❯ tests/data/R3b-material-admission-boundaries.test.ts:96:6
+     94|     read: async () => ({ status: 'rejected', code: 'corrupt', reason }…
+     95|   expect(await service(raw).openArtifact(ctx('owner-project', 'owner-w…
+     96|     .toMatchObject({ status: 'rejected', code: 'unavailable', reason: …
+       |      ^
+     97|   const legacy = createLegacyArtifactPort({ bodies: raw, authority, gr…
+     98|   expect(await legacy.open(ref, { requesterRunRef: { aggregateType: 'R…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  tests/data/R3b-material-admission-boundaries.test.ts > binds a Core work_run owner read to the canonical Run workspace as well as its full Run ref
+AssertionError: expected { status: 'ready', value: { …(5) } } to match object { status: 'rejected', …(1) }
+(6 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "forbidden",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/data/R3b-material-admission-boundaries.test.ts:122:6
+    120|     .toMatchObject({ status: 'ready', value: { body } });
+    121|   expect(await materials.openArtifact(workContext('other-workspace'), …
+    122|     .toMatchObject({ status: 'rejected', code: 'forbidden' });
+       |      ^
+    123| });
+    124|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 1 passed (6)
+   Start at  07:57:02
+   Duration  144ms (transform 44ms, setup 0ms, import 57ms, tests 9ms, environment 0ms)
+

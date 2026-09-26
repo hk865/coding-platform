@@ -1,0 +1,13 @@
+{
+  "writableFiles": [
+    "coding-platform/next/vendor/coding-agent/patches/public-api.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

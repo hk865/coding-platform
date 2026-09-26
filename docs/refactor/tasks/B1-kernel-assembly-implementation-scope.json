@@ -1,0 +1,8 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+    "coding-platform/next/src/core/agent-runtime/exploration-tools.ts",
+    "coding-platform/next/src/core/agent-runtime/project-source-tool.ts"
+  ],
+  "dshStateDirectories": ["profiles", "sessions", "storages", "cache", "llm-deepseek", "attachments"]
+}

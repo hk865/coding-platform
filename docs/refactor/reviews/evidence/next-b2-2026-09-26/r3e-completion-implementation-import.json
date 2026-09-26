@@ -1,0 +1,32 @@
+{
+  "lane": "r3e-task-goal-completion-implementation-20260926",
+  "files": {
+    "coding-platform/next/src/core/work-graph/tasks/completion.ts": {
+      "before": "a7b3183564e9e86ad52b68f9c44a147b0317ab200df16f9822fb09f35e02e86d",
+      "after": "8bc35b93ddde8fe86f5ec2228888f1e134a5bbbc54450a936ffe7bfa80619929"
+    },
+    "coding-platform/next/src/core/work-graph/tasks/completion-policy.ts": {
+      "before": "c3685fbba392c9d83f9ba596de116082a8cb3c35706fe90a048353b1fce5d812",
+      "after": "029590b8fa5097c8811a9a83e32e987a1189069054c6838d15475bdac66dc369"
+    },
+    "coding-platform/next/src/core/work-graph/tasks/completion-record-codecs.ts": {
+      "before": "fdda34b5e594c58ad989b9e433a72d11f81d102a3f6bea220b7afc21e834f7ac",
+      "after": "01fba890502ba7509d283434479f05db4dffa9fed847d56db70cd1841ee46689"
+    },
+    "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts": {
+      "before": "6c98b1656827af68b511c758813ca944fb986f768af66015c6ea892373073ebe",
+      "after": "c4e48489d095be10b5a378bd2ab27df022072283c60bfa4aa04ef89151c5c530"
+    },
+    "coding-platform/next/src/core/work-graph/tasks/plan-service.ts": {
+      "before": "eb1ae972b646afb8f783c40f53e0b561a3b5300c8f75a64208618fecec44ca6e",
+      "after": "fe05d6fb6ca9be3858ca0bf672e8e5bcec37b98fe855374752de63439cdd6f6d"
+    }
+  },
+  "review": "Bounded review PASS after one pure-policy repair for existing active Run/Lease side effects; optional intent without execution stays nonblocking.",
+  "checks": [
+    "r3e-completion-final-next-completion.log: 3 passed / 2 files",
+    "r3e-completion-final-next-types.log: exit 0"
+  ],
+  "actualPath": "Public Work and independent Goal gate checks -> formal completeTask -> completeGoal -> TaskGraph -> SQLite reopen and original receipt replay.",
+  "remaining": "Reviewer producer, formal reopen/supersession, Workflow and full Host E2E"
+}

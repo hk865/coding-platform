@@ -1,0 +1,47 @@
+{
+  "task": "R5b.1 Query job skeleton",
+  "status": "prepared_only_not_implemented",
+  "lanePrepared": false,
+  "dshStarted": false,
+  "dispatchOrder": "R3e composition skeleton imported and frozen; R5b.1 precedes unstarted R4.3 shared composition work; root reviews before dispatch",
+  "productionFiles": 6,
+  "testFiles": 2,
+  "newPlaceholderCount": 5,
+  "newPlaceholderHashes": {
+    "coding-platform/next/src/core/work-graph/queries/contracts.ts": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+    "coding-platform/next/src/core/work-graph/queries/query-job-service.ts": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+    "coding-platform/next/src/core/work-graph/queries/query-record-codecs.ts": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+    "coding-platform/next/tests/work-graph/R5b-query-job.test.ts": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+    "coding-platform/next/tests/composition/R5b-query-job-platform.test.ts": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+  },
+  "existing3ProductHashesUnchanged": {
+    "coding-platform/next/src/contracts/query-job.ts": "32555bd3e214f3eec8c1fce027193b256c59506aca17d4a2722eb058c06c79ec",
+    "coding-platform/next/src/core/work-graph/materials/record-readers.ts": "2b1f65b80c71aab1822dd94d6a0f7ec38df28470e4af8a6d97928ef95ba5177d",
+    "coding-platform/next/src/composition/create-platform.ts": "a16af0991f40b98ef0acd76e92e6fdaa93cd76e1c632b66aab2e58f32817ae60"
+  },
+  "scope": "docs/refactor/tasks/R5b-query-job-skeleton-scope.json",
+  "scopeSha256": "d8a976196ad491c55c13676dc3839ccb355d01e71c2cfef96d79082dc6dcb76b",
+  "taskDocument": "docs/refactor/tasks/R5b-query-planning-skeleton.md",
+  "taskSha256": "0b50beec059c84a4b0c02058290247c31b60a439e9568f7b7906240e3cf74788",
+  "selectorFile": "tools/dsh-refactor/check.py",
+  "selectorBeforeSha256": "252af1263a912cdd367b67b565d97b8a58c9fcd78b7e166eb413d6fa18783cd7",
+  "selectorAfterSha256": "0069ca253b79bfda7f8aa795ca75180dea1298af4f5a5ff16d33c79f1bc1f4f1",
+  "selector": {
+    "next-query-job": [
+      "../node_modules/vitest/vitest.mjs",
+      "run",
+      "tests/work-graph/R5b-query-job.test.ts",
+      "tests/composition/R5b-query-job-platform.test.ts"
+    ]
+  },
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ],
+  "verification": "existence/counts, selector uniqueness/Python AST/py_compile and three original product hashes only; no lane/test/build/DSH run; placeholders contain no tests or implementation",
+  "stageBoundary": "stage one skeleton/tests then STOP for Astra middle review; no pending writer implementation or Query execution in this dispatch"
+}

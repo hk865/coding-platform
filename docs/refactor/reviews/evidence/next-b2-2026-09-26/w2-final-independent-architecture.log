@@ -1,0 +1,7 @@
+Workflow: directory=true, sourceFiles=4
+WorkGraph: directory=true, sourceFiles=62
+AgentRuntime: directory=true, sourceFiles=24
+WorkspaceTools: directory=true, sourceFiles=27
+RecordStore: directory=true, sourceFiles=13
+observed module edges: 6/8 allowed (AgentRuntime -> RecordStore, AgentRuntime -> WorkGraph, AgentRuntime -> WorkspaceTools, WorkGraph -> RecordStore, WorkGraph -> WorkspaceTools, Workflow -> WorkGraph)
+next source boundaries: OK

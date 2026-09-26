@@ -1,0 +1,16 @@
+{
+  "lane": "r5a-project-bootstrap-implementation-20260926",
+  "files": [
+    {
+      "file": "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-record-codecs.ts",
+      "before": "ce3c88b3c4cb6ce3f5b9131b8449c79db1bd2f02cbe290e3daf95e2fb3470a03",
+      "after": "bf990f7b5e1c9737eb0cedcba55223d7608c709a4d253ae7e354d27255856a4a"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-service.ts",
+      "before": "d7ca3bbd5dd8279e17fbb18950c61190ba1d3d82b8e22fd0d78f0894b56bc46e",
+      "after": "5a08c66820be4640a4b462cfc10e8ad389297bedc83f2d9a5fb4ad76be022fa8"
+    }
+  ],
+  "stage": "independent final source review and targeted/types pass; full integrated verification next"
+}

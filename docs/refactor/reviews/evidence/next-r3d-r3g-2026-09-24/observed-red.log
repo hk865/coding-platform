@@ -1,0 +1,115 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R3d-observed-architecture.test.ts (10 tests | 10 failed) 290ms
+     × persists a source graph and reads its cycle and unresolved edges after capture expiry or restart 7ms
+     × replays the first observed receipt without recapturing and compares only mechanical changes 1ms
+     × checks current Host scope and read permission before opening a persisted body 1ms
+     × does not publish an observation if source changes after the immutable body is saved 2ms
+     × rejects a damaged persisted graph body instead of treating it as an empty graph 1ms
+     × persists a source graph and reads its cycle and unresolved edges after capture expiry or restart 57ms
+     × replays the first observed receipt without recapturing and compares only mechanical changes 56ms
+     × checks current Host scope and read permission before opening a persisted body 52ms
+     × does not publish an observation if source changes after the immutable body is saved 56ms
+     × rejects a damaged persisted graph body instead of treating it as an empty graph 56ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 10 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R3d-observed-architecture.test.ts > R3d observed architecture memory > persists a source graph and reads its cycle and unresolved edges after capture expiry or restart
+ FAIL  tests/work-graph/R3d-observed-architecture.test.ts > R3d observed architecture sqlite > persists a source graph and reads its cycle and unresolved edges after capture expiry or restart
+AssertionError: expected 'rejected' to be 'committed' // Object.is equality
+
+Expected: "committed"
+Received: "rejected"
+
+ ❯ tests/work-graph/R3d-observed-architecture.test.ts:124:31
+    122|       const service = createObservedArchitecture(fx.deps());
+    123|       const captured = await service.captureSourceChanges(context, cap…
+    124|       expect(captured.status).toBe('committed');
+       |                               ^
+    125|       if (captured.status !== 'committed') return;
+    126|       await fx.workspaceTools.releaseCapture(context, captured.value.c…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯
+
+ FAIL  tests/work-graph/R3d-observed-architecture.test.ts > R3d observed architecture memory > replays the first observed receipt without recapturing and compares only mechanical changes
+ FAIL  tests/work-graph/R3d-observed-architecture.test.ts > R3d observed architecture sqlite > replays the first observed receipt without recapturing and compares only mechanical changes
+AssertionError: expected 'rejected' to be 'committed' // Object.is equality
+
+Expected: "committed"
+Received: "rejected"
+
+ ❯ tests/work-graph/R3d-observed-architecture.test.ts:162:28
+    160|       const service = createObservedArchitecture({ ...fx.deps(), works…
+    161|       const first = await service.captureSourceChanges(context, captur…
+    162|       expect(first.status).toBe('committed');
+       |                            ^
+    163|       if (first.status !== 'committed') return;
+    164|       const count = captureCalls;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/10]⎯
+
+ FAIL  tests/work-graph/R3d-observed-architecture.test.ts > R3d observed architecture memory > checks current Host scope and read permission before opening a persisted body
+ FAIL  tests/work-graph/R3d-observed-architecture.test.ts > R3d observed architecture sqlite > checks current Host scope and read permission before opening a persisted body
+AssertionError: expected 'rejected' to be 'committed' // Object.is equality
+
+Expected: "committed"
+Received: "rejected"
+
+ ❯ tests/work-graph/R3d-observed-architecture.test.ts:194:30
+    192|     try {
+    193|       const created = await createObservedArchitecture(fx.deps()).capt…
+    194|       expect(created.status).toBe('committed');
+       |                              ^
+    195|       if (created.status !== 'committed') return;
+    196|       let bodyReads = 0;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/10]⎯
+
+ FAIL  tests/work-graph/R3d-observed-architecture.test.ts > R3d observed architecture memory > does not publish an observation if source changes after the immutable body is saved
+ FAIL  tests/work-graph/R3d-observed-architecture.test.ts > R3d observed architecture sqlite > does not publish an observation if source changes after the immutable body is saved
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "source_stale",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R3d-observed-architecture.test.ts:227:22
+    225|       const service = createObservedArchitecture({ ...fx.deps(), bodie…
+    226|       const result = await service.captureSourceChanges(context, captu…
+    227|       expect(result).toMatchObject({ status: 'rejected', code: 'source…
+       |                      ^
+    228|       const current = await fx.readRecord({ aggregateType: 'WorkspaceA…
+    229|       expect(current.status).toBe('ready');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/10]⎯
+
+ FAIL  tests/work-graph/R3d-observed-architecture.test.ts > R3d observed architecture memory > rejects a damaged persisted graph body instead of treating it as an empty graph
+ FAIL  tests/work-graph/R3d-observed-architecture.test.ts > R3d observed architecture sqlite > rejects a damaged persisted graph body instead of treating it as an empty graph
+AssertionError: expected 'rejected' to be 'committed' // Object.is equality
+
+Expected: "committed"
+Received: "rejected"
+
+ ❯ tests/work-graph/R3d-observed-architecture.test.ts:238:30
+    236|     try {
+    237|       const created = await createObservedArchitecture(fx.deps()).capt…
+    238|       expect(created.status).toBe('committed');
+       |                              ^
+    239|       if (created.status !== 'committed') return;
+    240|       const underlying = fx.deps().bodies;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/10]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  10 failed (10)
+   Start at  16:19:37
+   Duration  944ms (transform 336ms, setup 0ms, import 575ms, tests 290ms, environment 0ms)
+

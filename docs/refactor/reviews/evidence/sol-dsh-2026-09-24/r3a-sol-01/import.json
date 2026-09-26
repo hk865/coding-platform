@@ -1,0 +1,10 @@
+{
+  "at": 1790181944.5375896,
+  "files": {
+    "coding-platform/src/core/record-store/in-memory-record-store.ts": "e30f9daf584b78908348ff48da42b4fad6534815a7fa9a9063aa9101962bdc1f",
+    "coding-platform/src/core/record-store/sqlite-record-store.ts": "f7ad9509f43ba4f312c9ef4625a702086540b6490b6dfa1b415d3692d57725df",
+    "coding-platform/src/core/work-graph/tasks/task-service.ts": "53cc0cd5953b55c93d93c72683411bf26cbb8813ffc3faa4babddc563d18887c",
+    "coding-platform/src/core/work-graph/persistence/legacy-adapter.ts": "6d1be6aedfb9c24f2bca9be1b01abfd005544c561c6a8f0be167af8607b4f963"
+  },
+  "review": "Root reviewed all four diffs; 24 contract +108 focused +676 control/ledger tests passed in lane; build/types pending integrated final"
+}

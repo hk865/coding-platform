@@ -1,0 +1,35 @@
+{
+  "lane": "b1-kernel-assembly-skeleton",
+  "changes": [
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/exploration-tools.ts",
+      "before": "7ac294017db8c73c15713d912bd0c2acc1fa93e18fba291dfcd65c5a3b451854",
+      "after": "6d50a6eb13424d83d7305942ff444e71cc6cbf3255327a3d54e67f08270c7c8f"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+      "before": "dd67d768953e009062fb93a7b4b597bf9e64fe1db5c0d1b508e338dd92d77868",
+      "after": "25a017387f80a273be06b2f26529a70f02af06bd044c9bb5e00e240ce6cb6b2d"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/project-source-tool.ts",
+      "before": "1f8d1a3331c7a5ee4267ec78dedf6a4cff4fb55ac269cdbee90a11362d20251b",
+      "after": "beaedf4a2f1c5e1c70466a1c967f05f0bd8bb1f24375128192af958d70427e7f"
+    },
+    {
+      "path": "coding-platform/next/tests/runtime/B1-kernel-assembly.test.ts",
+      "before": "cb1c191e01a4a54ed056eb2d4e22e9b93c2345ccc7d1b83de26f08cb40b7cfcd",
+      "after": "4befd15dc9b5f2f55485e9df18b92183f27c39584b2599014390faca14986f65"
+    }
+  ],
+  "scope": {
+    "changed": [
+      "coding-platform/next/src/core/agent-runtime/exploration-tools.ts",
+      "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+      "coding-platform/next/src/core/agent-runtime/project-source-tool.ts",
+      "coding-platform/next/tests/runtime/B1-kernel-assembly.test.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  }
+}

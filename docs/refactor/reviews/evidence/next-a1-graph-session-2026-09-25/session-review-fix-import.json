@@ -1,0 +1,27 @@
+[
+  {
+    "file": "coding-platform/next/src/core/work-graph/sessions/session-lifecycle.ts",
+    "before": "68ac328f391b1d7ecb5703a4ebfd3850956e2b0f2c896afa3aaec14bafac29b3",
+    "after": "bec16c76ba064c200645c6c7bb72671af1ab63b3109464eca484561ca3055738"
+  },
+  {
+    "file": "coding-platform/next/src/core/work-graph/sessions/lifecycle-record-codecs.ts",
+    "before": "e36d4b037e27b7bf7ea3dc71234ecd30728390e8f963b55721dda4e75b57835f",
+    "after": "e36d4b037e27b7bf7ea3dc71234ecd30728390e8f963b55721dda4e75b57835f"
+  },
+  {
+    "file": "coding-platform/next/src/core/work-graph/sessions/session-directory.ts",
+    "before": "724557971543b0b5f2ba5752e878f51223966a448775ff1a3ca819db523ea57f",
+    "after": "ff0288306c911419e938dc444c856e05db4bc64848ebb8320d41727ad397fe56"
+  },
+  {
+    "file": "coding-platform/next/src/core/work-graph/sessions/session-record-codecs.ts",
+    "before": "50806d18e8e910c52862df9ac00c56c8d2bec7b731c5cd82bfe33ca845cce76a",
+    "after": "d9034fdebe36fc31219adafbd6df4d439a97ace0949797912eb4c4b75edfa725"
+  },
+  {
+    "file": "coding-platform/next/src/core/work-graph/sessions/session-targets.ts",
+    "before": "333d493a64b82e63a3fcb29c3532853b893ffd82aefe728c985d4ca6a35b55f2",
+    "after": "333d493a64b82e63a3fcb29c3532853b893ffd82aefe728c985d4ca6a35b55f2"
+  }
+]

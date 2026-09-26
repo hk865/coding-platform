@@ -1,0 +1,7 @@
+{
+  "reason": "independent review reproduced invalid tail metadata",
+  "file": "coding-platform/next/tests/runtime/R4c-kernel-history-range.test.ts",
+  "before": "1185bfde2fce4b42d721de593c1c7078c93885d106a20a665560ad7354803e02",
+  "after": "f5505cb2d122422cda82c3657ed7273f674e9e0068c6ce6a166bcc254acea4c9",
+  "candidate_red": "20 tests:17 pass,3 fail"
+}

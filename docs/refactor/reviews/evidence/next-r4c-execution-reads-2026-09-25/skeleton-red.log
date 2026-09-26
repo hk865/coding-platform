@@ -1,0 +1,668 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/runtime/R4c-execution-history.test.ts (8 tests | 8 failed) 1740ms
+     × returns only the requested execution identity and preserves the original evidence and basis 286ms
+     × freezes the raw upper bound and advances by the underlying raw cursor, not the last match cursor 186ms
+     × rejects cursors that change the Session or execution target, malformed cursors and invalid limits 316ms
+     × passes the original boundary through and propagates owner rejections instead of an empty page 198ms
+     × keeps the original signal and rejects a page cancelled before or while awaiting the owner 192ms
+     × owns the request before the first await so caller mutation cannot retarget the execution read 224ms
+     × rejects damaged inline evidence, inconsistent envelopes and unsupported external bodies 153ms
+     × still reads persisted Kernel evidence when the best-effort observer is down 183ms
+ ❯ tests/work-graph/R4c-execution-read.test.ts (39 tests | 39 failed) 5849ms
+     × reads the exact claimed set and cross-checks every reference 60ms
+     × re-reads the six linked records in one final readMany window 43ms
+     × returns current Session and Lease facts even when ownership has moved on 45ms
+     × reads successfully when the current Lease is absent 39ms
+     × reports incomplete, never a fabricated null Session, for an unmapped Run 45ms
+     × reports incomplete when a claim-linked record is missing 42ms
+     × reports unavailable for damaged records and inconsistent cross-links 46ms
+     × returns not_found for a missing Run but honours atLeastCursor first 45ms
+     × honours atLeastCursor against the final window watermark 45ms
+     × rejects invalid scope and cancellation before any store read 43ms
+     × turns an abort during the read into cancelled 41ms
+     × binds ctx and ref before the first await 39ms
+     × uses directed readMany only and never lookup/commit/event scan 38ms
+     × keeps the read count stable as unrelated Tasks and commits grow 44ms
+     × uses the final values and watermark after discovery, without gating on the older discovery watermark 46ms
+     × rejects a consistently bound Host from a different workspace 41ms
+     × ignores unrelated commits between discovery reads while returning the final window 41ms
+     × does not interpret an unaccounted key or unavailable schema as confirmed absence 42ms
+     × retries a changing reference within a bounded budget and ends busy 41ms
+     × reads the exact claimed set and cross-checks every reference 238ms
+     × re-reads the six linked records in one final readMany window 240ms
+     × returns current Session and Lease facts even when ownership has moved on 257ms
+     × reads successfully when the current Lease is absent 240ms
+     × reports incomplete, never a fabricated null Session, for an unmapped Run 229ms
+     × reports incomplete when a claim-linked record is missing 218ms
+     × reports unavailable for damaged records and inconsistent cross-links 229ms
+     × returns not_found for a missing Run but honours atLeastCursor first 234ms
+     × honours atLeastCursor against the final window watermark 234ms
+     × rejects invalid scope and cancellation before any store read 343ms
+     × turns an abort during the read into cancelled 225ms
+     × binds ctx and ref before the first await 350ms
+     × uses directed readMany only and never lookup/commit/event scan 234ms
+     × keeps the read count stable as unrelated Tasks and commits grow 238ms
+     × uses the final values and watermark after discovery, without gating on the older discovery watermark 346ms
+     × rejects a consistently bound Host from a different workspace 232ms
+     × ignores unrelated commits between discovery reads while returning the final window 233ms
+     × does not interpret an unaccounted key or unavailable schema as confirmed absence 239ms
+     × retries a changing reference within a bounded budget and ends busy 229ms
+     × reads the same execution facts after reopening the ledger 232ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 47 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/runtime/R4c-execution-history.test.ts > R4c.2a targeted raw execution history > returns only the requested execution identity and preserves the original evidence and basis
+AssertionError: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ tests/runtime/R4c-execution-history.test.ts:168:27
+    166|       const page = await reader.readExecutionHistory(ctx, { sessionRef…
+    167|         afterCursor: null, throughCursor: null, limit: 200 });
+    168|       expect(page.status).toBe('ready');
+       |                           ^
+    169|       if (page.status !== 'ready') return;
+    170|       expect(page.value.executionIdentity).toEqual(first);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/47]⎯
+
+ FAIL  tests/runtime/R4c-execution-history.test.ts > R4c.2a targeted raw execution history > freezes the raw upper bound and advances by the underlying raw cursor, not the last match cursor
+AssertionError: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ tests/runtime/R4c-execution-history.test.ts:214:30
+    212|       const partial = await reader.readExecutionHistory(ctx, { session…
+    213|         afterCursor: null, throughCursor: null, limit: 1 });
+    214|       expect(partial.status).toBe('ready');
+       |                              ^
+    215|       if (partial.status !== 'ready') return;
+    216|       expect(partial.value.items).toEqual([]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/47]⎯
+
+ FAIL  tests/runtime/R4c-execution-history.test.ts > R4c.2a targeted raw execution history > rejects cursors that change the Session or execution target, malformed cursors and invalid limits
+AssertionError: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ tests/runtime/R4c-execution-history.test.ts:258:29
+    256|       const opened = await reader.readExecutionHistory(ctx, { sessionR…
+    257|         afterCursor: null, throughCursor: null, limit: 1 });
+    258|       expect(opened.status).toBe('ready');
+       |                             ^
+    259|       if (opened.status !== 'ready') return;
+    260|       const changedActor = { kind: 'human' as const, id: 'another-auth…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/47]⎯
+
+ FAIL  tests/runtime/R4c-execution-history.test.ts > R4c.2a targeted raw execution history > passes the original boundary through and propagates owner rejections instead of an empty page
+AssertionError: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ tests/runtime/R4c-execution-history.test.ts:312:27
+    310|       const read = await reader.readExecutionHistory(ctx, { sessionRef…
+    311|         afterCursor: null, throughCursor: through, limit: 200 });
+    312|       expect(read.status).toBe('ready');
+       |                           ^
+    313|       expect(requests).toHaveLength(1);
+    314|       expect(requests[0]?.afterCursor).toBeNull();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/47]⎯
+
+ FAIL  tests/runtime/R4c-execution-history.test.ts > R4c.2a targeted raw execution history > keeps the original signal and rejects a page cancelled before or while awaiting the owner
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "cancelled",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/runtime/R4c-execution-history.test.ts:358:10
+    356|       expect(await reader.readExecutionHistory({ ...ctx, signal: befor…
+    357|         { sessionRef: created.ref, executionIdentity: identity, afterC…
+    358|         .toMatchObject({ status: 'rejected', code: 'cancelled' });
+       |          ^
+    359|
+    360|       let release!: () => void;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/47]⎯
+
+ FAIL  tests/runtime/R4c-execution-history.test.ts > R4c.2a targeted raw execution history > owns the request before the first await so caller mutation cannot retarget the execution read
+AssertionError: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ tests/runtime/R4c-execution-history.test.ts:421:29
+    419|       release();
+    420|       const result = await pending;
+    421|       expect(result.status).toBe('ready');
+       |                             ^
+    422|       if (result.status !== 'ready') return;
+    423|       expect(result.value.executionIdentity).toEqual(identityA);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/47]⎯
+
+ FAIL  tests/runtime/R4c-execution-history.test.ts > R4c.2a targeted raw execution history > rejects damaged inline evidence, inconsistent envelopes and unsupported external bodies
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/runtime/R4c-execution-history.test.ts:456:65
+    454|           },
+    455|         } });
+    456|         expect(await reader.readExecutionHistory(ctx, request)).toMatc…
+       |                                                                 ^
+    457|       }
+    458|     } finally { await fx.backend.close(); }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/47]⎯
+
+ FAIL  tests/runtime/R4c-execution-history.test.ts > R4c.2a targeted raw execution history > still reads persisted Kernel evidence when the best-effort observer is down
+AssertionError: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ tests/runtime/R4c-execution-history.test.ts:479:27
+    477|       const page = await reader.readExecutionHistory(ctx, { sessionRef…
+    478|         afterCursor: null, throughCursor: null, limit: 200 });
+    479|       expect(page.status).toBe('ready');
+       |                           ^
+    480|       if (page.status !== 'ready') return;
+    481|       expect(page.value.items.map(item => item.source.position)).toEqu…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > reads the exact claimed set and cross-checks every reference
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > reads the exact claimed set and cross-checks every reference
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:153:20
+    151|     const claim = await claimed(fixture);
+    152|     const result = await createRunStateReader({ records: fixture.recor…
+    153|     expect(result).toMatchObject({ status: 'ready' });
+       |                    ^
+    154|     if (result.status !== 'ready') return;
+    155|     const record = result.value;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > re-reads the six linked records in one final readMany window
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > re-reads the six linked records in one final readMany window
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:186:20
+    184|     const { records, spy } = countingReader(fixture.records);
+    185|     const result = await createRunStateReader({ records }).readExecuti…
+    186|     expect(result).toMatchObject({ status: 'ready' });
+       |                    ^
+    187|     const expected = new Set([
+    188|       key(claim.runRef), key(claim.attemptRef), key(claim.outboxRef),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > returns current Session and Lease facts even when ownership has moved on
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > returns current Session and Lease facts even when ownership has moved on
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:216:20
+    214|
+    215|     const result = await createRunStateReader({ records: fixture.recor…
+    216|     expect(result).toMatchObject({ status: 'ready' });
+       |                    ^
+    217|     if (result.status !== 'ready') return;
+    218|     expect(result.value.session).toMatchObject({ lifecycle: 'archived'…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > reads successfully when the current Lease is absent
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > reads successfully when the current Lease is absent
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:228:20
+    226|     const records = dropRecords(fixture.records, refKey => refKey === …
+    227|     const result = await createRunStateReader({ records }).readExecuti…
+    228|     expect(result).toMatchObject({ status: 'ready' });
+       |                    ^
+    229|     if (result.status !== 'ready') return;
+    230|     expect(result.value.lease).toBeNull();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > reports incomplete, never a fabricated null Session, for an unmapped Run
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > reports incomplete, never a fabricated null Session, for an unmapped Run
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "incomplete",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:237:20
+    235|     const runRef = await fixture.seedRun(fixture.tasks.first.taskId, '…
+    236|     const result = await createRunStateReader({ records: fixture.recor…
+    237|     expect(result).toMatchObject({ status: 'rejected', code: 'incomple…
+       |                    ^
+    238|   });
+    239|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > reports incomplete when a claim-linked record is missing
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > reports incomplete when a claim-linked record is missing
+AssertionError: Attempt: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "incomplete",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:252:37
+    250|       const records = dropRecords(fixture.records, scenario.drop);
+    251|       const result = await createRunStateReader({ records }).readExecu…
+    252|       expect(result, scenario.name).toMatchObject({ status: 'rejected'…
+       |                                     ^
+    253|     }
+    254|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > reports unavailable for damaged records and inconsistent cross-links
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > reports unavailable for damaged records and inconsistent cross-links
+AssertionError: damaged Run: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:280:37
+    278|     for (const scenario of scenarios) {
+    279|       const result = await createRunStateReader({ records: scenario.re…
+    280|       expect(result, scenario.name).toMatchObject({ status: 'rejected'…
+       |                                     ^
+    281|     }
+    282|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > returns not_found for a missing Run but honours atLeastCursor first
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > returns not_found for a missing Run but honours atLeastCursor first
+AssertionError: expected { status: 'rejected', …(2) } to deeply equal { status: 'not_found' }
+
+- Expected
++ Received
+
+  {
+-   "status": "not_found",
++   "code": "unsupported",
++   "reason": "R4c.2a: exact Task execution reads are not implemented in this batch",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:293:62
+    291|     const missing: RunRef = { aggregateType: 'Run', projectId: fixture…
+    292|       goalId: fixture.goalRef.goalId, runId: 'never-created' };
+    293|     expect(await reader.readExecution(fixture.ctx, missing)).toEqual({…
+       |                                                              ^
+    294|     const future = makeCommitCursor(seqOfCommitCursor(claimResult.curs…
+    295|     expect(await reader.readExecution(fixture.ctx, missing, { atLeastC…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > honours atLeastCursor against the final window watermark
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > honours atLeastCursor against the final window watermark
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:307:8
+    305|     const reader = createRunStateReader({ records: fixture.records });
+    306|     expect(await reader.readExecution(fixture.ctx, claimResult.value.r…
+    307|       .toMatchObject({ status: 'ready' });
+       |        ^
+    308|     const future = makeCommitCursor(seqOfCommitCursor(claimResult.curs…
+    309|     const pending = await reader.readExecution(fixture.ctx, claimResul…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > rejects invalid scope and cancellation before any store read
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > rejects invalid scope and cancellation before any store read
+AssertionError: non-host principal: expected 'unsupported' not to be 'unsupported' // Object.is equality
+ ❯ tests/work-graph/R4c-execution-read.test.ts:340:82
+    338|       const outcome = await reader.readExecution(scenario.ctx, scenari…
+    339|       expect(outcome, scenario.name).toMatchObject({ status: 'rejected…
+    340|       if (outcome.status === 'rejected') expect(outcome.code, scenario…
+       |                                                                                  ^
+    341|     }
+    342|     const controller = new AbortController();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > turns an abort during the read into cancelled
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > turns an abort during the read into cancelled
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "cancelled",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:365:20
+    363|     const result = await createRunStateReader({ records })
+    364|       .readExecution({ ...fixture.ctx, signal: controller.signal }, cl…
+    365|     expect(result).toMatchObject({ status: 'rejected', code: 'cancelle…
+       |                    ^
+    366|   });
+    367|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > binds ctx and ref before the first await
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > binds ctx and ref before the first await
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:389:20
+    387|     release();
+    388|     const result = await pending;
+    389|     expect(result).toMatchObject({ status: 'ready' });
+       |                    ^
+    390|     expect(firstKeys).toEqual([key(claim.runRef)]);
+    391|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > uses directed readMany only and never lookup/commit/event scan
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > uses directed readMany only and never lookup/commit/event scan
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:398:20
+    396|     const { records, spy } = countingReader(fixture.records);
+    397|     const result = await createRunStateReader({ records }).readExecuti…
+    398|     expect(result).toMatchObject({ status: 'ready' });
+       |                    ^
+    399|     expect(spy.lookup).toBe(0);
+    400|     expect(spy.lookupCommit).toBe(0);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > keeps the read count stable as unrelated Tasks and commits grow
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > keeps the read count stable as unrelated Tasks and commits grow
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:418:8
+    416|     const before = countingReader(fixture.records);
+    417|     expect(await createRunStateReader({ records: before.records }).rea…
+    418|       .toMatchObject({ status: 'ready' });
+       |        ^
+    419|     const baseline = before.spy.readMany.length;
+    420|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > uses the final values and watermark after discovery, without gating on the older discovery watermark
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > uses the final values and watermark after discovery, without gating on the older discovery watermark
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready', value: { …(2) } }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "run": {
+-       "revision": 2,
+-     },
+-     "session": {
+-       "health": "recoverable",
+-     },
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:461:19
+    459|     const found = await createRunStateReader({ records }).readExecutio…
+    460|       { atLeastCursor: result.cursor });
+    461|     expect(found).toMatchObject({ status: 'ready', value: { run: { rev…
+       |                   ^
+    462|       session: { health: 'recoverable' } } });
+    463|     if (found.status === 'ready') expect(found.value.readThrough).toBe…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > rejects a consistently bound Host from a different workspace
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > rejects a consistently bound Host from a different workspace
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "forbidden",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:473:8
+    471|       materialReader: { kind: 'host', projectId: fixture.scope.project…
+    472|     expect(await createRunStateReader({ records: fixture.records }).re…
+    473|       .toMatchObject({ status: 'rejected', code: 'forbidden' });
+       |        ^
+    474|   });
+    475|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > ignores unrelated commits between discovery reads while returning the final window
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > ignores unrelated commits between discovery reads while returning the final window
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:486:8
+    484|     } };
+    485|     expect(await createRunStateReader({ records }).readExecution(fixtu…
+    486|       .toMatchObject({ status: 'ready' });
+       |        ^
+    487|     expect(calls).toBe(3);
+    488|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > does not interpret an unaccounted key or unavailable schema as confirmed absence
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > does not interpret an unaccounted key or unavailable schema as confirmed absence
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:497:10
+    495|         records: batch.records.filter(record => record.refKey !== lost…
+    496|       expect(await createRunStateReader({ records: lost }).readExecuti…
+    497|         .toMatchObject({ status: 'rejected', code: 'unavailable' });
+       |          ^
+    498|     }
+    499|     const unsupported: Records = { ...fixture.records, async readMany(…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[26/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real memory execution read > retries a changing reference within a bounded budget and ends busy
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a real sqlite execution read > retries a changing reference within a bounded budget and ends busy
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', code: 'busy' }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "busy",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:525:20
+    523|     };
+    524|     const result = await createRunStateReader({ records }).readExecuti…
+    525|     expect(result).toMatchObject({ status: 'rejected', code: 'busy' });
+       |                    ^
+    526|     expect(changes).toBe(4);
+    527|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[27/47]⎯
+
+ FAIL  tests/work-graph/R4c-execution-read.test.ts > R4c.2a SQLite durability > reads the same execution facts after reopening the ledger
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-read.test.ts:539:20
+    537|     connections.push(reopened);
+    538|     const result = await createRunStateReader({ records: reopened.reco…
+    539|     expect(result).toMatchObject({ status: 'ready' });
+       |                    ^
+    540|     if (result.status !== 'ready') return;
+    541|     expect(result.value.run.ref).toEqual(claim.runRef);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[28/47]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  47 failed (47)
+   Start at  00:20:06
+   Duration  8.61s (transform 474ms, setup 0ms, import 863ms, tests 7.59s, environment 0ms)
+

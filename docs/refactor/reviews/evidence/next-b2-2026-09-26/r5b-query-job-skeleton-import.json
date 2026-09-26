@@ -1,0 +1,40 @@
+{
+  "lane": "r5b-query-job-skeleton-20260926",
+  "stage": "reviewed skeleton; implementation pending",
+  "files": {
+    "coding-platform/next/src/contracts/query-job.ts": {
+      "before": "32555bd3e214f3eec8c1fce027193b256c59506aca17d4a2722eb058c06c79ec",
+      "after": "bf1c7fae5066622bab4d347499cd20b8172fbd177a37cda79dc6e7cbd1125072"
+    },
+    "coding-platform/next/src/core/work-graph/queries/contracts.ts": {
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "e64aa54299cb7abb6ebf5c434101dde6127f6ee9b7b22eeb2814524185724d50"
+    },
+    "coding-platform/next/src/core/work-graph/queries/query-job-service.ts": {
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "52bcf79729bdf4dbd0f025b29c29acdf44a76efda885383f0936ac9c17d23c8d"
+    },
+    "coding-platform/next/src/core/work-graph/queries/query-record-codecs.ts": {
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "921f25739304577276e031e9c6fb1ef2d1e5555318a82f16564f80943772fa5a"
+    },
+    "coding-platform/next/src/core/work-graph/materials/record-readers.ts": {
+      "before": "2b1f65b80c71aab1822dd94d6a0f7ec38df28470e4af8a6d97928ef95ba5177d",
+      "after": "c6c74132cae3cd6f2ac7c51a1a97f05e96344a8a3d27e6180a8f49cbbd4d314f"
+    },
+    "coding-platform/next/src/composition/create-platform.ts": {
+      "before": "a16af0991f40b98ef0acd76e92e6fdaa93cd76e1c632b66aab2e58f32817ae60",
+      "after": "2ab8315e68afdfcdbe8647563c97174a037089bccd13551c20751d2ab9604564"
+    },
+    "coding-platform/next/tests/work-graph/R5b-query-job.test.ts": {
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "84fe6fd65b9e371d9eb236ceb7df1ad4c8db32420880b1649d4df3c6774bf273"
+    },
+    "coding-platform/next/tests/composition/R5b-query-job-platform.test.ts": {
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "a76506546c20e4575191222d5ff9426ca17e7a3077be717a061146b7f8280609"
+    }
+  },
+  "outsideScope": [],
+  "mainUnchangedBeforeImport": true
+}

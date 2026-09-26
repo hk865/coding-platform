@@ -1,0 +1,7 @@
+{
+  "coding-platform/next/src/core/agent-runtime/observed-model-run.ts": "55b29aa7dcbc11909fa589a72a3b23411ee19a596e2487d78f863c6d341496b3",
+  "coding-platform/next/tests/runtime/R4c-session-continuity.test.ts": "eac0cdcfbcda7beaa4667ac5347bbfa2430aab22b2837df8d9b57cd79770c6ad",
+  "tools/dsh-refactor/check.py": "5bb098903f9716643e0be59ceb267855344ab52e6482db6de6018e70cc3a51cd",
+  "docs/refactor/tasks/R4c-next-continuity-dsh-prompt.md": "83cb5085325e92310c68d0f873a793ebfebce760c7d8e2537bc24814e82fd72b",
+  "docs/refactor/tasks/R4c-next-continuity-dsh-scope.json": "16492419e60137d642de2ff3ba5151733c9435755ed8ba15741a6ba6e3f18b3a"
+}

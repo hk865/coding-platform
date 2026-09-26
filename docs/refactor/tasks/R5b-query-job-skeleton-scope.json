@@ -1,0 +1,20 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/contracts/query-job.ts",
+    "coding-platform/next/src/core/work-graph/queries/contracts.ts",
+    "coding-platform/next/src/core/work-graph/queries/query-job-service.ts",
+    "coding-platform/next/src/core/work-graph/queries/query-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/materials/record-readers.ts",
+    "coding-platform/next/src/composition/create-platform.ts",
+    "coding-platform/next/tests/work-graph/R5b-query-job.test.ts",
+    "coding-platform/next/tests/composition/R5b-query-job-platform.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

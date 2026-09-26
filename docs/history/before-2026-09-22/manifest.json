@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 1,
+  "archivedAt": "2026-09-23T19:06:21.728161+08:00",
+  "basis": "filesystem modification time before edits; not date mentioned inside prose",
+  "timezone": "Asia/Shanghai",
+  "cutoffExclusive": "2026-09-22T00:00:00+08:00",
+  "scope": "docs/; already archived files retained in place",
+  "moved": [
+    {
+      "originalPath": "docs/PRODUCT (副本).md",
+      "archivedPath": "docs/history/before-2026-09-22/PRODUCT (副本).md",
+      "modifiedAt": "2026-09-20T17:29:19.029249+08:00",
+      "mtimeNs": 1789896559029249355,
+      "sizeBytes": 75815,
+      "sha256": "7d6c0778d102762f15829631f26b9414e865188136485aa07d8da372f53c8b1f"
+    },
+    {
+      "originalPath": "docs/PRODUCT.md",
+      "archivedPath": "docs/history/before-2026-09-22/PRODUCT.md",
+      "modifiedAt": "2026-09-20T21:42:49.252276+08:00",
+      "mtimeNs": 1789911769252275776,
+      "sizeBytes": 100322,
+      "sha256": "e5c34e28984cd29d34cd7d28e2979e7794f6f155825abac5e2c1398793f56010"
+    },
+    {
+      "originalPath": "docs/agent-platform-architecture-review.md",
+      "archivedPath": "docs/history/before-2026-09-22/agent-platform-architecture-review.md",
+      "modifiedAt": "2026-09-21T09:36:02.074948+08:00",
+      "mtimeNs": 1789954562074948142,
+      "sizeBytes": 33490,
+      "sha256": "43188ebf8b97e61107eac4d7f494db02c9f1e1e7a248e50a50989f17f8de1b55"
+    },
+    {
+      "originalPath": "docs/agent-platform-decision-recommendations-revised.md",
+      "archivedPath": "docs/history/before-2026-09-22/agent-platform-decision-recommendations-revised.md",
+      "modifiedAt": "2026-09-20T18:16:12.416908+08:00",
+      "mtimeNs": 1789899372416908294,
+      "sizeBytes": 52079,
+      "sha256": "d50423e3977f4b69f06c5f4a1925c35bb64942d0e2d8c02b7df4b617ed711e2b"
+    },
+    {
+      "originalPath": "docs/agent-platform-decision-recommendations.md",
+      "archivedPath": "docs/history/before-2026-09-22/agent-platform-decision-recommendations.md",
+      "modifiedAt": "2026-09-20T17:54:06.186026+08:00",
+      "mtimeNs": 1789898046186026038,
+      "sizeBytes": 43994,
+      "sha256": "e96575e1087f48f9e37615350709341f531def273cf87e8fb226598cd1aac13e"
+    },
+    {
+      "originalPath": "docs/agent-platform-open-decisions-recommendations.md",
+      "archivedPath": "docs/history/before-2026-09-22/agent-platform-open-decisions-recommendations.md",
+      "modifiedAt": "2026-09-21T17:08:40.538652+08:00",
+      "mtimeNs": 1789981720538652079,
+      "sizeBytes": 30293,
+      "sha256": "d498388808bf7c8ddc387aedd4b62fee34d7799231064ac51328b61caac66f68"
+    },
+    {
+      "originalPath": "docs/agent-platform-user-replies-numbered.md",
+      "archivedPath": "docs/history/before-2026-09-22/agent-platform-user-replies-numbered.md",
+      "modifiedAt": "2026-09-21T17:08:34.795145+08:00",
+      "mtimeNs": 1789981714795144961,
+      "sizeBytes": 12732,
+      "sha256": "2afe45aa6b557f7ee35072df27f874d22c9ba76815830aab98fff24211d232e5"
+    },
+    {
+      "originalPath": "docs/agent-team-dsh-research.md",
+      "archivedPath": "docs/history/before-2026-09-22/agent-team-dsh-research.md",
+      "modifiedAt": "2026-09-19T19:25:15.509197+08:00",
+      "mtimeNs": 1789817115509197522,
+      "sizeBytes": 21968,
+      "sha256": "2d6507345ad76cf898ac18cc04f06742c8530ea512a9e4b9f7072f1fe2f70a1d"
+    },
+    {
+      "originalPath": "docs/agent-vs-agent-team.md",
+      "archivedPath": "docs/history/before-2026-09-22/agent-vs-agent-team.md",
+      "modifiedAt": "2026-09-19T19:20:07.111570+08:00",
+      "mtimeNs": 1789816807111570409,
+      "sizeBytes": 56776,
+      "sha256": "23b0ca1d40e1d864e7d6ec936799416545b62d0f1e7aa727c03a5360689e9eb5"
+    },
+    {
+      "originalPath": "docs/refactor/ARCHITECTURE (副本).md",
+      "archivedPath": "docs/history/before-2026-09-22/refactor/ARCHITECTURE (副本).md",
+      "modifiedAt": "2026-09-20T23:28:02.843796+08:00",
+      "mtimeNs": 1789918082843795593,
+      "sizeBytes": 119267,
+      "sha256": "e61b71e36251f762de35cbbc9fd7f6e07b4db76157844892768f281a38e6383e"
+    },
+    {
+      "originalPath": "docs/refactor/source-analysis.md",
+      "archivedPath": "docs/history/before-2026-09-22/refactor/source-analysis.md",
+      "modifiedAt": "2026-09-20T13:25:37.180256+08:00",
+      "mtimeNs": 1789881937180256260,
+      "sizeBytes": 194539,
+      "sha256": "ac6074f3f31a0c5ac39ecdb979b081387e0b749147552ebca48d96f135b9d693"
+    },
+    {
+      "originalPath": "docs/refactor-prompts.md",
+      "archivedPath": "docs/history/before-2026-09-22/refactor-prompts.md",
+      "modifiedAt": "2026-09-19T22:27:20.604898+08:00",
+      "mtimeNs": 1789828040604898015,
+      "sizeBytes": 59186,
+      "sha256": "eb5cb118d84418c2b6e612edeff12e34e29f53d52bcb5e360e980df9685ffd49"
+    },
+    {
+      "originalPath": "docs/refactor-prompts.revised (副本).md",
+      "archivedPath": "docs/history/before-2026-09-22/refactor-prompts.revised (副本).md",
+      "modifiedAt": "2026-09-20T21:31:48.406775+08:00",
+      "mtimeNs": 1789911108406775069,
+      "sizeBytes": 138539,
+      "sha256": "4a354fb241b4e2a07f04a1206a4b865695561b2418ad03fbc1c65532a1becaee"
+    }
+  ],
+  "alreadyArchivedBeforeCutoff": [
+    "docs/refactor/archive/2026-09-23-before-core-design/ARCHITECTURE.md"
+  ],
+  "navigationUpdated": [
+    "docs/AGENTS.md",
+    "docs/README.md",
+    "docs/history/README.md",
+    "docs/refactor-prompts.revised.md",
+    "docs/refactor/ARCHITECTURE.md",
+    "docs/refactor/CODE-QUALITY-GUIDELINES.md",
+    "docs/refactor/CODE-QUALITY-RESEARCH.md",
+    "docs/refactor/CORE-DATA-OPERATIONS.md",
+    "docs/refactor/DSH-WORKFLOW.md",
+    "docs/refactor/HANDOFF.md",
+    "docs/refactor/MODULE-REFACTOR-INTENT-REVIEW.md",
+    "docs/refactor/MODULE-REVIEW.md",
+    "docs/refactor/ORCHESTRATION-STATE-MACHINES.md",
+    "docs/refactor/README.md",
+    "docs/refactor/intent/INTENT-AND-DECISIONS.md",
+    "docs/refactor/refactor-plan.md",
+    "docs/refactor/reviews/core-design-implementation-evidence.md",
+    "docs/refactor/reviews/implementation-batches.md",
+    "docs/refactor/reviews/lifecycle-performance-followup.md",
+    "docs/refactor/reviews/module-dag-review.md",
+    "docs/refactor/reviews/module-necessity-review.md",
+    "docs/refactor/reviews/pre-prompt6-drift-review.md",
+    "docs/refactor/reviews/prompt2-architecture-review.md",
+    "docs/refactor/tasks/R2e-1-text-read-compare.md"
+  ],
+  "preservation": "Archived file bytes and original modification times unchanged; original-dialogue files and prior archives unchanged.",
+  "validation": "validation.json"
+}

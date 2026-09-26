@@ -1,0 +1,32 @@
+[
+  {
+    "path": "/home/hyh001/projects/coding-platform/coding-platform/vendor/coding-agent/src/app/composition/recovery-contract.ts",
+    "expectedWritable": true,
+    "writable": true,
+    "errno": null
+  },
+  {
+    "path": "/home/hyh001/projects/coding-platform/coding-platform/vendor/coding-agent/tests/review/R4a-resume-environment.test.ts",
+    "expectedWritable": false,
+    "writable": false,
+    "errno": 30
+  },
+  {
+    "path": "/home/hyh001/projects/coding-platform/coding-platform/vendor/coding-agent/src/app/composition/recovery-contract-types.ts",
+    "expectedWritable": false,
+    "writable": false,
+    "errno": 30
+  },
+  {
+    "path": "/home/hyh001/projects/coding-platform/coding-platform/package.json",
+    "expectedWritable": false,
+    "writable": false,
+    "errno": 30
+  },
+  {
+    "path": "/home/hyh001/projects/coding-platform/coding-platform/src/core/workspace/project-source-snapshot.ts",
+    "expectedWritable": false,
+    "writable": false,
+    "errno": 30
+  }
+]

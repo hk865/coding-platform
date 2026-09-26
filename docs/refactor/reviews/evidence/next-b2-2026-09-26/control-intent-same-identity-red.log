@@ -1,0 +1,71 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R4-control-intent.test.ts (18 tests | 1 failed) 238ms
+     × replays a same-identity winner committed after both lookup misses but before the delayed authority read 10ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > replays a same-identity winner committed after both lookup misses but before the delayed authority read
+AssertionError: expected { status: 'rejected', …(3) } to deeply equal { status: 'committed', …(3) }
+
+- Expected
++ Received
+
+  {
+-   "cursor": "c0000000016",
+-   "replayed": true,
+-   "status": "committed",
+-   "value": {
+-     "intent": {
+-       "desiredState": "paused",
+-       "kind": "pause",
+-       "reason": null,
++   "code": "revision_conflict",
++   "current": [
++     {
+        "ref": {
+-         "aggregateType": "ControlIntent",
+-         "intentId": "9d6cbf174e6c368a669aa6c35739171de1220d3c3d03e119979f18502bdcc9e8",
+-         "projectId": "r4c-claim-project",
+-         "workspaceId": "r4c-claim-workspace",
+-       },
+-       "requestedAt": "2026-09-24T00:00:00.000Z",
+-       "requestedBy": {
+-         "id": "r4c-claim-operator",
+-         "kind": "human",
+-       },
+-       "revision": 1,
+-       "runRef": {
+          "aggregateType": "Run",
+          "goalId": "r4c-claim-goal",
+          "projectId": "r4c-claim-project",
+          "runId": "r4c-claim-id-1",
+        },
+-       "schemaVersion": 1,
+-       "status": "queued",
++       "revision": 2,
+      },
+-     "runRevision": 2,
+-   },
++   ],
++   "reason": "the Run changed since the caller read it",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4-control-intent.test.ts:483:29
+    481|       if (winner.status !== 'committed') throw Error('the same-identit…
+    482|       release();
+    483|       expect(await delayed).toEqual({ ...winner, replayed: true });
+       |                             ^
+    484|       expect(commitCalls, 'the delayed retry must recover the receipt …
+    485|       expect((await fixture.read()).run.revision).toBe(pin.revision + …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 19 passed (20)
+   Start at  13:25:44
+   Duration  1.75s (transform 784ms, setup 0ms, import 1.30s, tests 293ms, environment 0ms)
+

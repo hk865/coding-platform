@@ -1,0 +1,26 @@
+/dist/
+node_modules/
+*.tsbuildinfo
+# This is a frozen source dependency, not next's generated application output.
+!/vendor/coding-agent/dist/
+!/vendor/coding-agent/dist/**
+# Frozen Python analyzer dependencies are required for an isolated checkout.
+!/.local/
+/.local/*
+!/.local/source-analyzers/
+/.local/source-analyzers/*
+!/.local/source-analyzers/analyzers.zip
+!/.local/source-analyzers/analyzers.sha256
+!/.local/source-analyzers/manifest.json
+
+# Local generated output and private runtime configuration
+.workbench-build/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+__pycache__/
+.toolchain/

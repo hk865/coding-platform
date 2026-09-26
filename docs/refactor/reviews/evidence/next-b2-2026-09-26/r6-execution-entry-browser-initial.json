@@ -1,0 +1,68 @@
+{
+  "reviewedAt": "2026-09-26T16:05:24.083988+00:00",
+  "method": "CUA actual IAB UI actions, no browser state injection or raw-store domain writes",
+  "url": "http://127.0.0.1:36765/workbench/",
+  "physicalNext": "/tmp/r6-execution-review-ffmsdj6h/next",
+  "fixture": "/tmp/coding-platform-r6-execution-review-DEPY2Q",
+  "candidateReview": "r6-execution-entry-implementation-final-review.json",
+  "actions": [
+    "Fill question: 读取项目来源并提出初始计划",
+    "Click 规划并执行 once",
+    "Observe completed and 正式完成",
+    "Open 重新查看 and read Goal and Task Graph",
+    "Open 完整回执"
+  ],
+  "observed": {
+    "executionPhase": "completed",
+    "formalReceipt": {
+      "status": "committed",
+      "kind": "complete_goal",
+      "goalPhase": {
+        "aggregateType": "GoalPhase",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "revision": 1,
+        "phase": "COMPLETED"
+      },
+      "adoptedTaskReductions": [
+        "r6x-work-1",
+        "r6x-work-2",
+        "r6x-gate"
+      ],
+      "replayed": false,
+      "cursor": "c0000000055"
+    },
+    "taskGraph": {
+      "taskCount": 4,
+      "planRevision": 1,
+      "tasks": {
+        "r6x-work-1": "satisfied",
+        "r6x-work-2": "satisfied",
+        "r6x-gate": "satisfied",
+        "r6x-future": "pending / plan_only / optional; no acceptance obligation"
+      }
+    },
+    "answerSource": "project_source src/module.ts @9ef5e537d2d519607d85fb8b5ee5528b4be222ebab3445f547be7a1cb986d5e4",
+    "provider": {
+      "attemptedCalls": 4,
+      "suppliedReplies": 4
+    }
+  },
+  "currentBrowserIssues": [
+    {
+      "scope": "current views-only narrow repair",
+      "finding": "Answer.answer and opened answer body both display the entire plan JSON by default in the left column. Fold full answer/body/source details behind deliberate interaction without removing source fields."
+    },
+    {
+      "scope": "current views-only narrow repair",
+      "finding": "renderTaskGraph ignores existing TaskGraph.completion and labels advisory planning.not_evaluated as completion. Render the returned formal phase/selectedPlanMatches, label planning diagnostics and Goal desiredState distinctly. No route/owner change."
+    }
+  ],
+  "claimsNotMade": [
+    "Full MVP completed",
+    "External live model verified",
+    "Unknown/retry UI experimentally exercised",
+    "Final answer-fold repair verified"
+  ],
+  "followupVerified": "Expanded actual tasks/query UI receipt includes completion.status recorded, snapshot.phase COMPLETED and selectedPlanMatches true. Source plan-contracts TaskGraph.completion already owns this read; no new route or owner is needed."
+}

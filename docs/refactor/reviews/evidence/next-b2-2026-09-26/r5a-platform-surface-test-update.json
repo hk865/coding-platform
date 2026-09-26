@@ -1,0 +1,6 @@
+{
+  "file": "coding-platform/next/tests/composition/platform.test.ts",
+  "before": "14ec5555d70c539cfcb7567fd63069bd78e47e3100e8069fc0cca29098909d54",
+  "after": "3c7a6c8050e9ca7ac33619826e2a890a6e805092f15803492cf195c55a101ac7",
+  "reason": "add exactly two reviewed R5a public ports to existing surface inventory; no production change"
+}

@@ -1,0 +1,497 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R4-control-intent.test.ts (17 tests | 17 failed) 223ms
+     × persists a pause intent together with the Run and replays the exact receipt after SQLite reopen 59ms
+     × cancel supersedes a queued pause while the original pause still replays and a new pause cannot weaken cancel 11ms
+     × a queued control blocks fresh authorize and leaves the missing authorization unchanged 11ms
+     × a queued control blocks fresh begin and leaves the authorized phase unchanged 15ms
+     × a queued control blocks fresh model issue for an entered Run 15ms
+     × a queued control blocks fresh consume of an already issued permit and leaves it unconsumed 15ms
+     × control committed before the authorize batch makes the stale Run guard lose 11ms
+     × control committed before the begin batch makes the stale Run guard lose 10ms
+     × control committed before the model-issue batch makes the stale Run guard lose 11ms
+     × control committed before the model-consume batch makes the stale Run guard lose and keeps the permit at @1 12ms
+     × a later control does not erase an earlier authorize receipt: the exact original request replays 8ms
+     × an occurred entering fact is still recorded after a later control but the next fresh model action is blocked 9ms
+     × a queued cancel cannot rewrite an already-occurred natural completion 9ms
+     × a revoked Host execution configuration still accepts a cancel and its read 7ms
+     × rejects a non-Host principal, a cross-scope context and malformed control input 8ms
+     × two controls on the same Run and pin have one fresh winner and leave the other Run untouched 7ms
+     × a lost commit acknowledgement is recovered only from the real receipt and never reported as uncommitted 6ms
+ ❯ tests/composition/R4-control-platform.test.ts (2 tests | 2 failed) 60ms
+   × submits and replays a durable control request on a real formal Run without a Runtime Host 43ms
+   × close waits for a control read suspended in the real RecordStore, then blocks new calls 17ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 19 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/composition/R4-control-platform.test.ts > submits and replays a durable control request on a real formal Run without a Runtime Host
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed', …(2) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
+-   "value": {
+-     "intent": {
+-       "desiredState": "cancelled",
+-       "kind": "cancel",
+-       "status": "queued",
+-     },
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/R4-control-platform.test.ts:81:23
+     79|       meta: { requestId: 'r4-platform-control', expected: [{ ref: runR…
+     80|     const submitted = await platform.controls.submitControl(fixture.ct…
+     81|     expect(submitted).toMatchObject({ status: 'committed', replayed: f…
+       |                       ^
+     82|       value: { intent: { kind: 'cancel', desiredState: 'cancelled', st…
+     83|     if (submitted.status !== 'committed') throw Error('public control …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/19]⎯
+
+ FAIL  tests/composition/R4-control-platform.test.ts > close waits for a control read suspended in the real RecordStore, then blocks new calls
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/R4-control-platform.test.ts:112:23
+    110|       meta: { requestId: 'r4-platform-drain', expected: [{ ref: runRef…
+    111|     const submitted = await platform.controls.submitControl(fixture.ct…
+    112|     expect(submitted).toMatchObject({ status: 'committed' });
+       |                       ^
+    113|     if (submitted.status !== 'committed') throw Error('public control …
+    114|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > persists a pause intent together with the Run and replays the exact receipt after SQLite reopen
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed', …(2) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
+-   "value": {
+-     "intent": {
+-       "desiredState": "paused",
+-       "kind": "pause",
+-       "reason": "operator requested pause",
+-       "revision": 1,
+-       "runRef": {
+-         "aggregateType": "Run",
+-         "goalId": "r4c-claim-goal",
+-         "projectId": "r4c-claim-project",
+-         "runId": "r4c-claim-id-1",
+-       },
+-       "schemaVersion": 1,
+-       "status": "queued",
+-     },
+-     "runRevision": 2,
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4-control-intent.test.ts:77:23
+     75|
+     76|     const submitted = await controls.submitControl(fixture.ctx, reques…
+     77|     expect(submitted).toMatchObject({ status: 'committed', replayed: f…
+       |                       ^
+     78|       runRevision: pin.revision + 1,
+     79|       intent: { schemaVersion: 1, revision: 1, runRef: fixture.claim.r…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > cancel supersedes a queued pause while the original pause still replays and a new pause cannot weaken cancel
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, value) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
+-   "value": {
+-     "intent": {
+-       "desiredState": "paused",
+-       "kind": "pause",
+-       "status": "queued",
+-     },
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4-control-intent.test.ts:112:19
+    110|       meta: { requestId: 'r4-pause-before-cancel', expected: [await fi…
+    111|     const pause = await controls.submitControl(fixture.ctx, pauseReque…
+    112|     expect(pause).toMatchObject({ status: 'committed', value: { intent…
+       |                   ^
+    113|     if (pause.status !== 'committed') throw Error('pause receipt requi…
+    114|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > a queued control blocks fresh authorize and leaves the missing authorization unchanged
+AssertionError: durable cancel control request (block-authorize): expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ submitControl tests/work-graph/R4-control-intent.test.ts:59:62
+     57|   const result = await controls.submitControl(fixture.ctx, { input: { …
+     58|     meta: { requestId: `r4-control-${tag}`, expected: [...pin] } });
+     59|   expect(result, `durable ${kind} control request (${tag})`).toMatchOb…
+       |                                                              ^
+     60|   if (result.status !== 'committed') throw Error(`durable ${kind} cont…
+     61|   return result;
+ ❯ tests/work-graph/R4-control-intent.test.ts:147:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > a queued control blocks fresh begin and leaves the authorized phase unchanged
+AssertionError: durable cancel control request (block-begin): expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ submitControl tests/work-graph/R4-control-intent.test.ts:59:62
+     57|   const result = await controls.submitControl(fixture.ctx, { input: { …
+     58|     meta: { requestId: `r4-control-${tag}`, expected: [...pin] } });
+     59|   expect(result, `durable ${kind} control request (${tag})`).toMatchOb…
+       |                                                              ^
+     60|   if (result.status !== 'committed') throw Error(`durable ${kind} cont…
+     61|   return result;
+ ❯ tests/work-graph/R4-control-intent.test.ts:159:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > a queued control blocks fresh model issue for an entered Run
+AssertionError: durable cancel control request (block-issue): expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ submitControl tests/work-graph/R4-control-intent.test.ts:59:62
+     57|   const result = await controls.submitControl(fixture.ctx, { input: { …
+     58|     meta: { requestId: `r4-control-${tag}`, expected: [...pin] } });
+     59|   expect(result, `durable ${kind} control request (${tag})`).toMatchOb…
+       |                                                              ^
+     60|   if (result.status !== 'committed') throw Error(`durable ${kind} cont…
+     61|   return result;
+ ❯ tests/work-graph/R4-control-intent.test.ts:171:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > a queued control blocks fresh consume of an already issued permit and leaves it unconsumed
+AssertionError: durable cancel control request (block-consume): expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ submitControl tests/work-graph/R4-control-intent.test.ts:59:62
+     57|   const result = await controls.submitControl(fixture.ctx, { input: { …
+     58|     meta: { requestId: `r4-control-${tag}`, expected: [...pin] } });
+     59|   expect(result, `durable ${kind} control request (${tag})`).toMatchOb…
+       |                                                              ^
+     60|   if (result.status !== 'committed') throw Error(`durable ${kind} cont…
+     61|   return result;
+ ❯ tests/work-graph/R4-control-intent.test.ts:187:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > control committed before the authorize batch makes the stale Run guard lose
+AssertionError: control writer must commit first: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4-control-intent.test.ts:231:67
+    229|     const action = await fixture.ports(race.records).entry.authorizeRu…
+    230|       input: { prepared, consumerId: 'runtime-a' }, meta: { requestId:…
+    231|     await expect(race.control, 'control writer must commit first').res…
+       |                                                                   ^
+    232|     expect(action).toMatchObject({ status: 'rejected', code: 'revision…
+    233|     const after = (await fixture.read()).run;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > control committed before the begin batch makes the stale Run guard lose
+AssertionError: control writer must commit first: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4-control-intent.test.ts:248:67
+    246|       input: { permit: admitted.permit, kernel: await fixture.kernelFo…
+    247|       meta: { requestId: 'r4-race-begin', expected: [pin] } });
+    248|     await expect(race.control, 'control writer must commit first').res…
+       |                                                                   ^
+    249|     expect(action).toMatchObject({ status: 'rejected', code: 'revision…
+    250|     const after = (await fixture.read()).run;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > control committed before the model-issue batch makes the stale Run guard lose
+AssertionError: control writer must commit first: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4-control-intent.test.ts:264:67
+    262|     const action = await fixture.ports(race.records).model.authorizeMo…
+    263|       input: request, meta: { requestId: 'r4-race-issue', expected: [p…
+    264|     await expect(race.control, 'control writer must commit first').res…
+       |                                                                   ^
+    265|     expect(action).toMatchObject({ status: 'rejected', code: 'revision…
+    266|     expect((await fixture.read()).run.controlState).toMatchObject({ de…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > control committed before the model-consume batch makes the stale Run guard lose and keeps the permit at @1
+AssertionError: control writer must commit first: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4-control-intent.test.ts:283:67
+    281|       input: { request, permitRef: issued.value.permitRef, attemptId: …
+    282|       meta: { requestId: 'r4-race-consume', expected: [pin, { ref: iss…
+    283|     await expect(race.control, 'control writer must commit first').res…
+       |                                                                   ^
+    284|     expect(action).toMatchObject({ status: 'rejected', code: 'revision…
+    285|     const rows = await fixture.base.records.readMany([b2Key(issued.val…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > a later control does not erase an earlier authorize receipt: the exact original request replays
+AssertionError: durable cancel control request (after-original-authorize): expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ submitControl tests/work-graph/R4-control-intent.test.ts:59:62
+     57|   const result = await controls.submitControl(fixture.ctx, { input: { …
+     58|     meta: { requestId: `r4-control-${tag}`, expected: [...pin] } });
+     59|   expect(result, `durable ${kind} control request (${tag})`).toMatchOb…
+       |                                                              ^
+     60|   if (result.status !== 'committed') throw Error(`durable ${kind} cont…
+     61|   return result;
+ ❯ tests/work-graph/R4-control-intent.test.ts:306:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > an occurred entering fact is still recorded after a later control but the next fresh model action is blocked
+AssertionError: durable pause control request (after-begin): expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ submitControl tests/work-graph/R4-control-intent.test.ts:59:62
+     57|   const result = await controls.submitControl(fixture.ctx, { input: { …
+     58|     meta: { requestId: `r4-control-${tag}`, expected: [...pin] } });
+     59|   expect(result, `durable ${kind} control request (${tag})`).toMatchOb…
+       |                                                              ^
+     60|   if (result.status !== 'committed') throw Error(`durable ${kind} cont…
+     61|   return result;
+ ❯ tests/work-graph/R4-control-intent.test.ts:321:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > a queued cancel cannot rewrite an already-occurred natural completion
+AssertionError: durable cancel control request (before-natural-completed): expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ submitControl tests/work-graph/R4-control-intent.test.ts:59:62
+     57|   const result = await controls.submitControl(fixture.ctx, { input: { …
+     58|     meta: { requestId: `r4-control-${tag}`, expected: [...pin] } });
+     59|   expect(result, `durable ${kind} control request (${tag})`).toMatchOb…
+       |                                                              ^
+     60|   if (result.status !== 'committed') throw Error(`durable ${kind} cont…
+     61|   return result;
+ ❯ tests/work-graph/R4-control-intent.test.ts:341:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > a revoked Host execution configuration still accepts a cancel and its read
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, value) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
+-   "value": {
+-     "intent": {
+-       "desiredState": "cancelled",
+-       "kind": "cancel",
+-       "status": "queued",
+-     },
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4-control-intent.test.ts:358:23
+    356|       input: { runRef: fixture.claim.runRef, kind: 'cancel', reason: '…
+    357|       meta: { requestId: 'r4-cancel-after-host-revoke', expected: [awa…
+    358|     expect(submitted).toMatchObject({ status: 'committed',
+       |                       ^
+    359|       value: { intent: { kind: 'cancel', desiredState: 'cancelled', st…
+    360|     if (submitted.status !== 'committed') throw Error('revocation must…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > rejects a non-Host principal, a cross-scope context and malformed control input
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "forbidden",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4-control-intent.test.ts:381:60
+    379|       meta: { requestId: 'r4-boundary-base', expected: [runPin] } };
+    380|
+    381|     expect(await controls.submitControl(workRunCtx, base)).toMatchObje…
+       |                                                            ^
+    382|     expect(await controls.submitControl(crossCtx, { ...base, meta: { .…
+    383|       .toMatchObject({ status: 'rejected', code: 'forbidden' });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > two controls on the same Run and pin have one fresh winner and leave the other Run untouched
+AssertionError: exactly one fresh winner: expected [] to have a length of 1 but got +0
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ tests/work-graph/R4-control-intent.test.ts:404:8
+    402|     ]);
+    403|     expect([first, second].filter(result => result.status === 'committ…
+    404|       .toHaveLength(1);
+       |        ^
+    405|     expect([first, second].filter(result => result.status === 'rejecte…
+    406|     expect(racer.arrivals()).toBe(2);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/19]⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > a lost commit acknowledgement is recovered only from the real receipt and never reported as uncommitted
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4-control-intent.test.ts:429:8
+    427|     const controls = controlsOn(wrapped, 'lost-ack');
+    428|     expect(await controls.submitControl(fixture.ctx, request))
+    429|       .toMatchObject({ status: 'rejected', code: 'unavailable' });
+       |        ^
+    430|     expect(await controls.submitControl(fixture.ctx, request))
+    431|       .toMatchObject({ status: 'committed', replayed: true });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/19]⎯
+
+
+ Test Files  2 failed | 5 passed (7)
+      Tests  19 failed | 30 passed (49)
+   Start at  13:03:09
+   Duration  4.14s (transform 852ms, setup 0ms, import 2.49s, tests 1.10s, environment 0ms)
+

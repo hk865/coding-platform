@@ -1,0 +1,127 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R4c-task-claim-concurrency.test.ts (7 tests | 4 failed) 58ms
+   × directed and whole-plan queries share the same current-plan task fold 8ms
+   × a missing matrix does not allow an unaccounted role pointer to become an absence guard 4ms
+   × malformed non-JSON request metadata rejects rather than throwing through the port 4ms
+   × replay verifies the returned event cursor against the original receipt 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R4c-task-claim-concurrency.test.ts > directed and whole-plan queries share the same current-plan task fold
+AssertionError: expected { taskId: 'implement-a', …(5) } to deeply equal { taskId: 'implement-a', …(5) }
+
+- Expected
++ Received
+
+@@ -1,20 +1,9 @@
+  {
+-   "currentAttempt": {
+-     "aggregateType": "TaskAttempt",
+-     "attemptId": "r4c-seeded-attempt-implement-a",
+-     "goalId": "r4c-claim-goal",
+-     "projectId": "r4c-claim-project",
+-     "taskId": "implement-a",
+-   },
+-   "effectivePhase": "running",
+-   "execution": {
+-     "aggregateType": "Run",
+-     "goalId": "r4c-claim-goal",
+-     "projectId": "r4c-claim-project",
+-     "runId": "r4c-seeded-run-1",
+-   },
++   "currentAttempt": null,
++   "effectivePhase": "blocked",
++   "execution": null,
+    "lease": {
+      "status": "free",
+    },
+    "reductionRevision": null,
+    "taskId": "implement-a",
+
+ ❯ tests/work-graph/R4c-task-claim-concurrency.test.ts:78:8
+     76|     if (whole.status !== 'ready' || directed.status !== 'ready') throw…
+     77|     expect(directed.value.byTaskId.get(f.tasks.first.taskId))
+     78|       .toEqual(whole.value.byTaskId.get(f.tasks.first.taskId));
+       |        ^
+     79|     expect(directed.value.byTaskId.size).toBe(1);
+     80|   } finally { await f.close(); }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim-concurrency.test.ts > a missing matrix does not allow an unaccounted role pointer to become an absence guard
+AssertionError: expected { status: 'ready', value: { …(3) } } to match object { status: 'rejected', …(1) }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/work-graph/R4c-task-claim-concurrency.test.ts:95:26
+     93|       roleBinding: f.roleBinding, declaredPermissions: { tools: [], wr…
+     94|     });
+     95|     expect(facts.result).toMatchObject({ status: 'rejected', code: 'un…
+       |                          ^
+     96|   } finally { await f.close(); }
+     97| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim-concurrency.test.ts > malformed non-JSON request metadata rejects rather than throwing through the port
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', code: 'invalid' }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "invalid",
++   "code": "not_found",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-task-claim-concurrency.test.ts:104:54
+    102|     const request = await f.buildRequest();
+    103|     Object.assign(request.meta.expected[0]!.ref, { malformed: 1n });
+    104|     await expect(f.service.claimTask(f.ctx, request)).resolves.toMatch…
+       |                                                      ^
+    105|     expect(f.spy.commits).toBe(0);
+    106|   } finally { await f.close(); }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim-concurrency.test.ts > replay verifies the returned event cursor against the original receipt
+AssertionError: expected { status: 'committed', …(3) } to match object { status: 'rejected', …(1) }
+(13 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/R4c-task-claim-concurrency.test.ts:119:53
+    117|       return { ...event, value: { ...event.value, cursor: makeCommitCu…
+    118|     } });
+    119|     expect(await service.claimTask(f.ctx, request)).toMatchObject({ st…
+       |                                                     ^
+    120|   } finally { await f.close(); }
+    121| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed | 6 passed (7)
+      Tests  4 failed | 68 passed (72)
+   Start at  22:04:58
+   Duration  2.37s (transform 528ms, setup 0ms, import 1.35s, tests 493ms, environment 1ms)
+

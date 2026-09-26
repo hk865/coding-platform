@@ -1,0 +1,8 @@
+{
+  "changed": [
+    "coding-platform/next/src/core/agent-runtime/observation-recovery.ts",
+    "coding-platform/next/tests/runtime/R4c-execution-history.test.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-26T17:09:44.490073+00:00",
+  "cwd": "/home/hyh001/projects/coding-platform/coding-platform-next",
+  "command": "node --run verify:isolated",
+  "exitCode": 0,
+  "testFilesPassed": 124,
+  "testsPassed": 1102,
+  "node": "24.21.0",
+  "checks": [
+    "Frozen Kernel: 7 managed source files / 28 exact regenerated artifacts",
+    "Five-module architecture: 7 actual / 8 allowed edges",
+    "Node and UI typecheck",
+    "Independent production build",
+    "Existing full test suite",
+    "Compiled composition create/close",
+    "Loopback token-protected workbench Host smoke"
+  ],
+  "dependencyMode": "npm-installed dependencies from independent root and vendor lockfiles; no old checkout dependency fallback",
+  "includes": "Final graph/history UI including removal of duplicated auxiliary renderer",
+  "log": {
+    "path": "verify-isolated.log",
+    "sha256": "4e81038ea821e043cf07901c15949b41e5ff504b68d98b7f2395813609ea30b7"
+  },
+  "scope": "Standalone extraction validation; not a complete MVP behavior audit or an external-model production test"
+}

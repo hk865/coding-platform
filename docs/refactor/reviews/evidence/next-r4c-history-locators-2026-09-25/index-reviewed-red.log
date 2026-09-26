@@ -1,0 +1,797 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts (65 tests | 60 failed) 8370ms
+     × accepts a complete locator 4ms
+     × round-trips the replay event through its own encoder/decoder 2ms
+     × binds the locator on the first call and returns the new Run revision 55ms
+     × preserves every original Run field while adding the locator 40ms
+     × lets WG11 readExecution return the persisted locator 39ms
+     × grows observedThroughPosition without changing identity or start 38ms
+     × sets a terminal endPosition once and refuses to clear or change it 40ms
+     × refuses to lower the inspected watermark 37ms
+     × refuses to change the fixed kernel identity or start position 37ms
+     × rejects a Kernel session that disagrees with the claim Session mapping 39ms
+     × rejects non-positive or inconsistent positions as invalid 39ms
+     × requires exactly one positive Run revision pin and never replaces it 39ms
+     × replays the original result from the real Store even after the Run grew 38ms
+     × reports idempotency_conflict for the same requestId with different content 37ms
+     × commits the same content under a new requestId as a fresh CAS write 37ms
+     × admits exactly one concurrent update at the same Run revision 37ms
+     × atomically grants an unowned Kernel identity to one of two different Runs 41ms
+     × rejects a stale expected revision as a CAS conflict 41ms
+     × reports busy when another Run already owns the Kernel identity slot 39ms
+     × leaves zero new state when a commit conflicts (full rollback) 41ms
+     × treats an unindexed legacy Run as readable and lets a starting Run record history 41ms
+     × does not require the current Session occupancy to still belong to the old Run 36ms
+     × does not guard the current Lease version changed after the final read 37ms
+     × reports a malformed stored locator as unavailable 39ms
+     × rejects invalid scope and identity before any store read 36ms
+     × rejects a pre-aborted call and writes nothing 37ms
+     × turns an abort during the read into cancelled and does not commit 37ms
+     × binds ctx and request before the first await 38ms
+     × uses directed readMany plus one commit and one replay read only 39ms
+     × keeps the write query size stable as unrelated Runs and commits grow 38ms
+     × binds the locator on the first call and returns the new Run revision 217ms
+     × preserves every original Run field while adding the locator 227ms
+     × lets WG11 readExecution return the persisted locator 229ms
+     × grows observedThroughPosition without changing identity or start 224ms
+     × sets a terminal endPosition once and refuses to clear or change it 228ms
+     × refuses to lower the inspected watermark 227ms
+     × refuses to change the fixed kernel identity or start position 226ms
+     × rejects a Kernel session that disagrees with the claim Session mapping 225ms
+     × rejects non-positive or inconsistent positions as invalid 222ms
+     × requires exactly one positive Run revision pin and never replaces it 422ms
+     × replays the original result from the real Store even after the Run grew 228ms
+     × reports idempotency_conflict for the same requestId with different content 225ms
+     × commits the same content under a new requestId as a fresh CAS write 228ms
+     × admits exactly one concurrent update at the same Run revision 220ms
+     × atomically grants an unowned Kernel identity to one of two different Runs 225ms
+     × rejects a stale expected revision as a CAS conflict 209ms
+     × reports busy when another Run already owns the Kernel identity slot 217ms
+     × leaves zero new state when a commit conflicts (full rollback) 275ms
+     × treats an unindexed legacy Run as readable and lets a starting Run record history 223ms
+     × does not require the current Session occupancy to still belong to the old Run 216ms
+     × does not guard the current Lease version changed after the final read 213ms
+     × reports a malformed stored locator as unavailable 216ms
+     × rejects invalid scope and identity before any store read 233ms
+     × rejects a pre-aborted call and writes nothing 243ms
+     × turns an abort during the read into cancelled and does not commit 236ms
+     × binds ctx and request before the first await 327ms
+     × uses directed readMany plus one commit and one replay read only 235ms
+     × keeps the write query size stable as unrelated Runs and commits grow 311ms
+     × rolls back records, events, binding and receipt when storage fails at receipt insertion 223ms
+     × preserves the locator and the replay event across a reopen 319ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 60 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b execution-history locator codec > accepts a complete locator
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:307:44
+    305|
+    306|   it('accepts a complete locator', () => {
+    307|     expect(isRunExecutionHistoryV1(valid)).toBe(true);
+       |                                            ^
+    308|   });
+    309|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b execution-history locator codec > round-trips the replay event through its own encoder/decoder
+AssertionError: expected { status: 'invalid', …(1) } to match object { status: 'decoded' }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "decoded",
++   "status": "invalid",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:352:21
+    350|     };
+    351|     const decoded = executionHistoryRecordedEventFromEvent(encodeExecu…
+    352|     expect(decoded).toMatchObject({ status: 'decoded' });
+       |                     ^
+    353|     if (decoded.status === 'decoded') expect(decoded.value).toEqual(ev…
+    354|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > binds the locator on the first call and returns the new Run revision
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > binds the locator on the first call and returns the new Run revision
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, replayed) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:399:20
+    397|     const result = await h.service.recordExecutionHistory(h.fixture.ct…
+    398|       historyRequest(pin, h.claim.runRef, h.kernel, { requestId: 'hist…
+    399|     expect(result).toMatchObject({ status: 'committed', replayed: fals…
+       |                    ^
+    400|     if (result.status !== 'committed') return;
+    401|     expect(result.value.runRef).toEqual(h.claim.runRef);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > preserves every original Run field while adding the locator
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > preserves every original Run field while adding the locator
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:410:20
+    408|     const before = await readRun(h.fixture, h.claim.runRef);
+    409|     const result = await write(h, { requestId: 'history-preserve', obs…
+    410|     expect(result).toMatchObject({ status: 'committed' });
+       |                    ^
+    411|     if (result.status !== 'committed') return;
+    412|     const after = await readRun(h.fixture, h.claim.runRef);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > lets WG11 readExecution return the persisted locator
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > lets WG11 readExecution return the persisted locator
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:431:20
+    429|     const h = await setup(kind);
+    430|     const result = await write(h, { requestId: 'history-wg11', observe…
+    431|     expect(result).toMatchObject({ status: 'committed' });
+       |                    ^
+    432|     if (result.status !== 'committed') return;
+    433|     const read = await createRunStateReader({ records: h.fixture.recor…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > grows observedThroughPosition without changing identity or start
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > grows observedThroughPosition without changing identity or start
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:443:19
+    441|     const h = await setup(kind);
+    442|     const first = await write(h, { requestId: 'history-grow-1', observ…
+    443|     expect(first).toMatchObject({ status: 'committed' });
+       |                   ^
+    444|     if (first.status !== 'committed') return;
+    445|     const pin = await runPin(h.fixture, h.claim.runRef);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > sets a terminal endPosition once and refuses to clear or change it
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > sets a terminal endPosition once and refuses to clear or change it
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:459:19
+    457|     const h = await setup(kind);
+    458|     const first = await write(h, { requestId: 'history-end-1', observe…
+    459|     expect(first).toMatchObject({ status: 'committed' });
+       |                   ^
+    460|     if (first.status !== 'committed') return;
+    461|     const pin = await runPin(h.fixture, h.claim.runRef);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > refuses to lower the inspected watermark
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > refuses to lower the inspected watermark
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:477:19
+    475|     const h = await setup(kind);
+    476|     const first = await write(h, { requestId: 'history-observed-1', ob…
+    477|     expect(first).toMatchObject({ status: 'committed' });
+       |                   ^
+    478|     if (first.status !== 'committed') return;
+    479|     const second = await write(h, { requestId: 'history-observed-2', o…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > refuses to change the fixed kernel identity or start position
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > refuses to change the fixed kernel identity or start position
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:486:19
+    484|     const h = await setup(kind);
+    485|     const first = await write(h, { requestId: 'history-identity-1', ob…
+    486|     expect(first).toMatchObject({ status: 'committed' });
+       |                   ^
+    487|     if (first.status !== 'committed') return;
+    488|     const pin = await runPin(h.fixture, h.claim.runRef);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > rejects a Kernel session that disagrees with the claim Session mapping
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > rejects a Kernel session that disagrees with the claim Session mapping
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "forbidden",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:508:21
+    506|       historyRequest(pin, h.claim.runRef, { ...h.kernel, kernelSession…
+    507|         { requestId: 'history-session-mismatch' }));
+    508|     expect(outcome).toMatchObject({ status: 'rejected', code: 'forbidd…
+       |                     ^
+    509|   });
+    510|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > rejects non-positive or inconsistent positions as invalid
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > rejects non-positive or inconsistent positions as invalid
+AssertionError: range case 0: expected { status: 'rejected', …(2) } to match object { status: 'rejected', code: 'invalid' }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "invalid",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:524:46
+    522|     for (const [index, positions] of cases.entries()) {
+    523|       const outcome = await write(h, { requestId: `history-range-${ind…
+    524|       expect(outcome, `range case ${index}`).toMatchObject({ status: '…
+       |                                              ^
+    525|     }
+    526|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > requires exactly one positive Run revision pin and never replaces it
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > requires exactly one positive Run revision pin and never replaces it
+AssertionError: empty: expected { status: 'rejected', …(2) } to match object { status: 'rejected', code: 'invalid' }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "invalid",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:545:38
+    543|       } as unknown as GraphWrite<RecordExecutionHistoryInput>;
+    544|       const outcome = await h.service.recordExecutionHistory(h.fixture…
+    545|       expect(outcome, scenario.name).toMatchObject({ status: 'rejected…
+       |                                      ^
+    546|     }
+    547|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > replays the original result from the real Store even after the Run grew
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > replays the original result from the real Store even after the Run grew
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, replayed) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:555:19
+    553|       { requestId: 'history-replay', observedThroughPosition: 3 });
+    554|     const first = await h.service.recordExecutionHistory(h.fixture.ctx…
+    555|     expect(first).toMatchObject({ status: 'committed', replayed: false…
+       |                   ^
+    556|     if (first.status !== 'committed') return;
+    557|     const grown = await write(h, { requestId: 'history-replay-growth',…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > reports idempotency_conflict for the same requestId with different content
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > reports idempotency_conflict for the same requestId with different content
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:572:19
+    570|     const h = await setup(kind);
+    571|     const first = await write(h, { requestId: 'history-conflict', obse…
+    572|     expect(first).toMatchObject({ status: 'committed' });
+       |                   ^
+    573|     if (first.status !== 'committed') return;
+    574|     const pin = await runPin(h.fixture, h.claim.runRef);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > commits the same content under a new requestId as a fresh CAS write
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > commits the same content under a new requestId as a fresh CAS write
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, replayed) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:583:19
+    581|     const h = await setup(kind);
+    582|     const first = await write(h, { requestId: 'history-fresh-1', obser…
+    583|     expect(first).toMatchObject({ status: 'committed', replayed: false…
+       |                   ^
+    584|     if (first.status !== 'committed') return;
+    585|     const second = await write(h, { requestId: 'history-fresh-2', obse…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > admits exactly one concurrent update at the same Run revision
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > admits exactly one concurrent update at the same Run revision
+AssertionError: expected [] to have a length of 1 but got +0
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:600:69
+    598|       barrier.run(() => service.recordExecutionHistory(h.fixture.ctx, …
+    599|         { requestId: `history-concurrent-${index}`, observedThroughPos…
+    600|     expect(results.filter(result => result.status === 'committed')).to…
+       |                                                                     ^
+    601|     expect(barrier.arrivals).toBe(2);
+    602|     expect(results.filter(result => result.status === 'rejected')).toE…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > atomically grants an unowned Kernel identity to one of two different Runs
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > atomically grants an unowned Kernel identity to one of two different Runs
+AssertionError: expected [] to have a length of 1 but got +0
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:619:69
+    617|     const results = await Promise.all(requests.map(request =>
+    618|       barrier.run(() => service.recordExecutionHistory(h.fixture.ctx, …
+    619|     expect(results.filter(result => result.status === 'committed')).to…
+       |                                                                     ^
+    620|     expect(barrier.arrivals).toBe(2);
+    621|     expect(results.filter(result => result.status === 'rejected')).toE…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > rejects a stale expected revision as a CAS conflict
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > rejects a stale expected revision as a CAS conflict
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:642:19
+    640|     const first = await h.service.recordExecutionHistory(h.fixture.ctx,
+    641|       historyRequest(stalePin, h.claim.runRef, h.kernel, { requestId: …
+    642|     expect(first).toMatchObject({ status: 'committed' });
+       |                   ^
+    643|     if (first.status !== 'committed') return;
+    644|     const loser = await h.service.recordExecutionHistory(h.fixture.ctx,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > reports busy when another Run already owns the Kernel identity slot
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > reports busy when another Run already owns the Kernel identity slot
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:652:19
+    650|     const h = await setup(kind);
+    651|     const first = await write(h, { requestId: 'history-slot-owner', ob…
+    652|     expect(first).toMatchObject({ status: 'committed' });
+       |                   ^
+    653|     if (first.status !== 'committed') return;
+    654|     const runB = await seedLinkedRun(h.fixture, h.claim, h.fixture.tas…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > leaves zero new state when a commit conflicts (full rollback)
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > leaves zero new state when a commit conflicts (full rollback)
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:672:19
+    670|     const first = await h.service.recordExecutionHistory(h.fixture.ctx,
+    671|       historyRequest(firstPin, h.claim.runRef, h.kernel, { requestId: …
+    672|     expect(first).toMatchObject({ status: 'committed' });
+       |                   ^
+    673|     if (first.status !== 'committed') return;
+    674|     const runBefore = await readRun(h.fixture, h.claim.runRef);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > treats an unindexed legacy Run as readable and lets a starting Run record history
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > treats an unindexed legacy Run as readable and lets a starting Run record history
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:702:20
+    700|
+    701|     const result = await write(h, { requestId: 'history-starting', obs…
+    702|     expect(result).toMatchObject({ status: 'committed' });
+       |                    ^
+    703|     if (result.status !== 'committed') return;
+    704|     const after = await readRun(h.fixture, h.claim.runRef);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > does not require the current Session occupancy to still belong to the old Run
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > does not require the current Session occupancy to still belong to the old Run
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:716:19
+    714|     const h = await setup(kind);
+    715|     const first = await write(h, { requestId: 'history-occupancy-1', o…
+    716|     expect(first).toMatchObject({ status: 'committed' });
+       |                   ^
+    717|     if (first.status !== 'committed') return;
+    718|     await h.fixture.overwriteSession(h.claim.sessionRef,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > does not guard the current Lease version changed after the final read
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > does not guard the current Lease version changed after the final read
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:732:19
+    730|     const h = await setup(kind);
+    731|     const first = await write(h, { requestId: 'history-lease-1', obser…
+    732|     expect(first).toMatchObject({ status: 'committed' });
+       |                   ^
+    733|     if (first.status !== 'committed') return;
+    734|     const leaseRefKey = key({ aggregateType: 'TaskLease', ...h.claim.t…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > reports a malformed stored locator as unavailable
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > reports a malformed stored locator as unavailable
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:764:20
+    762|     const h = await setup(kind);
+    763|     const result = await write(h, { requestId: 'history-damaged', obse…
+    764|     expect(result).toMatchObject({ status: 'committed' });
+       |                    ^
+    765|     if (result.status !== 'committed') return;
+    766|     const records = mutateRecord(h.fixture.records, refKey => refKey =…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > rejects invalid scope and identity before any store read
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > rejects invalid scope and identity before any store read
+AssertionError: non-host principal: expected 'unsupported' not to be 'unsupported' // Object.is equality
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:807:82
+    805|       const outcome = await service.recordExecutionHistory(scenario.ct…
+    806|       expect(outcome, scenario.name).toMatchObject({ status: 'rejected…
+    807|       if (outcome.status === 'rejected') expect(outcome.code, scenario…
+       |                                                                                  ^
+    808|     }
+    809|     expect(counted.spy.readMany).toHaveLength(0);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > rejects a pre-aborted call and writes nothing
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > rejects a pre-aborted call and writes nothing
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "cancelled",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:823:21
+    821|       { ...h.fixture.ctx, signal: controller.signal },
+    822|       historyRequest(pin, h.claim.runRef, h.kernel, { requestId: 'hist…
+    823|     expect(outcome).toMatchObject({ status: 'rejected', code: 'cancell…
+       |                     ^
+    824|     expect(counted.spy.readMany).toHaveLength(0);
+    825|     expect(counted.spy.commit).toBe(0);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[26/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > turns an abort during the read into cancelled and does not commit
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > turns an abort during the read into cancelled and does not commit
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "cancelled",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:844:21
+    842|       { ...h.fixture.ctx, signal: controller.signal },
+    843|       historyRequest(pin, h.claim.runRef, h.kernel, { requestId: 'hist…
+    844|     expect(outcome).toMatchObject({ status: 'rejected', code: 'cancell…
+       |                     ^
+    845|     expect(counted.spy.commit).toBe(0);
+    846|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[27/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > binds ctx and request before the first await
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > binds ctx and request before the first await
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:871:20
+    869|     release();
+    870|     const result = await pending;
+    871|     expect(result).toMatchObject({ status: 'committed' });
+       |                    ^
+    872|     if (result.status !== 'committed') return;
+    873|     expect(result.value.history.observedThroughPosition).toBe(4);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[28/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > uses directed readMany plus one commit and one replay read only
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > uses directed readMany plus one commit and one replay read only
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, replayed) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:884:19
+    882|     const counted = countingReader(h.fixture.records);
+    883|     const first = await serviceFor(h.fixture, counted.records).recordE…
+    884|     expect(first).toMatchObject({ status: 'committed', replayed: false…
+       |                   ^
+    885|     expect(counted.spy.lookup).toBe(0);
+    886|     expect(counted.spy.lookupCommit).toBe(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[29/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real memory execution-history index > keeps the write query size stable as unrelated Runs and commits grow
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b real sqlite execution-history index > keeps the write query size stable as unrelated Runs and commits grow
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:907:8
+    905|       historyRequest(await runPin(h.fixture, h.claim.runRef), h.claim.…
+    906|         { requestId: 'history-scale-0', observedThroughPosition: 2 })))
+    907|       .toMatchObject({ status: 'committed' });
+       |        ^
+    908|     const firstCount = baseline.spy.readMany.length;
+    909|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[30/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b SQLite durability > rolls back records, events, binding and receipt when storage fails at receipt insertion
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:944:22
+    942|       database.exec("CREATE TRIGGER fail_history_receipt BEFORE INSERT…
+    943|       const failed = await h.service.recordExecutionHistory(h.fixture.…
+    944|       expect(failed).toMatchObject({ status: 'rejected', code: 'unavai…
+       |                      ^
+    945|       expect(counts()).toEqual(beforeCounts);
+    946|       expect(await readRun(h.fixture, h.claim.runRef)).toEqual(beforeR…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[31/60]⎯
+
+ FAIL  tests/work-graph/R4c-execution-history-index.test.ts > R4c.2b SQLite durability > preserves the locator and the replay event across a reopen
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, replayed) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-execution-history-index.test.ts:964:19
+    962|       { requestId: 'history-sqlite', observedThroughPosition: 4 });
+    963|     const first = await serviceFor(fixture).recordExecutionHistory(fix…
+    964|     expect(first).toMatchObject({ status: 'committed', replayed: false…
+       |                   ^
+    965|     if (first.status !== 'committed') return;
+    966|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[32/60]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  60 failed | 5 passed (65)
+   Start at  10:56:43
+   Duration  8.95s (transform 362ms, setup 0ms, import 500ms, tests 8.37s, environment 0ms)
+

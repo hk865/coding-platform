@@ -1,0 +1,11 @@
+{
+  "method": "Existing Chromium headless with original sandbox; native input events; final physical build; real HTTP SQLite and Kernel",
+  "checks": [
+    "After Host restart with no review data, same SQLite/Kernel preserve two public Sessions, original Host message body pending and real creation history.",
+    "Delayed send followed by workspace switch: result/inbox stays with original Session; other workspace stays empty; new draft survives.",
+    "Selecting the second Session shows its empty inbox and hides the first Session message body."
+  ],
+  "first": "session-c7cad7b532a9b5193e0bbe60e2077e4b4fe2a259d1cbe502785db7737c76293f",
+  "second": "session-4d9c16d7071dd6f565dbfb3aeb7ecd215857c449268cab22035a8e802cd6fe48",
+  "message": "session-message-3fbfe34e567442fb726178a1bf517c2e3ee01eafa72797d6204a8c2f31fa6947"
+}

@@ -1,0 +1,8 @@
+{
+  "purpose": "R2e.1 boundary repair after Sol tests and root contract review",
+  "writableFiles": [
+    "coding-platform/src/core/workspace/text-source-snapshot.ts",
+    "coding-platform/src/core/workspace/workspace-read.ts"
+  ],
+  "dshStateDirectories": ["profiles", "sessions", "storages", "cache", "llm-deepseek", "attachments"]
+}

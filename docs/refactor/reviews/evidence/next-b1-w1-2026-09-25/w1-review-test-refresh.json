@@ -1,0 +1,6 @@
+{
+  "path": "coding-platform/next/tests/work-graph/W1-future-plan.test.ts",
+  "before": "1c89e0419559b6b6cdafd7e2009cbc9afd8c0bcd969dfbfff7d0d35b80ca876b",
+  "after": "d0d25aed715818affd59056bd4a7e57b56aeb1387a8b619210c3d81ab9dbd1dd",
+  "reason": "Astra independent counterexamples in existing scenarios 7/8: existing role reassignment and actual basis target integrity; tests stay read-only"
+}

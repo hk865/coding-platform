@@ -1,0 +1,95 @@
+{
+  "status": "awaiting_root_review_not_recommended_for_import",
+  "reviewedAt": "2026-09-26T15:13:29.660815+00:00",
+  "lane": "r4-control-runtime-implementation-20260926",
+  "sessionId": "session-e3559b46-ef97-467b-bcef-ebf8fa99dff3",
+  "result": {
+    "exitCode": 0,
+    "session": "session-e3559b46-ef97-467b-bcef-ebf8fa99dff3",
+    "counts": {
+      "session": 1,
+      "status": 176,
+      "thinking": 87,
+      "text": 7,
+      "tool_call": 104,
+      "tool_result": 104,
+      "final": 1
+    },
+    "finished": 1790435363.7273428,
+    "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4-control-runtime-implementation-20260926/attempt-1790434858353537646"
+  },
+  "repairBudgetUsed": 1,
+  "independentChecks": {
+    "next-control-runtime": {
+      "exit": 0,
+      "files": 2,
+      "tests": 4,
+      "log": "r4-control-runtime-implementation-repair-tests.log"
+    },
+    "next-types": {
+      "exit": 0,
+      "log": "r4-control-runtime-implementation-repair-types.log"
+    }
+  },
+  "dshReportedNeighborChecks": "next-control-intent next-runtime-execution next-b2-material-admission: 61 pass; not rerun by Astra",
+  "audit": {
+    "changed": [
+      "coding-platform/next/src/core/agent-runtime/execution-control.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+      "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+      "coding-platform/next/src/core/agent-runtime/runtime.ts",
+      "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts",
+      "coding-platform/next/src/core/work-graph/tasks/control-service.ts",
+      "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "frozenTestsUnchanged": true,
+  "candidateHashes": "r4-control-runtime-implementation-candidate-hashes.json",
+  "diff": "r4-control-runtime-implementation.diff",
+  "acceptedClosures": [
+    "Observed actor distinct from original requester; Submitted actor rule retained",
+    "Persistent source/window bound restored; paused/unknown advance original WG12 watermark before ack",
+    "Exact Run/Turn control-source cache retained, ended window fixed, pending ack request preserved",
+    "Finishing context for entered write/replay/reread; original observer reached before returning entered failure",
+    "Shared cleanProof now gates terminal writer; paused/cancelled cleanup failure propagated by observed-model seam",
+    "Pause delivery no longer overwrites consumed marker; fully exited handle refuses late delivery"
+  ],
+  "remainingBlockers": [
+    {
+      "id": "terminal_boundary_after_cleanup_gate",
+      "file": "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+      "lines": [
+        494,
+        564,
+        570,
+        572
+      ],
+      "normalSequence": "Public observe reads settled terminal while owned cleanup is pending. It caches reducedThrough/state, returns at cleanProof gate before pendingTerminals is created. Driver then observes after cleanup, but decoded is empty and prior is absent; terminal boundary/cursor can no longer be recovered from the current cache.",
+      "consequence": "Run result remains unavailable and occupancy cannot be released by the original driver.",
+      "requiredClosure": "Retain the original terminal boundary/cursor or pending submission before waiting on the cleanProof gate, preserving the existing gate, original event/request, and one history reducer."
+    },
+    {
+      "id": "cancel_consumption_still_not_causal",
+      "file": "coding-platform/next/src/core/agent-runtime/execution-control.ts",
+      "lines": [
+        155,
+        160,
+        220
+      ],
+      "relatedFile": "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+      "relatedLine": 666,
+      "normalSequence": "Caller already aborted own controller, or Kernel already returned paused/cancelled but owned cleanup is still pending. A later deliver(cancel) still sets handle.intentRef and aborts again. kernelExited is only set after runObservedModel finally completes.",
+      "consequence": "A later intent may claim a previous caller cancel/pause rather than the signal actually consumed by the Kernel.",
+      "requiredClosure": "Track actual Kernel-call return separately from cleanup completion. Associate cancel only for the first actual delivery to a still-running, not-already-aborted own controller; preserve existing consumed intent across late delivery."
+    }
+  ],
+  "import": "withheld; originalAllowedHashes not changed; no main production files imported",
+  "nextAction": "root final diff review; no automatic second repair or import",
+  "resolution": {
+    "status": "original two findings corrected in authorized follow-up",
+    "evidence": "r4-control-runtime-implementation-correction-review.json"
+  }
+}

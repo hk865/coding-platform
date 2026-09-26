@@ -1,0 +1,31 @@
+{
+  "lane": "w2-future-intent-implementation-20260926",
+  "review": "independent source review and targeted repair tests passed",
+  "files": [
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/plan-validation.ts",
+      "before": "d0ba07cdfd27a14529a7a3bdcbd1eb2e9a7febcff5561faf1a44705521b82873",
+      "after": "5e84314df7518f45f064f0a0ab3885774653e8a736c3ab629f4faae0304cac7b"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/plan-service.ts",
+      "before": "f525ada0384452b639b4568f476c5bf67c0d9c2b6af7010cc6bd1bc7bea97431",
+      "after": "eb1ae972b646afb8f783c40f53e0b561a3b5300c8f75a64208618fecec44ca6e"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/eligibility.ts",
+      "before": "fd75aab2bd444d2e36fefbf660295e8dc946ce6dff45faa35fcb0fb03a787508",
+      "after": "77d945799960e9e987fbfbf93f44d422111e82b0a6d5b69c58fc5faf9bcc2c5e"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/claim-service.ts",
+      "before": "9e985e9a30e513044a64badae409ac8df70d7193730f1400bde5cc0c3d290c2f",
+      "after": "97328e24e7cf59d19ac6d3bbff3e93bc7505d065129024945add1273c8fa8168"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+      "before": "f650e827f3a5eb8f12c858195d9937470c8afb8b2a06ca9cc1009210e3428b5a",
+      "after": "b2bddbef928e61d743c877c742f8a497fa12de2def9d007cd470250d20c10a5e"
+    }
+  ]
+}

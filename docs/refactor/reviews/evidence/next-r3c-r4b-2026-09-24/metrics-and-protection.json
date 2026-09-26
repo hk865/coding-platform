@@ -1,0 +1,18 @@
+{
+  "production": {
+    "files": 134,
+    "physicalLines": 19527
+  },
+  "contracts": {
+    "files": 54,
+    "physicalLines": 3086
+  },
+  "tests": {
+    "files": 49,
+    "physicalLines": 9351
+  },
+  "protectedOriginal": {
+    "files": 1313,
+    "changes": []
+  }
+}

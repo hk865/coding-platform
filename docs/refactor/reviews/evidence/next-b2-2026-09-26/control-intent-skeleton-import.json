@@ -1,0 +1,23 @@
+{
+  "lane": "r4-control-intent-skeleton-20260926",
+  "imported": {
+    "coding-platform/next/src/contracts/control-intent.ts": "7ea205a7e534c94cac438290e0c0f5dece9fc137f7fa6294c921b576bd6891b3",
+    "coding-platform/next/src/core/work-graph/tasks/control-contracts.ts": "68d1ff353e83d495a9cbec99fa73fa2fd4f002819c67eb95ca9da58d9397da42",
+    "coding-platform/next/src/core/work-graph/tasks/control-service.ts": "b0c62c6861b6b8ed8b136d6f9193d52a4c5e8bab86615350f2ce81f4673ecb29",
+    "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts": "7a2027809b824d22712ea1fd66f71c9e929364a5b323029b544e28ff55cfe714",
+    "coding-platform/next/src/core/work-graph/materials/record-readers.ts": "2b1f65b80c71aab1822dd94d6a0f7ec38df28470e4af8a6d97928ef95ba5177d",
+    "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts": "6e23be163880d47eca794acd3629b0b43dbeeac74444019a420eb7612c50a4ae",
+    "coding-platform/next/src/composition/create-platform.ts": "ba03c244a7089b241a0193fea931b99be0f9ca5dd8b2dbea80665b298565d9cc",
+    "coding-platform/next/tests/work-graph/R4-control-intent.test.ts": "4fd322ebf815cfa78b4a1b0aa5b00c668018dac90327fa7887b6001f0befadc3",
+    "coding-platform/next/tests/composition/R4-control-platform.test.ts": "6c3bb6a049f965541dd5ac6e71a95918c8d2472c06fd1e00bbda2a1c2d95463b"
+  },
+  "middleTests": {
+    "files": 7,
+    "expectedUnsupportedFailures": 19,
+    "passed": 30,
+    "typesExitCode": 0
+  },
+  "outsideScope": [],
+  "mainUnchangedBeforeImport": true,
+  "phase": "skeleton-only"
+}

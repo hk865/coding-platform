@@ -1,0 +1,11 @@
+{
+  "path": "coding-platform/next/tests/composition/R5c-workflow-platform.test.ts",
+  "before": "51fa7d5d25370865b00a644ff6d4aa6382d16b00e61ee5f2b9887baafb5fbc95",
+  "after": "743012174fb194bf23705cdc75f45ca95f5a409448a2f7ae953942742d3095ad",
+  "changes": [
+    "derive template digest from actual trusted guidance",
+    "resolve existing frozen Kernel skill root"
+  ],
+  "assertionsChanged": false,
+  "laneReadonlyRefreshed": true
+}

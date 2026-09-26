@@ -1,0 +1,84 @@
+[
+  {
+    "file": "reviewer-work.ts",
+    "declarations": [
+      "ReviewWorkSnapshot",
+      "ReviewProtocol",
+      "ReviewOutputBinding",
+      "INDEPENDENT_REVIEW_PROTOCOL"
+    ]
+  },
+  {
+    "file": "reviewer-context.ts",
+    "declarations": [
+      "ReviewerProfileV1",
+      "ReviewerConfigRef"
+    ]
+  },
+  {
+    "file": "query-job.ts",
+    "declarations": [
+      "QueryJobSubmittedEvent",
+      "validQueryExecution",
+      "queryJobRefFor",
+      "QueryJobV1",
+      "QueryJobIntentV1",
+      "ReadOnlyQueryPort",
+      "QueryJobStatus",
+      "TaskRef",
+      "ReadOnlyQueryResultV1",
+      "QueryTaskRef"
+    ]
+  },
+  {
+    "file": "query-execution-context.ts",
+    "declarations": [
+      "QueryExecutionRequest"
+    ]
+  },
+  {
+    "file": "reviewer-verification.ts",
+    "declarations": [
+      "ReviewMaterialDescriptorV1"
+    ]
+  },
+  {
+    "file": "verification-context.ts",
+    "declarations": [
+      "VerificationRoundScope",
+      "VerificationRoundMaterialIdentity"
+    ]
+  },
+  {
+    "file": "execution-feedback.ts",
+    "declarations": [
+      "FeedbackSource"
+    ]
+  },
+  {
+    "file": "evidence.ts",
+    "declarations": [
+      "VerificationPlanRefV1",
+      "EvidenceCoverageV1"
+    ]
+  },
+  {
+    "file": "memory.ts",
+    "declarations": [
+      "MemoryPurpose"
+    ]
+  },
+  {
+    "file": "governance.ts",
+    "declarations": [
+      "CompletionPolicyPin",
+      "ArchitectureBaselinePin"
+    ]
+  },
+  {
+    "file": "query-answer-presentation.ts",
+    "declarations": [
+      "QueryAnswerPresentation"
+    ]
+  }
+]

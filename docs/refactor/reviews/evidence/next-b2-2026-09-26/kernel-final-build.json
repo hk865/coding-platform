@@ -1,0 +1,64 @@
+{
+  "mode": "write",
+  "sources": [
+    {
+      "path": "vendor/coding-agent/patches/storage/adapters/sqlite/sqlite-stores.ts",
+      "sha256": "4c552b0ecbaecdd5db514697fe39019c5899e51589a8caa8a950c9b4bebe16b6"
+    },
+    {
+      "path": "vendor/coding-agent/patches/public-api.ts",
+      "sha256": "f876ccda6afefe3645e20987fd8006375bfbaae6096ae12a0f5ce6791e711bea"
+    }
+  ],
+  "typeScript": "6.0.3",
+  "artifacts": [
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.js",
+      "sha256": "a52fef11ca8d6b24c84034b5ef25bd895638d9c453f59cad90e909ffd573ef76",
+      "currentSha256": "a52fef11ca8d6b24c84034b5ef25bd895638d9c453f59cad90e909ffd573ef76",
+      "matches": true
+    },
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.js.map",
+      "sha256": "651abb806baca8a32a6f285fc6ced6fc2f1fc1460b80dc51e83efb2c84231111",
+      "currentSha256": "651abb806baca8a32a6f285fc6ced6fc2f1fc1460b80dc51e83efb2c84231111",
+      "matches": true
+    },
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.d.ts",
+      "sha256": "80be7f2b88f5578ed0a24d59014e49e5a124777f7926a0b46182d86f3ca9e8f3",
+      "currentSha256": "80be7f2b88f5578ed0a24d59014e49e5a124777f7926a0b46182d86f3ca9e8f3",
+      "matches": true
+    },
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.d.ts.map",
+      "sha256": "08e758e735d8d98b0a6b56f540bfbd7b7dd61bd585f21be5bf6cfa06b5e54102",
+      "currentSha256": "08e758e735d8d98b0a6b56f540bfbd7b7dd61bd585f21be5bf6cfa06b5e54102",
+      "matches": true
+    },
+    {
+      "path": "public-api.js",
+      "sha256": "a055c2080bd40f557f5e2aea403e2ddd4044db0955a986ca46d12243c561bdb4",
+      "currentSha256": "865d1853771c0df7a57b9df413f2f0d81a71f6d51103b7241fd79a99effc0434",
+      "matches": false
+    },
+    {
+      "path": "public-api.js.map",
+      "sha256": "aefd5c0c582ebbbbfce062bcd1c399749c4d2f8f90568b863e32d327283b5778",
+      "currentSha256": "04406e1b95f3c713115d5d226afce5832a77feaea27933afca08a5d4b7d503cb",
+      "matches": false
+    },
+    {
+      "path": "public-api.d.ts",
+      "sha256": "07e4d2563f8d33060d185351fffe52434e540d49c6ae319f4e14863642ffceef",
+      "currentSha256": "ea947ddc923ef162f53add527c4de771eacfcb2176e7b51ed184c68704ecb621",
+      "matches": false
+    },
+    {
+      "path": "public-api.d.ts.map",
+      "sha256": "0035099e06950fdda3fef8719c314abe6a0293ac3270d39f8193f90f745dcf88",
+      "currentSha256": "22eabee8d37ab720644307543e0b93afe84655b79b59def9b55b155108fa9414",
+      "matches": false
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+
+ RUN  v4.1.10 /tmp/r4c2b-graph-lower-review-zuat671r/next
+
+ ❯ tests/runtime/R4c-graph-history.test.ts (16 tests | 1 failed | 15 skipped) 331ms
+     × preserves an empty terminal page at the real upper cursor while still detecting a truncated source 330ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/runtime/R4c-graph-history.test.ts > R4c.2b RT1 bounded Session history range > preserves an empty terminal page at the real upper cursor while still detecting a truncated source
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready', …(1) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "items": [],
+-     "nextCursor": null,
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/runtime/R4c-graph-history.test.ts:895:19
+    893|       throughCursor: null, limit: 200, range };
+    894|     const empty = await h.owner.readSessionHistory(fx.ctx, request);
+    895|     expect(empty).toMatchObject({ status: 'ready', value: { items: [],…
+       |                   ^
+    896|
+    897|     const database = new DatabaseSync(kernelPath(fx));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 15 skipped (16)
+   Start at  12:40:05
+   Duration  1.24s (transform 521ms, setup 0ms, import 826ms, tests 331ms, environment 0ms)
+

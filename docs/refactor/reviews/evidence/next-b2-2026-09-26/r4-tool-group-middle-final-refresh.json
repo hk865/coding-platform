@@ -1,0 +1,6 @@
+{
+  "file": "docs/refactor/tasks/R4-tool-group-barrier-dispatch.md",
+  "before": "7a0fc400e93438ece05a30ca4b21712a4554b9386608689d72d1c46a476c7cbc",
+  "after": "9e66755e91379766537fd7b08ea639d1ee986b5dc5bf2cf3fa28ad50024b0180",
+  "scope": "test-only deadlock assertion repair"
+}

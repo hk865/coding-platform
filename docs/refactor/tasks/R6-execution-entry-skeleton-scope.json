@@ -1,0 +1,24 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/app/main.ts",
+    "coding-platform/next/src/app/host.ts",
+    "coding-platform/next/src/app/runtime-configuration.ts",
+    "coding-platform/next/src/app/core-http-types.ts",
+    "coding-platform/next/src/app/core-routes.ts",
+    "coding-platform/next/src/ui/main.ts",
+    "coding-platform/next/src/ui/views.ts",
+    "coding-platform/next/src/composition/create-platform.ts",
+    "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-contracts.ts",
+    "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-service.ts",
+    "coding-platform/next/tests/app/R6-host.test.ts",
+    "coding-platform/next/tests/app/R6-workbench.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

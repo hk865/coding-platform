@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "platform-adviser",
+  "title": "Platform adviser",
+  "kind": "instruction",
+  "priority": 60,
+  "contentFile": "content.md"
+}

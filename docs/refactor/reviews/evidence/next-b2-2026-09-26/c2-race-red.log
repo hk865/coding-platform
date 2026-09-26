@@ -1,0 +1,187 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/C2-mailbox-admission.test.ts (7 tests | 2 failed) 87ms
+     × ack restores the concurrent winner after a receipt miss and before reading the changed message 14ms
+     × respond restores the concurrent winner after a receipt miss and before reading the changed message 9ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/C2-mailbox-admission.test.ts > C2 mailbox fresh admission contract > ack restores the concurrent winner after a receipt miss and before reading the changed message
+AssertionError: {"status":"rejected","code":"invalid","reason":"only a pending message can be acknowledged"}: expected { status: 'rejected', …(2) } to deeply equal { status: 'committed', …(3) }
+
+- Expected
++ Received
+
+  {
+-   "cursor": "c0000000013",
+-   "replayed": true,
+-   "status": "committed",
+-   "value": {
+-     "bodyRef": {
+-       "contentType": "application/vnd.coding-platform.session-message+json",
+-       "digest": "0e19f79236249de57258fbecd06bb2fd533db481a7e43550e1213ba65876768d",
+-       "kind": "artifact",
+-       "sizeBytes": 317,
+-       "source": {
+-         "kind": "workspace",
+-         "refId": "r4c-claim-workspace",
+-         "revision": "1",
+-       },
+-     },
+-     "createdAt": "2026-09-26T00:00:00.000Z",
+-     "readAt": "2026-09-26T00:00:00.000Z",
+-     "recipient": {
+-       "projectId": "r4c-claim-project",
+-       "sessionId": "session-a63653f966d3a789e16f89541345718a8be04480e0b416147c3c33b45da52c38",
+-     },
+-     "ref": {
+-       "aggregateType": "SessionMessage",
+-       "messageId": "session-message-03c689401ea2a3f3f7f842b3f0e688f1bce905057a745e34b35520f6ab9cdc17",
+-       "projectId": "r4c-claim-project",
+-       "workspaceId": "r4c-claim-workspace",
+-     },
+-     "response": null,
+-     "revision": 2,
+-     "schemaVersion": 1,
+-     "sender": {
+-       "actor": {
+-         "id": "c1-host",
+-         "kind": "human",
+-       },
+-       "kind": "host",
+-     },
+-     "sourceRef": {
+-       "kind": "workspace",
+-       "refId": "r4c-claim-workspace",
+-       "revision": "1",
+-     },
+-     "status": "read",
+-   },
++   "code": "invalid",
++   "reason": "only a pending message can be acknowledged",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C2-mailbox-admission.test.ts:203:46
+    201|           .toMatchObject({ status: 'ready', value: { text: request.inp…
+    202|       }
+    203|       expect(second, JSON.stringify(second)).toEqual({ ...first, repla…
+       |                                              ^
+    204|     } finally {
+    205|       releaseB();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/work-graph/C2-mailbox-admission.test.ts > C2 mailbox fresh admission contract > respond restores the concurrent winner after a receipt miss and before reading the changed message
+AssertionError: {"status":"rejected","code":"invalid","reason":"the message already has a response"}: expected { status: 'rejected', …(2) } to deeply equal { status: 'committed', …(3) }
+
+- Expected
++ Received
+
+  {
+-   "cursor": "c0000000013",
+-   "replayed": true,
+-   "status": "committed",
+-   "value": {
+-     "bodyRef": {
+-       "contentType": "application/vnd.coding-platform.session-message+json",
+-       "digest": "ef46eb3fb3d08c347d16b391fcb293b9d0a1f0fed9ac6a9c73c900a7f9c3ce22",
+-       "kind": "artifact",
+-       "sizeBytes": 317,
+-       "source": {
+-         "kind": "workspace",
+-         "refId": "r4c-claim-workspace",
+-         "revision": "1",
+-       },
+-     },
+-     "createdAt": "2026-09-26T00:00:00.000Z",
+-     "readAt": "2026-09-26T00:00:00.000Z",
+-     "recipient": {
+-       "projectId": "r4c-claim-project",
+-       "sessionId": "session-a63653f966d3a789e16f89541345718a8be04480e0b416147c3c33b45da52c38",
+-     },
+-     "ref": {
+-       "aggregateType": "SessionMessage",
+-       "messageId": "session-message-36a16752e3e3682c247b9f169722279104ab4b978528062493505f0dc150bab0",
+-       "projectId": "r4c-claim-project",
+-       "workspaceId": "r4c-claim-workspace",
+-     },
+-     "response": {
+-       "bodyRef": {
+-         "contentType": "application/vnd.coding-platform.session-message+json",
+-         "digest": "c08c003257313c6c5e9483a5e316df62f48ff37e96e4222c8ce94ec0597c9134",
+-         "kind": "artifact",
+-         "sizeBytes": 690,
+-         "source": {
+-           "kind": "workspace",
+-           "refId": "r4c-claim-workspace",
+-           "revision": "1",
+-         },
+-       },
+-       "respondedAt": "2026-09-26T00:00:00.000Z",
+-       "sender": {
+-         "generation": 2,
+-         "kind": "work_run",
+-         "roleBinding": {
+-           "bindingId": "r4c-claim-binding",
+-           "bindingVersion": 1,
+-           "policyRevision": "legacy-template",
+-           "schemaVersion": 1,
+-           "templateId": "builder",
+-           "templateRevision": "1",
+-         },
+-         "runRef": {
+-           "aggregateType": "Run",
+-           "goalId": "r4c-claim-goal",
+-           "projectId": "r4c-claim-project",
+-           "runId": "r4c-claim-id-1",
+-         },
+-         "sessionRef": {
+-           "projectId": "r4c-claim-project",
+-           "sessionId": "session-a63653f966d3a789e16f89541345718a8be04480e0b416147c3c33b45da52c38",
+-         },
+-       },
+-       "sourceRef": {
+-         "kind": "workspace",
+-         "refId": "r4c-claim-workspace",
+-         "revision": "1",
+-       },
+-     },
+-     "revision": 2,
+-     "schemaVersion": 1,
+-     "sender": {
+-       "actor": {
+-         "id": "c1-host",
+-         "kind": "human",
+-       },
+-       "kind": "host",
+-     },
+-     "sourceRef": {
+-       "kind": "workspace",
+-       "refId": "r4c-claim-workspace",
+-       "revision": "1",
+-     },
+-     "status": "responded",
+-   },
++   "code": "invalid",
++   "reason": "the message already has a response",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C2-mailbox-admission.test.ts:203:46
+    201|           .toMatchObject({ status: 'ready', value: { text: request.inp…
+    202|       }
+    203|       expect(second, JSON.stringify(second)).toEqual({ ...first, repla…
+       |                                              ^
+    204|     } finally {
+    205|       releaseB();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  2 failed | 13 passed (15)
+   Start at  11:33:43
+   Duration  2.77s (transform 785ms, setup 0ms, import 1.63s, tests 905ms, environment 0ms)
+

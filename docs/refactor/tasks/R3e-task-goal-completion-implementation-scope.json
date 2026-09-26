@@ -1,0 +1,17 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/tasks/completion.ts",
+    "coding-platform/next/src/core/work-graph/tasks/completion-policy.ts",
+    "coding-platform/next/src/core/work-graph/tasks/completion-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-service.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

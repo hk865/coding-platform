@@ -1,0 +1,39 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+ ❯ tests/data/R3a-contract-invariants.test.ts (9 tests | 1 failed) 21ms
+   × owns or rejects an uncloneable raw Goal batch before an asynchronous lookup 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/data/R3a-contract-invariants.test.ts > owns or rejects an uncloneable raw Goal batch before an asynchronous lookup
+AssertionError: expected { status: 'not_found', ref: { …(3) } } to match object { status: 'found', snapshot: { …(1) } }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "snapshot": {
+-     "objective": "original raw objective",
+-   },
+-   "status": "found",
++   "status": "not_found",
+  }
+
+ ❯ tests/data/R3a-contract-invariants.test.ts:156:22
+    154|     const redirected = await ledger.load(redirectedRef);
+    155|     if (result.status === 'committed') {
+    156|       expect(stored).toMatchObject({ status: 'found', snapshot: { obje…
+       |                      ^
+    157|       expect(redirected).toMatchObject({ status: 'not_found' });
+    158|       expect(backend.legacyAccess.state.eventLog).toHaveLength(before …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  1 failed | 23 passed (24)
+   Start at  00:25:24
+   Duration  1.25s (transform 691ms, setup 0ms, import 945ms, tests 80ms, environment 0ms)
+

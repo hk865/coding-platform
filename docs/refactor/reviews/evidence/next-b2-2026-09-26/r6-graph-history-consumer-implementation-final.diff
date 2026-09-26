@@ -1,0 +1,762 @@
+--- before/coding-platform/next/src/ui/main.ts
++++ after/coding-platform/next/src/ui/main.ts
+@@ -32,6 +32,7 @@
+   renderFileRead,
+   renderGap,
+   renderExecutionHistory,
++  renderExecutionRecord,
+   renderGoalDetail,
+   renderInbox,
+   renderMessage,
+@@ -70,6 +71,8 @@
+   CompletionPoliciesInstallResponse,
+   CoreRouteSuffix,
+   CoreScope,
++  ExecutionsHistoryResponse,
++  ExecutionsReadResponse,
+   FilesReadResponse,
+   GoalsCreateResponse,
+   InitialPlanningGoalInputResult,
+@@ -89,6 +92,7 @@
+   QueryJobRef,
+   QueryRunRef,
+   RoleConfigurationRef,
++  RunRef,
+   RuntimeCapabilitiesResponse,
+   SessionCard,
+   SessionRecord,
+@@ -124,14 +128,36 @@
+   /** Present only for a `sessions/find` driven by a real WorkLinkTarget, so the
+    * related-session page never overwrites the project directory page. */
+   workTarget: WorkLinkTarget | null;
++  /** Present only for an `executions/*` read, so a late run-window response is
++   * written back under its exact RunRef and never shown under another Run. */
++  run: RunRef | null;
++  /** The exact page (scope + captured conversation/layout/tab + object) that
++   * issued the request. A response is stored under this key, so returning to an
++   * old page keeps its own result/cursor and a late response never lands on
++   * another page or re-opens a closed one. */
++  pageKey: string | null;
++  /** For a related `sessions/find`: the exact includeArchived filter the request
++   * was read under. A response read under a no-longer-current filter is dropped. */
++  filterIncludeArchived: boolean | null;
++  /** For a related `sessions/find`: the original optional role, preserved only
++   * when the issued request actually carried one. */
++  relatedRole: unknown | null;
+ };
+-const noTags: RequestTags = { session: null, messageRef: null, part: null, workTarget: null };
++const noTags: RequestTags = { session: null, messageRef: null, part: null, workTarget: null, run: null,
++  pageKey: null, filterIncludeArchived: null, relatedRole: null };
+ const tagsFor = (
+   session: SessionRef | null,
+   messageRef: MessageRefValue | null = null,
+   part: 'message' | 'response' | null = null,
+   workTarget: WorkLinkTarget | null = null,
+-): RequestTags => ({ session, messageRef, part, workTarget });
++  run: RunRef | null = null,
++  pageKey: string | null = null,
++): RequestTags => ({ session, messageRef, part, workTarget, run, pageKey,
++  filterIncludeArchived: null, relatedRole: null });
++/** Related-target read tags: the exact target, filter and (optional) role. */
++const tagsForRelated = (target: WorkLinkTarget, includeArchived: boolean, role: unknown | null): RequestTags =>
++  ({ session: null, messageRef: null, part: null, workTarget: target, run: null, pageKey: null,
++    filterIncludeArchived: includeArchived, relatedRole: role ?? null });
+ 
+ type ProjectValue = CommittedOf<ProjectsCreateResponse>['value'];
+ type WorkspaceValue = CommittedOf<WorkspacesRegisterResponse>['value'];
+@@ -287,10 +313,17 @@
+   inbox: { session: SessionRef; result: MessagesInboxResponse } | null;
+   message: { session: SessionRef; messageRef: MessageRefValue; result: MessagesReadResponse } | null;
+   messageBody: { session: SessionRef; messageRef: MessageRefValue; part: 'message' | 'response'; result: MessagesBodyResponse } | null;
+-  sessionHistory: { session: SessionRef; result: SessionsHistoryResponse } | null;
+-  /** R6 Task-execution -> original history page state, keyed by exact scope +
+-   * RunRef. Stage one declares the store only; no fetch/pagination is wired. */
+-  executionHistory: WorkbenchExecutionHistoryPage | null;
++  /** Opened Session-history pages keyed by scope + captured conversation/layout
++   * + page (center or tab) + exact SessionRef. The center and each auxiliary
++   * history/session tab keep their own result and original cursor. */
++  sessionHistories: Map<string, { session: SessionRef; result: SessionsHistoryResponse }>;
++  /** Opened Run-window pages keyed by scope + captured conversation/layout + the
++   * typed execution tab. Refresh/pagination overwrite only this page's latest
++   * real read result (ready or not). */
++  executionHistories: Map<string, WorkbenchExecutionHistoryPage>;
++  /** The exact `executions/read` facts per opened execution page. The claim
++   * Session is used only from a ready record; display state only. */
++  executionReads: Map<string, { run: RunRef; result: ExecutionsReadResponse }>;
+   activeSession: SessionRef | null;
+   activeMessage: MessageRefValue | null;
+   // R6 UI-layout display state. Each conversation (scope + exact SessionRef, or
+@@ -300,7 +333,11 @@
+   sessionIncludeArchived: boolean;
+   architectureReadSelection: string;
+   taskGraphGoalId: string;
+-  relatedSessions: { target: WorkLinkTarget; result: SessionsFindResponse } | null;
++  /** The current related-target list, stored with the exact target, filter and
++   * optional role it was read under. A new failure replaces the old ready page;
++   * a result read under a no-longer-current filter is dropped, not relabelled. */
++  relatedSessions: { target: WorkLinkTarget; includeArchived: boolean; role: unknown | null;
++    result: SessionsFindResponse } | null;
+   /** R6 execution-entry display state: the selected safe Query profile plus the
+    * real owner results and requests. It is display state only and never a second
+    * continuation owner. */
+@@ -390,6 +427,22 @@
+ const sameSession = (left: SessionRef | null, right: SessionRef | null): boolean =>
+   left !== null && right !== null && left.projectId === right.projectId && left.sessionId === right.sessionId;
+ 
++/** Same Run identity (aggregate/project/goal/run), never a title or tabId. */
++const sameRun = (left: RunRef, right: RunRef): boolean =>
++  left.aggregateType === right.aggregateType && left.projectId === right.projectId
++  && left.goalId === right.goalId && left.runId === right.runId;
++
++/** Exact page key for one opened Session-history page. Scope is the owning
++ * ScopeState; the captured conversation/layout + page discriminator (center or
++ * tab) + exact SessionRef keep the center and every auxiliary tab separate. */
++const sessionHistoryPageKey = (conversation: string, page: string, session: SessionRef): string =>
++  `session-history|${conversation}|${page}|${session.projectId}/${session.sessionId}`;
++
++/** Exact page key for one opened execution page: the captured conversation/layout
++ * plus the typed execution tab (whose tabId already carries the complete RunRef). */
++const executionPageKey = (conversation: string, tabId: string): string =>
++  `execution|${conversation}|${tabId}`;
++
+ /** Same persisted message address, so a body/read result only renders for the
+  * message the user actually selected. */
+ const sameMessage = (left: MessageRefValue, right: MessageRefValue): boolean =>
+@@ -531,14 +584,24 @@
+     case 'source/query': if (envelope.status === 'ready') scope.sourcePage = envelope.value as SourcePageValue; break;
+     case 'files/read': if (envelope.status === 'ready') scope.file = envelope.value as FileValue; break;
+     case 'sessions/find':
+-      if (envelope.status === 'ready') {
+-        if (tags.workTarget !== null) scope.relatedSessions = { target: tags.workTarget, result: payload as SessionsFindResponse };
+-        else scope.sessionFind = payload as SessionsFindResponse;
++      if (tags.workTarget !== null) {
++        // Related target list: keep the exact filter it was read under. A
++        // response whose filter is no longer current is dropped (never shown or
++        // continued under the new condition); a newer result, including a real
++        // failure, replaces the old ready page for the same target + filter.
++        if (tags.filterIncludeArchived === scope.sessionIncludeArchived) {
++          scope.relatedSessions = { target: tags.workTarget,
++            includeArchived: tags.filterIncludeArchived ?? scope.sessionIncludeArchived,
++            role: tags.relatedRole, result: payload as SessionsFindResponse };
++        }
++      } else if (envelope.status === 'ready') {
++        scope.sessionFind = payload as SessionsFindResponse;
+       }
+       break;
+     case 'sessions/read': {
+-      if (envelope.status !== 'ready') break;
+-      const session = tags.session ?? sessionRefFromCard(envelope.value);
++      // Store THIS read's result even when it is rejected/not_ready/not_found, so
++      // a failed refresh can never leave the previous ready detail in place.
++      const session = tags.session ?? (envelope.status === 'ready' ? sessionRefFromCard(envelope.value) : null);
+       if (session !== null) scope.sessionRead = { session, result: payload as SessionsReadResponse };
+       break;
+     }
+@@ -568,7 +631,19 @@
+         scope.messageBody = { session: tags.session, messageRef: tags.messageRef, part: tags.part, result: payload as MessagesBodyResponse };
+       break;
+     case 'sessions/history':
+-      if (envelope.status === 'ready' && tags.session !== null) scope.sessionHistory = { session: tags.session, result: payload as SessionsHistoryResponse };
++      // Exact Session + page attribution; the newest read is stored even when it
++      // is not ready, so a stale ready page never survives a failed refresh.
++      if (tags.session !== null && tags.pageKey !== null)
++        scope.sessionHistories.set(tags.pageKey, { session: tags.session, result: payload as SessionsHistoryResponse });
++      break;
++    case 'executions/read':
++      if (tags.run !== null && tags.pageKey !== null)
++        scope.executionReads.set(tags.pageKey, { run: tags.run, result: payload as ExecutionsReadResponse });
++      break;
++    case 'executions/history':
++      if (tags.run !== null && tags.pageKey !== null)
++        scope.executionHistories.set(tags.pageKey,
++          { scope: scope.config.scope, run: tags.run, result: payload as ExecutionsHistoryResponse });
+       break;
+   }
+ }
+@@ -857,19 +932,27 @@
+   return { scope: current.config.scope, input: receipt.operationRef };
+ }
+ 
+-function buildSessionHistoryRequest(next: boolean): unknown | null {
+-  const current = state();
+-  const session = current.activeSession;
+-  if (session === null) return null;
++/** The result stored for one exact page key, or null when that page was never
++ * read. The center and each auxiliary page pass their own stored result into the
++ * one builder below, so they never borrow another page's cursor. */
++function storedSessionHistoryPage(scope: ScopeState, key: string | null): SessionsHistoryResponse | null {
++  return key === null ? null : scope.sessionHistories.get(key)?.result ?? null;
++}
++
++/** The ONE explicit Session-history request builder. It receives the exact
++ * scope, Session and the original page whose `nextCursor` is being followed, so
++ * the center path and every auxiliary history/session tab page their own object
++ * and never borrow another object's cursor. A null `next` rebuilds the head
++ * (afterCursor null); empty `items` with a non-null `nextCursor` still continues. */
++function buildSessionHistoryRequest(
++  targetScope: CoreScope, ref: SessionRef, previous: SessionsHistoryResponse | null, next: boolean,
++): unknown | null {
+   let afterCursor: string | null = null;
+   if (next) {
+-    const previous = current.sessionHistory;
+-    if (previous === null || !sameSession(previous.session, session)
+-      || previous.result.status !== 'ready' || previous.result.value.nextCursor === null) return null;
+-    afterCursor = previous.result.value.nextCursor;
+-  }
+-  return { scope: current.config.scope, input: {
+-    sessionRef: session, afterCursor, throughCursor: null, limit: 10 } };
++    if (previous === null || previous.status !== 'ready' || previous.value.nextCursor === null) return null;
++    afterCursor = previous.value.nextCursor;
++  }
++  return { scope: targetScope, input: { sessionRef: ref, afterCursor, throughCursor: null, limit: 10 } };
+ }
+ 
+ function buildInboxRequest(next: boolean): unknown | null {
+@@ -1452,14 +1535,21 @@
+     case 'find-sessions': {
+       const target = workTargetFromElement(element);
+       if (target !== null) {
++        const includeArchived = scope.sessionIncludeArchived;
+         await submit(scope, 'sessions/find',
+-          { scope: scope.config.scope, input: { workspace: scope.config.scope, target,
+-            includeArchived: scope.sessionIncludeArchived, page: { limit: 10 } } },
+-          tagsFor(null, null, null, target));
++          { scope: scope.config.scope, input: { workspace: scope.config.scope, target, includeArchived, page: { limit: 10 } } },
++          tagsForRelated(target, includeArchived, null));
+         return;
+       }
+       const body = buildSessionFindRequest(false);
+       if (requireBody(scope, body)) await submit(scope, 'sessions/find', body);
++      return;
++    }
++    case 'next-related-sessions': {
++      const related = scope.relatedSessions;
++      const body = buildRelatedSessionsRequest(true);
++      if (body === null || related === null) { scope.error = '关联会话没有更多页。'; renderScopeIfSelected(scope); return; }
++      await submit(scope, 'sessions/find', body, tagsForRelated(related.target, related.includeArchived, related.role));
+       return;
+     }
+     case 'next-sessions': {
+@@ -1559,15 +1649,21 @@
+       return;
+     }
+     case 'read-session-history': {
+-      const body = buildSessionHistoryRequest(false);
++      const active = scope.activeSession;
++      const key = active === null ? null : centerSessionHistoryKey(active);
++      const body = active === null || key === null ? null
++        : buildSessionHistoryRequest(scope.config.scope, active, storedSessionHistoryPage(scope, key), false);
+       if (body === null) { scope.error = '请先选择会话。'; renderScopeIfSelected(scope); return; }
+-      await submit(scope, 'sessions/history', body, tagsFor(scope.activeSession));
++      await submit(scope, 'sessions/history', body, tagsFor(active, null, null, null, null, key));
+       return;
+     }
+     case 'next-session-history': {
+-      const body = buildSessionHistoryRequest(true);
++      const active = scope.activeSession;
++      const key = active === null ? null : centerSessionHistoryKey(active);
++      const body = active === null || key === null ? null
++        : buildSessionHistoryRequest(scope.config.scope, active, storedSessionHistoryPage(scope, key), true);
+       if (body === null) { scope.error = '原历史没有更多页。'; renderScopeIfSelected(scope); return; }
+-      await submit(scope, 'sessions/history', body, tagsFor(scope.activeSession));
++      await submit(scope, 'sessions/history', body, tagsFor(active, null, null, null, null, key));
+       return;
+     }
+     case 'read-runtime-capabilities': {
+@@ -1578,9 +1674,11 @@
+       const ref = sessionRefFromAny(scope, element.dataset.session ?? '');
+       if (ref === null) { scope.error = '请先从会话目录选择会话。'; renderScopeIfSelected(scope); return; }
+       const targetScope = scope.config.scope;
++      const key = centerSessionHistoryKey(ref);
+       selectSession(scope, ref);
+       await submit(scope, 'sessions/read', buildSessionReadRequest(targetScope, ref), tagsFor(ref));
+-      await submit(scope, 'sessions/history', buildSessionHistoryRequestFor(targetScope, ref, false), tagsFor(ref));
++      await submit(scope, 'sessions/history', buildSessionHistoryRequest(targetScope, ref, null, false),
++        tagsFor(ref, null, null, null, null, key));
+       return;
+     }
+     case 'refresh-session': {
+@@ -1601,8 +1699,21 @@
+       const tab = layout.tabs.find(candidate => candidate.tabId === layout.activeTabId);
+       if (tab === undefined || tab.kind !== 'session_chat') return;
+       const targetScope = scope.config.scope;
++      const key = tabSessionHistoryKey(conversationKey(layout.session), tab.tabId, tab.session);
+       await submit(scope, 'sessions/read', buildSessionReadRequest(targetScope, tab.session), tagsFor(tab.session));
+-      await submit(scope, 'sessions/history', buildSessionHistoryRequestFor(targetScope, tab.session, false), tagsFor(tab.session));
++      await submit(scope, 'sessions/history',
++        buildSessionHistoryRequest(targetScope, tab.session, storedSessionHistoryPage(scope, key), false),
++        tagsFor(tab.session, null, null, null, null, key));
++      return;
++    }
++    case 'next-session-tab': {
++      const layout = syncActiveLayout(scope);
++      const tab = layout.tabs.find(candidate => candidate.tabId === layout.activeTabId);
++      if (tab === undefined || tab.kind !== 'session_chat') return;
++      const key = tabSessionHistoryKey(conversationKey(layout.session), tab.tabId, tab.session);
++      const body = buildSessionHistoryRequest(scope.config.scope, tab.session, storedSessionHistoryPage(scope, key), true);
++      if (body === null) { scope.error = '该会话原历史没有更多页。'; renderScopeIfSelected(scope); return; }
++      await submit(scope, 'sessions/history', body, tagsFor(tab.session, null, null, null, null, key));
+       return;
+     }
+     case 'read-history-tab': {
+@@ -1610,14 +1721,96 @@
+       const tab = layout.tabs.find(candidate => candidate.tabId === layout.activeTabId);
+       if (tab === undefined || tab.kind !== 'history') return;
+       const targetScope = scope.config.scope;
+-      await submit(scope, 'sessions/history', buildSessionHistoryRequestFor(targetScope, tab.session, false), tagsFor(tab.session));
++      const key = tabSessionHistoryKey(conversationKey(layout.session), tab.tabId, tab.session);
++      await submit(scope, 'sessions/history',
++        buildSessionHistoryRequest(targetScope, tab.session, storedSessionHistoryPage(scope, key), false),
++        tagsFor(tab.session, null, null, null, null, key));
++      return;
++    }
++    case 'next-history-tab': {
++      const layout = syncActiveLayout(scope);
++      const tab = layout.tabs.find(candidate => candidate.tabId === layout.activeTabId);
++      if (tab === undefined || tab.kind !== 'history') return;
++      const key = tabSessionHistoryKey(conversationKey(layout.session), tab.tabId, tab.session);
++      const body = buildSessionHistoryRequest(scope.config.scope, tab.session, storedSessionHistoryPage(scope, key), true);
++      if (body === null) { scope.error = '该会话原历史没有更多页。'; renderScopeIfSelected(scope); return; }
++      await submit(scope, 'sessions/history', body, tagsFor(tab.session, null, null, null, null, key));
++      return;
++    }
++    case 'open-execution-history': {
++      const run = runRefFromElement(element);
++      if (run === null) { scope.error = '缺少完整的执行引用。'; renderScopeIfSelected(scope); return; }
++      const task = taskTripleFromElement(element);
++      const targetScope = scope.config.scope;
++      const tab: WorkbenchTab = { tabId: executionTabId(run), kind: 'execution_history',
++        title: `本次执行 ${run.runId}`, run, task };
++      // Capture the originating conversation/layout and its exact page BEFORE the
++      // first await, and open the typed Run page there. Later responses only
++      // update this page: they never select a Session or migrate/reopen a tab.
++      const key = executionPageKey(conversationKey(scope.activeSession), tab.tabId);
++      openTab(scope, tab);
++      await submit(scope, 'executions/read', { scope: targetScope, input: run },
++        tagsFor(null, null, null, null, run, key));
++      await submit(scope, 'executions/history',
++        buildExecutionHistoryRequest(targetScope, run, null, false),
++        tagsFor(null, null, null, null, run, key));
++      renderScopeIfSelected(scope);
++      return;
++    }
++    case 'read-execution-record': {
++      const tab = activeExecutionTab(scope);
++      if (tab === null) { scope.error = '请先打开本次执行页。'; renderScopeIfSelected(scope); return; }
++      const key = executionPageKey(conversationKey(scope.activeSession), tab.tabId);
++      await submit(scope, 'executions/read', { scope: scope.config.scope, input: tab.run },
++        tagsFor(null, null, null, null, tab.run, key));
++      return;
++    }
++    case 'read-execution-history': {
++      const tab = activeExecutionTab(scope);
++      if (tab === null) { scope.error = '请先打开本次执行页。'; renderScopeIfSelected(scope); return; }
++      const key = executionPageKey(conversationKey(scope.activeSession), tab.tabId);
++      const previous = scope.executionHistories.get(key) ?? null;
++      const body = buildExecutionHistoryRequest(scope.config.scope, tab.run, previous, false);
++      if (!requireBody(scope, body)) return;
++      await submit(scope, 'executions/history', body, tagsFor(null, null, null, null, tab.run, key));
++      return;
++    }
++    case 'next-execution-history': {
++      const tab = activeExecutionTab(scope);
++      if (tab === null) { scope.error = '请先打开本次执行页。'; renderScopeIfSelected(scope); return; }
++      const key = executionPageKey(conversationKey(scope.activeSession), tab.tabId);
++      const previous = scope.executionHistories.get(key) ?? null;
++      const body = buildExecutionHistoryRequest(scope.config.scope, tab.run, previous, true);
++      if (body === null) { scope.error = '本次执行原历史没有更多页。'; renderScopeIfSelected(scope); return; }
++      await submit(scope, 'executions/history', body, tagsFor(null, null, null, null, tab.run, key));
++      return;
++    }
++    case 'open-claim-session': {
++      // Explicit user navigation only. The clicked page already holds the ready
++      // record; capture the target page before the first await, then select the
++      // exact claim Session and read its full saved history.
++      const tab = activeExecutionTab(scope);
++      const key = tab === null ? null : executionPageKey(conversationKey(scope.activeSession), tab.tabId);
++      const readEntry = key === null ? null : (scope.executionReads.get(key) ?? null);
++      const claim = readEntry !== null && readEntry.result.status === 'ready'
++        ? readEntry.result.value.outbox.claim.sessionRef : null;
++      if (claim === null) {
++        scope.error = '本次执行事实尚不可用，不能打开原 claim 会话。'; renderScopeIfSelected(scope); return;
++      }
++      const targetScope = scope.config.scope;
++      const centerKey = centerSessionHistoryKey(claim);
++      selectSession(scope, claim);
++      await submit(scope, 'sessions/read', buildSessionReadRequest(targetScope, claim), tagsFor(claim));
++      await submit(scope, 'sessions/history',
++        buildSessionHistoryRequest(targetScope, claim, null, false),
++        tagsFor(claim, null, null, null, null, centerKey));
+       return;
+     }
+     case 'open-task-detail': {
+       const projectId = element.dataset.projectId ?? scope.config.scope.projectId;
+       const goalId = element.dataset.goalId ?? '';
+       const taskId = element.dataset.taskId ?? '';
+-      openTab(scope, { tabId: `task:${taskId}`, kind: 'task_detail', title: `任务 ${taskId}`,
++      openTab(scope, { tabId: `task:${projectId}:${goalId}:${taskId}`, kind: 'task_detail', title: `任务 ${taskId}`,
+         target: { kind: 'task', ref: { projectId, goalId, taskId } } });
+       renderScopeIfSelected(scope);
+       return;
+@@ -1625,7 +1818,7 @@
+     case 'open-module-detail': {
+       const projectId = element.dataset.projectId ?? scope.config.scope.projectId;
+       const moduleId = element.dataset.moduleId ?? '';
+-      openTab(scope, { tabId: `module:${moduleId}`, kind: 'module_detail', title: `模块 ${moduleId}`,
++      openTab(scope, { tabId: `module:${projectId}:${moduleId}`, kind: 'module_detail', title: `模块 ${moduleId}`,
+         target: { kind: 'module', ref: { projectId, moduleId } } });
+       renderScopeIfSelected(scope);
+       return;
+@@ -2099,6 +2292,14 @@
+ 
+ const conversationKey = (session: SessionRef | null): string => session === null ? '__project__' : `session:${session.sessionId}`;
+ 
++/** The center conversation's own Session-history page. */
++const centerSessionHistoryKey = (session: SessionRef): string =>
++  sessionHistoryPageKey(conversationKey(session), 'center', session);
++
++/** One auxiliary history/session tab's own Session-history page. */
++const tabSessionHistoryKey = (conversation: string, tabId: string, session: SessionRef): string =>
++  sessionHistoryPageKey(conversation, `tab:${tabId}`, session);
++
+ function sessionLifecycle(scope: ScopeState, ref: SessionRef | null): SessionRecord['lifecycle'] | null {
+   if (ref === null) return null;
+   const read = scope.sessionRead;
+@@ -2222,18 +2423,71 @@
+   return scope.activeSession !== null && scope.activeSession.sessionId === sessionId ? scope.activeSession : null;
+ }
+ 
+-function buildSessionHistoryRequestFor(targetScope: CoreScope, ref: SessionRef, next: boolean): unknown | null {
+-  // The pagination cursor must belong to the captured scope, never to whichever
+-  // scope is selected when a late continuation is built.
+-  const current = states.get(scopeKey(targetScope)) ?? state();
++/** Related-Session page builder. It keeps the exact `target` and the related
++ * page's OWN cursor; it never borrows the project directory's cursor/request, so
++ * the two `sessions/find` pages stay separate. A filter change marks the old
++ * target result unread (the caller clears it) instead of relabelling it. */
++function buildRelatedSessionsRequest(next: boolean): unknown | null {
++  const current = state();
++  const related = current.relatedSessions;
++  if (related === null) return null;
++  // Continue the ORIGINAL target + filter (+ optional role) with that page's own
++  // cursor; never the current directory filter or another page's cursor.
++  const input: Record<string, unknown> = { workspace: current.config.scope, target: related.target,
++    includeArchived: related.includeArchived };
++  if (related.role !== null) input.role = related.role;
++  if (!next) {
++    input.page = { limit: 10 };
++    return { scope: current.config.scope, input };
++  }
++  if (related.result.status !== 'ready' || related.result.value.nextCursor === null) return null;
++  input.page = { limit: 10, cursor: related.result.value.nextCursor, atLeastCursor: related.result.value.sourceCursor };
++  return { scope: current.config.scope, input };
++}
++
++/** The run-window page builder. It receives the exact scope, RunRef and the page
++ * being continued; `next` follows that page's own `nextCursor` and never invents
++ * or rewrites a cursor. `limit` is the scan count, not the match count. */
++function buildExecutionHistoryRequest(
++  targetScope: CoreScope, run: RunRef, previous: WorkbenchExecutionHistoryPage | null, next: boolean,
++): unknown | null {
+   let afterCursor: string | null = null;
+   if (next) {
+-    const previous = current.sessionHistory;
+-    if (previous === null || !sameSession(previous.session, ref)
++    if (previous === null || !executionHistoryMatches(previous, targetScope, run)
+       || previous.result.status !== 'ready' || previous.result.value.nextCursor === null) return null;
+     afterCursor = previous.result.value.nextCursor;
+   }
+-  return { scope: targetScope, input: { sessionRef: ref, afterCursor, throughCursor: null, limit: 10 } };
++  return { scope: targetScope, input: { runRef: run, afterCursor, limit: 10 } };
++}
++
++/** One execution page is one typed tab per scope + full RunRef; a title never
++ * carries identity. */
++const executionTabId = (run: RunRef): string =>
++  `execution:${run.aggregateType}:${run.projectId}:${run.goalId}:${run.runId}`;
++
++/** Read the complete typed RunRef from the rendered entry's data attributes. */
++function runRefFromElement(element: HTMLElement): RunRef | null {
++  const aggregateType = element.dataset.aggregateType;
++  const projectId = element.dataset.projectId ?? '';
++  const goalId = element.dataset.goalId ?? '';
++  const runId = element.dataset.runId ?? '';
++  if (aggregateType !== 'Run' || projectId.length === 0 || goalId.length === 0 || runId.length === 0) return null;
++  return { aggregateType, projectId, goalId, runId };
++}
++
++function taskTripleFromElement(element: HTMLElement): Extract<WorkbenchTab, { kind: 'execution_history' }>['task'] {
++  const projectId = element.dataset.projectId ?? '';
++  const goalId = element.dataset.goalId ?? '';
++  const taskId = element.dataset.taskId ?? '';
++  if (projectId.length === 0 || goalId.length === 0 || taskId.length === 0) return null;
++  return { projectId, goalId, taskId };
++}
++
++/** The active auxiliary tab when it is an execution page, else null. */
++function activeExecutionTab(scope: ScopeState): Extract<WorkbenchTab, { kind: 'execution_history' }> | null {
++  const layout = syncActiveLayout(scope);
++  const tab = layout.tabs.find(candidate => candidate.tabId === layout.activeTabId);
++  return tab !== undefined && tab.kind === 'execution_history' ? tab : null;
+ }
+ 
+ // --- Left: project / Agent navigation -----------------------------------------
+@@ -2290,7 +2544,9 @@
+       + `<p class="muted">初始化项目、目标与计划请在右侧“项目 / 计划”辅助页完成。</p></section>`;
+   }
+   const read = current.sessionRead !== null && sameSession(current.sessionRead.session, active) ? current.sessionRead : null;
+-  const history = current.sessionHistory !== null && sameSession(current.sessionHistory.session, active) ? current.sessionHistory : null;
++  const centerKey = centerSessionHistoryKey(active);
++  const storedCenter = current.sessionHistories.get(centerKey) ?? null;
++  const history = storedCenter !== null && sameSession(storedCenter.session, active) ? storedCenter : null;
+   const inbox = current.inbox !== null && sameSession(current.inbox.session, active) ? current.inbox : null;
+   const message = current.activeMessage !== null && current.message !== null
+     && sameSession(current.message.session, active) && sameMessage(current.message.messageRef, current.activeMessage)
+@@ -2301,8 +2557,8 @@
+   const lifecycle = sessionLifecycle(current, active);
+   const availability = read !== null && read.result.status === 'ready' ? AVAILABILITY_LABEL[read.result.value.availability] : '可用性未知';
+   const timeline = history === null
+-    ? renderGap('sessions/history', '尚未读取原历史；点击“查看历史”按原序读取。')
+-    : renderSessionHistoryTimeline(history.result);
++    ? renderGap('sessions/history', '尚未读取完整会话原历史；点击“查看历史”按原序读取。')
++    : `<h4>完整会话原历史</h4>` + renderSessionHistoryTimeline(history.result);
+   const inboxHtml = inbox === null
+     ? renderGap('messages/inbox', '尚未读取收件箱')
+     : renderInbox(inbox.result)
+@@ -2401,37 +2657,52 @@
+ function renderSessionTab(tab: Extract<WorkbenchTab, { kind: 'session_chat' }>): string {
+   const current = state();
+   const read = current.sessionRead !== null && sameSession(current.sessionRead.session, tab.session) ? current.sessionRead : null;
+-  const history = current.sessionHistory !== null && sameSession(current.sessionHistory.session, tab.session) ? current.sessionHistory : null;
++  const key = tabSessionHistoryKey(conversationKey(current.activeSession), tab.tabId, tab.session);
++  const stored = current.sessionHistories.get(key) ?? null;
++  const history = stored !== null && sameSession(stored.session, tab.session) ? stored : null;
++  const canNext = history !== null && history.result.status === 'ready' && history.result.value.nextCursor !== null;
+   return `<section class="panel" data-view="session-tab" data-session="${escapeHtml(tab.session.sessionId)}">`
+     + `<header><h3>会话 <code>${escapeHtml(tab.session.sessionId)}</code></h3></header>`
+     + `<div class="buttons"><button data-action="select-session" data-session="${escapeHtml(tab.session.sessionId)}">在中间查看</button>`
+-    + `<button data-action="read-session-tab">读取详情与历史</button></div>`
++    + `<button data-action="read-session-tab">读取详情与历史</button>`
++    + actionButton('next-session-tab', '下一页原历史', canNext, '没有更多原历史') + `</div>`
+     + (read === null ? renderGap('sessions/read', '尚未读取该会话详情') : renderSessionDetail(read.result))
+-    + (history === null ? renderGap('sessions/history', '尚未读取该会话原历史') : renderSessionHistoryTimeline(history.result))
++    + (history === null ? renderGap('sessions/history', '尚未读取完整会话原历史')
++      : `<h4>完整会话原历史</h4>` + renderSessionHistoryTimeline(history.result))
+     + `</section>`;
+ }
+ 
+ function renderHistoryTab(tab: Extract<WorkbenchTab, { kind: 'history' }>): string {
+   const current = state();
+-  const history = current.sessionHistory !== null && sameSession(current.sessionHistory.session, tab.session) ? current.sessionHistory : null;
++  const key = tabSessionHistoryKey(conversationKey(current.activeSession), tab.tabId, tab.session);
++  const stored = current.sessionHistories.get(key) ?? null;
++  const history = stored !== null && sameSession(stored.session, tab.session) ? stored : null;
++  const canNext = history !== null && history.result.status === 'ready' && history.result.value.nextCursor !== null;
+   return `<section class="panel" data-view="history-tab" data-session="${escapeHtml(tab.session.sessionId)}">`
+-    + `<header><h3>原历史 <code>${escapeHtml(tab.session.sessionId)}</code></h3></header>`
++    + `<header><h3>完整会话原历史 <code>${escapeHtml(tab.session.sessionId)}</code></h3></header>`
+     + `<div class="buttons"><button data-action="read-history-tab">读取原历史</button>`
++    + actionButton('next-history-tab', '下一页原历史', canNext, '没有更多原历史')
+     + `<button data-action="select-session" data-session="${escapeHtml(tab.session.sessionId)}">在中间查看</button></div>`
+-    + (history === null ? renderGap('sessions/history', '尚未读取原历史')
++    + (history === null ? renderGap('sessions/history', '尚未读取完整会话原历史')
+       : renderSessionHistoryTimeline(history.result) + renderSessionHistory(history.result))
+     + `</section>`;
+ }
+ 
+ /** R6 Task-execution -> original history tab. The typed `run` is the tab
+- * identity; a stored page is read back only when it matches the exact scope and
+- * RunRef. The page consumer itself is not implemented in stage one, so the body
+- * is an explicit unsupported gap, never a fake ready/empty history. */
++ * identity; the execution record and the run-window page are read back only when
++ * they match the exact scope + RunRef. A non-ready read is shown as its own real
++ * result; the claim Session is opened only from a ready execution record. */
+ function renderExecutionHistoryTab(tab: Extract<WorkbenchTab, { kind: 'execution_history' }>): string {
+   const current = state();
+-  const stored = current.executionHistory;
+-  const result = stored !== null && executionHistoryMatches(stored, current.config.scope, tab.run)
++  const key = executionPageKey(conversationKey(current.activeSession), tab.tabId);
++  const readEntry = current.executionReads.get(key) ?? null;
++  const record = readEntry !== null && sameRun(readEntry.run, tab.run) ? readEntry.result : null;
++  const stored = current.executionHistories.get(key) ?? null;
++  const history = stored !== null && executionHistoryMatches(stored, current.config.scope, tab.run)
+     ? stored.result : null;
++  const claim = record !== null && record.status === 'ready' ? record.value.outbox.claim.sessionRef : null;
++  const canNext = history !== null && history.status === 'ready' && history.value.nextCursor !== null;
++  const taskLine = tab.task === null ? '' : ` · Task <code>${escapeHtml(tab.task.taskId)}</code>`;
+   return `<section class="panel" data-view="execution-history-tab"`
+     + ` data-aggregate-type="${escapeHtml(tab.run.aggregateType)}"`
+     + ` data-project-id="${escapeHtml(tab.run.projectId)}" data-goal-id="${escapeHtml(tab.run.goalId)}"`
+@@ -2439,8 +2710,16 @@
+     + `<header><h3>本次执行原历史</h3>`
+     + `<p class="muted">Run <code>${escapeHtml(tab.run.runId)}</code>`
+     + ` · 项目 <code>${escapeHtml(tab.run.projectId)}</code>`
+-    + ` · 目标 <code>${escapeHtml(tab.run.goalId)}</code></p></header>`
+-    + renderExecutionHistory(result)
++    + ` · 目标 <code>${escapeHtml(tab.run.goalId)}</code>${taskLine}</p></header>`
++    + `<div class="buttons">`
++    + `<button data-action="read-execution-record">刷新执行事实</button>`
++    + `<button data-action="read-execution-history">读取本次执行原历史</button>`
++    + actionButton('next-execution-history', '下一页执行历史', canNext, '没有更多执行历史')
++    + (claim === null ? ''
++      : `<button data-action="open-claim-session" data-session="${escapeHtml(claim.sessionId)}">查看原会话 / 完整会话原历史</button>`)
++    + `</div>`
++    + renderExecutionRecord(record)
++    + renderExecutionHistory(history)
+     + `</section>`;
+ }
+ 
+@@ -2536,11 +2815,15 @@
+ }
+ 
+ function renderRelatedSessionsBlock(target: WorkLinkTarget): string {
+-  const related = state().relatedSessions;
+-  if (related === null || !sameWorkLinkTarget(related.target, target)) {
+-    return '<p class="muted">点击“查看关联会话”沿当前真实目标查询（是否含归档由左侧“包含归档会话”决定）；目标已变时不显示上一对象的关联列表。</p>';
+-  }
+-  return `<section class="panel" data-view="related-sessions"><h4>关联会话</h4>${renderSessionSummary(related.result)}</section>`;
++  const current = state();
++  const related = current.relatedSessions;
++  if (related === null || !sameWorkLinkTarget(related.target, target)
++    || related.includeArchived !== current.sessionIncludeArchived) {
++    return '<p class="muted">点击“查看关联会话”沿当前真实目标查询（是否含归档由左侧“包含归档会话”决定）；目标或筛选已变时不显示上一对象的关联列表。</p>';
++  }
++  const canNext = related.result.status === 'ready' && related.result.value.nextCursor !== null;
++  return `<section class="panel" data-view="related-sessions"><h4>关联会话</h4>${renderSessionSummary(related.result)}`
++    + `<div class="buttons">${actionButton('next-related-sessions', '下一页关联会话', canNext, '没有更多关联会话')}</div></section>`;
+ }
+ 
+ /** Shared Task facts renderer: used both by the explicit task_detail page and
+@@ -2817,8 +3100,8 @@
+     observedCapture: null, goalRead: null, proposalRead: null, architectureRead: null,
+     taskGraph: null, observed: null, capture: null, sourcePage: null, file: null,
+     sessionFind: null, sessionRead: null, sessionCreateReceipt: null, sessionOperationRead: null,
+-    runtimeCapabilities: null, inbox: null, message: null, messageBody: null, sessionHistory: null,
+-    executionHistory: null,
++    runtimeCapabilities: null, inbox: null, message: null, messageBody: null,
++    sessionHistories: new Map(), executionHistories: new Map(), executionReads: new Map(),
+     activeSession: null, activeMessage: null,
+     layouts: new Map(), sessionIncludeArchived: false, architectureReadSelection: '',
+     taskGraphGoalId: '', relatedSessions: null,
+@@ -2994,6 +3277,9 @@
+     if (element.dataset.action === 'toggle-archived') {
+       current.sessionIncludeArchived = element instanceof HTMLInputElement && element.checked;
+       current.sessionFind = null;
++      // The old target result was read under the previous includeArchived filter;
++      // mark it unread instead of keeping the stale list under a new label.
++      current.relatedSessions = null;
+       void submit(current, 'sessions/find', buildSessionFindRequest(false));
+       return;
+     }
+--- before/coding-platform/next/src/ui/views.ts
++++ after/coding-platform/next/src/ui/views.ts
+@@ -43,6 +43,7 @@
+   SourcePage,
+   TaskGraph,
+   TaskRow,
++  TaskExecutionRecord,
+   WorkflowAdvanceResult,
+   WorkspaceFile,
+   WorkspaceResult,
+@@ -402,15 +403,14 @@
+     + `<ul class="tasks">${graph.tasks.map(renderTaskRow).join('')}</ul></section>`;
+ }
+ 
+-/** R6 Task-execution consumer (stage one): the one narrow entry seam from a real
+- * `TaskRow` to its known formal execution. It carries the complete `RunRef`
++/** R6 Task-execution consumer: the one narrow entry seam from a real `TaskRow`
++ * to its known formal execution. It carries the complete `RunRef`
+  * (project/goal/run) plus the Task identity and never invents a Run, Session or
+  * time. A row with no `execution` says so instead of fabricating history.
+  *
+- * Until the consumer lands, an existing execution renders `unsupported`: the
+- * identity is real, but opening/reading/paging the original window is not
+- * implemented in this batch. The final entry is expected to be
+- * `data-execution-entry="open"`. */
++ * The formal entry opens the execution page; the browser then reads
++ * `executions/read` first and only uses the original claim Session once that
++ * read is ready. The identity stays typed in data attributes. */
+ export function renderTaskExecutionEntry(row: TaskRow): string {
+   if (row.execution === null) {
+     return `<section class="task-execution-entry" data-execution-entry="none"`
+@@ -421,10 +421,9 @@
+   const identity = `data-aggregate-type="${escapeHtml(run.aggregateType)}"`
+     + ` data-project-id="${escapeHtml(run.projectId)}" data-goal-id="${escapeHtml(run.goalId)}"`
+     + ` data-run-id="${escapeHtml(run.runId)}" data-task-id="${escapeHtml(row.ref.taskId)}"`;
+-  return `<section class="task-execution-entry" data-execution-entry="unsupported" ${identity}>`
+-    + `<button class="link" data-action="open-execution-history" ${identity} disabled>查看本次执行 / 原历史</button>`
+-    + `<p class="muted" data-execution-entry-unsupported="true">`
+-    + `本次执行到原 Session/原历史的显示、点击与翻页尚未实现；此处只保留真实 RunRef 入口。</p></section>`;
++  return `<section class="task-execution-entry" data-execution-entry="open" ${identity}>`
++    + `<button class="link" data-action="open-execution-history" ${identity}>查看本次执行 / 原历史</button>`
++    + `<p class="muted">打开后先读取该次执行事实；只有正式记录可用时才按原 claim 会话读取本次执行窗与完整原历史。</p></section>`;
+ }
+ 
+ /** The two graphs side by side as distinct sections; a single baseline label is
+@@ -595,6 +594,7 @@
+         + `<p>kernel ${escapeHtml(record.kernel.adapterId)} · ${escapeHtml(record.kernel.kernelSessionId)}</p>`
+         + `<p>关联工作 ${card.links.length} 条</p>`)
+       + `<button class="link" data-action="read-session" data-session="${escapeHtml(record.ref.sessionId)}">查看详情</button>`
++      + `<button class="link" data-action="select-session" data-session="${escapeHtml(record.ref.sessionId)}">打开完整会话历史</button>`
+       + `</li>`;
+   }).join('');
+   return `<section class="panel" data-view="sessions"><header><h3>会话</h3>`
+@@ -1100,8 +1100,8 @@
+ 
+ /** Result state for one execution-history page. The exact scope + RunRef is the
+  * key, so a late response can never be shown under another Run. This is page
+- * display state, never a second domain index. Stage one declares the shape and
+- * the render seam only; fetching, refresh and pagination are not implemented. */
++ * display state, never a second domain index; refresh/pagination overwrite it
++ * with the latest real read result. */
+ export type WorkbenchExecutionHistoryPage = {
+   scope: CoreScope;
+   run: RunRef;
+@@ -1117,12 +1117,43 @@
+     && state.run.goalId === run.goalId && state.run.runId === run.runId;
+ }
+ 
+-/** Stage one: the run-window page consumer is not implemented. The saved read
+- * result is never faked as a ready/empty history; the page states the real gap
+- * while the scope + RunRef binding stays exact. */
++/** The exact `executions/read` result: the original TaskExecutionRecord facts.
++ * The claim Session, Run status, attempt/outbox and every persisted field stay
++ * reachable (raw disclosure); a missing/unindexed record is shown as this
++ * read's real result and never hidden behind another Session. */
++export function renderExecutionRecord(result: ReadResult<TaskExecutionRecord> | null): string {
++  if (result === null) return renderGap('executions/read', '尚未读取本次执行事实。');
++  if (result.status === 'rejected') return rejectionPanel(result);
++  if (result.status === 'not_found') return renderGap('executions/read', '没有找到这次执行的正式记录。');
++  if (result.status === 'not_ready') return renderGap('executions/read', '本次执行记录尚未就绪。');
++  const value = result.value;
++  const claimSession = value.outbox.claim.sessionRef;
++  // Default view stays non-technical: this Task/Run's status and the original
++  // Session to navigate to. The outbox/attempt/lease/readThrough facts remain in
++  // the complete raw disclosure below, unfiltered.
++  return `<section class="panel" data-view="execution-record" data-run-id="${escapeHtml(value.run.ref.runId)}">`
++    + `<header><h3>本次执行事实</h3><p class="muted">Task <code>${escapeHtml(value.run.task.taskId)}</code>`
++    + ` · Run <code>${escapeHtml(value.run.ref.runId)}</code> · 状态 ${escapeHtml(value.run.status)}</p></header>`
++    + `<p>原 claim 会话 <code>${escapeHtml(claimSession.projectId)}/${escapeHtml(claimSession.sessionId)}</code></p>`
++    + detailsFor('查看执行原始字段', `<pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>`)
++    + `</section>`;
++}
++
++/** The exact `executions/history` run window. It reuses the original-history
++ * timeline (saved records only, original order, default-collapsed raw body) and
++ * adds the window's own Kernel identity/scannedCount/basis. A non-ready read is
++ * shown as this read's real result, never as a stale ready page. */
+ export function renderExecutionHistory(result: ReadResult<ExecutionHistoryPage> | null): string {
+   if (result === null) return renderGap('executions/history', '尚未读取本次执行原历史。');
+-  return renderGap('executions/history', '本次执行原历史的显示与翻页尚未实现；读取状态已按 scope + RunRef 绑定。');
++  if (result.status === 'rejected') return rejectionPanel(result);
++  if (result.status === 'not_found') return renderGap('executions/history', '本次执行没有被索引的原历史。');
++  if (result.status === 'not_ready') return renderGap('executions/history', '本次执行原历史尚未就绪。');
++  const page = result.value;
++  const identity = detailsFor('本次执行窗口身份与范围',
++    `<p>executionIdentity <code>${escapeHtml(JSON.stringify(page.executionIdentity))}</code></p>`
++    + `<p>scannedCount ${escapeHtml(page.scannedCount)}</p>`
++    + `<p>basis <code>${escapeHtml(JSON.stringify(page.basis))}</code></p>`);
++  return `<div data-view="execution-history-window">${renderSessionHistoryTimeline(result)}${identity}</div>`;
+ }
+ 
+ // --- Task structure ------------------------------------------------------------

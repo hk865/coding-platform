@@ -1,0 +1,10 @@
+{
+  "at": 1790235460.502432,
+  "files": [
+    {
+      "file": "coding-platform/next/src/core/agent-runtime/session-operations.ts",
+      "before": "c59aef41ef0b8310603cc5f4fe4e87acd1e1c3a66fe59221baa26356ffef2266",
+      "after": "b69b1baea8bd9487c27f59d24c170261f06fe194673a2c729d9e733babb16adc"
+    }
+  ]
+}

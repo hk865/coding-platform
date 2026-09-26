@@ -1,0 +1,13 @@
+{
+  "checkedAt": "2026-09-23T19:14:16.500111+08:00",
+  "scope": "current Markdown navigation excluding prior archives, external upstream copies and raw dialogue; plus new history indexes",
+  "moved": 13,
+  "archiveIntegrityProblems": [],
+  "preCutoffFilesOutsideHistory": [],
+  "currentMarkdownFilesChecked": 59,
+  "brokenCurrentLinks": [],
+  "targetModules": 5,
+  "targetEdges": 8,
+  "targetAcyclic": true,
+  "sourceOrTestChangesByDocumentCleanup": false
+}

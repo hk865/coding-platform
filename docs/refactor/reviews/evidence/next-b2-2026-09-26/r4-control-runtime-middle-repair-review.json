@@ -1,0 +1,90 @@
+{
+  "reviewedAt": "2026-09-26T14:39:29.455106+00:00",
+  "scope": "Two tests only; production skeleton review assigned separately. No source/test edits, no import, no repair dispatch by this reviewer.",
+  "lane": "r4-control-runtime-skeleton-20260926",
+  "attempt": "attempt-1790432937702764168",
+  "session": "session-7ffe634d-e8f9-41a4-a209-8692ac461333",
+  "verdict": "not_frozen_pending_root_decision",
+  "hashes": {
+    "coding-platform/next/tests/runtime/R4-control-runtime.test.ts": "710d53f0731e287910c7159dc37fa5f6c327e881e07a677eca819597204e26cd",
+    "coding-platform/next/tests/composition/R4-control-runtime-platform.test.ts": "ecd9fade10a8e3368ee04a2afc6bac45616d328b0b694a71e6b71f1b6758d523"
+  },
+  "checks": {
+    "next-control-runtime": {
+      "exitCode": 1,
+      "files": 2,
+      "failed": 4,
+      "durationSeconds": 2.27,
+      "firstFailure": "all four reach explicit unsupported deliverControl seam",
+      "log": "r4-control-runtime-middle-repair-tests.log"
+    },
+    "next-types": {
+      "exitCode": 0,
+      "log": "r4-control-runtime-middle-repair-types.log"
+    }
+  },
+  "audit": {
+    "changed": [
+      "coding-platform/next/src/composition/create-platform.ts",
+      "coding-platform/next/src/contracts/control-intent.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-contracts.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-control.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+      "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+      "coding-platform/next/src/core/agent-runtime/ports.ts",
+      "coding-platform/next/src/core/agent-runtime/runtime.ts",
+      "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts",
+      "coding-platform/next/src/core/work-graph/tasks/control-contracts.ts",
+      "coding-platform/next/src/core/work-graph/tasks/control-service.ts",
+      "coding-platform/next/tests/composition/R4-control-runtime-platform.test.ts",
+      "coding-platform/next/tests/runtime/R4-control-runtime.test.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "accepted": [
+    "Real SQLite fixture and real submitControl/Run pins",
+    "Pause now has two serial tool groups",
+    "Unknown comes from a genuinely suspended tool ignoring signal, not a handmade error",
+    "Composition now drives a live tool via public controls/runtime on the platform instance",
+    "Current unsupported red paths release gates and finish",
+    "Read-only controlled extensions request workspace_read under existing read grant; no non-read capability injected"
+  ],
+  "findings": [
+    {
+      "path": "coding-platform/next/tests/runtime/R4-control-runtime.test.ts",
+      "lines": [
+        320,
+        355
+      ],
+      "issue": "freshRejected only affects the Runtime host wrapper. baseEntry is the already-built fx.deps.entry whose authorizeConfiguration captured original fx.host in B2-runtime-fixture.ts:221-244; the claimed fresh Host refusal is not present on the actual entry admission dependency.",
+      "impact": "The entered preservation case cannot demonstrate handling the originally required fresh-admission refusal.",
+      "boundedCorrection": "Make the shared trusted Host dependency used by the real entry/configuration admission observe this toggle; do not add new lifecycle scenarios."
+    },
+    {
+      "path": "coding-platform/next/tests/runtime/R4-control-runtime.test.ts",
+      "lines": [
+        289,
+        292
+      ],
+      "issue": "Unknown path awaits running before releasing its gate, without an owned timeout/race. Vitest outer 20s timeout does not unwind this async finally.",
+      "impact": "A missing cancel/drain implementation can leave the test and teardown waiting until the 60s tool timeout instead of guaranteeing cleanup.",
+      "boundedCorrection": "Use a bounded wait/race within the test so finally always releases the gate and drains the same running promise."
+    },
+    {
+      "path": "coding-platform/next/tests/composition/R4-control-runtime-platform.test.ts",
+      "lines": [
+        166,
+        169
+      ],
+      "issue": "The cooperative tool resolves immediately on abort; deliverControl returning ready does not guarantee queued remains observable before the subsequent read.",
+      "impact": "A correctly completed fast cancellation can make this assertion fail even though applied/cancelled is valid.",
+      "boundedCorrection": "Remove this unnecessary intermediate queued assertion here, or tie it to an actual cleanup barrier; preserve terminal/release/applied checks. The pause test already covers durable queued while genuinely in flight."
+    }
+  ],
+  "resolution": {
+    "status": "three_local_amendments_authorized_applied_and_checked",
+    "importEvidence": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r4-control-runtime-skeleton-import.json"
+  }
+}

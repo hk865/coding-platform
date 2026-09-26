@@ -1,0 +1,33 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/kernel/R4-tool-group-barrier.test.ts (11 tests | 1 failed) 190ms
+     × persists an after_group failure against the latest SQLite state without losing completed tools 28ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/kernel/R4-tool-group-barrier.test.ts > R4.2 callback failure after a completed group > persists an after_group failure against the latest SQLite state without losing completed tools
+AssertionError: expected [] to have a length of 1 but got +0
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ tests/kernel/R4-tool-group-barrier.test.ts:761:71
+    759|           .toEqual(["g2-a"]);
+    760|         expect(events.map((event) => event.meta.sequence)).toEqual(eve…
+    761|         expect(events.filter((event) => event.type === "run.failed")).…
+       |                                                                       ^
+    762|         expect(events.at(-1)?.type).toBe("run.failed");
+    763|         expect(events.some((event) => event.type === "run.paused")).to…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 passed (11)
+   Start at  12:27:33
+   Duration  648ms (transform 236ms, setup 0ms, import 365ms, tests 190ms, environment 0ms)
+

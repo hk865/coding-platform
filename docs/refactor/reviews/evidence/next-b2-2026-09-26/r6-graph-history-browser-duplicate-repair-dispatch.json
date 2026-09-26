@@ -1,0 +1,13 @@
+{
+  "at": "2026-09-26T16:56:18.138842+00:00",
+  "lane": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r6-graph-history-consumer-implementation-20260927",
+  "session": "session-a49e4c5d-eb9c-402e-8e43-1e1dd8a2d05b",
+  "prompt": "/tmp/r6-graph-history-browser-duplicate-repair.md",
+  "promptSha256": "fe10959f7f4861c28da504d61e72dd229c0151b5c2de9f869477567c51103734",
+  "reason": "Root CUA observed duplicate history batch in auxiliary history tab; same original renderer called twice.",
+  "before": {
+    "coding-platform/next/src/ui/main.ts": "073d020b128998c89c156dd16e4065ad255b1987b318dd0857f9afe0efbfaccc",
+    "coding-platform/next/src/ui/views.ts": "2c846565e7aae6d61cc6bfc73495adb56c7ea4a18e22e09254a0c4f6d69fcbb8"
+  },
+  "scope": "main.ts duplicate render call and unused import only; views frozen; original two-path lane scope unchanged"
+}

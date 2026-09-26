@@ -1,0 +1,32 @@
+[
+  {
+    "path": "coding-platform/next/vendor/coding-agent/patches/core/ports/session_store/session-history.ts",
+    "originalSha256": "6284efab839fe6e2c2b1d8e24a9cb117811532721e02e8b8fbd5b4016449c04a",
+    "candidateSha256": "ff23182b6091353a80ddb4aeea468a8d7e367ee624b8bcec129a38a811fb10d2"
+  },
+  {
+    "path": "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.js",
+    "originalSha256": "8e8330131f68508b1672bfa9968e20c5513fc758253e7c087e79c0b25ecf2785",
+    "candidateSha256": "010ef30661584fb59e76e92aa872109b2ef5dfae9678cac649d5d8ad5229e5ec"
+  },
+  {
+    "path": "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.js.map",
+    "originalSha256": "7e95215f51fefc5ecb857ddd81433c35f07d7e94420082dce4d277f747ad16ef",
+    "candidateSha256": "ce5ec660c32fbb5bcabaf3de5366dd68fc528bcaec1de5656c96ae27a3bdf5c1"
+  },
+  {
+    "path": "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.d.ts",
+    "originalSha256": "49d890d64299a3466ca2f8b37ba1c34b2b5e14997a0edbccc7cf10a1cd1a105b",
+    "candidateSha256": "38d8568be0608421fd8cce93c67f9d366660f5cfc4da4f75faca69a162164299"
+  },
+  {
+    "path": "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.d.ts.map",
+    "originalSha256": "d4c35bc805ed868c9c6e99b715613936d72dee10d02de60652407ac79c07aa65",
+    "candidateSha256": "6b2e971d444d1bee49a2ad9c8e8748c6a80190e0ecf09f192c301a23ccc86fd2"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+    "originalSha256": "27cafdbc33e8c0908ef58b4ed71c915d150897d22438eed544993d7023be4945",
+    "candidateSha256": "779044403c37bb53777529cbcf36ae89bfad533f20f91d50a1b940de7b4abfdb"
+  }
+]

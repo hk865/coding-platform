@@ -1,0 +1,15 @@
+{
+  "exitCode": 0,
+  "session": "session-7ee83270-b403-4fa9-8b02-f55bda08bca9",
+  "counts": {
+    "session": 1,
+    "status": 24,
+    "thinking": 11,
+    "tool_call": 11,
+    "tool_result": 11,
+    "text": 3,
+    "final": 1
+  },
+  "finished": 1790240690.5627947,
+  "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/next-r3d-observed-20260924/attempt-1790240585903095475"
+}

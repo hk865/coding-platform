@@ -1,0 +1,22 @@
+[
+  {
+    "path": "coding-platform/next/resources/skills/platform-adviser/content.md",
+    "before": "1bf3a088fef87c146f08b77563d62451fec9c12ebb41ee3824507250d57474df",
+    "after": "98a33f4a2d4e3822b9cd5f6fb9e3efc736ebcb956b8a6c5a1ab86c24e9834000"
+  },
+  {
+    "path": "coding-platform/next/resources/skills/platform-scribe/content.md",
+    "before": "4fa5718ee73782c82fed12b9350db358f3ef6f7ddd93c078709cb6088e87bcf4",
+    "after": "6bf7036a56732e38a6283d5265fbca2f8f5ea589f05b243bc24d986b4b57e0cf"
+  },
+  {
+    "path": "coding-platform/next/resources/skills/platform-secretary/content.md",
+    "before": "bf21f88c9647280711fc86e18f36a06920028831889744016bada1e5cf6f262d",
+    "after": "fbbf765ac1589f37ea7345a48a2eae3980e3726c434bca15ee3ee1e1cbdbb4e5"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/whiteboard-tools.ts",
+    "before": "0cf20f6f4eb69cdec7626c84b1a65544e74852f0c02a18b02b80d77058128157",
+    "after": "c0bbfa98296cbde2ff6b50d880769ebb67d544f2df6bf73af63c0be248e06d25"
+  }
+]

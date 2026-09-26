@@ -1,0 +1,76 @@
+{
+  "reason": "User removed unsupported mid-run Session Role mutation from product and acceptance scope",
+  "productionPatchAdded": false,
+  "removedTestCount": 1,
+  "copies": [
+    {
+      "path": "coding-platform/next/tests/composition/B2-runtime-platform.test.ts",
+      "before": "aae556d19be0dc4426df4b4bcf9b24860b204054b2215db9e71f1ac54cd936c0",
+      "after": "e4f692878e038de5f1c9e2cad2eabefd6dfaacf65fb2c3cd81d481bedd632421",
+      "removedLines": 60
+    },
+    {
+      "path": ".toolchain/dsh-refactor-runs/b2-c1-m1-composition-implementation-20260926/workspace/coding-platform/next/tests/composition/B2-runtime-platform.test.ts",
+      "before": "aae556d19be0dc4426df4b4bcf9b24860b204054b2215db9e71f1ac54cd936c0",
+      "after": "e4f692878e038de5f1c9e2cad2eabefd6dfaacf65fb2c3cd81d481bedd632421",
+      "removedLines": 60
+    }
+  ],
+  "remainingCompositionRuntimeTests": 2,
+  "laneSnapshotHashUpdated": true,
+  "adjacentCleanup": [
+    {
+      "path": "coding-platform/next/tests/work-graph/C1-session-mailbox.test.ts",
+      "before": "106c7250996111fe2d586f7485b0b6b4e4f7dac28d8e1a5a67c2313b15a89dd0",
+      "after": "9f550456faed1c2926f5c0b71e26a2ef143ac700da9733727a522502fe71e0d4"
+    },
+    {
+      "path": "coding-platform/next/tests/runtime/source-binding-migration.test.ts",
+      "before": "bbbe2c9a5ac9dfa8215b8ba6d38712cd196f7ab4f8aa753d8dae0afb9f8dcc35",
+      "after": "1d854e356787b734a72e6ea09d082adcd7772666a458faa69e8565381f045e05"
+    },
+    {
+      "path": ".toolchain/dsh-refactor-runs/w2-agent-whiteboard-implementation-20260926/workspace/coding-platform/next/tests/work-graph/C1-session-mailbox.test.ts",
+      "before": "106c7250996111fe2d586f7485b0b6b4e4f7dac28d8e1a5a67c2313b15a89dd0",
+      "after": "9f550456faed1c2926f5c0b71e26a2ef143ac700da9733727a522502fe71e0d4"
+    },
+    {
+      "path": ".toolchain/dsh-refactor-runs/w2-agent-whiteboard-implementation-20260926/workspace/coding-platform/next/tests/runtime/source-binding-migration.test.ts",
+      "before": "bbbe2c9a5ac9dfa8215b8ba6d38712cd196f7ab4f8aa753d8dae0afb9f8dcc35",
+      "after": "1d854e356787b734a72e6ea09d082adcd7772666a458faa69e8565381f045e05"
+    },
+    {
+      "path": ".toolchain/dsh-refactor-runs/b2-c1-m1-composition-implementation-20260926/workspace/coding-platform/next/tests/work-graph/C1-session-mailbox.test.ts",
+      "before": "106c7250996111fe2d586f7485b0b6b4e4f7dac28d8e1a5a67c2313b15a89dd0",
+      "after": "9f550456faed1c2926f5c0b71e26a2ef143ac700da9733727a522502fe71e0d4"
+    },
+    {
+      "path": ".toolchain/dsh-refactor-runs/b2-c1-m1-composition-implementation-20260926/workspace/coding-platform/next/tests/runtime/source-binding-migration.test.ts",
+      "before": "bbbe2c9a5ac9dfa8215b8ba6d38712cd196f7ab4f8aa753d8dae0afb9f8dcc35",
+      "after": "1d854e356787b734a72e6ea09d082adcd7772666a458faa69e8565381f045e05"
+    }
+  ],
+  "adjacentRemoved": [
+    "one parameterized C1 raw policy matrix injection test and its two imports",
+    "one dynamic Run roleBinding replacement row in source-binding migration test"
+  ],
+  "productionReview": "No dedicated hot-rebind branch found. Keep shared RoleFacts, initial binding and trusted caller identity checks.",
+  "compositionAfterCleanup": "next-b2-composition: 2 files / 5 tests passed",
+  "whiteboardCleanup": {
+    "removedInternalMutationCases": 7,
+    "replacement": "two real recordRunResult lifecycle scenarios; public-input regression cases added independently for actual W2 bugs",
+    "fixtureDeletedHelpers": [
+      "rewriteRun",
+      "rewriteSession",
+      "releaseLease",
+      "encodeRunRecord",
+      "encodeLeaseRecord"
+    ],
+    "fixtureNetRemovedLines": 41,
+    "currentFiles": {
+      "coding-platform/next/tests/work-graph/W2-agent-whiteboard.test.ts": "97b9aad2764b67bf49038dc53f1125690f24a045d838a39f2b876a8ec54740a8",
+      "coding-platform/next/tests/helpers/W2-whiteboard-fixture.ts": "7e872d323f62f91b8390cee17621fa642c41a9945633d387690a7834b64e899e"
+    }
+  },
+  "regression": "5 files / 113 passed for C1 and source authority; composition 2 files / 5 passed"
+}

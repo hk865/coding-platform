@@ -1,0 +1,11 @@
+{
+  "coding-platform/src/data/artifact-vault/artifact-vault.ts": "dbd46113ed499a1d0c5e69b649c3f41d90924f312faf271aed4a40121dbf05e1",
+  "coding-platform/src/data/artifact-vault/sqlite-artifact-vault.ts": "965f2b0abd1859f468d68390b030226f8469debae81fd7e4105059fd270f4e23",
+  "coding-platform/src/data/artifact-vault/material-access-policy.ts": "bc090b3abe628e41a8cbd8137726b3c006bace50e2bb70d68cb8389950f734e9",
+  "coding-platform/src/composition/persistent-platform.ts": "fde7fc9bfd4370cbfbea73b6037d3584e6de70f9943a2e22b42ab7d86425343e",
+  "coding-platform/src/harness/in-memory-harness.ts": "74780d9d4ac5d95b4c5656fa07a7380ae004ad2a9e3271a085fb0ce5c79a130a",
+  "coding-platform/src/data/context-compiler/history-materials-context.ts": "7da43af783214bd043e3ce6caa0e81a434591281ac3f040b447a9aaacad7c996",
+  "coding-platform/src/app/service.ts": "009bc14bf9cee608f2a3258c1edbf7837057e22004c2d7ce0a875ac6ff730fd7",
+  "coding-platform/scripts/module-map.mjs": "8bf385fb8a50181532449848ae6ff9459c5c525002f0d642dc1a000b70bfaee1",
+  "coding-platform/scripts/check-module-boundaries.mjs": "ffc7946a82bc2727ded7570a800ac498abe36494c00a9632b45822427b40c8ee"
+}

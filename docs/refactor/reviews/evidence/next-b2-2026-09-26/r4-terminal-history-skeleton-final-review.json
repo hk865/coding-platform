@@ -1,0 +1,109 @@
+{
+  "status": "skeleton_test_convergence_stopped_ready_for_root_freeze",
+  "reviewedAt": "2026-09-26T15:58:39.670330+00:00",
+  "lane": "r4-terminal-history-skeleton-20260926",
+  "sessionId": "session-a31a9261-27dd-4a32-8565-31d07a005ccd",
+  "result": {
+    "exitCode": 0,
+    "session": "session-a31a9261-27dd-4a32-8565-31d07a005ccd",
+    "counts": {
+      "session": 1,
+      "status": 42,
+      "thinking": 20,
+      "text": 3,
+      "tool_call": 23,
+      "tool_result": 23,
+      "final": 1
+    },
+    "finished": 1790438201.4975562,
+    "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4-terminal-history-skeleton-20260926/attempt-1790438056724534052"
+  },
+  "independentChecks": {
+    "next-terminal-history": {
+      "exit": 1,
+      "passed": 2,
+      "expectedFirstReds": 3,
+      "log": "r4-terminal-history-skeleton-final-tests.log",
+      "firstReds": [
+        {
+          "consumer": "Kernel abandoned projection",
+          "at": "tests/kernel/R4-terminal-history.test.ts:277",
+          "actual": "StoreError version_unsupported from shared projector"
+        },
+        {
+          "consumer": "Runtime cancelled abandoned consumption",
+          "at": "execution-observation.ts:549",
+          "actual": "StoreError version_unsupported from shared projector"
+        },
+        {
+          "consumer": "existing real drain unknown projection rejection",
+          "at": "tests/runtime/R4-control-runtime.test.ts:346",
+          "actual": "StoreError version_unsupported while final target requires conflict; original occupancy/Lease/ack assertions run and pass first"
+        }
+      ]
+    },
+    "next-types": {
+      "exit": 0,
+      "log": "r4-terminal-history-skeleton-final-types.log"
+    },
+    "next-kernel-patch": {
+      "exit": 0,
+      "sources": 7,
+      "artifacts": 28,
+      "allMatch": true,
+      "evidence": "r4-terminal-history-skeleton-final-repro.json"
+    }
+  },
+  "audit": {
+    "changed": [
+      "coding-platform/next/scripts/build-kernel-patch.mjs",
+      "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+      "coding-platform/next/tests/kernel/R4-terminal-history.test.ts",
+      "coding-platform/next/tests/runtime/R4-control-runtime.test.ts",
+      "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.d.ts",
+      "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.d.ts.map",
+      "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.js",
+      "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.js.map",
+      "coding-platform/next/vendor/coding-agent/dist/public-api.d.ts",
+      "coding-platform/next/vendor/coding-agent/dist/public-api.d.ts.map",
+      "coding-platform/next/vendor/coding-agent/dist/public-api.js",
+      "coding-platform/next/vendor/coding-agent/dist/public-api.js.map",
+      "coding-platform/next/vendor/coding-agent/patches/core/ports/session_store/session-history.ts",
+      "coding-platform/next/vendor/coding-agent/patches/public-api.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "sourceExtractionSha256": "964a9f51b2e124d7f834074e1f2900eaf326b7d5cea5ff49bf23c78d9aff5639",
+  "oldOtherManagedArtifactsUnchanged": 20,
+  "oldRuntimeThreeCases": "pause and entered-window remain green; original unknown execution and assertions retained and pass before newly appended projector conflict target is the expected third red",
+  "productionAssessment": "signature/export/build manifest and abandoned-only consumers are stage-1 seams; projector explicitly throws; no filtering algorithm or new history owner; ordinary terminal matching retained",
+  "middleReviewItems": [],
+  "adjacentDeclaredExportUpdate": {
+    "file": "coding-platform/next/tests/kernel/B2-history-public-export.test.ts",
+    "line": 245,
+    "issue": "Existing exact public export allowlist only permits prior added assertTranscriptExchangeIntegrity. New authorized projectTerminalTranscript export is the only expected additional name.",
+    "dshReportedFailure": "unexpected=[projectTerminalTranscript]",
+    "sourceConfirmed": true,
+    "notModified": "outside 14-path frozen scope; root to authorize one-line allowed-export update"
+  },
+  "candidateHashes": "r4-terminal-history-skeleton-final-candidate-hashes.json",
+  "diff": "r4-terminal-history-skeleton-final.diff",
+  "notReached": [
+    "projection algorithm",
+    "formal Runtime release and second Task same-Session Turn prefix consumption, after the expected projector stub first red",
+    "non-abandoned unknown rejection in Kernel restore (Stage2 must switch all terminal states to the shared projector)"
+  ],
+  "import": "withheld pending root freeze; no code import or manifest change",
+  "resolvedMiddleReviewItems": [
+    "Runtime successor uses existing second Task / original Session / TaskClaimPort -> allowRun -> same Runtime prepare/start; direct Kernel/manual identity segment removed",
+    "Kernel projected assistant existence and kind asserted before narrowing return",
+    "Existing real unknown SessionRecords rebuilt by public reducer; projector StoreError conflict assertion appended after original facts; no new execution/case"
+  ],
+  "changedSinceFirstSkeletonReview": [
+    "coding-platform/next/tests/kernel/R4-terminal-history.test.ts",
+    "coding-platform/next/tests/runtime/R4-control-runtime.test.ts"
+  ],
+  "productionTwelveHashesUnchanged": true,
+  "originalAllowedHashesUnchanged": true
+}

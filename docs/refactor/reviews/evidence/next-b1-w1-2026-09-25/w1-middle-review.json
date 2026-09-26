@@ -1,0 +1,20 @@
+{
+  "decision": "approved_for_implementation",
+  "reviewers": [
+    "root",
+    "a1_test_review"
+  ],
+  "changes": "Fixed contradictory future success assertions, source fixtures, commit barriers, duplicate replay window, actual basis-aware reader corruption assertions. Removed duplicate helper assertions and artificial second active Run.",
+  "independentRed": "7 semantic failures,1 codec pass; typecheck succeeded",
+  "frozenFiles": {
+    "coding-platform/next/src/contracts/plan.ts": "93b7c26a348f1487127d9db1ac440a96e1f599d494c5f6cba56616d8d98ecdaf",
+    "coding-platform/next/src/core/work-graph/tasks/plan-validation.ts": "b887a8165e6f9fa67cffe4f44286a5e245f73fd9d2d064113c4a6c692833adb9",
+    "coding-platform/next/src/core/work-graph/tasks/plan-task-basis.ts": "c98c4140ccee28cabb89c0e77613c254bd86da1ee17814e3e9f26b8cbac83cb5",
+    "coding-platform/next/src/core/work-graph/tasks/plan-record-codecs.ts": "02b612c43f72649ec55d9edb7425415fa960fe3b2a9ef0762b140ae25c4aeb0f",
+    "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts": "e385eb73f3ed971155f8f23377246d5e0eb557278b182f5c6d64d88fe126e238",
+    "coding-platform/next/src/core/work-graph/tasks/plan-commit-compiler.ts": "7bbc2fb4adcb539647a403a135b5b7a2a83223aacad8868a2421e10992527070",
+    "coding-platform/next/src/core/work-graph/tasks/plan-service.ts": "8b10913eafee30306d8f58760c9c057992d05c3d526852f20da7a689b5a71156",
+    "coding-platform/next/tests/work-graph/W1-future-plan.test.ts": "1c89e0419559b6b6cdafd7e2009cbc9afd8c0bcd969dfbfff7d0d35b80ca876b",
+    "coding-platform/next/tests/composition/W1-future-plan-platform.test.ts": "266ec2896ba9ce264d1ad271810f20a469ed6fdf5dab2f31095b72ceb1be114f"
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "lane": "c2-runtime-platform-tools-skeleton-20260926",
+  "stage": "reviewed skeleton; final-target tests frozen, implementation pending",
+  "changes": [
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/execution-contracts.ts",
+      "before": "e7b25eebbda7c004e8197a598f958407b5e6d89f30bb63ea42b15397a4713763",
+      "after": "4b389b7d1a0641c59fd7629ac15fa471dc223e1715a6367fa52e8ec1414808fe"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+      "before": "4b6ec84b0cd8ea4c4101b0afb67a5d0ef6f83f8837bf9cbd628134538ab1c714",
+      "after": "29441529d665d50cab801b1412ee32dff02f97711889d36b1167590453de71ef"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/communication-tools.ts",
+      "before": "a02e4d3897443115074c83c8817d69052fc5f1470e26454221239ceb0ca27988",
+      "after": "b3ced82df2417d6e5e0af97ede7e50bbc8b9ace2599f0a6a9003ff38d791b194"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/communication/contracts.ts",
+      "before": "4039a205c9498633c7c863fa497cdf3828b0ca15fbfca3a833f39659aa911c7c",
+      "after": "2f2415038fe7495a10ef568cfa9a8eb92035a5429dda8082116b5ea687515d75"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/communication/mailbox-service.ts",
+      "before": "7dc37aea8609e0c6d1990a90eca54fb3d6bfed3ea92dffe8087231a312c0c1f0",
+      "after": "9ddf4181a855f48ccf315a09280bb5f1b8f33dda454aa1e6cb61b9b7765070ec"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/run-state-service.ts",
+      "before": "7b93dbab73183ff404735edd752410c580eacb4c3724f12e97163a1f7afca9cf",
+      "after": "90f4c3413ae47f61a577eca9960e1f6f03764f162081e7ec400120cc6d9e50ba"
+    },
+    {
+      "path": "coding-platform/next/tests/runtime/C2-runtime-platform-tools.test.ts",
+      "before": "00c924016298601d43dc6e369694ebc0565758f362635f8b3237ffab987de920",
+      "after": "a6a243e29fab94a5b2fd4ea6bddec4cf59bb2ad734a6895274494e4f95454727"
+    },
+    {
+      "path": "coding-platform/next/tests/work-graph/C2-mailbox-admission.test.ts",
+      "before": "00c924016298601d43dc6e369694ebc0565758f362635f8b3237ffab987de920",
+      "after": "585b9854623310dc3f681b940aedfc50af7f38622963592c00d09e7d4a34acf9"
+    },
+    {
+      "path": "coding-platform/next/tests/composition/C2-runtime-platform.test.ts",
+      "before": "00c924016298601d43dc6e369694ebc0565758f362635f8b3237ffab987de920",
+      "after": "9c14cb40b1a24eab5d79e60b8d130d02f2f4e90be4c63aa159633b19ee791621"
+    },
+    {
+      "path": "coding-platform/next/tests/helpers/C2-runtime-platform-fixture.ts",
+      "before": "00c924016298601d43dc6e369694ebc0565758f362635f8b3237ffab987de920",
+      "after": "00841b7eaf526710fb62638220034d7a86ef376db9ab92161b22052a5efdadf0"
+    },
+    {
+      "path": "coding-platform/next/tests/helpers/C1-mailbox-fixture.ts",
+      "before": "167338bae658a8d09e92556c3a928607b7bdbf5fef500c80e26a111b6f6ead34",
+      "after": "6151a8f33375ff32da2c5a66222e818240efedac46748311bf3ec8e7011d6845"
+    }
+  ],
+  "frozenTests": {
+    "coding-platform/next/tests/runtime/C2-runtime-platform-tools.test.ts": "a6a243e29fab94a5b2fd4ea6bddec4cf59bb2ad734a6895274494e4f95454727",
+    "coding-platform/next/tests/composition/C2-runtime-platform.test.ts": "9c14cb40b1a24eab5d79e60b8d130d02f2f4e90be4c63aa159633b19ee791621",
+    "coding-platform/next/tests/helpers/C2-runtime-platform-fixture.ts": "00841b7eaf526710fb62638220034d7a86ef376db9ab92161b22052a5efdadf0",
+    "coding-platform/next/tests/helpers/C1-mailbox-fixture.ts": "6151a8f33375ff32da2c5a66222e818240efedac46748311bf3ec8e7011d6845",
+    "coding-platform/next/tests/work-graph/C2-mailbox-admission.test.ts": "585b9854623310dc3f681b940aedfc50af7f38622963592c00d09e7d4a34acf9"
+  }
+}

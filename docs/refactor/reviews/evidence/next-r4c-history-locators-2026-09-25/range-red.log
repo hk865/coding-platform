@@ -1,0 +1,356 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/runtime/R4c-kernel-history-range.test.ts (16 tests | 6 failed) 735ms
+     × reads a small back page through a bounded primary-key range instead of a full scan 53ms
+     × reads a back page even when a front record payload is damaged outside the range 54ms
+     × still reports the tail position when the tail payload is damaged outside the range 42ms
+     × rejects a database position that contradicts the record payload position 47ms
+     × rejects a database Session key that contradicts the record payload Session 41ms
+     × isolates Sessions so damage and tails never leak across them 55ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/runtime/R4c-kernel-history-range.test.ts > R4c.2b Kernel Session history range read > reads a small back page through a bounded primary-key range instead of a full scan
+AssertionError: expected 'SELECT position,record_json FROM sess…' to match /\blimit\s+(?:(?:\?|[:@$][A-Za-z_][A-…/i
+
+- Expected:
+/\blimit\s+(?:(?:\?|[:@$][A-Za-z_][A-Za-z0-9_]*)|\d+)/i
+
++ Received:
+"SELECT position,record_json FROM session_records WHERE session_id=? ORDER BY position"
+
+ ❯ tests/runtime/R4c-kernel-history-range.test.ts:347:48
+    345|     expect(statements.some((sql) => /begin\s+immediate/i.test(sql))).t…
+    346|     // Every record read is physically bounded; the frozen skeleton ha…
+    347|     for (const sql of recordReads) expect(sql).toMatch(LIMIT_CLAUSE);
+       |                                                ^
+    348|     // At least one statement must show a real primary-key range predi…
+    349|     // returned row count.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  tests/runtime/R4c-kernel-history-range.test.ts > R4c.2b Kernel Session history range read > reads a back page even when a front record payload is damaged outside the range
+StoreError: Session record JSON 或 schema 损坏
+ ❯ parseJson vendor/coding-agent/src/storage/adapters/sqlite/sqlite-stores.ts:65:11
+ ❯ vendor/coding-agent/src/storage/adapters/sqlite/sqlite-stores.ts:524:22
+ ❯ SqliteStores.#allRecords vendor/coding-agent/src/storage/adapters/sqlite/sqlite-stores.ts:520:17
+ ❯ SqliteStores.read vendor/coding-agent/src/storage/adapters/sqlite/sqlite-stores.ts:265:33
+ ❯ tests/runtime/R4c-kernel-history-range.test.ts:365:30
+    363|     });
+    364|
+    365|     const page = await store.read('session-outside', total - 3, 3, opt…
+       |                              ^
+    366|     expect(positionsOf(page)).toEqual([total - 2, total - 1, total]);
+    367|     expect(page.lastPosition).toBe(total);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  tests/runtime/R4c-kernel-history-range.test.ts > R4c.2b Kernel Session history range read > still reports the tail position when the tail payload is damaged outside the range
+StoreError: Session record JSON 或 schema 损坏
+ ❯ parseJson vendor/coding-agent/src/storage/adapters/sqlite/sqlite-stores.ts:65:11
+ ❯ vendor/coding-agent/src/storage/adapters/sqlite/sqlite-stores.ts:524:22
+ ❯ SqliteStores.#allRecords vendor/coding-agent/src/storage/adapters/sqlite/sqlite-stores.ts:520:17
+ ❯ SqliteStores.read vendor/coding-agent/src/storage/adapters/sqlite/sqlite-stores.ts:265:33
+ ❯ tests/runtime/R4c-kernel-history-range.test.ts:381:30
+    379|     });
+    380|
+    381|     const page = await store.read('session-tail-damaged', 0, 3, option…
+       |                              ^
+    382|     expect(positionsOf(page)).toEqual([1, 2, 3]);
+    383|     expect(page.lastPosition).toBe(total);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  tests/runtime/R4c-kernel-history-range.test.ts > R4c.2b Kernel Session history range read > rejects a database position that contradicts the record payload position
+AssertionError: promise resolved "{ revision: 2, records: [ …(4) ], …(2) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "lastPosition": 13,
++   "nextPosition": 4,
++   "records": [
++     {
++       "checksum": "c291efb22ab1c2706e368e64214ccf10a80807e03d4d4e677106177ef3fa2e27",
++       "payload": {
++         "createdAt": "2026-09-25T00:00:00.000Z",
++         "sessionId": "session-position",
++       },
++       "position": 1,
++       "recordId": "created-session-position",
++       "recordType": "session.created",
++       "recordedAt": "2026-09-25T00:00:00.000Z",
++       "schemaVersion": 1,
++       "sessionId": "session-position",
++     },
++     {
++       "checksum": "33f6a370b8107f9326be653376a50ba07d1a7bfb10753dd816961645611102f5",
++       "payload": {
++         "event": {
++           "meta": {
++             "elapsedMs": 0,
++             "eventId": "event-session-position-run-0-1",
++             "occurredAt": "2026-09-25T00:00:00.000Z",
++             "runId": "session-position-run-0",
++             "schemaVersion": 1,
++             "sequence": 1,
++             "turnId": "session-position-turn-0",
++           },
++           "payload": {},
++           "type": "run.started",
++         },
++       },
++       "position": 3,
++       "recordId": "session-position-run-started-0",
++       "recordType": "agent.event",
++       "recordedAt": "2026-09-25T00:00:00.000Z",
++       "schemaVersion": 1,
++       "sessionId": "session-position",
++     },
++     {
++       "checksum": "1ccbfa5a7c45e2bed45fbb105a128331933a2654577ae22dde5651d1949692df",
++       "payload": {
++         "config": {
++           "baseConfigDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
++           "enabledToolSchemaDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++           "limits": {
++             "deadlineMs": null,
++             "maxCostUsdMicros": null,
++             "maxInputTokens": null,
++             "maxModelRequests": null,
++             "maxOutputTokens": null,
++             "maxToolCalls": null,
++             "maxTotalTokens": null,
++           },
++           "modelConfigId": "r4c-range-fixture",
++           "policyVersion": "r4c-range-policy",
++           "sandboxProfileVersion": "r4c-range-sandbox",
++         },
++         "run": {
++           "createdAt": "2026-09-25T00:00:00.000Z",
++           "runId": "session-position-run-0",
++           "schemaVersion": 1,
++           "turn": {
++             "turnId": "session-position-turn-0",
++             "userMessage": {
++               "content": "question 0",
++               "messageId": "session-position-user-0",
++               "role": "user",
++               "schemaVersion": 1,
++             },
++           },
++         },
++         "workspace": {
++           "identity": "workspace-range",
++           "reference": "workspace://range",
++           "revision": "1",
++         },
++       },
++       "position": 2,
++       "recordId": "session-position-turn-started-0",
++       "recordType": "turn.started",
++       "recordedAt": "2026-09-25T00:00:00.000Z",
++       "schemaVersion": 1,
++       "sessionId": "session-position",
++     },
++     {
++       "checksum": "84b06abac80fb32afbfc442a5c1850117c44edae9e979ff107d015e47d5abe86",
++       "payload": {
++         "event": {
++           "meta": {
++             "elapsedMs": 0,
++             "eventId": "event-session-position-run-0-2",
++             "occurredAt": "2026-09-25T00:00:00.000Z",
++             "runId": "session-position-run-0",
++             "schemaVersion": 1,
++             "sequence": 2,
++             "turnId": "session-position-turn-0",
++           },
++           "payload": {
++             "reason": "caller_requested",
++           },
++           "type": "run.cancelled",
++         },
++       },
++       "position": 4,
++       "recordId": "session-position-run-cancelled-0",
++       "recordType": "agent.event",
++       "recordedAt": "2026-09-25T00:00:00.000Z",
++       "schemaVersion": 1,
++       "sessionId": "session-position",
++     },
++   ],
++   "revision": 2,
+  }
+
+ ❯ tests/runtime/R4c-kernel-history-range.test.ts:446:66
+    444|     });
+    445|
+    446|     await expect(store.read('session-position', 0, 4, options())).reje…
+       |                                                                  ^
+    447|   });
+    448|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  tests/runtime/R4c-kernel-history-range.test.ts > R4c.2b Kernel Session history range read > rejects a database Session key that contradicts the record payload Session
+AssertionError: promise resolved "{ revision: 2, records: [ …(4) ], …(2) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "lastPosition": 13,
++   "nextPosition": 4,
++   "records": [
++     {
++       "checksum": "12692007a910320a495059a1a0efb48513ec5a1d27f4c23fb3fb3836c84b3a86",
++       "payload": {
++         "createdAt": "2026-09-25T00:00:00.000Z",
++         "sessionId": "session-key-a",
++       },
++       "position": 1,
++       "recordId": "created-session-key-a",
++       "recordType": "session.created",
++       "recordedAt": "2026-09-25T00:00:00.000Z",
++       "schemaVersion": 1,
++       "sessionId": "session-key-a",
++     },
++     {
++       "checksum": "7012fed8f2405446dd17741469989b80c24905101b0408f0020799d2b4a1cb77",
++       "payload": {
++         "config": {
++           "baseConfigDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
++           "enabledToolSchemaDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++           "limits": {
++             "deadlineMs": null,
++             "maxCostUsdMicros": null,
++             "maxInputTokens": null,
++             "maxModelRequests": null,
++             "maxOutputTokens": null,
++             "maxToolCalls": null,
++             "maxTotalTokens": null,
++           },
++           "modelConfigId": "r4c-range-fixture",
++           "policyVersion": "r4c-range-policy",
++           "sandboxProfileVersion": "r4c-range-sandbox",
++         },
++         "run": {
++           "createdAt": "2026-09-25T00:00:00.000Z",
++           "runId": "session-key-b-run-0",
++           "schemaVersion": 1,
++           "turn": {
++             "turnId": "session-key-b-turn-0",
++             "userMessage": {
++               "content": "question 0",
++               "messageId": "session-key-b-user-0",
++               "role": "user",
++               "schemaVersion": 1,
++             },
++           },
++         },
++         "workspace": {
++           "identity": "workspace-range",
++           "reference": "workspace://range",
++           "revision": "1",
++         },
++       },
++       "position": 2,
++       "recordId": "session-key-b-turn-started-0",
++       "recordType": "turn.started",
++       "recordedAt": "2026-09-25T00:00:00.000Z",
++       "schemaVersion": 1,
++       "sessionId": "session-key-b",
++     },
++     {
++       "checksum": "85209d480105643ff93738f16a9e213096de6bbdef112cce2e4d5bc5cad394a5",
++       "payload": {
++         "event": {
++           "meta": {
++             "elapsedMs": 0,
++             "eventId": "event-session-key-a-run-0-1",
++             "occurredAt": "2026-09-25T00:00:00.000Z",
++             "runId": "session-key-a-run-0",
++             "schemaVersion": 1,
++             "sequence": 1,
++             "turnId": "session-key-a-turn-0",
++           },
++           "payload": {},
++           "type": "run.started",
++         },
++       },
++       "position": 3,
++       "recordId": "session-key-a-run-started-0",
++       "recordType": "agent.event",
++       "recordedAt": "2026-09-25T00:00:00.000Z",
++       "schemaVersion": 1,
++       "sessionId": "session-key-a",
++     },
++     {
++       "checksum": "0ea2d8dc442aeee1df9de440ded26b1070c1f39e6472cbaa81938f53645f6d8d",
++       "payload": {
++         "event": {
++           "meta": {
++             "elapsedMs": 0,
++             "eventId": "event-session-key-a-run-0-2",
++             "occurredAt": "2026-09-25T00:00:00.000Z",
++             "runId": "session-key-a-run-0",
++             "schemaVersion": 1,
++             "sequence": 2,
++             "turnId": "session-key-a-turn-0",
++           },
++           "payload": {
++             "reason": "caller_requested",
++           },
++           "type": "run.cancelled",
++         },
++       },
++       "position": 4,
++       "recordId": "session-key-a-run-cancelled-0",
++       "recordType": "agent.event",
++       "recordedAt": "2026-09-25T00:00:00.000Z",
++       "schemaVersion": 1,
++       "sessionId": "session-key-a",
++     },
++   ],
++   "revision": 2,
+  }
+
+ ❯ tests/runtime/R4c-kernel-history-range.test.ts:466:63
+    464|     });
+    465|
+    466|     await expect(store.read('session-key-a', 0, 4, options())).rejects…
+       |                                                               ^
+    467|     // Session B is untouched by Session A's damage.
+    468|     const healthy = await store.read('session-key-b', 0, 4, options());
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ FAIL  tests/runtime/R4c-kernel-history-range.test.ts > R4c.2b Kernel Session history range read > isolates Sessions so damage and tails never leak across them
+StoreError: Session record JSON 或 schema 损坏
+ ❯ parseJson vendor/coding-agent/src/storage/adapters/sqlite/sqlite-stores.ts:65:11
+ ❯ vendor/coding-agent/src/storage/adapters/sqlite/sqlite-stores.ts:524:22
+ ❯ SqliteStores.#allRecords vendor/coding-agent/src/storage/adapters/sqlite/sqlite-stores.ts:520:17
+ ❯ SqliteStores.read vendor/coding-agent/src/storage/adapters/sqlite/sqlite-stores.ts:265:33
+ ❯ tests/runtime/R4c-kernel-history-range.test.ts:501:31
+    499|     });
+    500|
+    501|     const pageA = await store.read('session-iso-a', totalA - 2, 2, opt…
+       |                               ^
+    502|     expect(positionsOf(pageA)).toEqual([totalA - 1, totalA]);
+    503|     expect(pageA.lastPosition).toBe(totalA);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed | 10 passed (16)
+   Start at  10:54:53
+   Duration  1.13s (transform 216ms, setup 0ms, import 317ms, tests 735ms, environment 0ms)
+

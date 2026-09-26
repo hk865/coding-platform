@@ -1,0 +1,214 @@
+{
+  "goals/read": {
+    "status": "ready",
+    "value": {
+      "goal": {
+        "ref": {
+          "aggregateType": "Goal",
+          "projectId": "workbench-demo",
+          "goalId": "deliver-workbench"
+        },
+        "workspaceRef": {
+          "aggregateType": "Workspace",
+          "projectId": "workbench-demo",
+          "workspaceId": "workspace-main"
+        },
+        "objective": "接通真实初始化、文件浏览和两张图。",
+        "desiredState": "active",
+        "activePlanRevision": {
+          "aggregateType": "PlanRevision",
+          "projectId": "workbench-demo",
+          "planId": "workbench-plan"
+        },
+        "revision": 2
+      },
+      "pendingPlan": null
+    }
+  },
+  "tasks/query": {
+    "status": "ready",
+    "value": {
+      "plan": {
+        "ref": {
+          "aggregateType": "PlanRevision",
+          "projectId": "workbench-demo",
+          "planId": "workbench-plan"
+        },
+        "revision": 1,
+        "goalRef": {
+          "aggregateType": "Goal",
+          "projectId": "workbench-demo",
+          "goalId": "deliver-workbench"
+        },
+        "planId": "workbench-plan",
+        "planRevision": 1,
+        "acceptedAt": "2026-09-26T06:53:26.870Z",
+        "effectiveCompletionPolicy": {
+          "ref": {
+            "aggregateType": "CompletionPolicyRevision",
+            "projectId": "workbench-demo",
+            "policyId": "checks",
+            "revision": 1
+          },
+          "digest": "7bb58a9756a75dbc75f28a8953d7ad71aed145d86f28d06b94c20f0634de31a7"
+        },
+        "effectiveArchitectureBaseline": {
+          "ref": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "workbench-demo",
+            "baselineId": "initial-architecture",
+            "revision": 1
+          },
+          "digest": "8eb7696293d3647a072855700c216689ac421ef42c96e70ab2a022edf0cb1dcf"
+        },
+        "stages": [],
+        "tasks": [
+          {
+            "taskId": "implement",
+            "title": "实现文件浏览与双图工作台",
+            "requirementLevel": "required",
+            "taskKind": "work",
+            "disposition": "active",
+            "phase": "pending",
+            "scope": {
+              "kind": "goal"
+            }
+          },
+          {
+            "taskId": "gate",
+            "title": "验收目标结果",
+            "requirementLevel": "required",
+            "taskKind": "gate",
+            "disposition": "active",
+            "phase": "pending",
+            "scope": {
+              "kind": "goal"
+            }
+          }
+        ],
+        "assignments": [
+          {
+            "taskId": "implement",
+            "role": "builder",
+            "instruction": "实现工作台路径"
+          }
+        ],
+        "obligations": [
+          {
+            "obligationId": "working-entry",
+            "title": "入口可用",
+            "requirementLevel": "required",
+            "taskIds": [
+              "implement",
+              "gate"
+            ],
+            "verificationRequirements": [
+              {
+                "requirementId": "checks-pass",
+                "requirementLevel": "required",
+                "kind": "test",
+                "description": "运行检查通过"
+              }
+            ]
+          }
+        ],
+        "taskHierarchy": {
+          "parentOf": []
+        },
+        "executionDag": {
+          "dependsOn": []
+        },
+        "schemaVersion": 2,
+        "taskRelations": [],
+        "inputRequirements": []
+      },
+      "tasks": [
+        {
+          "ref": {
+            "projectId": "workbench-demo",
+            "goalId": "deliver-workbench",
+            "taskId": "implement"
+          },
+          "definition": {
+            "taskId": "implement",
+            "title": "实现文件浏览与双图工作台",
+            "requirementLevel": "required",
+            "taskKind": "work",
+            "disposition": "active",
+            "phase": "pending",
+            "scope": {
+              "kind": "goal"
+            }
+          },
+          "effectivePhase": "pending",
+          "disposition": "active",
+          "currentAttempt": null,
+          "execution": null,
+          "eligibilityScope": "task_state",
+          "eligibility": {
+            "eligible": true,
+            "reasons": []
+          },
+          "relations": [],
+          "inputRequirements": [],
+          "legacyDependencies": [],
+          "planningDiagnostics": []
+        },
+        {
+          "ref": {
+            "projectId": "workbench-demo",
+            "goalId": "deliver-workbench",
+            "taskId": "gate"
+          },
+          "definition": {
+            "taskId": "gate",
+            "title": "验收目标结果",
+            "requirementLevel": "required",
+            "taskKind": "gate",
+            "disposition": "active",
+            "phase": "pending",
+            "scope": {
+              "kind": "goal"
+            }
+          },
+          "effectivePhase": "pending",
+          "disposition": "active",
+          "currentAttempt": null,
+          "execution": null,
+          "eligibilityScope": "task_state",
+          "eligibility": {
+            "eligible": false,
+            "reasons": [
+              {
+                "code": "task_kind_not_work",
+                "taskId": "gate",
+                "taskKind": "gate",
+                "message": "only work tasks are dispatched; gate tasks are reduced by evidence"
+              }
+            ]
+          },
+          "relations": [],
+          "inputRequirements": [],
+          "legacyDependencies": [],
+          "planningDiagnostics": []
+        }
+      ],
+      "sourceCursor": "c0000000012",
+      "planning": {
+        "completionEvaluation": "not_evaluated",
+        "diagnostics": [
+          {
+            "code": "required_task_unfinished",
+            "taskId": "gate",
+            "message": "required task gate is not formally satisfied"
+          },
+          {
+            "code": "required_task_unfinished",
+            "taskId": "implement",
+            "message": "required task implement is not formally satisfied"
+          }
+        ]
+      }
+    }
+  }
+}

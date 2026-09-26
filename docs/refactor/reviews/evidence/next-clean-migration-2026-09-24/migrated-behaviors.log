@@ -1,0 +1,69 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/public-api.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/context/builder/context-builder.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/context/types/context-types.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/ports/model_client/model-client-port.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/ports/tool_executor/tool-executor-port.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/runtime/state/run-state.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/runtime/events/agent-events.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/ports/event_sink/event-sink-port.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/hooks/protocol/hook-protocol.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/app/composition/composition-contracts.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/context/selection_policy/context-selection-policy.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/hooks/executor/hook-executor.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/hooks/registry/hook-registry.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/runtime/cancellation/cancellation-controller.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/runtime/checkpointing/checkpointing-event-sink.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/ports/checkpoint_store/checkpoint-store-port.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-store-port.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/runtime/limits/limit-guard.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/runtime/reducer/run-state-reducer.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/runtime/event_delivery/event-delivery-coordinator.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/runtime/loop/runtime-runner.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/ports/tool_batch_policy/tool-batch-policy-port.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-projection.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/runtime/tool-outcome-unknown.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/runtime/loop/model-stream-consumer.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/runtime/recovery/recovery-coordinator.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/observability/logging/structured-event-logger.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/policy/approval/approval-coordinator.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/policy/permissions/permission-policy.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/sandbox/process/process-sandbox.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/sandbox/workspace/workspace-sandbox.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/tools/builtin/edit/edit-tool.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/tools/builtin/read/read-tool.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/tools/builtin/shell/shell-tool.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/tools/dispatcher/tool-dispatcher.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/tools/registry/tool-registry.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/tools/schemas/tool-schemas.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/storage/adapters/in_memory/in-memory-stores.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/storage/adapters/sqlite/sqlite-stores.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/storage/session_event_sink/session-event-sink.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/m5-public-api.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/app/composition/app-config.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/model/providers/registry/provider-registry.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/app/composition/composition-root.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/memory/providers/empty/empty-memory-provider.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/ports/memory_provider/memory-provider-port.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/model/providers/registry/builtin-provider-registry.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/model/providers/deepseek/deepseek-model-client.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/model/providers/provider-support.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/model/providers/openai/openai-model-client.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/skills/loader/file-skill-loader.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/core/ports/skill_provider/skill-provider-port.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/skills/registry/skill-registry.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/tools/builtin/check/check-tool.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/app/composition/control-hooks.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/app/composition/recovery-contract.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/app/composition/resume-composition.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/app/prompts/coding-agent-system-prompt.js" points to missing source files
+Sourcemap for "/home/hyh001/projects/coding-platform/coding-platform/next/vendor/coding-agent/dist/app/cli/cli.js" points to missing source files
+
+ Test Files  11 passed (11)
+      Tests  81 passed (81)
+   Start at  12:29:09
+   Duration  3.13s (transform 404ms, setup 0ms, import 1.53s, tests 788ms, environment 1ms)
+

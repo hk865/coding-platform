@@ -1,0 +1,15 @@
+{
+  "reviewers": [
+    "root: service/compiler/codec and independent tests",
+    "a1_test_review: basis/reader/validation follow-up"
+  ],
+  "result": "accepted",
+  "independentScoped": "2 files / 8 pass",
+  "isolated": "78 files / 726 pass",
+  "removedUnusedHelpers": [
+    "effectiveTaskBasis",
+    "extractFrozenTaskDefinition",
+    "FrozenTaskDefinitionInput"
+  ],
+  "implementationImport": "w1-implementation-import.json"
+}

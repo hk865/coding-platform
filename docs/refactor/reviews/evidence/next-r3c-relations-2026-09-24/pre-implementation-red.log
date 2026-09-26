@@ -1,0 +1,153 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R3c-task-inputs.test.ts (2 tests | 2 failed) 101ms
+   × memory: exact input is current while producer runs; unrelated inputs stay not_checked 16ms
+   × sqlite: exact input is current while producer runs; unrelated inputs stay not_checked 84ms
+ ❯ tests/composition/R3c-R4b-platform.test.ts (1 test | 1 failed) 163ms
+   × wires one durable Goal/Plan/Session graph and reopens the same Kernel Session 162ms
+ ❯ tests/work-graph/R3c-task-relations.test.ts (2 tests | 2 failed) 6ms
+   × memory: v2 relations and exact inputs survive adoption, replay and reopen without material reads 4ms
+   × sqlite: v2 relations and exact inputs survive adoption, replay and reopen without material reads 1ms
+ ❯ tests/work-graph/R3c-task-graph.test.ts (2 tests | 1 failed) 5ms
+   × uses current task state without treating a predecessor completion as a candidate gate 3ms
+ ❯ tests/work-graph/R3c-task-relations-boundaries.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R3c-task-relations-boundaries.test.ts [ tests/work-graph/R3c-task-relations-boundaries.test.ts ]
+Error: No test suite found in file /home/hyh001/projects/coding-platform/coding-platform/next/tests/work-graph/R3c-task-relations-boundaries.test.ts
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/composition/R3c-R4b-platform.test.ts > wires one durable Goal/Plan/Session graph and reopens the same Kernel Session
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, value) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
+-   "value": {
+-     "issues": [],
+-     "kind": "candidate_v2",
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/R3c-R4b-platform.test.ts:136:22
+    134|       reason: { text: 'Initial composed plan', sources: [] },
+    135|     } });
+    136|     expect(proposed).toMatchObject({ status: 'committed', value: { kin…
+       |                      ^
+    137|     if (proposed.status !== 'committed') throw Error('Plan proposal fa…
+    138|     const applied = await first.plans.applyPlanChange(ctx, { meta: { r…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/7]⎯
+
+ FAIL  tests/work-graph/R3c-task-graph.test.ts > uses current task state without treating a predecessor completion as a candidate gate
+AssertionError: expected { eligible: false, …(1) } to deeply equal { eligible: true, reasons: [] }
+
+- Expected
++ Received
+
+  {
+-   "eligible": true,
+-   "reasons": [],
++   "eligible": false,
++   "reasons": [
++     {
++       "code": "deps_unsatisfied",
++       "deps": [
++         {
++           "dependsOnId": "design",
++           "phase": "running",
++           "requires": {
++             "kind": "artifact",
++             "label": "design",
++           },
++         },
++       ],
++       "message": "design:running",
++       "taskId": "implement",
++     },
++   ],
+  }
+
+ ❯ tests/work-graph/R3c-task-graph.test.ts:34:66
+     32|   // The label is not an exact, verified input. A running design Task …
+     33|   // bar unrelated implementation or investigation by itself.
+     34|   expect(evaluateEligibility({ ...facts, taskId: 'implement' })).toEqu…
+       |                                                                  ^
+     35| });
+     36|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/7]⎯
+
+ FAIL  tests/work-graph/R3c-task-inputs.test.ts > memory: exact input is current while producer runs; unrelated inputs stay not_checked
+ FAIL  tests/work-graph/R3c-task-inputs.test.ts > sqlite: exact input is current while producer runs; unrelated inputs stay not_checked
+AssertionError: {"status":"rejected","code":"invalid","reason":"record schema PlanProposal@2 rejected the record: PlanProposal is invalid: plan schemaVersion must be 1"}: expected { status: 'rejected', …(2) } to match object { status: 'committed', …(1) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
+-   "value": {
+-     "issues": [],
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R3c-task-inputs.test.ts:188:48
+    186|       expected: [{ ref: goal.value.ref, revision: 1 }] }, input: { goa…
+    187|       basedOn: null, draft: draft('goal-one', exact, absent, unused), …
+    188|     expect(proposed, JSON.stringify(proposed)).toMatchObject({ status:…
+       |                                                ^
+    189|     if (proposed.status !== 'committed') throw Error('proposal fixture…
+    190|     const applied = await plans.applyPlanChange(hostCtx, { meta: { req…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/7]⎯
+
+ FAIL  tests/work-graph/R3c-task-relations.test.ts > memory: v2 relations and exact inputs survive adoption, replay and reopen without material reads
+RecordLookupRegistrationError: RecordStore lookup registration: lookup index r3c-run-by-goal aggregateType Run has no registered record schema
+ ❯ registrationError src/core/record-store/lookup-index.ts:36:9
+     34|
+     35| function registrationError(message: string): never {
+     36|   throw new RecordLookupRegistrationError(`RecordStore lookup registra…
+       |         ^
+     37| }
+     38|
+ ❯ createRecordLookupRegistry src/core/record-store/lookup-index.ts:81:7
+ ❯ createInMemoryRecordBackend src/core/record-store/in-memory-record-store.ts:81:41
+ ❯ open tests/work-graph/R3c-task-relations.test.ts:84:42
+ ❯ tests/work-graph/R3c-task-relations.test.ts:86:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/7]⎯
+
+ FAIL  tests/work-graph/R3c-task-relations.test.ts > sqlite: v2 relations and exact inputs survive adoption, replay and reopen without material reads
+RecordLookupRegistrationError: RecordStore lookup registration: lookup index r3c-run-by-goal aggregateType Run has no registered record schema
+ ❯ registrationError src/core/record-store/lookup-index.ts:36:9
+     34|
+     35| function registrationError(message: string): never {
+     36|   throw new RecordLookupRegistrationError(`RecordStore lookup registra…
+       |         ^
+     37| }
+     38|
+ ❯ createRecordLookupRegistry src/core/record-store/lookup-index.ts:81:7
+ ❯ createSqliteRecordBackend src/core/record-store/sqlite-record-store.ts:141:41
+ ❯ open tests/work-graph/R3c-task-relations.test.ts:85:7
+ ❯ tests/work-graph/R3c-task-relations.test.ts:86:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/7]⎯
+
+
+ Test Files  5 failed | 1 passed (6)
+      Tests  6 failed | 3 passed (9)
+   Start at  20:55:12
+   Duration  1.66s (transform 539ms, setup 0ms, import 907ms, tests 307ms, environment 0ms)
+

@@ -1,0 +1,25 @@
+{
+  "at": 1790259199.3892834,
+  "files": [
+    {
+      "file": "coding-platform/next/src/core/work-graph/configuration/role-memory-service.ts",
+      "before": "1e096122eb65944334f71ade57a3320f109435031c5ade8a1044acc8a91f2898",
+      "after": "e4f37b275644c452daf95aac28f0fdeca36e9457462e0c592691383ce1fceab7"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/claim-record-codecs.ts",
+      "before": "5ce9cb7723cbdf005359cb995617ca9a50cb432bbb9c8618a4dc005495a84412",
+      "after": "7eea1964ff398d23056600f07f695af7ff60f32586330e441a354c1003a50490"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/claim-service.ts",
+      "before": "0fafd595208a08d1543fce607de425798b7816072dc76b4534ed5c565b675a72",
+      "after": "9e985e9a30e513044a64badae409ac8df70d7193730f1400bde5cc0c3d290c2f"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+      "before": "4055127b2574a114be008433bf3ef4161446f06593c3d88446535c325724780f",
+      "after": "b34cd8944bac3b0832a61af97e1a3e7c1341007be56fe94049f7e73c3ec0f854"
+    }
+  ]
+}

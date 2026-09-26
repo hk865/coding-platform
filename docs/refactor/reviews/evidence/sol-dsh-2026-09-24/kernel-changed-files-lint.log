@@ -1,0 +1,12 @@
+
+/home/hyh001/projects/coding-platform/coding-platform/vendor/coding-agent/src/app/composition/composition-root.ts
+  75:17  error  `import()` type annotations are forbidden  @typescript-eslint/consistent-type-imports
+  85:21  error  `import()` type annotations are forbidden  @typescript-eslint/consistent-type-imports
+  86:36  error  `import()` type annotations are forbidden  @typescript-eslint/consistent-type-imports
+  87:31  error  `import()` type annotations are forbidden  @typescript-eslint/consistent-type-imports
+
+/home/hyh001/projects/coding-platform/coding-platform/vendor/coding-agent/src/app/composition/resume-composition.ts
+  64:17  error  `import()` type annotations are forbidden  @typescript-eslint/consistent-type-imports
+
+✖ 5 problems (5 errors, 0 warnings)
+

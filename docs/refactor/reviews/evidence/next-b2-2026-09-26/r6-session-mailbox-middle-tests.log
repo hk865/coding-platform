@@ -1,0 +1,30 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/app/R6-host.test.ts (8 tests | 1 failed) 1330ms
+     × carries a real Session, Host message and original Kernel history through an explicit reopen 10ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/R6-host.test.ts > R6.1a domain routes (expected red until phase 2) > carries a real Session, Host message and original Kernel history through an explicit reopen
+AssertionError: expected 'rejected' to be 'completed' // Object.is equality
+
+Expected: "completed"
+Received: "rejected"
+
+ ❯ tests/app/R6-host.test.ts:420:30
+    418|       expect(created.status).toBe(200);
+    419|       const receipt = await created.json() as OperationReceipt<Session…
+    420|       expect(receipt.status).toBe('completed');
+       |                              ^
+    421|       if (receipt.status !== 'completed') throw new Error('real Host S…
+    422|       const sessionRef: SessionRef = { projectId: receipt.value.ref.pr…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 16 passed (17)
+   Start at  21:07:05
+   Duration  3.71s (transform 773ms, setup 0ms, import 1.14s, tests 2.43s, environment 0ms)
+

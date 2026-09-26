@@ -1,0 +1,12 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/contracts/plan.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-validation.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-task-basis.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-commit-compiler.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-service.ts"
+  ],
+  "dshStateDirectories": ["profiles", "sessions", "storages", "cache", "llm-deepseek", "attachments"]
+}

@@ -1,0 +1,61 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+ ❯ tests/data/R3b-material-await-boundaries.test.ts (2 tests | 2 failed) 7ms
+   × cancels a work-run write after canonical scope lookup without starting raw storage 5ms
+   × requires the Host history owner load to return the requested canonical full ref 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/data/R3b-material-await-boundaries.test.ts > cancels a work-run write after canonical scope lookup without starting raw storage
+AssertionError: expected { status: 'stored', …(2) } to match object { status: 'rejected', …(1) }
+(7 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "cancelled",
+-   "status": "rejected",
++   "status": "stored",
+  }
+
+ ❯ tests/data/R3b-material-await-boundaries.test.ts:42:25
+     40|   controller.abort(new Error('caller cancelled during canonical scope …
+     41|   release(canonical(run));
+     42|   expect(await writing).toMatchObject({ status: 'rejected', code: 'can…
+       |                         ^
+     43|   expect(put).not.toHaveBeenCalled();
+     44| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/data/R3b-material-await-boundaries.test.ts > requires the Host history owner load to return the requested canonical full ref
+AssertionError: expected { status: 'ready', value: { …(5) } } to match object { status: 'rejected', …(1) }
+(6 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "forbidden",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/data/R3b-material-await-boundaries.test.ts:56:64
+     54|   expect(await materials.openArtifact(hostContext(), request)).toMatch…
+     55|   loadedRef = { ...run, runId: 'different-run' };
+     56|   expect(await materials.openArtifact(hostContext(), request)).toMatch…
+       |                                                                ^
+     57| });
+     58|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  08:12:08
+   Duration  136ms (transform 36ms, setup 0ms, import 48ms, tests 7ms, environment 0ms)
+

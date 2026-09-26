@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-26T16:22:58.682389+00:00",
+  "file": "/home/hyh001/projects/coding-platform/coding-platform/next/tests/helpers/W2-whiteboard-fixture.ts",
+  "beforeSha256": "7e872d323f62f91b8390cee17621fa642c41a9945633d387690a7834b64e899e",
+  "afterSha256": "ed8f567720898caf47c5a5cbce9f74b2f2b4d4d31ca35ca015b56ee2c9eef503",
+  "change": "Remove one implementation call-count lower-bound assertion; no production or behavior-case changes.",
+  "reason": "R4.3a intentionally removed fresh Host/Role authorization from recording an already-observed entered fact. Both formal Run authorize/begin/entered chains still assert their actual committed results and later fresh Agent write authorization/revocation tests remain. Requiring six Host calls incorrectly reinstates authorization for past facts.",
+  "firstIsolated": {
+    "filesPassed": 123,
+    "filesFailed": 1,
+    "testsPassed": 1079,
+    "testsFailed": 23,
+    "commonFailure": "W2 helper line 384 expected host.calls >= 6, observed 4",
+    "log": "r4-r6-isolated-final.log"
+  },
+  "newTestCases": 0
+}

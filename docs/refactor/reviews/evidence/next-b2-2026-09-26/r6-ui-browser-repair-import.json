@@ -1,0 +1,66 @@
+{
+  "status": "three files imported after independent review/checks; final native browser pending",
+  "importedAt": "2026-09-26T15:02:54.247028+00:00",
+  "lane": "r6-ui-browser-repair-20260926",
+  "sessionId": "session-f29ed20e-9ece-44fc-83c8-89a14f6d52bb",
+  "originalBaseline": {
+    "coding-platform/next/src/ui/main.ts": "9b6203a86936cac5feeffcd779b128d1a93a470c5d1da6f2f9abc43c8b217b3a",
+    "coding-platform/next/src/ui/views.ts": "8aa64511bd9fb8670f02e0767fa7f56dec096e17cdf18f22328a0a6a2b21c8fd",
+    "coding-platform/next/src/ui/styles.css": "4eb1035f7742d36f47f6d4954b4082612df52b89931f586af68c73f5182533bc"
+  },
+  "importedHashes": {
+    "coding-platform/next/src/ui/main.ts": "30e362cf7dcb1f0db44024227cac8de5c1e016359d9568e13c7a103b1dfe7805",
+    "coding-platform/next/src/ui/views.ts": "eb90d20ee74844b38c9aacb4f8591c29d8060fa333bf641b8f2a21b8f6914b6d",
+    "coding-platform/next/src/ui/styles.css": "ec5c5fac714feba9a32826be729868127937cf7cc148cf677fa817884e7fd305"
+  },
+  "frozenTest": {
+    "path": "coding-platform/next/tests/app/R6-workbench.test.ts",
+    "sha256": "2960b61e492980bb9718eef81253cc430e4a7baafa6733fe55d3eab4fae25f78",
+    "changed": false
+  },
+  "preImportAudit": {
+    "changed": [
+      "coding-platform/next/src/ui/main.ts",
+      "coding-platform/next/src/ui/styles.css",
+      "coding-platform/next/src/ui/views.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "checks": {
+    "next-r6-host": {
+      "exitCode": 0,
+      "log": "r6-ui-browser-repair-next-r6-host.log",
+      "sha256": "8fc1948855043315488866321ff0bdcdb1545edafa1bc2b049ac0523d84f6781"
+    },
+    "next-types": {
+      "exitCode": 0,
+      "log": "r6-ui-browser-repair-next-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "next-ui-types": {
+      "exitCode": 0,
+      "log": "r6-ui-browser-repair-next-ui-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "next-build": {
+      "exitCode": 0,
+      "log": "r6-ui-browser-repair-next-build.log",
+      "sha256": "b47519c2526d93882f43f74cc1d1ef3872960a8d640822b63e78721bcf5b7f54"
+    }
+  },
+  "independentTargetTestsPassed": 19,
+  "newTestCases": 0,
+  "review": [
+    "Same-depth nodes are positioned by cumulative widths within vertical depth bands; node labels/captions fit frame and pin includes complete text width.",
+    "Original Session records stay complete in closed-by-default details; cursor facts no longer force visible long header; outer flex/container width boundaries are explicit.",
+    "Single click updates graph selection synchronously in original scope/tab and changes only selected classes/detail slot, preserving native SVG target for double click. No timer remains.",
+    "Global receipts/replay are compact and folded; request/retry identities and file draft/reference flows unchanged.",
+    "Scope header uses content height; navigation uses remainder; setup grouped and folded; internal construction copy removed."
+  ],
+  "browserEvidenceBefore": "r6-layout-browser-middle.json",
+  "finalBrowserReview": "pending; root rebuilds physical copy and verifies native gestures/page width",
+  "indexHtmlChanged": false,
+  "backendChanged": false,
+  "manifestOriginalAllowedHashesRewritten": false
+}

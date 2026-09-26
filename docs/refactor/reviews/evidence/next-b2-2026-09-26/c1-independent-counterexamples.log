@@ -1,0 +1,85 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts (52 tests | 3 failed) 479ms
+   × a released same-owner Lease denies fresh mail while restoring the original send receipt 10ms
+   × a failed publication retries across a Workspace revision using the first exact body provenance 4ms
+   × mutating an inbox page during WG11 cannot transfer a Host continuation to a work Run 6ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > a released same-owner Lease denies fresh mail while restoring the original send receipt
+AssertionError: expected { status: 'committed', …(3) } to match object { status: 'rejected', …(1) }
+(14 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "forbidden",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:510:6
+    508|   expect(await h.mailbox.sendMessage(h.ctxWork, request)).toEqual({ ..…
+    509|   expect(await h.mailbox.sendMessage(h.ctxWork, sendRequest(h.idleSess…
+    510|     .toMatchObject({ status: 'rejected', code: 'forbidden' });
+       |      ^
+    511|   const inbox = await h.mailbox.readInbox(h.ctxHost, { recipient: h.id…
+    512|   expect(inbox).toMatchObject({ status: 'ready', value: { items: [sent…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > a failed publication retries across a Workspace revision using the first exact body provenance
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, replayed) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:539:19
+    537|     [{ refKey: row.refKey, expectedRevision: row.revision }])).toMatch…
+    538|   const retried = await h.mailbox.sendMessage(h.ctxHost, request);
+    539|   expect(retried).toMatchObject({ status: 'committed', replayed: false…
+       |                   ^
+    540|   if (retried.status !== 'committed') return;
+    541|   expect(retried.value.bodyRef).toEqual(firstRef);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/work-graph/C1-session-mailbox.test.ts > mutating an inbox page during WG11 cannot transfer a Host continuation to a work Run
+AssertionError: expected { status: 'ready', value: { …(3) } } to match object { status: 'rejected', code: 'invalid' }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "invalid",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/work-graph/C1-session-mailbox.test.ts:569:20
+    567|   // The accepted token belonged to the Host. Deleting it in caller me…
+    568|   // not turn that request into an authorized work-Run continuation or…
+    569|   expect(received).toMatchObject({ status: 'rejected', code: 'invalid'…
+       |                    ^
+    570|   const valid = await h.mailbox.readInbox(h.ctxHost, { recipient: h.bu…
+    571|   expect(valid.status).toBe('ready');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  3 failed | 61 passed (64)
+   Start at  02:14:14
+   Duration  1.56s (transform 536ms, setup 0ms, import 822ms, tests 577ms, environment 0ms)
+

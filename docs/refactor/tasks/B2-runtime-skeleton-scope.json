@@ -1,0 +1,27 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/agent-runtime/ports.ts",
+    "coding-platform/next/src/core/agent-runtime/runtime.ts",
+    "coding-platform/next/src/core/agent-runtime/execution-contracts.ts",
+    "coding-platform/next/src/core/agent-runtime/execution-preparation.ts",
+    "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+    "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+    "coding-platform/next/src/core/agent-runtime/model-call-access.ts",
+    "coding-platform/next/src/core/agent-runtime/session-operations.ts",
+    "coding-platform/next/src/core/agent-runtime/model-budget.ts",
+    "coding-platform/next/src/core/agent-runtime/run-limits.ts",
+    "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+    "coding-platform/next/src/composition/create-platform.ts",
+    "coding-platform/next/tests/runtime/B2-runtime-execution.test.ts",
+    "coding-platform/next/tests/composition/B2-runtime-platform.test.ts",
+    "coding-platform/next/tests/helpers/B2-runtime-fixture.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

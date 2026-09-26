@@ -1,0 +1,20 @@
+{
+  "stage": "skeleton",
+  "status": "running",
+  "started": "2026-09-26T14:17:04.844380+00:00",
+  "lane": "r4-control-runtime-skeleton-20260926",
+  "sessionId": "session-7ffe634d-e8f9-41a4-a209-8692ac461333",
+  "execSession": 28877,
+  "task": "docs/refactor/tasks/R4-control-runtime-dispatch.md",
+  "taskSha256": "88a8d99e5e5824ee86f8acee1eac9c80c384e8b027cf8cc7ba9046f5ba51ee85",
+  "scope": "docs/refactor/tasks/R4-control-runtime-skeleton-scope.json",
+  "scopeSha256": "d651bbab68cdc758017f45e522c4b695d20a471514c6ce445a71fb123b0c76a8",
+  "compositionBaseline": "038ebe65b84f330f3da304040e01288e75d4d556fb0e856cbe82ac17e0823425",
+  "fixedChecks": [
+    "next-control-runtime",
+    "next-types",
+    "next-architecture"
+  ],
+  "stop": "explicit unsupported deliver/observation; no control algorithm before middle review",
+  "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4-control-runtime-skeleton-20260926/attempt-1790432164839531976"
+}

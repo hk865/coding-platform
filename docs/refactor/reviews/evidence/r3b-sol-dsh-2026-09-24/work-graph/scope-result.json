@@ -1,0 +1,8 @@
+{
+  "changed": [
+    "coding-platform/src/core/work-graph/materials/applicability.ts",
+    "coding-platform/src/core/work-graph/materials/material-service.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

@@ -1,0 +1,17 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (../../../../../tmp/r3a-r4a-independent-review/trace/vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+ ✓ tests/integration/p1-02.integration.test.ts (4 tests) 2572ms
+     ✓ A1-A4: fixture digest/schema; install persists immutable revision; same identity/revision never overwritten  453ms
+     ✓ A3: activation accepts only installed exact target; CAS failure leaves active ref unmoved  667ms
+     ✓ A4/A5/A6/A7/A12/A13: full path with restart; pins survive default-ref movement; idempotency  880ms
+     ✓ A14: no dispatch outbox / TaskAttempt / AgentRun on the whole path  570ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  23:16:10
+   Duration  3.75s (transform 916ms, setup 17ms, import 1.08s, tests 2.57s, environment 0ms)
+

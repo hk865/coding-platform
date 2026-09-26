@@ -1,0 +1,26 @@
+{
+  "scope": [
+    "coding-platform/next/tests/work-graph/A1-session-lifecycle.test.ts",
+    "coding-platform/next/tests/work-graph/A1-session-discovery.test.ts",
+    "coding-platform/next/tests/work-graph/A1-architecture-catalog.test.ts",
+    "coding-platform/next/tests/work-graph/R4c-execution-read.test.ts",
+    "coding-platform/next/tests/runtime/R4b-session-recovery.test.ts"
+  ],
+  "beforeExpandedCases": 124,
+  "afterExpandedCases": 117,
+  "rationale": [
+    "Merge lifecycle replay into stronger reopen route, retain identity conflict",
+    "Merge archive history/discovery assertions into open-close route",
+    "Move SQLite-only reopen out of backend parameterization (remove Memory no-op)",
+    "Merge exact-read cost and unrelated growth witness",
+    "Remove duplicated corruption read, preserve genuinely missing history and separate corruption coverage"
+  ],
+  "verification": "Five changed suites:117 passed; final combined isolated suite follows",
+  "sha256": {
+    "coding-platform/next/tests/work-graph/A1-session-lifecycle.test.ts": "86ef4c7123498a6c59649a8d3b0058d0594b2934b77519c241da89c05faa95ad",
+    "coding-platform/next/tests/work-graph/A1-session-discovery.test.ts": "0ac639ad6b637cb52a8887b29418208d1d41286d75bfa963808c259c3e574e75",
+    "coding-platform/next/tests/work-graph/A1-architecture-catalog.test.ts": "442489c4ac674588b0f6e18c3a945a44e0c039da3efa363fac5ac5fa4e11cf91",
+    "coding-platform/next/tests/work-graph/R4c-execution-read.test.ts": "a894ffa82f7c50a920239e366feccd019ca364bd14142f8a9e67f59a57db9c8d",
+    "coding-platform/next/tests/runtime/R4b-session-recovery.test.ts": "649cba08bf68fb80dea690f27263accf0af7706c318c2355668c460428c7bddb"
+  }
+}

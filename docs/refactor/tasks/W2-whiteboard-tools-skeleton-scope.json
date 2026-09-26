@@ -1,0 +1,21 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/agent-runtime/whiteboard-tools.ts",
+    "coding-platform/next/tests/runtime/W2-whiteboard-tools.test.ts",
+    "coding-platform/next/tests/runtime/W2-role-skills.test.ts",
+    "coding-platform/next/resources/skills/platform-secretary/skill.json",
+    "coding-platform/next/resources/skills/platform-secretary/content.md",
+    "coding-platform/next/resources/skills/platform-adviser/skill.json",
+    "coding-platform/next/resources/skills/platform-adviser/content.md",
+    "coding-platform/next/resources/skills/platform-scribe/skill.json",
+    "coding-platform/next/resources/skills/platform-scribe/content.md"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

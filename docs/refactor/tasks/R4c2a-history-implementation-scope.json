@@ -1,0 +1,13 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/agent-runtime/observation-recovery.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

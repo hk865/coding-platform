@@ -1,0 +1,17 @@
+{
+  "status": "passed",
+  "testFiles": 102,
+  "tests": 1007,
+  "typecheck": true,
+  "build": true,
+  "moduleBoundaries": "6/8 allowed",
+  "kernelArtifactsReproduced": 24,
+  "compiledEntryOpenClose": true,
+  "protectedFiles": 8827,
+  "protectedChanged": [],
+  "nextSource": {
+    "files": 194,
+    "physicalLines": 43116
+  },
+  "log": "r5a-r4-isolated.log"
+}

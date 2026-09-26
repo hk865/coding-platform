@@ -1,0 +1,17 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/evidence/evidence-service.ts",
+    "coding-platform/next/src/core/work-graph/evidence/evidence-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/evidence/verification-plan.ts",
+    "coding-platform/next/src/core/work-graph/evidence/coverage.ts",
+    "coding-platform/next/src/core/agent-runtime/check-execution.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

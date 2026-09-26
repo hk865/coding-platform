@@ -1,0 +1,47 @@
+{
+  "readOnlyRefresh": [
+    {
+      "path": "coding-platform/next/tests/work-graph/W2-agent-whiteboard.test.ts",
+      "old": "bdd36971d4157f7c0f4e6776ec5bc8cc5c97a05228db6376c4c5897133db2d7c",
+      "new": "fe3309fe1ee8d44e10d67371ef07d4681a5d7b4a61853168029b2bfaab8d35b1"
+    },
+    {
+      "path": "coding-platform/next/tests/helpers/W2-whiteboard-fixture.ts",
+      "old": "60f4998e5d9e3938a520c4ddd25093edf78d8b42ada31424d3e6e9ac287541f6",
+      "new": "7e872d323f62f91b8390cee17621fa642c41a9945633d387690a7834b64e899e"
+    },
+    {
+      "path": "docs/refactor/tasks/W2-agent-whiteboard-implementation.md",
+      "old": "7bf9c36c72711a111ef7a9b6c0d9edada9c66225a5d5352e76d2cffe8110c435",
+      "new": "d91adf20e3d2a8253f2d097ed2015dfe731bf42fce1b342283f8e99d44a7f922"
+    },
+    {
+      "path": "docs/refactor/tasks/W2-agent-whiteboard-skeleton.md",
+      "old": "c27b6b76471e0c05fe8ca320a80fa64c86b98065cb4132cf7ea2773922674aa1",
+      "new": "eadc6ce68c006993e13cd1acaa0f0127be75cd98ef24fcb21c4e5f5c983d0265"
+    },
+    {
+      "path": "docs/refactor/CODE-QUALITY-GUIDELINES.md",
+      "old": "edef8af6b409eb0c9781f0e51c0945c135c7bb56d710ddade1312627462aca42",
+      "new": "3b55d5ed8f262efb03ea2f0b9d1759dbc460f80e8843e78ac5224da93451bc44"
+    },
+    {
+      "path": "docs/refactor/intent/INTENT-AND-DECISIONS.md",
+      "old": "c5fe456e21d740390f1cfe7f1011ebbb96ef6171dde42e44a0d2f5eeb4dee246",
+      "new": "0ef99cbbb0f46cd60b12fd4efcee82e92235f22db9d8a95216786b9fbdefc098"
+    }
+  ],
+  "testCases": 26,
+  "removedInternalMutationCases": 7,
+  "fixtureLinesRemoved": 41,
+  "frozenScopeUnchanged": true,
+  "finalTestHash": "97b9aad2764b67bf49038dc53f1125690f24a045d838a39f2b876a8ec54740a8",
+  "middle": {
+    "tests": 26,
+    "passed": 19,
+    "failed": 7,
+    "types": "passed",
+    "failures": "null/foreign/valid-v1 source, foreign Goal pin, stale source, propose/apply original signal all incorrectly commit",
+    "v1Fixture": "removed v2-only taskRelations/inputRequirements before final check"
+  }
+}

@@ -1,0 +1,17 @@
+Workflow: directory=true, sourceFiles=4
+WorkGraph: directory=true, sourceFiles=30
+AgentRuntime: directory=true, sourceFiles=14
+WorkspaceTools: directory=true, sourceFiles=26
+RecordStore: directory=true, sourceFiles=13
+observed module edges: 5/8 allowed (AgentRuntime -> WorkGraph, AgentRuntime -> WorkspaceTools, WorkGraph -> RecordStore, WorkGraph -> WorkspaceTools, Workflow -> WorkGraph)
+next source boundaries: OK
+
+ RUN  v4.1.10 /tmp/coding-platform-next-YCRTJ0/next
+
+
+ Test Files  53 passed (53)
+      Tests  369 passed (369)
+   Start at  17:08:29
+   Duration  42.44s (transform 926ms, setup 0ms, import 7.11s, tests 31.37s, environment 3ms)
+
+next isolated copy: typecheck, build and tests passed

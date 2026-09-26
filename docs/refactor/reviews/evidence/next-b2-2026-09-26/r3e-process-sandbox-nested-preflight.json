@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-09-26T04:51:45.970Z",
+  "nodeVersion": "v24.21.0",
+  "status": "passed",
+  "calls": [
+    {
+      "method": "WorkspaceSandbox.create",
+      "status": "completed",
+      "identity": "173:4"
+    },
+    {
+      "method": "ProcessSandbox.probe",
+      "result": {
+        "available": true,
+        "version": "bwrap-m3-v4:bubblewrap 0.9.0",
+        "bwrapPath": "/usr/bin/bwrap",
+        "reason": null
+      }
+    },
+    {
+      "method": "ProcessSandbox.execute",
+      "request": {
+        "command": "test \"$PWD\" = /workspace && test \"$(cat input.txt)\" = 'R3e preflight input' && printf 'R3E_PROCESS_SANDBOX_OK\\n'",
+        "cwd": ".",
+        "timeoutMs": 5000,
+        "outputLimitBytes": 32768,
+        "captureWorkspaceEffects": "default true"
+      },
+      "result": {
+        "exitCode": 0,
+        "signal": null,
+        "timedOut": false,
+        "cancelled": false,
+        "stdout": {
+          "text": "R3E_PROCESS_SANDBOX_OK\n",
+          "totalBytes": 23,
+          "truncated": false
+        },
+        "stderr": {
+          "text": "",
+          "totalBytes": 0,
+          "truncated": false
+        },
+        "effects": {
+          "sideEffect": "possible",
+          "changedPaths": [],
+          "workspaceRevision": "7f7c365b303d8f09d347e30a9ddcf5efaaf4ca6ae479212d09c6c5e87e21c34e",
+          "artifactRefs": []
+        },
+        "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0",
+        "timings": {
+          "snapshotBeforeMs": 2.5970510000000075,
+          "executionMs": 7.765151999999986,
+          "snapshotAfterMs": 0.4888569999999959
+        }
+      }
+    }
+  ],
+  "cleanup": {
+    "temporaryWorkspaceRemoved": true,
+    "kernelOwnership": "No invented close API. Kernel ProcessSandbox closes its root handle in finally; execution promise covers real child close."
+  },
+  "boundedCheckCommandExecuted": true,
+  "workspaceRoot": "/tmp/r3e-process-sandbox-nested-u3EJAD/workspace",
+  "childCompletion": "ProcessSandbox.execute resolved after real child close and workspace effect capture",
+  "finishedAt": "2026-09-26T04:51:46.003Z",
+  "executionContext": {
+    "outer": "tools/dsh-refactor/harness.py exec: existing real bubblewrap lane",
+    "lane": "r4-control-intent-skeleton-20260926",
+    "inner": "unchanged next public WorkspaceSandbox + ProcessSandbox.probe/execute",
+    "node": "/home/hyh001/projects/coding-platform/.toolchain/node-v24.21.0-linux-x64/bin/node",
+    "harnessExitCode": 0,
+    "hostStartedAt": "2026-09-26T04:51:45.833986+00:00"
+  },
+  "scope": "Nested Kernel process-environment preflight only; no production/test/lane code changes, no R3e business-chain acceptance, no direct-shell fallback."
+}

@@ -1,0 +1,19 @@
+{
+  "lane": "r2e-mixed-comparison-implementation-20260926",
+  "session": "session-035bbade-0bc7-4c13-a533-705ff95a32b3",
+  "files": {
+    "coding-platform/next/src/core/workspace/git-read.ts": {
+      "before": "808faf0a54492092c2690888964d03b1c866259c135c7b7a5c54abb74d183f9e",
+      "after": "23330b718f43a2d8f1e9959b76c9aef9e65801ad290785bd3866edc419637815"
+    }
+  },
+  "checks": [
+    "r2e-mixed-implementation-tests.log: 15 passed / 2 files",
+    "r2e-mixed-implementation-types.log: exit 0",
+    "r2e-mixed-implementation-audit.json: only git-read.ts changed; outsideScope [], originalWorkspaceChanged []"
+  ],
+  "review": "Astra bounded review passed: one captureTextSource observation; original authorized access, Kernel raw digest and mode, fixed Git reader, original direction and bounded results; existing Git implementation unchanged outside imports. No new review matrix or test edits.",
+  "actualChain": "Real B2 prepare/start and Kernel project_source compare in both directions; next model input receives four exact content/mode/add/delete deltas; original Run ended and Session occupancy released.",
+  "remaining": "mixed binary, Git/capture, Git writes and Host/UI compare consumers not implemented by this batch",
+  "importedAt": "2026-09-26T13:42:41.494289+00:00"
+}

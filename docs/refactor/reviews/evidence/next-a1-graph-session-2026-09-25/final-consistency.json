@@ -1,0 +1,16 @@
+{
+  "protected-before.json": {
+    "checked": 8827,
+    "changed": []
+  },
+  "accepted-source-hashes.json": {
+    "checked": 171,
+    "changed": []
+  },
+  "documents": {
+    "files": 16,
+    "localLinks": 583,
+    "missing": [],
+    "conflictMarkers": []
+  }
+}

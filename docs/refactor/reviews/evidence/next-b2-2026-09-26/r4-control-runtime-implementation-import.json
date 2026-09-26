@@ -1,0 +1,112 @@
+{
+  "status": "imported",
+  "importedAt": "2026-09-26T15:30:14.246836+00:00",
+  "lane": "r4-control-runtime-implementation-20260926",
+  "sourceAttempt": {
+    "exitCode": 0,
+    "session": "session-1e8f8993-91af-4e79-9d8d-0aa25cc41054",
+    "counts": {
+      "session": 1,
+      "status": 16,
+      "thinking": 7,
+      "text": 3,
+      "tool_call": 7,
+      "tool_result": 7,
+      "final": 1
+    },
+    "finished": 1790436425.9222953,
+    "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4-control-runtime-implementation-20260926/attempt-1790436397578682421"
+  },
+  "authorization": "root explicit final pause guard then passing exact import",
+  "review": "r4-control-runtime-implementation-final-review.json",
+  "originalAllowedHashesPreserved": true,
+  "importedFiles": [
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/control-service.ts",
+      "originalSha256": "302b0e924802d8b779e822226242ce0212bf18cba5ceee14f108f7471bc6fc95",
+      "mainSha256": "302b0e924802d8b779e822226242ce0212bf18cba5ceee14f108f7471bc6fc95",
+      "candidateSha256": "9bdbb14813bbf65129fc4d828d677e17dae092fe54319ea9f047828f727ef8b4",
+      "importedSha256": "9bdbb14813bbf65129fc4d828d677e17dae092fe54319ea9f047828f727ef8b4"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts",
+      "originalSha256": "addd9f13340e3fb3d4e9b88fe3699a45c4ff5174939df7d77e6a6b09c6e2363f",
+      "mainSha256": "addd9f13340e3fb3d4e9b88fe3699a45c4ff5174939df7d77e6a6b09c6e2363f",
+      "candidateSha256": "b1ec75052523793af01030a174d7a12194fdb2bdf44a4604934d97f12b57e25f",
+      "importedSha256": "b1ec75052523793af01030a174d7a12194fdb2bdf44a4604934d97f12b57e25f"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts",
+      "originalSha256": "5034ecaff918cc310a2551e64cac5e52378109a82951930f8940c1ec85539938",
+      "mainSha256": "5034ecaff918cc310a2551e64cac5e52378109a82951930f8940c1ec85539938",
+      "candidateSha256": "1fdafb34ca337df23682bf5556f30ab2ebe1f7ab31b0c0e28d61c293e6368a09",
+      "importedSha256": "1fdafb34ca337df23682bf5556f30ab2ebe1f7ab31b0c0e28d61c293e6368a09"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/runtime.ts",
+      "originalSha256": "deb03c5dcfaa46f25a470235bdee14dc484834a562225d73456f4c2920999efc",
+      "mainSha256": "deb03c5dcfaa46f25a470235bdee14dc484834a562225d73456f4c2920999efc",
+      "candidateSha256": "21d36cbdb32784dc0492175d3d5e745c9a2ca780c0cda7f84f8ef58e600ac995",
+      "importedSha256": "21d36cbdb32784dc0492175d3d5e745c9a2ca780c0cda7f84f8ef58e600ac995"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+      "originalSha256": "bd5a186eca4aed52d020c8d77ac388a2b7f09ef7ee5bc2d04b0914a187915d09",
+      "mainSha256": "bd5a186eca4aed52d020c8d77ac388a2b7f09ef7ee5bc2d04b0914a187915d09",
+      "candidateSha256": "012fca087057124db002401b1f3439e02ea13da8f2d00e851fbb5703d87987e2",
+      "importedSha256": "012fca087057124db002401b1f3439e02ea13da8f2d00e851fbb5703d87987e2"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+      "originalSha256": "88ec2d359f39baf213fa62d2cc6136dc3238aac7377f96849b4062cfe001e456",
+      "mainSha256": "88ec2d359f39baf213fa62d2cc6136dc3238aac7377f96849b4062cfe001e456",
+      "candidateSha256": "087f9ed3b843c033d9571e9e7ae7210b56ddb2d66ab72dc45d2c4f7336e17457",
+      "importedSha256": "087f9ed3b843c033d9571e9e7ae7210b56ddb2d66ab72dc45d2c4f7336e17457"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+      "originalSha256": "49718f02332d49a83f59d8af7880f4bc167f25f0b03f53dbaec8a7a3c3e2144e",
+      "mainSha256": "49718f02332d49a83f59d8af7880f4bc167f25f0b03f53dbaec8a7a3c3e2144e",
+      "candidateSha256": "362fb139a0c3afd9261ae736a3ecdfbd77450565631adb02f1a391dc8fcebf5f",
+      "importedSha256": "362fb139a0c3afd9261ae736a3ecdfbd77450565631adb02f1a391dc8fcebf5f"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/execution-control.ts",
+      "originalSha256": "0815ec4cd9d3f56727692fee8ebe7c1540f6ae23d7e1201f51597a223bf793fb",
+      "mainSha256": "0815ec4cd9d3f56727692fee8ebe7c1540f6ae23d7e1201f51597a223bf793fb",
+      "candidateSha256": "623d3e9ad78f457dca60bb0812260499bbbd3d6654334b398902d215563357cf",
+      "importedSha256": "623d3e9ad78f457dca60bb0812260499bbbd3d6654334b398902d215563357cf"
+    }
+  ],
+  "independentChecks": {
+    "next-control-runtime": {
+      "exit": 0,
+      "files": 2,
+      "tests": 4,
+      "log": "r4-control-runtime-implementation-final-tests.log"
+    },
+    "next-types": {
+      "exit": 0,
+      "log": "r4-control-runtime-implementation-final-types.log"
+    }
+  },
+  "preImportAudit": {
+    "changed": [
+      "coding-platform/next/src/core/agent-runtime/execution-control.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+      "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+      "coding-platform/next/src/core/agent-runtime/runtime.ts",
+      "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts",
+      "coding-platform/next/src/core/work-graph/tasks/control-service.ts",
+      "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "frozenTests": {
+    "coding-platform/next/tests/runtime/R4-control-runtime.test.ts": "2c2e7de19376361c66e37c44fbc8c4c0e494f6013e70b438eb761524996a3ef5",
+    "coding-platform/next/tests/composition/R4-control-runtime-platform.test.ts": "bdd0ae471ed54ac873a3a3556bff39956a5dfff9f12a72cfad33af5f52d8ca84"
+  },
+  "boundary": "R4.3a live execution pause/cancel control delivery and original fact ack only; R4.3b abandoned multi-group projection and R4.4/5 cold recovery/resume remain separate"
+}

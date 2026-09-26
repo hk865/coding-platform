@@ -1,0 +1,13 @@
+{
+  "changed": [
+    "coding-platform/next/src/core/work-graph/tasks/eligibility.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-commit-compiler.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-service.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-validation.ts",
+    "coding-platform/next/src/core/work-graph/tasks/task-index.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

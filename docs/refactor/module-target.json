@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "status": "target-with-partial-next-implementation",
+  "updated": "2026-09-24",
+  "modules": [
+    {
+      "id": "Workflow",
+      "path": "src/business/workflow/",
+      "document": "modules/business/workflow.md",
+      "dependencies": [
+        "WorkGraph",
+        "AgentRuntime",
+        "WorkspaceTools"
+      ]
+    },
+    {
+      "id": "WorkGraph",
+      "path": "src/core/work-graph/",
+      "document": "modules/core/work-graph.md",
+      "dependencies": [
+        "WorkspaceTools",
+        "RecordStore"
+      ]
+    },
+    {
+      "id": "AgentRuntime",
+      "path": "src/core/agent-runtime/",
+      "document": "modules/core/agent-runtime.md",
+      "dependencies": [
+        "WorkGraph",
+        "WorkspaceTools",
+        "RecordStore"
+      ]
+    },
+    {
+      "id": "WorkspaceTools",
+      "path": "src/core/workspace/",
+      "document": "modules/core/workspace.md",
+      "dependencies": []
+    },
+    {
+      "id": "RecordStore",
+      "path": "src/core/record-store/",
+      "document": "modules/core/record-store.md",
+      "dependencies": []
+    }
+  ],
+  "implementationOwnership": "../../coding-platform/next/scripts/check-boundaries.mjs",
+  "legacyModules": {
+    "HumanCollaboration": [
+      "Workflow"
+    ],
+    "PlanCompiler": [
+      "Workflow",
+      "WorkGraph"
+    ],
+    "ControlEngine": [
+      "WorkGraph"
+    ],
+    "DispatchEngine": [
+      "AgentRuntime",
+      "Workflow"
+    ],
+    "VerificationEngine": [
+      "Workflow",
+      "WorkGraph",
+      "AgentRuntime"
+    ],
+    "ArchitectureReconciler": [
+      "WorkGraph"
+    ],
+    "AgentLifecycle": [
+      "Workflow",
+      "WorkGraph",
+      "AgentRuntime"
+    ],
+    "WorkerRuntime": [
+      "AgentRuntime"
+    ],
+    "StateLedger": [
+      "RecordStore",
+      "WorkGraph"
+    ],
+    "ArtifactVault": [
+      "RecordStore",
+      "WorkGraph"
+    ],
+    "ReadModelIndex": [
+      "WorkGraph",
+      "RecordStore"
+    ],
+    "ContextCompiler": [
+      "WorkGraph",
+      "Workflow",
+      "AgentRuntime"
+    ],
+    "WorkspaceReader": [
+      "WorkspaceTools"
+    ]
+  },
+  "projectRoot": "../../coding-platform/next",
+  "referenceOwnership": "../../coding-platform/scripts/module-map.mjs"
+}

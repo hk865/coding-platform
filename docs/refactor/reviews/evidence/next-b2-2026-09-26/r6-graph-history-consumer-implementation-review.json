@@ -1,0 +1,105 @@
+{
+  "reviewedAt": "2026-09-26T16:48:39.952105+00:00",
+  "status": "final STOP; bounded source review and independent fixed checks accepted; root browser/import pending",
+  "lane": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r6-graph-history-consumer-implementation-20260927",
+  "session": "session-a49e4c5d-eb9c-402e-8e43-1e1dd8a2d05b",
+  "finalAttempt": "attempt-1790440541716145624",
+  "task": "docs/refactor/tasks/R6-graph-history-consumer-implementation.md",
+  "dispatch": {
+    "path": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-consumer-implementation-dispatch.json",
+    "sha256": "37034c9b818bc6a770c97dbfb2b36357fb73aa9e4ea030b14d0a4303115c3b98"
+  },
+  "files": [
+    {
+      "path": "coding-platform/next/src/ui/main.ts",
+      "before": "f236a568ef456553d4715a23b4ad737da0fe2f5486bfdfbe1ae4d3261a1f5f47",
+      "after": "073d020b128998c89c156dd16e4065ad255b1987b318dd0857f9afe0efbfaccc",
+      "added": 350,
+      "deleted": 64,
+      "net": 286
+    },
+    {
+      "path": "coding-platform/next/src/ui/views.ts",
+      "before": "ad27a58b243f949d3faf83d97ffd1b297a7ef1c41a0622ec90e41fd888005b20",
+      "after": "2c846565e7aae6d61cc6bfc73495adb56c7ea4a18e22e09254a0c4f6d69fcbb8",
+      "added": 47,
+      "deleted": 16,
+      "net": 31
+    }
+  ],
+  "totals": {
+    "added": 397,
+    "deleted": 80,
+    "net": 317,
+    "testFilesChanged": 0
+  },
+  "diff": {
+    "path": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-consumer-implementation-final.diff",
+    "sha256": "e534ccdda4f1cfa409bbdf20123f62dab345cc73bbcf8ba2d8a76730bba57866"
+  },
+  "frozenReadOnlyHashes": {
+    "coding-platform/next/src/app/core-http-types.ts": "f17fb3c80077b99cabe3ea209ff16e0536abb09a81edf12aa1dcf335ec422264",
+    "coding-platform/next/src/app/core-routes.ts": "17c77d3525f76773be9794f60a98b8508fe2f223b6b57ca9dc12150d4c9070a9",
+    "coding-platform/next/tests/app/R6-host.test.ts": "922b8024351387450bd98f635a20610976b1e2d5b514a20f1e3bb389342d6032",
+    "coding-platform/next/tests/app/R6-workbench.test.ts": "0c9d3738b6d21aba5f40ebc45d656987a6defb2098c7eecfb14021f1084ecac5",
+    "coding-platform/next/src/app/host.ts": "c1638768eb6a92ab4d29e37a270e09e176b269b1888d33d8f06e96d3a87dced0",
+    "coding-platform/next/src/composition/create-platform.ts": "9d5be391be290d065be762f733acd44a91e7481ed3643b6cc61698db5c1297aa"
+  },
+  "frozenReadOnlyMatched": true,
+  "independentChecks": [
+    {
+      "check": "next-r6-host",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-consumer-implementation-final-tests.log",
+      "sha256": "5066c283bf5e925ae2112092ac90b8397017a9279c26b085dc0fd263e2afa964",
+      "testFilesPassed": 2,
+      "testsPassed": 22
+    },
+    {
+      "check": "next-types",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-consumer-implementation-final-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "next-ui-types",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-consumer-implementation-final-ui-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "physical copy of lane next; original node --run build",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-consumer-implementation-final-build.log",
+      "sha256": "91ec3c7fb4103084fc9cebf77e6a30af0f2c1c0772511993e8db90e5cabc5b2d"
+    }
+  ],
+  "audit": {
+    "changed": [
+      "coding-platform/next/src/ui/main.ts",
+      "coding-platform/next/src/ui/views.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": [],
+    "path": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-consumer-implementation-final-audit.json",
+    "sha256": "e6d67ec872ed0d5b5ce74bdd7b9947bceac9377c6edb1ac31bcc61ebc91b0d5d"
+  },
+  "retainedBuild": {
+    "nextRoot": "/tmp/r6-graph-history-review-r_2vrc0p/next",
+    "sourceHashesMatchCandidate": true,
+    "compiledHost": "/tmp/r6-graph-history-review-r_2vrc0p/next/dist/app/host.js",
+    "workbenchIndex": "/tmp/r6-graph-history-review-r_2vrc0p/next/dist/app/public/workbench/index.html"
+  },
+  "review": [
+    "Original scope/conversation/tab and complete Run identity captured before await; Run page retained in originating layout; claim read only provides explicit Session navigation.",
+    "Center and auxiliary Session history pages use distinct page/object keys and one existing explicit request builder; Run/history/read result maps use originating page/object.",
+    "New non-ready result replaces old ready for the same page; related discovery retains original target and archive filter, ignores reply for changed filter, and uses its own original cursor.",
+    "Task/Run status and original Session navigation remain visible; outbox/attempt/lease/readThrough and raw history stay in original details and existing renderers preserve full saved contents.",
+    "No owner, route, interface, permission, Kernel, fixture, test-case, model-loop, Query workflow, or completion behavior added or altered."
+  ],
+  "limits": [
+    "Fixed tests exercise existing HTTP and render paths; actual browser navigation remains root-owned.",
+    "No fixture or model run performed by this reviewer; no source import performed.",
+    "Root independently began the same fixed collection before receiving this already-completed collection after context recovery; no further test expansion requested."
+  ]
+}

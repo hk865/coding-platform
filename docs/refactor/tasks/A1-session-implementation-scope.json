@@ -1,0 +1,10 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/sessions/session-lifecycle.ts",
+    "coding-platform/next/src/core/work-graph/sessions/lifecycle-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/sessions/session-directory.ts",
+    "coding-platform/next/src/core/work-graph/sessions/session-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/sessions/session-targets.ts"
+  ],
+  "dshStateDirectories": ["profiles", "sessions", "storages", "cache", "llm-deepseek", "attachments"]
+}

@@ -1,0 +1,37 @@
+{
+  "lane": "b2-material-facts-skeleton-20260926",
+  "middleReview": {
+    "tests": 13,
+    "passed": 1,
+    "unsupported": 12,
+    "types": "pass",
+    "existingB2Passed": 25
+  },
+  "files": [
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/execution-entry-contracts.ts",
+      "before": "7596b2ad56abd279de5149c12fb1314930bdb9656ae5463f9260d8f80fa64891",
+      "after": "72e37b1840ddd37c339e45f29e520ab2a898b59faf50b712d3571c08eb8669b0"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts",
+      "before": "3c217c75f5714be88586f41d9aa6f5600430a617ec8ee151c0666f4ac1a30c73",
+      "after": "d5dc2e6b2c3b990c2db542a06da59e23b9309f68cc304f9b359460f4febb2038"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/model-call-service.ts",
+      "before": "54714969549b04150b552bf93fa9aaad6331f8b04de05e086b13a83186e923c7",
+      "after": "810c8044666fad7aecbd063caef18b9d37fe224f8d43710916292c03ca39d4c0"
+    },
+    {
+      "path": "coding-platform/next/tests/helpers/B2-execution-fixture.ts",
+      "before": "5940697b80c04586f5a95b07f88e1dde45fab0f666171aefafa04825b02e4177",
+      "after": "57a2e2bd24c6d0ca01f18b05f8678eb87734f81c144afb10f1cdcf3c2d88321f"
+    },
+    {
+      "path": "coding-platform/next/tests/work-graph/B2-material-admission.test.ts",
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "466e016658319b2e3ae947e2226d56fd9329ed6bf12a60724e76ead62fd00f8f"
+    }
+  ]
+}

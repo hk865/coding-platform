@@ -1,0 +1,15 @@
+{
+  "exitCode": 0,
+  "session": "session-793152ca-22bb-4af3-bb57-17212884ac19",
+  "counts": {
+    "session": 1,
+    "status": 128,
+    "thinking": 63,
+    "text": 24,
+    "tool_call": 85,
+    "tool_result": 85,
+    "final": 1
+  },
+  "finished": 1790254596.9170573,
+  "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/next-r3c-relations-skeleton-20260924/attempt-1790254173044224541"
+}

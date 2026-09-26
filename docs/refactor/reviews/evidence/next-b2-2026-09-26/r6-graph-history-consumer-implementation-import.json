@@ -1,0 +1,36 @@
+{
+  "at": "2026-09-26T17:02:42.929879+00:00",
+  "status": "imported",
+  "lane": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r6-graph-history-consumer-implementation-20260927",
+  "auditBeforeImport": {
+    "changed": [
+      "coding-platform/next/src/ui/main.ts",
+      "coding-platform/next/src/ui/views.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "files": [
+    {
+      "path": "coding-platform/next/src/ui/main.ts",
+      "before": "f236a568ef456553d4715a23b4ad737da0fe2f5486bfdfbe1ae4d3261a1f5f47",
+      "after": "cd9a5d3154a7896f7b9b6e9882dbad69ea9384cc5468565c8a2a41b8464aa874"
+    },
+    {
+      "path": "coding-platform/next/src/ui/views.ts",
+      "before": "ad27a58b243f949d3faf83d97ffd1b297a7ef1c41a0622ec90e41fd888005b20",
+      "after": "2c846565e7aae6d61cc6bfc73495adb56c7ea4a18e22e09254a0c4f6d69fcbb8"
+    }
+  ],
+  "independentReview": {
+    "path": "r6-graph-history-browser-repair-review.json",
+    "sha256": "3096b27a8893f58f10fd8a1d27472bc6c258c526b5f1fa3835504786e18ec091"
+  },
+  "browser": {
+    "path": "r6-graph-history-browser-final.json",
+    "sha256": "7f696356ad4db25e7cc46cbbef5d79471e9ee359dd8dcc7e6eecb7d41a73fc0d"
+  },
+  "productionNetLines": 316,
+  "frozenTestsChanged": false,
+  "followup": "User requested implementation freeze and standalone main commit; no new batch dispatched."
+}

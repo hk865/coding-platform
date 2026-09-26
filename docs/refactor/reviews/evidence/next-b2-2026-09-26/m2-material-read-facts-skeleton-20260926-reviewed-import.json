@@ -1,0 +1,20 @@
+{
+  "lane": "m2-material-read-facts-skeleton-20260926",
+  "files": [
+    {
+      "path": "coding-platform/next/src/core/work-graph/materials/contracts.ts",
+      "before": "19afca26b697d657505982115465ace92a6312ca7c724dec1da204e3bcdbf619",
+      "after": "205476b69495bf29279a202e5aed747c2314fb2ae3674fe281bed5eacece63ae"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/materials/material-facts-service.ts",
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "e8f695c45775dfb31fb8f79e9457b4cd718d1a554a8fd55876bb252d05a872e0"
+    },
+    {
+      "path": "coding-platform/next/tests/work-graph/M2-material-read-facts.test.ts",
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "893c3d39fe8f9d86481574c7f0f189c0b0a0b7929aec7e7165bc0b23d4b826ed"
+    }
+  ]
+}

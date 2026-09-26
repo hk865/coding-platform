@@ -1,0 +1,15 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/tasks/control-service.ts",
+    "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

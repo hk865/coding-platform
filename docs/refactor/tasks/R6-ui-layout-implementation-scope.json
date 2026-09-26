@@ -1,0 +1,16 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/ui/main.ts",
+    "coding-platform/next/src/ui/views.ts",
+    "coding-platform/next/src/ui/styles.css",
+    "coding-platform/next/src/ui/index.html"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

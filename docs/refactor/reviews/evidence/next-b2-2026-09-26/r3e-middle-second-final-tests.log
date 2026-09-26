@@ -1,0 +1,220 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R3e-evidence.test.ts (4 tests | 4 failed) 115ms
+   × admits every fixed check body-first and replays the original open receipt without a second source capture 55ms
+   × refuses mismatched subject/ticket identities but keeps an original executed fact after Host revocation 23ms
+   × keeps the first recorded result, refuses a changed observation and preserves an interrupted window 19ms
+   × finalizes under one Round CAS, ignores an unrelated public write, then refuses a fresh begin 18ms
+ ❯ tests/composition/R3e-command-check-platform.test.ts (2 tests | 2 failed) 120ms
+   × executes the fixed commands through the real sandbox and admits mechanical Evidence without completing the Task 79ms
+   × collapses a concurrent fresh run into one real process and never re-runs an unknown executing window across restart 40ms
+ ❯ tests/work-graph/R3e-evidence-coverage.test.ts (4 tests | 4 failed) 103ms
+   × two applicable PASSes leave a missing requirement unsatisfied and a claim never counts 43ms
+   × an applicable PASS never deletes an earlier applicable FAIL from the blockers 19ms
+   × an empty required-obligation set is rejected by the compiler and a no-target binding is not APPLICABLE 17ms
+   × an unrelated future adoption keeps applicability along taskStateBasis (anchor unchanged) while a definition change does not 22ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 10 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/composition/R3e-command-check-platform.test.ts > executes the fixed commands through the real sandbox and admits mechanical Evidence without completing the Task
+AssertionError: formal open must commit: expected { status: 'rejected', …(2) } to match object { status: 'committed', …(1) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
+-   "value": {
+-     "status": "open",
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/R3e-command-check-platform.test.ts:84:45
+     82|   const { fixture, platform } = await prepared();
+     83|   const opened = await platform.evidence.openVerification(fixture.ctx,…
+     84|   expect(opened, 'formal open must commit').toMatchObject({ status: 'c…
+       |                                             ^
+     85|   if (opened.status !== 'committed') throw Error('open did not commit'…
+     86|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯
+
+ FAIL  tests/composition/R3e-command-check-platform.test.ts > collapses a concurrent fresh run into one real process and never re-runs an unknown executing window across restart
+AssertionError: formal open must commit: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/R3e-command-check-platform.test.ts:148:45
+    146|   const { fixture, options, platform } = await prepared();
+    147|   const opened = await platform.evidence.openVerification(fixture.ctx,…
+    148|   expect(opened, 'formal open must commit').toMatchObject({ status: 'c…
+       |                                             ^
+    149|   if (opened.status !== 'committed') throw Error('open did not commit'…
+    150|   const round = opened.value;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/10]⎯
+
+ FAIL  tests/work-graph/R3e-evidence-coverage.test.ts > two applicable PASSes leave a missing requirement unsatisfied and a claim never counts
+Error: selectEffectiveEvidenceSet is not implemented in the R3e.1 skeleton stage
+ ❯ algorithmNotImplemented src/core/work-graph/evidence/coverage.ts:32:11
+     30|
+     31| function algorithmNotImplemented(what: string): never {
+     32|     throw new Error(`${what} is not implemented in the R3e.1 skeleton …
+       |           ^
+     33| }
+     34|
+ ❯ selectEffectiveEvidenceSet src/core/work-graph/evidence/coverage.ts:57:12
+ ❯ tests/work-graph/R3e-evidence-coverage.test.ts:60:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/10]⎯
+
+ FAIL  tests/work-graph/R3e-evidence-coverage.test.ts > an applicable PASS never deletes an earlier applicable FAIL from the blockers
+Error: selectEffectiveEvidenceSet is not implemented in the R3e.1 skeleton stage
+ ❯ algorithmNotImplemented src/core/work-graph/evidence/coverage.ts:32:11
+     30|
+     31| function algorithmNotImplemented(what: string): never {
+     32|     throw new Error(`${what} is not implemented in the R3e.1 skeleton …
+       |           ^
+     33| }
+     34|
+ ❯ selectEffectiveEvidenceSet src/core/work-graph/evidence/coverage.ts:57:12
+ ❯ tests/work-graph/R3e-evidence-coverage.test.ts:75:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/10]⎯
+
+ FAIL  tests/work-graph/R3e-evidence-coverage.test.ts > an empty required-obligation set is rejected by the compiler and a no-target binding is not APPLICABLE
+Error: selectEffectiveEvidenceSet is not implemented in the R3e.1 skeleton stage
+ ❯ algorithmNotImplemented src/core/work-graph/evidence/coverage.ts:32:11
+     30|
+     31| function algorithmNotImplemented(what: string): never {
+     32|     throw new Error(`${what} is not implemented in the R3e.1 skeleton …
+       |           ^
+     33| }
+     34|
+ ❯ selectEffectiveEvidenceSet src/core/work-graph/evidence/coverage.ts:57:12
+ ❯ tests/work-graph/R3e-evidence-coverage.test.ts:88:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/10]⎯
+
+ FAIL  tests/work-graph/R3e-evidence-coverage.test.ts > an unrelated future adoption keeps applicability along taskStateBasis (anchor unchanged) while a definition change does not
+Error: evidenceApplicabilityWithBasis is not implemented in the R3e.1 skeleton stage
+ ❯ algorithmNotImplemented src/core/work-graph/evidence/coverage.ts:32:11
+     30|
+     31| function algorithmNotImplemented(what: string): never {
+     32|     throw new Error(`${what} is not implemented in the R3e.1 skeleton …
+       |           ^
+     33| }
+     34|
+ ❯ evidenceApplicabilityWithBasis src/core/work-graph/evidence/coverage.ts:86:12
+ ❯ tests/work-graph/R3e-evidence-coverage.test.ts:116:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/10]⎯
+
+ FAIL  tests/work-graph/R3e-evidence.test.ts > admits every fixed check body-first and replays the original open receipt without a second source capture
+AssertionError: formal open must commit: expected { status: 'rejected', …(2) } to match object { status: 'committed', …(2) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
+-   "value": {
+-     "status": "open",
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R3e-evidence.test.ts:72:45
+     70|   const openRequest = fixture.openRequest();
+     71|   const opened = await fixture.evidence.openVerification(fixture.ctx, …
+     72|   expect(opened, 'formal open must commit').toMatchObject({ status: 'c…
+       |                                             ^
+     73|   if (opened.status !== 'committed') throw Error('open did not commit'…
+     74|   const round = opened.value;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/10]⎯
+
+ FAIL  tests/work-graph/R3e-evidence.test.ts > refuses mismatched subject/ticket identities but keeps an original executed fact after Host revocation
+AssertionError: formal open must commit: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R3e-evidence.test.ts:118:45
+    116|   const fixture = await openFixture();
+    117|   const opened = await fixture.evidence.openVerification(fixture.ctx, …
+    118|   expect(opened, 'formal open must commit').toMatchObject({ status: 'c…
+       |                                             ^
+    119|   if (opened.status !== 'committed') throw Error('open did not commit'…
+    120|   const round = opened.value;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/10]⎯
+
+ FAIL  tests/work-graph/R3e-evidence.test.ts > keeps the first recorded result, refuses a changed observation and preserves an interrupted window
+AssertionError: formal open must commit: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R3e-evidence.test.ts:183:45
+    181|   const fixture = await openFixture();
+    182|   const opened = await fixture.evidence.openVerification(fixture.ctx, …
+    183|   expect(opened, 'formal open must commit').toMatchObject({ status: 'c…
+       |                                             ^
+    184|   if (opened.status !== 'committed') throw Error('open did not commit'…
+    185|   const round = opened.value;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/10]⎯
+
+ FAIL  tests/work-graph/R3e-evidence.test.ts > finalizes under one Round CAS, ignores an unrelated public write, then refuses a fresh begin
+AssertionError: formal open must commit: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R3e-evidence.test.ts:228:45
+    226|   const fixture = await openFixture();
+    227|   const opened = await fixture.evidence.openVerification(fixture.ctx, …
+    228|   expect(opened, 'formal open must commit').toMatchObject({ status: 'c…
+       |                                             ^
+    229|   if (opened.status !== 'committed') throw Error('open did not commit'…
+    230|   const round = opened.value;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/10]⎯
+
+
+ Test Files  3 failed (3)
+      Tests  10 failed (10)
+   Start at  14:09:51
+   Duration  1.97s (transform 745ms, setup 0ms, import 1.39s, tests 338ms, environment 0ms)
+

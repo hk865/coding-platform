@@ -1,0 +1,27 @@
+[
+  {
+    "path": "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts",
+    "before": "af7c1cbb73ce483e44cf42b7912108a4a7f1b5680bfcd290b70f5dcdfa978d3f",
+    "after": "7e0301d55c38ae6efa1b7d2c704df4a6039f8643a7b40d2a99a4c2574df30716"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/tasks/execution-history-binding.ts",
+    "before": "af7c1cbb73ce483e44cf42b7912108a4a7f1b5680bfcd290b70f5dcdfa978d3f",
+    "after": "fd66f9b05527f633b8c5eea674706e1d5e34ba24f2fd3b1b7f458ad9302ba315"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/tasks/model-call-service.ts",
+    "before": "af7c1cbb73ce483e44cf42b7912108a4a7f1b5680bfcd290b70f5dcdfa978d3f",
+    "after": "91f4ca43758c243e81b91881e63488d14d0e5f3933d674f1b68b5a41f0f023ef"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/persistence/execution-entry-codecs.ts",
+    "before": "af7c1cbb73ce483e44cf42b7912108a4a7f1b5680bfcd290b70f5dcdfa978d3f",
+    "after": "bdac172b0d8038fca7cd00a199f6e659a1b04f32e4c349bf66221359e61e2849"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/persistence/model-request-codecs.ts",
+    "before": "af7c1cbb73ce483e44cf42b7912108a4a7f1b5680bfcd290b70f5dcdfa978d3f",
+    "after": "4b0bb5ae63621a2649065a6a757d61152a246417c68ab630ac120c04d15c0e78"
+  }
+]

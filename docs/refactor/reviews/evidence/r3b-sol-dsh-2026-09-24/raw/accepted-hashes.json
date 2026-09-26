@@ -1,0 +1,5 @@
+{
+  "coding-platform/src/core/record-store/body-codec.ts": "f2460dc79a1bfe4a4559a46e798ca4b22e6e4f7f11e714c9adc80c69be902870",
+  "coding-platform/src/core/record-store/body-store.ts": "8fb298ac994ab23925ceb781e55a291dcab8c17f2b380955f84f01cbcce4b1b8",
+  "coding-platform/src/core/record-store/sqlite-body-store.ts": "23f6a03449c057c01d1bfcbb9fb69fb00326a2dda2b7caeb92d8881a91ea62c7"
+}

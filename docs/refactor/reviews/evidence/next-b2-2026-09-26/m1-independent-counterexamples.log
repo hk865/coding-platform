@@ -1,0 +1,87 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/M1-material-grants.test.ts (14 tests | 1 failed) 364ms
+   × recovers a lost commit acknowledgement only from the actual durable receipt 20ms
+ ❯ tests/data/M1-material-source-provider.test.ts (16 tests | 2 failed) 123ms
+   × snapshots the source selection before the first workspace open awaits 19ms
+   × cancellation during the final access release cannot publish a sourced pin 6ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/data/M1-material-source-provider.test.ts > snapshots the source selection before the first workspace open awaits
+AssertionError: expected { status: 'sourced', pin: { …(6) } } to deeply equal { status: 'sourced', pin: { …(6) } }
+
+- Expected
++ Received
+
+@@ -2,17 +2,17 @@
+    "pin": {
+      "identity": {
+        "commit": null,
+        "workspace": "164:398",
+      },
+-     "manifestDigest": "74ebe46ac720f2c4771a53db685baede20a710d09a25296705e8d81bb5e9bf6a",
++     "manifestDigest": "5b63a77dcc4ccbd91c0259fe2f5836558831c30cc3e067aa7e0245e239e37018",
+      "projectId": "m1-provider-project",
+      "schemaVersion": 1,
+      "sourceSet": {
+        "kind": "workspace_paths",
+        "paths": [
+-         "src/input.txt",
++         "other.txt",
+        ],
+      },
+      "workspaceId": "m1-provider-workspace",
+    },
+    "status": "sourced",
+
+ ❯ tests/data/M1-material-source-provider.test.ts:209:20
+    207|     release();
+    208|     const result = await pending;
+    209|     expect(result).toEqual(original);
+       |                    ^
+    210|     expect(c.releases()).toBe(c.opened());
+    211|     expect(c.counts().every(n => n === 1)).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/data/M1-material-source-provider.test.ts > cancellation during the final access release cannot publish a sourced pin
+AssertionError: expected 'sourced' to match /rejected|unavailable/
+
+- Expected:
+/rejected|unavailable/
+
++ Received:
+"sourced"
+
+ ❯ tests/data/M1-material-source-provider.test.ts:231:27
+    229|     const result = await provider(access).capture({ ...scope, sourceSe…
+    230|     expect(controller.signal.aborted).toBe(true);
+    231|     expect(result.status).toMatch(/rejected|unavailable/);
+       |                           ^
+    232|     expect(c.opened()).toBe(2);
+    233|     expect(c.releases()).toBe(2);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/work-graph/M1-material-grants.test.ts > recovers a lost commit acknowledgement only from the actual durable receipt
+Error: acknowledgement transport lost after the durable commit
+ ❯ Object.commit tests/work-graph/M1-material-grants.test.ts:505:19
+    503|             durable = receipt;
+    504|             original = JSON.parse(batch.records[0]!.json);
+    505|             throw Error('acknowledgement transport lost after the dura…
+       |                   ^
+    506|         } });
+    507|         const request = t.grantRequest();
+ ❯ Object.grantMaterialAccess src/core/work-graph/materials/grant-service.ts:756:21
+ ❯ tests/work-graph/M1-material-grants.test.ts:508:27
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  3 failed | 27 passed (30)
+   Start at  02:28:21
+   Duration  1.36s (transform 443ms, setup 0ms, import 714ms, tests 486ms, environment 0ms)
+

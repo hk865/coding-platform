@@ -1,0 +1,29 @@
+{
+  "changes": [
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/exploration-tools.ts",
+      "before": "6d50a6eb13424d83d7305942ff444e71cc6cbf3255327a3d54e67f08270c7c8f",
+      "after": "0f44e2623cd2a62772e5f916e64eda2e86c302f7fb0965dc4a2f5c5b0adcbb3c"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+      "before": "25a017387f80a273be06b2f26529a70f02af06bd044c9bb5e00e240ce6cb6b2d",
+      "after": "7d63775fbd4157f185e0d99c3ac2d251df0be39e5154c178cfcc5b48b1562cc2"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/project-source-tool.ts",
+      "before": "beaedf4a2f1c5e1c70466a1c967f05f0bd8bb1f24375128192af958d70427e7f",
+      "after": "541e873c80ad697bd7461f15678f7057052fe0ad7fab885d0d2761413ea48ac2"
+    }
+  ],
+  "scope": {
+    "changed": [
+      "coding-platform/next/src/core/agent-runtime/exploration-tools.ts",
+      "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+      "coding-platform/next/src/core/agent-runtime/project-source-tool.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "review": "Three defects reproduced independently and repaired. Final isolated acceptance pending."
+}

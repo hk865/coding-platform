@@ -1,0 +1,153 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+ ❯ tests/data/R3b-materials-contract.test.ts (10 tests | 10 failed) 21ms
+     × keeps the first owner, source and ref on duplicate memory puts without leaking mutable records 2ms
+     × reopens the original artifacts table and reads legacy first-owner provenance 16ms
+     × rejects newly forged legacy origins and reports damaged SQLite bodies as corrupt 0ms
+     × stores a Host artifact only for a matching trusted origin and isolates caller input 0ms
+     × allows a trustworthy Host historical read without a fabricated Run and rejects scope or actor mismatch 0ms
+     × keeps Host current reads from asserting unverified currentness 0ms
+     × does not infer a Host-readable scope from a legacy record without an owner 0ms
+     × requires an exact QueryRun grant and matching basis, with revocation taking effect 0ms
+     × preserves the legacy optional owner/applicability wire without a synthetic role binding 0ms
+     × keeps TaskAttempt legacy writes readable as raw bodies without granting a Run owner 0ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 10 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/data/R3b-materials-contract.test.ts > R3b raw body contract > keeps the first owner, source and ref on duplicate memory puts without leaking mutable records
+Error: R3b raw body put is not implemented
+ ❯ RawArtifactBodyStore.put src/core/record-store/body-store.ts:13:11
+     11|   constructor(_rows: ArtifactBodyRows = new MapBodyRows()) {}
+     12|   async put(_input: RawArtifactPut): Promise<StoreResult<{ ref: Artifa…
+     13|     throw new Error('R3b raw body put is not implemented');
+       |           ^
+     14|   }
+     15|   async read(_ref: ArtifactRef): Promise<StoreResult<RawArtifactRecord…
+ ❯ tests/data/R3b-materials-contract.test.ts:50:29
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯
+
+ FAIL  tests/data/R3b-materials-contract.test.ts > R3b raw body contract > reopens the original artifacts table and reads legacy first-owner provenance
+Error: R3b SQLite body store is not implemented
+ ❯ createSqliteRawArtifactStore src/core/record-store/sqlite-body-store.ts:6:9
+      4| export type CloseableRawArtifactStore = RawArtifactStorePort & { close…
+      5| export function createSqliteRawArtifactStore(_path: string): Closeable…
+      6|   throw new Error('R3b SQLite body store is not implemented');
+       |         ^
+      7| }
+      8|
+ ❯ tests/data/R3b-materials-contract.test.ts:78:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/10]⎯
+
+ FAIL  tests/data/R3b-materials-contract.test.ts > R3b raw body contract > rejects newly forged legacy origins and reports damaged SQLite bodies as corrupt
+Error: R3b raw body put is not implemented
+ ❯ RawArtifactBodyStore.put src/core/record-store/body-store.ts:13:11
+     11|   constructor(_rows: ArtifactBodyRows = new MapBodyRows()) {}
+     12|   async put(_input: RawArtifactPut): Promise<StoreResult<{ ref: Artifa…
+     13|     throw new Error('R3b raw body put is not implemented');
+       |           ^
+     14|   }
+     15|   async read(_ref: ArtifactRef): Promise<StoreResult<RawArtifactRecord…
+ ❯ tests/data/R3b-materials-contract.test.ts:93:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/10]⎯
+
+ FAIL  tests/data/R3b-materials-contract.test.ts > R3b WorkGraph material contract > stores a Host artifact only for a matching trusted origin and isolates caller input
+Error: R3b material store is not implemented
+ ❯ Object.storeArtifact src/core/work-graph/materials/material-service.ts:22:13
+     20|       contentType: string; body: string; sources: SourceRefV1[]; origi…
+     21|     }): Promise<StoreArtifactResult> {
+     22|       throw new Error('R3b material store is not implemented');
+       |             ^
+     23|     },
+     24|     async openArtifact(_ctx: CoreCallContext, _input: {
+ ❯ tests/data/R3b-materials-contract.test.ts:125:24
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/10]⎯
+
+ FAIL  tests/data/R3b-materials-contract.test.ts > R3b WorkGraph material contract > allows a trustworthy Host historical read without a fabricated Run and rejects scope or actor mismatch
+Error: R3b material open is not implemented
+ ❯ Object.openArtifact src/core/work-graph/materials/material-service.ts:27:13
+     25|       ref: ArtifactRef; usage: 'current' | 'historical_explanation';
+     26|     }): Promise<ReadResult<ArtifactRecord>> {
+     27|       throw new Error('R3b material open is not implemented');
+       |             ^
+     28|     },
+     29|   };
+ ❯ tests/data/R3b-materials-contract.test.ts:139:24
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/10]⎯
+
+ FAIL  tests/data/R3b-materials-contract.test.ts > R3b WorkGraph material contract > keeps Host current reads from asserting unverified currentness
+Error: R3b material open is not implemented
+ ❯ Object.openArtifact src/core/work-graph/materials/material-service.ts:27:13
+     25|       ref: ArtifactRef; usage: 'current' | 'historical_explanation';
+     26|     }): Promise<ReadResult<ArtifactRecord>> {
+     27|       throw new Error('R3b material open is not implemented');
+       |             ^
+     28|     },
+     29|   };
+ ❯ tests/data/R3b-materials-contract.test.ts:150:24
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/10]⎯
+
+ FAIL  tests/data/R3b-materials-contract.test.ts > R3b WorkGraph material contract > does not infer a Host-readable scope from a legacy record without an owner
+Error: R3b material open is not implemented
+ ❯ Object.openArtifact src/core/work-graph/materials/material-service.ts:27:13
+     25|       ref: ArtifactRef; usage: 'current' | 'historical_explanation';
+     26|     }): Promise<ReadResult<ArtifactRecord>> {
+     27|       throw new Error('R3b material open is not implemented');
+       |             ^
+     28|     },
+     29|   };
+ ❯ tests/data/R3b-materials-contract.test.ts:157:24
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/10]⎯
+
+ FAIL  tests/data/R3b-materials-contract.test.ts > R3b WorkGraph material contract > requires an exact QueryRun grant and matching basis, with revocation taking effect
+Error: R3b material open is not implemented
+ ❯ Object.openArtifact src/core/work-graph/materials/material-service.ts:27:13
+     25|       ref: ArtifactRef; usage: 'current' | 'historical_explanation';
+     26|     }): Promise<ReadResult<ArtifactRecord>> {
+     27|       throw new Error('R3b material open is not implemented');
+       |             ^
+     28|     },
+     29|   };
+ ❯ tests/data/R3b-materials-contract.test.ts:178:24
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/10]⎯
+
+ FAIL  tests/data/R3b-materials-contract.test.ts > R3b WorkGraph material contract > preserves the legacy optional owner/applicability wire without a synthetic role binding
+Error: R3b legacy artifact open adapter is not implemented
+ ❯ Object.open src/core/work-graph/materials/material-service.ts:40:13
+     38|     },
+     39|     async open(_ref: ArtifactRef, _query: ArtifactOpenQuery): Promise<…
+     40|       throw new Error('R3b legacy artifact open adapter is not impleme…
+       |             ^
+     41|     },
+     42|   };
+ ❯ tests/data/R3b-materials-contract.test.ts:187:33
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/10]⎯
+
+ FAIL  tests/data/R3b-materials-contract.test.ts > R3b WorkGraph material contract > keeps TaskAttempt legacy writes readable as raw bodies without granting a Run owner
+Error: R3b legacy artifact put adapter is not implemented
+ ❯ Object.put src/core/work-graph/materials/material-service.ts:37:13
+     35|   return {
+     36|     async put(_record: ArtifactPutRecord): Promise<ArtifactPutResult> {
+     37|       throw new Error('R3b legacy artifact put adapter is not implemen…
+       |             ^
+     38|     },
+     39|     async open(_ref: ArtifactRef, _query: ArtifactOpenQuery): Promise<…
+ ❯ tests/data/R3b-materials-contract.test.ts:210:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/10]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  10 failed (10)
+   Start at  07:45:06
+   Duration  147ms (transform 28ms, setup 0ms, import 40ms, tests 21ms, environment 0ms)
+

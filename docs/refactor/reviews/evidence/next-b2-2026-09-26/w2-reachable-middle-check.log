@@ -1,0 +1,181 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/W2-agent-whiteboard.test.ts (26 tests | 7 failed) 396ms
+     × Agent propose rejects a initial candidate before any Plan commit 17ms
+     × Agent propose rejects a foreign-source candidate before any Plan commit 13ms
+     × Agent propose rejects a v1 candidate before any Plan commit 13ms
+     × a Goal pin for another real Goal cannot stand in for the target Goal revision 13ms
+     × the same Run can propose two successive future plan versions 16ms
+     × propose keeps the original AbortSignal when the caller replaces ctx.signal during a read 13ms
+     × apply keeps the original AbortSignal when the caller replaces ctx.signal during a read 15ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/W2-agent-whiteboard.test.ts > W2 Agent authorization rejects > Agent propose rejects a initial candidate before any Plan commit
+AssertionError: {"status":"committed","value":{"kind":"candidate_v2","ref":{"aggregateType":"PlanProposal","projectId":"r4c-claim-project","workspaceId":"r4c-claim-workspace","proposalId":"plan-proposal-9ea570d82ea11392f567078eed0abf3f"},"revision":1,"schemaVersion":2,"goalRef":{"aggregateType":"Goal","projectId":"r4c-claim-project","goalId":"r4c-claim-goal"},"basedOn":null,"draft":{"schemaVersion":2,"planId":"w2-outside-scope-initial","planRevision":2,"goalId":"r4c-claim-goal","stages":[],"tasks":[{"taskId":"implement-a","title":"Implement A","requirementLevel":"required","taskKind":"work","disposition":"active","phase":"pending","scope":{"kind":"goal"}},{"taskId":"implement-b","title":"Implement B","requirementLevel":"required","taskKind":"work","disposition":"active","phase":"pending","scope":{"kind":"goal"}},{"taskId":"gate-goal","title":"Goal gate","requirementLevel":"required","taskKind":"gate","disposition":"active","phase":"pending","scope":{"kind":"goal"}}],"assignments":[{"taskId":"implement-a","role":"builder","instruction":"Implement A"},{"taskId":"implement-b","role":"builder","instruction":"Implement B"}],"obligations":[{"obligationId":"obligation-1","title":"Deliver implementation","requirementLevel":"required","taskIds":["implement-a","implement-b","gate-goal"],"verificationRequirements":[{"requirementId":"check-1","requirementLevel":"required","kind":"test","description":"Tests pass"}]}],"taskHierarchy":{"parentOf":[]},"executionDag":{"dependsOn":[{"taskId":"implement-b","dependsOnId":"implement-a","requires":{"kind":"output-contract","label":"A output contract"}}]},"taskRelations":[],"inputRequirements":[]},"reason":{"text":"W2 Agent whiteboard change","sources":[]},"status":"candidate","issues":[],"submittedBy":{"schemaVersion":1,"runRef":{"aggregateType":"Run","projectId":"r4c-claim-project","goalId":"r4c-claim-goal","runId":"r4c-claim-id-1"},"sessionRef":{"projectId":"r4c-claim-project","sessionId":"session-a63653f966d3a789e16f89541345718a8be04480e0b416147c3c33b45da52c38"},"roleBinding":{"schemaVersion":1,"bindingId":"r4c-claim-binding","templateId":"builder","templateRevision":"1","bindingVersion":1,"policyRevision":"legacy-template"},"sessionGeneration":2,"entryGeneration":1,"authorizationRevision":3,"configurationRevision":"b2-host-config-1"}},"replayed":false,"cursor":"c0000000022"}: expected { status: 'committed', …(3) } to match object { status: 'rejected', …(1) }
+(14 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "forbidden",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/W2-agent-whiteboard.test.ts:256:46
+    254|         now: () => '2026-09-26T00:00:00.000Z', eventId: () => `w2-outs…
+    255|       const result = await plans.proposePlan(f.ctxWork, request);
+    256|       expect(result, JSON.stringify(result)).toMatchObject({ status: '…
+       |                                              ^
+    257|         code: variant === 'initial' ? 'forbidden' : variant === 'forei…
+    258|       expect(commits, 'out-of-scope candidates never reach Store commi…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯
+
+ FAIL  tests/work-graph/W2-agent-whiteboard.test.ts > W2 Agent authorization rejects > Agent propose rejects a foreign-source candidate before any Plan commit
+AssertionError: {"status":"committed","value":{"kind":"candidate_v2","ref":{"aggregateType":"PlanProposal","projectId":"r4c-claim-project","workspaceId":"r4c-claim-workspace","proposalId":"plan-proposal-97917caa485df864671b36bb286979b5"},"revision":1,"schemaVersion":2,"goalRef":{"aggregateType":"Goal","projectId":"r4c-claim-project","goalId":"r4c-claim-goal"},"basedOn":{"aggregateType":"PlanRevision","projectId":"r4c-claim-project","planId":"b2-second-plan"},"draft":{"schemaVersion":2,"planId":"w2-outside-scope-foreign-source","planRevision":2,"goalId":"r4c-claim-goal","stages":[],"tasks":[{"taskId":"implement-a","title":"Implement A","requirementLevel":"required","taskKind":"work","disposition":"active","phase":"pending","scope":{"kind":"goal"}},{"taskId":"implement-b","title":"Implement B","requirementLevel":"required","taskKind":"work","disposition":"active","phase":"pending","scope":{"kind":"goal"}},{"taskId":"gate-goal","title":"Goal gate","requirementLevel":"required","taskKind":"gate","disposition":"active","phase":"pending","scope":{"kind":"goal"}}],"assignments":[{"taskId":"implement-a","role":"builder","instruction":"Implement A"},{"taskId":"implement-b","role":"builder","instruction":"Implement B"}],"obligations":[{"obligationId":"obligation-1","title":"Deliver implementation","requirementLevel":"required","taskIds":["implement-a","implement-b","gate-goal"],"verificationRequirements":[{"requirementId":"check-1","requirementLevel":"required","kind":"test","description":"Tests pass"}]}],"taskHierarchy":{"parentOf":[]},"executionDag":{"dependsOn":[{"taskId":"implement-b","dependsOnId":"implement-a","requires":{"kind":"output-contract","label":"A output contract"}}]},"taskRelations":[],"inputRequirements":[]},"reason":{"text":"W2 Agent whiteboard change","sources":[]},"status":"candidate","issues":[],"submittedBy":{"schemaVersion":1,"runRef":{"aggregateType":"Run","projectId":"r4c-claim-project","goalId":"r4c-claim-goal","runId":"r4c-claim-id-1"},"sessionRef":{"projectId":"r4c-claim-project","sessionId":"session-a63653f966d3a789e16f89541345718a8be04480e0b416147c3c33b45da52c38"},"roleBinding":{"schemaVersion":1,"bindingId":"r4c-claim-binding","templateId":"builder","templateRevision":"1","bindingVersion":1,"policyRevision":"legacy-template"},"sessionGeneration":2,"entryGeneration":1,"authorizationRevision":3,"configurationRevision":"b2-host-config-1"}},"replayed":false,"cursor":"c0000000022"}: expected { status: 'committed', …(3) } to match object { status: 'rejected', …(1) }
+(14 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "not_found",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/W2-agent-whiteboard.test.ts:256:46
+    254|         now: () => '2026-09-26T00:00:00.000Z', eventId: () => `w2-outs…
+    255|       const result = await plans.proposePlan(f.ctxWork, request);
+    256|       expect(result, JSON.stringify(result)).toMatchObject({ status: '…
+       |                                              ^
+    257|         code: variant === 'initial' ? 'forbidden' : variant === 'forei…
+    258|       expect(commits, 'out-of-scope candidates never reach Store commi…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/7]⎯
+
+ FAIL  tests/work-graph/W2-agent-whiteboard.test.ts > W2 Agent authorization rejects > Agent propose rejects a v1 candidate before any Plan commit
+AssertionError: {"status":"committed","value":{"kind":"candidate_v2","ref":{"aggregateType":"PlanProposal","projectId":"r4c-claim-project","workspaceId":"r4c-claim-workspace","proposalId":"plan-proposal-a40fb54cfcff1f2ab940823b4ad40785"},"revision":1,"schemaVersion":2,"goalRef":{"aggregateType":"Goal","projectId":"r4c-claim-project","goalId":"r4c-claim-goal"},"basedOn":{"aggregateType":"PlanRevision","projectId":"r4c-claim-project","planId":"r4c-claim-plan"},"draft":{"schemaVersion":1,"planId":"w2-outside-scope-v1","planRevision":2,"goalId":"r4c-claim-goal","stages":[],"tasks":[{"taskId":"implement-a","title":"Implement A","requirementLevel":"required","taskKind":"work","disposition":"active","phase":"pending","scope":{"kind":"goal"}},{"taskId":"implement-b","title":"Implement B","requirementLevel":"required","taskKind":"work","disposition":"active","phase":"pending","scope":{"kind":"goal"}},{"taskId":"gate-goal","title":"Goal gate","requirementLevel":"required","taskKind":"gate","disposition":"active","phase":"pending","scope":{"kind":"goal"}}],"assignments":[{"taskId":"implement-a","role":"builder","instruction":"Implement A"},{"taskId":"implement-b","role":"builder","instruction":"Implement B"}],"obligations":[{"obligationId":"obligation-1","title":"Deliver implementation","requirementLevel":"required","taskIds":["implement-a","implement-b","gate-goal"],"verificationRequirements":[{"requirementId":"check-1","requirementLevel":"required","kind":"test","description":"Tests pass"}]}],"taskHierarchy":{"parentOf":[]},"executionDag":{"dependsOn":[{"taskId":"implement-b","dependsOnId":"implement-a","requires":{"kind":"output-contract","label":"A output contract"}}]}},"reason":{"text":"W2 Agent whiteboard change","sources":[]},"status":"candidate","issues":[],"submittedBy":{"schemaVersion":1,"runRef":{"aggregateType":"Run","projectId":"r4c-claim-project","goalId":"r4c-claim-goal","runId":"r4c-claim-id-1"},"sessionRef":{"projectId":"r4c-claim-project","sessionId":"session-a63653f966d3a789e16f89541345718a8be04480e0b416147c3c33b45da52c38"},"roleBinding":{"schemaVersion":1,"bindingId":"r4c-claim-binding","templateId":"builder","templateRevision":"1","bindingVersion":1,"policyRevision":"legacy-template"},"sessionGeneration":2,"entryGeneration":1,"authorizationRevision":3,"configurationRevision":"b2-host-config-1"}},"replayed":false,"cursor":"c0000000022"}: expected { status: 'committed', …(3) } to match object { status: 'rejected', …(1) }
+(14 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unsupported",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/W2-agent-whiteboard.test.ts:256:46
+    254|         now: () => '2026-09-26T00:00:00.000Z', eventId: () => `w2-outs…
+    255|       const result = await plans.proposePlan(f.ctxWork, request);
+    256|       expect(result, JSON.stringify(result)).toMatchObject({ status: '…
+       |                                              ^
+    257|         code: variant === 'initial' ? 'forbidden' : variant === 'forei…
+    258|       expect(commits, 'out-of-scope candidates never reach Store commi…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/7]⎯
+
+ FAIL  tests/work-graph/W2-agent-whiteboard.test.ts > W2 Agent authorization rejects > a Goal pin for another real Goal cannot stand in for the target Goal revision
+AssertionError: {"status":"committed","value":{"kind":"candidate_v2","ref":{"aggregateType":"PlanProposal","projectId":"r4c-claim-project","workspaceId":"r4c-claim-workspace","proposalId":"plan-proposal-2f8bea2af497f8bacafbb32af361e044"},"revision":1,"schemaVersion":2,"goalRef":{"aggregateType":"Goal","projectId":"r4c-claim-project","goalId":"r4c-claim-goal"},"basedOn":{"aggregateType":"PlanRevision","projectId":"r4c-claim-project","planId":"r4c-claim-plan"},"draft":{"schemaVersion":2,"planId":"w2-foreign-goal-pin-plan","planRevision":2,"goalId":"r4c-claim-goal","stages":[],"tasks":[{"taskId":"implement-a","title":"Implement A","requirementLevel":"required","taskKind":"work","disposition":"active","phase":"pending","scope":{"kind":"goal"}},{"taskId":"implement-b","title":"Implement B","requirementLevel":"required","taskKind":"work","disposition":"active","phase":"pending","scope":{"kind":"goal"}},{"taskId":"gate-goal","title":"Goal gate","requirementLevel":"required","taskKind":"gate","disposition":"active","phase":"pending","scope":{"kind":"goal"}}],"assignments":[{"taskId":"implement-a","role":"builder","instruction":"Implement A"},{"taskId":"implement-b","role":"builder","instruction":"Implement B"}],"obligations":[{"obligationId":"obligation-1","title":"Deliver implementation","requirementLevel":"required","taskIds":["implement-a","implement-b","gate-goal"],"verificationRequirements":[{"requirementId":"check-1","requirementLevel":"required","kind":"test","description":"Tests pass"}]}],"taskHierarchy":{"parentOf":[]},"executionDag":{"dependsOn":[{"taskId":"implement-b","dependsOnId":"implement-a","requires":{"kind":"output-contract","label":"A output contract"}}]},"taskRelations":[],"inputRequirements":[]},"reason":{"text":"W2 Agent whiteboard change","sources":[]},"status":"candidate","issues":[],"submittedBy":{"schemaVersion":1,"runRef":{"aggregateType":"Run","projectId":"r4c-claim-project","goalId":"r4c-claim-goal","runId":"r4c-claim-id-1"},"sessionRef":{"projectId":"r4c-claim-project","sessionId":"session-a63653f966d3a789e16f89541345718a8be04480e0b416147c3c33b45da52c38"},"roleBinding":{"schemaVersion":1,"bindingId":"r4c-claim-binding","templateId":"builder","templateRevision":"1","bindingVersion":1,"policyRevision":"legacy-template"},"sessionGeneration":2,"entryGeneration":1,"authorizationRevision":3,"configurationRevision":"b2-host-config-1"}},"replayed":false,"cursor":"c0000000022"}: expected { status: 'committed', …(3) } to match object { status: 'rejected', code: 'invalid' }
+(14 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "invalid",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/W2-agent-whiteboard.test.ts:269:44
+    267|     const result = await f.proposeAsWorkRun(f.futureDraft('w2-foreign-…
+    268|       { requestId: 'w2-foreign-goal-pin', expected });
+    269|     expect(result, JSON.stringify(result)).toMatchObject({ status: 're…
+       |                                            ^
+    270|   });
+    271|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/7]⎯
+
+ FAIL  tests/work-graph/W2-agent-whiteboard.test.ts > W2 Agent identity and replay > the same Run can propose two successive future plan versions
+AssertionError: a real older accepted source cannot create a new proposal after activePlan advances: expected { status: 'committed', …(3) } to match object { status: 'rejected', …(1) }
+(14 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "revision_conflict",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/W2-agent-whiteboard.test.ts:298:8
+    296|       { requestId: 'w2-agent-version-3-stale-source', expected: await …
+    297|     expect(stale, 'a real older accepted source cannot create a new pr…
+    298|       .toMatchObject({ status: 'rejected', code: 'revision_conflict' }…
+       |        ^
+    299|     const second = await f.proposeAsWorkRun(draft3, applied.value.ref,…
+    300|     expect(second, 'second future version commits from the same Run').…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/7]⎯
+
+ FAIL  tests/work-graph/W2-agent-whiteboard.test.ts > W2 Agent identity and replay > propose keeps the original AbortSignal when the caller replaces ctx.signal during a read
+AssertionError: {"status":"committed","value":{"kind":"candidate_v2","ref":{"aggregateType":"PlanProposal","projectId":"r4c-claim-project","workspaceId":"r4c-claim-workspace","proposalId":"plan-proposal-dedbc85cbdaf6aace8ddbb3b567691ea"},"revision":1,"schemaVersion":2,"goalRef":{"aggregateType":"Goal","projectId":"r4c-claim-project","goalId":"r4c-claim-goal"},"basedOn":{"aggregateType":"PlanRevision","projectId":"r4c-claim-project","planId":"r4c-claim-plan"},"draft":{"schemaVersion":2,"planId":"w2-context-propose-plan","planRevision":2,"goalId":"r4c-claim-goal","stages":[],"tasks":[{"taskId":"implement-a","title":"Implement A","requirementLevel":"required","taskKind":"work","disposition":"active","phase":"pending","scope":{"kind":"goal"}},{"taskId":"implement-b","title":"Context snapshot B","requirementLevel":"required","taskKind":"work","disposition":"active","phase":"pending","scope":{"kind":"goal"}},{"taskId":"gate-goal","title":"Goal gate","requirementLevel":"required","taskKind":"gate","disposition":"active","phase":"pending","scope":{"kind":"goal"}}],"assignments":[{"taskId":"implement-a","role":"builder","instruction":"Implement A"},{"taskId":"implement-b","role":"builder","instruction":"Context snapshot B"}],"obligations":[{"obligationId":"obligation-1","title":"Deliver implementation","requirementLevel":"required","taskIds":["implement-a","implement-b","gate-goal"],"verificationRequirements":[{"requirementId":"check-1","requirementLevel":"required","kind":"test","description":"Tests pass"}]}],"taskHierarchy":{"parentOf":[]},"executionDag":{"dependsOn":[{"taskId":"implement-b","dependsOnId":"implement-a","requires":{"kind":"output-contract","label":"A output contract"}}]},"taskRelations":[],"inputRequirements":[]},"reason":{"text":"W2 Agent whiteboard change","sources":[]},"status":"candidate","issues":[],"submittedBy":{"schemaVersion":1,"runRef":{"aggregateType":"Run","projectId":"r4c-claim-project","goalId":"r4c-claim-goal","runId":"r4c-claim-id-1"},"sessionRef":{"projectId":"r4c-claim-project","sessionId":"session-a63653f966d3a789e16f89541345718a8be04480e0b416147c3c33b45da52c38"},"roleBinding":{"schemaVersion":1,"bindingId":"r4c-claim-binding","templateId":"builder","templateRevision":"1","bindingVersion":1,"policyRevision":"legacy-template"},"sessionGeneration":2,"entryGeneration":1,"authorizationRevision":3,"configurationRevision":"b2-host-config-1"}},"replayed":false,"cursor":"c0000000022"}: expected { status: 'committed', …(3) } to match object { status: 'rejected', …(1) }
+(14 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "cancelled",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/W2-agent-whiteboard.test.ts:457:46
+    455|       }
+    456|       const result = await pending;
+    457|       expect(result, JSON.stringify(result)).toMatchObject({ status: '…
+       |                                              ^
+    458|       expect(ctx.signal.aborted).toBe(false);
+    459|       expect(controller.signal.aborted).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/7]⎯
+
+ FAIL  tests/work-graph/W2-agent-whiteboard.test.ts > W2 Agent identity and replay > apply keeps the original AbortSignal when the caller replaces ctx.signal during a read
+AssertionError: {"status":"committed","value":{"ref":{"aggregateType":"PlanRevision","projectId":"r4c-claim-project","planId":"w2-context-apply-plan"},"revision":1,"goalRef":{"aggregateType":"Goal","projectId":"r4c-claim-project","goalId":"r4c-claim-goal"},"planId":"w2-context-apply-plan","planRevision":2,"acceptedAt":"2026-09-26T00:00:00.000Z","effectiveCompletionPolicy":{"ref":{"aggregateType":"CompletionPolicyRevision","projectId":"r4c-claim-project","policyId":"r4c-claim-policy","revision":1},"digest":"c8fe2edcc2c8367e857f304ca5616ca5e46e76abc23d41e731eea524cfb0a6da"},"effectiveArchitectureBaseline":{"ref":{"aggregateType":"ArchitectureBaselineRevision","projectId":"r4c-claim-project","baselineId":"r4c-claim-baseline","revision":1},"digest":"28d46dd0b0ef6f9fc5b36b02f3cdddeedd2fdfc355f7cb16638c21616c868252"},"stages":[],"tasks":[{"taskId":"implement-a","title":"Implement A","requirementLevel":"required","taskKind":"work","disposition":"active","phase":"pending","scope":{"kind":"goal"}},{"taskId":"implement-b","title":"Context snapshot B","requirementLevel":"required","taskKind":"work","disposition":"active","phase":"pending","scope":{"kind":"goal"}},{"taskId":"gate-goal","title":"Goal gate","requirementLevel":"required","taskKind":"gate","disposition":"active","phase":"pending","scope":{"kind":"goal"}}],"assignments":[{"taskId":"implement-a","role":"builder","instruction":"Implement A"},{"taskId":"implement-b","role":"builder","instruction":"Context snapshot B"}],"obligations":[{"obligationId":"obligation-1","title":"Deliver implementation","requirementLevel":"required","taskIds":["implement-a","implement-b","gate-goal"],"verificationRequirements":[{"requirementId":"check-1","requirementLevel":"required","kind":"test","description":"Tests pass"}]}],"taskHierarchy":{"parentOf":[]},"executionDag":{"dependsOn":[{"taskId":"implement-b","dependsOnId":"implement-a","requires":{"kind":"output-contract","label":"A output contract"}}]},"schemaVersion":2,"taskRelations":[],"inputRequirements":[],"taskStateBasis":{"schemaVersion":1,"entries":[{"taskId":"gate-goal","planRef":{"aggregateType":"PlanRevision","projectId":"r4c-claim-project","planId":"r4c-claim-plan"}},{"taskId":"implement-a","planRef":{"aggregateType":"PlanRevision","projectId":"r4c-claim-project","planId":"r4c-claim-plan"}},{"taskId":"implement-b","planRef":{"aggregateType":"PlanRevision","projectId":"r4c-claim-project","planId":"w2-context-apply-plan"}}]}},"replayed":false,"cursor":"c0000000023"}: expected { status: 'committed', …(3) } to match object { status: 'rejected', …(1) }
+(21 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "cancelled",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/W2-agent-whiteboard.test.ts:457:46
+    455|       }
+    456|       const result = await pending;
+    457|       expect(result, JSON.stringify(result)).toMatchObject({ status: '…
+       |                                              ^
+    458|       expect(ctx.signal.aborted).toBe(false);
+    459|       expect(controller.signal.aborted).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/7]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  7 failed | 19 passed (26)
+   Start at  10:19:56
+   Duration  1.15s (transform 486ms, setup 0ms, import 669ms, tests 396ms, environment 0ms)
+

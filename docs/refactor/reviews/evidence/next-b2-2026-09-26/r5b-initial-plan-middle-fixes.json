@@ -1,0 +1,47 @@
+{
+  "lane": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r5b-initial-plan-skeleton-20260926",
+  "session": "session-7c0cb8f2-6261-4566-93f1-ceb732a1d4c9",
+  "beforeStopHashes": {
+    "coding-platform/next/src/contracts/initial-planning.ts": "bae957a9865e3f1d001c5729116f7dba8aff0b10a1e465faaa2c40efe32cb427",
+    "coding-platform/next/src/core/work-graph/tasks/plan-contracts.ts": "1641f74cdacc31d01f6eef2ee6047849bbbd4aeb6b9a35844af1925040d89f39",
+    "coding-platform/next/src/core/work-graph/tasks/initial-plan.ts": "e34e03497bd4331f439360591c87d684bcaadf25f221a91bf3fb92dd4c28b15c",
+    "coding-platform/next/src/core/work-graph/tasks/plan-service.ts": "916752e6205007eb8f01c082b145f9411f5990ffedb687a5613a867e03a93d79",
+    "coding-platform/next/src/business/workflow/contracts.ts": "3c0c86df9d0d6f074108f69ec21cadb7c3a799912da34f4748a9d21a31f9dc79",
+    "coding-platform/next/src/business/workflow/ports.ts": "fce5f74ee00934b11b8fc7838da17caea7a132f823990f52a8c6420b8497b29b",
+    "coding-platform/next/src/business/workflow/workflow.ts": "0d8c7a35b5943bde7ddec627e1b85c1c37ba095ba00eb5c1335652923ccbfd1b",
+    "coding-platform/next/src/composition/create-platform.ts": "4828e063017062f0d68e7057e99951739c21ab90890daa98f6968bdb4c6584de",
+    "coding-platform/next/src/core/agent-runtime/query-preparation.ts": "4fa328a6f49ee67957773c038b43e2d00544de163d5faecf661cc8892a8551e7",
+    "coding-platform/next/resources/skills/platform-adviser/content.md": "1331403c6dc5a3bf6030338fb4df5792d7a906cdcca4d497428d953922a81e21",
+    "coding-platform/next/tests/work-graph/R5b-initial-plan.test.ts": "200ae38ec728c9746891d6c71da1eb8dc57b13cf3102e9c797db3e960d4ece57",
+    "coding-platform/next/tests/business/R5b-initial-planning-workflow.test.ts": "6cff2346f2fafd484f779fe36677c9109472cc3dfab971d4532e15ac71df0d9d"
+  },
+  "afterReviewerHashes": {
+    "coding-platform/next/src/contracts/initial-planning.ts": "5003a6050f979302f79daef3c57e8e1b31be6fccecb9eaa7725ce0b33c17822d",
+    "coding-platform/next/src/core/work-graph/tasks/plan-contracts.ts": "1641f74cdacc31d01f6eef2ee6047849bbbd4aeb6b9a35844af1925040d89f39",
+    "coding-platform/next/src/core/work-graph/tasks/initial-plan.ts": "69c497ff34fd12e19be28580f81b3b9fe656dd0555d20b35f3ae346886cc9942",
+    "coding-platform/next/src/core/work-graph/tasks/plan-service.ts": "916752e6205007eb8f01c082b145f9411f5990ffedb687a5613a867e03a93d79",
+    "coding-platform/next/src/business/workflow/contracts.ts": "3c0c86df9d0d6f074108f69ec21cadb7c3a799912da34f4748a9d21a31f9dc79",
+    "coding-platform/next/src/business/workflow/ports.ts": "fce5f74ee00934b11b8fc7838da17caea7a132f823990f52a8c6420b8497b29b",
+    "coding-platform/next/src/business/workflow/workflow.ts": "9e319a058b89eef45b435b8bb39d92ed71e20738ed48634bf3c0c76347ec96a8",
+    "coding-platform/next/src/composition/create-platform.ts": "4828e063017062f0d68e7057e99951739c21ab90890daa98f6968bdb4c6584de",
+    "coding-platform/next/src/core/agent-runtime/query-preparation.ts": "8af2c90383c8b53eb3cdd200d1ffb7575e84c3536e2ecc21b3909d4cd437440c",
+    "coding-platform/next/resources/skills/platform-adviser/content.md": "071d074e6aaeb5b43cef7a0fa0487492afb07df6f605ee766dc62656da47d55a",
+    "coding-platform/next/tests/work-graph/R5b-initial-plan.test.ts": "cddada0a9ff4d171b946d09bdf69be2eae4b4f9be79c571019efcf44e9ebf057",
+    "coding-platform/next/tests/business/R5b-initial-planning-workflow.test.ts": "37db4845476aa2d00812740b4370b2932c17dcba32bfeed7f5e3639b460eb985"
+  },
+  "fixes": [
+    "Workflow new branches returned to stage-one unsupported; prior advanceWork restored byte-for-byte",
+    "Identity documentation uses saved Job project/goal/intentId; versions/digest retained in origin",
+    "Original candidate request saved and replayed in same first chain",
+    "Second normal chain governance moved after formal answer and candidate before adoption"
+  ],
+  "resourceLock": {
+    "path": "coding-platform/next/runtime-assets.json",
+    "mainBeforeSha256": "af9facb81fc25f01285a13364a09c78dca97ba61cc5d01bf8726e8a7f778b0fe",
+    "laneAfterSha256": "b9e8a1c43feb3e46fb3fe1fbaf43f67ff78359ca58b844bc057f4c1727684aa0",
+    "oldAdviserSha256": "98a33f4a2d4e3822b9cd5f6fb9e3efc736ebcb956b8a6c5a1ab86c24e9834000",
+    "newAdviserSha256": "071d074e6aaeb5b43cef7a0fa0487492afb07df6f605ee766dc62656da47d55a",
+    "snapshotHashesUpdatedOnly": true,
+    "mainPendingExactImport": true
+  }
+}

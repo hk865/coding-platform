@@ -1,0 +1,64 @@
+{
+  "status": "skeleton_test_convergence_stopped_ready_for_root_freeze",
+  "started": "2026-09-26T15:37:47.966859+00:00",
+  "lane": "r4-terminal-history-skeleton-20260926",
+  "sessionId": "session-a31a9261-27dd-4a32-8565-31d07a005ccd",
+  "task": "docs/refactor/tasks/R4-terminal-history-skeleton.md",
+  "taskSha256": "44d9064369b194f5ee1c91dd8992d4178577c98ab82c055ac1af1e26d58e9e27",
+  "scope": "docs/refactor/tasks/R4-terminal-history-skeleton-scope.json",
+  "scopeSha256": "626cf2887788df4c7bca326f0d0b04e035e77ecd4f1c76d6a0fb09771c733c9f",
+  "manifestSha256": "fd49fb532040a2632c089dde88e02c40d5969147acaf8d3357db9f8e1ea7e063",
+  "originalAllowedHashesMatchPreparation": true,
+  "fixedChecks": [
+    "next-terminal-history",
+    "next-types",
+    "next-kernel-patch"
+  ],
+  "phase": "skeleton only; version_unsupported new projector; no algorithm implementation",
+  "import": "withheld pending root middle review",
+  "execSession": 77290,
+  "result": {
+    "exitCode": 0,
+    "session": "session-a31a9261-27dd-4a32-8565-31d07a005ccd",
+    "counts": {
+      "session": 1,
+      "status": 174,
+      "thinking": 86,
+      "text": 5,
+      "tool_call": 114,
+      "tool_result": 114,
+      "final": 1
+    },
+    "finished": 1790437536.1872153,
+    "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4-terminal-history-skeleton-20260926/attempt-1790437058700804475"
+  },
+  "review": "r4-terminal-history-skeleton-review.json",
+  "testConvergence": {
+    "taskSection": 6,
+    "taskSha256": "8203b81ca5ed5baf5fa5a3ffb42cafe779e41cd5cc1febf456510fd1dbc81c33",
+    "sessionId": "session-a31a9261-27dd-4a32-8565-31d07a005ccd",
+    "actualScope": [
+      "coding-platform/next/tests/kernel/R4-terminal-history.test.ts",
+      "coding-platform/next/tests/runtime/R4-control-runtime.test.ts"
+    ],
+    "production": "all 12 candidate files frozen"
+  },
+  "testConvergenceResult": {
+    "exitCode": 0,
+    "session": "session-a31a9261-27dd-4a32-8565-31d07a005ccd",
+    "counts": {
+      "session": 1,
+      "status": 42,
+      "thinking": 20,
+      "text": 3,
+      "tool_call": 23,
+      "tool_result": 23,
+      "final": 1
+    },
+    "finished": 1790438201.4975562,
+    "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4-terminal-history-skeleton-20260926/attempt-1790438056724534052"
+  },
+  "finalReview": "r4-terminal-history-skeleton-final-review.json",
+  "finalReviewSha256": "068313c386c34dd669ca01567f7f3cc8214f8ee3a967911e3feba71b97cc527d",
+  "finalTaskSha256": "e4ee0a912ddca2f0bd440943dd4871a57e91a4ecb3781ed540689c476ce0b0cc"
+}

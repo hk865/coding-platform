@@ -1,0 +1,35 @@
+{
+  "production": {
+    "files": 151,
+    "lines": 25234
+  },
+  "sharedContractsSubset": {
+    "files": 56,
+    "lines": 3772
+  },
+  "testsTs": {
+    "files": 65,
+    "lines": 13911
+  },
+  "previousProduction": {
+    "files": 147,
+    "lines": 24412
+  },
+  "previousTestsTs": {
+    "files": 63,
+    "lines": 12819
+  },
+  "protectedOldFiles": 1313,
+  "oldChanged": [],
+  "frozenFiles": 134,
+  "frozenChanged": [],
+  "isolated": {
+    "files": 62,
+    "passed": 473
+  },
+  "architecture": {
+    "modules": 5,
+    "allowedEdges": 8,
+    "observedEdges": 5
+  }
+}

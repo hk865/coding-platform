@@ -1,0 +1,10 @@
+{
+  "checked": 1313,
+  "changedOrMissing": [],
+  "added": [],
+  "excludedDirectories": [
+    "node_modules",
+    "dist",
+    ".git"
+  ]
+}

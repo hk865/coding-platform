@@ -1,0 +1,9 @@
+# M1 独立审阅返修
+
+主审实跑新增3项反例后当前27pass/3fail，全部测试只读已刷新同lane；scope保持原3文件。原地修复，不改测试或增加第二授权算法。
+
+1. grant/revoke真实commit已成功但回执传输抛错或返回unavailable：不能直接throw或宣称未提交。按同一identity/fingerprint lookup，只在找到真实持久receipt且原事件严格匹配时恢复committed/replayed；lookup未找到/不可用返回unavailable并说明提交结果未知，不伪造成功或安全重试。保留已有同请求竞争与late cancel语义。两个写入口共享适用恢复逻辑，不仅修正单测试入口。
+2. Source provider在首次await前快照query完整scope/sourceSet/paths，保留signal。不能open后再读取可变query.sourceSet。真实两源集测试证明原pin不能被等待期间变更替换。
+3. 每个成功获得的access都要release，最后authorization/release期间取消后不返回sourced。source read没有不可逆已提交成果；finally完成后检查原signal并返回现有取消/非sourced语义。不能finally里return掩盖真实错误；上游grant写已commit的late cancel仍返回committed，两种时序不要混淆。
+
+独立反例之外继续保持当前真实owner/Goal/Workspace/reader guards、Host-only、同一个来源provider及report不变成验证证据。测试next-material-grants、next-types与必要material-readers回归，报告实际结果并停止等主审。

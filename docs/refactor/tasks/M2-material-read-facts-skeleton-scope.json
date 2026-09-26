@@ -1,0 +1,15 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/materials/contracts.ts",
+    "coding-platform/next/src/core/work-graph/materials/material-facts-service.ts",
+    "coding-platform/next/tests/work-graph/M2-material-read-facts.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

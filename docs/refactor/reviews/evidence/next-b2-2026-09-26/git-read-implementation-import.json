@@ -1,0 +1,22 @@
+{
+  "lane": "r2e-git-read-compare-implementation-20260926",
+  "imported": {
+    "coding-platform/next/src/core/workspace/git-read.ts": "0c43ef82c558dd9e2d6ae76cac7f2222068bf61d2e0add93c61dc3670c5ba909"
+  },
+  "reviewedCandidateHash": "cfcfeddb4c84e8ccfe3708b6e7b63f96d4ea11e9f7a198ce04772a8f8347e582",
+  "rootOnlyCommentCorrection": {
+    "old": " * Establish that the bound root itself is the Git work-tree top-level. The returned text from\n * `--show-toplevel` is only trusted after its directory identity matches the still-open root\n * handle, so a parent repository (unregistered subdirectory) or an alias is rejected instead of\n * reading another tree. A bare repository and a non-repository are unsupported.\n",
+    "reason": "same inode alias is accepted; only different authorized root identity is rejected"
+  },
+  "independentChecks": {
+    "files": 12,
+    "testsPassed": 112,
+    "typesExitCode": 0
+  },
+  "outsideScope": [],
+  "mainUnchangedBeforeImport": true,
+  "limits": [
+    "No partial/promisor fetch fixture claimed; current patched Ubuntu Git supports GIT_NO_LAZY_FETCH.",
+    "Fixed commit read/compare only; no revision write or mixed capture/git pair."
+  ]
+}

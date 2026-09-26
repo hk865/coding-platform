@@ -1,0 +1,102 @@
+{
+  "status": "ready_for_root_final_review_import_withheld",
+  "preparedAt": "2026-09-26T16:01:57.564402+00:00",
+  "lane": "r4-terminal-history-implementation-20260927",
+  "taskSha256": "34e03ff12475408fa0273b4b44f030b3bf37f689633649568640ccbc02c66510",
+  "scopeSha256": "108b2be1abf7fb2ee86d41c1478dfa62af968364bdaeb7fbec78e1b09ec337c8",
+  "originalAllowedHashes": {
+    "coding-platform/next/vendor/coding-agent/patches/core/ports/session_store/session-history.ts": "6284efab839fe6e2c2b1d8e24a9cb117811532721e02e8b8fbd5b4016449c04a",
+    "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.js": "8e8330131f68508b1672bfa9968e20c5513fc758253e7c087e79c0b25ecf2785",
+    "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.js.map": "7e95215f51fefc5ecb857ddd81433c35f07d7e94420082dce4d277f747ad16ef",
+    "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.d.ts": "49d890d64299a3466ca2f8b37ba1c34b2b5e14997a0edbccc7cf10a1cd1a105b",
+    "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.d.ts.map": "d4c35bc805ed868c9c6e99b715613936d72dee10d02de60652407ac79c07aa65",
+    "coding-platform/next/src/core/agent-runtime/execution-observation.ts": "27cafdbc33e8c0908ef58b4ed71c915d150897d22438eed544993d7023be4945"
+  },
+  "frozenTestHashes": {
+    "coding-platform/next/tests/kernel/R4-terminal-history.test.ts": "cdd75d64a937a295e4075629937ba7db0550bf275830bb9d200568b93a205985",
+    "coding-platform/next/tests/runtime/R4-control-runtime.test.ts": "cbd89f515cfb1df72a0784ea0d60b84f1398700a5618782e0ff2e35529aa0838",
+    "coding-platform/next/tests/kernel/B2-history-public-export.test.ts": "42a8a77df76a869967bf26936ac8b481b48344e1850f94b98e6771683b0f397e"
+  },
+  "skeletonImportSha256": "847f23f042d446c211d840acefc6a28356080bf8ac5984328519a7e73a1ab93b",
+  "implementationScope": "six production files only; original manifest will remain unchanged",
+  "manifestSha256": "4bfa9b58a5047b03d8c649e94ff9c615cd4cb7c58f93d63b0b8073d3d747c4ee",
+  "sessionId": "session-9dfe3c17-fcab-45b5-b05d-82fb5af90ca5",
+  "execSessionId": 52384,
+  "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4-terminal-history-implementation-20260927/attempt-1790438549839425986",
+  "result": {
+    "exitCode": 0,
+    "session": "session-9dfe3c17-fcab-45b5-b05d-82fb5af90ca5",
+    "counts": {
+      "session": 1,
+      "status": 102,
+      "thinking": 50,
+      "text": 8,
+      "tool_call": 70,
+      "tool_result": 70,
+      "final": 1
+    },
+    "finished": 1790438807.7046158,
+    "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4-terminal-history-implementation-20260927/attempt-1790438549839425986"
+  },
+  "independentChecks": {
+    "next-terminal-history": {
+      "exit": 0,
+      "tests": 5,
+      "log": "r4-terminal-history-implementation-tests.log"
+    },
+    "next-kernel-history-public": {
+      "exit": 0,
+      "tests": 10,
+      "log": "r4-terminal-history-implementation-public-tests.log"
+    },
+    "next-types": {
+      "exit": 0,
+      "log": "r4-terminal-history-implementation-types.log"
+    },
+    "next-kernel-patch": {
+      "exit": 0,
+      "sources": 7,
+      "artifacts": 28,
+      "allMatch": true,
+      "evidence": "r4-terminal-history-implementation-repro.json"
+    }
+  },
+  "audit": "r4-terminal-history-implementation-audit.json",
+  "candidateHashes": "r4-terminal-history-implementation-candidate-hashes.json",
+  "diff": "r4-terminal-history-implementation.diff",
+  "frozenTestsUnchanged": true,
+  "manifestUnchanged": true,
+  "import": "withheld pending root review",
+  "repair": {
+    "at": "2026-09-26T16:10:02.385255+00:00",
+    "taskSha256": "46c772a3dc2368d7203eb87ac3e64fa9cd0ec44790f25f92d1a063e8a2a83db0",
+    "sessionId": "session-9dfe3c17-fcab-45b5-b05d-82fb5af90ca5",
+    "issue": "Pure tool-only assistant becomes empty after all pending calls are abandoned before first start; next ContextBuilder schema rejects projected shell.",
+    "sourceBeforeSha256": "ff23182b6091353a80ddb4aeea468a8d7e367ee624b8bcec129a38a811fb10d2",
+    "frozenObserverSha256": "779044403c37bb53777529cbcf36ae89bfad533f20f91d50a1b940de7b4abfdb",
+    "actualWriteScope": "managed source and its four generated artifacts only",
+    "tests": "unchanged fixed tests only",
+    "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4-terminal-history-implementation-20260927/attempt-1790439007282675080",
+    "execSessionId": 18778
+  },
+  "finalResult": {
+    "exitCode": 0,
+    "session": "session-9dfe3c17-fcab-45b5-b05d-82fb5af90ca5",
+    "counts": {
+      "session": 1,
+      "status": 20,
+      "thinking": 9,
+      "text": 4,
+      "tool_call": 8,
+      "tool_result": 8,
+      "final": 1
+    },
+    "finished": 1790439053.9028692,
+    "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4-terminal-history-implementation-20260927/attempt-1790439007282675080"
+  },
+  "finalReview": "r4-terminal-history-implementation-final-review.json",
+  "finalReviewSha256": "426747fcb568b03b27d7eeef1c8d156de319cebddc9bc05e66ce1cf3f090a216",
+  "finalHashes": "r4-terminal-history-implementation-final-candidate-hashes.json",
+  "finalHashesSha256": "91e99b7b4726af6f644948ebee4a49cfee0da58961381895d5345b0d6affb55c",
+  "independentSourceReviewComplete": true
+}

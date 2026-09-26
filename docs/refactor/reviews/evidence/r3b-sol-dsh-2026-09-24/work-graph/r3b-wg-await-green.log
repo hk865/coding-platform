@@ -1,0 +1,27 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  08:13:27
+   Duration  125ms (transform 34ms, setup 0ms, import 50ms, tests 3ms, environment 0ms)
+
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed | 3 skipped (10)
+   Start at  08:13:27
+   Duration  139ms (transform 44ms, setup 0ms, import 60ms, tests 5ms, environment 0ms)
+
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  08:13:27
+   Duration  144ms (transform 44ms, setup 0ms, import 58ms, tests 4ms, environment 0ms)
+

@@ -1,0 +1,81 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R3c-task-inputs.test.ts (2 tests | 2 failed) 29ms
+   × memory: exact input is current while producer runs; unrelated inputs stay not_checked 20ms
+   × sqlite: exact input is current while producer runs; unrelated inputs stay not_checked 8ms
+ ❯ tests/work-graph/R3c-task-relations.test.ts (2 tests | 2 failed) 23ms
+   × memory: v2 relations and exact inputs survive adoption, replay and reopen without material reads 14ms
+   × sqlite: v2 relations and exact inputs survive adoption, replay and reopen without material reads 9ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R3c-task-inputs.test.ts > memory: exact input is current while producer runs; unrelated inputs stay not_checked
+ FAIL  tests/work-graph/R3c-task-inputs.test.ts > sqlite: exact input is current while producer runs; unrelated inputs stay not_checked
+AssertionError: promise rejected "TypeError: Cannot read properties of null…" instead of resolving
+ ❯ tests/work-graph/R3c-task-inputs.test.ts:219:83
+    217|     const input = { goalRef: goal.value.ref, planRef, taskId: 'consume…
+    218|     for (const malformed of [null, undefined, [], 7]) {
+    219|       await expect(plans.readTaskInput(ctx, malformed as unknown as ty…
+       |                                                                                   ^
+    220|         .resolves.toMatchObject({ status: 'rejected', code: 'invalid' …
+    221|     }
+
+Caused by: TypeError: Cannot read properties of null (reading 'goalRef')
+ ❯ Object.readTaskInput src/core/work-graph/tasks/plan-service.ts:968:29
+ ❯ tests/work-graph/R3c-task-inputs.test.ts:219:26
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/work-graph/R3c-task-relations.test.ts > memory: v2 relations and exact inputs survive adoption, replay and reopen without material reads
+AssertionError: expected { status: 'committed', …(3) } to match object { status: 'rejected', code: 'invalid' }
+(13 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "invalid",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/R3c-task-relations.test.ts:155:31
+    153|         input: { goalRef: goal.value.ref, basedOn: null, draft: malfor…
+    154|           reason: { text: name, sources: [] } } });
+    155|       expect(malformedResult).toMatchObject({ status: 'rejected', code…
+       |                               ^
+    156|     }
+    157|     const proposedDraft = draft();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/work-graph/R3c-task-relations.test.ts > sqlite: v2 relations and exact inputs survive adoption, replay and reopen without material reads
+AssertionError: expected { status: 'committed', …(3) } to match object { status: 'rejected', code: 'invalid' }
+(13 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "invalid",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/R3c-task-relations.test.ts:155:31
+    153|         input: { goalRef: goal.value.ref, basedOn: null, draft: malfor…
+    154|           reason: { text: name, sources: [] } } });
+    155|       expect(malformedResult).toMatchObject({ status: 'rejected', code…
+       |                               ^
+    156|     }
+    157|     const proposedDraft = draft();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+
+ Test Files  2 failed | 4 passed (6)
+      Tests  4 failed | 8 passed (12)
+   Start at  21:15:19
+   Duration  1.42s (transform 494ms, setup 0ms, import 867ms, tests 93ms, environment 0ms)
+

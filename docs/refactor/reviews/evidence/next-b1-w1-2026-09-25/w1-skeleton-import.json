@@ -1,0 +1,65 @@
+{
+  "changes": [
+    {
+      "path": "coding-platform/next/src/contracts/plan.ts",
+      "before": "b2ef25a46ba724189cdb02c433dbf74c4cb9511ba5e87883ad932a924e196b1c",
+      "after": "93b7c26a348f1487127d9db1ac440a96e1f599d494c5f6cba56616d8d98ecdaf"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-commit-compiler.ts",
+      "before": "a092054b0c3d0e37531fe1887a94337d3a002679e5833625692e2162111665ac",
+      "after": "7bbc2fb4adcb539647a403a135b5b7a2a83223aacad8868a2421e10992527070"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+      "before": "b34cd8944bac3b0832a61af97e1a3e7c1341007be56fe94049f7e73c3ec0f854",
+      "after": "e385eb73f3ed971155f8f23377246d5e0eb557278b182f5c6d64d88fe126e238"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-record-codecs.ts",
+      "before": "8594c6c651fe1f9a1b3b7e5b4bfe71410392cd9968a8e4810b8aee0aa94f3048",
+      "after": "02b612c43f72649ec55d9edb7425415fa960fe3b2a9ef0762b140ae25c4aeb0f"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-service.ts",
+      "before": "1af103d1b996df5427812c2e1a0b85e29f0bd721e6e4ecdf7f8e526141e25a76",
+      "after": "8b10913eafee30306d8f58760c9c057992d05c3d526852f20da7a689b5a71156"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-task-basis.ts",
+      "before": "07c42c4cc86b40c79190419f60c54000a84b15bed74683b4e5598531f941decb",
+      "after": "c98c4140ccee28cabb89c0e77613c254bd86da1ee17814e3e9f26b8cbac83cb5"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-validation.ts",
+      "before": "3535a6e3c3c7c0af8f7c26e8fe686a4614cf3e8bf4184e4d4805509568b3f7c1",
+      "after": "b887a8165e6f9fa67cffe4f44286a5e245f73fd9d2d064113c4a6c692833adb9"
+    },
+    {
+      "path": "coding-platform/next/tests/composition/W1-future-plan-platform.test.ts",
+      "before": "4b6d8e41444dbe66024f76439c8ed78f220582bbc8f175da758e5a2c8c53280a",
+      "after": "01ac2478ee3443268d38f17162d67e3d8449f29cfe7ad717214dc2c579b01373"
+    },
+    {
+      "path": "coding-platform/next/tests/work-graph/W1-future-plan.test.ts",
+      "before": "25cfe00838d4fba6154aa5bc665b06edb1c7d79e5e0ea1511a529870990f67cc",
+      "after": "24fc8bc123d36b07ecdd5459f8db66c8a831abed2206c2fe072797b381bf9621"
+    }
+  ],
+  "scope": {
+    "changed": [
+      "coding-platform/next/src/contracts/plan.ts",
+      "coding-platform/next/src/core/work-graph/tasks/plan-commit-compiler.ts",
+      "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+      "coding-platform/next/src/core/work-graph/tasks/plan-record-codecs.ts",
+      "coding-platform/next/src/core/work-graph/tasks/plan-service.ts",
+      "coding-platform/next/src/core/work-graph/tasks/plan-task-basis.ts",
+      "coding-platform/next/src/core/work-graph/tasks/plan-validation.ts",
+      "coding-platform/next/tests/composition/W1-future-plan-platform.test.ts",
+      "coding-platform/next/tests/work-graph/W1-future-plan.test.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "status": "Imported for final root test corrections before freeze"
+}

@@ -1,0 +1,7 @@
+2026-09-26T04:49:10.372Z
+ProcessSandbox.probe performs the real bwrap version query and unchanged Kernel isolation canary.
+{"available":true,"version":"bwrap-m3-v4:bubblewrap 0.9.0","bwrapPath":"/usr/bin/bwrap","reason":null}
+Bounded command runs ONLY inside the available ProcessSandbox; no direct-shell fallback.
+{"exitCode":0,"signal":null,"timedOut":false,"cancelled":false,"stdout":{"text":"R3E_PROCESS_SANDBOX_OK\n","totalBytes":23,"truncated":false},"stderr":{"text":"","totalBytes":0,"truncated":false},"effects":{"sideEffect":"possible","changedPaths":[],"workspaceRevision":"8c7ad8e8b607e5c822d2cb198ac406df4c19f2faf582bc6c919810a422402d7c","artifactRefs":[]},"sandboxProfileVersion":"bwrap-m3-v4:bubblewrap 0.9.0","timings":{"snapshotBeforeMs":2.7548069999999996,"executionMs":7.297618,"snapshotAfterMs":0.22944200000000592}}
+{"temporaryWorkspaceRemoved":true,"temporaryScriptRemoved":true,"kernelOwnership":"WorkspaceSandbox/ProcessSandbox have no close API; ProcessSandbox owns and closes the inherited root handle in its finally."}
+2026-09-26T04:49:10.405Z

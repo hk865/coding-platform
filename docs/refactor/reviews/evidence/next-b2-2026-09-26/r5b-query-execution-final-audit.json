@@ -1,0 +1,13 @@
+{
+  "changed": [
+    "coding-platform/next/src/composition/create-platform.ts",
+    "coding-platform/next/src/core/agent-runtime/query-execution.ts",
+    "coding-platform/next/src/core/agent-runtime/query-observation.ts",
+    "coding-platform/next/src/core/agent-runtime/query-preparation.ts",
+    "coding-platform/next/src/core/agent-runtime/source-capture-access.ts",
+    "coding-platform/next/src/core/work-graph/queries/query-execution.ts",
+    "coding-platform/next/src/core/work-graph/source-authority-reader.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

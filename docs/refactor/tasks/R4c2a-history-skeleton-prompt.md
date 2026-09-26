@@ -1,0 +1,12 @@
+W=/home/hyh001/projects/coding-platform；T=W/coding-platform/next。按用户授权：架构优先、性能和复用优先。本阶段只写骨架和行为测试，完成后停止交 Astra 审核；不得直接实现。之后才是单独实现阶段，测试/契约会只读。
+先读现有路径：docs/PRODUCT.md相关执行/并行语义；docs/refactor/ARCHITECTURE.md目标边界；docs/refactor/IMPLEMENTED-CAPABILITIES.md总览及WG5/WG6/RT1/RS1；docs/refactor/modules/core/{work-graph,agent-runtime}.md执行章节；docs/refactor/DSH-WORKFLOW.md；本批两个 *contracts.ts。不能把旧文档草案解释为新的限制。
+宽读窄写。先沿源码核对并报告“需求 → 已有符号 → 最小接线 → 行为测试”，不要重复新建解释文档。无新Manager/索引/持久表/Repository/锁，无旧src import。源码只允许scope内文件；不要修改契约/组合根/现有测试。不得提交、装依赖、读取凭据。骨架真实返回unsupported，行为测试应因unsupported而红，typecheck须过；不要skip/todo/伪造service返回。外部系统可用已有真实存储加可控模型响应测试，不能访问模型网络。
+本批 B：定向原始Kernel执行历史。冻结 src/core/agent-runtime/execution-history-contracts.ts；工厂 createExecutionHistoryReader(deps):ExecutionHistoryPort，生产文件 observation-recovery.ts。本批只按identity筛原始证据，不能实现状态归约/entry/恢复/终态判定。
+仅组合既有 SessionOperationsPort.readSessionHistory，每次最多一次委托，limit为扫描原始行数1..200，不循环填满命中数。保留原entry body/source/recordId/cursor，不复制数据库/会话日志、不重新打开KernelStore或创建新Session。权限、映射、原会话头、上界都由原history owner验证。给定sessionRef由Host授权；request里的runId/turnId只作筛选，不证明对应某platform Run/TaskClaim。缺记录=本页未观察到，绝不等于从未执行，也不决定reexecute。
+turn.started 用实际payload.run identity精确匹配runId+turnId；agent.event用实际event meta身份精确匹配；session.created不作为执行记录。用冻结Kernel公共sessionRecordSchema验证解包，不导入私有路径；ArtifactRef body无法解析时unsupported，损坏unavailable，不能默认empty。忽略其他执行的正常记录。page.items可空且nextCursor仍继续前进；basis用原Session读取水位、不升级成完成历史边界。
+自己的nextCursor只封装执行identity+底层page.nextCursor（还应绑定SessionRef，底层rawCursor已绑定principal/adapter/session/upper）。拒绝改目标/改Session续页，畸形cursor invalid。第一调用afterCursor null，throughCursor原样交底层；后续原边界由原rawcursor固定，新追加尾部不能混入。同步隔离ctx和request，保留原signal，await返回后取消拒绝。始终传播底层not_found/not_ready/rejected，不能吞异常成空页。
+性能事实：冻结Kernel SqliteStores.read内部仍全Session物化后分页；本批只能承诺输出和上层委托次数有界，不能声称物理I/O已分页。单次JSON解码对原始页可接受，不复制私有history逻辑。public resumeCodingAgent只选最新Turn，不要碰恢复逻辑。
+测试tests/runtime/R4c-execution-history.test.ts：复用R4b session与R4c-session-continuity现有真实SQLite/Kernel/可控ModelClient调用模式，确保实际Kernel至少两Turn能定向读旧执行；增加单page spy证明稀疏页不循环/zero-match页推进、身份游标换target拒绝、原样证据与稳定上界、底层拒绝/损坏/取消、外部输入await后突变。真实链检查掉bestEffort observer后仍读持久原证据。不要拷贝整原套件，少量高价值行为即可。
+运行 python3 tools/dsh-refactor/check.py next-types 和 next-execution-history；返回复用分析、骨架与测试结果，停止。
+
+审前已核定补充：turn.started identity准确字段为payload.run.runId及payload.run.turn.turnId；agent.event为payload.event.meta.runId/turnId。新nextCursor必须包装底层page.nextCursor，不是最后命中entry.cursor。底层throughCursor指定其position，basis.cursor不等于整段头；不解析改写内层。解析时核recordId/position/sessionId与entry source及外壳一致，损坏不能被过滤掉。

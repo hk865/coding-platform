@@ -1,0 +1,41 @@
+{
+  "lane": "w2-agent-whiteboard-skeleton-20260926",
+  "middleReview": {
+    "tests": 25,
+    "passed": 7,
+    "unsupported": 18,
+    "types": "pass"
+  },
+  "files": [
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-contracts.ts",
+      "before": "191f3d1e3361fb98d193bc2e82430050e868f8c6a8a1064a25b37bf99b384938",
+      "after": "9704000276fbafbd5fe7bca0b052bb9202d14dac4e6a1d362f033992feb8dbe5"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-record-codecs.ts",
+      "before": "3f5c351c15ec802f882d7d62bac91527d76754cc507b145306404aa98da99cbf",
+      "after": "ee31141d85acd2ca527cd29ac39db141374ddd8148b391f498c41f982f0b0982"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-service.ts",
+      "before": "14910fac47c4072f1cff61e1e70e513c18fb34c5d0d4a608c7f0e8e7f8292800",
+      "after": "f0b51a2637558249f299dc568314d15fd131bf54d987f6a617d90bf380f7d0d1"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-write-admission.ts",
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "d745fafb977622304cec647ec058512890835504253845fee3a67843e43e8c5c"
+    },
+    {
+      "path": "coding-platform/next/tests/helpers/W2-whiteboard-fixture.ts",
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "60f4998e5d9e3938a520c4ddd25093edf78d8b42ada31424d3e6e9ac287541f6"
+    },
+    {
+      "path": "coding-platform/next/tests/work-graph/W2-agent-whiteboard.test.ts",
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "bdd36971d4157f7c0f4e6776ec5bc8cc5c97a05228db6376c4c5897133db2d7c"
+    }
+  ]
+}

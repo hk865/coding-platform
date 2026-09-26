@@ -1,0 +1,137 @@
+{
+  "lane": "r5b-query-execution-skeleton-20260926",
+  "session": "session-e080cca8-b961-4432-8276-43862a939ca9",
+  "stage": "skeleton frozen; new algorithms remain unsupported",
+  "files": [
+    {
+      "path": "coding-platform/next/src/contracts/query-job.ts",
+      "before": "bf1c7fae5066622bab4d347499cd20b8172fbd177a37cda79dc6e7cbd1125072",
+      "after": "a809695334bc88048a410bf03a401307287c04bffee98988d4e1b7c12aa5c051"
+    },
+    {
+      "path": "coding-platform/next/src/contracts/core/prepared-execution.ts",
+      "before": "6d8e2e1a484c8de2e7534c187ad34c7bf065ccf0f80a848823d0bc81e3ffdb8f",
+      "after": "4ab83829148bd5e7cdb1250f41c075c7d67019f647011f4e551802132b981418"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/queries/contracts.ts",
+      "before": "e64aa54299cb7abb6ebf5c434101dde6127f6ee9b7b22eeb2814524185724d50",
+      "after": "2f3f99e5566bfad3ac0b2ebff5419a3a7d1888a3ee562da06de72be12f38afe9"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/queries/query-job-service.ts",
+      "before": "2af59dc10eac55ed0fd69a0106e5756293b66facd2c5ceba4931576010083dc6",
+      "after": "8619ff82a56a14ad9d5736380b83088173020f9f8328fe1f116815810a5f6869"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/queries/query-record-codecs.ts",
+      "before": "c18beb4fc3419d1ae1b0fe7be60b6a7a4f6fbbec766374c82e7de3dc25e4b544",
+      "after": "4b09fb58531776c8779f8216a3f3aeba33b7f7b83977471238a16020e80f69b8"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/queries/query-execution.ts",
+      "before": "b80daf9be3d99957786baa7b8554de74dc8e72cad2a2790f8fc20380ebdacfe0",
+      "after": "900afb77d65f26ceb1d6609edc51d22db7495a0d34bfc8cef9ca7ce84633127d"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/materials/record-readers.ts",
+      "before": "c6c74132cae3cd6f2ac7c51a1a97f05e96344a8a3d27e6180a8f49cbbd4d314f",
+      "after": "3ff5fad74bd9831055bcc6d5d3b29f8147fbbd8476028c2ea2d6d8a278d57489"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/source-authority-ports.ts",
+      "before": "a1a02b7b57504bf416e61609bb3a265291f7001b891e6ebc9f414c7094434334",
+      "after": "9cd39b3df1094887e6f777bc48a6ec938330644c062491692d3cc059e7ca2bea"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/source-authority-reader.ts",
+      "before": "3b7c4db68274b183cf0f580f6875e8ba73eae9835d30fdc183231dd1c6db7dfe",
+      "after": "117678d977d43ceeb3520ea293fad5c2e3867a4d5bdd0e154c45463ee1502334"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/ports.ts",
+      "before": "3de2fb3b065677d7332576a68d79581880c47b90e179f7388d20165517d4641f",
+      "after": "30804ad6c2484d0b89982f11561a3a28ff7e63ad7eab5c0c939db191362970f9"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/execution-contracts.ts",
+      "before": "4b389b7d1a0641c59fd7629ac15fa471dc223e1715a6367fa52e8ec1414808fe",
+      "after": "1cb40b3242527f2aa895bcccf4c08e9e31d3be052e091a1ad49375960d20919f"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/runtime.ts",
+      "before": "425b908db21abe273866918c48d1baa38a5eba349a5b0c7543eb0159f9b5f5ad",
+      "after": "afbef1dbf95f2c597853952d5c1d306eeccc11083b519fa6e22f742fe3fc8173"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/query-preparation.ts",
+      "before": "b80daf9be3d99957786baa7b8554de74dc8e72cad2a2790f8fc20380ebdacfe0",
+      "after": "8f2935ba62d020988e554eabb43cc4825a3615c7221d1489a5b91350fad6c576"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/query-execution.ts",
+      "before": "b80daf9be3d99957786baa7b8554de74dc8e72cad2a2790f8fc20380ebdacfe0",
+      "after": "e0f0b2fa6bf30901bca55b6dee97e174fd0f0dcaa12ba7d53660b94bdaa5ae84"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/query-observation.ts",
+      "before": "b80daf9be3d99957786baa7b8554de74dc8e72cad2a2790f8fc20380ebdacfe0",
+      "after": "acf6228201de5dd1a994580b913cc69425c77ff8218f528ee112b5cc3b5346a2"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/source-capture-access.ts",
+      "before": "4ebe3dcc55d42bac32779717588eadad962adbb342191a7b0239199f90ad1faa",
+      "after": "1926bf1fc9b3e9968230edde5fd4c53ea2aee7fafc0faeae40f81044716379fb"
+    },
+    {
+      "path": "coding-platform/next/src/composition/create-platform.ts",
+      "before": "3c701554c6290a9a34044d54920b3f73a1095d6edc067e35ecfc0189c9cc221e",
+      "after": "0f1e9ef43d64421779bf213deca30790616eaa127e94a8c1d1618b9086679c3d"
+    },
+    {
+      "path": "coding-platform/next/tests/work-graph/R5b-query-execution.test.ts",
+      "before": "b80daf9be3d99957786baa7b8554de74dc8e72cad2a2790f8fc20380ebdacfe0",
+      "after": "f0e249b9fc13157c83e463ef962c643f1be536888d5597086d3f9008022fde95"
+    },
+    {
+      "path": "coding-platform/next/tests/runtime/R5b-query-session-loop.test.ts",
+      "before": "b80daf9be3d99957786baa7b8554de74dc8e72cad2a2790f8fc20380ebdacfe0",
+      "after": "17a26267742013ade587d55bd5ffc7f505456d4321cca04e78d187c57ef5b60b"
+    }
+  ],
+  "scope": {
+    "changed": [
+      "coding-platform/next/src/composition/create-platform.ts",
+      "coding-platform/next/src/contracts/core/prepared-execution.ts",
+      "coding-platform/next/src/contracts/query-job.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-contracts.ts",
+      "coding-platform/next/src/core/agent-runtime/ports.ts",
+      "coding-platform/next/src/core/agent-runtime/query-execution.ts",
+      "coding-platform/next/src/core/agent-runtime/query-observation.ts",
+      "coding-platform/next/src/core/agent-runtime/query-preparation.ts",
+      "coding-platform/next/src/core/agent-runtime/runtime.ts",
+      "coding-platform/next/src/core/agent-runtime/source-capture-access.ts",
+      "coding-platform/next/src/core/work-graph/materials/record-readers.ts",
+      "coding-platform/next/src/core/work-graph/queries/contracts.ts",
+      "coding-platform/next/src/core/work-graph/queries/query-execution.ts",
+      "coding-platform/next/src/core/work-graph/queries/query-job-service.ts",
+      "coding-platform/next/src/core/work-graph/queries/query-record-codecs.ts",
+      "coding-platform/next/src/core/work-graph/source-authority-ports.ts",
+      "coding-platform/next/src/core/work-graph/source-authority-reader.ts",
+      "coding-platform/next/tests/runtime/R5b-query-session-loop.test.ts",
+      "coding-platform/next/tests/work-graph/R5b-query-execution.test.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "independentChecks": {
+    "next-query-execution + next-query-job": "11 passed; two new chains first red at claim unsupported",
+    "next-types": "pass"
+  },
+  "middleReviewCorrections": [
+    "two existing normal chains corrected generation, real Skill/Host budget, valid source read and witness",
+    "Query event exact original receipt identity/fingerprint/result",
+    "existing sourcePolicyFor trusted option passed through composition"
+  ],
+  "remaining": "eight production implementation files; no extra test cases"
+}

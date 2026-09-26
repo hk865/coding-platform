@@ -1,0 +1,27 @@
+{
+  "scope": {
+    "writableFiles": [
+      "coding-platform/next/src/core/work-graph/tasks/run-state-service.ts"
+    ],
+    "dshStateDirectories": [
+      "profiles",
+      "sessions",
+      "storages",
+      "cache",
+      "llm-deepseek",
+      "attachments"
+    ]
+  },
+  "readOnlyRefreshes": [
+    {
+      "at": 1790267261.498573,
+      "files": [
+        {
+          "file": "coding-platform/next/tests/work-graph/R4c-execution-read.test.ts",
+          "old": "efbb4ccdfb00000ffa05246af7adfcf1273cae14115354254a82c1b9a8f66a03",
+          "new": "2caf2d09c0f069e5639f7ee91f8755ed1fa2e3d608e4f6f4762735bb4668d172"
+        }
+      ]
+    }
+  ]
+}

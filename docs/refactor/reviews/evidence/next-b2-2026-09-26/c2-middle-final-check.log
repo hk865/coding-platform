@@ -1,0 +1,233 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/runtime/C2-runtime-platform-tools.test.ts (5 tests | 3 failed) 107ms
+     × runs a real inbox -> body -> respond round through the model with the three deployed skills (RED) 58ms
+     × exposes only the granted platform tools, skips the source authorization, and honors an explicit empty Skill set (RED) 21ms
+     × rejects an ungranted builtin at the real Kernel boundary, with no source authorization and no file body (RED) 21ms
+ ❯ tests/composition/C2-runtime-platform.test.ts (3 tests | 3 failed) 166ms
+   × W2 delegated future-plan writes run through the real entered Runtime model round (RED) 48ms
+   × material selected by the accepted Plan reaches the real model request and survives a post-terminal revoke (RED) 63ms
+   × a revoked material grant is denied at start with zero provider calls (RED) 54ms
+ ❯ tests/work-graph/C2-mailbox-admission.test.ts (5 tests | 2 failed) 61ms
+     × re-checks the CURRENT Host/Role grant for a fresh work_run write while still restoring the original receipt (RED) 11ms
+     × reads historical mail addressed to the work Run without unrelated Plan/Attempt/Lease facts (RED) 8ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/composition/C2-runtime-platform.test.ts > W2 delegated future-plan writes run through the real entered Runtime model round (RED)
+AssertionError: {"status":"rejected","code":"unsupported","reason":"platform coordination tools are not wired into this Runtime execution batch yet: query_task_graph, propose_future_plan, apply_future_plan"}: expected { status: 'rejected', …(2) } to match object { status: 'ready', value: { …(2) } }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "run": {
+-       "status": "ended",
+-     },
+-     "session": {
+-       "occupancy": null,
+-     },
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/C2-runtime-platform.test.ts:149:44
+    147|   const started = await fx.platform.runtime.startRun(fx.ctx, { prepare…
+    148|   // Phase-2 target: a real entered Run performs the four-tool whitebo…
+    149|   expect(started, JSON.stringify(started)).toMatchObject({ status: 're…
+       |                                            ^
+    150|   expect(fx.scripted.calls()).toBe(5);
+    151|   // The same production Plan instance now exposes the adopted future …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+ FAIL  tests/composition/C2-runtime-platform.test.ts > material selected by the accepted Plan reaches the real model request and survives a post-terminal revoke (RED)
+AssertionError: {"status":"rejected","code":"unsupported","reason":"external selected/additional materials require the M2 material-facts grant guard seam; refusing a fresh entry authorization without grant CAS facts"}: expected { status: 'rejected', …(2) } to match object { status: 'ready', value: { …(2) } }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "run": {
+-       "status": "ended",
+-     },
+-     "session": {
+-       "occupancy": null,
+-     },
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/C2-runtime-platform.test.ts:186:44
+    184|   // Phase-2 target: the M2 material-facts seam is injected, the provi…
+    185|   // once, and the real original body is in the request.
+    186|   expect(started, JSON.stringify(started)).toMatchObject({ status: 're…
+       |                                            ^
+    187|   expect(fx.scripted.calls()).toBe(1);
+    188|   const userMessage = fx.scripted.requests[0]?.messages.find(message =…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
+
+ FAIL  tests/composition/C2-runtime-platform.test.ts > a revoked material grant is denied at start with zero provider calls (RED)
+AssertionError: {"status":"rejected","code":"unsupported","reason":"external selected/additional materials require the M2 material-facts grant guard seam; refusing a fresh entry authorization without grant CAS facts"}: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "forbidden",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/composition/C2-runtime-platform.test.ts:221:44
+    219|   const started = await fx.platform.runtime.startRun(fx.ctx, { prepare…
+    220|   // Phase-2 target: the fresh admission rejects the revoked grant.
+    221|   expect(started, JSON.stringify(started)).toMatchObject({ status: 're…
+       |                                            ^
+    222|   expect(fx.scripted.calls()).toBe(0);
+    223| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯
+
+ FAIL  tests/runtime/C2-runtime-platform-tools.test.ts > C2 real Runtime consumer over the production composition (phase-2 target) > runs a real inbox -> body -> respond round through the model with the three deployed skills (RED)
+AssertionError: {"status":"rejected","code":"unsupported","reason":"platform coordination tools are not wired into this Runtime execution batch yet: read_session_inbox, read_session_message_body, respond_session_message"}: expected { status: 'rejected', …(2) } to match object { status: 'ready', value: { …(2) } }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "run": {
+-       "status": "ended",
+-     },
+-     "session": {
+-       "occupancy": null,
+-     },
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/runtime/C2-runtime-platform-tools.test.ts:165:46
+    163|     const started = await fx.platform.runtime.startRun(fx.ctx, { prepa…
+    164|     // Phase-2 target: real Kernel round, four provider calls, success…
+    165|     expect(started, JSON.stringify(started)).toMatchObject({ status: '…
+       |                                              ^
+    166|     expect(fx.scripted.calls()).toBe(4);
+    167|     const responseResult = toolMessage(fx.scripted.requests[3], 'c2-re…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯
+
+ FAIL  tests/runtime/C2-runtime-platform-tools.test.ts > C2 real Runtime consumer over the production composition (phase-2 target) > exposes only the granted platform tools, skips the source authorization, and honors an explicit empty Skill set (RED)
+AssertionError: {"status":"rejected","code":"unsupported","reason":"platform coordination tools are not wired into this Runtime execution batch yet: read_session_inbox, query_task_graph"}: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/runtime/C2-runtime-platform-tools.test.ts:197:46
+    195|     if (prepared.status !== 'ready') return;
+    196|     const started = await fx.platform.runtime.startRun(fx.ctx, { prepa…
+    197|     expect(started, JSON.stringify(started)).toMatchObject({ status: '…
+       |                                              ^
+    198|     expect(fx.scripted.calls()).toBe(2);
+    199|     // A platform-only Run never resolves the source read policy.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/8]⎯
+
+ FAIL  tests/runtime/C2-runtime-platform-tools.test.ts > C2 real Runtime consumer over the production composition (phase-2 target) > rejects an ungranted builtin at the real Kernel boundary, with no source authorization and no file body (RED)
+AssertionError: {"status":"rejected","code":"unsupported","reason":"platform coordination tools are not wired into this Runtime execution batch yet: read_session_inbox"}: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/runtime/C2-runtime-platform-tools.test.ts:222:46
+    220|     if (prepared.status !== 'ready') return;
+    221|     const started = await fx.platform.runtime.startRun(fx.ctx, { prepa…
+    222|     expect(started, JSON.stringify(started)).toMatchObject({ status: '…
+       |                                              ^
+    223|     expect(fx.authorizeCalls()).toBe(0);
+    224|     const message = toolMessage(fx.scripted.requests[1], 'c2-builtin-r…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/8]⎯
+
+ FAIL  tests/work-graph/C2-mailbox-admission.test.ts > C2 mailbox fresh admission contract > re-checks the CURRENT Host/Role grant for a fresh work_run write while still restoring the original receipt (RED)
+AssertionError: {"status":"committed","value":{"ref":{"aggregateType":"SessionMessage","projectId":"r4c-claim-project","workspaceId":"r4c-claim-workspace","messageId":"session-message-c76e5c11a3dccbb93e29011b64113640035bf266bae73d8c5730021d5f18dc28"},"schemaVersion":1,"revision":1,"sender":{"kind":"work_run","sessionRef":{"projectId":"r4c-claim-project","sessionId":"session-a63653f966d3a789e16f89541345718a8be04480e0b416147c3c33b45da52c38"},"runRef":{"aggregateType":"Run","projectId":"r4c-claim-project","goalId":"r4c-claim-goal","runId":"r4c-claim-id-1"},"roleBinding":{"schemaVersion":1,"bindingId":"r4c-claim-binding","templateId":"builder","templateRevision":"1","bindingVersion":1,"policyRevision":"legacy-template"},"generation":2},"recipient":{"projectId":"r4c-claim-project","sessionId":"session-c9bd91d833ca6823b00f9109e5b1484153741763f2a05f0a606411e7c28dbd9a"},"bodyRef":{"kind":"artifact","contentType":"application/vnd.coding-platform.session-message+json","digest":"5db857200da2db6d3158abe15c97216a890bc0f73738a9a4510c97ca842bf2d6","sizeBytes":685,"source":{"kind":"workspace","refId":"r4c-claim-workspace","revision":"1"}},"sourceRef":{"kind":"workspace","refId":"r4c-claim-workspace","revision":"1"},"createdAt":"2026-09-26T00:00:00.000Z","status":"pending","readAt":null,"response":null},"replayed":false,"cursor":"c0000000013"}: expected { status: 'committed', …(3) } to match object { status: 'rejected', …(1) }
+(14 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "forbidden",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/C2-mailbox-admission.test.ts:86:42
+     84|     // Phase-2 target: a new request is re-checked against the current…
+     85|     const fresh = await mailbox.sendMessage(h.ctxWork, sendRequest(h.i…
+     86|     expect(fresh, JSON.stringify(fresh)).toMatchObject({ status: 'reje…
+       |                                          ^
+     87|     const inbox = await h.mailbox.readInbox(h.ctxHost, { recipient: h.…
+     88|     expect(inbox).toMatchObject({ status: 'ready', value: { items: [co…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/8]⎯
+
+ FAIL  tests/work-graph/C2-mailbox-admission.test.ts > C2 mailbox fresh admission contract > reads historical mail addressed to the work Run without unrelated Plan/Attempt/Lease facts (RED)
+AssertionError: {"status":"rejected","code":"unavailable","reason":"corrupt: injected unrelated Plan/Attempt/Lease read failure"}: expected { status: 'rejected', …(2) } to match object { status: 'ready', …(1) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "ref": {
+-       "aggregateType": "SessionMessage",
+-       "messageId": "session-message-0b23d45d3a7c6f173e7a0d4f745dc490bbcb6c0ee92fe05ee8135e33fd9c5f23",
+-       "projectId": "r4c-claim-project",
+-       "workspaceId": "r4c-claim-workspace",
+-     },
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/C2-mailbox-admission.test.ts:111:40
+    109|     // Phase-2 target: the historical identity only needs Run/outbox/S…
+    110|     const read = await mailbox.readMessage(h.ctxWork, hostSent.value.r…
+    111|     expect(read, JSON.stringify(read)).toMatchObject({ status: 'ready'…
+       |                                        ^
+    112|     expect(await mailbox.readMessageBody(h.ctxWork, { messageRef: host…
+    113|       .toMatchObject({ status: 'ready', value: { text: 'historical sta…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/8]⎯
+
+
+ Test Files  3 failed (3)
+      Tests  8 failed | 5 passed (13)
+   Start at  11:14:42
+   Duration  2.21s (transform 774ms, setup 0ms, import 1.64s, tests 333ms, environment 0ms)
+

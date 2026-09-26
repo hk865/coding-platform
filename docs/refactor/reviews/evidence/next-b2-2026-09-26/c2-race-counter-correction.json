@@ -1,0 +1,6 @@
+{
+  "file": "coding-platform/next/tests/work-graph/C2-mailbox-admission.test.ts",
+  "before": "56f0ebc10a9505c4d59e9ed2708c87e73744c1159d3e47e825828fc02648b8af",
+  "after": "2c810dfeb0cec8b5ebc08736474b0e61504269deb9e8a5eccdde9f773f42686c",
+  "reason": "count actual forwarded commit instead of an unused fixture spy"
+}

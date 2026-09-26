@@ -1,0 +1,45 @@
+{
+  "date": "2026-09-23",
+  "kind": "documentation-and-provenance-check-not-source-typecheck",
+  "checkedCurrentDocuments": [
+    "README.md",
+    "HANDOFF.md",
+    "ARCHITECTURE.md",
+    "CORE-DATA-OPERATIONS.md",
+    "ORCHESTRATION-STATE-MACHINES.md",
+    "IMPLEMENTATION-PLAN.md",
+    "module-dag.md",
+    "modules/README.md",
+    "modules/ownership-map.md",
+    "intent/INTENT-AND-DECISIONS.md",
+    "reviews/skeleton-handoff-review.md",
+    "skeleton/END-TO-END.md",
+    "skeleton/README.md",
+    "skeleton/CONTRACTS.md",
+    "modules/core/agent-runtime.md",
+    "modules/core/work-graph.md",
+    "modules/core/record-store.md",
+    "modules/core/workspace.md",
+    "modules/business/workflow.md",
+    "../refactor-prompts.revised.md"
+  ],
+  "promptScope": "first seven lines only; historical prompt body retained",
+  "localLinksChecked": 220,
+  "fragmentsChecked": 18,
+  "issues": [],
+  "targetModules": 5,
+  "targetEdges": 8,
+  "targetAcyclic": true,
+  "legacyModuleMappings": 13,
+  "archiveFilesUnchanged": 17,
+  "publicMessages": 50,
+  "publicRoles": {
+    "user": 26,
+    "assistant": 24
+  },
+  "diagramSha256": "fdbced13b507fb6e3c6e335c8b42d93a078a0e4928db449df234ef0864239136",
+  "sourceSha256Unchanged": {
+    "src/data/workspace-reader/project-source-index.ts": "b113d320466066dd88bb704ce1e42bf36180ea3fa33d384ad83df0c39af60563",
+    "tests/data/project-source-index.test.ts": "1c3b45f4de0cf3c980d8876eee7c2a501585de500fe69b163c6745bc34f43f6d"
+  }
+}

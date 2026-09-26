@@ -1,0 +1,83 @@
+{
+  "lane": "r5b-query-execution-implementation-20260926",
+  "session": "session-ec9bc734-f0b1-4717-a89a-932a9bf85556",
+  "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r5b-query-execution-implementation-20260926/attempt-1790429715555380797",
+  "importedAt": "2026-09-26T13:44:04.113323+00:00",
+  "files": {
+    "coding-platform/next/src/core/work-graph/queries/query-execution.ts": {
+      "before": "900afb77d65f26ceb1d6609edc51d22db7495a0d34bfc8cef9ca7ce84633127d",
+      "after": "30263f0a77b54de09d8ee81b6ad950c5b0d40c07d0944985dcb420d70f730381",
+      "changed": true
+    },
+    "coding-platform/next/src/core/work-graph/queries/query-record-codecs.ts": {
+      "before": "4b09fb58531776c8779f8216a3f3aeba33b7f7b83977471238a16020e80f69b8",
+      "after": "4b09fb58531776c8779f8216a3f3aeba33b7f7b83977471238a16020e80f69b8",
+      "changed": false
+    },
+    "coding-platform/next/src/core/work-graph/source-authority-reader.ts": {
+      "before": "117678d977d43ceeb3520ea293fad5c2e3867a4d5bdd0e154c45463ee1502334",
+      "after": "45e058cc7724abc413f66578c5f7dd47d52744aeffd32935ddcf2a35bcf9bfb8",
+      "changed": true
+    },
+    "coding-platform/next/src/core/agent-runtime/query-preparation.ts": {
+      "before": "8f2935ba62d020988e554eabb43cc4825a3615c7221d1489a5b91350fad6c576",
+      "after": "1ca0a96a8b2e062123be2429324e4450f642b4c8121c3e9ed852e5480f2612a3",
+      "changed": true
+    },
+    "coding-platform/next/src/core/agent-runtime/query-execution.ts": {
+      "before": "e0f0b2fa6bf30901bca55b6dee97e174fd0f0dcaa12ba7d53660b94bdaa5ae84",
+      "after": "15522b4182e532063665de7959eae035ea07fca529e5abe8da6c22176338d2f0",
+      "changed": true
+    },
+    "coding-platform/next/src/core/agent-runtime/query-observation.ts": {
+      "before": "acf6228201de5dd1a994580b913cc69425c77ff8218f528ee112b5cc3b5346a2",
+      "after": "f7eebcd79a3c844385b178ae34b4fb32e75f207c6754e89f00dcbe0b4d5fba00",
+      "changed": true
+    },
+    "coding-platform/next/src/core/agent-runtime/source-capture-access.ts": {
+      "before": "1926bf1fc9b3e9968230edde5fd4c53ea2aee7fafc0faeae40f81044716379fb",
+      "after": "fd88e91783a365f03ffc3a016e652171283c0cd3a7f47583d6a8d5ecbfd4436f",
+      "changed": true
+    },
+    "coding-platform/next/src/composition/create-platform.ts": {
+      "before": "0f1e9ef43d64421779bf213deca30790616eaa127e94a8c1d1618b9086679c3d",
+      "after": "518040aa46fc0f0ff0f7f57d6684a945f556b41af4333f7300de542cc0020918",
+      "changed": true
+    }
+  },
+  "scopeAudit": {
+    "changed": [
+      "coding-platform/next/src/composition/create-platform.ts",
+      "coding-platform/next/src/core/agent-runtime/query-execution.ts",
+      "coding-platform/next/src/core/agent-runtime/query-observation.ts",
+      "coding-platform/next/src/core/agent-runtime/query-preparation.ts",
+      "coding-platform/next/src/core/agent-runtime/source-capture-access.ts",
+      "coding-platform/next/src/core/work-graph/queries/query-execution.ts",
+      "coding-platform/next/src/core/work-graph/source-authority-reader.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "review": "PASS after the bounded same-session repair. Exact expected pins and original receipt replay precede fresh state checks; complete workspace and initial legacy Role selection are enforced; fresh bind/begin/admit check the original Session holder/generation; terminal records remain facts and release only a matching holder. ModelBudget and runObservedModel consume manifest.runtimeBudget; answer source identities come from the original prepared manifest and successful Kernel source-tool history; observed current pin differences mark stale. No Role hot-rebind defenses or nonexistent turn.finished requirement.",
+  "checks": [
+    {
+      "name": "next-query-execution + next-query-job",
+      "exitCode": 0,
+      "tests": 13,
+      "files": 4,
+      "log": "r5b-query-execution-final-tests.log"
+    },
+    {
+      "name": "next-types",
+      "exitCode": 0,
+      "log": "r5b-query-execution-final-types.log"
+    },
+    {
+      "name": "scope audit before import",
+      "exitCode": 0,
+      "log": "r5b-query-execution-final-audit.json"
+    }
+  ],
+  "actualPath": "Public no-Plan Project/Workspace/Goal -> pending Query -> real Session claim -> bounded preparation -> original readonly Kernel project_source read and provider tool round-trip -> formal Answer/Job/Run and same-generation Session release -> receipt replay and SQLite reopen.",
+  "remaining": "Query external-material grant, multi-round and advanced/cold control; answer-to-Plan and real Workflow/Host consumers are later batches, not implied complete by this chain."
+}

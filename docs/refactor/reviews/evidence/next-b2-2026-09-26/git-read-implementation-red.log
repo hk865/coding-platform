@@ -1,0 +1,53 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/data/R2e-git-operations.test.ts (13 tests | 3 failed) 916ms
+   × reads exact historical raw bytes (BOM) in a real sha1 repository despite later dirty/deleted worktree 111ms
+   × reads exact historical raw bytes (BOM) in a real sha256 repository despite later dirty/deleted worktree 101ms
+   × closes an acquired real root handle without spawning Git when cancelled before the handle returns 29ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > reads exact historical raw bytes (BOM) in a real sha1 repository despite later dirty/deleted worktree
+ FAIL  tests/data/R2e-git-operations.test.ts > reads exact historical raw bytes (BOM) in a real sha256 repository despite later dirty/deleted worktree
+AssertionError: {"status":"rejected","code":"not_found","reason":"this commit has no such path: ﻿identity.txt"}: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ ready tests/data/R2e-git-operations.test.ts:98:49
+     96|
+     97| function ready<T>(result: WorkspaceResult<T>): T {
+     98|   expect(result.status, JSON.stringify(result)).toBe('ready');
+       |                                                 ^
+     99|   if (result.status !== 'ready') throw Error(`${result.code}: ${result…
+    100|   return result.value;
+ ❯ tests/data/R2e-git-operations.test.ts:239:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > closes an acquired real root handle without spawning Git when cancelled before the handle returns
+AssertionError: cancellation after acquisition must be checked before any Git spawn: expected [ { …(3) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ tests/data/R2e-git-operations.test.ts:682:93
+    680|     expect(await withWatchdog(operation, 'cancelled root acquisition r…
+    681|       .toMatchObject({ status: 'rejected', code: 'cancelled' });
+    682|     expect(observed, 'cancellation after acquisition must be checked b…
+       |                                                                                             ^
+    683|     expect(state.resultClosed, 'the actual handle close must finish be…
+    684|     expect(state.resultFd).toBe(-1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  3 failed | 11 passed (14)
+   Start at  13:53:16
+   Duration  2.64s (transform 711ms, setup 0ms, import 1.33s, tests 1.16s, environment 0ms)
+

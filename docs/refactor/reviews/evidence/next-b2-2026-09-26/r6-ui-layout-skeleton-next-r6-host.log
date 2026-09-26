@@ -1,0 +1,44 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/app/R6-workbench.test.ts (11 tests | 2 failed) 1089ms
+     × keeps auxiliary tabs and file-selection drafts bound to one scope/Session, unsaved and never sendable on an archived page 4ms
+     × projects real original history in order and keeps task hierarchy separate from execution dependencies and real work links 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/R6-workbench.test.ts > pure DTO presentation > keeps auxiliary tabs and file-selection drafts bound to one scope/Session, unsaved and never sendable on an archived page
+Error: unsupported: R6 workbench layout state is not implemented in the skeleton phase
+ ❯ reduceWorkbenchLayout src/ui/views.ts:597:9
+    595| export function reduceWorkbenchLayout(layout: WorkbenchLayout, action:…
+    596|   void layout; void action;
+    597|   throw new Error('unsupported: R6 workbench layout state is not imple…
+       |         ^
+    598| }
+    599|
+ ❯ tests/app/R6-workbench.test.ts:330:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/app/R6-workbench.test.ts > pure DTO presentation > projects real original history in order and keeps task hierarchy separate from execution dependencies and real work links
+AssertionError: expected '<section class="panel gap" data-route…' to contain '请修复构建'
+
+Expected: "请修复构建"
+Received: "<section class="panel gap" data-route="sessions/history"><h3>暂不可用</h3><p>原历史时间线尚未实现（当前 5 条原始记录，正文未解析）。</p></section>"
+
+ ❯ tests/app/R6-workbench.test.ts:413:25
+    411|     // PHASE-2 ENTRY: the first unsupported call is the first red of t…
+    412|     const historyHtml = renderSessionHistoryTimeline(history);
+    413|     expect(historyHtml).toContain('请修复构建'); // turn.started user input
+       |                         ^
+    414|     expect(historyHtml).toContain('已修复'); // assistant text
+    415|     expect(historyHtml).not.toContain('检查了测试失败的原因'); // private reason…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  2 failed | 17 passed (19)
+   Start at  22:02:04
+   Duration  3.80s (transform 820ms, setup 0ms, import 1.20s, tests 2.45s, environment 0ms)
+

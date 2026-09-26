@@ -1,0 +1,8 @@
+{
+  "lane": "r2e-git-read-compare-implementation-20260926",
+  "test": "coding-platform/next/tests/data/R2e-git-operations.test.ts",
+  "old": "50c6d79bdca429f09249a8ea5644177981c5a1cbfffa99207292f39e8f1337bf",
+  "new": "24b2406f09a4f862b506cd3a81bf4a5218b36fa749bd3f76ab45e3accf63ad17",
+  "reason": "legal BOM filename identity and actual root handle acquisition cancellation",
+  "writableScopeUnchanged": true
+}

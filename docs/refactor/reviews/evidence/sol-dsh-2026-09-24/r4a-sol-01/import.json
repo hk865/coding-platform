@@ -1,0 +1,14 @@
+{
+  "at": 1790183236.0680528,
+  "files": {
+    "coding-platform/vendor/coding-agent/src/app/composition/recovery-contract.ts": "003230f08730f42430d94d0b7fc798e98123959695fff1b724a349d243a0c8c1",
+    "coding-platform/vendor/coding-agent/src/app/composition/composition-root.ts": "698d49b40753d4e256dea9766bf47d3b1d99a3d82535d65c82a46ae896d07bd4",
+    "coding-platform/vendor/coding-agent/src/app/composition/resume-composition.ts": "677ac4aaca71e8782bfeb9d01f2fdfad4630c773914f47ff165f068a5cba0904",
+    "coding-platform/vendor/coding-agent/src/core/runtime/recovery/recovery-coordinator.ts": "eb4fb252fec421c0b44d94782aede3b03fc935b2a27ac6824d72e10f185d7a97",
+    "coding-platform/vendor/coding-agent/src/core/ports/session_store/session-store-port.ts": "a666dcd03c2bb84024f52ed2b9c89eb1e43683faaead23a28dc221607cae8e56",
+    "coding-platform/vendor/coding-agent/src/core/ports/checkpoint_store/checkpoint-store-port.ts": "fb47923a1f9f663dbc2d28e27b9106b129cff1f274afff1f47ff8b72e0f40c7f",
+    "coding-platform/vendor/coding-agent/src/core/runtime/checkpointing/checkpointing-event-sink.ts": "326b6e20c3763cfd9c4545ae355897381dd1d5da3ba4e34b3bbc65c61df05957",
+    "coding-platform/vendor/coding-agent/INTEGRATION.md": "50007fc0a455270f2c9a314a15d70a6fe90975a05ecd76ad4e1a9af5543872cd"
+  },
+  "review": "Root source review, exact scope and original hashes checked; 17 independent contract tests passed; final integrated build/regression next"
+}

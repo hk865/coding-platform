@@ -1,0 +1,17 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/architecture/catalog-contracts.ts",
+    "coding-platform/next/src/core/work-graph/architecture/catalog-service.ts",
+    "coding-platform/next/src/core/work-graph/architecture/catalog-record-codecs.ts",
+    "coding-platform/next/src/composition/create-platform.ts",
+    "coding-platform/next/tests/composition/A1-graph-session-platform.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

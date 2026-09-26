@@ -1,0 +1,20 @@
+[
+  {
+    "file": "coding-platform/next/tests/runtime/R4c-execution-history.test.ts",
+    "before": "4983e81506b2dd456d09afba158c18311bdf8686efc8f9e0412bf0f7bb4ca51a",
+    "after": "577554b72b8ee8df6ac6f19d5d5d20a89358684fc04d577afa828e0034d74113",
+    "reason": "Independent implementation review: damaged body/envelope must be unavailable, only external ArtifactRef unsupported; no TypeError escape."
+  },
+  {
+    "file": "coding-platform/next/tests/work-graph/R4c-execution-read.test.ts",
+    "before": "efbb4ccdfb00000ffa05246af7adfcf1273cae14115354254a82c1b9a8f66a03",
+    "after": "2caf2d09c0f069e5639f7ee91f8755ed1fa2e3d608e4f6f4762735bb4668d172",
+    "reason": "Independent review: workspace cross-link, invalid watermark, avoid unused discovery reads, final missing is not changed reference."
+  },
+  {
+    "file": "coding-platform/next/tests/work-graph/R4c-execution-read.test.ts",
+    "before": "2caf2d09c0f069e5639f7ee91f8755ed1fa2e3d608e4f6f4762735bb4668d172",
+    "after": "0969e7d6b01cbd316cb94daee845bdc950b5d44664211af7597d999a43db9cc3",
+    "reason": "Final review: shared cursor parser coerces arrays via String; request must remain a string."
+  }
+]

@@ -1,0 +1,20 @@
+{
+  "status": "code_and_scoped_tests_passed_joint_isolated_pending",
+  "fixes": [
+    "Capture factory reference before await",
+    "Normalize sync throw and async reject into shared promise",
+    "Check cancellation after currentness await before resolving access"
+  ],
+  "rootRefinement": "Promise.resolve().then(factory) assigns cached pending before executing factory, matching the ownership comment",
+  "independentTests": {
+    "files": 5,
+    "passed": 36,
+    "log": "b1-independent.log"
+  },
+  "hashes": {
+    "coding-platform/next/src/core/agent-runtime/observed-model-run.ts": "41ffa6971e05475c04f0545ae07e0f05a0e954dd2c7339b7509ac35202902d0a",
+    "coding-platform/next/src/core/agent-runtime/exploration-tools.ts": "0f44e2623cd2a62772e5f916e64eda2e86c302f7fb0965dc4a2f5c5b0adcbb3c",
+    "coding-platform/next/src/core/agent-runtime/project-source-tool.ts": "541e873c80ad697bd7461f15678f7057052fe0ad7fab885d0d2761413ea48ac2",
+    "coding-platform/next/tests/runtime/B1-kernel-assembly.test.ts": "c6391389c1ae503123cb1fbc4a734be71555d4b148227b290a6a19b27b4a6c2e"
+  }
+}

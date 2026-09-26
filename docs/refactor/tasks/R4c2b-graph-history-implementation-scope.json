@@ -1,0 +1,15 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/agent-runtime/session-operations.ts",
+    "coding-platform/next/src/core/agent-runtime/observation-recovery.ts",
+    "coding-platform/next/src/core/agent-runtime/graph-execution-history.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

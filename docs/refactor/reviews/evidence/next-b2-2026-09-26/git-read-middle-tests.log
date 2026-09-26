@@ -1,0 +1,146 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/data/R2e-git-operations.test.ts (8 tests | 6 failed) 341ms
+   × reads exact historical bytes while the worktree is dirty and the path is deleted 55ms
+   × compares two real Git trees by blob OID and mode, including mode-only, binary and unique-content rename cases 81ms
+   × applies the trusted read scope to historical paths, never leaks a denied path and rechecks a revoked grant 26ms
+   × classifies a missing object, a non-commit object, binary/symlink entries and oversized blobs 29ms
+   × never runs repository clean filters, textconv or external diff, and ignores a redirected GIT_DIR 52ms
+   × resolves a legitimate linked worktree through real Git metadata instead of a model git-dir 49ms
+ ❯ tests/runtime/R2e-git-source-loop.test.ts (1 test | 1 failed) 184ms
+   × serves Git read and compare to a real B2 Kernel/model loop through project_source 184ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > reads exact historical bytes while the worktree is dirty and the path is deleted
+AssertionError: {"status":"rejected","code":"unsupported","reason":"git version reads are not implemented in this skeleton batch"}: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ ready tests/data/R2e-git-operations.test.ts:41:49
+     39|
+     40| function ready<T>(result: WorkspaceResult<T>): T {
+     41|   expect(result.status, JSON.stringify(result)).toBe('ready');
+       |                                                 ^
+     42|   if (result.status !== 'ready') throw Error(`${result.code}: ${result…
+     43|   return result.value;
+ ❯ tests/data/R2e-git-operations.test.ts:155:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > compares two real Git trees by blob OID and mode, including mode-only, binary and unique-content rename cases
+AssertionError: {"status":"rejected","code":"unsupported","reason":"git tree reads are not implemented in this skeleton batch"}: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ ready tests/data/R2e-git-operations.test.ts:41:49
+     39|
+     40| function ready<T>(result: WorkspaceResult<T>): T {
+     41|   expect(result.status, JSON.stringify(result)).toBe('ready');
+       |                                                 ^
+     42|   if (result.status !== 'ready') throw Error(`${result.code}: ${result…
+     43|   return result.value;
+ ❯ tests/data/R2e-git-operations.test.ts:198:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/7]⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > applies the trusted read scope to historical paths, never leaks a denied path and rechecks a revoked grant
+AssertionError: {"status":"rejected","code":"unsupported","reason":"git version reads are not implemented in this skeleton batch"}: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ ready tests/data/R2e-git-operations.test.ts:41:49
+     39|
+     40| function ready<T>(result: WorkspaceResult<T>): T {
+     41|   expect(result.status, JSON.stringify(result)).toBe('ready');
+       |                                                 ^
+     42|   if (result.status !== 'ready') throw Error(`${result.code}: ${result…
+     43|   return result.value;
+ ❯ tests/data/R2e-git-operations.test.ts:240:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/7]⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > classifies a missing object, a non-commit object, binary/symlink entries and oversized blobs
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "not_found",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/data/R2e-git-operations.test.ts:296:70
+    294|
+    295|   // A real full OID that is genuinely absent from this repository is …
+    296|   expect(await f.read(f.context(), 'f'.repeat(40), 'docs/text.txt')).t…
+       |                                                                      ^
+    297|   // A tree OID is not a commit and must not be peeled into one.
+    298|   expect(await f.read(f.context(), tree, 'docs/text.txt')).toMatchObje…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/7]⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > never runs repository clean filters, textconv or external diff, and ignores a redirected GIT_DIR
+AssertionError: {"status":"rejected","code":"unsupported","reason":"git version reads are not implemented in this skeleton batch"}: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ ready tests/data/R2e-git-operations.test.ts:41:49
+     39|
+     40| function ready<T>(result: WorkspaceResult<T>): T {
+     41|   expect(result.status, JSON.stringify(result)).toBe('ready');
+       |                                                 ^
+     42|   if (result.status !== 'ready') throw Error(`${result.code}: ${result…
+     43|   return result.value;
+ ❯ tests/data/R2e-git-operations.test.ts:336:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/7]⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > resolves a legitimate linked worktree through real Git metadata instead of a model git-dir
+AssertionError: {"status":"rejected","code":"unsupported","reason":"git version reads are not implemented in this skeleton batch"}: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ ready tests/data/R2e-git-operations.test.ts:41:49
+     39|
+     40| function ready<T>(result: WorkspaceResult<T>): T {
+     41|   expect(result.status, JSON.stringify(result)).toBe('ready');
+       |                                                 ^
+     42|   if (result.status !== 'ready') throw Error(`${result.code}: ${result…
+     43|   return result.value;
+ ❯ tests/data/R2e-git-operations.test.ts:389:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/7]⎯
+
+ FAIL  tests/runtime/R2e-git-source-loop.test.ts > serves Git read and compare to a real B2 Kernel/model loop through project_source
+AssertionError: {"status":"rejected","code":"unsupported","reason":"git version reads are not implemented in this skeleton batch"}: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ toolResult tests/runtime/R2e-git-source-loop.test.ts:38:49
+     36|   if (!output || output.kind !== 'json') throw Error(`No JSON result f…
+     37|   const result = output.value as unknown as WorkspaceResult<T>;
+     38|   expect(result.status, JSON.stringify(result)).toBe('ready');
+       |                                                 ^
+     39|   if (result.status !== 'ready') throw Error(`${result.code}: ${result…
+     40|   return result.value;
+ ❯ tests/runtime/R2e-git-source-loop.test.ts:106:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/7]⎯
+
+
+ Test Files  2 failed | 10 passed (12)
+      Tests  7 failed | 100 passed (107)
+   Start at  13:03:09
+   Duration  11.58s (transform 917ms, setup 0ms, import 3.58s, tests 7.10s, environment 1ms)
+

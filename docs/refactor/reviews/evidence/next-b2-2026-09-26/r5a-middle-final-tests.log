@@ -1,0 +1,329 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts (15 tests | 15 failed) 10ms
+     × creates Project@1, attributes the receipt event and replays the original value/cursor 3ms
+     × rejects a NEW request for an existing Project with revision_conflict and never overwrites it 0ms
+     × rejects work_run/query_run principals and a foreign ctx project as forbidden 3ms
+     × rejects a changed expected set under the same request identity as idempotency_conflict 0ms
+     × rejects missing, duplicated, foreign or wrong-version expected pins 1ms
+     × requires the Project to exist, writes Workspace@1, attributes the receipt and replays it 1ms
+     × rejects a ctx/workspace scope mismatch as forbidden and a NEW request over an existing Workspace as revision_conflict 0ms
+     × installs immutable revisions with the frozen canonical bytes/digest and the row revision stays 1 0ms
+     × rejects structurally invalid policy content as invalid 0ms
+     × activates an exact installed pin, attributes the receipt and advances only that project pointer 0ms
+     × rejects a wrong pin digest as source_stale, an uninstalled target as not_found, a foreign target scope as forbidden and a foreign expected pin as invalid 0ms
+     × lets only one of two different requests on the same active pin commit 0ms
+     × recovers the SAME cursor/value for two same-identity calls through a real lookup-miss window 0ms
+     × keeps replaying the original activation receipt after a later activation 0ms
+     × cancels at a real lookup await boundary with zero writes, and keeps a real committed result after a late cancel 0ms
+ ❯ tests/composition/R5a-project-bootstrap-platform.test.ts (2 tests | 2 failed) 20ms
+   × bootstraps an empty SQLite store to an accepted Plan and replays the four initialization receipts after reopen 15ms
+   × creates a second project/Workspace without touching the first, and isolates a missing policy cause 3ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 17 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/composition/R5a-project-bootstrap-platform.test.ts > bootstraps an empty SQLite store to an accepted Plan and replays the four initialization receipts after reopen
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed', …(2) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
+-   "value": {
+-     "ref": {
+-       "aggregateType": "Project",
+-       "projectId": "r5a-platform-project",
+-     },
+-     "revision": 1,
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/R5a-project-bootstrap-platform.test.ts:108:21
+    106|   try {
+    107|     const project = await platform.projects.createProject(hostCtx(), p…
+    108|     expect(project).toMatchObject({ status: 'committed', replayed: fal…
+       |                     ^
+    109|     if (project.status !== 'committed') throw new Error('public Projec…
+    110|     const projectSnapshot = project.value;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/17]⎯
+
+ FAIL  tests/composition/R5a-project-bootstrap-platform.test.ts > creates a second project/Workspace without touching the first, and isolates a missing policy cause
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/R5a-project-bootstrap-platform.test.ts:241:26
+    239|     const firstProject = await platform.projects.createProject(hostCtx…
+    240|       input: { projectId } });
+    241|     expect(firstProject).toMatchObject({ status: 'committed' });
+       |                          ^
+    242|     const firstWorkspace = await platform.projects.registerWorkspace(h…
+    243|       { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision:…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/17]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a Project registration > creates Project@1, attributes the receipt event and replays the original value/cursor
+Error: expected a committed write, got rejected
+ ❯ committed tests/work-graph/R5a-project-bootstrap.test.ts:95:44
+     93| type Committed<T> = Extract<T, { status: 'committed' }>;
+     94| function committed<T extends { status: string }>(result: T): Committed…
+     95|   if (result.status !== 'committed') throw new Error('expected a commi…
+       |                                            ^
+     96|   return result as Committed<T>;
+     97| }
+ ❯ commitProject tests/work-graph/R5a-project-bootstrap.test.ts:105:10
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:118:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/17]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a Project registration > rejects a NEW request for an existing Project with revision_conflict and never overwrites it
+Error: expected a committed write, got rejected
+ ❯ committed tests/work-graph/R5a-project-bootstrap.test.ts:95:44
+     93| type Committed<T> = Extract<T, { status: 'committed' }>;
+     94| function committed<T extends { status: string }>(result: T): Committed…
+     95|   if (result.status !== 'committed') throw new Error('expected a commi…
+       |                                            ^
+     96|   return result as Committed<T>;
+     97| }
+ ❯ commitProject tests/work-graph/R5a-project-bootstrap.test.ts:105:10
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:128:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/17]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a Project registration > rejects work_run/query_run principals and a foreign ctx project as forbidden
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "forbidden",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:137:72
+    135|     const { services } = service();
+    136|     const request = { meta: { requestId: 'r5a-project-forbidden', expe…
+    137|     expect(await services.projects.createProject(workRunCtx, request))…
+       |                                                                        ^
+    138|     expect(await services.projects.createProject(queryRunCtx, request)…
+    139|     expect(await services.projects.createProject(ctxFor('another-proje…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/17]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a Project registration > rejects a changed expected set under the same request identity as idempotency_conflict
+Error: expected a committed write, got rejected
+ ❯ committed tests/work-graph/R5a-project-bootstrap.test.ts:95:44
+     93| type Committed<T> = Extract<T, { status: 'committed' }>;
+     94| function committed<T extends { status: string }>(result: T): Committed…
+     95|   if (result.status !== 'committed') throw new Error('expected a commi…
+       |                                            ^
+     96|   return result as Committed<T>;
+     97| }
+ ❯ commitProject tests/work-graph/R5a-project-bootstrap.test.ts:105:10
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:144:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/17]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a Project registration > rejects missing, duplicated, foreign or wrong-version expected pins
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', code: 'invalid' }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "invalid",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:154:8
+    152|     const base = { input: { projectId } };
+    153|     expect(await services.projects.createProject(ctx, { ...base, meta:…
+    154|       .toMatchObject({ status: 'rejected', code: 'invalid' });
+       |        ^
+    155|     expect(await services.projects.createProject(ctx, { ...base, meta:…
+    156|       .toMatchObject({ status: 'rejected', code: 'invalid' });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/17]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a Workspace registration > requires the Project to exist, writes Workspace@1, attributes the receipt and replays it
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "not_found",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:168:69
+    166|     const { services, backend } = service();
+    167|     const request = { meta: { requestId: 'r5a-w1', expected: [{ ref: p…
+    168|     expect(await services.projects.registerWorkspace(ctx, request)).to…
+       |                                                                     ^
+    169|     await commitProject(services);
+    170|     const registered = committed(await services.projects.registerWorks…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/17]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a Workspace registration > rejects a ctx/workspace scope mismatch as forbidden and a NEW request over an existing Workspace as revision_conflict
+Error: expected a committed write, got rejected
+ ❯ committed tests/work-graph/R5a-project-bootstrap.test.ts:95:44
+     93| type Committed<T> = Extract<T, { status: 'committed' }>;
+     94| function committed<T extends { status: string }>(result: T): Committed…
+     95|   if (result.status !== 'committed') throw new Error('expected a commi…
+       |                                            ^
+     96|   return result as Committed<T>;
+     97| }
+ ❯ commitProject tests/work-graph/R5a-project-bootstrap.test.ts:105:10
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:179:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/17]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a CompletionPolicy configuration > installs immutable revisions with the frozen canonical bytes/digest and the row revision stays 1
+Error: expected a committed write, got rejected
+ ❯ committed tests/work-graph/R5a-project-bootstrap.test.ts:95:44
+     93| type Committed<T> = Extract<T, { status: 'committed' }>;
+     94| function committed<T extends { status: string }>(result: T): Committed…
+     95|   if (result.status !== 'committed') throw new Error('expected a commi…
+       |                                            ^
+     96|   return result as Committed<T>;
+     97| }
+ ❯ commitProject tests/work-graph/R5a-project-bootstrap.test.ts:105:10
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:192:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/17]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a CompletionPolicy configuration > rejects structurally invalid policy content as invalid
+Error: expected a committed write, got rejected
+ ❯ committed tests/work-graph/R5a-project-bootstrap.test.ts:95:44
+     93| type Committed<T> = Extract<T, { status: 'committed' }>;
+     94| function committed<T extends { status: string }>(result: T): Committed…
+     95|   if (result.status !== 'committed') throw new Error('expected a commi…
+       |                                            ^
+     96|   return result as Committed<T>;
+     97| }
+ ❯ commitProject tests/work-graph/R5a-project-bootstrap.test.ts:105:10
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:213:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/17]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a CompletionPolicy configuration > activates an exact installed pin, attributes the receipt and advances only that project pointer
+Error: expected a committed write, got rejected
+ ❯ committed tests/work-graph/R5a-project-bootstrap.test.ts:95:44
+     93| type Committed<T> = Extract<T, { status: 'committed' }>;
+     94| function committed<T extends { status: string }>(result: T): Committed…
+     95|   if (result.status !== 'committed') throw new Error('expected a commi…
+       |                                            ^
+     96|   return result as Committed<T>;
+     97| }
+ ❯ commitProject tests/work-graph/R5a-project-bootstrap.test.ts:105:10
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:225:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/17]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a CompletionPolicy configuration > rejects a wrong pin digest as source_stale, an uninstalled target as not_found, a foreign target scope as forbidden and a foreign expected pin as invalid
+Error: expected a committed write, got rejected
+ ❯ committed tests/work-graph/R5a-project-bootstrap.test.ts:95:44
+     93| type Committed<T> = Extract<T, { status: 'committed' }>;
+     94| function committed<T extends { status: string }>(result: T): Committed…
+     95|   if (result.status !== 'committed') throw new Error('expected a commi…
+       |                                            ^
+     96|   return result as Committed<T>;
+     97| }
+ ❯ commitProject tests/work-graph/R5a-project-bootstrap.test.ts:105:10
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:241:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/17]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a CompletionPolicy configuration > lets only one of two different requests on the same active pin commit
+Error: expected a committed write, got rejected
+ ❯ committed tests/work-graph/R5a-project-bootstrap.test.ts:95:44
+     93| type Committed<T> = Extract<T, { status: 'committed' }>;
+     94| function committed<T extends { status: string }>(result: T): Committed…
+     95|   if (result.status !== 'committed') throw new Error('expected a commi…
+       |                                            ^
+     96|   return result as Committed<T>;
+     97| }
+ ❯ commitProject tests/work-graph/R5a-project-bootstrap.test.ts:105:10
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:264:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/17]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a CompletionPolicy configuration > recovers the SAME cursor/value for two same-identity calls through a real lookup-miss window
+Error: expected a committed write, got rejected
+ ❯ committed tests/work-graph/R5a-project-bootstrap.test.ts:95:44
+     93| type Committed<T> = Extract<T, { status: 'committed' }>;
+     94| function committed<T extends { status: string }>(result: T): Committed…
+     95|   if (result.status !== 'committed') throw new Error('expected a commi…
+       |                                            ^
+     96|   return result as Committed<T>;
+     97| }
+ ❯ commitProject tests/work-graph/R5a-project-bootstrap.test.ts:105:10
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:279:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/17]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a CompletionPolicy configuration > keeps replaying the original activation receipt after a later activation
+Error: expected a committed write, got rejected
+ ❯ committed tests/work-graph/R5a-project-bootstrap.test.ts:95:44
+     93| type Committed<T> = Extract<T, { status: 'committed' }>;
+     94| function committed<T extends { status: string }>(result: T): Committed…
+     95|   if (result.status !== 'committed') throw new Error('expected a commi…
+       |                                            ^
+     96|   return result as Committed<T>;
+     97| }
+ ❯ commitProject tests/work-graph/R5a-project-bootstrap.test.ts:105:10
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:316:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/17]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a cancellation/commit seam > cancels at a real lookup await boundary with zero writes, and keeps a real committed result after a late cancel
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "cancelled",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:346:8
+    344|     const request = { meta: { requestId: 'r5a-cancel-before', expected…
+    345|     expect(await bootstrap(beforeCommit).projects.createProject({ ...c…
+    346|       .toMatchObject({ status: 'rejected', code: 'cancelled' });
+       |        ^
+    347|     expect(await backend.records.readMany([canonicalJson(projectRef as…
+    348|       .toMatchObject({ status: 'ready', value: { missing: [canonicalJs…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/17]⎯
+
+
+ Test Files  2 failed | 5 passed (7)
+      Tests  17 failed | 39 passed (56)
+   Start at  12:04:50
+   Duration  2.13s (transform 792ms, setup 0ms, import 1.42s, tests 161ms, environment 0ms)
+

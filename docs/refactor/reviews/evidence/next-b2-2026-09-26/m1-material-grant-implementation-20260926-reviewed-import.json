@@ -1,0 +1,20 @@
+{
+  "lane": "m1-material-grant-implementation-20260926",
+  "files": [
+    {
+      "path": "coding-platform/next/src/core/work-graph/materials/grant-record-codecs.ts",
+      "before": "443ddf9ac09b801362c4f3da01d20876e56b8fc0dd2161cb930246f4ef5f8bce",
+      "after": "8680d96d80ec959687685bfa2e513f167f7baba7049ad09d499baf1b57fba264"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/materials/grant-service.ts",
+      "before": "e8861aef12e0fb1c5bf3d20d7be47c6d194954c7770e4e490f8914d0f972bc30",
+      "after": "e1b3a8ab1a848422efa878fcb003e4d71bee3b2794bc9c6180ba805675ad01a7"
+    },
+    {
+      "path": "coding-platform/next/src/core/workspace/material-source-provider.ts",
+      "before": "9744d98edaec22ca85966f33b21339da77909eaef0dea92af97f2e26c484b684",
+      "after": "78480393349d60f55a76bd3a24205bef8c0c3d623844b2a6f78fad3bab28a232"
+    }
+  ]
+}

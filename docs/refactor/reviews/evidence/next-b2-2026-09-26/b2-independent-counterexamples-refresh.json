@@ -1,0 +1,14 @@
+{
+  "coding-platform/next/tests/work-graph/B2-execution-entry.test.ts": {
+    "before": "6a39962c34085ee8e8b6288dd8977459a0417728fee53631882c9f755c94bfe9",
+    "after": "c086b89be9cf140469671b541cde02794a696ba7fe60a9b2c39973017136a821"
+  },
+  "coding-platform/next/tests/work-graph/B2-execution-result.test.ts": {
+    "before": "4a50bbffb3e6d8b68686a1898692e38017b708eaf1fcb4699502283423d368b7",
+    "after": "5b591f835ca190105429a982a7dd26aa0d8304fc6f29b1c3310fbf8d55b18ff5"
+  },
+  "coding-platform/next/tests/work-graph/B2-model-request.test.ts": {
+    "before": "80f7e6219b856525a348d547a50185cd5f8c69a25f9fcf772614d7ee5cf0b819",
+    "after": "88d64680439fff165af7caa9b99591b2635e5041d87b1109f91a0b6397d84601"
+  }
+}

@@ -1,0 +1,12 @@
+[
+  {
+    "path": "coding-platform/next/vendor/coding-agent/patches/public-api.ts",
+    "before": "6fa6a3a57a9716054a97e3616d1d05a5876977d963acddffdc9ee0a196c470a6",
+    "after": "3a30600839cda57d989d65926e74025848b18efb444adaa2d70d66aae7c6a2c7"
+  },
+  {
+    "path": "coding-platform/next/tests/kernel/B2-history-public-export.test.ts",
+    "before": "f71dad8e051c572b9ae798c82b7219f7fe6a195e9b53f2abd30bd628cfd0ef13",
+    "after": "d6d7c07b428fef2be12eb38aaef621f165c93d2701240e99dc15b45eeda0a743"
+  }
+]

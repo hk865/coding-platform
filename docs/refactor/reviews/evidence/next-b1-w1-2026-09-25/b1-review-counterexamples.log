@@ -1,0 +1,63 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/runtime/B1-kernel-assembly.test.ts (6 tests | 3 failed) 250ms
+     × shares one suspended first_use open across parallel calls and delivers the real captured payload to the model 41ms
+     × drains a suspended first_use open on cancellation and closes the resolved access exactly once 1ms
+     × reports a lazy open failure as a real tool result, reuses the one failed factory attempt in the next round, and keeps project_index out 37ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/runtime/B1-kernel-assembly.test.ts > B1 Kernel assembly seam > shares one suspended first_use open across parallel calls and delivers the real captured payload to the model
+Error: Run settled before the first_use source opened
+ ❯ tests/runtime/B1-kernel-assembly.test.ts:321:36
+    319|       const opened = await Promise.race([
+    320|         openCalled.promise.then(() => 'opened' as const),
+    321|         pending.then(() => { throw new Error('Run settled before the f…
+       |                                    ^
+    322|       ]);
+    323|       expect(opened).toBe('opened');
+ ❯ tests/runtime/B1-kernel-assembly.test.ts:319:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/runtime/B1-kernel-assembly.test.ts > B1 Kernel assembly seam > drains a suspended first_use open on cancellation and closes the resolved access exactly once
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array []
+
+
+Number of calls: 1
+
+ ❯ tests/runtime/B1-kernel-assembly.test.ts:367:28
+    365|       finishCheck.resolve();
+    366|       await toolPending;
+    367|       expect(resolver).not.toHaveBeenCalled();
+       |                            ^
+    368|     } finally { finishCheck.resolve(); await toolPending.catch(() => {…
+    369|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/runtime/B1-kernel-assembly.test.ts > B1 Kernel assembly seam > reports a lazy open failure as a real tool result, reuses the one failed factory attempt in the next round, and keeps project_index out
+AssertionError: expected "vi.fn()" to be called 1 times, but got 3 times
+ ❯ tests/runtime/B1-kernel-assembly.test.ts:430:18
+    428|     });
+    429|     expect(result.state.status).toBe('completed');
+    430|     expect(open).toHaveBeenCalledTimes(1); // two same-round calls plu…
+       |                  ^
+    431|     expect(source.captureSourceChanges).not.toHaveBeenCalled(); // nev…
+    432|     expect(source.close).not.toHaveBeenCalled();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 3 passed (6)
+   Start at  19:14:43
+   Duration  841ms (transform 283ms, setup 0ms, import 512ms, tests 250ms, environment 0ms)
+

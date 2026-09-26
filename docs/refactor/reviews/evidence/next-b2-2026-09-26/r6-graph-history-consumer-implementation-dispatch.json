@@ -1,0 +1,22 @@
+{
+  "dispatchedAt": "2026-09-26T16:28:33.689105+00:00",
+  "lane": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r6-graph-history-consumer-implementation-20260927",
+  "session": "session-a49e4c5d-eb9c-402e-8e43-1e1dd8a2d05b",
+  "snapshotFiles": 4867,
+  "task": "docs/refactor/tasks/R6-graph-history-consumer-implementation.md",
+  "originalAllowedHashes": {
+    "coding-platform/next/src/ui/main.ts": "f236a568ef456553d4715a23b4ad737da0fe2f5486bfdfbe1ae4d3261a1f5f47",
+    "coding-platform/next/src/ui/views.ts": "ad27a58b243f949d3faf83d97ffd1b297a7ef1c41a0622ec90e41fd888005b20"
+  },
+  "frozenReadOnlyHashes": {
+    "coding-platform/next/src/app/core-http-types.ts": "f17fb3c80077b99cabe3ea209ff16e0536abb09a81edf12aa1dcf335ec422264",
+    "coding-platform/next/src/app/core-routes.ts": "17c77d3525f76773be9794f60a98b8508fe2f223b6b57ca9dc12150d4c9070a9",
+    "coding-platform/next/tests/app/R6-host.test.ts": "922b8024351387450bd98f635a20610976b1e2d5b514a20f1e3bb389342d6032",
+    "coding-platform/next/tests/app/R6-workbench.test.ts": "0c9d3738b6d21aba5f40ebc45d656987a6defb2098c7eecfb14021f1084ecac5",
+    "coding-platform/next/src/app/host.ts": "c1638768eb6a92ab4d29e37a270e09e176b269b1888d33d8f06e96d3a87dced0",
+    "coding-platform/next/src/composition/create-platform.ts": "9d5be391be290d065be762f733acd44a91e7481ed3643b6cc61698db5c1297aa"
+  },
+  "stage": "implementation only for existing ui/main.ts and ui/views.ts; STOP after fixed22/types/UItypes/build; no import or model/browser rerun",
+  "priorSkeletonImportSha256": "ffc69693dbdec60863332beaf927d8967abaa4b79fb5a5e216a6a5fb04dd77b5",
+  "fixtureReservedForRoot": "/tmp/coding-platform-r6-execution-review-NJz7aU"
+}

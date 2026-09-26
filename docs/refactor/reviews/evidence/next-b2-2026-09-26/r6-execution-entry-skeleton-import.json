@@ -1,0 +1,166 @@
+{
+  "lane": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r6-execution-entry-skeleton-20260926",
+  "session": "session-6d14a17e-0983-413c-ba8b-eda8ecdf747a",
+  "files": [
+    {
+      "path": "coding-platform/next/src/app/main.ts",
+      "beforeSha256": "eb60c67cde28ce4aa2f4220fd350abff78845a0b7139fa210344d9c646c3ee33",
+      "afterSha256": "081b6d883a9059fb767024af2ef65d843b357fbc507f1abfde48c7da8f063cbb",
+      "beforeLines": 134,
+      "afterLines": 155,
+      "added": 21,
+      "deleted": 0,
+      "net": 21
+    },
+    {
+      "path": "coding-platform/next/src/app/host.ts",
+      "beforeSha256": "96b8cc4496818e4e92374db03954f25886542ccbf1488049ba176b0c13b51be6",
+      "afterSha256": "6ae735ed1eb067dcc2a92787eddf1f5208dc7f3f33a9743197f611738335cdcf",
+      "beforeLines": 199,
+      "afterLines": 266,
+      "added": 68,
+      "deleted": 1,
+      "net": 67
+    },
+    {
+      "path": "coding-platform/next/src/app/runtime-configuration.ts",
+      "beforeSha256": "33475b26a94c8c19f91c15e7697798d28e1680fae36fc99b31eb02d7ea51f6df",
+      "afterSha256": "c3c6e78f3028e146f7c0b8995f2f5f8ec36eb53e6252efdadd9b5fb852bf32fe",
+      "beforeLines": 2,
+      "afterLines": 245,
+      "added": 245,
+      "deleted": 2,
+      "net": 243
+    },
+    {
+      "path": "coding-platform/next/src/app/core-http-types.ts",
+      "beforeSha256": "748e83d09bf38c58155d3b1063c8f9d3c4fdc898ca021cd04abc752f9b36915c",
+      "afterSha256": "619412e820d34e005bf37c012c34762703e8acb44bf654cde0f9da177ebe69a3",
+      "beforeLines": 228,
+      "afterLines": 302,
+      "added": 75,
+      "deleted": 1,
+      "net": 74
+    },
+    {
+      "path": "coding-platform/next/src/app/core-routes.ts",
+      "beforeSha256": "2ea2b467627231f7077d99fce16caf6a9530f715e5439d9d63d1d0caf7086b43",
+      "afterSha256": "efe379a98e705fdc1980df5a87ce4edaf4f8faad1072bbec874955e4d22dc584",
+      "beforeLines": 314,
+      "afterLines": 366,
+      "added": 53,
+      "deleted": 1,
+      "net": 52
+    },
+    {
+      "path": "coding-platform/next/src/ui/main.ts",
+      "beforeSha256": "30e362cf7dcb1f0db44024227cac8de5c1e016359d9568e13c7a103b1dfe7805",
+      "afterSha256": "ad6ecffc38c0e95b64404b587f518b5f9239fccf72c87ca902210e160f17a0f2",
+      "beforeLines": 2347,
+      "afterLines": 2398,
+      "added": 52,
+      "deleted": 1,
+      "net": 51
+    },
+    {
+      "path": "coding-platform/next/src/ui/views.ts",
+      "beforeSha256": "eb90d20ee74844b38c9aacb4f8591c29d8060fa333bf641b8f2a21b8f6914b6d",
+      "afterSha256": "8dbc70a56de23ea73d99a6f4eacae01095b54c9bc66c47690626e618f054acbf",
+      "beforeLines": 1138,
+      "afterLines": 1283,
+      "added": 146,
+      "deleted": 1,
+      "net": 145
+    },
+    {
+      "path": "coding-platform/next/src/composition/create-platform.ts",
+      "beforeSha256": "ac618284306b8b361104980d47a4c43e3c33f0564cb2e40442b00506b67e1853",
+      "afterSha256": "9d5be391be290d065be762f733acd44a91e7481ed3643b6cc61698db5c1297aa",
+      "beforeLines": 631,
+      "afterLines": 632,
+      "added": 1,
+      "deleted": 0,
+      "net": 1
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-contracts.ts",
+      "beforeSha256": "5422abd7ee37b6cbf3e841ae56b39badd967937d05aad71d9b1d1869dab546c9",
+      "afterSha256": "a7a7bfadcf2775db9935c6784986aca474a115e7760682b573263327bca0621a",
+      "beforeLines": 88,
+      "afterLines": 100,
+      "added": 13,
+      "deleted": 1,
+      "net": 12
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-service.ts",
+      "beforeSha256": "5a08c66820be4640a4b462cfc10e8ad389297bedc83f2d9a5fb4ad76be022fa8",
+      "afterSha256": "89044e7599e6a515f5d5dfaeca3ef0f10dc3e56a1a6082461c09a93bea980d4f",
+      "beforeLines": 989,
+      "afterLines": 994,
+      "added": 5,
+      "deleted": 0,
+      "net": 5
+    },
+    {
+      "path": "coding-platform/next/tests/app/R6-host.test.ts",
+      "beforeSha256": "4af36d60bb556bab93682cba40181b131f50aa226657d971bc3cd4ed4435e314",
+      "afterSha256": "89a8e77dc52ddacefa9953ce15dee30ced9ebe27473bfd01e3acc804f7180a0c",
+      "beforeLines": 506,
+      "afterLines": 841,
+      "added": 335,
+      "deleted": 0,
+      "net": 335
+    },
+    {
+      "path": "coding-platform/next/tests/app/R6-workbench.test.ts",
+      "beforeSha256": "2960b61e492980bb9718eef81253cc430e4a7baafa6733fe55d3eab4fae25f78",
+      "afterSha256": "621d1bbe5846d5f2add89df157e559d25200adee4ad39fa83f22cee4caee1183",
+      "beforeLines": 500,
+      "afterLines": 626,
+      "added": 126,
+      "deleted": 0,
+      "net": 126
+    }
+  ],
+  "checks": {
+    "next-r6-host": {
+      "exitCode": 1,
+      "passed": 20,
+      "failed": 2,
+      "firstReds": [
+        "R6-host.test.ts:710 registration unsupported",
+        "R6-workbench.test.ts:617 continuation unsupported"
+      ]
+    },
+    "next-types": {
+      "exitCode": 0
+    },
+    "next-ui-types": {
+      "exitCode": 0
+    },
+    "next-build": {
+      "exitCode": 0
+    },
+    "next-architecture": {
+      "exitCode": 0
+    }
+  },
+  "audit": {
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "status": "skeleton_reviewed_frozen_and_imported_not_implemented",
+  "importedAt": "2026-09-26T15:31:35.628968+00:00",
+  "rootReview": {
+    "accepted": [
+      "11 named routes forward to original owners; no second loop or store",
+      "real registration read and typed original continuation remain explicit gaps",
+      "same normal fixtures use valid explicit model budget and actual Host permission revision",
+      "Role matching uses structural fields, not object serialization order",
+      "interfaces and tests frozen; next implementation limited to six existing production files"
+    ],
+    "remaining": "two final normal chains remain red at explicit skeleton gaps; not full E2E pass"
+  },
+  "sourceReport": "/tmp/r6-execution-entry-final-hashes.json"
+}

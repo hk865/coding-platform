@@ -1,0 +1,7 @@
+{
+  "review": "approved for independent verification",
+  "sha256": {
+    "coding-platform/next/src/core/work-graph/tasks/execution-history-service.ts": "79ec1285a374fd085f22c9e4918f5ecf87cd2f6356d7ba8dd18afdb1e0fb7ffe",
+    "coding-platform/next/src/core/work-graph/persistence/execution-history-codecs.ts": "d1b0ffcbea3fcf0c73c9061131c20f6b0fc506206551971dfb93c2e82b56b8ea"
+  }
+}

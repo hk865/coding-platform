@@ -1,0 +1,185 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/vendor/coding-agent
+
+ ❯ tests/review/R4a-resume-environment.test.ts (7 tests | 2 failed) 266ms
+     × rejects an edited ordinary workspace file under strict consistency before any resumed model call 45ms
+     × does not exclude ordinary files beside the SQLite database from strict revision checks 33ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/review/R4a-resume-environment.test.ts > R4a paused recovery environment > rejects an edited ordinary workspace file under strict consistency before any resumed model call
+AssertionError: promise resolved "{ …(5) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "action": "paused",
++   "enabledTools": [
++     "read",
++   ],
++   "provider": "deepseek",
++   "sessionId": "environment-session",
++   "state": {
++     "activeModelRequest": null,
++     "createdAt": "2026-09-23T17:01:51.133Z",
++     "elapsedMs": 5,
++     "endedAt": "2026-09-23T17:01:51.158Z",
++     "lastEventId": "87aa577c-0a5d-487d-977d-bafcaa5ca610",
++     "lastEventSequence": 6,
++     "outcome": {
++       "finalMessageId": "78060afa-7e64-461c-a710-a7a4b352a42e",
++       "kind": "completed",
++       "reason": "final_answer",
++     },
++     "pause": null,
++     "runId": "environment-run",
++     "schemaVersion": 1,
++     "startedAt": "2026-09-23T17:01:51.136Z",
++     "status": "completed",
++     "toolBatch": null,
++     "transcript": [
++       {
++         "kind": "user_message",
++         "message": {
++           "content": "pause before the model",
++           "messageId": "c3b3f032-7f13-4eb0-b830-cb6216ac6a7b",
++           "role": "user",
++           "schemaVersion": 1,
++         },
++       },
++       {
++         "kind": "assistant_message",
++         "message": {
++           "content": "unexpected continuation",
++           "messageId": "78060afa-7e64-461c-a710-a7a4b352a42e",
++           "role": "assistant",
++           "schemaVersion": 1,
++         },
++         "toolCalls": [],
++       },
++     ],
++     "turn": {
++       "turnId": "environment-turn",
++       "userMessage": {
++         "content": "pause before the model",
++         "messageId": "c3b3f032-7f13-4eb0-b830-cb6216ac6a7b",
++         "role": "user",
++         "schemaVersion": 1,
++       },
++     },
++     "updatedAt": "2026-09-23T17:01:51.158Z",
++     "usage": {
++       "cachedInputTokens": 0,
++       "costUsdMicros": null,
++       "inputTokens": 0,
++       "modelRequestCount": 1,
++       "outputTokens": 0,
++       "toolCallCount": 0,
++     },
++   },
+  }
+
+ ❯ tests/review/R4a-resume-environment.test.ts:138:46
+    136|     const before = await records(h.databasePath, h.common.sessionId);
+    137|     await writeFile(path.join(h.common.workspaceRoot, "note.txt"), "ch…
+    138|     await expect(resumeCodingAgent(h.common)).rejects.toMatchObject({ …
+       |                                              ^
+    139|     expect(h.model.requests).toHaveLength(0);
+    140|     expect(await records(h.databasePath, h.common.sessionId)).toEqual(…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/review/R4a-resume-environment.test.ts > R4a paused recovery environment > does not exclude ordinary files beside the SQLite database from strict revision checks
+AssertionError: promise resolved "{ …(5) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "action": "paused",
++   "enabledTools": [
++     "read",
++   ],
++   "provider": "deepseek",
++   "sessionId": "environment-session",
++   "state": {
++     "activeModelRequest": null,
++     "createdAt": "2026-09-23T17:01:51.228Z",
++     "elapsedMs": 2,
++     "endedAt": "2026-09-23T17:01:51.246Z",
++     "lastEventId": "b19834ea-fd1f-4009-a021-8c4c2be1ac8b",
++     "lastEventSequence": 6,
++     "outcome": {
++       "finalMessageId": "85309de7-1f09-45a0-9c38-638272786ad3",
++       "kind": "completed",
++       "reason": "final_answer",
++     },
++     "pause": null,
++     "runId": "environment-run",
++     "schemaVersion": 1,
++     "startedAt": "2026-09-23T17:01:51.230Z",
++     "status": "completed",
++     "toolBatch": null,
++     "transcript": [
++       {
++         "kind": "user_message",
++         "message": {
++           "content": "pause before the model",
++           "messageId": "2d7429d0-f233-4959-b4d8-fb6bf84a293a",
++           "role": "user",
++           "schemaVersion": 1,
++         },
++       },
++       {
++         "kind": "assistant_message",
++         "message": {
++           "content": "unexpected continuation",
++           "messageId": "85309de7-1f09-45a0-9c38-638272786ad3",
++           "role": "assistant",
++           "schemaVersion": 1,
++         },
++         "toolCalls": [],
++       },
++     ],
++     "turn": {
++       "turnId": "environment-turn",
++       "userMessage": {
++         "content": "pause before the model",
++         "messageId": "2d7429d0-f233-4959-b4d8-fb6bf84a293a",
++         "role": "user",
++         "schemaVersion": 1,
++       },
++     },
++     "updatedAt": "2026-09-23T17:01:51.246Z",
++     "usage": {
++       "cachedInputTokens": 0,
++       "costUsdMicros": null,
++       "inputTokens": 0,
++       "modelRequestCount": 1,
++       "outputTokens": 0,
++       "toolCallCount": 0,
++     },
++   },
+  }
+
+ ❯ tests/review/R4a-resume-environment.test.ts:159:46
+    157|     const before = await records(h.databasePath, h.common.sessionId);
+    158|     await writeFile(path.join(h.common.workspaceRoot, "data", "user.tx…
+    159|     await expect(resumeCodingAgent(h.common)).rejects.toMatchObject({ …
+       |                                              ^
+    160|     expect(h.model.requests).toHaveLength(0);
+    161|     expect(await records(h.databasePath, h.common.sessionId)).toEqual(…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  2 failed | 15 passed (17)
+   Start at  01:01:50
+   Duration  1.43s (transform 205ms, setup 0ms, import 498ms, tests 734ms, environment 0ms)
+

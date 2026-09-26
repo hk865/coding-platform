@@ -1,0 +1,15 @@
+# 任务图与并行准入意图核对（2026-09-24）
+
+本报告记录本轮修改前的核对结果，正文行号指修订前读到的位置；产品、总体架构及并行图现已按核对结果修正，详细旧 scope/reservation 草案显式标记不得直接施工。引用章节和源码位置仍可追溯。
+
+本报告只核对已写明的产品、设计与 `next` 现状；不是新接口裁定或实现验收。历史 [PRODUCT §7.2.5](../../history/before-2026-09-22/PRODUCT.md) 将任务图定义为 **monitor + 可编辑的参谋部白板**：编排决定仍由人与 Agent 作出，图承载结果、状态、协作关系和状态来源；确认前可协作改写，确认后偏向监测，可自动放行辅助确认。[原文 407–419 行](../../history/before-2026-09-22/PRODUCT.md)及[后续澄清 935 行](../../history/before-2026-09-22/PRODUCT.md)均如此表述。修订前 [PRODUCT 33、50–52 行](../../PRODUCT.md)保留计划、当前、历史和关系/操作能力，但没有重述上述白板与“不替代编排决策”的明确限制。
+
+| 保留的已定语义 | 需修正或明确之处 | `next` 实际状态 |
+| --- | --- | --- |
+| 任务前置只表达真实输入/产出依赖；分组、通信、职责、架构影响各有自己的关系，不能自动转成硬前置。[CORE-DATA-OPERATIONS 268 行](../CORE-DATA-OPERATIONS.md)、[ARCHITECTURE 37、64–68 行](../ARCHITECTURE.md)、[Workflow 20、269–271 行](../modules/business/workflow.md) | `executionDag.dependsOn` **本来就定义为硬边**，不是任务图的所有边；只有明确消费尚缺产物的关系才应放入该 DAG。`requires` 目前只有 kind/label，不能把邻近、时间顺序或“可能影响接口”当作已证硬依赖。[plan.ts 103–115 行](../../../coding-platform/next/src/contracts/plan.ts) | 计划校验只核端点、自环和环，codec 只核 `requires` 的枚举与非空标签；未核具体产物/版本。[plan-validation.ts 86–99 行](../../../coding-platform/next/src/core/work-graph/tasks/plan-validation.ts)、[plan-record-codecs.ts 329–340 行](../../../coding-platform/next/src/core/work-graph/tasks/plan-record-codecs.ts)。资格规则把每条硬边的前驱 `phase !== satisfied` 一律视为未满足，而不检具体 `requires`；`queryReadyTasks` 再过滤此类候选。[eligibility.ts 55–65 行](../../../coding-platform/next/src/core/work-graph/tasks/eligibility.ts)、[plan-service.ts 903–908 行](../../../coding-platform/next/src/core/work-graph/tasks/plan-service.ts) |
+| 确定的版本、身份、权限、同一 Session/Task 唯一占用与真实冲突仍需机械核对；语义上的潜在影响交 Agent 判断。架构职责是线索而非模块锁，同工作区可并行。[ARCHITECTURE 102–106 行](../ARCHITECTURE.md)、[PARALLEL-COLLABORATION 22–34、100–107 行](../PARALLEL-COLLABORATION.md) | 不以强制预先证明全任务语义、全部未来文件范围或每次先 `assessParallelism` 来取得开工许可。明确分工可以直接推进；遇到实际文件、命令副作用或授权冲突时局部核对、协调或隔离。[Workflow 269–271 行](../modules/business/workflow.md)、[PARALLEL-COLLABORATION 87、168 行](../PARALLEL-COLLABORATION.md) | `next` 当前只有任务图/就绪候选读；`queryReadyTasks` 的 `task_state` 资格不含预算、角色、Session 或资源，不能视为执行许可。[work-graph 242 行](../modules/core/work-graph.md)、[eligibility.ts 5–26 行](../../../coding-platform/next/src/core/work-graph/tasks/eligibility.ts) |
+| 预评估是可选解释；实际执行点仍须检查真实文件冲突、权限和同 Session 幂等，未知副作用不得伪为空。[PARALLEL-COLLABORATION 87、100–105、168 行](../PARALLEL-COLLABORATION.md) | **预评估可选不等于预占资源也可选。** 现目标 `claimTask` 必填 `ScopeProposal`/`reservationRef`，并要求同事务资源占用；这比“不在施工前全量证明、预占全部未来资源”的意图更重。应撤销全量预证明和每次预占全部资源的无条件前置，保留使用点的具体原子冲突与授权核对；不能只把全量预占改名为强制初始范围预占。[work-graph 270、282–294、679–688 行](../modules/core/work-graph.md)、[PARALLEL-COLLABORATION 93–98、178–179 行](../PARALLEL-COLLABORATION.md) | `next` 尚无 `claimTask`/ResourceReservation 实现；RecordStore 的 `indexGuards/indexChanges` 仍限空集合。[ports.ts 103–115 行](../../../coding-platform/next/src/core/record-store/ports.ts)。不能把通用范围索引施工或后来全量测试通过，当成这项新语义已落实。 |
+
+此次意图审阅未改任务图/领取生产代码或测试，也未运行其新的验收。独立的连续 Session 转发另批实现，不据此关闭图语义缺口。表中“需修正”是原文与此次意图的差异定位；实际准入契约由主审同步产品与架构入口后另行冻结。
+
+后续补充：执行前后的静态比较复用现有 Workspace / observed 图能力，用户讨论原话已入意图 §5；真实 API、可证明结论及未实现项写入[WorkGraph §4.0](../modules/core/work-graph.md#40-执行前后静态分析的实现复用2026-09-24)，R4p 计划已按此重写，不新增并行图存储或无消费者资源索引。

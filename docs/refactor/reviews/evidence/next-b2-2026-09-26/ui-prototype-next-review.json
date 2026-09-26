@@ -1,0 +1,19 @@
+{
+  "prototype": "/home/hyh001/.codex/visualizations/2026/09/26/01a0dc16-38ca-7a71-ba7d-fc23e0d3cbed/agent-workbench.html",
+  "method": "Native Chromium CDP pointer/input events; local example data only; no product or prototype source changes",
+  "facts": [
+    "File selection enters draft with path, exact L1-L2 and text snapshot; unsaved content marked draft; no send.",
+    "Explorer and editor are separate tabs; editing survives tab switching.",
+    "Left pointer drag 180 -> 280px; right drag previously 300 -> 540px.",
+    "Hide/show retains active editor and draft; outer prototype stays 680px through graph detail and file panels.",
+    "Archived conversation refuses attachment-to-send draft and remains read-only."
+  ],
+  "earlier": [
+    "Double click pins completion node and changes accessible label; detail opens separate named tab.",
+    "Future task area has no fabricated execution time."
+  ],
+  "limits": [
+    "Standalone HTML fragment relies on host-provided lucide for icon rendering; icons are blank when opened directly.",
+    "No backend, real model, terminal, file save or production completion implied."
+  ]
+}

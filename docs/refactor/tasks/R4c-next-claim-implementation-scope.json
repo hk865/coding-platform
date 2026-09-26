@@ -1,0 +1,16 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/tasks/claim-service.ts",
+    "coding-platform/next/src/core/work-graph/tasks/claim-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+    "coding-platform/next/src/core/work-graph/configuration/role-memory-service.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

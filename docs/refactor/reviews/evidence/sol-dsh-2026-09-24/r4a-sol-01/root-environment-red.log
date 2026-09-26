@@ -1,0 +1,198 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/vendor/coding-agent
+
+ ❯ tests/review/R4a-resume-environment.test.ts (4 tests | 3 failed) 143ms
+     × rejects a changed model with original limits, sandboxes, and host authorization 70ms
+     × rejects a changed workspace root with original config, limits, and sandboxes 33ms
+     × ignores a checksum-valid checkpoint with unsupported recovery constraint version and replays Session events 19ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/review/R4a-resume-environment.test.ts > R4a paused recovery environment > rejects a changed model with original limits, sandboxes, and host authorization
+AssertionError: promise resolved "{ …(5) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "action": "paused",
++   "enabledTools": [
++     "read",
++   ],
++   "provider": "deepseek",
++   "sessionId": "environment-session",
++   "state": {
++     "activeModelRequest": null,
++     "createdAt": "2026-09-23T16:43:32.087Z",
++     "elapsedMs": 9,
++     "endedAt": "2026-09-23T16:43:32.128Z",
++     "lastEventId": "1e45f14b-0d26-491c-9bee-cfea99977f33",
++     "lastEventSequence": 6,
++     "outcome": {
++       "finalMessageId": "313bccf2-d688-4204-b01c-db3f7db2d59c",
++       "kind": "completed",
++       "reason": "final_answer",
++     },
++     "pause": null,
++     "runId": "environment-run",
++     "schemaVersion": 1,
++     "startedAt": "2026-09-23T16:43:32.099Z",
++     "status": "completed",
++     "toolBatch": null,
++     "transcript": [
++       {
++         "kind": "user_message",
++         "message": {
++           "content": "pause before the model",
++           "messageId": "9d164e57-94b6-4e64-83ee-d54e7bd1b344",
++           "role": "user",
++           "schemaVersion": 1,
++         },
++       },
++       {
++         "kind": "assistant_message",
++         "message": {
++           "content": "unexpected continuation",
++           "messageId": "313bccf2-d688-4204-b01c-db3f7db2d59c",
++           "role": "assistant",
++           "schemaVersion": 1,
++         },
++         "toolCalls": [],
++       },
++     ],
++     "turn": {
++       "turnId": "environment-turn",
++       "userMessage": {
++         "content": "pause before the model",
++         "messageId": "9d164e57-94b6-4e64-83ee-d54e7bd1b344",
++         "role": "user",
++         "schemaVersion": 1,
++       },
++     },
++     "updatedAt": "2026-09-23T16:43:32.128Z",
++     "usage": {
++       "cachedInputTokens": 0,
++       "costUsdMicros": null,
++       "inputTokens": 0,
++       "modelRequestCount": 1,
++       "outputTokens": 0,
++       "toolCallCount": 0,
++     },
++   },
+  }
+
+ ❯ tests/review/R4a-resume-environment.test.ts:92:76
+     90|       model: { ...h.common.config.model, model: "different-local-model…
+     91|     });
+     92|     await expect(resumeCodingAgent({ ...h.common, config: changedConfi…
+       |                                                                            ^
+     93|     expect(h.model.requests).toHaveLength(0);
+     94|     expect(await records(h.databasePath, h.common.sessionId)).toEqual(…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/review/R4a-resume-environment.test.ts > R4a paused recovery environment > rejects a changed workspace root with original config, limits, and sandboxes
+AssertionError: promise resolved "{ …(5) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "action": "paused",
++   "enabledTools": [
++     "read",
++   ],
++   "provider": "deepseek",
++   "sessionId": "environment-session",
++   "state": {
++     "activeModelRequest": null,
++     "createdAt": "2026-09-23T16:43:32.144Z",
++     "elapsedMs": 3,
++     "endedAt": "2026-09-23T16:43:32.163Z",
++     "lastEventId": "cfe90245-d5bc-4db5-baea-24ce0232abb0",
++     "lastEventSequence": 6,
++     "outcome": {
++       "finalMessageId": "fd6eac82-5e38-45ca-8064-17ea4659513b",
++       "kind": "completed",
++       "reason": "final_answer",
++     },
++     "pause": null,
++     "runId": "environment-run",
++     "schemaVersion": 1,
++     "startedAt": "2026-09-23T16:43:32.146Z",
++     "status": "completed",
++     "toolBatch": null,
++     "transcript": [
++       {
++         "kind": "user_message",
++         "message": {
++           "content": "pause before the model",
++           "messageId": "565cf4d6-8e2f-40a9-8406-e01663658c26",
++           "role": "user",
++           "schemaVersion": 1,
++         },
++       },
++       {
++         "kind": "assistant_message",
++         "message": {
++           "content": "unexpected continuation",
++           "messageId": "fd6eac82-5e38-45ca-8064-17ea4659513b",
++           "role": "assistant",
++           "schemaVersion": 1,
++         },
++         "toolCalls": [],
++       },
++     ],
++     "turn": {
++       "turnId": "environment-turn",
++       "userMessage": {
++         "content": "pause before the model",
++         "messageId": "565cf4d6-8e2f-40a9-8406-e01663658c26",
++         "role": "user",
++         "schemaVersion": 1,
++       },
++     },
++     "updatedAt": "2026-09-23T16:43:32.163Z",
++     "usage": {
++       "cachedInputTokens": 0,
++       "costUsdMicros": null,
++       "inputTokens": 0,
++       "modelRequestCount": 1,
++       "outputTokens": 0,
++       "toolCallCount": 0,
++     },
++   },
+  }
+
+ ❯ tests/review/R4a-resume-environment.test.ts:103:79
+    101|     await writeFile(path.join(otherRoot, "note.txt"), "same contents\n…
+    102|     const before = await records(h.databasePath, h.common.sessionId);
+    103|     await expect(resumeCodingAgent({ ...h.common, workspaceRoot: other…
+       |                                                                               ^
+    104|     expect(h.model.requests).toHaveLength(0);
+    105|     expect(await records(h.databasePath, h.common.sessionId)).toEqual(…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/review/R4a-resume-environment.test.ts > R4a paused recovery environment > ignores a checksum-valid checkpoint with unsupported recovery constraint version and replays Session events
+AssertionError: expected 'checkpoint:environment-run:4' not to be 'checkpoint:environment-run:4' // Object.is equality
+ ❯ tests/review/R4a-resume-environment.test.ts:132:42
+    130|       const recovered = await new RecoveryCoordinator({ sessions: stor…
+    131|         .recover(h.common.sessionId, { signal });
+    132|       expect(recovered.checkpointId).not.toBe(latest!.checkpointId);
+       |                                          ^
+    133|       expect(recovered.action).toBe("paused");
+    134|       expect(recovered.state).toEqual(fromEvents.state);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  3 failed | 11 passed (14)
+   Start at  00:43:31
+   Duration  1.34s (transform 218ms, setup 0ms, import 513ms, tests 605ms, environment 0ms)
+

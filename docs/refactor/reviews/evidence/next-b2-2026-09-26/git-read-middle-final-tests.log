@@ -1,0 +1,202 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/data/R2e-git-operations.test.ts (12 tests | 10 failed) 427ms
+   × reads exact historical raw bytes (BOM) in a real sha1 repository despite later dirty/deleted worktree 38ms
+   × reads exact historical raw bytes (BOM) in a real sha256 repository despite later dirty/deleted worktree 31ms
+   × compares two real Git trees by blob OID and mode, including mode-only, binary and prefix exclusion 61ms
+   × applies the trusted read scope to historical paths and to an authorized comparison without leaking denied paths 36ms
+   × classifies a non-commit object, binary/symlink reads, oversized blobs and a genuinely missing object 26ms
+   × keeps a symlink-containing domain unsupported and compares a pure-regular binary domain 32ms
+   × never runs clean filters, textconv or external diff, and ignores a redirected GIT_DIR 50ms
+   × keeps a legitimate linked worktree readable and rejects a parent-repository subdirectory root 71ms
+   × observes the real Git child exit and root handle close when the caller aborts 29ms
+   × observes the real Git child exit and root handle close when the registry closes 27ms
+ ❯ tests/runtime/R2e-git-source-loop.test.ts (1 test | 1 failed) 193ms
+   × serves Git read and compare to a real B2 Kernel/model loop through project_source 192ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 11 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > reads exact historical raw bytes (BOM) in a real sha1 repository despite later dirty/deleted worktree
+ FAIL  tests/data/R2e-git-operations.test.ts > reads exact historical raw bytes (BOM) in a real sha256 repository despite later dirty/deleted worktree
+AssertionError: {"status":"rejected","code":"unsupported","reason":"git version reads are not implemented in this skeleton batch"}: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ ready tests/data/R2e-git-operations.test.ts:89:49
+     87|
+     88| function ready<T>(result: WorkspaceResult<T>): T {
+     89|   expect(result.status, JSON.stringify(result)).toBe('ready');
+       |                                                 ^
+     90|   if (result.status !== 'ready') throw Error(`${result.code}: ${result…
+     91|   return result.value;
+ ❯ tests/data/R2e-git-operations.test.ts:212:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/11]⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > compares two real Git trees by blob OID and mode, including mode-only, binary and prefix exclusion
+AssertionError: {"status":"rejected","code":"unsupported","reason":"git tree reads are not implemented in this skeleton batch"}: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ ready tests/data/R2e-git-operations.test.ts:89:49
+     87|
+     88| function ready<T>(result: WorkspaceResult<T>): T {
+     89|   expect(result.status, JSON.stringify(result)).toBe('ready');
+       |                                                 ^
+     90|   if (result.status !== 'ready') throw Error(`${result.code}: ${result…
+     91|   return result.value;
+ ❯ tests/data/R2e-git-operations.test.ts:263:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/11]⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > applies the trusted read scope to historical paths and to an authorized comparison without leaking denied paths
+AssertionError: {"status":"rejected","code":"unsupported","reason":"git tree reads are not implemented in this skeleton batch"}: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ ready tests/data/R2e-git-operations.test.ts:89:49
+     87|
+     88| function ready<T>(result: WorkspaceResult<T>): T {
+     89|   expect(result.status, JSON.stringify(result)).toBe('ready');
+       |                                                 ^
+     90|   if (result.status !== 'ready') throw Error(`${result.code}: ${result…
+     91|   return result.value;
+ ❯ tests/data/R2e-git-operations.test.ts:309:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/11]⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > classifies a non-commit object, binary/symlink reads, oversized blobs and a genuinely missing object
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, code) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "capacity",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/data/R2e-git-operations.test.ts:408:68
+    406|   expect(JSON.stringify(link)).not.toContain('plain text');
+    407|   // A blob above the requested maxBytes is capacity, never a truncate…
+    408|   expect(await f.read(f.context(), commit, 'docs/large.txt', 100)).toM…
+       |                                                                    ^
+    409|   // A tree OID is not a commit and must not be peeled into one.
+    410|   expect(await f.read(f.context(), tree, 'docs/text.txt')).toMatchObje…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/11]⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > keeps a symlink-containing domain unsupported and compares a pure-regular binary domain
+AssertionError: {"status":"rejected","code":"unsupported","reason":"git tree reads are not implemented in this skeleton batch"}: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ ready tests/data/R2e-git-operations.test.ts:89:49
+     87|
+     88| function ready<T>(result: WorkspaceResult<T>): T {
+     89|   expect(result.status, JSON.stringify(result)).toBe('ready');
+       |                                                 ^
+     90|   if (result.status !== 'ready') throw Error(`${result.code}: ${result…
+     91|   return result.value;
+ ❯ tests/data/R2e-git-operations.test.ts:430:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/11]⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > never runs clean filters, textconv or external diff, and ignores a redirected GIT_DIR
+AssertionError: {"status":"rejected","code":"unsupported","reason":"git version reads are not implemented in this skeleton batch"}: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ ready tests/data/R2e-git-operations.test.ts:89:49
+     87|
+     88| function ready<T>(result: WorkspaceResult<T>): T {
+     89|   expect(result.status, JSON.stringify(result)).toBe('ready');
+       |                                                 ^
+     90|   if (result.status !== 'ready') throw Error(`${result.code}: ${result…
+     91|   return result.value;
+ ❯ tests/data/R2e-git-operations.test.ts:462:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/11]⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > keeps a legitimate linked worktree readable and rejects a parent-repository subdirectory root
+AssertionError: {"status":"rejected","code":"unsupported","reason":"git version reads are not implemented in this skeleton batch"}: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ ready tests/data/R2e-git-operations.test.ts:89:49
+     87|
+     88| function ready<T>(result: WorkspaceResult<T>): T {
+     89|   expect(result.status, JSON.stringify(result)).toBe('ready');
+       |                                                 ^
+     90|   if (result.status !== 'ready') throw Error(`${result.code}: ${result…
+     91|   return result.value;
+ ❯ tests/data/R2e-git-operations.test.ts:492:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/11]⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > observes the real Git child exit and root handle close when the caller aborts
+AssertionError: Git read must reach a real cat-file --batch-check child before returning: expected 'result' to be 'child' // Object.is equality
+
+Expected: "child"
+Received: "result"
+
+ ❯ observeCancellation tests/data/R2e-git-operations.test.ts:563:95
+    561|       observedOperation.then(() => 'result' as const),
+    562|     ]), 'Git read outcome');
+    563|     expect(first, 'Git read must reach a real cat-file --batch-check c…
+       |                                                                                               ^
+    564|     const entered = gate.records[0];
+    565|     if (!entered) throw Error('gated real child was not recorded');
+ ❯ tests/data/R2e-git-operations.test.ts:605:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/11]⎯
+
+ FAIL  tests/data/R2e-git-operations.test.ts > observes the real Git child exit and root handle close when the registry closes
+AssertionError: Git read must reach a real cat-file --batch-check child before returning: expected 'result' to be 'child' // Object.is equality
+
+Expected: "child"
+Received: "result"
+
+ ❯ observeCancellation tests/data/R2e-git-operations.test.ts:563:95
+    561|       observedOperation.then(() => 'result' as const),
+    562|     ]), 'Git read outcome');
+    563|     expect(first, 'Git read must reach a real cat-file --batch-check c…
+       |                                                                                               ^
+    564|     const entered = gate.records[0];
+    565|     if (!entered) throw Error('gated real child was not recorded');
+ ❯ tests/data/R2e-git-operations.test.ts:609:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/11]⎯
+
+ FAIL  tests/runtime/R2e-git-source-loop.test.ts > serves Git read and compare to a real B2 Kernel/model loop through project_source
+AssertionError: {"status":"rejected","code":"unsupported","reason":"git version reads are not implemented in this skeleton batch"}: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ toolResult tests/runtime/R2e-git-source-loop.test.ts:38:49
+     36|   if (!output || output.kind !== 'json') throw Error(`No JSON result f…
+     37|   const result = output.value as unknown as WorkspaceResult<T>;
+     38|   expect(result.status, JSON.stringify(result)).toBe('ready');
+       |                                                 ^
+     39|   if (result.status !== 'ready') throw Error(`${result.code}: ${result…
+     40|   return result.value;
+ ❯ tests/runtime/R2e-git-source-loop.test.ts:113:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/11]⎯
+
+
+ Test Files  2 failed | 10 passed (12)
+      Tests  11 failed | 100 passed (111)
+   Start at  13:20:47
+   Duration  11.86s (transform 925ms, setup 0ms, import 3.55s, tests 7.38s, environment 1ms)
+

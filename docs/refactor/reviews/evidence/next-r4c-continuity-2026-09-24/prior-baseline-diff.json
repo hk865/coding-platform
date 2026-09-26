@@ -1,0 +1,9 @@
+{
+  "changed": [
+    "src/core/agent-runtime/observed-model-run.ts"
+  ],
+  "added": [
+    "tests/runtime/R4c-session-continuity.test.ts"
+  ],
+  "removed": []
+}

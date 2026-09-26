@@ -1,0 +1,11 @@
+{
+  "production": {
+    "coding-platform/src/core/workspace/text-source-snapshot.ts": "e8c4797153038fcb09e385c9864963db0ec1829c4bd38309b39f60107a5918b9",
+    "coding-platform/src/core/workspace/workspace-read.ts": "6682248242298aa7542f3f17bcade617bf52b1b08a32022fca4f3aea0dc64a54"
+  },
+  "tests": {
+    "coding-platform/tests/data/workspace-text-operations.test.ts": "2bee644713c574b41c0f975184c1ca62322cc99f0544c7053284c2f780e976fd",
+    "coding-platform/tests/runtime/runtime-workspace-text-tools.test.ts": "5897e0c74e163d3790780958563223d6068079c0aa2c55646add91ed4d247eaa",
+    "coding-platform/tests/data/R2e-text-boundaries.test.ts": "cf98c2d8eee1f120ae49a793df410354dedea95e0be195f93bf9fe76bfb7a51c"
+  }
+}

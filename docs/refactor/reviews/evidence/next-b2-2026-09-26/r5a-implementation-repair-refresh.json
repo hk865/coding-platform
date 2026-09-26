@@ -1,0 +1,15 @@
+{
+  "files": [
+    {
+      "file": "coding-platform/next/tests/work-graph/R5a-project-bootstrap.test.ts",
+      "before": "e6eb5f1e386b9736b66c547b961e3a010f376573e75782e67d42979fe72b9481",
+      "after": "596d5b53e5390102a1dd8e7a254846c4fab607d37a7c27421af9c42c64b5a3cf"
+    },
+    {
+      "file": "docs/refactor/tasks/R5a-project-bootstrap-implementation.md",
+      "before": "e88173f0be9701eca415004a4efa64352ca580b30180efd79e4c06b4b1aa588b",
+      "after": "0418effb641c65c36730953adf1a3a4362e2ac51d73e1553fd00307a0171d746"
+    }
+  ],
+  "stage": "independently reviewed true response-window regressions"
+}

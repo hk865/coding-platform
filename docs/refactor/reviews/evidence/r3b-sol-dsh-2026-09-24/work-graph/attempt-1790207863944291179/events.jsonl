@@ -1,0 +1,64 @@
+{"type": "session", "sessionId": "session-a078c91e-68a4-44a9-ab54-bd6f5d12b153"}
+{"type": "status"}
+{"type": "status"}
+{"type": "text"}
+{"type": "tool_call", "tool": "bash"}
+{"type": "tool_result", "status": "completed"}
+{"type": "tool_call", "tool": "bash"}
+{"type": "tool_result", "status": "completed"}
+{"type": "status"}
+{"type": "status"}
+{"type": "tool_call", "tool": "read"}
+{"type": "tool_result", "status": "completed"}
+{"type": "status"}
+{"type": "status"}
+{"type": "text"}
+{"type": "tool_call", "tool": "bash"}
+{"type": "tool_result", "status": "completed"}
+{"type": "status"}
+{"type": "status"}
+{"type": "text"}
+{"type": "tool_call", "tool": "bash"}
+{"type": "tool_result", "status": "completed"}
+{"type": "status"}
+{"type": "status"}
+{"type": "text"}
+{"type": "tool_call", "tool": "bash"}
+{"type": "tool_result", "status": "completed"}
+{"type": "status"}
+{"type": "status"}
+{"type": "tool_call", "tool": "bash"}
+{"type": "tool_result", "status": "completed"}
+{"type": "status"}
+{"type": "status"}
+{"type": "text"}
+{"type": "tool_call", "tool": "bash"}
+{"type": "tool_result", "status": "completed"}
+{"type": "status"}
+{"type": "status"}
+{"type": "text"}
+{"type": "tool_call", "tool": "read"}
+{"type": "tool_result", "status": "completed"}
+{"type": "tool_call", "tool": "bash"}
+{"type": "tool_result", "status": "completed"}
+{"type": "status"}
+{"type": "status"}
+{"type": "text"}
+{"type": "tool_call", "tool": "bash"}
+{"type": "tool_result", "status": "completed"}
+{"type": "tool_call", "tool": "read"}
+{"type": "tool_result", "status": "completed"}
+{"type": "status"}
+{"type": "status"}
+{"type": "tool_call", "tool": "bash"}
+{"type": "tool_result", "status": "completed"}
+{"type": "status"}
+{"type": "status"}
+{"type": "tool_call", "tool": "read"}
+{"type": "tool_result", "status": "completed"}
+{"type": "status"}
+{"type": "status"}
+{"type": "text"}
+{"type": "status"}
+{"type": "status", "reason": {"kind": "completed"}}
+{"type": "final"}

@@ -1,0 +1,16 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/tasks/plan-write-admission.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-service.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-contracts.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-record-codecs.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

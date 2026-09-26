@@ -1,0 +1,177 @@
+{
+  "retrieved_on": "2026-09-22",
+  "purpose": "Read-only research snapshots; the downloaded SKILL.md is not installed or activated.",
+  "repositories": {
+    "google/eng-practices": {
+      "sha": "3bb3ec25b3b0199f4940b1aa75f0ac5c5753301c",
+      "commit_date": "2024-09-19T05:27:51Z",
+      "html_url": "https://github.com/google/eng-practices/commit/3bb3ec25b3b0199f4940b1aa75f0ac5c5753301c"
+    },
+    "google/styleguide": {
+      "sha": "2b21895cd5f2fbc6e041f9f0a2dbb32b44b5fe7b",
+      "commit_date": "2026-09-21T02:47:51Z",
+      "html_url": "https://github.com/google/styleguide/commit/2b21895cd5f2fbc6e041f9f0a2dbb32b44b5fe7b"
+    },
+    "airbnb/javascript": {
+      "sha": "8ed19247bef145e3cc41b24a02dd1fe6d9b5e681",
+      "commit_date": "2026-02-21T22:48:29Z",
+      "html_url": "https://github.com/airbnb/javascript/commit/8ed19247bef145e3cc41b24a02dd1fe6d9b5e681"
+    },
+    "getsentry/skills": {
+      "sha": "c2f99a5b04b4cd992ec3022d7c2c3e23e938d241",
+      "commit_date": "2026-08-25T14:33:48Z",
+      "html_url": "https://github.com/getsentry/skills/commit/c2f99a5b04b4cd992ec3022d7c2c3e23e938d241"
+    },
+    "openai/skills": {
+      "sha": "49f948faa9258a0c61caceaf225e179651397431",
+      "commit_date": "2026-06-24T02:36:12Z",
+      "html_url": "https://github.com/openai/skills/commit/49f948faa9258a0c61caceaf225e179651397431"
+    }
+  },
+  "files": [
+    {
+      "repo": "google/eng-practices",
+      "path": "LICENSE",
+      "commit": "3bb3ec25b3b0199f4940b1aa75f0ac5c5753301c",
+      "url": "https://raw.githubusercontent.com/google/eng-practices/3bb3ec25b3b0199f4940b1aa75f0ac5c5753301c/LICENSE",
+      "bytes": 19466,
+      "sha256": "11dbf7126ae9794e4a7dc54334f3c82a67efcf22df888d396dc2ed707b2a3f9b",
+      "local_path": "upstream/google/eng-practices/LICENSE",
+      "license": "CC-BY-3.0",
+      "license_path": "upstream/google/eng-practices/LICENSE",
+      "modified": false
+    },
+    {
+      "repo": "google/eng-practices",
+      "path": "README.md",
+      "commit": "3bb3ec25b3b0199f4940b1aa75f0ac5c5753301c",
+      "url": "https://raw.githubusercontent.com/google/eng-practices/3bb3ec25b3b0199f4940b1aa75f0ac5c5753301c/README.md",
+      "bytes": 1568,
+      "sha256": "fc8e999b9e95bc77c1b626fd9a22508cbc6341f15fd5b03da40787165d7298c8",
+      "local_path": "upstream/google/eng-practices/README.md",
+      "license": "CC-BY-3.0",
+      "license_path": "upstream/google/eng-practices/LICENSE",
+      "modified": false
+    },
+    {
+      "repo": "google/eng-practices",
+      "path": "review/reviewer/standard.md",
+      "commit": "3bb3ec25b3b0199f4940b1aa75f0ac5c5753301c",
+      "url": "https://raw.githubusercontent.com/google/eng-practices/3bb3ec25b3b0199f4940b1aa75f0ac5c5753301c/review/reviewer/standard.md",
+      "bytes": 5745,
+      "sha256": "c37144f9f8880092c3d48cd22a4e4ce30dbdefa4f4b2612a3c37b2a4bd838ae2",
+      "local_path": "upstream/google/eng-practices/review/reviewer/standard.md",
+      "license": "CC-BY-3.0",
+      "license_path": "upstream/google/eng-practices/LICENSE",
+      "modified": false
+    },
+    {
+      "repo": "google/eng-practices",
+      "path": "review/reviewer/looking-for.md",
+      "commit": "3bb3ec25b3b0199f4940b1aa75f0ac5c5753301c",
+      "url": "https://raw.githubusercontent.com/google/eng-practices/3bb3ec25b3b0199f4940b1aa75f0ac5c5753301c/review/reviewer/looking-for.md",
+      "bytes": 11330,
+      "sha256": "0a6643fc4ce2bc73e4d7a4ac01df694085adf9bd70cb499c5e8645dfd8c1f839",
+      "local_path": "upstream/google/eng-practices/review/reviewer/looking-for.md",
+      "license": "CC-BY-3.0",
+      "license_path": "upstream/google/eng-practices/LICENSE",
+      "modified": false
+    },
+    {
+      "repo": "google/eng-practices",
+      "path": "review/developer/small-cls.md",
+      "commit": "3bb3ec25b3b0199f4940b1aa75f0ac5c5753301c",
+      "url": "https://raw.githubusercontent.com/google/eng-practices/3bb3ec25b3b0199f4940b1aa75f0ac5c5753301c/review/developer/small-cls.md",
+      "bytes": 12289,
+      "sha256": "6bc55ce9a752bbb26df430a55cd12014beee684ed04e94841989ac86558817c9",
+      "local_path": "upstream/google/eng-practices/review/developer/small-cls.md",
+      "license": "CC-BY-3.0",
+      "license_path": "upstream/google/eng-practices/LICENSE",
+      "modified": false
+    },
+    {
+      "repo": "google/styleguide",
+      "path": "LICENSE",
+      "commit": "2b21895cd5f2fbc6e041f9f0a2dbb32b44b5fe7b",
+      "url": "https://raw.githubusercontent.com/google/styleguide/2b21895cd5f2fbc6e041f9f0a2dbb32b44b5fe7b/LICENSE",
+      "bytes": 19467,
+      "sha256": "e6bc9e9c474700b708f568bac9e5a8a9bcb2b1dad53442f5ba449fcb848b8e76",
+      "local_path": "upstream/google/styleguide/LICENSE",
+      "license": "CC-BY-3.0",
+      "license_path": "upstream/google/styleguide/LICENSE",
+      "modified": false
+    },
+    {
+      "repo": "google/styleguide",
+      "path": "tsguide.html",
+      "commit": "2b21895cd5f2fbc6e041f9f0a2dbb32b44b5fe7b",
+      "url": "https://raw.githubusercontent.com/google/styleguide/2b21895cd5f2fbc6e041f9f0a2dbb32b44b5fe7b/tsguide.html",
+      "bytes": 141203,
+      "sha256": "3ab5ef4a659559bafeced5ad971f0805b5b8bb755decc6d0c195bd6a4a1c57a3",
+      "local_path": "upstream/google/styleguide/tsguide.html",
+      "license": "CC-BY-3.0",
+      "license_path": "upstream/google/styleguide/LICENSE",
+      "modified": false
+    },
+    {
+      "repo": "airbnb/javascript",
+      "path": "LICENSE.md",
+      "commit": "8ed19247bef145e3cc41b24a02dd1fe6d9b5e681",
+      "url": "https://raw.githubusercontent.com/airbnb/javascript/8ed19247bef145e3cc41b24a02dd1fe6d9b5e681/LICENSE.md",
+      "bytes": 1063,
+      "sha256": "e18f507209d40c142dd96d5bfd825ae4d9a3cb83e1fb27bbfde20e980149212c",
+      "local_path": "upstream/airbnb/javascript/LICENSE.md",
+      "license": "MIT",
+      "license_path": "upstream/airbnb/javascript/LICENSE.md",
+      "modified": false
+    },
+    {
+      "repo": "airbnb/javascript",
+      "path": "README.md",
+      "commit": "8ed19247bef145e3cc41b24a02dd1fe6d9b5e681",
+      "url": "https://raw.githubusercontent.com/airbnb/javascript/8ed19247bef145e3cc41b24a02dd1fe6d9b5e681/README.md",
+      "bytes": 129525,
+      "sha256": "fd1901ae2b1ab28cf6ef4d3b943fb4af3be7a5fabb4e0b2eee60cb86ce5cc1d6",
+      "local_path": "upstream/airbnb/javascript/README.md",
+      "license": "MIT",
+      "license_path": "upstream/airbnb/javascript/LICENSE.md",
+      "modified": false
+    },
+    {
+      "repo": "getsentry/skills",
+      "path": "LICENSE",
+      "commit": "c2f99a5b04b4cd992ec3022d7c2c3e23e938d241",
+      "url": "https://raw.githubusercontent.com/getsentry/skills/c2f99a5b04b4cd992ec3022d7c2c3e23e938d241/LICENSE",
+      "bytes": 10785,
+      "sha256": "96e78a9ce85795b117c8929887bdb78f88bf23f7b85a31f0872cde4dff7e92cd",
+      "local_path": "upstream/getsentry/skills/LICENSE",
+      "license": "Apache-2.0",
+      "license_path": "upstream/getsentry/skills/LICENSE",
+      "modified": false
+    },
+    {
+      "repo": "getsentry/skills",
+      "path": "README.md",
+      "commit": "c2f99a5b04b4cd992ec3022d7c2c3e23e938d241",
+      "url": "https://raw.githubusercontent.com/getsentry/skills/c2f99a5b04b4cd992ec3022d7c2c3e23e938d241/README.md",
+      "bytes": 12264,
+      "sha256": "7bceb51c0939dc9d485f17f49e7b6ebbebcfcb904fa78bf644094c6120f15365",
+      "local_path": "upstream/getsentry/skills/README.md",
+      "license": "Apache-2.0",
+      "license_path": "upstream/getsentry/skills/LICENSE",
+      "modified": false
+    },
+    {
+      "repo": "getsentry/skills",
+      "path": "skills/code-review/SKILL.md",
+      "commit": "c2f99a5b04b4cd992ec3022d7c2c3e23e938d241",
+      "url": "https://raw.githubusercontent.com/getsentry/skills/c2f99a5b04b4cd992ec3022d7c2c3e23e938d241/skills/code-review/SKILL.md",
+      "bytes": 2768,
+      "sha256": "ec5fc8855cb4648b4f2c79b608f8c8824a2da6a683330524c4d6283e4a3954c4",
+      "local_path": "upstream/getsentry/skills/skills/code-review/SKILL.md",
+      "license": "Apache-2.0",
+      "license_path": "upstream/getsentry/skills/LICENSE",
+      "modified": false
+    }
+  ]
+}

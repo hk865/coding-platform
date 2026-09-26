@@ -1,0 +1,186 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts (19 tests | 5 failed) 31ms
+     × rejects a NEW request for an existing Project with revision_conflict and never overwrites it 5ms
+     × recovers the original receipt when the real commit succeeds but its response is lost 2ms
+     × honors cancellation during each real necessary read before any registration or policy commit 3ms
+     × rejects an expected policy content revision that names a different row from the install input 1ms
+     × recovers a same-identity winner committed after the loser lookup miss but before its fresh active read 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a Project registration > rejects a NEW request for an existing Project with revision_conflict and never overwrites it
+AssertionError: expected [ { ref: { …(2) }, revision: +0 } ] to not deep equally contain { ref: { …(2) }, revision: +0 }
+
+- Expected:
+{
+  "ref": {
+    "aggregateType": "Project",
+    "projectId": "r5a-bootstrap-project",
+  },
+  "revision": 0,
+}
+
++ Received:
+[
+  {
+    "ref": {
+      "aggregateType": "Project",
+      "projectId": "r5a-bootstrap-project",
+    },
+    "revision": 0,
+  },
+]
+
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:138:35
+    136|     expect(nonzero).toMatchObject({ status: 'rejected', code: 'revisio…
+    137|     if (nonzero.status === 'rejected' && nonzero.code === 'revision_co…
+    138|       expect(nonzero.current).not.toContainEqual({ ref: projectRef, re…
+       |                                   ^
+    139|     }
+    140|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a real provider response windows > recovers the original receipt when the real commit succeeds but its response is lost
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed', …(3) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "cursor": "c0000000001",
+-   "replayed": true,
+-   "status": "committed",
+-   "value": {
+-     "ref": {
+-       "aggregateType": "Project",
+-       "projectId": "r5a-bootstrap-project",
+-     },
+-     "revision": 1,
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:405:20
+    403|     const result = await services.projects.createProject(ctx, request);
+    404|     expect(actualCursor).toBeDefined();
+    405|     expect(result).toMatchObject({ status: 'committed', replayed: true,
+       |                    ^
+    406|       value: { ref: projectRef, revision: 1 }, cursor: actualCursor });
+    407|     expect(await services.projects.createProject(ctx, request)).toEqua…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a real provider response windows > honors cancellation during each real necessary read before any registration or policy commit
+AssertionError: expected [ …(3) ] to deeply equal [ …(3) ]
+
+- Expected
++ Received
+
+  [
+    {
+-     "code": "cancelled",
+-     "commits": 0,
++     "commits": 1,
+      "operation": "workspace",
+-     "status": "rejected",
++     "status": "committed",
+    },
+    {
+-     "code": "cancelled",
+-     "commits": 0,
++     "commits": 1,
+      "operation": "install",
+-     "status": "rejected",
++     "status": "committed",
+    },
+    {
+-     "code": "cancelled",
+-     "commits": 0,
++     "commits": 1,
+      "operation": "activate",
+-     "status": "rejected",
++     "status": "committed",
+    },
+  ]
+
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:446:22
+    444|       outcomes.push({ operation, status: result.status, ...(result.sta…
+    445|     }
+    446|     expect(outcomes).toEqual(['workspace', 'install', 'activate'].map(…
+       |                      ^
+    447|       ({ operation, status: 'rejected', code: 'cancelled', commits: 0 …
+    448|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a real provider response windows > rejects an expected policy content revision that names a different row from the install input
+AssertionError: expected { status: 'committed', …(3) } to match object { status: 'rejected', code: 'invalid' }
+(10 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "invalid",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:456:20
+    454|       meta: { requestId: 'r5a-wrong-policy-ref', expected: [{ ref: pro…
+    455|       input: { policyId, contentRevision: 1, content: content() } });
+    456|     expect(result).toMatchObject({ status: 'rejected', code: 'invalid'…
+       |                    ^
+    457|     const keys = [1, 2].map(revision => canonicalJson(policyRef(revisi…
+    458|     expect(await backend.records.readMany(keys)).toMatchObject({ statu…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  tests/work-graph/R5a-project-bootstrap.test.ts > R5a real provider response windows > recovers a same-identity winner committed after the loser lookup miss but before its fresh active read
+AssertionError: expected { status: 'rejected', …(3) } to match object { status: 'committed', …(3) }
+(3 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "cursor": "c0000000003",
+-   "replayed": true,
+-   "status": "committed",
+-   "value": {
+-     "activeRevision": {
+-       "aggregateType": "CompletionPolicyRevision",
+-       "policyId": "r5a-policy",
+-       "projectId": "r5a-bootstrap-project",
+-       "revision": 1,
+-     },
+-     "projectId": "r5a-bootstrap-project",
+-     "ref": {
+-       "aggregateType": "ProjectCompletionPolicyActive",
+-       "projectId": "r5a-bootstrap-project",
+-     },
+-     "revision": 1,
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R5a-project-bootstrap.test.ts:488:19
+    486|     expect(winnerResult).toBeDefined();
+    487|     const original = committed(winnerResult!);
+    488|     expect(loser).toMatchObject({ status: 'committed', replayed: true,…
+       |                   ^
+    489|     const active = await backend.records.readMany([canonicalJson(activ…
+    490|     expect(active).toMatchObject({ status: 'ready', value: { records: …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  5 failed | 16 passed (21)
+   Start at  12:25:55
+   Duration  1.43s (transform 794ms, setup 0ms, import 1.19s, tests 72ms, environment 0ms)
+

@@ -1,0 +1,16 @@
+{
+  "cause": "unanchored evidence exclusion omitted production work-graph/evidence directory",
+  "failedAttempt": "attempt-1790399679568327092",
+  "startedDSHSession": false,
+  "harnessBefore": "f9c56d106ac58f46a72627ae68cdce33e52fc41775d2341d42a61fe70934d4a4",
+  "harnessAfter": "872742b6ed3d32b0413324667d0b06723bf4a0f5f1c62d7a3a8042b0519c0f7c",
+  "repairedSnapshotFiles": {
+    "coding-platform/next/src/core/work-graph/evidence/contracts.ts": "25db9464b8b542cef42a5ddc1eea2d9734d09e3c7a506ea63a327de61bcc245e",
+    "coding-platform/next/src/core/work-graph/evidence/evidence-service.ts": "25db9464b8b542cef42a5ddc1eea2d9734d09e3c7a506ea63a327de61bcc245e",
+    "coding-platform/next/src/core/work-graph/evidence/evidence-record-codecs.ts": "25db9464b8b542cef42a5ddc1eea2d9734d09e3c7a506ea63a327de61bcc245e",
+    "coding-platform/next/src/core/work-graph/evidence/verification-plan.ts": "25db9464b8b542cef42a5ddc1eea2d9734d09e3c7a506ea63a327de61bcc245e",
+    "coding-platform/next/src/core/work-graph/evidence/coverage.ts": "25db9464b8b542cef42a5ddc1eea2d9734d09e3c7a506ea63a327de61bcc245e"
+  },
+  "originalAllowedHashesPreserved": true,
+  "writableScopeUnchanged": true
+}

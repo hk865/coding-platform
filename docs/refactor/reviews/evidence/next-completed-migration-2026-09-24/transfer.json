@@ -1,0 +1,304 @@
+[
+  {
+    "source": "src/execution/worker-runtime/project-source-tool.ts",
+    "target": "src/core/agent-runtime/project-source-tool.ts",
+    "sourceSha256": "37a9671e160bf104ee472f85effb64c1796f5f7ec93134dcdc3535a2316c41ce",
+    "targetSha256": "1f8d1a3331c7a5ee4267ec78dedf6a4cff4fb55ac269cdbee90a11362d20251b",
+    "byteIdentical": false
+  },
+  {
+    "source": "src/execution/worker-runtime/exploration-tools.ts",
+    "target": "src/core/agent-runtime/exploration-tools.ts",
+    "sourceSha256": "1e6ff898594cfe6c28d8b33b4679b4856f181d77143a7af69271a55f0f10aa0e",
+    "targetSha256": "7ac294017db8c73c15713d912bd0c2acc1fa93e18fba291dfcd65c5a3b451854",
+    "byteIdentical": false
+  },
+  {
+    "source": "src/execution/worker-runtime/observed-model-run.ts",
+    "target": "src/core/agent-runtime/observed-model-run.ts",
+    "sourceSha256": "263079d8dfeb8ce08be5076bfe57a098f2a17daa48e211fad6bc4031abeb0b11",
+    "targetSha256": "ad914ab5a70d036f1573006f94ae11480aa4220fd949504e3a6d1afd79bc9e9f",
+    "byteIdentical": false
+  },
+  {
+    "source": "src/execution/worker-runtime/model-budget.ts",
+    "target": "src/core/agent-runtime/model-budget.ts",
+    "sourceSha256": "810b108333fd9b7e8aa247b8c21c661f6acb7c7c5723b8fd40d49d379a68ad86",
+    "targetSha256": "810b108333fd9b7e8aa247b8c21c661f6acb7c7c5723b8fd40d49d379a68ad86",
+    "byteIdentical": true
+  },
+  {
+    "source": "src/execution/worker-runtime/run-limits.ts",
+    "target": "src/core/agent-runtime/run-limits.ts",
+    "sourceSha256": "7c4388a5f246b8101fd83d3719fb38c2f162a9cb70d1289f5af1e4242ba1fd02",
+    "targetSha256": "7c4388a5f246b8101fd83d3719fb38c2f162a9cb70d1289f5af1e4242ba1fd02",
+    "byteIdentical": true
+  },
+  {
+    "source": "src/core/workspace/python-source-index.ts",
+    "target": "src/core/workspace/python-source-index.ts",
+    "sourceSha256": "7d0f40800a13a86d1ab57b451260495194df6185767e1e4d73bf09baf161f117",
+    "targetSha256": "7d0f40800a13a86d1ab57b451260495194df6185767e1e4d73bf09baf161f117",
+    "byteIdentical": true
+  },
+  {
+    "source": "src/core/workspace/cpp-source-index.ts",
+    "target": "src/core/workspace/cpp-source-index.ts",
+    "sourceSha256": "e95502528c0340b502081d21f0d873fefa404290a0fb9530411f752380b2ca89",
+    "targetSha256": "e95502528c0340b502081d21f0d873fefa404290a0fb9530411f752380b2ca89",
+    "byteIdentical": true
+  },
+  {
+    "source": "src/contracts/runtime-budget.ts",
+    "target": "src/contracts/runtime-budget.ts",
+    "sourceSha256": "e1fc6e99bba9d50654a6be9a7cfd898e2eb660d09c483ca3f921075b86380cd3",
+    "targetSha256": "e1fc6e99bba9d50654a6be9a7cfd898e2eb660d09c483ca3f921075b86380cd3",
+    "byteIdentical": true
+  },
+  {
+    "source": "scripts/python-source-query.py",
+    "target": "scripts/python-source-query.py",
+    "sourceSha256": "aff8108c82c3c99359e78187cfdbb90e54143491566d68144fab0b3413f0936b",
+    "targetSha256": "aff8108c82c3c99359e78187cfdbb90e54143491566d68144fab0b3413f0936b",
+    "byteIdentical": true
+  },
+  {
+    "source": "scripts/cpp-source-query.py",
+    "target": "scripts/cpp-source-query.py",
+    "sourceSha256": "0e5223dc58137d14986ad1ded39c57bc90a69aa9b5640b41453de9dbac925839",
+    "targetSha256": "0e5223dc58137d14986ad1ded39c57bc90a69aa9b5640b41453de9dbac925839",
+    "byteIdentical": true
+  },
+  {
+    "source": ".local/source-analyzers/analyzers.zip",
+    "target": ".local/source-analyzers/analyzers.zip",
+    "sourceSha256": "d0cc3510f5fd53c80164c4c1a1bde1169264e054dfe39158a1c15496b405338b",
+    "targetSha256": "d0cc3510f5fd53c80164c4c1a1bde1169264e054dfe39158a1c15496b405338b",
+    "byteIdentical": true
+  },
+  {
+    "source": ".local/source-analyzers/analyzers.sha256",
+    "target": ".local/source-analyzers/analyzers.sha256",
+    "sourceSha256": "ea08be5256a002898ec1dcfbf0588ed5d662f2c61c41e5bb3e778e3e8957a10d",
+    "targetSha256": "ea08be5256a002898ec1dcfbf0588ed5d662f2c61c41e5bb3e778e3e8957a10d",
+    "byteIdentical": true
+  },
+  {
+    "source": ".local/source-analyzers/manifest.json",
+    "target": ".local/source-analyzers/manifest.json",
+    "sourceSha256": "c2526c71e433f69c38475c65e8f0996084f4ec577972f48970494edf69584716",
+    "targetSha256": "c2526c71e433f69c38475c65e8f0996084f4ec577972f48970494edf69584716",
+    "byteIdentical": true
+  },
+  {
+    "source": "vendor/coding-agent/resources/README.md",
+    "target": "vendor/coding-agent/resources/README.md",
+    "sourceSha256": "96785670d099025fc02cca99ef37951c465073e206c142146103da6e3c9702f2",
+    "targetSha256": "96785670d099025fc02cca99ef37951c465073e206c142146103da6e3c9702f2",
+    "byteIdentical": true
+  },
+  {
+    "source": "vendor/coding-agent/resources/mcp/README.md",
+    "target": "vendor/coding-agent/resources/mcp/README.md",
+    "sourceSha256": "7704b354935ca616ceb3b6eb1e8b3c83f6b006ef490af44b8c9741501ff9a8e7",
+    "targetSha256": "7704b354935ca616ceb3b6eb1e8b3c83f6b006ef490af44b8c9741501ff9a8e7",
+    "byteIdentical": true
+  },
+  {
+    "source": "vendor/coding-agent/resources/skills/README.md",
+    "target": "vendor/coding-agent/resources/skills/README.md",
+    "sourceSha256": "2fbdebebe5c17ae58089d0cf305e66e6d15cdc0358383bf92b14e46557f30d1d",
+    "targetSha256": "2fbdebebe5c17ae58089d0cf305e66e6d15cdc0358383bf92b14e46557f30d1d",
+    "byteIdentical": true
+  },
+  {
+    "source": "vendor/coding-agent/resources/skills/coding-safety/content.md",
+    "target": "vendor/coding-agent/resources/skills/coding-safety/content.md",
+    "sourceSha256": "d69286dc888e6efcce72676fc7eaa315b9cfe6f63809a666b4eb5ef528b1ed7d",
+    "targetSha256": "d69286dc888e6efcce72676fc7eaa315b9cfe6f63809a666b4eb5ef528b1ed7d",
+    "byteIdentical": true
+  },
+  {
+    "source": "vendor/coding-agent/resources/skills/coding-safety/skill.json",
+    "target": "vendor/coding-agent/resources/skills/coding-safety/skill.json",
+    "sourceSha256": "ba52b171a0e26031fea1ffe5408caa779934d02897a6af5ffa5c95c903e0090b",
+    "targetSha256": "ba52b171a0e26031fea1ffe5408caa779934d02897a6af5ffa5c95c903e0090b",
+    "byteIdentical": true
+  },
+  {
+    "source": "vendor/coding-agent/resources/skills/project-conventions/content.md",
+    "target": "vendor/coding-agent/resources/skills/project-conventions/content.md",
+    "sourceSha256": "38a625b34d25e42c1c16c2f3fc443ac4bc7b83d84ca240bac50641378f2880a9",
+    "targetSha256": "38a625b34d25e42c1c16c2f3fc443ac4bc7b83d84ca240bac50641378f2880a9",
+    "byteIdentical": true
+  },
+  {
+    "source": "vendor/coding-agent/resources/skills/project-conventions/skill.json",
+    "target": "vendor/coding-agent/resources/skills/project-conventions/skill.json",
+    "sourceSha256": "bf7c1d7ca0f73eeda520bb702acd2e4dcd43f6966829afb584e05b43fb942c5a",
+    "targetSha256": "bf7c1d7ca0f73eeda520bb702acd2e4dcd43f6966829afb584e05b43fb942c5a",
+    "byteIdentical": true
+  },
+  {
+    "source": "tests/data/project-source-index.test.ts",
+    "target": "tests/data/project-source-index.test.ts",
+    "sourceSha256": "aa253a7a7240f4f8480e406e2675e4edc34381e833db73c32a4bb3f0ef970316",
+    "targetSha256": "aa253a7a7240f4f8480e406e2675e4edc34381e833db73c32a4bb3f0ef970316",
+    "byteIdentical": true
+  },
+  {
+    "source": "tests/data/source-index.test.ts",
+    "target": "tests/data/source-index.test.ts",
+    "sourceSha256": "0793139fb7fce4f8086f4708d0deb943f7e6955dd330f90d9225c5cfa4e58a2d",
+    "targetSha256": "0793139fb7fce4f8086f4708d0deb943f7e6955dd330f90d9225c5cfa4e58a2d",
+    "byteIdentical": true
+  },
+  {
+    "source": "tests/data/python-source-index.test.ts",
+    "target": "tests/data/python-source-index.test.ts",
+    "sourceSha256": "70631a8847bfbcfd056d1fbf36cd24c8e060c737ac5a335b14b48ff547dd2be6",
+    "targetSha256": "70631a8847bfbcfd056d1fbf36cd24c8e060c737ac5a335b14b48ff547dd2be6",
+    "byteIdentical": true
+  },
+  {
+    "source": "tests/data/cpp-source-index.test.ts",
+    "target": "tests/data/cpp-source-index.test.ts",
+    "sourceSha256": "2bd5fa330213684bd11011e9f31736c28637891c4af5058cbf4459180c78aa78",
+    "targetSha256": "a5e38917bd3c9c98ad62a6b2ba430213563aacaee8f9f1ddbaa2c63b424e9d5c",
+    "byteIdentical": false
+  },
+  {
+    "source": "tests/app/project-source-tool.test.ts",
+    "target": "tests/app/project-source-tool.test.ts",
+    "sourceSha256": "e3329107ff896e3a77d78817294d405e56194b66ac5a34c77132c3a4ff129de2",
+    "targetSha256": "665abeba797e2891248910a5c6e9a43ad62b7c3cae58742ef50d67399758a6c5",
+    "byteIdentical": false
+  },
+  {
+    "source": "tests/runtime/source-tool-lifecycle.test.ts",
+    "target": "tests/runtime/source-tool-lifecycle.test.ts",
+    "sourceSha256": "0ce3ebf74d9c7f930f88040703115d2d66d5fd4bff294a0a9d836f7cf09232b1",
+    "targetSha256": "264ff7ff67f6eabdbe8d5a7fe5d3794e7510770ec5c3e51711ef073c77a6b874",
+    "byteIdentical": false
+  },
+  {
+    "source": "src/core/workspace/readonly-read-witness-reader.ts",
+    "target": "src/core/workspace/readonly-read-witness-reader.ts",
+    "sourceSha256": "22aadaaa4d7255086280338c921fba53c00b0d04a6130b92089394ee316d2d1e",
+    "targetSha256": "22aadaaa4d7255086280338c921fba53c00b0d04a6130b92089394ee316d2d1e",
+    "byteIdentical": true
+  },
+  {
+    "source": "src/core/workspace/exploration-source.ts",
+    "target": "src/core/workspace/exploration-source.ts",
+    "sourceSha256": "1273df7c9f329e8b9f65d8e8cf43b6a84a6f24a72627ceaf842b2ae78895f2bf",
+    "targetSha256": "1273df7c9f329e8b9f65d8e8cf43b6a84a6f24a72627ceaf842b2ae78895f2bf",
+    "byteIdentical": true
+  },
+  {
+    "source": "src/core/workspace/source-workspace-reader.ts",
+    "target": "src/core/workspace/source-workspace-reader.ts",
+    "sourceSha256": "d5cd0d75f41e9c14946f800518f5b3ccf52cf7c71ea8a1532d304af5c2a2d2e6",
+    "targetSha256": "d5cd0d75f41e9c14946f800518f5b3ccf52cf7c71ea8a1532d304af5c2a2d2e6",
+    "byteIdentical": true
+  },
+  {
+    "source": "src/core/workspace/verification-source-applicability.ts",
+    "target": "src/core/workspace/verification-source-applicability.ts",
+    "sourceSha256": "3cac33aaa727296cda610ca75360479260e42248a45296c1a7c4649b8470f36d",
+    "targetSha256": "3cac33aaa727296cda610ca75360479260e42248a45296c1a7c4649b8470f36d",
+    "byteIdentical": true
+  },
+  {
+    "source": "src/core/workspace/candidate-workspace-reader.ts",
+    "target": "src/core/workspace/candidate-workspace-reader.ts",
+    "sourceSha256": "9ab85adc4e6734e3b508143ef7febaaa44a2fdb529b9689b61ae03ac32ec2dc8",
+    "targetSha256": "9ab85adc4e6734e3b508143ef7febaaa44a2fdb529b9689b61ae03ac32ec2dc8",
+    "byteIdentical": true
+  },
+  {
+    "source": "src/core/workspace/reviewer-source-reader.ts",
+    "target": "src/core/workspace/reviewer-source-reader.ts",
+    "sourceSha256": "c914ae3d5b5ca2322698b5a9e486a239585aef414f10ea0a789c93058005626d",
+    "targetSha256": "c914ae3d5b5ca2322698b5a9e486a239585aef414f10ea0a789c93058005626d",
+    "byteIdentical": true
+  },
+  {
+    "source": "src/core/workspace/verification-workspace-reader.ts",
+    "target": "src/core/workspace/verification-workspace-reader.ts",
+    "sourceSha256": "3959ad0d67fdc7c6dfbe7ae0fd29d12351fc5c7984aac1837200074c1e45f50d",
+    "targetSha256": "3959ad0d67fdc7c6dfbe7ae0fd29d12351fc5c7984aac1837200074c1e45f50d",
+    "byteIdentical": true
+  },
+  {
+    "source": "src/core/workspace/query-workspace-source-reader.ts",
+    "target": "src/core/workspace/query-workspace-source-reader.ts",
+    "sourceSha256": "95fa5e9079af9eb953c4fdc2d2274d27383281d03b989f07d8cd6497c39ba5a0",
+    "targetSha256": "95fa5e9079af9eb953c4fdc2d2274d27383281d03b989f07d8cd6497c39ba5a0",
+    "byteIdentical": true
+  },
+  {
+    "source": "src/core/workspace/role-source-reader.ts",
+    "target": "src/core/workspace/role-source-reader.ts",
+    "sourceSha256": "b5306adcf51af30f60a01379c897bc659f8d7a895f846ccc8972dd9153879678",
+    "targetSha256": "b5306adcf51af30f60a01379c897bc659f8d7a895f846ccc8972dd9153879678",
+    "byteIdentical": true
+  },
+  {
+    "source": "tests/context/verification-workspace-reader.test.ts",
+    "target": "tests/context/verification-workspace-reader.test.ts",
+    "sourceSha256": "a47381cdec6c0656f9db0485517648afb5b2d17ba58c21a5733d2f6a02f2517e",
+    "targetSha256": "a47381cdec6c0656f9db0485517648afb5b2d17ba58c21a5733d2f6a02f2517e",
+    "byteIdentical": true
+  },
+  {
+    "source": "tests/app/reviewer-source-tools.test.ts",
+    "target": "tests/app/reviewer-source-tools.test.ts",
+    "sourceSha256": "0b7e542c956ece247f6238fd50e2c5d14a4c1c954b1e4eab9da97a5a7281578a",
+    "targetSha256": "fef40289690f4ea906bcb20103e3f322370fc289e2ab20a56e2c54bd17f37cda",
+    "byteIdentical": false
+  },
+  {
+    "source": "tests/app/exploration-tools.test.ts",
+    "target": "tests/app/exploration-tools.test.ts",
+    "sourceSha256": "1d7383f47ffcd3170b747ad0e357555866f98bf8451429274c5d6ab493bc8fd1",
+    "targetSha256": "a095443363202fc950c26094fa39a2de865cbe4b20e7ada0279135d1ebf3d377",
+    "byteIdentical": false
+  },
+  {
+    "source": "tests/data/exploration-source-applicability.test.ts",
+    "target": "tests/data/exploration-source-applicability.test.ts",
+    "sourceSha256": "e008811f46ec7e072f5f58705a3f5be66c10afac21d1de94eff42875c0336d56",
+    "targetSha256": "e008811f46ec7e072f5f58705a3f5be66c10afac21d1de94eff42875c0336d56",
+    "byteIdentical": true
+  },
+  {
+    "source": "tests/data/workspace-capture-architecture.test.ts",
+    "target": "tests/data/workspace-capture-architecture.test.ts",
+    "sourceSha256": "ede033876f3962882074c55eaa8bfbdcb29c496f33f594336c9e0df3034c3b0d",
+    "targetSha256": "ede033876f3962882074c55eaa8bfbdcb29c496f33f594336c9e0df3034c3b0d",
+    "byteIdentical": true
+  },
+  {
+    "source": "tests/data/candidate-workspace-reader.test.ts",
+    "target": "tests/data/candidate-workspace-reader.test.ts",
+    "sourceSha256": "160f20b6182de41488672065f9aaf5463c50187f214a97febd5fb6b025b10324",
+    "targetSha256": "160f20b6182de41488672065f9aaf5463c50187f214a97febd5fb6b025b10324",
+    "byteIdentical": true
+  },
+  {
+    "source": "tests/data/workspace-path-boundary.test.ts",
+    "target": "tests/data/workspace-path-boundary.test.ts",
+    "sourceSha256": "79a0ce24edb6ef4b69afdef8298d363a97e838c3909e7038d41cc455154a1991",
+    "targetSha256": "79a0ce24edb6ef4b69afdef8298d363a97e838c3909e7038d41cc455154a1991",
+    "byteIdentical": true
+  },
+  {
+    "source": "src/app/source-capture-access.ts",
+    "target": "src/core/agent-runtime/source-capture-access.ts",
+    "sourceSha256": "5fc08d4da9d04db991dd138fff32223bde3e2982665fb397c1193095fcbc4448",
+    "adaptation": "import relocation; StateLedger replaced by read-only SourceAuthorityReads, RunSpec by exact SourceRunSpec fields; no guard logic rewrite",
+    "targetSha256": "4c1431653625cafd4ae69677ebead2c362e8fb7cc07c38b3214bd499660be5e1",
+    "byteIdentical": false
+  }
+]

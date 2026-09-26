@@ -1,0 +1,114 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/runtime/R4c-source-authority-guards.test.ts (20 tests | 1 failed) 8885ms
+   × uses real SQLite facts through both readers: a starting claim is denied, a trusted running seed can read, and revocation is fresh 5241ms
+ ❯ tests/work-graph/R4c-source-authority-reader.test.ts (24 tests | 7 failed) 68331ms
+   × sqlite: loads the exact Workspace/Run/QueryRun facts through one authority read each 5029ms
+   × sqlite: a found result matches the full ref, not a same local id in another scope 5238ms
+   × sqlite: a genuinely absent exact ref stays not_found 5286ms
+   × sqlite: a thrown RecordStore error stays unavailable 5631ms
+   × sqlite: an unaccounted request key stays unavailable 6441ms
+   × a direct authority provider throw becomes unavailable after a real backend read 5308ms
+   × sqlite: adding unrelated facts adds no read to an exact load 5007ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R4c-source-authority-reader.test.ts > sqlite: loads the exact Workspace/Run/QueryRun facts through one authority read each
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/work-graph/R4c-source-authority-reader.test.ts:98:39
+     96| }
+     97|
+     98| it.each(['memory', 'sqlite'] as const)('%s: loads the exact Workspace/…
+       |                                       ^
+     99|   const fixture = await openFixture(kind);
+    100|   const run = manualRun(fixture, 'exact-run');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+ FAIL  tests/work-graph/R4c-source-authority-reader.test.ts > sqlite: a found result matches the full ref, not a same local id in another scope
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/work-graph/R4c-source-authority-reader.test.ts:113:39
+    111| });
+    112|
+    113| it.each(['memory', 'sqlite'] as const)('%s: a found result matches the…
+       |                                       ^
+    114|   const fixture = await openFixture(kind);
+    115|   const here = manualRun(fixture, 'shared-run');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
+
+ FAIL  tests/work-graph/R4c-source-authority-reader.test.ts > sqlite: a genuinely absent exact ref stays not_found
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/work-graph/R4c-source-authority-reader.test.ts:132:39
+    130| });
+    131|
+    132| it.each(['memory', 'sqlite'] as const)('%s: a genuinely absent exact r…
+       |                                       ^
+    133|   const fixture = await openFixture(kind);
+    134|   const { reads } = readerForRecords(fixture.records);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯
+
+ FAIL  tests/work-graph/R4c-source-authority-reader.test.ts > sqlite: a thrown RecordStore error stays unavailable
+ FAIL  tests/work-graph/R4c-source-authority-reader.test.ts > sqlite: an unaccounted request key stays unavailable
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/work-graph/R4c-source-authority-reader.test.ts:165:5
+    163| for (const kind of ['memory', 'sqlite'] as const) {
+    164|   for (const fault of faultCases) {
+    165|     it(`${kind}: ${fault.label} stays unavailable`, async () => {
+       |     ^
+    166|       const fixture = await openFixture(kind);
+    167|       const run = manualRun(fixture, 'fault-run');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯
+
+ FAIL  tests/work-graph/R4c-source-authority-reader.test.ts > a direct authority provider throw becomes unavailable after a real backend read
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/work-graph/R4c-source-authority-reader.test.ts:175:1
+    173| }
+    174|
+    175| it('a direct authority provider throw becomes unavailable after a real…
+       | ^
+    176|   const fixture = await openFixture('sqlite');
+    177|   const run = manualRun(fixture, 'provider-throw-run');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/8]⎯
+
+ FAIL  tests/work-graph/R4c-source-authority-reader.test.ts > sqlite: adding unrelated facts adds no read to an exact load
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/work-graph/R4c-source-authority-reader.test.ts:229:39
+    227| });
+    228|
+    229| it.each(['memory', 'sqlite'] as const)('%s: adding unrelated facts add…
+       |                                       ^
+    230|   const fixture = await openFixture(kind);
+    231|   const run = manualRun(fixture, 'count-run');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/8]⎯
+
+ FAIL  tests/runtime/R4c-source-authority-guards.test.ts > uses real SQLite facts through both readers: a starting claim is denied, a trusted running seed can read, and revocation is fresh
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4c-source-authority-guards.test.ts:321:1
+    319| });
+    320|
+    321| it('uses real SQLite facts through both readers: a starting claim is d…
+       | ^
+    322|   const fixture = await createTaskClaimFixture('sqlite');
+    323|   let handle: ReturnType<typeof createWorkspaceTools> | undefined;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/8]⎯
+
+
+ Test Files  2 failed | 1 passed (3)
+      Tests  8 failed | 43 passed (51)
+   Start at  12:53:56
+   Duration  79.28s (transform 498ms, setup 0ms, import 1.16s, tests 77.23s, environment 0ms)
+

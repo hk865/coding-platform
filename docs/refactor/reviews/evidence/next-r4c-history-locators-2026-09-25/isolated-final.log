@@ -1,0 +1,49 @@
+{
+  "mode": "check",
+  "source": "vendor/coding-agent/patches/storage/adapters/sqlite/sqlite-stores.ts",
+  "sourceSha256": "4c552b0ecbaecdd5db514697fe39019c5899e51589a8caa8a950c9b4bebe16b6",
+  "typeScript": "6.0.3",
+  "artifacts": [
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.js",
+      "sha256": "a52fef11ca8d6b24c84034b5ef25bd895638d9c453f59cad90e909ffd573ef76",
+      "currentSha256": "a52fef11ca8d6b24c84034b5ef25bd895638d9c453f59cad90e909ffd573ef76",
+      "matches": true
+    },
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.js.map",
+      "sha256": "651abb806baca8a32a6f285fc6ced6fc2f1fc1460b80dc51e83efb2c84231111",
+      "currentSha256": "651abb806baca8a32a6f285fc6ced6fc2f1fc1460b80dc51e83efb2c84231111",
+      "matches": true
+    },
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.d.ts",
+      "sha256": "80be7f2b88f5578ed0a24d59014e49e5a124777f7926a0b46182d86f3ca9e8f3",
+      "currentSha256": "80be7f2b88f5578ed0a24d59014e49e5a124777f7926a0b46182d86f3ca9e8f3",
+      "matches": true
+    },
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.d.ts.map",
+      "sha256": "08e758e735d8d98b0a6b56f540bfbd7b7dd61bd585f21be5bf6cfa06b5e54102",
+      "currentSha256": "08e758e735d8d98b0a6b56f540bfbd7b7dd61bd585f21be5bf6cfa06b5e54102",
+      "matches": true
+    }
+  ]
+}
+Workflow: directory=true, sourceFiles=4
+WorkGraph: directory=true, sourceFiles=39
+AgentRuntime: directory=true, sourceFiles=17
+WorkspaceTools: directory=true, sourceFiles=26
+RecordStore: directory=true, sourceFiles=13
+observed module edges: 5/8 allowed (AgentRuntime -> WorkGraph, AgentRuntime -> WorkspaceTools, WorkGraph -> RecordStore, WorkGraph -> WorkspaceTools, Workflow -> WorkGraph)
+next source boundaries: OK
+
+ RUN  v4.1.10 /tmp/coding-platform-next-CN0PiB/next
+
+
+ Test Files  68 passed (68)
+      Tests  620 passed (620)
+   Start at  13:04:07
+   Duration  78.75s (transform 1.08s, setup 0ms, import 9.54s, tests 64.26s, environment 4ms)
+
+next isolated copy: typecheck, build and tests passed

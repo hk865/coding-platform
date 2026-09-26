@@ -1,0 +1,15 @@
+{
+  "at": 1790235346.9832778,
+  "files": [
+    {
+      "file": "coding-platform/next/src/core/work-graph/sessions/session-directory.ts",
+      "before": "d398631181d25bac9b5dddba80c54aa00de243ef4c35a2868a431e2657cfe149",
+      "after": "04268de01d4f3f2b2008740725951ad42e9ada81240309db68b43dbd8b87f49c"
+    },
+    {
+      "file": "coding-platform/next/src/core/work-graph/sessions/session-record-codecs.ts",
+      "before": "9b811f4b5c56a43cac1f8a08122319042baaf5dcee11d8f5abc4b3b53d9610bf",
+      "after": "2d0e932a3d12a66df0ceda54e999bedc5fba843dc8b80da2b217bbb383dc3444"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "lane": "next-store-01",
+  "acceptedAfter": "independent next-store 11/11 + types + architecture",
+  "files": {
+    "coding-platform/next/src/core/record-store/lookup-index.ts": "65ea4340ff5aa21c3c18c5027aba845f47e2ace72c2c1c1c9016393b725d15cd",
+    "coding-platform/next/src/core/record-store/in-memory-record-store.ts": "9b51e597d76fd649d260b53020c2fe19fd0a56fe8dbb7e8e119a5a7af543b93e",
+    "coding-platform/next/src/core/record-store/sqlite-record-store.ts": "da94780476996b86ddbe61701c9495ba187410dd3cee0574684e42c69b93e916"
+  }
+}

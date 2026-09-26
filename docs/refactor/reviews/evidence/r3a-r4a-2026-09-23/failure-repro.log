@@ -1,0 +1,18 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+ ✓ tests/control/cancel-intent-reconciliation.test.ts (6 tests) 40831ms
+   ✓ sqlite: reconciles cancelled from canonical Run with no invented safe-point acknowledgement  11887ms
+   ✓ sqlite: reconciles completed from canonical Run with no invented safe-point acknowledgement  14464ms
+   ✓ sqlite: reconciles outcome_unknown from canonical Run with no invented safe-point acknowledgement  14449ms
+ ✓ tests/integration/p1-02.integration.test.ts (4 tests) 41337ms
+     ✓ A1-A4: fixture digest/schema; install persists immutable revision; same identity/revision never overwritten  4684ms
+     ✓ A3: activation accepts only installed exact target; CAS failure leaves active ref unmoved  10896ms
+     ✓ A4/A5/A6/A7/A12/A13: full path with restart; pins survive default-ref movement; idempotency  22897ms
+     ✓ A14: no dispatch outbox / TaskAttempt / AgentRun on the whole path  2860ms
+
+ Test Files  2 passed (2)
+      Tests  10 passed (10)
+   Start at  23:07:18
+   Duration  42.38s (transform 1.51s, setup 0ms, import 1.96s, tests 82.17s, environment 0ms)
+

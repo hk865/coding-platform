@@ -1,0 +1,20 @@
+[
+  {
+    "path": "coding-platform/next/tests/work-graph/R4c-execution-history-index.test.ts",
+    "before": "95eb254b730c1d6d45dab67eb835166974f6b7af4b59d9a4f5970e4c61c92794",
+    "after": "c5b95e3036f6916633f215759539b12f532154eae176754a8e8f28aeaf93b234",
+    "change": "comments only; frozen executable test unchanged"
+  },
+  {
+    "path": "coding-platform/next/tests/runtime/R4c-graph-history.test.ts",
+    "before": "ea153353af05ffadb61ea39c8ebd5be64aaa87667834676d3f3e011513b12552",
+    "after": "40e5859a69674d30ab5591a813bc67e8afcfa15747bf59b767fe01c0d00a2f39",
+    "change": "comments only; frozen executable test unchanged"
+  },
+  {
+    "path": "coding-platform/next/tests/runtime/R4c-source-authority-guards.test.ts",
+    "before": "9723e5efdd1aae6dd52b786213b6d20477d3daba4c29a5a1859dcdc8cc851a69",
+    "after": "e2f9bc165147f3d411ab032e352a5f6410550451127d9f08b66173a424d5611d",
+    "change": "comments only; frozen executable test unchanged"
+  }
+]

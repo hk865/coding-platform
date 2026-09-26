@@ -1,0 +1,34 @@
+{
+  "lane": "r5c-workflow-advancement-skeleton-20260926",
+  "files": {
+    "coding-platform/next/src/business/workflow/contracts.ts": {
+      "before": "a5a94f7d6d94ec0aa40332ab18adc870aba74789eaab6bc77df1b0d31283b57a",
+      "after": "4ca26d81739956db0a84be4c1148a413af4e2e194240ab3adccd8f4f63618af8"
+    },
+    "coding-platform/next/src/business/workflow/ports.ts": {
+      "before": "2b705bc211f26088e1ad6fd73c931b4f035b9a83783393a34fd10dede108ebd6",
+      "after": "5b847695073d66e9c5b3e9644e7691dd49b4f4692655c0da965bc4551011f123"
+    },
+    "coding-platform/next/src/business/workflow/workflow.ts": {
+      "before": "2fccb93ac92ad139d6b42aa851884406b9bb89c70787d85b875f65b456ebaeaa",
+      "after": "852019ade02613851f399c862ed216df03d119f92fdefaa895949c7c8e1bbb62"
+    },
+    "coding-platform/next/src/business/workflow/index.ts": {
+      "before": "6e1661e8c8c992cd3a5b880b4a0b1e45d2caff58cd3c8cc9d02d095dae993494",
+      "after": "438665a0a96f4d5bb0b977503be7ac2174d46871031141a20e3ed04ea04a1dd5"
+    },
+    "coding-platform/next/src/composition/create-platform.ts": {
+      "before": "5236285020d74bc76b1c42b346b0fbdf55fab6d155d8dc37f69d7bc3cad80c7c",
+      "after": "3c701554c6290a9a34044d54920b3f73a1095d6edc067e35ecfc0189c9cc221e"
+    },
+    "coding-platform/next/tests/business/R5c-workflow.test.ts": {
+      "before": "b80daf9be3d99957786baa7b8554de74dc8e72cad2a2790f8fc20380ebdacfe0",
+      "after": "f9497b324a61e4cc159ad16b6be81f89b35915024f50ba5ea5652476a3cf7045"
+    },
+    "coding-platform/next/tests/composition/R5c-workflow-platform.test.ts": {
+      "before": "b80daf9be3d99957786baa7b8554de74dc8e72cad2a2790f8fc20380ebdacfe0",
+      "after": "51fa7d5d25370865b00a644ff6d4aa6382d16b00e61ee5f2b9887baafb5fbc95"
+    }
+  },
+  "review": "Skeleton independent review passed; types/architecture passed; 3 expected unsupported first reds. One existing fixture separates source root from SQLite/Kernel; no new cases."
+}

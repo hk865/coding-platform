@@ -1,0 +1,75 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+ ❯ tests/app/R3b-host-boundaries.test.ts (5 tests | 3 failed) 63ms
+   × refuses a persisted history grant with wrong Control goal before reading its body 7ms
+   × refuses a persisted history grant with Run issuer instead of Control before reading its body 1ms
+   × refuses a persisted history grant with wrong history usage before reading its body 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/R3b-host-boundaries.test.ts > refuses a persisted history grant with wrong Control goal before reading its body
+ FAIL  tests/app/R3b-host-boundaries.test.ts > refuses a persisted history grant with wrong history usage before reading its body
+AssertionError: expected { …(3) } to match object { …(3) }
+(5 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -48,9 +48,8 @@
+        "projectId": "host-boundary-project",
+        "workspaceId": "host-boundary-workspace",
+      },
+    },
+    "result": {
+-     "code": "forbidden",
+-     "status": "rejected",
++     "status": "ready",
+    },
+  }
+
+ ❯ tests/app/R3b-host-boundaries.test.ts:85:67
+     83|   const context = new HistoryMaterialsContext({ ledger: matchingLedger…
+     84|     readHostContext, grantAuthority });
+     85|   expect(await context.read({ scope, grantId: invalid.grantId })).toMa…
+       |                                                                   ^
+     86|     grant: invalid, result: { status: 'rejected', code: 'forbidden' },…
+     87|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/app/R3b-host-boundaries.test.ts > refuses a persisted history grant with Run issuer instead of Control before reading its body
+AssertionError: expected { …(3) } to match object { …(3) }
+(5 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -49,9 +49,8 @@
+        "projectId": "host-boundary-project",
+        "workspaceId": "host-boundary-workspace",
+      },
+    },
+    "result": {
+-     "code": "forbidden",
+-     "status": "rejected",
++     "status": "ready",
+    },
+  }
+
+ ❯ tests/app/R3b-host-boundaries.test.ts:85:67
+     83|   const context = new HistoryMaterialsContext({ ledger: matchingLedger…
+     84|     readHostContext, grantAuthority });
+     85|   expect(await context.read({ scope, grantId: invalid.grantId })).toMa…
+       |                                                                   ^
+     86|     grant: invalid, result: { status: 'rejected', code: 'forbidden' },…
+     87|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 2 passed (5)
+   Start at  08:29:22
+   Duration  181ms (transform 28ms, setup 0ms, import 39ms, tests 63ms, environment 0ms)
+

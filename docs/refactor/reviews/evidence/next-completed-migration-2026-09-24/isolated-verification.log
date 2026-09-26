@@ -1,0 +1,17 @@
+Workflow: directory=true, sourceFiles=4
+WorkGraph: directory=true, sourceFiles=11
+AgentRuntime: directory=true, sourceFiles=12
+WorkspaceTools: directory=true, sourceFiles=26
+RecordStore: directory=true, sourceFiles=12
+observed module edges: 5/8 allowed (AgentRuntime -> WorkGraph, AgentRuntime -> WorkspaceTools, WorkGraph -> RecordStore, WorkGraph -> WorkspaceTools, Workflow -> WorkGraph)
+next source boundaries: OK
+
+ RUN  v4.1.10 /tmp/coding-platform-next-oEOPoL/next
+
+
+ Test Files  36 passed (36)
+      Tests  250 passed (250)
+   Start at  13:37:37
+   Duration  30.97s (transform 712ms, setup 0ms, import 4.93s, tests 23.31s, environment 2ms)
+
+next isolated copy: typecheck, build and tests passed

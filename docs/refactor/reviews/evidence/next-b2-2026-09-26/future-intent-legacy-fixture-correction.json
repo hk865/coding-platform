@@ -1,0 +1,6 @@
+{
+  "path": "coding-platform/next/tests/work-graph/R3c-task-graph.test.ts",
+  "before": "e017a7dd8f331f0302d10550546525667a462fd3a4359f130797244abc4574f7",
+  "after": "7a49127da5fb9d15ff07b84b2fcb1cc06acd3c4a2e78833d0ea1ff53ebf67446",
+  "reason": "The eligibility test models accepted executable work but omitted assignments via a partial cast. Supply valid task assignments; preserve both no-predecessor-gate assertions. No production exemption for missing fields."
+}

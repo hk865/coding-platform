@@ -1,0 +1,43 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/runtime/R4-control-runtime.test.ts (4 tests | 1 failed) 5368ms
+   × releases a real cancel whose never-started second serial group is reducer-abandoned, then lets the next Kernel Turn consume the original projected prefix 84ms
+ ❯ tests/kernel/R4-terminal-history.test.ts (1 test | 1 failed) 55ms
+     × removes only the reducer-proven abandoned declaration from a copy and preserves the original cancelled records 54ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/kernel/R4-terminal-history.test.ts > R4.3b Kernel terminal transcript projection seam > removes only the reducer-proven abandoned declaration from a copy and preserves the original cancelled records
+StoreError: projectTerminalTranscript 仍为 R4.3b 阶段一骨架，投影算法未实现（status=cancelled）
+ ❯ projectTerminalTranscript vendor/coding-agent/src/core/ports/session_store/session-history.ts:155:9
+ ❯ tests/kernel/R4-terminal-history.test.ts:277:23
+    275|     // `version_unsupported` seam; the assertions below are the not-ye…
+    276|     const stateSnapshot = structuredClone(result.state);
+    277|     const projected = projectTerminalTranscript(result.state);
+       |                       ^
+    278|     expect(result.state).toEqual(stateSnapshot);
+    279|     const projectedAssistant = projected.find((entry) => entry.kind ==…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/runtime/R4-control-runtime.test.ts > releases a real cancel whose never-started second serial group is reducer-abandoned, then lets the next Kernel Turn consume the original projected prefix
+StoreError: projectTerminalTranscript 仍为 R4.3b 阶段一骨架，投影算法未实现（status=cancelled）
+ ❯ projectTerminalTranscript vendor/coding-agent/src/core/ports/session_store/session-history.ts:155:9
+ ❯ Object.observe src/core/agent-runtime/execution-observation.ts:549:11
+    547|       // strict pairing path is unchanged.
+    548|       const consumableTranscript = abandonedInBatch
+    549|         ? projectTerminalTranscript(state)
+       |           ^
+    550|         : state.transcript;
+    551|       try {
+ ❯ Object.start src/core/agent-runtime/execution-driver.ts:675:28
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 3 passed (5)
+   Start at  23:46:18
+   Duration  6.78s (transform 763ms, setup 0ms, import 1.20s, tests 5.42s, environment 0ms)
+

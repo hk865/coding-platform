@@ -1,0 +1,463 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R4c-task-claim.test.ts (22 tests | 22 failed) 3216ms
+     × commits one lease/attempt/run/outbox/session set atomically and restores it on read 63ms
+     × claims a Task whose predecessor is unfinished without reading predecessor facts 43ms
+     × replays the original claim and reports idempotency_conflict for different content 44ms
+     × rejects stale/cross-scope/role/budget pins with zero records written 44ms
+     × independently rejects archived, unhealthy, execution-busy and maintenance-busy Sessions 57ms
+     × does not treat an ended Run without a lease as a fresh pending Task 38ms
+     × writes nothing when the bound call signal is already aborted 37ms
+     × binds the request and context before the first await 39ms
+     × keeps a claim valid when an unrelated commit lands after all claim reads 45ms
+     × commits one lease/attempt/run/outbox/session set atomically and restores it on read 208ms
+     × claims a Task whose predecessor is unfinished without reading predecessor facts 215ms
+     × replays the original claim and reports idempotency_conflict for different content 216ms
+     × rejects stale/cross-scope/role/budget pins with zero records written 206ms
+     × independently rejects archived, unhealthy, execution-busy and maintenance-busy Sessions 250ms
+     × does not treat an ended Run without a lease as a fresh pending Task 217ms
+     × writes nothing when the bound call signal is already aborted 205ms
+     × binds the request and context before the first await 202ms
+     × keeps a claim valid when an unrelated commit lands after all claim reads 205ms
+     × lets only one of two connections claim the same Task through different Sessions 207ms
+     × lets only one of two connections claim two Tasks through the same Session 222ms
+     × lets two connections claim different Tasks through different Sessions 232ms
+     × replays the original claim after reopening the same SQLite ledger 220ms
+ ❯ tests/composition/R3c-R4b-platform.test.ts (1 test | 1 failed) 233ms
+   × wires one durable Goal/Plan/Session graph and reopens the same Kernel Session 233ms
+ ❯ tests/work-graph/R4c-task-claim-boundaries.test.ts (9 tests | 8 failed) 766ms
+   × memory: role_spec exact pin succeeds; a different digest cannot borrow it 79ms
+   × sqlite: role_spec exact pin succeeds; a different digest cannot borrow it 274ms
+   × memory: no-matrix absence is guarded against installing a matrix before commit 37ms
+   × sqlite: no-matrix absence is guarded against installing a matrix before commit 221ms
+   × replays before deadline/current Session checks and never calls the clock on replay 39ms
+   × a Run in an older Plan still prevents a fresh claim, without a second scan 39ms
+   × cancellation during awaited reads retains the original signal and leaves no claim 36ms
+   × decoders reject individually valid but cross-linked refs, and replay rejects a foreign actor event 39ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 31 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/composition/R3c-R4b-platform.test.ts > wires one durable Goal/Plan/Session graph and reopens the same Kernel Session
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed', …(2) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
+-   "value": {
+-     "generation": 2,
+-     "task": {
+-       "taskId": "implement",
+-     },
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/R3c-R4b-platform.test.ts:237:21
+    235|     const closing = reopened.close();
+    236|     const claimed = await pendingClaim;
+    237|     expect(claimed).toMatchObject({ status: 'committed', replayed: fal…
+       |                     ^
+    238|       value: { task: { taskId: 'implement' }, generation: record.revis…
+    239|     await closing;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim-boundaries.test.ts > memory: role_spec exact pin succeeds; a different digest cannot borrow it
+ FAIL  tests/work-graph/R4c-task-claim-boundaries.test.ts > sqlite: role_spec exact pin succeeds; a different digest cannot borrow it
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "forbidden",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-task-claim-boundaries.test.ts:65:18
+     63|   const bad = await f.createSession('role-bad', { kind: 'role_spec', p…
+     64|   const denied = await f.service.claimTask(f.ctx, await f.buildRequest…
+     65|   expect(denied).toMatchObject({ status: 'rejected', code: 'forbidden'…
+       |                  ^
+     66|   expect(f.spy.commits).toBe(0);
+     67|   const result = await f.service.claimTask(f.ctx, await f.buildRequest…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim-boundaries.test.ts > memory: no-matrix absence is guarded against installing a matrix before commit
+ FAIL  tests/work-graph/R4c-task-claim-boundaries.test.ts > sqlite: no-matrix absence is guarded against installing a matrix before commit
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "revision_conflict",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-task-claim-boundaries.test.ts:78:6
+     76|   } });
+     77|   expect(await service.claimTask(f.ctx, await f.buildRequest()))
+     78|     .toMatchObject({ status: 'rejected', code: 'revision_conflict' });
+       |      ^
+     79|   expect(attempted).toBeDefined();
+     80|   const fresh = attempted!.records.filter(record => JSON.parse(record.…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim-boundaries.test.ts > replays before deadline/current Session checks and never calls the clock on replay
+AssertionError: expected 'rejected' to be 'committed' // Object.is equality
+
+Expected: "committed"
+Received: "rejected"
+
+ ❯ tests/work-graph/R4c-task-claim-boundaries.test.ts:90:27
+     88|   const request = await f.buildRequest({ input: { budget: { tokenBudge…
+     89|   const accepted = await service.claimTask(f.ctx, request);
+     90|   expect(accepted.status).toBe('committed'); if (accepted.status !== '…
+       |                           ^
+     91|   clock = '2026-09-25T00:00:00.000Z'; const count = clockCalls;
+     92|   await f.overwriteSession(f.sessions.first, record => ({ ...record, h…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim-boundaries.test.ts > a Run in an older Plan still prevents a fresh claim, without a second scan
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', code: 'busy' }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "busy",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-task-claim-boundaries.test.ts:105:6
+    103|     [{ refKey: row.refKey, expectedRevision: row.revision }])).toMatch…
+    104|   expect(await f.service.claimTask(f.ctx, await f.buildRequest()))
+    105|     .toMatchObject({ status: 'rejected', code: 'busy' });
+       |      ^
+    106|   expect(f.spy.commits).toBe(0);
+    107|   expect(f.spy.lookups).toHaveLength(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim-boundaries.test.ts > cancellation during awaited reads retains the original signal and leaves no claim
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "cancelled",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-task-claim-boundaries.test.ts:119:6
+    117|   const service = f.makeService(records); const request = await f.buil…
+    118|   expect(await service.claimTask({ ...f.ctx, signal: controller.signal…
+    119|     .toMatchObject({ status: 'rejected', code: 'cancelled' });
+       |      ^
+    120|   expect(await f.sessionsPort.readSession(f.ctx, f.sessions.first))
+    121|     .toMatchObject({ status: 'ready', value: { record: { occupancy: nu…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim-boundaries.test.ts > decoders reject individually valid but cross-linked refs, and replay rejects a foreign actor event
+AssertionError: expected 'rejected' to be 'committed' // Object.is equality
+
+Expected: "committed"
+Received: "rejected"
+
+ ❯ tests/work-graph/R4c-task-claim-boundaries.test.ts:127:25
+    125|   const f = await open('memory'); const request = await f.buildRequest…
+    126|   const result = await f.service.claimTask(f.ctx, request);
+    127|   expect(result.status).toBe('committed'); if (result.status !== 'comm…
+       |                         ^
+    128|   const read = await f.records.readMany([key(result.value.outboxRef)]);
+    129|   if (read.status !== 'ready') throw Error('outbox unavailable'); cons…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real memory atomic claim > commits one lease/attempt/run/outbox/session set atomically and restores it on read
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real sqlite atomic claim > commits one lease/attempt/run/outbox/session set atomically and restores it on read
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, replayed) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-task-claim.test.ts:106:20
+    104|     const request = await fixture.buildRequest();
+    105|     const result = await fixture.service.claimTask(fixture.ctx, reques…
+    106|     expect(result).toMatchObject({ status: 'committed', replayed: fals…
+       |                    ^
+    107|     if (result.status !== 'committed') return;
+    108|     const claim = result.value;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real memory atomic claim > claims a Task whose predecessor is unfinished without reading predecessor facts
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real sqlite atomic claim > claims a Task whose predecessor is unfinished without reading predecessor facts
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-task-claim.test.ts:149:20
+    147|     const request = await fixture.buildRequest({ input: { taskId: fixt…
+    148|     const result = await fixture.service.claimTask(fixture.ctx, reques…
+    149|     expect(result).toMatchObject({ status: 'committed' });
+       |                    ^
+    150|     if (result.status !== 'committed') return;
+    151|     expect(result.value.task).toEqual(fixture.tasks.second);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real memory atomic claim > replays the original claim and reports idempotency_conflict for different content
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real sqlite atomic claim > replays the original claim and reports idempotency_conflict for different content
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, replayed) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-task-claim.test.ts:161:19
+    159|     const request = await fixture.buildRequest({ requestId: 'stable-re…
+    160|     const first = await fixture.service.claimTask(fixture.ctx, request…
+    161|     expect(first).toMatchObject({ status: 'committed', replayed: false…
+       |                   ^
+    162|     if (first.status !== 'committed') return;
+    163|     expect(await fixture.service.claimTask(fixture.ctx, request)).toMa…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real memory atomic claim > rejects stale/cross-scope/role/budget pins with zero records written
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real sqlite atomic claim > rejects stale/cross-scope/role/budget pins with zero records written
+AssertionError: plan-not-current: expected 'unsupported' not to be 'unsupported' // Object.is equality
+ ❯ tests/work-graph/R4c-task-claim.test.ts:232:82
+    230|       expect(outcome, scenario.name).toMatchObject({ status: 'rejected…
+    231|       // A blanket `unsupported` skeleton is not a real rejection.
+    232|       if (outcome.status === 'rejected') expect(outcome.code, scenario…
+       |                                                                                  ^
+    233|     }
+    234|     expect(fixture.spy.commits).toBe(0);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real memory atomic claim > independently rejects archived, unhealthy, execution-busy and maintenance-busy Sessions
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real sqlite atomic claim > independently rejects archived, unhealthy, execution-busy and maintenance-busy Sessions
+AssertionError: archived: expected 'unsupported' not to be 'unsupported' // Object.is equality
+ ❯ tests/work-graph/R4c-task-claim.test.ts:263:82
+    261|       const outcome = await fixture.service.claimTask(fixture.ctx, req…
+    262|       expect(outcome, scenario.name).toMatchObject({ status: 'rejected…
+    263|       if (outcome.status === 'rejected') expect(outcome.code, scenario…
+       |                                                                                  ^
+    264|     }
+    265|     expect(fixture.spy.commits).toBe(0);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real memory atomic claim > does not treat an ended Run without a lease as a fresh pending Task
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real sqlite atomic claim > does not treat an ended Run without a lease as a fresh pending Task
+AssertionError: expected 'unsupported' not to be 'unsupported' // Object.is equality
+ ❯ tests/work-graph/R4c-task-claim.test.ts:273:63
+    271|     const result = await fixture.service.claimTask(fixture.ctx, await …
+    272|     expect(result).toMatchObject({ status: 'rejected' });
+    273|     if (result.status === 'rejected') expect(result.code).not.toBe('un…
+       |                                                               ^
+    274|     expect(fixture.spy.commits).toBe(0);
+    275|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real memory atomic claim > writes nothing when the bound call signal is already aborted
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real sqlite atomic claim > writes nothing when the bound call signal is already aborted
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'rejected', …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "cancelled",
++   "code": "unsupported",
+    "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-task-claim.test.ts:283:20
+    281|     const request = await fixture.buildRequest();
+    282|     const result = await fixture.service.claimTask({ ...fixture.ctx, s…
+    283|     expect(result).toMatchObject({ status: 'rejected', code: 'cancelle…
+       |                    ^
+    284|     expect(fixture.spy.commits).toBe(0);
+    285|     expect(await fixture.records.readMany([leaseKey(fixture.tasks.firs…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real memory atomic claim > binds the request and context before the first await
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real sqlite atomic claim > binds the request and context before the first await
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-task-claim.test.ts:298:20
+    296|     (fixture.ctx as { projectId: string }).projectId = 'changed-projec…
+    297|     const result = await pending;
+    298|     expect(result).toMatchObject({ status: 'committed' });
+       |                    ^
+    299|     if (result.status !== 'committed') return;
+    300|     expect(result.value.task).toEqual(fixture.tasks.first);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real memory atomic claim > keeps a claim valid when an unrelated commit lands after all claim reads
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real sqlite atomic claim > keeps a claim valid when an unrelated commit lands after all claim reads
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-task-claim.test.ts:319:59
+    317|       },
+    318|     });
+    319|     expect(await service.claimTask(fixture.ctx, request)).toMatchObjec…
+       |                                                           ^
+    320|     expect(reachedCommit).toBe(true);
+    321|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real SQLite races and durability > lets only one of two connections claim the same Task through different Sessions
+AssertionError: expected [] to have a length of 2 but got +0
+
+- Expected
++ Received
+
+- 2
++ 0
+
+ ❯ expectAtomicRaceLoser tests/work-graph/R4c-task-claim.test.ts:75:37
+     73|   results: readonly WriteResult<TaskClaim>[],
+     74| ): Promise<{ winner: TaskClaim; loserIndex: number }> {
+     75|   expect(submitted.filter(Boolean)).toHaveLength(2);
+       |                                     ^
+     76|   expect(results.filter(result => result.status === 'committed')).toHa…
+     77|   expect(results.filter(result => result.status === 'rejected')).toHav…
+ ❯ tests/work-graph/R4c-task-claim.test.ts:338:34
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real SQLite races and durability > lets only one of two connections claim two Tasks through the same Session
+AssertionError: expected [] to have a length of 2 but got +0
+
+- Expected
++ Received
+
+- 2
++ 0
+
+ ❯ expectAtomicRaceLoser tests/work-graph/R4c-task-claim.test.ts:75:37
+     73|   results: readonly WriteResult<TaskClaim>[],
+     74| ): Promise<{ winner: TaskClaim; loserIndex: number }> {
+     75|   expect(submitted.filter(Boolean)).toHaveLength(2);
+       |                                     ^
+     76|   expect(results.filter(result => result.status === 'committed')).toHa…
+     77|   expect(results.filter(result => result.status === 'rejected')).toHav…
+ ❯ tests/work-graph/R4c-task-claim.test.ts:361:42
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real SQLite races and durability > lets two connections claim different Tasks through different Sessions
+AssertionError: expected [] to have a length of 2 but got +0
+
+- Expected
++ Received
+
+- 2
++ 0
+
+ ❯ tests/work-graph/R4c-task-claim.test.ts:385:46
+    383|       services[1]!.claimTask(fixture.ctx, other),
+    384|     ]);
+    385|     expect(barrier.prepared.filter(Boolean)).toHaveLength(2);
+       |                                              ^
+    386|     expect(results.map(result => result.status)).toEqual(['committed',…
+    387|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/31]⎯
+
+ FAIL  tests/work-graph/R4c-task-claim.test.ts > R4c.1 real SQLite races and durability > replays the original claim after reopening the same SQLite ledger
+AssertionError: expected { status: 'rejected', …(2) } to match object { Object (status, replayed) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R4c-task-claim.test.ts:394:19
+    392|     const request = await fixture.buildRequest({ requestId: 'durable-r…
+    393|     const first = await fixture.service.claimTask(fixture.ctx, request…
+    394|     expect(first).toMatchObject({ status: 'committed', replayed: false…
+       |                   ^
+    395|     if (first.status !== 'committed') return;
+    396|     await fixture.closeBackend();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/31]⎯
+
+
+ Test Files  3 failed | 3 passed (6)
+      Tests  31 failed | 34 passed (65)
+   Start at  21:48:24
+   Duration  7.39s (transform 545ms, setup 0ms, import 1.25s, tests 5.69s, environment 0ms)
+

@@ -1,0 +1,48 @@
+{
+  "lane": "r6-session-mailbox-implementation-20260926",
+  "session": "session-26bd6864-2e56-4765-bd9d-67b5797aee5b",
+  "files": [
+    {
+      "path": "coding-platform/next/src/app/core-http-types.ts",
+      "before": "748e83d09bf38c58155d3b1063c8f9d3c4fdc898ca021cd04abc752f9b36915c",
+      "after": "748e83d09bf38c58155d3b1063c8f9d3c4fdc898ca021cd04abc752f9b36915c"
+    },
+    {
+      "path": "coding-platform/next/src/app/core-routes.ts",
+      "before": "a2ab61ab48d71a9973b0149c99a7ec539a403a6b12e1442cf2ac53cf083ad5cb",
+      "after": "2ea2b467627231f7077d99fce16caf6a9530f715e5439d9d63d1d0caf7086b43"
+    },
+    {
+      "path": "coding-platform/next/src/ui/main.ts",
+      "before": "8060010f5634988593c30c00c2c1b54c96e0a69523997866a549325492ed620a",
+      "after": "fd190659647940f5f572748db68a93b6017310b01558d7cf99fa6482dc390d25"
+    },
+    {
+      "path": "coding-platform/next/src/ui/views.ts",
+      "before": "56f107e03206ce1b277bd620d27e3c5c0b04b65b6a73a23acce422c54234130c",
+      "after": "0ff075b12eb01e239735ee9e3cd58a038193b3abfc1008b78ed326c66618e5a2"
+    }
+  ],
+  "scope": {
+    "changed": [
+      "coding-platform/next/src/app/core-routes.ts",
+      "coding-platform/next/src/ui/main.ts",
+      "coding-platform/next/src/ui/views.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "checks": {
+    "next-r6-host": "17/2 passed before UI-only scope correction; route/test hashes unchanged",
+    "Node/UI types": "passed, final physical build below",
+    "final physical build": "r6-session-selection-build.log: exit 0"
+  },
+  "review": "final original-scope/recipient send follow-up correction checked; no extra cases",
+  "browser": {
+    "status": "passed",
+    "evidence": "r6-session-browser.json",
+    "screenshot": "r6-session-browser.png",
+    "sameSQLiteReopen": true,
+    "selectionRepair": "r6-session-selection-repair-import.json"
+  }
+}

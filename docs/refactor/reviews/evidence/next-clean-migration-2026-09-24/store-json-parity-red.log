@@ -1,0 +1,43 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/record-store/lookup.test.ts (9 tests | 1 failed) 23ms
+   × sqlite: indexes follow decoded JSON values for duplicate fields and numeric literals 7ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/record-store/lookup.test.ts > sqlite: indexes follow decoded JSON values for duplicate fields and numeric literals
+AssertionError: expected { status: 'ready', value: { …(3) } } to match object { status: 'ready', value: { …(1) } }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "status": "ready",
+    "value": {
+-     "records": [
+-       {
+-         "refKey": "{\"aggregateType\":\"Widget\",\"projectId\":\"alpha\",\"widgetId\":\"duplicate\"}",
+-       },
+-     ],
++     "records": [],
+    },
+  }
+
+ ❯ tests/record-store/lookup.test.ts:64:55
+     62|     for (const row of [duplicate, numeric]) expect(await backend.recor…
+     63|       .toMatchObject({ status: 'committed' });
+     64|     expect(await lookup(backend, ['shared', 'open'])).toMatchObject({ …
+       |                                                       ^
+     65|       value: { records: [{ refKey: duplicate.refKey }] } });
+     66|     expect(await lookup(backend, ['wrong', 'open'])).toMatchObject({ s…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 10 passed (11)
+   Start at  12:53:03
+   Duration  291ms (transform 74ms, setup 0ms, import 111ms, tests 32ms, environment 0ms)
+

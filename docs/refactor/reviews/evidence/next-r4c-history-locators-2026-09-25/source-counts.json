@@ -1,0 +1,14 @@
+{
+  "src": {
+    "files": 157,
+    "physicalLines": 26716
+  },
+  "contracts": {
+    "files": 57,
+    "physicalLines": 3789
+  },
+  "tests": {
+    "files": 71,
+    "physicalLines": 17263
+  }
+}

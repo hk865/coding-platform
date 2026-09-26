@@ -1,0 +1,225 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+ ❯ tests/data/R3a-goal-record-store.test.ts (14 tests | 2 failed) 59ms
+     × sqlite rejects a changed stored ref even when the numeric revision is unchanged 9ms
+     × memory rejects a changed stored ref even when the numeric revision is unchanged 3ms
+ ❯ tests/data/R3a-contract-invariants.test.ts (8 tests | 4 failed) 21ms
+     × distinguishes bad ref from an ordinary CAS conflict 8ms
+     × distinguishes bad schema from an ordinary CAS conflict 1ms
+     × distinguishes bad ref from an ordinary CAS conflict 3ms
+     × distinguishes bad schema from an ordinary CAS conflict 2ms
+ ❯ tests/data/R3a-goal-input-isolation.test.ts (1 test | 1 failed) 9ms
+   × owns accepted fields or rejects an extra non-JSON property before an async caller mutation can redirect Goal creation 8ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/data/R3a-contract-invariants.test.ts > R3a final guard contract: memory > distinguishes bad ref from an ordinary CAS conflict
+ FAIL  tests/data/R3a-contract-invariants.test.ts > R3a final guard contract: memory > distinguishes bad schema from an ordinary CAS conflict
+ FAIL  tests/data/R3a-contract-invariants.test.ts > R3a final guard contract: sqlite > distinguishes bad ref from an ordinary CAS conflict
+ FAIL  tests/data/R3a-contract-invariants.test.ts > R3a final guard contract: sqlite > distinguishes bad schema from an ordinary CAS conflict
+AssertionError: expected { status: 'committed', …(2) } to match object { status: 'rejected', …(1) }
+(14 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/data/R3a-contract-invariants.test.ts:80:24
+     78|         });
+     79|         const result = await admitGoalCreation({ records, now: () => a…
+     80|         expect(result).toMatchObject(change !== 'changed revision'
+       |                        ^
+     81|           ? { status: 'rejected', code: 'unavailable' }
+     82|           : { status: 'rejected', code: 'revision_conflict' });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/15]⎯
+
+ FAIL  tests/data/R3a-goal-input-isolation.test.ts > owns accepted fields or rejects an extra non-JSON property before an async caller mutation can redirect Goal creation
+AssertionError: an in-flight call must never switch to the mutated Goal ref: expected [ …(3) ] to not include '{"aggregateType":"Goal","goalId":"goa…'
+ ❯ tests/data/R3a-goal-input-isolation.test.ts:70:101
+     68|     const result = await pending;
+     69|
+     70|     expect.soft(readSets.flat(), 'an in-flight call must never switch …
+       |                                                                                                     ^
+     71|     const stored = await backend.records.readMany([originalKey, redire…
+     72|     expect(stored.status).toBe('ready');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/15]⎯
+
+ FAIL  tests/data/R3a-goal-input-isolation.test.ts > owns accepted fields or rejects an extra non-JSON property before an async caller mutation can redirect Goal creation
+AssertionError: the caller mutation must not create another Goal: expected [ Array(1) ] to include '{"aggregateType":"Goal","goalId":"goa…'
+ ❯ tests/data/R3a-goal-input-isolation.test.ts:74:91
+     72|     expect(stored.status).toBe('ready');
+     73|     if (stored.status !== 'ready') throw new Error('Goal verification …
+     74|     expect.soft(stored.value.missing, 'the caller mutation must not cr…
+       |                                                                                           ^
+     75|
+     76|     if (result.status === 'rejected') {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/15]⎯
+
+ FAIL  tests/data/R3a-goal-input-isolation.test.ts > owns accepted fields or rejects an extra non-JSON property before an async caller mutation can redirect Goal creation
+AssertionError: expected { ref: { …(3) }, …(5) } to match object { ref: { …(3) }, …(1) }
+(7 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "objective": "original objective",
+    "ref": {
+      "aggregateType": "Goal",
+-     "goalId": "goal-at-call",
++     "goalId": "goal-mutated-after-call",
+      "projectId": "proj-alpha",
+    },
+  }
+
+ ❯ tests/data/R3a-goal-input-isolation.test.ts:83:31
+     81|       expect(backend.legacyAccess.state).toEqual(before);
+     82|     } else {
+     83|       expect(result.snapshot).toMatchObject({ ref: ref(original.aggreg…
+       |                               ^
+     84|       expect(stored.value.records.map(record => record.refKey)).toEqua…
+     85|       expect(backend.legacyAccess.state.eventLog).toHaveLength(before.…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/15]⎯
+
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > sqlite rejects a changed stored ref even when the numeric revision is unchanged
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > memory rejects a changed stored ref even when the numeric revision is unchanged
+AssertionError: expected { status: 'committed', …(5) } to match object { status: 'rejected', code: 'corrupt' }
+(5 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "corrupt",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/data/R3a-goal-record-store.test.ts:410:31
+    408|     proceed.resolve();
+    409|     const result = await pending;
+    410|     expect.soft(actualCommit).toMatchObject({ status: 'rejected', code…
+       |                               ^
+    411|     expect.soft(result).toMatchObject({ status: 'rejected', code: 'una…
+    412|     expect.soft(await ledger.load({ aggregateType: 'Goal', projectId: …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/15]⎯
+
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > sqlite rejects a changed stored ref even when the numeric revision is unchanged
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > memory rejects a changed stored ref even when the numeric revision is unchanged
+AssertionError: expected { status: 'committed', …(3) } to match object { status: 'rejected', …(1) }
+(9 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/data/R3a-goal-record-store.test.ts:411:25
+    409|     const result = await pending;
+    410|     expect.soft(actualCommit).toMatchObject({ status: 'rejected', code…
+    411|     expect.soft(result).toMatchObject({ status: 'rejected', code: 'una…
+       |                         ^
+    412|     expect.soft(await ledger.load({ aggregateType: 'Goal', projectId: …
+    413|     expect(await ledger.events({ afterCursor: null, limit: 100 })).toE…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/15]⎯
+
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > sqlite rejects a changed stored ref even when the numeric revision is unchanged
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > memory rejects a changed stored ref even when the numeric revision is unchanged
+AssertionError: expected { status: 'found', snapshot: { …(6) } } to match object { status: 'not_found' }
+(7 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "not_found",
++   "status": "found",
+  }
+
+ ❯ tests/data/R3a-goal-record-store.test.ts:412:121
+    410|     expect.soft(actualCommit).toMatchObject({ status: 'rejected', code…
+    411|     expect.soft(result).toMatchObject({ status: 'rejected', code: 'una…
+    412|     expect.soft(await ledger.load({ aggregateType: 'Goal', projectId: …
+       |                                                                                                                         ^
+    413|     expect(await ledger.events({ afterCursor: null, limit: 100 })).toE…
+    414|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/15]⎯
+
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > sqlite rejects a changed stored ref even when the numeric revision is unchanged
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > memory rejects a changed stored ref even when the numeric revision is unchanged
+AssertionError: expected { afterCursor: null, …(3) } to deeply equal { afterCursor: null, …(3) }
+
+- Expected
++ Received
+
+@@ -93,9 +93,35 @@
+          "projectId": "proj-beta",
+          "schemaVersion": 1,
+          "workspaceId": "ws-shared",
+        },
+      },
++     {
++       "cursor": "c0000000005",
++       "event": {
++         "actor": {
++           "id": "user-1",
++           "kind": "human",
++         },
++         "aggregateId": "corrupt-scope-goal",
++         "aggregateRevision": 1,
++         "aggregateType": "Goal",
++         "causationId": "goal-create-command:{\"actorId\":\"user-1\",\"actorKind\":\"human\",\"goalId\":\"corrupt-scope-goal\",\"idempotencyKey\":\"corrupt-scope-request\",\"projectId\":\"proj-alpha\",\"workspaceId\":\"ws-shared\"}",
++         "correlationId": "goal-create-request:{\"actorId\":\"user-1\",\"actorKind\":\"human\",\"goalId\":\"corrupt-scope-goal\",\"idempotencyKey\":\"corrupt-scope-request\",\"projectId\":\"proj-alpha\",\"workspaceId\":\"ws-shared\"}",
++         "eventId": "must-not-persist-corrupt-scope",
++         "eventType": "GoalCreated",
++         "idempotencyKey": "corrupt-scope-request",
++         "occurredAt": "2026-09-23T10:00:00.000Z",
++         "payload": {
++           "activePlanRevision": null,
++           "desiredState": "active",
++           "objective": "Café original objective",
++         },
++         "projectId": "proj-alpha",
++         "schemaVersion": 1,
++         "workspaceId": "ws-shared",
++       },
++     },
+    ],
+    "hasMore": false,
+-   "throughCursor": "c0000000004",
++   "throughCursor": "c0000000005",
+  }
+
+ ❯ tests/data/R3a-goal-record-store.test.ts:413:68
+    411|     expect.soft(result).toMatchObject({ status: 'rejected', code: 'una…
+    412|     expect.soft(await ledger.load({ aggregateType: 'Goal', projectId: …
+    413|     expect(await ledger.events({ afterCursor: null, limit: 100 })).toE…
+       |                                                                    ^
+    414|   });
+    415| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/15]⎯
+
+
+ Test Files  3 failed (3)
+      Tests  7 failed | 16 passed (23)
+   Start at  23:58:41
+   Duration  1.20s (transform 622ms, setup 0ms, import 864ms, tests 89ms, environment 0ms)
+

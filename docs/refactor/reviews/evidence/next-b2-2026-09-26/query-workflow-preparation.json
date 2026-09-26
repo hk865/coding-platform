@@ -1,0 +1,17 @@
+{
+  "status": "prepared; shared composition waits for completion skeleton import",
+  "newPlaceholders": {
+    "query-execution": [
+      "coding-platform/next/src/core/work-graph/queries/query-execution.ts",
+      "coding-platform/next/src/core/agent-runtime/query-preparation.ts",
+      "coding-platform/next/src/core/agent-runtime/query-execution.ts",
+      "coding-platform/next/src/core/agent-runtime/query-observation.ts",
+      "coding-platform/next/tests/work-graph/R5b-query-execution.test.ts",
+      "coding-platform/next/tests/runtime/R5b-query-session-loop.test.ts"
+    ],
+    "workflow-advancement": [
+      "coding-platform/next/tests/business/R5c-workflow.test.ts",
+      "coding-platform/next/tests/composition/R5c-workflow-platform.test.ts"
+    ]
+  }
+}

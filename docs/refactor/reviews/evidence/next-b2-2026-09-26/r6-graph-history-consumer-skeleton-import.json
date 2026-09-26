@@ -1,0 +1,105 @@
+{
+  "status": "stage-one imported and frozen; stage-two approved",
+  "at": "2026-09-26T16:26:55.997724+00:00",
+  "review": "r6-graph-history-consumer-skeleton-review.json",
+  "reviewSha256": "b509b1771614909d32ed810d5d9e681abc3bd622db9985b3fb6df59c9b81b22c",
+  "files": [
+    {
+      "path": "coding-platform/next/src/app/core-http-types.ts",
+      "before": "619412e820d34e005bf37c012c34762703e8acb44bf654cde0f9da177ebe69a3",
+      "after": "f17fb3c80077b99cabe3ea209ff16e0536abb09a81edf12aa1dcf335ec422264",
+      "added": 22,
+      "deleted": 1,
+      "net": 21
+    },
+    {
+      "path": "coding-platform/next/src/app/core-routes.ts",
+      "before": "efe379a98e705fdc1980df5a87ce4edaf4f8faad1072bbec874955e4d22dc584",
+      "after": "17c77d3525f76773be9794f60a98b8508fe2f223b6b57ca9dc12150d4c9070a9",
+      "added": 13,
+      "deleted": 1,
+      "net": 12
+    },
+    {
+      "path": "coding-platform/next/src/ui/main.ts",
+      "before": "65f227d05f435b515441601b573bfaf5d7e710b50a46f5ef53c6d00003a8d805",
+      "after": "f236a568ef456553d4715a23b4ad737da0fe2f5486bfdfbe1ae4d3261a1f5f47",
+      "added": 33,
+      "deleted": 1,
+      "net": 32
+    },
+    {
+      "path": "coding-platform/next/src/ui/views.ts",
+      "before": "0cd8e0b5dbb800abfba886aa1122b20e7dab794d89720759511b7b10435fd8d5",
+      "after": "ad27a58b243f949d3faf83d97ffd1b297a7ef1c41a0622ec90e41fd888005b20",
+      "added": 62,
+      "deleted": 1,
+      "net": 61
+    },
+    {
+      "path": "coding-platform/next/tests/app/R6-host.test.ts",
+      "before": "89a8e77dc52ddacefa9953ce15dee30ced9ebe27473bfd01e3acc804f7180a0c",
+      "after": "922b8024351387450bd98f635a20610976b1e2d5b514a20f1e3bb389342d6032",
+      "added": 132,
+      "deleted": 1,
+      "net": 131
+    },
+    {
+      "path": "coding-platform/next/tests/app/R6-workbench.test.ts",
+      "before": "621d1bbe5846d5f2add89df157e559d25200adee4ad39fa83f22cee4caee1183",
+      "after": "0c9d3738b6d21aba5f40ebc45d656987a6defb2098c7eecfb14021f1084ecac5",
+      "added": 40,
+      "deleted": 0,
+      "net": 40
+    }
+  ],
+  "scopeClean": true,
+  "originalAllowedHashesMatched": true,
+  "independentChecks": [
+    {
+      "check": "next-r6-host",
+      "exitCode": 1,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-skeleton-final-tests.log",
+      "sha256": "d47da542890c10771437d9aea721647f0b02cc51786c03ac85284c1203bdba4b",
+      "total": 22,
+      "passed": 21,
+      "failed": 1,
+      "expectedRed": {
+        "file": "tests/app/R6-workbench.test.ts",
+        "line": 549,
+        "expected": "data-execution-entry=\"open\"",
+        "actual": "data-execution-entry=\"unsupported\"",
+        "scope": "last assertion of existing original-history normal it; previous typed identity/reducer/future row assertions passed"
+      }
+    },
+    {
+      "check": "next-types",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-skeleton-final-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "next-ui-types",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-skeleton-final-ui-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "next-build",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-skeleton-final-build.log",
+      "sha256": "2b1edee55dfb8e18719b485a95c9376f2a9b5cd6af2e957df8ae2577abed4b0e"
+    },
+    {
+      "check": "next-architecture",
+      "exitCode": 0,
+      "log": "docs/refactor/reviews/evidence/next-b2-2026-09-26/r6-graph-history-skeleton-final-architecture.log",
+      "sha256": "5b54574630dd51dd3818192aae0beb67cd965e9a0d3cda936f8977cc9b164bee"
+    }
+  ],
+  "algorithmScope": [
+    "coding-platform/next/src/ui/main.ts",
+    "coding-platform/next/src/ui/views.ts"
+  ],
+  "limits": "New UI entry is deliberately unsupported and expected red until stage-two; HTTP original readers already real. This is not final UI delivery."
+}

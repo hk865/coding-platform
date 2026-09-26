@@ -1,0 +1,14 @@
+[
+  {
+    "file": "docs/refactor/tasks/R4-control-recovery-skeleton.md",
+    "before": "bf4da3f90c10da68e9d0560b8dfa686e4e6e7b167a21f6fa8b9cc9ea3d4484be",
+    "after": "fa92c91545053c886b53681effed263424eddad6a13b441dee9f33fd19c853d0",
+    "readOnly": true
+  },
+  {
+    "file": "docs/refactor/tasks/R4-tool-group-barrier-dispatch.md",
+    "before": "d82fc6cf4daa88be5cd3f55fa44de76c5cb4c15f9f83a51973e3a858959bc024",
+    "after": "7a0fc400e93438ece05a30ca4b21712a4554b9386608689d72d1c46a476c7cbc",
+    "readOnly": true
+  }
+]

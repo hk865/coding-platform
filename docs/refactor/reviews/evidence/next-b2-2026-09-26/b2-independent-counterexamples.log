@@ -1,0 +1,183 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/B2-execution-entry.test.ts (12 tests | 4 failed) 175ms
+     × the real Lease schema rejects a release from another scope even when local Run and attempt ids match 35ms
+     × a saved manifest with correct bytes and digest but the wrong contentType cannot authorize execution 14ms
+     × a real claim whose Session occupancy was lost cannot receive fresh entry authorization 12ms
+     × a Lease released after admission reads wins CAS and leaves no entry authorization 10ms
+ ❯ tests/work-graph/B2-execution-result.test.ts (7 tests | 2 failed) 118ms
+     × Host grant revocation denies new calls but does not suppress a genuine entered terminal and release 35ms
+     × one complete Turn atomically ends Run/Attempt/outbox, retains released Lease, advances the boundary and preserves discovery/links 15ms
+ ❯ tests/work-graph/B2-model-request.test.ts (6 tests | 1 failed) 127ms
+     × an entered Run that lost its Session cannot issue another model-call permit 35ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/B2-execution-entry.test.ts > B2 execution entry > the real Lease schema rejects a release from another scope even when local Run and attempt ids match
+AssertionError: expected { status: 'committed', …(5) } to match object { status: 'rejected' }
+(5 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/B2-execution-entry.test.ts:32:74
+     30|       expect(await f.base.commitRaw([{ refKey: b2Key(lease.ref), schem…
+     31|         revision: invalidLease.revision, json: JSON.stringify(invalidL…
+     32|       [{ refKey: b2Key(lease.ref), expectedRevision: lease.revision }]…
+       |                                                                          ^
+     33|       expect(await f.read()).toEqual(before);
+     34|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯
+
+ FAIL  tests/work-graph/B2-execution-entry.test.ts > B2 execution entry > a saved manifest with correct bytes and digest but the wrong contentType cannot authorize execution
+AssertionError: expected { status: 'committed', …(3) } to match object { status: 'rejected' }
+(8 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/B2-execution-entry.test.ts:53:8
+     51|     expect(await f.entry.authorizeRuntimeEntry(f.ctx, { input: { prepa…
+     52|       meta: { requestId: 'wrong-manifest-content-type', expected: [awa…
+     53|       .toMatchObject({ status: 'rejected' });
+       |        ^
+     54|     expect(await f.read()).toEqual(before);
+     55|     // The otherwise identical, correctly typed stored body is still a…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/7]⎯
+
+ FAIL  tests/work-graph/B2-execution-entry.test.ts > B2 execution entry > a real claim whose Session occupancy was lost cannot receive fresh entry authorization
+AssertionError: expected { status: 'committed', …(3) } to match object { status: 'rejected', code: 'busy' }
+(8 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "busy",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/B2-execution-entry.test.ts:68:8
+     66|     expect(await f.entry.authorizeRuntimeEntry(f.ctx, { input: { prepa…
+     67|       meta: { requestId: 'lost-session-before-authorize', expected: [a…
+     68|       .toMatchObject({ status: 'rejected', code: 'busy' });
+       |        ^
+     69|     expect(await f.read()).toEqual(before);
+     70|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/7]⎯
+
+ FAIL  tests/work-graph/B2-execution-entry.test.ts > B2 execution entry > a Lease released after admission reads wins CAS and leaves no entry authorization
+AssertionError: expected { status: 'committed', …(3) } to match object { status: 'rejected', …(1) }
+(8 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "revision_conflict",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/B2-execution-entry.test.ts:95:20
+     93|     });
+     94|     expect(intervened).toBe(true);
+     95|     expect(result).toMatchObject({ status: 'rejected', code: 'revision…
+       |                    ^
+     96|     const after = await f.read();
+     97|     expect(after.run).toEqual(before.run); expect(after.attempt).toEqu…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/7]⎯
+
+ FAIL  tests/work-graph/B2-execution-result.test.ts > B2 execution result and release > Host grant revocation denies new calls but does not suppress a genuine entered terminal and release
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed', …(2) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "replayed": false,
+-   "status": "committed",
+-   "value": {
+-     "executionAuthorization": {
+-       "phase": "settled",
+-     },
+-     "outcome": "completed",
+-     "status": "ended",
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/B2-execution-result.test.ts:15:20
+     13|     const result = await f.entry.recordRunResult(f.ctx, { input: obser…
+     14|       meta: { requestId: 'terminal-after-host-revocation', expected: […
+     15|     expect(result).toMatchObject({ status: 'committed', replayed: fals…
+       |                    ^
+     16|       value: { status: 'ended', outcome: 'completed', executionAuthori…
+     17|     const ended = await f.read();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/7]⎯
+
+ FAIL  tests/work-graph/B2-execution-result.test.ts > B2 execution result and release > one complete Turn atomically ends Run/Attempt/outbox, retains released Lease, advances the boundary and preserves discovery/links
+AssertionError: expected +0 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 0
+
+ ❯ tests/work-graph/B2-execution-result.test.ts:39:36
+     37|     expect(result).toMatchObject({ status: 'committed', replayed: fals…
+     38|     const ended = await f.read();
+     39|     expect(ended.run.lastEventSeq).toBe(request.input.event.sequence);
+       |                                    ^
+     40|     expect(ended.run.lastRuntimeEventId).toBe(request.input.event.even…
+     41|     expect(ended.run.lastFactEventId).not.toBe(current.run.lastFactEve…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/7]⎯
+
+ FAIL  tests/work-graph/B2-model-request.test.ts > B2 model request > an entered Run that lost its Session cannot issue another model-call permit
+AssertionError: expected { status: 'committed', …(3) } to match object { status: 'rejected' }
+(6 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/B2-model-request.test.ts:18:8
+     16|     expect(await f.model.authorizeModelRequest(f.ctx, { input: request,
+     17|       meta: { requestId: 'issue-after-session-loss', expected: [await …
+     18|       .toMatchObject({ status: 'rejected' });
+       |        ^
+     19|     expect(await f.read()).toEqual(before);
+     20|     const rows = await f.base.records.readMany([b2Key({ aggregateType:…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/7]⎯
+
+
+ Test Files  3 failed (3)
+      Tests  7 failed | 18 passed (25)
+   Start at  02:28:21
+   Duration  1.57s (transform 480ms, setup 0ms, import 929ms, tests 420ms, environment 0ms)
+

@@ -1,0 +1,10 @@
+{
+  "method": "Existing local Chromium headless browser, native DevTools input events, final built UI and real HTTP/SQLite Host",
+  "checks": [
+    "Typing Goal ID and Tab keeps the next objective input connected and focused.",
+    "Reopened same SQLite without review config; visible read Goal result reached.",
+    "Existing adopted Plan task graph displayed implement and gate.",
+    "While source capture response was delayed, switching to the second workspace kept its Goal/source state empty.",
+    "Returning to the originating workspace showed its completed capture and enabled file listing."
+  ]
+}

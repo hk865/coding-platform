@@ -1,0 +1,204 @@
+{
+  "mode": "check",
+  "sources": [
+    {
+      "path": "vendor/coding-agent/patches/storage/adapters/sqlite/sqlite-stores.ts",
+      "sha256": "4c552b0ecbaecdd5db514697fe39019c5899e51589a8caa8a950c9b4bebe16b6"
+    },
+    {
+      "path": "vendor/coding-agent/patches/public-api.ts",
+      "sha256": "a87deed2b4d9fb9f2275c97d1d9feaf403f74c9797c8f988d44c7de9a8b9ebfe"
+    },
+    {
+      "path": "vendor/coding-agent/patches/app/composition/control-hooks.ts",
+      "sha256": "de8bbc1aa688a99718f02710458a80882acd920499aa86edbd7e35c984b6999b"
+    },
+    {
+      "path": "vendor/coding-agent/patches/core/runtime/loop/runtime-runner.ts",
+      "sha256": "39f5ce8937ec6e205aa8313e1d77d97162fbc7813498e4d81aec9b43dab46ddb"
+    },
+    {
+      "path": "vendor/coding-agent/patches/app/composition/composition-root.ts",
+      "sha256": "faf3913c84fcd9284eadfbede9d47060a327bef8fe66d52cd941bacf94c58c1b"
+    },
+    {
+      "path": "vendor/coding-agent/patches/app/composition/resume-composition.ts",
+      "sha256": "d269e42c30c8312e446d5b0f0fd79a780277bbf1d9af7e5823ec033a78f6ace8"
+    },
+    {
+      "path": "vendor/coding-agent/patches/core/ports/session_store/session-history.ts",
+      "sha256": "9026ec17dabc8348782aa910804b4dbd7f4cbebf0fa2828ad003ff18d71bd508"
+    }
+  ],
+  "typeScript": "6.0.3",
+  "artifacts": [
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.js",
+      "sha256": "a52fef11ca8d6b24c84034b5ef25bd895638d9c453f59cad90e909ffd573ef76",
+      "currentSha256": "a52fef11ca8d6b24c84034b5ef25bd895638d9c453f59cad90e909ffd573ef76",
+      "matches": true
+    },
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.js.map",
+      "sha256": "651abb806baca8a32a6f285fc6ced6fc2f1fc1460b80dc51e83efb2c84231111",
+      "currentSha256": "651abb806baca8a32a6f285fc6ced6fc2f1fc1460b80dc51e83efb2c84231111",
+      "matches": true
+    },
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.d.ts",
+      "sha256": "80be7f2b88f5578ed0a24d59014e49e5a124777f7926a0b46182d86f3ca9e8f3",
+      "currentSha256": "80be7f2b88f5578ed0a24d59014e49e5a124777f7926a0b46182d86f3ca9e8f3",
+      "matches": true
+    },
+    {
+      "path": "storage/adapters/sqlite/sqlite-stores.d.ts.map",
+      "sha256": "08e758e735d8d98b0a6b56f540bfbd7b7dd61bd585f21be5bf6cfa06b5e54102",
+      "currentSha256": "08e758e735d8d98b0a6b56f540bfbd7b7dd61bd585f21be5bf6cfa06b5e54102",
+      "matches": true
+    },
+    {
+      "path": "public-api.js",
+      "sha256": "a9e2e9731e56b1425e4f3b284d07101c72447573481dc776b91792956a0bc358",
+      "currentSha256": "a9e2e9731e56b1425e4f3b284d07101c72447573481dc776b91792956a0bc358",
+      "matches": true
+    },
+    {
+      "path": "public-api.js.map",
+      "sha256": "edfb16f23eb058cf1a62ade31ce884afeba0a981eb942e610445801dfa754314",
+      "currentSha256": "edfb16f23eb058cf1a62ade31ce884afeba0a981eb942e610445801dfa754314",
+      "matches": true
+    },
+    {
+      "path": "public-api.d.ts",
+      "sha256": "fa20c24223d8081f954db0ba20d14b45be5c6a45a570f52aa471dd65b57de3a6",
+      "currentSha256": "fa20c24223d8081f954db0ba20d14b45be5c6a45a570f52aa471dd65b57de3a6",
+      "matches": true
+    },
+    {
+      "path": "public-api.d.ts.map",
+      "sha256": "2817ad684b5744c1154d6775ac12a559d83dd8fdeab7464cb5bb5ebcca9ec745",
+      "currentSha256": "2817ad684b5744c1154d6775ac12a559d83dd8fdeab7464cb5bb5ebcca9ec745",
+      "matches": true
+    },
+    {
+      "path": "app/composition/control-hooks.js",
+      "sha256": "f4b3450871e2b9c8a1ee5ced6e4d63d11b7fb3200a483d4d68b95d703e290a1a",
+      "currentSha256": "f4b3450871e2b9c8a1ee5ced6e4d63d11b7fb3200a483d4d68b95d703e290a1a",
+      "matches": true
+    },
+    {
+      "path": "app/composition/control-hooks.js.map",
+      "sha256": "9e46efd8b51c31d11e4fc081a6ce4c54377e36ccf3ed84986acd2b35024458c5",
+      "currentSha256": "9e46efd8b51c31d11e4fc081a6ce4c54377e36ccf3ed84986acd2b35024458c5",
+      "matches": true
+    },
+    {
+      "path": "app/composition/control-hooks.d.ts",
+      "sha256": "112e0beecc2ab9002a5f83ccb5ffbc51b484cd1778e717e8f9047f0f804ef1e5",
+      "currentSha256": "112e0beecc2ab9002a5f83ccb5ffbc51b484cd1778e717e8f9047f0f804ef1e5",
+      "matches": true
+    },
+    {
+      "path": "app/composition/control-hooks.d.ts.map",
+      "sha256": "83ce956c4892d3780ca513502321b1b93b84475298d89d0b54905c11a5e2c285",
+      "currentSha256": "83ce956c4892d3780ca513502321b1b93b84475298d89d0b54905c11a5e2c285",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/loop/runtime-runner.js",
+      "sha256": "a09eba7b4f4d2ee6683c51b364ffcc7c035ce2c613c94ed324662b1f5955eb49",
+      "currentSha256": "a09eba7b4f4d2ee6683c51b364ffcc7c035ce2c613c94ed324662b1f5955eb49",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/loop/runtime-runner.js.map",
+      "sha256": "2c865980392ce31c5a7ecd4d73ebb3175035340226a233befdc84ad2ac0261a8",
+      "currentSha256": "2c865980392ce31c5a7ecd4d73ebb3175035340226a233befdc84ad2ac0261a8",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/loop/runtime-runner.d.ts",
+      "sha256": "c1bff6e22f8def5b1c1eb18c0558da4a8089735216d7a3b2312a132625e73186",
+      "currentSha256": "c1bff6e22f8def5b1c1eb18c0558da4a8089735216d7a3b2312a132625e73186",
+      "matches": true
+    },
+    {
+      "path": "core/runtime/loop/runtime-runner.d.ts.map",
+      "sha256": "398ad71d27abab7f750e66fabc0db2c8d269309b6176ee53eb3788ac0e0bb571",
+      "currentSha256": "398ad71d27abab7f750e66fabc0db2c8d269309b6176ee53eb3788ac0e0bb571",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-root.js",
+      "sha256": "26edcc1533d93b74e635387973df2957e7e932e40f78cef94019db6ac448e1ab",
+      "currentSha256": "26edcc1533d93b74e635387973df2957e7e932e40f78cef94019db6ac448e1ab",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-root.js.map",
+      "sha256": "285bd689b2ae6b87448a5570236a17a93702d7658ea8f0f10ba1d943dee13635",
+      "currentSha256": "285bd689b2ae6b87448a5570236a17a93702d7658ea8f0f10ba1d943dee13635",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-root.d.ts",
+      "sha256": "55bd8510ad9f9dcb5c4c01da11f23d479f66c75c9e629c5ff65cf4e5b4b8b47d",
+      "currentSha256": "55bd8510ad9f9dcb5c4c01da11f23d479f66c75c9e629c5ff65cf4e5b4b8b47d",
+      "matches": true
+    },
+    {
+      "path": "app/composition/composition-root.d.ts.map",
+      "sha256": "5a7580ffe25d58a77b276b88dc63e75cc45aa297075997a3f18e95e0017728b6",
+      "currentSha256": "5a7580ffe25d58a77b276b88dc63e75cc45aa297075997a3f18e95e0017728b6",
+      "matches": true
+    },
+    {
+      "path": "app/composition/resume-composition.js",
+      "sha256": "07c7dfbddf14c2770b9e6ecbf5e8d0e6f0db08813e42a07e6f4c567855b90d79",
+      "currentSha256": "07c7dfbddf14c2770b9e6ecbf5e8d0e6f0db08813e42a07e6f4c567855b90d79",
+      "matches": true
+    },
+    {
+      "path": "app/composition/resume-composition.js.map",
+      "sha256": "d170709f50d278749b04669330a3eb8af050f84f9e19c20b2ea2a96e68625505",
+      "currentSha256": "d170709f50d278749b04669330a3eb8af050f84f9e19c20b2ea2a96e68625505",
+      "matches": true
+    },
+    {
+      "path": "app/composition/resume-composition.d.ts",
+      "sha256": "08ec6d5e4108e0d0696519aa3de5d729fb62d29cbab4afc46c768c4798bb18e5",
+      "currentSha256": "08ec6d5e4108e0d0696519aa3de5d729fb62d29cbab4afc46c768c4798bb18e5",
+      "matches": true
+    },
+    {
+      "path": "app/composition/resume-composition.d.ts.map",
+      "sha256": "d4a4c006c83441a21bb47bbc541959b5e25af3f1b78096daf6075409e501acf2",
+      "currentSha256": "d4a4c006c83441a21bb47bbc541959b5e25af3f1b78096daf6075409e501acf2",
+      "matches": true
+    },
+    {
+      "path": "core/ports/session_store/session-history.js",
+      "sha256": "425f329ae66bedc4ea6e54ca435b5591d64ffebc49351f57febc1d437fd8675b",
+      "currentSha256": "425f329ae66bedc4ea6e54ca435b5591d64ffebc49351f57febc1d437fd8675b",
+      "matches": true
+    },
+    {
+      "path": "core/ports/session_store/session-history.js.map",
+      "sha256": "c9e3bedf67ab45119a8bb1c59581009552edbeb308a8b891879a454c90a707d3",
+      "currentSha256": "c9e3bedf67ab45119a8bb1c59581009552edbeb308a8b891879a454c90a707d3",
+      "matches": true
+    },
+    {
+      "path": "core/ports/session_store/session-history.d.ts",
+      "sha256": "112cdc57a69fedd7296cf1c88c5868a96422d4ac14f1d6c3c6da07a61775d692",
+      "currentSha256": "112cdc57a69fedd7296cf1c88c5868a96422d4ac14f1d6c3c6da07a61775d692",
+      "matches": true
+    },
+    {
+      "path": "core/ports/session_store/session-history.d.ts.map",
+      "sha256": "613b6af24a92b028fead9f14733b403c05191281f8508dbb228bafd14b189760",
+      "currentSha256": "613b6af24a92b028fead9f14733b403c05191281f8508dbb228bafd14b189760",
+      "matches": true
+    }
+  ]
+}

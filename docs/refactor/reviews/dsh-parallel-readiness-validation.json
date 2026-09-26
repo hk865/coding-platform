@@ -1,0 +1,35 @@
+{
+  "date": "2026-09-23",
+  "scope": "dsh implementation prompt, optional preflight and per-slice contracts; documentation only",
+  "markdown_files": 65,
+  "checked_local_file_links": 1076,
+  "broken_links": [],
+  "unbalanced_fences": [],
+  "target_modules": 5,
+  "target_edges": 8,
+  "dag_acyclic": true,
+  "module_diagrams_match_target": {
+    "ARCHITECTURE.md": true,
+    "module-dag.md": true
+  },
+  "type_contracts_compiled": false,
+  "product_tests_run": false,
+  "dsh_started": false,
+  "mermaid_rendered": false,
+  "preserved_original_dialogue_references": [
+    {
+      "file": "docs/refactor/intent/ORIGINAL-DIALOGUE.md",
+      "target": "/home/hyh001/projects/coding-platform/coding-platform/src/data/workspace-reader/denied-prefixes.ts"
+    },
+    {
+      "file": "docs/refactor/intent/ORIGINAL-DIALOGUE.md",
+      "target": "/home/hyh001/projects/coding-platform/coding-platform/src/data/workspace-reader/project-source-index.ts"
+    },
+    {
+      "file": "docs/refactor/intent/ORIGINAL-DIALOGUE.md",
+      "target": "/home/hyh001/projects/coding-platform/docs/agent-platform-decision-recommendations-revised.md"
+    }
+  ],
+  "original_reference_policy": "Original dialogue keeps verbatim historical paths; these three moved-file references are recorded, not rewritten or counted as current-design failures.",
+  "prompt_review": "Independent read-only review: corrected WorkGraph persistence path and removed wait-for-Kernel gate from Goal integration."
+}

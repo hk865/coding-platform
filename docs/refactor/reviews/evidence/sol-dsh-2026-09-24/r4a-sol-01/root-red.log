@@ -1,0 +1,308 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/vendor/coding-agent
+
+ ❯ tests/review/independent-r4a-session-recovery.test.ts (6 tests | 3 failed) 324ms
+     × replays the requested old identity after a newer completed Turn without returning the newer Run 101ms
+     × rejects a paused recovery that raises the persisted model-request budget before any model call 51ms
+     × does not expose a previously denied path when paused recovery omits workspace options 38ms
+ ❯ tests/review/R4a-recovery-contract.test.ts (4 tests | 3 failed) 210ms
+     × stable identity replay selects the middle completed Run, with no model or SQLite writes 118ms
+     × a paused Turn cannot resume with a larger model budget after restart 41ms
+     × a paused Turn does not lose an explicit denied prefix when the resume call omits it 45ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/review/R4a-recovery-contract.test.ts > R4a recovery contract > stable identity replay selects the middle completed Run, with no model or SQLite writes
+AssertionError: expected 'run-C' to be 'run-B' // Object.is equality
+
+Expected: "run-B"
+Received: "run-C"
+
+ ❯ tests/review/R4a-recovery-contract.test.ts:79:32
+     77|     const before = await readRecords(h.databasePath, h.common.sessionI…
+     78|     const replay = await runCodingAgent(calls[1]!);
+     79|     expect(replay.state.runId).toBe("run-B");
+       |                                ^
+     80|     expect(replay.state.turn.turnId).toBe("turn-B");
+     81|     expect(replay.state.transcript).toEqual(results[1]!.state.transcri…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  tests/review/R4a-recovery-contract.test.ts > R4a recovery contract > a paused Turn cannot resume with a larger model budget after restart
+AssertionError: promise resolved "{ sessionId: 'contract-session', …(4) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "action": "paused",
++   "enabledTools": [
++     "read",
++   ],
++   "provider": "deepseek",
++   "sessionId": "contract-session",
++   "state": {
++     "activeModelRequest": null,
++     "createdAt": "2026-09-23T16:00:02.660Z",
++     "elapsedMs": 4,
++     "endedAt": "2026-09-23T16:00:02.684Z",
++     "lastEventId": "1b7c90d1-aee7-4771-a725-8e02af6088ba",
++     "lastEventSequence": 6,
++     "outcome": {
++       "finalMessageId": "f5341466-87c2-4e93-82c8-81346013b430",
++       "kind": "completed",
++       "reason": "final_answer",
++     },
++     "pause": null,
++     "runId": "budget",
++     "schemaVersion": 1,
++     "startedAt": "2026-09-23T16:00:02.662Z",
++     "status": "completed",
++     "toolBatch": null,
++     "transcript": [
++       {
++         "kind": "user_message",
++         "message": {
++           "content": "pause",
++           "messageId": "fceb03b8-6d0c-4e97-85e1-c077d0edba2c",
++           "role": "user",
++           "schemaVersion": 1,
++         },
++       },
++       {
++         "kind": "assistant_message",
++         "message": {
++           "content": "answer-1",
++           "messageId": "f5341466-87c2-4e93-82c8-81346013b430",
++           "role": "assistant",
++           "schemaVersion": 1,
++         },
++         "toolCalls": [],
++       },
++     ],
++     "turn": {
++       "turnId": "budget-turn",
++       "userMessage": {
++         "content": "pause",
++         "messageId": "fceb03b8-6d0c-4e97-85e1-c077d0edba2c",
++         "role": "user",
++         "schemaVersion": 1,
++       },
++     },
++     "updatedAt": "2026-09-23T16:00:02.684Z",
++     "usage": {
++       "cachedInputTokens": 0,
++       "costUsdMicros": null,
++       "inputTokens": 0,
++       "modelRequestCount": 1,
++       "outputTokens": 0,
++       "toolCallCount": 0,
++     },
++   },
+  }
+
+ ❯ tests/review/R4a-recovery-contract.test.ts:91:72
+     89|     expect(paused.state.status).toBe("paused");
+     90|     const before = await readRecords(h.databasePath, h.common.sessionI…
+     91|     await expect(resumeCodingAgent({ ...h.common, limits: limits(4) })…
+       |                                                                        ^
+     92|     expect(h.model.requests).toHaveLength(0);
+     93|     expect(await readRecords(h.databasePath, h.common.sessionId)).toEq…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  tests/review/R4a-recovery-contract.test.ts > R4a recovery contract > a paused Turn does not lose an explicit denied prefix when the resume call omits it
+AssertionError: expected 'success' to be 'error' // Object.is equality
+
+Expected: "error"
+Received: "success"
+
+ ❯ tests/review/R4a-recovery-contract.test.ts:103:84
+    101|     if (outcome.ok) {
+    102|       const deniedRead = outcome.value.state.transcript.find((entry) =…
+    103|       expect(deniedRead?.kind === "tool_result" ? deniedRead.result.st…
+       |                                                                                    ^
+    104|       expect(outcome.value.state.status).toBe("completed");
+    105|       expect(JSON.stringify(h.model.requests)).not.toContain("R4A_CONT…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  tests/review/independent-r4a-session-recovery.test.ts > independent R4a execution identity and paused recovery > replays the requested old identity after a newer completed Turn without returning the newer Run
+AssertionError: expected 'run-B' to be 'run-A' // Object.is equality
+
+Expected: "run-A"
+Received: "run-B"
+
+ ❯ tests/review/independent-r4a-session-recovery.test.ts:169:32
+    167|     const before = await records(h.databasePath, h.sessionId);
+    168|     const replay = await runCodingAgent(first);
+    169|     expect(replay.state.runId).toBe("run-A");
+       |                                ^
+    170|     expect(replay.state.turn.turnId).toBe("turn-A");
+    171|     expect(replay.state.transcript).toEqual(a.state.transcript);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  tests/review/independent-r4a-session-recovery.test.ts > independent R4a execution identity and paused recovery > rejects a paused recovery that raises the persisted model-request budget before any model call
+AssertionError: promise resolved "{ …(5) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "action": "paused",
++   "enabledTools": [
++     "read",
++   ],
++   "provider": "deepseek",
++   "sessionId": "independent-session",
++   "state": {
++     "activeModelRequest": null,
++     "createdAt": "2026-09-23T16:00:02.186Z",
++     "elapsedMs": 12,
++     "endedAt": "2026-09-23T16:00:02.217Z",
++     "lastEventId": "ef129613-3a00-4b56-993c-4261404ab73a",
++     "lastEventSequence": 10,
++     "outcome": {
++       "finalMessageId": "7e851968-a0a5-4143-9533-555c2763c956",
++       "kind": "completed",
++       "reason": "final_answer",
++     },
++     "pause": null,
++     "runId": "budget-run",
++     "schemaVersion": 1,
++     "startedAt": "2026-09-23T16:00:02.189Z",
++     "status": "completed",
++     "toolBatch": null,
++     "transcript": [
++       {
++         "kind": "user_message",
++         "message": {
++           "content": "read the fixture",
++           "messageId": "938bd8d9-a904-4fcc-887c-27268c9ceec5",
++           "role": "user",
++           "schemaVersion": 1,
++         },
++       },
++       {
++         "kind": "assistant_message",
++         "message": {
++           "content": "",
++           "messageId": "c08db616-ddf2-4277-8ab9-29464e6a0f33",
++           "role": "assistant",
++           "schemaVersion": 1,
++         },
++         "toolCalls": [
++           {
++             "arguments": {
++               "path": "note.txt",
++             },
++             "callId": "read-1",
++             "name": "read",
++             "schemaVersion": 1,
++           },
++         ],
++       },
++       {
++         "callId": "read-1",
++         "kind": "tool_result",
++         "result": {
++           "callId": "read-1",
++           "effects": {
++             "artifactRefs": [],
++             "changedPaths": [],
++             "sideEffect": "none",
++             "workspaceRevision": null,
++           },
++           "output": [
++             {
++               "kind": "text",
++               "text": "public fixture
++ ",
++             },
++             {
++               "kind": "json",
++               "value": {
++                 "endLine": 2,
++                 "path": "note.txt",
++                 "revision": "d3b26e1f1ce13bde26578063b679fab4dbba401f23bc8ed938f8f4d5713f5048",
++                 "startLine": 1,
++                 "totalLines": 2,
++                 "totalLinesKnown": true,
++                 "truncated": false,
++                 "utf8Bytes": 15,
++               },
++             },
++           ],
++           "schemaVersion": 1,
++           "status": "success",
++         },
++       },
++       {
++         "kind": "assistant_message",
++         "message": {
++           "content": "second request beyond original budget",
++           "messageId": "7e851968-a0a5-4143-9533-555c2763c956",
++           "role": "assistant",
++           "schemaVersion": 1,
++         },
++         "toolCalls": [],
++       },
++     ],
++     "turn": {
++       "turnId": "budget-turn",
++       "userMessage": {
++         "content": "read the fixture",
++         "messageId": "938bd8d9-a904-4fcc-887c-27268c9ceec5",
++         "role": "user",
++         "schemaVersion": 1,
++       },
++     },
++     "updatedAt": "2026-09-23T16:00:02.217Z",
++     "usage": {
++       "cachedInputTokens": 0,
++       "costUsdMicros": null,
++       "inputTokens": 0,
++       "modelRequestCount": 2,
++       "outputTokens": 0,
++       "toolCallCount": 1,
++     },
++   },
+  }
+
+ ❯ tests/review/independent-r4a-session-recovery.test.ts:204:72
+    202|     expect(h.model.requests).toHaveLength(0);
+    203|     const before = await records(h.databasePath, h.sessionId);
+    204|     await expect(resumeCodingAgent({ ...h.common, limits: limits(4) })…
+       |                                                                        ^
+    205|       code: "conflict",
+    206|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ FAIL  tests/review/independent-r4a-session-recovery.test.ts > independent R4a execution identity and paused recovery > does not expose a previously denied path when paused recovery omits workspace options
+AssertionError: expected 'success' to be 'error' // Object.is equality
+
+Expected: "error"
+Received: "success"
+
+ ❯ tests/review/independent-r4a-session-recovery.test.ts:236:41
+    234|       const results = outcome.value.state.transcript.filter((row) => r…
+    235|       expect(results).toHaveLength(1);
+    236|       expect(results[0]?.result.status).toBe("error");
+       |                                         ^
+    237|       expect(JSON.stringify(h.model.requests)).not.toContain(
+    238|         "INDEPENDENT_SYNTHETIC_PRIVATE_CONTENT",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  6 failed | 4 passed (10)
+   Start at  00:00:01
+   Duration  1.09s (transform 209ms, setup 0ms, import 405ms, tests 534ms, environment 0ms)
+

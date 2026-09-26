@@ -1,0 +1,18 @@
+{
+  "writableFiles": [
+    "coding-platform/next/vendor/coding-agent/patches/core/ports/session_store/session-history.ts",
+    "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.js",
+    "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.js.map",
+    "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.d.ts",
+    "coding-platform/next/vendor/coding-agent/dist/core/ports/session_store/session-history.d.ts.map",
+    "coding-platform/next/src/core/agent-runtime/execution-observation.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

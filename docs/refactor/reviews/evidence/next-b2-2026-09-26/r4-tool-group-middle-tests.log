@@ -1,0 +1,118 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/kernel/R4-tool-group-barrier.test.ts (10 tests | 6 failed) 69ms
+     × keeps the group unstarted while the before_group callback is pending, then continues once 14ms
+     × pauses at the serial boundary, persists run.paused, and resumes only the second group 39ms
+     × waits for every settled result and required sink before after_group and never calls the next provider while waiting 2ms
+     × does not resolve paused until the required run.paused sink settles 1ms
+     × does not report a successful paused state when the required pause sink rejects 2ms
+     × settles the known cancelled tool, records outcome_unknown for the ignoring tool, and never starts the next group 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/kernel/R4-tool-group-barrier.test.ts > R4.2 group 1: group-start await > keeps the group unstarted while the before_group callback is pending, then continues once
+AssertionError: {"kind":"failed","failure":{"category":"internal","code":"runner_internal","message":"tool_group_barrier_unsupported:before_group","retryable":false,"operationId":null}}: expected 'failed' to be 'completed' // Object.is equality
+
+Expected: "completed"
+Received: "failed"
+
+ ❯ tests/kernel/R4-tool-group-barrier.test.ts:367:73
+    365|     expect(outcome.status).toBe("fulfilled");
+    366|     if (outcome.status !== "fulfilled") return;
+    367|     expect(outcome.value.status, JSON.stringify(outcome.value.outcome)…
+       |                                                                         ^
+    368|     expect(executor.calls.map((call) => call.name)).toEqual(["tool_a"]…
+    369|     expect(invocations.map((invocation) => invocation.point)).toEqual([
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  tests/kernel/R4-tool-group-barrier.test.ts > R4.2 group 2: serial group pause and original-Turn resume > pauses at the serial boundary, persists run.paused, and resumes only the second group
+AssertionError: {"kind":"failed","failure":{"category":"internal","code":"runner_internal","message":"tool_group_barrier_unsupported:before_group","retryable":false,"operationId":null}}: expected 'failed' to be 'paused' // Object.is equality
+
+Expected: "paused"
+Received: "failed"
+
+ ❯ tests/kernel/R4-tool-group-barrier.test.ts:496:81
+    494|     expect(first.status).toBe("fulfilled");
+    495|     if (first.status !== "fulfilled") return;
+    496|     expect(first.value.state.status, JSON.stringify(first.value.state.…
+       |                                                                                 ^
+    497|     expect(h.toolCalls).toEqual(["tool_a"]);
+    498|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  tests/kernel/R4-tool-group-barrier.test.ts > R4.2 group 3: parallel group drain and last-group barrier > waits for every settled result and required sink before after_group and never calls the next provider while waiting
+AssertionError: {"kind":"failed","failure":{"category":"internal","code":"runner_internal","message":"tool_group_barrier_unsupported:before_group","retryable":false,"operationId":null}}: expected 'failed' to be 'paused' // Object.is equality
+
+Expected: "paused"
+Received: "failed"
+
+ ❯ tests/kernel/R4-tool-group-barrier.test.ts:590:73
+    588|     expect(outcome.status).toBe("fulfilled");
+    589|     if (outcome.status !== "fulfilled") return;
+    590|     expect(outcome.value.status, JSON.stringify(outcome.value.outcome)…
+       |                                                                         ^
+    591|     expect(executor.calls.map((call) => call.name).sort()).toEqual(["t…
+    592|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  tests/kernel/R4-tool-group-barrier.test.ts > R4.2 group 4: required pause sink > does not resolve paused until the required run.paused sink settles
+AssertionError: {"kind":"failed","failure":{"category":"internal","code":"runner_internal","message":"tool_group_barrier_unsupported:before_group","retryable":false,"operationId":null}}: expected 'failed' to be 'paused' // Object.is equality
+
+Expected: "paused"
+Received: "failed"
+
+ ❯ tests/kernel/R4-tool-group-barrier.test.ts:633:73
+    631|     expect(outcome.status).toBe("fulfilled");
+    632|     if (outcome.status !== "fulfilled") return;
+    633|     expect(outcome.value.status, JSON.stringify(outcome.value.outcome)…
+       |                                                                         ^
+    634|     expect(executor.calls).toHaveLength(0);
+    635|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  tests/kernel/R4-tool-group-barrier.test.ts > R4.2 group 4: required pause sink > does not report a successful paused state when the required pause sink rejects
+AssertionError: {"kind":"failed","failure":{"category":"internal","code":"runner_internal","message":"tool_group_barrier_unsupported:before_group","retryable":false,"operationId":null}}: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/kernel/R4-tool-group-barrier.test.ts:661:7
+    659|       sink.events.some((event) => event.type === "run.paused"),
+    660|       JSON.stringify(outcome.value.outcome),
+    661|     ).toBe(true);
+       |       ^
+    662|   });
+    663| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ FAIL  tests/kernel/R4-tool-group-barrier.test.ts > R4.2 group 5: cancellation and unknown tools > settles the known cancelled tool, records outcome_unknown for the ignoring tool, and never starts the next group
+AssertionError: {"kind":"failed","failure":{"category":"internal","code":"runner_internal","message":"tool_group_barrier_unsupported:before_group","retryable":false,"operationId":null}}: expected 'failed' to be 'cancelled' // Object.is equality
+
+Expected: "cancelled"
+Received: "failed"
+
+ ❯ tests/kernel/R4-tool-group-barrier.test.ts:726:73
+    724|     expect(outcome.status).toBe("fulfilled");
+    725|     if (outcome.status !== "fulfilled") return;
+    726|     expect(outcome.value.status, JSON.stringify(outcome.value.outcome)…
+       |                                                                         ^
+    727|     expect(executor.calls.map((call) => call.name).sort()).toEqual(["t…
+    728|     const types = sink.events.map((event) => event.type);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
+
+
+ Test Files  1 failed | 4 passed (5)
+      Tests  6 failed | 61 passed (67)
+   Start at  11:59:27
+   Duration  8.11s (transform 808ms, setup 0ms, import 1.80s, tests 5.92s, environment 0ms)
+

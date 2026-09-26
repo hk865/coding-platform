@@ -1,0 +1,69 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/business/R5b-initial-planning-workflow.test.ts (1 test | 1 failed) 129ms
+   × consumes the answer, adopts the candidate, then advances to a formal Goal completion 128ms
+ ❯ tests/work-graph/R5b-initial-plan.test.ts (1 test | 1 failed) 129ms
+   × consumes one real v2 answer into the same Plan owner candidate, then adopts it through public governance 128ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/business/R5b-initial-planning-workflow.test.ts > consumes the answer, adopts the candidate, then advances to a formal Goal completion
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'ready', value: { …(2) } }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
+-   "value": {
+-     "next": {
+-       "input": {
+-         "kind": "adopt_initial_plan",
+-       },
+-       "kind": "goal_input",
+-     },
+-     "state": "proposed",
+-   },
++   "status": "rejected",
+  }
+
+ ❯ tests/business/R5b-initial-planning-workflow.test.ts:292:21
+    290|     };
+    291|     const planned = await platform.workflow.handleGoalInput(ctx(), pla…
+    292|     expect(planned).toMatchObject({ status: 'ready', value: {
+       |                     ^
+    293|       state: 'proposed', next: { kind: 'goal_input', input: { kind: 'a…
+    294|     if (planned.status !== 'ready') throw new Error(`planning_answer w…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/work-graph/R5b-initial-plan.test.ts > consumes one real v2 answer into the same Plan owner candidate, then adopts it through public governance
+AssertionError: expected { status: 'rejected', …(2) } to match object { status: 'committed' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "committed",
++   "status": "rejected",
+  }
+
+ ❯ tests/work-graph/R5b-initial-plan.test.ts:247:22
+    245|     };
+    246|     const proposed = await platform.plans.proposeInitialPlanFromAnswer…
+    247|     expect(proposed).toMatchObject({ status: 'committed' });
+       |                      ^
+    248|     if (proposed.status !== 'committed') throw new Error('the answer-d…
+    249|     const candidate = proposed.value;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed | 4 passed (6)
+      Tests  2 failed | 8 passed (10)
+   Start at  22:00:13
+   Duration  2.48s (transform 900ms, setup 0ms, import 1.71s, tests 322ms, environment 0ms)
+

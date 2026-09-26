@@ -1,0 +1,25 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/contracts/reduction.ts",
+    "coding-platform/next/src/contracts/goal-phase.ts",
+    "coding-platform/next/src/core/work-graph/tasks/contracts.ts",
+    "coding-platform/next/src/core/work-graph/tasks/task-service.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-contracts.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-service.ts",
+    "coding-platform/next/src/core/work-graph/tasks/completion.ts",
+    "coding-platform/next/src/core/work-graph/tasks/completion-policy.ts",
+    "coding-platform/next/src/core/work-graph/tasks/completion-record-codecs.ts",
+    "coding-platform/next/src/composition/create-platform.ts",
+    "coding-platform/next/tests/work-graph/R3e-completion.test.ts",
+    "coding-platform/next/tests/composition/R3e-completion-platform.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

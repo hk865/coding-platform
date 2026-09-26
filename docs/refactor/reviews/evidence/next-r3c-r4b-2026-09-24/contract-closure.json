@@ -1,0 +1,71 @@
+[
+  {
+    "file": "plan.ts",
+    "declarations": [
+      "PlanStage",
+      "VerificationRequirement",
+      "AcceptanceObligation",
+      "DependencyRequirement",
+      "RuntimeExecutionDAG",
+      "PlanRevisionDraft",
+      "PlanValidationError",
+      "PlanRevisionSnapshot",
+      "PlanRevisionAcceptedEvent",
+      "planValidationError",
+      "applyPlanRevisionFingerprint",
+      "planRevisionRefFor",
+      "goalRefFor",
+      "DependsOnEdge",
+      "PlanValidationCode",
+      "ApplyPlanRevisionCommand"
+    ]
+  },
+  {
+    "file": "initial-planning.ts",
+    "declarations": [
+      "InitialPlanOrigin"
+    ]
+  },
+  {
+    "file": "validation/plan.ts",
+    "declarations": [
+      "validateApplyPlanRevisionCommand",
+      "validatePlanRevisionDraft",
+      "validateRuntimeTask",
+      "validateAcceptanceObligation",
+      "REQUIREMENT_LEVELS",
+      "TASK_KINDS",
+      "DISPOSITIONS",
+      "PHASES",
+      "validateTaskScope",
+      "validateVerificationRequirement"
+    ]
+  },
+  {
+    "file": "governance.ts",
+    "declarations": [
+      "CompletionPolicyContentV1"
+    ]
+  },
+  {
+    "file": "dispatch.ts",
+    "declarations": [
+      "TaskIneligibilityReason",
+      "TaskEligibility",
+      "RoleBindingInadmissibleDetail"
+    ]
+  },
+  {
+    "file": "role-spec.ts",
+    "declarations": [
+      "RoleSpecPinV1"
+    ]
+  },
+  {
+    "file": "validation/common.ts",
+    "declarations": [
+      "safePositiveIntField",
+      "validateEnum"
+    ]
+  }
+]

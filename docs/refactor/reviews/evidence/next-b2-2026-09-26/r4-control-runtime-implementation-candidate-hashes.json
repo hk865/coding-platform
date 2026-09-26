@@ -1,0 +1,50 @@
+[
+  {
+    "path": "coding-platform/next/src/core/work-graph/tasks/control-service.ts",
+    "originalSha256": "302b0e924802d8b779e822226242ce0212bf18cba5ceee14f108f7471bc6fc95",
+    "mainSha256": "302b0e924802d8b779e822226242ce0212bf18cba5ceee14f108f7471bc6fc95",
+    "candidateSha256": "9bdbb14813bbf65129fc4d828d677e17dae092fe54319ea9f047828f727ef8b4"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts",
+    "originalSha256": "addd9f13340e3fb3d4e9b88fe3699a45c4ff5174939df7d77e6a6b09c6e2363f",
+    "mainSha256": "addd9f13340e3fb3d4e9b88fe3699a45c4ff5174939df7d77e6a6b09c6e2363f",
+    "candidateSha256": "b1ec75052523793af01030a174d7a12194fdb2bdf44a4604934d97f12b57e25f"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts",
+    "originalSha256": "5034ecaff918cc310a2551e64cac5e52378109a82951930f8940c1ec85539938",
+    "mainSha256": "5034ecaff918cc310a2551e64cac5e52378109a82951930f8940c1ec85539938",
+    "candidateSha256": "1fdafb34ca337df23682bf5556f30ab2ebe1f7ab31b0c0e28d61c293e6368a09"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/runtime.ts",
+    "originalSha256": "deb03c5dcfaa46f25a470235bdee14dc484834a562225d73456f4c2920999efc",
+    "mainSha256": "deb03c5dcfaa46f25a470235bdee14dc484834a562225d73456f4c2920999efc",
+    "candidateSha256": "21d36cbdb32784dc0492175d3d5e745c9a2ca780c0cda7f84f8ef58e600ac995"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+    "originalSha256": "bd5a186eca4aed52d020c8d77ac388a2b7f09ef7ee5bc2d04b0914a187915d09",
+    "mainSha256": "bd5a186eca4aed52d020c8d77ac388a2b7f09ef7ee5bc2d04b0914a187915d09",
+    "candidateSha256": "4b6f586169379921906e059c9cb537279ad29706e96dbc06c890afac05859520"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+    "originalSha256": "88ec2d359f39baf213fa62d2cc6136dc3238aac7377f96849b4062cfe001e456",
+    "mainSha256": "88ec2d359f39baf213fa62d2cc6136dc3238aac7377f96849b4062cfe001e456",
+    "candidateSha256": "c415545b3abe0894f2a20d3c3ebac7e13ea6b49b98019361d040fa83f8b5ca26"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+    "originalSha256": "49718f02332d49a83f59d8af7880f4bc167f25f0b03f53dbaec8a7a3c3e2144e",
+    "mainSha256": "49718f02332d49a83f59d8af7880f4bc167f25f0b03f53dbaec8a7a3c3e2144e",
+    "candidateSha256": "c1d66475733a4cee25b9990aa06013fd676d3fff3fd6c6b0144c2e81a203f405"
+  },
+  {
+    "path": "coding-platform/next/src/core/agent-runtime/execution-control.ts",
+    "originalSha256": "0815ec4cd9d3f56727692fee8ebe7c1540f6ae23d7e1201f51597a223bf793fb",
+    "mainSha256": "0815ec4cd9d3f56727692fee8ebe7c1540f6ae23d7e1201f51597a223bf793fb",
+    "candidateSha256": "cbad10cf9576e80424936600233e971d450bb679c92c92e44c35c4424702b21d"
+  }
+]

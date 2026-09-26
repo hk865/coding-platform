@@ -1,0 +1,25 @@
+{
+  "at": 1790233448.9289215,
+  "files": [
+    {
+      "file": "coding-platform/next/src/core/record-store/commit-extensions.ts",
+      "before": "ef796b8bdc87fd983614515a07d8fbe6582b8296be5003ebe2e0e066e08a289f",
+      "after": "480a8f78d717ed1cf642a865b4abe46602d00aad3cd37818193ec395c7b0c057"
+    },
+    {
+      "file": "coding-platform/next/src/core/record-store/in-memory-record-store.ts",
+      "before": "fdf31090981e961dc0b647f0678434e4ea4b8c926403789c274c1f30c8d17fbf",
+      "after": "7712baa8550fcea804c81d5792377f6a1fa94783e018f86971ab029b83d9ce11"
+    },
+    {
+      "file": "coding-platform/next/src/core/record-store/record-codec.ts",
+      "before": "4b6f816b4a1dfe5006f910cc5f583dd564c00b0bd5a35f6ee5944d4f7be854ed",
+      "after": "5b732eb3b4cfe8721c999b1a662a86eb46fc86f40f2d03c439de7c1de001ce63"
+    },
+    {
+      "file": "coding-platform/next/src/core/record-store/sqlite-record-store.ts",
+      "before": "9fe177e645456e747e5e3353b8b8a3501effa739fe0e1043fb9cee39b46243d1",
+      "after": "0ef4f494fd06d64bd2a7245f5ae0dc3f1306f427e01fbfcc77dc9bf446b4ad35"
+    }
+  ]
+}

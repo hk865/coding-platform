@@ -1,0 +1,19 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/business/workflow/contracts.ts",
+    "coding-platform/next/src/business/workflow/ports.ts",
+    "coding-platform/next/src/business/workflow/workflow.ts",
+    "coding-platform/next/src/business/workflow/index.ts",
+    "coding-platform/next/src/composition/create-platform.ts",
+    "coding-platform/next/tests/business/R5c-workflow.test.ts",
+    "coding-platform/next/tests/composition/R5c-workflow-platform.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "at": 1790266629.6924577,
+  "files": [
+    {
+      "file": "coding-platform/next/src/core/agent-runtime/observation-recovery.ts",
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "c4a1086ffa2a3e1c20ba538beff4f6013772ac27bc313b6ac2a5bd3084ec921c"
+    },
+    {
+      "file": "coding-platform/next/tests/runtime/R4c-execution-history.test.ts",
+      "before": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "after": "eff9ade64ebe1c031d76eca0e6d22269163e61e91cdc47960a8917601cbf6307"
+    }
+  ]
+}

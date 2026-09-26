@@ -1,0 +1,44 @@
+{
+  "status": "accepted_for_exact_import",
+  "reviewedAt": "2026-09-26T15:30:14.246046+00:00",
+  "lane": "r4-control-runtime-implementation-20260926",
+  "sessionId": "session-1e8f8993-91af-4e79-9d8d-0aa25cc41054",
+  "finalGuard": "decide(paused) uses same handleLive/non-aborted/unconsumed guard as cancel; returns pause unchanged",
+  "rootFinalAcceptance": "two requested windows and consumed-pause behavior accepted by root; last pause guard exact fix authorized for import after passing",
+  "independentChecks": {
+    "next-control-runtime": {
+      "exit": 0,
+      "files": 2,
+      "tests": 4,
+      "log": "r4-control-runtime-implementation-final-tests.log"
+    },
+    "next-types": {
+      "exit": 0,
+      "log": "r4-control-runtime-implementation-final-types.log"
+    }
+  },
+  "audit": {
+    "changed": [
+      "coding-platform/next/src/core/agent-runtime/execution-control.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+      "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+      "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+      "coding-platform/next/src/core/agent-runtime/runtime.ts",
+      "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts",
+      "coding-platform/next/src/core/work-graph/tasks/control-service.ts",
+      "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "finalStepChangedFiles": [
+    "coding-platform/next/src/core/agent-runtime/execution-control.ts"
+  ],
+  "frozenTests": {
+    "coding-platform/next/tests/runtime/R4-control-runtime.test.ts": "2c2e7de19376361c66e37c44fbc8c4c0e494f6013e70b438eb761524996a3ef5",
+    "coding-platform/next/tests/composition/R4-control-runtime-platform.test.ts": "bdd0ae471ed54ac873a3a3556bff39956a5dfff9f12a72cfad33af5f52d8ca84"
+  },
+  "candidateHashes": "r4-control-runtime-implementation-final-candidate-hashes.json",
+  "diff": "r4-control-runtime-implementation-final.diff",
+  "remainingBlockers": []
+}

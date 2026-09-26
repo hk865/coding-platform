@@ -1,0 +1,43 @@
+{
+  "lane": "w1-future-plan-implementation",
+  "session": "session-ef78cbcc-2581-4486-a8f6-35506fef67d7",
+  "attempt": "1790337262479522978",
+  "files": [
+    {
+      "path": "coding-platform/next/src/contracts/plan.ts",
+      "before": "93b7c26a348f1487127d9db1ac440a96e1f599d494c5f6cba56616d8d98ecdaf",
+      "after": "fd757a6911791cd9b9f37c15ab3efc2bf7d4495a99b1eaa2daf6546c1a101e16"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-validation.ts",
+      "before": "b887a8165e6f9fa67cffe4f44286a5e245f73fd9d2d064113c4a6c692833adb9",
+      "after": "cd89ab500b7e4aec3b053ded69fb3df05b78a8ad7d915cb5836d977fdab244d6"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-task-basis.ts",
+      "before": "c98c4140ccee28cabb89c0e77613c254bd86da1ee17814e3e9f26b8cbac83cb5",
+      "after": "ed43ac7b8c7dd019b1aace6fcf2da6d6dad3e6ddf77913f36e3c517def7196e5"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-record-codecs.ts",
+      "before": "02b612c43f72649ec55d9edb7425415fa960fe3b2a9ef0762b140ae25c4aeb0f",
+      "after": "3f5c351c15ec802f882d7d62bac91527d76754cc507b145306404aa98da99cbf"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+      "before": "e385eb73f3ed971155f8f23377246d5e0eb557278b182f5c6d64d88fe126e238",
+      "after": "dc84a2e88d5f4ec158d14f88bc9789bbd5b0e9cea06acf81ef83b7a2104a0a02"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-commit-compiler.ts",
+      "before": "7bbc2fb4adcb539647a403a135b5b7a2a83223aacad8868a2421e10992527070",
+      "after": "dd34bb3b7380765b717d394d4e93ae7e8de6e06bf9e4dfcd0ae9f0d9fb8b15f4"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/plan-service.ts",
+      "before": "8b10913eafee30306d8f58760c9c057992d05c3d526852f20da7a689b5a71156",
+      "after": "14910fac47c4072f1cff61e1e70e513c18fb34c5d0d4a608c7f0e8e7f8292800"
+    }
+  ],
+  "independentTests": "W1 2 files / 8 passed; root reviewed service/compiler/codec, a1 reviewer verifies reader/helper/validation fixes"
+}

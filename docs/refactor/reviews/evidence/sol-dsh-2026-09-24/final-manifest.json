@@ -1,0 +1,94 @@
+{
+  "completedAt": 1790183917.9023142,
+  "status": "accepted_for_R3a_R4a_scope",
+  "sources": {
+    "coding-platform/src/core/record-store/guarded-revision.ts": "73d55dc2880e79597b465298cacb7b53b55ba58d38efc5efdbb1f24bc68d5864",
+    "coding-platform/src/core/record-store/in-memory-record-store.ts": "e30f9daf584b78908348ff48da42b4fad6534815a7fa9a9063aa9101962bdc1f",
+    "coding-platform/src/core/record-store/sqlite-record-store.ts": "a81efed995eefe251b8ad89881331f6e0f4ed34c5712845554e8007ab58f62a6",
+    "coding-platform/src/core/work-graph/persistence/legacy-adapter.ts": "6d1be6aedfb9c24f2bca9be1b01abfd005544c561c6a8f0be167af8607b4f963",
+    "coding-platform/src/core/work-graph/tasks/task-service.ts": "53cc0cd5953b55c93d93c72683411bf26cbb8813ffc3faa4babddc563d18887c",
+    "coding-platform/vendor/coding-agent/INTEGRATION.md": "50007fc0a455270f2c9a314a15d70a6fe90975a05ecd76ad4e1a9af5543872cd",
+    "coding-platform/vendor/coding-agent/src/app/composition/composition-root.ts": "698d49b40753d4e256dea9766bf47d3b1d99a3d82535d65c82a46ae896d07bd4",
+    "coding-platform/vendor/coding-agent/src/app/composition/recovery-contract-types.ts": "d00448a2eaf54baff0f3fb91c602c604323599176d255dbb9902e7736487dfa2",
+    "coding-platform/vendor/coding-agent/src/app/composition/recovery-contract.ts": "7c52109da52db71d80f73434b92efcecc21ae91cde0198c7f3b7f23d556515c2",
+    "coding-platform/vendor/coding-agent/src/app/composition/resume-composition.ts": "677ac4aaca71e8782bfeb9d01f2fdfad4630c773914f47ff165f068a5cba0904",
+    "coding-platform/vendor/coding-agent/src/core/ports/checkpoint_store/checkpoint-store-port.ts": "fb47923a1f9f663dbc2d28e27b9106b129cff1f274afff1f47ff8b72e0f40c7f",
+    "coding-platform/vendor/coding-agent/src/core/ports/session_store/session-store-port.ts": "a666dcd03c2bb84024f52ed2b9c89eb1e43683faaead23a28dc221607cae8e56",
+    "coding-platform/vendor/coding-agent/src/core/runtime/checkpointing/checkpointing-event-sink.ts": "326b6e20c3763cfd9c4545ae355897381dd1d5da3ba4e34b3bbc65c61df05957",
+    "coding-platform/vendor/coding-agent/src/core/runtime/recovery/recovery-coordinator.ts": "eb4fb252fec421c0b44d94782aede3b03fc935b2a27ac6824d72e10f185d7a97",
+    "coding-platform/vendor/coding-agent/src/sandbox/process/process-sandbox.ts": "5459244167e752f58c1ae77cd20abdb4fd76ab3aa50b1a2ca30a7fb5171e8ee8",
+    "coding-platform/vendor/coding-agent/src/sandbox/workspace/workspace-sandbox.ts": "23253688c241fd75aa66a2a01881b95317dfb1ac5373f7b14fa1da63412b1b16"
+  },
+  "frozenContracts": {
+    "coding-platform/tests/data/R3a-contract-invariants.test.ts": "9b05e327a5eb10313fbc08ea8cfda51e3471725c33849ca475b00a719939bd0f",
+    "coding-platform/tests/data/R3a-goal-record-store.test.ts": "27c3ad1c99f8ddd5b2626cab1b9affbfb328f4b28c94a50f88e04779b3a70197",
+    "coding-platform/tests/data/R3a-goal-input-isolation.test.ts": "23c7ea830d86780c97379a6bd4055e3fc924fce477556f845a24336b9b150e01",
+    "coding-platform/vendor/coding-agent/tests/review/scenario-runner-residual-security.test.ts": "2022d47c0100920b4c9ba6dcb0c61ec5d267c3b181b481f13c41b47d7444d15a",
+    "coding-platform/vendor/coding-agent/tests/review/R4a-recovery-contract.test.ts": "3bf03103bf65d228e2cfc2ad22b72038dffda81b78b9e9750f7643c4dc195e36",
+    "coding-platform/vendor/coding-agent/tests/review/production-checkpoint-wiring.test.ts": "77506b4da22e81a26a9ccb29dee6059b9cf7a68878910f64b572bc01d0495eb4",
+    "coding-platform/vendor/coding-agent/tests/review/scenario-runner-security.test.ts": "efd6731287d2b3bac19c4c741f981c48176a68b17edb234d5ede1217c4ee3f6c",
+    "coding-platform/vendor/coding-agent/tests/review/independent-r4a-session-recovery.test.ts": "7f48516627458d2c21e2b49d921c249d1396b8e220ad071fd8e1098a828b7497",
+    "coding-platform/vendor/coding-agent/tests/review/independent-runtime-lifecycle.test.ts": "a7a07f16ba0e92126f49ff2848b29aa817694b75f909090da46cad4cd41c4213",
+    "coding-platform/vendor/coding-agent/tests/review/minimart-blackbox.mjs": "4c2a3fe2e3bb51407a9a2037e03f3effe8a9c3a68ff1ee8faf625713cd850cf3",
+    "coding-platform/vendor/coding-agent/tests/review/web-game-logic-blackbox.mjs": "49bf8082f3e502949a6f5b74da719bd774665eff9cbc7645b92bcc1ee84617f7",
+    "coding-platform/vendor/coding-agent/tests/review/runtime-drain-regression.test.ts": "cad6304bedbbe34f5a05d2e02673337b2906edc3f83c705655e7ab12474169e9",
+    "coding-platform/vendor/coding-agent/tests/review/fixtures/seed-started-tool.mjs": "038cd70251b03d40c09c92456de96b0da8c4010a500e8369222dc3eea7f8f596",
+    "coding-platform/vendor/coding-agent/tests/review/fixtures/minimart-official-near-miss/order.js": "d2ad93bc7a587150e530d65ee35438eecff0fd7afdfc37b1589e76d3dd4e7c63",
+    "coding-platform/vendor/coding-agent/tests/review/fixtures/minimart-official-near-miss/inventory.js": "3713ea79937d3a2aeb32e61aa268bd68314bb9f71832985d2a986e8d5ff56e9b",
+    "coding-platform/vendor/coding-agent/tests/review/fixtures/minimart-fixed/order.js": "a9abfa4d4aff212d4ec62c703420bf7a862eab78e9561d58e39edd8c192b08b9",
+    "coding-platform/vendor/coding-agent/tests/review/fixtures/minimart-fixed/inventory.js": "a9b6557e6013d8ff636b1b7e64911822a5b5fdf949ea10c765fff13d81f9de04",
+    "coding-platform/vendor/coding-agent/tests/review/fixtures/web-game-complete/game-logic.mjs": "331aa7b51427657902bd73d943f0197d83f6d9da18fb116c5046a5d24917523c",
+    "coding-platform/vendor/coding-agent/tests/review/fixtures/web-game-complete/script.js": "846a914c3d59876ccd82e694be03171abbebb7e666f5123f14c0bf385c841807",
+    "coding-platform/vendor/coding-agent/tests/review/fixtures/web-game-complete/README.md": "f5e3473e77e8d7ea7d289952ed6ee2b390cc4105d8d178e337140908fde6f608",
+    "coding-platform/vendor/coding-agent/tests/review/fixtures/web-game-complete/index.html": "0158b10123a4fb8096f404e9e2d6492daffb6b944795f152145f6e2fc737db27",
+    "coding-platform/vendor/coding-agent/tests/review/fixtures/web-game-complete/style.css": "ebb85775dc9861d7b5a60c2c5aa413c145bcbfaefb8a2c0db906b460c29db21b",
+    "coding-platform/vendor/coding-agent/tests/review/R4a-resume-environment.test.ts": "00bc436fb4d3b7ed32a56e46a324917714f3ebefb63716ee74b88a768f0c05d9"
+  },
+  "originalFrozenTestsUnchanged": true,
+  "allLaneSnapshotTestsUnchanged": true,
+  "authorizedCrossLaneTestDifferences": [
+    {
+      "lane": "r4a-sol-01",
+      "path": "coding-platform/tests/data/R3a-contract-invariants.test.ts",
+      "reason": "Sol R3a test update intentionally belongs to R3a lane; R4a never runs these older snapshot tests"
+    },
+    {
+      "lane": "r4a-sol-01",
+      "path": "coding-platform/tests/core/record-store/sqlite-record-store.test.ts",
+      "reason": "Sol R3a test update intentionally belongs to R3a lane; R4a never runs these older snapshot tests"
+    },
+    {
+      "lane": "r4a-sol-01",
+      "path": "coding-platform/tests/core/record-store/in-memory-record-store.test.ts",
+      "reason": "Sol R3a test update intentionally belongs to R3a lane; R4a never runs these older snapshot tests"
+    }
+  ],
+  "historicalDatabaseHash": "07eba45f2721722f7446c4a9efd5178701bfdd8e30b8546b740c913167748f94",
+  "checks": {
+    "r3aContract": 24,
+    "r3aRegression": 108,
+    "controlLedger": 676,
+    "p1_01": 6,
+    "r4aContract": 17,
+    "kernelAfterBuild": {
+      "passed": 207,
+      "skipped": 1
+    },
+    "platformKernelIntegration": 19,
+    "platformTypes": 0,
+    "kernelTypes": 0,
+    "platformArchitecture": 0,
+    "kernelArchitecture": 0,
+    "build": 0,
+    "changedKernelLint": {
+      "exit": 1,
+      "preexistingIdenticalErrors": 5,
+      "newErrors": 0
+    }
+  },
+  "limitations": [
+    "No full platform suite or end-to-end performance benchmark in this repair",
+    "SQLite snapshot exclusion helper does not resolve symbolic path aliases",
+    "Later platform continuous Session, resource parallelism and UI are separate batches"
+  ]
+}

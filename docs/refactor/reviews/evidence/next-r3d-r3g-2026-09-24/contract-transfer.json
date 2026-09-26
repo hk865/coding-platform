@@ -1,0 +1,70 @@
+[
+  {
+    "file": "role-spec.ts",
+    "declarations": [
+      "ROLE_SPEC_REVISION",
+      "ROLE_RESPONSIBILITIES",
+      "ROLE_MATERIAL_KINDS",
+      "ROLE_OUTPUT_KINDS",
+      "RoleSpecContentV1",
+      "RoleSpecRevisionSnapshot",
+      "ProjectRoleSpecActiveSnapshot",
+      "InstallRoleSpecRevisionCommand",
+      "InstallRoleSpecRevisionReceipt",
+      "ActivateRoleSpecRevisionCommand",
+      "ActivateRoleSpecRevisionReceipt",
+      "roleSpecRevisionRefFor",
+      "projectRoleSpecActiveRefFor",
+      "roleSpecContentDigest",
+      "roleSpecRevisionFromBinding",
+      "installRoleSpecRevisionFingerprint",
+      "activateRoleSpecRevisionFingerprint",
+      "RoleSpecInstalledEvent",
+      "RoleSpecActivatedEvent",
+      "RoleResponsibilityV1",
+      "RoleMaterialRequirementV1",
+      "RoleSpecPermissionsV1",
+      "RoleSpecBudgetV1",
+      "RoleOutputRequirementV1",
+      "RoleSpecExitV1",
+      "RoleMaterialKindV1",
+      "RoleOutputKindV1"
+    ]
+  },
+  {
+    "file": "role-spec-materials.ts",
+    "declarations": [
+      "RoleSpecResolutionV1"
+    ]
+  },
+  {
+    "file": "human-role-collaboration.ts",
+    "declarations": [
+      "CoordinationRoleMatrixV1",
+      "CoordinationPolicyContentV1",
+      "CoordinationPolicyRevisionSnapshot",
+      "ProjectCoordinationPolicyActiveSnapshot",
+      "CoordinationPolicyPin",
+      "coordinationPolicyContentDigest"
+    ]
+  },
+  {
+    "file": "validation/role.ts",
+    "declarations": [
+      "validateRoleSpecContent",
+      "validateInstallRoleSpecRevisionCommand",
+      "validateActivateRoleSpecRevisionCommand",
+      "validateRoleSpecPin",
+      "validateCoordinationRoleMatrix",
+      "validateRoleMaterialList",
+      "validateRoleOutputList",
+      "validateRoleSpecInstallCommon"
+    ]
+  },
+  {
+    "file": "validation/common.ts",
+    "declarations": [
+      "stringArrayField"
+    ]
+  }
+]

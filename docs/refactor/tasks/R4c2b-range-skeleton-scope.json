@@ -1,0 +1,13 @@
+{
+  "writableFiles": [
+    "coding-platform/next/tests/runtime/R4c-kernel-history-range.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "path": "coding-platform/next/tests/runtime/B1-kernel-assembly.test.ts",
+  "before": "dbb3504bc937c2605c16665fdee603835e4788f4d2f3634e15cc0bdc964770bd",
+  "after": "c6391389c1ae503123cb1fbc4a734be71555d4b148227b290a6a19b27b4a6c2e",
+  "reason": "Root independent review: factory capture, synchronous throws, cancellation before lazy resolution. Test stays read-only for implementation."
+}

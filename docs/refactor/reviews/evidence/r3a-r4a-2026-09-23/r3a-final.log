@@ -1,0 +1,154 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+ ❯ tests/data/R3a-goal-record-store.test.ts (14 tests | 2 failed) 1363ms
+     ✓ rolls back a Goal transaction failing at snapshot after earlier writes really occurred 105ms
+     ✓ rolls back a Goal transaction failing at idempotency after earlier writes really occurred 98ms
+     ✓ requires a complete exact read set for a new raw identity and an event-consistent Goal fold 73ms
+     ✓ checks the persisted Project guard in the commit transaction and returns its actual conflict version 86ms
+     ✓ checks the persisted Workspace guard in the commit transaction and returns its actual conflict version 85ms
+     ✓ keeps complete project scope in Goal and idempotency keys, and replays the original receipt after later commits/restart 86ms
+     ✓ replays the original Goal@1/event/cursor before scope reads even after a real plan and scope versions advance 236ms
+     ✓ carries the observed Project version into the final transactional CAS 84ms
+     ✓ carries the observed Workspace version into the final transactional CAS 73ms
+     ✓ isolates reused local IDs across projects and rejects unrelated/duplicate pins before replay lookup 81ms
+     ✓ resolves two SQLite connections after both scope reads: same-request 79ms
+     ✓ resolves two SQLite connections after both scope reads: different-request 77ms
+     × sqlite rejects a changed stored ref even when the numeric revision is unchanged 197ms
+     × memory rejects a changed stored ref even when the numeric revision is unchanged 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > sqlite rejects a changed stored ref even when the numeric revision is unchanged
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > memory rejects a changed stored ref even when the numeric revision is unchanged
+AssertionError: expected { status: 'committed', …(5) } to match object { status: 'rejected', code: 'corrupt' }
+(5 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "corrupt",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/data/R3a-goal-record-store.test.ts:410:31
+    408|     proceed.resolve();
+    409|     const result = await pending;
+    410|     expect.soft(actualCommit).toMatchObject({ status: 'rejected', code…
+       |                               ^
+    411|     expect.soft(result).toMatchObject({ status: 'rejected', code: 'una…
+    412|     expect.soft(await ledger.load({ aggregateType: 'Goal', projectId: …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > sqlite rejects a changed stored ref even when the numeric revision is unchanged
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > memory rejects a changed stored ref even when the numeric revision is unchanged
+AssertionError: expected { status: 'committed', …(3) } to match object { status: 'rejected', …(1) }
+(9 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/data/R3a-goal-record-store.test.ts:411:25
+    409|     const result = await pending;
+    410|     expect.soft(actualCommit).toMatchObject({ status: 'rejected', code…
+    411|     expect.soft(result).toMatchObject({ status: 'rejected', code: 'una…
+       |                         ^
+    412|     expect.soft(await ledger.load({ aggregateType: 'Goal', projectId: …
+    413|     expect(await ledger.events({ afterCursor: null, limit: 100 })).toE…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
+
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > sqlite rejects a changed stored ref even when the numeric revision is unchanged
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > memory rejects a changed stored ref even when the numeric revision is unchanged
+AssertionError: expected { status: 'found', snapshot: { …(6) } } to match object { status: 'not_found' }
+(7 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "not_found",
++   "status": "found",
+  }
+
+ ❯ tests/data/R3a-goal-record-store.test.ts:412:121
+    410|     expect.soft(actualCommit).toMatchObject({ status: 'rejected', code…
+    411|     expect.soft(result).toMatchObject({ status: 'rejected', code: 'una…
+    412|     expect.soft(await ledger.load({ aggregateType: 'Goal', projectId: …
+       |                                                                                                                         ^
+    413|     expect(await ledger.events({ afterCursor: null, limit: 100 })).toE…
+    414|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯
+
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > sqlite rejects a changed stored ref even when the numeric revision is unchanged
+ FAIL  tests/data/R3a-goal-record-store.test.ts > R3a independent transaction-time stored identity guard > memory rejects a changed stored ref even when the numeric revision is unchanged
+AssertionError: expected { afterCursor: null, …(3) } to deeply equal { afterCursor: null, …(3) }
+
+- Expected
++ Received
+
+@@ -93,9 +93,35 @@
+          "projectId": "proj-beta",
+          "schemaVersion": 1,
+          "workspaceId": "ws-shared",
+        },
+      },
++     {
++       "cursor": "c0000000005",
++       "event": {
++         "actor": {
++           "id": "user-1",
++           "kind": "human",
++         },
++         "aggregateId": "corrupt-scope-goal",
++         "aggregateRevision": 1,
++         "aggregateType": "Goal",
++         "causationId": "goal-create-command:{\"actorId\":\"user-1\",\"actorKind\":\"human\",\"goalId\":\"corrupt-scope-goal\",\"idempotencyKey\":\"corrupt-scope-request\",\"projectId\":\"proj-alpha\",\"workspaceId\":\"ws-shared\"}",
++         "correlationId": "goal-create-request:{\"actorId\":\"user-1\",\"actorKind\":\"human\",\"goalId\":\"corrupt-scope-goal\",\"idempotencyKey\":\"corrupt-scope-request\",\"projectId\":\"proj-alpha\",\"workspaceId\":\"ws-shared\"}",
++         "eventId": "must-not-persist-corrupt-scope",
++         "eventType": "GoalCreated",
++         "idempotencyKey": "corrupt-scope-request",
++         "occurredAt": "2026-09-23T10:00:00.000Z",
++         "payload": {
++           "activePlanRevision": null,
++           "desiredState": "active",
++           "objective": "Café original objective",
++         },
++         "projectId": "proj-alpha",
++         "schemaVersion": 1,
++         "workspaceId": "ws-shared",
++       },
++     },
+    ],
+    "hasMore": false,
+-   "throughCursor": "c0000000004",
++   "throughCursor": "c0000000005",
+  }
+
+ ❯ tests/data/R3a-goal-record-store.test.ts:413:68
+    411|     expect.soft(result).toMatchObject({ status: 'rejected', code: 'una…
+    412|     expect.soft(await ledger.load({ aggregateType: 'Goal', projectId: …
+    413|     expect(await ledger.events({ afterCursor: null, limit: 100 })).toE…
+       |                                                                    ^
+    414|   });
+    415| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 12 passed (14)
+   Start at  23:11:12
+   Duration  2.28s (transform 677ms, setup 0ms, import 828ms, tests 1.36s, environment 0ms)
+
+JSON report written to /tmp/r3a-r4a-independent-review/r3a-final.json

@@ -1,0 +1,11 @@
+# B2 外部材料事实实施
+
+Astra中审已通过，第二阶段只实现B2-material-facts-skeleton.md冻结契约，阅读该任务全文及最新CODE-QUALITY-GUIDELINES。写范围仅implementation-scope.json三个生产文件，测试/helper/组合根/材料提供者/文档/原工程均只读。M1/M2已真实实现可复用，不能再称其是骨架。
+
+中审types通过，原B2 25项通过，新专项13项=1绿12红。绿项验证缺facts外部unsupported及同一当前consumer无外部材料authorize→begin→entered；12红均真正authorize unsupported，后续CAS/replay/result尚未执行到。fixture hash 57a2e2bd24c6d0ca01f18b05f8678eb87734f81c144afb10f1cdcf3c2d88321f；test hash 466e016658319b2e3ae947e2226d56fd9329ed6bf12a60724e76ead62fd00f8f。当前fixture已用consumer自己的Kernel mapping，真实M1 source+W1新consumer+正式Run reader预检；不得改成Host绕过grant。
+
+四个fresh barrier每次读取，不跨barrier缓存：authorize、fresh begin、model issue、fresh consume。调用现有Plan reader核selected requirementId/consumerTaskId/artifactKind/fullref成员关系，真实readTaskInput和openArtifactFacts须使用正式Run派生的work_run/materialReader ctx，保持原signal。additional也经真实facts/current；不能仅信manifest.materialAccessRefs。完整body/ref等价与facts guards同一次commit，合并同key版本冲突拒绝，不取最大/最后写胜。不新增全账本水位锁、全球source租约或第二材料算法。
+
+已经发生的entered/terminal、原request replay不因后来grant/source撤销而重做fresh材料准入；正式终态核原身份来源与释放owner。未提供facts时非空外部材料仍unsupported；空外部列表兼容原路径。复用M2真实resolver行为与拒绝语义，不把unknown当absent。
+
+运行next-types单独；next-b2-material-admission next-execution-state next-material-facts next-material-grants next-material-readers可合并。报告实际结果、复用与三文件改动后停止待独审。不得修改冻结测试或越scope，真实矛盾给主审具体反例。

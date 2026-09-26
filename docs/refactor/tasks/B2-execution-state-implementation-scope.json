@@ -1,0 +1,24 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/materials/record-readers.ts",
+    "coding-platform/next/src/core/work-graph/tasks/claim-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+    "coding-platform/next/src/core/work-graph/tasks/run-state-service.ts",
+    "coding-platform/next/src/core/work-graph/tasks/execution-read-contracts.ts",
+    "coding-platform/next/src/core/work-graph/tasks/execution-history-service.ts",
+    "coding-platform/next/src/core/work-graph/persistence/execution-history-codecs.ts",
+    "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts",
+    "coding-platform/next/src/core/work-graph/tasks/execution-history-binding.ts",
+    "coding-platform/next/src/core/work-graph/tasks/model-call-service.ts",
+    "coding-platform/next/src/core/work-graph/persistence/execution-entry-codecs.ts",
+    "coding-platform/next/src/core/work-graph/persistence/model-request-codecs.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

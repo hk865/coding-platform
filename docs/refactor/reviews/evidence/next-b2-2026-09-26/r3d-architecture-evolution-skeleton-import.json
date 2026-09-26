@@ -1,0 +1,63 @@
+{
+  "stage": "skeleton",
+  "status": "reviewed_and_imported",
+  "importedAt": "2026-09-26T14:13:12.604221+00:00",
+  "lane": "r3d-architecture-evolution-skeleton-20260926",
+  "sessionId": "session-ebddebcf-5413-4eeb-9267-6ac109e32892",
+  "review": "No blocking normal-path defect. Existing test body unchanged; exactly one real public Project/Workspace/Session path added. Missing containment preserved, explicit empty is flat, distinct dependency/containment graphs; revision remains unsupported. No new owner or runtime/role defenses.",
+  "checks": {
+    "next-catalog next-catalog-platform": {
+      "exitCode": 1,
+      "passed": 32,
+      "failed": 1,
+      "expectedFailure": "first revise call explicitly unsupported",
+      "log": "r3d-architecture-evolution-skeleton-tests.log"
+    },
+    "next-types": {
+      "exitCode": 0,
+      "log": "r3d-architecture-evolution-skeleton-types.log"
+    }
+  },
+  "audit": {
+    "changed": [
+      "coding-platform/next/src/composition/create-platform.ts",
+      "coding-platform/next/src/core/work-graph/architecture/catalog-contracts.ts",
+      "coding-platform/next/src/core/work-graph/architecture/catalog-record-codecs.ts",
+      "coding-platform/next/src/core/work-graph/architecture/catalog-service.ts",
+      "coding-platform/next/tests/composition/A1-graph-session-platform.test.ts"
+    ],
+    "outsideScope": [],
+    "originalWorkspaceChanged": []
+  },
+  "files": [
+    {
+      "path": "coding-platform/next/src/core/work-graph/architecture/catalog-contracts.ts",
+      "beforeSha256": "ebf3c56b2f8167ec11eb83733a1f3bc0e61981d0bdd9a3df250e42fc3efc0489",
+      "afterSha256": "237e7423aa56b518b483320f1525555ecef4475a832260c775e16c4e2d2a1779"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/architecture/catalog-service.ts",
+      "beforeSha256": "ab1d2c3c998a857b597220177e4a24932fbfc2dc0d9cfef9e6fc04eb164e2e4e",
+      "afterSha256": "f8214695c394cfec86549b6da94cc0b8953f18f8d149d6c6ba49bf4fa2766446"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/architecture/catalog-record-codecs.ts",
+      "beforeSha256": "6098b0fe6e0d53c74c8675688ecda59a2e08977e4560ad0327e3663bd53b2fd9",
+      "afterSha256": "26163cc741ca4cddfb447bf60b5b80c0b06fe8ea4f0fdc6da830046deab7616a"
+    },
+    {
+      "path": "coding-platform/next/src/composition/create-platform.ts",
+      "beforeSha256": "4828e063017062f0d68e7057e99951739c21ab90890daa98f6968bdb4c6584de",
+      "afterSha256": "038ebe65b84f330f3da304040e01288e75d4d556fb0e856cbe82ac17e0823425"
+    },
+    {
+      "path": "coding-platform/next/tests/composition/A1-graph-session-platform.test.ts",
+      "beforeSha256": "1da4911a366a12658c8e46cc60a549b9e273fadac7b9ed457a0136c063407df0",
+      "afterSha256": "b6734731ccaca58218e17626397c53d8dd6e89832f82f8d2a9fce821075ba1d8"
+    }
+  ],
+  "nextImplementationScope": [
+    "coding-platform/next/src/core/work-graph/architecture/catalog-service.ts",
+    "coding-platform/next/src/core/work-graph/architecture/catalog-record-codecs.ts"
+  ]
+}

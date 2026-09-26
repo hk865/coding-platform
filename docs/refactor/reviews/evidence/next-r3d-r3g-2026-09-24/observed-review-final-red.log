@@ -1,0 +1,51 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R3d-observed-boundaries.test.ts (18 tests | 4 failed) 598ms
+     × authorizes mapped frozen files without requiring separate grants for directory or missing display paths 20ms
+     × releases each capture when cancellation arrives during body persistence 101ms
+     × authorizes mapped frozen files without requiring separate grants for directory or missing display paths 17ms
+     × releases each capture when cancellation arrives during body persistence 98ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R3d-observed-boundaries.test.ts > R3d observed boundaries memory > authorizes mapped frozen files without requiring separate grants for directory or missing display paths
+ FAIL  tests/work-graph/R3d-observed-boundaries.test.ts > R3d observed boundaries sqlite > authorizes mapped frozen files without requiring separate grants for directory or missing display paths
+AssertionError: expected 'rejected' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "rejected"
+
+ ❯ tests/work-graph/R3d-observed-boundaries.test.ts:205:32
+    203|         const allowed = await service.queryArchitecture(context, { sel…
+    204|           relations: ['dependency'], page: { limit: 20 } });
+    205|         expect(allowed.status).toBe('ready');
+       |                                ^
+    206|         if (allowed.status === 'ready') expect(allowed.value.nodes.map…
+    207|         fx.allowOnly([...fx.sourceFiles.keys()].filter(path => path !=…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/work-graph/R3d-observed-boundaries.test.ts > R3d observed boundaries memory > releases each capture when cancellation arrives during body persistence
+ FAIL  tests/work-graph/R3d-observed-boundaries.test.ts > R3d observed boundaries sqlite > releases each capture when cancellation arrives during body persistence
+AssertionError: expected 'rejected' to be 'committed' // Object.is equality
+
+Expected: "committed"
+Received: "rejected"
+
+ ❯ tests/work-graph/R3d-observed-boundaries.test.ts:234:30
+    232|       const healthy = await createObservedArchitecture(fx.deps())
+    233|         .captureSourceChanges(context, capture('after-cancelled-captur…
+    234|       expect(healthy.status).toBe('committed');
+       |                              ^
+    235|     } finally { await fx.close(); }
+    236|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  4 failed | 26 passed (30)
+   Start at  17:02:26
+   Duration  2.27s (transform 375ms, setup 0ms, import 1.10s, tests 943ms, environment 0ms)
+

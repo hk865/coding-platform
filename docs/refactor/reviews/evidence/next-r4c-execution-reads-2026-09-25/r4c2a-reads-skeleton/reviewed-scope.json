@@ -1,0 +1,17 @@
+{
+  "scope": {
+    "writableFiles": [
+      "coding-platform/next/src/core/work-graph/tasks/run-state-service.ts",
+      "coding-platform/next/tests/work-graph/R4c-execution-read.test.ts"
+    ],
+    "dshStateDirectories": [
+      "profiles",
+      "sessions",
+      "storages",
+      "cache",
+      "llm-deepseek",
+      "attachments"
+    ]
+  },
+  "readOnlyRefreshes": []
+}

@@ -1,0 +1,32 @@
+{
+  "stage": "skeleton",
+  "status": "running",
+  "dispatchedAt": "2026-09-26T13:49:28.060616+00:00",
+  "lane": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r5b-initial-plan-skeleton-20260926",
+  "session": "session-7c0cb8f2-6261-4566-93f1-ceb732a1d4c9",
+  "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r5b-initial-plan-skeleton-20260926/attempt-1790430515902548760",
+  "task": "/home/hyh001/projects/coding-platform/docs/refactor/tasks/R5b-initial-plan-skeleton.md",
+  "taskHashBeforeStatusUpdate": "cad90d30f50b801616808d5fa5c0d559212446b27706c8b55a74aa059b10841c",
+  "taskHashAfterStatusUpdate": "0ad20320984f8786f1fa75465c8cfea23d5d1019ec82169f20bbe0a35dfcbcca",
+  "originalAllowedHashes": {
+    "coding-platform/next/src/contracts/initial-planning.ts": "cecf804d21235d96f69b0a49ad21183b827b2a15022bd7eb41ca7b487d6dbf38",
+    "coding-platform/next/src/core/work-graph/tasks/plan-contracts.ts": "e9b3180f8fc6a00cc3c7ffac5e0864eff39c76a7179604815f85a28fa220103b",
+    "coding-platform/next/src/core/work-graph/tasks/initial-plan.ts": "b80daf9be3d99957786baa7b8554de74dc8e72cad2a2790f8fc20380ebdacfe0",
+    "coding-platform/next/src/core/work-graph/tasks/plan-service.ts": "fe05d6fb6ca9be3858ca0bf672e8e5bcec37b98fe855374752de63439cdd6f6d",
+    "coding-platform/next/src/business/workflow/contracts.ts": "4ca26d81739956db0a84be4c1148a413af4e2e194240ab3adccd8f4f63618af8",
+    "coding-platform/next/src/business/workflow/ports.ts": "5b847695073d66e9c5b3e9644e7691dd49b4f4692655c0da965bc4551011f123",
+    "coding-platform/next/src/business/workflow/workflow.ts": "5e610d3c753921b5620f0108c7b1ed787224779210b1fb9c2dc1f019231b55af",
+    "coding-platform/next/src/composition/create-platform.ts": "518040aa46fc0f0ff0f7f57d6684a945f556b41af4333f7300de542cc0020918",
+    "coding-platform/next/src/core/agent-runtime/query-preparation.ts": "1ca0a96a8b2e062123be2429324e4450f642b4c8121c3e9ed852e5480f2612a3",
+    "coding-platform/next/resources/skills/platform-adviser/content.md": "98a33f4a2d4e3822b9cd5f6fb9e3efc736ebcb956b8a6c5a1ab86c24e9834000",
+    "coding-platform/next/tests/work-graph/R5b-initial-plan.test.ts": "b80daf9be3d99957786baa7b8554de74dc8e72cad2a2790f8fc20380ebdacfe0",
+    "coding-platform/next/tests/business/R5b-initial-planning-workflow.test.ts": "b80daf9be3d99957786baa7b8554de74dc8e72cad2a2790f8fc20380ebdacfe0"
+  },
+  "scopeCount": 12,
+  "prerequisites": [
+    "r5b-query-execution-implementation-import.json",
+    "r5c-workflow-implementation-import.json"
+  ],
+  "resourceManifestOwner": "reviewer: update only platform-adviser content hash after skeleton STOP; refresh readonly snapshot only; preserve originalAllowedHashes",
+  "nextGate": "skeleton STOP and bounded independent middle review; implementation requires separate authorization"
+}

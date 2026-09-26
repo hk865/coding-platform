@@ -1,0 +1,333 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/W1-future-plan.test.ts (6 tests | 2 failed) 56ms
+   × scenario 7: authorized split adopts from the source; coverage/role weakening is zero-write rejected 17ms
+   × scenario 8: codec rejects broken shapes and graph reads verify the actual basis source 7ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 7: authorized split adopts from the source; coverage/role weakening is zero-write rejected
+AssertionError: expected { status: 'committed', …(3) } to match object { status: 'rejected' }
+(21 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "rejected",
++   "status": "committed",
+  }
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:578:27
+    576|   const roleResult = await reassignment.applyChange(roleCandidate.valu…
+    577|     'w1-s7-existing-role-apply');
+    578|   expect.soft(roleResult).toMatchObject({ status: 'rejected' });
+       |                           ^
+    579|   expect.soft(roleResult.status === 'rejected' ? roleResult.code : 'co…
+    580|   expect.soft((await reassignment.currentGoal()).activePlanRevision).t…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/15]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 7: authorized split adopts from the source; coverage/role weakening is zero-write rejected
+AssertionError: expected { aggregateType: 'PlanRevision', …(2) } to deeply equal { aggregateType: 'PlanRevision', …(2) }
+
+- Expected
++ Received
+
+  {
+    "aggregateType": "PlanRevision",
+-   "planId": "w1-plan-1",
++   "planId": "w1-existing-role-reassignment",
+    "projectId": "w1-future-plan",
+  }
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:580:70
+    578|   expect.soft(roleResult).toMatchObject({ status: 'rejected' });
+    579|   expect.soft(roleResult.status === 'rejected' ? roleResult.code : 'co…
+    580|   expect.soft((await reassignment.currentGoal()).activePlanRevision).t…
+       |                                                                      ^
+    581|   expect.soft(await reassignment.readJsons([{ aggregateType: 'PlanRevi…
+    582|     .toEqual({});
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/15]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 7: authorized split adopts from the source; coverage/role weakening is zero-write rejected
+AssertionError: expected { …(1) } to deeply equal {}
+
+- Expected
++ Received
+
+- {}
++ {
++   "{\"aggregateType\":\"PlanRevision\",\"planId\":\"w1-existing-role-reassignment\",\"projectId\":\"w1-future-plan\"}": "{\"ref\":{\"aggregateType\":\"PlanRevision\",\"projectId\":\"w1-future-plan\",\"planId\":\"w1-existing-role-reassignment\"},\"revision\":1,\"goalRef\":{\"aggregateType\":\"Goal\",\"projectId\":\"w1-future-plan\",\"goalId\":\"goal-1\"},\"planId\":\"w1-existing-role-reassignment\",\"planRevision\":2,\"acceptedAt\":\"2026-09-25T00:00:00.000Z\",\"effectiveCompletionPolicy\":{\"ref\":{\"aggregateType\":\"CompletionPolicyRevision\",\"projectId\":\"w1-future-plan\",\"policyId\":\"w1-policy\",\"revision\":1},\"digest\":\"e080edef47a65eb7964ddea49af77b0d76ab505a5e7f9011150ec35b29f28913\"},\"effectiveArchitectureBaseline\":{\"ref\":{\"aggregateType\":\"ArchitectureBaselineRevision\",\"projectId\":\"w1-future-plan\",\"baselineId\":\"w1-baseline\",\"revision\":1},\"digest\":\"32a08b318f7db8148ebbdeac066e14d5f776d2d426984f85b5a9463e9ae5b2ef\"},\"stages\":[],\"tasks\":[{\"taskId\":\"A\",\"title\":\"Task A\",\"requirementLevel\":\"required\",\"taskKind\":\"work\",\"disposition\":\"active\",\"phase\":\"pending\",\"scope\":{\"kind\":\"goal\"}},{\"taskId\":\"B\",\"title\":\"Task B\",\"requirementLevel\":\"required\",\"taskKind\":\"work\",\"disposition\":\"active\",\"phase\":\"pending\",\"scope\":{\"kind\":\"goal\"}},{\"taskId\":\"C\",\"title\":\"Task C\",\"requirementLevel\":\"required\",\"taskKind\":\"work\",\"disposition\":\"active\",\"phase\":\"pending\",\"scope\":{\"kind\":\"goal\"}},{\"taskId\":\"gate-goal\",\"title\":\"Goal gate\",\"requirementLevel\":\"required\",\"taskKind\":\"gate\",\"disposition\":\"active\",\"phase\":\"pending\",\"scope\":{\"kind\":\"goal\"}}],\"assignments\":[{\"taskId\":\"A\",\"role\":\"reviewer\",\"instruction\":\"Run A\"},{\"taskId\":\"B\",\"role\":\"reviewer\",\"instruction\":\"Run B\"},{\"taskId\":\"C\",\"role\":\"builder\",\"instruction\":\"Run C\"}],\"obligations\":[{\"obligationId\":\"o-core\",\"title\":\"Deliver core\",\"requirementLevel\":\"required\",\"taskIds\":[\"A\",\"B\",\"C\",\"gate-goal\"],\"verificationRequirements\":[{\"requirementId\":\"check-core\",\"requirementLevel\":\"required\",\"kind\":\"test\",\"description\":\"Tests pass\"}]},{\"obligationId\":\"o-solo\",\"title\":\"Deliver B only\",\"requirementLevel\":\"required\",\"taskIds\":[\"B\"],\"verificationRequirements\":[{\"requirementId\":\"check-solo\",\"requirementLevel\":\"required\",\"kind\":\"test\",\"description\":\"Tests pass\"}]}],\"taskHierarchy\":{\"parentOf\":[]},\"executionDag\":{\"dependsOn\":[]},\"schemaVersion\":2,\"taskRelations\":[],\"inputRequirements\":[],\"taskStateBasis\":{\"schemaVersion\":1,\"entries\":[{\"taskId\":\"A\",\"planRef\":{\"aggregateType\":\"PlanRevision\",\"projectId\":\"w1-future-plan\",\"planId\":\"w1-plan-1\"}},{\"taskId\":\"B\",\"planRef\":{\"aggregateType\":\"PlanRevision\",\"projectId\":\"w1-future-plan\",\"planId\":\"w1-existing-role-reassignment\"}},{\"taskId\":\"C\",\"planRef\":{\"aggregateType\":\"PlanRevision\",\"projectId\":\"w1-future-plan\",\"planId\":\"w1-plan-1\"}},{\"taskId\":\"gate-goal\",\"planRef\":{\"aggregateType\":\"PlanRevision\",\"projectId\":\"w1-future-plan\",\"planId\":\"w1-plan-1\"}}]}}",
++ }
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:582:6
+    580|   expect.soft((await reassignment.currentGoal()).activePlanRevision).t…
+    581|   expect.soft(await reassignment.readJsons([{ aggregateType: 'PlanRevi…
+    582|     .toEqual({});
+       |      ^
+    583| });
+    584|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/15]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 8: codec rejects broken shapes and graph reads verify the actual basis source
+AssertionError: no-run: cross-goal: expected { status: 'ready', value: { …(3) } } to match object { status: 'rejected', …(1) }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:641:52
+    639|         const graph = await planServiceOver(broken, `s8-${runMode}-${f…
+    640|           .queryTaskGraph(ctx, { goalRef: f.goalRef });
+    641|         expect.soft(graph, `${runMode}: ${fault}`).toMatchObject({ sta…
+       |                                                    ^
+    642|         expect.soft(basisRead, `${runMode}: ${fault} must inspect the …
+    643|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/15]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 8: codec rejects broken shapes and graph reads verify the actual basis source
+AssertionError: no-run: cross-goal must inspect the real basis: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:642:84
+    640|           .queryTaskGraph(ctx, { goalRef: f.goalRef });
+    641|         expect.soft(graph, `${runMode}: ${fault}`).toMatchObject({ sta…
+    642|         expect.soft(basisRead, `${runMode}: ${fault} must inspect the …
+       |                                                                                    ^
+    643|       }
+    644|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/15]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 8: codec rejects broken shapes and graph reads verify the actual basis source
+AssertionError: no-run: missing: expected { status: 'ready', value: { …(3) } } to match object { status: 'rejected', …(1) }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:641:52
+    639|         const graph = await planServiceOver(broken, `s8-${runMode}-${f…
+    640|           .queryTaskGraph(ctx, { goalRef: f.goalRef });
+    641|         expect.soft(graph, `${runMode}: ${fault}`).toMatchObject({ sta…
+       |                                                    ^
+    642|         expect.soft(basisRead, `${runMode}: ${fault} must inspect the …
+    643|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/15]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 8: codec rejects broken shapes and graph reads verify the actual basis source
+AssertionError: no-run: missing must inspect the real basis: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:642:84
+    640|           .queryTaskGraph(ctx, { goalRef: f.goalRef });
+    641|         expect.soft(graph, `${runMode}: ${fault}`).toMatchObject({ sta…
+    642|         expect.soft(basisRead, `${runMode}: ${fault} must inspect the …
+       |                                                                                    ^
+    643|       }
+    644|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/15]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 8: codec rejects broken shapes and graph reads verify the actual basis source
+AssertionError: no-run: definition: expected { status: 'ready', value: { …(3) } } to match object { status: 'rejected', …(1) }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:641:52
+    639|         const graph = await planServiceOver(broken, `s8-${runMode}-${f…
+    640|           .queryTaskGraph(ctx, { goalRef: f.goalRef });
+    641|         expect.soft(graph, `${runMode}: ${fault}`).toMatchObject({ sta…
+       |                                                    ^
+    642|         expect.soft(basisRead, `${runMode}: ${fault} must inspect the …
+    643|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/15]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 8: codec rejects broken shapes and graph reads verify the actual basis source
+AssertionError: no-run: definition must inspect the real basis: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:642:84
+    640|           .queryTaskGraph(ctx, { goalRef: f.goalRef });
+    641|         expect.soft(graph, `${runMode}: ${fault}`).toMatchObject({ sta…
+    642|         expect.soft(basisRead, `${runMode}: ${fault} must inspect the …
+       |                                                                                    ^
+    643|       }
+    644|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/15]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 8: codec rejects broken shapes and graph reads verify the actual basis source
+AssertionError: self-origin-run: cross-goal: expected { status: 'ready', value: { …(3) } } to match object { status: 'rejected', …(1) }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:641:52
+    639|         const graph = await planServiceOver(broken, `s8-${runMode}-${f…
+    640|           .queryTaskGraph(ctx, { goalRef: f.goalRef });
+    641|         expect.soft(graph, `${runMode}: ${fault}`).toMatchObject({ sta…
+       |                                                    ^
+    642|         expect.soft(basisRead, `${runMode}: ${fault} must inspect the …
+    643|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/15]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 8: codec rejects broken shapes and graph reads verify the actual basis source
+AssertionError: self-origin-run: cross-goal must inspect the real basis: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:642:84
+    640|           .queryTaskGraph(ctx, { goalRef: f.goalRef });
+    641|         expect.soft(graph, `${runMode}: ${fault}`).toMatchObject({ sta…
+    642|         expect.soft(basisRead, `${runMode}: ${fault} must inspect the …
+       |                                                                                    ^
+    643|       }
+    644|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/15]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 8: codec rejects broken shapes and graph reads verify the actual basis source
+AssertionError: self-origin-run: missing: expected { status: 'ready', value: { …(3) } } to match object { status: 'rejected', …(1) }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:641:52
+    639|         const graph = await planServiceOver(broken, `s8-${runMode}-${f…
+    640|           .queryTaskGraph(ctx, { goalRef: f.goalRef });
+    641|         expect.soft(graph, `${runMode}: ${fault}`).toMatchObject({ sta…
+       |                                                    ^
+    642|         expect.soft(basisRead, `${runMode}: ${fault} must inspect the …
+    643|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/15]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 8: codec rejects broken shapes and graph reads verify the actual basis source
+AssertionError: self-origin-run: missing must inspect the real basis: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:642:84
+    640|           .queryTaskGraph(ctx, { goalRef: f.goalRef });
+    641|         expect.soft(graph, `${runMode}: ${fault}`).toMatchObject({ sta…
+    642|         expect.soft(basisRead, `${runMode}: ${fault} must inspect the …
+       |                                                                                    ^
+    643|       }
+    644|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/15]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 8: codec rejects broken shapes and graph reads verify the actual basis source
+AssertionError: self-origin-run: definition: expected { status: 'ready', value: { …(3) } } to match object { status: 'rejected', …(1) }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "code": "unavailable",
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:641:52
+    639|         const graph = await planServiceOver(broken, `s8-${runMode}-${f…
+    640|           .queryTaskGraph(ctx, { goalRef: f.goalRef });
+    641|         expect.soft(graph, `${runMode}: ${fault}`).toMatchObject({ sta…
+       |                                                    ^
+    642|         expect.soft(basisRead, `${runMode}: ${fault} must inspect the …
+    643|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/15]⎯
+
+ FAIL  tests/work-graph/W1-future-plan.test.ts > scenario 8: codec rejects broken shapes and graph reads verify the actual basis source
+AssertionError: self-origin-run: definition must inspect the real basis: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/work-graph/W1-future-plan.test.ts:642:84
+    640|           .queryTaskGraph(ctx, { goalRef: f.goalRef });
+    641|         expect.soft(graph, `${runMode}: ${fault}`).toMatchObject({ sta…
+    642|         expect.soft(basisRead, `${runMode}: ${fault} must inspect the …
+       |                                                                                    ^
+    643|       }
+    644|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/15]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 4 passed (6)
+   Start at  19:51:07
+   Duration  323ms (transform 143ms, setup 0ms, import 175ms, tests 56ms, environment 0ms)
+

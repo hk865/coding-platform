@@ -1,0 +1,54 @@
+{
+  "task": "R4.3a control runtime skeleton",
+  "status": "prepared_only_not_implemented",
+  "lanePrepared": false,
+  "dshStarted": false,
+  "dispatchPrerequisite": "root imports, reviews and freezes R3e composition skeleton before preparing this lane against updated main",
+  "productionFiles": 13,
+  "testFiles": 2,
+  "newPlaceholderCount": 3,
+  "newPlaceholderHashes": {
+    "coding-platform/next/src/core/agent-runtime/execution-control.ts": "f109a931252c6fd8c2f53c61d3877891cd01611b3c55542ff08ac6f6568f478d",
+    "coding-platform/next/tests/runtime/R4-control-runtime.test.ts": "f109a931252c6fd8c2f53c61d3877891cd01611b3c55542ff08ac6f6568f478d",
+    "coding-platform/next/tests/composition/R4-control-runtime-platform.test.ts": "f109a931252c6fd8c2f53c61d3877891cd01611b3c55542ff08ac6f6568f478d"
+  },
+  "existing12ProductHashesUnchanged": {
+    "coding-platform/next/src/contracts/control-intent.ts": "7ea205a7e534c94cac438290e0c0f5dece9fc137f7fa6294c921b576bd6891b3",
+    "coding-platform/next/src/core/work-graph/tasks/control-contracts.ts": "68d1ff353e83d495a9cbec99fa73fa2fd4f002819c67eb95ca9da58d9397da42",
+    "coding-platform/next/src/core/work-graph/tasks/control-service.ts": "33fc8025ad393ae475e789cb8fd3d99ce4912dee6f1002e3b25d2949c17b73bd",
+    "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts": "4aae58fbb5f10435d7b0eb9cac73b5a3038546a2081ddbcdb533770f1966d9b6",
+    "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts": "5034ecaff918cc310a2551e64cac5e52378109a82951930f8940c1ec85539938",
+    "coding-platform/next/src/core/agent-runtime/execution-contracts.ts": "4b389b7d1a0641c59fd7629ac15fa471dc223e1715a6367fa52e8ec1414808fe",
+    "coding-platform/next/src/core/agent-runtime/ports.ts": "3de2fb3b065677d7332576a68d79581880c47b90e179f7388d20165517d4641f",
+    "coding-platform/next/src/core/agent-runtime/runtime.ts": "425b908db21abe273866918c48d1baa38a5eba349a5b0c7543eb0159f9b5f5ad",
+    "coding-platform/next/src/core/agent-runtime/execution-driver.ts": "330f10e84f7f3910724acab18c0961a213e03d4ee714622e910936e07772c9f5",
+    "coding-platform/next/src/core/agent-runtime/execution-observation.ts": "0143957029f5be71811f62d7071bb7da7bf9802a217f38dc374e5e756c2784a6",
+    "coding-platform/next/src/core/agent-runtime/observed-model-run.ts": "04635db0a6129ce76ac25c08a41b964a4ece23ae49e2aa42e6486a29f06f997c",
+    "coding-platform/next/src/composition/create-platform.ts": "ba03c244a7089b241a0193fea931b99be0f9ca5dd8b2dbea80665b298565d9cc"
+  },
+  "scope": "docs/refactor/tasks/R4-control-runtime-skeleton-scope.json",
+  "scopeSha256": "d651bbab68cdc758017f45e522c4b695d20a471514c6ce445a71fb123b0c76a8",
+  "dispatch": "docs/refactor/tasks/R4-control-runtime-dispatch.md",
+  "dispatchSha256": "3180e4cc8d2c33d880db9951917bd9301029626ce0d72a2f7eaab3e63ff9a3df",
+  "taskSha256": "e8e073d1c9afb60f853b29f20ab6d4d1a0f753ee2754bfb6034f03bd9ade39b9",
+  "selectorFile": "tools/dsh-refactor/check.py",
+  "selectorBeforeSha256": "440cfa4b9f535a4f7472b8feb228f2afa472fed0749322fcdb784e1b1e555a9c",
+  "selectorAfterSha256": "252af1263a912cdd367b67b565d97b8a58c9fcd78b7e166eb413d6fa18783cd7",
+  "selector": {
+    "next-control-runtime": [
+      "../node_modules/vitest/vitest.mjs",
+      "run",
+      "tests/runtime/R4-control-runtime.test.ts",
+      "tests/composition/R4-control-runtime-platform.test.ts"
+    ]
+  },
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ],
+  "verification": "existence/counts, selector uniqueness/Python AST, and 12 original product hashes only; no lane/test/build/DSH run"
+}

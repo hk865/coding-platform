@@ -1,0 +1,20 @@
+{
+  "changed": [
+    "coding-platform/next/src/composition/create-platform.ts",
+    "coding-platform/next/src/contracts/control-intent.ts",
+    "coding-platform/next/src/core/agent-runtime/execution-contracts.ts",
+    "coding-platform/next/src/core/agent-runtime/execution-control.ts",
+    "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+    "coding-platform/next/src/core/agent-runtime/execution-observation.ts",
+    "coding-platform/next/src/core/agent-runtime/observed-model-run.ts",
+    "coding-platform/next/src/core/agent-runtime/ports.ts",
+    "coding-platform/next/src/core/agent-runtime/runtime.ts",
+    "coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/tasks/control-contracts.ts",
+    "coding-platform/next/src/core/work-graph/tasks/control-service.ts",
+    "coding-platform/next/tests/composition/R4-control-runtime-platform.test.ts",
+    "coding-platform/next/tests/runtime/R4-control-runtime.test.ts"
+  ],
+  "outsideScope": [],
+  "originalWorkspaceChanged": []
+}

@@ -1,0 +1,31 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/app/host.ts",
+    "coding-platform/next/src/app/server.ts",
+    "coding-platform/next/src/app/main.ts",
+    "coding-platform/next/src/app/core-call-context.ts",
+    "coding-platform/next/src/app/core-http-types.ts",
+    "coding-platform/next/src/app/core-routes.ts",
+    "coding-platform/next/src/ui/main.ts",
+    "coding-platform/next/src/ui/views.ts",
+    "coding-platform/next/src/ui/index.html",
+    "coding-platform/next/src/ui/styles.css",
+    "coding-platform/next/tsconfig.ui.json",
+    "coding-platform/next/scripts/build-workbench.mjs",
+    "coding-platform/next/tests/app/R6-host.test.ts",
+    "coding-platform/next/tests/app/R6-workbench.test.ts",
+    "coding-platform/next/package.json",
+    "coding-platform/next/tsconfig.json",
+    "coding-platform/next/tsconfig.build.json",
+    "coding-platform/next/scripts/check-boundaries.mjs",
+    "coding-platform/next/scripts/verify-isolated.mjs"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

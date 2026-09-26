@@ -1,0 +1,9 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+
+ Test Files  2 passed (2)
+      Tests  15 passed (15)
+   Start at  14:50:31
+   Duration  2.88s (transform 801ms, setup 0ms, import 1.21s, tests 1.51s, environment 0ms)
+

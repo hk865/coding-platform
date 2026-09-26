@@ -1,0 +1,20 @@
+{
+  "purpose": "R3b integrate accepted raw/WG material implementation into real Host and legacy callers",
+  "writableFiles": [
+    "coding-platform/src/data/artifact-vault/artifact-vault.ts",
+    "coding-platform/src/data/artifact-vault/sqlite-artifact-vault.ts",
+    "coding-platform/src/data/artifact-vault/material-access-policy.ts",
+    "coding-platform/src/composition/persistent-platform.ts",
+    "coding-platform/src/harness/in-memory-harness.ts",
+    "coding-platform/src/data/context-compiler/history-materials-context.ts",
+    "coding-platform/src/app/service.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

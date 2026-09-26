@@ -1,0 +1,21 @@
+{
+  "lane": "r4c2b-graph-history-implementation",
+  "scopeAudit": "no outside scope changes or originalWorkspaceChanged",
+  "files": [
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/session-operations.ts",
+      "before": "e72704c5cdfdf1d7ddc2621e38f2d996e9ec642e3ab1a44a26d16ca27868612d",
+      "after": "a9291fb3fe06205df9a51e428b619d0d758d588ce0cdc32a8a78e5bbd09f0be9"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/observation-recovery.ts",
+      "before": "6044c8a76d62848c935bf6e5721c37401cadd8a37f867536c27f2d1da7179f5a",
+      "after": "f3bb094cde34fd5339e1a11fbe3f3eccea406ab62e70d955b201a66b027dd3bc"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/graph-execution-history.ts",
+      "before": "344329ed14ff131dc9dbe0bc5318b6877dec08cf7b644d244d46c237ad153c90",
+      "after": "e07acbf7a05179de00d3b532b7d591d87cc20e4c9c002e8bb035d216554e3c31"
+    }
+  ]
+}

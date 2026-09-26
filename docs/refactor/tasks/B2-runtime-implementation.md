@@ -1,0 +1,21 @@
+# B2 Runtime 第二阶段：真实Task执行与增量观察
+
+Astra已中审/修订骨架与3测试文件并冻结。实现仅同名scope JSON内9个Runtime源文件（实际以scope为准），共享接口/ports/测试/组合根只读。先读 B2-runtime-skeleton.md 全文及主审末尾冻结补充、reviews/next-b2-c1-middle-review-2026-09-26.md、DSH-WORKFLOW和真实WG/Kernel public上下游。原工程只读，不能私import Kernel内部算法或新增执行引擎/历史库/RuntimeEntry库。
+
+复用原runObservedModel、ModelBudget、Kernel reducer+assertTranscriptExchangeIntegrity公开导出、TaskClaim/WG11/WG12/Role/Material/Session owner。main目标中接口声明存在不代表依赖行为全部验收：WG状态独审返修中，主审将刷新其只读候选/修复文件；不得擅自改WG或tests。先实现真实Runtime路径，遇依赖具体失败报告；不能mock掉准入使绿。
+
+prepare只消费正式Run/Claim/Role/Session/Plan输入及可信Host，预算来自Run.budget。Role required contract可由正式Task/Plan提供，其他required必须具体材料或明确拒绝；不得用概述假装历史/代码/证据。manifest精确contentType、有界<=256KiB、原UTF8 digest、Run owner持久body；Prepared只携引用/digest/envelope不携root/client/函数。配置无授权明确拒绝。外部材料缺M2 guards临时unsupported但保留准确实现接缝，后续主审接线，不能伪current。
+
+start先重新核存body/config，固定Session映射和预分配Kernel run/turn ID，authorize/fresh begin；仅fresh begin真正调用Kernel。相同/不明结果不重启任何模型工具；重试已进入Run只观察/解释。awaited before_model必须在真实Turn/Run日志已持久后，读取精确源并recordExecutionEntered成功才continue，失败provider=0/sourcecapture=0。每次模型真实stream必须有ModelCallAccess.bind/beforeCall：bind比正式Run.inputBinding，issue+consume并且仅fresh消费才provider。调用前及awaited entered之后重新核deadline，未知usage保留预留额度；现有meter承担累计，不建第二meter。源工厂first_use复用，不提前capture。
+
+Kernel session_history连续模式用原Session已完成boundary，不能重新建Session冒充连续。只有内部SessionHistoryCursorOwner能解canonical Session.historyCursor，公共principal-bound cursor不能任意跨主体读。readPositionWindow从afterPosition读取，首次冻结当前tail并每页携固定through，position1只做constant身份校验。driver与公开observe复用同一observation实例（factory已注入），缓存仅本Run已归约位置/ID/状态，不复制全Session。冷启动仅从locator.start或可靠上个complete boundary重建此Turn，不全表扫描猜缺失。实时WG12写单调非终态range；terminal由entry.recordRunResult一次入账历史/Attempt/outbox/释放，不能拆成伪原子两笔。
+
+Kernel返回值、文字done、best_effort observer都不是终态证据；必须原始持久记录连续、固定ids、完整Turn、reducer与配对validator通过。outcome_unknown即便配对合法也不能安全释放，paused/abandoned/missing保留占用。真实已持久终态但首次入账失败，后续observe可补账而provider=0。Run ended不Task satisfied，所有release仅匹配owner/generation并保留Lease版本。
+
+权限：全部read/exploration/source都要真实Host路径约束，builtin read用awaited before_tool，sourceTools用原allowedPath/assertCurrent，不能仅project_source受保护。root唯一WorkspaceHost来源。写范围本批只支持无write/shell+[]，或Host显式全workspace ['.']；更窄unsupported，不能偷扩大。shell还需可信shellWorkspaceAccess='all_except_denied'及真实Kernel ProcessSandbox deniedPrefixes。仅Skill/工具grant交集，不能给无权工具自动enabled。新协调工具接线由后续W2组合根完成，不在本lane冒充已启用。
+
+无参factory原unsupported保持。所有新流程同步snapshotctx/input/可信配置数据，保留signal/函数正确receiver。用户取消后只要真实终态证据具备，观察写入可用平台内部清理signal，不能用已abort信号阻止安全事实入账；不把best_effort回调当清理。平台close整体drain组合根另owner实现。
+
+检查next-types、next-architecture、next-runtime-driver，适当回归next-kernel-assembly/next-session-runtime/next-session-continuity/next-graph-history。next-runtime-execution含组合根两测试，未接前允许准确报告红点，不可自行写组合根；后续主审独立集成。阶段一23测试22红1绿是正确未实现边界，不证明后半断言正确；实现若遇真实测试错误给具体反例主审修，不能改冻结测试。
+
+Python/Node原地写scope文件，无rename/probe/配置更改。报告实际进展与剩余，交付后停止等独审；局部通过不称整产品完成。

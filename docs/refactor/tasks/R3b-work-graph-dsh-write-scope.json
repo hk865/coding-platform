@@ -1,0 +1,15 @@
+{
+  "purpose": "R3b work-graph implementation after Sol skeleton and root review",
+  "writableFiles": [
+    "coding-platform/src/core/work-graph/materials/applicability.ts",
+    "coding-platform/src/core/work-graph/materials/material-service.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

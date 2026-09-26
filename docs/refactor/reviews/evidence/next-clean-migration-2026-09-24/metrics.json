@@ -1,0 +1,53 @@
+{
+  "production": {
+    "files": 86,
+    "physicalLines": 9639
+  },
+  "tests": {
+    "files": 16,
+    "physicalLines": 3112
+  },
+  "engineeringScripts": {
+    "files": 2,
+    "physicalLines": 260
+  },
+  "contracts": {
+    "files": 40,
+    "physicalLines": 1864
+  },
+  "frozenKernelJsAndDeclarations": {
+    "files": 138,
+    "physicalLines": 19762
+  },
+  "modules": {
+    "core/workspace": {
+      "files": 15,
+      "physicalLines": 2149
+    },
+    "core/work-graph": {
+      "files": 10,
+      "physicalLines": 2764
+    },
+    "core/record-store": {
+      "files": 12,
+      "physicalLines": 2727
+    },
+    "core/agent-runtime": {
+      "files": 4,
+      "physicalLines": 34
+    },
+    "business/workflow": {
+      "files": 4,
+      "physicalLines": 36
+    },
+    "composition": {
+      "files": 1,
+      "physicalLines": 65
+    }
+  },
+  "unprunedInitialClosure": {
+    "files": 105,
+    "physicalLines": 23549
+  },
+  "note": "Physical lines including comments/blank lines. Target is a partial implementation; not a same-function old-vs-new comparison. Kernel separate."
+}

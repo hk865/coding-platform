@@ -1,0 +1,23 @@
+{
+  "lane": "r6-ui-layout-implementation-20260926",
+  "session": "session-cc32ca13-8b7b-443a-a8ca-3d86726c99d9",
+  "stage": "implementation_running",
+  "dispatchedAt": "2026-09-26T14:08:34.842744+00:00",
+  "scope": [
+    "coding-platform/next/src/ui/main.ts",
+    "coding-platform/next/src/ui/views.ts",
+    "coding-platform/next/src/ui/styles.css",
+    "coding-platform/next/src/ui/index.html"
+  ],
+  "baselineHashes": {
+    "coding-platform/next/src/ui/main.ts": "82f7dcecb874d097b0943e03c2ff52dab94c54ff304f28ddda778f3503adfda2",
+    "coding-platform/next/src/ui/views.ts": "9e880f59370aa100aee58e3bdec20b58da40261ad83992889c3f35a972da4ea0",
+    "coding-platform/next/src/ui/styles.css": "d0971e3bffc1bcb6bb2ec86018f87f96d1dcffb744c163ac81d08abb939074b6",
+    "coding-platform/next/src/ui/index.html": "f6bdf6760270513e47e8680fdde53dc12cb75868a98b0d8814f8585b4dd4a3a7"
+  },
+  "taskSha256": "28bac3e12a276e158ba77b877c1dc7b55fa6835e834cfb8b849e40e9ead77647",
+  "scopeSha256": "e37209172e2a7935927f753cf850e89126f01dfe6cf52f3cce802c63253a2c81",
+  "dispatchSha256": "b262f666ef73257237f84cee6fc4efd7ea9136c324b135a35561962ec204710d",
+  "frozenTestSha256": "c627e975afa3abfc21094cdb8f341c8c6bcaf23e71ff80dc5726cc4d839577e7",
+  "browserAcceptanceOwner": "root; production browser after candidate review; no browser run by implementation lane"
+}

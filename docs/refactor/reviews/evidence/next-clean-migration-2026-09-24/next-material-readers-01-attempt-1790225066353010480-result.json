@@ -1,0 +1,15 @@
+{
+  "exitCode": 0,
+  "session": "session-4effe38e-89ef-42eb-8ff3-928722f2cc30",
+  "counts": {
+    "session": 1,
+    "status": 94,
+    "thinking": 46,
+    "tool_call": 69,
+    "tool_result": 69,
+    "text": 3,
+    "final": 1
+  },
+  "finished": 1790225396.85326,
+  "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/next-material-readers-01/attempt-1790225066353010480"
+}

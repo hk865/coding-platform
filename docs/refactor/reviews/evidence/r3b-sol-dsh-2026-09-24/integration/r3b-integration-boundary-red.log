@@ -1,0 +1,36 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform
+
+ ❯ tests/app/R3b-host-boundaries.test.ts (2 tests | 1 failed) 59ms
+   × fails closed when a configured Host material path lacks canonical basis validation 6ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/app/R3b-host-boundaries.test.ts > fails closed when a configured Host material path lacks canonical basis validation
+AssertionError: expected { status: 'ready', record: { …(4) } } to match object { status: 'rejected' }
+(5 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "rejected",
++   "status": "ready",
+  }
+
+ ❯ tests/app/R3b-host-boundaries.test.ts:39:31
+     37|   }
+     38|   if (rejection !== undefined) expect(String(rejection)).toMatch(/basi…
+     39|   else expect(result?.result).toMatchObject({ status: 'rejected' });
+       |                               ^
+     40|   expect(openArtifact).not.toHaveBeenCalled();
+     41| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  08:25:12
+   Duration  192ms (transform 32ms, setup 0ms, import 45ms, tests 59ms, environment 0ms)
+

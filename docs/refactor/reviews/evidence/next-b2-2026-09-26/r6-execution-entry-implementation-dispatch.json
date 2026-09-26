@@ -1,0 +1,22 @@
+{
+  "lane": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r6-execution-entry-implementation-20260926",
+  "session": "session-fab943b7-ae20-4634-a1d4-5196e9ba026b",
+  "task": "docs/refactor/tasks/R6-execution-entry-implementation.md",
+  "originalAllowedHashes": {
+    "coding-platform/next/src/app/main.ts": "081b6d883a9059fb767024af2ef65d843b357fbc507f1abfde48c7da8f063cbb",
+    "coding-platform/next/src/app/host.ts": "6ae735ed1eb067dcc2a92787eddf1f5208dc7f3f33a9743197f611738335cdcf",
+    "coding-platform/next/src/app/runtime-configuration.ts": "c3c6e78f3028e146f7c0b8995f2f5f8ec36eb53e6252efdadd9b5fb852bf32fe",
+    "coding-platform/next/src/ui/main.ts": "ad6ecffc38c0e95b64404b587f518b5f9239fccf72c87ca902210e160f17a0f2",
+    "coding-platform/next/src/ui/views.ts": "8dbc70a56de23ea73d99a6f4eacae01095b54c9bc66c47690626e618f054acbf",
+    "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-service.ts": "89044e7599e6a515f5d5dfaeca3ef0f10dc3e56a1a6082461c09a93bea980d4f"
+  },
+  "frozenReadOnlyHashes": {
+    "coding-platform/next/tests/app/R6-host.test.ts": "89a8e77dc52ddacefa9953ce15dee30ced9ebe27473bfd01e3acc804f7180a0c",
+    "coding-platform/next/tests/app/R6-workbench.test.ts": "621d1bbe5846d5f2add89df157e559d25200adee4ad39fa83f22cee4caee1183",
+    "coding-platform/next/src/app/core-http-types.ts": "619412e820d34e005bf37c012c34762703e8acb44bf654cde0f9da177ebe69a3",
+    "coding-platform/next/src/app/core-routes.ts": "efe379a98e705fdc1980df5a87ce4edaf4f8faad1072bbec874955e4d22dc584",
+    "coding-platform/next/src/core/work-graph/configuration/project-bootstrap-contracts.ts": "a7a7bfadcf2775db9935c6784986aca474a115e7760682b573263327bca0621a",
+    "coding-platform/next/src/composition/create-platform.ts": "9d5be391be290d065be762f733acd44a91e7481ed3643b6cc61698db5c1297aa"
+  },
+  "scopePolicy": "six original production files only; normal workspace-write; in-place writes; tests/interfaces/routes/composition read-only; STOP for independent review"
+}

@@ -1,0 +1,15 @@
+{
+  "exitCode": 0,
+  "session": "session-f31c61a0-dac9-4363-849c-6b53ed72d581",
+  "counts": {
+    "session": 1,
+    "status": 30,
+    "thinking": 14,
+    "text": 9,
+    "tool_call": 17,
+    "tool_result": 17,
+    "final": 1
+  },
+  "finished": 1790235247.120985,
+  "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/next-r4b-wg-20260924/attempt-1790235095364356004"
+}

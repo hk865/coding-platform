@@ -1,0 +1,24 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/agent-runtime/execution-contracts.ts",
+    "coding-platform/next/src/core/agent-runtime/execution-driver.ts",
+    "coding-platform/next/src/core/agent-runtime/communication-tools.ts",
+    "coding-platform/next/src/core/work-graph/communication/contracts.ts",
+    "coding-platform/next/src/core/work-graph/communication/mailbox-service.ts",
+    "coding-platform/next/src/core/work-graph/tasks/run-state-service.ts",
+    "coding-platform/next/src/composition/create-platform.ts",
+    "coding-platform/next/tests/runtime/C2-runtime-platform-tools.test.ts",
+    "coding-platform/next/tests/work-graph/C2-mailbox-admission.test.ts",
+    "coding-platform/next/tests/composition/C2-runtime-platform.test.ts",
+    "coding-platform/next/tests/helpers/C2-runtime-platform-fixture.ts",
+    "coding-platform/next/tests/helpers/C1-mailbox-fixture.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

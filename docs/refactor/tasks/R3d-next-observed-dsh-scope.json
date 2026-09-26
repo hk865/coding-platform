@@ -1,0 +1,16 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/architecture/architecture-service.ts",
+    "coding-platform/next/src/core/work-graph/architecture/architecture-record-codecs.ts",
+    "coding-platform/next/src/core/work-graph/architecture/graph-index.ts",
+    "coding-platform/next/src/core/work-graph/architecture/architecture-delta.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

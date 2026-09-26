@@ -1,0 +1,15 @@
+{
+  "exitCode": 0,
+  "session": "session-da365fbb-48e6-45ad-b81a-1330b3556384",
+  "counts": {
+    "session": 1,
+    "status": 94,
+    "thinking": 46,
+    "text": 16,
+    "tool_call": 74,
+    "tool_result": 74,
+    "final": 1
+  },
+  "finished": 1790266576.4488719,
+  "attempt": "/home/hyh001/projects/coding-platform/.toolchain/dsh-refactor-runs/r4c2a-history-skeleton/attempt-1790266232165125187"
+}

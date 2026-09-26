@@ -1,0 +1,6 @@
+Continue SAME WG lane, only record-readers.ts writable. Lead has independently accepted Store provider and supplied its 3 files readonly to your snapshot. Frozen Kernel artifact is supplied. Original 8 real provider tests PASS; 3 new independent regressions FAIL as expected (Lead reproduced).
+Required narrow fixes:
+1. keyset pages must advance in UTF8 byte order matching SQLite BINARY. Reject a descending next cursor as unavailable before third page, in addition to repeat protection. No provider-loop workaround.
+2. ActorRef {kind:'agent',id} requires complete RunRef in .runRef per existing contracts/command-event.ts. Fix isActorRef so malformed persisted revocation actors reject. human/system actor requirements unchanged. Preserve existing authorization responsibility.
+3. Correct overstrong factory comments claiming no Ledger/Index implementation CAN be injected: structural callbacks can be arbitrary, actual production composition uses only target backend.records. Comment must describe actual boundary, not impossible static assurance.
+No extra wrappers/API, no changes to tests/configs/contracts. Run next-material-readers, next-types, next-architecture. If successful report exact tests and any limitation. No git operations/dependency installation.

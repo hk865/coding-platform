@@ -1,0 +1,32 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R4-control-intent.test.ts (18 tests | 1 failed) 234ms
+     × a lost commit acknowledgement is recovered from the real receipt, and a blocked recovery read stays unconfirmed until retried 9ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R4-control-intent.test.ts > R4.1 durable control intent > a lost commit acknowledgement is recovered from the real receipt, and a blocked recovery read stays unconfirmed until retried
+Error: simulated unreadable committed event
+ ❯ Object.eventAt tests/work-graph/R4-control-intent.test.ts:525:38
+    523|     const wrappedB: B2Records = { ...fixture.base.records,
+    524|       async eventAt(cursor) {
+    525|         if (breakRecoveryRead) throw new Error('simulated unreadable c…
+       |                                      ^
+    526|         return fixture.base.records.eventAt(cursor);
+    527|       },
+ ❯ loadReplayEvent src/core/work-graph/tasks/execution-entry-service.ts:816:28
+ ❯ replayControl src/core/work-graph/tasks/control-service.ts:151:24
+ ❯ readIdentityReceipt src/core/work-graph/tasks/control-service.ts:192:47
+ ❯ recoverControl src/core/work-graph/tasks/control-service.ts:210:19
+ ❯ Object.submitControl src/core/work-graph/tasks/control-service.ts:318:14
+ ❯ tests/work-graph/R4-control-intent.test.ts:535:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 19 passed (20)
+   Start at  13:30:25
+   Duration  1.79s (transform 799ms, setup 0ms, import 1.33s, tests 298ms, environment 0ms)
+

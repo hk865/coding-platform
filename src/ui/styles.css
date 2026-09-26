@@ -1,0 +1,156 @@
+/* R6 UI-layout workbench styles. Layout/interaction only; no business state. */
+:root { color-scheme: light dark; --line: #8a8f98; --panel: rgba(127, 127, 127, 0.08); --accent: #2aa198; --busy: #d33682; --ok: #2aa198; --warn: #b58900; }
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; font: 14px/1.5 system-ui, sans-serif; display: flex; flex-direction: column; overflow: hidden; }
+.top { flex: 0 0 auto; padding: 8px 16px; border-bottom: 1px solid var(--line); }
+.top h1 { margin: 0; font-size: 16px; }
+.top p { margin: 2px 0 0; font-size: 12px; }
+main#app { flex: 1 1 auto; min-height: 0; min-width: 0; max-width: 100%; display: flex; }
+
+/* Fixed-viewport-height workbench: internal scrolling everywhere, the page
+   itself never grows with long content. */
+.workbench-root { flex: 1 1 auto; min-height: 0; min-width: 0; max-width: 100%; display: flex; flex-direction: column; }
+.workbench { flex: 1 1 auto; min-height: 0; min-width: 0; max-width: 100%; display: flex; align-items: stretch; }
+.wb-col { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.wb-left { flex: 0 0 var(--wb-left, 300px); width: var(--wb-left, 300px); border-right: 1px solid var(--line); }
+.wb-right { flex: 0 0 var(--wb-right, 420px); width: var(--wb-right, 420px); border-left: 1px solid var(--line); }
+.wb-center { flex: 1 1 auto; }
+.wb-scroll { overflow: auto; min-height: 0; min-width: 0; max-width: 100%; }
+.wb-left > .wb-scroll, .wb-center > .wb-scroll, .wb-right > .wb-scroll { flex: 1 1 auto; }
+/* The scope selector keeps its content height; the session/Agent navigation
+   takes the rest of the left column instead of a forced half. */
+.wb-left > #region-scope { flex: 0 0 auto; }
+.wb-left > #region-nav { flex: 1 1 auto; }
+.wb-composer { flex: 0 0 auto; border-top: 1px solid var(--line); background: var(--panel); padding: 8px 12px; }
+.wb-left .panel, .wb-right .panel, .wb-center .panel { margin: 0 0 8px; }
+.wb-left > .wb-scroll, .wb-right > .wb-scroll, .wb-center > .wb-scroll { padding: 8px; }
+
+.splitter { flex: 0 0 6px; position: relative; cursor: col-resize; background: transparent; touch-action: none; }
+.splitter::after { content: ""; position: absolute; inset: 0 2px; border-left: 1px solid var(--line); }
+.splitter:hover, .splitter:focus-visible { background: var(--accent); outline: none; }
+.workbench.aux-hidden .wb-right, .workbench.aux-hidden #splitter-right { display: none; }
+.workbench.aux-expanded .wb-center, .workbench.aux-expanded #splitter-right { display: none; }
+.workbench.aux-expanded .wb-right { flex: 1 1 auto; width: auto; }
+
+/* Compact by default: a read shows one status line. Full receipts and the
+   replay control live in collapsed details and scroll inside this area. */
+.wb-status { flex: 0 0 auto; min-width: 0; max-height: 28vh; overflow: auto; border-top: 1px solid var(--line); padding: 6px 12px; }
+
+.panel { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--panel); min-width: 0; }
+/* Long technical strings (recordId/cursor/basis) wrap or scroll inside their
+   own box; they never widen a column or the document. */
+.wb-col, .wb-left, .wb-center, .wb-right, .conversation, .conversation-body, .conversation-head, .last { min-width: 0; }
+.panel, .last, .wb-status, .setup-group-body { overflow-wrap: anywhere; word-break: break-word; }
+code, details summary { overflow-wrap: anywhere; word-break: break-word; }
+.panel h2, .panel h3, .panel h4 { margin-top: 0; }
+.panel h2 { font-size: 15px; }
+.panel h3 { font-size: 14px; }
+.panel h4 { font-size: 13px; }
+.muted { opacity: 0.7; }
+.gap { border-color: var(--warn); }
+.rejected { border-color: var(--busy); }
+.committed { border-color: var(--accent); }
+.notice { color: var(--accent); }
+.error { color: var(--busy); }
+label.inline { display: inline-flex; gap: 6px; align-items: center; margin: 0 12px 8px 0; flex-wrap: wrap; }
+input, select, textarea { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; min-width: 120px; }
+textarea { width: 100%; min-width: 0; font: inherit; resize: vertical; }
+ul { margin: 6px 0; padding-left: 20px; }
+ul.paths, ul.session-list, ul.references, ol.history, ul.roles { list-style: none; padding-left: 0; }
+ul.paths { max-height: 260px; overflow: auto; }
+pre { overflow: auto; max-height: 260px; padding: 8px; background: rgba(127, 127, 127, 0.12); border-radius: 6px; white-space: pre-wrap; word-break: break-word; }
+.buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+button { padding: 5px 9px; border-radius: 6px; border: 1px solid var(--line); background: transparent; cursor: pointer; color: inherit; max-width: 100%; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.link { border: none; padding: 2px 4px; text-align: left; color: var(--accent); text-decoration: underline; }
+code { font-family: ui-monospace, monospace; }
+.last { min-width: 0; }
+.last .panel { margin: 0 0 6px; }
+.details { margin: 4px 0; }
+.details summary { cursor: pointer; }
+
+/* Left navigation: session availability and archived/active boundary. */
+.session-list { max-height: 46vh; overflow: auto; }
+.session-list li { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 3px 4px; border-bottom: 1px solid var(--panel); }
+.session-list li.active { background: rgba(42, 161, 152, 0.18); }
+.phase { display: inline-block; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); font-size: 12px; }
+[data-availability="busy"] { color: var(--busy); }
+[data-availability="idle"] { color: var(--ok); }
+.roles-details { margin: 4px 0; }
+.roles { max-height: 160px; overflow: auto; }
+
+/* Center conversation. */
+.conversation { display: flex; flex-direction: column; gap: 8px; }
+.conversation-head { position: sticky; top: -8px; z-index: 1; background: Canvas; padding: 4px 0; }
+.conversation-body { display: flex; flex-direction: column; gap: 8px; }
+ol.history { counter-reset: none; }
+ol.history li { border-left: 2px solid var(--line); padding: 4px 8px; margin-bottom: 6px; }
+[data-history-kind="user_input"] { border-left-color: #268bd2; }
+[data-history-kind="assistant_text"] { border-left-color: var(--ok); }
+[data-history-kind="tool_result"] { border-left-color: var(--warn); }
+[data-history-kind="artifact"] { border-left-color: var(--line); }
+[data-history-kind="unknown"] { border-left-color: var(--busy); }
+.history-body pre { max-height: 220px; }
+
+/* Right auxiliary tabs: many tabs, always closable, body scrolls. */
+.workbench-tabs { flex: 0 0 auto; }
+.workbench-aux { display: flex; flex-direction: column; min-height: 0; min-width: 0; max-width: 100%; }
+.tabbar { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.tab { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; }
+.tab.active { border-color: var(--accent); }
+.tab .tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-close { opacity: 0.6; }
+.tab-close:hover { opacity: 1; }
+.composer-draft { padding: 6px 8px; }
+.composer-draft pre { max-height: 120px; }
+.composer-label { display: flex; flex-direction: column; gap: 4px; }
+.file-editor { font-family: ui-monospace, monospace; min-height: 180px; }
+
+/* Wide graphs stay readable: a real canvas with horizontal scroll, never
+   squeezed text. Grid tracks have a 0 minimum so a long label can never force
+   the column (and the page) wider than its share. */
+.graph-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 12px; min-width: 0; }
+.graph-panels > * { min-width: 0; }
+.graph-panels .panel { margin: 0; }
+[data-graph], [data-view="task-structure"], [data-view="architecture-graph"] { overflow-x: auto; }
+[data-graph] .modules, [data-graph] .nodes, [data-graph] .edges { min-width: 320px; }
+[data-structure] { border: 1px dashed var(--line); border-radius: 6px; padding: 6px 10px; margin: 8px 0; }
+[data-work-link] { border-left: 3px solid var(--accent); }
+.setup-pages { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+/* Flat groups instead of a card wall: every capability still exists, but open
+   panels are only shown after the user expands its group. */
+.setup-group { border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; min-width: 0; }
+.setup-group > summary { cursor: pointer; font-weight: 600; }
+.setup-group .panel { border: none; background: transparent; padding: 6px 0; margin: 0; }
+.setup-group-body { min-width: 0; }
+
+@media (max-width: 900px) {
+  .workbench { flex-direction: column; overflow: auto; }
+  .wb-left, .wb-right, .wb-center { flex: 0 0 auto; width: auto; }
+  .splitter { display: none; }
+}
+
+/* Real node-link graphs: actual nodes plus connector lines on a wide canvas
+   with horizontal scroll; no layout engine and no fabricated time. */
+.graph-canvas { display: block; max-width: none; color: inherit; }
+.graph-canvas text { fill: currentColor; font-size: 11px; }
+.graph-node rect { fill: var(--panel); stroke: var(--line); }
+.graph-node[data-action] { cursor: pointer; }
+.graph-node[data-action]:hover rect, .graph-node[data-action]:focus-visible rect { stroke: var(--accent); stroke-width: 2; }
+.graph-node:focus { outline: none; }
+.graph-node-label { font-size: 12px; }
+.graph-node-caption { font-size: 10px; opacity: 0.75; }
+.graph-edge { stroke: currentColor; opacity: 0.55; }
+.graph-edge-label { font-size: 10px; opacity: 0.75; }
+[data-structure] { overflow-x: auto; }
+
+/* Historical/capture file versions are shown read-only. */
+.file-editor[readonly] { opacity: 0.92; }
+[data-draft-state="readonly_version"] { color: var(--warn); }
+
+/* Graph node display preference: selected node is marked in place; pinned nodes
+   show their full label on a wider box and can be un-pinned. */
+.graph-node.selected rect { stroke: var(--accent); stroke-width: 2.5; }
+.graph-node.pinned rect { fill: rgba(42, 161, 152, 0.18); }
+.graph-pin-badge { font-size: 9px; opacity: 0.9; }

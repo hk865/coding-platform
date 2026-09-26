@@ -1,0 +1,1136 @@
+import { createQueryAnswerAuditEntry } from './query-answer-audit-entry.js';
+import { TerminalContinuation } from './scheduling/terminal-continuation.js';
+import { queryJobRefFor } from '../contracts/query-job.js';
+import { DurableWake } from './scheduling/durable-wake.js';
+import { continueRework } from './scheduling/rework-continuation.js';
+import { HandoffRequest } from '../control/dispatch-engine/handoff/handoff-request.js';
+import { queryRecoveryView } from './scheduling/query-recovery-view.js';
+import { DispatchWake } from './scheduling/dispatch-wake.js';
+import { readDispatchBacklog } from '../data/read-model-index/dispatch-backlog-view.js';
+import { ArchitectureReviewEntry } from '../interaction/human-collaboration/architecture-review.js';
+import { architectureReviewView } from '../data/read-model-index/architecture-review-view.js';
+import { OrdinaryPredecessorMaterialCompiler } from '../data/context-compiler/ordinary-predecessor-materials.js';
+import { composeReworkDrive } from '../composition/rework-composition.js';
+import {createProfileMemory,projectMemory,type ProfileMemoryHost} from './memory.js';
+import { CommunicationViewIndex } from '../data/read-model-index/communication-view.js';
+import { ExecutionFeedbackContext } from '../data/context-compiler/execution-feedback-context.js';
+import { FeedbackMaterialCompiler } from '../data/context-compiler/feedback-materials.js';
+import { ExecutionFeedbackCompiler } from '../control/plan-compiler/execution-feedback-compiler.js';
+import { GovernanceReadModel } from '../data/read-model-index/governance-view.js';
+import { evaluateRoleSpecPinReadiness } from '../control/control-engine/policies/role-binding-admission.js';
+import { ControlReworkDisposition } from '../control/control-engine/rework-disposition.js';
+import { LeasedWorkerRuntime } from '../control/dispatch-engine/leased-worker-runtime.js';
+import { WorkMaterialDrive } from '../control/dispatch-engine/work-material-drive.js';
+import { DeliveryMaterialCompiler } from '../data/context-compiler/delivery-materials.js';
+import { LedgerRoleSpecRead } from '../control/dispatch-engine/role-spec-read.js';
+import { WorkRunMaterialCompiler } from '../data/context-compiler/work-run-materials.js';
+import { WorkspaceSourceIndexReader } from '../core/workspace/role-source-reader.js';
+import { RuntimeDispatch } from '../control/dispatch-engine/runtime-dispatch.js';
+import { OperatorPlanCompiler } from '../control/plan-compiler/operator-plan-compiler.js';
+import { OPERATOR_ENTRY_ROLES, OperatorTaskDispatch } from '../control/dispatch-engine/operator-task-dispatch.js';
+import { OperatorPlanningContext } from '../data/context-compiler/operator-planning-context.js';
+import { LedgerScopeCatalog } from '../data/state-ledger/ledger-scope-catalog.js';
+import { InitialPlanningView } from '../data/read-model-index/initial-planning-view.js';
+import { humanActionCaptureCursor, queryHumanActions } from '../data/read-model-index/query-human-actions.js';
+import { PlanCompilerImpl } from '../control/plan-compiler/plan-compiler.js';
+import { CoordinationContextCompiler } from '../data/context-compiler/coordination-context-compiler.js';
+import { QueryExecutionContextCompiler, QuerySourceContextCompiler } from '../data/context-compiler/query-execution-context.js';
+import { PlannedTaskDispatch } from '../control/dispatch-engine/planned-task-dispatch.js';
+import { ExplorationSourceApplicability } from '../core/workspace/exploration-source.js';
+import { VerificationSourceApplicability } from '../core/workspace/verification-source-applicability.js';
+import type { SourceApplicabilityPort, MaterialAccessScopeV1 } from '../contracts/material-access.js';
+import type { CoreCallContext } from '../contracts/core/call-context.js';
+import { createMaterialAccessResolver } from '../data/artifact-vault/material-access-policy.js';
+import { ExplorationContextCompiler } from '../data/context-compiler/exploration-context-compiler.js';
+import { ExplorationContextDrive } from '../control/dispatch-engine/exploration-context-drive.js';
+import { ExplorationMaterialReader } from '../data/artifact-vault/exploration-material-reader.js';
+import { QueryWorkspaceSourceReader } from '../core/workspace/query-workspace-source-reader.js';
+import { ExplorationSession } from '../interaction/human-collaboration/exploration-session.js';
+import { ExplorationSessionContextCompiler } from '../data/context-compiler/exploration-session-context.js';
+import { ExplorationReportVerifier } from '../control/verification-engine/exploration-report-verifier.js';
+import { ReadonlyReadWitnessReader } from '../core/workspace/readonly-read-witness-reader.js';
+import { ExplorationStartupReconciler } from '../control/control-engine/exploration-startup-reconciliation.js';
+import { VerificationService } from '../control/verification-engine/verification-service.js';
+import { ReworkDriveEngine } from '../control/dispatch-engine/rework-drive.js';
+import type { ReworkDriveRequestV1, ReworkDriveResultV1 } from '../contracts/rework/drive.js';
+import { FeedbackDecisionCompiler } from '../control/plan-compiler/feedback-decision-compiler.js';
+import { FeedbackDecisionContext } from '../data/context-compiler/feedback-decision-context.js';
+import { VerificationContextCompiler } from '../data/context-compiler/verification-context.js';
+import { ReviewerContextCompiler } from '../data/context-compiler/reviewer-context.js';
+import { ReviewerProfileCompiler } from '../data/context-compiler/reviewer-profile.js';
+import { createReviewControlPorts } from '../control/control-engine/reviewer-work.js';
+import { ReviewerDispatch } from '../control/dispatch-engine/reviewer-dispatch.js';
+import type { ReviewRequestView } from '../contracts/reviewer-verification.js';
+import { CandidateWorkspaceReader } from '../core/workspace/candidate-workspace-reader.js';
+import { VerificationWorkspaceReader } from '../core/workspace/verification-workspace-reader.js';
+import { GitCandidatePatchCheck } from '../control/verification-engine/candidate-patch-check.js';
+import { unconfiguredRuntimeCapabilities } from '../execution/worker-runtime/unconfigured-capabilities.js';
+import { HistoryMaterials } from '../interaction/human-collaboration/history-materials.js';
+import { HistoryMaterialsContext } from '../data/context-compiler/history-materials-context.js';
+import type { HistoryMaterialPort } from '../contracts/history-materials.js';
+import { ReadOnlyQueryRuntime } from '../execution/worker-runtime/read-only-query-runtime.js';
+import { InitialPlanning } from './initial-planning.js';
+import { canonicalJson } from '../contracts/fingerprint.js';
+import { CodingAgentRuntime } from '../execution/worker-runtime/coding-agent-runtime.js';
+import { validateRuntimeBudget } from '../execution/worker-runtime/model-budget.js';
+import type { RunPort } from '../contracts/ports.js';
+import type { RunSnapshot } from '../contracts/dispatch.js';
+import { ConfiguredWorkspaceCapabilityPolicy } from '../control/control-engine/policies/workspace-capability.js';
+type RealOptions = {
+    queryAnswerReviewPolicy?: 'high-risk-v1';
+    runtimeBudget?: (value: unknown, previous?: import('../contracts/runtime-budget.js').RuntimeBudget, fallback?: import('../contracts/runtime-budget.js').RuntimeBudget) => Promise<import('../contracts/runtime-budget.js').RuntimeBudget>;
+    reviewerModelMetadata?: import('../contracts/reviewer-context.js').ReviewerModelMetadataPort;
+    explorationContextOnlyRoots?: string[];
+    clock?: () => string;
+    resolveReferences?: (scope: {
+        projectId: string;
+        workspaceId: string;
+    }, refs: unknown) => Promise<string>;
+    contextOnlyTask?: {
+        root: string;
+        requestId: string;
+    };
+    runtime: CodingAgentRuntime;
+    /** Explicitly enable the fixture executor alongside a configured runtime.
+     * The fixture path is never inferred from a planId/runId shape. */
+    fixtureExecution?: boolean;
+    rootFor: (projectId: string, workspaceId: string) => string;
+    /** Trusted narrow policy for real source capture; missing means architecture source is unavailable. */
+    sourcePolicyFor?: (projectId: string, workspaceId: string) => Promise<SourcePolicy | null>;
+};
+import { randomUUID } from 'node:crypto';
+import { ProjectArchitectureSourceReader } from '../core/workspace/source-workspace-reader.js';
+import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../core/workspace/workspace-tools.js';
+import { createQuerySourceCaptureFactory, createRuntimeSourceCaptureFactory, createSourceCaptureAccess, type SourcePolicy } from './source-capture-access.js';
+import { SourceGraphContextCompiler } from '../data/context-compiler/source-graph-context.js';
+import type { ArchitectureReaderIdentity } from '../contracts/architecture-source.js';
+import { mkdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { createPersistentPlatform, createProductPlatform } from '../composition/persistent-platform.js';
+import { ensureHostBootstrap } from './host-bootstrap.js';
+import { buildInstallCommand, buildActivateCommand } from '../contracts/commands/governance.js';
+import { completionPolicyPinFor, architectureBaselinePinFor } from '../contracts/governance.js';
+import { COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1 } from '../fixtures/governance-fixtures.js';
+import { ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1 } from '../fixtures/architecture-evolution-policy-fixtures.js';
+import { ROLE_SPEC_SOURCES_V1 } from '../fixtures/role-spec-fixtures.js';
+import { GovernanceEntry } from './governance.js';
+import { PlanChangesEntry } from './plan-changes.js';
+import { buildApplyPlanCommand } from '../contracts/commands/plan.js';
+import { HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1 } from '../fixtures/plan-fixtures.js';
+import { FakeReadOnlyQueryAdapter } from '../execution/worker-runtime/read-only-query-adapter.js';
+import { FakeRuntimeAdapter } from '../execution/worker-runtime/fake-runtime-adapter.js';
+import { buildDispatchClaimCommand } from '../contracts/commands/dispatch.js';
+import type { ExecutionCapabilityV1 } from '../contracts/execution-capability.js';
+import { FAKE_RUNTIME_SCRIPT_COMPLETED_V1 } from '../fixtures/dispatch-fixtures.js';
+import type { CommitCursor } from '../contracts/command-event.js';
+type Scope = {
+    projectId: string;
+    workspaceId: string;
+};
+/** Tracks cleanup for resources created before a scoped host finishes initializing. */
+export type InitCleanup = { add(cleanup: () => Promise<void>): () => void; drain(): Promise<void> };
+export function createInitCleanup(): InitCleanup {
+    const cleanups = new Set<() => Promise<void>>();
+    return {
+        add: cleanup => { cleanups.add(cleanup); return () => { cleanups.delete(cleanup); }; },
+        drain: async () => { for (const cleanup of [...cleanups]) { cleanups.delete(cleanup); await cleanup().catch(() => { }); } },
+    };
+}
+async function createScopedGuiService(dir: string, scopes: Scope[], seedGoals: boolean, real: RealOptions | undefined, profileMemory: ProfileMemoryHost, initCleanup: InitCleanup = createInitCleanup()) {
+    await mkdir(dir, { recursive: true });
+    const now = real?.clock ?? (() => new Date().toISOString());
+    // 正式 Host 的可信源码绑定（R2d.2）：即使当前没有 mount 政策，也总是把工厂配好，
+    // 让 open 明确 unavailable，而不是省略回调让旧兼容模式在正式运行里默默生效。
+    const sourcePolicyFor = real?.sourcePolicyFor;
+    const serviceStop = new AbortController();
+    const executionCapability: ExecutionCapabilityV1 = real
+        ? { executor: 'coding-agent', source: 'configured-runtime', fixtureEnabled: real.fixtureExecution === true }
+        : { executor: 'fixture', source: 'explicit-fixture-service', fixtureEnabled: true };
+    const fakeRuntime = new FakeRuntimeAdapter(FAKE_RUNTIME_SCRIPT_COMPLETED_V1, { scriptFor: () => ({ schemaVersion: 1, items: FAKE_RUNTIME_SCRIPT_COMPLETED_V1.items.map(item => ({ ...item, occurredAt: now() })) }) });
+    let h: Awaited<ReturnType<typeof createPersistentPlatform>>;
+    let verifications: VerificationService | undefined;
+    const background = new Set<Promise<unknown>>();
+    const applicabilityReads = new Map<AbortController, Promise<void>>();
+    let projectionQueue: Promise<unknown> = Promise.resolve();
+    const project = () => { const next = projectionQueue.then(() => h.advanceProjection()); projectionQueue = next.catch(() => { }); return next; };
+    // 普通真实运行的工作身份与历史材料。两条材料通道各自独立、都在派发准备阶段运行：
+    //   - 探索运行走既有 ExplorationContextDrive；
+    //   - 普通开发运行走 WorkMaterialDrive（取材在 ContextCompiler，身份规则在 DispatchEngine）。
+    // 二者都只在 runtime.start 之前调用一次，不新增运行期读取路径。
+    // 注意：这两个驱动都必须在 test host 建好之后才能构造，因此只在回调里解引用（闭包延迟求值）。
+    let workMaterialDrive: WorkMaterialDrive | undefined;
+    const leasedRuntime = real ? new LeasedWorkerRuntime({ runtime: real.runtime, lease: () => h.workspaceLease, vault: () => h.vault,
+        materials: (spec, envelope) => spec.mode === 'explore' ? explorationDrive!.assembleRun(spec, envelope) : workMaterialDrive!.assembleRun(spec, envelope),
+        // 可信源码捕获工厂：只在租约/材料准备后复制绑定，真正进入模型循环时才 open 独占 registry。
+        sourceCapture: (spec, envelope) => createRuntimeSourceCaptureFactory({
+            ledger: () => h.ledger, ...(sourcePolicyFor ? { sourcePolicyFor } : {}), hostSignal: serviceStop.signal, now }, spec, envelope),
+        // 协调 Host 工具（协作通信）：按本次 Run 从 canonical 事实派生 exact principal
+        // 后装配 narrow port。模型拿不到身份字段，只能提供内容参数；正文 body-first，受理才算成功。
+        coordination: (spec) => h.coordinationGrant({ aggregateType: 'Run', projectId: spec.projectId, goalId: spec.goalId, runId: spec.runId }),
+        reviewerMaterials: (spec, envelope) => {
+            if (!reviewerContext || !spec.review) throw Error('独立审阅材料入口未配置');
+            return reviewerContext.runtime(spec.review.workRef, envelope);
+        }, now }) : undefined;
+    const runtime: RunPort = leasedRuntime ? {
+        capabilities: () => leasedRuntime.capabilities(),
+        start: (envelope, access) => real?.fixtureExecution === true && envelope.roleBinding.templateId === 'gui-fixture' && envelope.roleBinding.policyRevision === 'fixture-only-v1'
+            ? fakeRuntime.start(envelope) : leasedRuntime.start(envelope, access),
+    } : fakeRuntime;
+    const workspaceCapability = new ConfiguredWorkspaceCapabilityPolicy({ workspaceRead: true, workspaceWrite: true, maxWriteScope: null });
+    const queryFixture = new FakeReadOnlyQueryAdapter();
+    let memory: ReturnType<typeof projectMemory>;
+    const queryMaterials = new QueryExecutionContextCompiler({ ledger: () => h.ledger, vault: () => h.vault, memory: {select:request=>memory.context.select(request)},now });
+    const realQueries = real ? new ReadOnlyQueryRuntime(resolve(dir, 'query-runs'), { materials: queryMaterials, rootFor: real.rootFor, bind: runId => real.runtime.bindModel(runId),
+        // 正式 Host 总是配置 Query 可信源码工厂：委托给本 Runtime 实际交给 Kernel 的同一个 root；
+        // 缺 mount 政策时 open 明确 unavailable，不会省略回调而默默退回旧 project_index。
+        sourceCapture: (request, root) => createQuerySourceCaptureFactory({
+            ledger: () => h.ledger, ...(sourcePolicyFor ? { sourcePolicyFor } : {}), hostSignal: serviceStop.signal, now }, request, root),
+        ...(real.queryAnswerReviewPolicy ? { answerReviewPolicy: real.queryAnswerReviewPolicy } : {}) }) : undefined;
+    const humanActionFacts = async (scope: import('../contracts/query-quality-facts.js').QueryFactScope, signal?: AbortSignal) => {
+      signal?.throwIfAborted();
+      if (!real || !verifications) return queryHumanActions({ ledger: h.ledger }, scope);
+      const cursor = await humanActionCaptureCursor(h.ledger);
+      const before = await verifications.queryFacts(scope, signal);
+      const rework = await reworkDrive.reworkView({ schemaVersion: 1, ...scope });
+      const after = await verifications.queryFacts(scope, signal);
+      return queryHumanActions({ ledger: h.ledger, source: new QueryWorkspaceSourceReader(real.rootFor), rework,
+        reworkWitness: { cursor, verificationStable: ['ready', 'ready-empty'].includes(before.status) && before.version === after.version } }, scope);
+    };
+    const architectureActivation = (scope: import('../contracts/governance-view.js').GovernanceScopeV1) => governanceViews.architectureActivation(scope);
+    const querySources = realQueries && real ? new QuerySourceContextCompiler({ ledger: () => h.ledger, observations: realQueries.observations, architectureActivation, source: new QueryWorkspaceSourceReader(real.rootFor), humanActions: humanActionFacts, verificationFacts: (scope, signal) => { if (!verifications) throw Error('Verification observation unavailable'); return verifications.queryFacts(scope, signal); }, architectureReviews: scope => architectureReviewView(h.ledger, scope) }) : undefined;
+    await realQueries?.init();
+    const answerAudits = realQueries && real && querySources ? createQueryAnswerAuditEntry(resolve(dir, 'query-answer-audits'), {
+      job: scope => h.queryJobView(scope), runs: () => realQueries.all(), currentness: (projectId, workspaceId) => querySources.currentness(projectId, workspaceId),
+      materials: queryMaterials, bind: id => real.runtime.bindModel(id),
+    }) : undefined;
+    await answerAudits?.init();
+    const readOnlyQuery = { inspectQuery: async (request: Parameters<ReadOnlyQueryRuntime['inspectQuery']>[0]) => realQueries ? realQueries.inspectQuery(request) : { status: 'unavailable' as const, message: 'No durable query runtime is configured.' }, capabilities: (request: Parameters<FakeReadOnlyQueryAdapter['capabilities']>[0]) => realQueries?.capabilities() ?? queryFixture.capabilities(request),
+        startQuery: async (request: Parameters<FakeReadOnlyQueryAdapter['startQuery']>[0]) => {
+            const job = await h.ledger.load({ aggregateType: 'QueryJob', projectId: request.runRef.projectId, workspaceId: request.runRef.workspaceId, queryJobId: request.runRef.queryJobId });
+            if (job.status !== 'found')
+                throw Error('查询缺少正式执行描述');
+            const execution = (job.snapshot as import('../contracts/query-job.js').QueryJobSnapshot).job.intent.execution;
+            if (execution) {
+                if (!realQueries)
+                    throw Error('真实查询能力未配置');
+                return realQueries.startQuery(request);
+            }
+            return { ...await queryFixture.startQuery(request), endedAt: now() };
+        } };
+    // Shared source-capture registry for this scoped host. Only the composition root closes it;
+    // business/model callers only ever receive `tools`. Without a trusted policy there is no
+    // fallback: the graph reader reports unavailable instead of using an identity-free rootFor.
+    const workspaceHandle = real?.sourcePolicyFor ? createWorkspaceTools({
+        access: createSourceCaptureAccess({ ledger: () => h.ledger, sourcePolicyFor: real.sourcePolicyFor, signal: serviceStop.signal }),
+        now, limits: DEFAULT_WORKSPACE_LIMITS }) : undefined;
+    // If any later initialization step fails, this handle is closed by the caller's cleanup drain.
+    const releaseInit = workspaceHandle ? initCleanup.add(() => workspaceHandle.close()) : () => { };
+    const sourceReader = real ? new SourceGraphContextCompiler({ ledger: () => h.ledger, vault: () => h.vault, now,
+        ...(workspaceHandle ? { sourceForReader: (reader: ArchitectureReaderIdentity) => new ProjectArchitectureSourceReader({ tools: workspaceHandle.tools, context: {
+            projectId: reader.workspace.projectId, workspaceId: reader.workspace.workspaceId,
+            principal: { kind: 'work_run', runRef: reader.runRef, roleBinding: reader.roleBinding },
+            materialReader: { kind: 'run', requester: reader.runRef },
+            signal: serviceStop.signal,
+        } }) } : {}) }) : undefined;
+    const explorationSource = real ? new ExplorationSourceApplicability(real.rootFor) : undefined;
+    const verificationSource = real ? new VerificationSourceApplicability(real.rootFor) : undefined;
+    const sourceApplicability: SourceApplicabilityPort | undefined = real ? {
+        capture: (query, signal) => query.sourceSet.kind === 'verification_workspace'
+            ? verificationSource!.capture(query, signal) : explorationSource!.capture(query, signal),
+    } : undefined;
+    const platformOptions = { dir, runtime, readOnlyQuery, workspaceCapability, ...(real ? { architectureActivation, humanActions: humanActionFacts, verificationFacts: (scope: import('../contracts/query-quality-facts.js').QueryFactScope) => { if (!verifications) throw Error('Verification observation unavailable'); return verifications.queryFacts(scope); } } : {}), ...(sourceApplicability ? { sourceApplicability } : {}),
+        // 后继 Run 的准备面与工作区根：接续受理产生的后继在启动前由 Dispatch 从持久事实重建
+        // RunSpec 并 preflight/prepare（真实 Runtime 必须先有已登记的 exact runId spec）。
+        ...(real ? { initialWorkAssignments:true, runtimePreparation: real.runtime, workspaceRootFor: (projectId: string, workspaceId: string) => real.rootFor(projectId, workspaceId) } : {}),
+        ...(real ? { checkPorts: [], ...unconfiguredRuntimeCapabilities(now),
+            verification: { verify: async (request: Parameters<import('../contracts/verification.js').VerificationPort['verify']>[0]) => {
+                if (!verifications) throw Error('验证服务尚未完成初始化');
+                return verifications.verify(request);
+            } },
+            workspaceReader: sourceReader!,
+            codeGraph: { codeGraph: async (query: Parameters<import('../contracts/architecture-reconciler.js').CodeGraphPort['codeGraph']>[0]) => {
+                    const result = await sourceReader!.read({ ...query, requestedKinds: ['module', 'interface'], maxNodes: 512, maxEdges: 1024 });
+                    return result.status === 'sourced' ? { status: 'supported' as const, snapshotRef: result.snapshot.bodyRef, capabilityNote: 'TS/JS semantic imports with explicit source mapping' } : result.status === 'rejected' ? { status: 'rejected' as const, code: 'unavailable' as const, issues: result.issues } : result;
+                } } } : {}),
+        deps: { clock: now, commandId: randomUUID, correlationId: randomUUID, eventId: randomUUID } };
+    // Single ownership path: on any failure after the shared handle exists, the caller drains
+    // this guard (captures first, then the created platform) and preserves the original error.
+    h = real
+        ? await createProductPlatform({ ...platformOptions, ...unconfiguredRuntimeCapabilities(now), verification: platformOptions.verification!, workspaceReader: platformOptions.workspaceReader! })
+        : await createPersistentPlatform(platformOptions);
+    const releasePlatformInit = initCleanup.add(() => h.close());
+    const deps = (projectId: string, idempotencyKey: string = randomUUID()) => ({ projectId, actor: { kind: 'human' as const, id: 'user-1' }, idempotencyKey, commandId: randomUUID(), correlationId: randomUUID(), submittedAt: now() });
+    const check = <T extends {
+        status: string;
+    }>(receipt: T): T => {
+        if (receipt.status === 'rejected')
+            throw new Error(JSON.stringify(receipt));
+        return receipt;
+    };
+    // Seed via public commands, with stable payloads and keys so restart is a replay.
+    await ensureHostBootstrap(h.ledger, command => h.bootstrap(command), scopes);
+    for (const scope of scopes) {
+        await installGovernance(scope.projectId);
+        if (seedGoals)
+            check(await h.collaboration.createGoal({ ...scope, goalId: 'acceptance-demo', objective: scope.projectId.endsWith('alpha') ? '验收核心流程：计划、运行、查询与持久化' : '隔离对照项目：相同本地标识，独立数据', actor: { kind: 'human', id: 'local-gui' }, idempotencyKey: 'gui-demo-goal' }));
+    }
+    memory = projectMemory(h.ledger,profileMemory,now,{vault:h.vault,control:h.control});
+    const handoffRequest = real ? new HandoffRequest({ ledger: h.ledger, control: h, runtime: real.runtime, vault: h.vault, now }) : undefined;
+    const runtimeDispatch = real ? new RuntimeDispatch({ ledger: h.ledger, control: { runFact: h.runFact, reconcileRun: command => h.control.reconcileRun!(command) }, outbox: { drive: h.drive }, handoff: h.handoffDrive, runtime: real.runtime, now }) : undefined;
+    const dispatchWake = new DispatchWake({ drive: trigger => (runtimeDispatch ?? { drive: h.drive }).drive(trigger),
+      afterDrive: async () => { await terminalContinuation.scan(); await project(); }, now, onError: error => console.error('派发推进待处理：' + String(error)) });
+    const recovery = await runtimeDispatch?.recover(scopes);
+    if (recovery?.rejected.length)
+        throw Error('运行恢复事实尚未被接纳：' + JSON.stringify(recovery.rejected));
+    const verificationContext = new VerificationContextCompiler({ ledger: h.ledger, vault: h.vault, ...(real ? { runtime: real.runtime.observations, rootFor: real.rootFor, workspaceSource: new CandidateWorkspaceReader(), roundSource: new VerificationWorkspaceReader(), readonlyReads: new ReadonlyReadWitnessReader(real.rootFor), collaborationSource: sourceApplicability! } : {}) });
+    const reviewerProfiles = real ? new ReviewerProfileCompiler({ ledger: h.ledger, observations: real.runtime.observations,
+        modelMetadata: real.reviewerModelMetadata ?? { current: async () => null } }) : undefined;
+    const reviewerContext = real ? new ReviewerContextCompiler({ ledger: h.ledger, vault: h.vault, roundContext: verificationContext,
+        profiles: reviewerProfiles!, source: sourceApplicability!, observations: real.runtime.observations }) : undefined;
+    const reviewControl = real ? createReviewControlPorts({ ledger: h.ledger, now, eventId: randomUUID }) : undefined;
+    const reviewerDispatch = real ? new ReviewerDispatch({ executionSlots: h.executionSlots, ledger: h.ledger,
+        // Material grants must be projected before Context opens them. Model permits
+        // are canonical Run facts and use Control directly.
+        control: { startRun: h.startRun, runFact: h.runFact, grantMaterialAccess: h.grantMaterialAccess,
+            authorizeModelRequest: command => h.control.authorizeModelRequest!(command) }, reviewControl: reviewControl!.dispatch,
+        context: reviewerContext!, runtime: real.runtime, execution: leasedRuntime!, observations: real.runtime.observations,
+        vault: h.vault, now }) : undefined;
+    verifications = real ? new VerificationService({ directory: resolve(dir, 'verifications'), disposition: new ControlReworkDisposition(h.ledger as never), context: verificationContext, control: h, vault: h.vault,
+        workspaceLease: h.workspaceLease, candidatePatchCheck: new GitCandidatePatchCheck(),
+        // 轮次核对角色必产出时用的是**同一份** ControlEngine 受理判据（与派发时取材的那一份
+        // 是同一个只读实现）。组合根只做注入，不在这里复制矩阵 pin／revision／权限的判定规则。
+        roleSpec: new LedgerRoleSpecRead({ ledger: h.ledger }),
+        review: { context: reviewerContext!, profiles: reviewerProfiles!, control: reviewControl!.lifecycle } }) : undefined;
+    await verifications?.init();
+    // 返工触发驱动。未处置问题用的是 VerificationEngine **自己的**只读出口
+    // （VerificationService.openIssues），没有第二条读取路径；写入只经 ControlEngine 的既有
+    // 自动受理入口，组合根不直接 commit。因此 DispatchEngine 与 VerificationEngine 之间
+    // 没有源码依赖，ModuleDependencyDAG 的 VerificationEngine → ControlEngine 方向不被破坏。
+    const reworkDrive = composeReworkDrive({
+        coordination:{validate:row=>feedbackCompiler?.validate(row)??Promise.resolve(false)},
+        ledger: h.ledger,
+        control: h.control,
+        issues: request => verifications
+            ? verifications.openIssues(request)
+            : Promise.resolve({ status: 'unavailable' as const, code: 'unavailable' as const, message: '真实验收未配置：没有未处置问题的只读出口。' }),
+    });
+    // Ordinary history display goes through the trusted Host material port. The
+    // page grant (canonical grant + current basis + explicit human cross-workspace
+    // history authorization) is re-checked with the same resolved rules; the
+    // Host identity is fixed here and never taken from the JSON request body.
+    const grantAuthority = createMaterialAccessResolver(h.ledger, h.readModel, sourceApplicability);
+    const historyActor = { kind: 'human' as const, id: 'local-gui' };
+    const readHostContext = (requested: MaterialAccessScopeV1): CoreCallContext => {
+        const target = scopeOf(requested);
+        // Project scope: same-project cross-workspace history stays selectable,
+        // but the Host never widens past the verified project.
+        return {
+            projectId: target.projectId,
+            principal: { kind: 'host', actor: historyActor },
+            materialReader: { kind: 'host', projectId: target.projectId, actor: historyActor },
+            signal: serviceStop.signal,
+        };
+    };
+    const history: HistoryMaterialPort = new HistoryMaterials({ materials: new HistoryMaterialsContext({ ledger: h.ledger, vault: h.vault, materials: h.materials, readHostContext, grantAuthority }), catalog: () => verifications?.checkReportMaterials() ?? [], control: h, grants: h, now });
+    const operatorPlans = real ? new OperatorPlanCompiler({ directory: resolve(dir, 'explorations'), context: new OperatorPlanningContext({ ledger: h.ledger, rootFor: real.rootFor }), control: h, now }) : undefined;
+    const operatorDispatch = real ? new OperatorTaskDispatch({ ledger: h.ledger, control: h, runtime: real.runtime, planning: operatorPlans!, launch: (scope, runId) => launchRealDrive(scope, scope.goalId, runId), now }) : undefined;
+    const explorationContext = real ? new ExplorationSessionContextCompiler({ ledger: h.ledger, runtime: real.runtime.observations, rootFor: real.rootFor }) : undefined;
+    const explorationDrive = real ? new ExplorationContextDrive({ context: new ExplorationContextCompiler({ ledger: h.ledger, vault: h.vault, source: sourceApplicability! }), control: { grantMaterialAccess: h.grantMaterialAccess }, vault: h.vault, materials: new ExplorationMaterialReader({ directory: resolve(dir, 'explorations') }) }) : undefined;
+    // 普通真实运行的材料通道。取材（选什么、缺什么）在 ContextCompiler；
+    // 身份规则与时机在 DispatchEngine，两边都复用既有端口，不新增 Module 或平行路径。
+    const catalog = new LedgerScopeCatalog(h.ledger);
+    workMaterialDrive = real ? new WorkMaterialDrive({
+        ledger: h.ledger,
+        feedback: new FeedbackMaterialCompiler({ledger:h.ledger,vault:h.vault,catalog,source:new QueryWorkspaceSourceReader(real.rootFor),applicability:sourceApplicability!}),
+        // 这次运行的工作身份由 ControlEngine 的权威解析面给出（派发面不重算第二份）。
+        control: {resolveTaskWorkIdentity:query=>h.control.resolveTaskWorkIdentity(query),grantMaterialAccess:command=>h.grantMaterialAccess(command)},
+        // 后继 Run 的必需材料**只按 admission 固定的集合**取材（固定材料集合规则收窄）：
+        // 正常任务运行读到 none（本次不消费任何 Delivery），不是"读不到邮箱"。
+        deliveries: new DeliveryMaterialCompiler({ admitted: h.admittedDeliveryRead, vault: h.vault, source: sourceApplicability! }),
+        predecessors: new OrdinaryPredecessorMaterialCompiler({ ledger: h.ledger, vault: h.vault, source: sourceApplicability! }),
+        compiler: new WorkRunMaterialCompiler({
+            memory: memory.context, now,
+            ledger: h.ledger, vault: h.vault, workContext: h.workContext, completedWork: h.completedWork,
+            // 角色规格的解析判据来自 ControlEngine 自己的受理策略；组合根只做注入，
+            // 不在这里复制矩阵 pin／revision／权限的判定规则。
+            roleSpec: new LedgerRoleSpecRead({ ledger: h.ledger }),
+            // 角色必读材料「code」的取材通道。检出根只有组合根知道，因此宿主在这里绑定
+            // rootFor；读取本身归 WorkspaceReader（role-source-reader.ts），复用本 Module 与内核
+            // 既有的工作区读取能力（拒绝前缀只有 core/workspace/denied-prefixes.ts 一个来源，
+            // 逐文件 revision 由内核给出）。组合根不新开第二条读取路径，也不在这里做权限判定
+            // （权限与工作区版本由 ContextCompiler 按 claim 时的信封核对）。
+            sourceIndex: new WorkspaceSourceIndexReader({ rootFor: real.rootFor }),
+        }),
+    }) : undefined;
+    const explorations = real ? new ExplorationSession({
+        directory: resolve(dir, 'explorations'), planning: operatorPlans!, context: explorationContext!,
+        verification: new ExplorationReportVerifier({ context: explorationContext!, vault: h.vault }),
+        recordedVerification: verifications!.recorded,
+        contextDrive: explorationDrive!,
+        startup: new ExplorationStartupReconciler({ ledger: h.ledger, control: h }), vault: h.vault, control: h,
+    }) : undefined;
+    await explorations?.init();
+    const planningMaterials = new CoordinationContextCompiler({ ledger: h.ledger, catalog, ...(querySources ? { sources: querySources } : {}) });
+    const feedbackCompiler = real ? new ExecutionFeedbackCompiler({control:h.control,now,
+      materials:new ExecutionFeedbackContext({ledger:h.ledger,vault:h.vault,catalog,observations:real.runtime.observations,source:sourceApplicability!,querySource:new QueryWorkspaceSourceReader(real.rootFor)})}) : undefined;
+    const feedbackDecisionMaterials=new FeedbackDecisionContext(h.ledger,real?new QueryWorkspaceSourceReader(real.rootFor):undefined,catalog);
+    const feedbackDecisions=new FeedbackDecisionCompiler({materials:feedbackDecisionMaterials,planning:h.planProposal,control:h.control,now});
+    const initialPlanning = real && realQueries ? new InitialPlanning(new PlanCompilerImpl({ workIdentity: h.control, materials: planningMaterials, control: h, now }), new PlannedTaskDispatch(h, real.runtime, real.rootFor, (scope, runId) => launchRealDrive(scope, scope.goalId, runId), planningMaterials, now), new InitialPlanningView(h, catalog, realQueries), () => h.driveQuery({ reason: 'initial-coordination' })) : undefined;
+    const planningWake = new DurableWake();
+    const reworkWake = new DurableWake();
+    const reviewRecoveryWake = new DurableWake();
+    let closing = false;
+    const terminalContinuation = new TerminalContinuation({ ledger: h.ledger, records: () => real?.runtime.all() ?? [], scopes: () => scopes,
+        continue: record => continueEndedRun(record.spec, record.spec.goalId, record.spec.runId, record) });
+    function advancePlanning() {
+        if (!initialPlanning || closing)
+            return;
+        const work = planningWake.request('accepted-plans', async () => { await initialPlanning.advance(); await project(); });
+        void work.catch(error => console.error('规划推进待重试：' + String(error)));
+        background.add(work);
+        void work.finally(() => background.delete(work)).catch(() => { });
+    }
+    await project();
+    async function installGovernance(projectId: string) {
+        for (const [index, fixture] of [COMPLETION_POLICY_FIXTURE_V1, ARCHITECTURE_BASELINE_FIXTURE_V1].entries()) {
+            const key = `gui-governance-${index}`;
+            const install = buildInstallCommand(fixture, { ...deps(projectId, key), submittedAt: '2026-09-07T00:00:00.000Z' });
+            check(await h.install(install));
+            const pin = install.commandType === 'InstallCompletionPolicyRevision' ? completionPolicyPinFor(install) : architectureBaselinePinFor(install);
+            check(await h.activate(buildActivateCommand(pin, { ...deps(projectId, `${key}-activate`), expectedRevision: 1, submittedAt: '2026-09-07T00:00:00.000Z' })));
+        }
+    }
+    // 治理安装/激活的产品入口。五个种类都走**既有** ControlEngine 命令面（h.install /
+    // h.activate / installCoordinationPolicy / activateCoordinationPolicy /
+    // installArchitectureEvolutionPolicy / activateArchitectureEvolutionPolicy /
+    // h.control.installRoleSpec + activateRoleSpec），本组合根只负责
+    // 把 HTTP 输入翻译成那些命令，并提供"当前生效的是哪一份、谁在什么时候装的"的读侧。
+    // 内置 fixture 只在这里注入（module-map 只允许组合根引用 fixtures）；CoordinationPolicy
+    // 没有内置来源——自动化返工预算必须由人显式提交，不能被默认值授予。
+    const governanceRoleSources = ROLE_SPEC_SOURCES_V1.map(source => ({ roleId: source.roleId, content: source.content }));
+    const governanceEntryRoles = [
+      { roleId: OPERATOR_ENTRY_ROLES.develop, purpose: '人工授权的真实运行（/api/real/tasks）' },
+      { roleId: OPERATOR_ENTRY_ROLES.explore, purpose: '只读探索运行（/api/real/explorations/run）' },
+    ];
+    const governanceViews = new GovernanceReadModel({ ledger: () => h.ledger, defaults: { RoleSpecs: governanceRoleSources }, entryRoles: governanceEntryRoles,
+      policyExplanation: { roleSpecPinReadiness: evaluateRoleSpecPinReadiness } });
+    const governance = new GovernanceEntry({
+        views: governanceViews,
+        ledger: () => h.ledger,
+        install: command => h.install(command),
+        activate: command => h.activate(command),
+        installCoordinationPolicy: command => h.installCoordinationPolicy(command),
+        activateCoordinationPolicy: command => h.activateCoordinationPolicy(command),
+        installArchitectureEvolutionPolicy: command => h.installArchitectureEvolutionPolicy(command),
+        activateArchitectureEvolutionPolicy: command => h.activateArchitectureEvolutionPolicy(command),
+        // 第五个种类复用 ControlEngine **既有**的角色规格入口（RoleSpecPort），不新增写入路径。
+        // test host 面没有单列这两个方法，因此经 h.control 直接取同一实现（组合根只做注入）。
+        installRoleSpec: command => h.control.installRoleSpec(command),
+        activateRoleSpec: command => h.control.activateRoleSpec(command),
+        defaults: {
+            CompletionPolicy: COMPLETION_POLICY_FIXTURE_V1,
+            ArchitectureBaseline: ARCHITECTURE_BASELINE_FIXTURE_V1,
+            ArchitectureEvolutionPolicy: ARCHITECTURE_EVOLUTION_POLICY_FIXTURE_V1,
+            // 内置角色规格 source（与上面三条同一定位：它是 source 内容，本身不产生授权，
+            // 必须经 install + activate 才生效）。
+            RoleSpecs: governanceRoleSources,
+        },
+        // 产品自带的人工派发入口绑定、并会被角色矩阵校验的角色。逐个写明它属于哪条入口，
+        // 视图据此回答「装这份矩阵会不会把这些入口一起打断」。
+        entryRoles: governanceEntryRoles,
+        actor: { kind: 'human', id: 'user-1' },
+        now,
+        commandId: randomUUID,
+    });
+    // 计划变更只读入口。数据只有一处来源——既有投影 h.planChangeView；本入口只负责把
+    // 投影的 not_found 说清楚（确实没有变更 / 投影尚未推进），不重算、不复制业务规则，也不写任何状态。
+    const planChanges = new PlanChangesEntry({
+        advance: async () => { await project(); },
+        view: query => h.planChangeView(query),
+        observedCursor: () => h.observedCursor(),
+    });
+    let queue: Promise<unknown> = Promise.resolve();
+    function serial<T>(fn: () => Promise<T>): Promise<T> { const next = queue.then(fn); queue = next.catch(() => { }); return next; }
+    function scopeOf(input: Record<string, unknown>) {
+        const scope = scopes.find(s => s.projectId === input['projectId'] && s.workspaceId === input['workspaceId']);
+        if (!scope)
+            throw new Error('未知项目或工作区');
+        // Preserve legacy request fingerprints that include mount metadata.
+        // Module boundaries must select exact fields for canonical references.
+        return scope;
+    }
+    function required(input: Record<string, unknown>, key: string): string {
+        const value = input[key];
+        if (typeof value !== 'string' || !value.trim() || value.length > 4096)
+            throw new Error(`无效字段：${key}`);
+        return value.trim();
+    }
+    async function state(input: Record<string, unknown>, signal?: AbortSignal) {
+        signal?.throwIfAborted();
+        const scope = scopeOf(input);
+        await project();
+        const goalIds = new Set(await catalog.goals(scope));
+        const queryIds = new Set((await catalog.jobs(scope)).map(snapshot => snapshot.job.queryJobId));
+        const goals = await Promise.all([...goalIds].map(goalId => h.collaboration.goalView({ ...scope, goalId })));
+        const goalId = typeof input['goalId'] === 'string' && input['goalId'] ? input['goalId'] : [...goalIds][0] ?? '';
+        const communication = await new CommunicationViewIndex(h.ledger).view({ ...scope, ...(goalId ? { goalId } : {}) });
+        if (!goalId) {
+            const empty = { status: 'not_found' as const, observedCursor: h.observedCursor() };
+            return { scope, goalId, goals, applicability: { status: 'not_checked' as const, observedAt: now() }, communication, summary: await h.consoleSummary(scope), matrix: empty, agents: empty, timeline: await h.consoleTimeline(scope), graph: empty, evidence: [], queries: [], goalStatus: empty, observedCursor: h.observedCursor(), executor: executionCapability.executor, executionCapability, storage: 'SQLite' };
+        }
+        if (!goalIds.has(goalId))
+            throw new Error('该工作区中不存在此目标');
+        const query = { ...scope, goalId };
+        const [summary, matrix, agents, timeline, graph, queries, goalStatus] = await Promise.all([
+            h.consoleSummary(scope), h.consolePlanMatrix(query), h.consoleActiveAgents(query), h.consoleTimeline({ ...query, maxEntries: 80 }), h.planGraph({ projectId: scope.projectId, goalId }),
+            Promise.all([...queryIds].map(queryJobId => h.queryJobView({ ...scope, queryJobId }).then(view => queryRecoveryView(view, readOnlyQuery)))), h.goalStatus({ projectId: scope.projectId, goalId })
+        ]);
+        const evidence = matrix.status === 'ready' ? await Promise.all(matrix.matrix.rows.map(row => h.consoleTaskEvidence({ ...query, taskId: row.taskId }))) : [];
+        signal?.throwIfAborted();
+        const overview = input['view'] === 'overview';
+        const queryCurrentness = overview ? undefined : await querySources?.currentness(scope.projectId, scope.workspaceId, { ...(signal ? { signal } : {}) });
+        signal?.throwIfAborted();
+        for (const view of queries)
+            if (view.status === 'ready' && view.currentAnswer && queryCurrentness?.get(view.job.queryJobId) === false) {
+                view.stale = true;
+                view.currentAnswer = { ...view.currentAnswer, stale: true, staleReason: 'current_goal_workspace_or_source_changed' };
+            }
+        return { scope, goalId, goals, applicability: { status: overview ? 'not_checked' as const : 'checked' as const, observedAt: now() }, dispatch: await readDispatchBacklog(h.ledger, { projectId: scope.projectId, goalId }, now()), communication, summary, matrix, agents, timeline, graph, evidence, queries, goalStatus, exploration: await explorations?.view({ ...scope, goalId }) ?? null, planning: await initialPlanning?.view({ ...scope, goalId }) ?? [], liveRuns: real?.runtime.all().filter(r => r.spec.projectId === scope.projectId && r.spec.goalId === goalId && agents.status === 'ready' && agents.agents.rows.some(row => row.runRef.runId === r.spec.runId)).map(r => ({ ...r, canonicalStatus: agents.status === 'ready' ? agents.agents.rows.find(row => row.runRef.runId === r.spec.runId)?.runStatus ?? null : null, ...verifications?.forRun({ projectId: r.spec.projectId, workspaceId: r.spec.workspaceId, goalId: r.spec.goalId, runId: r.spec.runId }) })) ?? [], observedCursor: h.observedCursor(), executor: executionCapability.executor, executionCapability, storage: 'SQLite' };
+    }
+    function launchRealDrive(scope: Scope, goalId: string, runId: string) {
+        if (!runtimeDispatch)
+            throw Error('真实执行未配置');
+        const drive = runtimeDispatch.drive({ reason: 'gui-real-task', runRef: { aggregateType: 'Run', projectId: scope.projectId, goalId, runId } }).then(async () => {
+            try{await terminalContinuation.scan();}
+            finally{void dispatchWake.request('architecture-predecessor-ended');}
+            await project();
+            advancePlanning();
+        });
+        background.add(drive);
+        void drive.finally(() => background.delete(drive)).catch(() => { });
+    }
+    async function continueEndedRun(scope:Scope,goalId:string,runId:string, record: import('../contracts/runtime-preparation.js').PreparedRunFact) {
+        if(!record || record.spec.mode || ['prepared','running','outcome_unknown'].includes(record.status)) return;
+        await feedbackCompiler?.request({aggregateType:'Run',projectId:scope.projectId,goalId,runId});
+        await h.driveQuery({reason:'execution-feedback'});
+        const result=await verifications?.reverifyRework({projectId:scope.projectId,workspaceId:scope.workspaceId,goalId,runId,taskId:record.spec.taskId});
+        if(result && !('status' in result)) {
+          const review=await verifications?.prepareReworkReview({projectId:scope.projectId,workspaceId:scope.workspaceId,goalId,runId,taskId:record.spec.taskId},result.round.requestId);
+          if(review) launchReview(review.review);
+          await triggerRework(scope,goalId);
+        }
+    }
+    /**
+     * 本进程最近一次自动触发的返工结果（Host 会话状态）。它**不是**权威事实：受理结果由
+     * 账本重建（见 reworkView），这里只是让刚发生的触发结论可被查询。重启后为空，不冒充历史。
+     */
+    const lastReworkDrives = new Map<string, ReworkDriveResultV1>();
+    const reworkKey = (scope: Scope, goalId: string) => scope.projectId + '|' + scope.workspaceId + '|' + goalId;
+    // Verification supplies facts; only the planning scan schedules accepted plans.
+    function triggerRework(scope: Scope, goalId: string): Promise<void> {
+        if (closing) return Promise.resolve();
+        const work = reworkWake.request(reworkKey(scope, goalId), async () => {
+            try {
+                const result = await continueRework({ drive: reworkDrive,
+                    ...(feedbackCompiler ? { feedback: feedbackCompiler } : {}),
+                    issues: request => verifications ? verifications.openIssues(request) : Promise.resolve({ status: 'unavailable', code: 'unavailable', message: '真实验收未配置' }),
+                    driveQueries: () => h.driveQuery({ reason: 'verification-feedback' }),
+                }, { ...scope, goalId });
+                lastReworkDrives.set(reworkKey(scope, goalId), result);
+                await serial(project);
+            } finally {
+                // A commit can succeed even when its reply is lost. Rescan the ledger.
+                advancePlanning();
+            }
+        }).catch(error => { console.error('自动返工触发待重试：' + String(error)); });
+        background.add(work);
+        void work.finally(() => background.delete(work)).catch(() => {});
+        return work;
+    }
+    const reviewDrives = new Map<string, Promise<unknown>>();
+    function launchReview(view: ReviewRequestView) {
+        if (!reviewerDispatch || !verifications || !view.work || view.work.resultRef || view.phase === 'work_rejected') return;
+        const key = canonicalJson(view.work.ref);
+        if (reviewDrives.has(key)) return;
+        const workRef = view.work.ref;
+        const work = reviewerDispatch.drive(workRef)
+            .then(result => { if (result.status === 'rejected' || result.status === 'incomplete') console.error('Reviewer dispatch requires attention: ' + JSON.stringify(result)); })
+            .then(() => verifications!.resumeReview(view.scope, { requestId: view.requestId }))
+            // 独立审阅交付正式结论（并已归约）之后，才轮到组合根触发自动返工。
+            .then(async () => { await triggerRework(view.scope, view.scope.goalId); })
+            .finally(project);
+        reviewDrives.set(key, work);
+        background.add(work);
+        void work.finally(() => { reviewDrives.delete(key); background.delete(work); }).catch(() => { });
+    }
+    /**
+     * Formal-receipt lookup for one logical request.
+     *
+     * A browser whose response was lost must ask what the server actually recorded
+     * instead of guessing or blindly retrying. Every answer comes from canonical
+     * facts: the Goal read model, the Run aggregate plus the runtime record, or the
+     * persisted command-check record. "found: false" means the request never
+     * reached the server, so retrying with the same requestId cannot duplicate it.
+     */
+    async function receipt(scope: Scope, input: Record<string, unknown>) {
+        const requestId = required(input, 'requestId');
+        const kind = input['kind'];
+        if (kind !== 'goal' && kind !== 'real-task' && kind !== 'command-check' && kind !== 'verification-round' && kind !== 'independent-review')
+            throw Error('未知的回执查询类型');
+        const observedAt = now();
+        if (kind === 'goal') {
+            await project();
+            const view = await h.collaboration.goalView({ ...scope, goalId: requestId });
+            return { requestId, kind, found: view.status === 'ready', goalStatus: view.status === 'ready' ? view.goal.goalId : null, runId: null, runStatus: null, runtimeStatus: null, check: null, observedAt };
+        }
+        if (kind === 'real-task') {
+            const runId = `real-${requestId}`;
+            const loaded = await h.ledger.load({ aggregateType: 'Run', projectId: scope.projectId, goalId: required(input, 'goalId'), runId });
+            const record = real?.runtime.all().find(r => r.spec.projectId === scope.projectId && r.spec.goalId === required(input, 'goalId') && r.spec.runId === runId) ?? null;
+            const planning = (await initialPlanning?.view({ ...scope, goalId: required(input, 'goalId') }))?.find(row => row.requestId === requestId);
+            return { requestId, kind, found: loaded.status === 'found' || !!planning, goalStatus: null, runId, runStatus: loaded.status === 'found' ? (loaded.snapshot as RunSnapshot).status : planning?.status ?? null, runtimeStatus: record?.status ?? null, check: null, observedAt };
+        }
+        if (!verifications)
+            throw Error('真实验收未配置');
+        if (kind === 'independent-review') {
+            const review = await verifications.reviewReceipt({ projectId: scope.projectId, workspaceId: scope.workspaceId, goalId: required(input, 'goalId') }, requestId);
+            return { requestId, kind, found: !!review, goalStatus: null, runId: review?.scope.runId ?? null, runStatus: null, runtimeStatus: null, check: null, review, observedAt };
+        }
+        if (kind === 'verification-round') {
+            const round = await verifications.roundReceipt({ ...scope, goalId: required(input, 'goalId') }, requestId);
+            return { requestId, kind, found: !!round, goalStatus: null, runId: round?.runId ?? null, runStatus: null, runtimeStatus: null, check: null, round, observedAt };
+        }
+        const check = await verifications.checkReceipt({ ...scope, goalId: required(input, 'goalId') }, requestId);
+        return { requestId, kind, found: !!check, goalStatus: null, runId: check?.runId ?? null, runStatus: null, runtimeStatus: null, check, observedAt };
+    }
+    async function action(path: string, input: Record<string, unknown>) {
+        const scope = scopeOf(input);
+        if (path === '/api/receipts')
+            return receipt(scope, input);
+        if (path === '/api/goals') {
+            const goalId = required(input, 'requestId');
+            check(await h.collaboration.createGoal({ ...scope, goalId, objective: required(input, 'objective'), actor: { kind: 'human', id: 'local-gui' }, idempotencyKey: `gui-create-${goalId}` }));
+            await project();
+            return { goalId };
+        }
+        // 治理入口是**项目级**的，与 Goal 无关，因此放在 goalId 必填检查之前。
+        if(path==='/api/real/memory/project/adoption')return {runs:(realQueries?.all()??[])
+          .filter(run=>run.runRef.projectId===scope.projectId&&run.runRef.workspaceId===scope.workspaceId)
+          .map(run=>{
+            try{
+              const input=JSON.parse(run.input),selected=input.maintainedPreferences;
+              return {runId:run.runRef.runId,status:run.status,inputDigest:run.inputDigest,purpose:input.responsePurpose??null,
+                memory:selected?.status==='ready'?{profileRevision:selected.profileRevision,projectRevision:selected.projectRevision,
+                  entries:selected.entries.map((row:{scope:import('../contracts/memory.js').MemoryScope;entry:import('../contracts/memory.js').MemoryEntry})=>({scope:row.scope,entryId:row.entry.entryId,revision:row.entry.revision,digest:row.entry.digest}))}:null};
+            }catch{return {runId:run.runRef.runId,status:run.status,inputDigest:run.inputDigest,purpose:null,memory:null};}
+          })};
+        if (path.startsWith('/api/real/memory/project/')) return memory.action(path,input,scope.projectId);
+        if(path==='/api/real/architecture-reviews/view')return architectureReviewView(h.ledger,scope);
+        if(path==='/api/real/architecture-reviews/decide') {
+            const receipt=await new ArchitectureReviewEntry({ledger:h.ledger,control:h.control,vault:h.vault,inspection:h.inspection,now}).decide(scope,input);
+            if(receipt.status==='committed') {
+                void dispatchWake.request('architecture-human-decision');
+            }
+            return receipt;
+        }
+        if (path === '/api/real/governance/view')
+            return governance.view(scope);
+        if (path === '/api/real/governance/install')
+            return governance.install(scope, input);
+        if (path === '/api/real/governance/activate')
+            return governance.activate(scope, input);
+        if (path.startsWith('/api/real/queries/review/')) {
+            if (!answerAudits) throw Error('回答复核未配置');
+            return answerAudits.action(path, input);
+        }
+        if (path === '/api/real/queries/cancel') {
+            const queryJobId = required(input, 'queryJobId'), goalId = required(input, 'goalId');
+            const jobRef = queryJobRefFor(scope.projectId, scope.workspaceId, queryJobId);
+            const loaded = await h.ledger.load(jobRef);
+            if (loaded.status !== 'found') throw Error('查询不存在');
+            const snapshot = loaded.snapshot as import('../contracts/query-job.js').QueryJobSnapshot;
+            const job = snapshot.job;
+            if (job.goalId !== goalId || !job.runRef) throw Error('查询不属于该目标');
+            if (job.status === 'answered' || (job.status === 'closed' && job.closeReason?.code !== 'cancelled')) throw Error('查询已结束');
+            if (job.status !== 'closed') {
+                const id = 'query-cancel-' + queryJobId;
+                check(await h.closeQueryJob({ schemaVersion: 1, commandType: 'CloseQueryJob', commandId: id,
+                    identity: { projectId: scope.projectId, actor: { kind: 'human', id: 'local-gui' }, idempotencyKey: id },
+                    aggregateId: queryJobId, expectedRevision: snapshot.revision, correlationId: id, submittedAt: now(),
+                    payload: { jobRef, runRef: job.runRef, reason: { code: 'cancelled', message: '用户已取消查询。' } } }));
+            }
+            // Desired state is committed before signalling the exact readonly run.
+            await realQueries?.cancelQuery(job.runRef);
+            await project();
+            return { status: 'cancelled', queryJobId };
+        }
+        if (path === '/api/real/queries' || path === '/api/real/queries/runs') {
+            const goalId=required(input,'goalId');
+            if((await h.collaboration.goalView({...scope,goalId})).status!=='ready')throw Error('目标不存在');
+            if(path==='/api/real/queries/runs')return {runs:realQueries?.all().filter(run=>run.runRef.projectId===scope.projectId&&run.runRef.workspaceId===scope.workspaceId&&run.goalId===goalId)??[]};
+            const focusTaskRefs:import('../contracts/query-job.js').QueryTaskRef[]=[];
+            if(input['focusTaskId']!==undefined){
+                if(typeof input['focusTaskId']!=='string')throw Error('请选择目标中的任务');
+                const ref={aggregateType:'Task' as const,projectId:scope.projectId,goalId,taskId:input['focusTaskId']};
+                const graph=await h.planGraph({projectId:scope.projectId,goalId});
+                if(graph.status!=='ready'||!graph.graph.tasks.some(task=>task.taskId===ref.taskId))throw Error('任务不存在');
+                focusTaskRefs.push(ref);
+            }
+            if (!real || !realQueries)
+                throw Error('真实查询未配置');
+            const id = required(input, 'requestId');
+            const queryJobId = 'real-query-' + id, runId = queryJobId;
+            const original = await h.ledger.load(queryJobRefFor(scope.projectId, scope.workspaceId, queryJobId));
+            const previousBudget = original.status === 'found' ? (original.snapshot as import('../contracts/query-job.js').QueryJobSnapshot).job.intent.execution?.runtimeBudget : undefined;
+            const budget = real.runtimeBudget ? await real.runtimeBudget(input['budget'], previousBudget) : validateRuntimeBudget(input['budget']);
+            const submittedAt = original.status === 'found' ? (original.snapshot as import('../contracts/query-job.js').QueryJobSnapshot).job.submittedAt : now();
+            const result = check(await h.submitQueryJob({ schemaVersion: 1, commandType: 'SubmitQueryJob', commandId: queryJobId, identity: { projectId: scope.projectId, actor: { kind: 'human', id: 'local-gui' }, idempotencyKey: queryJobId }, aggregateId: queryJobId, expectedRevision: 0, correlationId: queryJobId, submittedAt,
+                payload: { runId, intent: { schemaVersion: 1, intentId: queryJobId, ...scope, goalId, question: required(input, 'question'), focusTaskRefs,
+                        budget: { maxTokens: budget.contextWindowTokens, deadline: budget.timeoutMs === null ? null : new Date(Date.parse(submittedAt) + budget.timeoutMs).toISOString() }, multiTurn: { maxRounds: 1 }, correlationId: queryJobId,
+                        execution: { kind: 'semantic_query', ...(input['responsePurpose']===undefined?{}:{responsePurpose:input['responsePurpose'] as import('../contracts/memory.js').MemoryPurpose}), runtimeBudget: budget, roleBinding: { schemaVersion: 1, bindingId: queryJobId, bindingVersion: 1, templateId: 'query-reader', templateRevision: '1', policyRevision: 'read-only-v1' } } } } }));
+            if (result.status === 'committed' && !result.replayed) {
+                const work = h.driveQuery({ reason: 'human-semantic-query' }).then(() => project());
+                background.add(work);
+                void work.finally(() => background.delete(work)).catch(() => { });
+            }
+            return { queryJobId, runId, receipt: result };
+        }
+        const goalId = required(input, 'goalId');
+        const view = await h.collaboration.goalView({ ...scope, goalId });
+        if (view.status !== 'ready')
+            throw new Error('目标不存在');
+        if (path === '/api/real/handoff') {
+            if (!handoffRequest) throw Error('真实换手尚未配置');
+            const result = await handoffRequest.submit({ ...scope, goalId, sourceRunId: required(input, 'sourceRunId'),
+                requestId: required(input, 'requestId'), reason: required(input, 'reason') });
+            launchRealDrive(scope, goalId, result.runId);
+            return result;
+        }
+        if (path === '/api/real/work') {
+            if (!real || !initialPlanning)
+                throw Error('真实协调尚未配置');
+            if (input['references'] !== undefined && !real.resolveReferences)
+                throw Error('文件引用读取未配置');
+            const referenceContext = real.resolveReferences ? await real.resolveReferences(scope, input['references']) : '';
+            const prior = await h.ledger.load(queryJobRefFor(scope.projectId, scope.workspaceId, 'real-query-initial-' + required(input, 'requestId')));
+            const previousBudget = prior.status === 'found' ? (prior.snapshot as import('../contracts/query-job.js').QueryJobSnapshot).job.intent.execution?.runtimeBudget : undefined;
+            const budget = real.runtimeBudget ? await real.runtimeBudget(input['budget'], previousBudget) : validateRuntimeBudget(input['budget']);
+            const result = await initialPlanning.submit({ ...scope, goalId }, { ...input, budget }, referenceContext);
+            advancePlanning();
+            return result;
+        }
+        if (path === '/api/real/planning')
+            return { rows: await initialPlanning?.view({ ...scope, goalId }) ?? [] };
+        if (path === '/api/real/history/view')
+            return history.view({ ...scope, goalId });
+        if (path === '/api/real/history/grant')
+            return history.grant({ ...scope, goalId }, input);
+        if (path === '/api/real/history/revoke')
+            return history.revoke({ ...scope, goalId }, input);
+        if (path === '/api/real/history/read')
+            return history.read({ ...scope, goalId }, input);
+        if (path === '/api/real/plan-changes/view') {
+            // 受理结果的可见性。直接复用既有投影（ReadModelIndex.planChangeView）：
+            // 提案／人的决定／Goal revision／任务处置行四类事实一次取回，界面据此回答
+            // "谁受理了什么、为什么"。这里没有任何重算，也不存在第二条读取路径。
+            return planChanges.view({ projectId: scope.projectId, workspaceId: scope.workspaceId, goalId });
+        }
+        if(path==='/api/real/feedback/options') return feedbackDecisionMaterials.options({...scope,goalId},input['answerRef'] as import('../contracts/query-job.js').QueryJobAnswerRef);
+        if(path==='/api/real/feedback/choose') {
+            if(!feedbackCompiler) throw Error('真实协调未配置');
+            const result=await feedbackDecisions.choose({...scope,goalId},input['answerRef'] as import('../contracts/query-job.js').QueryJobAnswerRef,required(input,'optionId'));
+            const queryJobRef=await feedbackCompiler.requestDecision(result.sourceJob,result.decisionRef);
+            await h.driveQuery({reason:'human-feedback-decision'});
+            await triggerRework(scope,goalId);
+            await project();
+            return {status:result.status,decisionRef:result.decisionRef,planRef:result.planRef,queryJobRef};
+        }
+        if (path === '/api/real/rework/issues') {
+            // 只读问题出口：让界面与返工提案拿到同一份带来源的未处置问题。
+            if (!verifications)
+                throw Error('真实验收未配置');
+            return verifications.openIssues({
+                schemaVersion: 1, projectId: scope.projectId, workspaceId: scope.workspaceId, goalId,
+                taskIds: Array.isArray(input['taskIds']) ? input['taskIds'].filter((value): value is string => typeof value === 'string') : [],
+            });
+        }
+        if (path === '/api/real/rework/status') {
+            // 只读入口：未处置问题 + 提案 + 受理事实（全部由 canonical 事实重建），
+            // 外加本进程最近一次自动触发的结果。不触发任何写入。
+            const request: ReworkDriveRequestV1 = { schemaVersion: 1, projectId: scope.projectId, workspaceId: scope.workspaceId, goalId };
+            return { view: await reworkDrive.reworkView(request), lastDrive: lastReworkDrives.get(reworkKey(scope, goalId)) ?? null };
+        }
+        if (path === '/api/real/verifications/verify') {
+            if (!verifications) throw Error('真实验收未配置');
+            const result = await h.verification.verify(input as import('../contracts/verification.js').VerificationRequestV1);
+            return result;
+        }
+        if (path.startsWith('/api/real/verifications/reviews/')) {
+            if (!verifications || !reviewerProfiles || !reviewerContext) throw Error('独立审阅未配置');
+            if (input['gateSubject'] !== undefined && input['gateSubject'] !== 'goal') throw Error('未知验证对象');
+            const reviewScope = { projectId: scope.projectId, workspaceId: scope.workspaceId, goalId, runId: required(input, 'runId'), taskId: required(input, 'taskId'), ...(input['gateSubject'] === 'goal' ? { gateSubject: 'goal' as const } : {}) };
+            if (path.endsWith('/profile')) return reviewerProfiles.current(reviewScope);
+            if (path.endsWith('/material')) return verifications.reviewMaterial(reviewScope, required(input, 'roundRequestId'));
+            if (path.endsWith('/read')) return verifications.review(reviewScope, required(input, 'requestId'));
+            if (path.endsWith('/report')) {
+                const review = await verifications.review(reviewScope, required(input, 'requestId'));
+                if (!review.work?.output) throw Error('原始审阅报告尚未绑定');
+                const opened = await reviewerContext.openHistoricalReport(review.work.ref);
+                if (opened.status !== 'ready') throw Error('原始审阅报告当前不可读取');
+                return { ref: opened.record.ref, body: opened.record.body, applicability: 'historical_explanation' as const };
+            }
+            if (path.endsWith('/recover')) {
+                if (input['allowExecute'] !== true) throw Error('需要明确授权重新受理 Reviewer');
+                const allowed = new Set(['projectId', 'workspaceId', 'goalId', 'runId', 'taskId', 'gateSubject', 'requestId', 'previousRequestId', 'allowExecute', 'reason']);
+                if (Object.keys(input).some(key => !allowed.has(key))) throw Error('恢复请求仅接受作用域、原请求、授权标识及原因');
+            }
+            const result = path.endsWith('/recover')
+                ? await verifications.recoverReview(reviewScope, {
+                    requestId: required(input, 'requestId'), previousRequestId: required(input, 'previousRequestId'),
+                    allowExecute: true, reason: required(input, 'reason'),
+                })
+                : path.endsWith('/start')
+                ? await verifications.startReview(reviewScope, input as import('../contracts/reviewer-verification.js').ReviewStartInput)
+                : path.endsWith('/resume') ? await verifications.resumeReview(reviewScope, { requestId: required(input, 'requestId') }) : null;
+            if (!result) throw Error('未知独立审阅操作');
+            launchReview(result.review);
+            return result;
+        }
+        if (path.startsWith('/api/real/verifications/rounds/')) {
+            if (!verifications) throw Error('真实验收未配置');
+            if (input['gateSubject'] !== undefined && input['gateSubject'] !== 'goal') throw Error('未知验证对象');
+            const roundScope = { projectId: scope.projectId, workspaceId: scope.workspaceId, goalId, runId: required(input, 'runId'), taskId: required(input, 'taskId'), ...(input['gateSubject'] === 'goal' ? { gateSubject: 'goal' as const } : {}) };
+            if (path.endsWith('/read')) return verifications.round(roundScope, required(input, 'requestId'));
+            const result = path.endsWith('/start')
+                ? await verifications.startRound(roundScope, input as import('../contracts/verification-round.js').VerificationRoundStartInput)
+                : path.endsWith('/resume')
+                    ? await verifications.resumeRound(roundScope, input as import('../contracts/verification-round.js').VerificationRoundResumeInput)
+                    : null;
+            if (!result) throw Error('未知验证轮次操作');
+            return result;
+        }
+        if (path === '/api/real/verifications/run-check') {
+            if (!verifications)
+                throw Error('真实验收未配置');
+            return verifications.runChecks({ ...scope, goalId, runId: required(input, 'runId') }, input);
+        }
+        if (path === '/api/real/verifications/check-report') {
+            if (!verifications)
+                throw Error('真实验收未配置');
+            return verifications.checkReports({ ...scope, goalId, runId: required(input, 'runId') }, required(input, 'requestId'));
+        }
+        if (path === '/api/real/verifications/check-evidence') {
+            if (!verifications)
+                throw Error('真实验收未配置');
+            return verifications.admitCheckEvidence({ ...scope, goalId, runId: required(input, 'runId') }, input);
+        }
+        if (path === '/api/real/verifications/reconcile-check') {
+            if (!verifications)
+                throw Error('真实验收未配置');
+            return verifications.reconcileCheck({ ...scope, goalId, runId: required(input, 'runId') }, required(input, 'requestId'));
+        }
+        if (path === '/api/real/verifications/candidates' || path === '/api/real/verifications/import') {
+            if (!verifications)
+                throw Error('真实验收未配置');
+            const runScope = { ...scope, goalId, runId: required(input, 'runId') };
+            return path.endsWith('/candidates') ? verifications.register(runScope, input) : verifications.import(runScope, input);
+        }
+        if (path.startsWith('/api/real/explorations/')) {
+            if (!real || !explorations)
+                throw Error('真实探索未配置');
+            const explorationScope = { ...scope, goalId };
+            if (path === '/api/real/explorations/plan')
+                return explorations.install(explorationScope, input);
+            if (path === '/api/real/explorations/review')
+                return explorations.review(explorationScope, input);
+            if (path === '/api/real/explorations/run') {
+                const contextOnly = real.explorationContextOnlyRoots?.includes(real.rootFor(scope.projectId, scope.workspaceId)) ?? false;
+                const prior = real.runtime.all().find(row => row.spec.projectId === scope.projectId && row.spec.workspaceId === scope.workspaceId && row.spec.goalId === goalId && row.spec.runId === 'real-explore-' + input['requestId']);
+                const fallback = contextOnly ? validateRuntimeBudget({ contextWindowTokens: 1000000, perResponseTokens: 32768 }) : undefined;
+                const selectedBudget = real.runtimeBudget ? await real.runtimeBudget(input['budget'], prior?.spec.budget, fallback) : input['budget'] ?? fallback;
+                const prepared = await explorations.prepareRun(explorationScope, input, validateRuntimeBudget(selectedBudget, contextOnly));
+                return operatorDispatch!.dispatch({ spec: prepared.spec, requestId: prepared.requestId });
+            }
+            throw Error('未知探索操作');
+        }
+        if (path === '/api/real/tasks') {
+            if (!real)
+                throw Error('真实执行未配置');
+            const id = required(input, 'requestId');
+            if (!/^[a-zA-Z0-9-]{1,100}$/.test(id))
+                throw Error('请求标识无效');
+            if (input['allowWrite'] !== true)
+                throw Error('请明确允许在当前项目内修改文件');
+            const runId = `real-${id}`, originalInstruction = required(input, 'instruction'), taskId = 'coding-task';
+            if (input['references'] !== undefined && !real.resolveReferences)
+                throw Error('当前服务未配置文件引用解析');
+            const instruction = originalInstruction + (real.resolveReferences ? await real.resolveReferences(scope, input['references']) : '');
+            const prior = real.runtime.all().find(row => row.spec.projectId === scope.projectId && row.spec.workspaceId === scope.workspaceId && row.spec.goalId === goalId && row.spec.runId === runId);
+            const budget = real.runtimeBudget ? await real.runtimeBudget(input['budget'], prior?.spec.budget) : validateRuntimeBudget(input['budget']);
+            const spec = { ...scope, goalId, runId, taskId, root: real.rootFor(scope.projectId, scope.workspaceId), instruction, budget };
+            return operatorDispatch!.dispatch({ spec, requestId: id });
+        }
+        if (path === '/api/real/cancel') {
+            if (!real)
+                throw Error('真实执行未配置');
+            const runId = required(input, 'runId');
+            return operatorDispatch!.cancel({ ...scope, goalId }, runId);
+        }
+        if (path === '/api/plans/sample') {
+            if (view.goal.activePlanRevision)
+                return { status: 'already_installed' };
+            const plan = structuredClone(HAND_AUTHORED_PLAN_REVISION_FIXTURE_V1);
+            plan.goalId = goalId;
+            plan.planId = `gui-plan-${goalId}`;
+            return check(await h.applyPlan(buildApplyPlanCommand(plan, { ...deps(scope.projectId, `gui-plan-${goalId}`), goalId, expectedRevision: view.goal.aggregateRevision })));
+        }
+        if (path === '/api/tasks/run') {
+            if (!executionCapability.fixtureEnabled)
+                throw Error('真实任务请使用真实执行入口');
+            const taskId = required(input, 'taskId');
+            const claim = check(await h.claimTask(buildDispatchClaimCommand({ ...deps(scope.projectId, `gui-claim-${goalId}-${taskId}`), goalId, taskId, attemptId: `gui-attempt-${taskId}`, runId: `gui-run-${taskId}`, roleBinding: { schemaVersion: 1, bindingId: `gui-fixture-${taskId}`, templateId: 'gui-fixture', templateRevision: '1', bindingVersion: 1, policyRevision: 'fixture-only-v1' }, declaredPermissions: { tools: ['read'], writeScope: [] }, budget: { tokenBudget: 10000, deadline: '2099-01-01T00:00:00.000Z' } })));
+            return { claim, drive: await (runtimeDispatch ?? { drive: h.drive }).drive({ reason: 'local-gui' }) };
+        }
+        if (path === '/api/queries') {
+            if (!executionCapability.fixtureEnabled)
+                throw Error('此真实任务请查看运行记录；带来源的查询请使用新版工作台的真实只读查询入口，不返回测试回答');
+            const id = required(input, 'requestId');
+            const graph = await h.planGraph({ projectId: scope.projectId, goalId });
+            if (graph.status !== 'ready')
+                throw new Error('请先安装计划，为查询提供任务来源');
+            const focusTaskId = input['focusTaskId'];
+            if (focusTaskId !== undefined && (typeof focusTaskId !== 'string' || !graph.graph.tasks.some(task => task.taskId === focusTaskId)))
+                throw new Error('查询的任务不属于当前目标');
+            const focusTaskRefs = graph.graph.tasks.filter(task => focusTaskId === undefined || task.taskId === focusTaskId).map(task => ({ aggregateType: 'Task' as const, projectId: scope.projectId, goalId, taskId: task.taskId }));
+            const result = check(await h.submitQueryJob({ schemaVersion: 1, commandType: 'SubmitQueryJob', ...deps(scope.projectId, id), identity: { projectId: scope.projectId, actor: { kind: 'human' as const, id: 'local-gui' }, idempotencyKey: id }, aggregateId: id, expectedRevision: 0, payload: { runId: 'run-' + id, intent: { schemaVersion: 1, intentId: id, ...scope, goalId, question: required(input, 'question'), focusTaskRefs, budget: { maxTokens: 1000, deadline: null }, multiTurn: { maxRounds: 1 }, correlationId: id } } }));
+            return { result, drive: await h.driveQuery({ reason: 'local-gui' }) };
+        }
+        throw new Error('未知操作');
+    }
+    function resumePendingReviews() {
+        if (!real || !verifications || closing) return;
+        const restored = new Set<string>();
+        for (const record of real.runtime.observations.all()) {
+            if (!scopes.some(scope => scope.projectId === record.spec.projectId && scope.workspaceId === record.spec.workspaceId))
+                continue;
+            for (const review of verifications.forRun(record.spec).reviews) {
+                const key = canonicalJson([review.scope, review.requestId]);
+                if (restored.has(key) || ['settled', 'assessment_rejected', 'work_rejected'].includes(review.phase))
+                    continue;
+                restored.add(key);
+                const work = reviewRecoveryWake.request(key, async () => { await verifications!.resumeReview(review.scope, { requestId: review.requestId })
+                    .then(result => launchReview(result.review))
+                    // 恢复路径同样是"审阅结论已归约"的收口，触发条件与在线路径一致。
+                    .then(async () => { await triggerRework(review.scope, review.scope.goalId); })
+                    .finally(project); });
+                background.add(work);
+                void work.finally(() => background.delete(work)).catch(() => { });
+            }
+        }
+    }
+    resumePendingReviews();
+    // Reconstruct post-Run work from durable observations. Existing Query/round
+    // identities replay; uncertain runtime/tool outcomes are never restarted.
+    if(real) {
+      const recovery=(async()=>{
+        void dispatchWake.request('architecture-restart');
+        for(const choice of await feedbackDecisionMaterials.recordedChoices()) {
+          try {
+            const applied=await feedbackDecisions.choose(choice.scope,choice.answerRef,choice.optionId);
+            await feedbackCompiler?.requestDecision(applied.sourceJob,applied.decisionRef);
+          }
+          catch(error) {console.error('人的决定投递待处理：'+choice.decisionRef.decisionId+': '+String(error));}
+        }
+        const recoveredGoals=new Map<string,{scope:Scope;goalId:string}>();
+        try { await terminalContinuation.scan(); }
+        catch (error) { console.error('运行后续对账待处理：' + String(error)); }
+        // Goals with an accepted revision need no surviving runtime observation.
+        for (const scope of scopes) for (const goalId of await catalog.goals(scope))
+          recoveredGoals.set(canonicalJson([scope.projectId, scope.workspaceId, goalId]), { scope, goalId });
+        await Promise.all([...recoveredGoals.values()].map(item => triggerRework(item.scope, item.goalId)));
+        await project();
+        advancePlanning();
+      })();
+      background.add(recovery);void recovery.finally(()=>background.delete(recovery)).catch(()=>{});
+    } else advancePlanning();
+    // Periodic wake is only a liveness aid: catalog, QueryJobs and accepted plans
+    // are durable. One lost HTTP/event wake must not require a process restart.
+    const recoveryTimer = real ? setInterval(() => {
+        if (closing) return;
+        void dispatchWake.request('durable-periodic-scan').catch(() => {});
+        resumePendingReviews();
+        advancePlanning();
+        const scan = Promise.all(scopes.map(async scope => {
+            for (const goalId of await catalog.goals(scope)) await triggerRework(scope, goalId);
+        })).then(() => {});
+        background.add(scan);
+        void scan.catch(error => console.error('持久扫描待重试：' + String(error)))
+            .finally(() => background.delete(scan));
+    }, 30_000) : undefined;
+    recoveryTimer?.unref();
+    releaseInit();
+    releasePlatformInit();
+    return { scopes, registerScope: (scope: Scope & { bindingDigest?: string }) => serial(async () => {
+            if (!scopes.some(item => item.projectId === scope.projectId))
+                throw Error('项目尚未登记');
+            const loaded = await h.ledger.load({ aggregateType: 'Project', projectId: scope.projectId });
+            if (loaded.status !== 'found')
+                throw Error('项目不存在');
+            const id = 'workspace-register-' + scope.workspaceId;
+            check(await h.control.registerWorkspace({ schemaVersion: 1, commandType: 'RegisterWorkspace', commandId: id, identity: { projectId: scope.projectId, actor: { kind: 'human' as const, id: 'local-gui' }, idempotencyKey: id }, workspaceId: scope.workspaceId, bindingDigest: scope.bindingDigest!, expectedProjectRevision: loaded.snapshot.revision, correlationId: id, submittedAt: now() }));
+            if (!scopes.some(item => item.projectId === scope.projectId && item.workspaceId === scope.workspaceId))
+                scopes.push({ projectId: scope.projectId, workspaceId: scope.workspaceId });
+            await project();
+        }), state: (input: Record<string, unknown>, signal?: AbortSignal) => serial(() => state(input, signal)),
+        queryApplicability: async (input: Record<string, unknown>, signal?: AbortSignal) => {
+            if (closing) throw Error('服务正在关闭');
+            const controller = new AbortController();
+            signal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+            let finish!: () => void;
+            applicabilityReads.set(controller, new Promise<void>(resolve => { finish = resolve; }));
+            try {
+            signal?.throwIfAborted();
+            const scope = scopeOf(input), queryJobId = String(input['queryJobId'] ?? ''), answerId = String(input['answerId'] ?? '');
+            const result = (status: 'current' | 'not_current' | 'stale' | 'unavailable', reason?: string) => ({ status, queryJobId, answerId, observedAt: now(), observedCursor: h.observedCursor(), ...(reason ? { reason } : {}) });
+            const before = await h.queryJobView({ ...scope, queryJobId });
+            signal.throwIfAborted();
+            if (before.status !== 'ready' || before.job.goalId !== input['goalId'] || before.currentAnswer?.answerId !== answerId || !querySources)
+                return result('unavailable', 'The selected answer is not available in this scope.');
+            // This observation does not occupy the state/command serial queue and
+            // never grants permission to publish, execute or accept material.
+            const checked = await querySources.currentness(scope.projectId, scope.workspaceId, { queryJobId, runId: before.currentAnswer.runRef.runId, ...(signal ? { signal } : {}) });
+            signal?.throwIfAborted();
+            const after = await h.queryJobView({ ...scope, queryJobId });
+            signal.throwIfAborted();
+            if (after.status !== 'ready' || canonicalJson(after) !== canonicalJson(before)) return result('stale', 'Answer changed during applicability observation.');
+            return result(checked.get(queryJobId) === true && !after.stale ? 'current' : 'not_current');
+            } finally { applicabilityReads.delete(controller); finish(); }
+        }, memoryRead: memory.read,memorySourceCurrent:memory.sourceCurrent,
+        action: (path: string, input: Record<string, unknown>) => {
+            if (closing)
+                return Promise.reject(Error('服务正在关闭'));
+            if (['/api/real/verifications/rounds/start', '/api/real/verifications/rounds/resume', '/api/real/verifications/verify', '/api/real/feedback/choose'].includes(path)) {
+                // Verification owns request/round concurrency and Control owns leases.
+                // Keep reads available while tools run; shutdown still waits for them.
+                const work = action(path, input).then(async (result) => {
+                    await serial(project);
+                    // 验证结论被接纳并归约之后，由组合根（不是 VerificationEngine）触发自动返工。
+                    try {
+                        await triggerRework(scopeOf(input), required(input, 'goalId'));
+                    }
+                    catch (error) {
+                        console.error('自动返工触发前置检查失败：' + String(error));
+                    }
+                    return result;
+                });
+                background.add(work);
+                void work.finally(() => background.delete(work)).catch(() => { });
+                return work;
+            }
+            return serial(async () => { const result = await action(path, input); await project(); return result; });
+        },
+        close: async () => {
+            closing = true;
+            // Stop new capture work and cancel in-flight capture before the ledger closes.
+            serviceStop.abort(new Error('服务正在关闭'));
+            // An earlier close failure must not skip the remaining resources; every parallel
+            // group is awaited to completion and the first failure is reported at the end.
+            const failures: unknown[] = [];
+            const attempt = async (work: () => unknown) => { try { await work(); } catch (error) { failures.push(error); } };
+            const settleAll = async (work: readonly Promise<unknown>[]) => {
+                const results = await Promise.allSettled(work);
+                const rejected = results.find(result => result.status === 'rejected');
+                if (rejected?.status === 'rejected') throw rejected.reason;
+            };
+            await attempt(async () => { for (const controller of applicabilityReads.keys()) controller.abort(new Error('服务正在关闭')); await settleAll([...applicabilityReads.values()]); });
+            if (recoveryTimer) clearInterval(recoveryTimer);
+            // Accepted queued actions can still register work. Drain them first,
+            // then await derived work without holding the projection queue.
+            await attempt(() => serial(async () => { }));
+            await attempt(() => answerAudits?.close());
+            await attempt(() => realQueries?.close());
+            await attempt(() => settleAll([planningWake.close(), reworkWake.close(), reviewRecoveryWake.close(), terminalContinuation.close()]));
+            await attempt(() => dispatchWake.close());
+            await attempt(async () => { while (background.size) await Promise.allSettled([...background]); });
+            // Reject new capture calls, wait for in-flight capture to leave, then close the ledger.
+            await attempt(() => workspaceHandle?.close());
+            await attempt(() => serial(() => h.close()));
+            if (failures.length) throw failures[0];
+        } };
+}
+// Preserve the original two-project ledger. Each added project gets its own store:
+// WorkspaceBootstrap is intentionally an only-if-empty command, not a registry API.
+export async function createGuiService(dir: string, initialScopes: Scope[] = [], real?: RealOptions) {
+    const applicabilityStop = new AbortController();
+    const scopes: Scope[] = ['acceptance-alpha', 'acceptance-beta'].map(projectId => ({ projectId, workspaceId: 'workspace-main' }));
+    const services = new Map<string, Awaited<ReturnType<typeof createScopedGuiService>>>();
+    const profileMemory = await createProfileMemory(dir,async projectId=>services.get(projectId)?.memoryRead({kind:'project',projectId})??{status:'unavailable',reason:'Unknown source project'},real?.clock??(()=>new Date().toISOString()),
+      async(projectId,entry,chain)=>services.get(projectId)?.memorySourceCurrent(projectId,entry,chain)??'unavailable');
+    let primary: Awaited<ReturnType<typeof createScopedGuiService>>;
+    const initCleanup = createInitCleanup();
+    try { primary=await createScopedGuiService(dir,[...scopes],true,real,profileMemory,initCleanup); }
+    catch(error){
+        // Cleanup failures must not replace the original initialization error.
+        await initCleanup.drain();
+        await profileMemory.close().catch(() => { });
+        throw error;
+    }
+    for(const scope of scopes)services.set(scope.projectId,primary);
+    let queue: Promise<unknown> = Promise.resolve();
+    async function addProject(scope: Scope & { bindingDigest?: string }) {
+        if (scopes.some(item => item.projectId === scope.projectId && item.workspaceId === scope.workspaceId))
+            return;
+        const existing = services.get(scope.projectId);
+        if (existing) {
+            if (!scope.bindingDigest)
+                throw Error('新增工作区需要实际目录绑定');
+            await existing.registerScope({ ...scope, bindingDigest: scope.bindingDigest });
+            scopes.push({ projectId: scope.projectId, workspaceId: scope.workspaceId });
+            return;
+        }
+        let service: Awaited<ReturnType<typeof createScopedGuiService>>;
+        try { service = await createScopedGuiService(resolve(dir, 'projects', encodeURIComponent(scope.projectId)), [scope], false, real,profileMemory,initCleanup); }
+        catch (error) { await initCleanup.drain(); throw error; }
+        services.set(scope.projectId, service);
+        scopes.push({ ...scope });
+    }
+    function serviceFor(input: Record<string, unknown>) {
+        if (!scopes.some(s => s.projectId === input['projectId'] && s.workspaceId === input['workspaceId']))
+            throw Error('未知项目或工作区');
+        return services.get(String(input['projectId']))!;
+    }
+    try {
+        for (const scope of initialScopes)
+            await addProject(scope);
+    }
+    catch (error) {
+        // Best-effort cleanup of everything already owned; the initialization error wins.
+        await Promise.allSettled([...new Set(services.values())].map(service => service.close()));
+        await initCleanup.drain();
+        await profileMemory.close().catch(() => { });
+        throw error;
+    }
+    return { scopes, addProject: (scope: Scope & { bindingDigest?: string }) => { const result = queue.then(() => addProject(scope)); queue = result.catch(() => { }); return result; },
+        /** The host's explicit execution capability, derived once at the
+         * composition root. `server.ts` serves this instead of a literal. */
+        capability: () => real
+            ? { executor: 'coding-agent', source: 'configured-runtime', fixtureEnabled: real.fixtureExecution === true }
+            : { executor: 'fixture', source: 'explicit-fixture-service', fixtureEnabled: true },
+        state: (input: Record<string, unknown>, signal?: AbortSignal) => serviceFor(input).state(input, signal),
+        queryApplicability: async (input: Record<string, unknown>, signal?: AbortSignal) => {
+            applicabilityStop.signal.throwIfAborted();
+            return serviceFor(input).queryApplicability(input, signal ? AbortSignal.any([signal, applicabilityStop.signal]) : applicabilityStop.signal);
+        },
+        action: async (path: string, input: Record<string, unknown>) => path.startsWith('/api/real/memory/profile/')?profileMemory.action(path,input):serviceFor(input).action(path, input),
+        close: async () => {
+            applicabilityStop.abort(new Error('服务正在关闭'));
+            const failures: unknown[] = [];
+            try { await queue; } catch (error) { failures.push(error); }
+            // Every owned service is awaited to completion, then the profile store closes;
+            // a failure in one must not skip the remaining resources.
+            for (const result of await Promise.allSettled([...new Set(services.values())].map(service => service.close())))
+                if (result.status === 'rejected') failures.push(result.reason);
+            try { await profileMemory.close(); } catch (error) { failures.push(error); }
+            if (failures.length) throw failures[0];
+        } };
+}

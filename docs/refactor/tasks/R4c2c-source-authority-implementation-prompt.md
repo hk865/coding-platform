@@ -1,0 +1,11 @@
+W=/home/hyh001/projects/coding-platform；T=W/coding-platform/next。Astra已完成 docs/refactor/tasks/R4c2c-source-authority-skeleton-prompt.md 所定义的骨架/测试中审，当前两套新增测试已冻结，进入DSH生产实现。重新按该页路径阅读已定架构/意图/上下游/原子复用，不重复造图/SQL/codec/授权框架。只写scope两个生产文件，测试/契约/配置/脚本/Kernel和原工程只读；原地写不rename，不提交/安装/凭据/外网模型。
+
+SourceAuthority reader用注入的已装配MaterialAuthorityReads：Workspace/Run/QueryRun每次只委托一次现有load(单键readMany)，ReviewWork/QueryJobunsupported零I/O。没有events成员；既有Query发起者链仍由真实events能力承担。同步隔离完整ref，kind和必要完整键合法；禁止宽匹配/额外键歧义/输入突变改变not_found.ref；found核完整ref再返回独立副本。坏输入不可序列化/缺关键ID/读失败或抛错统一unavailable，真正缺失保持not_found，不能另开Store或复制完整领域decoder。
+
+在source-capture-access.ts将只用load的Work/资格函数依赖收窄SourceSnapshotReads；只有确实扫描原Query发起者事件的createQuerySourceCaptureFactory/resolveQueryOrigin等保留完整SourceAuthorityReads。不要给Work凑空events。load返回unavailable/unsupported时在每个现有消费路径转为同名WorkspaceResult，不折叠为not_found/forbidden；原not_found和资格失败语义保持。WorkspaceResult已支持unsupported，扩展本地rejected helper即可，不修改词表/contracts。
+
+消费Run envelope.permissions之前统一小的叶字段校验：envelope=null是无授予，仍forbidden；有envelope却permissions损坏是unavailable。实际消费tools/writeScope必须数组且每成员字符串(非字符串成员即拒绝，即使tools还含read)，policyRevision为合法字符串。不可把字符串的.includes当工具数组授权。无需复制整个TaskEnvelope validator或引入新PolicyService。字段安全检查后复用现有身份/role/workspace/starting/ended/reviewer/readGrant检查；任何失败不进入WorkspaceSandbox/文件I/O。可信测试种子running只证明既有组件，不替代正式entry。Query/Reviewer既有回归须保持，缺provider不默认允许。
+
+优先复用已有的错误类型、授权与WorkspaceAccessFactory。返回fact并不授予权限；当前starting+envelope=null必须仍可读事实但无法读源码。目标是精确Provider与已有consumer真正配合，不实现prepare、Host材料current pin、QueryOrigin新索引，不改变Run状态，不新增平台外部入口。主审将审查真实Memory/SQLite→material reader→source reader→source access→Workspace Tools链。
+
+运行 python3 tools/dsh-refactor/check.py next-source-authority、next-types、next-architecture，现source-binding-migration/来源工具回归。其他独立lane红测如实说明，禁止改只读文件求绿。完成交付真实结果、最小变化和仍未闭合的能力，停止等待主审。

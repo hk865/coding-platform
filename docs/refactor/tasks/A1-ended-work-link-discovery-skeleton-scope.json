@@ -1,0 +1,15 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/sessions/contracts.ts",
+    "coding-platform/next/src/core/work-graph/sessions/session-directory.ts",
+    "coding-platform/next/tests/work-graph/A1-session-lifecycle.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

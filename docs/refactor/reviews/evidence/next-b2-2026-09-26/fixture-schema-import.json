@@ -1,0 +1,7 @@
+{
+  "path": "coding-platform/next/tests/helpers/task-claim-fixture.ts",
+  "before": "c69f4317cbcfd11ac66f06266b1020d1a3447b5306caca89ef4f11379a7d8728",
+  "after": "b7fc7af91031a99bef881e90f69da7034473295e921c3ead0b63347b4d50c02e",
+  "owner": "Astra C1 middle review",
+  "reason": "Optional schemas on one real backend; preserve default fixture semantics"
+}

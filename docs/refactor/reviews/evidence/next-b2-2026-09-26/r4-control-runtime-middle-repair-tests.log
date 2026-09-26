@@ -1,0 +1,106 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/runtime/R4-control-runtime.test.ts (3 tests | 3 failed) 276ms
+   × keeps a pause queued through the real in-flight tool group, then pauses before the second serial group with an ack bound to the original run.paused event 148ms
+   × lets the real Kernel drain timeout produce the outcome_unknown, then keeps the unknown side effect and occupancy instead of faking a cancel 76ms
+   × records the real entered fact and pauses when a pause is submitted after begin but before the entered write, even though the Host now rejects fresh configuration 52ms
+ ❯ tests/composition/R4-control-runtime-platform.test.ts (1 test | 1 failed) 169ms
+   × cancels a real active single tool through the public controls/runtime pair, releases the original generation and keeps the no-handle/no-writer tail 169ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/composition/R4-control-runtime-platform.test.ts > cancels a real active single tool through the public controls/runtime pair, releases the original generation and keeps the no-handle/no-writer tail
+AssertionError: public runtime must deliver the public cancel to the active driver: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/composition/R4-control-runtime-platform.test.ts:163:8
+    161|     const delivered = await platform.runtime.deliverControl!(fixture.c…
+    162|     expect(delivered, 'public runtime must deliver the public cancel t…
+    163|       .toMatchObject({ status: 'ready' });
+       |        ^
+    164|     if (delivered.status !== 'ready') return;
+    165|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/runtime/R4-control-runtime.test.ts > keeps a pause queued through the real in-flight tool group, then pauses before the second serial group with an ack bound to the original run.paused event
+AssertionError: pause delivery must reach the live fixed Run: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/runtime/R4-control-runtime.test.ts:193:71
+    191|
+    192|     const delivered = await runtime.port.deliverControl!(fx.ctx, { int…
+    193|     expect(delivered, 'pause delivery must reach the live fixed Run').…
+       |                                                                       ^
+    194|     if (delivered.status !== 'ready') return;
+    195|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/runtime/R4-control-runtime.test.ts > lets the real Kernel drain timeout produce the outcome_unknown, then keeps the unknown side effect and occupancy instead of faking a cancel
+AssertionError: cancel delivery must reach the live fixed Run: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/runtime/R4-control-runtime.test.ts:281:72
+    279|
+    280|     const delivered = await runtime.port.deliverControl!(fx.ctx, { int…
+    281|     expect(delivered, 'cancel delivery must reach the live fixed Run')…
+       |                                                                        ^
+    282|     if (delivered.status !== 'ready') return;
+    283|     // A sent signal is not a proven stop: the intent stays queued whi…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/runtime/R4-control-runtime.test.ts > records the real entered fact and pauses when a pause is submitted after begin but before the entered write, even though the Host now rejects fresh configuration
+AssertionError: entered-window pause delivery must reach the live driver: expected { status: 'rejected', …(2) } to match object { status: 'ready' }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "status": "ready",
++   "status": "rejected",
+  }
+
+ ❯ tests/runtime/R4-control-runtime.test.ts:367:85
+    365|   await running.catch(() => undefined);
+    366|
+    367|   expect(deliverResult, 'entered-window pause delivery must reach the …
+       |                                                                                     ^
+    368|   if (deliverResult?.status !== 'ready') return;
+    369|   expect(intentRef, 'a committed control ref must be known').toBeDefin…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  4 failed (4)
+   Start at  22:37:04
+   Duration  2.27s (transform 934ms, setup 0ms, import 1.67s, tests 445ms, environment 0ms)
+

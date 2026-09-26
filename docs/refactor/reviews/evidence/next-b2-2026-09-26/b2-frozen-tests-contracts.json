@@ -1,0 +1,12 @@
+{
+  "coding-platform/next/tests/work-graph/B2-execution-entry.test.ts": "6a39962c34085ee8e8b6288dd8977459a0417728fee53631882c9f755c94bfe9",
+  "coding-platform/next/tests/work-graph/B2-execution-result.test.ts": "4a50bbffb3e6d8b68686a1898692e38017b708eaf1fcb4699502283423d368b7",
+  "coding-platform/next/tests/work-graph/B2-model-request.test.ts": "80f7e6219b856525a348d547a50185cd5f8c69a25f9fcf772614d7ee5cf0b819",
+  "coding-platform/next/tests/helpers/B2-execution-fixture.ts": "5940697b80c04586f5a95b07f88e1dde45fab0f666171aefafa04825b02e4177",
+  "coding-platform/next/src/contracts/dispatch.ts": "ad9a5747f1087b02b564eafb59f1e51755fae88a8b31281966cc03eaa193e1e6",
+  "coding-platform/next/src/contracts/core/task-claim.ts": "491a1b61c3a710b9d91697d8c4d51506f21b69a8d854b4c0ccbd2dce0f86ceec",
+  "coding-platform/next/src/contracts/core/prepared-execution.ts": "6d8e2e1a484c8de2e7534c187ad34c7bf065ccf0f80a848823d0bc81e3ffdb8f",
+  "coding-platform/next/src/core/work-graph/tasks/claim-contracts.ts": "301da43a901c913cb513fc98f2c2b83c6a6771f7b56313612db12326eb93b58b",
+  "coding-platform/next/src/core/work-graph/tasks/execution-entry-contracts.ts": "7596b2ad56abd279de5149c12fb1314930bdb9656ae5463f9260d8f80fa64891",
+  "coding-platform/next/src/core/work-graph/tasks/model-call-contracts.ts": "90fffacc937bad5e1acb15a858fcdccd459bce725c4a6113ca64b0eff27de718"
+}

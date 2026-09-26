@@ -1,0 +1,1761 @@
+--- a/coding-platform/next/src/core/work-graph/tasks/control-service.ts
++++ b/coding-platform/next/src/core/work-graph/tasks/control-service.ts
+@@ -20,7 +20,8 @@
+  */
+ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+ import type {
+-  ControlIntentKindV1, ControlIntentRef, ControlIntentSnapshotV1, SubmitControlInput, SubmittedControl,
++  ControlIntentKindV1, ControlIntentRef, ControlIntentSnapshotV1, ControlObservationV1,
++  SubmitControlInput, SubmittedControl,
+ } from '../../../contracts/control-intent.js';
+ import type { VersionPin } from '../../../contracts/core/identity.js';
+ import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+@@ -28,10 +29,15 @@
+ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+ import type { EncodedRecord, GoalRecordTransactionPort, PreparedCommit, StoreCommitReceipt } from '../../record-store/ports.js';
+ import {
+-  CONTROL_INTENT_EVENT_SCHEMA_VERSION, CONTROL_INTENT_SUBMITTED_EVENT_TYPE,
+-  controlIntentSubmittedEventFromEvent, decodeControlIntentSnapshot, encodeControlIntentSnapshot,
+-  encodeControlIntentSubmittedEvent, type ControlIntentSubmittedEvent,
++  CONTROL_INTENT_EVENT_SCHEMA_VERSION, CONTROL_INTENT_OBSERVED_EVENT_SCHEMA_VERSION,
++  CONTROL_INTENT_OBSERVED_EVENT_TYPE, CONTROL_INTENT_SUBMITTED_EVENT_TYPE,
++  controlIntentObservedEventFromEvent, controlIntentSubmittedEventFromEvent,
++  controlObservationProblem, decodeControlIntentSnapshot, encodeControlIntentObservedEvent,
++  encodeControlIntentSnapshot, encodeControlIntentSubmittedEvent,
++  type ControlIntentObservedEvent, type ControlIntentSubmittedEvent,
+ } from '../persistence/control-record-codecs.js';
++import { isRunExecutionHistoryV1 } from '../persistence/execution-history-codecs.js';
++import { isExecutionAuthorizationV2 } from '../persistence/execution-entry-codecs.js';
+ import {
+   bindTrustedContext, checkRunPin, isRecord, isolateWrite, loadReplayEvent, mapStoreFailure,
+   nonEmpty, sameRef,
+@@ -46,6 +52,7 @@
+ type LoadedRun = { ok: true; value: RunSnapshot } | { ok: false; rejection: CoreRejection };
+ 
+ const CONTROL_SUBMIT_PREFIX = 'r4-control-submit:';
++const CONTROL_OBSERVATION_PREFIX = 'r4-control-observation:';
+ const RUN_SNAPSHOT_SCHEMA_ID = 'RunSnapshot@1';
+ const MAX_CONTROL_REASON_BYTES = 2048;
+ 
+@@ -140,6 +147,93 @@
+     return { ok: false, rejection: unavailable('the Run read returned a different aggregate') };
+   }
+   return { ok: true, value: snapshot as unknown as RunSnapshot };
++}
++
++// -------------------------------------------------------------------------- //
++// R4.3a observation write helpers                                             //
++// -------------------------------------------------------------------------- //
++
++function isPositiveSafeInteger(value: unknown): value is number {
++  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
++}
++function recordControlObservationInputProblem(value: unknown): string | null {
++  if (!isRecord(value)) return 'a control observation requires an input object';
++  if (Object.keys(value).some(key => key !== 'intentRef' && key !== 'runRef' && key !== 'observation')) {
++    return 'the control observation carries unknown fields';
++  }
++  const refProblem = controlIntentRefProblem(value['intentRef']);
++  if (refProblem !== null) return refProblem;
++  if (!isRunRef(value['runRef'])) return 'the control observation requires a complete RunRef';
++  return controlObservationProblem(value['observation']);
++}
++type CheckedObservationPins =
++  | { ok: true; intentPin: VersionPin; runPin: VersionPin }
++  | { ok: false; rejection: CoreRejection };
++function checkObservationPins(
++  expected: readonly VersionPin[], intentRef: ControlIntentRef, runRef: RunRef,
++): CheckedObservationPins {
++  if (expected.length !== 2) {
++    return { ok: false, rejection: invalid('meta.expected must contain exactly the intent and Run pins') };
++  }
++  const intentPin = expected.find(pin => sameRef(pin.ref, intentRef));
++  const runPin = expected.find(pin => sameRef(pin.ref, runRef));
++  if (intentPin === undefined || runPin === undefined || intentPin === runPin) {
++    return { ok: false, rejection: invalid('meta.expected must pin the intent and the Run without extras') };
++  }
++  if (!isPositiveSafeInteger(intentPin.revision) || !isPositiveSafeInteger(runPin.revision)) {
++    return { ok: false, rejection: invalid('the intent and Run pins must be positive safe revisions') };
++  }
++  return { ok: true, intentPin, runPin };
++}
++type LoadedIntent = { ok: true; value: ControlIntentSnapshotV1 } | { ok: false; rejection: CoreRejection };
++/** Exact intent read by its complete ref; never a scan and never a current-Run re-derivation. */
++async function readIntentRecord(records: Records, intentRef: ControlIntentRef): Promise<LoadedIntent> {
++  const key = refKeyOf(intentRef);
++  if (key === null) return { ok: false, rejection: invalid('the control intent ref is not canonicalizable JSON') };
++  let batch;
++  try { batch = await records.readMany([key]); }
++  catch (error) { return { ok: false, rejection: unavailable(`the control intent read failed: ${messageOf(error)}`) }; }
++  if (batch.status !== 'ready') return { ok: false, rejection: mapStoreFailure(batch) };
++  const record = batch.value.records.find(candidate => candidate.refKey === key);
++  if (record === undefined) {
++    return batch.value.missing.includes(key)
++      ? { ok: false, rejection: notFound('the control intent does not exist') }
++      : { ok: false, rejection: unavailable('the control intent key was neither returned nor missing') };
++  }
++  const decoded = decodeControlIntentSnapshot(record);
++  if (decoded.status !== 'decoded') {
++    return { ok: false, rejection: unavailable(`the control intent is damaged: ${decoded.reason}`) };
++  }
++  return { ok: true, value: decoded.value };
++}
++function observationStatusFor(kind: ControlObservationV1['kind']): 'applied' | 'superseded' | 'outcome_unknown' {
++  if (kind === 'terminal_without_cancel') return 'superseded';
++  if (kind === 'outcome_unknown') return 'outcome_unknown';
++  return 'applied';
++}
++
++/** Restore the exact observed snapshot from the immutable recorded event. */
++async function replayObservation(
++  records: Records,
++  receipt: Extract<StoreCommitReceipt, { status: 'committed' }>,
++  identity: string,
++  fingerprint: string,
++  actor: HostActor,
++): Promise<WriteResult<ControlIntentSnapshotV1>> {
++  const loaded = await loadReplayEvent(records, receipt);
++  if (!loaded.ok) return loaded.rejection;
++  const decoded = controlIntentObservedEventFromEvent(loaded.event);
++  if (decoded.status !== 'decoded') {
++    return unavailable(`the recorded control observation is not decodable: ${decoded.reason}`);
++  }
++  const event = decoded.value;
++  if (event.identityKey !== identity || event.fingerprint !== fingerprint) {
++    return unavailable('the recorded control observation disagrees with the request identity');
++  }
++  if (event.actor.kind !== actor.kind || event.actor.id !== actor.id) {
++    return unavailable('the recorded control observation belongs to another actor');
++  }
++  return { status: 'committed', value: event.result, replayed: true, cursor: receipt.cursor };
+ }
+ 
+ /** Restore the exact original receipt from the immutable recorded event. */
+@@ -353,17 +447,166 @@
+   }
+ 
+   /**
+-   * R4.3a stage-1 seam: the trusted observation writer exists so the Runtime can
+-   * be wired against ONE raw control service, but its transaction is not
+-   * implemented yet. It never fabricates an applied/superseded/outcome_unknown
+-   * observation and never falls back to the queued producer.
++   * The ONE trusted Runtime observation writer. It never delivers a signal and
++   * never touches the Run: it verifies the accepted intent, the current V2 entry
++   * identity and the Run's recorded history window, then commits exactly one
++   * observed snapshot plus its `ControlIntentObserved` replay event. The Run
++   * `controlState` is only read (never cleared/overwritten) and the Session,
++   * Lease and TaskAttempt are untouched.
+    */
+   async function recordControlObservation(
+-    _ctx: CoreCallContext,
+-    _request: GraphWrite<RecordControlObservationInput>,
++    ctx: CoreCallContext,
++    request: GraphWrite<RecordControlObservationInput>,
+   ): Promise<WriteResult<ControlIntentSnapshotV1>> {
+-    return { status: 'rejected', code: 'unsupported',
+-      reason: 'R4.3a recordControlObservation is not implemented in the stage-1 skeleton' };
++    const ownedCtx = bindTrustedContext(ctx);
++    if (!ownedCtx.ok) return ownedCtx.rejection;
++    const { scope, actor, signal } = ownedCtx;
++    const owned = isolateWrite(request);
++    if (!owned.ok) return owned.rejection;
++    const input = owned.input;
++    const inputProblem = recordControlObservationInputProblem(input);
++    if (inputProblem !== null) return invalid(inputProblem);
++    const { intentRef, runRef, observation } = input;
++    if (intentRef.projectId !== scope.projectId || intentRef.workspaceId !== scope.workspaceId) {
++      return forbidden('the control intent is outside the trusted Host scope');
++    }
++    if (runRef.projectId !== scope.projectId) return forbidden('the observed Run belongs to another project');
++    const checkedPins = checkObservationPins(owned.expected, intentRef, runRef);
++    if (!checkedPins.ok) return checkedPins.rejection;
++    if (signal.aborted) return cancelled('the control observation was cancelled before lookup');
++
++    let identity = '';
++    let fingerprint = '';
++    try {
++      identity = CONTROL_OBSERVATION_PREFIX + identityDigest(actor, scope.projectId, scope.workspaceId, owned.requestId);
++      fingerprint = fingerprintOf({
++        kind: 'r4-control-observation',
++        actor: { kind: actor.kind, id: actor.id },
++        intentRef, runRef, observation,
++        expected: [
++          { ref: checkedPins.intentPin.ref, revision: checkedPins.intentPin.revision },
++          { ref: checkedPins.runPin.ref, revision: checkedPins.runPin.revision },
++        ],
++      });
++    } catch {
++      return invalid('the control observation is not canonicalizable JSON');
++    }
++
++    try {
++      const lookup = await records.lookupCommit({ identityKey: identity, fingerprint });
++      if (lookup.status === 'ready') return await replayObservation(records, lookup.value, identity, fingerprint, actor);
++      if (lookup.code !== 'not_found') return mapStoreFailure(lookup);
++      if (signal.aborted) return cancelled('the control observation was cancelled during lookup');
++
++      const intentRead = await readIntentRecord(records, intentRef);
++      if (!intentRead.ok) return intentRead.rejection;
++      const intent = intentRead.value;
++      if (!sameRef(intent.ref, intentRef)) return unavailable('the control intent ref disagrees with the stored record');
++      if (!sameRef(intent.runRef, runRef)) return invalid('the observed Run disagrees with the intent Run');
++      if (intent.revision !== checkedPins.intentPin.revision) {
++        return reject('revision_conflict', 'the control intent changed since the caller read it',
++          [{ ref: intentRef, revision: intent.revision }]);
++      }
++
++      const loaded = await loadRun(deps, runRef);
++      if (!loaded.ok) return loaded.rejection;
++      const run = loaded.value;
++      if (run.workspaceSnapshot.workspaceId !== scope.workspaceId) {
++        return forbidden('the observed Run belongs to another workspace');
++      }
++      if (run.revision !== checkedPins.runPin.revision) {
++        return reject('revision_conflict', 'the Run changed since the caller read it',
++          [{ ref: run.ref, revision: run.revision }]);
++      }
++      const auth = run.executionAuthorization;
++      if (!isExecutionAuthorizationV2(auth)) {
++        return forbidden('the observed Run has no formal V2 entry authorization');
++      }
++      if (auth.consumerId !== observation.entry.consumerId
++        || auth.generation !== observation.entry.entryGeneration
++        || auth.sessionGeneration !== observation.entry.sessionGeneration) {
++        return forbidden('the observed entry identity disagrees with the Run entry binding');
++      }
++      const locator = run.executionHistory;
++      if (locator === undefined) return forbidden('the observed Run has no execution-history locator');
++      if (!isRunExecutionHistoryV1(locator)) return unavailable('the stored execution-history locator is malformed');
++      if (locator.sessionRef.projectId !== observation.history.sessionRef.projectId
++        || locator.sessionRef.sessionId !== observation.history.sessionRef.sessionId
++        || locator.kernel.adapterId !== observation.history.kernel.adapterId
++        || locator.kernel.kernelSessionId !== observation.history.kernel.kernelSessionId
++        || locator.kernel.runId !== observation.history.kernel.runId
++        || locator.kernel.turnId !== observation.history.kernel.turnId
++        || locator.startPosition !== observation.history.startPosition) {
++        return forbidden('the observation history disagrees with the Run locator');
++      }
++      // The persisted Run locator is the authority for the window; the
++      // observation must never replace it with a self-reported upper bound. A
++      // terminal window is bounded by `endPosition`, a nonterminal one by the
++      // last persisted `observedThroughPosition`, so a source from a later Turn
++      // of the same Session can never be accepted.
++      const persistedThrough = locator.endPosition ?? locator.observedThroughPosition;
++      if (observation.source.position < locator.startPosition
++        || observation.source.position > persistedThrough) {
++        return unavailable('the observation source is outside the persisted Run history window');
++      }
++      if (observation.history.observedThroughPosition > persistedThrough) {
++        return unavailable('the observation window exceeds the persisted Run history window');
++      }
++
++      // A newer canonical pointer keeps the older observation as history but
++      // marks it superseded; it never releases or rewrites the newer control.
++      const pointer = run.controlState;
++      const superseded = pointer === undefined || !sameRef(pointer.intentRef, intentRef);
++      const status = superseded ? 'superseded' : observationStatusFor(observation.kind);
++      const nextRevision = intent.revision + 1;
++      if (!Number.isSafeInteger(nextRevision)) {
++        return invalid('the control intent revision would not be a safe integer');
++      }
++      const nextSnapshot: ControlIntentSnapshotV1 = {
++        schemaVersion: intent.schemaVersion, ref: intent.ref, runRef: intent.runRef, kind: intent.kind,
++        desiredState: intent.desiredState, reason: intent.reason, requestedAt: intent.requestedAt,
++        requestedBy: intent.requestedBy, revision: nextRevision, status, observation,
++      };
++      const nowIso = deps.now();
++      const eventId = deps.eventId();
++      if (!nonEmpty(nowIso) || !nonEmpty(eventId)) {
++        return reject('unsupported', 'the injected id/clock source produced an empty value');
++      }
++      const intentRecord = encodeControlIntentSnapshot(nextSnapshot);
++      const runKey = refKeyOf(run.ref);
++      if (runKey === null) return invalid('the observed Run ref is not canonicalizable JSON');
++      const event: ControlIntentObservedEvent = {
++        eventId, eventType: CONTROL_INTENT_OBSERVED_EVENT_TYPE,
++        schemaVersion: CONTROL_INTENT_OBSERVED_EVENT_SCHEMA_VERSION, occurredAt: nowIso,
++        identityKey: identity, actor, fingerprint, result: nextSnapshot,
++      };
++      const preparedCommit: PreparedCommit = {
++        identityKey: identity, fingerprint,
++        guards: [
++          { refKey: intentRecord.refKey, expectedRevision: intent.revision },
++          { refKey: runKey, expectedRevision: run.revision },
++        ],
++        records: [intentRecord], claims: [], indexGuards: [], indexChanges: [],
++        events: [encodeControlIntentObservedEvent(event)],
++      };
++      if (signal.aborted) return cancelled('the control observation was cancelled before commit');
++      const receipt = await records.commit(preparedCommit);
++      if (receipt.status !== 'committed') return mapStoreFailure(receipt);
++      if (receipt.replayed) return await replayObservation(records, receipt, identity, fingerprint, actor);
++      return { status: 'committed', value: nextSnapshot, replayed: false, cursor: receipt.cursor };
++    } catch (error) {
++      // The commit result is genuinely unknown: only a real receipt read may
++      // recover the original snapshot; otherwise stay `unavailable`, never
++      // "did not commit" and never a second write.
++      try {
++        const lookup = await records.lookupCommit({ identityKey: identity, fingerprint });
++        if (lookup.status === 'ready') return await replayObservation(records, lookup.value, identity, fingerprint, actor);
++        if (lookup.code !== 'not_found') return mapStoreFailure(lookup);
++      } catch (readError) {
++        return unavailable(`the control observation receipt could not be read: ${messageOf(readError)}`);
++      }
++      return unavailable(`the control observation commit result is unknown: ${messageOf(error)}`);
++    }
+   }
+ 
+   return { submitControl, readControl, recordControlObservation };
+--- a/coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts
++++ b/coding-platform/next/src/core/work-graph/persistence/control-record-codecs.ts
+@@ -15,11 +15,13 @@
+  * barrier lives in `tasks/execution-entry-service.ts`.
+  */
+ import type { ActorRef } from '../../../contracts/command-event.js';
+-import type { ControlIntentSnapshotV1, SubmittedControl } from '../../../contracts/control-intent.js';
++import type { ControlIntentSnapshotV1, ControlObservationV1, SubmittedControl } from '../../../contracts/control-intent.js';
++import type { RunExecutionHistoryV1 } from '../../../contracts/core/execution-history.js';
+ import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+ import type {
+   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
+ } from '../../record-store/ports.js';
++import { isRunExecutionHistoryV1 } from './execution-history-codecs.js';
+ 
+ // -------------------------------------------------------------------------- //
+ // Schema names                                                               //
+@@ -177,10 +179,71 @@
+   return null;
+ }
+ 
++function isNonNegativeSafeInteger(value: unknown): value is number {
++  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
++}
++
++/**
++ * Pure closed-shape check for one trusted Runtime `ControlObservationV1`. It
++ * validates the observation's own history/source window; the owning Run, entry
++ * and intent identities are cross-checked against the real records by the ONE
++ * control service.
++ */
++export function controlObservationProblem(value: unknown): string | null {
++  if (!isJsonObject(value)) return 'ControlObservation must be an object';
++  if (!hasOnlyKeys(value, ['schemaVersion', 'kind', 'entry', 'history', 'source',
++    'kernelEventId', 'kernelEventSequence', 'observedAt'])) {
++    return 'ControlObservation carries unknown fields';
++  }
++  if (value['schemaVersion'] !== 1) return 'ControlObservation schemaVersion must be 1';
++  const kind = value['kind'];
++  if (kind !== 'paused' && kind !== 'cancelled' && kind !== 'terminal_without_cancel' && kind !== 'outcome_unknown') {
++    return 'ControlObservation kind is not recognized';
++  }
++  const entry = value['entry'];
++  if (!isJsonObject(entry) || !hasOnlyKeys(entry, ['consumerId', 'entryGeneration', 'sessionGeneration'])) {
++    return 'ControlObservation entry identity is incomplete';
++  }
++  if (!nonEmpty(entry['consumerId'])) return 'ControlObservation entry consumerId is required';
++  if (!isNonNegativeSafeInteger(entry['entryGeneration'])) return 'ControlObservation entryGeneration must be a non-negative safe integer';
++  if (!isNonNegativeSafeInteger(entry['sessionGeneration'])) return 'ControlObservation sessionGeneration must be a non-negative safe integer';
++  const history = value['history'];
++  if (!isRunExecutionHistoryV1(history)) return 'ControlObservation history must be a complete RunExecutionHistoryV1';
++  const source = value['source'];
++  if (!isJsonObject(source) || !hasOnlyKeys(source, ['adapterId', 'kernelSessionId', 'runId', 'turnId', 'position'])) {
++    return 'ControlObservation source must be the fixed Kernel identity with a position';
++  }
++  if (!nonEmpty(source['adapterId']) || !nonEmpty(source['kernelSessionId'])
++    || !nonEmpty(source['runId']) || !nonEmpty(source['turnId'])) {
++    return 'ControlObservation source Kernel identity is incomplete';
++  }
++  if (!isPositiveSafeInteger(source['position'])) return 'ControlObservation source position must be a positive safe integer';
++  const located = history as RunExecutionHistoryV1;
++  if (source['adapterId'] !== located.kernel.adapterId || source['kernelSessionId'] !== located.kernel.kernelSessionId
++    || source['runId'] !== located.kernel.runId || source['turnId'] !== located.kernel.turnId) {
++    return 'ControlObservation source disagrees with the observation history';
++  }
++  const position = source['position'] as number;
++  if (position < located.startPosition || position > located.observedThroughPosition) {
++    return 'ControlObservation source position is outside the observed history window';
++  }
++  if (!nonEmpty(value['kernelEventId'])) return 'ControlObservation kernelEventId is required';
++  if (!isNonNegativeSafeInteger(value['kernelEventSequence'])) {
++    return 'ControlObservation kernelEventSequence must be a non-negative safe integer';
++  }
++  if (typeof value['observedAt'] !== 'string' || !nonEmpty(value['observedAt'])
++    || !Number.isFinite(Date.parse(value['observedAt']))) {
++    return 'ControlObservation observedAt must be a legal instant';
++  }
++  return null;
++}
++
++const SNAPSHOT_ALL_KEYS: readonly string[] = ['schemaVersion', 'ref', 'revision', 'runRef', 'kind',
++  'desiredState', 'reason', 'requestedAt', 'requestedBy', 'status', 'observation'];
++
+ function controlIntentSnapshotProblem(value: unknown): string | null {
+   if (!isJsonObject(value)) return 'ControlIntentSnapshot must be an object';
+-  if (!hasOnlyKeys(value, ['schemaVersion', 'ref', 'revision', 'runRef', 'kind', 'desiredState',
+-    'status', 'reason', 'requestedAt', 'requestedBy'])) {
++  if (!hasOnlyKeys(value, SNAPSHOT_ALL_KEYS)) {
+     return 'ControlIntentSnapshot carries unknown fields';
+   }
+   if (value['schemaVersion'] !== 1) return 'ControlIntentSnapshot schemaVersion must be 1';
+@@ -191,7 +254,6 @@
+   if ((value['ref'] as UnknownRecord)['projectId'] !== (value['runRef'] as UnknownRecord)['projectId']) {
+     return 'ControlIntentSnapshot runRef is outside the intent project';
+   }
+-  if (value['revision'] !== 1) return 'ControlIntentSnapshot revision must be 1';
+   if (value['kind'] !== 'pause' && value['kind'] !== 'cancel') {
+     return 'ControlIntentSnapshot kind must be pause or cancel';
+   }
+@@ -201,14 +263,37 @@
+   if (value['kind'] === 'cancel' && value['desiredState'] !== 'cancelled') {
+     return 'ControlIntentSnapshot cancel must desire cancelled';
+   }
+-  if (value['status'] !== 'queued') return 'ControlIntentSnapshot status must be queued';
+   const reason = reasonProblem(value['reason']);
+   if (reason !== null) return reason;
+   if (typeof value['requestedAt'] !== 'string' || !nonEmpty(value['requestedAt'])
+     || !Number.isFinite(Date.parse(value['requestedAt']))) {
+     return 'ControlIntentSnapshot requestedAt must be a legal instant';
+   }
+-  return actorProblem(value['requestedBy']);
++  const actor = actorProblem(value['requestedBy']);
++  if (actor !== null) return actor;
++  const status = value['status'];
++  if (status === 'queued') {
++    if (Object.prototype.hasOwnProperty.call(value, 'observation')) {
++      return 'a queued ControlIntentSnapshot must not carry an observation';
++    }
++    if (value['revision'] !== 1) return 'ControlIntentSnapshot revision must be 1 while queued';
++    return null;
++  }
++  if (status !== 'applied' && status !== 'superseded' && status !== 'outcome_unknown') {
++    return 'ControlIntentSnapshot status must be queued, applied, superseded or outcome_unknown';
++  }
++  if (!isPositiveSafeInteger(value['revision']) || value['revision'] < 2) {
++    return 'an observed ControlIntentSnapshot revision must be at least 2';
++  }
++  const observationProblem = controlObservationProblem(value['observation']);
++  if (observationProblem !== null) return observationProblem;
++  const observationKind = (value['observation'] as UnknownRecord)['kind'];
++  if (observationKind === 'paused') {
++    if (value['kind'] !== 'pause') return 'a paused observation must belong to a pause intent';
++  } else if (value['kind'] !== 'cancel') {
++    return 'a cancelled/unknown observation must belong to a cancel intent';
++  }
++  return null;
+ }
+ 
+ function controlIntentSnapshotRecordProblem(record: EncodedRecord): string | null {
+@@ -222,7 +307,7 @@
+   if (canonicalOf(body['ref'] as object) !== record.refKey) {
+     return 'ControlIntent ref is not the outer canonical ref_key';
+   }
+-  if (record.revision !== 1) return 'ControlIntentSnapshot record revision must be 1';
++  if (!isPositiveSafeInteger(record.revision)) return 'ControlIntentSnapshot record revision must be a positive safe integer';
+   if (body['revision'] !== record.revision) {
+     return 'ControlIntentSnapshot revision disagrees with the encoded record';
+   }
+@@ -281,6 +366,10 @@
+   }
+   const intentProblem = controlIntentSnapshotProblem(submitted['intent']);
+   if (intentProblem !== null) return invalid(intentProblem);
++  const submittedIntent = submitted['intent'] as UnknownRecord;
++  if (submittedIntent['status'] !== 'queued' || submittedIntent['revision'] !== 1) {
++    return invalid('the submitted control intent must be the original queued@1 snapshot');
++  }
+   if (!isPositiveSafeInteger(submitted['runRevision'])) {
+     return invalid('control-intent runRevision must be a positive safe integer');
+   }
+@@ -292,12 +381,66 @@
+   return { status: 'decoded', value: body as unknown as ControlIntentSubmittedEvent };
+ }
+ 
++/** Encode the `ControlIntentObserved` replay event. */
++export function encodeControlIntentObservedEvent(event: ControlIntentObservedEvent): EncodedDomainEvent {
++  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
++    occurredAt: event.occurredAt, json: JSON.stringify(event) };
++}
++
++/**
++ * Decode and validate one `ControlIntentObserved` replay event. The observed
++ * result must be a real non-queued snapshot (`revision >= 2`); the observation
++ * itself is validated by the shared `controlObservationProblem`.
++ */
++export function controlIntentObservedEventFromEvent(
++  event: EncodedDomainEvent,
++): DecodeResult<ControlIntentObservedEvent> {
++  if (!isJsonObject(event)) return invalid('control-intent observed event must be an object');
++  if (event['eventType'] !== CONTROL_INTENT_OBSERVED_EVENT_TYPE) {
++    return invalid(`unexpected control-intent observed eventType ${String(event['eventType'])}`);
++  }
++  if (event['schemaVersion'] !== CONTROL_INTENT_OBSERVED_EVENT_SCHEMA_VERSION) {
++    return invalid(`expected schemaVersion ${String(CONTROL_INTENT_OBSERVED_EVENT_SCHEMA_VERSION)}, got ${String(event['schemaVersion'])}`);
++  }
++  if (!nonEmpty(event['eventId']) || !nonEmpty(event['occurredAt'])) {
++    return invalid('control-intent observed event envelope is incomplete');
++  }
++  if (typeof event['json'] !== 'string') return invalid('control-intent observed event json must be a string');
++  const body = parseObject(event['json']);
++  if (body === null) return invalid('control-intent observed event is not a JSON object');
++  if (body['eventId'] !== event['eventId']) return invalid('control-intent observed json does not match the envelope eventId');
++  if (body['eventType'] !== event['eventType']) return invalid('control-intent observed json does not match the envelope eventType');
++  if (body['schemaVersion'] !== event['schemaVersion']) return invalid('control-intent observed json does not match the envelope schemaVersion');
++  if (body['occurredAt'] !== event['occurredAt']) return invalid('control-intent observed json does not match the envelope occurredAt');
++  if (!nonEmpty(body['identityKey'])) return invalid('control-intent observed identityKey is required');
++  if (!nonEmpty(body['fingerprint'])) return invalid('control-intent observed fingerprint is required');
++  const actor = actorProblem(body['actor']);
++  if (actor !== null) return invalid(actor);
++  const result = body['result'];
++  const resultProblem = controlIntentSnapshotProblem(result);
++  if (resultProblem !== null) return invalid(resultProblem);
++  const resultRecord = result as UnknownRecord;
++  if (resultRecord['status'] === 'queued' || resultRecord['revision'] === 1) {
++    return invalid('the observed control intent must not be the queued@1 snapshot');
++  }
++  // `event.actor` is the trusted writer that actually recorded the observation;
++  // `result.requestedBy` is the original submit actor. Two legitimate Hosts may
++  // differ, so the Observed branch never forces them equal. The actor's own
++  // validity (above) and the identity/fingerprint replay checks still hold; the
++  // Submitted branch keeps its original requester equality.
++  return { status: 'decoded', value: body as unknown as ControlIntentObservedEvent };
++}
++
+ function validateControlIntentRecord(record: EncodedRecord): DecodeResult<EncodedRecord> {
+   const problem = controlIntentSnapshotRecordProblem(record);
+   return problem !== null ? invalid(problem) : { status: 'decoded', value: record };
+ }
+ function validateControlIntentEvent(event: EncodedDomainEvent): DecodeResult<EncodedDomainEvent> {
+   const decoded = controlIntentSubmittedEventFromEvent(event);
++  return decoded.status === 'decoded' ? { status: 'decoded', value: event } : decoded;
++}
++function validateControlIntentObservedEvent(event: EncodedDomainEvent): DecodeResult<EncodedDomainEvent> {
++  const decoded = controlIntentObservedEventFromEvent(event);
+   return decoded.status === 'decoded' ? { status: 'decoded', value: event } : decoded;
+ }
+ 
+@@ -313,6 +456,8 @@
+   events: [
+     { eventType: CONTROL_INTENT_SUBMITTED_EVENT_TYPE, schemaVersion: CONTROL_INTENT_EVENT_SCHEMA_VERSION,
+       validate: validateControlIntentEvent },
++    { eventType: CONTROL_INTENT_OBSERVED_EVENT_TYPE, schemaVersion: CONTROL_INTENT_OBSERVED_EVENT_SCHEMA_VERSION,
++      validate: validateControlIntentObservedEvent },
+   ],
+   lookups: [],
+ };
+--- a/coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts
++++ b/coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts
+@@ -1220,16 +1220,10 @@
+       if (kernelSource.position < history.startPosition || kernelSource.position > history.observedThroughPosition) {
+         return invalid('the entered Kernel position is outside the observed history range');
+       }
+-      const stored = await readStoredManifest(deps, facts.run);
+-      if (!stored.ok) return stored.rejection;
+-      const manifest = stored.value.manifest;
+-      const hostRole = await recheckHostRoleAdmission(deps, scopeCtx, {
+-        run: facts.run, manifestRole: manifest.role, sessionRole: facts.session.role,
+-        roleBinding: facts.run.roleBinding, permissions: manifest.permissions,
+-        hostTemplate: manifest.hostTemplate, configurationRevision: manifest.hostConfigurationRevision,
+-      });
+-      if (!hostRole.ok) return hostRole.rejection;
+-
++      // The entered fact is already-occurred evidence: it must not re-apply the
++      // fresh Host/Role/material admission gates here. authorize/begin and the
++      // model barriers keep those; this write keeps only the original permit,
++      // claim, Run/Kernel/Session/Lease identity and the real history source.
+       const compiled = compileExecutionHistoryBinding({
+         run: facts.run, session: facts.session, sessionRef: permit.claim.sessionRef,
+         kernel: kernelSource, startPosition: history.startPosition,
+@@ -1262,7 +1256,6 @@
+         { refKey: planRevisionRefKey(facts.plan.ref), expectedRevision: facts.plan.revision },
+         { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(facts.outbox.claim.sessionRef)), expectedRevision: facts.session.revision },
+         { refKey: refKeyOf(enteredLease!.ref) as string, expectedRevision: enteredLease!.revision },
+-        ...hostRole.value.roleFacts.guards,
+       ]);
+       if (!merged.ok) return merged.rejection;
+       const guards = merged.guards;
+--- a/coding-platform/next/src/core/agent-runtime/runtime.ts
++++ b/coding-platform/next/src/core/agent-runtime/runtime.ts
+@@ -85,8 +85,10 @@
+   // and driver so both share the exact same instance and its private
+   // exit/cleanup proof seam. The raw `controls` dependency is optional; without
+   // it the coordinator still exists and `deliverControl` stays unsupported.
+-  const control = createRuntimeControlCoordinator(
+-    deps.controls === undefined ? {} : { controls: deps.controls });
++  const control = createRuntimeControlCoordinator({
++    ...(deps.controls === undefined ? {} : { controls: deps.controls }),
++    sourceAuthority: deps.sourceAuthority,
++  });
+   const observation = createExecutionObservation({ ...deps, control });
+   const driver = createExecutionDriver({ ...deps, observation, control });
+   const queryPreparation = createQueryPreparation(deps);
+--- a/coding-platform/next/src/core/agent-runtime/execution-driver.ts
++++ b/coding-platform/next/src/core/agent-runtime/execution-driver.ts
+@@ -12,12 +12,14 @@
+ import type { CoreCallContext } from '../../contracts/core/call-context.js';
+ import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
+ import type { PreparedTaskExecution } from '../../contracts/core/prepared-execution.js';
+-import type { RunRef, RuntimeInputBindingV1 } from '../../contracts/dispatch.js';
++import type { RunRef, RunSnapshot, RuntimeInputBindingV1 } from '../../contracts/dispatch.js';
+ import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
+ import type { SessionRef } from '../../contracts/core/identity.js';
+ import type { GoalRef, WorkspaceRef } from '../../contracts/ledger.js';
+ import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
+-import type { HookPort, SqliteStores, ToolCall, ToolDefinition, WorkspaceSandbox } from '../../../vendor/coding-agent/dist/public-api.js';
++import type {
++  HookPort, SqliteStores, ToolCall, ToolDefinition, ToolGroupBarrier, WorkspaceSandbox,
++} from '../../../vendor/coding-agent/dist/public-api.js';
+ import { runObservedModel } from './observed-model-run.js';
+ import type { SourceToolOptions } from './exploration-tools.js';
+ import type { RuntimeSourceCaptureFactory } from './source-tool-ports.js';
+@@ -31,7 +33,7 @@
+ import type { SessionMailboxPort } from '../work-graph/communication/contracts.js';
+ import type { PlanTaskPort } from '../work-graph/tasks/plan-contracts.js';
+ import type { ExecutionObservationService } from './execution-observation.js';
+-import type { RuntimeControlCoordinator } from './execution-control.js';
++import type { RuntimeControlCoordinator, RuntimeControlHandle } from './execution-control.js';
+ import type {
+   ExecutionEntryPort, KernelExecutionBinding, KernelObservationSource, ObservedExecutionHistory, TaskEntryPermit,
+ } from '../work-graph/tasks/execution-entry-contracts.js';
+@@ -192,6 +194,10 @@
+       const owned = ownContext(ctx);
+       if (owned === null) return rejected('invalid', 'the call context cannot be isolated from the caller');
+       const signal = owned.signal;
++      // The ONE internal control coordinator shared with the observer. A local
++      // const keeps the optional narrowing stable inside the hook/barrier
++      // closures below.
++      const control = deps.control;
+       if (signal.aborted) return rejected('cancelled', 'the start was cancelled before the prepared body was re-read');
+       const rawPrepared: PreparedTaskExecution | undefined = request?.prepared;
+       const rawRunRef: RunRef | undefined = rawPrepared?.claim?.runRef;
+@@ -413,6 +419,33 @@
+         ? { version: 1 as const, mode: 'current_turn' as const }
+         : { version: 1 as const, mode: 'session_history' as const, throughPosition: boundary.position };
+ 
++      // R4.3a: the ONE independent live handle for this fixed Run identity. The
++      // caller signal is linked to this own controller so a caller cancel stops
++      // the Kernel, but a control cancel aborts only this controller. The
++      // entered-fact reads and the post-run reconciliation use their own signal,
++      // so a cancel never erases an already-occurred fact.
++      const controller = new AbortController();
++      const abortFromCaller = (): void => {
++        try { controller.abort(owned.signal.reason); } catch { /* an already-aborted controller is fine */ }
++      };
++      if (owned.signal.aborted) abortFromCaller();
++      else owned.signal.addEventListener('abort', abortFromCaller, { once: true });
++      const internalSignal = new AbortController().signal;
++      // The same finishing context for every already-occurred fact write, its
++      // receipt recovery and its revision-conflict re-read: a caller cancel must
++      // never erase real evidence that already happened.
++      const finishing: CoreCallContext = { ...owned, signal: internalSignal };
++      let settleDone!: () => void;
++      const done = new Promise<void>((resolve) => { settleDone = resolve; });
++      const handle: RuntimeControlHandle = {
++        runRef, done, controller,
++        entry: { consumerId: refreshedPermit.consumerId, entryGeneration: refreshedPermit.entryGeneration,
++          sessionGeneration: refreshedPermit.claim.generation },
++        kernel: { ...kernelBinding },
++        kernelExited: false,
++      };
++      control?.register(handle);
++
+       const readOnly = manifest.permissions.writeScope.length === 0;
+       let enteredFailure: CoreRejection | undefined;
+       let enteredDone = false;
+@@ -424,7 +457,9 @@
+           if (!enteredDone) {
+             let tail;
+             try {
+-              tail = await readTurnTail(record.session.kernel.adapterId, record.session.kernel.kernelSessionId, kernelBinding, boundary.cursor === null ? 0 : boundary.position, signal);
++              // An already-occurred fact read uses the internal signal: a caller
++              // or control cancel must not erase the real entered evidence.
++              tail = await readTurnTail(record.session.kernel.adapterId, record.session.kernel.kernelSessionId, kernelBinding, boundary.cursor === null ? 0 : boundary.position, internalSignal);
+             } catch (error) {
+               enteredFailure = rejected('unavailable', `the Kernel Turn tail could not be read: ${messageOf(error)}`);
+               return shouldPause('entered source unavailable');
+@@ -434,15 +469,56 @@
+               observedThroughPosition: tail.position, endPosition: null,
+             };
+             const kernelSource: KernelObservationSource = { ...kernelBinding, position: tail.position };
+-            let entered;
+-            try {
+-              entered = await deps.entry.recordExecutionEntered(owned, {
+-                input: { permit: refreshedPermit, enteredAt: deps.now(), kernelSource, history },
+-                meta: { requestId: `b2-entered:${requestId}`, expected: [{ ref: runRef, revision: currentRevision }] },
+-              });
+-            } catch (error) {
+-              enteredFailure = rejected('unavailable', `recording the runtime entry failed: ${messageOf(error)}`);
+-              return shouldPause('entered write failed');
++            // The entered fact is fixed once per Turn: the SAME request content
++            // (requestId/enteredAt/source/history) is reused across recovery and
++            // pin retries, so a lost response is reconciled, never duplicated.
++            const enteredAt = deps.now();
++            const callEntered = async (expectedRevision: number): Promise<WriteResult<RunSnapshot>> => {
++              const enteredRequest = {
++                input: { permit: refreshedPermit, enteredAt, kernelSource, history },
++                meta: { requestId: `b2-entered:${requestId}`, expected: [{ ref: runRef, revision: expectedRevision }] },
++              };
++              try {
++                return await deps.entry.recordExecutionEntered(finishing, enteredRequest);
++              } catch (error) {
++                // A thrown/lost response is an UNKNOWN result: re-query the exact
++                // same request once so the receipt-first replay restores a commit
++                // whose acknowledgement was lost, instead of fabricating "did not
++                // commit". An explicit returned rejection is a real outcome and is
++                // never retried here.
++                try { return await deps.entry.recordExecutionEntered(finishing, enteredRequest); }
++                catch (retryError) {
++                  return rejected('unavailable', `recording the runtime entry failed: ${messageOf(retryError)}`);
++                }
++              }
++            };
++            let entered = await callEntered(currentRevision);
++            if (entered.status === 'rejected' && entered.code === 'revision_conflict') {
++              // A control write advanced the Run after begin. Re-read the SAME
++              // entering binding and retry the original fact with the new pin;
++              // never guess a new authorization revision or consumer/generation.
++              let reread;
++              try { reread = await deps.executions.readExecution(finishing, runRef); }
++              catch (error) {
++                enteredFailure = rejected('unavailable', `the entered retry could not re-read the Run: ${messageOf(error)}`);
++                return shouldPause('entered retry failed');
++              }
++              if (reread.status !== 'ready') {
++                enteredFailure = mapRead(reread);
++                return shouldPause('entered retry failed');
++              }
++              const currentRun = reread.value.run;
++              const retryAuth = currentRun.executionAuthorization;
++              const sameEntering = retryAuth !== undefined && 'schemaVersion' in retryAuth
++                && retryAuth.schemaVersion === 2 && retryAuth.phase === 'entering'
++                && retryAuth.consumerId === refreshedPermit.consumerId
++                && retryAuth.generation === refreshedPermit.entryGeneration
++                && retryAuth.inputDigest === refreshedPermit.inputDigest;
++              if (!sameEntering || currentRun.revision === currentRevision) {
++                enteredFailure = rejected('revision_conflict', 'the entering binding moved while retrying the entered fact');
++                return shouldPause('entered retry rejected');
++              }
++              entered = await callEntered(currentRun.revision);
+             }
+             if (entered.status !== 'committed') {
+               enteredFailure = mapWrite(entered);
+@@ -464,6 +540,12 @@
+               return shouldPause('deadline passed');
+             }
+           }
++          // R4.3a: after the real entered fact and deadline, the before_model
++          // safe point reads the CURRENT canonical Run control pointer and
++          // pauses when the accepted intent asks for it. A missing/unknown fact
++          // fails closed instead of continuing from a cache.
++          const decision = control === undefined ? { kind: 'continue' as const } : await control.decide(owned, runRef);
++          if (decision.kind === 'pause') return shouldPause('R4.3a control pause requested');
+           return { point: 'before_model', kind: 'continue' };
+         },
+       };
+@@ -536,38 +618,68 @@
+         );
+       }
+ 
+-      try {
+-        await runObservedModel({
+-          kernel: deps.kernel, bound: hostConfig.model, meter, root: rootResolved.value.root, databasePath: location.databasePath,
+-          sessionId: record.session.kernel.kernelSessionId, input: manifest.input, budget: hostConfig.budget, readOnly,
+-          taskBudget: record.run.budget, sessionContext, executionIdentity: { runId: kernelBinding.runId, turnId: kernelBinding.turnId },
+-          now: deps.now, signal, deniedPrefixes: hostConfig.deniedPrefixes, modelCalls, manifestDigest: bundleRef.digest,
+-          allowedTools: builtinTools,
+-          ...(coordinationTools === null ? {} : { coordinationTools }),
+-          // The file path check is only installed when `read` is actually
+-          // granted; an ungranted builtin read is rejected by the Kernel as an
+-          // unknown tool and must never open the source read policy.
+-          controlHooks: hasFileRead ? [enteredHook, toolPathHook] : [enteredHook],
+-          skills: hostConfig.skills,
+-          ...(hostConfig.systemInstruction === null ? {} : { systemInstruction: hostConfig.systemInstruction }),
+-          processSandboxOptions: hostConfig.processSandboxOptions,
+-          ...(sourceTools === undefined ? {} : { sourceTools }),
+-          ...(sourceFactory === undefined ? {} : { projectSource: { mode: 'frozen' as const, open: sourceFactory, openOn: 'first_use' as const } }),
+-          publish: async () => { /* best-effort live events are never terminal evidence */ },
+-        });
+-      } catch (error) {
+-        // A model/provider failure is reconciled from the genuine history below;
+-        // it is never interpreted as a terminal by itself.
+-        if (error instanceof RuntimeModelCallRejected) {
+-          enteredFailure ??= rejected(error.code, error.message);
++      // R4.3a real tool-group safe point: it reads the CURRENT canonical Run and
++      // the accepted control intent. A cancel aborts this handle's own
++      // controller; a pause is committed by the Kernel at this real boundary.
++      const toolGroupBarrier: ToolGroupBarrier | undefined = control === undefined ? undefined
++        : async (invocation) => {
++            if (invocation.runId !== kernelBinding.runId || invocation.turnId !== kernelBinding.turnId) {
++              return { kind: 'pause' };
++            }
++            return control.decide(owned, runRef);
++          };
++
++      try {
++        try {
++          await runObservedModel({
++            kernel: deps.kernel, bound: hostConfig.model, meter, root: rootResolved.value.root, databasePath: location.databasePath,
++            sessionId: record.session.kernel.kernelSessionId, input: manifest.input, budget: hostConfig.budget, readOnly,
++            taskBudget: record.run.budget, sessionContext, executionIdentity: { runId: kernelBinding.runId, turnId: kernelBinding.turnId },
++            now: deps.now, signal: controller.signal, deniedPrefixes: hostConfig.deniedPrefixes, modelCalls, manifestDigest: bundleRef.digest,
++            allowedTools: builtinTools,
++            ...(coordinationTools === null ? {} : { coordinationTools }),
++            // The file path check is only installed when `read` is actually
++            // granted; an ungranted builtin read is rejected by the Kernel as an
++            // unknown tool and must never open the source read policy.
++            controlHooks: hasFileRead ? [enteredHook, toolPathHook] : [enteredHook],
++            skills: hostConfig.skills,
++            ...(hostConfig.systemInstruction === null ? {} : { systemInstruction: hostConfig.systemInstruction }),
++            processSandboxOptions: hostConfig.processSandboxOptions,
++            ...(sourceTools === undefined ? {} : { sourceTools }),
++            ...(sourceFactory === undefined ? {} : { projectSource: { mode: 'frozen' as const, open: sourceFactory, openOn: 'first_use' as const } }),
++            ...(toolGroupBarrier === undefined ? {} : { toolGroupBarrier }),
++            // The cleanup proof is published by the ONE existing finally after
++            // every owned resource was attempted and awaited. It is a private
++            // handle fact, never a public ack.
++            onResourcesClosed: (result) => { handle.resourcesClosed = result; },
++            // The two proofs stay separate: `kernelExited` fires synchronously
++            // from the real Kernel return/throw, before any owned cleanup;
++            // `resourcesClosed` fires after every owned resource was attempted
++            // and awaited. Neither is forwarded to the Kernel/model.
++            onKernelExited: () => { handle.kernelExited = true; },
++            publish: async () => { /* best-effort live events are never terminal evidence */ },
++          });
++        } catch (error) {
++          // A model/provider failure is reconciled from the genuine history below;
++          // it is never interpreted as a terminal by itself.
++          if (error instanceof RuntimeModelCallRejected) {
++            enteredFailure ??= rejected(error.code, error.message);
++          }
+         }
+-      }
+-      if (enteredFailure !== undefined) return enteredFailure;
+-      // A genuine persisted terminal must still be recorded after a user
+-      // cancellation; the reconcile uses a platform-internal cleanup signal,
+-      // never the already-aborted caller signal, and never a best-effort hook.
+-      const reconcileSignal = new AbortController().signal;
+-      return deps.observation.observe({ ...owned, signal: reconcileSignal }, { runRef });
++        // The already-occurred fact is reconciled along the ORIGINAL observer
++        // even when the fresh action failed or the caller cancelled: the concrete
++        // failure is chosen only after that reconciliation, never by skipping it.
++        // The reconcile uses a platform-internal cleanup signal, never the
++        // already-aborted caller signal, and never a best-effort hook.
++        const reconcileSignal = new AbortController().signal;
++        const reconciled = await deps.observation.observe({ ...owned, signal: reconcileSignal }, { runRef });
++        if (enteredFailure !== undefined) return enteredFailure;
++        return reconciled;
++      } finally {
++        handle.settled = true;
++        settleDone();
++        owned.signal.removeEventListener('abort', abortFromCaller);
++      }
+     },
+   };
+ 
+--- a/coding-platform/next/src/core/agent-runtime/execution-observation.ts
++++ b/coding-platform/next/src/core/agent-runtime/execution-observation.ts
+@@ -11,9 +11,11 @@
+  * nothing to release and the current record is returned unchanged.
+  */
+ import type { CoreCallContext } from '../../contracts/core/call-context.js';
++import type { VersionPin } from '../../contracts/core/identity.js';
+ import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
++import type { ControlIntentRef, ControlObservationV1 } from '../../contracts/control-intent.js';
+ import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
+-import type { RunRef, RuntimeEventV1 } from '../../contracts/dispatch.js';
++import type { ExecutionAuthorizationV2, RunRef, RuntimeEventV1 } from '../../contracts/dispatch.js';
+ import { canonicalJson } from '../../contracts/fingerprint.js';
+ import {
+   assertTranscriptExchangeIntegrity, createInitialRunState, reduceRunState,
+@@ -31,7 +33,7 @@
+ 
+ export type ExecutionObservationDependencies = Pick<RuntimeExecutionDependencies,
+   | 'entry' | 'historyWriter' | 'executions' | 'graphHistory' | 'activity' | 'sessionOperations'
+-  | 'kernelStores' | 'host' | 'kernel' | 'now' | 'newId'> & {
++  | 'kernelStores' | 'host' | 'kernel' | 'now' | 'newId' | 'controls'> & {
+   /**
+    * R4.3a: the SAME internal control coordinator the driver holds. The private
+    * exit/cleanup proof is read here before any positive pause/cancel conclusion;
+@@ -47,12 +49,26 @@
+   observe(ctx: CoreCallContext, request: ObserveTaskRunRequest): Promise<ReadResult<TaskExecutionRecord>>;
+ };
+ 
+-type CachedTurn = { startPosition: number; reducedThrough: number; state: RunState };
++type ControlSource = { position: number; eventId: string; kernelEventSequence: number };
++/** The original control-source events actually read for one Run, keyed by event
++ * type. Retained across observations so a later observe (whose incremental page
++ * is empty) can still complete a pending ack from the same real record. */
++type CachedControlSources = Partial<Record<string, ControlSource>>;
++type CachedTurn = {
++  startPosition: number;
++  reducedThrough: number;
++  state: RunState;
++  controlSources: CachedControlSources;
++};
+ /** A detected terminal whose WorkGraph commit has not yet been confirmed. The
+  * exact original event/boundary/requestId is kept so a retry (including after a
+  * lost response) reuses the same idempotency fingerprint instead of inventing a
+  * second terminal event. */
+ type PendingTerminal = { endPosition: number; requestId: string; observation: TaskResultObservation };
++/** One control-ack attempt whose commit result is unknown. The exact original
++ * observation, requestId and pinned revisions are kept so a later observe reuses
++ * the SAME idempotency fingerprint and recovers the original receipt. */
++type PendingControlAck = { observation: ControlObservationV1; requestId: string; expected: VersionPin[] };
+ type DecodedRecord = { position: number; record: KernelSessionRecord };
+ 
+ function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
+@@ -150,10 +166,222 @@
+   }
+ }
+ 
++type ControlAckKind = 'paused' | 'cancelled' | 'terminal_without_cancel' | 'outcome_unknown';
++
++function sameRef(left: unknown, right: unknown): boolean {
++  try { return canonicalJson(left as never) === canonicalJson(right as never); } catch { return false; }
++}
++function isNonNegativeInteger(value: unknown): value is number {
++  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
++}
++/**
++ * The formal Kernel transcript outcome_unknown check. An empty (already
++ * reduced) tool batch is NOT a known result: the transcript's official
++ * `tool_result` with `error.code === 'outcome_unknown'` is still the evidence.
++ * This is the ONE place that reads it; no second error interpreter exists.
++ */
++function transcriptHasOutcomeUnknown(transcript: RunState['transcript']): boolean {
++  return transcript.some(entry => entry.kind === 'tool_result'
++    && entry.result.status === 'error' && entry.result.error.code === 'outcome_unknown');
++}
++/** The original `agent.event` types that can carry an observation source. */
++const CONTROL_SOURCE_EVENT_TYPES: readonly string[] = [
++  'run.paused', 'run.cancelled', 'run.completed', 'run.failed', 'run.limit_exceeded', 'tool.outcome_unknown',
++];
++/**
++ * Collect the control-source events that were ACTUALLY read in this pass, keyed
++ * by type and filtered to this Run's fixed Turn. An event from another Turn of
++ * the same Session is never retained.
++ */
++function collectControlSources(
++  decoded: readonly DecodedRecord[], kernel: KernelExecutionBinding,
++): CachedControlSources {
++  const sources: CachedControlSources = {};
++  for (const item of decoded) {
++    if (item.record.recordType !== 'agent.event') continue;
++    const event = item.record.payload.event;
++    if (event.meta.runId !== kernel.runId || event.meta.turnId !== kernel.turnId) continue;
++    if (!CONTROL_SOURCE_EVENT_TYPES.includes(event.type)) continue;
++    if (!nonEmpty(event.meta.eventId) || !isNonNegativeInteger(event.meta.sequence)) continue;
++    sources[event.type] = { position: item.position, eventId: event.meta.eventId, kernelEventSequence: event.meta.sequence };
++  }
++  return sources;
++}
++/**
++ * The source for one ack kind. Prefer the exact events read in this pass; fall
++ * back to the retained original sources of the SAME Run/Turn when a previous
++ * public observe already reduced them and this pass only saw an empty
++ * increment. `runId`/`turnId` are filtered on BOTH paths and an ended Run is
++ * bounded to its fixed terminal window by the caller.
++ */
++function controlSourceRecord(
++  decoded: readonly DecodedRecord[],
++  cached: CachedControlSources | undefined,
++  kernel: KernelExecutionBinding,
++  kind: ControlAckKind,
++  state: RunState,
++): ControlSource | undefined {
++  const wanted = kind === 'paused' ? ['run.paused']
++    : kind === 'cancelled' ? ['run.cancelled']
++      : kind === 'outcome_unknown' ? ['tool.outcome_unknown']
++        : state.status === 'completed' ? ['run.completed']
++          : state.status === 'failed' ? ['run.failed']
++            : ['run.limit_exceeded'];
++  for (let index = decoded.length - 1; index >= 0; index -= 1) {
++    const item = decoded[index];
++    if (item === undefined || item.record.recordType !== 'agent.event') continue;
++    const event = item.record.payload.event;
++    if (event.meta.runId !== kernel.runId || event.meta.turnId !== kernel.turnId) continue;
++    if (!wanted.includes(event.type)) continue;
++    if (!nonEmpty(event.meta.eventId) || !isNonNegativeInteger(event.meta.sequence)) continue;
++    return { position: item.position, eventId: event.meta.eventId, kernelEventSequence: event.meta.sequence };
++  }
++  if (cached !== undefined) {
++    for (const type of wanted) {
++      const source = cached[type];
++      if (source !== undefined) return source;
++    }
++  }
++  return undefined;
++}
++
+ export function createExecutionObservation(deps: ExecutionObservationDependencies): ExecutionObservationService {
+   const cache = new Map<string, CachedTurn>();
+   const pendingTerminals = new Map<string, PendingTerminal>();
++  const pendingAcks = new Map<string, PendingControlAck>();
+   const owner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
++
++  /**
++   * Persist ONE real control observation from the ALREADY reduced original
++   * history. The intent association comes from the live handle that actually
++   * executed the safe point; the source event position/identity come from the
++   * original SessionRecord. The persisted Run locator is the authority for the
++   * window, and a request whose commit result was unknown keeps its exact
++   * observation/time/pins/requestId so a later observe recovers the receipt.
++   */
++  async function recordControlAck(
++    ctx: CoreCallContext,
++    runRef: RunRef,
++    auth: ExecutionAuthorizationV2,
++    sourceItem: ControlSource,
++    intentRef: ControlIntentRef,
++    kind: ControlAckKind,
++  ): Promise<void> {
++    const controls = deps.controls;
++    if (controls === undefined) return;
++    // The complete Run/intent identity keys the pending request; a serialization
++    // failure never degrades to a bare runId.
++    let ackKey: string;
++    try { ackKey = canonicalJson({ runRef, intentRef, kind } as never); }
++    catch { return; }
++    let pending = pendingAcks.get(ackKey);
++    if (pending === undefined) {
++      let current;
++      try { current = await controls.readControl(ctx, intentRef); }
++      catch { return; }
++      if (current.status !== 'ready') return;
++      // A later observation already recorded this intent: never duplicate it.
++      if (current.value.status !== 'queued') return;
++      if (!sameRef(current.value.runRef, runRef)) return;
++      let runRead;
++      try { runRead = await deps.executions.readExecution(ctx, runRef); }
++      catch { return; }
++      if (runRead.status !== 'ready') return;
++      const persisted = runRead.value.run.executionHistory;
++      if (persisted === undefined || !isRunExecutionHistoryV1(persisted)) return;
++      // The observation history is the PERSISTED window, never a self-reported
++      // one, and the already-read source must fit inside it.
++      const persistedThrough = persisted.endPosition ?? persisted.observedThroughPosition;
++      if (sourceItem.position < persisted.startPosition || sourceItem.position > persistedThrough) return;
++      const observation: ControlObservationV1 = {
++        schemaVersion: 1, kind,
++        entry: { consumerId: auth.consumerId, entryGeneration: auth.generation, sessionGeneration: auth.sessionGeneration },
++        history: {
++          schemaVersion: 1,
++          sessionRef: { projectId: persisted.sessionRef.projectId, sessionId: persisted.sessionRef.sessionId },
++          kernel: { ...persisted.kernel }, startPosition: persisted.startPosition,
++          observedThroughPosition: persistedThrough,
++          endPosition: kind === 'paused' || kind === 'outcome_unknown' ? null : persistedThrough,
++        },
++        source: { ...persisted.kernel, position: sourceItem.position },
++        kernelEventId: sourceItem.eventId, kernelEventSequence: sourceItem.kernelEventSequence, observedAt: deps.now(),
++      };
++      pending = {
++        observation,
++        requestId: `r4-control-observation:${runRef.runId}:${intentRef.intentId}:${kind}`,
++        expected: [
++          { ref: intentRef, revision: current.value.revision },
++          { ref: runRef, revision: runRead.value.run.revision },
++        ],
++      };
++      pendingAcks.set(ackKey, pending);
++    } else {
++      // A retry of the SAME unconfirmed request: its exact identity/fingerprint
++      // is preserved. Only clear it when the intent is no longer queued.
++      let current;
++      try { current = await controls.readControl(ctx, intentRef); }
++      catch { return; }
++      if (current.status !== 'ready' || current.value.status !== 'queued'
++        || !sameRef(current.value.runRef, runRef)) {
++        pendingAcks.delete(ackKey);
++        return;
++      }
++    }
++    for (let attempt = 0; attempt < 2; attempt += 1) {
++      let result;
++      try {
++        result = await controls.recordControlObservation(ctx, {
++          input: { intentRef, runRef, observation: pending.observation },
++          meta: { requestId: pending.requestId, expected: pending.expected },
++        });
++      } catch {
++        // Unknown commit result: keep the exact pending request for recovery.
++        return;
++      }
++      if (result.status === 'committed') {
++        pendingAcks.delete(ackKey);
++        return;
++      }
++      // A concurrent observer may have advanced the intent/Run pin without an
++      // unknown commit; rebind the current pins and retry the SAME request once.
++      if (result.status === 'rejected' && result.code === 'revision_conflict') {
++        const refreshed = await refreshAckPins(ctx, intentRef, runRef);
++        if (refreshed === null) return;
++        pending = { ...pending, expected: refreshed };
++        pendingAcks.set(ackKey, pending);
++        continue;
++      }
++      return;
++    }
++  }
++
++  /** Rebind the current intent/Run revisions for a genuine conflict retry. */
++  async function refreshAckPins(
++    ctx: CoreCallContext, intentRef: ControlIntentRef, runRef: RunRef,
++  ): Promise<VersionPin[] | null> {
++    const controls = deps.controls;
++    if (controls === undefined) return null;
++    try {
++      const current = await controls.readControl(ctx, intentRef);
++      if (current.status !== 'ready' || current.value.status !== 'queued') return null;
++      if (!sameRef(current.value.runRef, runRef)) return null;
++      const runRead = await deps.executions.readExecution(ctx, runRef);
++      if (runRead.status !== 'ready') return null;
++      return [
++        { ref: intentRef, revision: current.value.revision },
++        { ref: runRef, revision: runRead.value.run.revision },
++      ];
++    } catch { return null; }
++  }
++
++  async function consumedIntentKind(ctx: CoreCallContext, ref: ControlIntentRef): Promise<'pause' | 'cancel' | null> {
++    const controls = deps.controls;
++    if (controls === undefined) return null;
++    try {
++      const read = await controls.readControl(ctx, ref);
++      return read.status === 'ready' ? read.value.kind : null;
++    } catch { return null; }
++  }
+ 
+   return {
+     async observe(ctx: CoreCallContext, request: ObserveTaskRunRequest): Promise<ReadResult<TaskExecutionRecord>> {
+@@ -183,11 +411,13 @@
+       // rewrite it. Run ended is not Task satisfaction. The per-Run reduction
+       // cache may only exist because an earlier terminal commit response was
+       // lost or another observer persisted it, so both local caches are dropped
+-      // here; the persistent Run locator remains the only history source.
+-      if (record.run.status === 'ended') {
++      // here; the persistent Run locator remains the only history source. A late
++      // observe may still complete a missing control ack from that locator: it
++      // never rewrites the result and never starts a model call.
++      const alreadyEnded = record.run.status === 'ended';
++      if (alreadyEnded) {
+         cache.delete(cacheKey);
+         pendingTerminals.delete(cacheKey);
+-        return { status: 'ready', value: record };
+       }
+       const locator: RunExecutionHistoryV1 | undefined = record.run.executionHistory;
+       if (locator === undefined) return { status: 'ready', value: record };
+@@ -199,8 +429,14 @@
+         return rejected('unavailable', 'the persisted locator disagrees with the claim Session mapping');
+       }
+       const auth = record.run.executionAuthorization;
+-      if (!auth || !('schemaVersion' in auth) || auth.schemaVersion !== 2 || auth.phase !== 'entered') {
+-        // No formal entered binding yet: there is no Kernel run to reconcile.
++      if (auth === undefined || !('schemaVersion' in auth) || auth.schemaVersion !== 2) {
++        // No formal V2 binding yet: there is no Kernel run to reconcile.
++        return { status: 'ready', value: record };
++      }
++      const v2Auth: ExecutionAuthorizationV2 = auth;
++      const authUsable = v2Auth.phase === 'entered' || (alreadyEnded && v2Auth.phase === 'settled');
++      if (!authUsable) {
++        // An entering/unknown binding has no reconciled Kernel history yet.
+         return { status: 'ready', value: record };
+       }
+       if (signal.aborted) return rejected('cancelled', 'the observation was cancelled before reading the history window');
+@@ -212,7 +448,10 @@
+       const decoded: DecodedRecord[] = [];
+       let expected = from + 1;
+       let cursor = from;
+-      let frozenThrough: number | null = null;
++      // An ended Run only ever re-reads its fixed terminal window; a live Run
++      // freezes the first page's throughPosition so observed growth never
++      // widens this reconciliation.
++      let frozenThrough: number | null = alreadyEnded ? (locator.endPosition ?? locator.observedThroughPosition) : null;
+       let entries: SessionHistoryEntry[] = [];
+       for (let page = 0; page < MAX_OBSERVATION_PAGES; page += 1) {
+         let window;
+@@ -250,24 +489,72 @@
+       } catch (error) {
+         return rejected('unavailable', `reducing the complete Turn failed: ${messageOf(error)}`);
+       }
+-      cache.set(cacheKey, { startPosition: locator.startPosition, reducedThrough, state });
++      const observedControlSources = collectControlSources(decoded, locator.kernel);
++      const retainedControlSources: CachedControlSources = { ...(cached?.controlSources ?? {}), ...observedControlSources };
++      cache.set(cacheKey, { startPosition: locator.startPosition, reducedThrough, state, controlSources: retainedControlSources });
++
++      // The private proof comes from the SAME coordinator/driver instance. A
++      // positive pause/cancel conclusion needs the Kernel call to have exited
++      // AND every owned resource to be closed; absent means "not proven".
++      const proof = deps.control?.proof(runRef);
++      const consumedIntentRef = proof?.consumedIntentRef;
++      const cleanProof = proof?.kernelExited === true && proof.resourcesClosed?.status === 'completed';
+ 
+       const isTerminal = state.status === 'completed' || state.status === 'failed'
+         || state.status === 'cancelled' || state.status === 'limit_exceeded';
+       if (!isTerminal) {
+         pendingTerminals.delete(cacheKey);
+-        await advanceLocator(owned, record, locator, reducedThrough);
++        // The observed window is persisted BEFORE any positive ack, so the Run
++        // locator is the durable authority the ack is checked against. A paused
++        // Turn may still hold a not-yet-started next group, so it never requires
++        // a complete transcript; it is only acknowledged after the consumed
++        // intent's live handle proves Kernel exit + cleanup.
++        if (!alreadyEnded) await advanceLocator(owned, runRef, reducedThrough);
++        if (state.status === 'paused' && consumedIntentRef !== undefined && cleanProof) {
++          const sourceItem = controlSourceRecord(decoded, cached?.controlSources, locator.kernel, 'paused', state);
++          if (sourceItem !== undefined) {
++            await recordControlAck(owned, runRef, v2Auth, sourceItem, consumedIntentRef, 'paused');
++          }
++        }
+         return { status: 'ready', value: record };
+       }
+       // A terminal status is only evidence when the complete Turn is settled,
+       // the transcript exchange pairing holds and no tool is abandoned/unknown.
+-      if (!turnIsComplete(state)) return { status: 'ready', value: record };
+-      if (state.toolBatch !== null && state.toolBatch.calls.some(call => call.status === 'abandoned' || call.status === 'outcome_unknown')) {
++      const unknownInBatch = state.toolBatch !== null
++        && state.toolBatch.calls.some(call => call.status === 'abandoned' || call.status === 'outcome_unknown');
++      const transcriptUnknown = transcriptHasOutcomeUnknown(state.transcript);
++      if (!turnIsComplete(state) || unknownInBatch || transcriptUnknown) {
++        // Keep the real unknown side effect and occupancy; record the provable
++        // unknown observation but never an applied cancellation or a release.
++        // The nonterminal window is persisted before the unknown ack.
++        if (!alreadyEnded) await advanceLocator(owned, runRef, reducedThrough);
++        if (consumedIntentRef !== undefined && cleanProof) {
++          const sourceItem = controlSourceRecord(decoded, cached?.controlSources, locator.kernel, 'outcome_unknown', state);
++          if (sourceItem !== undefined) {
++            await recordControlAck(owned, runRef, v2Auth, sourceItem, consumedIntentRef, 'outcome_unknown');
++          }
++        }
+         return { status: 'ready', value: record };
+       }
+       try {
+         assertTranscriptExchangeIntegrity(state.transcript, `b2-runtime:${runRef.runId}`);
+       } catch {
++        return { status: 'ready', value: record };
++      }
++      if (alreadyEnded) {
++        // The terminal result was already recorded by an earlier observer. Only
++        // complete the missing control ack from the fixed terminal window.
++        if (consumedIntentRef !== undefined && cleanProof) {
++          const intentKind = await consumedIntentKind(owned, consumedIntentRef);
++          const ackKind: ControlAckKind | null = intentKind === 'cancel'
++            ? (state.status === 'cancelled' ? 'cancelled' : 'terminal_without_cancel') : null;
++          if (ackKind !== null) {
++            const sourceItem = controlSourceRecord(decoded, cached?.controlSources, locator.kernel, ackKind, state);
++            if (sourceItem !== undefined) {
++              await recordControlAck(owned, runRef, v2Auth, sourceItem, consumedIntentRef, ackKind);
++            }
++          }
++        }
+         return { status: 'ready', value: record };
+       }
+       // The terminal source is the last genuine record; when a prior submission
+@@ -302,6 +589,17 @@
+         };
+         pendingTerminals.set(cacheKey, submission);
+       }
++      // The exact original submission is saved BEFORE the proof gate, so a
++      // public observe that read the terminal while owned cleanup was still in
++      // flight can retry this SAME request (same boundary/cursor/event/time)
++      // once the live proof completes; no terminal is recreated.
++      // The Kernel terminal is genuine, but when this Runtime owns the raw
++      // controls the SAME live proof gates the terminal writer and every
++      // positive ack: the Kernel call must have exited AND every owned resource
++      // must have closed. Absence/failure keeps the real occupancy.
++      if (deps.controls !== undefined && !cleanProof) {
++        return { status: 'ready', value: record };
++      }
+       let written;
+       try {
+         written = await deps.entry.recordRunResult(owned, {
+@@ -316,19 +614,41 @@
+       // reduction state, and the next observation reads the persisted Run.
+       cache.delete(cacheKey);
+       pendingTerminals.delete(cacheKey);
++      // After the real terminal is recorded (and the same generation released),
++      // the consumed intent gets its real observation. A natural
++      // completed/failed/limit keeps its outcome and only marks a queued cancel
++      // terminal_without_cancel/superseded.
++      if (consumedIntentRef !== undefined) {
++        const intentKind = await consumedIntentKind(owned, consumedIntentRef);
++        const ackKind: ControlAckKind | null = intentKind === 'cancel'
++          ? (state.status === 'cancelled' ? 'cancelled' : 'terminal_without_cancel') : null;
++        if (ackKind !== null) {
++          const sourceItem = controlSourceRecord(decoded, cached?.controlSources, locator.kernel, ackKind, state);
++          if (sourceItem !== undefined) {
++            await recordControlAck(owned, runRef, v2Auth, sourceItem, consumedIntentRef, ackKind);
++          }
++        }
++      }
+       const finalRead = await deps.executions.readExecution(owned, runRef);
+       return finalRead.status === 'ready' ? { status: 'ready', value: finalRead.value } : mapRead(finalRead);
+     },
+   };
+ 
+   /** A live observation may only persist a monotone nonterminal window; the
+-   * terminal is recorded exactly once by recordRunResult above. */
+-  async function advanceLocator(ctx: CoreCallContext, record: TaskExecutionRecord, locator: RunExecutionHistoryV1, observedThrough: number): Promise<void> {
++   * terminal is recorded exactly once by recordRunResult above. The current Run
++   * is re-read so the CAS uses the revision that is actually durable. */
++  async function advanceLocator(ctx: CoreCallContext, runRef: RunRef, observedThrough: number): Promise<void> {
++    let read;
++    try { read = await deps.executions.readExecution(ctx, runRef); }
++    catch { return; }
++    if (read.status !== 'ready') return;
++    const locator = read.value.run.executionHistory;
++    if (locator === undefined || !isRunExecutionHistoryV1(locator)) return;
+     if (observedThrough <= locator.observedThroughPosition) return;
+     try {
+       await deps.historyWriter.recordExecutionHistory(ctx, {
+-        input: { runRef: record.run.ref, kernel: { ...locator.kernel }, startPosition: locator.startPosition, observedThroughPosition: observedThrough, endPosition: null },
+-        meta: { requestId: `b2-observe:${record.run.ref.runId}:${String(observedThrough)}`, expected: [{ ref: record.run.ref, revision: record.run.revision }] },
++        input: { runRef, kernel: { ...locator.kernel }, startPosition: locator.startPosition, observedThroughPosition: observedThrough, endPosition: null },
++        meta: { requestId: `b2-observe:${runRef.runId}:${String(observedThrough)}`, expected: [{ ref: runRef, revision: read.value.run.revision }] },
+       });
+     } catch {
+       // A concurrent observer may have advanced the same monotone watermark; a
+--- a/coding-platform/next/src/core/agent-runtime/observed-model-run.ts
++++ b/coding-platform/next/src/core/agent-runtime/observed-model-run.ts
+@@ -51,6 +51,16 @@
+    */
+   onResourcesClosed?: (result: RuntimeResourceCloseResult) => void;
+   /**
++   * R4.3a internal, synchronous notification fired the moment the ONE
++   * `runCodingAgent` call actually returns or throws, BEFORE the outer finally
++   * attempts or awaits any owned-resource cleanup. It is captured before the
++   * first await and consumed only by the Trusted Host's live handle; it is
++   * never a public ack and is never forwarded to the model or Kernel. Absent
++   * keeps the existing behavior, and an initialization failure that never
++   * reached the Kernel call never fires it.
++   */
++  onKernelExited?: () => void;
++  /**
+    * Trusted Host Skill resource configuration for this model loop. When present it is the only
+    * source of skills, including an explicit empty `enabledIds`; when absent the existing
+    * coding-safety behavior is preserved. Mutable fields are snapshotted before the first await.
+@@ -135,6 +145,7 @@
+   // afterwards cannot select or drop a new control behavior mid-run.
+   const toolGroupBarrier = o.toolGroupBarrier;
+   const onResourcesClosed = o.onResourcesClosed;
++  const onKernelExited = o.onKernelExited;
+   const skills = o.skills === undefined ? undefined : { resourceRoot: o.skills.resourceRoot, enabledIds: [...o.skills.enabledIds] };
+   // Own the optional object fields before the first await and forward these
+   // snapshots to Kernel; never assemble a platform transcript here.
+@@ -180,6 +191,9 @@
+   };
+   let failed = false;
+   let completed = false;
++  /** The Kernel reached a clean non-failure stop; at the R4.3a control seam a
++   * real cleanup failure on such a stop must not be silently dropped. */
++  let stopped = false;
+   try {
+     const definition = o.kernel.createBuiltinProviderRegistry().get(o.bound.configuration.provider);
+     const provider: ModelClientPort = o.modelCalls ? {
+@@ -226,54 +240,65 @@
+       ? ['read_source', ...(o.materialTools ? ['read_material'] : []), ...readTools, ...coordinationNames]
+       : [...allowed.map(tool => tool === 'write' ? 'edit' : tool), ...readTools, ...coordinationNames];
+     const needsExploration = hasRead;
+-    const result = await o.kernel.runCodingAgent({
+-      config: { ...base, model: { ...base.model, provider: definition.id, model: o.bound.configuration.model, baseUrl: o.bound.configuration.baseUrl, maxOutputTokens: o.budget.perResponseTokens },
+-        runtime: { tokenBudget: o.budget.contextWindowTokens, maxModelRequests: o.budget.maxRequests ?? base.runtime.maxModelRequests, maxToolCalls: o.budget.maxToolCalls ?? base.runtime.maxToolCalls },
+-        tools: { enabledNames },
+-        storage: { databasePath: o.databasePath },
+-        skills: skills ?? { resourceRoot: resolve(import.meta.dirname, '../../../vendor/coding-agent/resources/skills'), enabledIds: ['coding-safety'] } },
+-      // 宿主对**非只读**扩展工具的显式授权：只有这里列出、且确实被 additionalTools 注册、
+-      // 且 effectClass 不是 read_only 的名字才会被内核的权限策略采纳（协议约束 2.3）。
+-      // 缺席时协调工具会被内核按"未授权的未知操作"拒绝——这是刻意的 fail-closed。
+-      hostAuthorizedTools: coordinationNames,
+-      additionalTools: workspace => {
+-        const tools: ToolDefinition[] = [];
+-        if (needsExploration) {
+-          // Register the created handle before the material/coordination factories can throw, so a
+-          // later initialization failure still closes this group. The run-level projectSource is
+-          // authoritative; a caller-supplied access in `sourceTools` cannot be used unowned here.
+-          const handle = createExplorationTools(workspace, {
+-            sourceIdentity: () => readSourceIdentity(o.root, workspace.identity), ...o.sourceTools,
+-            projectSource: frozen
+-              ? (lazyFrozen ? { mode: 'frozen', access: openSharedSource } : { mode: 'frozen', access: source! })
+-              : { mode: 'legacy_live' },
+-          });
+-          owned.push(handle);
+-          tools.push(...handle.tools);
+-        }
+-        tools.push(...(o.materialTools?.(workspace) ?? []));
+-        tools.push(...(o.coordinationTools?.create(workspace) ?? []));
+-        return tools;
+-      },
+-      workspaceRoot: o.root, input: o.input, sessionId: o.sessionId, signal: o.signal,
+-      // 冻结的公共 Kernel 会话参数：缺省不传，保持 current_turn 与随机执行身份。
+-      ...(sessionContext !== undefined ? { sessionContext } : {}),
+-      ...(executionIdentity !== undefined ? { executionIdentity } : {}),
+-      // 宿主可信控制 Hook：缺省保持旧行为；元数据与 execute 已在首次 await 前快照。
+-      ...(controlHooks !== undefined ? { controlHooks } : {}),
+-      // R4.3a 可选工具组安全点：缺省不调用任何新逻辑。
+-      ...(toolGroupBarrier !== undefined ? { toolGroupBarrier } : {}),
+-      secretSource: { get: () => 'platform-bound-client' }, providerRegistry,
+-      workspaceOptions: { deniedPrefixes: o.deniedPrefixes }, processSandboxOptions: o.processSandboxOptions,
+-      limits: kernelRunLimits(o.budget, o.taskBudget, o.now),
+-      approvalRequester: new o.kernel.StaticApprovalRequester({ decision: 'allow_once', reason: o.readOnly ? 'explicit_read_only_role_work' : 'explicit_gui_task_in_isolated_workspace' }),
+-      observerEventSinks: [{ sinkId: 'platform-live-events', delivery: 'best_effort', publish: async (event: AgentEvent) => {
+-        const data = JSON.parse(JSON.stringify(event.payload)) as Record<string, unknown>;
+-        if (data['message'] && typeof data['message'] === 'object') delete (data['message'] as Record<string, unknown>)['reasoningContent'];
+-        await o.publish({ type: event.type, sequence: event.meta.sequence, at: event.meta.occurredAt, data });
+-      } }],
+-    });
++    let result!: Awaited<ReturnType<typeof o.kernel.runCodingAgent>>;
++    try {
++      result = await o.kernel.runCodingAgent({
++        config: { ...base, model: { ...base.model, provider: definition.id, model: o.bound.configuration.model, baseUrl: o.bound.configuration.baseUrl, maxOutputTokens: o.budget.perResponseTokens },
++          runtime: { tokenBudget: o.budget.contextWindowTokens, maxModelRequests: o.budget.maxRequests ?? base.runtime.maxModelRequests, maxToolCalls: o.budget.maxToolCalls ?? base.runtime.maxToolCalls },
++          tools: { enabledNames },
++          storage: { databasePath: o.databasePath },
++          skills: skills ?? { resourceRoot: resolve(import.meta.dirname, '../../../vendor/coding-agent/resources/skills'), enabledIds: ['coding-safety'] } },
++        // 宿主对**非只读**扩展工具的显式授权：只有这里列出、且确实被 additionalTools 注册、
++        // 且 effectClass 不是 read_only 的名字才会被内核的权限策略采纳（协议约束 2.3）。
++        // 缺席时协调工具会被内核按"未授权的未知操作"拒绝——这是刻意的 fail-closed。
++        hostAuthorizedTools: coordinationNames,
++        additionalTools: workspace => {
++          const tools: ToolDefinition[] = [];
++          if (needsExploration) {
++            // Register the created handle before the material/coordination factories can throw, so a
++            // later initialization failure still closes this group. The run-level projectSource is
++            // authoritative; a caller-supplied access in `sourceTools` cannot be used unowned here.
++            const handle = createExplorationTools(workspace, {
++              sourceIdentity: () => readSourceIdentity(o.root, workspace.identity), ...o.sourceTools,
++              projectSource: frozen
++                ? (lazyFrozen ? { mode: 'frozen', access: openSharedSource } : { mode: 'frozen', access: source! })
++                : { mode: 'legacy_live' },
++            });
++            owned.push(handle);
++            tools.push(...handle.tools);
++          }
++          tools.push(...(o.materialTools?.(workspace) ?? []));
++          tools.push(...(o.coordinationTools?.create(workspace) ?? []));
++          return tools;
++        },
++        workspaceRoot: o.root, input: o.input, sessionId: o.sessionId, signal: o.signal,
++        // 冻结的公共 Kernel 会话参数：缺省不传，保持 current_turn 与随机执行身份。
++        ...(sessionContext !== undefined ? { sessionContext } : {}),
++        ...(executionIdentity !== undefined ? { executionIdentity } : {}),
++        // 宿主可信控制 Hook：缺省保持旧行为；元数据与 execute 已在首次 await 前快照。
++        ...(controlHooks !== undefined ? { controlHooks } : {}),
++        // R4.3a 可选工具组安全点：缺省不调用任何新逻辑。
++        ...(toolGroupBarrier !== undefined ? { toolGroupBarrier } : {}),
++        secretSource: { get: () => 'platform-bound-client' }, providerRegistry,
++        workspaceOptions: { deniedPrefixes: o.deniedPrefixes }, processSandboxOptions: o.processSandboxOptions,
++        limits: kernelRunLimits(o.budget, o.taskBudget, o.now),
++        approvalRequester: new o.kernel.StaticApprovalRequester({ decision: 'allow_once', reason: o.readOnly ? 'explicit_read_only_role_work' : 'explicit_gui_task_in_isolated_workspace' }),
++        observerEventSinks: [{ sinkId: 'platform-live-events', delivery: 'best_effort', publish: async (event: AgentEvent) => {
++          const data = JSON.parse(JSON.stringify(event.payload)) as Record<string, unknown>;
++          if (data['message'] && typeof data['message'] === 'object') delete (data['message'] as Record<string, unknown>)['reasoningContent'];
++          await o.publish({ type: event.type, sequence: event.meta.sequence, at: event.meta.occurredAt, data });
++        } }],
++      });
++    } finally {
++      // The real Kernel call has returned or thrown: publish the exit fact
++      // immediately, before the outer finally attempts and awaits the owned
++      // resource cleanup. The two proofs (Kernel exit vs resources closed)
++      // stay separate, and an initialization failure that never reached the
++      // Kernel call never fires this.
++      onKernelExited?.();
++    }
+     completed = result.state.status === 'completed';
++    stopped = result.state.status === 'paused' || result.state.status === 'cancelled';
+     return result;
+   } catch (error) {
+     failed = true;
+@@ -293,6 +318,11 @@
+     onResourcesClosed?.(cleanupFailure === undefined
+       ? { status: 'completed' }
+       : { status: 'failed', reason: exactMessage(cleanupFailure) });
+-    if (cleanupFailure !== undefined && completed && !failed) throw cleanupFailure;
++    // Callers without the internal notification keep the original priority: a
++    // cleanup failure only replaces an otherwise completed run. At the R4.3a
++    // control seam (`onResourcesClosed` present) a real paused/cancelled stop
++    // must preserve the cleanup failure instead of reporting a clean stop.
++    const propagateCleanupFailure = onResourcesClosed === undefined ? completed : (completed || stopped);
++    if (cleanupFailure !== undefined && propagateCleanupFailure && !failed) throw cleanupFailure;
+   }
+ }
+--- a/coding-platform/next/src/core/agent-runtime/execution-control.ts
++++ b/coding-platform/next/src/core/agent-runtime/execution-control.ts
+@@ -1,52 +1,75 @@
+ /**
+- * R4.3a local control coordinator (stage-1 seam).
++ * R4.3a local control coordinator (implementation).
+  *
+- * This is the ONE internal coordinator the Runtime assembles. In the finished
+- * R4.3a implementation it owns the narrow live-handle map, resolves the exact
+- * accepted intent, drives the fixed local driver at a real safe point and
+- * exposes the private exit/cleanup proof the original observer must read before
+- * it releases anything. It is intentionally NOT a second execution engine and
+- * never persists independent state: `submitControl`/`readControl` stay in the
+- * raw WorkGraph control service and the original Kernel history stays the only
+- * transcript.
++ * This is the ONE internal coordinator the Runtime assembles. It owns the narrow
++ * live-handle map, resolves the exact accepted intent, drives the fixed local
++ * driver at a real safe point and exposes the private exit/cleanup proof the
++ * original observer must read before it releases anything. It is intentionally
++ * NOT a second execution engine and never persists independent state:
++ * `submitControl`/`readControl` stay in the raw WorkGraph control service and
++ * the original Kernel history stays the only transcript.
+  *
+- * Stage 1 freezes the seam only. `deliver` returns an explicit `unsupported`
+- * (it never signals, retries entered, reduces history, acks or releases), and
+- * the handle registry/exit-proof methods are real but unused until the reviewed
+- * implementation step. The optional `controls` dependency keeps an existing
+- * direct `createAgentRuntime(deps)` caller on its old behavior.
++ * The safe-point decision reads the CURRENT canonical Run through the already
++ * assembled `sourceAuthority` and the exact intent through the SAME raw control
++ * service. A missing/unavailable read fails closed (pause), never a cached
++ * continue. A cancel only aborts the handle's OWN controller; the fact write
++ * and the post-run reconciliation stay on the tracked public promise.
+  */
+ import type { CoreCallContext } from '../../contracts/core/call-context.js';
+-import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../contracts/control-intent.js';
++import type {
++  ControlEntryIdentityV1, ControlIntentRef, ControlIntentSnapshotV1,
++} from '../../contracts/control-intent.js';
+ import type { ReadResult } from '../../contracts/core/results.js';
+-import type { RunRef } from '../../contracts/dispatch.js';
++import type { RunRef, RunSnapshot } from '../../contracts/dispatch.js';
+ import { canonicalJson } from '../../contracts/fingerprint.js';
+ import type { ControlObservationPort, RunControlPort } from '../work-graph/tasks/control-contracts.js';
++import type { KernelExecutionBinding } from '../work-graph/tasks/execution-entry-contracts.js';
++import type { SourceSnapshotReads } from '../work-graph/source-authority-ports.js';
+ import type { DeliverControlRequest } from './execution-contracts.js';
+ import type { RuntimeResourceCloseResult } from './observed-model-run.js';
+ 
+ export type RuntimeControlCoordinatorDependencies = {
+   /** The SAME raw control service the composition root owns (optional). */
+   controls?: RunControlPort & ControlObservationPort;
++  /**
++   * The SAME exact-Run reader the Runtime already holds. The safe point reads
++   * the current canonical `controlState` from here; it is never a cache.
++   */
++  sourceAuthority?: () => SourceSnapshotReads;
+ };
+ 
+ /**
+- * One live local execution handle. The finished implementation stores the full
+- * RunRef, the fixed consumer/entry/session generations, the fixed Kernel
+- * binding, the independent AbortController, the original tracked `done` promise,
+- * the actually consumed intent and the resource-close result here. Stage 1
+- * declares the shape so the driver and observer can share the seam.
++ * One live local execution handle. It keeps the full RunRef, the fixed
++ * consumer/entry/session generations, the fixed Kernel binding, the independent
++ * AbortController, the original tracked `done` promise, the actually consumed
++ * intent and the real resource-close result.
+  */
+ export type RuntimeControlHandle = {
+   runRef: RunRef;
+   /** The existing tracked execution promise that owns this handle. */
+   done: Promise<unknown>;
++  entry: ControlEntryIdentityV1;
++  kernel: KernelExecutionBinding;
++  controller: AbortController;
+   /** Set by the model loop's `onResourcesClosed` once every owned resource is
+    * actually closed; absent means the cleanup proof is not available yet. */
+   resourcesClosed?: RuntimeResourceCloseResult;
++  /** Set once the Kernel call itself returned (before or with cleanup). */
++  kernelExited: boolean;
++  /** Set once the driver's own tracked start/reconcile promise settled. */
++  settled?: boolean;
+   /** The exact intent this handle consumed, if any. */
+   intentRef?: ControlIntentRef;
+ };
++
++/** The private exit/cleanup proof the observer reads before any positive ack. */
++export type RuntimeControlProof = {
++  kernelExited: boolean;
++  resourcesClosed?: RuntimeResourceCloseResult;
++  consumedIntentRef?: ControlIntentRef;
++};
++
++export type RuntimeControlDecision = { kind: 'continue' } | { kind: 'pause' };
+ 
+ export type RuntimeControlCoordinator = {
+   /** Read the accepted intent and consume it only at a real local safe point. */
+@@ -55,32 +78,173 @@
+   register(handle: RuntimeControlHandle): RuntimeControlHandle;
+   /** The private cleanup proof the original observer must consult before a
+    * positive pause/cancel conclusion. `undefined` means "not proven". */
+-  exitProof(runRef: RunRef): RuntimeResourceCloseResult | undefined;
++  proof(runRef: RunRef): RuntimeControlProof | undefined;
++  /**
++   * The real safe-point decision over the current canonical Run controlState.
++   * Missing/unavailable facts fail closed; a cancel aborts this handle's own
++   * controller and lets the Kernel's own signal check win.
++   */
++  decide(ctx: CoreCallContext, runRef: RunRef): Promise<RuntimeControlDecision>;
+   /** Drain the coordinator without starting any background recovery. */
+   close(): Promise<void>;
+ };
+ 
++function isRecord(value: unknown): value is Record<string, unknown> {
++  return typeof value === 'object' && value !== null && !Array.isArray(value);
++}
++function nonEmpty(value: unknown): value is string {
++  return typeof value === 'string' && value.length > 0;
++}
++function isControlIntentRef(value: unknown): value is ControlIntentRef {
++  return isRecord(value) && value['aggregateType'] === 'ControlIntent'
++    && nonEmpty(value['projectId']) && nonEmpty(value['workspaceId']) && nonEmpty(value['intentId']);
++}
++function isRunRef(value: unknown): value is RunRef {
++  return isRecord(value) && value['aggregateType'] === 'Run'
++    && nonEmpty(value['projectId']) && nonEmpty(value['goalId']) && nonEmpty(value['runId']);
++}
++function sameRef(left: unknown, right: unknown): boolean {
++  try { return canonicalJson(left as never) === canonicalJson(right as never); } catch { return false; }
++}
++function messageOf(error: unknown): string {
++  return error instanceof Error ? error.message : String(error);
++}
++
+ export function createRuntimeControlCoordinator(
+-  _deps: RuntimeControlCoordinatorDependencies,
++  deps: RuntimeControlCoordinatorDependencies,
+ ): RuntimeControlCoordinator {
+   const handles = new Map<string, RuntimeControlHandle>();
+-  const keyOf = (runRef: RunRef): string => {
+-    try { return canonicalJson(runRef as never); } catch { return String(runRef.runId); }
++  // The key is the FULL canonical RunRef. A serialization failure never
++  // degrades to the bare runId: such a handle is simply not addressable.
++  const keyOf = (runRef: RunRef): string | null => {
++    try { return canonicalJson(runRef as never); } catch { return null; }
+   };
++  const unsupported = (reason: string): ReadResult<ControlIntentSnapshotV1> =>
++    ({ status: 'rejected', code: 'unsupported', reason });
++  /** True while the live Kernel call can still actually receive a signal. */
++  const handleLive = (handle: RuntimeControlHandle): boolean =>
++    handle.kernelExited !== true && handle.settled !== true;
++
+   return {
+     async deliver(
+-      _ctx: CoreCallContext,
+-      _request: DeliverControlRequest,
++      ctx: CoreCallContext,
++      request: DeliverControlRequest,
+     ): Promise<ReadResult<ControlIntentSnapshotV1>> {
+-      return { status: 'rejected', code: 'unsupported',
+-        reason: 'R4.3a control delivery is not implemented in the stage-1 skeleton' };
++      const controls = deps.controls;
++      if (controls === undefined) return unsupported('control delivery is not wired without the trusted raw controls');
++      const ref = request?.intentRef;
++      if (!isControlIntentRef(ref)) {
++        return { status: 'rejected', code: 'invalid', reason: 'deliverControl requires a complete ControlIntentRef' };
++      }
++      let read: ReadResult<ControlIntentSnapshotV1>;
++      try {
++        read = await controls.readControl(ctx, ref);
++      } catch (error) {
++        return { status: 'rejected', code: 'unavailable', reason: `the control intent read failed: ${messageOf(error)}` };
++      }
++      if (read.status !== 'ready') return read;
++      const intent = read.value;
++      // An already-observed intent is returned as-is: no second delivery, no
++      // second abort and no new execution.
++      if (intent.status !== 'queued') return { status: 'ready', value: intent };
++      const key = keyOf(intent.runRef);
++      const handle = key === null ? undefined : handles.get(key);
++      // No matching live handle: the request stays durable and unsignalled.
++      if (handle === undefined) return { status: 'ready', value: intent };
++      // A late delivery must not overwrite the original consumed-intent
++      // association of an already-exited handle, nor let an old pause/terminal
++      // claim a new observation. Only a live Kernel call can consume.
++      if (!handleLive(handle)) return { status: 'ready', value: intent };
++      if (intent.kind === 'cancel') {
++        // A cancel is associated only for the FIRST live delivery to this fixed
++        // handle and only when its own controller has not already been aborted
++        // by the caller or an earlier control: a late cancel must never
++        // overwrite the original pause/cancel stop cause.
++        if (!handle.controller.signal.aborted && handle.intentRef === undefined) {
++          handle.intentRef = intent.ref;
++          try { handle.controller.abort('caller_requested'); } catch { /* an already-aborted controller is fine */ }
++        }
++      }
++      // A pause is associated only at the real safe-point decision in `decide`.
++      return { status: 'ready', value: intent };
+     },
+     register(handle: RuntimeControlHandle): RuntimeControlHandle {
+-      handles.set(keyOf(handle.runRef), handle);
++      const key = keyOf(handle.runRef);
++      if (key === null) throw new Error('the live control handle RunRef is not canonicalizable JSON');
++      handles.set(key, handle);
+       return handle;
+     },
+-    exitProof(runRef: RunRef): RuntimeResourceCloseResult | undefined {
+-      return handles.get(keyOf(runRef))?.resourcesClosed;
++    proof(runRef: RunRef): RuntimeControlProof | undefined {
++      const key = keyOf(runRef);
++      if (key === null) return undefined;
++      const handle = handles.get(key);
++      if (handle === undefined) return undefined;
++      return {
++        kernelExited: handle.kernelExited,
++        ...(handle.resourcesClosed === undefined ? {} : { resourcesClosed: handle.resourcesClosed }),
++        ...(handle.intentRef === undefined ? {} : { consumedIntentRef: handle.intentRef }),
++      };
++    },
++    async decide(ctx: CoreCallContext, runRef: RunRef): Promise<RuntimeControlDecision> {
++      const controls = deps.controls;
++      const sourceAuthority = deps.sourceAuthority;
++      // No trusted control facts: keep the historical no-barrier behavior.
++      if (controls === undefined || sourceAuthority === undefined) return { kind: 'continue' };
++      if (!isRunRef(runRef)) return { kind: 'pause' };
++      let loaded;
++      try {
++        loaded = await sourceAuthority().load(runRef);
++      } catch {
++        return { kind: 'pause' };
++      }
++      if (loaded.status !== 'found' || !isRunRef(loaded.snapshot.ref) || !sameRef(loaded.snapshot.ref, runRef)) {
++        return { kind: 'pause' };
++      }
++      const run = loaded.snapshot as RunSnapshot;
++      const control = run.controlState;
++      if (control === undefined) return { kind: 'continue' };
++      let read: ReadResult<ControlIntentSnapshotV1>;
++      try {
++        read = await controls.readControl(ctx, control.intentRef);
++      } catch {
++        return { kind: 'pause' };
++      }
++      if (read.status !== 'ready') return { kind: 'pause' };
++      const intent = read.value;
++      if (!sameRef(intent.ref, control.intentRef) || !sameRef(intent.runRef, runRef)) {
++        return { kind: 'pause' };
++      }
++      const key = keyOf(runRef);
++      const handle = key === null ? undefined : handles.get(key);
++      if (control.desiredState === 'paused') {
++        // Same first-live rule as `deliver`/cancel: only the fixed handle's
++        // still-live call whose own controller has not already been aborted, and
++        // which has not already consumed an intent, may record this pause. A
++        // cancel that actually aborted the controller while this readControl was
++        // awaiting keeps its original association; the Kernel's existing signal
++        // priority still decides the real terminal.
++        if (handle !== undefined && handleLive(handle) && !handle.controller.signal.aborted
++          && handle.intentRef === undefined) {
++          handle.intentRef = intent.ref;
++        }
++        return { kind: 'pause' };
++      }
++      if (control.desiredState === 'cancelled') {
++        // Same first-live rule as `deliver`: only the fixed handle's still-live
++        // call whose own controller has not already been aborted may consume the
++        // cancel; an already-returned/aborted call keeps its original stop cause.
++        if (handle !== undefined && handleLive(handle) && !handle.controller.signal.aborted
++          && handle.intentRef === undefined) {
++          handle.intentRef = intent.ref;
++          try { handle.controller.abort('caller_requested'); } catch { /* already aborted */ }
++        }
++        // The Kernel's own post-callback signal check wins and records
++        // run.cancelled; this is not a pause.
++        return { kind: 'continue' };
++      }
++      // A legal running/steered pointer still has no unblock proof in this
++      // batch. Fail closed instead of admitting work under an unproven pointer.
++      return { kind: 'pause' };
+     },
+     async close(): Promise<void> {
+       handles.clear();

@@ -1,0 +1,17 @@
+# R4c.1 中间审核（2026-09-24）
+
+DSH session-07e8dba0-e100-4a55-a202-1cc8b86e0733 第一阶段只写4个骨架/测试文件，scope audit越界0。Astra完成独立审核后才授权第二阶段。
+
+审核修正：动态deadline/Plan资格必须在幂等miss之后；Run-by-task索引由现有canonical reader注册；role内部facts/reader窄参数只增编译seam，原公开行为保留；事件actor收窄human/system；复用旧revisionAssignments函数。DSH的SQLite竞争提交次数断言错误，已用双连接commit barrier与loser零partial替代。生命周期用独立Session，防累积archived掩盖检查。无关提交移至读后commit前。
+
+新增Astra边界测试：真实role spec安装/激活/矩阵与坏digest；missing矩阵被并发安装的guard；过期后原回执replay且不调时钟；旧Plan Run；await内取消；codec交叉引用及foreign actor事件；真实composition关闭排空和重开。
+
+类型检查PASS。专项骨架状态31 failed/34 passed：新增正式操作因unsupported而RED，已有回归及assignment纯函数PASS，无fixture异常。红测日志skeleton-red.log。冻结哈希在frozen-tests-and-contracts.json；实现阶段tests/契约/装配均只读。完整R4c仍未实现，Kernel启动/授权/Query/释放/观察归约不在此批。
+
+独立补充冻结：实现阶段前期复查增加R4c-task-claim-concurrency.test.ts的3个反例（同请求同时miss后Store重放，Memory/SQLite；同一RoleService实例跨scope并发guards隔离）。类型检查通过；未放宽原断言。新增文件与固定检查入口只读刷新进实现lane，manifest记录此次主审刷新。
+
+实现中独立审阅发现codec将generation要求为sessionRevision+1，违反已冻结的同为新Session revision的语义。补强原happy断言sessionRevision===2（generation===2原已存在），没有放宽契约。测试哈希由ef4d162b719dbdbea6a8bf12e2999b1d4b3e1dfd4ddf621d8e46d96ae2336680更新为db367d9a59513a5874911c3e56b556dda5ac7eb74e6a5900fcf29ef90d347684并只读刷新；实现者须修正codec和compiler。
+
+实现复核新增定向/整Plan归约一致性、unaccounted不冒充absent、非JSON元数据不抛穿Port、event游标与receipt对应反例。现有composition公开keys断言只新增已批准的claims键，保留精确集合检查，不移除测试。上述只读文件经主审重冻结，下一次DSH返修使用。
+
+最后输入边界复核：新JSON validator在try外递归处理循环对象，会抛RangeError；追加循环request/ref必须invalid的反例并重新冻结，沿用同Session返修该局部缺陷，不改既有业务断言。

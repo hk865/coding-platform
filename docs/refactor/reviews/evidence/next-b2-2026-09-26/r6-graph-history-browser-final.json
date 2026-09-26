@@ -1,0 +1,70 @@
+{
+  "at": "2026-09-26T17:02:42.929407+00:00",
+  "status": "passed",
+  "browser": "CUA in-app browser",
+  "previousFullPathEvidence": "r6-graph-history-browser-initial.json",
+  "finalRepairReview": "r6-graph-history-browser-repair-review.json",
+  "sourceHashes": {
+    "coding-platform/next/src/ui/main.ts": "cd9a5d3154a7896f7b9b6e9882dbad69ea9384cc5468565c8a2a41b8464aa874",
+    "coding-platform/next/src/ui/views.ts": "2c846565e7aae6d61cc6bfc73495adb56c7ea4a18e22e09254a0c4f6d69fcbb8"
+  },
+  "reopen": {
+    "openedAt": "2026-09-26T17:00:21.870Z",
+    "nextRoot": "/tmp/r6-graph-history-review-gs95ezwq/next",
+    "publicDir": "/tmp/r6-graph-history-review-gs95ezwq/next/dist/app/public/workbench",
+    "configPath": "/tmp/coding-platform-r6-execution-review-NJz7aU/workbench.json",
+    "configSha256": "ac1e866b7011e40dcb5573c94692f782a375c8730a5f90fa007d08a8b0375e48",
+    "stores": [
+      {
+        "path": "/tmp/coding-platform-r6-execution-review-NJz7aU/storage/ledger.sqlite",
+        "sizeBeforeOpen": 614400
+      },
+      {
+        "path": "/tmp/coding-platform-r6-execution-review-NJz7aU/storage/artifacts.sqlite",
+        "sizeBeforeOpen": 40960
+      },
+      {
+        "path": "/tmp/coding-platform-r6-execution-review-NJz7aU/storage/kernel.sqlite",
+        "sizeBeforeOpen": 143360
+      }
+    ],
+    "sourceRoots": [
+      "/tmp/coding-platform-r6-execution-review-NJz7aU/source"
+    ],
+    "url": "http://127.0.0.1:43643/workbench/",
+    "modelAttempts": 0,
+    "initializationRequests": 0,
+    "mode": "same existing databases; manual persisted-history reads only"
+  },
+  "modelAttempts": {
+    "attempts": 0,
+    "status": "no_model_calls"
+  },
+  "finalNarrowRecheck": {
+    "session": "session-db823d5927ad2b207925f62d24d0cbf518fa7fd918e9ac08b766c134c0cac947",
+    "historyHeadings": 1,
+    "pageRecordCount": 10,
+    "rawDetailEntries": 10,
+    "positions": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "nextPageAvailable": true,
+    "fullSavedRecordExpandedAtPosition": 5,
+    "actualBody": "R6 execution first work result",
+    "duplicateRendererRemoved": true
+  },
+  "limits": [
+    "No new model execution or fixture initialization.",
+    "Prior full Task/Run/Session navigation evidence applies to the otherwise unchanged implementation.",
+    "Current TaskRow Run navigation is not all-attempt enumeration."
+  ]
+}

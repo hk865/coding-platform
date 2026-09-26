@@ -1,0 +1,25 @@
+[
+  {
+    "file": "dispatch.ts",
+    "declarations": [
+      "TaskLeaseSnapshot",
+      "TaskAttemptSnapshot",
+      "TaskAttemptStatus"
+    ]
+  },
+  {
+    "file": "reduction.ts",
+    "declarations": [
+      "TaskReductionSnapshot",
+      "TaskReductionPhase",
+      "TaskReductionCause",
+      "TaskReductionCauseCode"
+    ]
+  },
+  {
+    "file": "evidence.ts",
+    "declarations": [
+      "EffectivityAnchorV1"
+    ]
+  }
+]

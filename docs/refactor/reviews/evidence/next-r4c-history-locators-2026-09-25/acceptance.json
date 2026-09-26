@@ -1,0 +1,19 @@
+{
+  "status": "PASS",
+  "testFiles": 68,
+  "tests": 620,
+  "kernelPatchReproduction": "PASS, four artifacts identical",
+  "typecheck": "PASS",
+  "build": "PASS",
+  "boundaries": {
+    "modules": 5,
+    "allowedEdges": 8,
+    "observedEdges": 5
+  },
+  "compiledCompositionSmoke": "PASS",
+  "independentPhysicalCopy": true,
+  "source": "coding-platform/next",
+  "protectedOriginalFiles": 8827,
+  "protectedChanges": 0,
+  "initialConcurrentDirectRun": "SQLite fixture timeout failures preserved; later sequential 51-test run and full isolated 620-test run PASS without timeout/config/production changes; cause not proven"
+}

@@ -1,0 +1,30 @@
+{
+  "lane": "r6-host-workbench-implementation-20260926",
+  "files": {
+    "coding-platform/next/src/app/host.ts": {
+      "before": "a8855c920f26e942611c4b8423f1175091e64520a1f01d7c43c2dfe18bd1968f",
+      "after": "96b8cc4496818e4e92374db03954f25886542ccbf1488049ba176b0c13b51be6"
+    },
+    "coding-platform/next/src/app/core-routes.ts": {
+      "before": "b9faf7ef555f85504c549c0ca236fa9523079e30ccb773d6958857659efad74c",
+      "after": "88a1eb3696b8cc17e11a95c83e849ba44b1bfc61f72b7bdcf0664762481e0d40"
+    },
+    "coding-platform/next/src/ui/main.ts": {
+      "before": "f21206fbf7508324ccd2ab60dd20ea81f2dfcc0f3848a0d219424901e7e2fcdc",
+      "after": "2953b11bd17704f2d66ec3d0478426d20c56afee93eb3704dab7d4e88745c2b2"
+    },
+    "coding-platform/next/src/ui/views.ts": {
+      "before": "f301b58641b1961f8c63c6c1f1b43e7b8cffca8d9bdd7b0a8740e7b03f4e4215",
+      "after": "89cb7943308ee1f0934ce1546d3ef2f00b11caf686880212169fb24b935ebd60"
+    },
+    "coding-platform/next/src/ui/index.html": {
+      "before": "7190aea4973acad19f35943eaf9800ebc30e8cce69cb5aee54ca07d485bd4a98",
+      "after": "f6bdf6760270513e47e8680fdde53dc12cb75868a98b0d8814f8585b4dd4a3a7"
+    },
+    "coding-platform/next/src/ui/styles.css": {
+      "before": "f00a04926b229c56e351a126ef087d1b4daa33f4218306230f07974cc69e8b05",
+      "after": "d0971e3bffc1bcb6bb2ec86018f87f96d1dcffb744c163ac81d08abb939074b6"
+    }
+  },
+  "review": "Final 15 tests/2 files, Node/UI types and isolated build passed. Actual browser before final UI repair covered bootstrap, Plan/task graph, source paging/capture-version read, observed/adopted graphs, scope switch and replay. Final 3 UI repairs reviewed. Final browser repeat completed with existing Chromium Headless, original sandbox, temporary isolated profile and native DevTools input against real Host/SQLite: Goal ID then Tab preserves next-field focus; no-review reopen reads Goal/TaskGraph; 700ms delayed capture does not contaminate workspace B and returning to A shows capture ready. Evidence: r6-final-browser.json and r6-final-browser.png. Main core/Host integration: 47 tests/13 files serial PASS, types and 7/8 allowed edges PASS; initial concurrent timeout log retained. This is not a new full isolated cohort result."
+}

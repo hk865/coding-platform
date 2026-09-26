@@ -1,0 +1,22 @@
+{
+  "lane": "r2e-git-read-compare-skeleton-20260926",
+  "imported": {
+    "coding-platform/next/src/core/workspace/ports.ts": "51fd433e81481dda75729c0e0bec42e12bafa922475aaa2fe5bb13134e8f3d21",
+    "coding-platform/next/src/core/workspace/access.ts": "82ca3d6875595c3c0d70b62552fd63970c4deacbd40ff1c0a99805d1817b1e82",
+    "coding-platform/next/src/core/workspace/git-read.ts": "9131204d69672d983f60c9df51d8b3abe7e33ce2ec88adfef56a730253325982",
+    "coding-platform/next/src/core/workspace/capture.ts": "5e971b25a3f48cf998ff39606e90a34798b6ec568584440b0cac423b0ecab4a0",
+    "coding-platform/next/src/core/workspace/workspace-read.ts": "c14d8116904718a913a83d3de5f0c688b7f854e9ae7815d9218f24c124241bc5",
+    "coding-platform/next/src/core/agent-runtime/project-source-tool.ts": "045d84f99b65688c86753abab8a5c8f0bdbec0771e6920a085a3cc5c24328c80",
+    "coding-platform/next/tests/data/R2e-git-operations.test.ts": "50c6d79bdca429f09249a8ea5644177981c5a1cbfffa99207292f39e8f1337bf",
+    "coding-platform/next/tests/runtime/R2e-git-source-loop.test.ts": "74e32017f65d1f3626b17a1414616525e92ef97ac46da70f26dfad561bcd7278"
+  },
+  "middleTests": {
+    "files": 12,
+    "expectedUnsupportedFailures": 11,
+    "passed": 100,
+    "typesExitCode": 0
+  },
+  "outsideScope": [],
+  "mainUnchangedBeforeImport": true,
+  "phase": "skeleton-only"
+}

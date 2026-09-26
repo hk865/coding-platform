@@ -1,0 +1,32 @@
+{
+  "at": "2026-09-26T16:45:47.884629+00:00",
+  "nextRoot": "/tmp/r6-graph-history-review-_bedkxwv/next",
+  "checks": [
+    {
+      "name": "tests",
+      "exitCode": 0,
+      "log": "r6-graph-history-implementation-final-tests.log",
+      "sha256": "3f60ce83ae6f3a599fae10c93bf8a997907cfc25fecd8e058a692b1e7fc8bc21"
+    },
+    {
+      "name": "types",
+      "exitCode": 0,
+      "log": "r6-graph-history-implementation-final-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "build",
+      "exitCode": 0,
+      "log": "r6-graph-history-implementation-final-build.log",
+      "sha256": "46419cf2875043af1ef29d7b2b3cd0721b99190a62ce0e5dace246f781bdd16d"
+    }
+  ],
+  "frozenFiles": {
+    "src/app/core-http-types.ts": "f17fb3c80077b99cabe3ea209ff16e0536abb09a81edf12aa1dcf335ec422264",
+    "src/app/core-routes.ts": "17c77d3525f76773be9794f60a98b8508fe2f223b6b57ca9dc12150d4c9070a9",
+    "src/ui/main.ts": "073d020b128998c89c156dd16e4065ad255b1987b318dd0857f9afe0efbfaccc",
+    "src/ui/views.ts": "2c846565e7aae6d61cc6bfc73495adb56c7ea4a18e22e09254a0c4f6d69fcbb8",
+    "tests/app/R6-host.test.ts": "922b8024351387450bd98f635a20610976b1e2d5b514a20f1e3bb389342d6032",
+    "tests/app/R6-workbench.test.ts": "0c9d3738b6d21aba5f40ebc45d656987a6defb2098c7eecfb14021f1084ecac5"
+  }
+}

@@ -1,0 +1,67 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/work-graph/R3d-observed-boundaries.test.ts (20 tests | 2 failed) 724ms
+     × persists and reads a JSON-only mapping when TypeScript really indexed that JSON module 22ms
+     × persists and reads a JSON-only mapping when TypeScript really indexed that JSON module 18ms
+ ❯ tests/work-graph/R3d-record-integrity.test.ts (3 tests | 2 failed) 93ms
+   × rejects a frozen body whose scope, engine, Git basis or permission file manifest differs from its real capture 22ms
+   × requires a real indexed JSON member for a JSON-only mapped node 20ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R3d-observed-boundaries.test.ts > R3d observed boundaries memory > persists and reads a JSON-only mapping when TypeScript really indexed that JSON module
+ FAIL  tests/work-graph/R3d-observed-boundaries.test.ts > R3d observed boundaries sqlite > persists and reads a JSON-only mapping when TypeScript really indexed that JSON module
+AssertionError: expected 'rejected' to be 'committed' // Object.is equality
+
+Expected: "committed"
+Received: "rejected"
+
+ ❯ tests/work-graph/R3d-observed-boundaries.test.ts:225:31
+    223|       const observed = await service.captureSourceChanges(context, { .…
+    224|         input: { workspace, mappings: [{ id: 'Data', kind: 'module', p…
+    225|       expect(observed.status).toBe('committed');
+       |                               ^
+    226|       if (observed.status !== 'committed') return;
+    227|       const selection = { kind: 'observed' as const, capture: observed…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/work-graph/R3d-record-integrity.test.ts > rejects a frozen body whose scope, engine, Git basis or permission file manifest differs from its real capture
+AssertionError: expected 'decoded' to be 'invalid' // Object.is equality
+
+Expected: "invalid"
+Received: "decoded"
+
+ ❯ tests/work-graph/R3d-record-integrity.test.ts:90:78
+     88|     ];
+     89|     for (const changed of variants) {
+     90|       expect(decodeObservedArchitectureBody(JSON.stringify(changed)).s…
+       |                                                                              ^
+     91|     }
+     92|   } finally { await fx.close(); }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/work-graph/R3d-record-integrity.test.ts > requires a real indexed JSON member for a JSON-only mapped node
+AssertionError: expected 'invalid' to be 'decoded' // Object.is equality
+
+Expected: "decoded"
+Received: "invalid"
+
+ ❯ tests/work-graph/R3d-record-integrity.test.ts:121:73
+    119|       observedAt: '2026-09-24T00:00:00.000Z', summary: exported.value.…
+    120|       files: exported.value.files, architecture: mapped.value };
+    121|     expect(decodeObservedArchitectureBody(JSON.stringify(body)).status…
+       |                                                                         ^
+    122|     expect(decodeObservedArchitectureBody(JSON.stringify({ ...body,
+    123|       architecture: { ...mapped.value, indexedSources: indexed.filter(…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+
+ Test Files  2 failed | 1 passed (3)
+      Tests  4 failed | 29 passed (33)
+   Start at  17:13:27
+   Duration  2.38s (transform 367ms, setup 0ms, import 1.09s, tests 1.07s, environment 0ms)
+

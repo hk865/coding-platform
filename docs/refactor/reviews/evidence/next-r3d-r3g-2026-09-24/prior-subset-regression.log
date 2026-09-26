@@ -1,0 +1,269 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform/next
+
+ ❯ tests/composition/platform.test.ts (2 tests | 2 failed) 2564ms
+   × memory: public composition wires Host material and real workspace reads with narrow unsupported gaps 8ms
+   × sqlite: public composition wires Host material and real workspace reads with narrow unsupported gaps 2555ms
+ ❯ tests/composition/R3c-R4b-platform.test.ts (1 test | 1 failed) 7948ms
+   × wires one durable Goal/Plan/Session graph and reopens the same Kernel Session 7948ms
+ ❯ tests/runtime/R4b-session-input-boundaries.test.ts (2 tests | 1 failed) 9942ms
+   × rejects history limit outside 1..200 and a continuation cursor from another principal 7754ms
+ ❯ tests/work-graph/R4b-session-boundaries.test.ts (10 tests | 3 failed) 16943ms
+     × does not share the same request identity between two distinct Host actors 5482ms
+     × finds a role_spec Session by the digest on its pin 5072ms
+     × rejects cross-project Operation and WorkLink records through the registered schema 5354ms
+ ❯ tests/runtime/R4b-session-recovery.test.ts (5 tests | 4 failed) 29105ms
+     × repairs a failed platform mapping after reopening the real SQLite Store 7817ms
+     × never moves an accepted create to a new default Kernel store after registration is interrupted 6582ms
+     × binds raw history continuation to its original adapter, Session and upper record position 7203ms
+     × rejects missing and damaged original Kernel history without returning an empty success page 5596ms
+ ❯ tests/work-graph/R4b-session-directory.test.ts (14 tests | 3 failed) 31449ms
+     × registers one Kernel mapping under concurrent competing platform operations 7253ms
+     × binds a directory page cursor to the original filters and project workspace scope 6360ms
+     × rejects a Task link absent from the active accepted Plan 5481ms
+ ❯ tests/runtime/R4b-session-operations.test.ts (10 tests | 3 failed) 31895ms
+     × creates an empty Kernel Session without model execution and exposes only the mapped directory row 7975ms
+     × pages raw Kernel history by original positions without inventing a Run or completed-turn cursor 7497ms
+     × refuses cross-workspace original history reads before opening a Kernel store 5467ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 17 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/composition/R3c-R4b-platform.test.ts > wires one durable Goal/Plan/Session graph and reopens the same Kernel Session
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/composition/R3c-R4b-platform.test.ts:89:1
+     87| afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir…
+     88|
+     89| it('wires one durable Goal/Plan/Session graph and reopens the same Ker…
+       | ^
+     90|   const directory = await mkdtemp(join(tmpdir(), 'next-composed-r3c-r4…
+     91|   dirs.push(directory);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/19]⎯
+
+ FAIL  tests/composition/platform.test.ts > memory: public composition wires Host material and real workspace reads with narrow unsupported gaps
+ FAIL  tests/composition/platform.test.ts > sqlite: public composition wires Host material and real workspace reads with narrow unsupported gaps
+AssertionError: expected [ 'architecture', 'close', …(8) ] to deeply equal [ 'close', 'goals', 'materials', …(5) ]
+
+- Expected
++ Received
+
+  [
++   "architecture",
+    "close",
+    "goals",
+    "materials",
+    "plans",
++   "roles",
+    "runtime",
+    "sessions",
+    "workflow",
+    "workspace",
+  ]
+
+ ❯ tests/composition/platform.test.ts:56:42
+     54|   let closed = false;
+     55|   try {
+     56|     expect(Object.keys(platform).sort()).toEqual(['close', 'goals', 'm…
+       |                                          ^
+     57|     const ctx = context();
+     58|     const stored = await platform.materials.storeArtifact(ctx, {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/19]⎯
+
+ FAIL  tests/runtime/R4b-session-input-boundaries.test.ts > rejects history limit outside 1..200 and a continuation cursor from another principal
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4b-session-input-boundaries.test.ts:106:1
+    104| });
+    105|
+    106| it('rejects history limit outside 1..200 and a continuation cursor fro…
+       | ^
+    107|   const { backend, sessions, kernelStores } = await open();
+    108|   const runtime = createSessionOperations({ sessions, kernelStores });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/19]⎯
+
+ FAIL  tests/runtime/R4b-session-operations.test.ts > R4b real sqlite RecordStore acceptance > creates an empty Kernel Session without model execution and exposes only the mapped directory row
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4b-session-operations.test.ts:71:3
+     69|
+     70| describe.each(['memory', 'sqlite'] as const)('R4b real %s RecordStore …
+     71|   it('creates an empty Kernel Session without model execution and expo…
+       |   ^
+     72|     const { backend, sessions, runtime, kernelStores } = await open(ki…
+     73|     try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/19]⎯
+
+ FAIL  tests/runtime/R4b-session-operations.test.ts > R4b real sqlite RecordStore acceptance > creates an empty Kernel Session without model execution and exposes only the mapped directory row
+Error: ENOTEMPTY: directory not empty, rmdir '/tmp/next-r4b-acceptance-rnFUcj'
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/19]⎯
+
+ FAIL  tests/runtime/R4b-session-operations.test.ts > R4b real sqlite RecordStore acceptance > pages raw Kernel history by original positions without inventing a Run or completed-turn cursor
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4b-session-operations.test.ts:92:3
+     90|   });
+     91|
+     92|   it('pages raw Kernel history by original positions without inventing…
+       |   ^
+     93|     const { backend, runtime } = await open(kind);
+     94|     try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/19]⎯
+
+ FAIL  tests/runtime/R4b-session-operations.test.ts > R4b real sqlite RecordStore acceptance > refuses cross-workspace original history reads before opening a Kernel store
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4b-session-operations.test.ts:128:3
+    126|   });
+    127|
+    128|   it('refuses cross-workspace original history reads before opening a …
+       |   ^
+    129|     const { backend, runtime } = await open(kind);
+    130|     try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/19]⎯
+
+ FAIL  tests/runtime/R4b-session-recovery.test.ts > R4b SQLite recovery and raw history acceptance > repairs a failed platform mapping after reopening the real SQLite Store
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4b-session-recovery.test.ts:103:3
+    101|   });
+    102|
+    103|   it('repairs a failed platform mapping after reopening the real SQLit…
+       |   ^
+    104|     const first = await open('sqlite');
+    105|     let rejectRegistration = true;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/19]⎯
+
+ FAIL  tests/runtime/R4b-session-recovery.test.ts > R4b SQLite recovery and raw history acceptance > repairs a failed platform mapping after reopening the real SQLite Store
+Error: ENOTEMPTY: directory not empty, rmdir '/tmp/next-r4b-acceptance-g7AxCL'
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/19]⎯
+
+ FAIL  tests/runtime/R4b-session-recovery.test.ts > R4b SQLite recovery and raw history acceptance > never moves an accepted create to a new default Kernel store after registration is interrupted
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4b-session-recovery.test.ts:128:3
+    126|   });
+    127|
+    128|   it('never moves an accepted create to a new default Kernel store aft…
+       |   ^
+    129|     const first = await open('sqlite');
+    130|     const request = { ...creation('pinned-kernel-route').input, meta: …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/19]⎯
+
+ FAIL  tests/runtime/R4b-session-recovery.test.ts > R4b SQLite recovery and raw history acceptance > binds raw history continuation to its original adapter, Session and upper record position
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4b-session-recovery.test.ts:174:3
+    172|   });
+    173|
+    174|   it('binds raw history continuation to its original adapter, Session …
+       |   ^
+    175|     const { backend, runtime, kernelStores } = await open('sqlite');
+    176|     try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/19]⎯
+
+ FAIL  tests/runtime/R4b-session-recovery.test.ts > R4b SQLite recovery and raw history acceptance > rejects missing and damaged original Kernel history without returning an empty success page
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/runtime/R4b-session-recovery.test.ts:204:3
+    202|   });
+    203|
+    204|   it('rejects missing and damaged original Kernel history without retu…
+       |   ^
+    205|     const { backend, runtime, kernelStores } = await open('sqlite');
+    206|     try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/19]⎯
+
+ FAIL  tests/work-graph/R4b-session-boundaries.test.ts > R4b sqlite scope and identity boundaries > does not share the same request identity between two distinct Host actors
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/work-graph/R4b-session-boundaries.test.ts:95:3
+     93|   });
+     94|
+     95|   it('does not share the same request identity between two distinct Ho…
+       |   ^
+     96|     const { backend, sessions } = await open(kind);
+     97|     try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/19]⎯
+
+ FAIL  tests/work-graph/R4b-session-boundaries.test.ts > R4b sqlite scope and identity boundaries > finds a role_spec Session by the digest on its pin
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/work-graph/R4b-session-boundaries.test.ts:113:3
+    111|   });
+    112|
+    113|   it('finds a role_spec Session by the digest on its pin', async () =>…
+       |   ^
+    114|     const { backend, sessions } = await open(kind);
+    115|     try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/19]⎯
+
+ FAIL  tests/work-graph/R4b-session-boundaries.test.ts > R4b sqlite scope and identity boundaries > rejects cross-project Operation and WorkLink records through the registered schema
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/work-graph/R4b-session-boundaries.test.ts:150:3
+    148|   });
+    149|
+    150|   it('rejects cross-project Operation and WorkLink records through the…
+       |   ^
+    151|     const { backend } = await open(kind);
+    152|     try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/19]⎯
+
+ FAIL  tests/work-graph/R4b-session-directory.test.ts > R4b real sqlite RecordStore acceptance > registers one Kernel mapping under concurrent competing platform operations
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/work-graph/R4b-session-directory.test.ts:164:3
+    162|   });
+    163|
+    164|   it('registers one Kernel mapping under concurrent competing platform…
+       |   ^
+    165|     const { backend, sessions, kernelStores } = await open(kind);
+    166|     try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/19]⎯
+
+ FAIL  tests/work-graph/R4b-session-directory.test.ts > R4b real sqlite RecordStore acceptance > binds a directory page cursor to the original filters and project workspace scope
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/work-graph/R4b-session-directory.test.ts:195:3
+    193|   });
+    194|
+    195|   it('binds a directory page cursor to the original filters and projec…
+       |   ^
+    196|     const { backend, sessions } = await open(kind);
+    197|     try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/19]⎯
+
+ FAIL  tests/work-graph/R4b-session-directory.test.ts > R4b real sqlite RecordStore acceptance > rejects a Task link absent from the active accepted Plan
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/work-graph/R4b-session-directory.test.ts:249:3
+    247|   });
+    248|
+    249|   it('rejects a Task link absent from the active accepted Plan', async…
+       |   ^
+    250|     const { backend, sessions } = await open(kind);
+    251|     try {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/19]⎯
+
+
+ Test Files  7 failed | 41 passed (48)
+      Tests  17 failed | 304 passed (321)
+   Start at  16:27:25
+   Duration  32.80s (transform 6.12s, setup 0ms, import 12.93s, tests 272.51s, environment 3ms)
+

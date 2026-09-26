@@ -1,0 +1,14 @@
+{
+  "writableFiles": [
+    "coding-platform/next/src/core/work-graph/configuration/role-memory-service.ts",
+    "coding-platform/next/src/core/work-graph/configuration/role-record-codecs.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

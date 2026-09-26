@@ -1,0 +1,17 @@
+{
+  "writableFiles": [
+    "coding-platform/next/vendor/coding-agent/patches/core/runtime/loop/runtime-runner.ts",
+    "coding-platform/next/vendor/coding-agent/dist/core/runtime/loop/runtime-runner.js",
+    "coding-platform/next/vendor/coding-agent/dist/core/runtime/loop/runtime-runner.js.map",
+    "coding-platform/next/vendor/coding-agent/dist/core/runtime/loop/runtime-runner.d.ts",
+    "coding-platform/next/vendor/coding-agent/dist/core/runtime/loop/runtime-runner.d.ts.map"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

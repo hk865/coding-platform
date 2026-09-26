@@ -1,0 +1,12 @@
+[
+  {
+    "file": "coding-platform/next/src/core/work-graph/architecture/catalog-service.ts",
+    "before": "0bc1764bdfefae7574624244542a1625e9a93e1a3f04b6b27cc35accaad9a85a",
+    "after": "ab1d2c3c998a857b597220177e4a24932fbfc2dc0d9cfef9e6fc04eb164e2e4e"
+  },
+  {
+    "file": "coding-platform/next/src/core/work-graph/architecture/catalog-record-codecs.ts",
+    "before": "3494c03718f37e7ca9540ed82a4b59acffb879ae6b6de6f3e59f02ccfcd5cfd8",
+    "after": "6098b0fe6e0d53c74c8675688ecda59a2e08977e4560ad0327e3663bd53b2fd9"
+  }
+]

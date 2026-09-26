@@ -1,0 +1,18 @@
+{
+  "status": "approved-for-implementation",
+  "typecheck": "passed",
+  "tests": {
+    "total": 76,
+    "failed": 69,
+    "passed": 7,
+    "phase": "unsupported skeleton expected red"
+  },
+  "files": {
+    "coding-platform/next/tests/work-graph/A1-architecture-catalog.test.ts": "0c87275c2b65641075510c10b85841e5e6f8a4c36a9a25b754fe48f1bf6cfe4a",
+    "coding-platform/next/tests/work-graph/A1-session-discovery.test.ts": "d5efc392dca6e3f871cff646a9281ceb8021c2ac8e089372632312df184618c3",
+    "coding-platform/next/tests/work-graph/A1-session-lifecycle.test.ts": "ce11a79ebf2d88a80c86ca6257e3b772ef848d39416071c3ad67431b8f1dc29a",
+    "coding-platform/next/tests/helpers/graph-session-fixture.ts": "d9e16f0c307fe02fffdfa66205d010b8702d29ca041030156aaac6bef4f13fd4",
+    "coding-platform/next/src/core/work-graph/architecture/catalog-contracts.ts": "63b8fe1a1194e9b95d6cf66501548c7b2d932d4e658d13191a7fe9e8711437af",
+    "coding-platform/next/src/core/work-graph/sessions/lifecycle-contracts.ts": "a0c014bfcb15f297b35cd339efe1c8c9c376d42b8bdfca9c83226e85b7a4b9d0"
+  }
+}

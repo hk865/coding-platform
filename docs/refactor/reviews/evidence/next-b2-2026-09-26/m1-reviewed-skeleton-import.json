@@ -1,0 +1,32 @@
+[
+  {
+    "path": "coding-platform/next/src/core/work-graph/materials/grant-contracts.ts",
+    "before": "b6cdcfa0ae28980be984c0ea6ff261eb4054b93dda548438508947243c2fc680",
+    "after": "8fe46072383268cb47fd50d55cb2fd89da787ecfc0b2e23f2634891b400b8f71"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/materials/grant-service.ts",
+    "before": "b6cdcfa0ae28980be984c0ea6ff261eb4054b93dda548438508947243c2fc680",
+    "after": "e8861aef12e0fb1c5bf3d20d7be47c6d194954c7770e4e490f8914d0f972bc30"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/materials/grant-record-codecs.ts",
+    "before": "b6cdcfa0ae28980be984c0ea6ff261eb4054b93dda548438508947243c2fc680",
+    "after": "443ddf9ac09b801362c4f3da01d20876e56b8fc0dd2161cb930246f4ef5f8bce"
+  },
+  {
+    "path": "coding-platform/next/src/core/workspace/material-source-provider.ts",
+    "before": "b6cdcfa0ae28980be984c0ea6ff261eb4054b93dda548438508947243c2fc680",
+    "after": "9744d98edaec22ca85966f33b21339da77909eaef0dea92af97f2e26c484b684"
+  },
+  {
+    "path": "coding-platform/next/tests/work-graph/M1-material-grants.test.ts",
+    "before": "b6cdcfa0ae28980be984c0ea6ff261eb4054b93dda548438508947243c2fc680",
+    "after": "37c5cc5a0bd3c148189c16eed0d261b3febc962f4a3614377087c7b29c60e793"
+  },
+  {
+    "path": "coding-platform/next/tests/data/M1-material-source-provider.test.ts",
+    "before": "b6cdcfa0ae28980be984c0ea6ff261eb4054b93dda548438508947243c2fc680",
+    "after": "5b9352b790ef2fc339958942eeda438be6157e30fbe2a6430c7a8d29db672e48"
+  }
+]

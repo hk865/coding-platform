@@ -1,0 +1,16 @@
+{
+  "lane": "r4c2c-source-authority-implementation",
+  "scopeAudit": "no outside scope changes or originalWorkspaceChanged",
+  "files": [
+    {
+      "path": "coding-platform/next/src/core/work-graph/source-authority-reader.ts",
+      "before": "207a776085d42538620865bd93f74b95e652e908d5a57eb406058bdf3e8b32fe",
+      "after": "3b7c4db68274b183cf0f580f6875e8ba73eae9835d30fdc183231dd1c6db7dfe"
+    },
+    {
+      "path": "coding-platform/next/src/core/agent-runtime/source-capture-access.ts",
+      "before": "4c1431653625cafd4ae69677ebead2c362e8fb7cc07c38b3214bd499660be5e1",
+      "after": "4ebe3dcc55d42bac32779717588eadad962adbb342191a7b0239199f90ad1faa"
+    }
+  ]
+}

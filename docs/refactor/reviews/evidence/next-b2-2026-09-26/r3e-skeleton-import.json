@@ -1,0 +1,31 @@
+{
+  "lane": "r3e-evidence-skeleton-20260926",
+  "imported": {
+    "coding-platform/next/src/contracts/evidence.ts": "84d331c1e3167e0e9038887fc316dc9755f1e6a030783ca4c7596d9d871ff877",
+    "coding-platform/next/src/contracts/verification.ts": "297eb6424a2803d7e4140c21e99655599c06deeedafa1d9092a15554946a409f",
+    "coding-platform/next/src/contracts/ledger.ts": "f7becd6fba4c322056f8e7317d170748146bb2893271d185582e11cf0d1432be",
+    "coding-platform/next/src/core/work-graph/evidence/contracts.ts": "d493a17d0e10e41573acfded55823226b21e33379a93a2f32c3afc58455f0579",
+    "coding-platform/next/src/core/work-graph/evidence/evidence-service.ts": "2baaf7980ae82853704556b821f5bcf336ade8b295b21270a5c0f541012fa53f",
+    "coding-platform/next/src/core/work-graph/evidence/evidence-record-codecs.ts": "a72bd1338f821fd622128935adc892c06875b2748c37ca57fbacb008b11580dd",
+    "coding-platform/next/src/core/work-graph/evidence/verification-plan.ts": "5fd5a5949fe2b8bc0193c5b08614a908a6f32fefe01df46d8e141eaddedd01ee",
+    "coding-platform/next/src/core/work-graph/evidence/coverage.ts": "65ef15838dd82be0de4be0c87aa8a37fb38194eb9ab6782fdcdfb726820d105d",
+    "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts": "79fb556c92e959726b0df51b1727262d4f5a429eedd4bda3d5cd4350bbb3d0ac",
+    "coding-platform/next/src/core/agent-runtime/check-execution.ts": "39b2fc6a3b356b669e793ad4ee7868e84c5b24d60669ac75a15aefdff5f93981",
+    "coding-platform/next/src/composition/create-platform.ts": "a16af0991f40b98ef0acd76e92e6fdaa93cd76e1c632b66aab2e58f32817ae60",
+    "coding-platform/next/tests/work-graph/R3e-evidence.test.ts": "3eeb02064f326c31959b69c6f01cc8314577ecf5363ccf1081b67812ad78f352",
+    "coding-platform/next/tests/work-graph/R3e-evidence-coverage.test.ts": "ca00ffbbac7dc69ba6156bb3b9c92acab016e57cb0b031a1ea35cefa0a0ef9d5",
+    "coding-platform/next/tests/composition/R3e-command-check-platform.test.ts": "d1b95dd3792a8af96deb0b8382f9f371dab89ff951fc24c07dfe619c6856856e",
+    "coding-platform/next/tests/helpers/R3e-evidence-fixture.ts": "295eccbd29b377b666c47ec5fe5cfe494e3e6366e9ee9180ca643792a731e84a"
+  },
+  "phase": "skeleton-only",
+  "middleReview": "accepted including second bounded test repair",
+  "independentChecks": {
+    "combinedExpectedUnsupportedFailures": 10,
+    "neighborPassed": 71,
+    "finalTargetsExpectedUnsupportedFailures": 10,
+    "finalTypesExitCode": 0
+  },
+  "outsideScope": [],
+  "mainUnchangedBeforeImport": true,
+  "limitations": "No registered process execution has reached the skeleton; no completion capability delivered."
+}

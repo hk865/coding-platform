@@ -1,0 +1,106 @@
+{
+  "lane": "r4-tool-group-barrier-skeleton-20260926",
+  "stage": "reviewed skeleton; independent 6 expected target failures/61 pass; typecheck/24 artifacts pass",
+  "files": [
+    {
+      "file": "coding-platform/next/tests/kernel/R4-tool-group-barrier.test.ts",
+      "before": "37d03bce48050d51302f3445455665c2d2ef9710f79f4a736efea2489b4bd3e6",
+      "after": "746a787b433aaca3d4447c353f9ec623249823ac18aeb95e4e8ba2dcf74e1516"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/dist/app/composition/composition-root.d.ts",
+      "before": "a6a2744a16ab47a4c42e63dd96bcf58dc5939f4bc9a0dc960ee031131dad7a74",
+      "after": "55bd8510ad9f9dcb5c4c01da11f23d479f66c75c9e629c5ff65cf4e5b4b8b47d"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/dist/app/composition/composition-root.d.ts.map",
+      "before": "c5eb86e85ef12a80fee1deac4d9ef7381648a8abd5903f0f1b6565dfe1d339a8",
+      "after": "5a7580ffe25d58a77b276b88dc63e75cc45aa297075997a3f18e95e0017728b6"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/dist/app/composition/composition-root.js",
+      "before": "1613ca294c5376dcb881ce927cb4033607a1e1ee20e72343334fa9dd2d2a3a53",
+      "after": "26edcc1533d93b74e635387973df2957e7e932e40f78cef94019db6ac448e1ab"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/dist/app/composition/composition-root.js.map",
+      "before": "71ac238feeb448ded2427a59b34200547d593fc98c0910d78c8b3afcefedae09",
+      "after": "285bd689b2ae6b87448a5570236a17a93702d7658ea8f0f10ba1d943dee13635"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/dist/app/composition/resume-composition.d.ts",
+      "before": "26f3947ef530ce6780e8cfc5a2ba0866921219f72e3e78a18e69ba25a31f3d4e",
+      "after": "08ec6d5e4108e0d0696519aa3de5d729fb62d29cbab4afc46c768c4798bb18e5"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/dist/app/composition/resume-composition.d.ts.map",
+      "before": "4397478edbad049c085237201a8fd7fbaa5173c95ee0beb4acbf8c5d36c94070",
+      "after": "d4a4c006c83441a21bb47bbc541959b5e25af3f1b78096daf6075409e501acf2"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/dist/app/composition/resume-composition.js",
+      "before": "4d83b79362b3663bd1ccadf13e8d0819af9ca99e42865c38ce83361550988aef",
+      "after": "07c7dfbddf14c2770b9e6ecbf5e8d0e6f0db08813e42a07e6f4c567855b90d79"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/dist/app/composition/resume-composition.js.map",
+      "before": "9f9479e19ccbee5745b311f756b01b140478674321f2e9a4191c25d21d42e6ec",
+      "after": "d170709f50d278749b04669330a3eb8af050f84f9e19c20b2ea2a96e68625505"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/dist/core/runtime/loop/runtime-runner.d.ts",
+      "before": "8607f3fe49889b46b4ff4c267bf959366d4f0d288a9ddf69de93f6638d1ea0c0",
+      "after": "c1bff6e22f8def5b1c1eb18c0558da4a8089735216d7a3b2312a132625e73186"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/dist/core/runtime/loop/runtime-runner.d.ts.map",
+      "before": "e3859d32742044b33f1422d32733ee220300f9afb16e30b1e785ad889f52bcb2",
+      "after": "271af937d8fb51f56fbc73e10ed5e5b02ae32d25f35297c26cc35821906ede06"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/dist/core/runtime/loop/runtime-runner.js",
+      "before": "ef912a8661e5e30882a36580113ff4ef429afef471bf3e7be42f2358a8fcd3f7",
+      "after": "2ab17ee139944a055499f37e6d5823b13a2246bd8a470e3804dc6373d0ec3183"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/dist/core/runtime/loop/runtime-runner.js.map",
+      "before": "982505970b49fd5a4a60d49118250e6425f02742425c3acb7a168fbd3b5e39a8",
+      "after": "de55618f793340decb91f2eecc0fd1c782a4125643755874c5e5ede7856e0251"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/dist/public-api.d.ts",
+      "before": "07e4d2563f8d33060d185351fffe52434e540d49c6ae319f4e14863642ffceef",
+      "after": "80febdcaea3605d743f0f50b6a3c66d9eb502979026fb6c425c3cff2c2cd1f42"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/dist/public-api.d.ts.map",
+      "before": "0035099e06950fdda3fef8719c314abe6a0293ac3270d39f8193f90f745dcf88",
+      "after": "a0e53abf0fc871b2e0898b88dbb792a95c99a1686a95c7678beecd9eb11727cb"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/dist/public-api.js.map",
+      "before": "aefd5c0c582ebbbbfce062bcd1c399749c4d2f8f90568b863e32d327283b5778",
+      "after": "0a884b18fae43c135c9f4aaed748442f86eedcfccad06133b1041714f8b448c7"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/patches/app/composition/composition-root.ts",
+      "before": "698d49b40753d4e256dea9766bf47d3b1d99a3d82535d65c82a46ae896d07bd4",
+      "after": "faf3913c84fcd9284eadfbede9d47060a327bef8fe66d52cd941bacf94c58c1b"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/patches/app/composition/resume-composition.ts",
+      "before": "677ac4aaca71e8782bfeb9d01f2fdfad4630c773914f47ff165f068a5cba0904",
+      "after": "d269e42c30c8312e446d5b0f0fd79a780277bbf1d9af7e5823ec033a78f6ace8"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/patches/core/runtime/loop/runtime-runner.ts",
+      "before": "e37887abf5409cc048e491997c022c305c6ae75d3266e074995c583e2741f077",
+      "after": "474a908211cce1faf540a0982776aa489e8267e4a090e036eddc0bcaef82436f"
+    },
+    {
+      "file": "coding-platform/next/vendor/coding-agent/patches/public-api.ts",
+      "before": "f876ccda6afefe3645e20987fd8006375bfbaae6096ae12a0f5ce6791e711bea",
+      "after": "f5cda587cb9d26726dcf929e0cbef0e7d3a6c76b191864682024ab9a01a31ed3"
+    }
+  ]
+}

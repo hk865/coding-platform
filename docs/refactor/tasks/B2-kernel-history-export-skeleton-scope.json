@@ -1,0 +1,14 @@
+{
+  "writableFiles": [
+    "coding-platform/next/vendor/coding-agent/patches/public-api.ts",
+    "coding-platform/next/tests/kernel/B2-history-public-export.test.ts"
+  ],
+  "dshStateDirectories": [
+    "profiles",
+    "sessions",
+    "storages",
+    "cache",
+    "llm-deepseek",
+    "attachments"
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "source": "coding-platform/next/vendor/coding-agent/patches/app/composition/control-hooks.ts",
+  "sha256": "d3151d0e313d59cf5ae88c75a0c9b173c72428cd5a7e5c7b093fb370eb02846a",
+  "origin": "frozen dist/app/composition/control-hooks.js.map sourcesContent[0]"
+}

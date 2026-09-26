@@ -1,0 +1,18 @@
+{
+  "protectedFiles": 8827,
+  "protectedChanged": [],
+  "counts": {
+    "source": {
+      "files": 164,
+      "physicalLines": 29176
+    },
+    "contracts": {
+      "files": 57,
+      "physicalLines": 3789
+    },
+    "tests": {
+      "files": 80,
+      "physicalLines": 19235
+    }
+  }
+}

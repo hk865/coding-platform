@@ -1,0 +1,15 @@
+{
+  "decision": "approved_for_implementation",
+  "reviewers": [
+    "root",
+    "audit_graph_lifecycle"
+  ],
+  "changes": "Explicit unsupported skeleton; six real Kernel tests with skills/hooks snapshots, lazy dispatch, pending open cleanup and cross-round failure reuse; root strengthened no eager opening witness.",
+  "independentRed": "6 tests fail with explicit unsupported, typecheck succeeded",
+  "frozenFiles": {
+    "coding-platform/next/src/core/agent-runtime/observed-model-run.ts": "25a017387f80a273be06b2f26529a70f02af06bd044c9bb5e00e240ce6cb6b2d",
+    "coding-platform/next/src/core/agent-runtime/exploration-tools.ts": "6d50a6eb13424d83d7305942ff444e71cc6cbf3255327a3d54e67f08270c7c8f",
+    "coding-platform/next/src/core/agent-runtime/project-source-tool.ts": "beaedf4a2f1c5e1c70466a1c967f05f0bd8bb1f24375128192af958d70427e7f",
+    "coding-platform/next/tests/runtime/B1-kernel-assembly.test.ts": "dbb3504bc937c2605c16665fdee603835e4788f4d2f3634e15cc0bdc964770bd"
+  }
+}

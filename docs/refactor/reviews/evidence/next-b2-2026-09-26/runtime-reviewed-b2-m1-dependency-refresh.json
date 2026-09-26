@@ -1,0 +1,62 @@
+[
+  {
+    "path": "coding-platform/next/src/core/work-graph/materials/record-readers.ts",
+    "before": "291d9303c5ba3ad74d2959d6733c24568bf0e3f120e0676b211fa5d2544cebcd",
+    "after": "29e7cfa1033fd280da7fe6818cb26d1eea4c32303ad487406ca9023c8ef2070f"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/persistence/execution-entry-codecs.ts",
+    "before": "bdac172b0d8038fca7cd00a199f6e659a1b04f32e4c349bf66221359e61e2849",
+    "after": "723c60ce9f27a925eea0f35a5774ab28f2e1df2968efa43630affe29b0de65db"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/persistence/model-request-codecs.ts",
+    "before": "4b0bb5ae63621a2649065a6a757d61152a246417c68ab630ac120c04d15c0e78",
+    "after": "58d97819e0d8d29681f5a07a95f85cfacf19aedbb268f1e0fe95d4ed04d2be7b"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/tasks/claim-record-codecs.ts",
+    "before": "7eea1964ff398d23056600f07f695af7ff60f32586330e441a354c1003a50490",
+    "after": "dab01159a54d2dcc59c6329baf8ce3de567bc975f31c2e042cbe460de1f42560"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/tasks/execution-entry-service.ts",
+    "before": "7e0301d55c38ae6efa1b7d2c704df4a6039f8643a7b40d2a99a4c2574df30716",
+    "after": "3c217c75f5714be88586f41d9aa6f5600430a617ec8ee151c0666f4ac1a30c73"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/tasks/execution-history-binding.ts",
+    "before": "fd66f9b05527f633b8c5eea674706e1d5e34ba24f2fd3b1b7f458ad9302ba315",
+    "after": "35630d09491697f13e9ad4705998db2572536bdbc5016a293e81e09596ec8274"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/tasks/execution-history-service.ts",
+    "before": "51fea2737e854bf46e8367a9ae72b2c98795d30c585f32b158cf80caaf2b9f6d",
+    "after": "f6826a50d20bc6b9fd525946245c0831a893097ec3929a35d2a7762051dd5625"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/tasks/model-call-service.ts",
+    "before": "91f4ca43758c243e81b91881e63488d14d0e5f3933d674f1b68b5a41f0f023ef",
+    "after": "54714969549b04150b552bf93fa9aaad6331f8b04de05e086b13a83186e923c7"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/tasks/plan-readers.ts",
+    "before": "dc84a2e88d5f4ec158d14f88bc9789bbd5b0e9cea06acf81ef83b7a2104a0a02",
+    "after": "d9d05246237b508dea7c9a6d4a28714e4f4952f9de67c579aa8bb484d900b458"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/materials/grant-record-codecs.ts",
+    "before": "443ddf9ac09b801362c4f3da01d20876e56b8fc0dd2161cb930246f4ef5f8bce",
+    "after": "8680d96d80ec959687685bfa2e513f167f7baba7049ad09d499baf1b57fba264"
+  },
+  {
+    "path": "coding-platform/next/src/core/work-graph/materials/grant-service.ts",
+    "before": "e8861aef12e0fb1c5bf3d20d7be47c6d194954c7770e4e490f8914d0f972bc30",
+    "after": "e1b3a8ab1a848422efa878fcb003e4d71bee3b2794bc9c6180ba805675ad01a7"
+  },
+  {
+    "path": "coding-platform/next/src/core/workspace/material-source-provider.ts",
+    "before": "9744d98edaec22ca85966f33b21339da77909eaef0dea92af97f2e26c484b684",
+    "after": "78480393349d60f55a76bd3a24205bef8c0c3d623844b2a6f78fad3bab28a232"
+  }
+]

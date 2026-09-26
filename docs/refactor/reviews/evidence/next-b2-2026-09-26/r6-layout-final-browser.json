@@ -1,0 +1,359 @@
+{
+  "status": "passed_current_ui_browser_scope",
+  "recordedAt": "2026-09-26T15:06:49.659253+00:00",
+  "sourceHashes": {
+    "main.ts": "30e362cf7dcb1f0db44024227cac8de5c1e016359d9568e13c7a103b1dfe7805",
+    "views.ts": "eb90d20ee74844b38c9aacb4f8591c29d8060fa333bf641b8f2a21b8f6914b6d",
+    "styles.css": "ec5c5fac714feba9a32826be729868127937cf7cc148cf677fa817884e7fd305"
+  },
+  "setup": "UI three files copied by exact imported hash into existing physical next copy; real compiled Host reopened existing public-flow SQLite backups; original sandboxed Chromium native input",
+  "checks": {
+    "final-graph-file.json": {
+      "passed": true,
+      "checks": [
+        {
+          "nodes": [
+            {
+              "id": "implement",
+              "rect": {
+                "x": 1082,
+                "y": 445.78125,
+                "width": 200,
+                "height": 48,
+                "top": 445.78125,
+                "right": 1282,
+                "bottom": 493.78125,
+                "left": 1082
+              }
+            },
+            {
+              "id": "gate",
+              "rect": {
+                "x": 1318,
+                "y": 445.78125,
+                "width": 200,
+                "height": 48,
+                "top": 445.78125,
+                "right": 1518,
+                "bottom": 493.78125,
+                "left": 1318
+              }
+            },
+            {
+              "id": "implement",
+              "rect": {
+                "x": 1082,
+                "y": 683.5625,
+                "width": 200,
+                "height": 48,
+                "top": 683.5625,
+                "right": 1282,
+                "bottom": 731.5625,
+                "left": 1082
+              }
+            },
+            {
+              "id": "gate",
+              "rect": {
+                "x": 1318,
+                "y": 683.5625,
+                "width": 200,
+                "height": 48,
+                "top": 683.5625,
+                "right": 1518,
+                "bottom": 731.5625,
+                "left": 1318
+              }
+            }
+          ]
+        },
+        {
+          "singleClick": "implement",
+          "nativeDoubleClickPinned": true
+        },
+        {
+          "expanded": {
+            "viewport": {
+              "width": 1440,
+              "height": 960
+            },
+            "outer": {
+              "width": 1440,
+              "height": 960
+            },
+            "status": {
+              "x": 0,
+              "y": 893,
+              "width": 1440,
+              "height": 67,
+              "top": 893,
+              "right": 1440,
+              "bottom": 960,
+              "left": 0
+            },
+            "left": {
+              "x": 0,
+              "y": 61,
+              "width": 300,
+              "height": 832,
+              "top": 61,
+              "right": 300,
+              "bottom": 893,
+              "left": 0
+            },
+            "right": {
+              "x": 306,
+              "y": 61,
+              "width": 1134,
+              "height": 832,
+              "top": 61,
+              "right": 1440,
+              "bottom": 893,
+              "left": 306
+            }
+          }
+        },
+        {
+          "drag": {
+            "before": {
+              "viewport": {
+                "width": 1440,
+                "height": 960
+              },
+              "outer": {
+                "width": 1440,
+                "height": 960
+              },
+              "status": {
+                "x": 0,
+                "y": 893,
+                "width": 1440,
+                "height": 67,
+                "top": 893,
+                "right": 1440,
+                "bottom": 960,
+                "left": 0
+              },
+              "left": {
+                "x": 0,
+                "y": 61,
+                "width": 300,
+                "height": 832,
+                "top": 61,
+                "right": 300,
+                "bottom": 893,
+                "left": 0
+              },
+              "right": {
+                "x": 1020,
+                "y": 61,
+                "width": 420,
+                "height": 832,
+                "top": 61,
+                "right": 1440,
+                "bottom": 893,
+                "left": 1020
+              }
+            },
+            "after": {
+              "viewport": {
+                "width": 1440,
+                "height": 960
+              },
+              "outer": {
+                "width": 1440,
+                "height": 960
+              },
+              "status": {
+                "x": 0,
+                "y": 893,
+                "width": 1440,
+                "height": 67,
+                "top": 893,
+                "right": 1440,
+                "bottom": 960,
+                "left": 0
+              },
+              "left": {
+                "x": 0,
+                "y": 61,
+                "width": 300,
+                "height": 832,
+                "top": 61,
+                "right": 300,
+                "bottom": 893,
+                "left": 0
+              },
+              "right": {
+                "x": 840,
+                "y": 61,
+                "width": 600,
+                "height": 832,
+                "top": 61,
+                "right": 1440,
+                "bottom": 893,
+                "left": 840
+              }
+            }
+          }
+        },
+        {
+          "fileReference": "src/main.ts:L1-L1 · 草稿快照",
+          "dimensions": {
+            "viewport": {
+              "width": 1440,
+              "height": 960
+            },
+            "outer": {
+              "width": 1440,
+              "height": 960
+            },
+            "status": {
+              "x": 0,
+              "y": 848,
+              "width": 1440,
+              "height": 112,
+              "top": 848,
+              "right": 1440,
+              "bottom": 960,
+              "left": 0
+            },
+            "left": {
+              "x": 0,
+              "y": 61,
+              "width": 300,
+              "height": 787,
+              "top": 61,
+              "right": 300,
+              "bottom": 848,
+              "left": 0
+            },
+            "right": {
+              "x": 840,
+              "y": 61,
+              "width": 600,
+              "height": 787,
+              "top": 61,
+              "right": 1440,
+              "bottom": 848,
+              "left": 840
+            }
+          },
+          "editorDraftPreserved": true,
+          "sent": false
+        }
+      ]
+    },
+    "final-history.json": {
+      "passed": true,
+      "checks": [
+        {
+          "defaultClosed": true,
+          "dimensions": {
+            "viewport": {
+              "width": 1440,
+              "height": 960
+            },
+            "outer": {
+              "width": 1440,
+              "height": 960
+            },
+            "status": {
+              "x": 0,
+              "y": 893,
+              "width": 1440,
+              "height": 67,
+              "top": 893,
+              "right": 1440,
+              "bottom": 960,
+              "left": 0
+            },
+            "left": {
+              "x": 0,
+              "y": 61,
+              "width": 300,
+              "height": 832,
+              "top": 61,
+              "right": 300,
+              "bottom": 893,
+              "left": 0
+            },
+            "right": {
+              "x": 1020,
+              "y": 61,
+              "width": 420,
+              "height": 832,
+              "top": 61,
+              "right": 1440,
+              "bottom": 893,
+              "left": 1020
+            }
+          }
+        },
+        {
+          "opened": true,
+          "rawRecordId": "kernel:session.created:session-review-a:session-operation-c7cad7b532a9b5193e0bbe60e2077e4b4fe2a259d1cbe502785db7737c76293f",
+          "position": 1,
+          "dimensions": {
+            "viewport": {
+              "width": 1440,
+              "height": 960
+            },
+            "outer": {
+              "width": 1440,
+              "height": 960
+            },
+            "status": {
+              "x": 0,
+              "y": 893,
+              "width": 1440,
+              "height": 67,
+              "top": 893,
+              "right": 1440,
+              "bottom": 960,
+              "left": 0
+            },
+            "left": {
+              "x": 0,
+              "y": 61,
+              "width": 300,
+              "height": 832,
+              "top": 61,
+              "right": 300,
+              "bottom": 893,
+              "left": 0
+            },
+            "right": {
+              "x": 1020,
+              "y": 61,
+              "width": 420,
+              "height": 832,
+              "top": 61,
+              "right": 1440,
+              "bottom": 893,
+              "left": 1020
+            }
+          }
+        }
+      ],
+      "raw": "{\"recordId\":\"kernel:session.created:session-review-a:session-operation-c7cad7b532a9b5193e0bbe60e2077e4b4fe2a259d1cbe502785db7737c76293f\",\"sessionId\":\"session-c7cad7b532a9b5193e0bbe60e2077e4b4fe2a259d1cbe502785db7737c76293f\",\"position\":1,\"schemaVersion\":1,\"recordedAt\":\"2026-09-26T13:27:13.471Z\",\"checksum\":\"0c6723e744a7c05fa4f35151f9a2e94a0eead942a5f5aa7e9f0cc881fc68acf3\",\"recordType\":\"session.created\",\"payload\":{\"sessionId\":\"session-c7cad7b532a9b5193e0bbe60e2077e4b4fe2a259d1cbe502785db7737c76293f\",\"createdAt\":\"2026-09-26T13:27:13.471Z\"}}"
+    }
+  },
+  "confirmed": [
+    "same-depth nodes separated; native single click selects original node while keeping graph",
+    "native double-click/right-click pin; aux maximize/restore and native 420→600 resize",
+    "file directory/editor separation, L1-L1 draft reference without sending, tab/hide-show draft preservation",
+    "raw saved Session record default closed then explicit native disclosure, exact persisted body retained",
+    "graph and expanded raw history outer viewport remains 1440x960; default history status area 67px"
+  ],
+  "probeCorrections": [
+    "history probe initially opened target summary automatically and clicked it closed; corrected only /tmp helper to expand enclosing disclosures but not target summary",
+    "waited for own history read completion before opening persisted record"
+  ],
+  "limits": [
+    "No live provider/model execution in this UI review; forthcoming R6 execution entry is separate",
+    "History fixture contains actual session-created record; existing frozen display test covers saved reasoning/tool raw fields",
+    "Full task-to-run history linkage, historical Session relations, current containment consumer and final visual refinement remain later work",
+    "Current imported R4 skeleton still contains unsupported seams; this is not a full main test-suite pass"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "stage": "Astra shared interface review only; production remains unsupported",
+  "files": [
+    {
+      "path": "coding-platform/next/src/contracts/dispatch.ts",
+      "before": "f4020915ba10ef24d22e1d3fe849c53201f71c8c988cfd1428b1a48f30034a25",
+      "after": "ad9a5747f1087b02b564eafb59f1e51755fae88a8b31281966cc03eaa193e1e6"
+    },
+    {
+      "path": "coding-platform/next/src/contracts/core/task-claim.ts",
+      "before": "af7c1cbb73ce483e44cf42b7912108a4a7f1b5680bfcd290b70f5dcdfa978d3f",
+      "after": "491a1b61c3a710b9d91697d8c4d51506f21b69a8d854b4c0ccbd2dce0f86ceec"
+    },
+    {
+      "path": "coding-platform/next/src/contracts/core/prepared-execution.ts",
+      "before": "af7c1cbb73ce483e44cf42b7912108a4a7f1b5680bfcd290b70f5dcdfa978d3f",
+      "after": "6d8e2e1a484c8de2e7534c187ad34c7bf065ccf0f80a848823d0bc81e3ffdb8f"
+    },
+    {
+      "path": "coding-platform/next/src/core/work-graph/tasks/claim-contracts.ts",
+      "before": "a4ba3c7d21b50f89ca3fa253b99f997e3536e9d38c2ff6243be222ce777952d7",
+      "after": "301da43a901c913cb513fc98f2c2b83c6a6771f7b56313612db12326eb93b58b"
+    }
+  ]
+}
