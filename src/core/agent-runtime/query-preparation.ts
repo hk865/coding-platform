@@ -44,12 +44,61 @@ export const MAX_QUERY_MANIFEST_BYTES = ARTIFACT_MAX_SIZE_BYTES;
  * verified `initial_coordination` request, using the same trusted Role/Skill/
  * Host configuration, and adds no write-tool grant.
  */
-export const INITIAL_COORDINATION_RESPONSE_GUIDE = `Return one JSON object with schemaVersion 2 and kind "plan" or "needs_decision".
-For needs_decision, provide summary and questions; ask only the real product/authorization questions the request leaves open. Do not invent authorization.
-For plan, provide summary and plan with schemaVersion 2, stages, tasks, assignments, obligations, taskHierarchy:{parentOf:[]} and executionDag:{dependsOn:[]}; optional taskRelations and inputRequirements may be present.
-Do not include planId, planRevision, goalId or origin: the platform derives identity from the saved Job project/goal/intentId and provenance from the real Goal/Workspace revisions and actual answer digest.
-A task with executionIntent "plan_only" may omit assignment and acceptance. Use request_execution only when the task must run and then give it exactly one role/instruction assignment.
-Choose tasks, obligations and dependencies from the actual request and sources; keep the plan acyclic. Never invent a gate, dependency, assignment, acceptance or role binding the request did not ask for. Return no markdown fences.`;
+export const INITIAL_COORDINATION_RESPONSE_GUIDE = `Return exactly one JSON object as your entire final answer, with schemaVersion 2 and kind "plan" or "needs_decision": no preface, no trailing note, no commentary and no markdown or code fences. The platform parses that one object strictly and never extracts or repairs JSON out of surrounding text.
+For needs_decision, provide summary and questions (a non-empty array of strings); ask only the real product or authorization decisions the request leaves open. Do not invent authorization.
+For plan, provide summary and plan with schemaVersion 2 and the following fields:
+- stages: array of {stageId, title, description?}. A task references a stage only through its own stageId.
+- tasks: array of {taskId, stageId?, title, requirementLevel, taskKind, disposition, phase, scope, executionIntent?}. requirementLevel is "required" or "optional". taskKind is "work" or "gate". disposition is "active", "deferred", "cancelled" or "superseded". phase is "pending", "ready", "running", "verifying", "blocked", "satisfied" or "failed"; every task of a NEW plan starts "pending". scope is {kind:"goal"}, {kind:"stage",stageId} or {kind:"module",stageId,moduleRef}. executionIntent is "plan_only" or "request_execution" and may appear on a work task only.
+- assignments: array of {taskId, role, instruction}. A work task with executionIntent "request_execution" needs exactly one assignment whose role comes from the available configuration; a work task with executionIntent "plan_only" may omit it; a gate task must never carry an assignment or an executionIntent, because a gate conclusion comes from the formal evidence reduction, not from an execution run. A future work task with executionIntent "plan_only" may omit assignment, obligations/acceptance, dependencies and exact inputs; its incompleteness alone is not a reason to return needs_decision.
+- obligations: array of {obligationId, title, requirementLevel, taskIds, verificationRequirements}. taskIds lists only work/gate tasks of this same plan. Every verificationRequirements entry is {requirementId, requirementLevel, kind, description}; requirementLevel is "required" or "optional" and kind must be one of the requirementKinds of the effective CompletionPolicy shown in this context. A required obligation needs at least the policy's minimum number of required verification requirements.
+- taskHierarchy: {parentOf:[{parentTaskId, childTaskId}]}. It only expresses display grouping.
+- executionDag: {dependsOn:[{taskId, dependsOnId, requires:{kind, label}}]}. requires.kind is "output-contract", "artifact", "decision", "environment-revision" or "gate-result"; use a real versioned input/output dependency, keep the DAG acyclic and never make a task depend on itself.
+- taskRelations (optional): array of {fromTaskId, toTaskId, kind, note}; kind is "coordination" or "expected_dependency". It is advisory only and never a dispatch prerequisite.
+- inputRequirements (optional): array of {requirementId, consumerTaskId, kind:"artifact", artifactRef:{kind:"artifact", contentType, digest, sizeBytes, source:{kind, refId, revision}}}. Use it only when that exact artifact is already known from real facts; when it is not, omit the whole array instead of guessing a digest, size or source.
+Do not include planId, planRevision, goalId or origin: the platform derives identity from the saved Job project/goal/intentId and provenance from the real Goal/Workspace revisions and the actual answer digest.
+Choose every stage, task, scope, role, instruction, obligation, verification requirement and dependency from the actual request and the real sources. Never invent a gate, dependency, assignment, acceptance, verification requirement or role binding the request did not ask for, and never fill a genuinely missing decision with a default; ask that decision through needs_decision instead.
+The JSON example below is a SHAPE SAMPLE only: it shows the exact field names and legal enum values. It is NOT authorization for any task, role, acceptance or dependency of this request. Do not copy its ids, role, tasks, obligations or dependencies; replace every value with the real one from this request.
+BEGIN_INITIAL_PLAN_EXAMPLE
+{
+  "schemaVersion": 2,
+  "kind": "plan",
+  "summary": "Shape sample only: replace every value with the real work of this request.",
+  "plan": {
+    "schemaVersion": 2,
+    "stages": [
+      { "stageId": "sample-stage", "title": "Shape sample stage" }
+    ],
+    "tasks": [
+      { "taskId": "sample-work", "stageId": "sample-stage", "title": "Shape sample executable work",
+        "requirementLevel": "required", "taskKind": "work", "disposition": "active", "phase": "pending",
+        "scope": { "kind": "stage", "stageId": "sample-stage" }, "executionIntent": "request_execution" },
+      { "taskId": "sample-gate", "title": "Shape sample goal gate",
+        "requirementLevel": "required", "taskKind": "gate", "disposition": "active", "phase": "pending",
+        "scope": { "kind": "goal" } },
+      { "taskId": "sample-future", "title": "Shape sample optional future intent",
+        "requirementLevel": "optional", "taskKind": "work", "disposition": "active", "phase": "pending",
+        "scope": { "kind": "goal" }, "executionIntent": "plan_only" }
+    ],
+    "assignments": [
+      { "taskId": "sample-work", "role": "<role-from-available-configuration>",
+        "instruction": "Shape sample instruction: replace with the real requested work" }
+    ],
+    "obligations": [
+      { "obligationId": "sample-obligation", "title": "Shape sample acceptance obligation",
+        "requirementLevel": "required", "taskIds": ["sample-work", "sample-gate"],
+        "verificationRequirements": [
+          { "requirementId": "sample-requirement", "requirementLevel": "required", "kind": "static",
+            "description": "Shape sample verification: replace with the real check from this request" }
+        ] }
+    ],
+    "taskHierarchy": { "parentOf": [] },
+    "executionDag": { "dependsOn": [
+      { "taskId": "sample-gate", "dependsOnId": "sample-work",
+        "requires": { "kind": "artifact", "label": "Shape sample required input for the gate" } }
+    ] }
+  }
+}
+END_INITIAL_PLAN_EXAMPLE`;
 
 /** The declared call seam consumed by the stage-two `initial_coordination`
  * preparation; it grants nothing and ordinary Query never calls it. */

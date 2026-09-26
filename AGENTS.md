@@ -1,6 +1,6 @@
 # 独立仓库工作入口
 
-2026-09-27：本仓库是原 next 的独立提取，根目录就是唯一默认施工工程。用户要求保存提交并停止新批次；先读 `CONTINUE.md`，不要因历史任务书写着“立即继续”就自动派发。
+2026-09-27：本仓库是原 next 的独立提取，根目录就是唯一默认施工工程。用户已从独立 main 恢复，已完成有界 completion audit；最新限定的真实模型非语义错误验收已通过，并按用户要求停止，其它 MVP 阻塞保留；最新落点见 `docs/refactor/HANDOFF.md`。`CONTINUE.md` 是下次明确恢复时的提示，不因历史任务书存在就自动派发。
 
 1. 必要上下文：`README.md` → `docs/refactor/HANDOFF.md` → `docs/MVP-BEHAVIOR.md` → `docs/refactor/IMPLEMENTED-CAPABILITIES.md`；按需查 `docs/PRODUCT.md`、架构、模块与 UI 文档。
 2. 原 W/coding-platform/next 相当于本根；原 W/docs 相当于本根/docs。历史 C/src、C/tests 不是本仓库 src/tests；不得把本仓库源码当旧目录删除。历史绝对路径、scope、harness 命令都要先重新映射。当前文件优先于被复制文档里的旧目录说明。

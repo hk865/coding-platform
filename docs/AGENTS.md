@@ -1,6 +1,6 @@
 # 文档工作入口
 
-> 独立仓库说明（2026-09-27）：本仓库根即原 `coding-platform/next`，文档位于 `docs/`；当前继续入口见根 `CONTINUE.md` 与 `AGENTS.md`。旧证据、任务书中的绝对路径和 scope 只描述当时工作区，不能直接执行。用户已要求冻结保存，尚未宣告整个 MVP 完成。
+> 独立仓库说明（2026-09-27）：本仓库根即原 `coding-platform/next`，文档位于 `docs/`；当前继续入口见根 `CONTINUE.md` 与 `AGENTS.md`。旧证据、任务书中的绝对路径和 scope 只描述当时工作区，不能直接执行。用户已从独立 main 恢复；有界审计与本轮真实模型验收收口记录见 refactor/HANDOFF.md，真实模型限定验收后已按用户要求停止，尚未宣告整个 MVP 完成。
 
 2026-09-24：后续施工位置为 `coding-platform/next` 独立目标工程；同时读[用户纠偏](refactor/intent/2026-09-24-TARGET-PROJECT.md)与[迁移验收](refactor/reviews/next-completed-migration-2026-09-24.md)。原工程验收与新工程能力分别记录，不能把旧接口残留继续解释为目标依赖。
 

@@ -1,0 +1,15 @@
+{
+  "outcome": "formal Goal COMPLETED",
+  "calls": 16,
+  "registeredChecks": "3 PASS/exit0",
+  "platformExceptions": 0,
+  "expectedToolDenial": {
+    "callId": "call_01_IqwKOxJf1RdF1EuqGY977048",
+    "code": "hook_blocked",
+    "operation": "read path .",
+    "reason": "fixture Host readPrefixes=[src] excludes workspace root listing",
+    "effects": "none",
+    "modelContinued": true
+  },
+  "next": "Align fresh temporary fixture read scope with intended whole toy workspace and explain Host-owned checks; no production permission guard changes."
+}

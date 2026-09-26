@@ -1,0 +1,7 @@
+{
+  "writableFiles": [
+    "src/core/agent-runtime/query-preparation.ts",
+    "tests/work-graph/R5b-initial-plan.test.ts"
+  ],
+  "dshStateDirectories": ["profiles", "sessions", "storages", "cache", "llm-deepseek", "attachments"]
+}

@@ -1,13 +1,13 @@
-# 继续用的 prompt
+# 下次明确恢复时使用的 prompt
 
-请接手这个独立仓库：`/home/hyh001/projects/coding-platform/coding-platform-next`，从 `main` 当前提交继续。先读取根 `AGENTS.md`、`README.md`、`docs/refactor/HANDOFF.md`、`docs/MVP-BEHAVIOR.md`、`docs/refactor/IMPLEMENTED-CAPABILITIES.md`，再按需核对 `docs/refactor/skeleton/END-TO-END.md` 与已有验收证据。不要全量重读历史。
+请接手独立仓库 `/home/hyh001/projects/coding-platform/coding-platform-next`，从当前提交继续。本地分支为 `main`，源码远程发布分支为 `hk865/coding-platform:next-main`；文档同步到 `hk865/my-coding-platform-docs:next-main` 的 `docs/`。不要误用两个远程的旧 main。
 
-上次因额度将尽冻结施工并提交，**不是宣告整个 MVP 已完成**。首要任务只做一次有界 completion audit：将已确认 MVP 用户行为逐项对应到真实生产入口、当前实现、已有 E2E 证据和明确缺口。禁止新增需求、非阻塞测试或顺手重构；不要以“还有任务书”就判阻塞，也不要为了宣布完成把既定必需项自动移到 post-MVP。若无真正 blocker，更新现有文档并收口；若存在 blocker，先简要列出，再只完成阻塞当前 MVP 的最小必要工作。
+先读根 `AGENTS.md`、`README.md`、`docs/refactor/HANDOFF.md`、`docs/MVP-BEHAVIOR.md`、`docs/refactor/IMPLEMENTED-CAPABILITIES.md`；按需查 `docs/refactor/reviews/completion-audit-2026-09-27.md` 和 `docs/refactor/skeleton/END-TO-END.md`。有界 completion audit 已完成，不再全量重读历史或重新启动审计。
 
-已交付的限定路径：调查/初始规划→采用→两个 Work 复用同一 Session→checks→正式 Goal COMPLETED；Task 图→当前 Run→原 claim Session→本次执行窗口→完整原历史。完整保存记录可按需展开，辅助历史重复渲染已修复并做实际浏览器复验。模型是受控 provider，普通历史读取没有模型调用。最新独立提交验收看 `docs/refactor/reviews/evidence/standalone-2026-09-27/`，不要把旧的 124 文件/1,102 项快照自动当当前所有后续改动的证据。
+上轮用户明确要求“接入真实模型后消除非语义错误，验收后停止”，已按该范围完成并停工，**不是整个 MVP 完成**。真实 DeepSeek 验收见 `docs/refactor/reviews/evidence/standalone-2026-09-27/e01-live-deepseek/`：12 次真实模型调用，两个 Work 同 Session 真实改文件，3 次实际检查 PASS，正式 Goal COMPLETED，模型/工具错误为 0；历史读取不新增模型调用。只修初始规划输出 guide 的完整协议，未放宽 parser 或权限检查。初始失败和临时读取配置拒绝也保留，不能只看成功记录。完整示例 UI 仍是已确认设计目标，当前生产工作台不是其全部实现。
 
-冻结时：Work-control UI 草稿尚未派发；A1 ended-work-link 只在旧工作区 prepare，未启动 DSH、无产品候选；R3g policy writer 等草稿也没有因为保存而自动完成。恢复、Reviewer、协调/治理、完整 UI、旧消费者切换的剩余项以现有范围与审计为准，不要照旧聊天中“只剩最后签字”的估计下结论。
+这次恢复请按我新给的具体目标推进；若没有给下一目标，先指出已有审计中最小真实阻塞供选择，不自动展开所有模块。不得新增需求、非阻塞测试或顺手重构，不因为有任务书就判阻塞，也不得把既定必需项自动移出 MVP。无验收条件的未来 Task 继续保留；不恢复不存在的 Role 热切换防御。
 
-源码原 `coding-platform/next/` 现为本仓库根；文档原 `W/docs/` 现为 `docs/`。历史证据与任务书保留旧路径/哈希，先映射后使用；原旧产品、DSH lane、配置/凭据和临时数据库未提交，不要从旧lane盲目导入。需要继续生产施工时，保留两阶段 DSH 工作法，先适配现有 runner 与新 scope；先前没有完成的新骨架必须从此提交重新取基线。
+Work-control 新根 Stage1 已中审、仅存独立 lane，未导入、未 Stage2；若选它，先核当前基线与精确差异，不能盲导旧 lane。A1 旧 lane 未启动，R3g 草稿不等于完成。恢复/返工/并行/Reviewer/协调治理/完整 UI 与旧消费者切换依已有范围和审计判断。
 
-验证使用本仓库 Node 24 和 npm 锁文件；相关检查通过就继续，不扩大局部测试循环。未经要求不推送、不发布、不删除旧工程、不修改三个候选真实测试工作区。
+生产变更保持两阶段 DSH：先接口及 Stage1 骨架/测试后 STOP，中审冻结，再实现和必要验收。已适配 runner 在 `tools/dsh-refactor/`；用本仓库 Node 24、npm 锁文件及依赖。相关检查通过就推进，不扩局部测试循环。凭据从本机私有配置读取，不输出或提交；临时数据库不提交。源码原 next 即本根，文档原 W/docs 即本根/docs，历史路径先映射。不要删除旧工程或修改三个候选真实测试工作区；推送沿用户明确指定目标，不强推或改旧 main。

@@ -8,10 +8,11 @@
  * Query submit, a formal Runtime Session, the R5b.2 claim/prepare/start seam,
  * and the model's real `project_source` round before it returns the v2 plan JSON.
  *
- * Stage one: `proposeInitialPlanFromAnswer` is explicitly `unsupported`, so this
- * is the FIRST RED and every candidate/origin/apply/graph assertion below is NOT
- * reached by the skeleton. The test is the final acceptance shape and must not
- * be relaxed to pass early.
+ * R5b stage one: the production response guide still lacks the complete JSON
+ * example, so the guide-example shape contract below is the FIRST RED and every
+ * candidate/origin/apply/graph assertion after it is NOT reached until stage two
+ * adds that example. The test is the final acceptance shape and must not be
+ * relaxed to pass early.
  *
  * Specification: docs/refactor/tasks/R5b-query-planning-skeleton.md §11.2-§11.4,
  * §11.6.
@@ -24,6 +25,13 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { InitialPlanningResponseV2 } from '../../src/contracts/initial-planning.js';
 import type { QueryJobAnswerRef, QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
+import type { CompletionPolicyContentV1 } from '../../src/contracts/governance.js';
+import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
+import { INITIAL_COORDINATION_RESPONSE_GUIDE } from '../../src/core/agent-runtime/query-preparation.js';
+import { parseInitialPlanningResponseV2 } from '../../src/core/work-graph/tasks/initial-plan.js';
+import type { PlanProposal } from '../../src/core/work-graph/tasks/plan-contracts.js';
+import { decodePlanProposalRecord, encodePlanProposal } from '../../src/core/work-graph/tasks/plan-record-codecs.js';
+import { planPhaseGuardReasons, validatePlanAssignments, validatePlanDraft } from '../../src/core/work-graph/tasks/plan-validation.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
@@ -45,6 +53,21 @@ const roleBinding = { schemaVersion: 1 as const, bindingId: 'r5b-initial-binding
 const sessionRole = { kind: 'legacy_template' as const, templateId: 'advisor', templateRevision: '1' };
 const runtimeBudget = { contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 8, maxToolCalls: 8, timeoutMs: 30000, perResponseTokens: 512 };
 const hostInstruction = 'R5b initial-plan trusted read-only guidance';
+const completionPolicyContent: CompletionPolicyContentV1 = {
+  schemaVersion: 1, requirementKinds: ['static'], minimumRequiredRequirementsPerObligation: 1,
+};
+
+/** The one injected guide example body, or null when its BEGIN/END markers are absent. */
+const GUIDE_EXAMPLE_BEGIN = 'BEGIN_INITIAL_PLAN_EXAMPLE';
+const GUIDE_EXAMPLE_END = 'END_INITIAL_PLAN_EXAMPLE';
+function guideExampleFrom(text: string): string | null {
+  const begin = text.indexOf(GUIDE_EXAMPLE_BEGIN);
+  if (begin < 0) return null;
+  const end = text.indexOf(GUIDE_EXAMPLE_END, begin + GUIDE_EXAMPLE_BEGIN.length);
+  if (end < 0) return null;
+  const body = text.slice(begin + GUIDE_EXAMPLE_BEGIN.length, end).trim();
+  return body.length === 0 ? null : body;
+}
 
 /** The real v2 reply the model returns, typed so the shape is compile-checked. */
 const PLAN_RESPONSE: InitialPlanningResponseV2 = {
@@ -138,7 +161,7 @@ async function completeGovernance(platform: Awaited<ReturnType<typeof createTarg
   const installed = await platform.completionPolicies.installCompletionPolicy(host, { meta: { requestId: 'r5b-initial-policy-1',
     expected: [{ ref: projectRef, revision: 1 }, { ref: policyRef, revision: 0 }] },
     input: { policyId: 'r5b-initial-policy', contentRevision: 1,
-      content: { schemaVersion: 1, requirementKinds: ['static'], minimumRequiredRequirementsPerObligation: 1 } } });
+      content: completionPolicyContent } });
   expect(installed, 'the CompletionPolicy must install').toMatchObject({ status: 'committed' });
   if (installed.status !== 'committed') throw new Error('policy install failed');
   expect(await platform.completionPolicies.activateCompletionPolicy(host, { meta: { requestId: 'r5b-initial-policy-active',
@@ -236,6 +259,62 @@ it('consumes one real v2 answer into the same Plan owner candidate, then adopts 
     expect(answer.value.answer.sources.some(source => source.kind === 'project_source'
       && source.refKey.includes('src/module.ts')
       && source.version === digestOf('export const r5bInitialMarker = "R5B_INITIAL_REAL_SOURCE";\n'))).toBe(true);
+
+    // 2b. The guide actually injected into the real provider requests must itself
+    // carry the complete JSON example it tells the model to follow. It is parsed
+    // by the existing initial-planning parser and judged by the same Plan
+    // codec/validators as one shape contract; it authorizes nothing.
+    const requestTexts = scripted.requests.map(request => [
+      request.systemPrompt,
+      ...request.messages.flatMap(message => message.role === 'tool' ? [] : [message.content]),
+    ].join('\n\n'));
+    expect(requestTexts.some(text => text.includes(INITIAL_COORDINATION_RESPONSE_GUIDE)),
+      'the verified initial_coordination guide must be appended verbatim to the real provider request').toBe(true);
+    const guideExampleText = requestTexts.map(guideExampleFrom).find(text => text !== null) ?? null;
+    expect(guideExampleText,
+      `the injected guide must carry one complete JSON example between ${GUIDE_EXAMPLE_BEGIN} and ${GUIDE_EXAMPLE_END}`).not.toBeNull();
+    if (guideExampleText === null) throw new Error('the injected guide carries no JSON example');
+    const parsedExample = parseInitialPlanningResponseV2(guideExampleText);
+    expect(parsedExample,
+      `the guide example must be one valid v2 initial-planning response: ${JSON.stringify(parsedExample)}`)
+      .toMatchObject({ status: 'parsed', response: { schemaVersion: 2, kind: 'plan' } });
+    if (parsedExample.status !== 'parsed' || parsedExample.response.kind !== 'plan') {
+      throw new Error('the guide example is not a v2 plan response');
+    }
+    const examplePlan = parsedExample.response.plan;
+    // The example must demonstrate the real protocol, not a keyword stub.
+    expect(examplePlan.tasks.some(task => task.taskKind === 'work' && task.executionIntent !== undefined),
+      'the guide example must demonstrate an executable work task').toBe(true);
+    expect(examplePlan.tasks.some(task => task.taskKind === 'gate' && task.executionIntent === undefined),
+      'the guide example must demonstrate a goal gate without an execution intent').toBe(true);
+    expect(examplePlan.obligations.some(obligation => obligation.verificationRequirements.length > 0),
+      'the guide example must demonstrate an obligation with verification requirements').toBe(true);
+    expect(examplePlan.executionDag.dependsOn.some(edge => edge.requires !== undefined),
+      'the guide example must demonstrate a real dependency with its required input contract').toBe(true);
+    // The example is a shape sample only: placeholder identity proves the formal
+    // candidate_v2 codec accepts it without persisting any fact or plan.
+    const exampleDraft = {
+      ...structuredClone(examplePlan),
+      planId: 'r5b-guide-example-plan', planRevision: 1, goalId: 'r5b-guide-example-goal',
+    } as PlanRevisionDraft;
+    const exampleProposal: PlanProposal = {
+      kind: 'candidate_v2', ref: { aggregateType: 'PlanProposal', projectId, workspaceId,
+        proposalId: 'r5b-guide-example-proposal' }, revision: 1, schemaVersion: 2,
+      goalRef: { aggregateType: 'Goal', projectId, goalId: 'r5b-guide-example-goal' },
+      basedOn: null, draft: exampleDraft,
+      reason: { text: 'Shape-check the example the response guide shows the model', sources: [] },
+      status: 'candidate', issues: [],
+    };
+    const decodedExample = decodePlanProposalRecord(encodePlanProposal(exampleProposal));
+    expect(decodedExample,
+      `the guide example must encode/decode as a candidate_v2: ${JSON.stringify(decodedExample)}`)
+      .toMatchObject({ status: 'decoded', value: { kind: 'candidate_v2' } });
+    expect(validatePlanDraft(exampleDraft, completionPolicyContent).map(issue => `${issue.path}: ${issue.message}`),
+      'the guide example must satisfy the formal Plan draft validation').toEqual([]);
+    expect(validatePlanAssignments(exampleDraft),
+      'the guide example must satisfy the formal assignment coverage').toEqual([]);
+    expect(planPhaseGuardReasons(exampleDraft.tasks),
+      'the guide example must start every task in a legal planning phase').toEqual([]);
 
     // 3. The new Plan owner entry. Stage one is explicitly unsupported, so this
     // is the FIRST RED; everything below is unreached by the skeleton.

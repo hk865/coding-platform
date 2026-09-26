@@ -1,0 +1,73 @@
+[
+  {
+    "call": 1,
+    "requestId": "0c912ee3-140f-4d02-bcf9-002bb44a3fbf",
+    "runId": "krun-f6b2b26e68b59c6bd2188836f97994d48eeb4c4acd61c71341c2a13bb97408e1",
+    "toolResults": [],
+    "fileSha256": "ddb2b2e83c068f580acb857e3205869095a17a7d55d91b860d85d9cd9b4981cb",
+    "startedAt": "2026-09-26T18:08:23.520Z"
+  },
+  {
+    "call": 1,
+    "type": "completed",
+    "reason": "tool_calls",
+    "errorCode": null,
+    "at": "2026-09-26T18:08:24.395Z"
+  },
+  {
+    "call": 2,
+    "requestId": "86b1fe6d-172f-4ed2-bca2-6b27386a7523",
+    "runId": "krun-f6b2b26e68b59c6bd2188836f97994d48eeb4c4acd61c71341c2a13bb97408e1",
+    "toolResults": [
+      {
+        "callId": "call_00_Yk1KJB0mJBl76DWmiU7a7467",
+        "status": "success"
+      },
+      {
+        "callId": "call_01_z9MpOJ6GNZ7lAiFx0VFk3477",
+        "status": "success"
+      }
+    ],
+    "fileSha256": "ddb2b2e83c068f580acb857e3205869095a17a7d55d91b860d85d9cd9b4981cb",
+    "startedAt": "2026-09-26T18:08:24.516Z"
+  },
+  {
+    "call": 2,
+    "type": "completed",
+    "reason": "tool_calls",
+    "errorCode": null,
+    "at": "2026-09-26T18:08:25.566Z"
+  },
+  {
+    "call": 3,
+    "requestId": "824a970f-15e1-4cb4-9e3e-1be5de1b783e",
+    "runId": "krun-f6b2b26e68b59c6bd2188836f97994d48eeb4c4acd61c71341c2a13bb97408e1",
+    "toolResults": [
+      {
+        "callId": "call_00_Yk1KJB0mJBl76DWmiU7a7467",
+        "status": "success"
+      },
+      {
+        "callId": "call_01_z9MpOJ6GNZ7lAiFx0VFk3477",
+        "status": "success"
+      },
+      {
+        "callId": "call_00_mlozOl7GJccnnBGyhrLP4973",
+        "status": "success"
+      },
+      {
+        "callId": "call_01_RgiliLlVaJkvXJXopZGe4661",
+        "status": "success"
+      }
+    ],
+    "fileSha256": "ddb2b2e83c068f580acb857e3205869095a17a7d55d91b860d85d9cd9b4981cb",
+    "startedAt": "2026-09-26T18:08:25.635Z"
+  },
+  {
+    "call": 3,
+    "type": "completed",
+    "reason": "final_answer",
+    "errorCode": null,
+    "at": "2026-09-26T18:08:33.673Z"
+  }
+]

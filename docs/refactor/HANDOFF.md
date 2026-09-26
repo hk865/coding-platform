@@ -1,12 +1,16 @@
 # 无对话记忆的 Agent 接手说明
 
-**最新独立仓库验收：124 文件 / 1,102 项通过（exit0）。** 本次包含最终 graph/history UI 和独立目录构建脚本；Kernel 补丁再生、边界、Node/UI 类型、构建、编译入口和受 token 保护的 Host smoke 均通过。[独立验收记录](reviews/evidence/standalone-2026-09-27/verification.json)。完整 MVP 行为审计仍未执行；下方较早报告保留其当时范围。
+**最新独立仓库验收：124 文件 / 1,102 项通过（exit0）。** 本次包含最终 graph/history UI 和独立目录构建脚本；Kernel 补丁再生、边界、Node/UI 类型、构建、编译入口和受 token 保护的 Host smoke 均通过。[独立验收记录](reviews/evidence/standalone-2026-09-27/verification.json)。本轮[有界 completion audit](reviews/completion-audit-2026-09-27.md)已完成：仍有真实实现阻塞与验收缺证；下方较早报告保留其当时范围。
 
-> 独立仓库说明（2026-09-27）：本仓库根即原 `coding-platform/next`，文档位于 `docs/`；当前继续入口见根 `CONTINUE.md` 与 `AGENTS.md`。旧证据、任务书中的绝对路径和 scope 只描述当时工作区，不能直接执行。用户已要求冻结保存，尚未宣告整个 MVP 完成。
+> 独立仓库说明（2026-09-27）：本仓库根即原 `coding-platform/next`，文档位于 `docs/`；当前继续入口见根 `CONTINUE.md` 与 `AGENTS.md`。旧证据、任务书中的绝对路径和 scope 只描述当时工作区，不能直接执行。用户已从独立 main 恢复并完成有界审计；本轮真实模型接入的非语义错误修复已验收并停止，尚未宣告整个 MVP 完成。
 
-**当前状态（2026-09-27）：按用户要求冻结施工并保存 next 与文档，准备独立 main 提交和继续入口；不启动新批次。** A1 仅 prepare、未 run，已停止；Work-control 保持已预审草稿，R3g 未派发。R6 graph/history 已[精确导入](reviews/evidence/next-b2-2026-09-26/r6-graph-history-consumer-implementation-import.json)，固定22项、Node/UI types及构建通过，[最终只读浏览器复验](reviews/evidence/next-b2-2026-09-26/r6-graph-history-browser-final.json)通过；不宣告完整MVP完成。恢复施工须先按本页继续入口核对既定产品范围与现有证据。
+**当前状态（2026-09-27）：本轮真实模型接入验收已通过，按用户要求停止施工。** [有界审计](reviews/completion-audit-2026-09-27.md)之后，[R5b 输出契约](tasks/R5b-live-model-response-contract.md)已完成两阶段 DSH、中审及两文件导入；独立相关 4 文件 / 4 项、类型与构建通过。[最终真实 DeepSeek 验收](reviews/evidence/standalone-2026-09-27/e01-live-deepseek/result.json)完成 12 次模型调用、12 次工具完成，模型/工具错误均为 0；两个 Work 复用同一 Session 实际改文件，三次检查 PASS，正式 Goal COMPLETED。真实浏览器展开完成回执并读取 Query 原历史后，模型调用数仍为 12。本限定路径没有再出现“非语义”错误；不继续其它模块，也不据此撤销既定 MVP 余项或宣告整个 MVP 完成。
 
-更新：2026-09-27。默认施工本独立仓库根，原工程保留只读。已确认产品范围仍是当前五模块、真实消费者及Host/UI；本轮最新指令优先，先冻结保存，后续收到继续指令再施工。
+[受控 coding 路径](reviews/evidence/standalone-2026-09-27/e01-controlled-coding/result.json)已补证：原生产入口完成两次真实文件编辑、三次实际行为检查及正式 Goal COMPLETED。该证据使用受控 provider，初始化经正式 HTTP owner 完成，不代表真实模型、完整 UI bootstrap 或完整 MVP。
+
+独立根 runner 已实际运行 [Work-control Stage1](tasks/R6-work-control-consumer-skeleton.md)，骨架中审未发现必须返修项；候选仍只在独立 lane，未导入、未进入 Stage2，因本轮范围收窄保持 STOP。其余返工、控制/恢复、并行、换手、变更/治理和完整项目隔离缺口按原审计保留；A1 旧 lane 不导入，R3g 不自动派发。
+
+更新：2026-09-27。默认施工本独立仓库根，原工程保留只读。已确认产品范围仍是当前五模块、真实消费者及Host/UI；本轮已完成范围审计和真实模型限定路径验收，现按用户要求停止施工，旧工程保留只读。
 
 **提取前完整隔离基线：124 文件 / 1,102 项通过（exit0）。** 该副本包含R4.3b与R6执行入口最终导入，以及[W2一行机械调用次数断言删除](reviews/evidence/next-b2-2026-09-26/r4-r6-w2-fixture-amendment.json)；Node/UI types、构建、7/8边界、7源/28产物逐字再生、编译composition与真实token保护Host smoke均通过。见[结果](reviews/evidence/next-b2-2026-09-26/r4-r6-isolated-result.json)、[通过日志](reviews/evidence/next-b2-2026-09-26/r4-r6-isolated-recheck.log)及保留的[首次失败日志](reviews/evidence/next-b2-2026-09-26/r4-r6-isolated-final.log)。快照不含其后的graph/history骨架与实现，不能据此证明当前全部源码整体通过；本轮未重做旧8,827文件全hash比较，不沿用旧快照结论。
 
@@ -33,7 +37,7 @@ R4.3a 八生产控制投递/观察已[独审导入](reviews/evidence/next-b2-202
 
 R6 调查/规划执行入口六生产实现已[最终导入](reviews/evidence/next-b2-2026-09-26/r6-execution-entry-implementation-import.json)，固定22项、Node/UI types与物理构建通过；[最终真实 CUA 浏览器验收](reviews/evidence/next-b2-2026-09-26/r6-execution-entry-browser-final.json)一键贯通 Query→Answer→初始 Plan 采用→两个 Work→实际 checks/独立 Goal gate→正式 Goal COMPLETED。完整回答默认收起且可主动展开，任务图直接显示原 `TaskGraph.completion`，optional 无验收未来节点继续保留。该链使用原受控4回复及真实 Host/Runtime/Kernel/SQLite，不代表外部真实模型网络、完整 MVP/UI 或全生命周期已验收。
 
-[Task本次执行到原Session/历史](tasks/R6-graph-history-consumer-implementation.md)的两UI实现及辅助历史重复渲染窄修已[精确导入](reviews/evidence/next-b2-2026-09-26/r6-graph-history-consumer-implementation-import.json)，[固定22项、Node/UI types与构建通过](reviews/evidence/next-b2-2026-09-26/r6-graph-history-browser-repair-review.json)。[初轮真实CUA](reviews/evidence/next-b2-2026-09-26/r6-graph-history-browser-initial.json)已核Task→两个不同Run→同一claim Session、各原窗口2–6/7–11、完整Session顺序1–10→11、Run页切回保留、原文默认折叠可展开及中心/辅助分页独立；[最终只读复验](reviews/evidence/next-b2-2026-09-26/r6-graph-history-browser-final.json)确认辅助页仅呈现一次10条原记录，可展开position5实际正文，模型调用0。该消费者只导航当前TaskRow已知Run，不代表全部attempt枚举；本批未纳入上述124文件/1102项完整隔离副本。架构包含UI、文件保存、diff/终端、完整控制/恢复、Reviewer/返工、治理及最终消费者切换继续保留；当前冻结，不启动后续批次。
+[Task本次执行到原Session/历史](tasks/R6-graph-history-consumer-implementation.md)的两UI实现及辅助历史重复渲染窄修已[精确导入](reviews/evidence/next-b2-2026-09-26/r6-graph-history-consumer-implementation-import.json)，[固定22项、Node/UI types与构建通过](reviews/evidence/next-b2-2026-09-26/r6-graph-history-browser-repair-review.json)。[初轮真实CUA](reviews/evidence/next-b2-2026-09-26/r6-graph-history-browser-initial.json)已核Task→两个不同Run→同一claim Session、各原窗口2–6/7–11、完整Session顺序1–10→11、Run页切回保留、原文默认折叠可展开及中心/辅助分页独立；[最终只读复验](reviews/evidence/next-b2-2026-09-26/r6-graph-history-browser-final.json)确认辅助页仅呈现一次10条原记录，可展开position5实际正文，模型调用0。该消费者只导航当前TaskRow已知Run，不代表全部attempt枚举；本批未纳入提取前124文件/1102项副本，但已纳入顶部 standalone 独立提交验收。架构包含UI、文件保存、diff/终端、完整控制/恢复、Reviewer/返工、治理及最终消费者切换继续保留；恢复后的实际阻塞与下一批以顶部审计和 HANDOFF 为准。
 
 用户2026-09-26新提供的UI原型已[实际操作核对](reviews/evidence/next-b2-2026-09-26/ui-prototype-next-review.json)：两侧拖宽、节点固定/新页、文件树与编辑页分离、选区路径/行号/草稿快照、切页保留及归档只读均有演示证据。已同步[UI规范](../UI-WORKBENCH.md)，相应UI布局与执行展示已按上述批次导入并通过浏览器验收，继续复用既有真实HTTP事实。架构包含关系、各Task全部attempt/Turn枚举、文件保存、diff/终端与完整执行控制仍按原owner后续接通；当前TaskRun原窗口和完整Session历史已由上述消费者交付。
 
@@ -189,6 +193,6 @@ R4.3a八生产实现与四正常流程已独审导入；R4.3b[骨架](tasks/R4-t
 
 ## 冻结保存后的继续入口
 
-以下提示供用户恢复任务时直接使用；本次保存期间不执行其中施工步骤。
+以下保留额度冻结时的原始继续提示。本轮已完成其中的有界审计，且用户随后收窄施工范围；恢复时以本页顶部当前状态为准，不按本段重复审计或自动派发旧批次。
 
 > 请从已保存的独立main继续coding-platform。先读本页、docs/MVP-BEHAVIOR.md、IMPLEMENTED-CAPABILITIES.md、IMPLEMENTATION-PLAN.md及对应已有evidence，对已确认产品范围做一次completion audit：逐项区分已导入并有真实消费者证据、仅骨架/候选、尚缺生产者或消费者。保留124文件/1102项隔离副本的准确边界，不把后续局部验收说成新main全绿。按真实公开路径列出仍阻断既定交付的具体缺口，再优先补必要接线；不要新增需求、非阻塞测试、覆盖矩阵、顺手重构或第二owner，也不能自动删减已确认范围。Work-control仅为草稿、A1仅prepare未run且已停止、R3g未派发；不要凭旧会话状态重启它们，先核现源码和最终导入回执。已有授权范围内继续采用骨架→中审冻结→实现→必要独审的工作法，不重做已交付能力；如有真实阻塞如实记录其来源和未完成范围，不宣告完整MVP已完成。

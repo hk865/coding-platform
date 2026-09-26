@@ -1,0 +1,48 @@
+[
+  {
+    "callId": "e01-work-1-read",
+    "status": "success",
+    "path": "src/module.ts",
+    "revision": "ddb2b2e83c068f580acb857e3205869095a17a7d55d91b860d85d9cd9b4981cb",
+    "source": "real_model_request_tool_result"
+  },
+  {
+    "callId": "e01-work-1-edit",
+    "status": "success",
+    "path": "src/module.ts",
+    "oldRevision": "ddb2b2e83c068f580acb857e3205869095a17a7d55d91b860d85d9cd9b4981cb",
+    "newRevision": "958bacec0bffe06581938be430212b436d65da2615521eabdf3577cc3065d971",
+    "effects": {
+      "sideEffect": "confirmed",
+      "changedPaths": [
+        "src/module.ts"
+      ],
+      "workspaceRevision": "6d6bfac39d1ac75f4668176bb184d6a55fb3d295e58a6b07e7f2b88637b48222",
+      "artifactRefs": []
+    },
+    "source": "real_model_request_tool_result"
+  },
+  {
+    "callId": "e01-work-2-read",
+    "status": "success",
+    "path": "src/module.ts",
+    "revision": "958bacec0bffe06581938be430212b436d65da2615521eabdf3577cc3065d971",
+    "source": "real_model_request_tool_result"
+  },
+  {
+    "callId": "e01-work-2-edit",
+    "status": "success",
+    "path": "src/module.ts",
+    "oldRevision": "958bacec0bffe06581938be430212b436d65da2615521eabdf3577cc3065d971",
+    "newRevision": "286366bcdd1bf6ca0b35289737f14bd5da8ee9796c40fccd7720ba80df4fe026",
+    "effects": {
+      "sideEffect": "confirmed",
+      "changedPaths": [
+        "src/module.ts"
+      ],
+      "workspaceRevision": "665941c1acbb64cf6379631749ab2fcfefff57d43506110228110bfb1d1b3c94",
+      "artifactRefs": []
+    },
+    "source": "real_model_request_tool_result"
+  }
+]

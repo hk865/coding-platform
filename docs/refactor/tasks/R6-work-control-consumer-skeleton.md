@@ -1,6 +1,8 @@
 # R6：本地 Work Run 的暂停/取消消费者骨架
 
-2026-09-27。主审已按现有公开端口核对的下一批草稿；**尚未批准 prepare/派发**。必须等 R6 graph/history 两 UI 实现最终导入，fresh main 取基线，避免共写 main/views。只消费已导入的 R4.3a/b，不设计 resume、冷恢复、Query 控制或新执行引擎。生产范围为原五文件，加原两份 R6 测试；见 [scope](R6-work-control-consumer-skeleton-scope.json)。
+2026-09-27。独立仓库 `main@5bd93abc8cab` 有界 completion audit 确认 B08/E07 的 Host/UI 控制入口是实际阻塞。本批由该提交及本轮文档/runner适配后的当前工作树重新取基线；graph/history 最终实现已包含在内，不复用旧 lane。**新根 Stage1 已交付并经骨架中审核对，未发现必须返修项；候选未导入、未进入 Stage2，当前 STOP。** 用户随后要求本轮仅推进真实模型接入的非语义错误；该限定路径现已验收并按用户确认停止，因此不继续本批实现，不将本候选算作 Host/UI 已交付。独立 lane 为 `r6-work-control-skeleton-standalone-20260927`；后续若恢复本批，先核候选与当前基线差异，再决定 Stage2，不能自动覆盖主工作树。 只消费已导入的 R4.3a/b，不设计 resume、冷恢复、Query 控制或新执行引擎；这些仍是整体 MVP 的明确余项，不能由本批完成而关闭。生产范围为原五文件，加原两份 R6 测试；见 [scope](R6-work-control-consumer-skeleton-scope.json)。
+
+当前根是 `/home/hyh001/projects/coding-platform/coding-platform-next`；源码、测试直接位于 `src/`、`tests/`，历史文档中的 `coding-platform/next/` 只作路径映射。本批检查使用新根 `tools/dsh-refactor/check.py` 与本仓库 Node 24/npm 锁文件，不调用旧工作区 runner。任何检查日志写 `/tmp/dsh-output/`，不改变允许范围外文件。
 
 先读 docs/AGENTS.md、当前 HANDOFF、IMPLEMENTED-CAPABILITIES 的 RT10–RT12、R4-control-runtime-implementation.md、R4-terminal-history-implementation.md、已导入 R6 graph/history 契约。源码以 `control-contracts.ts`、`contracts/control-intent.ts`、原 Runtime ports/execution-control/observer、composition 与当前 UI 为事实。原五模块、Host token/scope/身份和两阶段工作法不变。
 

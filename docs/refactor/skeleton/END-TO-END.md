@@ -1,14 +1,18 @@
 # 贯通流程、Host装配与UI接线骨架
 
-**最新独立仓库验收：124 文件 / 1,102 项通过（exit0）。** 本次包含最终 graph/history UI 和独立目录构建脚本；Kernel 补丁再生、边界、Node/UI 类型、构建、编译入口和受 token 保护的 Host smoke 均通过。[独立验收记录](../reviews/evidence/standalone-2026-09-27/verification.json)。完整 MVP 行为审计仍未执行；下方较早报告保留其当时范围。
+**最新独立仓库验收：124 文件 / 1,102 项通过（exit0）。** 本次包含最终 graph/history UI 和独立目录构建脚本；Kernel 补丁再生、边界、Node/UI 类型、构建、编译入口和受 token 保护的 Host smoke 均通过。[独立验收记录](../reviews/evidence/standalone-2026-09-27/verification.json)。本轮[有界 completion audit](../reviews/completion-audit-2026-09-27.md)已完成：仍有真实实现阻塞与验收缺证；下方较早报告保留其当时范围。
 
-> 独立仓库说明（2026-09-27）：本仓库根即原 `coding-platform/next`，文档位于 `docs/`；当前继续入口见根 `CONTINUE.md` 与 `AGENTS.md`。旧证据、任务书中的绝对路径和 scope 只描述当时工作区，不能直接执行。用户已要求冻结保存，尚未宣告整个 MVP 完成。
+> 独立仓库说明（2026-09-27）：本仓库根即原 `coding-platform/next`，文档位于 `docs/`；当前继续入口见根 `CONTINUE.md` 与 `AGENTS.md`。旧证据、任务书中的绝对路径和 scope 只描述当时工作区，不能直接执行。用户已从独立 main 恢复并完成有界审计；本轮真实模型接入的非语义错误修复已验收并停止，尚未宣告整个 MVP 完成。
 
-**当前状态（2026-09-27）：按用户要求冻结施工并保存 next 与文档，准备独立 main 提交和继续入口；不启动新批次。** A1 仅 prepare、未 run，已停止；Work-control 保持已预审草稿，R3g 未派发。R6 graph/history 已[精确导入](../reviews/evidence/next-b2-2026-09-26/r6-graph-history-consumer-implementation-import.json)，固定22项、Node/UI types及构建通过，[最终只读浏览器复验](../reviews/evidence/next-b2-2026-09-26/r6-graph-history-browser-final.json)通过；不宣告完整MVP完成。恢复施工须先按[交接入口](../HANDOFF.md)核对既定产品范围与现有证据。
+**当前状态（2026-09-27）：本轮真实模型接入验收已通过，按用户要求停止施工。** [有界审计](../reviews/completion-audit-2026-09-27.md)之后，[R5b 输出契约](../tasks/R5b-live-model-response-contract.md)已完成两阶段 DSH、中审及两文件导入；独立相关 4 文件 / 4 项、类型与构建通过。[最终真实 DeepSeek 验收](../reviews/evidence/standalone-2026-09-27/e01-live-deepseek/result.json)完成 12 次模型调用、12 次工具完成，模型/工具错误均为 0；两个 Work 复用同一 Session 实际改文件，三次检查 PASS，正式 Goal COMPLETED。真实浏览器展开完成回执并读取 Query 原历史后，模型调用数仍为 12。本限定路径没有再出现“非语义”错误；不继续其它模块，也不据此撤销既定 MVP 余项或宣告整个 MVP 完成。
+
+[受控 coding 路径](../reviews/evidence/standalone-2026-09-27/e01-controlled-coding/result.json)已补证：原生产入口完成两次真实文件编辑、三次实际行为检查及正式 Goal COMPLETED。该证据使用受控 provider，初始化经正式 HTTP owner 完成，不代表真实模型、完整 UI bootstrap 或完整 MVP。
+
+独立根 runner 已实际运行 [Work-control Stage1](../tasks/R6-work-control-consumer-skeleton.md)，骨架中审未发现必须返修项；候选仍只在独立 lane，未导入、未进入 Stage2，因本轮范围收窄保持 STOP。其余返工、控制/恢复、并行、换手、变更/治理和完整项目隔离缺口按原审计保留；A1 旧 lane 不导入，R3g 不自动派发。
 
 2026-09-27：用户行为、首条E2E与产品MVP验收边界见[MVP-BEHAVIOR](../../MVP-BEHAVIOR.md)。正式完成、Workflow、Query/Answer、初始Plan、Session/mailbox与生产UI布局已导入；R4.3a/R4.3b及R6调查/规划执行入口也已导入，真实CUA一键Query→Plan→两Work→checks→正式Goal COMPLETED已通过。完整MVP/UI、恢复/维护、复杂编排与最终产品切换仍未交付；Task→当前Run/原Session/原窗口与完整Session历史消费者已最终导入并完成真实浏览器验收，精确证据见[交接](../HANDOFF.md)。
 
-**最近完整隔离基线：124 文件 / 1,102 项通过（exit0）。** 该副本包含R4.3b与R6执行入口最终导入，以及[W2一行机械调用次数断言删除](../reviews/evidence/next-b2-2026-09-26/r4-r6-w2-fixture-amendment.json)；Node/UI types、构建、7/8边界、7源/28产物逐字再生、编译composition与真实token保护Host smoke均通过。见[结果](../reviews/evidence/next-b2-2026-09-26/r4-r6-isolated-result.json)、[通过日志](../reviews/evidence/next-b2-2026-09-26/r4-r6-isolated-recheck.log)及保留的[首次失败日志](../reviews/evidence/next-b2-2026-09-26/r4-r6-isolated-final.log)。快照不含其后的graph/history骨架与实现，不能据此证明当前全部源码整体通过；本轮未重做旧8,827文件全hash比较，不沿用旧快照结论。
+**提取前隔离历史：124 文件 / 1,102 项通过（exit0）。** 该副本包含R4.3b与R6执行入口最终导入，以及[W2一行机械调用次数断言删除](../reviews/evidence/next-b2-2026-09-26/r4-r6-w2-fixture-amendment.json)；Node/UI types、构建、7/8边界、7源/28产物逐字再生、编译composition与真实token保护Host smoke均通过。见[结果](../reviews/evidence/next-b2-2026-09-26/r4-r6-isolated-result.json)、[通过日志](../reviews/evidence/next-b2-2026-09-26/r4-r6-isolated-recheck.log)及保留的[首次失败日志](../reviews/evidence/next-b2-2026-09-26/r4-r6-isolated-final.log)。快照不含其后的graph/history骨架与实现，不能据此证明当前全部源码整体通过；本轮未重做旧8,827文件全hash比较，不沿用旧快照结论。
 
 目标设计，2026-09-23。本文可以从头阅读理解一次真实任务怎样跨模块推进；各步骤的具体输入/结果类型和内部文件在对应模块页。流程中的函数名均是目标公开能力或明确注明的Host函数，不表示已接入生产。
 

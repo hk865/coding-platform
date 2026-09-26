@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-26T18:29:14.162263+00:00",
+  "baseCommit": "5bd93abc8cabfefc1bd81e203bbe604b57d163d8",
+  "productionDelta": "contract-import.json (query-preparation.ts guide only; parser and permission guards unchanged)",
+  "provider": {
+    "kind": "real built-in DeepSeek provider",
+    "model": "deepseek-flash",
+    "thinking": "disabled",
+    "requests": 12,
+    "modelErrors": 0
+  },
+  "tools": {
+    "completed": 12,
+    "failed": 0,
+    "confirmedFileEdits": 2
+  },
+  "workRuns": [
+    {
+      "ref": {
+        "aggregateType": "Run",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "runId": "5654d749-de96-4a2d-8638-386c258709f5"
+      },
+      "status": "ended",
+      "outcome": "completed"
+    },
+    {
+      "ref": {
+        "aggregateType": "Run",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "runId": "1a1a0e88-2c53-4ecb-b8c2-1a2088c3d9e8"
+      },
+      "status": "ended",
+      "outcome": "completed"
+    }
+  ],
+  "sameWorkSession": true,
+  "registeredChecks": {
+    "count": 3,
+    "allPass": true,
+    "observedExports": {
+      "total": 10,
+      "doubled": [
+        2,
+        4,
+        6
+      ]
+    }
+  },
+  "goal": {
+    "ref": {
+      "aggregateType": "GoalPhase",
+      "projectId": "r6-host-project",
+      "goalId": "r6x-goal"
+    },
+    "revision": 1,
+    "schemaVersion": 1,
+    "planRef": {
+      "aggregateType": "PlanRevision",
+      "projectId": "r6-host-project",
+      "planId": "initial-plan-1e22425c9be35f8feb204e268d9d1228"
+    },
+    "planRevision": 1,
+    "phase": "COMPLETED",
+    "adoptedTaskReductions": [
+      {
+        "ref": {
+          "aggregateType": "TaskReduction",
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "work-fix-sum-and-double"
+        },
+        "revision": 1
+      },
+      {
+        "ref": {
+          "aggregateType": "TaskReduction",
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "work-extract-sum-input-array"
+        },
+        "revision": 1
+      },
+      {
+        "ref": {
+          "aggregateType": "TaskReduction",
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "gate-goal-acceptance"
+        },
+        "revision": 1
+      }
+    ],
+    "satisfiedObligationIds": [
+      "obl-behavior-preserved"
+    ],
+    "reducedAt": "2026-09-26T18:27:09.804Z"
+  },
+  "finalFileSha256": "6f0dfbaaafc0a5dd8e747210fe2460f076486174563b2f83e3f4f63d85681133",
+  "browser": {
+    "url": "http://127.0.0.1:35627/workbench/",
+    "tab": 7,
+    "actions": [
+      "enter same goal and question",
+      "click 规划并执行 once",
+      "observe completed and expand committed GoalPhase COMPLETED receipt",
+      "read saved Query Session original history"
+    ],
+    "providerCallsBeforeHistory": 12,
+    "providerCallsAfterHistory": 12
+  },
+  "independentReview": "live_plan_contract_review read-only audit of ledger/Kernel/reports/file: PASS",
+  "fixtureDirectory": "/tmp/coding-platform-live-model-review-I7rUuf",
+  "notCovered": [
+    "whole MVP",
+    "full accepted prototype UI",
+    "all bootstrap only via UI (public HTTP owner initialization used)",
+    "rework/concurrency/control/resume/cold recovery/handoff/governance",
+    "arbitrary model semantic quality",
+    "three candidate real projects"
+  ],
+  "stoppingDecision": "User confirmed stop after this bounded live-provider acceptance; no next module dispatched."
+}

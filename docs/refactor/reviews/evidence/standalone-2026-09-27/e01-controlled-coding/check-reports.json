@@ -1,0 +1,224 @@
+[
+  {
+    "artifactRef": {
+      "kind": "artifact",
+      "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+      "digest": "bf875ccd7a6f7083d5f70b21d445202a4f1e5b690fedf704ef500f76376ab2ce",
+      "sizeBytes": 1458,
+      "source": {
+        "kind": "plan-revision",
+        "refId": "initial-plan-09567292b5a86ce75fd9fa340ebf2230",
+        "revision": "1"
+      }
+    },
+    "report": {
+      "schemaVersion": 1,
+      "kind": "registered-check-report",
+      "roundRef": {
+        "aggregateType": "VerificationRound",
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace",
+        "goalId": "r6x-goal",
+        "taskId": "r6x-work-1",
+        "runId": "31dad779-2a01-4796-a086-039ee0179aa5",
+        "roundId": "f6cb1405-871b-4aa3-a699-0e92a30bf40d"
+      },
+      "checkId": "e01-module-behavior",
+      "invocationId": "51196c84-2cac-4a96-b7bd-9a8b92250f3b",
+      "source": {
+        "actor": {
+          "kind": "human",
+          "id": "r6x-operator"
+        },
+        "runRef": null,
+        "checkId": "e01-module-behavior"
+      },
+      "subjectRunRef": {
+        "aggregateType": "Run",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "runId": "31dad779-2a01-4796-a086-039ee0179aa5"
+      },
+      "subject": {
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "taskId": "r6x-work-1"
+      },
+      "observation": {
+        "kind": "executed",
+        "startedAt": "2026-09-26T18:01:08.684Z",
+        "finishedAt": "2026-09-26T18:01:08.765Z",
+        "exitCode": 0,
+        "signal": null,
+        "timedOut": false,
+        "cancelled": false,
+        "stdout": {
+          "text": "{\"kind\":\"E01_ACTUAL_MODULE_CHECK\",\"stage\":\"saved-module\",\"path\":\"src/module.ts\",\"sha256\":\"958bacec0bffe06581938be430212b436d65da2615521eabdf3577cc3065d971\",\"total\":10,\"doubled\":[2,4,6]}\n",
+          "totalBytes": 186,
+          "truncated": false
+        },
+        "stderr": {
+          "text": "",
+          "totalBytes": 0,
+          "truncated": false
+        },
+        "effects": {
+          "workspaceRevision": "6d6bfac39d1ac75f4668176bb184d6a55fb3d295e58a6b07e7f2b88637b48222",
+          "changedPaths": []
+        },
+        "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0"
+      },
+      "sourceStatus": "matched",
+      "outcome": "PASS",
+      "recordedAt": "2026-09-26T18:01:08.772Z"
+    }
+  },
+  {
+    "artifactRef": {
+      "kind": "artifact",
+      "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+      "digest": "248a55aae8f617453cf25b4b9b90573fe78b51e8128910b3a83c623e4ca5e3b4",
+      "sizeBytes": 1458,
+      "source": {
+        "kind": "plan-revision",
+        "refId": "initial-plan-09567292b5a86ce75fd9fa340ebf2230",
+        "revision": "1"
+      }
+    },
+    "report": {
+      "schemaVersion": 1,
+      "kind": "registered-check-report",
+      "roundRef": {
+        "aggregateType": "VerificationRound",
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace",
+        "goalId": "r6x-goal",
+        "taskId": "r6x-work-2",
+        "runId": "43adb915-7055-4a8f-b9cc-d2e7349e0e91",
+        "roundId": "16fd9fad-6bdb-4eee-b1d4-30bc35887ecb"
+      },
+      "checkId": "e01-module-behavior",
+      "invocationId": "445fb9d6-853e-4b52-b3b7-b4addbde02ea",
+      "source": {
+        "actor": {
+          "kind": "human",
+          "id": "r6x-operator"
+        },
+        "runRef": null,
+        "checkId": "e01-module-behavior"
+      },
+      "subjectRunRef": {
+        "aggregateType": "Run",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "runId": "43adb915-7055-4a8f-b9cc-d2e7349e0e91"
+      },
+      "subject": {
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "taskId": "r6x-work-2"
+      },
+      "observation": {
+        "kind": "executed",
+        "startedAt": "2026-09-26T18:01:09.145Z",
+        "finishedAt": "2026-09-26T18:01:09.223Z",
+        "exitCode": 0,
+        "signal": null,
+        "timedOut": false,
+        "cancelled": false,
+        "stdout": {
+          "text": "{\"kind\":\"E01_ACTUAL_MODULE_CHECK\",\"stage\":\"saved-module\",\"path\":\"src/module.ts\",\"sha256\":\"286366bcdd1bf6ca0b35289737f14bd5da8ee9796c40fccd7720ba80df4fe026\",\"total\":10,\"doubled\":[2,4,6]}\n",
+          "totalBytes": 186,
+          "truncated": false
+        },
+        "stderr": {
+          "text": "",
+          "totalBytes": 0,
+          "truncated": false
+        },
+        "effects": {
+          "workspaceRevision": "665941c1acbb64cf6379631749ab2fcfefff57d43506110228110bfb1d1b3c94",
+          "changedPaths": []
+        },
+        "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0"
+      },
+      "sourceStatus": "matched",
+      "outcome": "PASS",
+      "recordedAt": "2026-09-26T18:01:09.229Z"
+    }
+  },
+  {
+    "artifactRef": {
+      "kind": "artifact",
+      "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+      "digest": "55d754323e5e9a5d5d1bfd4c95879c9278ddb172fc82090a69327c57dac14942",
+      "sizeBytes": 1454,
+      "source": {
+        "kind": "plan-revision",
+        "refId": "initial-plan-09567292b5a86ce75fd9fa340ebf2230",
+        "revision": "1"
+      }
+    },
+    "report": {
+      "schemaVersion": 1,
+      "kind": "registered-check-report",
+      "roundRef": {
+        "aggregateType": "VerificationRound",
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace",
+        "goalId": "r6x-goal",
+        "taskId": "r6x-gate",
+        "runId": "31dad779-2a01-4796-a086-039ee0179aa5",
+        "roundId": "0bb94365-ad71-4a80-8480-c74b183cdccf"
+      },
+      "checkId": "e01-module-behavior",
+      "invocationId": "ddb1a8ed-f02d-4b7d-bc52-06aed4e27181",
+      "source": {
+        "actor": {
+          "kind": "human",
+          "id": "r6x-operator"
+        },
+        "runRef": null,
+        "checkId": "e01-module-behavior"
+      },
+      "subjectRunRef": {
+        "aggregateType": "Run",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "runId": "31dad779-2a01-4796-a086-039ee0179aa5"
+      },
+      "subject": {
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "taskId": "r6x-gate"
+      },
+      "observation": {
+        "kind": "executed",
+        "startedAt": "2026-09-26T18:01:09.358Z",
+        "finishedAt": "2026-09-26T18:01:09.445Z",
+        "exitCode": 0,
+        "signal": null,
+        "timedOut": false,
+        "cancelled": false,
+        "stdout": {
+          "text": "{\"kind\":\"E01_ACTUAL_MODULE_CHECK\",\"stage\":\"saved-module\",\"path\":\"src/module.ts\",\"sha256\":\"286366bcdd1bf6ca0b35289737f14bd5da8ee9796c40fccd7720ba80df4fe026\",\"total\":10,\"doubled\":[2,4,6]}\n",
+          "totalBytes": 186,
+          "truncated": false
+        },
+        "stderr": {
+          "text": "",
+          "totalBytes": 0,
+          "truncated": false
+        },
+        "effects": {
+          "workspaceRevision": "665941c1acbb64cf6379631749ab2fcfefff57d43506110228110bfb1d1b3c94",
+          "changedPaths": []
+        },
+        "sandboxProfileVersion": "bwrap-m3-v4:bubblewrap 0.9.0"
+      },
+      "sourceStatus": "matched",
+      "outcome": "PASS",
+      "recordedAt": "2026-09-26T18:01:09.451Z"
+    }
+  }
+]

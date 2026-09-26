@@ -1,0 +1,31 @@
+{
+  "baseCommit": "5bd93abc8cabfefc1bd81e203bbe604b57d163d8",
+  "lane": "r5b-live-contract-20260927",
+  "session": "session-fa3c8db6-0a24-498e-8f10-02facda5a1d9",
+  "method": "two distinct DSH stages; independent middle/final review; exact scope/import",
+  "files": [
+    {
+      "path": "src/core/agent-runtime/query-preparation.ts",
+      "before": "b410de9bbb496dbd46546b74261c7acc3a4bc0bc95805ca719419f3a1be90c7f",
+      "after": "5ff828d234e8e7ced390500dff31eae102e9b7b407936c3457358324d07227b9"
+    },
+    {
+      "path": "tests/work-graph/R5b-initial-plan.test.ts",
+      "before": "cddada0a9ff4d171b946d09bdf69be2eae4b4f9be79c571019efcf44e9ebf057",
+      "after": "12332e859824833eea1aaa26a8ff74d8c46eb325240b1d628b37e9f1f4d91f09"
+    }
+  ],
+  "checks": {
+    "initialPlanAndQuery": {
+      "files": 4,
+      "tests": 4,
+      "exitCode": 0
+    },
+    "types": 0,
+    "build": 0
+  },
+  "scope": {
+    "outsideScope": [],
+    "staleAllowedFiles": []
+  }
+}

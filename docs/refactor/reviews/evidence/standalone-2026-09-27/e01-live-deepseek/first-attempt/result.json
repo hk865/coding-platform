@@ -1,0 +1,24 @@
+{
+  "sourceCommit": "5bd93abc8cabfefc1bd81e203bbe604b57d163d8",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "thinking": "disabled",
+  "calls": 3,
+  "observedThrough": "actual workbench browser; public Query answer",
+  "outcome": "waiting",
+  "initialPlanningReceipt": {
+    "status": "rejected",
+    "code": "invalid",
+    "reason": "the initial-planning answer is not valid JSON"
+  },
+  "sourceToolCalls": "four successful public tool results",
+  "filesChanged": false,
+  "diagnosis": "Existing guide named top-level arrays but omitted nested field shapes. Actual answer contained prose before JSON and guessed nested shapes. Parser remains strict.",
+  "fixtureDirectory": "/tmp/coding-platform-live-model-review-QPcTGS",
+  "notEvidenceFor": [
+    "plan adoption",
+    "work execution",
+    "goal completion",
+    "whole MVP"
+  ]
+}

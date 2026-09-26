@@ -1,0 +1,2897 @@
+{
+  "QueryJob": [
+    {
+      "ref": {
+        "aggregateType": "QueryJob",
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace",
+        "queryJobId": "qjob-flow-muipy89n-1"
+      },
+      "revision": 3,
+      "schemaVersion": 1,
+      "job": {
+        "schemaVersion": 1,
+        "queryJobId": "qjob-flow-muipy89n-1",
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace",
+        "goalId": "r6x-goal",
+        "intent": {
+          "schemaVersion": 1,
+          "intentId": "qjob-flow-muipy89n-1",
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace",
+          "goalId": "r6x-goal",
+          "question": "请读取 src/module.ts。授权 builder 执行两个顺序工作：先修复求和与翻倍使 total=10、doubled=[2,4,6]，再提取求和输入数组并保持行为。两步均实际改文件，使用已配置的 static 行为检查，最后由独立 goal gate 验收；规划并执行到正式完成。",
+          "focusTaskRefs": [],
+          "budget": {
+            "maxTokens": 200000,
+            "deadline": null
+          },
+          "multiTurn": {
+            "maxRounds": 1
+          },
+          "correlationId": "corr-flow-muipy89n-1",
+          "execution": {
+            "kind": "initial_coordination",
+            "roleBinding": {
+              "schemaVersion": 1,
+              "bindingId": "r6x-query-role-binding",
+              "templateId": "advisor",
+              "templateRevision": "1",
+              "bindingVersion": 1,
+              "policyRevision": "1"
+            },
+            "runtimeBudget": {
+              "contextWindowTokens": 200000,
+              "inputTokens": null,
+              "outputTokens": null,
+              "maxRequests": 8,
+              "maxToolCalls": 12,
+              "timeoutMs": 90000,
+              "perResponseTokens": 8192
+            }
+          }
+        },
+        "status": "answered",
+        "runRef": {
+          "aggregateType": "QueryRun",
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace",
+          "queryJobId": "qjob-flow-muipy89n-1",
+          "runId": "qrun-flow-muipy89n-1"
+        },
+        "answerRefs": [
+          {
+            "aggregateType": "QueryJobAnswer",
+            "projectId": "r6-host-project",
+            "workspaceId": "r6-host-workspace",
+            "queryJobId": "qjob-flow-muipy89n-1",
+            "answerId": "r5b-query-answer-e2cea603afef334b460bab69ff8be84914a1989023aaf5ada7abc3e95ec20ec3"
+          }
+        ],
+        "closeReason": null,
+        "submittedAt": "2026-09-26T18:24:18.868Z",
+        "updatedAt": "2026-09-26T18:24:30.925Z"
+      },
+      "submission": {
+        "schemaVersion": 1,
+        "identityKey": "query-job-submit:{\"actor\":{\"id\":\"r6x-operator\",\"kind\":\"human\"},\"idempotencyKey\":\"r6-queries-submit-muipy8bv-3\",\"projectId\":\"r6-host-project\"}",
+        "fingerprint": "2703745c2181f102313b9a405ce27067f13bddb52c8f5c485eb725c2cb5a2c92",
+        "eventId": "4e9d81e0-9f61-4a1d-9e70-71373ee6df0e"
+      }
+    }
+  ],
+  "QueryRun": [
+    {
+      "ref": {
+        "aggregateType": "QueryRun",
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace",
+        "queryJobId": "qjob-flow-muipy89n-1",
+        "runId": "qrun-flow-muipy89n-1"
+      },
+      "revision": 21,
+      "schemaVersion": 1,
+      "run": {
+        "schemaVersion": 1,
+        "queryJobRef": {
+          "aggregateType": "QueryJob",
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace",
+          "queryJobId": "qjob-flow-muipy89n-1"
+        },
+        "runId": "qrun-flow-muipy89n-1",
+        "status": "answered",
+        "startedAt": "2026-09-26T18:24:18.922Z",
+        "endedAt": "2026-09-26T18:24:30.925Z",
+        "outcome": "answered",
+        "executionState": {
+          "schemaVersion": 1,
+          "phase": "settled",
+          "sessionRef": {
+            "aggregateType": "Session",
+            "projectId": "r6-host-project",
+            "sessionId": "session-c59d27c2d286beabaa2d04ea8dc305a7ff6977f8bf9878123cf8c6f2ae44082b"
+          },
+          "sessionGeneration": 2,
+          "role": {
+            "kind": "legacy_template",
+            "templateId": "advisor",
+            "templateRevision": "1"
+          },
+          "roleBinding": {
+            "schemaVersion": 1,
+            "bindingId": "r6x-query-role-binding",
+            "templateId": "advisor",
+            "templateRevision": "1",
+            "bindingVersion": 1,
+            "policyRevision": "1"
+          },
+          "roleResolution": {
+            "status": "absent",
+            "roleId": "advisor",
+            "reason": "the project has no active coordination policy, so there is no role matrix"
+          },
+          "priorHistoryCursor": null,
+          "prepared": {
+            "bundleRef": {
+              "kind": "artifact",
+              "contentType": "application/vnd.coding-platform.query-execution-manifest+json;version=1",
+              "digest": "dbece0480d599877ab8af3b6124e868a8f5d698fa69e70db2be3286fd8ccc2a1",
+              "sizeBytes": 9110,
+              "source": {
+                "kind": "workspace",
+                "refId": "r6-host-workspace",
+                "revision": "1"
+              }
+            },
+            "inputDigest": "3e0f34219e624459cb729a5d69bbfe480519f67829e64570d181a77d9a89f2a7"
+          },
+          "entry": {
+            "generation": 1,
+            "consumerId": "r6x-consumer",
+            "hostConfigurationRevision": "r6x-query-host@1",
+            "permissions": {
+              "tools": [
+                "read",
+                "project_source"
+              ],
+              "writeScope": []
+            },
+            "budget": {
+              "contextWindowTokens": 200000,
+              "inputTokens": null,
+              "outputTokens": null,
+              "maxRequests": 8,
+              "maxToolCalls": 12,
+              "timeoutMs": 90000,
+              "perResponseTokens": 8192
+            },
+            "kernel": {
+              "adapterId": "r6x-kernel",
+              "kernelSessionId": "session-c59d27c2d286beabaa2d04ea8dc305a7ff6977f8bf9878123cf8c6f2ae44082b",
+              "runId": "krun-383452aa2b1fcc6d8aaad730f4247036e0a8a64f38ba5b375b6b4112cc3feed5",
+              "turnId": "kturn-3b5f6fab75b4c579a71349869022337f426873f6982bb1d30dcbdb067a0da73b"
+            }
+          },
+          "history": {
+            "schemaVersion": 1,
+            "sessionRef": {
+              "aggregateType": "Session",
+              "projectId": "r6-host-project",
+              "sessionId": "session-c59d27c2d286beabaa2d04ea8dc305a7ff6977f8bf9878123cf8c6f2ae44082b"
+            },
+            "kernel": {
+              "adapterId": "r6x-kernel",
+              "kernelSessionId": "session-c59d27c2d286beabaa2d04ea8dc305a7ff6977f8bf9878123cf8c6f2ae44082b",
+              "runId": "krun-383452aa2b1fcc6d8aaad730f4247036e0a8a64f38ba5b375b6b4112cc3feed5",
+              "turnId": "kturn-3b5f6fab75b4c579a71349869022337f426873f6982bb1d30dcbdb067a0da73b"
+            },
+            "startPosition": 2,
+            "observedThroughPosition": 29,
+            "endPosition": 29
+          },
+          "requests": [
+            {
+              "requestId": "35f0884c-70b4-47f9-9db6-8911581d856b",
+              "requestDigest": "fbc31217e0c16876900e7597290049fe6b9da84998b1aa80236d3d8ebbfc8a9c",
+              "reservedInput": 30507,
+              "reservedOutput": 8192,
+              "inputTokens": 6914,
+              "outputTokens": 133,
+              "cachedInputTokens": 5248,
+              "usageStatus": "reported",
+              "admitted": true
+            },
+            {
+              "requestId": "59d81594-c109-49ca-8520-2b67177baf61",
+              "requestDigest": "c93d43c493f6ed01380e62d01bce0b43ad4d2ae2ecc4cd1b7e6bebfe0dc1863d",
+              "reservedInput": 32872,
+              "reservedOutput": 8192,
+              "inputTokens": 7660,
+              "outputTokens": 278,
+              "cachedInputTokens": 7040,
+              "usageStatus": "reported",
+              "admitted": true
+            },
+            {
+              "requestId": "5a79879f-c753-41de-a02b-e1de97efd93d",
+              "requestDigest": "3fa993856a023c3bb8c2d34d04f8a76b3e8568ce84c99a4cce9fd589943157f9",
+              "reservedInput": 34951,
+              "reservedOutput": 8192,
+              "inputTokens": 8412,
+              "outputTokens": 283,
+              "cachedInputTokens": 7552,
+              "usageStatus": "reported",
+              "admitted": true
+            },
+            {
+              "requestId": "57f6a961-5db7-4f5d-bff3-9a04381592dc",
+              "requestDigest": "a23eef45981dd2e623ea2b36024261d0dfccf55ddd1ba28186778dedf571cbb2",
+              "reservedInput": 36680,
+              "reservedOutput": 8192,
+              "inputTokens": 9089,
+              "outputTokens": 255,
+              "cachedInputTokens": 8576,
+              "usageStatus": "reported",
+              "admitted": true
+            },
+            {
+              "requestId": "2abe5866-cd8a-4d7e-aa2f-471e86113041",
+              "requestDigest": "59e2dbfaf9e1d304c6a13aa9c2ca496660d6a665e8af5efca9b0714db44da072",
+              "reservedInput": 37738,
+              "reservedOutput": 8192,
+              "inputTokens": 9435,
+              "outputTokens": 1812,
+              "cachedInputTokens": 9216,
+              "usageStatus": "reported",
+              "admitted": true
+            }
+          ]
+        },
+        "execution": {
+          "schemaVersion": 1,
+          "roundIndex": 0,
+          "request": {
+            "runRef": {
+              "aggregateType": "QueryRun",
+              "projectId": "r6-host-project",
+              "workspaceId": "r6-host-workspace",
+              "queryJobId": "qjob-flow-muipy89n-1",
+              "runId": "qrun-flow-muipy89n-1"
+            },
+            "bundleRef": {
+              "kind": "artifact",
+              "contentType": "application/vnd.coding-platform.query-execution-manifest+json;version=1",
+              "digest": "dbece0480d599877ab8af3b6124e868a8f5d698fa69e70db2be3286fd8ccc2a1",
+              "sizeBytes": 9110,
+              "source": {
+                "kind": "workspace",
+                "refId": "r6-host-workspace",
+                "revision": "1"
+              }
+            },
+            "question": "请读取 src/module.ts。授权 builder 执行两个顺序工作：先修复求和与翻倍使 total=10、doubled=[2,4,6]，再提取求和输入数组并保持行为。两步均实际改文件，使用已配置的 static 行为检查，最后由独立 goal gate 验收；规划并执行到正式完成。",
+            "budget": {
+              "maxTokens": 200000
+            }
+          },
+          "selectedSources": []
+        }
+      }
+    }
+  ],
+  "QueryJobAnswer": [
+    {
+      "ref": {
+        "aggregateType": "QueryJobAnswer",
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace",
+        "queryJobId": "qjob-flow-muipy89n-1",
+        "answerId": "r5b-query-answer-e2cea603afef334b460bab69ff8be84914a1989023aaf5ada7abc3e95ec20ec3"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "answer": {
+        "schemaVersion": 1,
+        "answerId": "r5b-query-answer-e2cea603afef334b460bab69ff8be84914a1989023aaf5ada7abc3e95ec20ec3",
+        "queryJobRef": {
+          "aggregateType": "QueryJob",
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace",
+          "queryJobId": "qjob-flow-muipy89n-1"
+        },
+        "runRef": {
+          "aggregateType": "QueryRun",
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace",
+          "queryJobId": "qjob-flow-muipy89n-1",
+          "runId": "qrun-flow-muipy89n-1"
+        },
+        "roundIndex": 0,
+        "answer": "{\n  \"schemaVersion\": 2,\n  \"kind\": \"plan\",\n  \"summary\": \"src/module.ts (129 bytes, digest ddb2b2e83c068f580acb857e3205869095a17a7d55d91b860d85d9cd9b4981cb) currently reads: `export const total = [2, 3, 5].reduce((sum, value) => sum - value, 0);` and `export const doubled = [1, 2, 3].map(value => value + 2);`, so total = -10 and doubled = [3, 4, 5]. Two sequential builder works repair and then refactor, each verified by the already-registered static check on the saved module, followed by an independent goal gate.\",\n  \"plan\": {\n    \"schemaVersion\": 2,\n    \"stages\": [\n      {\n        \"stageId\": \"stage-fix-and-extract\",\n        \"title\": \"Repair module behavior, then extract the sum input array\",\n        \"description\": \"Stage 1 of the authorized sequence: fix the reduce/map defects in src/module.ts. Stage 2 of the authorized sequence: extract the sum input array into a named constant while keeping total = 10 and doubled = [2, 4, 6].\"\n      }\n    ],\n    \"tasks\": [\n      {\n        \"taskId\": \"work-fix-reduce-and-double\",\n        \"stageId\": \"stage-fix-and-extract\",\n        \"title\": \"Fix src/module.ts sum and doubling so total = 10 and doubled = [2, 4, 6]\",\n        \"requirementLevel\": \"required\",\n        \"taskKind\": \"work\",\n        \"disposition\": \"active\",\n        \"phase\": \"pending\",\n        \"scope\": { \"kind\": \"module\", \"stageId\": \"stage-fix-and-extract\", \"moduleRef\": \"src/module.ts\" },\n        \"executionIntent\": \"request_execution\"\n      },\n      {\n        \"taskId\": \"work-extract-sum-input\",\n        \"stageId\": \"stage-fix-and-extract\",\n        \"title\": \"Extract the sum input array into a named constant in src/module.ts, preserving total = 10 and doubled = [2, 4, 6]\",\n        \"requirementLevel\": \"required\",\n        \"taskKind\": \"work\",\n        \"disposition\": \"active\",\n        \"phase\": \"pending\",\n        \"scope\": { \"kind\": \"module\", \"stageId\": \"stage-fix-and-extract\", \"moduleRef\": \"src/module.ts\" },\n        \"executionIntent\": \"request_execution\"\n      },\n      {\n        \"taskId\": \"gate-goal-acceptance\",\n        \"title\": \"Independent goal gate: accept the final saved module against total = 10 and doubled = [2, 4, 6]\",\n        \"requirementLevel\": \"required\",\n        \"taskKind\": \"gate\",\n        \"disposition\": \"active\",\n        \"phase\": \"pending\",\n        \"scope\": { \"kind\": \"goal\" }\n      }\n    ],\n    \"assignments\": [\n      {\n        \"taskId\": \"work-fix-reduce-and-double\",\n        \"role\": \"builder\",\n        \"instruction\": \"Edit src/module.ts in place, only this file. Change the reduce callback so it adds instead of subtracts (e.g. `[2, 3, 5].reduce((sum, value) => sum + value, 0)`) and change the map callback so it doubles each element (e.g. `[1, 2, 3].map(value => value * 2)`). Do not change the exported names `total` and `doubled`, keep both `export const` top-level, and keep the arrays [2, 3, 5] and [1, 2, 3] intact. Save the file, then run the already-registered static behavior check that loads the actual saved module and reads total and doubled; report the real check output. Required outcome after this work: total = 10 and doubled = [2, 4, 6].\"\n      },\n      {\n        \"taskId\": \"work-extract-sum-input\",\n        \"role\": \"builder\",\n        \"instruction\": \"Continue in src/module.ts, only this file. Extract the sum input array into a named constant (for example a top-level `const sumInput = [2, 3, 5];` declared before `total`) and use that constant as the argument of total's `.reduce(...)`. Change nothing else: keep the same array values, the same add-based reduce callback, the same map callback and the same exported names `total` and `doubled`, and do not modify the doubling input array. This must be a behavior-preserving refactor. Save the file, then run the same already-registered static behavior check on the saved module and report its real output. Required outcome after this work: total = 10 and doubled = [2, 4, 6], unchanged from the previous work.\"\n      }\n    ],\n    \"obligations\": [\n      {\n        \"obligationId\": \"obligation-repaired-behavior\",\n        \"title\": \"The saved src/module.ts must expose total = 10 and doubled = [2, 4, 6] after the repair work\",\n        \"requirementLevel\": \"required\",\n        \"taskIds\": [\"work-fix-reduce-and-double\"],\n        \"verificationRequirements\": [\n          {\n            \"requirementId\": \"vr-fix-static-check\",\n            \"requirementLevel\": \"required\",\n            \"kind\": \"static\",\n            \"description\": \"Run the already-registered static check that executes the actual saved src/module.ts and requires total === 10 and doubled deep-equals [2, 4, 6]; the work is only accepted on the check's real output after saving.\"\n          }\n        ]\n      },\n      {\n        \"obligationId\": \"obligation-preserved-after-extraction\",\n        \"title\": \"After extracting the sum input array, the saved module still exposes total = 10 and doubled = [2, 4, 6]\",\n        \"requirementLevel\": \"required\",\n        \"taskIds\": [\"work-extract-sum-input\"],\n        \"verificationRequirements\": [\n          {\n            \"requirementId\": \"vr-extract-static-check\",\n            \"requirementLevel\": \"required\",\n            \"kind\": \"static\",\n            \"description\": \"Re-run the same registered static check on the actual saved src/module.ts after the extraction, confirming total === 10 and doubled deep-equals [2, 4, 6]; this guards behavior preservation rather than only source shape.\"\n          }\n        ]\n      },\n      {\n        \"obligationId\": \"obligation-goal-gate\",\n        \"title\": \"Independent goal gate over the final saved module for the whole objective\",\n        \"requirementLevel\": \"required\",\n        \"taskIds\": [\"work-fix-reduce-and-double\", \"work-extract-sum-input\", \"gate-goal-acceptance\"],\n        \"verificationRequirements\": [\n          {\n            \"requirementId\": \"vr-gate-static-check\",\n            \"requirementLevel\": \"required\",\n            \"kind\": \"static\",\n            \"description\": \"The goal gate re-runs the registered static behavior check against the final saved src/module.ts and requires total = 10 and doubled = [2, 4, 6] before the goal is called accepted.\"\n          }\n        ]\n      }\n    ],\n    \"taskHierarchy\": {\n      \"parentOf\": []\n    },\n    \"executionDag\": {\n      \"dependsOn\": [\n        {\n          \"taskId\": \"work-extract-sum-input\",\n          \"dependsOnId\": \"work-fix-reduce-and-double\",\n          \"requires\": { \"kind\": \"artifact\", \"label\": \"Repaired and saved src/module.ts satisfying total = 10 and doubled = [2, 4, 6]\" }\n        },\n        {\n          \"taskId\": \"gate-goal-acceptance\",\n          \"dependsOnId\": \"work-extract-sum-input\",\n          \"requires\": { \"kind\": \"artifact\", \"label\": \"Final saved src/module.ts after the sum-input extraction, with total = 10 and doubled = [2, 4, 6] confirmed by the registered static check\" }\n        }\n      ]\n    }\n  }\n}",
+        "sources": [
+          {
+            "kind": "project_source",
+            "refKey": "{\"path\":\"src/module.ts\",\"version\":{\"capture\":{\"captureId\":\"bff1ad76-64f2-41d5-9606-220875a866da\",\"configDigest\":\"b0b5259073c53d1d0fae8c94ee8e555010827dd5a950fceb3c5f39397cc6c810\",\"indexVersion\":\"typescript-language-service@6.0.3\",\"projectId\":\"r6-host-project\",\"sourceDigest\":\"a9b2d81383346c7a6634ef17ddd5eca3420f557c5327b9314ff6276b4a8d1bf5\",\"workspaceId\":\"r6-host-workspace\",\"workspaceRevision\":1},\"kind\":\"capture\"}}",
+            "version": "6661d666e3dc6009bcb52c0f28f57b3702f748aaa48fb2d8b426fdf53d394f09",
+            "label": "src/module.ts"
+          },
+          {
+            "kind": "goal",
+            "refKey": "r6x-goal",
+            "version": "1",
+            "label": null
+          },
+          {
+            "kind": "workspace",
+            "refKey": "r6-host-workspace",
+            "version": "1",
+            "label": null
+          }
+        ],
+        "followsAnswerRef": null,
+        "stale": false,
+        "staleReason": null,
+        "answeredAt": "2026-09-26T18:24:30.896Z",
+        "bodyRef": {
+          "kind": "artifact",
+          "contentType": "text/plain; charset=utf-8",
+          "digest": "6f34a0ee27f1ae6ff8b9e05a162bf8b68d5426a9554eafe5ac94fca70ec23ddb",
+          "sizeBytes": 6806,
+          "source": {
+            "kind": "workspace",
+            "refId": "r6-host-workspace",
+            "revision": "1"
+          }
+        }
+      }
+    }
+  ],
+  "Run": [
+    {
+      "ref": {
+        "aggregateType": "Run",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "runId": "8cab16b9-6cfa-4488-9a33-970b3c1a1dba"
+      },
+      "revision": 5,
+      "schemaVersion": 1,
+      "task": {
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "taskId": "work-fix-reduce-and-double"
+      },
+      "attemptId": "4681ac61-a0b1-4e15-b675-43d9bfabbc5e",
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "r6-host-project",
+        "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+      },
+      "roleBinding": {
+        "schemaVersion": 1,
+        "bindingId": "r6x-work-role-binding",
+        "templateId": "builder",
+        "templateRevision": "1",
+        "bindingVersion": 1,
+        "policyRevision": "legacy-template"
+      },
+      "budget": {
+        "tokenBudget": 100000,
+        "deadline": null
+      },
+      "workspaceSnapshot": {
+        "workspaceId": "r6-host-workspace",
+        "revision": 1
+      },
+      "status": "ended",
+      "outcome": "completed",
+      "exitCode": 0,
+      "lastEventSeq": 1,
+      "lastRuntimeEventId": "cbc8bc58-bb02-4040-b68c-da80731b5fba",
+      "lastFactEventId": "5d337d5e-142e-4a66-84a5-2291a8a352a5",
+      "envelope": {
+        "schemaVersion": 1,
+        "envelopeId": "023d98e7-27a8-4c42-b8ab-575cd32a97e9",
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace",
+        "goalId": "r6x-goal",
+        "taskId": "work-fix-reduce-and-double",
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "runId": "8cab16b9-6cfa-4488-9a33-970b3c1a1dba"
+        },
+        "attemptRef": {
+          "aggregateType": "TaskAttempt",
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "work-fix-reduce-and-double",
+          "attemptId": "4681ac61-a0b1-4e15-b675-43d9bfabbc5e"
+        },
+        "planRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "r6-host-project",
+          "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+        },
+        "roleBinding": {
+          "schemaVersion": 1,
+          "bindingId": "r6x-work-role-binding",
+          "templateId": "builder",
+          "templateRevision": "1",
+          "bindingVersion": 1,
+          "policyRevision": "legacy-template"
+        },
+        "workspaceSnapshot": {
+          "workspaceId": "r6-host-workspace",
+          "revision": 1
+        },
+        "permissions": {
+          "policyRevision": "legacy-template",
+          "tools": [
+            "read",
+            "write"
+          ],
+          "writeScope": [
+            "."
+          ]
+        },
+        "budget": {
+          "tokenBudget": 100000,
+          "deadline": null
+        },
+        "sourceRefs": [
+          {
+            "kind": "plan-revision",
+            "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+            "revision": "1"
+          },
+          {
+            "kind": "workspace",
+            "refId": "r6-host-workspace",
+            "revision": "1"
+          }
+        ],
+        "bundleRef": {
+          "kind": "artifact",
+          "contentType": "application/vnd.coding-platform.task-execution-manifest+json;version=1",
+          "digest": "f0c26eae92cd5fee5b25f803db3d7923d77891d14d695c5dc60bb61e84e8db65",
+          "sizeBytes": 3467,
+          "source": {
+            "kind": "plan-revision",
+            "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+            "revision": "1"
+          }
+        }
+      },
+      "startedAt": "2026-09-26T18:24:31.141Z",
+      "endedAt": "2026-09-26T18:24:40.135Z",
+      "inputBinding": {
+        "schemaVersion": 1,
+        "inputDigest": "a0ac3a5a09b7b59285f2967ff816e518ef82147b0a543f4ff890459262dba244",
+        "manifestDigest": "f0c26eae92cd5fee5b25f803db3d7923d77891d14d695c5dc60bb61e84e8db65",
+        "materialAccessRefs": [],
+        "additionalMaterialRefs": [],
+        "deliveryRefs": []
+      },
+      "executionAuthorization": {
+        "schemaVersion": 2,
+        "generation": 1,
+        "sessionGeneration": 2,
+        "revision": 4,
+        "consumerId": "r6x-consumer",
+        "inputDigest": "a0ac3a5a09b7b59285f2967ff816e518ef82147b0a543f4ff890459262dba244",
+        "phase": "settled",
+        "kernel": {
+          "adapterId": "r6x-kernel",
+          "kernelSessionId": "session-68e21c445c8bf69ba9eb35f1072c4d2f45d5903070a8a7591f2ecac675395299",
+          "runId": "krun-6f773fbfdb0a72934c5e554fe87c6f0635dd7e910ce4dac1517a49a571177abe",
+          "turnId": "kturn-718b3b2f122617f043518c37547cb51477b55cc34130d236b12bc9221f204e61"
+        }
+      },
+      "executionHistory": {
+        "schemaVersion": 1,
+        "sessionRef": {
+          "projectId": "r6-host-project",
+          "sessionId": "session-68e21c445c8bf69ba9eb35f1072c4d2f45d5903070a8a7591f2ecac675395299"
+        },
+        "kernel": {
+          "adapterId": "r6x-kernel",
+          "kernelSessionId": "session-68e21c445c8bf69ba9eb35f1072c4d2f45d5903070a8a7591f2ecac675395299",
+          "runId": "krun-6f773fbfdb0a72934c5e554fe87c6f0635dd7e910ce4dac1517a49a571177abe",
+          "turnId": "kturn-718b3b2f122617f043518c37547cb51477b55cc34130d236b12bc9221f204e61"
+        },
+        "startPosition": 2,
+        "observedThroughPosition": 37,
+        "endPosition": 37
+      }
+    },
+    {
+      "ref": {
+        "aggregateType": "Run",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "runId": "eaf94a67-9154-44fd-addd-37698630c4a0"
+      },
+      "revision": 5,
+      "schemaVersion": 1,
+      "task": {
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "taskId": "work-extract-sum-input"
+      },
+      "attemptId": "2edd524b-bec3-4616-814c-ca4996d6de88",
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "r6-host-project",
+        "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+      },
+      "roleBinding": {
+        "schemaVersion": 1,
+        "bindingId": "r6x-work-role-binding",
+        "templateId": "builder",
+        "templateRevision": "1",
+        "bindingVersion": 1,
+        "policyRevision": "legacy-template"
+      },
+      "budget": {
+        "tokenBudget": 100000,
+        "deadline": null
+      },
+      "workspaceSnapshot": {
+        "workspaceId": "r6-host-workspace",
+        "revision": 1
+      },
+      "status": "ended",
+      "outcome": "completed",
+      "exitCode": 0,
+      "lastEventSeq": 1,
+      "lastRuntimeEventId": "ba010528-e77a-48e0-92d7-ae08063e311a",
+      "lastFactEventId": "d58051a2-e58e-4896-9925-a49648761967",
+      "envelope": {
+        "schemaVersion": 1,
+        "envelopeId": "9046da15-27d8-45f3-b963-b5c726b1e0ea",
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace",
+        "goalId": "r6x-goal",
+        "taskId": "work-extract-sum-input",
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "runId": "eaf94a67-9154-44fd-addd-37698630c4a0"
+        },
+        "attemptRef": {
+          "aggregateType": "TaskAttempt",
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "work-extract-sum-input",
+          "attemptId": "2edd524b-bec3-4616-814c-ca4996d6de88"
+        },
+        "planRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "r6-host-project",
+          "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+        },
+        "roleBinding": {
+          "schemaVersion": 1,
+          "bindingId": "r6x-work-role-binding",
+          "templateId": "builder",
+          "templateRevision": "1",
+          "bindingVersion": 1,
+          "policyRevision": "legacy-template"
+        },
+        "workspaceSnapshot": {
+          "workspaceId": "r6-host-workspace",
+          "revision": 1
+        },
+        "permissions": {
+          "policyRevision": "legacy-template",
+          "tools": [
+            "read",
+            "write"
+          ],
+          "writeScope": [
+            "."
+          ]
+        },
+        "budget": {
+          "tokenBudget": 100000,
+          "deadline": null
+        },
+        "sourceRefs": [
+          {
+            "kind": "plan-revision",
+            "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+            "revision": "1"
+          },
+          {
+            "kind": "workspace",
+            "refId": "r6-host-workspace",
+            "revision": "1"
+          }
+        ],
+        "bundleRef": {
+          "kind": "artifact",
+          "contentType": "application/vnd.coding-platform.task-execution-manifest+json;version=1",
+          "digest": "ec0557a7e8ad249596772291cb8b6fd0442d5eb28f40521369219bdf83eeb905",
+          "sizeBytes": 3565,
+          "source": {
+            "kind": "plan-revision",
+            "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+            "revision": "1"
+          }
+        }
+      },
+      "startedAt": "2026-09-26T18:24:40.487Z",
+      "endedAt": "2026-09-26T18:24:48.212Z",
+      "inputBinding": {
+        "schemaVersion": 1,
+        "inputDigest": "03cadbd28d92bf94e79855c4233108aa07a6bb4cb6435592870e16f9ff3ba558",
+        "manifestDigest": "ec0557a7e8ad249596772291cb8b6fd0442d5eb28f40521369219bdf83eeb905",
+        "materialAccessRefs": [],
+        "additionalMaterialRefs": [],
+        "deliveryRefs": []
+      },
+      "executionAuthorization": {
+        "schemaVersion": 2,
+        "generation": 1,
+        "sessionGeneration": 4,
+        "revision": 4,
+        "consumerId": "r6x-consumer",
+        "inputDigest": "03cadbd28d92bf94e79855c4233108aa07a6bb4cb6435592870e16f9ff3ba558",
+        "phase": "settled",
+        "kernel": {
+          "adapterId": "r6x-kernel",
+          "kernelSessionId": "session-68e21c445c8bf69ba9eb35f1072c4d2f45d5903070a8a7591f2ecac675395299",
+          "runId": "krun-1b9a74bd4afdf49de0055986681b021250cd28914b756001f883e8b19701b535",
+          "turnId": "kturn-18d0c6bd76763f5b9d7008e81a5dadeaaadbe7f77dad9916ffbd87957c63c25c"
+        }
+      },
+      "executionHistory": {
+        "schemaVersion": 1,
+        "sessionRef": {
+          "projectId": "r6-host-project",
+          "sessionId": "session-68e21c445c8bf69ba9eb35f1072c4d2f45d5903070a8a7591f2ecac675395299"
+        },
+        "kernel": {
+          "adapterId": "r6x-kernel",
+          "kernelSessionId": "session-68e21c445c8bf69ba9eb35f1072c4d2f45d5903070a8a7591f2ecac675395299",
+          "runId": "krun-1b9a74bd4afdf49de0055986681b021250cd28914b756001f883e8b19701b535",
+          "turnId": "kturn-18d0c6bd76763f5b9d7008e81a5dadeaaadbe7f77dad9916ffbd87957c63c25c"
+        },
+        "startPosition": 38,
+        "observedThroughPosition": 69,
+        "endPosition": 69
+      }
+    }
+  ],
+  "TaskAttempt": [
+    {
+      "ref": {
+        "aggregateType": "TaskAttempt",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "taskId": "work-fix-reduce-and-double",
+        "attemptId": "4681ac61-a0b1-4e15-b675-43d9bfabbc5e"
+      },
+      "revision": 3,
+      "schemaVersion": 1,
+      "runId": "8cab16b9-6cfa-4488-9a33-970b3c1a1dba",
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "r6-host-project",
+        "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+      },
+      "status": "ended",
+      "startedAt": "2026-09-26T18:24:31.141Z",
+      "endedAt": "2026-09-26T18:24:40.135Z",
+      "endOutcome": "completed"
+    },
+    {
+      "ref": {
+        "aggregateType": "TaskAttempt",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "taskId": "work-extract-sum-input",
+        "attemptId": "2edd524b-bec3-4616-814c-ca4996d6de88"
+      },
+      "revision": 3,
+      "schemaVersion": 1,
+      "runId": "eaf94a67-9154-44fd-addd-37698630c4a0",
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "r6-host-project",
+        "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+      },
+      "status": "ended",
+      "startedAt": "2026-09-26T18:24:40.487Z",
+      "endedAt": "2026-09-26T18:24:48.212Z",
+      "endOutcome": "completed"
+    }
+  ],
+  "TaskDispatchOutbox": [],
+  "Session": [
+    {
+      "ref": {
+        "aggregateType": "Session",
+        "projectId": "r6-host-project",
+        "sessionId": "session-c59d27c2d286beabaa2d04ea8dc305a7ff6977f8bf9878123cf8c6f2ae44082b"
+      },
+      "revision": 3,
+      "kernel": {
+        "adapterId": "r6x-kernel",
+        "kernelSessionId": "session-c59d27c2d286beabaa2d04ea8dc305a7ff6977f8bf9878123cf8c6f2ae44082b"
+      },
+      "lifecycle": "active",
+      "health": "available",
+      "role": {
+        "kind": "legacy_template",
+        "templateId": "advisor",
+        "templateRevision": "1"
+      },
+      "workspaceId": "r6-host-workspace",
+      "lastExecutionRef": {
+        "aggregateType": "QueryRun",
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace",
+        "queryJobId": "qjob-flow-muipy89n-1",
+        "runId": "qrun-flow-muipy89n-1"
+      },
+      "occupancy": null,
+      "historyCursor": "kernhist1.eyJ2IjoxLCJwIjp7InByb2plY3RJZCI6InI2LWhvc3QtcHJvamVjdCIsInNlc3Npb25JZCI6InNlc3Npb24tYzU5ZDI3YzJkMjg2YmVhYmFhMmQwNGVhOGRjMzA1YTdmZjY5NzdmOGJmOTg3ODEyM2NmOGM2ZjJhZTQ0MDgyYiJ9LCJhIjoicjZ4LWtlcm5lbCIsImsiOiJzZXNzaW9uLWM1OWQyN2MyZDI4NmJlYWJhYTJkMDRlYThkYzMwNWE3ZmY2OTc3ZjhiZjk4NzgxMjNjZjhjNmYyYWU0NDA4MmIiLCJyIjoie1wiYWN0b3JcIjp7XCJpZFwiOlwiYWdlbnQtcnVudGltZVwiLFwia2luZFwiOlwic3lzdGVtXCJ9LFwia2luZFwiOlwiaG9zdFwifSIsInUiOjI5LCJsIjoxLCJpIjoyOX0",
+      "createdAt": "2026-09-26T18:24:18.850Z",
+      "archivedAt": null
+    },
+    {
+      "ref": {
+        "aggregateType": "Session",
+        "projectId": "r6-host-project",
+        "sessionId": "session-68e21c445c8bf69ba9eb35f1072c4d2f45d5903070a8a7591f2ecac675395299"
+      },
+      "revision": 5,
+      "kernel": {
+        "adapterId": "r6x-kernel",
+        "kernelSessionId": "session-68e21c445c8bf69ba9eb35f1072c4d2f45d5903070a8a7591f2ecac675395299"
+      },
+      "lifecycle": "active",
+      "health": "available",
+      "role": {
+        "kind": "legacy_template",
+        "templateId": "builder",
+        "templateRevision": "1"
+      },
+      "workspaceId": "r6-host-workspace",
+      "lastExecutionRef": {
+        "aggregateType": "Run",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "runId": "eaf94a67-9154-44fd-addd-37698630c4a0"
+      },
+      "occupancy": null,
+      "historyCursor": "kernhist1.eyJ2IjoxLCJwIjp7InByb2plY3RJZCI6InI2LWhvc3QtcHJvamVjdCIsInNlc3Npb25JZCI6InNlc3Npb24tNjhlMjFjNDQ1YzhiZjY5YmE5ZWIzNWYxMDcyYzRkMmY0NWQ1OTAzMDcwYThhNzU5MWYyZWNhYzY3NTM5NTI5OSJ9LCJhIjoicjZ4LWtlcm5lbCIsImsiOiJzZXNzaW9uLTY4ZTIxYzQ0NWM4YmY2OWJhOWViMzVmMTA3MmM0ZDJmNDVkNTkwMzA3MGE4YTc1OTFmMmVjYWM2NzUzOTUyOTkiLCJyIjoie1wiYWN0b3JcIjp7XCJpZFwiOlwiYWdlbnQtcnVudGltZVwiLFwia2luZFwiOlwic3lzdGVtXCJ9LFwia2luZFwiOlwiaG9zdFwifSIsInUiOjY5LCJsIjozOCwiaSI6Njl9",
+      "createdAt": "2026-09-26T18:24:31.030Z",
+      "archivedAt": null
+    }
+  ],
+  "TaskLease": [
+    {
+      "ref": {
+        "aggregateType": "TaskLease",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "taskId": "work-fix-reduce-and-double"
+      },
+      "revision": 2,
+      "schemaVersion": 1,
+      "holderRunId": "8cab16b9-6cfa-4488-9a33-970b3c1a1dba",
+      "attemptId": "4681ac61-a0b1-4e15-b675-43d9bfabbc5e",
+      "grantedAt": "2026-09-26T18:24:31.053Z",
+      "expiresAt": null,
+      "release": {
+        "schemaVersion": 1,
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "runId": "8cab16b9-6cfa-4488-9a33-970b3c1a1dba"
+        },
+        "attemptRef": {
+          "aggregateType": "TaskAttempt",
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "work-fix-reduce-and-double",
+          "attemptId": "4681ac61-a0b1-4e15-b675-43d9bfabbc5e"
+        },
+        "sessionRef": {
+          "projectId": "r6-host-project",
+          "sessionId": "session-68e21c445c8bf69ba9eb35f1072c4d2f45d5903070a8a7591f2ecac675395299"
+        },
+        "generation": 2,
+        "releasedAt": "2026-09-26T18:24:40.135Z",
+        "eventId": "5d337d5e-142e-4a66-84a5-2291a8a352a5"
+      }
+    },
+    {
+      "ref": {
+        "aggregateType": "TaskLease",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "taskId": "work-extract-sum-input"
+      },
+      "revision": 2,
+      "schemaVersion": 1,
+      "holderRunId": "eaf94a67-9154-44fd-addd-37698630c4a0",
+      "attemptId": "2edd524b-bec3-4616-814c-ca4996d6de88",
+      "grantedAt": "2026-09-26T18:24:40.381Z",
+      "expiresAt": null,
+      "release": {
+        "schemaVersion": 1,
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "runId": "eaf94a67-9154-44fd-addd-37698630c4a0"
+        },
+        "attemptRef": {
+          "aggregateType": "TaskAttempt",
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "work-extract-sum-input",
+          "attemptId": "2edd524b-bec3-4616-814c-ca4996d6de88"
+        },
+        "sessionRef": {
+          "projectId": "r6-host-project",
+          "sessionId": "session-68e21c445c8bf69ba9eb35f1072c4d2f45d5903070a8a7591f2ecac675395299"
+        },
+        "generation": 4,
+        "releasedAt": "2026-09-26T18:24:48.212Z",
+        "eventId": "d58051a2-e58e-4896-9925-a49648761967"
+      }
+    }
+  ],
+  "PlanRevision": [
+    {
+      "origin": {
+        "kind": "model_coordination",
+        "answerRef": {
+          "aggregateType": "QueryJobAnswer",
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace",
+          "queryJobId": "qjob-flow-muipy89n-1",
+          "answerId": "r5b-query-answer-e2cea603afef334b460bab69ff8be84914a1989023aaf5ada7abc3e95ec20ec3"
+        },
+        "answerDigest": "6f34a0ee27f1ae6ff8b9e05a162bf8b68d5426a9554eafe5ac94fca70ec23ddb",
+        "goalRevision": 1,
+        "workspaceRevision": 1,
+        "requestId": "qjob-flow-muipy89n-1",
+        "summary": "src/module.ts (129 bytes, digest ddb2b2e83c068f580acb857e3205869095a17a7d55d91b860d85d9cd9b4981cb) currently reads: `export const total = [2, 3, 5].reduce((sum, value) => sum - value, 0);` and `export const doubled = [1, 2, 3].map(value => value + 2);`, so total = -10 and doubled = [3, 4, 5]. Two sequential builder works repair and then refactor, each verified by the already-registered static check on the saved module, followed by an independent goal gate.",
+        "assignments": [
+          {
+            "taskId": "work-fix-reduce-and-double",
+            "role": "builder",
+            "instruction": "Edit src/module.ts in place, only this file. Change the reduce callback so it adds instead of subtracts (e.g. `[2, 3, 5].reduce((sum, value) => sum + value, 0)`) and change the map callback so it doubles each element (e.g. `[1, 2, 3].map(value => value * 2)`). Do not change the exported names `total` and `doubled`, keep both `export const` top-level, and keep the arrays [2, 3, 5] and [1, 2, 3] intact. Save the file, then run the already-registered static behavior check that loads the actual saved module and reads total and doubled; report the real check output. Required outcome after this work: total = 10 and doubled = [2, 4, 6]."
+          },
+          {
+            "taskId": "work-extract-sum-input",
+            "role": "builder",
+            "instruction": "Continue in src/module.ts, only this file. Extract the sum input array into a named constant (for example a top-level `const sumInput = [2, 3, 5];` declared before `total`) and use that constant as the argument of total's `.reduce(...)`. Change nothing else: keep the same array values, the same add-based reduce callback, the same map callback and the same exported names `total` and `doubled`, and do not modify the doubling input array. This must be a behavior-preserving refactor. Save the file, then run the same already-registered static behavior check on the saved module and report its real output. Required outcome after this work: total = 10 and doubled = [2, 4, 6], unchanged from the previous work."
+          }
+        ]
+      },
+      "ref": {
+        "aggregateType": "PlanRevision",
+        "projectId": "r6-host-project",
+        "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+      },
+      "revision": 1,
+      "goalRef": {
+        "aggregateType": "Goal",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal"
+      },
+      "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+      "planRevision": 1,
+      "acceptedAt": "2026-09-26T18:24:30.982Z",
+      "effectiveCompletionPolicy": {
+        "ref": {
+          "aggregateType": "CompletionPolicyRevision",
+          "projectId": "r6-host-project",
+          "policyId": "r6x-policy",
+          "revision": 1
+        },
+        "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+      },
+      "effectiveArchitectureBaseline": {
+        "ref": {
+          "aggregateType": "ArchitectureBaselineRevision",
+          "projectId": "r6-host-project",
+          "baselineId": "r6x-baseline",
+          "revision": 1
+        },
+        "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+      },
+      "stages": [
+        {
+          "stageId": "stage-fix-and-extract",
+          "title": "Repair module behavior, then extract the sum input array",
+          "description": "Stage 1 of the authorized sequence: fix the reduce/map defects in src/module.ts. Stage 2 of the authorized sequence: extract the sum input array into a named constant while keeping total = 10 and doubled = [2, 4, 6]."
+        }
+      ],
+      "tasks": [
+        {
+          "taskId": "work-fix-reduce-and-double",
+          "stageId": "stage-fix-and-extract",
+          "title": "Fix src/module.ts sum and doubling so total = 10 and doubled = [2, 4, 6]",
+          "requirementLevel": "required",
+          "taskKind": "work",
+          "disposition": "active",
+          "phase": "pending",
+          "scope": {
+            "kind": "module",
+            "stageId": "stage-fix-and-extract",
+            "moduleRef": "src/module.ts"
+          },
+          "executionIntent": "request_execution"
+        },
+        {
+          "taskId": "work-extract-sum-input",
+          "stageId": "stage-fix-and-extract",
+          "title": "Extract the sum input array into a named constant in src/module.ts, preserving total = 10 and doubled = [2, 4, 6]",
+          "requirementLevel": "required",
+          "taskKind": "work",
+          "disposition": "active",
+          "phase": "pending",
+          "scope": {
+            "kind": "module",
+            "stageId": "stage-fix-and-extract",
+            "moduleRef": "src/module.ts"
+          },
+          "executionIntent": "request_execution"
+        },
+        {
+          "taskId": "gate-goal-acceptance",
+          "title": "Independent goal gate: accept the final saved module against total = 10 and doubled = [2, 4, 6]",
+          "requirementLevel": "required",
+          "taskKind": "gate",
+          "disposition": "active",
+          "phase": "pending",
+          "scope": {
+            "kind": "goal"
+          }
+        }
+      ],
+      "assignments": [
+        {
+          "taskId": "work-fix-reduce-and-double",
+          "role": "builder",
+          "instruction": "Edit src/module.ts in place, only this file. Change the reduce callback so it adds instead of subtracts (e.g. `[2, 3, 5].reduce((sum, value) => sum + value, 0)`) and change the map callback so it doubles each element (e.g. `[1, 2, 3].map(value => value * 2)`). Do not change the exported names `total` and `doubled`, keep both `export const` top-level, and keep the arrays [2, 3, 5] and [1, 2, 3] intact. Save the file, then run the already-registered static behavior check that loads the actual saved module and reads total and doubled; report the real check output. Required outcome after this work: total = 10 and doubled = [2, 4, 6]."
+        },
+        {
+          "taskId": "work-extract-sum-input",
+          "role": "builder",
+          "instruction": "Continue in src/module.ts, only this file. Extract the sum input array into a named constant (for example a top-level `const sumInput = [2, 3, 5];` declared before `total`) and use that constant as the argument of total's `.reduce(...)`. Change nothing else: keep the same array values, the same add-based reduce callback, the same map callback and the same exported names `total` and `doubled`, and do not modify the doubling input array. This must be a behavior-preserving refactor. Save the file, then run the same already-registered static behavior check on the saved module and report its real output. Required outcome after this work: total = 10 and doubled = [2, 4, 6], unchanged from the previous work."
+        }
+      ],
+      "obligations": [
+        {
+          "obligationId": "obligation-repaired-behavior",
+          "title": "The saved src/module.ts must expose total = 10 and doubled = [2, 4, 6] after the repair work",
+          "requirementLevel": "required",
+          "taskIds": [
+            "work-fix-reduce-and-double"
+          ],
+          "verificationRequirements": [
+            {
+              "requirementId": "vr-fix-static-check",
+              "requirementLevel": "required",
+              "kind": "static",
+              "description": "Run the already-registered static check that executes the actual saved src/module.ts and requires total === 10 and doubled deep-equals [2, 4, 6]; the work is only accepted on the check's real output after saving."
+            }
+          ]
+        },
+        {
+          "obligationId": "obligation-preserved-after-extraction",
+          "title": "After extracting the sum input array, the saved module still exposes total = 10 and doubled = [2, 4, 6]",
+          "requirementLevel": "required",
+          "taskIds": [
+            "work-extract-sum-input"
+          ],
+          "verificationRequirements": [
+            {
+              "requirementId": "vr-extract-static-check",
+              "requirementLevel": "required",
+              "kind": "static",
+              "description": "Re-run the same registered static check on the actual saved src/module.ts after the extraction, confirming total === 10 and doubled deep-equals [2, 4, 6]; this guards behavior preservation rather than only source shape."
+            }
+          ]
+        },
+        {
+          "obligationId": "obligation-goal-gate",
+          "title": "Independent goal gate over the final saved module for the whole objective",
+          "requirementLevel": "required",
+          "taskIds": [
+            "work-fix-reduce-and-double",
+            "work-extract-sum-input",
+            "gate-goal-acceptance"
+          ],
+          "verificationRequirements": [
+            {
+              "requirementId": "vr-gate-static-check",
+              "requirementLevel": "required",
+              "kind": "static",
+              "description": "The goal gate re-runs the registered static behavior check against the final saved src/module.ts and requires total = 10 and doubled = [2, 4, 6] before the goal is called accepted."
+            }
+          ]
+        }
+      ],
+      "taskHierarchy": {
+        "parentOf": []
+      },
+      "executionDag": {
+        "dependsOn": [
+          {
+            "taskId": "work-extract-sum-input",
+            "dependsOnId": "work-fix-reduce-and-double",
+            "requires": {
+              "kind": "artifact",
+              "label": "Repaired and saved src/module.ts satisfying total = 10 and doubled = [2, 4, 6]"
+            }
+          },
+          {
+            "taskId": "gate-goal-acceptance",
+            "dependsOnId": "work-extract-sum-input",
+            "requires": {
+              "kind": "artifact",
+              "label": "Final saved src/module.ts after the sum-input extraction, with total = 10 and doubled = [2, 4, 6] confirmed by the registered static check"
+            }
+          }
+        ]
+      },
+      "schemaVersion": 2
+    }
+  ],
+  "VerificationRound": [
+    {
+      "ref": {
+        "aggregateType": "VerificationRound",
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace",
+        "goalId": "r6x-goal",
+        "taskId": "work-fix-reduce-and-double",
+        "runId": "8cab16b9-6cfa-4488-9a33-970b3c1a1dba",
+        "roundId": "c0ba1fd2-2d7d-49a8-bf49-0294fd5cf13b"
+      },
+      "revision": 4,
+      "schemaVersion": 1,
+      "subject": {
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "taskId": "work-fix-reduce-and-double"
+      },
+      "subjectRunRef": {
+        "aggregateType": "Run",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "runId": "8cab16b9-6cfa-4488-9a33-970b3c1a1dba"
+      },
+      "adoptedPlanRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "r6-host-project",
+        "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+      },
+      "taskBasisRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "r6-host-project",
+        "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+      },
+      "executor": {
+        "kind": "human",
+        "id": "r6x-operator"
+      },
+      "configuration": {
+        "configurationRevision": "e01-coding-checks-1",
+        "workspace": {
+          "aggregateType": "Workspace",
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace"
+        },
+        "executor": {
+          "kind": "human",
+          "id": "r6x-operator"
+        },
+        "permissionRevision": "host-permission-v1:59efd2728dc29963e04271782753ada44f3ec004a98df3b9318a06ed08972b7d",
+        "sourceAccess": "verification_workspace",
+        "processAccess": "all_except_denied",
+        "deniedPrefixes": [
+          ".git"
+        ],
+        "checks": [
+          {
+            "checkId": "e01-module-behavior",
+            "kind": "static",
+            "command": "/usr/bin/node -e 'const fs=require('\\''node:fs'\\''); const assert=require('\\''node:assert/strict'\\''); const crypto=require('\\''node:crypto'\\'');\n(async()=>{ const source=fs.readFileSync('\\''src/module.ts'\\'','\\''utf8'\\'');\nconst actual=await import('\\''data:text/javascript;base64,'\\''+Buffer.from(source).toString('\\''base64'\\''));\nassert.equal(actual.total,10,'\\''total must sum the saved input'\\'');\nassert.deepEqual(actual.doubled,[2,4,6],'\\''doubled must multiply each saved value'\\'');\nconsole.log(JSON.stringify({kind:'\\''E01_ACTUAL_MODULE_CHECK'\\'',stage:\"saved-module\",path:'\\''src/module.ts'\\'',sha256:crypto.createHash('\\''sha256'\\'').update(source).digest('\\''hex'\\''),total:actual.total,doubled:actual.doubled}));\n})().catch(error=>{console.error(error.message);process.exitCode=1;});'",
+            "cwd": ".",
+            "timeoutMs": 60000,
+            "taskIds": "all"
+          }
+        ]
+      },
+      "configurationDigest": "4f798d4ebfe39d164e6108f90efe06d9bd2de7484c22afe657e1984e0ca5dbe6",
+      "identity": {
+        "schemaVersion": 1,
+        "scope": {
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace",
+          "goalId": "r6x-goal",
+          "runId": "8cab16b9-6cfa-4488-9a33-970b3c1a1dba",
+          "taskId": "work-fix-reduce-and-double"
+        },
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "runId": "8cab16b9-6cfa-4488-9a33-970b3c1a1dba"
+        },
+        "runRevision": 5,
+        "runDigest": "5c1ac9f129c3b5ab1c6bba560ca3c97752bd1e8a2ef093b788aa807dc158f90a",
+        "planRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "r6-host-project",
+          "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+        },
+        "planRevision": 1,
+        "planDigest": "5e924e02d220b47edc54d485b3ddb6824aaa35e52c7be7b8aced3993f22fb615",
+        "taskDigest": "d4bb60cb63a177c6daac79b5283abeb4474887ddaa6d6f15687bbec5298651d1",
+        "goalRevision": 2,
+        "goalDigest": "373b751d034cda6f7856bd54c53f21883cab571a0964beec18a1be726b26e6c6",
+        "workspaceRevision": 1,
+        "workspaceDigest": "14141f5f2bb3ff44705ac7898cab4b88f3aaaab8086edb3e5a41bc5da8988b19",
+        "workspaceRoot": "/tmp/coding-platform-live-model-review-XLrhBa/source",
+        "policyPin": {
+          "ref": {
+            "aggregateType": "CompletionPolicyRevision",
+            "projectId": "r6-host-project",
+            "policyId": "r6x-policy",
+            "revision": 1
+          },
+          "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+        },
+        "baselinePin": {
+          "ref": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "r6-host-project",
+            "baselineId": "r6x-baseline",
+            "revision": 1
+          },
+          "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+        },
+        "sourceDigest": "8e3403fa2f064385ed62aa3c13dd3d56d53a856e22d63f21c28a04ffedcd3d3e",
+        "sourceProofDigest": "d908cc8890bb1fa6b5cec5ad45b4afb4a7816a137db4518c7b5d6e589dcbb621"
+      },
+      "sourceProof": {
+        "kind": "current-workspace-only",
+        "runBaselineKnown": false
+      },
+      "verificationPlan": {
+        "schemaVersion": 1,
+        "taskRef": {
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "work-fix-reduce-and-double"
+        },
+        "planRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "r6-host-project",
+          "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+        },
+        "planRevision": 1,
+        "workspaceRevision": 1,
+        "pinnedCompletionPolicy": {
+          "ref": {
+            "aggregateType": "CompletionPolicyRevision",
+            "projectId": "r6-host-project",
+            "policyId": "r6x-policy",
+            "revision": 1
+          },
+          "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+        },
+        "pinnedArchitectureBaseline": {
+          "ref": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "r6-host-project",
+            "baselineId": "r6x-baseline",
+            "revision": 1
+          },
+          "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+        },
+        "changeScope": {
+          "diffClass": "unclassified-current-workspace",
+          "changedFiles": [],
+          "writeSummary": "Actual current workspace captured; changed-file scope is unknown, not empty."
+        },
+        "semanticChange": "semantic",
+        "risks": [],
+        "checks": [
+          {
+            "checkId": "e01-module-behavior",
+            "kind": "static",
+            "satisfiesKind": "static",
+            "coverage": [
+              {
+                "obligationId": "obligation-repaired-behavior",
+                "requirementId": "vr-fix-static-check"
+              },
+              {
+                "obligationId": "obligation-preserved-after-extraction",
+                "requirementId": "vr-extract-static-check"
+              },
+              {
+                "obligationId": "obligation-goal-gate",
+                "requirementId": "vr-gate-static-check"
+              }
+            ],
+            "satisfactionPath": "predicate"
+          }
+        ],
+        "configurationDigest": "4f798d4ebfe39d164e6108f90efe06d9bd2de7484c22afe657e1984e0ca5dbe6",
+        "planId": "1602503ee831cb8fff120feb1cdb1a04ba3cee70af2546aa727b1da72a5dd094",
+        "planDigest": "1602503ee831cb8fff120feb1cdb1a04ba3cee70af2546aa727b1da72a5dd094"
+      },
+      "checks": [
+        {
+          "checkId": "e01-module-behavior",
+          "definition": {
+            "checkId": "e01-module-behavior",
+            "kind": "static",
+            "command": "/usr/bin/node -e 'const fs=require('\\''node:fs'\\''); const assert=require('\\''node:assert/strict'\\''); const crypto=require('\\''node:crypto'\\'');\n(async()=>{ const source=fs.readFileSync('\\''src/module.ts'\\'','\\''utf8'\\'');\nconst actual=await import('\\''data:text/javascript;base64,'\\''+Buffer.from(source).toString('\\''base64'\\''));\nassert.equal(actual.total,10,'\\''total must sum the saved input'\\'');\nassert.deepEqual(actual.doubled,[2,4,6],'\\''doubled must multiply each saved value'\\'');\nconsole.log(JSON.stringify({kind:'\\''E01_ACTUAL_MODULE_CHECK'\\'',stage:\"saved-module\",path:'\\''src/module.ts'\\'',sha256:crypto.createHash('\\''sha256'\\'').update(source).digest('\\''hex'\\''),total:actual.total,doubled:actual.doubled}));\n})().catch(error=>{console.error(error.message);process.exitCode=1;});'",
+            "cwd": ".",
+            "timeoutMs": 60000,
+            "taskIds": "all"
+          },
+          "coverage": [
+            {
+              "obligationId": "obligation-repaired-behavior",
+              "requirementId": "vr-fix-static-check"
+            },
+            {
+              "obligationId": "obligation-preserved-after-extraction",
+              "requirementId": "vr-extract-static-check"
+            },
+            {
+              "obligationId": "obligation-goal-gate",
+              "requirementId": "vr-gate-static-check"
+            }
+          ],
+          "phase": "finished",
+          "invocationId": "2707f5de-99ec-4fe9-8b8d-b01d8423861c",
+          "outcome": "PASS",
+          "reportRef": {
+            "kind": "artifact",
+            "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+            "digest": "139e2582ec5e9db3c2f13febcd19ccf6e34654b6382c5e2941b3aabc3a93e827",
+            "sizeBytes": 1490,
+            "source": {
+              "kind": "plan-revision",
+              "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+              "revision": "1"
+            }
+          },
+          "sourceStatus": "matched"
+        }
+      ],
+      "status": "finalized",
+      "outcome": "PASS",
+      "gaps": [],
+      "evidenceRefs": [
+        {
+          "aggregateType": "Evidence",
+          "projectId": "r6-host-project",
+          "evidenceId": "db4c4b13-a097-4c5f-a319-795f0eecff75"
+        },
+        {
+          "aggregateType": "Evidence",
+          "projectId": "r6-host-project",
+          "evidenceId": "c096d58c-c589-4822-814a-84a9b76bb79e"
+        },
+        {
+          "aggregateType": "Evidence",
+          "projectId": "r6-host-project",
+          "evidenceId": "6b0bcd8e-3914-4286-89e5-ba01dce3351e"
+        }
+      ]
+    },
+    {
+      "ref": {
+        "aggregateType": "VerificationRound",
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace",
+        "goalId": "r6x-goal",
+        "taskId": "work-extract-sum-input",
+        "runId": "eaf94a67-9154-44fd-addd-37698630c4a0",
+        "roundId": "4ce405c3-f96f-4527-8ab6-cb1145df4a55"
+      },
+      "revision": 4,
+      "schemaVersion": 1,
+      "subject": {
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "taskId": "work-extract-sum-input"
+      },
+      "subjectRunRef": {
+        "aggregateType": "Run",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "runId": "eaf94a67-9154-44fd-addd-37698630c4a0"
+      },
+      "adoptedPlanRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "r6-host-project",
+        "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+      },
+      "taskBasisRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "r6-host-project",
+        "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+      },
+      "executor": {
+        "kind": "human",
+        "id": "r6x-operator"
+      },
+      "configuration": {
+        "configurationRevision": "e01-coding-checks-1",
+        "workspace": {
+          "aggregateType": "Workspace",
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace"
+        },
+        "executor": {
+          "kind": "human",
+          "id": "r6x-operator"
+        },
+        "permissionRevision": "host-permission-v1:59efd2728dc29963e04271782753ada44f3ec004a98df3b9318a06ed08972b7d",
+        "sourceAccess": "verification_workspace",
+        "processAccess": "all_except_denied",
+        "deniedPrefixes": [
+          ".git"
+        ],
+        "checks": [
+          {
+            "checkId": "e01-module-behavior",
+            "kind": "static",
+            "command": "/usr/bin/node -e 'const fs=require('\\''node:fs'\\''); const assert=require('\\''node:assert/strict'\\''); const crypto=require('\\''node:crypto'\\'');\n(async()=>{ const source=fs.readFileSync('\\''src/module.ts'\\'','\\''utf8'\\'');\nconst actual=await import('\\''data:text/javascript;base64,'\\''+Buffer.from(source).toString('\\''base64'\\''));\nassert.equal(actual.total,10,'\\''total must sum the saved input'\\'');\nassert.deepEqual(actual.doubled,[2,4,6],'\\''doubled must multiply each saved value'\\'');\nconsole.log(JSON.stringify({kind:'\\''E01_ACTUAL_MODULE_CHECK'\\'',stage:\"saved-module\",path:'\\''src/module.ts'\\'',sha256:crypto.createHash('\\''sha256'\\'').update(source).digest('\\''hex'\\''),total:actual.total,doubled:actual.doubled}));\n})().catch(error=>{console.error(error.message);process.exitCode=1;});'",
+            "cwd": ".",
+            "timeoutMs": 60000,
+            "taskIds": "all"
+          }
+        ]
+      },
+      "configurationDigest": "4f798d4ebfe39d164e6108f90efe06d9bd2de7484c22afe657e1984e0ca5dbe6",
+      "identity": {
+        "schemaVersion": 1,
+        "scope": {
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace",
+          "goalId": "r6x-goal",
+          "runId": "eaf94a67-9154-44fd-addd-37698630c4a0",
+          "taskId": "work-extract-sum-input"
+        },
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "runId": "eaf94a67-9154-44fd-addd-37698630c4a0"
+        },
+        "runRevision": 5,
+        "runDigest": "c48988c4fceb812c9bfa2d19b034235869323dc5a1378d0f0eedb7cadef2fdaa",
+        "planRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "r6-host-project",
+          "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+        },
+        "planRevision": 1,
+        "planDigest": "5e924e02d220b47edc54d485b3ddb6824aaa35e52c7be7b8aced3993f22fb615",
+        "taskDigest": "5c7b03782a8d43833dd0bfea51d59c360b512b8f2bda7f9d86ed3a1aa4c80c8b",
+        "goalRevision": 2,
+        "goalDigest": "373b751d034cda6f7856bd54c53f21883cab571a0964beec18a1be726b26e6c6",
+        "workspaceRevision": 1,
+        "workspaceDigest": "14141f5f2bb3ff44705ac7898cab4b88f3aaaab8086edb3e5a41bc5da8988b19",
+        "workspaceRoot": "/tmp/coding-platform-live-model-review-XLrhBa/source",
+        "policyPin": {
+          "ref": {
+            "aggregateType": "CompletionPolicyRevision",
+            "projectId": "r6-host-project",
+            "policyId": "r6x-policy",
+            "revision": 1
+          },
+          "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+        },
+        "baselinePin": {
+          "ref": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "r6-host-project",
+            "baselineId": "r6x-baseline",
+            "revision": 1
+          },
+          "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+        },
+        "sourceDigest": "4cb26d3982c2be2c8ea04b2a4a8488d0078cbf02ea3f1894eb9bb674be30c153",
+        "sourceProofDigest": "d908cc8890bb1fa6b5cec5ad45b4afb4a7816a137db4518c7b5d6e589dcbb621"
+      },
+      "sourceProof": {
+        "kind": "current-workspace-only",
+        "runBaselineKnown": false
+      },
+      "verificationPlan": {
+        "schemaVersion": 1,
+        "taskRef": {
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "work-extract-sum-input"
+        },
+        "planRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "r6-host-project",
+          "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+        },
+        "planRevision": 1,
+        "workspaceRevision": 1,
+        "pinnedCompletionPolicy": {
+          "ref": {
+            "aggregateType": "CompletionPolicyRevision",
+            "projectId": "r6-host-project",
+            "policyId": "r6x-policy",
+            "revision": 1
+          },
+          "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+        },
+        "pinnedArchitectureBaseline": {
+          "ref": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "r6-host-project",
+            "baselineId": "r6x-baseline",
+            "revision": 1
+          },
+          "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+        },
+        "changeScope": {
+          "diffClass": "unclassified-current-workspace",
+          "changedFiles": [],
+          "writeSummary": "Actual current workspace captured; changed-file scope is unknown, not empty."
+        },
+        "semanticChange": "semantic",
+        "risks": [],
+        "checks": [
+          {
+            "checkId": "e01-module-behavior",
+            "kind": "static",
+            "satisfiesKind": "static",
+            "coverage": [
+              {
+                "obligationId": "obligation-repaired-behavior",
+                "requirementId": "vr-fix-static-check"
+              },
+              {
+                "obligationId": "obligation-preserved-after-extraction",
+                "requirementId": "vr-extract-static-check"
+              },
+              {
+                "obligationId": "obligation-goal-gate",
+                "requirementId": "vr-gate-static-check"
+              }
+            ],
+            "satisfactionPath": "predicate"
+          }
+        ],
+        "configurationDigest": "4f798d4ebfe39d164e6108f90efe06d9bd2de7484c22afe657e1984e0ca5dbe6",
+        "planId": "05b40a083eb9887650ea8d32294425139714c26c713f2e3d6d6cc3fccf223fed",
+        "planDigest": "05b40a083eb9887650ea8d32294425139714c26c713f2e3d6d6cc3fccf223fed"
+      },
+      "checks": [
+        {
+          "checkId": "e01-module-behavior",
+          "definition": {
+            "checkId": "e01-module-behavior",
+            "kind": "static",
+            "command": "/usr/bin/node -e 'const fs=require('\\''node:fs'\\''); const assert=require('\\''node:assert/strict'\\''); const crypto=require('\\''node:crypto'\\'');\n(async()=>{ const source=fs.readFileSync('\\''src/module.ts'\\'','\\''utf8'\\'');\nconst actual=await import('\\''data:text/javascript;base64,'\\''+Buffer.from(source).toString('\\''base64'\\''));\nassert.equal(actual.total,10,'\\''total must sum the saved input'\\'');\nassert.deepEqual(actual.doubled,[2,4,6],'\\''doubled must multiply each saved value'\\'');\nconsole.log(JSON.stringify({kind:'\\''E01_ACTUAL_MODULE_CHECK'\\'',stage:\"saved-module\",path:'\\''src/module.ts'\\'',sha256:crypto.createHash('\\''sha256'\\'').update(source).digest('\\''hex'\\''),total:actual.total,doubled:actual.doubled}));\n})().catch(error=>{console.error(error.message);process.exitCode=1;});'",
+            "cwd": ".",
+            "timeoutMs": 60000,
+            "taskIds": "all"
+          },
+          "coverage": [
+            {
+              "obligationId": "obligation-repaired-behavior",
+              "requirementId": "vr-fix-static-check"
+            },
+            {
+              "obligationId": "obligation-preserved-after-extraction",
+              "requirementId": "vr-extract-static-check"
+            },
+            {
+              "obligationId": "obligation-goal-gate",
+              "requirementId": "vr-gate-static-check"
+            }
+          ],
+          "phase": "finished",
+          "invocationId": "83ea0254-b3c3-4b36-ab71-af19b7db5cc0",
+          "outcome": "PASS",
+          "reportRef": {
+            "kind": "artifact",
+            "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+            "digest": "ccde2a412fd38ccee4f712820fe7cfa0ccec7a6d752a903fc4443ecf788d7458",
+            "sizeBytes": 1482,
+            "source": {
+              "kind": "plan-revision",
+              "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+              "revision": "1"
+            }
+          },
+          "sourceStatus": "matched"
+        }
+      ],
+      "status": "finalized",
+      "outcome": "PASS",
+      "gaps": [],
+      "evidenceRefs": [
+        {
+          "aggregateType": "Evidence",
+          "projectId": "r6-host-project",
+          "evidenceId": "fc693b13-ab5f-48b8-a8ab-3a7b94eb4e44"
+        },
+        {
+          "aggregateType": "Evidence",
+          "projectId": "r6-host-project",
+          "evidenceId": "f02bdc92-f9ca-427b-9e26-1b9155e99f01"
+        },
+        {
+          "aggregateType": "Evidence",
+          "projectId": "r6-host-project",
+          "evidenceId": "86471396-ae77-4770-85f2-c0f40260ea66"
+        }
+      ]
+    },
+    {
+      "ref": {
+        "aggregateType": "VerificationRound",
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace",
+        "goalId": "r6x-goal",
+        "taskId": "gate-goal-acceptance",
+        "runId": "8cab16b9-6cfa-4488-9a33-970b3c1a1dba",
+        "roundId": "15029072-3845-41a2-9c17-c128e0f80cb9"
+      },
+      "revision": 4,
+      "schemaVersion": 1,
+      "subject": {
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "taskId": "gate-goal-acceptance"
+      },
+      "subjectRunRef": {
+        "aggregateType": "Run",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "runId": "8cab16b9-6cfa-4488-9a33-970b3c1a1dba"
+      },
+      "adoptedPlanRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "r6-host-project",
+        "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+      },
+      "taskBasisRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "r6-host-project",
+        "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+      },
+      "executor": {
+        "kind": "human",
+        "id": "r6x-operator"
+      },
+      "configuration": {
+        "configurationRevision": "e01-coding-checks-1",
+        "workspace": {
+          "aggregateType": "Workspace",
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace"
+        },
+        "executor": {
+          "kind": "human",
+          "id": "r6x-operator"
+        },
+        "permissionRevision": "host-permission-v1:59efd2728dc29963e04271782753ada44f3ec004a98df3b9318a06ed08972b7d",
+        "sourceAccess": "verification_workspace",
+        "processAccess": "all_except_denied",
+        "deniedPrefixes": [
+          ".git"
+        ],
+        "checks": [
+          {
+            "checkId": "e01-module-behavior",
+            "kind": "static",
+            "command": "/usr/bin/node -e 'const fs=require('\\''node:fs'\\''); const assert=require('\\''node:assert/strict'\\''); const crypto=require('\\''node:crypto'\\'');\n(async()=>{ const source=fs.readFileSync('\\''src/module.ts'\\'','\\''utf8'\\'');\nconst actual=await import('\\''data:text/javascript;base64,'\\''+Buffer.from(source).toString('\\''base64'\\''));\nassert.equal(actual.total,10,'\\''total must sum the saved input'\\'');\nassert.deepEqual(actual.doubled,[2,4,6],'\\''doubled must multiply each saved value'\\'');\nconsole.log(JSON.stringify({kind:'\\''E01_ACTUAL_MODULE_CHECK'\\'',stage:\"saved-module\",path:'\\''src/module.ts'\\'',sha256:crypto.createHash('\\''sha256'\\'').update(source).digest('\\''hex'\\''),total:actual.total,doubled:actual.doubled}));\n})().catch(error=>{console.error(error.message);process.exitCode=1;});'",
+            "cwd": ".",
+            "timeoutMs": 60000,
+            "taskIds": "all"
+          }
+        ]
+      },
+      "configurationDigest": "4f798d4ebfe39d164e6108f90efe06d9bd2de7484c22afe657e1984e0ca5dbe6",
+      "identity": {
+        "schemaVersion": 1,
+        "scope": {
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace",
+          "goalId": "r6x-goal",
+          "runId": "8cab16b9-6cfa-4488-9a33-970b3c1a1dba",
+          "taskId": "gate-goal-acceptance",
+          "gateSubject": "goal"
+        },
+        "runRef": {
+          "aggregateType": "Run",
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "runId": "8cab16b9-6cfa-4488-9a33-970b3c1a1dba"
+        },
+        "runRevision": 5,
+        "runDigest": "5c1ac9f129c3b5ab1c6bba560ca3c97752bd1e8a2ef093b788aa807dc158f90a",
+        "planRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "r6-host-project",
+          "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+        },
+        "planRevision": 1,
+        "planDigest": "5e924e02d220b47edc54d485b3ddb6824aaa35e52c7be7b8aced3993f22fb615",
+        "taskDigest": "e2e6973bf3d18798bcc04cffe1624811e6953e60266e3dd73cb2e0ba4e7e3b45",
+        "goalRevision": 2,
+        "goalDigest": "373b751d034cda6f7856bd54c53f21883cab571a0964beec18a1be726b26e6c6",
+        "workspaceRevision": 1,
+        "workspaceDigest": "14141f5f2bb3ff44705ac7898cab4b88f3aaaab8086edb3e5a41bc5da8988b19",
+        "workspaceRoot": "/tmp/coding-platform-live-model-review-XLrhBa/source",
+        "policyPin": {
+          "ref": {
+            "aggregateType": "CompletionPolicyRevision",
+            "projectId": "r6-host-project",
+            "policyId": "r6x-policy",
+            "revision": 1
+          },
+          "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+        },
+        "baselinePin": {
+          "ref": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "r6-host-project",
+            "baselineId": "r6x-baseline",
+            "revision": 1
+          },
+          "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+        },
+        "sourceDigest": "4cb26d3982c2be2c8ea04b2a4a8488d0078cbf02ea3f1894eb9bb674be30c153",
+        "sourceProofDigest": "d908cc8890bb1fa6b5cec5ad45b4afb4a7816a137db4518c7b5d6e589dcbb621"
+      },
+      "sourceProof": {
+        "kind": "current-workspace-only",
+        "runBaselineKnown": false
+      },
+      "verificationPlan": {
+        "schemaVersion": 1,
+        "taskRef": {
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "gate-goal-acceptance"
+        },
+        "planRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "r6-host-project",
+          "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+        },
+        "planRevision": 1,
+        "workspaceRevision": 1,
+        "pinnedCompletionPolicy": {
+          "ref": {
+            "aggregateType": "CompletionPolicyRevision",
+            "projectId": "r6-host-project",
+            "policyId": "r6x-policy",
+            "revision": 1
+          },
+          "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+        },
+        "pinnedArchitectureBaseline": {
+          "ref": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "r6-host-project",
+            "baselineId": "r6x-baseline",
+            "revision": 1
+          },
+          "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+        },
+        "changeScope": {
+          "diffClass": "unclassified-current-workspace",
+          "changedFiles": [],
+          "writeSummary": "Actual current workspace captured; changed-file scope is unknown, not empty."
+        },
+        "semanticChange": "semantic",
+        "risks": [],
+        "checks": [
+          {
+            "checkId": "e01-module-behavior",
+            "kind": "static",
+            "satisfiesKind": "static",
+            "coverage": [
+              {
+                "obligationId": "obligation-repaired-behavior",
+                "requirementId": "vr-fix-static-check"
+              },
+              {
+                "obligationId": "obligation-preserved-after-extraction",
+                "requirementId": "vr-extract-static-check"
+              },
+              {
+                "obligationId": "obligation-goal-gate",
+                "requirementId": "vr-gate-static-check"
+              }
+            ],
+            "satisfactionPath": "predicate"
+          }
+        ],
+        "configurationDigest": "4f798d4ebfe39d164e6108f90efe06d9bd2de7484c22afe657e1984e0ca5dbe6",
+        "planId": "2b712fd20239036686bdeab478d2490b8f07ffcb5982410d8a165366e447cf2d",
+        "planDigest": "2b712fd20239036686bdeab478d2490b8f07ffcb5982410d8a165366e447cf2d"
+      },
+      "checks": [
+        {
+          "checkId": "e01-module-behavior",
+          "definition": {
+            "checkId": "e01-module-behavior",
+            "kind": "static",
+            "command": "/usr/bin/node -e 'const fs=require('\\''node:fs'\\''); const assert=require('\\''node:assert/strict'\\''); const crypto=require('\\''node:crypto'\\'');\n(async()=>{ const source=fs.readFileSync('\\''src/module.ts'\\'','\\''utf8'\\'');\nconst actual=await import('\\''data:text/javascript;base64,'\\''+Buffer.from(source).toString('\\''base64'\\''));\nassert.equal(actual.total,10,'\\''total must sum the saved input'\\'');\nassert.deepEqual(actual.doubled,[2,4,6],'\\''doubled must multiply each saved value'\\'');\nconsole.log(JSON.stringify({kind:'\\''E01_ACTUAL_MODULE_CHECK'\\'',stage:\"saved-module\",path:'\\''src/module.ts'\\'',sha256:crypto.createHash('\\''sha256'\\'').update(source).digest('\\''hex'\\''),total:actual.total,doubled:actual.doubled}));\n})().catch(error=>{console.error(error.message);process.exitCode=1;});'",
+            "cwd": ".",
+            "timeoutMs": 60000,
+            "taskIds": "all"
+          },
+          "coverage": [
+            {
+              "obligationId": "obligation-repaired-behavior",
+              "requirementId": "vr-fix-static-check"
+            },
+            {
+              "obligationId": "obligation-preserved-after-extraction",
+              "requirementId": "vr-extract-static-check"
+            },
+            {
+              "obligationId": "obligation-goal-gate",
+              "requirementId": "vr-gate-static-check"
+            }
+          ],
+          "phase": "finished",
+          "invocationId": "0d76339d-ba7d-4ae6-8288-2ece6b2d4487",
+          "outcome": "PASS",
+          "reportRef": {
+            "kind": "artifact",
+            "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+            "digest": "3619f250c41889c563ae8d3ffea3d45020ce405dde87d2dbf651420a1d30ada9",
+            "sizeBytes": 1478,
+            "source": {
+              "kind": "plan-revision",
+              "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+              "revision": "1"
+            }
+          },
+          "sourceStatus": "matched"
+        }
+      ],
+      "status": "finalized",
+      "outcome": "PASS",
+      "gaps": [],
+      "evidenceRefs": [
+        {
+          "aggregateType": "Evidence",
+          "projectId": "r6-host-project",
+          "evidenceId": "bcaf11d9-7437-46c4-99ed-6b10d4bed355"
+        },
+        {
+          "aggregateType": "Evidence",
+          "projectId": "r6-host-project",
+          "evidenceId": "a0e75422-ece1-454f-93f3-2f4e508d44f8"
+        },
+        {
+          "aggregateType": "Evidence",
+          "projectId": "r6-host-project",
+          "evidenceId": "68ad0183-723e-48fb-afec-4a94e0f50d14"
+        }
+      ]
+    }
+  ],
+  "Evidence": [
+    {
+      "ref": {
+        "aggregateType": "Evidence",
+        "projectId": "r6-host-project",
+        "evidenceId": "db4c4b13-a097-4c5f-a319-795f0eecff75"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "evidence": {
+        "schemaVersion": 1,
+        "evidenceId": "db4c4b13-a097-4c5f-a319-795f0eecff75",
+        "kind": "verdict",
+        "outcome": "PASS",
+        "source": {
+          "actor": {
+            "kind": "human",
+            "id": "r6x-operator"
+          },
+          "runRef": null,
+          "checkId": "e01-module-behavior"
+        },
+        "subject": {
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "work-fix-reduce-and-double"
+        },
+        "coverage": [
+          {
+            "obligationId": "obligation-repaired-behavior",
+            "requirementId": "vr-fix-static-check"
+          }
+        ],
+        "anchor": {
+          "schemaVersion": 1,
+          "planRef": {
+            "aggregateType": "PlanRevision",
+            "projectId": "r6-host-project",
+            "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+          },
+          "planRevision": 1,
+          "workspaceRevision": 1,
+          "pinnedCompletionPolicy": {
+            "ref": {
+              "aggregateType": "CompletionPolicyRevision",
+              "projectId": "r6-host-project",
+              "policyId": "r6x-policy",
+              "revision": 1
+            },
+            "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+          },
+          "pinnedArchitectureBaseline": {
+            "ref": {
+              "aggregateType": "ArchitectureBaselineRevision",
+              "projectId": "r6-host-project",
+              "baselineId": "r6x-baseline",
+              "revision": 1
+            },
+            "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+          }
+        },
+        "verificationPlanRef": {
+          "planId": "1602503ee831cb8fff120feb1cdb1a04ba3cee70af2546aa727b1da72a5dd094",
+          "planDigest": "1602503ee831cb8fff120feb1cdb1a04ba3cee70af2546aa727b1da72a5dd094"
+        },
+        "summary": {
+          "text": "check e01-module-behavior PASS",
+          "artifactRef": {
+            "kind": "artifact",
+            "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+            "digest": "139e2582ec5e9db3c2f13febcd19ccf6e34654b6382c5e2941b3aabc3a93e827",
+            "sizeBytes": 1490,
+            "source": {
+              "kind": "plan-revision",
+              "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+              "revision": "1"
+            }
+          }
+        }
+      },
+      "admittedAt": "2026-09-26T18:24:40.328Z"
+    },
+    {
+      "ref": {
+        "aggregateType": "Evidence",
+        "projectId": "r6-host-project",
+        "evidenceId": "c096d58c-c589-4822-814a-84a9b76bb79e"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "evidence": {
+        "schemaVersion": 1,
+        "evidenceId": "c096d58c-c589-4822-814a-84a9b76bb79e",
+        "kind": "verdict",
+        "outcome": "PASS",
+        "source": {
+          "actor": {
+            "kind": "human",
+            "id": "r6x-operator"
+          },
+          "runRef": null,
+          "checkId": "e01-module-behavior"
+        },
+        "subject": {
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "work-fix-reduce-and-double"
+        },
+        "coverage": [
+          {
+            "obligationId": "obligation-preserved-after-extraction",
+            "requirementId": "vr-extract-static-check"
+          }
+        ],
+        "anchor": {
+          "schemaVersion": 1,
+          "planRef": {
+            "aggregateType": "PlanRevision",
+            "projectId": "r6-host-project",
+            "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+          },
+          "planRevision": 1,
+          "workspaceRevision": 1,
+          "pinnedCompletionPolicy": {
+            "ref": {
+              "aggregateType": "CompletionPolicyRevision",
+              "projectId": "r6-host-project",
+              "policyId": "r6x-policy",
+              "revision": 1
+            },
+            "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+          },
+          "pinnedArchitectureBaseline": {
+            "ref": {
+              "aggregateType": "ArchitectureBaselineRevision",
+              "projectId": "r6-host-project",
+              "baselineId": "r6x-baseline",
+              "revision": 1
+            },
+            "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+          }
+        },
+        "verificationPlanRef": {
+          "planId": "1602503ee831cb8fff120feb1cdb1a04ba3cee70af2546aa727b1da72a5dd094",
+          "planDigest": "1602503ee831cb8fff120feb1cdb1a04ba3cee70af2546aa727b1da72a5dd094"
+        },
+        "summary": {
+          "text": "check e01-module-behavior PASS",
+          "artifactRef": {
+            "kind": "artifact",
+            "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+            "digest": "139e2582ec5e9db3c2f13febcd19ccf6e34654b6382c5e2941b3aabc3a93e827",
+            "sizeBytes": 1490,
+            "source": {
+              "kind": "plan-revision",
+              "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+              "revision": "1"
+            }
+          }
+        }
+      },
+      "admittedAt": "2026-09-26T18:24:40.328Z"
+    },
+    {
+      "ref": {
+        "aggregateType": "Evidence",
+        "projectId": "r6-host-project",
+        "evidenceId": "6b0bcd8e-3914-4286-89e5-ba01dce3351e"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "evidence": {
+        "schemaVersion": 1,
+        "evidenceId": "6b0bcd8e-3914-4286-89e5-ba01dce3351e",
+        "kind": "verdict",
+        "outcome": "PASS",
+        "source": {
+          "actor": {
+            "kind": "human",
+            "id": "r6x-operator"
+          },
+          "runRef": null,
+          "checkId": "e01-module-behavior"
+        },
+        "subject": {
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "work-fix-reduce-and-double"
+        },
+        "coverage": [
+          {
+            "obligationId": "obligation-goal-gate",
+            "requirementId": "vr-gate-static-check"
+          }
+        ],
+        "anchor": {
+          "schemaVersion": 1,
+          "planRef": {
+            "aggregateType": "PlanRevision",
+            "projectId": "r6-host-project",
+            "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+          },
+          "planRevision": 1,
+          "workspaceRevision": 1,
+          "pinnedCompletionPolicy": {
+            "ref": {
+              "aggregateType": "CompletionPolicyRevision",
+              "projectId": "r6-host-project",
+              "policyId": "r6x-policy",
+              "revision": 1
+            },
+            "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+          },
+          "pinnedArchitectureBaseline": {
+            "ref": {
+              "aggregateType": "ArchitectureBaselineRevision",
+              "projectId": "r6-host-project",
+              "baselineId": "r6x-baseline",
+              "revision": 1
+            },
+            "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+          }
+        },
+        "verificationPlanRef": {
+          "planId": "1602503ee831cb8fff120feb1cdb1a04ba3cee70af2546aa727b1da72a5dd094",
+          "planDigest": "1602503ee831cb8fff120feb1cdb1a04ba3cee70af2546aa727b1da72a5dd094"
+        },
+        "summary": {
+          "text": "check e01-module-behavior PASS",
+          "artifactRef": {
+            "kind": "artifact",
+            "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+            "digest": "139e2582ec5e9db3c2f13febcd19ccf6e34654b6382c5e2941b3aabc3a93e827",
+            "sizeBytes": 1490,
+            "source": {
+              "kind": "plan-revision",
+              "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+              "revision": "1"
+            }
+          }
+        }
+      },
+      "admittedAt": "2026-09-26T18:24:40.328Z"
+    },
+    {
+      "ref": {
+        "aggregateType": "Evidence",
+        "projectId": "r6-host-project",
+        "evidenceId": "fc693b13-ab5f-48b8-a8ab-3a7b94eb4e44"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "evidence": {
+        "schemaVersion": 1,
+        "evidenceId": "fc693b13-ab5f-48b8-a8ab-3a7b94eb4e44",
+        "kind": "verdict",
+        "outcome": "PASS",
+        "source": {
+          "actor": {
+            "kind": "human",
+            "id": "r6x-operator"
+          },
+          "runRef": null,
+          "checkId": "e01-module-behavior"
+        },
+        "subject": {
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "work-extract-sum-input"
+        },
+        "coverage": [
+          {
+            "obligationId": "obligation-repaired-behavior",
+            "requirementId": "vr-fix-static-check"
+          }
+        ],
+        "anchor": {
+          "schemaVersion": 1,
+          "planRef": {
+            "aggregateType": "PlanRevision",
+            "projectId": "r6-host-project",
+            "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+          },
+          "planRevision": 1,
+          "workspaceRevision": 1,
+          "pinnedCompletionPolicy": {
+            "ref": {
+              "aggregateType": "CompletionPolicyRevision",
+              "projectId": "r6-host-project",
+              "policyId": "r6x-policy",
+              "revision": 1
+            },
+            "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+          },
+          "pinnedArchitectureBaseline": {
+            "ref": {
+              "aggregateType": "ArchitectureBaselineRevision",
+              "projectId": "r6-host-project",
+              "baselineId": "r6x-baseline",
+              "revision": 1
+            },
+            "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+          }
+        },
+        "verificationPlanRef": {
+          "planId": "05b40a083eb9887650ea8d32294425139714c26c713f2e3d6d6cc3fccf223fed",
+          "planDigest": "05b40a083eb9887650ea8d32294425139714c26c713f2e3d6d6cc3fccf223fed"
+        },
+        "summary": {
+          "text": "check e01-module-behavior PASS",
+          "artifactRef": {
+            "kind": "artifact",
+            "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+            "digest": "ccde2a412fd38ccee4f712820fe7cfa0ccec7a6d752a903fc4443ecf788d7458",
+            "sizeBytes": 1482,
+            "source": {
+              "kind": "plan-revision",
+              "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+              "revision": "1"
+            }
+          }
+        }
+      },
+      "admittedAt": "2026-09-26T18:24:48.398Z"
+    },
+    {
+      "ref": {
+        "aggregateType": "Evidence",
+        "projectId": "r6-host-project",
+        "evidenceId": "f02bdc92-f9ca-427b-9e26-1b9155e99f01"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "evidence": {
+        "schemaVersion": 1,
+        "evidenceId": "f02bdc92-f9ca-427b-9e26-1b9155e99f01",
+        "kind": "verdict",
+        "outcome": "PASS",
+        "source": {
+          "actor": {
+            "kind": "human",
+            "id": "r6x-operator"
+          },
+          "runRef": null,
+          "checkId": "e01-module-behavior"
+        },
+        "subject": {
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "work-extract-sum-input"
+        },
+        "coverage": [
+          {
+            "obligationId": "obligation-preserved-after-extraction",
+            "requirementId": "vr-extract-static-check"
+          }
+        ],
+        "anchor": {
+          "schemaVersion": 1,
+          "planRef": {
+            "aggregateType": "PlanRevision",
+            "projectId": "r6-host-project",
+            "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+          },
+          "planRevision": 1,
+          "workspaceRevision": 1,
+          "pinnedCompletionPolicy": {
+            "ref": {
+              "aggregateType": "CompletionPolicyRevision",
+              "projectId": "r6-host-project",
+              "policyId": "r6x-policy",
+              "revision": 1
+            },
+            "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+          },
+          "pinnedArchitectureBaseline": {
+            "ref": {
+              "aggregateType": "ArchitectureBaselineRevision",
+              "projectId": "r6-host-project",
+              "baselineId": "r6x-baseline",
+              "revision": 1
+            },
+            "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+          }
+        },
+        "verificationPlanRef": {
+          "planId": "05b40a083eb9887650ea8d32294425139714c26c713f2e3d6d6cc3fccf223fed",
+          "planDigest": "05b40a083eb9887650ea8d32294425139714c26c713f2e3d6d6cc3fccf223fed"
+        },
+        "summary": {
+          "text": "check e01-module-behavior PASS",
+          "artifactRef": {
+            "kind": "artifact",
+            "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+            "digest": "ccde2a412fd38ccee4f712820fe7cfa0ccec7a6d752a903fc4443ecf788d7458",
+            "sizeBytes": 1482,
+            "source": {
+              "kind": "plan-revision",
+              "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+              "revision": "1"
+            }
+          }
+        }
+      },
+      "admittedAt": "2026-09-26T18:24:48.398Z"
+    },
+    {
+      "ref": {
+        "aggregateType": "Evidence",
+        "projectId": "r6-host-project",
+        "evidenceId": "86471396-ae77-4770-85f2-c0f40260ea66"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "evidence": {
+        "schemaVersion": 1,
+        "evidenceId": "86471396-ae77-4770-85f2-c0f40260ea66",
+        "kind": "verdict",
+        "outcome": "PASS",
+        "source": {
+          "actor": {
+            "kind": "human",
+            "id": "r6x-operator"
+          },
+          "runRef": null,
+          "checkId": "e01-module-behavior"
+        },
+        "subject": {
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "work-extract-sum-input"
+        },
+        "coverage": [
+          {
+            "obligationId": "obligation-goal-gate",
+            "requirementId": "vr-gate-static-check"
+          }
+        ],
+        "anchor": {
+          "schemaVersion": 1,
+          "planRef": {
+            "aggregateType": "PlanRevision",
+            "projectId": "r6-host-project",
+            "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+          },
+          "planRevision": 1,
+          "workspaceRevision": 1,
+          "pinnedCompletionPolicy": {
+            "ref": {
+              "aggregateType": "CompletionPolicyRevision",
+              "projectId": "r6-host-project",
+              "policyId": "r6x-policy",
+              "revision": 1
+            },
+            "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+          },
+          "pinnedArchitectureBaseline": {
+            "ref": {
+              "aggregateType": "ArchitectureBaselineRevision",
+              "projectId": "r6-host-project",
+              "baselineId": "r6x-baseline",
+              "revision": 1
+            },
+            "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+          }
+        },
+        "verificationPlanRef": {
+          "planId": "05b40a083eb9887650ea8d32294425139714c26c713f2e3d6d6cc3fccf223fed",
+          "planDigest": "05b40a083eb9887650ea8d32294425139714c26c713f2e3d6d6cc3fccf223fed"
+        },
+        "summary": {
+          "text": "check e01-module-behavior PASS",
+          "artifactRef": {
+            "kind": "artifact",
+            "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+            "digest": "ccde2a412fd38ccee4f712820fe7cfa0ccec7a6d752a903fc4443ecf788d7458",
+            "sizeBytes": 1482,
+            "source": {
+              "kind": "plan-revision",
+              "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+              "revision": "1"
+            }
+          }
+        }
+      },
+      "admittedAt": "2026-09-26T18:24:48.398Z"
+    },
+    {
+      "ref": {
+        "aggregateType": "Evidence",
+        "projectId": "r6-host-project",
+        "evidenceId": "bcaf11d9-7437-46c4-99ed-6b10d4bed355"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "evidence": {
+        "schemaVersion": 1,
+        "evidenceId": "bcaf11d9-7437-46c4-99ed-6b10d4bed355",
+        "kind": "verdict",
+        "outcome": "PASS",
+        "source": {
+          "actor": {
+            "kind": "human",
+            "id": "r6x-operator"
+          },
+          "runRef": null,
+          "checkId": "e01-module-behavior"
+        },
+        "subject": {
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "gate-goal-acceptance"
+        },
+        "coverage": [
+          {
+            "obligationId": "obligation-repaired-behavior",
+            "requirementId": "vr-fix-static-check"
+          }
+        ],
+        "anchor": {
+          "schemaVersion": 1,
+          "planRef": {
+            "aggregateType": "PlanRevision",
+            "projectId": "r6-host-project",
+            "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+          },
+          "planRevision": 1,
+          "workspaceRevision": 1,
+          "pinnedCompletionPolicy": {
+            "ref": {
+              "aggregateType": "CompletionPolicyRevision",
+              "projectId": "r6-host-project",
+              "policyId": "r6x-policy",
+              "revision": 1
+            },
+            "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+          },
+          "pinnedArchitectureBaseline": {
+            "ref": {
+              "aggregateType": "ArchitectureBaselineRevision",
+              "projectId": "r6-host-project",
+              "baselineId": "r6x-baseline",
+              "revision": 1
+            },
+            "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+          }
+        },
+        "verificationPlanRef": {
+          "planId": "2b712fd20239036686bdeab478d2490b8f07ffcb5982410d8a165366e447cf2d",
+          "planDigest": "2b712fd20239036686bdeab478d2490b8f07ffcb5982410d8a165366e447cf2d"
+        },
+        "summary": {
+          "text": "check e01-module-behavior PASS",
+          "artifactRef": {
+            "kind": "artifact",
+            "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+            "digest": "3619f250c41889c563ae8d3ffea3d45020ce405dde87d2dbf651420a1d30ada9",
+            "sizeBytes": 1478,
+            "source": {
+              "kind": "plan-revision",
+              "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+              "revision": "1"
+            }
+          }
+        }
+      },
+      "admittedAt": "2026-09-26T18:24:48.612Z"
+    },
+    {
+      "ref": {
+        "aggregateType": "Evidence",
+        "projectId": "r6-host-project",
+        "evidenceId": "a0e75422-ece1-454f-93f3-2f4e508d44f8"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "evidence": {
+        "schemaVersion": 1,
+        "evidenceId": "a0e75422-ece1-454f-93f3-2f4e508d44f8",
+        "kind": "verdict",
+        "outcome": "PASS",
+        "source": {
+          "actor": {
+            "kind": "human",
+            "id": "r6x-operator"
+          },
+          "runRef": null,
+          "checkId": "e01-module-behavior"
+        },
+        "subject": {
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "gate-goal-acceptance"
+        },
+        "coverage": [
+          {
+            "obligationId": "obligation-preserved-after-extraction",
+            "requirementId": "vr-extract-static-check"
+          }
+        ],
+        "anchor": {
+          "schemaVersion": 1,
+          "planRef": {
+            "aggregateType": "PlanRevision",
+            "projectId": "r6-host-project",
+            "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+          },
+          "planRevision": 1,
+          "workspaceRevision": 1,
+          "pinnedCompletionPolicy": {
+            "ref": {
+              "aggregateType": "CompletionPolicyRevision",
+              "projectId": "r6-host-project",
+              "policyId": "r6x-policy",
+              "revision": 1
+            },
+            "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+          },
+          "pinnedArchitectureBaseline": {
+            "ref": {
+              "aggregateType": "ArchitectureBaselineRevision",
+              "projectId": "r6-host-project",
+              "baselineId": "r6x-baseline",
+              "revision": 1
+            },
+            "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+          }
+        },
+        "verificationPlanRef": {
+          "planId": "2b712fd20239036686bdeab478d2490b8f07ffcb5982410d8a165366e447cf2d",
+          "planDigest": "2b712fd20239036686bdeab478d2490b8f07ffcb5982410d8a165366e447cf2d"
+        },
+        "summary": {
+          "text": "check e01-module-behavior PASS",
+          "artifactRef": {
+            "kind": "artifact",
+            "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+            "digest": "3619f250c41889c563ae8d3ffea3d45020ce405dde87d2dbf651420a1d30ada9",
+            "sizeBytes": 1478,
+            "source": {
+              "kind": "plan-revision",
+              "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+              "revision": "1"
+            }
+          }
+        }
+      },
+      "admittedAt": "2026-09-26T18:24:48.612Z"
+    },
+    {
+      "ref": {
+        "aggregateType": "Evidence",
+        "projectId": "r6-host-project",
+        "evidenceId": "68ad0183-723e-48fb-afec-4a94e0f50d14"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "evidence": {
+        "schemaVersion": 1,
+        "evidenceId": "68ad0183-723e-48fb-afec-4a94e0f50d14",
+        "kind": "verdict",
+        "outcome": "PASS",
+        "source": {
+          "actor": {
+            "kind": "human",
+            "id": "r6x-operator"
+          },
+          "runRef": null,
+          "checkId": "e01-module-behavior"
+        },
+        "subject": {
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal",
+          "taskId": "gate-goal-acceptance"
+        },
+        "coverage": [
+          {
+            "obligationId": "obligation-goal-gate",
+            "requirementId": "vr-gate-static-check"
+          }
+        ],
+        "anchor": {
+          "schemaVersion": 1,
+          "planRef": {
+            "aggregateType": "PlanRevision",
+            "projectId": "r6-host-project",
+            "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+          },
+          "planRevision": 1,
+          "workspaceRevision": 1,
+          "pinnedCompletionPolicy": {
+            "ref": {
+              "aggregateType": "CompletionPolicyRevision",
+              "projectId": "r6-host-project",
+              "policyId": "r6x-policy",
+              "revision": 1
+            },
+            "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+          },
+          "pinnedArchitectureBaseline": {
+            "ref": {
+              "aggregateType": "ArchitectureBaselineRevision",
+              "projectId": "r6-host-project",
+              "baselineId": "r6x-baseline",
+              "revision": 1
+            },
+            "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+          }
+        },
+        "verificationPlanRef": {
+          "planId": "2b712fd20239036686bdeab478d2490b8f07ffcb5982410d8a165366e447cf2d",
+          "planDigest": "2b712fd20239036686bdeab478d2490b8f07ffcb5982410d8a165366e447cf2d"
+        },
+        "summary": {
+          "text": "check e01-module-behavior PASS",
+          "artifactRef": {
+            "kind": "artifact",
+            "contentType": "application/vnd.coding-platform.verification-check-report+json;version=1",
+            "digest": "3619f250c41889c563ae8d3ffea3d45020ce405dde87d2dbf651420a1d30ada9",
+            "sizeBytes": 1478,
+            "source": {
+              "kind": "plan-revision",
+              "refId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf",
+              "revision": "1"
+            }
+          }
+        }
+      },
+      "admittedAt": "2026-09-26T18:24:48.612Z"
+    }
+  ],
+  "TaskReduction": [
+    {
+      "ref": {
+        "aggregateType": "TaskReduction",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "taskId": "work-fix-reduce-and-double"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "r6-host-project",
+        "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+      },
+      "planRevision": 1,
+      "taskKind": "work",
+      "requirementLevel": "required",
+      "disposition": "active",
+      "phase": "satisfied",
+      "currentAnchor": {
+        "schemaVersion": 1,
+        "planRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "r6-host-project",
+          "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+        },
+        "planRevision": 1,
+        "workspaceRevision": 1,
+        "pinnedCompletionPolicy": {
+          "ref": {
+            "aggregateType": "CompletionPolicyRevision",
+            "projectId": "r6-host-project",
+            "policyId": "r6x-policy",
+            "revision": 1
+          },
+          "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+        },
+        "pinnedArchitectureBaseline": {
+          "ref": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "r6-host-project",
+            "baselineId": "r6x-baseline",
+            "revision": 1
+          },
+          "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+        }
+      },
+      "effectiveEvidenceIds": [
+        "db4c4b13-a097-4c5f-a319-795f0eecff75",
+        "c096d58c-c589-4822-814a-84a9b76bb79e",
+        "6b0bcd8e-3914-4286-89e5-ba01dce3351e"
+      ],
+      "blockingEvidenceIds": [],
+      "staleEvidenceIds": [],
+      "outOfScopeEvidenceIds": [],
+      "satisfiedObligationIds": [
+        "obligation-repaired-behavior",
+        "obligation-goal-gate"
+      ],
+      "causes": [],
+      "reducedAt": "2026-09-26T18:24:40.351Z",
+      "completion": {
+        "schemaVersion": 1,
+        "roundRef": {
+          "aggregateType": "VerificationRound",
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace",
+          "goalId": "r6x-goal",
+          "taskId": "work-fix-reduce-and-double",
+          "runId": "8cab16b9-6cfa-4488-9a33-970b3c1a1dba",
+          "roundId": "c0ba1fd2-2d7d-49a8-bf49-0294fd5cf13b"
+        },
+        "roundRevision": 4,
+        "taskBasisRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "r6-host-project",
+          "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+        },
+        "verificationPlanRef": {
+          "planId": "1602503ee831cb8fff120feb1cdb1a04ba3cee70af2546aa727b1da72a5dd094",
+          "planDigest": "1602503ee831cb8fff120feb1cdb1a04ba3cee70af2546aa727b1da72a5dd094"
+        },
+        "configurationDigest": "4f798d4ebfe39d164e6108f90efe06d9bd2de7484c22afe657e1984e0ca5dbe6",
+        "evidenceRefs": [
+          {
+            "aggregateType": "Evidence",
+            "projectId": "r6-host-project",
+            "evidenceId": "db4c4b13-a097-4c5f-a319-795f0eecff75"
+          },
+          {
+            "aggregateType": "Evidence",
+            "projectId": "r6-host-project",
+            "evidenceId": "c096d58c-c589-4822-814a-84a9b76bb79e"
+          },
+          {
+            "aggregateType": "Evidence",
+            "projectId": "r6-host-project",
+            "evidenceId": "6b0bcd8e-3914-4286-89e5-ba01dce3351e"
+          }
+        ]
+      }
+    },
+    {
+      "ref": {
+        "aggregateType": "TaskReduction",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "taskId": "work-extract-sum-input"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "r6-host-project",
+        "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+      },
+      "planRevision": 1,
+      "taskKind": "work",
+      "requirementLevel": "required",
+      "disposition": "active",
+      "phase": "satisfied",
+      "currentAnchor": {
+        "schemaVersion": 1,
+        "planRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "r6-host-project",
+          "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+        },
+        "planRevision": 1,
+        "workspaceRevision": 1,
+        "pinnedCompletionPolicy": {
+          "ref": {
+            "aggregateType": "CompletionPolicyRevision",
+            "projectId": "r6-host-project",
+            "policyId": "r6x-policy",
+            "revision": 1
+          },
+          "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+        },
+        "pinnedArchitectureBaseline": {
+          "ref": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "r6-host-project",
+            "baselineId": "r6x-baseline",
+            "revision": 1
+          },
+          "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+        }
+      },
+      "effectiveEvidenceIds": [
+        "fc693b13-ab5f-48b8-a8ab-3a7b94eb4e44",
+        "f02bdc92-f9ca-427b-9e26-1b9155e99f01",
+        "86471396-ae77-4770-85f2-c0f40260ea66"
+      ],
+      "blockingEvidenceIds": [],
+      "staleEvidenceIds": [],
+      "outOfScopeEvidenceIds": [],
+      "satisfiedObligationIds": [
+        "obligation-preserved-after-extraction",
+        "obligation-goal-gate"
+      ],
+      "causes": [],
+      "reducedAt": "2026-09-26T18:24:48.418Z",
+      "completion": {
+        "schemaVersion": 1,
+        "roundRef": {
+          "aggregateType": "VerificationRound",
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace",
+          "goalId": "r6x-goal",
+          "taskId": "work-extract-sum-input",
+          "runId": "eaf94a67-9154-44fd-addd-37698630c4a0",
+          "roundId": "4ce405c3-f96f-4527-8ab6-cb1145df4a55"
+        },
+        "roundRevision": 4,
+        "taskBasisRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "r6-host-project",
+          "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+        },
+        "verificationPlanRef": {
+          "planId": "05b40a083eb9887650ea8d32294425139714c26c713f2e3d6d6cc3fccf223fed",
+          "planDigest": "05b40a083eb9887650ea8d32294425139714c26c713f2e3d6d6cc3fccf223fed"
+        },
+        "configurationDigest": "4f798d4ebfe39d164e6108f90efe06d9bd2de7484c22afe657e1984e0ca5dbe6",
+        "evidenceRefs": [
+          {
+            "aggregateType": "Evidence",
+            "projectId": "r6-host-project",
+            "evidenceId": "fc693b13-ab5f-48b8-a8ab-3a7b94eb4e44"
+          },
+          {
+            "aggregateType": "Evidence",
+            "projectId": "r6-host-project",
+            "evidenceId": "f02bdc92-f9ca-427b-9e26-1b9155e99f01"
+          },
+          {
+            "aggregateType": "Evidence",
+            "projectId": "r6-host-project",
+            "evidenceId": "86471396-ae77-4770-85f2-c0f40260ea66"
+          }
+        ]
+      }
+    },
+    {
+      "ref": {
+        "aggregateType": "TaskReduction",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal",
+        "taskId": "gate-goal-acceptance"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "r6-host-project",
+        "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+      },
+      "planRevision": 1,
+      "taskKind": "gate",
+      "requirementLevel": "required",
+      "disposition": "active",
+      "phase": "satisfied",
+      "currentAnchor": {
+        "schemaVersion": 1,
+        "planRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "r6-host-project",
+          "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+        },
+        "planRevision": 1,
+        "workspaceRevision": 1,
+        "pinnedCompletionPolicy": {
+          "ref": {
+            "aggregateType": "CompletionPolicyRevision",
+            "projectId": "r6-host-project",
+            "policyId": "r6x-policy",
+            "revision": 1
+          },
+          "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+        },
+        "pinnedArchitectureBaseline": {
+          "ref": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "r6-host-project",
+            "baselineId": "r6x-baseline",
+            "revision": 1
+          },
+          "digest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b"
+        }
+      },
+      "effectiveEvidenceIds": [
+        "bcaf11d9-7437-46c4-99ed-6b10d4bed355",
+        "a0e75422-ece1-454f-93f3-2f4e508d44f8",
+        "68ad0183-723e-48fb-afec-4a94e0f50d14"
+      ],
+      "blockingEvidenceIds": [],
+      "staleEvidenceIds": [],
+      "outOfScopeEvidenceIds": [],
+      "satisfiedObligationIds": [
+        "obligation-goal-gate"
+      ],
+      "causes": [],
+      "reducedAt": "2026-09-26T18:24:48.633Z",
+      "completion": {
+        "schemaVersion": 1,
+        "roundRef": {
+          "aggregateType": "VerificationRound",
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace",
+          "goalId": "r6x-goal",
+          "taskId": "gate-goal-acceptance",
+          "runId": "8cab16b9-6cfa-4488-9a33-970b3c1a1dba",
+          "roundId": "15029072-3845-41a2-9c17-c128e0f80cb9"
+        },
+        "roundRevision": 4,
+        "taskBasisRef": {
+          "aggregateType": "PlanRevision",
+          "projectId": "r6-host-project",
+          "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+        },
+        "verificationPlanRef": {
+          "planId": "2b712fd20239036686bdeab478d2490b8f07ffcb5982410d8a165366e447cf2d",
+          "planDigest": "2b712fd20239036686bdeab478d2490b8f07ffcb5982410d8a165366e447cf2d"
+        },
+        "configurationDigest": "4f798d4ebfe39d164e6108f90efe06d9bd2de7484c22afe657e1984e0ca5dbe6",
+        "evidenceRefs": [
+          {
+            "aggregateType": "Evidence",
+            "projectId": "r6-host-project",
+            "evidenceId": "bcaf11d9-7437-46c4-99ed-6b10d4bed355"
+          },
+          {
+            "aggregateType": "Evidence",
+            "projectId": "r6-host-project",
+            "evidenceId": "a0e75422-ece1-454f-93f3-2f4e508d44f8"
+          },
+          {
+            "aggregateType": "Evidence",
+            "projectId": "r6-host-project",
+            "evidenceId": "68ad0183-723e-48fb-afec-4a94e0f50d14"
+          }
+        ]
+      }
+    }
+  ],
+  "GoalPhase": [
+    {
+      "ref": {
+        "aggregateType": "GoalPhase",
+        "projectId": "r6-host-project",
+        "goalId": "r6x-goal"
+      },
+      "revision": 1,
+      "schemaVersion": 1,
+      "planRef": {
+        "aggregateType": "PlanRevision",
+        "projectId": "r6-host-project",
+        "planId": "initial-plan-7931b98309dd5d4f4ea32b3d65688acf"
+      },
+      "planRevision": 1,
+      "phase": "COMPLETED",
+      "adoptedTaskReductions": [
+        {
+          "ref": {
+            "aggregateType": "TaskReduction",
+            "projectId": "r6-host-project",
+            "goalId": "r6x-goal",
+            "taskId": "work-fix-reduce-and-double"
+          },
+          "revision": 1
+        },
+        {
+          "ref": {
+            "aggregateType": "TaskReduction",
+            "projectId": "r6-host-project",
+            "goalId": "r6x-goal",
+            "taskId": "work-extract-sum-input"
+          },
+          "revision": 1
+        },
+        {
+          "ref": {
+            "aggregateType": "TaskReduction",
+            "projectId": "r6-host-project",
+            "goalId": "r6x-goal",
+            "taskId": "gate-goal-acceptance"
+          },
+          "revision": 1
+        }
+      ],
+      "satisfiedObligationIds": [
+        "obligation-repaired-behavior",
+        "obligation-goal-gate",
+        "obligation-preserved-after-extraction"
+      ],
+      "reducedAt": "2026-09-26T18:24:48.659Z"
+    }
+  ]
+}

@@ -1,10 +1,12 @@
 # Coding Platform
 
-独立于旧产品的五模块 Agent 工作台。2026-09-27 从原 `coding-platform/next` 提取，源码和当前文档一起保存在本仓库的 `main` 分支。当前是**实现冻结版本**，尚未宣告整个 MVP 完成。独立目录验收已通过 124 个文件 / 1,102 项测试，以及类型、构建、Kernel 补丁再生和 Host smoke。
+独立于旧产品的五模块 Agent 工作台。2026-09-27 从原 `coding-platform/next` 提取，源码和当前文档一起保存在本仓库的 `main` 分支。现已从该冻结提交恢复，完成[有界 MVP 审计](docs/refactor/reviews/completion-audit-2026-09-27.md)，本轮限定的真实模型验收已通过，按用户要求停止；尚未宣告整个 MVP 完成。原独立冻结提交的完整验证为 124 文件 / 1,102 项及类型、构建、Kernel 补丁与 Host smoke；本次改动另有相关 4 文件 / 4 项、类型、构建和真实模型证据。
+
+源码远程：[coding-platform / next-main](https://github.com/hk865/coding-platform/tree/next-main)；文档远程：[my-coding-platform-docs / next-main/docs](https://github.com/hk865/my-coding-platform-docs/tree/next-main/docs)。两个旧 main 保留原历史。
 
 ## 入口
 
-- [继续任务的 prompt](CONTINUE.md)：下次先做一次有界 completion audit。
+- [恢复要求](CONTINUE.md)与[已完成的有界审计](docs/refactor/reviews/completion-audit-2026-09-27.md)；最新施工落点以交接为准，不重复全仓审计。
 - [当前交接](docs/refactor/HANDOFF.md)、[实现能力](docs/refactor/IMPLEMENTED-CAPABILITIES.md)、[MVP 行为](docs/MVP-BEHAVIOR.md)。
 - [产品](docs/PRODUCT.md)、[架构](docs/refactor/ARCHITECTURE.md)、[UI 方向](docs/UI-WORKBENCH.md)。
 - [提取与独立验收](docs/refactor/reviews/evidence/standalone-2026-09-27/extraction.json)。
@@ -32,9 +34,9 @@ node dist/app/main.js /absolute/path/to/workbench-config.json
 
 ## 本次保存范围
 
-已接通的限定路径包括调查/初始规划→采用→两个 Work 复用 Session→检查→正式 Goal 完成，以及 Task→当前 Run→原 claim Session→执行窗口/完整原历史。辅助历史重复渲染已删除，完整原始记录按需展开保留。模型验证使用受控 provider，不代表外部真实模型已验收。
+已接通的限定路径包括调查/初始规划→采用→两个 Work 复用 Session→检查→正式 Goal 完成，以及 Task→当前 Run→原 claim Session→执行窗口/完整原历史。辅助历史重复渲染已删除，完整原始记录按需展开保留。早期验证使用受控 provider；本轮已接真实 DeepSeek 完成相同 coding 路径，12 次调用、2 次真实编辑、3 次实际检查和正式 Goal COMPLETED，最终模型/工具错误均为 0。见[真实模型验收](docs/refactor/reviews/evidence/standalone-2026-09-27/e01-live-deepseek/README.md)。
 
-暂停/取消 UI、完整恢复、独立 Reviewer、部分协调/治理消费者、最终 UI 与旧产品切换仍需按已确认 MVP 范围审计。A1 新批仅准备了旧 lane，未启动；其候选没有混入本提交。当前停止新功能施工。
+暂停/取消 UI、完整恢复、独立 Reviewer、部分协调/治理消费者、最终 UI 与旧产品切换仍需按已确认 MVP 范围审计。A1 新批仅准备了旧 lane，未启动；其候选没有混入本提交。暂停/取消消费者骨架已留在独立 lane，尚未导入；真实模型限定验收已完成并停工，完整余项见审计，不将限定链等同产品 MVP。
 
 ## 路径与历史
 

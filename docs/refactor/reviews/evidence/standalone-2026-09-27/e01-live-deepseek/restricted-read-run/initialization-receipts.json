@@ -1,0 +1,431 @@
+[
+  {
+    "route": "projects/create",
+    "request": {
+      "scope": {
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace"
+      },
+      "request": {
+        "input": {
+          "projectId": "r6-host-project"
+        },
+        "meta": {
+          "requestId": "r6x-project-1",
+          "expected": [
+            {
+              "ref": {
+                "aggregateType": "Project",
+                "projectId": "r6-host-project"
+              },
+              "revision": 0
+            }
+          ]
+        }
+      }
+    },
+    "httpStatus": 200,
+    "result": {
+      "status": "committed",
+      "value": {
+        "ref": {
+          "aggregateType": "Project",
+          "projectId": "r6-host-project"
+        },
+        "revision": 1
+      },
+      "replayed": false,
+      "cursor": "c0000000001"
+    }
+  },
+  {
+    "route": "workspaces/register",
+    "request": {
+      "scope": {
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace"
+      },
+      "request": {
+        "input": {
+          "workspace": {
+            "projectId": "r6-host-project",
+            "workspaceId": "r6-host-workspace"
+          }
+        },
+        "meta": {
+          "requestId": "r6x-workspace-1",
+          "expected": [
+            {
+              "ref": {
+                "aggregateType": "Project",
+                "projectId": "r6-host-project"
+              },
+              "revision": 1
+            },
+            {
+              "ref": {
+                "aggregateType": "Workspace",
+                "projectId": "r6-host-project",
+                "workspaceId": "r6-host-workspace"
+              },
+              "revision": 0
+            }
+          ]
+        }
+      }
+    },
+    "httpStatus": 200,
+    "result": {
+      "status": "committed",
+      "value": {
+        "ref": {
+          "aggregateType": "Workspace",
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace"
+        },
+        "revision": 1
+      },
+      "replayed": false,
+      "cursor": "c0000000002"
+    }
+  },
+  {
+    "route": "goals/create",
+    "request": {
+      "scope": {
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace"
+      },
+      "request": {
+        "input": {
+          "goalId": "r6x-goal",
+          "workspace": {
+            "projectId": "r6-host-project",
+            "workspaceId": "r6-host-workspace"
+          },
+          "objective": "修复 src/module.ts 的求和与翻倍错误，再提取求和输入数组并保留行为；total 应为 10、doubled 应为 [2,4,6]。两项工作都修改实际文件，并通过实际产物检查与正式目标验收"
+        },
+        "meta": {
+          "requestId": "r6x-goal-1",
+          "expected": [
+            {
+              "ref": {
+                "aggregateType": "Project",
+                "projectId": "r6-host-project"
+              },
+              "revision": 1
+            },
+            {
+              "ref": {
+                "aggregateType": "Workspace",
+                "projectId": "r6-host-project",
+                "workspaceId": "r6-host-workspace"
+              },
+              "revision": 1
+            }
+          ]
+        }
+      }
+    },
+    "httpStatus": 200,
+    "result": {
+      "status": "committed",
+      "value": {
+        "ref": {
+          "aggregateType": "Goal",
+          "projectId": "r6-host-project",
+          "goalId": "r6x-goal"
+        },
+        "workspaceRef": {
+          "aggregateType": "Workspace",
+          "projectId": "r6-host-project",
+          "workspaceId": "r6-host-workspace"
+        },
+        "objective": "修复 src/module.ts 的求和与翻倍错误，再提取求和输入数组并保留行为；total 应为 10、doubled 应为 [2,4,6]。两项工作都修改实际文件，并通过实际产物检查与正式目标验收",
+        "desiredState": "active",
+        "activePlanRevision": null,
+        "revision": 1
+      },
+      "replayed": false,
+      "cursor": "c0000000003"
+    }
+  },
+  {
+    "route": "workspaces/registration",
+    "request": {
+      "scope": {
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace"
+      },
+      "input": {
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace"
+      }
+    },
+    "httpStatus": 200,
+    "result": {
+      "status": "ready",
+      "value": {
+        "project": {
+          "ref": {
+            "aggregateType": "Project",
+            "projectId": "r6-host-project"
+          },
+          "revision": 1
+        },
+        "workspace": {
+          "ref": {
+            "aggregateType": "Workspace",
+            "projectId": "r6-host-project",
+            "workspaceId": "r6-host-workspace"
+          },
+          "revision": 1
+        }
+      }
+    }
+  },
+  {
+    "route": "completion-policies/install",
+    "request": {
+      "scope": {
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace"
+      },
+      "request": {
+        "input": {
+          "policyId": "r6x-policy",
+          "contentRevision": 1,
+          "content": {
+            "schemaVersion": 1,
+            "requirementKinds": [
+              "static"
+            ],
+            "minimumRequiredRequirementsPerObligation": 1
+          }
+        },
+        "meta": {
+          "requestId": "r6x-policy-install",
+          "expected": [
+            {
+              "ref": {
+                "aggregateType": "Project",
+                "projectId": "r6-host-project"
+              },
+              "revision": 1
+            },
+            {
+              "ref": {
+                "aggregateType": "CompletionPolicyRevision",
+                "projectId": "r6-host-project",
+                "policyId": "r6x-policy",
+                "revision": 1
+              },
+              "revision": 0
+            }
+          ]
+        }
+      }
+    },
+    "httpStatus": 200,
+    "result": {
+      "status": "committed",
+      "value": {
+        "ref": {
+          "aggregateType": "CompletionPolicyRevision",
+          "projectId": "r6-host-project",
+          "policyId": "r6x-policy",
+          "revision": 1
+        },
+        "revision": 1,
+        "schemaVersion": 1,
+        "policyId": "r6x-policy",
+        "contentRevision": 1,
+        "contentDigest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35",
+        "content": {
+          "schemaVersion": 1,
+          "requirementKinds": [
+            "static"
+          ],
+          "minimumRequiredRequirementsPerObligation": 1
+        }
+      },
+      "replayed": false,
+      "cursor": "c0000000004"
+    }
+  },
+  {
+    "route": "completion-policies/activate",
+    "request": {
+      "scope": {
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace"
+      },
+      "request": {
+        "input": {
+          "target": {
+            "ref": {
+              "aggregateType": "CompletionPolicyRevision",
+              "projectId": "r6-host-project",
+              "policyId": "r6x-policy",
+              "revision": 1
+            },
+            "digest": "02af4573f7458e1c574ac74895dc8893baadebfe0bf5b3f5d2e26569eb2b1e35"
+          }
+        },
+        "meta": {
+          "requestId": "r6x-policy-active",
+          "expected": [
+            {
+              "ref": {
+                "aggregateType": "Project",
+                "projectId": "r6-host-project"
+              },
+              "revision": 1
+            },
+            {
+              "ref": {
+                "aggregateType": "ProjectCompletionPolicyActive",
+                "projectId": "r6-host-project"
+              },
+              "revision": 0
+            }
+          ]
+        }
+      }
+    },
+    "httpStatus": 200,
+    "result": {
+      "status": "committed",
+      "value": {
+        "ref": {
+          "aggregateType": "ProjectCompletionPolicyActive",
+          "projectId": "r6-host-project"
+        },
+        "projectId": "r6-host-project",
+        "activeRevision": {
+          "aggregateType": "CompletionPolicyRevision",
+          "projectId": "r6-host-project",
+          "policyId": "r6x-policy",
+          "revision": 1
+        },
+        "revision": 1
+      },
+      "replayed": false,
+      "cursor": "c0000000005"
+    }
+  },
+  {
+    "route": "architecture/adopt-initial",
+    "request": {
+      "scope": {
+        "projectId": "r6-host-project",
+        "workspaceId": "r6-host-workspace"
+      },
+      "request": {
+        "input": {
+          "baselineId": "r6x-baseline",
+          "description": "R6 execution-entry boundary",
+          "constraints": [],
+          "catalog": {
+            "requireDag": true,
+            "dependencies": [],
+            "modules": [
+              {
+                "ref": {
+                  "projectId": "r6-host-project",
+                  "moduleId": "r6x"
+                },
+                "name": "R6 execution entry",
+                "responsibility": "Consume the answer and advance",
+                "paths": [
+                  "src"
+                ],
+                "interfaces": []
+              }
+            ]
+          }
+        },
+        "meta": {
+          "requestId": "r6x-adopt",
+          "expected": [
+            {
+              "ref": {
+                "aggregateType": "Project",
+                "projectId": "r6-host-project"
+              },
+              "revision": 1
+            },
+            {
+              "ref": {
+                "aggregateType": "Workspace",
+                "projectId": "r6-host-project",
+                "workspaceId": "r6-host-workspace"
+              },
+              "revision": 1
+            }
+          ]
+        }
+      }
+    },
+    "httpStatus": 200,
+    "result": {
+      "status": "committed",
+      "value": {
+        "baseline": {
+          "ref": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "r6-host-project",
+            "baselineId": "r6x-baseline",
+            "revision": 1
+          },
+          "revision": 1,
+          "schemaVersion": 1,
+          "baselineId": "r6x-baseline",
+          "contentRevision": 1,
+          "contentDigest": "ceda4fb94edfa85b2935e62bee40c55945cf050c48d7422063cc302ae4f5552b",
+          "content": {
+            "schemaVersion": 1,
+            "description": "R6 execution-entry boundary",
+            "constraints": []
+          }
+        },
+        "catalog": {
+          "ref": {
+            "aggregateType": "ArchitectureCatalog",
+            "projectId": "r6-host-project",
+            "baselineId": "r6x-baseline",
+            "revision": 1
+          },
+          "revision": 1,
+          "baselineRef": {
+            "aggregateType": "ArchitectureBaselineRevision",
+            "projectId": "r6-host-project",
+            "baselineId": "r6x-baseline",
+            "revision": 1
+          },
+          "schemaVersion": 1,
+          "catalog": {
+            "modules": [
+              {
+                "ref": {
+                  "projectId": "r6-host-project",
+                  "moduleId": "r6x"
+                },
+                "name": "R6 execution entry",
+                "responsibility": "Consume the answer and advance",
+                "paths": [
+                  "src"
+                ],
+                "interfaces": []
+              }
+            ],
+            "dependencies": [],
+            "requireDag": true
+          }
+        }
+      },
+      "replayed": false,
+      "cursor": "c0000000006"
+    }
+  }
+]

@@ -1,0 +1,20 @@
+[
+  {
+    "stage": "initial_before_query",
+    "sha256": "ddb2b2e83c068f580acb857e3205869095a17a7d55d91b860d85d9cd9b4981cb",
+    "content": "export const total = [2, 3, 5].reduce((sum, value) => sum - value, 0);\nexport const doubled = [1, 2, 3].map(value => value + 2);\n",
+    "observedAt": "2026-09-26T18:00:40.549Z"
+  },
+  {
+    "stage": "after_kernel_edit_1",
+    "sha256": "958bacec0bffe06581938be430212b436d65da2615521eabdf3577cc3065d971",
+    "content": "export const total = [2, 3, 5].reduce((sum, value) => sum + value, 0);\nexport const doubled = [1, 2, 3].map(value => value * 2);\n",
+    "observedAt": "2026-09-26T18:01:08.586Z"
+  },
+  {
+    "stage": "after_kernel_edit_2",
+    "sha256": "286366bcdd1bf6ca0b35289737f14bd5da8ee9796c40fccd7720ba80df4fe026",
+    "content": "export const inputs = [2, 3, 5];\nexport const total = inputs.reduce((sum, value) => sum + value, 0);\nexport const doubled = [1, 2, 3].map(value => value * 2);\n",
+    "observedAt": "2026-09-26T18:01:09.053Z"
+  }
+]

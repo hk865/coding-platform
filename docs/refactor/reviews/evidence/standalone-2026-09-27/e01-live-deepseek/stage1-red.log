@@ -1,0 +1,26 @@
+
+ RUN  v4.1.10 /home/hyh001/projects/coding-platform/coding-platform-next
+
+ ❯ tests/work-graph/R5b-initial-plan.test.ts (1 test | 1 failed) 130ms
+   × consumes one real v2 answer into the same Plan owner candidate, then adopts it through public governance 129ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/work-graph/R5b-initial-plan.test.ts > consumes one real v2 answer into the same Plan owner candidate, then adopts it through public governance
+AssertionError: the injected guide must carry one complete JSON example between BEGIN_INITIAL_PLAN_EXAMPLE and END_INITIAL_PLAN_EXAMPLE: expected null not to be null
+ ❯ tests/work-graph/R5b-initial-plan.test.ts:275:126
+    273|     const guideExampleText = requestTexts.map(guideExampleFrom).find(t…
+    274|     expect(guideExampleText,
+    275|       `the injected guide must carry one complete JSON example between…
+       |                                                                                                                              ^
+    276|     if (guideExampleText === null) throw new Error('the injected guide…
+    277|     const parsedExample = parseInitialPlanningResponseV2(guideExampleT…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 1 passed (2)
+   Start at  02:19:21
+   Duration  2.18s (transform 819ms, setup 0ms, import 1.51s, tests 521ms, environment 0ms)
+
