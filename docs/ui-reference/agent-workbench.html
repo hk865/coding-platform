@@ -1,0 +1,2205 @@
+<!doctype html>
+<html lang="en" data-visualize-standalone>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Agent Workbench.source</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
+</head>
+<body>
+<iframe id="codex-visualization" sandbox="allow-scripts" referrerpolicy="no-referrer" title="Agent Workbench.source" data-srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot; data-visualize-standalone&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;&quot;&gt;
+&lt;title&gt;Agent Workbench.source&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(
+    --background,
+    var(--color-background-primary, light-dark(rgb(255 255 255), rgb(24 24 24)))
+  ) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: var(
+    --color-background-primary,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --card: color-mix(in oklab, var(--foreground) 5%, var(--background));
+  --card-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --popover: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255), rgb(45 45 45))
+  );
+  --popover-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --primary: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --primary-foreground: var(
+    --color-text-inverse,
+    light-dark(rgb(255 255 255), rgb(13 13 13))
+  );
+  --secondary: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%))
+  );
+  --secondary-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: var(
+    --color-text-secondary,
+    light-dark(rgb(26 28 31 / 49.4%), rgb(255 255 255 / 49.8%))
+  );
+  --accent: var(
+    --color-background-info,
+    light-dark(rgb(229 242 255), rgb(13 39 63))
+  );
+  --accent-foreground: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --destructive: var(
+    --color-text-warning,
+    light-dark(rgb(226 85 7), rgb(255 133 73))
+  );
+  --border: var(
+    --color-border-secondary,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+  --input: var(
+    --color-border-primary,
+    light-dark(
+      rgb(26 28 31 / 11.8%),
+      color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+    )
+  );
+  --ring: var(
+    --color-ring-primary,
+    light-dark(rgb(51 156 255), rgb(131 195 255 / 76%))
+  );
+  --font-size-base: var(--font-text-md-size, 14px);
+  --blue: light-dark(rgb(51 156 255), rgb(51 156 255));
+  --orange: light-dark(rgb(226 85 7), rgb(251 106 34));
+  --green: light-dark(rgb(0 162 64), rgb(64 201 119));
+  --red: light-dark(rgb(224 46 42), rgb(255 103 100));
+  --purple: light-dark(rgb(146 79 247), rgb(173 123 249));
+  --yellow: light-dark(rgb(255 195 0), rgb(255 210 64));
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans: -apple-system, system-ui, &quot;Segoe UI&quot;, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, &quot;SF Mono&quot;, Menlo, Consolas, &quot;Liberation Mono&quot;,
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 430;
+  --font-weight-medium: 500;
+  --icon-size: 16px;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --corner-shape: round;
+  --radius: var(--border-radius-lg, 10px);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 1.6);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url(&quot;data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E&quot;);
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+}
+
+:root[data-theme=&quot;light&quot;] {
+  color-scheme: light;
+}
+
+:root[data-theme=&quot;dark&quot;] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  /* Preserve MCP aliases for older inline renderers without creating :root cycles. */
+  --color-background-primary: var(
+    --background,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --color-text-primary: var(
+    --foreground,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --color-border-secondary: var(
+    --border,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+
+  margin: 0;
+  padding: var(--visualize-paint-gutter, 0px);
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans) !important;
+  font-size: var(--font-size-normal);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+}
+
+.cursor-interaction {
+  cursor: var(--cursor-interaction, pointer);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: var(--cursor-interaction, pointer);
+  font-weight: var(--font-weight-medium, 500);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+b,
+strong,
+th {
+  font-weight: var(--font-weight-medium);
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: var(--corner-shape);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--foreground);
+  font: inherit;
+  text-align: start;
+}
+
+.table :is(th, td) {
+  padding-block: 10px;
+  padding-inline: 0 24px;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.table-responsive &gt; .table :is(th, td) {
+  overflow-wrap: break-word;
+}
+
+.table :is(th, td):last-child {
+  padding-inline-end: 0;
+}
+
+.table :is(caption, thead th) {
+  font-weight: 600;
+}
+
+.table thead th {
+  padding-block: 8px;
+  border-bottom-color: color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+
+.table tbody tr:last-child :is(th, td) {
+  border-bottom: 0;
+}
+
+.table.table-sm :is(th, td) {
+  padding-block: 6px;
+}
+
+.table.table-sm :is(th, td):not(:last-child) {
+  padding-inline-end: 16px;
+}
+
+.table :is(.text-end, [align=&quot;right&quot;]) {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.table :is(.text-center, [align=&quot;center&quot;]) {
+  text-align: center;
+}
+
+.table .text-nowrap {
+  white-space: nowrap;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: var(--corner-shape);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+#widget &gt; :not(.card, .progress) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  corner-shape: var(--corner-shape);
+  color: var(--popover-foreground);
+  background: var(--popover);
+  box-shadow: none;
+  font-size: var(--font-size-tooltip);
+  line-height: var(--line-height-tooltip);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+hr {
+  width: 100%;
+  height: 1px;
+  margin-block: 6px;
+  border: 0;
+  background: var(--border);
+}
+
+.nav {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.progress {
+  display: flex;
+  height: 8px;
+  margin-block: calc((var(--line-height-normal, 1.5em) - 8px) / 2);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+}
+
+.progress-bar:only-child {
+  border-radius: var(--radius-full);
+}
+
+.progress-bar {
+  height: 100%;
+  flex-shrink: 0;
+  border: 0;
+  background: var(--viz-series-1);
+}
+
+.viz-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  color: var(--accent-foreground);
+  background: var(--accent);
+  font-weight: var(--font-weight-medium);
+}
+
+small,
+.text-small,
+.viz-badge {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.nav-link,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+.btn,
+.nav-link {
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: var(--corner-shape);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: var(--cursor-interaction, pointer);
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover,
+.nav-link:not(:disabled):not([aria-disabled=&quot;true&quot;]):hover {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn-primary {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: padding-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: padding-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.nav-pills .nav-link {
+  min-width: 0;
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.nav-justified .nav-link {
+  flex: 1 1 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.nav-pills .nav-link.active {
+  color: var(--foreground);
+  background: var(--muted);
+}
+
+.btn:disabled,
+.nav-link:disabled,
+.nav-link[aria-disabled=&quot;true&quot;] {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: var(--corner-shape);
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type=&quot;file&quot;] {
+  padding: 0;
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control[type=&quot;file&quot;]::file-selector-button {
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+}
+
+.form-control[type=&quot;file&quot;]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type=&quot;color&quot;] {
+  width: 40px;
+  height: 28px;
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: var(--corner-shape);
+}
+
+textarea.form-control {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 32px 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: var(--corner-shape);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
+    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-repeat: no-repeat;
+  background-size: 4px 4px;
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-check {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+  border-color: var(--input);
+  border-radius: var(--radius-sm);
+  corner-shape: var(--corner-shape);
+  background-color: var(--secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: &quot;&quot;;
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+}
+
+.form-check-input[type=&quot;radio&quot;] {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+}
+
+.form-check-input[type=&quot;radio&quot;]:checked {
+  border: 2px solid var(--primary);
+  background:
+    radial-gradient(circle, var(--primary-foreground) 0 2.5px, transparent 3px),
+    var(--primary);
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+  box-shadow: var(--shadow-sm);
+  content: &quot;&quot;;
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--primary);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 28px;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  outline: none;
+  border: 0;
+  accent-color: var(--primary);
+  background: linear-gradient(
+      color-mix(in srgb, var(--foreground) 7%, transparent),
+      color-mix(in srgb, var(--foreground) 7%, transparent)
+    )
+    center / 100% 2px no-repeat;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-webkit-slider-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range::-moz-range-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+  [aria-pressed=&quot;true&quot;],
+  [aria-selected=&quot;true&quot;],
+  .is-selected
+) {
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.btn.viz-tile:is([aria-pressed=&quot;true&quot;], [aria-selected=&quot;true&quot;], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible,
+.nav-link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .btn,
+  .nav-link,
+  .form-control,
+  .form-select {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* Keep small-screen WebKit from zooming when a text field receives focus. */
+  .form-control,
+  .form-select {
+    font-size: max(16px, var(--font-size-normal));
+  }
+
+  .form-control[type=&quot;file&quot;]::file-selector-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .form-control-color[type=&quot;color&quot;] {
+    width: 44px;
+    height: 44px;
+  }
+
+  .form-control:is(
+    [type=&quot;date&quot;],
+    [type=&quot;datetime-local&quot;],
+    [type=&quot;month&quot;],
+    [type=&quot;time&quot;],
+    [type=&quot;week&quot;]
+  ) {
+    min-width: 0;
+    max-width: 100%;
+    padding-block: 8px;
+  }
+
+  .form-check {
+    min-height: 44px;
+    padding-inline: 15px;
+  }
+
+  .form-check-input {
+    position: relative;
+  }
+
+  .form-check-input::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    content: &quot;&quot;;
+    transform: translate(-50%, -50%);
+  }
+
+  .form-check-label {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .form-range {
+    height: 44px;
+    touch-action: pan-y;
+  }
+
+  .form-range::-webkit-slider-runnable-track {
+    height: 44px;
+  }
+
+  .form-range::-moz-range-track {
+    height: 44px;
+  }
+
+  .form-range::-webkit-slider-thumb {
+    margin-top: 12px;
+  }
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+/* Model-authored chart rules can otherwise stretch icons after these styles load. */
+svg.lucide {
+  display: block;
+  width: var(--icon-size) !important;
+  height: var(--icon-size) !important;
+  flex: none;
+  margin: 0 !important;
+  stroke-width: 1.6;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;script type=&quot;application/json&quot; id=&quot;codex-visualization-widget-state&quot;&gt;__CODEX_VISUALIZATION_WIDGET_STATE__&lt;/script&gt;
+&lt;script&gt;(() =&gt; {
+  const root = document.documentElement;
+  const mediaQuery = globalThis.matchMedia(&quot;(prefers-color-scheme: dark)&quot;);
+  const apply = Reflect.apply;
+  const isArray = Array.isArray;
+  const hasOwn = Object.hasOwn;
+  const parentWindow = globalThis.parent;
+  const stringify = JSON.stringify;
+  const parse = JSON.parse;
+  const encode = TextEncoder.prototype.encode.bind(new TextEncoder());
+  const initialStateElement = document.getElementById(
+    &quot;codex-visualization-widget-state&quot;,
+  );
+  const initialGlobals = parse(initialStateElement?.textContent ?? &quot;{}&quot;);
+  initialStateElement?.remove();
+  /** @type {Record&lt;string, unknown&gt; | null} */
+  let state = initialGlobals.widgetState ?? null;
+  const statePersistence = initialGlobals.statePersistence ?? &quot;none&quot;;
+  let nextStateRequestId = 0;
+  /** @type {Map&lt;number, { resolve: () =&gt; void; reject: (error: Error) =&gt; void; timeout: ReturnType&lt;typeof globalThis.setTimeout&gt;; serializedState: string }&gt;} */
+  const pendingStateWrites = new Map();
+  const persistenceError = () =&gt;
+    Object.assign(
+      new Error(&quot;The host could not persist the widget state update&quot;),
+      {
+        code: -32000,
+        data: { code: &quot;widget_state_persistence_failed&quot;, retryable: false },
+      },
+    );
+  /**
+   * @param {object} prototype
+   * @param {string} property
+   */
+  const getPrototypeGetter = (prototype, property) =&gt; {
+    // oxlint-disable-next-line typescript/unbound-method -- invoked through captured Reflect.apply
+    const getter = Object.getOwnPropertyDescriptor(prototype, property)?.get;
+    if (getter == null) {
+      throw new Error(`Missing ${property} getter`);
+    }
+    return getter;
+  };
+  const getMessageData = getPrototypeGetter(MessageEvent.prototype, &quot;data&quot;);
+  const getMessagePorts = getPrototypeGetter(MessageEvent.prototype, &quot;ports&quot;);
+  const getMessageSource = getPrototypeGetter(MessageEvent.prototype, &quot;source&quot;);
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const addHostMessageListener = MessagePort.prototype.addEventListener;
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const postHostMessage = MessagePort.prototype.postMessage;
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const startHostPort = MessagePort.prototype.start;
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const stopMessagePropagation = Event.prototype.stopImmediatePropagation;
+  /** @type {MessagePort | null} */
+  let hostPort = null;
+  const postToHost = (type, payload) =&gt; {
+    if (hostPort != null) {
+      apply(postHostMessage, hostPort, [{ type, ...payload }]);
+    }
+  };
+  const openExternal = ({ href }) =&gt; {
+    if (globalThis.navigator.userActivation?.isActive === true) {
+      postToHost(&quot;open-external&quot;, { href });
+    }
+  };
+  const sendFollowUpMessage = ({ context, prompt, title }) =&gt; {
+    if (globalThis.navigator.userActivation?.isActive === true) {
+      postToHost(&quot;follow-up&quot;, { context, prompt, title });
+    }
+    return Promise.resolve();
+  };
+  /**
+   * @param {Record&lt;string, unknown&gt; | ((previous: Record&lt;string, unknown&gt; | null) =&gt; Record&lt;string, unknown&gt;)} next
+   * @returns {Promise&lt;void&gt;}
+   */
+  const setWidgetState = async (next) =&gt; {
+    const nextState = typeof next === &quot;function&quot; ? next(state) : next;
+    if (
+      nextState == null ||
+      typeof nextState !== &quot;object&quot; ||
+      isArray(nextState)
+    ) {
+      throw new TypeError(&quot;Widget state must be a JSON object&quot;);
+    }
+    const inputState = stringify(
+      nextState,
+      (_key, /** @type {unknown} */ value) =&gt; {
+        if (
+          typeof value === &quot;undefined&quot; ||
+          typeof value === &quot;function&quot; ||
+          typeof value === &quot;symbol&quot; ||
+          (typeof value === &quot;number&quot; &amp;&amp; !Number.isFinite(value))
+        ) {
+          throw new TypeError(&quot;Widget state must be a JSON object&quot;);
+        }
+        return value;
+      },
+    );
+    const parsedState = parse(inputState);
+    if (
+      parsedState == null ||
+      typeof parsedState !== &quot;object&quot; ||
+      isArray(parsedState)
+    ) {
+      throw new TypeError(&quot;Widget state must be a JSON object&quot;);
+    }
+    const storedState = {
+      modelContent: null,
+      privateContent: null,
+      ...parsedState,
+    };
+    const serializedState = stringify(storedState);
+    if (encode(serializedState).length &gt; 16 * 1024) {
+      throw new TypeError(
+        &quot;Widget state must be a JSON object of at most 16 KiB&quot;,
+      );
+    }
+    if (
+      hasOwn(storedState, &quot;imageIds&quot;) &amp;&amp;
+      (!isArray(storedState.imageIds) ||
+        storedState.imageIds.some(
+          (/** @type {unknown} */ id) =&gt; typeof id !== &quot;string&quot;,
+        ))
+    ) {
+      throw new TypeError(&quot;Widget state imageIds must be an array of strings&quot;);
+    }
+    if (storedState.imageIds?.length &gt; 0) {
+      throw Object.assign(
+        new TypeError(&quot;Visualization state does not support image attachments&quot;),
+        { code: -32602, data: { code: &quot;images_unsupported&quot; } },
+      );
+    }
+    state = storedState;
+    globalThis.openai.widgetState = state;
+    globalThis.dispatchEvent(
+      new CustomEvent(&quot;openai:set_globals&quot;, {
+        detail: { globals: { widgetState: state } },
+      }),
+    );
+    if (statePersistence === &quot;none&quot;) {
+      throw persistenceError();
+    }
+    const id = ++nextStateRequestId;
+    return new Promise((resolve, reject) =&gt; {
+      const timeout = globalThis.setTimeout(() =&gt; {
+        pendingStateWrites.delete(id);
+        reject(persistenceError());
+      }, 30_000);
+      pendingStateWrites.set(id, { resolve, reject, timeout, serializedState });
+      postToHost(&quot;widget-state-write&quot;, { id, state: serializedState });
+    });
+  };
+  const syncTheme = () =&gt; {
+    const theme = mediaQuery.matches ? &quot;dark&quot; : &quot;light&quot;;
+    root.dataset.theme = theme;
+    globalThis.openai = {
+      ...globalThis.openai,
+      openExternal,
+      sendFollowUpMessage,
+      setWidgetState,
+      theme,
+      visualizationStyleVariables: {},
+      visualizationTheme: theme,
+      widgetState: state,
+      statePersistence,
+      stateModelContext: &quot;none&quot;,
+    };
+    globalThis.dispatchEvent(
+      new CustomEvent(&quot;openai:set_globals&quot;, {
+        detail: { globals: globalThis.openai },
+      }),
+    );
+  };
+  const sendHeight = () =&gt; {
+    postToHost(&quot;height&quot;, {
+      height: Math.ceil(
+        Math.max(
+          document.body.scrollHeight,
+          document.body.getBoundingClientRect().height,
+        ),
+      ),
+    });
+  };
+
+  globalThis.addEventListener(
+    &quot;message&quot;,
+    (event) =&gt; {
+      const data = apply(getMessageData, event, []);
+      const ports = apply(getMessagePorts, event, []);
+      const source = apply(getMessageSource, event, []);
+      if (
+        hostPort != null ||
+        source !== parentWindow ||
+        typeof data !== &quot;object&quot; ||
+        data?.type !== &quot;codex-visualization-initialize&quot; ||
+        !isArray(ports) ||
+        ports.length !== 1
+      ) {
+        return;
+      }
+      apply(stopMessagePropagation, event, []);
+      const nextHostPort = ports[0];
+      try {
+        apply(addHostMessageListener, nextHostPort, [
+          &quot;message&quot;,
+          (event) =&gt; {
+            const data = apply(getMessageData, event, []);
+            if (typeof data === &quot;object&quot; &amp;&amp; data?.type === &quot;measure&quot;) {
+              sendHeight();
+            } else if (
+              typeof data === &quot;object&quot; &amp;&amp;
+              data?.type === &quot;widget-state-result&quot;
+            ) {
+              /** @type {unknown} */
+              const id = data.id;
+              if (typeof id !== &quot;number&quot;) {
+                return;
+              }
+              const pending = pendingStateWrites.get(id);
+              if (pending != null) {
+                pendingStateWrites.delete(id);
+                globalThis.clearTimeout(pending.timeout);
+                if (data.ok === true) {
+                  pending.resolve();
+                } else {
+                  pending.reject(persistenceError());
+                }
+              }
+            }
+          },
+        ]);
+        apply(startHostPort, nextHostPort, []);
+      } catch {
+        return;
+      }
+      hostPort = nextHostPort;
+      for (const [id, { serializedState }] of pendingStateWrites) {
+        postToHost(&quot;widget-state-write&quot;, { id, state: serializedState });
+      }
+      sendHeight();
+    },
+    { capture: true },
+  );
+  document.currentScript?.remove();
+  mediaQuery.addEventListener(&quot;change&quot;, syncTheme);
+  globalThis.addEventListener(&quot;click&quot;, (event) =&gt; {
+    if (event.defaultPrevented) {
+      return;
+    }
+    let element = null;
+    if (event.target instanceof globalThis.Element) {
+      element = event.target;
+    } else if (event.target instanceof globalThis.Node) {
+      element = event.target.parentElement;
+    }
+    const link = element?.closest(&quot;a[href]&quot;);
+    const href = link?.getAttribute(&quot;href&quot;);
+    if (href == null) {
+      return;
+    }
+    if (href.startsWith(&quot;#&quot;)) {
+      let id;
+      try {
+        id = decodeURIComponent(href.slice(1));
+      } catch {
+        return;
+      }
+      const target = id.length === 0 ? root : document.getElementById(id);
+      if (
+        target == null ||
+        globalThis.navigator.userActivation?.isActive !== true
+      ) {
+        return;
+      }
+      event.preventDefault();
+      postToHost(&quot;scroll-to&quot;, {
+        top: target.getBoundingClientRect().top + globalThis.scrollY,
+      });
+      return;
+    }
+    event.preventDefault();
+    openExternal({ href });
+  });
+  new ResizeObserver(sendHeight).observe(document.body);
+  syncTheme();
+})();
+&lt;/script&gt;
+&lt;style&gt;
+#quiet-workbench{--q-bg:light-dark(#fafafa,#18191b);--q-nav:light-dark(#f1f2f3,#141517);--q-text:light-dark(#26292f,#dcdee3);--q-muted:light-dark(#747981,#969aa3);--q-line:light-dark(#e4e5e8,#2a2c30);--q-hover:light-dark(#e9ebef,#24262b);--q-blue:light-dark(#42679e,#9bb8e5);--q-green:light-dark(#367455,#83b396);--q-input:light-dark(#f0f1f3,#222428);font:14px/1.8 Inter,&quot;PingFang SC&quot;,&quot;Microsoft YaHei&quot;,sans-serif;color:var(--q-text);background:var(--q-bg);border-radius:8px;overflow:hidden;min-width:0}
+#quiet-workbench *{box-sizing:border-box}#quiet-workbench button,#quiet-workbench textarea{font:inherit;color:inherit}#quiet-workbench button{border:0;background:transparent;padding:4px 7px;border-radius:4px;text-align:left}#quiet-workbench button:hover{background:var(--q-hover)}#quiet-workbench button:focus-visible,#quiet-workbench textarea:focus-visible{outline:2px solid var(--q-blue);outline-offset:3px}#quiet-workbench svg{width:16px;height:16px;flex-shrink:0}#quiet-workbench .q-icon{display:flex;align-items:center;justify-content:center}#quiet-workbench .q-top{min-height:42px;flex-wrap:wrap;padding:0 13px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--q-line);font-size:12px;color:var(--q-muted)}#quiet-workbench .q-top strong{font-weight:500;color:var(--q-text)}#quiet-workbench .q-fill{flex:1}#quiet-workbench .q-right-tools{display:flex;align-items:center;gap:3px}#quiet-workbench .q-right-tools button{color:var(--q-muted)}#quiet-workbench .q-body{display:grid;grid-template-columns:180px minmax(0,1fr);min-height:620px}#quiet-workbench[data-panel-open=true] .q-body{grid-template-columns:180px minmax(280px,1fr) 270px}#quiet-workbench .q-side{background:var(--q-nav);padding:20px 12px;border-right:1px solid var(--q-line)}#quiet-workbench .q-section{font-size:11px;color:var(--q-muted);padding:0 8px;margin:0 0 13px;display:flex;gap:10px;align-items:center}#quiet-workbench .q-project{width:100%;font-size:12px;display:flex;gap:7px;align-items:center}#quiet-workbench .q-people{margin:9px 0 30px 10px;padding-left:6px}#quiet-workbench .q-person{width:100%;display:flex;align-items:center;gap:9px;padding:6px 9px;font-size:12px;margin:2px 0}#quiet-workbench .q-person[aria-pressed=true]{background:var(--q-hover)}#quiet-workbench .q-dot{width:5px;height:5px;border-radius:50%;background:var(--q-green);display:inline-block;flex-shrink:0}#quiet-workbench .q-dot.idle{background:var(--q-muted);opacity:.6}#quiet-workbench .q-dot.pending{background:transparent;border:1px solid var(--q-muted)}#quiet-workbench .q-dot.running{background:var(--q-blue)}#quiet-workbench .q-archive{font-size:11px;color:var(--q-muted);margin:15px 0 0 9px}#quiet-workbench .q-center{min-width:0;display:flex;flex-direction:column}#quiet-workbench .q-titlebar{display:flex;align-items:center;gap:8px;min-height:52px;padding:10px 27px;font-size:12px}#quiet-workbench .q-titlebar&gt;button:first-child{padding-left:0}#quiet-workbench .q-titlebar .q-icon{color:var(--q-muted)}#quiet-workbench .q-chat{width:100%;max-width:700px;margin:0 auto;padding:35px 34px 15px;flex:1}#quiet-workbench .q-user{margin:0 0 38px 30px;color:var(--q-text);padding-left:16px;border-left:2px solid var(--q-line)}#quiet-workbench .q-user p{margin:0}#quiet-workbench .q-assistant p{margin:0 0 19px}#quiet-workbench .q-fold{margin:0 0 22px;font-size:12px;color:var(--q-muted)}#quiet-workbench summary{list-style:none;display:flex;align-items:center;gap:8px;user-select:none;width:fit-content;padding:3px 0}#quiet-workbench summary::-webkit-details-marker{display:none}#quiet-workbench summary .q-chevron{display:inline-block;transition:transform .12s}#quiet-workbench details[open]&gt;summary .q-chevron{transform:rotate(90deg)}#quiet-workbench .q-foldbody{margin:10px 0 4px 5px;padding:0 0 0 15px;border-left:1px solid var(--q-line)}#quiet-workbench .q-taskline{display:flex;align-items:center;gap:7px;padding:4px 0}#quiet-workbench .q-taskline button{padding:0;font-size:12px}#quiet-workbench .q-taskline small{font-size:11px;margin-left:auto;color:var(--q-muted)}#quiet-workbench .q-subtle{font-size:12px;color:var(--q-muted)}#quiet-workbench .q-compose-wrap{padding:25px 28px 24px;width:100%;max-width:730px;margin:0 auto}#quiet-workbench .q-compose{background:var(--q-input);border-radius:10px;padding:12px 14px}#quiet-workbench textarea{display:block;width:100%;min-height:44px;border:0;background:transparent;resize:vertical;outline-offset:3px;font-size:13px}#quiet-workbench textarea::placeholder{color:var(--q-muted)}#quiet-workbench .q-compose-bottom{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--q-muted)}#quiet-workbench .q-send{background:var(--q-text)!important;color:var(--q-bg)!important;border-radius:50%!important;width:27px;height:27px;padding:5px!important}#quiet-workbench .q-panel{border-left:1px solid var(--q-line);min-width:0;padding:12px 14px;background:var(--q-bg)}#quiet-workbench .q-panelhead{display:flex;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--q-muted);gap:3px;margin-bottom:26px}#quiet-workbench .q-panelhead button[aria-pressed=true]{color:var(--q-text)}#quiet-workbench .q-pages{display:flex;flex-wrap:wrap;gap:4px;min-width:0}#quiet-workbench .q-page{display:flex;align-items:center;border-bottom:1px solid transparent;font-size:11px}#quiet-workbench .q-page.active{border-bottom-color:var(--q-muted);color:var(--q-text)}#quiet-workbench .q-page button{padding:3px 5px}#quiet-workbench .q-page-close{opacity:.45}#quiet-workbench .q-page:hover .q-page-close,#quiet-workbench .q-page-close:focus-visible{opacity:1}#quiet-workbench .q-chooser{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:14px 5px;font-size:12px;color:var(--q-muted)}#quiet-workbench .q-panelhead svg{width:13px;height:13px}#quiet-workbench .q-tree{padding:0 0 0 6px;margin:0;list-style:none;font-size:12px}#quiet-workbench .q-tree ul{list-style:none;margin:5px 0 8px 6px;padding:0 0 0 16px;border-left:1px solid var(--q-line)}#quiet-workbench .q-tree li{padding:3px 0}#quiet-workbench .q-node{display:flex;flex-wrap:wrap;align-items:center;gap:7px;width:100%;padding:4px 0!important}#quiet-workbench .q-node small{font-size:11px;color:var(--q-muted);margin-left:auto;white-space:nowrap}#quiet-workbench .q-node[aria-pressed=true]{color:var(--q-blue)}#quiet-workbench .q-detail{margin-top:30px;padding-top:16px;border-top:1px solid var(--q-line);font-size:12px}#quiet-workbench .q-detail-head{display:flex;align-items:center;gap:8px;margin-bottom:14px}#quiet-workbench .q-detail strong{font-weight:500}#quiet-workbench .q-detail small{font-size:11px;color:var(--q-muted)}#quiet-workbench .q-detail p{margin:10px 0;color:var(--q-muted)}#quiet-workbench .q-link{padding:3px 0!important;color:var(--q-blue)!important;font-size:12px!important}#quiet-workbench .q-code{font:12px/1.9 Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:14px 0;color:var(--q-muted)}#quiet-workbench .q-drawer{padding:0 28px 14px;border-bottom:1px solid var(--q-line);font-size:12px;color:var(--q-muted)}#quiet-workbench .q-drawer strong{color:var(--q-text);font-weight:500}#quiet-workbench .q-drawer p{margin:6px 0}#quiet-workbench .q-event{font-size:12px;padding:9px 0;border-bottom:1px solid var(--q-line)}#quiet-workbench .q-event small{font-size:11px;color:var(--q-muted);display:block}#quiet-workbench .q-files button{font-size:12px;display:block;width:100%;margin:7px 0}#quiet-workbench .q-menu{border-bottom:1px solid var(--q-line);padding:8px 25px;display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:var(--q-muted)}#quiet-workbench .q-status{font-size:11px;color:var(--q-muted);min-height:18px;margin-top:8px}#quiet-workbench[data-expanded=true] .q-center{display:none}#quiet-workbench[data-expanded=true] .q-body{grid-template-columns:180px minmax(0,1fr)}#quiet-workbench[data-expanded=true] .q-panel{padding:16px 30px}#quiet-workbench[data-expanded=true] .q-tree{max-width:680px;margin:0 auto}#quiet-workbench[data-expanded=true] .q-detail{max-width:680px;margin:25px auto 0}#quiet-workbench [hidden]{display:none!important}
+@media(max-width:800px){#quiet-workbench .q-body{grid-template-columns:145px minmax(0,1fr)}#quiet-workbench[data-panel-open=true] .q-body{grid-template-columns:145px minmax(0,1fr)}#quiet-workbench .q-panel{grid-column:2;border-top:1px solid var(--q-line);border-left:0}#quiet-workbench .q-side{grid-row:1/3}#quiet-workbench .q-chat{padding:25px}#quiet-workbench[data-expanded=true] .q-body{grid-template-columns:145px minmax(0,1fr)}#quiet-workbench .q-compose-wrap{padding:20px}}
+@media(max-width:520px){#quiet-workbench .q-body,#quiet-workbench[data-panel-open=true] .q-body,#quiet-workbench[data-expanded=true] .q-body{display:flex;flex-direction:column;min-height:560px}#quiet-workbench .q-side{display:none}#quiet-workbench[data-nav-open=true] .q-side{display:block;border-right:0;border-bottom:1px solid var(--q-line)}#quiet-workbench .q-people{display:flex;flex-wrap:wrap;margin:5px 0;padding:0}#quiet-workbench .q-person{width:auto}#quiet-workbench .q-chat{padding:26px 22px 10px}#quiet-workbench .q-titlebar{padding:10px 20px}#quiet-workbench .q-user{margin-left:10px}#quiet-workbench .q-panel{border-top:1px solid var(--q-line)}#quiet-workbench .q-compose-wrap{padding:24px 18px}#quiet-workbench .q-center{flex:1}}
+@media(pointer:coarse){#quiet-workbench button,#quiet-workbench summary{min-height:44px}#quiet-workbench textarea{font-size:16px}}
+@media(prefers-reduced-motion:reduce){#quiet-workbench .q-chevron{transition:none}}
+&lt;/style&gt;
+&lt;div id=&quot;quiet-workbench&quot; data-panel-open=&quot;false&quot; data-expanded=&quot;false&quot; aria-label=&quot;简洁版 Agent 工作台原型&quot;&gt;
+&lt;header class=&quot;q-top&quot;&gt;&lt;button class=&quot;q-icon cursor-interaction&quot; id=&quot;q-nav&quot; aria-label=&quot;展开或收起项目导航&quot;&gt;&lt;i data-lucide=&quot;panel-left&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;strong&gt;coding-platform&lt;/strong&gt;&lt;span class=&quot;q-fill&quot;&gt;&lt;/span&gt;&lt;span class=&quot;q-demo-label&quot;&gt;示例&lt;/span&gt;&lt;nav class=&quot;q-right-tools&quot; aria-label=&quot;右侧资料与工具&quot;&gt;&lt;button class=&quot;q-icon cursor-interaction&quot; data-panel=&quot;tasks&quot; aria-label=&quot;打开任务图&quot;&gt;&lt;i data-lucide=&quot;git-branch&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;button class=&quot;q-icon cursor-interaction&quot; data-panel=&quot;architecture&quot; aria-label=&quot;打开架构图&quot;&gt;&lt;i data-lucide=&quot;network&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;button class=&quot;q-icon cursor-interaction&quot; data-panel=&quot;files&quot; aria-label=&quot;打开文件资源管理器&quot;&gt;&lt;i data-lucide=&quot;file-text&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;button class=&quot;q-icon cursor-interaction&quot; data-panel=&quot;terminal&quot; aria-label=&quot;打开终端输出&quot;&gt;&lt;i data-lucide=&quot;terminal&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/nav&gt;&lt;button class=&quot;q-icon cursor-interaction&quot; id=&quot;q-toggle-panel&quot; aria-label=&quot;显示或隐藏右侧工作区&quot; aria-expanded=&quot;false&quot;&gt;&lt;i data-lucide=&quot;panel-right&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;button class=&quot;q-icon cursor-interaction&quot; id=&quot;q-theme&quot; aria-label=&quot;切换明暗主题&quot;&gt;&lt;i data-lucide=&quot;sun-moon&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/header&gt;
+&lt;div class=&quot;q-body&quot;&gt;
+&lt;aside class=&quot;q-side&quot; aria-label=&quot;项目与 Agent&quot;&gt;&lt;div class=&quot;q-section&quot;&gt;项目&lt;/div&gt;&lt;button class=&quot;q-project cursor-interaction&quot; id=&quot;q-project&quot; aria-expanded=&quot;true&quot;&gt;&lt;i data-lucide=&quot;chevron-down&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;coding-platform&lt;/button&gt;&lt;div class=&quot;q-people&quot; id=&quot;q-people&quot;&gt;&lt;button class=&quot;q-person cursor-interaction&quot; data-agent=&quot;main&quot; aria-pressed=&quot;true&quot;&gt;主对话&lt;/button&gt;&lt;button class=&quot;q-person cursor-interaction&quot; data-agent=&quot;impl&quot; aria-pressed=&quot;false&quot;&gt;&lt;span class=&quot;q-dot running&quot;&gt;&lt;/span&gt;实现者&lt;/button&gt;&lt;button class=&quot;q-person cursor-interaction&quot; data-agent=&quot;review&quot; aria-pressed=&quot;false&quot;&gt;&lt;span class=&quot;q-dot idle&quot;&gt;&lt;/span&gt;审阅者&lt;/button&gt;&lt;button class=&quot;q-person cursor-interaction&quot; data-agent=&quot;architect&quot; aria-pressed=&quot;false&quot;&gt;&lt;span class=&quot;q-dot idle&quot;&gt;&lt;/span&gt;架构参谋&lt;/button&gt;&lt;/div&gt;&lt;button class=&quot;q-archive cursor-interaction&quot; id=&quot;q-archive&quot; aria-expanded=&quot;false&quot;&gt;已归档&lt;/button&gt;&lt;div id=&quot;q-archived&quot; hidden&gt;&lt;button class=&quot;q-person cursor-interaction&quot; data-agent=&quot;old&quot;&gt;调查者&lt;/button&gt;&lt;/div&gt;&lt;/aside&gt;
+&lt;main class=&quot;q-center&quot;&gt;&lt;div class=&quot;q-titlebar&quot;&gt;&lt;button class=&quot;cursor-interaction&quot; id=&quot;q-title&quot; aria-expanded=&quot;false&quot;&gt;主对话&lt;/button&gt;&lt;span class=&quot;q-fill&quot;&gt;&lt;/span&gt;&lt;button class=&quot;q-icon cursor-interaction&quot; id=&quot;q-more&quot; aria-label=&quot;更多会话操作&quot; aria-expanded=&quot;false&quot;&gt;&lt;i data-lucide=&quot;ellipsis&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;q-menu&quot; id=&quot;q-menu&quot; hidden&gt;&lt;button class=&quot;cursor-interaction&quot; data-mode=&quot;chat&quot;&gt;对话&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-mode=&quot;observe&quot;&gt;行为观察&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-panel=&quot;architecture&quot;&gt;架构图&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;q-drawer&quot; id=&quot;q-role&quot; hidden&gt;&lt;/div&gt;&lt;div class=&quot;q-chat&quot; id=&quot;q-chat&quot;&gt;&lt;/div&gt;&lt;div class=&quot;q-compose-wrap&quot;&gt;&lt;form class=&quot;q-compose&quot; id=&quot;q-compose&quot;&gt;&lt;textarea id=&quot;q-input&quot; aria-label=&quot;消息&quot; placeholder=&quot;发送消息…&quot;&gt;&lt;/textarea&gt;&lt;div class=&quot;q-compose-bottom&quot;&gt;&lt;span id=&quot;q-recipient&quot;&gt;主对话&lt;/span&gt;&lt;span class=&quot;q-fill&quot;&gt;&lt;/span&gt;&lt;button class=&quot;q-send q-icon cursor-interaction&quot; type=&quot;submit&quot; aria-label=&quot;发送示例消息&quot;&gt;&lt;i data-lucide=&quot;arrow-up&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/div&gt;&lt;/form&gt;&lt;div class=&quot;q-status&quot; id=&quot;q-status&quot; role=&quot;status&quot; aria-live=&quot;polite&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/main&gt;
+&lt;aside class=&quot;q-panel&quot; id=&quot;q-panel&quot; aria-label=&quot;辅助工作区&quot; hidden&gt;&lt;div class=&quot;q-panelhead&quot;&gt;&lt;div class=&quot;q-pages&quot; id=&quot;q-pages&quot; aria-label=&quot;辅助工作区页面&quot;&gt;&lt;/div&gt;&lt;button class=&quot;q-icon cursor-interaction&quot; id=&quot;q-new-page&quot; aria-label=&quot;新建页面&quot;&gt;&lt;i data-lucide=&quot;plus&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;span class=&quot;q-fill&quot;&gt;&lt;/span&gt;&lt;button class=&quot;q-icon cursor-interaction&quot; id=&quot;q-expand&quot; aria-label=&quot;放大辅助视图&quot; aria-pressed=&quot;false&quot;&gt;&lt;i data-lucide=&quot;maximize-2&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;button class=&quot;q-icon cursor-interaction&quot; id=&quot;q-close&quot; aria-label=&quot;隐藏右侧工作区&quot;&gt;&lt;i data-lucide=&quot;panel-right-close&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/div&gt;&lt;div id=&quot;q-panelcontent&quot;&gt;&lt;/div&gt;&lt;div class=&quot;q-detail&quot; id=&quot;q-detail&quot; hidden&gt;&lt;/div&gt;&lt;/aside&gt;
+&lt;/div&gt;&lt;/div&gt;
+&lt;script&gt;
+(()=&gt;{
+const root=document.getElementById(&#x27;quiet-workbench&#x27;),$=s=&gt;root.querySelector(s);
+const state={agent:&#x27;main&#x27;,mode:&#x27;chat&#x27;,panel:&#x27;tasks&#x27;,open:false,expanded:false,theme:&#x27;dark&#x27;,treeSize:12,pages:[],activePage:null};
+const names={main:&#x27;主对话&#x27;,impl:&#x27;实现者&#x27;,review:&#x27;审阅者&#x27;,architect:&#x27;架构参谋&#x27;,old:&#x27;调查者&#x27;};
+const drafts={},messages={},pageViews={};let renderedPage=null,renderedKind=null;let pageCounter=0;const pageNames={tasks:&#x27;任务图&#x27;,architecture:&#x27;架构图&#x27;,files:&#x27;资源管理器&#x27;,file:&#x27;文件&#x27;,terminal:&#x27;终端&#x27;,blank:&#x27;新页面&#x27;};let currentKey=&#x27;&#x27;,foldOpen=false;
+const details={goal:[&#x27;首条 E2E 路径&#x27;,&#x27;目标 · 推进中&#x27;,&#x27;完成依据来自当前采用的义务与真实检查。&#x27;],behavior:[&#x27;行为与验收&#x27;,&#x27;已完成 · 文档&#x27;,&#x27;查看已明确的行为要求与验收场景。&#x27;],completion:[&#x27;检查与完成链&#x27;,&#x27;工作中 · 实现者&#x27;,&#x27;检查尚未全部结束，当前不代表任务已完成。&#x27;],entry:[&#x27;入口与结果展示&#x27;,&#x27;待细化 · 必需&#x27;,&#x27;未来工作仍保留在任务图中，尚未开始。&#x27;],verify:[&#x27;端到端核对&#x27;,&#x27;待命 · 审阅者&#x27;,&#x27;在产物和检查结果可核对后开展。&#x27;],workflow:[&#x27;Workflow&#x27;,&#x27;已采用模块&#x27;,&#x27;规划、Session 选择与下一步业务动作。&#x27;],runtime:[&#x27;AgentRuntime&#x27;,&#x27;已采用模块&#x27;,&#x27;实际执行、控制与真实观察。&#x27;],graph:[&#x27;WorkGraph&#x27;,&#x27;已采用模块&#x27;,&#x27;任务、关联、证据与正式状态。&#x27;],workspace:[&#x27;WorkspaceTools&#x27;,&#x27;已采用模块&#x27;,&#x27;文件、来源捕获与比较。&#x27;],store:[&#x27;RecordStore&#x27;,&#x27;已采用模块&#x27;,&#x27;条件事务与持久化。&#x27;]};
+function icon(){if(globalThis.lucide)lucide.createIcons({attrs:{width:16,height:16}})}
+let lastSavedState=&#x27;&#x27;;
+function save(){const snapshot={modelContent:{uiDirection:&#x27;传统 Session + 渐进披露 + 树状节点，无常驻卡片&#x27;,theme:state.theme,auxiliaryOpen:state.open},privateContent:{agent:state.agent,mode:state.mode,panel:state.panel,expanded:state.expanded,treeSize:state.treeSize,pages:state.pages,activePage:state.activePage,leftWidth:state.leftWidth,rightWidth:state.rightWidth,groupTasks:state.groupTasks}};lastSavedState=JSON.stringify(snapshot);if(window.openai?.setWidgetState)window.openai.setWidgetState(snapshot).catch(()=&gt;{});}
+function role(){const desc=state.agent===&#x27;main&#x27;?&#x27;需求讨论、协作安排与结果解释。&#x27;:state.agent===&#x27;impl&#x27;?&#x27;编码执行 · 工作中。当前负责检查与完成链。&#x27;:state.agent===&#x27;review&#x27;?&#x27;独立审阅 · 待命。当前没有执行占用。&#x27;:state.agent===&#x27;architect&#x27;?&#x27;架构咨询 · 待命。负责方案与模块边界。&#x27;:&#x27;历史调查 · 已归档。记录保留，当前只读。&#x27;;$(&#x27;#q-role&#x27;).textContent=names[state.agent]+&#x27; — &#x27;+desc;}
+function baseRenderChat(){if(currentKey)drafts[currentKey]=$(&#x27;#q-input&#x27;).value;currentKey=state.agent;$(&#x27;#q-input&#x27;).value=drafts[currentKey]||&#x27;&#x27;;$(&#x27;#q-title&#x27;).textContent=names[state.agent]+(state.mode===&#x27;observe&#x27;?&#x27; · 行为观察&#x27;:&#x27;&#x27;);$(&#x27;#q-recipient&#x27;).textContent=names[state.agent];$(&#x27;#q-compose&#x27;).hidden=state.mode===&#x27;observe&#x27;||state.agent===&#x27;old&#x27;;root.querySelectorAll(&#x27;[data-agent]&#x27;).forEach(b=&gt;b.setAttribute(&#x27;aria-pressed&#x27;,String(b.dataset.agent===state.agent)));role();let html=&#x27;&#x27;;
+if(state.mode===&#x27;observe&#x27;){html=&#x27;&lt;div class=&quot;q-subtle&quot; style=&quot;margin-bottom:28px&quot;&gt;当前 Session 的明确动作与结果&lt;/div&gt;&lt;div class=&quot;q-event&quot;&gt;读取完成条件&lt;small&gt;14:32 · MVP-BEHAVIOR.md&lt;/small&gt;&lt;/div&gt;&lt;div class=&quot;q-event&quot;&gt;更新完成归约入口&lt;small&gt;14:33 · completion.ts&lt;/small&gt;&lt;/div&gt;&lt;div class=&quot;q-event&quot;&gt;运行相关检查&lt;small&gt;14:34 · 等待结果&lt;/small&gt;&lt;button class=&quot;q-link cursor-interaction&quot; data-panel=&quot;terminal&quot;&gt;查看输出&lt;/button&gt;&lt;/div&gt;&#x27;;}
+else if(state.agent===&#x27;main&#x27;){html=&#x27;&lt;div class=&quot;q-user&quot;&gt;&lt;p&gt;把从目标到完成的第一条路径接通。保留未来任务，完成必须有真实证据。&lt;/p&gt;&lt;/div&gt;&lt;details class=&quot;q-fold&quot; id=&quot;q-process&quot;&gt;&lt;summary class=&quot;cursor-interaction&quot;&gt;&lt;span class=&quot;q-chevron&quot;&gt;›&lt;/span&gt;&lt;span&gt;已明确范围，正在接通完成链&lt;/span&gt;&lt;/summary&gt;&lt;div class=&quot;q-foldbody&quot;&gt;&lt;div class=&quot;q-taskline&quot;&gt;&lt;span class=&quot;q-dot&quot;&gt;&lt;/span&gt;&lt;button class=&quot;cursor-interaction&quot; data-node=&quot;behavior&quot;&gt;明确行为与验收&lt;/button&gt;&lt;small&gt;完成&lt;/small&gt;&lt;/div&gt;&lt;div class=&quot;q-taskline&quot;&gt;&lt;span class=&quot;q-dot running&quot;&gt;&lt;/span&gt;&lt;button class=&quot;cursor-interaction&quot; data-node=&quot;completion&quot;&gt;接通检查与完成链&lt;/button&gt;&lt;small&gt;进行中&lt;/small&gt;&lt;/div&gt;&lt;div class=&quot;q-taskline&quot;&gt;&lt;span class=&quot;q-dot pending&quot;&gt;&lt;/span&gt;&lt;button class=&quot;cursor-interaction&quot; data-node=&quot;entry&quot;&gt;入口与结果展示&lt;/button&gt;&lt;small&gt;待细化&lt;/small&gt;&lt;/div&gt;&lt;/div&gt;&lt;/details&gt;&lt;div class=&quot;q-assistant&quot;&gt;&lt;p&gt;行为与验收要求已整理好。实现者正在连接检查与完成链，后续会根据真实检查结果继续推进。&lt;/p&gt;&lt;p&gt;尚未细化的工作会留在任务图中，不会因为当前没有可执行任务而被当作完成。&lt;/p&gt;&lt;/div&gt;&#x27;;}
+else if(state.agent===&#x27;impl&#x27;){html=&#x27;&lt;div class=&quot;q-user&quot;&gt;&lt;p&gt;目前进行到哪里了？&lt;/p&gt;&lt;/div&gt;&lt;details class=&quot;q-fold&quot; id=&quot;q-process&quot;&gt;&lt;summary class=&quot;cursor-interaction&quot;&gt;&lt;span class=&quot;q-chevron&quot;&gt;›&lt;/span&gt;已检查相关入口 · 2 项工具操作&lt;/summary&gt;&lt;div class=&quot;q-foldbody&quot;&gt;&lt;div class=&quot;q-taskline&quot;&gt;&lt;button class=&quot;cursor-interaction&quot; data-panel=&quot;files&quot;&gt;读取完成条件&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;q-taskline&quot;&gt;&lt;button class=&quot;cursor-interaction&quot; data-panel=&quot;terminal&quot;&gt;查看检查输出&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;&lt;/details&gt;&lt;div class=&quot;q-assistant&quot;&gt;&lt;p&gt;已经找到执行结果与正式完成之间的连接点，正在补齐检查覆盖和来源核对。&lt;/p&gt;&lt;p&gt;检查还没有全部结束。目前保留“工作中”，不会提前标记完成。&lt;/p&gt;&lt;/div&gt;&#x27;;}
+else if(state.agent===&#x27;old&#x27;){html=&#x27;&lt;p&gt;此前调查记录已归档。&lt;/p&gt;&lt;p class=&quot;q-subtle&quot;&gt;可以继续查看历史与来源；重新启用后才能继续该会话。&lt;/p&gt;&#x27;;}
+else{html=&#x27;&lt;div class=&quot;q-assistant&quot;&gt;&lt;p&gt;&#x27;+(state.agent===&#x27;review&#x27;?&#x27;我可以帮助核对当前变更和完成证据。&#x27;:&#x27;可以一起讨论模块职责、依赖和方案取舍。&#x27;)+&#x27;&lt;/p&gt;&lt;p class=&quot;q-subtle&quot;&gt;当前待命。选择相关文件或直接发送问题即可。&lt;/p&gt;&lt;/div&gt;&#x27;;}
+$(&#x27;#q-chat&#x27;).innerHTML=html;const fold=$(&#x27;#q-process&#x27;);if(fold){fold.open=foldOpen;fold.addEventListener(&#x27;toggle&#x27;,()=&gt;{foldOpen=fold.open})}for(const text of messages[currentKey]||[]){const p=document.createElement(&#x27;p&#x27;);p.className=&#x27;q-user&#x27;;p.textContent=text;$(&#x27;#q-chat&#x27;).append(p)}icon();}
+function node(id,label,status,cls){return &#x27;&lt;li&gt;&lt;button class=&quot;q-node cursor-interaction&quot; data-node=&quot;&#x27;+id+&#x27;&quot; aria-pressed=&quot;false&quot;&gt;&lt;span class=&quot;q-dot &#x27;+(cls||&#x27;&#x27;)+&#x27;&quot;&gt;&lt;/span&gt;&lt;span&gt;&#x27;+label+&#x27;&lt;/span&gt;&#x27;+(status?&#x27;&lt;small&gt;&#x27;+status+&#x27;&lt;/small&gt;&#x27;:&#x27;&#x27;)+&#x27;&lt;/button&gt;&lt;/li&gt;&#x27;;}
+function openPage(kind,force=false){let page=force?null:state.pages.find(p=&gt;p.kind===kind);if(!page){page={id:&#x27;page-&#x27;+(++pageCounter),kind};state.pages.push(page)}state.activePage=page.id;state.panel=page.kind;state.open=true;renderPanel();}
+function renderPages(){const host=$(&#x27;#q-pages&#x27;);host.replaceChildren();for(const page of state.pages){const row=document.createElement(&#x27;div&#x27;);row.className=&#x27;q-page&#x27;+(page.id===state.activePage?&#x27; active&#x27;:&#x27;&#x27;);const select=document.createElement(&#x27;button&#x27;);select.className=&#x27;cursor-interaction&#x27;;select.dataset.page=page.id;select.textContent=page.label||pageNames[page.kind];select.setAttribute(&#x27;aria-pressed&#x27;,String(page.id===state.activePage));const close=document.createElement(&#x27;button&#x27;);close.className=&#x27;q-page-close cursor-interaction&#x27;;close.dataset.closePage=page.id;close.textContent=&#x27;×&#x27;;close.setAttribute(&#x27;aria-label&#x27;,&#x27;关闭&#x27;+pageNames[page.kind]+&#x27;页面&#x27;);row.append(select,close);host.append(row)}}
+function baseRenderPanel(){if(renderedPage)pageViews[renderedPage]={kind:renderedKind,content:$(&#x27;#q-panelcontent&#x27;).innerHTML,detail:$(&#x27;#q-detail&#x27;).innerHTML,hidden:$(&#x27;#q-detail&#x27;).hidden};renderPages();$(&#x27;#q-toggle-panel&#x27;).setAttribute(&#x27;aria-expanded&#x27;,String(state.open));root.dataset.panelOpen=state.open;root.dataset.expanded=state.expanded;$(&#x27;#q-panel&#x27;).hidden=!state.open;$(&#x27;#q-expand&#x27;).setAttribute(&#x27;aria-pressed&#x27;,String(state.expanded));$(&#x27;#q-expand&#x27;).setAttribute(&#x27;aria-label&#x27;,state.expanded?&#x27;恢复辅助视图&#x27;:&#x27;放大辅助视图&#x27;);root.querySelectorAll(&#x27;.q-panelhead [data-panel]&#x27;).forEach(b=&gt;b.setAttribute(&#x27;aria-pressed&#x27;,String(b.dataset.panel===state.panel)));$(&#x27;#q-detail&#x27;).hidden=true;let html=&#x27;&#x27;;
+if(state.panel===&#x27;blank&#x27;||!state.pages.length)html=&#x27;&lt;div class=&quot;q-chooser&quot;&gt;&lt;span&gt;打开一个工作页面&lt;/span&gt;&lt;button class=&quot;cursor-interaction&quot; data-new-kind=&quot;tasks&quot;&gt;任务图&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-new-kind=&quot;architecture&quot;&gt;架构图&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-new-kind=&quot;files&quot;&gt;文件资源管理器&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-new-kind=&quot;terminal&quot;&gt;终端&lt;/button&gt;&lt;/div&gt;&#x27;;
+else if(state.panel===&#x27;tasks&#x27;)html=&#x27;&lt;ul class=&quot;q-tree&quot;&gt;&lt;li&gt;&lt;button class=&quot;q-node cursor-interaction&quot; data-node=&quot;goal&quot;&gt;&lt;span&gt;首条 E2E 路径&lt;/span&gt;&lt;/button&gt;&lt;ul&gt;&#x27;+node(&#x27;behavior&#x27;,&#x27;行为与验收&#x27;,&#x27;完成&#x27;,&#x27;&#x27;)+node(&#x27;completion&#x27;,&#x27;检查与完成链&#x27;,&#x27;进行中&#x27;,&#x27;running&#x27;)+node(&#x27;entry&#x27;,&#x27;入口与结果展示&#x27;,&#x27;待细化&#x27;,&#x27;pending&#x27;)+node(&#x27;verify&#x27;,&#x27;端到端核对&#x27;,&#x27;未开始&#x27;,&#x27;pending&#x27;)+&#x27;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&#x27;;
+else if(state.panel===&#x27;architecture&#x27;)html=&#x27;&lt;ul class=&quot;q-tree&quot;&gt;&lt;li&gt;&lt;button class=&quot;q-node cursor-interaction&quot; data-info=&quot;已采用的模块目录。树表达包含关系，不把目录父子关系当作依赖关系。&quot;&gt;coding-platform&lt;/button&gt;&lt;ul&gt;&#x27;+node(&#x27;workflow&#x27;,&#x27;Workflow&#x27;,&#x27;&#x27;,&#x27;idle&#x27;)+node(&#x27;runtime&#x27;,&#x27;AgentRuntime&#x27;,&#x27;&#x27;,&#x27;idle&#x27;)+node(&#x27;graph&#x27;,&#x27;WorkGraph&#x27;,&#x27;&#x27;,&#x27;idle&#x27;)+node(&#x27;workspace&#x27;,&#x27;WorkspaceTools&#x27;,&#x27;&#x27;,&#x27;idle&#x27;)+node(&#x27;store&#x27;,&#x27;RecordStore&#x27;,&#x27;&#x27;,&#x27;idle&#x27;)+&#x27;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&#x27;;
+else if(state.panel===&#x27;files&#x27;)html=&#x27;&lt;div class=&quot;q-subtle&quot;&gt;docs&lt;/div&gt;&lt;div class=&quot;q-files&quot;&gt;&lt;button class=&quot;cursor-interaction&quot; data-file=&quot;MVP-BEHAVIOR.md&quot;&gt;MVP-BEHAVIOR.md&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-file=&quot;UI-WORKBENCH.md&quot;&gt;UI-WORKBENCH.md&lt;/button&gt;&lt;/div&gt;&#x27;;
+else html=&#x27;&lt;div class=&quot;q-subtle&quot;&gt;实现者 / 检查输出&lt;/div&gt;&lt;pre class=&quot;q-code&quot;&gt;$ run verification\n\n✓ 来源版本核对\n✓ 已采用义务读取\n… 检查完成链&lt;/pre&gt;&lt;div class=&quot;q-subtle&quot;&gt;只读示例 · 等待剩余结果&lt;/div&gt;&#x27;;
+const view=pageViews[state.activePage];if(view&amp;&amp;view.kind===state.panel){$(&#x27;#q-panelcontent&#x27;).innerHTML=view.content;$(&#x27;#q-detail&#x27;).innerHTML=view.detail;$(&#x27;#q-detail&#x27;).hidden=view.hidden}else{$(&#x27;#q-panelcontent&#x27;).innerHTML=html}renderedPage=state.activePage;renderedKind=state.panel;root.querySelectorAll(&#x27;.q-tree&#x27;).forEach(x=&gt;x.style.fontSize=state.treeSize+&#x27;px&#x27;);icon();}
+function baseSelectNode(id){if(!details[id])return;if(!state.open||![&#x27;tasks&#x27;,&#x27;architecture&#x27;].includes(state.panel)){openPage(&#x27;tasks&#x27;)}const d=details[id];$(&#x27;#q-detail&#x27;).innerHTML=&#x27;&lt;div class=&quot;q-detail-head&quot;&gt;&lt;strong&gt;&lt;/strong&gt;&lt;span class=&quot;q-fill&quot;&gt;&lt;/span&gt;&lt;button class=&quot;q-icon cursor-interaction&quot; id=&quot;q-dismiss-detail&quot; aria-label=&quot;收起节点详情&quot;&gt;&lt;i data-lucide=&quot;x&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/div&gt;&lt;small&gt;&lt;/small&gt;&lt;p&gt;&lt;/p&gt;&lt;button class=&quot;q-link cursor-interaction&quot; data-agent=&quot;&#x27;+([&#x27;verify&#x27;,&#x27;audit&#x27;].includes(id)?&#x27;review&#x27;:id===&#x27;behavior&#x27;||id===&#x27;goal&#x27;?&#x27;main&#x27;:[&#x27;workflow&#x27;,&#x27;runtime&#x27;,&#x27;graph&#x27;,&#x27;workspace&#x27;,&#x27;store&#x27;].includes(id)?&#x27;architect&#x27;:&#x27;impl&#x27;)+&#x27;&quot;&gt;查看相关会话 →&lt;/button&gt;&#x27;;$(&#x27;#q-detail strong&#x27;).textContent=d[0];$(&#x27;#q-detail small&#x27;).textContent=d[1];$(&#x27;#q-detail p&#x27;).textContent=d[2];$(&#x27;#q-detail&#x27;).hidden=false;root.querySelectorAll(&#x27;.q-node[data-node]&#x27;).forEach(b=&gt;b.setAttribute(&#x27;aria-pressed&#x27;,String(b.dataset.node===id)));icon();}
+function render(){root.style.colorScheme=state.theme;renderChat();renderPanel();}
+function restore(s){if(!s)return;const m=s.modelContent||{},p=s.privateContent||{};if([&#x27;dark&#x27;,&#x27;light&#x27;].includes(m.theme))state.theme=m.theme;if(p.agent in names)state.agent=p.agent;if([&#x27;chat&#x27;,&#x27;observe&#x27;].includes(p.mode))state.mode=p.mode;if([&#x27;tasks&#x27;,&#x27;architecture&#x27;,&#x27;files&#x27;,&#x27;terminal&#x27;].includes(p.panel))state.panel=p.panel;if(Array.isArray(p.pages)){state.pages=p.pages.filter(x=&gt;x&amp;&amp;typeof x.id===&#x27;string&#x27;&amp;&amp;x.kind in pageNames).slice(0,16);pageCounter=state.pages.reduce((n,x)=&gt;Math.max(n,Number(x.id.split(&#x27;-&#x27;)[1])||0),0);state.activePage=state.pages.some(x=&gt;x.id===p.activePage)?p.activePage:state.pages[0]?.id||null;state.panel=state.pages.find(x=&gt;x.id===state.activePage)?.kind||&#x27;blank&#x27;}if(Number.isFinite(p.leftWidth))state.leftWidth=Math.max(140,Math.min(420,p.leftWidth));if(Number.isFinite(p.rightWidth))state.rightWidth=Math.max(140,Math.min(1400,p.rightWidth));if(typeof p.groupTasks===&#x27;boolean&#x27;)state.groupTasks=p.groupTasks;state.open=m.auxiliaryOpen===true;state.expanded=state.open&amp;&amp;p.expanded===true;if([12,13,14].includes(p.treeSize))state.treeSize=p.treeSize;}
+const trace=[
+ {task:&#x27;behavior&#x27;,kind:&#x27;摘要&#x27;,text:&#x27;明确验收边界&#x27;,time:&#x27;14:30&#x27;,body:&#x27;思考摘要（示例）：先区分执行结束与正式完成，再定位检查依据。&#x27;,duration:8},
+ {task:&#x27;behavior&#x27;,kind:&#x27;读取&#x27;,text:&#x27;读取行为文档&#x27;,time:&#x27;14:31&#x27;,body:&#x27;read_file · docs/MVP-BEHAVIOR.md\n已读取 B06 检查、返工与完成。&#x27;,duration:3},
+ {task:&#x27;completion&#x27;,kind:&#x27;摘要&#x27;,text:&#x27;定位完成链&#x27;,time:&#x27;14:32&#x27;,body:&#x27;思考摘要（示例）：复用现有来源与证据记录，补齐完成归约消费者。&#x27;,duration:12},
+ {task:&#x27;completion&#x27;,kind:&#x27;读取&#x27;,text:&#x27;读取完成入口&#x27;,time:&#x27;14:33&#x27;,body:&#x27;read_file · completion.ts\n找到执行结果与证据归约的连接点。&#x27;,duration:2},
+ {task:&#x27;completion&#x27;,kind:&#x27;修改&#x27;,text:&#x27;更新完成归约&#x27;,time:&#x27;14:34&#x27;,body:&#x27;apply_patch · completion.ts\n+ 检查义务与来源适用性\n- 以 Run 结束直接推定完成&#x27;,duration:4},
+ {task:&#x27;completion&#x27;,kind:&#x27;检查&#x27;,text:&#x27;运行相关检查&#x27;,time:&#x27;14:35&#x27;,body:&#x27;verification · 检查仍在执行\n✓ 来源版本核对\n… 完成链检查&#x27;,duration:16}
+];
+state.leftWidth=180;state.rightWidth=300;state.groupTasks=true;state.traceIndex=0;state.traceMetric=&#x27;time&#x27;;
+const graphNodes={
+ tasks:[[&#x27;goal&#x27;,.5,22,&#x27;首条 E2E&#x27;],[&#x27;behavior&#x27;,.18,105,&#x27;行为与验收&#x27;],[&#x27;completion&#x27;,.57,105,&#x27;完成链&#x27;],[&#x27;entry&#x27;,.18,210,&#x27;入口展示&#x27;],[&#x27;verify&#x27;,.57,210,&#x27;端到端核对&#x27;]],
+ architecture:[[&#x27;root&#x27;,.5,18,&#x27;coding-platform&#x27;],[&#x27;workflow&#x27;,.12,95,&#x27;Workflow&#x27;],[&#x27;runtime&#x27;,.32,95,&#x27;Runtime&#x27;],[&#x27;graph&#x27;,.56,95,&#x27;WorkGraph&#x27;],[&#x27;workspace&#x27;,.77,95,&#x27;Workspace&#x27;],[&#x27;store&#x27;,.94,95,&#x27;Store&#x27;],[&#x27;planning&#x27;,.12,175,&#x27;规划&#x27;],[&#x27;execution&#x27;,.32,175,&#x27;执行&#x27;],[&#x27;evidence&#x27;,.49,175,&#x27;证据&#x27;],[&#x27;reduction&#x27;,.64,175,&#x27;完成&#x27;],[&#x27;source&#x27;,.77,175,&#x27;来源&#x27;],[&#x27;transactions&#x27;,.94,175,&#x27;事务&#x27;]]
+};
+const parents={behavior:&#x27;goal&#x27;,completion:&#x27;goal&#x27;,entry:&#x27;behavior&#x27;,verify:&#x27;completion&#x27;,workflow:&#x27;root&#x27;,runtime:&#x27;root&#x27;,graph:&#x27;root&#x27;,workspace:&#x27;root&#x27;,store:&#x27;root&#x27;,planning:&#x27;workflow&#x27;,execution:&#x27;runtime&#x27;,evidence:&#x27;graph&#x27;,reduction:&#x27;graph&#x27;,source:&#x27;workspace&#x27;,transactions:&#x27;store&#x27;};
+Object.assign(details,{root:[&#x27;coding-platform&#x27;,&#x27;包含结构 · 示例&#x27;,&#x27;展开活跃路径与保留的兄弟分支。&#x27;],planning:[&#x27;规划&#x27;,&#x27;Workflow 子节点&#x27;,&#x27;规划与既有授权判断。&#x27;],execution:[&#x27;执行&#x27;,&#x27;工作中 · 实现者&#x27;,&#x27;消费已受理的执行意图。&#x27;],evidence:[&#x27;证据&#x27;,&#x27;WorkGraph 子节点&#x27;,&#x27;正式证据及来源关联。&#x27;],reduction:[&#x27;完成&#x27;,&#x27;工作中 · 实现者&#x27;,&#x27;当前义务的完成归约。&#x27;],source:[&#x27;来源&#x27;,&#x27;Workspace 子节点&#x27;,&#x27;文件与版本来源。&#x27;],transactions:[&#x27;事务&#x27;,&#x27;Store 子节点&#x27;,&#x27;局部条件提交。&#x27;]});
+details.audit=[&#x27;来源核对&#x27;,&#x27;工作中 · 审阅者&#x27;,&#x27;与完成链并行的示例任务；并列不代表依赖。&#x27;];
+function currentPage(){return state.pages.find(p=&gt;p.id===state.activePage)}
+function initPage(p){if(!p)return;p.minimal??=p.kind===&#x27;tasks&#x27;;p.pinned??=[];p.graphMode??=&#x27;structure&#x27;;p.lens??=2;p.expandedNodes??=[&#x27;root&#x27;,&#x27;runtime&#x27;,&#x27;graph&#x27;];p.follow??=false;p.selected??=null;}
+function setWidths(){root.style.setProperty(&#x27;--q-left&#x27;,state.leftWidth+&#x27;px&#x27;);root.style.setProperty(&#x27;--q-right&#x27;,state.rightWidth+&#x27;px&#x27;);for(const side of [&#x27;left&#x27;,&#x27;right&#x27;]){const el=$(&#x27;#q-resize-&#x27;+side);if(el)el.setAttribute(&#x27;aria-valuenow&#x27;,String(side===&#x27;left&#x27;?state.leftWidth:state.rightWidth))}}
+function makeSplit(side,target){const el=document.createElement(&#x27;div&#x27;);el.id=&#x27;q-resize-&#x27;+side;el.className=&#x27;q-split q-split-&#x27;+side;el.setAttribute(&#x27;role&#x27;,&#x27;separator&#x27;);el.setAttribute(&#x27;aria-label&#x27;,side===&#x27;left&#x27;?&#x27;调整左侧宽度&#x27;:&#x27;调整右侧宽度&#x27;);el.setAttribute(&#x27;aria-orientation&#x27;,&#x27;vertical&#x27;);el.setAttribute(&#x27;tabindex&#x27;,&#x27;0&#x27;);el.setAttribute(&#x27;aria-valuemin&#x27;,&#x27;140&#x27;);el.setAttribute(&#x27;aria-valuemax&#x27;,String(root.clientWidth-460));target.append(el);let drag=null;el.addEventListener(&#x27;pointerdown&#x27;,e=&gt;{if(e.button!==0)return;drag={x:e.clientX,w:side===&#x27;left&#x27;?state.leftWidth:state.rightWidth};el.setPointerCapture(e.pointerId);root.classList.add(&#x27;q-resizing&#x27;);e.preventDefault()});el.addEventListener(&#x27;pointermove&#x27;,e=&gt;{if(!drag)return;const delta=(e.clientX-drag.x)*(side===&#x27;left&#x27;?1:-1);const other=side===&#x27;left&#x27;?(state.open?state.rightWidth:0):($(&#x27;.q-side&#x27;).hidden?0:state.leftWidth);const limit=Math.max(140,Math.min(side===&#x27;left&#x27;?480:1400,root.clientWidth-other-280));state[side===&#x27;left&#x27;?&#x27;leftWidth&#x27;:&#x27;rightWidth&#x27;]=Math.max(140,Math.min(limit,drag.w+delta));setWidths()});const end=()=&gt;{drag=null;root.classList.remove(&#x27;q-resizing&#x27;);save()};el.addEventListener(&#x27;pointerup&#x27;,end);el.addEventListener(&#x27;pointercancel&#x27;,end);el.addEventListener(&#x27;dblclick&#x27;,()=&gt;{state[side===&#x27;left&#x27;?&#x27;leftWidth&#x27;:&#x27;rightWidth&#x27;]=side===&#x27;left&#x27;?180:300;setWidths();save()});el.addEventListener(&#x27;keydown&#x27;,e=&gt;{if(![&#x27;ArrowLeft&#x27;,&#x27;ArrowRight&#x27;,&#x27;Home&#x27;,&#x27;End&#x27;].includes(e.key))return;e.preventDefault();const key=side===&#x27;left&#x27;?&#x27;leftWidth&#x27;:&#x27;rightWidth&#x27;;state[key]=e.key===&#x27;End&#x27;?Math.max(140,root.clientWidth-(side===&#x27;right&#x27;?($(&#x27;.q-side&#x27;).hidden?0:state.leftWidth):(state.open?state.rightWidth:0))-280):e.key===&#x27;Home&#x27;?(side===&#x27;left&#x27;?180:300):Math.max(140,Math.min(Math.max(140,root.clientWidth-(side===&#x27;right&#x27;?($(&#x27;.q-side&#x27;).hidden?0:state.leftWidth):(state.open?state.rightWidth:0))-280),state[key]+(e.key===&#x27;ArrowRight&#x27;?1:-1)*(side===&#x27;left&#x27;?1:-1)*(e.shiftKey?50:10)));setWidths();save()})}
+makeSplit(&#x27;left&#x27;,$(&#x27;.q-side&#x27;));makeSplit(&#x27;right&#x27;,$(&#x27;#q-panel&#x27;));setWidths();
+function eventLine(t,i){return &#x27;&lt;details class=&quot;q-fold q-tool&quot; &#x27;+(state.traceIndex===i&amp;&amp;state.mode===&#x27;observe&#x27;?&#x27;open&#x27;:&#x27;&#x27;)+&#x27;&gt;&lt;summary class=&quot;cursor-interaction&quot;&gt;&lt;span class=&quot;q-chevron&quot;&gt;›&lt;/span&gt;&lt;span class=&quot;q-type&quot;&gt;&#x27;+t.kind+&#x27;&lt;/span&gt;&#x27;+t.text+&#x27;&lt;small&gt;&#x27;+t.time+&#x27;&lt;/small&gt;&lt;/summary&gt;&lt;pre class=&quot;q-code&quot;&gt;&#x27;+t.body+&#x27;&lt;/pre&gt;&lt;button class=&quot;q-link cursor-interaction&quot; data-trace-node=&quot;&#x27;+t.task+&#x27;&quot;&gt;定位任务&lt;/button&gt;&#x27;+(t.kind===&#x27;修改&#x27;?&#x27;&lt;button class=&quot;q-link cursor-interaction&quot; data-diff=&quot;completion.ts&quot;&gt;查看 diff&lt;/button&gt;&#x27;:&#x27;&#x27;)+&#x27;&lt;/details&gt;&#x27;}
+function renderChat(){baseRenderChat();if(state.mode===&#x27;observe&#x27;){
+ let lanes=[&#x27;摘要&#x27;,&#x27;读取&#x27;,&#x27;修改&#x27;,&#x27;检查&#x27;].map(kind=&gt;&#x27;&lt;div class=&quot;q-track&quot;&gt;&lt;span&gt;&#x27;+kind+&#x27;&lt;/span&gt;&lt;div&gt;&#x27;+trace.map((t,i)=&gt;&#x27;&lt;button class=&quot;q-trackmark cursor-interaction &#x27;+(t.kind===kind?&#x27;q-track-&#x27;+kind:&#x27;q-track-empty&#x27;)+&#x27;&quot; style=&quot;flex:&#x27;+(state.traceMetric===&#x27;time&#x27;?t.duration:1)+&#x27;&quot; data-trace=&quot;&#x27;+i+&#x27;&quot; aria-label=&quot;&#x27;+t.time+&#x27; &#x27;+t.text+&#x27;&quot; &#x27;+(t.kind!==kind?&#x27;disabled&#x27;:&#x27;&#x27;)+&#x27;&gt;&lt;/button&gt;&#x27;).join(&#x27;&#x27;)+&#x27;&lt;/div&gt;&lt;/div&gt;&#x27;).join(&#x27;&#x27;);
+ $(&#x27;#q-chat&#x27;).innerHTML=&#x27;&lt;div class=&quot;q-tracebar&quot;&gt;&lt;button class=&quot;cursor-interaction&quot; data-trace-metric=&quot;time&quot; aria-pressed=&quot;&#x27;+(state.traceMetric===&#x27;time&#x27;)+&#x27;&quot;&gt;时长&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-trace-metric=&quot;turn&quot; aria-pressed=&quot;&#x27;+(state.traceMetric===&#x27;turn&#x27;)+&#x27;&quot;&gt;轮次&lt;/button&gt;&lt;span class=&quot;q-fill&quot;&gt;&lt;/span&gt;&lt;small&gt;Session 轨迹 · 示例&lt;/small&gt;&lt;/div&gt;&lt;div class=&quot;q-tracks&quot;&gt;&#x27;+lanes+&#x27;&lt;/div&gt;&#x27;+trace.map(eventLine).join(&#x27;&#x27;);
+ }else if([&#x27;main&#x27;,&#x27;impl&#x27;].includes(state.agent)){const fold=$(&#x27;#q-process&#x27;);if(fold){const grouped=[&#x27;behavior&#x27;,&#x27;completion&#x27;].map(id=&gt;&#x27;&lt;details class=&quot;q-fold&quot;&gt;&lt;summary class=&quot;cursor-interaction&quot;&gt;&lt;span class=&quot;q-chevron&quot;&gt;›&lt;/span&gt;&#x27;+details[id][0]+&#x27;&lt;small&gt;&#x27;+trace.filter(t=&gt;t.task===id).length+&#x27; 项活动&lt;/small&gt;&lt;/summary&gt;&lt;div class=&quot;q-foldbody&quot;&gt;&#x27;+trace.map((t,i)=&gt;t.task===id?eventLine(t,i):&#x27;&#x27;).join(&#x27;&#x27;)+&#x27;&lt;/div&gt;&lt;/details&gt;&#x27;).join(&#x27;&#x27;);fold.innerHTML=&#x27;&lt;summary class=&quot;cursor-interaction&quot;&gt;&lt;span class=&quot;q-chevron&quot;&gt;›&lt;/span&gt;工具调用与思考摘要 · &#x27;+trace.length+&#x27; 项活动&lt;/summary&gt;&lt;div class=&quot;q-foldbody&quot;&gt;&lt;div class=&quot;q-tracebar&quot;&gt;&lt;button class=&quot;cursor-interaction&quot; data-group=&quot;true&quot; aria-pressed=&quot;&#x27;+state.groupTasks+&#x27;&quot;&gt;按 Task 收纳&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-group=&quot;false&quot; aria-pressed=&quot;&#x27;+!state.groupTasks+&#x27;&quot;&gt;原始顺序&lt;/button&gt;&lt;/div&gt;&#x27;+(state.groupTasks?grouped:trace.map(eventLine).join(&#x27;&#x27;))+&#x27;&lt;/div&gt;&#x27;;fold.open=foldOpen;}}
+ const menu=$(&#x27;#q-menu&#x27;);if(!menu.querySelector(&#x27;[data-group]&#x27;))menu.insertAdjacentHTML(&#x27;beforeend&#x27;,&#x27;&lt;button class=&quot;cursor-interaction&quot; data-group=&quot;toggle&quot;&gt;切换 Task 收纳&lt;/button&gt;&#x27;);
+}
+function renderPanel(){baseRenderPanel();const p=currentPage();initPage(p);if(p&amp;&amp;[&#x27;tasks&#x27;,&#x27;architecture&#x27;].includes(p.kind))drawGraph(p);else if(p?.kind===&#x27;files&#x27;&amp;&amp;!p.label?.startsWith(&#x27;Diff&#x27;))renderExplorer();else if(p?.kind===&#x27;file&#x27;)renderFile(p);setWidths()}
+function drawGraph(p){
+ initPage(p);p.pinned??=[];p.focusY??=180;
+ const content=$(&#x27;#q-panelcontent&#x27;);
+ content.innerHTML=&#x27;&lt;div class=&quot;q-graphbar&quot;&gt;&lt;button class=&quot;cursor-interaction&quot; data-graph-mode=&quot;structure&quot; aria-pressed=&quot;&#x27;+(p.graphMode===&#x27;structure&#x27;)+&#x27;&quot;&gt;结构&lt;/button&gt;&#x27;+(p.kind===&#x27;tasks&#x27;?&#x27;&lt;button class=&quot;cursor-interaction&quot; data-graph-mode=&quot;timeline&quot; aria-pressed=&quot;&#x27;+(p.graphMode===&#x27;timeline&#x27;)+&#x27;&quot;&gt;轨迹&lt;/button&gt;&#x27;:&#x27;&lt;button class=&quot;cursor-interaction&quot; data-active-paths&gt;活跃路径&lt;/button&gt;&#x27;)+&#x27;&lt;span class=&quot;q-fill&quot;&gt;&lt;/span&gt;&lt;button class=&quot;cursor-interaction&quot; data-minimal aria-pressed=&quot;&#x27;+!!p.minimal+&#x27;&quot; aria-label=&quot;切换极简节点&quot;&gt;◉&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;q-graph-layout&quot;&gt;&lt;div class=&quot;q-graph-scroll&quot; id=&quot;q-graph-scroll&quot;&gt;&lt;div class=&quot;q-graph&quot; id=&quot;q-graph&quot;&gt;&lt;/div&gt;&lt;/div&gt;&#x27;+(p.kind===&#x27;tasks&#x27;&amp;&amp;p.graphMode===&#x27;structure&#x27;?&#x27;&lt;div class=&quot;q-vertical-lens&quot;&gt;&lt;span&gt;早&lt;/span&gt;&lt;input id=&quot;q-continuous-lens&quot; type=&quot;range&quot; min=&quot;30&quot; max=&quot;390&quot; step=&quot;any&quot; value=&quot;&#x27;+p.focusY+&#x27;&quot; aria-label=&quot;连续纵向放大镜&quot;&gt;&lt;span&gt;晚&lt;/span&gt;&lt;/div&gt;&#x27;:&#x27;&#x27;)+&#x27;&lt;/div&gt;&lt;div id=&quot;q-lens&quot;&gt;&lt;/div&gt;&lt;div class=&quot;q-hover&quot; id=&quot;q-hover&quot; hidden role=&quot;status&quot;&gt;&lt;/div&gt;&lt;div class=&quot;q-context&quot; id=&quot;q-context&quot; hidden&gt;&lt;/div&gt;&#x27;;
+ const canvas=$(&#x27;#q-graph&#x27;),task=p.kind===&#x27;tasks&#x27;,continuous=task&amp;&amp;p.graphMode===&#x27;structure&#x27;;
+ const retained=new Set(p.expandedNodes);for(const id of p.pinned){let a=parents[id];while(a){retained.add(a);a=parents[a]}}
+ const width=Math.max(task?510:730,$(&#x27;#q-graph-scroll&#x27;).clientWidth),height=task?440:280;
+ canvas.style.width=width+&#x27;px&#x27;;canvas.style.height=height+&#x27;px&#x27;;canvas.dataset.continuous=String(continuous);
+ let nodes,edges=[];
+ if(task&amp;&amp;p.graphMode===&#x27;timeline&#x27;){
+  nodes=trace.map((t,i)=&gt;({id:t.task,key:&#x27;event-&#x27;+i,x:t.task===&#x27;behavior&#x27;?110:300,y:40+i*55,label:t.text}));
+  nodes.push({id:&#x27;audit&#x27;,key:&#x27;audit-event&#x27;,x:445,y:205,label:&#x27;并行核对来源&#x27;});
+  // Event order is local to each task; simultaneous tracks do not imply dependencies.
+  for(const id of [&#x27;behavior&#x27;,&#x27;completion&#x27;]){const group=nodes.filter(n=&gt;n.id===id);for(let i=1;i&lt;group.length;i++)edges.push([group[i-1],group[i]])}
+ }else if(task){
+  nodes=[{id:&#x27;goal&#x27;,x:260,y:35,label:&#x27;首条 E2E&#x27;},{id:&#x27;behavior&#x27;,x:90,y:110,end:155,label:&#x27;行为与验收&#x27;},{id:&#x27;completion&#x27;,x:250,y:210,end:365,label:&#x27;完成链&#x27;},{id:&#x27;audit&#x27;,x:420,y:210,end:320,label:&#x27;来源核对&#x27;}];
+  for(const n of nodes.slice(1))edges.push([nodes[0],n]);
+ }else{
+  nodes=graphNodes.architecture.filter(n=&gt;!parents[n[0]]||retained.has(parents[n[0]])).map(n=&gt;({id:n[0],x:40+n[1]*(width-95),y:n[2]+20,label:n[3]}));
+  for(const n of nodes){const a=nodes.find(x=&gt;x.id===parents[n.id]);if(a)edges.push([a,n])}
+ }
+ const svg=document.createElementNS(&#x27;http://www.w3.org/2000/svg&#x27;,&#x27;svg&#x27;);svg.classList.add(&#x27;q-edges&#x27;);svg.setAttribute(&#x27;viewBox&#x27;,&#x27;0 0 &#x27;+width+&#x27; &#x27;+height);svg.style.height=height+&#x27;px&#x27;;svg.setAttribute(&#x27;aria-hidden&#x27;,&#x27;true&#x27;);
+ for(const [a,b]of edges){const path=document.createElementNS(svg.namespaceURI,&#x27;path&#x27;);path.dataset.ax=a.x;path.dataset.ay=a.y;path.dataset.bx=b.x;path.dataset.by=b.y;svg.append(path)}
+ canvas.append(svg);
+ if(continuous){const band=document.createElement(&#x27;div&#x27;);band.className=&#x27;q-focus-band&#x27;;band.setAttribute(&#x27;aria-hidden&#x27;,&#x27;true&#x27;);canvas.append(band)}
+ for(const n of nodes){
+  const b=document.createElement(&#x27;button&#x27;);b.className=&#x27;q-graphnode cursor-interaction&#x27;;b.dataset.node=n.id;b.dataset.baseY=n.y;b.dataset.endY=n.end??n.y;b.dataset.x=n.x;b.style.left=n.x+&#x27;px&#x27;;b.style.top=n.y+&#x27;px&#x27;;b.setAttribute(&#x27;aria-label&#x27;,n.label+&#x27;，&#x27;+details[n.id][1]+(p.pinned.includes(n.id)?&#x27;，已固定显示&#x27;:&#x27;&#x27;));b.setAttribute(&#x27;aria-pressed&#x27;,String(p.selected===n.id));
+  const active=[&#x27;completion&#x27;,&#x27;audit&#x27;,&#x27;execution&#x27;,&#x27;reduction&#x27;,&#x27;runtime&#x27;,&#x27;graph&#x27;].includes(n.id);
+  b.innerHTML=&#x27;&lt;span class=&quot;q-orb &#x27;+(active?&#x27;active&#x27;:&#x27;&#x27;)+&#x27;&quot;&gt;&lt;/span&gt;&lt;span class=&quot;q-nodelabel&quot;&gt;&#x27;+n.label+&#x27;&lt;small&gt;&#x27;+(p.pinned.includes(n.id)?&#x27;固定 · &#x27;:&#x27;&#x27;)+details[n.id][1].split(&#x27; · &#x27;)[0]+&#x27;&lt;/small&gt;&lt;/span&gt;&#x27;;canvas.append(b);
+  if(n.end){const span=document.createElement(&#x27;div&#x27;);span.className=&#x27;q-duration&#x27;;span.dataset.baseY=n.y;span.dataset.endY=n.end;span.style.left=n.x+&#x27;px&#x27;;span.setAttribute(&#x27;aria-hidden&#x27;,&#x27;true&#x27;);canvas.append(span)}
+  if(!task&amp;&amp;graphNodes.architecture.some(x=&gt;parents[x[0]]===n.id)){const t=document.createElement(&#x27;button&#x27;);t.className=&#x27;q-branch-toggle cursor-interaction&#x27;;t.style.left=(n.x+12)+&#x27;px&#x27;;t.style.top=(n.y-24)+&#x27;px&#x27;;t.dataset.branch=n.id;t.textContent=p.expandedNodes.includes(n.id)?&#x27;−&#x27;:&#x27;+&#x27;;t.setAttribute(&#x27;aria-label&#x27;,(p.expandedNodes.includes(n.id)?&#x27;折叠&#x27;:&#x27;展开&#x27;)+n.label);canvas.append(t)}
+ }
+ if(continuous){$(&#x27;#q-lens&#x27;).innerHTML=&#x27;&lt;small class=&quot;q-subtle&quot;&gt;时间向下 · 并行任务并列 · 拖动右侧放大镜&lt;/small&gt;&lt;div class=&quot;q-future&quot;&gt;&lt;small&gt;未来工作 · 未分配时间&lt;/small&gt;&lt;button class=&quot;q-link cursor-interaction&quot; data-node=&quot;entry&quot;&gt;入口展示&lt;/button&gt;　&lt;button class=&quot;q-link cursor-interaction&quot; data-node=&quot;verify&quot;&gt;端到端核对&lt;/button&gt;&lt;/div&gt;&#x27;}
+ else if(task){$(&#x27;#q-lens&#x27;).innerHTML=&#x27;&lt;small class=&quot;q-subtle&quot;&gt;离散事件 · 同一纵向位置表示同时发生&lt;/small&gt;&lt;div class=&quot;q-lens-content&quot;&gt;&lt;small&gt;&#x27;+trace[p.lens].time+&#x27; · &#x27;+trace[p.lens].kind+&#x27;&lt;/small&gt;&lt;button class=&quot;q-link cursor-interaction&quot; data-node=&quot;&#x27;+trace[p.lens].task+&#x27;&quot;&gt;&#x27;+trace[p.lens].text+&#x27;&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;q-tracebar&quot;&gt;&lt;button class=&quot;cursor-interaction&quot; data-lens-step=&quot;-1&quot;&gt;上一事件&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-lens-step=&quot;1&quot;&gt;下一事件&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-follow aria-pressed=&quot;&#x27;+p.follow+&#x27;&quot;&gt;&#x27;+(p.follow?&#x27;暂停跟随&#x27;:&#x27;跟随最新&#x27;)+&#x27;&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-simulate&gt;模拟下一事件&lt;/button&gt;&lt;/div&gt;&#x27;}
+ else $(&#x27;#q-lens&#x27;).innerHTML=&#x27;&lt;small class=&quot;q-subtle&quot;&gt;包含关系 · 横向滚动查看全部分支&lt;/small&gt;&#x27;;
+ updateGraphFocus(p);
+ const scroll=$(&#x27;#q-graph-scroll&#x27;);scroll.scrollLeft=p.scrollX||0;scroll.addEventListener(&#x27;scroll&#x27;,()=&gt;{p.scrollX=scroll.scrollLeft;save()},{passive:true});
+ if(p.selected)selectNode(p.selected);else $(&#x27;#q-detail&#x27;).hidden=true;
+}
+function updateGraphFocus(p){
+ const canvas=$(&#x27;#q-graph&#x27;);if(!canvas)return;const continuous=canvas.dataset.continuous===&#x27;true&#x27;;
+ const focus=p.focusY??180;
+ const map=y=&gt;continuous?20+(y/440)*370+30*(Math.tanh((y-focus)/65)-Math.tanh(-focus/65)):y;
+ canvas.querySelectorAll(&#x27;.q-edges path&#x27;).forEach(path=&gt;{const a=path.dataset;const ay=map(+a.ay),by=map(+a.by);path.setAttribute(&#x27;d&#x27;,&#x27;M &#x27;+a.ax+&#x27; &#x27;+ay+&#x27; V &#x27;+((ay+by)/2)+&#x27; H &#x27;+a.bx+&#x27; V &#x27;+by)});
+ canvas.querySelectorAll(&#x27;.q-graphnode&#x27;).forEach((b,i)=&gt;{const id=b.dataset.node,y=+b.dataset.baseY;const pinned=p.pinned.includes(id);b.style.top=map(y)+&#x27;px&#x27;;b.classList.toggle(&#x27;q-pinned&#x27;,pinned);b.classList.toggle(&#x27;q-lens-focus&#x27;,!continuous&amp;&amp;p.kind===&#x27;tasks&#x27;&amp;&amp;i===p.lens);const show=pinned||p.selected===id||(continuous?(!p.minimal||(focus&gt;y-65&amp;&amp;focus&lt;+b.dataset.endY+65)):!p.minimal);const label=b.querySelector(&#x27;.q-nodelabel&#x27;);label.hidden=!show;label.style.top=continuous&amp;&amp;!pinned?(24+map(Math.max(y,Math.min(focus,+b.dataset.endY)))-map(y))+&#x27;px&#x27;:&#x27;24px&#x27;;});
+ canvas.querySelectorAll(&#x27;.q-duration&#x27;).forEach(b=&gt;{const y=map(+b.dataset.baseY);b.style.top=(y+10)+&#x27;px&#x27;;b.style.height=Math.max(0,map(+b.dataset.endY)-y-10)+&#x27;px&#x27;});
+ const band=canvas.querySelector(&#x27;.q-focus-band&#x27;);if(band)band.style.top=(map(focus)-48)+&#x27;px&#x27;;
+}
+function togglePin(id){const p=currentPage();initPage(p);p.pinned??=[];p.pinned=p.pinned.includes(id)?p.pinned.filter(x=&gt;x!==id):[...p.pinned,id];let ancestor=parents[id];while(ancestor){if(!p.expandedNodes.includes(ancestor))p.expandedNodes.push(ancestor);ancestor=parents[ancestor]}drawGraph(p);save()}
+function selectNode(id){if(!details[id])return;const architectureIds=graphNodes.architecture.map(x=&gt;x[0]);if(!state.open||!currentPage()||![&#x27;tasks&#x27;,&#x27;architecture&#x27;].includes(state.panel))openPage(architectureIds.includes(id)?&#x27;architecture&#x27;:&#x27;tasks&#x27;);const p=currentPage();initPage(p);p.selected=id;const opened=[...$(&#x27;#q-detail&#x27;).querySelectorAll(&#x27;details[open] summary&#x27;)].map(x=&gt;x.textContent);const d=details[id];const isArch=architectureIds.includes(id);const agent=isArch?&#x27;architect&#x27;:[&#x27;verify&#x27;,&#x27;audit&#x27;].includes(id)?&#x27;review&#x27;:&#x27;impl&#x27;;$(&#x27;#q-detail&#x27;).innerHTML=&#x27;&lt;div class=&quot;q-detail-head&quot;&gt;&lt;strong&gt;&#x27;+d[0]+&#x27;&lt;/strong&gt;&lt;span class=&quot;q-fill&quot;&gt;&lt;/span&gt;&lt;button class=&quot;cursor-interaction&quot; data-node-menu=&quot;&#x27;+id+&#x27;&quot; aria-label=&quot;节点更多操作&quot;&gt;···&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; id=&quot;q-dismiss-detail&quot; aria-label=&quot;收起节点详情&quot;&gt;×&lt;/button&gt;&lt;/div&gt;&lt;small&gt;&#x27;+d[1]+&#x27;&lt;/small&gt;&lt;p&gt;&#x27;+d[2]+&#x27;&lt;/p&gt;&lt;button class=&quot;q-link cursor-interaction&quot; data-context-new=&quot;&#x27;+id+&#x27;&quot;&gt;在新标签页打开&lt;/button&gt;&lt;details class=&quot;q-rel&quot;&gt;&lt;summary class=&quot;cursor-interaction&quot;&gt;当前 Agent&lt;/summary&gt;&lt;button class=&quot;q-link cursor-interaction&quot; data-agent=&quot;&#x27;+agent+&#x27;&quot;&gt;&#x27;+names[agent]+&#x27; · &#x27;+(agent===&#x27;impl&#x27;?&#x27;工作中&#x27;:&#x27;待命&#x27;)+&#x27;&lt;/button&gt;&lt;/details&gt;&lt;details class=&quot;q-rel&quot;&gt;&lt;summary class=&quot;cursor-interaction&quot;&gt;历史 Agent · 含归档&lt;/summary&gt;&lt;button class=&quot;q-link cursor-interaction&quot; data-agent=&quot;old&quot;&gt;调查者 · 已归档&lt;/button&gt;&lt;small&gt;经关联 Task → Run → Session · 示例历史&lt;/small&gt;&lt;/details&gt;&lt;details class=&quot;q-rel&quot;&gt;&lt;summary class=&quot;cursor-interaction&quot;&gt;文件索引&lt;/summary&gt;&lt;button class=&quot;q-link cursor-interaction&quot; data-open-file=&quot;&#x27;+(isArch?&#x27;ARCHITECTURE.md&#x27;:&#x27;completion.ts&#x27;)+&#x27;&quot;&gt;&#x27;+(isArch?&#x27;ARCHITECTURE.md&#x27;:&#x27;completion.ts&#x27;)+&#x27;&lt;/button&gt;&lt;/details&gt;&lt;details class=&quot;q-rel&quot;&gt;&lt;summary class=&quot;cursor-interaction&quot;&gt;Diff 索引&lt;/summary&gt;&lt;button class=&quot;q-link cursor-interaction&quot; data-diff=&quot;completion.ts&quot;&gt;completion.ts · v2 → v3&lt;/button&gt;&lt;small&gt;示例版本，非真实工程修改&lt;/small&gt;&lt;/details&gt;&#x27;;$(&#x27;#q-detail&#x27;).hidden=false;$(&#x27;#q-detail&#x27;).querySelectorAll(&#x27;details&#x27;).forEach(el=&gt;el.open=opened.includes(el.querySelector(&#x27;summary&#x27;).textContent));root.querySelectorAll(&#x27;.q-graphnode&#x27;).forEach(b=&gt;b.setAttribute(&#x27;aria-pressed&#x27;,String(b.dataset.node===id)));updateGraphFocus(p);icon()}
+function context(id){const box=$(&#x27;#q-context&#x27;);if(!box)return;box.hidden=false;box.innerHTML=&#x27;&lt;button class=&quot;cursor-interaction&quot; data-context-detail=&quot;&#x27;+id+&#x27;&quot;&gt;查看关联详情&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-context-new=&quot;&#x27;+id+&#x27;&quot;&gt;在新页面打开&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-context-pin=&quot;&#x27;+id+&#x27;&quot;&gt;&#x27;+(currentPage().pinned.includes(id)?&#x27;取消固定显示&#x27;:&#x27;固定完整显示&#x27;)+&#x27;&lt;/button&gt;&#x27;;box.querySelector(&#x27;button&#x27;).focus()}
+function openFile(file,diff=false){if(!diff){const path=filePath(file);const existing=state.pages.find(x=&gt;x.kind===&#x27;file&#x27;&amp;&amp;x.filePath===path);if(existing){state.activePage=existing.id;state.panel=&#x27;file&#x27;;state.open=true;renderPanel()}else{openPage(&#x27;file&#x27;,true);const page=currentPage();page.filePath=path;page.label=path.split(&#x27;/&#x27;).pop();page.fileMode=&#x27;view&#x27;;renderFile(page);renderPages()}return}openPage(&#x27;files&#x27;,true);const p=currentPage();p.label=diff?&#x27;Diff · &#x27;+file:file;$(&#x27;#q-panelcontent&#x27;).innerHTML=&#x27;&lt;div class=&quot;q-subtle&quot;&gt;&#x27;+(diff?&#x27;示例差异 · v2 → v3&#x27;:&#x27;示例文件预览&#x27;)+&#x27;&lt;/div&gt;&lt;pre class=&quot;q-code&quot;&gt;&lt;/pre&gt;&#x27;;$(&#x27;#q-panelcontent pre&#x27;).textContent=diff?&#x27;  completion.ts\n- return run.ended;\n+ return requirementsCovered\n+   &amp;&amp; sourceIsCurrent;&#x27;:file===&#x27;ARCHITECTURE.md&#x27;?&#x27;# 项目架构\n\nWorkflow → 业务选择\nWorkGraph → 正式状态\nAgentRuntime → 执行观察&#x27;:&#x27;// completion.ts — 示例\nreturn requirementsCovered\n  &amp;&amp; sourceIsCurrent;&#x27;;$(&#x27;#q-detail&#x27;).hidden=true;renderPages()}
+root.addEventListener(&#x27;click&#x27;,e=&gt;{const b=e.target.closest(&#x27;button&#x27;);if(!b)return;const p=currentPage();let handled=true;
+ if(b.dataset.group){state.groupTasks=b.dataset.group===&#x27;toggle&#x27;?!state.groupTasks:b.dataset.group===&#x27;true&#x27;;foldOpen=true;renderChat()}
+ else if(b.dataset.traceMetric){state.traceMetric=b.dataset.traceMetric;renderChat()}
+ else if(b.dataset.trace!==undefined){state.traceIndex=Number(b.dataset.trace);renderChat()}
+ else if(b.dataset.traceNode){openPage(&#x27;tasks&#x27;);selectNode(b.dataset.traceNode)}
+ else if(b.dataset.graphMode){p.graphMode=b.dataset.graphMode;drawGraph(p)}
+ else if(b.hasAttribute(&#x27;data-minimal&#x27;)){p.minimal=!p.minimal;drawGraph(p)}
+ else if(b.dataset.branch){const id=b.dataset.branch;p.expandedNodes=p.expandedNodes.includes(id)?p.expandedNodes.filter(x=&gt;x!==id):[...p.expandedNodes,id];drawGraph(p)}
+ else if(b.hasAttribute(&#x27;data-active-paths&#x27;)){p.expandedNodes=[...new Set([...p.expandedNodes,&#x27;root&#x27;,&#x27;runtime&#x27;,&#x27;graph&#x27;])];drawGraph(p)}
+ else if(b.dataset.lensStep){p.lens=Math.max(0,Math.min(5,p.lens+Number(b.dataset.lensStep)));p.follow=false;drawGraph(p)}
+ else if(b.hasAttribute(&#x27;data-follow&#x27;)){p.follow=!p.follow;if(p.follow)p.lens=p.latest??2;drawGraph(p)}
+ else if(b.hasAttribute(&#x27;data-simulate&#x27;)){p.latest=Math.min(5,(p.latest??2)+1);if(p.follow)p.lens=p.latest;drawGraph(p);$(&#x27;#q-status&#x27;).textContent=&#x27;模拟事件推进到 &#x27;+trace[p.latest].time+&#x27;，未执行真实工具&#x27;}
+ else if(b.dataset.nodeMenu){context(b.dataset.nodeMenu)}
+ else if(b.dataset.contextDetail){selectNode(b.dataset.contextDetail);$(&#x27;#q-context&#x27;).hidden=true}
+ else if(b.dataset.contextNew){const id=b.dataset.contextNew;const kind=state.panel;openPage(kind,true);currentPage().label=details[id][0];selectNode(id);renderPages()}
+ else if(b.dataset.contextPin){togglePin(b.dataset.contextPin)}
+ else if(b.dataset.diff){openFile(b.dataset.diff,true)}
+ else if(b.dataset.openFile){openFile(b.dataset.openFile)}
+ else if(b.id===&#x27;q-dismiss-detail&#x27;){if(p)p.selected=null;$(&#x27;#q-detail&#x27;).hidden=true}
+ else handled=false;
+ if(handled){e.stopImmediatePropagation();save()}
+},true);
+root.addEventListener(&#x27;dblclick&#x27;,e=&gt;{const b=e.target.closest(&#x27;.q-graphnode&#x27;);if(b){e.preventDefault();togglePin(b.dataset.node)}});
+root.addEventListener(&#x27;input&#x27;,e=&gt;{if(e.target.id===&#x27;q-continuous-lens&#x27;){const p=currentPage();p.focusY=Number(e.target.value);p.follow=false;updateGraphFocus(p);save()}});
+root.addEventListener(&#x27;input&#x27;,e=&gt;{if(e.target.id===&#x27;q-lens-range&#x27;){const p=currentPage();p.lens=Number(e.target.value);p.follow=false;const range=e.target;$(&#x27;#q-lens .q-lens-content&#x27;).innerHTML=&#x27;&lt;small&gt;&#x27;+trace[p.lens].time+&#x27; · &#x27;+trace[p.lens].kind+&#x27;&lt;/small&gt;&lt;button class=&quot;q-link cursor-interaction&quot; data-node=&quot;&#x27;+trace[p.lens].task+&#x27;&quot;&gt;&#x27;+trace[p.lens].text+&#x27;&lt;/button&gt;&#x27;;root.querySelectorAll(&#x27;.q-graphnode&#x27;).forEach((b,i)=&gt;b.classList.toggle(&#x27;q-lens-focus&#x27;,p.graphMode===&#x27;timeline&#x27;&amp;&amp;i===p.lens));save()}});
+root.addEventListener(&#x27;wheel&#x27;,e=&gt;{if(e.target.closest(&#x27;#q-graph&#x27;)&amp;&amp;currentPage()?.kind===&#x27;tasks&#x27;&amp;&amp;currentPage()?.graphMode===&#x27;structure&#x27;&amp;&amp;!e.shiftKey&amp;&amp;Math.abs(e.deltaY)&gt;Math.abs(e.deltaX)){e.preventDefault();const p=currentPage();p.follow=false;p.focusY=Math.max(30,Math.min(390,p.focusY+e.deltaY*.25));$(&#x27;#q-continuous-lens&#x27;).value=p.focusY;updateGraphFocus(p);save();return}if(e.target.closest(&#x27;#q-graph&#x27;)&amp;&amp;currentPage()?.graphMode===&#x27;timeline&#x27;&amp;&amp;!e.shiftKey&amp;&amp;Math.abs(e.deltaY)&gt;Math.abs(e.deltaX)){e.preventDefault();const p=currentPage();p.follow=false;p.lens=Math.max(0,Math.min(5,p.lens+(e.deltaY&gt;0?1:-1)));drawGraph(p);save()}},{passive:false});
+function previewNode(e){const b=e.target.closest(&#x27;.q-graphnode&#x27;);if(!b)return;const h=$(&#x27;#q-hover&#x27;);h.textContent=details[b.dataset.node][0]+&#x27; · &#x27;+details[b.dataset.node][1];h.hidden=false}
+root.addEventListener(&#x27;pointerover&#x27;,previewNode);root.addEventListener(&#x27;focusin&#x27;,previewNode);root.addEventListener(&#x27;pointerout&#x27;,e=&gt;{if(e.target.closest(&#x27;.q-graphnode&#x27;)&amp;&amp;$(&#x27;#q-hover&#x27;))$(&#x27;#q-hover&#x27;).hidden=true});root.addEventListener(&#x27;focusout&#x27;,e=&gt;{if(e.target.closest(&#x27;.q-graphnode&#x27;)&amp;&amp;$(&#x27;#q-hover&#x27;))$(&#x27;#q-hover&#x27;).hidden=true});
+root.addEventListener(&#x27;contextmenu&#x27;,e=&gt;{const b=e.target.closest(&#x27;.q-graphnode&#x27;);if(b){e.preventDefault();context(b.dataset.node)}});
+root.addEventListener(&#x27;keydown&#x27;,e=&gt;{if(e.key===&#x27;Escape&#x27;){for(const id of [&#x27;#q-context&#x27;,&#x27;#q-hover&#x27;])if($(id))$(id).hidden=true}if(e.key===&#x27;F10&#x27;&amp;&amp;e.shiftKey&amp;&amp;e.target.matches(&#x27;.q-graphnode&#x27;)){e.preventDefault();context(e.target.dataset.node)}});
+let resizeTimer,lastPanelWidth=-1;new ResizeObserver(entries=&gt;{const width=Math.round(entries[0].contentRect.width);if(width===lastPanelWidth)return;lastPanelWidth=width;clearTimeout(resizeTimer);resizeTimer=setTimeout(()=&gt;{const p=currentPage();if(state.open&amp;&amp;p&amp;&amp;[&#x27;tasks&#x27;,&#x27;architecture&#x27;].includes(p.kind))drawGraph(p)},80)}).observe($(&#x27;#q-panel&#x27;));
+
+const demoFiles={
+ &#x27;docs/MVP-BEHAVIOR.md&#x27;:&#x27;# MVP 行为\n\n## 完成条件\n任务完成必须有真实检查依据。\nRun 结束不等于 Task 完成。\n来源版本应与当前产物一致。\n\n## 未来工作\n尚未细化的工作保留在任务图中。&#x27;,
+ &#x27;docs/UI-WORKBENCH.md&#x27;:&#x27;# 工作台\n\n对话是主界面。\n文件资源管理器仅展示目录与文件。\n文件在独立页签查看和编辑。\n展开内容仅改变子页面的滚动范围。&#x27;,
+ &#x27;docs/ARCHITECTURE.md&#x27;:&#x27;# 项目架构\n\nWorkflow：业务选择\nWorkGraph：正式状态\nAgentRuntime：执行观察\nWorkspaceTools：文件与来源\nRecordStore：持久化&#x27;,
+ &#x27;src/completion.ts&#x27;:&#x27;// 示例文件，不是工程源码\nexport function isComplete(result) {\n  const requirementsCovered = result.requirementsCovered;\n  const sourceIsCurrent = result.sourceIsCurrent;\n  return requirementsCovered\n    &amp;&amp; sourceIsCurrent;\n}\n&#x27;
+};
+const fileBuffers={};
+function filePath(name){if(name in demoFiles)return name;return Object.keys(demoFiles).find(x=&gt;x.endsWith(&#x27;/&#x27;+name))||&#x27;src/completion.ts&#x27;}
+function fileBuffer(path){return fileBuffers[path]??=( {saved:demoFiles[path],text:demoFiles[path],revision:1} )}
+function renderExplorer(){
+ const box=$(&#x27;#q-panelcontent&#x27;);box.innerHTML=&#x27;&lt;div class=&quot;q-subtle&quot;&gt;coding-platform · 示例文件树&lt;/div&gt;&#x27;;
+ for(const dir of [&#x27;docs&#x27;,&#x27;src&#x27;]){const folder=document.createElement(&#x27;details&#x27;);folder.className=&#x27;q-folder&#x27;;folder.open=true;const summary=document.createElement(&#x27;summary&#x27;);summary.textContent=dir;summary.className=&#x27;cursor-interaction&#x27;;folder.append(summary);
+ for(const path of Object.keys(demoFiles).filter(x=&gt;x.startsWith(dir+&#x27;/&#x27;))){const row=document.createElement(&#x27;div&#x27;);row.className=&#x27;q-file-row&#x27;;const open=document.createElement(&#x27;button&#x27;);open.className=&#x27;cursor-interaction&#x27;;open.dataset.openFile=path;open.textContent=path.split(&#x27;/&#x27;).pop();const add=document.createElement(&#x27;button&#x27;);add.className=&#x27;q-file-add cursor-interaction&#x27;;add.dataset.attachFile=path;add.textContent=&#x27;＋&#x27;;add.setAttribute(&#x27;aria-label&#x27;,&#x27;添加到对话：&#x27;+path);row.append(open,add);folder.append(row)}box.append(folder)}
+ $(&#x27;#q-detail&#x27;).hidden=true;
+}
+function renderFile(p){
+ if(!p.filePath){$(&#x27;#q-panelcontent&#x27;).innerHTML=&#x27;&lt;p class=&quot;q-subtle&quot;&gt;从资源管理器选择文件。&lt;/p&gt;&lt;button class=&quot;q-link cursor-interaction&quot; data-panel=&quot;files&quot;&gt;打开文件资源管理器&lt;/button&gt;&#x27;;return}
+ const path=p.filePath,b=fileBuffer(path);const box=$(&#x27;#q-panelcontent&#x27;);
+ box.innerHTML=&#x27;&lt;div class=&quot;q-file-path&quot;&gt;&lt;/div&gt;&lt;div class=&quot;q-file-toolbar&quot;&gt;&lt;button class=&quot;cursor-interaction&quot; data-file-mode=&quot;view&quot;&gt;查看&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-file-mode=&quot;edit&quot;&gt;编辑&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-file-save&gt;保存示例&lt;/button&gt;&lt;span class=&quot;q-fill&quot;&gt;&lt;/span&gt;&lt;button class=&quot;cursor-interaction&quot; data-attach-current&gt;添加到对话&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;q-editor-shell&quot;&gt;&lt;pre class=&quot;q-line-numbers&quot; aria-hidden=&quot;true&quot;&gt;&lt;/pre&gt;&lt;textarea id=&quot;q-file-editor&quot; aria-label=&quot;文件内容&quot; spellcheck=&quot;false&quot; wrap=&quot;off&quot;&gt;&lt;/textarea&gt;&lt;/div&gt;&lt;div class=&quot;q-file-state&quot; role=&quot;status&quot;&gt;&lt;/div&gt;&#x27;;
+ box.querySelector(&#x27;.q-file-path&#x27;).textContent=path;
+ const editor=$(&#x27;#q-file-editor&#x27;);editor.value=b.text;editor.readOnly=p.fileMode!==&#x27;edit&#x27;;
+ box.querySelector(&#x27;[data-file-mode=&quot;view&quot;]&#x27;).setAttribute(&#x27;aria-pressed&#x27;,String(editor.readOnly));box.querySelector(&#x27;[data-file-mode=&quot;edit&quot;]&#x27;).setAttribute(&#x27;aria-pressed&#x27;,String(!editor.readOnly));box.querySelector(&#x27;[data-file-save]&#x27;).disabled=b.saved===b.text;
+ function lineNumbers(){box.querySelector(&#x27;.q-line-numbers&#x27;).textContent=editor.value.split(&#x27;\n&#x27;).map((_,i)=&gt;i+1).join(&#x27;\n&#x27;)}
+ function selection(){const start=editor.selectionStart,end=editor.selectionEnd;const first=editor.value.slice(0,start).split(&#x27;\n&#x27;).length,last=editor.value.slice(0,Math.max(start,end-1)).split(&#x27;\n&#x27;).length;p.selection={start,end};box.querySelector(&#x27;[data-attach-current]&#x27;).textContent=end&gt;start?&#x27;添加选区到对话&#x27;:&#x27;添加文件到对话&#x27;;box.querySelector(&#x27;.q-file-state&#x27;).textContent=(b.saved!==b.text?&#x27;未保存草稿 · &#x27;:&#x27;示例 v&#x27;+b.revision+&#x27; · &#x27;)+(end&gt;start?&#x27;选区 L&#x27;+first+&#x27;–L&#x27;+last:(editor.readOnly?&#x27;只读，可选择内容&#x27;:&#x27;可编辑，仅保存在本次演示&#x27;))}
+ editor.addEventListener(&#x27;input&#x27;,()=&gt;{b.text=editor.value;lineNumbers();selection();box.querySelector(&#x27;[data-file-save]&#x27;).disabled=b.saved===b.text});
+ for(const event of [&#x27;select&#x27;,&#x27;keyup&#x27;,&#x27;mouseup&#x27;])editor.addEventListener(event,selection);
+ editor.addEventListener(&#x27;scroll&#x27;,()=&gt;{box.querySelector(&#x27;.q-line-numbers&#x27;).scrollTop=editor.scrollTop;p.editorScroll=editor.scrollTop},{passive:true});
+ lineNumbers();editor.scrollTop=p.editorScroll||0;selection();$(&#x27;#q-detail&#x27;).hidden=true;
+}
+function attachFile(path,selection=null){
+ if(state.agent===&#x27;old&#x27;){$(&#x27;#q-status&#x27;).textContent=&#x27;归档对话只读，请先选择可发送的对话。&#x27;;return}
+ const b=fileBuffer(path);let reference=&#x27;@/workspace/coding-platform/&#x27;+path;
+ if(selection&amp;&amp;selection.end&gt;selection.start){const first=b.text.slice(0,selection.start).split(&#x27;\n&#x27;).length,last=b.text.slice(0,selection.end-1).split(&#x27;\n&#x27;).length;reference+=&#x27;:L&#x27;+first+&#x27;-L&#x27;+last+&#x27;\n```\n&#x27;+b.text.slice(selection.start,selection.end)+&#x27;\n```&#x27;;}
+ reference+=&#x27;\n（示例&#x27;+(b.text!==b.saved?&#x27; · 未保存草稿快照&#x27;:&#x27; · v&#x27;+b.revision)+&#x27;）&#x27;;
+ if(state.mode!==&#x27;chat&#x27;){state.mode=&#x27;chat&#x27;;renderChat()}
+ state.expanded=false;root.dataset.expanded=&#x27;false&#x27;;
+ const input=$(&#x27;#q-input&#x27;);input.value+=(input.value?&#x27;\n\n&#x27;:&#x27;&#x27;)+reference;drafts[state.agent]=input.value;input.focus();$(&#x27;#q-status&#x27;).textContent=&#x27;已添加到 &#x27;+names[state.agent]+&#x27; 的草稿，尚未发送&#x27;;
+}
+root.addEventListener(&#x27;click&#x27;,e=&gt;{
+ const b=e.target.closest(&#x27;button&#x27;);if(!b)return;const p=currentPage();
+ if(b.dataset.attachFile){attachFile(b.dataset.attachFile)}
+ else if(b.hasAttribute(&#x27;data-attach-current&#x27;)){attachFile(p.filePath,p.selection)}
+ else if(b.dataset.fileMode){p.fileMode=b.dataset.fileMode;renderFile(p)}
+ else if(b.hasAttribute(&#x27;data-file-save&#x27;)){const f=fileBuffer(p.filePath);f.saved=f.text;f.revision++;renderFile(p)}
+ else return;
+ e.stopImmediatePropagation();save();
+},true);
+
+restore(window.openai?.widgetState);render();window.addEventListener(&#x27;openai:set_globals&#x27;,e=&gt;{const incoming=e.detail?.globals?.widgetState;if(JSON.stringify(incoming)===lastSavedState)return;restore(incoming);render()});
+root.addEventListener(&#x27;click&#x27;,e=&gt;{const b=e.target.closest(&#x27;button&#x27;);if(!b)return;if(b.dataset.agent){state.agent=b.dataset.agent;state.mode=&#x27;chat&#x27;;state.expanded=false;foldOpen=false;$(&#x27;#q-role&#x27;).hidden=true;$(&#x27;#q-title&#x27;).setAttribute(&#x27;aria-expanded&#x27;,&#x27;false&#x27;);$(&#x27;#q-status&#x27;).textContent=&#x27;&#x27;;render()}else if(b.dataset.panel){openPage(b.dataset.panel)}else if(b.dataset.page){state.activePage=b.dataset.page;state.panel=state.pages.find(p=&gt;p.id===state.activePage).kind;renderPanel()}else if(b.dataset.closePage){const index=state.pages.findIndex(p=&gt;p.id===b.dataset.closePage);state.pages.splice(index,1);if(state.activePage===b.dataset.closePage){const page=state.pages[Math.min(index,state.pages.length-1)];state.activePage=page?.id||null;state.panel=page?.kind||&#x27;blank&#x27;}renderPanel()}else if(b.dataset.newKind){const page=state.pages.find(p=&gt;p.id===state.activePage);if(page&amp;&amp;page.kind===&#x27;blank&#x27;){page.kind=b.dataset.newKind;state.panel=page.kind;renderPanel()}else openPage(b.dataset.newKind,true)}else if(b.id===&#x27;q-new-page&#x27;){openPage(&#x27;blank&#x27;,true)}else if(b.id===&#x27;q-toggle-panel&#x27;){state.open=!state.open;if(!state.open)state.expanded=false;renderPanel()}else if(b.dataset.node){selectNode(b.dataset.node)}else if(b.dataset.mode){state.mode=b.dataset.mode;$(&#x27;#q-menu&#x27;).hidden=true;$(&#x27;#q-more&#x27;).setAttribute(&#x27;aria-expanded&#x27;,&#x27;false&#x27;);renderChat()}else if(b.dataset.file){$(&#x27;#q-detail&#x27;).hidden=false;$(&#x27;#q-detail&#x27;).innerHTML=&#x27;&lt;strong&gt;&lt;/strong&gt;&lt;p&gt;示例摘录&lt;/p&gt;&lt;p&gt;&lt;/p&gt;&#x27;;$(&#x27;#q-detail strong&#x27;).textContent=b.dataset.file;$(&#x27;#q-detail p:last-child&#x27;).textContent=b.dataset.file===&#x27;UI-WORKBENCH.md&#x27;?&#x27;默认只保留对话。图以树状节点呈现，信息按需展开。&#x27;:&#x27;完成应基于当前义务、真实检查与适用证据。&#x27;}else if(b.dataset.info){$(&#x27;#q-detail&#x27;).hidden=false;$(&#x27;#q-detail&#x27;).textContent=b.dataset.info}else if(b.id===&#x27;q-title&#x27;){$(&#x27;#q-role&#x27;).hidden=!$(&#x27;#q-role&#x27;).hidden;b.setAttribute(&#x27;aria-expanded&#x27;,String(!$(&#x27;#q-role&#x27;).hidden))}else if(b.id===&#x27;q-more&#x27;){$(&#x27;#q-menu&#x27;).hidden=!$(&#x27;#q-menu&#x27;).hidden;b.setAttribute(&#x27;aria-expanded&#x27;,String(!$(&#x27;#q-menu&#x27;).hidden))}else if(b.id===&#x27;q-close&#x27;){state.open=false;state.expanded=false;renderPanel()}else if(b.id===&#x27;q-expand&#x27;){state.expanded=!state.expanded;renderPanel()}else if(b.id===&#x27;q-dismiss-detail&#x27;){$(&#x27;#q-detail&#x27;).hidden=true;root.querySelectorAll(&#x27;.q-node[data-node]&#x27;).forEach(x=&gt;x.setAttribute(&#x27;aria-pressed&#x27;,&#x27;false&#x27;))}else if(b.id===&#x27;q-theme&#x27;){state.theme=state.theme===&#x27;dark&#x27;?&#x27;light&#x27;:&#x27;dark&#x27;;root.style.colorScheme=state.theme}else if(b.id===&#x27;q-nav&#x27;){if(window.matchMedia(&#x27;(max-width:520px)&#x27;).matches){root.dataset.navOpen=root.dataset.navOpen===&#x27;true&#x27;?&#x27;false&#x27;:&#x27;true&#x27;}else{const side=$(&#x27;.q-side&#x27;);side.hidden=!side.hidden;root.style.setProperty(&#x27;--q-nav-width&#x27;,side.hidden?&#x27;0px&#x27;:&#x27;180px&#x27;);root.classList.toggle(&#x27;q-nav-hidden&#x27;,side.hidden)}}else if(b.id===&#x27;q-project&#x27;){$(&#x27;#q-people&#x27;).hidden=!$(&#x27;#q-people&#x27;).hidden;b.setAttribute(&#x27;aria-expanded&#x27;,String(!$(&#x27;#q-people&#x27;).hidden))}else if(b.id===&#x27;q-archive&#x27;){$(&#x27;#q-archived&#x27;).hidden=!$(&#x27;#q-archived&#x27;).hidden;b.setAttribute(&#x27;aria-expanded&#x27;,String(!$(&#x27;#q-archived&#x27;).hidden))}save();});
+function submit(e){e.preventDefault();const input=$(&#x27;#q-input&#x27;),text=input.value.trim();if(!text)return;(messages[currentKey]??=[]).push(text);input.value=&#x27;&#x27;;drafts[currentKey]=&#x27;&#x27;;renderChat();$(&#x27;#q-status&#x27;).textContent=&#x27;示例消息，仅本地展示&#x27;;}
+$(&#x27;#q-compose&#x27;).addEventListener(&#x27;submit&#x27;,submit);$(&#x27;#q-input&#x27;).addEventListener(&#x27;keydown&#x27;,e=&gt;{if(e.key===&#x27;Enter&#x27;&amp;&amp;!e.shiftKey&amp;&amp;!e.isComposing)submit(e)});
+if(globalThis.Tweak){const t=new Tweak({container:root,onChange:()=&gt;{render();save()}});t.addSelect(state,&#x27;theme&#x27;,{label:&#x27;外观&#x27;,options:[{label:&#x27;深色&#x27;,value:&#x27;dark&#x27;},{label:&#x27;浅色&#x27;,value:&#x27;light&#x27;}]});t.addToggle(state,&#x27;open&#x27;,{label:&#x27;展开辅助区&#x27;});t.addSlider(state,&#x27;treeSize&#x27;,{label:&#x27;节点字号&#x27;,min:12,max:14,step:1,unit:&#x27;px&#x27;});}
+})();
+&lt;/script&gt;
+&lt;style&gt;
+#quiet-workbench.q-nav-hidden .q-body{grid-template-columns:minmax(0,1fr)}#quiet-workbench.q-nav-hidden[data-panel-open=true] .q-body{grid-template-columns:minmax(280px,1fr) 270px}#quiet-workbench.q-nav-hidden[data-expanded=true] .q-body{grid-template-columns:minmax(0,1fr)}
+@media(max-width:800px){#quiet-workbench.q-nav-hidden[data-panel-open=true] .q-body{grid-template-columns:minmax(0,1fr)}#quiet-workbench.q-nav-hidden .q-panel{grid-column:1}}
+&lt;/style&gt;
+
+&lt;style&gt;
+#quiet-workbench{--q-left:180px;--q-right:300px}#quiet-workbench .q-side,#quiet-workbench .q-panel{position:relative}#quiet-workbench .q-split{position:absolute;top:0;bottom:0;width:8px;z-index:9;cursor:col-resize;touch-action:none}#quiet-workbench .q-split-left{right:-4px}#quiet-workbench .q-split-right{left:-4px}#quiet-workbench .q-split:hover,#quiet-workbench .q-split:focus-visible{background:color-mix(in srgb,var(--q-blue) 30%,transparent)}#quiet-workbench.q-resizing{user-select:none}#quiet-workbench .q-body{grid-template-columns:var(--q-left) minmax(0,1fr)}#quiet-workbench[data-panel-open=true] .q-body{grid-template-columns:var(--q-left) minmax(280px,1fr) var(--q-right)}#quiet-workbench[data-expanded=true] .q-body{grid-template-columns:var(--q-left) minmax(0,1fr)}#quiet-workbench.q-nav-hidden[data-panel-open=true] .q-body{grid-template-columns:minmax(280px,1fr) var(--q-right)}#quiet-workbench.q-nav-hidden[data-expanded=true] .q-body{grid-template-columns:minmax(0,1fr)}#quiet-workbench .q-tool{margin-bottom:9px}#quiet-workbench .q-tool summary{width:100%;flex-wrap:wrap}#quiet-workbench .q-tool small{margin-left:auto;font-size:11px}#quiet-workbench .q-type{font-size:11px;color:var(--q-blue)}#quiet-workbench .q-tracebar,#quiet-workbench .q-graphbar{display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--q-muted);margin-bottom:12px}#quiet-workbench .q-tracebar [aria-pressed=true],#quiet-workbench .q-graphbar [aria-pressed=true]{background:var(--q-hover);color:var(--q-text)}#quiet-workbench .q-tracks{margin:12px 0 30px}#quiet-workbench .q-track{display:flex;gap:10px;align-items:center;font-size:10px;color:var(--q-muted)}#quiet-workbench .q-track&gt;span{width:28px}#quiet-workbench .q-track&gt;div{display:flex;flex:1;gap:3px;height:16px}#quiet-workbench .q-trackmark{padding:0!important;border-radius:1px;min-width:4px;height:9px;align-self:center;background:var(--q-blue)}#quiet-workbench .q-track-读取{background:var(--q-green)}#quiet-workbench .q-track-修改{background:#be9a66}#quiet-workbench .q-track-检查{background:#a194bf}#quiet-workbench .q-track-empty{background:transparent!important;opacity:0}#quiet-workbench .q-graph{position:relative;width:100%;margin-top:22px}#quiet-workbench svg.q-edges{width:100%;height:260px;display:block;overflow:visible}#quiet-workbench .q-edges path{stroke:var(--q-line);stroke-width:1.3;fill:none}#quiet-workbench .q-graphnode{position:absolute;transform:translate(-50%,-50%);padding:0;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:50%}#quiet-workbench .q-orb{width:7px;height:7px;background:var(--q-muted);border-radius:50%}#quiet-workbench .q-orb.active{background:var(--q-blue)}#quiet-workbench .q-graphnode[aria-pressed=true] .q-orb{outline:2px solid var(--q-blue);outline-offset:4px}#quiet-workbench .q-lens-focus{background:var(--q-hover);outline:1px solid var(--q-blue)}#quiet-workbench .q-nodelabel{position:absolute;top:28px;font-size:11px;white-space:nowrap;max-width:94px;overflow:hidden;text-overflow:ellipsis;color:var(--q-muted)}#quiet-workbench .q-branch-toggle{position:absolute;padding:0;width:20px;height:20px;font-size:12px;color:var(--q-muted)}#quiet-workbench .q-lensbar{display:flex;align-items:center;gap:6px}#quiet-workbench .q-lensbar input{min-width:0;flex:1;accent-color:var(--q-blue)}#quiet-workbench .q-lens-content{border-left:2px solid var(--q-blue);padding-left:11px;margin:9px 0 12px}#quiet-workbench .q-lens-content small{display:block;color:var(--q-muted);font-size:11px}#quiet-workbench .q-future{border-top:1px solid var(--q-line);padding-top:10px;margin-top:10px}#quiet-workbench .q-future small{display:block;color:var(--q-muted);font-size:11px}#quiet-workbench .q-hover{font-size:11px;color:var(--q-muted);padding:6px 0;min-height:25px}#quiet-workbench .q-context{position:absolute;right:12px;top:90px;z-index:12;border:1px solid var(--q-line);background:var(--q-nav);padding:6px;border-radius:5px}#quiet-workbench .q-context button{display:block;width:100%;font-size:12px}#quiet-workbench .q-rel{margin:10px 0;font-size:12px}#quiet-workbench .q-rel summary:before{content:&#x27;›&#x27;;color:var(--q-muted)}#quiet-workbench .q-rel[open] summary:before{content:&#x27;⌄&#x27;}#quiet-workbench .q-rel small{display:block}#quiet-workbench .q-rel .q-link{display:block}
+@media(max-width:800px){#quiet-workbench .q-body,#quiet-workbench[data-panel-open=true] .q-body,#quiet-workbench[data-expanded=true] .q-body{grid-template-columns:145px minmax(0,1fr)}#quiet-workbench .q-split{display:none}#quiet-workbench.q-nav-hidden[data-panel-open=true] .q-body{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:520px){#quiet-workbench .q-body,#quiet-workbench[data-panel-open=true] .q-body,#quiet-workbench[data-expanded=true] .q-body{display:flex}}
+
+&lt;/style&gt;
+&lt;style&gt;
+#quiet-workbench .q-graph-layout{display:flex;min-width:0;gap:8px;align-items:stretch}
+#quiet-workbench .q-graph-scroll{overflow-x:auto;overflow-y:hidden;flex:1;min-width:0;scrollbar-color:var(--q-muted) var(--q-nav);scrollbar-width:auto;padding-bottom:8px}
+#quiet-workbench .q-graph{margin-top:8px}
+#quiet-workbench .q-vertical-lens{display:flex;flex-direction:column;align-items:center;width:24px;flex-shrink:0;color:var(--q-muted);font-size:11px;padding:6px 0 20px}
+#quiet-workbench .q-vertical-lens input{writing-mode:vertical-lr;direction:ltr;width:20px;min-height:0;flex:1;accent-color:var(--q-blue);cursor:ns-resize}
+#quiet-workbench .q-focus-band{position:absolute;height:96px;left:0;right:0;pointer-events:none;background:color-mix(in srgb,var(--q-blue) 5%,transparent);border-top:1px solid var(--q-line);border-bottom:1px solid var(--q-line)}
+#quiet-workbench .q-graphnode{z-index:2}
+#quiet-workbench .q-nodelabel{max-width:145px;top:24px;color:var(--q-text);background:var(--q-bg);padding:0 4px;line-height:1.6;overflow:visible}
+#quiet-workbench .q-nodelabel small{display:block;font-size:11px;color:var(--q-muted)}
+#quiet-workbench .q-pinned .q-orb{border-radius:1px;outline:1px solid var(--q-text);outline-offset:3px}
+#quiet-workbench .q-duration{position:absolute;width:3px;background:var(--q-blue);opacity:.4;pointer-events:none;transform:translateX(-50%)}
+#quiet-workbench .q-split-left{right:0}#quiet-workbench .q-split-right{left:0}
+&lt;/style&gt;
+&lt;style&gt;
+/* The workbench has a stable viewport; content growth belongs to its pane. */
+#quiet-workbench{height:680px;display:flex;flex-direction:column;overflow:hidden}
+#quiet-workbench .q-top{flex:0 0 auto}
+#quiet-workbench .q-body{flex:1;min-height:0;overflow:hidden;grid-template-rows:minmax(0,1fr)}
+#quiet-workbench .q-side{min-height:0;overflow-y:auto;overscroll-behavior:contain}
+#quiet-workbench .q-center{min-height:0;overflow:hidden}
+#quiet-workbench .q-titlebar{flex:0 0 auto}
+#quiet-workbench .q-menu,#quiet-workbench .q-drawer{flex:0 0 auto;max-height:120px;overflow-y:auto;overscroll-behavior:contain}
+#quiet-workbench .q-chat{flex:1 1 0;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+#quiet-workbench .q-compose-wrap{flex:0 0 auto;padding-top:12px;padding-bottom:12px;max-height:210px;overflow-y:auto}
+#quiet-workbench textarea{max-height:110px;overflow-y:auto}
+#quiet-workbench .q-panel{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+#quiet-workbench .q-panelhead{flex:0 0 auto;margin-bottom:12px;max-height:84px;overflow-y:auto;overscroll-behavior:contain}
+#quiet-workbench #q-panelcontent{flex:1 1 0;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;padding-right:3px}
+#quiet-workbench .q-detail,#quiet-workbench[data-expanded=true] .q-detail{flex:0 1 40%;min-height:0;max-height:40%;width:100%;margin:12px 0 0;padding-top:12px;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+#quiet-workbench .q-side,#quiet-workbench .q-chat,#quiet-workbench #q-panelcontent,#quiet-workbench .q-detail{scrollbar-width:thin;scrollbar-color:var(--q-muted) var(--q-bg)}
+@media(max-width:800px) and (min-width:521px){
+#quiet-workbench[data-panel-open=true] .q-body{grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
+#quiet-workbench[data-expanded=true] .q-body{grid-template-rows:minmax(0,1fr)}
+}
+@media(max-width:520px){
+#quiet-workbench .q-body,#quiet-workbench[data-panel-open=true] .q-body,#quiet-workbench[data-expanded=true] .q-body{min-height:0}
+#quiet-workbench .q-side{flex:0 0 auto;max-height:130px}
+#quiet-workbench .q-center{flex:1 1 0;min-height:0}
+#quiet-workbench[data-panel-open=true] .q-panel{flex:1 1 0;min-height:0}
+#quiet-workbench .q-compose-wrap{padding:8px 14px}
+}
+&lt;/style&gt;
+&lt;style&gt;
+#quiet-workbench .q-folder{margin:12px 0;font-size:12px}
+#quiet-workbench .q-folder summary:before{content:&#x27;›&#x27;}#quiet-workbench .q-folder[open] summary:before{content:&#x27;⌄&#x27;}
+#quiet-workbench .q-file-row{display:flex;align-items:center;margin-left:14px;gap:4px}
+#quiet-workbench .q-file-row&gt;button:first-child{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#quiet-workbench .q-file-add{color:var(--q-muted);flex:0 0 auto}
+#quiet-workbench .q-file-path{font-size:11px;color:var(--q-muted);overflow-wrap:anywhere;margin-bottom:10px}
+#quiet-workbench .q-file-toolbar{display:flex;flex-wrap:wrap;gap:4px;font-size:11px;margin-bottom:12px}
+#quiet-workbench .q-file-toolbar [aria-pressed=true]{background:var(--q-hover)}
+#quiet-workbench .q-file-toolbar button:disabled{opacity:.4}
+#quiet-workbench .q-editor-shell{display:flex;height:320px;min-width:0;border-top:1px solid var(--q-line);padding-top:10px}
+#quiet-workbench .q-line-numbers{font:12px/22px Consolas,monospace;color:var(--q-muted);text-align:right;margin:0;padding:0 10px 0 0;overflow:hidden;min-width:30px;user-select:none}
+#quiet-workbench #q-file-editor{font:12px/22px Consolas,monospace;flex:1;min-width:0;min-height:0;max-height:none;height:100%;padding:0;margin:0;resize:none;overflow:auto;white-space:pre;tab-size:2;border-radius:0}
+#quiet-workbench .q-file-state{font-size:11px;color:var(--q-muted);margin-top:10px}
+&lt;/style&gt;
+
+&lt;script src=&quot;https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  if (window.FloatingUIDOM == null) {
+    return;
+  }
+  const { autoUpdate, computePosition, flip, offset, shift, size } =
+    window.FloatingUIDOM;
+  const tooltipPlacements = new Set([&quot;top&quot;, &quot;right&quot;, &quot;bottom&quot;, &quot;left&quot;]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+  let lastPointerWasTouch = false;
+  let pinnedByTouch = false;
+
+  const getTrigger = (event) =&gt; {
+    for (const target of event.composedPath()) {
+      if (target?.nodeType === Node.ELEMENT_NODE) {
+        const trigger = target.closest(&quot;[data-tooltip]&quot;);
+        if (trigger) return trigger;
+      }
+    }
+    return null;
+  };
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute(&quot;data-tooltip&quot;)?.trim() ?? &quot;&quot;;
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute(&quot;data-tooltip-placement&quot;);
+    return tooltipPlacements.has(placement) ? placement : &quot;top&quot;;
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement(&quot;div&quot;);
+      tooltip.id = tooltipId;
+      tooltip.className = &quot;tooltip&quot;;
+      tooltip.setAttribute(&quot;role&quot;, &quot;tooltip&quot;);
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute(&quot;aria-describedby&quot;) ?? &quot;&quot;)
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute(&quot;aria-describedby&quot;);
+    } else {
+      trigger.setAttribute(&quot;aria-describedby&quot;, [...ids].join(&quot; &quot;));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    pinnedByTouch = false;
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-width&quot;,
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-height&quot;,
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: &quot;fixed&quot;,
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = &quot;visible&quot;;
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = &quot;hidden&quot;;
+    floating.style.transform = &quot;translate(0, 0)&quot;;
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    autoUpdateCleanup = autoUpdate(trigger, floating, () =&gt; {
+      updatePosition(trigger, floating);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === &quot;touch&quot;) {
+      return;
+    }
+    const trigger = getTrigger(event);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handlePointer = (event) =&gt; {
+    lastPointerWasTouch =
+      event.type === &quot;pointerdown&quot; &amp;&amp; event.pointerType === &quot;touch&quot;;
+  };
+  const handleTouchClick = (event) =&gt; {
+    const isTouch = event.pointerType === &quot;touch&quot; || lastPointerWasTouch;
+    lastPointerWasTouch = false;
+    if (!isTouch || event.detail === 0) {
+      return;
+    }
+    const trigger = getTrigger(event);
+    if (
+      trigger == null ||
+      !trigger.isConnected ||
+      getContent(trigger).length === 0 ||
+      (pinnedByTouch &amp;&amp; activeTrigger === trigger)
+    ) {
+      if (pinnedByTouch) {
+        closeTooltip();
+      }
+      return;
+    }
+    openTooltip(trigger);
+    pinnedByTouch = activeTrigger === trigger;
+    window.setTimeout(() =&gt; {
+      if (activeTrigger === trigger &amp;&amp; !trigger.isConnected) {
+        closeTooltip(false);
+      }
+    }, 0);
+  };
+  const handleLeave = (event) =&gt; {
+    if (pinnedByTouch) {
+      return;
+    }
+    const trigger = getTrigger(event);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event);
+    if (trigger?.matches(&quot;:focus-visible&quot;)) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === &quot;Escape&quot;) {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    lastPointerWasTouch = false;
+    const trigger = getTrigger(event);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handlers = {
+    pointerover: handlePointerOpen,
+    pointerdown: handlePointer,
+    pointercancel: handlePointer,
+    click: handleTouchClick,
+    pointerout: handleLeave,
+    focusin: handleFocusIn,
+    focusout: handleLeave,
+    keydown: handleKeyDown,
+    contextmenu: handleContextMenu,
+  };
+  const roots = new Map();
+  const handledEvents = new WeakSet();
+  const handleEvent = (event) =&gt; {
+    if (handledEvents.has(event)) return;
+    handledEvents.add(event);
+    handlers[event.type](event);
+  };
+  const discoverRoots = (node) =&gt; {
+    if (node.shadowRoot) listen(node.shadowRoot);
+    for (const element of node.querySelectorAll(&quot;*&quot;)) {
+      if (element.shadowRoot) listen(element.shadowRoot);
+    }
+  };
+  const listen = (root) =&gt; {
+    if (roots.has(root)) return;
+    for (const type of Object.keys(handlers)) root.addEventListener(type, handleEvent);
+    const observer = new window.MutationObserver((records) =&gt; {
+      for (const { addedNodes } of records) {
+        for (const node of addedNodes) {
+          if (node.nodeType === Node.ELEMENT_NODE) discoverRoots(node);
+        }
+      }
+      for (const [root, cleanup] of roots) {
+        if (root.host &amp;&amp; !root.host.isConnected) {
+          cleanup();
+          roots.delete(root);
+        }
+      }
+      if (activeTrigger &amp;&amp; !activeTrigger.isConnected) closeTooltip(false);
+    });
+    observer.observe(root, { childList: true, subtree: true });
+    roots.set(root, () =&gt; {
+      observer.disconnect();
+      for (const type of Object.keys(handlers)) root.removeEventListener(type, handleEvent);
+    });
+    discoverRoots(root);
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    lastPointerWasTouch = false;
+    for (const cleanup of roots.values()) cleanup();
+    roots.clear();
+    tooltip = null;
+  };
+
+  // Events between children of one shadow root never reach the document.
+  listen(document);
+  window.addEventListener(&quot;pagehide&quot;, destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-tabs&quot;&gt;
+(() =&gt; {
+  const selector = &#x27;.nav[role=&quot;tablist&quot;] [role=&quot;tab&quot;]&#x27;;
+  const disabled = &#x27;:disabled,[aria-disabled=&quot;true&quot;]&#x27;;
+  const selectTab = (selected) =&gt; {
+    const panelId = selected.getAttribute(&quot;aria-controls&quot;);
+    for (const tab of selected.closest(&#x27;[role=&quot;tablist&quot;]&#x27;).querySelectorAll(&#x27;[role=&quot;tab&quot;]&#x27;)) {
+      const active = tab === selected;
+      tab.classList.toggle(&quot;active&quot;, active);
+      tab.setAttribute(&quot;aria-selected&quot;, String(active));
+      const id = tab.getAttribute(&quot;aria-controls&quot;);
+      const panel = id &amp;&amp; document.getElementById(id);
+      if (panel != null) {
+        panel.hidden = id !== panelId;
+        if (!panel.hidden &amp;&amp; selected.id) {
+          panel.setAttribute(&quot;aria-labelledby&quot;, selected.id);
+        }
+      }
+    }
+  };
+  const interact = (event) =&gt; {
+    const tab = event.target?.closest?.(selector);
+    if (event.defaultPrevented || tab == null || tab.matches(disabled)) {
+      return;
+    }
+    if (event.type === &quot;click&quot;) {
+      selectTab(tab);
+      return;
+    }
+    const tabs = Array.from(
+      tab.closest(&#x27;[role=&quot;tablist&quot;]&#x27;).querySelectorAll(&#x27;[role=&quot;tab&quot;]&#x27;),
+    ).filter((candidate) =&gt; !candidate.matches(disabled));
+    const current = tabs.indexOf(tab);
+    let next;
+    if (event.key === &quot;ArrowRight&quot; || event.key === &quot;ArrowDown&quot;) {
+      next = (current + 1) % tabs.length;
+    } else if (event.key === &quot;ArrowLeft&quot; || event.key === &quot;ArrowUp&quot;) {
+      next = (current + tabs.length - 1) % tabs.length;
+    } else if (event.key === &quot;Home&quot;) {
+      next = 0;
+    } else if (event.key === &quot;End&quot;) {
+      next = tabs.length - 1;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    tabs[next].focus();
+    selectTab(tabs[next]);
+  };
+
+  for (const list of document.querySelectorAll(&#x27;.nav[role=&quot;tablist&quot;]&#x27;)) {
+    const selected =
+      list.querySelector(&#x27;[role=&quot;tab&quot;][aria-selected=&quot;true&quot;]&#x27;) ??
+      list.querySelector(&#x27;[role=&quot;tab&quot;].active&#x27;) ??
+      list.querySelector(&#x27;[role=&quot;tab&quot;]&#x27;);
+    if (selected != null) {
+      selectTab(selected);
+    }
+  }
+  document.addEventListener(&quot;click&quot;, interact);
+  document.addEventListener(&quot;keydown&quot;, interact);
+  window.addEventListener(&quot;pagehide&quot;, () =&gt; {
+    document.removeEventListener(&quot;click&quot;, interact);
+    document.removeEventListener(&quot;keydown&quot;, interact);
+  }, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-lucide&quot; async src=&quot;https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById(&quot;codex-visualization-lucide&quot;)
+    ?.addEventListener(&quot;load&quot;, initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+<script>(() => {
+  const frame = document.getElementById("codex-visualization");
+  if (!(frame instanceof HTMLIFrameElement)) {
+    return;
+  }
+  let viewportHeight = globalThis.innerHeight;
+  const storageKey = `codex:visualization-widget-state-v2:${JSON.stringify([
+    globalThis.location.pathname,
+    globalThis.location.search,
+  ])}`;
+  const parseState = (serializedState) => {
+    if (
+      typeof serializedState !== "string" ||
+      new TextEncoder().encode(serializedState).length > 16 * 1024
+    ) {
+      throw new TypeError(
+        "Widget state must be a JSON object of at most 16 KiB",
+      );
+    }
+    /** @type {unknown} */
+    const state = JSON.parse(serializedState);
+    if (
+      state == null ||
+      typeof state !== "object" ||
+      Array.isArray(state) ||
+      ("imageIds" in state &&
+        (!Array.isArray(state.imageIds) || state.imageIds.length > 0))
+    ) {
+      throw new TypeError("Widget state must be a JSON object");
+    }
+    const storedState = { modelContent: null, privateContent: null, ...state };
+    const canonicalState = JSON.stringify(
+      storedState,
+      (_key, /** @type {unknown} */ value) => {
+        if (typeof value === "number" && !Number.isFinite(value)) {
+          throw new TypeError("Widget state must contain finite numbers");
+        }
+        return value;
+      },
+    );
+    if (new TextEncoder().encode(canonicalState).length > 16 * 1024) {
+      throw new TypeError(
+        "Widget state must be a JSON object of at most 16 KiB",
+      );
+    }
+    return storedState;
+  };
+  let storage = null;
+  let state = null;
+  try {
+    const localStorage = globalThis.localStorage;
+    const probeKey = `${storageKey}:probe`;
+    localStorage.setItem(probeKey, "1");
+    localStorage.removeItem(probeKey);
+    storage = localStorage;
+    const savedState = storage.getItem(storageKey);
+    if (savedState != null) {
+      try {
+        state = parseState(savedState);
+      } catch {
+        // Invalid saved state does not disable future writes.
+      }
+    }
+  } catch {
+    storage = null;
+  }
+  const initialGlobals = {
+    widgetState: state,
+    statePersistence: storage == null ? "none" : "local",
+  };
+
+  const channel = new MessageChannel();
+  channel.port1.addEventListener("message", (event) => {
+    const data = event.data;
+    if (typeof data !== "object" || data == null) {
+      return;
+    }
+    if (data.type === "widget-state-write") {
+      if (!Number.isSafeInteger(data.id) || data.id <= 0) {
+        return;
+      }
+      let ok = false;
+      try {
+        if (storage != null) {
+          const state = parseState(data.state);
+          storage.setItem(storageKey, JSON.stringify(state));
+          ok = true;
+        }
+      } catch {
+        // Storage denial, quota limits, and invalid state return a failed receipt.
+      }
+      channel.port1.postMessage({
+        type: "widget-state-result",
+        id: data.id,
+        ok,
+      });
+      return;
+    }
+    if (data.type === "height") {
+      const height = data.height;
+      if (
+        typeof height === "number" &&
+        Number.isFinite(height) &&
+        height >= 0 &&
+        height <= 10_000
+      ) {
+        frame.style.height = Math.ceil(height) + "px";
+      }
+      return;
+    }
+    if (data.type === "scroll-to") {
+      const top = data.top;
+      if (
+        typeof top === "number" &&
+        Number.isFinite(top) &&
+        top >= 0 &&
+        globalThis.navigator.userActivation?.isActive === true
+      ) {
+        globalThis.scrollTo({
+          top: Math.ceil(
+            globalThis.scrollY + frame.getBoundingClientRect().top + top,
+          ),
+        });
+      }
+      return;
+    }
+    if (data.type === "open-external") {
+      const rawHref = data.href;
+      if (typeof rawHref !== "string") {
+        return;
+      }
+      let href;
+      try {
+        const url = new URL(rawHref, document.baseURI);
+        if (url.protocol !== "https:") {
+          return;
+        }
+        href = url.href;
+      } catch {
+        return;
+      }
+      if (globalThis.navigator.userActivation?.isActive === true) {
+        const anchor = document.createElement("a");
+        anchor.href = href;
+        anchor.rel = "noopener noreferrer";
+        anchor.target = "_blank";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      }
+      return;
+    }
+    if (data.type === "follow-up") {
+      const prompt = data.prompt;
+      if (
+        typeof prompt !== "string" ||
+        globalThis.navigator.userActivation?.isActive !== true
+      ) {
+        return;
+      }
+      const title = data.title;
+      globalThis.prompt(typeof title === "string" ? title : prompt, prompt);
+    }
+  });
+  channel.port1.start();
+  const srcdoc = frame.dataset.srcdoc;
+  if (srcdoc == null) {
+    return;
+  }
+  globalThis.addEventListener("resize", () => {
+    const height = Number.parseFloat(frame.style.height);
+    if (!Number.isFinite(height) || height <= viewportHeight) {
+      frame.style.removeProperty("height");
+    }
+    viewportHeight = globalThis.innerHeight;
+    channel.port1.postMessage({ type: "measure" });
+  });
+  frame.addEventListener(
+    "load",
+    () => {
+      frame.contentWindow?.postMessage(
+        { type: "codex-visualization-initialize" },
+        "*",
+        [channel.port2],
+      );
+    },
+    { once: true },
+  );
+  // Match the trusted bootstrap element, not the same text in an authored title.
+  frame.srcdoc = srcdoc.replace(
+    '<script type="application/json" id="codex-visualization-widget-state">__CODEX_VISUALIZATION_WIDGET_STATE__<\/script>',
+    () =>
+      '<script type="application/json" id="codex-visualization-widget-state">' +
+      JSON.stringify(initialGlobals).replaceAll("<", "\\u003c") +
+      "<\/script>",
+  );
+  delete frame.dataset.srcdoc;
+})();
+</script>
+</body>
+</html>
